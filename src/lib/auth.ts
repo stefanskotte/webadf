@@ -1,11 +1,11 @@
 import { betterAuth } from 'better-auth';
 import { drizzleAdapter } from 'better-auth/adapters/drizzle';
-import { organization } from 'better-auth/plugins';
+import { organization as organizationPlugin } from 'better-auth/plugins';
 import { nextCookies } from 'better-auth/next-js';
 import { isAPIError } from 'better-auth/api';
 import { asc, eq } from 'drizzle-orm';
 import { getDb } from '@/db';
-import { member, user as userTable } from '@/db/schema/auth';
+import { member, user as userTable, organization as organizationTable } from '@/db/schema/auth';
 
 // Creates the tenant organization for `userId` and returns its id.
 // Called with NO session headers — passing them makes the createOrganization
@@ -23,6 +23,27 @@ async function bootstrapOrganization(userId: string, name: string): Promise<stri
     },
   });
   return org.id;
+}
+
+function isOrgAlreadyExists(err: unknown) {
+  return isAPIError(err) && err.body?.code === 'ORGANIZATION_ALREADY_EXISTS';
+}
+
+function isAlreadyAMember(err: unknown) {
+  return isAPIError(err) && err.body?.code === 'USER_IS_ALREADY_A_MEMBER_OF_THIS_ORGANIZATION';
+}
+
+async function lookupActiveOrgId(db: ReturnType<typeof getDb>, userId: string) {
+  const rows = await db
+    .select({ organizationId: member.organizationId })
+    .from(member)
+    .where(eq(member.userId, userId))
+    // No ORDER BY means Postgres may return any matching row — and a
+    // different one across calls — for a user with multiple memberships.
+    // Pin a deterministic order instead.
+    .orderBy(asc(member.createdAt), asc(member.organizationId))
+    .limit(1);
+  return rows[0]?.organizationId;
 }
 
 export const auth = betterAuth({
@@ -49,22 +70,25 @@ export const auth = betterAuth({
     user: {
       create: {
         after: async (user) => {
-          // Not atomic with user creation — this runs after the transaction
-          // that created `user` has already committed, and (per better-auth's
-          // sign-up route) *before* the `account` row holding the password
-          // credential is linked. better-auth never supplies
-          // `onAfterCommitHookError` and does not roll back on an after-hook
-          // throw, so letting a genuine failure here throw would propagate
-          // out of sign-up while leaving behind a `user` row with no
-          // credential — an account nobody can ever sign into again.
-          // Swallow and log instead; session.create.before creates the
-          // organization lazily if this attempt never ran, failed, or (the
-          // common case) already lost the race to it.
+          // Not atomic with user creation. And, per the ordering discovery
+          // above, this hook does NOT run until the entire sign-up handler
+          // has already finished: `linkAccount` (the password credential)
+          // and `createSession` (session cookie included) both complete
+          // first. So on the sign-up path, a rethrow here would not strand a
+          // credential-less user — the user is already fully signed up and
+          // signed in by the time this runs. It would instead surface a
+          // false "Sign up failed" to a client that actually succeeded.
+          // Still swallow and log rather than throw: this hook is also the
+          // only bootstrap path for user-creation flows that don't create a
+          // session in the same request (e.g. an admin creating a user
+          // directly), where a thrown error here really would abort that
+          // request. session.create.before repairs a missing org lazily on
+          // whatever sign-in eventually follows.
           try {
             await bootstrapOrganization(user.id, `${user.name || user.email.split('@')[0]}'s library`);
           } catch (err) {
-            if (isAPIError(err) && err.body?.code === 'ORGANIZATION_ALREADY_EXISTS') return;
-            console.error(`[auth] failed to bootstrap organization for user ${user.id} (${user.email})`, err);
+            if (isOrgAlreadyExists(err)) return;
+            console.error(`[auth] failed to bootstrap organization for user ${user.id}`, err);
           }
         },
       },
@@ -75,17 +99,7 @@ export const auth = betterAuth({
         // and none did above. So stamp it onto the session as it is created.
         before: async (session) => {
           const db = getDb();
-          const rows = await db
-            .select({ organizationId: member.organizationId })
-            .from(member)
-            .where(eq(member.userId, session.userId))
-            // No ORDER BY means Postgres may return any matching row — and a
-            // different one across calls — for a user with multiple
-            // memberships. Pin a deterministic order instead.
-            .orderBy(asc(member.createdAt), asc(member.organizationId))
-            .limit(1);
-
-          let organizationId = rows[0]?.organizationId;
+          let organizationId = await lookupActiveOrgId(db, session.userId);
 
           // Self-heal: on a brand-new sign-up this is normally what actually
           // creates the organization (see the comment above); it also covers
@@ -102,17 +116,50 @@ export const auth = betterAuth({
                 `${u?.name || u?.email?.split('@')[0] || 'My'}'s library`,
               );
             } catch (err) {
+              if (!isOrgAlreadyExists(err)) throw err;
+
               // Lost the race to user.create.after (or another concurrent
-              // sign-in) — look the row up again instead of failing this
-              // session creation.
-              if (!(isAPIError(err) && err.body?.code === 'ORGANIZATION_ALREADY_EXISTS')) throw err;
-              const retry = await db
-                .select({ organizationId: member.organizationId })
-                .from(member)
-                .where(eq(member.userId, session.userId))
-                .orderBy(asc(member.createdAt), asc(member.organizationId))
-                .limit(1);
-              organizationId = retry[0]?.organizationId;
+              // sign-in) — the organization exists, look the membership up
+              // again instead of failing this session creation.
+              organizationId = await lookupActiveOrgId(db, session.userId);
+
+              // Wedge case: createOrganization writes the organization row
+              // and the member row as two separate, non-atomic calls (no
+              // enclosing SQL transaction — `transaction: false` above), so
+              // it's possible for the org to exist with no matching member
+              // row (a failed/interrupted member insert on whichever call
+              // won the race). Left alone, that's permanent: the slug is
+              // taken, so every future sign-in would hit
+              // ORGANIZATION_ALREADY_EXISTS again and land back here with
+              // still no membership — requireOrg() would send the user to
+              // /onboarding forever. Repair it by looking the organization
+              // up by its deterministic slug and adding the membership.
+              if (!organizationId) {
+                const [org] = await db
+                  .select({ id: organizationTable.id })
+                  .from(organizationTable)
+                  .where(eq(organizationTable.slug, `org-${session.userId}`))
+                  .limit(1);
+                if (org) {
+                  try {
+                    const newMember = await auth.api.addMember({
+                      body: { userId: session.userId, organizationId: org.id, role: 'owner' },
+                    });
+                    organizationId = newMember.organizationId;
+                  } catch (repairErr) {
+                    if (isAlreadyAMember(repairErr)) {
+                      // Repaired by a concurrent sign-in between our lookup
+                      // and our own addMember call.
+                      organizationId = org.id;
+                    } else {
+                      // Give up gracefully — requireOrg() sends the user to
+                      // onboarding rather than failing sign-in outright, and
+                      // the next sign-in tries the repair again.
+                      console.error(`[auth] failed to repair missing membership for user ${session.userId} in organization ${org.id}`, repairErr);
+                    }
+                  }
+                }
+              }
             }
           }
 
@@ -126,5 +173,5 @@ export const auth = betterAuth({
       },
     },
   },
-  plugins: [organization(), nextCookies()], // nextCookies LAST
+  plugins: [organizationPlugin(), nextCookies()], // nextCookies LAST
 });
