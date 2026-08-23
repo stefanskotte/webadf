@@ -106,8 +106,12 @@ A device token can never enumerate the library, only fetch what it has been told
 ## 5. Data model
 
 Postgres via Drizzle, in one Neon database. Auth tables live in a separate `auth`
-Postgres schema (`drizzleAdapter(db, { provider: 'pg', schemaName: 'auth' })`) so the
-generated tables never mix with the catalog.
+Postgres schema so the generated tables never mix with the catalog.
+
+> **Verified correction.** `drizzleAdapter(db, { provider: 'pg', schemaName: 'auth' })`
+> is a **CLI codegen hint only** — its JSDoc scopes it to schema generation. What actually
+> namespaces queries at runtime is `pgSchema('auth')` in the generated table definitions.
+> Set both; do not assume the adapter option alone isolates anything.
 
 **Tenancy comes from Better Auth**, not from a table we write:
 
@@ -186,10 +190,20 @@ Vercel Blob implementation:
 - Key: `adf/<sha256>` — deterministic, `addRandomSuffix: false`.
 - `access: 'private'` throughout. ADFs are never publicly reachable.
 - Upload: `issueSignedToken({ operations: ['put'], pathname, maximumSizeInBytes, validUntil })`
-  then `presignUrl(token, { operation: 'put', allowOverwrite: false })`. The size cap and
-  path scope mean a leaked token cannot be used to upload anything else.
-- Download: `presignUrl(token, { operation: 'get', validUntil: now + 15min })`. Served via
-  Vercel's CDN by default.
+  then `presignUrl(token, { operation: 'put', access: 'private', addRandomSuffix: false,
+  allowOverwrite: false })`. The size cap and path scope mean a leaked token cannot upload
+  anything else. `presignUrl` takes the **whole** `issueSignedToken` result (it needs both
+  `delegationToken` and `clientSigningToken`) and returns `{ presignedUrl }`, not a string.
+- There is **no `ifNoneMatch` / create-if-absent**. Dedupe is `allowOverwrite: false` plus a
+  prior `head()` — and `head()` **throws `BlobNotFoundError`** when absent rather than
+  returning null, so existence checks must be try/catch.
+- The presigned PUT targets the control plane (`vercel.com/api/blob`), not the blob host, so
+  Vercel Functions' request-body limit never applies to uploads.
+- Download: `presignUrl(token, { operation: 'get', access: 'private', validUntil: now + 15min })`.
+  **Verified**: the resulting `https://<storeId>.private.blob.vercel-storage.com/...` URL carries
+  its delegation and signature as query parameters and needs **no headers, no cookies, no SDK** —
+  a bare HTTPS GET works, which is exactly the ESP32 path. Ceiling is 7 days (documented
+  server-side; the SDK does not enforce it).
 
 Migrating to R2 or self-hosted S3 means writing a second implementation of that interface.
 Nothing else in the codebase changes.
@@ -254,8 +268,11 @@ What we add:
 1. **`wifi_provision.h`** — captive portal on first boot; SSID/password to NVS.
 2. **`pairing.h`** — the 6-digit code from the portal, exchanged once for a device token.
 3. **`cloud_client.h`** — long-poll, JSON parse, sequential fetch of each disk.
-4. **Real TLS.** Upstream calls `setInsecure()`. Replace with a pinned CA bundle for the
-   blob host and the API host.
+4. **Real TLS.** Upstream calls `setInsecure()`. Replace with a pinned CA bundle.
+   **Verified against the live host:** `*.private.blob.vercel-storage.com` is served by a
+   Let's Encrypt certificate (leaf ← LE intermediate ← ISRG Root X1), renewed roughly every
+   90 days. Pin **ISRG Root X1** — pinning the leaf or the intermediate guarantees a field
+   failure within the quarter.
 5. **The RAM disk stays exactly as upstream built it** — 1.44 MB, FAT12, one image, and
    the existing `tud_disconnect()` → `build_empty_volume()` → stream → `build_fat_for_file()`
    → `mediaPresent(true)` → `tud_connect()` sequence untouched. That re-enumeration is what
