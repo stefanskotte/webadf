@@ -18,3 +18,8 @@ build/
 
 # Design canvas build output (re-seeded from the .dc.html working files)
 design/webadf-interface.html
+
+# SDD scratch — ledger, briefs, review packages
+.superpowers/
+test-results/
+playwright-report/
