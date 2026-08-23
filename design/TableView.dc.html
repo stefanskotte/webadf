@@ -1,0 +1,147 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap">
+  <style>
+    body { margin: 0; font-family: "Space Grotesk", "Helvetica Neue", sans-serif; }
+    a { color: #b3550f; text-decoration: none; } a:hover { color: #8f4109; }
+    * { box-sizing: border-box; }
+  </style>
+</helmet>
+
+<div style="width: 1440px; height: 900px; overflow: hidden; color: #223140;
+     background: linear-gradient(180deg, #1b2534 0%, #3a4d61 9%, #8d97a1 34%, #c8cfd3 62%, #eef1f2 100%);">
+
+  <div style="padding: 24px 28px 18px 28px; display: flex; align-items: flex-end; justify-content: space-between;">
+    <div style="display: flex; flex-direction: column; gap: 4px;">
+      <span style="font-size: 12.5px; font-weight: 600; color: rgb(233 240 244 / 0.62);">Amiga collection</span>
+      <span style="font-size: 34px; font-weight: 700; letter-spacing: -0.032em; line-height: 1; color: #eef3f6;">Library</span>
+    </div>
+    <div style="display: flex; align-items: center; gap: 10px;">
+      <div style="display: flex; align-items: center; gap: 9px; height: 36px; padding: 0 13px; border-radius: 9px; background: rgb(255 255 255 / 0.16); border: 1px solid rgb(255 255 255 / 0.26); font-family: 'IBM Plex Mono', monospace; font-size: 12px; color: #eef3f6;">
+        <span style="color: #f5a05e;">&gt;</span>
+        <span>publisher:"Team 17" disks:&gt;1</span>
+        <span style="width: 6px; height: 14px; background: #f5a05e;"></span>
+      </div>
+      <div style="display: flex; border-radius: 9px; overflow: hidden; border: 1px solid rgb(255 255 255 / 0.26); height: 36px;">
+        <div style="width: 36px; display: grid; place-items: center; background: rgb(255 255 255 / 0.12);">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="rgb(233 240 244 / 0.7)" stroke-width="1.8"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/></svg>
+        </div>
+        <div style="width: 36px; display: grid; place-items: center; background: #eef3f6;">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#16273a" stroke-width="2"><path d="M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01"/></svg>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div style="display: grid; grid-template-columns: 178px 1fr; gap: 16px; padding: 0 28px;">
+
+    <!-- FACETS -->
+    <div style="display: flex; flex-direction: column; gap: 16px; padding: 15px 0; border-radius: 14px; background: rgb(255 255 255 / 0.60);
+         border: 1px solid rgb(255 255 255 / 0.65); backdrop-filter: blur(12px); box-shadow: 0 1px 2px rgb(30 45 60 / 0.06), 0 8px 24px rgb(30 45 60 / 0.09); align-self: start;">
+      <sc-for list="{{facets}}" as="f" hint-placeholder-count="4">
+        <div style="display: flex; flex-direction: column; gap: 4px;">
+          <div style="padding: 0 15px; font-family: 'IBM Plex Mono', monospace; font-size: 9.5px; letter-spacing: 0.09em; color: #8a99a6;">{{f.label}}</div>
+          <sc-for list="{{f.rows}}" as="r" hint-placeholder-count="4">
+            <div style="display: flex; justify-content: space-between; padding: 4px 15px; font-family: 'IBM Plex Mono', monospace; font-size: 11px; color: #37485a;">
+              <span>{{r.k}}</span><span style="color: #a9b4bd;">{{r.v}}</span>
+            </div>
+          </sc-for>
+        </div>
+      </sc-for>
+    </div>
+
+    <!-- TABLE -->
+    <div style="border-radius: 14px; overflow: hidden; background: rgb(255 255 255 / 0.66); border: 1px solid rgb(255 255 255 / 0.65);
+         backdrop-filter: blur(12px); box-shadow: 0 1px 2px rgb(30 45 60 / 0.06), 0 8px 24px rgb(30 45 60 / 0.09);">
+      <div style="display: grid; grid-template-columns: 30px 42px 1fr 50px 156px 40px 74px 100px 92px; align-items: center; height: 32px; padding: 0 15px;
+           background: rgb(255 255 255 / 0.5); border-bottom: 1px solid rgb(30 45 60 / 0.10);
+           font-family: 'IBM Plex Mono', monospace; font-size: 9.5px; letter-spacing: 0.06em; color: #8a99a6;">
+        <span></span><span></span><span>TITLE</span><span>YEAR</span><span>PUBLISHER</span><span style="text-align: right;">DSK</span><span style="text-align: right;">SIZE</span><span style="text-align: right;">SHA-256</span><span style="text-align: right;">STATE</span>
+      </div>
+      <sc-for list="{{rows}}" as="r" hint-placeholder-count="14">
+        <div style="display: grid; grid-template-columns: 30px 42px 1fr 50px 156px 40px 74px 100px 92px; align-items: center; height: 35px; padding: 0 15px;
+             border-bottom: 1px solid rgb(30 45 60 / 0.05); font-family: 'IBM Plex Mono', monospace; font-size: 11px; background: {{r.bg}};">
+          <span style="color: #b6c0c8; font-size: 10px;">{{r.i}}</span>
+          <div style="width: 30px; height: 24px; border-radius: 3px; background: {{r.cover}}; box-shadow: 0 1px 2px rgb(30 45 60 / 0.18);"></div>
+          <span style="color: {{r.tcol}}; font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; padding-right: 12px;">{{r.title}}</span>
+          <span style="color: #5b6c7c;">{{r.year}}</span>
+          <span style="color: #5b6c7c; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; padding-right: 12px;">{{r.pub}}</span>
+          <span style="text-align: right; color: {{r.dcol}}; font-weight: 600;">{{r.disks}}</span>
+          <span style="text-align: right; color: #8a99a6;">{{r.size}}</span>
+          <span style="text-align: right; color: #a9b4bd; font-size: 10px;">{{r.sha}}</span>
+          <div style="display: flex; justify-content: flex-end;">
+            <span style="font-size: 9.5px; font-weight: 700; letter-spacing: 0.05em; padding: 3px 8px; border-radius: 5px; background: {{r.sbg}}; color: {{r.scol}};">{{r.state}}</span>
+          </div>
+        </div>
+      </sc-for>
+    </div>
+  </div>
+
+  <div style="margin: 16px 28px 0 28px; display: flex; align-items: center; gap: 20px; padding: 10px 16px; border-radius: 11px;
+       background: rgb(255 255 255 / 0.45); border: 1px solid rgb(255 255 255 / 0.6);
+       font-family: 'IBM Plex Mono', monospace; font-size: 10.5px; color: #5b6c7c;">
+    <span><span style="color: #b3550f; font-weight: 600;">&crarr;</span> mount</span>
+    <span><span style="color: #b3550f; font-weight: 600;">space</span> preview</span>
+    <span><span style="color: #b3550f; font-weight: 600;">d</span> disks</span>
+    <span><span style="color: #b3550f; font-weight: 600;">a</span> artwork</span>
+    <span><span style="color: #b3550f; font-weight: 600;">/</span> filter</span>
+    <span style="margin-left: auto;">412 unmatched &middot; press <span style="color: #8a6207; font-weight: 600;">u</span> to review</span>
+  </div>
+</div>
+</x-dc>
+
+<script data-dc-script>
+class Component extends DCLogic {
+  renderVals() {
+    const D = [
+      ['Project-X', '1992', 'Team 17', 4, '3.44 MB', 'a71f0c9e', 'IN DRIVE'],
+      ['Deluxe Paint IV v4.5', '1992', 'Electronic Arts', 3, '2.58 MB', '4b2e8d10', 'READY'],
+      ['9 Fingers', '1993', 'Spaceballs', 2, '1.72 MB', 'e9034ac7', 'READY'],
+      ['Giana Sisters SE', '2010', 'Reunion', 2, '1.72 MB', '77c1b0f4', 'READY'],
+      ['Workbench 3.1', '1993', 'Commodore', 6, '5.16 MB', '0d9e33b8', 'READY'],
+      ['Marble Slide', '1990', 'Handel, Peter', 1, '880 KB', 'cc50e7a1', 'READY'],
+      ['Ray of Hope II', '1994', '—', 1, '880 KB', '18ab4f6d', 'NO ART'],
+      ['Wayfarer', '1993', '—', 1, '880 KB', 'b3e70c25', 'NO ART'],
+      ['AmigaTestKit', '2015', 'Fraser, Keir', 1, '880 KB', '5f81d9e0', 'READY'],
+      ['Picasso96', '1997', 'Village Tronic', 1, '880 KB', '2a6cb14f', 'READY'],
+      ['WHDLoad 18.5', '2020', 'Wepl', 1, '880 KB', '90fd2e73', 'READY'],
+      ['SysInfo', '1996', 'Nic Wilson', 1, '880 KB', 'd41ea806', 'READY'],
+      ['FAT95', '2003', 'Torsten Jager', 1, '880 KB', '6b0397cc', 'READY'],
+      ['BONUS31_#3', '—', '—', 1, '880 KB', 'ae2210df', 'UNMATCHED']
+    ];
+    const hues = [285, 35, 200, 130, 255, 85, 300, 220, 145, 320, 195, 90, 30, 0];
+    const S = {
+      'IN DRIVE':  ['#1c7a3e', '#dff2e2'],
+      'READY':     ['#5b6c7c', 'rgb(30 45 60 / 0.06)'],
+      'NO ART':    ['#8a6207', '#fdf1cf'],
+      'UNMATCHED': ['#c0342e', '#fbe1e1']
+    };
+    return {
+      rows: D.map((r, i) => ({
+        i: String(i + 1).padStart(2, '0'),
+        title: r[0], year: r[1], pub: r[2], disks: r[3], size: r[4], sha: r[5] + '…', state: r[6],
+        bg: r[6] === 'IN DRIVE' ? 'rgb(28 122 62 / 0.07)' : 'transparent',
+        tcol: r[6] === 'IN DRIVE' ? '#155e30' : '#16232f',
+        dcol: r[3] > 1 ? '#a8560f' : '#8a99a6',
+        scol: S[r[6]][0], sbg: S[r[6]][1],
+        cover: 'linear-gradient(140deg, oklch(0.48 0.14 ' + hues[i] + '), oklch(0.24 0.07 ' + ((hues[i] + 40) % 360) + '))'
+      })),
+      facets: [
+        { label: 'KIND',    rows: [{ k: 'game', v: '1204' }, { k: 'demo', v: '331' }, { k: 'app', v: '188' }, { k: 'system', v: '104' }] },
+        { label: 'DISKS',   rows: [{ k: '1', v: '1472' }, { k: '2–4', v: '353' }, { k: '5+', v: '59' }] },
+        { label: 'SOURCE',  rows: [{ k: 'tosec', v: '3201' }, { k: 'manual', v: '799' }, { k: 'unmatched', v: '412' }] },
+        { label: 'ARTWORK', rows: [{ k: 'hasheous', v: '1102' }, { k: 'openretro', v: '287' }, { k: 'none', v: '495' }] }
+      ]
+    };
+  }
+}
+</script>
+</body>
+</html>

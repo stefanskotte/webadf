@@ -7,76 +7,80 @@
 <body>
 <x-dc>
 <helmet>
-  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap">
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap">
   <style>
     body { margin: 0; font-family: "Space Grotesk", "Helvetica Neue", sans-serif; }
-    a { color: oklch(0.72 0.16 55); text-decoration: none; } a:hover { color: oklch(0.80 0.16 55); }
+    a { color: #b3550f; text-decoration: none; } a:hover { color: #8f4109; }
     * { box-sizing: border-box; }
   </style>
 </helmet>
 
-<div style="width: 1440px; height: 900px; display: flex; flex-direction: column; background: oklch(0.185 0.012 260); color: oklch(0.95 0.005 260); padding: 32px 36px; gap: 26px; overflow: hidden;">
+<div style="width: 1440px; height: 900px; overflow: hidden; color: #223140;
+     background: linear-gradient(180deg, #1b2534 0%, #3a4d61 9%, #8d97a1 34%, #c8cfd3 62%, #eef1f2 100%);">
 
-  <div style="display: flex; align-items: flex-end; justify-content: space-between;">
+  <div style="padding: 26px 28px 20px 28px; display: flex; align-items: flex-end; justify-content: space-between;">
     <div style="display: flex; flex-direction: column; gap: 5px;">
-      <div style="font-size: 26px; font-weight: 700; letter-spacing: -0.028em;">Devices</div>
-      <div style="font-family: 'IBM Plex Mono', monospace; font-size: 11.5px; color: oklch(0.58 0.012 260);">2 paired &middot; 1 online &middot; long-poll every 2 s</div>
+      <span style="font-size: 12.5px; font-weight: 600; color: rgb(233 240 244 / 0.62);">Hardware</span>
+      <span style="font-size: 34px; font-weight: 700; letter-spacing: -0.032em; line-height: 1; color: #eef3f6;">Devices</span>
+      <span style="font-family: 'IBM Plex Mono', monospace; font-size: 11.5px; color: rgb(233 240 244 / 0.62); margin-top: 3px;">2 paired &middot; 1 online &middot; long-poll every 2 s</span>
     </div>
-    <div style="display: flex; align-items: center; gap: 9px; height: 38px; padding: 0 16px; border: 1px solid oklch(0.38 0.018 260); border-radius: 3px; font-size: 13px; font-weight: 500;">
-      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 5v14M5 12h14"/></svg>
+    <div style="display: flex; align-items: center; gap: 9px; height: 40px; padding: 0 17px; border-radius: 10px; background: rgb(255 255 255 / 0.16); border: 1px solid rgb(255 255 255 / 0.26); font-size: 13.5px; font-weight: 600; color: #eef3f6;">
+      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M12 5v14M5 12h14"/></svg>
       Pair a dongle
     </div>
   </div>
 
-  <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 20px;">
+  <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 16px; padding: 0 28px;">
 
     <!-- ONLINE DEVICE -->
-    <div style="display: flex; flex-direction: column; border: 1px solid oklch(0.42 0.09 150); border-radius: 4px; overflow: hidden;">
-      <div style="display: flex; align-items: center; gap: 11px; padding: 15px 18px; background: oklch(0.55 0.13 150 / 0.08); border-bottom: 1px solid oklch(0.34 0.05 150);">
-        <div style="width: 9px; height: 9px; border-radius: 50%; background: oklch(0.70 0.16 150); box-shadow: 0 0 9px oklch(0.70 0.16 150);"></div>
+    <div style="border-radius: 14px; overflow: hidden; background: rgb(255 255 255 / 0.68); border: 1px solid rgb(255 255 255 / 0.65);
+         backdrop-filter: blur(12px); box-shadow: 0 1px 2px rgb(30 45 60 / 0.06), 0 8px 24px rgb(30 45 60 / 0.09);">
+      <div style="display: flex; align-items: center; gap: 11px; padding: 15px 17px; background: #dff2e2; border-bottom: 1px solid rgb(28 122 62 / 0.18);">
+        <div style="width: 9px; height: 9px; border-radius: 50%; background: #1c7a3e;"></div>
         <div style="display: flex; flex-direction: column; gap: 1px;">
-          <span style="font-size: 15px; font-weight: 600;">Living Room</span>
-          <span style="font-family: 'IBM Plex Mono', monospace; font-size: 10.5px; color: oklch(0.64 0.05 150);">dev_8f21ac &middot; XIAO ESP32-S3 &middot; fw 2.1.0</span>
+          <span style="font-size: 15px; font-weight: 600; color: #133f22;">Living Room</span>
+          <span style="font-family: 'IBM Plex Mono', monospace; font-size: 10.5px; color: #3d7551;">dev_8f21ac &middot; XIAO ESP32-S3 &middot; fw 2.1.0</span>
         </div>
-        <div style="margin-left: auto; display: flex; align-items: center; gap: 12px;">
+        <div style="margin-left: auto; display: flex; align-items: center; gap: 11px;">
           <div style="display: flex; align-items: flex-end; gap: 2px; height: 14px;">
-            <div style="width: 3px; height: 5px; background: oklch(0.70 0.16 150);"></div>
-            <div style="width: 3px; height: 8px; background: oklch(0.70 0.16 150);"></div>
-            <div style="width: 3px; height: 11px; background: oklch(0.70 0.16 150);"></div>
-            <div style="width: 3px; height: 14px; background: oklch(0.35 0.02 150);"></div>
+            <div style="width: 3px; height: 5px; background: #1c7a3e;"></div>
+            <div style="width: 3px; height: 8px; background: #1c7a3e;"></div>
+            <div style="width: 3px; height: 11px; background: #1c7a3e;"></div>
+            <div style="width: 3px; height: 14px; background: rgb(28 122 62 / 0.25);"></div>
           </div>
-          <span style="font-family: 'IBM Plex Mono', monospace; font-size: 10.5px; color: oklch(0.62 0.03 150);">&minus;54 dBm</span>
+          <span style="font-family: 'IBM Plex Mono', monospace; font-size: 10.5px; color: #3d7551;">&minus;54 dBm</span>
         </div>
       </div>
 
-      <div style="padding: 18px; display: flex; flex-direction: column; gap: 16px;">
-        <div style="display: flex; gap: 14px; align-items: center; padding: 13px; background: oklch(0.22 0.014 260); border: 1px solid oklch(0.32 0.016 260); border-radius: 3px;">
-          <div style="width: 62px; height: 50px; flex-shrink: 0; border-radius: 2px; background: linear-gradient(150deg, oklch(0.44 0.18 275), oklch(0.24 0.12 300) 55%, oklch(0.32 0.17 15));"></div>
+      <div style="padding: 17px; display: flex; flex-direction: column; gap: 15px;">
+        <div style="display: flex; gap: 13px; align-items: center; padding: 12px; border-radius: 11px; background: rgb(255 255 255 / 0.8); border: 1px solid rgb(30 45 60 / 0.08);">
+          <div style="width: 62px; height: 50px; flex-shrink: 0; border-radius: 6px; box-shadow: 0 1px 4px rgb(30 45 60 / 0.2);
+               background: linear-gradient(150deg, oklch(0.44 0.18 275), oklch(0.24 0.12 300) 55%, oklch(0.32 0.17 15));"></div>
           <div style="display: flex; flex-direction: column; gap: 3px; min-width: 0;">
-            <span style="font-family: 'IBM Plex Mono', monospace; font-size: 9.5px; letter-spacing: 0.08em; color: oklch(0.70 0.14 150);">MOUNTED</span>
-            <span style="font-size: 14px; font-weight: 600;">Project-X</span>
-            <span style="font-family: 'IBM Plex Mono', monospace; font-size: 10.5px; color: oklch(0.58 0.012 260);">disk 1 of 4 &middot; swap from the library, ~2 s</span>
+            <span style="font-family: 'IBM Plex Mono', monospace; font-size: 9.5px; letter-spacing: 0.07em; font-weight: 700; color: #1c7a3e;">IN THE DRIVE</span>
+            <span style="font-size: 14.5px; font-weight: 600; color: #16232f;">Project-X</span>
+            <span style="font-family: 'IBM Plex Mono', monospace; font-size: 10.5px; color: #8a99a6;">disk 1 of 4 &middot; swap from the library</span>
           </div>
           <div style="margin-left: auto; display: flex; gap: 7px;">
-            <div style="display: grid; place-items: center; width: 34px; height: 34px; border: 1px solid oklch(0.36 0.018 260); border-radius: 3px;">
-              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="oklch(0.85 0.01 260)" stroke-width="1.8"><path d="M5 12h14M12 5l7 7-7 7"/></svg>
+            <div style="display: grid; place-items: center; width: 34px; height: 34px; border-radius: 8px; border: 1px solid rgb(30 45 60 / 0.10); background: rgb(255 255 255 / 0.8);">
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#37485a" stroke-width="1.9"><path d="M5 12h14M12 5l7 7-7 7"/></svg>
             </div>
-            <div style="display: grid; place-items: center; width: 34px; height: 34px; border: 1px solid oklch(0.45 0.10 25); border-radius: 3px;">
-              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="oklch(0.72 0.16 25)" stroke-width="1.8"><path d="M12 19V6m0 0-5 5m5-5 5 5"/><path d="M4 3h16"/></svg>
+            <div style="display: grid; place-items: center; width: 34px; height: 34px; border-radius: 8px; border: 1px solid rgb(192 52 46 / 0.30); background: #fbe1e1;">
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#c0342e" stroke-width="1.9"><path d="M12 19V6m0 0-5 5m5-5 5 5"/><path d="M4 3h16"/></svg>
             </div>
           </div>
         </div>
 
         <div style="display: flex; flex-direction: column; gap: 7px;">
-          <div style="display: flex; justify-content: space-between; font-family: 'IBM Plex Mono', monospace; font-size: 10.5px; color: oklch(0.58 0.012 260);">
+          <div style="display: flex; justify-content: space-between; font-family: 'IBM Plex Mono', monospace; font-size: 10.5px; color: #8a99a6;">
             <span>PSRAM &middot; FAT12 RAM disk 1.44 MB of 8 MB</span>
-            <span style="color: oklch(0.88 0.01 260);">880 KB used</span>
+            <span style="color: #223140; font-weight: 500;">880 KB used</span>
           </div>
-          <div style="height: 8px; background: oklch(0.26 0.014 260); border-radius: 2px; overflow: hidden;">
-            <div style="width: 61%; background: oklch(0.72 0.16 55);"></div>
+          <div style="height: 8px; background: rgb(30 45 60 / 0.10); border-radius: 4px; overflow: hidden;">
+            <div style="width: 61%; height: 100%; background: #f5822e;"></div>
           </div>
-          <div style="display: flex; gap: 14px; font-family: 'IBM Plex Mono', monospace; font-size: 10px; color: oklch(0.52 0.012 260);">
-            <span><span style="color: oklch(0.72 0.16 55);">&#9632;</span> Project-X disk 1</span>
+          <div style="display: flex; gap: 14px; font-family: 'IBM Plex Mono', monospace; font-size: 9.5px; color: #8a99a6;">
+            <span><span style="color: #f5822e;">&#9632;</span> Project-X disk 1</span>
             <span>one image at a time</span>
             <span style="margin-left: auto;">FAT12 &middot; USB MSC</span>
           </div>
@@ -84,72 +88,70 @@
 
         <div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 11px;">
           <sc-for list="{{stats}}" as="s" hint-placeholder-count="3">
-            <div style="display: flex; flex-direction: column; gap: 3px; padding: 10px 12px; background: oklch(0.21 0.013 260); border-radius: 3px;">
-              <span style="font-family: 'IBM Plex Mono', monospace; font-size: 9.5px; letter-spacing: 0.06em; color: oklch(0.54 0.012 260); text-transform: uppercase;">{{s.k}}</span>
-              <span style="font-size: 15px; font-weight: 600;">{{s.v}}</span>
+            <div style="display: flex; flex-direction: column; gap: 3px; padding: 11px 13px; border-radius: 10px; background: rgb(255 255 255 / 0.8); border: 1px solid rgb(30 45 60 / 0.06);">
+              <span style="font-family: 'IBM Plex Mono', monospace; font-size: 9.5px; letter-spacing: 0.06em; color: #8a99a6; text-transform: uppercase;">{{s.k}}</span>
+              <span style="font-size: 17px; font-weight: 700; letter-spacing: -0.02em; color: #16232f;">{{s.v}}</span>
             </div>
           </sc-for>
         </div>
       </div>
     </div>
 
-    <!-- RIGHT COLUMN -->
-    <div style="display: flex; flex-direction: column; gap: 20px;">
+    <!-- RIGHT -->
+    <div style="display: flex; flex-direction: column; gap: 16px;">
 
-      <div style="display: flex; align-items: center; gap: 13px; padding: 17px 18px; border: 1px solid oklch(0.30 0.016 260); border-radius: 4px; background: oklch(0.20 0.012 260);">
-        <div style="width: 9px; height: 9px; border-radius: 50%; background: oklch(0.42 0.012 260);"></div>
+      <div style="display: flex; align-items: center; gap: 13px; padding: 16px 17px; border-radius: 14px; background: rgb(255 255 255 / 0.52); border: 1px solid rgb(255 255 255 / 0.6); backdrop-filter: blur(12px);">
+        <div style="width: 9px; height: 9px; border-radius: 50%; background: #b6c0c8;"></div>
         <div style="display: flex; flex-direction: column; gap: 1px;">
-          <span style="font-size: 15px; font-weight: 600; color: oklch(0.70 0.01 260);">Workshop A500</span>
-          <span style="font-family: 'IBM Plex Mono', monospace; font-size: 10.5px; color: oklch(0.48 0.012 260);">dev_2c90fe &middot; last seen 3 days ago &middot; fw 2.0.4</span>
+          <span style="font-size: 15px; font-weight: 600; color: #5b6c7c;">Workshop A500</span>
+          <span style="font-family: 'IBM Plex Mono', monospace; font-size: 10.5px; color: #8a99a6;">dev_2c90fe &middot; last seen 3 days ago &middot; fw 2.0.4</span>
         </div>
-        <div style="margin-left: auto; display: flex; align-items: center; gap: 7px; padding: 4px 9px; border: 1px solid oklch(0.50 0.11 70); border-radius: 2px;">
-          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="oklch(0.78 0.15 70)" stroke-width="2"><path d="M12 3v13m0 0 4-4m-4 4-4-4"/></svg>
-          <span style="font-family: 'IBM Plex Mono', monospace; font-size: 10px; color: oklch(0.80 0.13 70);">OTA 2.1.0</span>
+        <div style="margin-left: auto; display: flex; align-items: center; gap: 7px; padding: 5px 10px; border-radius: 999px; background: #fdf1cf; border: 1px solid rgb(138 98 7 / 0.24);">
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#8a6207" stroke-width="2.2"><path d="M12 3v13m0 0 4-4m-4 4-4-4"/></svg>
+          <span style="font-family: 'IBM Plex Mono', monospace; font-size: 10px; font-weight: 600; color: #8a6207;">OTA 2.1.0</span>
         </div>
       </div>
 
-      <!-- PAIRING -->
-      <div style="flex-grow: 1; display: flex; flex-direction: column; gap: 16px; padding: 22px; border: 1px dashed oklch(0.38 0.018 260); border-radius: 4px;">
-        <div style="font-family: 'IBM Plex Mono', monospace; font-size: 10px; letter-spacing: 0.09em; color: oklch(0.58 0.012 260); text-transform: uppercase;">Pair a new dongle</div>
-        <div style="display: flex; flex-direction: column; gap: 13px;">
+      <div style="flex-grow: 1; display: flex; flex-direction: column; gap: 15px; padding: 20px; border-radius: 14px;
+           background: rgb(255 255 255 / 0.68); border: 1px dashed rgb(30 45 60 / 0.20); backdrop-filter: blur(12px);">
+        <span style="font-size: 14px; font-weight: 600; color: #16232f;">Pair a new dongle</span>
+        <div style="display: flex; flex-direction: column; gap: 12px;">
           <sc-for list="{{steps}}" as="s" hint-placeholder-count="4">
-            <div style="display: flex; gap: 13px; align-items: flex-start;">
-              <div style="width: 21px; height: 21px; flex-shrink: 0; border-radius: 50%; border: 1px solid {{s.bcol}}; display: grid; place-items: center; font-family: 'IBM Plex Mono', monospace; font-size: 10px; font-weight: 600; color: {{s.bcol}};">{{s.n}}</div>
+            <div style="display: flex; gap: 12px; align-items: flex-start;">
+              <div style="width: 21px; height: 21px; flex-shrink: 0; border-radius: 50%; background: {{s.dot}}; display: grid; place-items: center; font-family: 'IBM Plex Mono', monospace; font-size: 10px; font-weight: 700; color: {{s.dotfg}};">{{s.n}}</div>
               <div style="display: flex; flex-direction: column; gap: 2px; padding-top: 1px;">
-                <span style="font-size: 13px; color: {{s.tcol}};">{{s.t}}</span>
-                <span style="font-family: 'IBM Plex Mono', monospace; font-size: 10.5px; color: oklch(0.52 0.012 260);">{{s.d}}</span>
+                <span style="font-size: 13px; font-weight: 500; color: {{s.tcol}};">{{s.t}}</span>
+                <span style="font-family: 'IBM Plex Mono', monospace; font-size: 10.5px; color: #8a99a6;">{{s.d}}</span>
               </div>
             </div>
           </sc-for>
         </div>
 
-        <div style="margin-top: auto; display: flex; flex-direction: column; gap: 9px; align-items: center; padding: 18px; background: oklch(0.21 0.013 260); border-radius: 3px;">
-          <span style="font-family: 'IBM Plex Mono', monospace; font-size: 10px; letter-spacing: 0.08em; color: oklch(0.56 0.012 260);">PAIRING CODE</span>
+        <div style="margin-top: auto; display: flex; flex-direction: column; gap: 9px; align-items: center; padding: 17px; border-radius: 11px; background: rgb(22 39 58 / 0.05); border: 1px solid rgb(30 45 60 / 0.08);">
+          <span style="font-family: 'IBM Plex Mono', monospace; font-size: 9.5px; letter-spacing: 0.09em; color: #8a99a6;">PAIRING CODE</span>
           <div style="display: flex; gap: 7px;">
             <sc-for list="{{code}}" as="c" hint-placeholder-count="6">
-              <div style="width: 38px; height: 48px; display: grid; place-items: center; background: oklch(0.26 0.016 260); border: 1px solid oklch(0.36 0.018 260); border-radius: 3px; font-family: 'IBM Plex Mono', monospace; font-size: 22px; font-weight: 600; color: oklch(0.72 0.16 55);">{{c}}</div>
+              <div style="width: 38px; height: 48px; display: grid; place-items: center; background: #fff; border: 1px solid rgb(30 45 60 / 0.12); border-radius: 8px; box-shadow: 0 1px 2px rgb(30 45 60 / 0.07); font-family: 'IBM Plex Mono', monospace; font-size: 22px; font-weight: 600; color: #16273a;">{{c}}</div>
             </sc-for>
           </div>
-          <span style="font-family: 'IBM Plex Mono', monospace; font-size: 10px; color: oklch(0.50 0.012 260);">expires in 4:52</span>
+          <span style="font-family: 'IBM Plex Mono', monospace; font-size: 10px; color: #8a99a6;">expires in 4:52</span>
         </div>
       </div>
     </div>
   </div>
 
   <!-- ACTIVITY -->
-  <div style="flex-grow: 1; display: flex; flex-direction: column; gap: 11px; min-height: 0;">
-    <div style="font-family: 'IBM Plex Mono', monospace; font-size: 10px; letter-spacing: 0.09em; color: oklch(0.58 0.012 260); text-transform: uppercase;">Activity</div>
-    <div style="display: flex; flex-direction: column; border: 1px solid oklch(0.30 0.016 260); border-radius: 3px; overflow: hidden;">
-      <sc-for list="{{log}}" as="l" hint-placeholder-count="5">
-        <div style="display: grid; grid-template-columns: 96px 128px 1fr 128px 88px; align-items: center; height: 34px; padding: 0 15px; border-bottom: 1px solid oklch(0.24 0.014 260); font-family: 'IBM Plex Mono', monospace; font-size: 11px;">
-          <span style="color: oklch(0.50 0.012 260);">{{l.t}}</span>
-          <span style="color: oklch(0.66 0.012 260);">{{l.dev}}</span>
-          <span style="color: oklch(0.88 0.01 260);">{{l.msg}}</span>
-          <span style="color: oklch(0.58 0.012 260); text-align: right;">{{l.size}}</span>
-          <span style="color: {{l.col}}; text-align: right;">{{l.dur}}</span>
-        </div>
-      </sc-for>
-    </div>
+  <div style="margin: 16px 28px 0 28px; border-radius: 14px; overflow: hidden; background: rgb(255 255 255 / 0.60); border: 1px solid rgb(255 255 255 / 0.65); backdrop-filter: blur(12px);">
+    <div style="padding: 12px 16px; border-bottom: 1px solid rgb(30 45 60 / 0.08); font-size: 13.5px; font-weight: 600; color: #16232f;">Activity</div>
+    <sc-for list="{{log}}" as="l" hint-placeholder-count="5">
+      <div style="display: grid; grid-template-columns: 92px 130px 1fr 96px 72px; align-items: center; height: 34px; padding: 0 16px; border-bottom: 1px solid rgb(30 45 60 / 0.05); font-family: 'IBM Plex Mono', monospace; font-size: 11px;">
+        <span style="color: #8a99a6;">{{l.t}}</span>
+        <span style="color: #5b6c7c;">{{l.dev}}</span>
+        <span style="color: #223140;">{{l.msg}}</span>
+        <span style="color: #8a99a6; text-align: right;">{{l.size}}</span>
+        <span style="color: {{l.col}}; text-align: right; font-weight: 500;">{{l.dur}}</span>
+      </div>
+    </sc-for>
   </div>
 </div>
 </x-dc>
@@ -161,17 +163,17 @@ class Component extends DCLogic {
       stats: [{ k: 'uptime', v: '6h 12m' }, { k: 'mounts today', v: '9' }, { k: 'avg swap', v: '2.1 s' }],
       code: ['4', '2', '9', 'K', '7', 'M'],
       steps: [
-        { n: '1', t: 'Flash the firmware', d: 'web flasher · Chrome or Edge · one click', bcol: 'oklch(0.72 0.16 55)', tcol: 'oklch(0.92 0.008 260)' },
-        { n: '2', t: 'Join your WiFi', d: 'dongle opens a captive portal on first boot', bcol: 'oklch(0.72 0.16 55)', tcol: 'oklch(0.92 0.008 260)' },
-        { n: '3', t: 'Enter this code on the portal', d: 'binds the dongle to your account, issues its token', bcol: 'oklch(0.72 0.16 55)', tcol: 'oklch(0.92 0.008 260)' },
-        { n: '4', t: 'Plug it into the Gotek', d: 'appears here within a few seconds', bcol: 'oklch(0.40 0.018 260)', tcol: 'oklch(0.62 0.012 260)' }
+        { n: '1', t: 'Flash the firmware', d: 'web flasher · Chrome or Edge · one click', dot: '#16273a', dotfg: '#fff', tcol: '#16232f' },
+        { n: '2', t: 'Join your WiFi', d: 'dongle opens a captive portal on first boot', dot: '#16273a', dotfg: '#fff', tcol: '#16232f' },
+        { n: '3', t: 'Enter this code on the portal', d: 'binds the dongle to your account, issues its token', dot: '#16273a', dotfg: '#fff', tcol: '#16232f' },
+        { n: '4', t: 'Plug it into the Gotek', d: 'appears here within a few seconds', dot: 'rgb(30 45 60 / 0.12)', dotfg: '#5b6c7c', tcol: '#8a99a6' }
       ],
       log: [
-        { t: '21:04:12', dev: 'living-room', msg: 'swapped to Project-X disk 2', size: '880 KB', dur: '2.0 s', col: 'oklch(0.70 0.14 150)' },
-        { t: '20:48:55', dev: 'living-room', msg: 'ejected Deluxe Paint IV', size: '—', dur: '0.2 s', col: 'oklch(0.60 0.012 260)' },
-        { t: '20:31:07', dev: 'living-room', msg: 'mounted Deluxe Paint IV (disk 1)', size: '880 KB', dur: '1.9 s', col: 'oklch(0.70 0.14 150)' },
-        { t: '19:57:41', dev: 'living-room', msg: 'firmware updated 2.0.4 → 2.1.0', size: '1.2 MB', dur: '11.4 s', col: 'oklch(0.70 0.14 150)' },
-        { t: '19:12:03', dev: 'workshop-a500', msg: 'poll timeout · marked offline', size: '—', dur: '—', col: 'oklch(0.72 0.15 70)' }
+        { t: '21:04:12', dev: 'living-room',   msg: 'swapped to Project-X disk 2', size: '880 KB', dur: '2.0 s', col: '#1c7a3e' },
+        { t: '20:48:55', dev: 'living-room',   msg: 'mounted Project-X disk 1',    size: '880 KB', dur: '2.2 s', col: '#1c7a3e' },
+        { t: '20:31:07', dev: 'living-room',   msg: 'ejected Deluxe Paint IV',     size: '—',      dur: '0.2 s', col: '#5b6c7c' },
+        { t: '19:57:41', dev: 'living-room',   msg: 'firmware updated 2.0.4 → 2.1.0', size: '1.2 MB', dur: '11.4 s', col: '#1c7a3e' },
+        { t: '19:12:03', dev: 'workshop-a500', msg: 'poll timeout · marked offline', size: '—',    dur: '—',     col: '#8a6207' }
       ]
     };
   }

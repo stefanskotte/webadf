@@ -1,22 +1,25 @@
 {
   "artboards": [
-    { "file": "Main.dc.html",       "x": 0,    "y": 0,    "w": 1440, "h": 900, "title": "Direction A — Workbench Revival", "page": "page-1" },
-    { "file": "DirectionB.dc.html", "x": 1560, "y": 0,    "w": 1440, "h": 900, "title": "Direction B — Cinema",            "page": "page-1" },
-    { "file": "DirectionC.dc.html", "x": 3120, "y": 0,    "w": 1440, "h": 900, "title": "Direction C — Console",           "page": "page-1" },
-    { "file": "GameDetail.dc.html", "x": 0,    "y": 0,    "w": 1440, "h": 900, "title": "Game detail — multi-disk set",    "page": "page-2" },
-    { "file": "Devices.dc.html",    "x": 1560, "y": 0,    "w": 1440, "h": 900, "title": "Devices — status, pairing, mount","page": "page-2" },
-    { "file": "Ingest.dc.html",     "x": 3120, "y": 0,    "w": 1440, "h": 900, "title": "Ingest — hash-first bulk import", "page": "page-2" }
+    { "file": "Main.dc.html",       "x": 0,    "y": 0,    "w": 1440, "h": 900, "title": "Library — grid",                 "page": "page-1" },
+    { "file": "TableView.dc.html",  "x": 1560, "y": 0,    "w": 1440, "h": 900, "title": "Library — table view toggle",    "page": "page-1" },
+    { "file": "GameDetail.dc.html", "x": 3120, "y": 0,    "w": 1440, "h": 900, "title": "Game detail — disk set + swap",  "page": "page-1" },
+    { "file": "Devices.dc.html",    "x": 0,    "y": 1080, "w": 1440, "h": 900, "title": "Devices — status + pairing",     "page": "page-1" },
+    { "file": "Ingest.dc.html",     "x": 1560, "y": 1080, "w": 1440, "h": 900, "title": "Ingest — hash-first import",     "page": "page-1" },
+
+    { "file": "DarkA.dc.html",      "x": 0,    "y": 0,    "w": 1440, "h": 900, "title": "Dark A — Workbench Revival", "page": "page-2" },
+    { "file": "DarkB.dc.html",      "x": 1560, "y": 0,    "w": 1440, "h": 900, "title": "Dark B — Cinema",           "page": "page-2" },
+    { "file": "DarkC.dc.html",      "x": 3120, "y": 0,    "w": 1440, "h": 900, "title": "Dark C — Console",          "page": "page-2" },
+    { "file": "FlatLight.dc.html",  "x": 4680, "y": 0,    "w": 1440, "h": 900, "title": "Flat light (no gradient)",  "page": "page-2" }
   ],
   "annotations": [
-    { "id": "note-directions", "x": 0,    "y": -190, "w": 560, "text": "Pick a direction.\n\nAll three show the same library so the comparison is fair, and all use your real disks — Project-X, Deluxe Paint IV, 9 Fingers, Workbench 3.1.\n\nCover images are generated placeholders: real box art comes from Hasheous/IGDB at ingest, and this is genuinely what a disk with no art will look like.", "page": "page-1" },
-    { "id": "note-a", "x": 1180, "y": -190, "w": 300, "text": "A — Workbench Revival\nDense, filter-forward, Amiga orange/blue on cool slate, 3px radii, monospace metadata.\n\nBest at 1,884 titles. Trade-off: least cinematic.", "page": "page-1" },
-    { "id": "note-b", "x": 2740, "y": -190, "w": 300, "text": "B — Cinema\nPoster-forward, near-black, amber, big display type, hero + rows.\n\nMost impact per screen. Trade-off: shows ~12 titles where A shows 40 — weak for a large library.", "page": "page-1" },
-    { "id": "note-c", "x": 4300, "y": -190, "w": 300, "text": "C — Console\nMonospace table, keyboard-first, sortable, SHA visible.\n\nFastest to find one disk among thousands. Trade-off: box art is decorative, not the point.", "page": "page-1" },
-    { "id": "note-screens", "x": 0, "y": -150, "w": 620, "text": "The three functional screens, drawn in Direction A. These do not change much if you pick B or C — the layout logic is the same, only the skin differs.\n\nEverything shown is grounded in what the hardware actually does: the 8 MB PSRAM budget, the FAT12 RAM disk, the /ADF/<Game>/ tree the firmware reads, and the 512-byte .nfo limit.", "page": "page-2" }
+    { "id": "note-live", "x": 0, "y": -210, "w": 620, "text": "Gradient canvas, frosted cards.\n\nStructure borrowed from your UserBoost dashboard — fixed 180° gradient, glass surfaces at 55–68% white, hairlines at 8% ink, page title on the dark band. Retuned for a disk library rather than reusing UserBoost's brand: Space Grotesk + IBM Plex Mono instead of Inter, and the accent set is navy for actions, blue for counts, amber for attention.\n\nThe dark top does real work here — cover art reads as sitting on a shelf.", "page": "page-1" },
+    { "id": "note-swap", "x": 3120, "y": -210, "w": 420, "text": "One disk in the drive at a time (D10).\n\nDisk 1 is green and IN DRIVE; the rest say SWAP TO. Clicking one queues a mount job — about 2 s to re-fetch and re-enumerate USB.", "page": "page-1" },
+    { "id": "note-ingest", "x": 1560, "y": 830, "w": 420, "text": "Every finished row has a MOUNT button (D9).\n\nDrop, click, play — you never have to visit the library for a disk you just uploaded and already know you want.", "page": "page-1" },
+    { "id": "note-explored", "x": 0, "y": -160, "w": 560, "text": "Not chosen — kept for the record.\n\nThree dark directions and a flat light one. The flat light version is the same layout as the live design without the gradient canvas, which is the comparison that settled it.", "page": "page-2" }
   ],
   "pages": [
-    { "id": "page-1", "name": "Directions" },
-    { "id": "page-2", "name": "Screens" }
+    { "id": "page-1", "name": "webadf" },
+    { "id": "page-2", "name": "Explored" }
   ],
   "launch": { "view": "canvas", "page": "page-1" }
 }

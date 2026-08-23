@@ -39,10 +39,11 @@ importer, and a forked ESP32 firmware with a full cloud-pull client.
 | D4 | **Browser dropzone + companion CLI** for ingest. | 18,000 files is not a browser-tab job. The CLI hashes locally and uploads only misses. |
 | D5 | **Full firmware fork** of `Gotek_WiFi_Dongle`. | D1 makes it unavoidable; upstream has no cloud client, no pairing, and calls `setInsecure()`. |
 | D6 | **Vercel Blob** for objects, behind one thin storage module. | Chosen for now; the seam keeps a later move to R2 or self-hosted S3 a one-file change. |
-| D7 | **Direction A UI, with Direction C as a view toggle.** | Grid for browsing, table for finding one disk among thousands. |
+| D7 | **Cover grid by default, table as a view toggle.** | Grid for browsing by box art, table for finding one disk among thousands. Both are needed at 1,884 titles. |
 | D8 | **Better Auth**, fully self-hosted, for human auth; **our own opaque tokens** for devices. | Auth must live entirely on our own domain. Better Auth runs in-process at `/api/auth/*`, stores everything in our Neon database, and makes no third-party requests. Its `organization` plugin *is* the tenancy model from D2, so it replaces a hand-rolled `accounts` table rather than sitting beside one. Devices never touch it. |
 | D9 | **Enrichment is asynchronous and additive.** A disk is mountable the instant its bytes land; metadata and artwork arrive later, field by field. | Playing a game must never wait on IGDB. It is also the only workable design given external rate limits: 18,000 disks against ~4 req/s is hours of work. |
 | D10 | **One disk resident at a time**, exactly as upstream: a 1.44 MB FAT12 volume in PSRAM holding a single image. A swap is a fresh fetch plus a USB re-enumeration. | Parity with the linked projects. Sidesteps the FAT12 cluster ceiling entirely, and a ~2 s swap is nothing on a 30-year-old machine. |
+| D11 | **Light UI on a fixed gradient canvas with frosted cards.** Structure derived from the operator's UserBoost design system; retuned, not rebranded. | The dark top of the gradient makes cover art read as sitting on a shelf, which suits a disk library better than it suits an analytics dashboard. Replaces the dark theme explored first. |
 
 ---
 
@@ -375,8 +376,8 @@ import and the entire point is that you are playing meanwhile.
 
 ## 11. Web UI
 
-Next.js App Router, shadcn/ui, Tailwind. Design published at
-`design/` (artboards) — Direction A as default with Direction C as a toggle.
+Next.js App Router, shadcn/ui, Tailwind v4. Artboards in `design/`; the published canvas
+carries the live design plus the explored alternatives.
 
 - **Library** — cover grid, faceted sidebar, `/` search over title, publisher, SHA **and
   original filename**, sorted recently-added by default.
@@ -387,6 +388,58 @@ Next.js App Router, shadcn/ui, Tailwind. Design published at
   and a preview of the exact `/ADF/<Game>/` tree and `.nfo` the device will see.
 - **Devices** — status, PSRAM budget, pairing flow, OTA, activity log.
 - **Ingest** — dropzone, CLI instructions, live run progress, review queue.
+
+### 11.1 Visual system
+
+Derived from the operator's UserBoost `globals.css` — the same structural idea (fixed
+gradient canvas, frosted surfaces, page title on the dark band), retuned for this product
+rather than reusing that brand. Implement as CSS custom properties; no component
+hardcodes a hex.
+
+```css
+/* canvas — background-attachment: fixed is load-bearing; the design
+   depends on the gradient staying put while content scrolls */
+--grad: linear-gradient(180deg, #1b2534 0%, #3a4d61 9%, #8d97a1 34%,
+                                #c8cfd3 62%, #eef1f2 100%);
+
+/* text on the dark band            /* text on glass */
+--on-dark:        #eef3f6;          --ink:       #16232f;
+--on-dark-muted:  rgb(233 240 244 / 0.62);
+                                    --foreground:#223140;
+                                    --muted:     #5b6c7c;
+                                    --muted-2:   #8a99a6;
+                                    --faint:     #a9b4bd;
+
+/* frosted surfaces */
+--glass:        rgb(255 255 255 / 0.62);   /* default card            */
+--glass-panel:  rgb(255 255 255 / 0.68);   /* content panel           */
+--glass-strong: rgb(255 255 255 / 0.80);   /* active / raised         */
+--glass-subtle: rgb(255 255 255 / 0.45);   /* footer strips           */
+--glass-border: rgb(255 255 255 / 0.65);
+--input-bg:     rgb(255 255 255 / 0.75);
+--hairline:     rgb(30 45 60 / 0.08);
+--hairline-strong: rgb(30 45 60 / 0.14);
+--shadow-card:  0 1px 2px rgb(30 45 60 / 0.06), 0 8px 24px rgb(30 45 60 / 0.09);
+
+/* actions & accents */
+--primary:      #16273a;  --primary-fg: #ffffff;   /* Mount, submit   */
+--accent-blue:  #1a35d6;                           /* counts, dedupe  */
+--accent-amber: #f5822e;                           /* fills only      */
+--success-bg: #dff2e2; --success-fg: #1c7a3e;
+--warning-bg: #fdf1cf; --warning-fg: #8a6207;
+--danger-bg:  #fbe1e1; --danger-fg:  #c0342e;
+--online-dot: #5fd18b;                             /* on dark only    */
+
+--radius-card: 14px;  --radius-control: 9px;  --radius-pill: 999px;
+--font-sans: "Space Grotesk";  --font-mono: "IBM Plex Mono";
+```
+
+**Contrast rule, inherited from UserBoost's convention and worth keeping.** `--accent-amber`
+(`#f5822e`) is a *fill* colour and fails WCAG AA at text sizes. Amber text uses the darkened
+`#a8560f`, and amber-on-warning-surface uses `#8a6207`. Never set text in `--accent-amber`.
+
+**Cover aspect is 1.23:1** throughout, matching the firmware's 138×112 display box (§11), so
+what you see in the browser is framed the same way the device would frame it.
 
 Covers render through Next `<Image>` but must be **exported** within the firmware's
 verified hard limits when written to an SD card: **≤500,000 bytes, ≤2000×2000 px**, JPEG
