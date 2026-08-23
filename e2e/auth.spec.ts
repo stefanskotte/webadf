@@ -14,6 +14,9 @@ test('an anonymous visitor is redirected away from the library', async ({ page }
 test('signing out then back in returns to the same library', async ({ page }) => {
   const { email, password } = await signUpFresh(page);
 
+  const orgBefore = await page.getByTestId('active-org').textContent();
+  expect(orgBefore).toBeTruthy();
+
   await page.getByRole('button', { name: /sign out/i }).click();
   await expect(page).toHaveURL(/\/sign-in/);
 
@@ -21,4 +24,8 @@ test('signing out then back in returns to the same library', async ({ page }) =>
   await page.getByLabel('Password').fill(password);
   await page.getByRole('button', { name: 'Sign in' }).click();
   await expect(page).toHaveURL(/\/library/);
+
+  const orgAfter = await page.getByTestId('active-org').textContent();
+  expect(orgAfter).toBeTruthy();
+  expect(orgAfter).toBe(orgBefore);
 });
