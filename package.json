@@ -6,12 +6,18 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "eslint"
+    "lint": "eslint",
+    "db:generate": "dotenv -e .env.local -- drizzle-kit generate",
+    "db:push": "dotenv -e .env.local -- drizzle-kit push",
+    "test": "vitest run",
+    "e2e": "playwright test"
   },
   "dependencies": {
     "@base-ui/react": "^1.7.0",
+    "@neondatabase/serverless": "^1.1.0",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
+    "drizzle-orm": "^0.45.2",
     "lucide-react": "^1.33.0",
     "next": "16.3.2",
     "next-themes": "^0.4.6",
@@ -27,10 +33,14 @@
     "@types/node": "^20",
     "@types/react": "^19",
     "@types/react-dom": "^19",
+    "dotenv-cli": "^11.0.0",
+    "drizzle-kit": "^0.31.10",
     "eslint": "^9",
     "eslint-config-next": "16.3.2",
     "tailwindcss": "^4",
-    "typescript": "^5"
+    "typescript": "^5",
+    "vite-tsconfig-paths": "^6.1.1",
+    "vitest": "^4.1.11"
   },
   "packageManager": "pnpm@10.20.0"
 }
