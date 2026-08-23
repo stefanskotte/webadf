@@ -42,6 +42,7 @@ importer, and a forked ESP32 firmware with a full cloud-pull client.
 | D7 | **Direction A UI, with Direction C as a view toggle.** | Grid for browsing, table for finding one disk among thousands. |
 | D8 | **Better Auth**, fully self-hosted, for human auth; **our own opaque tokens** for devices. | Auth must live entirely on our own domain. Better Auth runs in-process at `/api/auth/*`, stores everything in our Neon database, and makes no third-party requests. Its `organization` plugin *is* the tenancy model from D2, so it replaces a hand-rolled `accounts` table rather than sitting beside one. Devices never touch it. |
 | D9 | **Enrichment is asynchronous and additive.** A disk is mountable the instant its bytes land; metadata and artwork arrive later, field by field. | Playing a game must never wait on IGDB. It is also the only workable design given external rate limits: 18,000 disks against ~4 req/s is hours of work. |
+| D10 | **One disk resident at a time**, exactly as upstream: a 1.44 MB FAT12 volume in PSRAM holding a single image. A swap is a fresh fetch plus a USB re-enumeration. | Parity with the linked projects. Sidesteps the FAT12 cluster ceiling entirely, and a ~2 s swap is nothing on a 30-year-old machine. |
 
 ---
 
@@ -67,7 +68,8 @@ gain under 1.5x from gzip**. Sparse AmigaDOS and utility disks gain 2–65x.
 - **Storage:** 16 GB is a rounding error at Vercel Blob's $0.023/GB-month. Halving it saves
   about 18 cents a month.
 - **Transfer:** an 880 KB ADF at a pessimistic 400 KB/s is ~2.2 s; median-compressed ~1.1 s.
-  Both are acceptable for "click a game, it appears."
+  Both are acceptable for "click a game, it appears" — and under D10 this is also the
+  disk-swap cost, which the operator has confirmed is fine.
 - **Cost:** the firmware's load path is currently zero-copy straight into the RAM disk.
   Inflating breaks that.
 
@@ -148,7 +150,7 @@ devices             id, org_id, name, token_hash, firmware_version,
                     mounted_disk_no, status
 pairing_codes       code (6 chars), org_id, created_by_user_id,
                     expires_at, consumed_at
-mount_jobs          id, device_id, org_id, game_id, disk_nos int[],
+mount_jobs          id, device_id, org_id, game_id, disk_no,
                     state ('queued'|'claimed'|'done'|'failed'),
                     created_at, claimed_at, completed_at, error
 import_runs         id, org_id, created_by_user_id, source, totals jsonb,
@@ -205,20 +207,22 @@ Body `{ pairingCode, firmwareVersion, macAddress }`. Consumes an unexpired
 Long-poll. Holds up to **25 s**, then returns `204` and the device reconnects.
 
 ```jsonc
-// 200 — work to do
+// 200 — work to do. Exactly one disk per job (D10).
 {
   "job": "mnt_01H...",
   "game": "Project-X",
-  "disks": [
-    { "n": 1, "name": "Project-X-1.adf", "size": 901120,
-      "sha256": "a71f0c9e…",
-      "url": "https://<store>.private.blob.vercel-storage.com/adf/a71f…?sig=…" },
-    { "n": 2, "...": "..." }
-  ],
-  "nfo": "Title: Project-X\nBlurb: 1992 - Team 17 - Horizontal shooter",
+  "disk": {
+    "n": 1, "of": 4,
+    "name": "Project-X-1.adf", "size": 901120,
+    "sha256": "a71f0c9e…",
+    "url": "https://<store>.private.blob.vercel-storage.com/adf/a71f…?sig=…"
+  },
   "expiresAt": "2026-08-23T21:19:00Z"
 }
 ```
+
+Swapping to disk 2 is simply another job carrying `disk.n = 2`. The device does not track
+sets and does not pre-fetch; it holds one image and replaces it on command.
 
 Presigned URLs are embedded in the poll response rather than served via a `302`, so the
 firmware never has to follow a cross-host redirect.
@@ -250,8 +254,11 @@ What we add:
 3. **`cloud_client.h`** — long-poll, JSON parse, sequential fetch of each disk.
 4. **Real TLS.** Upstream calls `setInsecure()`. Replace with a pinned CA bundle for the
    blob host and the API host.
-5. **Larger RAM disk.** Size the volume to the whole disk set so FlashFloppy swaps disks
-   locally with no WiFi round-trip. **This is the main firmware risk** — see §13.
+5. **The RAM disk stays exactly as upstream built it** — 1.44 MB, FAT12, one image, and
+   the existing `tud_disconnect()` → `build_empty_volume()` → stream → `build_fat_for_file()`
+   → `mediaPresent(true)` → `tud_connect()` sequence untouched. That re-enumeration is what
+   makes the Amiga register a disk change. This is deliberately *not* a change (D10); the
+   only new code is what fills the buffer.
 6. **`ota.h`** — signed firmware update, hash-verified before switching the boot pointer
    (upstream already does this pattern for SD updates).
 
@@ -374,7 +381,9 @@ Next.js App Router, shadcn/ui, Tailwind. Design published at
 - **Library** — cover grid, faceted sidebar, `/` search over title, publisher, SHA **and
   original filename**, sorted recently-added by default.
   Table view toggle for keyboard-driven search across thousands of disks.
-- **Game detail** — multi-disk selector, mount action, TOSEC identity and provenance,
+- **Game detail** — multi-disk selector that doubles as the **swap control** (clicking
+  disk 2 mid-game queues the swap; ~2 s later the Amiga sees the new disk), mount action,
+  TOSEC identity and provenance,
   and a preview of the exact `/ADF/<Game>/` tree and `.nfo` the device will see.
 - **Devices** — status, PSRAM budget, pairing flow, OTA, activity log.
 - **Ingest** — dropzone, CLI instructions, live run progress, review queue.
@@ -403,9 +412,9 @@ or PNG. Ideal aspect ≈1.23:1 to fill the device's 138×112 box without letterb
 
 | Risk | Assessment | Mitigation |
 |---|---|---|
-| **FAT12 cannot address a 6 MB volume.** FAT12 tops out near 4085 clusters; at 512-byte sectors that is ~2 MB. Upstream's hand-built volume is 1.44 MB. | **High — blocks the multi-disk-resident feature.** | Either 2 KB clusters under FAT12 (~8 MB ceiling) or move the builder to FAT16. Must be verified against FlashFloppy's FatFs configuration on real hardware before committing to the feature. Fallback: keep 1.44 MB and re-fetch on disk swap. |
-| ESP32-S3 HTTPS throughput unknown | Medium. Published figures vary from 300 KB/s to several MB/s; TLS handshakes alone have been measured over 3 s. | Bench on real hardware as the first firmware milestone. Reuse the TLS session across disk fetches. |
-| Presigned URL TTL vs slow fetch | Low | 15 min is ample for 6 × 880 KB. Device re-polls if a URL expires. |
+| **Disk swaps need the web UI.** With one disk resident (D10) there is no on-device affordance to advance to disk 2 — you reach for a phone or laptop mid-game. | Low, and it is parity: upstream needs the touchscreen or the phone for the same reason. | Accepted. If it grates, the XIAO's BOOT button is unused in the dongle firmware and could advance to the next disk in the set. Explicitly deferred, not designed in. |
+| ESP32-S3 HTTPS throughput unknown | Medium. Published figures vary from 300 KB/s to several MB/s; TLS handshakes alone have been measured over 3 s. | Bench on real hardware as the first firmware milestone. Reuse the TLS session across disk fetches — with one disk resident, swap latency is now on the critical path. |
+| Presigned URL TTL vs slow fetch | Low | 15 min is ample for a single 880 KB fetch. Device re-polls if a URL expires. |
 | Vercel Blob private storage is public beta | Low–medium | The `DiskStore` seam (§6) is the hedge. |
 | Copyright posture of a multi-tenant host of game images | Real, and the operator's call | Content addressing plus per-tenant entitlements means no cross-tenant distribution. Keep the deployment private/invite-only. |
 | Self-hosting auth means we own password reset, email verification, session revocation and lockout | Medium — real work a hosted provider would have done for us | Better Auth ships all of it; the cost is configuring and testing it rather than writing it. Budget a milestone for the account-lifecycle flows and their emails. |

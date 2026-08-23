@@ -55,7 +55,7 @@
           <div style="display: flex; flex-direction: column; gap: 3px; min-width: 0;">
             <span style="font-family: 'IBM Plex Mono', monospace; font-size: 9.5px; letter-spacing: 0.08em; color: oklch(0.70 0.14 150);">MOUNTED</span>
             <span style="font-size: 14px; font-weight: 600;">Project-X</span>
-            <span style="font-family: 'IBM Plex Mono', monospace; font-size: 10.5px; color: oklch(0.58 0.012 260);">disk 1 of 4 active &middot; set resident in PSRAM</span>
+            <span style="font-family: 'IBM Plex Mono', monospace; font-size: 10.5px; color: oklch(0.58 0.012 260);">disk 1 of 4 &middot; swap from the library, ~2 s</span>
           </div>
           <div style="margin-left: auto; display: flex; gap: 7px;">
             <div style="display: grid; place-items: center; width: 34px; height: 34px; border: 1px solid oklch(0.36 0.018 260); border-radius: 3px;">
@@ -69,18 +69,15 @@
 
         <div style="display: flex; flex-direction: column; gap: 7px;">
           <div style="display: flex; justify-content: space-between; font-family: 'IBM Plex Mono', monospace; font-size: 10.5px; color: oklch(0.58 0.012 260);">
-            <span>PSRAM &middot; RAM disk 6.0 MB of 8 MB</span>
-            <span style="color: oklch(0.88 0.01 260);">3.44 MB used</span>
+            <span>PSRAM &middot; FAT12 RAM disk 1.44 MB of 8 MB</span>
+            <span style="color: oklch(0.88 0.01 260);">880 KB used</span>
           </div>
-          <div style="height: 8px; background: oklch(0.26 0.014 260); border-radius: 2px; overflow: hidden; display: flex; gap: 1px;">
-            <div style="width: 14.7%; background: oklch(0.72 0.16 55);"></div>
-            <div style="width: 14.7%; background: oklch(0.62 0.15 255);"></div>
-            <div style="width: 14.7%; background: oklch(0.62 0.15 255);"></div>
-            <div style="width: 14.7%; background: oklch(0.62 0.15 255);"></div>
+          <div style="height: 8px; background: oklch(0.26 0.014 260); border-radius: 2px; overflow: hidden;">
+            <div style="width: 61%; background: oklch(0.72 0.16 55);"></div>
           </div>
           <div style="display: flex; gap: 14px; font-family: 'IBM Plex Mono', monospace; font-size: 10px; color: oklch(0.52 0.012 260);">
-            <span><span style="color: oklch(0.72 0.16 55);">&#9632;</span> disk 1 (active)</span>
-            <span><span style="color: oklch(0.62 0.15 255);">&#9632;</span> disks 2&ndash;4 resident</span>
+            <span><span style="color: oklch(0.72 0.16 55);">&#9632;</span> Project-X disk 1</span>
+            <span>one image at a time</span>
             <span style="margin-left: auto;">FAT12 &middot; USB MSC</span>
           </div>
         </div>
@@ -161,7 +158,7 @@
 class Component extends DCLogic {
   renderVals() {
     return {
-      stats: [{ k: 'uptime', v: '6h 12m' }, { k: 'mounts today', v: '9' }, { k: 'avg fetch', v: '3.8 s' }],
+      stats: [{ k: 'uptime', v: '6h 12m' }, { k: 'mounts today', v: '9' }, { k: 'avg swap', v: '2.1 s' }],
       code: ['4', '2', '9', 'K', '7', 'M'],
       steps: [
         { n: '1', t: 'Flash the firmware', d: 'web flasher · Chrome or Edge · one click', bcol: 'oklch(0.72 0.16 55)', tcol: 'oklch(0.92 0.008 260)' },
@@ -170,7 +167,7 @@ class Component extends DCLogic {
         { n: '4', t: 'Plug it into the Gotek', d: 'appears here within a few seconds', bcol: 'oklch(0.40 0.018 260)', tcol: 'oklch(0.62 0.012 260)' }
       ],
       log: [
-        { t: '21:04:12', dev: 'living-room', msg: 'mounted Project-X (disk set, 4)', size: '3.44 MB', dur: '4.1 s', col: 'oklch(0.70 0.14 150)' },
+        { t: '21:04:12', dev: 'living-room', msg: 'swapped to Project-X disk 2', size: '880 KB', dur: '2.0 s', col: 'oklch(0.70 0.14 150)' },
         { t: '20:48:55', dev: 'living-room', msg: 'ejected Deluxe Paint IV', size: '—', dur: '0.2 s', col: 'oklch(0.60 0.012 260)' },
         { t: '20:31:07', dev: 'living-room', msg: 'mounted Deluxe Paint IV (disk 1)', size: '880 KB', dur: '1.9 s', col: 'oklch(0.70 0.14 150)' },
         { t: '19:57:41', dev: 'living-room', msg: 'firmware updated 2.0.4 → 2.1.0', size: '1.2 MB', dur: '11.4 s', col: 'oklch(0.70 0.14 150)' },

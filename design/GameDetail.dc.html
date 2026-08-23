@@ -53,9 +53,9 @@
 
         <div style="display: flex; align-items: center; justify-content: center; gap: 9px; height: 46px; background: oklch(0.72 0.16 55); border-radius: 3px; color: oklch(0.19 0.04 55); font-size: 14px; font-weight: 700;">
           <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M12 3v13m0 0 4-4m-4 4-4-4"/><path d="M4 20h16"/></svg>
-          Mount all 4 disks
+          Mount disk 1
         </div>
-        <div style="font-family: 'IBM Plex Mono', monospace; font-size: 10.5px; color: oklch(0.56 0.012 260); text-align: center; line-height: 1.5;">3.44 MB &rarr; PSRAM &middot; est. 4.1 s<br>whole set resident, no WiFi on swap</div>
+        <div style="font-family: 'IBM Plex Mono', monospace; font-size: 10.5px; color: oklch(0.56 0.012 260); text-align: center; line-height: 1.5;">880 KB &rarr; PSRAM &middot; est. 2.1 s<br>swap disks from here, about 2 s each</div>
       </div>
     </div>
 
@@ -81,7 +81,7 @@
       <div style="display: flex; flex-direction: column; gap: 11px;">
         <div style="display: flex; align-items: baseline; gap: 10px;">
           <div style="font-family: 'IBM Plex Mono', monospace; font-size: 10px; letter-spacing: 0.09em; color: oklch(0.58 0.012 260); text-transform: uppercase;">Disk set</div>
-          <div style="font-family: 'IBM Plex Mono', monospace; font-size: 11px; color: oklch(0.50 0.012 260);">drag to reorder &middot; disk 1 boots</div>
+          <div style="font-family: 'IBM Plex Mono', monospace; font-size: 11px; color: oklch(0.50 0.012 260);">one disk in the drive at a time &middot; click to swap</div>
         </div>
         <div style="display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 11px;">
           <sc-for list="{{disks}}" as="d" hint-placeholder-count="4">
@@ -100,8 +100,9 @@
                 <div style="display: flex; justify-content: space-between;"><span>gzip</span><span style="color: oklch(0.80 0.01 260);">{{d.gz}}</span></div>
                 <div style="display: flex; justify-content: space-between;"><span>sha</span><span style="color: oklch(0.66 0.01 260);">{{d.sha}}</span></div>
               </div>
-              <div style="height: 3px; background: oklch(0.30 0.016 260); border-radius: 2px; overflow: hidden;">
-                <div style="width: {{d.pct}}; height: 100%; background: {{d.icol}};"></div>
+              <div style="display: flex; align-items: center; gap: 6px; font-family: 'IBM Plex Mono', monospace; font-size: 9.5px; letter-spacing: 0.05em; color: {{d.scol}};">
+                <span style="width: 6px; height: 6px; border-radius: 50%; background: {{d.scol}};"></span>
+                {{d.state}}
               </div>
             </div>
           </sc-for>
@@ -147,15 +148,16 @@
 class Component extends DCLogic {
   renderVals() {
     const D = [
-      [1, true, '724 KB', 'a71f0c9e', '100%'],
-      [2, false, '812 KB', '3d80b16a', '100%'],
-      [3, false, '798 KB', 'f042c7e5', '100%'],
-      [4, false, '806 KB', '9b17de30', '100%']
+      [1, true, '724 KB', 'a71f0c9e', 'IN DRIVE'],
+      [2, false, '812 KB', '3d80b16a', 'CLICK TO SWAP'],
+      [3, false, '798 KB', 'f042c7e5', 'CLICK TO SWAP'],
+      [4, false, '806 KB', '9b17de30', 'CLICK TO SWAP']
     ];
     return {
       tags: ['shooter', 'cracked', '2 players', 'AGA patch available'],
       disks: D.map(d => ({
-        n: d[0], boot: d[1], gz: d[2], sha: d[3] + '…', pct: d[4],
+        n: d[0], boot: d[1], gz: d[2], sha: d[3] + '…', state: d[4],
+        scol: d[4] === 'IN DRIVE' ? 'oklch(0.70 0.16 150)' : 'oklch(0.50 0.012 260)',
         bcol: d[1] ? 'oklch(0.55 0.11 55)' : 'oklch(0.34 0.018 260)',
         bg: d[1] ? 'oklch(0.72 0.16 55 / 0.07)' : 'oklch(0.21 0.013 260)',
         icol: d[1] ? 'oklch(0.72 0.16 55)' : 'oklch(0.62 0.15 255)',
