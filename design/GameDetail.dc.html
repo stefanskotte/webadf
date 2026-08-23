@@ -1,0 +1,179 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap">
+  <style>
+    body { margin: 0; font-family: "Space Grotesk", "Helvetica Neue", sans-serif; }
+    a { color: oklch(0.72 0.16 55); text-decoration: none; } a:hover { color: oklch(0.80 0.16 55); }
+    * { box-sizing: border-box; }
+  </style>
+</helmet>
+
+<div style="width: 1440px; height: 900px; display: flex; flex-direction: column; background: oklch(0.185 0.012 260); color: oklch(0.95 0.005 260); overflow: hidden;">
+
+  <div style="height: 48px; flex-shrink: 0; display: flex; align-items: center; gap: 10px; padding: 0 24px; border-bottom: 1px solid oklch(0.30 0.016 260); font-family: 'IBM Plex Mono', monospace; font-size: 11.5px; color: oklch(0.58 0.012 260);">
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m15 18-6-6 6-6"/></svg>
+    <span>Library</span><span>/</span><span>Games</span><span>/</span>
+    <span style="color: oklch(0.92 0.008 260);">Project-X</span>
+  </div>
+
+  <div style="flex-grow: 1; display: flex; min-height: 0;">
+
+    <!-- LEFT: art + actions -->
+    <div style="width: 400px; flex-shrink: 0; padding: 28px; display: flex; flex-direction: column; gap: 18px; border-right: 1px solid oklch(0.30 0.016 260);">
+      <div style="position: relative; aspect-ratio: 1.23 / 1; border-radius: 4px; overflow: hidden; border: 1px solid oklch(0.36 0.018 260); background: linear-gradient(150deg, oklch(0.44 0.18 275) 0%, oklch(0.24 0.12 300) 55%, oklch(0.32 0.17 15) 100%);">
+        <div style="position: absolute; inset: 0; background: repeating-linear-gradient(0deg, rgba(0,0,0,0.14) 0px, rgba(0,0,0,0.14) 1px, transparent 1px, transparent 3px);"></div>
+        <div style="position: absolute; inset: 0; display: flex; align-items: flex-end; padding: 20px; background: linear-gradient(to top, rgba(0,0,0,0.75), transparent 62%);">
+          <div style="font-size: 34px; font-weight: 700; letter-spacing: -0.03em; line-height: 1; color: #fff;">Project-X</div>
+        </div>
+      </div>
+      <div style="display: flex; align-items: center; justify-content: space-between; font-family: 'IBM Plex Mono', monospace; font-size: 10.5px; color: oklch(0.56 0.012 260);">
+        <span>artwork &middot; hasheous &rarr; igdb</span>
+        <span style="color: oklch(0.72 0.16 55);">replace</span>
+      </div>
+
+      <div style="height: 1px; background: oklch(0.30 0.016 260);"></div>
+
+      <div style="display: flex; flex-direction: column; gap: 9px;">
+        <div style="font-family: 'IBM Plex Mono', monospace; font-size: 10px; letter-spacing: 0.09em; color: oklch(0.58 0.012 260); text-transform: uppercase;">Mount to</div>
+        <div style="display: flex; align-items: center; gap: 11px; padding: 11px 13px; border: 1px solid oklch(0.42 0.09 150); background: oklch(0.55 0.13 150 / 0.09); border-radius: 3px;">
+          <div style="width: 8px; height: 8px; border-radius: 50%; background: oklch(0.70 0.16 150); box-shadow: 0 0 8px oklch(0.70 0.16 150);"></div>
+          <div style="display: flex; flex-direction: column; gap: 1px;">
+            <span style="font-size: 13px; font-weight: 500;">Living Room</span>
+            <span style="font-family: 'IBM Plex Mono', monospace; font-size: 10px; color: oklch(0.62 0.05 150);">XIAO-S3 &middot; fw 2.1.0 &middot; &minus;54 dBm</span>
+          </div>
+          <svg style="margin-left: auto;" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="oklch(0.60 0.03 150)" stroke-width="2"><path d="m6 9 6 6 6-6"/></svg>
+        </div>
+
+        <div style="display: flex; align-items: center; justify-content: center; gap: 9px; height: 46px; background: oklch(0.72 0.16 55); border-radius: 3px; color: oklch(0.19 0.04 55); font-size: 14px; font-weight: 700;">
+          <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M12 3v13m0 0 4-4m-4 4-4-4"/><path d="M4 20h16"/></svg>
+          Mount all 4 disks
+        </div>
+        <div style="font-family: 'IBM Plex Mono', monospace; font-size: 10.5px; color: oklch(0.56 0.012 260); text-align: center; line-height: 1.5;">3.44 MB &rarr; PSRAM &middot; est. 4.1 s<br>whole set resident, no WiFi on swap</div>
+      </div>
+    </div>
+
+    <!-- RIGHT -->
+    <div style="flex-grow: 1; padding: 28px 32px; display: flex; flex-direction: column; gap: 24px; min-width: 0; overflow: hidden;">
+
+      <div style="display: flex; flex-direction: column; gap: 9px;">
+        <div style="font-size: 32px; font-weight: 700; letter-spacing: -0.03em; line-height: 1;">Project-X</div>
+        <div style="display: flex; align-items: center; gap: 10px; font-size: 13px; color: oklch(0.70 0.012 260);">
+          <span>1992</span><span style="width: 3px; height: 3px; border-radius: 50%; background: oklch(0.45 0.012 260);"></span>
+          <span>Team 17</span><span style="width: 3px; height: 3px; border-radius: 50%; background: oklch(0.45 0.012 260);"></span>
+          <span>Horizontal shooter</span><span style="width: 3px; height: 3px; border-radius: 50%; background: oklch(0.45 0.012 260);"></span>
+          <span>OCS / ECS</span>
+        </div>
+        <div style="display: flex; gap: 6px; margin-top: 3px;">
+          <sc-for list="{{tags}}" as="t" hint-placeholder-count="4">
+            <span style="font-family: 'IBM Plex Mono', monospace; font-size: 10.5px; padding: 3px 8px; border: 1px solid oklch(0.36 0.018 260); border-radius: 2px; color: oklch(0.76 0.01 260);">{{t}}</span>
+          </sc-for>
+        </div>
+      </div>
+
+      <!-- DISK SET -->
+      <div style="display: flex; flex-direction: column; gap: 11px;">
+        <div style="display: flex; align-items: baseline; gap: 10px;">
+          <div style="font-family: 'IBM Plex Mono', monospace; font-size: 10px; letter-spacing: 0.09em; color: oklch(0.58 0.012 260); text-transform: uppercase;">Disk set</div>
+          <div style="font-family: 'IBM Plex Mono', monospace; font-size: 11px; color: oklch(0.50 0.012 260);">drag to reorder &middot; disk 1 boots</div>
+        </div>
+        <div style="display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 11px;">
+          <sc-for list="{{disks}}" as="d" hint-placeholder-count="4">
+            <div style="display: flex; flex-direction: column; gap: 9px; padding: 13px; border: 1px solid {{d.bcol}}; background: {{d.bg}}; border-radius: 3px;">
+              <div style="display: flex; align-items: center; justify-content: space-between;">
+                <div style="display: flex; align-items: center; gap: 8px;">
+                  <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="{{d.icol}}" stroke-width="1.6"><rect x="3" y="3" width="18" height="18" rx="1.5"/><path d="M8 3v6h8V3M7 21v-7h10v7"/></svg>
+                  <span style="font-size: 13px; font-weight: 600; color: {{d.tcol}};">Disk {{d.n}}</span>
+                </div>
+                <sc-if value="{{d.boot}}" hint-placeholder-val="{{true}}">
+                  <span style="font-family: 'IBM Plex Mono', monospace; font-size: 9px; font-weight: 700; letter-spacing: 0.06em; color: oklch(0.19 0.04 55); background: oklch(0.72 0.16 55); padding: 2px 5px; border-radius: 2px;">BOOT</span>
+                </sc-if>
+              </div>
+              <div style="display: flex; flex-direction: column; gap: 3px; font-family: 'IBM Plex Mono', monospace; font-size: 10px; color: oklch(0.56 0.012 260);">
+                <div style="display: flex; justify-content: space-between;"><span>size</span><span style="color: oklch(0.80 0.01 260);">880 KB</span></div>
+                <div style="display: flex; justify-content: space-between;"><span>gzip</span><span style="color: oklch(0.80 0.01 260);">{{d.gz}}</span></div>
+                <div style="display: flex; justify-content: space-between;"><span>sha</span><span style="color: oklch(0.66 0.01 260);">{{d.sha}}</span></div>
+              </div>
+              <div style="height: 3px; background: oklch(0.30 0.016 260); border-radius: 2px; overflow: hidden;">
+                <div style="width: {{d.pct}}; height: 100%; background: {{d.icol}};"></div>
+              </div>
+            </div>
+          </sc-for>
+        </div>
+      </div>
+
+      <!-- TWO COLUMNS -->
+      <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 26px; min-height: 0;">
+
+        <div style="display: flex; flex-direction: column; gap: 11px;">
+          <div style="font-family: 'IBM Plex Mono', monospace; font-size: 10px; letter-spacing: 0.09em; color: oklch(0.58 0.012 260); text-transform: uppercase;">Identity &amp; provenance</div>
+          <div style="display: flex; flex-direction: column; gap: 7px; font-family: 'IBM Plex Mono', monospace; font-size: 11px;">
+            <sc-for list="{{prov}}" as="p" hint-placeholder-count="6">
+              <div style="display: flex; gap: 12px;">
+                <span style="width: 88px; flex-shrink: 0; color: oklch(0.54 0.012 260);">{{p.k}}</span>
+                <span style="color: oklch(0.85 0.01 260); overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">{{p.v}}</span>
+              </div>
+            </sc-for>
+          </div>
+        </div>
+
+        <div style="display: flex; flex-direction: column; gap: 11px; min-width: 0;">
+          <div style="display: flex; align-items: baseline; gap: 9px;">
+            <div style="font-family: 'IBM Plex Mono', monospace; font-size: 10px; letter-spacing: 0.09em; color: oklch(0.58 0.012 260); text-transform: uppercase;">What the device sees</div>
+          </div>
+          <div style="border: 1px solid oklch(0.32 0.016 260); border-radius: 3px; overflow: hidden;">
+            <div style="display: flex; align-items: center; gap: 7px; padding: 7px 11px; background: oklch(0.22 0.014 260); border-bottom: 1px solid oklch(0.32 0.016 260); font-family: 'IBM Plex Mono', monospace; font-size: 10px; color: oklch(0.60 0.012 260);">
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M3 7l2-3h14l2 3v13a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1z"/><path d="M3 7h18"/></svg>
+              /ADF/Project-X/
+            </div>
+            <div style="padding: 11px; font-family: 'IBM Plex Mono', monospace; font-size: 10.5px; line-height: 1.75; color: oklch(0.76 0.01 260); white-space: pre-line;">{{tree}}</div>
+            <div style="padding: 9px 11px; border-top: 1px solid oklch(0.32 0.016 260); background: oklch(0.20 0.012 260); font-family: 'IBM Plex Mono', monospace; font-size: 10px; color: oklch(0.56 0.012 260); white-space: pre-line;">{{nfo}}</div>
+          </div>
+          <div style="font-family: 'IBM Plex Mono', monospace; font-size: 10px; color: oklch(0.50 0.012 260);">.nfo truncated to 512 B &middot; cover fitted under 500 KB</div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+</x-dc>
+
+<script data-dc-script>
+class Component extends DCLogic {
+  renderVals() {
+    const D = [
+      [1, true, '724 KB', 'a71f0c9e', '100%'],
+      [2, false, '812 KB', '3d80b16a', '100%'],
+      [3, false, '798 KB', 'f042c7e5', '100%'],
+      [4, false, '806 KB', '9b17de30', '100%']
+    ];
+    return {
+      tags: ['shooter', 'cracked', '2 players', 'AGA patch available'],
+      disks: D.map(d => ({
+        n: d[0], boot: d[1], gz: d[2], sha: d[3] + '…', pct: d[4],
+        bcol: d[1] ? 'oklch(0.55 0.11 55)' : 'oklch(0.34 0.018 260)',
+        bg: d[1] ? 'oklch(0.72 0.16 55 / 0.07)' : 'oklch(0.21 0.013 260)',
+        icol: d[1] ? 'oklch(0.72 0.16 55)' : 'oklch(0.62 0.15 255)',
+        tcol: d[1] ? 'oklch(0.88 0.09 55)' : 'oklch(0.92 0.008 260)'
+      })),
+      prov: [
+        { k: 'tosec', v: 'Project-X (1992)(Team 17)(Disk 1 of 4)[cr NMS]' },
+        { k: 'matched', v: 'TOSEC 2024-08-15 · CRC32 exact' },
+        { k: 'openretro', v: 'project-x/amiga · variant 3 of 11' },
+        { k: 'metadata', v: 'hasheous → igdb #1421' },
+        { k: 'uploaded', v: '2026-08-21 · webadf-cli 0.3.1' },
+        { k: 'entitlement', v: 'owned · not shared' }
+      ],
+      tree: 'Project-X-1.adf   880 KB\nProject-X-2.adf   880 KB\nProject-X-3.adf   880 KB\nProject-X-4.adf   880 KB\nProject-X.jpg      41 KB\nProject-X.nfo     118 B',
+      nfo: 'Title: Project-X\nBlurb: 1992 - Team 17 - Horizontal shooter'
+    };
+  }
+}
+</script>
+</body>
+</html>

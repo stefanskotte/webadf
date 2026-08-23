@@ -1,0 +1,20 @@
+# Disk images — never commit. Copyrighted content and 55+ MB of binaries.
+adf-archive/
+*.adf
+*.ADF
+*.dsk
+*.DSK
+*.adz
+*.dms
+
+node_modules/
+.next/
+.env
+.env.local
+.vercel
+dist/
+build/
+.DS_Store
+
+# Design canvas build output (re-seeded from the .dc.html working files)
+design/webadf-interface.html

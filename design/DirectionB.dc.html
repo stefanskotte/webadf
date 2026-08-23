@@ -1,0 +1,148 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,400;12..96,600;12..96,800&family=Public+Sans:wght@400;500;600&display=swap">
+  <style>
+    body { margin: 0; font-family: "Public Sans", "Helvetica Neue", sans-serif; }
+    a { color: oklch(0.78 0.15 70); } a:hover { color: oklch(0.86 0.14 70); }
+    * { box-sizing: border-box; }
+  </style>
+</helmet>
+
+<div style="width: 1440px; height: 900px; display: flex; background: oklch(0.115 0.006 60); color: oklch(0.96 0.004 60); overflow: hidden;">
+
+  <!-- ICON RAIL -->
+  <div style="width: 68px; flex-shrink: 0; border-right: 1px solid oklch(0.20 0.008 60); display: flex; flex-direction: column; align-items: center; padding: 20px 0; gap: 26px;">
+    <div style="width: 26px; height: 26px; border-radius: 50%; background: oklch(0.78 0.15 70); display: grid; place-items: center;">
+      <div style="width: 9px; height: 9px; border-radius: 50%; background: oklch(0.115 0.006 60);"></div>
+    </div>
+    <div style="display: flex; flex-direction: column; gap: 6px; align-items: center;">
+      <div style="width: 40px; height: 40px; border-radius: 10px; background: oklch(0.20 0.01 60); display: grid; place-items: center;">
+        <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="oklch(0.78 0.15 70)" stroke-width="1.6"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg>
+      </div>
+      <div style="width: 40px; height: 40px; border-radius: 10px; display: grid; place-items: center;">
+        <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="oklch(0.55 0.01 60)" stroke-width="1.6"><rect x="2" y="7" width="20" height="10" rx="2"/><path d="M6 11h4"/></svg>
+      </div>
+      <div style="width: 40px; height: 40px; border-radius: 10px; display: grid; place-items: center;">
+        <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="oklch(0.55 0.01 60)" stroke-width="1.6"><path d="M12 16V4m0 0L8 8m4-4 4 4"/><path d="M3 16v3a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-3"/></svg>
+      </div>
+    </div>
+    <div style="margin-top: auto; width: 32px; height: 32px; border-radius: 50%; background: oklch(0.30 0.03 70); display: grid; place-items: center; font-size: 12px; font-weight: 600; color: oklch(0.85 0.06 70);">SS</div>
+  </div>
+
+  <div style="flex-grow: 1; display: flex; flex-direction: column; min-width: 0; overflow: hidden;">
+
+    <!-- HERO -->
+    <div style="height: 380px; flex-shrink: 0; position: relative; overflow: hidden;">
+      <div style="position: absolute; inset: 0; background: radial-gradient(ellipse 70% 100% at 78% 40%, oklch(0.42 0.19 300) 0%, oklch(0.22 0.13 285) 42%, oklch(0.115 0.006 60) 78%);"></div>
+      <div style="position: absolute; inset: 0; background: repeating-linear-gradient(0deg, rgba(0,0,0,0.20) 0px, rgba(0,0,0,0.20) 1px, transparent 1px, transparent 4px);"></div>
+      <div style="position: absolute; inset: 0; background: linear-gradient(to right, oklch(0.115 0.006 60) 4%, oklch(0.115 0.006 60 / 0.86) 30%, transparent 62%);"></div>
+
+      <div style="position: relative; height: 100%; display: flex; flex-direction: column; justify-content: center; gap: 16px; padding: 0 52px; max-width: 640px;">
+        <div style="display: flex; align-items: center; gap: 9px;">
+          <span style="font-size: 10px; font-weight: 600; letter-spacing: 0.14em; text-transform: uppercase; color: oklch(0.78 0.15 70);">Continue</span>
+          <span style="width: 22px; height: 1px; background: oklch(0.78 0.15 70 / 0.5);"></span>
+        </div>
+        <div style="font-family: 'Bricolage Grotesque', sans-serif; font-size: 62px; font-weight: 800; line-height: 0.93; letter-spacing: -0.035em;">Project-X</div>
+        <div style="display: flex; align-items: center; gap: 12px; font-size: 13px; color: oklch(0.72 0.01 60);">
+          <span>1992</span>
+          <span style="width: 3px; height: 3px; border-radius: 50%; background: oklch(0.45 0.01 60);"></span>
+          <span>Team 17</span>
+          <span style="width: 3px; height: 3px; border-radius: 50%; background: oklch(0.45 0.01 60);"></span>
+          <span>Horizontal shooter</span>
+          <span style="width: 3px; height: 3px; border-radius: 50%; background: oklch(0.45 0.01 60);"></span>
+          <span>4 disks</span>
+        </div>
+        <div style="font-size: 14.5px; line-height: 1.55; color: oklch(0.76 0.008 60); max-width: 470px; text-wrap: pretty;">Team 17's breakout shooter, and the disk set that made everyone regret owning one floppy drive. Cracked release, four disks, no disk swapping once it's in PSRAM.</div>
+        <div style="display: flex; align-items: center; gap: 11px; margin-top: 6px;">
+          <div style="display: flex; align-items: center; gap: 9px; height: 46px; padding: 0 22px; border-radius: 23px; background: oklch(0.78 0.15 70); color: oklch(0.16 0.04 70); font-size: 14px; font-weight: 600;">
+            <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3v13m0 0 4-4m-4 4-4-4"/><path d="M4 20h16"/></svg>
+            Mount to Living Room
+          </div>
+          <div style="display: grid; place-items: center; width: 46px; height: 46px; border-radius: 23px; border: 1px solid oklch(0.32 0.01 60);">
+            <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="oklch(0.85 0.01 60)" stroke-width="1.7"><path d="M12 5v14M5 12h14"/></svg>
+          </div>
+          <div style="display: grid; place-items: center; width: 46px; height: 46px; border-radius: 23px; border: 1px solid oklch(0.32 0.01 60);">
+            <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="oklch(0.85 0.01 60)" stroke-width="1.7"><circle cx="12" cy="12" r="9"/><path d="M12 16v-4m0-4h.01"/></svg>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ROWS -->
+    <div style="flex-grow: 1; padding: 26px 0 0 52px; display: flex; flex-direction: column; gap: 26px; overflow: hidden;">
+      <div style="display: flex; flex-direction: column; gap: 13px;">
+        <div style="display: flex; align-items: baseline; gap: 12px;">
+          <div style="font-family: 'Bricolage Grotesque', sans-serif; font-size: 19px; font-weight: 600; letter-spacing: -0.02em;">Recently added</div>
+          <div style="font-size: 12px; color: oklch(0.55 0.01 60);">143 this week</div>
+        </div>
+        <div style="display: flex; gap: 16px;">
+          <sc-for list="{{row1}}" as="g" hint-placeholder-count="6">
+            <div style="width: 218px; flex-shrink: 0; display: flex; flex-direction: column; gap: 9px;">
+              <div style="position: relative; aspect-ratio: 1.23 / 1; border-radius: 8px; overflow: hidden; background: {{g.cover}};">
+                <div style="position: absolute; inset: 0; background: repeating-linear-gradient(0deg, rgba(0,0,0,0.16) 0px, rgba(0,0,0,0.16) 1px, transparent 1px, transparent 4px);"></div>
+                <div style="position: absolute; inset: 0; display: flex; align-items: flex-end; padding: 13px; background: linear-gradient(to top, rgba(0,0,0,0.70), transparent 60%);">
+                  <div style="font-family: 'Bricolage Grotesque', sans-serif; font-size: 17px; font-weight: 700; line-height: 1.05; letter-spacing: -0.025em; color: #fff; white-space: pre-line;">{{g.short}}</div>
+                </div>
+                <sc-if value="{{g.multi}}" hint-placeholder-val="{{true}}">
+                  <div style="position: absolute; top: 10px; right: 10px; background: rgba(0,0,0,0.55); backdrop-filter: blur(4px); border-radius: 11px; padding: 3px 9px; font-size: 10.5px; font-weight: 600; color: #fff;">{{g.disks}} disks</div>
+                </sc-if>
+              </div>
+              <div style="font-size: 12.5px; color: oklch(0.62 0.01 60);">{{g.meta}}</div>
+            </div>
+          </sc-for>
+        </div>
+      </div>
+
+      <div style="display: flex; flex-direction: column; gap: 13px;">
+        <div style="font-family: 'Bricolage Grotesque', sans-serif; font-size: 19px; font-weight: 600; letter-spacing: -0.02em;">System &amp; Workbench</div>
+        <div style="display: flex; gap: 16px;">
+          <sc-for list="{{row2}}" as="g" hint-placeholder-count="6">
+            <div style="width: 218px; flex-shrink: 0;">
+              <div style="position: relative; aspect-ratio: 1.23 / 1; border-radius: 8px; overflow: hidden; background: {{g.cover}};">
+                <div style="position: absolute; inset: 0; display: flex; align-items: flex-end; padding: 13px; background: linear-gradient(to top, rgba(0,0,0,0.70), transparent 60%);">
+                  <div style="font-family: 'Bricolage Grotesque', sans-serif; font-size: 17px; font-weight: 700; line-height: 1.05; letter-spacing: -0.025em; color: #fff; white-space: pre-line;">{{g.short}}</div>
+                </div>
+              </div>
+            </div>
+          </sc-for>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+</x-dc>
+
+<script data-dc-script>
+class Component extends DCLogic {
+  renderVals() {
+    const mk = (short, meta, disks, cover) => ({ short, meta, disks, multi: disks > 1, cover });
+    return {
+      row1: [
+        mk('Deluxe\nPaint IV', '1992 · Electronic Arts', 3, 'linear-gradient(140deg, oklch(0.58 0.19 35), oklch(0.30 0.14 8) 60%, oklch(0.20 0.07 300))'),
+        mk('9 Fingers', '1993 · Spaceballs', 2, 'linear-gradient(165deg, oklch(0.20 0.03 250), oklch(0.48 0.15 200) 70%, oklch(0.64 0.13 180))'),
+        mk('Giana\nSisters', '2010 · Reunion', 2, 'linear-gradient(155deg, oklch(0.62 0.17 130), oklch(0.36 0.13 155) 55%, oklch(0.24 0.08 240))'),
+        mk('Marble\nSlide', '1990 · P. Handel', 1, 'linear-gradient(145deg, oklch(0.55 0.16 85), oklch(0.28 0.09 60) 60%, oklch(0.20 0.05 260))'),
+        mk('Ray of\nHope II', '1994 · Unknown', 1, 'linear-gradient(160deg, oklch(0.34 0.11 300), oklch(0.18 0.05 280))'),
+        mk('Wayfarer', '1993 · Unknown', 1, 'linear-gradient(160deg, oklch(0.30 0.06 220), oklch(0.17 0.03 240))')
+      ],
+      row2: [
+        mk('Workbench\n3.1', '', 6, 'linear-gradient(140deg, oklch(0.40 0.11 255), oklch(0.24 0.06 255) 55%, oklch(0.56 0.14 55))'),
+        mk('Picasso96', '', 1, 'linear-gradient(150deg, oklch(0.50 0.15 320), oklch(0.24 0.08 290))'),
+        mk('WHDLoad\n18.5', '', 1, 'linear-gradient(150deg, oklch(0.44 0.12 200), oklch(0.20 0.05 230))'),
+        mk('Amiga\nTestKit', '', 1, 'linear-gradient(150deg, oklch(0.47 0.13 145), oklch(0.22 0.06 200))'),
+        mk('SysInfo', '', 1, 'linear-gradient(150deg, oklch(0.42 0.10 90), oklch(0.20 0.04 120))'),
+        mk('FAT95', '', 1, 'linear-gradient(150deg, oklch(0.38 0.08 30), oklch(0.19 0.04 40))')
+      ]
+    };
+  }
+}
+</script>
+</body>
+</html>

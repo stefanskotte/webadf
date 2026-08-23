@@ -1,0 +1,134 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700&display=swap">
+  <style>
+    body { margin: 0; font-family: "JetBrains Mono", ui-monospace, "SF Mono", monospace; }
+    a { color: oklch(0.78 0.13 195); } a:hover { color: oklch(0.86 0.12 195); }
+    * { box-sizing: border-box; }
+  </style>
+</helmet>
+
+<div style="width: 1440px; height: 900px; display: flex; flex-direction: column; background: oklch(0.155 0.008 230); color: oklch(0.90 0.008 230); font-size: 12px; overflow: hidden;">
+
+  <!-- COMMAND BAR -->
+  <div style="height: 44px; flex-shrink: 0; display: flex; align-items: center; gap: 14px; padding: 0 16px; border-bottom: 1px solid oklch(0.26 0.012 230); background: oklch(0.135 0.008 230);">
+    <span style="color: oklch(0.78 0.13 195); font-weight: 700;">webadf</span>
+    <div style="flex-grow: 1; max-width: 560px; display: flex; align-items: center; gap: 8px; height: 28px; padding: 0 10px; background: oklch(0.20 0.01 230); border: 1px solid oklch(0.30 0.014 230);">
+      <span style="color: oklch(0.78 0.13 195);">&gt;</span>
+      <span style="color: oklch(0.85 0.008 230);">publisher:"Team 17" disks:&gt;1</span>
+      <span style="width: 7px; height: 14px; background: oklch(0.78 0.13 195); animation: none;"></span>
+    </div>
+    <div style="display: flex; gap: 14px; color: oklch(0.55 0.01 230); font-size: 11px;">
+      <span><span style="color: oklch(0.75 0.01 230);">1,884</span> titles</span>
+      <span><span style="color: oklch(0.75 0.01 230);">4,412</span> disks</span>
+      <span><span style="color: oklch(0.75 0.01 230);">11.4</span> GB</span>
+    </div>
+    <div style="margin-left: auto; display: flex; align-items: center; gap: 8px; padding: 4px 10px; border: 1px solid oklch(0.40 0.10 150); background: oklch(0.50 0.13 150 / 0.10);">
+      <span style="width: 6px; height: 6px; border-radius: 50%; background: oklch(0.72 0.16 150);"></span>
+      <span style="font-size: 11px; color: oklch(0.80 0.06 150);">gotek-living-room</span>
+      <span style="font-size: 11px; color: oklch(0.55 0.03 150);">idle</span>
+    </div>
+  </div>
+
+  <div style="flex-grow: 1; display: flex; min-height: 0;">
+
+    <!-- FACETS -->
+    <div style="width: 190px; flex-shrink: 0; border-right: 1px solid oklch(0.26 0.012 230); padding: 14px 0; display: flex; flex-direction: column; gap: 16px; font-size: 11px;">
+      <sc-for list="{{facets}}" as="f" hint-placeholder-count="3">
+        <div style="display: flex; flex-direction: column; gap: 4px;">
+          <div style="padding: 0 14px; color: oklch(0.52 0.01 230); letter-spacing: 0.06em;">{{f.label}}</div>
+          <sc-for list="{{f.rows}}" as="r" hint-placeholder-count="4">
+            <div style="display: flex; justify-content: space-between; padding: 3px 14px; color: oklch(0.78 0.008 230);">
+              <span>{{r.k}}</span><span style="color: oklch(0.50 0.01 230);">{{r.v}}</span>
+            </div>
+          </sc-for>
+        </div>
+      </sc-for>
+    </div>
+
+    <!-- TABLE -->
+    <div style="flex-grow: 1; display: flex; flex-direction: column; min-width: 0;">
+      <div style="display: grid; grid-template-columns: 30px 44px 1fr 52px 168px 44px 78px 108px 96px; gap: 0; height: 28px; align-items: center; border-bottom: 1px solid oklch(0.30 0.014 230); background: oklch(0.135 0.008 230); font-size: 10.5px; color: oklch(0.52 0.01 230); letter-spacing: 0.05em; padding: 0 14px;">
+        <span></span><span></span><span>TITLE</span><span>YEAR</span><span>PUBLISHER</span><span style="text-align: right;">DSK</span><span style="text-align: right;">SIZE</span><span style="text-align: right;">SHA-256</span><span style="text-align: right;">STATE</span>
+      </div>
+
+      <sc-for list="{{rows}}" as="r" hint-placeholder-count="14">
+        <div style="display: grid; grid-template-columns: 30px 44px 1fr 52px 168px 44px 78px 108px 96px; gap: 0; height: 34px; align-items: center; border-bottom: 1px solid oklch(0.21 0.01 230); padding: 0 14px; background: {{r.bg}};">
+          <span style="color: oklch(0.42 0.01 230); font-size: 10.5px;">{{r.i}}</span>
+          <div style="width: 30px; height: 24px; background: {{r.cover}}; border: 1px solid oklch(0.30 0.014 230);"></div>
+          <span style="color: {{r.tcol}}; font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; padding-right: 12px;">{{r.title}}</span>
+          <span style="color: oklch(0.62 0.01 230);">{{r.year}}</span>
+          <span style="color: oklch(0.62 0.01 230); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; padding-right: 12px;">{{r.pub}}</span>
+          <span style="text-align: right; color: {{r.dcol}};">{{r.disks}}</span>
+          <span style="text-align: right; color: oklch(0.58 0.01 230);">{{r.size}}</span>
+          <span style="text-align: right; color: oklch(0.45 0.01 230); font-size: 10.5px;">{{r.sha}}</span>
+          <div style="display: flex; justify-content: flex-end;">
+            <span style="font-size: 10px; padding: 2px 7px; border: 1px solid {{r.scol}}; color: {{r.scol}};">{{r.state}}</span>
+          </div>
+        </div>
+      </sc-for>
+    </div>
+  </div>
+
+  <!-- KEY HINTS -->
+  <div style="height: 26px; flex-shrink: 0; border-top: 1px solid oklch(0.26 0.012 230); background: oklch(0.135 0.008 230); display: flex; align-items: center; gap: 20px; padding: 0 16px; font-size: 10.5px; color: oklch(0.50 0.01 230);">
+    <span><span style="color: oklch(0.78 0.13 195);">&crarr;</span> mount</span>
+    <span><span style="color: oklch(0.78 0.13 195);">space</span> preview</span>
+    <span><span style="color: oklch(0.78 0.13 195);">d</span> disks</span>
+    <span><span style="color: oklch(0.78 0.13 195);">a</span> artwork</span>
+    <span><span style="color: oklch(0.78 0.13 195);">/</span> filter</span>
+    <span style="margin-left: auto;">412 unmatched &middot; press <span style="color: oklch(0.80 0.14 70);">u</span> to review</span>
+  </div>
+</div>
+</x-dc>
+
+<script data-dc-script>
+class Component extends DCLogic {
+  renderVals() {
+    const D = [
+      ['Project-X', '1992', 'Team 17', 4, '3.44 MB', 'a71f0c9e', 'MOUNTED'],
+      ['Deluxe Paint IV v4.5', '1992', 'Electronic Arts', 3, '2.58 MB', '4b2e8d10', 'READY'],
+      ['9 Fingers', '1993', 'Spaceballs', 2, '1.72 MB', 'e9034ac7', 'READY'],
+      ['Giana Sisters SE', '2010', 'Reunion', 2, '1.72 MB', '77c1b0f4', 'READY'],
+      ['Workbench 3.1', '1993', 'Commodore', 6, '5.16 MB', '0d9e33b8', 'READY'],
+      ['Marble Slide', '1990', 'Handel, Peter', 1, '880 KB', 'cc50e7a1', 'READY'],
+      ['Ray of Hope II', '1994', '—', 1, '880 KB', '18ab4f6d', 'NO ART'],
+      ['Wayfarer', '1993', '—', 1, '880 KB', 'b3e70c25', 'NO ART'],
+      ['AmigaTestKit', '2015', 'Fraser, Keir', 1, '880 KB', '5f81d9e0', 'READY'],
+      ['Picasso96', '1997', 'Village Tronic', 1, '880 KB', '2a6cb14f', 'READY'],
+      ['WHDLoad 18.5', '2020', 'Wepl', 1, '880 KB', '90fd2e73', 'READY'],
+      ['SysInfo', '1996', 'Nic Wilson', 1, '880 KB', 'd41ea806', 'READY'],
+      ['FAT95', '2003', 'Torsten Jager', 1, '880 KB', '6b0397cc', 'READY'],
+      ['BONUS31_#3', '—', '—', 1, '880 KB', 'ae2210df', 'UNMATCHED']
+    ];
+    const hues = [285, 35, 200, 130, 255, 85, 300, 220, 145, 320, 195, 90, 30, 0];
+    const scol = { MOUNTED: 'oklch(0.72 0.16 150)', READY: 'oklch(0.52 0.012 230)', 'NO ART': 'oklch(0.75 0.14 70)', UNMATCHED: 'oklch(0.68 0.17 25)' };
+    return {
+      rows: D.map((r, i) => ({
+        i: String(i + 1).padStart(2, '0'),
+        title: r[0], year: r[1], pub: r[2], disks: r[3], size: r[4], sha: r[5] + '…', state: r[6],
+        bg: r[6] === 'MOUNTED' ? 'oklch(0.50 0.13 150 / 0.09)' : (i % 2 ? 'oklch(0.168 0.008 230)' : 'transparent'),
+        tcol: r[6] === 'MOUNTED' ? 'oklch(0.88 0.09 150)' : 'oklch(0.92 0.008 230)',
+        dcol: r[3] > 1 ? 'oklch(0.80 0.14 70)' : 'oklch(0.55 0.01 230)',
+        scol: scol[r[6]],
+        cover: 'linear-gradient(140deg, oklch(0.45 0.13 ' + hues[i] + '), oklch(0.22 0.06 ' + ((hues[i] + 40) % 360) + '))'
+      })),
+      facets: [
+        { label: 'KIND', rows: [{ k: 'game', v: '1204' }, { k: 'demo', v: '331' }, { k: 'app', v: '188' }, { k: 'system', v: '104' }] },
+        { label: 'DISKS', rows: [{ k: '1', v: '1472' }, { k: '2–4', v: '353' }, { k: '5+', v: '59' }] },
+        { label: 'SOURCE', rows: [{ k: 'tosec', v: '3201' }, { k: 'manual', v: '799' }, { k: 'unmatched', v: '412' }] },
+        { label: 'ARTWORK', rows: [{ k: 'hasheous', v: '1102' }, { k: 'openretro', v: '287' }, { k: 'none', v: '495' }] }
+      ]
+    };
+  }
+}
+</script>
+</body>
+</html>
