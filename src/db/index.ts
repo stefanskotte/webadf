@@ -1,8 +1,9 @@
 import { neon } from '@neondatabase/serverless';
 import { drizzle, type NeonHttpDatabase } from 'drizzle-orm/neon-http';
 import * as catalog from './schema/catalog';
+import * as authSchema from './schema/auth';
 
-const schema = { ...catalog };
+const schema = { ...catalog, ...authSchema };
 let _db: NeonHttpDatabase<typeof schema> | null = null;
 
 export function getDb(): NeonHttpDatabase<typeof schema> {
