@@ -44,6 +44,7 @@ importer, and a forked ESP32 firmware with a full cloud-pull client.
 | D9 | **Enrichment is asynchronous and additive.** A disk is mountable the instant its bytes land; metadata and artwork arrive later, field by field. | Playing a game must never wait on IGDB. It is also the only workable design given external rate limits: 18,000 disks against ~4 req/s is hours of work. |
 | D10 | **One disk resident at a time**, exactly as upstream: a 1.44 MB FAT12 volume in PSRAM holding a single image. A swap is a fresh fetch plus a USB re-enumeration. | Parity with the linked projects. Sidesteps the FAT12 cluster ceiling entirely, and a ~2 s swap is nothing on a 30-year-old machine. |
 | D11 | **Light UI on a fixed gradient canvas with frosted cards.** Structure derived from the operator's UserBoost design system; retuned, not rebranded. | The dark top of the gradient makes cover art read as sitting on a shelf, which suits a disk library better than it suits an analytics dashboard. Replaces the dark theme explored first. |
+| D12 | **Assume TLS session reuse on the device; build the web app first.** The firmware bench is no longer a gate. | The hardware is slow and known to be slow. Session reuse is a firmware config knob, not an architectural commitment — if it misbehaves it is disabled in one place. Nothing in the web app's design changes on the answer. |
 
 ---
 
@@ -466,7 +467,7 @@ or PNG. Ideal aspect ≈1.23:1 to fill the device's 138×112 box without letterb
 | Risk | Assessment | Mitigation |
 |---|---|---|
 | **Disk swaps need the web UI.** With one disk resident (D10) there is no on-device affordance to advance to disk 2 — you reach for a phone or laptop mid-game. | Low, and it is parity: upstream needs the touchscreen or the phone for the same reason. | Accepted. If it grates, the XIAO's BOOT button is unused in the dongle firmware and could advance to the next disk in the set. Explicitly deferred, not designed in. |
-| ESP32-S3 HTTPS throughput unknown | Medium. Published figures vary from 300 KB/s to several MB/s; TLS handshakes alone have been measured over 3 s. | Bench on real hardware as the first firmware milestone. Reuse the TLS session across disk fetches — with one disk resident, swap latency is now on the critical path. |
+| ESP32-S3 HTTPS throughput unknown | Low, by decision (D12) — deliberately not a gate. Published figures vary from 300 KB/s to several MB/s; TLS handshakes alone have been measured over 3 s. | Assume session reuse and build the web app first. Bench when the firmware milestone starts. If a handshake per fetch turns out to cost seconds, session reuse is already assumed; disabling it is a one-line change in the other direction. |
 | Presigned URL TTL vs slow fetch | Low | 15 min is ample for a single 880 KB fetch. Device re-polls if a URL expires. |
 | Vercel Blob private storage is public beta | Low–medium | The `DiskStore` seam (§6) is the hedge. |
 | Copyright posture of a multi-tenant host of game images | Real, and the operator's call | Content addressing plus per-tenant entitlements means no cross-tenant distribution. Keep the deployment private/invite-only. |
