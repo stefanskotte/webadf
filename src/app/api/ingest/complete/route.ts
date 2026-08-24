@@ -1,10 +1,9 @@
-import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import { getDb } from '@/db';
 import { blobs, entitlements, games, disks } from '@/db/schema/catalog';
 import { requireOrg } from '@/lib/session';
 import { diskStore } from '@/lib/storage';
-import { completeBody } from '@/lib/ingest';
+import { completeBody, stableId } from '@/lib/ingest';
 import { groupDisks } from '@/lib/grouping';
 import { parseTosecName } from '@/lib/tosec';
 
@@ -53,15 +52,23 @@ export async function POST(request: Request) {
   })));
 
   for (const g of grouped) {
-    const gameId = randomUUID();
+    // Deterministic ids, always including orgId: calling /complete twice
+    // with the same payload (a CLI retry) or with a payload that overlaps
+    // an earlier one (a batch that re-sends already-ingested files) must
+    // land on the SAME game/disk primary keys so onConflictDoNothing turns
+    // the repeat write into a no-op instead of a duplicate row. orgId is
+    // part of every derivation so two tenants uploading the identical disk
+    // set still get their own separate game/disk rows — the dedupe lives
+    // only on `blobs`, never on these per-tenant catalog rows.
+    const gameId = stableId('game', orgId, g.sortTitle, g.year === null ? '' : String(g.year));
     await db.insert(games).values({
       id: gameId, orgId, title: g.title, sortTitle: g.sortTitle,
       year: g.year, publisher: g.publisher, metadataSource: 'filename',
-    });
+    }).onConflictDoNothing();
     await db.insert(disks).values(g.disks.map((d) => ({
-      id: randomUUID(), gameId, orgId, diskNo: d.diskNo, sha256: d.sha256,
+      id: stableId('disk', gameId, d.sha256), gameId, orgId, diskNo: d.diskNo, sha256: d.sha256,
       tosecName: d.filename, isBoot: d.isBoot, sizeBytes: d.sizeBytes,
-    })));
+    }))).onConflictDoNothing();
   }
 
   return Response.json({
