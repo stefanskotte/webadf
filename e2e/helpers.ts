@@ -33,6 +33,19 @@ function loadEnvLocal() {
 }
 loadEnvLocal();
 
+/**
+ * A per-run uniqueness suffix that can never be parsed as a disk number.
+ *
+ * The old `${Date.now()}-${Math.floor(Math.random() * 1e6)}` could draw 1-99,
+ * and parseTosecName strips a trailing "-N" in that range as a disk number --
+ * so roughly one run in ten thousand silently got a different title than the
+ * one the locator searched for. The base-36 tail always contains at least one
+ * non-digit ('r'), so the trailing-"-N" rule can never fire on it.
+ */
+export function runTag(): string {
+  return `${Date.now()}r${Math.random().toString(36).slice(2, 8)}`;
+}
+
 export async function signUpFresh(page: Page) {
   const email = `t-${Date.now()}-${Math.floor(Math.random() * 1e6)}@example.test`;
   const password = 'correct-horse-battery-staple';

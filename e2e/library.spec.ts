@@ -1,6 +1,6 @@
 import { test, expect, type Page } from '@playwright/test';
 import { createHash } from 'node:crypto';
-import { signUpFresh } from './helpers';
+import { signUpFresh, runTag } from './helpers';
 
 test('a brand-new library shows the empty state, not an error', async ({ page }) => {
   await signUpFresh(page);
@@ -46,7 +46,7 @@ test('one org cannot see another org\'s games', async ({ browser }) => {
 
   // Unique per-run titles so this never collides with the 56 games already
   // sitting in the shared dev database from the Task 9 CLI smoke test.
-  const run = `${Date.now()}-${Math.floor(Math.random() * 1e6)}`;
+  const run = runTag();
   const titleA = `Isolation Test A ${run}`;
   const titleB = `Isolation Test B ${run}`;
 

@@ -1,9 +1,21 @@
-import { issueSignedToken, presignUrl, head, BlobNotFoundError } from '@vercel/blob';
+import {
+  issueSignedToken, presignUrl, head, get, del, BlobNotFoundError,
+} from '@vercel/blob';
+
+export interface BlobStat {
+  /** The size the store actually holds, in bytes. Authoritative — never the client's claim. */
+  sizeBytes: number;
+}
 
 export interface DiskStore {
   uploadUrl(sha256: string, sizeBytes: number): Promise<{ url: string; expiresAt: Date }>;
   downloadUrl(sha256: string, ttlSeconds: number): Promise<string>;
-  exists(sha256: string): Promise<boolean>;
+  /** Metadata for a stored blob, or null when it is absent. */
+  stat(sha256: string): Promise<BlobStat | null>;
+  /** Full contents. Only ever called for a blob whose digest still has to be verified. */
+  read(sha256: string): Promise<Uint8Array>;
+  /** Frees the key so a later, correct upload can claim it. */
+  remove(sha256: string): Promise<void>;
   storageKey(sha256: string): string;
 }
 
@@ -71,15 +83,35 @@ export const diskStore: DiskStore = {
     return presignedUrl;
   },
 
-  async exists(sha256) {
+  async stat(sha256) {
     assertSha(sha256);
     try {
-      await head(key(sha256));
-      return true;
+      // head() returns the size the store really holds. Callers compare it to
+      // whatever the client claimed — the claim is never trusted on its own.
+      const meta = await head(key(sha256));
+      return { sizeBytes: meta.size };
     } catch (err) {
       // head() THROWS when absent; it does not return null.
-      if (err instanceof BlobNotFoundError) return false;
+      if (err instanceof BlobNotFoundError) return null;
       throw err;
     }
+  },
+
+  async read(sha256) {
+    assertSha(sha256);
+    // useCache: false is REQUIRED here. This read exists to verify that the
+    // bytes at adf/<sha> really hash to <sha>, and a CDN-cached copy could
+    // answer with something other than what origin storage now holds — which
+    // is precisely the thing being checked.
+    const result = await get(key(sha256), { access: 'private', useCache: false });
+    if (!result || result.statusCode !== 200) {
+      throw new Error(`storage: could not read ${key(sha256)} back for verification`);
+    }
+    return new Uint8Array(await new Response(result.stream).arrayBuffer());
+  },
+
+  async remove(sha256) {
+    assertSha(sha256);
+    await del(key(sha256));
   },
 };
