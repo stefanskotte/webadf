@@ -5,6 +5,11 @@ import { blobs } from '@/db/schema/catalog';
 import { requireOrg } from '@/lib/session';
 import { checkBody, splitKnownMissing } from '@/lib/ingest';
 
+// One indexed IN (...) lookup over at most MAX_BATCH (500) hashes. Declared
+// alongside the other ingest routes so none of them silently inherits a
+// platform default that differs from the rest of the flow.
+export const maxDuration = 60;
+
 export async function POST(request: Request) {
   await requireOrg();
 

@@ -29,3 +29,16 @@ test('signing out then back in returns to the same library', async ({ page }) =>
   expect(orgAfter).toBeTruthy();
   expect(orgAfter).toBe(orgBefore);
 });
+
+// "/" was the untouched create-next-app scaffold ("edit this page", Next.js
+// and Vercel marketing links) -- on the live deployment's landing page. It now
+// redirects into the app, which for a signed-out visitor means sign-in.
+test('the root path leads into the app, never the create-next-app scaffold', async ({ page }) => {
+  await page.goto('/');
+  await expect(page).toHaveURL(/\/sign-in/);
+  await expect(page.getByText('To get started, edit the')).toHaveCount(0);
+
+  await signUpFresh(page);
+  await page.goto('/');
+  await expect(page).toHaveURL(/\/library/);
+});
