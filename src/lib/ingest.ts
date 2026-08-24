@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto';
 import { z } from 'zod';
+import { MAX_DISK_BYTES } from './blob-upload';
 
 export const SHA256_RE = /^[0-9a-f]{64}$/;
 export const MAX_BATCH = 500;
@@ -11,14 +12,14 @@ export const checkBody = z.object({
 export const presignBody = z.object({
   files: z.array(z.object({
     sha256: z.string().regex(SHA256_RE),
-    sizeBytes: z.number().int().positive().max(2 * 1024 * 1024),
+    sizeBytes: z.number().int().positive().max(MAX_DISK_BYTES),
   })).min(1).max(MAX_BATCH),
 });
 
 export const completeBody = z.object({
   files: z.array(z.object({
     sha256: z.string().regex(SHA256_RE),
-    sizeBytes: z.number().int().positive().max(2 * 1024 * 1024),
+    sizeBytes: z.number().int().positive().max(MAX_DISK_BYTES),
     filename: z.string().min(1).max(255),
   })).min(1).max(MAX_BATCH),
 });
