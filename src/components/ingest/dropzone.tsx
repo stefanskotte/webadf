@@ -3,6 +3,10 @@ import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { hashBlob } from '@/lib/browser-hash';
 import { chunk } from '@/lib/chunk';
+import { mapLimit } from '@/lib/pool';
+import {
+  classifyUpload, isExpiredPresign, isUploadableSize, type UploadOutcome,
+} from '@/lib/blob-upload';
 
 type RowState = 'hashing' | 'deduped' | 'uploading' | 'done' | 'failed';
 
@@ -37,6 +41,12 @@ const STATE_COLOR: Record<RowState, string> = {
 // direction and independently defines its own `const BATCH = 500`; this
 // mirrors that rather than sharing an import.
 const MAX_BATCH = 500;
+
+// Simultaneous PUTs straight to Blob. This was an unbounded Promise.all over
+// the whole group: 500 concurrent ~880 KB uploads is ~440 MB in flight from
+// one browser tab. Matches the CLI's pLimit(6) so the two clients put the
+// same load on the store.
+const UPLOAD_CONCURRENCY = 6;
 
 // Finished rows carry the mount action (Spec D9): the fast path is
 // drop -> click -> play, so a row whose bytes are safely stored -- whether
@@ -96,6 +106,31 @@ export function Dropzone() {
     return res.json();
   }
 
+  // One PUT attempt straight to Blob. Never logs, stores or renders `url` --
+  // a presigned URL is a credential, and it exists only as this argument.
+  async function putOnce(url: string, file: File) {
+    const res = await fetch(url, { method: 'PUT', body: file });
+    // The body is read only on failure, and only to classify it.
+    const body = res.ok ? '' : await res.text().catch(() => '');
+    return {
+      outcome: classifyUpload(res.status, res.ok, body),
+      expired: isExpiredPresign(res.status),
+    };
+  }
+
+  // Fresh URL for one file whose presign expired mid-batch. Returns null if
+  // even that fails, so the caller can mark just this file failed.
+  async function represign(h: { file: File; sha256: string }): Promise<string | null> {
+    try {
+      const { uploads } = await post('/api/ingest/presign', {
+        files: [{ sha256: h.sha256, sizeBytes: h.file.size }],
+      });
+      return (uploads as Array<{ sha256: string; url: string }>)[0]?.url ?? null;
+    } catch {
+      return null;
+    }
+  }
+
   // Processes one chunk (<= MAX_BATCH items) through check -> presign ->
   // upload -> complete. Kept separate from handleFiles so a batch larger
   // than MAX_BATCH can be split into several of these without any one call
@@ -128,25 +163,38 @@ export function Dropzone() {
           (uploads as Array<{ sha256: string; url: string }>).map((u) => [u.sha256, u.url]),
         );
 
-        await Promise.all(
-          toUpload.map(async (h) => {
-            patch(h.sha256, { state: 'uploading' });
-            // Caught per-file rather than left to reject Promise.all: a
-            // hard network failure here (not a non-2xx -- an actual fetch
-            // rejection) must not throw out of handleFiles before
-            // /complete, the final setRows, and setBusy(false) ever run.
-            // That used to wedge every row on "uploading" forever with no
-            // visible error and no way to recover short of a reload. Now a
-            // failure is scoped to just this file: it is marked 'failed'
-            // and every other row keeps going.
-            try {
-              const res = await fetch(urlFor.get(h.sha256)!, { method: 'PUT', body: h.file });
-              uploadOk.set(h.sha256, res.ok);
-            } catch {
-              uploadOk.set(h.sha256, false);
+        // Bounded rather than Promise.all over the whole group -- see
+        // UPLOAD_CONCURRENCY.
+        await mapLimit(toUpload, UPLOAD_CONCURRENCY, async (h) => {
+          patch(h.sha256, { state: 'uploading' });
+          // Caught per-file rather than left to reject: a hard network
+          // failure here (not a non-2xx -- an actual fetch rejection) must
+          // not throw out of handleFiles before /complete, the final
+          // setRows, and setBusy(false) ever run. That used to wedge every
+          // row on "uploading" forever with no visible error and no way to
+          // recover short of a reload. Now a failure is scoped to just this
+          // file: it is marked 'failed' and every other row keeps going.
+          let outcome: UploadOutcome;
+          try {
+            const first = await putOnce(urlFor.get(h.sha256)!, h.file);
+            outcome = first.outcome;
+            if (first.expired) {
+              // A 403 is an expired presigned URL (1 h TTL), not a bad file.
+              // Ask for a fresh one for this single file and try once more.
+              // Only a 403 retries: re-PUTting an over-size or otherwise
+              // rejected file would just fail again more slowly.
+              const fresh = await represign(h);
+              if (fresh) outcome = (await putOnce(fresh, h.file)).outcome;
             }
-          }),
-        );
+          } catch {
+            outcome = 'failed';
+          }
+          // 'already-stored' counts as OK on purpose: the bytes are in the
+          // store, so this file MUST still reach /complete or its blobs row
+          // never gets written and it stays wedged forever. See
+          // isBlobAlreadyExists in src/lib/blob-upload.ts.
+          uploadOk.set(h.sha256, outcome !== 'failed');
+        });
 
         for (const h of toUpload) {
           if (uploadOk.get(h.sha256) === false) patch(h.sha256, { state: 'failed' });
@@ -214,7 +262,16 @@ export function Dropzone() {
         });
       }
 
-      for (const group of chunk(hashed, MAX_BATCH)) {
+      // Screened before batching. /api/ingest/presign rejects a zero-byte or
+      // over-size file, and that 400 fails the presign call for the WHOLE
+      // group -- one truncated .adf in a dropped folder would take every
+      // other file in its batch down with it. Failing just that row keeps
+      // the rest of the drop working.
+      const unusable = hashed.filter((h) => !isUploadableSize(h.file.size));
+      for (const h of unusable) patch(h.sha256, { state: 'failed' });
+      const usable = hashed.filter((h) => isUploadableSize(h.file.size));
+
+      for (const group of chunk(usable, MAX_BATCH)) {
         await processGroup(group);
       }
     } finally {
