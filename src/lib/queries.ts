@@ -1,4 +1,4 @@
-import { sql, desc } from 'drizzle-orm';
+import { sql, desc, eq, and } from 'drizzle-orm';
 import { getDb } from '@/db';
 import { games, disks } from '@/db/schema/catalog';
 import { orgFilter } from '@/db/scope';
@@ -19,7 +19,13 @@ export async function listGames(orgId: string, opts: { limit?: number } = {}): P
       sha256Prefix: sql<string | null>`min(${disks.sha256})`,
     })
     .from(games)
-    .leftJoin(disks, sql`${disks.gameId} = ${games.id}`)
+    // Scoped on both columns, not just gameId -- belt and braces alongside the
+    // WHERE below. Nothing in the schema (no CHECK, no composite FK) currently
+    // guarantees disks.org_id matches its game's org_id; only the write path
+    // (/api/ingest/complete) keeps that true today. Scoping the join itself
+    // means a future write path that got that wrong can never leak another
+    // tenant's disk into this count or its sha256Prefix.
+    .leftJoin(disks, and(eq(disks.gameId, games.id), eq(disks.orgId, orgId)))
     .where(orgFilter(games, orgId))
     .groupBy(games.id)
     .orderBy(desc(games.createdAt))     // recently added first (spec §10, D9)
