@@ -5,7 +5,7 @@ import type { GameListItem } from '@/lib/queries';
 export function GameGrid({ games }: { games: GameListItem[] }) {
   if (games.length === 0) {
     return (
-      <div className="glass-card mx-7 flex flex-col items-center gap-3 p-12 text-center">
+      <div className="glass-card mx-7 flex flex-col items-center gap-3 p-12 text-center" data-testid="game-grid">
         <p className="text-lg font-semibold" style={{ color: 'var(--ink)' }}>No disks yet</p>
         <p className="text-sm" style={{ color: 'var(--muted)' }}>
           Drop some ADFs on the ingest page, or run <code className="font-mono">webadf push</code>.
