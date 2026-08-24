@@ -6,6 +6,7 @@ import { orgFilter } from '@/db/scope';
 export interface GameListItem {
   id: string; title: string; year: number | null; publisher: string | null;
   diskCount: number; coverAssetId: string | null;
+  sizeBytes: number; sha256Prefix: string | null;
 }
 
 export async function listGames(orgId: string, opts: { limit?: number } = {}): Promise<GameListItem[]> {
@@ -14,6 +15,8 @@ export async function listGames(orgId: string, opts: { limit?: number } = {}): P
       id: games.id, title: games.title, year: games.year, publisher: games.publisher,
       coverAssetId: games.coverAssetId,
       diskCount: sql<number>`count(${disks.id})::int`,
+      sizeBytes: sql<number>`coalesce(sum(${disks.sizeBytes}), 0)::bigint`,
+      sha256Prefix: sql<string | null>`min(${disks.sha256})`,
     })
     .from(games)
     .leftJoin(disks, sql`${disks.gameId} = ${games.id}`)
