@@ -2,6 +2,7 @@
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { hashBlob } from '@/lib/browser-hash';
+import { chunk } from '@/lib/chunk';
 
 type RowState = 'hashing' | 'deduped' | 'uploading' | 'done' | 'failed';
 
@@ -22,6 +23,20 @@ const STATE_COLOR: Record<RowState, string> = {
   hashing: 'var(--amber-text)',
   uploading: 'var(--amber-text)',
 };
+
+// The check/presign/complete endpoints cap a batch at 500 items (see
+// MAX_BATCH in src/lib/ingest.ts, enforced by Zod .max()). A real collection
+// is ~18,000 disks, so dropping more than 500 in one go is an everyday
+// action, not an edge case -- this MUST match the server's cap or a batch
+// this client thinks is fine will 400.
+//
+// Not imported from src/lib/ingest.ts: that module does `import { createHash
+// } from 'node:crypto'` for stableId(), which is server-only and has no
+// browser build. Importing it here would pull node:crypto into the client
+// bundle. cli/src/index.ts hits the same constraint from the other
+// direction and independently defines its own `const BATCH = 500`; this
+// mirrors that rather than sharing an import.
+const MAX_BATCH = 500;
 
 // Finished rows carry the mount action (Spec D9): the fast path is
 // drop -> click -> play, so a row whose bytes are safely stored -- whether
@@ -61,93 +76,154 @@ export function Dropzone() {
   const patch = (sha: string, next: Partial<Row>) =>
     setRows((rs) => rs.map((r) => (r.sha256 === sha ? { ...r, ...next } : r)));
 
+  // Any non-OK response is thrown, never returned as if it were data. The
+  // previous shape (`return fetch(...).then((r) => r.json())`) let a 400 --
+  // e.g. from sending more than MAX_BATCH hashes in one /check call --
+  // destructure as `{ missing: undefined }`. `new Set(undefined)` is empty,
+  // so `!missingSet.has(sha256)` was true for every file: the whole batch
+  // silently reported "deduped" while nothing had actually been checked,
+  // uploaded, or catalogued. Throwing here makes that failure impossible to
+  // mistake for success, for this or any other 4xx/5xx.
+  async function post(path: string, body: unknown) {
+    const res = await fetch(path, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    if (!res.ok) {
+      throw new Error(`${path} -> ${res.status} ${await res.text()}`);
+    }
+    return res.json();
+  }
+
+  // Processes one chunk (<= MAX_BATCH items) through check -> presign ->
+  // upload -> complete. Kept separate from handleFiles so a batch larger
+  // than MAX_BATCH can be split into several of these without any one call
+  // exceeding the server's per-request cap -- mirrors the loop in
+  // cli/src/index.ts, so the browser and the CLI hit the API identically.
+  async function processGroup(group: Array<{ file: File; sha256: string }>) {
+    const groupShas = new Set(group.map((h) => h.sha256));
+    try {
+      const { missing } = await post('/api/ingest/check', {
+        hashes: group.map((h) => h.sha256),
+      });
+      const missingSet = new Set<string>(missing);
+
+      for (const h of group) {
+        if (!missingSet.has(h.sha256)) patch(h.sha256, { state: 'deduped' });
+      }
+
+      const toUpload = group.filter((h) => missingSet.has(h.sha256));
+      const uploadOk = new Map<string, boolean>();
+
+      if (toUpload.length > 0) {
+        const { uploads } = await post('/api/ingest/presign', {
+          files: toUpload.map((h) => ({ sha256: h.sha256, sizeBytes: h.file.size })),
+        });
+        // A presigned URL is a credential: it is held only in this
+        // in-memory Map, used once as a fetch() target, and never assigned
+        // into state, rendered into the DOM, or passed to console/log
+        // calls.
+        const urlFor = new Map<string, string>(
+          (uploads as Array<{ sha256: string; url: string }>).map((u) => [u.sha256, u.url]),
+        );
+
+        await Promise.all(
+          toUpload.map(async (h) => {
+            patch(h.sha256, { state: 'uploading' });
+            // Caught per-file rather than left to reject Promise.all: a
+            // hard network failure here (not a non-2xx -- an actual fetch
+            // rejection) must not throw out of handleFiles before
+            // /complete, the final setRows, and setBusy(false) ever run.
+            // That used to wedge every row on "uploading" forever with no
+            // visible error and no way to recover short of a reload. Now a
+            // failure is scoped to just this file: it is marked 'failed'
+            // and every other row keeps going.
+            try {
+              const res = await fetch(urlFor.get(h.sha256)!, { method: 'PUT', body: h.file });
+              uploadOk.set(h.sha256, res.ok);
+            } catch {
+              uploadOk.set(h.sha256, false);
+            }
+          }),
+        );
+
+        for (const h of toUpload) {
+          if (uploadOk.get(h.sha256) === false) patch(h.sha256, { state: 'failed' });
+        }
+      }
+
+      // /complete is only told about deduped + successfully-uploaded files.
+      // A row is only truly finished once /complete has written its
+      // game/disk rows, so the mount action it carries (Spec D9) refers to
+      // something real -- patching to 'done' any earlier (e.g. right after
+      // the PUT) would let the UI race ahead of the write that makes the
+      // disk real.
+      const okToComplete = group.filter((h) => uploadOk.get(h.sha256) !== false);
+      if (okToComplete.length > 0) {
+        await post('/api/ingest/complete', {
+          files: okToComplete.map((h) => ({
+            sha256: h.sha256,
+            sizeBytes: h.file.size,
+            filename: h.file.name,
+          })),
+        });
+        for (const h of toUpload) {
+          if (uploadOk.get(h.sha256) !== false) patch(h.sha256, { state: 'done' });
+        }
+      }
+    } catch (err) {
+      // check/presign/complete failed outright (network error, or a 4xx/5xx
+      // now surfaced by post() throwing instead of silently destructuring
+      // to undefined). Whatever in this group never resolved to a terminal
+      // state must not be left showing "hashing"/"uploading" forever --
+      // mark it failed so the failure is visible, matching the per-file PUT
+      // handling above.
+      console.error('ingest batch failed', err);
+      setRows((rs) =>
+        rs.map((r) =>
+          groupShas.has(r.sha256) && (r.state === 'hashing' || r.state === 'uploading')
+            ? { ...r, state: 'failed' }
+            : r,
+        ),
+      );
+    }
+  }
+
   async function handleFiles(fileList: FileList) {
     setBusy(true);
-    const files = [...fileList].filter((f) => /\.(adf|dsk|adz|dms)$/i.test(f.name));
+    try {
+      const files = [...fileList].filter((f) => /\.(adf|dsk|adz|dms)$/i.test(f.name));
 
-    const hashed: Array<{ file: File; sha256: string }> = [];
-    for (const file of files) {
-      const sha256 = await hashBlob(file);
-      hashed.push({ file, sha256 });
-      // If this exact content is already a row (the user dropped it earlier
-      // in this same session, before a reload), reset that row in place
-      // rather than appending a second one: two rows sharing a sha256 would
-      // share a React key, which React logs as a duplicate-key error and
-      // may drop or duplicate the row in the DOM. This also has to reach
-      // into functional-update state, since the loop can hash faster than
-      // React commits each prior setRows call.
-      setRows((rs) => {
-        const row: Row = { filename: file.name, sizeBytes: file.size, sha256, state: 'hashing' };
-        return rs.some((r) => r.sha256 === sha256)
-          ? rs.map((r) => (r.sha256 === sha256 ? row : r))
-          : [...rs, row];
-      });
+      const hashed: Array<{ file: File; sha256: string }> = [];
+      for (const file of files) {
+        const sha256 = await hashBlob(file);
+        hashed.push({ file, sha256 });
+        // If this exact content is already a row (the user dropped it
+        // earlier in this same session, before a reload), reset that row in
+        // place rather than appending a second one: two rows sharing a
+        // sha256 would share a React key, which React logs as a
+        // duplicate-key error and may drop or duplicate the row in the DOM.
+        // This also has to reach into functional-update state, since the
+        // loop can hash faster than React commits each prior setRows call.
+        setRows((rs) => {
+          const row: Row = { filename: file.name, sizeBytes: file.size, sha256, state: 'hashing' };
+          return rs.some((r) => r.sha256 === sha256)
+            ? rs.map((r) => (r.sha256 === sha256 ? row : r))
+            : [...rs, row];
+        });
+      }
+
+      for (const group of chunk(hashed, MAX_BATCH)) {
+        await processGroup(group);
+      }
+    } finally {
+      // Runs on every path -- success, a per-group catch, or anything else
+      // thrown above -- so the dropzone/input never stays disabled and the
+      // library view always reflects whatever did land.
+      setBusy(false);
+      router.refresh();
     }
-
-    const post = (path: string, body: unknown) =>
-      fetch(path, {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify(body),
-      }).then((r) => r.json());
-
-    const { missing } = await post('/api/ingest/check', { hashes: hashed.map((h) => h.sha256) });
-    const missingSet = new Set<string>(missing);
-
-    for (const h of hashed) {
-      if (!missingSet.has(h.sha256)) patch(h.sha256, { state: 'deduped' });
-    }
-
-    const toUpload = hashed.filter((h) => missingSet.has(h.sha256));
-    const uploadOk = new Map<string, boolean>();
-    if (toUpload.length > 0) {
-      const { uploads } = await post('/api/ingest/presign', {
-        files: toUpload.map((h) => ({ sha256: h.sha256, sizeBytes: h.file.size })),
-      });
-      // A presigned URL is a credential: it is held only in this in-memory
-      // Map, used once as a fetch() target, and never assigned into state,
-      // rendered into the DOM, or passed to console/log calls.
-      const urlFor = new Map<string, string>(
-        (uploads as Array<{ sha256: string; url: string }>).map((u) => [u.sha256, u.url]),
-      );
-
-      // Track the PUT outcome locally rather than patching straight to
-      // 'done': a row is only truly finished once /complete has written its
-      // game/disk rows below, so the mount action it carries (Spec D9)
-      // actually refers to something in the catalog. Patching to 'done'
-      // here, before /complete has even been called, would let the UI (and
-      // anyone -- a test included -- who reacts to that state) race ahead
-      // of the write that makes the disk real.
-      await Promise.all(
-        toUpload.map(async (h) => {
-          patch(h.sha256, { state: 'uploading' });
-          const res = await fetch(urlFor.get(h.sha256)!, { method: 'PUT', body: h.file });
-          uploadOk.set(h.sha256, res.ok);
-        }),
-      );
-    }
-
-    const okToComplete = hashed.filter((h) => uploadOk.get(h.sha256) !== false);
-    if (okToComplete.length > 0) {
-      await post('/api/ingest/complete', {
-        files: okToComplete.map((h) => ({
-          sha256: h.sha256,
-          sizeBytes: h.file.size,
-          filename: h.file.name,
-        })),
-      });
-    }
-
-    setRows((rs) =>
-      rs.map((r) => {
-        if (r.state === 'uploading' || r.state === 'hashing') {
-          return { ...r, state: uploadOk.get(r.sha256) === false ? 'failed' : 'done' };
-        }
-        return r;
-      }),
-    );
-    setBusy(false);
-    router.refresh();
   }
 
   const scanned = rows.length;
@@ -200,11 +276,14 @@ export function Dropzone() {
           <div className="grid grid-cols-5 gap-3">
             {(
               [
-                { k: 'scanned', v: scanned, col: 'var(--ink)' },
-                { k: 'deduped', v: deduped, col: 'var(--accent-blue)' },
-                { k: 'uploaded', v: uploaded, col: 'var(--success-fg)' },
-                { k: 'in flight', v: inFlight, col: 'var(--amber-text)' },
-                { k: 'failed', v: failed, col: 'var(--danger-fg)' },
+                { k: 'scanned', v: scanned, col: 'var(--ink)', border: 'var(--ink)' },
+                { k: 'deduped', v: deduped, col: 'var(--accent-blue)', border: 'var(--accent-blue)' },
+                { k: 'uploaded', v: uploaded, col: 'var(--success-fg)', border: 'var(--success-fg)' },
+                // Border is a fill, not text, so it can use the brighter
+                // --accent-amber (matching design/Ingest.dc.html's tile);
+                // the number itself stays on --amber-text for AA contrast.
+                { k: 'in flight', v: inFlight, col: 'var(--amber-text)', border: 'var(--accent-amber)' },
+                { k: 'failed', v: failed, col: 'var(--danger-fg)', border: 'var(--danger-fg)' },
               ] as const
             ).map((t) => (
               <div
@@ -213,7 +292,7 @@ export function Dropzone() {
                 style={{
                   background: 'var(--glass-panel)',
                   border: '1px solid var(--glass-border)',
-                  borderTop: `3px solid ${t.col}`,
+                  borderTop: `3px solid ${t.border}`,
                   backdropFilter: 'blur(12px)',
                   boxShadow: 'var(--shadow-card)',
                 }}

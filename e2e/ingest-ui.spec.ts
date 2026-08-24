@@ -56,3 +56,68 @@ test('re-uploading the same bytes dedupes instead of uploading again', async ({ 
   await expect(page.getByTestId('ingest-row').first().locator('[data-state="deduped"]'))
     .toBeVisible({ timeout: 30_000 });
 });
+
+test('a failed check call marks the row failed, never deduped', async ({ page }) => {
+  await signUpFresh(page);
+  await page.goto('/ingest');
+
+  // Reproduces the server's real 400 shape (the check endpoint's Zod schema
+  // rejects an oversized/malformed batch with `{ error: ... }`, no
+  // `missing` field) without needing 501 real disk images to trigger it.
+  // This is the exact failure mode Finding 1 was about: the old
+  // `post()` did `return fetch(...).then((r) => r.json())` unconditionally,
+  // so `const { missing } = await post(...)` destructured a 400 body to
+  // `missing: undefined`, `new Set(undefined)` was empty, and
+  // `!missingSet.has(sha256)` was true for every file -- the whole batch
+  // silently reported "deduped" even though nothing was ever checked,
+  // uploaded, or catalogued. post() now throws on a non-OK response, so
+  // the row must land on 'failed', never 'deduped'.
+  await page.route('**/api/ingest/check', (route) =>
+    route.fulfill({
+      status: 400,
+      contentType: 'application/json',
+      body: JSON.stringify({ error: 'simulated batch rejection' }),
+    }),
+  );
+
+  await page.getByTestId('file-input').setInputFiles({
+    name: 'Should Fail (1993)(Nobody).adf',
+    mimeType: 'application/octet-stream',
+    buffer: fakeAdf(Date.now()),
+  });
+
+  await expect(page.getByTestId('ingest-row').first().locator('[data-state="failed"]'))
+    .toBeVisible({ timeout: 10_000 });
+  await expect(page.getByTestId('ingest-row').first().locator('[data-state="deduped"]'))
+    .toHaveCount(0);
+});
+
+test('re-selecting the same file in one session updates the row instead of duplicating it', async ({ page }) => {
+  await signUpFresh(page);
+  const buffer = fakeAdf(Date.now());
+
+  const consoleErrors: string[] = [];
+  page.on('console', (msg) => {
+    if (msg.type() === 'error') consoleErrors.push(msg.text());
+  });
+
+  await page.goto('/ingest');
+  await page.getByTestId('file-input').setInputFiles({
+    name: 'Reselect Me (1990)(X).adf', mimeType: 'application/octet-stream', buffer,
+  });
+  await expect(page.getByTestId('ingest-row').first().locator('[data-state="done"]'))
+    .toBeVisible({ timeout: 30_000 });
+
+  // Re-select the SAME bytes again without reloading -- this is exactly the
+  // path that used to produce two rows sharing key={sha256} (a React
+  // duplicate-key console error, and either a dropped or duplicated DOM
+  // row), since setRows used to append a new row unconditionally.
+  await page.getByTestId('file-input').setInputFiles({
+    name: 'Reselect Me (1990)(X).adf', mimeType: 'application/octet-stream', buffer,
+  });
+  await expect(page.getByTestId('ingest-row').first().locator('[data-state="deduped"]'))
+    .toBeVisible({ timeout: 30_000 });
+
+  await expect(page.getByTestId('ingest-row')).toHaveCount(1);
+  expect(consoleErrors.some((m) => /same key/i.test(m))).toBe(false);
+});
