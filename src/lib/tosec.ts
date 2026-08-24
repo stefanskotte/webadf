@@ -58,5 +58,32 @@ export function parseTosecName(filename: string): ParsedName {
     }
   }
 
+  // Same precedence as the trailing -N rule above: only when no "(Disk N of M)"
+  // clause (and no trailing -N) already set diskNo. Two more non-TOSEC naming
+  // conventions found in real-world archives: "Name_D<N>" and "Name_#<N>".
+  // Both require a `_` separator so ordinary titles are never mistaken for one
+  // ("Project-X" has no underscore and never reaches here).
+  if (diskNo === null) {
+    const dSuffix = title.match(/^(.+)_D(\d+)$/i);
+    if (dSuffix) {
+      const candidate = Number(dSuffix[2]);
+      if (candidate >= 1 && candidate <= 99) {
+        title = dSuffix[1];
+        diskNo = candidate;
+      }
+    }
+  }
+
+  if (diskNo === null) {
+    const hashSuffix = title.match(/^(.+)_#(\d+)$/);
+    if (hashSuffix) {
+      const candidate = Number(hashSuffix[2]);
+      if (candidate >= 1 && candidate <= 99) {
+        title = hashSuffix[1];
+        diskNo = candidate;
+      }
+    }
+  }
+
   return { title, year, publisher, diskNo, diskCount, flags, sortTitle: makeSortTitle(title) };
 }
