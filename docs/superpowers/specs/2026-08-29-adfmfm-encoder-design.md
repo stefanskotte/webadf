@@ -249,6 +249,20 @@ both belong to the firmware plan.
    should be reconciled.
 2. **Revolution timing.** `BITCELL_NS` is 2,000 against a true 1,973.6, giving ~296
    RPM. Accepted; see §1.
+3. **`bit_count` overflow accepts a bogus image.** `image_loader.c:51` computes
+   `payload_bytes = (bits + 7) / 8` on a `uint32_t`. A `bit_count` of `0xFFFFFFF9` or above
+   wraps the addition, yielding `payload_bytes = 0`, which sails past the
+   `> TRACK_SLOT_BYTES` guard. `psram_image_commit(track, bits)` then marks the track
+   present with a nonsense bit count, every track parses the same way, and
+   `psram_image_missing_count()` returns 0 — so the firmware presents a disk of empty
+   tracks instead of refusing the image. Confirmed by compiling the expression. The fix is
+   to bound `bits` *before* the arithmetic, not after.
+
+   **`firmware-parser.ts` reproduces this deliberately and must not be "fixed".** The
+   mirror's contract is to say what the device *does* accept, so making it stricter than
+   the C would be a divergence in its own right. `readWfmf` — which is our own reader, not
+   a mirror — *is* hardened against this, and the asymmetry between the two is intentional.
+   This defect was found by the mirror, which is what the mirror is for.
 
 ---
 
