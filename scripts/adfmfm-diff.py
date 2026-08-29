@@ -37,6 +37,9 @@ TSX = 'node_modules/.bin/tsx'
 
 # Phase 1: every disk's per-track hashes, in ONE node startup.
 usable = [p for p in paths if os.path.getsize(p) == 901120]
+if not usable:
+    sys.exit(f'no usable (901,120-byte) ADFs under {adf_dir} -- {len(paths)} '
+             f'file(s) found but all wrong-sized; nothing was verified')
 print(f'hashing {len(usable)} disks with our encoder...')
 all_ours = {}
 out = subprocess.run([TSX, 'scripts/adfmfm-diff.ts', 'hash'] + usable,
@@ -48,11 +51,13 @@ for line in out.stdout.strip().splitlines():
     all_ours.setdefault(path, {})[int(t)] = h
 
 bad = 0
+skipped = 0
 for path in paths:
     raw = open(path, 'rb').read()
     name = os.path.basename(path)
     if len(raw) != 901120:
-        print(f'SKIP {name}: {len(raw)} bytes, not a standard DD ADF')
+        skipped += 1
+        print(f'SKIP {name}: {len(raw)} bytes, not a standard DD ADF -- NOT VERIFIED')
         continue
 
     ours = all_ours[path]
@@ -81,5 +86,7 @@ for path in paths:
     print(f'       reference {theirs[max(0,off-4):off+8].hex()}')
 
 print()
-print(f'{len(paths) - bad}/{len(paths)} disks identical to the reference')
-sys.exit(1 if bad else 0)
+print(f'{len(paths) - bad - skipped}/{len(paths) - skipped} disks verified identical to the reference')
+if skipped:
+    print(f'{skipped} disk(s) SKIPPED (wrong size) and NOT verified -- treated as a failure')
+sys.exit(1 if (bad or skipped) else 0)
