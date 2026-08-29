@@ -32,7 +32,7 @@ export async function setDesired(
 
   // Org-scoped in the statement. A disk id alone is not enough to name a disk.
   const rows = await db
-    .select({ sha256: disks.sha256, gameId: disks.gameId, diskNo: disks.diskNo })
+    .select({ id: disks.id, sha256: disks.sha256, gameId: disks.gameId, diskNo: disks.diskNo })
     .from(disks)
     .where(and(eq(disks.id, diskId), eq(disks.orgId, orgId)))
     .limit(1);
@@ -46,6 +46,7 @@ export async function setDesired(
       desiredSha256: disk.sha256,
       desiredGameId: disk.gameId,
       desiredDiskNo: disk.diskNo,
+      desiredDiskId: disk.id,
       desiredSetAt: new Date(),
       desiredVersion: sql`${devices.desiredVersion} + 1`,
     })
@@ -62,6 +63,7 @@ export async function clearDesired(orgId: string, deviceId: string): Promise<num
       desiredSha256: null,
       desiredGameId: null,
       desiredDiskNo: null,
+      desiredDiskId: null,
       desiredSetAt: new Date(),
       desiredVersion: sql`${devices.desiredVersion} + 1`,
     })
@@ -108,11 +110,12 @@ export async function readDesired(deviceId: string): Promise<DesiredState | null
     })
     .from(devices)
     .leftJoin(games, eq(games.id, devices.desiredGameId))
-    .leftJoin(disks, and(
-      eq(disks.gameId, devices.desiredGameId),
-      eq(disks.diskNo, devices.desiredDiskNo),
-      eq(disks.orgId, devices.orgId),
-    ))
+    // Joined on the primary key, not the (gameId, diskNo, orgId) triple --
+    // that triple is not guaranteed unique (a corrected re-ingest of the same
+    // disk number lands a second disks row), so a join on it could silently
+    // pick the wrong row and report the wrong writeProtected for hardware
+    // that is about to honor it.
+    .leftJoin(disks, eq(disks.id, devices.desiredDiskId))
     .where(eq(devices.id, deviceId))
     .limit(1);
 
@@ -129,7 +132,7 @@ export async function readDesired(deviceId: string): Promise<DesiredState | null
       gameId: r.gameId,
       game: r.title ?? 'Unknown',
       diskNo: r.diskNo,
-      diskCount: r.diskCount || 1,
+      diskCount: r.diskCount ?? 1,
       label: r.label ?? `Disk ${r.diskNo}`,
       // A disk row that has gone missing is not a licence to allow writes.
       writeProtected: r.writeProtected ?? true,

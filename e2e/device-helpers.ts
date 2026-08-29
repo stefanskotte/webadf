@@ -54,6 +54,39 @@ export async function seedDisk(
   return { gameId, diskId };
 }
 
+/**
+ * Add a second disk to an EXISTING game. Used to exercise multi-disk games
+ * and, deliberately, to create two disks rows sharing the same (gameId,
+ * diskNo) -- e.g. a corrected re-ingest of the same physical disk under the
+ * same disk number. That triple is not unique in the schema (only disks.id
+ * is), so tests that mount one of two such rows can prove readDesired
+ * resolves to the exact row mounted rather than an arbitrary one.
+ */
+export async function addDisk(
+  orgId: string,
+  gameId: string,
+  opts: { diskNo: number; sha256: string; label?: string; writeProtected?: boolean },
+) {
+  const db = getDb();
+  const diskId = randomUUID();
+
+  await db.insert(blobs).values({
+    sha256: opts.sha256, sizeBytes: 901120, storageKey: `adf/${opts.sha256}`,
+  }).onConflictDoNothing();
+
+  await db.insert(disks).values({
+    id: diskId, gameId, orgId, diskNo: opts.diskNo, sha256: opts.sha256,
+    label: opts.label ?? `Disk ${opts.diskNo}`, sizeBytes: 901120,
+    ...(opts.writeProtected !== undefined ? { writeProtected: opts.writeProtected } : {}),
+  });
+
+  await db.insert(entitlements).values({
+    orgId, sha256: opts.sha256, sourceFilename: `disk-${opts.diskNo}-${opts.sha256}.adf`,
+  }).onConflictDoNothing();
+
+  return { diskId };
+}
+
 export function authHeader(token: string) {
   return { Authorization: `Bearer ${token}` };
 }

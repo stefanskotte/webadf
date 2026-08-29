@@ -1,0 +1,1 @@
+ALTER TABLE "devices" ADD COLUMN "desired_disk_id" text;

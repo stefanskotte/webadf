@@ -19,6 +19,7 @@ describe('devices desired-state columns', () => {
     expect(devices.desiredSha256.notNull).toBe(false);
     expect(devices.desiredGameId.notNull).toBe(false);
     expect(devices.desiredDiskNo.notNull).toBe(false);
+    expect(devices.desiredDiskId.notNull).toBe(false);
     expect(devices.desiredSetAt.notNull).toBe(false);
     expect(devices.desiredVersion.notNull).toBe(true);
     expect(devices.desiredVersion.hasDefault).toBe(true);
@@ -78,11 +79,20 @@ describe('SQL-facing identity of the new columns', () => {
     expect(devices.lastErrorAt.getSQLType()).toBe('timestamp with time zone');
   });
 
+  it('desiredDiskId is a text primary-key reference, not an integer', () => {
+    // (gameId, diskNo, orgId) is not a unique triple -- re-ingesting a
+    // corrected image for the same game and disk number lands a second
+    // disks row. readDesired joins on this column instead, which is
+    // provably one row because it targets disks.id, the primary key.
+    expect(devices.desiredDiskId.getSQLType()).toBe('text');
+  });
+
   it('every column this task added has the expected db-facing name', () => {
     expect(devices.mountedSha256.name).toBe('mounted_sha256');
     expect(devices.desiredSha256.name).toBe('desired_sha256');
     expect(devices.desiredGameId.name).toBe('desired_game_id');
     expect(devices.desiredDiskNo.name).toBe('desired_disk_no');
+    expect(devices.desiredDiskId.name).toBe('desired_disk_id');
     expect(devices.desiredSetAt.name).toBe('desired_set_at');
     expect(devices.desiredVersion.name).toBe('desired_version');
     expect(devices.lastError.name).toBe('last_error');

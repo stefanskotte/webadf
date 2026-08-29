@@ -29,6 +29,12 @@ export const devices = pgTable('devices', {
   desiredSha256: text('desired_sha256'),
   desiredGameId: text('desired_game_id'),
   desiredDiskNo: integer('desired_disk_no'),
+  // Primary-key reference to the exact disks row desired. (gameId, diskNo, orgId)
+  // is not guaranteed unique -- re-ingesting a corrected image for the same
+  // game and disk number lands a second disks row instead of replacing the
+  // first (see src/app/api/ingest/complete/route.ts's stableId keyed on sha).
+  // readDesired joins on this column so it can never pick the wrong row.
+  desiredDiskId: text('desired_disk_id'),
   desiredSetAt: timestamp('desired_set_at', { withTimezone: true }),
 
   // Monotonic. The long-poll compares the device's `since` against this; an
