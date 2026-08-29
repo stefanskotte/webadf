@@ -23,6 +23,14 @@ export interface FirmwareParseResult {
   reason?: string;
 }
 
+function le32(flat: Uint8Array, at: number): number {
+  return (flat[at] | (flat[at + 1] << 8) | (flat[at + 2] << 16) | (flat[at + 3] << 24)) >>> 0;
+}
+
+function fail(tracks: (Uint8Array | null)[], reason: string): FirmwareParseResult {
+  return { ok: false, tracks, reason };
+}
+
 export function parseLikeFirmware(chunks: Uint8Array[]): FirmwareParseResult {
   const tracks: (Uint8Array | null)[] = Array.from({ length: NUM_TRACKS }, () => null);
 
@@ -32,33 +40,29 @@ export function parseLikeFirmware(chunks: Uint8Array[]): FirmwareParseResult {
     for (const c of chunks) { flat.set(c, at); at += c.length; }
   }
 
-  const fail = (reason: string): FirmwareParseResult => ({ ok: false, tracks, reason });
-  const le32 = (at: number) =>
-    (flat[at] | (flat[at + 1] << 8) | (flat[at + 2] << 16) | (flat[at + 3] << 24)) >>> 0;
-
-  if (flat.length < 16) return fail('short header');
-  if (le32(0) !== IMAGE_MAGIC) return fail('bad magic');
-  if (le32(4) !== IMAGE_VERSION) return fail('bad version');
-  const count = le32(8);
-  if (count <= 0 || count > NUM_TRACKS) return fail(`bad track count ${count}`);
+  if (flat.length < 16) return fail(tracks, 'short header');
+  if (le32(flat, 0) !== IMAGE_MAGIC) return fail(tracks, 'bad magic');
+  if (le32(flat, 4) !== IMAGE_VERSION) return fail(tracks, 'bad version');
+  const count = le32(flat, 8);
+  if (count <= 0 || count > NUM_TRACKS) return fail(tracks, `bad track count ${count}`);
 
   let at = 16;
   for (let t = 0; t < count; t++) {
-    if (at + 4 > flat.length) return fail(`truncated before track ${t} length`);
-    const bits = le32(at);
+    if (at + 4 > flat.length) return fail(tracks, `truncated before track ${t} length`);
+    const bits = le32(flat, at);
     at += 4;
     const bytes = (bits + 7) >>> 3;
     if (bytes > TRACK_SLOT_BYTES) {
-      return fail(`track ${t} is ${bytes} bytes, over the ${TRACK_SLOT_BYTES}-byte slot`);
+      return fail(tracks, `track ${t} is ${bytes} bytes, over the ${TRACK_SLOT_BYTES}-byte slot`);
     }
-    if (at + bytes > flat.length) return fail(`truncated inside track ${t}`);
+    if (at + bytes > flat.length) return fail(tracks, `truncated inside track ${t}`);
     tracks[t] = flat.slice(at, at + bytes);
     at += bytes;
     const pad = (4 - (bytes & 3)) & 3;
-    if (at + pad > flat.length) return fail(`truncated in track ${t} padding`);
+    if (at + pad > flat.length) return fail(tracks, `truncated in track ${t} padding`);
     at += pad;
   }
 
-  if (tracks.some((x) => x === null)) return fail('image incomplete');
+  if (tracks.some((x) => x === null)) return fail(tracks, 'image incomplete');
   return { ok: true, tracks };
 }

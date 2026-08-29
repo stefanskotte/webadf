@@ -21,6 +21,40 @@ function chunked(blob: Uint8Array, seed: number): Uint8Array[] {
   return out;
 }
 
+function buildBlobWithOddTrackLength(): Uint8Array {
+  // Build a container with 12667-byte tracks (3 mod 4, needs 1 byte padding).
+  // 101336 bits / 8 = 12667 bytes. pad = (4 - (12667 & 3)) & 3 = (4 - 3) & 3 = 1.
+  // Total blob length: 16 (header) + 160 * (4 (bits) + 12667 (payload) + 1 (pad))
+  //                  = 16 + 160 * 12672 = 2,027,536 (same as WFMF_BYTES)
+  const trackPayloadBits = 101336;
+  const trackPayloadBytes = (trackPayloadBits + 7) >>> 3; // 12667
+  const trackPad = (4 - (trackPayloadBytes & 3)) & 3;     // 1
+  const blobSize = 16 + TRACKS * (4 + trackPayloadBytes + trackPad);
+
+  const blob = new Uint8Array(blobSize);
+  const dv = new DataView(blob.buffer);
+
+  // Write header
+  dv.setUint32(0, 0x464d4657, true);  // magic
+  dv.setUint32(4, 1, true);             // version
+  dv.setUint32(8, TRACKS, true);        // track_count = 160
+  dv.setUint32(12, 0, true);            // reserved
+
+  // Write tracks
+  let at = 16;
+  for (let t = 0; t < TRACKS; t++) {
+    dv.setUint32(at, trackPayloadBits, true);
+    at += 4;
+    // Fill track payload with t & 0xff to make misalignment detectable
+    blob.fill(t & 0xff, at, at + trackPayloadBytes);
+    at += trackPayloadBytes;
+    // Padding byte(s) are zero (already zero-initialized)
+    at += trackPad;
+  }
+
+  return blob;
+}
+
 describe('writeWfmf', () => {
   it('produces exactly WFMF_BYTES', () => {
     expect(writeWfmf(tracks()).length).toBe(WFMF_BYTES);
@@ -114,5 +148,42 @@ describe('parseLikeFirmware', () => {
   it('refuses a truncated body rather than presenting half a disk', () => {
     const r = parseLikeFirmware([writeWfmf(tracks()).subarray(0, 500000)]);
     expect(r.ok).toBe(false);
+  });
+
+  it('correctly handles odd-length tracks with padding (readWfmf)', () => {
+    const blob = buildBlobWithOddTrackLength();
+    const result = readWfmf(blob);
+    expect(result).toHaveLength(160);
+    for (let t = 0; t < 160; t++) {
+      expect(result[t]).toHaveLength(12667);
+      // Spot-check start, middle, end of each track to detect misalignment
+      expect(result[t][0]).toBe(t & 0xff);
+      expect(result[t][6333]).toBe(t & 0xff);
+      expect(result[t][12666]).toBe(t & 0xff);
+    }
+  });
+
+  it('correctly handles odd-length tracks with padding (parseLikeFirmware)', () => {
+    const blob = buildBlobWithOddTrackLength();
+    const r = parseLikeFirmware([blob]);
+    expect(r.ok).toBe(true);
+    expect(r.tracks).toHaveLength(160);
+    for (let t = 0; t < 160; t++) {
+      expect(r.tracks[t]).not.toBeNull();
+      expect(r.tracks[t]!).toHaveLength(12667);
+    }
+    // Spot check track 5
+    expect(r.tracks[5]![0]).toBe(5);
+    expect(r.tracks[5]![6333]).toBe(5);
+    expect(r.tracks[5]![12666]).toBe(5);
+  });
+
+  it('rejects track_count = 0', () => {
+    const blob = buildBlobWithOddTrackLength();
+    const dv = new DataView(blob.buffer, blob.byteOffset, blob.byteLength);
+    dv.setUint32(8, 0, true); // Set track_count to 0
+    const r = parseLikeFirmware([blob]);
+    expect(r.ok).toBe(false);
+    expect(r.reason).toMatch(/count/i);
   });
 });
