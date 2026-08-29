@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { encodeDisk, decodeDisk, ADF_BYTES, WFMF_BYTES, TRACK_DATA_BYTES } from './index';
-import { AdfFormatError } from './adf';
+import { AdfFormatError, adfTrack } from './adf';
 import { readWfmf } from './wfmf';
 import { parseLikeFirmware } from './firmware-parser';
 import { syntheticAdf, type SyntheticKind } from './synthetic';
@@ -44,9 +44,15 @@ describe('encodeDisk', () => {
     expect(back.slice(79 * TRACK_DATA_BYTES, 80 * TRACK_DATA_BYTES).every((b) => b === 0x00)).toBe(true);
   });
 
-  it('rejects an ADF that is not exactly 901,120 bytes', () => {
+  it('rejects a short ADF', () => {
     expect(() => encodeDisk(new Uint8Array(ADF_BYTES - 1))).toThrow(AdfFormatError);
+  });
+
+  it('rejects an over-long ADF', () => {
     expect(() => encodeDisk(new Uint8Array(ADF_BYTES + 1))).toThrow(AdfFormatError);
+  });
+
+  it('rejects an empty ADF', () => {
     expect(() => encodeDisk(new Uint8Array(0))).toThrow(AdfFormatError);
   });
 
@@ -56,5 +62,41 @@ describe('encodeDisk', () => {
 
   it('is deterministic, which is what makes the cache safe to key by SHA-256', () => {
     expect(encodeDisk(syntheticAdf('prng'))).toEqual(encodeDisk(syntheticAdf('prng')));
+  });
+});
+
+describe('adfTrack', () => {
+  it('returns exactly TRACK_DATA_BYTES for a valid track', () => {
+    const adf = syntheticAdf('zeros');
+    const track = adfTrack(adf, 0);
+    expect(track.length).toBe(TRACK_DATA_BYTES);
+  });
+
+  it('returns the correct subarray for track 0 and track 159', () => {
+    const adf = syntheticAdf('prng');
+    const track0 = adfTrack(adf, 0);
+    const track159 = adfTrack(adf, 159);
+    expect(track0).toEqual(adf.subarray(0, TRACK_DATA_BYTES));
+    expect(track159).toEqual(adf.subarray(159 * TRACK_DATA_BYTES, 160 * TRACK_DATA_BYTES));
+  });
+
+  it('rejects a negative track number', () => {
+    const adf = syntheticAdf('zeros');
+    expect(() => adfTrack(adf, -1)).toThrow(AdfFormatError);
+  });
+
+  it('rejects a track number >= 160', () => {
+    const adf = syntheticAdf('zeros');
+    expect(() => adfTrack(adf, 160)).toThrow(AdfFormatError);
+  });
+
+  it('rejects a non-integer track number', () => {
+    const adf = syntheticAdf('zeros');
+    expect(() => adfTrack(adf, 1.5)).toThrow(AdfFormatError);
+  });
+
+  it('rejects NaN as a track number', () => {
+    const adf = syntheticAdf('zeros');
+    expect(() => adfTrack(adf, NaN)).toThrow(AdfFormatError);
   });
 });
