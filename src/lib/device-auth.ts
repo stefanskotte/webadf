@@ -25,3 +25,18 @@ export async function requireDevice(request: Request): Promise<{ deviceId: strin
   if (!row || !tokensMatch(row.tokenHash, hash)) throw new DeviceAuthError();
   return { deviceId: row.id, orgId: row.orgId };
 }
+
+/**
+ * Convert a thrown value into the 401 a device-facing route should return.
+ *
+ * Returns null for anything that is not a DeviceAuthError, so a route that
+ * writes `const r = deviceAuthResponse(e); if (r) return r; throw e;` cannot
+ * silently turn a genuine bug into an authentication failure.
+ *
+ * The body carries no detail: a caller who guessed wrong learns only that
+ * they guessed wrong.
+ */
+export function deviceAuthResponse(e: unknown): Response | null {
+  if (!(e instanceof DeviceAuthError)) return null;
+  return Response.json({ error: 'unauthorized' }, { status: 401 });
+}
