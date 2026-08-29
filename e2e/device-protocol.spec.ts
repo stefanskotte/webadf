@@ -195,6 +195,16 @@ test('behaviour 2: eject completes the cycle', async ({ page, request }) => {
 
   const row = await deviceRow(deviceId);
   expect(row.desiredSha256).toBeNull();
+  expect(row.desiredGameId).toBeNull();
+  expect(row.desiredDiskNo).toBeNull();
+  // desiredDiskId in particular: (gameId, diskNo, orgId) is not unique (see
+  // the schema comment on devices.desiredDiskId in src/db/schema/devices.ts),
+  // so this column exists precisely to avoid a stale reference resolving to
+  // the wrong disk row. A dangling desiredDiskId surviving an eject is
+  // exactly the failure that column was added to prevent, and readDesired's
+  // own null-check (sha256/gameId/diskNo only) would not catch it either --
+  // this assertion is the only thing in the whole suite that does.
+  expect(row.desiredDiskId).toBeNull();
   expect(row.mountedSha256).toBeNull();
 });
 
@@ -232,6 +242,9 @@ test('behaviour 3: a swap delivers the second disk, and diskCount is 2', async (
   // subquery in readDesired, and the single easiest thing in this plan to
   // get silently wrong (e.g. by returning the literal 1).
   expect(state2.desired.diskCount).toBe(2);
+  // The poll's own version field must reflect the new state, not echo back
+  // the `since` value the request was made with.
+  expect(state2.version).toBeGreaterThan(poll1.version);
 });
 
 test('behaviour 4: write protection reaches the device', async ({ page, request }) => {
@@ -256,6 +269,8 @@ test('behaviour 4: write protection reaches the device', async ({ page, request 
   expect(poll2.status()).toBe(200);
   const state2 = await poll2.json();
   expect(state2.desired.writeProtected).toBe(true);
+  // Same guard as behaviour 3: the version must move, not just echo `since`.
+  expect(state2.version).toBeGreaterThan(poll1.version);
 });
 
 test('behaviour 5: cross-tenant isolation across the whole flow', async ({ browser }) => {
@@ -281,12 +296,17 @@ test('behaviour 5: cross-tenant isolation across the whole flow', async ({ brows
   const pollA = await (await ctxA.request.get('/api/device/poll?since=0', { headers: authHeader(tokenA) })).json();
   expect(pollA.desired.sha256).toBe(shaA);
   expect(pollA.desired.sha256).not.toBe(shaB);
+  // Each device's own version, not a stale echo of the `since=0` request —
+  // the mutation that would make this pass anyway (returning `since` back
+  // verbatim) is exactly what this line is here to catch.
+  expect(pollA.version).toBeGreaterThan(0);
 
   // B's device polling never sees A's state either — proves the isolation
   // runs both directions, not just the one this test happens to check first.
   const pollB = await (await ctxB.request.get('/api/device/poll?since=0', { headers: authHeader(tokenB) })).json();
   expect(pollB.desired.sha256).toBe(shaB);
   expect(pollB.desired.sha256).not.toBe(shaA);
+  expect(pollB.version).toBeGreaterThan(0);
 
   // A's device cannot fetch B's image, even by digest alone.
   const fetchAtoB = await ctxA.request.get(`/api/device/image/${shaB}`, { headers: authHeader(tokenA) });

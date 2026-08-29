@@ -38,7 +38,7 @@ test('mount sets the desired disk and bumps the version', async ({ page, request
   // human or a future debugging session relies on -- a mutation that drops
   // it from the UPDATE must not go unnoticed.
   expect(after.desiredSetAt).not.toBeNull();
-  expect(new Date(after.desiredSetAt).getTime()).toBeGreaterThan(Date.now() - 60_000);
+  expect(after.desiredSetAt!.getTime()).toBeGreaterThan(Date.now() - 60_000);
 });
 
 test('mounting disk 2 of a multi-disk game records the disk actually mounted, not a hardcoded disk 1', async ({ page, request }) => {
@@ -110,7 +110,7 @@ test('eject nulls the desired disk and bumps the version', async ({ page, reques
 
   // clearDesired must touch desiredSetAt too, not just the null-out columns.
   expect(row.desiredSetAt).not.toBeNull();
-  expect(new Date(row.desiredSetAt).getTime()).toBeGreaterThanOrEqual(new Date(afterMount.desiredSetAt).getTime());
+  expect(row.desiredSetAt!.getTime()).toBeGreaterThanOrEqual(afterMount.desiredSetAt!.getTime());
 });
 
 test('one organization cannot mount to, or eject, another organization’s device', async ({ page, request, browser }) => {

@@ -32,7 +32,7 @@ test('a report is recorded', async ({ page, request }) => {
   expect(row.psramFree).toBe(6127616);
   expect(row.rssi).toBe(-58);
   expect(row.lastSeenAt).not.toBeNull();
-  expect(new Date(row.lastSeenAt).getTime()).toBeGreaterThanOrEqual(before - 1000);
+  expect(row.lastSeenAt!.getTime()).toBeGreaterThanOrEqual(before - 1000);
 });
 
 test('a report never changes desired state', async ({ page, request }) => {
