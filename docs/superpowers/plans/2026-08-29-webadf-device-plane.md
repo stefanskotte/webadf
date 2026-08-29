@@ -8,6 +8,25 @@
 
 **Tech Stack:** Next.js 16.3.2 · Drizzle 0.45 · `@neondatabase/serverless` 1.1 · better-auth 1.7.1 · `@vercel/blob` 2.8 · Vitest · Playwright
 
+
+> ## ⚠️ PARTIALLY SUPERSEDED — read before executing
+>
+> The target hardware changed mid-plan (spec **D14–D16**, commit `2d81dd8`). It is now a
+> self-designed RP2350 board in `wifi-floppy/` that emulates the floppy bus directly via
+> PIO, **not** an ESP32 dongle feeding a Gotek over USB mass storage.
+>
+> | Tasks | Status |
+> |---|---|
+> | **1–4** | **DONE, reviewed clean, merged into `feat/device-plane`.** Protocol-agnostic; unaffected by the change. |
+> | **5, 9, 10, 11** | **Still valid, not started.** Mount jobs, devices UI, game detail, mount-from-ingest. `INTEGRATION.md` open question #2 asks for exactly the mount-pointer mechanism Task 5 builds. |
+> | **6, 7, 8** | **OBSOLETE as written.** They serve a presigned URL to a raw ADF. The device needs pre-encoded Amiga MFM in a `WFMF` container, fetched from webadf itself. Rewrite them in the successor plan, after the encoder exists. |
+>
+> Three pre-flight rulings still apply to Task 5: **PF-2** (`claimNextJob` must return a
+> joined row: `{ id, gameId, gameTitle, diskNo, diskCount, sha256, filename, sizeBytes }`,
+> org-scoped in the join as well as the WHERE) and **PF-3** (the mount endpoint
+> `POST /api/devices/[id]/mount` moves from Task 10 into Task 5) and **PF-4** (Task 5's
+> six mount-lifecycle test bodies are mandatory; the plan only names them).
+
 **Spec:** `docs/superpowers/specs/2026-08-23-webadf-design.md` — §5 (data model), §7 (device protocol), D10, D13.
 
 **Scope:** Plan 2 of 3. Plan 1 (foundation & library) is merged. Plan 3 is metadata enrichment. **Firmware is deferred to plan 4** — it needs physical hardware (a Seeed XIAO ESP32-S3). This plan's reference client stands in for it and proves the contract.
