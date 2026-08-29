@@ -194,6 +194,29 @@ Not this plan, and not the write plan's first increment either. But write-back s
 designed in a way that forecloses it: the first version should record *which tracks changed*
 rather than only storing a flattened result.
 
+**Backlog — an ADF browser, and Time Machine for disks (operator's idea).** A file browser in
+the web UI that reads the AmigaDOS filesystem out of a stored ADF and shows its directory
+tree, with a scrubber to move between a layered disk's versions the way Time Machine moves
+between backups: pick a point in history, see the disk as it was, restore or mount it.
+
+This decomposes into two independently useful pieces, and **only the second depends on
+layers**:
+
+1. **Read-only ADF browser — buildable today, blocked on nothing.** Parse OFS/FFS from the
+   880 KB image: boot block, root block, bitmap, directory and file-header blocks. Answers
+   "what is actually on this disk?" without mounting it, which is immediately useful for the
+   412 unmatched disks in the review queue — a disk whose TOSEC name is unknown often
+   identifies itself instantly from its file list. Pure logic over bytes we already store, so
+   it tests like `adfmfm` does. `mfm.c` already cites the reference:
+   http://lclevy.free.fr/adflib/adf_info.html
+2. **The version scrubber** — needs layered disks to have versions to scrub through, and the
+   browser from (1) to render each one. With both, a diff between two layers is a set of
+   changed files rather than a set of changed tracks, which is what makes the history legible
+   to a person rather than to a debugger.
+
+Worth building (1) before write-back rather than after: it is the tool you would want in
+order to *verify* that a write-back actually wrote what you expected.
+
 ---
 
 ## 6. The image endpoint
