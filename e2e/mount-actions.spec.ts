@@ -6,7 +6,9 @@ import { devices } from '@/db/schema/devices';
 import { disks } from '@/db/schema/catalog';
 import { readDesired } from '@/lib/mount';
 import { signUpFresh, runTag } from './helpers';
-import { pairDevice, seedDisk, addDisk } from './device-helpers';
+import { pairDevice, seedDisk, addDisk, cleanupSeeded } from './device-helpers';
+
+test.afterAll(cleanupSeeded);
 
 const sha = (s: string) => createHash('sha256').update(s).digest('hex');
 
