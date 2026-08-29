@@ -12,7 +12,7 @@
 
 ## Global Constraints
 
-- **Zero runtime dependencies.** `src/lib/adfmfm/**` imports nothing outside itself. No `node:` imports either — it must run unchanged in a Vercel function. Scripts under `scripts/` may use `node:` modules freely.
+- **Zero runtime dependencies in the module's non-test source.** `constants.ts`, `mfm.ts`, `track.ts`, `adf.ts`, `wfmf.ts`, `firmware-parser.ts`, `synthetic.ts` and `index.ts` import nothing outside `src/lib/adfmfm/`, and **no `node:` modules** — this code must run unchanged in a Vercel function. The `*.test.ts` files in the same directory are exempt and do use `node:fs` and `node:url` to read fixtures; scripts under `scripts/` may use anything.
 - **`Uint8Array` in, `Uint8Array` out.** Never `Buffer` inside the module; `Buffer` is a Node type and this code runs in the Next.js runtime.
 - **Procedural and transliterable to C.** No classes except `Error` subclasses, no closures over mutable state, no generators. Spec §13 of the parent spec keeps "move ADF→MFM onto the Pico" open as a fallback; this keeps that a transliteration. It is a style constraint only — do not contort the design for it.
 - **Exact constants**, all from the spec §1: `SECTORS = 11`, `TRACKS = 160`, `TRACK_DATA_BYTES = 5632`, `ADF_BYTES = 901120`, `TRACK_BITS = 101344`, `TRACK_BYTES = 12668`, `SECTOR_MFM_BYTES = 1088`, `GAP_LEAD_BYTES = 256`, `GAP_TRAIL_BYTES = 444`, `WFMF_MAGIC = 0x464d4657`, `WFMF_VERSION = 1`, `WFMF_BYTES = 2027536`, `FIRMWARE_MAX_TRACK_BITS = 106496`.
@@ -765,11 +765,16 @@ Decoding scans for sync rather than assuming fixed offsets, so it would still wo
 
 - [ ] **Step 1: Write the failing test**
 
-Append to `src/lib/adfmfm/track.test.ts`:
+First, extend the **existing** `./track` import at the top of the test file — do not add
+a second import statement:
 
 ```ts
-import { decodeTrack, TrackDecodeError } from './track';
+import { encodeTrack, decodeTrack, TrackDecodeError } from './track';
+```
 
+Then append to `src/lib/adfmfm/track.test.ts`:
+
+```ts
 describe('decodeTrack', () => {
   for (const kind of KINDS) {
     for (const trackNo of FIXTURE_TRACKS) {
