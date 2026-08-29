@@ -829,6 +829,137 @@ git commit -m "Add desired-state mount library and the human-facing mount, eject
 
 ---
 
+### Task 3b: Clean up what the e2e specs seed
+
+**Added mid-plan at the operator's direction.** The e2e specs seed rows into the live production database and never remove them. Measured over this plan so far: devices 7 → 65, disks 453 → 566, games 374 → 476, entitlements 453 → 566, blobs 413 → 524. Nothing real was modified and the rows sit in throwaway organizations invisible in the UI, but Tasks 4–7 each run e2e and would keep adding.
+
+**Files:**
+- Modify: `e2e/device-helpers.ts`
+- Modify: `e2e/mount-actions.spec.ts`
+
+**Interfaces:**
+- Consumes: `seedDisk`, `pairDevice` (Task 3).
+- Produces: `cleanupSeeded(): Promise<void>`, exported from `e2e/device-helpers.ts`. Deletes every row this module created in the current spec file, in foreign-key-safe order.
+
+**Scope, deliberately.** Clean up only what `device-helpers.ts` itself creates: games, disks, entitlements, blobs, devices and pairing codes. **Do not touch the `auth` schema** — the users and organizations `signUpFresh` creates live there, better-auth owns their shape, and deleting them is a larger and riskier change than this task. Those rows stay, and that is a known, accepted gap.
+
+**Do not sweep rows that already exist.** This task stops the growth from here. Removing the ~110 already accumulated is a separate decision the operator has not made.
+
+- [ ] **Step 1: Track what gets created**
+
+In `e2e/device-helpers.ts`, add module-level registries and record every insert:
+
+```ts
+// Playwright runs one module instance per spec file with fullyParallel: false,
+// so module-level state is per-file and cleanupSeeded() in an afterAll removes
+// exactly what that file made.
+const seeded = {
+  gameIds: [] as string[],
+  diskIds: [] as string[],
+  shas: [] as string[],
+  deviceIds: [] as string[],
+};
+```
+
+Push to each list as `seedDisk` and `pairDevice` insert. `seedDisk` currently uses `onConflictDoNothing` for `blobs` and `entitlements`; record the sha either way — the delete is scoped by sha and org, so removing a row another test already created is not possible across files, and within a file it is idempotent.
+
+- [ ] **Step 2: Write the cleanup**
+
+Append to `e2e/device-helpers.ts`:
+
+```ts
+import { inArray } from 'drizzle-orm';
+
+/**
+ * Remove everything this spec file seeded, in foreign-key order.
+ *
+ * disks and entitlements both reference blobs.sha256, so blobs go last.
+ * Never touches the auth schema: signUpFresh's users and organizations are
+ * better-auth's to manage and are left in place.
+ *
+ * Best-effort — a failure here must not fail a passing spec, because the rows
+ * are inert either way and a cleanup error would mask a real result.
+ */
+export async function cleanupSeeded(): Promise<void> {
+  const db = getDb();
+  try {
+    if (seeded.deviceIds.length) {
+      await db.delete(devices).where(inArray(devices.id, seeded.deviceIds));
+    }
+    if (seeded.diskIds.length) {
+      await db.delete(disks).where(inArray(disks.id, seeded.diskIds));
+    }
+    if (seeded.shas.length) {
+      await db.delete(entitlements).where(inArray(entitlements.sha256, seeded.shas));
+    }
+    if (seeded.gameIds.length) {
+      await db.delete(games).where(inArray(games.id, seeded.gameIds));
+    }
+    if (seeded.shas.length) {
+      await db.delete(blobs).where(inArray(blobs.sha256, seeded.shas));
+    }
+  } catch (e) {
+    console.warn('cleanupSeeded: best effort, continuing —', (e as Error).message);
+  } finally {
+    seeded.gameIds.length = 0;
+    seeded.diskIds.length = 0;
+    seeded.shas.length = 0;
+    seeded.deviceIds.length = 0;
+  }
+}
+```
+
+`devices` must be imported from `@/db/schema/devices`.
+
+- [ ] **Step 3: Call it**
+
+In `e2e/mount-actions.spec.ts`, add near the top:
+
+```ts
+import { test } from '@playwright/test';
+import { cleanupSeeded } from './device-helpers';
+
+test.afterAll(cleanupSeeded);
+```
+
+(Merge with the existing `@playwright/test` import rather than adding a second.)
+
+- [ ] **Step 4: Prove it works — measure before and after**
+
+Count the live rows, run the spec, count again. They must match.
+
+```bash
+pnpm exec dotenv -e .env.local -- node_modules/.bin/tsx -e "
+import { getDb } from './src/db';
+void (async () => {
+  for (const t of ['devices','disks','games','entitlements','blobs']) {
+    const r = await getDb().execute(\\`select count(*)::int as n from \\${t}\\`);
+    console.log(t, (r as any).rows[0].n);
+  }
+})();
+"
+pnpm e2e e2e/mount-actions.spec.ts
+# then run the count again
+```
+
+Expected: identical counts before and after, and the spec still passes 9/9. Report both count sets verbatim. If any table grew, the cleanup is missing something — say which.
+
+- [ ] **Step 5: Prove the cleanup is actually running**
+
+Comment out the `test.afterAll(cleanupSeeded)` line, run the spec, and count again. The counts **must** grow. Restore the line, run once more, and confirm they hold steady. This is the difference between a cleanup that works and one that silently no-ops.
+
+Report all three count sets.
+
+- [ ] **Step 6: Commit**
+
+```bash
+pnpm vitest run && pnpm e2e e2e/mount-actions.spec.ts
+git add e2e/device-helpers.ts e2e/mount-actions.spec.ts
+git commit -m "Clean up e2e-seeded rows so the live database stops growing"
+```
+
+---
+
 ### Task 4: `GET /api/device/poll`
 
 **Files:**
