@@ -78,6 +78,12 @@ seriously — it is the one place in this project where tests passing proves lea
 
 There are 62 real ADFs in `adf-archive/` (gitignored) to test against.
 
+**Backlog (not now):** if server-side encoding turns out not to work well — bit-exactness,
+the 2 MB-per-disk transfer, or the cache — the fallback is to **move ADF→MFM onto the Pico**
+and go back to shipping the raw 880 KB ADF. Recorded in spec §13. It is not the plan; write
+`adfmfm` as straightforward, dependency-free logic that could be transliterated to C, and
+don't contort the design for it.
+
 ### 2. Then `GET /api/device/image/<sha256>`
 
 Serves the `WFMF` blob. Encoding is deterministic, so cache the ~2 MB result keyed by
