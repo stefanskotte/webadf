@@ -216,6 +216,8 @@ Four layers, hardest first:
    byte-diffing all 9,760 tracks, reporting the first differing offset and the field
    it lands in. Requires the archive and the pipx install, so it is a local gate,
    not a CI one.
+
+   Run on 2026-08-29 against all 61 archive disks: 9,760 of 9,760 tracks byte-identical.
 2. **Golden fixtures in vitest.** Expected output committed for *synthetic* ADFs —
    all zeros, all `0xFF`, a seeded PRNG, and a realistic bootblock — generated once
    from Greaseweazle. Synthetic keeps disk images out of the repo (spec §14) while
