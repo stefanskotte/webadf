@@ -140,4 +140,13 @@ describe('decodeTrack', () => {
     t.fill(0xaa, GAP_LEAD_BYTES, GAP_LEAD_BYTES + 4); // destroy sector 0's sync
     expect(() => decodeTrack(t)).toThrow(/11 sectors|sector 0/i);
   });
+
+  it('rejects a track with a duplicate sector id', () => {
+    const t = encodeTrack(trackOf('prng', 0), 0);
+    // Copy sector 0 (at GAP_LEAD_BYTES) to sector 1's position (at GAP_LEAD_BYTES + SECTOR_MFM_BYTES)
+    // This creates two structurally valid, checksummed sectors both claiming id 0
+    t.set(t.subarray(GAP_LEAD_BYTES, GAP_LEAD_BYTES + SECTOR_MFM_BYTES), GAP_LEAD_BYTES + SECTOR_MFM_BYTES);
+    expect(() => decodeTrack(t)).toThrow(TrackDecodeError);
+    expect(() => decodeTrack(t)).toThrow(/appears twice/);
+  });
 });
