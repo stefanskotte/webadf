@@ -1,5 +1,5 @@
 import { randomInt } from 'node:crypto';
-import { eq } from 'drizzle-orm';
+import { and, eq, gt, isNull } from 'drizzle-orm';
 import { getDb } from '@/db';
 import { invites } from '@/db/schema/devices';
 
@@ -50,16 +50,62 @@ export async function issueInvite(orgId: string, createdByUserId: string): Promi
   return code;
 }
 
-export type RedeemResult =
+export type ClaimResult =
   | { ok: true; orgId: string }
-  | { ok: false; reason: 'unknown' | 'used' | 'expired' };
+  | { ok: false };
 
-export async function redeemInvite(raw: string): Promise<RedeemResult> {
+/**
+ * Atomically claims an invite: the gate ("is this code good?") and the
+ * consumption ("mark it used") are the same statement, not two.
+ *
+ * This replaces an earlier `redeemInvite`, which was a plain SELECT: it
+ * checked `consumedAt IS NULL` but never claimed the row, leaving the only
+ * write (a conditional UPDATE) to run later in `user.create.after` -- by
+ * which point the user row, credential and session already existed. Two
+ * concurrent sign-ups carrying the same unconsumed code both passed that
+ * SELECT, both got a user created, and only one of the later UPDATEs
+ * actually matched a row. One leaked or guessed invite code could therefore
+ * mint unboundedly many accounts -- exactly what gating registration exists
+ * to prevent.
+ *
+ * The fix is to fold the check and the write into one round trip: only the
+ * caller whose WHERE clause still matches a live, unconsumed, unexpired row
+ * gets a result back, and Postgres's own row locking serializes concurrent
+ * claims against the same row -- there is no gap between a read and a write
+ * for a second caller to land in.
+ *
+ * The three previously-distinguished failure reasons (`unknown` / `used` /
+ * `expired`) collapse into a single failure here on purpose: once the read
+ * and the write are the same statement, the caller genuinely cannot tell
+ * them apart (a `used` code and an `unknown` one both return zero rows for
+ * different reasons), and for an auth gate that is a feature, not a loss --
+ * a single "invalid or already used" response leaks nothing about which
+ * case applied.
+ *
+ * There is no user id available to record as `consumedByUserId` here: this
+ * runs from `databaseHooks.user.create.before`, and better-auth generates
+ * the new user's id later, inside its own adapter's `create()` call, which
+ * `createWithHooks` invokes only *after* `before` hooks have already run and
+ * returned (verified against better-auth 1.7.1's `@better-auth/core`
+ * adapter factory -- id generation happens in `transformInput`, called from
+ * that `create()`). So `consumedByUserId` is left null by this call. The
+ * security-relevant fact is `consumedAt` being set exactly once, which this
+ * statement guarantees; who consumed it is an audit nicety this task
+ * doesn't need, and pre-generating a user id solely to attach it here would
+ * add real complexity and risk for no correctness benefit.
+ */
+export async function claimInvite(raw: string): Promise<ClaimResult> {
   const code = normalizeInviteCode(raw);
-  const rows = await getDb().select().from(invites).where(eq(invites.code, code)).limit(1);
+  const rows = await getDb()
+    .update(invites)
+    .set({ consumedAt: new Date() })
+    .where(and(
+      eq(invites.code, code),
+      isNull(invites.consumedAt),
+      gt(invites.expiresAt, new Date()),
+    ))
+    .returning({ orgId: invites.orgId });
   const row = rows[0];
-  if (!row) return { ok: false, reason: 'unknown' };
-  if (row.consumedAt) return { ok: false, reason: 'used' };
-  if (row.expiresAt.getTime() < Date.now()) return { ok: false, reason: 'expired' };
+  if (!row) return { ok: false };
   return { ok: true, orgId: row.orgId };
 }

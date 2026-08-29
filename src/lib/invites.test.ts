@@ -1,12 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { normalizeInviteCode } from './invites';
-
-// Mirrors the private generating alphabet in ./invites. Kept in sync
-// deliberately (not imported) so the property test below still fails loudly
-// if the alphabet is ever edited back to include an ambiguous character --
-// the whole point is that this list is asserted against, not derived from,
-// the implementation.
-const GENERATING_ALPHABET = '23456789ABCDEFGHJKMNPRSTUVWXYZ';
+import { ALPHABET, normalizeInviteCode } from './invites';
 
 describe('normalizeInviteCode', () => {
   it('uppercases and strips spaces and dashes', () => {
@@ -36,13 +29,22 @@ describe('normalizeInviteCode', () => {
   // why, and the invite is permanently unredeemable. Every character the
   // generator can actually emit must therefore survive normalization
   // unchanged -- checked here over the whole alphabet, not spot-checked.
+  //
+  // Asserted against the real, exported `ALPHABET` from ./invites -- NOT a
+  // hardcoded local copy. A local copy would drift silently: if `Q` (or any
+  // other ambiguous character) were ever reinstated in the real constant,
+  // a test checking its own stale copy would keep passing, providing no
+  // actual protection against the regression it is named for. This was
+  // verified directly: with `Q` temporarily reinstated in the real
+  // `ALPHABET` in src/lib/invites.ts, this test failed; reverting made it
+  // pass again with a byte-identical file (see the task report).
   it('leaves every character the generator can emit unchanged', () => {
-    for (const ch of GENERATING_ALPHABET) {
+    for (const ch of ALPHABET) {
       expect(normalizeInviteCode(ch)).toBe(ch);
     }
     // And, as a corollary, a full-length code drawn entirely from the
     // alphabet round-trips as a whole, not just character-by-character.
-    const code = GENERATING_ALPHABET.repeat(3).slice(0, 8);
+    const code = ALPHABET.repeat(3).slice(0, 8);
     expect(normalizeInviteCode(code)).toBe(code);
   });
 });
