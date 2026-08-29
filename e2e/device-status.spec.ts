@@ -112,6 +112,29 @@ test('a malformed body is a 400', async ({ page, request }) => {
   });
   expect(nonHex.status()).toBe(400);
 
+  // Digests are lowercase everywhere in this codebase (desiredSha256 is
+  // always populated lowercase from ingest). An uppercase-hex digest is the
+  // right shape but the wrong case, and accepting it here would silently
+  // break every string comparison against desired state -- exactly the
+  // comparison plan 3b's UI uses to show synced vs. pending.
+  const upperCase = await request.post('/api/device/status', {
+    headers: authHeader(token),
+    data: { mountedSha256: sha(runTag()).toUpperCase() },
+  });
+  expect(upperCase.status()).toBe(400);
+
+  const missingKey = await request.post('/api/device/status', {
+    headers: authHeader(token),
+    data: { psramFree: 1000 },
+  });
+  expect(missingKey.status()).toBe(400);
+
+  const emptyBody = await request.post('/api/device/status', {
+    headers: authHeader(token),
+    data: {},
+  });
+  expect(emptyBody.status()).toBe(400);
+
   const outOfRangeRssi = await request.post('/api/device/status', {
     headers: authHeader(token),
     data: { mountedSha256: null, rssi: 50 },
