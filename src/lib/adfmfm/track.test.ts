@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
-import { encodeTrack } from './track';
+import { encodeTrack, decodeTrack, TrackDecodeError } from './track';
 import { checksum } from './mfm';
 import { syntheticAdf, type SyntheticKind } from './synthetic';
 import { TRACK_BYTES, TRACK_DATA_BYTES, GAP_LEAD_BYTES, SECTOR_MFM_BYTES, SECTORS } from './constants';
@@ -102,5 +102,42 @@ describe('encodeTrack', () => {
     headerAndNonZeroLabel.set(header, 0);
     headerAndNonZeroLabel.set(nonZeroLabel, header.length);
     expect(checksum(headerAndNonZeroLabel)).not.toBe(checksum(header));
+  });
+});
+
+describe('decodeTrack', () => {
+  for (const kind of KINDS) {
+    for (const trackNo of FIXTURE_TRACKS) {
+      it(`round-trips ${kind} track ${trackNo}`, () => {
+        expect(decodeTrack(encodeTrack(trackOf(kind, trackNo), trackNo)))
+          .toEqual(trackOf(kind, trackNo));
+      });
+
+      it(`decodes Greaseweazle's own bytes for ${kind} track ${trackNo}`, () => {
+        expect(decodeTrack(golden(kind, trackNo))).toEqual(trackOf(kind, trackNo));
+      });
+    }
+  }
+
+  it('rejects a track of the wrong length', () => {
+    expect(() => decodeTrack(new Uint8Array(12667))).toThrow(/12668/);
+  });
+
+  it('rejects a track with a corrupted data checksum', () => {
+    const t = encodeTrack(trackOf('prng', 0), 0);
+    t[GAP_LEAD_BYTES + 60] ^= 0x11; // flip data bits in sector 0
+    expect(() => decodeTrack(t)).toThrow(TrackDecodeError);
+  });
+
+  it('rejects a track with a corrupted header checksum', () => {
+    const t = encodeTrack(trackOf('prng', 0), 0);
+    t[GAP_LEAD_BYTES + 12] ^= 0x11; // flip label bits in sector 0
+    expect(() => decodeTrack(t)).toThrow(TrackDecodeError);
+  });
+
+  it('rejects a track that is missing a sector', () => {
+    const t = encodeTrack(trackOf('prng', 0), 0);
+    t.fill(0xaa, GAP_LEAD_BYTES, GAP_LEAD_BYTES + 4); // destroy sector 0's sync
+    expect(() => decodeTrack(t)).toThrow(/11 sectors|sector 0/i);
   });
 });
