@@ -30,16 +30,23 @@
 | File | Responsibility |
 |---|---|
 | `src/lib/device-auth.ts` | **Modify.** Reconcile the error contract (Task 1) |
-| `src/db/schema/devices.ts` | **Modify.** Desired-state columns; drop `mountedJobs` table |
+| `src/db/schema/devices.ts` | **Modify.** Desired-state columns; drop the `mountJobs` table |
 | `src/db/schema/catalog.ts` | **Modify.** `disks.write_protected` |
-| `src/lib/mount.ts` | **Create.** `setDesired`, `clearDesired`, `readDesired`, `recordStatus` — all pure DB logic, no HTTP |
-| `src/app/api/device/poll/route.ts` | **Create.** Long-poll |
-| `src/app/api/device/image/[sha256]/route.ts` | **Create.** Entitlement-checked WFMF |
-| `src/app/api/device/status/route.ts` | **Create.** Heartbeat and report |
-| `src/app/api/devices/[id]/mount/route.ts` | **Create.** Human-facing mount |
-| `src/app/api/devices/[id]/eject/route.ts` | **Create.** Human-facing eject |
-| `src/app/api/disks/[id]/route.ts` | **Create.** `PATCH { writeProtected }` |
-| `e2e/device-protocol.spec.ts` | **Create.** The reference client driving the whole flow |
+| `src/lib/mount.ts` | **Create.** `setDesired`, `clearDesired`, `readDesiredVersion`, `readDesired`, `recordStatus` — all database logic, no HTTP |
+| `src/app/api/devices/[id]/mount/route.ts` | **Create.** Human-facing mount (Task 3) |
+| `src/app/api/devices/[id]/eject/route.ts` | **Create.** Human-facing eject (Task 3) |
+| `src/app/api/disks/[id]/route.ts` | **Create.** `PATCH { writeProtected }` (Task 3) |
+| `src/app/api/device/poll/route.ts` | **Create.** Long-poll (Task 4) |
+| `src/app/api/device/image/[sha256]/route.ts` | **Create.** Entitlement-checked WFMF (Task 5) |
+| `src/app/api/device/status/route.ts` | **Create.** Heartbeat and report (Task 6) |
+| `e2e/device-helpers.ts` | **Create.** `pairDevice`, `seedDisk`, `authHeader` |
+| `e2e/mount-actions.spec.ts` | **Create.** Task 3's proof |
+| `e2e/device-poll.spec.ts` | **Create.** Task 4's proof |
+| `e2e/device-image.spec.ts` | **Create.** Task 5's proof |
+| `e2e/device-status.spec.ts` | **Create.** Task 6's proof |
+| `e2e/device-protocol.spec.ts` | **Create.** The reference client driving the whole flow (Task 7) |
+
+**Database behaviour is tested in Playwright, not Vitest.** No Vitest test in this repo opens a database connection — Vitest's process never loads `.env.local`, so `DATABASE_URL` is unset there, while `e2e/helpers.ts` loads it on import and e2e specs import `@/db` directly (see `e2e/ingest-api.spec.ts`). Vitest here covers only pure logic: the auth error contract and schema introspection.
 
 ---
 
@@ -252,8 +259,11 @@ Read the generated SQL before pushing. It must add the eight columns and drop `m
 
 - [ ] **Step 7: Verify against the live database**
 
+`getDb()` reads `DATABASE_URL` at call time, and a bare `tsx` invocation does **not** load
+`.env.local` — Next.js only does that for its own process. Prefix with `dotenv`:
+
 ```bash
-pnpm exec tsx -e "
+pnpm exec dotenv -e .env.local -- pnpm exec tsx -e "
 import { getDb } from './src/db';
 const r = await getDb().execute(\`
   select column_name, is_nullable, column_default from information_schema.columns
@@ -280,19 +290,22 @@ git commit -m "Add desired-state columns and write protection; drop mount_jobs"
 
 ---
 
-### Task 3: The mount library
-
-All the desired-state logic, with no HTTP in it, so it is testable in Vitest.
+### Task 3: The mount library and the human-facing actions
 
 **Files:**
 - Create: `src/lib/mount.ts`
-- Create: `src/lib/mount.test.ts`
+- Create: `src/app/api/devices/[id]/mount/route.ts`
+- Create: `src/app/api/devices/[id]/eject/route.ts`
+- Create: `src/app/api/disks/[id]/route.ts`
+- Create: `e2e/device-helpers.ts`
+- Create: `e2e/mount-actions.spec.ts`
 
 **Interfaces:**
-- Consumes: the Task 2 schema.
+- Consumes: the Task 2 schema; `requireOrg` from `@/lib/session`.
 - Produces:
 
 ```ts
+// src/lib/mount.ts
 export interface DesiredDisk {
   sha256: string; gameId: string; game: string;
   diskNo: number; diskCount: number; label: string; writeProtected: boolean;
@@ -307,186 +320,228 @@ export function recordStatus(deviceId: string, s: {
   mountedSha256: string | null; error: string | null;
   psramFree: number | null; rssi: number | null;
 }): Promise<void>;
+
+// e2e/device-helpers.ts
+export function pairDevice(page: Page, request: APIRequestContext, name?: string):
+  Promise<{ deviceId: string; token: string }>;
+export function seedDisk(orgId: string, opts: { title: string; diskNo: number; sha256: string }):
+  Promise<{ gameId: string; diskId: string }>;
+export function authHeader(token: string): { Authorization: string };
 ```
 
-`setDesired` and `clearDesired` return the new `desiredVersion`, or `null` when the device or disk does not belong to `orgId`. **Returning `null` rather than throwing** keeps the org check and the "not found" case indistinguishable to the caller, which is what stops the route leaking whether another org's device id exists.
+`setDesired` and `clearDesired` return the new `desiredVersion`, or `null` when the device or disk does not belong to `orgId`. **Returning `null` rather than throwing** keeps the org check and the "not found" case indistinguishable, which is what stops a route leaking whether another org's id exists.
 
-**Two readers on purpose.** The poll loop ticks once a second for 25 seconds, so it must not
-run a three-table join 25 times per hold. `readDesiredVersion` is a single indexed column
-read; the full `readDesired` runs once, only when the version has actually moved.
+**Two readers on purpose.** The poll loop (Task 4) ticks once a second for 25 seconds, so it must not run a three-table join 25 times per hold. `readDesiredVersion` is a single indexed read; the full `readDesired` runs only when the version has moved.
 
-**`diskCount` is not a column.** `games` has no such field — the rest of the app derives it
-as `count(disks.id)::int` (see `src/lib/queries.ts:17`). `readDesired` therefore computes it
-with a correlated subquery. Do not add a `disk_count` column.
+**`diskCount` is not a column.** `games` has no such field — the app derives it as `count(disks.id)::int` (`src/lib/queries.ts:17`). `readDesired` computes it with a correlated subquery. Do not add a `disk_count` column.
 
-- [ ] **Step 1: Write the failing test**
+**Why these tests are Playwright and not Vitest.** No Vitest test in this repo touches `getDb`; every one of them is pure logic, and Vitest's process never loads `.env.local`, so `DATABASE_URL` is unset there. Database behaviour is tested in Playwright, where `e2e/helpers.ts` loads the env on import and specs import `@/db` directly — see `e2e/ingest-api.spec.ts`. `mount.ts` is entirely database logic, so it is tested through its endpoints. **Do not add a Vitest test that opens a database connection**, and do not edit `vitest.config.mts`.
 
-Create `src/lib/mount.test.ts`. These run against the live database, like `invites.test.ts` does. Seed with a helper at the top of the file:
+- [ ] **Step 1: Write the e2e helpers**
+
+Create `e2e/device-helpers.ts`:
 
 ```ts
-import { describe, it, expect, beforeAll } from 'vitest';
 import { randomUUID } from 'node:crypto';
+import type { Page, APIRequestContext } from '@playwright/test';
+import { getDb } from '@/db';
+import { blobs, disks, games, entitlements } from '@/db/schema/catalog';
+import './helpers';   // side effect: loads .env.local before @/db is used
+
+/** Pair a device against the signed-in page's org and return its bearer token. */
+export async function pairDevice(page: Page, request: APIRequestContext, name = 'Test Device') {
+  const pair = await page.request.post('/api/devices/pair', { data: { name } });
+  if (pair.status() !== 200) throw new Error(`pair failed: ${pair.status()}`);
+  const { code } = await pair.json();
+
+  // A bare request context, not the page's — the device has no session.
+  const mac = Array.from({ length: 6 }, () =>
+    Math.floor(Math.random() * 256).toString(16).padStart(2, '0').toUpperCase()).join(':');
+  const reg = await request.post('/api/device/register', {
+    data: { pairingCode: code, firmwareVersion: '3.0.0', macAddress: mac },
+  });
+  if (reg.status() !== 200) throw new Error(`register failed: ${reg.status()}`);
+  const { token, deviceId } = await reg.json();
+  return { deviceId: deviceId as string, token: token as string };
+}
+
+/**
+ * Insert one game + disk + blob + entitlement directly. Faster than the real
+ * ingest flow and enough for protocol tests, which are not about ingest.
+ */
+export async function seedDisk(
+  orgId: string,
+  opts: { title: string; diskNo: number; sha256: string },
+) {
+  const db = getDb();
+  const gameId = `gam_${randomUUID()}`;
+  const diskId = randomUUID();
+
+  await db.insert(blobs).values({
+    sha256: opts.sha256, sizeBytes: 901120, storageKey: `adf/${opts.sha256}`,
+  }).onConflictDoNothing();
+
+  // games has NO diskCount column — it is derived. sortTitle IS NOT NULL.
+  await db.insert(games).values({
+    id: gameId, orgId, title: opts.title, sortTitle: opts.title.toLowerCase(),
+  });
+
+  await db.insert(disks).values({
+    id: diskId, gameId, orgId, diskNo: opts.diskNo, sha256: opts.sha256,
+    label: `${opts.title} (Disk ${opts.diskNo})`, sizeBytes: 901120,
+  });
+
+  await db.insert(entitlements).values({
+    orgId, sha256: opts.sha256, sourceFilename: `${opts.title}-${opts.diskNo}.adf`,
+  }).onConflictDoNothing();
+
+  return { gameId, diskId };
+}
+
+export function authHeader(token: string) {
+  return { Authorization: `Bearer ${token}` };
+}
+```
+
+- [ ] **Step 2: Write the failing spec**
+
+Create `e2e/mount-actions.spec.ts`:
+
+```ts
+import { test, expect } from '@playwright/test';
+import { createHash } from 'node:crypto';
 import { eq } from 'drizzle-orm';
 import { getDb } from '@/db';
 import { devices } from '@/db/schema/devices';
-import { blobs, disks, games, entitlements } from '@/db/schema/catalog';
-import { setDesired, clearDesired, readDesired, readDesiredVersion, recordStatus } from './mount';
+import { disks } from '@/db/schema/catalog';
+import { signUpFresh, runTag } from './helpers';
+import { pairDevice, seedDisk } from './device-helpers';
 
-const ORG_A = `org_a_${randomUUID()}`;
-const ORG_B = `org_b_${randomUUID()}`;
-let deviceA: string, deviceB: string, diskA1: string, diskA2: string, diskB1: string;
-const SHA_1 = 'a'.repeat(64), SHA_2 = 'b'.repeat(64);
+const sha = (s: string) => createHash('sha256').update(s).digest('hex');
 
-async function seedDisk(orgId: string, gameId: string, title: string, no: number, count: number, sha: string) {
-  const db = getDb();
-  await db.insert(blobs).values({ sha256: sha, sizeBytes: 901120, storageKey: `adf/${sha}` }).onConflictDoNothing();
-  // games has no diskCount column -- it is derived. sortTitle IS NOT NULL.
-  await db.insert(games).values({
-    id: gameId, orgId, title, sortTitle: title.toLowerCase(),
-  }).onConflictDoNothing();
-  const id = randomUUID();
-  await db.insert(disks).values({
-    id, gameId, orgId, diskNo: no, sha256: sha,
-    label: `${title} (Disk ${no} of ${count})`, sizeBytes: 901120,
-  });
-  await db.insert(entitlements).values({ orgId, sha256: sha, sourceFilename: `${title}-${no}.adf` }).onConflictDoNothing();
-  return id;
+async function deviceRow(deviceId: string) {
+  const r = await getDb().select().from(devices).where(eq(devices.id, deviceId));
+  return r[0];
 }
 
-beforeAll(async () => {
-  const db = getDb();
-  const gameA = `gam_${randomUUID()}`, gameB = `gam_${randomUUID()}`;
-  diskA1 = await seedDisk(ORG_A, gameA, 'Project-X', 1, 2, SHA_1);
-  diskA2 = await seedDisk(ORG_A, gameA, 'Project-X', 2, 2, SHA_2);
-  diskB1 = await seedDisk(ORG_B, gameB, 'Turrican', 1, 1, SHA_1);
-  deviceA = randomUUID(); deviceB = randomUUID();
-  await db.insert(devices).values([
-    { id: deviceA, orgId: ORG_A, name: 'A', tokenHash: randomUUID() },
-    { id: deviceB, orgId: ORG_B, name: 'B', tokenHash: randomUUID() },
-  ]);
+test('mount sets the desired disk and bumps the version', async ({ page, request }) => {
+  const { orgId } = await signUpFresh(page);
+  const { deviceId } = await pairDevice(page, request);
+  const { diskId } = await seedDisk(orgId, { title: `Px ${runTag()}`, diskNo: 1, sha256: sha(runTag()) });
+
+  const before = await deviceRow(deviceId);
+  const res = await page.request.post(`/api/devices/${deviceId}/mount`, { data: { diskId } });
+  expect(res.status()).toBe(200);
+  const { version } = await res.json();
+
+  const after = await deviceRow(deviceId);
+  expect(after.desiredSha256).not.toBeNull();
+  expect(after.desiredDiskNo).toBe(1);
+  expect(after.desiredVersion).toBe(version);
+  expect(version).toBeGreaterThan(before.desiredVersion);
 });
 
-describe('setDesired', () => {
-  it('sets the disk and bumps the version', async () => {
-    const v1 = await setDesired(ORG_A, deviceA, diskA1);
-    expect(v1).not.toBeNull();
-    const state = await readDesired(deviceA);
-    expect(state!.version).toBe(v1);
-    expect(state!.desired).toMatchObject({
-      sha256: SHA_1, diskNo: 1, diskCount: 2, game: 'Project-X', writeProtected: true,
-    });
-  });
+test('mounting the same disk twice still bumps the version, so a failed mount can be retried', async ({ page, request }) => {
+  const { orgId } = await signUpFresh(page);
+  const { deviceId } = await pairDevice(page, request);
+  const { diskId } = await seedDisk(orgId, { title: `Px ${runTag()}`, diskNo: 1, sha256: sha(runTag()) });
 
-  it('bumps the version on every change, strictly increasing', async () => {
-    const a = await setDesired(ORG_A, deviceA, diskA1);
-    const b = await setDesired(ORG_A, deviceA, diskA2);
-    const c = await setDesired(ORG_A, deviceA, diskA1);
-    expect(b!).toBeGreaterThan(a!);
-    expect(c!).toBeGreaterThan(b!);
-  });
-
-  it('bumps the version even when the same disk is set twice', async () => {
-    // A re-mount is a real instruction: the device may have failed the first
-    // one. If the version did not move, the poll would never deliver it again.
-    const a = await setDesired(ORG_A, deviceA, diskA2);
-    const b = await setDesired(ORG_A, deviceA, diskA2);
-    expect(b!).toBeGreaterThan(a!);
-  });
-
-  it('refuses a device belonging to another organization', async () => {
-    expect(await setDesired(ORG_A, deviceB, diskA1)).toBeNull();
-  });
-
-  it('refuses a disk belonging to another organization', async () => {
-    expect(await setDesired(ORG_A, deviceB, diskB1)).toBeNull();
-    expect(await setDesired(ORG_B, deviceB, diskA1)).toBeNull();
-  });
-
-  it('refuses an unknown device and an unknown disk identically', async () => {
-    expect(await setDesired(ORG_A, randomUUID(), diskA1)).toBeNull();
-    expect(await setDesired(ORG_A, deviceA, randomUUID())).toBeNull();
-  });
+  const a = await (await page.request.post(`/api/devices/${deviceId}/mount`, { data: { diskId } })).json();
+  const b = await (await page.request.post(`/api/devices/${deviceId}/mount`, { data: { diskId } })).json();
+  expect(b.version).toBeGreaterThan(a.version);
 });
 
-describe('clearDesired', () => {
-  it('nulls the desired disk and bumps the version', async () => {
-    const set = await setDesired(ORG_A, deviceA, diskA1);
-    const cleared = await clearDesired(ORG_A, deviceA);
-    expect(cleared!).toBeGreaterThan(set!);
-    const state = await readDesired(deviceA);
-    expect(state!.desired).toBeNull();
-    expect(state!.version).toBe(cleared);
-  });
+test('eject nulls the desired disk and bumps the version', async ({ page, request }) => {
+  const { orgId } = await signUpFresh(page);
+  const { deviceId } = await pairDevice(page, request);
+  const { diskId } = await seedDisk(orgId, { title: `Px ${runTag()}`, diskNo: 1, sha256: sha(runTag()) });
 
-  it('refuses a device belonging to another organization', async () => {
-    expect(await clearDesired(ORG_A, deviceB)).toBeNull();
-  });
+  const mounted = await (await page.request.post(`/api/devices/${deviceId}/mount`, { data: { diskId } })).json();
+  const res = await page.request.post(`/api/devices/${deviceId}/eject`);
+  expect(res.status()).toBe(200);
+  const { version } = await res.json();
+  expect(version).toBeGreaterThan(mounted.version);
+
+  const row = await deviceRow(deviceId);
+  expect(row.desiredSha256).toBeNull();
+  expect(row.desiredGameId).toBeNull();
+  expect(row.desiredDiskNo).toBeNull();
 });
 
-describe('readDesiredVersion', () => {
-  it('agrees with readDesired but does not join', async () => {
-    const v = await setDesired(ORG_A, deviceA, diskA1);
-    expect(await readDesiredVersion(deviceA)).toBe(v);
-    expect((await readDesired(deviceA))!.version).toBe(v);
-  });
+test('one organization cannot mount to, or eject, another organization’s device', async ({ page, request, browser }) => {
+  const { orgId: orgA } = await signUpFresh(page);
+  const { diskId: diskA } = await seedDisk(orgA, { title: `A ${runTag()}`, diskNo: 1, sha256: sha(runTag()) });
 
-  it('returns null for an unknown device, so the poll can 404', async () => {
-    expect(await readDesiredVersion(randomUUID())).toBeNull();
-  });
+  const ctxB = await browser.newContext();
+  const pageB = await ctxB.newPage();
+  const { orgId: orgB } = await signUpFresh(pageB);
+  const { deviceId: deviceB } = await pairDevice(pageB, request);
+  const { diskId: diskB } = await seedDisk(orgB, { title: `B ${runTag()}`, diskNo: 1, sha256: sha(runTag()) });
+
+  // A aims at B's device — 404, not 403: A learns nothing about whether it exists.
+  expect((await page.request.post(`/api/devices/${deviceB}/mount`, { data: { diskId: diskA } })).status()).toBe(404);
+  expect((await page.request.post(`/api/devices/${deviceB}/eject`)).status()).toBe(404);
+
+  // B aims its own device at A's disk — also 404.
+  expect((await pageB.request.post(`/api/devices/${deviceB}/mount`, { data: { diskId: diskA } })).status()).toBe(404);
+
+  // B's own disk on B's own device still works, proving the 404s were the org
+  // check and not a broken route.
+  expect((await pageB.request.post(`/api/devices/${deviceB}/mount`, { data: { diskId: diskB } })).status()).toBe(200);
+  await ctxB.close();
 });
 
-describe('readDesired', () => {
-  it('returns null for an unknown device', async () => {
-    expect(await readDesired(randomUUID())).toBeNull();
-  });
+test('an unknown device id and an unknown disk id are both plain 404s', async ({ page, request }) => {
+  const { orgId } = await signUpFresh(page);
+  const { deviceId } = await pairDevice(page, request);
+  const { diskId } = await seedDisk(orgId, { title: `Px ${runTag()}`, diskNo: 1, sha256: sha(runTag()) });
 
-  it('reports writeProtected from the disk row, not a constant', async () => {
-    await getDb().update(disks).set({ writeProtected: false }).where(eq(disks.id, diskA2));
-    await setDesired(ORG_A, deviceA, diskA2);
-    expect((await readDesired(deviceA))!.desired!.writeProtected).toBe(false);
-    await getDb().update(disks).set({ writeProtected: true }).where(eq(disks.id, diskA2));
-  });
+  expect((await page.request.post(`/api/devices/00000000-0000-4000-8000-000000000000/mount`, { data: { diskId } })).status()).toBe(404);
+  expect((await page.request.post(`/api/devices/${deviceId}/mount`, { data: { diskId: '00000000-0000-4000-8000-000000000000' } })).status()).toBe(404);
 });
 
-describe('recordStatus', () => {
-  it('records what the device says it holds, separately from what was desired', async () => {
-    await setDesired(ORG_A, deviceA, diskA1);
-    await recordStatus(deviceA, { mountedSha256: SHA_2, error: null, psramFree: 6127616, rssi: -58 });
-    const row = (await getDb().select().from(devices).where(eq(devices.id, deviceA)))[0];
-    expect(row.mountedSha256).toBe(SHA_2);
-    expect(row.desiredSha256).toBe(SHA_1);   // unchanged by a status report
-    expect(row.psramFree).toBe(6127616);
-    expect(row.rssi).toBe(-58);
-    expect(row.lastSeenAt).not.toBeNull();
-  });
+test('the write-protect toggle updates the disk and is org-scoped', async ({ page, request, browser }) => {
+  const { orgId } = await signUpFresh(page);
+  const { diskId } = await seedDisk(orgId, { title: `Px ${runTag()}`, diskNo: 1, sha256: sha(runTag()) });
 
-  it('records an error and clears it on the next clean report', async () => {
-    await recordStatus(deviceA, { mountedSha256: null, error: 'fetch failed', psramFree: null, rssi: null });
-    let row = (await getDb().select().from(devices).where(eq(devices.id, deviceA)))[0];
-    expect(row.lastError).toBe('fetch failed');
-    expect(row.lastErrorAt).not.toBeNull();
+  // Defaults to protected — games shipped read-only.
+  let row = (await getDb().select().from(disks).where(eq(disks.id, diskId)))[0];
+  expect(row.writeProtected).toBe(true);
 
-    await recordStatus(deviceA, { mountedSha256: SHA_1, error: null, psramFree: null, rssi: null });
-    row = (await getDb().select().from(devices).where(eq(devices.id, deviceA)))[0];
-    expect(row.lastError).toBeNull();
-  });
+  const res = await page.request.patch(`/api/disks/${diskId}`, { data: { writeProtected: false } });
+  expect(res.status()).toBe(200);
+  expect(await res.json()).toMatchObject({ id: diskId, writeProtected: false });
 
-  it('never changes desired state', async () => {
-    const before = await readDesired(deviceA);
-    await recordStatus(deviceA, { mountedSha256: null, error: 'boom', psramFree: null, rssi: null });
-    const after = await readDesired(deviceA);
-    expect(after!.version).toBe(before!.version);
-    expect(after!.desired).toEqual(before!.desired);
-  });
+  row = (await getDb().select().from(disks).where(eq(disks.id, diskId)))[0];
+  expect(row.writeProtected).toBe(false);
+
+  const ctxB = await browser.newContext();
+  const pageB = await ctxB.newPage();
+  await signUpFresh(pageB);
+  expect((await pageB.request.patch(`/api/disks/${diskId}`, { data: { writeProtected: true } })).status()).toBe(404);
+  await ctxB.close();
+});
+
+test('mount, eject and the write-protect toggle all reject an anonymous caller', async ({ request }) => {
+  const id = '00000000-0000-4000-8000-000000000000';
+  for (const [path, method] of [
+    [`/api/devices/${id}/mount`, 'post'],
+    [`/api/devices/${id}/eject`, 'post'],
+    [`/api/disks/${id}`, 'patch'],
+  ] as const) {
+    const res = await request[method](path, { data: { diskId: id, writeProtected: true }, maxRedirects: 0 });
+    expect(res.status(), `${path} must redirect an anonymous caller`).toBe(307);
+    expect(res.headers()['location'], path).toContain('/sign-in');
+  }
 });
 ```
 
-- [ ] **Step 2: Run the test to verify it fails**
+- [ ] **Step 3: Run the spec to verify it fails**
 
-Run: `pnpm vitest run src/lib/mount.test.ts`
-Expected: FAIL — cannot resolve `./mount`.
+Run: `pnpm e2e e2e/mount-actions.spec.ts`
+Expected: every test FAILS with a 404 from Next — the routes do not exist yet. Confirm the failures are missing routes and not a broken helper.
 
-- [ ] **Step 3: Write the implementation**
+- [ ] **Step 4: Write the mount library**
 
 Create `src/lib/mount.ts`:
 
@@ -532,8 +587,8 @@ export async function setDesired(
   const disk = rows[0];
   if (!disk) return null;
 
-  // The version bump is part of the same UPDATE as the state it describes, so
-  // a poller can never observe a new version with the old disk, or the reverse.
+  // The version bump is in the same UPDATE as the state it describes, so a
+  // poller can never observe a new version beside the old disk, or the reverse.
   const updated = await db.update(devices)
     .set({
       desiredSha256: disk.sha256,
@@ -566,8 +621,8 @@ export async function clearDesired(orgId: string, deviceId: string): Promise<num
 
 /**
  * Just the version. The poll loop calls this once a second for 25 s, so it must
- * stay a single-column read on the primary key -- never the join below.
- * Returns null when the device row is gone.
+ * stay a single-column read on the primary key — never the join below.
+ * Null means the device row is gone.
  */
 export async function readDesiredVersion(deviceId: string): Promise<number | null> {
   const rows = await getDb()
@@ -592,7 +647,7 @@ export async function readDesired(deviceId: string): Promise<DesiredState | null
       title: games.title,
       label: disks.label,
       writeProtected: disks.writeProtected,
-      // Derived, not stored -- games has no disk_count column. Matches how
+      // Derived, not stored — games has no disk_count column. Matches how
       // src/lib/queries.ts:17 counts it for the library grid.
       diskCount: sql<number>`(
         select count(*)::int from disks dc
@@ -651,24 +706,125 @@ export async function recordStatus(
 }
 ```
 
-- [ ] **Step 4: Run the test to verify it passes**
+- [ ] **Step 5: Write the mount route**
 
-Run: `pnpm vitest run src/lib/mount.test.ts`
-Expected: PASS, 15 tests.
+Create `src/app/api/devices/[id]/mount/route.ts`:
 
-- [ ] **Step 5: Prove the cross-org tests bite**
+```ts
+import { z } from 'zod';
+import { requireOrg } from '@/lib/session';
+import { setDesired } from '@/lib/mount';
 
-Drop `eq(disks.orgId, orgId)` from `setDesired`'s disk lookup and run the test.
-Expected: `refuses a disk belonging to another organization` FAILS. Restore, re-run green, record the message.
+export const maxDuration = 60;
 
-Then drop `eq(devices.orgId, orgId)` from `clearDesired` and confirm `refuses a device belonging to another organization` FAILS. Restore.
+const mountBody = z.object({ diskId: z.string().min(1).max(64) });
 
-- [ ] **Step 6: Run the full suite and commit**
+export async function POST(request: Request, ctx: { params: Promise<{ id: string }> }) {
+  const { orgId } = await requireOrg();
+  const { id: deviceId } = await ctx.params;
+
+  let body: unknown;
+  try { body = await request.json(); } catch {
+    return Response.json({ error: 'invalid_json' }, { status: 400 });
+  }
+
+  const parsed = mountBody.safeParse(body);
+  if (!parsed.success) return Response.json({ error: z.flattenError(parsed.error) }, { status: 400 });
+
+  const version = await setDesired(orgId, deviceId, parsed.data.diskId);
+  // null covers unknown device, unknown disk, and either belonging to another
+  // organization — deliberately indistinguishable.
+  if (version === null) return Response.json({ error: 'not_found' }, { status: 404 });
+
+  return Response.json({ version });
+}
+```
+
+- [ ] **Step 6: Write the eject route**
+
+Create `src/app/api/devices/[id]/eject/route.ts`:
+
+```ts
+import { requireOrg } from '@/lib/session';
+import { clearDesired } from '@/lib/mount';
+
+export const maxDuration = 60;
+
+export async function POST(_request: Request, ctx: { params: Promise<{ id: string }> }) {
+  const { orgId } = await requireOrg();
+  const { id: deviceId } = await ctx.params;
+
+  const version = await clearDesired(orgId, deviceId);
+  if (version === null) return Response.json({ error: 'not_found' }, { status: 404 });
+
+  return Response.json({ version });
+}
+```
+
+- [ ] **Step 7: Write the write-protect toggle**
+
+Create `src/app/api/disks/[id]/route.ts`:
+
+```ts
+import { z } from 'zod';
+import { and, eq } from 'drizzle-orm';
+import { getDb } from '@/db';
+import { disks } from '@/db/schema/catalog';
+import { requireOrg } from '@/lib/session';
+
+export const maxDuration = 60;
+
+const patchBody = z.object({ writeProtected: z.boolean() });
+
+export async function PATCH(request: Request, ctx: { params: Promise<{ id: string }> }) {
+  const { orgId } = await requireOrg();
+  const { id } = await ctx.params;
+
+  let body: unknown;
+  try { body = await request.json(); } catch {
+    return Response.json({ error: 'invalid_json' }, { status: 400 });
+  }
+
+  const parsed = patchBody.safeParse(body);
+  if (!parsed.success) return Response.json({ error: z.flattenError(parsed.error) }, { status: 400 });
+
+  // Org-scoped in the statement, not in a WHERE a later edit could drop.
+  const updated = await getDb().update(disks)
+    .set({ writeProtected: parsed.data.writeProtected })
+    .where(and(eq(disks.id, id), eq(disks.orgId, orgId)))
+    .returning({ id: disks.id, writeProtected: disks.writeProtected });
+
+  if (updated.length === 0) return Response.json({ error: 'not_found' }, { status: 404 });
+  return Response.json(updated[0]);
+}
+```
+
+- [ ] **Step 8: Run the spec to verify it passes**
+
+Run: `pnpm e2e e2e/mount-actions.spec.ts`
+Expected: PASS, 7 tests.
+
+- [ ] **Step 9: Confirm the proxy matcher still excludes these routes**
+
+Read `src/proxy.ts`. Its matcher is `['/library/:path*', '/ingest/:path*', '/devices/:path*']`. None begins with `/api`, so nothing added here is covered. **Do not change the matcher.** Confirm by reading and say so in your report — the anonymous-caller test in Step 2 passes either way, because `requireOrg()` redirects too, so the test cannot catch a matcher mistake for you.
+
+- [ ] **Step 10: Prove the org-scoping tests bite**
+
+Apply each, run `pnpm e2e e2e/mount-actions.spec.ts`, record the failing test, revert:
+
+1. Drop `eq(disks.orgId, orgId)` from `setDesired`'s disk lookup.
+   Expected: `one organization cannot mount to, or eject, another organization's device` FAILS on the "B aims at A's disk" assertion.
+2. Drop `eq(devices.orgId, orgId)` from `clearDesired`.
+   Expected: the same test FAILS on the eject assertion.
+3. Drop `eq(disks.orgId, orgId)` from the PATCH route.
+   Expected: `the write-protect toggle updates the disk and is org-scoped` FAILS.
+
+- [ ] **Step 11: Commit**
 
 ```bash
-pnpm vitest run
-git add src/lib/mount.ts src/lib/mount.test.ts
-git commit -m "Add desired-state mount library, org-scoped in the statement"
+pnpm vitest run && pnpm e2e e2e/mount-actions.spec.ts
+git add src/lib/mount.ts src/app/api/devices/ src/app/api/disks/ e2e/device-helpers.ts e2e/mount-actions.spec.ts
+git commit -m "Add desired-state mount library and the human-facing mount, eject and write-protect actions"
 ```
 
 ---
@@ -677,16 +833,128 @@ git commit -m "Add desired-state mount library, org-scoped in the statement"
 
 **Files:**
 - Create: `src/app/api/device/poll/route.ts`
+- Create: `e2e/device-poll.spec.ts`
 
 **Interfaces:**
-- Consumes: `requireDevice`, `deviceAuthResponse` (Task 1); `readDesired` (Task 3).
-- Produces: the endpoint. Response shapes are in spec §4 and repeated below.
+- Consumes: `requireDevice`, `deviceAuthResponse` (Task 1); `readDesired`, `readDesiredVersion` (Task 3); `pairDevice`, `seedDisk`, `authHeader` (Task 3).
+- Produces: the endpoint.
 
-**Long-poll shape.** Return immediately when `desiredVersion > since`. Otherwise poll the database every 1 s for up to 25 s, then `204`. `maxDuration = 60` covers the hold plus slack.
+**The constraint that binds this route hardest.** A failure must never look like an eject. `{"desired": null}` means ejected and may only be produced from a row that was actually read. Every error path returns a non-2xx — never a 200 with a null body. Spec §1 rule 1.
 
-**Global constraint that binds this route hardest:** a failure must never look like an eject. `{"desired": null}` means ejected and is only ever produced from a row that was actually read. Any error path returns a non-2xx, never a 200 with a null body.
+- [ ] **Step 1: Write the failing spec**
 
-- [ ] **Step 1: Write the implementation**
+Create `e2e/device-poll.spec.ts`:
+
+```ts
+import { test, expect } from '@playwright/test';
+import { createHash, randomUUID } from 'node:crypto';
+import { eq } from 'drizzle-orm';
+import { getDb } from '@/db';
+import { devices } from '@/db/schema/devices';
+import { signUpFresh, runTag } from './helpers';
+import { pairDevice, seedDisk, authHeader } from './device-helpers';
+
+const sha = (s: string) => createHash('sha256').update(s).digest('hex');
+
+test('a device polling from version 0 is told what to mount', async ({ page, request }) => {
+  const { orgId } = await signUpFresh(page);
+  const { deviceId, token } = await pairDevice(page, request);
+  const digest = sha(runTag());
+  const { diskId } = await seedDisk(orgId, { title: `Px ${runTag()}`, diskNo: 1, sha256: digest });
+  await page.request.post(`/api/devices/${deviceId}/mount`, { data: { diskId } });
+
+  const res = await request.get('/api/device/poll?since=0', { headers: authHeader(token) });
+  expect(res.status()).toBe(200);
+  const body = await res.json();
+  expect(body.desired).toMatchObject({ sha256: digest, diskNo: 1, writeProtected: true });
+  expect(body.version).toBeGreaterThan(0);
+});
+
+test('polling at the current version holds and then returns 204, so a device is never told the same thing twice', async ({ page, request }) => {
+  test.setTimeout(60_000);
+  const { orgId } = await signUpFresh(page);
+  const { deviceId, token } = await pairDevice(page, request);
+  const { diskId } = await seedDisk(orgId, { title: `Px ${runTag()}`, diskNo: 1, sha256: sha(runTag()) });
+  await page.request.post(`/api/devices/${deviceId}/mount`, { data: { diskId } });
+
+  const first = await (await request.get('/api/device/poll?since=0', { headers: authHeader(token) })).json();
+  const res = await request.get(`/api/device/poll?since=${first.version}`, {
+    headers: authHeader(token), timeout: 45_000,
+  });
+  expect(res.status()).toBe(204);
+});
+
+test('an eject is delivered as an explicit null desired', async ({ page, request }) => {
+  const { orgId } = await signUpFresh(page);
+  const { deviceId, token } = await pairDevice(page, request);
+  const { diskId } = await seedDisk(orgId, { title: `Px ${runTag()}`, diskNo: 1, sha256: sha(runTag()) });
+  await page.request.post(`/api/devices/${deviceId}/mount`, { data: { diskId } });
+  const mounted = await (await request.get('/api/device/poll?since=0', { headers: authHeader(token) })).json();
+
+  await page.request.post(`/api/devices/${deviceId}/eject`);
+  const res = await request.get(`/api/device/poll?since=${mounted.version}`, { headers: authHeader(token) });
+  expect(res.status()).toBe(200);
+  const body = await res.json();
+  expect(body.desired).toBeNull();
+  expect(body.version).toBeGreaterThan(mounted.version);
+});
+
+test('a garbled since is treated as never having polled, not as up to date', async ({ page, request }) => {
+  // Reading a bad `since` as "current" would strand the device on stale state
+  // forever, which is the same class of bug as an accidental eject.
+  const { orgId } = await signUpFresh(page);
+  const { deviceId, token } = await pairDevice(page, request);
+  const { diskId } = await seedDisk(orgId, { title: `Px ${runTag()}`, diskNo: 1, sha256: sha(runTag()) });
+  await page.request.post(`/api/devices/${deviceId}/mount`, { data: { diskId } });
+
+  for (const bad of ['abc', '-5', '']) {
+    const res = await request.get(`/api/device/poll?since=${bad}`, { headers: authHeader(token) });
+    expect(res.status(), `since=${JSON.stringify(bad)}`).toBe(200);
+    expect((await res.json()).desired).not.toBeNull();
+  }
+});
+
+test('a poll whose device has vanished is a 404, never a 200 that reads as an eject', async ({ page, request }) => {
+  // THE property of spec §1 rule 1. A device told {"desired": null} ejects a
+  // disk nobody asked it to eject.
+  const { orgId } = await signUpFresh(page);
+  const { deviceId, token } = await pairDevice(page, request);
+  const { diskId } = await seedDisk(orgId, { title: `Px ${runTag()}`, diskNo: 1, sha256: sha(runTag()) });
+  await page.request.post(`/api/devices/${deviceId}/mount`, { data: { diskId } });
+  const state = await (await request.get('/api/device/poll?since=0', { headers: authHeader(token) })).json();
+
+  // Hold a poll, then delete the row underneath it.
+  const pending = request.get(`/api/device/poll?since=${state.version}`, {
+    headers: authHeader(token), timeout: 45_000,
+  });
+  await new Promise((r) => setTimeout(r, 2_000));
+  await getDb().delete(devices).where(eq(devices.id, deviceId));
+
+  const res = await pending;
+  expect(res.status(), 'a vanished device must 404, never 200').toBe(404);
+});
+
+test('the poll rejects every flavour of bad credential with a bare 401', async ({ request }) => {
+  const cases: Array<[string, Record<string, string>]> = [
+    ['no header', {}],
+    ['malformed header', { Authorization: 'Basic abc' }],
+    ['unknown token', authHeader(`wadf_${randomUUID()}`)],
+  ];
+  for (const [label, headers] of cases) {
+    const res = await request.get('/api/device/poll?since=0', { headers });
+    expect(res.status(), label).toBe(401);
+    const body = await res.text();
+    expect(body, label).not.toMatch(/token|hash|bearer|device/i);
+  }
+});
+```
+
+- [ ] **Step 2: Run the spec to verify it fails**
+
+Run: `pnpm e2e e2e/device-poll.spec.ts`
+Expected: all six FAIL — the route does not exist.
+
+- [ ] **Step 3: Write the route**
 
 Create `src/app/api/device/poll/route.ts`:
 
@@ -713,18 +981,18 @@ export async function GET(request: Request) {
 
   const sinceRaw = new URL(request.url).searchParams.get('since');
   const since = Number.parseInt(sinceRaw ?? '0', 10);
-  // A garbled `since` must not be read as "up to date" -- that would strand the
+  // A garbled `since` must not read as "up to date" — that would strand the
   // device on stale state forever. Treat it as never having polled.
   const from = Number.isFinite(since) && since >= 0 ? since : 0;
 
   const deadline = Date.now() + HOLD_MS;
   for (;;) {
-    // Cheap single-column read per tick. The three-table join runs once, only
-    // when the version has actually moved -- 25 joins per hold would be waste.
+    // Cheap single-column read per tick. The three-table join runs only when
+    // the version has actually moved — 25 joins per hold would be waste.
     const version = await readDesiredVersion(device.deviceId);
 
-    // The device authenticated against this row, so it existed a moment ago. If
-    // it has been deleted mid-poll, that is a 404 -- NEVER a 200 the device
+    // The device authenticated against this row, so it existed a moment ago.
+    // If it has been deleted mid-poll that is a 404 — NEVER a 200 the device
     // could read as an eject instruction. Spec §1 rule 1.
     if (version === null) return Response.json({ error: 'device_not_found' }, { status: 404 });
 
@@ -740,14 +1008,28 @@ export async function GET(request: Request) {
 }
 ```
 
-- [ ] **Step 2: Commit**
+- [ ] **Step 4: Run the spec to verify it passes**
 
-The endpoint's behaviour is proven end to end in Task 8, which is where its tests live — a route handler cannot be meaningfully unit-tested in Vitest here (the constraint on async Server Components applies to routes needing a live request too).
+Run: `pnpm e2e e2e/device-poll.spec.ts`
+Expected: PASS, 6 tests. The 204 test takes ~25 s by design.
+
+- [ ] **Step 5: Prove three of them bite**
+
+Apply each, run the spec, record the failing test, revert:
+
+1. Change `version > from` to `version >= from`.
+   Expected: the 204 test FAILS — the device would be told the same thing forever.
+2. Replace the `version === null` branch with `return Response.json({ version: 0, desired: null })`.
+   Expected: `a poll whose device has vanished is a 404` FAILS. **This mutation is the exact bug the whole design exists to prevent.** If that test stays green here, it is not testing what it claims — fix it before continuing.
+3. Change the `from` fallback to `const from = Number.isFinite(since) ? since : Number.MAX_SAFE_INTEGER;`.
+   Expected: `a garbled since is treated as never having polled` FAILS.
+
+- [ ] **Step 6: Commit**
 
 ```bash
-pnpm vitest run
-git add src/app/api/device/poll/route.ts
-git commit -m "Add GET /api/device/poll: long-poll desired state by version"
+pnpm vitest run && pnpm e2e e2e/device-poll.spec.ts
+git add src/app/api/device/poll/ e2e/device-poll.spec.ts
+git commit -m "Add GET /api/device/poll: long-poll desired state, never eject on failure"
 ```
 
 ---
@@ -756,16 +1038,49 @@ git commit -m "Add GET /api/device/poll: long-poll desired state by version"
 
 **Files:**
 - Create: `src/app/api/device/image/[sha256]/route.ts`
+- Create: `e2e/device-image.spec.ts`
 
 **Interfaces:**
-- Consumes: `requireDevice`, `deviceAuthResponse`; `diskStore.read` from `@/lib/storage`; `encodeDisk` from `@/lib/adfmfm`; `entitlements` from `@/db/schema/catalog`.
+- Consumes: `requireDevice`, `deviceAuthResponse`; `diskStore` from `@/lib/storage`; `encodeDisk`, `WFMF_BYTES` from `@/lib/adfmfm`; `entitlements` from `@/db/schema/catalog`.
 - Produces: the endpoint.
 
 **Read spec §6 before writing this.** The entitlement check is the boundary that keeps digest-knowledge from becoming digest-access. It checks that the *device's organization* holds an entitlement for the sha256 — not that the sha256 exists.
 
-**No cache.** `encodeDisk` measures 9.6 ms. Encode on demand; do not add caching, and do not store the result.
+**No cache.** `encodeDisk` measures 9.6 ms. Encode on demand; do not add caching and do not store the result.
 
-- [ ] **Step 1: Write the implementation**
+- [ ] **Step 1: Write the failing spec**
+
+Create `e2e/device-image.spec.ts`. It needs a real ADF in Blob storage, so it drives the genuine ingest flow — copy the `uploadDisk` helper out of `e2e/ingest-api.spec.ts` rather than reinventing it, and read a real image from `adf-archive/` (gitignored, present locally):
+
+```ts
+import { test, expect } from '@playwright/test';
+import { createHash, randomUUID } from 'node:crypto';
+import { readFileSync, readdirSync } from 'node:fs';
+import { signUpFresh } from './helpers';
+import { pairDevice, authHeader } from './device-helpers';
+
+function anyRealAdf(): Buffer {
+  const dir = 'adf-archive';
+  const name = readdirSync(dir).find((f) => f.toLowerCase().endsWith('.adf'));
+  if (!name) throw new Error('no ADF in adf-archive/ — this spec needs one');
+  return readFileSync(`${dir}/${name}`);
+}
+```
+
+Mandatory behaviours. Write the bodies:
+
+1. **A device fetches a disk its org owns.** Sign up, pair, ingest a real ADF through `/api/ingest/presign` + upload + `/api/ingest/complete`, then GET `/api/device/image/<sha256>` with the device's token. Assert **200**, `content-type: application/octet-stream`, a body of exactly **2,027,536** bytes, and that the first four bytes are `0x57 0x46 0x4d 0x46` (`'WFMF'` little-endian).
+2. **A digest the org does not hold is a 404, not a 403 and not a 500.** Use a syntactically valid sha256 no entitlement covers.
+3. **Cross-tenant.** Org A ingests a disk; org B's device requests that exact sha256 and gets **404**. This is the assertion that keeps the ingest oracle from becoming a download.
+4. **A malformed digest is a 400.** `not-a-digest`, a 63-character hex string, and an uppercase 64-character hex string.
+5. **Bad credentials are a 401** for all three flavours in Task 4's Step 1 list.
+
+- [ ] **Step 2: Run the spec to verify it fails**
+
+Run: `pnpm e2e e2e/device-image.spec.ts`
+Expected: all FAIL — the route does not exist. Confirm behaviour 1 fails on the missing route and not on a broken ingest helper.
+
+- [ ] **Step 3: Write the route**
 
 Create `src/app/api/device/image/[sha256]/route.ts`:
 
@@ -801,7 +1116,7 @@ export async function GET(
   }
 
   // THE boundary. /api/ingest/check is a deliberate global existence oracle
-  // (D13), so a digest is not a secret -- TOSEC publishes thousands of them.
+  // (D13), so a digest is not a secret — TOSEC publishes thousands of them.
   // Serving bytes on digest knowledge alone would turn that accepted risk into
   // a live one. The device's own org must hold the entitlement.
   const owned = await getDb()
@@ -827,7 +1142,7 @@ export async function GET(
     wfmf = encodeDisk(adf);
   } catch (e) {
     // A stored blob that will not encode is our bug or a corrupt object, not
-    // the device's fault. 500, and the message names the digest for triage.
+    // the device's fault. 500, naming the digest for triage.
     return Response.json(
       { error: 'encode_failed', sha256, detail: (e as Error).message },
       { status: 500 },
@@ -845,11 +1160,21 @@ export async function GET(
 }
 ```
 
-- [ ] **Step 2: Commit**
+- [ ] **Step 4: Run the spec to verify it passes**
+
+Run: `pnpm e2e e2e/device-image.spec.ts`
+Expected: PASS, 5 tests.
+
+- [ ] **Step 5: Prove the entitlement check bites**
+
+Delete `eq(entitlements.orgId, device.orgId)` from the query so any entitlement matches. Run the spec.
+Expected: behaviours 2 and 3 FAIL. **Behaviour 3 is the one that matters** — it is the difference between a private library and a shared one. Record the failure, restore, re-run green.
+
+- [ ] **Step 6: Commit**
 
 ```bash
-pnpm vitest run
-git add src/app/api/device/image/
+pnpm vitest run && pnpm e2e e2e/device-image.spec.ts
+git add src/app/api/device/image/ e2e/device-image.spec.ts
 git commit -m "Add GET /api/device/image: entitlement-checked WFMF, encoded on demand"
 ```
 
@@ -859,12 +1184,29 @@ git commit -m "Add GET /api/device/image: entitlement-checked WFMF, encoded on d
 
 **Files:**
 - Create: `src/app/api/device/status/route.ts`
+- Create: `e2e/device-status.spec.ts`
 
 **Interfaces:**
 - Consumes: `requireDevice`, `deviceAuthResponse`; `recordStatus` (Task 3).
 - Produces: the endpoint.
 
-- [ ] **Step 1: Write the implementation**
+- [ ] **Step 1: Write the failing spec**
+
+Create `e2e/device-status.spec.ts`. Mandatory behaviours — write the bodies:
+
+1. **A report is recorded.** Pair a device, POST `{ mountedSha256: <digest>, psramFree: 6127616, rssi: -58 }`, expect **204**, and assert the `devices` row now has that `mountedSha256`, `psramFree`, `rssi`, and a fresh `lastSeenAt`.
+2. **A report never changes desired state.** Mount disk 1, then report holding a *different* digest. Assert `desiredSha256` is unchanged and `desiredVersion` has not moved. A report is an observation, not an instruction.
+3. **`mountedSha256: null` is a valid report** meaning "I hold nothing", accepted with 204 — and it still does not touch desired state.
+4. **An error is recorded and then cleared.** Report `error: 'fetch failed'`, assert `lastError` and `lastErrorAt` are set; report again with `error: null`, assert `lastError` is null.
+5. **A malformed body is a 400** — a non-hex `mountedSha256`, an `rssi` of `50` (out of the -120..0 range), and invalid JSON.
+6. **Bad credentials are a 401** for all three flavours.
+
+- [ ] **Step 2: Run the spec to verify it fails**
+
+Run: `pnpm e2e e2e/device-status.spec.ts`
+Expected: all FAIL — the route does not exist.
+
+- [ ] **Step 3: Write the route**
 
 Create `src/app/api/device/status/route.ts`:
 
@@ -878,7 +1220,7 @@ export const maxDuration = 60;
 const SHA256_RE = /^[0-9a-f]{64}$/;
 
 const statusBody = z.object({
-  // null means "I am holding no disk" -- an honest report, not an instruction.
+  // null means "I am holding no disk" — an honest report, not an instruction.
   mountedSha256: z.string().regex(SHA256_RE).nullable(),
   error: z.string().max(500).nullable().optional().default(null),
   psramFree: z.number().int().nonnegative().nullable().optional().default(null),
@@ -922,135 +1264,29 @@ export async function POST(request: Request) {
 }
 ```
 
-- [ ] **Step 2: Commit**
+- [ ] **Step 4: Run the spec to verify it passes**
+
+Run: `pnpm e2e e2e/device-status.spec.ts`
+Expected: PASS, 6 tests.
+
+- [ ] **Step 5: Prove behaviour 2 bites**
+
+In `recordStatus`, add `desiredSha256: s.mountedSha256` to the `.set({...})` so a report overwrites desired state. Run the spec.
+Expected: `a report never changes desired state` FAILS. Restore, re-run green, record the message.
+
+- [ ] **Step 6: Commit**
 
 ```bash
-pnpm vitest run
-git add src/app/api/device/status/
+pnpm vitest run && pnpm e2e e2e/device-status.spec.ts
+git add src/app/api/device/status/ e2e/device-status.spec.ts
 git commit -m "Add POST /api/device/status: report actual state, never desired"
 ```
 
 ---
 
-### Task 7: Human-facing mount, eject, and the write-protect toggle
+### Task 7: The reference client — the whole flow, end to end
 
-**Files:**
-- Create: `src/app/api/devices/[id]/mount/route.ts`
-- Create: `src/app/api/devices/[id]/eject/route.ts`
-- Create: `src/app/api/disks/[id]/route.ts`
-
-**Interfaces:**
-- Consumes: `requireOrg` from `@/lib/session`; `setDesired`, `clearDesired` (Task 3).
-- Produces: the three endpoints.
-
-All three are session-authenticated, org-scoped, and return `404` — never `403` — when the target is outside the caller's organization, so an id from another tenant is indistinguishable from one that does not exist.
-
-- [ ] **Step 1: Write the mount route**
-
-Create `src/app/api/devices/[id]/mount/route.ts`:
-
-```ts
-import { z } from 'zod';
-import { requireOrg } from '@/lib/session';
-import { setDesired } from '@/lib/mount';
-
-export const maxDuration = 60;
-
-const mountBody = z.object({ diskId: z.string().min(1).max(64) });
-
-export async function POST(request: Request, ctx: { params: Promise<{ id: string }> }) {
-  const { orgId } = await requireOrg();
-  const { id: deviceId } = await ctx.params;
-
-  let body: unknown;
-  try { body = await request.json(); } catch { return Response.json({ error: 'invalid_json' }, { status: 400 }); }
-
-  const parsed = mountBody.safeParse(body);
-  if (!parsed.success) return Response.json({ error: z.flattenError(parsed.error) }, { status: 400 });
-
-  const version = await setDesired(orgId, deviceId, parsed.data.diskId);
-  // null covers unknown device, unknown disk, and either belonging to another
-  // organization -- deliberately indistinguishable.
-  if (version === null) return Response.json({ error: 'not_found' }, { status: 404 });
-
-  return Response.json({ version });
-}
-```
-
-- [ ] **Step 2: Write the eject route**
-
-Create `src/app/api/devices/[id]/eject/route.ts`:
-
-```ts
-import { requireOrg } from '@/lib/session';
-import { clearDesired } from '@/lib/mount';
-
-export const maxDuration = 60;
-
-export async function POST(_request: Request, ctx: { params: Promise<{ id: string }> }) {
-  const { orgId } = await requireOrg();
-  const { id: deviceId } = await ctx.params;
-
-  const version = await clearDesired(orgId, deviceId);
-  if (version === null) return Response.json({ error: 'not_found' }, { status: 404 });
-
-  return Response.json({ version });
-}
-```
-
-- [ ] **Step 3: Write the write-protect toggle**
-
-Create `src/app/api/disks/[id]/route.ts`:
-
-```ts
-import { z } from 'zod';
-import { and, eq } from 'drizzle-orm';
-import { getDb } from '@/db';
-import { disks } from '@/db/schema/catalog';
-import { requireOrg } from '@/lib/session';
-
-export const maxDuration = 60;
-
-const patchBody = z.object({ writeProtected: z.boolean() });
-
-export async function PATCH(request: Request, ctx: { params: Promise<{ id: string }> }) {
-  const { orgId } = await requireOrg();
-  const { id } = await ctx.params;
-
-  let body: unknown;
-  try { body = await request.json(); } catch { return Response.json({ error: 'invalid_json' }, { status: 400 }); }
-
-  const parsed = patchBody.safeParse(body);
-  if (!parsed.success) return Response.json({ error: z.flattenError(parsed.error) }, { status: 400 });
-
-  // Org-scoped in the statement, not in a WHERE a later edit could drop.
-  const updated = await getDb().update(disks)
-    .set({ writeProtected: parsed.data.writeProtected })
-    .where(and(eq(disks.id, id), eq(disks.orgId, orgId)))
-    .returning({ id: disks.id, writeProtected: disks.writeProtected });
-
-  if (updated.length === 0) return Response.json({ error: 'not_found' }, { status: 404 });
-  return Response.json(updated[0]);
-}
-```
-
-- [ ] **Step 4: Confirm the proxy matcher still excludes the device plane**
-
-Read `src/proxy.ts`. Its matcher is `['/library/:path*', '/ingest/:path*', '/devices/:path*']`. None of these begin with `/api`, so no route added in this plan is covered. **Do not change the matcher.** Confirm by reading, and say so in your report.
-
-- [ ] **Step 5: Commit**
-
-```bash
-pnpm vitest run
-git add src/app/api/devices/ src/app/api/disks/
-git commit -m "Add human-facing mount, eject and write-protect endpoints"
-```
-
----
-
-### Task 8: The reference client — prove the whole flow
-
-The task that makes this plan mean something. A Playwright spec that pairs a device, drives it through mount, fetch, report, and eject, and asserts every state.
+The task that makes the plan mean something: one spec that drives a device through a complete lifecycle, proving the pieces compose.
 
 **Files:**
 - Create: `e2e/device-protocol.spec.ts`
@@ -1059,43 +1295,28 @@ The task that makes this plan mean something. A Playwright spec that pairs a dev
 - Consumes: everything.
 - Produces: the end-to-end proof.
 
-**These behaviours are mandatory.** Write the bodies yourself — they are integration tests against a live database and dev server, and the seeding they need does not exist yet.
-
-1. **A full mount cycle.** Sign up, pair a device, ingest a real ADF, mount disk 1 to the device. Poll with `since=0` and get a 200 whose `desired.sha256` matches, with `writeProtected: true`. Fetch `/api/device/image/<sha256>` and assert the body is exactly 2,027,536 bytes and starts with the four bytes `57 46 4d 46` (`'WFMF'` little-endian). POST status reporting that sha256. Poll again with the version just seen and get a **204**, proving the device is not told to do the same thing twice.
-2. **Eject.** POST `/api/devices/<id>/eject`, poll, and get a 200 whose `desired` is exactly `null` with a higher version.
-3. **A disk swap bumps the version and delivers the new disk.** Mount disk 1, poll, mount disk 2, poll with the first version, and get disk 2.
-4. **Re-mounting the same disk still delivers.** Mount disk 1, poll, mount disk 1 again, poll with the version just seen, and get a 200 — not a 204. A failed mount must be retryable.
-5. **The image endpoint refuses a digest the org does not hold.** Fetch a syntactically valid sha256 that no entitlement covers and assert **404** (not 403, not 500).
-6. **Cross-tenant isolation.** Two organizations, each with a device. Org A cannot mount org B's disk (404), cannot eject org B's device (404), and A's device polling never sees B's state.
-7. **An unauthenticated or wrongly-authenticated device gets 401** from all three device endpoints — no bearer header, a malformed header, and a well-formed but unknown token. Assert the body carries no detail about why.
-8. **The write-protect toggle reaches the poll payload.** PATCH a disk to `writeProtected: false`, mount it, poll, and assert the payload says `false`.
-9. **A status report never changes desired state.** Mount disk 1, report holding disk 2, then poll from version 0 and confirm the desired disk is still disk 1.
-10. **A failure never looks like an eject — spec §1 rule 1, the plan's most important property.** Mount disk 1 so a disk *is* desired. Start a poll with `since` set to the current version so it holds, and **without awaiting it**, delete the device row. Await the poll. It must be a **404** — never a 200 whose `desired` is `null`, which the device would act on by ejecting a disk nobody asked it to eject. Then assert the same for the auth failures in behaviour 7: none of the three returns a 200 body at all. The whole design rests on the device only ever ejecting when explicitly told to, so this is the behaviour to get right even if others are cut.
-
 - [ ] **Step 1: Write the spec**
 
-Follow `e2e/pairing.spec.ts` for pairing and `e2e/ingest-api.spec.ts` for driving the API with `request` fixtures and for ingesting a real ADF. Use `signUpFresh` from `e2e/helpers.ts`.
+Mandatory behaviours. Write the bodies; they are integration tests and their seeding differs from the per-task specs.
 
-- [ ] **Step 2: Run it and watch every test fail for the right reason first**
+1. **A full mount cycle.** Sign up, pair, ingest a real ADF, mount it. Poll `since=0` → 200 with the right digest. GET the image → 2,027,536 bytes starting `57 46 4d 46`. POST status reporting that digest. Poll at the version just seen → **204**. Assert the `devices` row shows `mountedSha256` equal to `desiredSha256` — converged.
+2. **Eject completes the cycle.** POST eject, poll → `desired: null` at a higher version. POST status with `mountedSha256: null`. Assert both desired and mounted are null.
+3. **A swap delivers the second disk.** Ingest two disks of one game. Mount 1, poll, mount 2, poll at the first version → disk 2 with `diskNo: 2` and `diskCount: 2`. **Assert `diskCount` is 2, not 1** — it is a derived subquery and the easiest thing in this plan to get silently wrong.
+4. **Write protection reaches the device.** PATCH a disk to `writeProtected: false`, mount it, poll, assert the payload says `false`. Then PATCH back to `true`, mount again, poll, assert `true`.
+5. **Cross-tenant isolation across the whole flow.** Two orgs, each with a device and a disk. A's device polling never sees B's state, and A's device cannot fetch B's image.
+
+- [ ] **Step 2: Run it, and watch each test fail for the right reason first**
 
 Run: `pnpm e2e e2e/device-protocol.spec.ts`
 
-Before making them pass, confirm each failure message names the thing the test is about. A test that fails because of a typo in the seeding is not yet testing anything.
+Before making them pass, confirm each failure names the thing the test is about. A test failing on a typo in its seeding is not yet testing anything.
 
-- [ ] **Step 3: Make them pass, then prove three of them bite**
+- [ ] **Step 3: Make them pass, then prove two of them bite**
 
-Apply each mutation, run the spec, record which test fails, and revert:
-
-1. In `src/app/api/device/image/[sha256]/route.ts`, delete the `eq(entitlements.orgId, device.orgId)` term so any entitlement matches.
-   Expected: behaviour 5 and the image half of behaviour 6 FAIL.
-2. In `src/lib/mount.ts`, change `desiredVersion: sql\`${devices.desiredVersion} + 1\`` to leave the version unchanged.
-   Expected: behaviours 3 and 4 FAIL.
-3. In `src/app/api/device/poll/route.ts`, change `version > from` to `>=`.
-   Expected: the 204 assertion in behaviour 1 FAILS — the device would be told the same thing forever.
-4. In `src/app/api/device/poll/route.ts`, change the `version === null` branch to `return Response.json({ version: 0, desired: null })`.
-   Expected: behaviour 10 FAILS. This mutation is the exact bug the whole design exists to prevent — a device that cannot be found being told, in a well-formed 200, that it holds nothing. If behaviour 10 stays green here, it is not testing what it claims and must be fixed before the task is complete.
-
-If any mutation leaves the suite green, that behaviour is not tested. Report it and fix the test.
+1. In `readDesired`, change the `diskCount` subquery to the literal `sql<number>\`1\``.
+   Expected: behaviour 3 FAILS on the `diskCount: 2` assertion.
+2. In `readDesired`, change `writeProtected: r.writeProtected ?? true` to `writeProtected: true`.
+   Expected: behaviour 4 FAILS on the `false` assertion.
 
 - [ ] **Step 4: Run everything and commit**
 
@@ -1107,29 +1328,29 @@ git commit -m "Prove the device protocol end to end with a reference client"
 
 ---
 
-### Task 9: Update the handoff and the spec's open questions
+### Task 8: Close the open questions this plan answered
 
 **Files:**
-- Modify: `HANDOFF.md`
 - Modify: `INTEGRATION.md`
 - Modify: `docs/superpowers/specs/2026-08-23-webadf-design.md`
+- Modify: `HANDOFF.md`
 
-- [ ] **Step 1: Close the open questions this plan answered**
+- [ ] **Step 1: Mark INTEGRATION.md's open questions**
 
-In `INTEGRATION.md`, open questions 1 and 3 are now answered — the mount pointer exists (`GET /api/device/poll` returns the identity; the device fetches `GET /api/device/image/<sha256>`), and caching is decided (none needed; `encodeDisk` is 9.6 ms). Mark each answered inline with a pointer to `docs/superpowers/specs/2026-08-29-device-plane-disk-change-design.md`. Leave questions 2 (write-back) and 4 open — question 4, `requireDevice`, is answered, so mark it answered too, pointing at `src/lib/device-auth.ts`'s `deviceAuthResponse`.
+Questions 1 (which disk is mounted) and 3 (caching encoded images) are answered — the mount pointer is `GET /api/device/poll` returning the identity, with the device fetching `GET /api/device/image/<sha256>`; caching is decided against because `encodeDisk` is 9.6 ms. Question 4's `requireDevice` divergence is settled in `src/lib/device-auth.ts`. Mark each answered inline, pointing at `docs/superpowers/specs/2026-08-29-device-plane-disk-change-design.md`. Leave question 2 (write-back) open.
 
 - [ ] **Step 2: Update the parent spec's §7**
 
-The device protocol section still describes `mount_jobs` semantics and a presigned URL in the poll body. Replace its `GET /api/device/poll` example with the desired-state shape from the new spec's §4, and add a line to the decisions table cross-referencing the new spec, matching how D15 already points at the encoder spec.
+Its `GET /api/device/poll` example still shows a presigned URL for a raw ADF and `mount_jobs` semantics. Replace the example with the desired-state shape from the new spec's §4, and add a row to the decisions table cross-referencing the new spec, matching how D15 already points at the encoder spec.
 
-- [ ] **Step 3: Rewrite the handoff's status**
+- [ ] **Step 3: Rewrite HANDOFF.md's status**
 
-Update `HANDOFF.md`: plan 2's tasks 6–8 are superseded by this plan rather than pending; `mount_jobs` no longer exists; the MFM encoder is done; plan 3a is done and 3b (UI) is next. Remove the "MFM encoder — not started" row and the stale open questions.
+Plan 2's tasks 6–8 are superseded by this plan rather than pending; `mount_jobs` no longer exists; the MFM encoder is done; plan 3a is done and 3b (UI) is next. Remove the "MFM encoder — not started" row and the stale open questions, and add the two firmware defects from the encoder spec's §7 plus the third recorded there.
 
 - [ ] **Step 4: Commit**
 
 ```bash
-git add HANDOFF.md INTEGRATION.md docs/superpowers/specs/2026-08-23-webadf-design.md
+git add INTEGRATION.md docs/superpowers/specs/2026-08-23-webadf-design.md HANDOFF.md
 git commit -m "Close the open questions plan 3a answered"
 ```
 
@@ -1137,8 +1358,8 @@ git commit -m "Close the open questions plan 3a answered"
 
 ## Done when
 
-- `pnpm vitest run` green — 215 currently, plus roughly 21 new from Tasks 1–3.
-- `pnpm e2e` green — 27 currently, plus 10 new behaviours from Task 8.
+- `pnpm vitest run` green — 215 currently, plus 3 from Task 1 and 5 from Task 2.
+- `pnpm e2e` green — 27 currently, plus 7 (Task 3), 6 (Task 4), 5 (Task 5), 6 (Task 6) and 5 (Task 7).
 - `pnpm build` clean.
-- Every mutation in Task 8 Step 3 was observed to fail a named test.
+- Every mutation named in Tasks 3, 4, 5, 6 and 7 was observed to fail a named test.
 - A reference client can mount, fetch, report and eject with no hardware involved.
