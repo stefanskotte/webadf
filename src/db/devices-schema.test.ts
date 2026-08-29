@@ -49,4 +49,44 @@ describe('disks.writeProtected', () => {
     expect(disks.writeProtected.hasDefault).toBe(true);
     expect(disks.writeProtected.default).toBe(true);
   });
+
+  it('is a real boolean column, not text or an integer flag', () => {
+    expect(disks.writeProtected.getSQLType()).toBe('boolean');
+  });
+});
+
+describe('SQL-facing identity of the new columns', () => {
+  // `.notNull` / `.hasDefault` describe constraints, not the underlying SQL
+  // type or column name -- a column can satisfy both while being the wrong
+  // type (e.g. text instead of integer) or having drifted to the wrong
+  // db-facing name under an unchanged TS property. Assert both explicitly so
+  // a rename or type swap fails here instead of surfacing later as a
+  // spurious `db:generate` diff against production.
+
+  it('desiredVersion is an integer, not a timestamp or string', () => {
+    // The long-poll compares a device's `since` against this value. An
+    // integer is unambiguous under clock skew and under two updates landing
+    // in the same millisecond, where a timestamp (or a stringly-typed
+    // "integer") is not. Spec §4.
+    expect(devices.desiredVersion.getSQLType()).toBe('integer');
+  });
+
+  it('desiredSetAt and lastErrorAt keep their time zone', () => {
+    // A bare `timestamp` column silently drops the zone and shifts times
+    // for any client not in UTC.
+    expect(devices.desiredSetAt.getSQLType()).toBe('timestamp with time zone');
+    expect(devices.lastErrorAt.getSQLType()).toBe('timestamp with time zone');
+  });
+
+  it('every column this task added has the expected db-facing name', () => {
+    expect(devices.mountedSha256.name).toBe('mounted_sha256');
+    expect(devices.desiredSha256.name).toBe('desired_sha256');
+    expect(devices.desiredGameId.name).toBe('desired_game_id');
+    expect(devices.desiredDiskNo.name).toBe('desired_disk_no');
+    expect(devices.desiredSetAt.name).toBe('desired_set_at');
+    expect(devices.desiredVersion.name).toBe('desired_version');
+    expect(devices.lastError.name).toBe('last_error');
+    expect(devices.lastErrorAt.name).toBe('last_error_at');
+    expect(disks.writeProtected.name).toBe('write_protected');
+  });
 });
