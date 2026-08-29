@@ -4,8 +4,8 @@ import { readFileSync, readdirSync } from 'node:fs';
 import { and, eq } from 'drizzle-orm';
 import { getDb } from '@/db';
 import { disks, entitlements, blobs, games } from '@/db/schema/catalog';
-import { signUpFresh, runTag } from './helpers';
-import { pairDevice, seedDisk, authHeader, cleanupSeeded } from './device-helpers';
+import { signUpFresh } from './helpers';
+import { pairDevice, authHeader, cleanupSeeded } from './device-helpers';
 
 const sha = (s: string) => createHash('sha256').update(s).digest('hex');
 
@@ -51,12 +51,14 @@ async function uploadDisk(page: Page, content: Buffer) {
   return { sha256, sizeBytes: content.length, createdBlob };
 }
 
-// Only behaviour 1 drives the genuine ingest flow (context item 3):
-// /api/ingest/complete inserts games/disks/entitlements rows that
-// device-helpers.ts's cleanupSeeded never learns about (it only tracks what
+// Behaviours 1 and 3 both drive the genuine ingest flow: /api/ingest/complete
+// inserts games/disks/entitlements rows that device-helpers.ts's
+// cleanupSeeded never learns about (it only tracks what
 // seedDisk/addDisk/pairDevice insert), so this spec must be able to remove
-// them itself. Behaviours 2-5 don't need real bytes (context item 4) and use
-// seedDisk instead, which cleanupSeeded already owns.
+// them itself. Behaviour 3 (cross-tenant) needs real bytes in Blob -- not
+// seedDisk's fabricated storage_key -- so that a broken entitlement check
+// would actually be caught handing back org A's real disk, not merely some
+// non-404 status.
 const ingestCleanup = {
   orgShaPairs: [] as Array<{ orgId: string; sha256: string }>,
   ownedBlobShas: [] as string[],
@@ -121,7 +123,7 @@ test('a digest the org does not hold is a 404, not a 403 and not a 500', async (
   expect(res.status()).toBe(404);
 });
 
-test('cross-tenant: org B cannot fetch a disk only org A holds an entitlement for', async ({ browser }) => {
+test('cross-tenant: org B cannot fetch org A\'s actual disk bytes', async ({ browser }) => {
   const contextA = await browser.newContext();
   const contextB = await browser.newContext();
   const pageA = await contextA.newPage();
@@ -131,14 +133,31 @@ test('cross-tenant: org B cannot fetch a disk only org A holds an entitlement fo
   await signUpFresh(pageB);
   const { token: tokenB } = await pairDevice(pageB, contextB.request);
 
-  // Doesn't need real bytes (context item 4): the request must be rejected
-  // by the entitlement check before diskStore.read is ever called.
-  const digest = sha(runTag());
-  await seedDisk(orgA, { title: `Cross Tenant ${runTag()}`, diskNo: 1, sha256: digest });
+  // Genuine ingest flow, same as behaviour 1 -- real bytes really do land in
+  // Blob under org A's entitlement. A test that only checked the status code
+  // against a seedDisk-fabricated (byte-less) blob could pass for the wrong
+  // reason: diskStore.read() throwing on missing bytes looks identical, from
+  // the status code alone, to the entitlement check correctly rejecting the
+  // request. Only real bytes behind the digest can distinguish "the check
+  // fired" from "the check fired AND no bytes came back."
+  const adf = anyRealAdf();
+  const { sha256, sizeBytes, createdBlob } = await uploadDisk(pageA, adf);
+  const filename = `Cross Tenant Test ${randomUUID()}.adf`;
+  const complete = await pageA.request.post('/api/ingest/complete', {
+    data: { files: [{ sha256, sizeBytes, filename }] },
+  });
+  expect(complete.status()).toBe(200);
+  ingestCleanup.orgShaPairs.push({ orgId: orgA, sha256 });
+  if (createdBlob) ingestCleanup.ownedBlobShas.push(sha256);
 
   // The assertion that matters: org B's device, org A's disk.
-  const res = await contextB.request.get(`/api/device/image/${digest}`, { headers: authHeader(tokenB) });
+  const res = await contextB.request.get(`/api/device/image/${sha256}`, { headers: authHeader(tokenB) });
   expect(res.status()).toBe(404);
+  // Belt and braces: prove no WFMF container leaked even if a future
+  // refactor changed the status code out from under the first assertion.
+  // The status proves the check fired; the length proves no bytes leaked.
+  const body = await res.body();
+  expect(body.length).not.toBe(2_027_536);
 
   await contextA.close();
   await contextB.close();
