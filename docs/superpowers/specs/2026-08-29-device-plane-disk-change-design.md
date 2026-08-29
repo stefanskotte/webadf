@@ -264,7 +264,29 @@ minutes with a pending desired change reads as *requested*, not *mounted*.
 
 ---
 
-## 8. Out of scope, and one thing worth naming
+## 8. Delivery: two plans
+
+Split along the same seam plan 2 used, which worked: protocol first, provable without
+hardware; UI second.
+
+**Plan 3a — device protocol.** The schema migration (§3), the three device endpoints (§4),
+the human-facing mount/eject actions, and a reference client that drives the whole flow end
+to end. Done when a reference client can be told to mount a disk, fetch its `WFMF`, report
+success, be ejected, and have every one of those states verified — with no hardware
+involved.
+
+**Plan 3b — UI.** Devices page, game-detail disk selector, write-protect toggle, and the
+desired-versus-actual presentation of §7.
+
+**Blocking item for 3a, carried from plan 2.** `requireDevice()` throws a `DeviceAuthError`,
+but plan 2's prose said it throws a `Response(401)`. Nothing consumes it yet, so the
+divergence has been harmless. **The endpoints in §4 are its first consumers**, and a
+`catch (e) { return e }` against the wrong assumption yields a 500 where a 401 belongs.
+Reconcile it in 3a's first task, before any endpoint is written.
+
+---
+
+## 9. Out of scope, and one thing worth naming
 
 Not built here: write-back and layered disks (§5); the firmware poll loop and PSRAM
 double-buffering (§1); proof of possession at ingest (§6). Mount history is not deferred —
