@@ -1070,6 +1070,7 @@ The task that makes this plan mean something. A Playwright spec that pairs a dev
 7. **An unauthenticated or wrongly-authenticated device gets 401** from all three device endpoints — no bearer header, a malformed header, and a well-formed but unknown token. Assert the body carries no detail about why.
 8. **The write-protect toggle reaches the poll payload.** PATCH a disk to `writeProtected: false`, mount it, poll, and assert the payload says `false`.
 9. **A status report never changes desired state.** Mount disk 1, report holding disk 2, then poll from version 0 and confirm the desired disk is still disk 1.
+10. **A failure never looks like an eject — spec §1 rule 1, the plan's most important property.** Mount disk 1 so a disk *is* desired. Start a poll with `since` set to the current version so it holds, and **without awaiting it**, delete the device row. Await the poll. It must be a **404** — never a 200 whose `desired` is `null`, which the device would act on by ejecting a disk nobody asked it to eject. Then assert the same for the auth failures in behaviour 7: none of the three returns a 200 body at all. The whole design rests on the device only ever ejecting when explicitly told to, so this is the behaviour to get right even if others are cut.
 
 - [ ] **Step 1: Write the spec**
 
@@ -1089,8 +1090,10 @@ Apply each mutation, run the spec, record which test fails, and revert:
    Expected: behaviour 5 and the image half of behaviour 6 FAIL.
 2. In `src/lib/mount.ts`, change `desiredVersion: sql\`${devices.desiredVersion} + 1\`` to leave the version unchanged.
    Expected: behaviours 3 and 4 FAIL.
-3. In `src/app/api/device/poll/route.ts`, change `state.version > from` to `>=`.
+3. In `src/app/api/device/poll/route.ts`, change `version > from` to `>=`.
    Expected: the 204 assertion in behaviour 1 FAILS — the device would be told the same thing forever.
+4. In `src/app/api/device/poll/route.ts`, change the `version === null` branch to `return Response.json({ version: 0, desired: null })`.
+   Expected: behaviour 10 FAILS. This mutation is the exact bug the whole design exists to prevent — a device that cannot be found being told, in a well-formed 200, that it holds nothing. If behaviour 10 stays green here, it is not testing what it claims and must be fixed before the task is complete.
 
 If any mutation leaves the suite green, that behaviour is not tested. Report it and fix the test.
 
@@ -1135,7 +1138,7 @@ git commit -m "Close the open questions plan 3a answered"
 ## Done when
 
 - `pnpm vitest run` green — 215 currently, plus roughly 21 new from Tasks 1–3.
-- `pnpm e2e` green — 27 currently, plus 9 new behaviours from Task 8.
+- `pnpm e2e` green — 27 currently, plus 10 new behaviours from Task 8.
 - `pnpm build` clean.
 - Every mutation in Task 8 Step 3 was observed to fail a named test.
 - A reference client can mount, fetch, report and eject with no hardware involved.
