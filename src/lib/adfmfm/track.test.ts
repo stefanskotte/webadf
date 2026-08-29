@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { encodeTrack } from './track';
+import { checksum } from './mfm';
 import { syntheticAdf, type SyntheticKind } from './synthetic';
 import { TRACK_BYTES, TRACK_DATA_BYTES, GAP_LEAD_BYTES, SECTOR_MFM_BYTES, SECTORS } from './constants';
 
@@ -70,5 +71,36 @@ describe('encodeTrack', () => {
     const t = encodeTrack(trackOf('prng', 159), 159);
     const at = GAP_LEAD_BYTES + 4;
     expect(Buffer.from(t.slice(at, at + 8)).toString('hex')).toBe('55452aa555152aa9');
+  });
+
+  it('folds the label into the header checksum, which no zero-label fixture can prove', () => {
+    const header = Uint8Array.of(0xff, 0, 0, 11);
+    const zeroLabel = new Uint8Array(16);
+    const nonZeroLabel = new Uint8Array(16).fill(0x5a);
+    // A uniform 16-byte fill is four identical 32-bit words, and XOR of an
+    // even count of identical words is zero -- so an unbroken fill of 0x5A
+    // would cancel out exactly like the all-zero label does, silently
+    // defeating this assertion. Break the symmetry in the last byte so the
+    // four label words don't XOR away to nothing.
+    nonZeroLabel[15] = 0x5b;
+
+    // (a) The label in every fixture is 16 zero bytes, and checksum XORs
+    // big-endian u32 words: folding in four all-zero words is arithmetically
+    // a no-op. So checksum(header) and checksum(header ++ zeroLabel) are
+    // numerically identical for every track of every disk, and no fixture
+    // comparison can ever tell apart a header checksum that covers the label
+    // from one that doesn't. Do not delete this as "redundant" — it is the
+    // only thing standing between that bug and a green suite.
+    const headerAndZeroLabel = new Uint8Array(header.length + zeroLabel.length);
+    headerAndZeroLabel.set(header, 0);
+    headerAndZeroLabel.set(zeroLabel, header.length);
+    expect(checksum(headerAndZeroLabel)).toBe(checksum(header));
+
+    // (b) The contract that actually matters: a non-zero label DOES change
+    // the checksum, so the implementation had better actually include it.
+    const headerAndNonZeroLabel = new Uint8Array(header.length + nonZeroLabel.length);
+    headerAndNonZeroLabel.set(header, 0);
+    headerAndNonZeroLabel.set(nonZeroLabel, header.length);
+    expect(checksum(headerAndNonZeroLabel)).not.toBe(checksum(header));
   });
 });
