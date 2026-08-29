@@ -5,7 +5,13 @@ import { invites } from '@/db/schema/devices';
 
 // No O/0, no I/1/L, and NO Q -- see the note on normalizeInviteCode below for
 // why Q is excluded from generation even though the reader still maps it.
-const ALPHABET = '23456789ABCDEFGHJKMNPRSTUVWXYZ';
+//
+// Exported so device pairing codes (src/lib/invites is the closest thing to a
+// "code alphabet" module) are drawn from the exact same unambiguous set --
+// a human retypes a pairing code off a screen too, so it deserves the same
+// guarantee: no character that a screen font or a squinting eye could
+// confuse with another one in the set.
+export const ALPHABET = '23456789ABCDEFGHJKMNPRSTUVWXYZ';
 const CODE_LEN = 8;
 const TTL_MS = 7 * 24 * 60 * 60 * 1000;
 
