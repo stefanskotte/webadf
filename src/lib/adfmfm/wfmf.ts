@@ -1,9 +1,10 @@
 import {
   TRACKS, TRACK_BYTES, TRACK_BITS, WFMF_MAGIC, WFMF_VERSION,
-  WFMF_HEADER_BYTES, WFMF_BYTES,
+  WFMF_HEADER_BYTES, WFMF_BYTES, FIRMWARE_ACCEPT_TRACK_BITS,
 } from './constants';
+import { AdfmfmError } from './errors';
 
-export class WfmfFormatError extends Error {
+export class WfmfFormatError extends AdfmfmError {
   constructor(message: string) {
     super(message);
     this.name = 'WfmfFormatError';
@@ -22,7 +23,7 @@ export function writeWfmf(tracks: Uint8Array[]): Uint8Array {
   }
 
   const out = new Uint8Array(WFMF_BYTES);
-  const dv = new DataView(out.buffer);
+  const dv = new DataView(out.buffer, out.byteOffset, out.byteLength);
   dv.setUint32(0, WFMF_MAGIC, true);
   dv.setUint32(4, WFMF_VERSION, true);
   dv.setUint32(8, TRACKS, true);
@@ -58,7 +59,15 @@ export function readWfmf(blob: Uint8Array): Uint8Array[] {
     if (at + 4 > blob.length) throw new WfmfFormatError(`truncated before track ${t} length`);
     const bits = dv.getUint32(at, true);
     at += 4;
-    const bytes = (bits + 7) >> 3;
+    // Validate BEFORE the arithmetic: for bits near 2**32 (e.g. 0xFFFFFFF9),
+    // `bits + 7` reaches 2**32 and wraps to 0 under ToUint32 regardless of
+    // whether the shift that follows is signed or unsigned, so unsigned shift
+    // alone does not make this safe. Rejecting oversized bits first closes
+    // both the zero-length-tracks case and the negative-offset RangeError case.
+    if (bits > FIRMWARE_ACCEPT_TRACK_BITS) {
+      throw new WfmfFormatError(`track ${t} has ${bits} bits, over the firmware's accepted ceiling of ${FIRMWARE_ACCEPT_TRACK_BITS}`);
+    }
+    const bytes = (bits + 7) >>> 3;
     if (at + bytes > blob.length) throw new WfmfFormatError(`truncated inside track ${t}`);
     tracks.push(blob.slice(at, at + bytes));
     at += bytes + ((4 - (bytes & 3)) & 3);

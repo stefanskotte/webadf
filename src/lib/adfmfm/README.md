@@ -98,6 +98,28 @@ on the length assertion instead of passing. See
 `.superpowers/sdd/2026-08-29-adfmfm-encoder/task-8-report.md` for the
 before/after.
 
+## Encoder version and caching
+
+`ENCODER_VERSION` (`constants.ts`) must be bumped whenever a change alters
+encoder *output* — e.g. `GAP_LEAD_BYTES` or `TRACK_BITS`. It is independent of
+`WFMF_VERSION`, which versions the container format, not the bytes this module
+produces. Anything that caches an encoded blob keyed on the source ADF's
+SHA-256 must include `ENCODER_VERSION` in that key, or a change here will
+silently keep serving stale cached output.
+
+## A disk this encoder cannot help with
+
+This encoder will happily produce a structurally perfect AmigaDOS track set
+from an ADF dumped off a **copy-protected or non-AmigaDOS disk** — and that
+track set may still not boot on real hardware. ADF only captures the 11
+AmigaDOS sectors per track; anything a copy-protection scheme relied on
+outside that (weak bits, nonstandard sector counts, long tracks) was already
+lost when the disk was dumped to ADF, before this module ever saw it. That is
+inherent to the ADF format, not a defect in this encoder. It is nonetheless
+the most likely source of a future "the Amiga refuses it" report, so ruling
+out a bad or protected source ADF should be the first step in any such
+debugging session, before suspecting the encoder.
+
 ## Not here
 
 No HTTP, no cache, no database — `GET /api/device/image/<sha256>` is separate.

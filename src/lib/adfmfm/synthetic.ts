@@ -1,9 +1,9 @@
 // Deterministic synthetic disks. Used to generate committed golden fixtures
 // without putting any real disk image, or anything derived from one, in the
 // repository (parent spec §14).
-export type SyntheticKind = 'zeros' | 'ones' | 'prng' | 'bootblock';
+import { ADF_BYTES } from './constants';
 
-const ADF_BYTES = 901120;
+export type SyntheticKind = 'zeros' | 'ones' | 'prng' | 'bootblock';
 
 // xorshift32. Chosen because it is four lines and reproduces identically in
 // any language, which matters if this ever moves to C.

@@ -10,9 +10,11 @@ import { writeWfmf, readWfmf } from './wfmf';
 import { TRACKS, TRACK_DATA_BYTES, ADF_BYTES } from './constants';
 
 export * from './constants';
-export { AdfFormatError } from './adf';
+export { AdfmfmError } from './errors';
+export { AdfFormatError, assertAdf, adfTrack } from './adf';
 export { TrackDecodeError } from './track';
 export { WfmfFormatError } from './wfmf';
+export { MfmFormatError } from './mfm';
 export { encodeTrack, decodeTrack } from './track';
 export { writeWfmf, readWfmf } from './wfmf';
 

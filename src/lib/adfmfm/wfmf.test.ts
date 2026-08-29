@@ -1,7 +1,10 @@
 import { describe, it, expect } from 'vitest';
 import { writeWfmf, readWfmf, WfmfFormatError } from './wfmf';
 import { parseLikeFirmware } from './firmware-parser';
-import { TRACKS, TRACK_BYTES, TRACK_BITS, WFMF_BYTES, FIRMWARE_MAX_TRACK_BITS } from './constants';
+import {
+  TRACKS, TRACK_BYTES, TRACK_BITS, WFMF_BYTES,
+  FIRMWARE_ACCEPT_TRACK_BITS, FIRMWARE_SAFE_TRACK_BITS,
+} from './constants';
 
 function tracks(): Uint8Array[] {
   return Array.from({ length: TRACKS }, (_, t) => new Uint8Array(TRACK_BYTES).fill(t & 0xff));
@@ -21,14 +24,9 @@ function chunked(blob: Uint8Array, seed: number): Uint8Array[] {
   return out;
 }
 
-function buildBlobWithOddTrackLength(): Uint8Array {
-  // Build a container with 12667-byte tracks (3 mod 4, needs 1 byte padding).
-  // 101336 bits / 8 = 12667 bytes. pad = (4 - (12667 & 3)) & 3 = (4 - 3) & 3 = 1.
-  // Total blob length: 16 (header) + 160 * (4 (bits) + 12667 (payload) + 1 (pad))
-  //                  = 16 + 160 * 12672 = 2,027,536 (same as WFMF_BYTES)
-  const trackPayloadBits = 101336;
-  const trackPayloadBytes = (trackPayloadBits + 7) >>> 3; // 12667
-  const trackPad = (4 - (trackPayloadBytes & 3)) & 3;     // 1
+function buildBlobWithTrackBits(trackPayloadBits: number): Uint8Array {
+  const trackPayloadBytes = (trackPayloadBits + 7) >>> 3;
+  const trackPad = (4 - (trackPayloadBytes & 3)) & 3;
   const blobSize = 16 + TRACKS * (4 + trackPayloadBytes + trackPad);
 
   const blob = new Uint8Array(blobSize);
@@ -75,8 +73,17 @@ describe('writeWfmf', () => {
     expect(writeWfmf(tracks()).length).toBe(16 + TRACKS * (4 + TRACK_BYTES));
   });
 
-  it('stays under the firmware track ceiling', () => {
-    expect(TRACK_BITS).toBeLessThanOrEqual(FIRMWARE_MAX_TRACK_BITS);
+  it('stays under the real firmware ceiling (TRACK_MFM_MAX * 8)', () => {
+    // The binding limit: track_cache.c:14 and main.c:28 cannot hold more than
+    // this many bits, regardless of what image_loader.c will accept.
+    expect(TRACK_BITS).toBeLessThanOrEqual(FIRMWARE_SAFE_TRACK_BITS);
+  });
+
+  it('stays under the looser image_loader.c acceptance ceiling too', () => {
+    // Looser and non-binding in practice -- FIRMWARE_SAFE_TRACK_BITS above is
+    // the one that must never be exceeded -- but worth asserting so a future
+    // change that widens the gap between the two constants is visible here.
+    expect(TRACK_BITS).toBeLessThanOrEqual(FIRMWARE_ACCEPT_TRACK_BITS);
   });
 
   it('rejects the wrong number of tracks', () => {
@@ -110,6 +117,24 @@ describe('readWfmf', () => {
   it('rejects a truncated body', () => {
     expect(() => readWfmf(writeWfmf(tracks()).subarray(0, WFMF_BYTES - 1))).toThrow(WfmfFormatError);
   });
+
+  it('rejects a bit_count so large that (bits + 7) wraps to 0 under ToUint32', () => {
+    // 0xFFFFFFF9 + 7 == 2**32, which wraps to 0 whether the shift that
+    // follows is signed or unsigned. Unvalidated, this yields a zero-length
+    // track and `at` never advances -- 160 zero-length tracks, no error.
+    const b = writeWfmf(tracks());
+    new DataView(b.buffer, b.byteOffset, b.byteLength).setUint32(16, 0xfffffff9, true);
+    expect(() => readWfmf(b)).toThrow(WfmfFormatError);
+  });
+
+  it('rejects a bit_count whose byte length would go negative under a signed shift', () => {
+    // 0x80000000 >> 3 is negative under a signed shift, which would otherwise
+    // walk `at` negative and let a bare RangeError escape instead of a
+    // WfmfFormatError.
+    const b = writeWfmf(tracks());
+    new DataView(b.buffer, b.byteOffset, b.byteLength).setUint32(16, 0x80000000, true);
+    expect(() => readWfmf(b)).toThrow(WfmfFormatError);
+  });
 });
 
 describe('parseLikeFirmware', () => {
@@ -123,12 +148,6 @@ describe('parseLikeFirmware', () => {
 
   it('accepts the whole container as a single chunk', () => {
     expect(parseLikeFirmware([writeWfmf(tracks())]).ok).toBe(true);
-  });
-
-  it('accepts the container one byte at a time', () => {
-    const b = writeWfmf(tracks());
-    const one = Array.from({ length: b.length }, (_, i) => b.subarray(i, i + 1));
-    expect(parseLikeFirmware(one).ok).toBe(true);
   });
 
   it('refuses a bad magic, as image_loader.c does', () => {
@@ -151,7 +170,9 @@ describe('parseLikeFirmware', () => {
   });
 
   it('correctly handles odd-length tracks with padding (readWfmf)', () => {
-    const blob = buildBlobWithOddTrackLength();
+    // 101336 bits / 8 = 12667 bytes (3 mod 4), needs 1 byte of padding.
+    // pad = (4 - (12667 & 3)) & 3 = (4 - 3) & 3 = 1.
+    const blob = buildBlobWithTrackBits(101336);
     const result = readWfmf(blob);
     expect(result).toHaveLength(160);
     for (let t = 0; t < 160; t++) {
@@ -163,8 +184,22 @@ describe('parseLikeFirmware', () => {
     }
   });
 
+  it('correctly handles a payload of 1 mod 4 bytes, needing 3 bytes of padding (readWfmf)', () => {
+    // 101320 bits / 8 = 12665 bytes (1 mod 4), needs 3 bytes of padding.
+    // pad = (4 - (12665 & 3)) & 3 = (4 - 1) & 3 = 3.
+    const blob = buildBlobWithTrackBits(101320);
+    const result = readWfmf(blob);
+    expect(result).toHaveLength(160);
+    for (let t = 0; t < 160; t++) {
+      expect(result[t]).toHaveLength(12665);
+      expect(result[t][0]).toBe(t & 0xff);
+      expect(result[t][6332]).toBe(t & 0xff);
+      expect(result[t][12664]).toBe(t & 0xff);
+    }
+  });
+
   it('correctly handles odd-length tracks with padding (parseLikeFirmware)', () => {
-    const blob = buildBlobWithOddTrackLength();
+    const blob = buildBlobWithTrackBits(101336);
     const r = parseLikeFirmware([blob]);
     expect(r.ok).toBe(true);
     expect(r.tracks).toHaveLength(160);
@@ -179,7 +214,7 @@ describe('parseLikeFirmware', () => {
   });
 
   it('rejects track_count = 0', () => {
-    const blob = buildBlobWithOddTrackLength();
+    const blob = buildBlobWithTrackBits(101336);
     const dv = new DataView(blob.buffer, blob.byteOffset, blob.byteLength);
     dv.setUint32(8, 0, true); // Set track_count to 0
     const r = parseLikeFirmware([blob]);

@@ -1,6 +1,7 @@
 import { ADF_BYTES, TRACK_DATA_BYTES, TRACKS } from './constants';
+import { AdfmfmError } from './errors';
 
-export class AdfFormatError extends Error {
+export class AdfFormatError extends AdfmfmError {
   constructor(message: string) {
     super(message);
     this.name = 'AdfFormatError';

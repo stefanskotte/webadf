@@ -6,11 +6,19 @@
 // image_loader.c changes, change this with it.
 //
 // Mirrored behaviours:
-//   - bytes arrive in arbitrary chunks; header and lengths reassemble a byte
-//     at a time
 //   - wrong magic or version aborts
 //   - payload_bytes > TRACK_SLOT_BYTES aborts rather than truncating
 //   - a short body leaves the image incomplete and NO disk is presented
+//
+// This mirror flattens the input chunks into one contiguous buffer before
+// parsing anything, rather than reassembling incrementally the way
+// image_loader.c's real state machine does. That is sufficient for the
+// question this mirror answers -- "would the device accept this blob?" -- but
+// it means chunk boundaries are erased before parsing starts: this file does
+// NOT exercise the C's incremental reassembly or resume-after-partial-chunk
+// logic. That behaviour stays untested by this repo. Porting the C's state
+// machine would let us test it, but we cannot execute the C to check such a
+// port against, so it is not attempted here.
 
 const IMAGE_MAGIC = 0x464d4657;
 const IMAGE_VERSION = 1;

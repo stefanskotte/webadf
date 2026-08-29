@@ -3,6 +3,8 @@ import {
   SECTORS, SECTOR_DATA_BYTES, TRACK_DATA_BYTES, TRACK_BYTES, TRACKS,
   SECTOR_MFM_BYTES, GAP_LEAD_BYTES,
 } from './constants';
+import { AdfFormatError } from './adf';
+import { AdfmfmError } from './errors';
 
 const SYNC = Uint8Array.of(0x44, 0x89, 0x44, 0x89);
 const LABEL_BYTES = 16;
@@ -17,10 +19,10 @@ function be32(v: number): Uint8Array {
  */
 export function encodeTrack(data: Uint8Array, trackNo: number): Uint8Array {
   if (data.length !== TRACK_DATA_BYTES) {
-    throw new RangeError(`track data must be ${TRACK_DATA_BYTES} bytes, got ${data.length}`);
+    throw new AdfFormatError(`track data must be ${TRACK_DATA_BYTES} bytes, got ${data.length}`);
   }
   if (!Number.isInteger(trackNo) || trackNo < 0 || trackNo >= TRACKS) {
-    throw new RangeError(`track number must be an integer in 0..${TRACKS - 1}, got ${trackNo}`);
+    throw new AdfFormatError(`track number must be an integer in 0..${TRACKS - 1}, got ${trackNo}`);
   }
 
   const out = new Uint8Array(TRACK_BYTES); // gaps are already zero
@@ -50,7 +52,7 @@ export function encodeTrack(data: Uint8Array, trackNo: number): Uint8Array {
   return out;
 }
 
-export class TrackDecodeError extends Error {
+export class TrackDecodeError extends AdfmfmError {
   constructor(message: string) {
     super(message);
     this.name = 'TrackDecodeError';

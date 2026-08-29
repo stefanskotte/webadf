@@ -1,6 +1,15 @@
 // Amiga MFM primitives. See the spec §3 for why each of these is shaped the
 // way it is; the reference is Greaseweazle's greaseweazle/codec/amiga/amigados.py.
 
+import { AdfmfmError } from './errors';
+
+export class MfmFormatError extends AdfmfmError {
+  constructor(message: string) {
+    super(message);
+    this.name = 'MfmFormatError';
+  }
+}
+
 /**
  * Amiga odd/even bit split: all the odd bits of the block, then all the even
  * bits. Each output byte carries four data bits in the 0x55 lanes and leaves
@@ -43,7 +52,7 @@ export function checksum(src: Uint8Array): number {
   // the shifts below -- so a misaligned length would silently checksum phantom
   // zero bytes instead of failing. Every real call site is 4, 20 or 512 bytes.
   if (src.length % 4 !== 0) {
-    throw new RangeError(`checksum needs a multiple of 4 bytes, got ${src.length}`);
+    throw new MfmFormatError(`checksum needs a multiple of 4 bytes, got ${src.length}`);
   }
   let c = 0;
   for (let i = 0; i < src.length; i += 4) {

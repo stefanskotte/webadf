@@ -4,7 +4,7 @@ import { fileURLToPath } from 'node:url';
 import { encodeTrack, decodeTrack, TrackDecodeError } from './track';
 import { checksum } from './mfm';
 import { syntheticAdf, type SyntheticKind } from './synthetic';
-import { TRACK_BYTES, TRACK_DATA_BYTES, GAP_LEAD_BYTES, SECTOR_MFM_BYTES, SECTORS } from './constants';
+import { TRACK_BYTES, TRACK_DATA_BYTES, GAP_LEAD_BYTES, GAP_TRAIL_BYTES, SECTOR_MFM_BYTES, SECTORS } from './constants';
 
 const KINDS: SyntheticKind[] = ['zeros', 'ones', 'prng', 'bootblock'];
 const FIXTURE_TRACKS = [0, 1, 80, 159];
@@ -52,7 +52,7 @@ describe('encodeTrack', () => {
     const endOfSectors = GAP_LEAD_BYTES + SECTORS * SECTOR_MFM_BYTES;
     expect(t.slice(0, GAP_LEAD_BYTES).every((b) => b === 0xaa)).toBe(true);
     expect(t.slice(endOfSectors).every((b) => b === 0xaa)).toBe(true);
-    expect(t.length - endOfSectors).toBe(444);
+    expect(t.length - endOfSectors).toBe(GAP_TRAIL_BYTES);
   });
 
   it('rejects a track that is not exactly 5632 bytes', () => {
