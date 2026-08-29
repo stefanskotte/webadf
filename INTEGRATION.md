@@ -71,25 +71,35 @@ Amiga refuses to read a disk.
    identify a disk (row id, content hash, path) — do not invent a parallel
    numbering scheme for the emulator.
 
-2. **Which disk is mounted.** The firmware currently hardcodes
-   `image_load(0)` in `main.c`. In a catalogue this needs a selection
-   mechanism — most likely a "mount" action in the webadf UI that sets a
-   current-disk pointer, with the Pico requesting that pointer at boot. If so
-   the endpoint becomes something like `GET /current` (returning the id, or
-   the image directly) and `main.c` changes accordingly. Decide this before
-   writing the endpoint.
+2. **Which disk is mounted. ANSWERED.** `devices` carries a desired state
+   (`desired_sha256` plus game/disk-set metadata), not a job or a pointer the
+   Pico looks up separately. The Pico's `GET /current` idea became
+   `GET /api/device/poll?since=<version>`: a long-poll that returns the
+   desired disk's identity immediately once `desired_version > since`, else
+   holds up to 25 s and returns `204`. The device then fetches the bytes
+   itself from `GET /api/device/image/<sha256>` (unchanged from the shape
+   below). Mount sets the desired state; eject nulls it. There is no queue —
+   see `docs/superpowers/specs/2026-08-29-device-plane-disk-change-design.md`
+   §2–4 for why a `mount_jobs`-style queue was rejected in favour of
+   reconciliation.
 
-3. **Caching encoded images.** Encoding is deterministic, so a disk always
-   yields the same ~2 MB blob. Encode on first mount and cache it beside the
-   ADF keyed by the same identity; pre-encoding the whole library would
-   roughly triple its size for disks that may never be mounted.
+3. **Caching encoded images. ANSWERED: no cache.** Measured, `encodeDisk`
+   takes 9.6 ms (mean of 20 runs against a real 901,120-byte ADF). That is
+   well under a second of function time for an operation that happens a few
+   times an hour, and far cheaper than tripling library storage with a cached
+   copy of every encoded disk beside its ADF. `GET /api/device/image/<sha256>`
+   encodes on demand; see the disk-change spec §6.
 
-4. **Write-back.** Not implemented on either side. The firmware has the
+4. **Write-back.** Still open. Not implemented on either side. The firmware has the
    plumbing — PSRAM tracks carry a `TRK_DIRTY` state and
    `psram_image_next_dirty()` exists — but nothing calls it, and
    `http_post_track()` is a stub. Decide whether webadf should accept
    modified tracks at all, or whether disks stay read-only. `WPROT` is
    asserted by default in the firmware until this is settled.
+   `disks.write_protected` now exists (default `true`) and rides along in the
+   poll payload so the wiring is ready, but it is inert until write-back
+   itself is designed — the disk-change spec §5 records a layered-disk
+   approach under consideration, deliberately not committed to here.
 
 ## Suggested layout in webadf
 

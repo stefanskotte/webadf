@@ -49,6 +49,7 @@ importer, and a forked ESP32 firmware with a full cloud-pull client.
 | D14 | **The device is a self-designed RP2350 board that emulates the floppy bus directly** (`wifi-floppy/`), not an ESP32 dongle feeding a Gotek over USB mass storage. | The operator changed the hardware design and has boards on order from JLCPCB. The firmware drives the bus with PIO and MFM, so there is no Gotek in the path at all. **Supersedes D5.** |
 | D15 | **The device consumes pre-encoded Amiga MFM, not raw ADF.** webadf gains an MFM encoder and serves a `WFMF` container. Designed in `2026-08-29-adfmfm-encoder-design.md`. | The Pico stores pre-encoded tracks and does no encoding work — a deliberate firmware decision so a WiFi stall can never halt the bus mid-track. Encoding on the server is therefore not optional. Roughly 2 MB per disk against an 880 KB ADF. |
 | D16 | **The firmware gains TLS and a bearer token and talks to webadf directly.** | Chosen over a LAN bridge. It keeps one system with no extra moving parts, and preserves the device-token and pairing model already built. The cost is mbedTLS on RP2350 and a provisioned token, on firmware not yet compiled once. |
+| D17 | **Device state is desired-vs-actual reconciliation, not a job queue.** `mount_jobs` is dropped; `devices` gains `desired_sha256`/`desired_game_id`/`desired_disk_no`/`desired_version`/`desired_set_at` alongside the existing `mounted_*` columns, and `disks` gains `write_protected`. Designed in `2026-08-29-device-plane-disk-change-design.md`. | A queue leaves the database and the device inconsistent after a failed fetch: the job is marked failed, the database still says the old disk is mounted, and nothing reconciles the two. Desired-state polling is idempotent across missed polls, reboots and duplicate deliveries — the recovery behaviour "the mounted disk is sticky" demands. `mount_jobs`'s own task in plan 2 was never started, so nothing reviewed was lost, only an unused table. |
 
 ---
 
@@ -156,8 +157,11 @@ games               id, org_id, title, sort_title, year, publisher,
                     -- a release: one or more disks
 
 disks               id, game_id, org_id, disk_no, sha256, label,
-                    tosec_name, is_boot
+                    tosec_name, is_boot, write_protected boolean not null default true
                     -- ordered members of a set; disk_no drives the -N filename
+                    -- write_protected (D17) lives here, not on `blobs` — `blobs` is
+                    -- global and content-addressed, so a flag there would apply one
+                    -- tenant's choice to every other tenant sharing the same bytes.
 
 assets              id, org_id, kind ('cover'|'screenshot'), storage_key,
                     width, height, byte_size, source
@@ -165,12 +169,15 @@ assets              id, org_id, kind ('cover'|'screenshot'), storage_key,
 
 devices             id, org_id, name, token_hash, firmware_version,
                     last_seen_at, rssi, psram_free, mounted_game_id,
-                    mounted_disk_no, status
+                    mounted_disk_no, mounted_sha256, status,
+                    -- desired-state columns (D17), all nullable except the version:
+                    desired_sha256, desired_game_id, desired_disk_no, desired_disk_id,
+                    desired_version integer not null default 0, desired_set_at,
+                    last_error, last_error_at
+                    -- mount_jobs (below) is DROPPED — see D17. `devices` states
+                    -- intent and reports the last-seen actual; there is no queue.
 pairing_codes       code (6 chars), org_id, created_by_user_id,
                     expires_at, consumed_at
-mount_jobs          id, device_id, org_id, game_id, disk_no,
-                    state ('queued'|'claimed'|'done'|'failed'),
-                    created_at, claimed_at, completed_at, error
 import_runs         id, org_id, created_by_user_id, source, totals jsonb,
                     state, created_at
 ```
@@ -232,29 +239,40 @@ Body `{ pairingCode, firmwareVersion, macAddress }`. Consumes an unexpired
 `pairing_codes` row, creates the `devices` row, returns the one and only plaintext token.
 
 ### `GET /api/device/poll`
-Long-poll. Holds up to **25 s**, then returns `204` and the device reconnects.
+
+**Superseded by D14/D15/D17 — implemented as desired-state reconciliation, not a job
+queue.** Full design in `2026-08-29-device-plane-disk-change-design.md` §2–4; this section
+keeps only the shape. `GET /api/device/poll?since=<version>` long-polls: it returns
+immediately once `desired_version > since`, otherwise holds up to **25 s** and returns
+`204`. The device reconnects either way, sending back the last `version` it saw.
 
 ```jsonc
-// 200 — work to do. Exactly one disk per job (D10).
+// 200 — a disk is desired
 {
-  "job": "mnt_01H...",
-  "game": "Project-X",
-  "disk": {
-    "n": 1, "of": 4,
-    "name": "Project-X-1.adf", "size": 901120,
+  "version": 7,
+  "desired": {
     "sha256": "a71f0c9e…",
-    "url": "https://<store>.private.blob.vercel-storage.com/adf/a71f…?sig=…"
-  },
-  "expiresAt": "2026-08-23T21:19:00Z"
+    "gameId": "gam_01H…", "game": "Project-X",
+    "diskNo": 2, "diskCount": 4,
+    "label": "Project-X (Disk 2 of 4)",
+    "writeProtected": true
+  }
 }
+
+// 200 — ejected
+{ "version": 8, "desired": null }
 ```
 
-Swapping to disk 2 is simply another job carrying `disk.n = 2`. The device does not track
-sets and does not pre-fetch; it holds one image and replaces it on command.
+There is no per-swap job (the `"job": "mnt_01H..."` shape this section once showed is
+gone): mounting disk 2 of a set is the same mount action setting `desired_disk_no = 2` and
+bumping `desired_version`, and an eject is `desired: null`. The device does not track sets
+and does not pre-fetch; it holds one image and reconciles toward whatever `desired`
+currently says, which is what makes a missed poll, a reboot or a duplicate delivery safe to
+ignore rather than something a queue would leave inconsistent (D17).
 
-**Superseded by D14/D15.** The poll no longer carries a presigned blob URL for a raw ADF,
-because the device cannot use one — it needs pre-encoded MFM. The poll now returns the
-*identity* of the image to mount, and the device fetches it from webadf itself:
+The poll no longer carries a presigned blob URL for a raw ADF, because the device cannot
+use one — it needs pre-encoded MFM. The poll returns only the *identity* of the image to
+mount, and the device fetches it from webadf itself:
 
 ```
 GET /api/device/image/<sha256>   ->  200 application/octet-stream
@@ -277,8 +295,12 @@ retries instead of mounting half a disk. Its idle timeout is 4 s between TCP chu
 a total deadline, so a slow link is fine and a stalled one is not.
 
 ### `POST /api/device/status`
-Heartbeat and completion: `{ job, state, mountedDisk, psramFree, rssi, error? }`.
-Updates `devices` and closes the `mount_jobs` row.
+
+**Superseded by D17 — no job to close, only actual state to report.**
+`{ mountedSha256, version, error, psramFree, rssi }`. Updates `devices.mounted_*`,
+`last_seen_at`, `rssi`, `psram_free`, and clears or sets `last_error`/`last_error_at`. The
+device posts this after every transition and as a heartbeat; there is no `mount_jobs` row
+to close, because there is no `mount_jobs` (D17). See the disk-change spec §4.
 
 **Long-poll over WebSockets.** Vercel now supports WebSockets, but long-poll is far simpler
 on the ESP32, survives NAT and captive portals better, and on Fluid Compute a held
