@@ -32,10 +32,17 @@ test('polling at the current version holds and then returns 204, so a device is 
   await page.request.post(`/api/devices/${deviceId}/mount`, { data: { diskId } });
 
   const first = await (await request.get('/api/device/poll?since=0', { headers: authHeader(token) })).json();
+  const startedAt = Date.now();
   const res = await request.get(`/api/device/poll?since=${first.version}`, {
     headers: authHeader(token), timeout: 45_000,
   });
+  const elapsedMs = Date.now() - startedAt;
   expect(res.status()).toBe(204);
+  // The 25 s hold is protocol-load-bearing: it is what stops a device that
+  // gets a 204 from immediately re-polling in a hot loop. Asserting only the
+  // final status would pass even if the hold were gutted to a few ms, so
+  // pin the duration too.
+  expect(elapsedMs).toBeGreaterThanOrEqual(20_000);
 });
 
 test('an eject is delivered as an explicit null desired', async ({ page, request }) => {
@@ -61,10 +68,25 @@ test('a garbled since is treated as never having polled, not as up to date', asy
   const { diskId } = await seedDisk(orgId, { title: `Px ${runTag()}`, diskNo: 1, sha256: sha(runTag()) });
   await page.request.post(`/api/devices/${deviceId}/mount`, { data: { diskId } });
 
-  for (const bad of ['abc', '-5', '']) {
-    const res = await request.get(`/api/device/poll?since=${bad}`, { headers: authHeader(token) });
+  const badValues = [
+    'abc', '-5', '',
+    // parseInt('1abc', 10) === 1 -- a numeric prefix must not sail through as
+    // a real version. This is the case the earlier version of the guard
+    // missed: with the real version at 1, `since=1abc` used to return 204,
+    // telling the device it was up to date when it had never received
+    // version 1 at all.
+    '1abc',
+    '0x10',
+    '1e9',
+    ' 1',
+    '99999999999999999999', // beyond Number.MAX_SAFE_INTEGER
+  ];
+  for (const bad of badValues) {
+    const res = await request.get(`/api/device/poll?since=${encodeURIComponent(bad)}`, {
+      headers: authHeader(token),
+    });
     expect(res.status(), `since=${JSON.stringify(bad)}`).toBe(200);
-    expect((await res.json()).desired).not.toBeNull();
+    expect((await res.json()).desired, `since=${JSON.stringify(bad)}`).not.toBeNull();
   }
 });
 

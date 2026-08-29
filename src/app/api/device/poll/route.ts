@@ -18,11 +18,15 @@ export async function GET(request: Request) {
     throw e;
   }
 
-  const sinceRaw = new URL(request.url).searchParams.get('since');
-  const since = Number.parseInt(sinceRaw ?? '0', 10);
-  // A garbled `since` must not read as "up to date" — that would strand the
-  // device on stale state forever. Treat it as never having polled.
-  const from = Number.isFinite(since) && since >= 0 ? since : 0;
+  const sinceRaw = new URL(request.url).searchParams.get('since') ?? '0';
+  // parseInt('1abc') is 1 -- a numeric-prefixed garbage value would parse to a
+  // real, positive version and be read as "up to date," stranding the device
+  // on stale state with no failure signal. Demand the whole string be digits
+  // before trusting it at all, and fall back to "never polled" (0) for
+  // anything else, including a value too large to represent exactly.
+  const from = /^\d+$/.test(sinceRaw) && Number.isSafeInteger(Number(sinceRaw))
+    ? Number(sinceRaw)
+    : 0;
 
   const deadline = Date.now() + HOLD_MS;
   for (;;) {
@@ -41,6 +45,13 @@ export async function GET(request: Request) {
       return Response.json({ version: state.version, desired: state.desired });
     }
     if (Date.now() >= deadline) return new Response(null, { status: 204 });
+    // Works where the platform wires request cancellation into `signal`,
+    // including local dev. On this repo's Vercel deployment it is currently
+    // inert: cancellation only reaches `request.signal` for a route that
+    // opts in via deployment config, which this route does not do. Left in
+    // rather than removed -- it costs nothing and starts working the day
+    // that opt-in is added -- but do not read it as protection that exists
+    // today.
     if (request.signal.aborted) return new Response(null, { status: 499 });
     await new Promise((r) => setTimeout(r, TICK_MS));
   }
