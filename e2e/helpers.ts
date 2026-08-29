@@ -1,6 +1,7 @@
 import { type Page, expect } from '@playwright/test';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { issueInvite } from '@/lib/invites';
 
 // Playwright's own test process (as opposed to the `pnpm dev` webServer it
 // spawns) never gets .env.local loaded automatically — Next.js only does
@@ -46,16 +47,32 @@ export function runTag(): string {
   return `${Date.now()}r${Math.random().toString(36).slice(2, 8)}`;
 }
 
+/**
+ * Registration is closed behind invite codes (D13). Seeding a row directly
+ * via Drizzle -- rather than going through some other authenticated
+ * "create an invite" flow -- avoids a chicken-and-egg problem: minting an
+ * invite through the app would itself require an already-signed-up user
+ * with an organization, which is exactly what every caller of
+ * `signUpFresh` is trying to create in the first place. `orgId` and
+ * `createdByUserId` are untracked, disposable placeholders here; nothing in
+ * this task uses an invite's issuer/org for anything beyond bookkeeping.
+ */
+export async function mintInviteCode(): Promise<string> {
+  return issueInvite('e2e-seed-org', 'e2e-seed-user');
+}
+
 export async function signUpFresh(page: Page) {
   const email = `t-${Date.now()}-${Math.floor(Math.random() * 1e6)}@example.test`;
   const password = 'correct-horse-battery-staple';
+  const inviteCode = await mintInviteCode();
 
   await page.goto('/sign-up');
   await page.getByLabel('Email').fill(email);
   await page.getByLabel('Password').fill(password);
+  await page.getByLabel('Invite code').fill(inviteCode);
   await page.getByRole('button', { name: 'Sign up' }).click();
   await expect(page).toHaveURL(/\/library/, { timeout: 15_000 });
 
   const orgId = await page.getByTestId('active-org').textContent();
-  return { email, password, orgId: orgId ?? '' };
+  return { email, password, inviteCode, orgId: orgId ?? '' };
 }

@@ -2,10 +2,30 @@ import { betterAuth } from 'better-auth';
 import { drizzleAdapter } from 'better-auth/adapters/drizzle';
 import { organization as organizationPlugin } from 'better-auth/plugins';
 import { nextCookies } from 'better-auth/next-js';
-import { isAPIError } from 'better-auth/api';
-import { asc, eq } from 'drizzle-orm';
+import { APIError, isAPIError } from 'better-auth/api';
+import { and, asc, eq, isNull } from 'drizzle-orm';
 import { getDb } from '@/db';
 import { member, user as userTable, organization as organizationTable } from '@/db/schema/auth';
+import { invites } from '@/db/schema/devices';
+import { normalizeInviteCode, redeemInvite } from '@/lib/invites';
+
+// The invite code travels as a plain extra property in the sign-up/email
+// request body (accepted because that endpoint's body schema is
+// `.and(z.record(string, any()))`), NOT as a better-auth `user.additionalFields`
+// entry. That sidesteps two problems an additionalFields entry would create:
+// it would need a real column on the `auth.user` table to persist to (we
+// never want the plaintext code stored on the user row), and databaseHooks'
+// `before` return value is *merged* onto the create payload rather than
+// replacing it (see with-hooks.ts), so an additionalFields value can't be
+// reliably stripped back out before the insert. Reading it off `context.body`
+// instead means it never touches the row we're creating.
+function readInviteCode(body: unknown): string {
+  if (body && typeof body === 'object' && 'inviteCode' in body) {
+    const value = (body as Record<string, unknown>).inviteCode;
+    if (typeof value === 'string') return value;
+  }
+  return '';
+}
 
 // Creates the tenant organization for `userId` and returns its id.
 // Called with NO session headers — passing them makes the createOrganization
@@ -69,7 +89,22 @@ export const auth = betterAuth({
     // bootstrap; the other becomes a no-op once it does.
     user: {
       create: {
-        after: async (user) => {
+        // D13: registration is closed. This runs BEFORE the user row is
+        // created and must throw on a failed redemption so no row is
+        // created at all — unlike `after` below, a thrown error here is
+        // exactly what we want. It runs synchronously inline (unlike
+        // `after`, `before` is never queued by runWithTransaction), so this
+        // check is genuinely in effect for every create, not a race.
+        before: async (_user, context) => {
+          const result = await redeemInvite(readInviteCode(context?.body));
+          if (!result.ok) {
+            throw new APIError('BAD_REQUEST', {
+              code: 'INVALID_INVITE_CODE',
+              message: `Invite code is ${result.reason}`,
+            });
+          }
+        },
+        after: async (user, context) => {
           // Not atomic with user creation. And, per the ordering discovery
           // above, this hook does NOT run until the entire sign-up handler
           // has already finished: `linkAccount` (the password credential)
@@ -87,8 +122,35 @@ export const auth = betterAuth({
           try {
             await bootstrapOrganization(user.id, `${user.name || user.email.split('@')[0]}'s library`);
           } catch (err) {
-            if (isOrgAlreadyExists(err)) return;
-            console.error(`[auth] failed to bootstrap organization for user ${user.id}`, err);
+            if (isOrgAlreadyExists(err)) {
+              // Not a return-early edge case: this is the EXPECTED outcome
+              // on essentially every real sign-up (see the top-of-file
+              // comment) — session.create.before already created the
+              // organization by the time this hook is flushed. Invite
+              // consumption below must still run when that happens, so it
+              // lives in its own try/catch rather than after this one in
+              // the same block, where this throw would otherwise skip it.
+            } else {
+              console.error(`[auth] failed to bootstrap organization for user ${user.id}`, err);
+            }
+          }
+
+          // The invite was already validated (not consumed) in `before`
+          // above; this marks it used. Own try/catch, deliberately separate
+          // from the one above: a consumption failure must never be able to
+          // swallow (or be swallowed by) an org-bootstrap outcome, and must
+          // never abort a sign-up that has already fully succeeded by the
+          // time this queued hook runs.
+          try {
+            const raw = readInviteCode(context?.body);
+            if (raw) {
+              await getDb()
+                .update(invites)
+                .set({ consumedAt: new Date(), consumedByUserId: user.id })
+                .where(and(eq(invites.code, normalizeInviteCode(raw)), isNull(invites.consumedAt)));
+            }
+          } catch (err) {
+            console.error(`[auth] failed to consume invite for user ${user.id}`, err);
           }
         },
       },
