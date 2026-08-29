@@ -49,6 +49,12 @@ export const disks = pgTable('disks', {
   label: text('label'),
   tosecName: text('tosec_name'),
   isBoot: boolean('is_boot').notNull().default(false),
+
+  // Org-scoped on purpose. This must never live on `blobs`, which is global and
+  // content-addressed -- 26 blobs are already shared across organizations, so a
+  // flag there would apply one tenant's choice to every other tenant holding
+  // the same disk. Defaults to protected: games shipped read-only.
+  writeProtected: boolean('write_protected').notNull().default(true),
   sizeBytes: bigint('size_bytes', { mode: 'number' }).notNull(),
 }, (t) => [
   index('disks_game_idx').on(t.gameId),

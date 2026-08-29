@@ -22,6 +22,22 @@ export const devices = pgTable('devices', {
   psramFree: integer('psram_free'),
   mountedGameId: text('mounted_game_id'),
   mountedDiskNo: integer('mounted_disk_no'),
+  mountedSha256: text('mounted_sha256'),
+
+  // Desired state. Null across all three means ejected -- there is no separate
+  // "ejected" flag, because "no disk is desired" and "eject" are the same fact.
+  desiredSha256: text('desired_sha256'),
+  desiredGameId: text('desired_game_id'),
+  desiredDiskNo: integer('desired_disk_no'),
+  desiredSetAt: timestamp('desired_set_at', { withTimezone: true }),
+
+  // Monotonic. The long-poll compares the device's `since` against this; an
+  // integer is unambiguous where a timestamp is not, under clock skew or two
+  // updates in the same millisecond.
+  desiredVersion: integer('desired_version').notNull().default(0),
+
+  lastError: text('last_error'),
+  lastErrorAt: timestamp('last_error_at', { withTimezone: true }),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
 }, (t) => [index('devices_org_idx').on(t.orgId)]);
 
@@ -33,20 +49,3 @@ export const pairingCodes = pgTable('pairing_codes', {
   consumedAt: timestamp('consumed_at', { withTimezone: true }),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
 }, (t) => [index('pairing_codes_org_idx').on(t.orgId)]);
-
-export const mountJobs = pgTable('mount_jobs', {
-  id: text('id').primaryKey(),
-  deviceId: text('device_id').notNull().references(() => devices.id, { onDelete: 'cascade' }),
-  orgId: text('org_id').notNull(),
-  gameId: text('game_id').notNull(),
-  diskNo: integer('disk_no').notNull(),
-  sha256: text('sha256').notNull(),
-  state: text('state').notNull().default('queued'),  // queued|claimed|done|failed
-  error: text('error'),
-  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
-  claimedAt: timestamp('claimed_at', { withTimezone: true }),
-  completedAt: timestamp('completed_at', { withTimezone: true }),
-}, (t) => [
-  index('mount_jobs_device_state_idx').on(t.deviceId, t.state),
-  index('mount_jobs_org_idx').on(t.orgId),
-]);
