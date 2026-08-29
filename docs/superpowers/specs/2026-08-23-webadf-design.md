@@ -45,6 +45,7 @@ importer, and a forked ESP32 firmware with a full cloud-pull client.
 | D10 | **One disk resident at a time**, exactly as upstream: a 1.44 MB FAT12 volume in PSRAM holding a single image. A swap is a fresh fetch plus a USB re-enumeration. | Parity with the linked projects. Sidesteps the FAT12 cluster ceiling entirely, and a ~2 s swap is nothing on a 30-year-old machine. |
 | D11 | **Light UI on a fixed gradient canvas with frosted cards.** Structure derived from the operator's UserBoost design system; retuned, not rebranded. | The dark top of the gradient makes cover art read as sitting on a shelf, which suits a disk library better than it suits an analytics dashboard. Replaces the dark theme explored first. |
 | D12 | **Assume TLS session reuse on the device; build the web app first.** The firmware bench is no longer a gate. | The hardware is slow and known to be slow. Session reuse is a firmware config knob, not an architectural commitment — if it misbehaves it is disabled in one place. Nothing in the web app's design changes on the answer. |
+| D13 | **Sign-up is invite-only; the global existence check stays.** | `/api/ingest/check` is deliberately global so one stored copy serves every tenant — that is the whole storage saving of D3, and scoping it would make clients re-upload into an already-exists rejection. The cost is that knowing a digest is enough to reference it, so registration is closed instead. The property holds socially rather than technically; see the corrected §5 wording. |
 
 ---
 
@@ -135,8 +136,16 @@ blobs               sha256 (PK), size_bytes, gzip_size_bytes, storage_key,
                     -- in the whole system. Never deleted while entitlements exist.
 
 entitlements        org_id, sha256, first_seen_at, source_filename
-                    -- PK (org_id, sha256). Proves this tenant uploaded
-                    -- these exact bytes. Gates every presigned GET.
+                    -- PK (org_id, sha256). Records that this tenant CLAIMED
+                    -- these exact bytes, and gates every presigned GET.
+                    --
+                    -- Corrected after implementation: this does NOT *prove*
+                    -- possession. `/api/ingest/check` is global by design, so a
+                    -- client that merely knows a digest is told "already stored"
+                    -- and is granted an entitlement without uploading anything.
+                    -- That is what makes cross-tenant dedupe work. Registration
+                    -- is invite-only (D13) so the set of parties who can exploit
+                    -- it is the set of people the operator invited.
 
 games               id, org_id, title, sort_title, year, publisher,
                     developer, genre, chipset, notes, cover_asset_id,
@@ -471,6 +480,9 @@ or PNG. Ideal aspect ≈1.23:1 to fill the device's 138×112 box without letterb
 - No compression at rest or in transit in v1 (§3.2).
 - No LAN push path. D1 chose cloud-pull; adding push later is additive.
 - No public sharing of libraries between tenants. Blobs are deduped, entitlements are not.
+  Note the honest limit of this (D13): a tenant who knows a digest can obtain an
+  entitlement to it without ever holding the bytes. Invite-only registration bounds
+  who can do that; it does not make it impossible.
 - No `/DSK` (ZX/CPC) or `/GENERIC` support, though the schema does not preclude it.
 - No manual metadata editor beyond the review queue in v1; enrichment is automatic or
   hand-corrected one game at a time.
@@ -487,7 +499,7 @@ or PNG. Ideal aspect ≈1.23:1 to fill the device's 138×112 box without letterb
 | ESP32-S3 HTTPS throughput unknown | Low, by decision (D12) — deliberately not a gate. Published figures vary from 300 KB/s to several MB/s; TLS handshakes alone have been measured over 3 s. | Assume session reuse and build the web app first. Bench when the firmware milestone starts. If a handshake per fetch turns out to cost seconds, session reuse is already assumed; disabling it is a one-line change in the other direction. |
 | Presigned URL TTL vs slow fetch | Low | 15 min is ample for a single 880 KB fetch. Device re-polls if a URL expires. |
 | Vercel Blob private storage is public beta | Low–medium | The `DiskStore` seam (§6) is the hedge. |
-| Copyright posture of a multi-tenant host of game images | Real, and the operator's call | Content addressing plus per-tenant entitlements means no cross-tenant distribution. Keep the deployment private/invite-only. |
+| Copyright posture of a multi-tenant host of game images | Real, and the operator's call — mitigated by invite-only registration (D13) | Content addressing plus per-tenant entitlements means no cross-tenant distribution. Keep the deployment private/invite-only. |
 | Self-hosting auth means we own password reset, email verification, session revocation and lockout | Medium — real work a hosted provider would have done for us | Better Auth ships all of it; the cost is configuring and testing it rather than writing it. Budget a milestone for the account-lifecycle flows and their emails. |
 | Auth emails need a sender | Low | Resend, added via the Marketplace when the email milestone lands. |
 
