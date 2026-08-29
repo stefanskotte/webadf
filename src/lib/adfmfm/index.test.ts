@@ -22,6 +22,7 @@ describe('encodeDisk', () => {
       const golden = new Uint8Array(
         readFileSync(fileURLToPath(new URL(`./fixtures/${name}`, import.meta.url))),
       );
+      expect(tracks[t].length, `${kind} track ${t}: length`).toBe(golden.length);
       const at = tracks[t].findIndex((b, i) => b !== golden[i]);
       expect(at, `${kind} track ${t}: first differing byte at ${at}`).toBe(-1);
     }

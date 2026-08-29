@@ -36,9 +36,16 @@ The design, and the derivation of every constant, is in
 
 ## Validating a change
 
-Round-trip tests are not sufficient — a symmetric misunderstanding of the bit
-split or the checksum passes them cleanly. The real gate is a byte-diff against
-Greaseweazle:
+Round-trip tests are not sufficient by themselves. A mismatch between
+`splitOddEven` and `joinOddEven` — for example, changing which half
+`splitOddEven` emits first without updating `joinOddEven` to match — breaks
+the round trip and the round-trip tests do catch it; that pairing is *not*
+symmetric, despite an earlier draft of this document claiming otherwise. What
+round-trip tests cannot catch is a misunderstanding baked consistently into
+*both* halves of a pair (or a checksum error that happens to cancel out the
+same way on encode and decode): that still round-trips cleanly while
+producing bytes a real Amiga drive would reject. The real gate is a byte-diff
+against Greaseweazle:
 
     pnpm adfmfm:diff          # all 61 disks in adf-archive/, needs pipx greaseweazle
     pnpm adfmfm:fixtures      # regenerate the committed golden fixtures
@@ -76,13 +83,20 @@ on this suite alone.
 | 7 | `encodeDisk` passes `0` as every `trackNo` | `index.ts` | the four `every track of <kind> matches the golden fixture` tests. Every round-trip test stays green: a wrong-but-consistent track number round-trips through decode perfectly |
 | 8 | `assertAdf` skips its length check | `adf.ts` | `rejects a short ADF`, `rejects an over-long ADF`, `rejects an empty ADF`, `does not pad a short ADF, unlike the reference` |
 
-Row 6 also revealed an undocumented fourth blind spot: the golden-fixture
+Row 6 briefly exposed a fourth, undocumented blind spot: the golden-fixture
 comparison in `index.test.ts` (`every track of <kind> matches the golden
-fixture`) compares byte-by-byte only up to the length of the *shorter* array.
-A shrunk `TRACK_BYTES` produces a track whose first N bytes are still correct,
-so the comparison stops before it can see the missing tail and reports no
-difference. Only the fixed-length tests in `track.test.ts` and the external
-Greaseweazle diff catch a constant-level size regression reliably.
+fixture`) compared byte-by-byte with `Uint8Array.prototype.findIndex`, which
+only walks the array it is called on. A shrunk `TRACK_BYTES` produced a track
+whose first N bytes were still correct, so the comparison stopped before it
+could see the missing tail and reported no difference — length-blind, not
+just prefix-checking. That hole is now closed: the test asserts
+`tracks[t].length` equals the fixture's length before comparing bytes, the
+same way `track.test.ts` already did with its trailing `expect(ours).toEqual(theirs)`.
+Re-running the row 6 shrink against the fixed test confirms it: the four
+`every track of <kind> matches the golden fixture` tests now fail immediately
+on the length assertion instead of passing. See
+`.superpowers/sdd/2026-08-29-adfmfm-encoder/task-8-report.md` for the
+before/after.
 
 ## Not here
 
