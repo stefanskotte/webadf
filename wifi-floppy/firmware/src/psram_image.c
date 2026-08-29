@@ -1,0 +1,119 @@
+#include "psram_image.h"
+#include "hardware/psram.h"
+#include "pico/stdlib.h"
+#include <string.h>
+
+// The image lives in PSRAM. __uninitialized_psram keeps it out of the data
+// image (no 2 MB of zeroes in flash, no startup memset).
+static __uninitialized_psram uint8_t image[NUM_TRACKS][TRACK_SLOT_BYTES];
+
+// Metadata stays in SRAM: it is touched from ISR-adjacent code and is tiny.
+static uint32_t      bits[NUM_TRACKS];
+static track_state_t state[NUM_TRACKS];
+static bool          have_psram;
+
+bool psram_image_init(void) {
+    memset(bits, 0, sizeof bits);
+    memset(state, 0, sizeof state);
+
+    // psram_get_size() reports the board-header size (8 MB here) or the
+    // auto-detected size; 0 means nothing is fitted.
+    size_t sz = psram_get_size();
+    have_psram = psram_is_available() && sz >= sizeof image;
+
+    // With auto-detection enabled the tail of the array could fall outside
+    // real PSRAM, which faults on access - check the last byte before use.
+    if (have_psram && !psram_check_address((void *)&image[NUM_TRACKS - 1][TRACK_SLOT_BYTES - 1]))
+        have_psram = false;
+
+    return have_psram;
+}
+
+bool   psram_image_available(void) { return have_psram; }
+size_t psram_image_size(void)      { return have_psram ? sizeof image : 0; }
+
+track_state_t psram_image_state(int track) {
+    if (!have_psram || track < 0 || track >= NUM_TRACKS) return TRK_ABSENT;
+    return state[track];
+}
+
+bool psram_image_have(int track) {
+    return psram_image_state(track) != TRK_ABSENT;
+}
+
+uint32_t psram_image_bits(int track) {
+    if (!psram_image_have(track)) return 0;
+    return bits[track];
+}
+
+bool psram_image_read(int track, uint8_t *dst, uint32_t *bit_count) {
+    if (!psram_image_have(track)) return false;
+    uint32_t nbytes = (bits[track] + 7) / 8;
+    if (nbytes > TRACK_SLOT_BYTES) return false;
+    memcpy(dst, image[track], nbytes);
+    *bit_count = bits[track];
+    return true;
+}
+
+static void store(int track, const uint8_t *src, uint32_t bit_count,
+                  track_state_t st) {
+    if (!have_psram || track < 0 || track >= NUM_TRACKS) return;
+    uint32_t nbytes = (bit_count + 7) / 8;
+    if (nbytes > TRACK_SLOT_BYTES) return;          // oversized track, drop
+    memcpy(image[track], src, nbytes);
+    bits[track]  = bit_count;
+    state[track] = st;
+}
+
+void psram_image_write_at(int track, uint32_t offset, const uint8_t *src, int len) {
+    if (!have_psram || track < 0 || track >= NUM_TRACKS) return;
+    if (offset + (uint32_t)len > TRACK_SLOT_BYTES) return;
+    memcpy(image[track] + offset, src, len);
+}
+
+void psram_image_commit(int track, uint32_t bit_count) {
+    if (!have_psram || track < 0 || track >= NUM_TRACKS) return;
+    if ((bit_count + 7) / 8 > TRACK_SLOT_BYTES) return;
+    bits[track]  = bit_count;
+    state[track] = TRK_PRESENT;
+}
+
+void psram_image_mark_dirty(int track, const uint8_t *src, uint32_t bit_count) {
+    store(track, src, bit_count, TRK_DIRTY);
+}
+
+int psram_image_next_dirty(void) {
+    if (!have_psram) return -1;
+    for (int t = 0; t < NUM_TRACKS; t++)
+        if (state[t] == TRK_DIRTY) return t;
+    return -1;
+}
+
+void psram_image_clear_dirty(int track) {
+    if (psram_image_state(track) == TRK_DIRTY) state[track] = TRK_PRESENT;
+}
+
+int psram_image_missing_count(void) {
+    if (!have_psram) return NUM_TRACKS;
+    int n = 0;
+    for (int t = 0; t < NUM_TRACKS; t++) if (state[t] == TRK_ABSENT) n++;
+    return n;
+}
+
+// Scan outwards from 'from_track' so the fill order follows the head, not
+// track 0 - the host is most likely to want neighbours next.
+int psram_image_next_missing(int from_track) {
+    if (!have_psram) return -1;
+    if (from_track < 0) from_track = 0;
+    for (int d = 0; d < NUM_TRACKS; d++) {
+        int up = from_track + d, dn = from_track - d;
+        if (up < NUM_TRACKS && state[up] == TRK_ABSENT) return up;
+        if (dn >= 0          && state[dn] == TRK_ABSENT) return dn;
+    }
+    return -1;
+}
+
+void psram_image_reset(void) {
+    memset(bits, 0, sizeof bits);
+    memset(state, 0, sizeof state);
+}

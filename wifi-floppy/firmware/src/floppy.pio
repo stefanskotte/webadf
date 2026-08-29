@@ -1,0 +1,62 @@
+; ---------------------------------------------------------------------------
+; flux_out: emit MFM read data on PIN_RDATA (via inverting FET driver).
+; 8 PIO cycles per bit cell. clkdiv = clk_sys * 2us / 8  (150 MHz -> 37.5)
+; Bus RD pulse = FET on = side-set 1 for 3 cycles (~750 ns low on the bus).
+; Bit = 1 -> flux transition (pulse); bit = 0 -> no pulse.
+; ---------------------------------------------------------------------------
+.program flux_out
+.side_set 1 opt
+.wrap_target
+    out x, 1            side 0 [1]   ; 2 cycles, idle (FET off, bus high)
+    jmp !x, nopulse     side 0       ; 1
+    nop                 side 1 [2]   ; 3 cycles asserted  = 750 ns pulse
+    jmp done            side 0       ; 1
+nopulse:
+    nop                 side 0 [2]   ; 3
+    jmp done            side 0       ; 1
+done:
+    nop                 side 0       ; 1  -> 8 total both paths
+.wrap
+
+; ---------------------------------------------------------------------------
+; flux_in: measure gaps between falling edges on WDATA (post-'541, active-low
+; pulses appear as high->low edges). Pushes down-counter values; host converts
+; count -> ns -> MFM bit pattern. 2 PIO cycles per loop iteration.
+; ---------------------------------------------------------------------------
+.program flux_in
+.wrap_target
+start:
+    set x, 0
+count:
+    jmp x--, dec        ; decrement (x wraps; value = ~elapsed)
+dec:
+    jmp pin, count      ; still high: keep counting
+    mov isr, x
+    push noblock        ; report interval
+wait_high:
+    jmp pin, start      ; wait for line to return high
+    jmp wait_high
+.wrap
+
+% c-sdk {
+#include "hardware/clocks.h"
+static inline void flux_out_program_init(PIO pio, uint sm, uint offset, uint pin) {
+    pio_sm_config c = flux_out_program_get_default_config(offset);
+    sm_config_set_sideset_pins(&c, pin);
+    sm_config_set_out_shift(&c, false, true, 32);        // MSB first, autopull
+    sm_config_set_fifo_join(&c, PIO_FIFO_JOIN_TX);
+    float div = (float)clock_get_hz(clk_sys) * 2e-6f / 8.0f;
+    sm_config_set_clkdiv(&c, div);
+    pio_gpio_init(pio, pin);
+    pio_sm_set_consecutive_pindirs(pio, sm, pin, 1, true);
+    pio_sm_init(pio, sm, offset, &c);
+}
+static inline void flux_in_program_init(PIO pio, uint sm, uint offset, uint pin) {
+    pio_sm_config c = flux_in_program_get_default_config(offset);
+    sm_config_set_jmp_pin(&c, pin);
+    sm_config_set_in_shift(&c, false, false, 32);
+    sm_config_set_fifo_join(&c, PIO_FIFO_JOIN_RX);
+    sm_config_set_clkdiv(&c, 1.0f);                      // full speed timer
+    pio_sm_init(pio, sm, offset, &c);
+}
+%}

@@ -37,15 +37,18 @@ importer, and a forked ESP32 firmware with a full cloud-pull client.
 | D2 | **Multi-tenant from day one.** Every catalog row is owned by an organization. | Avoids a rewrite. Accepted cost: real auth and per-tenant storage accounting. |
 | D3 | **Content-addressed storage.** Each unique disk stored once under its SHA-256; tenants hold *entitlements* to blobs, never direct paths. | Dedupes the ~30% of a typical collection that is shared Workbench/Extras/Locale disks, and keeps this personal storage rather than a distribution service. |
 | D4 | **Browser dropzone + companion CLI** for ingest. | 18,000 files is not a browser-tab job. The CLI hashes locally and uploads only misses. |
-| D5 | **Full firmware fork** of `Gotek_WiFi_Dongle`. | D1 makes it unavoidable; upstream has no cloud client, no pairing, and calls `setInsecure()`. |
+| D5 | ~~**Full firmware fork** of `Gotek_WiFi_Dongle`.~~ **SUPERSEDED by D14.** | D1 makes it unavoidable; upstream has no cloud client, no pairing, and calls `setInsecure()`. |
 | D6 | **Vercel Blob** for objects, behind one thin storage module. | Chosen for now; the seam keeps a later move to R2 or self-hosted S3 a one-file change. |
 | D7 | **Cover grid by default, table as a view toggle.** | Grid for browsing by box art, table for finding one disk among thousands. Both are needed at 1,884 titles. |
 | D8 | **Better Auth**, fully self-hosted, for human auth; **our own opaque tokens** for devices. | Auth must live entirely on our own domain. Better Auth runs in-process at `/api/auth/*`, stores everything in our Neon database, and makes no third-party requests. Its `organization` plugin *is* the tenancy model from D2, so it replaces a hand-rolled `accounts` table rather than sitting beside one. Devices never touch it. |
 | D9 | **Enrichment is asynchronous and additive.** A disk is mountable the instant its bytes land; metadata and artwork arrive later, field by field. | Playing a game must never wait on IGDB. It is also the only workable design given external rate limits: 18,000 disks against ~4 req/s is hours of work. |
-| D10 | **One disk resident at a time**, exactly as upstream: a 1.44 MB FAT12 volume in PSRAM holding a single image. A swap is a fresh fetch plus a USB re-enumeration. | Parity with the linked projects. Sidesteps the FAT12 cluster ceiling entirely, and a ~2 s swap is nothing on a 30-year-old machine. |
+| D10 | **One disk resident at a time** (mechanism superseded by D14 — now a whole MFM image in the RP2350's PSRAM rather than a 1.44 MB FAT12 volume; the *one disk at a time* property still holds), exactly as upstream: a 1.44 MB FAT12 volume in PSRAM holding a single image. A swap is a fresh fetch plus a USB re-enumeration. | Parity with the linked projects. Sidesteps the FAT12 cluster ceiling entirely, and a ~2 s swap is nothing on a 30-year-old machine. |
 | D11 | **Light UI on a fixed gradient canvas with frosted cards.** Structure derived from the operator's UserBoost design system; retuned, not rebranded. | The dark top of the gradient makes cover art read as sitting on a shelf, which suits a disk library better than it suits an analytics dashboard. Replaces the dark theme explored first. |
 | D12 | **Assume TLS session reuse on the device; build the web app first.** The firmware bench is no longer a gate. | The hardware is slow and known to be slow. Session reuse is a firmware config knob, not an architectural commitment — if it misbehaves it is disabled in one place. Nothing in the web app's design changes on the answer. |
 | D13 | **Sign-up is invite-only; the global existence check stays.** | `/api/ingest/check` is deliberately global so one stored copy serves every tenant — that is the whole storage saving of D3, and scoping it would make clients re-upload into an already-exists rejection. The cost is that knowing a digest is enough to reference it, so registration is closed instead. The property holds socially rather than technically; see the corrected §5 wording. |
+| D14 | **The device is a self-designed RP2350 board that emulates the floppy bus directly** (`wifi-floppy/`), not an ESP32 dongle feeding a Gotek over USB mass storage. | The operator changed the hardware design and has boards on order from JLCPCB. The firmware drives the bus with PIO and MFM, so there is no Gotek in the path at all. **Supersedes D5.** |
+| D15 | **The device consumes pre-encoded Amiga MFM, not raw ADF.** webadf gains an MFM encoder and serves a `WFMF` container. | The Pico stores pre-encoded tracks and does no encoding work — a deliberate firmware decision so a WiFi stall can never halt the bus mid-track. Encoding on the server is therefore not optional. Roughly 2 MB per disk against an 880 KB ADF. |
+| D16 | **The firmware gains TLS and a bearer token and talks to webadf directly.** | Chosen over a LAN bridge. It keeps one system with no extra moving parts, and preserves the device-token and pairing model already built. The cost is mbedTLS on RP2350 and a provisioned token, on firmware not yet compiled once. |
 
 ---
 
@@ -249,8 +252,29 @@ Long-poll. Holds up to **25 s**, then returns `204` and the device reconnects.
 Swapping to disk 2 is simply another job carrying `disk.n = 2`. The device does not track
 sets and does not pre-fetch; it holds one image and replaces it on command.
 
-Presigned URLs are embedded in the poll response rather than served via a `302`, so the
-firmware never has to follow a cross-host redirect.
+**Superseded by D14/D15.** The poll no longer carries a presigned blob URL for a raw ADF,
+because the device cannot use one — it needs pre-encoded MFM. The poll now returns the
+*identity* of the image to mount, and the device fetches it from webadf itself:
+
+```
+GET /api/device/image/<sha256>   ->  200 application/octet-stream
+```
+
+That response is the `WFMF` container defined by `wifi-floppy/firmware/src/image_loader.c`:
+
+    u32  magic        0x464D4657  ('WFMF', little-endian)
+    u32  version      1
+    u32  track_count  160
+    u32  reserved     0
+    per track (cyl*2+side, 0..159):
+        u32  bit_count   MFM bits, ~101,600; must be <= 13312*8 = 106,496
+        u8[] payload     ceil(bit_count/8) bytes, raw MFM, MSB first
+        u8[] padding     zeroes to a 4-byte boundary
+
+The firmware rejects a wrong magic or version, refuses an over-long track rather than
+truncating it, and presents no disk at all if the body is short or interrupted — it
+retries instead of mounting half a disk. Its idle timeout is 4 s between TCP chunks, not
+a total deadline, so a slow link is fine and a stalled one is not.
 
 ### `POST /api/device/status`
 Heartbeat and completion: `{ job, state, mountedDisk, psramFree, rssi, error? }`.
@@ -265,8 +289,17 @@ proves annoying.
 
 ## 8. Firmware
 
-Fork of `dimitrihilverda/Gotek-Touchscreen-interface` → `Gotek_WiFi_Dongle` (MIT).
-Target: Seeed XIAO ESP32-S3, 8 MB PSRAM, 8 MB flash, ~$7.
+**Superseded by D14.** The firmware is `wifi-floppy/` — bespoke C on the Pico SDK for an
+RP2350 (Pimoroni Pico Plus 2 W, PIM726) on a self-designed 2-layer board, boards ordered
+from JLCPCB. It emulates the floppy bus directly with PIO rather than presenting a USB
+mass-storage device to a Gotek, so the Gotek is out of the path entirely.
+
+Written but never compiled — expect SDK API fixes on the first build. Read-only for now:
+`WPROT` is asserted and `http_post_track()` is a stub, so write-back is unimplemented on
+both sides and disks stay read-only until that is settled.
+
+What the firmware still needs (plan 4): mbedTLS and a provisioned bearer token per D16;
+today `http_fetch.c` issues a plaintext `GET %s HTTP/1.1` to a bare IP with no credentials.
 
 What upstream already gives us: TinyUSB MSC, a hand-built FAT12 volume in PSRAM, a
 zero-copy `streamToBuffer()` that writes an HTTPS GET straight into the RAM disk, and

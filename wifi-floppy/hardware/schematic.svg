@@ -1,0 +1,108 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1500" height="1020" viewBox="0 0 1500 1020" font-family="monospace">
+<style>
+ text{font-size:13px;fill:#111}
+ .t{font-size:11px;fill:#333}
+ .h{font-size:16px;font-weight:bold}
+ .net{fill:#0645ad;font-size:12px}
+ line,rect,path,circle{stroke:#111;fill:none;stroke-width:1.5}
+ .thin{stroke-width:1}
+</style>
+<text x="20" y="28" class="h">WiFi Floppy Emulator — Amiga internal 34-pin, Pico 2 W  (rev A)</text>
+<text x="20" y="46" class="t">Inputs: 74LVC541A @3V3 (5V-tolerant). Outputs: BSS138 open-drain, GPIO HIGH = bus asserted LOW.</text>
+
+<!-- ===================== J1 ===================== -->
+<rect x="40" y="80" width="200" height="560"/>
+<text x="60" y="100" class="h">J1  FLOPPY-34</text>
+<text x="60" y="116" class="t">(Amiga internal pinout)</text>
+<text x="52" y="140" class="t">odd pins 1..33 = GND</text>
+<!-- signal rows -->
+<g>
+<text x="52" y="170">2  /CHNG</text>   <line x1="240" y1="165" x2="300" y2="165"/><text x="305" y="170" class="net">CHNG_B</text>
+<text x="52" y="200">8  /INDEX</text>  <line x1="240" y1="195" x2="300" y2="195"/><text x="305" y="200" class="net">INDEX_B</text>
+<text x="52" y="230">10 /SEL0</text>   <line x1="240" y1="225" x2="300" y2="225"/><text x="305" y="230" class="net">SEL0_B</text>
+<text x="52" y="260">12 /SEL1</text>   <line x1="240" y1="255" x2="300" y2="255"/><text x="305" y="260" class="net">SEL1_B</text>
+<text x="52" y="290">16 /MTR</text>    <line x1="240" y1="285" x2="300" y2="285"/><text x="305" y="290" class="net">MTR_B</text>
+<text x="52" y="320">18 DIR</text>     <line x1="240" y1="315" x2="300" y2="315"/><text x="305" y="320" class="net">DIR_B</text>
+<text x="52" y="350">20 /STEP</text>   <line x1="240" y1="345" x2="300" y2="345"/><text x="305" y="350" class="net">STEP_B</text>
+<text x="52" y="380">22 WDATA</text>   <line x1="240" y1="375" x2="300" y2="375"/><text x="305" y="380" class="net">WDATA_B</text>
+<text x="52" y="410">24 /WGATE</text>  <line x1="240" y1="405" x2="300" y2="405"/><text x="305" y="410" class="net">WGATE_B</text>
+<text x="52" y="440">26 /TRK0</text>   <line x1="240" y1="435" x2="300" y2="435"/><text x="305" y="440" class="net">TRK0_B</text>
+<text x="52" y="470">28 /WPROT</text>  <line x1="240" y1="465" x2="300" y2="465"/><text x="305" y="470" class="net">WPROT_B</text>
+<text x="52" y="500">30 RDATA</text>   <line x1="240" y1="495" x2="300" y2="495"/><text x="305" y="500" class="net">RDATA_B</text>
+<text x="52" y="530">32 /SIDE</text>   <line x1="240" y1="525" x2="300" y2="525"/><text x="305" y="530" class="net">SIDE_B</text>
+<text x="52" y="560">34 /RDY</text>    <line x1="240" y1="555" x2="300" y2="555"/><text x="305" y="560" class="net">RDY_B</text>
+<text x="52" y="600" class="t">4,6,14 n/c</text>
+</g>
+
+<!-- ===================== U2 buffer ===================== -->
+<rect x="480" y="120" width="240" height="330"/>
+<text x="510" y="145" class="h">U2 74LVC541A</text>
+<text x="510" y="162" class="t">VCC=3V3  /OE1,/OE2=GND</text>
+<g>
+<text x="490" y="195">A1</text><line x1="420" y1="190" x2="480" y2="190"/><text x="360" y="195" class="net">SEL0_B</text>
+<text x="490" y="225">A2</text><line x1="420" y1="220" x2="480" y2="220"/><text x="360" y="225" class="net">SEL1_B</text>
+<text x="490" y="255">A3</text><line x1="420" y1="250" x2="480" y2="250"/><text x="360" y="255" class="net">MTR_B</text>
+<text x="490" y="285">A4</text><line x1="420" y1="280" x2="480" y2="280"/><text x="360" y="285" class="net">DIR_B</text>
+<text x="490" y="315">A5</text><line x1="420" y1="310" x2="480" y2="310"/><text x="360" y="315" class="net">STEP_B</text>
+<text x="490" y="345">A6</text><line x1="420" y1="340" x2="480" y2="340"/><text x="360" y="345" class="net">WDATA_B</text>
+<text x="490" y="375">A7</text><line x1="420" y1="370" x2="480" y2="370"/><text x="360" y="375" class="net">WGATE_B</text>
+<text x="490" y="405">A8</text><line x1="420" y1="400" x2="480" y2="400"/><text x="360" y="405" class="net">SIDE_B</text>
+<text x="685" y="195">Y1</text><line x1="720" y1="190" x2="780" y2="190"/><text x="785" y="195" class="net">SEL0 → GP2</text>
+<text x="685" y="225">Y2</text><line x1="720" y1="220" x2="780" y2="220"/><text x="785" y="225" class="net">SEL1 → GP3</text>
+<text x="685" y="255">Y3</text><line x1="720" y1="250" x2="780" y2="250"/><text x="785" y="255" class="net">MTR  → GP4</text>
+<text x="685" y="285">Y4</text><line x1="720" y1="280" x2="780" y2="280"/><text x="785" y="285" class="net">DIR  → GP5</text>
+<text x="685" y="315">Y5</text><line x1="720" y1="310" x2="780" y2="310"/><text x="785" y="315" class="net">STEP → GP6</text>
+<text x="685" y="345">Y6</text><line x1="720" y1="340" x2="780" y2="340"/><text x="785" y="345" class="net">WDATA→ GP7</text>
+<text x="685" y="375">Y7</text><line x1="720" y1="370" x2="780" y2="370"/><text x="785" y="375" class="net">WGATE→ GP8</text>
+<text x="685" y="405">Y8</text><line x1="720" y1="400" x2="780" y2="400"/><text x="785" y="405" class="net">SIDE → GP9</text>
+</g>
+<text x="490" y="440" class="t">C1 100n across VCC-GND</text>
+
+<!-- ===================== Pico ===================== -->
+<rect x="980" y="120" width="240" height="560"/>
+<text x="1010" y="145" class="h">U1 Pico 2 W</text>
+<text x="1010" y="162" class="t">RP2350 + CYW43439</text>
+<g>
+<text x="990" y="195">GP2..GP9</text><text x="990" y="212" class="t">inputs (active-low)</text>
+<text x="990" y="250">GP10 WPROT</text>
+<text x="990" y="275">GP11 RDATA (PIO)</text>
+<text x="990" y="300">GP12 RDY</text>
+<text x="990" y="325">GP13 TRK0</text>
+<text x="990" y="350">GP0 INDEX</text>
+<text x="990" y="375">GP1 CHNG</text>
+<text x="990" y="410" class="t">outputs active-HIGH</text>
+<text x="990" y="426" class="t">(FET inverts to bus)</text>
+<text x="990" y="470">pin36 3V3_OUT → U2, C1</text>
+<text x="990" y="495">pin39 VSYS ← D1</text>
+<text x="990" y="520">GND pins → plane</text>
+<text x="990" y="560" class="t">GP7 WDATA: PIO capture</text>
+<text x="990" y="576" class="t">GP11 RDATA: PIO side-set</text>
+<text x="990" y="620" class="t">GP14-GP17 unused: pins sit in</text>
+<text x="990" y="636" class="t">onboard-antenna keepout zone</text>
+</g>
+
+<!-- ===================== FET driver detail ===================== -->
+<rect x="300" y="680" width="560" height="240"/>
+<text x="320" y="705" class="h">Output drivers ×6 (Q1..Q6, BSS138)</text>
+<!-- one FET drawn -->
+<line x1="380" y1="800" x2="440" y2="800"/><text x="330" y="805" class="net">GPIOn</text>
+<line x1="440" y1="780" x2="440" y2="820" />
+<line x1="450" y1="775" x2="450" y2="825" stroke-width="3"/>
+<line x1="450" y1="780" x2="490" y2="780"/><line x1="490" y1="780" x2="490" y2="750"/>
+<line x1="450" y1="820" x2="490" y2="820"/><line x1="490" y1="820" x2="490" y2="850"/>
+<line x1="475" y1="850" x2="505" y2="850"/><line x1="481" y1="856" x2="499" y2="856"/><line x1="487" y1="862" x2="493" y2="862"/>
+<line x1="490" y1="750" x2="560" y2="750"/><text x="565" y="755" class="net">bus pin (to J1)</text>
+<text x="520" y="800" class="t">D=bus, S=GND, G=GPIO</text>
+<text x="320" y="890" class="t">Q1 CHNG←GP1    Q2 INDEX←GP0   Q3 TRK0←GP13</text>
+<text x="320" y="908" class="t">Q4 WPROT←GP10  Q5 RDATA←GP11   Q6 RDY←GP12</text>
+
+<!-- ===================== power ===================== -->
+<rect x="920" y="720" width="420" height="200"/>
+<text x="940" y="745" class="h">Power</text>
+<text x="940" y="775">J2 Berg pin1 +5V ──▶|── D1 SS14 ──▶ VSYS (pin39)</text>
+<text x="940" y="800">J2 pins 2,3 GND ── plane</text>
+<text x="940" y="825">J2 pin4 +12V n/c</text>
+<text x="940" y="850">C3 10u on +5V,  C1 100n on 3V3 @ U2</text>
+<text x="940" y="890" class="t">USB co-power safe: Pico VBUS has its own diode;</text>
+<text x="940" y="906" class="t">D1 prevents back-feeding the Amiga 5V rail.</text>
+</svg>

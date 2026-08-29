@@ -1,0 +1,6 @@
+build/
+hardware/gerbers/
+hardware/*.zip
+hardware/pcb_render.png
+__pycache__/
+*.pyc

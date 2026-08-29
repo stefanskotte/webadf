@@ -1,0 +1,13 @@
+# Standard Raspberry Pi pico_sdk_import stub — expects PICO_SDK_PATH in env.
+if (DEFINED ENV{PICO_SDK_PATH} AND (NOT PICO_SDK_PATH))
+    set(PICO_SDK_PATH $ENV{PICO_SDK_PATH})
+endif ()
+if (NOT PICO_SDK_PATH)
+    message(FATAL_ERROR "PICO_SDK_PATH not set")
+endif ()
+get_filename_component(PICO_SDK_PATH "${PICO_SDK_PATH}" REALPATH)
+set(PICO_SDK_INIT_CMAKE_FILE ${PICO_SDK_PATH}/pico_sdk_init.cmake)
+if (NOT EXISTS ${PICO_SDK_INIT_CMAKE_FILE})
+    message(FATAL_ERROR "${PICO_SDK_PATH} does not appear to contain the Pico SDK")
+endif ()
+include(${PICO_SDK_INIT_CMAKE_FILE})
