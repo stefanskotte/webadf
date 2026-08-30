@@ -20,11 +20,32 @@ static int hex_digit(char c) {
     return -1;
 }
 
-// Freestanding-friendly decimal parse (no locale/errno dependence on strtol).
+// Freestanding-friendly decimal parse (no locale/errno dependence on strtol),
+// used only for the 3-digit status code -- small enough that no bound is
+// needed here (see parse_decimal_bounded for the body-size-affecting path).
 static long parse_decimal(const char *s) {
     long v = 0;
     while (*s >= '0' && *s <= '9') { v = v * 10 + (*s - '0'); s++; }
     return v;
+}
+
+// Bounded accumulation for values that gate how many body bytes we expect:
+// Content-Length and a chunk size. Checks the bound BEFORE each multiply so
+// the accumulator itself can never wrap (task 3's image_loader.c fix is the
+// same shape: bound before the arithmetic, not after). Rejects rather than
+// clamping or truncating -- a value this large or malformed is treated as a
+// malformed response, not a plausible one.
+static bool parse_bounded(const char *s, int len, int base, long max, long *out) {
+    long v = 0;
+    for (int i = 0; i < len; i++) {
+        int d = (base == 16) ? hex_digit(s[i])
+                              : (s[i] >= '0' && s[i] <= '9' ? s[i] - '0' : -1);
+        if (d < 0) return false;
+        if (v > (max - d) / base) return false; // would exceed max (or wrap)
+        v = v * base + d;
+    }
+    *out = v;
+    return true;
 }
 
 static bool ci_equal(const char *a, const char *b) {
@@ -62,8 +83,15 @@ static void handle_header_line(http_resp_t *r) {
     const char *name = r->_linebuf;
     const char *val = colon + 1;
     while (*val == ' ' || *val == '\t') val++;
+    int vlen = (int)strlen(val);
+    while (vlen > 0 && (val[vlen - 1] == ' ' || val[vlen - 1] == '\t')) vlen--;
     if (ci_equal(name, "content-length")) {
-        r->content_length = parse_decimal(val);
+        long v;
+        if (!parse_bounded(val, vlen, 10, HTTP_MAX_BODY_BYTES, &v)) {
+            r->_state = ST_ERROR;
+            return;
+        }
+        r->content_length = v;
     } else if (ci_equal(name, "transfer-encoding")) {
         if (ci_starts_with(val, "chunked")) r->chunked = true;
     }
@@ -115,6 +143,7 @@ bool http_resp_feed(http_resp_t *r, const uint8_t *data, int len,
                     r->_state = ST_HEADER_LINE;
                 } else {
                     handle_header_line(r);
+                    if (r->_state == ST_ERROR) return false;
                     if (r->headers_done) start_body_phase(r);
                 }
                 r->_linelen = 0;
@@ -144,11 +173,10 @@ bool http_resp_feed(http_resp_t *r, const uint8_t *data, int len,
             if (c == '\r') continue;
             if (c == ';') { r->_chunk_ext = true; continue; }
             if (c == '\n') {
-                long size = 0;
-                for (int k = 0; k < r->_linelen; k++) {
-                    int d = hex_digit(r->_linebuf[k]);
-                    if (d < 0) { r->_state = ST_ERROR; return false; }
-                    size = size * 16 + d;
+                long size;
+                if (!parse_bounded(r->_linebuf, r->_linelen, 16, HTTP_MAX_BODY_BYTES, &size)) {
+                    r->_state = ST_ERROR;
+                    return false;
                 }
                 r->_linelen = 0;
                 r->_chunk_ext = false;
@@ -191,7 +219,7 @@ bool http_resp_feed(http_resp_t *r, const uint8_t *data, int len,
                 r->_linelen = 0;
                 continue;
             }
-            r->_linelen++;
+            if (r->_linelen < (int)sizeof(r->_linebuf)) r->_linelen++;
             continue;
 
         case ST_DONE:

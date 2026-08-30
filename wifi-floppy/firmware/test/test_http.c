@@ -139,6 +139,67 @@ static void test_no_framing_header_completes_after_headers(void) {
     CHECK_EQ_INT(body_len, 0);
 }
 
+// --- Code review round 1: integer-overflow regressions ---
+
+// A Content-Length that wraps `long` negative must not be treated as a
+// small-or-zero body and reported complete. This is the reviewer's exact
+// repro: 18446744073709551611 wraps signed 64-bit `long` to -5, and the old
+// start_body_phase() fell through its `else` (neither == 0 nor > 0) straight
+// to body_complete = true with nothing read.
+static void test_content_length_overflow_rejected(void) {
+    http_resp_t r; http_resp_init(&r); body_len = 0;
+    bool ok = FEED(&r, "HTTP/1.1 200 OK\r\nContent-Length: 18446744073709551611"
+                       "\r\n\r\nhelloworldXXXXXXXXXX");
+    CHECK(!ok, "an overflowing Content-Length must be refused, not accepted");
+    CHECK(!r.body_complete, "must not report a truncated body as complete");
+    CHECK_EQ_INT(body_len, 0);
+
+    // Also cover the sanity ceiling on its own: a value that is merely
+    // absurd (far beyond anything this device ever legitimately fetches),
+    // with no `long` wraparound involved, must be refused too -- not
+    // accepted just because the arithmetic happened not to overflow.
+    http_resp_t r2; http_resp_init(&r2); body_len = 0;
+    bool ok2 = FEED(&r2, "HTTP/1.1 200 OK\r\nContent-Length: 999999999\r\n\r\n");
+    CHECK(!ok2, "a Content-Length far beyond any legitimate body must be refused");
+    CHECK(!r2.body_complete, "must not report completion for a rejected response");
+}
+
+// A chunk-size line whose hex value overflows must be rejected outright,
+// the same way a bad hex digit already was -- not silently truncated to a
+// small `int` (`ffffffffffffffff` wraps to -1 as a 64-bit `long`, and the
+// old code's unguarded `size = size * 16 + d` produced exactly that), which
+// would otherwise leave ST_CHUNK_DATA computing `int want = -1` and never
+// advancing: every future feed keeps returning true while discarding all
+// input, forever.
+static void test_chunk_size_overflow_rejected(void) {
+    http_resp_t r; http_resp_init(&r); body_len = 0;
+    CHECK(FEED(&r, "HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n"),
+          "headers parse");
+    bool ok = FEED(&r, "ffffffffffffffff\r\nhello");
+    CHECK(!ok, "an overflowing chunk size must be refused, not silently stalled");
+    CHECK(!r.body_complete, "must not report completion for a rejected response");
+    CHECK_EQ_INT(body_len, 0);
+}
+
+// Minor: an overlong trailer line (after the terminating zero chunk) must
+// not grow `_linelen` without bound. It never indexes the line buffer in
+// this state, so the old code could not corrupt memory, but an unbounded
+// signed-int counter is still a latent overflow (undefined behaviour once
+// it wraps) for no reason -- it only ever needs to tell "was this line
+// blank" apart from "was there anything on it", so it should cap at the
+// line buffer's own size like every other line-accumulating state does.
+static void test_chunk_trailer_linelen_bounded(void) {
+    http_resp_t r; http_resp_init(&r); body_len = 0;
+    CHECK(FEED(&r, "HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n0\r\n"),
+          "headers plus the terminating zero chunk parse");
+    char junk[600];
+    memset(junk, 'x', sizeof junk);
+    CHECK(http_resp_feed(&r, (const uint8_t *)junk, (int)sizeof junk, sink, NULL),
+          "an overlong, not-yet-terminated trailer line is not itself an error");
+    CHECK(r._linelen <= (int)sizeof(r._linebuf),
+          "_linelen must be capped at the line buffer size, not grown unbounded");
+}
+
 int main(void) {
     RUN(test_content_length_body); RUN(test_chunked_body);
     RUN(test_split_across_feeds); RUN(test_204_has_no_body);
@@ -148,5 +209,8 @@ int main(void) {
     RUN(test_chunked_split_inside_size_line_and_boundary);
     RUN(test_chunked_multiple_chunks_byte_at_a_time);
     RUN(test_no_framing_header_completes_after_headers);
+    RUN(test_content_length_overflow_rejected);
+    RUN(test_chunk_size_overflow_rejected);
+    RUN(test_chunk_trailer_linelen_bounded);
     return REPORT();
 }

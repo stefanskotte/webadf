@@ -7,6 +7,12 @@
 #include <stdint.h>
 #include <stdbool.h>
 
+// No response this device ever fetches (a small JSON poll body, an image a
+// few MB at most) legitimately exceeds this. A Content-Length or chunk size
+// beyond it is malformed or has overflowed arithmetic on its way to us --
+// either way, refused outright rather than clamped or silently substituted.
+#define HTTP_MAX_BODY_BYTES (8L * 1024 * 1024)
+
 typedef struct {
     int      status;            // 0 until the status line is parsed
     bool     headers_done;
