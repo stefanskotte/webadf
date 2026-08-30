@@ -10,6 +10,7 @@ typedef enum { S_HDR, S_LEN, S_PAYLOAD, S_PAD, S_ERR, S_EOF } state_t;
 
 typedef struct {
     state_t  st;
+    int      slot;          // PSRAM slot this parse is filling
     uint8_t  hdr[16];
     int      hdr_got;
     uint8_t  lenb[4];
@@ -65,10 +66,10 @@ static void sink(void *ctx, const uint8_t *d, int n) {
         case S_PAYLOAD: {
             uint32_t want = l->payload_bytes - l->payload_got;
             int take = (uint32_t)n < want ? n : (int)want;
-            psram_image_write_at(l->track, l->payload_got, d, take);
+            psram_image_write_at(l->slot, l->track, l->payload_got, d, take);
             l->payload_got += take; d += take; n -= take;
             if (l->payload_got < l->payload_bytes) return;
-            psram_image_commit(l->track, l->bits);
+            psram_image_commit(l->slot, l->track, l->bits);
             l->st = l->pad_left ? S_PAD : S_LEN;
             l->len_got = 0;
             if (l->st == S_LEN && ++l->track >= l->track_count) l->st = S_EOF;
@@ -88,18 +89,20 @@ static void sink(void *ctx, const uint8_t *d, int n) {
 }
 
 bool image_parse_buffer(int slot, const uint8_t *data, size_t len) {
-    (void)slot;   // no per-slot state yet -- there is only one active PSRAM
-                  // image today; the parameter exists so a future multi-image
-                  // cache doesn't need a signature change.
     if (!psram_image_available()) return false;   // no PSRAM, no disk
-    psram_image_reset();
+    // Reset only the target slot: this task (8) gives psram_image_* real
+    // per-slot storage, so a fetch into `slot` must never disturb whatever
+    // the OTHER slot -- possibly the currently-active, currently-playing
+    // disk -- holds.
+    psram_image_reset_slot(slot);
     memset(&L, 0, sizeof L);
     L.st = S_HDR;
+    L.slot = slot;
 
     sink(&L, data, (int)len);
 
-    bool ok = (L.st == S_EOF) && (psram_image_missing_count() == 0);
-    if (!ok) psram_image_reset();                 // never present a half disk
+    bool ok = (L.st == S_EOF) && (psram_image_missing_count(slot) == 0);
+    if (!ok) psram_image_reset_slot(slot);        // never present a half disk
     return ok;
 }
 

@@ -74,10 +74,10 @@ static void test_read_does_not_overflow_a_track_cache_sized_buffer(void) {
     const uint32_t payload_bytes = 13100u;   // inside the 13001-13312 gap
     uint8_t payload[13100];
     memset(payload, 0x5A, sizeof payload);
-    psram_image_reset();
-    psram_image_write_at(0, 0, payload, (int)payload_bytes);
-    psram_image_commit(0, payload_bytes * 8u);
-    CHECK(psram_image_have(0), "a 13100-byte track is within TRACK_MAX_BYTES and must commit");
+    psram_image_reset_slot(0);
+    psram_image_write_at(0, 0, 0, payload, (int)payload_bytes);
+    psram_image_commit(0, 0, payload_bytes * 8u);
+    CHECK(psram_image_have(0, 0), "a 13100-byte track is within TRACK_MAX_BYTES and must commit");
 
     size_t cache_buf_bytes = track_cache_buf_bytes();
     size_t canary_bytes = 64;
@@ -85,7 +85,7 @@ static void test_read_does_not_overflow_a_track_cache_sized_buffer(void) {
     memset(victim + cache_buf_bytes, 0xAA, canary_bytes);
 
     uint32_t bit_count = 0;
-    CHECK(psram_image_read(0, victim, &bit_count),
+    CHECK(psram_image_read(0, 0, victim, &bit_count),
           "the committed 13100-byte track must read back");
 
     bool canary_intact = true;
@@ -119,7 +119,7 @@ static void test_bit_count_overflow_is_refused(void) {
 }
 
 int main(void) {
-    size_t len = (size_t)TRACK_MAX_BYTES * NUM_TRACKS;
+    size_t len = (size_t)TRACK_MAX_BYTES * NUM_TRACKS * SLOT_COUNT;
     void *mem = malloc(len);
     psram_image_set_backing(mem, len);
     RUN(test_read_does_not_overflow_a_track_cache_sized_buffer);

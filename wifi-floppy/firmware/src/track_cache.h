@@ -15,10 +15,12 @@
 #include "floppy_io.h"
 
 void track_cache_init(void);
-void track_cache_flush(void);          // disk change: drop SRAM + PSRAM copies
+void track_cache_flush(void);          // disk change: drop SRAM + PSRAM copies,
+                                        // eject (both slots reset, active -> none)
 
-// Core 1. Returns an SRAM buffer for 'track', copied from the PSRAM image.
-// NULL means the track is not in the image - do not stream anything.
+// Core 1. Returns an SRAM buffer for 'track', copied from the PSRAM image's
+// active slot (psram_active_slot()). NULL means either no disk is mounted
+// or the track is not in the active slot's image - do not stream anything.
 const uint8_t *track_cache_get(int track, uint32_t *bit_count);
 
 bool track_cache_image_complete(void);

@@ -13,6 +13,7 @@
 #include "device_client.h"
 #include "http.h"
 #include "json_scan.h"
+#include "psram_image.h"
 #include <string.h>
 #include <stdio.h>
 
@@ -54,9 +55,14 @@ static void dc_body_sink(void *ctx, const uint8_t *b, int n) {
     body->buf[body->len] = '\0';
 }
 
-// The image body is never buffered here: Task 6 has nowhere to put it yet
-// (PSRAM slots are Task 8, wiring into image_loader is Task 10). What
-// matters at this layer is only whether the full body arrived.
+// The image body's bytes are still not routed anywhere here: PSRAM now has
+// a real fetch-target slot (Task 8's psram_inactive_slot()), but wiring
+// this sink into image_loader.c's image_parse_buffer() so the bytes
+// actually land in it is Task 10's job (it also gives core1 the real
+// network-driven caller). What this layer checks -- and has always
+// checked, before or after Task 8 -- is only whether the full body
+// arrived; dc_fetch_image below is what turns that into a publish-or-not
+// decision for the slot.
 static void dc_discard_sink(void *ctx, const uint8_t *b, int n) {
     (void)ctx; (void)b; (void)n;
 }
@@ -185,6 +191,17 @@ static dc_state_t dc_fetch_image(device_client_t *c, const dc_desired_t *d) {
     int req_len = http_build_request(req, sizeof req, "GET", path, c->host, c->token, NULL);
     if (req_len < 0) return dc_enter_backoff(c); // path too long: unexpected, treat as transient
 
+    // Task 8: a fetch always targets the slot that is NOT the one core0 is
+    // currently streaming from -- psram_inactive_slot() -- and that target
+    // is reset up front so stale data from an earlier aborted fetch can
+    // never be mistaken for this one. Nothing below this line may touch
+    // the active slot except the single psram_publish_slot() call in the
+    // 200 case, and only after the body is known to have arrived whole:
+    // that ordering is rule 2 (never release the current disk before the
+    // replacement is fetched *and* verified) made concrete.
+    int target = psram_inactive_slot();
+    psram_image_reset_slot(target);
+
     c->state = DC_FETCHING;
     http_resp_t r;
     bool ok = dc_exchange(c, req, req_len, dc_discard_sink, NULL, &r);
@@ -194,17 +211,26 @@ static dc_state_t dc_fetch_image(device_client_t *c, const dc_desired_t *d) {
         // at all, or a connection dropped before the body finished -- all
         // treated alike. Never block the digest for these: none of them
         // tell us anything reliable about the digest itself, and it may be
-        // perfectly fetchable next time.
+        // perfectly fetchable next time. `target` is left reset/empty and
+        // the active slot was never referenced above, so psram_active_slot()
+        // is exactly what it was on entry -- the Amiga keeps the disk it had.
         return dc_enter_backoff(c);
     }
 
     switch (r.status) {
     case 200:
-        // Task 6 has nowhere to route the image bytes yet (PSRAM slots are
-        // Task 8, the loader is wired in by Task 10) -- so "the whole body
-        // arrived intact" (already required above) is as far as
-        // verification goes here.
+        // Task 6/10 route the actual track bytes into `target` (via
+        // image_loader.c's image_parse_buffer(), wired to the network by
+        // Task 10); "the whole body arrived intact" (already required
+        // above) is as far as verification goes at this layer for now.
+        // Only once that holds does the swap happen, and it happens as
+        // the single word-aligned store psram_publish_slot() makes -- see
+        // its comment in psram_image.c for why moving between two
+        // complete, verified images that way can never show core0 a
+        // half-fetched one.
         c->state = DC_VERIFYING;
+        c->state = DC_SWAPPING;
+        psram_publish_slot(target);
         dc_complete_transition(c, d->version, d->sha256, d->disk_id);
         c->state = DC_IDLE_POLL;
         dc_backoff_reset(c);
@@ -243,7 +269,10 @@ static dc_state_t dc_handle_poll_body(device_client_t *c, const char *json) {
     if (json_is_null(json, "desired")) {
         // The one explicit, unambiguous eject instruction. No fetch is
         // needed -- the transition is "hold no disk", which is complete
-        // the instant it is acted on.
+        // the instant it is acted on. Task 8: that now includes publishing
+        // SLOT_NONE, so track_cache_get() actually stops streaming rather
+        // than only this struct's bookkeeping saying nothing is mounted.
+        psram_publish_slot(SLOT_NONE);
         dc_complete_transition(c, version, "", "");
         c->state = DC_IDLE_POLL;
         return c->state;

@@ -27,11 +27,12 @@
 #define IMAGE_VERSION 1u
 
 // Synchronous whole-buffer entry point around the same incremental parser
-// image_load() used to drive from the network one chunk at a time. `slot` is
-// unused today (there is only ever one active PSRAM image); it is there so a
-// future multi-image cache doesn't need a signature change. False on any
-// failure, in which case the image is left incomplete and no disk should be
-// presented.
+// image_load() used to drive from the network one chunk at a time. `slot`
+// selects which of psram_image.h's SLOT_COUNT PSRAM slots this parse fills
+// (task 8) -- normally the one psram_inactive_slot() names, so a fetch never
+// touches whatever the active slot is currently streaming. False on any
+// failure, in which case that slot is left reset/incomplete and must not be
+// published (psram_publish_slot) as the active one.
 bool image_parse_buffer(int slot, const uint8_t *data, size_t len);
 
 int  image_load_percent(void);      // progress, for logging / an LED

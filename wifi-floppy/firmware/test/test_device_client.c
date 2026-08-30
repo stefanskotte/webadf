@@ -1,7 +1,21 @@
 #include "harness.h"
 #include "transport_fake.h"
 #include "../src/device_client.h"
+#include "../src/psram_image.h"
+#include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
+
+// Builds "HTTP/1.1 200 OK\r\nContent-Length: <N>\r\n\r\n<body>" with N computed
+// from strlen(body) rather than hand-counted -- task 6 lost a round to six
+// wrong hand-counted lengths.
+static void push_ok_json(const char *body) {
+    char resp[512];
+    int n = snprintf(resp, sizeof resp, "HTTP/1.1 200 OK\r\nContent-Length: %zu\r\n\r\n%s",
+                      strlen(body), body);
+    (void)n;
+    fake_push_response(resp);
+}
 
 static device_client_t c;
 static void boot(void) {
@@ -47,6 +61,23 @@ static void test_since_does_not_advance_on_a_failed_fetch(void) {
     CHECK_EQ_INT(c.since, 0);
     CHECK_EQ_INT(c.mounted_version, 0);
     CHECK(c.mounted_sha256[0] == 0, "nothing may be reported as mounted");
+}
+
+// Task 8's rule, exercised directly: a fetch that dies mid-body must leave
+// the active PSRAM slot -- and therefore what the Amiga is holding --
+// completely untouched. Not "eject then fail to refill": untouched.
+static void test_current_disk_survives_a_failed_replacement_fetch(void) {
+    boot();
+    psram_publish_slot(0);
+    strcpy(c.mounted_sha256, "old");
+    push_ok_json(
+        "{\"version\":8,\"desired\":{\"sha256\":\"new\",\"diskId\":\"d2\",\"gameId\":\"g\","
+        "\"game\":\"G\",\"diskNo\":1,\"diskCount\":1,\"writeProtected\":false}}");
+    fake_push_truncated("HTTP/1.1 200 OK\r\nContent-Length: 2027536\r\n\r\nWFMF", 40);
+    dc_step(&c);
+    CHECK_EQ_INT(psram_active_slot(), 0);
+    CHECK(strcmp(c.mounted_sha256, "old") == 0,
+          "a failed fetch must leave the Amiga holding the disk it had");
 }
 
 static void test_poll_404_keeps_the_disk_mounted(void) {
@@ -223,6 +254,7 @@ int main(void) {
     RUN(test_cold_boot_polls_since_zero);
     RUN(test_request_survives_single_byte_writes);
     RUN(test_since_does_not_advance_on_a_failed_fetch);
+    RUN(test_current_disk_survives_a_failed_replacement_fetch);
     RUN(test_poll_404_keeps_the_disk_mounted);
     RUN(test_401_halts);
     RUN(test_204_repolls_with_same_since);

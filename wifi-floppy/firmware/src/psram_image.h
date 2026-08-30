@@ -9,6 +9,12 @@
 // reads an SRAM buffer, because a QMI cache miss contending with XIP could add
 // latency on a 2 us bitcell. PSRAM is bulk storage only, copied into SRAM on
 // track change (~13 KB memcpy, microseconds).
+//
+// Two slots (task 8): one is always what core0's track_cache_get() streams
+// from (the "active" slot); the other is free for core1 to fetch a
+// replacement disk into while the active one keeps playing. A slot is never
+// exposed to core0 until it holds a complete, verified image -- see
+// psram_publish_slot()'s comment in psram_image.c for the full argument.
 // ---------------------------------------------------------------------------
 #include <stdint.h>
 #include <stdbool.h>
@@ -27,7 +33,11 @@
 // which is free, and no previously-valid image becomes invalid. Reconciling
 // downwards to 13000 would have been a silent format restriction.
 #define TRACK_MAX_BYTES 13312u                      // 13 KB, 4-byte aligned
-// 160 * 13312 = 2,129,920 B (~2.03 MB) per disk. 8 MB fits 3 with room over.
+// 160 * 13312 = 2,129,920 B (~2.03 MB) per disk. 8 MB fits 3 with room over;
+// two slots (task 8) use ~4.06 MB, comfortably inside the 8 MB part.
+
+#define SLOT_COUNT 2
+#define SLOT_NONE  (-1)
 
 typedef enum {
     TRK_ABSENT = 0,     // not fetched yet
@@ -35,37 +45,49 @@ typedef enum {
     TRK_DIRTY           // written by the host, needs flushing back
 } track_state_t;
 
-// True once PSRAM is detected and the image area fits. If this returns false
-// the cache silently degrades to network-only operation (still works).
+// True once PSRAM is detected and the image area (both slots) fits. If this
+// returns false the cache silently degrades to network-only operation
+// (still works).
 bool psram_image_init(void);
 bool psram_image_available(void);
 size_t psram_image_size(void);
 
-track_state_t psram_image_state(int track);
-bool     psram_image_have(int track);
-uint32_t psram_image_bits(int track);
+track_state_t psram_image_state(int slot, int track);
+bool     psram_image_have(int slot, int track);
+uint32_t psram_image_bits(int slot, int track);
 
 // Copy a track out of PSRAM into an SRAM destination. False if not present.
-bool psram_image_read(int track, uint8_t *dst, uint32_t *bit_count);
+bool psram_image_read(int slot, int track, uint8_t *dst, uint32_t *bit_count);
 
 // Streaming store, used by the image loader: bytes arrive in arbitrary
 // chunks, so payload is written at an offset and the track is committed
 // (marked present) only once it is complete.
-void psram_image_write_at(int track, uint32_t offset, const uint8_t *src, int len);
-void psram_image_commit(int track, uint32_t bit_count);
+void psram_image_write_at(int slot, int track, uint32_t offset, const uint8_t *src, int len);
+void psram_image_commit(int slot, int track, uint32_t bit_count);
 
 // Host wrote this track: keep the data, mark for later flush to the server.
-void psram_image_mark_dirty(int track, const uint8_t *src, uint32_t bit_count);
+void psram_image_mark_dirty(int slot, int track, const uint8_t *src, uint32_t bit_count);
 
 // Next dirty track for the writeback walker, or -1 when the image is clean.
-int  psram_image_next_dirty(void);
-void psram_image_clear_dirty(int track);
+int  psram_image_next_dirty(int slot);
+void psram_image_clear_dirty(int slot, int track);
 
 // Fill progress, for the background loader and any UI.
-int  psram_image_missing_count(void);
-int  psram_image_next_missing(int from_track);
+int  psram_image_missing_count(int slot);
+int  psram_image_next_missing(int slot, int from_track);
 
-void psram_image_reset(void);        // eject / disk change
+void psram_image_reset_slot(int slot);   // clear one slot, leaving the other alone
+
+// --- The active/inactive swap -----------------------------------------
+//
+// active_slot is a single volatile word: core1 (this file, driven by
+// device_client.c's fetch-and-swap sequence) is the only writer, core0
+// (track_cache.c's track_cache_get()) is the only reader. See
+// psram_publish_slot()'s definition in psram_image.c for the safety
+// argument this rests on.
+void psram_publish_slot(int slot);      // the single volatile store core0 reads
+int  psram_active_slot(void);           // SLOT_NONE when ejected
+int  psram_inactive_slot(void);         // the fetch target; SLOT_NONE -> 0
 
 // Host tests only: point the image store at ordinary memory. On device the
 // SDK's PSRAM window is used and this is never called.
