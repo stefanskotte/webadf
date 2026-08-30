@@ -153,6 +153,49 @@ static void test_backoff_resets_after_success(void) {
     CHECK_EQ_INT(c.backoff_ms, 0);
 }
 
+// Review round 1, Important finding: with the fake clock pinned at 0 (as
+// every other backoff test leaves it, via boot()'s fake_set_clock(0)),
+// c->now() % 250 is 0 for the whole test, so jitter was never exercised --
+// a hardcoded 0, or a missing post-jitter recap, left the suite green.
+// These three assertions pin the clock away from 0 and demand an EXACT
+// value, so a silently-zeroed jitter term cannot hide.
+
+static void test_jitter_is_added_from_the_clock_not_silently_zero(void) {
+    boot();
+    fake_set_clock(123);
+    fake_push_connect_failure(); dc_step(&c);
+    // now() % 250 == 123, and this is the very first backoff (from 0), so
+    // the composition is exactly floor + jitter -- no doubling, no cap.
+    CHECK_EQ_INT(c.backoff_ms, DC_BACKOFF_FLOOR_MS + 123);
+}
+
+static void test_jitter_never_pushes_backoff_past_the_cap(void) {
+    boot();
+    fake_set_clock(249); // the maximum possible jitter term (249 % 250)
+    for (int i = 0; i < 8; i++) { // fake transport's queue caps at 8 pushes
+        fake_push_connect_failure();
+        dc_step(&c);
+    }
+    // Doubling alone reaches/exceeds the cap well before 10 iterations;
+    // the +249 jitter added on top must still be re-capped, not left to
+    // sit above DC_BACKOFF_CAP_MS.
+    CHECK_EQ_INT(c.backoff_ms, DC_BACKOFF_CAP_MS);
+}
+
+static void test_status_success_does_not_reset_poll_backoff(void) {
+    // Only a genuine poll success (dc_step's 204/200) resets backoff_ms.
+    // A successful status heartbeat is a different, best-effort channel --
+    // an over-eager dc_backoff_reset() call inside dc_report_status (a
+    // plausible copy/paste error) would silently mask real poll trouble.
+    boot();
+    fake_push_connect_failure(); dc_step(&c);
+    uint32_t after_fail = c.backoff_ms;
+    CHECK(after_fail > 0, "failure sets backoff");
+    fake_push_response("HTTP/1.1 204 No Content\r\n\r\n");
+    dc_report_status(&c, 4096, -55, NULL);
+    CHECK_EQ_INT(c.backoff_ms, after_fail);
+}
+
 static void test_status_sends_all_six_fields(void) {
     boot();
     fake_push_response("HTTP/1.1 204 No Content\r\n\r\n");
@@ -190,6 +233,9 @@ int main(void) {
     RUN(test_read_timeout_exceeds_the_hold);
     RUN(test_backoff_grows_and_is_capped);
     RUN(test_backoff_resets_after_success);
+    RUN(test_jitter_is_added_from_the_clock_not_silently_zero);
+    RUN(test_jitter_never_pushes_backoff_past_the_cap);
+    RUN(test_status_success_does_not_reset_poll_backoff);
     RUN(test_status_sends_all_six_fields);
     RUN(test_unmounted_reports_null_not_omitted);
     return REPORT();
