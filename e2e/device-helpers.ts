@@ -47,14 +47,18 @@ export async function pairDevice(page: Page, request: APIRequestContext, name = 
  */
 export async function seedDisk(
   orgId: string,
-  opts: { title: string; diskNo: number; sha256: string },
+  // sizeBytes defaults to a standard 901,120-byte DD image. Callers proving
+  // F-1 (an unencodable disk must not become mountable) pass a smaller value
+  // — the blob is sized to match, same as a real truncated ingest would be.
+  opts: { title: string; diskNo: number; sha256: string; sizeBytes?: number },
 ) {
   const db = getDb();
   const gameId = `gam_${randomUUID()}`;
   const diskId = randomUUID();
+  const sizeBytes = opts.sizeBytes ?? 901120;
 
   await db.insert(blobs).values({
-    sha256: opts.sha256, sizeBytes: 901120, storageKey: `adf/${opts.sha256}`,
+    sha256: opts.sha256, sizeBytes, storageKey: `adf/${opts.sha256}`,
   }).onConflictDoNothing();
 
   // games has NO diskCount column — it is derived. sortTitle IS NOT NULL.
@@ -64,7 +68,7 @@ export async function seedDisk(
 
   await db.insert(disks).values({
     id: diskId, gameId, orgId, diskNo: opts.diskNo, sha256: opts.sha256,
-    label: `${opts.title} (Disk ${opts.diskNo})`, sizeBytes: 901120,
+    label: `${opts.title} (Disk ${opts.diskNo})`, sizeBytes,
   });
 
   await db.insert(entitlements).values({

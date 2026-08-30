@@ -23,6 +23,17 @@ export const devices = pgTable('devices', {
   mountedGameId: text('mounted_game_id'),
   mountedDiskNo: integer('mounted_disk_no'),
   mountedSha256: text('mounted_sha256'),
+  // The exact disks row the device reports holding, resolved by recordStatus
+  // from the status POST's mountedDiskId. Exists for the same reason
+  // desiredDiskId does: (gameId, diskNo, orgId) is not unique, so plan 3b's
+  // §7 rendering must not have to resolve (orgId, mountedSha256) back to a
+  // disk row -- that lookup is exactly the non-unique one desiredDiskId was
+  // added to avoid.
+  mountedDiskId: text('mounted_disk_id'),
+  // The desired_version the device had converged to when it sent this report
+  // -- echoes the status payload's `version` field (spec §4). Nullable: a
+  // device that has never sent it (or an older firmware) simply has none.
+  mountedVersion: integer('mounted_version'),
 
   // Desired state. Null across all three means ejected -- there is no separate
   // "ejected" flag, because "no disk is desired" and "eject" are the same fact.

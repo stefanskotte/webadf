@@ -17,7 +17,13 @@ describe('deviceAuthResponse', () => {
   });
 
   it('does not leak the reason for the failure', async () => {
+    // Exact-match, not keyword-based: a keyword regex only catches a future
+    // leak that happens to use one of these particular words. A field like
+    // `reason: 'row not found'` would slip straight past
+    // /token|hash|bearer|device/i while still telling an attacker something
+    // real. Pinning the whole body is the only check that catches any
+    // addition at all.
     const body = await deviceAuthResponse(new DeviceAuthError())!.json();
-    expect(JSON.stringify(body)).not.toMatch(/token|hash|bearer|device/i);
+    expect(body).toEqual({ error: 'unauthorized' });
   });
 });

@@ -100,3 +100,20 @@ describe('SQL-facing identity of the new columns', () => {
     expect(disks.writeProtected.name).toBe('write_protected');
   });
 });
+
+describe('devices.mountedDiskId and mountedVersion (F-3)', () => {
+  // Without these, plan 3b's §7 rendering would have to resolve
+  // mounted_sha256 back to a disk row by (orgId, sha256) -- exactly the
+  // non-unique lookup desiredDiskId was added to avoid on the desired side.
+  it('are both nullable', () => {
+    expect(devices.mountedDiskId.notNull).toBe(false);
+    expect(devices.mountedVersion.notNull).toBe(false);
+  });
+
+  it('have the expected db-facing name and SQL type', () => {
+    expect(devices.mountedDiskId.name).toBe('mounted_disk_id');
+    expect(devices.mountedDiskId.getSQLType()).toBe('text');
+    expect(devices.mountedVersion.name).toBe('mounted_version');
+    expect(devices.mountedVersion.getSQLType()).toBe('integer');
+  });
+});

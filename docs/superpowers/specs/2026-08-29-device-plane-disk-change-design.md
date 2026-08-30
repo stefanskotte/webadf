@@ -326,3 +326,120 @@ side signal to advance within the resident set. Nothing in this protocol preclud
 The parent spec's §13 already floated a hardware button advancing through a disk set and
 deferred it. Under D14 the same escape hatch exists on the RP2350 board, and resident sets
 are what would make it instant rather than a 2-second fetch.
+
+---
+
+## 10. Device contract
+
+Everything above is written for the server side. This section is written for whoever
+implements the constrained C client on flaky WiFi — the firmware plan is separate, but a
+firmware author should not have to read route source to answer any of the questions below.
+
+### `since=0` on every cold boot — the single most important line in this section
+
+PSRAM is lost on power-cycle. If firmware persists `since` in flash (or anywhere else that
+survives a reboot) and sends that remembered value back on the first poll after power comes
+up, the device gets `204` for up to 25 s at a time and **never learns what it is supposed to
+mount** — it boots diskless and stays diskless, indefinitely, with no error and no retry that
+helps, because every retry repeats the same mistake. `since` is state about *what this
+device has already been told*, and PSRAM is where "already been told" lives. When PSRAM is
+empty, the device has not been told anything yet, no matter what a flash-resident counter
+says. **Always send `since=0` on cold boot.** Persisting `since` across a *reconnect* that
+did not lose PSRAM (a WiFi drop, a router reboot) is fine and is what avoids a redundant
+re-fetch of a disk already correctly mounted; persisting it across a *power-cycle* is the bug.
+
+### When to advance `since`
+
+Only after the transition it describes has actually completed — never merely on receipt of
+the poll response that named it. Concretely: receiving `{version: 7, desired: {...}}` does
+not mean `since` becomes 7 yet. `since` becomes 7 only once the fetch (`GET
+/api/device/image/<sha256>`) has succeeded, the image has been verified, and the swap into
+the slot the Amiga reads from is complete. If the fetch fails, keep polling with the
+*old* `since` — the server will keep re-delivering the same instruction, which is exactly
+what reconciliation (§2) wants: idempotent redelivery until the device catches up, not a
+one-shot job that is marked done whether or not it worked.
+
+### Status-code → action table
+
+**`GET /api/device/poll?since=<version>`**
+
+| Status | Action |
+|---|---|
+| 200 | Act on `desired` (fetch-then-transition, §1 rule 2; or eject if `desired` is `null`). |
+| 204 | Nothing changed within the hold. Re-poll with the same `since`. |
+| 401 | Stop polling. The token is no longer valid — re-pair. |
+| 404 | The device row itself is gone (deleted by the operator). Stop polling. **Keep the disk mounted** — spec §1 rule 1: the *absence* of a device on the server is not a signal to eject, any more than a network outage is. |
+| 499 | The platform cancelled the hold (see the route's own comment on when this is live). Retry. |
+| 5xx | Transient server fault. Retry with backoff (below). |
+
+**`GET /api/device/image/<sha256>`**
+
+| Status | Action |
+|---|---|
+| 200 | Use the bytes — verify length and the `WFMF` magic before swapping, then advance `since`. |
+| 400 | A firmware bug (malformed digest in the request). Never retry as-is; this will not become valid by resending it. |
+| 401 | Stop. Re-pair. |
+| 404 | Not entitled to this digest (or it does not exist). Do not retry *this* digest. Keep polling — the desired state may change to something the device is entitled to. |
+| 422 | Permanently unencodable (F-1: the stored disk is not a standard image). Same handling as 404 — do not retry this digest, keep polling for a different desired state. This is a data problem the device cannot fix by trying again. |
+| 503 | The blob store was unavailable. Retry. |
+| 5xx | Transient server fault. Retry with backoff. |
+
+**`POST /api/device/status`**
+
+| Status | Action |
+|---|---|
+| 204 | Report accepted. Nothing to do. |
+| 400 | The *whole* report was dropped — fix the body and resend. (After F-2, a well-formed partial report never destroys previously recorded fields, so there is little reason to send a partial one — see "send all five fields" below.) |
+| 401 | Stop. Re-pair. |
+
+### Send all five status fields on every report, where known
+
+`mountedSha256`, `mountedDiskId`, `version`, `error`, `psramFree` and `rssi`. F-2 means a
+partial report (say, just `mountedSha256`) no longer *destroys* the fields it omits — an
+absent key leaves the corresponding column untouched rather than nulling it out. But "no
+longer destroys data" is not the same as "keeps the UI honest": a full report is what lets
+the human-facing UI (plan 3b, §7) show current signal strength, free PSRAM, and the exact
+disk/version the device believes it holds, rather than a stale value from whenever that
+field was last reported. Send everything the firmware knows, every time it reports.
+
+### Heartbeat interval
+
+Report status roughly every 60 s, and additionally on every transition (a fetch completing,
+an eject, an error). The poll (`GET /api/device/poll`) already refreshes `last_seen_at` on
+every request as of F-4, independently of whether status reporting is working — so a device
+with a broken status path but a healthy poll loop still reads as recently seen, not as
+vanished hardware. The 60 s status heartbeat is what keeps `mounted_*`, `rssi` and
+`psram_free` fresh for the UI; it is not what keeps the device from looking dead.
+
+### Socket read timeout must exceed 30 s
+
+The poll holds the connection open for up to 25 s before answering `204`. A read timeout at
+or below that — a common embedded-HTTP-client default is 10 s — tears down every single poll
+mid-hold, which looks exactly like a network fault and drives the device into the reconnect/
+backoff path continuously even when the server and network are both fine. Set the socket
+read timeout comfortably above 25 s; 30 s is the floor, more is safer.
+
+### Backoff and jitter
+
+The server sends no `Retry-After` on any response. On a connection failure, a 5xx, or any
+other retryable condition, back off with jitter (e.g. exponential from 1 s up to some cap,
+plus a random component) rather than reconnecting in a tight loop. Every device doing this
+is what keeps a webservice outage from turning into a thundering-herd reconnect storm the
+moment the service returns — and per §1, an outage never costs the Amiga anything, so there
+is no urgency that justifies hammering the server.
+
+### No `Range` support
+
+`GET /api/device/image/<sha256>` does not support byte-range requests. A connection drop
+mid-transfer means restarting the whole 2,027,536-byte fetch from offset zero. This is a
+named limitation, not a surprise to discover in the field — plan accordingly (e.g. a fetch
+timeout budget that accounts for a full retransfer, not just one attempt).
+
+### Fetch before transition — restated from the device's side
+
+Spec §1 rule 2, restated for firmware: never eject the currently-mounted disk before the
+replacement disk is fully fetched into PSRAM and verified. Fetch first, into the *other*
+slot; only once that fetch has succeeded and verified does the device swap which slot the
+Amiga reads from and update `since`. A firmware that ejects first and fetches second
+recreates exactly the failure mode this whole design exists to prevent: several seconds of
+a diskless Amiga on every swap, and an indefinitely diskless Amiga on every failed fetch.

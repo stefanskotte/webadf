@@ -135,6 +135,9 @@ test('behaviour 1: a full mount cycle converges', async ({ page, request }) => {
   await ingestComplete(page, orgId, [{ sha256, sizeBytes, filename: `Mount Cycle ${randomUUID()}.adf` }]);
   if (createdBlob) ingestCleanup.ownedBlobShas.push(sha256);
   const diskId = await diskIdFor(orgId, sha256);
+  const diskRow = (await getDb()
+    .select({ gameId: disks.gameId, diskNo: disks.diskNo })
+    .from(disks).where(eq(disks.id, diskId)))[0];
 
   const mount = await (await page.request.post(`/api/devices/${deviceId}/mount`, { data: { diskId } })).json();
 
@@ -142,6 +145,11 @@ test('behaviour 1: a full mount cycle converges', async ({ page, request }) => {
   expect(poll1.status()).toBe(200);
   const state1 = await poll1.json();
   expect(state1.desired.sha256).toBe(sha256);
+  // F-3: the poll payload must carry the exact disk id, not just the sha --
+  // without it, plan 3b's status report would have to resolve
+  // (orgId, sha256) back to a disk row, which is exactly the non-unique
+  // lookup desiredDiskId was added to avoid.
+  expect(state1.desired.diskId).toBe(diskId);
   expect(state1.version).toBe(mount.version);
 
   const image = await request.get(`/api/device/image/${sha256}`, { headers: authHeader(token) });
@@ -150,9 +158,12 @@ test('behaviour 1: a full mount cycle converges', async ({ page, request }) => {
   expect(bytes.length).toBe(2_027_536);
   expect([bytes[0], bytes[1], bytes[2], bytes[3]]).toEqual([0x57, 0x46, 0x4d, 0x46]); // 'WFMF'
 
+  // A full report — the reference client sends everything it knows, per
+  // §10 of the device contract. mountedDiskId and version are what F-3
+  // added so the device can say WHICH disk it holds, not just which bytes.
   const report = await request.post('/api/device/status', {
     headers: authHeader(token),
-    data: { mountedSha256: sha256 },
+    data: { mountedSha256: sha256, mountedDiskId: diskId, version: state1.version },
   });
   expect(report.status()).toBe(204);
 
@@ -168,6 +179,12 @@ test('behaviour 1: a full mount cycle converges', async ({ page, request }) => {
   const row = await deviceRow(deviceId);
   expect(row.mountedSha256).toBe(row.desiredSha256);
   expect(row.mountedSha256).toBe(sha256);
+  // F-3: mounted_disk_id, mounted_game_id, mounted_disk_no and
+  // mounted_version are all populated from the full report.
+  expect(row.mountedDiskId).toBe(diskId);
+  expect(row.mountedGameId).toBe(diskRow.gameId);
+  expect(row.mountedDiskNo).toBe(diskRow.diskNo);
+  expect(row.mountedVersion).toBe(state1.version);
 });
 
 test('behaviour 2: eject completes the cycle', async ({ page, request }) => {

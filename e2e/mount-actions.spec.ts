@@ -136,6 +136,26 @@ test('one organization cannot mount to, or eject, another organization’s devic
   await ctxB.close();
 });
 
+test('a disk the encoder cannot serve is never mountable (F-1)', async ({ page, request }) => {
+  // Ingest accepts 1 byte to 2 MiB, but encodeDisk throws on anything that is
+  // not exactly a standard 901,120-byte DD image. Without the sizeBytes guard
+  // in setDesired, this mount would succeed, the poll would succeed, and
+  // /api/device/image/<sha256> would 500 forever with no signal to a human.
+  // Prove it bites by temporarily removing the size check in setDesired --
+  // this test then fails with 200 instead of 404.
+  const { orgId } = await signUpFresh(page);
+  const { deviceId } = await pairDevice(page, request);
+  const { diskId } = await seedDisk(orgId, {
+    title: `Truncated ${runTag()}`, diskNo: 1, sha256: sha(runTag()), sizeBytes: 500_000,
+  });
+
+  const res = await page.request.post(`/api/devices/${deviceId}/mount`, { data: { diskId } });
+  expect(res.status()).toBe(404);
+
+  const row = await deviceRow(deviceId);
+  expect(row.desiredSha256).toBeNull();
+});
+
 test('an unknown device id and an unknown disk id are both plain 404s', async ({ page, request }) => {
   const { orgId } = await signUpFresh(page);
   const { deviceId } = await pairDevice(page, request);

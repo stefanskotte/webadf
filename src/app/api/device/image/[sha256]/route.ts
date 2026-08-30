@@ -55,10 +55,16 @@ export async function GET(
     wfmf = encodeDisk(adf);
   } catch (e) {
     // A stored blob that will not encode is our bug or a corrupt object, not
-    // the device's fault. 500, naming the digest for triage.
+    // the device's fault -- but it is also never going to start encoding on a
+    // retry. setDesired (src/lib/mount.ts) rejects mounting anything but an
+    // exact 901,120-byte image, so this path should be unreachable for a
+    // freshly mounted disk; it remains here for a disk that became desired
+    // before that guard existed. 422, not 500: this is permanent, not
+    // transient, and a device must not treat it as a server fault worth
+    // retrying.
     return Response.json(
       { error: 'encode_failed', sha256, detail: (e as Error).message },
-      { status: 500 },
+      { status: 422 },
     );
   }
 

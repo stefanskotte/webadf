@@ -18,7 +18,9 @@ export async function PATCH(request: Request, ctx: { params: Promise<{ id: strin
   }
 
   const parsed = patchBody.safeParse(body);
-  if (!parsed.success) return Response.json({ error: z.flattenError(parsed.error) }, { status: 400 });
+  if (!parsed.success) {
+    return Response.json({ error: 'invalid_body', detail: z.flattenError(parsed.error) }, { status: 400 });
+  }
 
   // Org-scoped in the statement, not in a WHERE a later edit could drop.
   const updated = await getDb().update(disks)

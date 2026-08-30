@@ -90,6 +90,50 @@ test('a garbled since is treated as never having polled, not as up to date', asy
   }
 });
 
+test('a poll updates last_seen_at without any status POST (F-4)', async ({ page, request }) => {
+  // The poll is the only contact a device is guaranteed to make every ~25 s.
+  // If only the status POST wrote last_seen_at, a device polling happily
+  // whose status path is broken would read as "never seen," pointing the
+  // operator at the hardware instead of the network.
+  const { orgId } = await signUpFresh(page);
+  const { deviceId, token } = await pairDevice(page, request);
+  const { diskId } = await seedDisk(orgId, { title: `Px ${runTag()}`, diskNo: 1, sha256: sha(runTag()) });
+  // Mount so the poll returns immediately (200) instead of holding the full
+  // 25 s for an unrelated 204 -- this test is about last_seen_at, not the hold.
+  await page.request.post(`/api/devices/${deviceId}/mount`, { data: { diskId } });
+
+  const before = await getDb().select().from(devices).where(eq(devices.id, deviceId));
+  expect(before[0].lastSeenAt).toBeNull();
+
+  const beforeCall = Date.now();
+  const res = await request.get('/api/device/poll?since=0', { headers: authHeader(token) });
+  expect(res.status()).toBe(200);
+
+  const after = await getDb().select().from(devices).where(eq(devices.id, deviceId));
+  expect(after[0].lastSeenAt).not.toBeNull();
+  expect(after[0].lastSeenAt!.getTime()).toBeGreaterThanOrEqual(beforeCall - 1000);
+});
+
+test('a since far above the real version is a 200 with current desired, not a 204 forever (F-5)', async ({ page, request }) => {
+  // Reachable after a database restore rolls desired_version backward: the
+  // device's remembered `since` is now higher than anything the server has
+  // ever produced, and `version > from` would be false forever without a
+  // clamp -- 204 on every poll, no signal, indistinguishable from silence.
+  const { orgId } = await signUpFresh(page);
+  const { deviceId, token } = await pairDevice(page, request);
+  const digest = sha(runTag());
+  const { diskId } = await seedDisk(orgId, { title: `Px ${runTag()}`, diskNo: 1, sha256: digest });
+  const mount = await (await page.request.post(`/api/devices/${deviceId}/mount`, { data: { diskId } })).json();
+
+  const res = await request.get(`/api/device/poll?since=${mount.version + 999_999}`, {
+    headers: authHeader(token),
+  });
+  expect(res.status()).toBe(200);
+  const body = await res.json();
+  expect(body.desired?.sha256).toBe(digest);
+  expect(body.version).toBe(mount.version);
+});
+
 test('a poll whose device has vanished is a 404, never a 200 that reads as an eject', async ({ page, request }) => {
   // THE property of spec §1 rule 1. A device told {"desired": null} ejects a
   // disk nobody asked it to eject.

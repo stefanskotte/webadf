@@ -1,5 +1,5 @@
 import { requireDevice, deviceAuthResponse } from '@/lib/device-auth';
-import { readDesired, readDesiredVersion } from '@/lib/mount';
+import { readDesired, readDesiredVersion, touchLastSeen } from '@/lib/mount';
 
 // Holds up to 25 s. maxDuration covers the hold plus slack; the platform
 // default would cut the connection mid-hold.
@@ -8,15 +8,36 @@ export const maxDuration = 60;
 const HOLD_MS = 25_000;
 const TICK_MS = 1_000;
 
+const NO_STORE = { 'cache-control': 'no-store' };
+
+function notFound() {
+  return Response.json({ error: 'device_not_found' }, { status: 404, headers: NO_STORE });
+}
+
 export async function GET(request: Request) {
   let device;
   try {
     device = await requireDevice(request);
   } catch (e) {
     const res = deviceAuthResponse(e);
-    if (res) return res;
+    if (res) {
+      // A cached 401 served against the wrong bearer would be both a
+      // cross-tenant leak and, on a device-facing route, indistinguishable
+      // from a spurious instruction -- no response here may be cached.
+      res.headers.set('cache-control', 'no-store');
+      return res;
+    }
     throw e;
   }
+
+  // The poll is the one contact every device is guaranteed to make roughly
+  // every 25 s (the hold) plus reconnect time, whether or not its status
+  // POSTs are succeeding. Write last_seen_at here, once per request, so a
+  // device with a broken status path still reads as recently seen rather
+  // than pointing the operator at the hardware. src/lib/mount.ts's
+  // touchLastSeen keeps this a single-column write, not the full recordStatus
+  // path, which is for actual observations.
+  await touchLastSeen(device.deviceId);
 
   const sinceRaw = new URL(request.url).searchParams.get('since') ?? '0';
   // parseInt('1abc') is 1 -- a numeric-prefixed garbage value would parse to a
@@ -37,14 +58,26 @@ export async function GET(request: Request) {
     // The device authenticated against this row, so it existed a moment ago.
     // If it has been deleted mid-poll that is a 404 — NEVER a 200 the device
     // could read as an eject instruction. Spec §1 rule 1.
-    if (version === null) return Response.json({ error: 'device_not_found' }, { status: 404 });
+    if (version === null) return notFound();
 
-    if (version > from) {
+    // `since` can end up ahead of the version we are about to compare it to
+    // -- reachable after a database restore rolls desired_version backward.
+    // Left unclamped, `version > from` is false forever: no future version
+    // can ever exceed a `since` that is already bigger than anything the
+    // server has ever produced, so the device 204s on every poll with no
+    // signal, exactly the class of bug the garbled-string guard above
+    // already exists to prevent. Math.min pins `from` to no more than the
+    // real version before comparing; when that clamp actually changes the
+    // value (`clampedFrom !== from`), `since` was already invalid, and that
+    // alone must be enough to deliver the current state immediately rather
+    // than waiting for a version that can never arrive.
+    const clampedFrom = Math.min(from, version);
+    if (version > clampedFrom || clampedFrom !== from) {
       const state = await readDesired(device.deviceId);
-      if (!state) return Response.json({ error: 'device_not_found' }, { status: 404 });
-      return Response.json({ version: state.version, desired: state.desired });
+      if (!state) return notFound();
+      return Response.json({ version: state.version, desired: state.desired }, { headers: NO_STORE });
     }
-    if (Date.now() >= deadline) return new Response(null, { status: 204 });
+    if (Date.now() >= deadline) return new Response(null, { status: 204, headers: NO_STORE });
     // Works where the platform wires request cancellation into `signal`,
     // including local dev. On this repo's Vercel deployment it is currently
     // inert: cancellation only reaches `request.signal` for a route that
@@ -52,7 +85,7 @@ export async function GET(request: Request) {
     // rather than removed -- it costs nothing and starts working the day
     // that opt-in is added -- but do not read it as protection that exists
     // today.
-    if (request.signal.aborted) return new Response(null, { status: 499 });
+    if (request.signal.aborted) return new Response(null, { status: 499, headers: NO_STORE });
     await new Promise((r) => setTimeout(r, TICK_MS));
   }
 }

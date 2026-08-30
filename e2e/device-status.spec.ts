@@ -102,6 +102,75 @@ test('an error is recorded and then cleared', async ({ page, request }) => {
   expect(afterClear.lastErrorAt).toBeNull();
 });
 
+test('a partial report preserves a previously set lastError (F-2)', async ({ page, request }) => {
+  // {mountedSha256: X} is the exact shape the reference client sends
+  // (e2e/device-protocol.spec.ts's status POSTs). Before F-2, error/
+  // psramFree/rssi all defaulted to null in the zod schema, so this minimal
+  // report would silently wipe last_error while a mount is still
+  // unconverged -- a human would then see desired != mounted with no
+  // explanation at all.
+  await signUpFresh(page);
+  const { deviceId, token } = await pairDevice(page, request);
+
+  const withError = await request.post('/api/device/status', {
+    headers: authHeader(token),
+    data: { mountedSha256: null, error: 'fetch failed' },
+  });
+  expect(withError.status()).toBe(204);
+  expect((await deviceRow(deviceId)).lastError).toBe('fetch failed');
+
+  const partial = await request.post('/api/device/status', {
+    headers: authHeader(token),
+    data: { mountedSha256: null },
+  });
+  expect(partial.status()).toBe(204);
+
+  const after = await deviceRow(deviceId);
+  expect(after.lastError).toBe('fetch failed');
+  expect(after.lastErrorAt).not.toBeNull();
+});
+
+test('an explicit error: null still clears a previously set lastError (F-2)', async ({ page, request }) => {
+  await signUpFresh(page);
+  const { deviceId, token } = await pairDevice(page, request);
+
+  await request.post('/api/device/status', {
+    headers: authHeader(token),
+    data: { mountedSha256: null, error: 'fetch failed' },
+  });
+  expect((await deviceRow(deviceId)).lastError).toBe('fetch failed');
+
+  const cleared = await request.post('/api/device/status', {
+    headers: authHeader(token),
+    data: { mountedSha256: null, error: null },
+  });
+  expect(cleared.status()).toBe(204);
+
+  const after = await deviceRow(deviceId);
+  expect(after.lastError).toBeNull();
+  expect(after.lastErrorAt).toBeNull();
+});
+
+test('rssi: -125 is accepted with a 204 and mountedSha256 is still recorded (F-2)', async ({ page, request }) => {
+  // A marginal link reporting -125 dBm must not 400 the whole report --
+  // telemetry validation must never be able to reject the load-bearing
+  // mountedSha256 field over a signal-strength number nobody acts on
+  // precisely.
+  await signUpFresh(page);
+  const { deviceId, token } = await pairDevice(page, request);
+  const digest = sha(runTag());
+
+  const res = await request.post('/api/device/status', {
+    headers: authHeader(token),
+    data: { mountedSha256: digest, rssi: -125 },
+  });
+  expect(res.status()).toBe(204);
+
+  const row = await deviceRow(deviceId);
+  expect(row.mountedSha256).toBe(digest);
+  expect(row.rssi).toBe(-125);
+});
+
 test('a malformed body is a 400', async ({ page, request }) => {
   await signUpFresh(page);
   const { token } = await pairDevice(page, request);

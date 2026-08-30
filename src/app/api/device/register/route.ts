@@ -37,7 +37,14 @@ export async function POST(request: Request) {
 
   const parsed = registerBody.safeParse(body);
   if (!parsed.success) {
-    return Response.json({ error: z.flattenError(parsed.error) }, { status: 400 });
+    // { error: 'invalid_body', detail: ... } rather than the flattened object
+    // living directly under `error` -- a C client parsing `error` as a string
+    // could not otherwise tell this 400 apart from every other error shape
+    // in the protocol, all of which put a plain string there.
+    return Response.json(
+      { error: 'invalid_body', detail: z.flattenError(parsed.error) },
+      { status: 400 },
+    );
   }
 
   // Codes are generated uppercase from an alphabet with no ambiguous
