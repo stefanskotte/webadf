@@ -20,6 +20,14 @@ export default async function GamePage(props: PageProps<'/games/[id]'>) {
 
   // Which device, if any, is doing something with each disk. Keyed by sha256
   // because that is what both halves of the device row carry.
+  //
+  // Known limitation: `!holders.has(sha)` keeps only the FIRST device found
+  // for a given sha256, and `listDevices` orders by name -- so if two
+  // devices hold or are mounting the same disk content, only the
+  // alphabetically-first device's name is shown here, with nothing telling
+  // the reader a second device also has it. Plausible with several units and
+  // identical content. Not fixed here -- surfacing multiple holders is a
+  // display change out of this task's scope, not a one-line fix.
   const holders = new Map<string, DiskHolder>();
   for (const d of devices) {
     const state = deviceState(d, now);

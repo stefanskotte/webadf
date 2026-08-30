@@ -4,17 +4,18 @@ import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { toast } from 'sonner';
+import {
+  DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem,
+} from '@/components/ui/dropdown-menu';
 
 export interface MountTarget { id: string; name: string }
 
 export function MountAction({ diskId, devices }: { diskId: string; devices: MountTarget[] }) {
   const router = useRouter();
   const [busy, setBusy] = useState(false);
-  const [open, setOpen] = useState(false);
 
   async function mount(deviceId: string) {
     setBusy(true);
-    setOpen(false);
     try {
       const res = await fetch(`/api/devices/${deviceId}/mount`, {
         method: 'POST',
@@ -55,26 +56,33 @@ export function MountAction({ diskId, devices }: { diskId: string; devices: Moun
     );
   }
 
+  // Several devices paired: a real menu, not a hand-rolled popover. Base UI's
+  // Menu gives outside-click dismissal, Escape handling, focus management and
+  // menu/menuitem ARIA roles for free -- a hand-rolled <div> version had none
+  // of that (clicking elsewhere on the page left it open).
   return (
-    <div className="relative">
-      <button type="button" onClick={() => setOpen((v) => !v)} disabled={busy}
-              data-testid={`mount-${diskId}`} aria-expanded={open} className={cls} style={style}>
+    // Non-modal: this is a small in-row picker, not a dialog the user must
+    // resolve before doing anything else -- the rest of the page (other
+    // disks' rows included) should stay interactive while it's open.
+    <DropdownMenu modal={false}>
+      <DropdownMenuTrigger disabled={busy} data-testid={`mount-${diskId}`} className={cls} style={style}>
         {busy ? 'Mounting…' : 'Mount to ▾'}
-      </button>
-      {open && (
-        <div className="absolute right-0 z-10 mt-1 flex min-w-[160px] flex-col overflow-hidden rounded-lg border"
-             data-testid={`mount-${diskId}-menu`}
-             style={{ borderColor: 'var(--hairline)', background: '#fff' }}>
-          {devices.map((d) => (
-            <button key={d.id} type="button" onClick={() => mount(d.id)}
-                    data-testid={`mount-${diskId}-to-${d.id}`}
-                    className="px-3 py-2 text-left text-[12px] hover:bg-black/5"
-                    style={{ color: 'var(--ink)' }}>
-              {d.name}
-            </button>
-          ))}
-        </div>
-      )}
-    </div>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent
+        align="end"
+        data-testid={`mount-${diskId}-menu`}
+        className="min-w-[160px] overflow-hidden rounded-lg border p-0"
+        style={{ borderColor: 'var(--hairline)', background: '#fff' }}
+      >
+        {devices.map((d) => (
+          <DropdownMenuItem key={d.id} data-testid={`mount-${diskId}-to-${d.id}`}
+                             onClick={() => mount(d.id)}
+                             className="rounded-none px-3 py-2 text-[12px]"
+                             style={{ color: 'var(--ink)' }}>
+            {d.name}
+          </DropdownMenuItem>
+        ))}
+      </DropdownMenuContent>
+    </DropdownMenu>
   );
 }

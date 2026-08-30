@@ -1,9 +1,9 @@
 import { test, expect } from '@playwright/test';
-import { createHash } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { eq } from 'drizzle-orm';
 import { getDb } from '@/db';
 import { devices } from '@/db/schema/devices';
-import { disks } from '@/db/schema/catalog';
+import { disks, blobs } from '@/db/schema/catalog';
 import { signUpFresh, runTag } from './helpers';
 import { pairDevice, seedDisk, addDisk, cleanupSeeded } from './device-helpers';
 
@@ -157,6 +157,20 @@ test('with two devices paired, choosing the second in the menu mounts to the sec
   await expect(menu.getByTestId(`mount-${diskId}-to-${deviceIdA}`)).toBeVisible();
   await expect(menu.getByTestId(`mount-${diskId}-to-${deviceIdB}`)).toBeVisible();
 
+  // Escape closes the menu -- only possible once the hand-rolled popover was
+  // replaced with the real Menu primitive, which wires this up natively.
+  await page.keyboard.press('Escape');
+  await expect(menu).toHaveCount(0);
+
+  // Clicking anywhere else on the page closes it too.
+  await menuBtn.click();
+  await expect(menu).toBeVisible();
+  await page.getByRole('heading', { name: `TwoDevice-${tag}` }).click();
+  await expect(menu).toHaveCount(0);
+
+  await menuBtn.click();
+  await expect(menu).toBeVisible();
+
   await Promise.all([
     page.waitForResponse((r) => r.url().includes(`/api/devices/${deviceIdB}/mount`) && r.request().method() === 'POST'),
     menu.getByTestId(`mount-${diskId}-to-${deviceIdB}`).click(),
@@ -200,4 +214,37 @@ test('a disk held by a device shows its holder text, and a stale holder reads "n
   const holderStale = page.getByTestId(`holder-${diskStale}`);
   await expect(holderStale).toContainText('not confirmed');
   await expect(holderStale).not.toHaveText(/^In /);
+});
+
+test("a disk row whose org_id diverges from its game's org_id is never shown (defense in depth)", async ({ page }) => {
+  const { orgId } = await signUpFresh(page);
+  const tag = runTag();
+  const { gameId } = await seedDisk(orgId, { title: `Divergent-${tag}`, diskNo: 1, sha256: sha(`${tag}-legit`) });
+
+  // Nothing in the schema stops a disks row from naming a game_id that
+  // belongs to one org while the row's own org_id names another -- disks
+  // has no composite FK tying it to its game's org (see getGameDetail's own
+  // comment). No seeding helper ever creates that divergence, so it is
+  // written directly here: game_id points at THIS org's game, but org_id
+  // names a different one entirely.
+  const rogueSha = sha(`${tag}-rogue`);
+  const rogueDiskId = randomUUID();
+  await getDb().insert(blobs).values({ sha256: rogueSha, sizeBytes: 901120, storageKey: `adf/${rogueSha}` }).onConflictDoNothing();
+  await getDb().insert(disks).values({
+    id: rogueDiskId, gameId, orgId: `org-rogue-${tag}`, diskNo: 2, sha256: rogueSha,
+    label: 'Rogue disk', sizeBytes: 901120,
+  });
+
+  try {
+    await page.goto(`/games/${gameId}`);
+    // The positive half: the page renders and shows the legitimately-scoped
+    // disk, proving the absence below is the org filter at work and not the
+    // page having failed to load at all.
+    await expect(page.locator('[data-testid^="disk-"]')).toHaveCount(1);
+    await expect(page.getByTestId(`disk-${rogueDiskId}`)).toHaveCount(0);
+  } finally {
+    // Inserted directly, outside device-helpers' registry -- clean up here.
+    await getDb().delete(disks).where(eq(disks.id, rogueDiskId));
+    await getDb().delete(blobs).where(eq(blobs.sha256, rogueSha));
+  }
 });
