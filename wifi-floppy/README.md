@@ -11,7 +11,8 @@ WiFi from your ADF webservice instead of reading a USB stick.
 - `hardware/generate_pcb.py` — the generator that produced the board,
   including a DRC-lite checker (crossings, clearance ≥0.15 mm, 45° rule).
   Currently passes with 0 violations.
-- `firmware/` — pico-sdk 2.x project (RP2350 / `PICO_BOARD=pico2_w`).
+- `firmware/` — pico-sdk project (RP2350 / `PICO_BOARD=pimoroni_pico_plus2_w_rp2350`,
+  pico-sdk >= 2.3.0 required — see "Firmware build requirements" below).
 
 ## Design
 - **J1** 34-pin, Amiga internal pinout: pin 2 = /DSKCHG, pin 34 = /RDY
@@ -45,6 +46,21 @@ the firmware just plays bits. Suggested next step for the webservice.
 It's a from-scratch implementation of the observable behaviour, not a
 code port — if you later paste actual FlashFloppy code in, note its
 licensing and credit Keir Fraser.
+
+## Firmware build requirements
+
+- **pico-sdk >= 2.3.0.** `hardware_psram` (and this board's
+  `PICO_PSRAM_CS_PIN`/`PICO_PSRAM_SIZE_BYTES` board-header support) landed in
+  pico-sdk PR #2919, after the 2.2.0 release; 2.3.0 is the first tag that has
+  it. `CMakeLists.txt` checks `PICO_SDK_VERSION_STRING` and fails the
+  configure step with an explanation if `PICO_SDK_PATH` points at anything
+  older.
+- **`brew install arm-none-eabi-gcc` is not sufficient** — that formula ships
+  GCC and libgcc but no newlib, so linking fails with `cannot find -lg`/`-lc`
+  on the very first target. Use the official ARM GNU Toolchain instead (the
+  `gcc-arm-embedded` cask, or the equivalent tarball from
+  developer.arm.com/downloads/-/arm-gnu-toolchain-downloads) and make sure
+  its `bin/` is on `PATH` ahead of any homebrew `arm-none-eabi-*` shims.
 
 ## Honest caveats
 - **Firmware is untested and has not been compiled here** — no pico-sdk

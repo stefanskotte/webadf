@@ -1,5 +1,21 @@
 cmake_minimum_required(VERSION 3.13)
 include(pico_sdk_import.cmake)
+
+# hardware_psram (psram_get_size/psram_is_available/psram_check_address, and
+# the __uninitialized_psram section macro used by src/psram_image.c) does not
+# exist before pico-sdk PR #2919, which landed after the 2.2.0 release. This
+# board's header also only gained the PICO_PSRAM_CS_PIN / PICO_PSRAM_SIZE_BYTES
+# mapping at that point. First SDK tag with all of this: 2.3.0. Older SDKs fail
+# at link time with "cannot find -lhardware_psram" or similar, far from here -
+# catch it up front instead.
+if (PICO_SDK_VERSION_STRING VERSION_LESS "2.3.0")
+    message(FATAL_ERROR
+        "wifi_floppy requires pico-sdk >= 2.3.0 (found ${PICO_SDK_VERSION_STRING}). "
+        "hardware_psram, and this board's PICO_PSRAM_CS_PIN/PICO_PSRAM_SIZE_BYTES "
+        "board-header support, were not added until pico-sdk 2.3.0. "
+        "Point PICO_SDK_PATH at a pico-sdk checkout of tag 2.3.0 or later.")
+endif ()
+
 project(wifi_floppy C CXX ASM)
 set(CMAKE_C_STANDARD 11)
 set(PICO_BOARD pimoroni_pico_plus2_w_rp2350)   # RP2350B + RM2(CYW43) + 8MB PSRAM
