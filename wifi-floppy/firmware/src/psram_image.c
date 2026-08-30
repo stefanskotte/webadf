@@ -8,7 +8,7 @@
 #ifndef WFMF_HOST_TEST
 // The image lives in PSRAM. __uninitialized_psram keeps it out of the data
 // image (no 2 MB of zeroes in flash, no startup memset).
-static __uninitialized_psram("image") uint8_t device_image[NUM_TRACKS][TRACK_SLOT_BYTES];
+static __uninitialized_psram("image") uint8_t device_image[NUM_TRACKS][TRACK_MAX_BYTES];
 #endif
 
 // Metadata stays in SRAM: it is touched from ISR-adjacent code and is tiny.
@@ -23,7 +23,7 @@ static uint8_t *g_base;
 static size_t   g_len;
 
 static inline uint8_t *track_ptr(int track) {
-    return g_base + (size_t)track * TRACK_SLOT_BYTES;
+    return g_base + (size_t)track * TRACK_MAX_BYTES;
 }
 
 bool psram_image_init(void) {
@@ -46,7 +46,7 @@ bool psram_image_init(void) {
 #else
     // Host tests call psram_image_set_backing() instead of relying on init()
     // to discover PSRAM; nothing to do here beyond the metadata reset above.
-    have_psram = g_base != NULL && g_len >= (size_t)NUM_TRACKS * TRACK_SLOT_BYTES;
+    have_psram = g_base != NULL && g_len >= (size_t)NUM_TRACKS * TRACK_MAX_BYTES;
 #endif
 
     return have_psram;
@@ -55,7 +55,7 @@ bool psram_image_init(void) {
 void psram_image_set_backing(void *base, size_t len) {
     g_base = (uint8_t *)base;
     g_len  = len;
-    have_psram = g_base != NULL && g_len >= (size_t)NUM_TRACKS * TRACK_SLOT_BYTES;
+    have_psram = g_base != NULL && g_len >= (size_t)NUM_TRACKS * TRACK_MAX_BYTES;
 }
 
 bool   psram_image_available(void) { return have_psram; }
@@ -78,7 +78,7 @@ uint32_t psram_image_bits(int track) {
 bool psram_image_read(int track, uint8_t *dst, uint32_t *bit_count) {
     if (!psram_image_have(track)) return false;
     uint32_t nbytes = (bits[track] + 7) / 8;
-    if (nbytes > TRACK_SLOT_BYTES) return false;
+    if (nbytes > TRACK_MAX_BYTES) return false;
     memcpy(dst, track_ptr(track), nbytes);
     *bit_count = bits[track];
     return true;
@@ -88,7 +88,7 @@ static void store(int track, const uint8_t *src, uint32_t bit_count,
                   track_state_t st) {
     if (!have_psram || track < 0 || track >= NUM_TRACKS) return;
     uint32_t nbytes = (bit_count + 7) / 8;
-    if (nbytes > TRACK_SLOT_BYTES) return;          // oversized track, drop
+    if (nbytes > TRACK_MAX_BYTES) return;          // oversized track, drop
     memcpy(track_ptr(track), src, nbytes);
     bits[track]  = bit_count;
     state[track] = st;
@@ -96,13 +96,13 @@ static void store(int track, const uint8_t *src, uint32_t bit_count,
 
 void psram_image_write_at(int track, uint32_t offset, const uint8_t *src, int len) {
     if (!have_psram || track < 0 || track >= NUM_TRACKS) return;
-    if (offset + (uint32_t)len > TRACK_SLOT_BYTES) return;
+    if (offset + (uint32_t)len > TRACK_MAX_BYTES) return;
     memcpy(track_ptr(track) + offset, src, len);
 }
 
 void psram_image_commit(int track, uint32_t bit_count) {
     if (!have_psram || track < 0 || track >= NUM_TRACKS) return;
-    if ((bit_count + 7) / 8 > TRACK_SLOT_BYTES) return;
+    if ((bit_count + 7) / 8 > TRACK_MAX_BYTES) return;
     bits[track]  = bit_count;
     state[track] = TRK_PRESENT;
 }

@@ -26,6 +26,9 @@
 #define RPM          300
 #define REV_US       200000            // 200 ms / rev
 #define BITCELL_NS   2000              // Amiga DD MFM
-#define TRACK_MFM_MAX 13000            // bytes, DD raw MFM upper bound
+// The DD raw MFM track-size ceiling lives in psram_image.h as
+// TRACK_MAX_BYTES, not here: it has to be the same constant the PSRAM slot
+// and the SRAM staging buffer are both sized against (see psram_image.h for
+// why two different values here was a live overflow).
 #define INDEX_PULSE_US 2000
 #endif

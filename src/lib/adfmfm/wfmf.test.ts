@@ -73,16 +73,24 @@ describe('writeWfmf', () => {
     expect(writeWfmf(tracks()).length).toBe(16 + TRACKS * (4 + TRACK_BYTES));
   });
 
-  it('stays under the real firmware ceiling (TRACK_MFM_MAX * 8)', () => {
-    // The binding limit: track_cache.c:14 and main.c:28 cannot hold more than
-    // this many bits, regardless of what image_loader.c will accept.
+  it('stays under the real firmware ceiling (TRACK_MAX_BYTES * 8)', () => {
+    // track_cache.c's SRAM staging buffer and main.c's track_words array
+    // cannot hold more than this many bits.
     expect(TRACK_BITS).toBeLessThanOrEqual(FIRMWARE_SAFE_TRACK_BITS);
   });
 
-  it('stays under the looser image_loader.c acceptance ceiling too', () => {
-    // Looser and non-binding in practice -- FIRMWARE_SAFE_TRACK_BITS above is
-    // the one that must never be exceeded -- but worth asserting so a future
-    // change that widens the gap between the two constants is visible here.
+  it('stays under the image_loader.c acceptance ceiling too', () => {
+    // FIRMWARE_SAFE_TRACK_BITS and FIRMWARE_ACCEPT_TRACK_BITS used to be two
+    // different numbers (104000 vs 106496) because the firmware itself had
+    // two different limits for the same thing -- a live SRAM overflow for
+    // any track in the gap between them, recorded in the task-3 report. The
+    // firmware fix reconciled both C constants into one (TRACK_MAX_BYTES),
+    // so these two exports are now equal by construction and this assertion
+    // is redundant with the one above. It stays anyway: it documents that a
+    // caller may still reach for either name depending on which ceiling it
+    // means (what the loader accepts vs what the cache can hold), and it
+    // would immediately catch a future change that reintroduces two
+    // different values here.
     expect(TRACK_BITS).toBeLessThanOrEqual(FIRMWARE_ACCEPT_TRACK_BITS);
   });
 
@@ -156,12 +164,33 @@ describe('parseLikeFirmware', () => {
     expect(parseLikeFirmware([b]).ok).toBe(false);
   });
 
-  it('refuses a track longer than TRACK_SLOT_BYTES', () => {
+  it('refuses a track longer than TRACK_MAX_BYTES', () => {
     const b = writeWfmf(tracks());
     new DataView(b.buffer, b.byteOffset, b.byteLength).setUint32(16, 13313 * 8, true);
     const r = parseLikeFirmware([b]);
     expect(r.ok).toBe(false);
-    expect(r.reason).toMatch(/13312|slot/i);
+    // 13313 * 8 = 106504 bits already exceeds the 106496-bit ceiling this
+    // task's defect-2 fix checks first, so the failure now names that check
+    // (106496 bits) rather than the byte-count one (13312 bytes) below it --
+    // the two ceilings agree exactly (13312 * 8 === 106496), so a bits value
+    // can never fail the byte check without having already failed this one.
+    expect(r.reason).toMatch(/106496|bits/i);
+  });
+
+  it('rejects a bit_count so large that (bits + 7) wraps to 0 under ToUint32, agreeing with readWfmf', () => {
+    // Same input as the readWfmf test above. Before this repo's firmware fix
+    // (image_loader.c now bounds `bits` before computing payload_bytes),
+    // this mirror reproduced the identical firmware bug on purpose: bytes
+    // wrapped to 0, the track "parsed" as a present 0-byte track, and 160 of
+    // those made a superficially complete container. The two parsers agree
+    // here now because the device the mirror models was fixed, not because
+    // this file grew a stricter rule of its own -- see the comment at the
+    // top of firmware-parser.ts.
+    const b = writeWfmf(tracks());
+    new DataView(b.buffer, b.byteOffset, b.byteLength).setUint32(16, 0xfffffff9, true);
+    const r = parseLikeFirmware([b]);
+    expect(r.ok).toBe(false);
+    expect(r.reason).toMatch(/bits/i);
   });
 
   it('refuses a truncated body rather than presenting half a disk', () => {

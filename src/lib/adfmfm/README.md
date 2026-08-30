@@ -13,7 +13,7 @@ described in `INTEGRATION.md`. `firmware-parser.ts` mirrors that parser's
 acceptance rules; if `image_loader.c` changes, change it too.
 
 `firmware-parser.ts` deliberately hardcodes its own copies of `IMAGE_MAGIC`,
-`IMAGE_VERSION`, `NUM_TRACKS` and `TRACK_SLOT_BYTES` rather than importing them
+`IMAGE_VERSION`, `NUM_TRACKS` and `TRACK_MAX_BYTES` rather than importing them
 from `constants.ts`. Do not "clean this up" by importing them. The whole point
 of the duplication is that it is a drift detector: if the parser imported the
 values it mirrors, a bad edit to `constants.ts` would silently still "match"

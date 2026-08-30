@@ -16,7 +16,17 @@
 #include "floppy_io.h"
 
 #define NUM_TRACKS       (NUM_CYL * NUM_SIDES)      // 160
-#define TRACK_SLOT_BYTES 13312u                     // 13 KB, 4-byte aligned
+
+// One constant for both the PSRAM slot and the SRAM staging buffer. These
+// were TRACK_SLOT_BYTES=13312 (PSRAM) and TRACK_MFM_MAX=13000 (SRAM); the
+// 312-byte gap was a latent overflow for any track between the two, since
+// the loader accepted up to the larger and track_cache copied into the
+// smaller. Real tracks are 12668, under both, so it never fired.
+//
+// Reconciled UPWARDS to 13312: the SRAM staging buffer grows by 312 bytes,
+// which is free, and no previously-valid image becomes invalid. Reconciling
+// downwards to 13000 would have been a silent format restriction.
+#define TRACK_MAX_BYTES 13312u                      // 13 KB, 4-byte aligned
 // 160 * 13312 = 2,129,920 B (~2.03 MB) per disk. 8 MB fits 3 with room over.
 
 typedef enum {

@@ -3,7 +3,7 @@
 #include <stdlib.h>
 
 static void test_written_track_reads_back(void) {
-    size_t len = (size_t)TRACK_SLOT_BYTES * NUM_TRACKS;
+    size_t len = (size_t)TRACK_MAX_BYTES * NUM_TRACKS;
     void *mem = malloc(len);
     psram_image_set_backing(mem, len);
     psram_image_reset();

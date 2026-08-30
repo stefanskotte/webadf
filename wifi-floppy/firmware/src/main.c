@@ -25,7 +25,7 @@ static volatile int  cur_side  = 0;
 static volatile int  want_track = -1;      // core0 -> core1 request
 static volatile bool track_live = false;
 
-static uint32_t track_words[(TRACK_MFM_MAX + 3) / 4];
+static uint32_t track_words[(TRACK_MAX_BYTES + 3) / 4];
 static uint32_t track_word_count;
 
 // ---------------------------------------------------------------- DMA feed
@@ -94,10 +94,13 @@ static void core1_main(void) {
     // One bulk transfer, then the network is out of the picture. RDY and
     // CHNG stay deasserted until the whole image is in PSRAM, so the Amiga
     // simply sees "no disk yet" rather than a drive that stalls mid-track.
-    while (!image_load(0)) {
-        printf("image load failed (%d%%), retrying\n", image_load_percent());
-        sleep_ms(1000);
-    }
+    //
+    // TODO(task-10): image_load() was removed from image_loader.c (task 3)
+    // when it was decoupled from http_fetch.h so its two recorded defects
+    // could be host-tested. image_parse_buffer() is the host-testable
+    // replacement, but nothing here drives it from the network yet. Task 10
+    // deletes http_fetch.c and rewires this to stream into
+    // image_parse_buffer() properly.
     dskchg_image_inserted();
 
     int loaded = -1;

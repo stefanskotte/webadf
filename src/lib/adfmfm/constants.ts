@@ -24,18 +24,22 @@ export const WFMF_HEADER_BYTES = 16;
 export const WFMF_BYTES = WFMF_HEADER_BYTES + TRACKS * (4 + TRACK_BYTES); // 2027536
 
 // The largest bit_count image_loader.c will accept before rejecting the
-// container outright: TRACK_SLOT_BYTES (13312) * 8.
+// container outright: TRACK_MAX_BYTES (psram_image.h) * 8.
 export const FIRMWARE_ACCEPT_TRACK_BITS = 106496;
 
-// The real safe ceiling: TRACK_MFM_MAX (13000, floppy_io.h:29) * 8. Tighter
-// than FIRMWARE_ACCEPT_TRACK_BITS because image_loader.c (image_loader.c:52)
-// accepts more than the buffers it writes into can actually hold —
-// track_cache.c:14's `uint8_t data[TRACK_MFM_MAX]` and main.c:28's
-// `track_words[(TRACK_MFM_MAX + 3) / 4]`. That gap between what the loader
-// accepts and what the cache can hold is a live firmware defect, recorded in
-// the spec's §7. TRACK_BITS must stay at or under this value, not under
-// FIRMWARE_ACCEPT_TRACK_BITS, or the device overflows SRAM per track.
-export const FIRMWARE_SAFE_TRACK_BITS = 104000;
+// Historically this repo's task-3 spec (§7) recorded a *second*, tighter
+// ceiling here: TRACK_MFM_MAX (13000, floppy_io.h) * 8 = 104000. That was a
+// live firmware defect, not a design choice -- image_loader.c's PSRAM-slot
+// guard accepted up to TRACK_SLOT_BYTES=13312 while track_cache.c's SRAM
+// staging buffer, sized TRACK_MFM_MAX=13000, could not hold that much, so a
+// track between the two overflowed the buffer on every read. The firmware
+// fix reconciled both C constants into a single TRACK_MAX_BYTES=13312, so
+// there is no longer a second, tighter number to mirror here: this constant
+// is now simply an alias for FIRMWARE_ACCEPT_TRACK_BITS, kept under its own
+// name so callers that named the ceiling by its old "safe" role don't need
+// to change, but it can never silently diverge from the accept ceiling
+// again -- there is only one C constant behind both of these now.
+export const FIRMWARE_SAFE_TRACK_BITS = FIRMWARE_ACCEPT_TRACK_BITS;
 
 // Bump whenever a change alters encoder OUTPUT (e.g. GAP_LEAD_BYTES,
 // TRACK_BITS, or anything else that changes the bytes encodeDisk produces).

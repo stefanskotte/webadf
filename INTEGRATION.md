@@ -33,7 +33,7 @@ One endpoint, one bulk response.
 
 Constraints the firmware enforces, so violating them fails the load:
 
-* `bit_count` must not exceed `TRACK_SLOT_BYTES * 8` (13312 * 8 = 106,496).
+* `bit_count` must not exceed `TRACK_MAX_BYTES * 8` (13312 * 8 = 106,496).
   A real Amiga track is ~101,600 bits / ~12,700 bytes, so there is headroom,
   but an over-long track is rejected rather than truncated.
 * Wrong magic or version aborts the load.

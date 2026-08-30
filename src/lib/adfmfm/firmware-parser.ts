@@ -7,8 +7,21 @@
 //
 // Mirrored behaviours:
 //   - wrong magic or version aborts
-//   - payload_bytes > TRACK_SLOT_BYTES aborts rather than truncating
+//   - bits > TRACK_MAX_BYTES * 8 aborts before the byte-count arithmetic,
+//     rather than computing payload_bytes first and checking it after
+//   - payload_bytes > TRACK_MAX_BYTES aborts rather than truncating
 //   - a short body leaves the image incomplete and NO disk is presented
+//
+// The second bullet used to be the other way around: this file computed
+// `bytes = (bits + 7) >>> 3` and only bounded the result, deliberately
+// reproducing a real image_loader.c bug where bits near 2**32 (e.g.
+// 0xFFFFFFF9) made `bits + 7` wrap to 0 under ToUint32, so a garbage bit
+// count parsed as a 0-byte track instead of being refused. That was correct
+// to mirror at the time: this file's job is to model what the device
+// actually accepts, and the device accepted it. The firmware bug is now
+// fixed (image_loader.c bounds `bits` before the arithmetic), so this file
+// was moved to match -- the two parsers agree here for the same reason they
+// agree everywhere else: the device changed, not this file's mission.
 //
 // This mirror flattens the input chunks into one contiguous buffer before
 // parsing anything, rather than reassembling incrementally the way
@@ -23,7 +36,7 @@
 const IMAGE_MAGIC = 0x464d4657;
 const IMAGE_VERSION = 1;
 const NUM_TRACKS = 160;
-const TRACK_SLOT_BYTES = 13312;
+const TRACK_MAX_BYTES = 13312;
 
 export interface FirmwareParseResult {
   ok: boolean;
@@ -59,9 +72,16 @@ export function parseLikeFirmware(chunks: Uint8Array[]): FirmwareParseResult {
     if (at + 4 > flat.length) return fail(tracks, `truncated before track ${t} length`);
     const bits = le32(flat, at);
     at += 4;
+    // Bound `bits` BEFORE the arithmetic, matching image_loader.c: (bits + 7)
+    // reaches 2**32 for bits === 0xFFFFFFF9 and wraps to 0 under ToUint32,
+    // which would otherwise slip a garbage bit count past the byte-count
+    // check below as a 0-byte track.
+    if (bits > TRACK_MAX_BYTES * 8) {
+      return fail(tracks, `track ${t} has ${bits} bits, over the ${TRACK_MAX_BYTES * 8}-bit ceiling`);
+    }
     const bytes = (bits + 7) >>> 3;
-    if (bytes > TRACK_SLOT_BYTES) {
-      return fail(tracks, `track ${t} is ${bytes} bytes, over the ${TRACK_SLOT_BYTES}-byte slot`);
+    if (bytes > TRACK_MAX_BYTES) {
+      return fail(tracks, `track ${t} is ${bytes} bytes, over the ${TRACK_MAX_BYTES}-byte slot`);
     }
     if (at + bytes > flat.length) return fail(tracks, `truncated inside track ${t}`);
     tracks[t] = flat.slice(at, at + bytes);

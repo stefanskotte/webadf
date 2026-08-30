@@ -11,7 +11,7 @@
 typedef struct {
     int      track;
     uint32_t bit_count;
-    uint8_t  data[TRACK_MFM_MAX] __attribute__((aligned(4)));
+    uint8_t  data[TRACK_MAX_BYTES] __attribute__((aligned(4)));
 } sram_buf_t;
 
 static sram_buf_t buf[2];
@@ -55,6 +55,14 @@ const uint8_t *track_cache_get(int track, uint32_t *bit_count) {
 
 bool track_cache_image_complete(void) {
     return psram_image_available() && psram_image_missing_count() == 0;
+}
+
+// Test-only: the true size of the SRAM buffer track_cache_get() copies each
+// track into, read via sizeof rather than echoing a macro, so this reflects
+// buf[]'s actual layout even if a future change stops using TRACK_MAX_BYTES
+// to declare it. See track_cache.h for what invariant this backs.
+size_t track_cache_buf_bytes(void) {
+    return sizeof buf[0].data;
 }
 
 int track_cache_fill_percent(void) {

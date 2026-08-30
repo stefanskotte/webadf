@@ -1,8 +1,7 @@
 #include "image_loader.h"
 #include "psram_image.h"
-#include "http_fetch.h"
-#include <stdio.h>
 #include <string.h>
+#include <stddef.h>
 
 // Incremental parser: bytes arrive in arbitrary chunks, so the header and
 // each track length are reassembled a byte at a time, and payload bytes go
@@ -48,8 +47,16 @@ static void sink(void *ctx, const uint8_t *d, int n) {
             l->len_got += take; d += take; n -= take;
             if (l->len_got < 4) return;
             l->bits = le32(l->lenb);
+            // Bound `bits` BEFORE the arithmetic below. (bits + 7) on a
+            // uint32_t wraps for bits >= 0xFFFFFFF9, yielding
+            // payload_bytes == 0, which would otherwise slip past the
+            // payload_bytes > TRACK_MAX_BYTES check that follows and mark
+            // the track present with a nonsense bit count -- the firmware
+            // would present a disk of empty tracks instead of refusing the
+            // image.
+            if (l->bits > (uint32_t)TRACK_MAX_BYTES * 8u) { l->st = S_ERR; return; }
             l->payload_bytes = (l->bits + 7) / 8;
-            if (l->payload_bytes > TRACK_SLOT_BYTES) { l->st = S_ERR; return; }
+            if (l->payload_bytes > TRACK_MAX_BYTES) { l->st = S_ERR; return; }
             l->payload_got = 0;
             l->pad_left = (4 - (l->payload_bytes & 3)) & 3;
             l->st = S_PAYLOAD;
@@ -80,18 +87,18 @@ static void sink(void *ctx, const uint8_t *d, int n) {
     }
 }
 
-bool image_load(int image_id) {
+bool image_parse_buffer(int slot, const uint8_t *data, size_t len) {
+    (void)slot;   // no per-slot state yet -- there is only one active PSRAM
+                  // image today; the parameter exists so a future multi-image
+                  // cache doesn't need a signature change.
     if (!psram_image_available()) return false;   // no PSRAM, no disk
     psram_image_reset();
     memset(&L, 0, sizeof L);
     L.st = S_HDR;
 
-    char path[32];
-    snprintf(path, sizeof path, "/image/%d", image_id);
-    int n = http_get_stream(path, sink, &L, 4000);
+    sink(&L, data, (int)len);
 
-    bool ok = (n > 0) && (L.st == S_EOF) &&
-              (psram_image_missing_count() == 0);
+    bool ok = (L.st == S_EOF) && (psram_image_missing_count() == 0);
     if (!ok) psram_image_reset();                 // never present a half disk
     return ok;
 }
