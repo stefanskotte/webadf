@@ -16,10 +16,15 @@ fail=0
 # to link. Task 3 removed that dependency (image_load() and its
 # http_fetch.h include are gone; image_parse_buffer() is the host-testable
 # replacement), so it now compiles into the host build like everything else.
+#
+# transport_fake.c (this directory) is test infrastructure -- a scriptable
+# transport_t used by task 6+'s protocol-state-machine tests -- so it is
+# compiled into every test binary alongside src/*.c, not excluded from it.
 for t in test_*.c; do
   out=".build/${t%.c}"
   cc -std=c11 -g -O1 -Wall -Wextra -Werror -DWFMF_HOST_TEST=1 \
-     -o "$out" "$t" $(ls ../src/*.c | grep -vE 'main\.c|transport_tls\.c|sntp_time\.c|http_fetch\.c|dskchg\.c') \
+     -o "$out" "$t" transport_fake.c \
+     $(ls ../src/*.c | grep -vE 'main\.c|transport_tls\.c|sntp_time\.c|http_fetch\.c|dskchg\.c') \
      || { echo "COMPILE FAIL: $t"; fail=1; continue; }
   "$out" || fail=1
 done
