@@ -16,6 +16,19 @@
 // direct, synchronous lwIP/altcp call, never a sleep_ms() wait loop -- doing
 // the latter would stop the background context from ever running, so the
 // wait would never end.
+//
+// Review round 1 finding (Critical, C2): an earlier version of this file
+// read/mutated `rx_head`/`rx_off` and called pbuf_free() on them from
+// tls_read()/tls_connect()/tls_close() *outside* that lock, while on_recv()
+// (which runs on the background context) writes the very same fields. The
+// window between freeing a pbuf and re-pointing rx_head at its successor
+// was wide enough for on_recv() to run pbuf_cat() on now-freed memory and
+// then have its own new data silently orphaned. Every read, mutation, and
+// free of rx_head/rx_off below is now inside cyw43_arch_lwip_begin/end, so
+// it can never interleave with on_recv() -- only the "is there anything to
+// do yet" poll before the lock stays unlocked (same as the plain volatile
+// bool polls in tls_connect()/tls_write() below), since a stale read there
+// just means one extra 1ms loop iteration, not a memory-safety bug.
 #include "transport.h"
 #include "tls_guard.h"
 #include "sntp_time.h"
@@ -45,6 +58,7 @@
 #define TLS_ERR_TLS_CONFIG          (-103)
 #define TLS_ERR_CONNECT             (-104)
 #define TLS_ERR_HANDSHAKE_TIMEOUT   (-105)
+#define TLS_ERR_BAD_ARG             (-106) // read() called with cap <= 0
 
 #define DNS_TIMEOUT_MS       10000u
 #define CONNECT_TIMEOUT_MS   15000u
@@ -69,8 +83,20 @@ typedef struct {
     volatile bool dns_ok;
     ip_addr_t     remote_ip;
 
+    // Bumped once at the top of every tls_connect() call. dns_found_cb()
+    // captures the generation a lookup was issued under (via g_dns_token,
+    // below) and drops the result if this has since moved on -- review
+    // round 1 finding (Minor): dns_gethostbyname() has no cancel API, so a
+    // lookup that fires after tls_connect() already gave up on it
+    // (TLS_ERR_DNS_TIMEOUT) or after this static struct has been reused
+    // for a new attempt must not be allowed to write into whichever
+    // attempt is live *now*.
+    volatile uint32_t gen;
+
     struct pbuf *rx_head;    // queued decrypted bytes not yet handed to
-                              // the caller of read()
+                              // the caller of read() -- every access is
+                              // under cyw43_arch_lwip_begin/end, see the
+                              // file-header comment above.
     uint16_t     rx_off;     // bytes already consumed out of rx_head
 } tls_conn_t;
 
@@ -85,6 +111,17 @@ mbedtls_ms_time_t mbedtls_ms_time(void) {
 
 static tls_conn_t g_conn;
 
+// dns_gethostbyname()'s callback carries only the `arg` we hand it, and
+// there is exactly one lookup in flight at a time (one connection at a
+// time, matching this transport's single static tls_conn_t design) -- so
+// one static token is enough. Set immediately before every
+// dns_gethostbyname() call; see the `gen` comment on tls_conn_t above.
+typedef struct {
+    tls_conn_t *c;
+    uint32_t    gen;
+} dns_token_t;
+static dns_token_t g_dns_token;
+
 // Created once, on first use, and never freed: the parsed root bundle and
 // mbedtls_ssl_config it holds are immutable and connection-independent, so
 // there is no reason to re-parse roots.h's 5-certificate PEM bundle (and
@@ -95,7 +132,10 @@ static struct altcp_tls_config *g_tls_config;
 
 static void dns_found_cb(const char *name, const ip_addr_t *ipaddr, void *arg) {
     (void)name;
-    tls_conn_t *c = (tls_conn_t *)arg;
+    dns_token_t *tok = (dns_token_t *)arg;
+    tls_conn_t *c = tok->c;
+    if (tok->gen != c->gen) return; // stale: belongs to an attempt this
+                                     // transport has already moved past.
     if (ipaddr) {
         c->remote_ip = *ipaddr;
         c->dns_ok = true;
@@ -115,6 +155,14 @@ static err_t on_connected(void *arg, struct altcp_pcb *pcb, err_t err) {
     return ERR_OK;
 }
 
+// Runs on the background context. Every field it touches (`rx_head`,
+// `rx_off` via the other functions below, `closed`, `err`) is either only
+// ever written here and polled (not mutated) elsewhere as a plain volatile
+// bool, or -- for rx_head/rx_off specifically -- only ever mutated
+// elsewhere inside cyw43_arch_lwip_begin/end, which is what makes it safe
+// for this callback (itself running under that same lock, implicitly, as
+// part of lwIP's own dispatch) to touch them without a separate lock of
+// its own.
 static err_t on_recv(void *arg, struct altcp_pcb *pcb, struct pbuf *p, err_t err) {
     tls_conn_t *c = (tls_conn_t *)arg;
     if (err != ERR_OK) {
@@ -148,22 +196,41 @@ static void on_err(void *arg, err_t err) {
 }
 
 // Deregister every callback before closing, so a pcb lingering in lwIP's
-// own teardown (TIME_WAIT-equivalent) can never call back into a `c` that
-// this transport has since reused for the next connect(). Same pattern
-// http_fetch.c already uses (tcp_arg/tcp_recv(..., NULL) before tcp_close).
+// own teardown can never call back into a `c` that this transport has
+// since reused for the next connect(). Same pattern http_fetch.c already
+// uses (tcp_arg/tcp_recv(..., NULL) before tcp_close).
+//
+// Review round 1 finding (Important, I3): altcp_close()'s return value was
+// previously ignored. altcp_close() can fail (ERR_MEM, if it can't queue
+// the FIN) and leaves the pcb allocated -- with its callbacks already
+// NULL'd, nothing would ever free it, and on a 25-30s poll loop that
+// eventually exhausts MEMP_NUM_TCP_PCB and silently stops fetching. The
+// SDK's own altcp_tls_mbedtls.c (around its close path) falls back to
+// altcp_abort() when altcp_close() doesn't return ERR_OK; matched here.
 static void detach_and_close(struct altcp_pcb *pcb) {
     cyw43_arch_lwip_begin();
     altcp_arg(pcb, NULL);
     altcp_recv(pcb, NULL);
     altcp_err(pcb, NULL);
-    altcp_close(pcb);
+    if (altcp_close(pcb) != ERR_OK) {
+        altcp_abort(pcb);
+    }
     cyw43_arch_lwip_end();
 }
 
 static int tls_connect(struct transport *t, const char *host, int port) {
     tls_conn_t *c = (tls_conn_t *)t->impl;
-    if (c->rx_head) pbuf_free(c->rx_head);
+    uint32_t next_gen = c->gen + 1;
+
+    cyw43_arch_lwip_begin();
+    if (c->rx_head) {
+        pbuf_free(c->rx_head);
+        c->rx_head = NULL;
+    }
+    cyw43_arch_lwip_end();
+
     memset(c, 0, sizeof *c);
+    c->gen = next_gen; // must survive the memset above
 
     // The single most important check in this file: refuse to even try a
     // handshake without a trustworthy clock. mbedtls verifies certificate
@@ -173,8 +240,10 @@ static int tls_connect(struct transport *t, const char *host, int port) {
     // expiry checking either meaninglessly always-pass or always-fail.
     if (!sntp_time_valid()) return TLS_ERR_TIME_UNSET;
 
+    g_dns_token.c = c;
+    g_dns_token.gen = c->gen;
     cyw43_arch_lwip_begin();
-    err_t derr = dns_gethostbyname(host, &c->remote_ip, dns_found_cb, c);
+    err_t derr = dns_gethostbyname(host, &c->remote_ip, dns_found_cb, &g_dns_token);
     cyw43_arch_lwip_end();
     if (derr == ERR_OK) {
         c->dns_ok = true;
@@ -282,19 +351,35 @@ static int tls_write(struct transport *t, const uint8_t *b, int n) {
 // open for 25s, so timeout_ms must be honoured to the millisecond, not
 // approximated -- too short breaks a legitimately long poll, too long (or
 // unbounded) breaks the retry/backoff loop above this transport.
+//
+// Review round 1 (Minor): cap <= 0 previously returned 0, which the
+// contract reserves for a clean close -- a caller passing a bad/zero
+// buffer would misread that as "the peer hung up". Now negative.
 static int tls_read(struct transport *t, uint8_t *b, int cap, int timeout_ms) {
     tls_conn_t *c = (tls_conn_t *)t->impl;
-    if (cap <= 0) return 0;
+    if (cap <= 0) return TLS_ERR_BAD_ARG;
 
     absolute_time_t deadline =
         make_timeout_time_ms(timeout_ms > 0 ? (uint32_t)timeout_ms : 0);
-    while (!c->rx_head) {
+    for (;;) {
+        if (c->rx_head) break; // plain poll, unlocked: see file-header
+                                // comment -- a stale "not yet" here just
+                                // costs one more 1ms loop iteration.
         if (c->closed) return c->err ? -1 : 0;
         if (absolute_time_diff_us(get_absolute_time(), deadline) <= 0) return -1;
         sleep_ms(1);
     }
 
+    // Review round 1 finding (Critical, C2): this whole drain -- reading
+    // rx_head/rx_off, freeing a fully-consumed pbuf, and re-pointing
+    // rx_head at its successor -- used to run outside the lock. on_recv()
+    // (background context) mutates the same fields via pbuf_cat(); without
+    // the lock, on_recv() firing between pbuf_free(head) and the
+    // reassignment below could run pbuf_cat() on freed memory and then
+    // have its own new pbuf orphaned (rx_head overwritten out from under
+    // it). Locked for the whole sequence now.
     int copied = 0;
+    cyw43_arch_lwip_begin();
     while (cap > 0 && c->rx_head) {
         struct pbuf *head = c->rx_head;
         int avail_here = (int)head->len - (int)c->rx_off;
@@ -312,6 +397,7 @@ static int tls_read(struct transport *t, uint8_t *b, int cap, int timeout_ms) {
             c->rx_off = 0;
         }
     }
+    cyw43_arch_lwip_end();
     return copied;
 }
 
@@ -320,12 +406,16 @@ static void tls_close(struct transport *t) {
     if (c->pcb) {
         struct altcp_pcb *pcb = c->pcb;
         c->pcb = NULL;
-        detach_and_close(pcb);
+        detach_and_close(pcb); // deregisters arg/recv/err first, so
+                                // on_recv() cannot fire for this `c` again
+                                // after this returns.
     }
+    cyw43_arch_lwip_begin();
     if (c->rx_head) {
         pbuf_free(c->rx_head);
         c->rx_head = NULL;
     }
+    cyw43_arch_lwip_end();
 }
 
 static transport_t g_transport = {

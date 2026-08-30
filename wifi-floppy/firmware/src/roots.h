@@ -5,12 +5,14 @@
 // before committing: a bundle that cannot validate the live host is the
 // exact failure this file exists to prevent.
 //
-// SHA-256 fingerprints at generation time:
+// SHA-256 fingerprints (pinned in gen_roots.sh; every fetch is checked
+// against these before being written here -- a mismatched download fails
+// the script rather than being silently pinned):
 // GTS Root R1:               D9:47:43:2A:BD:E7:B7:FA:90:FC:2E:6B:59:10:1B:12:80:E0:E1:C7:E4:E4:0F:A3:C6:88:7F:FF:57:A7:F4:CF
 // ISRG Root X1:              96:BC:EC:06:26:49:76:F3:74:60:77:9A:CF:28:C5:A7:CF:E8:A3:C0:AA:E1:1A:8F:FC:EE:05:C0:BD:DF:08:C6
 // DigiCert Global Root G2:   CB:3C:CB:B7:60:31:E5:E0:13:8F:8D:D3:9A:23:F9:DE:47:FF:C3:5E:43:C1:14:4C:EA:27:D4:6A:5A:B1:CB:5F
 // Amazon Root CA 1:          8E:CD:E6:88:4F:3D:87:B1:12:5B:A3:1A:C3:FC:B1:3D:70:16:DE:7F:57:CC:90:4F:E1:CB:97:C6:AE:98:19:6E
-// GlobalSign Root CA:        EB:D4:10:40:E4:BB:3E:C7:42:C9:E3:81:D3:1E:F2:A4:1A:48:B6:68:5C:96:E7:CE:F3:C1:DF:6C:D4:33:1C:99
+// GlobalSign Root CA:        EB:D4:10:40:E4:BB:3E:C7:42:C9:E3:81:D3:1E:F2:A4:1A:48:B6:68:5C:96:E7:CE:F3:C1:DF:6C:D4:33:1C:99 (expires 2028-01-28 -- rotate this pin (and re-run this script) before then)
 #include <stddef.h>
 
 static const char root_ca_pem[] =

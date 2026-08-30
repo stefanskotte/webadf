@@ -31,11 +31,33 @@ pico_sdk_init()
 option(WFMF_OMIT_AUTHMODE
   "Test-only: omit ALTCP_MBEDTLS_AUTHMODE to prove src/tls_guard.h's #error fires. Never enable for a real build." OFF)
 
+# Review round 1 finding (Critical, C1): mbedtls_config.h enables
+# MBEDTLS_PSA_CRYPTO_C (required by MBEDTLS_SSL_PROTO_TLS1_3 -- see
+# mbedtls_config.h's own comment on that), but pico-sdk 2.3.0's
+# pico_mbedtls/CMakeLists.txt's src_crypto_list() omits
+# library/psa_crypto_random.c from the mbedtls-3.x file list even though
+# psa_crypto.c calls four functions defined only there
+# (psa_random_internal_{init,seed,generate,free}). The first build of this
+# task passed only because nothing in the executable referenced
+# tls_transport()/sntp_sync_blocking() yet, so --gc-sections discarded
+# transport_tls.c/sntp_time.c (and, transitively, everything in mbedtls
+# they alone would have pulled in) before the missing symbols ever came up
+# at link time -- "cross-build green" proved nothing about this task.
+# Smallest fix that keeps TLS 1.2+1.3/secp256r1 exactly as verified against
+# the live host in task-9-report.md: add the one missing SDK source file
+# directly, rather than dropping MBEDTLS_PSA_CRYPTO_C (which would also
+# force dropping MBEDTLS_SSL_PROTO_TLS1_3, per check_config.h).
+# PICO_MBEDTLS_PATH is set the same way PICO_LWIP_PATH already is used
+# below: promoted to this scope by pico_mbedtls's own CMakeLists.txt during
+# pico_sdk_init() above.
+set(WFMF_PSA_CRYPTO_RANDOM_SRC ${PICO_MBEDTLS_PATH}/library/psa_crypto_random.c)
+
 add_executable(wifi_floppy
   src/main.c src/dskchg.c src/track_cache.c src/psram_image.c
   src/image_loader.c
   src/http_fetch.c src/mfm.c
-  src/transport_tls.c src/sntp_time.c)
+  src/transport_tls.c src/sntp_time.c
+  ${WFMF_PSA_CRYPTO_RANDOM_SRC})
 pico_generate_pio_header(wifi_floppy ${CMAKE_CURRENT_LIST_DIR}/src/floppy.pio)
 target_include_directories(wifi_floppy PRIVATE src ${CMAKE_CURRENT_LIST_DIR})
 target_link_libraries(wifi_floppy
@@ -51,6 +73,23 @@ if (NOT WFMF_OMIT_AUTHMODE)
   target_compile_definitions(wifi_floppy PRIVATE
     ALTCP_MBEDTLS_AUTHMODE=MBEDTLS_SSL_VERIFY_REQUIRED)
 endif ()
+
+# Review round 1 finding (Critical, C1, part 2): the "cross-build green"
+# gate is only meaningful once something actually forces transport_tls.c's
+# and sntp_time.c's entry points to stay linked -- otherwise a future
+# regression (e.g. someone reverting the psa_crypto_random.c fix above)
+# can hide behind --gc-sections exactly as this task's first build did,
+# with the ELF silently containing zero mbedTLS/roots.h content. Task 10
+# will make main.c call these for real; until then, `-Wl,-u,<symbol>`
+# forces the linker to resolve them as if something referenced them,
+# pulling in (and keeping alive under --gc-sections) tls_transport()'s
+# whole referenced graph -- g_transport's function pointers
+# (tls_connect/tls_write/tls_read/tls_close), and therefore mbedTLS/altcp
+# -- and sntp_sync_blocking()'s (pico_lwip_sntp, and sntp_time_apply() via
+# lwipopts.h's SNTP_SET_SYSTEM_TIME hook). See task-9-report.md's fix
+# report for the nm/strings evidence this now actually links in.
+target_link_options(wifi_floppy PRIVATE
+  -Wl,-u,tls_transport -Wl,-u,sntp_sync_blocking)
 
 # altcp_tls_mbedtls.c is the SDK's own file (patched for mbedtls 3.x
 # compatibility -- see pico_lwip's CMakeLists.txt) when the bundled mbedtls
