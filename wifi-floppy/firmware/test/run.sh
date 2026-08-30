@@ -7,6 +7,11 @@ fail=0
 #   main.c            - entry point, defines its own main()
 #   transport_tls.c    } device-only network stack (lwIP/mbedTLS/cyw43);
 #   sntp_time.c        } no host-portable logic to test
+#   portal_net.c      - device-only network stack (lwIP raw UDP/TCP,
+#                       cyw43_arch AP mode); no host-portable logic of its
+#                       own -- everything it calls (dhcp_handle/dns_handle/
+#                       portal_request) is already covered by its own
+#                       host-tested source file
 #   dskchg.c          - pulls in pico/stdlib.h (gpio_put, absolute_time_t);
 #                       genuinely device-only, no host-portable logic to test
 # image_loader.c used to be excluded here too: it called http_get_stream(),
@@ -26,7 +31,7 @@ for t in test_*.c; do
   out=".build/${t%.c}"
   cc -std=c11 -g -O1 -Wall -Wextra -Werror -DWFMF_HOST_TEST=1 \
      -o "$out" "$t" transport_fake.c \
-     $(ls ../src/*.c | grep -vE 'main\.c|transport_tls\.c|sntp_time\.c|dskchg\.c') \
+     $(ls ../src/*.c | grep -vE 'main\.c|transport_tls\.c|sntp_time\.c|portal_net\.c|dskchg\.c') \
      || { echo "COMPILE FAIL: $t"; fail=1; continue; }
   "$out" || fail=1
 done

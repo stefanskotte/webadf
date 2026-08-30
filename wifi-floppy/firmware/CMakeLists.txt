@@ -57,10 +57,17 @@ add_executable(wifi_floppy
   src/image_loader.c src/device_client.c src/http.c src/json_scan.c
   src/token_store.c src/config_store.c src/provisioning.c
   src/mfm.c src/dns_server.c src/dhcp_server.c src/portal_http.c
+  src/portal_net.c
   src/transport_tls.c src/sntp_time.c
   ${WFMF_PSA_CRYPTO_RANDOM_SRC})
 pico_generate_pio_header(wifi_floppy ${CMAKE_CURRENT_LIST_DIR}/src/floppy.pio)
 target_include_directories(wifi_floppy PRIVATE src ${CMAKE_CURRENT_LIST_DIR})
+# Task 6: the provisioning AP's own address. cyw43_arch_enable_ap_mode()
+# (portal_net.c) brings the interface up; this is what makes it come up as
+# 192.168.4.1 specifically, matching dns_server.h/dhcp_server.c's PORTAL_IP_*
+# identity, rather than in code -- pico_cyw43_driver's own CMakeLists.txt
+# documents this exact macro/target-type/define-name/address-string shape.
+pico_configure_ip4_address(wifi_floppy PRIVATE CYW43_DEFAULT_IP_AP_ADDRESS 192.168.4.1)
 target_link_libraries(wifi_floppy
   pico_stdlib pico_multicore hardware_pio hardware_dma hardware_irq
   hardware_psram hardware_sync hardware_flash pico_flash
@@ -91,6 +98,19 @@ if (NOT WFMF_OMIT_AUTHMODE)
   target_compile_definitions(wifi_floppy PRIVATE
     ALTCP_MBEDTLS_AUTHMODE=MBEDTLS_SSL_VERIFY_REQUIRED)
 endif ()
+
+# Spec D-4b-2: the provisioning AP is WPA2 with a single fixed,
+# compile-time password rather than an open AP (which would hand the board
+# to anyone in range who also knows/guesses a valid pairing code) or a
+# per-board password derived from the MAC (considered and rejected there as
+# more ceremony than the operator's own boards warrant). portal_net.c's
+# portal_run() is the only consumer (cyw43_arch_enable_ap_mode()'s
+# `password` argument). Whoever cuts a real release should treat this the
+# same as any other shared secret baked into the image and set it via the
+# environment the way WIFI_PASS/WEBADF_PAIRING_CODE are above, rather than
+# leaving the placeholder below in a shipped build.
+target_compile_definitions(wifi_floppy PRIVATE
+  PORTAL_AP_PASSWORD=\"***REMOVED-CREDENTIAL***\")
 
 # Review round 1 finding (Critical, C1, part 2): the "cross-build green"
 # gate is only meaningful once something actually forces transport_tls.c's
@@ -133,12 +153,25 @@ endif ()
 # Task 5: portal_http.c, same shape again -- nothing in main.c calls
 # portal_request() yet (task 6 binds a TCP listener to it), so it needs
 # its own -Wl,-u entry too or --gc-sections would silently drop it.
+#
+# Task 6: portal_net.c is the caller task 3/4/5's comments above are
+# waiting for, but nothing in main.c calls *it* yet either (task 10 wires
+# main.c to call portal_run() when provisioning.c says the portal should
+# be offered) -- so it needs the same -Wl,-u treatment, forcing
+# portal_run() undefined so --gc-sections keeps it, and with it the whole
+# graph it references (dhcp_handle/dns_handle/portal_request above, plus
+# the raw lwIP UDP/TCP calls and cyw43_arch_enable_ap_mode()). portal_stop()
+# is deliberately NOT forced here: nothing calls it yet either, and unlike
+# portal_run() there is no separate task still waiting on proof that it
+# links -- task 10's real caller (or a future -Wl,-u of its own) is what
+# will keep it alive from here.
 target_link_options(wifi_floppy PRIVATE
   -Wl,-u,tls_transport -Wl,-u,sntp_sync_blocking
   -Wl,-u,config_store_load -Wl,-u,config_store_save -Wl,-u,config_store_erase
   -Wl,-u,prov_init -Wl,-u,prov_on_assoc_result
   -Wl,-u,prov_on_verified_submit -Wl,-u,prov_on_pairing_code_rejected
-  -Wl,-u,dns_handle -Wl,-u,dhcp_handle -Wl,-u,portal_request)
+  -Wl,-u,dns_handle -Wl,-u,dhcp_handle -Wl,-u,portal_request
+  -Wl,-u,portal_run)
 
 # altcp_tls_mbedtls.c is the SDK's own file (patched for mbedtls 3.x
 # compatibility -- see pico_lwip's CMakeLists.txt) when the bundled mbedtls
