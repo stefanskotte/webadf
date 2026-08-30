@@ -157,22 +157,11 @@ test('with two devices paired, choosing the second in the menu mounts to the sec
   await expect(menu.getByTestId(`mount-${diskId}-to-${deviceIdA}`)).toBeVisible();
   await expect(menu.getByTestId(`mount-${diskId}-to-${deviceIdB}`)).toBeVisible();
 
-  // Escape closes the menu -- only possible once the hand-rolled popover was
-  // replaced with the real Menu primitive, which wires this up natively.
+  // Escape collapses it -- the group expands inline (no portal, no overlay),
+  // so there is no "outside click" concept left to test: nothing is ever
+  // covering anything, so a stray click elsewhere leaving the row expanded
+  // is harmless rather than a bug.
   await page.keyboard.press('Escape');
-  await expect(menu).toHaveCount(0);
-
-  // Clicking anywhere else on the page closes it too. Base UI's modal
-  // overlay sits on top of the rest of the page while the menu is open (by
-  // design -- see mount-action.tsx's comment on why modal stays on), so a
-  // plain click on the heading is blocked by Playwright's actionability
-  // check the same way it would be blocked for a real pointer arriving on
-  // top of that overlay. The point of this assertion is only that the menu
-  // closes, not that the click also reaches the heading underneath, so the
-  // click is forced through.
-  await menuBtn.click();
-  await expect(menu).toBeVisible();
-  await page.getByRole('heading', { name: `TwoDevice-${tag}` }).click({ force: true });
   await expect(menu).toHaveCount(0);
 
   await menuBtn.click();
@@ -189,7 +178,7 @@ test('with two devices paired, choosing the second in the menu mounts to the sec
   expect((await deviceRow(deviceIdA)).desiredDiskId).toBeNull();
 });
 
-test("opening disk 1's menu does not let a click on disk 2's Mount trigger mount disk 1 (wrong-target protection)", async ({ page, request }) => {
+test("expanding disk 1's picker never covers disk 2's Mount trigger, so clicking it cannot mount disk 1 (wrong-target protection)", async ({ page, request }) => {
   const { orgId } = await signUpFresh(page);
   const { deviceId: deviceIdA } = await pairDevice(page, request, 'Device A');
   const { deviceId: deviceIdB } = await pairDevice(page, request, 'Device B');
@@ -199,46 +188,38 @@ test("opening disk 1's menu does not let a click on disk 2's Mount trigger mount
 
   await page.goto(`/games/${gameId}`);
 
-  // Two disks, each with a two-device dropdown: disk 1's popup, opened
-  // downward from its row, is tall enough to visually overlap disk 2's row
-  // directly below it -- measured in review as disk 1's popup spanning
-  // roughly y 238-342px while disk 2's Mount trigger sits at y 293-323px,
-  // fully inside it. A real mouse click aimed at what LOOKS like disk 2's
-  // trigger can therefore land on disk 1's own menu item instead.
+  // Two disks, each with a two-device picker. This used to be an overlay
+  // (Base UI Menu, then Base UI Menu with modal={true}): disk 1's popup,
+  // anchored to its row, was tall enough to visually cover disk 2's row
+  // directly below it regardless of modal (the popup's z-index outranks the
+  // rest of the page unconditionally), so a click aimed at what LOOKED like
+  // disk 2's trigger could land on disk 1's own menu item and silently
+  // mount disk 1. Inline expansion removes the overlay entirely: opening
+  // disk 1's picker grows disk 1's OWN row and pushes disk 2's row down in
+  // normal document flow, so there is nothing left to cover.
   await page.getByTestId(`mount-${disk1Id}`).click();
-  const menu = page.getByTestId(`mount-${disk1Id}-menu`);
-  await expect(menu).toBeVisible();
+  const disk1Menu = page.getByTestId(`mount-${disk1Id}-menu`);
+  await expect(disk1Menu).toBeVisible();
   const disk2Trigger = page.getByTestId(`mount-${disk2Id}`);
 
-  // Floating-ui positions the popup asynchronously, so its bounding box is
-  // not necessarily final the instant it becomes visible. Wait for the
-  // actual overlap condition this test depends on -- disk 2's trigger
-  // vertically inside disk 1's popup -- rather than clicking on a timer and
-  // hoping the layout has settled by then.
-  await expect(async () => {
-    const menuBox = await menu.boundingBox();
-    const triggerBox = await disk2Trigger.boundingBox();
-    if (!menuBox || !triggerBox) throw new Error('missing bounding box');
-    const triggerCenterY = triggerBox.y + triggerBox.height / 2;
-    if (triggerCenterY < menuBox.y || triggerCenterY > menuBox.y + menuBox.height) {
-      throw new Error(
-        `disk 2 trigger (y=${triggerBox.y}-${triggerBox.y + triggerBox.height}) not yet inside `
-        + `disk 1 menu (y=${menuBox.y}-${menuBox.y + menuBox.height})`,
-      );
-    }
-  }).toPass({ timeout: 3000 });
+  // The property, stated directly: disk 2's trigger is not vertically
+  // inside disk 1's expanded region. Not "the click missed" -- the two
+  // rectangles simply do not overlap.
+  const disk1MenuBox = await disk1Menu.boundingBox();
+  const disk2TriggerBox = await disk2Trigger.boundingBox();
+  if (!disk1MenuBox || !disk2TriggerBox) throw new Error('missing bounding box');
+  expect(disk2TriggerBox.y).toBeGreaterThanOrEqual(disk1MenuBox.y + disk1MenuBox.height);
 
-  // Click disk 2's trigger anyway, forced through Playwright's own
-  // actionability check (which would otherwise refuse the click, the same
-  // way it refused the heading click above) -- this is the point: does the
-  // click do anything to disk 1 behind the scenes, not whether Playwright
-  // considers disk 2's button "clickable" right now.
-  await disk2Trigger.click({ force: true });
+  // A perfectly ordinary click -- no force needed, because nothing overlays
+  // disk 2's trigger. If the geometry above were wrong, Playwright's own
+  // actionability check would refuse this click the same way it refused a
+  // click that landed under the old overlay.
+  await disk2Trigger.click();
 
-  // Give any fetch this click might have triggered a moment to land, then
-  // check the ONE thing that must never be true: disk 1 mounted to either
-  // device as a side effect of a click aimed at disk 2's row.
-  await page.waitForTimeout(500);
+  // Disk 2's OWN picker is now the one expanded...
+  await expect(page.getByTestId(`mount-${disk2Id}-menu`)).toBeVisible();
+  // ...and disk 1 was never touched: a single click aimed at disk 2's row
+  // must not have mounted disk 1 to either device.
   const rowA = await deviceRow(deviceIdA);
   const rowB = await deviceRow(deviceIdB);
   expect(rowA.desiredDiskId).not.toBe(disk1Id);
