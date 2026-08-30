@@ -172,6 +172,23 @@ Learned the hard way; several cost real debugging time.
   `PageProps`/`RouteContext` are ambient — never import them. The guard is `src/proxy.ts`
   exporting `proxy`, nodejs-only. `cacheComponents` stays off.
 - **shadcn v4 is Base UI, not Radix.** Any Radix-era snippet is wrong here.
+- **Pushing `master` does not deploy to production — it only builds a Preview.** The Vercel
+  project's Production Branch is **`feat/foundation-library`**, set when the project was
+  created (Vercel took the GitHub repo's default branch, and `origin/HEAD` still points
+  there) and never changed since. This file said "merged to `master`, in production" for
+  three plans running, which reads as though merging ships. It does not. Discovered on
+  2026-08-30 immediately after merging plan 3b: both pushes produced `target: null` builds
+  while `webadf.vercel.app` still served a build from the day before.
+  - **To ship after a merge today:** promote the master build explicitly —
+    `npx vercel promote <the master deployment url>`, or `npx vercel --prod`. Plan 3b was
+    shipped this way (`dpl_B6PcDSRqyWhs2VybYK35CRcf3vWk`).
+  - **To fix it permanently:** Vercel dashboard → project `webadf` → Settings → Git →
+    Production Branch → `master`. **Not settable through the API** — `PATCH /v9/projects`
+    rejects `productionBranch`, `gitRepository` and `link` alike as unknown properties, and
+    the only other route is re-linking the repo, which risks the GitHub connection. It is a
+    dashboard change, and it is still pending.
+  - **Verify with `npx vercel inspect webadf.vercel.app`** and read `target` and `created`.
+    `vercel ls`'s Environment column makes a preview-only push easy to skim past.
 
 ---
 
