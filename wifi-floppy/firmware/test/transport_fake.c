@@ -43,6 +43,11 @@ static char g_request[FAKE_MAX_REQUEST_BYTES];
 static int g_request_len;
 static int g_request_count;
 
+// 0/negative: unlimited, the default -- write() accepts everything offered.
+// Positive: caps how many bytes a single write() call accepts, simulating a
+// real socket's short writes under backpressure (review round 1, finding 2).
+static int g_max_write_bytes;
+
 static uint32_t g_clock_ms;
 
 static void fake_fatal(const char *msg) {
@@ -59,6 +64,7 @@ void fake_reset(void) {
     g_request_len = 0;
     g_request[0] = '\0';
     g_request_count = 0;
+    g_max_write_bytes = 0;
     g_clock_ms = 0;
 }
 
@@ -114,6 +120,11 @@ static int fake_connect(struct transport *t, const char *host, int port) {
     g_cursor = 0;
     g_request_len = 0;
     g_request[0] = '\0';
+    // Count completed connect() cycles, not write() calls: the fake's model
+    // is one queued event consumed per connect(), and a client that splits
+    // one request across multiple writes (e.g. header then body) must not
+    // inflate this count (review round 1, finding 1).
+    g_request_count++;
     if (g_queue[g_active_slot].type == FAKE_EV_CONNECT_FAIL) {
         g_connected = 0;
         return -1;
@@ -126,14 +137,17 @@ static int fake_write(struct transport *t, const uint8_t *b, int n) {
     (void)t;
     if (!g_connected) return -1;
     if (n < 0) return -1;
-    if (g_request_len + n > (int)sizeof(g_request) - 1) {
+    int to_write = n;
+    if (g_max_write_bytes > 0 && to_write > g_max_write_bytes) {
+        to_write = g_max_write_bytes;
+    }
+    if (g_request_len + to_write > (int)sizeof(g_request) - 1) {
         fake_fatal("recorded request exceeds FAKE_MAX_REQUEST_BYTES");
     }
-    memcpy(g_request + g_request_len, b, (size_t)n);
-    g_request_len += n;
+    memcpy(g_request + g_request_len, b, (size_t)to_write);
+    g_request_len += to_write;
     g_request[g_request_len] = '\0';
-    g_request_count++;
-    return n;
+    return to_write;
 }
 
 static int fake_read(struct transport *t, uint8_t *b, int cap, int timeout_ms) {
@@ -172,6 +186,10 @@ const char *fake_last_request(void) {
 
 int fake_request_count(void) {
     return g_request_count;
+}
+
+void fake_set_max_write(int n) {
+    g_max_write_bytes = n;
 }
 
 void fake_set_clock(uint32_t ms) {

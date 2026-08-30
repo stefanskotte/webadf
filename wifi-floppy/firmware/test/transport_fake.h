@@ -33,9 +33,21 @@ transport_t *fake_transport(void);
 // terminated. Valid until the next fake_reset() or connect().
 const char *fake_last_request(void);
 
-// Number of write() calls made since fake_reset() -- i.e. how many
-// requests the client under test has sent.
+// Number of connect() calls made since fake_reset() -- i.e. how many
+// request/response cycles the client under test has run (the fake's model
+// is one queued event consumed per connect(), regardless of how many
+// write() calls the client used to send the request; a client that splits
+// a request across multiple writes must not inflate this count).
 int fake_request_count(void);
+
+// Cap how many bytes a single write() call accepts, simulating a real
+// socket's short writes under backpressure. 0 or negative (the default,
+// set by fake_reset()) means unlimited: a write() accepts everything
+// offered, as before. A positive `n` makes the next write() (and every one
+// after, until changed) accept at most `n` bytes and return that count --
+// callers that don't loop on a short write will visibly fail to send the
+// rest of their request.
+void fake_set_max_write(int n);
 
 // Drive the injected clock (see transport.h's clock_ms_fn).
 void fake_set_clock(uint32_t ms);
