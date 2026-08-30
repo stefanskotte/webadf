@@ -162,9 +162,11 @@ static dc_state_t dc_fetch_image(device_client_t *c, const dc_desired_t *d) {
     http_resp_t r;
     bool ok = dc_exchange(c, path, dc_discard_sink, NULL, &r);
 
-    if (!ok) {
-        // Connect/write/read failure, or a response that never parsed as
-        // HTTP at all. Never block the digest for this: it may be
+    if (!ok || !r.body_complete) {
+        // Connect/write/read failure, a response that never parsed as HTTP
+        // at all, or a connection dropped before the body finished -- all
+        // treated alike. Never block the digest for these: none of them
+        // tell us anything reliable about the digest itself, and it may be
         // perfectly fetchable next time.
         return dc_enter_backoff(c);
     }
@@ -173,14 +175,8 @@ static dc_state_t dc_fetch_image(device_client_t *c, const dc_desired_t *d) {
     case 200:
         // Task 6 has nowhere to route the image bytes yet (PSRAM slots are
         // Task 8, the loader is wired in by Task 10) -- so "the whole body
-        // arrived intact" is as far as verification goes here. Gated
-        // specifically here, not above: a dropped connection mid-transfer
-        // must never swap, but a short/miscounted body on an *error*
-        // response below carries no disk content and is not this rule's
-        // concern -- only a 200's body is ever trusted.
-        if (!r.body_complete) {
-            return dc_enter_backoff(c);
-        }
+        // arrived intact" (already required above) is as far as
+        // verification goes here.
         c->state = DC_VERIFYING;
         dc_complete_transition(c, d->version, d->sha256);
         c->state = DC_IDLE_POLL;
@@ -234,12 +230,17 @@ static dc_state_t dc_handle_poll_body(device_client_t *c, const char *json) {
         // instruction. Never guess at a disk change from this.
         return dc_enter_backoff(c);
     }
-    // diskId/writeProtected are read best-effort: they inform what gets
-    // mounted (write protection, display metadata) but never *whether* a
-    // fetch happens -- only sha256 does that, so a body that is merely
-    // incomplete past that point (e.g. cut short on the wire) still names
-    // a real, actionable disk rather than being treated as malformed.
+    // diskId is read best-effort -- display metadata, never gates a fetch.
     json_str(json, "diskId", d.disk_id, sizeof d.disk_id);
+    // writeProtected fails safe: if it's absent or not a JSON boolean, this
+    // disk is treated as write-protected, not writable. The two ways to
+    // get this wrong are not symmetric -- presenting a genuinely
+    // read-only disk as writable risks a write the server never agreed to
+    // accept, where the reverse only costs a write the host will retry as
+    // read-only. memset above already zeroed the struct (false), so the
+    // safe default has to be set explicitly here, before the real value
+    // (if present) overwrites it.
+    d.write_protected = true;
     json_bool(json, "writeProtected", &d.write_protected);
     d.version = version;
     d.present = true;
@@ -297,7 +298,11 @@ dc_state_t dc_step(device_client_t *c) {
     http_resp_t r;
     bool ok = dc_exchange(c, path, dc_body_sink, &body, &r);
 
-    if (!ok) {
+    if (!ok || !r.body_complete) {
+        // Transport/framing failure, or a connection dropped before the
+        // body finished (204 always completes immediately in http.c, so
+        // this only ever bites 200 and the error statuses below). An
+        // incomplete response names nothing reliably -- never destructive.
         return dc_enter_backoff(c);
     }
 
@@ -318,12 +323,6 @@ dc_state_t dc_step(device_client_t *c) {
         return c->state;
 
     case 200:
-        if (!r.body_complete) {
-            // Status line (and maybe some headers) arrived, then the
-            // connection dropped before the body did. Same rule as an
-            // image fetch: an incomplete response names nothing reliably.
-            return dc_enter_backoff(c);
-        }
         dc_backoff_reset(c);
         return dc_handle_poll_body(c, body.buf);
 

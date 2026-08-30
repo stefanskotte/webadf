@@ -38,7 +38,7 @@ static void test_request_survives_single_byte_writes(void) {
 static void test_since_does_not_advance_on_a_failed_fetch(void) {
     boot();
     // Poll names version 7...
-    fake_push_response("HTTP/1.1 200 OK\r\nContent-Length: 120\r\n\r\n"
+    fake_push_response("HTTP/1.1 200 OK\r\nContent-Length: 125\r\n\r\n"
         "{\"version\":7,\"desired\":{\"sha256\":\"aa\",\"diskId\":\"d1\",\"gameId\":\"g\","
         "\"game\":\"G\",\"diskNo\":1,\"diskCount\":1,\"writeProtected\":false}}");
     // ...but the image fetch dies partway through.
@@ -52,7 +52,7 @@ static void test_since_does_not_advance_on_a_failed_fetch(void) {
 static void test_poll_404_keeps_the_disk_mounted(void) {
     boot();
     c.mounted_version = 5; strcpy(c.mounted_sha256, "deadbeef");
-    fake_push_response("HTTP/1.1 404 Not Found\r\nContent-Length: 30\r\n\r\n"
+    fake_push_response("HTTP/1.1 404 Not Found\r\nContent-Length: 28\r\n\r\n"
                        "{\"error\":\"device_not_found\"}");
     dc_state_t s = dc_step(&c);
     CHECK_EQ_INT(s, DC_HALTED);
@@ -82,7 +82,7 @@ static void test_204_repolls_with_same_since(void) {
 // it CAN fetch. Retrying a 422 in a tight loop is the obvious wrong answer.
 
 static void poll_then_image(const char *image_response) {
-    fake_push_response("HTTP/1.1 200 OK\r\nContent-Length: 120\r\n\r\n"
+    fake_push_response("HTTP/1.1 200 OK\r\nContent-Length: 125\r\n\r\n"
         "{\"version\":7,\"desired\":{\"sha256\":\"aa\",\"diskId\":\"d1\",\"gameId\":\"g\","
         "\"game\":\"G\",\"diskNo\":1,\"diskCount\":1,\"writeProtected\":false}}");
     fake_push_response(image_response);
@@ -90,7 +90,7 @@ static void poll_then_image(const char *image_response) {
 
 static void test_image_422_does_not_retry_the_digest_but_keeps_polling(void) {
     boot();
-    poll_then_image("HTTP/1.1 422 Unprocessable Entity\r\nContent-Length: 24\r\n\r\n"
+    poll_then_image("HTTP/1.1 422 Unprocessable Entity\r\nContent-Length: 23\r\n\r\n"
                     "{\"error\":\"unencodable\"}");
     dc_state_t s = dc_step(&c);
     CHECK(s != DC_HALTED, "a bad digest must not stop the poll loop");
@@ -100,7 +100,7 @@ static void test_image_422_does_not_retry_the_digest_but_keeps_polling(void) {
 
 static void test_image_404_behaves_the_same_as_422(void) {
     boot();
-    poll_then_image("HTTP/1.1 404 Not Found\r\nContent-Length: 22\r\n\r\n"
+    poll_then_image("HTTP/1.1 404 Not Found\r\nContent-Length: 21\r\n\r\n"
                     "{\"error\":\"not_found\"}");
     CHECK(dc_step(&c) != DC_HALTED, "keep polling");
     CHECK(dc_digest_is_blocked(&c, "aa"), "do not retry this digest");
@@ -108,7 +108,7 @@ static void test_image_404_behaves_the_same_as_422(void) {
 
 static void test_image_400_is_a_firmware_bug_and_never_retried(void) {
     boot();
-    poll_then_image("HTTP/1.1 400 Bad Request\r\nContent-Length: 26\r\n\r\n"
+    poll_then_image("HTTP/1.1 400 Bad Request\r\nContent-Length: 24\r\n\r\n"
                     "{\"error\":\"invalid_body\"}");
     dc_step(&c);
     CHECK(dc_digest_is_blocked(&c, "aa"), "a malformed digest will not become valid");
@@ -116,7 +116,7 @@ static void test_image_400_is_a_firmware_bug_and_never_retried(void) {
 
 static void test_image_503_is_retried(void) {
     boot();
-    poll_then_image("HTTP/1.1 503 Service Unavailable\r\nContent-Length: 21\r\n\r\n"
+    poll_then_image("HTTP/1.1 503 Service Unavailable\r\nContent-Length: 19\r\n\r\n"
                     "{\"error\":\"no_blob\"}");
     dc_step(&c);
     CHECK(!dc_digest_is_blocked(&c, "aa"),
