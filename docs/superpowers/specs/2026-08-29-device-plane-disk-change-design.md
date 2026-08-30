@@ -315,6 +315,18 @@ Not built here: write-back and layered disks (§5); the firmware poll loop and P
 double-buffering (§1); proof of possession at ingest (§6). Mount history is not deferred —
 it is declined (§2).
 
+**Hazard for whoever adds a delete route.** `devices.desired_disk_id` is a plain `text`
+column with no foreign key to `disks.id` — deliberately, so a device's desired state survives
+transient library edits. But `readDesired` treats a `desired_disk_id` that resolves to nothing
+as "no disk desired", and §10 tells a device that `desired: null` means **eject**. So the day a
+route can delete a `disks` or `games` row, deleting the disk a device is holding would tell that
+device to eject it — a failure looking exactly like an instruction, which §1 rule 1 forbids.
+
+Not reachable today: nothing in `src/app/api` deletes a `games` or `disks` row. Before adding
+one, either clear the desired state explicitly (bumping the version, so the eject is a real
+decision someone made) or make `readDesired` distinguish "orphaned" from "ejected" and refuse to
+report the latter.
+
 **Resident sets — the honest answer to "a Gotek is safer".** PSRAM holds three 2,129,920-byte
 image slots. A two- or three-disk game could be entirely resident, at which point swapping
 *within that set* needs no network at all and the Gotek gap closes for the case that
