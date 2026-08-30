@@ -55,7 +55,7 @@ set(WFMF_PSA_CRYPTO_RANDOM_SRC ${PICO_MBEDTLS_PATH}/library/psa_crypto_random.c)
 add_executable(wifi_floppy
   src/main.c src/dskchg.c src/track_cache.c src/psram_image.c
   src/image_loader.c src/device_client.c src/http.c src/json_scan.c
-  src/token_store.c src/config_store.c
+  src/token_store.c src/config_store.c src/provisioning.c
   src/mfm.c
   src/transport_tls.c src/sntp_time.c
   ${WFMF_PSA_CRYPTO_RANDOM_SRC})
@@ -122,7 +122,9 @@ endif ()
 # links in all three, and for the before/after with the flags removed.
 target_link_options(wifi_floppy PRIVATE
   -Wl,-u,tls_transport -Wl,-u,sntp_sync_blocking
-  -Wl,-u,config_store_load -Wl,-u,config_store_save -Wl,-u,config_store_erase)
+  -Wl,-u,config_store_load -Wl,-u,config_store_save -Wl,-u,config_store_erase
+  -Wl,-u,prov_init -Wl,-u,prov_on_assoc_result
+  -Wl,-u,prov_on_verified_submit -Wl,-u,prov_on_pairing_code_rejected)
 
 # altcp_tls_mbedtls.c is the SDK's own file (patched for mbedtls 3.x
 # compatibility -- see pico_lwip's CMakeLists.txt) when the bundled mbedtls
