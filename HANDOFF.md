@@ -182,11 +182,16 @@ Learned the hard way; several cost real debugging time.
   - **To ship after a merge today:** promote the master build explicitly —
     `npx vercel promote <the master deployment url>`, or `npx vercel --prod`. Plan 3b was
     shipped this way (`dpl_B6PcDSRqyWhs2VybYK35CRcf3vWk`).
-  - **To fix it permanently:** Vercel dashboard → project `webadf` → Settings → Git →
-    Production Branch → `master`. **Not settable through the API** — `PATCH /v9/projects`
-    rejects `productionBranch`, `gitRepository` and `link` alike as unknown properties, and
-    the only other route is re-linking the repo, which risks the GitHub connection. It is a
-    dashboard change, and it is still pending.
+  - **FIXED 2026-08-30 by the operator.** Production Branch is now `master`, so a push to
+    `master` deploys to production normally and no promote step is needed. Verified by two
+    builds of the same commit `bb9533a`: Preview at 15:17 before the change, Production at
+    15:42 after it. The paragraph above is kept because it explains three plans' worth of
+    "merged to `master`, in production" that never actually reached production.
+  - If it ever needs setting again it is a **dashboard** change — project `webadf` →
+    Settings → Git → Production Branch. **Not settable through the API:**
+    `PATCH /v9/projects` rejects `productionBranch`, `gitRepository` and `link` alike as
+    unknown properties, and the only other route is re-linking the repo, which risks the
+    GitHub connection.
   - **Verify with `npx vercel inspect webadf.vercel.app`** and read `target` and `created`.
     `vercel ls`'s Environment column makes a preview-only push easy to skim past.
 
