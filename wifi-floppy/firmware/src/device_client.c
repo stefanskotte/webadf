@@ -14,6 +14,8 @@
 #include "http.h"
 #include "json_scan.h"
 #include "psram_image.h"
+#include "image_loader.h"
+#include "token_store.h"
 #include <string.h>
 #include <stdio.h>
 
@@ -40,6 +42,16 @@
 // there is always room left for the rest of the fields.
 #define DC_STATUS_ERR_BYTES   256
 
+// Registration (spec §7): pairingCode, firmwareVersion, macAddress -- all
+// short, firmware-authored or compile-time values, so a generous fixed
+// size costs nothing and avoids a second round of hand-counted-length bugs.
+#define DC_REGISTER_PATH      "/api/device/register"
+#define DC_REGISTER_BODY_BYTES 384
+#define DC_REGISTER_REQ_BYTES  512
+// The register response is a small, fixed-shape JSON object ({token,
+// deviceId, name}); reuses dc_body_buf_t/DC_POLL_BODY_BYTES below rather
+// than a dedicated buffer.
+
 typedef struct {
     char buf[DC_POLL_BODY_BYTES];
     int  len;
@@ -55,16 +67,29 @@ static void dc_body_sink(void *ctx, const uint8_t *b, int n) {
     body->buf[body->len] = '\0';
 }
 
-// The image body's bytes are still not routed anywhere here: PSRAM now has
-// a real fetch-target slot (Task 8's psram_inactive_slot()), but wiring
-// this sink into image_loader.c's image_parse_buffer() so the bytes
-// actually land in it is Task 10's job (it also gives core1 the real
-// network-driven caller). What this layer checks -- and has always
-// checked, before or after Task 8 -- is only whether the full body
-// arrived; dc_fetch_image below is what turns that into a publish-or-not
-// decision for the slot.
+// Used for every exchange whose body this layer has no use for keeping
+// (the status report's response, and the image endpoint's body on any
+// non-200 status -- an error JSON payload, not track data). What this
+// layer checks regardless of whether bytes are kept is only whether the
+// full body arrived; dc_fetch_image is what turns that into a
+// publish-or-not decision for the slot.
 static void dc_discard_sink(void *ctx, const uint8_t *b, int n) {
     (void)ctx; (void)b; (void)n;
+}
+
+// The image endpoint's 200 body IS track data, and there is nowhere near
+// enough SRAM to buffer a whole image (up to ~2 MB, psram_image.h) before
+// parsing it -- so unlike dc_body_sink above, this feeds bytes straight
+// into image_loader.c's incremental parser as dc_exchange's read loop
+// hands them over, chunk by chunk, writing directly into the PSRAM slot
+// image_parse_begin() was pointed at. Harmless to feed on a non-200 status
+// too (a small error body will not parse as a WFMF header and the parser
+// state is simply never asked for a verdict via image_parse_end() in that
+// case), so dc_fetch_image uses this sink unconditionally rather than
+// switching on the status after the fact.
+static void dc_image_sink(void *ctx, const uint8_t *b, int n) {
+    (void)ctx;
+    image_parse_feed(b, n);
 }
 
 // Exponential from the floor, doubling on every consecutive failure,
@@ -168,13 +193,15 @@ static void dc_block_digest(device_client_t *c, const char *sha256) {
 // transition it names has completed, not on receipt of the response that
 // named it).
 static void dc_complete_transition(device_client_t *c, uint32_t version,
-                                   const char *sha256, const char *disk_id) {
+                                   const char *sha256, const char *disk_id,
+                                   bool write_protected) {
     c->since = version;
     c->mounted_version = version;
     strncpy(c->mounted_sha256, sha256, sizeof(c->mounted_sha256) - 1);
     c->mounted_sha256[sizeof(c->mounted_sha256) - 1] = '\0';
     strncpy(c->mounted_disk_id, disk_id, sizeof(c->mounted_disk_id) - 1);
     c->mounted_disk_id[sizeof(c->mounted_disk_id) - 1] = '\0';
+    c->mounted_write_protected = write_protected;
 }
 
 // Fetches `d->sha256` from the image endpoint. Only reached once the poll
@@ -192,50 +219,66 @@ static dc_state_t dc_fetch_image(device_client_t *c, const dc_desired_t *d) {
     if (req_len < 0) return dc_enter_backoff(c); // path too long: unexpected, treat as transient
 
     // Task 8: a fetch always targets the slot that is NOT the one core0 is
-    // currently streaming from -- psram_inactive_slot() -- and that target
-    // is reset up front so stale data from an earlier aborted fetch can
-    // never be mistaken for this one. Nothing below this line may touch
-    // the active slot except the single psram_publish_slot() call in the
-    // 200 case, and only after the body is known to have arrived whole:
-    // that ordering is rule 2 (never release the current disk before the
-    // replacement is fetched *and* verified) made concrete.
+    // currently streaming from -- psram_inactive_slot(). image_parse_begin()
+    // resets that slot up front (so stale data from an earlier aborted
+    // fetch can never be mistaken for this one) and points the incremental
+    // parser at it; dc_image_sink below feeds it body bytes straight off
+    // the wire as dc_exchange's read loop hands them over -- there is no
+    // SRAM buffer big enough to hold a whole image (up to ~2 MB,
+    // psram_image.h) first. Nothing below this line may touch the active
+    // slot except the single psram_publish_slot() call in the 200 case,
+    // and only after the body is known to have arrived whole AND parsed
+    // clean: that ordering is rule 2 (never release the current disk
+    // before the replacement is fetched *and* verified) made concrete.
     int target = psram_inactive_slot();
-    psram_image_reset_slot(target);
+    image_parse_begin(target);
 
     c->state = DC_FETCHING;
     http_resp_t r;
-    bool ok = dc_exchange(c, req, req_len, dc_discard_sink, NULL, &r);
+    bool ok = dc_exchange(c, req, req_len, dc_image_sink, NULL, &r);
 
     if (!ok || !r.body_complete) {
         // Connect/write/read failure, a response that never parsed as HTTP
         // at all, or a connection dropped before the body finished -- all
         // treated alike. Never block the digest for these: none of them
         // tell us anything reliable about the digest itself, and it may be
-        // perfectly fetchable next time. `target` is left reset/empty and
-        // the active slot was never referenced above, so psram_active_slot()
-        // is exactly what it was on entry -- the Amiga keeps the disk it had.
+        // perfectly fetchable next time. `target` holds whatever partial
+        // track data the parser managed to write before the drop (never
+        // published -- see below), and the active slot was never
+        // referenced above, so psram_active_slot() is exactly what it was
+        // on entry -- the Amiga keeps the disk it had.
         return dc_enter_backoff(c);
     }
 
     switch (r.status) {
-    case 200:
-        // Task 6/10 route the actual track bytes into `target` (via
-        // image_loader.c's image_parse_buffer(), wired to the network by
-        // Task 10); "the whole body arrived intact" (already required
-        // above, in the `!ok || !r.body_complete` check) is the
-        // verification this layer does today -- that is DC_VERIFYING,
-        // and it has already happened by the time control reaches here,
-        // so there is no separate state to hold for it. DC_SWAPPING is
-        // the moment right here: the single word-aligned store
-        // psram_publish_slot() makes -- see its comment in psram_image.c
-        // for why moving between two complete, verified images that way
-        // can never show core0 a half-fetched one.
+    case 200: {
+        // DC_VERIFYING: image_parse_end() is "fill, then verify" -- it
+        // returns true only if the parser reached a clean end-of-container
+        // AND every track in it landed in PSRAM (image_loader.c). That,
+        // together with "the whole body arrived intact" already checked
+        // above, is the verification this layer does; there is no
+        // separate state to hold for it once control reaches here.
+        if (!image_parse_end()) {
+            // Content-Length matched what arrived, but the bytes
+            // themselves are not a well-formed, complete WFMF container.
+            // Resending the exact same bytes under this digest would fail
+            // the same way every time, so this digest is treated like the
+            // 400/404/422 cases below rather than backed off forever.
+            dc_block_digest(c, d->sha256);
+            c->state = DC_IDLE_POLL;
+            return c->state;
+        }
+        // DC_SWAPPING is the moment right here: the single word-aligned
+        // store psram_publish_slot() makes -- see its comment in
+        // psram_image.c for why moving between two complete, verified
+        // images that way can never show core0 a half-fetched one.
         c->state = DC_SWAPPING;
         psram_publish_slot(target);
-        dc_complete_transition(c, d->version, d->sha256, d->disk_id);
+        dc_complete_transition(c, d->version, d->sha256, d->disk_id, d->write_protected);
         c->state = DC_IDLE_POLL;
         dc_backoff_reset(c);
         return c->state;
+    }
 
     case 400: // malformed digest: will not become valid by resending
     case 404: // not entitled / no longer exists
@@ -274,7 +317,10 @@ static dc_state_t dc_handle_poll_body(device_client_t *c, const char *json) {
         // SLOT_NONE, so track_cache_get() actually stops streaming rather
         // than only this struct's bookkeeping saying nothing is mounted.
         psram_publish_slot(SLOT_NONE);
-        dc_complete_transition(c, version, "", "");
+        // write_protected is meaningless with nothing mounted -- pass true
+        // anyway (rather than leaving whatever the previous disk reported)
+        // so a stale "writable" can never survive an eject in this field.
+        dc_complete_transition(c, version, "", "", true);
         c->state = DC_IDLE_POLL;
         return c->state;
     }
@@ -306,7 +352,7 @@ static dc_state_t dc_handle_poll_body(device_client_t *c, const char *json) {
         // Already holding exactly this disk: nothing to fetch. Catching
         // `since` up here (rather than leaving it behind version after
         // version) avoids re-attempting this same no-op every poll.
-        dc_complete_transition(c, version, d.sha256, d.disk_id);
+        dc_complete_transition(c, version, d.sha256, d.disk_id, d.write_protected);
         c->state = DC_IDLE_POLL;
         return c->state;
     }
@@ -354,6 +400,53 @@ static void dc_json_escape(char *out, int out_len, const char *in) {
         }
     }
     out[n] = '\0';
+}
+
+// One-shot, unauthenticated registration (spec §7; see device_client.h).
+// Builds {pairingCode, firmwareVersion, macAddress} and posts it with no
+// bearer at all (http_build_request(..., NULL, ...) omits the Authorization
+// header entirely) -- deliberately, since the pairing code IS the
+// credential here, and sending c->token (which may well be a stale or
+// placeholder value the caller passed to dc_init just to get a
+// transport/host-bearing device_client_t) would be actively misleading
+// about what authenticates this one request.
+//
+// pairing_code/firmware_version/mac are firmware-authored or compile-time
+// values, not network input, but are still escaped before landing in
+// hand-built JSON for the same reason dc_report_status escapes `err`.
+//
+// On a 200 whose body has a non-empty `token`, persists it via
+// token_store_save() (never logged -- see device_client.h) and returns
+// true. Any other outcome -- transport failure, non-200, or a 200 body
+// missing `token` -- returns false and stores nothing.
+bool dc_register(device_client_t *c, const char *pairing_code,
+                 const char *firmware_version, const char *mac) {
+    char pc_esc[80], fv_esc[32], mac_esc[32];
+    dc_json_escape(pc_esc, sizeof pc_esc, pairing_code);
+    dc_json_escape(fv_esc, sizeof fv_esc, firmware_version);
+    dc_json_escape(mac_esc, sizeof mac_esc, mac);
+
+    char body[DC_REGISTER_BODY_BYTES];
+    int body_len = snprintf(body, sizeof body,
+        "{\"pairingCode\":\"%s\",\"firmwareVersion\":\"%s\",\"macAddress\":\"%s\"}",
+        pc_esc, fv_esc, mac_esc);
+    if (body_len < 0 || body_len >= (int)sizeof body) return false;
+
+    char req[DC_REGISTER_REQ_BYTES];
+    int req_len = http_build_request(req, sizeof req, "POST", DC_REGISTER_PATH,
+                                     c->host, NULL, body);
+    if (req_len < 0) return false;
+
+    dc_body_buf_t resp = { .len = 0 };
+    resp.buf[0] = '\0';
+    http_resp_t r;
+    bool ok = dc_exchange(c, req, req_len, dc_body_sink, &resp, &r);
+    if (!ok || !r.body_complete || r.status != 200) return false;
+
+    char token[TOKEN_STORE_MAX_LEN + 1];
+    if (!json_str(resp.buf, "token", token, sizeof token) || token[0] == '\0') return false;
+
+    return token_store_save(token);
 }
 
 // Sends one status heartbeat (spec §4.3, §10; see device_client.h for the

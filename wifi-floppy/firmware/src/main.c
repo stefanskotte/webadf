@@ -6,6 +6,8 @@
 #include "pico/stdlib.h"
 #include "pico/multicore.h"
 #include "pico/cyw43_arch.h"
+#include "pico/flash.h"
+#include "pico/time.h"
 #include "hardware/pio.h"
 #include "hardware/dma.h"
 #include "hardware/irq.h"
@@ -15,6 +17,29 @@
 #include "track_cache.h"
 #include "psram_image.h"
 #include "image_loader.h"
+#include "transport.h"
+#include "device_client.h"
+#include "token_store.h"
+#include "sntp_time.h"
+#include <stdio.h>
+#include <string.h>
+
+// transport_tls.c is device-only (no host test exercises it, unlike every
+// other file this task wires in), so it has no shared header of its own --
+// see CMakeLists.txt's -Wl,-u,tls_transport comment for how it stays
+// linked in regardless of whether anything referenced it yet. Declaring
+// the one entry point here, now that this file is that "anything".
+transport_t *tls_transport(void);
+
+// Write-back (WGATE -> PSRAM -> flush to the server) does not exist yet --
+// flux_in_program is only ever set up, never enabled, and there is no code
+// anywhere that walks psram_image_next_dirty(). Until that lands, WPROT
+// must stay asserted for every mounted disk regardless of what the server
+// reports, because presenting a disk the server marks writable would let
+// the Amiga believe writes land somewhere, and every one of them would
+// silently vanish. See core1_main's WPROT comment for how this is wired;
+// flip this to 1 (and see the comment there) once the write path exists.
+#define WRITE_BACK_IMPLEMENTED 0
 
 static PIO  pio = pio0;
 static uint sm_out, sm_in;
@@ -55,7 +80,14 @@ static int64_t index_off(alarm_id_t id, void *ud) {
     gpio_put(PIN_INDEX, OUT_RELEASE);
     return 0;
 }
-static void __isr dma_irq(void) {
+// Flash writes disable XIP. This handler re-arms the DMA each revolution and
+// raises INDEX; stalling it mid-revolution presents to the Amiga as a
+// malformed revolution -- a flaky drive, essentially undiagnosable without a
+// scope. Kept in RAM so a token write (token_store.c, called once from
+// core1's boot-time registration path, before any disk is mounted) can
+// never reach it -- belt and braces alongside token_store_save()'s own
+// mounted-disk guard.
+static void __isr __not_in_flash_func(dma_irq)(void) {
     dma_hw->ints0 = 1u << dma_ch;
     if (!track_live) return;
     dma_channel_set_read_addr(dma_ch, track_words, false);
@@ -83,39 +115,140 @@ static void __isr gpio_isr(uint gpio, uint32_t events) {
     }
 }
 
+static uint32_t clock_ms(void) {
+    return to_ms_since_boot(get_absolute_time());
+}
+
+// Coarse "psramFree" for the status report (device_client.h): there is no
+// general allocator here -- PSRAM is two fixed whole-disk slots
+// (psram_image.h) -- so this reports headroom in whichever slot core1 is
+// free to fetch into (psram_inactive_slot()), the only one it ever writes.
+static int psram_free_estimate(void) {
+    if (!psram_image_available()) return 0;
+    return psram_image_missing_count(psram_inactive_slot()) * (int)TRACK_MAX_BYTES;
+}
+
+static int wifi_rssi(void) {
+    int32_t rssi = 0;
+    cyw43_wifi_get_rssi(&cyw43_state, &rssi);
+    return (int)rssi;
+}
+
+static void mac_address_string(char *out, size_t out_len) {
+    uint8_t mac[6] = {0};
+    cyw43_wifi_get_mac(&cyw43_state, CYW43_ITF_STA, mac);
+    snprintf(out, out_len, "%02x:%02x:%02x:%02x:%02x:%02x",
+             mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
+}
+
 // ---------------------------------------------------------------- core 1
 static void core1_main(void) {
     if (cyw43_arch_init()) while (1) tight_loop_contents();
     cyw43_arch_enable_sta_mode();
     while (cyw43_arch_wifi_connect_timeout_ms(WIFI_SSID, WIFI_PASS,
               CYW43_AUTH_WPA2_AES_PSK, 15000)) sleep_ms(1000);
-    track_cache_init();
 
-    // One bulk transfer, then the network is out of the picture. RDY and
-    // CHNG stay deasserted until the whole image is in PSRAM, so the Amiga
-    // simply sees "no disk yet" rather than a drive that stalls mid-track.
-    //
-    // TODO(task-10): image_load() was removed from image_loader.c (task 3)
-    // when it was decoupled from http_fetch.h so its two recorded defects
-    // could be host-tested. image_parse_buffer() is the host-testable
-    // replacement, but nothing here drives it from the network yet. Task 10
-    // deletes http_fetch.c and rewires this to stream into
-    // image_parse_buffer() properly.
-    dskchg_image_inserted();
+    // Spec §6.2: SNTP before the first TLS handshake, and the firmware
+    // never skips straight to a handshake with an unset clock --
+    // transport_tls.c's tls_connect() itself refuses to start one at all
+    // while sntp_time_valid() is false. A poll or register attempted
+    // before this succeeds just fails at connect() and falls into the
+    // same backoff dc_step()/dc_register() already use for any other
+    // transient network fault, so no separate SNTP-specific retry loop is
+    // needed here -- sntp_sync_blocking() also keeps periodically
+    // resyncing in the background for as long as the process runs.
+    sntp_sync_blocking(30000);
 
-    int loaded = -1;
-    uint32_t bits;
-    while (true) {
-        int want = want_track;
-        if (want >= 0 && want != loaded) {
-            const uint8_t *mfm = track_cache_get(want, &bits);
-            if (mfm) {
-                track_live = false;
-                start_streaming(mfm, bits);
-                loaded = want;
-            }
+    char mac[18];   // "aa:bb:cc:dd:ee:ff" + NUL
+    mac_address_string(mac, sizeof mac);
+
+    // Registration (spec §7): load a stored token, or register for one.
+    // Never logs `token` or the pairing code -- see device_client.h.
+    static char token[TOKEN_STORE_MAX_LEN + 1];
+    if (!token_store_load(token, sizeof token)) {
+        // dc_register() needs only a transport + host; it never reads
+        // c->token (it deliberately sends no bearer at all), so this
+        // throwaway device_client_t's token is irrelevant -- NULL is
+        // honest about that, and leaves `reg` in DC_UNPROVISIONED, which
+        // is never used for anything but this loop.
+        device_client_t reg;
+        dc_init(&reg, tls_transport(), clock_ms, WEBADF_HOST, NULL);
+        while (!dc_register(&reg, WEBADF_PAIRING_CODE, FIRMWARE_VERSION, mac)) {
+            sleep_ms(reg.backoff_ms ? reg.backoff_ms : DC_BACKOFF_FLOOR_MS);
         }
-        sleep_ms(1);
+        if (!token_store_load(token, sizeof token)) {
+            // dc_register() only ever returns true after token_store_save()
+            // itself succeeded, so this should be unreachable. Halting
+            // rather than looping back to register again is deliberate:
+            // the pairing code has almost certainly been single-used
+            // server-side by the successful attempt above, so retrying
+            // would just fail forever.
+            while (1) tight_loop_contents();
+        }
+    }
+
+    device_client_t c;
+    dc_init(&c, tls_transport(), clock_ms, WEBADF_HOST, token);
+
+    bool was_mounted = false;
+    char last_reported_sha[65] = "";
+    uint32_t last_status_ms = clock_ms();
+
+    while (true) {
+        dc_state_t s = dc_step(&c);
+
+        // Item 1: the drive may only ever report a disk once an image is
+        // genuinely resident and published -- dc_step only reaches here
+        // (mounted_sha256 non-empty) after a real fetch-and-verify or an
+        // already-mounted no-op (dc_handle_poll_body), never as a boot-time
+        // assumption. dskchg_image_inserted()/ejected() are called only on
+        // the actual transition, matching the pre-existing call pattern
+        // (this function was already called from this core before task 10;
+        // it is just conditional now instead of unconditional at boot).
+        bool mounted = c.mounted_sha256[0] != '\0';
+        if (mounted != was_mounted) {
+            if (mounted) dskchg_image_inserted(); else dskchg_image_ejected();
+            was_mounted = mounted;
+        }
+
+        // Item 3: WPROT. Nothing mounted -> nothing to write to regardless
+        // of the flag's stale value; a mounted disk's writeProtected flows
+        // through untouched; and -- see WRITE_BACK_IMPLEMENTED's comment
+        // above -- the write path's absence forces this true regardless of
+        // either, until that path exists. Only main()'s core0 loop ever
+        // wrote PIN_WPROT before this (a fixed boot-time default); this is
+        // now the only place that updates it afterward.
+        bool wprot = !mounted || c.mounted_write_protected || !WRITE_BACK_IMPLEMENTED;
+        gpio_put(PIN_WPROT, wprot ? OUT_ASSERT : OUT_RELEASE);
+
+        // Item 4: the status heartbeat. ~60s (DC_STATUS_PERIOD_MS) or
+        // immediately on a mount/swap/eject (spec §4.3, §10) -- tracked by
+        // the mounted disk's identity (sha256), not dc_state_t or
+        // mounted_version (which can advance on a no-op reconciliation poll
+        // that names the same already-mounted disk, which is not a
+        // transition anyone needs an out-of-band report for).
+        uint32_t now = clock_ms();
+        bool disk_changed = strcmp(c.mounted_sha256, last_reported_sha) != 0;
+        if (disk_changed || (now - last_status_ms) >= DC_STATUS_PERIOD_MS) {
+            dc_report_status(&c, psram_free_estimate(), wifi_rssi(), NULL);
+            last_status_ms = now;
+            strncpy(last_reported_sha, c.mounted_sha256, sizeof(last_reported_sha) - 1);
+            last_reported_sha[sizeof(last_reported_sha) - 1] = '\0';
+        }
+
+        // Item 5: actually honour c.backoff_ms between attempts -- dc_step
+        // computes it (device_client.c's dc_enter_backoff) but never
+        // sleeps on it itself; this loop is what turns the number into an
+        // actual delay. DC_IDLE_POLL needs no extra sleep here: dc_step's
+        // own long-poll read already blocked for up to DC_POLL_TIMEOUT_MS
+        // server-side. DC_HALTED means the token is dead (401 anywhere);
+        // re-provisioning is plan 4b's job, so this just idles rather than
+        // hammering a dead token in a tight loop.
+        if (s == DC_BACKOFF) {
+            sleep_ms(c.backoff_ms);
+        } else if (s == DC_HALTED) {
+            sleep_ms(DC_BACKOFF_CAP_MS);
+        }
     }
 }
 
@@ -130,7 +263,12 @@ int main(void) {
         gpio_put(outs[i], OUT_RELEASE);
     }
     gpio_put(PIN_TRK0, OUT_ASSERT);          // powered on at cyl 0
-    gpio_put(PIN_WPROT, OUT_ASSERT);         // read-only until write path lands
+    // Boot-time default, before core1 has even started, let alone learned
+    // whether a disk is mounted or what the server says about it -- core1's
+    // main loop is the only thing that writes PIN_WPROT after this (see its
+    // WPROT comment), but "asserted" is the only safe value to boot with
+    // regardless: read-only until proven otherwise beats writable by default.
+    gpio_put(PIN_WPROT, OUT_ASSERT);
 
     // inputs
     const uint ins[] = {PIN_SEL0, PIN_SEL1, PIN_MTR, PIN_DIR,
@@ -140,6 +278,7 @@ int main(void) {
     }
 
     dskchg_init();
+    track_cache_init();
 
     // PIO
     uint off_out = pio_add_program(pio, &flux_out_program);
@@ -162,10 +301,47 @@ int main(void) {
     gpio_set_irq_enabled(PIN_SIDE, GPIO_IRQ_EDGE_FALL | GPIO_IRQ_EDGE_RISE, true);
 
     multicore_launch_core1(core1_main);
+    // Lets core1's (rare, one-time) token flash write -- token_store.c,
+    // guarded to only ever run before any disk is mounted -- pause core0
+    // for its duration via flash_safe_execute's multicore lockout, so
+    // core0 is never mid-instruction-fetch from flash while XIP is down.
+    // Belt and braces alongside the DMA IRQ's __not_in_flash_func above:
+    // either mitigation would likely suffice on its own (see the DMA IRQ
+    // comment), but the failure they prevent -- a flaky drive with no
+    // other explanation -- is bad enough that both are cheap insurance.
+    // multicore_launch_core1() returns almost immediately and core1 has a
+    // WiFi connect, an SNTP sync, and (on a fresh device) a register
+    // round-trip ahead of it before it can reach that write, so there is
+    // no meaningful race with doing this init here rather than earlier.
+    flash_safe_execute_core_init();
+
     want_track = 0;
 
+    // Track service: psram_image.h/.c's own repeated documentation is
+    // explicit that "core0 (track_cache.c's track_cache_get()) is the only
+    // reader" of the published active slot -- this loop is where that
+    // reading happens, in the same real-time loop as dskchg_poll(), NOT in
+    // core1_main()'s loop. core1's loop now blocks for tens of seconds at
+    // a time inside dc_step()'s long poll; a track change noticed only
+    // when that call returns would leave the flux DMA replaying a stale
+    // track for however long is left of the poll, which the Amiga would
+    // see as reading the wrong data after a seek. track_cache.h's
+    // track_cache_get() comment previously said "Core 1" -- corrected
+    // alongside this move.
+    int loaded = -1;
     while (true) {
         dskchg_poll();
-        sleep_ms(2);
+
+        int want = want_track;
+        if (want >= 0 && want != loaded) {
+            uint32_t bits;
+            const uint8_t *mfm = track_cache_get(want, &bits);
+            if (mfm) {
+                track_live = false;
+                start_streaming(mfm, bits);
+                loaded = want;
+            }
+        }
+        sleep_ms(1);
     }
 }

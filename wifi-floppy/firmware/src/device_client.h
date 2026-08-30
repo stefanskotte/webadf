@@ -65,6 +65,14 @@ typedef struct {
     uint32_t     mounted_version;
     char         mounted_sha256[65];
     char         mounted_disk_id[65];
+    // The mounted disk's writeProtected flag, as last reported by the
+    // server (dc_handle_poll_body fails this safe to true if the poll body
+    // omits it or it isn't a JSON boolean). Meaningless while nothing is
+    // mounted (mounted_sha256[0] == '\0') -- the driving main loop is
+    // expected to treat "nothing mounted" as write-protected regardless of
+    // this field's value, which is why dc_init's zero-init (false) here is
+    // never itself read as an authoritative "writable".
+    bool         mounted_write_protected;
 
     // --- internal blocked-digest ring buffer; do not touch directly ---
     char _blocked[DC_BLOCKED_MAX][65];
@@ -78,6 +86,23 @@ void dc_init(device_client_t *c, transport_t *t, clock_ms_fn now,
 dc_state_t dc_step(device_client_t *c);
 
 bool dc_digest_is_blocked(const device_client_t *c, const char *sha256);
+
+// One-shot registration: POST /api/device/register with
+// {pairingCode, firmwareVersion, macAddress}. `c` need only have `t` and
+// `host` set (dc_init with any token, even NULL, works, since this call
+// never reads c->token) -- spec §7: the pairing code itself is the
+// credential, so unlike every other request in this file, no bearer is
+// sent regardless of what c->token holds. On a 200 with a `token` field,
+// persists it via token_store_save() and returns true; on any other
+// outcome (transport failure, non-200, or a 200 body missing `token`)
+// returns false and stores nothing. The caller (main.c) still owns turning
+// a successful registration into a usable device_client_t: reload the
+// token with token_store_load() and dc_init() again with it.
+//
+// Never logs `pairing_code` or the token the server returns -- the token
+// is returned exactly once, by this call.
+bool dc_register(device_client_t *c, const char *pairing_code,
+                 const char *firmware_version, const char *mac);
 
 // Sends one status heartbeat: POST /api/device/status with all six fields
 // (spec §4.3 -- "send everything the firmware knows, every time it

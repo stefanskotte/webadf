@@ -36,6 +36,10 @@ bool http_resp_feed(http_resp_t *r, const uint8_t *data, int len,
                     void (*sink)(void *ctx, const uint8_t *b, int n), void *ctx);
 
 // Build a request into `out`. Returns bytes written, or -1 if it would not fit.
+// `bearer` may be NULL to omit the Authorization header entirely -- the one
+// request in the device protocol built this way is device_client.h's
+// dc_register, which is deliberately unauthenticated (the pairing code in
+// the body IS the credential). Every other caller passes a real token.
 int  http_build_request(char *out, int out_len, const char *method, const char *path,
                         const char *host, const char *bearer, const char *body);
 

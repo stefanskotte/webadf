@@ -18,8 +18,15 @@ void track_cache_init(void);
 void track_cache_flush(void);          // disk change: drop SRAM + PSRAM copies,
                                         // eject (both slots reset, active -> none)
 
-// Core 1. Returns an SRAM buffer for 'track', copied from the PSRAM image's
-// active slot (psram_active_slot()). NULL means either no disk is mounted
+// Core 0 (see psram_image.h/.c: "core0 (track_cache.c's track_cache_get())
+// is the only reader" of the published active slot -- this comment
+// previously said "Core 1", which task 10 corrects: main.c's core1 runs
+// the network/device_client.c loop, which blocks for tens of seconds at a
+// time on a long poll, and calling this from that same core would leave
+// the flux DMA replaying a stale track for the whole time a poll is in
+// flight after a seek). Returns an SRAM buffer for 'track', copied from
+// the PSRAM image's active slot (psram_active_slot()). NULL means either
+// no disk is mounted
 // or the track is not in the active slot's image - do not stream anything.
 const uint8_t *track_cache_get(int track, uint32_t *bit_count);
 

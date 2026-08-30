@@ -88,22 +88,35 @@ static void sink(void *ctx, const uint8_t *d, int n) {
     }
 }
 
-bool image_parse_buffer(int slot, const uint8_t *data, size_t len) {
-    if (!psram_image_available()) return false;   // no PSRAM, no disk
-    // Reset only the target slot: this task (8) gives psram_image_* real
-    // per-slot storage, so a fetch into `slot` must never disturb whatever
-    // the OTHER slot -- possibly the currently-active, currently-playing
-    // disk -- holds.
+void image_parse_begin(int slot) {
+    // Reset only the target slot: task 8 gives psram_image_* real per-slot
+    // storage, so a fetch into `slot` must never disturb whatever the
+    // OTHER slot -- possibly the currently-active, currently-playing disk
+    // -- holds.
     psram_image_reset_slot(slot);
     memset(&L, 0, sizeof L);
-    L.st = S_HDR;
     L.slot = slot;
+    // No PSRAM, no disk: start already in S_ERR so feed() below is a
+    // guaranteed no-op (never touches psram_image_write_at, which would be
+    // a no-op itself but there is no reason to walk the whole container
+    // just to throw the result away) and end() reports failure.
+    L.st = psram_image_available() ? S_HDR : S_ERR;
+}
 
-    sink(&L, data, (int)len);
+void image_parse_feed(const uint8_t *data, int len) {
+    sink(&L, data, len);
+}
 
-    bool ok = (L.st == S_EOF) && (psram_image_missing_count(slot) == 0);
-    if (!ok) psram_image_reset_slot(slot);        // never present a half disk
+bool image_parse_end(void) {
+    bool ok = (L.st == S_EOF) && (psram_image_missing_count(L.slot) == 0);
+    if (!ok) psram_image_reset_slot(L.slot);      // never present a half disk
     return ok;
+}
+
+bool image_parse_buffer(int slot, const uint8_t *data, size_t len) {
+    image_parse_begin(slot);
+    image_parse_feed(data, (int)len);
+    return image_parse_end();
 }
 
 int image_load_percent(void) {

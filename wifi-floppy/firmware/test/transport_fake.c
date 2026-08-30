@@ -77,15 +77,18 @@ static fake_event_t *fake_push_slot(void) {
 }
 
 void fake_push_response(const char *raw) {
-    size_t len = strlen(raw);
-    if (len > (size_t)FAKE_MAX_RESPONSE_BYTES) {
+    fake_push_response_bytes((const uint8_t *)raw, (int)strlen(raw));
+}
+
+void fake_push_response_bytes(const uint8_t *raw, int len) {
+    if (len < 0 || len > FAKE_MAX_RESPONSE_BYTES) {
         fake_fatal("pushed response longer than FAKE_MAX_RESPONSE_BYTES");
     }
     fake_event_t *e = fake_push_slot();
     e->type = FAKE_EV_RESPONSE;
-    memcpy(e->data, raw, len);
-    e->len = (int)len;
-    e->deliver_limit = (int)len;
+    memcpy(e->data, raw, (size_t)len);
+    e->len = len;
+    e->deliver_limit = len;
 }
 
 void fake_push_truncated(const char *raw, int n) {

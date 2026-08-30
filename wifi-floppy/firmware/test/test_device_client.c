@@ -2,33 +2,49 @@
 #include "transport_fake.h"
 #include "../src/device_client.h"
 #include "../src/psram_image.h"
+#include "../src/image_loader.h"
+#include "../src/token_store.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
-// Builds "HTTP/1.1 200 OK\r\nContent-Length: <N>\r\n\r\n<body>" with N computed
+// Builds "<status_line>\r\nContent-Length: <N>\r\n\r\n<body>" with N computed
 // from strlen(body) rather than hand-counted -- task 6 lost a round to six
 // wrong hand-counted lengths. Review round 1, Nit: the same class of bug
 // can come back through a silently-discarded snprintf result just as
 // easily as a hand-typed number, so a body that would overflow `resp` (or
 // any other snprintf failure) aborts the test binary loudly instead of
 // quietly building a truncated fixture.
-static void push_ok_json(const char *body) {
+static void push_status_json(const char *status_line, const char *body) {
     char resp[512];
-    int n = snprintf(resp, sizeof resp, "HTTP/1.1 200 OK\r\nContent-Length: %zu\r\n\r\n%s",
-                      strlen(body), body);
+    int n = snprintf(resp, sizeof resp, "%s\r\nContent-Length: %zu\r\n\r\n%s",
+                      status_line, strlen(body), body);
     if (n < 0 || (size_t)n >= sizeof resp) {
-        fprintf(stderr, "push_ok_json: body too large for the fixture buffer "
+        fprintf(stderr, "push_status_json: body too large for the fixture buffer "
                         "(needed %d bytes, have %zu)\n", n, sizeof resp);
         abort();
     }
     fake_push_response(resp);
 }
 
+static void push_ok_json(const char *body) {
+    push_status_json("HTTP/1.1 200 OK", body);
+}
+
+static char buf[128];
 static device_client_t c;
 static void boot(void) {
     fake_reset(); fake_set_clock(0);
     dc_init(&c, fake_transport(), fake_clock_ms, "webadf.vercel.app", "tok");
+    // psram_publish_slot() writes a process-wide static (psram_image.c),
+    // so a test earlier in this binary that mounts a disk (directly, or by
+    // driving dc_step through a real successful fetch) would otherwise
+    // leak "mounted" into every test that runs after it -- in particular,
+    // token_store_save()'s mounted-disk guard would then refuse for
+    // reasons that have nothing to do with the test running. Tests that
+    // want a mounted precondition call psram_publish_slot() themselves,
+    // after boot().
+    psram_publish_slot(SLOT_NONE);
 }
 
 static void test_cold_boot_polls_since_zero(void) {
@@ -120,10 +136,14 @@ static void test_204_repolls_with_same_since(void) {
 // not stop the device polling -- the desired state may change to something
 // it CAN fetch. Retrying a 422 in a tight loop is the obvious wrong answer.
 
-static void poll_then_image(const char *image_response) {
+static void push_poll_desired_aa(void) {
     fake_push_response("HTTP/1.1 200 OK\r\nContent-Length: 125\r\n\r\n"
         "{\"version\":7,\"desired\":{\"sha256\":\"aa\",\"diskId\":\"d1\",\"gameId\":\"g\","
         "\"game\":\"G\",\"diskNo\":1,\"diskCount\":1,\"writeProtected\":false}}");
+}
+
+static void poll_then_image(const char *image_response) {
+    push_poll_desired_aa();
     fake_push_response(image_response);
 }
 
@@ -258,7 +278,153 @@ static void test_unmounted_reports_null_not_omitted(void) {
           "an unmounted device must report null explicitly");
 }
 
+// --- Task 10: a genuinely successful image fetch really publishes --------
+// Every other test above that reaches dc_fetch_image's 200 branch uses a
+// truncated or non-200 response, so none of them ever call
+// image_parse_end()/psram_publish_slot() for real. Task 8's fill-then-
+// publish memory-barrier ordering is only load-bearing once that actually
+// happens; this pushes a real, complete, minimal WFMF image and checks it
+// lands -- and that writeProtected from the poll body reaches
+// device_client_t (device_client.h's mounted_write_protected).
+
+static void put_u32_le(uint8_t *p, uint32_t v) {
+    p[0] = (uint8_t)v; p[1] = (uint8_t)(v >> 8);
+    p[2] = (uint8_t)(v >> 16); p[3] = (uint8_t)(v >> 24);
+}
+
+// One payload byte (8 bits) per track: valid per the WFMF container, and
+// small enough that the whole image plus HTTP framing fits comfortably
+// inside transport_fake's FAKE_MAX_RESPONSE_BYTES (8192).
+static int build_minimal_full_image(uint8_t *out) {
+    put_u32_le(out + 0, IMAGE_MAGIC);
+    put_u32_le(out + 4, IMAGE_VERSION);
+    put_u32_le(out + 8, NUM_TRACKS);
+    put_u32_le(out + 12, 0);
+    int at = 16;
+    for (int t = 0; t < NUM_TRACKS; t++) {
+        put_u32_le(out + at, 8); at += 4;    // 8 bits = 1 payload byte
+        out[at++] = (uint8_t)t;              // payload
+        out[at++] = 0; out[at++] = 0; out[at++] = 0;  // pad to 4-byte boundary
+    }
+    return at;
+}
+
+// A real WFMF image embeds NUL bytes from byte 4 onward (IMAGE_VERSION=1
+// as little-endian u32 is 01 00 00 00), so it cannot travel through
+// fake_push_response's strlen()-based C-string API -- fake_push_response_bytes
+// takes an exact length instead.
+static void push_image_response(void) {
+    static uint8_t body[4096];
+    int body_len = build_minimal_full_image(body);
+    char header[128];
+    int hn = snprintf(header, sizeof header,
+        "HTTP/1.1 200 OK\r\nContent-Length: %d\r\n\r\n", body_len);
+    if (hn < 0 || (size_t)hn >= sizeof header) abort();
+    static uint8_t full[sizeof header + sizeof body];
+    memcpy(full, header, (size_t)hn);
+    memcpy(full + hn, body, (size_t)body_len);
+    fake_push_response_bytes(full, hn + body_len);
+}
+
+// A short, definitely-not-WFMF body with a Content-Length that matches it
+// exactly -- the body arrives whole (r.body_complete == true), but
+// image_parse_end() must still refuse it. Distinguishes "the bytes arrived"
+// from "the bytes are a disk" -- dc_fetch_image's old dc_discard_sink-based
+// code could never fail this way, since it never looked at the bytes at all.
+static void push_corrupt_image_response(void) {
+    static uint8_t body[32];
+    memset(body, 0xAB, sizeof body);   // not the WFMF magic under any interpretation
+    char header[128];
+    int hn = snprintf(header, sizeof header,
+        "HTTP/1.1 200 OK\r\nContent-Length: %d\r\n\r\n", (int)sizeof body);
+    if (hn < 0 || (size_t)hn >= sizeof header) abort();
+    static uint8_t full[sizeof header + sizeof body];
+    memcpy(full, header, (size_t)hn);
+    memcpy(full + hn, body, sizeof body);
+    fake_push_response_bytes(full, hn + (int)sizeof body);
+}
+
+static void test_corrupt_image_body_blocks_the_digest_but_does_not_publish(void) {
+    boot();
+    int before = psram_active_slot();
+    push_poll_desired_aa();
+    push_corrupt_image_response();
+
+    dc_state_t s = dc_step(&c);
+
+    CHECK(s != DC_HALTED, "a corrupt image must not stop the poll loop");
+    CHECK_EQ_INT(psram_active_slot(), before);
+    CHECK(c.mounted_sha256[0] == '\0', "must not be reported as mounted");
+    CHECK(dc_digest_is_blocked(&c, "aa"), "this digest must not be retried");
+}
+
+static void test_successful_image_fetch_publishes_and_reflects_write_protected(void) {
+    boot();
+    int target = psram_inactive_slot();
+    push_poll_desired_aa();
+    push_image_response();
+
+    dc_state_t s = dc_step(&c);
+
+    CHECK_EQ_INT(s, DC_IDLE_POLL);
+    CHECK_EQ_INT(psram_active_slot(), target);
+    CHECK(strcmp(c.mounted_sha256, "aa") == 0, "the fetched disk must actually be mounted");
+    CHECK_EQ_INT((int)c.since, 7);
+    CHECK(!c.mounted_write_protected,
+          "writeProtected:false in the poll body must reach device_client_t");
+}
+
+// --- Task 10: registration -------------------------------------------
+// dc_register is the one request in the protocol with no bearer -- the
+// pairing code IS the credential (device_client.h) -- and is called while
+// `c` is otherwise fully provisioned (boot() gives it token "tok") to
+// prove it never sends that token regardless.
+
+static void test_register_body_has_the_three_required_fields(void) {
+    boot(); token_store_erase();
+    push_ok_json("{\"token\":\"t-1\",\"deviceId\":\"d-1\",\"name\":\"Device x\"}");
+    CHECK(dc_register(&c, "ABC123", "4a.0", "aa:bb:cc:dd:ee:ff"), "register");
+    const char *r = fake_last_request();
+    CHECK(strstr(r, "pairingCode")     != NULL, "pairingCode");
+    CHECK(strstr(r, "firmwareVersion") != NULL, "firmwareVersion");
+    CHECK(strstr(r, "macAddress")      != NULL, "macAddress");
+    CHECK(strstr(r, "Authorization")   == NULL,
+          "register is deliberately unauthenticated -- the code IS the credential");
+}
+
+static void test_register_stores_the_returned_token(void) {
+    boot(); token_store_erase();
+    push_ok_json("{\"token\":\"t-1\",\"deviceId\":\"d-1\",\"name\":\"Device x\"}");
+    CHECK(dc_register(&c, "ABC123", "4a.0", "aa:bb:cc:dd:ee:ff"), "register");
+    CHECK(token_store_load(buf, sizeof buf), "token persisted");
+    CHECK(strcmp(buf, "t-1") == 0, "the returned token");
+}
+
+static void test_bad_code_does_not_store_anything(void) {
+    boot(); token_store_erase();
+    // The body carries a `token` field on purpose, alongside the error --
+    // a fixture with no `token` key at all would let this test pass even
+    // if dc_register() stopped checking the status code entirely (a 200
+    // check dropped in favour of "did the body have a token" would still
+    // reject this response, just for the wrong reason, and never be
+    // caught). Only actually honouring the 400 keeps this out of the
+    // store.
+    push_status_json("HTTP/1.1 400 Bad Request",
+        "{\"error\":\"invalid_or_used_code\",\"token\":\"should-not-be-used\"}");
+    CHECK(!dc_register(&c, "WRONG", "4a.0", "aa:bb:cc:dd:ee:ff"), "should fail");
+    CHECK(!token_store_load(buf, sizeof buf), "nothing may be stored on failure");
+}
+
 int main(void) {
+    // Only test_successful_image_fetch_publishes_and_reflects_write_protected
+    // needs real PSRAM backing (everything else in this file either never
+    // reaches image_parse_feed, or only pokes psram_publish_slot()'s
+    // bookkeeping directly) -- set up once, matching test_psram_image.c's
+    // own main().
+    size_t psram_len = (size_t)TRACK_MAX_BYTES * NUM_TRACKS * SLOT_COUNT;
+    void *psram_mem = malloc(psram_len);
+    psram_image_set_backing(psram_mem, psram_len);
+
     RUN(test_cold_boot_polls_since_zero);
     RUN(test_request_survives_single_byte_writes);
     RUN(test_since_does_not_advance_on_a_failed_fetch);
@@ -278,5 +444,12 @@ int main(void) {
     RUN(test_status_success_does_not_reset_poll_backoff);
     RUN(test_status_sends_all_six_fields);
     RUN(test_unmounted_reports_null_not_omitted);
+    RUN(test_corrupt_image_body_blocks_the_digest_but_does_not_publish);
+    RUN(test_successful_image_fetch_publishes_and_reflects_write_protected);
+    RUN(test_register_body_has_the_three_required_fields);
+    RUN(test_register_stores_the_returned_token);
+    RUN(test_bad_code_does_not_store_anything);
+
+    free(psram_mem);
     return REPORT();
 }

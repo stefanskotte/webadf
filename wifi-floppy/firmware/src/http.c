@@ -233,23 +233,45 @@ bool http_resp_feed(http_resp_t *r, const uint8_t *data, int len,
 int http_build_request(char *out, int out_len, const char *method, const char *path,
                        const char *host, const char *bearer, const char *body) {
     int body_len = body ? (int)strlen(body) : 0;
-    int n = body_len > 0 ?
-        snprintf(out, (size_t)out_len,
-            "%s %s HTTP/1.1\r\n"
-            "Host: %s\r\n"
-            "Authorization: Bearer %s\r\n"
-            "Content-Length: %d\r\n"
-            "Connection: keep-alive\r\n"
-            "\r\n"
-            "%s",
-            method, path, host, bearer, body_len, body)
-      : snprintf(out, (size_t)out_len,
-            "%s %s HTTP/1.1\r\n"
-            "Host: %s\r\n"
-            "Authorization: Bearer %s\r\n"
-            "Connection: keep-alive\r\n"
-            "\r\n",
-            method, path, host, bearer);
+    int n;
+    if (bearer) {
+        n = body_len > 0 ?
+            snprintf(out, (size_t)out_len,
+                "%s %s HTTP/1.1\r\n"
+                "Host: %s\r\n"
+                "Authorization: Bearer %s\r\n"
+                "Content-Length: %d\r\n"
+                "Connection: keep-alive\r\n"
+                "\r\n"
+                "%s",
+                method, path, host, bearer, body_len, body)
+          : snprintf(out, (size_t)out_len,
+                "%s %s HTTP/1.1\r\n"
+                "Host: %s\r\n"
+                "Authorization: Bearer %s\r\n"
+                "Connection: keep-alive\r\n"
+                "\r\n",
+                method, path, host, bearer);
+    } else {
+        // No Authorization header at all -- see http.h's comment on
+        // `bearer`. Registration's pairing code travels in the body, not a
+        // header, so there is nothing to substitute it with here.
+        n = body_len > 0 ?
+            snprintf(out, (size_t)out_len,
+                "%s %s HTTP/1.1\r\n"
+                "Host: %s\r\n"
+                "Content-Length: %d\r\n"
+                "Connection: keep-alive\r\n"
+                "\r\n"
+                "%s",
+                method, path, host, body_len, body)
+          : snprintf(out, (size_t)out_len,
+                "%s %s HTTP/1.1\r\n"
+                "Host: %s\r\n"
+                "Connection: keep-alive\r\n"
+                "\r\n",
+                method, path, host);
+    }
     if (n < 0 || n >= out_len) return -1;
     return n;
 }

@@ -54,21 +54,25 @@ set(WFMF_PSA_CRYPTO_RANDOM_SRC ${PICO_MBEDTLS_PATH}/library/psa_crypto_random.c)
 
 add_executable(wifi_floppy
   src/main.c src/dskchg.c src/track_cache.c src/psram_image.c
-  src/image_loader.c
-  src/http_fetch.c src/mfm.c
+  src/image_loader.c src/device_client.c src/http.c src/json_scan.c
+  src/token_store.c
+  src/mfm.c
   src/transport_tls.c src/sntp_time.c
   ${WFMF_PSA_CRYPTO_RANDOM_SRC})
 pico_generate_pio_header(wifi_floppy ${CMAKE_CURRENT_LIST_DIR}/src/floppy.pio)
 target_include_directories(wifi_floppy PRIVATE src ${CMAKE_CURRENT_LIST_DIR})
 target_link_libraries(wifi_floppy
   pico_stdlib pico_multicore hardware_pio hardware_dma hardware_irq
-  hardware_psram hardware_sync
+  hardware_psram hardware_sync hardware_flash pico_flash
   pico_cyw43_arch_lwip_threadsafe_background
   pico_lwip_mbedtls pico_mbedtls pico_lwip_sntp)
 target_compile_definitions(wifi_floppy PRIVATE
   WIFI_SSID=\"$ENV{WIFI_SSID}\" WIFI_PASS=\"$ENV{WIFI_PASS}\"
-  TRACK_SERVER_IP=\"192.168.1.10\" TRACK_SERVER_PORT=8000
-  WEBADF_HOST=\"webadf.vercel.app\")
+  WEBADF_HOST=\"webadf.vercel.app\"
+  # Compile-time provisioning (spec §7); 4b (captive portal) replaces only
+  # where these two come from, nothing about how they're used here.
+  WEBADF_PAIRING_CODE=\"$ENV{WEBADF_PAIRING_CODE}\"
+  FIRMWARE_VERSION=\"4a.0\")
 if (NOT WFMF_OMIT_AUTHMODE)
   target_compile_definitions(wifi_floppy PRIVATE
     ALTCP_MBEDTLS_AUTHMODE=MBEDTLS_SSL_VERIFY_REQUIRED)

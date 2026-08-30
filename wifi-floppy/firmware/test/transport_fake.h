@@ -17,6 +17,11 @@ void fake_reset(void);
 // loudly rather than truncating silently.
 void fake_push_response(const char *raw);
 
+// Same as fake_push_response, but for a response containing bytes that
+// don't survive a C string (a real WFMF image body embeds NUL bytes in its
+// header alone) -- `len` is exact, not strlen()'d.
+void fake_push_response_bytes(const uint8_t *raw, int len);
+
 // Deliver only the first `n` bytes of `raw` for the next request, then
 // report a dropped connection: read() returns 0 (clean close) from then on,
 // exactly as a connection dying mid-body looks to the layer above. `n` must
