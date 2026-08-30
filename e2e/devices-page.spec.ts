@@ -29,6 +29,19 @@ test('a fresh org with no devices shows the empty-state copy', async ({ page }) 
   await expect(page.getByText('No devices paired yet')).toBeVisible();
 });
 
+test('the header subtitle counts online devices by lastSeenAt, not just how many are paired', async ({ page, request }) => {
+  await signUpFresh(page);
+  const { deviceId: idOnline } = await pairDevice(page, request, 'Online Device');
+  const { deviceId: idDark } = await pairDevice(page, request, 'Dark Device');
+
+  await setDevice(idOnline, { lastSeenAt: new Date() });
+  // Well past STALE_AFTER_MS (60s) -- this device is paired but not online.
+  await setDevice(idDark, { lastSeenAt: new Date(Date.now() - 60 * 60_000) });
+
+  await page.goto('/devices');
+  await expect(page.getByText('2 paired · 1 online', { exact: false })).toBeVisible();
+});
+
 test('all four device states render with distinct data-state and distinct visible text', async ({ page, request }) => {
   const { orgId } = await signUpFresh(page);
 
@@ -130,6 +143,15 @@ test('LiveRefresh is inactive when everything has converged and active when some
 
   // Something now differs -- the timer must prove itself active.
   await setDevice(deviceId, { mountedGameId: null, mountedDiskId: null, mountedSha256: null, mountedDiskNo: null });
+  await page.reload();
+  await expect(page.getByTestId('live-refresh')).toHaveAttribute('data-active', 'true');
+
+  // A stale device (same divergence, just not seen recently) is still
+  // unresolved, not settled -- if the hardware power-cycles and starts
+  // talking again, the page must already be polling so the operator sees it
+  // reconcile without a manual reload. "stale" must keep the timer active on
+  // its own, with no other pending device on the page to carry it.
+  await setDevice(deviceId, { lastSeenAt: new Date(Date.now() - 5 * 60_000) });
   await page.reload();
   await expect(page.getByTestId('live-refresh')).toHaveAttribute('data-active', 'true');
 });
