@@ -61,10 +61,16 @@ export function MountAction({ diskId, devices }: { diskId: string; devices: Moun
   // menu/menuitem ARIA roles for free -- a hand-rolled <div> version had none
   // of that (clicking elsewhere on the page left it open).
   return (
-    // Non-modal: this is a small in-row picker, not a dialog the user must
-    // resolve before doing anything else -- the rest of the page (other
-    // disks' rows included) should stay interactive while it's open.
-    <DropdownMenu modal={false}>
+    // Modal (the Base UI default -- kept explicit here as a decision, not an
+    // oversight). Two disk rows can each have their menu positioned close
+    // enough that one row's popup visually overlaps another row's Mount
+    // button; without the modal inert-overlay, a click that LOOKS like it
+    // lands on disk 2's button can actually be intercepted by disk 1's open
+    // menu underneath, mounting the wrong disk. The overlay makes that
+    // impossible: outside clicks and Escape still close the menu (Base UI
+    // handles both), but nothing behind the menu can receive a click while
+    // it's open.
+    <DropdownMenu modal>
       <DropdownMenuTrigger disabled={busy} data-testid={`mount-${diskId}`} className={cls} style={style}>
         {busy ? 'Mounting…' : 'Mount to ▾'}
       </DropdownMenuTrigger>

@@ -72,8 +72,19 @@ occasionally).
 The artboards assume one device, pinned top-right. With several paired, a mount needs a
 target.
 
-**A disk row's action is a plain "Mount" button when exactly one device is paired, and a
-dropdown of device names when there are several.** No persistent "current device" selection —
+**A disk row's action is a plain "Mount" button when exactly one device is paired, and an
+inline expansion listing the device names when there are several.**
+
+*Revised during implementation.* This originally said "dropdown", and a dropdown was built. It
+had a correctness bug, found by measurement rather than by eye: with two disk rows, the open
+popup covered the next row's Mount button, and `elementFromPoint` at that button resolved to
+the first row's menu item — so clicking what looked like disk 2's Mount silently mounted disk 1.
+`modal={true}` does not help, because `MenuPositioner`'s `z-50` is unconditional and the
+backdrop never enters the comparison. Nor does any placement: `side="bottom"` covers the row
+below, `side="top"` the row above, and horizontal placement is fragile at narrow widths. Any
+overlay anchored to a row in a tight list overlaps something. An inline expansion — the row
+grows, the rows below are pushed down — structurally cannot, which is worth more here than
+guarding a wrong-target mount with collision heuristics. No persistent "current device" selection —
 that is state to keep in sync, invalidate, and explain, for no benefit over naming the target
 at the moment you press the button.
 
