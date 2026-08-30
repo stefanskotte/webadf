@@ -33,8 +33,36 @@ static void test_save_refuses_while_a_disk_is_mounted(void) {
           "the post-unmount save must actually land");
 }
 
+// Review round 1, Minor M-2: erase() writes the same flash sector save()
+// does, so it needs the same mounted-disk guard -- an erase is a flash
+// write too, not merely "forgetting something in RAM".
+static void test_erase_refuses_while_a_disk_is_mounted(void) {
+    token_store_erase();
+    CHECK(token_store_save("tok-xyz"), "save");
+    psram_publish_slot(0);
+    token_store_erase();   // must be a silent no-op while mounted
+    CHECK(token_store_load(buf, sizeof buf) && strcmp(buf, "tok-xyz") == 0,
+          "erase must refuse while a disk is mounted, leaving the token intact");
+    psram_publish_slot(SLOT_NONE);
+    token_store_erase();
+    CHECK(!token_store_load(buf, sizeof buf), "erase succeeds once unmounted");
+}
+
+// Review round 1, Minor M-3: a flash program interrupted partway through
+// (e.g. a power loss mid-write) must read back as "nothing stored", not as
+// whatever partial bytes happen to look like a token.
+static void test_torn_write_reads_as_nothing_stored(void) {
+    token_store_erase();
+    CHECK(token_store_save("tok-abc"), "save");
+    token_store_test_simulate_torn_write();
+    CHECK(!token_store_load(buf, sizeof buf),
+          "a torn write must not surface a garbage token");
+}
+
 int main(void) {
     RUN(test_token_round_trips);
     RUN(test_save_refuses_while_a_disk_is_mounted);
+    RUN(test_erase_refuses_while_a_disk_is_mounted);
+    RUN(test_torn_write_reads_as_nothing_stored);
     return REPORT();
 }

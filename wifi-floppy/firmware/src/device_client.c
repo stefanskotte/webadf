@@ -430,23 +430,53 @@ bool dc_register(device_client_t *c, const char *pairing_code,
     int body_len = snprintf(body, sizeof body,
         "{\"pairingCode\":\"%s\",\"firmwareVersion\":\"%s\",\"macAddress\":\"%s\"}",
         pc_esc, fv_esc, mac_esc);
-    if (body_len < 0 || body_len >= (int)sizeof body) return false;
+    // Review round 1, Important I-2: every failure path below calls
+    // dc_enter_backoff() -- the same exponential-from-the-floor, jittered,
+    // capped backoff dc_step()/dc_fetch_image() already use -- rather than
+    // just returning false. Without it, main.c's register loop (which reads
+    // c->backoff_ms and sleeps on it) always saw 0 for a fresh
+    // device_client_t, so a bad or already-used pairing code hammered the
+    // deliberately UNAUTHENTICATED /api/device/register endpoint at a flat
+    // 1 req/s forever instead of backing off. Note dc_enter_backoff()
+    // returns dc_state_t, not bool -- DC_BACKOFF is nonzero, so
+    // `return dc_enter_backoff(c);` from this bool-returning function would
+    // silently return true on every failure. Each call site below is
+    // deliberately its own statement, discarding that return value, with an
+    // explicit `return false;` beside it.
+    if (body_len < 0 || body_len >= (int)sizeof body) {
+        dc_enter_backoff(c);
+        return false;
+    }
 
     char req[DC_REGISTER_REQ_BYTES];
     int req_len = http_build_request(req, sizeof req, "POST", DC_REGISTER_PATH,
                                      c->host, NULL, body);
-    if (req_len < 0) return false;
+    if (req_len < 0) {
+        dc_enter_backoff(c);
+        return false;
+    }
 
     dc_body_buf_t resp = { .len = 0 };
     resp.buf[0] = '\0';
     http_resp_t r;
     bool ok = dc_exchange(c, req, req_len, dc_body_sink, &resp, &r);
-    if (!ok || !r.body_complete || r.status != 200) return false;
+    if (!ok || !r.body_complete || r.status != 200) {
+        dc_enter_backoff(c);
+        return false;
+    }
 
     char token[TOKEN_STORE_MAX_LEN + 1];
-    if (!json_str(resp.buf, "token", token, sizeof token) || token[0] == '\0') return false;
+    if (!json_str(resp.buf, "token", token, sizeof token) || token[0] == '\0') {
+        dc_enter_backoff(c);
+        return false;
+    }
 
-    return token_store_save(token);
+    if (!token_store_save(token)) {
+        dc_enter_backoff(c);
+        return false;
+    }
+    dc_backoff_reset(c);
+    return true;
 }
 
 // Sends one status heartbeat (spec §4.3, §10; see device_client.h for the

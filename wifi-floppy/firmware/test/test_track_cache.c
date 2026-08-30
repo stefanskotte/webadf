@@ -106,12 +106,53 @@ static void test_three_disks_no_eject_does_not_serve_stale_track(void) {
           "SRAM copy cached under slot 0's earlier occupant, disk1 (0x11)");
 }
 
+// Review round 1, Critical C-1: main.c's core0 loop only re-enters
+// track_cache_get() on a seek (a STEP pulse). A swap or an eject published
+// with no seek in between must still be detectable -- this is the pure,
+// host-testable half of that fix (main.c's side effects -- dskchg_image_
+// inserted()/ejected(), stopping the flux DMA -- need real hardware and
+// aren't tested here).
+static void test_check_swap_detects_publish_and_eject_with_no_seek(void) {
+    // psram_image.c's published token is process-wide static state shared
+    // by every test in this binary, so an earlier test may already have
+    // published something (this binary's g_gen only ever counts up).
+    // Seeding `last` to whatever's current -- rather than the fresh-boot
+    // sentinel 0 -- makes this test observe only the changes IT makes,
+    // regardless of run order or what ran before it.
+    int32_t last = psram_active_token();
+    bool mounted = false;
+
+    CHECK(!track_cache_check_swap(&last, &mounted),
+          "seeding `last` to the already-current token must report no change yet");
+
+    psram_publish_slot(0);
+    CHECK(track_cache_check_swap(&last, &mounted), "a fresh publish must be reported");
+    CHECK(mounted, "publishing a real slot must report mounted");
+
+    CHECK(!track_cache_check_swap(&last, &mounted),
+          "calling again with nothing new published must report no change");
+
+    psram_publish_slot(SLOT_NONE);
+    CHECK(track_cache_check_swap(&last, &mounted), "an eject must be reported");
+    CHECK(!mounted, "publishing SLOT_NONE must report NOT mounted");
+
+    psram_publish_slot(1);
+    CHECK(track_cache_check_swap(&last, &mounted),
+          "a swap directly from one slot to another (no eject in between) must "
+          "be reported -- this is the case a bare slot-index comparison would "
+          "miss if slot 1 happened to look like \"the same slot\" (it does "
+          "not here, but the token, not the slot, is what this function -- "
+          "and psram_image.c's publish/read pair -- key off of)");
+    CHECK(mounted, "publishing a real slot must report mounted");
+}
+
 int main(void) {
     size_t len = (size_t)TRACK_MAX_BYTES * NUM_TRACKS * SLOT_COUNT;
     void *mem = malloc(len);
     psram_image_set_backing(mem, len);
     RUN(test_eject_then_refetch_does_not_serve_stale_track);
     RUN(test_three_disks_no_eject_does_not_serve_stale_track);
+    RUN(test_check_swap_detects_publish_and_eject_with_no_seek);
     free(mem);
     return REPORT();
 }

@@ -18,6 +18,29 @@ void track_cache_init(void);
 void track_cache_flush(void);          // disk change: drop SRAM + PSRAM copies,
                                         // eject (both slots reset, active -> none)
 
+// Review round 1, Critical C-1: a swap or an eject only becomes visible to
+// core0 when something re-enters track_cache_get() -- before this task,
+// only a STEP pulse (a seek) ever did that. Once core1's device_client.c
+// loop can publish a new slot (a swap) or SLOT_NONE (an eject) at any time,
+// core0's main() loop must notice even when the Amiga never seeks, or the
+// flux DMA keeps replaying a departed disk's last track forever (an eject
+// nobody asked for's exact inverse: an eject NOBODY SEES).
+//
+// Pure and host-testable on purpose: it only reads psram_active_token()/
+// psram_token_slot() (task 8), never touches GPIO or DMA, so the "did the
+// active image identity change" decision can be exercised from the host
+// test build even though the actual dskchg_image_inserted()/ejected() and
+// DMA-stopping side effects that main.c drives from it cannot be (they
+// need real hardware).
+//
+// `*last_token` is the caller's own record of the last token it observed;
+// pass a variable seeded to 0 (psram_image.c: 0 is never produced by a
+// real publish, so it safely means "nothing observed yet", matching the
+// unmounted boot state). Returns true at most once per actual change, and
+// only then writes `*mounted_out` (true if the NEW token names a real
+// slot, false for SLOT_NONE / an eject).
+bool track_cache_check_swap(int32_t *last_token, bool *mounted_out);
+
 // Core 0 (see psram_image.h/.c: "core0 (track_cache.c's track_cache_get())
 // is the only reader" of the published active slot -- this comment
 // previously said "Core 1", which task 10 corrects: main.c's core1 runs

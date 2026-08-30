@@ -415,6 +415,30 @@ static void test_bad_code_does_not_store_anything(void) {
     CHECK(!token_store_load(buf, sizeof buf), "nothing may be stored on failure");
 }
 
+// Review round 1, Important I-2: main.c's registration loop reads
+// c->backoff_ms and sleeps on it between attempts (exactly like the poll
+// loop does for dc_step()) -- but dc_register() itself has to be the thing
+// that grows it, or a fresh device_client_t's backoff_ms stays 0 forever
+// and that sleep is always DC_BACKOFF_FLOOR_MS flat, hammering the
+// deliberately unauthenticated /api/device/register endpoint at 1 req/s
+// on a bad or already-used pairing code. Mirrors
+// test_backoff_grows_and_is_capped's shape, against dc_register instead of
+// dc_step.
+static void test_register_backs_off_on_repeated_failure(void) {
+    boot(); token_store_erase();
+    uint32_t prev = 0;
+    for (int i = 0; i < 5; i++) {
+        push_status_json("HTTP/1.1 400 Bad Request",
+            "{\"error\":\"invalid_or_used_code\"}");
+        CHECK(!dc_register(&c, "WRONG", "4a.0", "aa:bb:cc:dd:ee:ff"), "should fail");
+        CHECK(c.backoff_ms >= prev, "backoff must not shrink on repeated failure");
+        prev = c.backoff_ms;
+    }
+    CHECK(prev > 0,
+          "a failed dc_register must grow backoff_ms, or main.c's register "
+          "loop hammers the endpoint at a flat 1 req/s forever");
+}
+
 int main(void) {
     // Only test_successful_image_fetch_publishes_and_reflects_write_protected
     // needs real PSRAM backing (everything else in this file either never
@@ -449,6 +473,7 @@ int main(void) {
     RUN(test_register_body_has_the_three_required_fields);
     RUN(test_register_stores_the_returned_token);
     RUN(test_bad_code_does_not_store_anything);
+    RUN(test_register_backs_off_on_repeated_failure);
 
     free(psram_mem);
     return REPORT();

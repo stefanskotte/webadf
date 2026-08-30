@@ -83,10 +83,20 @@ static int64_t index_off(alarm_id_t id, void *ud) {
 // Flash writes disable XIP. This handler re-arms the DMA each revolution and
 // raises INDEX; stalling it mid-revolution presents to the Amiga as a
 // malformed revolution -- a flaky drive, essentially undiagnosable without a
-// scope. Kept in RAM so a token write (token_store.c, called once from
-// core1's boot-time registration path, before any disk is mounted) can
-// never reach it -- belt and braces alongside token_store_save()'s own
-// mounted-disk guard.
+// scope.
+//
+// Review round 1, Minor M-1: moved into RAM with __not_in_flash_func, but
+// this alone is NOT sufficient -- objdump shows this handler's own call
+// graph still reaches into flash: the veneers it calls out through resolve
+// to alarm_pool_get_default()/time_us_64()/alarm_pool_add_alarm_at(), and
+// index_off() -- the callback add_alarm_in_us() installs below -- is itself
+// a flash-resident function. What actually prevents this handler stalling
+// mid-flash-write is main()'s flash_safe_execute_core_init() call, which
+// lets core1's token write park core0 (interrupts disabled, nothing
+// executing at all) for the write's duration -- see that comment for the
+// real argument. __not_in_flash_func is kept anyway as a second, cheap
+// layer, but it is not "either mitigation would suffice alone": only the
+// lockout actually covers this handler's full call graph.
 static void __isr __not_in_flash_func(dma_irq)(void) {
     dma_hw->ints0 = 1u << dma_ch;
     if (!track_live) return;
@@ -190,7 +200,6 @@ static void core1_main(void) {
     device_client_t c;
     dc_init(&c, tls_transport(), clock_ms, WEBADF_HOST, token);
 
-    bool was_mounted = false;
     char last_reported_sha[65] = "";
     uint32_t last_status_ms = clock_ms();
 
@@ -201,15 +210,16 @@ static void core1_main(void) {
         // genuinely resident and published -- dc_step only reaches here
         // (mounted_sha256 non-empty) after a real fetch-and-verify or an
         // already-mounted no-op (dc_handle_poll_body), never as a boot-time
-        // assumption. dskchg_image_inserted()/ejected() are called only on
-        // the actual transition, matching the pre-existing call pattern
-        // (this function was already called from this core before task 10;
-        // it is just conditional now instead of unconditional at boot).
+        // assumption. `mounted` here only feeds WPROT (item 3) below --
+        // review round 1, Important I-1: dskchg_image_inserted()/ejected()
+        // used to be called from THIS core, racing core0's gpio_isr/
+        // dskchg_poll against dskchg.c's plain, unsynchronized `st` (a
+        // pattern that was harmless when it fired exactly once at boot,
+        // but became a real race once this loop could call it repeatedly
+        // at arbitrary times). That signalling now lives entirely on core0
+        // -- see main()'s track_cache_check_swap() call below -- so
+        // dskchg.c stays single-threaded.
         bool mounted = c.mounted_sha256[0] != '\0';
-        if (mounted != was_mounted) {
-            if (mounted) dskchg_image_inserted(); else dskchg_image_ejected();
-            was_mounted = mounted;
-        }
 
         // Item 3: WPROT. Nothing mounted -> nothing to write to regardless
         // of the flag's stale value; a mounted disk's writeProtected flows
@@ -303,12 +313,13 @@ int main(void) {
     multicore_launch_core1(core1_main);
     // Lets core1's (rare, one-time) token flash write -- token_store.c,
     // guarded to only ever run before any disk is mounted -- pause core0
-    // for its duration via flash_safe_execute's multicore lockout, so
-    // core0 is never mid-instruction-fetch from flash while XIP is down.
-    // Belt and braces alongside the DMA IRQ's __not_in_flash_func above:
-    // either mitigation would likely suffice on its own (see the DMA IRQ
-    // comment), but the failure they prevent -- a flaky drive with no
-    // other explanation -- is bad enough that both are cheap insurance.
+    // for its duration via flash_safe_execute's multicore lockout: core0
+    // executes nothing at all (interrupts disabled) while XIP is down.
+    // This -- not the DMA IRQ's __not_in_flash_func above -- is what
+    // actually prevents that handler from stalling mid-flash-write; see
+    // its comment for why RAM-placement alone does not fully cover it
+    // (its own call graph still reaches into flash). __not_in_flash_func
+    // is kept as a second, cheap layer regardless.
     // multicore_launch_core1() returns almost immediately and core1 has a
     // WiFi connect, an SNTP sync, and (on a fresh device) a register
     // round-trip ahead of it before it can reach that write, so there is
@@ -328,9 +339,42 @@ int main(void) {
     // see as reading the wrong data after a seek. track_cache.h's
     // track_cache_get() comment previously said "Core 1" -- corrected
     // alongside this move.
+    //
+    // Review round 1, Critical C-1: a seek (a STEP pulse, which is what
+    // sets `want_track`) was previously the ONLY thing that ever re-entered
+    // track_cache_get(), so a swap or an eject with no seek in between was
+    // invisible here -- the flux DMA would keep replaying whatever track it
+    // last loaded from a disk that may no longer even be mounted, with
+    // INDEX still pulsing, forever. last_active_token latches
+    // psram_active_token() (see track_cache_check_swap(), which is the
+    // pure/host-tested half of this fix) so this loop notices the change
+    // itself, independent of `want_track`, and reacts immediately: force
+    // re-entry into track_cache_get() at the CURRENT head position (a swap
+    // takes effect right away, not on the next seek), and on an eject stop
+    // the flux DMA outright rather than letting it run one more revolution
+    // on a disk that is already gone.
+    //
+    // Review round 1, Important I-1: dskchg_image_inserted()/ejected() are
+    // called from here too, not from core1 -- see core1_main()'s comment
+    // on `mounted`. This keeps dskchg.c's `st` single-threaded (only ever
+    // touched from core0: gpio_isr, dskchg_poll, and this call), since it
+    // is plain and unsynchronized.
+    int32_t last_active_token = 0;   // psram_image.c: 0 == the fresh-boot sentinel
     int loaded = -1;
     while (true) {
         dskchg_poll();
+
+        bool now_mounted;
+        if (track_cache_check_swap(&last_active_token, &now_mounted)) {
+            loaded = -1;
+            if (now_mounted) {
+                dskchg_image_inserted();
+            } else {
+                dskchg_image_ejected();
+                track_live = false;
+                dma_channel_abort(dma_ch);
+            }
+        }
 
         int want = want_track;
         if (want >= 0 && want != loaded) {

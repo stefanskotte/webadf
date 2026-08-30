@@ -100,3 +100,11 @@ int track_cache_fill_percent(void) {
     if (slot == SLOT_NONE || !psram_image_available()) return 0;
     return (NUM_TRACKS - psram_image_missing_count(slot)) * 100 / NUM_TRACKS;
 }
+
+bool track_cache_check_swap(int32_t *last_token, bool *mounted_out) {
+    int32_t token = psram_active_token();
+    if (token == *last_token) return false;
+    *last_token = token;
+    *mounted_out = psram_token_slot(token) != SLOT_NONE;
+    return true;
+}

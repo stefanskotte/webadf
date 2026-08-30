@@ -37,7 +37,17 @@ bool token_store_load(char *out, int out_len);
 bool token_store_save(const char *token);
 
 // Clears whatever is stored. token_store_load() returns false afterwards
-// until the next successful token_store_save().
+// until the next successful token_store_save(). Refuses (a silent no-op)
+// under the same mounted-disk guard as token_store_save() -- erasing is
+// still a flash write, not merely forgetting something in RAM.
 void token_store_erase(void);
+
+// Host tests only (declared unconditionally, like psram_image_set_backing()
+// above it in spirit -- see psram_image.h): never called on device.
+// Simulates a flash program that started but was interrupted before it
+// finished (e.g. a power loss mid-write), so a test can prove
+// token_store_load() reports "nothing stored" for a torn write instead of
+// surfacing whatever partial bytes happen to look like a token.
+void token_store_test_simulate_torn_write(void);
 
 #endif
