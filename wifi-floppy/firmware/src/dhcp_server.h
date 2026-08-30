@@ -9,18 +9,26 @@
 // into the host test build. Task 6 binds a UDP socket to it.
 #include <stdint.h>
 
-// One phone at a time, plus a slot of slack. When the pool is exhausted, a
-// new (never-seen) MAC gets no reply at all (see dhcp_server.c) rather than
-// evicting an existing lease -- this AP realistically serves a single
-// phone, so refusing a second one is an acceptable, deliberate limitation.
+// One phone at a time, plus a slot of slack. When the pool is full, a new
+// (never-seen) MAC evicts the least-recently-used lease rather than being
+// refused (see dhcp_server.c's lease_stamp/lru_slot). Refusing was tried
+// first and rejected: iOS and Android both default to per-network
+// randomized MAC addresses, so a phone that starts association and is
+// cancelled or sleeps before finishing presents a fresh MAC on retry --
+// two such abandoned attempts fill this pool and would permanently lock
+// the real client out with no recovery short of a power cycle, which
+// nothing in the portal's own UI tells anyone to do. A stale lease has
+// nobody behind it, so evicting it is strictly better than refusing a
+// live client.
 #define DHCP_POOL_SIZE 2
 
 // Build a reply to a BOOTP/DHCP request received on port 67. Returns bytes
 // written to `out`, or 0 for "do not reply" -- the request is malformed,
 // too short, missing/wrong magic cookie, a BOOTREPLY rather than a
-// BOOTREQUEST, an option walks past `len`, message type is something other
-// than DISCOVER/REQUEST, or the lease pool is exhausted. Never writes past
-// `cap`. Pure: no sockets.
+// BOOTREQUEST, an option walks past `len`, or message type is something
+// other than DISCOVER/REQUEST. (The lease pool is never a reason to
+// refuse: a full pool evicts its least-recently-used entry instead --
+// see DHCP_POOL_SIZE above.) Never writes past `cap`. Pure: no sockets.
 int dhcp_handle(const uint8_t *req, int len, uint8_t *out, int cap);
 
 // Clear all leases. Used by host tests to isolate cases from each other,

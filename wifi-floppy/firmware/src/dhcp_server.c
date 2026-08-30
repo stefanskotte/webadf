@@ -54,16 +54,36 @@
 #define OPT_SERVER_ID 54
 #define OPT_END 255
 
-// One lease slot per known MAC. mac_set[i] is 0 until index i has been
+// One lease slot per known MAC. lease_used[i] is 0 until index i has been
 // handed out; a MAC of all-zero bytes is legitimate (chaddr is attacker
 // input), so a separate "in use" flag is used rather than treating an
 // all-zero mac[] as "empty".
+//
+// lease_stamp[i] holds the value of lease_clock at the moment slot i was
+// last issued or reused, so the pool can identify its least-recently-used
+// entry. This matters because iOS and Android both default to per-network
+// randomized MAC addresses: a phone that starts association, sleeps or is
+// cancelled, and retries presents a *different* MAC each time. Against a
+// small fixed pool, two abandoned attempts can fill every slot under two
+// pseudo-MACs that nobody is behind any more; refusing a third, live
+// attempt in that state is a self-lockout with no recovery available to
+// the user (the AP only clears its leases on a power cycle, which nothing
+// in the portal's own UI tells anyone to do). Evicting the LRU slot
+// instead is strictly better for a provisioning AP that realistically
+// serves one phone at a time: a stale lease has nobody behind it, so
+// reclaiming it never takes an address away from a client still mid
+// handshake as long as it keeps talking to us more recently than the
+// abandoned one did.
 static uint8_t lease_mac[DHCP_POOL_SIZE][6];
 static uint8_t lease_used[DHCP_POOL_SIZE];
+static unsigned long lease_stamp[DHCP_POOL_SIZE];
+static unsigned long lease_clock;
 
 void dhcp_reset_leases(void) {
     memset(lease_mac, 0, sizeof(lease_mac));
     memset(lease_used, 0, sizeof(lease_used));
+    memset(lease_stamp, 0, sizeof(lease_stamp));
+    lease_clock = 0;
 }
 
 // Find the pool slot already leased to `mac`, or -1.
@@ -74,23 +94,43 @@ static int find_lease(const uint8_t mac[6]) {
     return -1;
 }
 
-// Return the slot leased to `mac`, allocating the first free slot if `mac`
-// has not been seen before. Returns -1 if the pool is full and `mac` is
-// new -- the caller must not reply in that case (see the module comment in
-// dhcp_server.h: this AP realistically serves one phone, so refusing a
-// second unknown client is an acceptable, deliberate limitation rather
-// than silently evicting an existing lease).
+// Return the pool slot with the smallest stamp -- the one least recently
+// issued or reused. DHCP_POOL_SIZE is always >= 1 (a compile-time pool
+// size chosen by the firmware), so this always returns a valid index.
+static int lru_slot(void) {
+    int lru = 0;
+    for (int i = 1; i < DHCP_POOL_SIZE; i++) {
+        if (lease_stamp[i] < lease_stamp[lru]) lru = i;
+    }
+    return lru;
+}
+
+// Return the slot leased to `mac`, allocating a free slot if `mac` has not
+// been seen before, or -- if the pool is full -- evicting the
+// least-recently-used slot and handing it to `mac`. `find_lease` is
+// checked first, so a returning known MAC always gets its own slot back
+// without disturbing anything else. Every path stamps the slot with the
+// current tick before returning it, so both fresh allocations and reused
+// leases count as "recently used" for the next eviction decision.
 static int lease_for(const uint8_t mac[6]) {
+    lease_clock++;
     int existing = find_lease(mac);
-    if (existing >= 0) return existing;
+    if (existing >= 0) {
+        lease_stamp[existing] = lease_clock;
+        return existing;
+    }
     for (int i = 0; i < DHCP_POOL_SIZE; i++) {
         if (!lease_used[i]) {
             lease_used[i] = 1;
             memcpy(lease_mac[i], mac, 6);
+            lease_stamp[i] = lease_clock;
             return i;
         }
     }
-    return -1;
+    int evict = lru_slot();
+    memcpy(lease_mac[evict], mac, 6);
+    lease_stamp[evict] = lease_clock;
+    return evict;
 }
 
 // Message type carried in option 53, or 0 if absent/malformed. Bounds every
@@ -141,8 +181,10 @@ int dhcp_handle(const uint8_t *req, int len, uint8_t *out, int cap) {
     uint8_t mac[6];
     memcpy(mac, req + DHCP_CHADDR, 6);
 
+    // lease_for never returns a negative slot: an unknown mac with a full
+    // pool evicts the least-recently-used lease rather than being refused
+    // (see the lease_mac/lease_stamp comment above).
     int slot = lease_for(mac);
-    if (slot < 0) return 0;    // pool exhausted and mac is unknown: no reply
 
     uint8_t yiaddr[4] = {PORTAL_IP_0, PORTAL_IP_1, PORTAL_IP_2, (uint8_t)(16 + slot)};
     uint8_t server_id[4] = {PORTAL_IP_0, PORTAL_IP_1, PORTAL_IP_2, PORTAL_IP_3};
