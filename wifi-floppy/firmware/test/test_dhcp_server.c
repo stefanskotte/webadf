@@ -165,6 +165,38 @@ static void test_mac_randomization_third_attempt_is_served(void) {
     CHECK(rc > 0, "mac_c (the real retry) must be served, not locked out");
 }
 
+// review round 2: the two tests above ("pool exhaustion evicts LRU" and
+// "MAC randomization third attempt is served") both happen to have slot 0
+// as the least-recently-used slot by MAC arrival order alone, so a broken
+// implementation that just hardcodes "always evict slot 0" passes both of
+// them -- proven below by mutation, not assumed. This test breaks that
+// coincidence: A renews *after* B has already taken slot 1, so B (not A)
+// is the actual least-recently-used lease when C arrives, even though A
+// occupies the lower-numbered slot.
+static void test_lru_eviction_targets_the_actual_lru_slot_not_slot_zero(void) {
+    dhcp_reset_leases();
+    uint8_t mac_a[6] = {1,1,1,1,1,1};
+    uint8_t mac_b[6] = {2,2,2,2,2,2};
+    uint8_t mac_c[6] = {3,3,3,3,3,3};
+    uint8_t req[512], out_a[512], out_b[512], out_c[512];
+
+    int na = build_request(req, sizeof req, 1, mac_a);
+    CHECK(dhcp_handle(req, na, out_a, sizeof out_a) > 0, "mac_a discovers (slot 0)");
+
+    int nb = build_request(req, sizeof req, 1, mac_b);
+    CHECK(dhcp_handle(req, nb, out_b, sizeof out_b) > 0, "mac_b discovers (slot 1)");
+
+    // mac_a renews: still slot 0, but now stamped more recently than
+    // mac_b -- mac_b, not mac_a, is the actual LRU lease from here on.
+    int na2 = build_request(req, sizeof req, 1, mac_a);
+    CHECK(dhcp_handle(req, na2, out_a, sizeof out_a) > 0, "mac_a renews");
+
+    int nc = build_request(req, sizeof req, 1, mac_c);
+    int rc = dhcp_handle(req, nc, out_c, sizeof out_c);
+    CHECK(rc > 0, "mac_c is served");
+    CHECK_EQ_INT(out_c[19], out_b[19]);   // takes mac_b's address, not mac_a's
+}
+
 int main(void) {
     RUN(test_discover_gets_an_offer);
     RUN(test_request_gets_an_ack);
@@ -176,5 +208,6 @@ int main(void) {
     RUN(test_unrecognized_message_type_is_ignored);
     RUN(test_pool_exhaustion_evicts_the_least_recently_used_lease);
     RUN(test_mac_randomization_third_attempt_is_served);
+    RUN(test_lru_eviction_targets_the_actual_lru_slot_not_slot_zero);
     return REPORT();
 }
