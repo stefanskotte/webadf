@@ -29,7 +29,12 @@ export function DeviceCard({ device, now }: { device: DeviceListItem; now: numbe
     state === 'empty' ? 'Mount one from the library'
     : state === 'converged'
       ? `${device.mountedGame ?? 'Unknown'} — disk ${device.mountedDiskNo ?? '?'}`
-        + (device.desiredDiskCount ? ` of ${device.desiredDiskCount}` : '')
+        // desiredDiskCount is a SQL count(*), so it is 0 -- never null --
+        // when nothing is desired. Compare numerically, not by truthiness, so
+        // the "0 means don't show it" intent doesn't read as a null-check.
+        // (The `?? 0` is only to satisfy the nullable column type; the value
+        // itself is never actually null.)
+        + ((device.desiredDiskCount ?? 0) > 0 ? ` of ${device.desiredDiskCount}` : '')
     : state === 'pending'
       ? ejecting
         ? `Removing ${device.mountedGame ?? 'a disk'} disk ${device.mountedDiskNo ?? '?'}`

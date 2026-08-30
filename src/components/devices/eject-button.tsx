@@ -12,7 +12,17 @@ export function EjectButton({ deviceId }: { deviceId: string }) {
   async function onClick() {
     setBusy(true);
     try {
-      const res = await fetch(`/api/devices/${deviceId}/eject`, { method: 'POST' });
+      // fetch itself rejects on a network failure (offline, DNS, aborted) --
+      // before there is any Response to check `.ok` on. Without this inner
+      // try/catch that rejection is unhandled and the button just silently
+      // snaps back to "Eject" with nothing on screen.
+      let res: Response;
+      try {
+        res = await fetch(`/api/devices/${deviceId}/eject`, { method: 'POST' });
+      } catch {
+        toast.error('Could not reach the server', { description: 'Check your connection and try again.' });
+        return;
+      }
       if (!res.ok) {
         toast.error('Could not eject', { description: `The server answered ${res.status}.` });
         return;
