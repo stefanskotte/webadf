@@ -421,7 +421,7 @@ one-shot job that is marked done whether or not it worked.
 | 400 | The *whole* report was dropped — fix the body and resend. (After F-2, a well-formed partial report never destroys previously recorded fields, so there is little reason to send a partial one — see "send all five fields" below.) |
 | 401 | Stop. Re-pair. |
 
-### Send all five status fields on every report, where known
+### Send all six status fields on every report, where known
 
 `mountedSha256`, `mountedDiskId`, `version`, `error`, `psramFree` and `rssi`. F-2 means a
 partial report (say, just `mountedSha256`) no longer *destroys* the fields it omits — an
