@@ -37,12 +37,18 @@ void track_cache_init(void) {
     psram_image_init();
 }
 
-void track_cache_flush(void) {
-    buf[0].track = buf[1].track = -1;
-    buf[0].token = buf[1].token = 0;
-    for (int s = 0; s < SLOT_COUNT; s++) psram_image_reset_slot(s);
-    psram_publish_slot(SLOT_NONE);
-}
+// track_cache_flush() lived here and had no caller anywhere in src/ or
+// test/. Its body published SLOT_NONE -- i.e. it was an unrequested eject
+// sitting behind an innocuous "flush" name, one call site away from
+// violating the first rule of the whole protocol (device_client.c: "an
+// eject nobody asked for"). Deleted rather than documented: the eject that
+// the protocol DOES sanction is dc_handle_poll_body's explicit
+// `desired: null` branch, which publishes SLOT_NONE itself, and a second
+// way to do it is only a trap. If a future task needs to drop the SRAM
+// copies without ejecting, add a function that does exactly that and
+// nothing else -- note that track_cache_get() already re-reads
+// psram_active_token() on every call, so a swap invalidates them without
+// help.
 
 const uint8_t *track_cache_get(int track, uint32_t *bit_count) {
     if (track < 0 || track >= NUM_TRACKS) return 0;

@@ -56,6 +56,19 @@ static uint32_t track_word_count;
 // ---------------------------------------------------------------- DMA feed
 static void start_streaming(const uint8_t *mfm, uint32_t bit_count) {
     uint32_t nwords = (bit_count + 31) / 32;
+
+    // Review (final), Important 3: the abort MUST come before the repack
+    // loop, not after it. `track_words` is the DMA's read address; the
+    // caller clearing `track_live` only stops dma_irq() re-arming at the
+    // next revolution wrap, it does not stop a transfer already in flight.
+    // Rewriting the buffer underneath a running channel hands the PIO a
+    // mixture of the outgoing and incoming track for the remainder of that
+    // revolution -- one torn revolution, which the Amiga reads as a bad
+    // sector on a drive that is otherwise fine. That was survivable while
+    // this only ran on a seek; it now also runs on every swap and on
+    // eject-then-remount, at times nobody chose.
+    dma_channel_abort(dma_ch);
+
     // repack bytes MSB-first into words for autopull
     for (uint32_t i = 0; i < nwords; i++) {
         uint32_t w = 0;
@@ -63,7 +76,6 @@ static void start_streaming(const uint8_t *mfm, uint32_t bit_count) {
         track_words[i] = w;
     }
     track_word_count = nwords;
-    dma_channel_abort(dma_ch);
     dma_channel_config c = dma_channel_get_default_config(dma_ch);
     channel_config_set_transfer_data_size(&c, DMA_SIZE_32);
     channel_config_set_read_increment(&c, true);
@@ -152,6 +164,32 @@ static void mac_address_string(char *out, size_t out_len) {
 }
 
 // ---------------------------------------------------------------- core 1
+// Core 1's stack. multicore_launch_core1() would put this in SCRATCH_X --
+// PICO_CORE1_STACK_SIZE, which defaults to 2 KB and cannot exceed the
+// 4 KB the whole SCRATCH_X bank holds. Measured on the built ELF (see
+// .superpowers/sdd/2026-08-30-device-firmware-protocol/final-fix-report.md),
+// neither figure is enough, and the reason is not this file's own frames:
+//
+//   * core1_main -> dc_step -> dc_exchange -> tls_connect reaches
+//     mbedtls_ctr_drbg_seed -> block_cipher_df -> aes_gen_tables, ~2.0 KB
+//     of mbedTLS below tls_connect alone.
+//   * pico_cyw43_arch_lwip_threadsafe_background services lwIP from a
+//     low-priority IRQ on THIS core, so altcp_mbedtls_lower_recv ->
+//     mbedtls_ssl_handshake -> ..._hkdf_expand_label -> sha256 (~2.6 KB)
+//     lands on this same stack, on top of whatever the foreground is
+//     doing, at a moment nothing here chooses.
+//
+// Worst case is therefore the sum, ~4.9 KB, which no SCRATCH_X-resident
+// stack can hold. Beyond 4 KB the only option is a stack in main SRAM
+// launched via multicore_launch_core1_with_stack(); 16 KB leaves ~11 KB
+// of margin against a build with ~390 KB of SRAM unallocated, and the
+// MSPLIM stack guard (PICO_USE_STACK_GUARDS in CMakeLists.txt) turns any
+// future overrun into a hard fault rather than silent heap corruption.
+// 32-byte aligned because the guard rounds the limit address up to a
+// 32-byte boundary.
+#define CORE1_STACK_BYTES 16384
+static __attribute__((aligned(32))) uint32_t core1_stack[CORE1_STACK_BYTES / 4];
+
 static void core1_main(void) {
     if (cyw43_arch_init()) while (1) tight_loop_contents();
     cyw43_arch_enable_sta_mode();
@@ -169,7 +207,12 @@ static void core1_main(void) {
     // resyncing in the background for as long as the process runs.
     sntp_sync_blocking(30000);
 
-    char mac[18];   // "aa:bb:cc:dd:ee:ff" + NUL
+    // static, like device_client.c's buffers and for the same reason:
+    // core1_main is entered exactly once, by multicore_launch_core1_with_stack
+    // below, and never returns -- it is not re-entrant in any sense, and
+    // holding ~590 bytes of live frame for the entire life of the process
+    // is ~590 bytes the mbedTLS handshake chain below it does not get.
+    static char mac[18];   // "aa:bb:cc:dd:ee:ff" + NUL
     mac_address_string(mac, sizeof mac);
 
     // Registration (spec §7): load a stored token, or register for one.
@@ -181,7 +224,7 @@ static void core1_main(void) {
         // throwaway device_client_t's token is irrelevant -- NULL is
         // honest about that, and leaves `reg` in DC_UNPROVISIONED, which
         // is never used for anything but this loop.
-        device_client_t reg;
+        static device_client_t reg;
         dc_init(&reg, tls_transport(), clock_ms, WEBADF_HOST, NULL);
         while (!dc_register(&reg, WEBADF_PAIRING_CODE, FIRMWARE_VERSION, mac)) {
             sleep_ms(reg.backoff_ms ? reg.backoff_ms : DC_BACKOFF_FLOOR_MS);
@@ -197,10 +240,10 @@ static void core1_main(void) {
         }
     }
 
-    device_client_t c;
+    static device_client_t c;
     dc_init(&c, tls_transport(), clock_ms, WEBADF_HOST, token);
 
-    char last_reported_sha[65] = "";
+    static char last_reported_sha[65] = "";
     uint32_t last_status_ms = clock_ms();
 
     while (true) {
@@ -237,9 +280,17 @@ static void core1_main(void) {
         // mounted_version (which can advance on a no-op reconciliation poll
         // that names the same already-mounted disk, which is not a
         // transition anyone needs an out-of-band report for).
+        // Review (final), Minor 5: not while halted. DC_HALTED means a 401
+        // (or a 404 device row) -- the bearer is dead everywhere it
+        // appears, and /api/device/status uses the same one, so every
+        // heartbeat from here on is a guaranteed 401 against a known-dead
+        // token, once a minute, forever. dc_report_status's own 401
+        // handling would just re-set the state it is already in. Plan 4b's
+        // re-provisioning path is what gets the device out of DC_HALTED;
+        // until then the correct amount of traffic is none.
         uint32_t now = clock_ms();
         bool disk_changed = strcmp(c.mounted_sha256, last_reported_sha) != 0;
-        if (disk_changed || (now - last_status_ms) >= DC_STATUS_PERIOD_MS) {
+        if (s != DC_HALTED && (disk_changed || (now - last_status_ms) >= DC_STATUS_PERIOD_MS)) {
             dc_report_status(&c, psram_free_estimate(), wifi_rssi(), NULL);
             last_status_ms = now;
             strncpy(last_reported_sha, c.mounted_sha256, sizeof(last_reported_sha) - 1);
@@ -256,7 +307,16 @@ static void core1_main(void) {
         // hammering a dead token in a tight loop.
         if (s == DC_BACKOFF) {
             sleep_ms(c.backoff_ms);
-        } else if (s == DC_HALTED) {
+        } else if (s == DC_HALTED || s == DC_UNPROVISIONED) {
+            // Review (final), Important 2: DC_UNPROVISIONED gets the same
+            // floor as DC_HALTED. dc_step returns it immediately without
+            // touching the network, so if token_store_load() ever hands
+            // back a zero-length token (dc_init reads that as
+            // unprovisioned) this loop would otherwise spin core1 flat out
+            // calling dc_step, dc_report_status and cyw43_wifi_get_rssi
+            // forever. Neither state can change from inside this loop --
+            // 4b's re-provisioning path is what clears both -- so idling is
+            // the whole correct behaviour.
             sleep_ms(DC_BACKOFF_CAP_MS);
         }
     }
@@ -310,7 +370,12 @@ int main(void) {
     gpio_set_irq_enabled(PIN_MTR,  GPIO_IRQ_EDGE_FALL | GPIO_IRQ_EDGE_RISE, true);
     gpio_set_irq_enabled(PIN_SIDE, GPIO_IRQ_EDGE_FALL | GPIO_IRQ_EDGE_RISE, true);
 
-    multicore_launch_core1(core1_main);
+    // NOT multicore_launch_core1(): that uses the SCRATCH_X-resident
+    // .stack1_dummy, which tops out at 4 KB and cannot hold core1's
+    // measured ~4.9 KB worst case (foreground TLS setup plus the lwIP/
+    // mbedTLS IRQ chain that runs on the same stack). See core1_stack's
+    // comment above.
+    multicore_launch_core1_with_stack(core1_main, core1_stack, sizeof core1_stack);
     // Lets core1's (rare, one-time) token flash write -- token_store.c,
     // guarded to only ever run before any disk is mounted -- pause core0
     // for its duration via flash_safe_execute's multicore lockout: core0

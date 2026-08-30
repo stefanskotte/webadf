@@ -439,6 +439,138 @@ static void test_register_backs_off_on_repeated_failure(void) {
           "loop hammers the endpoint at a flat 1 req/s forever");
 }
 
+
+// --- Final review, Important 2: a blocked digest must not become a
+// request storm -------------------------------------------------------
+//
+// `since` advances ONLY in dc_complete_transition, i.e. only after a real
+// swap or a real eject. Every blocked-digest exit leaves it where it was.
+// The server (src/app/api/device/poll/route.ts) answers a poll the instant
+// `version > since`, so once a permanently-unfetchable disk is desired,
+// every poll returns 200 immediately, forever. main.c sleeps only on the
+// delay device_client.c hands it, so if these exits return DC_IDLE_POLL
+// with backoff_ms untouched, core1 re-polls at full TLS-handshake rate
+// with no pause at all -- against Vercel, indefinitely.
+//
+// These tests pin the floor. They assert on the DELAY, not on a particular
+// state name, because the delay is the thing main.c actually sleeps on.
+
+static void test_a_blocked_digest_never_repolls_without_a_delay(void) {
+    boot();
+    // Cycle 1: the poll names "aa" and the image endpoint permanently
+    // rejects it, so "aa" joins the blocked set and no transition happens.
+    poll_then_image("HTTP/1.1 422 Unprocessable Entity\r\nContent-Length: 23\r\n\r\n"
+                    "{\"error\":\"unencodable\"}");
+    dc_step(&c);
+    CHECK(dc_digest_is_blocked(&c, "aa"), "precondition: the digest is blocked");
+    CHECK_EQ_INT((int)c.since, 0);
+
+    // Cycles 2..6: the server keeps answering the same 200 immediately,
+    // because `since` never moved. Each one must come back with a real,
+    // non-shrinking delay for main.c to sleep on.
+    uint32_t prev = 0;
+    for (int i = 0; i < 5; i++) {
+        push_poll_desired_aa();
+        dc_state_t s = dc_step(&c);
+        CHECK_EQ_INT(s, DC_BACKOFF);
+        CHECK(c.backoff_ms >= DC_BACKOFF_FLOOR_MS,
+              "a 200 the device could not act on must leave main.c a delay "
+              "to sleep on, or this is an unthrottled request storm");
+        CHECK(c.backoff_ms >= prev, "the delay must not shrink");
+        prev = c.backoff_ms;
+    }
+    CHECK(prev > DC_BACKOFF_FLOOR_MS,
+          "the delay must GROW across repeats, not sit pinned at the floor -- "
+          "an unconditional dc_backoff_reset() on any 200 would pin it there");
+    CHECK_EQ_INT((int)c.since, 0);
+    CHECK(c.mounted_sha256[0] == '\0', "still nothing mounted, still not ejected");
+}
+
+// The same floor, one cycle earlier: the very poll whose image fetch fails
+// permanently (not just the later short-circuited ones) must already come
+// back with a delay.
+static void test_the_fetch_that_blocks_the_digest_also_backs_off(void) {
+    boot();
+    poll_then_image("HTTP/1.1 404 Not Found\r\nContent-Length: 21\r\n\r\n"
+                    "{\"error\":\"not_found\"}");
+    dc_state_t s = dc_step(&c);
+    CHECK_EQ_INT(s, DC_BACKOFF);
+    CHECK(c.backoff_ms >= DC_BACKOFF_FLOOR_MS, "must not re-poll instantly");
+    CHECK(s != DC_HALTED, "and must still not stop the poll loop");
+}
+
+// A 200 whose body is a well-formed WFMF-less mess blocks the digest too
+// (image_parse_end() fails), and takes the same floor.
+static void test_a_corrupt_image_body_also_backs_off(void) {
+    boot();
+    push_poll_desired_aa();
+    push_corrupt_image_response();
+    CHECK_EQ_INT(dc_step(&c), DC_BACKOFF);
+    CHECK(c.backoff_ms >= DC_BACKOFF_FLOOR_MS, "must not re-fetch instantly");
+    CHECK(dc_digest_is_blocked(&c, "aa"), "and must not retry the digest");
+}
+
+// The other half of the same change: dc_step no longer resets backoff_ms
+// on ANY 200, only on a productive one. These two pin that a real
+// transition still clears it, so the throttle above cannot creep into the
+// happy path and slow down a healthy device.
+static void test_a_successful_swap_still_clears_the_backoff(void) {
+    boot();
+    fake_push_connect_failure(); dc_step(&c);
+    CHECK(c.backoff_ms > 0, "precondition: a failure has set a backoff");
+
+    push_poll_desired_aa();
+    push_image_response();
+    CHECK_EQ_INT(dc_step(&c), DC_IDLE_POLL);
+    CHECK_EQ_INT(c.backoff_ms, 0);
+    CHECK_EQ_INT((int)c.since, 7);
+}
+
+static void test_an_eject_still_clears_the_backoff(void) {
+    boot();
+    fake_push_connect_failure(); dc_step(&c);
+    CHECK(c.backoff_ms > 0, "precondition: a failure has set a backoff");
+
+    push_ok_json("{\"version\":9,\"desired\":null}");
+    CHECK_EQ_INT(dc_step(&c), DC_IDLE_POLL);
+    CHECK_EQ_INT(c.backoff_ms, 0);
+    CHECK_EQ_INT((int)c.since, 9);
+}
+
+// --- Final review, Minor 6: a truncated poll body is never acted on ----
+// readDesired() emits `sha256` first and `writeProtected` LAST, after the
+// free-text `game` title, so an over-long title drops exactly the field
+// whose absence fails open once write-back exists. Acting on the prefix is
+// the wrong answer; so is silently defaulting. Refuse the body.
+static void test_an_over_long_poll_body_is_refused_not_truncated(void) {
+    boot();
+    static char body[6000];
+    static char title[3000];
+    memset(title, 'A', sizeof title - 1);
+    title[sizeof title - 1] = '\0';
+    int bn = snprintf(body, sizeof body,
+        "{\"version\":11,\"desired\":{\"sha256\":\"bb\",\"diskId\":\"d1\","
+        "\"gameId\":\"g\",\"game\":\"%s\",\"diskNo\":1,\"diskCount\":1,"
+        "\"label\":\"L\",\"writeProtected\":false}}", title);
+    if (bn < 0 || (size_t)bn >= sizeof body) abort();
+
+    // Content-Length computed from the body, never hand-counted.
+    static char resp[6200];
+    int rn = snprintf(resp, sizeof resp, "HTTP/1.1 200 OK\r\nContent-Length: %d\r\n\r\n%s",
+                      bn, body);
+    if (rn < 0 || (size_t)rn >= sizeof resp) abort();
+    fake_push_response(resp);
+
+    dc_state_t s = dc_step(&c);
+    CHECK_EQ_INT(s, DC_BACKOFF);
+    CHECK_EQ_INT((int)c.since, 0);
+    CHECK(c.mounted_sha256[0] == '\0',
+          "a body whose tail was cut off must not be acted on at all");
+    CHECK(!dc_digest_is_blocked(&c, "bb"),
+          "and must not poison the digest -- the digest itself is fine");
+    CHECK_EQ_INT(fake_request_count(), 1);
+}
+
 int main(void) {
     // Only test_successful_image_fetch_publishes_and_reflects_write_protected
     // needs real PSRAM backing (everything else in this file either never
@@ -474,6 +606,12 @@ int main(void) {
     RUN(test_register_stores_the_returned_token);
     RUN(test_bad_code_does_not_store_anything);
     RUN(test_register_backs_off_on_repeated_failure);
+    RUN(test_a_blocked_digest_never_repolls_without_a_delay);
+    RUN(test_the_fetch_that_blocks_the_digest_also_backs_off);
+    RUN(test_a_corrupt_image_body_also_backs_off);
+    RUN(test_a_successful_swap_still_clears_the_backoff);
+    RUN(test_an_eject_still_clears_the_backoff);
+    RUN(test_an_over_long_poll_body_is_refused_not_truncated);
 
     free(psram_mem);
     return REPORT();

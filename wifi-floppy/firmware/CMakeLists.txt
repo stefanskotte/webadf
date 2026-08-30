@@ -66,6 +66,20 @@ target_link_libraries(wifi_floppy
   hardware_psram hardware_sync hardware_flash pico_flash
   pico_cyw43_arch_lwip_threadsafe_background
   pico_lwip_mbedtls pico_mbedtls pico_lwip_sntp)
+# Review (final), Critical 1: RP2350's Arm stack guard is the msplim
+# register (pico_runtime_init/runtime_init_stack_guard.c) -- one instruction
+# per core at init, no MPU region consumed -- but PICO_USE_STACK_GUARDS
+# defaults to 0, so nothing was watching either core's stack. Core 1's stack
+# sits directly below the newlib heap that holds mbedTLS's ~16 KB record
+# buffers; an overrun there corrupted them silently, with no fault and no
+# symptom except wrong flux on the wire. With this on, an overrun is a hard
+# fault at the instruction that caused it. Kept as a permanent regression
+# trap, not a one-off: src/main.c's core1_stack is sized from a static
+# analysis of the built ELF, and a static analysis can only bound the
+# direct-call graph -- the indirect calls through mbedTLS's and lwIP's
+# function pointers are exactly what it cannot see.
+target_compile_definitions(wifi_floppy PRIVATE PICO_USE_STACK_GUARDS=1)
+
 target_compile_definitions(wifi_floppy PRIVATE
   WIFI_SSID=\"$ENV{WIFI_SSID}\" WIFI_PASS=\"$ENV{WIFI_PASS}\"
   WEBADF_HOST=\"webadf.vercel.app\"

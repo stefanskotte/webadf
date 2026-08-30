@@ -15,8 +15,8 @@
 #include "floppy_io.h"
 
 void track_cache_init(void);
-void track_cache_flush(void);          // disk change: drop SRAM + PSRAM copies,
-                                        // eject (both slots reset, active -> none)
+// track_cache_flush() was removed -- see track_cache.c for why (it was an
+// uncalled, unrequested eject). Do not reintroduce it under that name.
 
 // Review round 1, Critical C-1: a swap or an eject only becomes visible to
 // core0 when something re-enters track_cache_get() -- before this task,
