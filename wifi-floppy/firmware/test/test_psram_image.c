@@ -40,6 +40,27 @@ static void test_publish_is_all_or_nothing(void) {
     CHECK_EQ_INT(psram_active_slot(), 0);
     CHECK(!psram_image_have(psram_active_slot(), 3),
           "the active slot must be unaffected by a fetch into the other");
+
+    // Review round 1, Minor 2: the checks above only exercise per-slot
+    // METADATA (have/active-slot) -- they would still pass even if
+    // track_ptr() ignored `slot` and both slots physically aliased the
+    // same PSRAM bytes. Prove the two slots are backed by genuinely
+    // separate storage: write and commit DIFFERENT bytes to the SAME
+    // track number in each slot and confirm they read back different.
+    uint8_t a[64], b[64];
+    memset(a, 0xAA, sizeof a);
+    memset(b, 0x55, sizeof b);
+    psram_image_write_at(0, 3, 0, a, 64);
+    psram_image_commit(0, 3, 512);
+    psram_image_write_at(1, 3, 0, b, 64);
+    psram_image_commit(1, 3, 512);
+
+    uint8_t ra[64], rb[64];
+    uint32_t bits;
+    CHECK(psram_image_read(0, 3, ra, &bits), "slot 0 track 3 should read back");
+    CHECK(psram_image_read(1, 3, rb, &bits), "slot 1 track 3 should read back");
+    CHECK(memcmp(ra, rb, 64) != 0,
+          "slot 0 and slot 1 must be backed by separate storage, not aliases");
 }
 
 static void test_eject_publishes_slot_none(void) {

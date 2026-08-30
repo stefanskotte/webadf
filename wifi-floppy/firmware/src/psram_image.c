@@ -1,9 +1,26 @@
 #include "psram_image.h"
 #ifndef WFMF_HOST_TEST
 #include "hardware/psram.h"
+#include "hardware/sync.h"     // __dmb() -- see psram_publish_slot()/
+                                // psram_active_token() below
 #include "pico/stdlib.h"
 #endif
 #include <string.h>
+
+// A no-op under WFMF_HOST_TEST (the host test build is single-threaded --
+// there is no second core to reorder anything relative to), a real DMB on
+// device. Two call sites: psram_publish_slot() needs a release barrier
+// before its store so every write this core made to the slot being
+// published (PSRAM track payloads, bits[]/state[] metadata) is guaranteed
+// visible to any core that subsequently observes the new active_word;
+// psram_active_token() needs an acquire barrier after its load so this
+// core's own subsequent PSRAM reads cannot be hoisted above it and race
+// the writer.
+#ifdef WFMF_HOST_TEST
+static inline void wfmf_barrier(void) {}
+#else
+static inline void wfmf_barrier(void) { __dmb(); }
+#endif
 
 #ifndef WFMF_HOST_TEST
 // The image lives in PSRAM. __uninitialized_psram keeps it out of the data
@@ -25,11 +42,39 @@ static bool          have_psram;
 static uint8_t *g_base;
 static size_t   g_len;
 
-// The swap word. See psram_publish_slot() below for the safety argument.
-// Starts at SLOT_NONE: nothing is mounted until a fetch-and-verify sequence
-// (device_client.c) explicitly publishes a slot, exactly like the old
-// single-image code presented no disk until the image was fully loaded.
-static volatile int32_t active_slot = SLOT_NONE;
+// The swap word: NOT a bare slot index. A slot index is reused across disk
+// generations (there are only SLOT_COUNT of them), so tagging a cached copy
+// with just "slot 0" cannot tell today's slot-0 occupant apart from
+// yesterday's -- see the review finding this fixes: a stale SRAM copy from
+// an earlier disk could be served for a later disk that happened to land
+// back on the same slot, both via an intervening eject and via a third
+// fetch with no eject at all. Packed word layout:
+//   bit 0        the slot index (0 or 1) -- meaningful only if bit 1 is set
+//   bit 1        "mounted" flag; 0 means the word decodes to SLOT_NONE
+//   bits 2..31   a generation counter, incremented on EVERY publish call,
+//                including an eject -- so the word produced by any given
+//                publish is never produced by another one.
+// g_gen is core1-only (only psram_publish_slot() touches it, and only one
+// core ever calls that), so it needs no synchronization of its own; only
+// the packed result that lands in active_word has to be shared safely.
+// Starts at the all-zero word (gen 0, unmounted): nothing is mounted until
+// a fetch-and-verify sequence (device_client.c) explicitly publishes a
+// slot, exactly like the old single-image code presented no disk until the
+// image was fully loaded. Because psram_publish_slot() always increments
+// g_gen to at least 1 before storing, 0 is never produced by a real publish
+// and so doubles safely as track_cache.c's "never cached" sentinel.
+static uint32_t          g_gen;
+static volatile int32_t  active_word;
+
+static inline int32_t pack_word(uint32_t gen, int slot) {
+    int32_t mounted = (slot == SLOT_NONE) ? 0 : 1;
+    int32_t bit0    = (slot == SLOT_NONE) ? 0 : (int32_t)(slot & 1);
+    return (int32_t)(gen << 2) | (mounted << 1) | bit0;
+}
+
+static inline int slot_of_word(int32_t w) {
+    return (w & 2) ? (int)(w & 1) : SLOT_NONE;
+}
 
 static inline bool slot_ok(int slot) {
     return slot >= 0 && slot < SLOT_COUNT;
@@ -42,7 +87,8 @@ static inline uint8_t *track_ptr(int slot, int track) {
 bool psram_image_init(void) {
     memset(bits, 0, sizeof bits);
     memset(state, 0, sizeof state);
-    active_slot = SLOT_NONE;
+    g_gen = 0;
+    active_word = 0;    // gen 0, unmounted -- see active_word's comment above
 
 #ifndef WFMF_HOST_TEST
     g_base = &device_image[0][0][0];
@@ -186,15 +232,66 @@ void psram_image_reset_slot(int slot) {
 // this two-slot design exists to close, even though the store itself would
 // still be perfectly atomic.
 void psram_publish_slot(int slot) {
-    active_slot = (int32_t)slot;
+    // RELEASE: every store this core made before this call (the target
+    // slot's PSRAM track payloads, its bits[]/state[] metadata) must be
+    // guaranteed visible before active_word's new value can be. On
+    // Cortex-M33, Normal-memory stores may be observed out of order, so
+    // without this barrier those writes could still be in flight -- as far
+    // as another core can tell -- when the store below becomes visible,
+    // and a reader could act on a "published" slot whose bytes have not
+    // actually landed yet. This is latent today (dc_fetch_image's 200 path
+    // still discards the body via dc_discard_sink, so there is nothing
+    // real written before a publish until Task 10 wires image_parse_buffer
+    // in), but the argument has to hold before that lands, not be patched
+    // in afterwards.
+    wfmf_barrier();
+
+    // ATOMICITY: active_word is a naturally-aligned int32_t, so the store
+    // itself is single-copy atomic on this MCU without a lock -- a reader
+    // sees either the value from before this call or the value from after
+    // it, never a torn mix of the two.
+    //
+    // GENERATION: bumping g_gen on every call -- including an eject, i.e.
+    // slot == SLOT_NONE -- means the packed word this call produces has
+    // never been produced before. That is what makes the two values either
+    // side of this store distinguishable even when the slot INDEX repeats
+    // (there are only SLOT_COUNT of them): track_cache.c tags its SRAM
+    // copies with the whole word (psram_active_token()), not the bare
+    // slot, specifically so a copy cached under an earlier occupant of a
+    // slot can never be mistaken for a later one that reuses it.
+    //
+    // Given the caller's obligation that `slot` names a COMPLETE, VERIFIED
+    // image (or SLOT_NONE for an eject) -- device_client.c's dc_fetch_image
+    // only calls this once a fetch's body is known to have arrived in full
+    // -- every word this function ever produces names either a real,
+    // playable disk or "no disk", never a slot mid-fetch.
+    g_gen++;
+    active_word = pack_word(g_gen, slot);
+}
+
+int32_t psram_active_token(void) {
+    int32_t w = active_word;
+
+    // ACQUIRE: pairs with the release barrier in psram_publish_slot().
+    // Without this, this core's own subsequent PSRAM loads (track_cache.c's
+    // psram_image_have()/psram_image_read() calls that follow a call to
+    // this function) could be hoisted above the load of active_word and
+    // race the writer's metadata/payload stores -- the same reordering
+    // hazard as the release side, mirrored on the read path.
+    wfmf_barrier();
+    return w;
+}
+
+int psram_token_slot(int32_t token) {
+    return slot_of_word(token);
 }
 
 int psram_active_slot(void) {
-    return (int)active_slot;
+    return slot_of_word(psram_active_token());
 }
 
 int psram_inactive_slot(void) {
-    int a = (int)active_slot;
+    int a = psram_active_slot();
     if (a == SLOT_NONE) return 0;
     return (a + 1) % SLOT_COUNT;
 }

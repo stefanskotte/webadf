@@ -80,12 +80,26 @@ void psram_image_reset_slot(int slot);   // clear one slot, leaving the other al
 
 // --- The active/inactive swap -----------------------------------------
 //
-// active_slot is a single volatile word: core1 (this file, driven by
-// device_client.c's fetch-and-swap sequence) is the only writer, core0
-// (track_cache.c's track_cache_get()) is the only reader. See
-// psram_publish_slot()'s definition in psram_image.c for the safety
-// argument this rests on.
+// The published word is a single volatile, naturally-aligned int32_t:
+// core1 (this file, driven by device_client.c's fetch-and-swap sequence)
+// is the only writer, core0 (track_cache.c's track_cache_get()) is the
+// only reader. It packs a generation counter together with the slot index
+// -- NOT a bare slot index -- because a slot index is reused across disk
+// generations and a bare index cannot tell today's occupant of slot 0
+// apart from yesterday's. See psram_publish_slot()'s definition in
+// psram_image.c for the full safety argument (atomicity, ordering, and
+// why the generation matters).
 void psram_publish_slot(int slot);      // the single volatile store core0 reads
+
+// The full published token (generation + slot, or the unmounted word).
+// track_cache.c tags its cached SRAM copies with this whole value, not
+// with psram_active_slot()'s decoded slot number, so a copy cached under
+// an earlier occupant of a slot can never be mistaken for a later one that
+// reuses it. Reading this applies the acquire barrier that pairs with
+// psram_publish_slot()'s release barrier -- see psram_image.c.
+int32_t psram_active_token(void);
+int     psram_token_slot(int32_t token);   // decode a token; no barrier, no re-read
+
 int  psram_active_slot(void);           // SLOT_NONE when ejected
 int  psram_inactive_slot(void);         // the fetch target; SLOT_NONE -> 0
 

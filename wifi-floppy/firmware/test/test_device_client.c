@@ -8,12 +8,20 @@
 
 // Builds "HTTP/1.1 200 OK\r\nContent-Length: <N>\r\n\r\n<body>" with N computed
 // from strlen(body) rather than hand-counted -- task 6 lost a round to six
-// wrong hand-counted lengths.
+// wrong hand-counted lengths. Review round 1, Nit: the same class of bug
+// can come back through a silently-discarded snprintf result just as
+// easily as a hand-typed number, so a body that would overflow `resp` (or
+// any other snprintf failure) aborts the test binary loudly instead of
+// quietly building a truncated fixture.
 static void push_ok_json(const char *body) {
     char resp[512];
     int n = snprintf(resp, sizeof resp, "HTTP/1.1 200 OK\r\nContent-Length: %zu\r\n\r\n%s",
                       strlen(body), body);
-    (void)n;
+    if (n < 0 || (size_t)n >= sizeof resp) {
+        fprintf(stderr, "push_ok_json: body too large for the fixture buffer "
+                        "(needed %d bytes, have %zu)\n", n, sizeof resp);
+        abort();
+    }
     fake_push_response(resp);
 }
 

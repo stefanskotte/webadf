@@ -222,13 +222,14 @@ static dc_state_t dc_fetch_image(device_client_t *c, const dc_desired_t *d) {
         // Task 6/10 route the actual track bytes into `target` (via
         // image_loader.c's image_parse_buffer(), wired to the network by
         // Task 10); "the whole body arrived intact" (already required
-        // above) is as far as verification goes at this layer for now.
-        // Only once that holds does the swap happen, and it happens as
-        // the single word-aligned store psram_publish_slot() makes -- see
-        // its comment in psram_image.c for why moving between two
-        // complete, verified images that way can never show core0 a
-        // half-fetched one.
-        c->state = DC_VERIFYING;
+        // above, in the `!ok || !r.body_complete` check) is the
+        // verification this layer does today -- that is DC_VERIFYING,
+        // and it has already happened by the time control reaches here,
+        // so there is no separate state to hold for it. DC_SWAPPING is
+        // the moment right here: the single word-aligned store
+        // psram_publish_slot() makes -- see its comment in psram_image.c
+        // for why moving between two complete, verified images that way
+        // can never show core0 a half-fetched one.
         c->state = DC_SWAPPING;
         psram_publish_slot(target);
         dc_complete_transition(c, d->version, d->sha256, d->disk_id);

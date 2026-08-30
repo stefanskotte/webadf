@@ -31,7 +31,7 @@ pico_generate_pio_header(wifi_floppy ${CMAKE_CURRENT_LIST_DIR}/src/floppy.pio)
 target_include_directories(wifi_floppy PRIVATE src ${CMAKE_CURRENT_LIST_DIR})
 target_link_libraries(wifi_floppy
   pico_stdlib pico_multicore hardware_pio hardware_dma hardware_irq
-  hardware_psram
+  hardware_psram hardware_sync
   pico_cyw43_arch_lwip_threadsafe_background)
 target_compile_definitions(wifi_floppy PRIVATE
   WIFI_SSID=\"$ENV{WIFI_SSID}\" WIFI_PASS=\"$ENV{WIFI_PASS}\"
