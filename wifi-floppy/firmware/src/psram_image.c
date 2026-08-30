@@ -5,7 +5,7 @@
 
 // The image lives in PSRAM. __uninitialized_psram keeps it out of the data
 // image (no 2 MB of zeroes in flash, no startup memset).
-static __uninitialized_psram uint8_t image[NUM_TRACKS][TRACK_SLOT_BYTES];
+static __uninitialized_psram("image") uint8_t image[NUM_TRACKS][TRACK_SLOT_BYTES];
 
 // Metadata stays in SRAM: it is touched from ISR-adjacent code and is tiny.
 static uint32_t      bits[NUM_TRACKS];

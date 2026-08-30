@@ -12,6 +12,7 @@
 // ---------------------------------------------------------------------------
 #include <stdint.h>
 #include <stdbool.h>
+#include <stddef.h>
 #include "floppy_io.h"
 
 #define NUM_TRACKS       (NUM_CYL * NUM_SIDES)      // 160
