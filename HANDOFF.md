@@ -1,6 +1,6 @@
 # webadf — session handoff
 
-**Written 2026-08-29, updated 2026-08-30 after plan 3a.** Everything a fresh session
+**Written 2026-08-29, updated 2026-08-30 after plan 3b.** Everything a fresh session
 needs to pick this up cold. Read this first, then the spec, then the plan you are
 resuming.
 
@@ -26,23 +26,22 @@ SHA-256; you browse them and press mount; a custom board emulates the floppy dri
 | **Plan 2 — device plane** | ✅ tasks 1–4 done; **6–8 superseded** by plan 3a, not pending |
 | **MFM encoder (`adfmfm`)** | ✅ **done** — byte-identical to Greaseweazle across all 61 archive disks (9,760 tracks) |
 | **Plan 3a — device protocol** | ✅ done, merged to `master`, pushed |
-| **Plan 3b — device UI** | 🟡 **tasks 1–6 done on `feat/device-ui`. Only task 7 (docs) remains.** |
-| **Firmware (`wifi-floppy/`)** | ❌ never compiled. The remaining unbuilt piece |
+| **Plan 3b — device UI** | ✅ **done, all 7 tasks, merged to `master`** |
+| **Firmware (`wifi-floppy/`)** | ❌ never compiled. **The remaining unbuilt piece** |
 | **Hardware** | boards ordered from JLCPCB |
 
-**Current branch:** `feat/device-ui`, forked from `master` at `ef48eb5`, not yet pushed.
-**Suite:** 241 vitest, 87 Playwright, `pnpm build` clean, tree clean.
+**Current branch:** `master`. **Suite:** 241 vitest, 87 Playwright, `pnpm build` clean.
 
-### Resuming plan 3b
+**The whole web side is now built.** Everything from here is firmware, or backlog nobody is
+blocked on. The next person to touch this repo is picking up plan 4 — see below.
 
-Read `docs/superpowers/plans/2026-08-30-device-ui.md`. Tasks 1–6 are complete and reviewed.
-**Task 7 is documentation only** — mark plan 3b delivered in the disk-change spec's §8 and
-finish updating this file. Then merge to `master` and push, as plans 1, 2 and 3a were.
+### Before you touch the device UI
 
 The rulings taken during 3b are in `docs/decisions/2026-08-30-device-ui-rulings.md`. Read it
 before touching the mount action or the queries — it records why the multi-device picker is an
 inline expansion rather than the dropdown the spec originally specified, and that is the
-decision most likely to look arbitrary later.
+decision most likely to look arbitrary later. Both points are also summarised under "What to
+do next" below, because both have been rediscovered the hard way once already.
 
 ### What 3a and 3b built
 
@@ -79,16 +78,9 @@ so the format and its encoder cannot drift apart.
 
 ## What to do next, in order
 
-### 1. Finish plan 3b — task 7 only, documentation
+### 0. Two invariants in the 3b code that look like cruft and are not
 
-Tasks 1–6 are **done and reviewed** on `feat/device-ui`; both previously-404 routes now
-exist. All that remains is task 7 of `docs/superpowers/plans/2026-08-30-device-ui.md`:
-mark 3b delivered in the disk-change spec's §8, finish this file, then merge to `master`
-and push.
-
-**Before touching the mount action or the queries**, read
-`docs/decisions/2026-08-30-device-ui-rulings.md`. Two things there will otherwise look
-arbitrary:
+Not a task — a warning, first because both are one refactor away from being undone:
 
 - The multi-device picker is an **inline expansion, not a dropdown**, though spec §4
   originally said dropdown. A dropdown was built and measured to have a wrong-target bug —
@@ -100,7 +92,7 @@ arbitrary:
   organization — leftover e2e data, and that column has no foreign key. Removing the
   predicate puts a foreign title on the page. There is a test for it; do not weaken it.
 
-### 2. Firmware (plan 4)
+### 1. Firmware (plan 4) — the only thing left that blocks working hardware
 
 Add mbedTLS and a provisioned bearer token per D16. Today `http_fetch.c:63` issues a
 plaintext `GET %s HTTP/1.1` to a bare IP with no credentials. Also never compiled —
@@ -110,7 +102,7 @@ before the `(bits + 7) / 8` arithmetic in `image_loader.c:51` — see "Known fir
 defects" below. Implementing the two-slot double-buffer that lets a fetch happen before
 an eject (disk-change spec §1, rule 2) also belongs here.
 
-### 3. Backlog, not blocking anything
+### 2. Backlog, not blocking anything
 
 - **Write-back and layered disks** (disk-change spec §5). Deliberately not designed yet;
   the first increment should record which tracks changed, not just a flattened result, so
@@ -202,6 +194,16 @@ Learned the hard way; several cost real debugging time.
   reasoning in `2026-08-29-device-plane-disk-change-design.md` §6.
 - Spec §5's wording was corrected: an entitlement *records a claim*, it does not *prove*
   possession.
+- **CSRF on mount and eject rests entirely on Better Auth's default `SameSite=Lax` session
+  cookie. There is no origin check on either route.** Lax is sufficient today: both routes
+  are `POST` with a JSON body, so a cross-site form post cannot reach them and a cross-site
+  `fetch` sends no cookie. What makes this worth writing down is how narrow the margin is —
+  **configuring `crossSubDomainCookies`, or `sameSite: 'none'`, silently removes the only
+  thing defending these two routes**, and an unasked eject is precisely what disk-change
+  spec §1 rule 1 forbids. Either change means adding an explicit origin check first. Both
+  `src/app/api/devices/[id]/mount/route.ts` and `.../eject/route.ts` carry this as a header
+  comment so it is found by whoever touches the route rather than only by whoever reads this
+  file. Plan 3b did not close it.
 
 ---
 
@@ -243,8 +245,11 @@ the row counts. Two gaps remain, both known and accepted rather than accidental:
   owns those tables, and tearing them down from an e2e helper is a larger change than this
   plan took on.
 - **`ingest-api`, `ingest-ui` and `library` specs still seed without cleanup.** They predate
-  plan 3a and were out of its scope (which was device helpers only); the live database
-  continues to grow from those three files every full `pnpm e2e` run.
+  plan 3a and were out of its scope (which was device helpers only), and **plan 3b did not
+  close them either** — 3b's own two specs both call `cleanupSeeded`, but these three were
+  no more in its scope than in 3a's. The live database continues to grow from those three
+  files every full `pnpm e2e` run. This is the cleanup gap to close first if anyone is
+  tidying: it is the only one still actively adding rows.
 
 ---
 
@@ -300,7 +305,7 @@ the design three separate times. Keep doing both.
   `docs/superpowers/plans/2026-08-29-device-protocol-disk-change.md`
 - **UI spec:** `docs/superpowers/specs/2026-08-30-device-ui-design.md` — expands the
   disk-change spec's §7. **§4 was revised during implementation**; the reasoning is in it
-- **Plan 3b — UI (tasks 1–6 done, 7 remains):**
+- **Plan 3b — UI (done):**
   `docs/superpowers/plans/2026-08-30-device-ui.md`
 - **Decision log:** `docs/decisions/` — rulings taken during implementation. The SDD ledgers
   under `.superpowers/` are **gitignored and do not survive a session**, so anything worth

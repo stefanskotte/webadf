@@ -298,8 +298,25 @@ to end. Done when a reference client can be told to mount a disk, fetch its `WFM
 success, be ejected, and have every one of those states verified — with no hardware
 involved.
 
-**Plan 3b — UI.** Devices page, game-detail disk selector, write-protect toggle, and the
-desired-versus-actual presentation of §7.
+**Plan 3b — UI. Delivered.** `/devices` and `/games/[id]` both exist; neither 404s any more.
+`deviceState` in `src/lib/device-state.ts` is the pure four-way discriminant
+(`empty | converged | pending | stale`) that §7's desired-versus-actual rule reduces to, and it
+is the only part of the UI Vitest owns. On top of it: a device card with eject and pair, a
+`LiveRefresh` that polls only while something is pending and stops when nothing is, the
+game-detail disk selector, and the write-protect toggle. No new endpoints and no schema
+changes — 3a's were sufficient, as this section assumed.
+
+One thing shipped differently from the design. **The multi-device picker is an inline
+expansion, not the dropdown §7 and the UI spec's §4 called for.** A dropdown was built first
+and had a wrong-target bug: the open popup covered the next row's Mount button, so a click
+that looked like disk 2's Mount silently mounted disk 1 — a disk change nobody asked for.
+Not a §1 rule 1 violation, strictly: rule 1 governs the protocol, and guarantees that the
+*absence* of a signal never changes what the Amiga sees. This was the same guarantee's blind
+spot one layer up — a present, explicit, and wrong signal, which the protocol below is
+obliged to honour and cannot distinguish from an intended one. Neither
+`modal={true}` (`MenuPositioner`'s `z-50` is unconditional) nor any placement fixes it. The
+inline expansion is the fix, not a simplification; do not restore the dropdown. Reasoning in
+`docs/decisions/2026-08-30-device-ui-rulings.md`.
 
 **Blocking item for 3a, carried from plan 2.** `requireDevice()` throws a `DeviceAuthError`,
 but plan 2's prose said it throws a `Response(401)`. Nothing consumes it yet, so the
