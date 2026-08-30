@@ -31,7 +31,16 @@ WiFi from your ADF webservice instead of reading a USB stick.
 - 16-track LRU cache (~205 KB) + neighbour prefetch; a track is ~12.7 KB
   so a LAN fetch lands well inside a seek's settle time.
 
-## Track server protocol
+## Track server protocol — SUPERSEDED
+
+**This section describes a protocol the firmware no longer speaks.** `http_fetch.c`,
+which implemented `GET /tracks/<n>`, was deleted in plan 4a. The real device contract is
+`GET /api/device/poll` (long-poll for desired state), `GET /api/device/image/<sha256>`
+(the whole disk as a `WFMF` container, format defined in `image_loader.c`), and
+`POST /api/device/status`. See `INTEGRATION.md` and
+`docs/superpowers/specs/2026-08-29-device-plane-disk-change-design.md` §10 for the actual
+contract. Kept below only as a historical note; do not implement against it.
+
 ```
 GET /tracks/<n>        n = cyl*2 + side  (0..159)
  -> 200, body = [u32 LE bit_count][raw MFM bytes]
@@ -96,7 +105,10 @@ that - the read path contains no network call at all.
 | SRAM double buffer | ~26 KB | only DMA source for the flux PIO |
 | PSRAM disk image | 2.03 MB | the whole disk, 160 x 13 KB slots |
 
-`GET /image/<id>` returns:
+**The route below is superseded** — the firmware fetches
+`GET /api/device/image/<sha256>` (keyed by digest, not an integer id; see
+`INTEGRATION.md` and disk-change spec §10), but the `WFMF` container body format
+itself is current and matches `image_loader.c`:
 
     u32 magic 'WFMF'   u32 version=1   u32 track_count   u32 reserved
     per track: u32 bit_count, ceil(bits/8) bytes, padded to 4 bytes
