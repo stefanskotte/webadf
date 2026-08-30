@@ -53,22 +53,36 @@ void config_store_erase(void);
 // everything already written reads back exactly as programmed. Which
 // bytes that leaves intact depends entirely on how far the write got, so
 // task 1 review round 1 (Important) split this into the two shapes that
-// actually matter -- one per defence -- rather than one helper that
-// happened to trip both the magic check and the CRC at once and so proved
-// neither in isolation.
+// actually matter, rather than one helper that corrupted the magic AND
+// stomped a payload byte in one shot.
+//
+// Review round 2: the "during magic" shape below still does NOT, on its
+// own, prove the magic check specifically is what rejects it -- it also
+// leaves the version byte at 0xFF (!= CONFIG_VERSION), so the version
+// check catches it too, in mutation testing with the magic comparison
+// itself deleted. That is correct defence-in-depth for a real interrupted
+// write (several gates independently failing is fine, even desirable),
+// but it means no test here pinned the magic comparison in isolation.
+// config_store_test_corrupt_magic() below is the one that does that, by
+// construction: a fully valid, self-consistent record with ONLY the magic
+// word wrong.
 //
 // Interrupted before the magic word finished landing: only the first two
 // of its four bytes made it out, the rest of the page -- including the
-// remaining magic bytes, the length bytes, and the whole payload -- is
-// still at flash's erased value. The MAGIC check must be what rejects
-// this; it runs first and returns false before the CRC (whose own field
-// is still 0xFF here) is ever consulted.
+// remaining magic bytes, the version byte, the length bytes, and the
+// whole payload -- is still at flash's erased value. Rejected by the
+// magic check in the current code (it runs first), but defence-in-depth
+// means the version check would also reject it if the magic check were
+// ever removed -- this helper cannot tell those two apart, and doesn't
+// need to: see config_store_test_corrupt_magic() for the helper that does.
 void config_store_test_simulate_torn_write_during_magic(void);
 // Interrupted after the magic word (and header) finished landing, but
 // before the payload that follows it did: magic, version, and the length
 // bytes are all intact and valid, but some suffix of ssid/pass/code/crc is
 // still at flash's erased value. The magic check passes here -- there is
-// nothing wrong with it -- so only the CRC can catch this.
+// nothing wrong with it -- so only the CRC can catch this. (Mutation-
+// verified: deleting the CRC comparison alone makes the corresponding
+// test fail; nothing else in the code path would have caught it.)
 void config_store_test_simulate_torn_write_after_magic(void);
 // Simulates a flash program that finished -- magic intact, payload fully
 // written -- but whose payload was subsequently damaged (e.g. a bit flip
@@ -76,5 +90,15 @@ void config_store_test_simulate_torn_write_after_magic(void);
 // detect at all (its magic sits at offset 0 and nothing else is checked)
 // and this store's CRC exists to catch.
 void config_store_test_corrupt_payload_byte(void);
+// Review round 2 (Important, still not fully addressed by the two
+// torn-write helpers above): writes a fully valid, self-consistent record
+// via config_store_save(), then damages ONLY the magic word -- version,
+// lengths, payload, and CRC are all left exactly as written and remain
+// mutually consistent with each other. This is the one helper that
+// isolates the magic comparison: with everything else about the record
+// correct, only the magic check can reject it, so a test built on this
+// must fail if-and-only-if the magic comparison is deleted (unlike the
+// during-magic torn-write case above, where the version check also fires).
+void config_store_test_corrupt_magic(void);
 
 #endif

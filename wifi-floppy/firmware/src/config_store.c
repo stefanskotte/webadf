@@ -283,4 +283,20 @@ void config_store_test_corrupt_payload_byte(void) {
     g_page[CONFIG_HEADER_LEN] ^= 0xFF;
 }
 
+// Review round 2 (Important). Assumes config_store_save() has already
+// written a fully valid record. Flips one bit of the magic word's first
+// byte and touches nothing else -- version, lengths, payload, and CRC are
+// all left exactly as config_store_save() wrote them, and remain mutually
+// consistent (the CRC still matches the untouched payload). The only
+// thing wrong with this page is the magic word, so this is the helper
+// that isolates the magic comparison: unlike the torn-write-during-magic
+// case, the version byte here is still CONFIG_VERSION, so removing the
+// magic check would let this record load successfully -- only removing
+// the CRC comparison as well would not be enough on its own to explain
+// why it was rejected in the working code, because the CRC matches.
+void config_store_test_corrupt_magic(void) {
+    ensure_init();
+    g_page[0] ^= 0xFF;
+}
+
 #endif

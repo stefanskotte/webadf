@@ -29,26 +29,41 @@ static void test_round_trips(void) {
 
 // Task 1 review round 1 (Important): a torn write isn't one failure shape.
 // Flash programs a page front-to-back, so what's left over when power is
-// lost depends on how far the write got. These two tests pin the two
-// shapes that matter, each isolating a different defence -- see
-// config_store.h's comments on the two simulate_torn_write_* helpers.
+// lost depends on how far the write got. These two tests model the two
+// shapes that matter -- see config_store.h's comments on the two
+// simulate_torn_write_* helpers.
+//
+// Review round 2: "during magic" below is a real interrupted write and is
+// correctly rejected, but NOT solely by the magic check -- the version
+// byte is also 0xFF there, so the version check independently rejects it
+// too (proven by mutation: deleting only the magic comparison still left
+// this test passing, because the version check caught it instead). That
+// is correct defence-in-depth for an actual torn write, not a bug, but it
+// means this test does not pin the magic check in isolation.
+// test_corrupt_magic_is_rejected below is the one that does.
 
 static void test_torn_write_during_magic_is_rejected(void) {
     // Only the first two of the magic word's four bytes made it out; the
-    // rest of the page, including the whole payload, is still erased.
-    // Must be rejected by the MAGIC check, before the CRC is ever
-    // consulted (the CRC's own field is itself still 0xFF here).
+    // rest of the page -- including the version byte, the whole payload,
+    // and the crc field -- is still erased. Rejected by the magic check
+    // in the current code (it runs first); the version check would also
+    // reject it if the magic check were ever removed, since the version
+    // byte is 0xFF here too. Several gates independently catching an
+    // interrupted write is the intended defence-in-depth, not a weakness
+    // -- see test_corrupt_magic_is_rejected for the test that isolates
+    // the magic check specifically.
     config_store_erase();
     config_store_test_simulate_torn_write_during_magic();
     device_config_t out;
     CHECK(!config_store_load(&out),
-          "a magic word interrupted mid-write must be rejected by the magic check");
+          "a magic word interrupted mid-write must be rejected");
 }
 
 static void test_torn_write_after_magic_is_rejected(void) {
     // The magic word (and the header behind it) finished landing intact,
     // but the payload that follows did not. The magic and length checks
-    // all pass here -- only the CRC can catch this.
+    // all pass here -- only the CRC can catch this. (Mutation-verified:
+    // deleting the CRC comparison alone makes this fail.)
     config_store_erase();
     device_config_t in = mk("net", "password", "ABC123");
     CHECK(config_store_save(&in), "save");
@@ -56,6 +71,24 @@ static void test_torn_write_after_magic_is_rejected(void) {
     device_config_t out;
     CHECK(!config_store_load(&out),
           "an incomplete payload behind a valid magic must be rejected by the CRC");
+}
+
+static void test_corrupt_magic_is_rejected(void) {
+    // Task 1 review round 2 (Important): a fully valid, self-consistent
+    // record -- version, lengths, payload, and CRC all correct and
+    // mutually consistent -- with ONLY the magic word wrong. Unlike the
+    // torn-write-during-magic case above, nothing else here is amiss, so
+    // this is the test that isolates the magic comparison: it must fail
+    // if-and-only-if the magic comparison itself is deleted, since every
+    // other gate (version, length bounds, CRC) would pass this record.
+    config_store_erase();
+    device_config_t in = mk("net", "password", "ABC123");
+    CHECK(config_store_save(&in), "save");
+    config_store_test_corrupt_magic();
+    device_config_t out;
+    CHECK(!config_store_load(&out),
+          "a corrupted magic word must be rejected by the magic check, "
+          "even when everything else about the record is valid");
 }
 
 static void test_crc_mismatch_is_rejected(void) {
@@ -111,6 +144,7 @@ int main(void) {
     RUN(test_round_trips);
     RUN(test_torn_write_during_magic_is_rejected);
     RUN(test_torn_write_after_magic_is_rejected);
+    RUN(test_corrupt_magic_is_rejected);
     RUN(test_crc_mismatch_is_rejected);
     RUN(test_max_length_ssid_is_accepted);
     RUN(test_save_refuses_while_a_disk_is_mounted);
