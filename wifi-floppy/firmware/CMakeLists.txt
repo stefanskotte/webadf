@@ -56,7 +56,7 @@ add_executable(wifi_floppy
   src/main.c src/dskchg.c src/track_cache.c src/psram_image.c
   src/image_loader.c src/device_client.c src/http.c src/json_scan.c
   src/token_store.c src/config_store.c src/provisioning.c
-  src/mfm.c
+  src/mfm.c src/dns_server.c
   src/transport_tls.c src/sntp_time.c
   ${WFMF_PSA_CRYPTO_RANDOM_SRC})
 pico_generate_pio_header(wifi_floppy ${CMAKE_CURRENT_LIST_DIR}/src/floppy.pio)
@@ -120,11 +120,17 @@ endif ()
 # --gc-sections until task 7 gives them a real caller. See
 # task-1-report.md's fix report for the nm evidence this now actually
 # links in all three, and for the before/after with the flags removed.
+#
+# Task 3: dns_server.c is the same shape again -- nothing in main.c calls
+# dns_handle() yet (task 6 binds a UDP socket to it), so without forcing
+# it undefined here --gc-sections would drop it and a green cross-build
+# would prove nothing about this task's artifact.
 target_link_options(wifi_floppy PRIVATE
   -Wl,-u,tls_transport -Wl,-u,sntp_sync_blocking
   -Wl,-u,config_store_load -Wl,-u,config_store_save -Wl,-u,config_store_erase
   -Wl,-u,prov_init -Wl,-u,prov_on_assoc_result
-  -Wl,-u,prov_on_verified_submit -Wl,-u,prov_on_pairing_code_rejected)
+  -Wl,-u,prov_on_verified_submit -Wl,-u,prov_on_pairing_code_rejected
+  -Wl,-u,dns_handle)
 
 # altcp_tls_mbedtls.c is the SDK's own file (patched for mbedtls 3.x
 # compatibility -- see pico_lwip's CMakeLists.txt) when the bundled mbedtls
