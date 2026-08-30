@@ -56,4 +56,8 @@ int  psram_image_missing_count(void);
 int  psram_image_next_missing(int from_track);
 
 void psram_image_reset(void);        // eject / disk change
+
+// Host tests only: point the image store at ordinary memory. On device the
+// SDK's PSRAM window is used and this is never called.
+void psram_image_set_backing(void *base, size_t len);
 #endif
