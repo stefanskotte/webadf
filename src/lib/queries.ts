@@ -1,6 +1,8 @@
 import { sql, desc, eq, and } from 'drizzle-orm';
+import { alias } from 'drizzle-orm/pg-core';
 import { getDb } from '@/db';
 import { games, disks } from '@/db/schema/catalog';
+import { devices } from '@/db/schema/devices';
 import { orgFilter } from '@/db/scope';
 
 export interface GameListItem {
@@ -30,4 +32,107 @@ export async function listGames(orgId: string, opts: { limit?: number } = {}): P
     .groupBy(games.id)
     .orderBy(desc(games.createdAt))     // recently added first (spec §10, D9)
     .limit(opts.limit ?? 200);
+}
+
+export interface DeviceListItem {
+  id: string; name: string;
+  firmwareVersion: string | null; macAddress: string | null;
+  rssi: number | null; psramFree: number | null;
+  lastSeenAt: Date | null; lastError: string | null; lastErrorAt: Date | null;
+  desiredSha256: string | null; mountedSha256: string | null;
+  // The disk a human asked for, when one is asked for.
+  desiredGame: string | null; desiredDiskNo: number | null; desiredDiskCount: number | null;
+  // The disk the device says it holds, when it says it holds one.
+  mountedGame: string | null; mountedDiskNo: number | null;
+}
+
+/**
+ * Every paired device with both halves of its state.
+ *
+ * The desired disk and the mounted disk are joined SEPARATELY, through aliases,
+ * because they are frequently different rows -- that difference is the whole
+ * point of the devices page. Joining once and reusing the row would collapse
+ * exactly the distinction the parent spec's §7 requires us to show.
+ *
+ * Both joins are keyed on the disk id rather than (gameId, diskNo): that pair
+ * has no unique constraint, and a corrected re-upload creates a second row.
+ */
+export async function listDevices(orgId: string): Promise<DeviceListItem[]> {
+  // Only the game titles are needed, and devices already carries
+  // desired_game_id / mounted_game_id, so join games directly. Aliasing disks
+  // as well would add two joins nothing selects from.
+  const desiredGame = alias(games, 'desired_game');
+  const mountedGame = alias(games, 'mounted_game');
+
+  return getDb()
+    .select({
+      id: devices.id, name: devices.name,
+      firmwareVersion: devices.firmwareVersion, macAddress: devices.macAddress,
+      rssi: devices.rssi, psramFree: devices.psramFree,
+      lastSeenAt: devices.lastSeenAt,
+      lastError: devices.lastError, lastErrorAt: devices.lastErrorAt,
+      desiredSha256: devices.desiredSha256, mountedSha256: devices.mountedSha256,
+      desiredGame: desiredGame.title,
+      desiredDiskNo: devices.desiredDiskNo,
+      desiredDiskCount: sql<number | null>`(
+        select count(*)::int from disks dc
+        where dc.game_id = ${devices.desiredGameId} and dc.org_id = ${devices.orgId}
+      )`,
+      mountedGame: mountedGame.title,
+      mountedDiskNo: devices.mountedDiskNo,
+    })
+    .from(devices)
+    // Both joins are org-scoped in the ON clause itself, not just filtered
+    // afterwards: desired_game_id/mounted_game_id are plain text columns with
+    // no foreign key, so nothing at the database level stops a device row
+    // from naming another org's game.
+    .leftJoin(desiredGame, and(eq(desiredGame.id, devices.desiredGameId), eq(desiredGame.orgId, orgId)))
+    .leftJoin(mountedGame, and(eq(mountedGame.id, devices.mountedGameId), eq(mountedGame.orgId, orgId)))
+    .where(orgFilter(devices, orgId))
+    .orderBy(devices.name);
+}
+
+export interface GameDetailDisk {
+  id: string; diskNo: number; label: string | null;
+  sha256: string; sizeBytes: number; isBoot: boolean; writeProtected: boolean;
+}
+export interface GameDetail {
+  id: string; title: string; year: number | null; publisher: string | null;
+  genre: string | null; chipset: string | null; coverAssetId: string | null;
+  disks: GameDetailDisk[];
+}
+
+/**
+ * One game and its disks. Null when the game does not exist OR belongs to
+ * another organization -- deliberately indistinguishable, so the page 404s
+ * either way and an id from another tenant reveals nothing.
+ */
+export async function getGameDetail(orgId: string, gameId: string): Promise<GameDetail | null> {
+  const db = getDb();
+
+  const gameRows = await db
+    .select({
+      id: games.id, title: games.title, year: games.year, publisher: games.publisher,
+      genre: games.genre, chipset: games.chipset, coverAssetId: games.coverAssetId,
+    })
+    .from(games)
+    .where(orgFilter(games, orgId, eq(games.id, gameId)))
+    .limit(1);
+
+  const game = gameRows[0];
+  if (!game) return null;
+
+  const diskRows = await db
+    .select({
+      id: disks.id, diskNo: disks.diskNo, label: disks.label,
+      sha256: disks.sha256, sizeBytes: disks.sizeBytes,
+      isBoot: disks.isBoot, writeProtected: disks.writeProtected,
+    })
+    .from(disks)
+    // Scoped on orgId as well as gameId, matching listGames' reasoning: nothing
+    // in the schema guarantees disks.org_id matches its game's org_id.
+    .where(orgFilter(disks, orgId, eq(disks.gameId, gameId)))
+    .orderBy(disks.diskNo);
+
+  return { ...game, disks: diskRows };
 }
