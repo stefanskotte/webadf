@@ -27,14 +27,35 @@ static void test_round_trips(void) {
     CHECK(strcmp(out.code, "ABC123") == 0, "code");
 }
 
-static void test_torn_write_reads_as_nothing_stored(void) {
+// Task 1 review round 1 (Important): a torn write isn't one failure shape.
+// Flash programs a page front-to-back, so what's left over when power is
+// lost depends on how far the write got. These two tests pin the two
+// shapes that matter, each isolating a different defence -- see
+// config_store.h's comments on the two simulate_torn_write_* helpers.
+
+static void test_torn_write_during_magic_is_rejected(void) {
+    // Only the first two of the magic word's four bytes made it out; the
+    // rest of the page, including the whole payload, is still erased.
+    // Must be rejected by the MAGIC check, before the CRC is ever
+    // consulted (the CRC's own field is itself still 0xFF here).
+    config_store_erase();
+    config_store_test_simulate_torn_write_during_magic();
+    device_config_t out;
+    CHECK(!config_store_load(&out),
+          "a magic word interrupted mid-write must be rejected by the magic check");
+}
+
+static void test_torn_write_after_magic_is_rejected(void) {
+    // The magic word (and the header behind it) finished landing intact,
+    // but the payload that follows did not. The magic and length checks
+    // all pass here -- only the CRC can catch this.
     config_store_erase();
     device_config_t in = mk("net", "password", "ABC123");
     CHECK(config_store_save(&in), "save");
-    config_store_test_simulate_torn_write();
+    config_store_test_simulate_torn_write_after_magic();
     device_config_t out;
     CHECK(!config_store_load(&out),
-          "a torn write must read as nothing stored, never as partial credentials");
+          "an incomplete payload behind a valid magic must be rejected by the CRC");
 }
 
 static void test_crc_mismatch_is_rejected(void) {
@@ -88,7 +109,8 @@ int main(void) {
     void *mem = malloc(len);
     psram_image_set_backing(mem, len);
     RUN(test_round_trips);
-    RUN(test_torn_write_reads_as_nothing_stored);
+    RUN(test_torn_write_during_magic_is_rejected);
+    RUN(test_torn_write_after_magic_is_rejected);
     RUN(test_crc_mismatch_is_rejected);
     RUN(test_max_length_ssid_is_accepted);
     RUN(test_save_refuses_while_a_disk_is_mounted);

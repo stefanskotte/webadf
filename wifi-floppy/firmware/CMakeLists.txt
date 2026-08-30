@@ -106,8 +106,23 @@ endif ()
 # -- and sntp_sync_blocking()'s (pico_lwip_sntp, and sntp_time_apply() via
 # lwipopts.h's SNTP_SET_SYSTEM_TIME hook). See task-9-report.md's fix
 # report for the nm/strings evidence this now actually links in.
+#
+# Task 1 review, Critical: config_store.c hit the exact same defect class
+# the day it landed -- nothing in main.c calls config_store_load()/_save()/
+# _erase() yet (task 7 wires that up), so --gc-sections silently dropped
+# the whole translation unit; the object file compiled clean but
+# `arm-none-eabi-nm wifi_floppy.elf | grep config_store` found nothing at
+# all, defined or undefined. Sections here are per-function
+# (-ffunction-sections, implied by the SDK's default build flags), so
+# forcing just one entry point (e.g. only config_store_load) keeps that
+# one function's section alive but NOT config_store_save()/_erase() --
+# each public entry point needs its own `-Wl,-u,<symbol>` to survive
+# --gc-sections until task 7 gives them a real caller. See
+# task-1-report.md's fix report for the nm evidence this now actually
+# links in all three, and for the before/after with the flags removed.
 target_link_options(wifi_floppy PRIVATE
-  -Wl,-u,tls_transport -Wl,-u,sntp_sync_blocking)
+  -Wl,-u,tls_transport -Wl,-u,sntp_sync_blocking
+  -Wl,-u,config_store_load -Wl,-u,config_store_save -Wl,-u,config_store_erase)
 
 # altcp_tls_mbedtls.c is the SDK's own file (patched for mbedtls 3.x
 # compatibility -- see pico_lwip's CMakeLists.txt) when the bundled mbedtls

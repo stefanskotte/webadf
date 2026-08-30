@@ -47,14 +47,34 @@ void config_store_erase(void);
 // Host tests only (declared unconditionally, like token_store.h's
 // simulate-torn-write above it): never called on device.
 //
-// Simulates a flash program that started but was interrupted before it
-// finished (e.g. power loss mid-write): the page ends up holding neither
-// the erased pattern nor a valid magic+payload.
-void config_store_test_simulate_torn_write(void);
-// Simulates a flash program that finished -- magic intact -- but whose
-// payload was subsequently damaged (e.g. a bit flip, or a torn write that
-// happened to land after the magic bytes were already programmed). This is
-// the case token_store cannot detect and this store's CRC exists to catch.
+// A real torn write (power lost mid-program) isn't one failure shape --
+// flash programs a page front-to-back, so whatever hadn't been written
+// yet when power was lost reads back at flash's erased value (0xFF), and
+// everything already written reads back exactly as programmed. Which
+// bytes that leaves intact depends entirely on how far the write got, so
+// task 1 review round 1 (Important) split this into the two shapes that
+// actually matter -- one per defence -- rather than one helper that
+// happened to trip both the magic check and the CRC at once and so proved
+// neither in isolation.
+//
+// Interrupted before the magic word finished landing: only the first two
+// of its four bytes made it out, the rest of the page -- including the
+// remaining magic bytes, the length bytes, and the whole payload -- is
+// still at flash's erased value. The MAGIC check must be what rejects
+// this; it runs first and returns false before the CRC (whose own field
+// is still 0xFF here) is ever consulted.
+void config_store_test_simulate_torn_write_during_magic(void);
+// Interrupted after the magic word (and header) finished landing, but
+// before the payload that follows it did: magic, version, and the length
+// bytes are all intact and valid, but some suffix of ssid/pass/code/crc is
+// still at flash's erased value. The magic check passes here -- there is
+// nothing wrong with it -- so only the CRC can catch this.
+void config_store_test_simulate_torn_write_after_magic(void);
+// Simulates a flash program that finished -- magic intact, payload fully
+// written -- but whose payload was subsequently damaged (e.g. a bit flip
+// well after the write completed). This is the case token_store cannot
+// detect at all (its magic sits at offset 0 and nothing else is checked)
+// and this store's CRC exists to catch.
 void config_store_test_corrupt_payload_byte(void);
 
 #endif

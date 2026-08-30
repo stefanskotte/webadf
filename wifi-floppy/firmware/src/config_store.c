@@ -231,20 +231,53 @@ void config_store_erase(void) {
 }
 
 // Test-only (declared in config_store.h, defined only here -- same pattern
-// as token_store.c's token_store_test_simulate_torn_write()). Corrupts the
-// magic itself: the page ends up holding neither the erased pattern nor a
-// valid magic+record, so config_store_load() must report "nothing stored"
-// via the magic check, before the CRC is ever consulted.
-void config_store_test_simulate_torn_write(void) {
-    ensure_init();
-    write_u32(g_page, CONFIG_MAGIC);
-    g_page[0] ^= 0xFF;      // corrupt the magic: neither valid nor erased
-    g_page[CONFIG_HEADER_LEN] = 'x';   // a plausible-looking stray payload byte
+// as token_store.c's token_store_test_simulate_torn_write()).
+//
+// Flash programs a page front-to-back: whatever hadn't been written yet
+// when power was lost reads back at the erased value (0xFF); whatever had
+// already been written reads back exactly as programmed. These two
+// helpers pin the two shapes that matters -- interrupted DURING the magic
+// word, and interrupted AFTER it -- so each has its own test whose failure
+// isolates exactly one of the two defences (magic check, CRC). Review
+// round 1 (Important): a single helper that corrupted the magic and also
+// stomped a payload byte in one shot could not tell the two defences
+// apart -- deleting the CRC comparison left that test passing for the
+// wrong reason (the stomped payload byte, not the corrupted magic).
+//
+// Interrupted before the magic word finished landing: only the first two
+// of its four bytes made it out. The rest of the page -- the remaining
+// magic bytes, the length bytes, and the whole payload, crc field
+// included -- is still at flash's erased value. read_u32() over bytes
+// 0-3 will not equal CONFIG_MAGIC, so config_store_load() must be
+// rejected by the MAGIC check, the very first thing it does, before the
+// CRC (whose field is itself still 0xFF here) is ever consulted.
+void config_store_test_simulate_torn_write_during_magic(void) {
+    memset(g_page, 0xFF, sizeof g_page);
+    g_page[0] = (uint8_t)CONFIG_MAGIC;
+    g_page[1] = (uint8_t)(CONFIG_MAGIC >> 8);
+    g_page_init = true;
 }
 
-// Test-only. Leaves the magic (and lengths) intact but damages a payload
-// byte -- the failure token_store's magic-only scheme cannot detect, and
-// the one this store's CRC exists to catch.
+// Interrupted after the magic word (and the header that follows it --
+// version and the three length bytes) finished landing, but before the
+// payload itself did: everything from CONFIG_HEADER_LEN onward -- the
+// ssid/pass/code bytes and the crc field -- reverts to the erased value.
+// The magic and length checks all pass here (there is nothing wrong with
+// them), so only the CRC -- comparing the erased crc field against a
+// freshly computed CRC of the now-erased payload -- can catch this.
+// Assumes config_store_save() has already written a valid record.
+void config_store_test_simulate_torn_write_after_magic(void) {
+    ensure_init();
+    if (sizeof g_page > CONFIG_HEADER_LEN) {
+        memset(g_page + CONFIG_HEADER_LEN, 0xFF, sizeof g_page - CONFIG_HEADER_LEN);
+    }
+}
+
+// Test-only. Leaves the magic, version, and lengths intact, and the
+// payload fully written, but damages one payload byte after the fact --
+// e.g. a bit flip well after the write completed, nothing to do with a
+// torn write. This is the failure token_store's magic-only scheme cannot
+// detect at all, and the one this store's CRC exists to catch.
 void config_store_test_corrupt_payload_byte(void) {
     ensure_init();
     g_page[CONFIG_HEADER_LEN] ^= 0xFF;
