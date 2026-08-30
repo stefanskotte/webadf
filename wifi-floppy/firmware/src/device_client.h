@@ -36,6 +36,18 @@ typedef struct {
 // formalised and tested end to end.
 #define DC_POLL_TIMEOUT_MS 30000u
 
+// Backoff policy (Task 7): exponential from the floor, doubling on every
+// consecutive failure, capped, plus jitter derived from the injected clock
+// so tests stay deterministic (see dc_enter_backoff in device_client.c).
+#define DC_BACKOFF_FLOOR_MS 1000u
+#define DC_BACKOFF_CAP_MS   60000u
+
+// Roughly how often dc_report_status should be called by the driving main
+// loop (Task 7 only defines the constant and the report primitive; the
+// periodic/on-transition call sites are wired up by whichever task owns the
+// main loop).
+#define DC_STATUS_PERIOD_MS 60000u
+
 // Digests that returned 400/404/422 -- permanently unfetchable for this
 // device. Small and fixed: the desired state rarely cycles through many bad
 // digests, and an unbounded set on a device with no allocator is worse than
@@ -52,6 +64,7 @@ typedef struct {
     uint32_t     backoff_ms;
     uint32_t     mounted_version;
     char         mounted_sha256[65];
+    char         mounted_disk_id[65];
 
     // --- internal blocked-digest ring buffer; do not touch directly ---
     char _blocked[DC_BLOCKED_MAX][65];
@@ -65,5 +78,17 @@ void dc_init(device_client_t *c, transport_t *t, clock_ms_fn now,
 dc_state_t dc_step(device_client_t *c);
 
 bool dc_digest_is_blocked(const device_client_t *c, const char *sha256);
+
+// Sends one status heartbeat: POST /api/device/status with all six fields
+// (spec §4.3 -- "send everything the firmware knows, every time it
+// reports") -- mountedSha256, mountedDiskId, version, error, psramFree,
+// rssi. `err` may be NULL (reported as JSON null); mountedSha256/
+// mountedDiskId are reported as explicit null when nothing is mounted,
+// never omitted -- an absent key means "leave the column alone" server
+// side, while null means "I hold no disk" (spec §10, F-2). Best-effort:
+// a transport failure or unexpected status here is not reflected in
+// `backoff_ms` or `state`, except a 401 (token dead), which halts exactly
+// as it does for the poll and image endpoints.
+void dc_report_status(device_client_t *c, int psram_free, int rssi, const char *err);
 
 #endif

@@ -16,13 +16,6 @@
 #include <string.h>
 #include <stdio.h>
 
-// Backoff shape is finished properly in Task 7 (floor/cap constants, tested
-// growth and reset, jitter). This file only needs *some* nonzero, growing,
-// capped value so the image-fetch status-code tests (spec §4.2, "a 503
-// should back off") have something to assert on.
-#define DC_BACKOFF_INITIAL_MS 1000u
-#define DC_BACKOFF_CAP_MS     60000u
-
 // Generous for a GET line plus Host/Authorization headers to either the
 // poll or the image endpoint (the sha256 in the image path is 64 hex
 // chars); nowhere near HTTP_MAX_BODY_BYTES.
@@ -32,6 +25,19 @@
 // one is never buffered here at all (see dc_discard_sink).
 #define DC_POLL_BODY_BYTES 768
 #define DC_READ_CHUNK_BYTES 512
+
+// The status report is the one request this file POSTs a body with, so it
+// needs a bigger request buffer than a bare GET line (DC_REQ_BUF_BYTES):
+// two 64-hex-char fields, a version, an escaped error string, and two ints,
+// plus the request line and headers around them.
+#define DC_STATUS_PATH        "/api/device/status"
+#define DC_STATUS_BODY_BYTES  512
+#define DC_STATUS_REQ_BYTES   1024
+// `err` is firmware-authored (a short static string or errno-derived text,
+// never network input), but it still has to survive being embedded in a
+// JSON string unescaped -- truncated well short of DC_STATUS_BODY_BYTES so
+// there is always room left for the rest of the fields.
+#define DC_STATUS_ERR_BYTES   256
 
 typedef struct {
     char buf[DC_POLL_BODY_BYTES];
@@ -55,13 +61,26 @@ static void dc_discard_sink(void *ctx, const uint8_t *b, int n) {
     (void)ctx; (void)b; (void)n;
 }
 
+// Exponential from the floor, doubling on every consecutive failure,
+// capped -- then jittered. The jitter comes from the injected clock
+// (`c->now()`), never `rand()`, so a host test can drive it deterministically
+// (fix the fake clock and the sequence is exact; advance it and the jitter
+// term changes predictably). It is added *after* capping the doubled value,
+// and the sum is capped again, so DC_BACKOFF_CAP_MS is a hard ceiling on
+// `backoff_ms` even with a nonzero jitter term. Because the doubled-and-
+// capped base is always >= the previous backoff_ms (doubling a positive
+// number never shrinks it, and capping never pushes a value that was
+// already <= the cap below itself), and jitter only ever adds, the result
+// never shrinks either.
 static dc_state_t dc_enter_backoff(device_client_t *c) {
-    if (c->backoff_ms == 0) {
-        c->backoff_ms = DC_BACKOFF_INITIAL_MS;
-    } else {
-        uint32_t doubled = c->backoff_ms * 2u;
-        c->backoff_ms = (doubled > DC_BACKOFF_CAP_MS) ? DC_BACKOFF_CAP_MS : doubled;
-    }
+    uint32_t next = (c->backoff_ms == 0) ? DC_BACKOFF_FLOOR_MS : c->backoff_ms * 2u;
+    if (next > DC_BACKOFF_CAP_MS) next = DC_BACKOFF_CAP_MS;
+
+    uint32_t jitter = c->now() % 250u;
+    next += jitter;
+    if (next > DC_BACKOFF_CAP_MS) next = DC_BACKOFF_CAP_MS;
+
+    c->backoff_ms = next;
     c->state = DC_BACKOFF;
     return c->state;
 }
@@ -70,12 +89,18 @@ static void dc_backoff_reset(device_client_t *c) {
     c->backoff_ms = 0;
 }
 
-// Runs one full request/response exchange over `c->t`: builds a bearer-
-// authenticated GET for `path`, writes it -- looping on partial writes,
+// Runs one full request/response exchange over `c->t`: writes the `req_len`
+// bytes of an already-built request at `req` -- looping on partial writes,
 // since transport_t.write may accept fewer bytes than offered exactly as a
 // real socket can under backpressure -- then reads until the response is
 // fully framed or the connection closes. `sink` receives body bytes as
 // http_resp_feed frames them.
+//
+// This is the one place any request goes out on the wire: the GET poll
+// (dc_step), the GET image fetch (dc_fetch_image), and the POST status
+// report (dc_report_status) all build their own request bytes with
+// http_build_request and then share this function for the connect/write/
+// read loop, rather than each duplicating it.
 //
 // Returns false only for a transport- or framing-level failure (connect
 // failed, a write stalled, a read errored, or the bytes seen so far don't
@@ -83,18 +108,14 @@ static void dc_backoff_reset(device_client_t *c) {
 // a clean close mid-body returns true with `r->body_complete` still false
 // -- the caller decides what an incomplete body means for that endpoint;
 // this function only reports what happened on the wire.
-static bool dc_exchange(device_client_t *c, const char *path,
+static bool dc_exchange(device_client_t *c, const char *req, int req_len,
                         void (*sink)(void *ctx, const uint8_t *b, int n),
                         void *sink_ctx, http_resp_t *r) {
-    char req[DC_REQ_BUF_BYTES];
-    int n = http_build_request(req, sizeof req, "GET", path, c->host, c->token, NULL);
-    if (n < 0) return false; // path too long: a firmware bug, not a network fault
-
     if (c->t->connect(c->t, c->host, 443) < 0) return false;
 
     int sent = 0;
-    while (sent < n) {
-        int w = c->t->write(c->t, (const uint8_t *)req + sent, n - sent);
+    while (sent < req_len) {
+        int w = c->t->write(c->t, (const uint8_t *)req + sent, req_len - sent);
         if (w <= 0) { c->t->close(c->t); return false; }
         sent += w;
     }
@@ -141,11 +162,13 @@ static void dc_block_digest(device_client_t *c, const char *sha256) {
 // transition it names has completed, not on receipt of the response that
 // named it).
 static void dc_complete_transition(device_client_t *c, uint32_t version,
-                                   const char *sha256) {
+                                   const char *sha256, const char *disk_id) {
     c->since = version;
     c->mounted_version = version;
     strncpy(c->mounted_sha256, sha256, sizeof(c->mounted_sha256) - 1);
     c->mounted_sha256[sizeof(c->mounted_sha256) - 1] = '\0';
+    strncpy(c->mounted_disk_id, disk_id, sizeof(c->mounted_disk_id) - 1);
+    c->mounted_disk_id[sizeof(c->mounted_disk_id) - 1] = '\0';
 }
 
 // Fetches `d->sha256` from the image endpoint. Only reached once the poll
@@ -158,9 +181,13 @@ static dc_state_t dc_fetch_image(device_client_t *c, const dc_desired_t *d) {
     char path[DC_REQ_BUF_BYTES];
     snprintf(path, sizeof path, "/api/device/image/%s", d->sha256);
 
+    char req[DC_REQ_BUF_BYTES];
+    int req_len = http_build_request(req, sizeof req, "GET", path, c->host, c->token, NULL);
+    if (req_len < 0) return dc_enter_backoff(c); // path too long: unexpected, treat as transient
+
     c->state = DC_FETCHING;
     http_resp_t r;
-    bool ok = dc_exchange(c, path, dc_discard_sink, NULL, &r);
+    bool ok = dc_exchange(c, req, req_len, dc_discard_sink, NULL, &r);
 
     if (!ok || !r.body_complete) {
         // Connect/write/read failure, a response that never parsed as HTTP
@@ -178,7 +205,7 @@ static dc_state_t dc_fetch_image(device_client_t *c, const dc_desired_t *d) {
         // arrived intact" (already required above) is as far as
         // verification goes here.
         c->state = DC_VERIFYING;
-        dc_complete_transition(c, d->version, d->sha256);
+        dc_complete_transition(c, d->version, d->sha256, d->disk_id);
         c->state = DC_IDLE_POLL;
         dc_backoff_reset(c);
         return c->state;
@@ -217,7 +244,7 @@ static dc_state_t dc_handle_poll_body(device_client_t *c, const char *json) {
         // The one explicit, unambiguous eject instruction. No fetch is
         // needed -- the transition is "hold no disk", which is complete
         // the instant it is acted on.
-        dc_complete_transition(c, version, "");
+        dc_complete_transition(c, version, "", "");
         c->state = DC_IDLE_POLL;
         return c->state;
     }
@@ -249,7 +276,7 @@ static dc_state_t dc_handle_poll_body(device_client_t *c, const char *json) {
         // Already holding exactly this disk: nothing to fetch. Catching
         // `since` up here (rather than leaving it behind version after
         // version) avoids re-attempting this same no-op every poll.
-        dc_complete_transition(c, version, d.sha256);
+        dc_complete_transition(c, version, d.sha256, d.disk_id);
         c->state = DC_IDLE_POLL;
         return c->state;
     }
@@ -275,6 +302,86 @@ void dc_init(device_client_t *c, transport_t *t, clock_ms_fn now,
     c->state = (token && token[0]) ? DC_IDLE_POLL : DC_UNPROVISIONED;
 }
 
+// Escapes `"` and `\` (the two bytes that would break out of a JSON string)
+// and replaces any control byte with a space, copying at most out_len - 1
+// bytes of input into `out`. `err` is firmware-authored text (a short
+// static string or errno-derived message), never network input, but the
+// status report is still JSON we are constructing by hand, and an
+// unescaped quote in it would produce a malformed body silently.
+static void dc_json_escape(char *out, int out_len, const char *in) {
+    int n = 0;
+    for (const unsigned char *p = (const unsigned char *)in; *p; p++) {
+        if (*p == '"' || *p == '\\') {
+            if (n + 2 > out_len - 1) break;
+            out[n++] = '\\';
+            out[n++] = (char)*p;
+        } else if (*p < 0x20) {
+            if (n + 1 > out_len - 1) break;
+            out[n++] = ' ';
+        } else {
+            if (n + 1 > out_len - 1) break;
+            out[n++] = (char)*p;
+        }
+    }
+    out[n] = '\0';
+}
+
+// Sends one status heartbeat (spec §4.3, §10; see device_client.h for the
+// null-vs-omitted contract). Shares dc_exchange -- the same connect/write/
+// read loop dc_step and dc_fetch_image use -- rather than duplicating it;
+// only the request bytes (a POST with a body, built via the same
+// http_build_request the GET call sites use) differ.
+//
+// mountedSha256 and mountedDiskId are reported as explicit JSON null when
+// nothing is mounted (c->mounted_sha256[0] == '\0'), never omitted: an
+// absent key tells the server "no opinion, leave the column alone", while
+// null says "I am holding no disk" -- reporting the wrong one leaves a
+// stale disk showing in the operator UI after an eject.
+//
+// Best-effort: a connect/write/read failure or an unexpected status here
+// does not touch `backoff_ms` or `state` -- the poll loop is what keeps the
+// device from looking dead (spec: "a device with a broken status path but
+// a healthy poll loop still reads as recently seen"). The one exception is
+// 401: the token is dead everywhere it appears, so this halts exactly as
+// the poll and image endpoints do.
+void dc_report_status(device_client_t *c, int psram_free, int rssi, const char *err) {
+    bool mounted = c->mounted_sha256[0] != '\0';
+
+    char sha_field[80];
+    snprintf(sha_field, sizeof sha_field, mounted ? "\"%s\"" : "null", c->mounted_sha256);
+
+    char disk_field[80];
+    snprintf(disk_field, sizeof disk_field, mounted ? "\"%s\"" : "null", c->mounted_disk_id);
+
+    char err_field[DC_STATUS_ERR_BYTES + 2];
+    if (err) {
+        char esc[DC_STATUS_ERR_BYTES];
+        dc_json_escape(esc, sizeof esc, err);
+        snprintf(err_field, sizeof err_field, "\"%s\"", esc);
+    } else {
+        snprintf(err_field, sizeof err_field, "null");
+    }
+
+    char body[DC_STATUS_BODY_BYTES];
+    int body_len = snprintf(body, sizeof body,
+        "{\"mountedSha256\":%s,\"mountedDiskId\":%s,\"version\":%lu,"
+        "\"error\":%s,\"psramFree\":%d,\"rssi\":%d}",
+        sha_field, disk_field, (unsigned long)c->mounted_version,
+        err_field, psram_free, rssi);
+    if (body_len < 0 || body_len >= (int)sizeof body) return; // should never happen; give up quietly
+
+    char req[DC_STATUS_REQ_BYTES];
+    int req_len = http_build_request(req, sizeof req, "POST", DC_STATUS_PATH,
+                                     c->host, c->token, body);
+    if (req_len < 0) return;
+
+    http_resp_t r;
+    bool ok = dc_exchange(c, req, req_len, dc_discard_sink, NULL, &r);
+    if (!ok || !r.body_complete) return; // best-effort; the poll loop is what matters
+
+    if (r.status == 401) c->state = DC_HALTED; // token is dead; 401 anywhere halts
+}
+
 dc_state_t dc_step(device_client_t *c) {
     if (c->state == DC_UNPROVISIONED) {
         // No token yet; Task 10 adds dc_register() to get one. Nothing to
@@ -293,10 +400,14 @@ dc_state_t dc_step(device_client_t *c) {
     char path[64];
     snprintf(path, sizeof path, "/api/device/poll?since=%lu", (unsigned long)c->since);
 
+    char req[DC_REQ_BUF_BYTES];
+    int req_len = http_build_request(req, sizeof req, "GET", path, c->host, c->token, NULL);
+    if (req_len < 0) return dc_enter_backoff(c); // unexpected: since is bounded, host is fixed
+
     dc_body_buf_t body = { .len = 0 };
     body.buf[0] = '\0';
     http_resp_t r;
-    bool ok = dc_exchange(c, path, dc_body_sink, &body, &r);
+    bool ok = dc_exchange(c, req, req_len, dc_body_sink, &body, &r);
 
     if (!ok || !r.body_complete) {
         // Transport/framing failure, or a connection dropped before the

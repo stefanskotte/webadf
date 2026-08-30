@@ -124,6 +124,58 @@ static void test_image_503_is_retried(void) {
     CHECK(c.backoff_ms > 0, "503 should back off");
 }
 
+// --- Task 7: backoff, read timeout, status reporting ---------------------
+
+static void test_read_timeout_exceeds_the_hold(void) {
+    // The poll holds 25s. A timeout at or under that tears down every poll
+    // mid-hold and looks exactly like a network fault.
+    CHECK(DC_POLL_TIMEOUT_MS > 25000, "read timeout must exceed the 25s hold");
+}
+
+static void test_backoff_grows_and_is_capped(void) {
+    boot();
+    uint32_t prev = 0;
+    for (int i = 0; i < 8; i++) {
+        fake_push_connect_failure();
+        dc_step(&c);
+        CHECK(c.backoff_ms >= prev, "backoff must not shrink on repeated failure");
+        CHECK(c.backoff_ms <= DC_BACKOFF_CAP_MS, "backoff must be capped");
+        prev = c.backoff_ms;
+    }
+    CHECK(prev > 1000, "backoff should have grown beyond the 1s floor");
+}
+
+static void test_backoff_resets_after_success(void) {
+    boot();
+    fake_push_connect_failure(); dc_step(&c);
+    CHECK(c.backoff_ms > 0, "failure sets backoff");
+    fake_push_response("HTTP/1.1 204 No Content\r\n\r\n"); dc_step(&c);
+    CHECK_EQ_INT(c.backoff_ms, 0);
+}
+
+static void test_status_sends_all_six_fields(void) {
+    boot();
+    fake_push_response("HTTP/1.1 204 No Content\r\n\r\n");
+    dc_report_status(&c, 4096, -55, NULL);
+    const char *r = fake_last_request();
+    CHECK(strstr(r, "mountedSha256") != NULL, "mountedSha256");
+    CHECK(strstr(r, "mountedDiskId") != NULL, "mountedDiskId");
+    CHECK(strstr(r, "\"version\"")   != NULL, "version");
+    CHECK(strstr(r, "\"error\"")     != NULL, "error");
+    CHECK(strstr(r, "psramFree")     != NULL, "psramFree");
+    CHECK(strstr(r, "\"rssi\"")      != NULL, "rssi");
+}
+
+static void test_unmounted_reports_null_not_omitted(void) {
+    // null means "I hold no disk" -- an honest report. Omitting the key means
+    // "no opinion" and leaves the server's column stale.
+    boot();
+    fake_push_response("HTTP/1.1 204 No Content\r\n\r\n");
+    dc_report_status(&c, 4096, -55, NULL);
+    CHECK(strstr(fake_last_request(), "\"mountedSha256\":null") != NULL,
+          "an unmounted device must report null explicitly");
+}
+
 int main(void) {
     RUN(test_cold_boot_polls_since_zero);
     RUN(test_request_survives_single_byte_writes);
@@ -135,5 +187,10 @@ int main(void) {
     RUN(test_image_404_behaves_the_same_as_422);
     RUN(test_image_400_is_a_firmware_bug_and_never_retried);
     RUN(test_image_503_is_retried);
+    RUN(test_read_timeout_exceeds_the_hold);
+    RUN(test_backoff_grows_and_is_capped);
+    RUN(test_backoff_resets_after_success);
+    RUN(test_status_sends_all_six_fields);
+    RUN(test_unmounted_reports_null_not_omitted);
     return REPORT();
 }
