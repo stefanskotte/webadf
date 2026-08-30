@@ -175,3 +175,59 @@ briefs alone would suggest:
   `track_cache_get()` was never re-entered and the old disk kept streaming, INDEX still
   pulsing, after an eject. Fixed by `track_cache_check_swap()`, called unconditionally at
   the top of core0's loop, keyed off the same generation token from the Task 8 fix.
+
+---
+
+## The whole-branch review, and the third Critical
+
+Appended after this file's first commit: the final whole-branch review ran after Task 11,
+so its findings and the last two rulings are recorded here rather than above.
+
+**Task 8's and Task 10's Criticals were caught by per-task reviews. The third was not, and
+could not have been.**
+
+**Core 1's stack overflowed on the very first poll.** `PICO_CORE1_STACK_SIZE` was never set,
+so core 1 got the 2 KB default, while `core1_main` → `dc_step` alone needs 2712 bytes —
+and the TLS 1.3 handshake runs on that same stack from `low_priority_worker_irq`, pushing
+the real requirement past 5 KB. `__StackLimit` and `__HeapLimit` are both `0x20080000`, so
+the overflow ran into the top of the newlib heap, which is exactly where mbedTLS's ~16 KB
+record buffers live. `PICO_USE_STACK_GUARDS` was off, so nothing would have faulted.
+
+This is the one defect in the whole plan capable of causing **both** forbidden failure
+modes at once, by corrupting `active_word` / `bits[]` / `state[]` arbitrarily. The host
+suite runs with an 8 MB stack and the cross-build has no opinion on stack depth, so
+**neither gate could see it**. It would have failed on the first boot of the first board,
+silently and unrepeatably.
+
+Fixed by moving core 1 to a 16 KB stack in main SRAM via
+`multicore_launch_core1_with_stack()` and enabling `PICO_USE_STACK_GUARDS`. Making the
+large locals `static` was tried first and was **not sufficient** — the IRQ-side chain alone
+exceeds any stack that fits in the 4 KB SCRATCH_X bank, which is where the SDK's default
+core-1 stack lives. Measured margin after the fix: 5256 bytes used of 16384.
+
+Two other findings from the same review, both fixed: a permanently-blocked digest produced
+an unthrottled poll storm at full TLS-handshake rate (because `since` never advances and
+the server answers 200 immediately), and `start_streaming()` rewrote the live DMA source
+buffer before aborting the transfer, tearing one revolution on every disk change.
+
+The reviewer also confirmed, tracing the assembled system end to end, that there is **no
+path where the Amiga loses a disk it should have kept or is served one it should not**.
+
+**Ruling 10 — the Task 11 doc fix's scoped re-review was folded into the whole-branch
+review.** It was documentation-only (two "SUPERSEDED" annotations) and the whole-branch
+reviewer reads that diff anyway. Recorded rather than skipped silently.
+
+**Ruling 11 — two residual follow-ups are parked, not fixed.** The re-review recommended
+merge with both as non-blocking:
+
+1. `device_client.c`'s `STACK:` comment still says core 1 "runs on a 2 KB stack … cannot be
+   raised past 4 KB" — made untrue by the same commit that added it. **This is the one to
+   fix when the firmware is next touched**; it is a one-line correction, and a future reader
+   who trusts it could reintroduce a 2 KB assumption. The CMake and `main.c` both show the
+   real arrangement, which is what bounds the risk.
+2. The fix report's IRQ-chain figure understated the true bound (4968 vs the re-reviewer's
+   independently measured 5256). That file was gitignored scratch and is gone; the margin
+   conclusion was unaffected either way.
+
+No second fix wave was run for these, per the process: residual non-load-bearing findings
+surface to the operator instead of being patched unreviewed.
