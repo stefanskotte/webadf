@@ -18,21 +18,39 @@ SHA-256; you browse them and press mount; a custom board emulates the floppy dri
 
 ## Where things stand
 
+**Written 2026-08-29, rewritten 2026-08-30.**
+
 | | Status |
 |---|---|
-| **Plan 1 — foundation & library** | ✅ Complete, reviewed, **merged to `master`, deployed to production** |
-| **Plan 2 — device plane** | Tasks 1–4 done and reviewed. Tasks 6, 7, 8 are **superseded by plan 3a** (D17), not pending — see below. Tasks 5, 9–11 were never started and their status under the new design has not been re-examined. |
-| **MFM encoder (`adfmfm`)** | ✅ **Done.** Byte-identical to Greaseweazle across all 61 archive disks, 9,760 of 9,760 tracks. `pnpm adfmfm:diff` is the gate. Designed in `2026-08-29-adfmfm-encoder-design.md`, built in `docs/superpowers/plans/2026-08-29-adfmfm-encoder.md`. |
-| **Plan 3a — device protocol, disk change** | ✅ **Done.** Schema (`desired_*` columns, `write_protected`, `mount_jobs` dropped), `GET /api/device/poll`, `GET /api/device/image/<sha256>`, `POST /api/device/status`, and the human-facing mount/eject/write-protect endpoints. Proven end to end, no hardware, by `e2e/device-protocol.spec.ts`. Designed in `2026-08-29-device-plane-disk-change-design.md`, built in `docs/superpowers/plans/2026-08-29-device-protocol-disk-change.md`. |
-| **Plan 3b — UI** | 🔲 **Next.** Devices page, game-detail disk selector, write-protect toggle, desired-versus-actual display. Not started; design is spec §7. |
-| **Firmware (`wifi-floppy/`)** | Written, **never compiled**. Needs TLS + token added (D16). Three defects recorded, not fixed — see "Known firmware defects" below. |
-| **Hardware** | PCB routed, Gerbers exported, **boards ordered from JLCPCB** |
+| **Plan 1 — foundation & library** | ✅ merged to `master`, in production |
+| **Plan 2 — device plane** | ✅ tasks 1–4 done; **6–8 superseded** by plan 3a, not pending |
+| **MFM encoder (`adfmfm`)** | ✅ **done** — byte-identical to Greaseweazle across all 61 archive disks (9,760 tracks) |
+| **Plan 3a — device protocol** | ✅ done, merged to `master`, pushed |
+| **Plan 3b — device UI** | 🟡 **tasks 1–6 done on `feat/device-ui`. Only task 7 (docs) remains.** |
+| **Firmware (`wifi-floppy/`)** | ❌ never compiled. The remaining unbuilt piece |
+| **Hardware** | boards ordered from JLCPCB |
 
-**Current branch:** `feat/disk-change`, branched off `feat/device-plane` (see plan 3a's
-ledger, Ruling T2-1, for why — 8 early commits landed on `master` by mistake and were
-moved). Suite green: **228 vitest, 58 Playwright**, `pnpm build` clean.
+**Current branch:** `feat/device-ui`, forked from `master` at `ef48eb5`, not yet pushed.
+**Suite:** 241 vitest, 87 Playwright, `pnpm build` clean, tree clean.
 
----
+### Resuming plan 3b
+
+Read `docs/superpowers/plans/2026-08-30-device-ui.md`. Tasks 1–6 are complete and reviewed.
+**Task 7 is documentation only** — mark plan 3b delivered in the disk-change spec's §8 and
+finish updating this file. Then merge to `master` and push, as plans 1, 2 and 3a were.
+
+The rulings taken during 3b are in `docs/decisions/2026-08-30-device-ui-rulings.md`. Read it
+before touching the mount action or the queries — it records why the multi-device picker is an
+inline expansion rather than the dropdown the spec originally specified, and that is the
+decision most likely to look arbitrary later.
+
+### What 3a and 3b built
+
+Desired-state reconciliation, not a job queue. `devices` carries what a human asked for and
+what the device reported, separately and on purpose. Three device endpoints —
+`GET /api/device/poll` (25 s long-poll), `GET /api/device/image/<sha256>` (WFMF, encoded on
+demand), `POST /api/device/status` — plus human-facing mount, eject and write-protect. Two
+pages that previously 404'd, `/devices` and `/games/[id]`, now exist.
 
 ## The thing that changed mid-flight — read this before anything else
 
@@ -61,23 +79,26 @@ so the format and its encoder cannot drift apart.
 
 ## What to do next, in order
 
-### 1. Plan 3b — the UI
+### 1. Finish plan 3b — task 7 only, documentation
 
-The protocol is done and provable without hardware; nothing device-facing is blocking
-this. Build against `2026-08-29-device-plane-disk-change-design.md` §7:
+Tasks 1–6 are **done and reviewed** on `feat/device-ui`; both previously-404 routes now
+exist. All that remains is task 7 of `docs/superpowers/plans/2026-08-30-device-ui.md`:
+mark 3b delivered in the disk-change spec's §8, finish this file, then merge to `master`
+and push.
 
-- **Devices page** — each device shows its actual mounted disk, its desired disk when
-  they differ, `last_seen_at`, and `last_error`. An eject button.
-- **Game detail** — a disk selector; mount any disk of the set to any paired device.
-- **Write-protect toggle** — on the disk row, next to mount. `PATCH /api/disks/[id]`
-  already exists for this.
-- **Never present desired state as fact.** A device that has not been seen for minutes
-  with a pending desired change reads as *requested*, not *mounted* — this is the whole
-  point of keeping desired and actual as separate columns (D17).
+**Before touching the mount action or the queries**, read
+`docs/decisions/2026-08-30-device-ui-rulings.md`. Two things there will otherwise look
+arbitrary:
 
-The endpoints to build against already exist and are e2e-tested: `GET /api/device/poll`,
-`GET /api/device/image/<sha256>`, `POST /api/device/status`,
-`POST /api/devices/[id]/mount`, `POST /api/devices/[id]/eject`.
+- The multi-device picker is an **inline expansion, not a dropdown**, though spec §4
+  originally said dropdown. A dropdown was built and measured to have a wrong-target bug —
+  the open popup covered the next row's Mount button, so clicking what looked like disk 2's
+  Mount silently mounted disk 1. `modal={true}` does not fix it (`MenuPositioner`'s `z-50`
+  is unconditional) and neither does any placement. Do not "restore" the dropdown.
+- `listDevices`'s org-scoped join on `games` is **preventing a live cross-tenant leak**.
+  The production database holds three devices whose `desired_game_id` belongs to another
+  organization — leftover e2e data, and that column has no foreign key. Removing the
+  predicate puts a foreign title on the page. There is a test for it; do not weaken it.
 
 ### 2. Firmware (plan 4)
 
@@ -227,6 +248,29 @@ the row counts. Two gaps remain, both known and accepted rather than accidental:
 
 ---
 
+## How this work has been running
+
+Every plan since plan 1 has followed the same loop, and it is worth continuing: brainstorm to
+a spec, `superpowers:writing-plans` to a task-by-task plan, then
+`superpowers:subagent-driven-development` — a fresh subagent per task, a reviewer after each,
+a fix round with a mutation proof, and one whole-branch review at the end.
+
+Three things about it have earned their place:
+
+- **Watch every test fail before making it pass.** On plan 3b this caught two tests that
+  passed against a page that did not exist yet — both asserted only an absence.
+- **Prove each fix with a mutation.** Break the code, watch a *named* test fail, revert. A
+  fix without one is a claim.
+- **Tell an implementer to stop and escalate rather than weaken a test.** It did exactly that
+  once, and was right when I was wrong — see T6-5 in the 3b rulings.
+
+Across plans 1, 2, 3a and 3b, essentially every defect found was in **plan text**, not in
+implementer work on correct instructions. Several of the fix instructions were themselves
+wrong and were caught by implementers who said so. Budget review time accordingly: the plan is
+the risky artifact, not the code.
+
+---
+
 ## Verification standard that has been paying off
 
 Twelve defects were found across both plans. **All twelve were in the plan text I wrote;
@@ -254,8 +298,14 @@ the design three separate times. Keep doing both.
 - **Encoder plan (done):** `docs/superpowers/plans/2026-08-29-adfmfm-encoder.md`
 - **Plan 3a — device protocol (done):**
   `docs/superpowers/plans/2026-08-29-device-protocol-disk-change.md`
-- **Plan 3b — UI:** not written yet; design is the disk-change spec's §7
-- **Decision log:** `docs/decisions/` — rulings taken during implementation
+- **UI spec:** `docs/superpowers/specs/2026-08-30-device-ui-design.md` — expands the
+  disk-change spec's §7. **§4 was revised during implementation**; the reasoning is in it
+- **Plan 3b — UI (tasks 1–6 done, 7 remains):**
+  `docs/superpowers/plans/2026-08-30-device-ui.md`
+- **Decision log:** `docs/decisions/` — rulings taken during implementation. The SDD ledgers
+  under `.superpowers/` are **gitignored and do not survive a session**, so anything worth
+  keeping was copied here: `2026-08-24-foundation-rulings.md`,
+  `2026-08-29-device-plane-rulings.md`, `2026-08-30-device-ui-rulings.md`
 - **`adfmfm` module:** `src/lib/adfmfm/README.md`
 - **Firmware contract:** `INTEGRATION.md` and `wifi-floppy/firmware/src/image_loader.c`
 - **UI design:** `design/*.dc.html` artboards; canvas at
