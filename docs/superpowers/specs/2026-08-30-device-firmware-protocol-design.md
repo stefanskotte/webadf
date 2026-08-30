@@ -1,5 +1,11 @@
 # Device firmware — protocol plane (plan 4a)
 
+**Status: delivered 2026-08-30.** Everything this spec scoped is done and evidenced by a
+green host suite (`pnpm firmware:test`, 282 checks across 8 binaries) plus a green ARM
+cross-build (`pnpm firmware:build` → `wifi-floppy/firmware/build/wifi_floppy.uf2`). Nothing
+in this delivery has run on real hardware — boards were still in transit throughout. Plans
+4b and 5 are what remain; see "What plan 4a delivered" below.
+
 **Addendum to `2026-08-23-webadf-design.md`.** That spec remains the binding authority.
 This one implements the firmware half of `2026-08-29-device-plane-disk-change-design.md`
 §10 — the device contract that spec wrote *for* a firmware author without writing the
@@ -13,6 +19,58 @@ remains backlog and is not designed here.
 
 **Realises D16** ("the firmware gains TLS and a bearer token and talks to webadf
 directly"), which has been recorded as a decision since plan 2 and never implemented.
+
+---
+
+## What plan 4a delivered, and what it did not
+
+Read this before the rest of the spec below, which was written as a plan and is kept as a
+record of the design reasoning — it now describes what was built, not what remains to be.
+
+**Delivered and host/cross-build evidenced:**
+
+- The firmware **compiles** for the first time ever: `pnpm firmware:build` produces
+  `wifi-floppy/firmware/build/wifi_floppy.uf2`, on pico-sdk **2.3.0** (enforced by a CMake
+  version guard) with the official ARM GNU Toolchain (not homebrew's
+  `arm-none-eabi-gcc`, which ships no newlib).
+- A **host test suite** exists and passes: `pnpm firmware:test` — plain C under clang, 282
+  checks across 8 binaries, no framework.
+- Both **recorded defects are fixed**: `TRACK_SLOT_BYTES`/`TRACK_MFM_MAX` collapsed into
+  one `TRACK_MAX_BYTES`, and the `(bits + 7) / 8` overflow now bounds `bits` before the
+  arithmetic. `src/lib/adfmfm/firmware-parser.ts` was updated in the same change and no
+  longer mirrors the second defect — the device it modelled no longer has that bug.
+- The full §10 device contract: the poll loop, both `since` rules, the status-code tables,
+  exponential backoff with jitter, six-field status reports, two-slot PSRAM with
+  generation-tagged publish (so a reused slot index cannot serve a stale disk), and
+  fetch-before-transition.
+- **TLS is real and proved load-bearing**: mbedTLS over lwIP altcp, with
+  `MBEDTLS_SSL_VERIFY_REQUIRED` enforced by both a CMake define and an `#error` guard, a
+  five-root pinned CA bundle verified against the live `webadf.vercel.app` chain, SNTP
+  before the first handshake, and `-Wl,-u,...` link options proved (by removing them) to be
+  the only thing stopping `--gc-sections` from silently discarding the whole TLS chain.
+- Registration (`POST /api/device/register`) and a flash-backed token store work end to
+  end in `main.c`, including backoff on repeated registration failure and a torn-write
+  guard on the stored token.
+- `src/http_fetch.c`/`.h` — the old plaintext, path-addressed, credential-less fetcher —
+  are **deleted**.
+
+**Not delivered, and not this plan's job:**
+
+- **Plan 4b** — the AP-mode captive portal (DHCP, DNS, an HTTP config page, flash-backed
+  WiFi credentials), replacing today's compile-time `WIFI_SSID`/`WIFI_PASS`/
+  `WEBADF_HOST`/`WEBADF_PAIRING_CODE`.
+- **Plan 5** — hardware bring-up. Nothing built here has ever run on real hardware: no TLS
+  handshake, no SNTP sync, no floppy-bus timing has been exercised outside the host suite
+  and the cross-build. Boards were in transit for the whole of this plan.
+- **Write-back** remains undesigned backlog. `WRITE_BACK_IMPLEMENTED` is `0` in `main.c`,
+  so WPROT is asserted always.
+
+A dozen minor findings were deliberately deferred during 4a rather than fixed inline, and
+several rulings were taken on the operator's behalf during execution (a wrong pico-sdk
+version pin, several wrong hand-counted `Content-Length` fixtures, two "green suite proved
+nothing" incidents). All of it is recorded in
+`docs/decisions/2026-08-30-device-firmware-rulings.md`; `HANDOFF.md` points to it under
+"Before you touch the firmware again".
 
 ---
 

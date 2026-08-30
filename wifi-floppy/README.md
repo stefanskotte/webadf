@@ -63,9 +63,14 @@ licensing and credit Keir Fraser.
   its `bin/` is on `PATH` ahead of any homebrew `arm-none-eabi-*` shims.
 
 ## Honest caveats
-- **Firmware is untested and has not been compiled here** — no pico-sdk
-  toolchain in this environment. Expect minor compile fixes (headers,
-  SDK API drift). The PIO cycle counts and DMA scheme are desk-checked.
+- **The firmware now compiles** (`pnpm firmware:build` from the repo root produces
+  `firmware/build/wifi_floppy.uf2`) and has a green host test suite
+  (`pnpm firmware:test`, 282 checks across 8 binaries, plain C under clang). **It has
+  not run on real hardware.** No TLS handshake, no SNTP sync, no floppy-bus timing has
+  ever been exercised outside the host suite and the ARM cross-build — boards were still
+  in transit throughout that work. The PIO cycle counts and DMA scheme remain
+  desk-checked only. Treat anything not covered by a host test as unverified until it has
+  run on a board.
 - Write support is a skeleton: flux capture PIO exists, MFM decode and
   POST are TODO. WPROT is asserted by default until that lands.
 - The board passes my generator's DRC-lite, but run real KiCad DRC and

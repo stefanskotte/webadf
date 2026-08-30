@@ -1,8 +1,8 @@
 # webadf — session handoff
 
-**Written 2026-08-29, updated 2026-08-30 after plan 3b.** Everything a fresh session
-needs to pick this up cold. Read this first, then the spec, then the plan you are
-resuming.
+**Written 2026-08-29, updated 2026-08-30 after plan 3b, updated again 2026-08-30 after
+plan 4a.** Everything a fresh session needs to pick this up cold. Read this first, then
+the spec, then the plan you are resuming.
 
 ---
 
@@ -18,7 +18,8 @@ SHA-256; you browse them and press mount; a custom board emulates the floppy dri
 
 ## Where things stand
 
-**Written 2026-08-29, rewritten 2026-08-30.**
+**Written 2026-08-29, rewritten 2026-08-30 after plan 3b, rewritten again 2026-08-30
+after plan 4a.**
 
 | | Status |
 |---|---|
@@ -27,13 +28,21 @@ SHA-256; you browse them and press mount; a custom board emulates the floppy dri
 | **MFM encoder (`adfmfm`)** | ✅ **done** — byte-identical to Greaseweazle across all 61 archive disks (9,760 tracks) |
 | **Plan 3a — device protocol** | ✅ done, merged to `master`, pushed |
 | **Plan 3b — device UI** | ✅ **done, all 7 tasks, merged to `master`** |
-| **Firmware (`wifi-floppy/`)** | ❌ never compiled. **The remaining unbuilt piece** |
+| **Plan 4a — firmware protocol plane** | ✅ **done.** Firmware now **compiles** and has a green host suite. Branch `feat/device-firmware`, not yet merged. |
+| **Plan 4b — captive portal** | ❌ not started. Compile-time WiFi/host/pairing-code defines still stand in for it |
+| **Plan 5 — hardware bring-up** | ❌ not started. **Nothing has run on real hardware** — boards were in transit throughout 4a |
 | **Hardware** | boards ordered from JLCPCB |
 
-**Current branch:** `master`. **Suite:** 241 vitest, 87 Playwright, `pnpm build` clean.
+**Current branch:** `master` for the web app; firmware work is on `feat/device-firmware`
+(plan 4a, not yet merged). **Suite:** 241 vitest (+1 from the mirror update in plan 4a,
+so 242 on `feat/device-firmware`), 87 Playwright, `pnpm build` clean. Firmware:
+`pnpm firmware:test` green (282 checks, 8 binaries), `pnpm firmware:build` produces a
+`.uf2`.
 
-**The whole web side is now built.** Everything from here is firmware, or backlog nobody is
-blocked on. The next person to touch this repo is picking up plan 4 — see below.
+**The whole web side is built, and the firmware now compiles and passes its own host
+suite for the first time.** What is left is: plan 4b's captive portal, and plan 5's
+hardware bring-up — nothing in plan 4a has been exercised on a real board. See "What to
+do next" below.
 
 ### Before you touch the device UI
 
@@ -92,17 +101,49 @@ Not a task — a warning, first because both are one refactor away from being un
   organization — leftover e2e data, and that column has no foreign key. Removing the
   predicate puts a foreign title on the page. There is a test for it; do not weaken it.
 
-### 1. Firmware (plan 4) — the only thing left that blocks working hardware
+### 1. Plan 4a — done. Read this before touching firmware.
 
-Add mbedTLS and a provisioned bearer token per D16. Today `http_fetch.c:63` issues a
-plaintext `GET %s HTTP/1.1` to a bare IP with no credentials. Also never compiled —
-expect SDK API fixes on the first build. While there, reconcile `image_loader.c`'s
-`TRACK_SLOT_BYTES` against `track_cache.c`'s smaller `TRACK_MFM_MAX`, and bound `bits`
-before the `(bits + 7) / 8` arithmetic in `image_loader.c:51` — see "Known firmware
-defects" below. Implementing the two-slot double-buffer that lets a fetch happen before
-an eject (disk-change spec §1, rule 2) also belongs here.
+Plan 4a shipped on branch `feat/device-firmware` (not yet merged to `master`):
+mbedTLS with a provisioned bearer token per D16, the full §10 device-contract state
+machine, two-slot PSRAM with fetch-before-transition, and both recorded firmware defects
+fixed (`TRACK_SLOT_BYTES`/`TRACK_MFM_MAX` collapsed into one `TRACK_MAX_BYTES`; `bits` now
+bounded before the `(bits + 7) / 8` arithmetic in `image_loader.c`). `http_fetch.c`/`.h`
+— the old plaintext, path-addressed, credential-less fetcher — are deleted.
 
-### 2. Backlog, not blocking anything
+Full detail, including what got deferred and the rulings taken along the way, is in
+`docs/superpowers/specs/2026-08-30-device-firmware-protocol-design.md`'s "What plan 4a
+delivered" section and in "Before you touch the firmware again" below.
+
+**Build and test commands (see also "Commands" at the bottom):**
+
+```bash
+pnpm firmware:build   # requires the official ARM GNU Toolchain on PATH, e.g.:
+                      #   export PATH="/Applications/ArmGNUToolchain/15.3.rel1/arm-none-eabi/bin:$PATH"
+                      # and pico-sdk >= 2.3.0 checked out (PICO_SDK_PATH); homebrew's
+                      # arm-none-eabi-gcc ships no newlib and will not link.
+pnpm firmware:test    # plain C under clang, no toolchain/SDK needed — 282 checks, 8 binaries
+```
+
+**`src/lib/adfmfm/firmware-parser.ts` no longer mirrors the bit-count-overflow defect** —
+it was fixed in the same change as the firmware fix, and the mirror was updated with it.
+Older guidance (in this file and in the design spec) said never to "fix" that mirror; that
+instruction was correct only while the firmware was actually broken, and is now inverted.
+Do not reintroduce the wrapped-`bits` behaviour into the mirror.
+
+### 2. Plan 4b — the captive portal, and plan 5 — hardware bring-up
+
+**Plan 4b:** replace the compile-time `WIFI_SSID`/`WIFI_PASS`/`WEBADF_HOST`/
+`WEBADF_PAIRING_CODE` defines with an AP-mode captive portal (DHCP, DNS, an HTTP config
+page, flash-backed WiFi credentials). Plan 4a's spec (§7) already scoped the split so this
+should be additive — nothing else about provisioning changes when it lands.
+
+**Plan 5:** hardware bring-up, once boards arrive. **Nothing in plan 4a has run on real
+hardware** — no TLS handshake, no SNTP sync, no floppy-bus timing has ever been exercised
+outside the host suite and the cross-build. Treat every claim about TLS, timing, or the
+floppy bus as desk-checked and host-tested only, not hardware-verified, until plan 5 says
+otherwise.
+
+### 3. Backlog, not blocking anything
 
 - **Write-back and layered disks** (disk-change spec §5). Deliberately not designed yet;
   the first increment should record which tracks changed, not just a flattened result, so
@@ -229,30 +270,35 @@ Learned the hard way; several cost real debugging time.
 
 ---
 
-## Known firmware defects (recorded, not fixed)
+## Known firmware defects — both fixed in plan 4a
 
-Found while building the encoder and its device-image endpoint; none block webadf's side,
-all belong to the firmware plan. Full detail in `2026-08-29-adfmfm-encoder-design.md` §7.
+Found while building the encoder and its device-image endpoint. Both are now fixed on
+`feat/device-firmware`; kept here as history since the design docs (encoder spec §7, plan
+4a spec §8) refer back to them.
 
-1. **Latent buffer overflow.** `image_loader.c` accepts a track payload up to
-   `TRACK_SLOT_BYTES` (13,312 bytes), but `track_cache.c` copies it into an SRAM buffer of
-   `TRACK_MFM_MAX` (13,000 bytes) — a 312-byte overflow for any track over 13,000 bytes.
-   Our tracks are 12,668 bytes, under both, so this is latent rather than live today. The
-   two constants should be reconciled.
-2. **Revolution timing.** `BITCELL_NS` is 2,000 ns against a true Amiga bitcell of
-   1,973.6 ns, giving ~296 RPM against a nominal 300. Accepted — the Amiga's PLL locks to
-   sync marks, not a stopwatch, and real drives vary by more than this. A one-line
-   `clkdiv` trim in `flux_out_program_init` if it ever matters.
-3. **`bit_count` overflow accepts a bogus image.** `image_loader.c:51` computes
-   `payload_bytes = (bits + 7) / 8` on a `uint32_t`; a `bit_count` at or above `0xFFFFFFF9`
-   wraps the addition to `payload_bytes = 0`, sailing past the `> TRACK_SLOT_BYTES` guard.
-   Every track then parses as present with a nonsense bit count, and
-   `psram_image_missing_count()` returns 0 — the firmware presents a disk of empty tracks
-   instead of refusing the image. The fix is to bound `bits` *before* the arithmetic.
-   **`src/lib/adfmfm/firmware-parser.ts` reproduces this deliberately and must not be
-   "fixed"** — its job is to mirror what the device *actually* accepts, warts included;
-   `readWfmf`, webadf's own reader, is hardened against this and the asymmetry between the
-   two is intentional. This is the defect the mirror was built to find, and it did.
+1. **Latent buffer overflow — FIXED.** `image_loader.c` used to accept a track payload up
+   to `TRACK_SLOT_BYTES` (13,312 bytes), while `track_cache.c` copied it into an SRAM
+   buffer of `TRACK_MFM_MAX` (13,000 bytes) — a 312-byte overflow for any track over
+   13,000 bytes. Our tracks are 12,668 bytes, under both, so this was latent rather than
+   live in production. The two constants are now one: `TRACK_MAX_BYTES` (13,312), with the
+   SRAM staging buffer grown to match rather than the accepted maximum lowered.
+2. **Revolution timing — still accepted, not a defect.** `BITCELL_NS` is 2,000 ns against
+   a true Amiga bitcell of 1,973.6 ns, giving ~296 RPM against a nominal 300. Accepted —
+   the Amiga's PLL locks to sync marks, not a stopwatch, and real drives vary by more than
+   this. A one-line `clkdiv` trim in `flux_out_program_init` if plan 5 hardware bring-up
+   ever says otherwise.
+3. **`bit_count` overflow accepted a bogus image — FIXED.** `image_loader.c:51` used to
+   compute `payload_bytes = (bits + 7) / 8` on a `uint32_t`; a `bit_count` at or above
+   `0xFFFFFFF9` wrapped the addition to `payload_bytes = 0`, sailing past the
+   `> TRACK_SLOT_BYTES` guard. Every track then parsed as present with a nonsense bit
+   count, and `psram_image_missing_count()` returned 0 — the firmware would have presented
+   a disk of empty tracks instead of refusing the image. `bits` is now bounded *before*
+   the arithmetic.
+   **`src/lib/adfmfm/firmware-parser.ts` no longer reproduces this** — it was updated in
+   the same change as the firmware fix, since the mirror's job is to model what the device
+   *actually* accepts, and the device no longer accepts this. The old instruction to never
+   "fix" the mirror was correct only while the firmware itself was broken; it is inverted
+   now. `readWfmf`, webadf's own reader, was already hardened against this and remains so.
 
 ---
 
@@ -312,6 +358,27 @@ the design three separate times. Keep doing both.
 
 ---
 
+## Before you touch the firmware again
+
+The rulings taken during plan 4a — including three corrections to my own plan text on the
+`Content-Length` fixtures, the pico-sdk version pin, the toolchain PATH requirement, and a
+dozen deliberately deferred minor findings by file/task — are in
+`docs/decisions/2026-08-30-device-firmware-rulings.md`. It also records two "green
+suite/build proved nothing" incidents (Task 7's unexercised jitter, Task 9's TLS stack
+that built green without linking any of its own code) worth knowing before trusting a
+firmware gate at face value.
+- (Task 3, at the time still open) `main.c` called `dskchg_image_inserted()`
+  unconditionally while no image was ever loaded. **This was fixed within plan 4a**
+  (Task 10) via `track_cache_check_swap()`; listed here only because it was flagged as a
+  must-not-ship-this-way item and the record should show it was closed, not dropped.
+
+The rulings taken on the operator's behalf while executing plan 4a — including the
+pico-sdk version pin, the toolchain PATH requirement, and several corrections to the plan
+text itself — are recorded in `docs/decisions/2026-08-30-device-firmware-rulings.md`,
+following the same pattern as the existing rulings files below.
+
+---
+
 ## Reference
 
 - **Parent spec (binding authority):** `docs/superpowers/specs/2026-08-23-webadf-design.md`
@@ -329,19 +396,31 @@ the design three separate times. Keep doing both.
   disk-change spec's §7. **§4 was revised during implementation**; the reasoning is in it
 - **Plan 3b — UI (done):**
   `docs/superpowers/plans/2026-08-30-device-ui.md`
+- **Firmware protocol spec — plan 4a (done):**
+  `docs/superpowers/specs/2026-08-30-device-firmware-protocol-design.md` — see its "What
+  plan 4a delivered" section for the shipped/not-shipped split
+- **Plan 4a — firmware protocol plane (done, on `feat/device-firmware`, not yet merged):**
+  `docs/superpowers/plans/2026-08-30-device-firmware-protocol.md`
 - **Decision log:** `docs/decisions/` — rulings taken during implementation. The SDD ledgers
   under `.superpowers/` are **gitignored and do not survive a session**, so anything worth
   keeping was copied here: `2026-08-24-foundation-rulings.md`,
-  `2026-08-29-device-plane-rulings.md`, `2026-08-30-device-ui-rulings.md`
+  `2026-08-29-device-plane-rulings.md`, `2026-08-30-device-ui-rulings.md`,
+  `2026-08-30-device-firmware-rulings.md`
 - **`adfmfm` module:** `src/lib/adfmfm/README.md`
 - **Firmware contract:** `INTEGRATION.md` and `wifi-floppy/firmware/src/image_loader.c`
+- **Firmware itself:** `wifi-floppy/firmware/` — see `wifi-floppy/README.md` for build
+  requirements (pico-sdk ≥ 2.3.0, the official ARM GNU Toolchain) and its "Honest caveats"
+  for what has and has not been verified
 - **UI design:** `design/*.dc.html` artboards; canvas at
   https://claude.ai/code/artifact/fc7949f0-bdf8-4c7b-aedf-9d6712093e8b
 
 **Commands:** `pnpm dev` · `pnpm vitest run` · `pnpm e2e` · `pnpm build` ·
 `pnpm adfmfm:diff` (Greaseweazle differential gate, needs `adf-archive/` + pipx) ·
 `pnpm adfmfm:fixtures` (regenerate golden fixtures) ·
-`pnpm db:generate && pnpm db:push` · `npx webadf push <dir>` (CLI bulk import)
+`pnpm db:generate && pnpm db:push` · `npx webadf push <dir>` (CLI bulk import) ·
+`pnpm firmware:build` (needs pico-sdk ≥ 2.3.0 on `PICO_SDK_PATH` and the official ARM GNU
+Toolchain on `PATH`, not homebrew's `arm-none-eabi-gcc`) ·
+`pnpm firmware:test` (plain-C host suite, clang, no SDK/toolchain needed)
 
 **Infrastructure:** Vercel project `webadf` · Neon Postgres (`auth` + `public` schemas) ·
 Vercel Blob store `webadf-disks` (**private** access) · Vercel CLI 59.10.0
