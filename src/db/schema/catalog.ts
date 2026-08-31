@@ -10,7 +10,27 @@ export const blobs = pgTable('blobs', {
   storageKey: text('storage_key').notNull(),
   contentType: text('content_type').notNull().default('application/octet-stream'),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
-});
+
+  // Content hashes beyond sha256, for TOSEC matching. Computed SERVER-SIDE
+  // only -- at ingest inside verify()'s existing read-back, or by the
+  // sweeper. No client ever supplies these (design §7).
+  crc32: text('crc32'),
+  md5: text('md5'),
+  sha1: text('sha1'),
+  hashedAt: timestamp('hashed_at', { withTimezone: true }),
+
+  // The TOSEC identity of these bytes. Global on purpose: one match serves
+  // every tenant holding this sha256.
+  tosecEntryId: text('tosec_entry_id'),
+  // 'matched' | 'none' | 'ambiguous'. NOT inferable from tosecEntryId alone:
+  // "considered and found absent" and "not yet considered" are different
+  // facts, and telling them apart is what makes the miss rate measurable.
+  matchState: text('match_state'),
+  matchCheckedAt: timestamp('match_checked_at', { withTimezone: true }),
+}, (t) => [
+  index('blobs_hashed_at_idx').on(t.hashedAt),
+  index('blobs_match_checked_idx').on(t.matchCheckedAt),
+]);
 
 /** Proves a tenant uploaded these exact bytes. Gates every presigned GET. */
 export const entitlements = pgTable('entitlements', {

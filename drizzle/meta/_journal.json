@@ -50,6 +50,13 @@
       "when": 1788048938478,
       "tag": "0006_abnormal_supreme_intelligence",
       "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1788177240965,
+      "tag": "0007_deep_elektra",
+      "breakpoints": true
     }
   ]
 }
