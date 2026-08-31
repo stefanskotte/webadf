@@ -80,9 +80,20 @@ export async function adminCounts(): Promise<AdminCounts> {
  * memberships out into two rows. That is a known, accepted limitation for
  * this task rather than one hidden behind a DISTINCT or a LATERAL join.
  *
- * Ordered by created_at DESC so a newly created account is on page one.
+ * Ordered by created_at DESC so a newly created account is on page one,
+ * with user.id as a tiebreaker. The tiebreaker is NOT cosmetic: created_at
+ * is not unique in the live database (measured 2026-08-31 -- five groups of
+ * users share a timestamp, one of them three ways, because the e2e suite
+ * signs accounts up in bursts). ORDER BY on a non-unique key with
+ * LIMIT/OFFSET is an unstable sort: Postgres may order tied rows differently
+ * between the query for page N and the query for page N+1, which silently
+ * shows one user twice and skips another entirely. Since this list is how an
+ * operator finds a user in order to delete them, a silently skipped row is
+ * the bad direction to fail in. (created_at, id) is unique because id is the
+ * primary key, so the order is now total.
+ *
  * Pagination (limit/offset) is required, not optional: production holds
- * 2,862 users.
+ * 2,863 users.
  */
 export async function adminListUsers(opts: { limit: number; offset: number }): Promise<AdminUserRow[]> {
   return getDb()
@@ -100,7 +111,7 @@ export async function adminListUsers(opts: { limit: number; offset: number }): P
     .from(user)
     .leftJoin(member, eq(member.userId, user.id))
     .leftJoin(organization, eq(organization.id, member.organizationId))
-    .orderBy(desc(user.createdAt))
+    .orderBy(desc(user.createdAt), desc(user.id))
     .limit(opts.limit)
     .offset(opts.offset);
 }
