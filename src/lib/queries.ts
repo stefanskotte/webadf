@@ -4,16 +4,25 @@ import { getDb } from '@/db';
 import { games, disks, blobs } from '@/db/schema/catalog';
 import { devices } from '@/db/schema/devices';
 import { openretroEntries, openretroImages } from '@/db/schema/openretro';
+import { pickCover, type CoverCandidate } from '@/lib/cover-pick';
 import { orgFilter } from '@/db/scope';
 
 export interface GameListItem {
   id: string; title: string; year: number | null; publisher: string | null;
   diskCount: number; coverAssetId: string | null;
+  /**
+   * Our own image route, or null when nothing has been enriched for this
+   * game -- which is the MAJORITY case (OpenRetro recognises 4 of 61 real
+   * disks), so the grid's gradient stays the normal appearance, not an
+   * error state.
+   */
+  coverUrl: string | null;
   sizeBytes: number; sha256Prefix: string | null;
 }
 
 export async function listGames(orgId: string, opts: { limit?: number } = {}): Promise<GameListItem[]> {
-  return getDb()
+  const db = getDb();
+  const rows = await db
     .select({
       id: games.id, title: games.title, year: games.year, publisher: games.publisher,
       coverAssetId: games.coverAssetId,
@@ -33,6 +42,56 @@ export async function listGames(orgId: string, opts: { limit?: number } = {}): P
     .groupBy(games.id)
     .orderBy(desc(games.createdAt))     // recently added first (spec §10, D9)
     .limit(opts.limit ?? 200);
+
+  return withCovers(orgId, rows);
+}
+
+/**
+ * Attach each game's cover image, as a SECOND query rather than more joins on
+ * the aggregate above.
+ *
+ * That aggregate already groups by games.id to count disks and sum sizes.
+ * Reaching the images from there means two further joins (blobs, then
+ * openretro_images) inside the same GROUP BY, and since a game can have
+ * several disks and each entry several images, the fan-out would multiply the
+ * very rows count() and sum() are computing -- silently inflating every disk
+ * count and every size on the page. Aggregating over a fan-out is a classic
+ * way to get quietly wrong numbers, and the page's subtitle is built from
+ * exactly those sums.
+ *
+ * One extra round trip over at most `limit` games is the cheaper mistake.
+ */
+async function withCovers<T extends { id: string }>(
+  orgId: string, rows: T[],
+): Promise<Array<T & { coverUrl: string | null }>> {
+  const ids = rows.map((r) => r.id);
+  if (ids.length === 0) return [];
+
+  const found = await getDb()
+    .select({
+      gameId: disks.gameId,
+      sha1: openretroImages.sha1,
+      kind: openretroImages.kind,
+      ordinal: openretroImages.ordinal,
+    })
+    .from(disks)
+    .innerJoin(blobs, eq(blobs.sha256, disks.sha256))
+    // blobs and openretro_images are GLOBAL tables, so the org scope has to
+    // come from the disks side -- the same reasoning as the leftJoin above.
+    .innerJoin(openretroImages, eq(openretroImages.entryUuid, blobs.openretroEntryId))
+    .where(and(inArray(disks.gameId, ids), eq(disks.orgId, orgId)));
+
+  const byGame = new Map<string, CoverCandidate[]>();
+  for (const f of found) {
+    const list = byGame.get(f.gameId) ?? [];
+    list.push({ sha1: f.sha1, kind: f.kind, ordinal: f.ordinal });
+    byGame.set(f.gameId, list);
+  }
+
+  return rows.map((r) => {
+    const chosen = pickCover(byGame.get(r.id) ?? []);
+    return { ...r, coverUrl: chosen ? `/api/images/${chosen.sha1}` : null };
+  });
 }
 
 export interface DeviceListItem {
