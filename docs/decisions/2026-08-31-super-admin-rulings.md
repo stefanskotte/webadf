@@ -13,15 +13,18 @@ is gitignored and does not survive a session, so everything worth keeping is her
 |---|---|
 | 1 — `requireSuperAdmin` + allowlist | ✅ complete, reviewed clean (`f692321`..`485fbb1`) |
 | 2 — unscoped admin queries | ✅ complete, **reviewed 2026-08-31** (`40890c9`, fix `62192e0`) |
-| 3 — admin shell, overview, user list | not started |
-| 4 — invites issue/revoke | not started |
+| 3 — admin shell, overview, user list | ✅ complete (`768dc61`), guard mutation-checked |
+| 4 — invites issue/revoke | ✅ complete (`5ac7575`), both mutation proofs run |
 | 5 — cascade delete | not started |
 | 6 — docs + bootstrap runbook | not started |
 
-**Task 2's review is done. Resume at Task 3.** The plan and spec are self-contained; a fresh
-session needs no other context.
+**Resume at Task 5 (cascade delete).** The plan and spec are self-contained; a fresh session
+needs no other context.
 
-Suite: **256 vitest**, `pnpm build` clean. Playwright untouched (87).
+Suite: **256 vitest**, **102 Playwright** (87 + 15 admin), `pnpm build` clean.
+
+**The admin plane is usable now, at `/admin`.** Issuing an invite from `/admin/invites` is the
+only way to open registration again — the database still holds zero live codes.
 
 ## Task 2's review (2026-08-31)
 
@@ -95,6 +98,57 @@ rather than silently collapsed by a `DISTINCT`.
 against `adminCountUsers`' total. Detectable the moment it happens, because the two counts stop
 agreeing.*
 
+## Tasks 3 and 4 — what deviated from the plan's text
+
+Four deviations, all deliberate. None changes what the plane does; each is somewhere the plan's
+own snippets would have failed if typed in literally.
+
+**1. The operator asked for a top-nav link, and it is gated server-side.** Not in the plan --
+requested mid-session, on the grounds that the operator is an ordinary user of webadf as well as
+its admin and should not have to remember the URL. `(app)/layout.tsx` decides with
+`isSuperAdminEmail()` and passes a plain boolean to `TopNav`, so **the allowlist itself never
+reaches the client** -- a client component cannot read `SUPERADMIN_EMAILS`, and shipping it to
+the browser to let one try would publish the very thing the env var exists to keep out of the
+database. `requireOrg()` now also returns the session email it already had loaded, so the shell
+pays no second `getSession()` for this.
+
+Hiding a link is presentation, not access control -- `requireSuperAdmin()` is the guard. But it
+does preserve the plane's **non-disclosure** property: a non-admin is redirected to `/library`
+rather than 404'd precisely so the response never confirms `/admin` exists, and a link rendered
+for everyone would have leaked it in the markup regardless. Tested in both directions -- a
+non-admin's page contains no `/admin` at all, and the admin reaches the overview by clicking.
+
+**2. An unauthorized API caller gets a 307, not a 4xx.** Task 4's snippet asserted
+`[302, 401, 403, 404]`. This codebase redirects instead (`requireOrg()` does it everywhere, and
+`e2e/mount-actions.spec.ts` asserts exactly that), and **Playwright follows redirects by
+default**, so the assertion would have failed against a route that was working. The tests pass
+`maxRedirects: 0` and assert the 307 plus its `Location` -- `/library` for a signed-in
+non-admin, `/sign-in` for an anonymous one. Reusing `requireSuperAdmin()` unchanged is also what
+the plan's own global constraint asks for, so no second API-shaped guard was introduced.
+
+**3. One element cannot carry two `data-testid` values.** The plan asked for both
+`admin-user-row` and `user-row-<email>` on the row. The row keeps the countable testid plus a
+`data-email` attribute; the email cell carries the per-email testid. **Task 5 should target a
+row with `[data-testid="admin-user-row"][data-email="..."]`.**
+
+**4. `/admin/invites` was kept out of Task 3's guard loop until Task 4 built the page.** An
+unrouted path 404s before any layout guard runs, so including it early would have asserted
+Next's routing rather than `requireSuperAdmin()`. It is in the loop now.
+
+## What the mutation proofs actually showed
+
+Every guard in tasks 3 and 4 was mutation-checked rather than assumed, and one check paid off:
+
+- Removing `requireSuperAdmin()` from the `(admin)` layout **fails** the non-admin redirect test
+  -- so it is not passing vacuously on a missing route, which is the trap the plan warned about.
+- Dropping the `consumed_at` condition from the revoke **fails** `a consumed code cannot be
+  revoked`.
+- Removing `requireSuperAdmin()` from both invite routes **fails** the non-admin API test -- but
+  **left the anonymous test green**, because `POST` calls `requireOrg()` too and that redirects
+  an anonymous caller by itself. The anonymous test was therefore weaker than it looked. It now
+  asserts `DELETE` as well, which has no second guard and is the one that actually proves the
+  route is protected.
+
 ## The security finding worth remembering
 
 **`toLowerCase()` is not injective, so an "exact match" allowlist was not exact.**
@@ -117,9 +171,13 @@ same bug wearing the other face.
 - ~~**Task 2 is unreviewed.**~~ **DONE 2026-08-31** — reviewed, one real defect found and
   fixed (`62192e0`). See "Task 2's review" above.
 - ~~**Task 2's known limitation, needs a ruling**~~ — **RULED, accepted.** See Ruling 4.
-- **For Task 4:** the database contains no `live` and no `expired` invite row, so
-  `adminListInvites`' `expired` state and its live-first ordering are both unexercised. Task 4's
-  e2e is the first thing that can cover them — make sure it does.
+- ~~**For Task 4:** the `expired` state and the live-first ordering are unexercised.~~
+  **Partly closed.** Task 4's e2e now issues, lists and revokes live codes, so the live path and
+  the ordering are covered. **The `expired` branch is still unexercised** — an invite's TTL is
+  seven days, so no test can reach it without either waiting or seeding a row with a past
+  `expires_at`. Worth doing when something else touches invites.
+- **Task 5 targets a user row with `[data-testid="admin-user-row"][data-email="..."]`**, not
+  `getByTestId('user-row-<email>')` on the row itself — see deviation 3 above.
 - **Bootstrap steps 1 and 2 are DONE** (2026-08-31): `sfs@enhance-it.dk` is claimed with role
   `owner`, and the three leaked codes were deleted. **Zero live invite codes remain**, so
   registration is closed until one is issued. Only step 3 — setting `SUPERADMIN_EMAILS` in
