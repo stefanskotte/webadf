@@ -31,13 +31,17 @@ and pull data from there." The order is inverted here, deliberately.
 
 TOSEC DAT entries carry **CRC32, MD5 and SHA1 of the disk image file**. A hash match is
 therefore exact and authoritative — it identifies the release, the dump flags and the disk
-number with no inference at all. Reading OFS/FFS structures inside the image, by contrast,
-yields a volume label chosen by whoever mastered the disk, which is frequently a cracker's
-handle rather than the game's name.
+number with no inference at all.
+
+Reading inside the image is far weaker, and on Amiga it is weaker than it first appears.
+**Most commercial games are NDOS**: a custom bootblock and a custom track layout, with no
+AmigaDOS filesystem on the disk at all. There is no volume name to read and no file list to
+walk. OFS/FFS parsing only works on Workbench disks, utility disks and HD-installable titles —
+and even where a volume name does exist it was chosen by whoever mastered the disk, which is
+frequently a cracker's handle rather than the game's name.
 
 So the cascade is **hash → filename → contents**, and this increment builds only the first two
-steps. Contents-reading is a genuinely useful fallback, but only for images TOSEC does not
-know, and **nobody currently knows how large that set is.**
+steps.
 
 ## 2. Scope: this increment, and the two it defers
 
@@ -47,8 +51,20 @@ matching, applying matched metadata to the catalog, and the job machinery to run
 **Deferred, on purpose:**
 
 - **Increment B — disk-content scanning.** The OFS/FFS reader already sitting in the backlog
-  (disk-change spec §5): volume name, bootblock type, file listing, for images TOSEC has never
-  heard of — cracked, trained and modified releases.
+  (disk-change spec §5): volume name, bootblock type, file listing.
+
+  **Its value is much lower than it looks, and the reason is worth recording before anyone
+  plans it.** OFS/FFS parsing requires an AmigaDOS filesystem, which **NDOS disks do not have**
+  — and NDOS is the norm for commercial games, which use custom bootblocks and custom track
+  layouts. The disks TOSEC is most likely to miss are cracked and trained *game* releases,
+  which are exactly the disks a filesystem reader cannot read. The disks it *can* read —
+  Workbench, utilities, HD-installable titles — are largely the ones TOSEC already knows.
+
+  So a filesystem browser is a **library-browsing feature, not an identification strategy.**
+  If identification of TOSEC misses is the goal, the technique is **bootblock fingerprinting**:
+  hash the first 1024 bytes and match against known bootblocks, and extract the printable
+  strings that crack intros and trainers habitually carry. That is a different piece of work
+  from an OFS/FFS reader and should be specified as one.
 - **Increment C — online enrichment.** Genre, cover art and richer publisher data from a source
   such as OpenRetro or Hall of Light, filling the `genre`, `chipset` and `coverAssetId` columns
   that exist today and are never populated.
@@ -132,17 +148,44 @@ today; the rule exists so that the first edit UI does not have to remember to ad
 
 ### 5.2 The merge invariant
 
-Game ids are derived by `stableId('game', orgId, sortTitle, year)`. Correcting a title
-therefore changes what a game's id *would* be — and the corrected identity may already exist as
-a separate row, created from a correctly-named file.
+Game ids are derived by `stableId('game', orgId, sortTitle, year)`, and disk ids by
+`stableId('disk', gameId, sha256)`. Correcting a title therefore changes what a game's id
+*would* be — and, because disk ids descend from it, what every one of its disks' ids would be.
 
-Resolution: after computing a game's corrected `(sortTitle, year)`, re-derive its id. If a
-**different** row already holds that id, move the disks across and delete the emptied row.
+**Ids are never re-derived. This rule is safety-critical, not stylistic.**
 
-This yields the property worth holding onto:
+`devices` carries `desiredDiskId`, `desiredGameId`, `mountedDiskId` and `mountedGameId` as
+plain `text` with **no foreign keys**, and `readDesired` joins on `desiredDiskId` specifically
+because `(gameId, diskNo, orgId)` is not unique. Re-keying a disk would leave a device's
+`desiredDiskId` pointing at a row that no longer exists; the join would return nothing; and
+"no disk desired" is not an error in this protocol — it *is* eject. A metadata scan would
+silently eject a disk from real hardware, which disk-change spec §1 rule 1 forbids outright.
 
-> **The sweeper converges the catalog to exactly the state a correctly-named ingest would have
-> produced.**
+So the correction is title-only, and duplicates are resolved by **content, not by key**:
+
+> Two `games` rows in the same organization with the same `(sortTitle, year)` are the same game.
+> Merge them: move the disks to the survivor, repoint any device's `desiredGameId` /
+> `mountedGameId` from the absorbed row to the survivor, and delete the emptied row.
+
+The survivor is the row whose id already equals the derived id if one exists, otherwise the
+oldest. **`disks.id` is never touched**, so `desiredDiskId` and `mountedDiskId` stay valid and
+no device's desired state moves. Only `disks.gameId` changes, and only for disks being merged.
+
+This also closes the case the key-based version missed. A later re-ingest of the same bytes
+under a *correct* filename derives a different game id, finds no row, and inserts a second
+game — the duplicate simply arrives later instead of never. Matching on `(sortTitle, year)`
+catches it on the next sweep; matching on derived ids would not have.
+
+This yields the property worth holding onto, stated carefully:
+
+> **The sweeper converges the catalog's *content* to what a correctly-named ingest would have
+> produced — one game per `(sortTitle, year)`, correctly titled. It does not converge the
+> *keys*, and deliberately does not: ids stay as first issued.**
+
+The distinction matters. An earlier draft of this design claimed the stronger property and
+proposed re-deriving ids to achieve it; that would have ejected disks from live hardware, for
+the reason given above. Content convergence is the achievable half, and it is the half anyone
+actually looks at.
 
 It is idempotent, and it is why renames are safe to apply automatically rather than queued for
 review.
@@ -227,12 +270,18 @@ sweeper run. That is a real option; it trades immediacy for a smaller design.
 - The merge invariant of §5.2 is tested end to end in Playwright: ingest two games under
   differing names that TOSEC resolves to one, run the sweeper, assert one game with both disks
   and no orphan.
+- **The eject hazard of §5.2 gets its own test, because it is the one that reaches hardware:**
+  mount a disk to a device, run a sweep that renames and merges that disk's game, then assert
+  `desiredDiskId`, `desiredSha256` and `desiredVersion` are all unchanged and `readDesired`
+  still resolves the same disk. A sweep must never be observable as an eject.
 - **Vitest never opens a database connection** in this repo. Anything touching Postgres is
   Playwright, as established since plan 1.
 
 ## 9. Out of scope
 
-Reading inside disk images (Increment B) and online enrichment (Increment C), per §2. Also
+Reading inside disk images (Increment B) and online enrichment (Increment C), per §2 — note
+especially that a filesystem reader is a browsing feature rather than an identification
+strategy, since NDOS game disks have no filesystem to read. Also
 excluded: editing metadata by hand — this design protects a `metadataSource` value that no UI
 can yet produce; cover art of any kind; and re-deriving `isBoot`, which continues to come from
 `groupDisks` and remains subject to the recorded caveat that a set with no disk 1 gets no boot
