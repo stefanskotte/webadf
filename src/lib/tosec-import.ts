@@ -25,17 +25,29 @@ export async function importDat(text: string) {
   const dat = parseDat(text);
   const db = getDb();
 
-  const rows = dat.entries.map((e) => ({
-    id: stableId('tosec', dat.setName, e.romName),
-    setName: dat.setName,
-    setVersion: dat.setVersion,
-    gameName: e.gameName,
-    romName: e.romName,
-    sizeBytes: e.sizeBytes,
-    crc32: e.crc32, md5: e.md5, sha1: e.sha1,
-    title: e.title, sortTitle: e.sortTitle, year: e.year,
-    publisher: e.publisher, diskNo: e.diskNo, diskCount: e.diskCount,
-  }));
+  // Deduped by id (setName, romName): a real TOSEC set can genuinely
+  // contain duplicate rom names -- e.g. "Commodore Amiga - Games - SPS"
+  // has 672 duplicated rom names across 6,016 entries -- and two entries
+  // in the same INSERT_CHUNK sharing an id makes Postgres raise "ON
+  // CONFLICT DO UPDATE command cannot affect row a second time", aborting
+  // the whole statement. Last-one-wins, via the Map's overwrite-on-same-key
+  // semantics: within one DAT, two entries sharing (setName, romName) are
+  // the same catalogued file, and the later definition is the one the file
+  // ends on. Mirrors ingest/complete's blobRows/entitlementRows dedupe.
+  const rows = [...new Map(dat.entries.map((e) => {
+    const id = stableId('tosec', dat.setName, e.romName);
+    return [id, {
+      id,
+      setName: dat.setName,
+      setVersion: dat.setVersion,
+      gameName: e.gameName,
+      romName: e.romName,
+      sizeBytes: e.sizeBytes,
+      crc32: e.crc32, md5: e.md5, sha1: e.sha1,
+      title: e.title, sortTitle: e.sortTitle, year: e.year,
+      publisher: e.publisher, diskNo: e.diskNo, diskCount: e.diskCount,
+    }];
+  })).values()];
 
   for (const part of chunk(rows, INSERT_CHUNK)) {
     await db.insert(tosecEntries).values(part).onConflictDoUpdate({
