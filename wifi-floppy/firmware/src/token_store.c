@@ -131,9 +131,13 @@ void token_store_erase(void) {
     // Review round 1, Minor M-2: token_store_save() has always refused
     // while a disk is mounted; erase() writes the same flash sector (an
     // erase is itself a flash write, not merely "forgetting" something in
-    // RAM) and had no such guard. Unreachable today (main.c never calls
-    // this), but the whole point of the guard is to survive a future
-    // caller that doesn't know that -- see disk_is_mounted()'s comment.
+    // RAM) and had no such guard. This used to be unreachable (nothing
+    // called it) -- it no longer is: main.c's DC_HALTED recovery path
+    // (task 7) calls this directly, and specifically ejects the mounted
+    // disk first (psram_publish_slot(SLOT_NONE)) precisely because this
+    // guard would otherwise make that call a silent no-op. The guard
+    // itself stays: it is still what protects any OTHER caller that
+    // doesn't know to eject first -- see disk_is_mounted()'s comment.
     if (disk_is_mounted()) return;
     flash_safe_execute(do_erase, NULL, 1000);
 }

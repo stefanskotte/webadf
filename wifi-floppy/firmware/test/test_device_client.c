@@ -115,6 +115,30 @@ static void test_poll_404_keeps_the_disk_mounted(void) {
           "a deleted device row is an absence of signal, never an eject");
 }
 
+// Review round 3, NEW Important: a bare 404 status is not proof the device
+// row is gone -- only the server's own explicit
+// {"error":"device_not_found"} body (src/app/api/device/poll/route.ts)
+// means that. Before task 7's DC_HALTED fix, treating every poll 404 as
+// device_not_found was harmless-ish (the token survived DC_HALTED, and
+// boards resumed on their own once a transient infra fault -- a bad
+// deploy, a renamed route, a proxy misroute -- cleared). Now that
+// main.c's DC_HALTED handling erases the token, misreading an ordinary
+// infrastructure 404 as "device deleted" would erase every deployed
+// board's token from one bad deploy, turning a transient server-side
+// mistake into a fleet-wide outage that needs a human to re-pair each
+// board. Uses push_status_json (not fake_push_response) so Content-Length
+// is computed, not typed.
+static void test_poll_404_without_device_not_found_marker_is_retryable(void) {
+    boot();
+    c.mounted_version = 5; strcpy(c.mounted_sha256, "deadbeef");
+    push_status_json("HTTP/1.1 404 Not Found", "{\"error\":\"route_not_found\"}");
+    dc_state_t s = dc_step(&c);
+    CHECK(s != DC_HALTED,
+          "a 404 that doesn't name device_not_found must stay retryable, not halt");
+    CHECK(strcmp(c.mounted_sha256, "deadbeef") == 0,
+          "still never an eject, regardless of how the 404 is classified");
+}
+
 static void test_401_halts(void) {
     boot();
     fake_push_response("HTTP/1.1 401 Unauthorized\r\nContent-Length: 24\r\n\r\n"
@@ -608,6 +632,7 @@ int main(void) {
     RUN(test_since_does_not_advance_on_a_failed_fetch);
     RUN(test_current_disk_survives_a_failed_replacement_fetch);
     RUN(test_poll_404_keeps_the_disk_mounted);
+    RUN(test_poll_404_without_device_not_found_marker_is_retryable);
     RUN(test_401_halts);
     RUN(test_204_repolls_with_same_since);
     RUN(test_image_422_does_not_retry_the_digest_but_keeps_polling);

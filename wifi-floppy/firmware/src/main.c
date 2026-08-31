@@ -201,26 +201,31 @@ static void mac_address_string(char *out, size_t out_len) {
 //     entirely provisioning_t/device_config_t locals in core1_main itself;
 //     see its definition.)
 //   * IRQ: the first pass here started counting from
-//     altcp_mbedtls_lower_recv, which undercounted by 448 B -- the same
-//     mistake plan 4a's original 2 KB estimate made, missing everything
-//     ABOVE the point picked as the walk's root. The actual root is the
-//     vector: low_priority_worker_irq -> async_context_base_execute_once
-//     -> cyw43_poll_worker -> cyw43_poll_func -> cyw43_ll_ioctl ->
+//     altcp_mbedtls_lower_recv (2576 B down through the deepest branch of
+//     the TLS 1.3 client handshake state machine --
+//     mbedtls_ssl_tls13_compute_handshake_transform -> ..._evolve_secret
+//     -> ..._hkdf_expand_label -> PSA's HMAC/SHA-256 path, found by
+//     exhaustively comparing every branch of mbedtls_ssl_tls13_handshake_
+//     client_step's dispatch, not just the one named here; the
+//     next-largest, ...compute_application_transform, is close behind).
+//     That undercounted the true chain by 448 B -- the same mistake plan
+//     4a's original 2 KB estimate made, missing everything ABOVE the
+//     point picked as the walk's root. The actual root is the vector:
+//     low_priority_worker_irq -> async_context_base_execute_once ->
+//     cyw43_poll_worker -> cyw43_poll_func -> cyw43_ll_ioctl ->
 //     cyw43_do_ioctl -> cyw43_cb_process_ethernet -> ethernet_input ->
-//     ip4_input -> tcp_input (+312 B of dispatch this core also pays for
-//     every inbound packet) before ever reaching altcp_mbedtls_lower_recv
-//     -> ... -> the deepest branch of the TLS 1.3 client handshake state
-//     machine (mbedtls_ssl_tls13_compute_handshake_transform ->
-//     ..._evolve_secret -> ..._hkdf_expand_label -> PSA's HMAC/SHA-256
-//     path -- found by exhaustively comparing every branch of
-//     mbedtls_ssl_tls13_handshake_client_step's dispatch, not just the one
-//     named here; the next-largest, ...compute_application_transform, is
-//     close behind). On TOP of all of that, the hardware exception entry
-//     itself is not the 32 B basic AAPCS frame this comment implicitly
-//     assumed -- runtime_init.c enables the FPU (CPACR CP10/11), and
-//     alarm_pool_irq_handler/mbedtls_sha256 both use `d`-registers
-//     (vpush/vldr), so FPCA is set and every exception on this core stacks
-//     the extended ~104 B frame, not the basic one. IRQ chain total: 3024 B.
+//     ip4_input -> tcp_input, +312 B of dispatch this core also pays for
+//     every inbound packet before ever reaching altcp_mbedtls_lower_recv.
+//     Separately, the hardware exception entry itself is not the 32 B
+//     basic AAPCS frame this comment implicitly assumed -- runtime_init.c
+//     enables the FPU (CPACR CP10/11), and alarm_pool_irq_handler/
+//     mbedtls_sha256 both use `d`-registers (vpush/vldr), so FPCA is set
+//     and every exception on this core stacks the extended ~104 B frame,
+//     not the basic one. 2576 + 312 (dispatch) + 104 (exception frame) =
+//     2992, 32 B short of the confirmed 3024 B total -- that residual is
+//     8-byte AAPCS alignment padding accumulating across the ~10 frames
+//     in the dispatch/handshake chain above, not separately itemized;
+//     conservative direction, not chased further. IRQ chain total: 3024 B.
 //   * TLS path worst case (sum, matching plan 4a's IRQ-lands-on-
 //     whatever-the-foreground-is-doing reasoning): 2536 + 3024 = 5560 B.
 //   * Portal path, same accounting (core1_main + portal_run's own frame

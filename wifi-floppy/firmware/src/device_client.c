@@ -717,11 +717,43 @@ dc_state_t dc_step(device_client_t *c) {
         c->state = DC_HALTED;
         return c->state;
 
-    case 404:
-        // The device row is gone from the server -- an absence of signal.
-        // Keep the disk mounted (touch nothing) and stop polling.
-        c->state = DC_HALTED;
-        return c->state;
+    case 404: {
+        // Review round 3, NEW Important: a bare 404 status is NOT proof
+        // the device row is gone -- it is exactly what an
+        // infrastructure-level mistake (a bad deploy, a renamed route, a
+        // proxy misroute) looks like too, and those are indistinguishable
+        // from a deleted row at the transport level. Before this
+        // distinction existed that ambiguity was harmless: DC_HALTED left
+        // the token alone, and a board resumed on its own once the server
+        // came back healthy. It stopped being harmless the moment
+        // DC_HALTED started meaning "erase the token" (main.c's
+        // DC_HALTED handling, task 7) -- misreading a transient 404 as
+        // "device deleted" would now erase every deployed board's token
+        // from one bad deploy, turning a server-side mistake into a
+        // fleet-wide outage that needs a human to re-pair each board.
+        //
+        // Only the server's own explicit body
+        // (src/app/api/device/poll/route.ts: {"error":"device_not_found"})
+        // means the row is actually gone. `body` is already fully buffered
+        // here (the !ok/!body_complete check above already returned), so
+        // this costs nothing extra to check. `body.truncated` is excluded
+        // from trusting the parse for the same reason dc_register()
+        // excludes it: a body that didn't fully arrive is not a body
+        // worth reading a verdict out of, in either direction.
+        char err[32];
+        if (!body.truncated && json_str(body.buf, "error", err, sizeof err) &&
+            strcmp(err, "device_not_found") == 0) {
+            // The device row is gone from the server -- an absence of
+            // signal. Keep the disk mounted (touch nothing) and stop
+            // polling.
+            c->state = DC_HALTED;
+            return c->state;
+        }
+        // Any other 404 body (or none) is a transient/infra fault, not a
+        // deletion -- stays exactly as retryable as any other unexpected
+        // status.
+        return dc_enter_backoff(c);
+    }
 
     case 200:
         // NOT an unconditional dc_backoff_reset() -- see Important 2. A 200
