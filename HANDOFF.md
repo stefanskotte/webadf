@@ -214,6 +214,28 @@ carried forward verbatim from plan 4b's ledger:
 - Whether the iOS and Android captive-portal probe URLs actually trigger the sign-in sheet
   on real devices.
 
+### 3b. Super-admin plane — IN FLIGHT, paused mid-plan
+
+**Branch `feat/super-admin`, 2 of 6 tasks done. Task 2 is committed but NOT reviewed — run its
+task review first.** Full state, all rulings, and the open items are in
+`docs/decisions/2026-08-31-super-admin-rulings.md`; the spec and plan are self-contained.
+
+An operator-only plane: list users, delete one with a real cascade, issue and revoke invite
+codes. Identity is an env-var email allowlist (`SUPERADMIN_EMAILS`), deliberately outside the
+database so a database compromise cannot grant it.
+
+**Before it can be used, in this order** — the ordering is security-relevant:
+
+1. The operator signs up and claims `sfs@enhance-it.dk`. **There are currently zero non-test
+   accounts**, so that address is unclaimed and an allowlist deployed first would make it a
+   prize. `emailVerified` defaults to false and nothing enforces it.
+2. Revoke the invite codes that leaked into a session transcript: `M3W4V3BA`, `K69GXH72`,
+   `HXGMH4ZK`, `56DTUDMA`.
+3. `vercel env add SUPERADMIN_EMAILS production` → `sfs@enhance-it.dk`, then redeploy.
+
+`.env.local` needs `SUPERADMIN_EMAILS=admin@example.test` for local dev and e2e — a *different*
+value from production, deliberately. An unset variable denies everyone rather than allowing them.
+
 ### 4. Backlog, not blocking anything
 
 - **Write-back and layered disks** (disk-change spec §5). Deliberately not designed yet;
@@ -225,6 +247,10 @@ carried forward verbatim from plan 4b's ledger:
 - **Moving ADF→MFM encoding onto the Pico** (spec §13) if server-side encoding
   (9.6 ms/disk, ~2 MB over TLS) ever turns out not to hold up. `adfmfm` is written
   dependency-free specifically so this would be a transliteration, not a rewrite.
+- **Blob garbage collection** — reclaiming blobs whose last referencing disk is gone. Needs
+  cross-org reference counting and deletion from Vercel Blob as well as Postgres. Deferred at
+  the operator's direction during the super-admin design; the admin cascade delete deliberately
+  never touches `blobs`, because they are shared across organizations.
 - **Proof of possession at ingest** (encoder spec / disk-change spec §6) — required
   *before* opening registration beyond invite-only, not before shipping the device image
   endpoint as it stands today.
