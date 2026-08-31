@@ -70,16 +70,68 @@ licensing and credit Keir Fraser.
   `gcc-arm-embedded` cask, or the equivalent tarball from
   developer.arm.com/downloads/-/arm-gnu-toolchain-downloads) and make sure
   its `bin/` is on `PATH` ahead of any homebrew `arm-none-eabi-*` shims.
+- **`PORTAL_AP_PASSWORD` must be set in the environment (plan 4b).** It becomes the WPA2
+  PSK for the provisioning access point (see "Provisioning a board" below); CMake's
+  configure step fails on purpose if it is unset or empty, because an invalid WPA2 PSK
+  cannot be reported back to a console-less board at runtime. The full build command:
+
+  ```bash
+  export PATH="/Applications/ArmGNUToolchain/15.3.rel1/arm-none-eabi/bin:$PATH"
+  export PORTAL_AP_PASSWORD=<your AP password>
+  pnpm firmware:build
+  ```
+
+## Provisioning a board (plan 4b)
+
+**This procedure has never been run against real hardware — see "Honest caveats" below
+before trusting any step of it to behave exactly as described.** It is the intended
+human workflow, derived from the host-tested logic, not a verified one.
+
+A board with no WiFi credentials stored in flash — or one that has just failed to associate
+three times in a row — raises its own WPA2 access point named `wifi-floppy-XXXX`, where
+`XXXX` is the last two octets of the board's MAC address (so several boards on a bench stay
+distinguishable). To provision it:
+
+1. **Mint a pairing code in webadf.** From the web app, generate a device pairing code for
+   the board (single-use, 10-minute TTL — if it expires before step 4, generate a new one).
+2. **Join `wifi-floppy-XXXX`** from your phone or laptop, using the WPA2 password baked into
+   that board's firmware image at build time (`PORTAL_AP_PASSWORD`, above — whoever built
+   the firmware knows it).
+3. **Open any page** in a browser on that device. The board's DNS responder answers every
+   query with its own address and the HTTP server redirects every path to `/`, so a phone's
+   captive-portal probe should bring the config form up on its own; if it does not, browse to
+   `http://192.168.4.1/` directly.
+4. **Enter three fields**: your real WiFi network's SSID, its password, and the pairing code
+   from step 1. Submitting does not commit anything yet — the board drops its own AP,
+   attempts to associate with what you typed, and only writes the credentials to flash on
+   success. Your phone will briefly lose the `wifi-floppy-XXXX` network while this happens.
+5. **On success**, the board joins your real network and proceeds to register with webadf
+   using the pairing code; the AP does not come back. **On failure** (wrong password, or the
+   network was not found — the form distinguishes the two), the AP returns with the reason
+   and the form is ready to try again; re-enter all three fields, since none are echoed back.
+
+**Recovery without reflashing.** If webadf later reports the board's token as revoked or the
+device row is deleted, the board erases its stored token and returns to step 1 automatically
+— generate a fresh pairing code and repeat steps 2–5. The same is true of a rejected
+(expired or already-used) pairing code: the board returns to the portal rather than retrying
+the dead code forever.
 
 ## Honest caveats
 - **The firmware now compiles** (`pnpm firmware:build` from the repo root produces
   `firmware/build/wifi_floppy.uf2`) and has a green host test suite
-  (`pnpm firmware:test`, 282 checks across 8 binaries, plain C under clang). **It has
-  not run on real hardware.** No TLS handshake, no SNTP sync, no floppy-bus timing has
-  ever been exercised outside the host suite and the ARM cross-build — boards were still
-  in transit throughout that work. The PIO cycle counts and DMA scheme remain
-  desk-checked only. Treat anything not covered by a host test as unverified until it has
-  run on a board.
+  (`pnpm firmware:test`, 442 checks across 15 binaries, plain C under clang). **It has
+  not run on real hardware — this includes the provisioning portal above.** No TLS
+  handshake, no SNTP sync, no floppy-bus timing, and none of the portal's AP-mode
+  lwIP/cyw43 glue has ever been exercised outside the host suite and the ARM cross-build —
+  boards are still in transit. The PIO cycle counts and DMA scheme remain desk-checked
+  only. Treat anything not covered by a host test as unverified until it has run on a
+  board. Specifically unverified about the portal: whether the board's radio actually
+  transitions cleanly from AP mode back to station mode after teardown, whether the
+  confirmation page reaches the phone before the AP drops, DHCP lease renewal after
+  teardown, real phone behaviour against the 3-slot lease pool, and whether the iOS/Android
+  captive-portal probe URLs actually trigger the sign-in sheet on real devices. See
+  `docs/decisions/2026-08-31-device-portal-rulings.md`'s hardware-only list for the full
+  set, which plan 5 owns closing.
 - Write support is a skeleton: flux capture PIO exists, MFM decode and
   POST are TODO. WPROT is asserted by default until that lands.
 - The board passes my generator's DRC-lite, but run real KiCad DRC and

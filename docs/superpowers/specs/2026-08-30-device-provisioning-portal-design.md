@@ -8,8 +8,11 @@ would replace *only where those values come from*. This is that plan.
 **Scope:** provisioning only. How a board learns its WiFi credentials and its pairing code
 without a rebuild. Nothing about the device protocol, TLS, PSRAM or the floppy bus changes.
 
-**Status: not started.** Boards are still in transit, so — exactly as in 4a — nothing here
-will run on hardware, and "done" means a green cross-build plus a green host suite.
+**Status: delivered.** Everything in this document shipped on branch `feat/device-portal`
+(442 host checks across 15 binaries, 242 vitest, clean ARM cross-build) — see "What plan 4b
+delivered" at the end of this document for the exact shape of what shipped and what is left
+for plan 5. Boards are still in transit, so — exactly as in 4a — **nothing here has run on
+hardware**; "done" means a green cross-build plus a green host suite, not a verified device.
 
 ---
 
@@ -230,3 +233,66 @@ Also excluded: multiple stored networks; mDNS or a friendly hostname; retrofitti
 `token_store` with a CRC; and all hardware validation, which is plan 5's — including whether
 the iOS and Android captive-portal probes actually trigger the sign-in sheet, and whether
 WPA2 AP mode and STA mode transition cleanly on this radio.
+
+---
+
+## What plan 4b delivered
+
+Shipped on branch `feat/device-portal`, all 8 tasks, tree at commit `a1fcae4`: 442 host
+checks across 15 binaries, 242 vitest, clean ARM cross-build. Every decision in §3 above
+was implemented as specified; nothing in this section contradicts §1–9, it records the
+as-built state and the handful of things that changed shape during implementation.
+
+**Shipped exactly as designed:**
+
+- No stored credentials, or three consecutive failed associations, raises the AP
+  (`wifi-floppy-XXXX`, last two MAC octets). Opening any page on it serves the config form.
+- Verify-then-commit: the AP drops, the board associates with the submitted credentials,
+  and `config_store` is written only on success. A failed attempt returns to the form with
+  wrong-password and network-not-found distinguished.
+- `config_store` is a dedicated flash sector below `token_store`'s, CRC-protected over the
+  whole record (closing the class of torn-write gap `token_store` still has, per §7).
+  Erasing it also erases the device token, because re-pairing always issues a new one.
+- A rejected pairing code (`400 invalid_or_used_code`) returns to the portal so a fresh
+  code can be entered, per D-4b-4.
+- `WIFI_SSID`, `WIFI_PASS` and `WEBADF_PAIRING_CODE` are gone from `CMakeLists.txt`.
+  `WEBADF_HOST` stays compile-time, per §9.
+
+**One behaviour added beyond the original design, and why:** a revoked token or a deleted
+device row — `401`, or a `404` whose body names `device_not_found` — now erases the stored
+token and returns the board to the portal, so a device removed in the web UI is recoverable
+by re-pairing rather than by reflashing. This was not in §5's state diagram; it surfaced
+during Task 7 as a product-level bug (a board that hits `DC_HALTED` never recovers, even
+across a power cycle, because both config and token survive in flash). The ruling that
+added it, and a real regression it introduced and then had to be narrowed to fix, are
+recorded in full in `docs/decisions/2026-08-31-device-portal-rulings.md` under "Ruling 8 and
+its correction" — read that section before touching the `DC_HALTED` path or the poll 404
+handling again.
+
+**A build prerequisite this design did not anticipate:** `PORTAL_AP_PASSWORD` must now be
+set in the environment or the CMake configure step fails by design (an empty WPA2 PSK
+cannot be reported back to a console-less board at runtime, so it is refused at build time
+instead). See `HANDOFF.md` and `wifi-floppy/README.md` for the exact build incantation.
+
+**What plan 5 still owes — nothing above has ever run on hardware.** Boards are in transit;
+the entire lwIP/cyw43 glue (`portal_net.c`) has zero device-side tests and has never been
+linked into a running board. Specifically unverified:
+
+- Whether `netif_default` is really STA (not NULL) after AP teardown, and TLS to webadf
+  succeeds afterward — the whole provisioning flow's point.
+- Whether the confirmation page physically leaves the radio before the AP tears down.
+- STA DHCP lease acquisition/renewal after the AP netif is removed.
+- Real phone captive-portal behaviour against the 3-slot DHCP pool, including MAC
+  randomization retry storms and the ~30 s idle reclaim.
+- Whether the iOS (`captive.apple.com/hotspot-detect.html`) and Android (`/generate_204`)
+  probe URLs actually trigger the sign-in sheet on real devices.
+- Whether `cyw43_wifi_ap_set_up(false)` on a never-raised AP is benign on silicon.
+
+**Six minor findings were deferred rather than fixed**, none blocking merge; carried
+verbatim with their file/task context in `docs/decisions/2026-08-31-device-portal-rulings.md`.
+
+**Accuracy note:** the portal's *pure* logic — `config_store`, `provisioning`,
+`dhcp_handle`, `dns_handle`, `portal_request` — is host-tested exhaustively (including
+fuzzing in several tasks' reviews). The lwIP/cyw43 binding in `portal_net.c` that actually
+runs the AP has never executed, on host or hardware; it is reviewed C, not tested C. Do not
+describe the portal as tested end to end.

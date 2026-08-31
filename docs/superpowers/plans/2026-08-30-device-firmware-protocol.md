@@ -105,6 +105,13 @@ In `package.json` scripts:
 WIFI_SSID=x WIFI_PASS=y pnpm firmware:build
 ```
 
+**SUPERSEDED (plan 4b, 2026-08-31):** `WIFI_SSID` and `WIFI_PASS` do nothing any more —
+plan 4b deleted both defines from `CMakeLists.txt` in favor of the AP-mode captive portal,
+and the build now instead *requires* `PORTAL_AP_PASSWORD` set in the environment or the
+configure step fails by design. The command above is kept as a historical record of what
+plan 4a's build looked like; do not run it as written. See `HANDOFF.md`'s "Plan 4b" section
+for the current build incantation.
+
 Expect errors — this code has never been through a compiler. Fix **only** genuine compile/link errors: missing headers, renamed SDK functions, signature drift (`add_alarm_in_us` callback types, `pio_add_program` on RP2350, `hardware_psram` naming). Do not refactor, do not fix logic, do not touch the two known defects — Task 3 owns those, and mixing them makes the mutation proof there meaningless.
 
 Note that `floppy.pio` is referenced by `CMakeLists.txt` but was not in the file listing; if it is missing, **STOP and report** — the PIO program is the floppy bus and cannot be reconstructed from this plan.

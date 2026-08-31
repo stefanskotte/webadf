@@ -1,8 +1,8 @@
 # webadf — session handoff
 
 **Written 2026-08-29, updated 2026-08-30 after plan 3b, updated again 2026-08-30 after
-plan 4a.** Everything a fresh session needs to pick this up cold. Read this first, then
-the spec, then the plan you are resuming.
+plan 4a, updated again 2026-08-31 after plan 4b.** Everything a fresh session needs to pick
+this up cold. Read this first, then the spec, then the plan you are resuming.
 
 ---
 
@@ -19,7 +19,7 @@ SHA-256; you browse them and press mount; a custom board emulates the floppy dri
 ## Where things stand
 
 **Written 2026-08-29, rewritten 2026-08-30 after plan 3b, rewritten again 2026-08-30
-after plan 4a.**
+after plan 4a, rewritten again 2026-08-31 after plan 4b.**
 
 | | Status |
 |---|---|
@@ -28,21 +28,23 @@ after plan 4a.**
 | **MFM encoder (`adfmfm`)** | ✅ **done** — byte-identical to Greaseweazle across all 61 archive disks (9,760 tracks) |
 | **Plan 3a — device protocol** | ✅ done, merged to `master`, pushed |
 | **Plan 3b — device UI** | ✅ **done, all 7 tasks, merged to `master`** |
-| **Plan 4a — firmware protocol plane** | ✅ **done.** Firmware now **compiles** and has a green host suite. Branch `feat/device-firmware`, not yet merged. |
-| **Plan 4b — captive portal** | ❌ not started. Compile-time WiFi/host/pairing-code defines still stand in for it |
-| **Plan 5 — hardware bring-up** | ❌ not started. **Nothing has run on real hardware** — boards were in transit throughout 4a |
+| **Plan 4a — firmware protocol plane** | ✅ **done.** Firmware compiles and has a green host suite. |
+| **Plan 4b — captive portal** | ✅ **done, all 8 tasks.** Compile-time WiFi/pairing-code defines are gone, replaced by an AP-mode portal. Branch `feat/device-portal`, not yet merged. |
+| **Plan 5 — hardware bring-up** | ❌ not started, the only piece left. **Nothing has run on real hardware** — boards are still in transit and nothing in 4a or 4b has been exercised on one |
 | **Hardware** | boards ordered from JLCPCB |
 
-**Current branch:** `master` for the web app; firmware work is on `feat/device-firmware`
-(plan 4a, not yet merged). **Suite:** 241 vitest (+1 from the mirror update in plan 4a,
-so 242 on `feat/device-firmware`), 87 Playwright, `pnpm build` clean. Firmware:
-`pnpm firmware:test` green (282 checks, 8 binaries), `pnpm firmware:build` produces a
-`.uf2`.
+**Current branch:** `master` for the web app; firmware work is on `feat/device-portal`
+(plan 4b, forked from plan 4a's `feat/device-firmware`, not yet merged). **Suite:** 241
+vitest (+1 from the mirror update in plan 4a, so 242 from `feat/device-firmware` onward),
+87 Playwright, `pnpm build` clean. Firmware: `pnpm firmware:test` green (442 checks, 15
+binaries), `pnpm firmware:build` produces a `.uf2` — **and now requires
+`PORTAL_AP_PASSWORD` set in the environment, or the configure step fails by design**; see
+"Plan 4b" below for the full command.
 
-**The whole web side is built, and the firmware now compiles and passes its own host
-suite for the first time.** What is left is: plan 4b's captive portal, and plan 5's
-hardware bring-up — nothing in plan 4a has been exercised on a real board. See "What to
-do next" below.
+**The whole web side is built, the firmware compiles and passes its own host suite, and
+provisioning is no longer compile-time.** The only thing left before hardware bring-up is
+plan 5 itself — nothing in plan 4a or plan 4b has been exercised on a real board. See "What
+to do next" below.
 
 ### Before you touch the device UI
 
@@ -130,20 +132,63 @@ Older guidance (in this file and in the design spec) said never to "fix" that mi
 instruction was correct only while the firmware was actually broken, and is now inverted.
 Do not reintroduce the wrapped-`bits` behaviour into the mirror.
 
-### 2. Plan 4b — the captive portal, and plan 5 — hardware bring-up
+### 2. Plan 4b — done. Read this before touching provisioning.
 
-**Plan 4b:** replace the compile-time `WIFI_SSID`/`WIFI_PASS`/`WEBADF_HOST`/
-`WEBADF_PAIRING_CODE` defines with an AP-mode captive portal (DHCP, DNS, an HTTP config
-page, flash-backed WiFi credentials). Plan 4a's spec (§7) already scoped the split so this
-should be additive — nothing else about provisioning changes when it lands.
+Plan 4b replaced the compile-time `WIFI_SSID`/`WIFI_PASS`/`WEBADF_PAIRING_CODE` defines
+with an AP-mode captive portal. **`WEBADF_HOST` stays compile-time, deliberately** — it
+changes only if the deployment itself moves, and making it portal-editable would let anyone
+who reaches the AP point a board at a server of their own choosing, which is a real attack
+surface nobody needs.
 
-**Plan 5:** hardware bring-up, once boards arrive. **Nothing in plan 4a has run on real
-hardware** — no TLS handshake, no SNTP sync, no floppy-bus timing has ever been exercised
-outside the host suite and the cross-build. Treat every claim about TLS, timing, or the
-floppy bus as desk-checked and host-tested only, not hardware-verified, until plan 5 says
-otherwise.
+**How it works:** a board with no stored credentials, or one that fails to associate three
+times in a row, raises a WPA2 access point named `wifi-floppy-XXXX` (the board's last two
+MAC octets). Joining it and opening any page serves a config form asking for SSID, password
+and a webadf pairing code. Credentials are verified before anything is written to flash: the
+AP drops, the board attempts association with what was typed, and only success triggers a
+flash write — on failure the AP comes back with the reason, distinguishing a wrong password
+from a network that was not found. Storage is `config_store`, a dedicated CRC-protected
+flash sector below `token_store`'s; erasing it also erases the device token, since re-pairing
+always issues a new one. A rejected pairing code, a revoked token, or a device deleted in the
+web UI all now return the board to the portal rather than requiring a reflash — see
+`docs/decisions/2026-08-31-device-portal-rulings.md`'s "Ruling 8" section for how that last
+behaviour was added, and for a real fleet-wide regression it introduced and was then
+corrected to avoid.
 
-### 3. Backlog, not blocking anything
+**New build prerequisite:** `PORTAL_AP_PASSWORD` (the provisioning AP's WPA2 PSK) must be
+set in the environment, or CMake's configure step fails by design — an empty PSK cannot be
+reported back to a console-less board at runtime, so it is refused at build time instead.
+The full build incantation is now:
+
+```bash
+export PATH="/Applications/ArmGNUToolchain/15.3.rel1/arm-none-eabi/bin:$PATH"
+export PORTAL_AP_PASSWORD=<your AP password>
+pnpm firmware:build
+```
+
+Full detail — what shipped, what changed shape mid-plan, and what plan 5 still owes — is in
+`docs/superpowers/specs/2026-08-30-device-provisioning-portal-design.md`'s "What plan 4b
+delivered" section and in `docs/decisions/2026-08-31-device-portal-rulings.md`.
+
+### 3. Plan 5 — hardware bring-up, the only piece left
+
+Once boards arrive. **Nothing in plan 4a or plan 4b has run on real hardware** — no TLS
+handshake, no SNTP sync, no floppy-bus timing, and none of the AP-mode portal's lwIP/cyw43
+glue has ever been exercised outside the host suite and the cross-build. Treat every claim
+about TLS, timing, the floppy bus, or the portal's radio behaviour as desk-checked and
+host-tested only, not hardware-verified, until plan 5 says otherwise. Specifically open,
+carried forward verbatim from plan 4b's ledger:
+
+- Whether `netif_default` is really restored to STA (not left NULL) after the provisioning
+  AP tears down, and TLS to webadf actually succeeds afterward — the entire point of a
+  Critical fix in plan 4b that has never been run.
+- Whether the confirmation page physically leaves the radio before AP teardown.
+- STA DHCP lease acquisition/renewal after the AP netif has been removed.
+- Real phone captive-portal behaviour against the portal's 3-slot DHCP pool, including
+  MAC-randomization retry storms and the ~30 s idle reclaim.
+- Whether the iOS and Android captive-portal probe URLs actually trigger the sign-in sheet
+  on real devices.
+
+### 4. Backlog, not blocking anything
 
 - **Write-back and layered disks** (disk-change spec §5). Deliberately not designed yet;
   the first increment should record which tracks changed, not just a flattened result, so
@@ -377,6 +422,19 @@ pico-sdk version pin, the toolchain PATH requirement, and several corrections to
 text itself — are recorded in `docs/decisions/2026-08-30-device-firmware-rulings.md`,
 following the same pattern as the existing rulings files below.
 
+## Before you touch provisioning again
+
+The rulings taken during plan 4b — all 8, plus 6 deferred minor findings by file/task and
+the hardware-only list carried to plan 5 — are in
+`docs/decisions/2026-08-31-device-portal-rulings.md`. **Read its "Ruling 8 and its
+correction" section before touching `DC_HALTED` or the poll 404 handling in `main.c` again**:
+a fix for a real, well-reasoned bug (a revoked-token board could never recover without a
+reflash) shipped wider than its own justification and, for one review round, would have
+erased every deployed board's token on the first infrastructure 404 rather than only on a
+confirmed deleted-device response. Both the original ruling and the correction are recorded
+in full, because the pattern — a sound fix landing wider than its reasoning — is worth
+recognizing the next time a "this trigger is not transient" argument gets made.
+
 ---
 
 ## Reference
@@ -401,11 +459,16 @@ following the same pattern as the existing rulings files below.
   plan 4a delivered" section for the shipped/not-shipped split
 - **Plan 4a — firmware protocol plane (done, on `feat/device-firmware`, not yet merged):**
   `docs/superpowers/plans/2026-08-30-device-firmware-protocol.md`
+- **Provisioning portal spec — plan 4b (done):**
+  `docs/superpowers/specs/2026-08-30-device-provisioning-portal-design.md` — see its "What
+  plan 4b delivered" section for the shipped/not-shipped split
+- **Plan 4b — provisioning portal (done, on `feat/device-portal`, not yet merged):**
+  `docs/superpowers/plans/2026-08-30-device-provisioning-portal.md`
 - **Decision log:** `docs/decisions/` — rulings taken during implementation. The SDD ledgers
   under `.superpowers/` are **gitignored and do not survive a session**, so anything worth
   keeping was copied here: `2026-08-24-foundation-rulings.md`,
   `2026-08-29-device-plane-rulings.md`, `2026-08-30-device-ui-rulings.md`,
-  `2026-08-30-device-firmware-rulings.md`
+  `2026-08-30-device-firmware-rulings.md`, `2026-08-31-device-portal-rulings.md`
 - **`adfmfm` module:** `src/lib/adfmfm/README.md`
 - **Firmware contract:** `INTEGRATION.md` and `wifi-floppy/firmware/src/image_loader.c`
 - **Firmware itself:** `wifi-floppy/firmware/` — see `wifi-floppy/README.md` for build
@@ -418,9 +481,11 @@ following the same pattern as the existing rulings files below.
 `pnpm adfmfm:diff` (Greaseweazle differential gate, needs `adf-archive/` + pipx) ·
 `pnpm adfmfm:fixtures` (regenerate golden fixtures) ·
 `pnpm db:generate && pnpm db:push` · `npx webadf push <dir>` (CLI bulk import) ·
-`pnpm firmware:build` (needs pico-sdk ≥ 2.3.0 on `PICO_SDK_PATH` and the official ARM GNU
-Toolchain on `PATH`, not homebrew's `arm-none-eabi-gcc`) ·
-`pnpm firmware:test` (plain-C host suite, clang, no SDK/toolchain needed)
+`pnpm firmware:build` (needs pico-sdk ≥ 2.3.0 on `PICO_SDK_PATH`, the official ARM GNU
+Toolchain on `PATH` (not homebrew's `arm-none-eabi-gcc`), **and `PORTAL_AP_PASSWORD` set in
+the environment to a WPA2 PSK — the configure step fails by design otherwise**; see "Plan
+4b" above for the full command) ·
+`pnpm firmware:test` (plain-C host suite, clang, no SDK/toolchain/env vars needed)
 
 **Infrastructure:** Vercel project `webadf` · Neon Postgres (`auth` + `public` schemas) ·
 Vercel Blob store `webadf-disks` (**private** access) · Vercel CLI 59.10.0
