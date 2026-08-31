@@ -10,7 +10,7 @@ Plan: `docs/superpowers/plans/2026-08-30-device-provisioning-portal.md`. Spec:
 `feat/device-portal`, forked from `master` at `00c956b`. Predecessor: plan 4a, merged to
 `master` at `0df8c6e` (321 host checks, 242 vitest).
 
-Delivered: 8 tasks, commits `00c956b`..`a1fcae4`, 442 host checks across 15 binaries, 242
+Delivered: 8 tasks, commits `00c956b`..`a1fcae4`, 442 host checks across 13 binaries, 242
 vitest, clean ARM cross-build.
 
 ## Rulings

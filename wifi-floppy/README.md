@@ -119,7 +119,7 @@ the dead code forever.
 ## Honest caveats
 - **The firmware now compiles** (`pnpm firmware:build` from the repo root produces
   `firmware/build/wifi_floppy.uf2`) and has a green host test suite
-  (`pnpm firmware:test`, 442 checks across 15 binaries, plain C under clang). **It has
+  (`pnpm firmware:test`, 442 checks across 13 binaries, plain C under clang). **It has
   not run on real hardware — this includes the provisioning portal above.** No TLS
   handshake, no SNTP sync, no floppy-bus timing, and none of the portal's AP-mode
   lwIP/cyw43 glue has ever been exercised outside the host suite and the ARM cross-build —

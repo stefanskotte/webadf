@@ -36,7 +36,7 @@ after plan 4a, rewritten again 2026-08-31 after plan 4b.**
 **Current branch:** `master` for the web app; firmware work is on `feat/device-portal`
 (plan 4b, forked from plan 4a's `feat/device-firmware`, not yet merged). **Suite:** 241
 vitest (+1 from the mirror update in plan 4a, so 242 from `feat/device-firmware` onward),
-87 Playwright, `pnpm build` clean. Firmware: `pnpm firmware:test` green (442 checks, 15
+87 Playwright, `pnpm build` clean. Firmware: `pnpm firmware:test` green (442 checks, 13
 binaries), `pnpm firmware:build` produces a `.uf2` — **and now requires
 `PORTAL_AP_PASSWORD` set in the environment, or the configure step fails by design**; see
 "Plan 4b" below for the full command.

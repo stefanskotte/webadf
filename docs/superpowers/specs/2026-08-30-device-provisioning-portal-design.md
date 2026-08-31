@@ -9,7 +9,7 @@ would replace *only where those values come from*. This is that plan.
 without a rebuild. Nothing about the device protocol, TLS, PSRAM or the floppy bus changes.
 
 **Status: delivered.** Everything in this document shipped on branch `feat/device-portal`
-(442 host checks across 15 binaries, 242 vitest, clean ARM cross-build) — see "What plan 4b
+(442 host checks across 13 binaries, 242 vitest, clean ARM cross-build) — see "What plan 4b
 delivered" at the end of this document for the exact shape of what shipped and what is left
 for plan 5. Boards are still in transit, so — exactly as in 4a — **nothing here has run on
 hardware**; "done" means a green cross-build plus a green host suite, not a verified device.
@@ -239,7 +239,7 @@ WPA2 AP mode and STA mode transition cleanly on this radio.
 ## What plan 4b delivered
 
 Shipped on branch `feat/device-portal`, all 8 tasks, tree at commit `a1fcae4`: 442 host
-checks across 15 binaries, 242 vitest, clean ARM cross-build. Every decision in §3 above
+checks across 13 binaries, 242 vitest, clean ARM cross-build. Every decision in §3 above
 was implemented as specified; nothing in this section contradicts §1–9, it records the
 as-built state and the handful of things that changed shape during implementation.
 
