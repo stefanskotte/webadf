@@ -1,6 +1,7 @@
 import Link from 'next/link';
 import { adminListUsers, adminCountUsers } from '@/lib/admin-queries';
 import { PageHeader } from '@/components/shell/page-header';
+import { DeleteUserDialog } from '@/components/admin/delete-user-dialog';
 
 export const dynamic = 'force-dynamic';
 
@@ -50,6 +51,7 @@ export default async function AdminUsersPage({
                 <th className="px-4 py-3 text-right font-semibold">Games</th>
                 <th className="px-4 py-3 text-right font-semibold">Disks</th>
                 <th className="px-4 py-3 text-right font-semibold">Devices</th>
+                <th className="px-4 py-3 text-right font-semibold">Action</th>
               </tr>
             </thead>
             <tbody>
@@ -86,6 +88,16 @@ export default async function AdminUsersPage({
                   <td className="px-4 py-3 text-right tabular-nums">{r.games}</td>
                   <td className="px-4 py-3 text-right tabular-nums">{r.disks}</td>
                   <td className="px-4 py-3 text-right tabular-nums">{r.devices}</td>
+                  <td className="px-4 py-3 text-right">
+                    <DeleteUserDialog
+                      userId={r.userId}
+                      email={r.email}
+                      games={r.games}
+                      disks={r.disks}
+                      devices={r.devices}
+                      orgName={r.orgName}
+                    />
+                  </td>
                 </tr>
               ))}
             </tbody>
