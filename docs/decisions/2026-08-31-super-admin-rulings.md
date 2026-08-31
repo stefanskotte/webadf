@@ -18,12 +18,13 @@ is gitignored and does not survive a session, so everything worth keeping is her
 | 5 — cascade delete | ✅ complete (`bdc45f5`), both mutation proofs run |
 | 6 — docs + bootstrap runbook | ✅ complete |
 
-**All six tasks are done.** Suite: **256 vitest**, **107 Playwright** (87 + 20 admin),
-`pnpm build` clean. The branch is not merged to `master`.
+**All six tasks are done, merged to `master`, and live in production** (2026-08-31). Suite:
+**256 vitest**, **107 Playwright** (87 + 20 admin), `pnpm build` clean.
 
-**The only outstanding step is bootstrap step 3** — setting `SUPERADMIN_EMAILS` in Vercel
-production — and it should stay outstanding until the branch merges. `/admin` does not exist in
-production until then, which is the correct state.
+**The bootstrap is complete.** `SUPERADMIN_EMAILS` is set in Vercel production (Secret,
+Production scope only), the merge was a fast-forward, and the push deployed —
+`webadf.vercel.app` → `webadf-eo0n3qmtc`, `target: production`. The operator has confirmed
+`/admin` works for their account in production.
 
 ## Task 2's review (2026-08-31)
 

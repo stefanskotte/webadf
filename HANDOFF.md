@@ -31,12 +31,12 @@ after plan 4a, rewritten again 2026-08-31 after plan 4b.**
 | **Plan 4a — firmware protocol plane** | ✅ **done, merged to `master`, pushed.** Firmware compiles and has a green host suite. |
 | **Plan 4b — captive portal** | ✅ **done, all 8 tasks.** Compile-time WiFi/pairing-code defines are gone, replaced by an AP-mode portal. Merged to `master` and pushed. |
 | **Plan 5 — hardware bring-up** | ❌ not started, the only piece left. **Nothing has run on real hardware** — boards are still in transit and nothing in 4a or 4b has been exercised on one |
-| **Super-admin plane** | ✅ **done, all 6 tasks**, on `feat/super-admin` — not merged. `/admin`: overview, user list with cascade delete, invites |
+| **Super-admin plane** | ✅ **done, all 6 tasks, merged to `master` and live in production.** `/admin`: overview, user list with cascade delete, invites |
 | **Hardware** | boards ordered from JLCPCB |
 
-**Current branch:** `feat/super-admin` — the super-admin plane is complete and green but **not
-merged to `master`**. Everything through plan 4b is on `master` and pushed. **Suite on
-`feat/super-admin`:** 256 vitest, 107 Playwright, `pnpm build` clean. Firmware: `pnpm firmware:test` green (506 checks, 13
+**Current branch:** `master` — the super-admin plane was merged (fast-forward) and pushed on
+2026-08-31, and that push deployed to production. There is no outstanding feature branch.
+**Suite:** 256 vitest, 107 Playwright, `pnpm build` clean. Firmware: `pnpm firmware:test` green (506 checks, 13
 binaries), `pnpm firmware:build` produces a `.uf2` — **and now requires
 `PORTAL_AP_PASSWORD` set in the environment, or the configure step fails by design**; see
 "Plan 4b" below for the full command.
@@ -234,10 +234,12 @@ it. There is an **Admin** entry in the app's top nav, rendered only for an allow
    it, so an *unclaimed* allowlisted address is a prize.
 2. ~~Revoke the invite codes that leaked into a session transcript.~~ **DONE 2026-08-31** —
    `M3W4V3BA` was consumed by step 1; `56DTUDMA`, `HXGMH4ZK` and `K69GXH72` were deleted.
-3. **OUTSTANDING: `vercel env add SUPERADMIN_EMAILS production` → `sfs@enhance-it.dk`, then
-   redeploy.** Until this is done `/admin` works locally and **does not exist in production** —
-   which is the correct state until the branch is merged. An unset variable denies everyone
-   rather than allowing them, so this fails closed.
+3. ~~`vercel env add SUPERADMIN_EMAILS production` → `sfs@enhance-it.dk`, then redeploy.~~
+   **DONE 2026-08-31.** The variable is set (Secret, Production only), the branch was merged
+   fast-forward to `master`, and the push deployed to production —
+   `webadf.vercel.app` → `webadf-eo0n3qmtc`, `target: production`. **The operator has confirmed
+   `/admin` works for `sfs@enhance-it.dk` in production.** An unset variable would have denied
+   everyone rather than allowing them, so this always failed closed.
 
 `.env.local` needs `SUPERADMIN_EMAILS=admin@example.test` for local dev and e2e — a *different*
 value from production, deliberately (Ruling 1). A single shared value would either put a test
