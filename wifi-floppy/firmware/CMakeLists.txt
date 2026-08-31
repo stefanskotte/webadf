@@ -88,12 +88,14 @@ target_link_libraries(wifi_floppy
 target_compile_definitions(wifi_floppy PRIVATE PICO_USE_STACK_GUARDS=1)
 
 target_compile_definitions(wifi_floppy PRIVATE
-  WIFI_SSID=\"$ENV{WIFI_SSID}\" WIFI_PASS=\"$ENV{WIFI_PASS}\"
   WEBADF_HOST=\"webadf.vercel.app\"
-  # Compile-time provisioning (spec §7); 4b (captive portal) replaces only
-  # where these two come from, nothing about how they're used here.
-  WEBADF_PAIRING_CODE=\"$ENV{WEBADF_PAIRING_CODE}\"
-  FIRMWARE_VERSION=\"4a.0\")
+  # Task 7: WIFI_SSID, WIFI_PASS and WEBADF_PAIRING_CODE (plan 4a's
+  # compile-time credentials) are gone -- core1_main now reads all three
+  # from config_store.h (provisioning.c/portal_net.c), populated either by
+  # a prior boot's flash write or by the captive portal at runtime. Neither
+  # has a compile-time value any more, so there is nothing left for these
+  # defines to do.
+  FIRMWARE_VERSION=\"4b.0\")
 if (NOT WFMF_OMIT_AUTHMODE)
   target_compile_definitions(wifi_floppy PRIVATE
     ALTCP_MBEDTLS_AUTHMODE=MBEDTLS_SSL_VERIFY_REQUIRED)

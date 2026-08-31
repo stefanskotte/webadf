@@ -87,21 +87,39 @@ dc_state_t dc_step(device_client_t *c);
 
 bool dc_digest_is_blocked(const device_client_t *c, const char *sha256);
 
+// Task 7: a 400 invalid_or_used_code is not the same failure as a
+// transient network or server fault -- spec D-4b-4 says it is terminal
+// (the pairing code is single-use with a 10-minute TTL and will never
+// become valid again), while every other non-success is worth retrying
+// under backoff. DC_REG_BAD_CODE lets the caller (main.c) route the
+// former back to provisioning.h's prov_on_pairing_code_rejected() instead
+// of looping on dc_register() forever.
+typedef enum {
+    DC_REG_OK,          // 200 with a token; persisted via token_store_save().
+    DC_REG_RETRY,       // transport failure, non-200 other than the case
+                        // below, or a 200 body missing `token`. Worth
+                        // retrying under c->backoff_ms.
+    DC_REG_BAD_CODE,    // 400 {"error":"invalid_or_used_code"}. Terminal --
+                        // see provisioning.h's prov_on_pairing_code_rejected.
+} dc_register_result_t;
+
 // One-shot registration: POST /api/device/register with
 // {pairingCode, firmwareVersion, macAddress}. `c` need only have `t` and
 // `host` set (dc_init with any token, even NULL, works, since this call
 // never reads c->token) -- spec §7: the pairing code itself is the
 // credential, so unlike every other request in this file, no bearer is
 // sent regardless of what c->token holds. On a 200 with a `token` field,
-// persists it via token_store_save() and returns true; on any other
-// outcome (transport failure, non-200, or a 200 body missing `token`)
-// returns false and stores nothing. The caller (main.c) still owns turning
-// a successful registration into a usable device_client_t: reload the
-// token with token_store_load() and dc_init() again with it.
+// persists it via token_store_save() and returns DC_REG_OK; on a 400 body
+// whose `error` field is exactly "invalid_or_used_code" returns
+// DC_REG_BAD_CODE and stores nothing; on any other outcome (transport
+// failure, non-200, or a 200 body missing `token`) returns DC_REG_RETRY
+// and stores nothing. The caller (main.c) still owns turning a successful
+// registration into a usable device_client_t: reload the token with
+// token_store_load() and dc_init() again with it.
 //
 // Never logs `pairing_code` or the token the server returns -- the token
 // is returned exactly once, by this call.
-bool dc_register(device_client_t *c, const char *pairing_code,
+dc_register_result_t dc_register(device_client_t *c, const char *pairing_code,
                  const char *firmware_version, const char *mac);
 
 // Sends one status heartbeat: POST /api/device/status with all six fields

@@ -508,9 +508,12 @@ static void dc_json_escape(char *out, int out_len, const char *in) {
 //
 // On a 200 whose body has a non-empty `token`, persists it via
 // token_store_save() (never logged -- see device_client.h) and returns
-// true. Any other outcome -- transport failure, non-200, or a 200 body
-// missing `token` -- returns false and stores nothing.
-bool dc_register(device_client_t *c, const char *pairing_code,
+// DC_REG_OK. A 400 whose body's `error` field is exactly
+// "invalid_or_used_code" returns DC_REG_BAD_CODE (spec D-4b-4: terminal,
+// not retryable) and stores nothing. Any other outcome -- transport
+// failure, a different 400, another non-200 status, or a 200 body missing
+// `token` -- returns DC_REG_RETRY and stores nothing.
+dc_register_result_t dc_register(device_client_t *c, const char *pairing_code,
                  const char *firmware_version, const char *mac) {
     // static: see the STACK note above. dc_register runs only from
     // core1_main's registration loop, one call at a time, and never while
@@ -539,7 +542,7 @@ bool dc_register(device_client_t *c, const char *pairing_code,
     // explicit `return false;` beside it.
     if (body_len < 0 || body_len >= (int)sizeof body) {
         dc_enter_backoff(c);
-        return false;
+        return DC_REG_RETRY;
     }
 
     static char req[DC_REGISTER_REQ_BYTES];
@@ -547,7 +550,7 @@ bool dc_register(device_client_t *c, const char *pairing_code,
                                      c->host, NULL, body);
     if (req_len < 0) {
         dc_enter_backoff(c);
-        return false;
+        return DC_REG_RETRY;
     }
 
     // static: see the STACK note above. `resp` and `token` hold the
@@ -562,20 +565,36 @@ bool dc_register(device_client_t *c, const char *pairing_code,
     static char token[TOKEN_STORE_MAX_LEN + 1];
 
     bool ok = dc_exchange(c, req, req_len, dc_body_sink, &resp, &r);
-    if (!ok || !r.body_complete || r.status != 200 || resp.truncated) {
+    if (!ok || !r.body_complete || resp.truncated) {
         // resp.truncated: the register response is a small fixed-shape
         // object and cannot legitimately overrun DC_POLL_BODY_BYTES, so a
-        // truncated one is not a response worth parsing a token out of.
+        // truncated one is not a response worth parsing an error or a
+        // token out of.
         memset(&resp, 0, sizeof resp);
         dc_enter_backoff(c);
-        return false;
+        return DC_REG_RETRY;
+    }
+
+    if (r.status != 200) {
+        // Spec D-4b-4: a 400 body naming invalid_or_used_code is
+        // terminal, not retryable -- the pairing code is single-use with
+        // a 10-minute TTL and cannot become valid again. Every other
+        // non-200 (including a different 400 body) stays retryable, same
+        // as before this distinction existed.
+        static char err[32];
+        bool bad_code = r.status == 400 &&
+            json_str(resp.buf, "error", err, sizeof err) &&
+            strcmp(err, "invalid_or_used_code") == 0;
+        memset(&resp, 0, sizeof resp);
+        dc_enter_backoff(c);
+        return bad_code ? DC_REG_BAD_CODE : DC_REG_RETRY;
     }
 
     if (!json_str(resp.buf, "token", token, sizeof token) || token[0] == '\0') {
         memset(&resp, 0, sizeof resp);
         memset(token, 0, sizeof token);
         dc_enter_backoff(c);
-        return false;
+        return DC_REG_RETRY;
     }
 
     bool saved = token_store_save(token);
@@ -583,10 +602,10 @@ bool dc_register(device_client_t *c, const char *pairing_code,
     memset(token, 0, sizeof token);
     if (!saved) {
         dc_enter_backoff(c);
-        return false;
+        return DC_REG_RETRY;
     }
     dc_backoff_reset(c);
-    return true;
+    return DC_REG_OK;
 }
 
 // Sends one status heartbeat (spec §4.3, §10; see device_client.h for the

@@ -383,7 +383,7 @@ static void test_successful_image_fetch_publishes_and_reflects_write_protected(v
 static void test_register_body_has_the_three_required_fields(void) {
     boot(); token_store_erase();
     push_ok_json("{\"token\":\"t-1\",\"deviceId\":\"d-1\",\"name\":\"Device x\"}");
-    CHECK(dc_register(&c, "ABC123", "4a.0", "aa:bb:cc:dd:ee:ff"), "register");
+    CHECK_EQ_INT(dc_register(&c, "ABC123", "4a.0", "aa:bb:cc:dd:ee:ff"), DC_REG_OK);
     const char *r = fake_last_request();
     CHECK(strstr(r, "pairingCode")     != NULL, "pairingCode");
     CHECK(strstr(r, "firmwareVersion") != NULL, "firmwareVersion");
@@ -395,7 +395,7 @@ static void test_register_body_has_the_three_required_fields(void) {
 static void test_register_stores_the_returned_token(void) {
     boot(); token_store_erase();
     push_ok_json("{\"token\":\"t-1\",\"deviceId\":\"d-1\",\"name\":\"Device x\"}");
-    CHECK(dc_register(&c, "ABC123", "4a.0", "aa:bb:cc:dd:ee:ff"), "register");
+    CHECK_EQ_INT(dc_register(&c, "ABC123", "4a.0", "aa:bb:cc:dd:ee:ff"), DC_REG_OK);
     CHECK(token_store_load(buf, sizeof buf), "token persisted");
     CHECK(strcmp(buf, "t-1") == 0, "the returned token");
 }
@@ -411,8 +411,30 @@ static void test_bad_code_does_not_store_anything(void) {
     // store.
     push_status_json("HTTP/1.1 400 Bad Request",
         "{\"error\":\"invalid_or_used_code\",\"token\":\"should-not-be-used\"}");
-    CHECK(!dc_register(&c, "WRONG", "4a.0", "aa:bb:cc:dd:ee:ff"), "should fail");
+    CHECK_EQ_INT(dc_register(&c, "WRONG", "4a.0", "aa:bb:cc:dd:ee:ff"), DC_REG_BAD_CODE);
     CHECK(!token_store_load(buf, sizeof buf), "nothing may be stored on failure");
+}
+
+// Task 7, spec D-4b-4: invalid_or_used_code is terminal, not retryable --
+// main.c routes it straight to provisioning.h's
+// prov_on_pairing_code_rejected() instead of looping dc_register() under
+// backoff forever. DC_REG_BAD_CODE is what lets the caller tell this
+// apart from every other failure shape, which stays DC_REG_RETRY.
+static void test_invalid_code_is_reported_as_bad_code_not_retry(void) {
+    boot(); token_store_erase();
+    push_status_json("HTTP/1.1 400 Bad Request",
+        "{\"error\":\"invalid_or_used_code\"}");
+    CHECK_EQ_INT(dc_register(&c, "WRONG", "4b.0", "aa:bb:cc:dd:ee:ff"), DC_REG_BAD_CODE);
+}
+
+// A 400 for any other reason (a malformed body, say) is NOT the terminal
+// case above -- it must stay retryable, or a transient server-side bug
+// would strand a device in the portal for no recoverable reason.
+static void test_other_400_is_still_retryable(void) {
+    boot(); token_store_erase();
+    push_status_json("HTTP/1.1 400 Bad Request",
+        "{\"error\":\"invalid_body\"}");
+    CHECK_EQ_INT(dc_register(&c, "ABC123", "4b.0", "aa:bb:cc:dd:ee:ff"), DC_REG_RETRY);
 }
 
 // Review round 1, Important I-2: main.c's registration loop reads
@@ -430,7 +452,7 @@ static void test_register_backs_off_on_repeated_failure(void) {
     for (int i = 0; i < 5; i++) {
         push_status_json("HTTP/1.1 400 Bad Request",
             "{\"error\":\"invalid_or_used_code\"}");
-        CHECK(!dc_register(&c, "WRONG", "4a.0", "aa:bb:cc:dd:ee:ff"), "should fail");
+        CHECK_EQ_INT(dc_register(&c, "WRONG", "4a.0", "aa:bb:cc:dd:ee:ff"), DC_REG_BAD_CODE);
         CHECK(c.backoff_ms >= prev, "backoff must not shrink on repeated failure");
         prev = c.backoff_ms;
     }
@@ -605,6 +627,8 @@ int main(void) {
     RUN(test_register_body_has_the_three_required_fields);
     RUN(test_register_stores_the_returned_token);
     RUN(test_bad_code_does_not_store_anything);
+    RUN(test_invalid_code_is_reported_as_bad_code_not_retry);
+    RUN(test_other_400_is_still_retryable);
     RUN(test_register_backs_off_on_repeated_failure);
     RUN(test_a_blocked_digest_never_repolls_without_a_delay);
     RUN(test_the_fetch_that_blocks_the_digest_also_backs_off);

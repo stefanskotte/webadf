@@ -21,6 +21,9 @@
 #include "device_client.h"
 #include "token_store.h"
 #include "sntp_time.h"
+#include "provisioning.h"
+#include "config_store.h"
+#include "portal_net.h"
 #include <stdio.h>
 #include <string.h>
 
@@ -166,9 +169,8 @@ static void mac_address_string(char *out, size_t out_len) {
 // ---------------------------------------------------------------- core 1
 // Core 1's stack. multicore_launch_core1() would put this in SCRATCH_X --
 // PICO_CORE1_STACK_SIZE, which defaults to 2 KB and cannot exceed the
-// 4 KB the whole SCRATCH_X bank holds. Measured on the built ELF (see
-// .superpowers/sdd/2026-08-30-device-firmware-protocol/final-fix-report.md),
-// neither figure is enough, and the reason is not this file's own frames:
+// 4 KB the whole SCRATCH_X bank holds. Neither figure is enough, and the
+// reason is not this file's own frames:
 //
 //   * core1_main -> dc_step -> dc_exchange -> tls_connect reaches
 //     mbedtls_ctr_drbg_seed -> block_cipher_df -> aes_gen_tables, ~2.0 KB
@@ -179,145 +181,295 @@ static void mac_address_string(char *out, size_t out_len) {
 //     lands on this same stack, on top of whatever the foreground is
 //     doing, at a moment nothing here chooses.
 //
-// Worst case is therefore the sum, ~4.9 KB, which no SCRATCH_X-resident
-// stack can hold. Beyond 4 KB the only option is a stack in main SRAM
-// launched via multicore_launch_core1_with_stack(); 16 KB leaves ~11 KB
-// of margin against a build with ~390 KB of SRAM unallocated, and the
-// MSPLIM stack guard (PICO_USE_STACK_GUARDS in CMakeLists.txt) turns any
-// future overrun into a hard fault rather than silent heap corruption.
-// 32-byte aligned because the guard rounds the limit address up to a
-// 32-byte boundary.
+// Task 7 re-measured this after adding the portal's DHCP/DNS/HTTP servers
+// to this same core, rather than assuming the AP and TLS phases not
+// overlapping in TIME means their stack use doesn't need re-checking --
+// plan 4a's 2 KB-stack Critical happened by exactly that kind of
+// unverified assumption. Method: built ELF, `-fstack-usage` per
+// function, cross-referenced against `arm-none-eabi-objdump -d`'s actual
+// `bl` targets (not guessed from names) to find the actual longest call
+// chain by summed frame size, with the two known indirect edges (dc_exchange's
+// transport_t calls into tls_connect/tls_write/tls_read; lwIP's
+// callback-based dispatch into the recv handlers) bridged by hand since a
+// static disassembly can't see through a function pointer.
+//
+//   * Foreground, core1_main down through tls_connect's mbedtls setup
+//     (mbedtls_ctr_drbg_seed -> ctr_drbg_reseed_internal -> block_cipher_df
+//     -> aes_gen_tables): 2536 B. (Before this task, with core1_main's
+//     smaller pre-provisioning frame: 2304 B -- this task's +232 B here is
+//     entirely provisioning_t/device_config_t locals in core1_main itself;
+//     see its definition.)
+//   * IRQ, altcp_mbedtls_lower_recv down through the deepest branch of the
+//     TLS 1.3 client handshake state machine (mbedtls_ssl_tls13_compute_
+//     handshake_transform -> ..._evolve_secret -> ..._hkdf_expand_label ->
+//     PSA's HMAC/SHA-256 path): 2576 B, found by exhaustively comparing
+//     every branch of mbedtls_ssl_tls13_handshake_client_step's dispatch,
+//     not just the one named above (the next-largest, ...compute_
+//     application_transform, is close behind at 2376 B).
+//   * TLS path worst case (sum, matching plan 4a's IRQ-lands-on-
+//     whatever-the-foreground-is-doing reasoning): 2536 + 2576 = 5112 B.
+//   * Portal path: core1_main + portal_run's own frame while blocked in
+//     its `while (!g_submitted) sleep_ms(5)` poll (368 B) plus the
+//     deepest of the three servers' IRQ-invoked chains -- dns_recv_cb
+//     down through its UDP reply path (udp_sendto -> ... -> pbuf/mem
+//     free): 1360 B. Total 1728 B -- as expected, well under the TLS
+//     path, since the AP phase never has a live TLS connection to
+//     service concurrently. CORE1_STACK_BYTES is unchanged.
+//
+// Worst case is therefore 5112 B (TLS path), up from the ~4.9 KB this
+// comment previously recorded, entirely from core1_main's own growth --
+// which no SCRATCH_X-resident stack can hold regardless. Beyond 4 KB the
+// only option is a stack in main SRAM launched via
+// multicore_launch_core1_with_stack(); 16 KB leaves 16384 - 5112 =
+// 11272 B (~11.0 KB) of margin against a build with ~390 KB of SRAM
+// unallocated, and the MSPLIM stack guard (PICO_USE_STACK_GUARDS in
+// CMakeLists.txt) turns any future overrun into a hard fault rather than
+// silent heap corruption. 32-byte aligned because the guard rounds the
+// limit address up to a 32-byte boundary.
 #define CORE1_STACK_BYTES 16384
 static __attribute__((aligned(32))) uint32_t core1_stack[CORE1_STACK_BYTES / 4];
+
+// Maps a failed cyw43_arch_wifi_connect_timeout_ms() into one of the two
+// corrections spec §6 requires the portal to distinguish, plus a generic
+// fallback -- a bare "failed" would send the user back to retype a
+// password that was already right. Per pico_cyw43_arch.h's own
+// documentation of this call: PICO_ERROR_BADAUTH means the password was
+// wrong; PICO_ERROR_TIMEOUT means the timeout elapsed without ever
+// joining, which for a *_timeout_ms() (as opposed to *_blocking()) call
+// is what a persistently-unmatched SSID looks like --
+// cyw43_arch_wifi_connect_bssid_until() (pico-sdk's cyw43_arch.c) treats
+// CYW43_LINK_NONET as "keep retrying" internally rather than surfacing it,
+// so the timeout is the only signal this call exposes for "never found
+// it". Anything else (PICO_ERROR_CONNECT_FAILED, etc.) gets the fallback.
+static const char *assoc_failure_message(int err) {
+    if (err == PICO_ERROR_BADAUTH)  return "Wrong password";
+    if (err == PICO_ERROR_TIMEOUT)  return "Network not found";
+    return "Could not connect";
+}
 
 static void core1_main(void) {
     if (cyw43_arch_init()) while (1) tight_loop_contents();
     cyw43_arch_enable_sta_mode();
-    while (cyw43_arch_wifi_connect_timeout_ms(WIFI_SSID, WIFI_PASS,
-              CYW43_AUTH_WPA2_AES_PSK, 15000)) sleep_ms(1000);
 
-    // Spec §6.2: SNTP before the first TLS handshake, and the firmware
-    // never skips straight to a handshake with an unset clock --
-    // transport_tls.c's tls_connect() itself refuses to start one at all
-    // while sntp_time_valid() is false. A poll or register attempted
-    // before this succeeds just fails at connect() and falls into the
-    // same backoff dc_step()/dc_register() already use for any other
-    // transient network fault, so no separate SNTP-specific retry loop is
-    // needed here -- sntp_sync_blocking() also keeps periodically
-    // resyncing in the background for as long as the process runs.
-    sntp_sync_blocking(30000);
+    // Plan 4b: decide whether to serve the captive portal or run plan 4a's
+    // protocol loop against stored credentials. Touches no radio itself
+    // (provisioning.h's file-wide rule) -- prov.state is what the loop
+    // below acts on.
+    provisioning_t prov;
+    prov_init(&prov);
 
-    // static, like device_client.c's buffers and for the same reason:
-    // core1_main is entered exactly once, by multicore_launch_core1_with_stack
-    // below, and never returns -- it is not re-entrant in any sense, and
-    // holding ~590 bytes of live frame for the entire life of the process
-    // is ~590 bytes the mbedTLS handshake chain below it does not get.
-    static char mac[18];   // "aa:bb:cc:dd:ee:ff" + NUL
-    mac_address_string(mac, sizeof mac);
+    // Shown on the portal form after a failed association with freshly
+    // submitted credentials (spec D-4b-3's verify-then-commit). NULL
+    // until that happens.
+    const char *last_error = NULL;
 
-    // Registration (spec §7): load a stored token, or register for one.
-    // Never logs `token` or the pairing code -- see device_client.h.
-    static char token[TOKEN_STORE_MAX_LEN + 1];
-    if (!token_store_load(token, sizeof token)) {
-        // dc_register() needs only a transport + host; it never reads
-        // c->token (it deliberately sends no bearer at all), so this
-        // throwaway device_client_t's token is irrelevant -- NULL is
-        // honest about that, and leaves `reg` in DC_UNPROVISIONED, which
-        // is never used for anything but this loop.
-        static device_client_t reg;
-        dc_init(&reg, tls_transport(), clock_ms, WEBADF_HOST, NULL);
-        while (!dc_register(&reg, WEBADF_PAIRING_CODE, FIRMWARE_VERSION, mac)) {
-            sleep_ms(reg.backoff_ms ? reg.backoff_ms : DC_BACKOFF_FLOOR_MS);
+    for (;;) {
+        if (prov.state == PROV_PORTAL) {
+            // Blocks until a POST /save decodes to a complete
+            // device_config_t. portal_run() tears down any sockets still
+            // up from a previous call itself (it is re-entrant-safe), so
+            // looping back here after a failed verify below needs no
+            // extra teardown first.
+            device_config_t submitted;
+            portal_run(&submitted, last_error);
+
+            // Load-bearing, and must run before the connect attempt
+            // below, not after: bringing the AP up made it lwIP's
+            // default route, and portal_stop() is what restores the STA
+            // netif cyw43_arch_enable_sta_mode() registered above as
+            // netif_default. Skipping this (or reordering it after the
+            // connect) leaves the board associated with no route to
+            // anywhere, and every TLS handshake in the RUNNING loop below
+            // fails as a result.
+            portal_stop();
+
+            int err = cyw43_arch_wifi_connect_timeout_ms(
+                submitted.ssid, submitted.pass,
+                CYW43_AUTH_WPA2_AES_PSK, 15000);
+            if (err != PICO_OK) {
+                last_error = assoc_failure_message(err);
+                continue;   // portal_run() comes back up showing last_error
+            }
+
+            // Verify-then-commit (spec D-4b-3): reaches here only once
+            // this exact association has just succeeded, so committing
+            // now can never persist credentials that don't work.
+            prov_on_verified_submit(&prov, &submitted);
+            last_error = NULL;
+            continue;
         }
+
+        // PROV_RUNNING: prov.cfg is populated either by prov_init() (a
+        // config already on flash) or by prov_on_verified_submit() just
+        // above.
+        int err = cyw43_arch_wifi_connect_timeout_ms(
+            prov.cfg.ssid, prov.cfg.pass,
+            CYW43_AUTH_WPA2_AES_PSK, 15000);
+        if (err != PICO_OK) {
+            // prov_on_assoc_result(p, false) is the only call in this
+            // loop that may move `state`: three consecutive failures
+            // (PROV_MAX_ASSOC_FAILURES) send it back to PROV_PORTAL, and
+            // the top of this loop picks that up on the next iteration.
+            prov_on_assoc_result(&prov, false);
+            continue;
+        }
+        // Carried from task 2's review: prov_on_assoc_result(p, true)
+        // returns p->state UNCHANGED rather than forcing PROV_RUNNING --
+        // that is correct only because this call site is reached
+        // exclusively from the PROV_RUNNING branch (this `else`, in
+        // effect) above, never from PROV_PORTAL. Do not add another call
+        // site to prov_on_assoc_result(true) without preserving that.
+        prov_on_assoc_result(&prov, true);
+
+        // Spec §6.2: SNTP before the first TLS handshake, and the firmware
+        // never skips straight to a handshake with an unset clock --
+        // transport_tls.c's tls_connect() itself refuses to start one at all
+        // while sntp_time_valid() is false. A poll or register attempted
+        // before this succeeds just fails at connect() and falls into the
+        // same backoff dc_step()/dc_register() already use for any other
+        // transient network fault, so no separate SNTP-specific retry loop is
+        // needed here -- sntp_sync_blocking() also keeps periodically
+        // resyncing in the background for as long as the process runs.
+        sntp_sync_blocking(30000);
+
+        // static, like device_client.c's buffers and for the same reason:
+        // this branch can re-run (a later prov_on_pairing_code_rejected()
+        // sends control back to PROV_PORTAL and eventually back here), but
+        // never concurrently with itself -- holding ~590 bytes of live
+        // frame for the ensuing mbedTLS handshake chain is ~590 bytes it
+        // does not get.
+        static char mac[18];   // "aa:bb:cc:dd:ee:ff" + NUL
+        mac_address_string(mac, sizeof mac);
+
+        // Registration (spec §7): load a stored token, or register for one
+        // using the pairing code the portal collected (or that was already
+        // on flash). Never logs `token` or the pairing code -- see
+        // device_client.h.
+        static char token[TOKEN_STORE_MAX_LEN + 1];
+        bool code_rejected = false;
         if (!token_store_load(token, sizeof token)) {
-            // dc_register() only ever returns true after token_store_save()
-            // itself succeeded, so this should be unreachable. Halting
-            // rather than looping back to register again is deliberate:
-            // the pairing code has almost certainly been single-used
-            // server-side by the successful attempt above, so retrying
-            // would just fail forever.
-            while (1) tight_loop_contents();
-        }
-    }
-
-    static device_client_t c;
-    dc_init(&c, tls_transport(), clock_ms, WEBADF_HOST, token);
-
-    static char last_reported_sha[65] = "";
-    uint32_t last_status_ms = clock_ms();
-
-    while (true) {
-        dc_state_t s = dc_step(&c);
-
-        // Item 1: the drive may only ever report a disk once an image is
-        // genuinely resident and published -- dc_step only reaches here
-        // (mounted_sha256 non-empty) after a real fetch-and-verify or an
-        // already-mounted no-op (dc_handle_poll_body), never as a boot-time
-        // assumption. `mounted` here only feeds WPROT (item 3) below --
-        // review round 1, Important I-1: dskchg_image_inserted()/ejected()
-        // used to be called from THIS core, racing core0's gpio_isr/
-        // dskchg_poll against dskchg.c's plain, unsynchronized `st` (a
-        // pattern that was harmless when it fired exactly once at boot,
-        // but became a real race once this loop could call it repeatedly
-        // at arbitrary times). That signalling now lives entirely on core0
-        // -- see main()'s track_cache_check_swap() call below -- so
-        // dskchg.c stays single-threaded.
-        bool mounted = c.mounted_sha256[0] != '\0';
-
-        // Item 3: WPROT. Nothing mounted -> nothing to write to regardless
-        // of the flag's stale value; a mounted disk's writeProtected flows
-        // through untouched; and -- see WRITE_BACK_IMPLEMENTED's comment
-        // above -- the write path's absence forces this true regardless of
-        // either, until that path exists. Only main()'s core0 loop ever
-        // wrote PIN_WPROT before this (a fixed boot-time default); this is
-        // now the only place that updates it afterward.
-        bool wprot = !mounted || c.mounted_write_protected || !WRITE_BACK_IMPLEMENTED;
-        gpio_put(PIN_WPROT, wprot ? OUT_ASSERT : OUT_RELEASE);
-
-        // Item 4: the status heartbeat. ~60s (DC_STATUS_PERIOD_MS) or
-        // immediately on a mount/swap/eject (spec §4.3, §10) -- tracked by
-        // the mounted disk's identity (sha256), not dc_state_t or
-        // mounted_version (which can advance on a no-op reconciliation poll
-        // that names the same already-mounted disk, which is not a
-        // transition anyone needs an out-of-band report for).
-        // Review (final), Minor 5: not while halted. DC_HALTED means a 401
-        // (or a 404 device row) -- the bearer is dead everywhere it
-        // appears, and /api/device/status uses the same one, so every
-        // heartbeat from here on is a guaranteed 401 against a known-dead
-        // token, once a minute, forever. dc_report_status's own 401
-        // handling would just re-set the state it is already in. Plan 4b's
-        // re-provisioning path is what gets the device out of DC_HALTED;
-        // until then the correct amount of traffic is none.
-        uint32_t now = clock_ms();
-        bool disk_changed = strcmp(c.mounted_sha256, last_reported_sha) != 0;
-        if (s != DC_HALTED && (disk_changed || (now - last_status_ms) >= DC_STATUS_PERIOD_MS)) {
-            dc_report_status(&c, psram_free_estimate(), wifi_rssi(), NULL);
-            last_status_ms = now;
-            strncpy(last_reported_sha, c.mounted_sha256, sizeof(last_reported_sha) - 1);
-            last_reported_sha[sizeof(last_reported_sha) - 1] = '\0';
+            // dc_register() needs only a transport + host; it never reads
+            // c->token (it deliberately sends no bearer at all), so this
+            // throwaway device_client_t's token is irrelevant -- NULL is
+            // honest about that, and leaves `reg` in DC_UNPROVISIONED,
+            // which is never used for anything but this loop.
+            static device_client_t reg;
+            dc_init(&reg, tls_transport(), clock_ms, WEBADF_HOST, NULL);
+            dc_register_result_t rr;
+            while ((rr = dc_register(&reg, prov.cfg.code, FIRMWARE_VERSION, mac))
+                   != DC_REG_OK) {
+                if (rr == DC_REG_BAD_CODE) {
+                    // Spec D-4b-4: terminal, not retryable -- the code is
+                    // single-use with a 10-minute TTL and this one has
+                    // already been redeemed or has expired. Back to the
+                    // portal for a fresh one rather than hammering
+                    // /api/device/register with a code that can never
+                    // become valid again.
+                    prov_on_pairing_code_rejected(&prov);
+                    last_error = "Invalid or already-used pairing code";
+                    code_rejected = true;
+                    break;
+                }
+                sleep_ms(reg.backoff_ms ? reg.backoff_ms : DC_BACKOFF_FLOOR_MS);
+            }
+            if (code_rejected) continue;   // prov.state is now PROV_PORTAL
+            if (!token_store_load(token, sizeof token)) {
+                // dc_register() only ever returns DC_REG_OK after
+                // token_store_save() itself succeeded, so this should be
+                // unreachable. Halting rather than looping back to
+                // register again is deliberate: the pairing code has
+                // almost certainly been single-used server-side by the
+                // successful attempt above, so retrying would just fail
+                // forever.
+                while (1) tight_loop_contents();
+            }
         }
 
-        // Item 5: actually honour c.backoff_ms between attempts -- dc_step
-        // computes it (device_client.c's dc_enter_backoff) but never
-        // sleeps on it itself; this loop is what turns the number into an
-        // actual delay. DC_IDLE_POLL needs no extra sleep here: dc_step's
-        // own long-poll read already blocked for up to DC_POLL_TIMEOUT_MS
-        // server-side. DC_HALTED means the token is dead (401 anywhere);
-        // re-provisioning is plan 4b's job, so this just idles rather than
-        // hammering a dead token in a tight loop.
-        if (s == DC_BACKOFF) {
-            sleep_ms(c.backoff_ms);
-        } else if (s == DC_HALTED || s == DC_UNPROVISIONED) {
-            // Review (final), Important 2: DC_UNPROVISIONED gets the same
-            // floor as DC_HALTED. dc_step returns it immediately without
-            // touching the network, so if token_store_load() ever hands
-            // back a zero-length token (dc_init reads that as
-            // unprovisioned) this loop would otherwise spin core1 flat out
-            // calling dc_step, dc_report_status and cyw43_wifi_get_rssi
-            // forever. Neither state can change from inside this loop --
-            // 4b's re-provisioning path is what clears both -- so idling is
-            // the whole correct behaviour.
-            sleep_ms(DC_BACKOFF_CAP_MS);
+        static device_client_t c;
+        dc_init(&c, tls_transport(), clock_ms, WEBADF_HOST, token);
+
+        static char last_reported_sha[65] = "";
+        uint32_t last_status_ms = clock_ms();
+
+        while (true) {
+            dc_state_t s = dc_step(&c);
+
+            // Item 1: the drive may only ever report a disk once an image is
+            // genuinely resident and published -- dc_step only reaches here
+            // (mounted_sha256 non-empty) after a real fetch-and-verify or an
+            // already-mounted no-op (dc_handle_poll_body), never as a boot-time
+            // assumption. `mounted` here only feeds WPROT (item 3) below --
+            // review round 1, Important I-1: dskchg_image_inserted()/ejected()
+            // used to be called from THIS core, racing core0's gpio_isr/
+            // dskchg_poll against dskchg.c's plain, unsynchronized `st` (a
+            // pattern that was harmless when it fired exactly once at boot,
+            // but became a real race once this loop could call it repeatedly
+            // at arbitrary times). That signalling now lives entirely on core0
+            // -- see main()'s track_cache_check_swap() call below -- so
+            // dskchg.c stays single-threaded.
+            bool mounted = c.mounted_sha256[0] != '\0';
+
+            // Item 3: WPROT. Nothing mounted -> nothing to write to regardless
+            // of the flag's stale value; a mounted disk's writeProtected flows
+            // through untouched; and -- see WRITE_BACK_IMPLEMENTED's comment
+            // above -- the write path's absence forces this true regardless of
+            // either, until that path exists. Only main()'s core0 loop ever
+            // wrote PIN_WPROT before this (a fixed boot-time default); this is
+            // now the only place that updates it afterward.
+            bool wprot = !mounted || c.mounted_write_protected || !WRITE_BACK_IMPLEMENTED;
+            gpio_put(PIN_WPROT, wprot ? OUT_ASSERT : OUT_RELEASE);
+
+            // Item 4: the status heartbeat. ~60s (DC_STATUS_PERIOD_MS) or
+            // immediately on a mount/swap/eject (spec §4.3, §10) -- tracked by
+            // the mounted disk's identity (sha256), not dc_state_t or
+            // mounted_version (which can advance on a no-op reconciliation poll
+            // that names the same already-mounted disk, which is not a
+            // transition anyone needs an out-of-band report for).
+            // Review (final), Minor 5: not while halted. DC_HALTED means a 401
+            // (or a 404 device row) -- the bearer is dead everywhere it
+            // appears, and /api/device/status uses the same one, so every
+            // heartbeat from here on is a guaranteed 401 against a known-dead
+            // token, once a minute, forever. dc_report_status's own 401
+            // handling would just re-set the state it is already in. Plan 4b
+            // (this loop) only re-opens the portal for a rejected pairing
+            // code (prov_on_pairing_code_rejected, above) -- a token that
+            // goes bad after registration (a revoked/deleted device row)
+            // has no path back to the portal in this plan, so DC_HALTED
+            // here is genuinely terminal until a power cycle or a manual
+            // config_store_erase(); the correct amount of traffic until
+            // then is none.
+            uint32_t now = clock_ms();
+            bool disk_changed = strcmp(c.mounted_sha256, last_reported_sha) != 0;
+            if (s != DC_HALTED && (disk_changed || (now - last_status_ms) >= DC_STATUS_PERIOD_MS)) {
+                dc_report_status(&c, psram_free_estimate(), wifi_rssi(), NULL);
+                last_status_ms = now;
+                strncpy(last_reported_sha, c.mounted_sha256, sizeof(last_reported_sha) - 1);
+                last_reported_sha[sizeof(last_reported_sha) - 1] = '\0';
+            }
+
+            // Item 5: actually honour c.backoff_ms between attempts -- dc_step
+            // computes it (device_client.c's dc_enter_backoff) but never
+            // sleeps on it itself; this loop is what turns the number into an
+            // actual delay. DC_IDLE_POLL needs no extra sleep here: dc_step's
+            // own long-poll read already blocked for up to DC_POLL_TIMEOUT_MS
+            // server-side. DC_HALTED means the token is dead (401 anywhere);
+            // re-provisioning is plan 4b's job, so this just idles rather than
+            // hammering a dead token in a tight loop.
+            if (s == DC_BACKOFF) {
+                sleep_ms(c.backoff_ms);
+            } else if (s == DC_HALTED || s == DC_UNPROVISIONED) {
+                // Review (final), Important 2: DC_UNPROVISIONED gets the same
+                // floor as DC_HALTED. dc_step returns it immediately without
+                // touching the network, so if token_store_load() ever hands
+                // back a zero-length token (dc_init reads that as
+                // unprovisioned) this loop would otherwise spin core1 flat out
+                // calling dc_step, dc_report_status and cyw43_wifi_get_rssi
+                // forever. Neither state can change from inside this loop --
+                // see the DC_HALTED comment above for what plan 4b does and
+                // does not do about that -- so idling is the whole correct
+                // behaviour.
+                sleep_ms(DC_BACKOFF_CAP_MS);
+            }
         }
     }
 }
