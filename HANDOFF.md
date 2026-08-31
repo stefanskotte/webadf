@@ -400,6 +400,26 @@ increment delivered" before planning the disk-content reader.
 
   Note the standing caveat that `disks.write_protected` is inert until write-back is designed —
   so this is only observable on hardware once the board actually honours the flag.
+- **User-defined collections, with drag-and-drop.** Requested by the operator 2026-08-31: make
+  your own categories ("My favorite games - AGA") and move games into them. Notes for whoever
+  plans it:
+
+  **The one non-obvious constraint: the TOSEC scan DELETES `games` rows.** `mergeDuplicates` in
+  `src/lib/tosec-apply.ts` collapses two games that resolve to the same `(sortTitle, year)` — it
+  moves the disks to a survivor and deletes the absorbed row. It already repoints
+  `devices.desiredGameId` and `mountedGameId` for exactly this reason. **Any new table holding a
+  game id must be repointed in that same batch**, or a collection silently loses its entry (or
+  worse, cascade-deletes it, which is the shape of the Critical bug this branch shipped a fix
+  for). That statement list is the first place to look, not an afterthought.
+
+  **Shape:** a `collections` table (per-tenant, with `orgId` — unlike `blobs` and `tosec_entries`,
+  which are global because they are content-addressed) and a `collection_games` join carrying a
+  sort key, since "drag to reorder" needs an explicit order rather than a derived one.
+
+  **Drag-and-drop is a real dependency decision.** shadcn v4 here is Base UI, not Radix, and
+  neither ships a DnD primitive — this would mean `dnd-kit` or similar, the first UI dependency of
+  its kind in this repo. A plain "add to collection" menu needs none of that and delivers most of
+  the value; the reordering is the part that actually requires the library.
 - **Show each disk's real filename, and let a human download the ADF.** Requested by the
   operator 2026-08-31. Two useful facts before anyone plans it: the original uploaded
   filename already exists as `entitlements.sourceFilename` and is **per-organization** on
