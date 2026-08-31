@@ -36,7 +36,7 @@ after plan 4a, rewritten again 2026-08-31 after plan 4b.**
 **Current branch:** `master` for the web app; firmware work is on `feat/device-portal`
 (plan 4b, forked from plan 4a's `feat/device-firmware`, not yet merged). **Suite:** 241
 vitest (+1 from the mirror update in plan 4a, so 242 from `feat/device-firmware` onward),
-87 Playwright, `pnpm build` clean. Firmware: `pnpm firmware:test` green (442 checks, 13
+87 Playwright, `pnpm build` clean. Firmware: `pnpm firmware:test` green (506 checks, 13
 binaries), `pnpm firmware:build` produces a `.uf2` — **and now requires
 `PORTAL_AP_PASSWORD` set in the environment, or the configure step fails by design**; see
 "Plan 4b" below for the full command.
@@ -119,11 +119,17 @@ delivered" section and in "Before you touch the firmware again" below.
 **Build and test commands (see also "Commands" at the bottom):**
 
 ```bash
-pnpm firmware:build   # requires the official ARM GNU Toolchain on PATH, e.g.:
-                      #   export PATH="/Applications/ArmGNUToolchain/15.3.rel1/arm-none-eabi/bin:$PATH"
-                      # and pico-sdk >= 2.3.0 checked out (PICO_SDK_PATH); homebrew's
-                      # arm-none-eabi-gcc ships no newlib and will not link.
-pnpm firmware:test    # plain C under clang, no toolchain/SDK needed — 282 checks, 8 binaries
+# Both of these, copy-pasteable, from the repo root. The two exports are
+# required for the BUILD, not the tests: plan 4b made PORTAL_AP_PASSWORD a
+# hard CMake FATAL_ERROR (an empty WPA2 PSK cannot be reported back to a
+# console-less board at runtime, so it is refused at configure time), and
+# homebrew's arm-none-eabi-gcc ships no newlib and will not link.
+export PATH="/Applications/ArmGNUToolchain/15.3.rel1/arm-none-eabi/bin:$PATH"
+export PORTAL_AP_PASSWORD=<any WPA2 PSK, 8-63 chars>
+pnpm firmware:build   # also needs pico-sdk >= 2.3.0 checked out (PICO_SDK_PATH).
+                      # If configure behaves oddly, rm -rf wifi-floppy/firmware/build.
+pnpm firmware:test    # plain C under clang, no toolchain/SDK/env vars needed --
+                      # 506 checks across 13 binaries (measured, plan 4b final)
 ```
 
 **`src/lib/adfmfm/firmware-parser.ts` no longer mirrors the bit-count-overflow defect** —
@@ -153,6 +159,25 @@ web UI all now return the board to the portal rather than requiring a reflash �
 `docs/decisions/2026-08-31-device-portal-rulings.md`'s "Ruling 8" section for how that last
 behaviour was added, and for a real fleet-wide regression it introduced and was then
 corrected to avoid.
+
+**The portal is not a one-way door.** If the board still has a usable configuration in flash
+(it got there by failing to associate three times, not by a rejected pairing code), the AP
+comes down after **five minutes with no client traffic at all** and the stored credentials
+are re-tried; if those fail their three attempts again, the AP comes back, and so on. That
+is what stops a power cut which drops the router and the board together — board boots first,
+burns 45 s of attempts while the router is still starting — from parking a board in AP mode
+until someone turns up with a phone. The window is inactivity, not a wall clock: any DHCP,
+DNS or HTTP packet restarts it, and it is never even evaluated while an HTTP connection is
+open, so nobody filling in the form is cut off. With nothing stored to re-try, the wait is
+indefinite by design. Constant is `PORTAL_IDLE_TIMEOUT_MS` in `src/portal_net.h`.
+
+**Two spec sections were corrected in place** (not just amended in the delivered-section
+addendum) by the final pre-merge review: **§2**, because `main.c`'s `DC_HALTED` recovery
+ejects a mounted disk before dropping to the portal, so the old absolute "a board that is
+already serving a disk never drops into the portal" was false — §2 now states the rule as
+"never *spontaneously*, with one deliberate ejecting exception" and names it; and **D-4b-1**,
+for the bounded wait above. §2 is the invariant plan 5 will be read against, so read it
+there, not here.
 
 **New build prerequisite:** `PORTAL_AP_PASSWORD` (the provisioning AP's WPA2 PSK) must be
 set in the environment, or CMake's configure step fails by design — an empty PSK cannot be
@@ -485,7 +510,8 @@ recognizing the next time a "this trigger is not transient" argument gets made.
 Toolchain on `PATH` (not homebrew's `arm-none-eabi-gcc`), **and `PORTAL_AP_PASSWORD` set in
 the environment to a WPA2 PSK — the configure step fails by design otherwise**; see "Plan
 4b" above for the full command) ·
-`pnpm firmware:test` (plain-C host suite, clang, no SDK/toolchain/env vars needed)
+`pnpm firmware:test` (plain-C host suite, clang, no SDK/toolchain/env vars needed — 506
+checks, 13 binaries)
 
 **Infrastructure:** Vercel project `webadf` · Neon Postgres (`auth` + `public` schemas) ·
 Vercel Blob store `webadf-disks` (**private** access) · Vercel CLI 59.10.0

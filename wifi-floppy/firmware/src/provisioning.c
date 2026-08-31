@@ -48,3 +48,18 @@ prov_state_t prov_on_pairing_code_rejected(provisioning_t *p) {
     p->state = PROV_PORTAL;
     return p->state;
 }
+
+bool prov_on_portal_idle_timeout(provisioning_t *p) {
+    // Nothing stored means nothing to re-try -- see provisioning.h. Leaving
+    // the state alone (rather than "returning" to a PROV_RUNNING with no
+    // credentials in it) is the whole point: the caller loops straight back
+    // into the portal, which is where such a board belongs.
+    if (!p->have_config) return false;
+    // Reset the counter for the same reason prov_on_assoc_result() resets
+    // it on success: this is a fresh run of attempts against a network that
+    // may well have come back since the last one, not a continuation of the
+    // run that opened the portal.
+    p->assoc_failures = 0;
+    p->state = PROV_RUNNING;
+    return true;
+}

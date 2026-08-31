@@ -57,4 +57,27 @@ bool prov_on_verified_submit(provisioning_t *p, const device_config_t *cfg);
 // for a human to supply a fresh one.
 prov_state_t prov_on_pairing_code_rejected(provisioning_t *p);
 
+// The portal was offered and nobody submitted anything within the caller's
+// inactivity window (portal_net.h's PORTAL_IDLE_TIMEOUT_MS).
+//
+// Final-review Important 2: without this, PROV_PORTAL was a one-way door.
+// The case it exists for is a power cut that drops the router and the board
+// together: the board boots first, spends its three 15 s attempts
+// (PROV_MAX_ASSOC_FAILURES) inside the 45 s the router is still starting
+// up, and lands in the portal -- where, with an unbounded wait, it stayed
+// until a human arrived with a phone. Spec S2's "a board with a disk
+// mounted stays mounted" does not bound that damage, because nothing is
+// mounted at boot.
+//
+// Returns true if there is a stored configuration to re-try -- state goes
+// back to PROV_RUNNING with the failure count reset, so the caller gets a
+// fresh PROV_MAX_ASSOC_FAILURES attempts and, if those fail too, the portal
+// again. Returns false, leaving the state at PROV_PORTAL, when have_config
+// is false: nothing is stored (a factory-fresh board) or what was stored
+// has just been erased as unusable (prov_on_pairing_code_rejected), so
+// there is nothing to re-try and only a human can move this board forward.
+// Callers must pass 0 as portal_run()'s idle_timeout_ms in that case rather
+// than bouncing the AP under whoever is filling in the form.
+bool prov_on_portal_idle_timeout(provisioning_t *p);
+
 #endif

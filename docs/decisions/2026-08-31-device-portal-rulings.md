@@ -11,7 +11,11 @@ Plan: `docs/superpowers/plans/2026-08-30-device-provisioning-portal.md`. Spec:
 `master` at `0df8c6e` (321 host checks, 242 vitest).
 
 Delivered: 8 tasks, commits `00c956b`..`a1fcae4`, 442 host checks across 13 binaries, 242
-vitest, clean ARM cross-build.
+vitest, clean ARM cross-build. A final whole-branch review then added one fix wave on top
+(506 host checks, same 13 binaries): a distinct confirmation page for a successful submit, a
+bounded `portal_run()` wait so `PROV_PORTAL` is no longer a one-way door, a DNS QTYPE check,
+and four documentation corrections. Figures quoted below are as of `a1fcae4` and are left
+alone — they record what each ruling was taken against.
 
 ## Rulings
 

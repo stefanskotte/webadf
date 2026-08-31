@@ -113,6 +113,93 @@ static void test_post_save_with_null_body_is_not_a_submit(void) {
     CHECK_EQ_INT(res.action, PORTAL_ACT_NONE);
 }
 
+// --- Final review, Important 1: a successful submit is its own page ---
+
+// The defect: a good POST /save re-rendered the FORM, with the previous
+// attempt's `err` still set. So the user who mistyped a password once,
+// then typed it correctly, was served the same "Wrong password" banner at
+// the exact moment the board accepted the credentials and started tearing
+// the AP down. Success was indistinguishable from failure.
+static void test_successful_submit_does_not_repeat_the_previous_error(void) {
+    int n = REQ("POST", "/save", "ssid=net&pass=correct-horse&code=ABC123",
+                "Wrong password");
+    CHECK(n > 0, "rendered");
+    CHECK_EQ_INT(res.action, PORTAL_ACT_SUBMIT);
+    CHECK(strstr(out, "Wrong password") == NULL,
+          "the PREVIOUS attempt's error must not appear on the page that "
+          "confirms THIS attempt worked");
+    CHECK(strstr(out, "class=\"err\"") == NULL, "and no error block at all");
+}
+
+// It must also not merely be the form-without-an-error: an empty form is
+// what a failed submit looks like, so the two bodies have to differ.
+static void test_successful_submit_is_not_the_form(void) {
+    char form[sizeof out];
+    int fn = REQ("GET", "/", NULL, NULL);
+    CHECK(fn > 0, "form rendered");
+    memcpy(form, out, (size_t)fn + 1);
+
+    int sn = REQ("POST", "/save", "ssid=net&pass=pw12345678&code=ABC123", NULL);
+    CHECK(sn > 0, "submit rendered");
+    CHECK_EQ_INT(res.action, PORTAL_ACT_SUBMIT);
+    CHECK(!(sn == fn && memcmp(out, form, (size_t)sn) == 0),
+          "the accepted page is a different body from the plain form");
+    CHECK(strstr(out, "<form") == NULL,
+          "nothing to fill in again -- the credentials were accepted");
+    CHECK(strstr(out, "name=\"ssid\"") == NULL, "no SSID field");
+    CHECK(strstr(form, "<form") != NULL,
+          "...and the plain form really does have one, so the check above "
+          "is not passing vacuously");
+    CHECK(strstr(out, "200 OK") != NULL, "still a 200");
+}
+
+// The submitted SSID is attacker-shaped free text; the confirmation page
+// must not reflect it (unescaped or otherwise), same standing rule the
+// password already had.
+static void test_accepted_page_echoes_nothing_submitted(void) {
+    REQ("POST", "/save", "ssid=%3Cscript%3Ex&pass=hunter2xy&code=ZZTOP1", NULL);
+    CHECK_EQ_INT(res.action, PORTAL_ACT_SUBMIT);
+    CHECK(strstr(out, "<script>") == NULL, "no reflected SSID");
+    CHECK(strstr(out, "hunter2xy") == NULL, "no reflected password");
+    CHECK(strstr(out, "ZZTOP1") == NULL, "no reflected pairing code");
+}
+
+// The other half of the same route: a submit that did NOT decode still
+// gets the form back, with an error on it, because there is something
+// left to do.
+static void test_failed_submit_still_returns_the_form_with_an_error(void) {
+    REQ("POST", "/save", "ssid=only", NULL);
+    CHECK_EQ_INT(res.action, PORTAL_ACT_NONE);
+    CHECK(strstr(out, "<form") != NULL, "the form comes back");
+    CHECK(strstr(out, "class=\"err\"") != NULL, "with an error block");
+
+    // ...and a caller-supplied reason still wins over the generic one.
+    REQ("POST", "/save", "ssid=only", "Network not found");
+    CHECK(strstr(out, "Network not found") != NULL,
+          "an actual failure reason beats \"fill in every field\"");
+}
+
+// Final review, Minor 4: both association sites hardcode
+// CYW43_AUTH_WPA2_AES_PSK, so an empty password can only ever come back as
+// "Could not connect". The form must not imply otherwise.
+static void test_password_field_is_required(void) {
+    REQ("GET", "/", NULL, NULL);
+    const char *pass = strstr(out, "name=\"pass\"");
+    CHECK(pass != NULL, "password field present");
+    const char *end = pass ? strchr(pass, '>') : NULL;
+    CHECK(end != NULL, "the input tag is terminated");
+    // Isolate just this one <input ...> tag (its length computed from the
+    // markup, not guessed) so "required" on a *different* field cannot
+    // satisfy this check.
+    char tag[256];
+    size_t taglen = (size_t)(end - pass);
+    CHECK(taglen < sizeof tag, "the tag fits the scratch buffer");
+    memcpy(tag, pass, taglen);
+    tag[taglen] = '\0';
+    CHECK(strstr(tag, "required") != NULL,
+          "an open network cannot work, so the field is not optional");
+}
+
 int main(void) {
     RUN(test_root_renders_the_form);
     RUN(test_page_has_no_external_references);
@@ -127,5 +214,10 @@ int main(void) {
     RUN(test_truncated_percent_escape_at_end_is_rejected);
     RUN(test_invalid_hex_escape_is_rejected);
     RUN(test_post_save_with_null_body_is_not_a_submit);
+    RUN(test_successful_submit_does_not_repeat_the_previous_error);
+    RUN(test_successful_submit_is_not_the_form);
+    RUN(test_accepted_page_echoes_nothing_submitted);
+    RUN(test_failed_submit_still_returns_the_form_with_an_error);
+    RUN(test_password_field_is_required);
     return REPORT();
 }

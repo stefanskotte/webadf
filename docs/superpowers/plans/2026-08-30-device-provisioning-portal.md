@@ -13,7 +13,7 @@
 ## Global Constraints
 
 - **`provisioning.c` and the pure half of each server may not `#include` any pico-sdk or lwIP header.** This is what keeps them host-testable and it degrades silently — one include and nothing announces the loss. If a file seems to need one, move the seam.
-- **A board that is already serving a disk never drops into the portal.** Spec §2. The portal is reachable only before a disk is mounted.
+- **A board that is serving a disk never drops into the portal *spontaneously*.** Spec §2 (corrected in place after delivery). Every state-machine edge into the portal is reachable only before a disk is mounted; the one path that reaches it with a disk mounted — `main.c`'s `DC_HALTED` recovery — ejects first, deliberately, because the alternative is a board that needs reflashing. No flash write ever happens with a disk mounted, either way.
 - **The association-failure counter is RAM-only.** Never persisted. A power-cycle restores patience; a flash-resident counter would eventually park a healthy board in AP mode permanently.
 - **Verify, then commit.** Flash is written only after a successful association with the submitted credentials.
 - **`400 invalid_or_used_code` from `/api/device/register` is terminal** — it returns to the portal rather than being retried.

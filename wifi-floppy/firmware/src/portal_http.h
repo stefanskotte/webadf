@@ -19,10 +19,29 @@ typedef struct {
 
 // Render a reply for one request. `err` is shown on the form when non-NULL
 // (e.g. "Wrong password" from a previous attempt); NULL shows no error
-// block. `body` is the request body for POST (may be NULL for GET, and is
+// block.
+//
+// A POST /save that decodes completely does NOT come back as the form: it
+// renders a distinct "Credentials accepted / connecting" confirmation
+// body, and `err` -- which describes the attempt before this one -- is
+// deliberately dropped rather than carried into it. (Final-review
+// Important 1: the old behaviour re-rendered the form with the stale
+// banner still set, so a corrected password looked exactly like another
+// failure at the moment the board was actually accepting it.) The two
+// bodies are guaranteed distinguishable -- the confirmation page carries
+// no <form> at all -- and both are host-tested to be so.
+//
+// `body` is the request body for POST (may be NULL for GET, and is
 // treated as empty if so). `mac_str` is shown on the page so whoever is
 // holding the phone knows which board they are configuring; NULL is
-// rendered as an empty string. `res` is always written: action is
+// rendered as an empty string. The password field is marked required in
+// the rendered form because both association sites hardcode
+// CYW43_AUTH_WPA2_AES_PSK: an open network cannot work, and the page says
+// so rather than letting it fail later as a generic "Could not connect".
+// That is a page-level rule, not a parse rule -- this function still
+// accepts an empty `pass` value from a hand-built POST, which then fails
+// at association like any other wrong credential. `res` is always written:
+// action is
 // PORTAL_ACT_NONE unless this request was a POST /save whose body decoded
 // to all three fields, within their length limits -- an over-length field
 // is rejected outright, never truncated (a silently truncated SSID would

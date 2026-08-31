@@ -159,6 +159,7 @@ static const char *PAGE_FMT =
     ".err{background:#fee3e3;border:1px solid #c00;padding:.6em 1em;"
     "margin-bottom:1em;color:#900;border-radius:4px;}"
     ".mac{color:#666;font-size:.9em;}"
+    ".hint{color:#666;font-size:.85em;margin:-.8em 0 1em;}"
     "</style>"
     "</head><body>"
     "<h1>WiFi Floppy Setup</h1>"
@@ -169,13 +170,64 @@ static const char *PAGE_FMT =
     "<input type=\"text\" id=\"ssid\" name=\"ssid\" maxlength=\"32\" "
     "autocapitalize=\"off\" autocorrect=\"off\" required>"
     "<label for=\"pass\">WiFi password</label>"
-    "<input type=\"password\" id=\"pass\" name=\"pass\" maxlength=\"63\">"
+    "<input type=\"password\" id=\"pass\" name=\"pass\" maxlength=\"63\" "
+    "minlength=\"8\" required>"
+    "<p class=\"hint\">Required: open networks with no password are not "
+    "supported.</p>"
     "<label for=\"code\">Pairing code</label>"
     "<input type=\"text\" id=\"code\" name=\"code\" maxlength=\"16\" "
     "autocapitalize=\"off\" autocorrect=\"off\" required>"
     "<button type=\"submit\">Save</button>"
     "</form>"
     "</body></html>";
+
+// The page a *successful* submit gets, and the reason it exists as a
+// separate template rather than a re-render of the form.
+//
+// Final-review Important 1: this route used to answer a good POST /save
+// with render_form() and the caller's `err` still in place -- so the last
+// thing a user saw, at the exact moment the board had ACCEPTED their
+// credentials and was tearing the AP down, was the previous attempt's
+// "Wrong password" banner over an empty form. Retyping a password
+// correctly looked identical to getting it wrong again. There was also no
+// confirmation page at all, even though portal_net.c's publish-after-
+// tcp_output ordering is justified by one.
+//
+// So: one distinct body, and `err` is deliberately not a parameter -- the
+// previous attempt's failure cannot be carried into the page that says the
+// current attempt worked. Nothing submitted is echoed either: not the
+// password (§6's standing rule) and not the SSID, which is attacker-shaped
+// free text that would otherwise be reflected unescaped into HTML. The MAC
+// is the board's own, so it stays.
+static const char *ACCEPTED_FMT =
+    "HTTP/1.1 200 OK\r\n"
+    "Content-Type: text/html; charset=utf-8\r\n"
+    "Connection: close\r\n"
+    "\r\n"
+    "<!DOCTYPE html><html><head><meta charset=\"utf-8\">"
+    "<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">"
+    "<title>WiFi Floppy Setup</title>"
+    "<style>"
+    "body{font-family:sans-serif;max-width:480px;margin:2em auto;padding:0 1em;}"
+    ".ok{background:#e3f7e3;border:1px solid #2a2;padding:.6em 1em;"
+    "margin-bottom:1em;color:#161;border-radius:4px;}"
+    ".mac{color:#666;font-size:.9em;}"
+    "</style>"
+    "</head><body>"
+    "<h1>Connecting\xe2\x80\xa6</h1>"
+    "<p class=\"mac\">Board %s</p>"
+    "<div class=\"ok\">Credentials accepted.</div>"
+    "<p>This setup network is shutting down now, so it will disappear from "
+    "your phone in a few seconds. That is what success looks like \xe2\x80\x94 "
+    "you do not need to do anything else.</p>"
+    "<p>If the board cannot join the network you gave it, the setup network "
+    "comes back within about a minute with the reason. Rejoin it and try "
+    "again only if that happens.</p>"
+    "</body></html>";
+
+static int render_accepted(char *out, int cap, const char *mac_str) {
+    return emit(out, cap, ACCEPTED_FMT, mac_str ? mac_str : "");
+}
 
 static int render_form(char *out, int cap, const char *mac_str, const char *err) {
     char err_block[192];
@@ -218,20 +270,19 @@ int portal_request(const char *method, const char *path, const char *body,
     bool is_post = strcmp(method, "POST") == 0;
 
     if (is_save && is_post) {
-        bool ok = parse_form(body, &res->submitted);
-        if (ok) {
+        if (parse_form(body, &res->submitted)) {
             res->action = PORTAL_ACT_SUBMIT;
-        } else {
-            memset(&res->submitted, 0, sizeof res->submitted);
+            // The submit worked: a distinct page, and `err` -- which
+            // describes the attempt BEFORE this one -- is not passed on.
+            // See ACCEPTED_FMT's comment.
+            return render_accepted(out, cap, mac_str);
         }
-        const char *show_err = err;
-        char default_err[64];
-        if (!show_err && !ok) {
-            snprintf(default_err, sizeof default_err,
-                     "Please fill in every field correctly.");
-            show_err = default_err;
-        }
-        return render_form(out, cap, mac_str, show_err);
+        // Not a submit: the form comes back. A caller-supplied `err` still
+        // wins over the generic message, since it names an actual failure
+        // (a wrong password) rather than just "that body didn't decode".
+        memset(&res->submitted, 0, sizeof res->submitted);
+        return render_form(out, cap, mac_str,
+                           err ? err : "Please fill in every field correctly.");
     }
 
     if (is_root) {

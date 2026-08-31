@@ -102,6 +102,67 @@ static void test_compression_pointer_in_question_is_refused(void) {
     CHECK_EQ_INT(dns_handle(req, 18, out, sizeof out), 0);
 }
 
+// --- Final review, Minor 5: qtype is honoured -------------------------
+
+// Same name, qtype AAAA (28). iOS and Android both send this alongside the
+// A query for their captive-portal check hostnames. This responder used to
+// answer it with a TYPE A record -- an answer whose RR type does not match
+// the question, which a resolver is entitled to treat as a broken server
+// rather than as "there is no AAAA record here".
+static int build_query_qtype(uint8_t *b, int cap, uint8_t qtype_hi,
+                              uint8_t qtype_lo) {
+    int n = build_query(b, cap);
+    if (n == 0) return 0;
+    // The qtype is the second-to-last field: QTYPE(2) + QCLASS(2) close the
+    // question, so it starts 4 bytes back from the end of what was built.
+    b[n - 4] = qtype_hi;
+    b[n - 3] = qtype_lo;
+    return n;
+}
+
+static void test_aaaa_query_is_not_answered_with_an_a_record(void) {
+    uint8_t req[128], out[256];
+    int n = build_query_qtype(req, sizeof req, 0x00, 0x1C);   // qtype AAAA
+    int r = dns_handle(req, n, out, sizeof out);
+    // Answered, but empty: header + question echoed, nothing after it.
+    CHECK_EQ_INT(r, n);
+    CHECK_EQ_INT(out[2] & 0x80, 0x80);            // QR = response
+    CHECK_EQ_INT(out[3] & 0x0F, 0x00);            // RCODE = NOERROR
+    CHECK_EQ_INT(out[6], 0); CHECK_EQ_INT(out[7], 0);   // ANCOUNT 0
+    CHECK_EQ_INT(out[0], 0x12); CHECK_EQ_INT(out[1], 0x34);  // id echoed
+    // The question is echoed back verbatim, qtype included -- so the reply
+    // answers the question that was actually asked.
+    CHECK(memcmp(out + 12, req + 12, (size_t)(n - 12)) == 0,
+          "question section echoed unchanged");
+}
+
+// An empty NOERROR is deliberate rather than silence: a dropped query
+// costs the client its whole retry timer before it falls back to the A
+// query the portal depends on.
+static void test_a_query_still_gets_the_portal_ip_after_the_qtype_check(void) {
+    uint8_t req[128], out[256];
+    int n = build_query_qtype(req, sizeof req, 0x00, 0x01);   // qtype A
+    int r = dns_handle(req, n, out, sizeof out);
+    CHECK_EQ_INT(r, n + 16);                       // question + one A record
+    CHECK_EQ_INT(out[7], 1);                       // ANCOUNT 1
+    CHECK_EQ_INT(out[r - 4], PORTAL_IP_0);
+    CHECK_EQ_INT(out[r - 1], PORTAL_IP_3);
+}
+
+// Any other type gets the same empty answer -- the check is on A, not on a
+// list of types someone remembered to enumerate.
+static void test_other_qtypes_get_an_empty_answer_too(void) {
+    uint8_t req[128], out[256];
+    const uint8_t types[] = { 0x02 /* NS */, 0x0F /* MX */, 0x10 /* TXT */,
+                              0x21 /* SRV */, 0xFF /* ANY */ };
+    for (unsigned i = 0; i < sizeof types / sizeof types[0]; i++) {
+        int n = build_query_qtype(req, sizeof req, 0x00, types[i]);
+        int r = dns_handle(req, n, out, sizeof out);
+        CHECK_EQ_INT(r, n);
+        CHECK_EQ_INT(out[7], 0);
+    }
+}
+
 int main(void) {
     RUN(test_answers_an_a_query_with_the_portal_ip);
     RUN(test_truncated_query_is_ignored);
@@ -110,5 +171,8 @@ int main(void) {
     RUN(test_reply_that_would_not_fit_is_refused);
     RUN(test_label_length_runs_past_end_of_buffer);
     RUN(test_compression_pointer_in_question_is_refused);
+    RUN(test_aaaa_query_is_not_answered_with_an_a_record);
+    RUN(test_a_query_still_gets_the_portal_ip_after_the_qtype_check);
+    RUN(test_other_qtypes_get_an_empty_answer_too);
     return REPORT();
 }

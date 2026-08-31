@@ -9,7 +9,7 @@ would replace *only where those values come from*. This is that plan.
 without a rebuild. Nothing about the device protocol, TLS, PSRAM or the floppy bus changes.
 
 **Status: delivered.** Everything in this document shipped on branch `feat/device-portal`
-(442 host checks across 13 binaries, 242 vitest, clean ARM cross-build) — see "What plan 4b
+(506 host checks across 13 binaries, 242 vitest, clean ARM cross-build) — see "What plan 4b
 delivered" at the end of this document for the exact shape of what shipped and what is left
 for plan 5. Boards are still in transit, so — exactly as in 4a — **nothing here has run on
 hardware**; "done" means a green cross-build plus a green host suite, not a verified device.
@@ -39,12 +39,41 @@ Inherited from the disk-change spec §1 and unchanged: **losing the webservice d
 swapping, not disk serving.** Provisioning adds a new way to be offline — a board sitting in
 AP mode is, by definition, not talking to webadf — so one rule follows directly:
 
-> **A board that is already serving a disk never drops into the portal.**
+> **A board that is serving a disk never drops into the portal
+> *spontaneously*. It gets there only by first ejecting, deliberately, on the one
+> path that has no other way out.**
 
-The portal is reachable only before a disk is mounted: at boot, or after association has
-failed. A device happily serving an Amiga does not interrupt itself to offer a config page,
-whatever the network is doing. This also keeps the existing flash-write guard honest — the
-portal's only flash write happens while `psram_active_slot() == SLOT_NONE`.
+*Corrected in place after plan 4b shipped.* As originally written this rule was absolute —
+"a board that is already serving a disk never drops into the portal" — and it was true of
+everything §3 and §5 describe. Plan 4b's task 7 then added one path that breaks it, knowingly,
+and this is the binding invariant plan 5 will be read against, so it states the rule as it
+now is rather than as it was.
+
+**The rule, in two halves.**
+
+*Never spontaneously.* No network condition, no failed association, no timeout, and no
+poll result reaches for the portal while a disk is mounted. A device happily serving an
+Amiga does not interrupt itself to offer a config page, whatever the network is doing. Every
+edge in §5's state machine that leads to `PORTAL` — no stored credentials, three consecutive
+association failures, a rejected pairing code — is reachable only before a disk is mounted:
+at boot, or after association has failed, both of which are strictly ahead of the first
+fetch.
+
+*One exception, taken on purpose.* `main.c`'s `DC_HALTED` branch — a revoked token or a
+device row deleted in the web UI (a `401`, or a `404` whose body names `device_not_found`) —
+**ejects first** (`psram_publish_slot(SLOT_NONE)`) and then works its way back to the portal.
+The eject is not incidental: both flash stores refuse to write while a disk is mounted, so
+without it `token_store_erase()` is a silent no-op and every subsequent boot 401s straight
+back into `DC_HALTED`. The alternative to ejecting is a board that can only be recovered by
+physically reflashing it, for what should be a routine re-pair. Interrupting a disk the
+server has already declared unservable is the smaller harm, and it is the *server's*
+declaration that triggers it, never the board's own judgement of the network.
+
+**What survives unchanged is the guard this rule exists to protect:** no flash write ever
+happens while `psram_active_slot() != SLOT_NONE`. The exception above does not weaken it —
+it satisfies it, by ejecting *before* it writes, and the stores enforce it independently
+regardless. Anything plan 5 adds must keep that ordering: eject, then write; never write and
+hope.
 
 ## 3. Decisions taken, with reasoning
 
@@ -54,9 +83,28 @@ consecutive failed associations.** An *attempt* is one
 uses — so three failures is roughly 45 seconds of trying, not three instantaneous retries.
 Recovery matters more than simplicity here: this
 hardware has no console and no spare button, so "unprovisioned only" would make a changed
-router password an unrecoverable state requiring a reflash of every board. The cost is that
-an extended router outage eventually parks a board in AP mode; §2's rule bounds the damage,
-since a board with a disk mounted stays mounted.
+router password an unrecoverable state requiring a reflash of every board.
+
+The cost is that an extended router outage sends a board to AP mode. *This paragraph
+originally bounded that cost with "§2's rule bounds the damage, since a board with a disk
+mounted stays mounted" — which was wrong, and is corrected here.* The case that matters is a
+power cut taking out the router and the board together: the board boots first, spends its
+three attempts inside the 45 s the router is still coming up, and lands in the portal with
+**nothing mounted**, so §2's rule bounds nothing at all. As written the portal was then a
+one-way door — the board waited for a human with a phone, forever, holding credentials that
+had probably started working minutes later.
+
+**So the portal wait is bounded** (`PORTAL_IDLE_TIMEOUT_MS`, five minutes). After five
+minutes of *nobody touching the AP*, `portal_run()` returns "nobody submitted" and the board
+re-tries the configuration still in flash; if that fails its three attempts again, the portal
+comes back and the cycle repeats. An unattended board self-heals within minutes of the router
+returning; a router that is genuinely gone just costs a slow sweep. Two properties keep this
+from interrupting anyone: the window measures *inactivity* (any DHCP, DNS or HTTP packet
+restarts it, and a phone sitting on the form emits all three), and it is not evaluated at all
+while an HTTP connection is open, so a submission in flight is never cut off. When there is
+nothing stored to re-try — a factory-fresh board, or one whose config a rejected pairing code
+has just erased — the wait stays indefinite, because bouncing the AP under whoever is filling
+in the form would buy nothing.
 
 **The failure counter is RAM-only.** Same reasoning as 4a's `since`: a power-cycle should
 restore patience. A flash-resident counter would accumulate across reboots and eventually
@@ -95,11 +143,22 @@ a fresh code can be entered.
 and issues a new token; keeping the old one would leave the board authenticating as a device
 the server no longer associates with these credentials.
 
-*This does not contradict §2's rule.* Registration only ever runs before a disk is mounted —
-a token is a precondition for polling, and polling is a precondition for fetching an image —
-so the `RUNNING → PORTAL` edge above can never fire while the Amiga is being served. The
-state machine in §5 shows the edge leaving `RUNNING`, but the only part of `RUNNING` that can
-take it is the registration step at its start.
+*How this sits with §2's rule.* **Corrected in place after plan 4b shipped** — this paragraph
+originally said the `RUNNING → PORTAL` edge "can never fire while the Amiga is being served",
+which was true when written and is not any more.
+
+For D-4b-4 itself, it still is: registration only ever runs before a disk is mounted — a
+token is a precondition for polling, and polling is a precondition for fetching an image — so
+a rejected pairing code always arrives with nothing mounted. The state machine in §5 shows
+the edge leaving `RUNNING`, but the only part of `RUNNING` that can take it is the
+registration step at its start.
+
+What changed is that `RUNNING → PORTAL` acquired a *second* origin during implementation: the
+`DC_HALTED` recovery described under "What plan 4b delivered" below, which can fire at any
+point in the poll loop, including with a disk mounted. That path ejects first, on purpose,
+and §2 now names it as the single deliberate exception with the reasoning for why ejecting
+beats requiring a reflash. It is not a counter-example to §2's rule; it is the one thing §2's
+rule carves out, and there is exactly one of them.
 
 ## 4. Architecture
 
@@ -141,9 +200,14 @@ boot → config_store_load
 RUNNING → register returns 400 invalid_or_used_code → PORTAL   (D-4b-4)
 
 PORTAL (AP up, WPA2) → submit
+  → confirmation page ("credentials accepted, this network will disappear")
   → AP down → associate with submitted credentials
       ├─ success → config_store_save → RUNNING
       └─ failure → AP back up, form redisplayed with the reason
+
+PORTAL, nothing submitted for PORTAL_IDLE_TIMEOUT_MS of client silence
+  ├─ have_config ─→ AP down → RUNNING, retry the stored config (D-4b-1)
+  └─ no config ───→ wait indefinitely; only a human can move this board
 ```
 
 `RUNNING` is 4a's `core1_main` loop, entered unmodified once credentials exist.
@@ -158,8 +222,13 @@ oversized, and wrong-op-code inputs.
 
 **DNS.** Answers every A query with `192.168.4.1`. That blanket redirection is what makes the
 captive portal appear at all rather than the phone reporting a network with no internet.
-Same pure shape. Tested against a normal query, a compressed name, a query with no question
-section, and a malformed length field.
+**Only** A queries get an address, though: any other QTYPE (a phone's AAAA probe, which iOS
+and Android send alongside the A query for their check hostnames) gets an empty NOERROR reply
+— question echoed, `ANCOUNT` 0. Answering an AAAA question with a TYPE A record, which the
+first implementation did, is a type mismatch a resolver may read as a broken server; silence
+would instead cost the client its whole retry timer before falling back to the A query the
+portal depends on. Same pure shape. Tested against a normal query, a compressed name, a query
+with no question section, a malformed length field, and AAAA/NS/MX/TXT/SRV/ANY.
 
 **HTTP portal.** Three routes: `GET /` renders the form, `POST /save` decodes
 `application/x-www-form-urlencoded`, and **every other path 302-redirects to
@@ -173,6 +242,19 @@ route to the internet and a page blocking on a CDN would look broken. It display
 board's MAC so multiple boards are distinguishable, never echoes a stored password back into
 the form, and on failure distinguishes *wrong password* from *SSID not found* — the cyw43
 return tells them apart, and they call for different corrections.
+
+There are **two** bodies, not one. A `POST /save` that decodes completely renders a distinct
+"Credentials accepted / this network will now disappear" page, and the previous attempt's
+error is deliberately not carried into it. (The first implementation re-rendered the form
+with the stale banner still set, so a user who mistyped a password once and then typed it
+correctly was served "Wrong password" again at the exact moment the board accepted the
+credentials and began tearing the AP down — success was indistinguishable from failure.
+`portal_net.c`'s publish-after-`tcp_output` ordering is justified by this page existing, so
+it also had to exist.) Nothing submitted is echoed into it: not the password, and not the
+SSID, which is free text an attacker chooses. The password field is marked **required**,
+because both association sites hardcode `CYW43_AUTH_WPA2_AES_PSK` and an open network could
+only ever fail later as a generic "Could not connect"; the page says so rather than implying
+otherwise.
 
 **Named limitation:** whether those probe URLs actually trigger the sign-in sheet **cannot be
 verified without hardware**. The parsing, routing and form decoding are host-tested; the
@@ -238,10 +320,28 @@ WPA2 AP mode and STA mode transition cleanly on this radio.
 
 ## What plan 4b delivered
 
-Shipped on branch `feat/device-portal`, all 8 tasks, tree at commit `a1fcae4`: 442 host
-checks across 13 binaries, 242 vitest, clean ARM cross-build. Every decision in §3 above
+Shipped on branch `feat/device-portal`, all 8 tasks plus a final whole-branch fix wave: 506
+host checks across 13 binaries, 242 vitest, clean ARM cross-build. Every decision in §3 above
 was implemented as specified; nothing in this section contradicts §1–9, it records the
 as-built state and the handful of things that changed shape during implementation.
+
+**§2, §3's D-4b-4 paragraph, and D-4b-1 were edited in place** by that final wave rather than
+only being amended down here — §2 because it is the binding invariant plan 5 will be read
+against and it had become false as written (`main.c`'s `DC_HALTED` recovery ejects a mounted
+disk and then drops to the portal), and D-4b-1 because it justified an unbounded portal wait
+with reasoning that does not hold at boot. Read those sections, not just this one.
+
+**Fixed in the final whole-branch review, before merge:**
+
+- A successful `POST /save` renders its own confirmation page instead of re-rendering the
+  form with the *previous* attempt's error still in the banner (§6).
+- `portal_run()`'s wait is bounded by five minutes of client inactivity when there is a
+  stored configuration worth re-trying, so a board that lost a boot race with its own router
+  self-heals instead of parking in AP mode until a human appears (D-4b-1). Indefinite when
+  there is nothing stored to re-try.
+- The DNS responder honours QTYPE: only A queries get an address (§6).
+- The form marks the WiFi password required, since WPA2 is hardcoded at both association
+  sites and an open network cannot work.
 
 **Shipped exactly as designed:**
 
@@ -282,8 +382,9 @@ linked into a running board. Specifically unverified:
   succeeds afterward — the whole provisioning flow's point.
 - Whether the confirmation page physically leaves the radio before the AP tears down.
 - STA DHCP lease acquisition/renewal after the AP netif is removed.
-- Real phone captive-portal behaviour against the 3-slot DHCP pool, including MAC
-  randomization retry storms and the ~30 s idle reclaim.
+- Real phone captive-portal behaviour against the **two**-lease DHCP pool
+  (`DHCP_POOL_SIZE` is 2; the 3 is `MAX_HTTP_CONNS`, a different pool), including MAC
+  randomization retry storms and the ~30 s idle HTTP-slot reclaim.
 - Whether the iOS (`captive.apple.com/hotspot-detect.html`) and Android (`/generate_204`)
   probe URLs actually trigger the sign-in sheet on real devices.
 - Whether `cyw43_wifi_ap_set_up(false)` on a never-raised AP is benign on silicon.

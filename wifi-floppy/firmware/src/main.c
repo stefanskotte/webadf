@@ -290,7 +290,38 @@ static void core1_main(void) {
             // looping back here after a failed verify below needs no
             // extra teardown first.
             device_config_t submitted;
-            portal_run(&submitted, last_error);
+            // Final-review Important 2: the wait is bounded ONLY when
+            // there is a stored configuration worth going back to.
+            //   * have_config true: the portal was opened by three
+            //     consecutive association failures, so the credentials in
+            //     flash may simply have lost a race with a router that was
+            //     still booting. Re-try them every PORTAL_IDLE_TIMEOUT_MS
+            //     of nobody touching the AP, so an unattended board
+            //     self-heals instead of parking in AP mode forever.
+            //   * have_config false: a factory-fresh board, or one whose
+            //     config prov_on_pairing_code_rejected() just erased.
+            //     There is nothing to re-try, so 0 (wait forever) --
+            //     timing out would only bounce the AP under whoever is
+            //     mid-form for no gain.
+            uint32_t portal_wait_ms =
+                prov.have_config ? PORTAL_IDLE_TIMEOUT_MS : 0u;
+            portal_run_result_t pr =
+                portal_run(&submitted, last_error, portal_wait_ms);
+
+            if (pr == PORTAL_RUN_IDLE_TIMEOUT) {
+                // Same teardown as the submit path below -- an idle
+                // timeout leaves the AP up exactly as a submission does,
+                // and the retry attempt underneath needs STA back as
+                // lwIP's default route just as much.
+                portal_stop();
+                // Back to PROV_RUNNING with a fresh set of attempts
+                // against prov.cfg. If those fail too, prov_on_assoc_
+                // result() opens the portal again and this repeats --
+                // which is the intended shape: a slow sweep, not a
+                // permanent strand.
+                prov_on_portal_idle_timeout(&prov);
+                continue;
+            }
 
             // Load-bearing, and must run before the connect attempt
             // below, not after: bringing the AP up made it lwIP's
@@ -624,10 +655,20 @@ int main(void) {
     // its comment for why RAM-placement alone does not fully cover it
     // (its own call graph still reaches into flash). __not_in_flash_func
     // is kept as a second, cheap layer regardless.
-    // multicore_launch_core1() returns almost immediately and core1 has a
-    // WiFi connect, an SNTP sync, and (on a fresh device) a register
-    // round-trip ahead of it before it can reach that write, so there is
-    // no meaningful race with doing this init here rather than earlier.
+    // multicore_launch_core1() returns almost immediately, so the question
+    // is whether core1 can reach a flash write before this line runs.
+    //
+    // Final-review Minor 6: this comment used to answer that with "core1
+    // has a WiFi connect, an SNTP sync, and a register round-trip ahead of
+    // it", which plan 4b made false -- the FIRST flash write on a
+    // freshly-provisioned board is now config_store_save(), which lands in
+    // core1_main()'s portal branch ahead of all three. The conclusion is
+    // unchanged and if anything stronger: that write happens only after
+    // the AP has been raised, a phone has joined it, a human has filled in
+    // a form, and the board has associated with what they typed -- seconds
+    // at the very best, and realistically much longer. There is no
+    // meaningful race with doing this init here rather than earlier; the
+    // reason stated for it just had to stop naming the wrong first write.
     flash_safe_execute_core_init();
 
     want_track = 0;

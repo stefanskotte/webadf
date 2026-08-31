@@ -128,72 +128,46 @@ endif ()
 target_compile_definitions(wifi_floppy PRIVATE
   PORTAL_AP_PASSWORD=\"$ENV{PORTAL_AP_PASSWORD}\")
 
-# Review round 1 finding (Critical, C1, part 2): the "cross-build green"
-# gate is only meaningful once something actually forces transport_tls.c's
-# and sntp_time.c's entry points to stay linked -- otherwise a future
-# regression (e.g. someone reverting the psa_crypto_random.c fix above)
-# can hide behind --gc-sections exactly as this task's first build did,
-# with the ELF silently containing zero mbedTLS/roots.h content. Task 10
-# will make main.c call these for real; until then, `-Wl,-u,<symbol>`
-# forces the linker to resolve them as if something referenced them,
-# pulling in (and keeping alive under --gc-sections) tls_transport()'s
-# whole referenced graph -- g_transport's function pointers
-# (tls_connect/tls_write/tls_read/tls_close), and therefore mbedTLS/altcp
-# -- and sntp_sync_blocking()'s (pico_lwip_sntp, and sntp_time_apply() via
-# lwipopts.h's SNTP_SET_SYSTEM_TIME hook). See task-9-report.md's fix
-# report for the nm/strings evidence this now actually links in.
+# Why these twelve -Wl,-u entries stay, now that every one of them has a
+# real caller.
 #
-# Task 1 review, Critical: config_store.c hit the exact same defect class
-# the day it landed -- nothing in main.c calls config_store_load()/_save()/
-# _erase() yet (task 7 wires that up), so --gc-sections silently dropped
-# the whole translation unit; the object file compiled clean but
+# The defect they were built against is plan 4a's Critical C1: the entire
+# TLS stack was silently discarded by --gc-sections while the cross-build
+# stayed green, because nothing referenced it -- the ELF contained zero
+# mbedTLS/roots.h content and the "clean build" proved nothing about the
+# artifact. Every 4b module hit the same class as it landed (config_store
+# on day one: the object compiled clean and
 # `arm-none-eabi-nm wifi_floppy.elf | grep config_store` found nothing at
-# all, defined or undefined. Sections here are per-function
-# (-ffunction-sections, implied by the SDK's default build flags), so
-# forcing just one entry point (e.g. only config_store_load) keeps that
-# one function's section alive but NOT config_store_save()/_erase() --
-# each public entry point needs its own `-Wl,-u,<symbol>` to survive
-# --gc-sections until task 7 gives them a real caller. See
-# task-1-report.md's fix report for the nm evidence this now actually
-# links in all three, and for the before/after with the flags removed.
+# all, defined or undefined), because each was written a task or more
+# before its caller existed. `-Wl,-u,<symbol>` forces the linker to resolve
+# a symbol as if something referenced it, which keeps its section -- and
+# the whole graph it references -- alive under --gc-sections. Sections here
+# are per-function (-ffunction-sections, implied by the SDK's default build
+# flags), so each public entry point needs its own entry; forcing
+# config_store_load alone would not keep config_store_save/_erase.
 #
-# Task 3: dns_server.c is the same shape again -- nothing in main.c calls
-# dns_handle() yet (task 6 binds a UDP socket to it), so without forcing
-# it undefined here --gc-sections would drop it and a green cross-build
-# would prove nothing about this task's artifact.
+# As of plan 4b task 10 that scaffolding is no longer load-bearing: main.c
+# calls prov_*, config_store_*, portal_run() and portal_stop() directly,
+# and portal_net.c calls dns_handle/dhcp_handle/portal_request, so every
+# symbol below is reachable from main() and would survive --gc-sections on
+# its own. They are kept anyway, deliberately, for two reasons: they cost
+# nothing on a build that already links these symbols, and they are a
+# tripwire for the reverse regression -- if a future refactor drops the
+# last real caller of one of these entry points, the link keeps it in the
+# ELF and the failure shows up as dead code to notice rather than as a
+# green build over a silently gutted binary, which is exactly the shape
+# 4a's Critical took. Deleting an entry here is only correct together with
+# deleting the function it names.
 #
-# Task 4: dhcp_server.c, same shape again -- nothing in main.c calls
-# dhcp_handle() yet (task 6 binds a UDP socket to it, same as dns_handle
-# above), so it needs its own -Wl,-u entry too.
-#
-# Task 5: portal_http.c, same shape again -- nothing in main.c calls
-# portal_request() yet (task 6 binds a TCP listener to it), so it needs
-# its own -Wl,-u entry too or --gc-sections would silently drop it.
-#
-# Task 6: portal_net.c is the caller task 3/4/5's comments above are
-# waiting for, but nothing in main.c calls *it* yet either (task 10 wires
-# main.c to call portal_run() when provisioning.c says the portal should
-# be offered) -- so it needs the same -Wl,-u treatment, forcing
-# portal_run() undefined so --gc-sections keeps it, and with it the whole
-# graph it references (dhcp_handle/dns_handle/portal_request above, plus
-# the raw lwIP UDP/TCP calls and cyw43_arch_enable_ap_mode()). portal_stop()
-# is deliberately NOT forced here: nothing calls it yet either, and unlike
-# portal_run() there is no separate task still waiting on proof that it
-# links -- task 10's real caller (or a future -Wl,-u of its own) is what
-# will keep it alive from here.
-#
-# Review round 1 (Critical, part of the netif_default fix): portal_stop()
-# is now force-linked too -- it was flagged as never having been linked,
-# let alone run, at the time of that review (no -Wl,-u entry, no caller
-# yet), so the CRITICAL fix inside it (restoring netif_default after AP
-# mode comes down) had never even been checked by the cross-build, only
-# by reading the SDK source. Forcing it undefined here makes it at least
-# nm-checkable now, same reasoning as every other entry in this list.
+# (tls_transport and sntp_sync_blocking predate 4b -- same story, same
+# reasoning; see task-9-report.md for that pair's nm/strings evidence and
+# task-1-report.md for config_store's.)
 target_link_options(wifi_floppy PRIVATE
   -Wl,-u,tls_transport -Wl,-u,sntp_sync_blocking
   -Wl,-u,config_store_load -Wl,-u,config_store_save -Wl,-u,config_store_erase
   -Wl,-u,prov_init -Wl,-u,prov_on_assoc_result
   -Wl,-u,prov_on_verified_submit -Wl,-u,prov_on_pairing_code_rejected
+  -Wl,-u,prov_on_portal_idle_timeout
   -Wl,-u,dns_handle -Wl,-u,dhcp_handle -Wl,-u,portal_request
   -Wl,-u,portal_run -Wl,-u,portal_stop)
 

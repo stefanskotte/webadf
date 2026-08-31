@@ -108,6 +108,79 @@ static void test_rejected_pairing_code_returns_to_the_portal(void) {
     CHECK(!p.have_config, "and the in-memory copy must go with it");
 }
 
+// --- Final review, Important 2: the portal is no longer a one-way door ---
+
+// The scenario: a power cut drops the router and the board together. The
+// board boots first, burns its three attempts in the 45 s the router is
+// still starting up, and opens the portal. With an unbounded wait it stayed
+// there until a human arrived with a phone; now an idle window sends it
+// back to re-try what is still in flash.
+static void test_idle_timeout_retries_the_stored_config(void) {
+    config_store_erase();
+    device_config_t c = mk("net");
+    config_store_save(&c);
+    provisioning_t p;
+    prov_init(&p);
+    prov_on_assoc_result(&p, false);
+    prov_on_assoc_result(&p, false);
+    CHECK_EQ_INT(prov_on_assoc_result(&p, false), PROV_PORTAL);
+
+    CHECK(prov_on_portal_idle_timeout(&p), "there is a config to re-try");
+    CHECK_EQ_INT(p.state, PROV_RUNNING);
+    CHECK_EQ_INT(p.assoc_failures, 0);
+    CHECK(strcmp(p.cfg.ssid, "net") == 0,
+          "the stored credentials are still the ones main.c will associate with");
+    CHECK(config_store_load(&c),
+          "and nothing was erased -- an idle portal is not a failure");
+}
+
+// ...and if the router really is gone, the re-try fails its three attempts
+// and the portal opens again. A slow sweep, not a permanent strand, and
+// not a permanent RUNNING either.
+static void test_a_failed_retry_returns_to_the_portal(void) {
+    config_store_erase();
+    device_config_t c = mk("net");
+    config_store_save(&c);
+    provisioning_t p;
+    prov_init(&p);
+    for (int i = 0; i < PROV_MAX_ASSOC_FAILURES; i++) prov_on_assoc_result(&p, false);
+    CHECK_EQ_INT(p.state, PROV_PORTAL);
+    CHECK(prov_on_portal_idle_timeout(&p), "back to RUNNING");
+    CHECK_EQ_INT(prov_on_assoc_result(&p, false), PROV_RUNNING);   // 1
+    CHECK_EQ_INT(prov_on_assoc_result(&p, false), PROV_RUNNING);   // 2
+    CHECK_EQ_INT(prov_on_assoc_result(&p, false), PROV_PORTAL);    // 3
+    CHECK(prov_on_portal_idle_timeout(&p), "and it can sweep again");
+}
+
+// Nothing stored means nothing to re-try: main.c reads the false return as
+// "wait indefinitely", so the AP is never bounced under someone who is
+// halfway through the form on a board that only a human can move forward.
+static void test_idle_timeout_does_nothing_without_a_config(void) {
+    config_store_erase();
+    provisioning_t p;
+    prov_init(&p);
+    CHECK_EQ_INT(p.state, PROV_PORTAL);
+    CHECK(!prov_on_portal_idle_timeout(&p), "nothing to re-try");
+    CHECK_EQ_INT(p.state, PROV_PORTAL);
+    CHECK(!p.have_config, "and it did not invent one");
+}
+
+// The same holds after a rejected pairing code, which is the other way to
+// reach the portal with have_config false: re-trying there would associate
+// fine and then be rejected by the server all over again, bouncing the AP
+// every window for nothing.
+static void test_idle_timeout_does_not_retry_a_rejected_pairing_code(void) {
+    config_store_erase();
+    device_config_t c = mk("net");
+    config_store_save(&c);
+    provisioning_t p;
+    prov_init(&p);
+    prov_on_pairing_code_rejected(&p);
+    CHECK(!prov_on_portal_idle_timeout(&p),
+          "a dead pairing code is not fixed by trying it again");
+    CHECK_EQ_INT(p.state, PROV_PORTAL);
+}
+
 int main(void) {
     size_t len = (size_t)TRACK_MAX_BYTES * NUM_TRACKS * SLOT_COUNT;
     void *mem = malloc(len);
@@ -119,6 +192,10 @@ int main(void) {
     RUN(test_verified_submit_commits_and_runs);
     RUN(test_a_failed_commit_does_not_claim_to_be_running);
     RUN(test_rejected_pairing_code_returns_to_the_portal);
+    RUN(test_idle_timeout_retries_the_stored_config);
+    RUN(test_a_failed_retry_returns_to_the_portal);
+    RUN(test_idle_timeout_does_nothing_without_a_config);
+    RUN(test_idle_timeout_does_not_retry_a_rejected_pairing_code);
     free(mem);
     return REPORT();
 }

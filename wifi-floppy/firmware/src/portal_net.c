@@ -91,9 +91,11 @@
 // ignoring) a broadcast reply that isn't its own transaction.
 //
 // --- Setup failure has no return path ----------------------------------
-// portal_run() returns bool but the only defined outcome is "true, a
-// submission arrived" -- there is nothing meaningful to hand back for
-// "the very first udp_new()/tcp_new() of this device's life failed".
+// portal_run() has two defined outcomes (a submission arrived, or the
+// caller's inactivity window elapsed -- portal_net.h's
+// portal_run_result_t), and neither of them is "the very first
+// udp_new()/tcp_new() of this device's life failed"; there is nothing
+// meaningful to hand a caller back for that.
 // main.c already sets the precedent for treating that class of failure
 // as unrecoverable rather than inventing a signalling path for it:
 // `if (cyw43_arch_init()) while (1) tight_loop_contents();`. Every setup
@@ -132,10 +134,13 @@
 #define TCP_REQ_CAP  2048      // headers + body; see the accumulation
                                // comment above for what "too large" does.
 #define TCP_RESP_CAP 2048      // portal_http.c's largest rendered page is
-                               // ~1.4 KB fully substituted (measured
-                               // against PAGE_FMT + a full MAC + a full
-                               // err block); this leaves comfortable
-                               // headroom without costing much RAM.
+                               // 1339 B fully substituted (re-measured
+                               // against PAGE_FMT + a full MAC + a
+                               // buffer-filling err block; its second
+                               // template, the accepted-submit
+                               // confirmation page, is 938 B). This leaves
+                               // comfortable headroom without costing much
+                               // RAM.
 
 #define HTTP_POLL_INTERVAL 6      // tcp_poll() units are ~500 ms each
                                    // (lwIP's coarse timer) -- 6 is ~3 s.
@@ -162,8 +167,31 @@ static device_config_t g_pending_cfg;
 // though the HTTP callback reads it from a different context.
 static const char *g_current_err;
 
+// Final-review Important 2: portal_run()'s wait is now bounded, so it
+// needs to know whether anyone is actually out there. This is a
+// milliseconds-since-boot stamp of the last packet received from any
+// client on the AP -- DHCP, DNS or HTTP alike -- written from background
+// (lwIP callback) context and read from portal_run()'s foreground loop.
+//
+// A single aligned uint32_t: the read and the write are each one
+// instruction on this core, so a reader never sees a torn value, and the
+// only thing a stale read can do is extend the wait by one 5 ms tick,
+// which is the harmless direction. Comparisons use unsigned subtraction
+// (now - stamp), so the ~49.7-day wrap of to_ms_since_boot()'s 32-bit
+// value is a non-event rather than a 49-day hang.
+static volatile uint32_t g_last_activity_ms;
+
+static void note_client_activity(void) {
+    g_last_activity_ms = to_ms_since_boot(get_absolute_time());
+}
+
 typedef struct {
-    bool             in_use;
+    // volatile: portal_run()'s foreground loop polls this (via
+    // any_http_conn_in_use()) to refuse to time out while a request is in
+    // flight, while lwIP callbacks on the background context set and clear
+    // it. Without the qualifier the compiler is free to hoist the read out
+    // of that loop and never observe a connection at all.
+    volatile bool    in_use;
     struct tcp_pcb  *pcb;
     char             req[TCP_REQ_CAP];
     int              req_used;
@@ -204,6 +232,7 @@ static void format_mac_colon(char *out, size_t out_len) {
 static void dhcp_recv_cb(void *arg, struct udp_pcb *pcb, struct pbuf *p,
                           const ip_addr_t *addr, u16_t port) {
     (void)arg; (void)addr; (void)port;
+    note_client_activity();   // somebody is on the AP -- see portal_run()
     uint8_t req[DGRAM_CAP];
     u16_t n = pbuf_copy_partial(p, req, DGRAM_CAP, 0);
     pbuf_free(p);
@@ -230,6 +259,7 @@ static void dhcp_recv_cb(void *arg, struct udp_pcb *pcb, struct pbuf *p,
 static void dns_recv_cb(void *arg, struct udp_pcb *pcb, struct pbuf *p,
                          const ip_addr_t *addr, u16_t port) {
     (void)arg;
+    note_client_activity();   // somebody is on the AP -- see portal_run()
     uint8_t req[DGRAM_CAP];
     u16_t n = pbuf_copy_partial(p, req, DGRAM_CAP, 0);
     pbuf_free(p);
@@ -491,6 +521,9 @@ static err_t http_recv_cb(void *arg, struct tcp_pcb *tpcb, struct pbuf *p, err_t
     }
 
     c->poll_ticks = 0; // saw data -- the idle watchdog only fires on silence
+    note_client_activity();  // ...and so does portal_run()'s, which is what
+                              // keeps a request that is still arriving from
+                              // being cut off by the AP coming down.
 
     u16_t total = p->tot_len;
     tcp_recved(tpcb, total); // ack the whole segment whether kept or
@@ -518,6 +551,9 @@ static err_t http_sent_cb(void *arg, struct tcp_pcb *tpcb, u16_t len) {
     if (!c || !c->pcb) return ERR_OK;
     c->poll_ticks = 0; // the peer ACKed real bytes -- see http_poll_cb's
                        // review-round-1 fix for why this matters.
+    note_client_activity();  // a reply still going out is activity too --
+                              // the confirmation page must not be cut off
+                              // mid-send by portal_run()'s timeout.
     return try_send_more(c);
 }
 
@@ -559,6 +595,19 @@ static err_t http_poll_cb(void *arg, struct tcp_pcb *tpcb) {
     return ERR_OK;
 }
 
+// portal_run()'s second guarantee that an in-progress submission is never
+// cut off: the inactivity deadline is not even evaluated while any slot is
+// occupied, so the check is effectively "between connections" as well as
+// "after silence". A slot is occupied from http_accept_cb() until
+// finish_conn(), which covers a request still arriving, a response still
+// being written, and everything in between.
+static bool any_http_conn_in_use(void) {
+    for (int i = 0; i < MAX_HTTP_CONNS; i++) {
+        if (g_http_conns[i].in_use) return true;
+    }
+    return false;
+}
+
 static http_conn_t *find_free_conn(void) {
     for (int i = 0; i < MAX_HTTP_CONNS; i++) {
         if (!g_http_conns[i].in_use) return &g_http_conns[i];
@@ -578,6 +627,7 @@ static err_t http_accept_cb(void *arg, struct tcp_pcb *newpcb, err_t err) {
         tcp_abort(newpcb);
         return ERR_ABRT;
     }
+    note_client_activity();
     memset(c, 0, sizeof *c);
     c->in_use = true;
     c->pcb = newpcb;
@@ -644,7 +694,8 @@ static void setup_http(void) {
     cyw43_arch_lwip_end();
 }
 
-bool portal_run(device_config_t *out, const char *err) {
+portal_run_result_t portal_run(device_config_t *out, const char *err,
+                               uint32_t idle_timeout_ms) {
     // Review round 1 (Important 1): a second portal_run() call without an
     // intervening portal_stop() used to hang the board silently --
     // lwipopts.h does not set LWIP_SO_REUSE, so re-binding ports 67/53/80
@@ -678,6 +729,10 @@ bool portal_run(device_config_t *out, const char *err) {
 
     g_current_err = err;
     g_submitted = false;
+    note_client_activity();   // start the inactivity clock at "now", not at
+                               // whenever the last portal session saw a
+                               // packet -- otherwise a second call could
+                               // time out before the AP is even usable.
 
     setup_dhcp();
     setup_dns();
@@ -688,12 +743,49 @@ bool portal_run(device_config_t *out, const char *err) {
                       // cyw43_arch_lwip_begin()/end(): doing so would
                       // block the very background context that has to
                       // run for g_submitted to ever become true.
+
+        // Final-review Important 2: this wait used to be unbounded, which
+        // made PROV_PORTAL a one-way door -- a board that lost a race with
+        // its own router at boot (three 15 s attempts spent in the 45 s
+        // before the router finished coming up) parked in AP mode until
+        // somebody turned up with a phone. See portal_net.h's
+        // PORTAL_IDLE_TIMEOUT_MS for the interval and its two-sided
+        // justification, and provisioning.h's prov_on_portal_idle_timeout()
+        // for what the caller does with the result.
+        //
+        // Three separate things keep a submission in progress from being
+        // cut off here:
+        //   1. `idle_timeout_ms` measures INACTIVITY. Every DHCP, DNS and
+        //      HTTP packet -- inbound bytes and outbound ACKs alike --
+        //      calls note_client_activity(), so the clock only runs while
+        //      the AP is genuinely deserted.
+        //   2. The deadline is not evaluated at all while an HTTP
+        //      connection slot is occupied, so a request mid-arrival or a
+        //      response mid-send holds the portal open no matter how the
+        //      clock stands. That cannot defer the timeout forever: a slot
+        //      with no progress in either direction is reclaimed by
+        //      http_poll_cb() after HTTP_IDLE_POLL_LIMIT ticks (~30 s), so
+        //      a client that opens a socket and goes silent buys the
+        //      portal half a minute, not an eternity.
+        //   3. g_submitted is re-read after the deadline check. A submit
+        //      published by the background context between the top of this
+        //      loop and here still wins the race, so the outcome is never
+        //      "timed out, discarding a config that had already arrived".
+        if (idle_timeout_ms == 0) continue;    // caller wants no bound
+        if (any_http_conn_in_use()) {
+            note_client_activity();
+            continue;
+        }
+        uint32_t now = to_ms_since_boot(get_absolute_time());
+        if ((uint32_t)(now - g_last_activity_ms) < idle_timeout_ms) continue;
+        if (g_submitted) break;                // point 3 above
+        return PORTAL_RUN_IDLE_TIMEOUT;
     }
 
     cyw43_arch_lwip_begin();
     *out = g_pending_cfg;
     cyw43_arch_lwip_end();
-    return true;
+    return PORTAL_RUN_SUBMITTED;
 }
 
 void portal_stop(void) {
