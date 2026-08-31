@@ -208,7 +208,8 @@ carried forward verbatim from plan 4b's ledger:
   Critical fix in plan 4b that has never been run.
 - Whether the confirmation page physically leaves the radio before AP teardown.
 - STA DHCP lease acquisition/renewal after the AP netif has been removed.
-- Real phone captive-portal behaviour against the portal's 3-slot DHCP pool, including
+- Real phone captive-portal behaviour against the portal's 2-lease DHCP pool
+  (`DHCP_POOL_SIZE`) and its 3 concurrent HTTP slots (`MAX_HTTP_CONNS`), including
   MAC-randomization retry storms and the ~30 s idle reclaim.
 - Whether the iOS and Android captive-portal probe URLs actually trigger the sign-in sheet
   on real devices.

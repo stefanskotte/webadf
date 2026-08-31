@@ -128,7 +128,7 @@ endif ()
 target_compile_definitions(wifi_floppy PRIVATE
   PORTAL_AP_PASSWORD=\"$ENV{PORTAL_AP_PASSWORD}\")
 
-# Why these twelve -Wl,-u entries stay, now that every one of them has a
+# Why these fifteen -Wl,-u entries stay, now that every one of them has a
 # real caller.
 #
 # The defect they were built against is plan 4a's Critical C1: the entire
