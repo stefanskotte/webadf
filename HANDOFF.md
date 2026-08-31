@@ -339,6 +339,49 @@ increment delivered" before planning the disk-content reader.
   `cleanupTosec()` removes the e2e-seeded `tosec_entries` rows afterward, but it cannot restore
   the verdicts that reset threw away -- those are only recovered by pressing Run now again.
 
+### 3d. OpenRetro enrichment — PLANNED, NOT STARTED
+
+**Branch `feat/openretro` exists and is identical to `master`; zero tasks dispatched.**
+Spec: `docs/superpowers/specs/2026-08-31-openretro-enrichment-design.md`.
+Plan: `docs/superpowers/plans/2026-08-31-openretro-enrichment.md` (9 tasks).
+
+The SDD ledger and the nine task briefs are at
+`.superpowers/sdd/2026-08-31-openretro-enrichment/`, which is **gitignored** — it survives a
+session restart on this machine but is not in git and not on any other. Everything from it that
+matters is reproduced below, so a cold session needs only this file, the spec and the plan.
+
+**What it does:** enrich games with OpenRetro's publisher, developer, year, tags, chipset and
+images, matched by the SHA-1 the TOSEC scan already stores on every blob. Enrichment becomes
+**phase 3 of the existing sweeper**, so it inherits the budget, cursor, cron and admin page.
+
+**`Amiga.sqlite` (28.6 MB) is at the repo root**, supplied by the operator and **gitignored**
+(`/Amiga.sqlite`, `*.sqlite`). Task 1 Step 5 and Task 9 both need it. If it is missing, the
+operator regenerates it by running FS-UAE Launcher once and letting it sync.
+
+**Four facts measured from that real file — the design rests on them, so do not re-derive:**
+
+- `game.data` is **zlib-deflate** (`789c`), **not gzip**. A gunzip-based reader throws.
+- `game.uuid` is a 16-byte **BLOB**; `parent_uuid` inside the JSON is a **hyphenated string**.
+  Without converting between them every variant silently orphans and nothing ever matches.
+- Images: `https://openretro.org/image/<sha1>` — **`?size=400` resizes server-side** (381,535
+  bytes versus 1,029,484 full size). **`?width=` is silently ignored** and serves full size;
+  `?w=` returns 500. Getting the parameter name wrong costs three times the storage.
+- The parent record carries **`hol_url`**, so a later Hall of Light increment gets an exact id
+  and needs no title matching. The operator was told otherwise when they chose to defer it;
+  that was wrong, and this is the correction.
+
+**Two rulings already made, before any task was dispatched:**
+
+1. **Task 5 must reuse `isBlobAlreadyExists`** from `src/lib/blob-upload.ts`. Its `ensureImage`
+   guards only on an existing database row before calling `put(..., allowOverwrite: false)` — if
+   the object exists but the row does not, `put` throws and that blob retries forever. This repo
+   already solved exactly that for ADFs. *Costs if wrong: one extra branch in a small function.*
+2. **Implementation runs on a feature branch, not a git worktree** — this repo's convention, and
+   a worktree would need its own `pnpm install` plus a second dev server for Playwright.
+
+**To resume:** read the spec and plan, then dispatch Task 1. Nothing has been implemented, so
+there is no partial state to reconcile — only the ledger's pre-flight scan, which is above.
+
 ### 4. Backlog, not blocking anything
 
 - **Write-back and layered disks** (disk-change spec §5). Deliberately not designed yet;
