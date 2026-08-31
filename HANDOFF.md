@@ -28,13 +28,13 @@ after plan 4a, rewritten again 2026-08-31 after plan 4b.**
 | **MFM encoder (`adfmfm`)** | ✅ **done** — byte-identical to Greaseweazle across all 61 archive disks (9,760 tracks) |
 | **Plan 3a — device protocol** | ✅ done, merged to `master`, pushed |
 | **Plan 3b — device UI** | ✅ **done, all 7 tasks, merged to `master`** |
-| **Plan 4a — firmware protocol plane** | ✅ **done.** Firmware compiles and has a green host suite. |
-| **Plan 4b — captive portal** | ✅ **done, all 8 tasks.** Compile-time WiFi/pairing-code defines are gone, replaced by an AP-mode portal. Branch `feat/device-portal`, not yet merged. |
+| **Plan 4a — firmware protocol plane** | ✅ **done, merged to `master`, pushed.** Firmware compiles and has a green host suite. |
+| **Plan 4b — captive portal** | ✅ **done, all 8 tasks.** Compile-time WiFi/pairing-code defines are gone, replaced by an AP-mode portal. Merged to `master` and pushed. |
 | **Plan 5 — hardware bring-up** | ❌ not started, the only piece left. **Nothing has run on real hardware** — boards are still in transit and nothing in 4a or 4b has been exercised on one |
 | **Hardware** | boards ordered from JLCPCB |
 
-**Current branch:** `master` for the web app; firmware work is on `feat/device-portal`
-(plan 4b, forked from plan 4a's `feat/device-firmware`, not yet merged). **Suite:** 241
+**Current branch:** `master` — everything through plan 4b is merged and pushed; there is no
+outstanding feature branch. **Suite:** 241
 vitest (+1 from the mirror update in plan 4a, so 242 from `feat/device-firmware` onward),
 87 Playwright, `pnpm build` clean. Firmware: `pnpm firmware:test` green (506 checks, 13
 binaries), `pnpm firmware:build` produces a `.uf2` — **and now requires
@@ -105,7 +105,7 @@ Not a task — a warning, first because both are one refactor away from being un
 
 ### 1. Plan 4a — done. Read this before touching firmware.
 
-Plan 4a shipped on branch `feat/device-firmware` (not yet merged to `master`):
+Plan 4a shipped (merged to `master`):
 mbedTLS with a provisioned bearer token per D16, the full §10 device-contract state
 machine, two-slot PSRAM with fetch-before-transition, and both recorded firmware defects
 fixed (`TRACK_SLOT_BYTES`/`TRACK_MFM_MAX` collapsed into one `TRACK_MAX_BYTES`; `bits` now
