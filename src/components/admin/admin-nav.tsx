@@ -9,6 +9,7 @@ const ITEMS = [
   { href: '/admin', label: 'Overview' },
   { href: '/admin/users', label: 'Users' },
   { href: '/admin/invites', label: 'Invites' },
+  { href: '/admin/scan', label: 'Scan' },
 ];
 
 export function AdminNav() {
