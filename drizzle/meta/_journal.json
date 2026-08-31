@@ -64,6 +64,13 @@
       "when": 1788207510101,
       "tag": "0008_illegal_blue_blade",
       "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1788208069757,
+      "tag": "0009_large_stick",
+      "breakpoints": true
     }
   ]
 }

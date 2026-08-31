@@ -1,0 +1,1 @@
+ALTER TABLE "openretro_images" ADD COLUMN "url" text NOT NULL;

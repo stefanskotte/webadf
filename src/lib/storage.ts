@@ -1,6 +1,7 @@
 import {
-  issueSignedToken, presignUrl, head, get, del, BlobNotFoundError,
+  issueSignedToken, presignUrl, head, get, put, del, BlobNotFoundError,
 } from '@vercel/blob';
+import { isBlobAlreadyExists } from '@/lib/blob-upload';
 
 export interface BlobStat {
   /** The size the store actually holds, in bytes. Authoritative — never the client's claim. */
@@ -113,5 +114,64 @@ export const diskStore: DiskStore = {
   async remove(sha256) {
     assertSha(sha256);
     await del(key(sha256));
+  },
+};
+
+const SHA1_RE = /^[0-9a-f]{40}$/;
+
+function imageKey(sha1: string): string {
+  return `oagd/${sha1}`;
+}
+
+export interface ImageStore {
+  /** Stores bytes at oagd/<sha1>, returning the public URL to render from. */
+  put(sha1: string, bytes: Uint8Array, contentType: string): Promise<{ url: string; key: string }>;
+  storageKey(sha1: string): string;
+}
+
+/**
+ * Cover art and screenshots, keyed by OpenRetro's own sha-1.
+ *
+ * A SECOND store rather than a second @vercel/blob importer. This file states
+ * that it is the only place that may import the SDK, and the self-hosting
+ * backlog item treats DiskStore as the seam a MinIO or filesystem backend
+ * would be written against -- a direct `put` in openretro-images.ts would put
+ * a second, undocumented dependency behind that seam.
+ *
+ * It cannot simply be DiskStore: that interface is sha-256 shaped (assertSha
+ * rejects a 40-character digest), its keys live under adf/, and its objects
+ * are PRIVATE and served through presigned URLs with a TTL. These are public,
+ * because a game page renders them in an <img> and re-presigning every
+ * screenshot on every page view would be a round trip per image for content
+ * that is not secret.
+ */
+export const imageStore: ImageStore = {
+  storageKey: imageKey,
+
+  async put(sha1, bytes, contentType) {
+    if (!SHA1_RE.test(sha1)) {
+      throw new Error(`storage: expected a lowercase hex sha-1 digest, got ${JSON.stringify(sha1)}`);
+    }
+    const pathname = imageKey(sha1);
+    try {
+      // Buffer.from wraps the same memory; the SDK's PutBody does not accept
+      // a bare Uint8Array.
+      const result = await put(pathname, Buffer.from(bytes), {
+        access: 'public', contentType, addRandomSuffix: false, allowOverwrite: false,
+      });
+      return { url: result.url, key: pathname };
+    } catch (err) {
+      // The object is already in the store but its row is not in the
+      // database -- a crash between the two writes. Without this branch the
+      // put is refused forever and that image retries every single sweep.
+      // Exactly the reconciliation ADF uploads already do; isBlobAlreadyExists
+      // is imported rather than re-expressed so there is one copy of the rule.
+      // 400 is passed literally because the SDK throws an Error and does not
+      // surface the status code that the presigned-PUT path can read.
+      const message = err instanceof Error ? err.message : String(err);
+      if (!isBlobAlreadyExists(400, message)) throw err;
+      const meta = await head(pathname);
+      return { url: meta.url, key: pathname };
+    }
   },
 };
