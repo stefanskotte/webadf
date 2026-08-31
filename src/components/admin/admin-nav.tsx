@@ -5,11 +5,10 @@ import { usePathname } from 'next/navigation';
 // Mirrors the app shell's TopNav styling, but over the admin routes. Exact
 // matching on href, not startsWith: '/admin' is a prefix of every other entry,
 // so startsWith would light up Overview on all three pages.
-// Invites is added by task 4, together with the page it points at -- a nav
-// entry linking at a route that does not exist yet would 404 the operator.
 const ITEMS = [
   { href: '/admin', label: 'Overview' },
   { href: '/admin/users', label: 'Users' },
+  { href: '/admin/invites', label: 'Invites' },
 ];
 
 export function AdminNav() {

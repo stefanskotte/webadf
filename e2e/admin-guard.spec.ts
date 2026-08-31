@@ -5,10 +5,7 @@ import { cleanupSeeded } from './device-helpers';
 
 test.afterAll(cleanupSeeded);
 
-// '/admin/invites' is deliberately absent from this loop until task 4 creates
-// the page: an unrouted path 404s before any layout guard runs, so including
-// it here would assert Next's routing rather than requireSuperAdmin().
-const ADMIN_ROUTES = ['/admin', '/admin/users'];
+const ADMIN_ROUTES = ['/admin', '/admin/users', '/admin/invites'];
 
 test('a signed-in non-admin is redirected away from every admin route', async ({ page }) => {
   await signUpFresh(page); // a random @example.test user, NOT the allowlisted one
