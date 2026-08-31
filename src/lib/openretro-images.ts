@@ -49,7 +49,7 @@ export async function ensureImage(
   const stored = await imageStore.put(sha1, bytes, res.headers.get('content-type') ?? 'image/png');
 
   await db.insert(openretroImages).values({
-    sha1, entryUuid, kind, ordinal, storageKey: stored.key, url: stored.url,
+    sha1, entryUuid, kind, ordinal, storageKey: stored.key,
     sizeBytes: bytes.byteLength, sourceUrl: url,
   }).onConflictDoNothing();
 

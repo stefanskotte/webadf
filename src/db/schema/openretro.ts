@@ -61,11 +61,6 @@ export const openretroImages = pgTable('openretro_images', {
   kind: text('kind').notNull(),
   ordinal: integer('ordinal').notNull().default(0),
   storageKey: text('storage_key').notNull(),
-  // The public URL in OUR store. Persisted because it cannot be derived: it
-  // embeds the Blob store id. Rendering from source_url instead would hotlink
-  // openretro.org on every page view, which is the thing storing these
-  // locally exists to avoid.
-  url: text('url').notNull(),
   sizeBytes: integer('size_bytes').notNull(),
   sourceUrl: text('source_url').notNull(),
   fetchedAt: timestamp('fetched_at', { withTimezone: true }).notNull().defaultNow(),

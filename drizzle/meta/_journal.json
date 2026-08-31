@@ -71,6 +71,13 @@
       "when": 1788208069757,
       "tag": "0009_large_stick",
       "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1788208763624,
+      "tag": "0010_hot_loa",
+      "breakpoints": true
     }
   ]
 }

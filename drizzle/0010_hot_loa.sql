@@ -1,0 +1,1 @@
+ALTER TABLE "openretro_images" DROP COLUMN "url";

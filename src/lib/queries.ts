@@ -98,7 +98,10 @@ export interface GameDetailDisk {
   sha256: string; sizeBytes: number; isBoot: boolean; writeProtected: boolean;
 }
 export interface GameImage {
-  sha1: string; url: string; kind: string; ordinal: number;
+  sha1: string;
+  /** Our own streaming route. Content-addressed, so it is derived, not stored. */
+  url: string;
+  kind: string; ordinal: number;
 }
 /** OpenRetro's outbound links, plus its own page, for the attribution row. */
 export interface GameLinks {
@@ -186,14 +189,15 @@ export async function getGameDetail(orgId: string, gameId: string): Promise<Game
         longplayUrl: entry.longplayUrl,
       };
 
-      const imgs = await db
+      const rows = await db
         .select({
-          sha1: openretroImages.sha1, url: openretroImages.url,
+          sha1: openretroImages.sha1,
           kind: openretroImages.kind, ordinal: openretroImages.ordinal,
         })
         .from(openretroImages)
         .where(eq(openretroImages.entryUuid, entry.uuid))
         .orderBy(openretroImages.ordinal);
+      const imgs: GameImage[] = rows.map((i) => ({ ...i, url: `/api/images/${i.sha1}` }));
 
       front = imgs.find((i) => i.kind === 'front') ?? null;
       titleShot = imgs.find((i) => i.kind === 'title') ?? null;

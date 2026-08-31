@@ -124,8 +124,12 @@ function imageKey(sha1: string): string {
 }
 
 export interface ImageStore {
-  /** Stores bytes at oagd/<sha1>, returning the public URL to render from. */
-  put(sha1: string, bytes: Uint8Array, contentType: string): Promise<{ url: string; key: string }>;
+  /** Stores bytes at oagd/<sha1>. */
+  put(sha1: string, bytes: Uint8Array, contentType: string): Promise<{ key: string }>;
+  /** Full contents, for the route that streams them to a browser. */
+  read(sha1: string): Promise<{ bytes: Uint8Array; contentType: string } | null>;
+  /** Only the e2e suite removes an image; the app never deletes one. */
+  remove(sha1: string): Promise<void>;
   storageKey(sha1: string): string;
 }
 
@@ -139,11 +143,15 @@ export interface ImageStore {
  * a second, undocumented dependency behind that seam.
  *
  * It cannot simply be DiskStore: that interface is sha-256 shaped (assertSha
- * rejects a 40-character digest), its keys live under adf/, and its objects
- * are PRIVATE and served through presigned URLs with a TTL. These are public,
- * because a game page renders them in an <img> and re-presigning every
- * screenshot on every page view would be a round trip per image for content
- * that is not secret.
+ * rejects a 40-character digest) and its keys live under adf/.
+ *
+ * These are stored PRIVATE, like everything else here. access: 'public' was
+ * tried first and the real store refused it outright -- "Cannot use public
+ * access on a private store" -- and making the store public to suit cover art
+ * would also make every ADF in it publicly addressable, which is precisely
+ * the boundary /api/device/image exists to enforce. They are served instead
+ * by /api/images/<sha1>, which streams the bytes so no presigned URL ever
+ * reaches the DOM.
  */
 export const imageStore: ImageStore = {
   storageKey: imageKey,
@@ -156,10 +164,10 @@ export const imageStore: ImageStore = {
     try {
       // Buffer.from wraps the same memory; the SDK's PutBody does not accept
       // a bare Uint8Array.
-      const result = await put(pathname, Buffer.from(bytes), {
-        access: 'public', contentType, addRandomSuffix: false, allowOverwrite: false,
+      await put(pathname, Buffer.from(bytes), {
+        access: 'private', contentType, addRandomSuffix: false, allowOverwrite: false,
       });
-      return { url: result.url, key: pathname };
+      return { key: pathname };
     } catch (err) {
       // The object is already in the store but its row is not in the
       // database -- a crash between the two writes. Without this branch the
@@ -170,8 +178,21 @@ export const imageStore: ImageStore = {
       // surface the status code that the presigned-PUT path can read.
       const message = err instanceof Error ? err.message : String(err);
       if (!isBlobAlreadyExists(400, message)) throw err;
-      const meta = await head(pathname);
-      return { url: meta.url, key: pathname };
+      return { key: pathname };
     }
+  },
+
+  async read(sha1) {
+    if (!SHA1_RE.test(sha1)) return null;
+    const result = await get(imageKey(sha1), { access: 'private' });
+    if (!result || result.statusCode !== 200) return null;
+    return {
+      bytes: new Uint8Array(await new Response(result.stream).arrayBuffer()),
+      contentType: result.headers.get('content-type') ?? 'image/png',
+    };
+  },
+
+  async remove(sha1) {
+    await del(imageKey(sha1));
   },
 };
