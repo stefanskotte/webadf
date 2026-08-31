@@ -32,11 +32,12 @@ after plan 4a, rewritten again 2026-08-31 after plan 4b.**
 | **Plan 4b — captive portal** | ✅ **done, all 8 tasks.** Compile-time WiFi/pairing-code defines are gone, replaced by an AP-mode portal. Merged to `master` and pushed. |
 | **Plan 5 — hardware bring-up** | ❌ not started, the only piece left. **Nothing has run on real hardware** — boards are still in transit and nothing in 4a or 4b has been exercised on one |
 | **Super-admin plane** | ✅ **done, all 6 tasks, merged to `master` and live in production.** `/admin`: overview, user list with cascade delete, invites |
+| **TOSEC identity scan** | ✅ **done, 12 tasks, on `feat/tosec-scan` — NOT merged.** `/admin/scan`: DAT import, hashing, matching, backfill |
 | **Hardware** | boards ordered from JLCPCB |
 
-**Current branch:** `master` — the super-admin plane was merged (fast-forward) and pushed on
-2026-08-31, and that push deployed to production. There is no outstanding feature branch.
-**Suite:** 256 vitest, 107 Playwright, `pnpm build` clean. Firmware: `pnpm firmware:test` green (506 checks, 13
+**Current branch:** `feat/tosec-scan` — the TOSEC identity scan is complete and reviewed but
+**not merged**. The super-admin plane before it is on `master` and live in production.
+**Suite on `feat/tosec-scan`:** 285 vitest, `pnpm build` clean, Playwright green. Firmware: `pnpm firmware:test` green (506 checks, 13
 binaries), `pnpm firmware:build` produces a `.uf2` — **and now requires
 `PORTAL_AP_PASSWORD` set in the environment, or the configure step fails by design**; see
 "Plan 4b" below for the full command.
@@ -255,6 +256,64 @@ account in production's allowlist or leave the e2e unable to sign in as an admin
   `/admin` exists. That is also why the nav link is gated server-side rather than rendered for
   everyone and hidden with CSS.
 
+### 3c. TOSEC identity scan — DONE, on `feat/tosec-scan`, not merged
+
+Identifies stored disk images by content hash against imported TOSEC data and corrects the
+catalog's filename-derived titles. Spec: `docs/superpowers/specs/2026-08-31-tosec-identity-scan-design.md`.
+Plan: `docs/superpowers/plans/2026-08-31-tosec-identity-scan.md` (11 tasks + a 12th added mid-flight).
+
+**The measured result, which is the point of the whole increment: TOSEC recognises 28 of the
+operator's 62 archive disks — 45.2%.** 55,932 entries are loaded from all seven Amiga `[ADF]` sets.
+
+**Do not quote the database's own miss rate.** The blob corpus is dominated by e2e-generated
+content with convincing TOSEC-style filenames, plus 129 blobs whose bytes were never in the object
+store. Over that corpus the figure is 9.7% and it means nothing. Measure against a real archive
+and exclude `unreadable`.
+
+**The misses invert the spec's own argument about what to build next** — they are Workbench,
+system and utility disks (`Install3_1_4.adf`, `Locale.adf`, `WHDLoad185.adf`, `Real_Amiga_Install.ADF`),
+not games. Those are OFS/FFS disks a filesystem reader *can* read. See the spec's "What this
+increment delivered" before planning the disk-content reader.
+
+**Operator runbook:**
+
+1. Download the Amiga TOSEC DATs. The complete pack holds 4,743 files for every system; only the
+   seven `[ADF]` sets can ever match an ADF. The pack ships **Logiqx XML** despite every filename
+   ending `_CM`.
+2. `/admin/scan` → choose files. The input takes **several DATs at once**; they import
+   sequentially and one bad file is skipped rather than aborting the run.
+3. **Import everything first, then press Run now ONCE.** Each import clears every blob's match
+   verdict, so sweeping between imports repeats a full re-match for nothing.
+4. Press **Run now** until `unchecked` reaches 0. Each pass is bounded (~240 s) and resumable;
+   the nightly cron at 03:00 continues on its own.
+
+**`CRON_SECRET` is set in Vercel production** (2026-08-31). The cron route fails closed without it.
+
+**Things that will bite you here:**
+
+- **NEVER re-derive `games.id` or `disks.id`.** `disks.id` descends from `games.id`, and
+  `devices.desiredDiskId` is plain text with no foreign key that `readDesired` joins on. Re-keying
+  makes that join return nothing, and in this protocol "no disk desired" **is eject** — a metadata
+  scan would silently eject disks from real hardware, which disk-change spec §1 rule 1 forbids.
+  Duplicates are merged on `(sortTitle, year)` instead, and `e2e/tosec-scan.spec.ts` has a test
+  whose whole job is to catch a regression here.
+- **Never clear a blob's hashes.** Both match resets touch only `match_checked_at`/`match_state`/
+  `tosec_entry_id`. Hashing means re-reading every blob out of the object store; a content hash
+  never changes.
+- **`applyMatch` must run before the blob is stamped**, not after. Stamping first and failing
+  leaves a blob permanently marked matched with the catalog never rewritten, and the sweeper's
+  cursor never revisits it.
+- **A human-edited game is never retitled *or merged away*.** `MACHINE_SOURCES` is `['filename',
+  'tosec']`; anything else — including `NULL` — is protected, and two protected duplicates abort
+  the merge rather than choosing between two human decisions.
+- **`seedDisk()` must set `metadataSource: 'filename'`** to mirror real ingest. It once did not,
+  and the resulting NULL is a row shape the app never produces, which silently made every
+  TOSEC correction impossible in tests.
+- **`stableId('tosec', setName, romName)` collides across tests reusing a set name.** That
+  silently dropped one test's fixture via `onConflictDoNothing`. Give each test a distinct set name.
+- **4 of 221 Amiga DATs contain duplicate rom names** (`Games - SPS` has 672 in 6,016), so the
+  importer dedupes by id before upserting. Without it Postgres aborts the whole import.
+
 ### 4. Backlog, not blocking anything
 
 - **Write-back and layered disks** (disk-change spec §5). Deliberately not designed yet;
@@ -389,6 +448,14 @@ Learned the hard way; several cost real debugging time.
 - **`isBoot` is not guaranteed.** `groupDisks` marks disk 1 as boot; a set with disks 2
   and 3 and no disk 1 gets none. **7 games in the live database currently have zero boot
   disks.** Never assume one exists — fall back to the lowest `diskNo`.
+- **No toast in this app was visible until 2026-08-31.** `src/components/ui/sonner.tsx` existed
+  but no layout rendered `<Toaster/>`, so every `toast()` call in nine components — mount, eject,
+  pair, write-protect, invite issue/revoke, user delete, scan and DAT upload — displayed nothing.
+  Every failure path reported silence, including in the super-admin plane that shipped to
+  production that morning. Fixed by rendering `<Toaster/>` in the root layout. Note there is still
+  **no `next-themes` ThemeProvider anywhere**, so `sonner.tsx`'s `useTheme()` silently falls back
+  to `"system"`; that is pre-existing and unrelated, but it means the toaster's theme is not
+  actually following the app.
 - **A presigned URL is a live credential.** Never log it, never put it in the DOM.
 - **`--accent-amber` (`#f5822e`) is fill-only** and fails WCAG AA as text. Amber text is
   `--amber-text` (`#a8560f`).

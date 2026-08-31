@@ -229,8 +229,12 @@ and already gzips them to record `gzipSizeBytes`.
 
 So CRC32, MD5 and SHA1 are computed **in that same pass, on the server, from the stored bytes**.
 The cost is CPU over bytes already in memory; no extra read, no extra request, no client
-involvement. A freshly pushed disk is hashed and matched immediately, and **there is no
-client-supplied hash anywhere in this design** — so there is nothing to verify later, no
+involvement. **Correction, made during implementation:** a freshly pushed disk is *hashed*
+immediately but is **not matched** immediately — ingest computes hashes, the sweeper matches.
+Matching inline would run several queries per hash on a route capped at 60 s with batches of up
+to 500 files, so it is deliberately deferred. What ingest does do is clear the match verdict for
+the batch's hashes, so the sweeper reconsiders them (see "What this increment delivered").
+There is **no client-supplied hash anywhere in this design** — so there is nothing to verify later, no
 provisional per-tenant state, and no window in which shared `blobs` state could be wrong.
 
 Two consequences worth stating:
@@ -274,3 +278,62 @@ disk at all.
 
 Blob garbage collection remains out of scope and unaffected: nothing here deletes a blob, and
 the §5.2 merge deletes only an emptied `games` row.
+
+
+---
+
+## What this increment delivered (2026-08-31)
+
+Shipped on `feat/tosec-scan`: CRC32, a DAT parser for both ClrMamePro and Logiqx XML, the
+matching cascade, `tosec_entries` plus content-hash columns on `blobs`, server-side hashing inside
+ingest's existing read-back, DAT import, the destructive apply-and-merge, the batched resumable
+sweeper, a cron and an admin trigger, and the admin scan page.
+
+### The measurement this increment exists to produce
+
+**TOSEC recognises 28 of the operator's 62 archive disks — 45.2%.** Measured directly: every local
+ADF hashed and its SHA-1 looked up among 55,932 entries imported from all seven Amiga `[ADF]`
+sets (TOSEC-v2025-01-30 and siblings).
+
+**The database's own miss rate is not trustworthy and must not be quoted.** Of 871 blobs, 129 are
+unreadable (rows whose bytes were never in the object store — e2e seeds), and nearly all the rest
+are e2e-generated content carrying convincing TOSEC-style filenames such as
+`Wedge Me (1991)(Y).adf` and `Test Game (1992)(Acme)(Disk 1 of 2).adf`. Computed over that corpus
+the rate is 9.7%, which says nothing about a real library. The `unreadable` counter — added
+because a review found storage failures were being recorded identically to genuine TOSEC misses —
+is what makes this visible at all. **Any future miss rate must exclude `unreadable` and must be
+measured against a real archive, not against this database.**
+
+### §2's conclusion about Increment B is INVERTED by the data
+
+§2 argued a filesystem reader was low value because NDOS game disks have no filesystem to read.
+The measured misses say otherwise. They are not games. They are:
+
+`Install3_1_4.adf`, `Extras3_1_4.adf`, `Fonts.adf`, `Locale.adf`, `Storage3_1_4.adf`,
+`ModulesA1200_3.1.4.adf`, `Workbench31 - *.adf`, `WHDLoad185.adf`, `DOpus.adf`, `SysInfo.adf`,
+`BPPC-FLASH.ADF`, `Real_Amiga_Install.ADF`, `Boot-CFD-FAT95-v2.adf`, `ICDPrepHD-42.adf`.
+
+Workbench, system and utility disks — several of them 3.1.4, a later commercial re-release
+preservation sets deliberately do not carry, plus personally-built install and flash disks that
+exist nowhere but the operator's shelf. **These are exactly the OFS/FFS disks a filesystem reader
+CAN read**: they have volume names, file listings and version strings.
+
+So Increment B is worth more than §2 estimated, for the opposite reason to the one it was
+discounted on. Bootblock fingerprinting, which §2 proposed instead, addresses cracked *game*
+releases — and games are not where this library's misses are. **Anyone planning Increment B
+should start from this paragraph, not from §2.**
+
+### Corrections to this spec made during implementation
+
+1. **§7's immediacy claim was wrong** and is corrected in place above.
+2. **The `flags` column in §3.1's sketch was never built.** Flags play no part in hash-based
+   identity and are recoverable from the verbatim `game_name`/`rom_name`.
+3. **Two gaps not in this spec at all**, both found by reasoning about the operator's first real
+   run rather than by any review, and both of which would have made the feature silently do
+   nothing: importing a DAT now clears every prior match verdict (a blob is otherwise considered
+   exactly once, so importing after a sweep matched nothing), and ingesting disks clears the
+   verdict for their hashes (so a blob matched before those disks existed reaches them). Hashes
+   are never cleared by either reset — hashing is the expensive half and a content hash never
+   changes.
+4. **Operator guidance that follows from 3:** import every DAT first, then sweep **once**. The
+   reset is global and idempotent, so sweeping between imports repeats a full re-match for no gain.
