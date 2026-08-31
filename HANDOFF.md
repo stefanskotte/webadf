@@ -230,11 +230,10 @@ database so a database compromise cannot grant it.
    exists (role `owner`, org "sfs's library"), so the unique constraint on `user.email` now
    protects that address permanently. This had to happen first because `emailVerified` defaults
    to false and nothing enforces it, so an unclaimed allowlisted address is a prize.
-2. **STILL OUTSTANDING.** Revoke the invite codes that leaked into a session transcript.
-   `M3W4V3BA` was consumed by step 1; `56DTUDMA`, `HXGMH4ZK` and `K69GXH72` are **still live**.
-   Registration is invite-only (D13) to bound the ingest oracle, so each live code is one
-   account anyone holding it can create. No admin UI exists yet (that is Task 4), so this is a
-   `delete from invites where code in (...) and consumed_at is null` until then.
+2. ~~Revoke the invite codes that leaked into a session transcript.~~ **DONE 2026-08-31** —
+   `M3W4V3BA` was consumed by step 1; `56DTUDMA`, `HXGMH4ZK` and `K69GXH72` were deleted
+   (unconsumed rows only). **There are now zero live invite codes**, which means no new account
+   can be registered until one is issued — by hand, or by the admin plane once Task 4 lands.
 3. `vercel env add SUPERADMIN_EMAILS production` → `sfs@enhance-it.dk`, then redeploy.
 
 `.env.local` needs `SUPERADMIN_EMAILS=admin@example.test` for local dev and e2e — a *different*
