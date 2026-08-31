@@ -20,7 +20,11 @@ import { tosecEntries } from '@/db/schema/tosec';
 // Sources this system writes for itself. Anything else means a human decided
 // it, and a human's row is never deleted by a sweep -- the Authority rule
 // applies to deletion as much as to retitling.
-const MACHINE_SOURCES = ['filename', 'tosec'];
+//
+// Exported because openretro-apply.ts enforces the same rule and must not
+// keep a second copy of this list: a source added to one and not the other
+// would silently make half the system treat a machine row as human-edited.
+export const MACHINE_SOURCES = ['filename', 'tosec', 'openretro'];
 
 export interface ApplyResult { gamesUpdated: number; disksUpdated: number; gamesMerged: number }
 
