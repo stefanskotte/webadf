@@ -24,6 +24,17 @@ import { tmpdir } from 'node:os';
 
 export interface OpenRetroVariant {
   uuid: string; parentUuid: string | null;
+  /**
+   * sha-1 of every file in this variant that is a WHOLE ADF DISK IMAGE.
+   *
+   * Measured on the real file: a variant's file_list holds 418,539 files in
+   * total but only 19,483 are named *.adf. The rest are the individual files
+   * inside a WHDLoad install (190,425 have no extension at all), or other
+   * container formats -- .ipf, .dms, .pkd -- whose bytes can never equal a
+   * raw ADF's. This app only ever stores raw ADFs, so indexing the others
+   * would grow the sha1 table twelvefold (175,282 digests against 14,850)
+   * with no digest among them that any blob could match.
+   */
   fileSha1s: string[];
   chipset: string | null; videoStandard: string | null;
   protection: string | null; variantName: string | null; source: string | null;
@@ -90,8 +101,11 @@ export function readOpenRetroDb(bytes: Uint8Array): OpenRetroData {
       if (type === '2') {
         let fileSha1s: string[] = [];
         try {
-          const list = JSON.parse(String(j.file_list ?? '[]')) as Array<{ sha1?: string }>;
-          fileSha1s = list.map((f) => sha(f.sha1)).filter((s): s is string => s !== null);
+          const list = JSON.parse(String(j.file_list ?? '[]')) as Array<{ name?: string; sha1?: string }>;
+          fileSha1s = list
+            .filter((f) => /\.adf$/i.test(f.name ?? ''))
+            .map((f) => sha(f.sha1))
+            .filter((s): s is string => s !== null);
         } catch { fileSha1s = []; }
         variants.push({
           uuid, parentUuid: str(j.parent_uuid), fileSha1s,

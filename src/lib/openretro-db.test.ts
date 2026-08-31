@@ -40,6 +40,10 @@ function buildFixture(): Uint8Array {
     file_list: JSON.stringify([
       { name: 'PF1.adf', sha1: '1'.repeat(40) },
       { name: 'PF2.adf', sha1: '2'.repeat(40) },
+      // A WHDLoad slave and an IPF: neither is a raw ADF, so neither digest
+      // can ever equal a stored blob's. 92% of the real file looks like this.
+      { name: 'PinballFantasies.slave', sha1: '3'.repeat(40) },
+      { name: 'PinballFantasies_PF1.ipf', sha1: '4'.repeat(40) },
     ]),
   };
 
@@ -74,7 +78,10 @@ describe('readOpenRetroDb', () => {
     expect(data.variants[0].parentUuid).toBe('dd6a826f-7106-55d3-9503-435bdb6a2e9c');
   });
 
-  it('extracts every sha1 from file_list, lowercased', () => {
+  it('extracts only whole-ADF sha1s from file_list, lowercased', () => {
+    // Deliberately excludes the .slave and .ipf entries: this app stores raw
+    // ADFs, so those digests could never match a blob, and indexing them
+    // grows the sha1 table twelvefold for nothing.
     expect(data.variants[0].fileSha1s).toEqual(['1'.repeat(40), '2'.repeat(40)]);
   });
 
