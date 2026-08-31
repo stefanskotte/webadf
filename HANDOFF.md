@@ -289,6 +289,23 @@ increment delivered" before planning the disk-content reader.
 
 **`CRON_SECRET` is set in Vercel production** (2026-08-31). The cron route fails closed without it.
 
+**Two known gaps, both found by the final review's own re-review and deliberately not fixed:**
+
+- **A permanently-failing blob makes the sweeper hot-loop forever.** Phase 2 catches a per-blob
+  error, logs it and moves on — deliberately *without* stamping `match_checked_at`, because a
+  match failure is usually transient and stamping would misclassify it as decided. But once every
+  other blob has drained, `todo` degenerates to just that blob, and every `sweep()` — cron and Run
+  now alike — retries it for the whole 240 s budget and never reaches `done: true`. Nothing is
+  corrupted; it simply never finishes and hammers the database nightly. The fix, if it ever fires,
+  is a bounded retry or a distinguishable `match_state = 'error'` after N attempts. Watch for a
+  `tosec-sweep: match failed for blob <sha>` line repeating in the logs.
+- **`recordStatus()` in `src/lib/mount.ts` resolves a disk to its game using `disks.orgId` alone**,
+  not double-scoped against `games.orgId` the way `src/lib/queries.ts` is. Since the merge now
+  *preserves* org-drifted disks rather than letting the cascade delete them, the population of
+  such rows grows rather than shrinks. `listDevices`' defensive join still stops a foreign title
+  rendering, so this is the same already-tolerated class as the recorded "3 leftover devices",
+  not a new leak — but it is worth a hardening pass.
+
 **Things that will bite you here:**
 
 - **NEVER re-derive `games.id` or `disks.id`.** `disks.id` descends from `games.id`, and
