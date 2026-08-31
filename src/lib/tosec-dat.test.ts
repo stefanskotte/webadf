@@ -100,3 +100,90 @@ describe('parseDat robustness', () => {
     expect(parseDat('game (\n\tname "Nothing"\n)\n').entries).toEqual([]);
   });
 });
+
+describe('parseDat (Regression: 100+ games with cross-game mis-association check)', () => {
+  // Helper to generate test fixtures programmatically with paren-heavy names
+  const generateGames = (count: number) => {
+    const games: Array<{ name: string; crc: string; md5: string; sha1: string }> = [];
+    for (let i = 0; i < count; i++) {
+      // Paren-heavy, TOSEC-realistic name with nested parens to exercise edge cases
+      const name = `Game ${i} (199${i % 10})(Publisher (Sub) Ltd)(PD)[cr CSL][a1]`;
+      // Derive distinct hashes from index - detectable if swapped
+      const crc = i.toString(16).padStart(8, '0');
+      const md5 = i.toString(16).padStart(32, '0');
+      const sha1 = i.toString(16).padStart(40, '0');
+      games.push({ name, crc, md5, sha1 });
+    }
+    return games;
+  };
+
+  const generateCmp = (games: Array<{ name: string; crc: string; md5: string; sha1: string }>) => {
+    let cmp = `clrmamepro (
+\tname "Test Set"
+\tversion 1.0
+)
+`;
+    for (const game of games) {
+      cmp += `
+game (
+\tname "${game.name}"
+\trom ( name "${game.name}.adf" size 901120 crc ${game.crc} md5 ${game.md5} sha1 ${game.sha1} )
+)
+`;
+    }
+    return cmp;
+  };
+
+  const generateXml = (games: Array<{ name: string; crc: string; md5: string; sha1: string }>) => {
+    let xml = `<?xml version="1.0"?>
+<datafile>
+\t<header><name>Test Set</name><version>1.0</version></header>
+`;
+    for (const game of games) {
+      xml += `\t<game name="${game.name}">
+\t\t<rom name="${game.name}.adf" size="901120" crc="${game.crc}" md5="${game.md5}" sha1="${game.sha1}"/>
+\t</game>
+`;
+    }
+    xml += `</datafile>`;
+    return xml;
+  };
+
+  it('handles 150 games without cross-game mis-association (ClrMamePro)', () => {
+    const games = generateGames(150);
+    const cmp = generateCmp(games);
+    const dat = parseDat(cmp);
+
+    // Assert entry count equals game count
+    expect(dat.entries).toHaveLength(games.length);
+
+    // Assert each entry's hash matches its game's hash (detects rom clause bleeding)
+    for (let i = 0; i < games.length; i++) {
+      const entry = dat.entries[i];
+      const game = games[i];
+      expect(entry.crc32).toBe(game.crc.toLowerCase());
+      expect(entry.md5).toBe(game.md5.toLowerCase());
+      expect(entry.sha1).toBe(game.sha1.toLowerCase());
+      expect(entry.gameName).toBe(game.name);
+    }
+  });
+
+  it('handles 150 games without cross-game mis-association (Logiqx XML)', () => {
+    const games = generateGames(150);
+    const xml = generateXml(games);
+    const dat = parseDat(xml);
+
+    // Assert entry count equals game count
+    expect(dat.entries).toHaveLength(games.length);
+
+    // Assert each entry's hash matches its game's hash (detects rom clause bleeding)
+    for (let i = 0; i < games.length; i++) {
+      const entry = dat.entries[i];
+      const game = games[i];
+      expect(entry.crc32).toBe(game.crc.toLowerCase());
+      expect(entry.md5).toBe(game.md5.toLowerCase());
+      expect(entry.sha1).toBe(game.sha1.toLowerCase());
+      expect(entry.gameName).toBe(game.name);
+    }
+  });
+});
