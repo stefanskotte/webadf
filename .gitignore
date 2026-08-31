@@ -44,6 +44,7 @@ test-results/
 playwright-report/
 
 # Bulk TOSEC downloads: ~1 GB of disk images and DAT packs. Reference data the
-# operator fetches by hand, never part of the repo.
-tosec-archive/
-tosec/
+# operator fetches by hand, never part of the repo. Anchored to the repo root
+# (leading /) so this doesn't also match src/app/api/admin/tosec/.
+/tosec-archive/
+/tosec/
