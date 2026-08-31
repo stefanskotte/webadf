@@ -352,6 +352,19 @@ Learned the hard way; several cost real debugging time.
 
 ---
 
+## The e2e suite leaves live invite codes behind
+
+`e2e/admin-invites.spec.ts` issues real invite codes, and `cleanupSeeded` does **not** remove
+them — it tracks shas, games, disks and devices, not invites. Six live codes were left after
+the 2026-08-31 runs and were deleted by hand (unconsumed rows only; a consumed row is the
+record that an account exists). **Check `select count(*) from invites where consumed_at is null
+and expires_at > now()` after any run of that spec** — a live code is a working registration
+credential for seven days, and registration being invite-only (D13) is what bounds the ingest
+oracle recorded under "Known accepted risks".
+
+Worth fixing properly by having `cleanupSeeded` track issued invite codes the way it tracks
+everything else.
+
 ## The live database's catalog was emptied on 2026-08-31
 
 `games` and `disks` are **0 rows**. This was not a bug in shipped code: plan 5 of the
