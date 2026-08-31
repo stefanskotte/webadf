@@ -67,6 +67,9 @@ same bug wearing the other face.
   fan such a user into duplicate rows. Unreachable today at one org per user; the admin list is
   also exactly where a broken multi-member account should be visible. Decide whether to accept,
   or use `DISTINCT ON`/`LATERAL`.
+- **Bootstrap step 1 is DONE** (2026-08-31): `sfs@enhance-it.dk` is claimed, role `owner`.
+  Step 2 is **not** — `56DTUDMA`, `HXGMH4ZK`, `K69GXH72` remain live and were printed in a
+  session transcript.
 - **Deferred from Task 1:** nothing tests `requireSuperAdmin` itself, so `/sign-in` versus
   `/library` targeting is unverified by Vitest. Task 3's e2e covers both — check it does.
 
