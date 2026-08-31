@@ -80,7 +80,7 @@ test('a sweep is NEVER observable as an eject', async ({ page, request }) => {
   // join would return nothing, and "no disk desired" IS eject.
   const user = await signUpFresh(page);
   const sha256 = randomUUID().replace(/-/g, '').padEnd(64, '2');
-  const { diskId } = await seedDisk(user.orgId, { title: 'stateart', diskNo: 1, sha256 });
+  const { diskId, gameId } = await seedDisk(user.orgId, { title: 'stateart', diskNo: 1, sha256 });
   // pairDevice is the only device-creating helper this repo has: it goes
   // through the real pair + register flow and registers the id for cleanup.
   const device = await pairDevice(page, request, 'Eject canary');
@@ -91,7 +91,18 @@ test('a sweep is NEVER observable as an eject', async ({ page, request }) => {
   }).where(eq(devices.id, device.deviceId));
 
   const sha1 = await fakeHashes(sha256);
+  // setName MUST differ from "a hash match retitles a badly named disk"
+  // above: seedTosecEntry defaults setName to 'e2e-set' and derives its row
+  // id from stableId('tosec', setName, romName) alone -- the sha1 plays no
+  // part in the id. Reusing that test's identical romName under the same
+  // default setName would collide onto the SAME row, and its
+  // .onConflictDoNothing() would silently keep whichever entry landed
+  // first (that test's sha1, not this one's), making a match here
+  // impossible regardless of what sweep()/applyMatch() actually do. Found
+  // via the premise assertion below failing deterministically -- in
+  // isolation, with no other test or file involved -- until this was fixed.
   await seedTosecEntry({
+    setName: 'e2e-set-eject',
     gameName: 'State of the Art (1992)(Spaceballs)',
     romName: 'State of the Art (1992)(Spaceballs).adf',
     sha1, title: 'State of the Art', sortTitle: 'state of the art',
@@ -100,6 +111,16 @@ test('a sweep is NEVER observable as an eject', async ({ page, request }) => {
 
   await signInAsSuperAdmin(page);
   expect((await page.request.post('/api/admin/scan')).ok()).toBe(true);
+
+  // Prove the premise first: the match actually fired and retitled the
+  // game. Without this, a sweep()/applyMatch() that silently no-ops on this
+  // exact fixture would leave every assertion below trivially true -- the
+  // device invariants hold whether or not anything happened at all. This
+  // test's whole value is being trustworthy on its own, not borrowing
+  // credibility from "a hash match retitles a badly named disk" above.
+  const game = (await db.select().from(games).where(eq(games.id, gameId)))[0];
+  expect(game.title, 'the rename this test depends on must actually have fired').toBe('State of the Art');
+  expect(game.metadataSource).toBe('tosec');
 
   const after = (await db.select().from(devices).where(eq(devices.id, device.deviceId)))[0];
   expect(after.desiredDiskId, 'a sweep must not move desired state').toBe(diskId);

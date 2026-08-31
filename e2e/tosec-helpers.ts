@@ -4,6 +4,13 @@ import { eq } from 'drizzle-orm';
 import { stableId } from '@/lib/ingest';
 
 const seededIds: string[] = [];
+// Whole DAT-imported sets, tracked by setName -- for specs that drive a real
+// import through /api/admin/tosec (e.g. via the file input) rather than
+// seeding one row at a time with seedTosecEntry. importDat() derives ids from
+// (setName, romName) per entry, so tracking every id individually would mean
+// duplicating its parsing; deleting by setName is simpler and exact, since
+// a real DAT's setName is not shared with anything else in the suite.
+const seededSetNames: string[] = [];
 
 /** Seed one TOSEC entry directly. Avoids needing a real DAT file in the suite. */
 export async function seedTosecEntry(opts: {
@@ -27,9 +34,17 @@ export async function seedTosecEntry(opts: {
   return id;
 }
 
+/** Track a whole DAT-imported set (by setName) for cleanupTosec() to remove. */
+export function trackTosecSet(setName: string) {
+  seededSetNames.push(setName);
+}
+
 export async function cleanupTosec() {
   const db = getDb();
   for (const id of seededIds.splice(0)) {
     try { await db.delete(tosecEntries).where(eq(tosecEntries.id, id)); } catch { /* best effort */ }
+  }
+  for (const setName of seededSetNames.splice(0)) {
+    try { await db.delete(tosecEntries).where(eq(tosecEntries.setName, setName)); } catch { /* best effort */ }
   }
 }
