@@ -45,11 +45,15 @@ export async function sweep(budgetMs: number = DEFAULT_BUDGET_MS): Promise<Sweep
           .set({ crc32: h.crc32, md5: h.md5, sha1: h.sha1, hashedAt: new Date() })
           .where(eq(blobs.sha256, b.sha256));
         out.hashed++;
-      } catch {
+      } catch (err) {
         // Bytes missing from the store, or unreadable. Stamp hashedAt so the
         // sweeper does not spin on it forever; the hashes stay null, so it
         // will simply never match. A blob row without bytes is a separate
-        // problem and not this job's to fix.
+        // problem and not this job's to fix -- but log it: phase 2's
+        // short-circuit will otherwise fold this silently into 'none', and
+        // scanStatus's `unreadable` count (see below) is what keeps a
+        // storage outage from being misread as a worse TOSEC hit rate.
+        console.error(`tosec-sweep: could not read blob ${b.sha256}`, err);
         await db.update(blobs).set({ hashedAt: new Date() }).where(eq(blobs.sha256, b.sha256));
       }
     }
@@ -96,17 +100,39 @@ export async function sweep(budgetMs: number = DEFAULT_BUDGET_MS): Promise<Sweep
         candidates,
       );
 
-      await db.update(blobs).set({
-        matchState: verdict.state,
-        matchCheckedAt: new Date(),
-        tosecEntryId: verdict.state === 'matched' ? verdict.entryId : null,
-      }).where(eq(blobs.sha256, b.sha256));
-
       if (verdict.state === 'matched') {
+        // applyMatch MUST run before the blob is stamped 'matched'. If the
+        // stamp ran first and applyMatch then threw -- a transient Neon
+        // error, or the process killed exactly at the budget boundary this
+        // file exists to guard -- the blob would already read
+        // matchCheckedAt IS NOT NULL, phase 2's cursor would skip it
+        // forever, and the catalog would never actually be rewritten. No
+        // re-run of sweep() could heal that.
+        //
+        // Doing it in this order is safe because applyMatch is idempotent
+        // for a repeated (sha256, entryId): the disk fields are overwritten
+        // with identical values, the games UPDATE is gated on
+        // metadataSource = 'filename' which is already false after a first
+        // success, and mergeDuplicates finds fewer than two duplicates on a
+        // second pass. So a crash between applyMatch and the stamp just
+        // means the next sweep redoes an idempotent operation -- the
+        // crash-and-retry story this module is supposed to have.
         await applyMatch(b.sha256, verdict.entryId);
+        await db.update(blobs).set({
+          matchState: 'matched',
+          matchCheckedAt: new Date(),
+          tosecEntryId: verdict.entryId,
+        }).where(eq(blobs.sha256, b.sha256));
         out.matched++;
-      } else if (verdict.state === 'ambiguous') out.ambiguous++;
-      else out.none++;
+      } else {
+        await db.update(blobs).set({
+          matchState: verdict.state,
+          matchCheckedAt: new Date(),
+          tosecEntryId: null,
+        }).where(eq(blobs.sha256, b.sha256));
+        if (verdict.state === 'ambiguous') out.ambiguous++;
+        else out.none++;
+      }
     }
   }
 
@@ -115,7 +141,7 @@ export async function sweep(budgetMs: number = DEFAULT_BUDGET_MS): Promise<Sweep
 
 export interface ScanStatus {
   blobs: number; hashed: number; matched: number; none: number;
-  ambiguous: number; unchecked: number; tosecEntries: number;
+  ambiguous: number; unchecked: number; unreadable: number; tosecEntries: number;
   sets: Array<{ setName: string; setVersion: string | null; entries: number }>;
 }
 
@@ -130,6 +156,13 @@ export async function scanStatus(): Promise<ScanStatus> {
       (select count(*)::int from blobs where match_state = 'none')               as none,
       (select count(*)::int from blobs where match_state = 'ambiguous')          as ambiguous,
       (select count(*)::int from blobs where match_checked_at is null)           as unchecked,
+      -- Distinguishes "the object store could not produce these bytes"
+      -- (hashed_at set, but no hash landed) from a genuine TOSEC miss (a
+      -- real hash was computed and just isn't in tosec_entries). Both would
+      -- otherwise read as match_state = 'none' and silently worsen the
+      -- reported TOSEC hit rate during, say, a storage outage.
+      (select count(*)::int from blobs where hashed_at is not null
+        and sha1 is null)                                                        as unreadable,
       (select count(*)::int from tosec_entries)                                  as tosec_entries
   `);
   const r = rows[0];
@@ -143,6 +176,7 @@ export async function scanStatus(): Promise<ScanStatus> {
   return {
     blobs: Number(r.blobs), hashed: Number(r.hashed), matched: Number(r.matched),
     none: Number(r.none), ambiguous: Number(r.ambiguous), unchecked: Number(r.unchecked),
+    unreadable: Number(r.unreadable),
     tosecEntries: Number(r.tosec_entries),
     sets: sets.map((s) => ({ ...s, entries: Number(s.entries) })),
   };
