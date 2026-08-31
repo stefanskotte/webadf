@@ -260,6 +260,17 @@ account in production's allowlist or leave the e2e unable to sign in as an admin
 - **Write-back and layered disks** (disk-change spec §5). Deliberately not designed yet;
   the first increment should record which tracks changed, not just a flattened result, so
   it doesn't foreclose the layered approach.
+- **Show each disk's real filename, and let a human download the ADF.** Requested by the
+  operator 2026-08-31. Two useful facts before anyone plans it: the original uploaded
+  filename already exists as `entitlements.sourceFilename` and is **per-organization** on
+  purpose (the same bytes can be uploaded under different names by different tenants, and
+  `blobs` has no filename at all), while `disks.tosecName` holds the canonical TOSEC name
+  once the identity scan has run — so "the actual filename" is two different columns and
+  the UI should probably show both. For download: `GET /api/device/image/<sha256>` already
+  exists but serves **WFMF (MFM-encoded, ~2 MB)**, not a raw ADF, so a human download is a
+  new route rather than a reuse. It must check the caller's org holds an entitlement for
+  that sha256 — the same boundary the device route enforces — and note the standing rule
+  that **a presigned URL is a live credential**: never log it, never put it in the DOM.
 - **A read-only ADF browser** (disk-change spec §5) — parses OFS/FFS out of a stored ADF
   with no mounting involved. Buildable today, blocked on nothing, and useful right now for
   the unmatched-disk review queue.
