@@ -110,6 +110,7 @@
 #include "lwip/tcp.h"
 #include "lwip/pbuf.h"
 #include "lwip/ip_addr.h"
+#include "lwip/netif.h"   // netif_set_default(), see portal_stop()'s CRITICAL fix
 
 #include <stdint.h>
 #include <string.h>
@@ -172,6 +173,11 @@ typedef struct {
     int              resp_len;
     int              resp_sent;
     int              poll_ticks;
+    bool             handled;      // set once a response has started --
+                                   // see start_response()'s comment (MINOR 2
+                                   // review-round-1 fix: blocks a later
+                                   // segment from re-entering
+                                   // handle_complete_request()).
 } http_conn_t;
 
 static http_conn_t g_http_conns[MAX_HTTP_CONNS];
@@ -302,6 +308,15 @@ static err_t try_send_more(http_conn_t *c) {
 // already rendered straight into it) or one of the small fixed literals
 // above (TOO_LARGE_RESPONSE) -- copied in only for that second case.
 static err_t start_response(http_conn_t *c, const char *data, int len) {
+    // Review round 1 (Minor): every response-producing path (this one,
+    // both TOO_LARGE_RESPONSE call sites, and the normal
+    // handle_complete_request() path) funnels through here, so setting
+    // the flag in this one place is enough to stop try_progress() from
+    // ever re-entering handle_complete_request() for a later segment on
+    // this connection (pipelined bytes, a retransmit) -- which would
+    // otherwise re-run portal_request(), clobber c->resp mid-send, and
+    // for a POST /save, re-publish g_pending_cfg a second time.
+    c->handled = true;
     int cap = (int)sizeof(c->resp);
     int n = (len < cap) ? len : cap;
     if (data != c->resp) memcpy(c->resp, data, (size_t)n);
@@ -405,22 +420,36 @@ static err_t handle_complete_request(http_conn_t *c) {
     int n = portal_request(method, path, body, mac_str, g_current_err,
                             c->resp, (int)sizeof c->resp, &res);
 
-    if (res.action == PORTAL_ACT_SUBMIT) {
-        g_pending_cfg = res.submitted; // write the payload...
-        g_submitted = true;            // ...then publish it -- see the
-                                        // file header comment.
-    }
-
     if (n <= 0) {
         // portal_request()'s "would not fit" case. Not expected given
         // TCP_RESP_CAP's sizing against portal_http.c's templates, but
         // fail closed (no reply) rather than send nothing meaningful.
         return finish_conn(c);
     }
-    return start_response(c, c->resp, n);
+
+    err_t rc = start_response(c, c->resp, n);
+
+    // Review round 1 (Important 2): publish only now that the reply has
+    // actually been handed to lwIP (start_response() -> try_send_more()
+    // already ran tcp_write()/tcp_output() above). Publishing before this
+    // point let portal_run()'s foreground loop observe g_submitted, return,
+    // and have the caller reach portal_stop() -- tearing the AP down --
+    // while the confirmation page was still only sitting in c->resp,
+    // never given to lwIP at all.
+    if (res.action == PORTAL_ACT_SUBMIT) {
+        g_pending_cfg = res.submitted; // write the payload...
+        g_submitted = true;            // ...then publish it -- see the
+                                        // file header comment.
+    }
+    return rc;
 }
 
 static err_t try_progress(http_conn_t *c) {
+    if (c->handled) return ERR_OK; // already answered (see
+                                    // start_response()'s comment) --
+                                    // ignore any further bytes on this
+                                    // connection rather than re-running
+                                    // portal_request().
     if (c->header_end < 0) {
         int idx = find_header_end(c->req, c->req_used);
         if (idx < 0) return ERR_OK; // headers not complete yet
@@ -441,16 +470,20 @@ static err_t try_progress(http_conn_t *c) {
 static err_t http_recv_cb(void *arg, struct tcp_pcb *tpcb, struct pbuf *p, err_t err) {
     http_conn_t *c = (http_conn_t *)arg;
     if (err != ERR_OK) {
-        // This SDK's tcp_in.c never actually invokes this callback with a
-        // non-ERR_OK err (grep confirms the one call site always passes
-        // ERR_OK), but treat it the same defensive way transport_tls.c's
-        // on_recv() treats altcp's equivalent: drop the reference and
-        // touch nothing else, since a non-ERR_OK here would mean the pcb
-        // is already in a state this file cannot assume anything about.
+        // Review round 1 (Minor): this SDK's tcp_in.c never actually
+        // invokes this callback with a non-ERR_OK err (grep confirms the
+        // one call site always passes ERR_OK), so this is dead code today
+        // -- but it is exactly the defect class plan 4a was bitten by, so
+        // it gets the same real teardown as every other exit from this
+        // connection rather than a bespoke one. Nulling c->pcb/c->in_use
+        // directly (the previous version of this branch) without
+        // deregistering callbacks or closing the pcb would let this slot
+        // be handed to a new connection while the old pcb -- still
+        // pointing tcp_arg() at this same struct -- could still call back
+        // into it. finish_conn() does the full deregister-then-close (or
+        // abort) sequence instead, same as every other path below.
         if (p) pbuf_free(p);
-        c->pcb = NULL;
-        c->in_use = false;
-        return ERR_OK;
+        return finish_conn(c);
     }
     if (!p) {
         // Remote closed (or reset cleanly) before completing a request.
@@ -483,6 +516,8 @@ static err_t http_sent_cb(void *arg, struct tcp_pcb *tpcb, u16_t len) {
     (void)tpcb; (void)len;
     http_conn_t *c = (http_conn_t *)arg;
     if (!c || !c->pcb) return ERR_OK;
+    c->poll_ticks = 0; // the peer ACKed real bytes -- see http_poll_cb's
+                       // review-round-1 fix for why this matters.
     return try_send_more(c);
 }
 
@@ -502,13 +537,24 @@ static err_t http_poll_cb(void *arg, struct tcp_pcb *tpcb) {
     (void)tpcb;
     http_conn_t *c = (http_conn_t *)arg;
     if (!c || !c->pcb) return ERR_OK;
-    if (c->resp_len > 0 && c->resp_sent < c->resp_len) {
-        return try_send_more(c); // a stalled tcp_write() (ERR_MEM) retry
-    }
+
+    // Review round 1 (Minor): this used to only increment/check
+    // poll_ticks in the "waiting on the client" branch below, so a
+    // response that was queued but stalled (tcp_write() returning
+    // ERR_MEM, e.g. a dribbling client that acks very slowly) never
+    // timed out at all -- the slot would be held forever. poll_ticks now
+    // ticks unconditionally every ~3 s and is reset by *any* real
+    // progress in either direction (new request bytes in http_recv_cb,
+    // or an ACKed write in http_sent_cb above), so a connection that is
+    // truly idle -- whichever direction that idleness is in -- still
+    // gets reclaimed within HTTP_IDLE_POLL_LIMIT ticks.
     c->poll_ticks++;
     if (c->poll_ticks >= HTTP_IDLE_POLL_LIMIT) {
-        return finish_conn(c); // idle too long without completing a
-                                // request -- reclaim the slot.
+        return finish_conn(c); // no progress in either direction for too
+                                // long -- reclaim the slot.
+    }
+    if (c->resp_len > 0 && c->resp_sent < c->resp_len) {
+        return try_send_more(c); // a stalled tcp_write() (ERR_MEM) retry
     }
     return ERR_OK;
 }
@@ -599,6 +645,21 @@ static void setup_http(void) {
 }
 
 bool portal_run(device_config_t *out, const char *err) {
+    // Review round 1 (Important 1): a second portal_run() call without an
+    // intervening portal_stop() used to hang the board silently --
+    // lwipopts.h does not set LWIP_SO_REUSE, so re-binding ports 67/53/80
+    // while the previous pcbs are still bound returns ERR_USE, and
+    // setup_dhcp()/setup_dns()/setup_http() treat any bind failure as the
+    // unrecoverable fatal_setup_failure() case (while(1)
+    // tight_loop_contents(), no watchdog, no LED, no UART). Retrying after
+    // a wrong password (spec D-4b-3's verify-then-commit) is the NORMAL
+    // path here, not a caller error, so this enforces the ordering
+    // itself instead of just documenting it as the caller's
+    // responsibility.
+    if (g_dhcp_pcb) {
+        portal_stop();
+    }
+
     // Read the MAC before enabling AP mode: it names the AP itself. The
     // MAC is a fixed per-chip value available as soon as cyw43_arch_init()
     // has run (main.c's own mac_address_string() reads it the same way,
@@ -668,4 +729,39 @@ void portal_stop(void) {
     cyw43_arch_lwip_end();
 
     cyw43_arch_disable_ap_mode();
+
+    // Review round 1 (Critical): cyw43_arch_disable_ap_mode() ->
+    // cyw43_wifi_set_up(CYW43_ITF_AP, false, ...) -> cyw43_cb_tcpip_deinit()
+    // -> netif_remove() on the AP's netif (cyw43_lwip.c). netif_remove()
+    // (lwip/core/netif.c) sets netif_default back to NULL whenever the
+    // netif being removed *was* netif_default -- and it always is here,
+    // because bringing the AP up (cyw43_cb_tcpip_init(), same file) called
+    // netif_set_default() on it unconditionally. Left alone, every route
+    // lookup with no more specific match (ip4_route(), used for anything
+    // off the AP's own /24 -- e.g. the TLS connection to WEBADF_HOST once
+    // STA reconnects) returns NULL from here on: the provisioning flow
+    // looks like it succeeded and the board silently never reaches the
+    // server again. A later cyw43_arch_enable_sta_mode() does NOT fix
+    // this on its own: cyw43_wifi_set_up()'s `up` branch only calls
+    // cyw43_cb_tcpip_init() (the thing that calls netif_set_default())
+    // when the itf's bit in itf_state is not already set, and main.c
+    // enables STA mode once at boot, before this file's caller ever runs
+    // -- so STA's bit is already set by the time portal_stop() is called,
+    // and re-enabling it again is a no-op as far as netif_set_default()
+    // is concerned.
+    //
+    // The fix: explicitly restore the STA netif as default.
+    // cyw43_state.netif[itf] (cyw43.h's own `struct netif netif[2];`
+    // field, indexed exactly this way by cyw43_lwip.c itself) is always a
+    // valid, already-netif_add()-ed struct by the time this runs --
+    // portal_net.h documents that this file assumes STA mode has already
+    // been enabled by the caller (main.c does this once at boot, before
+    // any provisioning decision), so the target netif here always exists
+    // and is already registered in lwIP's netif_list; this is only
+    // re-designating which already-registered netif is the default one.
+    // netif_set_default() is a plain lwIP call made from foreground code,
+    // so it needs the lock like every other one above.
+    cyw43_arch_lwip_begin();
+    netif_set_default(&cyw43_state.netif[CYW43_ITF_STA]);
+    cyw43_arch_lwip_end();
 }

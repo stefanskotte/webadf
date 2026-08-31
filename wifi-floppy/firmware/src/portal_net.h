@@ -11,10 +11,17 @@
 #include <stdbool.h>
 #include "config_store.h"
 
-// Assumes cyw43_arch_init() has already run and this core owns the cyw43
-// driver -- main.c does that once at boot, the same precondition
-// transport_tls.c has for STA mode. This file only adds AP mode and the
-// three sockets on top of it.
+// Assumes cyw43_arch_init() AND cyw43_arch_enable_sta_mode() have already
+// run and this core owns the cyw43 driver -- main.c does both once at
+// boot, unconditionally, before any provisioning decision. This file
+// only adds AP mode and the three sockets on top of that. The STA-mode
+// precondition specifically is load-bearing, not just a convenience: it
+// is what guarantees cyw43_state.netif[CYW43_ITF_STA] is already a
+// valid, registered netif by the time portal_stop() needs to hand
+// default routing back to it (see portal_net.c's portal_stop() for the
+// review-round-1 netif_default fix this depends on). Calling either
+// function here before that precondition holds is not a supported call
+// pattern.
 //
 // Brings up the WPA2 AP (SSID "wifi-floppy-XXXX" built from the last two
 // MAC octets, password PORTAL_AP_PASSWORD -- see CMakeLists.txt), starts
@@ -28,10 +35,14 @@
 // actually does before returning, not to signal an alternative outcome.
 bool portal_run(device_config_t *out, const char *err);
 
-// Tears down the sockets and the AP so the caller can switch the radio to
-// STA mode and attempt the submitted credentials. Only meaningful after
-// portal_run() has returned; calling it first is a no-op (nothing is up
-// yet to tear down).
+// Tears down the sockets and the AP, and restores the already-enabled
+// STA interface as lwIP's default route (see portal_net.c: bringing the
+// AP up made *it* the default route, and disabling it does not put that
+// back on its own), so the caller can attempt the submitted credentials
+// over STA. Meant to be called after portal_run() has returned;
+// portal_run() itself now also calls this first if a previous session's
+// sockets were still up (see its own comment), so callers no longer
+// need to track that ordering themselves.
 void portal_stop(void);
 
 #endif

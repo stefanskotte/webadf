@@ -105,12 +105,26 @@ endif ()
 # per-board password derived from the MAC (considered and rejected there as
 # more ceremony than the operator's own boards warrant). portal_net.c's
 # portal_run() is the only consumer (cyw43_arch_enable_ap_mode()'s
-# `password` argument). Whoever cuts a real release should treat this the
-# same as any other shared secret baked into the image and set it via the
-# environment the way WIFI_PASS/WEBADF_PAIRING_CODE are above, rather than
-# leaving the placeholder below in a shipped build.
+# `password` argument).
+#
+# Review round 1 (recommendation, accepted): this used to be a hardcoded
+# literal ("***REMOVED-CREDENTIAL***") here, which is a real WPA2 PSK committed to git
+# history the moment this file is -- the comment above already said that
+# was wrong for a shipped build, so fix it now rather than after a
+# history rewrite is the only remedy. Sourced from the environment the
+# same way WIFI_PASS/WEBADF_PAIRING_CODE are above, with a fatal-error
+# guard: unlike those two (which degrade to an unusable-but-harmless
+# empty compile-time string if unset), an empty WPA2 PSK is invalid
+# outright, and cyw43_arch_enable_ap_mode() has no way to report that
+# back at runtime on a board with no console -- refuse to build instead.
+if (NOT DEFINED ENV{PORTAL_AP_PASSWORD} OR "$ENV{PORTAL_AP_PASSWORD}" STREQUAL "")
+  message(FATAL_ERROR
+    "PORTAL_AP_PASSWORD must be set in the environment to a WPA2 PSK "
+    "(8-63 characters) -- see this CMakeLists.txt's comment just above "
+    "this check.")
+endif ()
 target_compile_definitions(wifi_floppy PRIVATE
-  PORTAL_AP_PASSWORD=\"***REMOVED-CREDENTIAL***\")
+  PORTAL_AP_PASSWORD=\"$ENV{PORTAL_AP_PASSWORD}\")
 
 # Review round 1 finding (Critical, C1, part 2): the "cross-build green"
 # gate is only meaningful once something actually forces transport_tls.c's
@@ -165,13 +179,21 @@ target_compile_definitions(wifi_floppy PRIVATE
 # portal_run() there is no separate task still waiting on proof that it
 # links -- task 10's real caller (or a future -Wl,-u of its own) is what
 # will keep it alive from here.
+#
+# Review round 1 (Critical, part of the netif_default fix): portal_stop()
+# is now force-linked too -- it was flagged as never having been linked,
+# let alone run, at the time of that review (no -Wl,-u entry, no caller
+# yet), so the CRITICAL fix inside it (restoring netif_default after AP
+# mode comes down) had never even been checked by the cross-build, only
+# by reading the SDK source. Forcing it undefined here makes it at least
+# nm-checkable now, same reasoning as every other entry in this list.
 target_link_options(wifi_floppy PRIVATE
   -Wl,-u,tls_transport -Wl,-u,sntp_sync_blocking
   -Wl,-u,config_store_load -Wl,-u,config_store_save -Wl,-u,config_store_erase
   -Wl,-u,prov_init -Wl,-u,prov_on_assoc_result
   -Wl,-u,prov_on_verified_submit -Wl,-u,prov_on_pairing_code_rejected
   -Wl,-u,dns_handle -Wl,-u,dhcp_handle -Wl,-u,portal_request
-  -Wl,-u,portal_run)
+  -Wl,-u,portal_run -Wl,-u,portal_stop)
 
 # altcp_tls_mbedtls.c is the SDK's own file (patched for mbedtls 3.x
 # compatibility -- see pico_lwip's CMakeLists.txt) when the bundled mbedtls
