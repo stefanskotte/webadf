@@ -246,3 +246,65 @@ Continuing the pattern named in the 4a rulings file — a gate needs its own pro
   so the Critical bug found in it (leaving `netif_default` NULL after AP teardown) existed in
   code that had never been linked, let alone run. Fixed in the same round as the Critical
   itself, once `portal_stop` gained a real caller in the fix.
+
+---
+
+## The whole-branch review, and two rulings made after this file was first written
+
+Appended after this file's first commit: the final whole-branch review ran after Task 8, so
+its findings and the last two rulings are recorded here rather than above.
+
+**No Critical was found.** The three Important findings were all things a task-scoped review
+structurally could not see, and two of them were defects in this spec rather than in the code
+implementing it.
+
+**The portal reported failure on success.** A successful `POST /save` re-rendered the plain
+form with the previous error banner still set. So a user who typed the wrong WiFi password,
+was told "Wrong password", and then typed it correctly, was served the same form with the
+same error — while the board had in fact accepted the credentials and was tearing the AP
+down. There was no confirmation page at all, even though `portal_net.c`'s comment justified
+its publish-after-`tcp_output` ordering by referring to one. Fixed with a distinct
+"connecting" page that carries no prior error.
+
+**The portal was a one-way door, and the spec's own justification did not cover the case.**
+Once in `PROV_PORTAL` the board never re-attempted the credentials it still held in flash.
+The scenario is ordinary: a power cut drops the router and the board together, the board
+boots first, burns its three 15-second attempts inside the 45 seconds the router is still
+starting up, and then waits in AP mode forever for a human with a phone. §3 accepted that
+outcome, but justified it with "§2's rule bounds the damage, since a board with a disk
+mounted stays mounted" — **which does not apply at boot, when nothing is mounted.** The
+accepted risk was larger than the reasoning that accepted it. Fixed with a five-minute
+client-inactivity timeout that returns the board to `PROV_RUNNING` to re-try what is stored,
+and back to the portal if that still fails. The timeout is disabled entirely when nothing is
+stored, and an in-progress submission cannot be cut off — the deadline is not evaluated while
+an HTTP slot is occupied, and `g_submitted` is published while that slot is still in use, so
+a real submission can never race it.
+
+**§2 and §3 had quietly become false.** `DC_HALTED` recovery ejects a mounted disk before
+dropping to the portal, which contradicts §2's "a board that is already serving a disk never
+drops into the portal" and §3's paragraph explicitly denying that edge could fire while
+mounted. Both were true when written. They are corrected in place, not merely in the
+delivered addendum, because §2 is the binding invariant plan 5 will be read against.
+
+**Ruling 9 — Task 8's fix-round re-review was folded into the whole-branch review.** That
+round changed one number in five places and the implementer re-derived every headline figure
+by running the command; the whole-branch reviewer reads those files anyway.
+
+**Ruling 10 — two residual count errors were corrected inline rather than dispatched.** The
+force-link comment said "twelve" entries where there are **fifteen**, and this file's
+hardware list said "3-slot DHCP pool" where `DHCP_POOL_SIZE` is 2 and 3 is `MAX_HTTP_CONNS`.
+Both were single literal numbers.
+
+### The count errors are worth their own note
+
+Three separate invented figures reached tracked files during this plan: "442 checks across
+15 binaries" (13), "twelve `-Wl,-u` entries" (15), and "3-slot DHCP pool" (2). Every one came
+from a number nobody ran a command to check, and the first was written by the coordinator and
+propagated faithfully by an implementer whose report said it had verified everything against
+the ledger — true of the ledger-derived claims, and vacuous for that one, because the ledger
+never stated a binary count.
+
+The rule this suggests: **a number handed down in a brief is not evidence.** If a figure can
+be checked by running something, check it even when it comes from whoever assigned the work.
+Enumerating beats grepping, too — a `grep -o` over the force-link block returns sixteen, one
+of them a zero-length match.
