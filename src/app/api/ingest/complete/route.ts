@@ -1,4 +1,3 @@
-import { createHash } from 'node:crypto';
 import { gzipSync } from 'node:zlib';
 import { z } from 'zod';
 import { inArray } from 'drizzle-orm';
@@ -10,6 +9,7 @@ import { diskStore } from '@/lib/storage';
 import { completeBody, stableId } from '@/lib/ingest';
 import { groupDisks } from '@/lib/grouping';
 import { parseTosecName } from '@/lib/tosec';
+import { contentHashes } from '@/lib/content-hashes';
 import { mapLimit } from '@/lib/pool';
 import { chunk } from '@/lib/chunk';
 
@@ -28,7 +28,11 @@ const VERIFY_CONCURRENCY = 4;
 const INSERT_CHUNK = 250;
 
 type Verdict =
-  | { ok: true; sizeBytes: number; gzipSizeBytes: number | null }
+  | { ok: true; sizeBytes: number; gzipSizeBytes: number | null;
+      // Present only on the first-registration path, which is the only
+      // branch that reads the bytes. A dedupe hit skips the read-back by
+      // design and its blob already carries hashes from that first write.
+      hashes: { crc32: string; md5: string; sha1: string } | null }
   | { ok: false; reason: 'not-stored' | 'size-mismatch' | 'digest-mismatch' };
 
 /**
@@ -58,12 +62,15 @@ async function verify(sha256: string, claimedSize: number, alreadyRegistered: bo
 
   if (alreadyRegistered) {
     if (stat.sizeBytes !== claimedSize) return { ok: false, reason: 'size-mismatch' };
-    return { ok: true, sizeBytes: stat.sizeBytes, gzipSizeBytes: null };
+    return { ok: true, sizeBytes: stat.sizeBytes, gzipSizeBytes: null, hashes: null };
   }
 
   const bytes = await diskStore.read(sha256);
-  const actual = createHash('sha256').update(bytes).digest('hex');
-  if (actual !== sha256) {
+  // One pass over bytes that are already in memory. This is the only moment
+  // they ever are (see the comment on verify()), so it is the only free
+  // opportunity to record the other three digests.
+  const h = contentHashes(bytes);
+  if (h.sha256 !== sha256) {
     await release(sha256);
     return { ok: false, reason: 'digest-mismatch' };
   }
@@ -82,6 +89,7 @@ async function verify(sha256: string, claimedSize: number, alreadyRegistered: bo
     ok: true,
     sizeBytes: bytes.byteLength,
     gzipSizeBytes: gzipSync(bytes).byteLength,
+    hashes: { crc32: h.crc32, md5: h.md5, sha1: h.sha1 },
   };
 }
 
@@ -186,6 +194,10 @@ export async function POST(request: Request) {
       sizeBytes: v.sizeBytes,
       gzipSizeBytes: v.gzipSizeBytes,
       storageKey: diskStore.storageKey(f.sha256),
+      crc32: v.hashes?.crc32 ?? null,
+      md5: v.hashes?.md5 ?? null,
+      sha1: v.hashes?.sha1 ?? null,
+      hashedAt: v.hashes ? new Date() : null,
     }];
   })).values()];
   for (const part of chunk(blobRows, INSERT_CHUNK)) {
