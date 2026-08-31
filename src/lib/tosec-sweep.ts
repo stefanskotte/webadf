@@ -6,6 +6,9 @@ import { diskStore } from '@/lib/storage';
 import { contentHashes } from '@/lib/content-hashes';
 import { matchBlob, type Candidate } from '@/lib/tosec-match';
 import { applyMatch } from '@/lib/tosec-apply';
+import { openretroEntries, openretroDiskSha1 } from '@/db/schema/openretro';
+import { applyEnrichment } from '@/lib/openretro-apply';
+import { ensureImage } from '@/lib/openretro-images';
 
 /** Stop well inside the 300 s function limit rather than being killed mid-write. */
 const DEFAULT_BUDGET_MS = 240_000;
@@ -13,9 +16,71 @@ const DEFAULT_BUDGET_MS = 240_000;
 const HASH_BATCH = 25;
 /** Blobs matched per pass. No blob reads here, so this can be larger. */
 const MATCH_BATCH = 200;
+/** Blobs considered per enrichment pass. */
+const ENRICH_BATCH = 50;
+/**
+ * Images fetched per sweep run, across all blobs. A first pass over a large
+ * library therefore spreads over several nights instead of arriving at
+ * openretro.org as a burst.
+ */
+const IMAGE_CAP_PER_RUN = 40;
 
 export interface SweepResult {
-  hashed: number; matched: number; none: number; ambiguous: number; merged: number; done: boolean;
+  hashed: number; matched: number; none: number; ambiguous: number; merged: number;
+  enriched: number; enrichNone: number; enrichAmbiguous: number;
+  imagesStored: number; imageBytes: number;
+  done: boolean;
+}
+
+/**
+ * Best-effort image fetch for one entry: the cover, the title screen and every
+ * screenshot, up to `budget` images.
+ *
+ * Every fetch is isolated. An image that 404s at openretro.org is PERMANENT,
+ * not transient -- unlike anything phase 2 can fail on -- so letting it
+ * propagate would abort its blob's enrichment, leave the blob unstamped, and
+ * hand the same blob back to the very next pass. With no ORDER BY on the todo
+ * query nothing can rotate ahead of it, so a single missing image would burn
+ * the whole 240 s budget every night, forever. The facts are the enrichment;
+ * the pictures are a bonus, and a missing one must not cost the facts.
+ */
+async function fetchEntryImages(
+  entryUuid: string, out: SweepResult, budget: number,
+): Promise<number> {
+  if (budget <= 0) return 0;
+  const db = getDb();
+  const rows = await db.select({
+    frontSha1: openretroEntries.frontSha1,
+    titleSha1: openretroEntries.titleSha1,
+    screenshotSha1s: openretroEntries.screenshotSha1s,
+  }).from(openretroEntries).where(eq(openretroEntries.uuid, entryUuid)).limit(1);
+  const e = rows[0];
+  if (!e) return 0;
+
+  const wanted: Array<{ sha1: string; kind: 'front' | 'title' | 'screenshot'; ordinal: number }> = [];
+  if (e.frontSha1) wanted.push({ sha1: e.frontSha1, kind: 'front', ordinal: 0 });
+  if (e.titleSha1) wanted.push({ sha1: e.titleSha1, kind: 'title', ordinal: 0 });
+  // Persisted comma-joined by the importer, because the import and this fetch
+  // are different requests -- an in-memory list would be long gone by now.
+  (e.screenshotSha1s ?? '').split(',').filter(Boolean).forEach((sha1, i) => {
+    wanted.push({ sha1, kind: 'screenshot', ordinal: i + 1 });
+  });
+
+  let fetched = 0;
+  for (const w of wanted) {
+    if (fetched >= budget) break;
+    try {
+      const r = await ensureImage(entryUuid, w.sha1, w.kind, w.ordinal);
+      if (r.stored) {
+        fetched++;
+        out.imagesStored++;
+        out.imageBytes += r.bytes;
+      }
+    } catch (err) {
+      console.error(`openretro: image ${w.sha1} for entry ${entryUuid} failed`, err);
+    }
+  }
+  return fetched;
 }
 
 /**
@@ -29,7 +94,17 @@ export interface SweepResult {
 export async function sweep(budgetMs: number = DEFAULT_BUDGET_MS): Promise<SweepResult> {
   const db = getDb();
   const started = Date.now();
-  const out: SweepResult = { hashed: 0, matched: 0, none: 0, ambiguous: 0, merged: 0, done: false };
+  const out: SweepResult = {
+    hashed: 0, matched: 0, none: 0, ambiguous: 0, merged: 0,
+    enriched: 0, enrichNone: 0, enrichAmbiguous: 0, imagesStored: 0, imageBytes: 0,
+    done: false,
+  };
+  // `done` means EVERY phase drained, so each phase that can leave work
+  // behind records its own verdict. Phase 2 alone setting out.done would
+  // report "Scan complete" to the admin page while enrichment was still
+  // hundreds of blobs from finished.
+  let matchDone = false;
+  let enrichDone = false;
   const spent = () => Date.now() - started;
 
   // Phase 1 -- hash.
@@ -69,7 +144,7 @@ export async function sweep(budgetMs: number = DEFAULT_BUDGET_MS): Promise<Sweep
     }).from(blobs)
       .where(and(isNull(blobs.matchCheckedAt), sql`${blobs.hashedAt} is not null`))
       .limit(MATCH_BATCH);
-    if (todo.length === 0) { out.done = true; break; }
+    if (todo.length === 0) { matchDone = true; break; }
 
     for (const b of todo) {
       if (spent() >= budgetMs) break;
@@ -161,12 +236,67 @@ export async function sweep(budgetMs: number = DEFAULT_BUDGET_MS): Promise<Sweep
     }
   }
 
+  // Phase 3 -- enrich. Runs last: a blob's TOSEC identity is useful context
+  // when a human reviews an enrichment miss, and all three phases share one
+  // budget.
+  let imageBudget = IMAGE_CAP_PER_RUN;
+  while (spent() < budgetMs) {
+    const todo = await db.select({ sha256: blobs.sha256, sha1: blobs.sha1 })
+      .from(blobs)
+      .where(and(isNull(blobs.enrichCheckedAt), sql`${blobs.sha1} is not null`))
+      .limit(ENRICH_BATCH);
+    if (todo.length === 0) { enrichDone = true; break; }
+
+    for (const b of todo) {
+      if (spent() >= budgetMs) break;
+      try {
+        const hit = await db.select({ entryUuid: openretroDiskSha1.entryUuid })
+          .from(openretroDiskSha1).where(eq(openretroDiskSha1.sha1, b.sha1!));
+        const uuids = [...new Set(hit.map((h) => h.entryUuid))];
+
+        if (uuids.length === 0) {
+          await db.update(blobs).set({ enrichState: 'none', enrichCheckedAt: new Date(), openretroEntryId: null })
+            .where(eq(blobs.sha256, b.sha256));
+          out.enrichNone++;
+          continue;
+        }
+        if (uuids.length > 1) {
+          // 13,610 of the 175,282 sha1s in a real sync map to more than one
+          // parent -- worst case 85 -- so this branch is ordinary, not an
+          // error. Two entries disagreeing about what these bytes are is not
+          // something a sweep may pick between.
+          await db.update(blobs).set({ enrichState: 'ambiguous', enrichCheckedAt: new Date(), openretroEntryId: null })
+            .where(eq(blobs.sha256, b.sha256));
+          out.enrichAmbiguous++;
+          continue;
+        }
+
+        const uuid = uuids[0];
+        await applyEnrichment(b.sha256, uuid);
+        imageBudget -= await fetchEntryImages(uuid, out, imageBudget);
+        // Stamped only after the work succeeded -- the same ordering phase 2
+        // uses, and for the same reason: a stamp before a throw is
+        // unrecoverable, since the cursor never revisits it.
+        await db.update(blobs).set({ enrichState: 'enriched', enrichCheckedAt: new Date(), openretroEntryId: uuid })
+          .where(eq(blobs.sha256, b.sha256));
+        out.enriched++;
+      } catch (err) {
+        // Deliberately does NOT stamp: an image fetch failure is usually
+        // transient, and stamping would record it as decided forever.
+        console.error(`openretro: enrichment failed for blob ${b.sha256}`, err);
+      }
+    }
+  }
+
+  out.done = matchDone && enrichDone;
   return out;
 }
 
 export interface ScanStatus {
   blobs: number; hashed: number; matched: number; none: number;
   ambiguous: number; unchecked: number; unreadable: number; tosecEntries: number;
+  enriched: number; enrichNone: number; enrichAmbiguous: number; enrichUnchecked: number;
+  openretroEntries: number; imagesStored: number; imageBytes: number;
   sets: Array<{ setName: string; setVersion: string | null; entries: number }>;
 }
 
@@ -188,7 +318,19 @@ export async function scanStatus(): Promise<ScanStatus> {
       -- reported TOSEC hit rate during, say, a storage outage.
       (select count(*)::int from blobs where hashed_at is not null
         and sha1 is null)                                                        as unreadable,
-      (select count(*)::int from tosec_entries)                                  as tosec_entries
+      (select count(*)::int from tosec_entries)                                  as tosec_entries,
+      (select count(*)::int from blobs where enrich_state = 'enriched')          as enriched,
+      (select count(*)::int from blobs where enrich_state = 'none')              as enrich_none,
+      (select count(*)::int from blobs where enrich_state = 'ambiguous')         as enrich_ambiguous,
+      -- Counts only HASHED blobs: phase 3's cursor requires a sha1, so a blob
+      -- with no hash is not pending enrichment, it is permanently outside it.
+      -- Counting those here would leave enrich-unchecked stuck above zero
+      -- with no run able to lower it.
+      (select count(*)::int from blobs where enrich_checked_at is null
+        and sha1 is not null)                                                    as enrich_unchecked,
+      (select count(*)::int from openretro_entries)                              as openretro_entries,
+      (select count(*)::int from openretro_images)                               as images_stored,
+      (select coalesce(sum(size_bytes), 0)::bigint from openretro_images)        as image_bytes
   `);
   const r = rows[0];
 
@@ -203,6 +345,10 @@ export async function scanStatus(): Promise<ScanStatus> {
     none: Number(r.none), ambiguous: Number(r.ambiguous), unchecked: Number(r.unchecked),
     unreadable: Number(r.unreadable),
     tosecEntries: Number(r.tosec_entries),
+    enriched: Number(r.enriched), enrichNone: Number(r.enrich_none),
+    enrichAmbiguous: Number(r.enrich_ambiguous), enrichUnchecked: Number(r.enrich_unchecked),
+    openretroEntries: Number(r.openretro_entries),
+    imagesStored: Number(r.images_stored), imageBytes: Number(r.image_bytes),
     sets: sets.map((s) => ({ ...s, entries: Number(s.entries) })),
   };
 }
