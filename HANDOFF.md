@@ -313,6 +313,14 @@ increment delivered" before planning the disk-content reader.
   silently dropped one test's fixture via `onConflictDoNothing`. Give each test a distinct set name.
 - **4 of 221 Amiga DATs contain duplicate rom names** (`Games - SPS` has 672 in 6,016), so the
   importer dedupes by id before upserting. Without it Postgres aborts the whole import.
+- **Running the e2e suite globally invalidates the scan state.** `admin-scan.spec.ts` drives a
+  real DAT through `/api/admin/tosec`, and `importDat()`'s reset is unscoped BY DESIGN (see the
+  comment on that reset) -- it clears `match_checked_at`/`match_state`/`tosec_entry_id` on every
+  blob with a verdict, not just the ones that DAT actually touches. So every suite run hands the
+  whole blob corpus back to the sweeper: `unchecked` jumps from 0 to the full count, and the
+  operator will see the scan "un-finishing" itself with no scan of their own having run.
+  `cleanupTosec()` removes the e2e-seeded `tosec_entries` rows afterward, but it cannot restore
+  the verdicts that reset threw away -- those are only recovered by pressing Run now again.
 
 ### 4. Backlog, not blocking anything
 

@@ -147,6 +147,75 @@ test('a sweep is NEVER observable as an eject', async ({ page, request }) => {
   expect(await db.select().from(disks).where(eq(disks.id, diskId))).toHaveLength(1);
 });
 
+test('a device paired to a merge survivor is untouched by the merge', async ({ page, request }) => {
+  test.setTimeout(SWEEP_TIMEOUT_MS);
+  // Finding 1's hazard, specifically for the merge path: mergeDuplicates'
+  // disks-repoint UPDATE used to be org-scoped, which -- for any disk whose
+  // orgId happens to differ from its game's org (src/lib/admin-delete.ts
+  // documents this drift as real) -- left it matching the DELETE's cascade
+  // (disks.gameId references games.id with onDelete: 'cascade') without
+  // matching the repoint's predicate, so it was deleted outright rather than
+  // repointed. A deleted disk is exactly as much an eject as a re-keyed one:
+  // readDesired's leftJoin on devices.desiredDiskId returns nothing either
+  // way. The rename-only eject canary above cannot catch this, because a
+  // rename never deletes a games row -- only a merge does.
+  const user = await signUpFresh(page);
+  const shaA = randomUUID().replace(/-/g, '').padEnd(64, '5');
+  const shaB = randomUUID().replace(/-/g, '').padEnd(64, '6');
+  const { diskId: diskA, gameId: gameA } = await seedDisk(user.orgId, { title: 'mercenary', diskNo: 1, sha256: shaA });
+  const { diskId: diskB } = await seedDisk(user.orgId, { title: 'Mercenary', diskNo: 1, sha256: shaB });
+
+  // pairDevice uses the signed-in PAGE's tenant session, so it must run
+  // before signInAsSuperAdmin swaps that session over to the admin's.
+  const device = await pairDevice(page, request, 'Merge canary');
+
+  const db = getDb();
+  await db.update(devices).set({
+    desiredSha256: shaA, desiredDiskId: diskA, desiredGameId: gameA, desiredDiskNo: 1, desiredVersion: 3,
+  }).where(eq(devices.id, device.deviceId));
+
+  // Two games, two disks, one TOSEC identity (same sortTitle/year) -- this is
+  // exactly "two games TOSEC resolves to one are merged" above, but this
+  // time with a device desiring one of the two disks. setName MUST differ
+  // per entry (see the eject test's comment on stableId('tosec', setName,
+  // romName) colliding across a shared setName) and must not collide with
+  // any other test in this file or in admin-scan.spec.ts.
+  for (const [sha, setName] of [[shaA, 'e2e-merge-set-a'], [shaB, 'e2e-merge-set-b']] as const) {
+    const sha1 = await fakeHashes(sha);
+    await seedTosecEntry({
+      setName,
+      gameName: 'Mercenary (1985)(Novagen)',
+      romName: 'Mercenary (1985)(Novagen).adf',
+      sha1, title: 'Mercenary', sortTitle: 'mercenary',
+      year: 1985, publisher: 'Novagen',
+    });
+  }
+
+  await signInAsSuperAdmin(page);
+  expect((await page.request.post('/api/admin/scan')).ok()).toBe(true);
+
+  // Prove the merge actually fired, the same way the eject test proves its
+  // rename fired: without this, a no-op sweep would leave every assertion
+  // below trivially true.
+  const rows = await db.select().from(games).where(eq(games.orgId, user.orgId));
+  expect(rows, 'the merge this test depends on must actually have fired').toHaveLength(1);
+  const survivorId = rows[0].id;
+  const kept = await db.select().from(disks).where(eq(disks.gameId, survivorId));
+  expect(kept, 'the survivor must hold both disks').toHaveLength(2);
+
+  const after = (await db.select().from(devices).where(eq(devices.id, device.deviceId)))[0];
+  expect(after.desiredDiskId, 'a merge must not move desired state').toBe(diskA);
+  expect(after.desiredSha256).toBe(shaA);
+  expect(after.desiredVersion, 'a merge must not bump the version').toBe(3);
+
+  // The assertion that catches finding 1: both disk rows -- the one the
+  // device desires and the other one absorbed into the merge -- must still
+  // exist under their own ids. Before the fix, an org-mismatched absorbed
+  // disk would vanish here instead of being repointed.
+  expect(await db.select().from(disks).where(eq(disks.id, diskA)), 'the desired disk must survive').toHaveLength(1);
+  expect(await db.select().from(disks).where(eq(disks.id, diskB)), 'the absorbed disk must survive').toHaveLength(1);
+});
+
 // --- Part A regression: importing a DAT must invalidate every prior verdict ---
 
 test('importing a DAT retroactively matches a blob already decided against no TOSEC data', async ({ page }) => {

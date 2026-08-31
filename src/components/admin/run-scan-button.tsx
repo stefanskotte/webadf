@@ -27,7 +27,10 @@ export function RunScanButton() {
       const r = await res.json();
       toast.success(
         r.done ? 'Scan complete' : 'Batch done — more to do',
-        { description: `${r.hashed} hashed · ${r.matched} matched · ${r.none} unmatched · ${r.ambiguous} ambiguous` },
+        {
+          description: `${r.hashed} hashed · ${r.matched} matched · ${r.none} unmatched · `
+            + `${r.ambiguous} ambiguous · ${r.merged} merged`,
+        },
       );
       router.refresh();
     } finally {

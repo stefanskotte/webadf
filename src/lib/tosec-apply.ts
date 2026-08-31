@@ -10,7 +10,7 @@
 // Duplicates are therefore resolved by CONTENT: two games in one org with the
 // same (sortTitle, year) are the same game, and are merged.
 
-import { and, eq, isNull, ne } from 'drizzle-orm';
+import { and, eq, inArray, isNull, ne } from 'drizzle-orm';
 import type { BatchItem } from 'drizzle-orm/batch';
 import { getDb } from '@/db';
 import { games, disks } from '@/db/schema/catalog';
@@ -51,14 +51,20 @@ export async function applyMatch(sha256: string, entryId: string): Promise<Apply
     }).where(eq(disks.id, row.diskId)));
     disksUpdated++;
 
-    // Game level: only over filename-derived metadata. A human edit is never
-    // overwritten -- nothing writes such a value today, but the rule exists
-    // before the first edit UI can forget it.
+    // Game level: only over machine-authored metadata. Gating on
+    // MACHINE_SOURCES (not just 'filename') keeps a game re-correctable
+    // after its first TOSEC match -- a row already at metadataSource:
+    // 'tosec' is still machine-authored, and importDat()'s promise that a
+    // newer release "corrects the entries it changed" would otherwise be
+    // false for any row already matched once. Idempotent either way: a
+    // repeat writes identical values. A human edit (any other value,
+    // including NULL) is never overwritten -- nothing writes such a value
+    // today, but the rule exists before the first edit UI can forget it.
     stmts.push(db.update(games).set({
       title: entry.title, sortTitle: entry.sortTitle,
       year: entry.year, publisher: entry.publisher,
       metadataSource: 'tosec',
-    }).where(and(eq(games.id, row.gameId), eq(games.metadataSource, 'filename'))));
+    }).where(and(eq(games.id, row.gameId), inArray(games.metadataSource, MACHINE_SOURCES))));
     gamesUpdated++;
   }
 
@@ -135,13 +141,21 @@ async function mergeDuplicates(orgId: string, sortTitle: string, year: number | 
 
   const stmts: BatchItem<'pg'>[] = [];
   for (const gone of absorbed) {
+    // Deliberately NOT org-scoped, unlike the two devices updates below.
     // disks.orgId is an independent column, not guaranteed to match its
-    // game's org (src/lib/admin-delete.ts documents this drift as real) --
-    // so this repoint is org-scoped exactly like the two devices updates
-    // below it, and can never move another tenant's disk onto this org's
-    // survivor.
+    // game's org (src/lib/admin-delete.ts documents this drift as real), so
+    // an org-scoped predicate here can leave a disk pointed at `gone`. That
+    // disk is not merely missed -- `gone` is a game in THIS org, so any disk
+    // pointing at it is reachable only through it, and the DELETE below
+    // cascades (disks.gameId references games.id with onDelete: 'cascade')
+    // and destroys it outright. A destroyed disk is indistinguishable from
+    // an eject: readDesired's leftJoin on devices.desiredDiskId returns no
+    // row, and "no disk desired" IS eject in this protocol. Repointing every
+    // disk regardless of its own orgId is strictly SAFER than that cascade,
+    // not a cross-tenant risk -- there is no other tenant's disk to move,
+    // because `gone` never belonged to one.
     stmts.push(db.update(disks).set({ gameId: survivor })
-      .where(and(eq(disks.gameId, gone), eq(disks.orgId, orgId))));
+      .where(eq(disks.gameId, gone)));
     stmts.push(db.update(devices).set({ desiredGameId: survivor })
       .where(and(eq(devices.orgId, orgId), eq(devices.desiredGameId, gone))));
     stmts.push(db.update(devices).set({ mountedGameId: survivor })
@@ -149,5 +163,9 @@ async function mergeDuplicates(orgId: string, sortTitle: string, year: number | 
     stmts.push(db.delete(games).where(and(eq(games.id, gone), ne(games.id, survivor))));
   }
   await db.batch(stmts as [BatchItem<'pg'>, ...BatchItem<'pg'>[]]);
+  // Traceable in logs: a merge deletes `games` rows, and applyMatch's
+  // caller (the sweep) can only report a count, not which games. Named here
+  // because this is the one place that still has both ids in hand.
+  console.log(`tosec-apply: merged ${absorbed.length} game(s) into ${survivor}: ${absorbed.join(', ')}`);
   return absorbed.length;
 }

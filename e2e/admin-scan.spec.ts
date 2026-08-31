@@ -51,13 +51,17 @@ test('the operator can run a scan by clicking Run now', async ({ page }) => {
   await expect(button).toHaveText('Run now');
   await button.click();
   await expect(button).toHaveText('Scanning…');
-  // Nothing in this app currently mounts sonner's <Toaster/> (grepped every
-  // layout: src/app/layout.tsx, (app)/layout.tsx, (admin)/layout.tsx -- none
-  // render one), so toast.success()/toast.error() calls never reach the DOM
-  // and cannot be asserted on. Proving the click worked through the button's
+  // sonner's <Toaster/> is now mounted in src/app/layout.tsx (see
+  // e2e/admin-invites.spec.ts's "a success toast is actually visible"
+  // test, which was the regression that proved it), so the toast this
+  // click fires is now assertable -- but exact counts are not: results
+  // depend on whatever is currently unswept in the live database, and
+  // asserting on precise numbers here would make this flaky. The button's
   // own busy -> idle transition, plus the page still rendering afterwards,
-  // does not depend on that separate (unrelated, pre-existing) gap.
+  // remains the primary assertion; the toast check below is a real but
+  // loosely-worded addition, not a replacement for it.
   await expect(button).toHaveText('Run now', { timeout: 250_000 });
+  await expect(page.getByText(/Scan complete|Batch done/)).toBeVisible();
   await expect(page.getByTestId('scan-blobs')).toHaveText(/^\d+$/);
 });
 
@@ -88,10 +92,15 @@ game (
     name: 'test.dat', mimeType: 'text/plain', buffer: Buffer.from(datText),
   });
 
-  // Same Toaster gap as the test above -- assert through the table
-  // dat-upload.tsx's router.refresh() actually re-renders, not through a
-  // toast that never mounts.
+  // The Toaster is now mounted (see the "Run now" test's comment above), so
+  // the success toast is asserted directly below. The table assertion stays
+  // too, and is still the one that actually proves dat-upload.tsx's
+  // router.refresh() re-rendered the page with the imported set.
+  await expect(page.getByText(`Imported 1 entries from 1 file`)).toBeVisible();
   const row = page.getByRole('row', { name: setName });
   await expect(row).toBeVisible({ timeout: 15_000 });
-  await expect(row).toContainText('1'); // one game entry in the DAT above
+  // Assert the Entries cell specifically, not the whole row: the row also
+  // renders setVersion "2026-01-01", which contains the substring "1", so
+  // `row.toContainText('1')` used to pass regardless of what Entries said.
+  await expect(row.getByTestId('set-entries')).toHaveText('1');
 });

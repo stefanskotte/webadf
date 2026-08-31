@@ -99,7 +99,9 @@ export default async function AdminScanPage() {
                     <td className="px-4 py-3 font-mono text-[12px]" style={{ color: 'var(--muted)' }}>
                       {set.setVersion ?? '—'}
                     </td>
-                    <td className="px-4 py-3 text-right tabular-nums">{set.entries}</td>
+                    <td className="px-4 py-3 text-right tabular-nums" data-testid="set-entries">
+                      {set.entries}
+                    </td>
                   </tr>
                 ))
               )}
