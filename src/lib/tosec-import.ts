@@ -1,6 +1,7 @@
-import { sql } from 'drizzle-orm';
+import { sql, isNotNull } from 'drizzle-orm';
 import { getDb } from '@/db';
 import { tosecEntries } from '@/db/schema/tosec';
+import { blobs } from '@/db/schema/catalog';
 import { parseDat } from '@/lib/tosec-dat';
 import { stableId } from '@/lib/ingest';
 import { chunk } from '@/lib/chunk';
@@ -62,6 +63,20 @@ export async function importDat(text: string) {
       },
     });
   }
+
+  // A newly imported or updated set invalidates every verdict reached without
+  // it: sweep()'s phase-2 cursor is `match_checked_at IS NULL`, so a blob is
+  // only ever considered once. Without this reset, importing a DAT after a
+  // sweep matches nothing at all -- the blobs have already been "decided".
+  //
+  // Hashes are deliberately NOT cleared. Hashing is the expensive half (a full
+  // read of every blob's bytes out of the object store) and a content hash
+  // never changes, so re-matching is cheap while re-hashing would not be.
+  await db.update(blobs).set({
+    matchCheckedAt: null,
+    matchState: null,
+    tosecEntryId: null,
+  }).where(isNotNull(blobs.matchCheckedAt));
 
   return { setName: dat.setName, setVersion: dat.setVersion, imported: rows.length };
 }

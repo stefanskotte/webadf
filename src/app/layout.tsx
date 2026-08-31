@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import { Space_Grotesk, IBM_Plex_Mono } from "next/font/google";
+import { Toaster } from "@/components/ui/sonner";
 import "./globals.css";
 
 const sans = Space_Grotesk({
@@ -24,6 +25,7 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
     <html lang="en" className={`${sans.variable} ${mono.variable} h-full`}>
       <body className="bg-page-gradient antialiased min-h-full flex flex-col">
         {children}
+        <Toaster />
       </body>
     </html>
   );

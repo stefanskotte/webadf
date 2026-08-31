@@ -1,6 +1,6 @@
 import { gzipSync } from 'node:zlib';
 import { z } from 'zod';
-import { inArray } from 'drizzle-orm';
+import { and, inArray, isNotNull } from 'drizzle-orm';
 import { BlobServiceRateLimited } from '@vercel/blob';
 import { getDb } from '@/db';
 import { blobs, entitlements, games, disks } from '@/db/schema/catalog';
@@ -267,6 +267,18 @@ export async function POST(request: Request) {
   // Strictly after the games inserts: disks.game_id has an FK onto games.id.
   for (const part of chunk([...diskRows.values()], INSERT_CHUNK)) {
     await db.insert(disks).values(part).onConflictDoNothing();
+  }
+
+  // applyMatch rewrites the games/disks rows that exist when it runs, so a blob
+  // matched before these disks existed would never reach them. Clearing the
+  // verdict puts these hashes back in front of the sweeper, which re-applies the
+  // identity to the rows just created. Only hashes that were already decided are
+  // touched; a brand-new blob has a null cursor already.
+  const decided = [...new Set(landed.map((f) => f.sha256))];
+  if (decided.length > 0) {
+    await db.update(blobs).set({
+      matchCheckedAt: null, matchState: null, tosecEntryId: null,
+    }).where(and(inArray(blobs.sha256, decided), isNotNull(blobs.matchCheckedAt)));
   }
 
   return Response.json({

@@ -22,6 +22,22 @@ test('issuing shows a code that then appears in the list', async ({ page }) => {
   await expect(page.getByTestId(`invite-${code}`)).toBeVisible();
 });
 
+test('a success toast is actually visible after revoking a code', async ({ page }) => {
+  // Part C regression: nine components across this app call toast(), but no
+  // layout ever rendered sonner's <Toaster/> before now, so none of those
+  // messages was ever visible (see admin-scan.spec.ts's now-historical
+  // comments on the same gap). RevokeInviteButton's toast.success() on this
+  // page is a real, already-existing call -- unlike IssueInviteButton on
+  // this same page, which only ever calls toast.error() on a failure path
+  // and so cannot prove a SUCCESS toast renders.
+  await signInAsSuperAdmin(page);
+  await page.goto('/admin/invites');
+  const code = await issueCode(page);
+
+  await page.getByTestId(`revoke-${code}`).click();
+  await expect(page.getByText(`Revoked ${code}`)).toBeVisible();
+});
+
 test('a live code is exactly what the sign-up gate accepts', async ({ page, context }) => {
   await signInAsSuperAdmin(page);
   await page.goto('/admin/invites');
