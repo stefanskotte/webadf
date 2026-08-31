@@ -12,16 +12,57 @@ is gitignored and does not survive a session, so everything worth keeping is her
 | Task | State |
 |---|---|
 | 1 — `requireSuperAdmin` + allowlist | ✅ complete, reviewed clean (`f692321`..`485fbb1`) |
-| 2 — unscoped admin queries | ⚠️ **implemented and committed (`40890c9`), NOT REVIEWED** |
+| 2 — unscoped admin queries | ✅ complete, **reviewed 2026-08-31** (`40890c9`, fix `62192e0`) |
 | 3 — admin shell, overview, user list | not started |
 | 4 — invites issue/revoke | not started |
 | 5 — cascade delete | not started |
 | 6 — docs + bootstrap runbook | not started |
 
-**Resume by running Task 2's task review first**, then continue with Task 3. The plan and spec
-are self-contained; a fresh session needs no other context.
+**Task 2's review is done. Resume at Task 3.** The plan and spec are self-contained; a fresh
+session needs no other context.
 
-Suite at the pause point: **256 vitest**, `pnpm build` clean. Playwright untouched (87).
+Suite: **256 vitest**, `pnpm build` clean. Playwright untouched (87).
+
+## Task 2's review (2026-08-31)
+
+Task 2 ships no Vitest coverage by design -- every function opens a database connection and
+this repo's Vitest has no `DATABASE_URL`. The review therefore ran all four functions
+**read-only against the live database** rather than desk-checking them, which is the only way
+they can actually be exercised before Task 3's Playwright specs exist. Findings:
+
+**One real defect, fixed (`62192e0`): `adminListUsers` could skip a user.** It ordered by
+`created_at DESC` alone. That column is *not unique* in the live database -- five groups of
+users share a timestamp, one of them three ways, because the e2e suite signs accounts up in
+bursts. `ORDER BY` a non-unique key with `LIMIT`/`OFFSET` is an unstable sort: Postgres may
+order tied rows differently for the page-N query and the page-N+1 query, showing one user twice
+and skipping another entirely. This list is how an operator finds a user *in order to delete
+them*, so a silently skipped row fails in the bad direction. Fixed by adding `user.id` as a
+tiebreaker, making the order total (id is the primary key). Verified by walking all 2,863 users
+in pages of 500: 2,863 fetched, 2,863 distinct, zero duplicates, zero skips.
+
+**Everything else verified correct against real data:**
+
+- `adminCounts` returns `{users: 2863, orgs: 2862, games: 739, disks: 876, blobs: 802,
+  liveInvites: 0}`. The `::int` casts work -- values arrive as JS numbers, not strings. The
+  `liveInvites: 0` independently confirms the bootstrap step-2 revocation recorded below.
+- The `.rows[0]` correction the plan's own text got wrong (it wrote `const [row] = await
+  ...execute()`) is applied correctly; the neon-http driver does return `{ rows }`.
+- **The LEFT joins are load-bearing and demonstrably so.** 2,863 users against 2,862
+  organizations -- there is exactly one real user with no membership at all
+  (`t-1788049672913-737154@example.test`). An inner join would hide them, and the admin list is
+  precisely where a failed organization bootstrap should be visible.
+- `createdAt` arrives as a real `Date`; the correlated `games`/`disks`/`devices` counts arrive
+  as numbers and are 0 (not null) for the membership-less user.
+- `adminListInvites`' SQL-derived state and its live-first ordering both execute correctly.
+
+**Not exercised by real data, for Task 4's e2e to cover:** all 2,371 invite rows are
+`consumed` -- there is not one `live` or `expired` row in the database, so neither the
+`expired` branch of the state `case` nor the live-first ordering has ever produced a non-trivial
+result.
+
+**Cosmetic, deliberately left alone:** `adminCounts` reads `rows[0]` unguarded while its sibling
+`adminCountUsers` guards with `?? 0`. The query is six scalar subqueries and always returns
+exactly one row, so the guard would be dead code.
 
 ## Rulings taken
 
@@ -42,6 +83,18 @@ Claiming the operator's email and setting the production env var are operator ac
 security consequences, and the env var is a side effect outside the branch.
 *Costs if wrong: the plane ships with no admin configured, which fails closed.*
 
+**Ruling 4 — `adminListUsers`' multi-membership fan-out is ACCEPTED, not fixed.**
+The open item below asked whether to defend the plain LEFT JOIN with `DISTINCT ON`/`LATERAL`
+against a user holding two `auth.member` rows. **Measured on the live database: zero users hold
+more than one membership**, and the full paging walk returned exactly 2,863 rows for 2,863
+users, so there is no fan-out to defend against. Accepted for the reason the code's own comment
+gives: nothing in this app's sign-up or invite flow creates a second membership, and if one ever
+appears, the admin list is exactly where a broken multi-member account *should* be visible
+rather than silently collapsed by a `DISTINCT`.
+*Costs if wrong: a user with two memberships appears twice on the list and inflates the page
+against `adminCountUsers`' total. Detectable the moment it happens, because the two counts stop
+agreeing.*
+
 ## The security finding worth remembering
 
 **`toLowerCase()` is not injective, so an "exact match" allowlist was not exact.**
@@ -61,12 +114,12 @@ same bug wearing the other face.
 
 ## Open items for the next session
 
-- **Task 2 is unreviewed.** Run its task review before anything else.
-- **Task 2's known limitation, needs a ruling:** a user can hold multiple `auth.member` rows
-  (see `auth.ts`'s `lookupActiveOrgId` comment), and `adminListUsers`'s plain LEFT JOIN would
-  fan such a user into duplicate rows. Unreachable today at one org per user; the admin list is
-  also exactly where a broken multi-member account should be visible. Decide whether to accept,
-  or use `DISTINCT ON`/`LATERAL`.
+- ~~**Task 2 is unreviewed.**~~ **DONE 2026-08-31** — reviewed, one real defect found and
+  fixed (`62192e0`). See "Task 2's review" above.
+- ~~**Task 2's known limitation, needs a ruling**~~ — **RULED, accepted.** See Ruling 4.
+- **For Task 4:** the database contains no `live` and no `expired` invite row, so
+  `adminListInvites`' `expired` state and its live-first ordering are both unexercised. Task 4's
+  e2e is the first thing that can cover them — make sure it does.
 - **Bootstrap steps 1 and 2 are DONE** (2026-08-31): `sfs@enhance-it.dk` is claimed with role
   `owner`, and the three leaked codes were deleted. **Zero live invite codes remain**, so
   registration is closed until one is issued. Only step 3 — setting `SUPERADMIN_EMAILS` in
