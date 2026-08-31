@@ -17,6 +17,11 @@ import { games, disks } from '@/db/schema/catalog';
 import { devices } from '@/db/schema/devices';
 import { tosecEntries } from '@/db/schema/tosec';
 
+// Sources this system writes for itself. Anything else means a human decided
+// it, and a human's row is never deleted by a sweep -- the Authority rule
+// applies to deletion as much as to retitling.
+const MACHINE_SOURCES = ['filename', 'tosec'];
+
 export interface ApplyResult { gamesUpdated: number; disksUpdated: number; gamesMerged: number }
 
 export async function applyMatch(sha256: string, entryId: string): Promise<ApplyResult> {
@@ -77,28 +82,66 @@ export async function applyMatch(sha256: string, entryId: string): Promise<Apply
  * once the absorbed row is deleted. desiredDiskId is deliberately NOT touched:
  * disks keep their ids, so no device's desired state moves and no sweep can
  * be observed as an eject.
+ *
+ * The Authority rule -- a human edit is never overwritten -- applies to
+ * deletion by merge exactly as much as it applies to the retitling UPDATE in
+ * applyMatch above: collapsing two games into one destroys whichever one does
+ * not survive, so a human-edited (non-MACHINE_SOURCES) row is only ever a
+ * survivor, never the one a sweep removes. See the branches below for how
+ * that plays out when more than one row is human-edited.
  */
 async function mergeDuplicates(orgId: string, sortTitle: string, year: number | null): Promise<number> {
   const db = getDb();
 
   const dupes = await db
-    .select({ id: games.id, createdAt: games.createdAt })
+    .select({ id: games.id, createdAt: games.createdAt, metadataSource: games.metadataSource })
     .from(games)
     .where(and(
       eq(games.orgId, orgId),
       eq(games.sortTitle, sortTitle),
       year === null ? isNull(games.year) : eq(games.year, year),
     ))
-    .orderBy(games.createdAt);
+    // createdAt ALONE is not a total order. ingest/complete bulk-inserts up
+    // to INSERT_CHUNK (250) games in a single INSERT, and Postgres' now()
+    // returns the enclosing TRANSACTION's start time, so every game created
+    // by one /complete call shares one identical createdAt. Without games.id
+    // (the primary key) as a tiebreaker, ties among those rows have no
+    // defined order, and which one this function treats as "first" -- the
+    // survivor -- could change from one sweep to the next. This exact bug
+    // class (non-unique ORDER BY paired with a first-row/LIMIT pick) has
+    // already appeared once in this codebase, on the super-admin plane's user
+    // list (see admin-queries.ts's adminListUsers, which orders by
+    // (createdAt, id) for the same reason). Do not drop the second column.
+    .orderBy(games.createdAt, games.id);
 
   if (dupes.length < 2) return 0;
 
-  const survivor = dupes[0].id;
-  const absorbed = dupes.slice(1).map((d) => d.id);
+  const protectedRows = dupes.filter((d) => !MACHINE_SOURCES.includes(d.metadataSource ?? ''));
+  const machineRows = dupes.filter((d) => MACHINE_SOURCES.includes(d.metadataSource ?? ''));
+
+  // Two or more human-edited rows: merging them would mean deleting one
+  // person's edit to keep another's, and choosing between two human
+  // decisions is not a sweep's call. Merge nothing, for either row.
+  if (protectedRows.length >= 2) return 0;
+
+  // Exactly one protected row: it is the survivor regardless of where it
+  // sorts by (createdAt, id), and only machine-authored rows are absorbed.
+  // With zero protected rows, the survivor is the oldest machine row by the
+  // deterministic order above.
+  const survivor = protectedRows.length === 1 ? protectedRows[0].id : machineRows[0].id;
+  const absorbed = machineRows.filter((m) => m.id !== survivor).map((m) => m.id);
+
+  if (absorbed.length === 0) return 0;
 
   const stmts: BatchItem<'pg'>[] = [];
   for (const gone of absorbed) {
-    stmts.push(db.update(disks).set({ gameId: survivor }).where(eq(disks.gameId, gone)));
+    // disks.orgId is an independent column, not guaranteed to match its
+    // game's org (src/lib/admin-delete.ts documents this drift as real) --
+    // so this repoint is org-scoped exactly like the two devices updates
+    // below it, and can never move another tenant's disk onto this org's
+    // survivor.
+    stmts.push(db.update(disks).set({ gameId: survivor })
+      .where(and(eq(disks.gameId, gone), eq(disks.orgId, orgId))));
     stmts.push(db.update(devices).set({ desiredGameId: survivor })
       .where(and(eq(devices.orgId, orgId), eq(devices.desiredGameId, gone))));
     stmts.push(db.update(devices).set({ mountedGameId: survivor })
