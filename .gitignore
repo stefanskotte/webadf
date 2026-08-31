@@ -42,3 +42,8 @@ design/webadf-interface.html
 .superpowers/
 test-results/
 playwright-report/
+
+# Bulk TOSEC downloads: ~1 GB of disk images and DAT packs. Reference data the
+# operator fetches by hand, never part of the repo.
+tosec-archive/
+tosec/
