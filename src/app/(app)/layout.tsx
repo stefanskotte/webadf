@@ -1,4 +1,5 @@
 import { requireOrg } from "@/lib/session";
+import { isSuperAdminEmail } from "@/lib/superadmin";
 import { TopNav } from "@/components/shell/top-nav";
 import { SignOutButton } from "@/components/sign-out-button";
 
@@ -7,7 +8,10 @@ export default async function AppLayout({
 }: {
   children: React.ReactNode;
 }) {
-  await requireOrg();
+  const { email } = await requireOrg();
+  // Decided here, on the server, and passed down as a plain boolean -- the
+  // allowlist itself never reaches the client.
+  const showAdmin = isSuperAdminEmail(email);
   return (
     <div className="min-h-screen">
       <header className="flex items-center gap-4 px-7 pt-4">
@@ -17,7 +21,7 @@ export default async function AppLayout({
         >
           webadf
         </span>
-        <TopNav />
+        <TopNav showAdmin={showAdmin} />
         <SignOutButton />
       </header>
       {children}

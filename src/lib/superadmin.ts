@@ -21,3 +21,25 @@ export async function requireSuperAdmin(): Promise<{ userId: string; email: stri
   }
   return { userId: result.user.id, email: result.user.email };
 }
+
+/**
+ * Non-redirecting variant, for deciding whether to RENDER something (the
+ * app shell's Admin nav link) rather than whether to ALLOW something.
+ *
+ * It takes the email the caller already has instead of fetching a session,
+ * so the app layout does not pay a second getSession() round trip on every
+ * page just to decide whether to draw one link. It still reads
+ * SUPERADMIN_EMAILS here rather than in the caller, which keeps this file
+ * the single place that configuration enters the system.
+ *
+ * This is NOT an access check and must never be used as one. Hiding a link
+ * is not a guard: requireSuperAdmin() is, and every admin page and every
+ * /api/admin route calls it for itself. What this does buy is the
+ * non-disclosure property the plane is specified with -- a non-admin is
+ * redirected to /library rather than 404'd so the response never confirms
+ * /admin exists, and a nav link rendered for everyone would have given that
+ * away in the markup regardless.
+ */
+export function isSuperAdminEmail(email: string | undefined): boolean {
+  return isAllowed(email, process.env.SUPERADMIN_EMAILS);
+}

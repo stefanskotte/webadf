@@ -2,7 +2,7 @@ import { headers } from 'next/headers';
 import { redirect } from 'next/navigation';
 import { auth } from '@/lib/auth';
 
-export async function requireOrg(): Promise<{ userId: string; orgId: string }> {
+export async function requireOrg(): Promise<{ userId: string; orgId: string; email: string }> {
   const result = await auth.api.getSession({ headers: await headers() });
   if (!result) redirect('/sign-in');
 
@@ -13,5 +13,9 @@ export async function requireOrg(): Promise<{ userId: string; orgId: string }> {
   const orgId = result.session.activeOrganizationId;
   if (!orgId) redirect('/sign-in');
 
-  return { userId: result.user.id, orgId };
+  // `email` rides along because the app shell needs it to decide whether to
+  // draw the Admin nav link (see isSuperAdminEmail). The session is already
+  // loaded here, so returning it costs nothing and saves the layout a second
+  // getSession() round trip on every authenticated page render.
+  return { userId: result.user.id, orgId, email: result.user.email };
 }

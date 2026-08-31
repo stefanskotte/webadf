@@ -8,8 +8,23 @@ const ITEMS = [
   { href: "/ingest", label: "Ingest" },
 ];
 
-export function TopNav() {
+// Rendered only when the layout says so. `showAdmin` is decided on the server
+// by isSuperAdminEmail(); this component must never work it out for itself,
+// because a client component cannot read SUPERADMIN_EMAILS and shipping the
+// allowlist to the browser to let it try would publish the very thing the
+// env var exists to keep out of the database and off the wire.
+//
+// Hiding the link is presentation, NOT access control -- /admin is guarded by
+// requireSuperAdmin() in the (admin) layout, and each /api/admin route guards
+// itself. What omitting it preserves is non-disclosure: the plane redirects a
+// non-admin to /library rather than 404ing precisely so the response never
+// confirms /admin exists, and a link rendered for everyone would leak that in
+// the markup anyway.
+const ADMIN_ITEM = { href: "/admin", label: "Admin" };
+
+export function TopNav({ showAdmin = false }: { showAdmin?: boolean }) {
   const pathname = usePathname();
+  const items = showAdmin ? [...ITEMS, ADMIN_ITEM] : ITEMS;
   return (
     <nav
       className="mx-auto flex items-center gap-[3px] rounded-full border p-1"
@@ -18,7 +33,7 @@ export function TopNav() {
         borderColor: "rgb(255 255 255 / 0.16)",
       }}
     >
-      {ITEMS.map((item) => {
+      {items.map((item) => {
         const active = pathname.startsWith(item.href);
         return (
           <Link
