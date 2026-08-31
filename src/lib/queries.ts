@@ -1,8 +1,9 @@
-import { sql, desc, eq, and } from 'drizzle-orm';
+import { sql, desc, eq, and, inArray } from 'drizzle-orm';
 import { alias } from 'drizzle-orm/pg-core';
 import { getDb } from '@/db';
-import { games, disks } from '@/db/schema/catalog';
+import { games, disks, blobs } from '@/db/schema/catalog';
 import { devices } from '@/db/schema/devices';
+import { openretroEntries, openretroImages } from '@/db/schema/openretro';
 import { orgFilter } from '@/db/scope';
 
 export interface GameListItem {
@@ -96,9 +97,23 @@ export interface GameDetailDisk {
   id: string; diskNo: number; label: string | null;
   sha256: string; sizeBytes: number; isBoot: boolean; writeProtected: boolean;
 }
+export interface GameImage {
+  sha1: string; url: string; kind: string; ordinal: number;
+}
+/** OpenRetro's outbound links, plus its own page, for the attribution row. */
+export interface GameLinks {
+  slug: string | null; holUrl: string | null; mobygamesUrl: string | null;
+  lemonUrl: string | null; wikipediaUrl: string | null; longplayUrl: string | null;
+}
 export interface GameDetail {
   id: string; title: string; year: number | null; publisher: string | null;
   genre: string | null; chipset: string | null; coverAssetId: string | null;
+  developer: string | null; players: string | null;
+  description: string | null; history: string | null;
+  factsSource: string | null; proseSource: string | null;
+  languages: string | null;
+  front: GameImage | null; title_: GameImage | null; screenshots: GameImage[];
+  links: GameLinks | null;
   disks: GameDetailDisk[];
 }
 
@@ -114,6 +129,9 @@ export async function getGameDetail(orgId: string, gameId: string): Promise<Game
     .select({
       id: games.id, title: games.title, year: games.year, publisher: games.publisher,
       genre: games.genre, chipset: games.chipset, coverAssetId: games.coverAssetId,
+      developer: games.developer, players: games.players,
+      description: games.description, history: games.history,
+      factsSource: games.factsSource, proseSource: games.proseSource,
     })
     .from(games)
     .where(orgFilter(games, orgId, eq(games.id, gameId)))
@@ -134,5 +152,56 @@ export async function getGameDetail(orgId: string, gameId: string): Promise<Game
     .where(orgFilter(disks, orgId, eq(disks.gameId, gameId)))
     .orderBy(disks.diskNo);
 
-  return { ...game, disks: diskRows };
+  // The OpenRetro entry reached through this game's own disks: disk -> blob
+  // -> the entry the sweeper decided those bytes are. Scoped through
+  // diskRows, which is already org-filtered above, so no cross-tenant row can
+  // be reached even though blobs and openretro_* are global tables.
+  const shas = [...new Set(diskRows.map((d) => d.sha256))];
+  let front: GameImage | null = null;
+  let titleShot: GameImage | null = null;
+  let screenshots: GameImage[] = [];
+  let links: GameLinks | null = null;
+  let languages: string | null = null;
+
+  if (shas.length > 0) {
+    const entryRows = await db
+      .select({
+        uuid: openretroEntries.uuid, slug: openretroEntries.slug,
+        languages: openretroEntries.languages,
+        holUrl: openretroEntries.holUrl, mobygamesUrl: openretroEntries.mobygamesUrl,
+        lemonUrl: openretroEntries.lemonUrl, wikipediaUrl: openretroEntries.wikipediaUrl,
+        longplayUrl: openretroEntries.longplayUrl,
+      })
+      .from(blobs)
+      .innerJoin(openretroEntries, eq(openretroEntries.uuid, blobs.openretroEntryId))
+      .where(inArray(blobs.sha256, shas))
+      .limit(1);
+
+    const entry = entryRows[0];
+    if (entry) {
+      languages = entry.languages;
+      links = {
+        slug: entry.slug, holUrl: entry.holUrl, mobygamesUrl: entry.mobygamesUrl,
+        lemonUrl: entry.lemonUrl, wikipediaUrl: entry.wikipediaUrl,
+        longplayUrl: entry.longplayUrl,
+      };
+
+      const imgs = await db
+        .select({
+          sha1: openretroImages.sha1, url: openretroImages.url,
+          kind: openretroImages.kind, ordinal: openretroImages.ordinal,
+        })
+        .from(openretroImages)
+        .where(eq(openretroImages.entryUuid, entry.uuid))
+        .orderBy(openretroImages.ordinal);
+
+      front = imgs.find((i) => i.kind === 'front') ?? null;
+      titleShot = imgs.find((i) => i.kind === 'title') ?? null;
+      screenshots = imgs.filter((i) => i.kind === 'screenshot');
+    }
+  }
+
+  return {
+    ...game, languages, front, title_: titleShot, screenshots, links, disks: diskRows,
+  };
 }

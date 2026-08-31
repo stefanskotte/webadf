@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { DatabaseSync } from 'node:sqlite';
 import { deflateSync } from 'node:zlib';
-import { readFileSync, writeFileSync, mkdtempSync } from 'node:fs';
+import { readFileSync, mkdtempSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { readOpenRetroDb } from './openretro-db';

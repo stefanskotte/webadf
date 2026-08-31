@@ -6,6 +6,7 @@ import { deviceState } from '@/lib/device-state';
 import { PageHeader } from '@/components/shell/page-header';
 import { LiveRefresh } from '@/components/devices/live-refresh';
 import { DiskRow, type DiskHolder } from '@/components/games/disk-row';
+import { GameFacts } from '@/components/games/game-facts';
 
 export default async function GamePage(props: PageProps<'/games/[id]'>) {
   const { orgId } = await requireOrg();
@@ -59,6 +60,7 @@ export default async function GamePage(props: PageProps<'/games/[id]'>) {
         }
       />
       <LiveRefresh active={anyPending} />
+      <GameFacts game={game} />
       <div className="flex flex-col gap-3 px-7 pb-10">
         {game.disks.map((disk) => (
           <DiskRow key={disk.id} disk={disk} devices={targets}

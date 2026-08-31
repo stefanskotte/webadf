@@ -2,6 +2,7 @@ import { scanStatus } from '@/lib/tosec-sweep';
 import { PageHeader } from '@/components/shell/page-header';
 import { DatUpload } from '@/components/admin/dat-upload';
 import { RunScanButton } from '@/components/admin/run-scan-button';
+import { OpenRetroUpload } from '@/components/admin/openretro-upload';
 
 export const dynamic = 'force-dynamic';
 
@@ -13,6 +14,15 @@ const TILES = [
   { key: 'ambiguous', label: 'Ambiguous' },
   { key: 'unreadable', label: 'Unreadable' },
   { key: 'unchecked', label: 'Unchecked' },
+] as const;
+
+const ENRICH_TILES = [
+  { key: 'enriched', label: 'Enriched' },
+  { key: 'enrichNone', label: 'Not in OpenRetro' },
+  { key: 'enrichAmbiguous', label: 'Ambiguous' },
+  { key: 'enrichUnchecked', label: 'Unchecked' },
+  { key: 'openretroEntries', label: 'OpenRetro entries' },
+  { key: 'imagesStored', label: 'Images stored' },
 ] as const;
 
 export default async function AdminScanPage() {
@@ -57,6 +67,46 @@ export default async function AdminScanPage() {
           ))}
         </div>
 
+        <div className="mb-3 grid grid-cols-2 gap-3 md:grid-cols-3">
+          {ENRICH_TILES.map((t) => (
+            <div key={t.key} className="glass-card p-5">
+              <div className="text-[12.5px] font-semibold" style={{ color: 'var(--muted)' }}>
+                {t.label}
+              </div>
+              <div
+                className="mt-1 text-[30px] font-bold leading-none tracking-[-0.03em]"
+                data-testid={`scan-${t.key}`}
+              >
+                {s[t.key]}
+              </div>
+              {/* The storage cost of copying someone else's images into our
+                  own store should be a number on the page, not a surprise
+                  on a bill. */}
+              {t.key === 'imagesStored' && (
+                <div className="mt-1 text-[12px]" style={{ color: 'var(--muted)' }}
+                     data-testid="scan-imageMb">
+                  {(s.imageBytes / (1024 * 1024)).toFixed(1)} MB
+                </div>
+              )}
+            </div>
+          ))}
+        </div>
+
+        {s.openretroEntries === 0 && (
+          <div className="glass-card mb-3 p-4 text-[13px]" style={{ color: 'var(--muted)' }}>
+            No OpenRetro metadata loaded. Nothing can be enriched until an
+            <strong> Amiga.sqlite</strong> is uploaded below.
+          </div>
+        )}
+
+        {s.enrichUnchecked > 0 && s.openretroEntries > 0 && (
+          <div className="glass-card mb-3 p-4 text-[13px]" style={{ color: 'var(--muted)' }}>
+            <strong>{s.enrichUnchecked}</strong> blobs still to enrich. Image fetching is
+            capped per run on purpose, so a first pass over a large library takes several
+            runs — or several nights.
+          </div>
+        )}
+
         {s.unreadable > 0 && (
           <div className="glass-card mb-3 p-4 text-[13px]" style={{ color: 'var(--amber-text)' }}>
             <strong>{s.unreadable}</strong> blobs could not be read from storage and were stamped
@@ -73,6 +123,10 @@ export default async function AdminScanPage() {
 
         <div className="glass-card mb-3 p-5">
           <DatUpload />
+        </div>
+
+        <div className="glass-card mb-3 p-5">
+          <OpenRetroUpload />
         </div>
 
         <div className="glass-card overflow-x-auto">
