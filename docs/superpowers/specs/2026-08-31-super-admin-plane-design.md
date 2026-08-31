@@ -191,3 +191,44 @@ Also excluded: org sharing and multi-user organizations (invites stay pure regis
 and the `orgId` `claimInvite` returns stays discarded); impersonation; and an audit log of
 admin actions — worth naming because deletions are irreversible and nothing will record who
 ran one. Acceptable at one operator; it would not be at two.
+
+---
+
+## What this plan delivered (2026-08-31)
+
+All six tasks shipped on `feat/super-admin`. The plane is at `/admin`: an overview of the
+unscoped counts, a paginated user list with a cascade delete, and invite issue/revoke. Identity
+is `SUPERADMIN_EMAILS`, read in exactly one file and matched exactly, ASCII-only, on the
+pre-lowercase string. Suite at delivery: **256 vitest, 107 Playwright, `pnpm build` clean.**
+
+**Added beyond this spec, at the operator's request:** an `Admin` entry in the app's top nav,
+so the operator — who is an ordinary user of webadf as well as its admin — does not have to
+remember the URL. It is gated server-side and the allowlist never reaches the client. Hiding a
+link is not access control, but it does preserve §1's non-disclosure property: a non-admin is
+redirected to `/library` rather than 404'd so the response never confirms `/admin` exists, and a
+link rendered for everyone would have leaked it in the markup anyway.
+
+**Also added beyond this spec:** deleting an allowlisted account is refused with a 409. §3's
+hazard is that an *unclaimed* allowlisted address is a prize; deleting the row that claims one
+would manufacture exactly that, since the allowlist matches on the address and not on a user id.
+
+**Four things in the plan's text were wrong and were corrected in the implementation:**
+
+1. **There is no transaction.** drizzle's neon-http session throws *"No transactions support in
+   neon-http driver"*. `db.batch()` — which neon wraps in one server-side transaction — is the
+   atomic primitive that exists, so the cascade is built up and submitted as a single batch.
+2. **Deleting `auth.user` does not cascade to the organization.** `auth.organization` has no
+   foreign key to `auth.user`; the membership cascades and the organization is orphaned. It is
+   now deleted explicitly, and only where the deleted user was its last member.
+3. **An unauthorized API caller gets a 307, not a 4xx.** This codebase redirects everywhere, and
+   Playwright follows redirects by default, so the plan's `[302, 401, 403, 404]` assertion would
+   have failed against a correctly working route.
+4. **One element cannot carry two `data-testid` values.** The user row carries the countable
+   testid plus a `data-email` attribute; the email cell carries the per-email one.
+
+**§8 stands unchanged.** Blob garbage collection is still out of scope and still backlog: the
+cascade never touches `blobs`, and the database enforces that independently — `entitlements`
+and `disks` both reference `blobs.sha256` with no cascade, so a referenced blob cannot be
+deleted even by accident. The absence of an admin audit log also stands, and is now more
+pointed than when it was written: deletions are irreversible, they work, and nothing records
+who ran one.

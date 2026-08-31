@@ -31,12 +31,12 @@ after plan 4a, rewritten again 2026-08-31 after plan 4b.**
 | **Plan 4a — firmware protocol plane** | ✅ **done, merged to `master`, pushed.** Firmware compiles and has a green host suite. |
 | **Plan 4b — captive portal** | ✅ **done, all 8 tasks.** Compile-time WiFi/pairing-code defines are gone, replaced by an AP-mode portal. Merged to `master` and pushed. |
 | **Plan 5 — hardware bring-up** | ❌ not started, the only piece left. **Nothing has run on real hardware** — boards are still in transit and nothing in 4a or 4b has been exercised on one |
+| **Super-admin plane** | ✅ **done, all 6 tasks**, on `feat/super-admin` — not merged. `/admin`: overview, user list with cascade delete, invites |
 | **Hardware** | boards ordered from JLCPCB |
 
-**Current branch:** `master` — everything through plan 4b is merged and pushed; there is no
-outstanding feature branch. **Suite:** 241
-vitest (+1 from the mirror update in plan 4a, so 242 from `feat/device-firmware` onward),
-87 Playwright, `pnpm build` clean. Firmware: `pnpm firmware:test` green (506 checks, 13
+**Current branch:** `feat/super-admin` — the super-admin plane is complete and green but **not
+merged to `master`**. Everything through plan 4b is on `master` and pushed. **Suite on
+`feat/super-admin`:** 256 vitest, 107 Playwright, `pnpm build` clean. Firmware: `pnpm firmware:test` green (506 checks, 13
 binaries), `pnpm firmware:build` produces a `.uf2` — **and now requires
 `PORTAL_AP_PASSWORD` set in the environment, or the configure step fails by design**; see
 "Plan 4b" below for the full command.
@@ -214,30 +214,44 @@ carried forward verbatim from plan 4b's ledger:
 - Whether the iOS and Android captive-portal probe URLs actually trigger the sign-in sheet
   on real devices.
 
-### 3b. Super-admin plane — IN FLIGHT, paused mid-plan
+### 3b. Super-admin plane — DONE, all 6 tasks
 
-**Branch `feat/super-admin`, 2 of 6 tasks done. Task 2 is committed but NOT reviewed — run its
-task review first.** Full state, all rulings, and the open items are in
-`docs/decisions/2026-08-31-super-admin-rulings.md`; the spec and plan are self-contained.
+**Branch `feat/super-admin`, complete and green: 256 vitest, 107 Playwright, `pnpm build`
+clean.** Not merged to `master` yet. Rulings, deviations and mutation results are in
+`docs/decisions/2026-08-31-super-admin-rulings.md`; the spec carries a "What this plan
+delivered" section.
 
-An operator-only plane: list users, delete one with a real cascade, issue and revoke invite
-codes. Identity is an env-var email allowlist (`SUPERADMIN_EMAILS`), deliberately outside the
-database so a database compromise cannot grant it.
+An operator-only plane at **`/admin`** — an overview of unscoped counts, a paginated user list
+with a real cascade delete, and invite issue/revoke. Identity is an env-var email allowlist
+(`SUPERADMIN_EMAILS`), deliberately outside the database so a database compromise cannot grant
+it. There is an **Admin** entry in the app's top nav, rendered only for an allowlisted user.
 
-**Before it can be used, in this order** — the ordering is security-relevant:
+**The bootstrap sequence, and it is security-relevant in this order:**
 
 1. ~~The operator signs up and claims `sfs@enhance-it.dk`.~~ **DONE 2026-08-31** — the account
-   exists (role `owner`, org "sfs's library"), so the unique constraint on `user.email` now
-   protects that address permanently. This had to happen first because `emailVerified` defaults
-   to false and nothing enforces it, so an unclaimed allowlisted address is a prize.
+   exists (role `owner`), so the unique constraint on `user.email` protects that address
+   permanently. This had to come first: `emailVerified` defaults to false and nothing enforces
+   it, so an *unclaimed* allowlisted address is a prize.
 2. ~~Revoke the invite codes that leaked into a session transcript.~~ **DONE 2026-08-31** —
-   `M3W4V3BA` was consumed by step 1; `56DTUDMA`, `HXGMH4ZK` and `K69GXH72` were deleted
-   (unconsumed rows only). **There are now zero live invite codes**, which means no new account
-   can be registered until one is issued — by hand, or by the admin plane once Task 4 lands.
-3. `vercel env add SUPERADMIN_EMAILS production` → `sfs@enhance-it.dk`, then redeploy.
+   `M3W4V3BA` was consumed by step 1; `56DTUDMA`, `HXGMH4ZK` and `K69GXH72` were deleted.
+3. **OUTSTANDING: `vercel env add SUPERADMIN_EMAILS production` → `sfs@enhance-it.dk`, then
+   redeploy.** Until this is done `/admin` works locally and **does not exist in production** —
+   which is the correct state until the branch is merged. An unset variable denies everyone
+   rather than allowing them, so this fails closed.
 
 `.env.local` needs `SUPERADMIN_EMAILS=admin@example.test` for local dev and e2e — a *different*
-value from production, deliberately. An unset variable denies everyone rather than allowing them.
+value from production, deliberately (Ruling 1). A single shared value would either put a test
+account in production's allowlist or leave the e2e unable to sign in as an admin.
+
+**Two things worth knowing before you touch it:**
+
+- **`src/lib/superadmin.ts` is the only file that may read `SUPERADMIN_EMAILS`**, and
+  `src/lib/admin-queries.ts` is the only place unscoped queries live. Every other query in this
+  codebase goes through `orgFilter()`; these deliberately do not, and the quarantine is what
+  makes that visible in review rather than invisible in a diff.
+- **A non-admin is redirected to `/library`, never 404'd.** The response must not confirm
+  `/admin` exists. That is also why the nav link is gated server-side rather than rendered for
+  everyone and hidden with CSS.
 
 ### 4. Backlog, not blocking anything
 
@@ -337,6 +351,27 @@ Learned the hard way; several cost real debugging time.
     `vercel ls`'s Environment column makes a preview-only push easy to skim past.
 
 ---
+
+## The live database's catalog was emptied on 2026-08-31
+
+`games` and `disks` are **0 rows**. This was not a bug in shipped code: plan 5 of the
+super-admin plan prescribes a mutation proof that removes the `org_id` predicate from the
+cascade's `games` delete, to confirm a test catches an unscoped delete. Run against the live
+database — which is what every e2e in this repo uses — that mutation is a literal
+`DELETE FROM games`, and it cascaded to `disks` via `disks.game_id`. The test caught it, which
+was the point; the rows are gone, which was not.
+
+**What survived:** all 826 `blobs`, all 902 `entitlements`, every `devices` row, and every
+account including the operator's. So the uploaded ADF bytes are still in Vercel Blob and every
+organization's claim on them is intact — what was lost is the catalog *metadata* (titles, disk
+numbering, boot flags), which would have to be re-ingested. The operator had confirmed
+beforehand that they had no data they needed in the system.
+
+**The lesson, for the next destructive mutation proof:** a mutation that drops a tenant
+predicate is not scoped by the test that runs it. Point the run at a scratch database, or accept
+in advance that it empties the table for everyone. This repo has no such database today — every
+e2e runs against live Neon — so "accept in advance" is currently the only option, and it should
+be an explicit decision each time rather than a side effect of following a plan step.
 
 ## Known accepted risks
 

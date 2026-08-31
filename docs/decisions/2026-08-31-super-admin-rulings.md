@@ -15,16 +15,15 @@ is gitignored and does not survive a session, so everything worth keeping is her
 | 2 — unscoped admin queries | ✅ complete, **reviewed 2026-08-31** (`40890c9`, fix `62192e0`) |
 | 3 — admin shell, overview, user list | ✅ complete (`768dc61`), guard mutation-checked |
 | 4 — invites issue/revoke | ✅ complete (`5ac7575`), both mutation proofs run |
-| 5 — cascade delete | not started |
-| 6 — docs + bootstrap runbook | not started |
+| 5 — cascade delete | ✅ complete (`bdc45f5`), both mutation proofs run |
+| 6 — docs + bootstrap runbook | ✅ complete |
 
-**Resume at Task 5 (cascade delete).** The plan and spec are self-contained; a fresh session
-needs no other context.
+**All six tasks are done.** Suite: **256 vitest**, **107 Playwright** (87 + 20 admin),
+`pnpm build` clean. The branch is not merged to `master`.
 
-Suite: **256 vitest**, **102 Playwright** (87 + 15 admin), `pnpm build` clean.
-
-**The admin plane is usable now, at `/admin`.** Issuing an invite from `/admin/invites` is the
-only way to open registration again — the database still holds zero live codes.
+**The only outstanding step is bootstrap step 3** — setting `SUPERADMIN_EMAILS` in Vercel
+production — and it should stay outstanding until the branch merges. `/admin` does not exist in
+production until then, which is the correct state.
 
 ## Task 2's review (2026-08-31)
 
@@ -148,6 +147,58 @@ Every guard in tasks 3 and 4 was mutation-checked rather than assumed, and one c
   an anonymous caller by itself. The anonymous test was therefore weaker than it looked. It now
   asserts `DELETE` as well, which has no second guard and is the one that actually proves the
   route is protected.
+
+## Task 5 — two more of the plan's own claims were wrong
+
+Both would have failed at runtime, and neither at build time.
+
+1. **There is no transaction available.** The plan says "one transaction". drizzle's neon-http
+   session throws *"No transactions support in neon-http driver"* from `.transaction()`.
+   `db.batch()` is the atomic primitive that does exist — neon wraps a batch in one server-side
+   transaction — so the cascade is built up and submitted as a single batch. It is
+   non-interactive, so every read that decides the batch's shape runs first.
+2. **`auth.user` does not cascade to the organization.** The plan says it does. `auth.member`
+   references both `user` and `organization` with `ON DELETE CASCADE`, but `auth.organization`
+   has no foreign key to `auth.user` at all — so deleting a user removes their membership and
+   leaves the organization orphaned. Confirmed from the other side by the live counts: 2,863
+   users against 2,862 organizations. The org is now deleted explicitly, **only where the
+   deleted user was its last member** — an organization someone else is still in is theirs.
+
+**Added beyond the plan:** deleting an allowlisted account is refused with a 409. The allowlist
+matches on the *address*, not a user id, so deleting such a row would not revoke anyone's admin
+— it would free the address for whoever registers it next, manufacturing exactly the unclaimed
+allowlisted address that the bootstrap ordering exists to prevent.
+
+**The confirmation is a centered modal, not a row-anchored popup.** Plan 3b's rulings record a
+real wrong-target bug from that shape — an open dropdown covered the next row's Mount button —
+and the consequence here is a permanent delete rather than a wrong mount. The typed-email gate
+is the stronger protection: the operator must type *that row's* address exactly, so even a
+mis-aimed click cannot delete the wrong account.
+
+## The mutation proof that emptied the live catalog
+
+Task 5's second prescribed mutation — drop the `org_id` predicate from the cascade's `games`
+delete, and confirm a test notices — is, against a live database, a literal `DELETE FROM games`.
+It cascaded to `disks` through `disks.game_id`. **`games` and `disks` are now 0 rows.**
+
+The proof worked: no existing test caught it, so the assertion the plan told us to add if none
+did (*the other organization's rows survive*) was added, and it fails under the mutation. The
+operator had confirmed beforehand that they needed no data in the system. Blobs (826),
+entitlements (902), devices and every account survived, so the ADF bytes and every
+organization's claim on them are intact — what was lost is catalog metadata.
+
+**For the next destructive mutation proof:** a mutation that drops a tenant predicate is not
+scoped by the test that runs it. Either point the run at a scratch database or accept in advance
+that it empties the table for every tenant. This repo has no scratch database — every e2e runs
+against live Neon — so today that is an explicit decision to make each time, not something to
+walk into by following a plan step.
+
+**The first mutation is more interesting than it looks.** Adding `blobs` to the delete set does
+not fail by the blob vanishing — it fails because the *other* organization's `disks` still
+reference that sha256, and `disks.sha256`/`entitlements.sha256` reference `blobs.sha256` with no
+cascade. The foreign key rejects the delete, and because the batch is atomic the entire cascade
+rolls back, so the test fails on the user never being deleted at all. The database enforces the
+"never delete a shared blob" rule independently of the code comment that states it.
 
 ## The security finding worth remembering
 
