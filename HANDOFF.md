@@ -400,6 +400,28 @@ increment delivered" before planning the disk-content reader.
 
   Note the standing caveat that `disks.write_protected` is inert until write-back is designed —
   so this is only observable on hardware once the board actually honours the flag.
+- **A rich game detail page** — description, history, screenshots, publisher, "everything".
+  Requested by the operator 2026-08-31. **This is Increment C of the TOSEC work, not a UI task**,
+  and the distinction matters:
+
+  **TOSEC cannot supply any of it.** A DAT carries a canonical name, year, publisher, disk
+  numbering and dump flags — and nothing else. No description, no history, no images. The scan's
+  contribution is *identity*, which is precisely what makes enrichment possible: a disk matched to
+  a canonical TOSEC entry gives a trustworthy title/year/publisher to look the game up by, instead
+  of whatever the uploader called the file. Doing this before the scan existed would have meant
+  querying an external database with a filename.
+
+  **The columns are already there and already rendered.** `games` carries `genre`, `chipset` and
+  `coverAssetId`, `src/lib/queries.ts` selects all three, and `/games/[id]` already puts `year`,
+  `publisher`, `genre` and `chipset` in its subtitle. **Nothing has ever written them** — so the
+  page will start showing more the moment something populates them. Description, history and
+  screenshots need new columns; screenshots additionally need Blob storage and finally give
+  `coverAssetId` a purpose.
+
+  **The source is the open question.** OpenRetro and Hall of Light (abime.net) are the Amiga
+  databases worth evaluating. Both bring a network dependency, rate limits, and — for screenshots
+  — an attribution and licensing question that should be answered before images are copied into
+  this project's storage rather than after.
 - **User-defined collections, with drag-and-drop.** Requested by the operator 2026-08-31: make
   your own categories ("My favorite games - AGA") and move games into them. Notes for whoever
   plans it:
