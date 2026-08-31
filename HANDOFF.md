@@ -260,6 +260,62 @@ account in production's allowlist or leave the e2e unable to sign in as an admin
 - **Write-back and layered disks** (disk-change spec §5). Deliberately not designed yet;
   the first increment should record which tracks changed, not just a flattened result, so
   it doesn't foreclose the layered approach.
+- **Self-host on the local network: Docker containers, a local URL, local hardware.** Requested by
+  the operator 2026-08-31 as a nice-to-have. Substantial but not exotic — the shape of the work is
+  known, and most of it is swapping two managed services for local ones. What it actually touches:
+
+  - **Blob storage.** `src/lib/storage.ts` is built on `@vercel/blob`, including presigned upload
+    tokens. Needs an S3-compatible backend (MinIO) or a filesystem store behind the same
+    `diskStore` interface — that interface is already the seam, so this is a re-implementation
+    rather than a rewrite of callers.
+  - **Postgres.** The app uses `@neondatabase/serverless`'s HTTP driver, and that single choice is
+    why this codebase has **no transactions** and leans on `db.batch()` everywhere (see
+    `src/lib/admin-delete.ts` and `src/lib/tosec-apply.ts`). On a plain local Postgres with
+    `node-postgres`, `db.transaction()` genuinely works — so self-hosting would *simplify* those
+    modules, not complicate them. Worth knowing before anyone assumes the batch style is
+    load-bearing everywhere.
+  - **Scheduling.** `vercel.ts`'s `crons` has no meaning off-platform; the nightly scan needs a
+    real scheduler (a container running cron, or a loop calling the route with `CRON_SECRET`).
+  - **Function limits.** The `maxDuration` exports and the sweeper's ~240 s wall-clock budget are
+    shaped around a 300 s serverless ceiling that does not exist in a container. The budget can
+    stay (it is harmless and keeps runs bounded) but is no longer a constraint.
+  - **Build.** `next.config.ts` sets no `output` mode; a lean image wants `output: 'standalone'`.
+  - **`BETTER_AUTH_URL`** and the session cookie settings need the local origin — and note the
+    recorded warning that touching `crossSubDomainCookies` or `sameSite` removes the only CSRF
+    defence the mount and eject routes have.
+
+  **The part that is genuinely awkward, and the reason this is more than a packaging exercise:**
+  the firmware's `WEBADF_HOST` is **compile-time** (`wifi-floppy/firmware/CMakeLists.txt`, currently
+  `webadf.vercel.app`), and that was a deliberate security decision in plan 4b — making it
+  portal-editable would let anyone who reaches the provisioning AP point a board at a server of
+  their choosing. So pointing boards at a local instance means **reflashing them**, and the
+  device connects over TLS with mbedTLS: a local instance needs either a publicly-trusted
+  certificate for its LAN name or its CA baked into the firmware image. Neither is hard; both
+  need deciding before this is usable with real hardware rather than just in a browser.
+- ~~**Rename the "Ingest" nav item to "Upload".**~~ **Label DONE 2026-08-31** — the nav now reads
+  "Upload"; nothing asserted on the old text, so no test changed. **The route rename is still
+  open and is deliberately not done:** `/ingest` is referenced in `src/proxy.ts`'s matcher, the
+  page, `game-grid.tsx`, several `src/lib` modules and their tests, and e2e URL assertions, and
+  the `/api/ingest/*` namespace is baked into the CLI and the design docs. That is a much wider
+  change and should be its own decision.
+- **Propagate a write-protect flip to a device that already has the disk mounted.** Requested by
+  the operator 2026-08-31, and it is part of the design's intent rather than a new feature. It
+  does not work today, and the reason is specific: `PATCH /api/disks/[id]` updates only
+  `disks.write_protected` — it does **not** bump `devices.desired_version`. The long-poll is
+  version-gated (`version > clampedFrom` in `src/app/api/device/poll/route.ts`), so a board
+  holding that disk sits in its 25 s poll and never learns the flag changed.
+
+  **The fix is not simply "bump the version", and that is the part worth knowing before planning
+  it.** A version bump is what tells the device its *desired disk* changed, and the device
+  reconciles by fetching the image — roughly 2 MB of WFMF over TLS — and remounting. For a
+  flag-only change that is an unrequested eject-and-remount of a disk nobody asked to touch,
+  which is what disk-change spec §1 rule 1 forbids. So this needs a protocol answer for "same
+  disk, changed flag": either a separate counter the device can act on without re-fetching, or a
+  poll payload the firmware can apply to `WPROT` alone. Firmware already asserts `WPROT`; what is
+  missing is a way to change it in place.
+
+  Note the standing caveat that `disks.write_protected` is inert until write-back is designed —
+  so this is only observable on hardware once the board actually honours the flag.
 - **Show each disk's real filename, and let a human download the ADF.** Requested by the
   operator 2026-08-31. Two useful facts before anyone plans it: the original uploaded
   filename already exists as `entitlements.sourceFilename` and is **per-organization** on

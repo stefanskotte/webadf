@@ -5,7 +5,11 @@ import { usePathname } from "next/navigation";
 const ITEMS = [
   { href: "/library", label: "Library" },
   { href: "/devices", label: "Devices" },
-  { href: "/ingest", label: "Ingest" },
+  // Label only -- the route stays /ingest. "Ingest" was jargon for what is
+  // plainly an upload; the route and the /api/ingest/* namespace are
+  // referenced by the CLI, the proxy matcher and the design docs, so renaming
+  // those is a separate, much wider decision.
+  { href: "/ingest", label: "Upload" },
 ];
 
 // Rendered only when the layout says so. `showAdmin` is decided on the server
