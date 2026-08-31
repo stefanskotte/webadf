@@ -36,6 +36,11 @@ export interface OpenRetroGame {
   frontSha1: string | null; titleSha1: string | null; screenshotSha1s: string[];
   holUrl: string | null; mobygamesUrl: string | null; lemonUrl: string | null;
   wikipediaUrl: string | null; longplayUrl: string | null;
+  // Prose. Measured on the real file: 1,544 parents carry __long_description
+  // and 305 carry description (143 carry both), 1.39 MB in total. Both are
+  // kept because they are different lengths for different purposes; the
+  // catalog prefers the long one and falls back to the short.
+  description: string | null; longDescription: string | null;
 }
 
 export interface OpenRetroData { games: OpenRetroGame[]; variants: OpenRetroVariant[]; version: number | null }
@@ -113,6 +118,7 @@ export function readOpenRetroDb(bytes: Uint8Array): OpenRetroData {
           holUrl: str(j.hol_url), mobygamesUrl: str(j.mobygames_url),
           lemonUrl: str(j.lemon_url), wikipediaUrl: str(j.wikipedia_url),
           longplayUrl: str(j.longplay_url),
+          description: str(j.description), longDescription: str(j.__long_description),
         });
       }
     }

@@ -4,13 +4,14 @@ import * as catalog from './schema/catalog';
 import * as authModule from './schema/auth';
 import * as devices from './schema/devices';
 import * as tosec from './schema/tosec';
+import * as openretro from './schema/openretro';
 
 // `authSchema` (the `pgSchema('auth')` object itself) isn't a table — drop it
 // so drizzle's schema map only contains the actual tables/relations.
 const { authSchema: _authPgSchema, ...authTables } = authModule;
 void _authPgSchema;
 
-const schema = { ...catalog, ...authTables, ...devices, ...tosec };
+const schema = { ...catalog, ...authTables, ...devices, ...tosec, ...openretro };
 let _db: NeonHttpDatabase<typeof schema> | null = null;
 
 export function getDb(): NeonHttpDatabase<typeof schema> {

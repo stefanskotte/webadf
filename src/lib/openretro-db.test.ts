@@ -29,6 +29,8 @@ function buildFixture(): Uint8Array {
     // 6-8 carry a `__` prefix upstream; 3 is absent, so ordering is also tested.
     __screen6_sha1: 'e'.repeat(40),
     hol_url: 'http://hol.abime.net/1056',
+    description: 'A pinball simulation.',
+    __long_description: 'Four tables, each with its own ruleset and multiball.',
     mobygames_url: 'http://www.mobygames.com/game/amiga/pinball-fantasies',
   };
   const variant = {
@@ -111,6 +113,13 @@ describe('readOpenRetroDb', () => {
   it('carries the parent fields that fill genre and chipset', () => {
     expect(data.games[0].tags).toBe('pinball, scrolling');
     expect(data.variants[0].chipset).toBe('AGA');
+  });
+
+  it('keeps both prose fields, the long one under its __ prefix', () => {
+    // 1,706 games in the real file carry prose; the catalog prefers the long
+    // form, so losing __long_description would quietly halve what it can show.
+    expect(data.games[0].description).toBe('A pinball simulation.');
+    expect(data.games[0].longDescription).toBe('Four tables, each with its own ruleset and multiball.');
   });
 
   it('skips a row with empty data rather than throwing', () => {

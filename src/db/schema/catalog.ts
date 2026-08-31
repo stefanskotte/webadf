@@ -27,9 +27,18 @@ export const blobs = pgTable('blobs', {
   // facts, and telling them apart is what makes the miss rate measurable.
   matchState: text('match_state'),
   matchCheckedAt: timestamp('match_checked_at', { withTimezone: true }),
+
+  // Enrichment cursor. Mirrors tosecEntryId / matchState / matchCheckedAt
+  // exactly, so the sweeper's resumable pattern applies unchanged. No foreign
+  // key, for the same reason: a re-import may drop an entry and a dangling
+  // reference must degrade to "unenriched", never block.
+  openretroEntryId: text('openretro_entry_id'),
+  enrichState: text('enrich_state'),            // 'enriched' | 'none' | 'ambiguous'
+  enrichCheckedAt: timestamp('enrich_checked_at', { withTimezone: true }),
 }, (t) => [
   index('blobs_hashed_at_idx').on(t.hashedAt),
   index('blobs_match_checked_idx').on(t.matchCheckedAt),
+  index('blobs_enrich_checked_idx').on(t.enrichCheckedAt),
 ]);
 
 /** Proves a tenant uploaded these exact bytes. Gates every presigned GET. */
@@ -52,6 +61,17 @@ export const games = pgTable('games', {
   publisher: text('publisher'),
   genre: text('genre'),
   chipset: text('chipset'),
+  developer: text('developer'),
+  players: text('players'),
+  // Empty until a Hall of Light increment fills them. Added now so that
+  // increment needs no migration -- OpenRetro carries hol_url, so it will be
+  // an exact lookup rather than a title search.
+  description: text('description'),
+  history: text('history'),
+  // Which source last wrote the facts, and which wrote the prose. Separate,
+  // so OpenRetro's publisher/year survive a later prose import and vice versa.
+  factsSource: text('facts_source'),
+  proseSource: text('prose_source'),
   coverAssetId: text('cover_asset_id'),
   metadataSource: text('metadata_source'),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
