@@ -62,8 +62,16 @@ export async function seedDisk(
   }).onConflictDoNothing();
 
   // games has NO diskCount column — it is derived. sortTitle IS NOT NULL.
+  // metadataSource must mirror what /api/ingest/complete writes for a
+  // freshly-created game ('filename') -- applyMatch (tosec-apply.ts) only
+  // ever retitles a game whose metadataSource is exactly 'filename', by
+  // design: an unrecognized value (including NULL) is treated as a human
+  // edit and left alone. A seeded game with NULL here is a row shape the
+  // real app never produces (every real games row has metadataSource set),
+  // and silently makes it impossible for any TOSEC match to correct it.
   await db.insert(games).values({
     id: gameId, orgId, title: opts.title, sortTitle: opts.title.toLowerCase(),
+    metadataSource: 'filename',
   });
 
   await db.insert(disks).values({
