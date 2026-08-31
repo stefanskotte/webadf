@@ -19,12 +19,16 @@ change the shape of the work:
    (each referenced by its own SHA-1), plus publisher, year, languages and copy-protection notes.
    There is no prose anywhere in it. Description, history and reviews live at **Hall of Light**
    (`amiga.abime.net`), a different database whose covers are watermarked.
-3. **There is no documented public API**, and no JSON or database export is offered. FS-UAE
-   Launcher and other clients do query it, so a machine-readable interface exists; two open-source
-   clients — `FrodeSolheim/fs-uae-launcher` and `sonnenscheinchen/oagd-launch` — are the reference
-   for what it is. **Implementation must read one of them rather than guess at endpoints.**
-4. **Bulk image packs are published** for FS-UAE Launcher. They are a sanctioned alternative to
-   per-game fetching and are worth revisiting if per-request fetching proves unwelcome or slow.
+3. **Nobody consumes OpenRetro by querying it per game.** FS-UAE Launcher **syncs the entire
+   database into a local SQLite file** (`Amiga.sqlite`, incrementally updated) through an API the
+   project itself describes as *unpublished*, and fetches **images on demand**, caching them.
+   There is no documented public API and no JSON export.
+4. **Bulk image packs are published** for FS-UAE Launcher — a sanctioned source of covers and
+   screenshots.
+
+**§0.3 corrected an earlier draft of this design.** It assumed per-game HTTP lookups and built
+politeness machinery around a request pattern nobody actually uses. The correction matters
+because it removes webadf's dependency on an unpublished API for metadata entirely.
 
 ## 1. Why this is worth doing now and was not worth doing before
 
@@ -107,37 +111,50 @@ Screenshots are stored as their own rows with an order, since a game page shows 
 screenshots, not disk images), but the implementation records total bytes stored so the cost is
 visible rather than discovered.
 
-## 6. Job mechanics — a third sweeper phase
+## 6. How the data arrives: uploaded metadata, fetched images
 
-Enrichment is **phase 3 of the existing sweeper**, after hashing and matching, not a separate job.
+**Metadata is uploaded, never fetched.** The operator runs FS-UAE Launcher once to produce
+`Amiga.sqlite`, then uploads it at `/admin/scan` — the same flow they already use for TOSEC DATs,
+and the same one they confirmed is "plenty fine" for data that changes rarely. **webadf makes no
+API calls to openretro.org for metadata**, so it depends on nothing unpublished, cannot be rate
+limited, and cannot break when an undocumented endpoint changes.
 
-The operator already knows `/admin/scan` → **Run now**, and a nightly cron already runs at 03:00.
-A separate job would mean a second schedule, a second shared secret, and a second status page for
-no benefit. The phase is bounded by the same wall-clock budget, resumable through the same cursor
-pattern, and reports its counts through the same `SweepResult` and the same admin tiles.
+The upload route reads the file as **binary** (`request.arrayBuffer()`), unlike the DAT route
+which reads text. Parsing uses Node's **built-in `node:sqlite`** — verified present and unflagged
+on this project's Node (v25; `DatabaseSync` is exported) — so this adds **no dependency**, in
+keeping with how `crc32` and `adfmfm` were written. The implementation must confirm `node:sqlite`
+is equally available in the deployed Vercel runtime before relying on it; if it is not, a WASM
+SQLite reader is the fallback and the choice belongs in the plan, not in a surprise at deploy.
 
-**Ordering matters:** enrichment runs after matching, because a blob's TOSEC identity is useful
-context for a human reviewing an enrichment miss, and because both phases share one time budget.
+**Images are fetched on demand**, one at a time, as the launcher does — this is the only runtime
+dependency on openretro.org, and §7's politeness rules apply to it alone.
 
-## 7. Politeness, and how failure is recorded
+**Enrichment is phase 3 of the existing sweeper**, after hashing and matching. The operator
+already knows `/admin/scan` → **Run now**, and the nightly cron already exists; a separate job
+would mean a second schedule, a second secret and a second status page for no benefit. The phase
+inherits the same wall-clock budget, the same resumable cursor pattern and the same result
+counters.
 
-**OpenRetro is a volunteer-run community database, not a paid API.** The implementation must:
+## 7. Politeness for image fetching, and how failure is recorded
+
+Image fetching is the only place webadf talks to openretro.org, and **it is a volunteer-run
+community database, not a paid API.** So:
 
 - fetch **sequentially**, never in parallel, with a deliberate delay between requests;
-- send a **descriptive User-Agent** identifying this project, so the operators can see who is
-  calling and contact someone if it is a nuisance;
-- enforce a **hard cap per sweep run**, so a first run over a large library spreads across nights
-  rather than arriving as a burst.
+- send a **descriptive User-Agent** naming this project, so its operators can see who is calling;
+- enforce a **hard cap per sweep run**, so a first pass over a large library spreads across
+  nights rather than arriving as a burst;
+- **never re-fetch an image already stored** — content-addressed storage makes this free.
 
 Failure handling follows the sweeper's existing and deliberate asymmetry:
 
-- **A miss** — OpenRetro has no record for this hash — stamps `enrich_checked_at` with
-  `enrich_state = 'none'`. It is decided, and not retried.
-- **A fetch failure** — network error, timeout, 5xx — **does not stamp**, logs, and moves to the
-  next blob. It is presumed transient and retried on the next run.
+- **A miss** — the uploaded database has no record for this hash — stamps `enrich_checked_at`
+  with `enrich_state = 'none'`. Decided, not retried.
+- **A fetch failure** on an image — network error, timeout, 5xx — **does not stamp**, logs, and
+  moves on. Presumed transient, retried next run.
 - A permanently-failing blob therefore retries indefinitely. That is the same known gap the match
-  phase carries (recorded in `HANDOFF.md`), and the same eventual fix — a bounded retry — would
-  serve both. Do not solve it differently here.
+  phase carries (recorded in `HANDOFF.md`), with the same eventual fix — a bounded retry. Do not
+  solve it differently here.
 
 ## 8. Attribution, and a decision made knowingly
 
@@ -153,7 +170,9 @@ Two things follow, and both cost nothing:
 - **Do not strip or alter the images.**
 
 If OpenRetro ever objects, §0.4's published image packs and plain hotlinking are both available
-fallbacks, and the stored source URLs make either switch mechanical.
+fallbacks, and the stored source URLs make either switch mechanical. Note the metadata half
+already needs no permission: it arrives as a file the operator obtained through OpenRetro's own
+client.
 
 ## 9. Verification
 
@@ -163,7 +182,10 @@ fallbacks, and the stored source URLs make either switch mechanical.
 - The matching rule is pure and unit-tested, including the ambiguous case where one game's disks
   resolve to different records.
 - Playwright covers the flow end to end against a seeded `openretro_entries` row, so the suite
-  never depends on openretro.org being reachable. **No test may make a live third-party request.**
+  never depends on openretro.org being reachable. **No test may make a live third-party request** —
+  including image fetches, which must be exercised against a local fixture.
+- The SQLite reader is tested against a **small fixture database built in the test itself**, not
+  against a real `Amiga.sqlite`, so the suite carries no large binary.
 - A test asserts that an enrichment sweep leaves `devices` desired state untouched — the same
   hazard class the TOSEC merge carries, since enrichment writes to `games`.
 
@@ -176,3 +198,57 @@ upstream edits. Bulk image-pack ingestion (§0.4) — noted as a fallback, not b
 `blobs` is never deleted by this increment, and no id is ever re-derived — both invariants are
 inherited unchanged from the TOSEC work, and the second one exists because re-keying a disk is
 indistinguishable from ejecting it from real hardware.
+
+---
+
+## 11. The real `Amiga.sqlite`, measured 2026-08-31
+
+The operator supplied the file, so nothing below is inferred. **28.6 MB**, three tables:
+`game` (21,440 rows), `metadata` (1 row: `version 19, database_version 17`), `rating` (22,160).
+
+**`game` has only `id`, `uuid` (BLOB), `data` (BLOB).** `data` is **zlib-deflate** (`789c` header,
+*not* gzip) wrapping a JSON object. Measured across all 21,440 rows: **0 failed to inflate, 1 has
+empty data** — so the parser must skip an empty blob but need not tolerate corruption.
+
+`uuid` is a 16-byte BLOB; `parent_uuid` inside the JSON is a hyphenated string. **The parser must
+convert between them** — a mismatch here silently orphans every variant.
+
+**Two record types, distinguished by `_type`:**
+
+- **`_type: 2` — variant (17,742).** Carries `file_list`: a JSON array of `{name, sha1}` — **the
+  disk hashes this whole increment matches on** — plus `parent_uuid`, `chipset`, `video_standard`,
+  `protection`, `variant_name`, and `__source` (the TOSEC set it came from).
+- **`_type: 1` — parent game (3,697).** Carries `game_name`, `publisher`, `developer`, `year`,
+  `languages`, `players`, `tags`, `__link_name` (the openretro.org slug), the image references
+  `front_sha1` / `__back_sha1` / `title_sha1` / `screen1_sha1`…`screen5_sha1`, and outbound links:
+  **`hol_url`**, `mobygames_url`, `lemon_url`, `wikipedia_url`, `amigamemo_url`, `longplay_url`.
+
+**So the join is: blob SHA-1 → variant `file_list` → `parent_uuid` → parent game.**
+
+### 11.1 `hol_url` changes the Hall of Light decision
+
+The parent record carries a **direct Hall of Light URL** (e.g. `http://hol.abime.net/1056`). When
+the operator chose "OpenRetro now, Hall of Light later", they were told HoL would need title
+matching because it has no checksum lookup. **That was wrong** — the exact HoL id arrives free
+with every OpenRetro match. Store `hol_url` now; it makes the deferred prose increment an exact
+lookup rather than a fuzzy one.
+
+### 11.2 `tags` and `chipset` fill the two dead columns
+
+`games.genre` and `games.chipset` have existed, been selected and been rendered since plan 1 and
+have never been written. `tags` (e.g. `competitive, hotseat, pinball, realistic, scrolling`) and
+the variant's `chipset` (e.g. `AGA`) populate both.
+
+### 11.3 Images are large, and the endpoint resizes
+
+`https://openretro.org/image/<sha1>` returns a PNG. **A front cover measured 1,029,484 bytes.**
+With up to eight images per game that is ~8 MB per title — 379 MB of e2e fixtures were reclaimed
+on this very day, so this must not be taken casually.
+
+**The endpoint resizes server-side: `?size=400` returned 381,535 bytes for the same cover**, a 63%
+saving. (`?w=` returns 500; `?width=` is ignored and serves full size — so `size` is the parameter,
+and getting it wrong silently costs three times the storage.)
+
+**Fetch at a bounded size, not full resolution**, and record the total bytes stored so the cost
+stays visible. Only images for games the operator actually holds are ever fetched — never the
+whole database's ~30,000 images.

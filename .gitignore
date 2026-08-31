@@ -48,3 +48,8 @@ playwright-report/
 # (leading /) so this doesn't also match src/app/api/admin/tosec/.
 /tosec-archive/
 /tosec/
+
+# OpenRetro's synced game database, dropped in by the operator. Reference data
+# obtained through FS-UAE Launcher, never part of the repo.
+/Amiga.sqlite
+*.sqlite
