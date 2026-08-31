@@ -97,16 +97,12 @@ two uses is a bug in one of them and should be fixed in the shared parser, not f
 
 ### 3.2 `blobs` gains content hashes and a match
 
-`crc32`, `md5`, `sha1`, `hashes_verified`, `hashed_at`, `tosec_entry_id`, `match_state`,
-`match_checked_at`.
+`crc32`, `md5`, `sha1`, `hashed_at`, `tosec_entry_id`, `match_state`, `match_checked_at`.
 
 `match_state` is one of `matched` / `none` / `ambiguous`, and is **not** inferable from
 `tosec_entry_id` alone — "considered and found absent" and "not yet considered" are different
 states, and telling them apart is what makes the miss rate in §2 measurable rather than
 confused with unfinished work. `match_checked_at` records when the decision was made.
-
-`hashes_verified` distinguishes hashes computed server-side from stored bytes (trustworthy)
-from hashes supplied by an uploading client (not yet). §7 depends on this column.
 
 **This is the correct home and the choice matters.** Because `blobs` is content-addressed and
 shared across organizations, a disk is identified **once for every tenant simultaneously**. The
@@ -220,45 +216,34 @@ shaping one runs first.
 written by hand — roughly 30 lines with a lookup table, dependency-free in the same spirit as
 `adfmfm`, which was written that way deliberately. Bytes are streamed from Blob storage.
 
-## 7. Ingest-time matching, and the trust decision
+## 7. Ingest-time hashing — free, and with nothing to trust
 
-The CLI and the browser dropzone already stream every file to compute SHA-256. They will
-compute **CRC32, MD5 and SHA1 on that same pass** — very close to free — and send all four to
-`/api/ingest/complete`, which stores them on the blob. A freshly pushed disk is therefore
-matched immediately, with no server-side re-read.
+**An earlier draft of this design agonised over whether to trust client-supplied hashes. That
+question turned out to be moot, and the resolution is much better than either option
+considered.**
 
-**This trusts a client-supplied hash, and the naive version of it has a cross-tenant flaw that
-must not be built.** `blobs` is shared. If a client uploads bytes B and claims a false SHA1 that
-happens to match some other TOSEC entry, and that match were written to `blobs.tosec_entry_id`,
-then **every other organization holding the same bytes would see the wrong title** — metadata
-contamination across the tenant boundary, from a value the server never checked. The blob is
-shared precisely because dedupe works; that is what makes the blast radius bigger than the
-uploader.
+`/api/ingest/complete`'s `verify()` **already reads every genuinely-new blob's full bytes into
+memory** — it must, because that read-back is the only moment content addressing can be
+enforced, and it is where the `blobs` row is created. It already hashes those bytes with SHA-256
+and already gzips them to record `gzipSizeBytes`.
 
-The rule that removes it:
+So CRC32, MD5 and SHA1 are computed **in that same pass, on the server, from the stored bytes**.
+The cost is CPU over bytes already in memory; no extra read, no extra request, no client
+involvement. A freshly pushed disk is hashed and matched immediately, and **there is no
+client-supplied hash anywhere in this design** — so there is nothing to verify later, no
+provisional per-tenant state, and no window in which shared `blobs` state could be wrong.
 
-> **An unverified hash may never write shared state.** `blobs.tosec_entry_id` and
-> `match_state` are written **only** from hashes computed server-side, where
-> `hashes_verified` is true.
+Two consequences worth stating:
 
-A match derived from client-supplied hashes is applied **only to the uploading organization's
-own `games` and `disks` rows**. That org gets its immediate, correct-looking result; no other
-tenant can be affected by a number the server has not checked. The sweeper then re-hashes those
-bytes server-side, sets `hashes_verified`, and promotes the match to the shared row — or
-corrects the uploading org, if the client was wrong.
+- **Dedupe hits skip the read-back** (`alreadyRegistered` returns early on a `head()`), which is
+  correct and must stay that way: those bytes were verified when their row was first written.
+  Such a blob already carries its hashes from that first registration, so nothing is lost.
+- **The only blobs needing backfill are the ones that predate this change** — the 850 measured
+  in §0. That is precisely the sweeper's one-off job, and after it drains, the sweeper's hashing
+  phase has nothing left to do until a blob somehow arrives unhashed.
 
-Two further things keep it honest:
-
-- **SHA-256 is unaffected.** It still addresses the blob and gates entitlements, and is
-  verified exactly as it is today. Nothing here touches that path.
-- **The sweeper prioritises unverified blobs**, so the provisional window is short by design.
-
-A disagreement found between a client-supplied hash and the stored bytes is **surfaced, not
-silently corrected**: it means a broken client or a lying one, and both are worth knowing about.
-
-**If this provisional-match machinery is judged not worth its complexity, the fallback is to
-hash only server-side** — newly pushed disks then keep filename-derived titles until the next
-sweeper run. That is a real option; it trades immediacy for a smaller design.
+**SHA-256 is untouched.** It still addresses the blob and gates entitlements, verified exactly
+as today. Nothing here alters that path.
 
 ## 8. Verification
 
