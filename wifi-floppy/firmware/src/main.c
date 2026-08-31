@@ -185,47 +185,61 @@ static void mac_address_string(char *out, size_t out_len) {
 // to this same core, rather than assuming the AP and TLS phases not
 // overlapping in TIME means their stack use doesn't need re-checking --
 // plan 4a's 2 KB-stack Critical happened by exactly that kind of
-// unverified assumption. Method: built ELF, `-fstack-usage` per
-// function, cross-referenced against `arm-none-eabi-objdump -d`'s actual
-// `bl` targets (not guessed from names) to find the actual longest call
-// chain by summed frame size, with the two known indirect edges (dc_exchange's
+// unverified assumption. Method: built ELF, `-fstack-usage` per function,
+// cross-referenced against `arm-none-eabi-objdump -d`'s actual `bl`
+// targets (not guessed from names) to find the actual longest call chain
+// by summed frame size, with the two known indirect edges (dc_exchange's
 // transport_t calls into tls_connect/tls_write/tls_read; lwIP's
 // callback-based dispatch into the recv handlers) bridged by hand since a
 // static disassembly can't see through a function pointer.
 //
 //   * Foreground, core1_main down through tls_connect's mbedtls setup
 //     (mbedtls_ctr_drbg_seed -> ctr_drbg_reseed_internal -> block_cipher_df
-//     -> aes_gen_tables): 2536 B. (Before this task, with core1_main's
-//     smaller pre-provisioning frame: 2304 B -- this task's +232 B here is
+//     -> aes_gen_tables): 2536 B, confirmed by an independent re-derivation
+//     (round 2 review). (Before this task, with core1_main's smaller
+//     pre-provisioning frame: 2304 B -- this task's +232 B here is
 //     entirely provisioning_t/device_config_t locals in core1_main itself;
 //     see its definition.)
-//   * IRQ, altcp_mbedtls_lower_recv down through the deepest branch of the
-//     TLS 1.3 client handshake state machine (mbedtls_ssl_tls13_compute_
-//     handshake_transform -> ..._evolve_secret -> ..._hkdf_expand_label ->
-//     PSA's HMAC/SHA-256 path): 2576 B, found by exhaustively comparing
-//     every branch of mbedtls_ssl_tls13_handshake_client_step's dispatch,
-//     not just the one named above (the next-largest, ...compute_
-//     application_transform, is close behind at 2376 B).
+//   * IRQ: the first pass here started counting from
+//     altcp_mbedtls_lower_recv, which undercounted by 448 B -- the same
+//     mistake plan 4a's original 2 KB estimate made, missing everything
+//     ABOVE the point picked as the walk's root. The actual root is the
+//     vector: low_priority_worker_irq -> async_context_base_execute_once
+//     -> cyw43_poll_worker -> cyw43_poll_func -> cyw43_ll_ioctl ->
+//     cyw43_do_ioctl -> cyw43_cb_process_ethernet -> ethernet_input ->
+//     ip4_input -> tcp_input (+312 B of dispatch this core also pays for
+//     every inbound packet) before ever reaching altcp_mbedtls_lower_recv
+//     -> ... -> the deepest branch of the TLS 1.3 client handshake state
+//     machine (mbedtls_ssl_tls13_compute_handshake_transform ->
+//     ..._evolve_secret -> ..._hkdf_expand_label -> PSA's HMAC/SHA-256
+//     path -- found by exhaustively comparing every branch of
+//     mbedtls_ssl_tls13_handshake_client_step's dispatch, not just the one
+//     named here; the next-largest, ...compute_application_transform, is
+//     close behind). On TOP of all of that, the hardware exception entry
+//     itself is not the 32 B basic AAPCS frame this comment implicitly
+//     assumed -- runtime_init.c enables the FPU (CPACR CP10/11), and
+//     alarm_pool_irq_handler/mbedtls_sha256 both use `d`-registers
+//     (vpush/vldr), so FPCA is set and every exception on this core stacks
+//     the extended ~104 B frame, not the basic one. IRQ chain total: 3024 B.
 //   * TLS path worst case (sum, matching plan 4a's IRQ-lands-on-
-//     whatever-the-foreground-is-doing reasoning): 2536 + 2576 = 5112 B.
-//   * Portal path: core1_main + portal_run's own frame while blocked in
-//     its `while (!g_submitted) sleep_ms(5)` poll (368 B) plus the
-//     deepest of the three servers' IRQ-invoked chains -- dns_recv_cb
-//     down through its UDP reply path (udp_sendto -> ... -> pbuf/mem
-//     free): 1360 B. Total 1728 B -- as expected, well under the TLS
-//     path, since the AP phase never has a live TLS connection to
-//     service concurrently. CORE1_STACK_BYTES is unchanged.
+//     whatever-the-foreground-is-doing reasoning): 2536 + 3024 = 5560 B.
+//   * Portal path, same accounting (core1_main + portal_run's own frame
+//     blocked in its `while (!g_submitted) sleep_ms(5)` poll, plus the
+//     deepest of the three servers' IRQ-invoked chains, the same corrected
+//     dispatch prefix and exception frame included): ~2260 B -- still well
+//     under the TLS path, since the AP phase never has a live TLS
+//     connection to service concurrently. CORE1_STACK_BYTES is unchanged.
 //
-// Worst case is therefore 5112 B (TLS path), up from the ~4.9 KB this
-// comment previously recorded, entirely from core1_main's own growth --
-// which no SCRATCH_X-resident stack can hold regardless. Beyond 4 KB the
-// only option is a stack in main SRAM launched via
-// multicore_launch_core1_with_stack(); 16 KB leaves 16384 - 5112 =
-// 11272 B (~11.0 KB) of margin against a build with ~390 KB of SRAM
-// unallocated, and the MSPLIM stack guard (PICO_USE_STACK_GUARDS in
-// CMakeLists.txt) turns any future overrun into a hard fault rather than
-// silent heap corruption. 32-byte aligned because the guard rounds the
-// limit address up to a 32-byte boundary.
+// Worst case is therefore 5560 B (TLS path), up from the ~4.9 KB this
+// comment previously recorded (partly core1_main's own growth, partly two
+// missed pieces of the IRQ chain above), which no SCRATCH_X-resident stack
+// can hold regardless. Beyond 4 KB the only option is a stack in main SRAM
+// launched via multicore_launch_core1_with_stack(); 16 KB leaves
+// 16384 - 5560 = 10824 B (~66% headroom) of margin against a build with
+// ~390 KB of SRAM unallocated, and the MSPLIM stack guard
+// (PICO_USE_STACK_GUARDS in CMakeLists.txt) turns any future overrun into
+// a hard fault rather than silent heap corruption. 32-byte aligned because
+// the guard rounds the limit address up to a 32-byte boundary.
 #define CORE1_STACK_BYTES 16384
 static __attribute__((aligned(32))) uint32_t core1_stack[CORE1_STACK_BYTES / 4];
 
@@ -294,8 +308,21 @@ static void core1_main(void) {
             // Verify-then-commit (spec D-4b-3): reaches here only once
             // this exact association has just succeeded, so committing
             // now can never persist credentials that don't work.
-            prov_on_verified_submit(&prov, &submitted);
-            last_error = NULL;
+            //
+            // Review round 2, Important 2: the return value used to be
+            // discarded. provisioning.h documents false as "the flash
+            // write failed, state deliberately left PROV_PORTAL" -- the
+            // one outcome that return exists to report. Discarding it and
+            // unconditionally clearing last_error made a flash-write
+            // failure loop portal -> submit -> associate -> save-fail ->
+            // portal forever with the form showing no error at all, which
+            // looks like the submission was silently ignored rather than
+            // told "it didn't save, try again".
+            if (prov_on_verified_submit(&prov, &submitted)) {
+                last_error = NULL;
+            } else {
+                last_error = "Could not save configuration, try again";
+            }
             continue;
         }
 
@@ -311,6 +338,16 @@ static void core1_main(void) {
             // (PROV_MAX_ASSOC_FAILURES) send it back to PROV_PORTAL, and
             // the top of this loop picks that up on the next iteration.
             prov_on_assoc_result(&prov, false);
+            // Review round 2, Minor 1: if that was the third failure and
+            // the portal just opened, show the same reason a submit-path
+            // failure would (spec §6's two-message requirement) -- without
+            // this, a boot that never had a chance to submit anything
+            // shows a blank form instead of "wrong password"/"network not
+            // found". A first or second failure leaves state at
+            // PROV_RUNNING, so this is a no-op then.
+            if (prov.state == PROV_PORTAL) {
+                last_error = assoc_failure_message(err);
+            }
             continue;
         }
         // Carried from task 2's review: prov_on_assoc_result(p, true)
@@ -365,6 +402,18 @@ static void core1_main(void) {
                     // portal for a fresh one rather than hammering
                     // /api/device/register with a code that can never
                     // become valid again.
+                    //
+                    // Latent, comment-only (review round 2): config_store_
+                    // erase() (called from inside this) returns early,
+                    // erasing nothing on flash, if disk_is_mounted() --
+                    // the same guard token_store_save()/token_store_erase()
+                    // use (config_store.c/token_store.c). At THIS call
+                    // site nothing has been mounted yet -- registration
+                    // runs before the poll loop even starts -- so the
+                    // guard cannot fire here. The DC_HALTED path below is
+                    // a different story (a disk is very plausibly mounted
+                    // by the time a token goes bad in the field); see its
+                    // comment for why that one explicitly ejects first.
                     prov_on_pairing_code_rejected(&prov);
                     last_error = "Invalid or already-used pairing code";
                     code_rejected = true;
@@ -428,16 +477,12 @@ static void core1_main(void) {
             // Review (final), Minor 5: not while halted. DC_HALTED means a 401
             // (or a 404 device row) -- the bearer is dead everywhere it
             // appears, and /api/device/status uses the same one, so every
-            // heartbeat from here on is a guaranteed 401 against a known-dead
-            // token, once a minute, forever. dc_report_status's own 401
-            // handling would just re-set the state it is already in. Plan 4b
-            // (this loop) only re-opens the portal for a rejected pairing
-            // code (prov_on_pairing_code_rejected, above) -- a token that
-            // goes bad after registration (a revoked/deleted device row)
-            // has no path back to the portal in this plan, so DC_HALTED
-            // here is genuinely terminal until a power cycle or a manual
-            // config_store_erase(); the correct amount of traffic until
-            // then is none.
+            // heartbeat from here on until this loop notices (see the
+            // DC_HALTED case below, item 5) would otherwise be a guaranteed
+            // 401 against a known-dead token. dc_report_status's own 401
+            // handling would just re-set the state it is already in, so
+            // there is no reason to send it even the one time before this
+            // loop reacts.
             uint32_t now = clock_ms();
             bool disk_changed = strcmp(c.mounted_sha256, last_reported_sha) != 0;
             if (s != DC_HALTED && (disk_changed || (now - last_status_ms) >= DC_STATUS_PERIOD_MS)) {
@@ -457,17 +502,54 @@ static void core1_main(void) {
             // hammering a dead token in a tight loop.
             if (s == DC_BACKOFF) {
                 sleep_ms(c.backoff_ms);
-            } else if (s == DC_HALTED || s == DC_UNPROVISIONED) {
+            } else if (s == DC_HALTED) {
+                // Review round 2, Important 1: DC_HALTED used to be a
+                // permanent, unrecoverable strand. This `while (true)`
+                // never broke, so once registered the outer state machine
+                // (provisioning.h) was unreachable again for the rest of
+                // the process's life -- a revoked token or a deleted
+                // device row (401/404) idled here at the backoff cap
+                // forever, and a power cycle did NOT help: config and
+                // token both survive flash, prov_init() lands back in
+                // PROV_RUNNING, token_store_load() at the top of this
+                // branch succeeds, registration is skipped, and the very
+                // first status/poll re-401s straight back into DC_HALTED.
+                // Recovery needed a physical reflash for what should be a
+                // routine re-pair in the web UI -- and task 8 is docs
+                // only, so leaving this for "later" meant never.
+                //
+                // The fix reuses primitives this task already added:
+                // eject whatever is mounted (psram_publish_slot(SLOT_NONE)
+                // -- the same call dc_step() itself makes for a normal
+                // eject, safe to call from core1) so the config/token
+                // erases below cannot be silently refused by their
+                // mounted-disk guard (see the prov_on_pairing_code_
+                // rejected() comment above -- without this eject, a
+                // DC_HALTED reached with a disk mounted, the ordinary
+                // case in the field, would make token_store_erase() below
+                // a no-op and every subsequent boot would just 401 straight
+                // back into DC_HALTED again); then token_store_erase()
+                // and break out of this inner loop. Back at the top of
+                // the outer PROV_RUNNING branch, token_store_load() now
+                // fails, so the registration loop runs again with
+                // prov.cfg.code -- the same, already-redeemed pairing
+                // code -- which the server reports as
+                // invalid_or_used_code (DC_REG_BAD_CODE), landing on
+                // prov_on_pairing_code_rejected() and the portal, exactly
+                // where a human can supply a fresh pairing code.
+                psram_publish_slot(SLOT_NONE);
+                token_store_erase();
+                break;
+            } else if (s == DC_UNPROVISIONED) {
                 // Review (final), Important 2: DC_UNPROVISIONED gets the same
-                // floor as DC_HALTED. dc_step returns it immediately without
-                // touching the network, so if token_store_load() ever hands
-                // back a zero-length token (dc_init reads that as
-                // unprovisioned) this loop would otherwise spin core1 flat out
-                // calling dc_step, dc_report_status and cyw43_wifi_get_rssi
-                // forever. Neither state can change from inside this loop --
-                // see the DC_HALTED comment above for what plan 4b does and
-                // does not do about that -- so idling is the whole correct
-                // behaviour.
+                // floor as DC_HALTED used to. dc_step returns it immediately
+                // without touching the network, so if token_store_load()
+                // ever hands back a zero-length token (dc_init reads that
+                // as unprovisioned) this loop would otherwise spin core1
+                // flat out calling dc_step, dc_report_status and
+                // cyw43_wifi_get_rssi forever. This state cannot change
+                // from inside this loop (unlike DC_HALTED, above, which
+                // now recovers), so idling is the whole correct behaviour.
                 sleep_ms(DC_BACKOFF_CAP_MS);
             }
         }

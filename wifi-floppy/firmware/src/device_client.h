@@ -94,6 +94,16 @@ bool dc_digest_is_blocked(const device_client_t *c, const char *sha256);
 // under backoff. DC_REG_BAD_CODE lets the caller (main.c) route the
 // former back to provisioning.h's prov_on_pairing_code_rejected() instead
 // of looping on dc_register() forever.
+// Review round 2, Minor 2: DC_REG_OK == 0, so `if (!dc_register(...))`
+// -- the old bool idiom, and the shape every call site used before this
+// task -- now means SUCCESS, the exact opposite of what it meant when
+// dc_register() returned bool. device_client.c's dc_enter_backoff() carries
+// the same warning for DC_BACKOFF (nonzero) inside dc_register()'s own
+// body; this is the same class of trap at the call site instead. Every one
+// of the 7 call sites this task touched (main.c's production caller, plus
+// the six in test/test_device_client.c) is an explicit `== DC_REG_OK` /
+// `== DC_REG_BAD_CODE` comparison, never a bare truthiness check -- keep it
+// that way in any new call site.
 typedef enum {
     DC_REG_OK,          // 200 with a token; persisted via token_store_save().
     DC_REG_RETRY,       // transport failure, non-200 other than the case
