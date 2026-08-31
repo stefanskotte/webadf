@@ -32,12 +32,14 @@ after plan 4a, rewritten again 2026-08-31 after plan 4b.**
 | **Plan 4b — captive portal** | ✅ **done, all 8 tasks.** Compile-time WiFi/pairing-code defines are gone, replaced by an AP-mode portal. Merged to `master` and pushed. |
 | **Plan 5 — hardware bring-up** | ❌ not started, the only piece left. **Nothing has run on real hardware** — boards are still in transit and nothing in 4a or 4b has been exercised on one |
 | **Super-admin plane** | ✅ **done, all 6 tasks, merged to `master` and live in production.** `/admin`: overview, user list with cascade delete, invites |
-| **TOSEC identity scan** | ✅ **done, 12 tasks, on `feat/tosec-scan` — NOT merged.** `/admin/scan`: DAT import, hashing, matching, backfill |
+| **TOSEC identity scan** | ✅ **done, 12 tasks, merged to `master`.** `/admin/scan`: DAT import, hashing, matching, backfill |
+| **OpenRetro enrichment** | ✅ **done, all 9 tasks, on `feat/openretro` — NOT merged.** Enriches 6.6% of the real archive against TOSEC's 45.9%; see 3d |
 | **Hardware** | boards ordered from JLCPCB |
 
-**Current branch:** `feat/tosec-scan` — the TOSEC identity scan is complete and reviewed but
-**not merged**. The super-admin plane before it is on `master` and live in production.
-**Suite on `feat/tosec-scan`:** 285 vitest, `pnpm build` clean, Playwright green. Firmware: `pnpm firmware:test` green (506 checks, 13
+**Current branch:** `feat/openretro` — the OpenRetro enrichment is complete and green but
+**not merged**. The TOSEC identity scan and the super-admin plane before it are both on
+`master`, and the super-admin plane is live in production.
+**Suite on `feat/openretro`:** 297 vitest, `pnpm build` clean, **124 Playwright passed (14.1 min)**. Firmware: `pnpm firmware:test` green (506 checks, 13
 binaries), `pnpm firmware:build` produces a `.uf2` — **and now requires
 `PORTAL_AP_PASSWORD` set in the environment, or the configure step fails by design**; see
 "Plan 4b" below for the full command.
@@ -339,48 +341,90 @@ increment delivered" before planning the disk-content reader.
   `cleanupTosec()` removes the e2e-seeded `tosec_entries` rows afterward, but it cannot restore
   the verdicts that reset threw away -- those are only recovered by pressing Run now again.
 
-### 3d. OpenRetro enrichment — PLANNED, NOT STARTED
+### 3d. OpenRetro enrichment — DONE, on `feat/openretro`, not merged
 
-**Branch `feat/openretro` exists and is identical to `master`; zero tasks dispatched.**
+Enriches games with OpenRetro's publisher, developer, players, tags, chipset, prose and images,
+matched by the SHA-1 the TOSEC scan already stores on every blob. Enrichment is **phase 3 of the
+existing sweeper**, so it inherits the budget, cursor, cron and admin page.
 Spec: `docs/superpowers/specs/2026-08-31-openretro-enrichment-design.md`.
 Plan: `docs/superpowers/plans/2026-08-31-openretro-enrichment.md` (9 tasks).
 
-The SDD ledger and the nine task briefs are at
-`.superpowers/sdd/2026-08-31-openretro-enrichment/`, which is **gitignored** — it survives a
-session restart on this machine but is not in git and not on any other. Everything from it that
-matters is reproduced below, so a cold session needs only this file, the spec and the plan.
+**The measurement this increment exists to produce, and it is a disappointing one:**
 
-**What it does:** enrich games with OpenRetro's publisher, developer, year, tags, chipset and
-images, matched by the SHA-1 the TOSEC scan already stores on every blob. Enrichment becomes
-**phase 3 of the existing sweeper**, so it inherits the budget, cursor, cron and admin page.
+| | disks recognised | rate |
+|---|---|---|
+| **TOSEC** | 28 / 61 | **45.9%** |
+| **OpenRetro** | 4 / 61 | **6.6%** |
 
-**`Amiga.sqlite` (28.6 MB) is at the repo root**, supplied by the operator and **gitignored**
-(`/Amiga.sqlite`, `*.sqlite`). Task 1 Step 5 and Task 9 both need it. If it is missing, the
-operator regenerates it by running FS-UAE Launcher once and letting it sync.
+Measured exactly as TOSEC's 45% was — hash every local ADF in `adf-archive/`, look the SHA-1 up
+directly. **OpenRetro knows nothing TOSEC does not**; it is a strict subset on this archive. The
+4 disks are all Project-X (1992)(Team 17) and resolve to a single game. 33 disks neither knows.
 
-**Four facts measured from that real file — the design rests on them, so do not re-derive:**
+**Why, and it is structural rather than bad luck.** A variant's `file_list` holds 418,539 files
+across the real sync but only 19,483 are named `*.adf`; 190,425 have no extension at all, because
+they are the individual files inside a WHDLoad install. OpenRetro's strength is file-level WHDLoad
+content, not whole-disk ADF dumps. Only **14,850 of 175,282 distinct sha1s are ADFs**, so 92% of
+the index could never match anything this app is able to store — the importer now filters to
+`*.adf` for exactly that reason, which cut the table from 194,913 rows to 14,866 and the import
+from 120 s to 13 s while losing no coverage.
 
-- `game.data` is **zlib-deflate** (`789c`), **not gzip**. A gunzip-based reader throws.
-- `game.uuid` is a 16-byte **BLOB**; `parent_uuid` inside the JSON is a **hyphenated string**.
+**The lever nobody has pulled: match on TOSEC identity, not content hash.** 28 archive disks carry
+a canonical TOSEC title and year, and OpenRetro holds 3,697 named games. Matching on identity
+rather than digest would plausibly reach most of them instead of four. It trades exactness for a
+title match, so it needs its own design and its own ambiguity rules — but it is the single change
+that would make this increment pay for itself. The operator was shown the 6.6% and chose to ship
+as built and record it, rather than expand scope here.
+
+**Measured storage cost:** the one reachable game stored **7 images totalling 1,498,148 bytes
+(1.43 MB)** — a 393 KB cover plus a title screen and five screenshots, averaging 214 KB each.
+That is the `?size=400` resize doing its job; at full resolution the cover alone was ~1 MB.
+Extrapolating, a library where OpenRetro recognised everything would cost roughly 1.5 MB per
+title. The admin page shows the running total in MB so it never becomes a surprise.
+
+**Two caveats that will mislead someone later:**
+
+- **`openretro_images.sha1` does NOT verify the stored bytes.** It is OpenRetro's digest of the
+  FULL-SIZE original, while what is stored is the `?size=400` resize — different bytes entirely.
+  That inverts this codebase's usual rule, where `blobs.sha256` is re-read and re-hashed to prove
+  the store holds what it claims. Here the digest is an identifier only, and anything that tries
+  to "verify" an image against it will fail every row.
+- **The e2e suite really does fetch from openretro.org**, despite no test asking it to. The specs
+  seed their own data and never reach a third party — but `/api/admin/scan` sweeps the WHOLE live
+  database, which now holds the real 3,697-entry import, so any spec that presses Run now enriches
+  the real blobs and fetches their images. It is self-limiting (they are stamped afterward and
+  images are never re-fetched) and it cost 7 images once. Re-importing `Amiga.sqlite` resets every
+  enrichment verdict and will make it happen again.
+
+**Operator runbook:**
+
+1. Run FS-UAE Launcher once and let it sync, producing `Amiga.sqlite`.
+2. `/admin/scan` → **Import OpenRetro metadata**. One file; a full import takes ~13 s.
+3. Press **Run now** until `enrich-unchecked` reaches 0. Image fetching is capped at 40 per run
+   by design, so a first pass over a large library takes several runs or several nights.
+
+**Things that will bite you here:**
+
+- **`_type` is the STRING `"1"`/`"2"`, never the number.** A `=== 1` comparison matches 0 of
+  21,440 rows. The plan's own fixture wrote numbers, so its test passed while the real file
+  yielded nothing at all — the reader was only correct once it was run against `Amiga.sqlite`.
+- **`game.data` is zlib-DEFLATE (`789c`), not gzip.** A gunzip-based reader throws.
+- **`game.uuid` is a 16-byte BLOB; `parent_uuid` inside the JSON is a hyphenated string.**
   Without converting between them every variant silently orphans and nothing ever matches.
-- Images: `https://openretro.org/image/<sha1>` — **`?size=400` resizes server-side** (381,535
-  bytes versus 1,029,484 full size). **`?width=` is silently ignored** and serves full size;
-  `?w=` returns 500. Getting the parameter name wrong costs three times the storage.
-- The parent record carries **`hol_url`**, so a later Hall of Light increment gets an exact id
-  and needs no title matching. The operator was told otherwise when they chose to defer it;
-  that was wrong, and this is the correction.
-
-**Two rulings already made, before any task was dispatched:**
-
-1. **Task 5 must reuse `isBlobAlreadyExists`** from `src/lib/blob-upload.ts`. Its `ensureImage`
-   guards only on an existing database row before calling `put(..., allowOverwrite: false)` — if
-   the object exists but the row does not, `put` throws and that blob retries forever. This repo
-   already solved exactly that for ADFs. *Costs if wrong: one extra branch in a small function.*
-2. **Implementation runs on a feature branch, not a git worktree** — this repo's convention, and
-   a worktree would need its own `pnpm install` plus a second dev server for Playwright.
-
-**To resume:** read the spec and plan, then dispatch Task 1. Nothing has been implemented, so
-there is no partial state to reconcile — only the ledger's pre-flight scan, which is above.
+- **Screenshots 6-8 are `__screen6_sha1`**, with a leading double underscore. 415 games have them.
+- **`?size=400` resizes server-side** (381,535 bytes versus 1,029,484). **`?width=` is silently
+  ignored** and serves full size; `?w=` returns 500. Getting the name wrong costs 3x the storage.
+- **The Blob store is PRIVATE.** `access: 'public'` is refused outright — "Cannot use public
+  access on a private store" — and making it public to suit cover art would make every ADF in it
+  publicly addressable, which is the boundary `/api/device/image` exists to enforce. Images are
+  stored private and streamed by `/api/images/<sha1>`; no presigned URL ever reaches the DOM.
+- **A broken `<img>` is still a visible element.** The first version of the image e2e passed
+  while every single image fetch was failing. A test that asserts on an image must also assert
+  the route serves the bytes.
+- **`hol_url` is on the parent record** (3,634 of 3,697 entries), so a later Hall of Light
+  increment gets an exact id and needs no title matching at all.
+- **`metadataSource` is never written by enrichment.** It owns row IDENTITY, which is still
+  TOSEC's; stamping it `openretro` would lock TOSEC out of correcting the title forever.
+  `factsSource`/`proseSource` record what enrichment wrote without claiming the row.
 
 ### 4. Backlog, not blocking anything
 
@@ -496,6 +540,56 @@ there is no partial state to reconcile — only the ledger's pre-flight scan, wh
   new route rather than a reuse. It must check the caller's org holds an entitlement for
   that sha256 — the same boundary the device route enforces — and note the standing rule
   that **a presigned URL is a live credential**: never log it, never put it in the DOM.
+- **A type pill in the library grid, and a type column in the list view.** Requested by the
+  operator 2026-08-31: show whether a title is a game, a demo, or something else. Notes for
+  whoever plans it:
+
+  **The type already exists and is already imported — it is the TOSEC set name.** The seven
+  Amiga `[ADF]` sets are exactly this taxonomy: `Games`, `Games - Public Domain`,
+  `Demos - Various`, `Applications`, `Applications - Public Domain`, `Educational`,
+  `Coverdisks`. The path is `disks.sha256` → `blobs.tosecEntryId` → `tosec_entries.setName`.
+  Nothing needs to be invented or inferred, and OpenRetro's `tags` is NOT the right source —
+  that is genre (`pinball, scrolling`), which is a different question and already renders.
+
+  **Derive it once at apply time, not per render.** `listGames` is already a grouped aggregate
+  over a `leftJoin`; adding a second join through `blobs` to `tosec_entries` puts a third table
+  in a query that runs on every library page load. Writing a `games.kind` column inside
+  `applyMatch` (`src/lib/tosec-apply.ts`) is cheaper and fits the existing authority rule —
+  it is machine-authored metadata like `publisher`, so it belongs under `MACHINE_SOURCES` and
+  must never overwrite a human edit.
+
+  **Two things that will look like bugs and are not.** A game's disks can come from different
+  TOSEC sets, so a game needs a stated rule for disagreement (first boot disk wins, or most
+  common) rather than whatever the last UPDATE in the batch happened to write. And **about half
+  of a real library will have no type at all** — TOSEC recognises 45.9% of the operator's
+  archive — so "unknown" is the common case, not the edge case, and the design should look
+  deliberate when the pill is absent rather than leaving a ragged grid.
+
+- **Typeahead search with debounce, over titles and descriptions.** Requested by the operator
+  2026-08-31, optionally searchable by attribute too. Notes for whoever plans it:
+
+  **`games.description` exists as of the OpenRetro increment but is nearly empty**, and that is
+  the first thing to check before promising description search. It is written only for blobs
+  OpenRetro recognises, which on the operator's archive is 4 disks resolving to ONE game. A
+  search that advertises "matches descriptions" would today be searching a single row. Either
+  the TOSEC-identity matching described in §3d lands first, or the feature ships as title
+  search with description as a quiet bonus.
+
+  **`sortTitle` is already normalized lowercase** and `games_org_sort_idx` is on
+  `(orgId, sortTitle)`, so a prefix search is fast today with no migration. Anything better —
+  infix matching, or ranking titles above descriptions — wants a trigram or tsvector index,
+  which IS a migration and should be decided up front rather than bolted on when ILIKE
+  `%foo%` turns out not to use the index.
+
+  **The route must be org-scoped through `orgFilter()` like every other query here**, and it
+  must not become a cross-tenant existence oracle: `/api/ingest/check` is a deliberate global
+  oracle on digests (D13), but titles are not digests and there is no equivalent decision
+  covering them. Scope it, and return nothing rather than a 404 that distinguishes cases.
+
+  **Debounce belongs in the client, and the request needs cancellation, not just delay.** Without
+  aborting the in-flight fetch, a fast typist gets responses out of order and the grid flickers
+  back to a stale result — the classic typeahead bug, and the one most worth a test.
+
 - **A read-only ADF browser** (disk-change spec §5) — parses OFS/FFS out of a stored ADF
   with no mounting involved. Buildable today, blocked on nothing, and useful right now for
   the unmatched-disk review queue.

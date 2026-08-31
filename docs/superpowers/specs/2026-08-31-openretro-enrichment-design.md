@@ -252,3 +252,54 @@ and getting it wrong silently costs three times the storage.)
 **Fetch at a bounded size, not full resolution**, and record the total bytes stored so the cost
 stays visible. Only images for games the operator actually holds are ever fetched — never the
 whole database's ~30,000 images.
+
+---
+
+## What this increment delivered
+
+**Delivered on `feat/openretro`, all 9 tasks.** `readOpenRetroDb`, the three global tables and the
+enrichment cursor, the `Amiga.sqlite` importer and its admin route, `applyEnrichment`, the polite
+image fetcher, phase 3 of the sweeper, the admin tiles and game-page rendering, and five e2e specs.
+
+**Measured storage cost:** 7 images, 1,498,148 bytes (1.43 MB) for the single reachable game —
+averaging 214 KB, which is §11.3's `?size=400` working as intended against a ~1 MB original.
+
+### The measurement, which does not flatter the idea
+
+| | disks recognised | rate |
+|---|---|---|
+| **TOSEC** | 28 / 61 | **45.9%** |
+| **OpenRetro** | 4 / 61 | **6.6%** |
+
+Measured as §2 requires — against the real archive, not the database — by hashing every ADF in
+`adf-archive/` and looking the SHA-1 up directly. **OpenRetro is a strict subset of TOSEC here:**
+it recognises nothing TOSEC misses. The four disks are one game, Project-X (1992)(Team 17).
+
+**§4's premise was wrong, and this is the correction.** The design assumed OpenRetro's SHA-1 file
+lists were a dense index of Amiga disk images. They are not. A variant's `file_list` holds 418,539
+files across the real sync and only 19,483 are `*.adf`; 190,425 have no extension at all because
+they are the individual files inside a WHDLoad install. OpenRetro's coverage is deep in WHDLoad
+file-level content and thin in whole-disk ADF dumps — which is precisely the shape this app stores.
+Only 14,850 of 175,282 distinct digests are ADFs.
+
+**What would actually work, and was deliberately not built here:** matching on the canonical TOSEC
+identity (title + year) rather than on content hash. 28 archive disks already carry that identity
+and OpenRetro holds 3,697 named games, so identity matching would plausibly reach most of them
+rather than four. It trades exactness for a title match and needs its own ambiguity rules, so it
+is a design, not a tweak. The operator was shown the 6.6% and chose to ship this as built.
+
+### What changed shape during implementation
+
+- **`_type` is a string.** §11's structure was measured correctly in every respect but this one.
+  `=== 1` matched none of 21,440 rows, and the plan's fixture wrote numbers so its test could not
+  see it. Nothing downstream worked until the reader was run against the real file.
+- **Screenshots 6–8 carry a `__` prefix** (415 games).
+- **Prose was pulled forward.** §8 deferred `description`/`history` to a Hall of Light increment,
+  but 1,706 of 3,697 entries already carry prose — 1.39 MB, median 779 characters — in a file this
+  increment parses anyway. Deferring would have bought a second production migration for text
+  already in hand. `games.description` is populated now; `history` still awaits Hall of Light.
+- **The Blob store is private**, so §8's assumption that images could be public objects is wrong.
+  They are stored private and streamed by `/api/images/<sha1>`, which also keeps the standing rule
+  that a presigned URL never reaches the DOM.
+- **The sha1 index is filtered to `*.adf`**, cutting it from 194,913 rows to 14,866 and the import
+  from 120 s to 13 s against a 300 s route ceiling, with no coverage lost.

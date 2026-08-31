@@ -54,6 +54,14 @@ export const openretroDiskSha1 = pgTable('openretro_disk_sha1', {
  * One row per image we have actually stored, keyed by OpenRetro's own sha1.
  * `kind` is 'front' | 'title' | 'screenshot'. Global for the same reason the
  * entries are: the same cover serves every tenant holding that game.
+ *
+ * WARNING -- `sha1` DOES NOT VERIFY `size_bytes` OR THE STORED BYTES. It is
+ * OpenRetro's digest of the FULL-SIZE original, while what we store is the
+ * server-side ?size=400 resize, which is different bytes entirely (measured:
+ * 393,010 stored against a 1 MB original). That inverts this codebase's
+ * usual rule, where blobs.sha256 is re-read and re-hashed to prove the store
+ * holds what it claims. Here the digest is an IDENTIFIER only. Anything that
+ * "verifies" an image against this column will fail every single row.
  */
 export const openretroImages = pgTable('openretro_images', {
   sha1: text('sha1').primaryKey(),
