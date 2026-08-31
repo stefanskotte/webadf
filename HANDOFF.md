@@ -483,12 +483,12 @@ recognizing the next time a "this trigger is not transient" argument gets made.
 - **Firmware protocol spec — plan 4a (done):**
   `docs/superpowers/specs/2026-08-30-device-firmware-protocol-design.md` — see its "What
   plan 4a delivered" section for the shipped/not-shipped split
-- **Plan 4a — firmware protocol plane (done, on `feat/device-firmware`, not yet merged):**
+- **Plan 4a — firmware protocol plane (done, merged to `master`):**
   `docs/superpowers/plans/2026-08-30-device-firmware-protocol.md`
 - **Provisioning portal spec — plan 4b (done):**
   `docs/superpowers/specs/2026-08-30-device-provisioning-portal-design.md` — see its "What
   plan 4b delivered" section for the shipped/not-shipped split
-- **Plan 4b — provisioning portal (done, on `feat/device-portal`, not yet merged):**
+- **Plan 4b — provisioning portal (done, merged to `master`):**
   `docs/superpowers/plans/2026-08-30-device-provisioning-portal.md`
 - **Decision log:** `docs/decisions/` — rulings taken during implementation. The SDD ledgers
   under `.superpowers/` are **gitignored and do not survive a session**, so anything worth
