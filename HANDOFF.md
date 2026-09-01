@@ -33,13 +33,13 @@ after plan 4a, rewritten again 2026-08-31 after plan 4b.**
 | **Plan 5 — hardware bring-up** | ❌ not started, the only piece left. **Nothing has run on real hardware** — boards are still in transit and nothing in 4a or 4b has been exercised on one |
 | **Super-admin plane** | ✅ **done, all 6 tasks, merged to `master` and live in production.** `/admin`: overview, user list with cascade delete, invites |
 | **TOSEC identity scan** | ✅ **done, 12 tasks, merged to `master`.** `/admin/scan`: DAT import, hashing, matching, backfill |
-| **OpenRetro enrichment** | ✅ **done, all 9 tasks, on `feat/openretro` — NOT merged.** Enriches 6.6% of the real archive against TOSEC's 45.9%; see 3d |
+| **OpenRetro enrichment** | ✅ **done, all 9 tasks, merged to `master` and live in production.** Enriches 6.6% of the real archive against TOSEC's 45.9%; see 3d |
+| **Library covers, type pills, contrast** | ✅ **done, merged and live 2026-09-01.** Grid shows real cover art; grid and table both show a TOSEC-derived type; the grey ramp now passes WCAG AA |
 | **Hardware** | boards ordered from JLCPCB |
 
-**Current branch:** `feat/openretro` — the OpenRetro enrichment is complete and green but
-**not merged**. The TOSEC identity scan and the super-admin plane before it are both on
-`master`, and the super-admin plane is live in production.
-**Suite on `feat/openretro`:** 297 vitest, `pnpm build` clean, **124 Playwright passed (14.1 min)**. Firmware: `pnpm firmware:test` green (506 checks, 13
+**Current branch:** `master`, clean and pushed. Everything below through the library-covers
+work is merged and live in production. **Plan 5 (hardware bring-up) is the only unbuilt plan.**
+**Suite on `master`:** 310 vitest, `pnpm build` clean, **134 Playwright passed (16.1 min)**. Firmware: `pnpm firmware:test` green (506 checks, 13
 binaries), `pnpm firmware:build` produces a `.uf2` — **and now requires
 `PORTAL_AP_PASSWORD` set in the environment, or the configure step fails by design**; see
 "Plan 4b" below for the full command.
@@ -540,9 +540,10 @@ title. The admin page shows the running total in MB so it never becomes a surpri
   new route rather than a reuse. It must check the caller's org holds an entitlement for
   that sha256 — the same boundary the device route enforces — and note the standing rule
   that **a presigned URL is a live credential**: never log it, never put it in the DOM.
-- **A type pill in the library grid, and a type column in the list view.** Requested by the
-  operator 2026-08-31: show whether a title is a game, a demo, or something else. Notes for
-  whoever plans it:
+- ~~**A type pill in the library grid, and a type column in the list view.**~~ **DONE
+  2026-09-01**, merged and live. Both surfaces show `Game` / `Demo` / `App` / `Educational` /
+  `Coverdisk`, derived in `src/lib/game-kind.ts` from the TOSEC set name. The notes below are
+  kept because they are what the implementation actually did, and the last one still bites:
 
   **The type already exists and is already imported — it is the TOSEC set name.** The seven
   Amiga `[ADF]` sets are exactly this taxonomy: `Games`, `Games - Public Domain`,
@@ -559,11 +560,17 @@ title. The admin page shows the running total in MB so it never becomes a surpri
   must never overwrite a human edit.
 
   **Two things that will look like bugs and are not.** A game's disks can come from different
-  TOSEC sets, so a game needs a stated rule for disagreement (first boot disk wins, or most
-  common) rather than whatever the last UPDATE in the batch happened to write. And **about half
-  of a real library will have no type at all** — TOSEC recognises 45.9% of the operator's
-  archive — so "unknown" is the common case, not the edge case, and the design should look
-  deliberate when the pill is absent rather than leaving a ragged grid.
+  TOSEC sets, so a game needs a stated rule for disagreement — `pickKind` uses most-common,
+  unmatched disks abstain, ties break alphabetically so the value cannot change between two
+  renders. And **about half of a real library has no type at all** — TOSEC recognises 45.9% of
+  the operator's archive — so "unknown" is the common case: the table prints an em dash to hold
+  the column's place, and the grid prints nothing at all.
+
+  **What was NOT done as planned:** the notes above said to write a `games.kind` column at apply
+  time. It is derived per request instead, in a second query beside the covers one. That needs
+  no migration and no re-sweep, and works immediately for every already-matched game — the
+  performance objection was about joining onto `listGames`' aggregate, which a separate query
+  avoids entirely.
 
 - **Typeahead search with debounce, over titles and descriptions.** Requested by the operator
   2026-08-31, optionally searchable by attribute too. Notes for whoever plans it:
