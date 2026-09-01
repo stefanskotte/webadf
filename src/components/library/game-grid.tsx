@@ -65,6 +65,26 @@ export function GameGrid({ games }: { games: GameListItem[] }) {
   );
 }
 
+/**
+ * How a card looks while it is the one being dragged.
+ *
+ * It shrinks and fades, and that is functional rather than decorative: a card
+ * is about 178x200 and the collections rail is about 198 wide, so a full-size
+ * drag preview covers the exact rows the person is trying to aim at. The
+ * highlight underneath is useless if the thing you are dragging is parked on
+ * top of it.
+ *
+ * Scale goes in the SAME transform string as dnd-kit's translate, after it --
+ * a separate `scale` property would be composited before the translate and
+ * drag the card away from the pointer.
+ */
+function dragStyle(translate: string | undefined, isDragging: boolean) {
+  return {
+    transform: isDragging ? `${translate ?? ''} scale(0.55)`.trim() : translate,
+    opacity: isDragging ? 0.4 : 1,
+  };
+}
+
 function CardBody({ game: g }: { game: GameListItem }) {
   return (
     <>
@@ -94,10 +114,7 @@ function DraggableCard({ game: g }: { game: GameListItem }) {
     data: { type: 'game', id: g.id } satisfies GameDragData,
   });
   const attributes = { ...dragAttributes, role: undefined };
-  const style = {
-    transform: CSS.Translate.toString(transform),
-    opacity: isDragging ? 0.6 : 1,
-  };
+  const style = dragStyle(CSS.Translate.toString(transform), isDragging);
 
   return (
     <Link
@@ -130,17 +147,13 @@ function SortableCard({ game: g, collectionId }: { game: GameListItem; collectio
     data: { type: 'game', id: g.id } satisfies GameDragData,
   });
   const attributes = { ...dragAttributes, role: undefined };
-  const style = {
-    transform: CSS.Translate.toString(transform),
-    transition,
-    opacity: isDragging ? 0.6 : 1,
-  };
+  const style = { ...dragStyle(CSS.Translate.toString(transform), isDragging), transition };
 
   const [busy, setBusy] = useState(false);
 
   async function onRemove(e: React.MouseEvent) {
     // Must not reach the card's own Link -- this button sits inside it, and
-    // an unstopped click would both remove the game AND navigate to it.
+    // an unstopped click would both remove the title AND navigate to it.
     e.preventDefault();
     e.stopPropagation();
 
@@ -150,12 +163,12 @@ function SortableCard({ game: g, collectionId }: { game: GameListItem; collectio
       try {
         res = await fetch(`/api/collections/${collectionId}/games/${g.id}`, { method: 'DELETE' });
       } catch {
-        toast.error('Could not reach the server', { description: 'The game was not removed from the collection.' });
+        toast.error('Could not reach the server', { description: 'The title was not removed from the collection.' });
         return;
       }
       if (!res.ok) {
         const body = await res.json().catch(() => ({}));
-        toast.error('Could not remove the game from the collection', {
+        toast.error('Could not remove the title from the collection', {
           description: typeof body.error === 'string' ? body.error : undefined,
         });
         return;

@@ -76,7 +76,12 @@ function railRow(page: Page, collectionId: string): Locator {
  * accumulate: a single jump from source to target is one pointermove, and
  * the intermediate `steps` below are what make the drag register at all.
  */
-async function dragOnto(page: Page, source: Locator, target: Locator) {
+async function dragOnto(
+  page: Page, source: Locator, target: Locator,
+  // Runs while the pointer is HELD over the target, before the release --
+  // the only moment the drop-target highlight exists to be asserted on.
+  opts: { whileOver?: () => Promise<void> } = {},
+) {
   const from = await source.boundingBox();
   const to = await target.boundingBox();
   if (!from || !to) throw new Error('drag: source or target is not visible');
@@ -92,6 +97,7 @@ async function dragOnto(page: Page, source: Locator, target: Locator) {
   await page.mouse.move(sx + 14, sy + 14, { steps: 6 });
   await page.mouse.move(tx, ty, { steps: 15 });
   await page.mouse.move(tx, ty, { steps: 2 });
+  if (opts.whileOver) await opts.whileOver();
   await page.mouse.up();
 }
 
@@ -210,6 +216,38 @@ test('dragging a card onto a rail collection files it there', async ({ page }) =
   await expect(railRow(page, id).getByTestId('collection-count')).toHaveText('1', { timeout: 10_000 });
   await expect.poll(async () => await membership(id), { timeout: 10_000 })
     .toEqual([gameId]);
+});
+
+test('the rail highlights the collection a dragged title will actually land in', async ({ page }) => {
+  const run = runTag();
+  const u = await signUpFresh(page);
+  const { gameId } = await seedDisk(u.orgId, { title: `Aimed ${run}`, diskNo: 1, sha256: randomUUID().replace(/-/g, '').padEnd(64, 'b') });
+
+  // TWO collections, adjacent in the rail. One target is not a test: the bug
+  // being guarded is not "nothing highlights", it is "the wrong one does".
+  const missId = await apiCreateCollection(page, `Not this one ${run}`);
+  const hitId = await apiCreateCollection(page, `This one ${run}`);
+
+  await page.goto('/library');
+  await expect(railRow(page, hitId)).toBeVisible();
+  // Nothing is armed until a drag starts.
+  await expect(railRow(page, hitId)).not.toHaveAttribute('data-drop-target', 'true');
+
+  await dragOnto(page, page.getByTestId('game-card').first(), railRow(page, hitId), {
+    whileOver: async () => {
+      await expect(railRow(page, hitId)).toHaveAttribute('data-drop-target', 'true');
+      await expect(railRow(page, missId)).not.toHaveAttribute('data-drop-target', 'true');
+    },
+  });
+
+  // ...and the row that was highlighted is the row that got it. This pairing
+  // is the whole point: a highlight computed independently of dnd-kit's own
+  // collision detection could point confidently at the wrong row.
+  await expect.poll(async () => await membership(hitId), { timeout: 10_000 }).toEqual([gameId]);
+  expect(await membership(missId)).toEqual([]);
+
+  // The highlight is released with the pointer.
+  await expect(railRow(page, hitId)).not.toHaveAttribute('data-drop-target', 'true');
 });
 
 test('a reorder persists across a reload', async ({ page }) => {

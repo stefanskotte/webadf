@@ -27,6 +27,7 @@ import {
   useCollectionsContext,
   type CollectionSummary,
   type CollectionDragData,
+  type CollectionsDragData,
 } from './collection-provider';
 
 export function CollectionRail() {
@@ -59,7 +60,7 @@ export function CollectionRail() {
             : { color: 'var(--ink)' }
         }
       >
-        All games
+        All titles
       </Link>
 
       <div className="my-1 h-px" style={{ background: 'var(--hairline)' }} />
@@ -100,14 +101,43 @@ function CollectionRow({
   href: string;
 }) {
   const router = useRouter();
-  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
+  const {
+    attributes, listeners, setNodeRef, transform, transition, isDragging,
+    isOver, active: dragActive,
+  } = useSortable({
     id: collection.id,
     data: { type: 'collection', id: collection.id } satisfies CollectionDragData,
   });
+
+  /**
+   * Which row a dragged card will actually land in.
+   *
+   * Driven by dnd-kit's own `isOver` -- the SAME value onDragEnd resolves the
+   * drop from -- so the highlight cannot disagree with where the title really
+   * goes. Anything computed independently (pointer position, bounding boxes)
+   * could differ from the collision detection and would be worse than no
+   * highlight: it would confidently point at the wrong row.
+   *
+   * `isOver` alone is not the condition, though. It is equally true while
+   * REORDERING the rail, where a drop moves the collection rather than filing
+   * anything into it, so the active drag has to be a game for the row to arm.
+   */
+  const draggingGame =
+    (dragActive?.data.current as CollectionsDragData | undefined)?.type === 'game';
+  const isDropTarget = draggingGame && isOver;
+
   const style = {
     transform: CSS.Transform.toString(transform),
     transition,
     opacity: isDragging ? 0.5 : 1,
+    // Armed rows get a whisper so the rail reads as live; the one under the
+    // pointer gets an unmissable ring. Geometry NEVER changes -- no padding
+    // or size shift -- because moving a drop target out from under the cursor
+    // mid-drag is how you make a drop land somewhere the person did not aim.
+    background: isDropTarget
+      ? 'rgb(245 130 46 / 0.20)'
+      : draggingGame ? 'rgb(30 45 60 / 0.05)' : undefined,
+    boxShadow: isDropTarget ? 'inset 0 0 0 2px var(--accent-amber)' : undefined,
   };
 
   const [renaming, setRenaming] = useState(false);
@@ -148,10 +178,10 @@ function CollectionRow({
   }
 
   async function onDelete() {
-    // The reasonable fear here is "did this delete my games" -- it doesn't,
+    // The reasonable fear here is "did this delete my disks" -- it doesn't,
     // and the confirm copy says so explicitly.
     const confirmed = window.confirm(
-      `Delete "${collection.name}"? This deletes only the collection -- the games in it are not deleted.`,
+      `Delete "${collection.name}"? This deletes only the collection -- the titles in it are not deleted.`,
     );
     if (!confirmed) return;
 
@@ -187,6 +217,7 @@ function CollectionRow({
       style={style}
       data-testid="collection-row"
       data-collection-id={collection.id}
+      data-drop-target={isDropTarget ? 'true' : undefined}
       className="flex items-center gap-1 rounded-md px-1 py-0.5"
     >
       <button

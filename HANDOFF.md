@@ -1001,6 +1001,33 @@ Learned the hard way; several cost real debugging time.
   the description colour from `--muted`. `next-themes` remains a dependency with no provider and
   now no meaningful consumer.
 - **A presigned URL is a live credential.** Never log it, never put it in the DOM.
+- **dnd-kit's default collision detection resolves a drop from the DRAGGED ELEMENT's rectangle,
+  not the pointer** — and in this app that is wrong. A library card is ~178x200 and a rail row is
+  ~198x31, so one card overlaps three or four rows at once and `rectIntersection` picks the one
+  with the greatest overlap, which is routinely NOT the row under the cursor. A title landed in
+  the collection above or below the one being aimed at, with nothing on screen explaining why.
+  `collectionCollisionDetection` in `collection-provider.tsx` uses `pointerWithin` instead (with
+  a `rectIntersection` fallback for the no-pointer case, e.g. a keyboard sensor). **The rail's
+  drop highlight reads dnd-kit's own `isOver`, deliberately** — computing it independently from
+  pointer position or bounding boxes could disagree with the collision detection and would be
+  worse than no highlight, because it would point confidently at the wrong row.
+  `e2e/collections.spec.ts` asserts the highlighted row IS the row that receives the title;
+  that pairing is the test, not the highlight's existence. Reported by the operator as "hard to
+  spot which collection you are actually hitting" — the aiming was the bug, the missing
+  highlight only hid it.
+- **The logo is three shapes and one drawing, kept in two places by hand.**
+  `src/components/shell/logo.tsx` is the mark; `src/app/icon.svg` is the same drawing with the
+  slot and the label's ruled lines removed and the keyline at 7 instead of 6, because a
+  sub-pixel outline is the first thing a browser tab throws away. There is no build step
+  generating one from the other and there does not need to be — but **change one and change the
+  other**. `favicon.ico` carries six frames (16-256) each rendered at its NATIVE size rather than
+  downscaled from one raster, because a LANCZOS downscale turns that keyline to mush.
+  **The keyline is painted OUTSIDE the silhouette** (`paintOrder="stroke"`), which is what lets
+  one artwork sit on the dark header and a white card with no reversed variant; a plain stroke
+  would straddle the path and eat 3 units into the body. Its colour is `--grad-4` (#c8cfd3), NOT
+  `--on-dark` — at #eef3f6 it read as white and glared — and the same value drives the label
+  plate, so the mark has one light value, not two. Colours are literal, never `var(--…)`: the
+  same drawing renders inside `icon.svg`, where the app's custom properties do not exist.
 - **A page with no `glass-card` puts shadcn's defaults straight onto the gradient, and they are
   invisible there.** `--foreground` is `#252525` because shadcn assumes a white page;
   `bg-page-gradient`'s top stop is `--grad-top` `#1b2534`. That pairing measures **1.01:1**. It

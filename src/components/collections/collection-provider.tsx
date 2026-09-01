@@ -19,11 +19,38 @@ import { toast } from 'sonner';
 import {
   DndContext,
   PointerSensor,
+  pointerWithin,
+  rectIntersection,
   useSensor,
   useSensors,
+  type CollisionDetection,
   type DragEndEvent,
 } from '@dnd-kit/core';
 import { arrayMove } from '@dnd-kit/sortable';
+
+/**
+ * Resolve the drop from the POINTER, not from the dragged card's rectangle.
+ *
+ * dnd-kit's default is `rectIntersection`, which picks whichever droppable the
+ * DRAGGED ELEMENT overlaps most. A library card is about 178x200; a rail row
+ * is about 198x31 with a couple of pixels between rows. So one card covers
+ * three or four rows at once, and the one with the greatest overlap is
+ * routinely NOT the one under the cursor -- a title would land in the
+ * collection above or below the one being aimed at, with nothing on screen
+ * explaining why. Reported as "it's hard to spot which collection you are
+ * actually hitting"; the aiming was the bug, the missing highlight only hid it.
+ *
+ * `pointerWithin` requires the pointer to be inside the droppable, which is
+ * how a person believes dragging works, and it is what lets the rail's
+ * highlight be honest: the row lighting up is the row `over` resolves to,
+ * because both read the same value.
+ *
+ * The `rectIntersection` fallback is not decoration -- `pointerWithin` needs
+ * pointer coordinates and returns nothing without them (a keyboard sensor, if
+ * one is ever added), and silently dropping nothing would be worse.
+ */
+export const collectionCollisionDetection: CollisionDetection = (args) =>
+  (args.pointerCoordinates ? pointerWithin(args) : rectIntersection(args));
 
 /** What a draggable card in the library grid declares about itself. */
 export interface GameDragData {
@@ -169,12 +196,12 @@ export function CollectionsProvider({
           body: JSON.stringify({ gameId }),
         });
       } catch {
-        toast.error('Could not reach the server', { description: 'The game was not added to the collection.' });
+        toast.error('Could not reach the server', { description: 'The title was not added to the collection.' });
         return;
       }
       if (!res.ok) {
         const body = await res.json().catch(() => ({}));
-        toast.error('Could not add the game to the collection', {
+        toast.error('Could not add the title to the collection', {
           description: typeof body.error === 'string' ? body.error : undefined,
         });
         return;
@@ -306,7 +333,7 @@ export function CollectionsProvider({
         started again at 0. React reported a hydration mismatch on every
         /library load. A fixed id is the same on both sides.
       */}
-      <DndContext id="collections-dnd" sensors={sensors} onDragStart={onDragStart} onDragEnd={onDragEnd} onDragCancel={onDragCancel}>
+      <DndContext id="collections-dnd" sensors={sensors} collisionDetection={collectionCollisionDetection} onDragStart={onDragStart} onDragEnd={onDragEnd} onDragCancel={onDragCancel}>
         {children}
       </DndContext>
     </CollectionsContext.Provider>
