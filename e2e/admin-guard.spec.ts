@@ -1,11 +1,20 @@
 import { test, expect } from '@playwright/test';
 import { signUpFresh } from './helpers';
-import { signInAsSuperAdmin } from './admin-helpers';
+import {
+  signInAsSuperAdmin, seedUsers, cleanupSeededUsers, ADMIN_PER_PAGE,
+} from './admin-helpers';
 import { cleanupSeeded } from './device-helpers';
 
-test.afterAll(cleanupSeeded);
+test.afterAll(async () => { await cleanupSeededUsers(); await cleanupSeeded(); });
 
 const ADMIN_ROUTES = ['/admin', '/admin/users', '/admin/invites'];
+
+// The two pagination specs below need a SECOND PAGE of users to exist. They
+// used to get that from the suite's own leftovers -- 4,600 accumulated
+// accounts meant page 2 was always there -- so cleaning the database up
+// correctly broke them. That was the leak acting as a fixture; a test has to
+// bring its own data.
+test.beforeAll(async () => { await seedUsers(ADMIN_PER_PAGE + 5); });
 
 test('a signed-in non-admin is redirected away from every admin route', async ({ page }) => {
   await signUpFresh(page); // a random @example.test user, NOT the allowlisted one
@@ -51,6 +60,8 @@ test('the allowlisted admin sees the overview with real counts', async ({ page }
   await expect(page.getByTestId('count-blobs')).toHaveText(/^\d+$/);
 });
 
+// Both pagination specs below need a second page to exist. They used to get
+// that from the suite's own leftover accounts; now they create it.
 test('the admin user list paginates rather than rendering thousands of rows', async ({ page }) => {
   await signInAsSuperAdmin(page);
   await page.goto('/admin/users');
