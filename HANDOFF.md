@@ -597,6 +597,45 @@ be unreachable by both the spec's cleanup and `global-teardown`, which is the sh
 
 ### 4. Backlog, not blocking anything
 
+- **A unified breadcrumb, replacing the per-page eyebrow and the hand-written back links.**
+  Requested by the operator 2026-09-01: as you drill Library → a game/demo/app → a disk's
+  files, the trail should be one consistent, clickable thing. Notes for whoever plans it:
+
+  **What exists today is two conventions and neither is navigation.** `PageHeader`
+  (`src/components/shell/page-header.tsx`) takes `eyebrow` as a **plain string** — it renders
+  text, never links — and the nine call sites do not agree on what goes in it: `Library /
+  Games`, `Library / Disk 2`, `Amiga collection`, `Add disks`, `Hardware`, `Admin`. Only two of
+  them are even shaped like a path. Going *back* is a separate, hand-written `<Link>` in the
+  `actions` slot, and there are already two different spellings of it — `/games/[id]` says
+  "← Library", `/disks/[id]/files` names the entry it returns to. A third drill-down would
+  invent a third. **`PageHeader`'s `eyebrow` prop is the seam**: change that one contract and
+  every page follows.
+
+  **The one non-obvious constraint: the trail cannot be derived from the data, because a game
+  can be in many collections.** `?collection=<id>` on `/library` is a real second axis of
+  drill-down now, and a person who opened a game from inside a collection expects to come back
+  to *that collection*, not to the unfiltered library. But `/games/[id]` and
+  `/disks/[id]/files` carry no collection in their URLs, and reconstructing it from
+  `collection_games` is not possible — the join is many-to-many by design. So the breadcrumb
+  has to be **carried** (a `?from=` param threaded through the links, resolved against
+  `listCollections(orgId)` the same way `?collection=` already is in
+  `src/app/(app)/library/page.tsx`), or it has to honestly say "Library" and drop the
+  collection. Decide that first; everything else follows from it.
+
+  **The `kind` segment can be real rather than invented.** `src/lib/game-kind.ts` already
+  derives Game / Demo / Educational / Coverdisk / App from the TOSEC set that recognised a
+  title's disks, and the grid and table both show it. **But it is `null` for everything TOSEC
+  did not recognise, which is more than half the archive** (45.9% recognised). A breadcrumb
+  that defaults an unknown title to "Game" would repeat the bug fixed on 2026-09-01 in the file
+  browser's back link, where the `games` table's vocabulary leaked into the UI and labelled a
+  Workbench disk "← Game". An unrecognised title has no kind, and the trail must be able to say
+  nothing rather than guess.
+
+  **Two smaller things it must not break:** `TopNav` already marks the active section with
+  `pathname.startsWith(item.href)`, so a breadcrumb must not contradict or duplicate it; and
+  `/disks/[id]/files` reaches its game only through `disks.gameId`, joined LEFT and scoped on
+  `orgId`, because nothing in the schema guarantees `disks.orgId` matches its game's org.
+
 - **Write-back and layered disks** (disk-change spec §5). Deliberately not designed yet;
   the first increment should record which tracks changed, not just a flattened result, so
   it doesn't foreclose the layered approach.
