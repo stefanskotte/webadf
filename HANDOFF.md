@@ -638,6 +638,45 @@ so a future helper inventing its own id is caught automatically.
   aborting the in-flight fetch, a fast typist gets responses out of order and the grid flickers
   back to a stale result — the classic typeahead bug, and the one most worth a test.
 
+- **Create blank ADFs, and add / edit / delete files through the browser.** Requested by the
+  operator 2026-09-01. This is the WRITE counterpart to the read-only browser, and the reader
+  is a hard prerequisite: you cannot safely write a filesystem you cannot yet read.
+
+  **The constraint that shapes everything: `blobs` is content-addressed and immutable.** Editing
+  a disk produces different bytes, therefore a different sha-256, therefore a NEW blob. There is
+  no in-place edit. So an edit is really "write a new blob and repoint `disks.sha256`" — and
+  that has consequences the UI must not hide:
+
+  - **`disks.id` must still never change** (the standing rule), but `disks.sha256` now does, and
+    **`devices.desiredSha256` is what a board polls on**. Repointing a mounted disk is a real
+    disk change to the hardware and has to bump `desiredVersion` deliberately, not incidentally.
+    Compare the write-protect-propagation entry above: same protocol question, opposite answer —
+    there the flag changed and the bytes did not.
+  - **The old blob may still be entitled to other tenants**, so it is never deleted on edit. The
+    blob-GC rule in `src/lib/blob-gc.ts` is what decides when it becomes reclaimable.
+  - **`disks.writeProtected` stops being inert.** It currently has no enforcement anywhere; the
+    moment editing exists it needs one, and it is per-org by design.
+
+  **What the reader can skip and a writer cannot:**
+
+  - **Bitmap blocks.** The reader ignores them entirely. A writer must allocate and free blocks
+    and keep the bitmap and its checksum correct, or the disk corrupts on a real Amiga.
+  - **Checksums on every modified block**, not just the ones whose contents changed.
+  - **Hash chains on insert and delete.** This is the fiddly part: removing an entry mid-chain
+    means relinking, and the hash function differs under INTL (6 of the operator's 49 readable
+    disks are INTL).
+  - **Both OFS and FFS write paths.** The archive is 29 OFS / 24 FFS, so neither can be skipped,
+    and OFS additionally maintains a 24-byte header on every data block.
+
+  **Start with the blank ADF.** Bootblock + root block + empty bitmap is small, self-contained,
+  and immediately verifiable — a blank disk this code writes should mount on a real Amiga and
+  read back through the reader from increment 3. That is the honest first milestone.
+
+  **Plan it together with "write-back and layered disks"** (disk-change spec §5). A disk edited
+  in the browser is a write-back from a different source, and that entry already argues the first
+  increment should record WHICH BLOCKS changed rather than a flattened result. Designing these
+  separately would produce two incompatible answers to the same question.
+
 - **A read-only ADF browser** (disk-change spec §5) — parses OFS/FFS out of a stored ADF
   with no mounting involved. Buildable today, blocked on nothing, and useful right now for
   the unmatched-disk review queue.
