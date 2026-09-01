@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { walkDirectory, protectionString } from './dir';
 import { syntheticVolume, recheck } from './synthetic';
-import { ROOT_BLOCK, BLOCK_BYTES, MAX_ENTRIES, MAX_DEPTH } from './constants';
+import { ROOT_BLOCK, BLOCK_BYTES, MAX_DEPTH } from './constants';
 
 const bytes = (n: number) => new Uint8Array(n);
 const walk = (adf: Uint8Array) => walkDirectory(adf, ROOT_BLOCK);
@@ -84,7 +84,6 @@ describe('walkDirectory', () => {
     // (see the comment on it in constants.ts), so this exercises the same
     // `count >= maxEntries` guard through the injectable cap instead --
     // otherwise nothing in this suite would ever prove the guard works.
-    expect(MAX_ENTRIES).toBeGreaterThan(0);
     const many = Array.from({ length: 10 }, (_, i) => ({
       name: `File${i}`, bytes: bytes(4),
     }));

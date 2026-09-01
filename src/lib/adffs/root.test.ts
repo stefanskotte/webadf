@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { readBoot } from './boot';
 import { readRoot } from './root';
 import { syntheticVolume } from './synthetic';
-import { BLOCK_BYTES, ROOT_BLOCK, CHECKSUM_WORD } from './constants';
+import { BLOCK_BYTES, ROOT_BLOCK } from './constants';
 
 const volumeOf = (adf: Uint8Array) => readRoot(adf, readBoot(adf)!);
 
@@ -51,6 +51,13 @@ describe('readRoot', () => {
   it('rejects an all-zero image without throwing', () => {
     const adf = new Uint8Array(BLOCK_BYTES * 1760);
     expect(readBoot(adf)).toBeNull();
-    void CHECKSUM_WORD;
+    // readRoot takes a BootInfo, not the missing boot block itself, because
+    // readVolume only ever calls it after readBoot has already succeeded.
+    // The all-zero root block still fails readRoot on its own terms (wrong
+    // type, then a bad checksum), so a placeholder BootInfo is enough to
+    // exercise that path here without throwing.
+    const boot = { filesystem: 'OFS' as const, intl: false, dirc: false };
+    expect(() => readRoot(adf, boot)).not.toThrow();
+    expect(readRoot(adf, boot)).toBeNull();
   });
 });

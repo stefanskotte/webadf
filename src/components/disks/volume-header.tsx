@@ -1,4 +1,4 @@
-import type { AdfEntry, VolumeResult } from '@/lib/adffs';
+import { MAX_ENTRIES, type AdfEntry, type VolumeResult } from '@/lib/adffs';
 
 /**
  * Copy for the three ways a disk can answer "no filesystem". Verbatim from
@@ -90,7 +90,7 @@ export function VolumeHeader({ result, filename }: { result: VolumeResult; filen
 
       {truncated && (
         <p className="mt-3 text-[12px]" style={{ color: 'var(--amber-text)' }} data-testid="listing-truncated">
-          listing truncated at 10,000 entries
+          listing truncated at {MAX_ENTRIES.toLocaleString()} entries
         </p>
       )}
       {warnings.length > 0 && (

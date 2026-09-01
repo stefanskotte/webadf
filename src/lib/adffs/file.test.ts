@@ -2,11 +2,15 @@ import { describe, it, expect } from 'vitest';
 import { readFileBytes } from './file';
 import { walkDirectory } from './dir';
 import { syntheticVolume, recheck } from './synthetic';
-import { ROOT_BLOCK, BLOCK_BYTES, OFS_DATA_BYTES } from './constants';
+import { ROOT_BLOCK, BLOCK_BYTES, BLOCK_COUNT, OFS_DATA_BYTES } from './constants';
 
 function putBe32(a: Uint8Array, off: number, v: number) {
   a[off] = (v >>> 24) & 0xff; a[off + 1] = (v >>> 16) & 0xff;
   a[off + 2] = (v >>> 8) & 0xff; a[off + 3] = v & 0xff;
+}
+
+function getBe32(a: Uint8Array, off: number): number {
+  return ((a[off] << 24) | (a[off + 1] << 16) | (a[off + 2] << 8) | a[off + 3]) >>> 0;
 }
 
 /** Deterministic content, so a wrong offset shows up as wrong bytes. */
@@ -95,5 +99,46 @@ describe('readFileBytes', () => {
   it('returns null when the block is not a file header', () => {
     const adf = syntheticVolume({ entries: [{ name: 'A', bytes: payload(10) }] });
     expect(readFileBytes(adf, ROOT_BLOCK, 'OFS')).toBeNull();
+  });
+
+  it('caps the collected pointer list so a re-listed data block cannot amplify output', () => {
+    // The extension CHAIN is bounded by `seen`, but nothing bounded the
+    // POINTER LIST each link contributes -- and the same data block can be
+    // listed by many links. On a crafted 901,120-byte image this produced
+    // 64,770,560 bytes of output in 42 ms, a 72x amplification. This builds
+    // a smaller version of the same shape: one real data block, re-listed
+    // by enough extension blocks that the naive (uncapped) pointer count
+    // would exceed BLOCK_COUNT, and proves collection stops at BLOCK_COUNT
+    // instead.
+    const adf = syntheticVolume({ filesystem: 'FFS', entries: [{ name: 'A', bytes: payload(10) }] });
+    const block = firstFile(adf).block;
+
+    // The file's one data block, in the header's last pointer slot (24 +
+    // 71 * 4 -- see the "REVERSE order" comment in file.ts).
+    const dataBlock = getBe32(adf, block * BLOCK_BYTES + 24 + 71 * 4);
+
+    // A run of extension blocks in an area syntheticVolume never allocates
+    // into (metadata grows down from 879, data grows up from 882), each
+    // relisting the SAME data block across all 72 of its pointer slots.
+    // 26 * 72 + 1 (the header's own pointer) = 1,873, comfortably past
+    // BLOCK_COUNT (1,760).
+    const EXT_START = 1700;
+    const EXT_COUNT = 26;
+    putBe32(adf, block * BLOCK_BYTES + 504, EXT_START);
+    for (let e = 0; e < EXT_COUNT; e++) {
+      const es = (EXT_START + e) * BLOCK_BYTES;
+      for (let i = 0; i < 72; i++) putBe32(adf, es + 24 + i * 4, dataBlock);
+      putBe32(adf, es + 504, e + 1 < EXT_COUNT ? EXT_START + e + 1 : 0);
+    }
+
+    // A declared size big enough that the size guard (the OTHER test above)
+    // is never what trims the result -- only the pointer-list cap should be.
+    putBe32(adf, block * BLOCK_BYTES + 324, 999_999_999);
+    recheck(adf, block);
+
+    const got = readFileBytes(adf, block, 'FFS')!;
+    expect(got.bytes.length).toBeLessThanOrEqual(BLOCK_COUNT * BLOCK_BYTES);
+    expect(got.warnings.join(' ')).toMatch(/exceeds/i);
+    expect(got.complete).toBe(false);
   });
 });

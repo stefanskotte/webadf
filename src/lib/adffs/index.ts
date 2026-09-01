@@ -12,6 +12,7 @@ import { readRoot, type VolumeInfo } from './root';
 import { walkDirectory, type AdfEntry } from './dir';
 import { readFileBytes, type FileBytes } from './file';
 
+export { MAX_ENTRIES } from './constants';
 export type { VolumeInfo } from './root';
 export type { AdfEntry } from './dir';
 export type { FileBytes } from './file';
