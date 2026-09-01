@@ -80,11 +80,23 @@ describe('walkDirectory', () => {
 
   it('caps the entry count and reports truncation', () => {
     // Spec section 5 guard 3. A crafted image must not build an unbounded
-    // tree on the server.
+    // tree on the server. MAX_ENTRIES itself cannot fire in an 880 KB image
+    // (see the comment on it in constants.ts), so this exercises the same
+    // `count >= maxEntries` guard through the injectable cap instead --
+    // otherwise nothing in this suite would ever prove the guard works.
     expect(MAX_ENTRIES).toBeGreaterThan(0);
-    const adf = syntheticVolume({ entries: [{ name: 'A', bytes: bytes(4) }] });
-    const result = walkDirectory(adf, ROOT_BLOCK);
-    expect(result.truncated).toBe(false);
+    const many = Array.from({ length: 10 }, (_, i) => ({
+      name: `File${i}`, bytes: bytes(4),
+    }));
+    const adf = syntheticVolume({ entries: many });
+    const capped = walkDirectory(adf, ROOT_BLOCK, 3);
+    expect(capped.truncated).toBe(true);
+    expect(capped.root.length).toBeLessThanOrEqual(3);
+
+    // The default cap must NOT truncate the same volume.
+    const uncapped = walkDirectory(adf, ROOT_BLOCK);
+    expect(uncapped.truncated).toBe(false);
+    expect(uncapped.root).toHaveLength(10);
   });
 
   it('never throws on an image full of random bytes', () => {

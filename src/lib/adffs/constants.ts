@@ -29,6 +29,13 @@ export const ST_FILE = -3;
  * Caps from spec section 5. The real archive's largest disk holds a few
  * hundred entries at depth 4, so these bound a crafted image without
  * constraining any real one.
+ *
+ * MAX_ENTRIES cannot fire in a valid 880 KB image today: walkDirectory's
+ * visited set admits each block at most once, and there are only
+ * BLOCK_COUNT (1,760) blocks total, well under this cap. It exists as
+ * defence-in-depth should that invariant ever change (e.g. the visited-set
+ * logic being altered) -- do not delete it as dead code, and do not raise it
+ * to "the real number that matters" without also re-deriving why it is safe.
  */
 export const MAX_ENTRIES = 10_000;
 export const MAX_DEPTH = 32;

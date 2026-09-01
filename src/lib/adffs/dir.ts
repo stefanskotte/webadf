@@ -43,7 +43,9 @@ export function protectionString(bits: number): string {
     + low.map(([m, c]) => (bits & m ? '-' : c)).join('');
 }
 
-export function walkDirectory(adf: Uint8Array, start: number): WalkResult {
+export function walkDirectory(
+  adf: Uint8Array, start: number, maxEntries: number = MAX_ENTRIES,
+): WalkResult {
   const warnings: string[] = [];
   const visited = new Set<number>([start]);
   let count = 0;
@@ -93,7 +95,7 @@ export function walkDirectory(adf: Uint8Array, start: number): WalkResult {
     for (let slot = 0; slot < HASH_TABLE_SIZE; slot++) {
       let ptr = be32(dir, 24 + slot * 4);
       while (ptr !== 0) {
-        if (count >= MAX_ENTRIES) { truncated = true; return out; }
+        if (count >= maxEntries) { truncated = true; return out; }
         // Guard 2: a chain that revisits a block would otherwise spin
         // forever and take the request thread with it.
         if (visited.has(ptr)) { warn(`hash chain cycle at block ${ptr}`); break; }
