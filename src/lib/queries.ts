@@ -1,7 +1,7 @@
 import { sql, desc, eq, and, inArray } from 'drizzle-orm';
 import { alias } from 'drizzle-orm/pg-core';
 import { getDb } from '@/db';
-import { games, disks, blobs } from '@/db/schema/catalog';
+import { games, disks, blobs, entitlements } from '@/db/schema/catalog';
 import { devices } from '@/db/schema/devices';
 import { openretroEntries, openretroImages } from '@/db/schema/openretro';
 import { pickCover, type CoverCandidate } from '@/lib/cover-pick';
@@ -189,6 +189,19 @@ export async function listDevices(orgId: string): Promise<DeviceListItem[]> {
 export interface GameDetailDisk {
   id: string; diskNo: number; label: string | null;
   sha256: string; sizeBytes: number; isBoot: boolean; writeProtected: boolean;
+  /**
+   * The best known name for the disk -- NOT necessarily TOSEC's, despite the
+   * column name. /api/ingest/complete seeds it with the uploaded filename and
+   * applyMatch overwrites it with the canonical rom name once the identity
+   * scan matches these bytes. Equal to sourceFilename until then.
+   */
+  tosecName: string | null;
+  /**
+   * What THIS organization called the file when it uploaded it. Per-tenant on
+   * purpose: the same bytes can be uploaded under different names by
+   * different tenants, and `blobs` carries no filename at all.
+   */
+  sourceFilename: string | null;
 }
 export interface GameImage {
   sha1: string;
@@ -241,8 +254,17 @@ export async function getGameDetail(orgId: string, gameId: string): Promise<Game
       id: disks.id, diskNo: disks.diskNo, label: disks.label,
       sha256: disks.sha256, sizeBytes: disks.sizeBytes,
       isBoot: disks.isBoot, writeProtected: disks.writeProtected,
+      tosecName: disks.tosecName,
+      sourceFilename: entitlements.sourceFilename,
     })
     .from(disks)
+    // Scoped on BOTH columns of the entitlement's primary key. Joining on
+    // sha256 alone would pull in another tenant's filename for shared bytes,
+    // and 26 blobs in this system are already shared across organizations.
+    .leftJoin(entitlements, and(
+      eq(entitlements.sha256, disks.sha256),
+      eq(entitlements.orgId, orgId),
+    ))
     // Scoped on orgId as well as gameId, matching listGames' reasoning: nothing
     // in the schema guarantees disks.org_id matches its game's org_id.
     .where(orgFilter(disks, orgId, eq(disks.gameId, gameId)))

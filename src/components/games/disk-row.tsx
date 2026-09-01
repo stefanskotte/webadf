@@ -28,6 +28,25 @@ export function DiskRow({ disk, devices, holder }: {
                   style={{ background: 'var(--accent-amber)' }}>Boot</span>
           )}
         </div>
+        {/*
+          Both names, TOSEC first, and the uploaded one only when it actually
+          differs. They disagree more often than you would expect -- one disk
+          here is "[cr Nemesis]" to its uploader and "[cr NMS]" to TOSEC --
+          and collapsing them to one line would hide that. `title` carries the
+          full string, since either can be far wider than the row.
+        */}
+        {disk.tosecName && (
+          <span className="truncate font-mono text-[11px]" title={disk.tosecName}
+                style={{ color: 'var(--ink)' }} data-testid={`tosec-name-${disk.id}`}>
+            {disk.tosecName}
+          </span>
+        )}
+        {disk.sourceFilename && disk.sourceFilename !== disk.tosecName && (
+          <span className="truncate font-mono text-[11px]" title={disk.sourceFilename}
+                style={{ color: 'var(--muted)' }} data-testid={`source-name-${disk.id}`}>
+            {disk.tosecName ? 'uploaded as ' : ''}{disk.sourceFilename}
+          </span>
+        )}
         <span className="truncate font-mono text-[11px]" style={{ color: 'var(--muted)' }}>
           {(disk.sizeBytes / 1024).toFixed(0)} KB · {disk.sha256.slice(0, 12)}
         </span>
@@ -39,6 +58,22 @@ export function DiskRow({ disk, devices, holder }: {
           </span>
         )}
       </div>
+      {/*
+        A plain anchor, not a fetch: the browser streams the response straight
+        to disk and shows its own progress. Pulling 880 KB into JS first would
+        buffer the whole image in memory to achieve exactly the same save.
+        No `download` attribute -- the server's Content-Disposition already
+        names the file, and it knows the canonical name while the client does
+        not.
+      */}
+      <a
+        href={`/api/disks/${disk.id}/adf`}
+        data-testid={`download-${disk.id}`}
+        className="shrink-0 rounded-lg px-3 py-1.5 text-[12px] font-semibold"
+        style={{ background: 'var(--glass-strong)', color: 'var(--ink)' }}
+      >
+        Download
+      </a>
       <WriteProtectToggle diskId={disk.id} writeProtected={disk.writeProtected} />
       <MountAction diskId={disk.id} devices={devices} />
     </div>
