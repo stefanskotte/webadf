@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { walkDirectory, protectionString } from './dir';
 import { syntheticVolume, recheck } from './synthetic';
-import { ROOT_BLOCK, BLOCK_BYTES, MAX_ENTRIES } from './constants';
+import { ROOT_BLOCK, BLOCK_BYTES, MAX_ENTRIES, MAX_DEPTH } from './constants';
 
 const bytes = (n: number) => new Uint8Array(n);
 const walk = (adf: Uint8Array) => walkDirectory(adf, ROOT_BLOCK);
@@ -97,6 +97,49 @@ describe('walkDirectory', () => {
     const uncapped = walkDirectory(adf, ROOT_BLOCK);
     expect(uncapped.truncated).toBe(false);
     expect(uncapped.root).toHaveLength(10);
+  });
+
+  it('stops recursing past MAX_DEPTH and warns, without blowing the stack', () => {
+    // Spec section 5 guard 5. A crafted image must not recurse without bound
+    // via nested directories. syntheticVolume allocates metadata blocks
+    // downward from 879, so ~35 nested single-child directories fit
+    // comfortably in the image.
+    const depthBuilt = 35;
+    let node: { name: string; bytes: Uint8Array } | { name: string; entries: unknown[] } =
+      { name: 'Bottom', bytes: bytes(4) };
+    for (let i = depthBuilt - 1; i >= 0; i--) {
+      node = { name: `D${i}`, entries: [node] };
+    }
+    const adf = syntheticVolume({ entries: [node as never] });
+
+    const result = walk(adf);   // must return, not blow the stack
+    expect(result.warnings.join(' ')).toMatch(/deeper than/i);
+
+    let levels = 0;
+    let cur = result.root[0];
+    while (cur.children.length > 0) {
+      levels++;
+      cur = cur.children[0];
+    }
+    expect(levels).toBeLessThanOrEqual(MAX_DEPTH);
+  });
+
+  it('drops an entry with a stale checksum, without losing the rest of the listing', () => {
+    // readEntry's checksum check has unit coverage in blocks.test.ts, but
+    // nothing here proved walkDirectory actually acts on it -- deleting the
+    // check currently fails nothing in this file.
+    const adf = syntheticVolume({ entries: [
+      { name: 'Good', bytes: bytes(4) },
+      { name: 'Bad', bytes: bytes(4) },
+    ] });
+    const badBlock = walk(adf).root.find((e) => e.name === 'Bad')!.block;
+    // Corrupt a field and deliberately DO NOT recheck: that stale checksum
+    // is the point of this test, unlike every other mutation in this file.
+    putBe32(adf, badBlock * BLOCK_BYTES + 324, 0xdeadbeef);
+
+    const result = walk(adf);
+    expect(names(result.root)).toEqual(['Good']);
+    expect(result.warnings.join(' ')).toMatch(/bad checksum/i);
   });
 
   it('never throws on an image full of random bytes', () => {
