@@ -74,6 +74,18 @@ test('the page renders a real tree, from a real FFS volume', async ({ page }) =>
   // image, not just a listing of the root block.
   await page.locator('[data-testid="fs-entry"][data-name="C"]').getByRole('button').click();
   await expect(page.locator('[data-testid="fs-entry"][data-name="SetPatch"]')).toBeVisible();
+
+  // The back link names its DESTINATION -- that entry's own page, whose
+  // heading is this same title. It read "← Game" until 2026-09-01, which is
+  // the `games` table's vocabulary leaking into the UI and reads as simply
+  // wrong on a Workbench or utility disk, which is most of what this browser
+  // is for. The regex guards the word, not just the current wording.
+  const back = page.getByRole('link', { name: /^←/ });
+  await expect(back).toHaveCount(1);
+  await expect(back).not.toHaveText(/Game$/);
+  await back.click();
+  await expect(page).toHaveURL(new RegExp(`/games/${row.gameId}$`));
+  await expect(page.locator('h1').first()).toHaveText(`disk-${tag}`);
 });
 
 test('a disk with no filesystem explains itself', async ({ page }) => {

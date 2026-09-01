@@ -2,7 +2,7 @@ import { notFound } from 'next/navigation';
 import Link from 'next/link';
 import { and, eq } from 'drizzle-orm';
 import { getDb } from '@/db';
-import { disks, entitlements } from '@/db/schema/catalog';
+import { disks, entitlements, games } from '@/db/schema/catalog';
 import { requireOrg } from '@/lib/session';
 import { diskStore } from '@/lib/storage';
 import { readVolume } from '@/lib/adffs';
@@ -23,12 +23,18 @@ export default async function DiskFilesPage(props: PageProps<'/disks/[id]/files'
     .select({
       sha256: disks.sha256, diskNo: disks.diskNo, gameId: disks.gameId,
       tosecName: disks.tosecName, sourceFilename: entitlements.sourceFilename,
+      gameTitle: games.title,
     })
     .from(disks)
     .innerJoin(entitlements, and(
       eq(entitlements.sha256, disks.sha256),
       eq(entitlements.orgId, orgId),
     ))
+    // Only to label the back link with where it actually goes. A LEFT join,
+    // and scoped on orgId as well as the id: nothing in the schema guarantees
+    // disks.orgId matches its game's org (listGames documents the same
+    // drift), and a missing title must degrade the label, never the page.
+    .leftJoin(games, and(eq(games.id, disks.gameId), eq(games.orgId, orgId)))
     .where(and(eq(disks.id, id), eq(disks.orgId, orgId)))
     .limit(1);
 
@@ -56,8 +62,17 @@ export default async function DiskFilesPage(props: PageProps<'/disks/[id]/files'
         title={title}
         subtitle={filename}
         actions={
-          <Link href={`/games/${disk.gameId}`} className="text-[12.5px] font-semibold"
-                style={{ color: 'var(--on-dark-muted)' }}>← Game</Link>
+          // Named for where it goes, which is that entry's own page -- and
+          // that page's heading IS this title. It used to read "← Game",
+          // which is the `games` table's vocabulary leaking into the UI and
+          // is simply wrong on a Workbench or utility disk, the exact case
+          // this browser is most useful for.
+          <Link href={`/games/${disk.gameId}`}
+                title={disk.gameTitle ?? undefined}
+                className="inline-block max-w-[16rem] shrink-0 truncate text-[12.5px] font-semibold"
+                style={{ color: 'var(--on-dark-muted)' }}>
+            ← {disk.gameTitle ?? 'Back'}
+          </Link>
         }
       />
       <div className="flex flex-col gap-3 px-7 pb-10">
