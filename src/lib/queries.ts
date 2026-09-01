@@ -3,6 +3,7 @@ import { alias } from 'drizzle-orm/pg-core';
 import { getDb } from '@/db';
 import { games, disks, blobs, entitlements } from '@/db/schema/catalog';
 import { devices } from '@/db/schema/devices';
+import { collectionGames } from '@/db/schema/collections';
 import { openretroEntries, openretroImages } from '@/db/schema/openretro';
 import { pickCover, type CoverCandidate } from '@/lib/cover-pick';
 import { kindFromSetName, pickKind } from '@/lib/game-kind';
@@ -28,8 +29,55 @@ export interface GameListItem {
   sizeBytes: number; sha256Prefix: string | null;
 }
 
-export async function listGames(orgId: string, opts: { limit?: number } = {}): Promise<GameListItem[]> {
+/**
+ * `opts.collectionId`, when set, filters to one collection's members and
+ * orders by their position in it instead of recency. The unfiltered path
+ * below is left byte-identical to before this option existed -- a library
+ * with no collections must behave exactly as it did before -- which is why
+ * the two branches are written out separately rather than sharing a partial
+ * query builder chain.
+ *
+ * The collection id is NOT trusted from the caller here: every route reaches
+ * this through listCollections (src/lib/collections.ts) first, which is
+ * itself org-scoped, so an id belonging to another tenant never arrives as
+ * opts.collectionId. The join added below carries no org_id predicate of its
+ * own, because collection_games has no such column by design (D-4-5) --
+ * collections.org_id is what scopes it, and that check already happened
+ * upstream of this function.
+ */
+export async function listGames(
+  orgId: string, opts: { limit?: number; collectionId?: string } = {},
+): Promise<GameListItem[]> {
   const db = getDb();
+
+  if (opts.collectionId) {
+    const collectionId = opts.collectionId;
+    const rows = await db
+      .select({
+        id: games.id, title: games.title, year: games.year, publisher: games.publisher,
+        coverAssetId: games.coverAssetId,
+        diskCount: sql<number>`count(${disks.id})::int`,
+        sizeBytes: sql<number>`coalesce(sum(${disks.sizeBytes}), 0)::bigint`,
+        sha256Prefix: sql<string | null>`min(${disks.sha256})`,
+      })
+      .from(games)
+      .leftJoin(disks, and(eq(disks.gameId, games.id), eq(disks.orgId, orgId)))
+      .innerJoin(collectionGames, and(
+        eq(collectionGames.gameId, games.id),
+        eq(collectionGames.collectionId, collectionId),
+      ))
+      .where(orgFilter(games, orgId))
+      // collectionGames.sortKey has to join the GROUP BY alongside games.id:
+      // it isn't functionally dependent on games' own primary key, only on
+      // the (collectionId, gameId) pair the inner join above already fixed
+      // to at most one row per game, so grouping by both does not fan out.
+      .groupBy(games.id, collectionGames.sortKey)
+      .orderBy(collectionGames.sortKey, games.id)
+      .limit(opts.limit ?? 200);
+
+    return withDerived(orgId, rows);
+  }
+
   const rows = await db
     .select({
       id: games.id, title: games.title, year: games.year, publisher: games.publisher,
