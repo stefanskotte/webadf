@@ -137,11 +137,19 @@ export function syntheticVolume(opts: SyntheticOptions = {}): Uint8Array {
 
     // Extension blocks for anything beyond 72 data blocks. 112 real files
     // need this, so it is exercised, not theoretical.
+    //
+    // Chaining a new extension block onto a PREVIOUS extension block writes
+    // that block's +504 pointer AFTER its checksum was already stored, which
+    // invalidates it -- the same failure shape link() below guards against
+    // for the hash-chain pointer. recheck() fixes it. The file header itself
+    // is exempt: it is checksummed after this loop runs, so the +504 write
+    // into it here still happens before its checksum is taken.
     let remaining = dataBlocks.slice(HASH_TABLE_SIZE);
-    let prev = hs + 504;
+    let prevBlock = header;
     while (remaining.length > 0) {
       const ext = allocMeta();
-      putBe32(adf, prev, ext);
+      putBe32(adf, prevBlock * BLOCK_BYTES + 504, ext);
+      if (prevBlock !== header) recheck(adf, prevBlock);
       const es = ext * BLOCK_BYTES;
       const take = remaining.slice(0, HASH_TABLE_SIZE);
       putBe32(adf, es, T_LIST);
@@ -155,7 +163,7 @@ export function syntheticVolume(opts: SyntheticOptions = {}): Uint8Array {
       putBe32(adf, es + CHECKSUM_WORD * 4,
         blockChecksum(adf.subarray(es, es + BLOCK_BYTES), CHECKSUM_WORD));
       remaining = remaining.slice(HASH_TABLE_SIZE);
-      prev = es + 504;
+      prevBlock = ext;
     }
 
     putName(adf, hs, name);
