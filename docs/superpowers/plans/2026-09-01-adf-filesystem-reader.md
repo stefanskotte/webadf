@@ -445,6 +445,8 @@ export interface SyntheticOptions {
   noSignature?: boolean;
 }
 export function syntheticVolume(opts?: SyntheticOptions): Uint8Array;
+/** Recompute a block's checksum. Tests that mutate a block MUST call this. */
+export function recheck(adf: Uint8Array, block: number): void;
 ```
 
 `synthetic.ts` is the workhorse for Tasks 3–6 — every later test builds its fixture with it, exactly as `adfmfm/synthetic.ts` does, so **no real disk image ever enters the repository**.
@@ -582,6 +584,21 @@ export interface SyntheticOptions {
 const isDir = (e: SyntheticEntry): e is SyntheticDir =>
   Array.isArray((e as SyntheticDir).entries);
 
+/**
+ * Recompute and store a block's checksum.
+ *
+ * Exported because TESTS need it too: any test that patches a byte into a
+ * block the reader checksums must call this afterwards, or the reader
+ * rejects the block as corrupt and the test passes for the wrong reason --
+ * exercising the corruption path instead of the pointer or size guard it
+ * was written for.
+ */
+export function recheck(adf: Uint8Array, block: number): void {
+  const start = block * BLOCK_BYTES;
+  const view = adf.subarray(start, start + BLOCK_BYTES);
+  putBe32(adf, start + CHECKSUM_WORD * 4, blockChecksum(view, CHECKSUM_WORD));
+}
+
 function putBe32(a: Uint8Array, off: number, v: number) {
   a[off] = (v >>> 24) & 0xff; a[off + 1] = (v >>> 16) & 0xff;
   a[off + 2] = (v >>> 8) & 0xff; a[off + 3] = v & 0xff;
@@ -702,7 +719,16 @@ export function syntheticVolume(opts: SyntheticOptions = {}): Uint8Array {
     return header;
   }
 
-  /** Link a child into a parent directory's hash chain. */
+  /**
+   * Link a child into a parent directory's hash chain.
+   *
+   * The child's checksum is RECOMPUTED afterwards, and that is not optional:
+   * writeFile and writeDir have already checksummed the child by the time
+   * this runs, and writing its hash-chain pointer at offset 496 invalidates
+   * that checksum. walkDirectory rejects entry blocks whose checksum fails,
+   * so without this every synthetic volume lists as empty -- looking exactly
+   * like a traversal bug rather than a fixture bug.
+   */
   function link(parent: number, child: number, name: string) {
     const slot = nameHash(name, intl);
     const ps = parent * BLOCK_BYTES;
@@ -710,6 +736,7 @@ export function syntheticVolume(opts: SyntheticOptions = {}): Uint8Array {
       | adf[ps + 24 + slot * 4 + 2] << 8 | adf[ps + 24 + slot * 4 + 3]) >>> 0;
     putBe32(adf, child * BLOCK_BYTES + 496, head);
     putBe32(adf, ps + 24 + slot * 4, child);
+    recheck(adf, child);
   }
 
   function writeDir(name: string, list: SyntheticEntry[], parent: number): number {
@@ -955,7 +982,7 @@ export function protectionString(bits: number): string;
 ```ts
 import { describe, it, expect } from 'vitest';
 import { walkDirectory, protectionString } from './dir';
-import { syntheticVolume } from './synthetic';
+import { syntheticVolume, recheck } from './synthetic';
 import { ROOT_BLOCK, BLOCK_BYTES, MAX_ENTRIES } from './constants';
 
 const bytes = (n: number) => new Uint8Array(n);
@@ -1011,6 +1038,10 @@ describe('walkDirectory', () => {
     const adf = syntheticVolume({ entries: [{ name: 'Loop', bytes: bytes(4) }] });
     const entry = walk(adf).root[0].block;
     putBe32(adf, entry * BLOCK_BYTES + 496, entry);   // chain -> itself
+    // The block stays internally VALID -- this test is about the cycle
+    // guard, not about corruption. Without this the reader rejects the
+    // entry on its checksum and the test passes for the wrong reason.
+    recheck(adf, entry);
     const result = walk(adf);
     expect(result.root.length).toBeGreaterThan(0);
     expect(result.warnings.join(' ')).toMatch(/cycle/i);
@@ -1020,6 +1051,10 @@ describe('walkDirectory', () => {
     // Spec section 5 guard 1.
     const adf = syntheticVolume({ entries: [{ name: 'Fine', bytes: bytes(4) }] });
     putBe32(adf, ROOT_BLOCK * BLOCK_BYTES + 24, 99_999);
+    // walkDirectory does not checksum the DIRECTORY block it is reading,
+    // only the entries it finds, so no recheck is needed here -- but the
+    // root's own checksum is now stale, which readRoot would reject. This
+    // test calls walkDirectory directly and so is unaffected.
     const result = walk(adf);
     expect(result.warnings.join(' ')).toMatch(/out of range/i);
     expect(() => walk(adf)).not.toThrow();
@@ -1224,7 +1259,7 @@ export function readFileBytes(
 import { describe, it, expect } from 'vitest';
 import { readFileBytes } from './file';
 import { walkDirectory } from './dir';
-import { syntheticVolume } from './synthetic';
+import { syntheticVolume, recheck } from './synthetic';
 import { ROOT_BLOCK, BLOCK_BYTES, OFS_DATA_BYTES } from './constants';
 
 function putBe32(a: Uint8Array, off: number, v: number) {
@@ -1283,6 +1318,9 @@ describe('readFileBytes', () => {
     const adf = syntheticVolume({ filesystem: 'FFS', entries: [{ name: 'Liar', bytes: payload(100) }] });
     const block = firstFile(adf).block;
     putBe32(adf, block * BLOCK_BYTES + 324, 800_000);
+    // readFileBytes checksums the file header, so the fixture must stay
+    // valid: this test is about the size guard, not about corruption.
+    recheck(adf, block);
     const got = readFileBytes(adf, block, 'FFS')!;
     expect(got.bytes.length).toBeLessThan(1000);
     expect(got.complete).toBe(false);
@@ -1306,6 +1344,7 @@ describe('readFileBytes', () => {
     const adf = syntheticVolume({ filesystem: 'FFS', entries: [{ name: 'A', bytes: payload(2000) }] });
     const block = firstFile(adf).block;
     putBe32(adf, block * BLOCK_BYTES + 24 + 71 * 4, 99_999);
+    recheck(adf, block);
     const got = readFileBytes(adf, block, 'FFS')!;
     expect(got.complete).toBe(false);
     expect(got.warnings.length).toBeGreaterThan(0);
