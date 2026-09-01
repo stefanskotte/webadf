@@ -654,6 +654,17 @@ so a future helper inventing its own id is caught automatically.
     there the flag changed and the bytes did not.
   - **The old blob may still be entitled to other tenants**, so it is never deleted on edit. The
     blob-GC rule in `src/lib/blob-gc.ts` is what decides when it becomes reclaimable.
+  - **An edited or hand-built disk has NO TOSEC identity, and that is the intended outcome, not
+    a failure** (operator ruling, 2026-09-01: "I create floppy disks myself and decide the
+    content"). It will hash to something no DAT contains, so the sweeper will stamp
+    `match_state = 'none'` — correct, and it must not be reported as a miss in any rate that is
+    meant to measure preservation coverage. **The rate published on `/admin/scan` should exclude
+    user-authored disks**, or it degrades every time the operator makes a disk.
+  - **Therefore the write path must set `games.metadataSource` OUTSIDE `MACHINE_SOURCES`.** That
+    is the existing Authority rule doing exactly the job it was built for: a value the machine
+    does not recognise is treated as a human decision, so `applyMatch` will never retitle a
+    hand-built disk and `mergeDuplicates` will never absorb it. Getting this wrong is not
+    cosmetic — a merge DELETES the losing `games` row.
   - **`disks.writeProtected` stops being inert.** It currently has no enforcement anywhere; the
     moment editing exists it needs one, and it is per-org by design.
 
