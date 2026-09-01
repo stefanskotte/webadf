@@ -67,7 +67,7 @@ export function VolumeHeader({ result, filename }: { result: VolumeResult; filen
   const { files, dirs } = countEntries(root);
 
   return (
-    <div className="glass-card p-5">
+    <div className="glass-card p-5" data-testid="volume-header">
       <dl className="grid grid-cols-[auto_1fr] items-center gap-x-4 gap-y-1.5 text-[13px]">
         <Fact label="Filesystem">
           <span className="inline-flex items-center gap-2">
