@@ -34,6 +34,7 @@ after plan 4a, rewritten again 2026-08-31 after plan 4b.**
 | **Super-admin plane** | ✅ **done, all 6 tasks, merged to `master` and live in production.** `/admin`: overview, user list with cascade delete, invites |
 | **TOSEC identity scan** | ✅ **done, 12 tasks, merged to `master`.** `/admin/scan`: DAT import, hashing, matching, backfill |
 | **OpenRetro enrichment** | ✅ **done, all 9 tasks, merged to `master` and live in production.** Enriches 6.6% of the real archive against TOSEC's 45.9%; see 3d |
+| **e2e cleanup** | ✅ **done, merged and live 2026-09-01.** A run no longer leaks; 4,600 accumulated rows and 73 live invite codes swept; see 3e |
 | **Library covers, type pills, contrast** | ✅ **done, merged and live 2026-09-01.** Grid shows real cover art; grid and table both show a TOSEC-derived type; the grey ramp now passes WCAG AA |
 | **Hardware** | boards ordered from JLCPCB |
 
@@ -425,6 +426,46 @@ title. The admin page shows the running total in MB so it never becomes a surpri
 - **`metadataSource` is never written by enrichment.** It owns row IDENTITY, which is still
   TOSEC's; stamping it `openretro` would lock TOSEC out of correcting the title forever.
   `factsSource`/`proseSource` record what enrichment wrote without claiming the row.
+
+### 3e. The e2e suite now cleans up after itself — DONE 2026-09-01, merged and live
+
+**`e2e/global-teardown.ts`, wired into `playwright.config.ts`.** Before it, one suite run left
+~70 users, orgs, games and disks in the live database permanently, and **4,600 rows had
+accumulated since 2026-08-23**. A full run now leaves the database exactly as it found it.
+
+**Backfilled once:** 4,601 test users, 66 games, 4,201 invites, 72 blobs and 72 stored objects
+removed; 485 stale admin sessions cleared. The operator's account and its 5 games were verified
+intact before and after. Baseline is now 2 users, 5 games, 10 disks, 10 blobs, 0 live codes.
+
+**The security-relevant half was the invite codes, not the row count.** Registration is
+invite-only — that is what bounds the ingest existence oracle (D13) — and **73 unconsumed,
+unexpired codes were live**. Neither population was reachable by any cascade: 4,144 were minted
+under placeholder org ids that no `auth.organization` row matches (`mintInviteCode` uses
+`e2e-seed-org`, because its callers have no org yet), and 14 belonged to the kept
+`admin@example.test` account, which survives on purpose so its invites survived with it. The
+teardown matches on **"the org does not exist"** rather than a list of known placeholder names,
+so a future helper inventing its own id is caught automatically.
+
+**Things worth knowing:**
+
+- **The safety boundary is the email domain and nothing else.** Every account the suite creates
+  is `@example.test`; the operator's is not. **Never widen that predicate.**
+- It reuses **`deleteUserCascade`** from `src/lib/admin-delete.ts` — the app's own cascade,
+  already covered by `admin-delete.spec.ts` — so the teardown cannot drift from real behaviour.
+- **Blobs are handled separately and deliberately**, because that cascade refuses to touch a
+  global content-addressed table (26 blobs are shared across orgs, and there is a test for it).
+  Only blobs *nothing* references anywhere are reclaimed; the rule is a pure tested function in
+  `src/lib/blob-gc.ts`, not a SQL predicate no test can exercise. **That function is also what a
+  future "blob garbage collection" increment should build on.**
+- **Stored objects are removed before their rows.** A removed object with a surviving row shows
+  up as `unreadable` and a human can see it; a deleted row whose object survives is invisible
+  forever, because the sha is the only handle on it.
+- **A test was passing only because of the leak.** `admin-guard.spec.ts`'s "paging forward"
+  clicks Next and needs a second page of users; 4,600 leftover accounts guaranteed one, so the
+  spec never created what it asserted on. Fixing the leak broke it. It now seeds `PER_PAGE + 5`
+  rows itself. **If another spec starts failing after a clean run, suspect this shape first.**
+- The one-time backfill took **32 minutes** (4,601 sequential cascades over neon-http). A normal
+  teardown handles ~120 users and adds a few seconds.
 
 ### 4. Backlog, not blocking anything
 
