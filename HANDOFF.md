@@ -35,6 +35,7 @@ after plan 4a, rewritten again 2026-08-31 after plan 4b.**
 | **TOSEC identity scan** | ✅ **done, 12 tasks, merged to `master`.** `/admin/scan`: DAT import, hashing, matching, backfill |
 | **OpenRetro enrichment** | ✅ **done, all 9 tasks, merged to `master` and live in production.** Enriches 6.6% of the real archive against TOSEC's 45.9%; see 3d |
 | **e2e cleanup** | ✅ **done, merged and live 2026-09-01.** A run no longer leaks; 4,600 accumulated rows and 73 live invite codes swept; see 3e |
+| **User-defined collections** | ⏸️ **IN FLIGHT on `feat/collections`, 7 of 9 tasks.** Migration 0011 already applied to the live DB; see 3g |
 | **Library covers, type pills, contrast** | ✅ **done, merged and live 2026-09-01.** Grid shows real cover art; grid and table both show a TOSEC-derived type; the grey ramp now passes WCAG AA |
 | **Read-only ADF filesystem reader** | ✅ **done, all 10 tasks, `feat/adf-filesystem-reader`.** Reads 80.3% of the archive (49/61) against TOSEC's 45.9% and OpenRetro's 6.6%; see 3f |
 | **Hardware** | boards ordered from JLCPCB |
@@ -503,6 +504,80 @@ reader of that page may reasonably wonder why a Workbench disk is labelled with 
 **Read-only by decision, not by omission.** Writing needs bitmap and hash-chain maintenance this
 reader deliberately skips; the write increment is already in the backlog with its constraints
 recorded, including that an edited disk deliberately has no TOSEC identity.
+
+### 3g. User-defined collections — IN FLIGHT on `feat/collections`, 7 of 9 tasks done
+
+**Paused mid-plan 2026-09-01 because the session ran out of context. This section exists because
+the SDD ledger lives at `.superpowers/sdd/2026-09-01-collections/progress.md`, which is
+GITIGNORED — the same trap that made the super-admin and OpenRetro increments need their state
+copied into a tracked file. Everything needed to resume cold is reproduced here.**
+
+Spec: `docs/superpowers/specs/2026-09-01-collections-design.md`.
+Plan: `docs/superpowers/plans/2026-09-01-collections.md` (9 tasks).
+Branch: `feat/collections`, **7 commits ahead of `master`**, not merged, not pushed.
+
+**MIGRATION 0011 IS ALREADY APPLIED to the live database** (`collections`, `collection_games`,
+two FKs, three indexes). Operator approved it. Do not re-apply; do not regenerate it.
+
+| Task | State |
+|---|---|
+| 1 `planReorder` (pure reorder rule) | ✅ complete, reviewed clean |
+| 2 schema + migration | ✅ complete, reviewed clean, **applied** |
+| 3 `mergeDuplicates` + `deleteUserCascade` | ✅ complete, reviewed clean (opus) |
+| 4 `src/lib/collections.ts` + `listGames` filter | ✅ complete, reviewed clean |
+| 5 six API routes | ✅ complete, reviewed clean |
+| 6 dnd-kit + `CollectionsProvider` | ✅ complete, reviewed clean |
+| 7 rail, draggable cards, per-card remove | ⚠️ **committed (`36a31cc`) but NOT YET REVIEWED** |
+| 8 e2e | ❌ not started |
+| 9 docs | ❌ not started |
+
+**To resume:** dispatch the Task 7 review first (`review-package` from `2068e28` to `36a31cc`),
+then Tasks 8 and 9. The plan's task briefs regenerate with
+`scripts/task-brief docs/superpowers/plans/2026-09-01-collections.md N`.
+
+**Rulings taken during execution, each with what it costs if wrong:**
+
+1. **Task 3's two membership statements are deliberately NOT org-scoped.** `collection_games` has
+   no `org_id` (D-4-5), so they match on `game_id` alone. Safe because `mergeDuplicates` picks
+   duplicates within one org and `addGameToCollection` refuses to file another org's game, so no
+   foreign collection can hold it. Mirrors the `disks` repoint in the same loop. *Costs if wrong:
+   nothing today; a future cross-org path would see the row moved rather than dangling — still the
+   safer outcome.*
+2. **The migration was a controller checkpoint, not an implementer action.** Applied after review,
+   before Task 4. *Costs if wrong: Task 8 would fail loudly on missing tables.*
+
+**Verified by hand during execution, so nobody re-checks it:**
+
+- The `inArray(col, db.select())` subquery form **works on the live neon-http driver** — correct
+  SQL, executes standalone and inside a `db.batch()`. This was the implementer's stated risk.
+- The `order`-vs-`[id]` route shadowing was live-verified with markers against a dev server: only
+  `order/route.ts` fires for `PATCH /api/collections/order`.
+- The hard merge case holds: two absorbed games both mapping into one collection. Iteration A's
+  DELETE no-ops and its UPDATE makes the collection hold the survivor; iteration B's DELETE
+  subquery is re-evaluated at execution time, sees that, and removes B's row before repointing.
+
+**Deferred minors, for the final review to triage:**
+
+- `e2e/global-teardown.ts:72-75` lists what `deleteUserCascade` covers and now **omits
+  collections**. One-line comment fix.
+- **CARRY INTO TASK 8:** a fixture creating a collection under a PLACEHOLDER org id would never be
+  reached by the teardown, which finds collections only through a real user's org — the same shape
+  that leaked 4,144 invite codes. **Task 8 fixtures must create collections under a real
+  signed-up org.**
+- Narrow concurrency window in the merge: a user adding the survivor to a collection between the
+  DELETE's snapshot and the UPDATE would trip the PK and abort one sweep pass. **Self-heals** on
+  the next pass, so not the forever-loop the design warns about.
+- The collections delete in `deleteUserCascade` sits in the `orgIds` loop, not `soleOrgIds`, so
+  deleting one member destroys a co-member's collections. Matches the existing treatment of
+  games/disks/devices; flagged only because collections cannot be regenerated.
+- `renameBody` duplicates `createBody` as a literal — route modules cannot easily share a const.
+- Task 7's own reported concerns, unreviewed: delete confirmation uses `window.confirm` (so **Task
+  8 needs `page.on('dialog', ...)`**), the rename/delete menu testids are the implementer's own
+  invention rather than brief-specified, and **no live browser QA was done** — build and vitest
+  only.
+
+**Suite state at the pause:** 408 vitest green, `pnpm build` clean, lint at the pre-existing
+3-error baseline. **The full Playwright suite has NOT been run on this branch.**
 
 ### 4. Backlog, not blocking anything
 
