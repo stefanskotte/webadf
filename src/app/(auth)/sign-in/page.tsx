@@ -23,20 +23,32 @@ export default function SignInPage() {
   }
 
   return (
-    <form onSubmit={onSubmit} className="mx-auto flex w-full max-w-sm flex-col gap-4 p-8">
-      <h1 className="text-2xl font-bold tracking-tight">Sign in</h1>
+    <form
+      onSubmit={onSubmit}
+      /* `--glass-strong` (0.80 white) rather than `.glass-card`'s own `--glass`
+         (0.62): a panel centred in the viewport lands anywhere on the gradient
+         depending on window height, and only the stronger fill keeps `--ink`
+         above 10:1 even composited over the darkest stop. */
+      style={{ background: 'var(--glass-strong)' }}
+      className="glass-card flex w-full max-w-sm flex-col gap-4 p-7"
+    >
+      <h1 className="text-2xl font-bold tracking-tight" style={{ color: 'var(--ink)' }}>Sign in</h1>
       <div className="flex flex-col gap-2">
-        <Label htmlFor="email">Email</Label>
+        <Label htmlFor="email" style={{ color: 'var(--muted)' }}>Email</Label>
         <Input id="email" type="email" value={email} required
-               onChange={(e) => setEmail(e.target.value)} />
+               onChange={(e) => setEmail(e.target.value)}
+               style={{ background: 'var(--input-bg)', borderColor: 'var(--hairline-strong)', color: 'var(--ink)' }} />
       </div>
       <div className="flex flex-col gap-2">
-        <Label htmlFor="password">Password</Label>
+        <Label htmlFor="password" style={{ color: 'var(--muted)' }}>Password</Label>
         <Input id="password" type="password" value={password} required minLength={8}
-               onChange={(e) => setPassword(e.target.value)} />
+               onChange={(e) => setPassword(e.target.value)}
+               style={{ background: 'var(--input-bg)', borderColor: 'var(--hairline-strong)', color: 'var(--ink)' }} />
       </div>
-      {error && <p role="alert" className="text-sm text-red-600">{error}</p>}
-      <Button type="submit" disabled={busy}>{busy ? 'Signing in…' : 'Sign in'}</Button>
+      {error && <p role="alert" className="text-sm font-semibold" style={{ color: 'var(--danger-fg)' }}>{error}</p>}
+      <Button type="submit" disabled={busy} style={{ background: 'var(--primary-action)', color: '#fff' }}>
+        {busy ? 'Signing in…' : 'Sign in'}
+      </Button>
     </form>
   );
 }

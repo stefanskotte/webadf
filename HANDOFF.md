@@ -986,11 +986,31 @@ Learned the hard way; several cost real debugging time.
   but no layout rendered `<Toaster/>`, so every `toast()` call in nine components — mount, eject,
   pair, write-protect, invite issue/revoke, user delete, scan and DAT upload — displayed nothing.
   Every failure path reported silence, including in the super-admin plane that shipped to
-  production that morning. Fixed by rendering `<Toaster/>` in the root layout. Note there is still
-  **no `next-themes` ThemeProvider anywhere**, so `sonner.tsx`'s `useTheme()` silently falls back
-  to `"system"`; that is pre-existing and unrelated, but it means the toaster's theme is not
-  actually following the app.
+  production that morning. Fixed by rendering `<Toaster/>` in the root layout.
+
+  **There is still no `next-themes` ThemeProvider anywhere, and that was NOT harmless — this
+  note used to say it was.** `sonner.tsx`'s `useTheme()` fell back to `"system"`, sonner
+  resolved that against `prefers-color-scheme`, and on a dark-mode machine it applied its own
+  rule `[data-sonner-theme='dark'] [data-description] { color: hsl(0,0%,91%) }`. That colour is
+  **hard-coded, not read from a custom property**, so none of the `--normal-*` overrides could
+  reach it — while the background *is* tokenised and stayed white, because `.dark` is never
+  applied to `<html>`. Result: #e8e8e8 description text on a white toast, **1.23:1**, with the
+  title unaffected at 15:1. So every admin toast showed a readable headline over an invisible
+  explanation, and all of them pass a `description`. **Fixed 2026-09-01** by pinning
+  `theme="light"` (this app has exactly one theme; following the OS was the defect) and stating
+  the description colour from `--muted`. `next-themes` remains a dependency with no provider and
+  now no meaningful consumer.
 - **A presigned URL is a live credential.** Never log it, never put it in the DOM.
+- **A page with no `glass-card` puts shadcn's defaults straight onto the gradient, and they are
+  invisible there.** `--foreground` is `#252525` because shadcn assumes a white page;
+  `bg-page-gradient`'s top stop is `--grad-top` `#1b2534`. That pairing measures **1.01:1**. It
+  shipped on `/sign-in` and `/sign-up`, the only two pages in the app with no shell, and looked
+  like a *partial* problem only because the gradient lightens downward — the lower fields
+  drifted into legible territory, so it also changed with window height. Fixed 2026-09-01 with
+  an `(auth)` layout that centres a `--glass-strong` panel. **`e2e/contrast.spec.ts` now
+  measures the composited pixels** on both pages and on a toast; extend it rather than trusting
+  a review, because in both defects the offending colour came from a stylesheet no file in this
+  repo names.
 - **`--accent-amber` (`#f5822e`) is fill-only** and fails WCAG AA as text. Amber text is
   `--amber-text` (`#a8560f`).
 - **Next 16:** `params`/`searchParams`/`cookies()`/`headers()` are Promises.
