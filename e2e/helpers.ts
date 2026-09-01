@@ -61,6 +61,21 @@ export async function mintInviteCode(): Promise<string> {
   return issueInvite('e2e-seed-org', 'e2e-seed-user');
 }
 
+/**
+ * Every org signUpFresh created in THIS spec file.
+ *
+ * Playwright runs one module instance per spec file, so this list is exactly
+ * that file's orgs -- the same scoping device-helpers' `seeded` registry uses.
+ * Kept here, as a plain array with no database import, because helpers.ts must
+ * not import anything that reaches `@/db`: loadEnvLocal() above runs at module
+ * top level, AFTER imports are hoisted, so an import that touched the database
+ * would evaluate before DATABASE_URL existed.
+ *
+ * Registered by signUpFresh itself rather than by each caller, so a spec
+ * cannot forget. cleanupSeeded (device-helpers.ts) is what drains it.
+ */
+export const signedUpOrgIds: string[] = [];
+
 export async function signUpFresh(page: Page) {
   const email = `t-${Date.now()}-${Math.floor(Math.random() * 1e6)}@example.test`;
   const password = 'correct-horse-battery-staple';
@@ -74,5 +89,6 @@ export async function signUpFresh(page: Page) {
   await expect(page).toHaveURL(/\/library/, { timeout: 15_000 });
 
   const orgId = await page.getByTestId('active-org').textContent();
+  if (orgId) signedUpOrgIds.push(orgId);
   return { email, password, inviteCode, orgId: orgId ?? '' };
 }

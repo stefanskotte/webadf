@@ -4,6 +4,13 @@ import { inArray, eq } from 'drizzle-orm';
 import { getDb } from '@/db';
 import { blobs, disks } from '@/db/schema/catalog';
 import { signUpFresh, runTag } from './helpers';
+import { cleanupSeeded } from './device-helpers';
+
+// These specs create their rows through the REAL ingest flow, so no helper
+// ever learns their ids -- cleanupSeeded reaches them by purging the whole
+// catalog of every org signUpFresh made in this file (see purgeSignedUpOrgs).
+
+test.afterAll(cleanupSeeded);
 
 test('check reports an unknown hash as missing', async ({ page }) => {
   await signUpFresh(page); // seeds the session cookie into the context

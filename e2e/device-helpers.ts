@@ -1,10 +1,13 @@
 import { randomUUID } from 'node:crypto';
-import { inArray } from 'drizzle-orm';
+import { eq, inArray } from 'drizzle-orm';
 import type { Page, APIRequestContext } from '@playwright/test';
 import { getDb } from '@/db';
 import { blobs, disks, games, entitlements } from '@/db/schema/catalog';
 import { devices, pairingCodes } from '@/db/schema/devices';
-import './helpers';   // side effect: loads .env.local before @/db is used
+import { collections } from '@/db/schema/collections';
+import { organization, member, user } from '@/db/schema/auth';
+import { diskStore } from '@/lib/storage';
+import { signedUpOrgIds } from './helpers';   // also a side effect: loads .env.local before @/db is used
 
 // Playwright runs one module instance per spec file with fullyParallel: false,
 // so module-level state is per-file and cleanupSeeded() in an afterAll removes
@@ -130,6 +133,91 @@ export function authHeader(token: string) {
   return { Authorization: `Bearer ${token}` };
 }
 
+
+/**
+ * Remove the whole catalog of every org signUpFresh created in this spec file.
+ *
+ * This is the half `seeded` above cannot cover. Four specs -- ingest-api,
+ * ingest-ui, library, and parts of tosec-scan/device-image/device-protocol --
+ * create their rows through the REAL ingest flow (presign -> PUT -> complete),
+ * so the application writes them and no helper ever learns their ids. Before
+ * this, those rows survived until global-teardown swept the whole run, which
+ * worked but left the guarantee resting on one mechanism: a teardown that is
+ * deliberately best-effort and never fails a run.
+ *
+ * THE SAFETY BOUNDARY IS THE EMAIL DOMAIN, exactly as in e2e/global-teardown.ts,
+ * and it is enforced here in SQL rather than assumed: an org is purged only if
+ * it has at least one member and EVERY member is @example.test. An org id that
+ * somehow reached this list without being a test org -- the operator's own --
+ * is skipped rather than trusted. Nothing here may ever widen that predicate.
+ *
+ * The auth schema is untouched: users and organizations are better-auth's, and
+ * global-teardown is still what removes them.
+ */
+async function purgeSignedUpOrgs(): Promise<void> {
+  const orgIds = signedUpOrgIds.splice(0);
+  if (orgIds.length === 0) return;
+  const db = getDb();
+
+  // Every member of every candidate org, so the predicate below is decided
+  // from data rather than from the id looking test-shaped. Bound parameters
+  // throughout -- an org id is a value, never spliced into SQL text.
+  const members = await db
+    .select({ orgId: member.organizationId, email: user.email })
+    .from(member)
+    .innerJoin(user, eq(user.id, member.userId))
+    .innerJoin(organization, eq(organization.id, member.organizationId))
+    .where(inArray(member.organizationId, orgIds));
+
+  const seen = new Set<string>();
+  const tainted = new Set<string>();
+  for (const m of members) {
+    seen.add(m.orgId);
+    if (!m.email.endsWith('@example.test')) tainted.add(m.orgId);
+  }
+  // At least one member, and not one of them outside the test domain.
+  const purgeable = [...seen].filter((id) => !tainted.has(id));
+  if (purgeable.length === 0) return;
+
+  // Collect the shas BEFORE the rows go -- afterwards there is no way back
+  // to them, and an object left in storage with no row is an invisible leak.
+  const shas = new Set<string>();
+  for (const r of await db.select({ sha256: disks.sha256 }).from(disks).where(inArray(disks.orgId, purgeable))) {
+    shas.add(r.sha256);
+  }
+  for (const r of await db.select({ sha256: entitlements.sha256 }).from(entitlements).where(inArray(entitlements.orgId, purgeable))) {
+    shas.add(r.sha256);
+  }
+
+  // collection_games follows by cascade from collections.id, and again from
+  // games.id -- but the collections rows themselves are reachable only here.
+  await db.delete(collections).where(inArray(collections.orgId, purgeable));
+  await db.delete(disks).where(inArray(disks.orgId, purgeable));
+  await db.delete(entitlements).where(inArray(entitlements.orgId, purgeable));
+  await db.delete(games).where(inArray(games.orgId, purgeable));
+
+  if (shas.size === 0) return;
+
+  // A blob is GLOBAL and content-addressed: the same bytes can be shared with
+  // another tenant, including the operator's real library, and dropping one
+  // still referenced would corrupt them. Only what NOTHING references now.
+  const all = [...shas];
+  const stillUsed = new Set<string>([
+    ...(await db.select({ sha256: disks.sha256 }).from(disks).where(inArray(disks.sha256, all))).map((r) => r.sha256),
+    ...(await db.select({ sha256: entitlements.sha256 }).from(entitlements).where(inArray(entitlements.sha256, all))).map((r) => r.sha256),
+  ]);
+  const orphaned = all.filter((sha) => !stillUsed.has(sha));
+  if (orphaned.length === 0) return;
+
+  // Bytes first, then the row. A removed object with a surviving row is
+  // recoverable and visible; a deleted row whose object survives is not,
+  // because the sha is the only handle anything has on it.
+  for (const sha256 of orphaned) {
+    try { await diskStore.remove(sha256); } catch { /* often never PUT at all */ }
+  }
+  await db.delete(blobs).where(inArray(blobs.sha256, orphaned));
+}
+
 /**
  * Remove everything this spec file seeded, in foreign-key order.
  *
@@ -161,6 +249,10 @@ export async function cleanupSeeded(): Promise<void> {
     if (seeded.shas.length) {
       await db.delete(blobs).where(inArray(blobs.sha256, seeded.shas));
     }
+    // The rows this file created through the REAL ingest flow, which no
+    // helper ever saw the ids of. Runs last: it reclaims blobs by asking what
+    // is still referenced, and the deletes above change that answer.
+    await purgeSignedUpOrgs();
   } catch (e) {
     console.warn('cleanupSeeded: best effort, continuing —', (e as Error).message);
   } finally {
@@ -169,5 +261,6 @@ export async function cleanupSeeded(): Promise<void> {
     seeded.shas.length = 0;
     seeded.deviceIds.length = 0;
     seeded.pairingCodes.length = 0;
+    signedUpOrgIds.length = 0;
   }
 }

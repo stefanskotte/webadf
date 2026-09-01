@@ -1,5 +1,12 @@
 import { test, expect } from '@playwright/test';
 import { signUpFresh } from './helpers';
+import { cleanupSeeded } from './device-helpers';
+
+// These specs create their rows through the REAL ingest flow, so no helper
+// ever learns their ids -- cleanupSeeded reaches them by purging the whole
+// catalog of every org signUpFresh made in this file (see purgeSignedUpOrgs).
+
+test.afterAll(cleanupSeeded);
 
 const ADF_BYTES = 901_120;
 

@@ -597,6 +597,46 @@ be unreachable by both the spec's cleanup and `global-teardown`, which is the sh
 
 ### 4. Backlog, not blocking anything
 
+- **Make the app usable on a phone.** Requested by the operator 2026-09-01. Today it is a
+  fixed desktop layout that merely *renders* on a phone; nothing about it is responsive by
+  accident, because almost nothing is responsive at all.
+
+  **The measurement, so nobody has to guess how far this reaches: the entire app contains ten
+  responsive utilities, and six of them are inside `src/components/ui/` (shadcn's own).** The
+  four that are actually ours are `game-facts.tsx`'s `md:flex-row` and three `md:grid-cols-3`
+  on admin pages. Everything else is written at one width. The `viewport` meta is NOT the
+  problem and is already correct — Next emits `width=device-width, initial-scale=1` by default
+  and nothing overrides it (verified in the build output).
+
+  **The one non-obvious constraint, and the reason this is not just a CSS pass: dnd-kit's
+  `PointerSensor` with a distance constraint eats touch scrolling.** The library grid's cards
+  are draggable with `activationConstraint: { distance: 8 }`
+  (`src/components/collections/collection-provider.tsx`), and the rail's grip already sets
+  `touchAction: 'none'`. On a mouse that is exactly right; on a touch screen a distance-based
+  activation cannot be told apart from the start of a scroll, so a finger dragged down the
+  library picks a card up instead of scrolling the page. The fix is a `TouchSensor` with a
+  **delay** constraint (press-and-hold to drag, move-immediately to scroll) alongside the
+  pointer one — not a media query. **Verify it on a real touch device, not in a resized
+  desktop window:** the whole collections increment shipped three defects that only a real
+  browser revealed (see 3g), and this is the same class of thing one level further out.
+
+  **The fixed widths that actually break, in rough order of damage:**
+
+  | Where | What |
+  |---|---|
+  | `game-grid.tsx` | `grid-cols-5`, unconditional — five columns on a 390 px phone is ~50 px per card |
+  | `collection-rail.tsx` | `w-56 shrink-0` (224 px) beside the grid — leaves ~110 px for the library itself |
+  | `game-table.tsx` | `grid-cols-[30px_1fr_104px_50px_128px_40px_74px_100px]` — ~526 px of fixed columns |
+  | `dropzone.tsx` | `grid-cols-5` plus a 400 px fixed-column row |
+  | `px-7` everywhere | 56 px of a 390 px screen spent on padding |
+  | `page-header.tsx` | a 34 px title and its actions on one `justify-between` row |
+
+  **Nothing in the suite would catch a regression:** `playwright.config.ts` declares no
+  `projects`, so all 154 tests run at the default 1280×720 desktop viewport. A mobile project
+  over a handful of the existing specs is the cheap way to stop this rotting again, and it
+  costs suite time — which already runs `workers: 1` for ~20 minutes — so pick the specs
+  deliberately rather than duplicating the whole suite.
+
 - **A unified breadcrumb, replacing the per-page eyebrow and the hand-written back links.**
   Requested by the operator 2026-09-01: as you drill Library → a game/demo/app → a disk's
   files, the trail should be one consistent, clickable thing. Notes for whoever plans it:
@@ -695,28 +735,48 @@ be unreachable by both the spec's cleanup and `global-teardown`, which is the sh
 
   Note the standing caveat that `disks.write_protected` is inert until write-back is designed —
   so this is only observable on hardware once the board actually honours the flag.
-- **A rich game detail page** — description, history, screenshots, publisher, "everything".
-  Requested by the operator 2026-08-31. **This is Increment C of the TOSEC work, not a UI task**,
-  and the distinction matters:
+- **Let a person edit their own titles' details — and never have a scan overwrite them.**
+  Requested by the operator 2026-09-01, replacing the old "rich game detail page" entry: the
+  page itself is fine as it stands, and the gap is that there is no way to fill it in by hand.
+  Every field an enrichment increment would have written is already there and already rendered;
+  nothing has ever written most of them, and no human path exists at all.
 
-  **TOSEC cannot supply any of it.** A DAT carries a canonical name, year, publisher, disk
-  numbering and dump flags — and nothing else. No description, no history, no images. The scan's
-  contribution is *identity*, which is precisely what makes enrichment possible: a disk matched to
-  a canonical TOSEC entry gives a trustworthy title/year/publisher to look the game up by, instead
-  of whatever the uploader called the file. Doing this before the scan existed would have meant
-  querying an external database with a filename.
+  **The single most important fact: the Authority rule is already built, and the edit UI's whole
+  job is to use it.** `MACHINE_SOURCES = ['filename', 'tosec', 'openretro']` in
+  `src/lib/tosec-apply.ts`, and `applyMatch` only ever overwrites a row whose source column is
+  one of those three. Writing **any other value** — `'human'`, say — makes that row permanently
+  immune to both the TOSEC scan and OpenRetro enrichment. That file's own comment says it
+  outright: *"A human edit (any other value, including NULL) is never overwritten — nothing
+  writes such a value today, but the rule exists before the first edit UI can forget it."* This
+  entry is that UI. It does not need a new mechanism; it needs to set the column.
 
-  **The columns are already there and already rendered.** `games` carries `genre`, `chipset` and
-  `coverAssetId`, `src/lib/queries.ts` selects all three, and `/games/[id]` already puts `year`,
-  `publisher`, `genre` and `chipset` in its subtitle. **Nothing has ever written them** — so the
-  page will start showing more the moment something populates them. Description, history and
-  screenshots need new columns; screenshots additionally need Blob storage and finally give
-  `coverAssetId` a purpose.
+  **There are THREE source columns, not one, and that is deliberate.** `metadataSource` governs
+  title/year/publisher; `factsSource` and `proseSource` are separate so OpenRetro's facts survive
+  a later prose import and vice versa. **An edit UI must decide, per field, which column it
+  stamps** — stamping all three because someone fixed a typo in the description would silently
+  freeze their publisher against every future scan, which is the opposite of what they asked for.
 
-  **The source is the open question.** OpenRetro and Hall of Light (abime.net) are the Amiga
-  databases worth evaluating. Both bring a network dependency, rate limits, and — for screenshots
-  — an attribution and licensing question that should be answered before images are copied into
-  this project's storage rather than after.
+  **Editing a title is not like editing the other fields, and this is the trap.** `sortTitle` is
+  `NOT NULL`, it is what `games_org_sort_idx` orders by, and `(sortTitle, year)` is the exact key
+  `mergeDuplicates` collapses duplicates on. So a title edit must write `sortTitle` too, and it
+  changes merge behaviour permanently: a human-edited row is **always** the survivor and never
+  the one a sweep deletes, and **two** human-edited rows in one duplicate set merge not at all.
+  That is correct behaviour, not a bug — but it means a person who edits two titles into agreement
+  will not see them merge, and the UI should not imply otherwise.
+
+  **The columns that already exist**, all on `games`, all selected by `src/lib/queries.ts`, none
+  writable by a human today: `genre`, `chipset`, `developer`, `players`, `description`, `history`,
+  `coverAssetId`. `/games/[id]` already renders `year`, `publisher`, `genre` and `chipset` in its
+  subtitle. **No migration is needed for the fields themselves** — only, probably, for an audit of
+  who changed what, which this app does not have anywhere yet (see the admin audit-log gap).
+
+  **What is NOT covered by this and should not be smuggled in:** editing a *disk* is a different
+  question from editing a *title*. `disks.tosecName` is overwritten by the next scan by design,
+  and `blobs` is global and content-addressed — a disk's bytes belong to every tenant that
+  uploaded them. Cover art and screenshots are also out: they need Blob storage plus an
+  attribution and licensing answer, and that answer should come before images land in this
+  project's storage, not after.
+
 - ~~**User-defined collections, with drag-and-drop.**~~ **DONE 2026-09-01 — see 3g.** Requested
   by the operator 2026-08-31: make your own categories ("My favorite games - AGA") and move games
   into them. The planning notes below are kept because the constraint they name outlived the
@@ -1070,12 +1130,26 @@ the row counts. Two gaps remain, both known and accepted rather than accidental:
 - **The `auth` schema's `user` and `organization` rows are not cleaned up.** Better Auth
   owns those tables, and tearing them down from an e2e helper is a larger change than this
   plan took on.
-- **`ingest-api`, `ingest-ui` and `library` specs still seed without cleanup.** They predate
-  plan 3a and were out of its scope (which was device helpers only), and **plan 3b did not
-  close them either** — 3b's own two specs both call `cleanupSeeded`, but these three were
-  no more in its scope than in 3a's. The live database continues to grow from those three
-  files every full `pnpm e2e` run. This is the cleanup gap to close first if anyone is
-  tidying: it is the only one still actively adding rows.
+- ~~**`ingest-api`, `ingest-ui` and `library` specs still seed without cleanup.**~~ **CLOSED
+  2026-09-01.** They create their rows through the REAL ingest flow, so no helper ever learned
+  the ids — `cleanupSeeded` now reaches them from the other end, purging the whole catalog of
+  every org `signUpFresh` made in that file. `signUpFresh` registers its own org (a plain array
+  in `helpers.ts`, which must never import anything reaching `@/db` — `loadEnvLocal()` runs
+  after imports are hoisted), so a spec cannot forget to opt in.
+
+  **The safety boundary is still the email domain, and it is now enforced in SQL rather than
+  assumed:** an org is purged only if it has at least one member and *every* member is
+  `@example.test`, decided from `auth."member"` joined to `auth."user"` with bound parameters.
+  An org id that reached the list without being a test org is skipped, not trusted.
+
+  Blobs are reclaimed the same way `global-teardown` does it — only shas nothing anywhere still
+  references, bytes removed before the row — because a blob is global and content-addressed and
+  may be shared with the operator's real library.
+
+  **Verified by running those three files with `globalTeardown` removed**, so only the per-file
+  cleanup could act: 15 tests passed and `games`/`disks`/`entitlements`/`blobs` all finished at
+  exactly their starting counts (6/11/11/11). The same run took `auth."user"` from 2 to 18,
+  which is the gap above and is still `global-teardown`'s job.
 
 ---
 

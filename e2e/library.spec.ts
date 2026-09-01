@@ -1,6 +1,13 @@
 import { test, expect, type Page } from '@playwright/test';
 import { createHash } from 'node:crypto';
 import { signUpFresh, runTag } from './helpers';
+import { cleanupSeeded } from './device-helpers';
+
+// These specs create their rows through the REAL ingest flow, so no helper
+// ever learns their ids -- cleanupSeeded reaches them by purging the whole
+// catalog of every org signUpFresh made in this file (see purgeSignedUpOrgs).
+
+test.afterAll(cleanupSeeded);
 
 test('a brand-new library shows the empty state, not an error', async ({ page }) => {
   await signUpFresh(page);
