@@ -52,6 +52,48 @@ test('the table shows a type derived from the TOSEC set', async ({ page }) => {
   }
 });
 
+test('the grid shows the same type as a pill on the cover', async ({ page }) => {
+  const user = await signUpFresh(page);
+  await seedTyped(user.orgId, 'gridtypedgame', 'Commodore Amiga - Games - [ADF]');
+  await seedTyped(user.orgId, 'gridtypeddemo', 'Commodore Amiga - Demos - Various - [ADF]');
+
+  await page.goto('/library');
+  await expect(page.getByTestId('game-grid')).toBeVisible();
+
+  for (const [title, expected] of [
+    ['gridtypedgame', 'Game'], ['gridtypeddemo', 'Demo'],
+  ] as const) {
+    const card = page.getByTestId('game-card').filter({ hasText: title });
+    await expect(card.getByTestId('grid-kind')).toHaveText(expected);
+  }
+});
+
+test('a grid card with no type carries no pill at all', async ({ page }) => {
+  // Not an empty pill and not a dash: on a cover, an "unknown" chip would be
+  // visual noise on the majority of cards. The table needs the dash because a
+  // column has to hold its place; a badge does not.
+  const user = await signUpFresh(page);
+  await seedDisk(user.orgId, { title: 'gridnotype', diskNo: 1, sha256: freshSha() });
+
+  await page.goto('/library');
+  const card = page.getByTestId('game-card').filter({ hasText: 'gridnotype' });
+  await expect(card).toBeVisible();
+  await expect(card.getByTestId('grid-kind')).toHaveCount(0);
+});
+
+test('a typed multi-disk card shows both the type and the disk count', async ({ page }) => {
+  // The two badges sit in opposite corners of the same cover; a layout change
+  // that dropped one would otherwise go unnoticed.
+  const user = await signUpFresh(page);
+  const first = await seedTyped(user.orgId, 'gridboth', 'Commodore Amiga - Games - [ADF]');
+  await addDisk(user.orgId, first.gameId, { diskNo: 2, sha256: freshSha() });
+
+  await page.goto('/library');
+  const card = page.getByTestId('game-card').filter({ hasText: 'gridboth' });
+  await expect(card.getByTestId('grid-kind')).toHaveText('Game');
+  await expect(card.getByText('2', { exact: true })).toBeVisible();
+});
+
 test('an unmatched game shows a dash, not a made-up type', async ({ page }) => {
   // The majority case on a real library: TOSEC recognises 45.9% of it.
   const user = await signUpFresh(page);

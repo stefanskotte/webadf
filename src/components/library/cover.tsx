@@ -18,8 +18,11 @@ function hueFor(id: string): number {
  * person is actually scanning for.
  */
 export function Cover({
-  id, title, diskCount, coverUrl,
-}: { id: string; title: string; diskCount: number; coverUrl?: string | null }) {
+  id, title, diskCount, coverUrl, kind,
+}: {
+  id: string; title: string; diskCount: number;
+  coverUrl?: string | null; kind?: string | null;
+}) {
   const hue = hueFor(id);
   return (
     <div className="relative overflow-hidden rounded-lg" style={{
@@ -60,6 +63,25 @@ export function Cover({
                   style={{ textShadow: '0 1px 3px rgba(0,0,0,0.55)' }}>{title}</span>
           </div>
         </>
+      )}
+      {/*
+        Deliberately styled like the disk-count badge opposite it, NOT like
+        the table's type pill. The table's sits on a pale card and can be a
+        translucent grey; this one sits over artwork or a saturated gradient,
+        where only a near-opaque chip stays legible. Consistency within a
+        surface beats consistency of one component across two surfaces.
+
+        Top-LEFT, mirroring the disk count top-right, so a card carrying both
+        stays balanced. On a card with real art the corners are usually the
+        blurred backdrop rather than the artwork itself, since the cover is
+        centred and contained.
+      */}
+      {kind && (
+        <div className="absolute left-2 top-2 rounded-full px-2 py-0.5 font-mono text-[9.5px] font-bold"
+             data-testid="grid-kind"
+             style={{ background: 'rgb(255 255 255 / 0.90)', color: '#16273a' }}>
+          {kind}
+        </div>
       )}
       {diskCount > 1 && (
         <div className="absolute right-2 top-2 rounded-full px-2 py-0.5 font-mono text-[9.5px] font-bold"

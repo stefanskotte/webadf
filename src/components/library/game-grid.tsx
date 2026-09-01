@@ -21,7 +21,8 @@ export function GameGrid({ games }: { games: GameListItem[] }) {
       {games.map((g) => (
         <Link key={g.id} href={`/games/${g.id}`} className="glass-card flex flex-col p-2.5"
               data-testid="game-card">
-          <Cover id={g.id} title={g.title} diskCount={g.diskCount} coverUrl={g.coverUrl} />
+          <Cover id={g.id} title={g.title} diskCount={g.diskCount}
+                 coverUrl={g.coverUrl} kind={g.kind} />
           <div className="flex flex-col gap-0.5 px-0.5 pb-1 pt-2.5">
             <span className="truncate text-[13px] font-semibold" style={{ color: 'var(--ink)' }}>
               {g.title}
