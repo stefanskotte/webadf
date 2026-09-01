@@ -2,6 +2,12 @@ import { defineConfig } from '@playwright/test';
 
 export default defineConfig({
   testDir: './e2e',
+  // Runs once after the whole suite. Without it a single run left ~70 users,
+  // orgs, games and disks in the live database permanently -- 4,600 rows had
+  // accumulated before this existed -- plus every uploaded object, which
+  // nothing had ever deleted. See e2e/global-teardown.ts for the safety
+  // boundary.
+  globalTeardown: './e2e/global-teardown.ts',
   // Both of these are needed, and the pair is easy to get wrong.
   //
   // fullyParallel: false only stops tests within ONE file running in
