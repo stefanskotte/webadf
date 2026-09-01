@@ -36,6 +36,7 @@ after plan 4a, rewritten again 2026-08-31 after plan 4b.**
 | **OpenRetro enrichment** | ✅ **done, all 9 tasks, merged to `master` and live in production.** Enriches 6.6% of the real archive against TOSEC's 45.9%; see 3d |
 | **e2e cleanup** | ✅ **done, merged and live 2026-09-01.** A run no longer leaks; 4,600 accumulated rows and 73 live invite codes swept; see 3e |
 | **Library covers, type pills, contrast** | ✅ **done, merged and live 2026-09-01.** Grid shows real cover art; grid and table both show a TOSEC-derived type; the grey ramp now passes WCAG AA |
+| **Read-only ADF filesystem reader** | ✅ **done, all 10 tasks, `feat/adf-filesystem-reader`.** Reads 80.3% of the archive (49/61) against TOSEC's 45.9% and OpenRetro's 6.6%; see 3f |
 | **Hardware** | boards ordered from JLCPCB |
 
 **Current branch:** `master`, clean and pushed. Everything below through the library-covers
@@ -466,6 +467,42 @@ so a future helper inventing its own id is caught automatically.
   rows itself. **If another spec starts failing after a clean run, suspect this shape first.**
 - The one-time backfill took **32 minutes** (4,601 sequential cascades over neon-http). A normal
   teardown handles ~120 users and adds a few seconds.
+
+### 3f. Read-only ADF filesystem reader — DONE 2026-09-01, `feat/adf-filesystem-reader`
+
+**`src/lib/adffs/`** — a pure, read-only AmigaDOS OFS/FFS reader for 901,120-byte ADF images (62
+vitest tests across 8 files), plus `/disks/[id]/files` (a Browse link on each disk row) and
+`GET /api/disks/[id]/files/[block]` to serve one file out of a disk. `archive.test.ts` runs the
+reader over the operator's real 61-disk `adf-archive/` and asserts the measured result exactly.
+
+**The measured result, which is the point of the increment: 49 of 61 disks readable (80.3%),
+against TOSEC's 45.9% and OpenRetro's 6.6%.** 25 OFS, 24 FFS, 6 INTL, 0 DIRC; 2,430 files in 427
+directories, max depth 4, zero cycles. The reader and the catalog are complementary rather than
+redundant — `Install3_1_4.adf`, `Workbench31 - wbench31.adf` and the `BestWB` disks are all TOSEC
+misses with a perfectly readable filesystem and a self-describing volume name, while the 12
+failures are games and demos with custom bootblocks, which is the expected shape.
+
+**Two traps, so nobody re-litigates them:**
+
+- **The root-block checksum is what rejects Project-X.** All four Project-X disks have
+  `T_HEADER` at offset 0 and `ST_ROOT` at offset 508 on a disk with no filesystem at all — block
+  880 is the middle of the game's data — and store `0x31313131` (ASCII `"1111"`) where the
+  checksum belongs. Structural checks alone would report a filesystem with a blank volume name on
+  a cracked game. Validity is DOS signature AND root type AND secondary type AND root checksum
+  correct — drop the last clause and Project-X passes.
+- **The boot-block checksum must NEVER gate validity.** Only 19 of the 49 disks with a sound
+  filesystem have a valid one; enforcing it would discard 61% of exactly what this reader exists
+  to read. Non-bootable data disks and disks with custom boot code routinely fail it, so the
+  reader classifies OFS/FFS/INTL/DIRC from the boot block without ever checking its checksum.
+
+**Worth a cross-reference:** `disks.tosecName` holds the UPLOADED filename until the identity
+scan runs and overwrites it with the canonical one (see 3d and the "Show each disk's real
+filename" backlog entry below) — the `/disks/[id]/files` page shows it as the disk's title, so a
+reader of that page may reasonably wonder why a Workbench disk is labelled with someone's upload.
+
+**Read-only by decision, not by omission.** Writing needs bitmap and hash-chain maintenance this
+reader deliberately skips; the write increment is already in the backlog with its constraints
+recorded, including that an edited disk deliberately has no TOSEC identity.
 
 ### 4. Backlog, not blocking anything
 

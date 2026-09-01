@@ -300,3 +300,24 @@ a cross-tenant request gets 404.
   image, needs no escaping, and avoids re-walking the tree to resolve a path.
 - **D-3-6. DIRC is detected and ignored.** It is a cache over the hash chains, which are read
   regardless; no disk in the archive uses it.
+
+---
+
+## What this increment delivered
+
+**Delivered on `feat/adf-filesystem-reader`, all 10 tasks.** `src/lib/adffs/` (62 vitest tests
+across 8 files: `constants`, `blocks`, `boot`, `root`, `dir`, `file`, `index`, `synthetic`),
+`/disks/[id]/files`, `GET /api/disks/[id]/files/[block]`, and 5 passing e2e specs in
+`e2e/adf-browser.spec.ts`.
+
+**`archive.test.ts` reproduces all ten figures §1 and §3.3 measured, exactly:** 61 files scanned,
+49 readable (80.3%), 25 OFS / 24 FFS / 6 INTL / 0 DIRC, 2,430 files in 427 directories, max depth
+4, zero cycles.
+
+**One figure differed on the first run, and it was the test's convention, not the reader.** Max
+depth read **5**, not the 4 this spec measured. The probe that produced this spec's figure walked
+from depth 0 and incremented on entering a subdirectory, so depth counts directory nesting levels
+*below* the root — `DOpus.adf`'s `DOpusSets/Storage/4colicons/Tools` is depth 4. `archive.test.ts`
+started its own walk at depth 1, shifting every level by one. The reader was never wrong; the fix
+was `walk(r.root, 0)` in the test, and the convention now has a comment naming that path so the
+next person who reads "depth 4" doesn't have to re-derive it.
