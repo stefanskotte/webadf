@@ -36,6 +36,15 @@ describe('downloadFilename', () => {
     expect(downloadFilename(null, '../../etc/passwd', SHA)).toBe('passwd.adf');
     expect(downloadFilename(null, 'C:\\games\\x.adf', SHA)).toBe('x.adf');
   });
+
+  it('appends no extension when the caller asks for none', () => {
+    // A file inside a disk is not an ADF: "startup-sequence" must stay itself.
+    expect(downloadFilename('startup-sequence', null, SHA, '')).toBe('startup-sequence');
+  });
+
+  it('still defaults to .adf for a whole disk', () => {
+    expect(downloadFilename(null, 'Workbench31', SHA)).toBe('Workbench31.adf');
+  });
 });
 
 describe('contentDisposition', () => {

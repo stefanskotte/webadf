@@ -28,9 +28,11 @@ export function downloadFilename(
   tosecName: string | null | undefined,
   sourceFilename: string | null | undefined,
   sha256: string,
+  ext: string = EXT,
 ): string {
   const chosen = base(tosecName) ?? base(sourceFilename) ?? sha256;
-  return /\.adf$/i.test(chosen) ? chosen : `${chosen}${EXT}`;
+  if (ext === '') return chosen;
+  return chosen.toLowerCase().endsWith(ext.toLowerCase()) ? chosen : `${chosen}${ext}`;
 }
 
 /**
