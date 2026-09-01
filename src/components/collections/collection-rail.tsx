@@ -225,10 +225,14 @@ function CollectionRow({
         </Link>
       )}
 
+      {/* The active highlight lives on the Link alone, not on this row, so
+          this count sits on the rail's plain glass whether or not the
+          collection is selected -- it must stay a --muted-2 grey. An earlier
+          draft flipped it to #fff when active and rendered it invisible. */}
       <span
         data-testid="collection-count"
         className="shrink-0 font-mono text-[10.5px]"
-        style={{ color: active && !renaming ? '#fff' : 'var(--muted-2)' }}
+        style={{ color: 'var(--muted-2)' }}
       >
         {collection.gameCount}
       </span>
@@ -307,6 +311,7 @@ function CreateCollectionForm() {
       <Plus size={13} style={{ color: 'var(--muted-2)' }} className="shrink-0" />
       <input
         data-testid="collection-create"
+        aria-label="New collection name"
         value={name}
         disabled={busy}
         onChange={(e) => setName(e.target.value)}

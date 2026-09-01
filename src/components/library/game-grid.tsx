@@ -83,10 +83,17 @@ function CardBody({ game: g }: { game: GameListItem }) {
 
 /** Unfiltered recently-added view: draggable onto a rail collection, not sortable against siblings. */
 function DraggableCard({ game: g }: { game: GameListItem }) {
-  const { attributes, listeners, setNodeRef, transform, isDragging } = useDraggable({
+  // `role` is pulled OUT of dnd-kit's attributes and thrown away: it is
+  // "button", and this card is an <a href> that really does navigate. Spread
+  // whole, it would have a screen reader announce every game in the library
+  // as a button, and the 8px activation constraint exists precisely so the
+  // link half keeps working. The rest of the attributes (tabIndex,
+  // aria-roledescription, aria-describedby) are kept.
+  const { attributes: dragAttributes, listeners, setNodeRef, transform, isDragging } = useDraggable({
     id: g.id,
     data: { type: 'game', id: g.id } satisfies GameDragData,
   });
+  const attributes = { ...dragAttributes, role: undefined };
   const style = {
     transform: CSS.Translate.toString(transform),
     opacity: isDragging ? 0.6 : 1,
@@ -97,6 +104,13 @@ function DraggableCard({ game: g }: { game: GameListItem }) {
       ref={setNodeRef}
       href={`/games/${g.id}`}
       data-testid="game-card"
+      // An <a href> is natively draggable, so pressing one and moving started
+      // the BROWSER's own link drag alongside dnd-kit's -- and dropping a
+      // link onto the page makes Chrome navigate to it, which took a person
+      // filing a game straight out of the library. The other half of that
+      // failure (the click the browser fires at the end of a drag) is fixed
+      // in collection-provider.tsx, which is the only place it CAN be fixed.
+      draggable={false}
       className="glass-card flex flex-col p-2.5"
       style={style}
       {...attributes}
@@ -110,10 +124,12 @@ function DraggableCard({ game: g }: { game: GameListItem }) {
 /** Filtered-to-a-collection view: sortable against siblings (reorders the collection), plus a remove control. */
 function SortableCard({ game: g, collectionId }: { game: GameListItem; collectionId: string }) {
   const router = useRouter();
-  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
+  // See DraggableCard on why `role` is discarded rather than spread.
+  const { attributes: dragAttributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
     id: g.id,
     data: { type: 'game', id: g.id } satisfies GameDragData,
   });
+  const attributes = { ...dragAttributes, role: undefined };
   const style = {
     transform: CSS.Translate.toString(transform),
     transition,
@@ -155,6 +171,8 @@ function SortableCard({ game: g, collectionId }: { game: GameListItem; collectio
       ref={setNodeRef}
       href={`/games/${g.id}`}
       data-testid="game-card"
+      // See DraggableCard on why an anchor must opt out of native dragging.
+      draggable={false}
       className="glass-card relative flex flex-col p-2.5"
       style={style}
       {...attributes}

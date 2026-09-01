@@ -13,7 +13,7 @@
 // id happened to collide (both are randomUUID()s from unrelated tables, so
 // nothing rules that out).
 
-import { createContext, useContext, useState, type ReactNode } from 'react';
+import { createContext, useContext, useEffect, useRef, useState, type ReactNode } from 'react';
 import { useRouter } from 'next/navigation';
 import { toast } from 'sonner';
 import {
@@ -117,6 +117,37 @@ export function CollectionsProvider({
     setGameIds(initialGameIds);
   }
 
+  /**
+   * Swallow the click the browser fires at the END of a drag.
+   *
+   * Every game card is an <a href>, so without this, dropping one onto a
+   * collection filed the game AND navigated to it -- the person lands on a
+   * game page instead of seeing their library. That is not fixable on the
+   * card: dnd-kit's PointerSensor already installs its OWN document-level
+   * capture listener that calls stopPropagation() on that click (see
+   * handleStart in @dnd-kit/core), so React's delegated onClick -- and
+   * therefore next/link's own handler -- never runs at all. What it does NOT
+   * do is preventDefault(), and the browser's default action on an anchor is
+   * to follow the href.
+   *
+   * So the fix has to be a listener on the same node. stopPropagation does
+   * not stop other listeners already registered on document, only the
+   * remaining path, so this one still runs and can prevent the default.
+   *
+   * Found by e2e/collections.spec.ts's drag test, which ended up on
+   * /games/<id> instead of on the library it started from.
+   */
+  const suppressNextClick = useRef(false);
+  useEffect(() => {
+    function onClickCapture(e: MouseEvent) {
+      if (!suppressNextClick.current) return;
+      suppressNextClick.current = false;
+      e.preventDefault();
+    }
+    document.addEventListener('click', onClickCapture, true);
+    return () => document.removeEventListener('click', onClickCapture, true);
+  }, []);
+
   // ~8px of movement before a drag starts. Without this, PointerSensor
   // starts a drag on the mousedown of a plain click -- and every card in the
   // grid is wrapped in a Link (src/components/library/game-grid.tsx), so an
@@ -205,7 +236,27 @@ export function CollectionsProvider({
     }
   }
 
+  function onDragStart() {
+    suppressNextClick.current = true;
+  }
+
+  /**
+   * A cancelled drag (Escape, or a lost pointer) never reaches onDragEnd, so
+   * it needs its own disarm -- otherwise the flag stays set and eats the next
+   * real click anywhere on the page.
+   */
+  function onDragCancel() {
+    setTimeout(() => { suppressNextClick.current = false; }, 0);
+  }
+
   function onDragEnd(event: DragEndEvent) {
+    // Armed on drag start, disarmed here on the next task -- by then the
+    // click belonging to this drag has been dispatched (the browser fires it
+    // in the same input-processing sequence as the mouseup that ended the
+    // drag). Without this, a drag that produced no click at all would leave
+    // the flag set and eat the NEXT real click on the page.
+    setTimeout(() => { suppressNextClick.current = false; }, 0);
+
     const { active, over } = event;
     if (!over) return; // dropped outside any droppable -- nothing to do
 
@@ -246,7 +297,16 @@ export function CollectionsProvider({
 
   return (
     <CollectionsContext.Provider value={{ collections, gameIds, filteredCollectionId }}>
-      <DndContext sensors={sensors} onDragEnd={onDragEnd}>
+      {/*
+        `id` is not decoration. dnd-kit derives the hidden drag description's
+        element id from a MODULE-LEVEL counter (useUniqueId in
+        @dnd-kit/utilities) when none is given -- and that module lives for
+        the whole life of the server process, so the server rendered
+        aria-describedby="DndDescribedBy-10" while a freshly loaded client
+        started again at 0. React reported a hydration mismatch on every
+        /library load. A fixed id is the same on both sides.
+      */}
+      <DndContext id="collections-dnd" sensors={sensors} onDragStart={onDragStart} onDragEnd={onDragEnd} onDragCancel={onDragCancel}>
         {children}
       </DndContext>
     </CollectionsContext.Provider>
