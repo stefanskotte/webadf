@@ -5,6 +5,8 @@ import { games, disks, blobs } from '@/db/schema/catalog';
 import { devices } from '@/db/schema/devices';
 import { openretroEntries, openretroImages } from '@/db/schema/openretro';
 import { pickCover, type CoverCandidate } from '@/lib/cover-pick';
+import { kindFromSetName, pickKind } from '@/lib/game-kind';
+import { tosecEntries } from '@/db/schema/tosec';
 import { orgFilter } from '@/db/scope';
 
 export interface GameListItem {
@@ -17,6 +19,12 @@ export interface GameListItem {
    * error state.
    */
   coverUrl: string | null;
+  /**
+   * 'Game' | 'Demo' | 'App' | 'Educational' | 'Coverdisk', from the TOSEC set
+   * that recognised the disks -- or null, which is the case for over half a
+   * real library (TOSEC matches 45.9% of the operator's archive).
+   */
+  kind: string | null;
   sizeBytes: number; sha256Prefix: string | null;
 }
 
@@ -43,12 +51,12 @@ export async function listGames(orgId: string, opts: { limit?: number } = {}): P
     .orderBy(desc(games.createdAt))     // recently added first (spec §10, D9)
     .limit(opts.limit ?? 200);
 
-  return withCovers(orgId, rows);
+  return withDerived(orgId, rows);
 }
 
 /**
- * Attach each game's cover image, as a SECOND query rather than more joins on
- * the aggregate above.
+ * Attach each game's cover image and its kind, as SEPARATE queries rather
+ * than more joins on the aggregate above.
  *
  * That aggregate already groups by games.id to count disks and sum sizes.
  * Reaching the images from there means two further joins (blobs, then
@@ -60,37 +68,63 @@ export async function listGames(orgId: string, opts: { limit?: number } = {}): P
  * exactly those sums.
  *
  * One extra round trip over at most `limit` games is the cheaper mistake.
+ *
+ * Covers and kinds are two queries rather than one for the same reason: a
+ * game with five images and four TOSEC-matched disks would return twenty rows
+ * from a single joined query, and each half would have to de-duplicate the
+ * other's fan-out. Two narrow queries run concurrently are simpler and cost
+ * one round trip, not two, in wall-clock terms.
  */
-async function withCovers<T extends { id: string }>(
+async function withDerived<T extends { id: string }>(
   orgId: string, rows: T[],
-): Promise<Array<T & { coverUrl: string | null }>> {
+): Promise<Array<T & { coverUrl: string | null; kind: string | null }>> {
   const ids = rows.map((r) => r.id);
   if (ids.length === 0) return [];
+  const db = getDb();
 
-  const found = await getDb()
-    .select({
+  const [images, sets] = await Promise.all([
+    db.select({
       gameId: disks.gameId,
       sha1: openretroImages.sha1,
       kind: openretroImages.kind,
       ordinal: openretroImages.ordinal,
     })
-    .from(disks)
-    .innerJoin(blobs, eq(blobs.sha256, disks.sha256))
-    // blobs and openretro_images are GLOBAL tables, so the org scope has to
-    // come from the disks side -- the same reasoning as the leftJoin above.
-    .innerJoin(openretroImages, eq(openretroImages.entryUuid, blobs.openretroEntryId))
-    .where(and(inArray(disks.gameId, ids), eq(disks.orgId, orgId)));
+      .from(disks)
+      .innerJoin(blobs, eq(blobs.sha256, disks.sha256))
+      // blobs, openretro_images and tosec_entries are all GLOBAL tables, so
+      // the org scope has to come from the disks side -- the same reasoning
+      // as the leftJoin above.
+      .innerJoin(openretroImages, eq(openretroImages.entryUuid, blobs.openretroEntryId))
+      .where(and(inArray(disks.gameId, ids), eq(disks.orgId, orgId))),
 
-  const byGame = new Map<string, CoverCandidate[]>();
-  for (const f of found) {
-    const list = byGame.get(f.gameId) ?? [];
+    db.select({ gameId: disks.gameId, setName: tosecEntries.setName })
+      .from(disks)
+      .innerJoin(blobs, eq(blobs.sha256, disks.sha256))
+      .innerJoin(tosecEntries, eq(tosecEntries.id, blobs.tosecEntryId))
+      .where(and(inArray(disks.gameId, ids), eq(disks.orgId, orgId))),
+  ]);
+
+  const coversByGame = new Map<string, CoverCandidate[]>();
+  for (const f of images) {
+    const list = coversByGame.get(f.gameId) ?? [];
     list.push({ sha1: f.sha1, kind: f.kind, ordinal: f.ordinal });
-    byGame.set(f.gameId, list);
+    coversByGame.set(f.gameId, list);
+  }
+
+  const kindsByGame = new Map<string, Array<string | null>>();
+  for (const s of sets) {
+    const list = kindsByGame.get(s.gameId) ?? [];
+    list.push(kindFromSetName(s.setName));
+    kindsByGame.set(s.gameId, list);
   }
 
   return rows.map((r) => {
-    const chosen = pickCover(byGame.get(r.id) ?? []);
-    return { ...r, coverUrl: chosen ? `/api/images/${chosen.sha1}` : null };
+    const chosen = pickCover(coversByGame.get(r.id) ?? []);
+    return {
+      ...r,
+      coverUrl: chosen ? `/api/images/${chosen.sha1}` : null,
+      kind: pickKind(kindsByGame.get(r.id) ?? []),
+    };
   });
 }
 

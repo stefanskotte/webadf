@@ -138,13 +138,28 @@
   --grad-bot: #eef1f2;
 
   --on-dark:        #eef3f6;
-  --on-dark-muted:  rgb(233 240 244 / 0.62);
+  /* 0.78, not 0.62. At 0.62 this text sat at 4.03:1 over the gradient's
+     #3a4d61 band -- under AA -- and it is used for page subtitles and the
+     eyebrow, which are small. 0.78 measures 5.35:1 there and 8.68:1 over
+     the darker top band. */
+  --on-dark-muted:  rgb(233 240 244 / 0.78);
 
   --ink:        #16232f;
   --foreground: #223140;
-  --muted:      #5b6c7c;
-  --muted-2:    #8a99a6;
-  --faint:      #a9b4bd;
+  /* This ramp is contrast-checked, not eyeballed. The previous values were
+     --muted #5b6c7c (4.90:1), --muted-2 #8a99a6 (2.64:1) and --faint
+     #a9b4bd (1.91:1) measured against a glass card over the gradient's pale
+     #f1f4f5 band. The lower two failed WCAG AA badly while being used at
+     10-11px in the library table -- small, mono, and the hardest text in the
+     app to read. Every value below clears 4.5:1 on that same background.
+
+     The ramp is necessarily tighter than it was: on a near-white surface you
+     cannot have both four visibly distinct greys and AA at all of them. Size
+     and weight carry the rest of the hierarchy. Do not lighten these back
+     toward the old values without re-running the contrast numbers. */
+  --muted:      #4c5966;   /* 6.49:1 */
+  --muted-2:    #5f6874;   /* 5.11:1 */
+  --faint:      #666d75;   /* 4.74:1 */
 
   --glass:        rgb(255 255 255 / 0.62);
   --glass-panel:  rgb(255 255 255 / 0.68);
