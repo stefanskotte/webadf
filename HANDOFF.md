@@ -858,9 +858,11 @@ be unreachable by both the spec's cleanup and `global-teardown`, which is the sh
   increment should record WHICH BLOCKS changed rather than a flattened result. Designing these
   separately would produce two incompatible answers to the same question.
 
-- **A read-only ADF browser** (disk-change spec §5) — parses OFS/FFS out of a stored ADF
-  with no mounting involved. Buildable today, blocked on nothing, and useful right now for
-  the unmatched-disk review queue.
+- ~~**A read-only ADF browser**~~ (disk-change spec §5) — **DONE 2026-09-01, see 3f.** Parses
+  OFS/FFS out of a stored ADF with no mounting involved; reads 49 of the operator's 61 disks
+  (80.3%). Left listed because the reason it was wanted — a review queue for disks TOSEC does
+  not recognise — was NOT built, and is still worth having: the reader is what makes it
+  possible, since a Workbench disk TOSEC misses has a perfectly readable volume name.
 - **Moving ADF→MFM encoding onto the Pico** (spec §13) if server-side encoding
   (9.6 ms/disk, ~2 MB over TLS) ever turns out not to hold up. `adfmfm` is written
   dependency-free specifically so this would be a transliteration, not a rewrite.
