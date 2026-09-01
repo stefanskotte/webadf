@@ -1,3 +1,4 @@
+import Link from 'next/link';
 import type { GameDetailDisk } from '@/lib/queries';
 import { WriteProtectToggle } from './write-protect-toggle';
 import { MountAction, type MountTarget } from './mount-action';
@@ -74,6 +75,19 @@ export function DiskRow({ disk, devices, holder }: {
       >
         Download
       </a>
+      {/*
+        Link, not <a>: this is an internal navigation to the file browser
+        page and should be client-side, unlike Download above which must be
+        a real request so the browser streams the response to disk.
+      */}
+      <Link
+        href={`/disks/${disk.id}/files`}
+        data-testid={`browse-${disk.id}`}
+        className="shrink-0 rounded-lg px-3 py-1.5 text-[12px] font-semibold"
+        style={{ background: 'var(--glass-strong)', color: 'var(--ink)' }}
+      >
+        Browse
+      </Link>
       <WriteProtectToggle diskId={disk.id} writeProtected={disk.writeProtected} />
       <MountAction diskId={disk.id} devices={devices} />
     </div>
