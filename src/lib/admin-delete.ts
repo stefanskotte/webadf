@@ -19,6 +19,7 @@ import { getDb } from '@/db';
 import { entitlements, games, disks } from '@/db/schema/catalog';
 import { devices, pairingCodes, invites } from '@/db/schema/devices';
 import { user, member, organization } from '@/db/schema/auth';
+import { collections } from '@/db/schema/collections';
 
 export interface DeleteUserResult {
   orgId: string | null;
@@ -91,6 +92,12 @@ export async function deleteUserCascade(userId: string): Promise<DeleteUserResul
     // entitlements first: they reference blobs, and clearing them is what
     // makes a blob reclaimable later by the backlog GC. Never blobs themselves.
     stmts.push(db.delete(entitlements).where(eq(entitlements.orgId, orgId)));
+
+    // collection_games follows by cascade from collections.id. Placed before
+    // the games delete below: both would work (the games cascade would also
+    // clear membership), but deleting collections first removes the rows for
+    // the reason they actually belong to this org, rather than incidentally.
+    stmts.push(db.delete(collections).where(eq(collections.orgId, orgId)));
 
     // games cascades to disks via disks.game_id ON DELETE CASCADE...
     gamesIdx.push(stmts.push(

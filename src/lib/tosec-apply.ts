@@ -16,6 +16,7 @@ import { getDb } from '@/db';
 import { games, disks } from '@/db/schema/catalog';
 import { devices } from '@/db/schema/devices';
 import { tosecEntries } from '@/db/schema/tosec';
+import { collectionGames } from '@/db/schema/collections';
 
 // Sources this system writes for itself. Anything else means a human decided
 // it, and a human's row is never deleted by a sweep -- the Authority rule
@@ -164,6 +165,32 @@ async function mergeDuplicates(orgId: string, sortTitle: string, year: number | 
       .where(and(eq(devices.orgId, orgId), eq(devices.desiredGameId, gone))));
     stmts.push(db.update(devices).set({ mountedGameId: survivor })
       .where(and(eq(devices.orgId, orgId), eq(devices.mountedGameId, gone))));
+
+    // Collections are HUMAN-authored and cannot be recomputed, unlike every
+    // other grouping in this app. A membership row left pointing at `gone`
+    // would be destroyed by the cascade below, silently removing a game from
+    // someone's collection with no error and nothing to recover from.
+    //
+    // TWO statements, and the ORDER MATTERS. If a collection already holds
+    // the survivor as well as `gone`, a bare repoint produces two rows with
+    // the same (collection_id, game_id) and violates the primary key --
+    // which, because db.batch() is atomic, aborts the ENTIRE merge. The
+    // sweeper does not stamp a blob whose applyMatch threw, so it would retry
+    // that merge on every pass forever. Deleting the would-be duplicates
+    // first makes the repoint always legal.
+    stmts.push(db.delete(collectionGames).where(and(
+      eq(collectionGames.gameId, gone),
+      inArray(
+        collectionGames.collectionId,
+        db.select({ id: collectionGames.collectionId })
+          .from(collectionGames)
+          .where(eq(collectionGames.gameId, survivor)),
+      ),
+    )));
+    stmts.push(db.update(collectionGames)
+      .set({ gameId: survivor })
+      .where(eq(collectionGames.gameId, gone)));
+
     stmts.push(db.delete(games).where(and(eq(games.id, gone), ne(games.id, survivor))));
   }
   await db.batch(stmts as [BatchItem<'pg'>, ...BatchItem<'pg'>[]]);
