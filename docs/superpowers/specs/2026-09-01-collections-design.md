@@ -250,3 +250,43 @@ reorder preview), and reordering is explicitly in scope.
 - **D-4-6. `dnd-kit` is added** because reordering is in scope; native HTML5 drag would have
   sufficed for adding alone.
 - **D-4-7. Collections are invisible to the device plane.** No endpoint, no protocol change.
+
+---
+
+## 9. What this increment delivered — 2026-09-01, `feat/collections`
+
+Everything in §2's scope shipped: the two tables, the six routes, the rail, drag-to-file,
+drag-to-reorder in both directions, and the per-card remove control of §6.1. Migration 0011 is
+applied to the live database. `e2e/collections.spec.ts` covers all eight cases §7 asks for,
+including both halves of the §3.1 hazard with the merge proven to have fired first.
+
+**What changed shape during implementation:**
+
+- **D-4-6's aside is wrong, and in an instructive direction.** It says native HTML5 drag would
+  have sufficed for adding alone. It would not have: a game card is an `<a href>`, an anchor is
+  natively draggable, and dropping a link onto the page makes Chrome navigate to it — so the
+  native behaviour actively fought the library's own. Every card now carries
+  `draggable={false}` to switch it off. Native drag is not the cheaper option here; it is an
+  adversary.
+- **Two more dnd-kit facts had to be designed around, and neither is visible without a real
+  browser.** Its `PointerSensor` `stopPropagation`s the click that ends a drag but never
+  `preventDefault`s it, so React's delegated `onClick` (and `next/link`'s handler with it) never
+  runs while the browser still follows the href — the suppression has to be a second
+  document-level capture listener, which lives in `collection-provider.tsx`. And `DndContext`
+  needs an explicit `id`, or its hidden description element's id comes from a module-level
+  counter that differs between a long-lived server process and a fresh client, producing a
+  hydration mismatch on every page load.
+- **`GET /api/collections` exists** in addition to the six routes §6 lists. It costs nothing and
+  the e2e suite uses it to assert a tenant sees no other tenant's collections.
+- **`?collection=` is resolved against `listCollections(orgId)` in the page**, not passed to
+  `listGames`. `collection_games` has no `org_id` (D-4-5), so `listGames`' filtered join trusts
+  its caller to have already proven ownership; resolving the id against this org's own
+  collections is that proof. An unknown or foreign id falls back to the unfiltered library
+  rather than 404ing, because a stale link should not break the page.
+- **Ordering is by `(sortKey, id)` everywhere, never `sortKey` alone.** `sortKey` is not unique,
+  and a non-unique ORDER BY paired with a first-row pick has already caused one bug in this
+  codebase.
+
+**Not delivered, and not in scope:** collections remain invisible to the device plane (D-4-7),
+and the library's table view shows the rail and honours the filter but has no drag affordance of
+its own — there is nothing in `game-table.tsx` to drag.

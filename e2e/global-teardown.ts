@@ -72,8 +72,14 @@ export default async function globalTeardown() {
       try {
         // The application's OWN cascade, already covered by
         // admin-delete.spec.ts -- orgs, members, games, disks, entitlements,
-        // devices, pairing codes and invites. Reusing it means the teardown
-        // cannot drift from the behaviour the app actually has.
+        // devices, pairing codes, collections and invites. Reusing it means
+        // the teardown cannot drift from the behaviour the app actually has.
+        //
+        // Collections are reachable ONLY through a real user's org, so a
+        // fixture that ever creates one under a placeholder org id would
+        // leak it permanently -- the same shape that let 4,144 invite codes
+        // accumulate. e2e/collections.spec.ts creates them under signUpFresh
+        // orgs for exactly that reason.
         const result = await deleteUserCascade(row.id);
         users++;
         games += result.games;

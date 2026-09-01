@@ -1,16 +1,34 @@
 import { requireOrg } from '@/lib/session';
 import { listGames } from '@/lib/queries';
+import { listCollections } from '@/lib/collections';
 import { PageHeader } from '@/components/shell/page-header';
 import { GameGrid } from '@/components/library/game-grid';
 import { GameTable } from '@/components/library/game-table';
 import { ViewToggle } from '@/components/library/view-toggle';
+import { CollectionsProvider } from '@/components/collections/collection-provider';
+import { CollectionRail } from '@/components/collections/collection-rail';
 
 export default async function LibraryPage(props: PageProps<'/library'>) {
   const { orgId } = await requireOrg();
   const sp = await props.searchParams;
   const view = sp.view === 'table' ? 'table' : 'grid';
 
-  const games = await listGames(orgId);
+  const collections = await listCollections(orgId);
+
+  // sp.collection is untrusted input straight off the query string. It is
+  // NEVER handed to listGames directly: collection_games carries no org_id
+  // of its own (D-4-5), so listGames' filtered join trusts its caller
+  // entirely to have already proven the id belongs to this org. Resolving
+  // it against listCollections(orgId) -- this org's OWN collections -- is
+  // that proof. An id absent from that list (unknown, or another tenant's)
+  // falls back to unfiltered rather than ever reaching listGames, and never
+  // a 404: a stale link should quietly show the whole library, not break it.
+  const requestedCollectionId = typeof sp.collection === 'string' ? sp.collection : undefined;
+  const filteredCollectionId = requestedCollectionId && collections.some((c) => c.id === requestedCollectionId)
+    ? requestedCollectionId
+    : null;
+
+  const games = await listGames(orgId, filteredCollectionId ? { collectionId: filteredCollectionId } : {});
   const diskTotal = games.reduce((n, g) => n + g.diskCount, 0);
 
   return (
@@ -25,7 +43,18 @@ export default async function LibraryPage(props: PageProps<'/library'>) {
         subtitle={`${games.length.toLocaleString()} titles · ${diskTotal.toLocaleString()} disks`}
         actions={<ViewToggle view={view} />}
       />
-      {view === 'table' ? <GameTable games={games} /> : <GameGrid games={games} />}
+      <CollectionsProvider
+        collections={collections}
+        gameIds={games.map((g) => g.id)}
+        filteredCollectionId={filteredCollectionId}
+      >
+        <div className="flex items-start gap-4">
+          <CollectionRail />
+          <div className="min-w-0 flex-1">
+            {view === 'table' ? <GameTable games={games} /> : <GameGrid games={games} />}
+          </div>
+        </div>
+      </CollectionsProvider>
     </>
   );
 }

@@ -35,12 +35,15 @@ after plan 4a, rewritten again 2026-08-31 after plan 4b.**
 | **TOSEC identity scan** | ✅ **done, 12 tasks, merged to `master`.** `/admin/scan`: DAT import, hashing, matching, backfill |
 | **OpenRetro enrichment** | ✅ **done, all 9 tasks, merged to `master` and live in production.** Enriches 6.6% of the real archive against TOSEC's 45.9%; see 3d |
 | **e2e cleanup** | ✅ **done, merged and live 2026-09-01.** A run no longer leaks; 4,600 accumulated rows and 73 live invite codes swept; see 3e |
+| **User-defined collections** | ✅ **done, all 9 tasks, `feat/collections`.** A rail on `/library`, drag to file and to reorder; migration 0011 applied to the live DB; see 3g |
 | **Library covers, type pills, contrast** | ✅ **done, merged and live 2026-09-01.** Grid shows real cover art; grid and table both show a TOSEC-derived type; the grey ramp now passes WCAG AA |
 | **Read-only ADF filesystem reader** | ✅ **done, all 10 tasks, `feat/adf-filesystem-reader`.** Reads 80.3% of the archive (49/61) against TOSEC's 45.9% and OpenRetro's 6.6%; see 3f |
 | **Hardware** | boards ordered from JLCPCB |
 
-**Current branch:** `master`, clean and pushed. Everything below through the library-covers
-work is merged and live in production. **Plan 5 (hardware bring-up) is the only unbuilt plan.**
+**Current branch:** `feat/collections`, **complete but NOT merged and NOT pushed** — 10 commits
+ahead of `master`, with the whole suite green on it (see 3g). Everything below through the
+library-covers work is merged and live in production. **Plan 5 (hardware bring-up) is the only
+unbuilt plan.**
 **Suite on `master`:** 310 vitest, `pnpm build` clean, **134 Playwright passed (16.1 min)**. Firmware: `pnpm firmware:test` green (506 checks, 13
 binaries), `pnpm firmware:build` produces a `.uf2` — **and now requires
 `PORTAL_AP_PASSWORD` set in the environment, or the configure step fails by design**; see
@@ -504,6 +507,96 @@ reader of that page may reasonably wonder why a Workbench disk is labelled with 
 reader deliberately skips; the write increment is already in the backlog with its constraints
 recorded, including that an edited disk deliberately has no TOSEC identity.
 
+### 3g. User-defined collections — DONE 2026-09-01, `feat/collections`
+
+Two per-tenant tables (`collections`, `collection_games`), six API routes, and a rail on
+`/library` beside the existing grid — cards drag into a collection, collections drag into
+order, and games drag into order inside one. **Migration 0011 is applied to the live
+database.** Spec: `docs/superpowers/specs/2026-09-01-collections-design.md`. Plan:
+`docs/superpowers/plans/2026-09-01-collections.md`.
+
+**`mergeDuplicates` now repoints `collection_games`, delete-then-update, and that is the
+point of the increment.** `src/lib/tosec-apply.ts` DELETES `games` rows when a TOSEC scan
+collapses two titles into one; `collection_games.game_id` cascades, so an unrepointed
+membership row is destroyed silently, and a collection is the one thing in this app nobody
+can regenerate. **`collection_games` is now the SECOND table whose game id has to join that
+batch** — `devices.desiredGameId`/`mountedGameId` were the first — so the pattern, not the
+table, is what to carry forward: **anything new holding a `games.id` belongs in that
+statement list, and it is the first place to look, not an afterthought.** The DELETE must
+precede the UPDATE: a collection holding both the survivor and the absorbed game makes a bare
+repoint violate the composite primary key, and because `db.batch()` is atomic that aborts the
+whole merge and the sweeper retries it on every pass forever.
+
+**`collection_games.gameId` cascades DELIBERATELY, and that is the opposite of the
+`disks.gameId` ruling.** Losing a collection entry when its game is genuinely gone is correct.
+Losing a *disk* is not: `readDesired` joins on `devices.desiredDiskId`, and a disk that
+vanishes is indistinguishable from an eject. The cascade here is a safety net under the
+repointing above, not a substitute for it — within one batch the UPDATE runs first and the
+cascade finds nothing left.
+
+**A reorder rejects unknown ids, duplicates AND omissions** (`src/lib/collection-order.ts`,
+proven in vitest). That is what makes it safe for the endpoint to accept a whole
+client-supplied list: a reorder can never change membership, only its order.
+
+**`dnd-kit` is this repo's first drag-and-drop dependency** (`@dnd-kit/core`, `/sortable`,
+`/utilities`). One `DndContext` in `src/components/collections/collection-provider.tsx` wraps
+both the rail and the grid, because a card is dragged from one to the other and two contexts
+cannot see each other's draggables.
+
+**Three things about that dependency were found only by driving a real browser, and all three
+are invisible to vitest and to `pnpm build`:**
+
+- **An `<a href>` is natively draggable, and dropping a link on the page makes Chrome navigate
+  to it.** Pressing a card and moving started the browser's own link drag *alongside*
+  dnd-kit's, and filing a game took the person out of the library and onto that game's page.
+  Every card carries `draggable={false}`. Note this contradicts D-4-6's aside that native
+  HTML5 drag would have sufficed for adding alone: native drag is not neutral here, it is an
+  active adversary.
+- **dnd-kit `stopPropagation`s the click that ends a drag, but never `preventDefault`s it.**
+  Its `PointerSensor` installs a document-level capture listener on activation, so React's
+  delegated `onClick` — and therefore `next/link`'s own handler — never runs at all, while the
+  browser still follows the href. **An `onClick` on the card cannot fix this and neither can
+  `next/link`;** the fix has to be another document-level capture listener, which is what
+  `collection-provider.tsx` installs (armed on drag start, disarmed a task after drag end or
+  cancel, so it never eats an unrelated click).
+- **`DndContext` needs an explicit `id`.** Without one, dnd-kit derives its hidden
+  description element's id from a MODULE-LEVEL counter that lives as long as the server
+  process, so the server rendered `aria-describedby="DndDescribedBy-10"` while a fresh client
+  started at 0 — a React hydration mismatch on every `/library` load.
+
+**Smaller rulings, so nobody re-litigates them:**
+
+- **The two membership statements in `mergeDuplicates` are deliberately NOT org-scoped.**
+  `collection_games` has no `org_id` (D-4-5), so they match on `game_id` alone. Safe because
+  `mergeDuplicates` picks its duplicates within one org and `addGameToCollection` refuses to
+  file another org's game. Mirrors the `disks` repoint in the same loop, for the same reason.
+- **`?collection=` is resolved against `listCollections(orgId)` before it reaches
+  `listGames`,** which trusts its caller entirely — `collection_games` has no `org_id` to
+  scope on. An unknown or another tenant's id falls back to the unfiltered library and never
+  404s: a stale link should not break the page.
+- **The collections delete in `deleteUserCascade` sits in the `orgIds` loop, not
+  `soleOrgIds`,** so deleting one member destroys a co-member's collections. That matches the
+  existing treatment of games, disks and devices; it is flagged only because collections
+  cannot be regenerated.
+- **Narrow concurrency window in the merge:** a user adding the survivor to a collection
+  between the DELETE's snapshot and the UPDATE would trip the primary key and abort one sweep
+  pass. It **self-heals** on the next pass, so it is not the forever-loop D-4-1 warns about.
+- The `inArray(col, db.select())` subquery form was hand-verified against the live neon-http
+  driver, standalone and inside a `db.batch()`.
+- `PATCH /api/collections/order` was live-verified to reach the static `order/route.ts` rather
+  than being read by `[id]/route.ts` as a rename of a collection named "order".
+
+**Suite on `feat/collections`:** 408 vitest, `pnpm build` clean, lint at the pre-existing
+3-error baseline, **154 Playwright passed (19.6 min)** — the whole suite, not just the new file.
+**Not merged to `master` and not pushed.**
+
+**e2e:** `e2e/collections.spec.ts`, 10 tests, including both halves of the merge hazard (both
+games in one collection; only the absorbed one), the three reorder rejections with membership
+asserted unchanged after each, and a real pointer-driven drag. **Every fixture creates its
+collections under a real signed-up org** — a collection filed under a placeholder org id would
+be unreachable by both the spec's cleanup and `global-teardown`, which is the shape that let
+4,144 invite codes accumulate.
+
 ### 4. Backlog, not blocking anything
 
 - **Write-back and layered disks** (disk-change spec §5). Deliberately not designed yet;
@@ -587,9 +680,12 @@ recorded, including that an edited disk deliberately has no TOSEC identity.
   databases worth evaluating. Both bring a network dependency, rate limits, and — for screenshots
   — an attribution and licensing question that should be answered before images are copied into
   this project's storage rather than after.
-- **User-defined collections, with drag-and-drop.** Requested by the operator 2026-08-31: make
-  your own categories ("My favorite games - AGA") and move games into them. Notes for whoever
-  plans it:
+- ~~**User-defined collections, with drag-and-drop.**~~ **DONE 2026-09-01 — see 3g.** Requested
+  by the operator 2026-08-31: make your own categories ("My favorite games - AGA") and move games
+  into them. The planning notes below are kept because the constraint they name outlived the
+  increment: the "any new table holding a game id" rule now has two tables obeying it, not one.
+  The drag-and-drop paragraph's aside about native HTML5 drag turned out to be worse than
+  neutral — see 3g.
 
   **The one non-obvious constraint: the TOSEC scan DELETES `games` rows.** `mergeDuplicates` in
   `src/lib/tosec-apply.ts` collapses two games that resolve to the same `(sortTitle, year)` — it
