@@ -35,15 +35,13 @@ after plan 4a, rewritten again 2026-08-31 after plan 4b.**
 | **TOSEC identity scan** | ✅ **done, 12 tasks, merged to `master`.** `/admin/scan`: DAT import, hashing, matching, backfill |
 | **OpenRetro enrichment** | ✅ **done, all 9 tasks, merged to `master` and live in production.** Enriches 6.6% of the real archive against TOSEC's 45.9%; see 3d |
 | **e2e cleanup** | ✅ **done, merged and live 2026-09-01.** A run no longer leaks; 4,600 accumulated rows and 73 live invite codes swept; see 3e |
-| **User-defined collections** | ✅ **done, all 9 tasks, `feat/collections`.** A rail on `/library`, drag to file and to reorder; migration 0011 applied to the live DB; see 3g |
+| **User-defined collections** | ✅ **done, all 9 tasks, merged to `master` and live in production.** A rail on `/library`, drag to file and to reorder; migration 0011 applied; see 3g |
 | **Library covers, type pills, contrast** | ✅ **done, merged and live 2026-09-01.** Grid shows real cover art; grid and table both show a TOSEC-derived type; the grey ramp now passes WCAG AA |
 | **Read-only ADF filesystem reader** | ✅ **done, all 10 tasks, `feat/adf-filesystem-reader`.** Reads 80.3% of the archive (49/61) against TOSEC's 45.9% and OpenRetro's 6.6%; see 3f |
 | **Hardware** | boards ordered from JLCPCB |
 
-**Current branch:** `feat/collections`, **complete but NOT merged and NOT pushed** — 10 commits
-ahead of `master`, with the whole suite green on it (see 3g). Everything below through the
-library-covers work is merged and live in production. **Plan 5 (hardware bring-up) is the only
-unbuilt plan.**
+**Current branch:** `master`, clean and pushed. Everything below, collections included, is
+merged and live in production. **Plan 5 (hardware bring-up) is the only unbuilt plan.**
 **Suite on `master`:** 310 vitest, `pnpm build` clean, **134 Playwright passed (16.1 min)**. Firmware: `pnpm firmware:test` green (506 checks, 13
 binaries), `pnpm firmware:build` produces a `.uf2` — **and now requires
 `PORTAL_AP_PASSWORD` set in the environment, or the configure step fails by design**; see
@@ -507,7 +505,7 @@ reader of that page may reasonably wonder why a Workbench disk is labelled with 
 reader deliberately skips; the write increment is already in the backlog with its constraints
 recorded, including that an edited disk deliberately has no TOSEC identity.
 
-### 3g. User-defined collections — DONE 2026-09-01, `feat/collections`
+### 3g. User-defined collections — DONE 2026-09-01, merged to `master` and live
 
 Two per-tenant tables (`collections`, `collection_games`), six API routes, and a rail on
 `/library` beside the existing grid — cards drag into a collection, collections drag into
@@ -586,9 +584,9 @@ are invisible to vitest and to `pnpm build`:**
 - `PATCH /api/collections/order` was live-verified to reach the static `order/route.ts` rather
   than being read by `[id]/route.ts` as a rename of a collection named "order".
 
-**Suite on `feat/collections`:** 408 vitest, `pnpm build` clean, lint at the pre-existing
-3-error baseline, **154 Playwright passed (19.6 min)** — the whole suite, not just the new file.
-**Not merged to `master` and not pushed.**
+**Suite at merge:** 408 vitest, `pnpm build` clean, lint at the pre-existing 3-error baseline,
+**154 Playwright passed (19.6 min)** — the whole suite, not just the new file. **Merged to
+`master` and pushed to production 2026-09-01.**
 
 **e2e:** `e2e/collections.spec.ts`, 10 tests, including both halves of the merge hazard (both
 games in one collection; only the absorbed one), the three reorder rejections with membership
