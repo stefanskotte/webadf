@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64">
+  <!--
+    The webadf mark, small-size variant: the slot and the label's ruled lines
+    are removed and the keyline goes to 7, because a sub-pixel outline is the
+    first thing a browser tab throws away. Kept in step with
+    src/components/shell/logo.tsx by hand -- there is no build step generating
+    this, and there does not need to be for three shapes.
+  -->
+  <path d="M12 5 H43.5 L59 20.5 V52 A7 7 0 0 1 52 59 H12 A7 7 0 0 1 5 52 V12 A7 7 0 0 1 12 5 Z"
+        fill="#16232f" stroke="#c8cfd3" stroke-width="7" stroke-linejoin="round" paint-order="stroke"/>
+  <path d="M22 5 H41 V23 H22 Z" fill="#f5822e"/>
+  <rect x="14" y="33" width="36" height="20" rx="3.5" fill="#c8cfd3"/>
+</svg>

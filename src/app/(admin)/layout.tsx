@@ -1,6 +1,7 @@
 import Link from 'next/link';
 import { requireSuperAdmin } from '@/lib/superadmin';
 import { AdminNav } from '@/components/admin/admin-nav';
+import { Logo } from '@/components/shell/logo';
 
 /**
  * The admin shell. Deliberately NOT the (app) shell: there is no active
@@ -22,10 +23,11 @@ export default async function AdminLayout({
     <div className="min-h-screen">
       <header className="flex items-center gap-4 px-7 pt-4">
         <span
-          className="text-base font-bold tracking-[-0.02em]"
+          className="flex items-center gap-2.5 text-base font-bold tracking-[-0.02em]"
           style={{ color: 'var(--on-dark)' }}
         >
-          webadf <span style={{ color: 'var(--on-dark-muted)' }}>admin</span>
+          <Logo size={22} />
+          <span>webadf <span style={{ color: 'var(--on-dark-muted)' }}>admin</span></span>
         </span>
         <AdminNav />
         <div className="ml-auto flex items-center gap-4">

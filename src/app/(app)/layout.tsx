@@ -2,6 +2,7 @@ import { requireOrg } from "@/lib/session";
 import { isSuperAdminEmail } from "@/lib/superadmin";
 import { TopNav } from "@/components/shell/top-nav";
 import { SignOutButton } from "@/components/sign-out-button";
+import { Logo } from "@/components/shell/logo";
 
 export default async function AppLayout({
   children,
@@ -16,9 +17,10 @@ export default async function AppLayout({
     <div className="min-h-screen">
       <header className="flex items-center gap-4 px-7 pt-4">
         <span
-          className="text-base font-bold tracking-[-0.02em]"
+          className="flex items-center gap-2.5 text-base font-bold tracking-[-0.02em]"
           style={{ color: "var(--on-dark)" }}
         >
+          <Logo size={22} />
           webadf
         </span>
         <TopNav showAdmin={showAdmin} />
