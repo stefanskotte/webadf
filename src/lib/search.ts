@@ -12,8 +12,13 @@
 //  3. Global content-addressed tables are never matched first and joined back.
 //     This file does not touch blobs, tosec_entries or openretro_images at all.
 //
-// collection_games is never queried: it has no org_id by design (D-4-5) and
-// only collection NAMES are matched here.
+// collection_games has no org_id by design (D-4-5): membership is reachable
+// only through a collection, which has one. The gameCount subquery below does
+// query it -- correlated on collections.id, which has already passed through
+// orgFilter(collections, orgId, ...) in the query above it -- so it is never
+// keyed on a collection id that has not itself been through orgFilter. No
+// cross-org row can be counted. listCollections (src/lib/collections.ts)
+// scopes the same subquery the same way.
 
 import { and, asc, eq, ilike, or, sql } from 'drizzle-orm';
 import { getDb } from '@/db';
@@ -32,7 +37,18 @@ export interface SearchTitle {
 export interface SearchCollectionHit { id: string; name: string; gameCount: number }
 export interface SearchResults { titles: SearchTitle[]; collections: SearchCollectionHit[] }
 
-export const EMPTY_RESULTS: SearchResults = { titles: [], collections: [] };
+// Frozen, and shared across every empty-query call in this warm lambda for
+// the life of the process. Safe only because it is frozen two levels deep --
+// an unfrozen shared object would let one future `results.titles.push(...)`
+// corrupt every org's "no results" response. Freeze, don't allocate fresh:
+// this is the common case, fired on every keystroke before the user has
+// typed anything worth searching for.
+const emptyTitles: SearchTitle[] = [];
+const emptyCollectionHits: SearchCollectionHit[] = [];
+export const EMPTY_RESULTS: SearchResults = Object.freeze({
+  titles: Object.freeze(emptyTitles) as SearchTitle[],
+  collections: Object.freeze(emptyCollectionHits) as SearchCollectionHit[],
+});
 
 export async function search(orgId: string, raw: string): Promise<SearchResults> {
   const pattern = likePattern(raw);
