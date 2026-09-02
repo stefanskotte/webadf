@@ -58,28 +58,39 @@ export function SearchBox() {
   // controller.signal.aborted) is what catches it.
   const currentQueryRef = useRef('');
 
-  // Every path that empties the box or dismisses the panel funnels through
-  // here, so abort/clear/reset-highlight can never be forgotten on one of
-  // them. Missing this on even one path (Escape, select(), or clearing the
-  // input) leaves a stale request free to land later and repopulate a panel
-  // the user believes is closed, or worse, an open one for a different query.
-  function reset() {
+  // Abort/clear everything search-related, WITHOUT touching `q` itself.
+  // Shared by the "box is now empty" path and the full reset() below, so
+  // that a whitespace-only value can still be cleared of search state
+  // without also stomping the literal characters the user typed (see
+  // onChange: `q` is controlled, so wiping it here would swallow a leading
+  // space as it's typed).
+  function clearSearchState() {
     abortRef.current?.abort();
     currentQueryRef.current = '';
-    setQ('');
     setResults(EMPTY_RESULTS);
     setRespondedQuery(null);
     setError(null);
     setHighlight(0);
   }
 
+  // Every path that DISMISSES the panel (Escape, selecting a result) funnels
+  // through here, so abort/clear/reset-highlight/clear-q can never be
+  // forgotten on one of them. Missing this on even one path leaves a stale
+  // request free to land later and repopulate a panel the user believes is
+  // closed, or worse, an open one for a different query -- router.push does
+  // not unmount SearchBox, since it lives in the layout.
+  function reset() {
+    clearSearchState();
+    setQ('');
+  }
+
   useEffect(() => {
     const query = q.trim();
-    // Clearing the field back to empty is handled synchronously by reset(),
-    // not here -- setting state directly in an effect body (rather than
-    // inside the async callback below) is exactly the pattern
-    // react-hooks/set-state-in-effect flags, and there is nothing to
-    // synchronize with an external system for "the box is empty".
+    // Clearing the field back to empty is handled synchronously by
+    // clearSearchState()/reset(), not here -- setting state directly in an
+    // effect body (rather than inside the async callback below) is exactly
+    // the pattern react-hooks/set-state-in-effect flags, and there is
+    // nothing to synchronize with an external system for "the box is empty".
     if (query === '') return;
 
     const timer = setTimeout(async () => {
@@ -154,7 +165,6 @@ export function SearchBox() {
   }, []);
 
   const trimmed = q.trim();
-  const showPanel = trimmed !== '';
   // While an error is showing, the rows behind it are stale and must not be
   // navigable -- an empty flat list here also disarms ArrowUp/ArrowDown/Enter.
   const flat: Array<
@@ -166,20 +176,29 @@ export function SearchBox() {
         ...results.titles.map((item) => ({ kind: 'title' as const, item })),
         ...results.collections.map((item) => ({ kind: 'collection' as const, item })),
       ];
-  const showEmpty = showPanel && !error && respondedQuery === trimmed && flat.length === 0;
+  const showEmpty = trimmed !== '' && !error && respondedQuery === trimmed && flat.length === 0;
+  // The panel itself is gated on there being something to put in it. Without
+  // this, the bordered box renders empty (no rows, no error, no empty-state
+  // line yet -- respondedQuery hasn't caught up) for the whole debounce plus
+  // round trip of every single search: a small blank box flashing under the
+  // pill on the first keystroke.
+  const showPanel = trimmed !== '' && (error !== null || flat.length > 0 || showEmpty);
 
   function onChange(value: string) {
+    // `q` is a controlled input's value, so it must always take the literal
+    // characters typed -- including a leading space on an otherwise-empty
+    // box, which trims to ''. Clearing search state below must not clear
+    // `q` too, or that space would never render.
+    setQ(value);
     const trimmedValue = value.trim();
     if (trimmedValue === '') {
-      // Nothing left to search for. reset() aborts whatever was in flight
-      // and clears the panel right away, rather than waiting on the
-      // debounce -- an empty query renders no panel at all (a different
-      // thing from an empty result set), so stale rows must not linger
-      // under it.
-      reset();
+      // Nothing left to search for. Clear search state right away rather
+      // than waiting on the debounce -- an empty (or whitespace-only) query
+      // renders no panel at all (a different thing from an empty result
+      // set), so stale rows must not linger under it.
+      clearSearchState();
       return;
     }
-    setQ(value);
     currentQueryRef.current = trimmedValue;
   }
 
@@ -249,7 +268,17 @@ export function SearchBox() {
         // regardless of where the panel sits on the gradient, which is a
         // stronger fix than re-tuning two token values for one placement.
         // Recomputed against #f1f4f5: --ink 14.44:1, --muted 6.49:1,
-        // --muted-2 5.11:1, --faint 4.74:1 -- all clear 4.5:1.
+        // --muted-2 5.11:1, --faint 4.74:1 -- all clear 4.5:1 on the PLAIN
+        // panel. But the highlighted row (see `highlighted` below) adds a
+        // rgb(30 45 60 / 0.08) overlay on top of that, compositing to about
+        // #e0e4e6, and highlight defaults to 0 -- the top row is highlighted
+        // whenever any row shows, i.e. this is the default state, not an
+        // edge case. On that composited surface --muted-2 drops to 4.41:1,
+        // under AA. The per-row metadata line below therefore uses --muted
+        // (6.49:1 on #f1f4f5, 5.60:1 on the highlighted #e0e4e6), not
+        // --muted-2, so it clears AA either way. --faint is unaffected and
+        // stays as-is: it is only used on the group labels, which are never
+        // highlighted.
         <div
           data-testid="search-panel"
           className="absolute right-0 top-[42px] z-50 w-80 rounded-xl border p-1.5"
@@ -296,7 +325,7 @@ export function SearchBox() {
                     <span className="text-[13px] font-semibold" style={{ color: 'var(--ink)' }}>
                       {t.title}
                     </span>
-                    <span className="font-mono text-[10.5px]" style={{ color: 'var(--muted-2)' }}>
+                    <span className="font-mono text-[10.5px]" style={{ color: 'var(--muted)' }}>
                       {[t.year, t.publisher, `${t.diskCount} disk${t.diskCount === 1 ? '' : 's'}`]
                         .filter(Boolean)
                         .join(' · ')}
@@ -328,7 +357,7 @@ export function SearchBox() {
                     <span className="text-[13px] font-semibold" style={{ color: 'var(--ink)' }}>
                       {c.name}
                     </span>
-                    <span className="font-mono text-[10.5px]" style={{ color: 'var(--muted-2)' }}>
+                    <span className="font-mono text-[10.5px]" style={{ color: 'var(--muted)' }}>
                       {c.gameCount} title{c.gameCount === 1 ? '' : 's'}
                     </span>
                   </button>
