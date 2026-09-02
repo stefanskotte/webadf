@@ -1,4 +1,4 @@
-import Link from 'next/link';
+import { Link } from '@/components/shell/link';
 import type { GameDetailDisk } from '@/lib/queries';
 import { WriteProtectToggle } from './write-protect-toggle';
 import { MountAction, type MountTarget } from './mount-action';

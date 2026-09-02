@@ -10,7 +10,7 @@
 // also hosts a Link, a rename input and a menu, and none of those should
 // have to survive an 8px-pointer-move-then-release to register as a click.
 
-import Link from 'next/link';
+import { Link } from '@/components/shell/link';
 import { useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { toast } from 'sonner';

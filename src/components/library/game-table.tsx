@@ -1,4 +1,4 @@
-import Link from 'next/link';
+import { Link } from '@/components/shell/link';
 import type { GameListItem } from '@/lib/queries';
 
 // TYPE sits between title and year: it qualifies what the row IS, so it

@@ -126,6 +126,33 @@ test('Escape closes the panel, and Cmd/Ctrl+K focuses the input', async ({ page 
   await expect(input).toBeFocused();
 });
 
+test('"/" focuses the search box, and does not type itself into it', async ({ page }) => {
+  // The negative case below (not hijacking another input) existed from the
+  // start; this positive one did not, so the shortcut could have been broken
+  // outright and the suite would still have been green.
+  await signUpFresh(page);
+  await page.goto('/library');
+  await page.locator('body').click();
+  await page.keyboard.press('/');
+
+  await expect(page.getByTestId('search-input')).toBeFocused();
+  // Focused AND empty: preventDefault has to run, or the keystroke that
+  // opened the box also lands in it and every search starts with a slash.
+  await expect(page.getByTestId('search-input')).toHaveValue('');
+});
+
+test('the pill advertises the "/" shortcut until it is in use', async ({ page }) => {
+  await signUpFresh(page);
+  await page.goto('/library');
+  const hint = page.getByTestId('search-hint');
+  await expect(hint).toBeVisible();
+
+  // Once focused the hint has served its purpose and would sit in the way of
+  // the text.
+  await page.getByTestId('search-input').focus();
+  await expect(hint).toHaveCount(0);
+});
+
 test('"/" does not hijack typing in another input', async ({ page }) => {
   await signUpFresh(page);
 

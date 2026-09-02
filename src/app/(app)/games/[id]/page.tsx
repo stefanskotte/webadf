@@ -1,5 +1,5 @@
 import { notFound } from 'next/navigation';
-import Link from 'next/link';
+import { Link } from '@/components/shell/link';
 import { requireOrg } from '@/lib/session';
 import { getGameDetail, listDevices } from '@/lib/queries';
 import { deviceState } from '@/lib/device-state';

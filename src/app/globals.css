@@ -206,3 +206,26 @@
   backdrop-filter: blur(12px);
   box-shadow: var(--shadow-card);
 }
+/* The travelling segment in the navigation bar (see nav-progress.tsx). It is
+   indeterminate by choice: we cannot know how far a server render has got, and
+   a bar that creeps to 90% and stalls teaches people to ignore it.
+
+   Reduced motion gets a still, half-width bar rather than nothing at all --
+   the feedback is the point, and removing it entirely would leave exactly the
+   "did my click register?" gap this was built to close. */
+@keyframes nav-progress-run {
+  0%   { transform: translateX(-100%); }
+  100% { transform: translateX(400%); }
+}
+
+.nav-progress-run {
+  animation: nav-progress-run 1.1s cubic-bezier(0.4, 0, 0.2, 1) infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .nav-progress-run {
+    animation: none;
+    width: 50%;
+    transform: none;
+  }
+}

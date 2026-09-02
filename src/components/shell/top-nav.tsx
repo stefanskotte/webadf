@@ -1,5 +1,5 @@
 "use client";
-import Link from "next/link";
+import { Link } from '@/components/shell/link';
 import { usePathname } from "next/navigation";
 
 const ITEMS = [
@@ -31,7 +31,7 @@ export function TopNav({ showAdmin = false }: { showAdmin?: boolean }) {
   const items = showAdmin ? [...ITEMS, ADMIN_ITEM] : ITEMS;
   return (
     <nav
-      className="mx-auto flex items-center gap-[3px] rounded-full border p-1"
+      className="flex items-center gap-[3px] rounded-full border p-1"
       style={{
         background: "rgb(255 255 255 / 0.12)",
         borderColor: "rgb(255 255 255 / 0.16)",

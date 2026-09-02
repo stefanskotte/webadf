@@ -1,4 +1,4 @@
-import Link from 'next/link';
+import { Link } from '@/components/shell/link';
 import { adminListUsers, adminCountUsers } from '@/lib/admin-queries';
 import { PageHeader } from '@/components/shell/page-header';
 import { DeleteUserDialog } from '@/components/admin/delete-user-dialog';

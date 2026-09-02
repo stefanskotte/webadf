@@ -1,4 +1,4 @@
-import Link from 'next/link';
+import { Link } from '@/components/shell/link';
 
 export function ViewToggle({ view }: { view: 'grid' | 'table' }) {
   const base = 'grid h-8 w-9 place-items-center text-[11px] font-semibold';

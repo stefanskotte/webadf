@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import Link from 'next/link';
+import { Link } from '@/components/shell/link';
 import { toast } from 'sonner';
 
 export interface MountTarget { id: string; name: string }

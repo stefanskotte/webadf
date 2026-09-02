@@ -1,5 +1,5 @@
 import { notFound } from 'next/navigation';
-import Link from 'next/link';
+import { Link } from '@/components/shell/link';
 import { and, eq } from 'drizzle-orm';
 import { getDb } from '@/db';
 import { disks, entitlements, games } from '@/db/schema/catalog';
