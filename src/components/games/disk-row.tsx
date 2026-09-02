@@ -18,7 +18,14 @@ export function DiskRow({ disk, devices, holder }: {
     : `Requested on ${holder.deviceName} — not confirmed`;
 
   return (
-    <div className="glass-card flex items-center gap-4 p-4" data-testid={`disk-${disk.id}`}>
+    <div
+      // Five controls plus the name on one line leave under 60px for the
+      // name at 390px, and the name is the thing the row is about. Below
+      // `sm` the controls drop to a second line of their own; from `sm` up
+      // this is the single row it has always been.
+      className="glass-card flex flex-col gap-3 p-4 sm:flex-row sm:items-center sm:gap-4"
+      data-testid={`disk-${disk.id}`}
+    >
       <div className="flex min-w-0 flex-1 flex-col gap-0.5">
         <div className="flex items-center gap-2">
           <span className="text-[14px] font-bold" style={{ color: 'var(--ink)' }}>
@@ -60,36 +67,47 @@ export function DiskRow({ disk, devices, holder }: {
         )}
       </div>
       {/*
-        A plain anchor, not a fetch: the browser streams the response straight
-        to disk and shows its own progress. Pulling 880 KB into JS first would
-        buffer the whole image in memory to achieve exactly the same save.
-        No `download` attribute -- the server's Content-Disposition already
-        names the file, and it knows the canonical name while the client does
-        not.
+        `sm:contents` so the controls are a wrapped block of their own on a
+        phone and, from `sm` up, generate no box at all -- the row's flex
+        then lays out these four exactly as it did before this wrapper
+        existed. Nothing here is portalled or absolutely positioned: the
+        mount picker expands INLINE (see mount-action.tsx), and
+        game-detail.spec.ts asserts that the next row's trigger sits below
+        an open picker rather than under it.
       */}
-      <a
-        href={`/api/disks/${disk.id}/adf`}
-        data-testid={`download-${disk.id}`}
-        className="shrink-0 rounded-lg px-3 py-1.5 text-[12px] font-semibold"
-        style={{ background: 'var(--glass-strong)', color: 'var(--ink)' }}
-      >
-        Download
-      </a>
-      {/*
-        Link, not <a>: this is an internal navigation to the file browser
-        page and should be client-side, unlike Download above which must be
-        a real request so the browser streams the response to disk.
-      */}
-      <Link
-        href={`/disks/${disk.id}/files`}
-        data-testid={`browse-${disk.id}`}
-        className="shrink-0 rounded-lg px-3 py-1.5 text-[12px] font-semibold"
-        style={{ background: 'var(--glass-strong)', color: 'var(--ink)' }}
-      >
-        Browse
-      </Link>
-      <WriteProtectToggle diskId={disk.id} writeProtected={disk.writeProtected} />
-      <MountAction diskId={disk.id} devices={devices} />
+      <div className="flex flex-wrap items-center gap-2 sm:contents">
+        {/*
+          A plain anchor, not a fetch: the browser streams the response straight
+          to disk and shows its own progress. Pulling 880 KB into JS first would
+          buffer the whole image in memory to achieve exactly the same save.
+          No `download` attribute -- the server's Content-Disposition already
+          names the file, and it knows the canonical name while the client does
+          not.
+        */}
+        <a
+          href={`/api/disks/${disk.id}/adf`}
+          data-testid={`download-${disk.id}`}
+          className="shrink-0 rounded-lg px-3 py-1.5 text-[12px] font-semibold"
+          style={{ background: 'var(--glass-strong)', color: 'var(--ink)' }}
+        >
+          Download
+        </a>
+        {/*
+          Link, not <a>: this is an internal navigation to the file browser
+          page and should be client-side, unlike Download above which must be
+          a real request so the browser streams the response to disk.
+        */}
+        <Link
+          href={`/disks/${disk.id}/files`}
+          data-testid={`browse-${disk.id}`}
+          className="shrink-0 rounded-lg px-3 py-1.5 text-[12px] font-semibold"
+          style={{ background: 'var(--glass-strong)', color: 'var(--ink)' }}
+        >
+          Browse
+        </Link>
+        <WriteProtectToggle diskId={disk.id} writeProtected={disk.writeProtected} />
+        <MountAction diskId={disk.id} devices={devices} />
+      </div>
     </div>
   );
 }

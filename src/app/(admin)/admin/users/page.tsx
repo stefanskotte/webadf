@@ -40,9 +40,19 @@ export default async function AdminUsersPage({
         title="Users"
         subtitle={`${total} total · page ${page} of ${lastPage} · newest first`}
       />
-      <div className="px-7 pb-10">
+      <div className="px-4 pb-10 sm:px-7">
         <div className="glass-card overflow-x-auto">
-          <table className="w-full text-[13px]">
+          {/* The card has always said overflow-x-auto, but w-full made that a
+              promise it could not keep: 100% of a 390px viewport is a width
+              the table always "fits", so it squeezed seven columns instead of
+              scrolling and the Delete control ended up a few pixels wide at
+              the far edge. The minimum is what turns the scroll on. 720px is
+              these seven columns at honest widths -- a readable address, an
+              org name, an unbroken ISO date, three counts no narrower than
+              their own headers, and the action -- and it is only a floor: a
+              long e2e address is one unbreakable token, so the table grows
+              past it on its own. */}
+          <table className="w-full min-w-[720px] text-[13px]">
             <thead>
               <tr style={{ color: 'var(--muted)' }}>
                 <th className="px-4 py-3 text-left font-semibold">Email</th>

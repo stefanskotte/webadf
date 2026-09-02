@@ -50,7 +50,7 @@ export default async function AdminScanPage() {
         subtitle={`${s.tosecEntries} TOSEC entries loaded${missRate === null ? '' : ` · ${missRate}% of decided blobs unmatched`}`}
         actions={<RunScanButton />}
       />
-      <div className="px-7 pb-10">
+      <div className="px-4 pb-10 sm:px-7">
         <div className="mb-3 grid grid-cols-2 gap-3 md:grid-cols-3">
           {TILES.map((t) => (
             <div key={t.key} className="glass-card p-5">
@@ -130,7 +130,12 @@ export default async function AdminScanPage() {
         </div>
 
         <div className="glass-card overflow-x-auto">
-          <table className="w-full text-[13px]">
+          {/* Three columns, but two of them are long single tokens -- a set
+              name like "Commodore Amiga - Games - [ADF]" and a version like
+              "TOSEC-v2023-01-08" -- which w-full would wrap to shreds at
+              390px instead of letting the card scroll. 640px keeps both on
+              one line and still leaves the entry count its own column. */}
+          <table className="w-full min-w-[640px] text-[13px]">
             <thead>
               <tr style={{ color: 'var(--muted)' }}>
                 <th className="px-4 py-3 text-left font-semibold">TOSEC set</th>

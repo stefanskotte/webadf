@@ -61,7 +61,7 @@ export default async function GamePage(props: PageProps<'/games/[id]'>) {
       />
       <LiveRefresh active={anyPending} />
       <GameFacts game={game} />
-      <div className="flex flex-col gap-3 px-7 pb-10">
+      <div className="flex flex-col gap-3 px-4 pb-10 sm:px-7">
         {game.disks.map((disk) => (
           <DiskRow key={disk.id} disk={disk} devices={targets}
                    holder={holders.get(disk.sha256) ?? null} />

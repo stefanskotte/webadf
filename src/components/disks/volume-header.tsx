@@ -45,8 +45,15 @@ const Badge = ({ label }: { label: string }) => (
 
 const Fact = ({ label, children }: { label: string; children: React.ReactNode }) => (
   <div className="contents">
-    <dt className="font-semibold" style={{ color: 'var(--muted)' }}>{label}</dt>
-    <dd>{children}</dd>
+    <dt className="whitespace-nowrap font-semibold" style={{ color: 'var(--muted)' }}>{label}</dt>
+    {/*
+      A grid item's automatic minimum size is its content, so a long volume
+      name -- and Amiga volume names have no spaces to break at -- would push
+      the 1fr track past the card and out of the phone's viewport rather than
+      wrapping. min-w-0 lets the track shrink; break-words then breaks the
+      name itself. Neither has any effect at a width where the value fits.
+    */}
+    <dd className="min-w-0 break-words">{children}</dd>
   </div>
 );
 

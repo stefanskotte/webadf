@@ -16,7 +16,10 @@ export function AdminNav() {
   const pathname = usePathname();
   return (
     <nav
-      className="flex items-center gap-[3px] rounded-full border p-1"
+      // w-max below sm, matching TopNav: inside the layout's bottom bar the
+      // pill is in a clamped scroll container, and at auto width its items
+      // would spill outside the pill's own border rather than widen it.
+      className="flex w-max items-center gap-[3px] rounded-full border p-1 sm:w-auto"
       style={{
         background: 'rgb(255 255 255 / 0.12)',
         borderColor: 'rgb(255 255 255 / 0.16)',

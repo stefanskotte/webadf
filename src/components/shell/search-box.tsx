@@ -246,7 +246,10 @@ export function SearchBox() {
   }
 
   return (
-    <div className="relative">
+    // Full width below sm: the header wraps the search box onto a line of its
+    // own there, and a shrink-to-fit box would leave that line mostly empty
+    // while the input it contains stayed too narrow to read a query in.
+    <div className="relative w-full sm:w-auto">
       <input
         ref={inputRef}
         data-testid="search-input"
@@ -264,7 +267,10 @@ export function SearchBox() {
         // back-link beside this box, and at w-56 the centred nav pill and this
         // input overlapped by 15px at 1280 (measured, both shells). 192px
         // still holds the placeholder and the key hint with room to spare.
-        className="h-[34px] w-48 rounded-full border pl-4 pr-9 text-[13px] outline-none transition-colors"
+        // Below sm none of that applies -- the pill has left the header for
+        // the bottom bar -- and 192px would waste the line the box now has to
+        // itself, so it takes the whole of it.
+        className="h-[34px] w-full rounded-full border pl-4 pr-4 text-[13px] outline-none transition-colors sm:w-48 sm:pr-9"
         style={{
           background: 'rgb(255 255 255 / 0.12)',
           borderColor: 'rgb(255 255 255 / 0.16)',
@@ -283,7 +289,11 @@ export function SearchBox() {
         <kbd
           aria-hidden
           data-testid="search-hint"
-          className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 rounded border px-1.5 font-mono text-[11px] leading-[15px]"
+          // hidden below sm: it advertises a KEY, and a phone has no keyboard
+          // to press it with -- on a touch device it is decoration sitting on
+          // top of the input's text. The shortcut itself still works for
+          // anything with a keyboard attached at any width.
+          className="pointer-events-none absolute right-3 top-1/2 hidden -translate-y-1/2 rounded border px-1.5 font-mono text-[11px] leading-[15px] sm:block"
           style={{
             background: 'rgb(255 255 255 / 0.10)',
             borderColor: 'rgb(255 255 255 / 0.22)',
@@ -318,7 +328,14 @@ export function SearchBox() {
         // highlighted.
         <div
           data-testid="search-panel"
-          className="absolute right-0 top-[42px] z-50 w-80 rounded-xl border p-1.5"
+          // The panel is anchored right-0 and grows leftwards, so on a narrow
+          // screen a fixed 20rem puts its LEFT edge off-canvas -- and the
+          // titles are left-aligned inside it, so that is the half a reader
+          // needs. 20rem still fits at 390px; it stops fitting on the 320px
+          // phones below that, and the min() is what makes those degrade to a
+          // narrower panel rather than a truncated one. Above sm it always
+          // resolves to 20rem, which is today's w-80 exactly.
+          className="absolute right-0 top-[42px] z-50 w-[min(20rem,calc(100vw-2rem))] rounded-xl border p-1.5 sm:w-80"
           style={{
             background: '#f1f4f5',
             borderColor: 'var(--hairline-strong)',

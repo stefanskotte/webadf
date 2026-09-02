@@ -171,6 +171,18 @@
   --hairline-strong: rgb(30 45 60 / 0.14);
   --shadow-card:  0 1px 2px rgb(30 45 60 / 0.06), 0 8px 24px rgb(30 45 60 / 0.09);
 
+  /* The mobile nav bar's surface (below sm only -- see the wrapper in each
+     shell's layout). Deliberately NOT one of the --glass-* values above:
+     those are white, for dark text on a pale card, and the nav pill's text is
+     the light --on-dark ramp tuned against the gradient's dark TOP band. The
+     bar is fixed to the BOTTOM of the viewport, where the gradient has run
+     down to --grad-bot (#eef1f2); white glass there leaves the nav labels at
+     roughly 1.5:1. Carrying --grad-top down with the bar keeps them at the
+     ratio they were designed for. Held at 0.90 rather than opaque so the
+     content scrolling under it still reads as content. */
+  --nav-scrim:          rgb(27 37 52 / 0.90);
+  --nav-scrim-hairline: rgb(255 255 255 / 0.14);
+
   --primary-action: #16273a;
   --accent-blue:    #1a35d6;
   --accent-amber:   #f5822e;   /* FILL ONLY — fails AA as text */

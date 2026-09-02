@@ -88,7 +88,14 @@ export function FileTree({ entries, diskId }: { entries: AdfEntry[]; diskId: str
         return (
           <div
             key={entry.block}
-            className="flex items-center gap-3 py-1.5 text-[12.5px]"
+            // Two lines on a phone, one line from `sm` up. The metadata
+            // columns total ~312px of fixed width inside a card that is only
+            // ~310px wide at 390px, so the name column computes NEGATIVE at
+            // depth 0 and worse at every level of nesting, and the card's
+            // own overflow-hidden clips whatever is left. Scrolling the row
+            // sideways is not the alternative: Download is the row's only
+            // action, so it would be the first thing pushed out of reach.
+            className="flex flex-col gap-1 py-1.5 text-[12.5px] sm:flex-row sm:items-center sm:gap-3"
             style={{
               paddingLeft: `${depth * 18 + 8}px`,
               paddingRight: '8px',
@@ -123,32 +130,50 @@ export function FileTree({ entries, diskId }: { entries: AdfEntry[]; diskId: str
               </span>
             )}
 
-            {!isDir && (
+            {/*
+              `sm:contents` rather than a second set of column rules: from
+              `sm` up this wrapper generates no box at all, so the row's own
+              flex lays these four out exactly as it did before the wrapper
+              existed -- the desktop row is unchanged, not re-derived. Below
+              `sm` it is line two, indented by the chevron's width so it
+              starts under the name rather than under the arrow.
+            */}
+            <div className="flex flex-wrap items-center gap-x-3 gap-y-1 pl-[22px] sm:contents">
+              {!isDir && (
+                <span className="shrink-0 font-mono text-[11px]" style={{ color: 'var(--muted-2)' }}>
+                  {entry.sizeBytes.toLocaleString()} B
+                </span>
+              )}
               <span className="shrink-0 font-mono text-[11px]" style={{ color: 'var(--muted-2)' }}>
-                {entry.sizeBytes.toLocaleString()} B
+                {entry.protection}
               </span>
-            )}
-            <span className="shrink-0 font-mono text-[11px]" style={{ color: 'var(--muted-2)' }}>
-              {entry.protection}
-            </span>
-            <span className="w-[80px] shrink-0 font-mono text-[11px]" style={{ color: 'var(--muted-2)' }}>
-              {entry.modifiedAt ? entry.modifiedAt.toISOString().slice(0, 10) : '—'}
-            </span>
+              <span className="w-[80px] shrink-0 font-mono text-[11px]" style={{ color: 'var(--muted-2)' }}>
+                {entry.modifiedAt ? entry.modifiedAt.toISOString().slice(0, 10) : '—'}
+              </span>
 
-            {!isDir ? (
-              <a
-                href={`/api/disks/${diskId}/files/${entry.block}`}
-                data-testid={`fs-download-${entry.block}`}
-                className="shrink-0 rounded px-2 py-0.5 text-[11px] font-semibold"
-                style={{ background: 'var(--glass-strong)', color: 'var(--ink)' }}
-              >
-                Download
-              </a>
-            ) : (
-              // Keeps the file column above aligned when a directory row has
-              // no download link of its own.
-              <span className="w-[68px] shrink-0" />
-            )}
+              {/*
+                An <a>, and it stays an <a>: adf-browser.spec.ts scopes
+                getByRole('button') to a row to click the directory toggle,
+                so a second button anywhere in here makes that locator
+                strict-mode ambiguous and fails the suite.
+              */}
+              {!isDir ? (
+                <a
+                  href={`/api/disks/${diskId}/files/${entry.block}`}
+                  data-testid={`fs-download-${entry.block}`}
+                  className="shrink-0 rounded px-2 py-0.5 text-[11px] font-semibold"
+                  style={{ background: 'var(--glass-strong)', color: 'var(--ink)' }}
+                >
+                  Download
+                </a>
+              ) : (
+                // Keeps the file column above aligned when a directory row has
+                // no download link of its own. Only from `sm` up: on the
+                // two-line layout there is no column to align to, and 68px of
+                // nothing would just widen line two.
+                <span className="hidden w-[68px] shrink-0 sm:block" />
+              )}
+            </div>
           </div>
         );
       })}

@@ -31,7 +31,7 @@ export default async function DevicesPage() {
         actions={<PairButton />}
       />
       <LiveRefresh active={anyPending} />
-      <div className="flex flex-col gap-3 px-7 pb-10">
+      <div className="flex flex-col gap-3 px-4 pb-10 sm:px-7">
         {devices.length === 0 ? (
           <div className="glass-card p-6 text-[13px]" style={{ color: 'var(--muted)' }}>
             No devices paired yet. Press <strong>Pair a device</strong> and enter the code on the hardware.

@@ -69,12 +69,20 @@ function railRow(page: Page, collectionId: string): Locator {
 /**
  * Drag with the real pointer, not `locator.dragTo()`.
  *
- * dnd-kit's PointerSensor is configured with an 8px activation constraint
+ * dnd-kit's MouseSensor is configured with an 8px activation constraint
  * (src/components/collections/collection-provider.tsx) -- without it every
  * click on a card, which is a Link, would start a drag instead of
  * navigating. That constraint means the sensor has to actually SEE movement
- * accumulate: a single jump from source to target is one pointermove, and
+ * accumulate: a single jump from source to target is one mousemove, and
  * the intermediate `steps` below are what make the drag register at all.
+ *
+ * MouseSensor, not PointerSensor, since the responsive work: PointerSensor
+ * keys on pointerdown with no pointerType check, so it double-activated
+ * alongside the TouchSensor that press-and-hold-to-drag needs on a phone.
+ * page.mouse emits pointerType "mouse", which satisfies MouseSensor and
+ * leaves the TouchSensor inert here -- so this helper is unaffected. What
+ * WOULD break it is moving the touch path's `delay` onto the mouse path:
+ * the moves below start immediately, with no hold.
  */
 async function dragOnto(
   page: Page, source: Locator, target: Locator,

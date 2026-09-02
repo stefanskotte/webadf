@@ -18,9 +18,10 @@ import { useRouter } from 'next/navigation';
 import { toast } from 'sonner';
 import {
   DndContext,
-  PointerSensor,
+  MouseSensor,
   pointerWithin,
   rectIntersection,
+  TouchSensor,
   useSensor,
   useSensors,
   type CollisionDetection,
@@ -150,9 +151,10 @@ export function CollectionsProvider({
    * Every game card is an <a href>, so without this, dropping one onto a
    * collection filed the game AND navigated to it -- the person lands on a
    * game page instead of seeing their library. That is not fixable on the
-   * card: dnd-kit's PointerSensor already installs its OWN document-level
+   * card: dnd-kit's pointer sensors already install their OWN document-level
    * capture listener that calls stopPropagation() on that click (see
-   * handleStart in @dnd-kit/core), so React's delegated onClick -- and
+   * handleStart in AbstractPointerSensor, which both MouseSensor and
+   * TouchSensor extend), so React's delegated onClick -- and
    * therefore next/link's own handler -- never runs at all. What it does NOT
    * do is preventDefault(), and the browser's default action on an anchor is
    * to follow the href.
@@ -175,13 +177,34 @@ export function CollectionsProvider({
     return () => document.removeEventListener('click', onClickCapture, true);
   }, []);
 
-  // ~8px of movement before a drag starts. Without this, PointerSensor
-  // starts a drag on the mousedown of a plain click -- and every card in the
-  // grid is wrapped in a Link (src/components/library/game-grid.tsx), so an
-  // unconstrained sensor would swallow every click that should navigate to
-  // a game and make the library unclickable.
+  /**
+   * Mouse and touch are two sensors, not one PointerSensor, because the two
+   * inputs need different answers to "was that a drag or a tap?".
+   *
+   * Mouse keeps the ~8px threshold it has always had: without it a drag starts
+   * on the mousedown of a plain click -- and every card in the grid is wrapped
+   * in a Link (src/components/library/game-grid.tsx), so an unconstrained
+   * sensor would swallow every click that should navigate to a game and make
+   * the library unclickable.
+   *
+   * Touch cannot use distance for that, because on a phone a finger moving 8px
+   * across a card is how you SCROLL the library -- a distance constraint would
+   * pick a card up every time someone tried to look further down the page.
+   * Press-and-hold is the gesture that means "pick this up" instead, so touch
+   * gets a delay. `tolerance` is not optional on dnd-kit's delay form: it is
+   * the movement budget during the hold, and exceeding it aborts the drag,
+   * which is precisely what lets a swipe scroll rather than drag.
+   *
+   * PointerSensor could not have been kept alongside TouchSensor: it keys on
+   * onPointerDown with no pointerType check, so one finger would have
+   * activated both. And the delay had to go on the TOUCH path only --
+   * e2e/collections.spec.ts drives page.mouse, which presses and moves
+   * immediately without ever holding, so a delay on the mouse path would fail
+   * every drag test at 1280.
+   */
   const sensors = useSensors(
-    useSensor(PointerSensor, { activationConstraint: { distance: 8 } }),
+    useSensor(MouseSensor, { activationConstraint: { distance: 8 } }),
+    useSensor(TouchSensor, { activationConstraint: { delay: 250, tolerance: 8 } }),
   );
 
   async function addGameToCollection(collectionId: string, gameId: string) {

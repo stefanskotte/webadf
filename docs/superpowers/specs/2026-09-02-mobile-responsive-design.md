@@ -104,3 +104,75 @@ viewport.** So:
   press-and-hold **drags**.
 - The existing suite must stay green at 1280 **unchanged** — no spec edited to accommodate a
   mobile rule. Editing one is the signal that a rule was written backwards.
+
+---
+
+## 8. What this increment delivered, and where this spec was wrong
+
+**Delivered 2026-09-02 on `feat/mobile-responsive`.** Implemented by four agents working
+concurrently over disjoint files; every correction below came from one of them pushing back
+on this document rather than following it.
+
+### Corrections to §4 and §5
+
+- **§5's `/library` row was incomplete.** It said `flex-col md:flex-row`. `items-start` has to
+  move under `md:` as well: on a column it governs the HORIZONTAL axis, so left unprefixed it
+  shrink-wraps the rail and the grid to their content width instead of filling the screen.
+- **D-6-5's prose was looser than its own table row.** A scroll wrapper alone does not fix
+  `game-table`: the `min-w` has to be on the ROWS, or the `1fr` title track absorbs the
+  shortfall and the container never overflows, so the scroll never engages.
+- **"Hide the admin email below `sm`" was wrong and was not done.** The users table's email is
+  what the delete gate requires you to type to confirm; hiding it is a functional regression.
+  D-6-5's minimum width is the whole treatment.
+- **One blanket `min-w-[640px]` was wrong for the users table.** Seven columns need ~708px, so
+  it got 720; invites and scan kept 640. Sized per table, not per spec.
+- **§5 said `/devices` breaks by "header collision only".** The device card's mono
+  MAC/firmware/RSSI line also overflows its card: a flex item will not shrink below its
+  content, so the CARD grew instead of the line wrapping. Fixed with `min-w-0` + `break-words`,
+  and the same applies to `volume-header` and `game-facts` — Amiga volume names have no spaces
+  to break at.
+- **§6 called the 250ms delay "a guess".** It is dnd-kit's own current default for touch, so it
+  is conventional in a stronger sense than this document claimed.
+
+### The nav bar's colour is not a glass token, deliberately
+
+The implementation brief asked for "a translucent backdrop consistent with the app's glass
+tokens". That would have been unreadable. The `--glass-*` tokens are WHITE surfaces meant for
+dark text; the nav pill's labels are the light `--on-dark` ramp, tuned against the gradient's
+dark TOP band. The bar is fixed to the BOTTOM of the viewport, where the fixed gradient has
+run down to `--grad-bot` (#eef1f2) — white glass there leaves the labels at roughly 1.5:1.
+Two new tokens, `--nav-scrim` (`--grad-top` at 0.90) and `--nav-scrim-hairline`, carry the
+dark band down with the bar so the pill's existing colours keep the ratio they were designed
+for.
+
+### `touch-action` is on the grip and NOT on the cards, and the asymmetry is the point
+
+`AbstractPointerSensor.handleMove` suppresses scrolling only via
+`if (event.cancelable) event.preventDefault()`. Once a browser has committed a gesture to a
+scroll its `touchmove` stops being cancelable, so a rail reorder would drag while the page
+scrolled out from under it — `touch-action: none` on the rail grip is what guarantees the
+first post-hold move is still cancelable. Its cost is that a swipe beginning exactly on the
+20×24px grip scrolls nothing, which is why the drag activators live on the grip alone.
+
+The grid cards get NO `touch-action`, for the same reason inverted: their listeners cover the
+whole card, so `none` there would kill scrolling of the entire library. The 250ms/8px hold is
+what separates the two gestures instead.
+
+### `sm:contents` is how desktop stayed byte-identical
+
+The mobile-only groupings (the file tree's second line, the disk row's control cluster) are
+wrapped in a div that is `sm:contents` — at desktop widths the wrapper generates NO BOX, so
+the original row lays out exactly as it did before rather than being re-derived from new
+rules. This is why the 1280 suite needed no edits.
+
+### Verification
+
+- **177 Playwright tests: 172 desktop at 1280×720, 5 mobile at 390×844 with touch.** No
+  existing spec was edited — which was the stated signal that a rule had been written
+  backwards, and it never fired.
+- **The touch test was mutation-proven.** Reverting the touch path to a distance-only
+  constraint makes the card's opacity go to 0.4 — it picks the card up instead of scrolling,
+  exactly the failure the backlog predicted — and the test fails on it.
+- **Not verified: a real phone.** Everything above is Chromium at 390×844 with emulated touch.
+  Emulated touch is not a finger, `hover:` has no analogue on a phone, and no physical device
+  has loaded this build.
