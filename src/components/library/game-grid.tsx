@@ -1,6 +1,6 @@
 'use client';
 
-import Link from 'next/link';
+import { Link } from '@/components/shell/link';
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { toast } from 'sonner';
@@ -17,7 +17,7 @@ export function GameGrid({ games }: { games: GameListItem[] }) {
 
   if (games.length === 0) {
     return (
-      <div className="glass-card mx-7 flex flex-col items-center gap-3 p-12 text-center" data-testid="game-grid">
+      <div className="glass-card mx-4 flex flex-col items-center gap-3 p-12 text-center sm:mx-7" data-testid="game-grid">
         <p className="text-lg font-semibold" style={{ color: 'var(--ink)' }}>No disks yet</p>
         <p className="text-sm" style={{ color: 'var(--muted)' }}>
           Drop some ADFs on the ingest page, or run <code className="font-mono">webadf push</code>.
@@ -42,7 +42,10 @@ export function GameGrid({ games }: { games: GameListItem[] }) {
   }
 
   const grid = (
-    <div className="mx-7 grid grid-cols-5 gap-4" data-testid="game-grid">
+    // Five across is ~60px per card at 390px, which is smaller than the
+    // cover art is legible at. Two, then three, then today's five.
+    // The gutter shrinks with it: mx-7 spends 56 of 390px on nothing.
+    <div className="mx-4 grid grid-cols-2 gap-4 sm:mx-7 sm:grid-cols-3 md:grid-cols-5" data-testid="game-grid">
       {ordered.map((g) =>
         filteredCollectionId
           ? <SortableCard key={g.id} game={g} collectionId={filteredCollectionId} />

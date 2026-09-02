@@ -46,9 +46,16 @@ export function DeviceCard({ device, now }: { device: DeviceListItem; now: numbe
     <div className="glass-card flex flex-col gap-3 p-5" data-testid={`device-${device.id}`}
          data-state={state}>
       <div className="flex items-start justify-between gap-4">
-        <div className="flex flex-col gap-0.5">
+        {/*
+          min-w-0 + break-words on the identity line: MAC, firmware and RSSI
+          joined together run past 300px, and a flex item refuses to shrink
+          below its content by default, so without this the card grows wider
+          than the phone instead of the line wrapping. Both are inert at a
+          width where the line already fits.
+        */}
+        <div className="flex min-w-0 flex-col gap-0.5">
           <span className="text-[16px] font-bold" style={{ color: 'var(--ink)' }}>{device.name}</span>
-          <span className="font-mono text-[11px]" style={{ color: 'var(--muted)' }}>
+          <span className="break-words font-mono text-[11px]" style={{ color: 'var(--muted)' }}>
             {[device.macAddress, device.firmwareVersion && `fw ${device.firmwareVersion}`,
               device.rssi !== null && `${device.rssi} dBm`].filter(Boolean).join(' · ')}
           </span>

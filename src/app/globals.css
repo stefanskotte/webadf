@@ -171,6 +171,18 @@
   --hairline-strong: rgb(30 45 60 / 0.14);
   --shadow-card:  0 1px 2px rgb(30 45 60 / 0.06), 0 8px 24px rgb(30 45 60 / 0.09);
 
+  /* The mobile nav bar's surface (below sm only -- see the wrapper in each
+     shell's layout). Deliberately NOT one of the --glass-* values above:
+     those are white, for dark text on a pale card, and the nav pill's text is
+     the light --on-dark ramp tuned against the gradient's dark TOP band. The
+     bar is fixed to the BOTTOM of the viewport, where the gradient has run
+     down to --grad-bot (#eef1f2); white glass there leaves the nav labels at
+     roughly 1.5:1. Carrying --grad-top down with the bar keeps them at the
+     ratio they were designed for. Held at 0.90 rather than opaque so the
+     content scrolling under it still reads as content. */
+  --nav-scrim:          rgb(27 37 52 / 0.90);
+  --nav-scrim-hairline: rgb(255 255 255 / 0.14);
+
   --primary-action: #16273a;
   --accent-blue:    #1a35d6;
   --accent-amber:   #f5822e;   /* FILL ONLY — fails AA as text */
@@ -205,4 +217,27 @@
   border-radius: var(--radius-card);
   backdrop-filter: blur(12px);
   box-shadow: var(--shadow-card);
+}
+/* The travelling segment in the navigation bar (see nav-progress.tsx). It is
+   indeterminate by choice: we cannot know how far a server render has got, and
+   a bar that creeps to 90% and stalls teaches people to ignore it.
+
+   Reduced motion gets a still, half-width bar rather than nothing at all --
+   the feedback is the point, and removing it entirely would leave exactly the
+   "did my click register?" gap this was built to close. */
+@keyframes nav-progress-run {
+  0%   { transform: translateX(-100%); }
+  100% { transform: translateX(400%); }
+}
+
+.nav-progress-run {
+  animation: nav-progress-run 1.1s cubic-bezier(0.4, 0, 0.2, 1) infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .nav-progress-run {
+    animation: none;
+    width: 50%;
+    transform: none;
+  }
 }

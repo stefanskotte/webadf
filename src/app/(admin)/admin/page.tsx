@@ -24,7 +24,7 @@ export default async function AdminOverviewPage() {
         title="Overview"
         subtitle="Every organization, unscoped — these numbers cross the tenant boundary"
       />
-      <div className="grid grid-cols-2 gap-3 px-7 pb-10 md:grid-cols-3">
+      <div className="grid grid-cols-2 gap-3 px-4 pb-10 sm:px-7 md:grid-cols-3">
         {TILES.map((tile) => (
           <div key={tile.key} className="glass-card p-5">
             <div className="text-[12.5px] font-semibold" style={{ color: 'var(--muted)' }}>

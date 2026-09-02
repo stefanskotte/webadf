@@ -1,5 +1,5 @@
 "use client";
-import Link from "next/link";
+import { Link } from '@/components/shell/link';
 import { usePathname } from "next/navigation";
 
 const ITEMS = [
@@ -31,7 +31,11 @@ export function TopNav({ showAdmin = false }: { showAdmin?: boolean }) {
   const items = showAdmin ? [...ITEMS, ADMIN_ITEM] : ITEMS;
   return (
     <nav
-      className="mx-auto flex items-center gap-[3px] rounded-full border p-1"
+      // w-max below sm so the pill stays as wide as its items when the
+      // layout's bottom bar clamps it and scrolls: at the shell's own width
+      // the items would spill outside the pill's border instead of taking it
+      // with them. Four items (with Admin) already fill most of 390px.
+      className="flex w-max items-center gap-[3px] rounded-full border p-1 sm:w-auto"
       style={{
         background: "rgb(255 255 255 / 0.12)",
         borderColor: "rgb(255 255 255 / 0.16)",

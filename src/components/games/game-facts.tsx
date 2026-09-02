@@ -42,7 +42,7 @@ export function GameFacts({ game }: { game: GameDetail }) {
   const cover = game.front ?? game.title_;
 
   return (
-    <div className="px-7 pb-3" data-testid="game-facts">
+    <div className="px-4 pb-3 sm:px-7" data-testid="game-facts">
       <div className="glass-card p-5">
         <div className="flex flex-col gap-5 md:flex-row">
           {cover && (
@@ -59,8 +59,11 @@ export function GameFacts({ game }: { game: GameDetail }) {
               <dl className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1.5 text-[13px]">
                 {facts.map(([k, v]) => (
                   <div key={k} className="contents">
-                    <dt className="font-semibold" style={{ color: 'var(--muted)' }}>{k}</dt>
-                    <dd data-testid={`fact-${k.toLowerCase()}`}>{v}</dd>
+                    <dt className="whitespace-nowrap font-semibold" style={{ color: 'var(--muted)' }}>{k}</dt>
+                    {/* A grid item's automatic minimum size is its content, so
+                        a long Languages or Genre list would widen the 1fr
+                        track past the card rather than wrap inside it. */}
+                    <dd className="min-w-0 break-words" data-testid={`fact-${k.toLowerCase()}`}>{v}</dd>
                   </div>
                 ))}
               </dl>

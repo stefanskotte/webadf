@@ -1,5 +1,5 @@
 import { notFound } from 'next/navigation';
-import Link from 'next/link';
+import { Link } from '@/components/shell/link';
 import { and, eq } from 'drizzle-orm';
 import { getDb } from '@/db';
 import { disks, entitlements, games } from '@/db/schema/catalog';
@@ -75,7 +75,7 @@ export default async function DiskFilesPage(props: PageProps<'/disks/[id]/files'
           </Link>
         }
       />
-      <div className="flex flex-col gap-3 px-7 pb-10">
+      <div className="flex flex-col gap-3 px-4 pb-10 sm:px-7">
         {volume === null ? (
           <div className="glass-card p-5 text-[13px]" style={{ color: 'var(--amber-text)' }}
                data-testid="blob-unavailable">

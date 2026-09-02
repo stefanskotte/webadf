@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import Link from 'next/link';
+import { Link } from '@/components/shell/link';
 import { toast } from 'sonner';
 
 export interface MountTarget { id: string; name: string }
@@ -77,7 +77,11 @@ export function MountAction({ diskId, devices }: { diskId: string; devices: Moun
       <div ref={wrapperRef} tabIndex={-1}
            data-testid={`mount-${diskId}-menu`}
            onKeyDown={(e) => { if (e.key === 'Escape') setExpanded(false); }}
-           className="flex flex-wrap items-center justify-end gap-1.5 outline-none">
+           // Below `sm` the picker takes a full line of its own inside the
+           // row's control block, so a fleet of several devices wraps into
+           // readable buttons instead of a column of slivers; from `sm` up
+           // it is the right-aligned inline group it has always been.
+           className="flex w-full flex-wrap items-center justify-start gap-1.5 outline-none sm:w-auto sm:justify-end">
         {devices.map((d) => (
           <button key={d.id} type="button" onClick={() => mount(d.id)} disabled={busy}
                   data-testid={`mount-${diskId}-to-${d.id}`}

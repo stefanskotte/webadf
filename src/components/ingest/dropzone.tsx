@@ -290,7 +290,7 @@ export function Dropzone() {
   const failed = rows.filter((r) => r.state === 'failed').length;
 
   return (
-    <div className="mx-7 flex flex-col gap-4">
+    <div className="mx-4 flex flex-col gap-4 sm:mx-7">
       <label
         data-testid="dropzone"
         onDragOver={(e) => e.preventDefault()}
@@ -330,7 +330,10 @@ export function Dropzone() {
 
       {rows.length > 0 && (
         <>
-          <div className="grid grid-cols-5 gap-3">
+          {/* Five tiles across is ~70px each at 390px -- narrower than
+              some of the labels in them. Two, then three, then the five this
+              has always been. */}
+          <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
             {(
               [
                 { k: 'scanned', v: scanned, col: 'var(--ink)', border: 'var(--ink)' },
@@ -380,8 +383,12 @@ export function Dropzone() {
               </span>
             </div>
 
+            {/* Hidden below `sm`: the rows underneath stack there, so a
+                header of column names would be naming columns that no longer
+                exist -- and its own 400px of fixed tracks would be clipped by
+                the card's overflow-hidden regardless. */}
             <div
-              className="grid grid-cols-[1fr_90px_100px_90px_120px] items-center px-4 py-1.5 font-mono text-[10px] uppercase tracking-wide"
+              className="hidden grid-cols-[1fr_90px_100px_90px_120px] items-center px-4 py-1.5 font-mono text-[10px] uppercase tracking-wide sm:grid"
               style={{ background: 'rgb(255 255 255 / 0.5)', borderBottom: '1px solid var(--hairline)', color: 'var(--muted-2)' }}
             >
               <span>File</span>
@@ -396,10 +403,17 @@ export function Dropzone() {
                 <div
                   key={r.sha256}
                   data-testid="ingest-row"
-                  className="grid grid-cols-[1fr_90px_100px_90px_120px] items-center px-4 py-2 font-mono text-[11px]"
+                  // 1fr plus 400px of fixed tracks, in a card that does not
+                  // scroll sideways: at 390px the filename track computes to
+                  // nothing and the state -- the one thing anyone actually
+                  // watches during an ingest -- is clipped off the end. Below
+                  // `sm` the row becomes a card of its own: filename on the
+                  // first line, the rest wrapped beneath it. The grid returns
+                  // at `sm` untouched.
+                  className="flex flex-wrap items-center gap-x-3 gap-y-1 px-4 py-2 font-mono text-[11px] sm:grid sm:grid-cols-[1fr_90px_100px_90px_120px] sm:gap-x-0 sm:gap-y-0"
                   style={{ borderBottom: '1px solid var(--hairline)' }}
                 >
-                  <span className="truncate pr-3" style={{ color: 'var(--foreground)' }}>
+                  <span className="w-full truncate pr-3 sm:w-auto" style={{ color: 'var(--foreground)' }}>
                     {r.filename}
                   </span>
                   <span className="text-right" style={{ color: 'var(--muted-2)' }}>
@@ -415,7 +429,7 @@ export function Dropzone() {
                   >
                     {r.state}
                   </span>
-                  <div className="flex justify-end">
+                  <div className="ml-auto flex justify-end sm:ml-0">
                     <MountButton state={r.state} />
                   </div>
                 </div>

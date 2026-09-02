@@ -12,7 +12,7 @@
 // below instead, kept in sync with src/lib/search.ts by hand.
 
 import { useEffect, useRef, useState } from 'react';
-import { useRouter } from 'next/navigation';
+import { useNavProgress } from './nav-progress';
 
 interface SearchTitle {
   id: string;
@@ -34,7 +34,7 @@ interface SearchResults {
 const EMPTY_RESULTS: SearchResults = { titles: [], collections: [] };
 
 export function SearchBox() {
-  const router = useRouter();
+  const { navigate } = useNavProgress();
   const inputRef = useRef<HTMLInputElement>(null);
 
   const [q, setQ] = useState('');
@@ -77,7 +77,7 @@ export function SearchBox() {
   // through here, so abort/clear/reset-highlight/clear-q can never be
   // forgotten on one of them. Missing this on even one path leaves a stale
   // request free to land later and repopulate a panel the user believes is
-  // closed, or worse, an open one for a different query -- router.push does
+  // closed, or worse, an open one for a different query -- navigating does
   // not unmount SearchBox, since it lives in the layout.
   function reset() {
     clearSearchState();
@@ -164,6 +164,8 @@ export function SearchBox() {
     return () => window.removeEventListener('keydown', onKey);
   }, []);
 
+  const [focused, setFocused] = useState(false);
+
   const trimmed = q.trim();
   // While an error is showing, the rows behind it are stale and must not be
   // navigable -- an empty flat list here also disarms ArrowUp/ArrowDown/Enter.
@@ -203,9 +205,12 @@ export function SearchBox() {
   }
 
   function select(entry: (typeof flat)[number]) {
-    if (entry.kind === 'title') router.push(`/games/${entry.item.id}`);
-    else router.push(`/library?collection=${entry.item.id}`);
-    // SearchBox lives in the layout, so router.push does not unmount it --
+    // navigate(), not router.push: a bare push reports no pending state, and
+    // this is the one navigation in the app where the panel vanishes on the
+    // same click, so without the bar nothing on screen confirms it landed.
+    if (entry.kind === 'title') navigate(`/games/${entry.item.id}`);
+    else navigate(`/library?collection=${entry.item.id}`);
+    // SearchBox lives in the layout, so navigating does not unmount it --
     // without reset() here the request for whatever was typed keeps running
     // and can repopulate the panel with the PREVIOUS search's rows the next
     // time it opens.
@@ -241,21 +246,63 @@ export function SearchBox() {
   }
 
   return (
-    <div className="relative">
+    // Full width below sm: the header wraps the search box onto a line of its
+    // own there, and a shrink-to-fit box would leave that line mostly empty
+    // while the input it contains stayed too narrow to read a query in.
+    <div className="relative w-full sm:w-auto">
       <input
         ref={inputRef}
         data-testid="search-input"
+        aria-label="Search titles"
+        title="Search titles — press / to focus"
         placeholder="Search titles"
         value={q}
         onChange={(e) => onChange(e.target.value)}
         onKeyDown={onKeyDown}
-        className="h-[34px] w-56 rounded-full border px-4 text-[13px] outline-none transition-colors"
+        onFocus={() => setFocused(true)}
+        onBlur={() => setFocused(false)}
+        // pr-9 leaves room for the key hint; without it a long query runs
+        // underneath the badge instead of scrolling behind the pill's edge.
+        // w-48, not w-56. The admin shell carries the operator's email and a
+        // back-link beside this box, and at w-56 the centred nav pill and this
+        // input overlapped by 15px at 1280 (measured, both shells). 192px
+        // still holds the placeholder and the key hint with room to spare.
+        // Below sm none of that applies -- the pill has left the header for
+        // the bottom bar -- and 192px would waste the line the box now has to
+        // itself, so it takes the whole of it.
+        className="h-[34px] w-full rounded-full border pl-4 pr-4 text-[13px] outline-none transition-colors sm:w-48 sm:pr-9"
         style={{
           background: 'rgb(255 255 255 / 0.12)',
           borderColor: 'rgb(255 255 255 / 0.16)',
           color: 'var(--on-dark)',
         }}
       />
+
+      {/* The "/" shortcut has always worked; nothing on screen said so, which
+          for most people is the same as it not existing. Shown only while the
+          box is idle -- once it is focused or has a query in it, the hint has
+          served its purpose and would just be sitting in the way of the text.
+          aria-hidden because the same thing is already announced properly by
+          the input's title attribute; a screen reader does not need "slash"
+          read out as content. */}
+      {!focused && q === '' && (
+        <kbd
+          aria-hidden
+          data-testid="search-hint"
+          // hidden below sm: it advertises a KEY, and a phone has no keyboard
+          // to press it with -- on a touch device it is decoration sitting on
+          // top of the input's text. The shortcut itself still works for
+          // anything with a keyboard attached at any width.
+          className="pointer-events-none absolute right-3 top-1/2 hidden -translate-y-1/2 rounded border px-1.5 font-mono text-[11px] leading-[15px] sm:block"
+          style={{
+            background: 'rgb(255 255 255 / 0.10)',
+            borderColor: 'rgb(255 255 255 / 0.22)',
+            color: 'rgb(233 240 244 / 0.78)',
+          }}
+        >
+          /
+        </kbd>
+      )}
 
       {showPanel && (
         // OPAQUE, not --glass-strong. The panel is anchored at top-[42px],
@@ -281,7 +328,14 @@ export function SearchBox() {
         // highlighted.
         <div
           data-testid="search-panel"
-          className="absolute right-0 top-[42px] z-50 w-80 rounded-xl border p-1.5"
+          // The panel is anchored right-0 and grows leftwards, so on a narrow
+          // screen a fixed 20rem puts its LEFT edge off-canvas -- and the
+          // titles are left-aligned inside it, so that is the half a reader
+          // needs. 20rem still fits at 390px; it stops fitting on the 320px
+          // phones below that, and the min() is what makes those degrade to a
+          // narrower panel rather than a truncated one. Above sm it always
+          // resolves to 20rem, which is today's w-80 exactly.
+          className="absolute right-0 top-[42px] z-50 w-[min(20rem,calc(100vw-2rem))] rounded-xl border p-1.5 sm:w-80"
           style={{
             background: '#f1f4f5',
             borderColor: 'var(--hairline-strong)',

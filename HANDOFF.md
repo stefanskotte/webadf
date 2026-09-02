@@ -37,13 +37,15 @@ after plan 4a, rewritten again 2026-08-31 after plan 4b.**
 | **e2e cleanup** | ✅ **done, merged and live 2026-09-01.** A run no longer leaks; 4,600 accumulated rows and 73 live invite codes swept; see 3e |
 | **User-defined collections** | ✅ **done, all 9 tasks, merged to `master` and live in production.** A rail on `/library`, drag to file and to reorder; migration 0011 applied; see 3g |
 | **Library covers, type pills, contrast** | ✅ **done, merged and live 2026-09-01.** Grid shows real cover art; grid and table both show a TOSEC-derived type; the grey ramp now passes WCAG AA |
+| **Shell polish** | ✅ **done 2026-09-02.** The "/" hint, both navs centred on the viewport, zebra-striped file tree, and a navigation bar + scrim; see 3i |
+| **Mobile responsive** | ✅ **done 2026-09-02, all surfaces.** Usable at 390px; nav becomes a bottom bar, touch drag no longer eats scrolling; see 3j |
 | **Typeahead search** | ✅ **done, all 7 tasks, merged to `master` and live in production.** A Spotlight-style pill in both shells; migration 0012 applied; see 3h |
 | **Read-only ADF filesystem reader** | ✅ **done, all 10 tasks, `feat/adf-filesystem-reader`.** Reads 80.3% of the archive (49/61) against TOSEC's 45.9% and OpenRetro's 6.6%; see 3f |
 | **Hardware** | boards ordered from JLCPCB |
 
 **Current branch:** `master`, clean and pushed. Everything below, collections included, is
 merged and live in production. **Plan 5 (hardware bring-up) is the only unbuilt plan.**
-**Suite on `master`:** 418 vitest, `pnpm build` clean, **170 Playwright passed (23.7 min)**. Firmware: `pnpm firmware:test` green (506 checks, 13
+**Suite on `master`:** 418 vitest, `pnpm build` clean, **177 Playwright passed (22.9 min)** — 172 desktop at 1280×720 and 5 mobile at 390×844; `playwright.config.ts` now has two projects. Firmware: `pnpm firmware:test` green (506 checks, 13
 binaries), `pnpm firmware:build` produces a `.uf2` — **and now requires
 `PORTAL_AP_PASSWORD` set in the environment, or the configure step fails by design**; see
 "Plan 4b" below for the full command.
@@ -707,6 +709,87 @@ is applied to the live database.** **Merged to `master` and pushed to production
 **e2e:** `e2e/search.spec.ts`, 11 tests — the middle-of-string fragment that is the whole point
 of D-5-2, ranking, both keyboard paths, the abort, the empty state, cross-tenant, the lone `%`,
 and the drifted disk. `e2e/contrast.spec.ts` gained a twelfth for the highlighted row.
+
+### 3i. Shell polish — DONE 2026-09-02, merged to `master` and live
+
+Four operator requests. **The "/" search shortcut already worked** — it focuses without typing
+a slash into the box it opens. What was missing was any sign of it on screen and any test that
+it focused at all: only the negative case (not hijacking another input) was covered, so it
+could have been broken outright with a green suite. There is now a `/` badge in the pill
+(`sm:`-only — it advertises a key, and a phone has none) and two tests.
+
+**Both navs are centred on the VIEWPORT, and getting there took three attempts, all measured.**
+`mx-auto` centres only within the space its siblings leave over, so the wider right-hand group
+pushed the pill left by a different amount in each shell. A `1fr/auto/1fr` grid centred it
+exactly but forced equal side columns, wrapping "Back to library". Absolute centring collided
+with the search box by 15px in the admin shell. What shipped is absolute centring **plus a
+32px narrower search pill**, measuring 0.0px off centre in both shells with equal vertical
+centres. The admin email is capped and truncated — a long real address would have broken that
+header at any width.
+
+**The file tree's zebra wash is WHITE, not grey, and that is not a style choice.** Its metadata
+columns use `--muted-2`; darkening alternate rows by even 0.03 alpha drops `--faint` to 4.49:1,
+under WCAG AA. Washing lighter reads as the same alternation while raising `--muted-2` to
+5.37:1. **Striping also required flattening the tree into its visible rows first** — striping
+per level puts two same-shaded rows side by side at every expanded directory boundary.
+
+**Navigation now shows a bar and dims the page**, because Next's docs name the symptom exactly:
+a dynamic route without `loading.tsx` blocks on the server response before rendering, so the app
+"appears unresponsive" — which was every route here. **Each `<Link>` reports through
+`useLinkStatus()` rather than a global click listener**, because `/library` already runs one for
+dnd-kit and a second on the same drag handles is a production-only bug in waiting; the reporter
+renders `null`, so it adds no DOM and cannot shift a layout. The 150ms delay before anything
+appears is a CSS `transition-delay`, not a timer — a timer meant setting state from an effect,
+which this repo's React 19 lint rules reject.
+
+### 3j. Mobile responsive — DONE 2026-09-02, merged to `master` and live
+
+The app rendered on a phone and could not be used on one: **four responsive utilities existed in
+our own code**, and everything else was written at one width. Spec:
+`docs/superpowers/specs/2026-09-02-mobile-responsive-design.md`, whose §8 records the six places
+that spec was wrong and was corrected during implementation.
+
+**`playwright.config.ts` now has two projects, and that is the load-bearing part.** Until now
+every spec ran at Playwright's default 1280×720 because no viewport was ever configured, so the
+responsive rules had no test that could fail. `desktop` deliberately sets NO viewport so it keeps
+inheriting that default; `mobile` is pinned to 390×844 with `hasTouch` and matches only
+`e2e/mobile.spec.ts`.
+
+**Every rule is written as the mobile value unprefixed with `sm:`/`md:` restoring the desktop
+value, never the reverse.** A regression at 1280 is the signal that a rule was written backwards.
+**No existing spec was edited** — that was the agreed tripwire and it never fired. The
+mobile-only groupings use **`sm:contents`**, so above the breakpoint the wrapper generates no box
+and the desktop row lays out exactly as before rather than being re-derived.
+
+**Touch drag is where the real hazard was.** `PointerSensor` keys on `pointerdown` with **no
+`pointerType` check**, so adding a `TouchSensor` beside it double-activates on a phone. It is
+**replaced** by `MouseSensor` at the same 8px distance, with touch getting
+`delay: 250, tolerance: 8` (`tolerance` is required on dnd-kit's delay form). **The delay is on
+the touch path ONLY** — `collections.spec.ts` moves immediately without holding, so a delay on
+the mouse path breaks every drag test.
+
+**`touch-action: none` stays on the rail grip and is deliberately absent from the grid cards.**
+`AbstractPointerSensor.handleMove` suppresses scrolling only via
+`if (event.cancelable) event.preventDefault()`; once a browser commits a gesture to a scroll its
+`touchmove` stops being cancelable, so the grip needs it to guarantee the first post-hold move is
+still cancelable. On the cards, whose listeners cover the whole card, `none` would kill scrolling
+of the entire library — the 250ms/8px hold separates the gestures instead.
+
+**The nav bar's backdrop is NOT a glass token.** Those are white surfaces for dark text; the
+pill's labels are the light `--on-dark` ramp, and the bar sits at the bottom of the viewport
+where the fixed gradient has run to `#eef1f2` — white glass there leaves the labels near 1.5:1.
+`--nav-scrim` and `--nav-scrim-hairline` carry the dark band down with the bar.
+
+**The file tree was the worst break in the app:** fixed columns totalling more than the card was
+wide, so the name column computed **negative** at depth 0 and Download was clipped away entirely.
+Two lines below `sm`, and deliberately no horizontal scroll — Download is the row's only action.
+**The directory toggle must stay the only `<button>` in a row** (`adf-browser.spec.ts` scopes
+`getByRole('button')` to it).
+
+**Verified, and its limit:** the touch test is **mutation-proven** — reverting the touch path to
+a distance-only constraint makes the card pick up instead of the page scrolling, and the test
+fails on it. **Nothing has run on a real phone.** Emulated touch is not a finger and `hover:` has
+no analogue on one.
 
 ### 4. Backlog, not blocking anything
 

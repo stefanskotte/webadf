@@ -48,7 +48,13 @@ export default async function LibraryPage(props: PageProps<'/library'>) {
         gameIds={games.map((g) => g.id)}
         filteredCollectionId={filteredCollectionId}
       >
-        <div className="flex items-start gap-4">
+        {/* Two columns from `md` up, which is what it has always been; below
+            that the rail stacks above the grid, because a 224px rail beside a
+            390px screen leaves the grid about 66px of it. `items-start` is
+            deliberately NOT the base rule: in a column it governs the
+            horizontal axis, so it would shrink the rail and the grid to their
+            content width instead of letting them fill the screen. */}
+        <div className="flex flex-col gap-4 md:flex-row md:items-start">
           <CollectionRail />
           <div className="min-w-0 flex-1">
             {view === 'table' ? <GameTable games={games} /> : <GameGrid games={games} />}

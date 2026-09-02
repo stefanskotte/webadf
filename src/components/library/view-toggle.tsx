@@ -1,7 +1,9 @@
-import Link from 'next/link';
+import { Link } from '@/components/shell/link';
 
 export function ViewToggle({ view }: { view: 'grid' | 'table' }) {
-  const base = 'grid h-8 w-9 place-items-center text-[11px] font-semibold';
+  // Bigger on a phone and back to today's 36x32 from `sm`: this pair lives in
+  // the page header's actions, where a thumb is the only pointer there is.
+  const base = 'grid h-10 w-11 place-items-center text-[11px] font-semibold sm:h-8 sm:w-9';
   const on  = { background: 'var(--primary-action)', color: '#fff' };
   const off = { color: 'var(--muted)' };
   return (

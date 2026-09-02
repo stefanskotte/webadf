@@ -10,7 +10,7 @@
 // also hosts a Link, a rename input and a menu, and none of those should
 // have to survive an 8px-pointer-move-then-release to register as a click.
 
-import Link from 'next/link';
+import { Link } from '@/components/shell/link';
 import { useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { toast } from 'sonner';
@@ -45,9 +45,15 @@ export function CollectionRail() {
     return qs ? `/library?${qs}` : '/library';
   }
 
+  // Below `md` the rail is a full-width band above the grid (page.tsx stacks
+  // the two there), so it drops its fixed 224px and takes the page's own
+  // gutter on both sides. From `md` it is the left column again and the right
+  // margin goes back to nothing: the parent's `gap-4` is what separates it
+  // from the grid, and a second margin would widen that split beyond what it
+  // has always been.
   return (
     <aside
-      className="glass-card ml-7 flex w-56 shrink-0 flex-col gap-1 p-3"
+      className="glass-card ml-4 mr-4 flex w-auto shrink-0 flex-col gap-1 p-3 sm:ml-7 sm:mr-7 md:mr-0 md:w-56"
       data-testid="collection-rail"
     >
       <Link
@@ -220,6 +226,19 @@ function CollectionRow({
       data-drop-target={isDropTarget ? 'true' : undefined}
       className="flex items-center gap-1 rounded-md px-1 py-0.5"
     >
+      {/*
+        `touchAction: 'none'` was already here for the old PointerSensor and is
+        MORE load-bearing now that a TouchSensor drives this by press-and-hold.
+        dnd-kit only calls preventDefault() on a touchmove that is still
+        `cancelable` (handleMove in AbstractPointerSensor); once the browser has
+        committed the gesture to a scroll, it is not, and the page would scroll
+        away underneath a rail reorder. Opting the handle out of browser
+        gestures is what keeps that first post-hold move cancelable.
+
+        Its cost is that a swipe begun exactly on this 20x24px grip scrolls
+        nothing -- which is why the drag activators live on the grip alone and
+        not on the row, so the rest of the rail scrolls like any other list.
+      */}
       <button
         type="button"
         aria-label={`Reorder ${collection.name}`}

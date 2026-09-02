@@ -26,7 +26,7 @@ export default async function AdminInvitesPage() {
         subtitle={`${live} live · ${invites.length} total · registration is invite-only (D13)`}
         actions={<IssueInviteButton />}
       />
-      <div className="px-7 pb-10">
+      <div className="px-4 pb-10 sm:px-7">
         {live === 0 && (
           <div
             className="glass-card mb-3 p-4 text-[13px]"
@@ -37,7 +37,13 @@ export default async function AdminInvitesPage() {
           </div>
         )}
         <div className="glass-card overflow-x-auto">
-          <table className="w-full text-[13px]">
+          {/* w-full alone let the card's overflow-x-auto go unused: the table
+              shrank to the viewport and crushed its cells rather than
+              scrolling, taking Revoke -- the only action here -- with it.
+              640px is comfortable for five narrow, fixed-shape columns: an
+              eight-character code, a state word, and two ISO dates that must
+              never wrap mid-token. */}
+          <table className="w-full min-w-[640px] text-[13px]">
             <thead>
               <tr style={{ color: 'var(--muted)' }}>
                 <th className="px-4 py-3 text-left font-semibold">Code</th>
