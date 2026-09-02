@@ -97,12 +97,21 @@ digests and no equivalent decision covers them.** Another org's title returns no
 "nothing" is indistinguishable from "you have no such title": same status, same body shape, no
 404 that separates the cases, and no error text that differs between them.
 
-### 3.5 `collection_games` is never touched
+### 3.5 `collection_games` is reached only through an org-scoped collection
 
 `collections` carries `orgId`, so `orgFilter` covers it. `collection_games` deliberately has **no**
-`orgId` (D-4-5) and is reachable only through a collection. This increment matches collection
-*names* only, so it never queries that table. If a later change wants a member count in the result
-row, it must scope through `collections`, not by collection id alone.
+`orgId` (D-4-5) and is reachable only through a collection.
+
+**Corrected 2026-09-02, during Task 3's review.** An earlier draft of this section said
+`collection_games` "is never queried" — which contradicted §7.2 of this same spec, where a
+collection result row shows its member count. The count has to come from somewhere. It comes from a
+subquery correlated on `collections.id` **inside** the `orgFilter(collections, orgId, …)` predicate,
+so the id it keys on is already org-scoped — the safe shape this section always demanded, described
+by a sentence that had gone stale. `listCollections` (`src/lib/collections.ts`) counts members the
+same way.
+
+The rule that matters is unchanged and is the one to carry forward: **`collection_games` is never
+keyed on a collection id that has not itself been through `orgFilter`.**
 
 ---
 
