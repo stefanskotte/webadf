@@ -19,8 +19,9 @@ import { test, expect, type Page } from '@playwright/test';
  * The lesson worth keeping: a colour can arrive from a stylesheet no file in
  * this repo names. Assert the composited pixels.
  */
-import { signUpFresh } from './helpers';
-import { cleanupSeeded } from './device-helpers';
+import { randomUUID } from 'node:crypto';
+import { signUpFresh, runTag } from './helpers';
+import { cleanupSeeded, seedDisk } from './device-helpers';
 import { signInAsSuperAdmin } from './admin-helpers';
 
 test.afterAll(cleanupSeeded);
@@ -114,5 +115,35 @@ test('a toast description is legible', async ({ page }) => {
   const r = ratio(p!.fg, p!.bg);
   console.log(`toast     [data-description]     ${r.toFixed(2)}:1  "${p!.text.slice(0, 40)}"`);
   await page.screenshot({ path: 'test-results/zz-toast.png' });
+  expect(r).toBeGreaterThan(4.5);
+});
+
+test('the search panel metadata line is legible while its row is highlighted', async ({ page }) => {
+  // The panel's own comment (search-box.tsx) works out the math for this
+  // exact case: the panel is painted opaque (#f1f4f5) precisely because the
+  // translucent version measured under AA on the page gradient's dark band,
+  // and the highlighted row then composites a further overlay on top of
+  // that (~#e0e4e6). --muted (not --muted-2) is what the metadata line
+  // uses there, landing at ~5.6:1 -- this asserts that arithmetic against
+  // the rendered pixels rather than trusting the comment. Highlight
+  // defaults to index 0, so the TOP row -- the one this test reads -- is
+  // highlighted by default, not an edge case reached only by hovering.
+  const run = runTag();
+  const u = await signUpFresh(page);
+  await seedDisk(u.orgId, {
+    title: `Contrast Row ${run}`, diskNo: 1,
+    sha256: randomUUID().replace(/-/g, '').padEnd(64, 'c'),
+  });
+
+  await page.getByTestId('search-input').fill('Contrast Row');
+  await expect(page.getByTestId('search-result').first()).toBeVisible();
+
+  // The metadata line is the second (last) span in the top result's button
+  // -- querySelector returns the first DOM match, which is that top,
+  // highlighted-by-default row.
+  const p = await probe(page, '[data-testid="search-result"] span:last-child');
+  expect(p, 'search result metadata line not found').toBeTruthy();
+  const r = ratio(p!.fg, p!.bg);
+  console.log(`search    metadata line                  ${r.toFixed(2)}:1  "${p!.text.slice(0, 40)}"`);
   expect(r).toBeGreaterThan(4.5);
 });
