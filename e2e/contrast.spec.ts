@@ -27,7 +27,7 @@ import { signInAsSuperAdmin } from './admin-helpers';
 test.afterAll(cleanupSeeded);
 
 /**
- * The element's own rendered colour, over the first thing actually painted
+ * The element's own rendered colour, over what is actually composited
  * behind it. Measured from the live page rather than from the stylesheet,
  * because the whole bug class here is a colour arriving from somewhere the
  * source does not obviously name.
@@ -57,12 +57,43 @@ async function probe(page: Page, sel: string) {
       const d = ctx.getImageData(0, 0, 1, 1).data;
       return [d[0], d[1], d[2], d[3] / 255];
     };
-    let bg: number[] | null = null;
+    // Walk from the element outward (toward the root), collecting every
+    // background along the way -- opaque or translucent -- stopping once
+    // one is opaque enough (alpha > 0.5) to serve as a backstop with
+    // nothing usable behind it.
+    //
+    // A translucent layer (e.g. the search panel's highlighted-row overlay,
+    // rgb(30 45 60 / 0.08)) is real paint, not noise: skipping it entirely,
+    // as an earlier version of this function did, silently measures the
+    // PLAIN panel's colour instead of the highlighted one -- landing on a
+    // higher, wrong ratio for exactly the row a bug is most likely to ship
+    // on, since highlight defaults to index 0.
+    const layers: number[][] = [];
     let node: Element | null = el;
     while (node) {
       const p = parse(getComputedStyle(node).backgroundColor);
-      if (p && (p[3] ?? 1) > 0.5) { bg = p; break; }
+      if (p) {
+        layers.push(p);
+        if (p[3] > 0.5) break;
+      }
       node = node.parentElement;
+    }
+    if (layers.length === 0) return null;
+    // layers[0] is nearest to the element (painted last, i.e. on top);
+    // layers[last] is the opaque backstop (painted first, i.e. on the
+    // bottom). Composite back-to-front with the standard "over" operator,
+    // treating the backstop itself as fully opaque.
+    const backstop = layers[layers.length - 1];
+    let bg: number[] = [backstop[0], backstop[1], backstop[2], 1];
+    for (let i = layers.length - 2; i >= 0; i--) {
+      const top = layers[i];
+      const a = top[3] + bg[3] * (1 - top[3]);
+      bg = [
+        (top[0] * top[3] + bg[0] * bg[3] * (1 - top[3])) / a,
+        (top[1] * top[3] + bg[1] * bg[3] * (1 - top[3])) / a,
+        (top[2] * top[3] + bg[2] * bg[3] * (1 - top[3])) / a,
+        a,
+      ];
     }
     const fg = parse(getComputedStyle(el).color);
     if (!fg || !bg) return null;
@@ -122,12 +153,15 @@ test('the search panel metadata line is legible while its row is highlighted', a
   // The panel's own comment (search-box.tsx) works out the math for this
   // exact case: the panel is painted opaque (#f1f4f5) precisely because the
   // translucent version measured under AA on the page gradient's dark band,
-  // and the highlighted row then composites a further overlay on top of
-  // that (~#e0e4e6). --muted (not --muted-2) is what the metadata line
-  // uses there, landing at ~5.6:1 -- this asserts that arithmetic against
-  // the rendered pixels rather than trusting the comment. Highlight
-  // defaults to index 0, so the TOP row -- the one this test reads -- is
-  // highlighted by default, not an edge case reached only by hovering.
+  // and the highlighted row then composites a further overlay
+  // (rgb(30 45 60 / 0.08)) on top of that, landing on ~#e0e4e6. --muted
+  // (not --muted-2) is what the metadata line uses there, landing at
+  // ~5.6:1. probe() now actually composites that overlay rather than
+  // skipping it as a low-alpha layer, so this measures the real
+  // highlighted-row pixels rather than the plain panel underneath them.
+  // Highlight defaults to index 0, so the TOP row -- the one this test
+  // reads -- is highlighted by default, not an edge case reached only by
+  // hovering.
   const run = runTag();
   const u = await signUpFresh(page);
   await seedDisk(u.orgId, {

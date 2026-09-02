@@ -73,7 +73,14 @@ test('an attribute match works and ranks below a name match', async ({ page }) =
   const run = runTag();
   const u = await signUpFresh(page);
   const { gameId: nameMatchId } = await seedDisk(u.orgId, { title: `Rainbow Islands ${run}`, diskNo: 1, sha256: sha('3') });
-  const { gameId: attrMatchId } = await seedDisk(u.orgId, { title: `Turrican II ${run}`, diskNo: 1, sha256: sha('4') });
+  // Sorts BEFORE "Rainbow Islands" alphabetically (its sort_title is
+  // derived straight from the title by seedDisk), and has nothing to do
+  // with "rainbow" in its own name. If the ranking's
+  // `CASE WHEN title ILIKE ... THEN 0 ELSE 1` clause were ever deleted and
+  // the query fell back to its secondary `ORDER BY sort_title` alone, this
+  // attribute-only match would wrongly sort first -- so only the ranking
+  // clause, and nothing else, can make the assertion below pass.
+  const { gameId: attrMatchId } = await seedDisk(u.orgId, { title: `Apidya ${run}`, diskNo: 1, sha256: sha('4') });
 
   // seedDisk sets no publisher -- write it directly, as the brief says to.
   await getDb().update(games).set({ publisher: 'Rainbow Arts' }).where(eq(games.id, attrMatchId));
@@ -126,31 +133,112 @@ test('"/" does not hijack typing in another input', async ({ page }) => {
   await createInput.click();
   await createInput.press('/');
 
-  expect(await createInput.inputValue()).toContain('/');
+  // toHaveValue polls/retries; a one-shot inputValue() snapshot would not.
+  await expect(createInput).toHaveValue(/\//);
   await expect(page.getByTestId('search-input')).not.toBeFocused();
 });
 
-test('out-of-order responses do not win: a slow answer for a shorter query never replaces a newer one', async ({ page }) => {
+test('out-of-order responses do not win: a superseded request is aborted and its answer never paints', async ({ page }) => {
   const run = runTag();
   const u = await signUpFresh(page);
   await seedDisk(u.orgId, { title: `Giana Sisters ${run}`, diskNo: 1, sha256: sha('6') });
+  // A DISTINCT fixture that "gia" matches but "giana" does not -- "gia" is
+  // itself a substring of "giana", so without this the stale and fresh
+  // answers could share the exact same top row and the assertion below
+  // could never fail no matter how badly the guard in search-box.tsx was
+  // broken. Its real id is reused below so the fixture is genuinely seeded
+  // (and genuinely cleaned up), even though its title is overridden in the
+  // held response to be unmistakable.
+  const { gameId: staleGameId } = await seedDisk(u.orgId, { title: `Nostalgia ${run}`, diskNo: 1, sha256: sha('6b') });
 
-  // Hold the response for "gia" until well after "giana" has been typed
-  // and answered. The route pattern matches the real request URL exactly,
-  // including its (unencoded, here -- "gia" has nothing to encode) query
-  // string.
+  // WHAT THIS TEST CAN AND CANNOT OBSERVE, because an earlier version of it
+  // asserted something impossible and hung for the full 30s timeout:
+  //
+  // search-box.tsx has TWO guards. The first is the AbortController, which
+  // cancels the superseded request. The second is a currentQueryRef
+  // comparison on each landing response, for the sub-millisecond window in
+  // which a response is already queued when abort() is called.
+  //
+  // The first guard makes the second UNOBSERVABLE from here. Once the page
+  // aborts, Chromium emits `requestfailed` (net::ERR_ABORTED) and NEVER a
+  // `response` event -- route.fulfill() still resolves, but it resolves into
+  // a dead request. So `waitForResponse` on the superseded URL can never
+  // fire, and a stale answer cannot be delivered over the network at all
+  // while the abort works. That is the guard doing its job, not a flake.
+  //
+  // So this asserts the abort DIRECTLY (its failure reason), which is
+  // sensitive to the guard being removed: without the AbortController the
+  // superseded request completes with a 200 instead of failing. The
+  // currentQueryRef guard is deliberately not covered here -- it defends a
+  // window that cannot be forced open from outside the browser.
+  let releaseStale: () => void = () => {};
+  const staleGate = new Promise<void>((resolve) => { releaseStale = resolve; });
+  // Resolved once route.fulfill has actually returned, so the assertions
+  // below wait on a real event rather than a guessed sleep.
+  let markFulfilled: () => void = () => {};
+  const staleFulfilled = new Promise<void>((resolve) => { markFulfilled = resolve; });
+
+  // route.fulfill, not route.continue: the stale body is fully under this
+  // test's control, so there is no ambiguity about what "the stale row" is.
   await page.route('**/api/search?q=gia', async (route) => {
-    await new Promise((r) => setTimeout(r, 1200));
-    await route.continue();
+    await staleGate;
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        titles: [{ id: staleGameId, title: `STALE ROW ${run}`, year: null, publisher: null, diskCount: 1 }],
+        collections: [],
+      }),
+    });
+    markFulfilled();
   });
 
   await page.getByTestId('search-input').fill('gia');
-  await page.getByTestId('search-input').fill('giana');
+  // Force the race window open deterministically: wait for the debounced
+  // request to actually be SENT before typing the next query. Two fill()
+  // calls landing within the 150ms debounce would otherwise clear the "gia"
+  // timer before it ever fired -- the held route would never be hit at all,
+  // and the test would pass having raced nothing.
+  await page.waitForRequest('**/api/search?q=gia');
 
-  // The slow answer for the shorter query must never replace the newer one.
-  await expect(page.getByTestId('search-result').first()).toContainText('Giana');
-  await page.waitForTimeout(1500);
-  await expect(page.getByTestId('search-result').first()).toContainText('Giana');
+  // Armed BEFORE the keystroke that triggers the abort, or the event is
+  // missed entirely. Raced against the response rather than awaited alone:
+  // if the abort is ever removed, the superseded request COMPLETES instead
+  // of failing, and racing the two makes that a fast, self-describing
+  // failure ("responded:200") rather than a 30-second timeout on an event
+  // that is never coming.
+  const staleSettled = Promise.race([
+    page.waitForEvent('requestfailed', (r) => r.url().includes('/api/search?q=gia'))
+      .then((r) => `failed:${r.failure()?.errorText}`),
+    page.waitForResponse('**/api/search?q=gia').then((r) => `responded:${r.status()}`),
+  ]);
+
+  await page.getByTestId('search-input').fill('giana');
+  // The real, un-intercepted answer for "giana".
+  await expect(page.getByTestId('search-result').first()).toContainText('Giana Sisters');
+
+  // Release the held answer for the superseded query, well after "giana" has
+  // been typed and answered. This has to happen BEFORE awaiting the race
+  // above: with the abort removed there is no requestfailed event, and the
+  // response cannot arrive until the gate opens -- awaiting first would hang
+  // on exactly the mutation this is meant to catch.
+  releaseStale();
+
+  // Guard 1, asserted on the reason and not merely on "it did not arrive":
+  // typing a newer query cancelled the older request.
+  expect(await staleSettled).toBe('failed:net::ERR_ABORTED');
+  await staleFulfilled;
+  // A negative ("this never painted") needs a window to be meaningful. This
+  // one is a completed in-page round trip rather than a magic number: the
+  // stale delivery, if it were ever going to happen, was queued before this
+  // fetch was even issued, so this request finishing means the browser has
+  // moved past it.
+  await page.evaluate(() => fetch('/api/search?q=zzbarrier').then((r) => r.json()));
+
+  // The answer to the shorter, superseded query must never have painted the
+  // panel -- neither as the top row nor anywhere else in it.
+  await expect(page.getByText(`STALE ROW ${run}`)).toHaveCount(0);
+  await expect(page.getByTestId('search-result').first()).toContainText('Giana Sisters');
 });
 
 test('the empty state says so, and is distinct from an empty query', async ({ page }) => {
@@ -159,9 +247,32 @@ test('the empty state says so, and is distinct from an empty query', async ({ pa
   await seedDisk(u.orgId, { title: `Present ${run}`, diskNo: 1, sha256: sha('7') });
 
   const input = page.getByTestId('search-input');
+  const query = `Nothing Matches This ${run}`;
+  const pattern = `**/api/search?q=${encodeURIComponent(query)}`;
 
-  // A query matching nothing: the empty-state message, not a blank panel.
-  await input.fill(`Nothing Matches This ${run}`);
+  // Hold the response so the in-flight window is directly observable.
+  // Under the earlier broken form, search-empty rendered on the very next
+  // React commit -- before the debounce even elapsed, let alone before any
+  // request was made -- so asserting toBeVisible() right after fill()
+  // would pass in milliseconds with /api/search never called at all.
+  let release: () => void = () => {};
+  const gate = new Promise<void>((resolve) => { release = resolve; });
+  await page.route(pattern, async (route) => {
+    await gate;
+    await route.continue();
+  });
+
+  await input.fill(query);
+  await page.waitForRequest(pattern);
+  // Still in flight: nothing to show yet, and specifically not the
+  // empty-state line.
+  await expect(page.getByTestId('search-empty')).toHaveCount(0);
+
+  // Same ordering concern as the out-of-order test above: arm the
+  // listener before releasing the gate.
+  const responded = page.waitForResponse(pattern);
+  release();
+  await responded;
   await expect(page.getByTestId('search-empty')).toBeVisible();
   await expect(page.getByTestId('search-panel')).toBeVisible();
 
@@ -209,7 +320,9 @@ test('a lone "%" matches nothing rather than the caller\'s whole library', async
   const res = await page.request.get('/api/search?q=%25');
   expect(res.status()).toBe(200);
   const body = await res.json();
-  expect(body.titles).toEqual([]);
+  // The whole shape, not just titles -- a leaked '%' would match every
+  // collection too, and a titles-only assertion would miss that.
+  expect(body).toEqual({ titles: [], collections: [] });
 });
 
 test('defence in depth: a drifted disk is neither surfaced nor counted', async ({ browser }) => {
