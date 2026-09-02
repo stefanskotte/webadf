@@ -249,7 +249,9 @@ Expected: no output. If anything matches, stop — this migration must only add.
 
 - [ ] **Step 4: STOP. This is a controller checkpoint, not an implementer action.**
 
-**Do not apply this yourself, and do not run `pnpm db:push`.** `db:push` diffs the schema files and would not create the extension anyway. The live database is also the e2e database; Task 6 cannot pass until this is applied. Hand back to the controller, who applies it after review and confirms with:
+**Do not apply this yourself, and do not run `pnpm db:push`.** `db:push` diffs the schema files and would not create the extension anyway.
+
+**Task 6 does NOT depend on this being applied.** `ILIKE '%x%'` is valid SQL with or without `pg_trgm`, and every query in Task 3 returns identical rows either way — the extension adds an index, not a capability. So the suite is expected green before this lands, and a red suite here means a real bug, not a missing migration. Hand back to the controller, who applies it after review and confirms with:
 
 ```sql
 select count(*)::int from pg_extension where extname = 'pg_trgm';   -- expect 1

@@ -85,6 +85,13 @@
       "when": 1788272170417,
       "tag": "0011_reflective_omega_sentinel",
       "breakpoints": true
+    },
+    {
+      "idx": 12,
+      "version": "7",
+      "when": 1788367826199,
+      "tag": "0012_search_trgm",
+      "breakpoints": true
     }
   ]
 }

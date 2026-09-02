@@ -1,6 +1,7 @@
 import Link from 'next/link';
 import { requireSuperAdmin } from '@/lib/superadmin';
 import { AdminNav } from '@/components/admin/admin-nav';
+import { SearchBox } from '@/components/shell/search-box';
 import { Logo } from '@/components/shell/logo';
 
 /**
@@ -30,6 +31,7 @@ export default async function AdminLayout({
           <span>webadf <span style={{ color: 'var(--on-dark-muted)' }}>admin</span></span>
         </span>
         <AdminNav />
+        <SearchBox />
         <div className="ml-auto flex items-center gap-4">
           <span
             className="font-mono text-[11.5px]"

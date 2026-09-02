@@ -1,6 +1,7 @@
 import { requireOrg } from "@/lib/session";
 import { isSuperAdminEmail } from "@/lib/superadmin";
 import { TopNav } from "@/components/shell/top-nav";
+import { SearchBox } from "@/components/shell/search-box";
 import { SignOutButton } from "@/components/sign-out-button";
 import { Logo } from "@/components/shell/logo";
 
@@ -24,6 +25,7 @@ export default async function AppLayout({
           webadf
         </span>
         <TopNav showAdmin={showAdmin} />
+        <SearchBox />
         <SignOutButton />
       </header>
       {children}

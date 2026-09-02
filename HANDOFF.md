@@ -37,12 +37,13 @@ after plan 4a, rewritten again 2026-08-31 after plan 4b.**
 | **e2e cleanup** | ✅ **done, merged and live 2026-09-01.** A run no longer leaks; 4,600 accumulated rows and 73 live invite codes swept; see 3e |
 | **User-defined collections** | ✅ **done, all 9 tasks, merged to `master` and live in production.** A rail on `/library`, drag to file and to reorder; migration 0011 applied; see 3g |
 | **Library covers, type pills, contrast** | ✅ **done, merged and live 2026-09-01.** Grid shows real cover art; grid and table both show a TOSEC-derived type; the grey ramp now passes WCAG AA |
+| **Typeahead search** | ✅ **done, all 7 tasks, merged to `master` and live in production.** A Spotlight-style pill in both shells; migration 0012 applied; see 3h |
 | **Read-only ADF filesystem reader** | ✅ **done, all 10 tasks, `feat/adf-filesystem-reader`.** Reads 80.3% of the archive (49/61) against TOSEC's 45.9% and OpenRetro's 6.6%; see 3f |
 | **Hardware** | boards ordered from JLCPCB |
 
 **Current branch:** `master`, clean and pushed. Everything below, collections included, is
 merged and live in production. **Plan 5 (hardware bring-up) is the only unbuilt plan.**
-**Suite on `master`:** 310 vitest, `pnpm build` clean, **134 Playwright passed (16.1 min)**. Firmware: `pnpm firmware:test` green (506 checks, 13
+**Suite on `master`:** 418 vitest, `pnpm build` clean, **170 Playwright passed (23.7 min)**. Firmware: `pnpm firmware:test` green (506 checks, 13
 binaries), `pnpm firmware:build` produces a `.uf2` — **and now requires
 `PORTAL_AP_PASSWORD` set in the environment, or the configure step fails by design**; see
 "Plan 4b" below for the full command.
@@ -595,6 +596,118 @@ collections under a real signed-up org** — a collection filed under a placehol
 be unreachable by both the spec's cleanup and `global-teardown`, which is the shape that let
 4,144 invite codes accumulate.
 
+### 3h. Typeahead search — DONE 2026-09-02, merged to `master` and live
+
+A Spotlight-style pill in both shells' headers. Typing finds a title by any fragment of its
+name, publisher, genre or description, or a collection by name, and the keyboard takes you
+there. One org-scoped `GET /api/search` returning two groups; **search navigates, it never
+filters the library grid.** Spec:
+`docs/superpowers/specs/2026-09-02-typeahead-search-design.md`. Plan:
+`docs/superpowers/plans/2026-09-02-typeahead-search.md`.
+
+**`disks.orgId` can diverge from its game's org, so a join on `gameId` alone is not scoped**
+(D-5-5). Nothing in the schema prevents the drift; only the write path keeps it true. Search
+is now the **third** place that rule is load-bearing — `listGames` and `withDerived` were the
+first two — so **the rule is the point, not the site: any new join to `disks` carries
+`eq(disks.orgId, orgId)` alongside the `gameId` predicate.** Get it wrong here and the query
+still returns the right org's games, with another tenant's disk counted into them. That is
+the one mistake in this increment that fails silently, and it is why `e2e/search.spec.ts`
+ends on a drifted-disk test that asserts `diskCount: 0` rather than a count of a disk that
+now claims to belong elsewhere.
+
+**Ranking is done in SQL, not in TypeScript, and that is a deliberate deviation from spec
+§9.** `ORDER BY (CASE WHEN title ILIKE … THEN 0 ELSE 1 END), sort_title, id`. Ranking in JS
+would mean fetching N candidates ordered by `sortTitle` and re-sorting them in the client —
+which lets the `LIMIT` truncate away the very name-match that should have ranked first. The
+SQL form is correct at any size. The trailing `id` is not decoration: a non-unique `ORDER BY`
+paired with a `LIMIT` has already produced two bugs in this codebase.
+
+**The endpoint is not an existence oracle.** There is no 404 and no status that distinguishes
+"you have no such title" from "that title belongs to someone else" — both are an empty array
+with a `200` (D-5-6). `/api/ingest/check` is a deliberate GLOBAL oracle, but D13 covers
+**digests**; titles are not digests and no equivalent decision covers them.
+
+**`q` is not lowercased** — the second deliberate deviation, from §4. `ILIKE` is already
+case-insensitive, so lowercasing changes no result and only invites the next reader to think
+matching is case-sensitive somewhere. Trim, collapse whitespace, cap, escape the LIKE
+metacharacters (`\`, `%`, `_`) — no case change. A lone `%` therefore matches nothing rather
+than the caller's whole library, which is its own e2e test.
+
+**`pg_trgm` is installed by migration 0012, and honestly: it buys nothing at current scale.**
+At 9 games Postgres will choose a sequential scan regardless and it will be instant. It ships
+now so that adding it later is not a migration run *during* a performance problem. **The
+migration is committed but NOT YET APPLIED to the live database** — see the checkpoint note
+below before merging.
+
+**Debounce alone is not enough; the abort is what stops a stale result winning.** 150 ms of
+debounce still leaves a fast typist with several requests in flight, and they resolve in
+arrival order, not in the order they were sent. `search-box.tsx` aborts the previous request
+on every keystroke **and** compares each landing response against `currentQueryRef` before
+painting it, because aborting is not instantaneous and an older query's answer can still
+arrive after a newer one starts. Both guards, not either.
+
+**Smaller rulings, so nobody re-litigates them:**
+
+- **`search-box.tsx` deliberately does NOT import from `@/lib/search`.** That module reaches
+  `@/db`; this is a client component, and the import would drag the database into the browser
+  bundle. The two result shapes are redeclared and kept in sync by hand.
+- **`EMPTY_RESULTS` is frozen two levels deep**, not allocated fresh. It is shared across
+  every empty-query call for the life of a warm lambda, so an unfrozen shared object would
+  let one future `results.titles.push(...)` corrupt every org's "no results" response.
+- **The empty-state line is gated on a completed response for the current query**, not on
+  "results are empty". Without that gate `search-empty` renders on the very next React commit
+  — before the debounce has even elapsed, let alone before a request is made — so it flashes
+  on every search and, worse, **a completely broken `/api/search` would still render it**, and
+  a test asserting only that the line appears would pass having proven nothing.
+- **`/` focuses the box UNLESS focus is already inside an input, textarea or contenteditable.**
+  Otherwise it steals the key from the collection rename and create-collection fields on
+  `/library`. There is a test for it.
+- **Every path that dismisses the panel funnels through one `reset()`.** Missing the abort on
+  even one of them leaves a stale request free to land later and repopulate a panel the user
+  believes is closed — `router.push` does not unmount `SearchBox`, which lives in the layout.
+- **`games.description` is matched but never advertised.** It is written only for blobs
+  OpenRetro recognises. It costs nothing in the `or(...)` and improves on its own as
+  enrichment lands.
+- **`collection_games` has no `org_id` by design (D-4-5).** The `gameCount` subquery is
+  correlated on a `collections.id` that has already passed through `orgFilter()`, so it can
+  never be keyed on a collection this caller does not own. `listCollections` scopes the same
+  subquery the same way.
+
+**The e2e tests were hardened after a review, and one of them was asserting something
+impossible.** Four passed while proving nothing: the ranking test's attribute-match fixture
+sorted second alphabetically anyway, so deleting the ranking clause entirely would not have
+failed it (it is now `Apidya`, which sorts first); the empty-state test asserted a line that
+rendered before any request was made, so a completely broken `/api/search` would have
+satisfied it; and `contrast.spec.ts`'s `probe()` skipped translucent layers, measuring the
+PLAIN panel instead of the highlighted row — a higher, wrong ratio for exactly the row a bug
+is most likely to ship on, since highlight defaults to index 0.
+
+**The fourth is the one worth reading before you touch that test.** The out-of-order test
+raced nothing (two `fill()`s inside the 150 ms debounce cleared the first timer before it
+fired), and when that was corrected it still could not pass — because **the abort makes a
+stale response undeliverable, so `waitForResponse` on the superseded URL can never fire.**
+Once the page aborts, Chromium emits `requestfailed` with `net::ERR_ABORTED` and **never a
+`response` event**; `route.fulfill()` still resolves, but it resolves into a dead request.
+That is the guard working, not a flake. **So `currentQueryRef` — the belt-and-braces guard
+behind the abort — is not reachable from an e2e test at all**, and pretending otherwise is
+what cost a 30-second timeout. The test now asserts the abort *directly*, on its failure
+reason, raced against the response so that removing the `AbortController` fails in 8 s with
+`responded:200` rather than hanging. **Verified by mutation: with the abort deleted, the test
+fails.**
+
+**The pattern, so it need not be rediscovered:** a typeahead test that does not force the race
+window open with `waitForRequest` is not testing the race; a fixture that would satisfy the
+assertion for the wrong reason is not a fixture; and an assertion nobody has watched fail is
+not yet a test.
+
+**Suite at merge:** 418 vitest, `pnpm build` clean, lint at the pre-existing 3-error baseline,
+**170 Playwright passed (23.7 min)** — the whole suite, not just the new file. **Migration 0012
+is applied to the live database.** **Merged to `master` and pushed to production 2026-09-02.**
+
+**e2e:** `e2e/search.spec.ts`, 11 tests — the middle-of-string fragment that is the whole point
+of D-5-2, ranking, both keyboard paths, the abort, the empty state, cross-tenant, the lone `%`,
+and the drifted disk. `e2e/contrast.spec.ts` gained a twelfth for the highlighted row.
+
 ### 4. Backlog, not blocking anything
 
 - **Make the app usable on a phone.** Requested by the operator 2026-09-01. Today it is a
@@ -843,8 +956,9 @@ be unreachable by both the spec's cleanup and `global-teardown`, which is the sh
   performance objection was about joining onto `listGames`' aggregate, which a separate query
   avoids entirely.
 
-- **Typeahead search with debounce, over titles and descriptions.** Requested by the operator
-  2026-08-31, optionally searchable by attribute too. Notes for whoever plans it:
+- **~~Typeahead search with debounce, over titles and descriptions.~~ DONE 2026-09-02 — see 3h.**
+  Requested by the operator 2026-08-31. The planning notes below are kept because three of
+  them shaped what shipped and one of them was wrong:
 
   **`games.description` exists as of the OpenRetro increment but is nearly empty**, and that is
   the first thing to check before promising description search. It is written only for blobs
@@ -852,6 +966,10 @@ be unreachable by both the spec's cleanup and `global-teardown`, which is the sh
   search that advertises "matches descriptions" would today be searching a single row. Either
   the TOSEC-identity matching described in §3d lands first, or the feature ships as title
   search with description as a quiet bonus.
+
+  **What the notes got wrong:** they framed description search as the risk. It is a non-issue —
+  description is matched but never advertised, costing nothing in the `or(...)`. The real risk
+  was the disks join (D-5-5), which these notes never mention.
 
   **`sortTitle` is already normalized lowercase** and `games_org_sort_idx` is on
   `(orgId, sortTitle)`, so a prefix search is fast today with no migration. Anything better —

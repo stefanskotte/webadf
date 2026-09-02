@@ -97,12 +97,21 @@ digests and no equivalent decision covers them.** Another org's title returns no
 "nothing" is indistinguishable from "you have no such title": same status, same body shape, no
 404 that separates the cases, and no error text that differs between them.
 
-### 3.5 `collection_games` is never touched
+### 3.5 `collection_games` is reached only through an org-scoped collection
 
 `collections` carries `orgId`, so `orgFilter` covers it. `collection_games` deliberately has **no**
-`orgId` (D-4-5) and is reachable only through a collection. This increment matches collection
-*names* only, so it never queries that table. If a later change wants a member count in the result
-row, it must scope through `collections`, not by collection id alone.
+`orgId` (D-4-5) and is reachable only through a collection.
+
+**Corrected 2026-09-02, during Task 3's review.** An earlier draft of this section said
+`collection_games` "is never queried" — which contradicted §7.2 of this same spec, where a
+collection result row shows its member count. The count has to come from somewhere. It comes from a
+subquery correlated on `collections.id` **inside** the `orgFilter(collections, orgId, …)` predicate,
+so the id it keys on is already org-scoped — the safe shape this section always demanded, described
+by a sentence that had gone stale. `listCollections` (`src/lib/collections.ts`) counts members the
+same way.
+
+The rule that matters is unchanged and is the one to carry forward: **`collection_games` is never
+keyed on a collection id that has not itself been through `orgFilter`.**
 
 ---
 
@@ -252,3 +261,114 @@ without querying" branch.
 - **D-5-7. Wildcards are escaped for shape, not for isolation.** `%` and `_` cannot cross an org
   boundary, but unescaped they make one keystroke match the whole library.
 - **D-5-8. Errors do not toast.** One line in the panel. A toast per keystroke is its own problem.
+
+---
+
+## 11. What this increment delivered
+
+**Delivered 2026-09-02 on `feat/typeahead-search`, all 7 tasks.** Plan:
+`docs/superpowers/plans/2026-09-02-typeahead-search.md`. Everything in §§1–10 shipped as
+specified except where noted below.
+
+**Files:** `src/lib/search-query.ts` (pure normalisation and escaping), `src/lib/search.ts`
+(the two org-scoped queries), `src/app/api/search/route.ts`, `src/components/shell/
+search-box.tsx`, `drizzle/0012_search_trgm.sql`, and `e2e/search.spec.ts`. The pill is
+rendered from both `(app)` and `(admin)` layouts.
+
+### Two deliberate deviations, decided while planning
+
+1. **Ranking is done in SQL, not in TypeScript.** §9 lists the ranking rule under Vitest,
+   which implies ranking in the client. Doing it there means fetching N candidates ordered by
+   `sortTitle` and re-sorting them — so the `LIMIT` can truncate away the very name-match that
+   should have ranked first. `ORDER BY (CASE WHEN title ILIKE … THEN 0 ELSE 1 END),
+   sort_title, id` is correct at any size. **Ranking is therefore covered by Playwright, not
+   by Vitest**, which is the only reason §9's split does not match what shipped.
+2. **`q` is not lowercased.** §4 says trimmed, lowercased, capped. `ILIKE` is already
+   case-insensitive, so lowercasing changes no result and only invites the next reader to
+   think matching is case-sensitive somewhere. Trim, collapse whitespace, cap, escape — no
+   case change.
+
+### What changed shape during implementation
+
+- **The empty-state line is gated on a completed response for the current query**, not on
+  "results are empty". §7.2 describes the line but not its gate; without one, `search-empty`
+  renders on the very next React commit — before the debounce elapses, let alone before a
+  request is made. It then flashes on every search, and **a completely broken `/api/search`
+  would still render it**, so a test asserting only its appearance proves nothing.
+- **The abort needed a second guard.** §8 specifies aborting the in-flight request, which is
+  necessary and not sufficient: aborting is not instantaneous, so an older query's response
+  can still land after a newer one has started. Each landing response is compared against
+  `currentQueryRef` — the trimmed query as of the most recent keystroke, held outside React
+  state so the fetch callback can read it synchronously — and dropped if it no longer matches.
+  Both guards ship, not either.
+- **`search-box.tsx` redeclares the two result shapes rather than importing them** from
+  `src/lib/search.ts`. That module reaches `@/db`; this is a client component, and the import
+  would drag the database into the browser bundle. Kept in sync by hand, deliberately.
+- **`EMPTY_RESULTS` is a frozen module-level constant**, shared across every empty-query call
+  for the life of a warm lambda. It is frozen two levels deep on purpose: an unfrozen shared
+  object would let one future `results.titles.push(...)` corrupt every org's "no results"
+  response.
+- **`games.description` is matched but not advertised** (§4 lists it as a match target). It is
+  written only for blobs OpenRetro recognises — a handful of rows today — so it ships as a
+  quiet bonus that improves as enrichment lands, not as a promise.
+
+### D-5-3 in practice
+
+The migration is applied to the live database as of 2026-09-02: `pg_trgm` installed,
+`games_title_trgm_idx` and `games_publisher_trgm_idx` created. §5's honest note stands
+unchanged — at this size Postgres will choose a sequential scan regardless. It is here so
+that adding it later is not a migration run during a performance problem.
+
+### §8's second guard is not observable from an e2e test, and that is a finding
+
+§8 specifies aborting the in-flight request. Implementation added a second guard behind it —
+each landing response is compared against `currentQueryRef`, the trimmed query as of the most
+recent keystroke, held outside React state so the fetch callback can read it synchronously —
+because aborting is not instantaneous and a response can already be queued when `abort()` is
+called.
+
+**The first guard makes the second untestable from outside the browser.** Once the page
+aborts, Chromium emits `requestfailed` with `net::ERR_ABORTED` and **never a `response`
+event**. `route.fulfill()` still resolves, but into a dead request. So a Playwright test
+cannot deliver a stale answer to the client at all while the abort works, and
+`page.waitForResponse` on the superseded URL can only ever time out — which is exactly how it
+was first written, and it hung for the full 30-second timeout.
+
+`e2e/search.spec.ts` therefore asserts the abort **directly**, on its failure reason, raced
+against the response so the mutation is fast and self-describing: delete the
+`AbortController` and the test fails in 8 s with `responded:200` instead of
+`failed:net::ERR_ABORTED`. **That mutation was run.** `currentQueryRef` is deliberately
+uncovered: it defends a sub-millisecond window that cannot be forced open from outside the
+browser, and this repo has no React component-test infrastructure (vitest is node-only, no
+testing-library) in which it could be. Adding that infrastructure for one guard was judged
+out of scope; the guard stays because it is cheap and correct, not because a test demands it.
+
+### Three other tests passed while proving nothing
+
+- **The out-of-order test raced nothing** before the above was even reached: two `fill()`
+  calls inside the 150 ms debounce cleared the first timer before it fired, so the held route
+  was never hit. It now waits for the debounced request to actually be **sent**
+  (`waitForRequest`) before typing the next query. Its fixture was also one the *fresh* answer
+  matched — "gia" is a substring of "giana" — so stale and fresh could share a top row and the
+  assertion could not fail however broken the guard was. There is now a distinct fixture and
+  an unmistakable `STALE ROW` body, asserted absent from the whole panel.
+- **The empty-state test asserted a line that rendered before any request was made**, so a
+  completely broken `/api/search` would have satisfied it. It now holds the response and
+  asserts `search-empty` is absent while the request is genuinely in flight. The response
+  listener is armed *before* the gate is released — otherwise `route.fulfill`'s promise chain
+  can complete before an `await` started afterwards begins listening, and the event is missed.
+- **The ranking test's fixture would have satisfied the assertion for the wrong reason.**
+  `Turrican II` sorts after `Rainbow Islands` alphabetically, so deleting the
+  `CASE WHEN … THEN 0 ELSE 1` clause and falling back to `ORDER BY sort_title` alone would
+  still have passed. The attribute-only match is now `Apidya`, which sorts *first*.
+- **`contrast.spec.ts`'s `probe()` measured the wrong pixels.** It walked outward for the
+  first background with alpha > 0.5 and skipped translucent layers entirely, so for the search
+  panel's highlighted row it measured the **plain** panel underneath — a higher, wrong ratio
+  for exactly the row a bug is most likely to ship on, since highlight defaults to index 0. It
+  now collects every layer out to the opaque backstop and composites them back-to-front with
+  the standard "over" operator.
+
+The pattern, stated once so it need not be rediscovered: **a typeahead test that does not
+force the race window open is not testing the race**, a fixture that would satisfy the
+assertion for the wrong reason is not a fixture, and an assertion nobody has watched fail is
+not yet a test.
