@@ -46,12 +46,31 @@ export function GameFacts({ game }: { game: GameDetail }) {
       <div className="glass-card p-5">
         <div className="flex flex-col gap-5 md:flex-row">
           {cover && (
-            <img
-              src={cover.url}
-              alt={`${game.title} cover`}
-              data-testid="game-cover"
-              className="h-auto w-full max-w-[220px] self-start rounded-lg"
-            />
+            // A FIXED box, with the image contained inside it.
+            //
+            // `h-auto` reserved no height at all until the bytes arrived, so
+            // the whole card below the cover was painted at the top of the
+            // page and then shoved down by ~280px when it decoded -- the jump
+            // you see on opening a title. Nothing in the schema records an
+            // image's dimensions (openretro_images stores sha1, kind, size
+            // and source, no width/height), so the browser cannot be told the
+            // real aspect ratio and has to be given a reserved one instead.
+            //
+            // 4/5 is the shape of Amiga box art (a measured cover is
+            // 400x509 = 0.786 against this box's 0.8). object-contain means
+            // a cover that disagrees letterboxes by a few pixels rather than
+            // being cropped or resizing the layout. The grid's Cover has
+            // done exactly this since it shipped, which is why the library
+            // never had this bug.
+            <div className="aspect-[4/5] w-full max-w-[220px] shrink-0 self-start overflow-hidden rounded-lg">
+              <img
+                src={cover.url}
+                alt={`${game.title} cover`}
+                data-testid="game-cover"
+                decoding="async"
+                className="h-full w-full object-contain"
+              />
+            </div>
           )}
 
           <div className="min-w-0 flex-1">
@@ -97,8 +116,17 @@ export function GameFacts({ game }: { game: GameDetail }) {
         {game.screenshots.length > 0 && (
           <div className="mt-5 flex gap-3 overflow-x-auto pb-1" data-testid="game-screenshots">
             {game.screenshots.map((s) => (
+              // w-[168px], not w-auto. With an auto width each thumbnail
+              // occupied nothing until it decoded and then shoved every
+              // thumbnail after it sideways -- measured on production as
+              // three separate shifts, x 250->410, 410->565, 581->737.
+              // Measured natural sizes are 472-500 x 400 (ratios 1.18-1.25),
+              // so a 168x132 box at 1.27 contains the widest of them without
+              // cropping, and object-contain letterboxes anything squarer by
+              // a few pixels rather than moving its neighbours.
               <img key={s.sha1} src={s.url} alt={`${game.title} screenshot`}
-                   className="h-[132px] w-auto shrink-0 rounded-md" />
+                   loading="lazy" decoding="async"
+                   className="h-[132px] w-[168px] shrink-0 rounded-md object-contain" />
             ))}
           </div>
         )}
