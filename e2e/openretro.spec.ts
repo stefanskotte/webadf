@@ -101,7 +101,7 @@ test('a matched blob enriches its game', async ({ page }) => {
   expect(b.openretroEntryId).toBe(uuid);
 });
 
-test('a human-edited game is not overwritten', async ({ page }) => {
+test('a human-owned group is not overwritten, and the others still enrich', async ({ page }) => {
   test.setTimeout(SWEEP_TIMEOUT_MS);
   const user = await signUpFresh(page);
   const sha256 = freshSha();
@@ -121,16 +121,53 @@ test('a human-edited game is not overwritten', async ({ page }) => {
   await signInAsSuperAdmin(page);
   expect((await page.request.post('/api/admin/scan')).ok()).toBe(true);
 
+  // AUTHORITY IS PER GROUP as of 2026-09-03, not per row. This test asserted
+  // the old whole-row rule -- it expected developer to stay null too -- and
+  // that rule was the bug: a person fixing a typo in a title froze that
+  // game's facts and prose against every future enrichment, though the three
+  // source columns existed precisely so they would not.
   const g = await gameRow(gameId);
+  // IDENTITY is the group this human owns, so publisher is refused...
   expect(g.publisher).toBe('My own note');
-  expect(g.developer).toBeNull();
-  expect(g.factsSource).toBeNull();
+  // ...and FACTS, which no human has claimed, still enriches. facts_source is
+  // NULL here, which means "nothing has ever written this" -- NOT "a person
+  // owns it", the way NULL does in metadata_source.
+  expect(g.developer).toBe('Nor This');
+  expect(g.factsSource).toBe('openretro');
 
   // The BLOB is still stamped enriched -- the entry was found, and the
   // authority rule is what declined the write. Asserting this pins the
   // difference between "no match" and "matched but protected".
   const b = await blobRow(sha256);
   expect(b.enrichState).toBe('enriched');
+});
+
+test('a human-owned FACTS group is refused while identity still enriches', async ({ page }) => {
+  test.setTimeout(SWEEP_TIMEOUT_MS);
+  const user = await signUpFresh(page);
+  const sha256 = freshSha();
+  const { gameId } = await seedDisk(user.orgId, { title: 'facts-held', diskNo: 1, sha256 });
+  const sha1 = await readyBlob(sha256, 'facts-held');
+
+  // The mirror of the test above: this person owns the FACTS and nothing
+  // else, so the guard has to refuse developer while leaving publisher --
+  // which is identity, and machine-owned here -- free to be corrected.
+  await getDb().update(games)
+    .set({ factsSource: 'human', developer: 'Written by hand' })
+    .where(eq(games.id, gameId));
+
+  const uuid = await seedOpenRetroEntry({
+    gameName: 'Some Game', publisher: 'Should Appear', developer: 'Should Not Appear',
+  });
+  await seedOpenRetroSha1(sha1, uuid);
+
+  await signInAsSuperAdmin(page);
+  expect((await page.request.post('/api/admin/scan')).ok()).toBe(true);
+
+  const g = await gameRow(gameId);
+  expect(g.developer).toBe('Written by hand');
+  expect(g.factsSource).toBe('human');
+  expect(g.publisher).toBe('Should Appear');
 });
 
 test('two entries for one sha1 is ambiguous and changes nothing', async ({ page }) => {

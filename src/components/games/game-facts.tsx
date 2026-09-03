@@ -33,8 +33,18 @@ export function GameFacts({ game }: { game: GameDetail }) {
   if (game.links?.wikipediaUrl) links.push(['Wikipedia', game.links.wikipediaUrl]);
   if (game.links?.longplayUrl) links.push(['Longplay', game.links.longplayUrl]);
 
-  const enriched = game.factsSource === 'openretro' || game.proseSource === 'openretro'
-    || game.front !== null || game.screenshots.length > 0;
+  // "Has anyone authored anything here", not "did OpenRetro run".
+  //
+  // This gate read `=== 'openretro'` until the edit UI shipped, which meant a
+  // description someone typed by hand was saved, stamped, protected from
+  // scans -- and then never rendered, because the only author this block
+  // recognised was the enrichment. Any non-null source is an author now;
+  // those columns are only ever written BY an author.
+  const authored = game.factsSource !== null || game.proseSource !== null;
+  const enriched = authored || game.front !== null || game.screenshots.length > 0;
+  // Distinct from `authored`: WHO wrote it, not whether anyone did.
+  const fromOpenRetro = game.factsSource === 'openretro' || game.proseSource === 'openretro'
+    || game.front !== null || game.title_ !== null || game.screenshots.length > 0;
   const hasBody = facts.length > 0 || game.description || game.front
     || game.screenshots.length > 0 || links.length > 0;
   if (!enriched || !hasBody) return null;
@@ -133,7 +143,14 @@ export function GameFacts({ game }: { game: GameDetail }) {
 
         {/* Attribution. These images and facts are volunteer-contributed and
             copied into this project's own storage; crediting the source and
-            linking back is the cheapest part of behaving well about that. */}
+            linking back is the cheapest part of behaving well about that.
+            
+            CONDITIONAL, since the edit UI shipped. This block renders for
+            hand-written content too now, and crediting OpenRetro for a
+            sentence a person typed is the exact inverse of behaving well
+            about attribution. Only claim it when something here really did
+            come from them. */}
+        {fromOpenRetro && (
         <div className="mt-5 text-[12px]" style={{ color: 'var(--muted)' }} data-testid="openretro-credit">
           Metadata and images from{' '}
           <a
@@ -145,6 +162,7 @@ export function GameFacts({ game }: { game: GameDetail }) {
           </a>
           .
         </div>
+        )}
       </div>
     </div>
   );
