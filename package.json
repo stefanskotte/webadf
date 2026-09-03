@@ -13,6 +13,7 @@
     "test": "vitest run",
     "e2e": "playwright test",
     "adfmfm:fixtures": "rm -rf /tmp/adfmfm-syn && tsx scripts/adfmfm-write-synthetic.ts /tmp/adfmfm-syn && ~/.local/pipx/venvs/greaseweazle/bin/python scripts/adfmfm-gen-fixtures.py /tmp/adfmfm-syn src/lib/adfmfm/fixtures",
+    "adffs:verify": "tsx scripts/adffs-verify.ts",
     "adfmfm:diff": "~/.local/pipx/venvs/greaseweazle/bin/python scripts/adfmfm-diff.py adf-archive",
     "firmware:build": "cd wifi-floppy/firmware && cmake -B build -G Ninja -DPICO_SDK_PATH=$HOME/pico-sdk -DPICO_BOARD=pimoroni_pico_plus2_w_rp2350 && cmake --build build",
     "firmware:test": "wifi-floppy/firmware/test/run.sh"

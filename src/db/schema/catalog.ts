@@ -74,6 +74,21 @@ export const games = pgTable('games', {
   proseSource: text('prose_source'),
   coverAssetId: text('cover_asset_id'),
   metadataSource: text('metadata_source'),
+  /**
+   * Made HERE, rather than uploaded. Two things need to know:
+   *
+   *  - the library card offers an inline volume rename only for these, since
+   *    renaming rewrites the disk's bytes and "which disk?" has no answer on
+   *    a multi-disk title;
+   *  - a disk somebody made is in no preservation set, so it must be excluded
+   *    from the TOSEC coverage rate on /admin/scan -- otherwise that rate
+   *    falls every time the operator makes a disk, which would report their
+   *    own work as a gap in the archive.
+   *
+   * Distinct from metadataSource 'human', which only says a person last wrote
+   * the metadata -- true of any title whose details were edited by hand.
+   */
+  authored: boolean('authored').notNull().default(false),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
 }, (t) => [
   index('games_org_sort_idx').on(t.orgId, t.sortTitle),

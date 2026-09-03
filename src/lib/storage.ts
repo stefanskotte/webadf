@@ -10,6 +10,14 @@ export interface BlobStat {
 
 export interface DiskStore {
   uploadUrl(sha256: string, sizeBytes: number): Promise<{ url: string; expiresAt: Date }>;
+  /**
+   * Stores bytes directly, for a disk this SERVER built rather than one a
+   * browser uploaded. The presigned-PUT path above exists so large uploads
+   * never pass through a function; a formatted blank disk is already in
+   * memory here, and round-tripping it out to a presigned URL and back would
+   * add a network hop to move bytes to themselves.
+   */
+  put(sha256: string, bytes: Uint8Array): Promise<{ key: string }>;
   downloadUrl(sha256: string, ttlSeconds: number): Promise<string>;
   /** Metadata for a stored blob, or null when it is absent. */
   stat(sha256: string): Promise<BlobStat | null>;
@@ -38,6 +46,28 @@ function key(sha256: string): string {
  * swapping to R2 or a self-hosted S3 means writing another DiskStore here.
  */
 export const diskStore: DiskStore = {
+  async put(sha256, bytes) {
+    assertSha(sha256);
+    const pathname = key(sha256);
+    try {
+      // Buffer.from wraps the same memory; the SDK's PutBody does not accept
+      // a bare Uint8Array.
+      await put(pathname, Buffer.from(bytes), {
+        access: 'private', contentType: 'application/octet-stream',
+        addRandomSuffix: false, allowOverwrite: false,
+      });
+      return { key: pathname };
+    } catch (err) {
+      // Already in the store without its row -- a crash between the two
+      // writes. Content-addressed, so the object that is there IS these
+      // bytes; refusing forever would strand the digest. Same reconciliation
+      // the upload path already does, via the same shared rule.
+      const message = err instanceof Error ? err.message : String(err);
+      if (!isBlobAlreadyExists(400, message)) throw err;
+      return { key: pathname };
+    }
+  },
+
   storageKey: key,
 
   async uploadUrl(sha256, sizeBytes) {

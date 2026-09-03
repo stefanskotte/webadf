@@ -5,6 +5,7 @@ import { PageHeader } from '@/components/shell/page-header';
 import { GameGrid } from '@/components/library/game-grid';
 import { GameTable } from '@/components/library/game-table';
 import { ViewToggle } from '@/components/library/view-toggle';
+import { CreateAdf } from '@/components/library/create-adf';
 import { CollectionsProvider } from '@/components/collections/collection-provider';
 import { CollectionRail } from '@/components/collections/collection-rail';
 
@@ -41,7 +42,12 @@ export default async function LibraryPage(props: PageProps<'/library'>) {
         eyebrow="Amiga collection"
         title="Library"
         subtitle={`${games.length.toLocaleString()} titles · ${diskTotal.toLocaleString()} disks`}
-        actions={<ViewToggle view={view} />}
+        actions={
+          <div className="flex flex-wrap items-center gap-3">
+            <CreateAdf />
+            <ViewToggle view={view} />
+          </div>
+        }
       />
       <CollectionsProvider
         collections={collections}
