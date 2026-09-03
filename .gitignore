@@ -53,3 +53,6 @@ playwright-report/
 # obtained through FS-UAE Launcher, never part of the repo.
 /Amiga.sqlite
 *.sqlite
+
+# Playwright MCP browser session artifacts (snapshots, console logs).
+.playwright-mcp/
