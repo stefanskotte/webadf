@@ -1,0 +1,110 @@
+- generic [active] [ref=f1e1]:
+  - generic [ref=f1e2]:
+    - banner [ref=f1e3]:
+      - generic [ref=f1e4]: webadf
+      - navigation [ref=f1e10]:
+        - link "Library" [ref=f1e11] [cursor=pointer]:
+          - /url: /library
+        - link "Devices" [ref=f1e12] [cursor=pointer]:
+          - /url: /devices
+        - link "Upload" [ref=f1e13] [cursor=pointer]:
+          - /url: /ingest
+        - link "Admin" [ref=f1e14] [cursor=pointer]:
+          - /url: /admin
+      - generic [ref=f1e15]:
+        - generic [ref=f1e16]:
+          - textbox "Search titles" [ref=f1e17]
+          - generic [aria-hidden]: /
+        - button "Sign out" [ref=f1e18]
+    - generic [ref=f1e19]: XgnDi60OFAiqcF4gxlf6xau0jSY22hhJ
+    - generic [ref=f1e20]:
+      - generic [ref=f1e21]:
+        - generic [ref=f1e22]: Amiga collection
+        - heading "Library" [level=1] [ref=f1e23]
+        - generic [ref=f1e24]: 6 titles · 11 disks
+      - generic [ref=f1e25]:
+        - link "Grid view" [ref=f1e26] [cursor=pointer]:
+          - /url: /library?view=grid
+          - text: ▦
+        - link "Table view" [ref=f1e27] [cursor=pointer]:
+          - /url: /library?view=table
+          - text: ☰
+    - generic [ref=f1e28]:
+      - complementary [ref=f1e29]:
+        - link "All titles" [ref=f1e30] [cursor=pointer]:
+          - /url: /library
+        - generic [ref=f1e32]:
+          - generic [ref=f1e33]:
+            - button "Reorder Utilities" [ref=f1e34]
+            - link "Utilities" [ref=f1e42] [cursor=pointer]:
+              - /url: /library?collection=e4c063de-fddb-4fb2-b305-7042d9bc1f27
+            - generic [ref=f1e43]: "1"
+            - button "More actions for Utilities" [ref=f1e44]
+          - generic [ref=f1e49]:
+            - button "Reorder Games" [ref=f1e50]
+            - link "Games" [ref=f1e58] [cursor=pointer]:
+              - /url: /library?collection=2e8f827d-7126-4217-b876-8d9c731c8cea
+            - generic [ref=f1e59]: "1"
+            - button "More actions for Games" [ref=f1e60]
+          - generic [ref=f1e65]:
+            - button "Reorder Demos" [ref=f1e66]
+            - link "Demos" [ref=f1e74] [cursor=pointer]:
+              - /url: /library?collection=b95661c0-5a33-44b9-a712-1c41d5c22fda
+            - generic [ref=f1e75]: "3"
+            - button "More actions for Demos" [ref=f1e76]
+        - textbox "New collection name" [ref=f1e84]:
+          - /placeholder: New collection
+      - generic [ref=f1e86]:
+        - link "Workbench3_1_4 Workbench3_1_4 unidentified" [ref=f1e87] [cursor=pointer]:
+          - /url: /games/4c8c32fb-9229-5eaf-bc0b-9c33045f50ad
+          - generic [ref=f1e88]: Workbench3_1_4
+          - generic [ref=f1e92]:
+            - generic [ref=f1e93]: Workbench3_1_4
+            - generic [ref=f1e94]: unidentified
+        - link "Project-X cover Game 4 Project-X 1992 · Team 17" [ref=f1e95] [cursor=pointer]:
+          - /url: /games/4ec9bbdf-e9cf-57d2-a48f-1d59ecb6ac23
+          - generic [ref=f1e96]:
+            - img "Project-X cover" [ref=f1e98]
+            - generic [ref=f1e99]: Game
+            - generic [ref=f1e100]: "4"
+          - generic [ref=f1e101]:
+            - generic [ref=f1e102]: Project-X
+            - generic [ref=f1e103]: 1992 · Team 17
+        - link "Giana Sisters - Special Edition Game 2 Giana Sisters - Special Edition unidentified" [ref=f1e104] [cursor=pointer]:
+          - /url: /games/477e0ec3-2c48-5f91-9b3b-cc464ae61016
+          - generic [ref=f1e105]:
+            - generic [ref=f1e107]: Giana Sisters - Special Edition
+            - generic [ref=f1e109]: Game
+            - generic [ref=f1e110]: "2"
+          - generic [ref=f1e111]:
+            - generic [ref=f1e112]: Giana Sisters - Special Edition
+            - generic [ref=f1e113]: unidentified
+        - link "9 Fingers Demo 2 9 Fingers unidentified" [ref=f1e114] [cursor=pointer]:
+          - /url: /games/d0e4e3c9-8bd1-5ab7-b6dd-38cdc9c7416b
+          - generic [ref=f1e115]:
+            - generic [ref=f1e117]: 9 Fingers
+            - generic [ref=f1e119]: Demo
+            - generic [ref=f1e120]: "2"
+          - generic [ref=f1e121]:
+            - generic [ref=f1e122]: 9 Fingers
+            - generic [ref=f1e123]: unidentified
+        - link "State of the Art Demo State of the Art unidentified" [ref=f1e124] [cursor=pointer]:
+          - /url: /games/2784a1f6-ef86-597d-a3c1-1c21bf8832cf
+          - generic [ref=f1e125]:
+            - generic [ref=f1e127]: State of the Art
+            - generic [ref=f1e129]: Demo
+          - generic [ref=f1e130]:
+            - generic [ref=f1e131]: State of the Art
+            - generic [ref=f1e132]: unidentified
+        - link "Ray of Hope 2 Demo Ray of Hope 2 1991 · Majic 12" [ref=f1e133] [cursor=pointer]:
+          - /url: /games/9324fa20-772e-55ce-94e3-0b956c41aa48
+          - generic [ref=f1e134]:
+            - generic [ref=f1e136]: Ray of Hope 2
+            - generic [ref=f1e138]: Demo
+          - generic [ref=f1e139]:
+            - generic [ref=f1e140]: Ray of Hope 2
+            - generic [ref=f1e141]: 1991 · Majic 12
+    - status [ref=f1e142]
+  - status [ref=f1e143]
+  - region "Notifications alt+T"
+  - alert [ref=f1e144]

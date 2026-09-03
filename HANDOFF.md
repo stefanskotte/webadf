@@ -39,13 +39,26 @@ after plan 4a, rewritten again 2026-08-31 after plan 4b.**
 | **Library covers, type pills, contrast** | ✅ **done, merged and live 2026-09-01.** Grid shows real cover art; grid and table both show a TOSEC-derived type; the grey ramp now passes WCAG AA |
 | **Shell polish** | ✅ **done 2026-09-02.** The "/" hint, both navs centred on the viewport, zebra-striped file tree, and a navigation bar + scrim; see 3i |
 | **Mobile responsive** | ✅ **done 2026-09-02, all surfaces.** Usable at 390px; nav becomes a bottom bar, touch drag no longer eats scrolling; see 3j |
+| **Image layout shift** | ✅ **done 2026-09-03.** The game page's cover and screenshots reserve their space; the library grid never had the bug; see 3k |
 | **Typeahead search** | ✅ **done, all 7 tasks, merged to `master` and live in production.** A Spotlight-style pill in both shells; migration 0012 applied; see 3h |
 | **Read-only ADF filesystem reader** | ✅ **done, all 10 tasks, `feat/adf-filesystem-reader`.** Reads 80.3% of the archive (49/61) against TOSEC's 45.9% and OpenRetro's 6.6%; see 3f |
-| **Hardware** | boards ordered from JLCPCB |
+| **Hardware** | boards ordered from JLCPCB; **operator expects all of them by ~2026-09-06**, which unblocks plan 5 |
 
-**Current branch:** `master`, clean and pushed. Everything below, collections included, is
-merged and live in production. **Plan 5 (hardware bring-up) is the only unbuilt plan.**
-**Suite on `master`:** 418 vitest, `pnpm build` clean, **177 Playwright passed (22.9 min)** — 172 desktop at 1280×720 and 5 mobile at 390×844; `playwright.config.ts` now has two projects. Firmware: `pnpm firmware:test` green (506 checks, 13
+**Current branch:** `master`, clean and pushed. Everything below is merged and live in
+production. **Plan 5 (hardware bring-up) is the only unbuilt plan**, and the boards for it are
+expected ~2026-09-06 — nothing in plan 4a or 4b has ever run on real silicon.
+
+**Next, at the operator's direction (2026-09-03), in this order:** the unified breadcrumb,
+editing a title's details by hand, and propagating a write-protect flip to a device that
+already has the disk mounted. All three are specced as backlog entries in §4.
+**Suite on `master`:** 418 vitest, `pnpm build` clean, **178 Playwright** — 173 desktop at
+1280×720 and 5 mobile at 390×844; `playwright.config.ts` now has two projects.
+
+**Known flake shape, so nobody debugs it twice:** the first two or three tests of a cold run can
+time out at the 30s per-test limit while Turbopack compiles a route for the first time —
+observed as `apiRequestContext.post: Test timeout` on `/api/ingest/complete`, and as
+`signUpFresh` never reaching `/library`. Both pass in isolation and on a warm re-run. Before
+concluding a regression, **re-run the failing spec alone**; if it passes, that was this. Firmware: `pnpm firmware:test` green (506 checks, 13
 binaries), `pnpm firmware:build` produces a `.uf2` — **and now requires
 `PORTAL_AP_PASSWORD` set in the environment, or the configure step fails by design**; see
 "Plan 4b" below for the full command.
@@ -791,47 +804,55 @@ a distance-only constraint makes the card pick up instead of the page scrolling,
 fails on it. **Nothing has run on a real phone.** Emulated touch is not a finger and `hover:` has
 no analogue on one.
 
+### 3k. The game page's images now reserve their space — DONE 2026-09-03
+
+Reported by the operator as "clicking a title shifts the layout". Measured on production with
+a `layout-shift` PerformanceObserver rather than guessed: **CLS 0.0063 over two entries**, the
+sources all being the screenshot strip sliding sideways (x 250→410, 410→565, 581→737) as each
+thumbnail decoded.
+
+**Two defects, one cause: `<img>` elements with no declared dimensions.** The cover was
+`h-auto`, so it reserved ZERO height until the bytes arrived and then shoved the whole facts
+card down ~275px — the big jump. The screenshots were `w-auto`, so each occupied nothing until
+it decoded and then pushed its neighbours right.
+
+**Nothing in the schema records image dimensions.** `openretro_images` has sha1, kind, size and
+source, no width/height, so the browser cannot be told the true aspect ratio and has to be
+given a reserved one: the cover is `aspect-[4/5]` (a measured cover is 400×509 = 0.786 against
+the box's 0.8), the screenshots are `w-[168px]` (naturals 472–500 × 400, ratios 1.18–1.25, so
+1.27 contains the widest without cropping). `object-contain` on both, so a disagreeing image
+letterboxes by a few pixels instead of cropping or moving the layout.
+
+**The library grid never had this bug**, because `cover.tsx` has always painted into a fixed
+`aspectRatio: '1.23 / 1'` box. The detail page was the one surface that did not follow that
+pattern — which is the rule to carry forward: **an image in this app goes in a box whose size
+is known before the bytes are.**
+
+**If exactness ever matters more than a reserved ratio**, the fix is width/height columns on
+`openretro_images` plus a backfill, not a bigger guess. Deliberately not done as part of a
+layout fix.
+
+Proven by mutation: reverting to the old markup makes the reserved cover box report a height of
+**0** before load, and `e2e/openretro.spec.ts`'s "the images reserve their space" test fails on
+it. That test holds every `/api/images/**` response and asserts the boxes are already full-size
+— note it must `goto` with `waitUntil: 'domcontentloaded'`, since the default waits for the very
+images it is holding.
+
 ### 4. Backlog, not blocking anything
 
-- **Make the app usable on a phone.** Requested by the operator 2026-09-01. Today it is a
-  fixed desktop layout that merely *renders* on a phone; nothing about it is responsive by
-  accident, because almost nothing is responsive at all.
+- ~~**Make the app usable on a phone.**~~ **DONE 2026-09-02**, merged and live — see 3j.
+  Requested by the operator 2026-09-01. The two notes below are kept because they were the
+  hard parts and both are now settled:
 
-  **The measurement, so nobody has to guess how far this reaches: the entire app contains ten
-  responsive utilities, and six of them are inside `src/components/ui/` (shadcn's own).** The
-  four that are actually ours are `game-facts.tsx`'s `md:flex-row` and three `md:grid-cols-3`
-  on admin pages. Everything else is written at one width. The `viewport` meta is NOT the
-  problem and is already correct — Next emits `width=device-width, initial-scale=1` by default
-  and nothing overrides it (verified in the build output).
+  **The dnd-kit touch hazard was real, and worse than the note predicted.** It was not enough
+  to add a `TouchSensor`: `PointerSensor` keys on `pointerdown` with no `pointerType` check,
+  so the two double-activate. `PointerSensor` is **replaced** by `MouseSensor`, and the delay
+  lives on the touch path only — the existing drag specs move without holding, so a delay on
+  the mouse path breaks all of them.
 
-  **The one non-obvious constraint, and the reason this is not just a CSS pass: dnd-kit's
-  `PointerSensor` with a distance constraint eats touch scrolling.** The library grid's cards
-  are draggable with `activationConstraint: { distance: 8 }`
-  (`src/components/collections/collection-provider.tsx`), and the rail's grip already sets
-  `touchAction: 'none'`. On a mouse that is exactly right; on a touch screen a distance-based
-  activation cannot be told apart from the start of a scroll, so a finger dragged down the
-  library picks a card up instead of scrolling the page. The fix is a `TouchSensor` with a
-  **delay** constraint (press-and-hold to drag, move-immediately to scroll) alongside the
-  pointer one — not a media query. **Verify it on a real touch device, not in a resized
-  desktop window:** the whole collections increment shipped three defects that only a real
-  browser revealed (see 3g), and this is the same class of thing one level further out.
-
-  **The fixed widths that actually break, in rough order of damage:**
-
-  | Where | What |
-  |---|---|
-  | `game-grid.tsx` | `grid-cols-5`, unconditional — five columns on a 390 px phone is ~50 px per card |
-  | `collection-rail.tsx` | `w-56 shrink-0` (224 px) beside the grid — leaves ~110 px for the library itself |
-  | `game-table.tsx` | `grid-cols-[30px_1fr_104px_50px_128px_40px_74px_100px]` — ~526 px of fixed columns |
-  | `dropzone.tsx` | `grid-cols-5` plus a 400 px fixed-column row |
-  | `px-7` everywhere | 56 px of a 390 px screen spent on padding |
-  | `page-header.tsx` | a 34 px title and its actions on one `justify-between` row |
-
-  **Nothing in the suite would catch a regression:** `playwright.config.ts` declares no
-  `projects`, so all 154 tests run at the default 1280×720 desktop viewport. A mobile project
-  over a handful of the existing specs is the cheap way to stop this rotting again, and it
-  costs suite time — which already runs `workers: 1` for ~20 minutes — so pick the specs
-  deliberately rather than duplicating the whole suite.
+  **The suite now has two projects.** `desktop` sets no viewport, so it keeps inheriting the
+  1280×720 default every existing spec was written against; `mobile` is 390×844 with
+  `hasTouch` and matches only `e2e/mobile.spec.ts`. Five tests, not a duplicated suite.
 
 - **A unified breadcrumb, replacing the per-page eyebrow and the hand-written back links.**
   Requested by the operator 2026-09-01: as you drill Library → a game/demo/app → a disk's
@@ -996,17 +1017,14 @@ no analogue on one.
   neither ships a DnD primitive — this would mean `dnd-kit` or similar, the first UI dependency of
   its kind in this repo. A plain "add to collection" menu needs none of that and delivers most of
   the value; the reordering is the part that actually requires the library.
-- **Show each disk's real filename, and let a human download the ADF.** Requested by the
-  operator 2026-08-31. Two useful facts before anyone plans it: the original uploaded
-  filename already exists as `entitlements.sourceFilename` and is **per-organization** on
-  purpose (the same bytes can be uploaded under different names by different tenants, and
-  `blobs` has no filename at all), while `disks.tosecName` holds the canonical TOSEC name
-  once the identity scan has run — so "the actual filename" is two different columns and
-  the UI should probably show both. For download: `GET /api/device/image/<sha256>` already
-  exists but serves **WFMF (MFM-encoded, ~2 MB)**, not a raw ADF, so a human download is a
-  new route rather than a reuse. It must check the caller's org holds an entitlement for
-  that sha256 — the same boundary the device route enforces — and note the standing rule
-  that **a presigned URL is a live credential**: never log it, never put it in the DOM.
+- ~~**Show each disk's real filename, and let a human download the ADF.**~~ **DONE**, merged
+  and live. `disk-row.tsx` shows both names — `disks.tosecName` and, when it differs,
+  "uploaded as `entitlements.sourceFilename`" — because "the actual filename" really is two
+  different columns. `GET /api/disks/[id]/adf` serves the raw 901,120-byte ADF under the
+  canonical TOSEC name, scoped by the caller's org **entitlement** rather than by
+  `disks.orgId`, which can drift. `e2e/adf-download.spec.ts` covers the bytes, the naming
+  precedence, and that another tenant gets a 404 rather than a 403.
+
 - ~~**A type pill in the library grid, and a type column in the list view.**~~ **DONE
   2026-09-01**, merged and live. Both surfaces show `Game` / `Demo` / `App` / `Educational` /
   `Coverdisk`, derived in `src/lib/game-kind.ts` from the TOSEC set name. The notes below are

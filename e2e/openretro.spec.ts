@@ -198,6 +198,73 @@ test('an enrichment sweep is NEVER observable as an eject', async ({ page, reque
   expect(stillThere).toHaveLength(1);
 });
 
+test('the images reserve their space, so opening a title does not shift', async ({ page }) => {
+  test.setTimeout(SWEEP_TIMEOUT_MS);
+  const user = await signUpFresh(page);
+  const sha256 = freshSha();
+  const { gameId } = await seedDisk(user.orgId, { title: 'reserved', diskNo: 1, sha256 });
+  const sha1 = await readyBlob(sha256, 'reserve');
+
+  const uuid = await seedOpenRetroEntry({
+    gameName: 'Reserved Game', slug: 'reserved-game', publisher: 'Reserver Ltd', year: 1993,
+  });
+  await seedOpenRetroSha1(sha1, uuid);
+  const coverSha1 = createHash('sha1').update(`reserve-cover-${gameId}`).digest('hex');
+  await seedOpenRetroImage({ sha1: coverSha1, entryUuid: uuid, kind: 'front' });
+  const shotA = createHash('sha1').update(`reserve-shot-a-${gameId}`).digest('hex');
+  const shotB = createHash('sha1').update(`reserve-shot-b-${gameId}`).digest('hex');
+  await seedOpenRetroImage({ sha1: shotA, entryUuid: uuid, kind: 'screenshot', ordinal: 0 });
+  await seedOpenRetroImage({ sha1: shotB, entryUuid: uuid, kind: 'screenshot', ordinal: 1 });
+
+  await signInAsSuperAdmin(page);
+  expect((await page.request.post('/api/admin/scan')).ok()).toBe(true);
+  await signInAs(page, user.email, user.password);
+
+  // Hold every image, so the page is measured in exactly the state that used
+  // to be broken: markup present, bytes not yet arrived.
+  let release: () => void = () => {};
+  const gate = new Promise<void>((resolve) => { release = resolve; });
+  await page.route('**/api/images/**', async (route) => { await gate; await route.continue(); });
+
+  // domcontentloaded, not the default 'load': load waits for images, and the
+  // images are exactly what this test is holding, so the default would
+  // deadlock against its own route handler.
+  await page.goto(`/games/${gameId}`, { waitUntil: 'domcontentloaded' });
+  await expect(page.getByTestId('game-facts')).toBeVisible();
+
+  // THE REGRESSION. With h-auto and w-auto these boxes were 0 tall / 0 wide
+  // until the bytes landed, so the card below the cover was painted at the
+  // top of the page and then shoved down ~280px, and each screenshot shoved
+  // its neighbours sideways as it decoded.
+  const coverBox = page.getByTestId('game-cover').locator('..');
+  const before = (await coverBox.boundingBox())!;
+  expect(before.width).toBeGreaterThan(200);
+  expect(before.height).toBeGreaterThan(260);   // 220 wide at 4/5 is 275
+
+  const shots = page.getByTestId('game-screenshots').locator('img');
+  await expect(shots).toHaveCount(2);
+  const shotBefore = (await shots.first().boundingBox())!;
+  expect(shotBefore.width).toBeGreaterThan(160); // 168 by CSS, not by content
+  expect(shotBefore.height).toBeGreaterThan(125);
+
+  // The facts column sits below/beside the cover; remember where it starts.
+  const factsBefore = (await page.getByTestId('game-facts').boundingBox())!;
+
+  release();
+  await expect.poll(async () => page.getByTestId('game-cover')
+    .evaluate((el: HTMLImageElement) => el.complete)).toBe(true);
+
+  // Nothing moved when the bytes arrived. That is the whole point.
+  const after = (await coverBox.boundingBox())!;
+  const factsAfter = (await page.getByTestId('game-facts').boundingBox())!;
+  expect(after.height).toBeCloseTo(before.height, 0);
+  expect(after.width).toBeCloseTo(before.width, 0);
+  expect(factsAfter.y).toBeCloseTo(factsBefore.y, 0);
+  const shotAfter = (await shots.first().boundingBox())!;
+  expect(shotAfter.width).toBeCloseTo(shotBefore.width, 0);
+  expect(shotAfter.x).toBeCloseTo(shotBefore.x, 0);
+});
+
 test('the game page renders the enriched facts and the attribution link', async ({ page }) => {
   test.setTimeout(SWEEP_TIMEOUT_MS);
   const user = await signUpFresh(page);

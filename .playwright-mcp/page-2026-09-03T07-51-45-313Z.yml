@@ -1,0 +1,133 @@
+- generic [active] [ref=f1e1]:
+  - generic [ref=f1e2]:
+    - banner [ref=f1e3]:
+      - generic [ref=f1e4]: webadf
+      - navigation [ref=f1e10]:
+        - link "Library" [ref=f1e11] [cursor=pointer]:
+          - /url: /library
+        - link "Devices" [ref=f1e12] [cursor=pointer]:
+          - /url: /devices
+        - link "Upload" [ref=f1e13] [cursor=pointer]:
+          - /url: /ingest
+        - link "Admin" [ref=f1e14] [cursor=pointer]:
+          - /url: /admin
+      - generic [ref=f1e15]:
+        - generic [ref=f1e16]:
+          - textbox "Search titles" [ref=f1e17]
+          - generic [aria-hidden]: /
+        - button "Sign out" [ref=f1e18]
+    - generic [ref=f1e145]:
+      - generic [ref=f1e146]:
+        - generic [ref=f1e147]: Library / Games
+        - heading "Project-X" [level=1] [ref=f1e148]
+        - generic [ref=f1e149]: 1992 · Team 17 · alien, horizontal, powerup, scifi, scrolling, shootemup, sideways, space · 4 disks
+      - link "← Library" [ref=f1e150] [cursor=pointer]:
+        - /url: /library
+    - generic [ref=f1e153]:
+      - generic [ref=f1e154]:
+        - img "Project-X cover" [ref=f1e155]
+        - generic [ref=f1e156]:
+          - generic [ref=f1e157]:
+            - generic [ref=f1e158]:
+              - term [ref=f1e159]: Publisher
+              - definition [ref=f1e160]: Team 17
+            - generic [ref=f1e161]:
+              - term [ref=f1e162]: Developer
+              - definition [ref=f1e163]: Team 17
+            - generic [ref=f1e164]:
+              - term [ref=f1e165]: Year
+              - definition [ref=f1e166]: "1992"
+            - generic [ref=f1e167]:
+              - term [ref=f1e168]: Players
+              - definition [ref=f1e169]: 1 - 2 (1)
+            - generic [ref=f1e170]:
+              - term [ref=f1e171]: Languages
+              - definition [ref=f1e172]: en
+            - generic [ref=f1e173]:
+              - term [ref=f1e174]: Genre
+              - definition [ref=f1e175]: alien, horizontal, powerup, scifi, scrolling, shootemup, sideways, space
+          - paragraph [ref=f1e176]: Five levels of horizontally-scrolling shooting await in this R-Type style action game. The attack waves vary in style, with some attacking you from quite fiendish angles. These give off blue power-up tokens, which are used towards selecting one of many weapons. There are 4 front-firing options (guns, plasma, magma and laser-beams - guns can be built up quickly but lack top-end power compared to the others) as well as speed-up (only requires one token), side-shot, up to 3 homing missiles, build (a quick super-destructive blast that only functions when you aren't using auto-fire) and stealth (a period of invulnerability). Each level has a very different setting, and an end-of-level boss to defeat. The chance to resume from the level you died at is offered up to level 3. Unusually, the game has an option to emulate an auto-fire function using software (this makes it one of the few Amiga shoot 'em ups you can hope to get as far through on an emulator on keyboard as on joystick on the real thing).
+          - generic [ref=f1e177]:
+            - link "Hall of Light" [ref=f1e178] [cursor=pointer]:
+              - /url: http://hol.abime.net/1164
+            - link "MobyGames" [ref=f1e179] [cursor=pointer]:
+              - /url: http://www.mobygames.com/game/amiga/project-x
+            - link "Lemon Amiga" [ref=f1e180] [cursor=pointer]:
+              - /url: http://www.lemonamiga.com/?game_id=2035
+            - link "Wikipedia" [ref=f1e181] [cursor=pointer]:
+              - /url: http://en.wikipedia.org/wiki/Project-X
+            - link "Longplay" [ref=f1e182] [cursor=pointer]:
+              - /url: http://www.youtube.com/watch?v=MI7axN1coR4
+      - generic [ref=f1e183]:
+        - img "Project-X screenshot" [ref=f1e184]
+        - img "Project-X screenshot" [ref=f1e185]
+        - img "Project-X screenshot" [ref=f1e186]
+        - img "Project-X screenshot" [ref=f1e187]
+        - img "Project-X screenshot" [ref=f1e188]
+      - generic [ref=f1e189]:
+        - text: Metadata and images from
+        - link "OpenRetro" [ref=f1e190] [cursor=pointer]:
+          - /url: https://openretro.org/amiga/project-x
+        - text: .
+    - generic [ref=f1e191]:
+      - generic [ref=f1e192]:
+        - generic [ref=f1e193]:
+          - generic [ref=f1e194]:
+            - generic [ref=f1e195]: Disk 1
+            - generic [ref=f1e196]: Boot
+          - generic "Project-X (1992)(Team 17)(Disk 1 of 4)[cr NMS].adf" [ref=f1e197]
+          - generic "Project-X (1992)(Team 17)[cr Nemesis](Disk 1 of 4).adf" [ref=f1e198]: uploaded as Project-X (1992)(Team 17)[cr Nemesis](Disk 1 of 4).adf
+          - generic [ref=f1e199]: 880 KB · 110e17bea5f5
+        - generic [ref=f1e200]:
+          - link "Download" [ref=f1e201] [cursor=pointer]:
+            - /url: /api/disks/37beb230-fe61-5f36-a49d-c41b8fb35ada/adf
+          - link "Browse" [ref=f1e202] [cursor=pointer]:
+            - /url: /disks/37beb230-fe61-5f36-a49d-c41b8fb35ada/files
+          - button "Protected" [pressed] [ref=f1e203]
+          - link "Pair a device" [ref=f1e204] [cursor=pointer]:
+            - /url: /devices
+      - generic [ref=f1e205]:
+        - generic [ref=f1e206]:
+          - generic [ref=f1e207]: Disk 2
+          - generic "Project-X (1992)(Team 17)(Disk 2 of 4)[cr NMS][h Fast Eddie].adf" [ref=f1e209]
+          - generic "Project-X (1992)(Team 17)[cr Nemesis](Disk 2 of 4).adf" [ref=f1e210]: uploaded as Project-X (1992)(Team 17)[cr Nemesis](Disk 2 of 4).adf
+          - generic [ref=f1e211]: 880 KB · e33a764d056e
+        - generic [ref=f1e212]:
+          - link "Download" [ref=f1e213] [cursor=pointer]:
+            - /url: /api/disks/a7405c21-9917-5d13-bdb8-2888648b38ed/adf
+          - link "Browse" [ref=f1e214] [cursor=pointer]:
+            - /url: /disks/a7405c21-9917-5d13-bdb8-2888648b38ed/files
+          - button "Protected" [pressed] [ref=f1e215]
+          - link "Pair a device" [ref=f1e216] [cursor=pointer]:
+            - /url: /devices
+      - generic [ref=f1e217]:
+        - generic [ref=f1e218]:
+          - generic [ref=f1e219]: Disk 3
+          - generic "Project-X (1992)(Team 17)(Disk 3 of 4)[cr NMS][h Fast Eddie].adf" [ref=f1e221]
+          - generic "Project-X (1992)(Team 17)[cr Nemesis](Disk 3 of 4).adf" [ref=f1e222]: uploaded as Project-X (1992)(Team 17)[cr Nemesis](Disk 3 of 4).adf
+          - generic [ref=f1e223]: 880 KB · e63a21c8bd68
+        - generic [ref=f1e224]:
+          - link "Download" [ref=f1e225] [cursor=pointer]:
+            - /url: /api/disks/b01081e0-2ad8-5030-b1ac-513fd9faf76a/adf
+          - link "Browse" [ref=f1e226] [cursor=pointer]:
+            - /url: /disks/b01081e0-2ad8-5030-b1ac-513fd9faf76a/files
+          - button "Protected" [pressed] [ref=f1e227]
+          - link "Pair a device" [ref=f1e228] [cursor=pointer]:
+            - /url: /devices
+      - generic [ref=f1e229]:
+        - generic [ref=f1e230]:
+          - generic [ref=f1e231]: Disk 4
+          - generic "Project-X (1992)(Team 17)(Disk 4 of 4)[cr NMS][h Fast Eddie].adf" [ref=f1e233]
+          - generic "Project-X (1992)(Team 17)[cr Nemesis](Disk 4 of 4).adf" [ref=f1e234]: uploaded as Project-X (1992)(Team 17)[cr Nemesis](Disk 4 of 4).adf
+          - generic [ref=f1e235]: 880 KB · 9e6fe496da02
+        - generic [ref=f1e236]:
+          - link "Download" [ref=f1e237] [cursor=pointer]:
+            - /url: /api/disks/a350e615-8058-5a26-8514-22940f679218/adf
+          - link "Browse" [ref=f1e238] [cursor=pointer]:
+            - /url: /disks/a350e615-8058-5a26-8514-22940f679218/files
+          - button "Protected" [pressed] [ref=f1e239]
+          - link "Pair a device" [ref=f1e240] [cursor=pointer]:
+            - /url: /devices
+  - status [ref=f1e143]
+  - region "Notifications alt+T"
+  - alert [ref=f1e144]
