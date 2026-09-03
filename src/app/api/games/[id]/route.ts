@@ -4,6 +4,7 @@ import { getDb } from '@/db';
 import { games } from '@/db/schema/catalog';
 import { requireOrg } from '@/lib/session';
 import { GROUP_COLUMN, planEdit, EditError, type GameEditCurrent } from '@/lib/game-edit';
+import { deleteGame } from '@/lib/disk-delete';
 
 export const maxDuration = 60;
 
@@ -75,4 +76,21 @@ export async function PATCH(request: Request, ctx: { params: Promise<{ id: strin
 
   if (updated.length === 0) return Response.json({ error: 'not_found' }, { status: 404 });
   return Response.json({ id, changed: plan.touched });
+}
+
+/**
+ * Remove a title and every disk on it.
+ *
+ * The BLOB is never removed: it is global and content-addressed, and other
+ * tenants may hold the same bytes. What goes is this org's entitlement, and
+ * only for bytes no other disk of theirs still references.
+ */
+export async function DELETE(_request: Request, ctx: { params: Promise<{ id: string }> }) {
+  const { orgId } = await requireOrg();
+  const { id } = await ctx.params;
+
+  const result = await deleteGame(orgId, id);
+  // 404, never 403: the response must not confirm another tenant's id exists.
+  if (!result) return Response.json({ error: 'not_found' }, { status: 404 });
+  return Response.json(result);
 }

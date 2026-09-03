@@ -8,6 +8,7 @@ import { useDraggable } from '@dnd-kit/core';
 import { SortableContext, rectSortingStrategy, useSortable } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
 import { X } from 'lucide-react';
+import { DeleteDiskDialog } from '@/components/library/delete-disk-dialog';
 import { Cover } from './cover';
 import type { GameListItem } from '@/lib/queries';
 import { useCollectionsContext, type GameDragData } from '@/components/collections/collection-provider';
@@ -169,9 +170,16 @@ function CardBody({ game: g }: { game: GameListItem }) {
             {g.title}
           </span>
         )}
-        <span className="truncate font-mono text-[10.5px]" style={{ color: 'var(--muted-2)' }}>
-          {[g.year, g.publisher].filter(Boolean).join(' · ') || (g.authored ? 'made here' : 'unidentified')}
-        </span>
+        <div className="flex items-center justify-between gap-2">
+          <span className="truncate font-mono text-[10.5px]" style={{ color: 'var(--muted-2)' }}>
+            {[g.year, g.publisher].filter(Boolean).join(' · ') || (g.authored ? 'made here' : 'unidentified')}
+          </span>
+          {/* Inside the card's <a href>, like the rename field and the
+              collection remove button, and safe the same way: the dialog
+              stops every pointer event before it reaches the anchor or
+              dnd-kit's drag listeners. */}
+          <DeleteDiskDialog kind="game" id={g.id} title={g.title} diskCount={g.diskCount} />
+        </div>
       </div>
     </>
   );

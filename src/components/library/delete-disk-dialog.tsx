@@ -1,0 +1,152 @@
+'use client';
+
+import { useState } from 'react';
+import { createPortal } from 'react-dom';
+import { useRouter } from 'next/navigation';
+import { toast } from 'sonner';
+
+/**
+ * Confirming the removal of a title, or of one disk.
+ *
+ * NO TYPED-NAME GATE, unlike delete-user-dialog. That gate exists because
+ * deleting a user destroys someone else's whole library and cannot be undone
+ * by re-doing anything. This is the person's own disk, and an ADF they
+ * uploaded can be uploaded again -- so the protection that fits is naming
+ * exactly what is about to happen, not making them type it out.
+ *
+ * WHAT IT MUST SAY, because none of it is guessable from a Delete button:
+ * that a device holding the disk will be ejected, and that the bytes are not
+ * destroyed for anyone else who has them.
+ */
+export function DeleteDiskDialog({
+  kind, id, title, diskCount, onDeleted,
+}: {
+  kind: 'game' | 'disk';
+  id: string;
+  title: string;
+  /** Only meaningful for a title: how many disks go with it. */
+  diskCount?: number;
+  onDeleted?: () => void;
+}) {
+  const router = useRouter();
+  const [open, setOpen] = useState(false);
+  const [busy, setBusy] = useState(false);
+
+  async function confirm() {
+    setBusy(true);
+    try {
+      const url = kind === 'game' ? `/api/games/${id}` : `/api/disks/${id}`;
+      const res = await fetch(url, { method: 'DELETE' });
+      if (!res.ok) {
+        toast.error(kind === 'game' ? 'Could not delete the title' : 'Could not delete the disk');
+        return;
+      }
+      const body = await res.json().catch(() => null);
+      const ejected: string[] = body?.ejected ?? [];
+      toast.success(kind === 'game' ? 'Title deleted' : 'Disk deleted', {
+        // Named because it is a real side effect on hardware, not a detail.
+        description: ejected.length > 0
+          ? `Ejected from ${ejected.join(', ')}.`
+          : undefined,
+      });
+      setOpen(false);
+      onDeleted?.();
+      router.refresh();
+    } catch {
+      toast.error('Could not reach the server');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  if (!open) {
+    return (
+      <button
+        type="button"
+        data-testid={`delete-${kind}-${id}`}
+        aria-label={`Delete ${title}`}
+        onClick={(e) => { e.preventDefault(); e.stopPropagation(); setOpen(true); }}
+        onPointerDown={(e) => e.stopPropagation()}
+        onMouseDown={(e) => e.stopPropagation()}
+        className="shrink-0 rounded px-2 py-0.5 text-[11px] font-semibold"
+        style={{ background: 'var(--danger-bg)', color: 'var(--danger-fg)' }}
+      >
+        Delete
+      </button>
+    );
+  }
+
+  const disks = diskCount ?? 1;
+
+  // No "am I mounted yet" guard is needed, and adding one would trip this
+  // repo's set-state-in-effect rule for nothing: `open` starts false and can
+  // only be set by a click, so the server never renders this branch and
+  // document is always there by the time it does.
+  //
+  // PORTALLED TO document.body, and it has to be.
+  //
+  // This dialog is rendered from inside a library card, and .glass-card sets
+  // backdrop-filter. A filtered ancestor becomes the CONTAINING BLOCK for its
+  // fixed-position descendants, so `fixed inset-0` resolved against the card
+  // rather than the viewport: the overlay came out about 145px wide, wedged
+  // inside the card, with the text in a column one word across. A transform
+  // on the same ancestor (dnd-kit sets one while dragging) does the same
+  // thing. The portal is what escapes both.
+  return createPortal((
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center p-4"
+      style={{ background: 'rgb(11 18 28 / 0.55)' }}
+      // The dialog is rendered from inside a draggable card on the library, so
+      // every event that could reach the card is stopped at the overlay.
+      onPointerDown={(e) => e.stopPropagation()}
+      onMouseDown={(e) => e.stopPropagation()}
+      onClick={(e) => { e.preventDefault(); e.stopPropagation(); }}
+    >
+      <div
+        role="dialog"
+        aria-modal="true"
+        aria-label={`Delete ${title}`}
+        data-testid="delete-dialog"
+        className="glass-card w-full max-w-[440px] p-6 text-left"
+      >
+        <h2 className="text-[15px] font-bold" style={{ color: 'var(--ink)' }}>
+          Delete {kind === 'game' ? 'this title' : 'this disk'}?
+        </h2>
+        <p className="mt-2 text-[13px]" style={{ color: 'var(--muted)' }}>
+          <strong style={{ color: 'var(--ink)' }}>{title}</strong>
+          {kind === 'game' && disks > 1 ? ` and its ${disks} disks` : ''} will be removed from
+          your library.
+        </p>
+        <ul className="mt-3 flex flex-col gap-1 text-[12.5px]" style={{ color: 'var(--muted)' }}>
+          <li>Any device holding it will be ejected.</li>
+          {/* Content addressing is not obvious, and someone deleting a disk
+              deserves to know it is not being destroyed for anyone else. */}
+          <li>The disk image itself is kept if anyone else has the same one.</li>
+          <li>You can upload it again.</li>
+        </ul>
+        <div className="mt-5 flex items-center justify-end gap-2">
+          <button
+            type="button"
+            data-testid="delete-cancel"
+            disabled={busy}
+            onClick={() => setOpen(false)}
+            className="rounded-full px-4 py-1.5 text-[12.5px] font-semibold disabled:opacity-50"
+            style={{ color: 'var(--muted)' }}
+          >
+            Cancel
+          </button>
+          <button
+            type="button"
+            data-testid="delete-confirm"
+            disabled={busy}
+            onClick={confirm}
+            className="rounded-full px-4 py-1.5 text-[12.5px] font-semibold text-white disabled:opacity-50"
+            style={{ background: 'var(--danger-fg)' }}
+          >
+            {busy ? 'Deleting…' : 'Delete'}
+          </button>
+        </div>
+      </div>
+    </div>
+  ), document.body);
+}

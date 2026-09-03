@@ -4,7 +4,7 @@ import { getDb } from '@/db';
 import { disks, entitlements, games } from '@/db/schema/catalog';
 import { requireOrg } from '@/lib/session';
 import { diskStore } from '@/lib/storage';
-import { readVolume } from '@/lib/adffs';
+import { readVolume, readUsage } from '@/lib/adffs';
 import { PageHeader } from '@/components/shell/page-header';
 import { VolumeHeader } from '@/components/disks/volume-header';
 import { FileTree } from '@/components/disks/file-tree';
@@ -52,6 +52,9 @@ export default async function DiskFilesPage(props: PageProps<'/disks/[id]/files'
   }
 
   const volume = bytes ? readVolume(bytes) : null;
+  // Null for a disk whose bitmap cannot be trusted; the header says so
+  // rather than showing a figure someone might act on.
+  const usage = bytes ? readUsage(bytes) : null;
   const title = volume?.ok ? volume.volume.name || filename : filename;
 
   return (
@@ -83,7 +86,7 @@ export default async function DiskFilesPage(props: PageProps<'/disks/[id]/files'
           </div>
         ) : (
           <>
-            <VolumeHeader result={volume} filename={filename} />
+            <VolumeHeader result={volume} filename={filename} usage={usage} />
             {volume.ok && <FileTree entries={volume.root} diskId={id} />}
           </>
         )}

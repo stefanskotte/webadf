@@ -39,6 +39,8 @@ after plan 4a, rewritten again 2026-08-31 after plan 4b.**
 | **Library covers, type pills, contrast** | ✅ **done, merged and live 2026-09-01.** Grid shows real cover art; grid and table both show a TOSEC-derived type; the grey ramp now passes WCAG AA |
 | **Shell polish** | ✅ **done 2026-09-02.** The "/" hint, both navs centred on the viewport, zebra-striped file tree, and a navigation bar + scrim; see 3i |
 | **Mobile responsive** | ✅ **done 2026-09-02, all surfaces.** Usable at 390px; nav becomes a bottom bar, touch drag no longer eats scrolling; see 3j |
+| **Delete a title or a disk** | ✅ **done 2026-09-04.** Confirmation dialog, deliberate eject, blob never destroyed; see 3o |
+| **Disk space on the browse page** | ✅ **done 2026-09-04.** Read from the allocation bitmap, agreeing with xdftool on 46 of 46 real disks; see 3p |
 | **Create a blank ADF** | ✅ **done 2026-09-03.** A real formatted disk from a button, named inline; migration 0013 applied; see 3n. File add/edit/delete is NOT part of it |
 | **Edit a title by hand** | ✅ **done 2026-09-03.** Per-group authority, and a scan never silently undoes an edit; see 3m |
 | **Unified breadcrumb** | ✅ **done 2026-09-03.** One clickable trail replaces nine inconsistent eyebrows and two hand-written back links; see 3l |
@@ -57,7 +59,7 @@ already has the disk mounted**, specced as a backlog entry in §4. Take it with 
 desk — its flag is inert until write-back exists, so it is
 only observable on hardware, and it needs a protocol answer for "same disk, changed flag" rather
 than a version bump that would force an unrequested ~2 MB re-fetch and remount.
-**Suite on `master`:** 444 vitest, `pnpm build` clean, **195 Playwright** — 190 desktop at
+**Suite on `master`:** 450 vitest, `pnpm build` clean, **203 Playwright** — 198 desktop at
 1280×720 and 5 mobile at 390×844; `playwright.config.ts` now has two projects.
 
 **Known flake shape, so nobody debugs it twice:** the first two or three tests of a cold run can
@@ -65,6 +67,14 @@ time out at the 30s per-test limit while Turbopack compiles a route for the firs
 observed as `apiRequestContext.post: Test timeout` on `/api/ingest/complete`, and as
 `signUpFresh` never reaching `/library`. Both pass in isolation and on a warm re-run. Before
 concluding a regression, **re-run the failing spec alone**; if it passes, that was this.
+
+**A third, and it cost two hours on 2026-09-03: a killed run ORPHANS its dev server.**
+`playwright.config.ts` sets `reuseExistingServer: true`, so the next run adopts whatever is
+holding port 3000 -- including a wedged process that never answers HTTP. The run then waits
+forever with **no output at all**, which reads exactly like a slow cold compile. The tell is
+`ps -o etime,time`: hours of elapsed against under a second of CPU, and no
+`chrome-headless-shell` process ever started. **After killing a run, kill `next dev` and
+`next-server` too**, and check `lsof -iTCP:3000` is free before restarting.
 
 **Its sibling: do not start a spec while the previous run's teardown is still going.**
 `globalTeardown` sweeps every test user by email domain, and it keeps running after the last
@@ -1008,6 +1018,62 @@ smallest thing that has to be exactly right.
 **Suite:** 444 vitest, **195 Playwright passed (25.8 min)**, build clean, lint at the 3-error
 baseline.
 
+### 3o. Deleting a title or a disk — DONE 2026-09-04
+
+`DELETE /api/games/[id]` and `DELETE /api/disks/[id]`, behind a confirmation dialog. Operator's
+rulings: **the whole title from a library card, plus per-disk on the game page**, and **eject
+first, then delete** rather than refusing while mounted.
+
+**THE BLOB IS NEVER DELETED.** It is global and content-addressed, and other tenants may hold
+the same bytes — destroying the object would break their library. What goes is this org's
+**entitlement**, which is what makes the blob reclaimable by `blob-gc.ts` later.
+
+**And the entitlement only goes when nothing else needs it.** The same image can back two disks
+in one library — a duplicate upload is ordinary — and dropping the claim on the first delete
+would break the survivor's download AND its device fetch, because the entitlement IS the
+boundary those paths check. There is a test for exactly that.
+
+**The eject is deliberate, not incidental, and this is the subtle part.** `disks.gameId`
+cascades, so the row would vanish either way and `readDesired`'s LEFT JOIN would quietly return
+nothing — which in this protocol IS an eject. But **the long poll is gated on
+`desiredVersion`**, so without a bump the board sits for 25 s and never learns. `clearDesired`
+is used precisely because it bumps. Compare the write-protect backlog entry: same protocol
+question, opposite answer, because there the flag changes and the bytes do not.
+
+**No typed-name gate, unlike `delete-user-dialog`.** That gate exists because deleting a user
+destroys someone else's library irrecoverably. This is the person's own disk and an ADF can be
+uploaded again, so the protection that fits is naming what will happen — the title, the
+ejection, and that the image survives for anyone else who has it.
+
+**The dialog is portalled to `document.body`, and it has to be.** `.glass-card` sets
+`backdrop-filter`, and **a filtered ancestor becomes the containing block for fixed-position
+descendants** — so `fixed inset-0` resolved against the card and the overlay rendered ~145px
+wide with its text one word per line. A dnd-kit drag transform on the same ancestor does the
+same thing. Any future modal rendered from inside a card needs the same treatment.
+
+### 3p. Disk space on the browse page — DONE 2026-09-04
+
+`readUsage()` in `src/lib/adffs/usage.ts`, shown on `/disks/[id]/files` as
+`2 KB used of 880 KB · 878 KB free` with a bar that turns amber past 90%.
+
+**THE ONE PLACE THIS READER TRUSTS THE BITMAP.** Everything else in `adffs` ignores it by
+design — a disk with a wrong bitmap reads perfectly — so this is the only path where a bad
+bitmap produces a wrong ANSWER rather than no answer. Hence it returns **null rather than a
+guess** when the volume marks its own bitmap invalid (`bm_flag != -1`, meaning AmigaDOS would
+rebuild it on mount), when the bitmap pointer cannot be a block, or when the bitmap claims every
+block free **including its own** — an uninitialised block that would report an almost-full disk
+as empty. This is the figure a person acts on when deciding whether a file fits.
+
+**Measured before it was written and verified after.** All 46 readable volumes in the operator's
+archive have a valid flag, a pointer of 881 and a self-marking bitmap, so "unknown" is not the
+common case. The counts agree with amitools' xdftool on used AND free for **46 of 46** real
+disks. The +2 against a naive bit count is the two boot blocks, outside the bitmap but certainly
+not free space.
+
+**`syntheticVolume` writes NO bitmap**, so a test fixture reports "unknown" and cannot exercise
+this — use `formatVolume` for a disk that has one. There is a test pinning the refusal path on a
+synthetic disk, which is the property that actually matters.
+
 ### 4. Backlog, not blocking anything
 
 - ~~**Make the app usable on a phone.**~~ **DONE 2026-09-02**, merged and live — see 3j.
@@ -1028,6 +1094,44 @@ baseline.
   **DONE 2026-09-03**, see 3l. The entry's central question — whether the trail carries the
   collection you came from — was answered by the operator: the root is hardcoded "Library", so
   it does not.
+
+- **The breadcrumb should lead back to the collection you came from, not always to "Library".**
+  Requested by the operator 2026-09-03. The hardcoded root that 3l implemented came from a
+  question asked BEFORE anyone had seen a trail on screen, and the answer given was to the
+  question as posed; seeing it in use is what surfaced the real requirement. **Not a defect and
+  not a reversal — the first decision was made without the information the second one had.**
+  Today, opening a title from inside a collection and following the trail returns you to the
+  whole library.
+
+  **The trail CANNOT be derived, and that is the whole difficulty.** A game can be in many
+  collections and `collection_games` is many-to-many by design, so `/games/[id]` and
+  `/disks/[id]/files` — which carry no collection in their URLs — cannot work out which one you
+  came from. It has to be CARRIED. Three ways, and they are not equivalent:
+
+  - **`?from=<collectionId>` threaded through every link** into a title and onward to its
+    disks. Explicit, shareable, survives a reload and a new tab. Costs a param on
+    `game-grid.tsx`, `game-table.tsx`, `disk-row.tsx`'s Browse link and the breadcrumb itself,
+    and must be resolved against `listCollections(orgId)` before it is trusted — the same
+    check `?collection=` already gets in `src/app/(app)/library/page.tsx`, because
+    `collection_games` has no `org_id` (D-4-5).
+  - **Remembering the last collection viewed** (cookie or `sessionStorage`). No URL changes at
+    all, but it is a lie on a shared link and on a second tab, and it will eventually send
+    someone "back" somewhere they never were.
+  - **`document.referrer` / history**. The operator said "following the history", and this is
+    the most literal reading — but it is unavailable on a hard reload, and Next's client
+    navigation does not update it the way a full page load would. Do not pick this without
+    checking it actually holds for a client-side transition.
+
+  **A passing test currently asserts the OPPOSITE and must be updated deliberately, not
+  deleted:** `e2e/breadcrumb.spec.ts` — *"the trail does not invent a collection it cannot
+  know"* — opens a title from inside a collection and asserts the trail neither names it nor
+  navigates to it. That test is correct for the hardcoded root; when this ships it should
+  become the guard that a `?from=` naming a collection **of another tenant, or one that no
+  longer exists**, still falls back to Library rather than 404ing or leaking a name.
+
+  **Also check the mobile bottom bar and `?collection=` do not fight**: the library already
+  treats `?collection=` as its filter, and a `?from=` that disagrees with it would be two
+  sources of truth on one screen.
 
 - **Write-back and layered disks** (disk-change spec §5). Deliberately not designed yet;
   the first increment should record which tracks changed, not just a flattened result, so
