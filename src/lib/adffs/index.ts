@@ -17,6 +17,7 @@ export type { VolumeInfo } from './root';
 export type { AdfEntry } from './dir';
 export type { FileBytes } from './file';
 export type { Filesystem, BootInfo } from './boot';
+export { readUsage, type VolumeUsage } from './usage';
 
 export type VolumeResult =
   | { ok: true; volume: VolumeInfo; root: AdfEntry[]; truncated: boolean; warnings: string[] }

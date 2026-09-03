@@ -1,4 +1,11 @@
-import { MAX_ENTRIES, type AdfEntry, type VolumeResult } from '@/lib/adffs';
+import { MAX_ENTRIES, type AdfEntry, type VolumeResult, type VolumeUsage } from '@/lib/adffs';
+
+/**
+ * KB the way an Amiga counts it: 1024 bytes, and whole numbers. A disk this
+ * size has no use for a decimal place, and "880 KB" is the number printed on
+ * the label of the physical thing.
+ */
+const formatKb = (bytes: number) => `${Math.round(bytes / 1024)} KB`;
 
 /**
  * Copy for the three ways a disk can answer "no filesystem". Verbatim from
@@ -57,7 +64,9 @@ const Fact = ({ label, children }: { label: string; children: React.ReactNode })
   </div>
 );
 
-export function VolumeHeader({ result, filename }: { result: VolumeResult; filename: string }) {
+export function VolumeHeader({ result, filename, usage }: {
+  result: VolumeResult; filename: string; usage?: VolumeUsage | null;
+}) {
   if (!result.ok) {
     return (
       <div
@@ -86,6 +95,40 @@ export function VolumeHeader({ result, filename }: { result: VolumeResult; filen
         {volume.name && volume.name !== filename && <Fact label="Volume name">{volume.name}</Fact>}
         <Fact label="Contents">
           {files} file{files === 1 ? '' : 's'}, {dirs} director{dirs === 1 ? 'y' : 'ies'}
+        </Fact>
+        {/* Read from the allocation bitmap, which is the only thing on a disk
+            that knows. Absent rather than guessed when the bitmap cannot be
+            trusted: this is the figure a person acts on when deciding whether
+            something fits, so a confident wrong number is worse than none. */}
+        <Fact label="Space">
+          {usage ? (
+            <span className="flex flex-wrap items-center gap-x-3 gap-y-1" data-testid="volume-usage">
+              <span data-testid="volume-usage-text">
+                {formatKb(usage.usedBytes)} used of {formatKb(usage.totalBytes)}
+                {' '}· {formatKb(usage.freeBytes)} free
+              </span>
+              <span
+                aria-hidden
+                className="h-1.5 w-28 overflow-hidden rounded-full"
+                style={{ background: 'var(--hairline-strong)' }}
+              >
+                <span
+                  className="block h-full rounded-full"
+                  style={{
+                    width: `${usage.percentUsed}%`,
+                    // Fill, never text -- --accent-amber fails AA as a colour
+                    // to read, and this bar is read as a shape.
+                    background: usage.percentUsed >= 90 ? 'var(--accent-amber)' : 'var(--primary-action)',
+                  }}
+                />
+              </span>
+              <span style={{ color: 'var(--muted-2)' }}>{usage.percentUsed}%</span>
+            </span>
+          ) : (
+            <span style={{ color: 'var(--muted-2)' }} data-testid="volume-usage-unknown">
+              unknown — this disk&apos;s allocation bitmap is not usable
+            </span>
+          )}
         </Fact>
         {volume.createdAt && (
           <Fact label="Created">{volume.createdAt.toISOString().slice(0, 10)}</Fact>

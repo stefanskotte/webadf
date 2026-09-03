@@ -94,6 +94,31 @@ test('the page renders a real tree, from a real FFS volume', async ({ page }) =>
   await expect(page.locator('h1').first()).toHaveText(`disk-${tag}`);
 });
 
+test('the browse page shows how much of the disk is used', async ({ page }) => {
+  await signUpFresh(page);
+  const tag = randomUUID();
+  // A file big enough to move the needle: 40 KB is 80 blocks, so the figure
+  // cannot be confused with the 4 blocks a blank disk already spends.
+  const adf = syntheticVolume({
+    filesystem: 'FFS',
+    volumeName: `Space-${tag.slice(0, 8)}`,
+    entries: [{ name: 'BIG', bytes: new Uint8Array(40 * 1024).fill(0x41) }],
+  });
+  const row = await ingestDisk(page, adf, `space-${tag}.adf`);
+
+  await page.goto(`/disks/${row.id}/files`);
+  const usage = page.getByTestId('volume-usage-text');
+  await expect(usage).toBeVisible();
+  // 880 KB is the number printed on the physical disk, and the figures have
+  // to add up to it or they are not describing a floppy.
+  await expect(usage).toContainText('of 880 KB');
+  const text = (await usage.textContent()) ?? '';
+  const [used, total, free] = [...text.matchAll(/(\d+) KB/g)].map((m) => Number(m[1]));
+  expect(used + free).toBe(total);
+  expect(used).toBeGreaterThan(40);   // the file is in there somewhere
+  expect(used).toBeLessThan(200);     // ...and the disk is not nearly full
+});
+
 test('a disk with no filesystem explains itself', async ({ page }) => {
   await signUpFresh(page);
   const tag = randomUUID();
