@@ -39,6 +39,7 @@ after plan 4a, rewritten again 2026-08-31 after plan 4b.**
 | **Library covers, type pills, contrast** | ✅ **done, merged and live 2026-09-01.** Grid shows real cover art; grid and table both show a TOSEC-derived type; the grey ramp now passes WCAG AA |
 | **Shell polish** | ✅ **done 2026-09-02.** The "/" hint, both navs centred on the viewport, zebra-striped file tree, and a navigation bar + scrim; see 3i |
 | **Mobile responsive** | ✅ **done 2026-09-02, all surfaces.** Usable at 390px; nav becomes a bottom bar, touch drag no longer eats scrolling; see 3j |
+| **Edit a title by hand** | ✅ **done 2026-09-03.** Per-group authority, and a scan never silently undoes an edit; see 3m |
 | **Unified breadcrumb** | ✅ **done 2026-09-03.** One clickable trail replaces nine inconsistent eyebrows and two hand-written back links; see 3l |
 | **Image layout shift** | ✅ **done 2026-09-03.** The game page's cover and screenshots reserve their space; the library grid never had the bug; see 3k |
 | **Typeahead search** | ✅ **done, all 7 tasks, merged to `master` and live in production.** A Spotlight-style pill in both shells; migration 0012 applied; see 3h |
@@ -49,13 +50,13 @@ after plan 4a, rewritten again 2026-08-31 after plan 4b.**
 production. **Plan 5 (hardware bring-up) is the only unbuilt plan**, and the boards for it are
 expected ~2026-09-06 — nothing in plan 4a or 4b has ever run on real silicon.
 
-**Next, at the operator's direction (2026-09-03):** the unified breadcrumb is DONE (3l);
-remaining are **editing a title's details by hand** and **propagating a write-protect flip to a
-device that already has the disk mounted**. Both are specced as backlog entries in §4. Take the
-write-protect one with a board on the desk — its flag is inert until write-back exists, so it is
+**Next, at the operator's direction (2026-09-03):** the breadcrumb (3l) and editing a title by
+hand (3m) are both DONE. Remaining is **propagating a write-protect flip to a device that
+already has the disk mounted**, specced as a backlog entry in §4. Take it with a board on the
+desk — its flag is inert until write-back exists, so it is
 only observable on hardware, and it needs a protocol answer for "same disk, changed flag" rather
 than a version bump that would force an unrequested ~2 MB re-fetch and remount.
-**Suite on `master`:** 418 vitest, `pnpm build` clean, **181 Playwright** — 176 desktop at
+**Suite on `master`:** 432 vitest, `pnpm build` clean, **189 Playwright** — 184 desktop at
 1280×720 and 5 mobile at 390×844; `playwright.config.ts` now has two projects.
 
 **Known flake shape, so nobody debugs it twice:** the first two or three tests of a cold run can
@@ -896,6 +897,55 @@ it navigates there, and that page's heading is the title.
 **Suite:** 418 vitest, **181 Playwright passed (24.9 min)**, build clean, lint at the 3-error
 baseline.
 
+### 3m. Editing a title by hand — DONE 2026-09-03
+
+`PATCH /api/games/[id]` and `POST /api/games/[id]/reset`, with an editor on the game page. Spec:
+`docs/superpowers/specs/2026-09-03-edit-title-details.md`. Two operator rulings shaped it:
+**authority is per GROUP, not per row**, and **an edit is reversible**.
+
+**The mechanism already existed; this is the UI that uses it.** `MACHINE_SOURCES` gates every
+sweep write, so stamping a source column `'human'` makes that group immune. Three groups:
+**identity** (`title` + derived `sortTitle`, `year`, `publisher` → `metadataSource`), **facts**
+(`developer`, `players`, `genre`, `chipset` → `factsSource`), **prose** (`description`,
+`history` → `proseSource`). **An edit stamps only the groups it actually changed** — saving an
+untouched form stamps nothing, and there is a test for that, because otherwise merely opening
+the editor would freeze a row forever.
+
+**THE TRAP, and it was measured against live data before a line was written.** `metadata_source`
+is never NULL (`'filename'` at ingest), so NULL there really does mean a human. But
+**`facts_source` and `prose_source` were NULL on 7 of the 9 live games**, where NULL means
+*never written*. The obvious guard — `inArray(factsSource, MACHINE_SOURCES)` — would have
+**excluded every never-enriched row and silently stopped OpenRetro enriching ~78% of the
+archive**. Their guard is `IS NULL OR IN MACHINE_SOURCES`; see `machineOwned()` in
+`openretro-apply.ts`. **The "including NULL" rule in `tosec-apply`'s comment is correct for
+`metadataSource` and inverted for the other two.**
+
+**`applyEnrichment` is now three statements, not one.** It guarded everything on
+`metadataSource`, which made the per-group columns decorative — a typo fix in a TITLE froze that
+game's facts and prose too. `publisher` stays guarded on `metadataSource` even though OpenRetro
+writes it: it is TOSEC's column first, and a person correcting it means it.
+
+**Two bugs this increment introduced and then fixed, both found by looking at the page:**
+- A hand-written description was saved, stamped, protected — **and never rendered**, because
+  `GameFacts` gated on `=== 'openretro'` and recognised no other author.
+- Fixing that made the page print "Metadata and images from OpenRetro" under a sentence a person
+  typed. **The attribution is now conditional on something actually coming from them**, which is
+  the whole point of having it.
+
+**Reset restores, it does not merely release.** It reads this game's own matched entry
+(`blobs.tosecEntryId` / `openretroEntryId`) and writes the values back, because a control saying
+"use scanned data" must not mean "your mistake stays until some future sweep". **`applyMatch` is
+deliberately not reused** — it applies across every tenant holding those bytes and can MERGE
+games, far more than undoing one edit asked for. Identity resets to `'tosec'`/`'filename'`, never
+NULL, which in that column would leave the row frozen.
+
+**Editing a title writes `sortTitle` too** (via `makeSortTitle`, so human rows sort like machine
+ones). It also makes that row permanently the merge survivor, and two human-edited rows in one
+duplicate set never merge. That is correct, and the UI does not imply otherwise.
+
+**Suite:** 432 vitest, **189 Playwright passed (25.9 min)**, build clean, lint at the 3-error
+baseline.
+
 ### 4. Backlog, not blocking anything
 
 - ~~**Make the app usable on a phone.**~~ **DONE 2026-09-02**, merged and live — see 3j.
@@ -976,71 +1026,11 @@ baseline.
 
   Note the standing caveat that `disks.write_protected` is inert until write-back is designed —
   so this is only observable on hardware once the board actually honours the flag.
-- **Let a person edit their own titles' details — and never have a scan overwrite them.**
-  Requested by the operator 2026-09-01, replacing the old "rich game detail page" entry: the
-  page itself is fine as it stands, and the gap is that there is no way to fill it in by hand.
-  Every field an enrichment increment would have written is already there and already rendered;
-  nothing has ever written most of them, and no human path exists at all.
+- ~~**Let a person edit their own titles' details — and never have a scan overwrite them.**~~
+  **DONE 2026-09-03**, see 3m. The entry's own warning about the three source columns was right,
+  and understated: the columns were not merely separate, they were unread — every sweep guarded
+  on `metadataSource` alone.
 
-  **The single most important fact: the Authority rule is already built, and the edit UI's whole
-  job is to use it.** `MACHINE_SOURCES = ['filename', 'tosec', 'openretro']` in
-  `src/lib/tosec-apply.ts`, and `applyMatch` only ever overwrites a row whose source column is
-  one of those three. Writing **any other value** — `'human'`, say — makes that row permanently
-  immune to both the TOSEC scan and OpenRetro enrichment. That file's own comment says it
-  outright: *"A human edit (any other value, including NULL) is never overwritten — nothing
-  writes such a value today, but the rule exists before the first edit UI can forget it."* This
-  entry is that UI. It does not need a new mechanism; it needs to set the column.
-
-  **There are THREE source columns, not one, and that is deliberate.** `metadataSource` governs
-  title/year/publisher; `factsSource` and `proseSource` are separate so OpenRetro's facts survive
-  a later prose import and vice versa. **An edit UI must decide, per field, which column it
-  stamps** — stamping all three because someone fixed a typo in the description would silently
-  freeze their publisher against every future scan, which is the opposite of what they asked for.
-
-  **Editing a title is not like editing the other fields, and this is the trap.** `sortTitle` is
-  `NOT NULL`, it is what `games_org_sort_idx` orders by, and `(sortTitle, year)` is the exact key
-  `mergeDuplicates` collapses duplicates on. So a title edit must write `sortTitle` too, and it
-  changes merge behaviour permanently: a human-edited row is **always** the survivor and never
-  the one a sweep deletes, and **two** human-edited rows in one duplicate set merge not at all.
-  That is correct behaviour, not a bug — but it means a person who edits two titles into agreement
-  will not see them merge, and the UI should not imply otherwise.
-
-  **The columns that already exist**, all on `games`, all selected by `src/lib/queries.ts`, none
-  writable by a human today: `genre`, `chipset`, `developer`, `players`, `description`, `history`,
-  `coverAssetId`. `/games/[id]` already renders `year`, `publisher`, `genre` and `chipset` in its
-  subtitle. **No migration is needed for the fields themselves** — only, probably, for an audit of
-  who changed what, which this app does not have anywhere yet (see the admin audit-log gap).
-
-  **What is NOT covered by this and should not be smuggled in:** editing a *disk* is a different
-  question from editing a *title*. `disks.tosecName` is overwritten by the next scan by design,
-  and `blobs` is global and content-addressed — a disk's bytes belong to every tenant that
-  uploaded them. Cover art and screenshots are also out: they need Blob storage plus an
-  attribution and licensing answer, and that answer should come before images land in this
-  project's storage, not after.
-
-- ~~**User-defined collections, with drag-and-drop.**~~ **DONE 2026-09-01 — see 3g.** Requested
-  by the operator 2026-08-31: make your own categories ("My favorite games - AGA") and move games
-  into them. The planning notes below are kept because the constraint they name outlived the
-  increment: the "any new table holding a game id" rule now has two tables obeying it, not one.
-  The drag-and-drop paragraph's aside about native HTML5 drag turned out to be worse than
-  neutral — see 3g.
-
-  **The one non-obvious constraint: the TOSEC scan DELETES `games` rows.** `mergeDuplicates` in
-  `src/lib/tosec-apply.ts` collapses two games that resolve to the same `(sortTitle, year)` — it
-  moves the disks to a survivor and deletes the absorbed row. It already repoints
-  `devices.desiredGameId` and `mountedGameId` for exactly this reason. **Any new table holding a
-  game id must be repointed in that same batch**, or a collection silently loses its entry (or
-  worse, cascade-deletes it, which is the shape of the Critical bug this branch shipped a fix
-  for). That statement list is the first place to look, not an afterthought.
-
-  **Shape:** a `collections` table (per-tenant, with `orgId` — unlike `blobs` and `tosec_entries`,
-  which are global because they are content-addressed) and a `collection_games` join carrying a
-  sort key, since "drag to reorder" needs an explicit order rather than a derived one.
-
-  **Drag-and-drop is a real dependency decision.** shadcn v4 here is Base UI, not Radix, and
-  neither ships a DnD primitive — this would mean `dnd-kit` or similar, the first UI dependency of
-  its kind in this repo. A plain "add to collection" menu needs none of that and delivers most of
-  the value; the reordering is the part that actually requires the library.
 - ~~**Show each disk's real filename, and let a human download the ADF.**~~ **DONE**, merged
   and live. `disk-row.tsx` shows both names — `disks.tosecName` and, when it differs,
   "uploaded as `entitlements.sourceFilename`" — because "the actual filename" really is two

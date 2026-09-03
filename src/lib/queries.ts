@@ -268,6 +268,10 @@ export interface GameDetail {
   developer: string | null; players: string | null;
   description: string | null; history: string | null;
   factsSource: string | null; proseSource: string | null;
+  /** Who owns title/year/publisher. Needed by the editor to say so, and to
+   *  offer handing the group back. Never NULL in practice -- ingest writes
+   *  'filename' -- so a NULL here really would mean a human took the row. */
+  metadataSource: string | null;
   languages: string | null;
   front: GameImage | null; title_: GameImage | null; screenshots: GameImage[];
   links: GameLinks | null;
@@ -289,6 +293,7 @@ export async function getGameDetail(orgId: string, gameId: string): Promise<Game
       developer: games.developer, players: games.players,
       description: games.description, history: games.history,
       factsSource: games.factsSource, proseSource: games.proseSource,
+      metadataSource: games.metadataSource,
     })
     .from(games)
     .where(orgFilter(games, orgId, eq(games.id, gameId)))
