@@ -1,5 +1,4 @@
 import { notFound } from 'next/navigation';
-import { Link } from '@/components/shell/link';
 import { requireOrg } from '@/lib/session';
 import { getGameDetail, listDevices } from '@/lib/queries';
 import { deviceState } from '@/lib/device-state';
@@ -49,15 +48,19 @@ export default async function GamePage(props: PageProps<'/games/[id]'>) {
   return (
     <>
       <PageHeader
-        eyebrow="Library / Games"
+        // One crumb, because the library is this page's only ancestor. The
+        // old eyebrow read "Library / Games" and was neither: "Games" is not
+        // a place, and on a demo or a Workbench disk it was not even true.
+        // The kind IS derivable (game-kind.ts) but is deliberately not a
+        // crumb: it is null for the ~54% of the archive TOSEC does not
+        // recognise, it is not somewhere you can navigate to, and putting it
+        // here would cost getGameDetail an extra query per render to show a
+        // word that is usually absent.
+        eyebrow={[{ label: 'Library', href: '/library' }]}
         title={game.title}
         subtitle={[game.year, game.publisher, game.genre, game.chipset,
                    `${game.disks.length} disk${game.disks.length === 1 ? '' : 's'}`]
                   .filter(Boolean).join(' · ')}
-        actions={
-          <Link href="/library" className="text-[12.5px] font-semibold"
-                style={{ color: 'var(--on-dark-muted)' }}>← Library</Link>
-        }
       />
       <LiveRefresh active={anyPending} />
       <GameFacts game={game} />

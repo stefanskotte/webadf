@@ -1,10 +1,19 @@
+import { Breadcrumb, type Crumb } from '@/components/shell/breadcrumb';
+
 export function PageHeader({
   eyebrow,
   title,
   subtitle,
   actions,
 }: {
-  eyebrow?: string;
+  /**
+   * A plain label for a page that is not a drill-down ("Admin", "Hardware"),
+   * or a clickable trail for one that is. One prop rather than two because
+   * they occupy the same slot above the title and only ever one of them
+   * applies -- and because this prop is the seam: change the contract here
+   * and every page follows.
+   */
+  eyebrow?: string | Crumb[];
   title: string;
   subtitle?: string;
   actions?: React.ReactNode;
@@ -18,14 +27,16 @@ export function PageHeader({
     // px-7 is 14% of a 390px screen.
     <div className="flex flex-col items-start gap-3 px-4 pb-5 pt-6 sm:flex-row sm:items-end sm:justify-between sm:gap-0 sm:px-7">
       <div className="flex flex-col gap-1">
-        {eyebrow && (
+        {Array.isArray(eyebrow) ? (
+          <Breadcrumb crumbs={eyebrow} />
+        ) : eyebrow ? (
           <span
             className="text-[12.5px] font-semibold"
             style={{ color: "var(--on-dark-muted)" }}
           >
             {eyebrow}
           </span>
-        )}
+        ) : null}
         <h1
           // 26px below sm: at 34px a two-word title ("Disk contents") wraps
           // on a 390px screen, and leading-none makes a wrapped heading read

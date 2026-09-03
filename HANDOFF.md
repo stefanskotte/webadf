@@ -39,6 +39,7 @@ after plan 4a, rewritten again 2026-08-31 after plan 4b.**
 | **Library covers, type pills, contrast** | ✅ **done, merged and live 2026-09-01.** Grid shows real cover art; grid and table both show a TOSEC-derived type; the grey ramp now passes WCAG AA |
 | **Shell polish** | ✅ **done 2026-09-02.** The "/" hint, both navs centred on the viewport, zebra-striped file tree, and a navigation bar + scrim; see 3i |
 | **Mobile responsive** | ✅ **done 2026-09-02, all surfaces.** Usable at 390px; nav becomes a bottom bar, touch drag no longer eats scrolling; see 3j |
+| **Unified breadcrumb** | ✅ **done 2026-09-03.** One clickable trail replaces nine inconsistent eyebrows and two hand-written back links; see 3l |
 | **Image layout shift** | ✅ **done 2026-09-03.** The game page's cover and screenshots reserve their space; the library grid never had the bug; see 3k |
 | **Typeahead search** | ✅ **done, all 7 tasks, merged to `master` and live in production.** A Spotlight-style pill in both shells; migration 0012 applied; see 3h |
 | **Read-only ADF filesystem reader** | ✅ **done, all 10 tasks, `feat/adf-filesystem-reader`.** Reads 80.3% of the archive (49/61) against TOSEC's 45.9% and OpenRetro's 6.6%; see 3f |
@@ -48,17 +49,27 @@ after plan 4a, rewritten again 2026-08-31 after plan 4b.**
 production. **Plan 5 (hardware bring-up) is the only unbuilt plan**, and the boards for it are
 expected ~2026-09-06 — nothing in plan 4a or 4b has ever run on real silicon.
 
-**Next, at the operator's direction (2026-09-03), in this order:** the unified breadcrumb,
-editing a title's details by hand, and propagating a write-protect flip to a device that
-already has the disk mounted. All three are specced as backlog entries in §4.
-**Suite on `master`:** 418 vitest, `pnpm build` clean, **178 Playwright** — 173 desktop at
+**Next, at the operator's direction (2026-09-03):** the unified breadcrumb is DONE (3l);
+remaining are **editing a title's details by hand** and **propagating a write-protect flip to a
+device that already has the disk mounted**. Both are specced as backlog entries in §4. Take the
+write-protect one with a board on the desk — its flag is inert until write-back exists, so it is
+only observable on hardware, and it needs a protocol answer for "same disk, changed flag" rather
+than a version bump that would force an unrequested ~2 MB re-fetch and remount.
+**Suite on `master`:** 418 vitest, `pnpm build` clean, **181 Playwright** — 176 desktop at
 1280×720 and 5 mobile at 390×844; `playwright.config.ts` now has two projects.
 
 **Known flake shape, so nobody debugs it twice:** the first two or three tests of a cold run can
 time out at the 30s per-test limit while Turbopack compiles a route for the first time —
 observed as `apiRequestContext.post: Test timeout` on `/api/ingest/complete`, and as
 `signUpFresh` never reaching `/library`. Both pass in isolation and on a warm re-run. Before
-concluding a regression, **re-run the failing spec alone**; if it passes, that was this. Firmware: `pnpm firmware:test` green (506 checks, 13
+concluding a regression, **re-run the failing spec alone**; if it passes, that was this.
+
+**Its sibling: do not start a spec while the previous run's teardown is still going.**
+`globalTeardown` sweeps every test user by email domain, and it keeps running after the last
+test reports. A spec launched into that window has its freshly signed-up user deleted
+underneath it, which shows up as several tests in one file failing in ~500ms each — a cascade
+that looks alarming and is nothing. Observed 2026-09-03. Wait for the teardown line
+(`teardown: removed N test users...`) before re-running anything. Firmware: `pnpm firmware:test` green (506 checks, 13
 binaries), `pnpm firmware:build` produces a `.uf2` — **and now requires
 `PORTAL_AP_PASSWORD` set in the environment, or the configure step fails by design**; see
 "Plan 4b" below for the full command.
@@ -838,6 +849,53 @@ it. That test holds every `/api/images/**` response and asserts the boxes are al
 — note it must `goto` with `waitUntil: 'domcontentloaded'`, since the default waits for the very
 images it is holding.
 
+### 3l. Unified breadcrumb — DONE 2026-09-03
+
+One clickable trail above the title, replacing two conventions that were never navigation:
+`eyebrow` as a plain string, which nine pages filled in six mutually inconsistent ways, and a
+hand-written back link in the `actions` slot, already spelled two different ways and about to
+invent a third.
+
+**`PageHeader`'s `eyebrow` is now `string | Crumb[]`** — the seam the backlog identified. A
+plain label still renders exactly as before, so the seven top-level pages are untouched; the two
+drill-down pages pass a trail. `src/components/shell/breadcrumb.tsx`.
+
+**The trail carries ancestors only; the `<h1>` is the current page.** Repeating a title at
+12.5px directly above the same words at 34px reads as a rendering bug. The one exception is a
+crumb that says WHICH of something you are looking at — "Disk 2" — where the heading is showing
+a different fact entirely (the volume's name).
+
+- `/games/[id]`: `Library`
+- `/disks/[id]/files`: `Library / <the entry's title> / Disk N`
+
+**The root is hardcoded "Library", by the operator's ruling, and that is the collection
+decision.** `?collection=<id>` is a real second axis on `/library`, but a game can be in many
+collections and `collection_games` is many-to-many by design, so the trail **cannot be derived**
+from a game id — carrying it would mean threading a `?from=` param through every link. So a
+person who opened a title from inside a collection returns to the whole library, and the trail
+says so honestly instead of guessing at one of the collections that title belongs to. There is a
+test that opens a title from inside a collection and asserts the trail neither names it nor
+navigates to it.
+
+**The `kind` segment was considered and deliberately left out.** `game-kind.ts` derives it, but
+it is `null` for the ~54% of the archive TOSEC does not recognise, it is not somewhere you can
+navigate, and `getGameDetail` does not carry it — it would cost an extra query per render to
+show a word that is usually absent.
+
+**The middle crumb is named for the entry, never typed as "Game".** That rule came from the back
+link this replaced, and it is kept rather than rediscovered: `games` is the table's vocabulary,
+and it is simply wrong on a Workbench or utility disk, which is most of what the file browser is
+for.
+
+**One existing spec was edited, deliberately.** `adf-browser.spec.ts` located the back link by
+regex — `getByRole('link', { name: /^←/ })` — so a grep for the literal text missed it and the
+suite caught what the grep did not. The affordance moved, so its four guarantees moved with it
+onto the trail rather than being deleted: there is a way back, it is named for the destination,
+it navigates there, and that page's heading is the title.
+
+**Suite:** 418 vitest, **181 Playwright passed (24.9 min)**, build clean, lint at the 3-error
+baseline.
+
 ### 4. Backlog, not blocking anything
 
 - ~~**Make the app usable on a phone.**~~ **DONE 2026-09-02**, merged and live — see 3j.
@@ -854,44 +912,10 @@ images it is holding.
   1280×720 default every existing spec was written against; `mobile` is 390×844 with
   `hasTouch` and matches only `e2e/mobile.spec.ts`. Five tests, not a duplicated suite.
 
-- **A unified breadcrumb, replacing the per-page eyebrow and the hand-written back links.**
-  Requested by the operator 2026-09-01: as you drill Library → a game/demo/app → a disk's
-  files, the trail should be one consistent, clickable thing. Notes for whoever plans it:
-
-  **What exists today is two conventions and neither is navigation.** `PageHeader`
-  (`src/components/shell/page-header.tsx`) takes `eyebrow` as a **plain string** — it renders
-  text, never links — and the nine call sites do not agree on what goes in it: `Library /
-  Games`, `Library / Disk 2`, `Amiga collection`, `Add disks`, `Hardware`, `Admin`. Only two of
-  them are even shaped like a path. Going *back* is a separate, hand-written `<Link>` in the
-  `actions` slot, and there are already two different spellings of it — `/games/[id]` says
-  "← Library", `/disks/[id]/files` names the entry it returns to. A third drill-down would
-  invent a third. **`PageHeader`'s `eyebrow` prop is the seam**: change that one contract and
-  every page follows.
-
-  **The one non-obvious constraint: the trail cannot be derived from the data, because a game
-  can be in many collections.** `?collection=<id>` on `/library` is a real second axis of
-  drill-down now, and a person who opened a game from inside a collection expects to come back
-  to *that collection*, not to the unfiltered library. But `/games/[id]` and
-  `/disks/[id]/files` carry no collection in their URLs, and reconstructing it from
-  `collection_games` is not possible — the join is many-to-many by design. So the breadcrumb
-  has to be **carried** (a `?from=` param threaded through the links, resolved against
-  `listCollections(orgId)` the same way `?collection=` already is in
-  `src/app/(app)/library/page.tsx`), or it has to honestly say "Library" and drop the
-  collection. Decide that first; everything else follows from it.
-
-  **The `kind` segment can be real rather than invented.** `src/lib/game-kind.ts` already
-  derives Game / Demo / Educational / Coverdisk / App from the TOSEC set that recognised a
-  title's disks, and the grid and table both show it. **But it is `null` for everything TOSEC
-  did not recognise, which is more than half the archive** (45.9% recognised). A breadcrumb
-  that defaults an unknown title to "Game" would repeat the bug fixed on 2026-09-01 in the file
-  browser's back link, where the `games` table's vocabulary leaked into the UI and labelled a
-  Workbench disk "← Game". An unrecognised title has no kind, and the trail must be able to say
-  nothing rather than guess.
-
-  **Two smaller things it must not break:** `TopNav` already marks the active section with
-  `pathname.startsWith(item.href)`, so a breadcrumb must not contradict or duplicate it; and
-  `/disks/[id]/files` reaches its game only through `disks.gameId`, joined LEFT and scoped on
-  `orgId`, because nothing in the schema guarantees `disks.orgId` matches its game's org.
+- ~~**A unified breadcrumb, replacing the per-page eyebrow and the hand-written back links.**~~
+  **DONE 2026-09-03**, see 3l. The entry's central question — whether the trail carries the
+  collection you came from — was answered by the operator: the root is hardcoded "Library", so
+  it does not.
 
 - **Write-back and layered disks** (disk-change spec §5). Deliberately not designed yet;
   the first increment should record which tracks changed, not just a flattened result, so
