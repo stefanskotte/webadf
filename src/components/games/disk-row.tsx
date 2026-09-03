@@ -2,6 +2,7 @@ import { Link } from '@/components/shell/link';
 import type { GameDetailDisk } from '@/lib/queries';
 import { WriteProtectToggle } from './write-protect-toggle';
 import { MountAction, type MountTarget } from './mount-action';
+import { DeleteDiskDialog } from '@/components/library/delete-disk-dialog';
 
 /** What some device is doing with this particular disk, if anything. */
 export interface DiskHolder { deviceName: string; state: 'converged' | 'pending' | 'stale' }
@@ -107,6 +108,14 @@ export function DiskRow({ disk, devices, holder }: {
         </Link>
         <WriteProtectToggle diskId={disk.id} writeProtected={disk.writeProtected} />
         <MountAction diskId={disk.id} devices={devices} />
+        {/* Last in the row, after the actions someone actually came here to
+            use. Named for the disk, not the title: on a multi-disk set this
+            removes one ADF and leaves the rest. */}
+        <DeleteDiskDialog
+          kind="disk"
+          id={disk.id}
+          title={disk.tosecName ?? disk.sourceFilename ?? `Disk ${disk.diskNo}`}
+        />
       </div>
     </div>
   );

@@ -3,6 +3,7 @@ import { and, eq } from 'drizzle-orm';
 import { getDb } from '@/db';
 import { disks } from '@/db/schema/catalog';
 import { requireOrg } from '@/lib/session';
+import { deleteDisk } from '@/lib/disk-delete';
 
 export const maxDuration = 60;
 
@@ -30,4 +31,17 @@ export async function PATCH(request: Request, ctx: { params: Promise<{ id: strin
 
   if (updated.length === 0) return Response.json({ error: 'not_found' }, { status: 404 });
   return Response.json(updated[0]);
+}
+
+/**
+ * Remove one disk. Takes the title with it when it was the last one, since a
+ * title with no disks is not a title.
+ */
+export async function DELETE(_request: Request, ctx: { params: Promise<{ id: string }> }) {
+  const { orgId } = await requireOrg();
+  const { id } = await ctx.params;
+
+  const result = await deleteDisk(orgId, id);
+  if (!result) return Response.json({ error: 'not_found' }, { status: 404 });
+  return Response.json(result);
 }
