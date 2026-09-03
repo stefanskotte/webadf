@@ -66,6 +66,14 @@ observed as `apiRequestContext.post: Test timeout` on `/api/ingest/complete`, an
 `signUpFresh` never reaching `/library`. Both pass in isolation and on a warm re-run. Before
 concluding a regression, **re-run the failing spec alone**; if it passes, that was this.
 
+**A third, and it cost two hours on 2026-09-03: a killed run ORPHANS its dev server.**
+`playwright.config.ts` sets `reuseExistingServer: true`, so the next run adopts whatever is
+holding port 3000 -- including a wedged process that never answers HTTP. The run then waits
+forever with **no output at all**, which reads exactly like a slow cold compile. The tell is
+`ps -o etime,time`: hours of elapsed against under a second of CPU, and no
+`chrome-headless-shell` process ever started. **After killing a run, kill `next dev` and
+`next-server` too**, and check `lsof -iTCP:3000` is free before restarting.
+
 **Its sibling: do not start a spec while the previous run's teardown is still going.**
 `globalTeardown` sweeps every test user by email domain, and it keeps running after the last
 test reports. A spec launched into that window has its freshly signed-up user deleted
@@ -1028,6 +1036,44 @@ baseline.
   **DONE 2026-09-03**, see 3l. The entry's central question — whether the trail carries the
   collection you came from — was answered by the operator: the root is hardcoded "Library", so
   it does not.
+
+- **The breadcrumb should lead back to the collection you came from, not always to "Library".**
+  Requested by the operator 2026-09-03. The hardcoded root that 3l implemented came from a
+  question asked BEFORE anyone had seen a trail on screen, and the answer given was to the
+  question as posed; seeing it in use is what surfaced the real requirement. **Not a defect and
+  not a reversal — the first decision was made without the information the second one had.**
+  Today, opening a title from inside a collection and following the trail returns you to the
+  whole library.
+
+  **The trail CANNOT be derived, and that is the whole difficulty.** A game can be in many
+  collections and `collection_games` is many-to-many by design, so `/games/[id]` and
+  `/disks/[id]/files` — which carry no collection in their URLs — cannot work out which one you
+  came from. It has to be CARRIED. Three ways, and they are not equivalent:
+
+  - **`?from=<collectionId>` threaded through every link** into a title and onward to its
+    disks. Explicit, shareable, survives a reload and a new tab. Costs a param on
+    `game-grid.tsx`, `game-table.tsx`, `disk-row.tsx`'s Browse link and the breadcrumb itself,
+    and must be resolved against `listCollections(orgId)` before it is trusted — the same
+    check `?collection=` already gets in `src/app/(app)/library/page.tsx`, because
+    `collection_games` has no `org_id` (D-4-5).
+  - **Remembering the last collection viewed** (cookie or `sessionStorage`). No URL changes at
+    all, but it is a lie on a shared link and on a second tab, and it will eventually send
+    someone "back" somewhere they never were.
+  - **`document.referrer` / history**. The operator said "following the history", and this is
+    the most literal reading — but it is unavailable on a hard reload, and Next's client
+    navigation does not update it the way a full page load would. Do not pick this without
+    checking it actually holds for a client-side transition.
+
+  **A passing test currently asserts the OPPOSITE and must be updated deliberately, not
+  deleted:** `e2e/breadcrumb.spec.ts` — *"the trail does not invent a collection it cannot
+  know"* — opens a title from inside a collection and asserts the trail neither names it nor
+  navigates to it. That test is correct for the hardcoded root; when this ships it should
+  become the guard that a `?from=` naming a collection **of another tenant, or one that no
+  longer exists**, still falls back to Library rather than 404ing or leaking a name.
+
+  **Also check the mobile bottom bar and `?collection=` do not fight**: the library already
+  treats `?collection=` as its filter, and a `?from=` that disagrees with it would be two
+  sources of truth on one screen.
 
 - **Write-back and layered disks** (disk-change spec §5). Deliberately not designed yet;
   the first increment should record which tracks changed, not just a flattened result, so

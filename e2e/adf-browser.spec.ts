@@ -5,6 +5,7 @@ import { getDb } from '@/db';
 import { disks } from '@/db/schema/catalog';
 import { ROOT_BLOCK } from '@/lib/adffs/constants';
 import { syntheticVolume } from '@/lib/adffs/synthetic';
+import { formatVolume } from '@/lib/adffs/format';
 import { signUpFresh } from './helpers';
 import { cleanupSeeded } from './device-helpers';
 
@@ -97,26 +98,48 @@ test('the page renders a real tree, from a real FFS volume', async ({ page }) =>
 test('the browse page shows how much of the disk is used', async ({ page }) => {
   await signUpFresh(page);
   const tag = randomUUID();
-  // A file big enough to move the needle: 40 KB is 80 blocks, so the figure
-  // cannot be confused with the 4 blocks a blank disk already spends.
-  const adf = syntheticVolume({
-    filesystem: 'FFS',
-    volumeName: `Space-${tag.slice(0, 8)}`,
-    entries: [{ name: 'BIG', bytes: new Uint8Array(40 * 1024).fill(0x41) }],
-  });
+  // formatVolume, NOT syntheticVolume. The fixture generator writes correct
+  // checksums and hash chains but NO BITMAP -- which is exactly why
+  // formatVolume had to be written -- and the space figure is read from the
+  // bitmap. A synthetic disk therefore reports "unknown", correctly, and
+  // cannot exercise this at all. The test below asserts that case.
+  const adf = formatVolume({ filesystem: 'FFS', volumeName: `Space-${tag.slice(0, 8)}` });
   const row = await ingestDisk(page, adf, `space-${tag}.adf`);
 
   await page.goto(`/disks/${row.id}/files`);
   const usage = page.getByTestId('volume-usage-text');
   await expect(usage).toBeVisible();
-  // 880 KB is the number printed on the physical disk, and the figures have
-  // to add up to it or they are not describing a floppy.
-  await expect(usage).toContainText('of 880 KB');
+
+  // Four blocks on a freshly formatted disk -- two boot blocks, the root and
+  // the bitmap -- which is 2 KB, and the same figure xdftool reports for its
+  // own format. 880 KB is the number printed on the physical disk.
+  await expect(usage).toContainText('2 KB used of 880 KB');
+  await expect(usage).toContainText('878 KB free');
+
   const text = (await usage.textContent()) ?? '';
   const [used, total, free] = [...text.matchAll(/(\d+) KB/g)].map((m) => Number(m[1]));
   expect(used + free).toBe(total);
-  expect(used).toBeGreaterThan(40);   // the file is in there somewhere
-  expect(used).toBeLessThan(200);     // ...and the disk is not nearly full
+});
+
+test('a disk whose bitmap cannot be trusted says so instead of guessing', async ({ page }) => {
+  await signUpFresh(page);
+  const tag = randomUUID();
+  // syntheticVolume writes no bitmap at all, so the root block's bm_flag is
+  // not valid and readUsage refuses. That refusal is the point: this is the
+  // figure someone acts on when deciding whether a file fits, and a
+  // confidently wrong "878 KB free" on a full disk is worse than no answer.
+  const adf = syntheticVolume({
+    filesystem: 'FFS',
+    volumeName: `NoBitmap-${tag.slice(0, 8)}`,
+    entries: [{ name: 'README', bytes: enc('x') }],
+  });
+  const row = await ingestDisk(page, adf, `nobitmap-${tag}.adf`);
+
+  await page.goto(`/disks/${row.id}/files`);
+  // The disk still READS -- the reader ignores bitmaps by design.
+  await expect(page.locator('[data-testid="fs-entry"][data-name="README"]')).toBeVisible();
+  await expect(page.getByTestId('volume-usage-unknown')).toBeVisible();
+  await expect(page.getByTestId('volume-usage-text')).toHaveCount(0);
 });
 
 test('a disk with no filesystem explains itself', async ({ page }) => {

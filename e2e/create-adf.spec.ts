@@ -1,5 +1,5 @@
 import { test, expect } from '@playwright/test';
-import { eq } from 'drizzle-orm';
+import { and, eq } from 'drizzle-orm';
 import { getDb } from '@/db';
 import { games, disks } from '@/db/schema/catalog';
 import { readVolume } from '@/lib/adffs';
@@ -12,17 +12,20 @@ const gameRow = async (id: string) => (await getDb().select().from(games).where(
 const diskRow = async (id: string) => (await getDb().select().from(disks).where(eq(disks.id, id)))[0];
 
 test('a blank disk is made, is real immediately, and an Amiga could mount it', async ({ page }) => {
-  await signUpFresh(page);
+  const u = await signUpFresh(page);
   await page.goto('/library');
 
   await page.getByTestId('create-adf').click();
   await expect(page.getByTestId('game-card')).toHaveCount(1);
 
   // Real the moment it appears (operator's ruling): rows exist, bytes exist.
-  const created = await getDb().select().from(games).where(eq(games.title, 'Empty'));
-  const mine = created.filter((g) => g.authored);
-  expect(mine.length).toBeGreaterThan(0);
-  const game = mine[mine.length - 1];
+  // Scoped to THIS test's org. Every create-adf test makes a disk called
+  // 'Empty', so an unscoped lookup picks an arbitrary one -- it passes in
+  // isolation, where only one exists, and fails in the full suite.
+  const created = await getDb().select().from(games)
+    .where(and(eq(games.orgId, u.orgId), eq(games.authored, true)));
+  expect(created.length).toBe(1);
+  const game = created[0];
   expect(game.authored).toBe(true);
   // OUTSIDE MACHINE_SOURCES, so no scan will ever retitle it and
   // mergeDuplicates will never absorb it -- a merge DELETES the losing row.
@@ -44,15 +47,15 @@ test('a blank disk is made, is real immediately, and an Amiga could mount it', a
 });
 
 test('OFS is selectable, and it really is OFS on the disk', async ({ page }) => {
-  await signUpFresh(page);
+  const u = await signUpFresh(page);
   await page.goto('/library');
 
   await page.getByTestId('create-adf-fs').selectOption('OFS');
   await page.getByTestId('create-adf').click();
   await expect(page.getByTestId('game-card')).toHaveCount(1);
 
-  const [game] = await getDb().select().from(games).where(eq(games.title, 'Empty'))
-    .then((rows) => rows.filter((g) => g.authored).slice(-1));
+  const [game] = await getDb().select().from(games)
+    .where(and(eq(games.orgId, u.orgId), eq(games.authored, true)));
   const [disk] = await getDb().select().from(disks).where(eq(disks.gameId, game.id));
   const adf = await page.request.get(`/api/disks/${disk.id}/adf`);
   const v = readVolume(new Uint8Array(await adf.body()));
@@ -63,13 +66,13 @@ test('OFS is selectable, and it really is OFS on the disk', async ({ page }) => 
 
 test('renaming on the card rewrites the disk under a new digest', async ({ page }) => {
   const run = runTag();
-  await signUpFresh(page);
+  const u = await signUpFresh(page);
   await page.goto('/library');
   await page.getByTestId('create-adf').click();
   await expect(page.getByTestId('game-card')).toHaveCount(1);
 
-  const [game] = await getDb().select().from(games).where(eq(games.title, 'Empty'))
-    .then((rows) => rows.filter((g) => g.authored).slice(-1));
+  const [game] = await getDb().select().from(games)
+    .where(and(eq(games.orgId, u.orgId), eq(games.authored, true)));
   const [before] = await getDb().select().from(disks).where(eq(disks.gameId, game.id));
 
   const name = `Workbench ${run}`.slice(0, 30);
@@ -93,13 +96,13 @@ test('renaming on the card rewrites the disk under a new digest', async ({ page 
 });
 
 test('typing in the name field neither navigates nor drags the card', async ({ page }) => {
-  await signUpFresh(page);
+  const u = await signUpFresh(page);
   await page.goto('/library');
   await page.getByTestId('create-adf').click();
   await expect(page.getByTestId('game-card')).toHaveCount(1);
 
-  const [game] = await getDb().select().from(games).where(eq(games.title, 'Empty'))
-    .then((rows) => rows.filter((g) => g.authored).slice(-1));
+  const [game] = await getDb().select().from(games)
+    .where(and(eq(games.orgId, u.orgId), eq(games.authored, true)));
 
   // The field sits INSIDE the card's <a href>, which is also a dnd-kit
   // draggable. Clicking into it must not follow the link.
@@ -131,14 +134,14 @@ test('an uploaded title gets no rename field, and another tenant cannot rename',
   const b = await browser.newContext();
   const pa = await a.newPage();
   const pb = await b.newPage();
-  await signUpFresh(pa);
+  const ua = await signUpFresh(pa);
   await signUpFresh(pb);
 
   await pa.goto('/library');
   await pa.getByTestId('create-adf').click();
   await expect(pa.getByTestId('game-card')).toHaveCount(1);
-  const [game] = await getDb().select().from(games).where(eq(games.title, 'Empty'))
-    .then((rows) => rows.filter((g) => g.authored).slice(-1));
+  const [game] = await getDb().select().from(games)
+    .where(and(eq(games.orgId, ua.orgId), eq(games.authored, true)));
   const [disk] = await getDb().select().from(disks).where(eq(disks.gameId, game.id));
 
   // Another tenant gets 404, never 403 -- the response must not confirm the
