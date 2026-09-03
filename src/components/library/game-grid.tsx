@@ -88,16 +88,89 @@ function dragStyle(translate: string | undefined, isDragging: boolean) {
   };
 }
 
+/**
+ * The volume name of a disk made here, editable on the card.
+ *
+ * INSIDE the card's <a>, like the remove button above it, and safe for the
+ * same reason: every pointer event is stopped before it reaches the anchor or
+ * dnd-kit's listeners. Without that, typing would navigate to the game and
+ * a drag would start from the text cursor.
+ *
+ * Offered only for an authored title. Renaming rewrites the disk's BYTES --
+ * new sha-256, new blob, repointed disks.sha256 -- and "which disk?" has no
+ * answer on a multi-disk game, which is why this is gated on `authored`
+ * rather than on metadataSource 'human' (true of any hand-edited title).
+ */
+function VolumeNameField({ game: g }: { game: GameListItem }) {
+  const router = useRouter();
+  const [name, setName] = useState(g.title);
+  const [busy, setBusy] = useState(false);
+
+  async function commit() {
+    const trimmed = name.trim();
+    if (trimmed === '' || trimmed === g.title) { setName(g.title); return; }
+    setBusy(true);
+    try {
+      const res = await fetch(`/api/disks/${g.diskId}/volume-name`, {
+        method: 'PATCH',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ volumeName: trimmed }),
+      });
+      if (!res.ok) {
+        toast.error('Could not rename the disk');
+        setName(g.title);
+        return;
+      }
+      // Said plainly, because it is not what a rename usually costs: the disk
+      // is content-addressed, so this really did make a new one.
+      toast.success('Disk renamed', { description: 'The disk was rewritten under a new digest.' });
+      router.refresh();
+    } catch {
+      toast.error('Could not reach the server');
+      setName(g.title);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  const stop = (e: React.SyntheticEvent) => { e.stopPropagation(); };
+
+  return (
+    <input
+      data-testid={`volume-name-${g.id}`}
+      aria-label={`Volume name for ${g.title}`}
+      value={name}
+      disabled={busy}
+      onChange={(e) => setName(e.target.value)}
+      onPointerDown={stop}
+      onMouseDown={stop}
+      onClick={(e) => { e.preventDefault(); e.stopPropagation(); }}
+      onKeyDown={(e) => {
+        e.stopPropagation();
+        if (e.key === 'Enter') { e.preventDefault(); e.currentTarget.blur(); }
+        if (e.key === 'Escape') { setName(g.title); e.currentTarget.blur(); }
+      }}
+      onBlur={commit}
+      className="w-full truncate rounded border bg-transparent px-1 py-0.5 text-[13px] font-semibold"
+      style={{ borderColor: 'var(--hairline)', color: 'var(--ink)' }}
+    />
+  );
+}
+
 function CardBody({ game: g }: { game: GameListItem }) {
   return (
     <>
       <Cover id={g.id} title={g.title} diskCount={g.diskCount} coverUrl={g.coverUrl} kind={g.kind} />
       <div className="flex flex-col gap-0.5 px-0.5 pb-1 pt-2.5">
-        <span className="truncate text-[13px] font-semibold" style={{ color: 'var(--ink)' }}>
-          {g.title}
-        </span>
+        {g.authored && g.diskId ? (
+          <VolumeNameField game={g} />
+        ) : (
+          <span className="truncate text-[13px] font-semibold" style={{ color: 'var(--ink)' }}>
+            {g.title}
+          </span>
+        )}
         <span className="truncate font-mono text-[10.5px]" style={{ color: 'var(--muted-2)' }}>
-          {[g.year, g.publisher].filter(Boolean).join(' · ') || 'unidentified'}
+          {[g.year, g.publisher].filter(Boolean).join(' · ') || (g.authored ? 'made here' : 'unidentified')}
         </span>
       </div>
     </>

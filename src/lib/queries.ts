@@ -14,6 +14,18 @@ export interface GameListItem {
   id: string; title: string; year: number | null; publisher: string | null;
   diskCount: number; coverAssetId: string | null;
   /**
+   * Made here rather than uploaded. The grid offers an inline volume rename
+   * only for these: renaming rewrites the disk's bytes, and "which disk?" has
+   * no answer on a multi-disk title.
+   */
+  authored: boolean;
+  /**
+   * Aggregated with min() like sha256Prefix, so it means something only where
+   * a title has ONE disk -- which is exactly the authored case the inline
+   * rename uses it for. Do not reach for it on a multi-disk title.
+   */
+  diskId: string | null;
+  /**
    * Our own image route, or null when nothing has been enriched for this
    * game -- which is the MAJORITY case (OpenRetro recognises 4 of 61 real
    * disks), so the grid's gradient stays the normal appearance, not an
@@ -55,10 +67,11 @@ export async function listGames(
     const rows = await db
       .select({
         id: games.id, title: games.title, year: games.year, publisher: games.publisher,
-        coverAssetId: games.coverAssetId,
+        coverAssetId: games.coverAssetId, authored: games.authored,
         diskCount: sql<number>`count(${disks.id})::int`,
         sizeBytes: sql<number>`coalesce(sum(${disks.sizeBytes}), 0)::bigint`,
         sha256Prefix: sql<string | null>`min(${disks.sha256})`,
+        diskId: sql<string | null>`min(${disks.id})`,
       })
       .from(games)
       .leftJoin(disks, and(eq(disks.gameId, games.id), eq(disks.orgId, orgId)))
@@ -81,10 +94,11 @@ export async function listGames(
   const rows = await db
     .select({
       id: games.id, title: games.title, year: games.year, publisher: games.publisher,
-      coverAssetId: games.coverAssetId,
+      coverAssetId: games.coverAssetId, authored: games.authored,
       diskCount: sql<number>`count(${disks.id})::int`,
       sizeBytes: sql<number>`coalesce(sum(${disks.sizeBytes}), 0)::bigint`,
       sha256Prefix: sql<string | null>`min(${disks.sha256})`,
+      diskId: sql<string | null>`min(${disks.id})`,
     })
     .from(games)
     // Scoped on both columns, not just gameId -- belt and braces alongside the

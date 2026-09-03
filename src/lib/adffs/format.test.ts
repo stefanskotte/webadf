@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { formatVolume, usedBlocks, BITMAP_BLOCK, MAX_VOLUME_NAME } from './format';
+import { formatVolume, setVolumeName, usedBlocks, BITMAP_BLOCK, MAX_VOLUME_NAME } from './format';
 import { readVolume } from './index';
 import { BLOCK_BYTES, BLOCK_COUNT, ROOT_BLOCK } from './constants';
 
@@ -92,5 +92,41 @@ describe('formatVolume', () => {
       const from = block === 0 ? 12 : 0;
       expect(slice.subarray(from).every((byte) => byte === 0)).toBe(true);
     }
+  });
+});
+
+describe('setVolumeName', () => {
+  it('renames without disturbing anything else on the disk', () => {
+    const before = formatVolume({ filesystem: 'FFS', volumeName: 'Before', now: AT });
+    const after = setVolumeName(before, 'After');
+    const v = readVolume(after);
+    expect(v.ok).toBe(true);
+    if (!v.ok) return;
+    expect(v.volume.name).toBe('After');
+    expect(v.volume.filesystem).toBe('FFS');
+    // The bitmap is untouched -- a rename that reformatted would erase the
+    // disk, and on a disk with files that is data loss rather than a bug.
+    expect(usedBlocks(after)).toEqual(usedBlocks(before));
+    // Every block except the root is byte-identical.
+    const root = ROOT_BLOCK * BLOCK_BYTES;
+    expect(Buffer.from(after.subarray(0, root)).equals(Buffer.from(before.subarray(0, root)))).toBe(true);
+    expect(Buffer.from(after.subarray(root + BLOCK_BYTES)).equals(
+      Buffer.from(before.subarray(root + BLOCK_BYTES)))).toBe(true);
+  });
+
+  it('leaves no tail of the previous name behind a shorter one', () => {
+    const long = formatVolume({ filesystem: 'FFS', volumeName: 'Something Quite Long', now: AT });
+    const short = setVolumeName(long, 'Ab');
+    const root = ROOT_BLOCK * BLOCK_BYTES;
+    expect(short[root + 432]).toBe(2);
+    // The reader would not show it, but the bytes would still be on the disk.
+    expect(short.subarray(root + 435, root + 464).every((b) => b === 0)).toBe(true);
+  });
+
+  it('returns new bytes rather than mutating, because blobs are immutable', () => {
+    const before = formatVolume({ filesystem: 'FFS', volumeName: 'Before', now: AT });
+    const copy = before.slice();
+    setVolumeName(before, 'After');
+    expect(Buffer.from(before).equals(Buffer.from(copy))).toBe(true);
   });
 });

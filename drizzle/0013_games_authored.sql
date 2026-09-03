@@ -1,0 +1,18 @@
+-- Disks made in this app rather than uploaded.
+--
+-- Two consumers, and the second is why this is a column rather than an
+-- inference from metadata_source:
+--
+--   * the library card offers an inline volume rename only for an authored
+--     disk, because renaming rewrites the disk's bytes and "which disk?" has
+--     no answer on a multi-disk title;
+--   * a disk somebody made is in no preservation set, so it is excluded from
+--     the TOSEC coverage rate -- without that, the rate falls every time the
+--     operator makes a disk and reports their own work as a gap.
+--
+-- metadata_source = 'human' is NOT the same thing: that is true of any title
+-- whose details were edited by hand, including a real, uploaded game.
+--
+-- Additive and backfill-free: every row that exists today was uploaded, which
+-- is exactly what the default says.
+ALTER TABLE games ADD COLUMN IF NOT EXISTS authored boolean NOT NULL DEFAULT false;

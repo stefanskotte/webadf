@@ -174,3 +174,31 @@ export function usedBlocks(adf: Uint8Array): number[] {
   }
   return used;
 }
+
+/**
+ * Rename a volume in place, preserving everything on it.
+ *
+ * NOT a re-format. Re-formatting to change a name would silently erase every
+ * file on the disk, and this has to be safe on a disk that already holds
+ * something -- a person renaming a disk is not asking to empty it. Only the
+ * root block's name field and its checksum change.
+ *
+ * Returns fresh bytes rather than mutating: `blobs` is content-addressed, so
+ * a rename necessarily produces a DIFFERENT disk with a different sha-256.
+ * There is no in-place edit anywhere in this system, and pretending otherwise
+ * in this signature would invite a caller to write over a blob other tenants
+ * may still be entitled to.
+ */
+export function setVolumeName(adf: Uint8Array, volumeName: string): Uint8Array {
+  const out = adf.slice();
+  const root = ROOT_BLOCK * BLOCK_BYTES;
+  // Clear the whole 31-byte field first: a shorter name would otherwise leave
+  // the tail of the previous one behind it, which the length byte hides from
+  // our reader but a hex dump would not.
+  out.fill(0, root + 432, root + 464);
+  putBcpl(out, root + 432, volumeName, MAX_VOLUME_NAME);
+  putBe32(out, root + CHECKSUM_WORD * 4, 0);
+  putBe32(out, root + CHECKSUM_WORD * 4,
+    blockChecksum(out.subarray(root, root + BLOCK_BYTES), CHECKSUM_WORD));
+  return out;
+}

@@ -39,6 +39,7 @@ after plan 4a, rewritten again 2026-08-31 after plan 4b.**
 | **Library covers, type pills, contrast** | ✅ **done, merged and live 2026-09-01.** Grid shows real cover art; grid and table both show a TOSEC-derived type; the grey ramp now passes WCAG AA |
 | **Shell polish** | ✅ **done 2026-09-02.** The "/" hint, both navs centred on the viewport, zebra-striped file tree, and a navigation bar + scrim; see 3i |
 | **Mobile responsive** | ✅ **done 2026-09-02, all surfaces.** Usable at 390px; nav becomes a bottom bar, touch drag no longer eats scrolling; see 3j |
+| **Create a blank ADF** | ✅ **done 2026-09-03.** A real formatted disk from a button, named inline; migration 0013 applied; see 3n. File add/edit/delete is NOT part of it |
 | **Edit a title by hand** | ✅ **done 2026-09-03.** Per-group authority, and a scan never silently undoes an edit; see 3m |
 | **Unified breadcrumb** | ✅ **done 2026-09-03.** One clickable trail replaces nine inconsistent eyebrows and two hand-written back links; see 3l |
 | **Image layout shift** | ✅ **done 2026-09-03.** The game page's cover and screenshots reserve their space; the library grid never had the bug; see 3k |
@@ -56,7 +57,7 @@ already has the disk mounted**, specced as a backlog entry in §4. Take it with 
 desk — its flag is inert until write-back exists, so it is
 only observable on hardware, and it needs a protocol answer for "same disk, changed flag" rather
 than a version bump that would force an unrequested ~2 MB re-fetch and remount.
-**Suite on `master`:** 432 vitest, `pnpm build` clean, **189 Playwright** — 184 desktop at
+**Suite on `master`:** 444 vitest, `pnpm build` clean, **195 Playwright** — 190 desktop at
 1280×720 and 5 mobile at 390×844; `playwright.config.ts` now has two projects.
 
 **Known flake shape, so nobody debugs it twice:** the first two or three tests of a cold run can
@@ -946,6 +947,67 @@ duplicate set never merge. That is correct, and the UI does not imply otherwise.
 **Suite:** 432 vitest, **189 Playwright passed (25.9 min)**, build clean, lint at the 3-error
 baseline.
 
+### 3n. Creating a blank ADF — DONE 2026-09-03
+
+`POST /api/disks/create` and `PATCH /api/disks/[id]/volume-name`, with a **Create ADF** button
+and an FFS/OFS selector on `/library`. Operator's rulings: **the disk is real the moment you
+press the button** (no draft card), and **FFS by default, OFS selectable**.
+
+**This is the FIRST WRITE PATH in `src/lib/adffs`.** `formatVolume()` writes boot, root and --
+the part that never existed -- the **bitmap**. `index.ts` used to say the module does not
+maintain bitmaps; that is now true of the READER only.
+
+**THE VERIFICATION IS THE INTERESTING PART, because unit tests structurally cannot do it.**
+The reader ignores the bitmap, so a disk with an exactly INVERTED bitmap round-trips through
+`readVolume` perfectly and corrupts only when a real Amiga writes to it and believes an
+occupied block is free. The code that would catch that bug is the code under test.
+`pnpm adffs:verify` (`scripts/adffs-verify.ts`) is the second opinion, mirroring what
+`adfmfm:diff` does with Greaseweazle: it hands a disk to amitools' **xdftool**. The decisive
+check is not that xdftool READS our disk — **it is that xdftool WRITES a file into one**, which
+means it allocated a block out of our bitmap and believed it, and that our reader still reads
+the result. Ten checks across OFS and FFS. **Not in `pnpm test`: xdftool is not a dependency
+and is not in CI.** Run it by hand after touching `format.ts`.
+
+**A by-product worth knowing: our reader had never been tested against anything but its own
+fixtures**, and it reads amitools' disks correctly — names, filesystems, files and directories,
+zero warnings.
+
+**Two things xdftool does that were deliberately NOT copied:** it writes `"DOS"` into the root
+block's `next_hash` field, which is meaningless on a root block, and it stamps dates in local
+time. Ours leaves the field zero and stores UTC.
+
+**A rename rewrites the disk, and every consequence follows from content addressing:** new
+bytes, new sha-256, a NEW blob, and `disks.sha256` repointed. **`disks.id` never changes** —
+`readDesired` joins on `devices.desiredDiskId`, and a re-keyed disk makes that join return
+nothing, which in this protocol IS an eject. The old blob is never deleted; other tenants may
+still be entitled to those exact bytes. `setVolumeName` patches the root block rather than
+re-formatting, because re-formatting to change a name would erase every file on the disk.
+
+**A bug found and fixed during implementation:** the first version repointed any device whose
+desired OR mounted sha matched. That is wrong — a device whose MOUNTED sha is the old one but
+whose desired sha is something else has already been told to change to a different disk, and
+repointing would silently redirect it. It is `desired` only, and it bumps `desiredVersion`,
+which is what the long poll is gated on.
+
+**`games.authored` is a real column (migration 0013, applied), not an inference.**
+`metadataSource: 'human'` is true of ANY hand-edited title including a real uploaded game, and
+renaming one of those from a card would rewrite a game's volume — with no answer to "which
+disk?" on a multi-disk title. The flag also serves the backlog's requirement that the TOSEC
+coverage rate exclude user-made disks, or the rate falls every time the operator makes one and
+reports their own work as a gap. **That exclusion is NOT yet implemented on `/admin/scan`.**
+
+**The inline rename field sits INSIDE the card's `<a href>`**, which is also a dnd-kit
+draggable, and is safe for the same reason the collection remove button is: every pointer event
+is stopped before it reaches the anchor or the drag listeners.
+
+**NOT in this increment: adding, editing or deleting FILES.** That needs allocation from the
+bitmap, hash-chain insert and relink on delete, OFS data-block headers and extension blocks. It
+was split off deliberately — creating a blank disk is where the bitmap work lands and is the
+smallest thing that has to be exactly right.
+
+**Suite:** 444 vitest, **195 Playwright passed (25.8 min)**, build clean, lint at the 3-error
+baseline.
+
 ### 4. Backlog, not blocking anything
 
 - ~~**Make the app usable on a phone.**~~ **DONE 2026-09-02**, merged and live — see 3j.
@@ -1101,9 +1163,20 @@ baseline.
   aborting the in-flight fetch, a fast typist gets responses out of order and the grid flickers
   back to a stale result — the classic typeahead bug, and the one most worth a test.
 
-- **Create blank ADFs, and add / edit / delete files through the browser.** Requested by the
-  operator 2026-09-01. This is the WRITE counterpart to the read-only browser, and the reader
-  is a hard prerequisite: you cannot safely write a filesystem you cannot yet read.
+- **Add / edit / delete files through the browser.** ~~Create blank ADFs~~ **DONE 2026-09-03,
+  see 3n** -- the button, the format writer and the bitmap all shipped; what remains is the
+  file operations. Requested by the operator 2026-09-01. The reader was a hard prerequisite and
+  so, now, is the bitmap: allocation has somewhere to come from.
+
+  **What 3n already settled, so it need not be re-litigated:** blobs are immutable and an edit
+  is a new blob (proven by the rename path), `disks.id` never changes, devices are repointed on
+  `desired` only, authored disks are flagged and stamped outside MACHINE_SOURCES, and
+  `pnpm adffs:verify` exists to check a writer against amitools rather than against ourselves.
+
+  **What is still ahead, and none of it is in the blank-disk path:** allocation FROM the bitmap
+  (3n only marks two blocks used and never frees one), hash-chain insert and -- the fiddly one
+  -- relink on delete, whose hash function differs under INTL, OFS's 24-byte data-block header,
+  and file extension blocks.
 
   **The constraint that shapes everything: `blobs` is content-addressed and immutable.** Editing
   a disk produces different bytes, therefore a different sha-256, therefore a NEW blob. There is
