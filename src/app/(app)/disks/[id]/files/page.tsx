@@ -1,5 +1,4 @@
 import { notFound } from 'next/navigation';
-import { Link } from '@/components/shell/link';
 import { and, eq } from 'drizzle-orm';
 import { getDb } from '@/db';
 import { disks, entitlements, games } from '@/db/schema/catalog';
@@ -58,22 +57,23 @@ export default async function DiskFilesPage(props: PageProps<'/disks/[id]/files'
   return (
     <>
       <PageHeader
-        eyebrow={`Library / Disk ${disk.diskNo}`}
+        // The full chain, and the middle crumb is named for the entry rather
+        // than typed as "Game" -- the `games` table's vocabulary is simply
+        // wrong on a Workbench or utility disk, which is the exact case this
+        // browser is most useful for. That naming rule came from the back
+        // link this trail replaces; it is kept, not rediscovered.
+        //
+        // "Disk N" is a crumb rather than a duplicate of the heading: the h1
+        // here is the VOLUME's name, which is a different fact, and on a
+        // multi-disk set the number is the only thing saying which one you
+        // opened.
+        eyebrow={[
+          { label: 'Library', href: '/library' },
+          { label: disk.gameTitle ?? 'Untitled', href: `/games/${disk.gameId}` },
+          { label: `Disk ${disk.diskNo}` },
+        ]}
         title={title}
         subtitle={filename}
-        actions={
-          // Named for where it goes, which is that entry's own page -- and
-          // that page's heading IS this title. It used to read "← Game",
-          // which is the `games` table's vocabulary leaking into the UI and
-          // is simply wrong on a Workbench or utility disk, the exact case
-          // this browser is most useful for.
-          <Link href={`/games/${disk.gameId}`}
-                title={disk.gameTitle ?? undefined}
-                className="inline-block max-w-[16rem] shrink-0 truncate text-[12.5px] font-semibold"
-                style={{ color: 'var(--on-dark-muted)' }}>
-            ← {disk.gameTitle ?? 'Back'}
-          </Link>
-        }
       />
       <div className="flex flex-col gap-3 px-4 pb-10 sm:px-7">
         {volume === null ? (

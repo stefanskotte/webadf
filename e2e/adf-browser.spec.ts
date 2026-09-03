@@ -75,14 +75,20 @@ test('the page renders a real tree, from a real FFS volume', async ({ page }) =>
   await page.locator('[data-testid="fs-entry"][data-name="C"]').getByRole('button').click();
   await expect(page.locator('[data-testid="fs-entry"][data-name="SetPatch"]')).toBeVisible();
 
-  // The back link names its DESTINATION -- that entry's own page, whose
-  // heading is this same title. It read "← Game" until 2026-09-01, which is
-  // the `games` table's vocabulary leaking into the UI and reads as simply
-  // wrong on a Workbench or utility disk, which is most of what this browser
-  // is for. The regex guards the word, not just the current wording.
-  const back = page.getByRole('link', { name: /^←/ });
-  await expect(back).toHaveCount(1);
-  await expect(back).not.toHaveText(/Game$/);
+  // The way back is the BREADCRUMB's middle crumb as of 2026-09-03; it was a
+  // hand-written "← ..." link in the header's actions slot until then. The
+  // affordance moved, but every guarantee it carried is asserted here still,
+  // because the reason for them did not change:
+  //
+  //   - there is a way back to the entry's own page,
+  //   - it is named for that DESTINATION rather than typed as "Game" -- the
+  //     `games` table's vocabulary leaking into the UI, and simply wrong on a
+  //     Workbench or utility disk, which is most of what this browser is for,
+  //   - it navigates there, and that page's heading is the title.
+  const trail = page.getByTestId('breadcrumb');
+  const back = trail.getByRole('link').nth(1);
+  await expect(back).not.toHaveText(/^Game$/);
+  await expect(back).toHaveText(`disk-${tag}`);
   await back.click();
   await expect(page).toHaveURL(new RegExp(`/games/${row.gameId}$`));
   await expect(page.locator('h1').first()).toHaveText(`disk-${tag}`);
