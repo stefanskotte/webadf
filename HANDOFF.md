@@ -1277,13 +1277,18 @@ Learned the hard way; several cost real debugging time.
   `PageProps`/`RouteContext` are ambient — never import them. The guard is `src/proxy.ts`
   exporting `proxy`, nodejs-only. `cacheComponents` stays off.
 - **shadcn v4 is Base UI, not Radix.** Any Radix-era snippet is wrong here.
-- **Pushing `master` does not deploy to production — it only builds a Preview.** The Vercel
-  project's Production Branch is **`feat/foundation-library`**, set when the project was
-  created (Vercel took the GitHub repo's default branch, and `origin/HEAD` still points
-  there) and never changed since. This file said "merged to `master`, in production" for
-  three plans running, which reads as though merging ships. It does not. Discovered on
-  2026-08-30 immediately after merging plan 3b: both pushes produced `target: null` builds
-  while `webadf.vercel.app` still served a build from the day before.
+- **Pushing `master` DOES deploy to production. Assume every push ships.** Confirmed
+  repeatedly on 2026-09-02 and 2026-09-03: each push to `master` produced a `Production`
+  deployment that was Ready in 30-40 s. Ask before pushing anything you are not ready to
+  publish.
+
+  **The history below is kept because the headline used to say the opposite**, and a reader
+  who skims headlines would have got exactly the wrong answer. Until 2026-08-30 the Vercel
+  project's Production Branch was **`feat/foundation-library`**, taken from the GitHub repo's
+  default branch when the project was created. This file said "merged to `master`, in
+  production" for three plans running, which read as though merging shipped. It did not.
+  Discovered immediately after merging plan 3b: both pushes produced `target: null` builds
+  while `webadf.vercel.app` still served the previous day's.
   - **To ship after a merge today:** promote the master build explicitly —
     `npx vercel promote <the master deployment url>`, or `npx vercel --prod`. Plan 3b was
     shipped this way (`dpl_B6PcDSRqyWhs2VybYK35CRcf3vWk`).
