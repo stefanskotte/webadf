@@ -4,3 +4,6 @@ hardware/*.zip
 hardware/pcb_render.png
 __pycache__/
 *.pyc
+
+# Local venv for the hardware tooling (shapely, for the Gerber exporter).
+hardware/.venv/

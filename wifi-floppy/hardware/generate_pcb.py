@@ -15,7 +15,13 @@ Board:
   D1  SS14 Schottky 5V -> VSYS
   C1  100n (U2), C3 10u bulk
 """
-import uuid, math, sys
+import uuid, math, sys, os, os
+
+# Paths resolve against THIS FILE, not the working directory. These were
+# absolute /home/claude/... paths from wherever the script was first written,
+# so none of them could run on another machine -- which is why the board could
+# not be regenerated here until 2026-09-04.
+HERE = os.path.dirname(os.path.abspath(__file__))
 
 # ---------------------------------------------------------------- geometry
 def J1_y(row): return 107.0 + (row - 1) * 2.54          # rows 1..17
@@ -396,6 +402,29 @@ for i,(nm,_,_,ap,_) in enumerate(INPUTS):
 for n in range(1,21):
     x,y=U2_pin(n)
     f+=smd(n,x-U2_X,y-U2_Y,u2nets.get(n,'GND'),1.9,0.6)
+
+# U2 silkscreen. SOIC-20W body is 7.5 x 12.8 mm, so in footprint-local
+# coordinates the outline is +-3.75 x +-6.4.
+#
+# ONLY THE SHORT EDGES ARE DRAWN, and that is measured rather than stylistic:
+# the pads run from x = -5.650 to -3.750 and +3.750 to +5.650, so they reach
+# the body's long edges EXACTLY. A rectangle outline -- what silk() would draw
+# -- would put ink on twenty pads, which a fab either strips or, worse, prints
+# and leaves as a solder-mask defect under the part. The short edges have
+# 0.385 mm of clearance to the nearest pad, which is over the usual 0.2 mm
+# minimum, so those are safe.
+U2_HW, U2_HL = 3.75, 6.4
+for _ey in (-U2_HL, U2_HL):
+    f += (f'  (fp_line (start {-U2_HW:.3f} {_ey:.3f}) (end {U2_HW:.3f} {_ey:.3f})'
+          f' (stroke (width 0.12) (type solid)) (layer "F.SilkS") (tstamp {U()}))\n')
+# Pin-1 marker, OUTSIDE the pad field entirely. Pin 1 sits at local
+# (-4.700, -5.715) and the pads stop at y = -6.015, so a dot at y = -7.0
+# clears the nearest copper by 0.735 mm. Without this the part can be fitted
+# 180 degrees out, which no amount of correct footprint geometry prevents --
+# and rotation is exactly the failure this board has already paid for once.
+f += (f'  (fp_circle (center -4.700 -7.000) (end -4.450 -7.000)'
+      f' (stroke (width 0.12) (type solid)) (fill solid)'
+      f' (layer "F.SilkS") (tstamp {U()}))\n')
 f+=' )'; out.append(f)
 # FETs
 for q,(cx,cy,p,row) in FETS.items():
@@ -450,8 +479,8 @@ out.append(f''' (zone (net {NID["GND"]}) (net_name "GND") (layer "B.Cu") (tstamp
   (polygon (pts (xy 100 100) (xy 196 100) (xy 196 162) (xy 100 162))))''')
 out.append(')')
 
-open('/home/claude/wifi-floppy/hardware/wifi_floppy.kicad_pcb','w').write('\n'.join(out))
+open(os.path.join(HERE, 'wifi_floppy.kicad_pcb'), 'w').write('\n'.join(out))
 # paren balance sanity
-txt=open('/home/claude/wifi-floppy/hardware/wifi_floppy.kicad_pcb').read()
+txt=open(os.path.join(HERE, 'wifi_floppy.kicad_pcb')).read()
 assert txt.count('(')==txt.count(')'), 'paren imbalance'
 print(f'wrote wifi_floppy.kicad_pcb  ({len(segs)} segments, {len(vias)} vias)')

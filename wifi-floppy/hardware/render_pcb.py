@@ -5,10 +5,16 @@ F.Cu solid red, B.Cu translucent blue, pads gold, keepout hatched).
 Parses the s-expression file rather than re-using the generator's tables,
 so what you see is what is actually in the .kicad_pcb.
 """
-import re, sys
+import re, sys, os
 
-SRC = '/home/claude/wifi-floppy/hardware/wifi_floppy.kicad_pcb'
-OUT = '/home/claude/wifi-floppy/hardware/pcb_render.svg'
+# Paths resolve against THIS FILE, not the working directory. These were
+# absolute /home/claude/... paths from wherever the script was first written,
+# so none of them could run on another machine -- which is why the board could
+# not be regenerated here until 2026-09-04.
+HERE = os.path.dirname(os.path.abspath(__file__))
+
+SRC = os.path.join(HERE, 'wifi_floppy.kicad_pcb')
+OUT = os.path.join(HERE, 'pcb_render.svg')
 txt = open(SRC).read()
 
 # ---------------------------------------------------------------- s-expr

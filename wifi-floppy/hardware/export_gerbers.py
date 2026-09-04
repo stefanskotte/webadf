@@ -21,8 +21,14 @@ import os, re, math, zipfile
 from shapely.geometry import Polygon, box, Point, LineString
 from shapely.ops import unary_union
 
-SRC = '/home/claude/wifi-floppy/hardware/wifi_floppy.kicad_pcb'
-OUTDIR = '/home/claude/wifi-floppy/hardware/gerbers'
+# Paths resolve against THIS FILE, not the working directory. These were
+# absolute /home/claude/... paths from wherever the script was first written,
+# so none of them could run on another machine -- which is why the board could
+# not be regenerated here until 2026-09-04.
+HERE = os.path.dirname(os.path.abspath(__file__))
+
+SRC = os.path.join(HERE, 'wifi_floppy.kicad_pcb')
+OUTDIR = os.path.join(HERE, 'gerbers')
 STEM = 'wifi_floppy'
 
 # --- fab rules -------------------------------------------------------------
@@ -290,7 +296,7 @@ with open(path('TXT'), 'w') as f:
 print('drill sizes:', {d: len(v) for d, v in sorted(holes.items())})
 
 # ---------------------------------------------------------------- zip
-zp = '/home/claude/wifi-floppy/hardware/wifi_floppy_gerbers.zip'
+zp = os.path.join(HERE, 'wifi_floppy_gerbers.zip')
 with zipfile.ZipFile(zp, 'w', zipfile.ZIP_DEFLATED) as z:
     for ext in ('GTL', 'GBL', 'GTS', 'GBS', 'GTO', 'GKO', 'TXT'):
         z.write(path(ext), f'{STEM}.{ext}')
