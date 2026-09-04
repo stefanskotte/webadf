@@ -47,11 +47,12 @@ after plan 4a, rewritten again 2026-08-31 after plan 4b.**
 | **Image layout shift** | ✅ **done 2026-09-03.** The game page's cover and screenshots reserve their space; the library grid never had the bug; see 3k |
 | **Typeahead search** | ✅ **done, all 7 tasks, merged to `master` and live in production.** A Spotlight-style pill in both shells; migration 0012 applied; see 3h |
 | **Read-only ADF filesystem reader** | ✅ **done, all 10 tasks, `feat/adf-filesystem-reader`.** Reads 80.3% of the archive (49/61) against TOSEC's 45.9% and OpenRetro's 6.6%; see 3f |
-| **Hardware** | boards ordered from JLCPCB; **operator expects all of them by ~2026-09-06**, which unblocks plan 5 |
+| **Hardware** | **the first PCB was MIRRORED and is unusable**; a corrected revision was ordered 2026-09-04, so plan 5 slips to the week of 2026-09-08 |
 
 **Current branch:** `master`, clean and pushed. Everything below is merged and live in
-production. **Plan 5 (hardware bring-up) is the only unbuilt plan**, and the boards for it are
-expected ~2026-09-06 — nothing in plan 4a or 4b has ever run on real silicon.
+production. **Plan 5 (hardware bring-up) is the only unbuilt plan.** The first PCB came back
+**mirrored** and a corrected revision was ordered on 2026-09-04, so bring-up cannot start before
+the week of **2026-09-08** — and nothing in plan 4a or 4b has ever run on real silicon.
 
 **Next, at the operator's direction (2026-09-03):** the breadcrumb (3l) and editing a title by
 hand (3m) are both DONE. Remaining is **propagating a write-protect flip to a device that
