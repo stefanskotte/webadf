@@ -47,7 +47,7 @@ after plan 4a, rewritten again 2026-08-31 after plan 4b.**
 | **Image layout shift** | ✅ **done 2026-09-03.** The game page's cover and screenshots reserve their space; the library grid never had the bug; see 3k |
 | **Typeahead search** | ✅ **done, all 7 tasks, merged to `master` and live in production.** A Spotlight-style pill in both shells; migration 0012 applied; see 3h |
 | **Read-only ADF filesystem reader** | ✅ **done, all 10 tasks, `feat/adf-filesystem-reader`.** Reads 80.3% of the archive (49/61) against TOSEC's 45.9% and OpenRetro's 6.6%; see 3f |
-| **Hardware** | **the first PCB was MIRRORED and is unusable**; a corrected revision was ordered 2026-09-04, so plan 5 slips to the week of 2026-09-08 |
+| **Hardware** | **the first PCB was MIRRORED and is unusable**; corrected revision ordered 2026-09-04, so plan 5 slips to w/c 2026-09-08. Board check + U2 silkscreen done; see 3s |
 
 **Current branch:** `master`, clean and pushed. Everything below is merged and live in
 production. **Plan 5 (hardware bring-up) is the only unbuilt plan.** The first PCB came back
@@ -1136,6 +1136,50 @@ href, which glued `?from=` onto every id — it now takes the **pathname's last 
 next link to gain a param will not break it.
 
 **Suite:** 464 vitest, **206 Playwright passed**, build clean, lint at the 3-error baseline.
+
+### 3s. Hardware: the board check, and silkscreen for U2 — DONE 2026-09-04
+
+The first PCB came back **mirrored** and was scrapped; a corrected revision was ordered
+2026-09-04, so plan 5 cannot start before the week of 2026-09-08. Everything below is about not
+paying for that mistake twice.
+
+**`pnpm hw:verify` (`wifi-floppy/hardware/verify_board.py`) runs before any fab order.** It
+checks two things: that no footprint is a *reflection* of its canonical KiCad land pattern, and
+that the exported Gerber is correctly Y-flipped (Gerber is Y-up, KiCad Y-down). **Mutation-proven
+2026-09-04:** reflecting the SOT-23 reference makes all six FETs fail with `REFLECTION + 180 deg`
+and the run refuses with *DO NOT FAB*.
+
+**A bug in that checker that made it worse than useless for new references.** `pads_from_mod`
+matched only `(pad 1 smd rect (at x y)` — unquoted, one line, smd only. Everything KiCad emits
+today quotes the pad name, puts `(at …)` on its own line, and says `thru_hole` for a header, so
+against a modern file it matched **nothing** and would have compared an empty pad set and
+reported a cheerful pass. It parses either format and any pad type now.
+
+**TWO LIMITS THE CHECK STATES ABOUT ITSELF**, because a check whose limits are undocumented gets
+trusted past them:
+- **A mirror-symmetric land pattern cannot fail a chirality test** — a reflection of it is
+  indistinguishable from a rotation. C_0603, C_0805, D_SMA and the 1x04 header are all in that
+  class and say so per part. **The 2x17 floppy header is NOT symmetric**, so it is genuinely
+  chirality-checked, which makes it the most valuable reference of the five.
+- **U1 has no upstream reference** and must be checked by hand against the module drawing.
+
+**U1 is a Pimoroni PIM726, and the part number is a REQUIREMENT, not a preference.** The
+firmware targets `pimoroni_pico_plus2_w_rp2350` and `psram_image.c` is a 2.03 MB store in that
+board's PSRAM — a pin-compatible module without PSRAM fits the footprint perfectly and then
+fails to run. Confirmed by the operator 2026-09-04. No check in that folder can catch it.
+
+**Only U2 carries silkscreen** (operator's call): the buffer IC is the one part that can be
+fitted the wrong way round without it being obvious. Caps and SOT-23s are deliberately bare.
+**Only the short edges are drawn** — the pads reach the 7.5 mm body's long edges exactly, so a
+full rectangle would put ink on twenty pads. The short edges clear by 0.385 mm; the pin-1 dot
+sits 0.735 mm outside the pad field.
+
+**THE BOARD IS GENERATED.** Edit `generate_pcb.py`, never `wifi_floppy.kicad_pcb` — a
+regeneration discards hand edits. Three scripts held absolute `/home/claude/…` paths and could
+not run on the operator's machine at all until 2026-09-04; they resolve against their own
+directory now. The Gerber exporter needs `shapely`, which will not install into a PEP 668 system
+Python: there is a gitignored `hardware/.venv`, so run
+`./.venv/bin/python export_gerbers.py`.
 
 ### 4. Backlog, not blocking anything
 
