@@ -12,6 +12,13 @@ import {
 } from './constants';
 import { blockChecksum } from './blocks';
 import type { Filesystem } from './boot';
+import { nameHash } from './hash';
+import { putBe32, putName, recheck } from './write-blocks';
+
+// Re-exported: synthetic.test.ts, dir.test.ts and file.test.ts import these
+// by name from here rather than from hash.ts / write-blocks.ts directly.
+export { nameHash } from './hash';
+export { recheck } from './write-blocks';
 
 export interface SyntheticFile { name: string; bytes: Uint8Array }
 export interface SyntheticDir { name: string; entries: SyntheticEntry[] }
@@ -30,32 +37,6 @@ export interface SyntheticOptions {
 
 const isDir = (e: SyntheticEntry): e is SyntheticDir =>
   Array.isArray((e as SyntheticDir).entries);
-
-/**
- * Recompute and store a block's checksum.
- *
- * Exported because TESTS need it too: any test that patches a byte into a
- * block the reader checksums must call this afterwards, or the reader
- * rejects the block as corrupt and the test passes for the wrong reason --
- * exercising the corruption path instead of the pointer or size guard it
- * was written for.
- */
-export function recheck(adf: Uint8Array, block: number): void {
-  const start = block * BLOCK_BYTES;
-  const view = adf.subarray(start, start + BLOCK_BYTES);
-  putBe32(adf, start + CHECKSUM_WORD * 4, blockChecksum(view, CHECKSUM_WORD));
-}
-
-function putBe32(a: Uint8Array, off: number, v: number) {
-  a[off] = (v >>> 24) & 0xff; a[off + 1] = (v >>> 16) & 0xff;
-  a[off + 2] = (v >>> 8) & 0xff; a[off + 3] = v & 0xff;
-}
-
-function putName(a: Uint8Array, blockStart: number, name: string) {
-  const n = name.slice(0, 30);
-  a[blockStart + 432] = n.length;
-  for (let i = 0; i < n.length; i++) a[blockStart + 433 + i] = n.charCodeAt(i) & 0xff;
-}
 
 /**
  * Bitmap block. Written LAST, once every allocation is known.
@@ -79,23 +60,6 @@ function writeBitmap(adf: Uint8Array, used: number[], page: number) {
     sum = (sum + (((adf[o] << 24) | (adf[o + 1] << 16) | (adf[o + 2] << 8) | adf[o + 3]) >>> 0)) >>> 0;
   }
   putBe32(adf, bm, (-sum >>> 0));
-}
-
-/**
- * The AmigaDOS directory hash. INTL folds the extended Latin range as well as
- * ASCII, which is why 6 archive disks need the second variant.
- */
-export function nameHash(name: string, intl: boolean): number {
-  let hash = name.length;
-  for (const ch of name) {
-    const c = ch.charCodeAt(0);
-    const upper = intl
-      ? ((c >= 0x61 && c <= 0x7a) || (c >= 0xe0 && c <= 0xfe && c !== 0xf7) ? c - 32 : c)
-      : (c >= 0x61 && c <= 0x7a ? c - 32 : c);
-    hash = ((hash * 13) + upper) >>> 0;
-    hash = hash & 0x7ff;
-  }
-  return hash % HASH_TABLE_SIZE;
 }
 
 export function syntheticVolume(opts: SyntheticOptions = {}): Uint8Array {
