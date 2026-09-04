@@ -107,6 +107,14 @@ export function writeFileHeader(
   putBe32(adf, hs + 8, first72.length);
   putBe32(adf, hs + 16, first72[0] ?? 0);
   putBe32(adf, hs + 324, size);
+  // Clear the whole pointer table before writing the new one: `replaceFile`
+  // (spec D-W-6) reuses this SAME header block for a smaller file, and a
+  // fresh `addFile` block is already zero -- but a reused one is not. Every
+  // reader here (`collectFileBlocks`) treats any non-zero slot as a live
+  // pointer regardless of `high_seq`, so a shorter `first72` left over a
+  // longer one would resurrect already-freed blocks as if they still
+  // belonged to this file.
+  adf.fill(0, hs + 24, hs + 24 + HASH_TABLE_SIZE * 4);
   first72.forEach((blk, i) => {
     putBe32(adf, hs + 24 + (HASH_TABLE_SIZE - 1 - i) * 4, blk);
   });
@@ -140,6 +148,9 @@ export function writeExtensionBlocks(
     putBe32(adf, es + 4, ext);
     putBe32(adf, es + 8, take.length);
     putBe32(adf, es + 500, header);
+    // Same reasoning as `writeFileHeader`: a recycled block may carry a
+    // fuller pointer table from whatever it held before it was freed.
+    adf.fill(0, es + 24, es + 24 + HASH_TABLE_SIZE * 4);
     take.forEach((blk, i) => {
       putBe32(adf, es + 24 + (HASH_TABLE_SIZE - 1 - i) * 4, blk);
     });
@@ -330,5 +341,64 @@ export function renameEntry(
   putName(out, hs, newName);
 
   linkIntoDirectory(out, parentBlock, entryBlock, newName, boot.intl);
+  return { ok: true, adf: out };
+}
+
+/**
+ * Replace a file's contents in place: same header block, same name, same
+ * hash-chain bucket. Only the data, its size, and (when the block count
+ * crosses the header's 72-pointer capacity either way) its extension chain
+ * change.
+ *
+ * D-W-6: the header block IS the file's identity -- the download route
+ * addresses a file by it -- so this NEVER allocates a new header, unlike
+ * `addFile`. Nothing about the hash chain is touched either (no unlink, no
+ * relink): the header stays exactly where `linkIntoDirectory` first put it.
+ *
+ * ORDER MATTERS: the old data and extension blocks (found via the same
+ * `collectFileBlocks` walk `deleteEntry` uses, so there is one opinion of
+ * what a file's blocks are) are freed BEFORE the replacement's blocks are
+ * allocated. Allocating first would make a same-size or shrinking replace
+ * fail with `disk-full` on a full-ish disk, when freeing the old blocks
+ * first would have made room. This can still never hand back a
+ * partially-rewritten disk: everything that doesn't touch the bitmap is
+ * validated up front against the pristine `adf` (same D-W-4 shape as
+ * `deleteEntry`/`renameEntry`), and if `allocate` fails after the free, the
+ * mutated working copy (`out`) is simply never returned -- the caller's
+ * `adf` was never written to, so `disk-full` here is as clean a refusal as
+ * one that never freed anything.
+ */
+export function replaceFile(adf: Uint8Array, entryBlock: number, bytes: Uint8Array): WriteResult {
+  const boot = readBoot(adf);
+  if (!boot) return { ok: false, reason: 'no-filesystem' };
+  if (bitmapPage(adf) === null) return { ok: false, reason: 'bitmap-untrusted' };
+
+  const header = blockAt(adf, entryBlock);
+  if (!header) return { ok: false, reason: 'not-found' };
+  if (be32(header, 0) !== T_HEADER) return { ok: false, reason: 'not-found' };
+  if (!checksumOk(header, CHECKSUM_WORD)) return { ok: false, reason: 'not-found' };
+  if (i32(header, 508) !== ST_FILE) return { ok: false, reason: 'not-found' };
+
+  const parentBlock = be32(header, 500);
+  const name = bcplString(header, 432, 30);
+
+  const out = adf.slice();                       // never mutate the input; discarded whole on disk-full
+
+  const warnings: string[] = [];
+  const { data: oldData, extensions: oldExtensions } = collectFileBlocks(out, entryBlock, warnings);
+  free(out, [...oldData, ...oldExtensions]);      // free BEFORE allocating -- see doc comment
+
+  const perBlock = boot.filesystem === 'OFS' ? OFS_DATA_BYTES : BLOCK_BYTES;
+  const dataCount = Math.max(1, Math.ceil(bytes.length / perBlock));
+  const extCount = Math.max(0, Math.ceil((dataCount - HASH_TABLE_SIZE) / HASH_TABLE_SIZE));
+
+  const blocks = allocate(out, dataCount + extCount);
+  if (!blocks) return { ok: false, reason: 'disk-full' };   // `out` is discarded here, unreturned
+  const data = blocks.slice(0, dataCount);
+  const exts = blocks.slice(dataCount);
+
+  writeDataBlocks(out, data, bytes, entryBlock, boot.filesystem, perBlock);
+  writeFileHeader(out, entryBlock, parentBlock, name, bytes.length, data.slice(0, HASH_TABLE_SIZE), exts[0] ?? 0);
+  writeExtensionBlocks(out, exts, data, entryBlock);
   return { ok: true, adf: out };
 }

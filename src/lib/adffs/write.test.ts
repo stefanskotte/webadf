@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { addFile, deleteEntry, renameEntry } from './write';
+import { addFile, deleteEntry, renameEntry, replaceFile } from './write';
 import { readVolume, readFile } from './index';
 import { readUsage } from './usage';
 import { readBoot } from './boot';
@@ -247,5 +247,95 @@ describe('renameEntry', () => {
 
   it('reports not-found for a block that is not in this directory', () => {
     expect(renameEntry(empty(), 880, 500, 'x')).toEqual({ ok: false, reason: 'not-found' });
+  });
+});
+
+describe('replaceFile', () => {
+  it('replaces contents and KEEPS the header block', () => {
+    const added = addFile(empty(), 880, 'cfg.txt', new TextEncoder().encode('old'));
+    if (!added.ok) throw new Error('setup');
+    const v0 = readVolume(added.adf);
+    if (!v0.ok) return;
+    const block = v0.root[0].block;
+
+    const next = new TextEncoder().encode('a much longer replacement value');
+    const r = replaceFile(added.adf, block, next);
+    if (!r.ok) throw new Error('replace failed');
+    const v = readVolume(r.adf);
+    if (!v.ok) return;
+
+    // D-W-6: the block number is the file's identity and the download route
+    // addresses by it, so it must survive an edit.
+    expect(v.root[0].block).toBe(block);
+    expect(v.root[0].name).toBe('cfg.txt');
+    expect(v.root[0].sizeBytes).toBe(next.length);
+    expect(Array.from(readFile(r.adf, block)!.bytes)).toEqual(Array.from(next));
+  });
+
+  it('returns the old data blocks when the new contents are smaller', () => {
+    const added = addFile(empty(), 880, 'shrink.bin', new Uint8Array(20 * 512).fill(1));
+    if (!added.ok) throw new Error('setup');
+    const v0 = readVolume(added.adf);
+    if (!v0.ok) return;
+    const before = readUsage(added.adf)!.freeBlocks;
+
+    const r = replaceFile(added.adf, v0.root[0].block, new Uint8Array(512).fill(2));
+    if (!r.ok) throw new Error('replace failed');
+    expect(readUsage(r.adf)!.freeBlocks).toBeGreaterThan(before);
+  });
+
+  it('exercises a fresh extension chain when the replacement grows past 72 blocks', () => {
+    const added = addFile(empty(), 880, 'grow.bin', new Uint8Array([9]));
+    if (!added.ok) throw new Error('setup');
+    const v0 = readVolume(added.adf);
+    if (!v0.ok) return;
+
+    const bytes = new Uint8Array(100 * 512).fill(5);   // 100 > 72: needs an extension block
+    const r = replaceFile(added.adf, v0.root[0].block, bytes);
+    if (!r.ok) throw new Error('replace failed');
+    const v = readVolume(r.adf);
+    if (!v.ok) return;
+    expect(v.root[0].block).toBe(v0.root[0].block);
+    expect(v.root[0].sizeBytes).toBe(bytes.length);
+    const back = readFile(r.adf, v0.root[0].block)!;
+    expect(back.complete).toBe(true);
+    expect(Array.from(back.bytes)).toEqual(Array.from(bytes));
+  });
+
+  it('frees the OLD extension chain when shrinking from more than 72 blocks to fewer', () => {
+    // Extension-block freeing has no other automated coverage in this
+    // module -- the earlier task (block-collection walk) only proved it by
+    // hand. This asserts the freed block COUNT exactly, not just "some
+    // blocks came back": 1 header + 5 data blocks are the only ones that
+    // should still be in use afterwards, so every one of the old file's 100
+    // data blocks AND its extension block must be genuinely free again.
+    const baseline = readUsage(empty())!.freeBlocks;
+    const added = addFile(empty(), 880, 'big.bin', new Uint8Array(100 * 512).fill(4));
+    if (!added.ok) throw new Error('setup');
+    const v0 = readVolume(added.adf);
+    if (!v0.ok) return;
+
+    const small = new Uint8Array(5 * 512).fill(6);
+    const r = replaceFile(added.adf, v0.root[0].block, small);
+    if (!r.ok) throw new Error('replace failed');
+    const v = readVolume(r.adf);
+    if (!v.ok) return;
+    expect(Array.from(readFile(r.adf, v0.root[0].block)!.bytes)).toEqual(Array.from(small));
+    expect(readUsage(r.adf)!.freeBlocks).toBe(baseline - 6);
+  });
+
+  it('does not mutate the input', () => {
+    const added = addFile(empty(), 880, 'x.txt', new Uint8Array(2000).fill(1));
+    if (!added.ok) throw new Error('setup');
+    const v0 = readVolume(added.adf);
+    if (!v0.ok) return;
+    const copy = added.adf.slice();
+
+    replaceFile(added.adf, v0.root[0].block, new Uint8Array([9]));
+    expect(Array.from(added.adf)).toEqual(Array.from(copy));
+  });
+
+  it('reports not-found for a block that is not a file header', () => {
+    expect(replaceFile(empty(), 500, new Uint8Array([1]))).toEqual({ ok: false, reason: 'not-found' });
   });
 });
