@@ -59,7 +59,7 @@ already has the disk mounted**, specced as a backlog entry in §4. Take it with 
 desk — its flag is inert until write-back exists, so it is
 only observable on hardware, and it needs a protocol answer for "same disk, changed flag" rather
 than a version bump that would force an unrequested ~2 MB re-fetch and remount.
-**Suite on `master`:** 450 vitest, `pnpm build` clean, **203 Playwright** — 198 desktop at
+**Suite on `master`:** 456 vitest, `pnpm build` clean, **204 Playwright** — 199 desktop at
 1280×720 and 5 mobile at 390×844; `playwright.config.ts` now has two projects.
 
 **Known flake shape, so nobody debugs it twice:** the first two or three tests of a cold run can
@@ -1004,7 +1004,7 @@ which is what the long poll is gated on.
 renaming one of those from a card would rewrite a game's volume — with no answer to "which
 disk?" on a multi-disk title. The flag also serves the backlog's requirement that the TOSEC
 coverage rate exclude user-made disks, or the rate falls every time the operator makes one and
-reports their own work as a gap. **That exclusion is NOT yet implemented on `/admin/scan`.**
+reports their own work as a gap. **That exclusion shipped 2026-09-04** — see 3q.
 
 **The inline rename field sits INSIDE the card's `<a href>`**, which is also a dnd-kit
 draggable, and is safe for the same reason the collection remove button is: every pointer event
@@ -1073,6 +1073,32 @@ not free space.
 **`syntheticVolume` writes NO bitmap**, so a test fixture reports "unknown" and cannot exercise
 this — use `formatVolume` for a disk that has one. There is a test pinning the refusal path on a
 synthetic disk, which is the property that actually matters.
+
+### 3q. Self-made disks no longer count as TOSEC misses — DONE 2026-09-04
+
+The loose end 3n left open. A disk somebody made hashes to something no DAT contains, so the
+sweeper stamps `match_state = 'none'` — correct — but counting it as a MISS made the coverage
+rate on `/admin/scan` fall every time the operator created a disk, reporting their own work as
+a gap in the archive.
+
+`scanStatus()` gains `authoredNone`, and the page subtracts it exactly as it already subtracted
+`unreadable`, capped so the two corrections cannot overlap into a negative count.
+
+**EVERY disk on the blob must be authored, not just one.** Blobs are global and
+content-addressed: if the same bytes also back a real uploaded disk in ANY organization, then it
+genuinely is an archive disk TOSEC failed to recognise, which is precisely what this rate
+measures. The SQL is `not exists (… g.authored = false)`, not `exists (… authored = true)`, and
+the difference is the whole correctness of it.
+
+**The page names what it left out** (`· 1 self-made disk excluded`) rather than quietly
+reporting a nicer number. A rate that silently deducts things is one nobody can check.
+
+**A flake worth knowing about, found in the test for this:** it failed once and then passed
+unchanged, because it assumed a single `POST /api/admin/scan` would reach the new blob. **The
+sweeper works to a budget against a shared live database**, so how far it gets depends on what
+else is unchecked at that moment. The test now sweeps until the blob is actually decided and
+asserts that verdict before looking at the page. Any test that depends on a sweep reaching a
+specific row needs the same treatment.
 
 ### 4. Backlog, not blocking anything
 

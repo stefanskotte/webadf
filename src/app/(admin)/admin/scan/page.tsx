@@ -38,8 +38,18 @@ export default async function AdminScanPage() {
   // into `none`, cannot drive the count negative) without touching the
   // interface scanStatus() already returns.
   const unreadableDecided = Math.min(s.unreadable, s.none);
-  const genuineNone = s.none - unreadableDecided;
-  const decided = s.matched + s.none + s.ambiguous - unreadableDecided;
+  // ...and the same treatment for disks somebody MADE here. They hash to
+  // something no DAT contains, so they are stamped 'none' correctly -- but a
+  // disk the operator authored is in no preservation set and never will be,
+  // so counting it would make this rate fall every time they make one and
+  // report their own work as a gap in the archive.
+  //
+  // Capped against what is left after the unreadable subtraction so the two
+  // corrections cannot overlap into a negative count.
+  const authoredDecided = Math.min(s.authoredNone, Math.max(0, s.none - unreadableDecided));
+  const excluded = unreadableDecided + authoredDecided;
+  const genuineNone = s.none - excluded;
+  const decided = s.matched + s.none + s.ambiguous - excluded;
   const missRate = decided === 0 ? null : Math.round((genuineNone / decided) * 100);
 
   return (
@@ -47,7 +57,13 @@ export default async function AdminScanPage() {
       <PageHeader
         eyebrow="Admin"
         title="Scan"
-        subtitle={`${s.tosecEntries} TOSEC entries loaded${missRate === null ? '' : ` · ${missRate}% of decided blobs unmatched`}`}
+        subtitle={[
+          `${s.tosecEntries} TOSEC entries loaded`,
+          missRate === null ? null : `${missRate}% of decided blobs unmatched`,
+          // Named rather than silently deducted: a rate that quietly excludes
+          // things is a rate nobody can check.
+          authoredDecided === 0 ? null : `${authoredDecided} self-made disk${authoredDecided === 1 ? '' : 's'} excluded`,
+        ].filter(Boolean).join(' · ')}
         actions={<RunScanButton />}
       />
       <div className="px-4 pb-10 sm:px-7">

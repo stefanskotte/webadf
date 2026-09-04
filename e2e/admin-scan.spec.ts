@@ -1,4 +1,7 @@
 import { test, expect } from '@playwright/test';
+import { and, eq } from 'drizzle-orm';
+import { getDb } from '@/db';
+import { games, disks, blobs } from '@/db/schema/catalog';
 import { signUpFresh } from './helpers';
 import { signInAsSuperAdmin } from './admin-helpers';
 import { cleanupSeeded } from './device-helpers';
@@ -103,4 +106,41 @@ game (
   // renders setVersion "2026-01-01", which contains the substring "1", so
   // `row.toContainText('1')` used to pass regardless of what Entries said.
   await expect(row.getByTestId('set-entries')).toHaveText('1');
+});
+
+test('a disk somebody made is excluded from the coverage rate', async ({ page }) => {
+  test.setTimeout(280_000);
+  // A self-made disk hashes to something no DAT contains, so the sweeper
+  // stamps match_state 'none' -- correctly. It must not count as a MISS: a
+  // disk the operator authored is in no preservation set and never will be,
+  // and counting it would make the reported coverage fall every time they
+  // make one, reporting their own work as a gap in the archive.
+  const u = await signUpFresh(page);
+  await page.goto('/library');
+  await page.getByTestId('create-adf').click();
+  await expect(page.getByTestId('game-card')).toHaveCount(1);
+
+  const [game] = await getDb().select().from(games)
+    .where(and(eq(games.orgId, u.orgId), eq(games.authored, true)));
+  const [disk] = await getDb().select().from(disks).where(eq(disks.gameId, game.id));
+
+  await signInAsSuperAdmin(page);
+  // SWEEP UNTIL THIS BLOB IS DECIDED, rather than assuming one pass reaches
+  // it. The sweeper works to a budget against a shared live database, so how
+  // much it gets through depends on what else is unchecked at the time --
+  // one run decided it when this was written and did not on the run before.
+  for (let i = 0; i < 4; i++) {
+    expect((await page.request.post('/api/admin/scan')).ok()).toBe(true);
+    const [b] = await getDb().select().from(blobs).where(eq(blobs.sha256, disk.sha256));
+    if (b.matchState !== null) break;
+  }
+  const [decided] = await getDb().select().from(blobs).where(eq(blobs.sha256, disk.sha256));
+  // 'none' is the CORRECT verdict for a disk nobody published -- the point is
+  // what the rate then does with it, not that it went unmatched.
+  expect(decided.matchState).toBe('none');
+
+  await page.goto('/admin/scan');
+  // The page names what it left out rather than quietly reporting a nicer
+  // number -- a rate that silently excludes things is one nobody can check.
+  await expect(page.getByText(/self-made disks? excluded/)).toBeVisible();
 });
