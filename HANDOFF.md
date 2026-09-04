@@ -1382,7 +1382,25 @@ regression.
 
 - **Add / edit / delete files through the browser.** ~~Create blank ADFs~~ **DONE 2026-09-03,
   see 3n** -- the button, the format writer and the bitmap all shipped; what remains is the
-  file operations. Requested by the operator 2026-09-01. The reader was a hard prerequisite and
+  file operations.
+
+  **SPECCED AND PLANNED 2026-09-04, not yet built.**
+  `docs/superpowers/specs/2026-09-04-adf-file-operations-design.md` is binding and
+  `docs/superpowers/plans/2026-09-04-adf-file-operations.md` has the twelve tasks. Two operator
+  rulings are recorded there: any disk is editable but an identified one warns that the edit
+  drops its TOSEC identity (D-W-3), and editing a disk a device has mounted is **refused**
+  rather than propagated (D-W-4), which is what keeps this increment free of any protocol
+  question on hardware that has never run.
+
+  **Read §1 of that spec before starting.** Four of the five "hard parts" listed below are
+  already written, in `synthetic.ts` -- the name hash including INTL, OFS data-block headers,
+  file headers, hash-chain insert and `T_LIST` extension blocks. Only the bitmap allocator is
+  absent. **But xdftool rejects all four synthetic volume shapes** with
+  `Bitmap Block Count Mismatch`, because `syntheticVolume()` writes no bitmap at all and our
+  reader ignores bitmaps. Every fixture-based test in `src/lib/adffs` has therefore been
+  validated against a disk no Amiga tool would mount, which is why repairing it is task 1.
+  The PRODUCTION path is unaffected: `pnpm adffs:verify` still passes all ten checks, and the
+  reader's 80.3% on the real archive comes from `archive.test.ts`, which uses real disks. Requested by the operator 2026-09-01. The reader was a hard prerequisite and
   so, now, is the bitmap: allocation has somewhere to come from.
 
   **What 3n already settled, so it need not be re-litigated:** blobs are immutable and an edit
