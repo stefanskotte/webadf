@@ -1,10 +1,11 @@
 import { test, expect, type Page } from '@playwright/test';
 import { createHash, randomUUID } from 'node:crypto';
-import { eq } from 'drizzle-orm';
+import { and, eq } from 'drizzle-orm';
 import { getDb } from '@/db';
-import { disks } from '@/db/schema/catalog';
+import { games, disks } from '@/db/schema/catalog';
 import { syntheticVolume } from '@/lib/adffs/synthetic';
-import { signUpFresh, runTag } from './helpers';
+import { readVolume } from '@/lib/adffs';
+import { signUpFresh, runTag, createAdf } from './helpers';
 import { cleanupSeeded, seedDisk } from './device-helpers';
 
 /**
@@ -235,6 +236,81 @@ test('the Create ADF menu opens and makes a disk at a phone width', async ({ pag
 
   // The menu is portalled to the body, so it can widen the document without
   // widening any container the grid test would have caught.
+  const overflow = await page.evaluate(
+    () => document.documentElement.scrollWidth - document.documentElement.clientWidth,
+  );
+  expect(overflow).toBeLessThanOrEqual(0);
+});
+
+/**
+ * The file toolbar (upload, new folder) and a row's Rename/Delete controls,
+ * at 390x844. Worth a real check for the same reason the Create ADF menu
+ * was: task-11's controls are ordinary buttons and inline forms, not the
+ * dropdown that the Create ADF finding was about, but nothing here was ever
+ * proven to fit a phone either, and the same card that clips the Download
+ * link (the "a file tree row shows its name AND its download control" test
+ * above) is exactly where these controls live too.
+ */
+test('the file toolbar and a row\'s controls fit a phone', async ({ page }) => {
+  const u = await signUpFresh(page);
+  await page.goto('/library');
+  await createAdf(page);
+  // WAIT FOR THE CARD BEFORE QUERYING. createAdf() returns the moment it
+  // clicks the menu item, but the disk is made by a request still in
+  // flight, so a query fired immediately finds nothing and `game.id` throws
+  // on undefined. disk-files-edit.spec.ts hit exactly this and now hides the
+  // wait inside its own helper; this file has no such helper, so the wait is
+  // explicit. create-adf.spec.ts has always done it this way.
+  await expect(page.getByTestId('game-card')).toHaveCount(1);
+  const [game] = await getDb().select().from(games)
+    .where(and(eq(games.orgId, u.orgId), eq(games.authored, true)));
+  if (!game) throw new Error(`no authored game for org ${u.orgId} after createAdf`);
+  const [disk] = await getDb().select().from(disks).where(eq(disks.gameId, game.id));
+
+  await page.goto(`/disks/${disk.id}/files`);
+  const toolbar = page.getByTestId('file-toolbar');
+  await expect(toolbar).toBeVisible();
+  let box = (await toolbar.boundingBox())!;
+  expect(box.x).toBeGreaterThanOrEqual(0);
+  expect(box.x + box.width).toBeLessThanOrEqual(390);
+
+  // Selecting a file swaps the trigger for the name+submit+cancel form --
+  // that form is what has to fit, not just the trigger button.
+  await page.getByTestId('upload-input').setInputFiles({
+    name: 'PHONE.TXT', mimeType: 'application/octet-stream', buffer: Buffer.from('phone upload'),
+  });
+  for (const id of ['upload-name', 'upload-submit', 'upload-cancel']) {
+    box = (await page.getByTestId(id).boundingBox())!;
+    expect(box.x).toBeGreaterThanOrEqual(0);
+    expect(box.x + box.width).toBeLessThanOrEqual(390);
+  }
+  await page.getByTestId('upload-submit').tap();
+
+  const row = page.locator('[data-testid="fs-entry"][data-name="PHONE.TXT"]');
+  await expect(row).toBeVisible();
+
+  const adf = new Uint8Array(await (await page.request.get(`/api/disks/${disk.id}/adf`)).body());
+  const volume = readVolume(adf);
+  expect(volume.ok).toBe(true);
+  if (!volume.ok) return;
+  const block = volume.root.find((e) => e.name === 'PHONE.TXT')!.block;
+
+  await page.getByTestId(`fs-rename-${block}`).tap();
+  for (const id of [`fs-rename-name-${block}`, `fs-rename-submit-${block}`, `fs-rename-cancel-${block}`]) {
+    box = (await page.getByTestId(id).boundingBox())!;
+    expect(box.x).toBeGreaterThanOrEqual(0);
+    expect(box.x + box.width).toBeLessThanOrEqual(390);
+  }
+  await page.getByTestId(`fs-rename-cancel-${block}`).tap();
+
+  await page.getByTestId(`fs-delete-${block}`).tap();
+  for (const id of [`fs-delete-confirm-${block}`, `fs-delete-cancel-${block}`]) {
+    box = (await page.getByTestId(id).boundingBox())!;
+    expect(box.x).toBeGreaterThanOrEqual(0);
+    expect(box.x + box.width).toBeLessThanOrEqual(390);
+  }
+  await page.getByTestId(`fs-delete-cancel-${block}`).tap();
+
   const overflow = await page.evaluate(
     () => document.documentElement.scrollWidth - document.documentElement.clientWidth,
   );

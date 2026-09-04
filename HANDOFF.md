@@ -43,6 +43,7 @@ after plan 4a, rewritten again 2026-08-31 after plan 4b.**
 | **Disk space on the browse page** | ✅ **done 2026-09-04.** Read from the allocation bitmap, agreeing with xdftool on 46 of 46 real disks; see 3p |
 | **Create a blank ADF** | ✅ **done 2026-09-03.** A real formatted disk from a button, named inline; migration 0013 applied; see 3n. File add/edit/delete is NOT part of it |
 | **Create ADF is one menu** | ✅ **done 2026-09-04.** One dropdown with FFS and OFS items replaces the sticky select plus button; the filesystem is no longer remembered between disks; see 3t |
+| **Files inside an ADF** | ✅ **done 2026-09-04.** Add, delete, rename, replace contents, make and remove directories, through the browse page; every operation checked against xdftool rather than against our own reader; see 3u |
 | **Edit a title by hand** | ✅ **done 2026-09-03.** Per-group authority, and a scan never silently undoes an edit; see 3m |
 | **Unified breadcrumb** | ✅ **done 2026-09-03**, and 2026-09-04 it follows the collection you came from; see 3l and 3r |
 | **Image layout shift** | ✅ **done 2026-09-03.** The game page's cover and screenshots reserve their space; the library grid never had the bug; see 3k |
@@ -1181,6 +1182,81 @@ not run on the operator's machine at all until 2026-09-04; they resolve against 
 directory now. The Gerber exporter needs `shapely`, which will not install into a PEP 668 system
 Python: there is a gitignored `hardware/.venv`, so run
 `./.venv/bin/python export_gerbers.py`.
+
+### 3u. Adding, editing and deleting files inside an ADF — DONE 2026-09-04
+
+`src/lib/adffs` is no longer read-only. `addFile`, `deleteEntry` (files AND directories,
+recursive), `renameEntry` (files AND directories), `replaceFile` and `makeDirectory`, all pure
+functions over a `Uint8Array` returning new bytes or a typed error, never mutating and never
+throwing. Behind them a real bitmap allocator. Above them three routes under
+`/api/disks/[id]/files` and upload / new folder / rename / delete on the browse page.
+Spec `docs/superpowers/specs/2026-09-04-adf-file-operations-design.md`, plan
+`docs/superpowers/plans/2026-09-04-adf-file-operations.md`, twelve tasks.
+
+**THE FIXTURE BUILDER HAD NO BITMAP, AND THAT IS WHY IT WAS TASK 1.** `syntheticVolume()` wrote
+none at all, so amitools' `xdftool` rejected every fixture in this module with
+`Bitmap Block Count Mismatch` on all four shapes tried, at the first command. Our own reader
+accepted them because it ignores bitmaps. **Every fixture-based test in `src/lib/adffs` had
+therefore been validated against a disk shape no Amiga tool would mount** — which is exactly the
+foundation a writer would have been built on. The production path was never affected:
+`formatVolume()` always wrote a correct bitmap, and the reader's 80.3% on the real archive comes
+from `archive.test.ts`, which uses real disks.
+
+**Two mutation proofs, both reproduced independently by a second reviewer.** Making `free()` a
+no-op fails exactly the two delete-then-refill checks; dropping `rechecksum` from `allocate`
+fails exactly 38. `pnpm adffs:verify` is now 89 checks covering every operation on OFS and FFS.
+
+**The plan's own sharpest check was vacuous and had to be resized.** A ~700-block file needs 710
+blocks with extensions, leaving 1046 free of 1756 — so with `free()` broken, xdftool simply
+refilled from elsewhere and the check passed. It is a 950-block payload (964 blocks) now,
+leaving 792 free: a 172-block shortfall that a broken free cannot satisfy.
+
+**The verify script could not see failures at all.** `execFileSync` puts the real `FSError:`
+text on the exception's `.stdout`, not in its message, so `String(e)` never matched. **Sixteen
+checks were incapable of failing** — the 12 `lists it` checks and the 4 fixture `opens` checks
+from task 1. Fixed; this is also why task 1's mutation produced a different error than predicted.
+
+**A LATENT BUG IN THE SHARED WRITERS, found by task 7 and predating it.** `writeFileHeader` and
+`writeExtensionBlocks` never cleared their 72-slot pointer tables, so a REUSED block kept the
+previous file's pointers. Unreachable while fixtures started from an all-zero buffer, but
+reachable through `addFile` alone once blocks recycle: add a 100-block file, delete it, add a
+small one. `allocate` hands out any freed block and `free` never zeroes content. Fixed
+unconditionally in both writers and pinned by two isolated regression tests.
+
+**THE DEFECT ONLY e2e COULD FIND: the TOSEC identity warning fired on EVERY disk.** The dialog
+gated on `disks.tosecName`, whose comment claimed it meant "this disk matches TOSEC". It does
+not — it holds the uploaded filename until a scan overwrites it (see the cross-reference in 3f),
+and `/api/disks/create` stamps `${volumeName}.adf` into every blank disk. A disk created seconds
+earlier displayed "This disk currently matches Empty.adf in TOSEC". Beyond breaking four tests it
+inverted D-W-3: the operator would be warned on every edit of their own disk that an identity
+they never had was about to be lost. **Now gated on `blobs.matchState === 'matched'`**, joined by
+sha256 — `'none'` and `null` are not matches. The e2e test for it passed even WITH the bug, and
+now stamps `matchState` itself, proven by a negative control.
+
+**Two operator rulings, both recorded in the spec:**
+- **D-W-3.** Any disk is editable; one with a real TOSEC identity warns first. Losing the
+  identity is the intended outcome, not a failure.
+- **D-W-4.** Editing a disk a device has MOUNTED is refused with 409, naming the device — not
+  propagated. That is what keeps this increment free of any protocol question on hardware that
+  has never run. Both `mountedSha256` and `desiredSha256` are checked.
+
+**Two rulings I made against the plan, because the spec outranks it:** the plan's allocator
+skeleton let `isFree` and `free` read the bitmap pointer raw, which gave a path where a corrupted
+`bm_pages[0]` of 880 made `rechecksum` overwrite the ROOT block — D-W-5 binds all three functions,
+not just `allocate`. And the plan never implemented directory rename at all, though the spec's
+scope says "rename a file or directory" and its own self-review claimed full coverage; task 8 was
+extended to close it.
+
+**A TRAP THAT COST HOURS, and it is the one already in this file.** An orphaned `next dev` on
+port 3000 produces cascading `ERR_CONNECTION_REFUSED` that reads exactly like a code regression.
+Running suites back to back also exhausts connections and makes `/api/ingest/presign` hang for
+30s, failing whole spec files. **Both were misdiagnosed as real regressions before being run
+alone on a clean port.** Check `lsof -iTCP:3000` before every run, never start a run while
+another is going, and never background a dev server from a tool call — it dies with the call.
+
+**Suite:** 517 vitest, `pnpm build` clean, lint at the 3-error baseline, `pnpm adffs:verify` 89
+checks, `disk-files-edit.spec.ts` 7/7 and the mobile project 7/7 on a clean environment. The
+last full-suite run predates the final fixes and is not the number to quote.
 
 ### 3t. Create ADF is one menu, not a select plus a button — DONE 2026-09-04
 

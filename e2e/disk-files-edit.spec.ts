@@ -304,26 +304,44 @@ test('another tenant gets 404 on every write route, never the disk', async ({ br
   await createAdf(pa);
   const disk = await authoredDisk(pa, ua.orgId);
 
+  // maxRedirects: 0 on every call here, deliberately. requireOrg() redirects
+  // to /sign-in on a missing/unscoped session, and Playwright's
+  // request.*() follow redirects by default -- so a 404 assertion alone
+  // would just as happily pass if the handler redirected and the redirect
+  // target happened to answer 404, and would MISS a redirect that resolved
+  // to 200 (sign-in HTML, not JSON, but still status 200). Pinning
+  // maxRedirects to 0 turns any such redirect into an unmissable 3xx
+  // instead of letting it hide behind a followed response. Do not "simplify"
+  // this away: it is what makes the 404 below mean what it says.
   const post = await pb.request.post(`/api/disks/${disk.id}/files`, {
     multipart: { parentBlock: '880', name: 'Intruder' },
+    maxRedirects: 0,
   });
   expect(post.status()).toBe(404);
 
   const patch = await pb.request.patch(`/api/disks/${disk.id}/files/880`, {
     data: { name: 'Intruder' },
+    maxRedirects: 0,
   });
   expect(patch.status()).toBe(404);
 
-  const del = await pb.request.delete(`/api/disks/${disk.id}/files/880`);
+  const del = await pb.request.delete(`/api/disks/${disk.id}/files/880`, {
+    maxRedirects: 0,
+  });
   expect(del.status()).toBe(404);
 
-  const get = await pb.request.get(`/api/disks/${disk.id}/files/880`);
-  // TEMP DIAGNOSTIC -- remove after establishing why this returns 200.
-  console.log('DIAG status', get.status());
-  console.log('DIAG url', get.url());
-  console.log('DIAG content-type', get.headers()['content-type']);
-  console.log('DIAG body', (await get.body()).toString('utf8').slice(0, 500));
+  const get = await pb.request.get(`/api/disks/${disk.id}/files/880`, {
+    maxRedirects: 0,
+  });
   expect(get.status()).toBe(404);
+  // Belt and braces on the one route that can legitimately return bytes:
+  // even at 404 this pins the response to the JSON error shape the route
+  // actually emits, so a future regression that swaps in disk bytes (or a
+  // followed sign-in redirect, which would arrive as text/html) fails on
+  // content, not just on a status code that two different bugs could both
+  // produce.
+  expect(get.headers()['content-type']).toContain('application/json');
+  expect(await get.json()).toEqual({ error: 'not_found' });
 
   const unchanged = await diskRow(disk.id);
   expect(unchanged.sha256).toBe(disk.sha256);
