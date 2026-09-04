@@ -1,6 +1,8 @@
 import { notFound } from 'next/navigation';
 import { requireOrg } from '@/lib/session';
 import { getGameDetail, listDevices } from '@/lib/queries';
+import { listCollections } from '@/lib/collections';
+import { resolveFrom, libraryTrail } from '@/lib/trail';
 import { deviceState } from '@/lib/device-state';
 import { PageHeader } from '@/components/shell/page-header';
 import { LiveRefresh } from '@/components/devices/live-refresh';
@@ -11,8 +13,16 @@ import { EditDetails } from '@/components/games/edit-details';
 export default async function GamePage(props: PageProps<'/games/[id]'>) {
   const { orgId } = await requireOrg();
   const { id } = await props.params;
+  // Untrusted, straight off the query string, and resolved against THIS org's
+  // own collections before its name is rendered -- collection_games carries no
+  // org_id (D-4-5), so an unchecked id would put another tenant's collection
+  // name on the page.
+  const sp = await props.searchParams;
+  const from = typeof sp.from === 'string' ? sp.from : undefined;
 
-  const [game, devices] = await Promise.all([getGameDetail(orgId, id), listDevices(orgId)]);
+  const [game, devices, collections] = await Promise.all([
+    getGameDetail(orgId, id), listDevices(orgId), listCollections(orgId),
+  ]);
   // Null covers "does not exist" and "belongs to another organization"
   // indistinguishably, so an id from another tenant reveals nothing.
   if (!game) notFound();
@@ -49,15 +59,16 @@ export default async function GamePage(props: PageProps<'/games/[id]'>) {
   return (
     <>
       <PageHeader
-        // One crumb, because the library is this page's only ancestor. The
-        // old eyebrow read "Library / Games" and was neither: "Games" is not
-        // a place, and on a demo or a Workbench disk it was not even true.
-        // The kind IS derivable (game-kind.ts) but is deliberately not a
-        // crumb: it is null for the ~54% of the archive TOSEC does not
-        // recognise, it is not somewhere you can navigate to, and putting it
-        // here would cost getGameDetail an extra query per render to show a
-        // word that is usually absent.
-        eyebrow={[{ label: 'Library', href: '/library' }]}
+        // Library, plus the collection you came from when a ?from= names one
+        // of this org's own. It cannot be derived here: a game is in many
+        // collections and collection_games is many-to-many, so an unfiltered
+        // "Library" is the honest answer when nothing was carried.
+        //
+        // The KIND is still deliberately not a crumb: game-kind.ts derives it,
+        // but it is null for the ~54% of the archive TOSEC does not recognise,
+        // it is not somewhere you can navigate to, and it would cost
+        // getGameDetail an extra query per render.
+        eyebrow={libraryTrail(resolveFrom(from, collections))}
         title={game.title}
         subtitle={[game.year, game.publisher, game.genre, game.chipset,
                    `${game.disks.length} disk${game.disks.length === 1 ? '' : 's'}`]
@@ -71,7 +82,7 @@ export default async function GamePage(props: PageProps<'/games/[id]'>) {
       <GameFacts game={game} />
       <div className="flex flex-col gap-3 px-4 pb-10 sm:px-7">
         {game.disks.map((disk) => (
-          <DiskRow key={disk.id} disk={disk} devices={targets}
+          <DiskRow key={disk.id} disk={disk} devices={targets} from={from}
                    holder={holders.get(disk.sha256) ?? null} />
         ))}
       </div>

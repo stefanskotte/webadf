@@ -43,7 +43,7 @@ after plan 4a, rewritten again 2026-08-31 after plan 4b.**
 | **Disk space on the browse page** | ✅ **done 2026-09-04.** Read from the allocation bitmap, agreeing with xdftool on 46 of 46 real disks; see 3p |
 | **Create a blank ADF** | ✅ **done 2026-09-03.** A real formatted disk from a button, named inline; migration 0013 applied; see 3n. File add/edit/delete is NOT part of it |
 | **Edit a title by hand** | ✅ **done 2026-09-03.** Per-group authority, and a scan never silently undoes an edit; see 3m |
-| **Unified breadcrumb** | ✅ **done 2026-09-03.** One clickable trail replaces nine inconsistent eyebrows and two hand-written back links; see 3l |
+| **Unified breadcrumb** | ✅ **done 2026-09-03**, and 2026-09-04 it follows the collection you came from; see 3l and 3r |
 | **Image layout shift** | ✅ **done 2026-09-03.** The game page's cover and screenshots reserve their space; the library grid never had the bug; see 3k |
 | **Typeahead search** | ✅ **done, all 7 tasks, merged to `master` and live in production.** A Spotlight-style pill in both shells; migration 0012 applied; see 3h |
 | **Read-only ADF filesystem reader** | ✅ **done, all 10 tasks, `feat/adf-filesystem-reader`.** Reads 80.3% of the archive (49/61) against TOSEC's 45.9% and OpenRetro's 6.6%; see 3f |
@@ -59,7 +59,7 @@ already has the disk mounted**, specced as a backlog entry in §4. Take it with 
 desk — its flag is inert until write-back exists, so it is
 only observable on hardware, and it needs a protocol answer for "same disk, changed flag" rather
 than a version bump that would force an unrequested ~2 MB re-fetch and remount.
-**Suite on `master`:** 456 vitest, `pnpm build` clean, **204 Playwright** — 199 desktop at
+**Suite on `master`:** 464 vitest, `pnpm build` clean, **206 Playwright** — 201 desktop at
 1280×720 and 5 mobile at 390×844; `playwright.config.ts` now has two projects.
 
 **Known flake shape, so nobody debugs it twice:** the first two or three tests of a cold run can
@@ -1100,6 +1100,42 @@ else is unchecked at that moment. The test now sweeps until the blob is actually
 asserts that verdict before looking at the page. Any test that depends on a sweep reaching a
 specific row needs the same treatment.
 
+### 3r. The breadcrumb follows the collection you came from — DONE 2026-09-04
+
+3l hardcoded the root to "Library"; that answered the question as it was asked, before anyone
+had seen a trail in use. Opening a title from inside a collection now reads
+`Library / Sports Games / Sensible World of Soccer / Disk 1`, and the collection survives both
+steps down AND the step back up.
+
+**It is CARRIED, not derived, and it cannot be otherwise.** A game is in many collections and
+`collection_games` is many-to-many, so nothing downstream can work out which one you came from.
+`?from=<collectionId>` rides the link; `src/lib/trail.ts` holds the whole rule.
+
+**AND NOT THE BROWSER'S HISTORY, which was measured rather than assumed.** On production,
+`document.referrer` is **EMPTY** after a Next client-side navigation from `/library` to
+`/games/[id]`. `history.length` does increment, but browsers do not expose history entries to
+read — so nothing can NAME the place it would go back to, only go there blindly. A `?from=` is
+the only mechanism that survives a reload, a shared link and a new tab, and the only one that
+can render the destination's name. **Do not "simplify" this to a Back button or a referrer
+check.**
+
+**An untrusted `?from=` is resolved against this org's own collections before its name is
+rendered** — exactly the proof `/library` already performs on `?collection=`. `collection_games`
+carries no `org_id` (D-4-5), so an unchecked id would print **another tenant's collection name**
+on the page: a cross-tenant leak through a breadcrumb. A test forges one. An unknown or foreign
+id degrades to plain "Library", never a 404.
+
+**Library stays first and stays clickable inside a collection.** A collection is a view of the
+library, not a replacement, and someone who filtered their way in still wants the way out.
+
+**Two existing tests changed deliberately.** *"the trail does not invent a collection it cannot
+know"* pinned the hardcoded root and is replaced by the guard for the fallback that still must
+hold. And `collections.spec.ts`'s `cardGameIds` derived ids with a string replace on the raw
+href, which glued `?from=` onto every id — it now takes the **pathname's last segment**, so the
+next link to gain a param will not break it.
+
+**Suite:** 464 vitest, **206 Playwright passed**, build clean, lint at the 3-error baseline.
+
 ### 4. Backlog, not blocking anything
 
 - ~~**Make the app usable on a phone.**~~ **DONE 2026-09-02**, merged and live — see 3j.
@@ -1121,43 +1157,9 @@ specific row needs the same treatment.
   collection you came from — was answered by the operator: the root is hardcoded "Library", so
   it does not.
 
-- **The breadcrumb should lead back to the collection you came from, not always to "Library".**
-  Requested by the operator 2026-09-03. The hardcoded root that 3l implemented came from a
-  question asked BEFORE anyone had seen a trail on screen, and the answer given was to the
-  question as posed; seeing it in use is what surfaced the real requirement. **Not a defect and
-  not a reversal — the first decision was made without the information the second one had.**
-  Today, opening a title from inside a collection and following the trail returns you to the
-  whole library.
-
-  **The trail CANNOT be derived, and that is the whole difficulty.** A game can be in many
-  collections and `collection_games` is many-to-many by design, so `/games/[id]` and
-  `/disks/[id]/files` — which carry no collection in their URLs — cannot work out which one you
-  came from. It has to be CARRIED. Three ways, and they are not equivalent:
-
-  - **`?from=<collectionId>` threaded through every link** into a title and onward to its
-    disks. Explicit, shareable, survives a reload and a new tab. Costs a param on
-    `game-grid.tsx`, `game-table.tsx`, `disk-row.tsx`'s Browse link and the breadcrumb itself,
-    and must be resolved against `listCollections(orgId)` before it is trusted — the same
-    check `?collection=` already gets in `src/app/(app)/library/page.tsx`, because
-    `collection_games` has no `org_id` (D-4-5).
-  - **Remembering the last collection viewed** (cookie or `sessionStorage`). No URL changes at
-    all, but it is a lie on a shared link and on a second tab, and it will eventually send
-    someone "back" somewhere they never were.
-  - **`document.referrer` / history**. The operator said "following the history", and this is
-    the most literal reading — but it is unavailable on a hard reload, and Next's client
-    navigation does not update it the way a full page load would. Do not pick this without
-    checking it actually holds for a client-side transition.
-
-  **A passing test currently asserts the OPPOSITE and must be updated deliberately, not
-  deleted:** `e2e/breadcrumb.spec.ts` — *"the trail does not invent a collection it cannot
-  know"* — opens a title from inside a collection and asserts the trail neither names it nor
-  navigates to it. That test is correct for the hardcoded root; when this ships it should
-  become the guard that a `?from=` naming a collection **of another tenant, or one that no
-  longer exists**, still falls back to Library rather than 404ing or leaking a name.
-
-  **Also check the mobile bottom bar and `?collection=` do not fight**: the library already
-  treats `?collection=` as its filter, and a `?from=` that disagrees with it would be two
-  sources of truth on one screen.
+- ~~**The breadcrumb should lead back to the collection you came from.**~~ **DONE 2026-09-04**,
+  see 3r. The entry listed three mechanisms; `document.referrer` was measured and found empty
+  after a client-side navigation, so `?from=` was the only one that could name the destination.
 
 - **Write-back and layered disks** (disk-change spec §5). Deliberately not designed yet;
   the first increment should record which tracks changed, not just a flattened result, so

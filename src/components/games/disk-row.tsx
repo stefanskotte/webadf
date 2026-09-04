@@ -3,14 +3,21 @@ import type { GameDetailDisk } from '@/lib/queries';
 import { WriteProtectToggle } from './write-protect-toggle';
 import { MountAction, type MountTarget } from './mount-action';
 import { DeleteDiskDialog } from '@/components/library/delete-disk-dialog';
+import { fromQuery } from '@/lib/trail';
 
 /** What some device is doing with this particular disk, if anything. */
 export interface DiskHolder { deviceName: string; state: 'converged' | 'pending' | 'stale' }
 
-export function DiskRow({ disk, devices, holder }: {
+export function DiskRow({ disk, devices, holder, from }: {
   disk: GameDetailDisk;
   devices: MountTarget[];
   holder: DiskHolder | null;
+  /**
+   * The collection the person came from, carried onward to the file browser
+   * so its breadcrumb can lead back there too. Threaded rather than derived:
+   * a game is in many collections and nothing downstream can work out which.
+   */
+  from?: string;
 }) {
   const holderText =
     !holder ? null
@@ -99,7 +106,7 @@ export function DiskRow({ disk, devices, holder }: {
           a real request so the browser streams the response to disk.
         */}
         <Link
-          href={`/disks/${disk.id}/files`}
+          href={`/disks/${disk.id}/files${fromQuery(from)}`}
           data-testid={`browse-${disk.id}`}
           className="shrink-0 rounded-lg px-3 py-1.5 text-[12px] font-semibold"
           style={{ background: 'var(--glass-strong)', color: 'var(--ink)' }}

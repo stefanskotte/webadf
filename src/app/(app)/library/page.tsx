@@ -63,7 +63,9 @@ export default async function LibraryPage(props: PageProps<'/library'>) {
         <div className="flex flex-col gap-4 md:flex-row md:items-start">
           <CollectionRail />
           <div className="min-w-0 flex-1">
-            {view === 'table' ? <GameTable games={games} /> : <GameGrid games={games} />}
+            {view === 'table'
+              ? <GameTable games={games} collectionId={filteredCollectionId} />
+              : <GameGrid games={games} />}
           </div>
         </div>
       </CollectionsProvider>

@@ -118,7 +118,14 @@ async function dragOnto(
  */
 async function cardGameIds(page: Page): Promise<string[]> {
   return page.getByTestId('game-card').evaluateAll((els) =>
-    els.map((el) => (el.getAttribute('href') ?? '').replace('/games/', '')));
+    // The PATHNAME's last segment, not a string replace on the raw href.
+    // Inside a collection the link also carries ?from=<collectionId> so the
+    // title's breadcrumb can lead back here, and a replace() left that query
+    // string glued to every id.
+    els.map((el) => {
+      const href = el.getAttribute('href') ?? '';
+      return new URL(href, 'http://x').pathname.split('/').pop() ?? '';
+    }));
 }
 
 // ---------------------------------------------------------------------------
