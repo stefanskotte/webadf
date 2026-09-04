@@ -12,9 +12,24 @@
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { createHash } from 'node:crypto';
+import type { SQL } from 'drizzle-orm';
+import { PgDialect } from 'drizzle-orm/pg-core';
 import { disks, blobs, entitlements } from '@/db/schema/catalog';
 import { devices } from '@/db/schema/devices';
 import type { WriteResult } from '@/lib/adffs';
+
+// Drizzle's own dialect, used only to render a captured `.where(...)`
+// condition back to the SQL text and bound params it would actually send --
+// the same rendering `getDb()` uses before a real query ever reaches
+// Postgres. This is how FINDING 1 and FINDING 2 get proven rather than
+// merely asserted: a fake `.where()` that ignored its argument could not
+// tell "checks mountedSha256 OR desiredSha256" apart from "checks only
+// mountedSha256", or "scoped by orgId" apart from "scoped by id alone" --
+// every branch would produce an identical queued result either way.
+const dialect = new PgDialect();
+function renderWhere(cond: unknown): { sql: string; params: unknown[] } {
+  return dialect.sqlToQuery(cond as SQL);
+}
 
 const diskStoreRead = vi.fn();
 const diskStorePut = vi.fn();
@@ -34,6 +49,9 @@ let selectResults: unknown[][] = [];
 const insertCalls: { table: unknown; values: unknown }[] = [];
 const updateCalls: { table: unknown; set: unknown }[] = [];
 const deleteCalls: unknown[] = [];
+// One entry per `.select(...)` call, in call order: the disk lookup's
+// `.where(...)` argument first, then the device-holder check's.
+const whereConditions: unknown[] = [];
 
 /**
  * A fake NeonHttpDatabase. Each call to `.select(...)` consumes the next
@@ -41,7 +59,8 @@ const deleteCalls: unknown[] = [];
  * its queries: the disk lookup first, then the device-holder check. That
  * coupling to call order is the price of not standing up a real database
  * for a unit test; disk-write.test.ts owns it rather than leaving it
- * implicit.
+ * implicit. `.where(...)`'s argument is captured, not discarded, so tests
+ * can render it back to real SQL and prove what it actually scopes on.
  */
 function fakeDb() {
   const select = () => {
@@ -49,7 +68,7 @@ function fakeDb() {
     const chain = {
       from: () => chain,
       innerJoin: () => chain,
-      where: () => chain,
+      where: (cond: unknown) => { whereConditions.push(cond); return chain; },
       limit: () => Promise.resolve(result),
     };
     return chain;
@@ -95,6 +114,7 @@ beforeEach(() => {
   insertCalls.length = 0;
   updateCalls.length = 0;
   deleteCalls.length = 0;
+  whereConditions.length = 0;
 });
 
 describe('applyDiskEdit', () => {
@@ -107,6 +127,17 @@ describe('applyDiskEdit', () => {
 
     expect(result).toEqual({ ok: false, status: 404, reason: 'not_found' });
     expect(edit).not.toHaveBeenCalled();
+
+    // PROVES the org scoping, not just the 404 shape: a lookup accidentally
+    // scoped by disks.id alone (orgId dropped) would still hit this queued
+    // empty result and produce the same 404 -- the point of this repo's
+    // cross-org isolation is that the WHERE clause itself never lets that
+    // row match, not merely that this particular fixture returns nothing.
+    expect(whereConditions).toHaveLength(1);
+    const lookup = renderWhere(whereConditions[0]);
+    expect(lookup.sql).toContain('"disks"."org_id"');
+    expect(lookup.sql).toContain('"disks"."id"');
+    expect(lookup.params).toEqual(expect.arrayContaining([ORG_ID, DISK_ID]));
   });
 
   it('refuses when a device has the disk mounted', async () => {
@@ -130,6 +161,19 @@ describe('applyDiskEdit', () => {
     expect(edit).not.toHaveBeenCalled();
     expect(diskStoreRead).not.toHaveBeenCalled();
     expect(diskStorePut).not.toHaveBeenCalled();
+
+    // PROVES both mount columns are checked, not just that a 409 came back:
+    // a fixture with the holder row already queued would produce the same
+    // 409 whether the real WHERE clause tested mountedSha256 OR
+    // desiredSha256 (correct, D-W-4) or only one of them -- a regression
+    // that silently dropped the desiredSha256 branch would be invisible
+    // without inspecting the clause itself.
+    expect(whereConditions).toHaveLength(2);
+    const holderCheck = renderWhere(whereConditions[1]);
+    expect(holderCheck.sql).toContain('"devices"."mounted_sha256"');
+    expect(holderCheck.sql).toContain('"devices"."desired_sha256"');
+    expect(holderCheck.sql).toContain('"devices"."org_id"');
+    expect(holderCheck.params).toEqual(expect.arrayContaining([ORG_ID, OLD_SHA]));
   });
 
   it('keeps disks.id and changes disks.sha256', async () => {

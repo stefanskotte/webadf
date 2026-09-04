@@ -40,7 +40,15 @@ export async function POST(request: Request, ctx: { params: Promise<{ id: string
     return Response.json({ error: 'invalid_body' }, { status: 400 });
   }
 
-  const parentBlock = Number(form.get('parentBlock'));
+  // `form.get` on a missing field is `null`, and `Number(null)` is `0` --
+  // not NaN -- so a dropped field would otherwise silently pass as a request
+  // to write into the root directory instead of being rejected. Checked as
+  // a string first so "absent" and "present and zero" cannot be confused.
+  const parentBlockField = form.get('parentBlock');
+  if (typeof parentBlockField !== 'string' || parentBlockField.trim().length === 0) {
+    return Response.json({ error: 'bad_parent_block' }, { status: 400 });
+  }
+  const parentBlock = Number(parentBlockField);
   if (!Number.isInteger(parentBlock) || parentBlock < 0) {
     return Response.json({ error: 'bad_parent_block' }, { status: 400 });
   }
