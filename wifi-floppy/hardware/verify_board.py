@@ -37,9 +37,20 @@ REFS = {
 }
 
 # Footprints this project draws itself, for which no upstream reference
-# exists. Named explicitly so they read as a known gap rather than as an
-# oversight -- U1 is the Pico 2 W land pattern and has to be eyeballed against
-# the module's own datasheet.
+# exists. Named explicitly so they read as a known gap rather than an
+# oversight.
+#
+# U1 is the operator's Pimoroni module, part PIM726, on a standard 2x20 THT
+# Pico land pattern (rows 17.78 mm apart, 19 x 2.54 mm along). There is no
+# KiCad library footprint to compare that against, so it is the one part on
+# this board that must be checked by hand against the module's own mechanical
+# drawing.
+#
+# WORTH CONFIRMING ONCE, because it is not checkable here: the firmware builds
+# for PICO_BOARD=pimoroni_pico_plus2_w_rp2350 and this design DEPENDS on that
+# board's 8 MB PSRAM -- psram_image.c is a 2.03 MB image store, which is how a
+# disk is served at all. A module without PSRAM would fit the footprint
+# perfectly and then fail to run the firmware.
 NO_UPSTREAM = ('Pico2W_THT',)
 
 def pads_from_mod(path):

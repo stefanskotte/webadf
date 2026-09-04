@@ -9,8 +9,13 @@ DRC-lite pass (same-layer segment crossings, clearance, 45-degree rule).
 Board:
   J1  2x17 THT 34-pin floppy header (Amiga internal pinout)
   J2  4-pin Berg power (5V in)
-  U1  Raspberry Pi Pico 2 W on two 1x20 THT rows
-  U2  74LVC541A SOIC-20W (bus -> Pico input buffer, 5V-tolerant)
+  U1  Pimoroni PIM726 module on two 1x20 THT rows (rows 17.78 mm apart).
+      The firmware targets pimoroni_pico_plus2_w_rp2350 and the design needs
+      that board's 8 MB PSRAM -- see psram_image.c.
+  U2  74LVC541A SOIC-20W (bus -> Pico input buffer, 5V-tolerant).
+      The ONLY part with silkscreen: it is the one that can be fitted the
+      wrong way round and not be obvious. Caps and SOT-23s are deliberately
+      left bare (operator's call, 2026-09-04).
   Q1..Q6 BSS138 SOT-23 open-drain output drivers (GPIO high = bus low)
   D1  SS14 Schottky 5V -> VSYS
   C1  100n (U2), C3 10u bulk
