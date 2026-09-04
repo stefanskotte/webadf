@@ -5,6 +5,8 @@ import { disks, entitlements, games } from '@/db/schema/catalog';
 import { requireOrg } from '@/lib/session';
 import { diskStore } from '@/lib/storage';
 import { readVolume, readUsage } from '@/lib/adffs';
+import { listCollections } from '@/lib/collections';
+import { resolveFrom, libraryTrail, fromQuery } from '@/lib/trail';
 import { PageHeader } from '@/components/shell/page-header';
 import { VolumeHeader } from '@/components/disks/volume-header';
 import { FileTree } from '@/components/disks/file-tree';
@@ -14,6 +16,11 @@ export const dynamic = 'force-dynamic';
 export default async function DiskFilesPage(props: PageProps<'/disks/[id]/files'>) {
   const { orgId } = await requireOrg();
   const { id } = await props.params;
+  // Same untrusted-input rule as the game page: resolved against this org's
+  // own collections before its name is rendered.
+  const sp = await props.searchParams;
+  const from = typeof sp.from === 'string' ? sp.from : undefined;
+  const collections = await listCollections(orgId);
 
   // THE ENTITLEMENT is the boundary, not the disk row -- disks.orgId is an
   // independent column that can drift from its game's org. Identical to the
@@ -71,8 +78,10 @@ export default async function DiskFilesPage(props: PageProps<'/disks/[id]/files'
         // multi-disk set the number is the only thing saying which one you
         // opened.
         eyebrow={[
-          { label: 'Library', href: '/library' },
-          { label: disk.gameTitle ?? 'Untitled', href: `/games/${disk.gameId}` },
+          ...libraryTrail(resolveFrom(from, collections)),
+          // The collection is carried onward here too, so stepping back up to
+          // the title does not silently lose it.
+          { label: disk.gameTitle ?? 'Untitled', href: `/games/${disk.gameId}${fromQuery(from)}` },
           { label: `Disk ${disk.diskNo}` },
         ]}
         title={title}

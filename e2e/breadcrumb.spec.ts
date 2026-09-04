@@ -64,7 +64,7 @@ test('a disk trails Library / its title / which disk, and each crumb goes where 
   await expect(page).toHaveURL(new RegExp(`/games/${row.gameId}$`));
 });
 
-test('the trail does not invent a collection it cannot know', async ({ page }) => {
+test('the trail leads back to the collection you came from', async ({ page }) => {
   const run = runTag();
   const u = await signUpFresh(page);
   const { gameId } = await seedDisk(u.orgId, { title: `Filed ${run}`, diskNo: 1, sha256: sha(`b-${run}`) });
@@ -76,16 +76,89 @@ test('the trail does not invent a collection it cannot know', async ({ page }) =
   // Arrive at the title from INSIDE a collection.
   await page.goto(`/library?collection=${collectionId}`);
   await page.getByTestId('game-card').first().click();
-  await expect(page).toHaveURL(new RegExp(`/games/${gameId}$`));
+  await expect(page).toHaveURL(new RegExp(`/games/${gameId}`));
 
-  // The root is hardcoded "Library" (operator's ruling): a game can be in many
-  // collections and collection_games is many-to-many, so the trail cannot be
-  // derived from a game id. It must not guess at one -- it says Library, and
-  // Library is where it goes.
+  // The collection cannot be DERIVED here -- a game is in many collections
+  // and collection_games is many-to-many -- so it is carried in the link and
+  // resolved against this org's own collections before its name is shown.
   const trail = page.getByTestId('breadcrumb');
-  await expect(trail).not.toContainText(`Faves ${run}`);
-  await trail.getByRole('link', { name: 'Library' }).click();
-  await expect(page).toHaveURL(/\/library$/);
+  await expect(trail).toContainText(`Faves ${run}`);
+  // Library stays first and stays clickable: a collection is a view of the
+  // library, not a replacement, and the way out still has to be there.
+  await expect(trail.getByRole('link', { name: 'Library' })).toBeVisible();
+
+  await trail.getByRole('link', { name: `Faves ${run}` }).click();
+  await expect(page).toHaveURL(new RegExp(`collection=${collectionId}`));
 
   await page.request.delete(`/api/collections/${collectionId}`);
+});
+
+test('the collection survives the step down into a disk', async ({ page }) => {
+  const run = runTag();
+  const u = await signUpFresh(page);
+  const tag = randomUUID().slice(0, 8);
+  const adf = syntheticVolume({
+    filesystem: 'FFS', volumeName: `Vol-${tag}`,
+    entries: [{ name: 'README', bytes: new TextEncoder().encode('x') }],
+  });
+  const content = Buffer.from(adf);
+  const sha256 = createHash('sha256').update(content).digest('hex');
+  const presign = await page.request.post('/api/ingest/presign', { data: { files: [{ sha256, sizeBytes: content.length }] } });
+  const { uploads } = await presign.json();
+  await fetch(uploads[0].url, { method: 'PUT', body: new Uint8Array(content) });
+  await page.request.post('/api/ingest/complete', { data: { files: [{ sha256, sizeBytes: content.length, filename: `deep-${tag}.adf` }] } });
+  const row = (await getDb().select().from(disks).where(eq(disks.sha256, sha256)))[0];
+  void u;
+
+  const created = await page.request.post('/api/collections', { data: { name: `Deep ${run}` } });
+  const collectionId = (await created.json()).id as string;
+  expect((await page.request.post(`/api/collections/${collectionId}/games`, { data: { gameId: row.gameId } })).ok()).toBe(true);
+
+  await page.goto(`/library?collection=${collectionId}`);
+  await page.getByTestId('game-card').first().click();
+  await page.getByRole('link', { name: 'Browse' }).first().click();
+  await expect(page).toHaveURL(/\/files/);
+
+  // Four crumbs now: Library / the collection / the title / which disk. The
+  // collection has to survive TWO steps, or the trail forgets it halfway.
+  const trail = page.getByTestId('breadcrumb');
+  await expect(trail.getByRole('listitem')).toHaveCount(4);
+  await expect(trail).toContainText(`Deep ${run}`);
+
+  // Stepping back up to the title keeps it too.
+  await trail.getByRole('link').nth(2).click();
+  await expect(page).toHaveURL(new RegExp(`/games/${row.gameId}`));
+  await expect(page.getByTestId('breadcrumb')).toContainText(`Deep ${run}`);
+
+  await page.request.delete(`/api/collections/${collectionId}`);
+});
+
+test('a ?from= naming a collection that is not yours is ignored, not rendered', async ({ browser }) => {
+  const run = runTag();
+  const a = await browser.newContext();
+  const b = await browser.newContext();
+  const pa = await a.newPage();
+  const pb = await b.newPage();
+  const ua = await signUpFresh(pa);
+  await signUpFresh(pb);
+  const { gameId } = await seedDisk(ua.orgId, { title: `Guarded ${run}`, diskNo: 1, sha256: sha(`c-${run}`) });
+
+  // Org B makes a collection with a distinctive name.
+  const theirs = await pb.request.post('/api/collections', { data: { name: `SECRET ${run}` } });
+  const theirId = (await theirs.json()).id as string;
+
+  // Org A forges a ?from= naming it. collection_games carries no org_id, so
+  // an unchecked id here would print another tenant's collection NAME on the
+  // page -- a cross-tenant leak through a breadcrumb.
+  await pa.goto(`/games/${gameId}?from=${theirId}`);
+  const trail = pa.getByTestId('breadcrumb');
+  await expect(trail).toBeVisible();
+  await expect(trail).not.toContainText('SECRET');
+  // ...and it degrades to the plain library rather than 404ing: a stale link
+  // should quietly show the library, not break.
+  await expect(trail.getByRole('link', { name: 'Library' })).toBeVisible();
+
+  await pb.request.delete(`/api/collections/${theirId}`);
+  await a.close();
+  await b.close();
 });

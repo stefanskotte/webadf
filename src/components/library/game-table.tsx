@@ -1,4 +1,5 @@
 import { Link } from '@/components/shell/link';
+import { fromQuery } from '@/lib/trail';
 import type { GameListItem } from '@/lib/queries';
 
 // TYPE sits between title and year: it qualifies what the row IS, so it
@@ -11,7 +12,14 @@ function fmtSize(bytes: number): string {
   return bytes >= 1_000_000 ? `${(bytes / 1_048_576).toFixed(2)} MB` : `${Math.round(bytes / 1024)} KB`;
 }
 
-export function GameTable({ games }: { games: GameListItem[] }) {
+export function GameTable({ games, collectionId }: {
+  games: GameListItem[];
+  /**
+   * The collection currently being viewed, carried into each title's link so
+   * its breadcrumb can lead back here. Null in the unfiltered library.
+   */
+  collectionId?: string | null;
+}) {
   return (
     <div className="glass-card mx-4 overflow-hidden sm:mx-7" data-testid="game-table">
       {/* COLS totals ~590px of FIXED tracks, and the card above clips
@@ -30,7 +38,7 @@ export function GameTable({ games }: { games: GameListItem[] }) {
           <span className="text-right">SHA-256</span>
         </div>
         {games.map((g, i) => (
-          <Link key={g.id} href={`/games/${g.id}`} data-testid="game-row"
+          <Link key={g.id} href={`/games/${g.id}${fromQuery(collectionId)}`} data-testid="game-row"
                 className={`grid ${COLS} min-w-[600px] items-center border-b px-4 py-2 font-mono text-[11px] hover:bg-white/40`}
                 style={{ borderColor: 'rgb(30 45 60 / 0.05)' }}>
             <span style={{ color: 'var(--faint)' }}>{String(i + 1).padStart(2, '0')}</span>

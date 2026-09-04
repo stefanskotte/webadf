@@ -9,6 +9,7 @@ import { SortableContext, rectSortingStrategy, useSortable } from '@dnd-kit/sort
 import { CSS } from '@dnd-kit/utilities';
 import { X } from 'lucide-react';
 import { DeleteDiskDialog } from '@/components/library/delete-disk-dialog';
+import { fromQuery } from '@/lib/trail';
 import { Cover } from './cover';
 import type { GameListItem } from '@/lib/queries';
 import { useCollectionsContext, type GameDragData } from '@/components/collections/collection-provider';
@@ -266,7 +267,11 @@ function SortableCard({ game: g, collectionId }: { game: GameListItem; collectio
   return (
     <Link
       ref={setNodeRef}
-      href={`/games/${g.id}`}
+      // Carries the collection you are standing in, so the title's breadcrumb
+      // can lead back HERE rather than to the unfiltered library. It cannot
+      // be derived on the far side: a game is in many collections and
+      // collection_games is many-to-many.
+      href={`/games/${g.id}${fromQuery(collectionId)}`}
       data-testid="game-card"
       // See DraggableCard on why an anchor must opt out of native dragging.
       draggable={false}
