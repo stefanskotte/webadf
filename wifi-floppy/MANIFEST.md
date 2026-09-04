@@ -12,8 +12,10 @@ a 34-pin Shugart floppy drive and serves whole disk images out of PSRAM.
 
 ## firmware/ — RP2350, `PICO_BOARD=pimoroni_pico_plus2_w_rp2350`
 
-**The board's 8 MB PSRAM is not optional**: `psram_image.c` is a 2.03 MB image
-store and it is how a disk gets served at all.
+**The module is a Pimoroni PIM726, and the part number is a requirement.**
+`psram_image.c` is a 2.03 MB store in that board's PSRAM and it is how a disk
+gets served at all — a pin-compatible module without PSRAM fits the footprint
+and then does not work.
 
     CMakeLists.txt      PORTAL_AP_PASSWORD must be set in the environment or
                         the configure step fails BY DESIGN — an empty WPA2 PSK

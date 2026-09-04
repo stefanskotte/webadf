@@ -9,9 +9,11 @@ DRC-lite pass (same-layer segment crossings, clearance, 45-degree rule).
 Board:
   J1  2x17 THT 34-pin floppy header (Amiga internal pinout)
   J2  4-pin Berg power (5V in)
-  U1  Pimoroni PIM726 module on two 1x20 THT rows (rows 17.78 mm apart).
-      The firmware targets pimoroni_pico_plus2_w_rp2350 and the design needs
-      that board's 8 MB PSRAM -- see psram_image.c.
+  U1  Pimoroni PIM726 on two 1x20 THT rows (rows 17.78 mm apart). The part
+      number is a REQUIREMENT: the firmware targets
+      pimoroni_pico_plus2_w_rp2350 and psram_image.c is a 2.03 MB store in
+      that board's PSRAM. A pin-compatible module without PSRAM fits and
+      then does not work.
   U2  74LVC541A SOIC-20W (bus -> Pico input buffer, 5V-tolerant).
       The ONLY part with silkscreen: it is the one that can be fitted the
       wrong way round and not be obvious. Caps and SOT-23s are deliberately

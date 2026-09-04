@@ -46,11 +46,12 @@ REFS = {
 # this board that must be checked by hand against the module's own mechanical
 # drawing.
 #
-# WORTH CONFIRMING ONCE, because it is not checkable here: the firmware builds
-# for PICO_BOARD=pimoroni_pico_plus2_w_rp2350 and this design DEPENDS on that
-# board's 8 MB PSRAM -- psram_image.c is a 2.03 MB image store, which is how a
-# disk is served at all. A module without PSRAM would fit the footprint
-# perfectly and then fail to run the firmware.
+# CONFIRMED by the operator 2026-09-04: the PIM726 carries the PSRAM this
+# design needs. That matters because nothing here can check it -- the firmware
+# builds for PICO_BOARD=pimoroni_pico_plus2_w_rp2350 and psram_image.c is a
+# 2.03 MB image store, which is how a disk is served at all. A module without
+# PSRAM would fit this footprint perfectly and then fail to run the firmware,
+# so the part number is a requirement, not a preference.
 NO_UPSTREAM = ('Pico2W_THT',)
 
 def pads_from_mod(path):
