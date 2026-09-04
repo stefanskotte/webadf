@@ -43,10 +43,18 @@ function sameName(a: string, b: string, intl: boolean): boolean {
   return true;
 }
 
-/** True when `dir` already has an entry (of any kind) named `name`. */
-function entryNamed(adf: Uint8Array, dir: number, name: string, intl: boolean): boolean {
+/**
+ * True when `dir` already has an entry (of any kind) named `name`.
+ *
+ * `exclude`, when given, skips that one entry block -- so a rename can ask
+ * "does anything ELSE already have this name" without tripping over its own
+ * current name. `sameName` is case-insensitive (matching `nameHash`), so
+ * without this a case-only rename ('readme' -> 'README') would see its own
+ * entry as a collision and refuse itself.
+ */
+function entryNamed(adf: Uint8Array, dir: number, name: string, intl: boolean, exclude?: number): boolean {
   const { root } = walkDirectory(adf, dir);
-  return root.some((e) => sameName(e.name, name, intl));
+  return root.some((e) => e.block !== exclude && sameName(e.name, name, intl));
 }
 
 /**
@@ -267,5 +275,60 @@ export function deleteEntry(adf: Uint8Array, parentBlock: number, entryBlock: nu
   const warnings: string[] = [];
   const { data, extensions } = collectFileBlocks(out, entryBlock, warnings);
   free(out, [entryBlock, ...data, ...extensions]);
+  return { ok: true, adf: out };
+}
+
+/**
+ * Rename a file: unlink its header from `parentBlock`'s hash chain, write
+ * the new name, then link it back in under the bucket the new name hashes
+ * to. Allocates and frees nothing, so unlike `addFile`/`deleteEntry` it
+ * never touches the bitmap at all.
+ *
+ * THE CASE THAT DEFINES THIS FUNCTION: `nameHash` upper-cases before
+ * hashing, so a case-only rename ('readme' -> 'README') lands in the SAME
+ * bucket it just left. The entry is unlinked FULLY -- its predecessor's
+ * pointer patched, exactly as `deleteEntry` does -- before the new name is
+ * written or it is linked back in. That turns the same-bucket case into an
+ * ordinary insert into a chain the entry is no longer part of. Doing this
+ * carelessly (e.g. linking before fully unlinking) can make the entry point
+ * at itself; `walkDirectory`'s cycle guard would silently CONTAIN that on
+ * read, making a corrupted disk look like a normal listing.
+ */
+export function renameEntry(
+  adf: Uint8Array, parentBlock: number, entryBlock: number, newName: string,
+): WriteResult {
+  if (newName.length === 0 || newName.length > 30) return { ok: false, reason: 'name-too-long' };
+  const boot = readBoot(adf);
+  if (!boot) return { ok: false, reason: 'no-filesystem' };
+  if (bitmapPage(adf) === null) return { ok: false, reason: 'bitmap-untrusted' };
+
+  const header = blockAt(adf, entryBlock);
+  if (!header) return { ok: false, reason: 'not-found' };
+  if (be32(header, 0) !== T_HEADER) return { ok: false, reason: 'not-found' };
+  if (!checksumOk(header, CHECKSUM_WORD)) return { ok: false, reason: 'not-found' };
+  if (i32(header, 508) !== ST_FILE) return { ok: false, reason: 'not-found' };
+  if (be32(header, 500) !== parentBlock) return { ok: false, reason: 'not-found' };
+
+  const oldName = bcplString(header, 432, 30);
+  const pred = predecessorOf(adf, parentBlock, entryBlock, oldName, boot.intl);
+  if (!pred) return { ok: false, reason: 'not-found' };
+  if (entryNamed(adf, parentBlock, newName, boot.intl, entryBlock)) return { ok: false, reason: 'name-exists' };
+
+  const out = adf.slice();                       // never mutate the input
+
+  // Unlink fully first (same relink as deleteEntry): the chain no longer
+  // contains this entry before anything about the new name is written.
+  const nextHash = be32(header, 496);
+  putBe32(out, pred.offset, nextHash);
+  recheck(out, pred.kind === 'slot' ? parentBlock : pred.block);
+
+  // Clear the whole name field before writing the new one: a shorter name
+  // must not leave the tail of the old one behind it (same reasoning as
+  // `setVolumeName` in format.ts).
+  const hs = entryBlock * BLOCK_BYTES;
+  out.fill(0, hs + 432, hs + 463);
+  putName(out, hs, newName);
+
+  linkIntoDirectory(out, parentBlock, entryBlock, newName, boot.intl);
   return { ok: true, adf: out };
 }

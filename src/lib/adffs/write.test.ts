@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { addFile, deleteEntry } from './write';
+import { addFile, deleteEntry, renameEntry } from './write';
 import { readVolume, readFile } from './index';
 import { readUsage } from './usage';
 import { readBoot } from './boot';
@@ -157,5 +157,95 @@ describe('deleteEntry', () => {
       // chain from f52.txt onward.
       expect(v.root.map((e) => e.name).sort()).toEqual(['f0.txt', 'f96.txt']);
     });
+  });
+});
+
+describe('renameEntry', () => {
+  it('renames into a different bucket', () => {
+    const added = addFile(empty(), 880, 'before.txt', new Uint8Array([1]));
+    if (!added.ok) throw new Error('setup');
+    const v0 = readVolume(added.adf);
+    if (!v0.ok) return;
+    const r = renameEntry(added.adf, 880, v0.root[0].block, 'after.txt');
+    if (!r.ok) throw new Error('rename failed');
+    const v = readVolume(r.adf);
+    if (!v.ok) return;
+    expect(v.root.map(e => e.name)).toEqual(['after.txt']);
+  });
+
+  it('survives a rename that lands in the SAME bucket', () => {
+    // Case-only change: nameHash is case-insensitive, so old and new collide.
+    const added = addFile(empty(), 880, 'readme', new Uint8Array([1]));
+    if (!added.ok) throw new Error('setup');
+    const v0 = readVolume(added.adf);
+    if (!v0.ok) return;
+    const r = renameEntry(added.adf, 880, v0.root[0].block, 'README');
+    if (!r.ok) throw new Error('rename failed');
+    const v = readVolume(r.adf);
+    if (!v.ok) return;
+    // A self-referential pointer here would be CONTAINED by walkDirectory's
+    // cycle guard, so assert the name AND that no warning was raised.
+    expect(v.root.map(e => e.name)).toEqual(['README']);
+    expect(v.warnings).toEqual([]);
+  });
+
+  it('refuses a name already in the directory', () => {
+    let adf = empty();
+    for (const n of ['a.txt', 'b.txt']) {
+      const r = addFile(adf, 880, n, new Uint8Array([1]));
+      if (!r.ok) throw new Error('setup');
+      adf = r.adf;
+    }
+    const v0 = readVolume(adf);
+    if (!v0.ok) return;
+    const a = v0.root.find(e => e.name === 'a.txt')!;
+    expect(renameEntry(adf, 880, a.block, 'b.txt')).toEqual({ ok: false, reason: 'name-exists' });
+  });
+
+  it('does not touch the bitmap: a rename allocates and frees nothing', () => {
+    const added = addFile(empty(), 880, 'before.txt', new Uint8Array([1]));
+    if (!added.ok) throw new Error('setup');
+    const v0 = readVolume(added.adf);
+    if (!v0.ok) return;
+    const before = readUsage(added.adf)!.freeBlocks;
+
+    const r = renameEntry(added.adf, 880, v0.root[0].block, 'after.txt');
+    if (!r.ok) throw new Error('rename failed');
+    expect(readUsage(r.adf)!.freeBlocks).toBe(before);
+  });
+
+  it('does not mutate the input', () => {
+    const added = addFile(empty(), 880, 'before.txt', new Uint8Array([1]));
+    if (!added.ok) throw new Error('setup');
+    const v0 = readVolume(added.adf);
+    if (!v0.ok) return;
+    const copy = added.adf.slice();
+
+    renameEntry(added.adf, 880, v0.root[0].block, 'after.txt');
+    expect(Array.from(added.adf)).toEqual(Array.from(copy));
+  });
+
+  it('leaves no stale tail when the new name is shorter', () => {
+    const added = addFile(empty(), 880, 'a-long-original-name.txt', new Uint8Array([1]));
+    if (!added.ok) throw new Error('setup');
+    const v0 = readVolume(added.adf);
+    if (!v0.ok) return;
+
+    const r = renameEntry(added.adf, 880, v0.root[0].block, 'x');
+    if (!r.ok) throw new Error('rename failed');
+    const hs = v0.root[0].block * 512;
+    // Length byte says 1 char, and every byte after it in the 30-char field
+    // must be zero -- not the leftover tail of the old, longer name.
+    expect(r.adf[hs + 432]).toBe(1);
+    expect(r.adf[hs + 433]).toBe('x'.charCodeAt(0));
+    expect(Array.from(r.adf.subarray(hs + 434, hs + 463)).every(b => b === 0)).toBe(true);
+
+    const v = readVolume(r.adf);
+    if (!v.ok) return;
+    expect(v.root.map(e => e.name)).toEqual(['x']);
+  });
+
+  it('reports not-found for a block that is not in this directory', () => {
+    expect(renameEntry(empty(), 880, 500, 'x')).toEqual({ ok: false, reason: 'not-found' });
   });
 });
