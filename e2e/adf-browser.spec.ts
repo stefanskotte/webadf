@@ -3,9 +3,10 @@ import { createHash, randomUUID } from 'node:crypto';
 import { eq } from 'drizzle-orm';
 import { getDb } from '@/db';
 import { disks } from '@/db/schema/catalog';
-import { ROOT_BLOCK } from '@/lib/adffs/constants';
+import { BLOCK_BYTES, ROOT_BLOCK } from '@/lib/adffs/constants';
 import { syntheticVolume } from '@/lib/adffs/synthetic';
 import { formatVolume } from '@/lib/adffs/format';
+import { recheck } from '@/lib/adffs/write-blocks';
 import { signUpFresh } from './helpers';
 import { cleanupSeeded } from './device-helpers';
 
@@ -133,16 +134,41 @@ test('the browse page shows how much of the disk is used', async ({ page }) => {
 test('a disk whose bitmap cannot be trusted says so instead of guessing', async ({ page }) => {
   await signUpFresh(page);
   const tag = randomUUID();
-  // syntheticVolume writes no bitmap at all, so the root block's bm_flag is
-  // not valid and readUsage refuses. That refusal is the point: this is the
-  // figure someone acts on when deciding whether a file fits, and a
-  // confidently wrong "878 KB free" on a full disk is worse than no answer.
+  // syntheticVolume() used to write no bitmap at all, which was enough on
+  // its own to make bm_flag invalid. Commit d6af734 ("Give synthetic
+  // volumes the bitmap they never had", task 1 of the file-operations plan)
+  // gave it a real, trustworthy bitmap instead -- the write layer needs one
+  // to allocate from -- so that fixture no longer exercises this path. The
+  // untrustworthy case has to be built deliberately now, the same way
+  // alloc.test.ts and write.test.ts already do it: build a normal volume,
+  // then poke bm_flag (root block, offset 312) back to 0. readUsage() checks
+  // only bm_flag, the bitmap pointer's range, and the bitmap block's own
+  // self-bit, so this one byte is sufficient to make it refuse.
+  //
+  // That refusal is the point, and it now protects more than this label:
+  // D-W-5 makes bitmap trust decide whether a disk is writable at all, and
+  // alloc.ts reuses this exact same readUsage() check as its trust gate. A
+  // confidently wrong "878 KB free" on a full disk was already worse than no
+  // answer; allocating real blocks from an untrusted bitmap would be worse
+  // still.
   const adf = syntheticVolume({
     filesystem: 'FFS',
-    volumeName: `NoBitmap-${tag.slice(0, 8)}`,
+    volumeName: `Untrusted-${tag.slice(0, 8)}`,
     entries: [{ name: 'README', bytes: enc('x') }],
   });
-  const row = await ingestDisk(page, adf, `nobitmap-${tag}.adf`);
+  adf[ROOT_BLOCK * BLOCK_BYTES + 312] = 0x00;
+  // Unlike the unit tests' direct calls into readUsage()/allocate(), this
+  // test goes through the real page, which parses the root block with
+  // readVolume() first -- and readVolume() DOES verify the root block's own
+  // checksum (root.ts), unlike readUsage(). Poking a byte without fixing the
+  // checksum up would make the checksum itself the thing that's wrong, and
+  // the page would report "no filesystem" instead of exercising the bitmap
+  // path this test is actually about. recheck() (write-blocks.ts) exists for
+  // precisely this: recompute the checksum over the block as it now stands,
+  // corrupted bm_flag included, so the root block still reads as a valid
+  // filesystem and only the bitmap itself is untrustworthy.
+  recheck(adf, ROOT_BLOCK);
+  const row = await ingestDisk(page, adf, `untrusted-${tag}.adf`);
 
   await page.goto(`/disks/${row.id}/files`);
   // The disk still READS -- the reader ignores bitmaps by design.
