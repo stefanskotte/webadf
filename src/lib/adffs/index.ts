@@ -1,9 +1,9 @@
-// The AmigaDOS filesystem reader's public surface.
+// The AmigaDOS filesystem module's public surface.
 //
 // Shaped like src/lib/adfmfm/: pure functions over a Uint8Array, no I/O and
-// no database, so the entire format is testable in vitest. Read-only by
-// design -- writing needs bitmap and hash-chain maintenance this module
-// deliberately does not do.
+// no database, so the entire format is testable in vitest. Write operations
+// (write.ts, re-exported below) never mutate their input -- they return a
+// new Uint8Array -- and never throw, returning a WriteResult instead.
 
 import { ADF_BYTES } from '@/lib/adfmfm';
 import { ROOT_BLOCK } from './constants';
@@ -18,6 +18,7 @@ export type { AdfEntry } from './dir';
 export type { FileBytes } from './file';
 export type { Filesystem, BootInfo } from './boot';
 export { readUsage, type VolumeUsage } from './usage';
+export { addFile, type WriteResult, type WriteError } from './write';
 
 export type VolumeResult =
   | { ok: true; volume: VolumeInfo; root: AdfEntry[]; truncated: boolean; warnings: string[] }

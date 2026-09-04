@@ -7,13 +7,13 @@
 
 import {
   BLOCK_BYTES, BLOCK_COUNT, ROOT_BLOCK, HASH_TABLE_SIZE, CHECKSUM_WORD,
-  OFS_DATA_CHECKSUM_WORD, OFS_DATA_BYTES, T_HEADER, T_DATA, T_LIST,
-  ST_ROOT, ST_USERDIR, ST_FILE,
+  OFS_DATA_BYTES, T_HEADER, ST_ROOT, ST_USERDIR,
 } from './constants';
 import { blockChecksum } from './blocks';
 import type { Filesystem } from './boot';
 import { nameHash } from './hash';
 import { putBe32, putName, recheck } from './write-blocks';
+import { writeDataBlocks, writeFileHeader, writeExtensionBlocks } from './write';
 
 // Re-exported: synthetic.test.ts, dir.test.ts and file.test.ts import these
 // by name from here rather than from hash.ts / write-blocks.ts directly.
@@ -84,82 +84,30 @@ export function syntheticVolume(opts: SyntheticOptions = {}): Uint8Array {
   const allocData = () => { const b = nextData++; allocated.push(b); return b; };
   const allocMeta = () => { const b = nextMeta--; allocated.push(b); return b; };
 
-  /** Write one file's data blocks and its header; returns the header block. */
+  /**
+   * Write one file's data blocks and its header; returns the header block.
+   *
+   * Lays blocks out with ITS OWN strategy (data upward via allocData,
+   * metadata -- header and extensions -- downward via allocMeta) and hands
+   * the resulting block numbers to write.ts's shared writers, which own the
+   * one implementation of the on-disk format (spec D-W-2, Ruling R-1).
+   */
   function writeFile(name: string, bytes: Uint8Array, parent: number): number {
     const perBlock = filesystem === 'OFS' ? OFS_DATA_BYTES : BLOCK_BYTES;
-    const dataBlocks: number[] = [];
-    for (let off = 0; off < Math.max(bytes.length, 1); off += perBlock) {
-      dataBlocks.push(allocData());
-      if (bytes.length === 0) break;
-    }
+    const dataCount = Math.max(1, Math.ceil(bytes.length / perBlock));
+    const dataBlocks = Array.from({ length: dataCount }, allocData);
     const header = allocMeta();
 
-    // Data blocks.
-    dataBlocks.forEach((blk, i) => {
-      const start = blk * BLOCK_BYTES;
-      const chunk = bytes.subarray(i * perBlock, (i + 1) * perBlock);
-      if (filesystem === 'OFS') {
-        putBe32(adf, start, T_DATA);
-        putBe32(adf, start + 4, header);
-        putBe32(adf, start + 8, i + 1);              // sequence number, 1-based
-        putBe32(adf, start + 12, chunk.length);
-        putBe32(adf, start + 16, dataBlocks[i + 1] ?? 0);
-        adf.set(chunk, start + 24);
-        putBe32(adf, start + OFS_DATA_CHECKSUM_WORD * 4,
-          blockChecksum(adf.subarray(start, start + BLOCK_BYTES), OFS_DATA_CHECKSUM_WORD));
-      } else {
-        adf.set(chunk, start);
-      }
-    });
-
-    // File header. Data pointers live at 24..307 in REVERSE order.
-    const hs = header * BLOCK_BYTES;
-    putBe32(adf, hs, T_HEADER);
-    putBe32(adf, hs + 4, header);
-    putBe32(adf, hs + 8, Math.min(dataBlocks.length, HASH_TABLE_SIZE));
-    putBe32(adf, hs + 16, dataBlocks[0] ?? 0);
-    putBe32(adf, hs + 324, bytes.length);
-    const inHeader = dataBlocks.slice(0, HASH_TABLE_SIZE);
-    inHeader.forEach((blk, i) => {
-      putBe32(adf, hs + 24 + (HASH_TABLE_SIZE - 1 - i) * 4, blk);
-    });
-
     // Extension blocks for anything beyond 72 data blocks. 112 real files
-    // need this, so it is exercised, not theoretical.
-    //
-    // Chaining a new extension block onto a PREVIOUS extension block writes
-    // that block's +504 pointer AFTER its checksum was already stored, which
-    // invalidates it -- the same failure shape link() below guards against
-    // for the hash-chain pointer. recheck() fixes it. The file header itself
-    // is exempt: it is checksummed after this loop runs, so the +504 write
-    // into it here still happens before its checksum is taken.
-    let remaining = dataBlocks.slice(HASH_TABLE_SIZE);
-    let prevBlock = header;
-    while (remaining.length > 0) {
-      const ext = allocMeta();
-      putBe32(adf, prevBlock * BLOCK_BYTES + 504, ext);
-      if (prevBlock !== header) recheck(adf, prevBlock);
-      const es = ext * BLOCK_BYTES;
-      const take = remaining.slice(0, HASH_TABLE_SIZE);
-      putBe32(adf, es, T_LIST);
-      putBe32(adf, es + 4, ext);
-      putBe32(adf, es + 8, take.length);
-      putBe32(adf, es + 500, header);
-      take.forEach((blk, i) => {
-        putBe32(adf, es + 24 + (HASH_TABLE_SIZE - 1 - i) * 4, blk);
-      });
-      putBe32(adf, es + 508, ST_FILE);
-      putBe32(adf, es + CHECKSUM_WORD * 4,
-        blockChecksum(adf.subarray(es, es + BLOCK_BYTES), CHECKSUM_WORD));
-      remaining = remaining.slice(HASH_TABLE_SIZE);
-      prevBlock = ext;
-    }
+    // need this, so it is exercised, not theoretical. Allocated in the same
+    // order (header, then each extension in chain order) as before, so
+    // fixtures built here still occupy the same block numbers.
+    const extCount = Math.max(0, Math.ceil((dataCount - HASH_TABLE_SIZE) / HASH_TABLE_SIZE));
+    const exts = Array.from({ length: extCount }, allocMeta);
 
-    putName(adf, hs, name);
-    putBe32(adf, hs + 500, parent);
-    putBe32(adf, hs + 508, ST_FILE >>> 0);
-    putBe32(adf, hs + CHECKSUM_WORD * 4,
-      blockChecksum(adf.subarray(hs, hs + BLOCK_BYTES), CHECKSUM_WORD));
+    writeDataBlocks(adf, dataBlocks, bytes, header, filesystem, perBlock);
+    writeFileHeader(adf, header, parent, name, bytes.length, dataBlocks.slice(0, HASH_TABLE_SIZE), exts[0] ?? 0);
+    writeExtensionBlocks(adf, exts, dataBlocks, header);
     return header;
   }
 
