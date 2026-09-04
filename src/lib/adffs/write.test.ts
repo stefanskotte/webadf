@@ -351,6 +351,66 @@ describe('replaceFile', () => {
     }
   });
 
+  // Fix round 2, finding 1 (carried): the header test above gives NO
+  // coverage to `writeExtensionBlocks`'s own table-clearing line -- its
+  // shrink never allocates an extension block at all (extCount stays 0).
+  // This closes that gap the same way `replaceFile` itself would trigger
+  // it: an extension block that used to be FULLY populated (72 real
+  // pointers) gets reused, via the bitmap, for a new extension block that
+  // only needs a few. Built with addFile/deleteEntry/addFile rather than
+  // replaceFile because that's the deterministic way to land a SPECIFIC
+  // reused block address:
+  //   1. big2.bin needs exactly 144 data blocks -- exactly enough for ONE
+  //      extension block, and that block ends up FULLY populated (72 of
+  //      72 slots), because rest.length is exactly 72.
+  //   2. Deleting it frees its header, data and that one extension block.
+  //   3. filler.bin (68 data blocks, no extension) consumes the low end of
+  //      the freed range, so it does NOT reuse big2.bin's extension block.
+  //   4. small2.bin (75 data blocks) then needs exactly one extension
+  //      block of its own, with only 3 pointers in it -- and `allocate`
+  //      scans lowest-free-first, so the next free block after filler.bin
+  //      is exactly the block big2.bin's full extension used to occupy.
+  // The actual block number is read back from the written header (`hs +
+  // 504`), not assumed, per the "verify by reading it back" instruction.
+  it('leaves no stale pointer bytes in a REUSED extension block', () => {
+    let adf: Uint8Array = empty();
+
+    const big = addFile(adf, 880, 'big2.bin', new Uint8Array(144 * 512).fill(3));
+    if (!big.ok) throw new Error('setup');
+    adf = big.adf;
+    const vBig = readVolume(adf);
+    if (!vBig.ok) return;
+    const bigBlock = vBig.root.find((e) => e.name === 'big2.bin')!.block;
+
+    const del = deleteEntry(adf, 880, bigBlock);
+    if (!del.ok) throw new Error('setup');
+    adf = del.adf;
+
+    const filler = addFile(adf, 880, 'filler.bin', new Uint8Array(68 * 512).fill(1));
+    if (!filler.ok) throw new Error('setup');
+    adf = filler.adf;
+
+    const small = addFile(adf, 880, 'small2.bin', new Uint8Array(75 * 512).fill(2));
+    if (!small.ok) throw new Error('setup');
+    adf = small.adf;
+
+    const v = readVolume(adf);
+    if (!v.ok) return;
+    const smallBlock = v.root.find((e) => e.name === 'small2.bin')!.block;
+    const header = blockAt(adf, smallBlock)!;
+    const extBlock = be32(header, 504);
+    expect(extBlock).not.toBe(0);
+
+    const ext = blockAt(adf, extBlock)!;
+    expect(be32(ext, 8)).toBe(3);            // high_seq: 3 real pointers in this block
+    // Those 3 pointers occupy the LAST 3 slots (reverse order, offset 24);
+    // every slot before that must be zero -- not one of big2.bin's 72 old
+    // pointers left over from before this block was freed and recycled.
+    for (let i = 0; i < HASH_TABLE_SIZE - 3; i++) {
+      expect(be32(ext, 24 + i * 4)).toBe(0);
+    }
+  });
+
   it('does not mutate the input', () => {
     const added = addFile(empty(), 880, 'x.txt', new Uint8Array(2000).fill(1));
     if (!added.ok) throw new Error('setup');
