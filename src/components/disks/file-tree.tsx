@@ -157,9 +157,19 @@ export function FileTree({ entries, diskId }: { entries: AdfEntry[]; diskId: str
             data-name={entry.name}
           >
             {isDir ? (
+              // A stable testid of its own -- not just the accessible name
+              // (which happens to equal entry.name today) -- because a row
+              // now legitimately holds more than one <button> (Rename,
+              // Delete, and this toggle), so any test still choosing "the
+              // button" by role alone would be ambiguous or, worse, silently
+              // pick the wrong one if the row's button order ever changes.
+              // Fix round 1 moved e2e/adf-browser.spec.ts and
+              // e2e/mobile.spec.ts onto this testid for exactly that reason
+              // -- do not "simplify" them back to a bare getByRole('button').
               <button
                 type="button"
                 onClick={() => toggle(entry.block)}
+                data-testid={`fs-toggle-${entry.block}`}
                 className="flex min-w-0 flex-1 items-center gap-2 text-left font-semibold"
                 style={{ color: 'var(--ink)' }}
                 aria-expanded={open}
@@ -201,10 +211,11 @@ export function FileTree({ entries, diskId }: { entries: AdfEntry[]; diskId: str
               </span>
 
               {/*
-                An <a>, and it stays an <a>: adf-browser.spec.ts scopes
-                getByRole('button') to a row to click the directory toggle,
-                so a second button anywhere in here makes that locator
-                strict-mode ambiguous and fails the suite.
+                An <a> with a real href, not a <button>: the browser streams
+                the response straight to disk and shows its own progress, the
+                same reasoning as the Download control on the game detail
+                page (disk-row.tsx). A plain fetch-then-save would buffer the
+                whole file in memory to achieve the same result.
               */}
               {!isDir ? (
                 <a
@@ -232,13 +243,22 @@ export function FileTree({ entries, diskId }: { entries: AdfEntry[]; diskId: str
               cover a sibling row's controls the way an anchored popup did
               on the game detail page (see e2e/game-detail.spec.ts).
 
-              Both triggers are <a>, same reasoning as Download just above:
-              a second <button> in this row would make
-              adf-browser.spec.ts's row-scoped getByRole('button') (aimed at
-              the directory toggle) match more than one element and fail
-              strict mode. The expanded forms below use real <button>s --
-              safe, because they only exist in the DOM for the one row
-              currently being renamed or deleted.
+              Real <button>s, not <a> -- these are destructive/mutating
+              actions with no href of their own, and a native anchor only
+              activates on Enter, not Space, so a keyboard user tabbing here
+              and pressing Space would scroll the page instead of opening the
+              form. An earlier version of this file used <a href="#"> plus
+              preventDefault to keep the row's `<button>` count at one for a
+              test locator's sake; collection-provider.tsx already documents,
+              at length, what a bare href under dnd-kit cost this repo once
+              (a default action that kept firing despite stopPropagation,
+              needing a document-level capture-phase preventDefault, found
+              only by an e2e failure). This tree is not in a drag context
+              today, but there is nothing that keeps it that way, and the
+              fix -- a real <button disabled>, matching FileToolbar two files
+              over -- is not worth deferring. The directory toggle now
+              carries its own `fs-toggle-${block}` testid instead, so the row
+              can hold more than one button without any test locator caring.
             */}
             {renameBlock === entry.block ? (
               <div className="flex flex-wrap items-center gap-2 pl-[22px]">
@@ -305,28 +325,28 @@ export function FileTree({ entries, diskId }: { entries: AdfEntry[]; diskId: str
               </div>
             ) : (
               <div className="flex items-center gap-3 pl-[22px]">
-                <a
-                  href="#"
-                  onClick={(e) => { e.preventDefault(); if (!disabled) startRename(entry); }}
-                  aria-disabled={!!disabled}
+                <button
+                  type="button"
+                  onClick={() => startRename(entry)}
+                  disabled={!!disabled}
                   title={disabled?.message}
                   data-testid={`fs-rename-${entry.block}`}
-                  className="text-[11px] font-semibold underline-offset-2 hover:underline"
-                  style={{ color: disabled ? 'var(--muted-2)' : 'var(--muted)', opacity: disabled ? 0.5 : 1 }}
+                  className="text-[11px] font-semibold underline-offset-2 hover:underline disabled:opacity-50 disabled:no-underline"
+                  style={{ color: 'var(--muted)' }}
                 >
                   Rename
-                </a>
-                <a
-                  href="#"
-                  onClick={(e) => { e.preventDefault(); if (!disabled) startDelete(entry); }}
-                  aria-disabled={!!disabled}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => startDelete(entry)}
+                  disabled={!!disabled}
                   title={disabled?.message}
                   data-testid={`fs-delete-${entry.block}`}
-                  className="text-[11px] font-semibold underline-offset-2 hover:underline"
-                  style={{ color: disabled ? 'var(--muted-2)' : 'var(--muted)', opacity: disabled ? 0.5 : 1 }}
+                  className="text-[11px] font-semibold underline-offset-2 hover:underline disabled:opacity-50 disabled:no-underline"
+                  style={{ color: 'var(--muted)' }}
                 >
                   Delete
-                </a>
+                </button>
               </div>
             )}
           </div>

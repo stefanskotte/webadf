@@ -49,9 +49,14 @@ viewport.** So:
   columns total ~312px inside a 310px card, so the name column is negative at depth 0 and
   worse at every nesting level. Horizontal scroll would push Download off-screen, which is the
   row's only action. Line 1 is the name; line 2 is `size · protection · date` plus Download.
-- **D-6-4. The directory toggle stays the only `<button>` in a row.** `adf-browser.spec.ts:75`
-  does `.getByRole('button')` scoped to a row; any second button breaks it. The download
-  affordance stays an `<a>`.
+- **D-6-4. The directory toggle carries its own testid; a row is no longer limited to one
+  `<button>`.** Superseded by task 11 (2026-09-04): the file tree gained real per-row Rename and
+  Delete buttons, both correctly native `<button>`s (an `<a href="#">` dodge was tried and
+  reverted -- a native anchor does not activate on Space, only Enter). `adf-browser.spec.ts` and
+  `mobile.spec.ts` now locate the toggle by its own `fs-toggle-${block}` testid rather than a
+  bare `.getByRole('button')` scoped to the row, so the row can hold as many buttons as it needs
+  without any locator caring. The download affordance stays an `<a>` with a real `href`, for the
+  unrelated reason that the browser streams the response straight to disk.
 - **D-6-5. Wide tables scroll, and are given a real minimum.** The admin tables are already in
   `overflow-x-auto` cards but are `w-full`, so they compress to 390px and crush their cells
   instead of scrolling. They get `min-w-[640px]`, which makes the existing scroll real.

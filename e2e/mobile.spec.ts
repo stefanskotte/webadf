@@ -146,8 +146,15 @@ test('a file tree row shows its name AND its download control', async ({ page })
   expect(box.x).toBeGreaterThanOrEqual(0);
   expect(box.x + box.width).toBeLessThanOrEqual(390);
 
-  // D-6-4: the directory toggle stays the only button in a row.
-  await expect(page.locator('[data-testid="fs-entry"][data-name="C"]').getByRole('button')).toHaveCount(1);
+  // D-6-4 (updated by task 11): the row now legitimately holds more than
+  // one <button> -- Rename and Delete joined the directory toggle -- so
+  // "only one button in the row" is no longer the invariant to protect.
+  // What still has to hold, and what this asserts, is that the toggle
+  // itself is uniquely locatable by its own testid rather than ambiguous
+  // among however many buttons the row happens to have.
+  await expect(
+    page.locator('[data-testid="fs-entry"][data-name="C"]').locator('[data-testid^="fs-toggle-"]'),
+  ).toHaveCount(1);
 });
 
 test('the table view keeps every column reachable by scrolling', async ({ page }) => {

@@ -73,7 +73,16 @@ test('the page renders a real tree, from a real FFS volume', async ({ page }) =>
 
   // Expand the directory to prove this is a real nested traversal of the
   // image, not just a listing of the root block.
-  await page.locator('[data-testid="fs-entry"][data-name="C"]').getByRole('button').click();
+  //
+  // Targeted by the toggle's own `fs-toggle-` testid, not a bare
+  // getByRole('button') scoped to the row: task 11 gave every row real
+  // Rename and Delete buttons too, so "the button" is no longer unique --
+  // a role-only locator would now be strict-mode ambiguous, or worse,
+  // silently click the wrong control if the row's button order ever
+  // changes. See file-tree.tsx's comment on the toggle for the full story.
+  await page.locator('[data-testid="fs-entry"][data-name="C"]')
+    .locator('[data-testid^="fs-toggle-"]')
+    .click();
   await expect(page.locator('[data-testid="fs-entry"][data-name="SetPatch"]')).toBeVisible();
 
   // The way back is the BREADCRUMB's middle crumb as of 2026-09-03; it was a
