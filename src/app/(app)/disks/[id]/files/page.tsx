@@ -1,7 +1,8 @@
 import { notFound } from 'next/navigation';
-import { and, eq } from 'drizzle-orm';
+import { and, eq, or } from 'drizzle-orm';
 import { getDb } from '@/db';
 import { disks, entitlements, games } from '@/db/schema/catalog';
+import { devices } from '@/db/schema/devices';
 import { requireOrg } from '@/lib/session';
 import { diskStore } from '@/lib/storage';
 import { readVolume, readUsage } from '@/lib/adffs';
@@ -10,6 +11,7 @@ import { resolveFrom, libraryTrail, fromQuery } from '@/lib/trail';
 import { PageHeader } from '@/components/shell/page-header';
 import { VolumeHeader } from '@/components/disks/volume-header';
 import { FileTree } from '@/components/disks/file-tree';
+import { FileEditProvider, FileToolbar, type EditDisabled } from '@/components/disks/file-actions';
 
 export const dynamic = 'force-dynamic';
 
@@ -64,6 +66,44 @@ export default async function DiskFilesPage(props: PageProps<'/disks/[id]/files'
   const usage = bytes ? readUsage(bytes) : null;
   const title = volume?.ok ? volume.volume.name || filename : filename;
 
+  // Same holder check applyDiskEdit runs before any write (D-W-4): a device
+  // that has this disk mounted OR merely desires it is a reason to refuse,
+  // because a board polling toward it is just as much "somewhere this edit
+  // would land on hardware" as one already converged. Run here too, before
+  // any edit is attempted, so the controls can say so up front instead of
+  // only failing once someone tries.
+  const holders = bytes ? await getDb()
+    .select({ name: devices.name })
+    .from(devices)
+    .where(and(
+      eq(devices.orgId, orgId),
+      or(eq(devices.mountedSha256, disk.sha256), eq(devices.desiredSha256, disk.sha256)),
+    ))
+    .limit(1) : [];
+  const holder = holders[0] ?? null;
+
+  // The three ways editing is refused, in the same priority applyDiskEdit
+  // itself would hit them: mounted is checked BEFORE the bytes are even
+  // read (D-W-4), so it takes precedence here too; no-filesystem and
+  // bitmap-untrusted only arise once the (pure) edit is actually attempted
+  // against the volume, no-filesystem first since it is the more
+  // fundamental refusal. A disk that isn't even readable never reaches
+  // this (the blob-unavailable branch below skips the editor entirely).
+  // Stated as a reason, never by just hiding the controls (§6) -- "this
+  // disk is unusual" has to read differently from "this feature is
+  // missing".
+  const disabled: EditDisabled | null =
+    holder
+      ? { reason: 'mounted', message: `This disk is mounted on "${holder.name}" — eject it there before editing.` }
+      : volume && !volume.ok
+        ? { reason: 'no-filesystem', message: 'This disk has no filesystem, so there is nothing to add files to.' }
+        : usage === null
+          ? {
+              reason: 'bitmap-untrusted',
+              message: "This disk's allocation bitmap can't be trusted, so blocks can't be safely allocated. Editing is disabled.",
+            }
+          : null;
+
   return (
     <>
       <PageHeader
@@ -94,10 +134,16 @@ export default async function DiskFilesPage(props: PageProps<'/disks/[id]/files'
             The stored bytes for this disk could not be read.
           </div>
         ) : (
-          <>
+          <FileEditProvider diskId={id} disabled={disabled} tosecName={disk.tosecName}>
             <VolumeHeader result={volume} filename={filename} usage={usage} />
+            {/*
+              Shown even when there is no filesystem to browse -- a disk
+              with nothing to add a file to still gets the toolbar, disabled
+              with that reason, rather than the controls simply not existing.
+            */}
+            <FileToolbar />
             {volume.ok && <FileTree entries={volume.root} diskId={id} />}
-          </>
+          </FileEditProvider>
         )}
       </div>
     </>

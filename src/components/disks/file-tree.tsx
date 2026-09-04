@@ -2,6 +2,7 @@
 
 import { useState } from 'react';
 import type { AdfEntry } from '@/lib/adffs';
+import { useFileEdit, MAX_NAME_LENGTH } from './file-actions';
 
 /**
  * Directories first, then case-insensitive name order.
@@ -51,6 +52,15 @@ function flatten(entries: AdfEntry[], openBlocks: Set<number>, depth = 0): Visib
 
 export function FileTree({ entries, diskId }: { entries: AdfEntry[]; diskId: string }) {
   const [openBlocks, setOpenBlocks] = useState<ReadonlySet<number>>(() => new Set());
+  const { disabled, busy, runEdit } = useFileEdit();
+
+  // Which single row, if any, has its rename or delete form expanded. Kept
+  // here rather than per-row, and mutually exclusive with each other: at
+  // most one row is ever mid-edit, which keeps the inline layout simple
+  // without losing anything a person would actually want to do at once.
+  const [renameBlock, setRenameBlock] = useState<number | null>(null);
+  const [renameValue, setRenameValue] = useState('');
+  const [deleteBlock, setDeleteBlock] = useState<number | null>(null);
 
   function toggle(block: number) {
     setOpenBlocks((prev) => {
@@ -58,6 +68,45 @@ export function FileTree({ entries, diskId }: { entries: AdfEntry[]; diskId: str
       if (!next.delete(block)) next.add(block);
       return next;
     });
+  }
+
+  function startRename(entry: AdfEntry) {
+    setDeleteBlock(null);
+    setRenameBlock(entry.block);
+    setRenameValue(entry.name.slice(0, MAX_NAME_LENGTH));
+  }
+
+  function cancelRename() {
+    setRenameBlock(null);
+    setRenameValue('');
+  }
+
+  function submitRename(block: number) {
+    const name = renameValue.trim();
+    if (!name) return;
+    runEdit(() => fetch(`/api/disks/${diskId}/files/${block}`, {
+      method: 'PATCH',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ name }),
+    }), `Renamed to "${name}"`);
+    cancelRename();
+  }
+
+  function startDelete(entry: AdfEntry) {
+    setRenameBlock(null);
+    setDeleteBlock(entry.block);
+  }
+
+  function cancelDelete() {
+    setDeleteBlock(null);
+  }
+
+  function submitDelete(block: number) {
+    runEdit(
+      () => fetch(`/api/disks/${diskId}/files/${block}`, { method: 'DELETE' }),
+      'Deleted',
+    );
+    cancelDelete();
   }
 
   if (entries.length === 0) {
@@ -174,6 +223,112 @@ export function FileTree({ entries, diskId }: { entries: AdfEntry[]; diskId: str
                 <span className="hidden w-[68px] shrink-0 sm:block" />
               )}
             </div>
+
+            {/*
+              Rename and delete, on their own line so they never have to
+              fight the responsive column rules above. INLINE expansion, not
+              an overlay: opening one grows this row in normal document
+              flow and pushes every row below it down, so nothing can ever
+              cover a sibling row's controls the way an anchored popup did
+              on the game detail page (see e2e/game-detail.spec.ts).
+
+              Both triggers are <a>, same reasoning as Download just above:
+              a second <button> in this row would make
+              adf-browser.spec.ts's row-scoped getByRole('button') (aimed at
+              the directory toggle) match more than one element and fail
+              strict mode. The expanded forms below use real <button>s --
+              safe, because they only exist in the DOM for the one row
+              currently being renamed or deleted.
+            */}
+            {renameBlock === entry.block ? (
+              <div className="flex flex-wrap items-center gap-2 pl-[22px]">
+                <input
+                  value={renameValue}
+                  onChange={(e) => setRenameValue(e.target.value.slice(0, MAX_NAME_LENGTH))}
+                  maxLength={MAX_NAME_LENGTH}
+                  aria-label={`New name for ${entry.name}`}
+                  data-testid={`fs-rename-name-${entry.block}`}
+                  autoFocus
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') submitRename(entry.block);
+                    if (e.key === 'Escape') cancelRename();
+                  }}
+                  className="rounded border bg-transparent px-2 py-1 text-[11px]"
+                  style={{ borderColor: 'var(--hairline)', color: 'var(--ink)' }}
+                />
+                <button
+                  type="button"
+                  onClick={() => submitRename(entry.block)}
+                  disabled={busy || !renameValue.trim()}
+                  data-testid={`fs-rename-submit-${entry.block}`}
+                  className="rounded px-2 py-0.5 text-[11px] font-semibold text-white disabled:opacity-50"
+                  style={{ background: 'var(--primary-action)' }}
+                >
+                  Save
+                </button>
+                <button
+                  type="button"
+                  onClick={cancelRename}
+                  disabled={busy}
+                  data-testid={`fs-rename-cancel-${entry.block}`}
+                  className="rounded px-2 py-0.5 text-[11px] font-semibold disabled:opacity-50"
+                  style={{ color: 'var(--muted)' }}
+                >
+                  Cancel
+                </button>
+              </div>
+            ) : deleteBlock === entry.block ? (
+              <div className="flex flex-wrap items-center gap-2 pl-[22px]">
+                <span className="text-[11px]" style={{ color: 'var(--muted)' }}>
+                  Delete &quot;{entry.name}&quot;{isDir ? ' and everything inside it' : ''}? This cannot be undone.
+                </span>
+                <button
+                  type="button"
+                  onClick={() => submitDelete(entry.block)}
+                  disabled={busy}
+                  data-testid={`fs-delete-confirm-${entry.block}`}
+                  className="rounded px-2 py-0.5 text-[11px] font-semibold text-white disabled:opacity-50"
+                  style={{ background: 'var(--danger-fg)' }}
+                >
+                  Delete
+                </button>
+                <button
+                  type="button"
+                  onClick={cancelDelete}
+                  disabled={busy}
+                  data-testid={`fs-delete-cancel-${entry.block}`}
+                  className="rounded px-2 py-0.5 text-[11px] font-semibold disabled:opacity-50"
+                  style={{ color: 'var(--muted)' }}
+                >
+                  Cancel
+                </button>
+              </div>
+            ) : (
+              <div className="flex items-center gap-3 pl-[22px]">
+                <a
+                  href="#"
+                  onClick={(e) => { e.preventDefault(); if (!disabled) startRename(entry); }}
+                  aria-disabled={!!disabled}
+                  title={disabled?.message}
+                  data-testid={`fs-rename-${entry.block}`}
+                  className="text-[11px] font-semibold underline-offset-2 hover:underline"
+                  style={{ color: disabled ? 'var(--muted-2)' : 'var(--muted)', opacity: disabled ? 0.5 : 1 }}
+                >
+                  Rename
+                </a>
+                <a
+                  href="#"
+                  onClick={(e) => { e.preventDefault(); if (!disabled) startDelete(entry); }}
+                  aria-disabled={!!disabled}
+                  title={disabled?.message}
+                  data-testid={`fs-delete-${entry.block}`}
+                  className="text-[11px] font-semibold underline-offset-2 hover:underline"
+                  style={{ color: disabled ? 'var(--muted-2)' : 'var(--muted)', opacity: disabled ? 0.5 : 1 }}
+                >
+                  Delete
+                </a>
+              </div>
+            )}
           </div>
         );
       })}
