@@ -1,7 +1,7 @@
 import { notFound } from 'next/navigation';
 import { and, eq, or } from 'drizzle-orm';
 import { getDb } from '@/db';
-import { disks, entitlements, games } from '@/db/schema/catalog';
+import { disks, entitlements, games, blobs } from '@/db/schema/catalog';
 import { devices } from '@/db/schema/devices';
 import { requireOrg } from '@/lib/session';
 import { diskStore } from '@/lib/storage';
@@ -32,12 +32,26 @@ export default async function DiskFilesPage(props: PageProps<'/disks/[id]/files'
       sha256: disks.sha256, diskNo: disks.diskNo, gameId: disks.gameId,
       tosecName: disks.tosecName, sourceFilename: entitlements.sourceFilename,
       gameTitle: games.title,
+      // NOT the same question as `tosecName IS NOT NULL`: that column holds
+      // the uploaded (or, for an authored disk, the volume-derived) filename
+      // right up until a real match overwrites it (HANDOFF.md's own
+      // cross-reference trap, and /api/disks/create stamps
+      // `${volumeName}.adf` into every blank disk it creates). matchState is
+      // the actual verdict -- 'matched' | 'none' | 'ambiguous' | null (not
+      // yet checked) -- and only 'matched' means this disk really has a
+      // TOSEC identity to lose.
+      matchState: blobs.matchState,
     })
     .from(disks)
     .innerJoin(entitlements, and(
       eq(entitlements.sha256, disks.sha256),
       eq(entitlements.orgId, orgId),
     ))
+    // Global, not per-tenant (blobs has no orgId), and LEFT: a blob the
+    // sweeper hasn't reached yet has no row-level state to report beyond
+    // matchState being null, which the D-W-3 gate below already treats the
+    // same as 'none'.
+    .leftJoin(blobs, eq(blobs.sha256, disks.sha256))
     // Only to label the back link with where it actually goes. A LEFT join,
     // and scoped on orgId as well as the id: nothing in the schema guarantees
     // disks.orgId matches its game's org (listGames documents the same
@@ -52,6 +66,14 @@ export default async function DiskFilesPage(props: PageProps<'/disks/[id]/files'
   if (!disk) notFound();
 
   const filename = disk.tosecName ?? disk.sourceFilename ?? `${disk.sha256.slice(0, 12)}.adf`;
+
+  // D-W-3's warning is for a disk that REALLY has a TOSEC identity to drop,
+  // not any disk whose (frequently uploader-chosen) tosecName happens to be
+  // non-null -- see the query comment above. `tosecName` here still carries
+  // the canonical rom name, because applyMatch only ever overwrites it WHEN
+  // it also stamps matchState 'matched' (tosec-apply.ts / tosec-sweep.ts),
+  // so the two stay in lockstep for exactly the disks this should fire for.
+  const matchedTosecName = disk.matchState === 'matched' ? disk.tosecName : null;
 
   let bytes: Uint8Array | null = null;
   try {
@@ -134,7 +156,7 @@ export default async function DiskFilesPage(props: PageProps<'/disks/[id]/files'
             The stored bytes for this disk could not be read.
           </div>
         ) : (
-          <FileEditProvider diskId={id} disabled={disabled} tosecName={disk.tosecName}>
+          <FileEditProvider diskId={id} disabled={disabled} tosecName={matchedTosecName}>
             <VolumeHeader result={volume} filename={filename} usage={usage} />
             {/*
               Shown even when there is no filesystem to browse -- a disk

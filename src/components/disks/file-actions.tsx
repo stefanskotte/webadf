@@ -84,7 +84,16 @@ export function FileEditProvider({
 }: {
   diskId: string;
   disabled: EditDisabled | null;
-  /** Non-null when this disk currently matches a TOSEC entry (D-W-3). */
+  /**
+   * Non-null ONLY when this disk currently matches a TOSEC entry (D-W-3) --
+   * that is, `blobs.matchState === 'matched'` for its sha256, not merely
+   * `disks.tosecName IS NOT NULL`. That column also holds the uploaded
+   * filename (or, for an authored disk, `${volumeName}.adf` --
+   * /api/disks/create) until a real match overwrites it, so a caller that
+   * passes the raw column here would show this warning on every edit of
+   * every disk, matched or not. See page.tsx's query comment for the join
+   * that gets this right.
+   */
   tosecName: string | null;
   children: ReactNode;
 }) {
