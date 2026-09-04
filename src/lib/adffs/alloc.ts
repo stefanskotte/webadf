@@ -35,9 +35,28 @@ export function bitmapPage(adf: Uint8Array): number | null {
   return be32(adf, ROOT_BLOCK * BLOCK_BYTES + 316);
 }
 
-/** True when the block is free according to the bitmap. SET means free. */
+/**
+ * True when the block is free according to the bitmap. SET means free.
+ *
+ * Routed through `bitmapPage()` rather than reading bm_pages[0] raw: per
+ * spec D-W-5, "a disk whose bitmap readUsage() rejects is not writable"
+ * binds every function here, not just `allocate`. Reading the pointer
+ * without the trust gate let a corrupted bm_pages[0] be trusted anyway.
+ *
+ * Bounds/exclusion mirrors `free`'s guard exactly, and the two answers this
+ * gives for anything outside its remit -- an untrusted bitmap, a block
+ * outside 2..1759, or a protected block (root, bitmap page itself) -- are
+ * both `false`. The bitmap block has 4064 addressable bits but only 1758
+ * correspond to real blocks; format.ts leaves the padding past block 1759
+ * set to 0xff ("free"), so an unguarded read of block 2000 would come back
+ * `true` -- a plausible-looking but meaningless answer. `false` is the safe
+ * direction here, matching `free`'s silent no-op on the same inputs: never
+ * claim a block is available to use when this function isn't sure.
+ */
 export function isFree(adf: Uint8Array, block: number): boolean {
-  const page = be32(adf, ROOT_BLOCK * BLOCK_BYTES + 316);
+  const page = bitmapPage(adf);
+  if (page === null) return false;
+  if (block === ROOT_BLOCK || block === page || block < BITMAP_FIRST_BLOCK || block >= BLOCK_COUNT) return false;
   const bit = block - BITMAP_FIRST_BLOCK;
   const o = page * BLOCK_BYTES + 4 + (bit >>> 5) * 4;
   return (be32(adf, o) & (1 << (bit & 31))) !== 0;
@@ -95,9 +114,20 @@ export function allocate(adf: Uint8Array, n: number): number[] | null {
  * The root and bitmap blocks, and anything outside the bitmap's range, are
  * silently skipped rather than freed -- they must never read as available,
  * no matter what a caller passes in.
+ *
+ * Routed through `bitmapPage()` rather than reading bm_pages[0] raw (same
+ * D-W-5 reasoning as `isFree`): when the bitmap cannot be trusted, `free`
+ * does nothing at all -- no bit is touched and no checksum is written.
+ * Reading the pointer raw had a concrete failure mode: if bm_pages[0] were
+ * corrupted to equal ROOT_BLOCK (880), the old `b === page` guard degraded
+ * to "skip anything equal to 880" and `rechecksum(adf, 880)` would have
+ * written a checksum at offset 0 of the ROOT block itself, corrupting it.
+ * `bitmapPage()` cannot return 880 -- `readUsage` already refuses a bitmap
+ * pointer equal to ROOT_BLOCK -- so that path is now unreachable.
  */
 export function free(adf: Uint8Array, blocks: number[]): void {
-  const page = be32(adf, ROOT_BLOCK * BLOCK_BYTES + 316);
+  const page = bitmapPage(adf);
+  if (page === null) return;
   for (const b of blocks) {
     if (b === ROOT_BLOCK || b === page || b < BITMAP_FIRST_BLOCK || b >= BLOCK_COUNT) continue;
     setBit(adf, page, b, true);
