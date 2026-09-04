@@ -295,6 +295,13 @@ export async function sweep(budgetMs: number = DEFAULT_BUDGET_MS): Promise<Sweep
 export interface ScanStatus {
   blobs: number; hashed: number; matched: number; none: number;
   ambiguous: number; unchecked: number; unreadable: number; tosecEntries: number;
+  /**
+   * Blobs in match_state 'none' whose every referencing disk belongs to an
+   * AUTHORED game. Not misses: a disk somebody made is in no preservation set
+   * and never will be, so counting it would make the coverage rate fall every
+   * time the operator creates one.
+   */
+  authoredNone: number;
   enriched: number; enrichNone: number; enrichAmbiguous: number; enrichUnchecked: number;
   openretroEntries: number; imagesStored: number; imageBytes: number;
   sets: Array<{ setName: string; setVersion: string | null; entries: number }>;
@@ -318,6 +325,25 @@ export async function scanStatus(): Promise<ScanStatus> {
       -- reported TOSEC hit rate during, say, a storage outage.
       (select count(*)::int from blobs where hashed_at is not null
         and sha1 is null)                                                        as unreadable,
+      -- Disks somebody MADE here rather than uploaded. They will hash to
+      -- something no DAT contains, so they land in match_state 'none' --
+      -- correct, and not a miss: a disk the operator authored is in no
+      -- preservation set and never will be. Counting them would make the
+      -- reported coverage fall every time they make one, reporting their own
+      -- work as a gap in the archive.
+      --
+      -- EVERY disk on the blob must be authored, not just one. A blob is
+      -- global and content-addressed: if the same bytes also back a real
+      -- uploaded disk in any organization, then it IS an archive disk that
+      -- TOSEC failed to recognise, and that is exactly what this rate is for.
+      (select count(*)::int from blobs b
+        where b.match_state = 'none'
+          and exists (select 1 from disks d where d.sha256 = b.sha256)
+          and not exists (
+            select 1 from disks d
+            join games g on g.id = d.game_id
+            where d.sha256 = b.sha256 and g.authored = false
+          ))                                                                     as authored_none,
       (select count(*)::int from tosec_entries)                                  as tosec_entries,
       (select count(*)::int from blobs where enrich_state = 'enriched')          as enriched,
       (select count(*)::int from blobs where enrich_state = 'none')              as enrich_none,
@@ -344,6 +370,7 @@ export async function scanStatus(): Promise<ScanStatus> {
     blobs: Number(r.blobs), hashed: Number(r.hashed), matched: Number(r.matched),
     none: Number(r.none), ambiguous: Number(r.ambiguous), unchecked: Number(r.unchecked),
     unreadable: Number(r.unreadable),
+    authoredNone: Number(r.authored_none),
     tosecEntries: Number(r.tosec_entries),
     enriched: Number(r.enriched), enrichNone: Number(r.enrich_none),
     enrichAmbiguous: Number(r.enrich_ambiguous), enrichUnchecked: Number(r.enrich_unchecked),
