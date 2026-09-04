@@ -20,16 +20,36 @@ export interface FileBytes {
   warnings: string[];
 }
 
-/** Every data block of a file, in order, following extension blocks. */
-function dataBlocks(adf: Uint8Array, headerBlock: number, warnings: string[]): number[] {
+export interface FileBlocks {
+  /** Every data block, in order. */
+  data: number[];
+  /** Every T_LIST extension block in the chain, in order. Excludes the header itself. */
+  extensions: number[];
+}
+
+/**
+ * Every block reachable from a file's header: its data blocks (in order)
+ * and its extension blocks.
+ *
+ * Shared by `readFileBytes` (which only needs `.data`) and `deleteEntry` in
+ * write.ts (which needs both, to free every block a deleted file held) --
+ * ONE walk, so a hostile image cannot make the two disagree about which
+ * blocks belong to a file. A second, independent walk in write.ts would
+ * risk exactly that: freeing a block this reader still thinks is live data,
+ * or leaking one it no longer reaches.
+ */
+export function collectFileBlocks(adf: Uint8Array, headerBlock: number, warnings: string[]): FileBlocks {
   const warn = (m: string) => { if (warnings.length < 50) warnings.push(m); };
-  const out: number[] = [];
+  const data: number[] = [];
+  const extensions: number[] = [];
   const seen = new Set<number>([headerBlock]);
   let current: number | null = headerBlock;
+  let isHeader = true;
 
   while (current !== null) {
     const b = blockAt(adf, current);
     if (!b) { warn(`block ${current} is out of range`); break; }
+    if (!isHeader) extensions.push(current);
 
     // Pointers live at 24..307 in REVERSE order: the LAST slot is the FIRST
     // data block. Reading them forwards produces a file of the right length
@@ -48,8 +68,8 @@ function dataBlocks(adf: Uint8Array, headerBlock: number, warnings: string[]): n
     for (let i = HASH_TABLE_SIZE - 1; i >= 0; i--) {
       const ptr = be32(b, 24 + i * 4);
       if (ptr === 0) continue;
-      if (out.length >= BLOCK_COUNT) { capped = true; break; }
-      out.push(ptr);
+      if (data.length >= BLOCK_COUNT) { capped = true; break; }
+      data.push(ptr);
     }
     if (capped) {
       warn(`data pointer list exceeds ${BLOCK_COUNT} blocks; stopping collection`);
@@ -61,8 +81,9 @@ function dataBlocks(adf: Uint8Array, headerBlock: number, warnings: string[]): n
     if (seen.has(next)) { warn(`extension chain cycle at block ${next}`); break; }
     seen.add(next);
     current = next;
+    isHeader = false;
   }
-  return out;
+  return { data, extensions };
 }
 
 /**
@@ -85,7 +106,7 @@ export function readFileBytes(
   const warnings: string[] = [];
   const warn = (m: string) => { if (warnings.length < 50) warnings.push(m); };
   const declared = be32(header, 324);
-  const blocks = dataBlocks(adf, headerBlock, warnings);
+  const blocks = collectFileBlocks(adf, headerBlock, warnings).data;
 
   const chunks: Uint8Array[] = [];
   let total = 0;

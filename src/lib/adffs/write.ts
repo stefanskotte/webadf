@@ -9,12 +9,13 @@ import {
   BLOCK_BYTES, HASH_TABLE_SIZE, CHECKSUM_WORD, OFS_DATA_BYTES,
   OFS_DATA_CHECKSUM_WORD, T_HEADER, T_DATA, T_LIST, ST_FILE,
 } from './constants';
-import { be32, blockChecksum } from './blocks';
+import { blockAt, be32, i32, checksumOk, bcplString, blockChecksum } from './blocks';
 import { putBe32, putName, recheck } from './write-blocks';
 import { nameHash } from './hash';
-import { allocate, bitmapPage } from './alloc';
+import { allocate, free, bitmapPage } from './alloc';
 import { readBoot, type Filesystem } from './boot';
 import { walkDirectory } from './dir';
+import { collectFileBlocks } from './file';
 
 export type WriteError =
   | 'disk-full' | 'name-too-long' | 'name-exists' | 'not-found'
@@ -193,5 +194,78 @@ export function addFile(
   writeFileHeader(out, header, parentBlock, name, bytes.length, data.slice(0, HASH_TABLE_SIZE), exts[0] ?? 0);
   writeExtensionBlocks(out, exts, data, header);
   linkIntoDirectory(out, parentBlock, header, name, boot.intl);
+  return { ok: true, adf: out };
+}
+
+/**
+ * The slot or entry that points AT `entry`, so it can be relinked around.
+ *
+ * `entry`'s bucket is a singly-linked chain, and its predecessor is one of
+ * two shapes: the bucket SLOT itself (`dir + 24 + bucket*4`, when `entry`
+ * is the chain head), or another entry's `next_hash` field (`predecessor +
+ * 496`, otherwise). Relinking the wrong one loses every entry AFTER the
+ * deleted one -- `walkDirectory` reports the shorter list without any
+ * complaint, since a truncated chain still looks like a well-formed one.
+ *
+ * Guarded against a chain cycle the same way `walkDirectory` is (a `seen`
+ * set): a hostile chain that never reaches `entry` must terminate this scan
+ * rather than loop forever. Returns null both when the chain genuinely
+ * doesn't contain `entry` and when a cycle prevented finding out --
+ * `deleteEntry` treats both as `not-found`.
+ */
+function predecessorOf(adf: Uint8Array, dir: number, entry: number, name: string, intl: boolean):
+  { kind: 'slot'; offset: number } | { kind: 'entry'; offset: number; block: number } | null {
+  const slotOffset = dir * BLOCK_BYTES + 24 + nameHash(name, intl) * 4;
+  let ptr = be32(adf, slotOffset);
+  if (ptr === entry) return { kind: 'slot', offset: slotOffset };
+  const seen = new Set<number>();
+  while (ptr !== 0 && !seen.has(ptr)) {
+    seen.add(ptr);
+    const nextOffset = ptr * BLOCK_BYTES + 496;
+    if (be32(adf, nextOffset) === entry) return { kind: 'entry', offset: nextOffset, block: ptr };
+    ptr = be32(adf, nextOffset);
+  }
+  return null;
+}
+
+/**
+ * Delete a file: unlink its header from `parentBlock`'s hash chain, then
+ * free the header plus every data and extension block it held.
+ *
+ * `entryBlock` must be a FILE header (checksum-valid, `ST_FILE`) that is
+ * actually `parentBlock`'s child and actually reachable through its hash
+ * chain -- anything else is `not-found`, never a throw and never a partial
+ * write (mirrors `addFile`'s D-W-4 ordering: everything is validated before
+ * the first byte is copied or freed).
+ *
+ * Directories are refused here (also `not-found`) rather than handled: Task
+ * 8 extends this to recurse into a directory's own entries before freeing
+ * it. Reusing the file walk from `file.ts` for block collection keeps that
+ * extension a matter of adding a second case, not rewriting this one.
+ */
+export function deleteEntry(adf: Uint8Array, parentBlock: number, entryBlock: number): WriteResult {
+  const boot = readBoot(adf);
+  if (!boot) return { ok: false, reason: 'no-filesystem' };
+  if (bitmapPage(adf) === null) return { ok: false, reason: 'bitmap-untrusted' };
+
+  const header = blockAt(adf, entryBlock);
+  if (!header) return { ok: false, reason: 'not-found' };
+  if (be32(header, 0) !== T_HEADER) return { ok: false, reason: 'not-found' };
+  if (!checksumOk(header, CHECKSUM_WORD)) return { ok: false, reason: 'not-found' };
+  if (i32(header, 508) !== ST_FILE) return { ok: false, reason: 'not-found' };
+  if (be32(header, 500) !== parentBlock) return { ok: false, reason: 'not-found' };
+
+  const name = bcplString(header, 432, 30);
+  const pred = predecessorOf(adf, parentBlock, entryBlock, name, boot.intl);
+  if (!pred) return { ok: false, reason: 'not-found' };
+
+  const nextHash = be32(header, 496);
+  const out = adf.slice();                       // never mutate the input
+  putBe32(out, pred.offset, nextHash);
+  recheck(out, pred.kind === 'slot' ? parentBlock : pred.block);
+
+  const warnings: string[] = [];
+  const { data, extensions } = collectFileBlocks(out, entryBlock, warnings);
+  free(out, [entryBlock, ...data, ...extensions]);
   return { ok: true, adf: out };
 }
