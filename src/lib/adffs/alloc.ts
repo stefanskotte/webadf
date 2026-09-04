@@ -36,6 +36,25 @@ export function bitmapPage(adf: Uint8Array): number | null {
 }
 
 /**
+ * O(1) bit read given a page ALREADY resolved and trusted by the caller.
+ * Internal only -- every external entry point must resolve and trust the
+ * page itself (via `bitmapPage()`) before reaching this; it does no
+ * exclusion or bounds checking of its own.
+ *
+ * Split out from `isFree` so `allocate`'s candidate scan can call this
+ * directly: `isFree` re-resolves the trusted page (an O(1758) `readUsage`
+ * scan) on every call, which made `allocate`'s O(n) loop effectively
+ * O(n * 1758) when it called `isFree` per candidate block. `allocate`
+ * resolves the page once and calls this instead -- see `allocate`'s
+ * comment.
+ */
+function isFreeAt(adf: Uint8Array, page: number, block: number): boolean {
+  const bit = block - BITMAP_FIRST_BLOCK;
+  const o = page * BLOCK_BYTES + 4 + (bit >>> 5) * 4;
+  return (be32(adf, o) & (1 << (bit & 31))) !== 0;
+}
+
+/**
  * True when the block is free according to the bitmap. SET means free.
  *
  * Routed through `bitmapPage()` rather than reading bm_pages[0] raw: per
@@ -52,14 +71,18 @@ export function bitmapPage(adf: Uint8Array): number | null {
  * `true` -- a plausible-looking but meaningless answer. `false` is the safe
  * direction here, matching `free`'s silent no-op on the same inputs: never
  * claim a block is available to use when this function isn't sure.
+ *
+ * This is the single-call, externally-facing form: it pays the full
+ * `bitmapPage()` trust check every time, which is correct for a caller
+ * checking one block in isolation. A caller checking many blocks against
+ * the same disk (`allocate`'s scan) should resolve the page once instead --
+ * see `isFreeAt`.
  */
 export function isFree(adf: Uint8Array, block: number): boolean {
   const page = bitmapPage(adf);
   if (page === null) return false;
   if (block === ROOT_BLOCK || block === page || block < BITMAP_FIRST_BLOCK || block >= BLOCK_COUNT) return false;
-  const bit = block - BITMAP_FIRST_BLOCK;
-  const o = page * BLOCK_BYTES + 4 + (bit >>> 5) * 4;
-  return (be32(adf, o) & (1 << (bit & 31))) !== 0;
+  return isFreeAt(adf, page, block);
 }
 
 /** Read-modify-write one bit. freeNow true sets the bit (free); false clears it (used). */
@@ -93,6 +116,13 @@ function rechecksum(adf: Uint8Array, page: number): void {
  * ALL OR NOTHING: on failure this takes nothing. A partial allocation would
  * leave blocks marked used that nothing will ever free -- a permanent leak
  * on a real Amiga, since the reader here never writes the bitmap on its own.
+ *
+ * Resolves the trusted page ONCE, then scans with `isFreeAt` (an O(1) bit
+ * read) rather than `isFree` (which re-resolves the page, an O(1758)
+ * `readUsage` scan, on every call). This is the same shape `free` already
+ * used. Calling `isFree` per candidate block made this loop effectively
+ * O(n * 1758) instead of O(n) -- allocating most of a disk ran roughly
+ * 1758^2 ~= 3.1M elementary operations where it should run ~1758.
  */
 export function allocate(adf: Uint8Array, n: number): number[] | null {
   const page = bitmapPage(adf);
@@ -100,7 +130,7 @@ export function allocate(adf: Uint8Array, n: number): number[] | null {
   const out: number[] = [];
   for (let b = BITMAP_FIRST_BLOCK; b < BLOCK_COUNT && out.length < n; b++) {
     if (b === ROOT_BLOCK || b === page) continue;
-    if (isFree(adf, b)) out.push(b);
+    if (isFreeAt(adf, page, b)) out.push(b);
   }
   if (out.length < n) return null;
   for (const b of out) setBit(adf, page, b, false);
