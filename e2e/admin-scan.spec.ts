@@ -2,7 +2,7 @@ import { test, expect } from '@playwright/test';
 import { and, eq } from 'drizzle-orm';
 import { getDb } from '@/db';
 import { games, disks, blobs } from '@/db/schema/catalog';
-import { signUpFresh } from './helpers';
+import { signUpFresh, createAdf } from './helpers';
 import { signInAsSuperAdmin } from './admin-helpers';
 import { cleanupSeeded } from './device-helpers';
 import { trackTosecSet, cleanupTosec } from './tosec-helpers';
@@ -117,7 +117,7 @@ test('a disk somebody made is excluded from the coverage rate', async ({ page })
   // make one, reporting their own work as a gap in the archive.
   const u = await signUpFresh(page);
   await page.goto('/library');
-  await page.getByTestId('create-adf').click();
+  await createAdf(page);
   await expect(page.getByTestId('game-card')).toHaveCount(1);
 
   const [game] = await getDb().select().from(games)

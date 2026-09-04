@@ -202,3 +202,34 @@ test('a touch drag scrolls the library, and a press-and-hold drags a card', asyn
   await expect.poll(() => card.evaluate((el) => getComputedStyle(el).opacity)).toBe('0.4');
   await held.end();
 });
+
+test('the Create ADF menu opens and makes a disk at a phone width', async ({ page }) => {
+  await signUpFresh(page);
+  await page.goto('/library');
+
+  // Worth a mobile test specifically because of what was given up: the old
+  // control was a native <select>, and a phone renders one as an OS picker
+  // for free -- correctly sized, always on screen, impossible to get wrong.
+  // A Base UI menu inherits none of that, so it has to be asserted.
+  await page.getByTestId('create-adf').tap();
+  const ffs = page.getByTestId('create-adf-ffs');
+  await expect(ffs).toBeVisible();
+
+  // On screen horizontally. A popup anchored to a button near the right edge
+  // of a 390px viewport is the obvious way for this to go wrong.
+  const box = (await ffs.boundingBox())!;
+  expect(box.x).toBeGreaterThanOrEqual(0);
+  expect(box.x + box.width).toBeLessThanOrEqual(390);
+  // And big enough to hit with a finger rather than a mouse.
+  expect(box.height).toBeGreaterThanOrEqual(32);
+
+  await ffs.tap();
+  await expect(page.getByTestId('game-card')).toHaveCount(1);
+
+  // The menu is portalled to the body, so it can widen the document without
+  // widening any container the grid test would have caught.
+  const overflow = await page.evaluate(
+    () => document.documentElement.scrollWidth - document.documentElement.clientWidth,
+  );
+  expect(overflow).toBeLessThanOrEqual(0);
+});

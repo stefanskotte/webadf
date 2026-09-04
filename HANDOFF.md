@@ -42,6 +42,7 @@ after plan 4a, rewritten again 2026-08-31 after plan 4b.**
 | **Delete a title or a disk** | ✅ **done 2026-09-04.** Confirmation dialog, deliberate eject, blob never destroyed; see 3o |
 | **Disk space on the browse page** | ✅ **done 2026-09-04.** Read from the allocation bitmap, agreeing with xdftool on 46 of 46 real disks; see 3p |
 | **Create a blank ADF** | ✅ **done 2026-09-03.** A real formatted disk from a button, named inline; migration 0013 applied; see 3n. File add/edit/delete is NOT part of it |
+| **Create ADF is one menu** | ✅ **done 2026-09-04.** One dropdown with FFS and OFS items replaces the sticky select plus button; the filesystem is no longer remembered between disks; see 3t |
 | **Edit a title by hand** | ✅ **done 2026-09-03.** Per-group authority, and a scan never silently undoes an edit; see 3m |
 | **Unified breadcrumb** | ✅ **done 2026-09-03**, and 2026-09-04 it follows the collection you came from; see 3l and 3r |
 | **Image layout shift** | ✅ **done 2026-09-03.** The game page's cover and screenshots reserve their space; the library grid never had the bug; see 3k |
@@ -1180,6 +1181,45 @@ not run on the operator's machine at all until 2026-09-04; they resolve against 
 directory now. The Gerber exporter needs `shapely`, which will not install into a PEP 668 system
 Python: there is a gitignored `hardware/.venv`, so run
 `./.venv/bin/python export_gerbers.py`.
+
+### 3t. Create ADF is one menu, not a select plus a button — DONE 2026-09-04
+
+The library header's control was a native `<select>` (FFS/OFS) sitting beside a **Create ADF**
+button. It is now a single dropdown menu with two items, **Create ADF (FFS)** and
+**Create ADF (OFS)**, built on the same Base UI `dropdown-menu.tsx` the collection rail already
+uses. Operator's call 2026-09-04, following the note in 3n that the two-control shape needed
+revising.
+
+**The change that matters is not cosmetic: a `<select>` keeps its value.** Picking OFS once made
+every later disk OFS until somebody changed it back, and nothing on screen restated that choice
+at the moment you pressed Create. The filesystem is now part of the click instead of ambient
+state. The guard is `create-adf.spec.ts`'s "the filesystem is chosen per disk" test, which makes
+an OFS disk and then an FFS disk and reads the filesystem off the BYTES of each.
+
+**Seven call sites clicked `create-adf` and expected a disk to exist afterwards.** On a menu
+trigger that click only opens the menu, so all of them — six in `create-adf.spec.ts`, one in
+`admin-scan.spec.ts` — now go through a new **`createAdf(page, filesystem)`** helper in
+`e2e/helpers.ts`. Anything that makes a disk through the UI should use it rather than clicking
+the trigger, because forgetting the second click leaves a menu open and no disk made, which
+fails later and somewhere else.
+
+**What was given up, and the test that covers it.** A native `<select>` gets the OS picker on a
+phone for free: correctly sized, always on screen, impossible to get wrong. A Base UI menu
+inherits none of that. `mobile.spec.ts` now opens the menu at 390×844, asserts the popup sits
+inside the viewport horizontally, asserts the item is at least 32px tall, taps it, and checks
+the document did not widen. **Base UI does NOT clamp an over-wide popup back on screen** —
+proven by mutation, forcing the content to 600px fails the horizontal bound rather than being
+collision-corrected. Do not assume the primitive protects you at narrow widths. `align="start"`
+is load-bearing for the same reason: the trigger is the leftmost thing in the header's actions.
+
+**Suite:** 464 vitest, `pnpm build` clean, lint at the 3-error baseline, **208 Playwright** — 202 desktop and
+6 mobile.
+
+**One failure in that run, and it was not this change:** `game-edit.spec.ts`'s "handing identity
+back restores what the scan found" hit its 280s timeout waiting for `edit-details` to appear,
+then passed **alone in 18.3s**. It is a sweep test, it never references the Create ADF control,
+and this is the flake shape already recorded above. Re-run it alone before treating it as a
+regression.
 
 ### 4. Backlog, not blocking anything
 

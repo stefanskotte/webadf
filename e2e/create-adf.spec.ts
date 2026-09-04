@@ -3,7 +3,7 @@ import { and, eq } from 'drizzle-orm';
 import { getDb } from '@/db';
 import { games, disks } from '@/db/schema/catalog';
 import { readVolume } from '@/lib/adffs';
-import { signUpFresh, runTag } from './helpers';
+import { signUpFresh, runTag, createAdf } from './helpers';
 import { cleanupSeeded } from './device-helpers';
 
 test.afterAll(cleanupSeeded);
@@ -15,7 +15,7 @@ test('a blank disk is made, is real immediately, and an Amiga could mount it', a
   const u = await signUpFresh(page);
   await page.goto('/library');
 
-  await page.getByTestId('create-adf').click();
+  await createAdf(page);
   await expect(page.getByTestId('game-card')).toHaveCount(1);
 
   // Real the moment it appears (operator's ruling): rows exist, bytes exist.
@@ -50,8 +50,7 @@ test('OFS is selectable, and it really is OFS on the disk', async ({ page }) => 
   const u = await signUpFresh(page);
   await page.goto('/library');
 
-  await page.getByTestId('create-adf-fs').selectOption('OFS');
-  await page.getByTestId('create-adf').click();
+  await createAdf(page, 'OFS');
   await expect(page.getByTestId('game-card')).toHaveCount(1);
 
   const [game] = await getDb().select().from(games)
@@ -68,7 +67,7 @@ test('renaming on the card rewrites the disk under a new digest', async ({ page 
   const run = runTag();
   const u = await signUpFresh(page);
   await page.goto('/library');
-  await page.getByTestId('create-adf').click();
+  await createAdf(page);
   await expect(page.getByTestId('game-card')).toHaveCount(1);
 
   const [game] = await getDb().select().from(games)
@@ -98,7 +97,7 @@ test('renaming on the card rewrites the disk under a new digest', async ({ page 
 test('typing in the name field neither navigates nor drags the card', async ({ page }) => {
   const u = await signUpFresh(page);
   await page.goto('/library');
-  await page.getByTestId('create-adf').click();
+  await createAdf(page);
   await expect(page.getByTestId('game-card')).toHaveCount(1);
 
   const [game] = await getDb().select().from(games)
@@ -119,7 +118,7 @@ test('a disk made inside a collection lands in that collection, first', async ({
   const collectionId = (await created.json()).id as string;
 
   await page.goto(`/library?collection=${collectionId}`);
-  await page.getByTestId('create-adf').click();
+  await createAdf(page);
 
   // "Created where you stand." It has to be visible where it was made, or it
   // cannot be named.
@@ -138,7 +137,7 @@ test('an uploaded title gets no rename field, and another tenant cannot rename',
   await signUpFresh(pb);
 
   await pa.goto('/library');
-  await pa.getByTestId('create-adf').click();
+  await createAdf(pa);
   await expect(pa.getByTestId('game-card')).toHaveCount(1);
   const [game] = await getDb().select().from(games)
     .where(and(eq(games.orgId, ua.orgId), eq(games.authored, true)));
@@ -157,4 +156,36 @@ test('an uploaded title gets no rename field, and another tenant cannot rename',
 
   await a.close();
   await b.close();
+});
+
+test('the filesystem is chosen per disk, not left set from last time', async ({ page }) => {
+  const u = await signUpFresh(page);
+  await page.goto('/library');
+
+  // The old control was a <select> sitting beside the button, and it kept its
+  // value: making one OFS disk quietly made every later disk OFS until
+  // someone noticed and put it back. Choosing from the menu makes the
+  // filesystem part of the click, and this is the assertion that fails if a
+  // sticky default ever returns.
+  await createAdf(page, 'OFS');
+  await expect(page.getByTestId('game-card')).toHaveCount(1);
+  await createAdf(page, 'FFS');
+  await expect(page.getByTestId('game-card')).toHaveCount(2);
+
+  const made = await getDb().select().from(games)
+    .where(and(eq(games.orgId, u.orgId), eq(games.authored, true)));
+  expect(made.length).toBe(2);
+
+  // Read the filesystem off the BYTES of each disk, not off any UI state.
+  // Sorted rather than indexed: the library is createdAt-descending and this
+  // asserts which filesystems exist, not which card came back first.
+  const filesystems: string[] = [];
+  for (const g of made) {
+    const [disk] = await getDb().select().from(disks).where(eq(disks.gameId, g.id));
+    const adf = await page.request.get(`/api/disks/${disk.id}/adf`);
+    const v = readVolume(new Uint8Array(await adf.body()));
+    expect(v.ok).toBe(true);
+    if (v.ok) filesystems.push(v.volume.filesystem);
+  }
+  expect(filesystems.sort()).toEqual(['FFS', 'OFS']);
 });

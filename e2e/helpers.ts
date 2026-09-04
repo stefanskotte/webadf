@@ -92,3 +92,20 @@ export async function signUpFresh(page: Page) {
   if (orgId) signedUpOrgIds.push(orgId);
   return { email, password, inviteCode, orgId: orgId ?? '' };
 }
+
+/**
+ * Make a blank disk from the library header's "Create ADF" menu.
+ *
+ * Every caller goes through here because the trigger click alone no longer
+ * creates anything. It used to: the control was a sticky <select> beside a
+ * button, so a bare `create-adf` click made a disk using whatever filesystem
+ * had last been selected -- including one selected by an earlier action. The
+ * menu makes the filesystem part of the click instead of ambient state, and
+ * that means a caller that forgets the second click leaves a menu open and no
+ * disk made. Keeping the two-step in one place is what stops that being
+ * rediscovered per spec.
+ */
+export async function createAdf(page: Page, filesystem: 'FFS' | 'OFS' = 'FFS') {
+  await page.getByTestId('create-adf').click();
+  await page.getByTestId(`create-adf-${filesystem.toLowerCase()}`).click();
+}
