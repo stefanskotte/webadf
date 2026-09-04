@@ -56,7 +56,8 @@ function putBe32(buf: Uint8Array, offset: number, value: number): void {
  * AmigaDOS keeps dates as days since 1978-01-01 plus minutes plus ticks of
  * 1/50 s. Written into the three consecutive longs at `offset`.
  */
-function putAmigaDate(buf: Uint8Array, offset: number, when: Date): void {
+/** Exported so write.ts's `makeDirectory` can reuse it -- D-W-2: one implementation. */
+export function putAmigaDate(buf: Uint8Array, offset: number, when: Date): void {
   const epoch = Date.UTC(1978, 0, 1);
   const ms = when.getTime() - epoch;
   const days = Math.floor(ms / 86_400_000);

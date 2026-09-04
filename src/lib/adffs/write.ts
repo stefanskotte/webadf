@@ -7,15 +7,16 @@
 
 import {
   BLOCK_BYTES, HASH_TABLE_SIZE, CHECKSUM_WORD, OFS_DATA_BYTES,
-  OFS_DATA_CHECKSUM_WORD, T_HEADER, T_DATA, T_LIST, ST_FILE,
+  OFS_DATA_CHECKSUM_WORD, T_HEADER, T_DATA, T_LIST, ST_FILE, ST_USERDIR,
 } from './constants';
 import { blockAt, be32, i32, checksumOk, bcplString, blockChecksum } from './blocks';
 import { putBe32, putName, recheck } from './write-blocks';
 import { nameHash } from './hash';
 import { allocate, free, bitmapPage } from './alloc';
 import { readBoot, type Filesystem } from './boot';
-import { walkDirectory } from './dir';
+import { walkDirectory, type AdfEntry } from './dir';
 import { collectFileBlocks } from './file';
+import { putAmigaDate } from './format';
 
 export type WriteError =
   | 'disk-full' | 'name-too-long' | 'name-exists' | 'not-found'
@@ -221,6 +222,62 @@ export function addFile(
 }
 
 /**
+ * Write a directory header block: `T_HEADER` / `ST_USERDIR`, a name, a date,
+ * a parent pointer, and 72 EMPTY hash slots. No data blocks and no
+ * extension blocks -- a directory's free set (see `collectSubtreeBlocks`) is
+ * just its own block plus everything beneath it.
+ *
+ * The WHOLE block is zeroed first, not just the fields this function goes on
+ * to set. `allocate` can hand back a block a previous `deleteEntry` or
+ * `replaceFile` freed, and `free` never clears content (same lesson as
+ * `writeFileHeader`'s doc comment, Task 7) -- so a reused block may still
+ * carry another header's hash table, name, comment or size bytes. A directory
+ * has no field that legitimately holds most of a file header's content, so
+ * zeroing the entire 512 bytes is both simpler than field-by-field clearing
+ * and the only way to guarantee the 72 hash slots read as empty regardless
+ * of what the block held before.
+ */
+function writeDirectoryHeader(
+  adf: Uint8Array, block: number, parent: number, name: string, when: Date,
+): void {
+  const bs = block * BLOCK_BYTES;
+  adf.fill(0, bs, bs + BLOCK_BYTES);
+  putBe32(adf, bs, T_HEADER);
+  putBe32(adf, bs + 4, block);
+  putAmigaDate(adf, bs + 420, when);
+  putName(adf, bs, name);
+  putBe32(adf, bs + 500, parent);
+  putBe32(adf, bs + 508, ST_USERDIR);
+  putBe32(adf, bs + CHECKSUM_WORD * 4,
+    blockChecksum(adf.subarray(bs, bs + BLOCK_BYTES), CHECKSUM_WORD));
+}
+
+/**
+ * Create a new, empty directory inside `parentBlock`.
+ *
+ * Allocates exactly one block and links it in exactly as `addFile` does --
+ * same validation order (D-W-4), same duplicate-name check across BOTH
+ * kinds of entry (`entryNamed` does not distinguish file from directory, so
+ * a directory can't be named over an existing file or vice versa).
+ */
+export function makeDirectory(adf: Uint8Array, parentBlock: number, name: string): WriteResult {
+  if (name.length === 0 || name.length > 30) return { ok: false, reason: 'name-too-long' };
+  const boot = readBoot(adf);
+  if (!boot) return { ok: false, reason: 'no-filesystem' };
+  if (bitmapPage(adf) === null) return { ok: false, reason: 'bitmap-untrusted' };
+  if (entryNamed(adf, parentBlock, name, boot.intl)) return { ok: false, reason: 'name-exists' };
+
+  const out = adf.slice();                       // never mutate the input
+  const blocks = allocate(out, 1);
+  if (!blocks) return { ok: false, reason: 'disk-full' };
+  const [dir] = blocks;
+
+  writeDirectoryHeader(out, dir, parentBlock, name, new Date());
+  linkIntoDirectory(out, parentBlock, dir, name, boot.intl);
+  return { ok: true, adf: out };
+}
+
+/**
  * The slot or entry that points AT `entry`, so it can be relinked around.
  *
  * `entry`'s bucket is a singly-linked chain, and its predecessor is one of
@@ -252,19 +309,57 @@ function predecessorOf(adf: Uint8Array, dir: number, entry: number, name: string
 }
 
 /**
- * Delete a file: unlink its header from `parentBlock`'s hash chain, then
- * free the header plus every data and extension block it held.
+ * Every block a directory subtree holds: the directory's own block, every
+ * descendant directory's own block, and every descendant file's header,
+ * data and extension blocks.
  *
- * `entryBlock` must be a FILE header (checksum-valid, `ST_FILE`) that is
- * actually `parentBlock`'s child and actually reachable through its hash
- * chain -- anything else is `not-found`, never a throw and never a partial
- * write (mirrors `addFile`'s D-W-4 ordering: everything is validated before
- * the first byte is copied or freed).
+ * REUSES `walkDirectory` rather than inventing a second traversal (Task 8's
+ * controller ruling): `dirBlock` is passed as `walkDirectory`'s `start`, so
+ * the SAME visited-set cycle guard, the SAME `MAX_DEPTH` bound, and the SAME
+ * opinion of "what is a child of what" that the reader uses is what decides
+ * what gets freed here. A second, independently-written traversal could
+ * disagree with the reader's on a hostile image -- freeing a block the
+ * reader still considers reachable, or leaking one it doesn't -- exactly the
+ * bitmap-mistake class this function exists to avoid. File children are
+ * then expanded through `collectFileBlocks`, the same one-implementation
+ * block walk `deleteEntry`'s file case already used.
+ */
+function collectSubtreeBlocks(adf: Uint8Array, dirBlock: number, warnings: string[]): number[] {
+  const { root, warnings: walkWarnings } = walkDirectory(adf, dirBlock);
+  warnings.push(...walkWarnings);
+
+  const blocks: number[] = [dirBlock];
+  const visit = (entries: AdfEntry[]) => {
+    for (const entry of entries) {
+      if (entry.kind === 'dir') {
+        blocks.push(entry.block);
+        visit(entry.children);
+      } else {
+        const { data, extensions } = collectFileBlocks(adf, entry.block, warnings);
+        blocks.push(entry.block, ...data, ...extensions);
+      }
+    }
+  };
+  visit(root);
+  return blocks;
+}
+
+/**
+ * Delete a file or directory: unlink its header from `parentBlock`'s hash
+ * chain, then free every block it held.
  *
- * Directories are refused here (also `not-found`) rather than handled: Task
- * 8 extends this to recurse into a directory's own entries before freeing
- * it. Reusing the file walk from `file.ts` for block collection keeps that
- * extension a matter of adding a second case, not rewriting this one.
+ * `entryBlock` must be a FILE or DIRECTORY header (checksum-valid, `ST_FILE`
+ * or `ST_USERDIR`) that is actually `parentBlock`'s child and actually
+ * reachable through its hash chain -- anything else is `not-found`, never a
+ * throw and never a partial write (mirrors `addFile`'s D-W-4 ordering:
+ * everything is validated before the first byte is copied or freed).
+ *
+ * A directory is unlinked exactly like a file -- one entry, one predecessor,
+ * in `parentBlock`'s chain -- and then everything BENEATH it is freed via
+ * `collectSubtreeBlocks` before the directory's own block is. Order doesn't
+ * matter for correctness here (unlike `replaceFile`'s free-before-allocate):
+ * this never allocates, so there is no "make room first" concern, only "free
+ * every block exactly once."
  */
 export function deleteEntry(adf: Uint8Array, parentBlock: number, entryBlock: number): WriteResult {
   const boot = readBoot(adf);
@@ -275,7 +370,8 @@ export function deleteEntry(adf: Uint8Array, parentBlock: number, entryBlock: nu
   if (!header) return { ok: false, reason: 'not-found' };
   if (be32(header, 0) !== T_HEADER) return { ok: false, reason: 'not-found' };
   if (!checksumOk(header, CHECKSUM_WORD)) return { ok: false, reason: 'not-found' };
-  if (i32(header, 508) !== ST_FILE) return { ok: false, reason: 'not-found' };
+  const secondary = i32(header, 508);
+  if (secondary !== ST_FILE && secondary !== ST_USERDIR) return { ok: false, reason: 'not-found' };
   if (be32(header, 500) !== parentBlock) return { ok: false, reason: 'not-found' };
 
   const name = bcplString(header, 432, 30);
@@ -288,16 +384,31 @@ export function deleteEntry(adf: Uint8Array, parentBlock: number, entryBlock: nu
   recheck(out, pred.kind === 'slot' ? parentBlock : pred.block);
 
   const warnings: string[] = [];
-  const { data, extensions } = collectFileBlocks(out, entryBlock, warnings);
-  free(out, [entryBlock, ...data, ...extensions]);
+  let toFree: number[];
+  if (secondary === ST_USERDIR) {
+    toFree = collectSubtreeBlocks(out, entryBlock, warnings);
+  } else {
+    const { data, extensions } = collectFileBlocks(out, entryBlock, warnings);
+    toFree = [entryBlock, ...data, ...extensions];
+  }
+  free(out, toFree);
   return { ok: true, adf: out };
 }
 
 /**
- * Rename a file: unlink its header from `parentBlock`'s hash chain, write
- * the new name, then link it back in under the bucket the new name hashes
- * to. Allocates and frees nothing, so unlike `addFile`/`deleteEntry` it
- * never touches the bitmap at all.
+ * Rename a file OR a directory: unlink its header from `parentBlock`'s hash
+ * chain, write the new name, then link it back in under the bucket the new
+ * name hashes to. Allocates and frees nothing, so unlike
+ * `addFile`/`deleteEntry`/`makeDirectory` it never touches the bitmap at
+ * all.
+ *
+ * ACCEPTS `ST_USERDIR` AS WELL AS `ST_FILE` (controller ruling R-4): the
+ * spec's scope and section 5 describe rename with no file/directory
+ * qualifier, and the tree in Task 11's UI puts a rename control on every
+ * row, directories included. Nothing else in this function is
+ * kind-specific -- a directory header's name, hash-chain linkage and
+ * predecessor shape are identical to a file header's, so accepting the
+ * second secondary type is the entire change.
  *
  * THE CASE THAT DEFINES THIS FUNCTION: `nameHash` upper-cases before
  * hashing, so a case-only rename ('readme' -> 'README') lands in the SAME
@@ -321,7 +432,8 @@ export function renameEntry(
   if (!header) return { ok: false, reason: 'not-found' };
   if (be32(header, 0) !== T_HEADER) return { ok: false, reason: 'not-found' };
   if (!checksumOk(header, CHECKSUM_WORD)) return { ok: false, reason: 'not-found' };
-  if (i32(header, 508) !== ST_FILE) return { ok: false, reason: 'not-found' };
+  const secondary = i32(header, 508);
+  if (secondary !== ST_FILE && secondary !== ST_USERDIR) return { ok: false, reason: 'not-found' };
   if (be32(header, 500) !== parentBlock) return { ok: false, reason: 'not-found' };
 
   const oldName = bcplString(header, 432, 30);

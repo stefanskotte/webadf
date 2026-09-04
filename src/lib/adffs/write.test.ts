@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { addFile, deleteEntry, renameEntry, replaceFile } from './write';
+import { addFile, deleteEntry, renameEntry, replaceFile, makeDirectory } from './write';
 import { readVolume, readFile } from './index';
 import { readUsage } from './usage';
 import { readBoot } from './boot';
@@ -72,6 +72,84 @@ describe('addFile', () => {
     const before = readUsage(adf)!.freeBlocks;
     addFile(adf, 880, 'x'.repeat(31), new Uint8Array([1]));
     expect(readUsage(adf)!.freeBlocks).toBe(before);
+  });
+});
+
+describe('makeDirectory', () => {
+  it('creates a directory you can add a file into', () => {
+    const d = makeDirectory(empty(), 880, 'tools');
+    if (!d.ok) throw new Error('mkdir failed');
+    const v0 = readVolume(d.adf);
+    if (!v0.ok) return;
+    expect(v0.root[0].kind).toBe('dir');
+
+    const f = addFile(d.adf, v0.root[0].block, 'inside.txt', new Uint8Array([1]));
+    if (!f.ok) throw new Error('add failed');
+    const v = readVolume(f.adf);
+    if (!v.ok) return;
+    expect(v.root[0].children.map(c => c.name)).toEqual(['inside.txt']);
+  });
+
+  it('refuses a duplicate name (against a file OR a directory), a long name, and an untrusted bitmap', () => {
+    const one = makeDirectory(empty(), 880, 'a');
+    if (!one.ok) throw new Error('setup failed');
+    expect(makeDirectory(one.adf, 880, 'a')).toEqual({ ok: false, reason: 'name-exists' });
+
+    const withFile = addFile(empty(), 880, 'b.txt', new Uint8Array([1]));
+    if (!withFile.ok) throw new Error('setup failed');
+    expect(makeDirectory(withFile.adf, 880, 'b.txt')).toEqual({ ok: false, reason: 'name-exists' });
+
+    expect(makeDirectory(empty(), 880, 'x'.repeat(31))).toEqual({ ok: false, reason: 'name-too-long' });
+
+    const bad = empty();
+    bad[880 * 512 + 312] = 0;                       // bm_flag invalid
+    expect(makeDirectory(bad, 880, 'a')).toEqual({ ok: false, reason: 'bitmap-untrusted' });
+  });
+
+  it('does not mutate the input', () => {
+    const adf = empty();
+    const copy = adf.slice();
+    makeDirectory(adf, 880, 'tools');
+    expect(Array.from(adf)).toEqual(Array.from(copy));
+  });
+
+  // Task 7's stale-pointer lesson extended to directories: `allocate` can
+  // hand `makeDirectory` a block a previous `deleteEntry` freed, and `free`
+  // never clears content. A file with exactly 72 data blocks leaves its
+  // header's 72-slot pointer table (offset 24, the SAME offset range a
+  // directory's hash table occupies) fully populated with non-zero
+  // pointers. If that block is reused for a directory and the new header
+  // only clears fields it explicitly writes, those 72 stale pointers would
+  // be read straight back by walkDirectory as if they were live hash-chain
+  // heads.
+  it('zeroes a reused block\'s hash slots instead of leaving a stale file pointer table', () => {
+    const filler = addFile(empty(), 880, 'filler.bin', new Uint8Array(HASH_TABLE_SIZE * 512).fill(9));
+    if (!filler.ok) throw new Error('setup');
+    const v0 = readVolume(filler.adf);
+    if (!v0.ok) return;
+    const fillerBlock = v0.root[0].block;
+
+    // Precondition: the header's pointer table really is fully populated,
+    // not just plausible-looking -- otherwise this test would pass for the
+    // wrong reason.
+    const before = blockAt(filler.adf, fillerBlock)!;
+    expect(Array.from(before.subarray(24, 24 + HASH_TABLE_SIZE * 4)).some((b) => b !== 0)).toBe(true);
+
+    const del = deleteEntry(filler.adf, 880, fillerBlock);
+    if (!del.ok) throw new Error('delete failed');
+
+    const d = makeDirectory(del.adf, 880, 'reused');
+    if (!d.ok) throw new Error('mkdir failed');
+    const v = readVolume(d.adf);
+    if (!v.ok) return;
+    const dirBlock = v.root[0].block;
+    // Proves this really IS the reused block, not a coincidentally-clean one.
+    expect(dirBlock).toBe(fillerBlock);
+
+    const header = blockAt(d.adf, dirBlock)!;
+    for (let i = 0; i < HASH_TABLE_SIZE; i++) {
+      expect(be32(header, 24 + i * 4)).toBe(0);
+    }
   });
 });
 
@@ -160,6 +238,82 @@ describe('deleteEntry', () => {
       expect(v.root.map((e) => e.name).sort()).toEqual(['f0.txt', 'f96.txt']);
     });
   });
+
+  describe('on a directory', () => {
+    it('deletes a non-empty directory and frees everything under it', () => {
+      const baseline = readUsage(empty())!.freeBlocks;
+      const d = makeDirectory(empty(), 880, 'tools');
+      if (!d.ok) throw new Error('mkdir');
+      const v0 = readVolume(d.adf);
+      if (!v0.ok) return;
+      const dir = v0.root[0].block;
+      let adf = d.adf;
+      for (const n of ['a.txt', 'b.txt']) {
+        const r = addFile(adf, dir, n, new Uint8Array(1000).fill(4));
+        if (!r.ok) throw new Error('add');
+        adf = r.adf;
+      }
+
+      const r = deleteEntry(adf, 880, dir);
+      if (!r.ok) throw new Error('rmdir failed');
+      const v = readVolume(r.adf);
+      if (!v.ok) return;
+      expect(v.root).toEqual([]);
+      expect(readUsage(r.adf)!.freeBlocks).toBe(baseline);
+    });
+
+    // Recursion must genuinely descend, not just free the immediate
+    // children: a directory nested inside the deleted directory, itself
+    // holding a file, proves depth > 1 is handled and that
+    // `collectSubtreeBlocks` reuses `walkDirectory`'s own recursive
+    // traversal rather than a shallow, one-level-only walk.
+    it('recurses into nested directories, not just immediate children', () => {
+      const baseline = readUsage(empty())!.freeBlocks;
+      let adf = empty();
+
+      const outer = makeDirectory(adf, 880, 'outer');
+      if (!outer.ok) throw new Error('mkdir outer');
+      adf = outer.adf;
+      const v1 = readVolume(adf);
+      if (!v1.ok) return;
+      const outerBlock = v1.root[0].block;
+
+      const inner = makeDirectory(adf, outerBlock, 'inner');
+      if (!inner.ok) throw new Error('mkdir inner');
+      adf = inner.adf;
+      const v2 = readVolume(adf);
+      if (!v2.ok) return;
+      const innerBlock = v2.root[0].children[0].block;
+
+      const withFile = addFile(adf, innerBlock, 'deep.txt', new Uint8Array(600).fill(2));
+      if (!withFile.ok) throw new Error('add deep');
+      adf = withFile.adf;
+
+      const v3 = readVolume(adf);
+      if (!v3.ok) return;
+      expect(v3.root[0].children[0].children.map((c) => c.name)).toEqual(['deep.txt']);
+
+      const r = deleteEntry(adf, 880, outerBlock);
+      if (!r.ok) throw new Error('rmdir failed');
+      const v = readVolume(r.adf);
+      if (!v.ok) return;
+      expect(v.root).toEqual([]);
+      expect(readUsage(r.adf)!.freeBlocks).toBe(baseline);
+    });
+
+    it('does not mutate the input', () => {
+      const d = makeDirectory(empty(), 880, 'tools');
+      if (!d.ok) throw new Error('mkdir');
+      const v0 = readVolume(d.adf);
+      if (!v0.ok) return;
+      const added = addFile(d.adf, v0.root[0].block, 'a.txt', new Uint8Array([1]));
+      if (!added.ok) throw new Error('add');
+      const copy = added.adf.slice();
+
+      deleteEntry(added.adf, 880, v0.root[0].block);
+      expect(Array.from(added.adf)).toEqual(Array.from(copy));
+    });
+  });
 });
 
 describe('renameEntry', () => {
@@ -202,6 +356,67 @@ describe('renameEntry', () => {
     if (!v0.ok) return;
     const a = v0.root.find(e => e.name === 'a.txt')!;
     expect(renameEntry(adf, 880, a.block, 'b.txt')).toEqual({ ok: false, reason: 'name-exists' });
+  });
+
+  // Controller ruling R-4: the spec describes rename with no file/directory
+  // qualifier, and Task 11's UI puts a rename control on every row of a
+  // tree that includes directories. `renameEntry` originally accepted only
+  // `ST_FILE`; these prove the `ST_USERDIR` branch works, including the
+  // same case-only, same-bucket scenario the file tests above cover, since
+  // a directory header's hash-chain linkage is unlinked and relinked
+  // through the exact same code path as a file's.
+  describe('on a directory', () => {
+    it('renames into a different bucket, keeping its children reachable', () => {
+      const d = makeDirectory(empty(), 880, 'before');
+      if (!d.ok) throw new Error('mkdir');
+      const v0 = readVolume(d.adf);
+      if (!v0.ok) return;
+      const dirBlock = v0.root[0].block;
+      const withFile = addFile(d.adf, dirBlock, 'inside.txt', new Uint8Array([1]));
+      if (!withFile.ok) throw new Error('add');
+
+      const r = renameEntry(withFile.adf, 880, dirBlock, 'after');
+      if (!r.ok) throw new Error('rename failed');
+      const v = readVolume(r.adf);
+      if (!v.ok) return;
+      expect(v.root.map((e) => e.name)).toEqual(['after']);
+      expect(v.root[0].block).toBe(dirBlock);
+      expect(v.root[0].children.map((c) => c.name)).toEqual(['inside.txt']);
+    });
+
+    it('survives a rename that lands in the SAME bucket', () => {
+      // Case-only change: nameHash is case-insensitive, so old and new collide.
+      const d = makeDirectory(empty(), 880, 'readme');
+      if (!d.ok) throw new Error('mkdir');
+      const v0 = readVolume(d.adf);
+      if (!v0.ok) return;
+
+      const r = renameEntry(d.adf, 880, v0.root[0].block, 'README');
+      if (!r.ok) throw new Error('rename failed');
+      const v = readVolume(r.adf);
+      if (!v.ok) return;
+      // A self-referential pointer here would be CONTAINED by
+      // walkDirectory's cycle guard, so assert the name AND that no
+      // warning was raised.
+      expect(v.root.map((e) => e.name)).toEqual(['README']);
+      expect(v.root[0].kind).toBe('dir');
+      expect(v.warnings).toEqual([]);
+    });
+
+    it('refuses a name already in the directory', () => {
+      let adf = empty();
+      const d = makeDirectory(adf, 880, 'a');
+      if (!d.ok) throw new Error('mkdir');
+      adf = d.adf;
+      const withFile = addFile(adf, 880, 'b.txt', new Uint8Array([1]));
+      if (!withFile.ok) throw new Error('setup');
+      adf = withFile.adf;
+
+      const v0 = readVolume(adf);
+      if (!v0.ok) return;
+      const dir = v0.root.find((e) => e.name === 'a')!;
+      expect(renameEntry(adf, 880, dir.block, 'b.txt')).toEqual({ ok: false, reason: 'name-exists' });
+    });
   });
 
   it('does not touch the bitmap: a rename allocates and frees nothing', () => {
