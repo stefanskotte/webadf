@@ -5,6 +5,8 @@ import { readUsage } from './usage';
 import { readBoot } from './boot';
 import { nameHash } from './hash';
 import { syntheticVolume } from './synthetic';
+import { blockAt, be32 } from './blocks';
+import { HASH_TABLE_SIZE } from './constants';
 
 const empty = (fs: 'OFS' | 'FFS' = 'FFS') =>
   syntheticVolume({ filesystem: fs, volumeName: 'AddVol' });
@@ -322,6 +324,31 @@ describe('replaceFile', () => {
     if (!v.ok) return;
     expect(Array.from(readFile(r.adf, v0.root[0].block)!.bytes)).toEqual(Array.from(small));
     expect(readUsage(r.adf)!.freeBlocks).toBe(baseline - 6);
+  });
+
+  // Regression test for the stale-pointer bug the shrink case above exposed
+  // (fix round 1, finding 1): `readFileBytes` walks pointer slots from
+  // index 71 DOWN to 0, and the new pointers after a shrink land in the
+  // LAST slots -- so a byte-length or free-count assertion can pass
+  // identically whether or not the earlier, now-unreachable slots were
+  // ever cleared. Only inspecting the raw header bytes catches it.
+  it('leaves no stale pointer bytes in the header after a shrink from >72 blocks', () => {
+    const added = addFile(empty(), 880, 'stale.bin', new Uint8Array(100 * 512).fill(4));
+    if (!added.ok) throw new Error('setup');
+    const v0 = readVolume(added.adf);
+    if (!v0.ok) return;
+
+    const small = new Uint8Array(5 * 512).fill(6);
+    const r = replaceFile(added.adf, v0.root[0].block, small);
+    if (!r.ok) throw new Error('replace failed');
+
+    const header = blockAt(r.adf, v0.root[0].block)!;
+    // 5 new pointers occupy the LAST 5 slots (reverse order from offset
+    // 24); every slot before that must be zero, not a leftover pointer
+    // from the 100-block file this header used to describe.
+    for (let i = 0; i < HASH_TABLE_SIZE - 5; i++) {
+      expect(be32(header, 24 + i * 4)).toBe(0);
+    }
   });
 
   it('does not mutate the input', () => {

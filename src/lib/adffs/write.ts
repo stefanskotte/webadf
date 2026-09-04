@@ -107,13 +107,17 @@ export function writeFileHeader(
   putBe32(adf, hs + 8, first72.length);
   putBe32(adf, hs + 16, first72[0] ?? 0);
   putBe32(adf, hs + 324, size);
-  // Clear the whole pointer table before writing the new one: `replaceFile`
-  // (spec D-W-6) reuses this SAME header block for a smaller file, and a
-  // fresh `addFile` block is already zero -- but a reused one is not. Every
-  // reader here (`collectFileBlocks`) treats any non-zero slot as a live
-  // pointer regardless of `high_seq`, so a shorter `first72` left over a
-  // longer one would resurrect already-freed blocks as if they still
-  // belonged to this file.
+  // Clear the whole pointer table before writing the new one. `allocate`
+  // hands out any block whose bitmap bit is free, including one a previous
+  // `deleteEntry`/`replaceFile` returned to the pool -- and `free` only
+  // flips that bit, it never clears the block's old content. So this
+  // block may already hold a LARGER file's pointer table (most directly
+  // via `replaceFile` reusing this same header, spec D-W-6, but the
+  // allocator gives `addFile` no guarantee of a zero block either).
+  // `collectFileBlocks` treats any non-zero slot as a live pointer
+  // regardless of `high_seq`, so a shorter `first72` left over a longer
+  // one would resurrect already-freed blocks as if they still belonged to
+  // this file.
   adf.fill(0, hs + 24, hs + 24 + HASH_TABLE_SIZE * 4);
   first72.forEach((blk, i) => {
     putBe32(adf, hs + 24 + (HASH_TABLE_SIZE - 1 - i) * 4, blk);
