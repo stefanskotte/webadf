@@ -24,6 +24,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { formatVolume } from '../src/lib/adffs/format';
 import { readVolume } from '../src/lib/adffs';
+import { syntheticVolume, type SyntheticOptions } from '../src/lib/adffs/synthetic';
 
 const dir = mkdtempSync(join(tmpdir(), 'adffs-verify-'));
 let failures = 0;
@@ -77,6 +78,27 @@ for (const filesystem of ['OFS', 'FFS'] as const) {
   check('our reader still reads it after their write',
     reread.ok && reread.root.some((e) => e.name === 'HELLO'),
     reread.ok ? `entries=[${reread.root.map((e) => e.name).join(', ')}]` : `reason=${reread.reason}`);
+}
+
+console.log('\nsynthetic fixtures');
+const payload = join(dir, 'payload.bin');
+writeFileSync(payload, 'hello from the synthetic verifier\n');
+const syntheticFixtures: [string, SyntheticOptions][] = [
+  ['OFS file',   { filesystem: 'OFS', volumeName: 'SynOFS',  entries: [{ name: 'hello.txt', bytes: new TextEncoder().encode('hello amiga') }] }],
+  ['FFS file',   { filesystem: 'FFS', volumeName: 'SynFFS',  entries: [{ name: 'hello.txt', bytes: new TextEncoder().encode('hello amiga') }] }],
+  ['FFS INTL',   { filesystem: 'FFS', intl: true, volumeName: 'SynINTL', entries: [{ name: 'hello.txt', bytes: new TextEncoder().encode('hi') }] }],
+  ['FFS nested', { filesystem: 'FFS', volumeName: 'SynDir',  entries: [{ name: 'sub', entries: [{ name: 'in.txt', bytes: new TextEncoder().encode('nested') }] }] }],
+];
+for (const [label, opts] of syntheticFixtures) {
+  const image = join(dir, `syn-${label.replace(/\W/g, '')}.adf`);
+  writeFileSync(image, syntheticVolume(opts));
+  let listed = '';
+  try { listed = xdftool(image, 'list'); } catch (e) { listed = String(e); }
+  check(`xdftool opens the ${label} fixture`, !/FSError/.test(listed), listed.split('\n')[0]);
+  // The decisive one, same as for formatVolume: can they ALLOCATE into it?
+  let wrote = true;
+  try { xdftool(image, 'write', payload, 'added.txt'); } catch { wrote = false; }
+  check(`xdftool writes into the ${label} fixture`, wrote);
 }
 
 rmSync(dir, { recursive: true, force: true });

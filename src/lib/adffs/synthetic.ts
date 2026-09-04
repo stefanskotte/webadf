@@ -58,6 +58,30 @@ function putName(a: Uint8Array, blockStart: number, name: string) {
 }
 
 /**
+ * Bitmap block. Written LAST, once every allocation is known.
+ *
+ * Copied from format.ts's `--- bitmap block ---` section, already verified
+ * against xdftool -- do not invent a second version of this arithmetic.
+ * A SET bit means FREE, and the checksum sits at offset 0 rather than word 5.
+ */
+function writeBitmap(adf: Uint8Array, used: number[], page: number) {
+  const bm = page * BLOCK_BYTES;
+  adf.fill(0xff, bm + 4, bm + BLOCK_BYTES);   // every bit FREE to begin with
+  for (const block of [...used, page]) {
+    const bit = block - 2;                     // bitmap covers 2..1759
+    const o = bm + 4 + (bit >>> 5) * 4;
+    const word = ((adf[o] << 24) | (adf[o + 1] << 16) | (adf[o + 2] << 8) | adf[o + 3]) >>> 0;
+    putBe32(adf, o, (word & ~(1 << (bit & 31))) >>> 0);   // CLEAR means used
+  }
+  putBe32(adf, bm, 0);
+  let sum = 0;
+  for (let o = bm; o < bm + BLOCK_BYTES; o += 4) {
+    sum = (sum + (((adf[o] << 24) | (adf[o + 1] << 16) | (adf[o + 2] << 8) | adf[o + 3]) >>> 0)) >>> 0;
+  }
+  putBe32(adf, bm, (-sum >>> 0));
+}
+
+/**
  * The AmigaDOS directory hash. INTL folds the extended Latin range as well as
  * ASCII, which is why 6 archive disks need the second variant.
  */
@@ -92,8 +116,9 @@ export function syntheticVolume(opts: SyntheticOptions = {}): Uint8Array {
 
   let nextData = ROOT_BLOCK + 2;   // data blocks grow upward from 882
   let nextMeta = ROOT_BLOCK - 1;   // dir/file headers grow downward from 879
-  const allocData = () => nextData++;
-  const allocMeta = () => nextMeta--;
+  const allocated: number[] = [ROOT_BLOCK];
+  const allocData = () => { const b = nextData++; allocated.push(b); return b; };
+  const allocMeta = () => { const b = nextMeta--; allocated.push(b); return b; };
 
   /** Write one file's data blocks and its header; returns the header block. */
   function writeFile(name: string, bytes: Uint8Array, parent: number): number {
@@ -225,7 +250,15 @@ export function syntheticVolume(opts: SyntheticOptions = {}): Uint8Array {
   putName(adf, rs, volumeName);
   putBe32(adf, rs + 16, 1);   // days: a non-zero date so amigaDate returns one
   putBe32(adf, rs + 420, 1);
+  putBe32(adf, rs + 312, 0xffffffff);   // bm_flag: valid
+  putBe32(adf, rs + 316, 881);          // bm_pages[0]
   fill(ROOT_BLOCK, entries);
+
+  // The counters must not collide with block 881: nextData starts at 882, so
+  // it does not, but this is asserted rather than trusted.
+  if (allocated.includes(881)) throw new Error('synthetic allocator collided with the bitmap block');
+  writeBitmap(adf, allocated, 881);
+
   putBe32(adf, rs + CHECKSUM_WORD * 4,
     blockChecksum(adf.subarray(rs, rs + BLOCK_BYTES), CHECKSUM_WORD));
 
