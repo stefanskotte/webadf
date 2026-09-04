@@ -24,12 +24,43 @@ REFDIR = os.path.join(os.path.dirname(__file__), 'ref_footprints')
 REFS = {
     'SOT-23': 'SOT-23.kicad_mod',
     'SOIC-20W': 'SOIC-20W_7.5x12.8mm_P1.27mm.kicad_mod',
+    # Added 2026-09-04 so the run has no unexplained "check by hand" lines.
+    # These four are MIRROR-SYMMETRIC, so they cannot catch a reflection --
+    # the report says so per part. What they do catch is a land pattern that
+    # is the wrong SIZE or pitch, or a footprint swapped for a similar one,
+    # which is worth having and is not what the first board got wrong.
+    'C_0603': 'C_0603_1608Metric.kicad_mod',
+    'C_0805': 'C_0805_2012Metric.kicad_mod',
+    'D_SMA': 'D_SMA.kicad_mod',
+    'PinHeader_2x17': 'PinHeader_2x17_P2.54mm_Vertical.kicad_mod',
+    'PinHeader_1x04': 'PinHeader_1x04_P2.54mm_Vertical.kicad_mod',
 }
 
+# Footprints this project draws itself, for which no upstream reference
+# exists. Named explicitly so they read as a known gap rather than as an
+# oversight -- U1 is the Pico 2 W land pattern and has to be eyeballed against
+# the module's own datasheet.
+NO_UPSTREAM = ('Pico2W_THT',)
+
 def pads_from_mod(path):
+    """
+    Pads from a .kicad_mod, in EITHER format and for any pad type.
+
+    The first version of this matched only `(pad 1 smd rect (at x y)` on one
+    line and unquoted -- which is how the two hand-fetched references happened
+    to be written. Everything KiCad emits today quotes the pad name and puts
+    `(at ...)` on its own line, and a thru_hole pad says thru_hole rather than
+    smd. Against a modern file the old pattern matched NOTHING, so a reference
+    added from the local KiCad library would have compared an empty pad set
+    and reported a cheerful pass.
+    """
     t = open(path).read()
-    return {m.group(1): (float(m.group(2)), float(m.group(3)))
-            for m in re.finditer(r'\(pad (\w+) smd \w+ \(at ([\-\d\.]+) ([\-\d\.]+)\)', t)}
+    out = {}
+    for m in re.finditer(r'\(pad\s+"?([^\s")]+)"?\s+(\w+)\s+\w+', t):
+        at = re.search(r'\(at\s+([\-\d\.]+)\s+([\-\d\.]+)', t[m.end():m.end() + 400])
+        if at:
+            out[m.group(1)] = (float(at.group(1)), float(at.group(2)))
+    return out
 
 def pads_from_pcb(path):
     src = open(path).read()
@@ -62,21 +93,48 @@ def same(a, b, tol=0.4):
     return set(a) == set(b) and all(
         abs(a[k][0]-b[k][0]) < tol and abs(a[k][1]-b[k][1]) < tol for k in a)
 
+def mirror_symmetric(canon):
+    """
+    True when the canonical land pattern is its own mirror image.
+
+    For such a footprint CHIRALITY IS NOT DECIDABLE: a reflection is
+    indistinguishable from a rotation, so the check below can never fail and
+    reporting "OK" would claim a guarantee that was never tested. A two-pad
+    0805, an SMA diode and a straight pin header are all in this class; a
+    SOT-23 and a SOIC are not, which is why those two catch a real mirror.
+    """
+    B = centre(canon)
+    return any(same(B, rot(refl(B), d)) for d in (0, 90, 180, 270))
+
+
 def classify(mine, canon):
     A, B = centre(mine), centre(canon)
     for d in (0, 90, 180, 270):
-        if same(A, rot(B, d)): return True, f"rotation {d} deg"
+        if same(A, rot(B, d)):
+            # The land pattern matches. Say whether that actually proves
+            # anything about chirality, rather than implying it always does.
+            if mirror_symmetric(canon):
+                return True, f"rotation {d} deg; symmetric, so chirality is not decidable"
+            return True, f"rotation {d} deg"
     for d in (0, 90, 180, 270):
         if same(A, rot(refl(B), d)): return False, f"REFLECTION + {d} deg"
     return None, "no match"
 
 fail = 0
+unchecked = 0
 print("== footprint chirality ==")
 board = pads_from_pcb(PCB)
 for ref, (fpn, pads, _org) in sorted(board.items()):
     key = next((k for k in REFS if k in fpn), None)
     if not key:
-        print(f"  {ref:4s} {fpn:45s} no reference - check by hand")
+        why = ("this project's own footprint - check against the datasheet"
+               if any(n in fpn for n in NO_UPSTREAM)
+               else "NO REFERENCE - add one to ref_footprints/")
+        print(f"  {ref:4s} {fpn:45s} {why}")
+        # An unreferenced footprint that is NOT a known-custom one is a gap in
+        # this check, not a pass. Counting it keeps the summary honest.
+        if not any(n in fpn for n in NO_UPSTREAM):
+            unchecked += 1
         continue
     refpath = os.path.join(REFDIR, REFS[key])
     if not os.path.exists(refpath):
@@ -115,5 +173,7 @@ else:
     print("  *** FAIL: gerber is MIRRORED - parts cannot be soldered ***")
     fail += 1
 
+if unchecked:
+    print(f"\n{unchecked} footprint(s) had no reference and were NOT checked.")
 print(f"\n{'ALL CHECKS PASSED' if fail == 0 else f'*** {fail} FAILURE(S) - DO NOT FAB ***'}")
 sys.exit(1 if fail else 0)
