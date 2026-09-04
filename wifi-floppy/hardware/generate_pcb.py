@@ -32,20 +32,22 @@ def PICO_pin(n):                                         # 2x20 THT rows
     if n <= 20:  return (PICO_XW, 107.0 + (n - 1) * 2.54)
     else:        return (PICO_XE, 107.0 + (40 - n) * 2.54)
 
-# FETs: D pad west (cx-1.1), G/S east (cx+1.1). normal: G=cy-0.95, S=cy+0.95
-# flipped: mirrored.
-FETS = {   # name: (cx, cy, flipped, J1pin, J1row)
- 'Q1': (112.6, 107.00, False, 2 , 1 ),   # CHNG
- 'Q2': (112.6, 113.40, False, 8 , 4 ),   # INDEX
- 'Q3': (112.6, 137.48, False, 26, 13),   # TRK0
- 'Q4': (112.6, 140.02, True , 28, 14),   # WPROT
- 'Q5': (112.6, 143.20, True , 30, 15),   # RDATA
- 'Q6': (112.6, 147.64, False, 34, 17),   # RDY
+# FETs: D pad (pin 3) west at cx-1.1; G (pin 1) and S (pin 2) east at cx+1.1.
+# Canonical KiCad SOT-23: pad1(-1,-0.95) pad2(-1,+0.95) pad3(+1,0). Rotated
+# 180 deg to put the drain west, a real part has GATE at cy+0.95 and SOURCE
+# at cy-0.95. Any other arrangement is a REFLECTION and cannot be soldered.
+FETS = {   # name: (cx, cy, J1pin, J1row)
+ 'Q1': (112.6, 107.00, 2 , 1 ),   # CHNG
+ 'Q2': (112.6, 113.40, 8 , 4 ),   # INDEX
+ 'Q3': (112.6, 136.88, 26, 13),   # TRK0 (offset 0.6 north, drain jogs)
+ 'Q4': (112.6, 140.02, 28, 14),   # WPROT
+ 'Q5': (112.6, 143.20, 30, 15),   # RDATA
+ 'Q6': (112.6, 147.64, 34, 17),   # RDY
 }
-def fet_pads(cx, cy, flipped):
-    g_y = cy + 0.95 if flipped else cy - 0.95
-    s_y = cy - 0.95 if flipped else cy + 0.95
-    return {'G': (cx + 1.1, g_y), 'S': (cx + 1.1, s_y), 'D': (cx - 1.1, cy)}
+def fet_pads(cx, cy):
+    return {'G': (cx + 1.1, cy + 0.95),      # pad 1
+            'S': (cx + 1.1, cy - 0.95),      # pad 2
+            'D': (cx - 1.1, cy)}             # pad 3
 
 D1_X = 190.0; D1_CATH = (D1_X, 148.0); D1_AN = (D1_X, 152.0)
 J2_Y = 156.0; J2_X0 = 112.0
@@ -109,12 +111,13 @@ for i, (nm, _, _, apin, ppin) in enumerate(INPUTS):
 # FET drain -> J1 (F.Cu)
 DRAIN_NET = {'Q1':'CHNG_B','Q2':'INDEX_B','Q3':'TRK0_B','Q4':'WPROT_B',
              'Q5':'RDATA_B','Q6':'RDY_B'}
-for q, (cx, cy, fl, j1p, row) in FETS.items():
-    d = fet_pads(cx, cy, fl)['D']; ty = J1_y(row); nm = DRAIN_NET[q]
+for q, (cx, cy, j1p, row) in FETS.items():
+    d = fet_pads(cx, cy)['D']; ty = J1_y(row); nm = DRAIN_NET[q]
     if abs(ty - cy) < 1e-6:
         S(nm, 'F.Cu', [d, (J1_XB, ty)])
-S('INDEX_B','F.Cu',[fet_pads(*FETS['Q2'][:3])['D'],(110.2,113.40),(108.98,114.62),(J1_XB,114.62)])
-S('RDATA_B','F.Cu',[fet_pads(*FETS['Q5'][:3])['D'],(110.2,143.20),(109.56,142.56),(J1_XB,142.56)])
+S('INDEX_B','F.Cu',[fet_pads(*FETS['Q2'][:2])['D'],(110.2,113.40),(108.98,114.62),(J1_XB,114.62)])
+S('RDATA_B','F.Cu',[fet_pads(*FETS['Q5'][:2])['D'],(110.2,143.20),(109.56,142.56),(J1_XB,142.56)])
+S('TRK0_B','F.Cu',[fet_pads(*FETS['Q3'][:2])['D'],(110.2,136.88),(109.6,137.48),(J1_XB,137.48)])
 
 # Pico GP10..GP15 -> FET gates
 STUB_X = 152.0
@@ -125,34 +128,35 @@ def gate_route(name, ppin, bpts, gpad):
     gx, gy = bpts[-1]; V(name, gx, gy)
     S(name, 'F.Cu', [(gx, gy), gpad])
 
-gQ = {q: fet_pads(*FETS[q][:3])['G'] for q in FETS}
+gQ = {q: fet_pads(*FETS[q][:2])['G'] for q in FETS}
 # WPROT GP10 y140.02 -> Q4 G (113.7,140.97)
 gate_route('WPROT', 14, [(116.6,140.02),(115.65,140.97),(114.7,140.97)], gQ['Q4'])
 # RDATA GP11 y142.56 -> Q5 G (113.7,144.15)
 gate_route('RDATA', 15, [(116.29,142.56),(114.70,144.15)], gQ['Q5'])
 # RDY GP12 y145.10 -> Q6 G (113.7,146.69)
-gate_route('RDY',   16, [(116.29,145.10),(114.70,146.69)], gQ['Q6'])
+gate_route('RDY',   16, [(117.5,145.10),(116.29,146.31),(116.29,147.0),
+                          (114.7,148.59)], gQ['Q6'])
 # TRK0 GP13 y147.64: B west -> F vert x125.3 -> B west y137.48 -> Q3 G (113.7,136.53)
 px, py = PICO_pin(17)
 S('TRK0','F.Cu',[(px,py),(STUB_X,py)]); V('TRK0',STUB_X,py)
 S('TRK0','B.Cu',[(STUB_X,147.64),(125.3,147.64)]); V('TRK0',125.3,147.64)
 S('TRK0','F.Cu',[(125.3,147.64),(125.3,137.48)]);  V('TRK0',125.3,137.48)
-S('TRK0','B.Cu',[(125.3,137.48),(115.9,137.48),(114.95,136.53),(114.7,136.53)])
-V('TRK0',114.7,136.53); S('TRK0','F.Cu',[(114.7,136.53),gQ['Q3']])
+S('TRK0','B.Cu',[(125.3,137.48),(116.5,137.48),(116.15,137.83),(114.7,137.83)])
+V('TRK0',114.7,137.83); S('TRK0','F.Cu',[(114.7,137.83),gQ['Q3']])
 # INDEX GP0 (pin1, 166,107): upper F.Cu lane y104.6 west past everything,
 # drop to B.Cu west of the FET column, approach Q2 gate from the west.
 px, py = PICO_pin(1)
-S('INDEX','F.Cu',[(px,py),(165.5,107.0),(163.1,104.6),(112.05,104.6),
-                  (110.5,106.15)])
-V('INDEX',110.5,106.15)
-S('INDEX','B.Cu',[(110.5,106.15),(110.5,111.5),(111.45,112.45),(112.7,112.45)])
-V('INDEX',112.7,112.45)
-S('INDEX','F.Cu',[(112.7,112.45),gQ['Q2']])
+S('INDEX','F.Cu',[(px,py),(165.5,107.0),(163.1,104.6),(111.9,104.6),
+                  (110.2,106.3)])
+V('INDEX',110.2,106.3)
+S('INDEX','B.Cu',[(110.2,106.3),(110.2,113.5),(111.05,114.35),(112.7,114.35)])
+V('INDEX',112.7,114.35)
+S('INDEX','F.Cu',[(112.7,114.35),gQ['Q2']])
 # CHNG GP1 (pin2, 166,109.54): lower F.Cu lane y105.25, 45-deg drop straight
 # into Q1 gate pad from the east (stops east of INDEX's descent - no cross).
 px, py = PICO_pin(2)
-S('CHNG','F.Cu',[(px,py),(165.26,109.54),(160.97,105.25),(114.5,105.25),
-                 gQ['Q1']])
+S('CHNG','F.Cu',[(px,py),(165.26,109.54),(160.97,105.25),(118.0,105.25),
+                 (115.3,107.95),gQ['Q1']])
 
 # 3V3: Pico pin36 (THT) -> B.Cu -> via -> F stub -> U2 pin20 + C1
 p36 = PICO_pin(36); u2p20 = U2_pin(20)
@@ -179,7 +183,7 @@ S('GND','F.Cu',[U2_pin(1),(130.8,106.285)],0.3);  V('GND',130.8,106.285)
 S('GND','F.Cu',[U2_pin(19),(143.5,107.555)],0.3); V('GND',143.5,107.555)
 # FET source -> GND vias
 for q in FETS:
-    s = fet_pads(*FETS[q][:3])['S']
+    s = fet_pads(*FETS[q][:2])['S']
     S('GND','F.Cu',[s,(114.9,s[1])],0.3); V('GND',114.9,s[1])
 
 # ---------------------------------------------------------------- checker
@@ -206,7 +210,7 @@ PADS = []
 def _reg(net, x, y, sx, sy): PADS.append((net, x, y, sx/2, sy/2))
 _j1nets = {p: ('GND' if p % 2 == 1 else '') for p in range(1, 35)}
 for _nm, _p, _r, _a, _pp in INPUTS: _j1nets[_p] = _nm + '_B'
-for _q,(_cx,_cy,_fl,_p,_row) in FETS.items():
+for _q,(_cx,_cy,_p,_row) in FETS.items():
     _j1nets[_p] = {'Q1':'CHNG_B','Q2':'INDEX_B','Q3':'TRK0_B','Q4':'WPROT_B',
                    'Q5':'RDATA_B','Q6':'RDY_B'}[_q]
 for _p in range(1, 35):
@@ -224,9 +228,9 @@ for _i,(_nm,_,_,_ap,_) in enumerate(INPUTS):
     _u2nets[_ap]=_nm+'_B'; _u2nets[20-_ap]=_nm
 for _n in range(1,21):
     _x,_y=U2_pin(_n); _reg(_u2nets.get(_n,''),_x,_y,1.9,0.6)
-for _q,(_cx,_cy,_fl,_p,_row) in FETS.items():
+for _q,(_cx,_cy,_p,_row) in FETS.items():
     _sig={'Q1':'CHNG','Q2':'INDEX','Q3':'TRK0','Q4':'WPROT','Q5':'RDATA','Q6':'RDY'}[_q]
-    _pd=fet_pads(_cx,_cy,_fl)
+    _pd=fet_pads(_cx,_cy)
     _reg(_sig,_pd['G'][0],_pd['G'][1],1.0,0.9)
     _reg('GND',_pd['S'][0],_pd['S'][1],1.0,0.9)
     _reg(_sig+'_B',_pd['D'][0],_pd['D'][1],1.0,0.9)
@@ -338,7 +342,7 @@ def smd(num,dx,dy,net,sx,sy):
 j1nets = {p:'' for p in range(1,35)}
 for p in range(1,35,2): j1nets[p]='GND'
 for nm,p,_,_,_ in INPUTS: j1nets[p]=nm+'_B'
-for q,(cx,cy,fl,p,row) in FETS.items():
+for q,(cx,cy,p,row) in FETS.items():
     j1nets[p]={'Q1':'CHNG_B','Q2':'INDEX_B','Q3':'TRK0_B','Q4':'WPROT_B','Q5':'RDATA_B','Q6':'RDY_B'}[q]
 f = fp_open('Connector_PinHeader_2.54mm:PinHeader_2x17','J1','FLOPPY34',J1_XA,J1_y(1))
 for r in range(1,18):
@@ -394,10 +398,10 @@ for n in range(1,21):
     f+=smd(n,x-U2_X,y-U2_Y,u2nets.get(n,'GND'),1.9,0.6)
 f+=' )'; out.append(f)
 # FETs
-for q,(cx,cy,fl,p,row) in FETS.items():
+for q,(cx,cy,p,row) in FETS.items():
     sig={'Q1':'CHNG','Q2':'INDEX','Q3':'TRK0','Q4':'WPROT','Q5':'RDATA','Q6':'RDY'}[q]
     f=fp_open('Package_TO_SOT_SMD:SOT-23','%s'%q,'BSS138',cx,cy).replace('through_hole','smd')
-    pads=fet_pads(cx,cy,fl)
+    pads=fet_pads(cx,cy)
     f+=smd(1,pads['G'][0]-cx,pads['G'][1]-cy,sig,1.0,0.9)
     f+=smd(2,pads['S'][0]-cx,pads['S'][1]-cy,'GND',1.0,0.9)
     f+=smd(3,pads['D'][0]-cx,pads['D'][1]-cy,sig+'_B',1.0,0.9)

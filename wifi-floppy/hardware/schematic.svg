@@ -8,7 +8,7 @@
  .thin{stroke-width:1}
 </style>
 <text x="20" y="28" class="h">WiFi Floppy Emulator — Amiga internal 34-pin, Pico 2 W  (rev A)</text>
-<text x="20" y="46" class="t">Inputs: 74LVC541A @3V3 (5V-tolerant). Outputs: BSS138 open-drain, GPIO HIGH = bus asserted LOW.</text>
+<text x="20" y="46" class="t">Inputs: 74LVC541A @3V3 (5V-tolerant). Outputs: IRLML2402 (or BSS138) open-drain, GPIO HIGH = bus asserted LOW.</text>
 
 <!-- ===================== J1 ===================== -->
 <rect x="40" y="80" width="200" height="560"/>
@@ -83,7 +83,7 @@
 
 <!-- ===================== FET driver detail ===================== -->
 <rect x="300" y="680" width="560" height="240"/>
-<text x="320" y="705" class="h">Output drivers ×6 (Q1..Q6, BSS138)</text>
+<text x="320" y="705" class="h">Output drivers ×6 (Q1..Q6, IRLML2402 / BSS138)</text>
 <!-- one FET drawn -->
 <line x1="380" y1="800" x2="440" y2="800"/><text x="330" y="805" class="net">GPIOn</text>
 <line x1="440" y1="780" x2="440" y2="820" />
@@ -93,6 +93,7 @@
 <line x1="475" y1="850" x2="505" y2="850"/><line x1="481" y1="856" x2="499" y2="856"/><line x1="487" y1="862" x2="493" y2="862"/>
 <line x1="490" y1="750" x2="560" y2="750"/><text x="565" y="755" class="net">bus pin (to J1)</text>
 <text x="520" y="800" class="t">D=bus, S=GND, G=GPIO</text>
+<text x="320" y="932" class="t">rev A2: SOT-23 land pattern corrected - G=pin1 at cy+0.95, S=pin2 at cy-0.95</text>
 <text x="320" y="890" class="t">Q1 CHNG←GP1    Q2 INDEX←GP0   Q3 TRK0←GP13</text>
 <text x="320" y="908" class="t">Q4 WPROT←GP10  Q5 RDATA←GP11   Q6 RDY←GP12</text>
 

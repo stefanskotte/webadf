@@ -56,3 +56,6 @@ playwright-report/
 
 # Playwright MCP browser session artifacts (snapshots, console logs).
 .playwright-mcp/
+
+# Editor/tool backups (generate_pcb.py.bak and friends).
+*.bak

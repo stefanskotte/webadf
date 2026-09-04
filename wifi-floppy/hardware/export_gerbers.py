@@ -50,18 +50,37 @@ def first(n, name):
 def nums(n, c): return [float(v) for v in n[1:1 + c]]
 
 # ---------------------------------------------------------------- extract
+# CRITICAL: KiCad's coordinate system has Y increasing DOWNWARD; Gerber and
+# Excellon have Y increasing UPWARD. Every coordinate is flipped here, once,
+# at parse time, so copper, mask, silk, outline and drill all stay consistent.
+# Omitting this produces a board that is a perfect mirror image of the design
+# and cannot have its parts soldered to it.
+YFLIP = None            # set once the board extents are known
+
+def fy(y):
+    return y if YFLIP is None else YFLIP - y
+
 segments, vias, pads, edges, silks = [], [], [], [], []
 
+_ey = [v for gl in kids(root, 'gr_line') if first(gl, 'layer')[1] == 'Edge.Cuts'
+       for v in (nums(first(gl, 'start'), 2)[1], nums(first(gl, 'end'), 2)[1])]
+YFLIP = min(_ey) + max(_ey)          # mirror about the board's own centre line
+
 for s in kids(root, 'segment'):
-    segments.append((nums(first(s, 'start'), 2), nums(first(s, 'end'), 2),
+    _a = nums(first(s, 'start'), 2); _b = nums(first(s, 'end'), 2)
+    _a[1] = fy(_a[1]); _b[1] = fy(_b[1])
+    segments.append((_a, _b,
                      nums(first(s, 'width'), 1)[0], first(s, 'layer')[1],
                      first(s, 'net')[1]))
 for v in kids(root, 'via'):
-    vias.append((nums(first(v, 'at'), 2), nums(first(v, 'size'), 1)[0],
+    _at = nums(first(v, 'at'), 2); _at[1] = fy(_at[1])
+    vias.append((_at, nums(first(v, 'size'), 1)[0],
                  nums(first(v, 'drill'), 1)[0], first(v, 'net')[1]))
 for gl in kids(root, 'gr_line'):
     if first(gl, 'layer')[1] == 'Edge.Cuts':
-        edges.append((nums(first(gl, 'start'), 2), nums(first(gl, 'end'), 2)))
+        _a = nums(first(gl, 'start'), 2); _b = nums(first(gl, 'end'), 2)
+        _a[1] = fy(_a[1]); _b[1] = fy(_b[1])
+        edges.append((_a, _b))
 for fp in kids(root, 'footprint'):
     ox, oy = nums(first(fp, 'at'), 2)
     ref = next((t[2] for t in kids(fp, 'fp_text') if t[1] == 'reference'), '')
@@ -69,13 +88,13 @@ for fp in kids(root, 'footprint'):
         ly = first(fl, 'layer')
         if ly and ly[1] == 'F.SilkS':
             a = nums(first(fl, 'start'), 2); b = nums(first(fl, 'end'), 2)
-            silks.append(((ox + a[0], oy + a[1]), (ox + b[0], oy + b[1]),
+            silks.append(((ox + a[0], fy(oy + a[1])), (ox + b[0], fy(oy + b[1])),
                           nums(first(first(fl, 'stroke'), 'width'), 1)[0]))
     for pad in kids(fp, 'pad'):
         at = nums(first(pad, 'at'), 2); size = nums(first(pad, 'size'), 2)
         dr = first(pad, 'drill'); net = first(pad, 'net')
         pads.append(dict(num=pad[1], type=pad[2], shape=pad[3],
-                         x=ox + at[0], y=oy + at[1], w=size[0], h=size[1],
+                         x=ox + at[0], y=fy(oy + at[1]), w=size[0], h=size[1],
                          drill=float(dr[1]) if dr else 0.0,
                          net=(net[2] if net and len(net) > 2 else ''), ref=ref))
 
@@ -92,6 +111,7 @@ print(f'keepout zones: {len(keepouts)}')
 xs = [p for e in edges for p in (e[0][0], e[1][0])]
 ys = [p for e in edges for p in (e[0][1], e[1][1])]
 BX1, BX2, BY1, BY2 = min(xs), max(xs), min(ys), max(ys)
+print(f'Y flipped about {YFLIP/2:.1f} mm (KiCad Y-down -> Gerber Y-up)')
 print(f'board {BX2-BX1:.1f} x {BY2-BY1:.1f} mm  '
       f'{len(segments)} segs {len(vias)} vias {len(pads)} pads')
 
