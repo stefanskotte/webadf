@@ -18,7 +18,10 @@ export type { AdfEntry } from './dir';
 export type { FileBytes } from './file';
 export type { Filesystem, BootInfo } from './boot';
 export { readUsage, type VolumeUsage } from './usage';
-export { addFile, deleteEntry, type WriteResult, type WriteError } from './write';
+export {
+  addFile, deleteEntry, renameEntry, replaceFile, makeDirectory,
+  type WriteResult, type WriteError,
+} from './write';
 
 export type VolumeResult =
   | { ok: true; volume: VolumeInfo; root: AdfEntry[]; truncated: boolean; warnings: string[] }

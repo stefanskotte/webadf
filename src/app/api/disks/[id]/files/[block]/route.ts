@@ -1,10 +1,16 @@
+import { z } from 'zod';
 import { and, eq } from 'drizzle-orm';
 import { getDb } from '@/db';
 import { disks, entitlements } from '@/db/schema/catalog';
 import { requireOrg } from '@/lib/session';
 import { diskStore } from '@/lib/storage';
-import { readVolume, readFile, type AdfEntry } from '@/lib/adffs';
+import {
+  readVolume, readFile, deleteEntry, renameEntry, replaceFile,
+  type AdfEntry, type WriteResult,
+} from '@/lib/adffs';
+import { ROOT_BLOCK } from '@/lib/adffs/constants';
 import { downloadFilename, contentDisposition } from '@/lib/download-name';
+import { applyDiskEdit } from '@/lib/disk-write';
 
 export const maxDuration = 60;
 
@@ -13,6 +19,24 @@ function findEntry(entries: AdfEntry[], block: number): AdfEntry | null {
   for (const e of entries) {
     if (e.block === block) return e;
     const found = findEntry(e.children, block);
+    if (found) return found;
+  }
+  return null;
+}
+
+/**
+ * Same walk as `findEntry`, but also returns the block the entry lives
+ * directly under. `renameEntry` and `deleteEntry` both take the PARENT block
+ * explicitly (spec D-3-5's block-addressing has no parent pointer of its
+ * own to read back), so the only way to get it is to walk down from
+ * ROOT_BLOCK and remember where each entry was found.
+ */
+function findEntryWithParent(
+  entries: AdfEntry[], block: number, parentBlock: number,
+): { entry: AdfEntry; parentBlock: number } | null {
+  for (const e of entries) {
+    if (e.block === block) return { entry: e, parentBlock };
+    const found = findEntryWithParent(e.children, block, e.block);
     if (found) return found;
   }
   return null;
@@ -88,4 +112,106 @@ export async function GET(
       'cache-control': 'private, max-age=31536000, immutable',
     },
   });
+}
+
+const renameBody = z.object({ name: z.string().trim().min(1) });
+
+/**
+ * Rename this entry, or replace a file's contents -- distinguished by
+ * content type, exactly as the two are distinguished on the underlying
+ * disk: a rename relinks a hash chain and never touches data blocks, a
+ * replace never touches the hash chain (D-W-6, the header block IS the
+ * file's identity) and only rewrites data. A JSON body renames; a
+ * multipart body carrying a `file` part replaces.
+ *
+ * Both closures walk the tree from the SAME bytes `applyDiskEdit` is about
+ * to hash and store, never a separate read: `renameEntry` needs the
+ * entry's parent block, which only that walk can supply.
+ */
+export async function PATCH(
+  request: Request,
+  ctx: { params: Promise<{ id: string; block: string }> },
+) {
+  const { orgId } = await requireOrg();
+  const { id, block } = await ctx.params;
+
+  const blockNo = Number(block);
+  if (!Number.isInteger(blockNo) || blockNo < 0) {
+    return Response.json({ error: 'bad_block' }, { status: 400 });
+  }
+
+  const contentType = request.headers.get('content-type') ?? '';
+  let edit: (adf: Uint8Array) => WriteResult;
+
+  if (contentType.includes('multipart/form-data')) {
+    let form: FormData;
+    try {
+      form = await request.formData();
+    } catch {
+      return Response.json({ error: 'invalid_body' }, { status: 400 });
+    }
+    const file = form.get('file');
+    if (!(file instanceof File)) {
+      return Response.json({ error: 'invalid_body', detail: 'file is required' }, { status: 400 });
+    }
+    const bytes = new Uint8Array(await file.arrayBuffer());
+    edit = (adf) => replaceFile(adf, blockNo, bytes);
+  } else {
+    let raw: unknown;
+    try {
+      raw = await request.json();
+    } catch {
+      return Response.json({ error: 'invalid_json' }, { status: 400 });
+    }
+    const parsed = renameBody.safeParse(raw);
+    if (!parsed.success) {
+      return Response.json({ error: 'invalid_body', detail: z.flattenError(parsed.error) }, { status: 400 });
+    }
+    const newName = parsed.data.name;
+    edit = (adf) => {
+      const volume = readVolume(adf);
+      if (!volume.ok) return { ok: false, reason: 'no-filesystem' };
+      const found = findEntryWithParent(volume.root, blockNo, ROOT_BLOCK);
+      if (!found) return { ok: false, reason: 'not-found' };
+      return renameEntry(adf, found.parentBlock, blockNo, newName);
+    };
+  }
+
+  const result = await applyDiskEdit(orgId, id, edit);
+  if (!result.ok) {
+    return Response.json({ error: 'edit_failed', reason: result.reason }, { status: result.status });
+  }
+  return Response.json({ id, block: blockNo, sha256: result.sha256 });
+}
+
+/**
+ * Delete this entry -- a file, or a directory and everything under it
+ * (`deleteEntry` is recursive, spec R-4). Same parent-block resolution as
+ * the rename branch of PATCH above, against the same freshly-loaded bytes.
+ */
+export async function DELETE(
+  _request: Request,
+  ctx: { params: Promise<{ id: string; block: string }> },
+) {
+  const { orgId } = await requireOrg();
+  const { id, block } = await ctx.params;
+
+  const blockNo = Number(block);
+  if (!Number.isInteger(blockNo) || blockNo < 0) {
+    return Response.json({ error: 'bad_block' }, { status: 400 });
+  }
+
+  const edit = (adf: Uint8Array): WriteResult => {
+    const volume = readVolume(adf);
+    if (!volume.ok) return { ok: false, reason: 'no-filesystem' };
+    const found = findEntryWithParent(volume.root, blockNo, ROOT_BLOCK);
+    if (!found) return { ok: false, reason: 'not-found' };
+    return deleteEntry(adf, found.parentBlock, blockNo);
+  };
+
+  const result = await applyDiskEdit(orgId, id, edit);
+  if (!result.ok) {
+    return Response.json({ error: 'edit_failed', reason: result.reason }, { status: result.status });
+  }
+  return Response.json({ id, block: blockNo, sha256: result.sha256 });
 }
