@@ -37,7 +37,13 @@ function upperChar(c: number, intl: boolean): number {
   return c;
 }
 
-function sameName(a: string, b: string, intl: boolean): boolean {
+/**
+ * Case-insensitive name equality, folded the same way `nameHash` folds for
+ * hash-bucket placement -- exported so `staging.ts` can detect collisions
+ * before a write is ever attempted, using the identical rule rather than a
+ * second one that could drift from it.
+ */
+export function sameName(a: string, b: string, intl: boolean): boolean {
   if (a.length !== b.length) return false;
   for (let i = 0; i < a.length; i++) {
     if (upperChar(a.charCodeAt(i), intl) !== upperChar(b.charCodeAt(i), intl)) return false;
