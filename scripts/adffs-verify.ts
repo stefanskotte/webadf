@@ -26,7 +26,9 @@ import { formatVolume } from '../src/lib/adffs/format';
 import { readVolume } from '../src/lib/adffs';
 import { syntheticVolume, type SyntheticOptions } from '../src/lib/adffs/synthetic';
 import { ROOT_BLOCK } from '../src/lib/adffs/constants';
-import { addFile, deleteEntry, renameEntry, replaceFile, makeDirectory } from '../src/lib/adffs/write';
+import {
+  addFile, deleteEntry, renameEntry, replaceFile, makeDirectory, moveEntry, applyBatch,
+} from '../src/lib/adffs/write';
 
 const dir = mkdtempSync(join(tmpdir(), 'adffs-verify-'));
 let failures = 0;
@@ -250,6 +252,49 @@ for (const filesystem of ['OFS', 'FFS'] as const) {
     check(`${filesystem} delete-dir: doomed is really gone`, !listing.toUpperCase().includes('DOOMED'));
     check(`${filesystem} delete-dir: inside.txt is really gone`, !listing.toUpperCase().includes('INSIDE.TXT'));
   }
+}
+
+// ---------------------------------------------------------------------------
+// Task 5: applyBatch and moveEntry, proved the same way as every other write
+// operation above -- xdftool lists what we expect, xdftool allocates a
+// block by writing into the result, and our reader still reads it after.
+//
+// The move check is the sharper of the two: our own reader never validates
+// a header's parent pointer while walking down from the root (it follows
+// hash chains, not parent links), so a reparent that updates the hash chain
+// but leaves the stale parent pointer behind is completely invisible to
+// `readVolume` and visible only to a real filesystem implementation such as
+// xdftool. See the mutation drill below the loop.
+for (const filesystem of ['OFS', 'FFS'] as const) {
+  console.log(`\n${filesystem} batch and move`);
+
+  const base = formatVolume({ filesystem, volumeName: `Batch${filesystem}` });
+  const seeded = addFile(base, ROOT_BLOCK, 'root.txt', smallPayload);
+  if (!seeded.ok) throw new Error(`setup: batch seed add failed (${seeded.reason})`);
+
+  // C/ with two files, S/ with one, all via a single applyBatch call.
+  const batched = applyBatch([
+    { op: 'mkdir', parentPath: '', name: 'C' },
+    { op: 'mkdir', parentPath: '', name: 'S' },
+    { op: 'add', parentPath: 'C', name: 'one.txt', bytes: smallPayload },
+    { op: 'add', parentPath: 'C', name: 'two.txt', bytes: smallPayload },
+    { op: 'add', parentPath: 'S', name: 'three.txt', bytes: smallPayload },
+  ])(seeded.adf);
+  if (!batched.ok) throw new Error(`setup: batch failed (${batched.reason})`);
+  proves(`${filesystem} batch`, batched.adf, ['C', 'S', 'one.txt', 'two.txt', 'three.txt']);
+
+  // Move root.txt from the root into C.
+  const cBlock = blockOf(batched.adf, 'C');
+  const fileBlock = blockOf(batched.adf, 'root.txt');
+  const moved = moveEntry(batched.adf, ROOT_BLOCK, fileBlock, cBlock);
+  if (!moved.ok) throw new Error(`setup: move failed (${moved.reason})`);
+  const image = proves(`${filesystem} move`, moved.adf, ['C', 'root.txt']);
+  // proves() only checks the moved name appears SOMEWHERE in xdftool's
+  // (recursive) listing; ask xdftool to list C specifically so this checks
+  // that xdftool itself, walking its own directory structure, agrees the
+  // file now lives there.
+  const cListing = xdftool(image, 'list', 'C');
+  check(`${filesystem} move: xdftool sees root.txt inside C`, cListing.toUpperCase().includes('ROOT.TXT'));
 }
 
 console.log('\nsharpest case: delete then refill');
