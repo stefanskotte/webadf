@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { addFile, deleteEntry, renameEntry, replaceFile, makeDirectory, moveEntry } from './write';
+import { addFile, deleteEntry, renameEntry, replaceFile, makeDirectory, moveEntry, applyBatch } from './write';
 import { readVolume, readFile } from './index';
 import { readUsage } from './usage';
 import { readBoot } from './boot';
@@ -771,5 +771,58 @@ describe('moveEntry', () => {
     // A move relinks pointers; it allocates and frees nothing.
     expect(readUsage(moved.adf)!.freeBlocks).toBe(before);
     expect(Array.from(withFile.adf)).toEqual(Array.from(copy));
+  });
+});
+
+describe('applyBatch', () => {
+  it('creates a nested tree in ONE pass, parents before children', () => {
+    const run = applyBatch([
+      { op: 'mkdir', parentPath: '', name: 'C' },
+      { op: 'add', parentPath: 'C', name: 'Assign', bytes: new TextEncoder().encode('a') },
+      { op: 'mkdir', parentPath: '', name: 'S' },
+      { op: 'add', parentPath: 'S', name: 'Startup', bytes: new TextEncoder().encode('s') },
+    ]);
+    const r = run(empty());
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    const v = readVolume(r.adf);
+    if (!v.ok) return;
+    expect(v.root.map((e) => e.name).sort()).toEqual(['C', 'S']);
+    const c = v.root.find((e) => e.name === 'C')!;
+    expect(c.children.map((e) => e.name)).toEqual(['Assign']);
+  });
+
+  it('resolves a parent path created EARLIER IN THE SAME BATCH', () => {
+    // The reason paths are used rather than block numbers: a directory made in
+    // this batch has no block number the caller could have known.
+    const r = applyBatch([
+      { op: 'mkdir', parentPath: '', name: 'A' },
+      { op: 'mkdir', parentPath: 'A', name: 'B' },
+      { op: 'add', parentPath: 'A/B', name: 'deep.txt', bytes: new Uint8Array([1]) },
+    ])(empty());
+    if (!r.ok) throw new Error('batch failed');
+    const v = readVolume(r.adf);
+    if (!v.ok) return;
+    expect(v.root[0].children[0].children.map((e) => e.name)).toEqual(['deep.txt']);
+  });
+
+  it('fails the WHOLE batch when one operation cannot be applied', () => {
+    // A fresh volume has 1756 free blocks; the preceding mkdir leaves 1755.
+    // 1800 data blocks cost 1 header + 1800 data + ceil((1800-72)/72) = 24
+    // extension blocks = 1825 blocks, which does not fit -- unlike the
+    // brief's original 1000-block figure (1015 blocks), which does.
+    const huge = new Uint8Array(1800 * 512).fill(1);   // will not fit
+    const r = applyBatch([
+      { op: 'mkdir', parentPath: '', name: 'ok' },
+      { op: 'add', parentPath: '', name: 'huge.bin', bytes: huge },
+    ])(empty());
+    expect(r).toEqual({ ok: false, reason: 'disk-full' });
+  });
+
+  it('leaves the caller\'s disk untouched when it fails', () => {
+    const adf = empty();
+    const copy = adf.slice();
+    applyBatch([{ op: 'add', parentPath: '', name: 'x'.repeat(31), bytes: new Uint8Array([1]) }])(adf);
+    expect(Array.from(adf)).toEqual(Array.from(copy));
   });
 });

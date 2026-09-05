@@ -28,6 +28,19 @@ export type WriteResult =
   | { ok: false; reason: WriteError };
 
 /**
+ * One step of a batch upload (Task 6's drag-and-drop route): create a
+ * directory, add a new file, or replace an existing one. Every op names its
+ * parent by PATH rather than block number, because a directory created
+ * earlier in the SAME batch has no block number the caller could possibly
+ * have known when it built the list -- `applyBatch` is what resolves paths
+ * to blocks as it goes.
+ */
+export type BatchOp =
+  | { op: 'mkdir'; parentPath: string; name: string }
+  | { op: 'add'; parentPath: string; name: string; bytes: Uint8Array }
+  | { op: 'replace'; parentPath: string; name: string; bytes: Uint8Array };
+
+/**
  * Case-fold one character the same way `nameHash` does, so name comparison
  * and hash-bucket placement can never disagree about which two names match.
  */
@@ -631,4 +644,86 @@ export function moveEntry(
   putBe32(out, entryBlock * BLOCK_BYTES + 496, 0);          // clear stale next
   linkIntoDirectory(out, toParent, entryBlock, name, boot.intl);
   return { ok: true, adf: out };
+}
+
+/**
+ * The block number of `parent`'s direct child named `name`, or null when
+ * there isn't one.
+ *
+ * REUSES `walkDirectory` (the same traversal `entryNamed` and
+ * `collectSubtreeBlocks` already rely on) rather than a second hash-chain
+ * walk -- one opinion of "what is a child of what", same as everywhere else
+ * in this file. `applyBatch` calls this right after `makeDirectory` so the
+ * new directory's block becomes addressable to later operations in the same
+ * batch that name it as their parent.
+ */
+function findChildBlock(adf: Uint8Array, parent: number, name: string): number | null {
+  const { root } = walkDirectory(adf, parent);
+  const boot = readBoot(adf);
+  const child = root.find((e) => sameName(e.name, name, boot?.intl ?? false));
+  return child ? child.block : null;
+}
+
+/**
+ * Resolve the entry named `name` inside `parent` and overwrite its contents
+ * via `replaceFile`, which already knows how to keep the same header block
+ * and hash-chain position (D-W-6). `not-found` covers both "no such name"
+ * and "that name isn't a file" -- `replaceFile` itself refuses anything
+ * whose secondary type isn't `ST_FILE`.
+ */
+function replaceExisting(adf: Uint8Array, parent: number, name: string, bytes: Uint8Array): WriteResult {
+  const block = findChildBlock(adf, parent, name);
+  if (block === null) return { ok: false, reason: 'not-found' };
+  return replaceFile(adf, block, bytes);
+}
+
+/**
+ * Turn a list of `BatchOp`s into a single edit function, so a whole folder
+ * drop is ONE `applyDiskEdit` call -- one new blob -- rather than one per
+ * file (see this task's brief, D-DD-3). `applyDiskEdit` itself is untouched:
+ * a batch is just an edit function like any other, applying many operations
+ * to one in-memory copy before returning it.
+ *
+ * ONE copy for the whole batch: `cur` walks forward through each op's
+ * result, so the array is copied once per op (each write function already
+ * does its own `.slice()`) rather than once per call from outside. A
+ * failure anywhere returns that op's own `WriteResult` immediately and
+ * `cur` is simply dropped -- the caller's original `adf` was never mutated
+ * (every op here follows D-W-3), so the failed batch leaves no trace and
+ * needs no transaction or rollback concept.
+ *
+ * `dirs` maps a batch-relative path to the block number that path resolved
+ * to, seeded with the root so `parentPath: ''` always means `ROOT_BLOCK`.
+ * Every time an `mkdir` succeeds, its new block is looked up with
+ * `findChildBlock` and recorded under its path, which is what lets a LATER
+ * op in the same batch address a directory this batch itself just created.
+ *
+ * Ordering is the CALLER's job: operations are applied exactly as given, in
+ * order, with no sorting here. Task 6 sorts its op list by path depth
+ * before calling this, so a parent always exists by the time a child names
+ * it -- a batch that silently reordered its own input would be untestable.
+ */
+export function applyBatch(ops: readonly BatchOp[]): (adf: Uint8Array) => WriteResult {
+  return (adf) => {
+    let cur = adf;
+    const dirs = new Map<string, number>([['', ROOT_BLOCK]]);
+
+    for (const op of ops) {
+      const parent = dirs.get(op.parentPath);
+      if (parent === undefined) return { ok: false, reason: 'not-found' };
+
+      const r = op.op === 'mkdir' ? makeDirectory(cur, parent, op.name)
+        : op.op === 'add' ? addFile(cur, parent, op.name, op.bytes)
+        : replaceExisting(cur, parent, op.name, op.bytes);
+      if (!r.ok) return r;
+      cur = r.adf;
+
+      if (op.op === 'mkdir') {
+        const made = findChildBlock(cur, parent, op.name);
+        if (made === null) return { ok: false, reason: 'not-found' };
+        dirs.set(op.parentPath ? `${op.parentPath}/${op.name}` : op.name, made);
+      }
+    }
+    return { ok: true, adf: cur };
+  };
 }
