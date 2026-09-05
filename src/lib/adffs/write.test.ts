@@ -6,7 +6,8 @@ import { readBoot } from './boot';
 import { nameHash } from './hash';
 import { syntheticVolume } from './synthetic';
 import { blockAt, be32 } from './blocks';
-import { HASH_TABLE_SIZE } from './constants';
+import { HASH_TABLE_SIZE, ROOT_BLOCK } from './constants';
+import { walkDirectory } from './dir';
 
 const empty = (fs: 'OFS' | 'FFS' = 'FFS') =>
   syntheticVolume({ filesystem: fs, volumeName: 'AddVol' });
@@ -676,9 +677,13 @@ describe('moveEntry', () => {
   });
 
   it('REFUSES moving a directory into its own descendant', () => {
-    // THE CORRUPTION THIS EXISTS TO PREVENT. A cycle here is invisible to our
-    // own reader: walkDirectory's cycle guard would contain it and report a
-    // plausible listing while the disk is unwalkable on a real Amiga.
+    // THE CORRUPTION THIS EXISTS TO PREVENT. Measured directly (comment out
+    // moveEntry's ancestryOf check and rerun): the moved directory unlinks
+    // from the real root's chain onto its own descendant, so `readVolume`
+    // from ROOT_BLOCK reports `{ warnings: [], root: [] }` -- no warning, no
+    // error, the corrupted subtree just isn't there. The disk reads as
+    // empty and healthy while being unwalkable on a real Amiga; only a walk
+    // rooted AT the orphaned block itself would ever see the cycle.
     let adf = empty();
     const outer = makeDirectory(adf, 880, 'outer');
     if (!outer.ok) throw new Error('mkdir');
@@ -697,6 +702,36 @@ describe('moveEntry', () => {
     expect(moveEntry(adf, 880, outerBlock, innerBlock)).toEqual({ ok: false, reason: 'cycle' });
     // ...and into ITSELF.
     expect(moveEntry(adf, 880, outerBlock, outerBlock)).toEqual({ ok: false, reason: 'cycle' });
+  });
+
+  it('refuses moving an ancestor into a descendant deeper than MAX_DEPTH', () => {
+    // Regression for a step-capped `ancestryOf`: walkDirectory itself admits
+    // entries up to MAX_DEPTH (32) deep, so an ancestor chain climbing from
+    // a descendant at that depth back to the root can need MORE than
+    // MAX_DEPTH links. A depth-capped ancestryOf would give up before ever
+    // reaching the ancestor being moved, wrongly conclude "not a
+    // descendant", and let this exact drag build a cycle.
+    const DEPTH = 40;   // deeper than MAX_DEPTH -- the old cap would truncate
+    let node: { name: string; entries: unknown[] } = { name: `D${DEPTH - 1}`, entries: [] };
+    for (let i = DEPTH - 2; i >= 0; i--) {
+      node = { name: `D${i}`, entries: [node] };
+    }
+    const adf = syntheticVolume({ entries: [node as never] });
+
+    // Descend one level at a time: each walkDirectory call here only looks
+    // at the immediate children of `cur`, so it never itself hits
+    // MAX_DEPTH regardless of how deep the full chain goes.
+    let outerBlock = -1;
+    let deepestBlock = -1;
+    let cur = ROOT_BLOCK;
+    for (let i = 0; i < DEPTH; i++) {
+      const child = walkDirectory(adf, cur).root[0];
+      if (i === 0) outerBlock = child.block;
+      cur = child.block;
+      deepestBlock = child.block;
+    }
+
+    expect(moveEntry(adf, 880, outerBlock, deepestBlock)).toEqual({ ok: false, reason: 'cycle' });
   });
 
   it('refuses a name already taken in the destination', () => {

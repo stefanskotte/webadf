@@ -8,7 +8,7 @@
 import {
   BLOCK_BYTES, HASH_TABLE_SIZE, CHECKSUM_WORD, OFS_DATA_BYTES,
   OFS_DATA_CHECKSUM_WORD, T_HEADER, T_DATA, T_LIST, ST_FILE, ST_USERDIR,
-  MAX_DEPTH, ROOT_BLOCK,
+  ROOT_BLOCK,
 } from './constants';
 import { blockAt, be32, i32, checksumOk, bcplString, blockChecksum } from './blocks';
 import { putBe32, putName, recheck } from './write-blocks';
@@ -520,14 +520,28 @@ export function replaceFile(adf: Uint8Array, entryBlock: number, bytes: Uint8Arr
   return { ok: true, adf: out };
 }
 
-/** Every block from `entry` up to the root, following each header's parent. */
+/**
+ * Every block from `entry` up to the root, following each header's parent.
+ *
+ * Bounded by `seen` ALONE, deliberately not by a depth cap. `seen` is
+ * sufficient on its own: an 880K image has exactly BLOCK_COUNT (1,760)
+ * blocks, each admitted here at most once, so this cannot spin even on an
+ * image that is already cyclic. A `MAX_DEPTH`-style cap would be actively
+ * WRONG here, not merely redundant: `walkDirectory` itself admits entries
+ * up to `MAX_DEPTH` deep, so climbing from one of those back to the root
+ * can take more than `MAX_DEPTH` links, and a matching cap would exit the
+ * loop before reaching `ROOT_BLOCK` (or a repeat) -- returning a
+ * TRUNCATED chain that silently omits a real ancestor. Since the caller
+ * only asks "is `entryBlock` in this chain", a truncated chain answers
+ * "no" to what should be "yes": a wrongful ALLOWANCE of exactly the cycle
+ * this function exists to catch. Termination and completeness cannot both
+ * be had from a step count here, so this uses the bound that gives both.
+ */
 function ancestryOf(adf: Uint8Array, entry: number): number[] {
   const chain: number[] = [];
   const seen = new Set<number>();
   let cur = entry;
-  // MAX_DEPTH bounds a crafted image; `seen` bounds one that already has a
-  // cycle, so this cannot spin on a disk that is already broken.
-  for (let i = 0; i < MAX_DEPTH && cur !== 0 && !seen.has(cur); i++) {
+  while (cur !== 0 && !seen.has(cur)) {
     chain.push(cur);
     seen.add(cur);
     if (cur === ROOT_BLOCK) break;
@@ -549,13 +563,20 @@ function ancestryOf(adf: Uint8Array, entry: number): number[] {
  *
  * THE CHECK THAT MATTERS: moving a directory into one of its own
  * descendants (or into itself) would make the destination's ancestry chain
- * loop back through `entryBlock` -- a cycle in the directory tree.
- * `walkDirectory`'s cycle guard would silently CONTAIN that on read,
- * reporting a plausible listing while the disk is unwalkable on a real
- * Amiga (same class of invisibility as `renameEntry`'s self-referencing
- * chain, but one level up: a directory instead of a hash bucket). Checked
- * BEFORE the name collision so a drag onto a descendant reports `cycle`
- * rather than the misleading `name-exists`.
+ * loop back through `entryBlock` -- a cycle in the directory tree. This is
+ * WORSE than `walkDirectory`'s cycle guard merely containing a loop and
+ * reporting a plausible listing: measured directly (comment out the
+ * `ancestryOf` check below and read the result), the moved subtree
+ * unlinks from the real root's chain onto its own descendant, so
+ * `readVolume` from `ROOT_BLOCK` sees `{ warnings: [], root: [] }` -- no
+ * warning, no error, the corrupted directory just isn't there. The disk
+ * reads as empty and healthy; the only way to see the cycle at all is to
+ * start a walk AT the orphaned block directly, which is not something any
+ * normal read path does. Same class of invisibility as `renameEntry`'s
+ * self-referencing chain, but one level up (a directory instead of a hash
+ * bucket) and with no diagnostic left behind. Checked BEFORE the name
+ * collision so a drag onto a descendant reports `cycle` rather than the
+ * misleading `name-exists`.
  */
 export function moveEntry(
   adf: Uint8Array, fromParent: number, entryBlock: number, toParent: number,
@@ -564,8 +585,18 @@ export function moveEntry(
   if (!boot) return { ok: false, reason: 'no-filesystem' };
   if (bitmapPage(adf) === null) return { ok: false, reason: 'bitmap-untrusted' };
 
+  // Same trust as `deleteEntry`/`renameEntry`, and for the same reason
+  // (root.ts): type and secondary type alone are two 32-bit comparisons
+  // that ordinary game data can pass by chance. `fromParent`, `entryBlock`
+  // and `toParent` all arrive here as raw numbers from the PATCH route, so
+  // this is a trust boundary, not an internal helper -- the checksum is
+  // what actually distinguishes a filesystem block from a coincidence.
   const header = blockAt(adf, entryBlock);
-  if (!header || be32(header, 0) !== T_HEADER) return { ok: false, reason: 'not-found' };
+  if (!header) return { ok: false, reason: 'not-found' };
+  if (be32(header, 0) !== T_HEADER) return { ok: false, reason: 'not-found' };
+  if (!checksumOk(header, CHECKSUM_WORD)) return { ok: false, reason: 'not-found' };
+  const secondary = i32(header, 508);
+  if (secondary !== ST_FILE && secondary !== ST_USERDIR) return { ok: false, reason: 'not-found' };
   if (be32(header, 500) !== fromParent) return { ok: false, reason: 'not-found' };
 
   const dest = blockAt(adf, toParent);
