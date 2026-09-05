@@ -5,15 +5,35 @@ import { disks, entitlements, games, blobs } from '@/db/schema/catalog';
 import { devices } from '@/db/schema/devices';
 import { requireOrg } from '@/lib/session';
 import { diskStore } from '@/lib/storage';
-import { readVolume, readUsage } from '@/lib/adffs';
+import { readVolume, readUsage, type AdfEntry } from '@/lib/adffs';
 import { listCollections } from '@/lib/collections';
 import { resolveFrom, libraryTrail, fromQuery } from '@/lib/trail';
 import { PageHeader } from '@/components/shell/page-header';
 import { VolumeHeader } from '@/components/disks/volume-header';
 import { FileTree } from '@/components/disks/file-tree';
+import { DropStaging } from '@/components/disks/drop-staging';
 import { FileEditProvider, FileToolbar, type EditDisabled } from '@/components/disks/file-actions';
 
 export const dynamic = 'force-dynamic';
+
+/**
+ * Every directory already on this disk, keyed by its root-relative path
+ * ('' for the root itself) to the names it already holds -- what
+ * `stageDrop` (Task 3) calls `existingNamesByDir`, and what the staging
+ * area re-derives live as a person edits a name (drop-staging.tsx). Built
+ * here, once, from the same `AdfEntry[]` the tree already renders, rather
+ * than a second read of the volume.
+ */
+function existingNamesByDir(entries: AdfEntry[], prefix = ''): Record<string, string[]> {
+  const out: Record<string, string[]> = { [prefix]: entries.map((e) => e.name) };
+  for (const entry of entries) {
+    if (entry.kind === 'dir') {
+      const path = prefix ? `${prefix}/${entry.name}` : entry.name;
+      Object.assign(out, existingNamesByDir(entry.children, path));
+    }
+  }
+  return out;
+}
 
 export default async function DiskFilesPage(props: PageProps<'/disks/[id]/files'>) {
   const { orgId } = await requireOrg();
@@ -165,6 +185,18 @@ export default async function DiskFilesPage(props: PageProps<'/disks/[id]/files'
             */}
             <FileToolbar />
             {volume.ok && <FileTree entries={volume.root} diskId={id} />}
+            {/*
+              Below the tree, always rendered -- even with no filesystem to
+              browse, matching FileToolbar's own always-shown-but-disabled
+              pattern -- so the page keeps advertising it accepts a drop
+              rather than the control simply not existing (§6).
+            */}
+            <DropStaging
+              filesystem={volume.ok ? volume.volume.filesystem : 'OFS'}
+              intl={volume.ok ? volume.volume.intl : false}
+              existingNamesByDir={volume.ok ? existingNamesByDir(volume.root) : {}}
+              freeBlocks={usage?.freeBlocks ?? 0}
+            />
           </FileEditProvider>
         )}
       </div>
