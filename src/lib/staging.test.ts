@@ -17,6 +17,24 @@ describe('shortenName', () => {
     expect(out).toHaveLength(30);
     expect(out.endsWith('.info')).toBe(true);
   });
+
+  it('falls back to plain truncation when the extension alone is 30+ characters', () => {
+    // The extension itself is already at the cap, so trimming the stem to
+    // fit alongside it would leave nothing -- fall back to a plain cut
+    // instead of keeping an "extension" that is really the whole budget.
+    const extension = `.${'a'.repeat(29)}`; // 30 characters, including the dot
+    const name = `x${extension}`; // 31 characters total
+    const out = shortenName(name);
+    expect(out).toHaveLength(30);
+    expect(out).toBe(name.slice(0, 30));
+  });
+
+  it('falls back to plain truncation when there is no dot at all', () => {
+    const name = 'x'.repeat(40);
+    const out = shortenName(name);
+    expect(out).toHaveLength(30);
+    expect(out).toBe('x'.repeat(30));
+  });
 });
 
 describe('stageDrop', () => {
@@ -24,6 +42,7 @@ describe('stageDrop', () => {
     const staged = stageDrop(
       [{ path: 'README', kind: 'file', sizeBytes: 10 }],
       new Map([['', ['readme']]]), // case-insensitive: readme === README
+      false,
     );
     expect(staged[0].collidesWith).toBe('existing');
   });
@@ -32,7 +51,7 @@ describe('stageDrop', () => {
     const staged = stageDrop([
       { path: 'AnAbsurdlyLongFileNameIndeedYes1.txt', kind: 'file', sizeBytes: 1 },
       { path: 'AnAbsurdlyLongFileNameIndeedYes2.txt', kind: 'file', sizeBytes: 1 },
-    ], new Map());
+    ], new Map(), false);
     // Both shorten into the same 30 characters, which no per-row check against
     // the DISK would ever notice.
     expect(staged[1].collidesWith).toBe('staged');
@@ -43,7 +62,29 @@ describe('stageDrop', () => {
       { path: 'C', kind: 'dir', sizeBytes: 0 },
       { path: 'C/README', kind: 'file', sizeBytes: 1 },
       { path: 'README', kind: 'file', sizeBytes: 1 },
-    ], new Map());
+    ], new Map(), false);
     expect(staged.filter((e) => e.collidesWith !== null)).toHaveLength(0);
+  });
+
+  it('folds extended Latin case only when staging for an INTL disk', () => {
+    // hash.ts's INTL fold covers 0xe0-0xfe (excluding 0xf7, the division
+    // sign) by subtracting 0x20, same as ASCII a-z. 0xe5 'å' therefore folds
+    // to 0xc5 'Å' under INTL -- and 0xc5 itself is outside 0xe0-0xfe, so it
+    // passes through unfolded on either side. Under the non-INTL fold,
+    // neither byte moves, so the two stay distinct. Same length, differing
+    // only in that one trailing character, so this is exactly the pair
+    // `nameHash` and `sameName` treat differently depending on `intl`.
+    const lower = 'Diskå'; // "Diskå"
+    const upper = 'DiskÅ'; // "DiskÅ"
+    const dropped = [
+      { path: lower, kind: 'file' as const, sizeBytes: 1 },
+      { path: upper, kind: 'file' as const, sizeBytes: 1 },
+    ];
+
+    const onIntlDisk = stageDrop(dropped, new Map(), true);
+    expect(onIntlDisk[1].collidesWith).toBe('staged');
+
+    const onPlainDisk = stageDrop(dropped, new Map(), false);
+    expect(onPlainDisk[1].collidesWith).toBe(null);
   });
 });

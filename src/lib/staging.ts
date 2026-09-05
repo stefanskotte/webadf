@@ -82,12 +82,20 @@ function splitPath(path: string): { dir: string; name: string } {
  * collide after shortening is the one reported, matching the order they
  * would be written in.
  *
- * Case folding uses `sameName`'s non-INTL rule, same as `nameHash` uses for
- * an ordinary (non-international) filesystem.
+ * Case folding uses `sameName`, so it agrees with `nameHash` on which two
+ * names occupy the same directory slot. `intl` selects which of the two
+ * folds applies -- it is the TARGET disk's own `boot.intl` (the page
+ * already reads this when it opens the disk), because the write path,
+ * `linkIntoDirectory`, hashes with `nameHash(name, boot.intl)`. Six disks
+ * in the operator's archive are INTL-formatted, where extended Latin
+ * (0xe0-0xfe, excluding 0xf7) also folds; passing the wrong flag here would
+ * let this module say "no collision" for a pair that the real write would
+ * refuse.
  */
 export function stageDrop(
   dropped: readonly { path: string; kind: 'file' | 'dir'; sizeBytes: number }[],
   existingNamesByDir: ReadonlyMap<string, readonly string[]>,
+  intl: boolean,
 ): StagedEntry[] {
   const stagedNamesByDir = new Map<string, string[]>();
 
@@ -99,9 +107,9 @@ export function stageDrop(
     const stagedSoFar = stagedNamesByDir.get(dir) ?? [];
 
     let collidesWith: StagedEntry['collidesWith'] = null;
-    if (existing.some((other) => sameName(other, name, false))) {
+    if (existing.some((other) => sameName(other, name, intl))) {
       collidesWith = 'existing';
-    } else if (stagedSoFar.some((other) => sameName(other, name, false))) {
+    } else if (stagedSoFar.some((other) => sameName(other, name, intl))) {
       collidesWith = 'staged';
     }
 
