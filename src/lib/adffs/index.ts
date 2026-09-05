@@ -22,6 +22,7 @@ export {
   addFile, deleteEntry, renameEntry, replaceFile, makeDirectory, moveEntry,
   type WriteResult, type WriteError,
 } from './write';
+export { blocksForFile, blocksForPlan, type CostItem } from './capacity';
 
 export type VolumeResult =
   | { ok: true; volume: VolumeInfo; root: AdfEntry[]; truncated: boolean; warnings: string[] }
