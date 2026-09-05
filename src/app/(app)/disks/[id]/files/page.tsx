@@ -208,6 +208,7 @@ export default async function DiskFilesPage(props: PageProps<'/disks/[id]/files'
               intl={volume.ok ? volume.volume.intl : false}
               existingNamesByDir={volume.ok ? existingNamesByDir(volume.root) : {}}
               freeBlocks={usage?.freeBlocks ?? 0}
+              entries={volume.ok ? volume.root : []}
             />
           </FileEditProvider>
         )}

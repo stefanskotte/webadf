@@ -3,11 +3,17 @@
 import { useMemo, useState } from 'react';
 import { readDroppedItems, type DroppedItem } from '@/lib/drop-reader';
 import { stageDrop, type StagedEntry, type ExistingEntry } from '@/lib/staging';
-import { blocksForPlan, type Filesystem } from '@/lib/adffs';
+import { blocksForPlan, type AdfEntry, type Filesystem } from '@/lib/adffs';
+import { ROOT_BLOCK } from '@/lib/adffs/constants';
 // The identical fold `stageDrop` itself uses (see staging.ts's own comment):
 // reused here, not reinvented, so a live re-check of a typed rename can
 // never disagree with the one-shot check `stageDrop` already ran.
 import { sameName } from '@/lib/adffs/write';
+// The SAME directory-collecting walk the "Move to…" menu already uses
+// (fix: the spec calls for every folder to be a usable destination, and a
+// second, independently-written walk here could quietly disagree with that
+// one about what counts as a directory or how it's labelled).
+import { collectDirectories, type DirectoryOption } from './file-tree';
 import { useFileEdit, MAX_NAME_LENGTH } from './file-actions';
 
 /** Split a dropped path into its parent directory key and its own name -- the identical rule `staging.ts` uses internally, needed again here to walk a renamed ancestor chain when building the disk path a batch actually writes to (see `diskPathFor` below). */
@@ -40,7 +46,7 @@ interface LiveRow {
 }
 
 export function DropStaging({
-  filesystem, intl, existingNamesByDir, freeBlocks,
+  filesystem, intl, existingNamesByDir, freeBlocks, entries,
 }: {
   filesystem: Filesystem;
   intl: boolean;
@@ -54,6 +60,14 @@ export function DropStaging({
    */
   existingNamesByDir: Record<string, ExistingEntry[]>;
   freeBlocks: number;
+  /**
+   * The disk's own tree, root's children only -- feeds the destination
+   * selector's directory list (`collectDirectories`, the same helper
+   * `FileTree`'s "Move to…" menu already uses). Not derived from
+   * `existingNamesByDir`, which has no block numbers and so can't back a
+   * `<select>` needing a stable value per option.
+   */
+  entries: AdfEntry[];
 }) {
   const { diskId, disabled, busy, runEdit } = useFileEdit();
 
@@ -69,6 +83,33 @@ export function DropStaging({
     () => new Map(Object.entries(existingNamesByDir)),
     [existingNamesByDir],
   );
+
+  // Every folder ROW is a drop target per the design doc -- but a native OS
+  // drop cannot actually be landed on one (see this control's own comment
+  // in the render below, and HANDOFF.md §3v: the deviation is recorded
+  // there, not hidden). This selector is what stands in for it: root plus
+  // every directory already on the disk, defaulting to root, using the
+  // IDENTICAL walk (`collectDirectories`) the "Move to…" menu already
+  // built rather than a second one that could disagree with it.
+  const directoryOptions = useMemo<DirectoryOption[]>(
+    () => [{ block: ROOT_BLOCK, label: '/' }, ...collectDirectories(entries)],
+    [entries],
+  );
+  const [destinationBlock, setDestinationBlock] = useState<number>(ROOT_BLOCK);
+  // `collectDirectories`' labels are slash-prefixed ("/Docs", "/Docs/Sub")
+  // for display; the internal convention every path in this component (and
+  // `existingNamesByDir`'s own keys) uses is un-prefixed, '' for the root
+  // itself -- so this strips exactly one leading slash rather than
+  // reinventing a second path format.
+  const destinationPath = useMemo(() => {
+    const label = directoryOptions.find((d) => d.block === destinationBlock)?.label ?? '/';
+    return label === '/' ? '' : label.slice(1);
+  }, [directoryOptions, destinationBlock]);
+  /** `dir`, joined onto the chosen destination -- what every lookup against `existingMap` (a disk-rooted map) must use once a destination other than root is picked. */
+  function atDestination(dir: string): string {
+    if (!destinationPath) return dir;
+    return dir ? `${destinationPath}/${dir}` : destinationPath;
+  }
 
   // The one-shot verdict from Task 3's own module -- the default name and
   // shortened flag for every row come from here and never change; only the
@@ -101,7 +142,12 @@ export function DropStaging({
     return baseline.map((entry): LiveRow => {
       const name = effectiveNameFor(entry.path);
       const resolution = resolutions.get(entry.path) ?? null;
-      const { dir } = splitPath(entry.path);
+      // Joined onto the CHOSEN destination, not the disk root: a row's own
+      // `dir` is only its position WITHIN the dropped tree (e.g. '' for
+      // something dropped directly, "Sub" for something nested one level
+      // in) -- where it actually lands on the disk is that, prefixed by
+      // wherever the destination selector points.
+      const dir = atDestination(splitPath(entry.path).dir);
 
       const existingEntries = existingMap.get(dir) ?? [];
       const takenSoFar = takenByDir.get(dir) ?? [];
@@ -156,8 +202,8 @@ export function DropStaging({
         collidesWith, conflictName, existingKind,
       };
     });
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- effectiveNameFor is a plain function (not memoized) closing over byPath and nameOverrides; byPath itself is a useMemo keyed on `baseline`, which IS listed below, so this recomputes exactly when either input actually changes.
-  }, [baseline, resolutions, nameOverrides, existingMap, intl]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- effectiveNameFor and atDestination are plain functions (not memoized) closing over byPath/nameOverrides and destinationPath respectively; byPath is a useMemo keyed on `baseline` (listed below) and destinationPath IS listed below too, so this recomputes exactly when any actual input changes.
+  }, [baseline, resolutions, nameOverrides, existingMap, intl, destinationPath]);
 
   function setName(path: string, name: string) {
     setNameOverrides((prev) => new Map(prev).set(path, name.slice(0, MAX_NAME_LENGTH)));
@@ -223,10 +269,17 @@ export function DropStaging({
   const commitDisabled = !!disabled || busy || rows.length === 0
     || nonSkipped.length === 0 || hasOutstandingCollision || overCapacity;
 
-  function diskPathFor(path: string): string {
+  /** The path this dropped item would sit at from the drop's OWN root -- recurses through renamed ancestors, but knows nothing of the destination selector; see `diskPathFor` below for the path actually written. */
+  function relativePathFor(path: string): string {
     const { dir } = splitPath(path);
     const leaf = effectiveNameFor(path);
-    return dir === '' ? leaf : `${diskPathFor(dir)}/${leaf}`;
+    return dir === '' ? leaf : `${relativePathFor(dir)}/${leaf}`;
+  }
+
+  /** The path actually written on commit: the chosen destination, prefixed exactly ONCE, ahead of the drop-relative path -- never per level of `relativePathFor`'s own recursion, which would otherwise repeat it once per ancestor. */
+  function diskPathFor(path: string): string {
+    const relative = relativePathFor(path);
+    return destinationPath ? `${destinationPath}/${relative}` : relative;
   }
 
   function commit() {
@@ -297,11 +350,30 @@ export function DropStaging({
           <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-1 text-[11px]"
                style={{ color: 'var(--muted-2)' }}>
             {/*
-              Root only, always -- Task 8 has no mechanism to land a drop on
-              a folder row (that is dnd-kit's shared drag context, Task 9).
-              Shown as a fact rather than a control until that exists.
+              A native OS drop cannot actually be landed ON a folder row --
+              the browser's drag-and-drop APIs and dnd-kit's own drag
+              context are two entirely separate mechanisms with no shared
+              event to land one inside the other, and there is no way to
+              tell, from inside a native `drop` handler, which rendered row
+              the pointer was over. This selector is the deviation the spec
+              asked for a plain statement of (HANDOFF.md §3v): every
+              directory on the disk IS a usable destination, chosen HERE
+              rather than by dropping directly onto its row.
             */}
-            <span data-testid="drop-destination">Destination: disk root (/)</span>
+            <label className="flex items-center gap-1.5">
+              Destination:
+              <select
+                data-testid="drop-destination-select"
+                value={destinationBlock}
+                onChange={(e) => setDestinationBlock(Number(e.target.value))}
+                className="rounded border bg-transparent px-1.5 py-0.5 text-[11px]"
+                style={{ borderColor: 'var(--hairline)', color: 'var(--ink)' }}
+              >
+                {directoryOptions.map((opt) => (
+                  <option key={opt.block} value={opt.block}>{opt.label}</option>
+                ))}
+              </select>
+            </label>
             <span>
               <span data-testid="drop-total-blocks">{totalBlocks.toLocaleString()}</span>
               {' '}block{totalBlocks === 1 ? '' : 's'} needed ·{' '}

@@ -641,8 +641,20 @@ export function moveEntry(
   if (secondary !== ST_FILE && secondary !== ST_USERDIR) return { ok: false, reason: 'not-found' };
   if (be32(header, 500) !== fromParent) return { ok: false, reason: 'not-found' };
 
+  // THE DESTINATION GETS THE SAME TRUST AS THE SOURCE (fix: the reviewer's
+  // finding). A zeroed block with only 0x00000002 (ST_USERDIR) at offset 508
+  // used to pass -- no T_HEADER at offset 0, no valid checksum -- because the
+  // old check only compared the secondary type. Accepting that let an entry
+  // be reparented onto a non-header block: `linkIntoDirectory` then stamps a
+  // checksum over four bytes of it and the moved subtree becomes unreachable
+  // while still marked allocated. `T_HEADER` and `checksumOk` are exactly
+  // the two checks the SOURCE header already gets above; the root block
+  // passes both (it IS a T_HEADER block with a real checksum, see root.ts),
+  // so this adds no new restriction on moving into the root.
   const dest = blockAt(adf, toParent);
   if (!dest) return { ok: false, reason: 'not-found' };
+  if (be32(dest, 0) !== T_HEADER) return { ok: false, reason: 'not-found' };
+  if (!checksumOk(dest, CHECKSUM_WORD)) return { ok: false, reason: 'not-found' };
   const destKind = i32(dest, 508);
   if (toParent !== ROOT_BLOCK && destKind !== ST_USERDIR) {
     return { ok: false, reason: 'not-a-directory' };
@@ -701,6 +713,61 @@ function replaceExisting(adf: Uint8Array, parent: number, name: string, bytes: U
 }
 
 /**
+ * Resolve a batch-relative path to the block number it names, walking
+ * segment by segment from `ROOT_BLOCK` through directories ALREADY on the
+ * disk when `dirs` (the batch's own cache, seeded `['', ROOT_BLOCK]`) has no
+ * entry for it yet.
+ *
+ * THE GAP THIS CLOSES: `dirs` used to be populated ONLY by a successful
+ * `mkdir` earlier in the same batch (see `applyBatch` below), so dropping a
+ * folder onto a directory that already exists on the disk had no path to
+ * success at all -- `dirs.get(op.parentPath)` missed, the batch refused
+ * `not-found` before writing anything; emitting an `mkdir` for it instead
+ * just traded that refusal for `name-exists`. Resolving each segment with
+ * `findChildBlock` (the same "what is `parent`'s child named `name`"
+ * question `applyBatch` already asks after every `mkdir`) is what makes
+ * "commit into a folder that's already there" work at all.
+ *
+ * Each segment is checked for `ST_USERDIR` (via `blockAt` + `i32`, not just
+ * membership in the tree) before being trusted as a directory to search
+ * inside: a dropped path running through a pre-existing FILE (`Docs/Notes`
+ * where "Docs" is a file, not a folder) must refuse `not-a-directory`
+ * rather than silently treating the file's header block as if it had a hash
+ * table. A missing segment anywhere along the way is `not-found`, exactly
+ * what a miss against `dirs` alone used to mean.
+ *
+ * Every segment resolved this way is cached into `dirs` under its own
+ * partial path, not just the final one -- so a later op in the same batch
+ * naming an intermediate directory (or this same one again) resolves in
+ * O(1) rather than re-walking from the root, and so it lines up with the
+ * caching an `mkdir` result already gets.
+ */
+function resolveParentPath(
+  adf: Uint8Array, dirs: Map<string, number>, path: string,
+): { ok: true; block: number } | { ok: false; reason: WriteError } {
+  const cached = dirs.get(path);
+  if (cached !== undefined) return { ok: true, block: cached };
+
+  const slash = path.lastIndexOf('/');
+  const parentPath = slash === -1 ? '' : path.slice(0, slash);
+  const name = slash === -1 ? path : path.slice(slash + 1);
+
+  const parent = resolveParentPath(adf, dirs, parentPath);
+  if (!parent.ok) return parent;
+
+  const block = findChildBlock(adf, parent.block, name);
+  if (block === null) return { ok: false, reason: 'not-found' };
+
+  const header = blockAt(adf, block);
+  if (!header || i32(header, 508) !== ST_USERDIR) {
+    return { ok: false, reason: 'not-a-directory' };
+  }
+
+  dirs.set(path, block);
+  return { ok: true, block };
+}
+
+/**
  * Turn a list of `BatchOp`s into a single edit function, so a whole folder
  * drop is ONE `applyDiskEdit` call -- one new blob -- rather than one per
  * file (see this task's brief, D-DD-3). `applyDiskEdit` itself is untouched:
@@ -720,6 +787,8 @@ function replaceExisting(adf: Uint8Array, parent: number, name: string, bytes: U
  * Every time an `mkdir` succeeds, its new block is looked up with
  * `findChildBlock` and recorded under its path, which is what lets a LATER
  * op in the same batch address a directory this batch itself just created.
+ * `resolveParentPath` is what handles the other case -- a parent that was
+ * never created by THIS batch because it was already on the disk.
  *
  * Ordering is the CALLER's job: operations are applied exactly as given, in
  * order, with no sorting here. Task 6 sorts its op list by path depth
@@ -732,8 +801,9 @@ export function applyBatch(ops: readonly BatchOp[]): (adf: Uint8Array) => WriteR
     const dirs = new Map<string, number>([['', ROOT_BLOCK]]);
 
     for (const op of ops) {
-      const parent = dirs.get(op.parentPath);
-      if (parent === undefined) return { ok: false, reason: 'not-found' };
+      const resolved = resolveParentPath(cur, dirs, op.parentPath);
+      if (!resolved.ok) return resolved;
+      const parent = resolved.block;
 
       const r = op.op === 'mkdir' ? makeDirectory(cur, parent, op.name)
         : op.op === 'add' ? addFile(cur, parent, op.name, op.bytes)

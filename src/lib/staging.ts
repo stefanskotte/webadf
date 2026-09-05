@@ -38,8 +38,17 @@ export interface StagedEntry {
   path: string;
   kind: 'file' | 'dir';
   sizeBytes: number;
-  /** What will actually be written, after shortening. */
+  /** What will actually be written, after Latin-1 masking and shortening. */
   name: string;
+  /**
+   * True when `name` differs from the dropped name for EITHER reason this
+   * module corrects visibly: over-length shortening, or a code point above
+   * 0xFF masked down to a byte (`maskToLatin1`). Both are the same kind of
+   * fact to a person staging a drop -- "this isn't what you dropped, look
+   * at what will actually be written" -- so both share this one flag and
+   * the same editable-row treatment in the UI, rather than a name change
+   * silently happening without a bar to notice it.
+   */
   shortened: boolean;
   collidesWith: 'existing' | 'staged' | null;
   /**
@@ -54,6 +63,32 @@ export interface StagedEntry {
    * misleading).
    */
   existingKind: 'file' | 'dir' | null;
+}
+
+/**
+ * Mask every character above the Latin-1 byte range down to one byte, the
+ * IDENTICAL rule `putName` (write-blocks.ts) applies when it actually writes
+ * a name to disk: `charCodeAt(i) & 0xff`.
+ *
+ * WHY THIS HAS TO LIVE HERE, NOT JUST IN `putName`: `nameHash` and
+ * `sameName` (write.ts) hash and compare the FULL, unmasked code point, so
+ * without this a staged name lies. A dropped "Ω.txt" (U+03A9, 0x3A9) used to
+ * stage and display as "Ω.txt" while the byte `putName` actually wrote was
+ * `0x3A9 & 0xff` = 0xA9 = "©" -- stored as "©.txt", hashed and compared as
+ * "©.txt" by `nameHash`/`sameName`, but DISPLAYED and staged as if it were
+ * still "Ω.txt". A real Amiga probing for the name it can actually see on
+ * disk ("©.txt") would never think to hash "Ω.txt" first, so the file was
+ * unfindable there -- only our own reader (which walks every hash bucket
+ * rather than probing one) showed it fine. Masking here, before shortening
+ * and before the collision check, makes the staged `name` the TRUTH: what a
+ * person sees is byte-for-byte what gets written, hashed and compared.
+ */
+function maskToLatin1(name: string): string {
+  let out = '';
+  for (let i = 0; i < name.length; i++) {
+    out += String.fromCharCode(name.charCodeAt(i) & 0xff);
+  }
+  return out;
 }
 
 /**
@@ -119,7 +154,11 @@ export function stageDrop(
 
   return dropped.map((entry) => {
     const { dir, name: rawName } = splitPath(entry.path);
-    const name = shortenName(rawName);
+    // Masked BEFORE shortening: masking never changes length (one UTF-16
+    // code unit in, one out), so the order between the two never changes
+    // the final length, but the collision check below must see the byte
+    // value `putName` will actually write, not the pre-mask original.
+    const name = shortenName(maskToLatin1(rawName));
 
     const existing = existingNamesByDir.get(dir) ?? [];
     const stagedSoFar = stagedNamesByDir.get(dir) ?? [];

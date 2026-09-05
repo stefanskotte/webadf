@@ -181,6 +181,24 @@ export async function PATCH(
         if (!volume.ok) return { ok: false, reason: 'no-filesystem' };
         const found = findEntryWithParent(volume.root, blockNo, ROOT_BLOCK);
         if (!found) return { ok: false, reason: 'not-found' };
+
+        // Resolved through the PARSED tree, exactly like `found` above and
+        // like GET/DELETE resolve the block they act on -- never the raw
+        // client number passed straight through. `readVolume` already
+        // walked every block it accepted into `volume.root`, checking
+        // `T_HEADER`, its checksum and its secondary type on the way
+        // (dir.ts); a block that only LOOKS like a directory (say, a zeroed
+        // block with `0x00000002` at offset 508 and nothing else) never
+        // makes it into that tree at all, so it can never be found here.
+        // `moveEntry`'s own `T_HEADER`/checksum/`ST_USERDIR` checks on
+        // `toParent` are a second, independent line of defense for the same
+        // bogus-block attack -- this is the first.
+        if (toParent !== ROOT_BLOCK) {
+          const dest = findEntry(volume.root, toParent);
+          if (!dest) return { ok: false, reason: 'not-found' };
+          if (dest.kind !== 'dir') return { ok: false, reason: 'not-a-directory' };
+        }
+
         return moveEntry(adf, found.parentBlock, blockNo, toParent);
       };
     } else {

@@ -108,4 +108,34 @@ describe('stageDrop', () => {
     const onPlainDisk = stageDrop(dropped, new Map(), false);
     expect(onPlainDisk[1].collidesWith).toBe(null);
   });
+
+  it('masks a name above Latin-1 down to the byte putName actually writes, and marks the row', () => {
+    // 'Ω' is U+03A9 (0x3A9). putName (write-blocks.ts) stores
+    // `charCodeAt(i) & 0xff`, so the byte actually written is 0xA9 -- '©'.
+    // Without this fix the staged `name` would still read "Ω.txt", lying
+    // about what's on the disk.
+    const staged = stageDrop(
+      [{ path: 'Ω.txt', kind: 'file', sizeBytes: 1 }],
+      new Map(),
+      false,
+    );
+    expect(staged[0].name).toBe('©.txt'); // '©.txt'
+    expect(staged[0].name).not.toBe('Ω.txt');
+    // Reuses the SAME flag an over-long name gets -- this is "corrected
+    // visibly in the editable field" too, not a second kind of marker.
+    expect(staged[0].shortened).toBe(true);
+  });
+
+  it('flags two names that mask into the SAME byte-identical name as colliding', () => {
+    // 'Ω' (U+03A9) and '©' (U+00A9) both mask to the byte 0xA9: `putName`
+    // would write byte-for-byte identical stored names for two dropped
+    // items that look completely different pre-mask -- a collision no
+    // per-row check against the unmasked names would ever catch.
+    const staged = stageDrop([
+      { path: 'Ω.txt', kind: 'file', sizeBytes: 1 },
+      { path: '©.txt', kind: 'file', sizeBytes: 1 },
+    ], new Map(), false);
+    expect(staged[0].name).toBe(staged[1].name);
+    expect(staged[1].collidesWith).toBe('staged');
+  });
 });

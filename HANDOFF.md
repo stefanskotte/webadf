@@ -1319,6 +1319,20 @@ folder row (`file-tree.tsx`, dnd-kit, the same `MouseSensor`/`TouchSensor` pair
 identical `moveEntry`/route, so a cycle refusal or a mounted-device 409 reads the same whichever
 way the move was started.
 
+**A deviation from the spec, recorded rather than hidden: folder ROWS are not native OS-drop
+targets.** The spec describes every folder row as a drop target, with the destination pre-set
+from whichever row a drop landed on. That mechanism does not exist and was not built — a native
+`drop` event and dnd-kit's own drag context are two unrelated systems with no shared event, and
+nothing inside a native drop handler says which rendered row the pointer was over when it fired.
+What ships instead is the same CAPABILITY by a different mechanism: `DropStaging` renders a
+destination `<select>` (`data-testid="drop-destination-select"`, drop-staging.tsx) listing the
+disk root and every directory on the disk — built from `collectDirectories`, the identical walk
+`FileTree`'s own "Move to…" menu already uses, not a second one that could disagree with it —
+defaulting to the root. Every manifest path is prefixed with whichever destination is chosen
+before the batch is posted. A drop itself still only ever lands on the page's one drop strip;
+choosing where it goes is a separate, explicit step rather than an implicit one inferred from
+pointer position.
+
 **Fit is computed in BLOCKS, never bytes, because a byte total lies (design §3.1).** Every file
 costs one header block plus `ceil(size / perBlock)` data blocks plus one extension block per 72
 data blocks beyond the first — so 900 zero-byte files cost 1,800 blocks (900 header + 900 data)

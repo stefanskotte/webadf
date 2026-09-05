@@ -6,11 +6,17 @@ import { readBoot } from './boot';
 import { nameHash } from './hash';
 import { syntheticVolume } from './synthetic';
 import { blockAt, be32 } from './blocks';
-import { HASH_TABLE_SIZE, ROOT_BLOCK } from './constants';
+import { HASH_TABLE_SIZE, ROOT_BLOCK, BLOCK_BYTES } from './constants';
 import { walkDirectory } from './dir';
 
 const empty = (fs: 'OFS' | 'FFS' = 'FFS') =>
   syntheticVolume({ filesystem: fs, volumeName: 'AddVol' });
+
+/** Poke a raw big-endian word into `adf`, for tests that need to fabricate a bogus block by hand (same pattern dir.test.ts, file.test.ts and usage.test.ts each keep their own local copy of). */
+function putBe32(a: Uint8Array, off: number, v: number) {
+  a[off] = (v >>> 24) & 0xff; a[off + 1] = (v >>> 16) & 0xff;
+  a[off + 2] = (v >>> 8) & 0xff; a[off + 3] = v & 0xff;
+}
 
 describe('addFile', () => {
   it('adds a file the reader can find and read back', () => {
@@ -795,6 +801,33 @@ describe('moveEntry', () => {
     if (!result.ok) return;
     expect(Array.from(result.adf)).toEqual(Array.from(withFile.adf));
   });
+
+  it('refuses a bogus destination block that only LOOKS like a directory', () => {
+    // THE EXACT CORRUPTION THE REVIEWER FOUND: a zeroed block with nothing
+    // but ST_USERDIR (0x00000002) at offset 508 -- no T_HEADER at offset 0,
+    // no valid checksum -- used to pass moveEntry's old destination check,
+    // which only ever compared the secondary type. Accepted, it reparents
+    // the entry onto a non-header block, `linkIntoDirectory` stamps a
+    // checksum over four bytes of that block, and the moved subtree becomes
+    // unreachable while still marked allocated -- the same class of
+    // invisible corruption `ancestryOf`'s cycle check exists to prevent,
+    // just reached from the other end (a bad DESTINATION rather than a
+    // cyclic one). The fix gives the destination the identical T_HEADER +
+    // checksum trust the SOURCE header already gets above.
+    const withFile = addFile(empty(), 880, 'x.txt', new Uint8Array([1]));
+    if (!withFile.ok) throw new Error('add');
+    const v = readVolume(withFile.adf);
+    if (!v.ok) return;
+    const file = v.root.find((e) => e.name === 'x.txt')!;
+
+    const bogusBlock = 1700; // far from anything this tiny fixture actually allocated
+    const adf = withFile.adf.slice();
+    const bs = bogusBlock * BLOCK_BYTES;
+    adf.fill(0, bs, bs + BLOCK_BYTES);
+    putBe32(adf, bs + 508, 2); // ST_USERDIR -- and nothing else real about this block
+
+    expect(moveEntry(adf, 880, file.block, bogusBlock)).toEqual({ ok: false, reason: 'not-found' });
+  });
 });
 
 describe('applyBatch', () => {
@@ -847,5 +880,94 @@ describe('applyBatch', () => {
     const copy = adf.slice();
     applyBatch([{ op: 'add', parentPath: '', name: 'x'.repeat(31), bytes: new Uint8Array([1]) }])(adf);
     expect(Array.from(adf)).toEqual(Array.from(copy));
+  });
+
+  it('commits into a directory ALREADY on the disk, with no mkdir op for it -- the exact shape DropStaging emits for a folder merge', () => {
+    // THE GAP THIS CLOSES: `dirs` used to be seeded with ONLY `['', ROOT_BLOCK]`
+    // and gained an entry for a path ONLY when that batch's own `mkdir`
+    // succeeded. A folder dropped onto a disk that already has a
+    // same-named directory never emits an `mkdir` for it (the staging UI
+    // calls this a "merge", not a create) -- so `dirs.get('Docs')` missed,
+    // and the whole batch refused `not-found` before writing a single
+    // byte. This is also the exact scenario the staging copy's promise
+    // ("Not created — its contents are added to the folder already
+    // there") depends on being true: proved here, not assumed.
+    const made = makeDirectory(empty(), 880, 'Docs');
+    if (!made.ok) throw new Error('mkdir');
+
+    const run = applyBatch([
+      // No 'mkdir' for "Docs" -- it already exists. Only its contents.
+      { op: 'add', parentPath: 'Docs', name: 'note.txt', bytes: new TextEncoder().encode('hi') },
+    ]);
+    const r = run(made.adf);
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+
+    const v = readVolume(r.adf);
+    if (!v.ok) return;
+    expect(v.root.map((e) => e.name)).toEqual(['Docs']);
+    expect(v.root[0].children.map((e) => e.name)).toEqual(['note.txt']);
+    expect(readFile(r.adf, v.root[0].children[0].block)?.bytes).toEqual(new TextEncoder().encode('hi'));
+  });
+
+  it('resolves a MULTI-SEGMENT path through directories already on the disk, not created by this batch', () => {
+    let adf = empty();
+    const outer = makeDirectory(adf, 880, 'Outer');
+    if (!outer.ok) throw new Error('mkdir outer');
+    adf = outer.adf;
+    const vOuter = readVolume(adf);
+    if (!vOuter.ok) return;
+    const inner = makeDirectory(adf, vOuter.root[0].block, 'Inner');
+    if (!inner.ok) throw new Error('mkdir inner');
+    adf = inner.adf;
+
+    const r = applyBatch([
+      { op: 'add', parentPath: 'Outer/Inner', name: 'deep.txt', bytes: new Uint8Array([9]) },
+    ])(adf);
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    const v = readVolume(r.adf);
+    if (!v.ok) return;
+    expect(v.root[0].children[0].children.map((e) => e.name)).toEqual(['deep.txt']);
+  });
+
+  it('refuses a path running through a pre-existing FILE with not-a-directory', () => {
+    // "Docs" already exists, but as a FILE -- a dropped path naming it as a
+    // parent must never be treated as if it had a hash table to search.
+    const withFile = addFile(empty(), 880, 'Docs', new Uint8Array([1]));
+    if (!withFile.ok) throw new Error('add');
+
+    const r = applyBatch([
+      { op: 'add', parentPath: 'Docs', name: 'note.txt', bytes: new Uint8Array([2]) },
+    ])(withFile.adf);
+    expect(r).toEqual({ ok: false, reason: 'not-a-directory' });
+  });
+
+  it('refuses a path whose segment does not exist anywhere, on disk or in this batch', () => {
+    const r = applyBatch([
+      { op: 'add', parentPath: 'Nonexistent', name: 'note.txt', bytes: new Uint8Array([1]) },
+    ])(empty());
+    expect(r).toEqual({ ok: false, reason: 'not-found' });
+  });
+
+  it('applies a `replace` op, the wiring behind the batch route\'s most destructive choice', () => {
+    const added = addFile(empty(), 880, 'existing.txt', new TextEncoder().encode('old'));
+    if (!added.ok) throw new Error('add');
+    const v0 = readVolume(added.adf);
+    if (!v0.ok) return;
+    const originalBlock = v0.root[0].block;
+
+    const r = applyBatch([
+      { op: 'replace', parentPath: '', name: 'existing.txt', bytes: new TextEncoder().encode('new content') },
+    ])(added.adf);
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+
+    const v1 = readVolume(r.adf);
+    if (!v1.ok) return;
+    expect(v1.root.map((e) => e.name)).toEqual(['existing.txt']);
+    // Same header block (D-W-6), new bytes.
+    expect(v1.root[0].block).toBe(originalBlock);
+    expect(readFile(r.adf, v1.root[0].block)?.bytes).toEqual(new TextEncoder().encode('new content'));
   });
 });

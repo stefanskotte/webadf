@@ -159,7 +159,7 @@ function subtreeBlocks(entry: AdfEntry): Set<number> {
 }
 
 /** One directory a "Move to…" control can offer, labelled by its full path so two directories that share a name at different depths are never offered as indistinguishable options. */
-interface DirectoryOption {
+export interface DirectoryOption {
   block: number;
   label: string;
 }
@@ -170,8 +170,13 @@ interface DirectoryOption {
  * already accepts. The root itself is not an `AdfEntry` (it has no block of
  * its own to walk into here), so callers prepend it -- see `directoryOptions`
  * below.
+ *
+ * EXPORTED so `DropStaging`'s destination selector (drop-staging.tsx) can
+ * reuse the identical list rather than a second directory-collecting walk
+ * that could quietly disagree with this one about what counts as a
+ * directory or how it's labelled.
  */
-function collectDirectories(entries: AdfEntry[], parentPath = ''): DirectoryOption[] {
+export function collectDirectories(entries: AdfEntry[], parentPath = ''): DirectoryOption[] {
   const dirs: DirectoryOption[] = [];
   for (const entry of sortEntries(entries)) {
     if (entry.kind !== 'dir') continue;
