@@ -604,6 +604,29 @@ export function moveEntry(
   if (!boot) return { ok: false, reason: 'no-filesystem' };
   if (bitmapPage(adf) === null) return { ok: false, reason: 'bitmap-untrusted' };
 
+  // Fix round 1: "move it into the directory it is already in" is not a
+  // cycle (an entry's own parent is not its own ANCESTOR, so `ancestryOf`
+  // below never catches this) and it is not a real name collision either --
+  // but `entryNamed` below runs against the ORIGINAL, still-linked array,
+  // so it walks `toParent`, finds the entry's own still-present link under
+  // this exact name, and reports `name-exists`. That is surfaced to a
+  // person as "Something with that name already exists here", which is
+  // only true of the entry itself: actively misleading for an operation
+  // that changes nothing. `renameEntry` has the analogous case (a
+  // case-only rename landing back in its own bucket) and solves it by
+  // passing `entryBlock` as `entryNamed`'s `exclude` -- that repairs the
+  // check but still re-links the entry into the destination bucket, which
+  // for a rename is correct (the NAME changed) but for a move back into
+  // the SAME parent under the SAME name would just reorder that bucket's
+  // chain for no reason, producing a different but equally valid disk
+  // image where an unchanged one was expected (and the caller would hash
+  // and store a new blob for bytes that didn't need to change). Short-
+  // circuiting here instead -- before the header/dest/cycle/name checks
+  // below, all of which exist for an ACTUAL move -- returns the input
+  // completely untouched, which is what "drop it where it already is"
+  // means to the person doing it.
+  if (toParent === fromParent) return { ok: true, adf };
+
   // Same trust as `deleteEntry`/`renameEntry`, and for the same reason
   // (root.ts): type and secondary type alone are two 32-bit comparisons
   // that ordinary game data can pass by chance. `fromParent`, `entryBlock`

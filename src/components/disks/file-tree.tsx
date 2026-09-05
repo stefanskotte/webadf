@@ -121,6 +121,26 @@ function findEntryByBlock(entries: AdfEntry[], block: number): AdfEntry | null {
 }
 
 /**
+ * Every entry's block, mapped to the block it currently lives directly
+ * under (`ROOT_BLOCK` for anything at the top level) -- `AdfEntry` itself
+ * carries no parent pointer (it is a tree of children, not a flat list with
+ * back-references), so this is the one walk that knows it.
+ *
+ * Fix round 1: `moveEntry` now treats a move to the entry's OWN current
+ * parent as a no-op success rather than the misleading `name-exists` it
+ * used to report, but offering that destination in the menu is still
+ * noise -- it does nothing, so a person choosing it would reasonably
+ * expect something to have happened. This map is what lets `moveOptions`
+ * (below, on FileRow) drop it from the list rather than merely tolerate it.
+ */
+function buildParentMap(entries: AdfEntry[], parent: number, map: Map<number, number>): void {
+  for (const entry of entries) {
+    map.set(entry.block, parent);
+    if (entry.kind === 'dir') buildParentMap(entry.children, entry.block, map);
+  }
+}
+
+/**
  * Every block number in `entry`'s own subtree, itself included -- what a
  * dragged directory must forbid as a drop target. The server already refuses
  * this cycle correctly (`'a folder cannot be moved inside itself'`), but a
@@ -297,6 +317,16 @@ export function FileTree({ entries, diskId }: { entries: AdfEntry[]; diskId: str
     [entries],
   );
 
+  // Each row's own current parent block, so it can drop that one entry back
+  // out of the shared `directoryOptions` list -- see `buildParentMap`.
+  // `moveEntry` no longer ERRORS on this destination (fix round 1), but
+  // offering a choice that changes nothing is still misleading noise.
+  const parentBlocks = useMemo(() => {
+    const map = new Map<number, number>();
+    buildParentMap(entries, ROOT_BLOCK, map);
+    return map;
+  }, [entries]);
+
   /**
    * Mouse and touch are two sensors, not one PointerSensor -- copied
    * verbatim from collection-provider.tsx, whose comment explains why in
@@ -415,6 +445,7 @@ export function FileTree({ entries, diskId }: { entries: AdfEntry[]; diskId: str
             moveBlock={moveBlock}
             moveTarget={moveTarget}
             directoryOptions={directoryOptions}
+            currentParent={parentBlocks.get(entry.block) ?? ROOT_BLOCK}
             forbiddenBlocks={forbiddenBlocks}
             diskId={diskId}
             toggle={toggle}
@@ -452,6 +483,8 @@ interface FileRowProps {
   moveTarget: number | '';
   /** Every destination a "Move to…" menu can offer, root included -- see FileTree's `directoryOptions`. Each row filters its own forbidden subtree out of this shared list rather than this being recomputed per row. */
   directoryOptions: DirectoryOption[];
+  /** The block this entry currently lives directly under -- see FileTree's `parentBlocks`. Dropped from this row's own `moveOptions`: `moveEntry` treats it as a no-op success (fix round 1), not an error, but offering a destination that changes nothing is still noise. */
+  currentParent: number;
   /** Blocks this row must refuse as a drop target for the CURRENT drag -- see `subtreeBlocks` on FileTree. Only ever non-empty while a directory is being dragged. */
   forbiddenBlocks: ReadonlySet<number>;
   diskId: string;
@@ -471,7 +504,7 @@ interface FileRowProps {
 
 function FileRow({
   entry, depth, open, striped, editDisabled, busy,
-  renameBlock, renameValue, deleteBlock, moveBlock, moveTarget, directoryOptions,
+  renameBlock, renameValue, deleteBlock, moveBlock, moveTarget, directoryOptions, currentParent,
   forbiddenBlocks, diskId,
   toggle, startRename, cancelRename, submitRename, setRenameValue,
   startDelete, cancelDelete, submitDelete,
@@ -487,11 +520,18 @@ function FileRow({
   // list untouched. This is the one rule Task 9's drag and this task's
   // keyboard control share on purpose -- see the module comment on
   // `subtreeBlocks`.
+  //
+  // `currentParent` is filtered out on top of that: `moveEntry` now treats
+  // moving into the entry's own current location as a no-op SUCCESS (fix
+  // round 1) rather than the `name-exists` it used to misreport, but a
+  // destination that changes nothing is still not worth offering -- the
+  // person would reasonably expect choosing something to do something.
   const moveOptions = useMemo(() => {
-    if (!isDir) return directoryOptions;
-    const forbidden = subtreeBlocks(entry);
-    return directoryOptions.filter((option) => !forbidden.has(option.block));
-  }, [directoryOptions, entry, isDir]);
+    const forbidden = isDir ? subtreeBlocks(entry) : new Set<number>();
+    return directoryOptions.filter(
+      (option) => !forbidden.has(option.block) && option.block !== currentParent,
+    );
+  }, [directoryOptions, entry, isDir, currentParent]);
 
   // Every row is draggable, but the grip handle below is the ONLY
   // activator -- `attributes`/`listeners` are never spread on the row

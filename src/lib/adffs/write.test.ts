@@ -772,6 +772,29 @@ describe('moveEntry', () => {
     expect(readUsage(moved.adf)!.freeBlocks).toBe(before);
     expect(Array.from(withFile.adf)).toEqual(Array.from(copy));
   });
+
+  it('moving an entry into its own current parent succeeds as a byte-identical no-op', () => {
+    // Fix round 1 regression: `toParent === fromParent` used to fall
+    // through to `entryNamed`, which runs against the ORIGINAL,
+    // still-linked array -- so it walked the destination (the entry's own
+    // current parent), found the entry's own still-present link under its
+    // own name, and reported `name-exists`. Dropping something back where
+    // it already lives is not a name collision; it is nothing happening at
+    // all, and the fix returns the input completely untouched rather than
+    // re-linking it into the bucket it never left.
+    const d = makeDirectory(empty(), 880, 'tools');
+    if (!d.ok) throw new Error('mkdir');
+    const withFile = addFile(d.adf, 880, 'same.txt', new Uint8Array([1, 2, 3]));
+    if (!withFile.ok) throw new Error('add');
+    const v1 = readVolume(withFile.adf);
+    if (!v1.ok) return;
+    const file = v1.root.find((e) => e.name === 'same.txt')!;
+
+    const result = moveEntry(withFile.adf, 880, file.block, 880);
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(Array.from(result.adf)).toEqual(Array.from(withFile.adf));
+  });
 });
 
 describe('applyBatch', () => {
