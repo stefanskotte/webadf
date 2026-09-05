@@ -19,7 +19,7 @@ export type { FileBytes } from './file';
 export type { Filesystem, BootInfo } from './boot';
 export { readUsage, type VolumeUsage } from './usage';
 export {
-  addFile, deleteEntry, renameEntry, replaceFile, makeDirectory,
+  addFile, deleteEntry, renameEntry, replaceFile, makeDirectory, moveEntry,
   type WriteResult, type WriteError,
 } from './write';
 

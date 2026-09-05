@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { addFile, deleteEntry, renameEntry, replaceFile, makeDirectory } from './write';
+import { addFile, deleteEntry, renameEntry, replaceFile, makeDirectory, moveEntry } from './write';
 import { readVolume, readFile } from './index';
 import { readUsage } from './usage';
 import { readBoot } from './boot';
@@ -639,5 +639,102 @@ describe('replaceFile', () => {
 
   it('reports not-found for a block that is not a file header', () => {
     expect(replaceFile(empty(), 500, new Uint8Array([1]))).toEqual({ ok: false, reason: 'not-found' });
+  });
+});
+
+describe('moveEntry', () => {
+  it('moves a file into a subdirectory and out again', () => {
+    const d = makeDirectory(empty(), 880, 'tools');
+    if (!d.ok) throw new Error('mkdir');
+    const v0 = readVolume(d.adf);
+    if (!v0.ok) return;
+    const dir = v0.root[0].block;
+
+    const withFile = addFile(d.adf, 880, 'move.txt', new TextEncoder().encode('hi'));
+    if (!withFile.ok) throw new Error('add');
+    const v1 = readVolume(withFile.adf);
+    if (!v1.ok) return;
+    const file = v1.root.find((e) => e.name === 'move.txt')!;
+
+    const moved = moveEntry(withFile.adf, 880, file.block, dir);
+    expect(moved.ok).toBe(true);
+    if (!moved.ok) return;
+    const v2 = readVolume(moved.adf);
+    if (!v2.ok) return;
+    // Gone from the root, present in the directory, SAME block number.
+    expect(v2.root.map((e) => e.name)).toEqual(['tools']);
+    expect(v2.root[0].children.map((e) => e.name)).toEqual(['move.txt']);
+    expect(v2.root[0].children[0].block).toBe(file.block);
+    expect(v2.warnings).toEqual([]);
+
+    // ...and back to the root.
+    const back = moveEntry(moved.adf, dir, file.block, 880);
+    if (!back.ok) throw new Error('move back');
+    const v3 = readVolume(back.adf);
+    if (!v3.ok) return;
+    expect(v3.root.map((e) => e.name).sort()).toEqual(['move.txt', 'tools']);
+  });
+
+  it('REFUSES moving a directory into its own descendant', () => {
+    // THE CORRUPTION THIS EXISTS TO PREVENT. A cycle here is invisible to our
+    // own reader: walkDirectory's cycle guard would contain it and report a
+    // plausible listing while the disk is unwalkable on a real Amiga.
+    let adf = empty();
+    const outer = makeDirectory(adf, 880, 'outer');
+    if (!outer.ok) throw new Error('mkdir');
+    adf = outer.adf;
+    const vo = readVolume(adf);
+    if (!vo.ok) return;
+    const outerBlock = vo.root[0].block;
+
+    const inner = makeDirectory(adf, outerBlock, 'inner');
+    if (!inner.ok) throw new Error('mkdir inner');
+    adf = inner.adf;
+    const vi = readVolume(adf);
+    if (!vi.ok) return;
+    const innerBlock = vi.root[0].children[0].block;
+
+    expect(moveEntry(adf, 880, outerBlock, innerBlock)).toEqual({ ok: false, reason: 'cycle' });
+    // ...and into ITSELF.
+    expect(moveEntry(adf, 880, outerBlock, outerBlock)).toEqual({ ok: false, reason: 'cycle' });
+  });
+
+  it('refuses a name already taken in the destination', () => {
+    const d = makeDirectory(empty(), 880, 'tools');
+    if (!d.ok) throw new Error('mkdir');
+    const v0 = readVolume(d.adf);
+    if (!v0.ok) return;
+    const dir = v0.root[0].block;
+
+    let adf = d.adf;
+    for (const parent of [880, dir]) {
+      const r = addFile(adf, parent, 'same.txt', new Uint8Array([1]));
+      if (!r.ok) throw new Error('add');
+      adf = r.adf;
+    }
+    const v1 = readVolume(adf);
+    if (!v1.ok) return;
+    const atRoot = v1.root.find((e) => e.name === 'same.txt')!;
+    expect(moveEntry(adf, 880, atRoot.block, dir)).toEqual({ ok: false, reason: 'name-exists' });
+  });
+
+  it('touches neither the bitmap nor the input', () => {
+    const d = makeDirectory(empty(), 880, 'tools');
+    if (!d.ok) throw new Error('mkdir');
+    const v0 = readVolume(d.adf);
+    if (!v0.ok) return;
+    const withFile = addFile(d.adf, 880, 'x.txt', new Uint8Array([1]));
+    if (!withFile.ok) throw new Error('add');
+    const v1 = readVolume(withFile.adf);
+    if (!v1.ok) return;
+    const file = v1.root.find((e) => e.name === 'x.txt')!;
+
+    const before = readUsage(withFile.adf)!.freeBlocks;
+    const copy = withFile.adf.slice();
+    const moved = moveEntry(withFile.adf, 880, file.block, v0.root[0].block);
+    if (!moved.ok) throw new Error('move');
+    // A move relinks pointers; it allocates and frees nothing.
+    expect(readUsage(moved.adf)!.freeBlocks).toBe(before);
+    expect(Array.from(withFile.adf)).toEqual(Array.from(copy));
   });
 });

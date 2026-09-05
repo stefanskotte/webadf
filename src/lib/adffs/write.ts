@@ -8,6 +8,7 @@
 import {
   BLOCK_BYTES, HASH_TABLE_SIZE, CHECKSUM_WORD, OFS_DATA_BYTES,
   OFS_DATA_CHECKSUM_WORD, T_HEADER, T_DATA, T_LIST, ST_FILE, ST_USERDIR,
+  MAX_DEPTH, ROOT_BLOCK,
 } from './constants';
 import { blockAt, be32, i32, checksumOk, bcplString, blockChecksum } from './blocks';
 import { putBe32, putName, recheck } from './write-blocks';
@@ -20,7 +21,7 @@ import { putAmigaDate } from './format';
 
 export type WriteError =
   | 'disk-full' | 'name-too-long' | 'name-exists' | 'not-found'
-  | 'not-a-directory' | 'bitmap-untrusted' | 'no-filesystem';
+  | 'not-a-directory' | 'bitmap-untrusted' | 'no-filesystem' | 'cycle';
 
 export type WriteResult =
   | { ok: true; adf: Uint8Array }
@@ -516,5 +517,81 @@ export function replaceFile(adf: Uint8Array, entryBlock: number, bytes: Uint8Arr
   writeDataBlocks(out, data, bytes, entryBlock, boot.filesystem, perBlock);
   writeFileHeader(out, entryBlock, parentBlock, name, bytes.length, data.slice(0, HASH_TABLE_SIZE), exts[0] ?? 0);
   writeExtensionBlocks(out, exts, data, entryBlock);
+  return { ok: true, adf: out };
+}
+
+/** Every block from `entry` up to the root, following each header's parent. */
+function ancestryOf(adf: Uint8Array, entry: number): number[] {
+  const chain: number[] = [];
+  const seen = new Set<number>();
+  let cur = entry;
+  // MAX_DEPTH bounds a crafted image; `seen` bounds one that already has a
+  // cycle, so this cannot spin on a disk that is already broken.
+  for (let i = 0; i < MAX_DEPTH && cur !== 0 && !seen.has(cur); i++) {
+    chain.push(cur);
+    seen.add(cur);
+    if (cur === ROOT_BLOCK) break;
+    cur = be32(adf, cur * BLOCK_BYTES + 500);
+  }
+  return chain;
+}
+
+/**
+ * Move an entry (file or directory) from `fromParent`'s hash chain into
+ * `toParent`'s: unlink it exactly as `deleteEntry` does, reparent it, then
+ * link it back in under its (unchanged) name -- same shape as
+ * `renameEntry`'s unlink-then-relink, except the bucket that changes is the
+ * DIRECTORY, not the name's hash.
+ *
+ * Relinks pointers only: no block is allocated or freed, so the bitmap is
+ * never touched (verified by a test that snapshots `readUsage`'s free count
+ * before and after).
+ *
+ * THE CHECK THAT MATTERS: moving a directory into one of its own
+ * descendants (or into itself) would make the destination's ancestry chain
+ * loop back through `entryBlock` -- a cycle in the directory tree.
+ * `walkDirectory`'s cycle guard would silently CONTAIN that on read,
+ * reporting a plausible listing while the disk is unwalkable on a real
+ * Amiga (same class of invisibility as `renameEntry`'s self-referencing
+ * chain, but one level up: a directory instead of a hash bucket). Checked
+ * BEFORE the name collision so a drag onto a descendant reports `cycle`
+ * rather than the misleading `name-exists`.
+ */
+export function moveEntry(
+  adf: Uint8Array, fromParent: number, entryBlock: number, toParent: number,
+): WriteResult {
+  const boot = readBoot(adf);
+  if (!boot) return { ok: false, reason: 'no-filesystem' };
+  if (bitmapPage(adf) === null) return { ok: false, reason: 'bitmap-untrusted' };
+
+  const header = blockAt(adf, entryBlock);
+  if (!header || be32(header, 0) !== T_HEADER) return { ok: false, reason: 'not-found' };
+  if (be32(header, 500) !== fromParent) return { ok: false, reason: 'not-found' };
+
+  const dest = blockAt(adf, toParent);
+  if (!dest) return { ok: false, reason: 'not-found' };
+  const destKind = i32(dest, 508);
+  if (toParent !== ROOT_BLOCK && destKind !== ST_USERDIR) {
+    return { ok: false, reason: 'not-a-directory' };
+  }
+
+  // D-DD-6, and the order matters: check the cycle BEFORE the name, so
+  // dragging a folder into itself reports why rather than "name-exists".
+  if (ancestryOf(adf, toParent).includes(entryBlock)) return { ok: false, reason: 'cycle' };
+
+  const name = bcplString(header, 432, 30);
+  if (entryNamed(adf, toParent, name, boot.intl)) return { ok: false, reason: 'name-exists' };
+
+  const out = adf.slice();
+  const pred = predecessorOf(out, fromParent, entryBlock, name, boot.intl);
+  if (!pred) return { ok: false, reason: 'not-found' };
+
+  const nextHash = be32(out, entryBlock * BLOCK_BYTES + 496);
+  putBe32(out, pred.offset, nextHash);
+  if (pred.kind === 'slot') recheck(out, fromParent); else recheck(out, pred.block);
+
+  putBe32(out, entryBlock * BLOCK_BYTES + 500, toParent);   // reparent
+  putBe32(out, entryBlock * BLOCK_BYTES + 496, 0);          // clear stale next
+  linkIntoDirectory(out, toParent, entryBlock, name, boot.intl);
   return { ok: true, adf: out };
 }
