@@ -19,7 +19,7 @@ import { toast } from 'sonner';
  * destroyed for anyone else who has them.
  */
 export function DeleteDiskDialog({
-  kind, id, title, diskCount, onDeleted,
+  kind, id, title, diskCount, onDeleted, redirectWhenGone,
 }: {
   kind: 'game' | 'disk';
   id: string;
@@ -27,6 +27,14 @@ export function DeleteDiskDialog({
   /** Only meaningful for a title: how many disks go with it. */
   diskCount?: number;
   onDeleted?: () => void;
+  /**
+   * Where to go when this deletion removes the subject of the CURRENT page.
+   *
+   * Set by the title page, where deleting the last disk empties the title and
+   * the server deletes it too. Left unset on the library grid, where the page
+   * is the library and outlives any card on it.
+   */
+  redirectWhenGone?: string;
 }) {
   const router = useRouter();
   const [open, setOpen] = useState(false);
@@ -51,7 +59,17 @@ export function DeleteDiskDialog({
       });
       setOpen(false);
       onDeleted?.();
-      router.refresh();
+
+      // THE SERVER TELLS US WHETHER THE TITLE STILL EXISTS, so we do not have
+      // to guess from `kind`: deleting the LAST disk of a title removes the
+      // title too (disk-delete.ts), and `gameDeleted` reports exactly that.
+      // Refreshing in that case re-runs a page whose subject is gone, which
+      // is a 404 on the page someone was just using.
+      //
+      // REPLACE, not push: the deleted title's URL must not stay in history,
+      // or Back returns to the 404 this exists to avoid.
+      if (body?.gameDeleted && redirectWhenGone) router.replace(redirectWhenGone);
+      else router.refresh();
     } catch {
       toast.error('Could not reach the server');
     } finally {

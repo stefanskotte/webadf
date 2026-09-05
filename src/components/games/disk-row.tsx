@@ -3,6 +3,7 @@ import type { GameDetailDisk } from '@/lib/queries';
 import { WriteProtectToggle } from './write-protect-toggle';
 import { MountAction, type MountTarget } from './mount-action';
 import { DeleteDiskDialog } from '@/components/library/delete-disk-dialog';
+import { libraryHref } from '@/lib/trail';
 import { fromQuery } from '@/lib/trail';
 
 /** What some device is doing with this particular disk, if anything. */
@@ -122,6 +123,11 @@ export function DiskRow({ disk, devices, holder, from }: {
           kind="disk"
           id={disk.id}
           title={disk.tosecName ?? disk.sourceFilename ?? `Disk ${disk.diskNo}`}
+          // Removing the last disk takes the title with it, and this page IS
+          // that title. Go where the breadcrumb's own Library crumb goes,
+          // carrying the collection you arrived from, rather than refreshing
+          // into a 404.
+          redirectWhenGone={libraryHref(from)}
         />
       </div>
     </div>

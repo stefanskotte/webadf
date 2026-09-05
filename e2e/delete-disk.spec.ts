@@ -4,7 +4,7 @@ import { randomUUID } from 'node:crypto';
 import { getDb } from '@/db';
 import { games, disks, blobs, entitlements } from '@/db/schema/catalog';
 import { devices } from '@/db/schema/devices';
-import { signUpFresh, runTag } from './helpers';
+import { signUpFresh, runTag, createAdf } from './helpers';
 import { cleanupSeeded, seedDisk, pairDevice } from './device-helpers';
 
 test.afterAll(cleanupSeeded);
@@ -168,4 +168,66 @@ test('another tenant cannot delete, and gets 404 rather than 403', async ({ brow
 
   await a.close();
   await b.close();
+});
+
+test('deleting the last disk from its own page lands on the library, not a 404', async ({ page }) => {
+  // THE BUG THIS GUARDS. Creating an ADF makes a title with exactly one
+  // disk, so deleting that disk empties the title and the server removes it
+  // too (deleteDisk returns gameDeleted: true). The dialog used to call
+  // router.refresh() regardless, which re-ran /games/[id] for a game that no
+  // longer existed -- notFound(), a 404 on the page you were just using.
+  const u = await signUpFresh(page);
+  await page.goto('/library');
+  await createAdf(page);
+  await expect(page.getByTestId('game-card')).toHaveCount(1);
+
+  const [game] = await getDb().select().from(games)
+    .where(and(eq(games.orgId, u.orgId), eq(games.authored, true)));
+  const [disk] = await getDb().select().from(disks).where(eq(disks.gameId, game.id));
+
+  await page.goto(`/games/${game.id}`);
+  await page.getByTestId(`delete-disk-${disk.id}`).click();
+  await page.getByTestId('delete-confirm').click();
+
+  // Landed on the library, and NOT on an error page.
+  await expect(page).toHaveURL(/\/library/);
+  // The Create ADF trigger is unique to /library and visible, so this
+  // asserts the library actually RENDERED rather than that the URL merely
+  // changed -- a 404 at /library would satisfy the URL check alone.
+  await expect(page.getByTestId('create-adf')).toBeVisible();
+  expect(await gameRows(game.id)).toHaveLength(0);
+
+  // ...and going BACK must not return to the deleted title. The navigation
+  // replaces rather than pushes, or Back lands on the 404 we just escaped.
+  await page.goBack();
+  await expect(page).not.toHaveURL(new RegExp(`/games/${game.id}`));
+});
+
+test('deleting one disk of a set keeps you on the title page', async ({ page }) => {
+  // The other half of the ruling, and what stops the fix over-correcting:
+  // navigation happens ONLY when the response says the title itself is gone.
+  const run = runTag();
+  const u = await signUpFresh(page);
+  const one = await seedDisk(u.orgId, { title: `Stay ${run}`, diskNo: 1, sha256: freshSha() });
+
+  const secondSha = freshSha();
+  await getDb().insert(blobs).values({
+    sha256: secondSha, sizeBytes: 901_120, storageKey: `adf/${secondSha}`,
+  }).onConflictDoNothing();
+  await getDb().insert(entitlements)
+    .values({ orgId: u.orgId, sha256: secondSha, sourceFilename: 'two.adf' })
+    .onConflictDoNothing();
+  await getDb().insert(disks).values({
+    id: `dsk_${randomUUID()}`, gameId: one.gameId, orgId: u.orgId,
+    diskNo: 2, sha256: secondSha, isBoot: false, sizeBytes: 901_120,
+  });
+  const second = (await getDb().select().from(disks)
+    .where(and(eq(disks.gameId, one.gameId), eq(disks.diskNo, 2))))[0];
+
+  await page.goto(`/games/${one.gameId}`);
+  await page.getByTestId(`delete-disk-${second.id}`).click();
+  await page.getByTestId('delete-confirm').click();
+
+  await expect(page).toHaveURL(new RegExp(`/games/${one.gameId}`));
+  expect(await gameRows(one.gameId)).toHaveLength(1);
 });

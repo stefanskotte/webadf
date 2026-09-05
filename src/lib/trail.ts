@@ -51,10 +51,22 @@ export function fromQuery(collectionId: string | null | undefined): string {
 export function libraryTrail(collection: CollectionRef | null): Crumb[] {
   const crumbs: Crumb[] = [{ label: 'Library', href: '/library' }];
   if (collection) {
-    crumbs.push({
-      label: collection.name,
-      href: `/library?collection=${encodeURIComponent(collection.id)}`,
-    });
+    crumbs.push({ label: collection.name, href: libraryHref(collection.id) });
   }
   return crumbs;
+}
+
+/**
+ * Where "back to the library" goes, filtered to a collection when we know one.
+ *
+ * ONE place that knows the shape of that URL. `libraryTrail` renders it as a
+ * crumb; DeleteDiskDialog navigates to it when the title you were looking at
+ * stops existing. Those two must agree -- the destination of the redirect IS
+ * the crumb the person can see -- and spelling the query string out twice is
+ * how they would quietly stop agreeing.
+ */
+export function libraryHref(collectionId: string | null | undefined): string {
+  return collectionId
+    ? `/library?collection=${encodeURIComponent(collectionId)}`
+    : '/library';
 }
