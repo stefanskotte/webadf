@@ -2,7 +2,7 @@
 
 import { useMemo, useState } from 'react';
 import { readDroppedItems, type DroppedItem } from '@/lib/drop-reader';
-import { stageDrop, type StagedEntry } from '@/lib/staging';
+import { stageDrop, type StagedEntry, type ExistingEntry } from '@/lib/staging';
 import { blocksForPlan, type Filesystem } from '@/lib/adffs';
 // The identical fold `stageDrop` itself uses (see staging.ts's own comment):
 // reused here, not reinvented, so a live re-check of a typed rename can
@@ -16,7 +16,7 @@ function splitPath(path: string): { dir: string; name: string } {
   return slash === -1 ? { dir: '', name: path } : { dir: path.slice(0, slash), name: path.slice(slash + 1) };
 }
 
-/** How a person has resolved a collision row, or null while it is still outstanding. `'replace'` only ever applies to a `kind: 'file'` row colliding with an existing entry -- there is no such thing as replacing a directory (the batch route's `replace` op is `replaceFile`), so the control for it is never even offered otherwise. */
+/** How a person has resolved a collision row, or null while it is still outstanding. `'replace'` only ever applies to a `kind: 'file'` row colliding with an existing entry that is ITSELF a file -- there is no such thing as replacing a directory (the batch route's `replace` op is `replaceFile`, which requires `ST_FILE`), so the control for it is never even offered otherwise (fix round 1, Finding 2). */
 type Resolution = 'skip' | 'replace' | null;
 
 /** One row's live, derived state -- distinct from `StagedEntry` because a person can retype the name or pick skip/replace, and the collision verdict has to be re-checked against those live values rather than frozen at drop time (otherwise "rename" would never actually clear the block on commit). */
@@ -28,6 +28,15 @@ interface LiveRow {
   collidesWith: StagedEntry['collidesWith'];
   /** The exact existing or sibling name this row collides with, for display -- may differ in case from `name` itself (that's the whole reason two names can collide here). */
   conflictName: string | null;
+  /**
+   * The KIND of the existing entry this row collides with, only when
+   * `collidesWith === 'existing'` -- null otherwise. Fix round 1, Finding
+   * 2: "replace" (`replaceFile`) only makes sense against an existing
+   * FILE, so a dropped file colliding with an existing DIRECTORY must
+   * never be offered it, even though `row.entry.kind === 'file'` alone
+   * would wrongly suggest it could be.
+   */
+  existingKind: 'file' | 'dir' | null;
 }
 
 export function DropStaging({
@@ -35,8 +44,15 @@ export function DropStaging({
 }: {
   filesystem: Filesystem;
   intl: boolean;
-  /** Every directory already on the disk, keyed by its root-relative path ('' for the root itself), to the names it already holds. Plain object rather than a `Map` -- this crosses the server/client boundary from `page.tsx`. */
-  existingNamesByDir: Record<string, string[]>;
+  /**
+   * Every directory already on the disk, keyed by its root-relative path
+   * ('' for the root itself), to the entries it already holds -- name AND
+   * kind (fix round 1, Finding 2: a name-only map can't tell a same-named
+   * file from a same-named directory apart, and that distinction is what
+   * decides whether "replace" is even sound). Plain object rather than a
+   * `Map` -- this crosses the server/client boundary from `page.tsx`.
+   */
+  existingNamesByDir: Record<string, ExistingEntry[]>;
   freeBlocks: number;
 }) {
   const { diskId, disabled, busy, runEdit } = useFileEdit();
@@ -87,20 +103,22 @@ export function DropStaging({
       const resolution = resolutions.get(entry.path) ?? null;
       const { dir } = splitPath(entry.path);
 
-      if (resolution === 'skip') {
-        return { entry, name, resolution, collidesWith: null, conflictName: null };
-      }
-
-      const existingNames = existingMap.get(dir) ?? [];
+      const existingEntries = existingMap.get(dir) ?? [];
       const takenSoFar = takenByDir.get(dir) ?? [];
 
       let collidesWith: StagedEntry['collidesWith'] = null;
       let conflictName: string | null = null;
-      const existingHit = existingNames.find((o) => sameName(o, name, intl));
+      let existingKind: 'file' | 'dir' | null = null;
+      // An 'existing' collision is a fact about the disk itself, so it is
+      // checked regardless of resolution -- what changes below is only
+      // whether a 'staged' collision (competition between two DROPPED
+      // items) still counts once one of them has been skipped out of it.
+      const existingHit = existingEntries.find((o) => sameName(o.name, name, intl));
       if (existingHit !== undefined) {
         collidesWith = 'existing';
-        conflictName = existingHit;
-      } else {
+        conflictName = existingHit.name;
+        existingKind = existingHit.kind;
+      } else if (resolution !== 'skip') {
         const stagedHit = takenSoFar.find((o) => sameName(o, name, intl));
         if (stagedHit !== undefined) {
           collidesWith = 'staged';
@@ -108,17 +126,34 @@ export function DropStaging({
         }
       }
 
-      takenSoFar.push(name);
-      takenByDir.set(dir, takenSoFar);
+      // A skipped row will never be written, so it must not go on
+      // occupying a name slot its siblings are also competing for.
+      if (resolution !== 'skip') {
+        takenSoFar.push(name);
+        takenByDir.set(dir, takenSoFar);
+      }
 
-      // 'replace' only resolves an 'existing' collision -- it is never
-      // offered for a 'staged' one (see the render below), so a stale
-      // 'replace' resolution left over from before a rename is simply
-      // ignored rather than trusted, the same way 'skip' is trusted above.
+      if (resolution === 'skip') {
+        // `existingKind` is kept (not nulled) even though this row is
+        // resolved -- it is what lets the resolved line below tell a
+        // skipped FOLDER MERGE ("existingKind === 'dir'") apart from a
+        // skipped anything-else, per fix round 1, Finding 1.
+        return {
+          entry, name, resolution, collidesWith: null, conflictName: null, existingKind,
+        };
+      }
+
+      // 'replace' only resolves an 'existing' collision AGAINST A FILE --
+      // it is never offered against an existing directory (there is no
+      // such op as replacing a directory) or a 'staged' one (see the
+      // render below), so a stale 'replace' resolution left over from
+      // before a rename, or one that no longer applies now that the
+      // collision is against a directory, is simply ignored rather than
+      // trusted.
       return {
         entry, name,
-        resolution: collidesWith === 'existing' ? resolution : null,
-        collidesWith, conflictName,
+        resolution: collidesWith === 'existing' && existingKind === 'file' ? resolution : null,
+        collidesWith, conflictName, existingKind,
       };
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps -- effectiveNameFor is a plain function (not memoized) closing over byPath and nameOverrides; byPath itself is a useMemo keyed on `baseline`, which IS listed below, so this recomputes exactly when either input actually changes.
@@ -319,44 +354,77 @@ export function DropStaging({
                     </span>
                   )}
 
-                  {openCollision && (
-                    <>
-                      <span data-testid={`stage-conflict-${i}`} className="font-semibold"
-                            style={{ color: 'var(--danger-fg)' }}>
-                        collides with {row.collidesWith === 'existing' ? 'existing' : 'another staged'}
-                        {' '}&quot;{row.conflictName}&quot;
-                      </span>
-                      <button type="button" onClick={() => setResolution(row.entry.path, 'skip')}
-                              data-testid={`stage-skip-${i}`}
-                              className="rounded px-2 py-0.5 text-[11px] font-semibold"
-                              style={{ borderColor: 'var(--hairline)', color: 'var(--muted)' }}>
-                        Skip
-                      </button>
-                      {row.entry.kind === 'file' && row.collidesWith === 'existing' && (
-                        <button type="button" onClick={() => setResolution(row.entry.path, 'replace')}
-                                data-testid={`stage-replace-${i}`}
-                                className="rounded px-2 py-0.5 text-[11px] font-semibold text-white"
-                                style={{ background: 'var(--primary-action)' }}>
-                          Replace
+                  {/*
+                    Fix round 1, Finding 1: a directory colliding with an
+                    EXISTING DIRECTORY of the same name is not really being
+                    "skipped" -- the underlying resolution is still 'skip'
+                    (nothing changes about what gets written), but what it
+                    actually means is "don't create a second one, add my
+                    contents into the one already there" -- a merge, not a
+                    no-op. Every other combination (a file colliding either
+                    way, or a directory colliding with an existing FILE, or
+                    two staged items colliding with each other) keeps the
+                    plain "skip" wording, because for those there really is
+                    nothing to merge into.
+                  */}
+                  {openCollision && (() => {
+                    const isFolderMerge = row.entry.kind === 'dir' && row.collidesWith === 'existing'
+                      && row.existingKind === 'dir';
+                    return (
+                      <>
+                        <span data-testid={`stage-conflict-${i}`} className="font-semibold"
+                              style={{ color: 'var(--danger-fg)' }}>
+                          {isFolderMerge
+                            ? <>a folder named &quot;{row.conflictName}&quot; already exists here</>
+                            : <>collides with {row.collidesWith === 'existing' ? 'existing' : 'another staged'}
+                              {' '}&quot;{row.conflictName}&quot;</>}
+                        </span>
+                        <button type="button" onClick={() => setResolution(row.entry.path, 'skip')}
+                                data-testid={`stage-skip-${i}`}
+                                className="rounded px-2 py-0.5 text-[11px] font-semibold"
+                                style={{ borderColor: 'var(--hairline)', color: 'var(--muted)' }}>
+                          {isFolderMerge ? 'Use existing folder' : 'Skip'}
                         </button>
-                      )}
-                    </>
-                  )}
+                        {row.entry.kind === 'file' && row.collidesWith === 'existing'
+                          && row.existingKind === 'file' && (
+                          <button type="button" onClick={() => setResolution(row.entry.path, 'replace')}
+                                  data-testid={`stage-replace-${i}`}
+                                  className="rounded px-2 py-0.5 text-[11px] font-semibold text-white"
+                                  style={{ background: 'var(--primary-action)' }}>
+                            Replace
+                          </button>
+                        )}
+                      </>
+                    );
+                  })()}
 
-                  {resolved && (
-                    <>
-                      <span data-testid={`stage-resolution-${i}`} className="text-[11px] font-semibold"
-                            style={{ color: 'var(--muted)' }}>
-                        {row.resolution === 'skip' ? 'Skipped' : 'Will replace existing'}
-                      </span>
-                      <button type="button" onClick={() => clearResolution(row.entry.path)}
-                              data-testid={`stage-undo-${i}`}
-                              className="text-[11px] underline-offset-2 hover:underline"
+                  {resolved && (() => {
+                    const wasFolderMerge = row.resolution === 'skip' && row.entry.kind === 'dir'
+                      && row.existingKind === 'dir';
+                    return (
+                      <>
+                        <span data-testid={`stage-resolution-${i}`} className="text-[11px] font-semibold"
                               style={{ color: 'var(--muted)' }}>
-                        Undo
-                      </button>
-                    </>
-                  )}
+                          {row.resolution === 'replace'
+                            ? 'Will replace existing'
+                            // Wording states the EFFECT, not the mechanism
+                            // (fix round 1, Finding 1): "skipped" would tell
+                            // the operator nothing was written under this
+                            // path, when its contents are in fact merged
+                            // into the folder already there.
+                            : wasFolderMerge
+                              ? 'Not created — its contents are added to the folder already there'
+                              : 'Skipped'}
+                        </span>
+                        <button type="button" onClick={() => clearResolution(row.entry.path)}
+                                data-testid={`stage-undo-${i}`}
+                                className="text-[11px] underline-offset-2 hover:underline"
+                                style={{ color: 'var(--muted)' }}>
+                          Undo
+                        </button>
+                      </>
+                    );
+                  })()}
                 </div>
               );
             })}

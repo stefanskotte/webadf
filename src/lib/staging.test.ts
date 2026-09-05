@@ -41,10 +41,31 @@ describe('stageDrop', () => {
   it('flags a collision with an existing entry', () => {
     const staged = stageDrop(
       [{ path: 'README', kind: 'file', sizeBytes: 10 }],
-      new Map([['', ['readme']]]), // case-insensitive: readme === README
+      // case-insensitive: readme === README
+      new Map([['', [{ name: 'readme', kind: 'file' }]]]),
       false,
     );
     expect(staged[0].collidesWith).toBe('existing');
+    expect(staged[0].existingKind).toBe('file');
+  });
+
+  it('carries the existing entry\'s kind, not the dropped one\'s, so a caller can tell "replace" is unsound', () => {
+    // Fix round 1, Finding 2: a dropped FILE colliding with an existing
+    // DIRECTORY of the same name must be reported as a collision whose
+    // existingKind is 'dir' -- replaceFile requires ST_FILE, so a caller
+    // that only checked collidesWith === 'existing' (and the DROPPED
+    // entry's own kind, which is 'file' here) would wrongly offer replace
+    // for a target that can never accept one.
+    const staged = stageDrop(
+      [{ path: 'C', kind: 'file', sizeBytes: 10 }],
+      new Map([['', [{ name: 'C', kind: 'dir' }]]]),
+      false,
+    );
+    expect(staged[0].collidesWith).toBe('existing');
+    expect(staged[0].existingKind).toBe('dir');
+    // The field a caller checks before offering replace: kind must match on
+    // BOTH sides, dropped and existing.
+    expect(staged[0].kind === 'file' && staged[0].existingKind === 'file').toBe(false);
   });
 
   it('flags two dropped files that collide with EACH OTHER after shortening', () => {

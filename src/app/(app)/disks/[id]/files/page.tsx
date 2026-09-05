@@ -18,14 +18,26 @@ export const dynamic = 'force-dynamic';
 
 /**
  * Every directory already on this disk, keyed by its root-relative path
- * ('' for the root itself) to the names it already holds -- what
+ * ('' for the root itself) to the entries it already holds -- what
  * `stageDrop` (Task 3) calls `existingNamesByDir`, and what the staging
  * area re-derives live as a person edits a name (drop-staging.tsx). Built
  * here, once, from the same `AdfEntry[]` the tree already renders, rather
  * than a second read of the volume.
+ *
+ * Carries each entry's `kind` alongside its `name` (fix round 1, Finding
+ * 2) -- a name-only map cannot tell a same-named FILE from a same-named
+ * DIRECTORY apart, and that distinction is exactly what decides whether
+ * "replace" is even a sound offer for a colliding row (`replaceFile`
+ * requires `ST_FILE`; the batch route refuses a mismatched replace
+ * correctly, but only after the whole batch has already been attempted).
  */
-function existingNamesByDir(entries: AdfEntry[], prefix = ''): Record<string, string[]> {
-  const out: Record<string, string[]> = { [prefix]: entries.map((e) => e.name) };
+function existingNamesByDir(
+  entries: AdfEntry[],
+  prefix = '',
+): Record<string, { name: string; kind: 'file' | 'dir' }[]> {
+  const out: Record<string, { name: string; kind: 'file' | 'dir' }[]> = {
+    [prefix]: entries.map((e) => ({ name: e.name, kind: e.kind })),
+  };
   for (const entry of entries) {
     if (entry.kind === 'dir') {
       const path = prefix ? `${prefix}/${entry.name}` : entry.name;

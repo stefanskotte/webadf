@@ -27,6 +27,12 @@ import { sameName } from './adffs/write';
 
 const MAX_NAME_LENGTH = 30;
 
+/** One entry already on the disk, in the shape `existingNamesByDir` carries -- `kind` alongside `name` so a caller can tell a same-named FILE from a same-named DIRECTORY apart, which matters because "replace" (`replaceFile`) only ever makes sense against an existing file (fix round 1, Finding 2). */
+export interface ExistingEntry {
+  name: string;
+  kind: 'file' | 'dir';
+}
+
 export interface StagedEntry {
   /** As dropped, e.g. "Workbench/C/Assign". */
   path: string;
@@ -36,6 +42,18 @@ export interface StagedEntry {
   name: string;
   shortened: boolean;
   collidesWith: 'existing' | 'staged' | null;
+  /**
+   * The kind of the entry this collides with, ONLY when `collidesWith` is
+   * `'existing'` -- null otherwise (no collision, or a 'staged' collision,
+   * which has no existing entry to name a kind for). This is what a caller
+   * checks before offering "replace": `replaceFile` requires `ST_FILE`, so a
+   * dropped file colliding with an existing DIRECTORY of the same name must
+   * never be offered replace, only skip or rename (fix round 1, Finding 2 --
+   * the batch route refuses this correctly, but only after the whole batch
+   * has already been attempted, and the error it surfaces then is
+   * misleading).
+   */
+  existingKind: 'file' | 'dir' | null;
 }
 
 /**
@@ -94,7 +112,7 @@ function splitPath(path: string): { dir: string; name: string } {
  */
 export function stageDrop(
   dropped: readonly { path: string; kind: 'file' | 'dir'; sizeBytes: number }[],
-  existingNamesByDir: ReadonlyMap<string, readonly string[]>,
+  existingNamesByDir: ReadonlyMap<string, readonly ExistingEntry[]>,
   intl: boolean,
 ): StagedEntry[] {
   const stagedNamesByDir = new Map<string, string[]>();
@@ -107,8 +125,17 @@ export function stageDrop(
     const stagedSoFar = stagedNamesByDir.get(dir) ?? [];
 
     let collidesWith: StagedEntry['collidesWith'] = null;
-    if (existing.some((other) => sameName(other, name, intl))) {
+    let existingKind: StagedEntry['existingKind'] = null;
+    // Found once, by name, and its KIND carried alongside -- a second
+    // `.some()` re-scan for the kind could in principle land on a different
+    // entry than the one `.find()` matched if two existing entries in the
+    // same directory ever compared equal under `sameName` (they can't, real
+    // AmigaDOS directories are unique per hash slot, but a single `.find()`
+    // is also simply less code).
+    const existingHit = existing.find((other) => sameName(other.name, name, intl));
+    if (existingHit) {
       collidesWith = 'existing';
+      existingKind = existingHit.kind;
     } else if (stagedSoFar.some((other) => sameName(other, name, intl))) {
       collidesWith = 'staged';
     }
@@ -123,6 +150,7 @@ export function stageDrop(
       name,
       shortened: name !== rawName,
       collidesWith,
+      existingKind,
     };
   });
 }
