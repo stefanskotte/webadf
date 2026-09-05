@@ -60,8 +60,18 @@ interface FileEditContextValue {
    * row's rename/delete alike -- goes through this, so the identity-drop
    * confirmation (D-W-3), the disabled guard, error toasts and the
    * post-success refresh can never drift between them.
+   *
+   * `onSuccess`, when given, runs ONLY once the request actually succeeds --
+   * never on a failed or unreachable request, and never merely because
+   * `runEdit` was called (a caller that fires-and-forgets without it, like
+   * the toolbar's upload/mkdir forms, keeps its existing clear-regardless
+   * behaviour unchanged). It fires from the SAME place win or lose is
+   * decided regardless of which path got there: the ordinary immediate
+   * case, or the identity-drop confirmation dialog's deferred one -- a
+   * caller with a reviewed batch worth not losing (`DropStaging`'s commit)
+   * needs "cleared" to mean "written", not "attempted".
    */
-  runEdit: (perform: () => Promise<Response>, successMessage: string) => void;
+  runEdit: (perform: () => Promise<Response>, successMessage: string, onSuccess?: () => void) => void;
 }
 
 const FileEditContext = createContext<FileEditContextValue | null>(null);
@@ -108,7 +118,7 @@ export function FileEditProvider({
   const [confirmOpen, setConfirmOpen] = useState(false);
   const pendingRef = useRef<(() => void) | null>(null);
 
-  async function execute(perform: () => Promise<Response>, successMessage: string) {
+  async function execute(perform: () => Promise<Response>, successMessage: string, onSuccess?: () => void) {
     setBusy(true);
     try {
       const res = await perform();
@@ -122,6 +132,7 @@ export function FileEditProvider({
       }
       toast.success(successMessage);
       router.refresh();
+      onSuccess?.();
     } catch {
       toast.error('Could not reach the server');
     } finally {
@@ -129,18 +140,18 @@ export function FileEditProvider({
     }
   }
 
-  function runEdit(perform: () => Promise<Response>, successMessage: string) {
+  function runEdit(perform: () => Promise<Response>, successMessage: string, onSuccess?: () => void) {
     // The controls that call this are themselves disabled whenever
     // `disabled` is set -- this is the belt-and-braces guard, not the
     // primary one, in case a request is already in flight when the disk's
     // state changes under it.
     if (disabled) return;
     if (tosecName && !identityConfirmed) {
-      pendingRef.current = () => { void execute(perform, successMessage); };
+      pendingRef.current = () => { void execute(perform, successMessage, onSuccess); };
       setConfirmOpen(true);
       return;
     }
-    void execute(perform, successMessage);
+    void execute(perform, successMessage, onSuccess);
   }
 
   function confirmIdentityDrop() {

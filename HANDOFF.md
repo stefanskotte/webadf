@@ -1412,7 +1412,8 @@ it and did not need to be.
   within would read as broken, and building them separately risked exactly that half-finished
   state shipping first.
 
-**Suite:** 549 vitest, `pnpm build` clean, lint at the 3-error baseline (unchanged; nothing in
+**Suite:** 566 vitest (549 at the original 11-task ship, plus the whole-branch review's own fixes
+and their tests above), `pnpm build` clean, lint at the 3-error baseline (unchanged; nothing in
 this increment's files), `pnpm adffs:verify` 119 checks including both OFS and FFS's amitools
 parent-consistency validation. Per this task's own instructions only its own Playwright specs
 were run, not the full suite: `disk-drag-drop.spec.ts` 6/6 on `--project=desktop`, and the

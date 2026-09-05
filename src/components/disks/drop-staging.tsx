@@ -2,7 +2,9 @@
 
 import { useMemo, useState } from 'react';
 import { readDroppedItems, type DroppedItem } from '@/lib/drop-reader';
-import { stageDrop, type StagedEntry, type ExistingEntry } from '@/lib/staging';
+import {
+  stageDrop, joinDestination, existingCollisionAt, type StagedEntry, type ExistingEntry,
+} from '@/lib/staging';
 import { blocksForPlan, type AdfEntry, type Filesystem } from '@/lib/adffs';
 import { ROOT_BLOCK } from '@/lib/adffs/constants';
 // The identical fold `stageDrop` itself uses (see staging.ts's own comment):
@@ -105,12 +107,6 @@ export function DropStaging({
     const label = directoryOptions.find((d) => d.block === destinationBlock)?.label ?? '/';
     return label === '/' ? '' : label.slice(1);
   }, [directoryOptions, destinationBlock]);
-  /** `dir`, joined onto the chosen destination -- what every lookup against `existingMap` (a disk-rooted map) must use once a destination other than root is picked. */
-  function atDestination(dir: string): string {
-    if (!destinationPath) return dir;
-    return dir ? `${destinationPath}/${dir}` : destinationPath;
-  }
-
   // The one-shot verdict from Task 3's own module -- the default name and
   // shortened flag for every row come from here and never change; only the
   // COLLISION verdict is re-derived below, live, because a typed rename or a
@@ -146,10 +142,10 @@ export function DropStaging({
       // `dir` is only its position WITHIN the dropped tree (e.g. '' for
       // something dropped directly, "Sub" for something nested one level
       // in) -- where it actually lands on the disk is that, prefixed by
-      // wherever the destination selector points.
-      const dir = atDestination(splitPath(entry.path).dir);
-
-      const existingEntries = existingMap.get(dir) ?? [];
+      // wherever the destination selector points. `joinDestination` is the
+      // SAME function `diskPathFor` below uses to build the written path,
+      // so the two can never disagree about which directory this is.
+      const dir = joinDestination(destinationPath, splitPath(entry.path).dir);
       const takenSoFar = takenByDir.get(dir) ?? [];
 
       let collidesWith: StagedEntry['collidesWith'] = null;
@@ -159,8 +155,15 @@ export function DropStaging({
       // checked regardless of resolution -- what changes below is only
       // whether a 'staged' collision (competition between two DROPPED
       // items) still counts once one of them has been skipped out of it.
-      const existingHit = existingEntries.find((o) => sameName(o.name, name, intl));
-      if (existingHit !== undefined) {
+      // `existingCollisionAt` re-derives the SAME `dir` internally via
+      // `joinDestination` -- passed the un-joined `splitPath(...).dir` and
+      // `destinationPath` separately here would risk joining it twice, so
+      // the raw (pre-join) directory is what actually gets passed to it,
+      // via `existingHit` below.
+      const existingHit = existingCollisionAt(
+        name, splitPath(entry.path).dir, destinationPath, existingMap, intl,
+      );
+      if (existingHit !== null) {
         collidesWith = 'existing';
         conflictName = existingHit.name;
         existingKind = existingHit.kind;
@@ -202,7 +205,7 @@ export function DropStaging({
         collidesWith, conflictName, existingKind,
       };
     });
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- effectiveNameFor and atDestination are plain functions (not memoized) closing over byPath/nameOverrides and destinationPath respectively; byPath is a useMemo keyed on `baseline` (listed below) and destinationPath IS listed below too, so this recomputes exactly when any actual input changes.
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- effectiveNameFor is a plain function (not memoized) closing over byPath and nameOverrides; byPath itself is a useMemo keyed on `baseline`, which IS listed below, so this recomputes exactly when either input actually changes. `joinDestination`/`existingCollisionAt` are imported, pure functions, not component state.
   }, [baseline, resolutions, nameOverrides, existingMap, intl, destinationPath]);
 
   function setName(path: string, name: string) {
@@ -276,10 +279,14 @@ export function DropStaging({
     return dir === '' ? leaf : `${relativePathFor(dir)}/${leaf}`;
   }
 
-  /** The path actually written on commit: the chosen destination, prefixed exactly ONCE, ahead of the drop-relative path -- never per level of `relativePathFor`'s own recursion, which would otherwise repeat it once per ancestor. */
+  /**
+   * The path actually written on commit: `joinDestination` (the SAME join
+   * the live collision recheck above uses) applied exactly ONCE, ahead of
+   * the drop-relative path -- never per level of `relativePathFor`'s own
+   * recursion, which would otherwise repeat it once per ancestor.
+   */
   function diskPathFor(path: string): string {
-    const relative = relativePathFor(path);
-    return destinationPath ? `${destinationPath}/${relative}` : relative;
+    return joinDestination(destinationPath, relativePathFor(path));
   }
 
   function commit() {
@@ -298,17 +305,18 @@ export function DropStaging({
       }
     }
     form.set('manifest', JSON.stringify(manifest));
+    // Cleared ONLY on success (`onSuccess`, third arg) -- unlike
+    // FileToolbar's own submitUpload/submitFolder, which clear regardless
+    // because their forms hold one filename each. A staged batch here can
+    // be a reviewed folder tree with collisions worked through row by row;
+    // throwing all of that away on a disk-full or mounted-device refusal
+    // (or on any other 400) would make the person redo the review, not
+    // just retry the write, over a failure the toast already explains.
     runEdit(
       () => fetch(`/api/disks/${diskId}/files/batch`, { method: 'POST', body: form }),
       `Added ${manifest.length} item${manifest.length === 1 ? '' : 's'}`,
+      clearStaged,
     );
-    // Cleared immediately, win or lose -- the same tradeoff FileToolbar's
-    // own submitUpload/submitFolder already make (they call cancelUpload /
-    // cancelFolder right after firing runEdit): the toast reports failure,
-    // router.refresh() reflects success, and a failed commit means
-    // re-dropping rather than retrying stale rows against a disk whose
-    // state runEdit hasn't yet told this component about.
-    clearStaged();
   }
 
   return (

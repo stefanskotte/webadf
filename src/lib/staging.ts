@@ -38,16 +38,18 @@ export interface StagedEntry {
   path: string;
   kind: 'file' | 'dir';
   sizeBytes: number;
-  /** What will actually be written, after Latin-1 masking and shortening. */
+  /** What will actually be written, after Latin-1 masking, forbidden-byte substitution and shortening. */
   name: string;
   /**
-   * True when `name` differs from the dropped name for EITHER reason this
-   * module corrects visibly: over-length shortening, or a code point above
-   * 0xFF masked down to a byte (`maskToLatin1`). Both are the same kind of
-   * fact to a person staging a drop -- "this isn't what you dropped, look
-   * at what will actually be written" -- so both share this one flag and
-   * the same editable-row treatment in the UI, rather than a name change
-   * silently happening without a bar to notice it.
+   * True when `name` differs from the dropped name for ANY of the three
+   * reasons this module corrects visibly: over-length shortening, a code
+   * point above 0xFF masked down to a byte (`maskToLatin1`), or a masked
+   * byte that landed on `/`, `:` or a control character and was substituted
+   * (`forbidUnwritable`). All three are the same kind of fact to a person
+   * staging a drop -- "this isn't what you dropped, look at what will
+   * actually be written" -- so all three share this one flag and the same
+   * editable-row treatment in the UI, rather than a name change silently
+   * happening without a bar to notice it.
    */
   shortened: boolean;
   collidesWith: 'existing' | 'staged' | null;
@@ -92,6 +94,41 @@ function maskToLatin1(name: string): string {
 }
 
 /**
+ * The stand-in for a byte AmigaDOS cannot hold in a name. Plain, printable
+ * ASCII, one byte, and -- the property that actually matters here -- not
+ * itself `/`, `:`, or a control character, so substituting it can never
+ * reintroduce the exact problem this function exists to remove.
+ */
+const FORBIDDEN_SUBSTITUTE = '_';
+
+/**
+ * Replace any byte AmigaDOS cannot hold in a name -- `/` (0x2F, the path
+ * separator), `:` (0x3A, the device separator) and anything below 0x20 (an
+ * ASCII control character) -- with `FORBIDDEN_SUBSTITUTE`.
+ *
+ * THE GAP THIS CLOSES IN `maskToLatin1`: masking a code point above 0xFF
+ * down to one byte can LAND on one of these forbidden bytes purely by
+ * coincidence of arithmetic -- 'į' (U+012F) masks to `0x2F`, which is `/`;
+ * 'ĺ' (U+013A) masks to `0x3A`, which is `:`. Before this, a dropped
+ * "į.txt" staged (and would have been written) as "/.txt". Nothing wrong
+ * with that specific ROW was ever shown: `diskPathFor` built the manifest
+ * path "/.txt" from it, and the batch route's `isPathSafe` sees a leading
+ * '/' as an empty first PATH SEGMENT, not a bad NAME, and refuses the
+ * WHOLE manifest with a 400 that names no row at all. Substituting here --
+ * after masking, before the collision check, in the one place a person can
+ * see and further edit the name -- is what keeps that refusal from ever
+ * reaching the batch route.
+ */
+function forbidUnwritable(name: string): string {
+  let out = '';
+  for (let i = 0; i < name.length; i++) {
+    const c = name.charCodeAt(i);
+    out += (c === 0x2f || c === 0x3a || c < 0x20) ? FORBIDDEN_SUBSTITUTE : name[i];
+  }
+  return out;
+}
+
+/**
  * Shorten `name` to AmigaDOS's 30-character cap, keeping the extension
  * where there is one: "Startup-Seq.txt" is a name AmigaDOS can hold,
  * "MyVeryLongDocumentFileNameXX.t" is not worth having kept the "t" for.
@@ -125,6 +162,42 @@ function splitPath(path: string): { dir: string; name: string } {
 }
 
 /**
+ * Join a within-drop relative directory (possibly `''`, meaning "wherever
+ * this row sits directly") onto a chosen destination path (possibly `''`
+ * for the disk root itself) -- the one join every lookup against
+ * `existingNamesByDir`, and every written manifest path, has to agree on.
+ *
+ * EXPORTED so `DropStaging`'s destination selector (drop-staging.tsx) uses
+ * this SAME function for both "what directory is this row's collision
+ * checked against" and "what directory does this row actually get written
+ * to" -- a second, independently-written join for either side could
+ * quietly disagree with the other about which directory that is, which is
+ * exactly the defect a destination selector exists to prevent (staging
+ * would say "no collision" for a name the write then refuses, or the
+ * reverse).
+ */
+export function joinDestination(destinationPath: string, dir: string): string {
+  if (!destinationPath) return dir;
+  return dir ? `${destinationPath}/${dir}` : destinationPath;
+}
+
+/**
+ * Whether `name` collides with an entry ALREADY ON THE DISK inside `dir`,
+ * once `dir` is joined onto `destinationPath` via `joinDestination` --
+ * i.e. the check evaluated against the CHOSEN destination's own existing
+ * entries, never unconditionally against the disk root's. `null` when
+ * `dir` (at that destination) holds nothing on the disk, or nothing there
+ * matches `name` under `sameName`'s case fold.
+ */
+export function existingCollisionAt(
+  name: string, dir: string, destinationPath: string,
+  existingNamesByDir: ReadonlyMap<string, readonly ExistingEntry[]>, intl: boolean,
+): ExistingEntry | null {
+  const existing = existingNamesByDir.get(joinDestination(destinationPath, dir)) ?? [];
+  return existing.find((o) => sameName(o.name, name, intl)) ?? null;
+}
+
+/**
  * Stage a dropped tree for writing, without writing anything.
  *
  * Entries are grouped by parent directory (from `path`, not from the
@@ -154,11 +227,13 @@ export function stageDrop(
 
   return dropped.map((entry) => {
     const { dir, name: rawName } = splitPath(entry.path);
-    // Masked BEFORE shortening: masking never changes length (one UTF-16
-    // code unit in, one out), so the order between the two never changes
-    // the final length, but the collision check below must see the byte
-    // value `putName` will actually write, not the pre-mask original.
-    const name = shortenName(maskToLatin1(rawName));
+    // Masked, then made WRITABLE, then shortened -- in that order.
+    // `maskToLatin1` and `forbidUnwritable` each preserve length (one
+    // UTF-16 code unit in, one out), so doing them before `shortenName`
+    // never changes where it ends up cutting; but the collision check
+    // below has to see the exact bytes `putName` will actually write, not
+    // the pre-mask, pre-substitution original.
+    const name = shortenName(forbidUnwritable(maskToLatin1(rawName)));
 
     const existing = existingNamesByDir.get(dir) ?? [];
     const stagedSoFar = stagedNamesByDir.get(dir) ?? [];
