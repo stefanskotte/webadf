@@ -56,6 +56,111 @@ function check(label: string, ok: boolean, detail = ''): void {
   if (!ok) failures++;
 }
 
+/**
+ * Task 5 fix round 1: xdftool CANNOT see a wrong parent pointer.
+ *
+ * Discovered while mutation-proving moveEntry (task-5-report.md): xdftool's
+ * `list`/`write`/`delete`/`type` commands build their directory tree purely
+ * by walking hash chains -- amitools assigns each node's in-memory `.parent`
+ * from that walk and never reads back the on-disk parent field (header
+ * offset 500) to check it agrees. So a `moveEntry` that relinks an entry
+ * into a new directory's hash chain but leaves its OLD parent pointer in
+ * place is invisible to every xdftool command used above, for exactly the
+ * same reason it is invisible to this project's own `readVolume`: neither
+ * one ever looks at that field while walking down from the root. Proven by
+ * hand: skipping moveEntry's reparent write left every xdftool-based check
+ * in this file still green.
+ *
+ * amitools ships a second, INDEPENDENT opinion that DOES look at it:
+ * `amitools.fs.validate.DirScan`, the library behind the `xdfscan` CLI
+ * tool. `xdfscan` itself is not used here -- on this machine it crashes
+ * before ever opening a disk (`time.clock()` was removed in Python 3.8+,
+ * and this amitools release still calls it) -- so `checkParentConsistency`
+ * below shells out to the SAME validator library directly, skipping only
+ * the broken CLI wrapper around it. This is therefore not "xdftool, again":
+ * it is a second, structurally different implementation that actually
+ * walks the parent-pointer relationship xdftool's own commands never
+ * touch.
+ */
+const PARENT_CHECK_SCRIPT = `
+import sys
+from amitools.fs.blkdev.BlkDevFactory import BlkDevFactory
+from amitools.fs.validate.Validator import Validator
+path = sys.argv[1]
+blkdev = BlkDevFactory().open(path, read_only=True)
+v = Validator(blkdev, min_level=0)
+boot_dos, bootable = v.scan_boot()
+root = v.scan_root()
+if root:
+    v.scan_dir_tree()
+    v.scan_files()
+    v.scan_bitmap()
+v.log.dump()
+blkdev.close()
+`;
+
+/**
+ * Find a Python interpreter that can `import amitools`, memoized for the
+ * life of the script. Prefers the interpreter named in xdftool's own
+ * shebang line, since that is guaranteed to have amitools installed
+ * alongside it (it is how xdftool itself runs); falls back to a bare
+ * `python3` in case xdftool was reached some other way.
+ */
+let amitoolsPython: string | null | undefined;
+function findAmitoolsPython(): string | null {
+  if (amitoolsPython !== undefined) return amitoolsPython;
+  const candidates: string[] = [];
+  try {
+    const xdftoolPath = execFileSync('which', ['xdftool'], { encoding: 'utf8' }).trim();
+    const shebang = readFileSync(xdftoolPath, 'utf8').split('\n')[0];
+    const match = /^#!(.+)$/.exec(shebang);
+    if (match) candidates.push(match[1].trim());
+  } catch { /* fall through to the generic candidate below */ }
+  candidates.push('python3');
+
+  for (const candidate of candidates) {
+    try {
+      execFileSync(candidate, ['-c', 'import amitools.fs.validate.DirScan'], { stdio: 'ignore' });
+      amitoolsPython = candidate;
+      return candidate;
+    } catch { /* try the next candidate */ }
+  }
+  amitoolsPython = null;
+  return null;
+}
+
+/**
+ * Run amitools' own directory-tree validator against `image` and check it
+ * does NOT report a parent-pointer inconsistency (`DirScan`'s "invalid
+ * parent in ... chain" error -- confirmed by hand against a hand-mutated
+ * fixture while wiring this check in; see task-5-report.md).
+ *
+ * Degrades LOUDLY, not silently, when the validator itself is unavailable:
+ * an unreachable python/amitools reports as a FAILED check with a clear
+ * reason, the same way the top-of-script xdftool probe below refuses to
+ * proceed quietly when xdftool itself is missing. A check that cannot run
+ * must never be indistinguishable from a check that ran and passed.
+ */
+function checkParentConsistency(label: string, image: string): void {
+  const python = findAmitoolsPython();
+  if (!python) {
+    check(`${label}: amitools parent-consistency validator`, false,
+      'no Python interpreter with amitools installed was found -- cannot check parent pointers independently');
+    return;
+  }
+  let output: string;
+  try {
+    output = execFileSync(python, ['-c', PARENT_CHECK_SCRIPT, image], { encoding: 'utf8' });
+  } catch (e) {
+    const err = e as { stdout?: string; stderr?: string };
+    check(`${label}: amitools parent-consistency validator`, false,
+      `validator crashed: ${(err.stderr || err.stdout || String(e)).trim().split('\n')[0]}`);
+    return;
+  }
+  const parentError = output.split('\n').find((l) => /invalid parent/i.test(l));
+  check(`${label}: amitools agrees every parent pointer is consistent`, !parentError, parentError ?? '');
+}
+
 try {
   execFileSync('xdftool', ['--help'], { stdio: 'ignore' });
 } catch {
@@ -255,16 +360,19 @@ for (const filesystem of ['OFS', 'FFS'] as const) {
 }
 
 // ---------------------------------------------------------------------------
-// Task 5: applyBatch and moveEntry, proved the same way as every other write
-// operation above -- xdftool lists what we expect, xdftool allocates a
-// block by writing into the result, and our reader still reads it after.
+// Task 5: applyBatch and moveEntry, proved against not one but TWO
+// independent implementations.
 //
-// The move check is the sharper of the two: our own reader never validates
-// a header's parent pointer while walking down from the root (it follows
-// hash chains, not parent links), so a reparent that updates the hash chain
-// but leaves the stale parent pointer behind is completely invisible to
-// `readVolume` and visible only to a real filesystem implementation such as
-// xdftool. See the mutation drill below the loop.
+// xdftool proves the batch and the move the same way as every other write
+// operation above: it lists what we expect, it allocates a block by
+// writing into the result, and our reader still reads it after. But for
+// the move specifically, xdftool is NOT enough on its own: it never reads
+// a header's on-disk parent pointer for any of `list`/`write`/`delete`/
+// `type` (see the comment on `checkParentConsistency` above), so a
+// reparent that updates the destination's hash chain but leaves the STALE
+// parent pointer behind is exactly as invisible to xdftool as it is to
+// this project's own `readVolume`. `checkParentConsistency` below is the
+// second opinion that actually looks at that field.
 for (const filesystem of ['OFS', 'FFS'] as const) {
   console.log(`\n${filesystem} batch and move`);
 
@@ -295,6 +403,11 @@ for (const filesystem of ['OFS', 'FFS'] as const) {
   // file now lives there.
   const cListing = xdftool(image, 'list', 'C');
   check(`${filesystem} move: xdftool sees root.txt inside C`, cListing.toUpperCase().includes('ROOT.TXT'));
+
+  // THE CHECK THAT MATTERS for the move: a second, independent
+  // implementation that actually reads the parent pointer xdftool never
+  // touches.
+  checkParentConsistency(`${filesystem} move`, image);
 }
 
 console.log('\nsharpest case: delete then refill');
