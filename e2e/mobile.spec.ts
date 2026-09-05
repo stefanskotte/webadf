@@ -7,6 +7,7 @@ import { syntheticVolume } from '@/lib/adffs/synthetic';
 import { readVolume } from '@/lib/adffs';
 import { signUpFresh, runTag, createAdf } from './helpers';
 import { cleanupSeeded, seedDisk } from './device-helpers';
+import { synthDrop } from './drag-drop-helpers';
 
 /**
  * The only specs in this repo that run at a phone's width.
@@ -315,4 +316,106 @@ test('the file toolbar and a row\'s controls fit a phone', async ({ page }) => {
     () => document.documentElement.scrollWidth - document.documentElement.clientWidth,
   );
   expect(overflow).toBeLessThanOrEqual(0);
+});
+
+/**
+ * Task 11: the drop strip, the staging list it grows into, and a
+ * press-and-hold drag onto a folder -- at 390x844.
+ *
+ * `synthDrop` (drag-drop-helpers.ts) is used here exactly as it is in
+ * disk-drag-drop.spec.ts's desktop specs -- Playwright cannot drive a real
+ * OS file drop on a phone any more than it can on a desktop browser, and
+ * that helper's own comment states plainly what it does and does not
+ * prove. What THIS test adds is the thing neither the desktop suite nor a
+ * synthesized drop can check: whether the staging list it grows into
+ * actually fits a 390px screen, and whether a real finger (via CDP, not a
+ * mouse event wearing a touch costume -- same reasoning as `touchDrag`,
+ * above) can still drag an entry inside the tree once the row also carries
+ * a grip handle, a toggle, Rename, Delete and Move to....
+ */
+test('the drop strip fits a phone, and a press-and-hold drags an entry onto a folder', async ({ page }) => {
+  const u = await signUpFresh(page);
+  await page.goto('/library');
+  await createAdf(page);
+  // WAIT FOR THE CARD BEFORE QUERYING -- see the identical comment on the
+  // file-toolbar test above; createAdf() returns before the disk exists.
+  await expect(page.getByTestId('game-card')).toHaveCount(1);
+  const [game] = await getDb().select().from(games)
+    .where(and(eq(games.orgId, u.orgId), eq(games.authored, true)));
+  if (!game) throw new Error(`no authored game for org ${u.orgId} after createAdf`);
+  const [disk] = await getDb().select().from(disks).where(eq(disks.gameId, game.id));
+
+  // A folder and a file to drag into it, made through the API rather than
+  // the UI -- this test is about touch input and layout, not about
+  // upload, and disk-drag-drop.spec.ts already covers making them by hand.
+  await page.request.post(`/api/disks/${disk.id}/files`, {
+    multipart: { parentBlock: '880', name: 'DEST' },
+  });
+  await page.request.post(`/api/disks/${disk.id}/files`, {
+    multipart: {
+      parentBlock: '880', name: 'DRAGME.TXT',
+      file: { name: 'DRAGME.TXT', mimeType: 'application/octet-stream', buffer: Buffer.from('mobile drag') },
+    },
+  });
+
+  await page.goto(`/disks/${disk.id}/files`);
+  const strip = page.getByTestId('drop-strip');
+  await expect(strip).toBeVisible();
+  let box = (await strip.boundingBox())!;
+  expect(box.x).toBeGreaterThanOrEqual(0);
+  expect(box.x + box.width).toBeLessThanOrEqual(390);
+
+  // Stage something so the LIST actually renders -- the always-visible
+  // strip above it was never the thing at risk of clipping; a list of rows
+  // with a name field, a conflict message and two buttons is.
+  await synthDrop(page, [{
+    name: 'Utilities',
+    kind: 'dir',
+    children: [{ name: 'A name long enough that it has to be shortened for AmigaDOS', kind: 'file', content: 'hi' }],
+  }]);
+  const list = page.getByTestId('drop-staging-list');
+  await expect(list).toBeVisible();
+  box = (await list.boundingBox())!;
+  expect(box.x).toBeGreaterThanOrEqual(0);
+  expect(box.x + box.width).toBeLessThanOrEqual(390);
+
+  const stagingOverflow = await page.evaluate(
+    () => document.documentElement.scrollWidth - document.documentElement.clientWidth,
+  );
+  expect(stagingOverflow).toBeLessThanOrEqual(0);
+
+  await page.getByTestId('drop-clear').tap();
+  await expect(list).toHaveCount(0);
+
+  // Now the press-and-hold drag: DRAGME.TXT onto DEST.
+  const adf = new Uint8Array(await (await page.request.get(`/api/disks/${disk.id}/adf`)).body());
+  const volume = readVolume(adf);
+  expect(volume.ok).toBe(true);
+  if (!volume.ok) return;
+  const dest = volume.root.find((e) => e.name === 'DEST')!;
+  const dragged = volume.root.find((e) => e.name === 'DRAGME.TXT')!;
+
+  const grip = page.getByTestId(`fs-drag-${dragged.block}`);
+  const dropZone = page.getByTestId(`fs-drop-${dest.block}`);
+  const entryRow = page.locator('[data-testid="fs-entry"][data-name="DRAGME.TXT"]');
+  await expect(grip).toBeVisible();
+  const gripBox = (await grip.boundingBox())!;
+  const dropBox = (await dropZone.boundingBox())!;
+  const from = { x: gripBox.x + gripBox.width / 2, y: gripBox.y + gripBox.height / 2 };
+  const targetY = dropBox.y + dropBox.height / 2;
+
+  // 250ms hold, matching the TouchSensor's own activation delay
+  // (file-tree.tsx copies collection-provider.tsx's sensor setup
+  // verbatim) -- anything shorter is a scroll gesture, not a drag.
+  const drag = await touchDrag(page, from, targetY - from.y, { holdMs: 400 });
+  await expect.poll(() => entryRow.evaluate((el) => getComputedStyle(el).opacity)).toBe('0.5');
+  await drag.end();
+
+  await expect.poll(async () => {
+    const after = new Uint8Array(await (await page.request.get(`/api/disks/${disk.id}/adf`)).body());
+    const afterVolume = readVolume(after);
+    if (!afterVolume.ok) return null;
+    const destAfter = afterVolume.root.find((e) => e.name === 'DEST');
+    return destAfter?.children.find((c) => c.name === 'DRAGME.TXT')?.block ?? null;
+  }, { timeout: 15_000 }).toBe(dragged.block);
 });

@@ -44,6 +44,7 @@ after plan 4a, rewritten again 2026-08-31 after plan 4b.**
 | **Create a blank ADF** | ✅ **done 2026-09-03.** A real formatted disk from a button, named inline; migration 0013 applied; see 3n. File add/edit/delete is NOT part of it |
 | **Create ADF is one menu** | ✅ **done 2026-09-04.** One dropdown with FFS and OFS items replaces the sticky select plus button; the filesystem is no longer remembered between disks; see 3t |
 | **Files inside an ADF** | ✅ **done 2026-09-04.** Add, delete, rename, replace contents, make and remove directories, through the browse page; every operation checked against xdftool rather than against our own reader; see 3u |
+| **Drag and drop inside an ADF** | ✅ **done 2026-09-05, all 11 tasks, on `feat/adf-drag-drop`, not merged.** Drop a folder from the OS to stage and batch-commit it as one blob; drag or keyboard-move an entry between directories; a cycle refusal our own reader cannot see the need for; see 3v |
 | **Edit a title by hand** | ✅ **done 2026-09-03.** Per-group authority, and a scan never silently undoes an edit; see 3m |
 | **Unified breadcrumb** | ✅ **done 2026-09-03**, and 2026-09-04 it follows the collection you came from; see 3l and 3r |
 | **Image layout shift** | ✅ **done 2026-09-03.** The game page's cover and screenshots reserve their space; the library grid never had the bug; see 3k |
@@ -1296,6 +1297,114 @@ back restores what the scan found" hit its 280s timeout waiting for `edit-detail
 then passed **alone in 18.3s**. It is a sweep test, it never references the Create ADF control,
 and this is the flake shape already recorded above. Re-run it alone before treating it as a
 regression.
+
+### 3v. Dropping files onto a disk, and dragging them around inside it — DONE 2026-09-05, on `feat/adf-drag-drop`, not merged
+
+Builds directly on 3u's write layer. Two gestures, shipped together in one increment (operator's
+ruling, 2026-09-05, recorded below): dropping files and folders from the operating system onto a
+disk, and dragging an entry already inside a disk onto a folder to move it — plus a
+keyboard-reachable "Move to…" for the second, since a drag-only feature excludes keyboard users.
+Spec `docs/superpowers/specs/2026-09-05-adf-drag-and-drop-design.md`, plan
+`docs/superpowers/plans/2026-09-05-adf-drag-and-drop.md`, 11 tasks.
+
+Dropping never writes directly. It fills an always-visible staging list (`DropStaging`,
+`src/components/disks/drop-staging.tsx`) showing every dropped file and folder, what it will be
+named (AmigaDOS names are 30 characters and fold case, so an over-long or colliding dropped name
+is the ordinary case, not an edge case), whether it fits, and any collision — before a single
+byte reaches the disk. One **Add** commits the whole batch as ONE new blob (`applyBatch`,
+`POST /api/disks/[id]/files/batch`), reusing `applyDiskEdit` so it inherits the 409-when-mounted
+refusal and the 404-never-403 tenancy boundary for free. Inside a disk, an entry drags onto a
+folder row (`file-tree.tsx`, dnd-kit, the same `MouseSensor`/`TouchSensor` pair
+`collection-provider.tsx` already paid for) or moves through "Move to…" — both paths call the
+identical `moveEntry`/route, so a cycle refusal or a mounted-device 409 reads the same whichever
+way the move was started.
+
+**Fit is computed in BLOCKS, never bytes, because a byte total lies (design §3.1).** Every file
+costs one header block plus `ceil(size / perBlock)` data blocks plus one extension block per 72
+data blocks beyond the first — so 900 zero-byte files cost 1,800 blocks (900 header + 900 data)
+to hold zero bytes of content, and a byte-only comparison against free *bytes* would wave every
+one of them through. `blocksForPlan` (Task 2) is the one function both the client staging area
+and the batch route call, so the two can never disagree about whether something fits — proven in
+`disk-drag-drop.spec.ts` by staging exactly that 900-file drop against a blank FFS disk (1,756
+free blocks) and reading `drop-total-blocks`/`drop-free-blocks`/`drop-capacity-warning` back with
+the real numbers, then hitting the batch route directly with an equally-oversized manifest and
+getting the identical refusal, with numbers, in the JSON body — **before `applyDiskEdit` is ever
+reached, so `disks.sha256` never changes.**
+
+**A move refuses a destination inside its own subtree (D-DD-6), and our own reader cannot see why
+this matters.** `moveEntry`'s `ancestryOf` check is not redundant with `dir.ts`'s existing
+hash-chain cycle guard — it is strictly worse to rely on that guard here. Measured by hand
+(`write.ts`'s own comment on `moveEntry`): with the ancestry check disabled, moving a directory
+into one of its own descendants unlinks the whole subtree from the real root's chain onto its own
+now-orphaned descendant, and `readVolume` from `ROOT_BLOCK` afterward reports `{ warnings: [],
+root: [] }` — **no warning, no error, the corrupted directory just isn't there.** The disk reads
+as empty and healthy; the only way to see the cycle at all is to start a walk AT the orphaned
+block directly, which no normal read path ever does. `disk-drag-drop.spec.ts` proves the refusal
+fires on the real bytes (`PATCH .../files/[block]` with a descendant as `toParent` → 400,
+`disks.sha256` unchanged) and that the UI never offers the destination in the first place
+(`subtreeBlocks` drops it from both the drag targets and the "Move to…" `<select>`).
+
+**`FileSystemDirectoryReader.readEntries()` hands back at most 100 entries per call (design
+§3.4) — a naive single call truncates a large dropped folder at exactly 100 items, silently.**
+`readDroppedItems` (`src/lib/drop-reader.ts`, Task 7) loops until an empty page comes back.
+`disk-drag-drop.spec.ts`'s does-not-fit test doubles as this trap's own regression guard: its
+900-file synthetic drop only produces a capacity refusal (901 staged rows, 1,801 blocks) if all
+nine pages of 100 are actually read; break the loop back down to one call and the test would see
+100 items, ~200 blocks, no overcapacity warning, and a disabled-commit assertion that fails.
+
+**Playwright cannot perform a real HTML5 file drop from the operating system — no browser exposes
+that to test automation, for the same reason a script cannot construct a `DragEvent` carrying a
+real `DataTransfer` full of files.** `e2e/drag-drop-helpers.ts`'s `synthDrop` instead builds fake
+`FileSystemEntry`-like objects (their `readEntries` deliberately paged at 100, matching the real
+contract) and dispatches a plain, cancelable `Event` named "drop" with a hand-attached
+`dataTransfer` — sufficient because React's synthetic event system copies `dataTransfer` straight
+off whatever native event it is given, with no check that it is a genuine `DragEvent`. **What
+this does NOT prove:** `webkitGetAsEntry()` itself is never exercised — there is no real OS file
+system underneath any of it — so a browser- or OS-specific bug in how a genuine external drag
+populates `DataTransferItemList`, or in the real File System Access implementation behind it,
+would not be caught by any test built on this helper. The internal move tests (drag onto a
+folder, and the mobile press-and-hold) use real pointer/touch input the whole way, since that
+gesture is dnd-kit reacting to ordinary mouse/touch events, not an OS drop.
+
+**`xdftool` does not check parent pointers, and this was already known from Task 5 — anyone
+adding a future operation that touches them must not assume `pnpm adffs:verify` alone covers it.**
+`xdftool`'s `list`/`write`/`delete`/`type` commands build their tree purely by walking hash
+chains; amitools assigns each node's in-memory parent from that walk and never reads the on-disk
+parent field back to confirm it agrees — which is exactly why `moveEntry`'s cycle guard above
+cannot be "verified" by xdftool listing the result correctly, the same blind spot this project's
+own reader has. `checkParentConsistency` (`scripts/adffs-verify.ts`) shells out to amitools'
+`Validator`/`DirScan` library directly (not the `xdfscan` CLI, which crashes on this machine
+under Python 3.8+ — a removed `time.clock()` call) as a second, structurally independent opinion
+that actually reads that field. Both OFS and FFS move checks in `pnpm adffs:verify` end with
+"amitools agrees every parent pointer is consistent"; a validator that cannot be reached fails
+loudly rather than being silently skipped. This check exists ONLY for `moveEntry`'s move ops —
+the batch route's `mkdir`/`add`/`replace` never touch a parent pointer, so they are not covered by
+it and did not need to be.
+
+**Four operator rulings, recorded in the spec:**
+- **D-DD-1.** The drop zone is the source and the disk is the destination, stacked vertically —
+  a side-by-side pane would need its own phone layout; stacked, one layout serves both.
+- **D-DD-2.** Dropping stages; it never writes. An 880KB disk means a dropped folder often will
+  not fit, and staging turns a failure after the fact into a refusal with real numbers before it
+  — and lets several drops commit together as one blob.
+- **D-DD-4.** Over-long names are shortened visibly; collisions are never resolved automatically.
+  A collision offers skip, replace or rename per row and blocks the commit until resolved — the
+  operator's own disks must never be silently overwritten. `disk-drag-drop.spec.ts` proves both
+  halves: the commit stays disabled with an outstanding collision, and **replace** genuinely
+  replaces (same header block, per D-W-6, new content).
+- **The together-in-one-increment scope call.** Dropping-in and dragging-around were built as one
+  increment rather than two, because they are the same gesture pointed in two directions sharing
+  one drag context and one set of drop targets — a page that accepted drags from outside but not
+  within would read as broken, and building them separately risked exactly that half-finished
+  state shipping first.
+
+**Suite:** 549 vitest, `pnpm build` clean, lint at the 3-error baseline (unchanged; nothing in
+this increment's files), `pnpm adffs:verify` 119 checks including both OFS and FFS's amitools
+parent-consistency validation. Per this task's own instructions only its own Playwright specs
+were run, not the full suite: `disk-drag-drop.spec.ts` 6/6 on `--project=desktop`, and the
+`mobile` project 8/8 (7 pre-existing plus this task's own drop-strip/press-and-hold-drag test) —
+both clean on a freshly-confirmed port 3000, no re-runs needed. The operator runs the full suite
+separately.
 
 ### 4. Backlog, not blocking anything
 
