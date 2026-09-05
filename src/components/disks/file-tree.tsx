@@ -138,6 +138,30 @@ function subtreeBlocks(entry: AdfEntry): Set<number> {
   return blocks;
 }
 
+/** One directory a "Move to…" control can offer, labelled by its full path so two directories that share a name at different depths are never offered as indistinguishable options. */
+interface DirectoryOption {
+  block: number;
+  label: string;
+}
+
+/**
+ * Every directory in the tree, depth-first, labelled with its full path from
+ * the root -- the keyboard equivalent of the drag targets a directory row
+ * already accepts. The root itself is not an `AdfEntry` (it has no block of
+ * its own to walk into here), so callers prepend it -- see `directoryOptions`
+ * below.
+ */
+function collectDirectories(entries: AdfEntry[], parentPath = ''): DirectoryOption[] {
+  const dirs: DirectoryOption[] = [];
+  for (const entry of sortEntries(entries)) {
+    if (entry.kind !== 'dir') continue;
+    const path = `${parentPath}/${entry.name}`;
+    dirs.push({ block: entry.block, label: path });
+    dirs.push(...collectDirectories(entry.children, path));
+  }
+  return dirs;
+}
+
 /** Reserved on the left of every row for the drag handle, so the handle can be absolutely positioned in that gutter without disturbing any of the existing `pl-[22px]` alignment the metadata/action lines below the name already depend on. */
 const GRIP_GUTTER = 22;
 
@@ -152,6 +176,12 @@ export function FileTree({ entries, diskId }: { entries: AdfEntry[]; diskId: str
   const [renameBlock, setRenameBlock] = useState<number | null>(null);
   const [renameValue, setRenameValue] = useState('');
   const [deleteBlock, setDeleteBlock] = useState<number | null>(null);
+  // Third member of the same mutually-exclusive trio: opening "Move to…" on
+  // one row closes any rename/delete form open on another (or the same)
+  // row, and starting a rename or delete closes this one right back --
+  // see startRename/startDelete below.
+  const [moveBlock, setMoveBlock] = useState<number | null>(null);
+  const [moveTarget, setMoveTarget] = useState<number | ''>('');
 
   // The block of whichever row is currently being dragged, or null. Tracked
   // here (not per-row) because deciding whether a GIVEN folder may accept
@@ -168,6 +198,7 @@ export function FileTree({ entries, diskId }: { entries: AdfEntry[]; diskId: str
 
   function startRename(entry: AdfEntry) {
     setDeleteBlock(null);
+    setMoveBlock(null);
     setRenameBlock(entry.block);
     setRenameValue(entry.name.slice(0, MAX_NAME_LENGTH));
   }
@@ -190,6 +221,7 @@ export function FileTree({ entries, diskId }: { entries: AdfEntry[]; diskId: str
 
   function startDelete(entry: AdfEntry) {
     setRenameBlock(null);
+    setMoveBlock(null);
     setDeleteBlock(entry.block);
   }
 
@@ -205,6 +237,40 @@ export function FileTree({ entries, diskId }: { entries: AdfEntry[]; diskId: str
     cancelDelete();
   }
 
+  function startMove(entry: AdfEntry) {
+    setRenameBlock(null);
+    setDeleteBlock(null);
+    setMoveBlock(entry.block);
+    setMoveTarget('');
+  }
+
+  function cancelMove() {
+    setMoveBlock(null);
+    setMoveTarget('');
+  }
+
+  /**
+   * The keyboard equivalent of `onDragEnd` below -- same route, same body
+   * shape, same success toast wording, so the cycle refusal and the 409
+   * naming a mounted device read identically whichever way the move was
+   * started. `moveTarget` is only ever a block a directory row actually
+   * offered (`directoryOptions` below already excludes the entry's own
+   * subtree), so there is nothing left to validate here beyond "something
+   * was chosen".
+   */
+  function submitMove(block: number) {
+    if (moveTarget === '') return;
+    const toParent = moveTarget;
+    const movedEntry = findEntryByBlock(entries, block);
+    const name = movedEntry?.name ?? 'item';
+    runEdit(() => fetch(`/api/disks/${diskId}/files/${block}`, {
+      method: 'PATCH',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ toParent }),
+    }), `Moved "${name}"`);
+    cancelMove();
+  }
+
   /**
    * A folder can never accept a drop of itself or of anything already inside
    * it -- see `subtreeBlocks` above. Empty whenever nothing is being
@@ -217,6 +283,19 @@ export function FileTree({ entries, diskId }: { entries: AdfEntry[]; diskId: str
     if (!active || active.kind !== 'dir') return new Set<number>();
     return subtreeBlocks(active);
   }, [entries, activeBlock]);
+
+  /**
+   * Every "Move to…" destination this disk has, root included -- computed
+   * once from the tree (not from drag state, unlike `forbiddenBlocks` above:
+   * this list backs a menu that can be open independently of any drag).
+   * Each row filters its OWN forbidden subtree out of this shared list
+   * rather than this being recomputed per row, since the list itself never
+   * differs between rows -- only what a given row must exclude from it does.
+   */
+  const directoryOptions = useMemo<DirectoryOption[]>(
+    () => [{ block: ROOT_BLOCK, label: '/' }, ...collectDirectories(entries)],
+    [entries],
+  );
 
   /**
    * Mouse and touch are two sensors, not one PointerSensor -- copied
@@ -333,6 +412,9 @@ export function FileTree({ entries, diskId }: { entries: AdfEntry[]; diskId: str
             renameBlock={renameBlock}
             renameValue={renameValue}
             deleteBlock={deleteBlock}
+            moveBlock={moveBlock}
+            moveTarget={moveTarget}
+            directoryOptions={directoryOptions}
             forbiddenBlocks={forbiddenBlocks}
             diskId={diskId}
             toggle={toggle}
@@ -343,6 +425,10 @@ export function FileTree({ entries, diskId }: { entries: AdfEntry[]; diskId: str
             startDelete={startDelete}
             cancelDelete={cancelDelete}
             submitDelete={submitDelete}
+            startMove={startMove}
+            cancelMove={cancelMove}
+            submitMove={submitMove}
+            setMoveTarget={setMoveTarget}
           />
         ))}
       </div>
@@ -360,6 +446,12 @@ interface FileRowProps {
   renameBlock: number | null;
   renameValue: string;
   deleteBlock: number | null;
+  /** The block whose "Move to…" form is expanded, or null. Mutually exclusive with `renameBlock`/`deleteBlock` -- see FileTree's startMove/startRename/startDelete. */
+  moveBlock: number | null;
+  /** The directory chosen so far in the open "Move to…" form -- `''` until something is picked, mirroring the `<select>`'s own empty-option value. */
+  moveTarget: number | '';
+  /** Every destination a "Move to…" menu can offer, root included -- see FileTree's `directoryOptions`. Each row filters its own forbidden subtree out of this shared list rather than this being recomputed per row. */
+  directoryOptions: DirectoryOption[];
   /** Blocks this row must refuse as a drop target for the CURRENT drag -- see `subtreeBlocks` on FileTree. Only ever non-empty while a directory is being dragged. */
   forbiddenBlocks: ReadonlySet<number>;
   diskId: string;
@@ -371,15 +463,35 @@ interface FileRowProps {
   startDelete: (entry: AdfEntry) => void;
   cancelDelete: () => void;
   submitDelete: (block: number) => void;
+  startMove: (entry: AdfEntry) => void;
+  cancelMove: () => void;
+  submitMove: (block: number) => void;
+  setMoveTarget: (value: number | '') => void;
 }
 
 function FileRow({
   entry, depth, open, striped, editDisabled, busy,
-  renameBlock, renameValue, deleteBlock, forbiddenBlocks, diskId,
+  renameBlock, renameValue, deleteBlock, moveBlock, moveTarget, directoryOptions,
+  forbiddenBlocks, diskId,
   toggle, startRename, cancelRename, submitRename, setRenameValue,
   startDelete, cancelDelete, submitDelete,
+  startMove, cancelMove, submitMove, setMoveTarget,
 }: FileRowProps) {
   const isDir = entry.kind === 'dir';
+
+  // The "Move to…" menu's own options -- this row's exclusion of
+  // `directoryOptions`, computed the same way `forbiddenBlocks` is computed
+  // for the drag (same `subtreeBlocks` helper, same rule): a directory can
+  // never be offered as a destination for itself or anything already inside
+  // it. A file has no subtree to forbid anything from, so it gets the full
+  // list untouched. This is the one rule Task 9's drag and this task's
+  // keyboard control share on purpose -- see the module comment on
+  // `subtreeBlocks`.
+  const moveOptions = useMemo(() => {
+    if (!isDir) return directoryOptions;
+    const forbidden = subtreeBlocks(entry);
+    return directoryOptions.filter((option) => !forbidden.has(option.block));
+  }, [directoryOptions, entry, isDir]);
 
   // Every row is draggable, but the grip handle below is the ONLY
   // activator -- `attributes`/`listeners` are never spread on the row
@@ -633,6 +745,49 @@ function FileRow({
             Cancel
           </button>
         </div>
+      ) : moveBlock === entry.block ? (
+        // The keyboard path onto the exact same PATCH a drop issues (D-DD-7):
+        // a directory can never be moved into itself or its own descendants,
+        // so `moveOptions` has already dropped those before this menu is
+        // ever drawn -- the refusal is surfaced by omission here rather than
+        // discovered later as a 409, the same guarantee the drag gets from
+        // `forbiddenBlocks`.
+        <div className="flex flex-wrap items-center gap-2 pl-[22px]">
+          <select
+            value={moveTarget}
+            onChange={(e) => setMoveTarget(e.target.value === '' ? '' : Number(e.target.value))}
+            aria-label={`Move ${entry.name} to`}
+            data-testid={`fs-move-target-${entry.block}`}
+            autoFocus
+            className="rounded border bg-transparent px-2 py-1 text-[11px]"
+            style={{ borderColor: 'var(--hairline)', color: 'var(--ink)' }}
+          >
+            <option value="">Choose a location…</option>
+            {moveOptions.map((option) => (
+              <option key={option.block} value={option.block}>{option.label}</option>
+            ))}
+          </select>
+          <button
+            type="button"
+            onClick={() => submitMove(entry.block)}
+            disabled={busy || moveTarget === ''}
+            data-testid={`fs-move-submit-${entry.block}`}
+            className="rounded px-2 py-0.5 text-[11px] font-semibold text-white disabled:opacity-50"
+            style={{ background: 'var(--primary-action)' }}
+          >
+            Move
+          </button>
+          <button
+            type="button"
+            onClick={cancelMove}
+            disabled={busy}
+            data-testid={`fs-move-cancel-${entry.block}`}
+            className="rounded px-2 py-0.5 text-[11px] font-semibold disabled:opacity-50"
+            style={{ color: 'var(--muted)' }}
+          >
+            Cancel
+          </button>
+        </div>
       ) : (
         <div className="flex items-center gap-3 pl-[22px]">
           <button
@@ -656,6 +811,24 @@ function FileRow({
             style={{ color: 'var(--muted)' }}
           >
             Delete
+          </button>
+          {/*
+            The keyboard/no-mouse equivalent of Task 9's drag: a real
+            <button>, its own stable testid (the row already holds several
+            buttons -- see the comment above this whole block), and the
+            native `disabled` attribute rather than a click handler that
+            silently no-ops, matching every other control on this row.
+          */}
+          <button
+            type="button"
+            onClick={() => startMove(entry)}
+            disabled={!!editDisabled}
+            title={editDisabled?.message}
+            data-testid={`fs-move-${entry.block}`}
+            className="text-[11px] font-semibold underline-offset-2 hover:underline disabled:opacity-50 disabled:no-underline"
+            style={{ color: 'var(--muted)' }}
+          >
+            Move to…
           </button>
         </div>
       )}
