@@ -5,7 +5,7 @@ import { disks, entitlements } from '@/db/schema/catalog';
 import { requireOrg } from '@/lib/session';
 import { diskStore } from '@/lib/storage';
 import {
-  readVolume, readFile, deleteEntry, renameEntry, replaceFile,
+  readVolume, readFile, deleteEntry, renameEntry, replaceFile, moveEntry,
   type AdfEntry, type WriteResult,
 } from '@/lib/adffs';
 import { ROOT_BLOCK } from '@/lib/adffs/constants';
@@ -115,18 +115,22 @@ export async function GET(
 }
 
 const renameBody = z.object({ name: z.string().trim().min(1) });
+const moveBody = z.object({ toParent: z.number().int().nonnegative() });
 
 /**
- * Rename this entry, or replace a file's contents -- distinguished by
- * content type, exactly as the two are distinguished on the underlying
- * disk: a rename relinks a hash chain and never touches data blocks, a
- * replace never touches the hash chain (D-W-6, the header block IS the
- * file's identity) and only rewrites data. A JSON body renames; a
- * multipart body carrying a `file` part replaces.
+ * Rename this entry, replace a file's contents, or move it to another
+ * directory -- distinguished by content type and, within a JSON body, by
+ * which field is present. A rename relinks a hash chain and never touches
+ * data blocks; a replace never touches the hash chain (D-W-6, the header
+ * block IS the file's identity) and only rewrites data; a move relinks the
+ * hash chain from one directory into another and touches no data blocks
+ * either (design §6). A multipart body carrying a `file` part replaces; a
+ * JSON body with `toParent` moves; any other JSON body renames.
  *
- * Both closures walk the tree from the SAME bytes `applyDiskEdit` is about
- * to hash and store, never a separate read: `renameEntry` needs the
- * entry's parent block, which only that walk can supply.
+ * All three closures walk the tree from the SAME bytes `applyDiskEdit` is
+ * about to hash and store, never a separate read: `renameEntry` and
+ * `moveEntry` both need the entry's CURRENT parent block, which only that
+ * walk can supply.
  */
 export async function PATCH(
   request: Request,
@@ -163,23 +167,46 @@ export async function PATCH(
     } catch {
       return Response.json({ error: 'invalid_json' }, { status: 400 });
     }
-    const parsed = renameBody.safeParse(raw);
-    if (!parsed.success) {
-      return Response.json({ error: 'invalid_body', detail: z.flattenError(parsed.error) }, { status: 400 });
+
+    // `toParent` is the one field that distinguishes a move from a rename --
+    // there is no separate `kind` field to fall out of sync with it.
+    if (raw !== null && typeof raw === 'object' && 'toParent' in raw) {
+      const parsed = moveBody.safeParse(raw);
+      if (!parsed.success) {
+        return Response.json({ error: 'invalid_body', detail: z.flattenError(parsed.error) }, { status: 400 });
+      }
+      const toParent = parsed.data.toParent;
+      edit = (adf) => {
+        const volume = readVolume(adf);
+        if (!volume.ok) return { ok: false, reason: 'no-filesystem' };
+        const found = findEntryWithParent(volume.root, blockNo, ROOT_BLOCK);
+        if (!found) return { ok: false, reason: 'not-found' };
+        return moveEntry(adf, found.parentBlock, blockNo, toParent);
+      };
+    } else {
+      const parsed = renameBody.safeParse(raw);
+      if (!parsed.success) {
+        return Response.json({ error: 'invalid_body', detail: z.flattenError(parsed.error) }, { status: 400 });
+      }
+      const newName = parsed.data.name;
+      edit = (adf) => {
+        const volume = readVolume(adf);
+        if (!volume.ok) return { ok: false, reason: 'no-filesystem' };
+        const found = findEntryWithParent(volume.root, blockNo, ROOT_BLOCK);
+        if (!found) return { ok: false, reason: 'not-found' };
+        return renameEntry(adf, found.parentBlock, blockNo, newName);
+      };
     }
-    const newName = parsed.data.name;
-    edit = (adf) => {
-      const volume = readVolume(adf);
-      if (!volume.ok) return { ok: false, reason: 'no-filesystem' };
-      const found = findEntryWithParent(volume.root, blockNo, ROOT_BLOCK);
-      if (!found) return { ok: false, reason: 'not-found' };
-      return renameEntry(adf, found.parentBlock, blockNo, newName);
-    };
   }
 
   const result = await applyDiskEdit(orgId, id, edit);
   if (!result.ok) {
-    return Response.json({ error: 'edit_failed', reason: result.reason }, { status: result.status });
+    // A bare "cycle" means nothing to a person -- say what it actually
+    // means: dragging a folder into its own subtree.
+    const reason = result.reason === 'cycle'
+      ? 'a folder cannot be moved inside itself'
+      : result.reason;
+    return Response.json({ error: 'edit_failed', reason }, { status: result.status });
   }
   return Response.json({ id, block: blockNo, sha256: result.sha256 });
 }

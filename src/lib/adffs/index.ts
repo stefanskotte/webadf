@@ -20,7 +20,7 @@ export type { Filesystem, BootInfo } from './boot';
 export { readUsage, type VolumeUsage } from './usage';
 export {
   addFile, deleteEntry, renameEntry, replaceFile, makeDirectory, moveEntry,
-  type WriteResult, type WriteError,
+  applyBatch, type WriteResult, type WriteError, type BatchOp,
 } from './write';
 export { blocksForFile, blocksForPlan, type CostItem } from './capacity';
 
