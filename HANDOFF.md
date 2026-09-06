@@ -44,6 +44,8 @@ after plan 4a, rewritten again 2026-08-31 after plan 4b.**
 | **Create a blank ADF** | ✅ **done 2026-09-03.** A real formatted disk from a button, named inline; migration 0013 applied; see 3n. File add/edit/delete is NOT part of it |
 | **Create ADF is one menu** | ✅ **done 2026-09-04.** One dropdown with FFS and OFS items replaces the sticky select plus button; the filesystem is no longer remembered between disks; see 3t |
 | **Files inside an ADF** | ✅ **done 2026-09-04.** Add, delete, rename, replace contents, make and remove directories, through the browse page; every operation checked against xdftool rather than against our own reader; see 3u |
+| **Drop a folder in, drag to rearrange** | ✅ **done 2026-09-05.** Drop from the OS into a staging area that checks fit in BLOCKS before writing; one commit, one blob; drag or keyboard to move entries between folders; see 3v |
+| **Deleting the last disk no longer 404s** | ✅ **done 2026-09-05.** Navigates on the server's own `gameDeleted`, replaces rather than pushes, and goes where the breadcrumb points; see 3w |
 | **Drag and drop inside an ADF** | ✅ **done 2026-09-05, all 11 tasks, on `feat/adf-drag-drop`, not merged.** Drop a folder from the OS to stage and batch-commit it as one blob; drag or keyboard-move an entry between directories; a cycle refusal our own reader cannot see the need for; see 3v |
 | **Edit a title by hand** | ✅ **done 2026-09-03.** Per-group authority, and a scan never silently undoes an edit; see 3m |
 | **Unified breadcrumb** | ✅ **done 2026-09-03**, and 2026-09-04 it follows the collection you came from; see 3l and 3r |
@@ -1297,6 +1299,31 @@ back restores what the scan found" hit its 280s timeout waiting for `edit-detail
 then passed **alone in 18.3s**. It is a sweep test, it never references the Create ADF control,
 and this is the flake shape already recorded above. Re-run it alone before treating it as a
 regression.
+
+### 3w. Deleting the last disk no longer 404s — DONE 2026-09-05
+
+Reported by the operator: create an ADF, click into it, delete it, and the page 404s.
+
+**The server was already reporting the cause in the response the client was reading.** Creating
+an ADF makes a title with exactly one disk, so deleting that disk empties the title and
+`deleteDisk` removes the title too, returning `gameDeleted: true`. `DeleteDiskDialog` parsed
+that same body for `ejected` and ignored `gameDeleted`, then called `router.refresh()`
+regardless — re-running `/games/[id]` for a game that no longer existed, which is `notFound()`.
+
+So the fix keys on what the server SAYS rather than on `kind`: navigate only when the response
+reports the title itself is gone. Deleting one disk of a multi-disk set still refreshes and
+leaves you on the title page, and a second test pins that so the fix cannot over-correct.
+
+**REPLACE, NOT PUSH.** The deleted title's URL must not stay in history or Back returns to the
+404 this exists to avoid. There is a test for that too.
+
+**Where it goes is the breadcrumb's own answer**, not a guess: `libraryHref()` now lives in
+`src/lib/trail.ts` beside `libraryTrail` and both use it, so the redirect destination IS the
+Library crumb the person can see, carrying the `?from=` collection they arrived through.
+Spelling that URL out twice is how the two would quietly stop agreeing.
+
+**The library grid deliberately passes nothing and keeps refreshing:** there the page is the
+library, which outlives any card on it.
 
 ### 3v. Dropping files onto a disk, and dragging them around inside it — DONE 2026-09-05, on `feat/adf-drag-drop`, not merged
 
