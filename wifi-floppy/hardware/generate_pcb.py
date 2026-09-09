@@ -269,6 +269,7 @@ CLR = 0.15
 SILK_W = 0.2
 SILK_TEXT_TH = 0.2      # font stroke thickness, same limit applies
 SILK_TEXT_H = 1.0       # JLC minimum legible text height is 0.8 mm
+SILK_BAR_W = 0.4        # cathode bar: heavier than an outline, so it reads as a bar
 
 # Board identity on the silkscreen. Rev A and rev A2 both shipped unmarked,
 # so the only way to tell a scrap board from a good one is to squint at
@@ -349,11 +350,14 @@ for i,n in enumerate(NETS): out.append(f' (net {i} "{n}")')
 #   Q1-Q6  the FET column is on a 3.14 mm pitch, so a label above Q4 or Q5
 #          lands on the pads of the FET above it. All six go east instead,
 #          level with their own part, so the column reads consistently.
-#   D1     the SMA pads are large; 2.2 mm north is still on copper.
+#   D1     the SMA pads are large; 2.2 mm north is still on copper, and north
+#          is now the cathode bar as well. West clears the pads but comes
+#          within 0.27 mm of U1's outline, so it goes east: 6.67 mm from any
+#          other silk, 1.85 mm from copper, 1.9 mm inside the board edge.
 #   U1     2.2 mm north sits on the module's own silkscreen outline.
 REF_OFFSET = {
     'U1': (0.0, -3.4),
-    'D1': (0.0, -3.7),
+    'D1': (3.4, 0.0),
     **{q: (3.0, 0.0) for q in ('Q1', 'Q2', 'Q3', 'Q4', 'Q5', 'Q6')},
 }
 
@@ -476,6 +480,26 @@ for q,(cx,cy,p,row) in FETS.items():
 f=fp_open('Diode_SMD:D_SMA','D1','SS14',D1_X,150.0).replace('through_hole','smd')
 f+=smd(1,0,-2.0,'VSYS',1.6,1.8)
 f+=smd(2,0, 2.0,'+5V',1.6,1.8)
+# D1 body outline and cathode bar. This is the only polarised part on the
+# board and it had no marking of any kind, so the only way to orient an SS14
+# was to know which trace went where.
+#
+# Pad 1 is the cathode - not by "pin 1 is K" convention but by what the
+# canonical KiCad D_SMA actually draws: its F.Fab layer puts the diode
+# symbol's bar on the pad-1 side with the triangle pointing at it, and its
+# F.SilkS outline closes off that end. This is that outline rotated 90 deg to
+# suit our vertical placement (canonical pads sit at x=+-2, ours at y=+-2),
+# so the closed end lands over pad 1. It agrees with the netlist: pad 1 is
+# VSYS, pad 2 is +5V, and current runs anode -> cathode.
+#
+# The bar is drawn heavier than the sides so it reads as a cathode stripe
+# rather than as one more edge of a rectangle. The SS14's own band goes to it.
+_D_HW, _D_END, _D_OPEN = 1.65, -3.51, 2.0
+f+=(f'  (fp_line (start {-_D_HW} {_D_END}) (end {_D_HW} {_D_END})'
+    f' (stroke (width {SILK_BAR_W}) (type solid)) (layer "F.SilkS") (tstamp {U()}))\n')
+for _sx in (-_D_HW, _D_HW):
+    f+=(f'  (fp_line (start {_sx} {_D_END}) (end {_sx} {_D_OPEN})'
+        f' (stroke (width {SILK_W}) (type solid)) (layer "F.SilkS") (tstamp {U()}))\n')
 f+=' )'; out.append(f)
 # C1 C3
 f=fp_open('Capacitor_SMD:C_0603','C1','100n',C1[0],C1[1]).replace('through_hole','smd')

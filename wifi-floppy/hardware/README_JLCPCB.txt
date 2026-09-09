@@ -23,8 +23,8 @@ Files
 Notes
   * All holes are plated; the board has no NPTH and no mounting holes.
   * Silkscreen carries component outlines, the J1/J2/U1 pin-1 markers, U2's
-    pin-1 dot, every reference designator, the antenna-keepout label and the
-    board's "WIFI FLOPPY REV B" marking. Text is drawn with the single-stroke
+    pin-1 dot, D1's body outline and cathode bar, every reference designator,
+    the antenna-keepout label and the board's "WIFI FLOPPY REV B" marking. Text is drawn with the single-stroke
     font in stroke_font.py; there is no filled type, which is normal for
     silkscreen.
   * EVERY silk feature is >= 0.2 mm, against JLCPCB's 0.15 mm (6 mil) minimum,

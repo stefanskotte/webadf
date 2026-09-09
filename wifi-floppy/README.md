@@ -301,6 +301,30 @@ the fab minimum, and `export_gerbers.py` reports any legend stroke that lands
 within 0.15 mm of a pad. Designator placement was moved to suit: the FET column
 is on a 3.14 mm pitch, so Q1-Q6 label to the east rather than above.
 
+### Orienting the parts
+
+D1 is the only part you can silently fit the wrong way round, so rev B marks
+it: a body outline closed at the cathode end, drawn with a heavier bar than
+the sides. **The SS14's banded end goes to that bar** - pad 1, the pad whose
+trace runs the long way up the board, away from J2. Pad 2 is the anode, fed by
+the +5V run that comes along the bottom edge from J2.
+
+Pad 1 is the cathode by what KiCad's own `D_SMA` draws, not by convention: its
+`F.Fab` layer puts the diode symbol's bar on the pad-1 side with the triangle
+pointing at it, and its `F.SilkS` outline closes that end. The netlist agrees -
+pad 1 is `VSYS`, pad 2 is `+5V`, and current runs anode to cathode. Reversed,
+the board simply will not power from the floppy connector while still working
+over USB, which is an annoying thing to debug.
+
+Everything else is keyed:
+
+| part | how you orient it |
+|------|-------------------|
+| J1, J2, U1 | square pad 1 (J1 also has the chevron). U1 matters - a 2x20 header footprint is symmetric, so the module fits rotated 180 degrees |
+| U2 | pin-1 dot on the silkscreen |
+| Q1-Q6 | no marking, and none needed: SOT-23 has two pads one side and one the other, so it cannot land rotated |
+| C1, C3 | ceramic, not polarised |
+
 **Still unconfirmed:** that the RM2's antenna is at the pin 19-22 end at all.
 That is inherited from the CYW43 Pico 2 W and has never been checked against a
 PIM726 in hand. `verify_board.py` enforces the assumption; it cannot validate
