@@ -83,9 +83,11 @@ licensing and credit Keir Fraser.
 
 ## Provisioning a board (plan 4b)
 
-**This procedure has never been run against real hardware — see "Honest caveats" below
-before trusting any step of it to behave exactly as described.** It is the intended
-human workflow, derived from the host-tested logic, not a verified one.
+**Steps 1-3 are verified on hardware as of 2026-09-10; steps 4-5 are not.** The AP
+comes up, iOS raises the sign-in sheet on its own, and the form renders at
+192.168.4.1. Everything from pressing Save onwards — teardown, association,
+registration — has still only ever run against the host suite. See "Honest caveats"
+below.
 
 A board with no WiFi credentials stored in flash — or one that has just failed to associate
 three times in a row — raises its own WPA2 access point named `wifi-floppy-XXXX`, where
@@ -117,21 +119,39 @@ device row is deleted, the board erases its stored token and returns to step 1 a
 the dead code forever.
 
 ## Honest caveats
-- **The firmware now compiles** (`pnpm firmware:build` from the repo root produces
-  `firmware/build/wifi_floppy.uf2`) and has a green host test suite
-  (`pnpm firmware:test`, 506 checks across 13 binaries, plain C under clang). **It has
-  not run on real hardware — this includes the provisioning portal above.** No TLS
-  handshake, no SNTP sync, no floppy-bus timing, and none of the portal's AP-mode
-  lwIP/cyw43 glue has ever been exercised outside the host suite and the ARM cross-build —
-  boards are still in transit. The PIO cycle counts and DMA scheme remain desk-checked
-  only. Treat anything not covered by a host test as unverified until it has run on a
-  board. Specifically unverified about the portal: whether the board's radio actually
-  transitions cleanly from AP mode back to station mode after teardown, whether the
-  confirmation page reaches the phone before the AP drops, DHCP lease renewal after
-  teardown, real phone behaviour against the 3-slot lease pool, and whether the iOS/Android
-  captive-portal probe URLs actually trigger the sign-in sheet on real devices. See
-  `docs/decisions/2026-08-31-device-portal-rulings.md`'s hardware-only list for the full
-  set, which plan 5 owns closing.
+- **First run on real hardware: 2026-09-10.** A rev A2 board, partially populated
+  (J1, J2 and U1 only), flashed with `wifi_floppy.uf2` and powered over USB. What that
+  exercised, end to end, on real silicon:
+  - the RP2350 boots the image, reaches `main()`, and launches core1
+  - `cyw43_arch_init()` succeeds — the **RM2 radio works over SPI**, the single
+    largest never-before-run piece
+  - the AP comes up: `wifi-floppy-6A38`, WPA2-AES, SSID built from the chip's own MAC
+  - **DHCP hands the phone an address, the DNS responder answers, and the HTTP server
+    serves the form** at `192.168.4.1`
+  - **iOS's captive-portal probe raises the sign-in sheet on its own** ("Wi-Fi med
+    tilmelding"), which was explicitly on the unverified list
+  - the page's `28:cd:c1:19:6a:38` and the SSID's `6A38` agree, so `main.c`'s
+    `mac_address_string()` and `portal_net.c`'s SSID construction cross-check
+  - no re-enumeration of the USB CDC device over several minutes: no crash loop
+
+  **Still not run on hardware:** everything past pressing Save. AP teardown and the
+  transition back to station mode, association with a real network, the confirmation
+  page arriving before the AP drops, DHCP lease renewal after teardown, the 3-slot
+  lease pool under real phone behaviour, Android's captive-portal probe, TLS, SNTP,
+  device registration, and the whole floppy side — PIO cycle counts, DMA, PSRAM image
+  load, bus timing — which remain desk-checked only. See
+  `docs/decisions/2026-08-31-device-portal-rulings.md`'s hardware-only list for the
+  full set, which plan 5 owns closing.
+- **The firmware has no console output whatsoever.** `stdio_init_all()` brings up the
+  USB CDC device — so `/dev/cu.usbmodem*` appears and `tio` connects — but there is not
+  one `printf` in `src/`, no logging macro, and `CYW43_VERBOSE_DEBUG`, `LWIP_DEBUG` and
+  `MBEDTLS_DEBUG` are all off. Listening to that port returns zero bytes, which is
+  correct behaviour and not a symptom. It cost nothing while the portal was externally
+  visible; it will cost a great deal at the first failure that is not.
+- It compiles (`pnpm firmware:build` produces `firmware/build/wifi_floppy.uf2`) and has
+  a green host suite (`pnpm firmware:test`, 506 checks across 13 binaries, plain C under
+  clang). Treat anything not covered by a host test or by the hardware run above as
+  unverified.
 - Write support is a skeleton: flux capture PIO exists, MFM decode and
   POST are TODO. WPROT is asserted by default until that lands.
 - The board passes my generator's DRC-lite, but run real KiCad DRC and
