@@ -335,9 +335,10 @@ for x, y, d in silk_dots:
 g.close()
 
 # --- silkscreen DFM --------------------------------------------------------
-# The first two batches came back with a blank top side: every feature was
-# 0.12 or 0.15 mm and JLCPCB strips silkscreen below 6 mil. Nothing checked
-# feature sizes, so nothing said so. This does, and it is loud.
+# The first two batches went out at 0.12 or 0.15 mm, under JLCPCB's 6 mil
+# minimum. They printed anyway, but nothing here was checking, so nobody knew
+# the layer was out of spec until a photo of a finished board raised it. This
+# checks, and it is loud.
 thin = sorted({w for _a, _b, w, _s in legend if w < SILK_MIN_W} |
               {d for _x, _y, d in silk_dots if d < SILK_MIN_W})
 short = sorted({h for _t, _x, _y, h, _th, _r in silk_text if h < SILK_MIN_H})

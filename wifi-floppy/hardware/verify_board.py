@@ -314,11 +314,12 @@ else:
 
 
 print("\n== silkscreen manufacturability ==")
-# Rev A and rev A2 both came back with a blank top side. Every silk feature
-# was 0.12 mm (or 0.15, which is still short of 6 mil), JLCPCB strips
-# silkscreen below its minimum, and nothing here looked at feature sizes - so
-# nothing said so. Read out of the emitted .GTO, like the keepout check: the
-# question is what the fab receives, not what the exporter intended.
+# Rev A and rev A2 both went out below JLCPCB's published 6 mil minimum -
+# 0.12 mm for the outlines, 0.15 for the J1 chevron. JLC printed them anyway,
+# so this is a spec violation rather than a proven failure, but a layer that
+# only prints because the fab was lenient is not one to ship again. Read out
+# of the emitted .GTO, like the keepout check: the question is what the fab
+# receives, not what the exporter intended.
 SILK_MIN_W = 6 * 0.0254        # JLCPCB minimum silkscreen line width, 6 mil
 SILK_MIN_H = 0.8               # ...and minimum legible text height
 
@@ -336,7 +337,7 @@ if strokes + flashes == 0:
 elif widths and widths[0] < SILK_MIN_W:
     thin = [w for w in widths if w < SILK_MIN_W]
     print(f"  *** FAIL: {thin} below JLCPCB's {SILK_MIN_W:.4f} mm minimum - "
-          f"the fab will strip this layer and the board arrives blank ***")
+          f"below the fab's published minimum - printing is not guaranteed ***")
     fail += 1
 else:
     print(f"  every feature is at or above {SILK_MIN_W:.4f} mm: OK")

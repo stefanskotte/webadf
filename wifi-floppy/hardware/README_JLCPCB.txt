@@ -28,9 +28,10 @@ Notes
     font in stroke_font.py; there is no filled type, which is normal for
     silkscreen.
   * EVERY silk feature is >= 0.2 mm, against JLCPCB's 0.15 mm (6 mil) minimum,
-    and text is 1.0-1.5 mm against their 0.8 mm minimum. This is checked by
-    verify_board.py out of the emitted .GTO. It matters: rev A and rev A2 went
-    out at 0.12 mm and arrived with a completely blank top side.
+    and text is 1.0-1.5 mm against their 0.8 mm minimum, checked by
+    verify_board.py out of the emitted .GTO. Rev A and rev A2 went out at
+    0.12 mm, under spec; JLC printed them anyway, so it is a violation rather
+    than a proven failure - but not one to rely on batch to batch.
   * The GND plane was computed by export_gerbers.py, not by KiCad. It was
     verified by re-parsing the emitted Gerber: 0.30 mm clearance to all
     foreign copper, 27/27 GND pads bonded via thermal spokes, 51/51 signal
@@ -59,19 +60,23 @@ The rev A2 boards were fabricated from these files and ARE NOT SCRAP, but see
 rev B below before ordering more of them.
 
 
-REV B - antenna keepout moved, and a silkscreen that prints
------------------------------------------------------------
+REV B - antenna keepout moved, and the silkscreen finally lettered
+------------------------------------------------------------------
 export_gerbers.py flipped Y for pads, traces, silk, outline and drill but not
 for the antenna keepout polygon, so on rev A2 the ground-pour void landed over
 U1 pins 1/2/39/40 - the USB end - and copper stayed under the RM2 antenna.
 Fixed; the void is now over pins 19-22.
 
-Separately: every silkscreen feature on rev A and rev A2 was 0.12 or 0.15 mm,
-under JLCPCB's 6 mil (0.1524 mm) minimum, so the fab stripped the whole layer
-and both batches arrived with nothing printed. Rev B draws silk at 0.2 mm and
-text at 1.0-1.5 mm, and export_gerbers.py now renders reference designators,
-board text and pin-1 circles instead of dropping everything that was not an
-fp_line.
+Separately: rev A and rev A2 carry body outlines but NO LETTERING AT ALL,
+because export_gerbers.py read only fp_line and silently dropped all 13
+reference designators, the keepout label and U2's pin-1 dot. Rev B renders
+them through stroke_font.py and draws circles.
+
+Their silk was also 0.12 mm (0.15 for the J1 chevron), under JLCPCB's 6 mil
+minimum. It printed regardless - J2's and U1's outlines are legible on an
+assembled rev A2 board - so that is a spec violation, not a proven failure.
+Rev B draws silk at 0.2 mm and text at 1.0-1.5 mm anyway, because a layer that
+prints only because the fab was lenient is not one to ship twice.
 
 verify_board.py checks this by reading copper out of the emitted .GBL rather
 than re-deriving the void from the exporter, which is how the rev A2 audit
@@ -80,9 +85,9 @@ on these files.
 
 Copper, mask, drill and outline are byte-identical to rev A2 (.GTL, .GTS,
 .GBS, .GKO, .TXT). Two files change: .GBL, for the keepout, and .GTO, because
-rev B is also the first revision whose silkscreen will actually print. A rev A2
-board is still electrically correct - just blank on top, with ground plane
-under its antenna.
+rev B is the first revision that puts any lettering on the board. A rev A2
+board is still electrically correct - it has outlines but no designators, and
+ground plane under its antenna.
 
 REV B IS MARKED. The board now says "WIFI FLOPPY REV B" on the silkscreen, and
 carries its reference designators. Rev A and rev A2 have neither, so an

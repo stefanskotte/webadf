@@ -291,20 +291,26 @@ carries its reference designators; rev A and rev A2 have neither, so an unmarked
 board is one of the older two. Which of those it is you tell from the pour void:
 on A2 it sits at the USB end of U1, on B at the opposite end.
 
-### The silkscreen never printed on rev A or rev A2
+### Rev A and rev A2 have outlines but no lettering
 
-Both fabricated batches arrived with a completely blank top side, and the cause
-was two independent things:
+**Corrected 2026-09-09 from a photograph of an assembled rev A2 board.** An
+earlier version of this section said the silkscreen never printed at all and
+blamed the fab for stripping it. That was wrong, and it was wrong in the
+direction that flatters the diagnosis: I inferred it from a spec table instead
+of from the board. J2's and U1's body outlines are plainly legible on a real
+board, at 0.12 mm. Two separate things are true:
 
-1. **Every silk feature was below the fab's minimum.** JLCPCB will not print
-   silkscreen thinner than 6 mil (0.1524 mm); the board drew outlines at 0.12 mm
-   and the J1 chevron at 0.15 mm, so all 17 features were under and the layer was
-   stripped. Rev B draws silk at 0.2 mm and text at 1.0-1.5 mm.
-2. **The exporter dropped everything that was not an `fp_line`.** All 13
-   reference designators, the antenna-keepout label and U2's pin-1 dot never
-   reached the `.GTO` at all - silently, because nothing counted what it skipped.
-   `export_gerbers.py` now renders text through `stroke_font.py`, a
-   single-stroke vector font, and draws circles.
+1. **The exporter dropped everything that was not an `fp_line`, and that is why
+   there is no lettering.** All 13 reference designators, the antenna-keepout
+   label and U2's pin-1 dot never reached the `.GTO` at all - silently, because
+   nothing counted what it skipped. `export_gerbers.py` now renders text through
+   `stroke_font.py`, a single-stroke vector font, and draws circles.
+2. **Every silk feature was also below the fab's published minimum**, which is a
+   real DFM violation even though it printed. JLCPCB's minimum silkscreen line
+   width is 6 mil (0.1524 mm); the outlines were 0.12 mm and the J1 chevron
+   0.15 mm, so all 17 features were under it. They came out this time. A layer
+   that prints only because the fab was lenient is not one to ship again, so rev
+   B draws silk at 0.2 mm and text at 1.0-1.5 mm.
 
 Neither was visible to any check, which is the third time something wrong in the
 fab output got there because nothing was looking at it. `verify_board.py` now

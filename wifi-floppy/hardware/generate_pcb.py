@@ -262,10 +262,11 @@ def seg_rect_dist(a, b, cx, cy, hw, hh):
 
 CLR = 0.15
 
-# JLCPCB will not print silkscreen thinner than 6 mil = 0.1524 mm; anything
-# under that is stripped by their DFM. The first two batches went out at 0.12
-# (and 0.15, which is still 0.0024 mm short), so every board came back with a
-# blank top side. 0.2 leaves real margin.
+# JLCPCB's published minimum silkscreen line width is 6 mil = 0.1524 mm. The
+# first two batches went out at 0.12 (and 0.15, which is still 0.0024 mm
+# short) - out of spec, though JLC did in fact print them: the J2 and U1 body
+# outlines are legible on a rev A2 board. Out of spec is still not something
+# to rely on batch to batch, so 0.2 leaves real margin.
 SILK_W = 0.2
 SILK_TEXT_TH = 0.2      # font stroke thickness, same limit applies
 SILK_TEXT_H = 1.0       # JLC minimum legible text height is 0.8 mm
