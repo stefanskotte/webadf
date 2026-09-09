@@ -20,6 +20,7 @@ Outputs (JLCPCB-recognised extensions):
 import os, re, math, zipfile
 from shapely.geometry import Polygon, box, Point, LineString
 from shapely.ops import unary_union
+import stroke_font
 
 # Paths resolve against THIS FILE, not the working directory. These were
 # absolute /home/claude/... paths from wherever the script was first written,
@@ -37,6 +38,9 @@ EDGE_CLEARANCE = 0.30      # pour pullback from board edge
 MASK_EXPANSION = 0.05      # matches (pad_to_mask_clearance 0.05) in the pcb
 THERMAL_SPOKE_W = 0.45     # spoke width on GND through-hole pads
 VIA_TENTED = True          # JLC default: vias covered by mask
+SILK_MIN_W = 6 * 0.0254    # JLCPCB minimum silkscreen line width, 6 mil
+SILK_MIN_H = 0.8           # ...and minimum legible text height
+SILK_PAD_CLR = 0.15        # keep legend ink off pads by at least this
 
 # ---------------------------------------------------------------- s-expr
 def tokenize(s): return re.findall(r'\(|\)|"[^"]*"|[^\s()"]+', s)
@@ -67,6 +71,8 @@ def fy(y):
     return y if YFLIP is None else YFLIP - y
 
 segments, vias, pads, edges, silks = [], [], [], [], []
+silk_dots = []          # filled circles -> a single flash
+silk_text = []          # (string, x, y, height, thickness, rotation)
 
 _ey = [v for gl in kids(root, 'gr_line') if first(gl, 'layer')[1] == 'Edge.Cuts'
        for v in (nums(first(gl, 'start'), 2)[1], nums(first(gl, 'end'), 2)[1])]
@@ -96,6 +102,37 @@ for fp in kids(root, 'footprint'):
             a = nums(first(fl, 'start'), 2); b = nums(first(fl, 'end'), 2)
             silks.append(((ox + a[0], fy(oy + a[1])), (ox + b[0], fy(oy + b[1])),
                           nums(first(first(fl, 'stroke'), 'width'), 1)[0]))
+    # A circle is silkscreen too. Reading only fp_line dropped U2's pin-1 dot
+    # without saying so, which is the marker that stops the part going on
+    # backwards.
+    for fc in kids(fp, 'fp_circle'):
+        ly = first(fc, 'layer')
+        if not (ly and ly[1] == 'F.SilkS'):
+            continue
+        c = nums(first(fc, 'center'), 2); e = nums(first(fc, 'end'), 2)
+        r = math.hypot(e[0] - c[0], e[1] - c[1])
+        w = nums(first(first(fc, 'stroke'), 'width'), 1)[0]
+        cx, cy = ox + c[0], fy(oy + c[1])
+        fill = first(fc, 'fill')
+        if fill and fill[1] in ('solid', 'yes'):
+            silk_dots.append((cx, cy, 2 * r + w))     # ink covers the stroke
+        else:
+            n = 32
+            ring = [(cx + r * math.cos(2*math.pi*i/n), cy + r * math.sin(2*math.pi*i/n))
+                    for i in range(n + 1)]
+            for a, b in zip(ring, ring[1:]):
+                silks.append((a, b, w))
+    # Reference designators. Without these the board has no lettering at all.
+    for t in kids(fp, 'fp_text'):
+        ly = first(t, 'layer')
+        if t[1] != 'reference' or not (ly and ly[1] == 'F.SilkS'):
+            continue
+        at = first(t, 'at'); a = nums(at, 2)
+        rot = float(at[3]) if len(at) > 3 else 0.0
+        font = first(first(t, 'effects'), 'font')
+        h = nums(first(font, 'size'), 2)[1]
+        th = nums(first(font, 'thickness'), 1)[0]
+        silk_text.append((t[2], ox + a[0], fy(oy + a[1]), h, th, rot))
     for pad in kids(fp, 'pad'):
         at = nums(first(pad, 'at'), 2); size = nums(first(pad, 'size'), 2)
         dr = first(pad, 'drill'); net = first(pad, 'net')
@@ -104,6 +141,18 @@ for fp in kids(root, 'footprint'):
                          drill=float(dr[1]) if dr else 0.0,
                          net=(net[2] if net and len(net) > 2 else ''), ref=ref))
 
+for t in kids(root, 'gr_text'):
+    ly = first(t, 'layer')
+    if not (ly and ly[1] == 'F.SilkS'):
+        continue
+    at = first(t, 'at'); a = nums(at, 2)
+    rot = float(at[3]) if len(at) > 3 else 0.0
+    font = first(first(t, 'effects'), 'font')
+    h = nums(first(font, 'size'), 2)[1]
+    th = nums(first(font, 'thickness'), 1)[0]
+    # the s-expression carries a literal backslash-n, not a newline
+    silk_text.append((t[1].replace('\\n', '\n'), a[0], fy(a[1]), h, th, rot))
+
 keepouts = []
 for z in kids(root, 'zone'):
     ko = first(z, 'keepout')
@@ -111,7 +160,12 @@ for z in kids(root, 'zone'):
     cp = first(ko, 'copperpour')
     if cp and cp[1] == 'not_allowed':
         pts = first(first(z, 'polygon'), 'pts')
-        keepouts.append([nums(p, 2) for p in kids(pts, 'xy')])
+        # The zone polygon is a coordinate like any other and must be
+        # Y-flipped too. Flipping the pads, traces, silk, outline and
+        # drill but NOT this put the void at the far end of the module
+        # on the rev A2 boards, leaving copper under the RM2 antenna.
+        keepouts.append([[q[0], fy(q[1])]
+                         for q in (nums(p, 2) for p in kids(pts, 'xy'))])
 print(f'keepout zones: {len(keepouts)}')
 
 xs = [p for e in edges for p in (e[0][0], e[1][0])]
@@ -218,6 +272,11 @@ class G:
 os.makedirs(OUTDIR, exist_ok=True)
 def path(ext): return os.path.join(OUTDIR, f'{STEM}.{ext}')
 
+import shutil
+_notes = os.path.join(HERE, 'README_JLCPCB.txt')
+if os.path.exists(_notes):
+    shutil.copy(_notes, os.path.join(OUTDIR, 'README_JLCPCB.txt'))
+
 def draw_copper(g, layer, with_pour=False):
     if with_pour:
         for poly in polys:
@@ -259,11 +318,55 @@ for layer, ext, fn in (('F.Cu', 'GTS', 'Soldermask,Top'),
             g.use(g.aperture('C', v[1])); g.flash(v[0][0], v[0][1])
     g.close()
 
-# silkscreen (outlines only - no stroke-font text in this export)
+# silkscreen: outlines, pin-1 markers and stroke-font text
+legend = [(a, b, w, 'outline') for a, b, w in silks]
+for txt, tx, ty, h, th, rot in silk_text:
+    # KiCad rotates counter-clockwise in a Y-DOWN frame; after the Y flip that
+    # is clockwise, hence the sign. Every text on this board is at rotation 0,
+    # so the sign is reasoned, not observed - check it if you ever rotate one.
+    for a, b in stroke_font.strokes(txt, tx, ty, h, rotation=-rot):
+        legend.append((a, b, th, f'text {txt!r}'))
+
 g = G(path('GTO'), 'Legend,Top')
-for a, b, w in silks:
+for a, b, w, _src in legend:
     g.use(g.aperture('C', w)); g.line(a, b)
+for x, y, d in silk_dots:
+    g.use(g.aperture('C', d)); g.flash(x, y)
 g.close()
+
+# --- silkscreen DFM --------------------------------------------------------
+# The first two batches came back with a blank top side: every feature was
+# 0.12 or 0.15 mm and JLCPCB strips silkscreen below 6 mil. Nothing checked
+# feature sizes, so nothing said so. This does, and it is loud.
+thin = sorted({w for _a, _b, w, _s in legend if w < SILK_MIN_W} |
+              {d for _x, _y, d in silk_dots if d < SILK_MIN_W})
+short = sorted({h for _t, _x, _y, h, _th, _r in silk_text if h < SILK_MIN_H})
+print(f'silk: {len(legend)} strokes, {len(silk_dots)} dots, {len(silk_text)} text items')
+_missing = {c for t, *_ in silk_text for c in stroke_font.unsupported(t)}
+if _missing:
+    print(f'  *** stroke font has no glyph for {sorted(_missing)} - they print as \"?\" ***')
+if thin:
+    print(f'  *** {len(thin)} silk width(s) below {SILK_MIN_W:.4f} mm: {thin} '
+          f'- JLCPCB WILL STRIP THIS LAYER ***')
+if short:
+    print(f'  *** text height(s) below {SILK_MIN_H} mm: {short} ***')
+
+# ink on a pad is a solder defect, not a cosmetic one
+_padshapes = unary_union([pad_shape(p, SILK_PAD_CLR) for p in pads])
+_hits = {}
+for a, b, w, src in legend:
+    if LineString([a, b]).buffer(w / 2, 8).intersects(_padshapes):
+        _hits[src] = _hits.get(src, 0) + 1
+for x, y, d in silk_dots:
+    if Point(x, y).buffer(d / 2, 16).intersects(_padshapes):
+        _hits['pin-1 dot'] = _hits.get('pin-1 dot', 0) + 1
+if _hits:
+    print(f'  *** silk within {SILK_PAD_CLR} mm of a pad - a solder defect, '
+          f'not a cosmetic one:')
+    for src, n in sorted(_hits.items(), key=lambda kv: -kv[1]):
+        print(f'        {src}: {n} stroke(s)')
+else:
+    print(f'  no silk within {SILK_PAD_CLR} mm of any pad')
 
 # board outline
 g = G(path('GKO'), 'Profile,NP')
@@ -300,4 +403,11 @@ zp = os.path.join(HERE, 'wifi_floppy_gerbers.zip')
 with zipfile.ZipFile(zp, 'w', zipfile.ZIP_DEFLATED) as z:
     for ext in ('GTL', 'GBL', 'GTS', 'GBS', 'GTO', 'GKO', 'TXT'):
         z.write(path(ext), f'{STEM}.{ext}')
+    # Hand-written order settings, not generated. Kept beside this script
+    # rather than in OUTDIR, because OUTDIR is gitignored - a clean checkout
+    # would lose the file and the zip would quietly ship without it.
+    notes = os.path.join(HERE, 'README_JLCPCB.txt')
+    if not os.path.exists(notes):
+        raise SystemExit(f'missing {notes} - the fab order settings')
+    z.write(notes, 'README_JLCPCB.txt')
 print('wrote', zp)

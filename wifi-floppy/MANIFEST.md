@@ -5,7 +5,8 @@ a 34-pin Shugart floppy drive and serves whole disk images out of PSRAM.
 
 `README.md` is the design narrative and the errata. This file is only the map.
 
-    README.md          design notes, decisions, and the rev A2 errata
+    README.md          design notes, decisions, the revision history and the
+                       rev A/A2 errata (rev B is current, not yet fabricated)
     INTEGRATION.md     at the REPO ROOT, not here — the /image/<sha256> wire
                        format and how the firmware talks to webadf
     .gitignore         build output, regenerable Gerbers, hardware/.venv
@@ -58,13 +59,19 @@ is a real attack surface nobody needs.
                        Needs shapely — use ./.venv/bin/python
     render_pcb.py      pcb_render.svg
     verify_board.py    RUN BEFORE ANY FAB ORDER — `pnpm hw:verify`
+    stroke_font.py     single-stroke vector font, so the exporter can put
+                       reference designators on the silkscreen at all
     ref_footprints/    canonical KiCad land patterns to compare against
     bom.csv            regenerated with the board
 
 **The first revision came back MIRRORED and was scrapped.** `verify_board.py`
-exists to catch that class of mistake, and checks two things: that no footprint
-is a reflection of its canonical land pattern, and that the exported Gerber is
-correctly Y-flipped (Gerber is Y-up, KiCad is Y-down).
+exists to catch that class of mistake, and checks four things: that no footprint
+is a reflection of its canonical land pattern, that the exported Gerber is
+correctly Y-flipped (Gerber is Y-up, KiCad is Y-down), that the antenna keepout
+void is at the antenna end of U1, and that no silkscreen feature is below the
+fab's minimum width. The last two are read back out of the emitted Gerbers
+rather than re-derived from the exporter, because each of those three failures
+reached a fabricated board.
 
 Two limits it states about itself rather than hiding: a mirror-symmetric part
 (0603, 0805, SMA, 1x04 header) cannot fail a chirality test at all, and U1's

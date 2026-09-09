@@ -261,6 +261,19 @@ def seg_rect_dist(a, b, cx, cy, hw, hh):
     return min(segseg(a,b,e[0],e[1]) for e in edges)
 
 CLR = 0.15
+
+# JLCPCB will not print silkscreen thinner than 6 mil = 0.1524 mm; anything
+# under that is stripped by their DFM. The first two batches went out at 0.12
+# (and 0.15, which is still 0.0024 mm short), so every board came back with a
+# blank top side. 0.2 leaves real margin.
+SILK_W = 0.2
+SILK_TEXT_TH = 0.2      # font stroke thickness, same limit applies
+SILK_TEXT_H = 1.0       # JLC minimum legible text height is 0.8 mm
+
+# Board identity on the silkscreen. Rev A and rev A2 both shipped unmarked,
+# so the only way to tell a scrap board from a good one is to squint at
+# which end of U1 the ground-pour void sits. Not again.
+BOARD_ID_XY = (150.0, 150.0)
 bad = 0
 for net,layer,pts in corner_bad:
     print(f"CORNER >45deg  {net} {layer} {pts}"); bad+=1
@@ -328,13 +341,30 @@ out.append(''' (layers
 out.append(' (setup (pad_to_mask_clearance 0.05))')
 for i,n in enumerate(NETS): out.append(f' (net {i} "{n}")')
 
+# Where each reference designator sits, in footprint-local mm, KiCad Y-down.
+# Default is 2.2 mm north of the origin. The exceptions are measured, not
+# stylistic - export_gerbers.py reports any legend stroke within 0.15 mm of a
+# pad, and these are the offsets that clear it:
+#
+#   Q1-Q6  the FET column is on a 3.14 mm pitch, so a label above Q4 or Q5
+#          lands on the pads of the FET above it. All six go east instead,
+#          level with their own part, so the column reads consistently.
+#   D1     the SMA pads are large; 2.2 mm north is still on copper.
+#   U1     2.2 mm north sits on the module's own silkscreen outline.
+REF_OFFSET = {
+    'U1': (0.0, -3.4),
+    'D1': (0.0, -3.7),
+    **{q: (3.0, 0.0) for q in ('Q1', 'Q2', 'Q3', 'Q4', 'Q5', 'Q6')},
+}
+
 def fp_open(name,ref,val,x,y,layer='F.Cu'):
+    rx, ry = REF_OFFSET.get(ref, (0.0, -2.2))
     return (f' (footprint "{name}" (layer "{layer}") (tstamp {U()}) (at {x} {y})\n'
             f'  (attr through_hole)\n'
-            f'  (fp_text reference "{ref}" (at 0 -2.2) (layer "F.SilkS") (tstamp {U()})'
-            f' (effects (font (size 1 1) (thickness 0.15))))\n'
+            f'  (fp_text reference "{ref}" (at {rx} {ry}) (layer "F.SilkS") (tstamp {U()})'
+            f' (effects (font (size {SILK_TEXT_H} {SILK_TEXT_H}) (thickness {SILK_TEXT_TH}))))\n'
             f'  (fp_text value "{val}" (at 0 2.2) (layer "F.Fab") (tstamp {U()})'
-            f' (effects (font (size 1 1) (thickness 0.15))))\n')
+            f' (effects (font (size {SILK_TEXT_H} {SILK_TEXT_H}) (thickness {SILK_TEXT_TH}))))\n')
 def tht(num,dx,dy,net,drill=1.0,size=1.7,shape='circle'):
     return (f'  (pad "{num}" thru_hole {shape} (at {dx} {dy}) (size {size} {size})'
             f' (drill {drill}) (layers "*.Cu" "*.Mask") (net {NID[net]} "{net}") (tstamp {U()}))\n')
@@ -345,7 +375,7 @@ def silk(x1,y1,x2,y2,ox,oy,layer='F.SilkS'):
     out=''
     for a,b in zip(pts,pts[1:]):
         out+=(f'  (fp_line (start {a[0]-ox:.3f} {a[1]-oy:.3f}) (end {b[0]-ox:.3f} {b[1]-oy:.3f})'
-              f' (stroke (width 0.12) (type solid)) (layer "{layer}") (tstamp {U()}))\n')
+              f' (stroke (width {SILK_W}) (type solid)) (layer "{layer}") (tstamp {U()}))\n')
     return out
 def smd(num,dx,dy,net,sx,sy):
     return (f'  (pad "{num}" smd rect (at {dx} {dy}) (size {sx} {sy})'
@@ -370,10 +400,10 @@ f+=silk(_cx-2.54, J1_y(1)-1.27, _cx+2.54, J1_y(17)+1.27, J1_XA, J1_y(1))
 # pin-1 chevron outside the body, next to the square pad
 f+=(f'  (fp_line (start {J1_XA-3.4-J1_XA:.3f} {J1_y(1)-1.27-J1_y(1):.3f})'
     f' (end {J1_XA-2.0-J1_XA:.3f} {J1_y(1)-J1_y(1):.3f})'
-    f' (stroke (width 0.15) (type solid)) (layer "F.SilkS") (tstamp {U()}))\n')
+    f' (stroke (width {SILK_W}) (type solid)) (layer "F.SilkS") (tstamp {U()}))\n')
 f+=(f'  (fp_line (start {J1_XA-3.4-J1_XA:.3f} {J1_y(1)+1.27-J1_y(1):.3f})'
     f' (end {J1_XA-2.0-J1_XA:.3f} {J1_y(1)-J1_y(1):.3f})'
-    f' (stroke (width 0.15) (type solid)) (layer "F.SilkS") (tstamp {U()}))\n'
+    f' (stroke (width {SILK_W}) (type solid)) (layer "F.SilkS") (tstamp {U()}))\n'
     )
 f+=' )'; out.append(f)
 # J2
@@ -423,14 +453,14 @@ for n in range(1,21):
 U2_HW, U2_HL = 3.75, 6.4
 for _ey in (-U2_HL, U2_HL):
     f += (f'  (fp_line (start {-U2_HW:.3f} {_ey:.3f}) (end {U2_HW:.3f} {_ey:.3f})'
-          f' (stroke (width 0.12) (type solid)) (layer "F.SilkS") (tstamp {U()}))\n')
+          f' (stroke (width {SILK_W}) (type solid)) (layer "F.SilkS") (tstamp {U()}))\n')
 # Pin-1 marker, OUTSIDE the pad field entirely. Pin 1 sits at local
 # (-4.700, -5.715) and the pads stop at y = -6.015, so a dot at y = -7.0
 # clears the nearest copper by 0.735 mm. Without this the part can be fitted
 # 180 degrees out, which no amount of correct footprint geometry prevents --
 # and rotation is exactly the failure this board has already paid for once.
 f += (f'  (fp_circle (center -4.700 -7.000) (end -4.450 -7.000)'
-      f' (stroke (width 0.12) (type solid)) (fill solid)'
+      f' (stroke (width {SILK_W}) (type solid)) (fill solid)'
       f' (layer "F.SilkS") (tstamp {U()}))\n')
 f+=' )'; out.append(f)
 # FETs
@@ -476,8 +506,10 @@ out.append(f''' (zone (net 0) (net_name "") (layers "F.Cu" "B.Cu") (tstamp {U()}
            (copperpour not_allowed) (footprints allowed))
   (fill (thermal_gap 0.5) (thermal_bridge_width 0.5))
   (polygon (pts (xy {kx1} {ky1}) (xy {kx2} {ky1}) (xy {kx2} {ky2}) (xy {kx1} {ky2}))))''')
+out.append(f''' (gr_text "WIFI FLOPPY REV B" (at {BOARD_ID_XY[0]} {BOARD_ID_XY[1]}) (layer "F.SilkS") (tstamp {U()})
+  (effects (font (size 1.5 1.5) (thickness 0.25))))''')
 out.append(f''' (gr_text "PICO 2 W ANTENNA\\nKEEPOUT" (at {(kx1+kx2)/2} {(ky1+ky2)/2}) (layer "F.SilkS") (tstamp {U()})
-  (effects (font (size 1 1) (thickness 0.15))))''')
+  (effects (font (size {SILK_TEXT_H} {SILK_TEXT_H}) (thickness {SILK_TEXT_TH}))))''')
 
 # B.Cu GND zone
 out.append(f''' (zone (net {NID["GND"]}) (net_name "GND") (layer "B.Cu") (tstamp {U()})

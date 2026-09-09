@@ -11,6 +11,13 @@ boards scrapped:
      exporter forgets to flip, every layer comes out reflected and the board
      is scrap. Checked by comparing the emitted Gerber against the .kicad_pcb.
 
+  3. A KEEPOUT THAT DID NOT GET FLIPPED WITH EVERYTHING ELSE - the rev A2
+     follow-up. Pads, traces, silk, outline and drill were flipped but the
+     antenna keepout polygon was not, so the ground-pour void landed at the
+     far end of U1 and copper stayed under the RM2 antenna. Checked by
+     reading copper out of the emitted B.Cu Gerber, not by re-deriving the
+     void from the exporter - re-deriving is what missed it the first time.
+
 Run this before sending anything to a fab.
 """
 import re, sys, math, os
@@ -18,6 +25,12 @@ import re, sys, math, os
 PCB = os.path.join(os.path.dirname(__file__), 'wifi_floppy.kicad_pcb')
 GERBERS = os.path.join(os.path.dirname(__file__), 'gerbers')
 REFDIR = os.path.join(os.path.dirname(__file__), 'ref_footprints')
+
+# U1's pins at the antenna end of the module. The Pico form factor puts
+# USB at the pin 1/40 end, so the radio is at the other one. NOTE: which
+# end that is has never been confirmed against an RM2 module in hand --
+# this check enforces the design's assumption, it does not validate it.
+ANTENNA_PINS = ['19', '20', '21', '22']
 
 # canonical KiCad land patterns, {ref_prefix: (file, {pad: (x, y)})}
 # fetched from github.com/KiCad/kicad-footprints
@@ -167,15 +180,18 @@ ey = [float(v) for m in re.finditer(
       for v in (m.group(2), m.group(4))]
 yflip = min(ey) + max(ey)
 
-pcb_pts = {(round(ox + x, 2), round(oy + y, 2))
+# Rounded ONCE, after the flip. Rounding to 2 dp and then flipping rounds
+# twice, which moved 8 of the 122 pads across a boundary and reported a
+# healthy board as 114/122 - noise that makes a real miss easy to wave off.
+pcb_pts = {(ox + x, oy + y)
            for fpn, pads, (ox, oy) in board.values() for (x, y) in pads.values()}
 gtl = open(os.path.join(GERBERS, 'wifi_floppy.GTL')).read()
 ger_pts = {(round(int(m.group(1))/1e6, 2), round(int(m.group(2))/1e6, 2))
            for m in re.finditer(r'X(-?\d+)Y(-?\d+)D03\*', gtl)}
 
-want_flip   = {(x, round(yflip - y, 2)) for x, y in pcb_pts}
+want_flip   = {(round(x, 2), round(yflip - y, 2)) for x, y in pcb_pts}
 hit_flipped = len(want_flip & ger_pts)
-hit_plain   = len(pcb_pts & ger_pts)
+hit_plain   = len({(round(x, 2), round(y, 2)) for x, y in pcb_pts} & ger_pts)
 print(f"  mirror axis Y = {yflip/2:.1f} mm")
 print(f"  pads landing at mirrored Y : {hit_flipped}/{len(pcb_pts)}")
 print(f"  pads landing at un-mirrored Y: {hit_plain}/{len(pcb_pts)}")
@@ -184,6 +200,156 @@ if hit_flipped > hit_plain:
 else:
     print("  *** FAIL: gerber is MIRRORED - parts cannot be soldered ***")
     fail += 1
+
+
+print("\n== antenna keepout placement ==")
+# Bug 3 of the rev A2 errata. export_gerbers.py flipped Y for pads, traces,
+# silk, outline and drill but NOT for the keepout zone polygon, so the void
+# landed at the far end of the module and copper stayed under the RM2
+# antenna.
+#
+# The audit that missed it re-derived the void from the same unflipped
+# polygon it was checking - self-consistent, and self-consistently wrong.
+# So this check does NOT ask the exporter what it meant to do. It reads the
+# emitted B.Cu gerber and asks where the copper actually is. Pure stdlib:
+# `pnpm hw:verify` runs under system python3, which has no shapely.
+
+def keepout_from_pcb(src):
+    """The (unflipped) keepout rectangle, as x/y bounds."""
+    # Bound each zone at the next one. A fixed-size window runs past the end
+    # of the keepout into the GND pour's own outline, and the union of the
+    # two is the whole board - which silently "covers" every pin.
+    starts = [m.start() for m in re.finditer(r'\(zone\b', src)] + [len(src)]
+    for a, b in zip(starts, starts[1:]):
+        blk = src[a:b]
+        if 'copperpour not_allowed' not in blk:
+            continue
+        poly = re.search(r'\(polygon\s*\(pts(.*?)\)\s*\)\s*\)', blk, re.S)
+        if not poly:
+            continue
+        pts = [(float(x), float(y)) for x, y in
+               re.findall(r'\(xy ([\-\d\.]+) ([\-\d\.]+)\)', poly.group(1))]
+        if pts:
+            return (min(q[0] for q in pts), min(q[1] for q in pts),
+                    max(q[0] for q in pts), max(q[1] for q in pts))
+    return None
+
+def gbl_regions(path):
+    """(dark, clear) region rings from a gerber, in mm."""
+    dark, clear, ring = [], [], []
+    inside, pol = False, 'D'
+    for line in open(path):
+        line = line.strip()
+        if line == '%LPD*%': pol = 'D'
+        elif line == '%LPC*%': pol = 'C'
+        elif line == 'G36*': inside, ring = True, []
+        elif line == 'G37*':
+            inside = False
+            (dark if pol == 'D' else clear).append(ring)
+        elif inside:
+            m = re.match(r'X(-?\d+)Y(-?\d+)D0[12]\*', line)
+            if m:
+                ring.append((int(m.group(1)) / 1e6, int(m.group(2)) / 1e6))
+    return dark, clear
+
+def in_ring(pt, ring):
+    x, y = pt
+    inside = False
+    for i in range(len(ring)):
+        x1, y1 = ring[i]
+        x2, y2 = ring[(i + 1) % len(ring)]
+        if (y1 > y) != (y2 > y) and x < (x2 - x1) * (y - y1) / (y2 - y1) + x1:
+            inside = not inside
+    return inside
+
+def copper_at(pt, dark, clear):
+    return (any(in_ring(pt, r) for r in dark)
+            and not any(in_ring(pt, r) for r in clear))
+
+def sample(x1, y1, x2, y2, dark, clear, n=5):
+    """Fraction of an inset grid over a rectangle that is copper."""
+    ix, iy = (x2 - x1) * 0.15, (y2 - y1) * 0.15
+    pts = [(x1 + ix + (x2 - x1 - 2 * ix) * i / (n - 1),
+            y1 + iy + (y2 - y1 - 2 * iy) * j / (n - 1))
+           for i in range(n) for j in range(n)]
+    return sum(copper_at(p, dark, clear) for p in pts), len(pts)
+
+ko = keepout_from_pcb(src)
+if not ko:
+    print("  no keepout zone in the pcb *** FAIL ***"); fail += 1
+else:
+    kx1, ky1, kx2, ky2 = ko
+    # where the void belongs, and the mirror-image rectangle where the A2
+    # bug put it instead
+    want = (kx1, yflip - ky2, kx2, yflip - ky1)
+    wrong = (kx1, ky1, kx2, ky2)
+
+    u1 = board.get('U1')
+    if u1:
+        _fpn, u1pads, (ox, oy) = u1
+        covered = sorted((n for n, (x, y) in u1pads.items()
+                          if want[0] <= ox + x <= want[2]
+                          and want[1] <= yflip - (oy + y) <= want[3]), key=int)
+        print(f"  keepout covers U1 pins {covered}")
+        if covered != ANTENNA_PINS:
+            print(f"  *** FAIL: expected the antenna-end pins {ANTENNA_PINS} ***")
+            fail += 1
+
+    dark, clear = gbl_regions(os.path.join(GERBERS, 'wifi_floppy.GBL'))
+    got_cu, n = sample(*want, dark, clear)
+    bad_cu, _ = sample(*wrong, dark, clear)
+    print(f"  emitted B.Cu at the antenna end: {got_cu}/{n} sample points are copper "
+          f"(want 0)")
+    print(f"  emitted B.Cu at the far end    : {bad_cu}/{n} sample points are copper "
+          f"(want {n})")
+    if got_cu:
+        print("  *** FAIL: ground pour under the RM2 antenna ***"); fail += 1
+    elif bad_cu < n:
+        print("  *** FAIL: the void mirrored to the wrong end of the module ***")
+        fail += 1
+    else:
+        print("  void is at the antenna end and nowhere else: OK")
+
+
+print("\n== silkscreen manufacturability ==")
+# Rev A and rev A2 both came back with a blank top side. Every silk feature
+# was 0.12 mm (or 0.15, which is still short of 6 mil), JLCPCB strips
+# silkscreen below its minimum, and nothing here looked at feature sizes - so
+# nothing said so. Read out of the emitted .GTO, like the keepout check: the
+# question is what the fab receives, not what the exporter intended.
+SILK_MIN_W = 6 * 0.0254        # JLCPCB minimum silkscreen line width, 6 mil
+SILK_MIN_H = 0.8               # ...and minimum legible text height
+
+gto = open(os.path.join(GERBERS, 'wifi_floppy.GTO')).read()
+aps = {int(m.group(1)): [float(v) for v in m.group(3).split('X')]
+       for m in re.finditer(r'%ADD(\d+)([CR]),([\d.X]+)\*%', gto)}
+used = {int(m.group(1)) for m in re.finditer(r'^D(\d+)\*$', gto, re.M)}
+strokes = len(re.findall(r'D01\*', gto))
+flashes = len(re.findall(r'D03\*', gto))
+widths = sorted({w for d in used if d in aps for w in aps[d]})
+print(f"  {strokes} strokes, {flashes} flashes, widths {widths} mm")
+
+if strokes + flashes == 0:
+    print("  *** FAIL: the silkscreen layer is empty ***"); fail += 1
+elif widths and widths[0] < SILK_MIN_W:
+    thin = [w for w in widths if w < SILK_MIN_W]
+    print(f"  *** FAIL: {thin} below JLCPCB's {SILK_MIN_W:.4f} mm minimum - "
+          f"the fab will strip this layer and the board arrives blank ***")
+    fail += 1
+else:
+    print(f"  every feature is at or above {SILK_MIN_W:.4f} mm: OK")
+
+# Text height cannot be recovered from a stroked gerber, so it is checked at
+# the source instead - stated plainly rather than left looking covered.
+# bounded window, and DOTALL: a gr_text puts its layer and its effects on
+# separate lines, so a newline-shy pattern silently skips every one of them
+heights = sorted({float(m.group(1)) for m in
+                  re.finditer(r'F\.SilkS.{0,160}?\(font \(size [\d.]+ ([\d.]+)\)',
+                              src, re.S)})
+if heights:
+    print(f"  text heights in the .kicad_pcb (not the gerber): {heights} mm")
+    if heights[0] < SILK_MIN_H:
+        print(f"  *** FAIL: below the {SILK_MIN_H} mm legible minimum ***"); fail += 1
 
 if unchecked:
     print(f"\n{unchecked} footprint(s) had no reference and were NOT checked.")

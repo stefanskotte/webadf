@@ -145,8 +145,8 @@ the dead code forever.
 ## PSRAM revision (Pimoroni Pico Plus 2 W)
 
 U1 is now specified as a **Pimoroni Pico Plus 2 W** (RP2350B, 16MB flash,
-8MB PSRAM, RM2 radio). It keeps the Pico footprint and pinout, so the rev A
-PCB is unchanged electrically - only the module value differs.
+8MB PSRAM, RM2 radio). It keeps the Pico footprint and pinout, so the PCB is
+unchanged electrically - only the module value differs.
 
 PSRAM is the disk. The image is pulled in **one bulk transfer at mount**
 (`image_loader.c`) and the floppy bus is served entirely from RAM after
@@ -207,5 +207,105 @@ end plugs onto - same as a real 3.5" drive or a Gotek.
 **Shrouded header is not a drop-in.** A keyed 2x17 IDC box header has a
 10.16 mm body, which overhangs the FET drain pads by ~1.35 mm. To fit one,
 the Q1-Q6 column must move about 2 mm east, which also pushes the input
-routing channels. The plain header is what most drives use, so rev A keeps
+routing channels. The plain header is what most drives use, so rev B keeps
 it; polarity relies on the pin-1 markings and the cable's red stripe.
+
+## Revision history - rev B is current
+
+| rev | state |
+|-----|-------|
+| A   | fabricated, **scrap** - every layer mirrored, and four SOT-23s reflected |
+| A2  | fabricated, **usable with a caveat** - correct except that the ground pour runs under the RM2 antenna |
+| B   | **current**, not yet fabricated - A2 with the antenna keepout at the right end; copper, mask, drill and outline are byte-identical to A2 |
+
+### Rev A2 errata - rev A boards are scrap
+
+The first batch (rev A) came back from JLCPCB mirrored and cannot be used.
+Two independent bugs, both now fixed and both now covered by
+`hardware/verify_board.py`, which must be run before any future fab order.
+
+**1. Gerber Y axis.** KiCad's coordinate system has Y increasing downward;
+Gerber and Excellon have Y increasing upward, and KiCad negates Y when it
+plots. `export_gerbers.py` wrote coordinates straight through, so every
+layer was reflected. The renderer used the same Y-down convention, so the
+preview looked correct and the verification compared the Gerbers against an
+equally wrong-handed source - self-consistent, and self-consistently
+mirrored.
+
+**2. SOT-23 gate/source.** Q1, Q2, Q3 and Q6 were reflections of the
+canonical KiCad SOT-23 land pattern - gate and source swapped - so a real
+part would have had its gate on the GND pad and never switched. Only Q4 and
+Q5 were right. Independent of bug 1; it would have shipped either way.
+
+Fixing 2 moved the gate and source pads, which made Q3's gate pad overlap
+Q4's source pad, so Q3 moved 0.6 mm north and its drain now jogs to J1 row
+13 the way Q2 and Q5 already did. The INDEX, TRK0, RDY and CHNG gate routes
+were re-run to suit.
+
+`verify_board.py` now checks every footprint against the canonical KiCad land
+pattern (rotation = fine, reflection = fail) and confirms the Gerber pads sit
+at the mirrored Y of the .kicad_pcb. Regression-tested against the old broken
+export: it reports 118/122 pads at un-mirrored Y and fails.
+
+**A2 follow-up: antenna keepout was at the wrong end.** The rev A2 boards
+were fabricated with the ground pour void over U1 pins 1/2/39/40 instead of
+19/20/21/22 - the opposite end of the module. Cause: `export_gerbers.py`
+flipped Y for pads, traces, silk, outline and drill, but not for the keepout
+zone polygon, so the void mirrored away from the antenna. The pour audit
+missed it because it used the same unflipped polygon on both sides of the
+comparison - self-consistent again. Fixed, and `verify_board.py` now asserts
+the keepout covers U1 pins 19-22 - reading copper out of the emitted `.GBL`
+rather than re-deriving the void from the exporter, so the check cannot agree
+with the exporter's mistake the way the last one did. Regression-tested both
+ways: it fails on the rev A2 `.GBL` (25/25 sample points copper under the
+antenna) and passes on the current one (0/25).
+
+Consequence for the rev A2 boards in hand: they are electrically fine (all 27
+GND pads still bond, no signal pad is affected) but there is ground plane
+under the RM2 antenna and a harmless void near pins 1/2. Build one and check
+signal strength before respinning - the whole-image PSRAM load means WiFi only
+has to work at mount time.
+
+### Rev B
+
+The corrected files are **rev B** and have not been fabricated. Copper, mask,
+drill and outline are byte-identical to rev A2 - `.GTL`, `.GTS`, `.GBS`, `.GKO`
+and `.TXT` all unchanged - so an assembled rev A2 board remains a valid bring-up
+target and nothing in the BOM changes. Two files differ: `.GBL` for the keepout,
+and `.GTO`, because rev B is the first revision whose silkscreen will print.
+
+**Rev B is marked.** The board says `WIFI FLOPPY REV B` on the silkscreen and
+carries its reference designators; rev A and rev A2 have neither, so an unmarked
+board is one of the older two. Which of those it is you tell from the pour void:
+on A2 it sits at the USB end of U1, on B at the opposite end.
+
+### The silkscreen never printed on rev A or rev A2
+
+Both fabricated batches arrived with a completely blank top side, and the cause
+was two independent things:
+
+1. **Every silk feature was below the fab's minimum.** JLCPCB will not print
+   silkscreen thinner than 6 mil (0.1524 mm); the board drew outlines at 0.12 mm
+   and the J1 chevron at 0.15 mm, so all 17 features were under and the layer was
+   stripped. Rev B draws silk at 0.2 mm and text at 1.0-1.5 mm.
+2. **The exporter dropped everything that was not an `fp_line`.** All 13
+   reference designators, the antenna-keepout label and U2's pin-1 dot never
+   reached the `.GTO` at all - silently, because nothing counted what it skipped.
+   `export_gerbers.py` now renders text through `stroke_font.py`, a
+   single-stroke vector font, and draws circles.
+
+Neither was visible to any check, which is the third time something wrong in the
+fab output got there because nothing was looking at it. `verify_board.py` now
+reads feature widths back out of the emitted `.GTO` and fails on anything below
+the fab minimum, and `export_gerbers.py` reports any legend stroke that lands
+within 0.15 mm of a pad. Designator placement was moved to suit: the FET column
+is on a 3.14 mm pitch, so Q1-Q6 label to the east rather than above.
+
+**Still unconfirmed:** that the RM2's antenna is at the pin 19-22 end at all.
+That is inherited from the CYW43 Pico 2 W and has never been checked against a
+PIM726 in hand. `verify_board.py` enforces the assumption; it cannot validate
+it. Confirm before ordering rev B, because moving the void is the only thing
+rev B does.
+
+Component orders are unaffected - every part in the Mouser order is still
+correct for rev A2 and for rev B.
