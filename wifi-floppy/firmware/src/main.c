@@ -25,6 +25,7 @@
 #include "config_store.h"
 #include "portal_net.h"
 #include <stdio.h>
+#include "wf_log.h"
 #include <string.h>
 
 // transport_tls.c is device-only (no host test exercises it, unlike every
@@ -119,6 +120,11 @@ static void __isr __not_in_flash_func(dma_irq)(void) {
     dma_channel_set_trans_count(dma_ch, track_word_count, true);
     gpio_put(PIN_INDEX, OUT_ASSERT);                 // ~2 ms index at wrap
     add_alarm_in_us(INDEX_PULSE_US, index_off, NULL, true);
+    // wf_trace, not wf_logf: no formatting and no format string, so this
+    // stays legal in a __not_in_flash_func handler. One record per
+    // revolution is 5/s -- an INDEX that stops is the loudest possible
+    // symptom on the Amiga side, and it only shows up if it was ticking.
+    wf_trace(WF_EV_INDEX, (uint32_t)track_word_count, 0);
 }
 
 // ---------------------------------------------------------------- bus ISRs
@@ -130,13 +136,18 @@ static void __isr gpio_isr(uint gpio, uint32_t events) {
         gpio_put(PIN_TRK0, cur_cyl == 0 ? OUT_ASSERT : OUT_RELEASE);
         dskchg_on_step();
         want_track = cur_cyl * 2 + cur_side;
+        wf_trace(WF_EV_STEP, (uint32_t)cur_cyl, outwards ? 1u : 0u);
     } else if (gpio == PIN_SEL0 && (events & GPIO_IRQ_EDGE_FALL)) {
         dskchg_on_sel_edge();
+        wf_trace(WF_EV_SEL, 1, 0);
     } else if (gpio == PIN_MTR) {
-        dskchg_on_motor(!gpio_get(PIN_MTR));         // active low
+        bool running = !gpio_get(PIN_MTR);           // active low
+        dskchg_on_motor(running);
+        wf_trace(WF_EV_MOTOR, running ? 1u : 0u, 0);
     } else if (gpio == PIN_SIDE) {
         cur_side = gpio_get(PIN_SIDE) ? 0 : 1;       // low = side 1
         want_track = cur_cyl * 2 + cur_side;
+        wf_trace(WF_EV_SIDE, (uint32_t)cur_side, (uint32_t)want_track);
     }
 }
 
@@ -267,7 +278,14 @@ static const char *assoc_failure_message(int err) {
 }
 
 static void core1_main(void) {
-    if (cyw43_arch_init()) while (1) tight_loop_contents();
+    if (cyw43_arch_init()) {
+        // This loop never exits, but core0 is what drains the log, so this
+        // line does get out -- which is the whole reason the drain lives
+        // there and not here.
+        wf_logf(WF_ERR, "cyw43_arch_init failed, radio is dead");
+        while (1) tight_loop_contents();
+    }
+    wf_logf(WF_INFO, "radio up (RM2)");
     cyw43_arch_enable_sta_mode();
 
     // Plan 4b: decide whether to serve the captive portal or run plan 4a's
@@ -284,6 +302,8 @@ static void core1_main(void) {
 
     for (;;) {
         if (prov.state == PROV_PORTAL) {
+            wf_logf(WF_INFO, "portal: raising AP%s%s",
+                    last_error ? ", last error: " : "", last_error ? last_error : "");
             // Blocks until a POST /save decodes to a complete
             // device_config_t. portal_run() tears down any sockets still
             // up from a previous call itself (it is re-entrant-safe), so
@@ -338,6 +358,8 @@ static void core1_main(void) {
                 CYW43_AUTH_WPA2_AES_PSK, 15000);
             if (err != PICO_OK) {
                 last_error = assoc_failure_message(err);
+                wf_logf(WF_WARN, "portal: association failed (%d): %s",
+                        err, last_error);
                 continue;   // portal_run() comes back up showing last_error
             }
 
@@ -355,6 +377,7 @@ static void core1_main(void) {
             // looks like the submission was silently ignored rather than
             // told "it didn't save, try again".
             if (prov_on_verified_submit(&prov, &submitted)) {
+                wf_logf(WF_INFO, "portal: credentials verified and saved");
                 last_error = NULL;
             } else {
                 last_error = "Could not save configuration, try again";
@@ -373,6 +396,8 @@ static void core1_main(void) {
             // loop that may move `state`: three consecutive failures
             // (PROV_MAX_ASSOC_FAILURES) send it back to PROV_PORTAL, and
             // the top of this loop picks that up on the next iteration.
+            wf_logf(WF_WARN, "assoc failed (%d), failure %d of %d", err,
+                    prov.assoc_failures + 1, PROV_MAX_ASSOC_FAILURES);
             prov_on_assoc_result(&prov, false);
             // Review round 2, Minor 1: if that was the third failure and
             // the portal just opened, show the same reason a submit-path
@@ -595,6 +620,8 @@ static void core1_main(void) {
 // ---------------------------------------------------------------- main
 int main(void) {
     stdio_init_all();
+    wf_log_init();
+    wf_logf(WF_INFO, "wifi-floppy boot: %s", PICO_BOARD);
 
     // outputs (FET gates, idle released)
     const uint outs[] = {PIN_WPROT, PIN_RDY, PIN_TRK0, PIN_INDEX, PIN_CHNG};
@@ -714,10 +741,12 @@ int main(void) {
             loaded = -1;
             if (now_mounted) {
                 dskchg_image_inserted();
+                wf_trace(WF_EV_MOUNT, (uint32_t)last_active_token, 0);
             } else {
                 dskchg_image_ejected();
                 track_live = false;
                 dma_channel_abort(dma_ch);
+                wf_trace(WF_EV_EJECT, 0, 0);
             }
         }
 
@@ -729,8 +758,22 @@ int main(void) {
                 track_live = false;
                 start_streaming(mfm, bits);
                 loaded = want;
+                wf_trace(WF_EV_TRACK_SERVED, (uint32_t)want, bits);
+            } else {
+                // Not a cache miss to retry -- psram_image.h is explicit
+                // that a track absent from PSRAM is a fault. Worth a record
+                // every time it happens: on the Amiga this is a drive that
+                // reads some tracks and not others, which looks like bad
+                // media unless the log says otherwise.
+                wf_trace(WF_EV_TRACK_MISS, (uint32_t)want, 0);
             }
         }
+
+        // Bounded on purpose. Four lines per 1 ms iteration keeps up with a
+        // seek across the whole disk, and caps what a host that has stopped
+        // reading can cost this loop (PICO_STDIO_USB_STDOUT_TIMEOUT_US in
+        // CMakeLists bounds each write).
+        wf_log_drain(4);
         sleep_ms(1);
     }
 }

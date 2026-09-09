@@ -59,7 +59,9 @@ add_executable(wifi_floppy
   src/mfm.c src/dns_server.c src/dhcp_server.c src/portal_http.c
   src/portal_net.c
   src/transport_tls.c src/sntp_time.c
-  ${WFMF_PSA_CRYPTO_RANDOM_SRC})
+  ${WFMF_PSA_CRYPTO_RANDOM_SRC}
+  src/wf_log.c
+)
 pico_generate_pio_header(wifi_floppy ${CMAKE_CURRENT_LIST_DIR}/src/floppy.pio)
 target_include_directories(wifi_floppy PRIVATE src ${CMAKE_CURRENT_LIST_DIR})
 # Task 6: the provisioning AP's own address. cyw43_arch_enable_ap_mode()
@@ -199,6 +201,13 @@ set_source_files_properties(
 
 # GP0/GP1 are this board's default UART pins and are used here for INDEX and
 # CHNG - keep stdio off the UART or it will drive the floppy bus.
+# Bounds what an unattended USB port costs core0's 1 ms service loop.
+# The SDK default is 500 ms per write, which would be catastrophic there:
+# wf_log_drain() is called from the same loop that services track changes.
+target_compile_definitions(wifi_floppy PRIVATE PICO_STDIO_USB_STDOUT_TIMEOUT_US=1000)
+
+# UART stays OFF. GP0 and GP1 are INDEX and CHNG on this board -- enabling
+# UART stdio would drive the floppy bus. The log goes out over USB CDC only.
 pico_enable_stdio_uart(wifi_floppy 0)
 pico_enable_stdio_usb(wifi_floppy 1)
 

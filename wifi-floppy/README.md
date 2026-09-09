@@ -118,6 +118,47 @@ device row is deleted, the board erases its stored token and returns to step 1 a
 (expired or already-used) pairing code: the board returns to the portal rather than retrying
 the dead code forever.
 
+## Watching the log
+
+```bash
+tio /dev/cu.usbmodem*          # brew install tio; it reconnects across reboots
+```
+
+Output looks like this — uptime in seconds.milliseconds, then which core:
+
+```
+[    0.002] c0 wifi-floppy boot: pimoroni_pico_plus2_w_rp2350
+[    0.481] c1 radio up (RM2)
+[    0.494] c1 portal: raising AP
+[   34.117] c0 MOTOR        a=1 b=0
+[   34.119] c0 SEL          a=1 b=0
+[   34.226] c0 STEP         a=1 b=0
+[   34.229] c0 TRACK-SERVED a=2 b=101376
+[   34.431] c0 INDEX        a=3168 b=0
+```
+
+Two entry points, and the difference is load-bearing. `wf_logf()` formats with
+`vsnprintf` and is for core1 and core0's loop. `wf_trace()` takes an integer event code
+and two integers — no formatting, no format string — so it is legal inside the flux DMA
+handler, where a flash-resident string would not be. `wf_trace` is placed in SRAM with
+`__not_in_flash_func` for the same reason `dma_irq` is.
+
+**core0 drains, core1 only produces.** core0's service loop already sleeps 1 ms per
+iteration and the bit-level work is PIO and DMA, so it has the slack to write to USB;
+core1's loop blocks for tens of seconds inside a long-poll and would strand every core0
+trace behind it. A useful consequence: a core1 hang still gets its last line out, which
+is why `cyw43_arch_init` failing logs before it spins forever.
+
+The ring holds 63 records (~7 KB of SRAM). When it fills it **drops newest and counts
+them**, then prints `-- N record(s) dropped --` once the backlog clears. It never blocks
+a producer: a logger that stalls the floppy service loop to report on the floppy service
+loop would be worse than no logger. `PICO_STDIO_USB_STDOUT_TIMEOUT_US` is set to 1 ms in
+`CMakeLists.txt`, against an SDK default of 500 ms, so an unattended USB port cannot
+stall that loop either.
+
+UART stdio stays off and must stay off: GP0 and GP1 are INDEX and CHNG on this board, so
+enabling it would drive the floppy bus.
+
 ## Honest caveats
 - **First run on real hardware: 2026-09-10.** A rev A2 board, partially populated
   (J1, J2 and U1 only), flashed with `wifi_floppy.uf2` and powered over USB. What that
@@ -142,12 +183,12 @@ the dead code forever.
   load, bus timing — which remain desk-checked only. See
   `docs/decisions/2026-08-31-device-portal-rulings.md`'s hardware-only list for the
   full set, which plan 5 owns closing.
-- **The firmware has no console output whatsoever.** `stdio_init_all()` brings up the
-  USB CDC device — so `/dev/cu.usbmodem*` appears and `tio` connects — but there is not
-  one `printf` in `src/`, no logging macro, and `CYW43_VERBOSE_DEBUG`, `LWIP_DEBUG` and
-  `MBEDTLS_DEBUG` are all off. Listening to that port returns zero bytes, which is
-  correct behaviour and not a symptom. It cost nothing while the portal was externally
-  visible; it will cost a great deal at the first failure that is not.
+- **Console logging exists as of 2026-09-10 (`src/wf_log.c`), but has not itself run on
+  hardware.** Before it, the firmware wrote nothing at all: `stdio_init_all()` brought up
+  the CDC device so a port appeared and a terminal attached, but there was not one
+  `printf` in `src/`, and listening returned zero bytes. See "Watching the log" below for
+  how to use it. Host-tested (74 checks) and cross-built clean; every line it prints on a
+  real board is still unobserved.
 - It compiles (`pnpm firmware:build` produces `firmware/build/wifi_floppy.uf2`) and has
   a green host suite (`pnpm firmware:test`, 506 checks across 13 binaries, plain C under
   clang). Treat anything not covered by a host test or by the hardware run above as

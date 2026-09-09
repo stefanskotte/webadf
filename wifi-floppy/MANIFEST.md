@@ -27,6 +27,10 @@ and then does not work.
     src/mfm.c           decode helpers; write-back is still a skeleton
     src/psram_image.c   2.03 MB image store, two slots, fetch before transition
     src/track_cache.c   SRAM double buffer — the only DMA source
+    src/wf_log.c        USB-CDC console log for bring-up. wf_logf() formats;
+                        wf_trace() takes an integer event code, so it is legal
+                        inside the flux DMA handler where a flash-resident
+                        format string is not. core0 drains, core1 only produces
     src/image_loader.c  streams a WFMF image into PSRAM at mount
 
     the device protocol (plan 4a)
