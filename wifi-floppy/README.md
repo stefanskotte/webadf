@@ -182,11 +182,23 @@ Notes / still to verify on hardware:
   re-enable UART stdio or it will drive the floppy bus.
 * The flux DMA never reads PSRAM directly - a QMI cache miss contending with
   XIP can add latency at a 2 us bitcell. Tracks are copied PSRAM -> SRAM.
-* **Antenna keepout position is still the CYW43 assumption.** The Plus 2 W
-  uses the RM2 module; confirm where its antenna actually sits before fab and
-  move the keepout rectangle in `generate_pcb.py` (KEEPOUT) if it differs.
-* Confirm GP0-GP17 map to the same physical castellations on the RP2350B
-  board as on the Pico 2 W before ordering.
+* **Antenna keepout position is still an assumption, and the PIM726 documents
+  do not settle it.** A schematic carries no placement, and the "Pins and
+  Dims" sheet's board illustration is not something to read a fab decision
+  off. What the keepout currently claims, so it can be checked against a
+  module in hand: it spans the module's full 21 mm width and the last 5.4 mm
+  of its 51 mm length at the **non-USB end** - the pin 19-22 end, GP14-GP17.
+  If the RM2's antenna is anywhere else, there is ground plane under it.
+  Costs nothing to keep: GP14-GP17 are unused on this board, so the keepout
+  is only wrong if it is in the wrong *place*, never merely expensive.
+* ~~Confirm GP0-GP17 map to the same physical castellations on the RP2350B
+  board as on the Pico 2 W.~~ **CONFIRMED 2026-09-09** against the PIM726
+  schematic (sheet 3/3, "Output headers"). The Plus 2 W's header is the
+  standard Pico header pin for pin: pin 1 = GP0 through pin 22 = GP17, with
+  GND on 3/8/13/18/23. The only difference is that pins 6 and 7 are labelled
+  `GP4_SDA` and `GP5_SCL` because they also feed the QW/ST connector - same
+  GPIOs, alternate function. Every U1 signal this board uses lands where it
+  was assumed to.
 * Write-back path is still a skeleton: PSRAM now has TRK_DIRTY state and
   `psram_image_next_dirty()` for a flush walker, but nothing calls it yet.
 

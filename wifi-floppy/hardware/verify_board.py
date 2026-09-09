@@ -26,10 +26,12 @@ PCB = os.path.join(os.path.dirname(__file__), 'wifi_floppy.kicad_pcb')
 GERBERS = os.path.join(os.path.dirname(__file__), 'gerbers')
 REFDIR = os.path.join(os.path.dirname(__file__), 'ref_footprints')
 
-# U1's pins at the antenna end of the module. The Pico form factor puts
-# USB at the pin 1/40 end, so the radio is at the other one. NOTE: which
-# end that is has never been confirmed against an RM2 module in hand --
-# this check enforces the design's assumption, it does not validate it.
+# U1's pins at the antenna end of the module. The PIM726's header is the
+# standard Pico header pin for pin (confirmed 2026-09-09 against its
+# schematic sheet 3/3), so pin 1 = GP0 at the USB end and 19-22 = GP14-GP17
+# at the far end. What is STILL unconfirmed is that the RM2's antenna is at
+# that far end: a schematic carries no placement. This check enforces the
+# design's assumption, it does not validate it.
 ANTENNA_PINS = ['19', '20', '21', '22']
 
 # canonical KiCad land patterns, {ref_prefix: (file, {pad: (x, y)})}
