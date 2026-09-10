@@ -1,11 +1,13 @@
 #include "wf_log.h"
 #include <stdarg.h>
+#include <stdbool.h>
 #include <stdio.h>
 #include <string.h>
 
 #ifndef WFMF_HOST_TEST
 #include "pico/stdlib.h"
 #include "pico/multicore.h"
+#include "pico/stdio_usb.h"
 #include "hardware/sync.h"
 #endif
 
@@ -43,6 +45,9 @@ static spin_lock_t *g_lock;
 static uint64_t wf_now_us(void) { return time_us_64(); }
 static unsigned wf_core(void)   { return get_core_num(); }
 static void     wf_sink(const char *line) { puts(line); }
+// DTR, in effect: pico-sdk's stdio_usb_connected() is tud_cdc_connected()
+// unless PICO_STDIO_USB_CONNECTION_WITHOUT_DTR is set, which we do not set.
+static bool     wf_sink_ready(void) { return stdio_usb_connected(); }
 
 #else   // WFMF_HOST_TEST
 
@@ -52,17 +57,21 @@ static void     wf_sink(const char *line) { puts(line); }
 #define WF_UNLOCK()  do { } while (0)
 
 static uint64_t h_now;
+static int      h_ready = 1;
 static void (*h_sink)(const char *line);
 static uint64_t wf_now_us(void) { return h_now; }
 static unsigned wf_core(void)   { return 0; }
 static void     wf_sink(const char *line) { if (h_sink) h_sink(line); }
+static bool     wf_sink_ready(void) { return h_ready != 0; }
 
 void wf_log_test_set_now(uint64_t us) { h_now = us; }
+void wf_log_test_set_ready(int ready) { h_ready = ready; }
 void wf_log_test_set_sink(void (*s)(const char *line)) { h_sink = s; }
 int  wf_log_test_capacity(void) { return WF_LOG_SLOTS - 1; }
 void wf_log_test_reset(void) {
     r_head = r_tail = r_dropped = 0;
     h_now = 0;
+    h_ready = 1;
     memset(ring, 0, sizeof ring);
 }
 
@@ -153,6 +162,29 @@ static void wf_emit(const rec_t *r) {
 }
 
 int wf_log_drain(int max_records) {
+    // A DETACHED USB CDC PORT DISCARDS WHAT IS WRITTEN TO IT. pico-sdk's
+    // stdio_usb_out_chars() returns without writing when DTR is deasserted,
+    // and PICO_STDIO_USB_CONNECT_WAIT_TIMEOUT_MS defaults to 0, so boot never
+    // waits for a terminal. Draining into that sink therefore DESTROYS
+    // records instead of delivering them -- and destroys them silently, since
+    // the ring never overflows and the dropped-record line never fires.
+    //
+    // Measured on a rev A2 board 2026-09-10, before this guard existed: the
+    // "wifi-floppy boot" banner and "radio up (RM2)" were both already gone
+    // by the time a terminal could attach (~560 ms of board uptime), with
+    // nothing in the stream to say they had ever been written. A board cannot
+    // be attached to before it enumerates, so every boot-time record was
+    // structurally unobservable -- which is precisely the window this log was
+    // added to make visible.
+    //
+    // So hold instead of drain. Records stay in the ring until someone is
+    // listening, where the existing policy applies: oldest kept, newest
+    // dropped, and the loss REPORTED when the backlog clears. A long
+    // detachment therefore costs the most recent records rather than the boot
+    // history, which is the right way round for bring-up -- and unlike the
+    // silent discard, it says so.
+    if (!wf_sink_ready()) return 0;
+
     int emitted = 0;
     while (emitted < max_records) {
         rec_t local;

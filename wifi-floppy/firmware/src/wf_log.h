@@ -30,6 +30,13 @@
 // than overwriting oldest or blocking a producer. A logger that stalls the
 // floppy service loop to report on the floppy service loop would be worse
 // than no logger, and one that silently loses records would be worse still.
+//
+// NOTHING IS DRAINED UNTIL A TERMINAL IS ATTACHED. A detached USB CDC port
+// does not buffer what is written to it, it discards it -- so a drain with
+// nobody listening destroys records silently, which is exactly the failure
+// the paragraph above says is the worst one available. wf_log_drain() holds
+// instead, and the boot history survives to whenever someone attaches. See
+// its definition for the measurement that produced this rule.
 #include <stdint.h>
 
 typedef enum {
@@ -68,6 +75,7 @@ void wf_trace(wf_ev_t ev, uint32_t a, uint32_t b);
 
 // Emit up to max_records queued records. Returns how many lines it wrote,
 // including the "records dropped" line if one was due. Call from core0.
+// Returns 0 without consuming anything while no terminal is attached.
 int wf_log_drain(int max_records);
 
 // Records lost to a full ring since the last drain reported them.
@@ -78,6 +86,9 @@ uint32_t wf_log_dropped(void);
 // time_us_64() and its sink is puts().
 void wf_log_test_reset(void);
 void wf_log_test_set_now(uint64_t us);
+// Stands in for stdio_usb_connected(). Defaults to attached on reset, so
+// every test written before the hold existed still exercises the drain.
+void wf_log_test_set_ready(int ready);
 void wf_log_test_set_sink(void (*sink)(const char *line));
 int  wf_log_test_capacity(void);
 #endif

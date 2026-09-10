@@ -154,6 +154,67 @@ static void test_long_message_is_truncated_not_overrun(void) {
     CHECK(strstr(captured[0], "zzzz") != NULL, "and still show what it can");
 }
 
+// ---------------------------------------------------------------------
+// The hold. These exist because the sink above ALWAYS accepts, and the real
+// one does not: a detached USB CDC port discards silently. Every test before
+// this point would pass just as happily against a logger whose every record
+// went nowhere, which is what shipped and what a board measured on
+// 2026-09-10 actually did with its boot banner.
+static void test_nothing_is_drained_while_detached(void) {
+    begin();
+    wf_log_test_set_ready(0);
+    wf_logf(WF_INFO, "boot");
+    wf_trace(WF_EV_STEP, 3, 0);
+    CHECK_EQ_INT(wf_log_drain(100), 0);
+    CHECK_EQ_INT(n_captured, 0);
+    CHECK_EQ_INT((int)wf_log_dropped(), 0);   // held, not dropped
+}
+
+static void test_held_records_survive_until_a_terminal_attaches(void) {
+    begin();
+    wf_log_test_set_ready(0);
+    wf_logf(WF_INFO, "wifi-floppy boot");
+    wf_logf(WF_INFO, "radio up");
+    wf_log_drain(100);                        // the drain that used to destroy them
+    CHECK_EQ_INT(n_captured, 0);
+
+    wf_log_test_set_ready(1);
+    CHECK_EQ_INT(wf_log_drain(100), 2);
+    CHECK(strstr(captured[0], "wifi-floppy boot") != NULL,
+          "the boot banner must still be there when someone finally attaches");
+    CHECK(strstr(captured[1], "radio up") != NULL, "and in order");
+}
+
+static void test_a_long_detachment_keeps_the_boot_history_and_reports_the_loss(void) {
+    begin();
+    const int cap = wf_log_test_capacity();
+    wf_log_test_set_ready(0);
+    wf_logf(WF_INFO, "boot marker");
+    for (int i = 0; i < cap + 4; i++) {       // overrun it while nobody listens
+        wf_logf(WF_INFO, "later%d", i);
+        wf_log_drain(4);                      // the service loop, still calling
+    }
+    wf_log_test_set_ready(1);
+    wf_log_drain(1000);
+    CHECK(captured_contains("boot marker"),
+          "a long detachment must cost the NEWEST records, not the boot history");
+    CHECK(captured_contains("record(s) dropped"),
+          "and the loss must be reported rather than silent");
+}
+
+static void test_detaching_again_stops_the_drain(void) {
+    begin();
+    wf_logf(WF_INFO, "seen");
+    CHECK_EQ_INT(wf_log_drain(100), 1);
+    wf_log_test_set_ready(0);
+    wf_logf(WF_INFO, "unseen");
+    CHECK_EQ_INT(wf_log_drain(100), 0);
+    CHECK(!captured_contains("unseen"), "a terminal that goes away stops the drain");
+    wf_log_test_set_ready(1);
+    wf_log_drain(100);
+    CHECK(captured_contains("unseen"), "and the record was waiting for it");
+}
+
 int main(void) {
     RUN(test_fifo_order);
     RUN(test_drain_is_bounded);
@@ -164,5 +225,9 @@ int main(void) {
     RUN(test_every_event_code_has_a_name);
     RUN(test_levels_are_tagged);
     RUN(test_long_message_is_truncated_not_overrun);
+    RUN(test_nothing_is_drained_while_detached);
+    RUN(test_held_records_survive_until_a_terminal_attaches);
+    RUN(test_a_long_detachment_keeps_the_boot_history_and_reports_the_loss);
+    RUN(test_detaching_again_stops_the_drain);
     return REPORT();
 }
