@@ -24,6 +24,7 @@
 #include "provisioning.h"
 #include "config_store.h"
 #include "portal_net.h"
+#include "lwip/netif.h"   // default_route_str(): netif_default, see portal_stop()
 #include <stdio.h>
 #include "wf_log.h"
 #include <string.h>
@@ -168,6 +169,30 @@ static int wifi_rssi(void) {
     int32_t rssi = 0;
     cyw43_wifi_get_rssi(&cyw43_state, &rssi);
     return (int)rssi;
+}
+
+// Renders lwIP's default route. This exists for ONE open question that plan
+// 4b's ledger has carried unanswered since it was written: whether
+// portal_stop() really restores the STA netif as netif_default after the
+// provisioning AP tears down, or leaves it NULL. Nothing else on the board
+// can answer it -- a wrong answer looks exactly like "TLS is broken", since
+// every handshake fails with no route and no message. Call it AFTER
+// portal_stop() and after association.
+//
+// Reads under the lwIP lock: cyw43_arch_lwip_begin()/end() is recursive, so
+// this is safe from core1's ordinary flow. Never call it from an interrupt.
+static const char *default_route_str(void) {
+    static char buf[48];
+    cyw43_arch_lwip_begin();
+    struct netif *nif = netif_default;
+    if (!nif) {
+        cyw43_arch_lwip_end();
+        return "NONE -- netif_default is NULL";
+    }
+    snprintf(buf, sizeof buf, "%c%c%d ip=%s", nif->name[0], nif->name[1],
+             nif->num, ip4addr_ntoa(netif_ip4_addr(nif)));
+    cyw43_arch_lwip_end();
+    return buf;
 }
 
 static void mac_address_string(char *out, size_t out_len) {
@@ -352,6 +377,8 @@ static void core1_main(void) {
             // anywhere, and every TLS handshake in the RUNNING loop below
             // fails as a result.
             portal_stop();
+            wf_logf(WF_INFO, "portal: AP down, default route now %s",
+                    default_route_str());
 
             int err = cyw43_arch_wifi_connect_timeout_ms(
                 submitted.ssid, submitted.pass,
@@ -376,6 +403,8 @@ static void core1_main(void) {
             // portal forever with the form showing no error at all, which
             // looks like the submission was silently ignored rather than
             // told "it didn't save, try again".
+            wf_logf(WF_INFO, "portal: associated, default route %s",
+                    default_route_str());
             if (prov_on_verified_submit(&prov, &submitted)) {
                 wf_logf(WF_INFO, "portal: credentials verified and saved");
                 last_error = NULL;
@@ -418,6 +447,9 @@ static void core1_main(void) {
         // effect) above, never from PROV_PORTAL. Do not add another call
         // site to prov_on_assoc_result(true) without preserving that.
         prov_on_assoc_result(&prov, true);
+        // Success was previously silent -- only failures logged -- so "did it
+        // associate?" could not be answered from the console at all.
+        wf_logf(WF_INFO, "associated, default route %s", default_route_str());
 
         // Spec §6.2: SNTP before the first TLS handshake, and the firmware
         // never skips straight to a handshake with an unset clock --
@@ -428,7 +460,20 @@ static void core1_main(void) {
         // transient network fault, so no separate SNTP-specific retry loop is
         // needed here -- sntp_sync_blocking() also keeps periodically
         // resyncing in the background for as long as the process runs.
-        sntp_sync_blocking(30000);
+        //
+        // The RESULT is logged because discarding it silently is the single
+        // most confusing failure this firmware can have: tls_connect()
+        // refuses to start a handshake at all while sntp_time_valid() is
+        // false, so a board that cannot reach an NTP server does not report a
+        // clock problem -- it sits in dc_register()'s backoff loop forever,
+        // looking for all the world like TLS or the server is broken. Saying
+        // so costs one line. (The call's own contract is unchanged: a failure
+        // here is still not fatal, and sntp keeps resyncing in the
+        // background.)
+        bool clock_ok = sntp_sync_blocking(30000);
+        wf_logf(clock_ok ? WF_INFO : WF_WARN, "sntp: %s", clock_ok
+                ? "clock set"
+                : "NO clock -- TLS will refuse every handshake until it syncs");
 
         // static, like device_client.c's buffers and for the same reason:
         // this branch can re-run (a later prov_on_pairing_code_rejected()
@@ -445,7 +490,14 @@ static void core1_main(void) {
         // device_client.h.
         static char token[TOKEN_STORE_MAX_LEN + 1];
         bool code_rejected = false;
-        if (!token_store_load(token, sizeof token)) {
+        // Hoisted out of the `if` only so the outcome can be stated. Which of
+        // these two paths a board takes is the first thing worth knowing when
+        // registration misbehaves, and it was previously invisible.
+        bool have_token = token_store_load(token, sizeof token);
+        wf_logf(WF_INFO, "device: %s", have_token
+                ? "stored token found, skipping registration"
+                : "no stored token, registering with pairing code");
+        if (!have_token) {
             // dc_register() needs only a transport + host; it never reads
             // c->token (it deliberately sends no bearer at all), so this
             // throwaway device_client_t's token is irrelevant -- NULL is
@@ -476,13 +528,25 @@ static void core1_main(void) {
                     // by the time a token goes bad in the field); see its
                     // comment for why that one explicitly ejects first.
                     prov_on_pairing_code_rejected(&prov);
+                    wf_logf(WF_WARN, "register: pairing code rejected "
+                            "(single-use, 10 min TTL) -- back to the portal");
                     last_error = "Invalid or already-used pairing code";
                     code_rejected = true;
                     break;
                 }
+                // Edge-triggered by construction: one line per ATTEMPT, and
+                // every attempt is separated by the backoff below. Without
+                // this the loop is a silent forever-retry -- the shape a
+                // missing clock, a DNS failure and an unreachable host all
+                // collapse into.
+                wf_logf(WF_WARN, "register failed (rr=%d), retrying in %lu ms",
+                        (int)rr,
+                        (unsigned long)(reg.backoff_ms ? reg.backoff_ms
+                                                       : DC_BACKOFF_FLOOR_MS));
                 sleep_ms(reg.backoff_ms ? reg.backoff_ms : DC_BACKOFF_FLOOR_MS);
             }
             if (code_rejected) continue;   // prov.state is now PROV_PORTAL
+            wf_logf(WF_INFO, "register: OK, token stored");
             if (!token_store_load(token, sizeof token)) {
                 // dc_register() only ever returns DC_REG_OK after
                 // token_store_save() itself succeeded, so this should be
@@ -497,6 +561,7 @@ static void core1_main(void) {
 
         static device_client_t c;
         dc_init(&c, tls_transport(), clock_ms, WEBADF_HOST, token);
+        wf_logf(WF_INFO, "entering poll loop against %s", WEBADF_HOST);
 
         static char last_reported_sha[65] = "";
         uint32_t last_status_ms = clock_ms();
@@ -646,6 +711,20 @@ int main(void) {
 
     dskchg_init();
     track_cache_init();
+    // psram_image_init() runs inside track_cache_init() and its bool result is
+    // discarded there. Say it out loud, because PSRAM is the one part of this
+    // board no footprint check and no host test can vouch for: a pin-compatible
+    // module WITHOUT the PSRAM this design needs fits U1 perfectly, and the only
+    // symptom is that image_parse_begin() goes straight to its error state and
+    // every single fetch fails -- silently, forever, on a board that otherwise
+    // associates, registers and polls perfectly.
+    {
+        bool ok = psram_image_available();
+        wf_logf(ok ? WF_INFO : WF_ERR, "psram: %s (%u KB needed for %d slots)",
+                ok ? "available" : "NOT AVAILABLE -- every image fetch will fail",
+                (unsigned)((size_t)SLOT_COUNT * NUM_TRACKS * TRACK_MAX_BYTES / 1024u),
+                SLOT_COUNT);
+    }
 
     // PIO
     uint off_out = pio_add_program(pio, &flux_out_program);
@@ -765,6 +844,25 @@ int main(void) {
                 // every time it happens: on the Amiga this is a drive that
                 // reads some tracks and not others, which looks like bad
                 // media unless the log says otherwise.
+                //
+                // `loaded` latches here for the same reason it does on the
+                // hit path, and NOT latching it was a real defect. The
+                // condition above is level-triggered, so a miss that left
+                // `loaded` alone re-entered this branch on the next 1 ms
+                // iteration and traced the same track again, forever.
+                // Measured on a rev A2 board 2026-09-10: a freshly booted
+                // board with no disk mounted -- want_track == 0 and nothing
+                // in PSRAM, which is the DEFAULT state of every board at
+                // power-on -- emitted 44,929 TRACK-MISS records in 48
+                // seconds (40 KB/s), burying every other event at several
+                // thousand to one and defeating the whole point of the log.
+                // Latching makes it one record per track change, which is
+                // what "every time it happens" was always meant to mean.
+                //
+                // Not retrying costs nothing: track_cache_check_swap() above
+                // resets `loaded` to -1 on every mount and every eject, so a
+                // track that only arrives later is re-attempted then.
+                loaded = want;
                 wf_trace(WF_EV_TRACK_MISS, (uint32_t)want, 0);
             }
         }

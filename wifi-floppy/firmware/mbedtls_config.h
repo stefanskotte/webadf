@@ -50,6 +50,24 @@
 #define MBEDTLS_GCM_C
 #define MBEDTLS_MD_C
 #define MBEDTLS_SHA256_C
+// SHA-384/512 is needed to PARSE a trust anchor, not to verify anything on
+// this chain. The comment at the top of this file reasoned from the SERVED
+// chain -- leaf, WR1 and GTS Root R1 are all sha256WithRSAEncryption, which
+// is true -- and concluded SHA-256 was sufficient. It is not: GTS Root R1's
+// own SELF-signature is sha384WithRSAEncryption, and mbedtls_x509_crt_parse()
+// rejects a certificate whose signature algorithm it cannot name, whether or
+// not that signature is ever checked. A rejected root simply never enters the
+// trust store.
+//
+// That mattered far more than one missing root, because lwIP's
+// altcp_tls_create_config() fails the WHOLE config on any non-zero return
+// from mbedtls_x509_crt_parse() (altcp_tls_mbedtls.c) -- and that function is
+// permissive, returning the COUNT of certs it rejected rather than an error.
+// So two unparseable roots in a five-root bundle produced a flat NULL, no
+// TLS config at all, and every request failing before a single packet moved.
+// Measured on a rev A2 board 2026-09-10: `tls: root CA parse -> 2`.
+#define MBEDTLS_SHA512_C           // provides SHA-384; SHA384_C requires it
+#define MBEDTLS_SHA384_C
 #define MBEDTLS_HKDF_C            // TLS 1.3 key schedule (also drives the
                                    // PSA_WANT_ALG_HKDF_* auto-derivation
                                    // check_config.h requires for TLS 1.3).

@@ -11,6 +11,7 @@
 // Every dispatch branch below resolves failures towards "touch nothing"
 // rather than towards "clear the mount", specifically because of rule 1.
 #include "device_client.h"
+#include "wf_log.h"
 #include "http.h"
 #include "json_scan.h"
 #include "psram_image.h"
@@ -45,7 +46,10 @@
 // path), which is the same "touch nothing" resolution every other
 // malformed-response case takes.
 #define DC_POLL_BODY_BYTES 1536
-#define DC_READ_CHUNK_BYTES 512
+// 512 was never under load before the image fetch: every other response on
+// this device is a few hundred bytes of poll JSON. At 2 MB it means ~4,000
+// read calls, each taking the lwIP lock, memcpy'ing and crediting the window.
+#define DC_READ_CHUNK_BYTES 4096
 
 // The status report is the one request this file POSTs a body with, so it
 // needs a bigger request buffer than a bare GET line (DC_REQ_BUF_BYTES):
@@ -110,9 +114,31 @@ static void dc_discard_sink(void *ctx, const uint8_t *b, int n) {
 // state is simply never asked for a verdict via image_parse_end() in that
 // case), so dc_fetch_image uses this sink unconditionally rather than
 // switching on the status after the fact.
+// Reset by dc_fetch_image before each attempt. 16 KB granularity was what
+// diagnosed the 3z stall -- it is the only way to tell a transfer that STOPS
+// DEAD from one that merely crawls, since both reach the caller as a read that
+// eventually times out. Dialled back to 256 KB now that the stall is fixed: at
+// 16 KB a healthy fetch printed ~124 lines in under four seconds, which is a
+// smaller version of exactly the mistake 3x records. Eight lines still show
+// throughput and still localise a stall to within 256 KB, which is enough to
+// know to put it back.
+static long g_img_got;
+static long g_img_next;
+static uint32_t g_img_t0;   // fetch start, for the throughput line
+static uint32_t g_ms_read;  // ms inside transport read (network + TLS decrypt)
+static uint32_t g_ms_feed;  // ms inside http parse + sink (PSRAM writes)
+
 static void dc_image_sink(void *ctx, const uint8_t *b, int n) {
-    (void)ctx;
+    // The clock starts on the FIRST BODY BYTE, not at dc_fetch_image entry:
+    // otherwise the ~1-3 s DNS + TCP + TLS handshake is averaged into the
+    // transfer rate and a throughput change is impossible to read.
+    if (g_img_got == 0 && ctx) g_img_t0 = ((device_client_t *)ctx)->now();
     image_parse_feed(b, n);
+    g_img_got += n;
+    if (g_img_got >= g_img_next) {
+        wf_logf(WF_INFO, "fetch: %ld KB", g_img_got / 1024);
+        g_img_next = g_img_got + 262144;
+    }
 }
 
 // ---------------------------------------------------------------------
@@ -220,14 +246,27 @@ static bool dc_exchange(device_client_t *c, const char *req, int req_len,
     }
 
     http_resp_init(r);
+    g_ms_read = 0;
+    g_ms_feed = 0;
     // static: see the STACK note above. Live only inside this loop, and
     // dc_exchange is never nested inside itself.
     static uint8_t buf[DC_READ_CHUNK_BYTES];
     for (;;) {
+        // Splits the transfer into "waiting for the network + TLS decrypt"
+        // (read) and "our own processing" (feed -> image_parse_feed -> PSRAM).
+        // Raising TCP_WND 16->32*MSS bought +27% and DC_READ_CHUNK_BYTES
+        // 512->4096 bought ~4%, so neither is the ceiling any more and the next
+        // change should be aimed at whichever of these two dominates -- not
+        // guessed at.
+        uint32_t t_a = c->now();
         int got = c->t->read(c->t, buf, sizeof buf, (int)DC_POLL_TIMEOUT_MS);
+        uint32_t t_b = c->now();
+        g_ms_read += t_b - t_a;
         if (got < 0) { c->t->close(c->t); return false; } // error or timeout
         if (got == 0) break;                              // clean close
-        if (!http_resp_feed(r, buf, got, sink, sink_ctx)) {
+        bool fed = http_resp_feed(r, buf, got, sink, sink_ctx);
+        g_ms_feed += c->now() - t_b;
+        if (!fed) {
             c->t->close(c->t);
             return false; // malformed response
         }
@@ -302,13 +341,33 @@ static dc_state_t dc_fetch_image(device_client_t *c, const dc_desired_t *d) {
     // clean: that ordering is rule 2 (never release the current disk
     // before the replacement is fetched *and* verified) made concrete.
     int target = psram_inactive_slot();
+    // Digests are not secret here -- /api/ingest/check is a deliberate global
+    // existence oracle and TOSEC publishes thousands of them -- so a prefix is
+    // safe to print and is what makes a fetch traceable against the server side.
+    g_img_got = 0;
+    g_img_next = 262144;
+    g_img_t0 = 0;   // set by the sink on the first body byte
+    wf_logf(WF_INFO, "fetch: %.12s -> slot %d (psram %s)", d->sha256, target,
+            psram_image_available() ? "ok" : "MISSING");
     image_parse_begin(target);
 
     c->state = DC_FETCHING;
     static http_resp_t r;   // static: see the STACK note above
-    bool ok = dc_exchange(c, req, req_len, dc_image_sink, NULL, &r);
+    bool ok = dc_exchange(c, req, req_len, dc_image_sink, c, &r);
 
     if (!ok || !r.body_complete) {
+        // Deliberately detailed: this branch NEVER blocks the digest, so it
+        // retries the same fetch forever, and from the console that is
+        // indistinguishable from a stalled server unless it says which of the
+        // three things went wrong. `_body_got` is parser-internal, but it is
+        // the only record of how far the transfer actually got -- the whole
+        // question for a 2 MB body on a device whose largest previous transfer
+        // was a few hundred bytes.
+        wf_logf(WF_WARN, "fetch: incomplete -- exchange=%s status=%d "
+                "complete=%s got=%ld of %ld",
+                ok ? "ok" : "FAILED", r.status,
+                r.body_complete ? "yes" : "no",
+                r._body_got, r.content_length);
         // Connect/write/read failure, a response that never parsed as HTTP
         // at all, or a connection dropped before the body finished -- all
         // treated alike. Never block the digest for these: none of them
@@ -335,6 +394,8 @@ static dc_state_t dc_fetch_image(device_client_t *c, const dc_desired_t *d) {
             // Resending the exact same bytes under this digest would fail
             // the same way every time, so this digest is treated like the
             // 400/404/422 cases below rather than backed off forever.
+            wf_logf(WF_WARN, "fetch: %.12s arrived complete but is not a "
+                    "valid WFMF container -- digest blocked", d->sha256);
             dc_block_digest(c, d->sha256);
             // Review (final), Important 2: `since` has NOT advanced -- only
             // dc_complete_transition moves it, and no transition happened
@@ -353,6 +414,15 @@ static dc_state_t dc_fetch_image(device_client_t *c, const dc_desired_t *d) {
         // psram_image.c for why moving between two complete, verified
         // images that way can never show core0 a half-fetched one.
         c->state = DC_SWAPPING;
+        {
+            uint32_t ms = c->now() - g_img_t0;
+            wf_logf(WF_INFO, "fetch: read=%lu ms feed=%lu ms",
+                    (unsigned long)g_ms_read, (unsigned long)g_ms_feed);
+            wf_logf(WF_INFO, "fetch: verified in %lu ms (%lu KB/s), publishing slot %d",
+                    (unsigned long)ms,
+                    (unsigned long)(ms ? (unsigned long)g_img_got / ms * 1000u / 1024u : 0u),
+                    target);
+        }
         psram_publish_slot(target);
         dc_complete_transition(c, d->version, d->sha256, d->disk_id, d->write_protected);
         c->state = DC_IDLE_POLL;
@@ -368,6 +438,8 @@ static dc_state_t dc_fetch_image(device_client_t *c, const dc_desired_t *d) {
         // rather than returned as DC_IDLE_POLL for the same reason as the
         // parse-failure case above: `since` did not advance, so an
         // immediate re-poll is answered immediately and the loop spins.
+        wf_logf(WF_WARN, "fetch: server said %d -- digest blocked, not retried",
+                r.status);
         dc_block_digest(c, d->sha256);
         return dc_enter_backoff(c);
 

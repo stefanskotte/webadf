@@ -1,14 +1,26 @@
 #!/usr/bin/env bash
-# Fetches five pinned CA root certificates and emits src/roots.h as a PEM
+# Fetches four pinned CA root certificates and emits src/roots.h as a PEM
 # string literal (plus tools/roots.pem, the flat bundle used to verify it).
 #
-# Why these five: the live chain for webadf.vercel.app today is
+# Why these four: the live chain for webadf.vercel.app today is
 #   *.vercel.app -> Google Trust Services WR1 -> GTS Root R1
-# GTS Root R1 alone would cover today's chain. The other four (ISRG Root X1,
-# DigiCert Global Root G2, Amazon Root CA 1, GlobalSign Root CA) are pinned
-# alongside it so a future CDN/CA change upstream of Vercel doesn't stall
-# every device in the field waiting on a firmware update -- they're the CAs
-# most commonly seen fronting large hosting platforms.
+# GTS Root R1 alone would cover today's chain. The other three (ISRG Root X1,
+# DigiCert Global Root G2, Amazon Root CA 1) are pinned alongside it so a
+# future CDN/CA change upstream of Vercel doesn't stall every device in the
+# field waiting on a firmware update -- they're the CAs most commonly seen
+# fronting large hosting platforms.
+#
+# GlobalSign Root CA WAS the fifth, and was REMOVED on 2026-09-10 because it
+# is signed sha1WithRSAEncryption. Keeping it meant enabling MBEDTLS_SHA1_C
+# purely so a 1998 root that expires 2028-01-28 and is not on any chain this
+# device uses could be parsed -- and it was not a free choice to leave it in:
+# mbedtls_x509_crt_parse() rejected it, and lwIP's altcp_tls_create_config()
+# fails the ENTIRE bundle on any non-zero return, so its presence meant the
+# board had no TLS configuration at all. Measured on hardware, not inferred:
+# `tls: root CA parse -> 2` (the other reject was GTS Root R1, fixed by
+# enabling SHA-384 in mbedtls_config.h). If a future chain ever needs a
+# SHA-1-signed root, weigh enabling SHA-1 against pinning a modern root
+# instead -- prefer the latter.
 #
 # Review round 1 finding (Important, I5): an earlier version of this script
 # fetched five live URLs with no expected fingerprint and only checked
@@ -50,42 +62,36 @@ fetch https://pki.goog/repo/certs/gtsr1.pem                "$WORK/gts_root_r1.pe
 fetch https://letsencrypt.org/certs/isrgrootx1.pem          "$WORK/isrg_root_x1.pem"
 fetch https://cacerts.digicert.com/DigiCertGlobalRootG2.crt.pem "$WORK/digicert_global_root_g2.pem"
 fetch https://www.amazontrust.com/repository/AmazonRootCA1.pem  "$WORK/amazon_root_ca1.pem"
-fetch https://secure.globalsign.com/cacert/root-r1.crt      "$WORK/globalsign_root_ca.der"
-openssl x509 -in "$WORK/globalsign_root_ca.der" -inform DER \
-    -out "$WORK/globalsign_root_ca.pem" -outform PEM
 
 # Parallel arrays (bash 3.2-compatible, so this runs under macOS's stock
 # /bin/bash too): name, file, and the PINNED expected SHA-256 fingerprint
 # (colons, uppercase, as openssl prints it). A trailing free-text note
-# (empty string if none) is appended to that cert's line in roots.h --
-# currently used only for GlobalSign Root CA's expiry.
+# (empty string if none) is appended to that cert's line in roots.h. No cert
+# carries one at present; it is kept because an expiry note is exactly what
+# the next pin roll will want.
 NAMES=(
     "GTS Root R1"
     "ISRG Root X1"
     "DigiCert Global Root G2"
     "Amazon Root CA 1"
-    "GlobalSign Root CA"
 )
 FILES=(
     "$WORK/gts_root_r1.pem"
     "$WORK/isrg_root_x1.pem"
     "$WORK/digicert_global_root_g2.pem"
     "$WORK/amazon_root_ca1.pem"
-    "$WORK/globalsign_root_ca.pem"
 )
 PINNED_SHA256=(
     "D9:47:43:2A:BD:E7:B7:FA:90:FC:2E:6B:59:10:1B:12:80:E0:E1:C7:E4:E4:0F:A3:C6:88:7F:FF:57:A7:F4:CF"
     "96:BC:EC:06:26:49:76:F3:74:60:77:9A:CF:28:C5:A7:CF:E8:A3:C0:AA:E1:1A:8F:FC:EE:05:C0:BD:DF:08:C6"
     "CB:3C:CB:B7:60:31:E5:E0:13:8F:8D:D3:9A:23:F9:DE:47:FF:C3:5E:43:C1:14:4C:EA:27:D4:6A:5A:B1:CB:5F"
     "8E:CD:E6:88:4F:3D:87:B1:12:5B:A3:1A:C3:FC:B1:3D:70:16:DE:7F:57:CC:90:4F:E1:CB:97:C6:AE:98:19:6E"
-    "EB:D4:10:40:E4:BB:3E:C7:42:C9:E3:81:D3:1E:F2:A4:1A:48:B6:68:5C:96:E7:CE:F3:C1:DF:6C:D4:33:1C:99"
 )
 NOTES=(
     ""
     ""
     ""
     ""
-    "expires 2028-01-28 -- rotate this pin (and re-run this script) before then"
 )
 
 : > roots.pem

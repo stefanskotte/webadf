@@ -36,6 +36,11 @@
 
 #include "pico/cyw43_arch.h"
 #include "pico/time.h"
+#include "wf_log.h"
+#include "mbedtls/x509_crt.h"   // root-CA parse probe, see tls_connect()
+#include "lwip/stats.h"          // 3z: pbuf/heap counters at the stall
+#include "lwip/priv/altcp_priv.h" // 3z: reach the inner TCP pcb for rcv_wnd
+#include "lwip/tcp.h"
 #include "lwip/altcp.h"
 #include "lwip/altcp_tls.h"
 #include "lwip/dns.h"
@@ -175,7 +180,17 @@ static err_t on_recv(void *arg, struct altcp_pcb *pcb, struct pbuf *p, err_t err
         c->closed = true; // remote closed cleanly (TLS close_notify or FIN)
         return ERR_OK;
     }
-    altcp_recved(pcb, p->tot_len);
+    // NO altcp_recved() HERE -- see tls_read(), which calls it for the bytes
+    // it actually hands to the application. Crediting the window on ARRIVAL
+    // tells TCP "consumed" for data nobody has read yet, so the peer is never
+    // throttled and the pbuf_cat chain below grows without bound. That is
+    // invisible while every response is a few hundred bytes of poll JSON, and
+    // wrong on the first big one. NOTE, recorded honestly: moving the credit
+    // here did NOT fix the 2 MB image fetch (2026-09-10) -- that stalls at a
+    // variable 43-57 KB and is still unexplained at the time of writing. This
+    // change stands on its own terms regardless: crediting a window for bytes
+    // no one has read is incorrect flow control and would bite under memory
+    // pressure. Do not read it as the fix for the fetch stall.
     if (c->rx_head) {
         pbuf_cat(c->rx_head, p);
     } else {
@@ -218,6 +233,18 @@ static void detach_and_close(struct altcp_pcb *pcb) {
     cyw43_arch_lwip_end();
 }
 
+// Every failure exit below goes through this. tls_connect() already
+// distinguishes seven causes -- clock, DNS, DNS timeout, config, connect,
+// handshake timeout, bad arg -- and dc_register() then flattens ALL of them
+// into DC_REG_RETRY, so from the console a dead root CA and an unplugged
+// router looked identical (`register failed (rr=1)`). `detail` carries
+// whatever the specific site knows: an lwIP err_t, or the err snapshot
+// on_err() captured.
+static int tls_fail(int code, const char *why, int detail) {
+    wf_logf(WF_WARN, "tls: %s (code %d, detail %d)", why, code, detail);
+    return code;
+}
+
 static int tls_connect(struct transport *t, const char *host, int port) {
     tls_conn_t *c = (tls_conn_t *)t->impl;
     uint32_t next_gen = c->gen + 1;
@@ -238,7 +265,8 @@ static int tls_connect(struct transport *t, const char *host, int port) {
     // MBEDTLS_HAVE_TIME_DATE); before the first successful SNTP sync,
     // time() reads back an arbitrary post-boot value, which would make
     // expiry checking either meaninglessly always-pass or always-fail.
-    if (!sntp_time_valid()) return TLS_ERR_TIME_UNSET;
+    if (!sntp_time_valid())
+        return tls_fail(TLS_ERR_TIME_UNSET, "no clock, refusing handshake", 0);
 
     g_dns_token.c = c;
     g_dns_token.gen = c->gen;
@@ -254,23 +282,44 @@ static int tls_connect(struct transport *t, const char *host, int port) {
                absolute_time_diff_us(get_absolute_time(), deadline) > 0) {
             sleep_ms(1);
         }
-        if (!c->dns_done) return TLS_ERR_DNS_TIMEOUT;
+        if (!c->dns_done)
+            return tls_fail(TLS_ERR_DNS_TIMEOUT, "DNS timed out", DNS_TIMEOUT_MS);
     } else {
-        return TLS_ERR_DNS;
+        return tls_fail(TLS_ERR_DNS, "DNS call refused", (int)derr);
     }
-    if (!c->dns_ok) return TLS_ERR_DNS;
+    if (!c->dns_ok) return tls_fail(TLS_ERR_DNS, "DNS did not resolve", 0);
 
     if (!g_tls_config) {
         g_tls_config = altcp_tls_create_config_client(
             (const uint8_t *)root_ca_pem, root_ca_pem_len);
-        if (!g_tls_config) return TLS_ERR_TLS_CONFIG;
+        if (!g_tls_config) {
+            // altcp_tls_create_config_client() reports failure as NULL and
+            // nothing else, which is not enough to act on: a bundle whose
+            // certs cannot be parsed and a heap too small to hold them look
+            // identical. So parse the SAME buffer directly and report what
+            // mbedtls actually said. Note mbedtls_x509_crt_parse() is
+            // permissive -- a POSITIVE return is the number of certs in the
+            // bundle that failed while others succeeded, and lwIP rejects the
+            // whole config on any non-zero, so one bad cert kills all of it.
+            static mbedtls_x509_crt probe;
+            mbedtls_x509_crt_init(&probe);
+            int pret = mbedtls_x509_crt_parse(
+                &probe, (const unsigned char *)root_ca_pem, root_ca_pem_len);
+            mbedtls_x509_crt_free(&probe);
+            wf_logf(WF_ERR, "tls: root CA parse -> %d (>0 = certs rejected, "
+                    "<0 = mbedtls error, 0 = bundle is fine so this is heap)",
+                    pret);
+            return tls_fail(TLS_ERR_TLS_CONFIG,
+                            "altcp_tls_create_config_client failed",
+                            (int)root_ca_pem_len);
+        }
     }
 
     cyw43_arch_lwip_begin();
     c->pcb = altcp_tls_new(g_tls_config, IPADDR_TYPE_V4);
     if (!c->pcb) {
         cyw43_arch_lwip_end();
-        return TLS_ERR_TLS_CONFIG;
+        return tls_fail(TLS_ERR_TLS_CONFIG, "altcp_tls_new failed (out of memory)", 0);
     }
     altcp_arg(c->pcb, c);
     altcp_recv(c->pcb, on_recv);
@@ -287,7 +336,7 @@ static int tls_connect(struct transport *t, const char *host, int port) {
         c->pcb = NULL;
         cyw43_arch_lwip_end();
         detach_and_close(pcb);
-        return TLS_ERR_TLS_CONFIG;
+        return tls_fail(TLS_ERR_TLS_CONFIG, "mbedtls_ssl_set_hostname failed", 0);
     }
 
     err_t cerr = altcp_connect(c->pcb, &c->remote_ip, (u16_t)port, on_connected);
@@ -296,7 +345,7 @@ static int tls_connect(struct transport *t, const char *host, int port) {
         struct altcp_pcb *pcb = c->pcb;
         c->pcb = NULL;
         detach_and_close(pcb);
-        return TLS_ERR_CONNECT;
+        return tls_fail(TLS_ERR_CONNECT, "altcp_connect refused", (int)cerr);
     }
 
     // Waits for the *full* TLS handshake, not just the TCP three-way
@@ -306,14 +355,21 @@ static int tls_connect(struct transport *t, const char *host, int port) {
            absolute_time_diff_us(get_absolute_time(), deadline) > 0) {
         sleep_ms(1);
     }
-    if (c->connected) return 0;
+    if (c->connected) {
+        wf_logf(WF_INFO, "tls: handshake OK with %s:%d", host, port);
+        return 0;
+    }
 
     if (c->pcb) {
         struct altcp_pcb *pcb = c->pcb;
         c->pcb = NULL;
         detach_and_close(pcb);
     }
-    return c->closed ? TLS_ERR_CONNECT : TLS_ERR_HANDSHAKE_TIMEOUT;
+    // c->err is on_err()'s snapshot of the lwIP err_t -- the ONLY place the
+    // real reason for a refused handshake survives.
+    return c->closed
+        ? tls_fail(TLS_ERR_CONNECT, "closed during handshake", (int)c->err)
+        : tls_fail(TLS_ERR_HANDSHAKE_TIMEOUT, "handshake timed out", (int)c->err);
 }
 
 // transport.h: "Returns bytes accepted. ... a SHORT WRITE IS LEGAL and the
@@ -366,7 +422,45 @@ static int tls_read(struct transport *t, uint8_t *b, int cap, int timeout_ms) {
                                 // comment -- a stale "not yet" here just
                                 // costs one more 1ms loop iteration.
         if (c->closed) return c->err ? -1 : 0;
-        if (absolute_time_diff_us(get_absolute_time(), deadline) <= 0) return -1;
+        if (absolute_time_diff_us(get_absolute_time(), deadline) <= 0) {
+            // 3z: THE moment of the stall. Nothing has arrived for the whole
+            // timeout while the peer still holds most of the body, so whatever
+            // went wrong has already gone wrong -- these counters are the only
+            // record of it. `err` is the discriminator: a non-zero pbuf-pool or
+            // heap err means an allocation failed and packets were dropped,
+            // which lwIP surfaces nowhere else; all-zero errs point at the
+            // receive window instead.
+            wf_logf(WF_WARN, "tls: read timeout -- pbuf used=%u max=%u err=%u, "
+                    "heap used=%u max=%u err=%u, tcp drop=%u memerr=%u",
+                    (unsigned)lwip_stats.memp[MEMP_PBUF_POOL]->used,
+                    (unsigned)lwip_stats.memp[MEMP_PBUF_POOL]->max,
+                    (unsigned)lwip_stats.memp[MEMP_PBUF_POOL]->err,
+                    (unsigned)lwip_stats.mem.used,
+                    (unsigned)lwip_stats.mem.max,
+                    (unsigned)lwip_stats.mem.err,
+                    (unsigned)lwip_stats.tcp.drop,
+                    (unsigned)lwip_stats.tcp.memerr);
+            // The actual receive window, read off the inner TCP pcb. altcp_tls
+            // credits the LOWER layer with PLAINTEXT byte counts
+            // (altcp_mbedtls_pass_rx_data adds the decrypted tot_len to
+            // rx_passed_unrecved, and altcp_mbedtls_recved forwards that same
+            // number to altcp_recved on inner_conn), while TCP actually
+            // received ciphertext. If that shortfall is what stalls us, rcv_wnd
+            // is at or near zero here; if it is healthy, the peer went quiet
+            // for some other reason and this rules the window out.
+            {
+                struct altcp_pcb *inner = c->pcb ? c->pcb->inner_conn : NULL;
+                struct tcp_pcb *tp = inner ? (struct tcp_pcb *)inner->state : NULL;
+                if (tp) {
+                    wf_logf(WF_WARN, "tls: rcv_wnd=%u ann=%u (TCP_WND=%u) state=%d",
+                            (unsigned)tp->rcv_wnd, (unsigned)tp->rcv_ann_wnd,
+                            (unsigned)TCP_WND, (int)tp->state);
+                } else {
+                    wf_logf(WF_WARN, "tls: no inner tcp pcb to inspect");
+                }
+            }
+            return -1;
+        }
         sleep_ms(1);
     }
 
@@ -397,6 +491,12 @@ static int tls_read(struct transport *t, uint8_t *b, int cap, int timeout_ms) {
             c->rx_off = 0;
         }
     }
+    // Flow control belongs HERE, at consumption: these are the bytes the
+    // application has actually taken, so this is the only point at which the
+    // receive window can honestly be reopened. With TCP_WND at 8*TCP_MSS the
+    // server now pauses when this loop falls behind, which is what keeps a
+    // 2 MB body bounded in a 16 KB lwIP heap.
+    if (copied > 0) altcp_recved(c->pcb, (u16_t)copied);
     cyw43_arch_lwip_end();
     return copied;
 }
