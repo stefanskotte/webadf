@@ -30,7 +30,7 @@ after plan 4a, rewritten again 2026-08-31 after plan 4b.**
 | **Plan 3b — device UI** | ✅ **done, all 7 tasks, merged to `master`** |
 | **Plan 4a — firmware protocol plane** | ✅ **done, merged to `master`, pushed.** Firmware compiles and has a green host suite. |
 | **Plan 4b — captive portal** | ✅ **done, all 8 tasks.** Compile-time WiFi/pairing-code defines are gone, replaced by an AP-mode portal. Merged to `master` and pushed. |
-| **Plan 5 — hardware bring-up** | ❌ not started, the only piece left. **Nothing has run on real hardware** — boards are still in transit and nothing in 4a or 4b has been exercised on one |
+| **Plan 5 — hardware bring-up** | 🔵 **started 2026-09-10.** The captive portal runs on a real board: RM2 radio up, AP raised, DHCP/DNS/HTTP serving the form, iOS raising the sign-in sheet by itself. Everything past pressing Save, and the whole floppy side, is still unrun; see 3x |
 | **Super-admin plane** | ✅ **done, all 6 tasks, merged to `master` and live in production.** `/admin`: overview, user list with cascade delete, invites |
 | **TOSEC identity scan** | ✅ **done, 12 tasks, merged to `master`.** `/admin/scan`: DAT import, hashing, matching, backfill |
 | **OpenRetro enrichment** | ✅ **done, all 9 tasks, merged to `master` and live in production.** Enriches 6.6% of the real archive against TOSEC's 45.9%; see 3d |
@@ -52,10 +52,10 @@ after plan 4a, rewritten again 2026-08-31 after plan 4b.**
 | **Image layout shift** | ✅ **done 2026-09-03.** The game page's cover and screenshots reserve their space; the library grid never had the bug; see 3k |
 | **Typeahead search** | ✅ **done, all 7 tasks, merged to `master` and live in production.** A Spotlight-style pill in both shells; migration 0012 applied; see 3h |
 | **Read-only ADF filesystem reader** | ✅ **done, all 10 tasks, `feat/adf-filesystem-reader`.** Reads 80.3% of the archive (49/61) against TOSEC's 45.9% and OpenRetro's 6.6%; see 3f |
-| **Hardware** | **the first PCB was MIRRORED and is unusable**; corrected revision ordered 2026-09-04, so plan 5 slips to w/c 2026-09-08. Board check + U2 silkscreen done; see 3s |
+| **Hardware** | rev A scrap (mirrored), **rev A2 in hand and working**, **rev B is current and unfabricated** — keepout moved to the antenna end, a silkscreen that carries lettering, D1 polarity marked. Respin deliberately on hold until a board is known to work; see 3s and 3x |
 
 **Current branch:** `master`, clean and pushed. Everything below is merged and live in
-production. **Plan 5 (hardware bring-up) is the only unbuilt plan.** The first PCB came back
+production. **Plan 5 (hardware bring-up) is under way as of 2026-09-10 — see 3x.** The first PCB came back
 **mirrored** and a corrected revision was ordered on 2026-09-04, so bring-up cannot start before
 the week of **2026-09-08** — and nothing in plan 4a or 4b has ever run on real silicon.
 
@@ -1875,6 +1875,50 @@ predicate is not scoped by the test that runs it. Point the run at a scratch dat
 in advance that it empties the table for everyone. This repo has no such database today — every
 e2e runs against live Neon — so "accept in advance" is currently the only option, and it should
 be an explicit decision each time rather than a side effect of following a plan step.
+
+### 3x. Hardware bring-up begins, and a console log — 2026-09-10
+
+**A rev A2 board, populated with J1, J2 and U1 only, ran the firmware.** What that
+proved on real silicon, in order of how much it was worth knowing:
+
+- `cyw43_arch_init()` succeeds — the **RM2 radio works over SPI**, the largest piece
+  that had only ever been compiled
+- the AP comes up: `wifi-floppy-6A38`, WPA2-AES, SSID built from the chip's own MAC
+- **DHCP, the DNS responder and the HTTP server all work** — the form serves at
+  `192.168.4.1`
+- **iOS raises the captive-portal sign-in sheet by itself**, which was named
+  explicitly on the unverified list
+- the form's `28:cd:c1:19:6a:38` and the SSID's `6A38` agree, so `main.c`'s
+  `mac_address_string()` and `portal_net.c`'s SSID construction cross-check
+- no USB CDC re-enumeration over minutes: not crash-looping
+
+**Still unrun:** everything past pressing Save — AP teardown, station mode,
+association, the confirmation page beating the AP drop, lease renewal, Android, TLS,
+SNTP, registration — and the entire floppy side.
+
+**`src/wf_log.c` now exists because none of that would have been visible.** The
+firmware previously wrote nothing at all: `stdio_init_all()` created the CDC device,
+so a port appeared and a terminal attached, but there was not one `printf` in `src/`.
+`wf_logf()` formats; `wf_trace()` takes an integer event code so it is legal inside
+the flux DMA handler, and sits in SRAM (0x200001bc) beside `dma_irq`. **core0 drains,
+core1 only produces** — core0's loop already sleeps 1 ms, core1's blocks for tens of
+seconds in a long-poll — which is also why a wedged core1 still gets its last line
+out. Drops newest when full and says so. **Not yet run on hardware.**
+
+**Hardware, three revisions now.** Rev A scrap. Rev A2 in hand, working, with ground
+plane under the antenna and outlines but no lettering. Rev B is current and
+unfabricated: keepout at the antenna end, silkscreen at 0.2 mm with real designators
+and a `WIFI FLOPPY REV B` marking, D1's cathode bar. Two things deliberately open —
+the RM2's position on the module underside is still unconfirmed, and the operator is
+**holding the keepout extension until a board is known to work**, since bring-up may
+move other things.
+
+**A diagnosis I got wrong, recorded because the reasoning was the problem.** I said
+JLCPCB stripped the sub-minimum silkscreen and both batches arrived blank. A photo of
+an assembled A2 board shows J2's and U1's outlines plainly legible at 0.12 mm. The
+0.12 mm is a real spec violation, but it printed; what was actually missing was all
+lettering, and that was the exporter dropping everything that was not an `fp_line`.
+I inferred a fab behaviour from a spec table instead of from a board.
 
 ## Known accepted risks
 
