@@ -196,6 +196,10 @@ export interface DeviceListItem {
   rssi: number | null; psramFree: number | null;
   lastSeenAt: Date | null; lastError: string | null; lastErrorAt: Date | null;
   desiredSha256: string | null; mountedSha256: string | null;
+  // The exact disk ROWS, which the digests above cannot stand in for: two rows
+  // can share one digest (identical bytes re-uploaded under a second title),
+  // and the mount picker has to tell them apart or it lights up both.
+  desiredDiskId: string | null; mountedDiskId: string | null;
   // The disk a human asked for, when one is asked for.
   desiredGame: string | null; desiredDiskNo: number | null; desiredDiskCount: number | null;
   // The disk the device says it holds, when it says it holds one.
@@ -228,6 +232,7 @@ export async function listDevices(orgId: string): Promise<DeviceListItem[]> {
       lastSeenAt: devices.lastSeenAt,
       lastError: devices.lastError, lastErrorAt: devices.lastErrorAt,
       desiredSha256: devices.desiredSha256, mountedSha256: devices.mountedSha256,
+      desiredDiskId: devices.desiredDiskId, mountedDiskId: devices.mountedDiskId,
       desiredGame: desiredGame.title,
       desiredDiskNo: devices.desiredDiskNo,
       desiredDiskCount: sql<number | null>`(

@@ -1,18 +1,16 @@
 import { Link } from '@/components/shell/link';
 import type { GameDetailDisk } from '@/lib/queries';
 import { WriteProtectToggle } from './write-protect-toggle';
-import { MountAction, type MountTarget } from './mount-action';
+import { MountAction } from './mount-action';
+import { holderText, type MountChoice } from '@/lib/mount-choice';
 import { DeleteDiskDialog } from '@/components/library/delete-disk-dialog';
 import { libraryHref } from '@/lib/trail';
 import { fromQuery } from '@/lib/trail';
 
-/** What some device is doing with this particular disk, if anything. */
-export interface DiskHolder { deviceName: string; state: 'converged' | 'pending' | 'stale' }
-
-export function DiskRow({ disk, devices, holder, from }: {
+export function DiskRow({ disk, choices, from }: {
   disk: GameDetailDisk;
-  devices: MountTarget[];
-  holder: DiskHolder | null;
+  /** Per-device verdict for THIS disk -- see lib/mount-choice.ts. */
+  choices: MountChoice[];
   /**
    * The collection the person came from, carried onward to the file browser
    * so its breadcrumb can lead back there too. Threaded rather than derived:
@@ -20,11 +18,10 @@ export function DiskRow({ disk, devices, holder, from }: {
    */
   from?: string;
 }) {
-  const holderText =
-    !holder ? null
-    : holder.state === 'converged' ? `In ${holder.deviceName}`
-    : holder.state === 'pending' ? `Mounting to ${holder.deviceName}…`
-    : `Requested on ${holder.deviceName} — not confirmed`;
+  // Derived from the SAME choices the mount picker uses. It used to come from
+  // a separate sha256-keyed map in the page, which could name a different
+  // device than the button did whenever two disk rows shared one digest.
+  const held = holderText(choices);
 
   return (
     <div
@@ -67,11 +64,11 @@ export function DiskRow({ disk, devices, holder, from }: {
         <span className="truncate font-mono text-[11px]" style={{ color: 'var(--muted)' }}>
           {(disk.sizeBytes / 1024).toFixed(0)} KB · {disk.sha256.slice(0, 12)}
         </span>
-        {holderText && (
+        {held && (
           <span className="text-[11.5px] font-semibold"
-                style={{ color: holder!.state === 'stale' ? 'var(--amber-text)' : 'var(--muted)' }}
+                style={{ color: held.stale ? 'var(--amber-text)' : 'var(--muted)' }}
                 data-testid={`holder-${disk.id}`}>
-            {holderText}
+            {held.text}
           </span>
         )}
       </div>
@@ -115,7 +112,7 @@ export function DiskRow({ disk, devices, holder, from }: {
           Browse
         </Link>
         <WriteProtectToggle diskId={disk.id} writeProtected={disk.writeProtected} />
-        <MountAction diskId={disk.id} devices={devices} />
+        <MountAction diskId={disk.id} choices={choices} />
         {/* Last in the row, after the actions someone actually came here to
             use. Named for the disk, not the title: on a multi-disk set this
             removes one ADF and leaves the rest. */}
