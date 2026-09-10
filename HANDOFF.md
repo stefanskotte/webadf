@@ -251,8 +251,15 @@ Once boards arrive. **Nothing in plan 4a or plan 4b has run on real hardware** �
 handshake, no SNTP sync, no floppy-bus timing, and none of the AP-mode portal's lwIP/cyw43
 glue has ever been exercised outside the host suite and the cross-build. Treat every claim
 about TLS, timing, the floppy bus, or the portal's radio behaviour as desk-checked and
-host-tested only, not hardware-verified, until plan 5 says otherwise. Specifically open,
-carried forward verbatim from plan 4b's ledger:
+host-tested only, not hardware-verified, until plan 5 says otherwise.
+
+**SUPERSEDED 2026-09-10 -- READ 3y FIRST.** A rev A2 board has now provisioned itself,
+registered with production and run the poll loop. Every bullet below except the floppy-bus
+and Android ones is ANSWERED there, and answering them took three fixes (an lwIP timeout-
+pool panic, an unparseable root CA bundle, and the logger's own two in 3x). The list is
+kept as written because it is what the bullets were before the board ran, and because 3y's
+answers only mean something against it. Specifically open, carried forward verbatim from
+plan 4b's ledger:
 
 - Whether `netif_default` is really restored to STA (not left NULL) after the provisioning
   AP tears down, and TLS to webadf actually succeeds afterward — the entire point of a
@@ -1450,6 +1457,69 @@ separately.
 
 ### 4. Backlog, not blocking anything
 
+- **Drive an I2C OLED from the PIM726 board.** The operator has one to hand (2026-09-11).
+  Same underlying need as the activity-LED item below -- see what the drive is doing without
+  a terminal -- so design the two together rather than separately: an LED is instant and
+  costs nothing at the moment of a track read, while an OLED can carry state the LED cannot
+  (SSID and IP, mounted title, fetch progress, "retrying"). They complement each other; the
+  LED is not made redundant by the display.
+
+  **Time it against rev B while that is still unfabricated**, same as the LED item: two free
+  GPIOs plus a 4-pin header (3V3/GND/SDA/SCL) is a layout change now and a respin later.
+  RP2350 has two I2C blocks, and most of these panels are SSD1306 or SH1106.
+
+  **The one real hazard, and it is the lesson of 3x and 3z combined: do NOT drive it from
+  core0's service loop.** That loop sleeps 1 ms and services track changes in real time; a
+  full-frame I2C write to an SSD1306 at 400 kHz is ~1 KB of payload and takes on the order of
+  20 ms. Rendering there would stall the floppy exactly as a flood of USB writes would.
+  Core1 already blocks for tens of seconds in a long-poll, so it cannot own a responsive
+  display either -- this probably wants its own bounded, incremental update driven from
+  core0's loop a few bytes at a time, or a deliberate decision that the display only refreshes
+  when the floppy is idle.
+
+  **A design point that is easy to miss:** `wf_log_drain()` CONSUMES records and hands them
+  to a single sink. A display that drains the ring competes with the USB console -- attach a
+  terminal and the screen goes blank, or vice versa. Either give the display its own tap
+  (peek rather than consume) or feed it from the state it wants to show directly, not from
+  the log.
+
+- **LEDs on the wifi-floppy board, at minimum a track-activity LED.** Requested by the
+  operator 2026-09-11. The point is to see the drive doing something without a console
+  attached -- which is the ordinary case, since `wf_log` only reaches a terminal over USB
+  CDC and holds its records until one attaches (3x).
+
+  **Time this against rev B, which is CURRENT AND UNFABRICATED** -- adding LEDs now costs a
+  layout change and nothing else, whereas after a fab run it costs a spin. Note 3s's standing
+  caveat that the operator was holding the antenna keepout extension "until a board is known
+  to work"; as of 3y and 3z a board IS known to work, so that hold can be revisited in the
+  same pass.
+
+  The firmware side is nearly free: `wf_trace()` already fires `WF_EV_TRACK_SERVED` on every
+  track change and is interrupt-safe by construction (integer event codes, no formatting, in
+  SRAM), so an activity blink is a GPIO toggle at an existing call site. What needs deciding
+  is the hardware: which free GPIOs, and how many LEDs -- activity alone, or activity plus
+  link/mounted, which would make the whole state machine in 3y visible without a terminal.
+  A mounted/idle indicator would also cover the case 3z made obvious, where a fetch is
+  silently retrying every ~35 s and nothing outward says so.
+
+- **The disk "mount" button should target a device explicitly.** Requested by the operator
+  2026-09-11, right after the first successful hardware mount. Today mounting is
+  device-implicit; it should present the org's **list of devices** and show **mounted status
+  per device**, so you pick which drive receives the disk and can see at a glance what each
+  one is currently holding.
+
+  Worth knowing before designing it: the data is already there and already correctly scoped.
+  `devices` carries `orgId`, `mountedSha256`, `mountedDiskId`, `mountedVersion` and
+  `lastSeenAt` (`src/db/schema/devices.ts`), `listDevices(orgId)` is what `/devices` already
+  renders, and every device endpoint is org-scoped -- so this is a UI and mount-target
+  change, not a tenancy change. `src/lib/mount.ts`'s `setDesired` is the write path.
+
+  Two things the hardware now says about the UX: a mount takes **~4-6 s end to end** (TLS
+  handshake plus a ~2 MB transfer), so the button wants a pending state rather than
+  optimistic success; and a device only converges on its next poll, which is a long-poll of
+  up to `DC_POLL_TIMEOUT_MS`. "Mounted" should mean the device reported it (`mountedSha256`
+  came back), not that we asked -- 3y's status heartbeat is what makes that observable.
+
 - ~~**Make the app usable on a phone.**~~ **DONE 2026-09-02**, merged and live — see 3j.
   Requested by the operator 2026-09-01. The two notes below are kept because they were the
   hard parts and both are now settled:
@@ -1892,9 +1962,11 @@ proved on real silicon, in order of how much it was worth knowing:
   `mac_address_string()` and `portal_net.c`'s SSID construction cross-check
 - no USB CDC re-enumeration over minutes: not crash-looping
 
-**Still unrun:** everything past pressing Save — AP teardown, station mode,
-association, the confirmation page beating the AP drop, lease renewal, Android, TLS,
-SNTP, registration — and the entire floppy side.
+**Still unrun, as of the moment this section was written:** everything past pressing
+Save — AP teardown, station mode, association, the confirmation page beating the AP drop,
+lease renewal, Android, TLS, SNTP, registration — and the entire floppy side.
+**All of that except lease renewal, Android and the floppy side ran later the same night —
+see 3y.**
 
 **`src/wf_log.c` now exists because none of that would have been visible.** The
 firmware previously wrote nothing at all: `stdio_init_all()` created the CDC device,
@@ -1903,7 +1975,89 @@ so a port appeared and a terminal attached, but there was not one `printf` in `s
 the flux DMA handler, and sits in SRAM (0x200001bc) beside `dma_irq`. **core0 drains,
 core1 only produces** — core0's loop already sleeps 1 ms, core1's blocks for tens of
 seconds in a long-poll — which is also why a wedged core1 still gets its last line
-out. Drops newest when full and says so. **Not yet run on hardware.**
+out. Drops newest when full and says so.
+
+**It is now verified on a rev A2 board (2026-09-10), and it took two fixes to get
+there.** Both were invisible to its 74 green host checks, and both are the same
+shape: the host harness drives the ring directly through a sink that always accepts,
+so it could not see the loop that feeds the ring or the sink that refuses.
+
+- **`TRACK-MISS` was level-triggered and flooded the log.** `main.c`'s service loop
+  gates on `want != loaded`, and the miss path did not advance `loaded` -- so a miss
+  re-traced the same track every 1 ms, forever. On a freshly booted board with no
+  disk mounted (`want_track == 0`, nothing in PSRAM, which is the DEFAULT state of
+  every board at power-on) that measured **44,929 `TRACK-MISS` records in 48 seconds,
+  40 KB/s**, burying every other event at several thousand to one. The fix is to
+  latch `loaded = want` on the miss path too. Nothing is lost by not retrying:
+  `track_cache_check_swap()` resets `loaded` to -1 on every mount and every eject.
+- **`wf_log_drain()` was feeding a sink that discards.** A detached USB CDC port does
+  not buffer -- pico-sdk's `stdio_usb_out_chars()` returns without writing when DTR is
+  deasserted, and `PICO_STDIO_USB_CONNECT_WAIT_TIMEOUT_MS` defaults to 0 so boot never
+  waits. Draining therefore DESTROYED records, and silently: the ring never overflowed
+  so the dropped-record line never fired. The boot banner and `radio up (RM2)` were
+  both gone ~560 ms into boot, before any terminal could attach. A board cannot be
+  attached to before it enumerates, so **every boot-time record was structurally
+  unobservable** -- precisely the window the log was added to make visible. The drain
+  now holds while `stdio_usb_connected()` is false.
+
+**The measurement, before and after, same board, same idle state:** 44,930 records /
+845 KB in 48 s, no boot banner -> 4 records / 166 B, boot banner present. Attaching 65
+seconds after boot now replays the whole boot history, timestamps intact:
+
+```
+[    0.004] c0 wifi-floppy boot: pimoroni_pico_plus2_w_rp2350
+[    0.004] c0 TRACK-MISS   a=0 b=0
+[    0.004] c1 radio up (RM2)
+[    0.760] c1 portal: raising AP
+```
+
+`radio up (RM2)` had never been seen on hardware before. Four tests were added
+(`test_wf_log.c`, 74 -> 87 checks) and **mutation-checked**: reverting the guard fails
+all four, each in the shape of the original defect.
+
+**What is still NOT verified about the logger**, since the board is silent without a
+disk or an Amiga: the latch's retry-after-mount path (`main.c` is excluded from the
+host build, and exercising it needs the fetch path that has never run); detach/reattach
+cycling; and ring overflow while held. All three are host-tested only. Live streaming
+was proven by the pre-fix run and that path is unchanged.
+
+**The post-Save path is now instrumented, because it was completely silent.**
+Every module downstream of the portal -- `portal_net.c`, `device_client.c`,
+`transport_tls.c`, `sntp_time.c`, `config_store.c`, `token_store.c` -- had **zero** log
+calls, and `main.c`'s stopped at "credentials verified and saved". Running plan 5's next
+item against that would have been blind on paths that have never executed. Worse, three
+of its failure modes are silent forever-loops:
+
+- `sntp_sync_blocking()`'s result was **discarded**, and `tls_connect()` refuses to start
+  a handshake while `sntp_time_valid()` is false -- so a board that cannot reach NTP sits
+  in `dc_register()`'s backoff loop forever and looks exactly like broken TLS or a broken
+  server. It now says `sntp: NO clock -- TLS will refuse every handshake until it syncs`.
+- `dc_register()`'s retry loop logged nothing on any non-terminal failure. One line per
+  attempt now, with the backoff.
+- **Association SUCCESS was never logged** -- only failure -- so "did it associate?" was
+  unanswerable from the console.
+
+Added: AP-down + default route after `portal_stop()`, association success + default route
+on both paths, the SNTP result, stored-token-vs-registering, pairing-code rejection,
+per-attempt registration failure, and poll-loop entry. `default_route_str()` exists
+specifically to settle plan 4b's oldest open question -- whether `portal_stop()` really
+restores the STA netif as `netif_default` or leaves it NULL -- since a NULL there presents
+as "TLS is broken" with no message anywhere.
+
+**None of those lines has fired yet.** They are all downstream of pressing Save, and the
+board is unprovisioned, so it sits at the portal. Verified only that the instrumented
+build boots unchanged (same four lines, byte-identical). **This is where plan 5 is
+blocked, and it is blocked on a physical act, not on code:** someone must join
+`wifi-floppy-XXXX` from a phone, submit a real SSID and password plus a fresh pairing code
+from `/devices`, and capture the console through the sequence. That single run answers the
+whole of §3's open list at once.
+
+**A trap for whoever adds the next trace.** `wf_trace()` from a level-triggered
+condition in the 1 ms loop is a 1 kHz firehose, and the flood is worst exactly when
+the board is in its default state, so it will look like the logger is broken rather
+than the caller. Trace edges, not levels -- and if the condition really is a level,
+latch it. `WF_EV_TRACK_WANT` and `WF_EV_WGATE` are declared but never emitted; they
+are the next two candidates and both are level-shaped.
 
 **Hardware, three revisions now.** Rev A scrap. Rev A2 in hand, working, with ground
 plane under the antenna and outlines but no lettering. Rev B is current and
@@ -1919,6 +2073,181 @@ an assembled A2 board shows J2's and U1's outlines plainly legible at 0.12 mm. T
 0.12 mm is a real spec violation, but it printed; what was actually missing was all
 lettering, and that was the exporter dropping everything that was not an `fp_line`.
 I inferred a fab behaviour from a spec table instead of from a board.
+
+### 3y. Plan 5: the network stack is verified end to end — 2026-09-10
+
+**A rev A2 board provisioned itself and registered with production.** The device appears
+in the Devices tab as paired, and the poll loop has been running clean. This is the first
+time anything past `cyw43_arch_wifi_connect_timeout_ms()` has executed on hardware.
+
+```
+[  138.800] c1 portal: AP down, default route now w00 ip=172.16.10.216
+[  138.871] c1 portal: associated, default route w00 ip=172.16.10.216
+[  138.958] c1 portal: credentials verified and saved
+[  138.981] c1 associated, default route w00 ip=172.16.10.216
+[  138.981] c1 sntp: clock set
+[  138.981] c1 device: no stored token, registering with pairing code
+[  140.147] c1 tls: handshake OK with webadf.vercel.app:443
+[  140.611] c1 register: OK, token stored
+[  140.611] c1 entering poll loop against webadf.vercel.app
+[  141.863] c1 tls: handshake OK with webadf.vercel.app:443   <- polls, ~26.6 s apart
+```
+
+**§3's open list, answered.** Do not carry these forward as open again:
+
+- **`netif_default` IS restored to STA after the AP tears down.** `portal_stop()` works;
+  plan 4b's Critical fix is real. The board reports `w00` immediately after teardown,
+  never NULL. This had been unanswered since plan 4b was written.
+- **STA DHCP works after the AP netif is removed** — lease `172.16.10.216`, and the same
+  address again across cold boots from stored config.
+- **TLS to webadf succeeds** — full chain verification against the pinned bundle, with SNI
+  and hostname checking, in ~1.2 s.
+- **The confirmation page does leave the radio before AP teardown** — the phone rendered it
+  and `portal: AP down` follows.
+- **iOS captive-portal behaviour works end to end**, sign-in sheet through to Save.
+- **The pairing-code-rejected path is correct on hardware** (spec D-4b-4): a 400
+  `invalid_or_used_code` was treated as terminal, the config erased, the portal reopened
+  with the reason on the form. Verified by accident, with an expired code, then again
+  deliberately with a wrong one.
+
+**Three defects had to be fixed to get here, none of which any host test could see.** The
+logger's own two are in §3x. The third:
+
+- **The board hard-panicked at `sntp_init()`**: `pool MEMP_SYS_TIMEOUT is empty`.
+  `lwipopts.h` never set `MEMP_NUM_SYS_TIMEOUT`, and lwIP's default formula counts only
+  its own core modules with **no term for anything under `lwip/apps/`** -- which is where
+  SNTP lives. lwIP asserts rather than degrading. Not specific to the portal path: any
+  board, provisioned or not, took the same route to the same panic, so nothing downstream
+  of association could ever have run. Now `MEMP_NUM_SYS_TIMEOUT 12`, budget written out.
+- **`altcp_tls_create_config_client()` returned NULL**, so no handshake was ever
+  attempted. Cause: `mbedtls_config.h` enabled only `MBEDTLS_SHA256_C`, and **two of the
+  five pinned roots could not be parsed** -- GTS Root R1 is self-signed
+  `sha384WithRSAEncryption`, GlobalSign Root CA is `sha1WithRSAEncryption`. lwIP's
+  `altcp_tls_create_config()` fails the ENTIRE bundle on any non-zero return from
+  `mbedtls_x509_crt_parse()`, and that function is permissive -- it returns the COUNT of
+  rejects, not an error. Two bad certs produced a flat NULL and every request failing
+  before a packet moved.
+
+  **How it was missed is worth more than the fix.** `mbedtls_config.h`'s own header says
+  "The chain (leaf/WR1/GTS Root R1) is ... sha256WithRSAEncryption" -- correct about the
+  SERVED chain, all three certs of which really are SHA-256. But a trust anchor must still
+  be PARSED, and `mbedtls_x509_crt_parse()` rejects a cert whose signature algorithm it
+  cannot name whether or not that signature is ever verified. The reasoning was one step
+  short, and the root it stranded was the only one Vercel actually chains to.
+
+  Fixed by enabling `MBEDTLS_SHA512_C`/`MBEDTLS_SHA384_C` (needed to PARSE, not to verify
+  -- nothing on this chain is SHA-384) and **removing the GlobalSign root** from
+  `tools/gen_roots.sh` rather than enabling `MBEDTLS_SHA1_C`. The operator's ruling,
+  2026-09-10: "dont support SHA-1 its compromised." Verified: `MBEDTLS_SHA1_C` undefined
+  and **0 SHA-1 symbols linked** into the image (the SDK compiles `sha1.c`, but its body is
+  entirely `#if defined(MBEDTLS_SHA1_C)`). Bundle is four roots, all SHA-256, and still
+  validates the live host (`Verify return code: 0 (ok)`).
+
+**Still unrun after tonight:** the entire floppy side (no `SEL`/`MOTOR`/`STEP`/`INDEX`
+trace has ever fired, `WF_EV_TRACK_WANT` and `WF_EV_WGATE` are still never emitted), image
+fetch and PSRAM publish, Android captive-portal behaviour, DHCP lease RENEWAL over hours,
+and the portal's 2-lease pool / 3 HTTP slots under MAC-randomization retry storms.
+
+**A note on method, since it decided the outcome.** Every one of tonight's defects was
+found by instrumenting first and running second, and each was invisible to the layer above
+it: `register failed (rr=1)` flattened transport failure, non-200 and malformed body into
+one code; `altcp_tls_create_config_client()` reports failure only as NULL; and
+`mbedtls_x509_crt_parse()`'s permissive positive return had to be read directly to learn
+that the number was 2. Three diagnostics deep before a cause appeared. Budget for that.
+
+### 3z. The image fetch stalls at ~43-57 KB — FIXED, 2026-09-10/11
+
+**A disk can be mounted from the UI, the device fetches it, and the transfer dies partway.
+This is the first thing on the list that is not fixed.** Everything up to it works: the poll
+returns the desired disk, the entitlement check passes, and the server serves a real body.
+
+```
+[   15.467] c1 fetch: 6f471d757147 -> slot 0 (psram ok)
+[   17.027] c1 fetch: 16 KB
+[   18.029] c1 fetch: 32 KB
+[   48.033] c1 WARN fetch: incomplete -- exchange=FAILED status=200 complete=no
+                              got=43442 of 2027536
+```
+
+**The shape, which is the useful part.** Transfer runs at roughly 16 KB/s, reaches ~43 KB,
+then **stops dead** -- thirty seconds of total silence, then `DC_POLL_TIMEOUT_MS` (30 s)
+fires in `tls_read()`. Not a slowdown, a full stop with the server still holding 1.9 MB it
+is willing to send. Stall points observed: 43,442 and 57,344 bytes, alternating between
+attempts, so it is NOT a fixed buffer boundary. The failure lands in dc_fetch_image's
+`if (!ok || !r.body_complete)` branch, which deliberately never blocks the digest -- so the
+board retries the same fetch forever, roughly every 35 s.
+
+**Answered along the way, and worth keeping:** `psram ok` on every fetch line. The PIM726
+carries the PSRAM the design needs. That is the U1 substitution risk 3s says no check in
+the hardware folder can catch, and it is now retired on this board.
+
+**A WRONG DIAGNOSIS, recorded because the reasoning is the lesson.** I read `on_recv()`
+crediting `altcp_recved(pcb, p->tot_len)` on ARRIVAL while `tls_read()` never called it at
+all, concluded the receive window was never throttling the peer, and moved the credit to
+consumption. **It did not fix the stall** -- same failure, same byte counts. I had also
+claimed the stall was "exactly 57,344 bytes every time" on the strength of two samples, and
+the third was 43,442. Two errors: fixing the first plausible defect I found rather than the
+one the evidence pointed at, and generalising a constant from two data points.
+
+The change is KEPT, because crediting a window for bytes no one has read is incorrect flow
+control on its own terms and would bite under memory pressure -- but `transport_tls.c`'s
+comment now says explicitly that it is not the fix for this stall. Do not read it as one.
+
+**Where to look next.** A dead stop with data available at the peer is either a receive
+window that closes and never reopens, or lwIP exhausting pbufs and dropping silently; from
+the console those are identical. `LWIP_STATS` with `MEMP_PBUF_POOL` and heap counters dumped
+at the moment `tls_read()` times out separates them in a single run -- that is the next step,
+and it is instrumentation, not another guess.
+
+**THE CAUSE: `TCP_WND` was smaller than one maximum TLS record.** 8*TCP_MSS is 11,680
+bytes; `MBEDTLS_SSL_IN_CONTENT_LEN` defaults to 16384, so a record on the wire is up to
+~16,406. mbedtls cannot decrypt a partial record -- it yields no application byte until the
+whole record has arrived -- and lwIP credits the receive window in two parts: the
+application's share when we call `altcp_recved()`, and the record overhead in
+`altcp_mbedtls_lower_recv`, but ONLY once a record completes
+(`mbedtls_ssl_get_bytes_avail(...) == 0`). A window smaller than one record is therefore a
+deadlock: the peer fills the window with an incomplete record, mbedtls yields nothing,
+neither credit fires, we advertise zero, and both sides wait forever on a healthy
+ESTABLISHED socket. Every earlier response was a few hundred bytes of poll JSON in one small
+record, which is why nothing had ever hit it. `TCP_WND` is now 32*TCP_MSS.
+
+**What made it findable was measuring the window itself.** The lwIP stats said pbuf
+used=0 max=11 err=0 and heap err=0 -- no memory pressure at all, which killed the pbuf
+theory outright -- and then `rcv_wnd=0 ann=0 (TCP_WND=11680) state=4` said the rest in one
+line. Two wrong guesses preceded it; the counter did not.
+
+**Verified end to end 2026-09-11:**
+
+```
+[   20.400] c1 fetch: verified, publishing slot 0
+[   20.401] c0 MOUNT        a=6 b=0
+[   20.402] c0 TRACK-SERVED a=0 b=101344
+[   20.604] c0 INDEX        a=3167 b=0
+```
+
+`b=101344` is not merely plausible, it is exact: `src/lib/adfmfm/constants.ts` has
+`TRACK_BYTES = 12668`, so `TRACK_BITS = 101344`, and `WFMF_BYTES = 16 + 160 * (4 + 12668) =
+2027536` -- the Content-Length the device reported. The server's encoder, the container, the
+2 MB transfer, the PSRAM write, the publish and core0's read-back agree to the bit. INDEX
+firing means core0 is streaming flux through PIO/DMA with no Amiga attached. **PSRAM is
+confirmed working on this board**, retiring 3s's U1-substitution risk.
+
+**Throughput, measured rather than assumed.** Steady-state: 471 KB/s at 16*TCP_MSS, 599 KB/s
+at 32*TCP_MSS (+27%), 621 KB/s after `DC_READ_CHUNK_BYTES` 512 -> 4096 (~4% -- so the small
+reads were never the problem). A read/feed split then settled it: `read=3609 ms feed=411 ms`,
+i.e. **90% waiting on network plus TLS, 10% our own processing** (2 MB into PSRAM at ~4.8
+MB/s). ~575 KB/s is ~4.6 Mbit/s, consistent with commonly reported CYW43439-over-SPI figures
+plus software AES-GCM (RP2350 accelerates SHA-256, not AES) -- NOT independently measured,
+so treat it as an indication. The real lever is fewer bytes, not more tuning: the source ADF
+is 901,120 bytes against 2,027,536 of MFM, so encoding on-device would cut a mount to ~1.6 s
+-- at the cost of moving an encoder that was deliberately verified against greaseweazle
+server-side. Weigh that before doing it.
+
+**Still true, and now explained:** `DC_READ_CHUNK_BYTES` was
+**512**, so a 2,027,536-byte image is ~4,000 read calls, each a locked drain of the pbuf
+chain. Before tonight nothing on this path had moved more than a few hundred bytes in one
+response, so 512 had never been under load. ~16 KB/s is slow enough to be worth explaining
+even once the stall is fixed.
 
 ## Known accepted risks
 
