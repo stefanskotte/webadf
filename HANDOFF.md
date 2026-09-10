@@ -1457,6 +1457,27 @@ separately.
 
 ### 4. Backlog, not blocking anything
 
+- **Devices cannot be named, and the mount picker makes that hurt.** Found 2026-09-11 while
+  building the per-device mount UI (3ab), by an e2e assertion that expected the name it had
+  just passed to `pairDevice` and got `Device 12:E0:DD:C6:5D:65` instead.
+
+  `/api/devices/pair` ACCEPTS a `name` (zod-validated, 1-100 chars) and then throws it away:
+  `pairing_codes` has no column to hold it, so `register/route.ts` falls back to labelling
+  the device by its MAC. Its own comment says so. Nothing caught it because no test had ever
+  asserted a device's displayed name -- `game-detail.spec.ts` passes 'Device A'/'Device B'
+  and only ever checks testids, which are keyed on ids.
+
+  It did not matter while the only device list was `/devices`, where a MAC is a reasonable
+  identifier. It matters now: 3ab's whole point is choosing a drive from the library, and a
+  column of same-shaped MACs is the worst possible thing to choose between. With one device
+  it is invisible; the operator's fleet is about to be larger than one.
+
+  **Not fixed tonight on purpose: it needs a migration** (a `name` on `pairing_codes`, or a
+  rename flow writing `devices.name`), and running one against the production database
+  unsupervised while the operator slept was not a call to make alone. A rename flow on
+  `/devices` is probably the better shape anyway -- it fixes devices already paired, which a
+  pairing-time name cannot.
+
 - **Drive an I2C OLED from the PIM726 board.** The operator has one to hand (2026-09-11).
   Same underlying need as the activity-LED item below -- see what the drive is doing without
   a terminal -- so design the two together rather than separately: an LED is instant and
@@ -2248,6 +2269,59 @@ server-side. Weigh that before doing it.
 chain. Before tonight nothing on this path had moved more than a few hundred bytes in one
 response, so 512 had never been under load. ~16 KB/s is slow enough to be worth explaining
 even once the stall is fixed.
+
+### 3ab. Mount and eject a disk from the library — DONE 2026-09-11, on `feat/mount-to-device`, not merged
+
+Requested by the operator the same night the hardware first mounted a disk: "going to the
+library, click on a disk, then choose to mount & eject through the list of devices". Ejecting
+already worked from `/devices`; what did not exist was doing either from the disk itself.
+
+**Nothing on the server changed.** `setDesired`/`clearDesired` and
+`POST /api/devices/[id]/mount|eject` already existed and are already org-scoped, and the
+whole tenancy chain was re-verified the same night (pair mints with `requireOrg`, register
+binds the code's `orgId`, every device endpoint scopes by it, `/api/device/image` requires
+the device's own org to hold the entitlement and 404s rather than 403s). This increment is
+UI plus two columns.
+
+**What was there before:** a Mount button that listed device NAMES and nothing else. To find
+out which drive was free, or to get a disk back, you left for the Devices tab -- exactly the
+trip this removes.
+
+**What it does now.** Per device, in the picker: what that drive is holding right now, and a
+button that reads the situation -- `Mount here`, `Eject` when that drive has confirmed this
+disk, or `Cancel` when a fetch for it is still in flight. With one device paired the button
+flips between Mount and Eject directly. The trigger itself says `In {device} ▾` when some
+drive already has the disk, so the common question is answered before it is opened.
+
+**`Cancel` is not cosmetic.** Both verbs POST to `/eject`, which means "hold nothing" -- so
+calling off a pending fetch also drops whatever is still in the drive. Wording them apart is
+the honest way to say that; a person who picked the wrong drive is looking for Cancel, and
+`§7`'s rule that desired state must never be presented as fact is what makes Eject wrong
+before anything has landed.
+
+**Two columns added to `listDevices`:** `desiredDiskId` and `mountedDiskId`. The digests
+cannot stand in for them -- two disk rows can share one sha256 (identical bytes re-uploaded
+under a second title), and only the id tells them apart. `mount-choice.ts` still falls back
+to the digest when `mountedDiskId` is null, because `recordStatus` leaves it null when it
+could not resolve the reported digest, and reporting an empty drive that visibly holds
+something would be worse than an imprecise match.
+
+**A composition defect I introduced and then caught, worth recording as the pattern.** Each
+half was right alone: the trigger said `In {name}` matched by disk ID, while the line under
+the disk name came from the page's own sha256-keyed `holders` map, which by its own comment
+kept only the FIRST device found. Two rows sharing a digest, device A holding one and B the
+other, and the same row would say "In A" on one line and "In B" on the button. Fixed by
+making `choices` the single source of truth for both -- which also retired that documented
+first-match limitation for free, since per-device data can name every holder ("In A and B")
+instead of silently dropping the second. **Nothing in the per-piece work would have found
+this; it took reading the whole diff as one change**, which is the same lesson as 3v.
+
+**Verified:** 581 -> 588 vitest (22 in `mount-choice.test.ts` alone), `pnpm build` clean,
+lint at the standing 3-error baseline (all three pre-existing: two `Date.now()`-in-render,
+one in `pair-button.tsx`), and the full Playwright suite green at 229 before the composition
+fix, re-run after it.
+
+**Not merged and not pushed.** The operator was asleep; `master` is the production branch.
 
 ## Known accepted risks
 
