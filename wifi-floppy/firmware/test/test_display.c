@@ -58,40 +58,95 @@ static int lit_count(const uint8_t *fb) {
 
 // ------------------------------------------------------------ layout
 static void test_the_track_counter_is_right_aligned_and_exact(void) {
-    // Rendering "12/79" as the counter must put the SAME pixels on the panel
-    // as drawing that text flush right -- which is what pins the format the
-    // operator asked for ("0/79", then "1/79") rather than a zero-padded or
-    // differently-separated one that would also "look like a counter".
+    // On the BOTTOM line since the lemming took the top-right corner. The
+    // format is the one the operator asked for -- "0/79", then "1/79" -- not
+    // a zero-padded or differently-separated variant that would also "look
+    // like a counter".
     uint8_t got[DISP_FB_BYTES], want[DISP_FB_BYTES];
     display_state_t s = base_state();
     s.cyl = 12; s.show_track = true;
     display_render(&s, got);
 
     display_state_t ref = base_state();
-    ref.status = DS_LOADED; ref.show_track = false;
-    strcpy(ref.detail, "");
+    ref.show_track = false;
     display_render(&ref, want);
-    // The counter occupies the last 5 glyphs: 5*6-1 = 29 px, so x >= 99.
-    CHECK(any_lit(got, 0, 99, DISP_W), "a track counter must be drawn top-right");
-    CHECK(!any_lit(want, 0, 99, DISP_W), "no counter when show_track is false");
+    // "12/79" is 5 glyphs = 29 px, so it starts at x >= 99 on page 3.
+    CHECK(any_lit(got, 3, 99, DISP_W), "a track counter must be drawn bottom-right");
+    CHECK(!any_lit(want, 3, 99, DISP_W), "no counter when show_track is false");
 
-    // Single digit shifts right, exactly as "0/79" -> 4 glyphs = 23 px.
     uint8_t one[DISP_FB_BYTES];
     s.cyl = 0; display_render(&s, one);
-    CHECK(any_lit(one, 0, 105, DISP_W), "0/79 must still be flush right");
-    CHECK(!any_lit(one, 0, 99, 104), "0/79 is narrower than 12/79");
+    CHECK(any_lit(one, 3, 105, DISP_W), "0/79 must still be flush right");
+    CHECK(!any_lit(one, 3, 99, 104), "0/79 is narrower than 12/79");
 }
 
-static void test_the_counter_wins_a_collision_with_the_status_word(void) {
-    // A half-drawn "12/79" would be a LIE about which track is being read.
-    // A clipped status word is not. So the counter is drawn first and the
-    // word is what gets clipped -- assert that, because the opposite
-    // ordering also "works" until the day a long word meets a 3-digit track.
+static void test_the_counter_wins_a_collision_with_the_detail(void) {
+    // A half-drawn "12/79" would be a LIE about which track is being read; a
+    // clipped label is only shorter. So the counter is drawn first and the
+    // detail is what gets clipped -- assert it, because the opposite ordering
+    // also "works" right up until a long label meets a 3-digit track.
     display_state_t s = base_state();
-    s.status = DS_DOWNLOAD; s.cyl = 159; s.max_cyl = 159; s.show_track = true;
+    strcpy(s.detail, "Disk 10/12 Language D");   // exactly fills the 21-char line
+    s.cyl = 159; s.max_cyl = 159; s.show_track = true;
     uint8_t fb[DISP_FB_BYTES];
     display_render(&s, fb);
-    CHECK(any_lit(fb, 0, 110, DISP_W), "the counter must survive intact");
+    CHECK(any_lit(fb, 3, 110, DISP_W), "the counter must survive intact");
+}
+
+// ------------------------------------------------------------ the lemming
+static void test_the_lemming_walks(void) {
+    // A heartbeat that does not move is not a heartbeat. Every frame of the
+    // cycle must differ from the one before it, or the animation silently
+    // degrades into a static sprite that still "passes" every other check.
+    uint8_t prev[DISP_FB_BYTES];
+    display_state_t s = base_state();
+    s.tick = 0; display_render(&s, prev);
+    for (int t = 1; t < 4; t++) {
+        uint8_t fb[DISP_FB_BYTES];
+        s.tick = t; display_render(&s, fb);
+        CHECK(memcmp(fb, prev, DISP_FB_BYTES) != 0, "each frame must differ");
+        memcpy(prev, fb, DISP_FB_BYTES);
+    }
+    // And it must be a CYCLE, not a ramp off the end of the table.
+    uint8_t zero[DISP_FB_BYTES], four[DISP_FB_BYTES];
+    s.tick = 0; display_render(&s, zero);
+    s.tick = 4; display_render(&s, four);
+    CHECK(memcmp(zero, four, DISP_FB_BYTES) == 0, "the walk cycle must repeat");
+}
+
+static void test_the_lemming_stays_in_its_corner(void) {
+    // THE property that makes an animation affordable in a 1 ms service loop:
+    // it must dirty only its own 8 columns of one page. If a frame change
+    // touched the title or the counter, every step of the walk would cost a
+    // redraw of them too, on the core that is servicing the floppy bus.
+    display_state_t a = base_state(), b = base_state();
+    strcpy(a.title, "Sensible Soccer"); strcpy(a.detail, "Disk 1/2");
+    a.show_track = true; a.cyl = 12;
+    b = a;
+    a.tick = 0; b.tick = 2;
+    uint8_t fa[DISP_FB_BYTES], fb_[DISP_FB_BYTES];
+    display_render(&a, fa); display_render(&b, fb_);
+    for (int p = 0; p < DISP_PAGES; p++)
+        for (int x = 0; x < DISP_W; x++) {
+            bool corner = (p == 0 && x >= DISP_W - 8);
+            if (!corner)
+                CHECK_EQ_INT(fa[p * DISP_W + x], fb_[p * DISP_W + x]);
+        }
+}
+
+static void test_a_walk_step_costs_one_small_blit(void) {
+    begin();
+    display_t d; display_init(&d, fake_blit, NULL);
+    display_state_t s = base_state();
+    strcpy(s.title, "Lemmings"); s.show_track = true; s.cyl = 12;
+    display_set(&d, &s);
+    while (!display_in_sync(&d)) display_pump(&d, 64);
+
+    s.tick = 1; display_set(&d, &s);
+    int sent = 0, calls = 0;
+    while (!display_in_sync(&d) && calls++ < 50) sent += display_pump(&d, 12);
+    CHECK(sent > 0, "a walk step must send something");
+    CHECK(sent <= 12, "and must fit a single mounted-budget pump call");
 }
 
 static void test_a_title_breaks_at_a_space_when_it_can(void) {
@@ -279,6 +334,15 @@ static void dump(const char *what, const display_state_t *s) {
 }
 
 static void dump_all(void) {
+    // The walk cycle, side by side -- the sprite is 8 px and no assertion can
+    // say whether it reads as a lemming.
+    for (int t = 0; t < 4; t++) {
+        display_state_t w = base_state();
+        w.tick = t; w.status = DS_LOADED; w.bars = 3;
+        char h[32]; snprintf(h, sizeof h, "walk frame %d", t);
+        dump(h, &w);
+    }
+
     display_state_t s = base_state();
     s.status = DS_LOADED; s.bars = 3; s.cyl = 12; s.show_track = true;
     strcpy(s.title, "Sensible Soccer"); strcpy(s.detail, "Disk 1/2  WP");
@@ -303,7 +367,10 @@ static void dump_all(void) {
 int main(int argc, char **argv) {
     if (argc > 1 && strcmp(argv[1], "--dump") == 0) { dump_all(); return 0; }
     RUN(test_the_track_counter_is_right_aligned_and_exact);
-    RUN(test_the_counter_wins_a_collision_with_the_status_word);
+    RUN(test_the_counter_wins_a_collision_with_the_detail);
+    RUN(test_the_lemming_walks);
+    RUN(test_the_lemming_stays_in_its_corner);
+    RUN(test_a_walk_step_costs_one_small_blit);
     RUN(test_a_title_breaks_at_a_space_when_it_can);
     RUN(test_a_long_unbreakable_title_is_truncated_visibly);
     RUN(test_more_bars_never_removes_pixels);

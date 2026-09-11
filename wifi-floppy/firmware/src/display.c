@@ -85,6 +85,32 @@ static const uint16_t WIFI_ARC2[8] = { 0x000,0x000,0x0F8,0x104,0x000,0x000,0x000
 static const uint16_t WIFI_ARC1[8] = { 0x000,0x000,0x000,0x000,0x070,0x088,0x000,0x000 };
 static const uint16_t WIFI_DOT [8] = { 0x000,0x000,0x000,0x000,0x000,0x000,0x020,0x070 };
 
+
+// A LEMMING, walking on the spot in the top-right corner. Asked for because it
+// is a nice thing to have on an Amiga floppy emulator, kept because it earns
+// its 8 columns: it is the only element on this panel that shows core0's
+// service loop is still TURNING. Every other field is static between events,
+// so a hung board and an idle one look identical. A lemming that has stopped
+// walking is a board that has stopped servicing the floppy bus.
+//
+// Eight pixels square, four frames, drawn from the pictures below rather than
+// hand-computed -- see the wifi glyph's comment for why that rule exists here.
+//
+//   .######.   .........   wide hair, the one feature that survives here
+//   .######.   .######.
+//   ..####..   .######.    the passing frame drops the whole figure one
+//   ..####..   ..####..    pixel as the feet come together -- that BOB is
+//   .######.   ..####..    what reads as walking at 8 px, more than any
+//   ..####..   .######.    number of extra leg positions would
+//   ..#..#..   ..####..
+//   .#....#.   ...##...
+#define LEM_W     8
+#define LEM_FRAMES 2
+static const uint8_t LEMMING[LEM_FRAMES][8] = {
+  { 0x7E, 0x7E, 0x3C, 0x3C, 0x7E, 0x3C, 0x24, 0x42 },   /* contact: legs apart, body up   */
+  { 0x00, 0x7E, 0x7E, 0x3C, 0x3C, 0x7E, 0x3C, 0x18 },   /* passing: feet together, bobbed */
+};
+
 // ---------------------------------------------------------------- drawing
 static void px(uint8_t *fb, int x, int y) {
     if (x < 0 || x >= DISP_W || y < 0 || y >= DISP_H) return;
@@ -120,6 +146,13 @@ static void draw_bitmap(uint8_t *fb, int x, int y, const uint16_t rows[8]) {
     for (int r = 0; r < 8; r++)
         for (int c = 0; c < WIFI_W; c++)
             if (rows[r] & (1u << (WIFI_W - 1 - c))) px(fb, x + c, y + r);
+}
+
+static void draw_lemming(uint8_t *fb, int x, int y, int frame) {
+    const uint8_t *g = LEMMING[((frame % LEM_FRAMES) + LEM_FRAMES) % LEM_FRAMES];
+    for (int r = 0; r < 8; r++)
+        for (int c = 0; c < LEM_W; c++)
+            if (g[r] & (1u << (LEM_W - 1 - c))) px(fb, x + c, y + r);
 }
 
 static void draw_wifi(uint8_t *fb, int x, int y, int bars) {
@@ -183,24 +216,10 @@ void display_render(const display_state_t *s, uint8_t fb[DISP_FB_BYTES]) {
     // --- top line: wifi glyph, status word, and the track counter ---------
     draw_wifi(fb, 0, 0, s->bars);
 
-    // The counter is right-aligned and drawn FIRST, so the status word is
-    // the thing that gets clipped in a collision. A half-drawn "12/79" would
-    // be a lie about which track is being read; a clipped "DOWNLO" is not.
-    int right = DISP_W;
-    if (s->show_track) {
-        char t[16];
-        snprintf(t, sizeof t, "%d/%d", s->cyl, s->max_cyl);
-        int w = text_px(t);
-        draw_text(fb, DISP_W - w, 0, t, DISP_W);
-        right = DISP_W - w - ADVANCE;
-    } else if (s->status == DS_DOWNLOAD && s->pct >= 0) {
-        char t[8];
-        snprintf(t, sizeof t, "%d%%", s->pct);
-        int w = text_px(t);
-        draw_text(fb, DISP_W - w, 0, t, DISP_W);
-        right = DISP_W - w - ADVANCE;
-    }
-    draw_text(fb, WIFI_W + 3, 0, status_word(s->status), right);
+    // The lemming owns the top-right corner, so the status word's room ends
+    // where it begins.
+    draw_lemming(fb, DISP_W - LEM_W, 0, s->tick);
+    draw_text(fb, WIFI_W + 3, 0, status_word(s->status), DISP_W - LEM_W - 2);
 
     // --- middle two lines: the disk name ----------------------------------
     char l1[22], l2[22];
@@ -208,8 +227,28 @@ void display_render(const display_state_t *s, uint8_t fb[DISP_FB_BYTES]) {
     draw_text(fb, 0, LINE_H,     l1, DISP_W);
     draw_text(fb, 0, LINE_H * 2, l2, DISP_W);
 
-    // --- bottom line: whatever detail the state has -----------------------
-    draw_text(fb, 0, LINE_H * 3, s->detail, DISP_W);
+    // --- bottom line: detail on the left, the number on the right ---------
+    //
+    // The counter lives here rather than the top-right because the lemming
+    // took that corner. It is drawn FIRST and the detail text is clipped
+    // against it, never the other way round: a half-drawn "12/79" would be a
+    // lie about which track is being read, where a clipped label is only
+    // shorter. Same rule as before the move, same reason.
+    int right = DISP_W;
+    if (s->show_track) {
+        char t[16];
+        snprintf(t, sizeof t, "%d/%d", s->cyl, s->max_cyl);
+        int w = text_px(t);
+        draw_text(fb, DISP_W - w, LINE_H * 3, t, DISP_W);
+        right = DISP_W - w - ADVANCE;
+    } else if (s->status == DS_DOWNLOAD && s->pct >= 0) {
+        char t[8];
+        snprintf(t, sizeof t, "%d%%", s->pct);
+        int w = text_px(t);
+        draw_text(fb, DISP_W - w, LINE_H * 3, t, DISP_W);
+        right = DISP_W - w - ADVANCE;
+    }
+    draw_text(fb, 0, LINE_H * 3, s->detail, right);
 }
 
 // ---------------------------------------------------------------- pump

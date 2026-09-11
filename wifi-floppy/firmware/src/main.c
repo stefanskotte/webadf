@@ -79,6 +79,12 @@ transport_t *tls_transport(void);
 #define DISP_BUDGET_MOUNTED 12
 #define DISP_BUDGET_IDLE    96
 
+// How long the lemming holds each frame. ~8 steps a second, which is a brisk
+// walk and not a twitch. Cheap by construction: a frame change dirties only
+// the sprite's own 8 columns of one page (there is a test for that), so a step
+// is a single pump call even at the mounted budget.
+#define LEMMING_STEP_MS 120
+
 static display_t  g_disp;
 static uint8_t    g_panel_addr;          // 0 == no panel answered at boot
 
@@ -1111,6 +1117,11 @@ int main(void) {
             ui.show_track = disk_mounted;
             ui.cyl        = cur_cyl;
             ui.max_cyl    = NUM_CYL - 1;
+            // The lemming walks off core0's own clock, which is the point of
+            // it: every other field on this panel is static between events, so
+            // a hung board and an idle one look identical. A lemming that has
+            // stopped walking is a service loop that has stopped turning.
+            ui.tick       = (int)(clock_ms() / LEMMING_STEP_MS);
             // Re-render only on a real change. display_render() is cheap but
             // it is not free, and this loop runs a thousand times a second
             // while nothing at all is happening.

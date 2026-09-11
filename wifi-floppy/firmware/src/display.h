@@ -50,6 +50,10 @@ typedef struct {
     int  cyl;        // 0..max_cyl
     int  max_cyl;    // 79 for a standard Amiga DD disk
     int  pct;        // download percent, or -1 to omit
+    // Walk-cycle frame for the lemming. Part of the STATE, not a timer read
+    // inside the renderer, so display_render stays pure and a given frame is
+    // reproducible in a test. The caller advances it; see main.c.
+    int  tick;
 } display_state_t;
 
 /** Compose `s` into a framebuffer. Pure: same state, same 512 bytes. */
