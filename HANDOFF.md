@@ -1560,11 +1560,27 @@ separately.
   on eject. `src/display.c` (pure, host-tested), `src/ssd1306.c` (transport),
   `dc_set_observer` (the seam), and core0's loop.
 
-  **The layout is four fields on 128x32:** a wifi glyph with signal strength, a status
-  word, the disk name wrapped over two lines, and the track counter as "0/79" --
-  right-aligned and drawn BEFORE the status word, so a collision clips the word rather
-  than the counter. A half-drawn "12/79" is a lie about which track is being read; a
-  clipped "DOWNLO" is not.
+  **The layout, on 128x32:**
+
+      ((o)) LOADED              [lemming]
+      Sensible Soccer
+      Disk 1/2 Boot        12/79
+
+  A wifi glyph with signal strength; a status word; the disk name wrapped over two
+  lines at a word break; the track counter as "0/79"; and a walking lemming in the
+  top-right. The counter is drawn BEFORE the detail label beside it and the label is
+  clipped against it, never the reverse -- a half-drawn "12/79" is a lie about which
+  track is being read, where a clipped label is only shorter.
+
+  **The lemming is not only decoration.** Every other field is static between events,
+  so a hung board and an idle one look identical on this panel; a lemming that has
+  stopped walking is a service loop that has stopped turning. It is the only liveness
+  signal there is. Two frames, because what reads as walking at 8 px is the body BOB
+  against the leg phase, not extra leg positions -- the four-frame first attempt had
+  two identical frames and read as a bounce. A frame change dirties only the sprite's
+  own 8 columns of one page (tested), so a step is a single pump call even at the
+  mounted budget; without that property every step would redraw the title and the
+  counter on the core servicing the floppy bus.
 
   **Where it runs is the whole design, and the obvious answer is wrong.** Core1 owns
   the network and therefore knows DOWNLOAD, LOADED and the disk's name -- but it blocks
@@ -1586,6 +1602,16 @@ separately.
   **STILL UNVERIFIED: the track counter.** Nothing generates STEP pulses until the
   Amiga is on the cable. The rendering and the wiring are host-tested; that the
   counter follows a real seek is not, and must not be recorded as working until it is.
+
+  **Where to pick this up.** `src/display.c` is pure and host-tested -- layout, font,
+  truncation, the counter's format, the pump's budget and its retry-on-failure -- so
+  anything about WHAT is shown is changed there and judged by `./test/run.sh`, not by
+  looking at the panel. `test/test_display.c --dump` prints the frames as ASCII art
+  for the one thing no assertion can judge, which is whether a glyph is legible; run
+  it whenever the font or a sprite changes. `src/ssd1306.c` is only how bytes reach
+  the glass. If a new field is wanted, the question to answer first is which core
+  knows it: core1 publishes through `ui_publish` (seqlock, main.c), core0 owns
+  anything the floppy side knows and is the only core that may touch I2C.
 
 - **THE PANEL IS DRAWING, AND IT IS 128x32 (2026-09-11).** Verified on hardware at 0x3c on
   i2c1: a frame on all four edges plus corner-to-corner diagonals, closed and unbroken.
