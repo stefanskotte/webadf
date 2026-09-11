@@ -2270,7 +2270,7 @@ chain. Before tonight nothing on this path had moved more than a few hundred byt
 response, so 512 had never been under load. ~16 KB/s is slow enough to be worth explaining
 even once the stall is fixed.
 
-### 3ab. Mount and eject a disk from the library — DONE 2026-09-11, on `feat/mount-to-device`, not merged
+### 3ab. Mount and eject a disk from the library — DONE 2026-09-11, merged to `master` and live
 
 Requested by the operator the same night the hardware first mounted a disk: "going to the
 library, click on a disk, then choose to mount & eject through the list of devices". Ejecting
@@ -2321,10 +2321,14 @@ lint at the standing 3-error baseline (all three pre-existing: two `Date.now()`-
 one in `pair-button.tsx`), and the full Playwright suite green at 229 before the composition
 fix, re-run after it.
 
-**Pushed, NOT merged.** `feat/mount-to-device` is on the remote and has a Preview
-deployment; `master` has not taken it. The firmware commits of 3x/3y/3z went to `master` in
-the same push and are therefore live -- harmlessly, since they touch only `wifi-floppy/` and
-this file, so the production build is byte-identical to the app that was already serving.
+**Merged fast-forward to `master` and deployed to production**, on the operator's say-so
+at the end of the same session. The merge changed nothing: `master` was a direct ancestor,
+so the tree that shipped is byte-for-byte the tree the 229-test suite ran against.
+
+**It shipped with the device-naming gap open, knowingly.** The picker labels every drive
+`Device <MAC>`, which is the weakest part of the feature and is in the backlog above. It was
+raised before the merge and the operator chose to ship; with one device paired it is
+invisible, and the fix wants a migration rather than a rushed one.
 
 ## Known accepted risks
 
