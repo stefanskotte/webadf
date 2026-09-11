@@ -98,40 +98,58 @@ bool ssd1306_selftest(uint8_t addr) {
   if (!cmd(addr, &window[3], 3)) return false;
 
   /*
-   * A ROW RULER, now scaled to the panel that is actually attached.
+   * A FRAME AND AN X, because counting failed three times.
    *
-   * Deliberately sparse: isolated single-pixel lines with known gaps can be
-   * COUNTED, and counting is what distinguishes a geometry fault from a dead
-   * region. The previous version measured a 64-row panel and so put three of
-   * its five lines in pages that do not exist here -- it could only ever have
-   * reported the top pair, which is exactly what it did.
+   * Every pattern before this one asked the operator to count lines, and every
+   * answer was ambiguous -- "bottom bar missing", "shifted down one row", "8
+   * blocks", "only one line", "3 lines" where 5 were drawn. That last one is
+   * the clearest evidence the METHOD is wrong rather than the reading: on a
+   * 0.91" panel two lines one row apart are ~0.4 mm apart, so a pair reads as
+   * one thicker mark, and "3" is exactly what a CORRECT 5-line ruler looks
+   * like. A test whose pass and fail look alike is not a test.
    *
-   *   rows  0 and  2   a PAIR at the very top,    one blank row between
-   *   row  16          a single line, mid-panel
-   *   rows 29 and 31   a PAIR at the very bottom, one blank row between
+   * This one is answerable by eye, with no counting at all:
    *
-   * Five lines, two of them touching the outer edges, means the geometry is
-   * right: every row of RAM reaches the row of glass it was addressed to.
+   *   a 1px FRAME on all four edges -- its four sides are the four extremes of
+   *     the addressable area, so "is the box closed and flush to the glass"
+   *     settles the panel's extent in one glance
+   *   an X corner to corner -- two unbroken strokes crossing in the middle.
+   *     A diagonal is the pattern interleaved COM pins cannot fake: wrong COM
+   *     mapping reorders rows, which turns a straight stroke into a staircase
+   *     of disconnected segments while leaving a frame looking perfect.
+   *
+   * Frame closed AND strokes clean -> geometry is right, and the display is
+   * ready for a driver. Anything else is now specific enough to act on.
    */
+  uint8_t fb[PAGES][WIDTH];
+  for (int p = 0; p < PAGES; p++)
+    for (int x = 0; x < WIDTH; x++) fb[p][x] = 0;
+
+  #define PIX(x, y) (fb[(y) / 8][(x)] |= (uint8_t)(1u << ((y) % 8)))
+  for (int x = 0; x < WIDTH; x++)  { PIX(x, 0); PIX(x, HEIGHT - 1); }
+  for (int y = 0; y < HEIGHT; y++) { PIX(0, y); PIX(WIDTH - 1, y); }
+  // Both diagonals. x advances WIDTH/HEIGHT per row so each stroke reaches the
+  // opposite corner exactly, rather than stopping short and leaving a gap that
+  // would read as the very breakage this is meant to detect.
+  for (int y = 0; y < HEIGHT; y++) {
+    const int x = y * (WIDTH - 1) / (HEIGHT - 1);
+    PIX(x, y);
+    PIX(WIDTH - 1 - x, y);
+  }
+  #undef PIX
+
   for (int page = 0; page < PAGES; page++) {
     uint8_t row[1 + WIDTH];
     row[0] = 0x40;                       /* "data follows" */
-    for (int x = 0; x < WIDTH; x++) {
-      uint8_t bits = 0;
-      for (int b = 0; b < 8; b++) {
-        const int y = page * 8 + b;
-        const bool lit = (y == 0 || y == 2 || y == 16 || y == 29 || y == 31);
-        if (lit) bits |= (uint8_t)(1u << b);
-      }
-      row[1 + x] = bits;
-    }
+    for (int x = 0; x < WIDTH; x++) row[1 + x] = fb[page][x];
     if (i2c_write_timeout_us(i2c1, addr, row, sizeof row, false,
                              I2C_TIMEOUT_US * 4) < 0) {
       return false;
     }
   }
 
-  wf_logf(WF_INFO, "oled: 0x%02x initialised as %dx%d, row ruler drawn "
-                   "(rows 0,2 / 16 / 29,31)", addr, WIDTH, HEIGHT);
+  wf_logf(WF_INFO, "oled: 0x%02x initialised as %dx%d, frame + X drawn — "
+                   "is the box closed on all four edges, strokes unbroken?",
+          addr, WIDTH, HEIGHT);
   return true;
 }
