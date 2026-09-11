@@ -2321,7 +2321,10 @@ lint at the standing 3-error baseline (all three pre-existing: two `Date.now()`-
 one in `pair-button.tsx`), and the full Playwright suite green at 229 before the composition
 fix, re-run after it.
 
-**Not merged and not pushed.** The operator was asleep; `master` is the production branch.
+**Pushed, NOT merged.** `feat/mount-to-device` is on the remote and has a Preview
+deployment; `master` has not taken it. The firmware commits of 3x/3y/3z went to `master` in
+the same push and are therefore live -- harmlessly, since they touch only `wifi-floppy/` and
+this file, so the production build is byte-identical to the app that was already serving.
 
 ## Known accepted risks
 
