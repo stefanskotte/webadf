@@ -1457,6 +1457,15 @@ separately.
 
 ### 4. Backlog, not blocking anything
 
+- **Enrich demos and applications from a source that actually has them.** Measured 2026-09-11
+  (see 3ad): of the TOSEC-identified blobs OpenRetro cannot enrich, essentially all are
+  demoscene productions -- 9 Fingers, State of the Art, Global Trash, Wayfarer, Ray of Hope 2
+  -- or applications, World Construction Set. OpenRetro is a games database and no amount of
+  matcher cleverness changes that. **Demozoo has a public API and covers exactly this
+  material**; Pouet is the other candidate. This, not more OpenRetro work, is what would put
+  titles and screenshots on the majority of THIS archive. Whoever picks it up should measure
+  coverage first the way 3ad did, before building anything.
+
 - ~~**Devices cannot be named, and the mount picker makes that hurt.**~~ **DONE 2026-09-11 — see 3ac.** Found while
   building the per-device mount UI (3ab), by an e2e assertion that expected the name it had
   just passed to `pairDevice` and got `Device 12:E0:DD:C6:5D:65` instead.
@@ -2424,6 +2433,87 @@ avoidable: the value is known at the moment the editor is asked for, so seeding 
 the click handler, not an effect. Back to exactly the 3 pre-existing errors.
 
 **Verified:** 594 vitest, **235 Playwright**, build clean, lint at the 3-error baseline.
+
+### 3ad. The scanner runs on upload, and the image budget became a rate — 2026-09-11
+
+Asked for: "the scanner should run more often to update titles, but we don't want to pound
+the openretro site, so it should be a differential run". Two thirds of that turned out to be
+ALREADY TRUE, and finding that out changed what was worth building.
+
+**Matching never touches openretro.org.** TOSEC and OpenRetro matching both run against
+locally imported tables. The only network calls are IMAGE fetches, and `openretro-images.ts`
+already states the policy in its own header: one at a time, 500 ms apart, identifying
+User-Agent, never re-fetched. Politeness was never the constraint on matching titles.
+
+**The sweep was already differential.** Every phase stamps its blob (`hashedAt`,
+`matchCheckedAt`, `enrichCheckedAt`); a run with nothing new does three indexed queries and
+exits.
+
+**And it was already global rather than per-org**, which is the part that matters for handing
+other people a library: blobs are content-addressed and shared, and `applyMatch` fans out to
+every org holding those bytes. One user's copy of Lemmings being identified titles it for
+everyone who holds the same bytes, at no extra cost. Multi-user enrichment did not need
+building.
+
+**What was actually broken was latency.** Nightly at 03:00 UTC, so somebody uploading sixty
+disks at lunchtime saw sixty untitled files until the next morning.
+
+- `/api/ingest/complete` now sweeps via **`after()`** with a 45 s budget. `after()` and not a
+  bare un-awaited promise: serverless freezes the function when the response returns, which
+  is exactly when fire-and-forget dies. The cron stays as the safety net that finishes long
+  jobs.
+- **`IMAGE_CAP_PER_RUN` (40) became `IMAGES_PER_ROLLING_HOUR` (60).** This is the change that
+  makes the rest safe, and the coupling is the whole point: 40 *per run* at four runs an hour
+  is 3,840 images a day arriving at a volunteer-run site that previously saw 40 a night. A
+  per-run cap cannot bound a rate when the number of runs is not fixed. Counted from
+  `openretro_images.fetched_at`, so every run shares one budget with no coordination and no
+  new table, and it is re-read before each entry so concurrent runs converge.
+- **A blob that throws is skipped for the rest of that run.** It is deliberately never
+  stamped, so the todo query used to hand it straight back and one permanently-failing blob
+  burned the whole 240 s budget while nothing else moved. The next run still retries it,
+  which is what a transient fault needs.
+
+**NO LOCK, and that is a decision rather than an omission.** I said I would add one. Once the
+image budget became a shared rolling rate, the only thing concurrency could genuinely harm --
+requests leaving the building -- was bounded anyway, and every database write here is
+idempotent and stamped. A lease table would have cost a migration to prevent duplicated local
+work. If sweeps ever start overlapping enough for that duplication to matter, this is the
+note to revisit.
+
+**IDENTITY MATCHING: BUILT, AND WORTH ALMOST NOTHING HERE. Measure before believing the
+handoff.** 3d called title+year matching "the single change that would make this increment pay
+for itself". Measured against the live catalogue before writing it:
+
+```
+TOSEC-identified blobs        29
+  already enriched by hash    13
+  NEW via title+year           1     <- Lemmings, and nothing else
+  ambiguous                    0
+  no OpenRetro entry at all   15
+```
+
+**The 15 are the finding, and they are not normalisation failures** -- checked again against a
+punctuation-stripped index. They are World Construction Set (an application), and 9 Fingers,
+State of the Art, Global Trash, Wayfarer, Giana Sisters Special Edition, Ray of Hope 2:
+**demoscene productions**. OpenRetro is a GAMES database. No matcher can make it enrich a
+demo. **The honest conclusion is that this archive is largely demos and applications, and the
+source that would cover it is Demozoo or Pouet, not a better OpenRetro matcher.** That is now
+the backlog item worth having.
+
+It is kept regardless, and strictly: exact normalised title AND exact year, unique hit or
+nothing -- no fuzzy distance, no year tolerance. A wrong title in somebody's library is worse
+than a missing one, and unlike a hash match there is no second signal to catch it. The reason
+to keep it is that the next libraries are other people's, and a collection of GAMES is exactly
+the case where it pays: the one hit here was the one game in the sample. `SweepResult` reports
+`enrichedByIdentity` separately so it can be judged on evidence later rather than assumed.
+
+**A test that had to change, and why it is not a weakened assertion.** `tosec-scan.spec.ts`'s
+"a disk landed after its blob was already matched" seeded a TOSEC entry with a direct DB write
+and relied on the blob being undecided -- true only because nothing swept between upload and
+scan. Now `/complete` sweeps, so the blob is correctly decided `none` first. Production does
+not have this problem: `tosec-import.ts` clears `matchCheckedAt`/`matchState` on every decided
+blob precisely so new reference data puts old verdicts back in play. The test now does the
+same thing explicitly, standing in for the import route it bypasses.
 
 ## Known accepted risks
 
