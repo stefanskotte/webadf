@@ -61,6 +61,7 @@ add_executable(wifi_floppy
   src/transport_tls.c src/sntp_time.c
   ${WFMF_PSA_CRYPTO_RANDOM_SRC}
   src/wf_log.c
+  src/activity_led.c src/i2c_probe.c
 )
 pico_generate_pio_header(wifi_floppy ${CMAKE_CURRENT_LIST_DIR}/src/floppy.pio)
 target_include_directories(wifi_floppy PRIVATE src ${CMAKE_CURRENT_LIST_DIR})
@@ -72,7 +73,7 @@ target_include_directories(wifi_floppy PRIVATE src ${CMAKE_CURRENT_LIST_DIR})
 pico_configure_ip4_address(wifi_floppy PRIVATE CYW43_DEFAULT_IP_AP_ADDRESS 192.168.4.1)
 target_link_libraries(wifi_floppy
   pico_stdlib pico_multicore hardware_pio hardware_dma hardware_irq
-  hardware_psram hardware_sync hardware_flash pico_flash
+  hardware_psram hardware_sync hardware_flash pico_flash hardware_i2c
   pico_cyw43_arch_lwip_threadsafe_background
   pico_lwip_mbedtls pico_mbedtls pico_lwip_sntp)
 # Review (final), Critical 1: RP2350's Arm stack guard is the msplim

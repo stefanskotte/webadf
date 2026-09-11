@@ -27,6 +27,8 @@
 #include "lwip/netif.h"   // default_route_str(): netif_default, see portal_stop()
 #include <stdio.h>
 #include "wf_log.h"
+#include "activity_led.h"
+#include "i2c_probe.h"
 #include <string.h>
 
 // transport_tls.c is device-only (no host test exercises it, unlike every
@@ -169,6 +171,7 @@ static void __isr gpio_isr(uint gpio, uint32_t events) {
         dskchg_on_step();
         want_track = cur_cyl * 2 + cur_side;
         wf_trace(WF_EV_STEP, (uint32_t)cur_cyl, outwards ? 1u : 0u);
+        led_blip();
     } else if (gpio == PIN_SEL0 && (events & GPIO_IRQ_EDGE_FALL)) {
         dskchg_on_sel_edge();
         wf_trace(WF_EV_SEL, 1, 0);
@@ -742,6 +745,16 @@ int main(void) {
 
     dskchg_init();
     track_cache_init();
+
+    // Both are hand-wired bring-up aids on unrouted header pins and both are
+    // no-ops with nothing attached, so neither is conditional: a board with no
+    // LED and no panel simply logs that it found no panel.
+    led_init();
+    // Three blinks, scheduled not blocked. With no Amiga connected there is no
+    // floppy traffic at all, so this is the only thing that distinguishes a
+    // working LED from a backwards one before the cable goes on.
+    led_selftest(3);
+    i2c_probe_bus();
     // psram_image_init() runs inside track_cache_init() and its bool result is
     // discarded there. Say it out loud, because PSRAM is the one part of this
     // board no footprint check and no host test can vouch for: a pin-compatible
@@ -869,6 +882,7 @@ int main(void) {
                 start_streaming(mfm, bits);
                 loaded = want;
                 wf_trace(WF_EV_TRACK_SERVED, (uint32_t)want, bits);
+                led_blip();
             } else {
                 // Not a cache miss to retry -- psram_image.h is explicit
                 // that a track absent from PSRAM is a fault. Worth a record

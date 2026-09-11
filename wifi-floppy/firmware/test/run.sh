@@ -14,6 +14,11 @@ fail=0
 #                       host-tested source file
 #   dskchg.c          - pulls in pico/stdlib.h (gpio_put, absolute_time_t);
 #                       genuinely device-only, no host-portable logic to test
+#   activity_led.c    } bring-up aids on hand-wired pins: a GPIO write plus an
+#   i2c_probe.c       } alarm, and an SDK i2c_read_timeout_us scan. Both are
+#                       device-only by construction and hold no logic a host
+#                       test could judge -- what they assert is about wiring,
+#                       which only a board can answer.
 # image_loader.c used to be excluded here too: it called http_get_stream(),
 # which only existed in http_fetch.c/.h (device-only, lwIP-backed), so
 # including it would fail to link. Task 3 removed that dependency
@@ -31,7 +36,7 @@ for t in test_*.c; do
   out=".build/${t%.c}"
   cc -std=c11 -g -O1 -Wall -Wextra -Werror -DWFMF_HOST_TEST=1 \
      -o "$out" "$t" transport_fake.c \
-     $(ls ../src/*.c | grep -vE 'main\.c|transport_tls\.c|sntp_time\.c|portal_net\.c|dskchg\.c') \
+     $(ls ../src/*.c | grep -vE 'main\.c|transport_tls\.c|sntp_time\.c|portal_net\.c|dskchg\.c|activity_led\.c|i2c_probe\.c') \
      || { echo "COMPILE FAIL: $t"; fail=1; continue; }
   "$out" || fail=1
 done

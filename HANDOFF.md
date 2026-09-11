@@ -1508,6 +1508,26 @@ separately.
   (peek rather than consume) or feed it from the state it wants to show directly, not from
   the log.
 
+- **PINS ARE CHOSEN AND THE FIRMWARE SIDE IS BUILT (2026-09-11).** `GP22` (header pin 29) for
+  the activity LED, `GP18`/`GP19` (pins 24/25) for I2C1 SDA/SCL. All three are bare, unrouted
+  through-holes in U1's footprint on rev A2, so this needs NO board change -- Dupont leads onto
+  the header pins that pass through the top. GND is pin 23 (adjacent to SDA) and 3V3 is pin 36.
+  `src/floppy_io.h` carries the full reasoning; `src/activity_led.c` and `src/i2c_probe.c` carry
+  the code. What remains below is the hardware itself.
+
+  **The trap worth knowing before moving these:** GP14-GP17 (pins 19-22) are the only other
+  free GPIOs and ALL FOUR are unusable. The existing comment warns only about pins 19/20, but
+  the antenna keepout spans both header rows and the east row mirrors the west, so pins 21/22
+  (GP16/GP17) land at the same y. The keepout allows pads and forbids tracks and vias, so
+  nothing can be routed to them -- and being the antenna end, they are equally wrong for
+  flying leads.
+
+  **Two hazards, both able to damage something:** the PIM726's Qw/ST connector is hardwired to
+  GP4/GP5, which on this board are MTR and DIR -- plugging a Qwiic device in contends with the
+  floppy bus, so the panel goes on the header, never the connector. And the OLED must be
+  powered from 3V3 (pin 36), never VSYS/VBUS: SSD1306 modules pull SDA/SCL up to their own VCC
+  and **RP2350 GPIOs are not 5V tolerant**.
+
 - **LEDs on the wifi-floppy board, at minimum a track-activity LED.** Requested by the
   operator 2026-09-11. The point is to see the drive doing something without a console
   attached -- which is the ordinary case, since `wf_log` only reaches a terminal over USB
