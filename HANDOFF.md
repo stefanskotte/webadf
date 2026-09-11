@@ -1457,7 +1457,7 @@ separately.
 
 ### 4. Backlog, not blocking anything
 
-- **Devices cannot be named, and the mount picker makes that hurt.** Found 2026-09-11 while
+- ~~**Devices cannot be named, and the mount picker makes that hurt.**~~ **DONE 2026-09-11 — see 3ac.** Found while
   building the per-device mount UI (3ab), by an e2e assertion that expected the name it had
   just passed to `pairDevice` and got `Device 12:E0:DD:C6:5D:65` instead.
 
@@ -1472,11 +1472,15 @@ separately.
   column of same-shaped MACs is the worst possible thing to choose between. With one device
   it is invisible; the operator's fleet is about to be larger than one.
 
-  **Not fixed tonight on purpose: it needs a migration** (a `name` on `pairing_codes`, or a
-  rename flow writing `devices.name`), and running one against the production database
-  unsupervised while the operator slept was not a call to make alone. A rename flow on
-  `/devices` is probably the better shape anyway -- it fixes devices already paired, which a
-  pairing-time name cannot.
+  **THE "NEEDS A MIGRATION" CLAIM WAS WRONG, and it is the reason this sat in the backlog
+  overnight.** It is true only of naming at PAIRING time, which is where I was looking --
+  `pairing_codes` has no column. An alias edited AFTER the fact needs no schema change at
+  all: `devices.name` is already a NOT NULL text column, already what every surface renders,
+  and `devices.macAddress` is separate so the identity survives a rename. The operator saw
+  that immediately ("just having an alias field under each device... would solve this easy"),
+  and was right. The lesson is narrow and worth keeping: **I priced the fix from the design I
+  had happened to examine, not from the one that was cheapest**, and a wrong cost estimate
+  parked a small job for a night.
 
 - **Drive an I2C OLED from the PIM726 board.** The operator has one to hand (2026-09-11).
   Same underlying need as the activity-LED item below -- see what the drive is doing without
@@ -2367,6 +2371,39 @@ so the tree that shipped is byte-for-byte the tree the 229-test suite ran agains
 `Device <MAC>`, which is the weakest part of the feature and is in the backlog above. It was
 raised before the merge and the operator chose to ship; with one device paired it is
 invisible, and the fix wants a migration rather than a rushed one.
+
+### 3ac. Devices can be named — DONE 2026-09-11, merged and live
+
+`devices.name` had always held `Device <MAC>`, written by `/api/device/register` from the one
+detail the device supplies about itself, with a comment saying it stood in "until a rename
+flow exists". 3ab made that hurt: choosing a drive from the library means choosing between
+names, and a column of same-shaped MACs is the worst thing to choose between.
+
+**No migration.** The column existed; only the way to edit it did not.
+
+- `src/lib/device-name.ts` -- `defaultDeviceName()` is now the SINGLE definition of the MAC
+  label, and `register/route.ts` calls it rather than inlining the template. Load-bearing:
+  clearing an alias RESETS to that exact string, so a drift between the two would "reset" a
+  device to a label it never had. A unit test pins them together.
+- `PATCH /api/devices/[id]` -- org-scoped, alias trimmed, 80 chars, and **404 not 403** for
+  another tenant's device, the same boundary `/api/device/image` sets.
+- An inline editor on each device card. "Name" while it still wears a MAC, "Rename"
+  afterwards; Enter saves, Escape abandons; an EMPTY alias restores the MAC rather than
+  leaving a nameless drive, because `devices.name` is NOT NULL and because a blank card is
+  harder to pick out of a list than one wearing its MAC.
+
+**Six e2e tests**, the load-bearing one being that two renamed devices show their aliases in
+the library mount picker AND that no `Device ` MAC label remains on that surface -- the
+complaint, asserted directly rather than via the rename alone. Plus cross-tenant refusal and
+the over-long-alias rejection.
+
+**A lint error I added and removed, worth a line.** Seeding the input inside a `useEffect`
+trips `react-hooks/set-state-in-effect` -- the same error `pair-button.tsx` carries in the
+standing baseline, which is presumably how the pattern got copied in the first place. It was
+avoidable: the value is known at the moment the editor is asked for, so seeding belongs in
+the click handler, not an effect. Back to exactly the 3 pre-existing errors.
+
+**Verified:** 594 vitest, **235 Playwright**, build clean, lint at the 3-error baseline.
 
 ## Known accepted risks
 
