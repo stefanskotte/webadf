@@ -121,12 +121,22 @@ export function writeDataBlocks(
 export function writeFileHeader(
   adf: Uint8Array, header: number, parent: number, name: string, size: number,
   first72: number[], firstExtension: number,
+  /** AmigaDOS protection bits, offset 320. See addFile's parameter note for
+   *  why absent and zero mean the same bytes but not the same thing. */
+  protection?: number,
 ): void {
   const hs = header * BLOCK_BYTES;
   putBe32(adf, hs, T_HEADER);
   putBe32(adf, hs + 4, header);
   putBe32(adf, hs + 8, first72.length);
   putBe32(adf, hs + 16, first72[0] ?? 0);
+  // Written UNCONDITIONALLY, including the zero case. `allocate` can hand back
+  // a block a previous delete freed and `free` never clears content, so a
+  // recycled header may still carry another file's protection word -- the same
+  // hazard the pointer-table clear below exists for. Defaulting to 0 here is
+  // what makes "the archive said nothing" produce ----rwed rather than
+  // whatever the last occupant happened to be.
+  putBe32(adf, hs + 320, protection ?? 0);
   putBe32(adf, hs + 324, size);
   // Clear the whole pointer table before writing the new one. `allocate`
   // hands out any block whose bitmap bit is free, including one a previous
@@ -216,6 +226,18 @@ function linkIntoDirectory(adf: Uint8Array, dir: number, entry: number, name: st
  */
 export function addFile(
   adf: Uint8Array, parentBlock: number, name: string, bytes: Uint8Array,
+  /**
+   * AmigaDOS protection bits for the new file, as the file header block stores
+   * them at offset 320 and as `protectionString` (dir.ts) reads them back.
+   *
+   * Optional, and undefined is NOT the same as 0. An archive that carries no
+   * attribute header has said nothing about protection, so the file takes the
+   * AmigaDOS default -- which happens to be the zero word, since the RWED bits
+   * are clear-means-allowed. An archive that explicitly says 0 is saying the
+   * same thing, so both land on the same bytes; the distinction matters at the
+   * CALLER, which must not invent bits from, say, a Unix mode.
+   */
+  protection?: number,
 ): WriteResult {
   if (name.length === 0 || name.length > 30) return { ok: false, reason: 'name-too-long' };
   const boot = readBoot(adf);
@@ -235,7 +257,7 @@ export function addFile(
   const exts = rest.slice(dataCount);
 
   writeDataBlocks(out, data, bytes, header, boot.filesystem, perBlock);
-  writeFileHeader(out, header, parentBlock, name, bytes.length, data.slice(0, HASH_TABLE_SIZE), exts[0] ?? 0);
+  writeFileHeader(out, header, parentBlock, name, bytes.length, data.slice(0, HASH_TABLE_SIZE), exts[0] ?? 0, protection);
   writeExtensionBlocks(out, exts, data, header);
   linkIntoDirectory(out, parentBlock, header, name, boot.intl);
   return { ok: true, adf: out };

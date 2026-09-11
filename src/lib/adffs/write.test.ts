@@ -971,3 +971,48 @@ describe('applyBatch', () => {
     expect(readFile(r.adf, v1.root[0].block)?.bytes).toEqual(new TextEncoder().encode('new content'));
   });
 });
+
+describe('protection bits', () => {
+  const disk = () => syntheticVolume({ filesystem: 'FFS', volumeName: 'Prot' });
+
+  it('defaults to ----rwed when the caller says nothing', () => {
+    const r = addFile(disk(), ROOT_BLOCK, 'plain', new Uint8Array([1, 2, 3]));
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    const v = readVolume(r.adf);
+    if (!v.ok) return;
+    expect(v.root[0].protection).toBe('----rwed');
+  });
+
+  it('preserves the bits an archive carried', () => {
+    // hspa|rwed is the case dir.test.ts already pins on the READ side, so this
+    // proves the two halves agree rather than that a number round-tripped.
+    const r = addFile(disk(), ROOT_BLOCK, 'fromlha', new Uint8Array([9]),
+                      0x80 | 0x40 | 0x20 | 0x10);
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    const v = readVolume(r.adf);
+    if (!v.ok) return;
+    expect(v.root[0].protection).toBe('hsparwed');
+  });
+
+  it('clears a recycled header rather than inheriting its protection', () => {
+    // allocate() can hand back a block a delete freed, and free() never wipes
+    // content -- the same hazard the pointer-table clear exists for. Without an
+    // unconditional write the next file would silently wear the dead one's bits.
+    const first = addFile(disk(), ROOT_BLOCK, 'gone', new Uint8Array([1]), 0x0f);
+    if (!first.ok) throw new Error('addFile failed');
+    const v0 = readVolume(first.adf);
+    if (!v0.ok) throw new Error('readVolume failed');
+
+    const del = deleteEntry(first.adf, ROOT_BLOCK, v0.root[0].block);
+    if (!del.ok) throw new Error('deleteEntry failed');
+
+    const second = addFile(del.adf, ROOT_BLOCK, 'fresh', new Uint8Array([2]));
+    if (!second.ok) throw new Error('second addFile failed');
+    const v = readVolume(second.adf);
+    if (!v.ok) return;
+    expect(v.root[0].name).toBe('fresh');
+    expect(v.root[0].protection).toBe('----rwed');
+  });
+});
