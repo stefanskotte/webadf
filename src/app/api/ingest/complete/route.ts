@@ -1,3 +1,5 @@
+import { after } from 'next/server';
+import { sweep } from '@/lib/tosec-sweep';
 import { gzipSync } from 'node:zlib';
 import { z } from 'zod';
 import { and, inArray, isNotNull } from 'drizzle-orm';
@@ -280,6 +282,37 @@ export async function POST(request: Request) {
       matchCheckedAt: null, matchState: null, tosecEntryId: null,
     }).where(and(inArray(blobs.sha256, decided), isNotNull(blobs.matchCheckedAt)));
   }
+
+  // Identify and enrich what just landed, WITHOUT making the uploader wait for
+  // it. Until now the only thing that ever ran the sweeper was a cron at 03:00
+  // UTC, so somebody who uploaded sixty disks at lunchtime looked at sixty
+  // untitled files until the next morning. For a library other people are
+  // meant to be able to use, that is the whole experience.
+  //
+  // after() rather than a bare un-awaited promise: on a serverless platform
+  // the function can be frozen the moment the response is returned, which is
+  // precisely when a fire-and-forget sweep would be killed. after() is the
+  // documented way to keep work alive past the response.
+  //
+  // A SHORT budget, not the cron's 240 s. This is the "make the new disks
+  // appear" pass, and the nightly run remains the one that finishes long jobs
+  // -- every phase is stamped and resumable, so stopping early costs nothing
+  // but the next run's time.
+  //
+  // Overlap with the cron, or with another upload, is left possible on
+  // purpose. Every write here is idempotent and stamped, and the one thing
+  // that genuinely must not double up -- requests to openretro.org -- is
+  // bounded by a rolling-hour budget that every run re-reads before fetching,
+  // so concurrency costs a little duplicated local work and nothing external.
+  after(async () => {
+    try {
+      await sweep(45_000);
+    } catch (err) {
+      // Never let a sweep failure reach the uploader: their disks ARE stored,
+      // and the nightly run will identify them. Logged, not surfaced.
+      console.error('ingest: post-upload sweep failed', err);
+    }
+  });
 
   return Response.json({
     created: grouped.length,

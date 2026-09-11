@@ -319,6 +319,19 @@ test('a disk landed after its blob was already matched still gets retitled', asy
     year: 1994, publisher: 'ReTest',
   });
 
+  // Stand in for what importing a DAT does for real. /complete now kicks a
+  // sweep of its own (so a new library titles itself without waiting for the
+  // 03:00 cron), which means this blob was already decided 'none' above --
+  // correctly, since no TOSEC entry existed yet. seedTosecEntry writes the
+  // entry straight to the table and so skips tosec-import.ts, whose lines
+  // 76-79 clear matchCheckedAt/matchState on every decided blob for precisely
+  // this reason: new reference data must put old verdicts back in play.
+  // Without this the test would be asserting that a stale 'none' survives,
+  // which is the opposite of the behaviour the product has.
+  await getDb().update(blobs)
+    .set({ matchCheckedAt: null, matchState: null, tosecEntryId: null })
+    .where(eq(blobs.sha256, sha256));
+
   await signInAsSuperAdmin(page);
   // First sweep: the blob IS matched (a genuine candidate exists), but
   // there is no disk anywhere for applyMatch to rewrite -- "matched against

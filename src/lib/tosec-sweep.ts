@@ -6,7 +6,8 @@ import { diskStore } from '@/lib/storage';
 import { contentHashes } from '@/lib/content-hashes';
 import { matchBlob, type Candidate } from '@/lib/tosec-match';
 import { applyMatch } from '@/lib/tosec-apply';
-import { openretroEntries, openretroDiskSha1 } from '@/db/schema/openretro';
+import { openretroEntries, openretroDiskSha1, openretroImages } from '@/db/schema/openretro';
+import { matchIdentity, openretroSortTitle, type IdentityCandidate } from '@/lib/openretro-identity';
 import { applyEnrichment } from '@/lib/openretro-apply';
 import { ensureImage } from '@/lib/openretro-images';
 
@@ -19,15 +20,68 @@ const MATCH_BATCH = 200;
 /** Blobs considered per enrichment pass. */
 const ENRICH_BATCH = 50;
 /**
- * Images fetched per sweep run, across all blobs. A first pass over a large
- * library therefore spreads over several nights instead of arriving at
- * openretro.org as a burst.
+ * Images fetched per ROLLING HOUR, across every run -- not per run.
+ *
+ * This was 40-per-run, correct while the only caller was one cron a night, and
+ * wrong the moment a sweep could also be triggered by an upload: 40 per run at
+ * four runs an hour is 3,840 images a day arriving at a volunteer-run site
+ * that previously saw 40 a night. A per-run cap cannot bound a rate when the
+ * number of runs is not fixed.
+ *
+ * Counted from openretro_images.fetched_at, so the budget is shared by every
+ * run automatically -- including concurrent ones, which each re-read it before
+ * fetching -- needing no coordination and no new table. 60/hour is one a
+ * minute sustained: enough that a new library fills in over an evening rather
+ * than a week, and the one number to turn down if openretro's operators ever
+ * ask us to.
  */
-const IMAGE_CAP_PER_RUN = 40;
+const IMAGES_PER_ROLLING_HOUR = 60;
+
+/**
+ * How many images may still be fetched this hour. Re-read before each entry so
+ * that two runs overlapping (an upload trigger landing on top of the cron)
+ * converge on the same budget instead of each spending it in full.
+ */
+async function imageBudgetRemaining(): Promise<number> {
+  const since = new Date(Date.now() - 3_600_000);
+  const rows = await getDb()
+    .select({ n: sql<number>`count(*)::int` })
+    .from(openretroImages)
+    .where(sql`${openretroImages.fetchedAt} > ${since}`);
+  return Math.max(0, IMAGES_PER_ROLLING_HOUR - (rows[0]?.n ?? 0));
+}
+
+/**
+ * Every OpenRetro entry keyed by normalised title, built once per run and only
+ * if something actually needs it.
+ *
+ * Held in memory rather than queried per blob because the table is 3,697 rows
+ * -- small enough that one read beats thousands of LIKEs, and because the
+ * normalisation has to happen in TypeScript anyway: doing it in SQL would mean
+ * a second implementation of makeSortTitle that could drift from the first.
+ */
+async function buildIdentityIndex(): Promise<Map<string, IdentityCandidate[]>> {
+  const rows = await getDb()
+    .select({ uuid: openretroEntries.uuid, gameName: openretroEntries.gameName,
+              year: openretroEntries.year })
+    .from(openretroEntries);
+  const idx = new Map<string, IdentityCandidate[]>();
+  for (const r of rows) {
+    const key = openretroSortTitle(r.gameName);
+    const bucket = idx.get(key);
+    if (bucket) bucket.push(r); else idx.set(key, [r]);
+  }
+  return idx;
+}
 
 export interface SweepResult {
   hashed: number; matched: number; none: number; ambiguous: number; merged: number;
   enriched: number; enrichNone: number; enrichAmbiguous: number;
+  /** Of `enriched`, how many came from TOSEC identity rather than a content
+   *  hash. Reported separately because it is the only way to tell whether
+   *  identity matching is earning its keep -- see openretro-identity.ts, which
+   *  records that on THIS archive it is worth exactly one disk. */
+  enrichedByIdentity: number;
   imagesStored: number; imageBytes: number;
   done: boolean;
 }
@@ -96,7 +150,8 @@ export async function sweep(budgetMs: number = DEFAULT_BUDGET_MS): Promise<Sweep
   const started = Date.now();
   const out: SweepResult = {
     hashed: 0, matched: 0, none: 0, ambiguous: 0, merged: 0,
-    enriched: 0, enrichNone: 0, enrichAmbiguous: 0, imagesStored: 0, imageBytes: 0,
+    enriched: 0, enrichNone: 0, enrichAmbiguous: 0, enrichedByIdentity: 0,
+    imagesStored: 0, imageBytes: 0,
     done: false,
   };
   // `done` means EVERY phase drained, so each phase that can leave work
@@ -239,25 +294,66 @@ export async function sweep(budgetMs: number = DEFAULT_BUDGET_MS): Promise<Sweep
   // Phase 3 -- enrich. Runs last: a blob's TOSEC identity is useful context
   // when a human reviews an enrichment miss, and all three phases share one
   // budget.
-  let imageBudget = IMAGE_CAP_PER_RUN;
+  let imageBudget = 0;
+  let identityIndex: Map<string, IdentityCandidate[]> | null = null;
   while (spent() < budgetMs) {
-    const todo = await db.select({ sha256: blobs.sha256, sha1: blobs.sha1 })
+    const todo = await db.select({
+        sha256: blobs.sha256, sha1: blobs.sha1,
+        // Carried so a hash miss can fall back to TOSEC identity without a
+        // second round trip per blob. LEFT join: most blobs have no TOSEC
+        // identity, and those simply skip the fallback.
+        tosecSortTitle: tosecEntries.sortTitle, tosecYear: tosecEntries.year,
+      })
       .from(blobs)
+      .leftJoin(tosecEntries, eq(tosecEntries.id, blobs.tosecEntryId))
       .where(and(isNull(blobs.enrichCheckedAt), sql`${blobs.sha1} is not null`))
       .limit(ENRICH_BATCH);
     if (todo.length === 0) { enrichDone = true; break; }
 
+    // A blob that THROWS is deliberately never stamped, so the same todo query
+    // hands it straight back -- which is how one permanently-failing blob used
+    // to burn the entire 240 s budget every night while nothing else advanced.
+    // Skipping it for the rest of THIS run lets the queue behind it move; the
+    // next run still retries it, which is what a transient fault needs.
+    const failedThisRun = new Set<string>();
+    if (todo.every((t) => failedThisRun.has(t.sha256))) { enrichDone = true; break; }
+
     for (const b of todo) {
       if (spent() >= budgetMs) break;
+      if (failedThisRun.has(b.sha256)) continue;
       try {
         const hit = await db.select({ entryUuid: openretroDiskSha1.entryUuid })
           .from(openretroDiskSha1).where(eq(openretroDiskSha1.sha1, b.sha1!));
         const uuids = [...new Set(hit.map((h) => h.entryUuid))];
 
         if (uuids.length === 0) {
-          await db.update(blobs).set({ enrichState: 'none', enrichCheckedAt: new Date(), openretroEntryId: null })
-            .where(eq(blobs.sha256, b.sha256));
-          out.enrichNone++;
+          // No content-hash hit. Before recording a miss, try the blob's TOSEC
+          // identity: openretro is thin in whole-disk ADF dumps but holds
+          // 3,697 NAMED games, so a disk TOSEC can name is sometimes a game
+          // openretro knows under a different set of bytes.
+          const viaIdentity = b.tosecSortTitle
+            ? matchIdentity(b.tosecSortTitle, b.tosecYear,
+                            (identityIndex ??= await buildIdentityIndex()).get(b.tosecSortTitle) ?? [])
+            : { state: 'none' as const };
+
+          if (viaIdentity.state === 'matched') {
+            await applyEnrichment(b.sha256, viaIdentity.uuid);
+            imageBudget = await imageBudgetRemaining();
+            imageBudget -= await fetchEntryImages(viaIdentity.uuid, out, imageBudget);
+            await db.update(blobs).set({
+              enrichState: 'enriched', enrichCheckedAt: new Date(),
+              openretroEntryId: viaIdentity.uuid,
+            }).where(eq(blobs.sha256, b.sha256));
+            out.enriched++;
+            out.enrichedByIdentity++;
+            continue;
+          }
+
+          await db.update(blobs).set({
+            enrichState: viaIdentity.state === 'ambiguous' ? 'ambiguous' : 'none',
+            enrichCheckedAt: new Date(), openretroEntryId: null,
+          }).where(eq(blobs.sha256, b.sha256));
+          if (viaIdentity.state === 'ambiguous') out.enrichAmbiguous++; else out.enrichNone++;
           continue;
         }
         if (uuids.length > 1) {
@@ -273,6 +369,7 @@ export async function sweep(budgetMs: number = DEFAULT_BUDGET_MS): Promise<Sweep
 
         const uuid = uuids[0];
         await applyEnrichment(b.sha256, uuid);
+        imageBudget = await imageBudgetRemaining();
         imageBudget -= await fetchEntryImages(uuid, out, imageBudget);
         // Stamped only after the work succeeded -- the same ordering phase 2
         // uses, and for the same reason: a stamp before a throw is
@@ -284,6 +381,7 @@ export async function sweep(budgetMs: number = DEFAULT_BUDGET_MS): Promise<Sweep
         // Deliberately does NOT stamp: an image fetch failure is usually
         // transient, and stamping would record it as decided forever.
         console.error(`openretro: enrichment failed for blob ${b.sha256}`, err);
+        failedThisRun.add(b.sha256);
       }
     }
   }
