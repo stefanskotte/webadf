@@ -1554,12 +1554,42 @@ separately.
   (peek rather than consume) or feed it from the state it wants to show directly, not from
   the log.
 
+- **THE PANEL IS DRAWING, AND IT IS 128x32 (2026-09-11).** Verified on hardware at 0x3c on
+  i2c1: a frame on all four edges plus corner-to-corner diagonals, closed and unbroken.
+  That covers the whole path -- bus, address, charge pump, geometry, row mapping -- which a
+  probe's ACK does not: an ACK survives a panel whose data line works one way, a controller
+  that decodes its address and nothing else, and a display with no charge pump.
+  `src/ssd1306.c` holds the self-test; it is NOT the driver, and the hazards below still
+  govern what a driver may do.
+
+  **The panel is 128x32, not the 128x64 that every SSD1306 example initialises**, and getting
+  that wrong does not fail. The controller scans 64 COM lines onto glass that has 32, so half
+  the pages land nowhere and `0xDA 0x12` interleaves the rest; the panel shows SOME of what
+  you drew. It reads as a damaged display. It cost a swapped panel, a reversed-polarity short
+  that had the board suspected dead, and an ENTIRE-DISPLAY-ON probe -- and none of those could
+  have produced the answer, because the fault was geometry and geometry is printed on the part.
+  `HEIGHT` is now the one constant that `0xA8`, `0xDA`, the page window and the test pattern
+  all derive from. **Ask for a partially-drawing panel's dimensions before probing it.**
+
+  **The second lesson is about the test, not the panel.** Four patterns in a row asked the
+  operator to COUNT features, and every answer was ambiguous -- "bottom bar missing",
+  "shifted down one row", "8 blocks", "only one line", "3 lines" where 5 were drawn. The last
+  one was a correct panel: lines one row apart are ~0.4 mm on a 0.91" display and the eye
+  merges them, so pass and fail looked alike. A hardware self-test whose result a human must
+  resolve at sub-millimetre scale is not a test. Frame-and-X replaced it because it is
+  answerable at a glance, and the diagonals are what a frame cannot do: wrong COM mapping
+  reorders rows, breaking a straight stroke into a staircase while the frame still looks fine.
+
 - **PINS ARE CHOSEN AND THE FIRMWARE SIDE IS BUILT (2026-09-11).** `GP22` (header pin 29) for
   the activity LED, `GP18`/`GP19` (pins 24/25) for I2C1 SDA/SCL. All three are bare, unrouted
   through-holes in U1's footprint on rev A2, so this needs NO board change -- Dupont leads onto
   the header pins that pass through the top. GND is pin 23 (adjacent to SDA) and 3V3 is pin 36.
   `src/floppy_io.h` carries the full reasoning; `src/activity_led.c` and `src/i2c_probe.c` carry
   the code. What remains below is the hardware itself.
+
+  **The I2C half is now verified on hardware; the LED half is NOT.** `led_selftest()` is
+  written and flashed but has never lit anything -- the operator is waiting on Dupont headers
+  (2026-09-11). Do not record GP22 as working until an LED has actually blinked on it.
 
   **The trap worth knowing before moving these:** GP14-GP17 (pins 19-22) are the only other
   free GPIOs and ALL FOUR are unusable. The existing comment warns only about pins 19/20, but
