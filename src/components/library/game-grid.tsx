@@ -24,7 +24,7 @@ export function GameGrid({ games }: { games: GameListItem[] }) {
         <p className="text-sm" style={{ color: 'var(--muted)' }}>
           Drop some ADFs on the ingest page, or run <code className="font-mono">webadf push</code>.
         </p>
-        <Link href="/ingest" className="rounded-lg px-4 py-2 text-sm font-semibold text-white"
+        <Link href="/ingest" className="btn-like rounded-lg px-4 py-2 text-sm font-semibold text-white"
               style={{ background: 'var(--primary-action)' }}>Add disks</Link>
       </div>
     );

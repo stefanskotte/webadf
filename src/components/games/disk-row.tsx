@@ -93,7 +93,7 @@ export function DiskRow({ disk, choices, from }: {
         <a
           href={`/api/disks/${disk.id}/adf`}
           data-testid={`download-${disk.id}`}
-          className="shrink-0 rounded-lg px-3 py-1.5 text-[12px] font-semibold"
+          className="btn-like shrink-0 rounded-lg px-3 py-1.5 text-[12px] font-semibold"
           style={{ background: 'var(--glass-strong)', color: 'var(--ink)' }}
         >
           Download
@@ -106,7 +106,7 @@ export function DiskRow({ disk, choices, from }: {
         <Link
           href={`/disks/${disk.id}/files${fromQuery(from)}`}
           data-testid={`browse-${disk.id}`}
-          className="shrink-0 rounded-lg px-3 py-1.5 text-[12px] font-semibold"
+          className="btn-like shrink-0 rounded-lg px-3 py-1.5 text-[12px] font-semibold"
           style={{ background: 'var(--glass-strong)', color: 'var(--ink)' }}
         >
           Browse

@@ -127,6 +127,91 @@
   html {
     @apply font-sans;
   }
+
+  /* ---- pressability ------------------------------------------------------
+     Operator report, 2026-09-11: "it's a bit hard sometimes to distinguish
+     labels and buttons". They were right, and the numbers say why -- 60
+     <button> elements across 18 files and exactly ONE cursor-pointer between
+     them, with hover styling on some and not others. On a glass design where
+     a pale button and a pale label sit on the same pale card, the pointer and
+     the hover ARE the distinction.
+
+     Done here rather than on each button deliberately. Sixty inline styles is
+     how the inconsistency happened in the first place; one base rule cannot
+     drift, and it covers every button written from now on without anyone
+     remembering to.
+
+     :not(:disabled) throughout -- a disabled control that lights up under the
+     cursor is a worse lie than one with no affordance at all. */
+  button:not(:disabled),
+  [role="button"]:not([aria-disabled="true"]),
+  a.btn-like {
+    cursor: pointer;
+    transition: box-shadow 0.13s ease, transform 0.13s ease;
+  }
+  button:disabled,
+  [aria-disabled="true"] {
+    cursor: not-allowed;
+  }
+
+  /* The wash is --primary-action's own hue at 10%, not a neutral grey and not
+     a new accent colour: laid over whatever background a button already
+     carries, it reads as that button one step deeper. So the pale glass
+     buttons darken, the dark primary one deepens, and neither gains a colour
+     that was not already in the palette.
+
+     `inset` matters -- it paints over the background but UNDER the label, so
+     the text keeps the contrast ratios recorded above rather than being
+     dimmed along with its backdrop. A filter: brightness() would have taken
+     the text down with it. */
+  button:not(:disabled):hover,
+  [role="button"]:not([aria-disabled="true"]):hover,
+  a.btn-like:hover {
+    box-shadow:
+      inset 0 0 0 999px rgb(22 39 58 / 0.10),
+      0 1px 2px rgb(30 45 60 / 0.10);
+  }
+
+  /* ...except on the dark buttons, where a dark wash does nothing. Screenshot,
+     2026-09-11: the same 10% ink laid over --primary-action (#16273a) was very
+     nearly invisible, while it read clearly on the pale glass ones. Dark
+     surfaces have to go the other way.
+
+     `.text-white` is the discriminator and it is a reliable one here rather
+     than a guess: in this codebase every filled dark button carries it,
+     because white-on-navy is the only way that fill is legible. If a dark
+     button ever appears without it, it will hover weakly and this comment is
+     where to look. */
+  button.text-white:not(:disabled):hover,
+  a.btn-like.text-white:hover {
+    box-shadow:
+      inset 0 0 0 999px rgb(255 255 255 / 0.15),
+      0 1px 2px rgb(30 45 60 / 0.16);
+  }
+  button.text-white:not(:disabled):active,
+  a.btn-like.text-white:active {
+    box-shadow: inset 0 0 0 999px rgb(255 255 255 / 0.24);
+  }
+
+  button:not(:disabled):active,
+  [role="button"]:not([aria-disabled="true"]):active,
+  a.btn-like:active {
+    transform: translateY(0.5px);
+    box-shadow: inset 0 0 0 999px rgb(22 39 58 / 0.16);
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    button,
+    [role="button"],
+    a.btn-like {
+      transition: none;
+    }
+    button:active,
+    [role="button"]:active,
+    a.btn-like:active {
+      transform: none;
+    }
+  }
 }
 
 /* ---- webadf design tokens (spec §11.1) ---- */

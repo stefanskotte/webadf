@@ -35,7 +35,12 @@ export function WriteProtectToggle({ diskId, writeProtected }: { diskId: string;
               : 'Writable — the device may write to this disk once write-back ships'}
             className="rounded-md border px-2 py-1 text-[10.5px] font-semibold uppercase tracking-wide disabled:opacity-50"
             style={writeProtected
-              ? { borderColor: 'var(--hairline)', color: 'var(--muted)' }
+              // --hairline is 8% and read as no border at all, which made this
+              // toggle look like a status chip rather than the control it is --
+              // the clearest instance of the operator's "hard to distinguish
+              // labels and buttons". --hairline-strong (14%) is still quiet
+              // enough not to compete with the actions beside it.
+              ? { borderColor: 'var(--hairline-strong)', color: 'var(--muted)' }
               : { borderColor: 'var(--amber-text)', color: 'var(--amber-text)' }}>
       {writeProtected ? 'Protected' : 'Writable'}
     </button>

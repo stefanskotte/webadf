@@ -74,7 +74,7 @@ export function MountAction({ diskId, choices }: { diskId: string; choices: Moun
   if (choices.length === 0) {
     return (
       <Link href="/devices" data-testid={`mount-${diskId}-none`}
-            className="rounded-lg border px-3 py-1.5 text-[12px] font-semibold"
+            className="btn-like rounded-lg border px-3 py-1.5 text-[12px] font-semibold"
             style={{ borderColor: 'var(--hairline)', color: 'var(--muted)' }}>
         Pair a device
       </Link>
