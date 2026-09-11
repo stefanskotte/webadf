@@ -13,8 +13,22 @@
 // in/out TLS record buffers mbedtls_ssl_setup() allocates are separate
 // mbedtls_calloc() calls that land on the ordinary C heap, not here.)
 #define MEMP_NUM_TCP_SEG            32
-#define PBUF_POOL_SIZE              32   // headroom for a full-size TLS record
-                                         // in flight, see TCP_WND below
+// MUST EXCEED TCP_WND/TCP_MSS, WITH HEADROOM. The receive window is a promise
+// that the peer may have that many bytes in flight, and every arriving segment
+// needs a pool pbuf to land in -- so a pool sized at exactly the window is a
+// pool with no slack for ARP, DNS, retransmits or the next segment arriving
+// while one is being consumed. When it runs dry lwIP silently DROPS packets
+// and the transfer stalls, which presents identically to the 3z deadlock.
+//
+// Caught on hardware 2026-09-11, and self-inflicted: raising TCP_WND from
+// 16 to 32*TCP_MSS for throughput left this at 32, i.e. exactly 46720/1460
+// segments. The board then reported `pbuf used=32 max=32 err=49` and needed
+// three attempts and 94 s to mount what it had been mounting first time in
+// under 5 s. It was LATENT while I measured throughput -- those runs happened
+// to succeed -- which is why it reached a commit.
+//
+// 64 against a 32-segment window is 2x. Costs ~64 * ~1.5 KB of SRAM.
+#define PBUF_POOL_SIZE              64
 #define LWIP_ARP                    1
 #define LWIP_ICMP                   1
 #define LWIP_DHCP                   1

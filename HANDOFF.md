@@ -2264,6 +2264,44 @@ is 901,120 bytes against 2,027,536 of MFM, so encoding on-device would cut a mou
 -- at the cost of moving an encoder that was deliberately verified against greaseweazle
 server-side. Weigh that before doing it.
 
+**TWO MORE DEFECTS, FOUND AFTER THIS SECTION WAS WRITTEN, ONE OF THEM MINE.**
+
+**INDEX was traced every revolution, which permanently saturated the log ring.** At 300 RPM
+that is a ~5 Hz producer, and wf_log keeps OLDEST and drops NEWEST -- a policy written for
+bursts. A board left mounted and unattended for 8.6 h reported `-- 151362 record(s)
+dropped --`, which is INDEX alone (151362 / 4.93 Hz = 8.5 h). The ring saturates about
+thirteen seconds after a disk mounts and stays that way, so any LATER event -- a TRACK-MISS,
+an error, an eject -- is dropped before a terminal can be attached. The boot history
+survives, which is the policy working as designed; everything after it did not. Same shape as
+the TRACK-MISS defect in 3x: a per-revolution trace is a level, not an edge.
+
+INDEX is now traced ONCE per stream, on the first wrap after start_streaming(), pairing with
+TRACK-SERVED to prove the DMA actually wrapped. `b` carries how many revolutions the PREVIOUS
+track completed, which is the fact the flood stood in for. A live "still spinning" indicator
+is what the activity LED in the backlog is for; it is not the log's job. Measured after:
+**1 INDEX line across 20 s of continuous streaming**, and 25 console lines for an entire
+boot + mount + 20 s, against thousands before.
+
+**PBUF_POOL_SIZE was left behind when TCP_WND was raised, and that one was self-inflicted.**
+Raising TCP_WND from 16 to 32*TCP_MSS for throughput made the window exactly 46720/1460 = 32
+segments while the pool stayed at 32 -- no slack for ARP, DNS, retransmits, or the next
+segment arriving while one is consumed. The pool ran dry, lwIP silently DROPPED packets, and
+the fetch stalled and timed out, presenting identically to the deadlock above:
+`pbuf used=32 max=32 err=49`, three attempts and 94 s to mount what had been mounting first
+time in under 5 s.
+
+**It was LATENT while I measured throughput** -- those runs happened to succeed, which is why
+it reached a commit, and it is the second time in one session that generalising from one or
+two good samples was wrong. The rule it leaves: **the pbuf pool must exceed TCP_WND/TCP_MSS
+with real headroom, and the two must be changed together.** Pool is now 64 against a
+32-segment window.
+
+Fixing it also RAISED throughput, because the window could not previously be used: four
+consecutive cold-boot mount cycles at **695, 688, 616, 630 KB/s, zero timeouts and zero
+incomplete fetches**, a whole image in ~2.9-3.2 s -- better than the 599 KB/s the paragraph
+above claims for the tuning alone. Treat those earlier figures as measured on a configuration
+that was quietly dropping packets.
+
 **Still true, and now explained:** `DC_READ_CHUNK_BYTES` was
 **512**, so a 2,027,536-byte image is ~4,000 read calls, each a locked drain of the pbuf
 chain. Before tonight nothing on this path had moved more than a few hundred bytes in one

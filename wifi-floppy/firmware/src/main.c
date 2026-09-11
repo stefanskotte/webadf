@@ -59,8 +59,22 @@ static uint32_t track_words[(TRACK_MAX_BYTES + 3) / 4];
 static uint32_t track_word_count;
 
 // ---------------------------------------------------------------- DMA feed
+// Revolutions of the current stream, the previous stream's total, and whether
+// this stream has already logged its INDEX. Touched from dma_irq (an ISR) and
+// from start_streaming on core0; volatile for the same reason track_live is.
+static volatile uint32_t rev_count;
+static volatile uint32_t prev_revs;
+static volatile bool     index_traced;
+
 static void start_streaming(const uint8_t *mfm, uint32_t bit_count) {
     uint32_t nwords = (bit_count + 31) / 32;
+
+    // Carry the outgoing track's revolution count into the next INDEX record
+    // and restart the counters. See dma_irq(): INDEX is traced ONCE per
+    // stream, not once per revolution.
+    prev_revs = rev_count;
+    rev_count = 0;
+    index_traced = false;
 
     // Review (final), Important 3: the abort MUST come before the repack
     // loop, not after it. `track_words` is the DMA's read address; the
@@ -121,11 +135,28 @@ static void __isr __not_in_flash_func(dma_irq)(void) {
     dma_channel_set_trans_count(dma_ch, track_word_count, true);
     gpio_put(PIN_INDEX, OUT_ASSERT);                 // ~2 ms index at wrap
     add_alarm_in_us(INDEX_PULSE_US, index_off, NULL, true);
-    // wf_trace, not wf_logf: no formatting and no format string, so this
-    // stays legal in a __not_in_flash_func handler. One record per
-    // revolution is 5/s -- an INDEX that stops is the loudest possible
-    // symptom on the Amiga side, and it only shows up if it was ticking.
-    wf_trace(WF_EV_INDEX, (uint32_t)track_word_count, 0);
+    rev_count++;
+    // ONCE PER STREAM, NOT ONCE PER REVOLUTION, and the difference is not
+    // cosmetic. At 300 RPM a per-revolution record is a permanent ~5 Hz
+    // producer, and wf_log's ring keeps OLDEST and drops NEWEST -- a policy
+    // written for bursts. Measured on a rev A2 board 2026-09-11: a board left
+    // mounted and unattended for 8.6 h reported "151362 record(s) dropped",
+    // which is INDEX alone (151362 / 4.93 Hz = 8.5 h). The ring saturates
+    // about thirteen seconds after a disk mounts and stays that way, so ANY
+    // later event -- a TRACK-MISS, an error, an eject -- is dropped before a
+    // terminal can ever be attached. The boot history survives, which is the
+    // policy working as designed; everything after it did not.
+    //
+    // Edge-triggered, this pairs with TRACK-SERVED: one line proving the DMA
+    // actually wrapped on the track just loaded. `b` carries how many
+    // revolutions the PREVIOUS track completed, which is the fact a
+    // per-revolution flood was standing in for -- and it costs one record per
+    // seek instead of five per second. A live "still spinning" indicator is
+    // what the activity LED in the backlog is for; it is not the log's job.
+    if (!index_traced) {
+        index_traced = true;
+        wf_trace(WF_EV_INDEX, (uint32_t)track_word_count, prev_revs);
+    }
 }
 
 // ---------------------------------------------------------------- bus ISRs
