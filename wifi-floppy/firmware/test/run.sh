@@ -36,7 +36,7 @@ for t in test_*.c; do
   out=".build/${t%.c}"
   cc -std=c11 -g -O1 -Wall -Wextra -Werror -DWFMF_HOST_TEST=1 \
      -o "$out" "$t" transport_fake.c \
-     $(ls ../src/*.c | grep -vE 'main\.c|transport_tls\.c|sntp_time\.c|portal_net\.c|dskchg\.c|activity_led\.c|i2c_probe\.c') \
+     $(ls ../src/*.c | grep -vE 'main\.c|transport_tls\.c|sntp_time\.c|portal_net\.c|dskchg\.c|activity_led\.c|i2c_probe\.c|ssd1306\.c') \
      || { echo "COMPILE FAIL: $t"; fail=1; continue; }
   "$out" || fail=1
 done

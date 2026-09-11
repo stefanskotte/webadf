@@ -29,6 +29,7 @@
 #include "wf_log.h"
 #include "activity_led.h"
 #include "i2c_probe.h"
+#include "ssd1306.h"
 #include <string.h>
 
 // transport_tls.c is device-only (no host test exercises it, unlike every
@@ -754,7 +755,14 @@ int main(void) {
     // floppy traffic at all, so this is the only thing that distinguishes a
     // working LED from a backwards one before the cable goes on.
     led_selftest(3);
-    i2c_probe_bus();
+    {
+        uint8_t panel = 0;
+        i2c_probe_bus(&panel);
+        // Only when a panel actually answered: a missing display must cost
+        // nothing, and must certainly not put bounded-but-real bus writes in
+        // front of a board that is trying to boot.
+        if (panel != 0) ssd1306_selftest(panel);
+    }
     // psram_image_init() runs inside track_cache_init() and its bool result is
     // discarded there. Say it out loud, because PSRAM is the one part of this
     // board no footprint check and no host test can vouch for: a pin-compatible

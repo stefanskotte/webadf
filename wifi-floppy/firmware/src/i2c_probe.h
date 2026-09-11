@@ -18,6 +18,9 @@
 /** Scan 0x08..0x77 and log each responder. Returns how many answered.
  *  Bounded: ~112 addresses, each NAKing immediately or timing out in 2 ms.
  *  Call once from core0's init, before the service loop. */
-int i2c_probe_bus(void);
+/** `panel_addr` (optional) receives the address of an SSD1306/SH1106 if one
+ *  answered, or 0. Reported separately from the count because the panel is the
+ *  one device this board has any business talking to. */
+int i2c_probe_bus(uint8_t *panel_addr);
 
 #endif
