@@ -18,8 +18,13 @@ export const maxDuration = 60;
 // about to create has no block number the client could possibly know yet.
 const manifestEntry = z.discriminatedUnion('op', [
   z.object({ op: z.literal('mkdir'), path: z.string().trim().min(1) }),
-  z.object({ op: z.literal('add'), path: z.string().trim().min(1) }),
-  z.object({ op: z.literal('replace'), path: z.string().trim().min(1) }),
+  // `protection` is the AmigaDOS bit mask an .lha carried for this file, when
+  // it carried one. Optional and unsigned-32 bounded; absent means the writer
+  // applies the AmigaDOS default rather than inventing bits.
+  z.object({ op: z.literal('add'), path: z.string().trim().min(1),
+             protection: z.number().int().min(0).max(0xffffffff).optional() }),
+  z.object({ op: z.literal('replace'), path: z.string().trim().min(1),
+             protection: z.number().int().min(0).max(0xffffffff).optional() }),
 ]);
 const manifestSchema = z.array(manifestEntry).min(1);
 
@@ -175,7 +180,7 @@ export async function POST(request: Request, ctx: { params: Promise<{ id: string
       ops.push({ op: 'mkdir', parentPath, name });
     } else {
       const bytes = new Uint8Array(await files.get(entry.path)!.arrayBuffer());
-      ops.push({ op: entry.op, parentPath, name, bytes });
+      ops.push({ op: entry.op, parentPath, name, bytes, protection: entry.protection });
     }
   }
 

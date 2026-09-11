@@ -37,8 +37,10 @@ export type WriteResult =
  */
 export type BatchOp =
   | { op: 'mkdir'; parentPath: string; name: string }
-  | { op: 'add'; parentPath: string; name: string; bytes: Uint8Array }
-  | { op: 'replace'; parentPath: string; name: string; bytes: Uint8Array };
+  // `protection` carries AmigaDOS bits an archive supplied. Optional, and
+  // absent is not zero -- see addFile's parameter note.
+  | { op: 'add'; parentPath: string; name: string; bytes: Uint8Array; protection?: number }
+  | { op: 'replace'; parentPath: string; name: string; bytes: Uint8Array; protection?: number };
 
 /**
  * Case-fold one character the same way `nameHash` does, so name comparison
@@ -828,7 +830,7 @@ export function applyBatch(ops: readonly BatchOp[]): (adf: Uint8Array) => WriteR
       const parent = resolved.block;
 
       const r = op.op === 'mkdir' ? makeDirectory(cur, parent, op.name)
-        : op.op === 'add' ? addFile(cur, parent, op.name, op.bytes)
+        : op.op === 'add' ? addFile(cur, parent, op.name, op.bytes, op.protection)
         : replaceExisting(cur, parent, op.name, op.bytes);
       if (!r.ok) return r;
       cur = r.adf;

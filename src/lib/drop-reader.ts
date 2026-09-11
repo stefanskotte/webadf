@@ -16,6 +16,14 @@ export interface DroppedItem {
   kind: 'file' | 'dir';
   file?: File;
   sizeBytes: number;
+  /**
+   * AmigaDOS protection bits, for items that came out of an archive that
+   * carried them. Absent for anything dropped from the filesystem, which has
+   * no Amiga permissions to report -- and absent is not zero: the writer turns
+   * "nothing was said" into the AmigaDOS default rather than inventing bits
+   * from, say, a Unix mode.
+   */
+  protection?: number | null;
 }
 
 /**

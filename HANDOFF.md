@@ -1457,7 +1457,7 @@ separately.
 
 ### 4. Backlog, not blocking anything
 
-- **Drop .lha and .zip onto a disk and pick files out of them.** Requested 2026-09-11:
+- ~~**Drop .lha and .zip onto a disk and pick files out of them.**~~ **DONE 2026-09-11 — see 3ae.** Requested:
   "most are distributed like this (from aminet typically), so many times you want to pick a
   few files out of archives". Cap the archive at ~25 MB.
 
@@ -2551,6 +2551,75 @@ scan. Now `/complete` sweeps, so the blob is correctly decided `none` first. Pro
 not have this problem: `tosec-import.ts` clears `matchCheckedAt`/`matchState` on every decided
 blob precisely so new reference data puts old verdicts back in play. The test now does the
 same thing explicitly, standing in for the import route it bypasses.
+
+### 3ae. Dropping .lha and .zip onto a disk — DONE 2026-09-11
+
+Aminet distributes as .lha and picking two files out of a download is the ordinary case, so
+an archive dropped on a disk now expands into the staging area exactly as a dropped FOLDER
+does. That was the whole placement answer: `readDroppedItems()` already flattens a folder
+into `{path, File}`, and an archive is the same shape, so expanding it at that point inherits
+the destination selector, collision handling, Latin-1/AmigaDOS name masking and the
+block-based free-space estimate without any of them knowing what an archive is.
+
+**Zip needed no dependency.** The container is a few fixed records and
+`DecompressionStream('deflate-raw')` is native. Read from the CENTRAL DIRECTORY, never by
+scanning local headers -- a local header may carry zeroed sizes with the truth in a trailing
+data descriptor.
+
+**LHA is the whole job, and it is verified against the reference tool, not against us.**
+`pnpm lha:verify <dir>` extracts every archive with the real `lha` and compares every byte of
+every member -- the same arrangement adffs has with xdftool and adfmfm with greaseweazle.
+Against five real Aminet downloads: **60/60 members byte-identical**. Methods seen: `-lh5-`
+everywhere, `-lh0-` for already-compressed members. Header levels seen: **level 1 on four of
+five**, level 2 on one -- so macOS `lha`'s level-2 default is NOT representative and local
+fixtures alone would have tested the wrong thing.
+
+**Two bugs only real archives could find:**
+
+- **Level 1's extended-header chain stores each header's size at the END of the previous
+  one.** Getting that wrong decodes levels 0 and 2 correctly BY LUCK -- neither derives its
+  data offset from that walk -- and lands level 1's payload 26 bytes early, producing files of
+  exactly the right LENGTH full of the wrong bytes. Sizes matching is what made it look fine.
+- **Level 0/1 headers pack the file comment into the filename field as `name\0comment`.**
+  Aminet's `l2boot.lha` decoded perfectly into paths like
+  `l2remote.boot\0created 02.08.2026 00:38:42, last accessed...`. "Comments not needed"
+  turned out to be load-bearing rather than a preference.
+
+**And one the verifier found about ITSELF.** Mutation-testing it -- corrupt an archive, expect
+DIFFER -- instead made `lha` reject the file, so the script skipped it and reported `0/0` with
+exit 0. **A run that verifies nothing now fails**, the same rule its missing-binary check
+already followed. Mutating the READER (level-1 chain off by two) then correctly reported 6/60
+and exit 1.
+
+**Protection bits, and the honest state of them.** `addFile`/`writeFileHeader` now take
+optional AmigaDOS bits and write them at offset 320, which `dir.ts` already read back --
+`addFile`'s signature simply could not express protection before, the same
+"does-the-type-carry-enough" shape that bit 3v twice. Written UNCONDITIONALLY including zero,
+because `allocate` can return a block a delete freed and `free` never clears content, so a
+recycled header would otherwise wear the dead file's bits.
+
+**But surveyed across those five Aminet archives, NOT ONE carries the 0x40 Amiga attribute
+header.** They carry Unix `0x50/0x51/0x53` instead, because modern uploads are built on Linux
+and Mac. So protection is usually absent, and absent means the AmigaDOS default. **No
+Unix-to-Amiga mapping, by the operator's decision** -- "it wouldn't translate right", and they
+are right: a Unix mode has no honest image in HSPARWED. Genuinely old Amiga-made archives
+should carry 0x40 and will be honoured; today's mostly do not.
+
+**Per-row include is the one real UI addition**, and it is deliberately NOT the existing
+`skip`. A 'skip' resolution means "this collides and I choose not to overwrite", which the
+resolution line and folder-merge wording both read that way; an archive member usually
+collides with nothing, and overloading 'skip' would make a plain exclusion claim a collision
+was resolved. Separate `excluded` set, offered on every row.
+
+**The 25 MB cap protects the BROWSER**, where decoding happens. It says nothing about fit: an
+ADF holds 880 KB and what decides fit is staging's block-based estimate, which exists because
+bytes lie about it.
+
+Nested archives and file comments are out of scope by decision, not oversight.
+
+**Verified:** 649 vitest (39 in the archive module alone), the e2e drops a real `lha`-produced
+fixture and asserts ON THE BYTES read back out of the stored image -- including that an
+excluded member is absent from the DISK rather than merely greyed out in a list.
 
 ## Known accepted risks
 

@@ -2,6 +2,8 @@
 
 import { useMemo, useState } from 'react';
 import { readDroppedItems, type DroppedItem } from '@/lib/drop-reader';
+import { expandArchive, isArchiveName } from '@/lib/archive';
+import { toast } from 'sonner';
 import {
   stageDrop, joinDestination, existingCollisionAt, type StagedEntry, type ExistingEntry,
 } from '@/lib/staging';
@@ -77,6 +79,18 @@ export function DropStaging({
   // several drops are meant to land in the SAME staging batch and commit
   // together, so a later drop appends rather than replacing.
   const [dropped, setDropped] = useState<DroppedItem[]>([]);
+  /**
+   * Rows the person has decided not to take at all.
+   *
+   * Separate from `resolutions`, deliberately. A 'skip' there means "this
+   * collides and I choose not to overwrite", and the resolution line and the
+   * folder-merge wording both read it that way. Dropping an ARCHIVE is the
+   * case the operator described as "pick a few files out of", which is a
+   * different statement about a row that may not collide with anything --
+   * overloading 'skip' would make a plain exclusion claim a collision was
+   * resolved.
+   */
+  const [excluded, setExcluded] = useState<ReadonlySet<string>>(new Set());
   const [nameOverrides, setNameOverrides] = useState<ReadonlyMap<string, string>>(new Map());
   const [resolutions, setResolutions] = useState<ReadonlyMap<string, Resolution>>(new Map());
   const [dragOver, setDragOver] = useState(false);
@@ -253,12 +267,63 @@ export function DropStaging({
     // -- as a plain function call, not behind an `await` of anything else
     // first -- is what keeps this correct. Get this wrong and a dropped
     // folder arrives as nothing, silently: no vitest suite can catch it.
-    readDroppedItems(e.dataTransfer.items).then((items) => {
-      setDropped((prev) => [...prev, ...items]);
+    readDroppedItems(e.dataTransfer.items).then(async (items) => {
+      // Archives expand HERE, after the synchronous read above, so the
+      // dataTransfer rule is untouched -- and they expand into exactly the
+      // same DroppedItem shape a folder produces, which is what lets the
+      // staging area, destination picker, collision handling and free-space
+      // estimate all apply to an .lha without knowing it is one.
+      const out: DroppedItem[] = [];
+      for (const item of items) {
+        if (item.kind !== 'file' || !item.file || !isArchiveName(item.file.name)) {
+          out.push(item);
+          continue;
+        }
+        const bytes = new Uint8Array(await item.file.arrayBuffer());
+        const result = await expandArchive(item.file.name, bytes);
+        if (result === null) { out.push(item); continue; }
+        if ('error' in result) {
+          toast.error(
+            result.error === 'too-large' ? 'Archive is too large' : 'Could not read that archive',
+            { description: result.error === 'too-large'
+                ? `${item.file.name} is ${(result.sizeBytes / 1024 / 1024).toFixed(1)} MB; the limit is 25 MB.`
+                : `${item.file.name} is not an .lha or .zip this can open.` });
+          continue;
+        }
+
+        // Parent directories, synthesised from the member paths. A dropped
+        // FOLDER arrives with its directories already present as entries and
+        // the commit turns those into mkdir ops; an archive carries its
+        // structure only in the paths, so without this a nested member would
+        // be written into a directory that was never created.
+        const dirs = new Set<string>();
+        for (const m of result.members) {
+          const parts = m.path.split('/').slice(0, -1);
+          for (let i = 1; i <= parts.length; i++) dirs.add(parts.slice(0, i).join('/'));
+        }
+        for (const d of [...dirs].sort()) {
+          out.push({ path: d, kind: 'dir', sizeBytes: 0 });
+        }
+        for (const m of result.members) {
+          out.push({
+            path: m.path,
+            kind: 'file',
+            sizeBytes: m.bytes.length,
+            file: new File([m.bytes as unknown as BlobPart], m.path.split('/').pop() ?? 'file'),
+            protection: m.protection,
+          });
+        }
+        if (result.skipped.length > 0) {
+          toast.warning(`${result.skipped.length} item${result.skipped.length === 1 ? '' : 's'} in ${item.file.name} could not be read`, {
+            description: result.skipped.slice(0, 3).map((k) => `${k.path}: ${k.reason}`).join('; '),
+          });
+        }
+      }
+      setDropped((prev) => [...prev, ...out]);
     });
   }
 
-  const nonSkipped = rows.filter((r) => r.resolution !== 'skip');
+  const nonSkipped = rows.filter((r) => r.resolution !== 'skip' && !excluded.has(r.entry.path));
   const totalBlocks = useMemo(
     () => blocksForPlan(nonSkipped.map((r) => ({ kind: r.entry.kind, sizeBytes: r.entry.sizeBytes })), filesystem),
     [nonSkipped, filesystem],
@@ -291,14 +356,24 @@ export function DropStaging({
 
   function commit() {
     if (commitDisabled) return;
-    const manifest: { op: 'mkdir' | 'add' | 'replace'; path: string }[] = [];
+    const manifest: { op: 'mkdir' | 'add' | 'replace'; path: string; protection?: number }[] = [];
     const form = new FormData();
     for (const row of nonSkipped) {
       const diskPath = diskPathFor(row.entry.path);
       if (row.entry.kind === 'dir') {
         manifest.push({ op: 'mkdir', path: diskPath });
       } else {
-        manifest.push({ op: row.resolution === 'replace' ? 'replace' : 'add', path: diskPath });
+        // Protection rides on the manifest rather than through staging.ts:
+        // the dropped item is already looked up here for its bytes, and
+        // StagedEntry has no business carrying an Amiga permission word.
+        // Undefined when the archive said nothing, which the writer turns
+        // into the AmigaDOS default rather than inventing bits.
+        const prot = droppedByPath.get(row.entry.path)?.protection;
+        manifest.push({
+          op: row.resolution === 'replace' ? 'replace' : 'add',
+          path: diskPath,
+          ...(typeof prot === 'number' ? { protection: prot } : {}),
+        });
         // Present on every DroppedItem of kind 'file' (drop-reader.ts);
         // the `!`s reflect that invariant, not a hopeful cast.
         form.set(diskPath, droppedByPath.get(row.entry.path)!.file!);
@@ -410,9 +485,31 @@ export function DropStaging({
               // or 'skip' resolution locks the name back down -- Undo is
               // the way back to editing it.
               const editable = openCollision || (row.entry.shortened && !resolved);
+              const isExcluded = excluded.has(row.entry.path);
               return (
                 <div key={i} className="flex flex-wrap items-center gap-2 pt-2 text-[12px]"
-                     data-testid={`stage-row-${i}`}>
+                     data-testid={`stage-row-${i}`} data-excluded={isExcluded ? 'true' : 'false'}
+                     style={isExcluded ? { opacity: 0.45 } : undefined}>
+                  {/*
+                    Take it or leave it, on EVERY row. A dropped folder is
+                    normally taken whole, but an archive is "pick a few files
+                    out of" -- and the existing skip control only appears on a
+                    collision, which most archive members do not have.
+                  */}
+                  <button type="button"
+                          onClick={() => setExcluded((prev) => {
+                            const next = new Set(prev);
+                            if (!next.delete(row.entry.path)) next.add(row.entry.path);
+                            return next;
+                          })}
+                          data-testid={`stage-include-${i}`}
+                          aria-pressed={!isExcluded}
+                          title={isExcluded ? 'Not being added — click to include' : 'Will be added — click to leave out'}
+                          className="shrink-0 rounded px-1.5 py-0.5 text-[11px] font-semibold"
+                          style={{ border: '1px solid var(--hairline-strong)',
+                                   color: isExcluded ? 'var(--muted)' : 'var(--ink)' }}>
+                    {isExcluded ? '☐' : '☑'}
+                  </button>
                   <span className="min-w-0 flex-1 truncate" style={{ color: 'var(--muted-2)' }}
                         title={row.entry.path}>
                     {row.entry.kind === 'dir' ? '📁 ' : ''}{row.entry.path}

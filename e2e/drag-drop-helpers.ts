@@ -12,6 +12,13 @@ export interface DropNode {
   kind: 'file' | 'dir';
   /** Only meaningful for a file. Defaults to '' (an empty file). */
   content?: string;
+  /**
+   * Binary content, as plain numbers so it survives page.evaluate's structured
+   * clone. Takes precedence over `content`. Needed because an .lha is binary
+   * and a string round-trip mangles it -- which would make an archive-drop test
+   * fail for a reason that has nothing to do with the archive code.
+   */
+  bytes?: number[];
   /** Only meaningful for a directory. Defaults to no children. */
   children?: DropNode[];
 }
@@ -86,7 +93,9 @@ export async function synthDrop(page: Page, tree: DropNode[]): Promise<void> {
         isFile: true,
         name: node.name,
         file(success: (f: File) => void) {
-          success(new File([node.content ?? ''], node.name));
+          success(node.bytes
+            ? new File([new Uint8Array(node.bytes)], node.name)
+            : new File([node.content ?? ''], node.name));
         },
       };
     }
