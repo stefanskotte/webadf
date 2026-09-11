@@ -1554,6 +1554,39 @@ separately.
   (peek rather than consume) or feed it from the state it wants to show directly, not from
   the log.
 
+- **DONE, AND VERIFIED ON HARDWARE (2026-09-11): the OLED shows status, the disk's
+  name, and the track.** Operator-confirmed against a real mount and a real eject:
+  DOWNLOAD with a live percentage, VERIFY, LOADED naming the disk, and back to READY
+  on eject. `src/display.c` (pure, host-tested), `src/ssd1306.c` (transport),
+  `dc_set_observer` (the seam), and core0's loop.
+
+  **The layout is four fields on 128x32:** a wifi glyph with signal strength, a status
+  word, the disk name wrapped over two lines, and the track counter as "0/79" --
+  right-aligned and drawn BEFORE the status word, so a collision clips the word rather
+  than the counter. A half-drawn "12/79" is a lie about which track is being read; a
+  clipped "DOWNLO" is not.
+
+  **Where it runs is the whole design, and the obvious answer is wrong.** Core1 owns
+  the network and therefore knows DOWNLOAD, LOADED and the disk's name -- but it blocks
+  for tens of seconds inside dc_step's long poll, so a counter fed from there would
+  freeze mid-seek for exactly that long. The counter is core0 state, so core0 drives
+  the panel; and core0 cannot afford a frame (512 bytes is ~11 ms at 400 kHz against a
+  1 ms loop -- the same stall the USB flood caused in 3x). Hence: framebuffer in RAM,
+  only CHANGED bytes sent, bounded slice per iteration (12 bytes ~450 us while mounted,
+  96 when idle, because the real-time duty exists only while the Amiga can be reading).
+  A track step moves under 40 bytes. Core1 publishes through a seqlock and never
+  touches I2C. **Nothing here drains wf_log** -- the hazard this entry used to warn
+  about; it reads state directly, so attaching a terminal cannot blank the screen.
+
+  **The disk name needed no server change and no protocol change.** The poll body has
+  carried `game`, `label`, `diskNo` and `diskCount` since src/lib/mount.ts was written;
+  the device parsed the digest and discarded the rest. Worth remembering as a pattern:
+  the missing feature was a field already on the wire.
+
+  **STILL UNVERIFIED: the track counter.** Nothing generates STEP pulses until the
+  Amiga is on the cable. The rendering and the wiring are host-tested; that the
+  counter follows a real seek is not, and must not be recorded as working until it is.
+
 - **THE PANEL IS DRAWING, AND IT IS 128x32 (2026-09-11).** Verified on hardware at 0x3c on
   i2c1: a frame on all four edges plus corner-to-corner diagonals, closed and unbroken.
   That covers the whole path -- bus, address, charge pump, geometry, row mapping -- which a
