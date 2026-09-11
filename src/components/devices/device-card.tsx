@@ -1,6 +1,8 @@
 import { deviceState } from '@/lib/device-state';
+import { isDefaultDeviceName } from '@/lib/device-name';
 import type { DeviceListItem } from '@/lib/queries';
 import { EjectButton } from './eject-button';
+import { DeviceAlias } from './device-alias';
 
 function relative(from: Date | null, now: number): string {
   if (!from) return 'never';
@@ -54,7 +56,8 @@ export function DeviceCard({ device, now }: { device: DeviceListItem; now: numbe
           width where the line already fits.
         */}
         <div className="flex min-w-0 flex-col gap-0.5">
-          <span className="text-[16px] font-bold" style={{ color: 'var(--ink)' }}>{device.name}</span>
+          <DeviceAlias deviceId={device.id} name={device.name}
+                       isDefault={isDefaultDeviceName(device.name, device.macAddress)} />
           <span className="break-words font-mono text-[11px]" style={{ color: 'var(--muted)' }}>
             {[device.macAddress, device.firmwareVersion && `fw ${device.firmwareVersion}`,
               device.rssi !== null && `${device.rssi} dBm`].filter(Boolean).join(' · ')}

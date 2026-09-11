@@ -4,6 +4,7 @@ import { and, eq, gt, isNull } from 'drizzle-orm';
 import { getDb } from '@/db';
 import { devices, pairingCodes } from '@/db/schema/devices';
 import { mintDeviceToken } from '@/lib/device-token';
+import { defaultDeviceName } from '@/lib/device-name';
 
 // Device plane: deliberately unauthenticated. The device has no bearer token
 // yet -- the pairing code it presents here IS the credential for this one
@@ -73,11 +74,14 @@ export async function POST(request: Request) {
   const { orgId } = claimed[0];
   const { plaintext, hash } = mintDeviceToken();
   const deviceId = randomUUID();
-  // No name was collected at register time (the pairing body's optional name
-  // isn't persisted anywhere yet -- see the pair route). The MAC address is
-  // the one identifying detail the device itself supplies, so it doubles as
-  // a stand-in label until a rename flow exists.
-  const name = `Device ${parsed.data.macAddress}`;
+  // No name is collected at register time (the pairing body's optional name
+  // isn't persisted anywhere -- see the pair route), so a device starts life
+  // labelled by the one identifying detail it supplies about itself.
+  //
+  // Shared with the rename flow rather than inlined here: clearing an alias
+  // RESETS to this exact string, so if the two ever diverged a "reset" would
+  // produce a label the device never had.
+  const name = defaultDeviceName(parsed.data.macAddress);
 
   // Only the hash is ever written. `plaintext` is returned once, below, and
   // never logged or stored.
