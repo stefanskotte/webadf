@@ -1457,6 +1457,43 @@ separately.
 
 ### 4. Backlog, not blocking anything
 
+- **Drop .lha and .zip onto a disk and pick files out of them.** Requested 2026-09-11:
+  "most are distributed like this (from aminet typically), so many times you want to pick a
+  few files out of archives". Cap the archive at ~25 MB.
+
+  **Where it goes: nowhere new.** The operator flagged that the create/edit ADF UX is not
+  settled and asked for an assessment -- and the assessment is that this needs no new surface.
+  `readDroppedItems()` (drop-reader.ts) already turns a dropped FOLDER into a flat list of
+  `{path, File}` by walking it client-side, and `stageDrop()` turns that into staged rows with
+  collision verdicts. **An archive is the same thing: a container of paths and bytes.** Expand
+  it into `DroppedItem[]` at the same point and the entire existing pipeline applies unchanged
+  -- the staging area, the destination selector, per-row rename/skip/replace, the Latin-1 and
+  AmigaDOS-character masking from 3v's F3 finding, and the block-based free-space estimate.
+  That also keeps it in the surface the operator already said was the part worth keeping
+  ("the staging area is a good idea I think", 3v).
+
+  **The one genuine UI addition is per-row INCLUDE.** A folder drop stages everything, which
+  is right for a folder; an archive is explicitly "pick a few files out of", which the staging
+  area cannot express today -- skip/replace resolve a collision, they do not decline an entry.
+  Expect select-all / select-none and probably a filter, because a 25 MB archive can be
+  hundreds of rows where a folder drop is usually a handful.
+
+  **.zip is easy; .lha is the whole job.** Zip is a solved problem in the browser (fflate).
+  LHA/LZH is niche, and Aminet is overwhelmingly .lha -- so this item lives or dies on an LZH
+  decoder. Aminet archives are almost all `-lh5-`, with some `-lh0-` (stored); implementing
+  those two probably covers the archive, and it is worth MEASURING that across a sample of
+  real Aminet files before committing to a library or writing one. Do it client-side like
+  drop-reader already does: it keeps 25 MB off the server entirely and sidesteps the function
+  body limit.
+
+  **Two different limits, do not conflate them.** The ~25 MB cap protects the BROWSER (decode
+  time and memory). It says nothing about whether the files fit: an ADF is 880 KB, so even a
+  large archive can only ever contribute a fraction of itself, and what decides that is the
+  existing block-based estimate -- built in 3v precisely because bytes lie about whether a
+  folder fits, since a hundred 1 KB files cost 300 blocks to hold 100 KB.
+
+  Out of scope unless asked: .lha file comments and Amiga protection bits, and nested archives.
+
 - **Enrich demos and applications from a source that actually has them.** Measured 2026-09-11
   (see 3ad): of the TOSEC-identified blobs OpenRetro cannot enrich, essentially all are
   demoscene productions -- 9 Fingers, State of the Art, Global Trash, Wayfarer, Ray of Hope 2
