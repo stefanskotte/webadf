@@ -30,6 +30,8 @@
 #include "activity_led.h"
 #include "i2c_probe.h"
 #include "ssd1306.h"
+#include "display.h"
+#include "hardware/sync.h"   // __dmb(), for the display seqlock below
 #include <string.h>
 
 // transport_tls.c is device-only (no host test exercises it, unlike every
@@ -38,6 +40,152 @@
 // linked in regardless of whether anything referenced it yet. Declaring
 // the one entry point here, now that this file is that "anything".
 transport_t *tls_transport(void);
+
+// ---------------------------------------------------------------- display
+//
+// WHERE THIS RUNS, and why it is not the obvious answer.
+//
+// Core1 owns the network, so it is core1 that knows DOWNLOAD and LOADED and
+// the disk's name -- which makes "render on core1" the first idea anyone has,
+// including me. It is wrong: core1 blocks for tens of seconds inside dc_step's
+// long poll, and the TRACK COUNTER would freeze mid-seek for exactly that
+// long. The counter is core0 state (cur_cyl, set by the STEP ISR), so core0 is
+// what must drive the panel.
+//
+// But core0 cannot afford a frame. Its service loop turns over every 1 ms and
+// a full 128x32 frame is 512 bytes -- ~11 ms at 400 kHz -- which would stall
+// the floppy exactly as the flood of USB writes did on 2026-09-10. So:
+//
+//   * the framebuffer lives in RAM and is composed by display.c, which is
+//     pure CPU work and pure C (host-tested, see test/test_display.c);
+//   * only CHANGED bytes are sent, and only a bounded slice per iteration.
+//
+// Core1 publishes what it knows through a seqlock; core0 reads it, adds the
+// track counter, and pumps. Core1 never touches the panel.
+//
+// Also load-bearing: nothing here drains wf_log. A display fed from the log
+// would COMPETE with the USB console for records (wf_log_drain consumes), so
+// attaching a terminal would blank the screen. It reads state directly.
+
+// Bytes of payload per pump call. The cost of a call is (n + 8) bytes at
+// 400 kHz and ~9 bits per byte -- 8 being the window commands and the control
+// byte -- so 12 is ~450 us and 96 is ~2.3 ms.
+//
+// Two budgets because the real-time duty is not constant: while a disk is
+// mounted the Amiga can be reading and core0 must stay responsive to STEP;
+// with nothing mounted there is no floppy traffic at all and a slow, pretty
+// redraw costs nobody anything. The seek deadline it must respect is head
+// settle, ~15 ms, not the 1 ms loop period.
+#define DISP_BUDGET_MOUNTED 12
+#define DISP_BUDGET_IDLE    96
+
+static display_t  g_disp;
+static uint8_t    g_panel_addr;          // 0 == no panel answered at boot
+
+static bool panel_blit(void *ctx, int page, int col, const uint8_t *b, int n) {
+    (void)ctx;
+    return ssd1306_blit(g_panel_addr, page, col, b, n);
+}
+
+// The published half: written by core1, read by core0. `g_ui_seq` is odd
+// while the strings are being written, so a reader can tell it caught a torn
+// update and simply try again on its next 1 ms turn -- a display is the one
+// consumer for which "skip this frame" is a complete and correct answer.
+static volatile uint32_t g_ui_seq;
+static char g_ui_title[DISP_TITLE_MAX + 1];
+static char g_ui_detail[DISP_DETAIL_MAX + 1];
+static volatile int g_ui_status = DS_BOOT;
+static volatile int g_ui_bars   = -1;
+static volatile int g_ui_pct    = -1;
+
+static void ui_publish(disp_status_t st, const char *title, const char *detail, int pct) {
+    g_ui_seq++;                     // odd: writing
+    __dmb();
+    if (title)  snprintf(g_ui_title,  sizeof g_ui_title,  "%s", title);
+    if (detail) snprintf(g_ui_detail, sizeof g_ui_detail, "%s", detail);
+    __dmb();
+    g_ui_seq++;                     // even: settled
+    g_ui_status = (int)st;
+    g_ui_pct    = pct;
+}
+
+/** Copy the published state. False means "torn, ask again" -- never a stale
+ *  half-string handed to the renderer. */
+static bool ui_snapshot(display_state_t *s) {
+    uint32_t a = g_ui_seq;
+    __dmb();
+    if (a & 1u) return false;
+    memset(s, 0, sizeof *s);
+    s->status = (disp_status_t)g_ui_status;
+    s->bars   = g_ui_bars;
+    s->pct    = g_ui_pct;
+    memcpy(s->title,  g_ui_title,  sizeof s->title);
+    memcpy(s->detail, g_ui_detail, sizeof s->detail);
+    s->title[DISP_TITLE_MAX]   = '\0';
+    s->detail[DISP_DETAIL_MAX] = '\0';
+    __dmb();
+    return g_ui_seq == a;
+}
+
+/** Just the dotted quad, for the panel's bottom line. default_route_str() is
+ *  the diagnostic form ("w00 ip=..."), which is right for a console log and
+ *  wrong for 21 characters of glass. Takes the lwIP lock, so core1 only --
+ *  never from core0's service loop, and never from an interrupt. */
+static const char *ip_str(void) {
+    static char buf[20];
+    cyw43_arch_lwip_begin();
+    struct netif *nif = netif_default;
+    snprintf(buf, sizeof buf, "%s", nif ? ip4addr_ntoa(netif_ip4_addr(nif)) : "no route");
+    cyw43_arch_lwip_end();
+    return buf;
+}
+
+/** RSSI to arcs. The thresholds are the ordinary ones for 2.4 GHz: -60 dBm is
+ *  a strong link, -80 is the edge of usable. Below that the glyph shows a bare
+ *  dot, which is honest -- it is associated, and barely. */
+static int rssi_bars(int rssi) {
+    if (rssi == 0)    return -1;      // not associated at all
+    if (rssi >= -60)  return 3;
+    if (rssi >= -70)  return 2;
+    if (rssi >= -80)  return 1;
+    return 0;
+}
+
+// Core1's view of the state machine, turned into words. Called from inside
+// dc_step -- including from the image read loop -- so it must do nothing but
+// format and store, which is all ui_publish does.
+static void ui_observe(void *ctx, const dc_obs_t *o) {
+    (void)ctx;
+    char detail[DISP_DETAIL_MAX + 1];
+    switch (o->kind) {
+    case DC_OBS_FETCH_BEGIN:
+        ui_publish(DS_DOWNLOAD, o->title[0] ? o->title : "Fetching", "", 0);
+        break;
+    case DC_OBS_FETCH_PROGRESS: {
+        int pct = o->total ? (int)((uint64_t)o->got * 100u / o->total) : -1;
+        snprintf(detail, sizeof detail, "%lu of %lu KB",
+                 (unsigned long)(o->got / 1024u), (unsigned long)(o->total / 1024u));
+        ui_publish(DS_DOWNLOAD, NULL, detail, pct);
+        break;
+    }
+    case DC_OBS_VERIFY:
+        ui_publish(DS_VERIFY, NULL, "checking image", -1);
+        break;
+    case DC_OBS_MOUNTED:
+        // "Disk 1/2" only when there is more than one -- on a single-disk
+        // game it is noise, and the line is 21 characters wide.
+        if (o->disk_count > 1)
+            snprintf(detail, sizeof detail, "Disk %lu/%lu %s",
+                     (unsigned long)o->disk_no, (unsigned long)o->disk_count, o->label);
+        else
+            snprintf(detail, sizeof detail, "%s", o->label);
+        ui_publish(DS_LOADED, o->title[0] ? o->title : "Disk mounted", detail, -1);
+        break;
+    case DC_OBS_EJECTED:
+        ui_publish(DS_READY, "No disk", "", -1);
+        break;
+    }
+}
 
 // Write-back (WGATE -> PSRAM -> flush to the server) does not exist yet --
 // flux_in_program is only ever set up, never enabled, and there is no code
@@ -369,6 +517,16 @@ static void core1_main(void) {
             // up from a previous call itself (it is re-entrant-safe), so
             // looping back here after a failed verify below needs no
             // extra teardown first.
+            {
+                uint8_t mac[6] = {0};
+                cyw43_hal_get_mac(0, mac);
+                char ssid[DISP_DETAIL_MAX + 1];
+                snprintf(ssid, sizeof ssid, "wifi-floppy-%02X%02X", mac[4], mac[5]);
+                // The SSID to join, not the IP: standing at the board, the
+                // question is which network to look for on a phone. The
+                // portal's address is handed over by DNS once joined.
+                ui_publish(DS_PORTAL, "Setup needed", ssid, -1);
+            }
             device_config_t submitted;
             // Final-review Important 2: the wait is bounded ONLY when
             // there is a stored configuration worth going back to.
@@ -452,6 +610,7 @@ static void core1_main(void) {
         // PROV_RUNNING: prov.cfg is populated either by prov_init() (a
         // config already on flash) or by prov_on_verified_submit() just
         // above.
+        ui_publish(DS_WIFI, "Connecting", prov.cfg.ssid, -1);
         int err = cyw43_arch_wifi_connect_timeout_ms(
             prov.cfg.ssid, prov.cfg.pass,
             CYW43_AUTH_WPA2_AES_PSK, 15000);
@@ -485,6 +644,8 @@ static void core1_main(void) {
         // Success was previously silent -- only failures logged -- so "did it
         // associate?" could not be answered from the console at all.
         wf_logf(WF_INFO, "associated, default route %s", default_route_str());
+        g_ui_bars = rssi_bars(wifi_rssi());
+        ui_publish(DS_READY, "No disk", ip_str(), -1);
 
         // Spec §6.2: SNTP before the first TLS handshake, and the firmware
         // never skips straight to a handshake with an unset clock --
@@ -596,6 +757,8 @@ static void core1_main(void) {
 
         static device_client_t c;
         dc_init(&c, tls_transport(), clock_ms, WEBADF_HOST, token);
+        // AFTER dc_init, which zeroes the struct (device_client.h).
+        dc_set_observer(&c, ui_observe, NULL);
         wf_logf(WF_INFO, "entering poll loop against %s", WEBADF_HOST);
 
         static char last_reported_sha[65] = "";
@@ -644,6 +807,8 @@ static void core1_main(void) {
             // handling would just re-set the state it is already in, so
             // there is no reason to send it even the one time before this
             // loop reacts.
+            g_ui_bars = rssi_bars(wifi_rssi());
+
             uint32_t now = clock_ms();
             bool disk_changed = strcmp(c.mounted_sha256, last_reported_sha) != 0;
             if (s != DC_HALTED && (disk_changed || (now - last_status_ms) >= DC_STATUS_PERIOD_MS)) {
@@ -761,7 +926,17 @@ int main(void) {
         // Only when a panel actually answered: a missing display must cost
         // nothing, and must certainly not put bounded-but-real bus writes in
         // front of a board that is trying to boot.
-        if (panel != 0) ssd1306_selftest(panel);
+        if (panel != 0 && ssd1306_selftest(panel)) {
+            // The self-test leaves the frame-and-X on the glass. Clear it, or
+            // the pump's first update would show the test pattern through
+            // every byte the new frame happens to leave blank -- display.c's
+            // shadow starts all-zero and only sends what DIFFERS, which is
+            // the whole reason a track step costs a few bytes and not a frame.
+            ssd1306_clear(panel);
+            g_panel_addr = panel;
+            display_init(&g_disp, panel_blit, NULL);
+            ui_publish(DS_BOOT, "wifi-floppy", "starting", -1);
+        }
     }
     // psram_image_init() runs inside track_cache_init() and its bool result is
     // discarded there. Say it out loud, because PSRAM is the one part of this
@@ -864,12 +1039,20 @@ int main(void) {
     // is plain and unsynchronized.
     int32_t last_active_token = 0;   // psram_image.c: 0 == the fresh-boot sentinel
     int loaded = -1;
+    // Display bookkeeping. `disk_mounted` gates BOTH the track counter (a
+    // cylinder number with no disk in the drive is a number about nothing)
+    // and the pump's budget, because the real-time duty only exists while
+    // the Amiga has something to read.
+    bool disk_mounted = false;
+    display_state_t ui, last_ui;
+    memset(&last_ui, 0, sizeof last_ui);
     while (true) {
         dskchg_poll();
 
         bool now_mounted;
         if (track_cache_check_swap(&last_active_token, &now_mounted)) {
             loaded = -1;
+            disk_mounted = now_mounted;
             if (now_mounted) {
                 dskchg_image_inserted();
                 wf_trace(WF_EV_MOUNT, (uint32_t)last_active_token, 0);
@@ -919,6 +1102,24 @@ int main(void) {
                 wf_trace(WF_EV_TRACK_MISS, (uint32_t)want, 0);
             }
         }
+
+        // The display: composed here because the track counter is core0's
+        // alone, and pushed a bounded slice at a time because a whole frame
+        // is ~11 ms against this loop's 1 ms turn. See the display section at
+        // the top of this file for why core1 cannot own this.
+        if (ui_snapshot(&ui)) {
+            ui.show_track = disk_mounted;
+            ui.cyl        = cur_cyl;
+            ui.max_cyl    = NUM_CYL - 1;
+            // Re-render only on a real change. display_render() is cheap but
+            // it is not free, and this loop runs a thousand times a second
+            // while nothing at all is happening.
+            if (memcmp(&ui, &last_ui, sizeof ui) != 0) {
+                display_set(&g_disp, &ui);
+                last_ui = ui;
+            }
+        }
+        display_pump(&g_disp, disk_mounted ? DISP_BUDGET_MOUNTED : DISP_BUDGET_IDLE);
 
         // Bounded on purpose. Four lines per 1 ms iteration keeps up with a
         // seek across the whole disk, and caps what a host that has stopped

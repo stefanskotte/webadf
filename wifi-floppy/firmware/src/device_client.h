@@ -28,6 +28,43 @@ typedef struct {
     bool     present;          // false => desired: null => eject
 } dc_desired_t;
 
+// ---------------------------------------------------------------------
+// OBSERVATIONS: what this state machine is doing, for something that shows
+// it to a human. Nothing here influences the protocol -- an observer that
+// does nothing must leave behaviour identical, which is what keeps the
+// display from being able to break a mount.
+//
+// A function pointer rather than a header include, for the same reason
+// transport_t is one: this file may not reference the panel, the I2C bus or
+// anything else device-only, or it stops building on the host.
+//
+// The server has ALWAYS sent the disk's title, number and label in the poll
+// body (src/lib/mount.ts). Nothing here parsed them, so the device knew only
+// a 64-character digest -- which is why "show the disk name" needs no server
+// change and no protocol change, only reading fields already on the wire.
+#define DC_TITLE_MAX 48
+#define DC_LABEL_MAX 24
+
+typedef enum {
+    DC_OBS_FETCH_BEGIN,     // a new digest is wanted; title is known
+    DC_OBS_FETCH_PROGRESS,  // got/total bytes; emitted only when % changes
+    DC_OBS_VERIFY,          // body complete, checking the container
+    DC_OBS_MOUNTED,         // published and servable
+    DC_OBS_EJECTED,         // desired: null
+} dc_obs_kind_t;
+
+typedef struct {
+    dc_obs_kind_t kind;
+    char     title[DC_TITLE_MAX + 1];
+    char     label[DC_LABEL_MAX + 1];
+    uint32_t disk_no;
+    uint32_t disk_count;
+    uint32_t got;
+    uint32_t total;
+} dc_obs_t;
+
+typedef void (*dc_observe_fn)(void *ctx, const dc_obs_t *o);
+
 // Read timeout for one request/response cycle. The server holds a poll
 // open for up to 25s before answering 204 (spec §4.3); a timeout at or
 // under that tears down a healthy poll mid-hold and looks exactly like a
@@ -74,6 +111,17 @@ typedef struct {
     // never itself read as an authoritative "writable".
     bool         mounted_write_protected;
 
+    // --- observation, see dc_set_observer ---
+    dc_observe_fn _obs;
+    void         *_obs_ctx;
+    // The in-flight disk's identity, so a progress observation can carry the
+    // title without re-parsing the poll body it came from.
+    char          _fetch_title[DC_TITLE_MAX + 1];
+    char          _fetch_label[DC_LABEL_MAX + 1];
+    uint32_t      _fetch_disk_no;
+    uint32_t      _fetch_disk_count;
+    int           _fetch_pct;     // last percent emitted, -1 = none yet
+
     // --- internal blocked-digest ring buffer; do not touch directly ---
     char _blocked[DC_BLOCKED_MAX][65];
     int  _blocked_count;
@@ -82,6 +130,12 @@ typedef struct {
 
 void dc_init(device_client_t *c, transport_t *t, clock_ms_fn now,
              const char *host, const char *token);
+
+/** Watch what this client does. Call AFTER dc_init, which zeroes the struct.
+ *  `fn` may be NULL to stop observing. Called on the caller's thread, from
+ *  inside dc_step -- including from the image read loop, so it must be cheap
+ *  and must not block: on this device that loop is the 2 MB transfer. */
+void dc_set_observer(device_client_t *c, dc_observe_fn fn, void *ctx);
 // One iteration: poll, and act on whatever comes back. Returns the new state.
 dc_state_t dc_step(device_client_t *c);
 

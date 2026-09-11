@@ -56,7 +56,7 @@ static bool cmd(uint8_t addr, const uint8_t *bytes, size_t n) {
   return i2c_write_timeout_us(i2c1, addr, buf, n + 1, false, I2C_TIMEOUT_US) >= 0;
 }
 
-bool ssd1306_selftest(uint8_t addr) {
+bool ssd1306_init(uint8_t addr) {
   static const uint8_t init[] = {
     0xAE,              /* display off while it is reconfigured           */
     0xD5, 0x80,        /* clock divide / oscillator frequency            */
@@ -92,10 +92,55 @@ bool ssd1306_selftest(uint8_t addr) {
     i += n;
   }
 
-  // Address the whole panel: columns 0..127, pages 0..7.
-  static const uint8_t window[] = { 0x21, 0x00, WIDTH - 1, 0x22, 0x00, PAGES - 1 };
+  /*
+   * 400 kHz now that a device has answered and the wiring is known good.
+   * i2c_probe_bus() deliberately runs at 100 kHz because its question is "is
+   * anything there" over hand-wired Dupont leads; once the panel has ACKed
+   * and initialised, the rate that matters is the one that decides how long
+   * core0's service loop is blocked per update. At 100 kHz every display
+   * write would cost four times as much of that loop, for no gain.
+   */
+  i2c_set_baudrate(i2c1, 400000);
+
+  if (!ssd1306_clear(addr)) return false;
+  return true;
+}
+
+/** Address one page and stream `n` bytes into it. */
+bool ssd1306_blit(uint8_t addr, int page, int col, const uint8_t *bytes, int n) {
+  if (page < 0 || page >= PAGES || col < 0 || n <= 0 || col + n > WIDTH) return false;
+
+  // The column END is the last byte of THIS write, not the edge of the panel.
+  // With horizontal addressing the controller auto-advances and wraps at the
+  // window's end; a window left open to column 127 would let a short write
+  // leave the pointer parked mid-row, and the next blit's own window command
+  // is the only thing that would rescue it. Closing the window exactly makes
+  // each blit independent of whatever ran before it.
+  const uint8_t window[] = { 0x21, (uint8_t)col, (uint8_t)(col + n - 1),
+                             0x22, (uint8_t)page, (uint8_t)page };
   if (!cmd(addr, &window[0], 3)) return false;
   if (!cmd(addr, &window[3], 3)) return false;
+
+  uint8_t buf[1 + WIDTH];
+  buf[0] = 0x40;                          /* "data follows" */
+  for (int i = 0; i < n; i++) buf[1 + i] = bytes[i];
+  return i2c_write_timeout_us(i2c1, addr, buf, (size_t)n + 1, false,
+                              I2C_TIMEOUT_US * 4) >= 0;
+}
+
+bool ssd1306_clear(uint8_t addr) {
+  // Leaves the panel matching display.c's all-zero shadow, which is what lets
+  // the pump send only genuine changes from the very first frame instead of
+  // having to push a full one to establish agreement.
+  uint8_t zero[WIDTH];
+  for (int x = 0; x < WIDTH; x++) zero[x] = 0;
+  for (int p = 0; p < PAGES; p++)
+    if (!ssd1306_blit(addr, p, 0, zero, WIDTH)) return false;
+  return true;
+}
+
+bool ssd1306_selftest(uint8_t addr) {
+  if (!ssd1306_init(addr)) return false;
 
   /*
    * A FRAME AND AN X, because counting failed three times.
@@ -138,15 +183,11 @@ bool ssd1306_selftest(uint8_t addr) {
   }
   #undef PIX
 
-  for (int page = 0; page < PAGES; page++) {
-    uint8_t row[1 + WIDTH];
-    row[0] = 0x40;                       /* "data follows" */
-    for (int x = 0; x < WIDTH; x++) row[1 + x] = fb[page][x];
-    if (i2c_write_timeout_us(i2c1, addr, row, sizeof row, false,
-                             I2C_TIMEOUT_US * 4) < 0) {
-      return false;
-    }
-  }
+  // Pushed through ssd1306_blit(), deliberately: that is the path the display
+  // driver uses for every update, so a self-test that bypassed it would prove
+  // the panel works and leave the code that actually drives it untested.
+  for (int page = 0; page < PAGES; page++)
+    if (!ssd1306_blit(addr, page, 0, fb[page], WIDTH)) return false;
 
   wf_logf(WF_INFO, "oled: 0x%02x initialised as %dx%d, frame + X drawn — "
                    "is the box closed on all four edges, strokes unbroken?",

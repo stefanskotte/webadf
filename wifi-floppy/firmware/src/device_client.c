@@ -124,9 +124,43 @@ static void dc_discard_sink(void *ctx, const uint8_t *b, int n) {
 // know to put it back.
 static long g_img_got;
 static long g_img_next;
+// The in-flight response, so dc_image_sink can read the Content-Length that
+// the header parser recorded. Safe to read from the sink and nowhere else:
+// http.c only starts calling the body sink after start_body_phase(), which
+// runs once the headers are complete, so the field is final by then. Points
+// at dc_fetch_image's own `static` response, whose storage outlives the call.
+static const http_resp_t *g_img_resp;
 static uint32_t g_img_t0;   // fetch start, for the throughput line
 static uint32_t g_ms_read;  // ms inside transport read (network + TLS decrypt)
 static uint32_t g_ms_feed;  // ms inside http parse + sink (PSRAM writes)
+
+// ---------------------------------------------------------------------
+// Observations. `obs` is file-static for the reason every large buffer here
+// is (see the STACK note below): core1 runs on a 2 KB stack shared with the
+// whole mbedTLS handshake, and ~90 bytes of struct per call is not free at
+// that size. Safe because no dc_* function re-enters another, which the
+// re-entrancy note below establishes for exactly this kind of sharing.
+static dc_obs_t obs;
+
+static void dc_emit(device_client_t *c, dc_obs_kind_t kind,
+                    uint32_t got, uint32_t total) {
+    if (!c->_obs) return;
+    memset(&obs, 0, sizeof obs);
+    obs.kind = kind;
+    snprintf(obs.title, sizeof obs.title, "%s", c->_fetch_title);
+    snprintf(obs.label, sizeof obs.label, "%s", c->_fetch_label);
+    obs.disk_no    = c->_fetch_disk_no;
+    obs.disk_count = c->_fetch_disk_count;
+    obs.got        = got;
+    obs.total      = total;
+    c->_obs(c->_obs_ctx, &obs);
+}
+
+void dc_set_observer(device_client_t *c, dc_observe_fn fn, void *ctx) {
+    c->_obs = fn;
+    c->_obs_ctx = ctx;
+    c->_fetch_pct = -1;
+}
 
 static void dc_image_sink(void *ctx, const uint8_t *b, int n) {
     // The clock starts on the FIRST BODY BYTE, not at dc_fetch_image entry:
@@ -138,6 +172,19 @@ static void dc_image_sink(void *ctx, const uint8_t *b, int n) {
     if (g_img_got >= g_img_next) {
         wf_logf(WF_INFO, "fetch: %ld KB", g_img_got / 1024);
         g_img_next = g_img_got + 262144;
+    }
+    // Throttled to whole percent changes. This sink runs once per 4 KB read,
+    // so ~500 times for a 2 MB image; an observation per call would be ~400
+    // wasted publishes, all of them rendering the identical frame.
+    if (ctx) {
+        device_client_t *c = ctx;
+        uint32_t total = (g_img_resp && g_img_resp->content_length > 0)
+                       ? (uint32_t)g_img_resp->content_length : 0u;
+        int pct = total ? (int)((uint64_t)g_img_got * 100u / total) : -1;
+        if (pct != c->_fetch_pct) {
+            c->_fetch_pct = pct;
+            dc_emit(c, DC_OBS_FETCH_PROGRESS, (uint32_t)g_img_got, total);
+        }
     }
 }
 
@@ -353,6 +400,9 @@ static dc_state_t dc_fetch_image(device_client_t *c, const dc_desired_t *d) {
 
     c->state = DC_FETCHING;
     static http_resp_t r;   // static: see the STACK note above
+    g_img_resp = &r;
+    c->_fetch_pct = -1;     // a fresh transfer reports 0% again
+    dc_emit(c, DC_OBS_FETCH_BEGIN, 0, 0);
     bool ok = dc_exchange(c, req, req_len, dc_image_sink, c, &r);
 
     if (!ok || !r.body_complete) {
@@ -388,6 +438,7 @@ static dc_state_t dc_fetch_image(device_client_t *c, const dc_desired_t *d) {
         // together with "the whole body arrived intact" already checked
         // above, is the verification this layer does; there is no
         // separate state to hold for it once control reaches here.
+        dc_emit(c, DC_OBS_VERIFY, (uint32_t)g_img_got, (uint32_t)g_img_got);
         if (!image_parse_end()) {
             // Content-Length matched what arrived, but the bytes
             // themselves are not a well-formed, complete WFMF container.
@@ -425,6 +476,7 @@ static dc_state_t dc_fetch_image(device_client_t *c, const dc_desired_t *d) {
         }
         psram_publish_slot(target);
         dc_complete_transition(c, d->version, d->sha256, d->disk_id, d->write_protected);
+        dc_emit(c, DC_OBS_MOUNTED, 0, 0);
         c->state = DC_IDLE_POLL;
         dc_backoff_reset(c);
         return c->state;
@@ -471,6 +523,10 @@ static dc_state_t dc_handle_poll_body(device_client_t *c, const char *json) {
         // SLOT_NONE, so track_cache_get() actually stops streaming rather
         // than only this struct's bookkeeping saying nothing is mounted.
         psram_publish_slot(SLOT_NONE);
+        c->_fetch_title[0] = '\0';
+        c->_fetch_label[0] = '\0';
+        c->_fetch_disk_no = c->_fetch_disk_count = 0;
+        dc_emit(c, DC_OBS_EJECTED, 0, 0);
         // write_protected is meaningless with nothing mounted -- pass true
         // anyway (rather than leaving whatever the previous disk reported)
         // so a stale "writable" can never survive an eject in this field.
@@ -493,6 +549,22 @@ static dc_state_t dc_handle_poll_body(device_client_t *c, const char *json) {
     }
     // diskId is read best-effort -- display metadata, never gates a fetch.
     json_str(json, "diskId", d.disk_id, sizeof d.disk_id);
+
+    // Likewise the human-readable identity, which the server has sent all
+    // along (src/lib/mount.ts) and this device used to discard. Best-effort
+    // in the strongest sense: a missing or malformed title must never stop a
+    // disk mounting -- the drive's job is to hold the disk, and a blank line
+    // on a display is not a reason to refuse. json_str leaves the buffer
+    // untouched and returns false when the key is absent, so the memset of
+    // these fields below is what guarantees a stale title cannot survive
+    // into a different disk.
+    c->_fetch_title[0] = '\0';
+    c->_fetch_label[0] = '\0';
+    c->_fetch_disk_no = c->_fetch_disk_count = 0;
+    json_str(json, "game",  c->_fetch_title, sizeof c->_fetch_title);
+    json_str(json, "label", c->_fetch_label, sizeof c->_fetch_label);
+    json_u32(json, "diskNo",    &c->_fetch_disk_no);
+    json_u32(json, "diskCount", &c->_fetch_disk_count);
     // writeProtected fails safe: if it's absent or not a JSON boolean, this
     // disk is treated as write-protected, not writable. The two ways to
     // get this wrong are not symmetric -- presenting a genuinely
@@ -511,6 +583,12 @@ static dc_state_t dc_handle_poll_body(device_client_t *c, const char *json) {
         // `since` up here (rather than leaving it behind version after
         // version) avoids re-attempting this same no-op every poll.
         dc_complete_transition(c, version, d.sha256, d.disk_id, d.write_protected);
+        // Not redundant with the DC_OBS_MOUNTED after a fetch: on a board that
+        // rebooted with its disk still in PSRAM, or one whose display was
+        // attached later, this reconciliation poll is the ONLY place the
+        // title is ever spoken. Without it the panel would read LOADED with
+        // no name until the next time the operator changed disks.
+        dc_emit(c, DC_OBS_MOUNTED, 0, 0);
         dc_backoff_reset(c);   // `since` advanced: a productive poll
         c->state = DC_IDLE_POLL;
         return c->state;

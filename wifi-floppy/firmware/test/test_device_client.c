@@ -398,6 +398,131 @@ static void test_successful_image_fetch_publishes_and_reflects_write_protected(v
           "writeProtected:false in the poll body must reach device_client_t");
 }
 
+
+// --- observations: what the OLED is told -----------------------------
+// The server has always sent the disk's title, number and label in the poll
+// body; this device discarded them until the display needed them. These
+// tests exist because the alternative place to find out whether a title is
+// right is a 0.91" panel, and that is exactly the verification loop the
+// display work was meant to get out of.
+#define MAX_OBS 64
+static dc_obs_t seen[MAX_OBS];
+static int n_seen;
+static void record(void *ctx, const dc_obs_t *o) {
+    (void)ctx;
+    if (n_seen < MAX_OBS) seen[n_seen] = *o;
+    n_seen++;
+}
+static void watch(void) { n_seen = 0; dc_set_observer(&c, record, NULL); }
+static const dc_obs_t *last_of(dc_obs_kind_t k) {
+    for (int i = (n_seen < MAX_OBS ? n_seen : MAX_OBS) - 1; i >= 0; i--)
+        if (seen[i].kind == k) return &seen[i];
+    return NULL;
+}
+
+static void test_the_disk_title_is_read_from_the_poll_body(void) {
+    boot(); watch();
+    push_ok_json("{\"version\":7,\"desired\":{\"sha256\":\"aa\",\"diskId\":\"d1\","
+                 "\"gameId\":\"g\",\"game\":\"Sensible Soccer\",\"label\":\"Boot\","
+                 "\"diskNo\":1,\"diskCount\":2,\"writeProtected\":true}}");
+    push_image_response();
+    dc_step(&c);
+
+    const dc_obs_t *m = last_of(DC_OBS_MOUNTED);
+    CHECK(m != NULL, "a successful mount must be observable");
+    if (m) {
+        CHECK(strcmp(m->title, "Sensible Soccer") == 0, "the title must survive the wire");
+        CHECK(strcmp(m->label, "Boot") == 0, "and so must the label");
+        CHECK_EQ_INT((int)m->disk_no, 1);
+        CHECK_EQ_INT((int)m->disk_count, 2);
+    }
+}
+
+static void test_an_eject_clears_the_title(void) {
+    // Otherwise the panel goes on naming a disk the drive no longer holds,
+    // which is worse than a blank line: it is a confident wrong answer.
+    boot(); watch();
+    psram_publish_slot(0);
+    strcpy(c.mounted_sha256, "aa");
+    strcpy(c._fetch_title, "Sensible Soccer");
+    push_ok_json("{\"version\":9,\"desired\":null}");
+    dc_step(&c);
+
+    const dc_obs_t *e = last_of(DC_OBS_EJECTED);
+    CHECK(e != NULL, "an eject must be observable");
+    if (e) CHECK(e->title[0] == '\0', "an ejected drive must not still name a disk");
+}
+
+static void test_an_already_mounted_disk_is_still_named(void) {
+    // The reboot case. A board that comes up with its disk already in PSRAM
+    // never runs the fetch path again, so if only the fetch announced the
+    // title the panel would read LOADED with no name until the next swap.
+    boot(); watch();
+    psram_publish_slot(0);
+    strcpy(c.mounted_sha256, "aa");
+    push_ok_json("{\"version\":7,\"desired\":{\"sha256\":\"aa\",\"diskId\":\"d1\","
+                 "\"gameId\":\"g\",\"game\":\"Lemmings\",\"diskNo\":1,"
+                 "\"diskCount\":1,\"writeProtected\":true}}");
+    dc_step(&c);
+
+    const dc_obs_t *m = last_of(DC_OBS_MOUNTED);
+    CHECK(m != NULL, "a reconciliation poll must still name the disk");
+    if (m) CHECK(strcmp(m->title, "Lemmings") == 0, "and name it correctly");
+}
+
+static void test_a_missing_title_never_stops_a_mount(void) {
+    // The drive's job is to hold the disk. A blank line on a display is not
+    // a reason to refuse one, so an absent title must cost nothing but the
+    // title itself.
+    boot(); watch();
+    push_poll_desired_aa();          // fixture carries no "label"
+    push_image_response();
+    dc_state_t st = dc_step(&c);
+    CHECK_EQ_INT(st, DC_IDLE_POLL);
+    CHECK(strcmp(c.mounted_sha256, "aa") == 0, "the disk must mount regardless");
+}
+
+static void test_a_stale_title_cannot_survive_into_a_different_disk(void) {
+    boot(); watch();
+    strcpy(c._fetch_title, "Previous Disk");
+    strcpy(c._fetch_label, "Old Label");
+    // This body names a disk but carries NO title fields at all.
+    push_ok_json("{\"version\":7,\"desired\":{\"sha256\":\"aa\",\"diskId\":\"d1\","
+                 "\"gameId\":\"g\",\"writeProtected\":true}}");
+    push_image_response();
+    dc_step(&c);
+    const dc_obs_t *m = last_of(DC_OBS_MOUNTED);
+    CHECK(m != NULL, "still mounts");
+    if (m) CHECK(m->title[0] == '\0',
+                 "a title from the PREVIOUS disk must not be shown for this one");
+}
+
+static void test_progress_is_reported_once_per_percent(void) {
+    // The body sink runs once per 4 KB read -- ~500 times for a 2 MB image.
+    // An observation per call would be ~400 publishes that render the exact
+    // same frame, on a core that is also running the TLS read loop.
+    boot(); watch();
+    push_poll_desired_aa();
+    push_image_response();
+    dc_step(&c);
+    int n = 0;
+    for (int i = 0; i < n_seen && i < MAX_OBS; i++)
+        if (seen[i].kind == DC_OBS_FETCH_PROGRESS) n++;
+    CHECK(n <= 101, "progress must be throttled to whole percent changes");
+}
+
+static void test_an_absent_observer_changes_nothing(void) {
+    // The display must not be able to break a mount. Same fixtures, no
+    // observer, same outcome.
+    boot();
+    dc_set_observer(&c, NULL, NULL);
+    push_poll_desired_aa();
+    push_image_response();
+    dc_state_t st = dc_step(&c);
+    CHECK_EQ_INT(st, DC_IDLE_POLL);
+    CHECK(strcmp(c.mounted_sha256, "aa") == 0, "mount is unaffected by observation");
+}
+
 // --- Task 10: registration -------------------------------------------
 // dc_register is the one request in the protocol with no bearer -- the
 // pairing code IS the credential (device_client.h) -- and is called while
@@ -663,5 +788,12 @@ int main(void) {
     RUN(test_an_over_long_poll_body_is_refused_not_truncated);
 
     free(psram_mem);
+    RUN(test_the_disk_title_is_read_from_the_poll_body);
+    RUN(test_an_eject_clears_the_title);
+    RUN(test_an_already_mounted_disk_is_still_named);
+    RUN(test_a_missing_title_never_stops_a_mount);
+    RUN(test_a_stale_title_cannot_survive_into_a_different_disk);
+    RUN(test_progress_is_reported_once_per_percent);
+    RUN(test_an_absent_observer_changes_nothing);
     return REPORT();
 }
