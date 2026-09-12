@@ -1646,9 +1646,20 @@ separately.
   `src/floppy_io.h` carries the full reasoning; `src/activity_led.c` and `src/i2c_probe.c` carry
   the code. What remains below is the hardware itself.
 
-  **The I2C half is now verified on hardware; the LED half is NOT.** `led_selftest()` is
-  written and flashed but has never lit anything -- the operator is waiting on Dupont headers
-  (2026-09-11). Do not record GP22 as working until an LED has actually blinked on it.
+  **BOTH HALVES ARE NOW VERIFIED ON HARDWARE.** The I2C panel draws (2026-09-11) and the
+  activity LED on GP22 lights (operator, 2026-09-12). That closes every bring-up item on this
+  board except the floppy side itself.
+
+  **One electrical caveat, and rev B is the moment to act on it.** The bench LED is wired with
+  NO series resistor, which this pinout assumes. It lights; that is not the same as being in
+  spec. Nothing then limits the current except the pad's own output impedance against the LED's
+  forward voltage -- the 4 mA default is a guaranteed drive at a specified VOH, not a current
+  limit. `led_init()` now asks for GPIO_DRIVE_STRENGTH_2MA, which roughly halves it: a
+  mitigation, not a fix. What has kept it benign is duty cycle rather than margin (a blip is
+  40 ms and events are sparse), and that stops being true during a seek, where a STEP every
+  ~3 ms makes overlapping blips a continuously lit LED -- so the worst electrical case is also
+  the common one. **Rev B is unfabricated: the resistor footprint is free now and a respin
+  later.**
 
   **The trap worth knowing before moving these:** GP14-GP17 (pins 19-22) are the only other
   free GPIOs and ALL FOUR are unusable. The existing comment warns only about pins 19/20, but
