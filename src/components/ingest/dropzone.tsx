@@ -1,6 +1,7 @@
 'use client';
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
+import { toAdf, DISK_IMAGE_PATTERN } from '@/lib/archive/disk-image';
 import { hashBlob } from '@/lib/browser-hash';
 import { chunk } from '@/lib/chunk';
 import { mapLimit } from '@/lib/pool';
@@ -15,6 +16,11 @@ type Row = {
   sizeBytes: number;
   sha256: string;
   state: RowState;
+  /** Why a file failed, or what it was expanded from. A dropped .dms that
+   *  cannot be decoded has to SAY so: silently dropping it from the list is
+   *  how the old behaviour looked -- the file appeared to upload and then
+   *  could never be mounted. */
+  note?: string;
 };
 
 const STATE_COLOR: Record<RowState, string> = {
@@ -241,10 +247,25 @@ export function Dropzone() {
   async function handleFiles(fileList: FileList) {
     setBusy(true);
     try {
-      const files = [...fileList].filter((f) => /\.(adf|dsk|adz|dms)$/i.test(f.name));
+      const dropped = [...fileList].filter((f) => DISK_IMAGE_PATTERN.test(f.name));
 
       const hashed: Array<{ file: File; sha256: string }> = [];
-      for (const file of files) {
+      for (const original of dropped) {
+        // .adz and .dms become a plain ADF here, BEFORE hashing -- so the
+        // stored blob, its sha256 and its TOSEC identity are identical to
+        // those of the same disk uploaded as a .adf. Converting later would
+        // give one disk two identities depending on how it arrived.
+        const conv = await toAdf(original.name, new Uint8Array(await original.arrayBuffer()));
+        if (!conv.ok) {
+          setRows((rs) => [...rs, {
+            filename: original.name, sizeBytes: original.size, sha256: `bad:${original.name}`,
+            state: 'failed' as RowState, note: conv.reason,
+          }]);
+          continue;
+        }
+        const file = conv.from === 'adf'
+          ? original
+          : new File([conv.bytes as unknown as BlobPart], conv.name, { type: 'application/octet-stream' });
         const sha256 = await hashBlob(file);
         hashed.push({ file, sha256 });
         // If this exact content is already a row (the user dropped it
@@ -255,7 +276,11 @@ export function Dropzone() {
         // This also has to reach into functional-update state, since the
         // loop can hash faster than React commits each prior setRows call.
         setRows((rs) => {
-          const row: Row = { filename: file.name, sizeBytes: file.size, sha256, state: 'hashing' };
+          const row: Row = {
+            filename: file.name, sizeBytes: file.size, sha256, state: 'hashing',
+            note: conv.from === 'adf' ? undefined
+              : `from ${original.name}${conv.note ? ` (${conv.note})` : ''}`,
+          };
           return rs.some((r) => r.sha256 === sha256)
             ? rs.map((r) => (r.sha256 === sha256 ? row : r))
             : [...rs, row];
@@ -306,7 +331,7 @@ export function Dropzone() {
           <path d="M3 16v3a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-3" />
         </svg>
         <span className="text-[15px] font-semibold" style={{ color: 'var(--ink)' }}>
-          Drop ADF or DSK files
+          Drop ADF, ADZ, DMS
         </span>
         <span className="font-mono text-[10.5px]" style={{ color: 'var(--muted-2)' }}>
           hashed in your browser before upload
@@ -415,6 +440,19 @@ export function Dropzone() {
                 >
                   <span className="w-full truncate pr-3 sm:w-auto" style={{ color: 'var(--foreground)' }}>
                     {r.filename}
+                    {r.note && (
+                      // Not a tooltip: the two things this carries -- "why
+                      // your .dms was rejected" and "this .adf came out of a
+                      // .dms" -- are both things you need to see without
+                      // hunting for them.
+                      <span
+                        className="ml-2 text-[10px] font-normal"
+                        data-testid="ingest-note"
+                        style={{ color: r.state === 'failed' ? 'var(--danger-fg)' : 'var(--muted-2)' }}
+                      >
+                        {r.note}
+                      </span>
+                    )}
                   </span>
                   <span className="text-right" style={{ color: 'var(--muted-2)' }}>
                     {Math.round(r.sizeBytes / 1024)} KB
