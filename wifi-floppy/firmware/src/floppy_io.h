@@ -49,7 +49,11 @@
 // The panel must be powered from 3V3 (header pin 36), never VSYS/VBUS: most
 // SSD1306 modules pull SDA/SCL up to their own VCC, and RP2350 GPIOs are not
 // 5V tolerant.
-#define PIN_ACT_LED  22    // header pin 29 -> series resistor -> LED -> GND
+// Header pin 29 -> series resistor -> LED -> GND. VERIFIED WORKING on a rev A2
+// board 2026-09-12 -- but wired on the bench with NO resistor, which is out of
+// spec even though it lights: see led_init(), which drops the pad to its
+// weakest drive to compensate. Rev B is unfabricated; put the resistor in.
+#define PIN_ACT_LED  22
 #define PIN_I2C_SDA  18    // header pin 24, I2C1 SDA
 #define PIN_I2C_SCL  19    // header pin 25, I2C1 SCL
 

@@ -39,6 +39,22 @@ static int64_t led_selftest_cb(alarm_id_t id, void *arg) {
 void led_init(void) {
     gpio_init(PIN_ACT_LED);
     gpio_set_dir(PIN_ACT_LED, GPIO_OUT);
+    // The WEAKEST drive the pad offers, because the LED on the bench is wired
+    // with NO SERIES RESISTOR (operator, 2026-09-12) and floppy_io.h's pinout
+    // assumes one.
+    //
+    // Without a resistor nothing sets the current except the pad's own output
+    // impedance against the LED's forward voltage: the "4 mA" default is a
+    // guaranteed drive at a specified VOH, not a current limit, and into a ~2 V
+    // load it will pass several times that. 2 mA roughly doubles the pad
+    // resistance and so roughly halves the current. It is a mitigation, not a
+    // fix -- the fix is a resistor, and rev B is unfabricated, which is the
+    // cheap moment to add the footprint.
+    //
+    // Duty cycle is what has kept this benign so far: a blip is 40 ms and
+    // events are sparse. It does NOT stay benign during a seek, where a STEP
+    // every ~3 ms makes overlapping blips into a continuously lit LED.
+    gpio_set_drive_strength(PIN_ACT_LED, GPIO_DRIVE_STRENGTH_2MA);
     // Dark, not lit. A LED that comes up lit and stays lit would be
     // indistinguishable from a shorted pin.
     gpio_put(PIN_ACT_LED, 0);
