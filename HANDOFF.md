@@ -1742,12 +1742,43 @@ separately.
   networking entry below.** It is now load-bearing for two features rather than one -- see
   "Amiga networking over the floppy port", which cannot begin without it.
 
-  **The firmware side is closer than it looks.** `flux_in` (src/floppy.pio) already measures
-  the gaps between WDATA edges and is initialised in main.c, but the state machine is never
-  enabled and nothing consumes its FIFO. WGATE is wired (GP8) and read. So the missing pieces
-  are: enable the SM, drain it, turn intervals into MFM, decode sectors, and decide what to do
-  with the result -- not any new hardware. `WF_EV_WGATE` is declared and never emitted, which
-  is the trace to light up first.
+  **STARTED 2026-09-13. The capture path is built and the decode is verified on the host;
+  nothing is applied to a disk yet.** What exists:
+
+  * `src/mfm.c` -- sector decode from captured MFM: sync scan, both checksums, recovery into
+    an ADF track. Tested against the golden tracks in `src/lib/adfmfm/fixtures` (the
+    TypeScript encoder's output, asserted byte-identical to Greaseweazle) with the expected
+    data regenerated independently in C from synthetic.ts's xorshift32.
+  * `src/flux_bits.c` -- intervals to an MFM bitstream. Tested end to end: a golden track is
+    turned into the intervals a drive would produce, fed back, decoded, and must give back
+    the bytes that were encoded, including under +-8% speed error.
+  * `src/flux_capture.c` -- the PIO/DMA half. Device-only and excluded from the host build,
+    because only a floppy bus can exercise a state machine; every DECISION was deliberately
+    kept out of it so that "untestable" covers register writes and nothing else.
+  * `main.c` -- WGATE arms and disarms the capture, the service loop drains it bounded, and
+    a finished capture is LOGGED. `WF_EV_WGATE` now fires.
+
+  **THE SWITCH IS NOT THROWN.** WPROT is asserted for every mounted disk
+  (`WRITE_BACK_IMPLEMENTED`), so the Amiga refuses to write and WGATE never goes active.
+  Nothing captures in the field until that changes, which is one line and deliberately not
+  done: the disk the Amiga is reading must not start changing underneath it before a real
+  capture has been seen to be correct, and the history model below is not designed.
+
+  **What remains, in order:** (1) connect the Amiga and watch a real write produce
+  `write: trk N ... sectors 0x7ff (all 11)` in the log -- the capture is unproven until a
+  real drive's flux has been through it; (2) design the history model, since the operator
+  wants a TIME MACHINE (below) and that decides what a write even stores; (3) only then
+  release WPROT and apply anything.
+
+  **THE OPERATOR WANTS A TIME MACHINE (2026-09-13): rewind through an ADF's history.** That
+  is a requirement on the storage model, not a feature to add afterwards, and it is why this
+  entry has always said to record WHICH TRACKS CHANGED rather than a flattened result. The
+  shape it argues for: an append-only log of per-write deltas against the original digest,
+  where a version is the base plus an ordered run of deltas and rewinding is materialising a
+  prefix of them. Sector-level granularity (512 bytes, the Amiga's own unit) rather than
+  whole tracks, because a track write rewrites 5,632 bytes to change one sector's worth.
+  Nothing here is built; it needs designing before any write is applied, because the first
+  increment that flattens a write forecloses it.
 
 - **ARCHITECTURE DECISION 2026-09-13: the device keeps streaming FLUX, not ADF.**
   Raised while starting write support -- storing ADF on the Pico and encoding MFM there
