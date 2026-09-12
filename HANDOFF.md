@@ -1749,6 +1749,41 @@ separately.
   with the result -- not any new hardware. `WF_EV_WGATE` is declared and never emitted, which
   is the trace to light up first.
 
+- **ARCHITECTURE DECISION 2026-09-13: the device keeps streaming FLUX, not ADF.**
+  Raised while starting write support -- storing ADF on the Pico and encoding MFM there
+  would cut the per-mount download by 2.25x (2,027,536 -> 901,120 bytes, ~3.2 s -> ~1.4 s
+  at the measured 630 KB/s) and free ~2.4 MB of the 4.26 MB two slots currently take. Real
+  wins, and the write path would have been simpler: a decoded track IS ADF.
+
+  **Rejected because WFMF is FORMAT-AGNOSTIC and ADF is not.** The device streams whatever
+  flux the server hands it, so a copy-protected disk, an HFE or an IPF can ride the
+  existing path with NO FIRMWARE CHANGE. ADF cannot represent any of them. The operator's
+  call, and the backlog entry below is what it buys.
+
+- **Support HFE and IPF, for copy-protected games.** Requested by the operator 2026-09-13,
+  and the direct payoff of the decision above: both are flux/bitstream formats, which is
+  exactly what WFMF already carries, so the work is server-side conversion into the
+  container the device already streams. **No firmware change, and no board change.**
+
+  **The two are NOT equal in difficulty, and the difference is licensing, not code.**
+
+  * **HFE** (HxC Floppy Emulator) is an open, documented format: a header plus per-track
+    bitstream at a stated bitrate. Converting it to WFMF is mechanical -- both sides are
+    bitstreams -- and it is the one to do first. It also gives the whole path a test that
+    does not depend on owning a protected disk.
+  * **IPF** (SPS/CAPS) has no published specification. Reading it in practice means the
+    SPS `capsimg` library, which is closed source, and its redistribution terms must be
+    read BEFORE any work starts -- not after. Treat "can we even ship this" as the first
+    question, the same way PaulaNET's missing licence turned out to be the first question
+    there. Do not assume; check.
+
+  **What still cannot be emulated regardless of format:** protections that depend on
+  physical media properties rather than on flux we can replay -- weak/fuzzy bits that read
+  differently each revolution, and long-track timing. Some of those the WFMF container
+  could carry with work (multiple revolutions per track); some cannot be done by any
+  emulator on a 500 kbit/s interface. Worth establishing which before promising a title
+  list.
+
 - **Amiga networking over the floppy port (PaulaNET-style).** Raised by the operator
   2026-09-13 after finding RobSmithDev's PaulaNET. Genuinely attractive, and explicitly a
   SECOND PRODUCT on the same board rather than an increment to disk serving: it makes the
