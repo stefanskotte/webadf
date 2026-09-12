@@ -1,4 +1,5 @@
 'use client';
+import { Trash2 } from 'lucide-react';
 
 import { useState } from 'react';
 import { createPortal } from 'react-dom';
@@ -86,10 +87,27 @@ export function DeleteDiskDialog({
         onClick={(e) => { e.preventDefault(); e.stopPropagation(); setOpen(true); }}
         onPointerDown={(e) => e.stopPropagation()}
         onMouseDown={(e) => e.stopPropagation()}
-        className="shrink-0 rounded px-2 py-0.5 text-[11px] font-semibold"
-        style={{ background: 'var(--danger-bg)', color: 'var(--danger-fg)' }}
+        /*
+         * A quiet icon, not a red pill.
+         *
+         * The red box was doing danger-signalling on a control that cannot do
+         * damage on its own: every path through here opens a confirmation
+         * that names what will be deleted and cannot be dismissed by accident
+         * (see the dialog's own comment on what it must say). Shouting at the
+         * trigger buys nothing and costs a red rectangle on every card in the
+         * library, which crowds the thing people are actually looking at --
+         * the titles. The confirmation is where the danger colour belongs,
+         * and it is still there on the confirm button.
+         *
+         * The hit area stays the size it was; only the paint changed. The
+         * accessible name still says what will be deleted, because "trash
+         * icon" is not a description of anything to a screen reader.
+         */
+        className="shrink-0 rounded p-1 transition-colors hover:bg-[var(--danger-bg)] hover:text-[var(--danger-fg)]"
+        style={{ color: 'var(--faint)' }}
+        title={`Delete ${title}`}
       >
-        Delete
+        <Trash2 size={14} strokeWidth={1.75} aria-hidden />
       </button>
     );
   }

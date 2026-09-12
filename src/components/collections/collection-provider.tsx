@@ -16,6 +16,7 @@
 import { createContext, useContext, useEffect, useRef, useState, type ReactNode } from 'react';
 import { useRouter } from 'next/navigation';
 import { toast } from 'sonner';
+import type { LibraryView } from '@/lib/library-view';
 import {
   DndContext,
   MouseSensor,
@@ -95,8 +96,15 @@ interface CollectionsContextValue {
    * while `filteredCollectionId` is set to the collection it came from.
    */
   gameIds: string[];
-  /** The collection the grid is currently filtered to, or null when showing the whole library (unfiltered games cannot be reordered: there is no single membership list to write). */
+  /** The collection the grid is currently filtered to, or null when showing the whole library or the uncategorized inbox (neither can be reordered: there is no single membership list to write). */
   filteredCollectionId: string | null;
+  /** Which slice the page is showing. Separate from filteredCollectionId
+   *  because "Uncategorized" and "All titles" are both null there and the
+   *  rail has to tell them apart to mark the right row as current. */
+  view: LibraryView;
+  /** Titles in no collection at all, counted the same way and at the same
+   *  moment as every collection's own count. */
+  uncategorizedCount: number;
 }
 
 const CollectionsContext = createContext<CollectionsContextValue | null>(null);
@@ -112,6 +120,8 @@ export interface CollectionsProviderProps {
   collections: CollectionSummary[];
   gameIds: string[];
   filteredCollectionId: string | null;
+  view: LibraryView;
+  uncategorizedCount: number;
   children: ReactNode;
 }
 
@@ -119,6 +129,8 @@ export function CollectionsProvider({
   collections: initialCollections,
   gameIds: initialGameIds,
   filteredCollectionId,
+  view,
+  uncategorizedCount,
   children,
 }: CollectionsProviderProps) {
   const router = useRouter();
@@ -346,7 +358,7 @@ export function CollectionsProvider({
   }
 
   return (
-    <CollectionsContext.Provider value={{ collections, gameIds, filteredCollectionId }}>
+    <CollectionsContext.Provider value={{ collections, gameIds, filteredCollectionId, view, uncategorizedCount }}>
       {/*
         `id` is not decoration. dnd-kit derives the hidden drag description's
         element id from a MODULE-LEVEL counter (useUniqueId in

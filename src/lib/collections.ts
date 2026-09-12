@@ -49,6 +49,28 @@ export async function listCollections(orgId: string): Promise<CollectionListItem
     .orderBy(collections.sortKey, collections.id);
 }
 
+/**
+ * How many titles are in no collection at all.
+ *
+ * Its own query rather than a number derived on the page, because the rail
+ * shows it next to every other collection's count and the two have to be
+ * counted the same way -- from the database, at the same moment. Scoped
+ * through `collections`, since collection_games carries no org_id: a title
+ * filed in another tenant's collection is uncategorized HERE.
+ */
+export async function countUncategorized(orgId: string): Promise<number> {
+  const db = getDb();
+  const [row] = await db
+    .select({ n: sql<number>`count(*)::int` })
+    .from(games)
+    .where(and(orgFilter(games, orgId), sql`not exists (
+      select 1 from collection_games cg
+      join collections co on co.id = cg.collection_id
+      where cg.game_id = ${games.id} and co.org_id = ${orgId}
+    )`));
+  return row?.n ?? 0;
+}
+
 /** Lands at the end of this org's list: sortKey is max(sortKey) + 1, or 0 for the first collection. */
 export async function createCollection(orgId: string, name: string): Promise<CollectionListItem> {
   const db = getDb();

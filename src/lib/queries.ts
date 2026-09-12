@@ -58,9 +58,40 @@ export interface GameListItem {
  * upstream of this function.
  */
 export async function listGames(
-  orgId: string, opts: { limit?: number; collectionId?: string } = {},
+  orgId: string, opts: { limit?: number; collectionId?: string; uncategorized?: boolean } = {},
 ): Promise<GameListItem[]> {
   const db = getDb();
+
+  if (opts.uncategorized) {
+    // Titles in no collection at all -- the library's inbox. NOT EXISTS
+    // rather than a left join with a null check: the join form would have to
+    // sit inside the GROUP BY that counts disks, and a title in two
+    // collections would then fan the disk count out. `collection_games` has
+    // no org_id column (D-4-5), so this subquery is scoped through the
+    // collections table, or a title filed in ANOTHER tenant's collection
+    // would wrongly read as uncategorized here.
+    const rows = await db
+      .select({
+        id: games.id, title: games.title, year: games.year, publisher: games.publisher,
+        coverAssetId: games.coverAssetId, authored: games.authored,
+        diskCount: sql<number>`count(${disks.id})::int`,
+        sizeBytes: sql<number>`coalesce(sum(${disks.sizeBytes}), 0)::bigint`,
+        sha256Prefix: sql<string | null>`min(${disks.sha256})`,
+        diskId: sql<string | null>`min(${disks.id})`,
+      })
+      .from(games)
+      .leftJoin(disks, and(eq(disks.gameId, games.id), eq(disks.orgId, orgId)))
+      .where(and(orgFilter(games, orgId), sql`not exists (
+        select 1 from collection_games cg
+        join collections co on co.id = cg.collection_id
+        where cg.game_id = ${games.id} and co.org_id = ${orgId}
+      )`))
+      .groupBy(games.id)
+      .orderBy(desc(games.createdAt))
+      .limit(opts.limit ?? 200);
+
+    return withDerived(orgId, rows);
+  }
 
   if (opts.collectionId) {
     const collectionId = opts.collectionId;
@@ -114,6 +145,22 @@ export async function listGames(
     .limit(opts.limit ?? 200);
 
   return withDerived(orgId, rows);
+}
+
+/**
+ * Whole-library totals, for the overview that replaces an empty inbox.
+ *
+ * Counted in the database rather than derived from listGames, which is capped
+ * at 200 rows: a library past that cap would otherwise report its own page
+ * size as its size.
+ */
+export async function countAllGames(orgId: string): Promise<{ titles: number; disks: number }> {
+  const db = getDb();
+  const [t] = await db.select({ n: sql<number>`count(*)::int` })
+    .from(games).where(orgFilter(games, orgId));
+  const [d] = await db.select({ n: sql<number>`count(*)::int` })
+    .from(disks).where(orgFilter(disks, orgId));
+  return { titles: t?.n ?? 0, disks: d?.n ?? 0 };
 }
 
 /**

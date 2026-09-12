@@ -23,6 +23,7 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
+import { viewHref, isCurrentView, type LibraryView } from '@/lib/library-view';
 import {
   useCollectionsContext,
   type CollectionSummary,
@@ -31,19 +32,13 @@ import {
 } from './collection-provider';
 
 export function CollectionRail() {
-  const { collections, filteredCollectionId } = useCollectionsContext();
+  const { collections, view, uncategorizedCount } = useCollectionsContext();
   const searchParams = useSearchParams();
 
-  // Preserves every other query param (just `view` today) while only ever
-  // touching `collection` -- so switching collections never drops the
-  // grid/table toggle, and clearing the filter doesn't either.
-  function hrefFor(id: string | null): string {
-    const params = new URLSearchParams(searchParams.toString());
-    if (id) params.set('collection', id);
-    else params.delete('collection');
-    const qs = params.toString();
-    return qs ? `/library?${qs}` : '/library';
-  }
+  // Preserves every other query param (view, q) while only ever touching
+  // `collection` -- so switching slices never drops the grid/table toggle.
+  const hrefFor = (v: LibraryView) => viewHref(v, new URLSearchParams(searchParams.toString()));
+  const current = (v: LibraryView) => isCurrentView(view, v);
 
   // Below `md` the rail is a full-width band above the grid (page.tsx stacks
   // the two there), so it drops its fixed 224px and takes the page's own
@@ -56,17 +51,28 @@ export function CollectionRail() {
       className="glass-card ml-4 mr-4 flex w-auto shrink-0 flex-col gap-1 p-3 sm:ml-7 sm:mr-7 md:mr-0 md:w-56"
       data-testid="collection-rail"
     >
+      {/* The inbox, and the landing view. It sits with the collections
+          rather than apart from them because it behaves like one: it has a
+          count, it is a place titles are, and filing one into a collection
+          takes it out of here. It is NOT a drop target -- "uncategorize this"
+          is a removal, which the collection's own menu already does. */}
       <Link
-        href={hrefFor(null)}
-        data-testid="collection-all"
-        className="rounded-md px-2.5 py-1.5 text-[13px] font-semibold"
+        href={hrefFor({ kind: 'uncategorized' })}
+        data-testid="collection-uncategorized"
+        className="flex items-center justify-between gap-2 rounded-md px-2.5 py-1.5 text-[13px] font-semibold"
         style={
-          filteredCollectionId === null
+          current({ kind: 'uncategorized' })
             ? { background: 'var(--primary-action)', color: '#fff' }
             : { color: 'var(--ink)' }
         }
       >
-        All titles
+        <span className="truncate">Uncategorized</span>
+        <span
+          className="shrink-0 font-mono text-[10.5px]"
+          style={{ color: current({ kind: 'uncategorized' }) ? 'rgb(255 255 255 / 0.75)' : 'var(--faint)' }}
+        >
+          {uncategorizedCount}
+        </span>
       </Link>
 
       <div className="my-1 h-px" style={{ background: 'var(--hairline)' }} />
@@ -82,8 +88,8 @@ export function CollectionRail() {
               <CollectionRow
                 key={c.id}
                 collection={c}
-                active={c.id === filteredCollectionId}
-                href={hrefFor(c.id)}
+                active={current({ kind: 'collection', id: c.id })}
+                href={hrefFor({ kind: 'collection', id: c.id })}
               />
             ))}
           </div>
@@ -93,6 +99,24 @@ export function CollectionRail() {
       <div className="my-1 h-px" style={{ background: 'var(--hairline)' }} />
 
       <CreateCollectionForm />
+
+      {/* Last, and below the divider: the whole library in one list is an
+          escape hatch, not the place you work. Kept because it is the only
+          view that shows a title filed in two collections once, and the only
+          one where "where did that disk go" has a single answer. */}
+      <div className="mt-1 h-px" style={{ background: 'var(--hairline)' }} />
+      <Link
+        href={hrefFor({ kind: 'all' })}
+        data-testid="collection-all"
+        className="mt-1 rounded-md px-2.5 py-1.5 text-[13px] font-semibold"
+        style={
+          current({ kind: 'all' })
+            ? { background: 'var(--primary-action)', color: '#fff' }
+            : { color: 'var(--muted-2)' }
+        }
+      >
+        All titles
+      </Link>
     </aside>
   );
 }

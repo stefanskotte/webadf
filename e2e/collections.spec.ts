@@ -201,15 +201,23 @@ test('filtering to a collection shows exactly its games', async ({ page }) => {
   const id = await apiCreateCollection(page, `Filter ${run}`);
   await apiAddGame(page, id, a.gameId);
 
-  await page.goto('/library');
+  // "All titles" is the whole library; /library on its own is the
+  // uncategorized inbox, which is a different question and is asserted below.
+  await page.goto('/library?collection=all');
   await expect(page.getByTestId('game-card')).toHaveCount(2);
 
   await page.goto(`/library?collection=${id}`);
   await expect(page.getByTestId('game-card')).toHaveCount(1);
   await expect(page.getByTestId('game-card')).toContainText(`Filtered ${run}`);
 
-  // A stale or foreign id must not break the library: it falls back to
-  // unfiltered rather than 404ing.
+  // The landing view shows only what has NOT been filed -- one of the two.
+  await page.goto('/library');
+  await expect(page.getByTestId('game-card')).toHaveCount(1);
+  await expect(page.getByTestId('game-card')).toContainText(`Unfiled ${run}`);
+
+  // A stale or foreign id must not break the library: it falls back to the
+  // whole library rather than 404ing, or landing somewhere that merely looks
+  // like a filtered view of it.
   await page.goto(`/library?collection=${randomUUID()}`);
   await expect(page.getByTestId('game-card')).toHaveCount(2);
 });
@@ -231,6 +239,13 @@ test('dragging a card onto a rail collection files it there', async ({ page }) =
   await expect(railRow(page, id).getByTestId('collection-count')).toHaveText('1', { timeout: 10_000 });
   await expect.poll(async () => await membership(id), { timeout: 10_000 })
     .toEqual([gameId]);
+
+  // ...and it LEAVES the inbox. This drag started on the uncategorized view,
+  // which is what /library shows, so a card that stayed put would mean the
+  // page still lists a title that is no longer uncategorized -- filing that
+  // appears not to have worked, and invites filing it a second time.
+  await expect(page.getByTestId('game-card')).toHaveCount(0, { timeout: 10_000 });
+  await expect(page.getByTestId('collection-uncategorized')).toContainText('0');
 });
 
 test('the rail highlights the collection a dragged title will actually land in', async ({ page }) => {
@@ -312,7 +327,7 @@ test('the per-card control removes a game from the collection, not from the libr
   expect(await membership(id)).toEqual([b.gameId]);
 
   // ...and the game itself is untouched: still in the library, still a row.
-  await page.goto('/library');
+  await page.goto('/library?collection=all');
   await expect(page.getByTestId('game-card')).toHaveCount(2);
   await expect(page.getByTestId('game-card').filter({ hasText: `Removable ${run}` })).toHaveCount(1);
   expect(await getDb().select().from(games).where(eq(games.id, a.gameId))).toHaveLength(1);
@@ -524,4 +539,56 @@ test('deleting a user deletes their collections', async ({ page }) => {
   expect(await db.select().from(user).where(eq(user.email, victim.email))).toHaveLength(0);
   expect(await db.select().from(collections).where(eq(collections.orgId, victim.orgId))).toHaveLength(0);
   expect(await db.select().from(collectionGames).where(eq(collectionGames.collectionId, id))).toHaveLength(0);
+});
+
+
+test('the landing view is the uncategorized inbox, and filing empties it', async ({ page }) => {
+  const run = runTag();
+  const u = await signUpFresh(page);
+  const a = await seedDisk(u.orgId, { title: `Inbox ${run}`, diskNo: 1, sha256: randomUUID().replace(/-/g, '').padEnd(64, '1') });
+
+  const id = await apiCreateCollection(page, `Inbox target ${run}`);
+
+  // A freshly ingested title belongs to no collection, so it lands here.
+  await page.goto('/library');
+  await expect(page.getByTestId('collection-uncategorized')).toContainText('1');
+  await expect(page.getByTestId('game-card')).toHaveCount(1);
+
+  await apiAddGame(page, id, a.gameId);
+
+  // Filing it takes it OFF this page -- an inbox that never empties is just a
+  // second copy of the library.
+  await page.goto('/library');
+  await expect(page.getByTestId('game-card')).toHaveCount(0);
+
+  // And an empty inbox falls through to the collections rather than a blank
+  // page, which is the whole reason the overview exists.
+  await expect(page.getByTestId('category-overview')).toBeVisible();
+  await expect(page.getByTestId(`overview-card-${id}`)).toContainText('1 title');
+
+  // The card goes exactly where the rail row goes.
+  await page.getByTestId(`overview-card-${id}`).click();
+  await expect(page).toHaveURL(new RegExp(`collection=${id}`));
+  await expect(page.getByTestId('game-card')).toHaveCount(1);
+});
+
+test('All titles sits at the bottom of the rail and still shows everything', async ({ page }) => {
+  const run = runTag();
+  const u = await signUpFresh(page);
+  const a = await seedDisk(u.orgId, { title: `Filed ${run}`, diskNo: 1, sha256: randomUUID().replace(/-/g, '').padEnd(64, '2') });
+  await seedDisk(u.orgId, { title: `Loose ${run}`, diskNo: 1, sha256: randomUUID().replace(/-/g, '').padEnd(64, '3') });
+  const id = await apiCreateCollection(page, `Bottom ${run}`);
+  await apiAddGame(page, id, a.gameId);
+
+  await page.goto('/library');
+  const rail = page.getByTestId('collection-rail');
+  // Order matters: Uncategorized leads, All titles is last. Asserted on the
+  // rail's own text so a reordering of the markup cannot pass silently.
+  const text = await rail.innerText();
+  expect(text.indexOf('Uncategorized')).toBeGreaterThanOrEqual(0);
+  expect(text.indexOf('All titles')).toBeGreaterThan(text.indexOf('Uncategorized'));
+  expect(text.indexOf('All titles')).toBeGreaterThan(text.indexOf(`Bottom ${run}`));
+
+  await page.getByTestId('collection-all').click();
+  await expect(page.getByTestId('game-card')).toHaveCount(2);
 });
