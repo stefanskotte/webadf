@@ -61,8 +61,8 @@ add_executable(wifi_floppy
   src/transport_tls.c src/sntp_time.c
   ${WFMF_PSA_CRYPTO_RANDOM_SRC}
   src/wf_log.c
-  src/activity_led.c src/i2c_probe.c src/ssd1306.c
-    src/display.c
+  src/activity_led.c src/i2c_probe.c src/ssd1306.c src/display.c
+  src/flux_capture.c src/flux_bits.c
 )
 pico_generate_pio_header(wifi_floppy ${CMAKE_CURRENT_LIST_DIR}/src/floppy.pio)
 target_include_directories(wifi_floppy PRIVATE src ${CMAKE_CURRENT_LIST_DIR})

@@ -19,6 +19,12 @@ fail=0
 #                       device-only by construction and hold no logic a host
 #                       test could judge -- what they assert is about wiring,
 #                       which only a board can answer.
+#   flux_capture.c    - the PIO state machine and DMA ring that carry WDATA off
+#                       the bus. Only a floppy bus can exercise those. Every
+#                       DECISION the capture makes lives in flux_bits.c and
+#                       mfm.c instead, which are pure and ARE tested -- the
+#                       split is deliberate, so that "we could not test it"
+#                       covers register writes and nothing else.
 # image_loader.c used to be excluded here too: it called http_get_stream(),
 # which only existed in http_fetch.c/.h (device-only, lwIP-backed), so
 # including it would fail to link. Task 3 removed that dependency
@@ -36,7 +42,7 @@ for t in test_*.c; do
   out=".build/${t%.c}"
   cc -std=c11 -g -O1 -Wall -Wextra -Werror -DWFMF_HOST_TEST=1 \
      -o "$out" "$t" transport_fake.c \
-     $(ls ../src/*.c | grep -vE 'main\.c|transport_tls\.c|sntp_time\.c|portal_net\.c|dskchg\.c|activity_led\.c|i2c_probe\.c|ssd1306\.c') \
+     $(ls ../src/*.c | grep -vE 'main\.c|transport_tls\.c|sntp_time\.c|portal_net\.c|dskchg\.c|activity_led\.c|i2c_probe\.c|ssd1306\.c|flux_capture\.c') \
      || { echo "COMPILE FAIL: $t"; fail=1; continue; }
   "$out" || fail=1
 done

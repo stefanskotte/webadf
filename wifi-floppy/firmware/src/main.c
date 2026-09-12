@@ -31,6 +31,9 @@
 #include "i2c_probe.h"
 #include "ssd1306.h"
 #include "display.h"
+#include "flux_capture.h"
+#include "flux_bits.h"
+#include "mfm.h"
 #include "hardware/sync.h"   // __dmb(), for the display seqlock below
 #include <string.h>
 
@@ -334,6 +337,22 @@ static void __isr gpio_isr(uint gpio, uint32_t events) {
         bool running = !gpio_get(PIN_MTR);           // active low
         dskchg_on_motor(running);
         wf_trace(WF_EV_MOTOR, running ? 1u : 0u, 0);
+    } else if (gpio == PIN_WGATE) {
+        /*
+         * The Amiga is writing. WGATE brackets exactly one track, so this is
+         * the only signal that says when the flux on WDATA is worth anything.
+         *
+         * Both branches are deliberately cheap -- a few register writes and no
+         * decoding. Everything expensive (turning intervals into bits, finding
+         * sectors, checking their checksums) happens in the service loop,
+         * because this runs in an ISR on the core that has to keep serving
+         * the bus while the write is still going on.
+         *
+         * Active low, like every other input through the '541.
+         */
+        bool writing = !gpio_get(PIN_WGATE);
+        if (writing) flux_capture_arm(); else flux_capture_disarm();
+        wf_trace(WF_EV_WGATE, writing ? 1u : 0u, (uint32_t)(cur_cyl * 2 + cur_side));
     } else if (gpio == PIN_SIDE) {
         cur_side = gpio_get(PIN_SIDE) ? 0 : 1;       // low = side 1
         want_track = cur_cyl * 2 + cur_side;
@@ -968,6 +987,10 @@ int main(void) {
     uint off_in = pio_add_program(pio, &flux_in_program);
     sm_in = pio_claim_unused_sm(pio, true);
     flux_in_program_init(pio, sm_in, off_in, PIN_WDATA);
+    // Claims a DMA channel and points it at sm_in's RX FIFO. The state machine
+    // stays DISABLED until WGATE says the Amiga is writing -- see
+    // flux_capture_arm().
+    flux_capture_init(pio, sm_in);
     // (enabled when WGATE asserts; write path TODO)
 
     dma_ch = dma_claim_unused_channel(true);
@@ -978,6 +1001,9 @@ int main(void) {
     gpio_set_irq_enabled(PIN_SEL0, GPIO_IRQ_EDGE_FALL, true);
     gpio_set_irq_enabled(PIN_MTR,  GPIO_IRQ_EDGE_FALL | GPIO_IRQ_EDGE_RISE, true);
     gpio_set_irq_enabled(PIN_SIDE, GPIO_IRQ_EDGE_FALL | GPIO_IRQ_EDGE_RISE, true);
+    // Both edges: the falling one starts a capture and the rising one ends it,
+    // and an end that is missed would run the ring into the next write.
+    gpio_set_irq_enabled(PIN_WGATE, GPIO_IRQ_EDGE_FALL | GPIO_IRQ_EDGE_RISE, true);
 
     // NOT multicore_launch_core1(): that uses the SCRATCH_X-resident
     // .stack1_dummy, which tops out at 4 KB and cannot hold core1's
@@ -1106,6 +1132,52 @@ int main(void) {
                 // track that only arrives later is re-attempted then.
                 loaded = want;
                 wf_trace(WF_EV_TRACK_MISS, (uint32_t)want, 0);
+            }
+        }
+
+        /*
+         * Write capture. Two bounded steps, both of which do nothing at all
+         * unless the Amiga is writing.
+         *
+         * REPORTED, NOT YET APPLIED. This increment proves the path end to end
+         * -- flux off the wire, intervals to bits, bits to sectors, checksums
+         * verified -- and says so in the log. It deliberately does NOT write
+         * the result into PSRAM or send it upstream: the disk the Amiga is
+         * reading must not start changing underneath it until the capture has
+         * been seen to be correct on real hardware, and the history model that
+         * will receive these tracks is not designed yet.
+         *
+         * Nothing here can run in the field either way: WPROT is asserted for
+         * every mounted disk (see WRITE_BACK_IMPLEMENTED), so the Amiga
+         * refuses to write and WGATE never goes active. That is the switch to
+         * throw when this is ready to be tried for real, and it is one line.
+         */
+        flux_capture_poll();
+        {
+            flux_capture_result_t cap;
+            if (flux_capture_take(&cap)) {
+                static uint8_t decoded[MFM_TRACK_DATA_BYTES];
+                mfm_decode_result_t d;
+                memset(decoded, 0, sizeof decoded);
+                mfm_decode_track(cap.mfm, cap.mfm_bytes, decoded, &d);
+                wf_logf(WF_INFO,
+                        "write: trk %d got %u intervals -> %u bytes, "
+                        "sectors 0x%03x%s, bad %u, range %u%s",
+                        cur_cyl * 2 + cur_side,
+                        (unsigned)cap.intervals, (unsigned)cap.mfm_bytes,
+                        (unsigned)d.found,
+                        d.found == 0x7ff ? " (all 11)" : " INCOMPLETE",
+                        (unsigned)d.bad_checksums, (unsigned)cap.out_of_range,
+                        cap.overflowed ? " OVERFLOWED" : "");
+                if (d.found && !d.track_no_consistent) {
+                    wf_logf(WF_WARN, "write: sector headers disagree about the track");
+                } else if (d.found && d.track_no != cur_cyl * 2 + cur_side) {
+                    // The one corruption a checksum cannot see: every sector
+                    // internally valid, but written to a cylinder the head is
+                    // not on. Never apply one of these.
+                    wf_logf(WF_WARN, "write: track says %u, head is on %d",
+                            (unsigned)d.track_no, cur_cyl * 2 + cur_side);
+                }
             }
         }
 
