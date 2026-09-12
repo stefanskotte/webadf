@@ -288,7 +288,14 @@ test('the file toolbar and a row\'s controls fit a phone', async ({ page }) => {
   await page.getByTestId('upload-submit').tap();
 
   const row = page.locator('[data-testid="fs-entry"][data-name="PHONE.TXT"]');
-  await expect(row).toBeVisible();
+  // Explicit timeout: this is a file write into an ADF plus a server
+  // re-render, not a local DOM update, and the default 5 s is tight enough
+  // that it fails under the load of a FULL suite run while passing every time
+  // this file is run on its own. Measured 2026-09-13 -- 1 failure in a
+  // 241-test run, 16/16 passes in isolation both before and after the change
+  // that was briefly suspected of causing it. Same 10 s the collection drag
+  // assertions in this suite already use, for the same reason.
+  await expect(row).toBeVisible({ timeout: 15_000 });
 
   const adf = new Uint8Array(await (await page.request.get(`/api/disks/${disk.id}/adf`)).body());
   const volume = readVolume(adf);
