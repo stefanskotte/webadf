@@ -1737,6 +1737,63 @@ separately.
 - **Write-back and layered disks** (disk-change spec §5). Deliberately not designed yet;
   the first increment should record which tracks changed, not just a flattened result, so
   it doesn't foreclose the layered approach.
+
+  **PRIORITISED BY THE OPERATOR 2026-09-13: write support goes first, ahead of the
+  networking entry below.** It is now load-bearing for two features rather than one -- see
+  "Amiga networking over the floppy port", which cannot begin without it.
+
+  **The firmware side is closer than it looks.** `flux_in` (src/floppy.pio) already measures
+  the gaps between WDATA edges and is initialised in main.c, but the state machine is never
+  enabled and nothing consumes its FIFO. WGATE is wired (GP8) and read. So the missing pieces
+  are: enable the SM, drain it, turn intervals into MFM, decode sectors, and decide what to do
+  with the result -- not any new hardware. `WF_EV_WGATE` is declared and never emitted, which
+  is the trace to light up first.
+
+- **Amiga networking over the floppy port (PaulaNET-style).** Raised by the operator
+  2026-09-13 after finding RobSmithDev's PaulaNET. Genuinely attractive, and explicitly a
+  SECOND PRODUCT on the same board rather than an increment to disk serving: it makes the
+  Amiga itself reach the internet, and does nothing to make disks load better.
+
+  **Our hardware already is his hardware.** PaulaNET is a Pico W / Pico 2 W on the external
+  floppy port with 2N7002 level shifters and the CYW43439 radio; this board is an RP2350B
+  (PIM726) on the floppy port with BSS138 level shifters and the same radio. Every signal it
+  needs is already broken out, WDATA (GP7) and WGATE (GP8) included. **No board change, and
+  rev B does not need to account for this.**
+
+  **How it works, so nobody has to re-derive it:** the Amiga sees a floppy drive (DF1:) and
+  moves data with plain `trackdisk.device` raw commands, `ETD_RAWREAD` / `ETD_RAWWRITE`.
+  Tracks 0-74 hold a small AmigaDOS disk carrying the driver; **75 is AP scan results, 76 is
+  device configuration, 77 is ethernet data**. An RLE scheme chosen so its output can always
+  be locked onto by Paula avoids MFM's 2x cost; without it the rate halves. Measured at
+  ~43 KB/s with 80-120 ms ping on an unaccelerated A1200 -- about 70% of the 500 kbit/s the
+  port can carry, which independently confirms the "floppy speed" finding recorded below.
+
+  **THE TRACK MAP IS A REAL CONFLICT, not a detail.** A standard ADF uses all 80 cylinders, so
+  a drive cannot serve a real disk and carry a network on tracks 75-77 at the same time.
+  Either the device switches modes (network only while nothing is mounted) or networking gets
+  its own drive, which is what PaulaNET assumes by sitting on DF1.
+
+  **Licensing, which decides the shape of the work.** PaulaNET carries NO licence --
+  "Copyright (c) 2026 RobSmithDev. All rights reserved." -- so neither its firmware nor its
+  `PaulaNET.device` may be copied or vendored. **The operator is asking Rob directly
+  (2026-09-13), noting this project is open anyway.** Until that answer comes back, assume
+  nothing of his can be used, and do not start a clean-room reimplementation on the
+  assumption that it must be: an email is cheaper than a SANA-II driver.
+
+  **What we would actually have to write is the Amiga side, and that is most of the job.**
+  A SANA-II network device driver (VBCC), which is Amiga systems programming this project has
+  never touched. The Pico half is comparatively small once write support exists.
+
+  **Stack: AmiTCP_NG** (https://github.com/MW0MWZ/AmiTCP_NG), named by the operator.
+  GPL-2.0, actively maintained, a fork of AmiTCP/IP 3.0b2 offering a Roadshow-compatible
+  `bsdsocket.library` ABI. It consumes **any SANA-II device** through its `device=` setting
+  and is already hardware-validated against `wifipi.device` on PiStorm -- so there is a
+  working precedent for exactly this shape of driver.
+
+  **The layering also settles the licence question for our own code:** a SANA-II driver talks
+  to the stack over Exec device I/O, not by linking against it, so such a driver is not a
+  derivative work of AmiTCP_NG and its GPL does not propagate into it. That also means the
+  stack stays the user's choice -- Roadshow or AmiTCP_NG -- rather than something we bake in.
 - **Self-host on the local network: Docker containers, a local URL, local hardware.** Requested by
   the operator 2026-08-31 as a nice-to-have. Substantial but not exotic — the shape of the work is
   known, and most of it is swapping two managed services for local ones. What it actually touches:
