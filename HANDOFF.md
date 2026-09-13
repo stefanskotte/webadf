@@ -1494,6 +1494,36 @@ separately.
 
   Out of scope unless asked: .lha file comments and Amiga protection bits, and nested archives.
 
+- **DEMOZOO: assessed 2026-09-13, NOT a quick add -- and the design decision is already
+  made for you if you want it to be.** The operator asked for it "if it's easy", noting
+  Demozoo is a non-profit that should not be pounded. Two facts settle the shape:
+
+  1. **Demozoo publishes a daily bulk dump**: `https://data.demozoo.org/demozoo-export.sql.gz`,
+     ~200 MB gzipped, a Postgres dump, refreshed daily (checked 2026-09-13). Downloading it
+     once and querying locally is the arrangement that puts NO load on them at all -- the
+     same shape `openretro-db.ts` already uses for FS-UAE's Amiga.sqlite, and the thing a
+     non-profit would actually prefer.
+  2. **Demozoo stores NO file hashes.** A production's `download_links` are URLs to
+     scene.org and Aminet, nothing more. So matching cannot be by content the way OpenRetro's
+     SHA-1 match is; it is title-based, with all the false-positive risk that carries.
+
+  **Why it is still worth doing, unlike the OpenRetro identity matcher.** That one was
+  measured and produced exactly one new match, because OpenRetro is a GAMES database and the
+  misses were demos. Demozoo is the demoscene database: the very titles that failed --
+  9 Fingers, State of the Art, Global Trash, Wayfarer, Ray of Hope 2 -- are its core
+  content, and they are distinctive enough that a title match is not the coin-flip it would
+  be for generic names. **Measure it before building it**, the same way the OpenRetro claim
+  was measured and overturned: count how many unenriched TOSEC-identified disks find exactly
+  one Amiga production by title.
+
+  **Why it is not easy.** The dump is a Postgres dump and this project has no local
+  Postgres, so using it means a restore step (Docker) plus an extraction into a compact
+  local index -- heavier than OpenRetro's SQLite, which `node:sqlite` reads with no
+  dependency at all. The API alternative is much less code but puts load on them, needs the
+  rolling-hour budget from `tosec-sweep.ts` and negative-result caching, and would be built
+  twice if the dump is adopted later. **Pick dump or API deliberately; it determines
+  everything else.** Amiga platform ids are 5 (OCS/ECS), 6 (AGA), 26 (PPC/RTG).
+
 - **Enrich demos and applications from a source that actually has them.** Measured 2026-09-11
   (see 3ad): of the TOSEC-identified blobs OpenRetro cannot enrich, essentially all are
   demoscene productions -- 9 Fingers, State of the Art, Global Trash, Wayfarer, Ray of Hope 2
