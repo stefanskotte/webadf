@@ -49,6 +49,15 @@ for t in test_*.c; do
      -o "$out" "$t" transport_fake.c \
      $(ls ../src/*.c | grep -vE 'main\.c|transport_tls\.c|sntp_time\.c|portal_net\.c|dskchg\.c|activity_led\.c|i2c_probe\.c|ssd1306\.c|flux_capture\.c') \
      || { echo "COMPILE FAIL: $t"; fail=1; continue; }
-  "$out" || fail=1
+  if ! "$out"; then
+    rc=$?
+    # 128+n means a signal: a segfault or an abort, not an assertion. Say so --
+    # the difference between "a test failed" and "a test crashed" is the
+    # difference between reading the report and reaching for a debugger.
+    if [ "$rc" -gt 128 ]; then
+      echo "CRASHED (signal $((rc - 128))): $t -- see the last test name printed above"
+    fi
+    fail=1
+  fi
 done
 exit $fail
