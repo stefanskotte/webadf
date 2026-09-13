@@ -96,6 +96,16 @@ target_compile_definitions(wifi_floppy PRIVATE PICO_USE_STACK_GUARDS=1)
 # flux capture, the MFM decoder -- so as a default it distinguishes nothing.
 # CI passes the git description; rollout, rollback and anti-rollback in the
 # firmware-update design all need a version that moves when the image does.
+# An experiment build that lets the Amiga write, so the capture path can be
+# tested against a real drive. Writes are decoded and logged, NEVER applied --
+# see main.c's comment, which spells out that the Amiga will believe a write
+# succeeded and later read stale data back.
+option(WF_WRITE_CAPTURE "Release WPROT so writes can be captured (writes are discarded)" OFF)
+if (WF_WRITE_CAPTURE)
+  target_compile_definitions(wifi_floppy PRIVATE WF_WRITE_CAPTURE=1)
+  message(WARNING "WF_WRITE_CAPTURE is ON: this image lets the Amiga write, and throws the writes away.")
+endif ()
+
 set(FIRMWARE_VERSION "4b.0-dev" CACHE STRING
     "Version string the device reports at registration")
 

@@ -211,6 +211,34 @@ static void ui_observe(void *ctx, const dc_obs_t *o) {
 // flip this to 1 (and see the comment there) once the write path exists.
 #define WRITE_BACK_IMPLEMENTED 0
 
+/*
+ * WF_WRITE_CAPTURE -- release WPROT so the Amiga will actually write, for
+ * testing the capture path against a real drive. OFF unless -DWF_WRITE_CAPTURE=1.
+ *
+ * SEPARATE FROM WRITE_BACK_IMPLEMENTED ON PURPOSE. That flag means "a write
+ * reaches the image", and it is still 0 because that is still true. Flipping it
+ * to enable an experiment would make it a lie, and it is exactly the kind of
+ * lie a later reader believes.
+ *
+ * WHAT THIS BUILD ACTUALLY DOES, and it is not what the Amiga will think:
+ * the flux is captured, decoded, checksummed and LOGGED, and then discarded.
+ * Nothing is written to PSRAM and nothing is sent upstream. So the Amiga sees
+ * a successful write, and reads the OLD data back once its own cache is gone.
+ * AmigaDOS may then decide the disk is corrupt -- correctly, from where it is
+ * standing. Use a disk you do not mind losing.
+ *
+ * The panel's pencil lights in this build, which is honest as far as it goes:
+ * the disk IS presented as writable. It does not say the writes go nowhere.
+ */
+#ifndef WF_WRITE_CAPTURE
+#define WF_WRITE_CAPTURE 0
+#endif
+
+// Both gates, in one place: the firmware must be willing AND the server must
+// say the disk is writable (dc_desired_t.write_protected, defaulting to true
+// in the database).
+#define WF_ACCEPTS_WRITES (WRITE_BACK_IMPLEMENTED || WF_WRITE_CAPTURE)
+
 static PIO  pio = pio0;
 static uint sm_out, sm_in;
 static int  dma_ch;
@@ -819,8 +847,27 @@ static void core1_main(void) {
             // either, until that path exists. Only main()'s core0 loop ever
             // wrote PIN_WPROT before this (a fixed boot-time default); this is
             // now the only place that updates it afterward.
-            bool wprot = !mounted || c.mounted_write_protected || !WRITE_BACK_IMPLEMENTED;
+            bool wprot = !mounted || c.mounted_write_protected || !WF_ACCEPTS_WRITES;
             gpio_put(PIN_WPROT, wprot ? OUT_ASSERT : OUT_RELEASE);
+            /*
+             * Say so when it CHANGES, with the reason.
+             *
+             * Added after a write test that produced nothing: WGATE never
+             * fired, and working out why meant inferring the pin's state from
+             * the absence of an event. Three separate things force WPROT --
+             * no disk, the server's flag, and this firmware's own willingness
+             * -- and from the log they were indistinguishable. A gate nobody
+             * can observe is a gate nobody can debug.
+             */
+            static int last_wprot = -1;
+            if ((int)wprot != last_wprot) {
+                last_wprot = (int)wprot;
+                wf_logf(WF_INFO, "wprot: %s (mounted=%s server=%s firmware=%s)",
+                        wprot ? "ASSERTED -- the Amiga cannot write" : "RELEASED -- the Amiga may write",
+                        mounted ? "yes" : "no",
+                        mounted ? (c.mounted_write_protected ? "protected" : "writable") : "n/a",
+                        WF_ACCEPTS_WRITES ? "accepts writes" : "refuses writes");
+            }
             // The panel's pencil, from the same value and at the same moment.
             // It is therefore dark today for a reason that is true rather than
             // incidental: WRITE_BACK_IMPLEMENTED is 0, so every disk is
@@ -923,6 +970,11 @@ int main(void) {
     stdio_init_all();
     wf_log_init();
     wf_logf(WF_INFO, "wifi-floppy boot: %s", PICO_BOARD);
+#if WF_WRITE_CAPTURE
+    wf_logf(WF_WARN, "WRITE CAPTURE BUILD: WPROT released for writable disks. "
+                     "Writes are decoded and LOGGED, then DISCARDED -- the image "
+                     "does not change. Do not use a disk you care about.");
+#endif
 
     // outputs (FET gates, idle released)
     const uint outs[] = {PIN_WPROT, PIN_RDY, PIN_TRK0, PIN_INDEX, PIN_CHNG};
