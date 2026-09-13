@@ -82,7 +82,7 @@ risk — its discriminating power was demonstrated before it was written.
 
 **Ruling 7 (Task 6).** Accepted the reviewer's recommendation to source
 `PORTAL_AP_PASSWORD` from the environment (with a build-time fatal-error guard on empty)
-rather than the literal `"***REMOVED-CREDENTIAL***"` the implementer had shipped. A hardcoded PSK
+rather than the hardcoded literal PSK the implementer had shipped. A hardcoded PSK
 satisfies the spec's "fixed compile-time password" on paper but puts a real WPA2 credential
 into git history the moment the file is committed; the implementer's own code comment
 already said it should not be there. Unlike `WIFI_PASS`/`WEBADF_PAIRING_CODE` in plan 4a

@@ -114,10 +114,20 @@ endif ()
 # `password` argument).
 #
 # Review round 1 (recommendation, accepted): this used to be a hardcoded
-# literal ("***REMOVED-CREDENTIAL***") here, which is a real WPA2 PSK committed to git
-# history the moment this file is -- the comment above already said that
-# was wrong for a shipped build, so fix it now rather than after a
-# history rewrite is the only remedy. Sourced from the environment the
+# literal PSK here, which is a real WPA2 credential committed to git history
+# the moment this file is -- the comment above already said that was wrong
+# for a shipped build, so fix it now rather than after a history rewrite is
+# the only remedy.
+#
+# It was NOT fixed in time: the literal reached git and stayed there, and
+# the history was rewritten on 2026-09-13 before the repository was made
+# public -- which is exactly the remedy this comment warned would be the
+# only one left. The value itself is gone from every commit; this note
+# stays because the lesson is the point. A credential in a source file is
+# already leaked, and moving it to the environment afterwards does not
+# unleak it.
+#
+# Sourced from the environment the
 # same way WIFI_PASS/WEBADF_PAIRING_CODE are above, with a fatal-error
 # guard: unlike those two (which degrade to an unusable-but-harmless
 # empty compile-time string if unset), an empty WPA2 PSK is invalid
