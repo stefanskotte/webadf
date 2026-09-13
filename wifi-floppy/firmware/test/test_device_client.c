@@ -787,7 +787,11 @@ int main(void) {
     RUN(test_an_eject_still_clears_the_backoff);
     RUN(test_an_over_long_poll_body_is_refused_not_truncated);
 
-    free(psram_mem);
+    // The observation tests run BEFORE the backing is released: several of
+    // them drive a real fetch, which writes into PSRAM. Appending them after
+    // free(psram_mem) -- which is where they first landed -- is a
+    // heap-use-after-free that macOS tolerated silently and Linux turned into
+    // a segfault on the first CI run.
     RUN(test_the_disk_title_is_read_from_the_poll_body);
     RUN(test_an_eject_clears_the_title);
     RUN(test_an_already_mounted_disk_is_still_named);
@@ -795,5 +799,9 @@ int main(void) {
     RUN(test_a_stale_title_cannot_survive_into_a_different_disk);
     RUN(test_progress_is_reported_once_per_percent);
     RUN(test_an_absent_observer_changes_nothing);
+
+    // Last, so nothing below can touch it. Anything added after this line and
+    // reaching image_parse_feed() writes to freed memory.
+    free(psram_mem);
     return REPORT();
 }
