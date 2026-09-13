@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { ADF_BYTES } from '@/lib/adfmfm';
 import {
   replayPlan, materialise, nextKind, deltasSinceSnapshot,
-  MAX_CHAIN_DEPTH, HistoryError, type VersionEntry,
+  MAX_CHAIN_DEPTH, type VersionEntry,
 } from './chain';
 import { buildDelta, encodeDelta, SECTOR_BYTES, SECTORS_PER_DISK } from './delta';
 
