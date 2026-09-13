@@ -1863,11 +1863,19 @@ separately.
     answer is to tell them loudly -- in the Devices tab, and on the panel -- that an update
     is waiting and why it matters. Silently updating a device whose owner declined is the
     thing that makes people distrust every other switch in the product.
-  * **Per device, not only per org.** Keeping one board pinned while the rest move is the
-    ordinary case: it is how you keep a known-good device beside a Amiga that matters while
-    trying a new build on another. The Devices tab should show, at a glance, which boards
-    are opted out and which are behind -- an invisible opt-out becomes a fleet nobody
-    realises is stale.
+  * **Per device. Operator-confirmed 2026-09-13 as the right granularity**, so each board is
+    enabled or disabled for updates on its own. Keeping one pinned while the rest move is
+    the ordinary case: it is how you keep a known-good device beside an Amiga that matters
+    while trying a new build on another. An org-wide default may sit underneath it, but the
+    per-device setting is the one that decides. The Devices tab should show, at a glance,
+    which boards are opted out and which are behind -- an invisible opt-out becomes a fleet
+    nobody realises is stale.
+
+    **The default is ON**, from the operator's own framing -- "something the user can elect
+    to DISABLE" -- so a board updates unless someone says otherwise. Recorded explicitly
+    because a default is exactly the kind of thing that drifts when the setting is built
+    months later, and the two directions are not equivalent: default-off means a fleet that
+    quietly never patches because nobody remembered to opt in.
   * **Enforce it ON THE DEVICE, not only in the server's logic.** A flag the device holds in
     its config store and refuses to act against is meaningfully stronger than one the server
     merely honours, because it survives a compromised server. Be honest in the UI about
