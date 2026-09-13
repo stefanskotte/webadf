@@ -2540,15 +2540,52 @@ silently truncated the opposite case. Fixed and tested. **Whether that damage is
 Amiga trips on is NOT established** -- the failing block is a directory block and the file
 is elsewhere.
 
-**The experiment that settles it, and had not been run when this was written:** mount a
-different, trusted ADF. Clean reads -> the image is the fault. Errors follow -> the fault is
-in delivery, and the flux path needs direct instrumentation rather than more inference from
-event traces.
+**IT FOLLOWED TO A SECOND, DIFFERENT DISK** (`amiga-wb31_workbench.adf`, a different digest
+and 141 of 1,760 blocks different from the first, including block 1598 itself). So it is not
+that image. The two are 92% identical Workbench 3.1 disks, which is why `dir df0: all` walks
+a near-identical tree and lands on the same block -- the repeated block number is a
+coincidence of similar disks, not a positional fault.
 
-**A process note worth more than any of the above.** Four diagnoses were offered and four
-died. Two were built on logs that had silently dropped records -- a check that takes one
-grep and was not done until late. Look for `record(s) dropped` BEFORE drawing a conclusion
-from a capture.
+**THE WHOLE SOFTWARE CHAIN IS NOW PROVEN, END TO END. The fault is after it.**
+
+| stage | how it was verified |
+|---|---|
+| operator's file -> stored blob | sha256 of the local file matches the served digest exactly |
+| ADF -> MFM | `pnpm adfmfm:diff`: **160/160 tracks byte-identical to Greaseweazle** |
+| MFM -> PSRAM | `image_parse_end()` on arrival |
+| **PSRAM at serve time** | **`-DWF_VERIFY_TRACKS=1`: 160 tracks re-read and decoded, 0 bad, 526 ms** |
+| track served to the Amiga | correct track, full 101,344 bits, zero misses |
+| the Amiga | fails to read it |
+
+`WF_VERIFY_TRACKS` is the new diagnostic and is worth keeping: it re-reads every track out
+of PSRAM after a mount and decodes it the way the Amiga will, requiring eleven sectors with
+valid checksums. It found nothing, which is exactly its value -- it eliminated the one link
+nothing else covered, since `image_loader` checks PSRAM once on arrival and nothing ever
+looks again.
+
+**Also measured: the Amiga does NOT retry.** Track 145 was served once, held for 224 ms
+(one revolution), and the Amiga stepped away. So this is not a drive-level retry storm.
+
+**What is left, and what would measure it.** Only the PIO's flux generation and the
+electrical path to Paula remain unverified -- everything from the operator's file to the
+words queued into the PIO TX FIFO is proven correct. The one mechanism that could corrupt a
+read without corrupting our data is a **PIO TX FIFO underrun**, which would stall the flux
+mid-track; counting those is the next instrument to build. Beyond that it wants a scope on
+RDATA during a read of cylinder 72.
+
+**THE PROCESS NOTE IS WORTH MORE THAN ANY OF THE ABOVE.** FIVE diagnoses were offered with
+confidence and all five died: SIDE bounce, dropped STEP pulses, STEP bursts, a corrupt
+image, and a USB adapter that turned out to be on the console side of the machine entirely.
+
+Two rules came out of it, both learned the expensive way:
+
+1. **Check for `record(s) dropped` before drawing any conclusion from a capture.** Two of
+   the five rested on logs missing 2,091 records. It is one grep.
+2. **Do not flash a speculative fix.** The SIDE change was reasoned, not measured -- and it
+   turned an intermittent read error into a disk that would not mount at all, costing the
+   operator a power cycle and a chunk of an evening. When the symptom it was meant to cure
+   survived it, that alone should have triggered an immediate revert rather than leaving it
+   in the real-time path while hunting something else.
 
 ### 4a. THE AMIGA READS DISKS — 2026-09-13
 
