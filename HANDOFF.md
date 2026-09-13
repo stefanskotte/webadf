@@ -2495,6 +2495,61 @@ in advance that it empties the table for everyone. This repo has no such databas
 e2e runs against live Neon — so "accept in advance" is currently the only option, and it should
 be an explicit decision each time rather than a side effect of following a plan step.
 
+### 4b. The write path on real hardware, and a read error still unexplained — 2026-09-13
+
+**WRITE CAPTURE EXISTS AND IS UNPROVEN.** `-DWF_WRITE_CAPTURE=1` builds an image that
+releases WPROT so the Amiga will write; the flux is captured, decoded and logged, then
+DISCARDED. Deliberately not done by flipping `WRITE_BACK_IMPLEMENTED`, which still means
+"a write reaches the image" and is still 0. **No write has ever been captured**: every
+WGATE assertion seen so far has been a bus-wide edge storm at a single timestamp -- the
+Amiga powering on or off -- and never a real one.
+
+**WPROT has three gates and now says which is closed.** No disk, the server's
+`writeProtected` flag, or the firmware's own willingness. A write test produced nothing at
+all and diagnosing it meant inferring a pin's state from the absence of an event, so the
+state is now logged on every change with the reason. The first line it printed answered the
+question immediately.
+
+**A flip of `writeProtected` does NOT reach a device that already holds the disk** -- the
+backlog entry on that is real and was hit in practice. Eject, flip, re-mount.
+
+**AN UNEXPLAINED READ ERROR, and four wrong diagnoses worth recording so they are not
+repeated.** An Amiga reading Workbench 3.1 intermittently reports "read error on block N"
+(1598, 1617) and recovers on retry. What the board's own record says, across every session:
+
+  * `TRACK-MISS` after a mount: **zero**, always. Every track asked for was present.
+  * Every serve is **101,344 bits** -- the full `TRACK_BITS`, never short.
+  * `STEP` tracking is exact: a 70-step seek moved `cur_cyl` 69 -> 0 with no dropped pulses.
+
+Ruled out, each after being proposed with confidence and then killed by the data:
+  1. *SIDE bounce restarting the flux stream.* Real (3,725 edges <1 ms apart) and fixed --
+     the loop now SAMPLES the SIDE level rather than chasing its edges, which is correct
+     regardless -- but the log it was measured on had **2,091 dropped records**, and the
+     error persisted afterwards.
+  2. *Dropped STEP pulses causing cylinder drift.* Measured: zero drops.
+  3. *STEP bursts random-walking `cur_cyl`.* Real and worth fixing (16 edges in one
+     millisecond with 7 direction reversals) but occurred **once**, in a session without
+     the error.
+  4. *A corrupt disk image.* The image is byte-intact, but see below.
+
+**The one real finding, and it came from an independent tool.** `xdftool` refuses the
+operator's Workbench 3.1 image outright: `L/PPaint/Animations/PPaint.anim` lists 64 data
+blocks for a declared 24,576 bytes (48). Our own reader walked 163 files and called the
+volume healthy, because it only warned when a file had FEWER bytes than claimed and
+silently truncated the opposite case. Fixed and tested. **Whether that damage is what the
+Amiga trips on is NOT established** -- the failing block is a directory block and the file
+is elsewhere.
+
+**The experiment that settles it, and had not been run when this was written:** mount a
+different, trusted ADF. Clean reads -> the image is the fault. Errors follow -> the fault is
+in delivery, and the flux path needs direct instrumentation rather than more inference from
+event traces.
+
+**A process note worth more than any of the above.** Four diagnoses were offered and four
+died. Two were built on logs that had silently dropped records -- a check that takes one
+grep and was not done until late. Look for `record(s) dropped` BEFORE drawing a conclusion
+from a capture.
+
 ### 4a. THE AMIGA READS DISKS — 2026-09-13
 
 **Operator-reported, and it is the milestone this whole project was pointed at:** a real
