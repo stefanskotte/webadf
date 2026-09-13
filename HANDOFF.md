@@ -2486,12 +2486,30 @@ TRK0, SEL, MOTOR, SIDE and STEP are wired the right way round through the '541 a
 BSS138s; `track_cache_get()` answers a seek inside the head-settle window; and the whole
 chain from a click in a browser to bytes in an Amiga's RAM closes.
 
-**NOT independently corroborated from the device log, and the reason is worth knowing.**
-Checked ~12 minutes after the report: the board had rebooted and `wf_log` had dropped 903
-records, so the session's STEP/TRACK-SERVED traces were gone. That is the ring's policy
-working as designed (it keeps the OLDEST records, so a boot history survives and later
-traffic does not) and not a defect -- but it means "the Amiga read disks" currently rests
-on the operator having watched it, which is good evidence and is not a measurement.
+**MEASURED on a live session the same day**, after a first attempt found only a rotated
+log ring (903 records dropped -- the ring keeping its OLDEST records exactly as designed).
+A Workbench 3.1 boot, captured over the console:
+
+| | |
+|---|---|
+| `TRACK-MISS` after the mount | **0** -- all 41 were before it, on an empty drive |
+| Tracks served | 2,468 over 145 s, 108 distinct, reaching track 159 |
+| Bit count on every serve | **101,344** -- exactly `TRACK_BITS`, never short |
+| `STEP` -> `TRACK-SERVED` | median **1 ms**, p99 **3 ms**, against ~15 ms of head settle |
+
+Zero misses after the mount is the strong result: every track the Amiga asked for was
+present in PSRAM and served whole. The seek latency says core0's service loop has an order
+of magnitude of headroom against the deadline that actually constrains it -- which is worth
+knowing before anything else is added to that loop.
+
+**WHAT COULD NOT BE MEASURED, and it is the commercially interesting one.** How many
+REVOLUTIONS a track read costs. Two obstacles, both in the instrumentation rather than the
+result: 95.5% of track loads are replaced before completing one revolution (the Amiga seeks
+far more than it dwells, so `WF_EV_INDEX`'s revolution field mostly reads 0), and a RETRY
+re-reads the same track without changing `want_track`, so it never fires `TRACK-SERVED` and
+is invisible to every trace there is. A clean Workbench boot is practical evidence that
+reads are not failing; it is not a measurement of how many revolutions they take. Answering
+it properly needs a trace on the DMA wrap counter rather than on track changes.
 
 **Still unverified, and now cheaply verifiable -- do these next time a disk is read:**
 * **The track counter on the OLED.** It renders and is wired, both host-tested, but has
