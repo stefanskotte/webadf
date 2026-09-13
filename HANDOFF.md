@@ -1562,13 +1562,28 @@ separately.
 
   **The layout, on 128x32:**
 
-      ((o)) LOADED              [lemming]
+      ((o)) LOADED         [lock] [lemming]
       Sensible Soccer
       Disk 1/2 Boot        12/79
 
   A wifi glyph with signal strength; a status word; the disk name wrapped over two
-  lines at a word break; the track counter as "0/79"; and a walking lemming in the
-  top-right. The counter is drawn BEFORE the detail label beside it and the label is
+  lines at a word break; the track counter as "0/79"; the WRITE STATE; and a walking
+  lemming in the top-right.
+
+  **The write state is a padlock or a pencil, never an absent icon.** Operator-verified
+  2026-09-13. It is read-only on every disk today (WPROT is asserted while
+  `WRITE_BACK_IMPLEMENTED` is 0), so the padlock is what you see, and the pencil
+  appearing is precisely the signal that the write switch has been thrown. It is driven
+  by the same expression that drives the WPROT pin, never a second opinion about it: a
+  pencil that disagreed with the pin would be worse than none, because it would be
+  believed.
+
+  **The first version drew the pencil only when writable and nothing otherwise, and that
+  was wrong** -- the panel showed a blank, which cannot be told apart from a firmware
+  with no such indicator. `draw_wifi()` one function away already handles this correctly
+  (no radio is a STRUCK glyph, not a blank), and the rule was simply not carried across.
+  A state worth showing is worth showing in both of its values; the test now asserts both
+  light pixels and that the two differ, which the broken version would have passed. The counter is drawn BEFORE the detail label beside it and the label is
   clipped against it, never the reverse -- a half-drawn "12/79" is a lie about which
   track is being read, where a clipped label is only shorter.
 
