@@ -112,18 +112,30 @@ static const uint8_t LEMMING[LEM_FRAMES][8] = {
 };
 
 
-// A PENCIL, shown only while the mounted disk is writable. Drawn from the
-// picture, like everything else here.
+// THE WRITE STATE, as one of two glyphs -- never as the ABSENCE of one.
 //
-//   .....##.    the eraser end, top right
-//   ....####
-//   ...####.    the body, on the diagonal
-//   ..####..
-//   .####...
-//   ####....
-//   ###.....    tapering to
-//   #.......    a point, bottom left
+// The first version drew a pencil when the disk was writable and nothing when
+// it was not. That is unreadable: no disk is writable today (WPROT is asserted
+// for every mount while WRITE_BACK_IMPLEMENTED is 0), so the panel showed
+// nothing at all, and nothing is indistinguishable from a firmware that has no
+// such indicator. Reported by the operator the moment it was flashed.
+//
+// The same rule the wifi glyph already follows, where "no radio" is a struck
+// glyph rather than a blank: a state worth showing is worth showing in both of
+// its values. Both occupy the same 8 columns, so the status word beside them
+// never moves.
+//
+//   pencil, writable        padlock, read-only
+//   .....##.                ..####..
+//   ....####                .##..##.     the shackle
+//   ...####.                .##..##.
+//   ..####..                ########
+//   .####...                ###..###     a keyhole, so it reads as a lock
+//   ####....                ###..###     and not as a filled box
+//   ###.....                ########
+//   #.......                ........
 #define PENCIL_W 8
+static const uint8_t LOCK[8] = { 0x3C, 0x66, 0x66, 0xFF, 0xE7, 0xE7, 0xFF, 0x00 };
 static const uint8_t PENCIL[8] = { 0x06, 0x0F, 0x1E, 0x3C, 0x78, 0xF0, 0xE0, 0x80 };
 
 // ---------------------------------------------------------------- drawing
@@ -170,10 +182,11 @@ static void draw_lemming(uint8_t *fb, int x, int y, int frame) {
             if (g[r] & (1u << (LEM_W - 1 - c))) px(fb, x + c, y + r);
 }
 
-static void draw_pencil(uint8_t *fb, int x, int y) {
+static void draw_write_state(uint8_t *fb, int x, int y, bool writable) {
+    const uint8_t *g = writable ? PENCIL : LOCK;
     for (int r = 0; r < 8; r++)
         for (int c = 0; c < PENCIL_W; c++)
-            if (PENCIL[r] & (1u << (PENCIL_W - 1 - c))) px(fb, x + c, y + r);
+            if (g[r] & (1u << (PENCIL_W - 1 - c))) px(fb, x + c, y + r);
 }
 
 static void draw_wifi(uint8_t *fb, int x, int y, int bars) {
@@ -243,12 +256,12 @@ void display_render(const display_state_t *s, uint8_t fb[DISP_FB_BYTES]) {
     // sideways when a disk became writable would be harder to read at a
     // glance than the pencil is worth.
     draw_lemming(fb, DISP_W - LEM_W, 0, s->tick);
-    int word_limit = DISP_W - LEM_W - 2;
-    if (s->writable) {
-        draw_pencil(fb, DISP_W - LEM_W - 2 - PENCIL_W, 0);
-        word_limit = DISP_W - LEM_W - 2 - PENCIL_W - 2;
-    }
-    draw_text(fb, WIFI_W + 3, 0, status_word(s->status), word_limit);
+    draw_write_state(fb, DISP_W - LEM_W - 2 - PENCIL_W, 0, s->writable);
+    // Constant, because the glyph is always there. The earlier version moved
+    // this depending on whether a pencil was drawn, which made the status word
+    // shift sideways as a disk mounted.
+    draw_text(fb, WIFI_W + 3, 0, status_word(s->status),
+              DISP_W - LEM_W - 2 - PENCIL_W - 2);
 
     // --- middle two lines: the disk name ----------------------------------
     char l1[22], l2[22];

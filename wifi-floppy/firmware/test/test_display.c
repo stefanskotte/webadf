@@ -134,22 +134,28 @@ static void test_the_lemming_stays_in_its_corner(void) {
         }
 }
 
-static void test_the_pencil_shows_only_when_the_disk_is_writable(void) {
-    /* It is the one thing on this panel that says what the Amiga is allowed
-       to do to your disk, so it must not appear when it is not true -- and
-       must be unmistakable when it is. */
+static void test_the_write_state_is_always_shown(void) {
+    /*
+     * THE bug the operator found: the first version drew a pencil when the
+     * disk was writable and NOTHING when it was not. No disk is writable
+     * today, so the panel showed nothing -- which cannot be told apart from a
+     * firmware that has no such indicator.
+     *
+     * Both values of the state must draw something, and the two must differ.
+     */
     display_state_t ro = base_state(), rw = base_state();
     rw.writable = true;
     uint8_t a[DISP_FB_BYTES], b[DISP_FB_BYTES];
     display_render(&ro, a);
     display_render(&rw, b);
-    CHECK(memcmp(a, b, DISP_FB_BYTES) != 0, "a writable disk must look different");
-    /* Its own 8 columns, just left of the lemming. */
-    CHECK(any_lit(b, 0, DISP_W - 8 - 2 - 8, DISP_W - 8 - 2), "the pencil is drawn");
-    CHECK(!any_lit(a, 0, DISP_W - 8 - 2 - 8, DISP_W - 8 - 2), "and only when writable");
+
+    const int x0 = DISP_W - 8 - 2 - 8, x1 = DISP_W - 8 - 2;
+    CHECK(any_lit(a, 0, x0, x1), "read-only must draw a glyph, not a blank");
+    CHECK(any_lit(b, 0, x0, x1), "writable must draw a glyph");
+    CHECK(memcmp(a, b, DISP_FB_BYTES) != 0, "and the two must not look alike");
 }
 
-static void test_the_pencil_disturbs_nothing_else(void) {
+static void test_the_write_glyph_disturbs_nothing_else(void) {
     /* Same reason the lemming has this test: if turning write on redrew the
        title or the counter, every toggle would cost a frame on the core that
        services the floppy bus. */
@@ -402,8 +408,8 @@ int main(int argc, char **argv) {
     RUN(test_the_counter_wins_a_collision_with_the_detail);
     RUN(test_the_lemming_walks);
     RUN(test_the_lemming_stays_in_its_corner);
-    RUN(test_the_pencil_shows_only_when_the_disk_is_writable);
-    RUN(test_the_pencil_disturbs_nothing_else);
+    RUN(test_the_write_state_is_always_shown);
+    RUN(test_the_write_glyph_disturbs_nothing_else);
     RUN(test_a_walk_step_costs_one_small_blit);
     RUN(test_a_title_breaks_at_a_space_when_it_can);
     RUN(test_a_long_unbreakable_title_is_truncated_visibly);
