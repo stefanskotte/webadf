@@ -135,9 +135,29 @@ export function readFileBytes(
     at += take;
   }
 
-  const complete = total >= declared && warnings.length === 0;
-  if (!complete && total < declared) {
+  /*
+   * BOTH directions of the mismatch are damage, and only one was reported.
+   *
+   * Too FEW reachable bytes was warned about; too MANY was silently truncated
+   * by the Math.min above and marked complete. That is not a tidier outcome,
+   * it is a quieter one: a file whose block list carries more data blocks than
+   * its own size field accounts for has inconsistent metadata, and AmigaDOS
+   * and xdftool both treat it as an error.
+   *
+   * Found 2026-09-13 on the operator's Workbench 3.1 disk, where
+   * L/PPaint/Animations/PPaint.anim lists 64 data blocks for a size of 24,576
+   * bytes (48 blocks). xdftool refuses the disk outright; this library called
+   * it healthy and showed it in the browser as a normal file, which is the
+   * worst of the three answers -- the operator was about to rely on that disk
+   * on real hardware.
+   */
+  const excess = total - declared;
+  if (total < declared) {
     warn(`header claims ${declared} bytes but only ${total} are reachable`);
+  } else if (excess >= BLOCK_BYTES) {
+    warn(`header claims ${declared} bytes but the block list holds ${total} ` +
+         `(${Math.floor(excess / BLOCK_BYTES)} block(s) too many) -- inconsistent metadata`);
   }
+  const complete = total >= declared && warnings.length === 0;
   return { bytes, complete, warnings };
 }

@@ -21,6 +21,46 @@ function firstFile(adf: Uint8Array) {
 }
 
 describe('readFileBytes', () => {
+  it('reports a block list that holds MORE than the header claims', () => {
+    /*
+     * Both directions of this mismatch are damage. Only the "too few" case was
+     * reported; "too many" was silently truncated and the file marked complete,
+     * so a damaged disk read as healthy in the browser.
+     *
+     * Found on the operator's real Workbench 3.1 disk 2026-09-13, where
+     * L/PPaint/Animations/PPaint.anim lists 64 data blocks for a declared size
+     * of 24,576 bytes. xdftool refuses the whole image over it; this library
+     * showed it as a normal file -- the worst of the three answers, since the
+     * disk was about to be trusted on real hardware.
+     */
+    const want = payload(BLOCK_BYTES * 4);
+    const adf = syntheticVolume({ filesystem: 'FFS', entries: [{ name: 'A', bytes: want }] });
+    const header = firstFile(adf).block;
+
+    // Shrink the DECLARED size by two blocks, leaving the block list intact --
+    // exactly the shape of the real damage.
+    const declaredOff = header * BLOCK_BYTES + 324;
+    expect(getBe32(adf, declaredOff)).toBe(BLOCK_BYTES * 4);
+    putBe32(adf, declaredOff, BLOCK_BYTES * 2);
+    recheck(adf, header);
+
+    const got = readFileBytes(adf, header, 'FFS')!;
+    expect(got.warnings.join(' ')).toMatch(/block list holds/);
+    expect(got.warnings.join(' ')).toMatch(/2 block\(s\) too many/);
+    expect(got.complete).toBe(false);
+    // The bytes it does return are still the declared length, not the excess.
+    expect(got.bytes.length).toBe(BLOCK_BYTES * 2);
+  });
+
+  it('stays quiet when the block list matches the declared size', () => {
+    // The guard above must not fire on healthy files: FFS rounds a file up to
+    // whole blocks, so a partial last block is normal and is NOT damage.
+    const adf = syntheticVolume({ filesystem: 'FFS', entries: [{ name: 'A', bytes: payload(BLOCK_BYTES + 7) }] });
+    const got = readFileBytes(adf, firstFile(adf).block, 'FFS')!;
+    expect(got.warnings).toEqual([]);
+    expect(got.complete).toBe(true);
+  });
+
   it('reads a small OFS file, skipping the 24-byte data-block header', () => {
     const want = payload(100);
     const adf = syntheticVolume({ filesystem: 'OFS', entries: [{ name: 'A', bytes: want }] });
