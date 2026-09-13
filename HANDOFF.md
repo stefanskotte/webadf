@@ -1851,9 +1851,9 @@ separately.
   part of a first increment. Note it, do not reach for it until the software path has been
   proven on boards that can still be recovered.
 
-  **THE USER MUST BE ABLE TO TURN AUTOMATIC UPDATES OFF** (operator, 2026-09-13). Default
-  ON, because a fleet that never patches is its own security problem, but opting out has to
-  be a real choice and not a dark pattern.
+  **AUTOMATIC UPDATES SHIP OFF. OPT-IN, per device** (operator's decision, 2026-09-13 --
+  reversing an earlier default-on reading of the same conversation, so do not "restore" it).
+  A board never reflashes itself until someone has said it may.
 
   * **"Off" means the device never updates ITSELF.** A manual update stays available, behind
     the same password confirmation. That is the distinction worth drawing: the objection
@@ -1871,19 +1871,39 @@ separately.
     which boards are opted out and which are behind -- an invisible opt-out becomes a fleet
     nobody realises is stale.
 
-    **The default is ON**, from the operator's own framing -- "something the user can elect
-    to DISABLE" -- so a board updates unless someone says otherwise. Recorded explicitly
-    because a default is exactly the kind of thing that drifts when the setting is built
-    months later, and the two directions are not equivalent: default-off means a fleet that
-    quietly never patches because nobody remembered to opt in.
+    **The default is OFF.** Recorded explicitly because a default is exactly what drifts
+    when a setting is built months after it is specified.
+
+    **What opt-in costs, and therefore what it obliges:** most boards will never be
+    enrolled, because most people never visit a settings page -- so the fleet's normal state
+    is stale, and "there is an update" has to reach someone who is not looking for it. That
+    makes the visibility work below load-bearing rather than nice-to-have, and it is the
+    part most likely to be dropped for time. If only one thing gets built beyond the flag
+    itself, make it **the prompt at pairing**: that is the single moment the operator of a
+    board is already paying attention to it.
   * **Enforce it ON THE DEVICE, not only in the server's logic.** A flag the device holds in
     its config store and refuses to act against is meaningfully stronger than one the server
     merely honours, because it survives a compromised server. Be honest in the UI about
     which kind it is: as a purely server-side flag it is a convenience control and NOT a
     security boundary, since a server that can ignore the flag can push firmware anyway.
     The device-side version is the one worth building.
-  * Changing the setting needs the same step-up auth as an update, or the opt-out is
-    trivially undone by whoever the opt-out was protecting against.
+  * Changing the setting needs the same step-up auth as an update, or the choice is
+    trivially undone by whoever it was protecting against. That now cuts both ways: turning
+    updates ON is the privileged operation, because it is the one that grants a remote party
+    the right to run code on that board.
+
+  **Making "off by default" honest rather than negligent.** Three things, in the order they
+  matter:
+
+  1. **Ask at pairing.** The one moment someone is demonstrably looking at that device.
+     Offer it plainly -- neither pre-ticked nor buried -- and record the answer.
+  2. **Show the state, not just the setting.** The Devices tab should say which boards are
+     enrolled, which are behind, and by how much. An opt-in scheme whose UI shows only a
+     toggle tells you what you chose, not what you are running.
+  3. **Say when it matters.** A security-relevant release should surface against every
+     un-enrolled device that is behind -- loudly, and without updating it. Per the rule
+     above, a declined or unelected update is still declined; the answer is to tell someone,
+     never to decide for them.
 
 - **ARCHITECTURE DECISION 2026-09-13: the device keeps streaming FLUX, not ADF.**
   Raised while starting write support -- storing ADF on the Pico and encoding MFM there
