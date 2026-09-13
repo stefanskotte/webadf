@@ -1942,6 +1942,37 @@ separately.
   existing path with NO FIRMWARE CHANGE. ADF cannot represent any of them. The operator's
   call, and the backlog entry below is what it buys.
 
+- **HD floppies: 1.76 MB images, on a par with the 880 KB ones today.** Requested by the
+  operator 2026-09-13 -- create them, add files to them, mount them. The operator's own
+  estimate that the MFM would be ~4 MB is right: an Amiga HD disk is 22 sectors per track
+  against DD's 11, and the flux is 1 us bitcells at 150 rpm rather than 2 us at 300, which
+  is the same 500 kbit/s over a revolution twice as long. 160 tracks x ~25,000 bytes is
+  ~4.0 MB per image.
+
+  **THE BLOCKER IS PSRAM, and it is worth knowing before anyone starts.** The part is 8 MB
+  and today two slots of DD cost 4.26 MB (`SLOT_COUNT 2`, `TRACK_MAX_BYTES 13312`). Doubling
+  the track size for HD makes one slot ~4.26 MB and two of them ~8.5 MB -- **over the part**.
+  So HD forces a choice: a single slot (losing the fetch-the-next-disk-while-the-current-one-
+  plays property that `psram_publish_slot()` exists to provide, and with it the guarantee
+  that a failed fetch leaves the Amiga holding the disk it had), or a bigger PSRAM part on a
+  future board. Decide that first; everything else is ordinary work.
+
+  **What else it touches:**
+  * `src/lib/adfmfm/constants.ts` -- SECTORS, TRACK_BITS, the gaps, ADF_BYTES and WFMF_BYTES
+    all assume DD. They are measured values verified against Greaseweazle, so the HD set
+    needs verifying the same way rather than derived by doubling.
+  * The PIO clock divider: `flux_out` emits 2 us bitcells today. HD is 1 us.
+  * `src/lib/adffs/` -- AmigaDOS scales to HD but the root block moves (block 1760 on an HD
+    volume, not 880), so anything that hardcodes ROOT_BLOCK needs to take it from the
+    volume's size.
+  * The 901,120-byte checks: `setDesired` refuses anything that is not exactly a DD image,
+    and the ingest path and `toAdf()` assume the same. Those become "one of two valid sizes".
+
+  **It also needs an Amiga that can read HD at all** -- an A500 cannot, and on machines that
+  can the drive must report HD. Worth confirming the operator's target machine before
+  building it, since a correct HD image that no available Amiga can read is a long way to go
+  for nothing.
+
 - **Support HFE and IPF, for copy-protected games.** Requested by the operator 2026-09-13,
   and the direct payoff of the decision above: both are flux/bitstream formats, which is
   exactly what WFMF already carries, so the work is server-side conversion into the
