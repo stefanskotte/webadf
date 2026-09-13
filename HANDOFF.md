@@ -1851,6 +1851,32 @@ separately.
   part of a first increment. Note it, do not reach for it until the software path has been
   proven on boards that can still be recovered.
 
+  **THE USER MUST BE ABLE TO TURN AUTOMATIC UPDATES OFF** (operator, 2026-09-13). Default
+  ON, because a fleet that never patches is its own security problem, but opting out has to
+  be a real choice and not a dark pattern.
+
+  * **"Off" means the device never updates ITSELF.** A manual update stays available, behind
+    the same password confirmation. That is the distinction worth drawing: the objection
+    people have is to hardware changing under them unannounced, not to updating at all.
+  * **A setting that gets overridden is not a setting.** There will be a temptation to force
+    "critical security updates" through regardless. Do not. If someone has said no, the
+    answer is to tell them loudly -- in the Devices tab, and on the panel -- that an update
+    is waiting and why it matters. Silently updating a device whose owner declined is the
+    thing that makes people distrust every other switch in the product.
+  * **Per device, not only per org.** Keeping one board pinned while the rest move is the
+    ordinary case: it is how you keep a known-good device beside a Amiga that matters while
+    trying a new build on another. The Devices tab should show, at a glance, which boards
+    are opted out and which are behind -- an invisible opt-out becomes a fleet nobody
+    realises is stale.
+  * **Enforce it ON THE DEVICE, not only in the server's logic.** A flag the device holds in
+    its config store and refuses to act against is meaningfully stronger than one the server
+    merely honours, because it survives a compromised server. Be honest in the UI about
+    which kind it is: as a purely server-side flag it is a convenience control and NOT a
+    security boundary, since a server that can ignore the flag can push firmware anyway.
+    The device-side version is the one worth building.
+  * Changing the setting needs the same step-up auth as an update, or the opt-out is
+    trivially undone by whoever the opt-out was protecting against.
+
 - **ARCHITECTURE DECISION 2026-09-13: the device keeps streaming FLUX, not ADF.**
   Raised while starting write support -- storing ADF on the Pico and encoding MFM there
   would cut the per-mount download by 2.25x (2,027,536 -> 901,120 bytes, ~3.2 s -> ~1.4 s
