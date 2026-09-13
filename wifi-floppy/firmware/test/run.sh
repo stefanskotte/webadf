@@ -40,7 +40,12 @@ fail=0
 # compiled into every test binary alongside src/*.c, not excluded from it.
 for t in test_*.c; do
   out=".build/${t%.c}"
-  cc -std=c11 -g -O1 -Wall -Wextra -Werror -DWFMF_HOST_TEST=1 \
+  # -D_DEFAULT_SOURCE: strnlen (config_store.c) is POSIX.1-2008, not C11, and
+  # glibc declares it only when a feature-test macro asks. macOS declares it
+  # anyway, so this build passed there for months and failed the first time it
+  # ran on Linux in CI. The device build is unaffected -- newlib declares it --
+  # which is exactly why nothing caught it until a second toolchain did.
+  cc -std=c11 -D_DEFAULT_SOURCE -g -O1 -Wall -Wextra -Werror -DWFMF_HOST_TEST=1 \
      -o "$out" "$t" transport_fake.c \
      $(ls ../src/*.c | grep -vE 'main\.c|transport_tls\.c|sntp_time\.c|portal_net\.c|dskchg\.c|activity_led\.c|i2c_probe\.c|ssd1306\.c|flux_capture\.c') \
      || { echo "COMPILE FAIL: $t"; fail=1; continue; }

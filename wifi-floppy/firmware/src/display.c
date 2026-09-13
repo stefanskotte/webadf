@@ -284,8 +284,15 @@ void display_render(const display_state_t *s, uint8_t fb[DISP_FB_BYTES]) {
         draw_text(fb, DISP_W - w, LINE_H * 3, t, DISP_W);
         right = DISP_W - w - ADVANCE;
     } else if (s->status == DS_DOWNLOAD && s->pct >= 0) {
+        // Clamped, not merely assumed. `pct` is an int and a caller can hand
+        // this anything; "%d%%" of INT_MAX is 12 bytes into 8. GCC says so and
+        // clang does not, which is why it took a second toolchain to notice.
+        // Clamping beats widening the buffer: a percentage over 100 is a bug
+        // in the caller, and showing "100%" is a better failure than showing
+        // a number that cannot be true.
+        const int pct = s->pct > 100 ? 100 : s->pct;
         char t[8];
-        snprintf(t, sizeof t, "%d%%", s->pct);
+        snprintf(t, sizeof t, "%d%%", pct);
         int w = text_px(t);
         draw_text(fb, DISP_W - w, LINE_H * 3, t, DISP_W);
         right = DISP_W - w - ADVANCE;
