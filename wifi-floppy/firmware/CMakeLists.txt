@@ -91,6 +91,14 @@ target_link_libraries(wifi_floppy
 # function pointers are exactly what it cannot see.
 target_compile_definitions(wifi_floppy PRIVATE PICO_USE_STACK_GUARDS=1)
 
+# Overridable so a build can identify ITSELF. The default has read "4b.0"
+# through every firmware change in this project's history -- the display, the
+# flux capture, the MFM decoder -- so as a default it distinguishes nothing.
+# CI passes the git description; rollout, rollback and anti-rollback in the
+# firmware-update design all need a version that moves when the image does.
+set(FIRMWARE_VERSION "4b.0-dev" CACHE STRING
+    "Version string the device reports at registration")
+
 target_compile_definitions(wifi_floppy PRIVATE
   WEBADF_HOST=\"webadf.vercel.app\"
   # Task 7: WIFI_SSID, WIFI_PASS and WEBADF_PAIRING_CODE (plan 4a's
@@ -99,7 +107,7 @@ target_compile_definitions(wifi_floppy PRIVATE
   # a prior boot's flash write or by the captive portal at runtime. Neither
   # has a compile-time value any more, so there is nothing left for these
   # defines to do.
-  FIRMWARE_VERSION=\"4b.0\")
+  FIRMWARE_VERSION=\"${FIRMWARE_VERSION}\")
 if (NOT WFMF_OMIT_AUTHMODE)
   target_compile_definitions(wifi_floppy PRIVATE
     ALTCP_MBEDTLS_AUTHMODE=MBEDTLS_SSL_VERIFY_REQUIRED)
@@ -133,14 +141,39 @@ endif ()
 # empty compile-time string if unset), an empty WPA2 PSK is invalid
 # outright, and cyw43_arch_enable_ap_mode() has no way to report that
 # back at runtime on a board with no console -- refuse to build instead.
-if (NOT DEFINED ENV{PORTAL_AP_PASSWORD} OR "$ENV{PORTAL_AP_PASSWORD}" STREQUAL "")
-  message(FATAL_ERROR
-    "PORTAL_AP_PASSWORD must be set in the environment to a WPA2 PSK "
-    "(8-63 characters) -- see this CMakeLists.txt's comment just above "
-    "this check.")
+# DEFAULT "wififloppy", overridable from the environment (operator, 2026-09-13).
+#
+# This used to refuse to build without the variable set, on the reasoning that
+# a compile-time PSK in a source file is a leaked credential. That reasoning is
+# sound and it is also why a default is now the honest choice rather than a
+# retreat: the password is compiled into every image, the repository is public,
+# and firmware is meant to be distributed -- so it was never going to be a
+# secret, and pretending otherwise only made the project harder to build.
+#
+# What actually gates provisioning is the PAIRING CODE. The AP password stops a
+# passer-by idly joining the setup network during the seconds it is up; it was
+# never the thing standing between a stranger and your WiFi credentials.
+#
+# A board that wants a private one sets PORTAL_AP_PASSWORD at build time. An
+# explicitly EMPTY value is still refused: an empty WPA2 PSK is invalid
+# outright, and cyw43_arch_enable_ap_mode() has no way to report that back at
+# runtime on a board with no console.
+set(PORTAL_AP_PASSWORD_DEFAULT "wififloppy")
+if (DEFINED ENV{PORTAL_AP_PASSWORD})
+  if ("$ENV{PORTAL_AP_PASSWORD}" STREQUAL "")
+    message(FATAL_ERROR
+      "PORTAL_AP_PASSWORD is set but empty. Leave it unset to take the default "
+      "(\"${PORTAL_AP_PASSWORD_DEFAULT}\"), or set a WPA2 PSK of 8-63 characters.")
+  endif ()
+  set(PORTAL_AP_PASSWORD "$ENV{PORTAL_AP_PASSWORD}")
+else ()
+  set(PORTAL_AP_PASSWORD "${PORTAL_AP_PASSWORD_DEFAULT}")
+  message(STATUS "PORTAL_AP_PASSWORD not set; using the default provisioning "
+                 "AP password \"${PORTAL_AP_PASSWORD_DEFAULT}\".")
 endif ()
+
 target_compile_definitions(wifi_floppy PRIVATE
-  PORTAL_AP_PASSWORD=\"$ENV{PORTAL_AP_PASSWORD}\")
+  PORTAL_AP_PASSWORD=\"${PORTAL_AP_PASSWORD}\")
 
 # Why these fifteen -Wl,-u entries stay, now that every one of them has a
 # real caller.

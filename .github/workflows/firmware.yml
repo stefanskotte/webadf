@@ -1,0 +1,133 @@
+name: firmware
+
+# Builds the RP2350 firmware on every push that touches it, runs the host test
+# suite, and publishes a .uf2 with a manifest beside it.
+#
+# THE MANIFEST IS THE POINT, not the .uf2. It is the shape the in-app firmware
+# updater (see HANDOFF.md, "Automatic firmware updates") will consume: a
+# version, a digest, a size and the commit that produced them. Building an
+# artefact nobody can identify would be most of the work and none of the value.
+
+on:
+  push:
+    paths:
+      - 'wifi-floppy/firmware/**'
+      - 'src/lib/adfmfm/fixtures/**'      # the host tests decode these
+      - '.github/workflows/firmware.yml'
+  pull_request:
+    paths:
+      - 'wifi-floppy/firmware/**'
+      - '.github/workflows/firmware.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  PICO_SDK_TAG: '2.3.0'                   # CMakeLists refuses anything older
+  PICO_BOARD: pimoroni_pico_plus2_w_rp2350
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0                  # git describe needs the history
+
+      - name: Install the ARM toolchain
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gcc-arm-none-eabi ninja-build cmake
+          arm-none-eabi-gcc --version | head -1
+
+      # Cached because the SDK plus its submodules (tinyusb, cyw43-driver,
+      # lwip, mbedtls) is most of the wall-clock time and changes only when
+      # PICO_SDK_TAG does.
+      - name: Cache pico-sdk
+        id: sdk-cache
+        uses: actions/cache@v4
+        with:
+          path: pico-sdk
+          key: pico-sdk-${{ env.PICO_SDK_TAG }}
+
+      - name: Fetch pico-sdk
+        if: steps.sdk-cache.outputs.cache-hit != 'true'
+        run: |
+          git clone --branch "$PICO_SDK_TAG" --depth 1 \
+            https://github.com/raspberrypi/pico-sdk.git pico-sdk
+          git -C pico-sdk submodule update --init --depth 1 \
+            lib/tinyusb lib/cyw43-driver lib/lwip lib/mbedtls
+
+      # Runs first: it needs no toolchain and no SDK, and a decoder that is
+      # wrong is worth knowing about before spending three minutes linking.
+      - name: Host tests
+        run: wifi-floppy/firmware/test/run.sh
+
+      - name: Version from git
+        id: ver
+        run: echo "value=$(git describe --tags --always --dirty)" >> "$GITHUB_OUTPUT"
+
+      # No secret here, and none needed: PORTAL_AP_PASSWORD now has a
+      # documented default ("wififloppy"). That is the honest arrangement for
+      # a public repository whose firmware is distributed -- the password is
+      # compiled into every image, so treating it as a secret would be
+      # pretending. What actually gates provisioning is the pairing code.
+      #
+      # Signed release builds for the in-app updater will need a different
+      # arrangement: see HANDOFF.md, which argues the signing key must not
+      # live on the server either.
+      - name: Build
+        env:
+          FW_VERSION: ${{ steps.ver.outputs.value }}
+        run: |
+          cmake -S wifi-floppy/firmware -B build -G Ninja \
+            -DPICO_SDK_PATH="$PWD/pico-sdk" \
+            -DPICO_BOARD="$PICO_BOARD" \
+            -DFIRMWARE_VERSION="$FW_VERSION"
+          cmake --build build
+          ls -la build/wifi_floppy.uf2 build/wifi_floppy.elf
+
+      # Every ${{ }} value reaches the script through env, never by string
+      # interpolation into the shell. A branch name is attacker-chosen on a
+      # pull request, so interpolating github.ref directly is a command
+      # injection with extra steps -- flagged by semgrep on the first draft of
+      # this file, which is exactly the sort of thing it is there for.
+      - name: Manifest
+        env:
+          FW_VERSION: ${{ steps.ver.outputs.value }}
+          FW_COMMIT: ${{ github.sha }}
+          FW_REF: ${{ github.ref }}
+        run: |
+          uf2=build/wifi_floppy.uf2
+          python3 - "$uf2" > build/manifest.json <<'PY'
+          import hashlib, json, os, sys, datetime
+          path = sys.argv[1]
+          data = open(path, 'rb').read()
+          json.dump({
+              "version":   os.environ["FW_VERSION"],
+              "commit":    os.environ["FW_COMMIT"],
+              "ref":       os.environ["FW_REF"],
+              "builtAt":   datetime.datetime.now(datetime.timezone.utc)
+                               .strftime("%Y-%m-%dT%H:%M:%SZ"),
+              "board":     os.environ["PICO_BOARD"],
+              "picoSdk":   os.environ["PICO_SDK_TAG"],
+              "file":      os.path.basename(path),
+              "sizeBytes": len(data),
+              "sha256":    hashlib.sha256(data).hexdigest(),
+              "apPassword": "default",
+              "note": ("Built with the default provisioning-AP password. "
+                       "Override PORTAL_AP_PASSWORD at build time for a board "
+                       "that should not use it."),
+          }, sys.stdout, indent=2)
+          PY
+          cat build/manifest.json
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: wifi-floppy-${{ steps.ver.outputs.value }}
+          path: |
+            build/wifi_floppy.uf2
+            build/wifi_floppy.elf
+            build/manifest.json
+          if-no-files-found: error
