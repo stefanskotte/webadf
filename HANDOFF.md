@@ -1843,9 +1843,35 @@ separately.
   not the session), and require it per update rather than once per login.
 
   **Also worth having:** pinning a device to a version (so one board can stay behind while
-  the rest move), staged rollout, and the running version visible in the Devices tab -- the
-  first question after any update is "did it take", and today nothing on the web side knows
-  what firmware a device is running.
+  the rest move) and staged rollout.
+
+  **CORRECTION, and it changes what the work is.** An earlier draft of this entry said
+  "nothing on the web side knows what firmware a device is running". That was wrong, and
+  checking took one grep: the device sends `firmwareVersion` in its REGISTRATION body
+  (`dc_register`, from the compile-time `FIRMWARE_VERSION` in CMakeLists.txt), the server
+  stores it in `devices.firmware_version`, and `device-card.tsx` already renders it as
+  "fw <version>". The plumbing exists end to end.
+
+  **The actual gap is that it is captured ONCE, at pairing.** The status heartbeat carries
+  mountedDiskId, desired version, error, psramFree and rssi -- not the firmware version --
+  and a device does not re-register after an update. So the value shown in the Devices tab
+  is whatever the board had when it was paired, and it goes stale the first time anyone
+  reflashes. That is worse than showing nothing, because it looks authoritative: "did the
+  update take?" is the first question after any update, and this field would answer it
+  confidently and wrongly.
+
+  **Two small pieces of work, both worth doing BEFORE any update mechanism exists**, since
+  they make an already-shipped display honest:
+
+  1. Add `firmwareVersion` to the status report -- firmware side in `dc_report_status`,
+     server side one more optional field in the status schema and `recordStatus`. The
+     heartbeat's own spec note already says "send everything the firmware knows, every
+     time", so this is closing a gap rather than adding a concept.
+  2. **Make the version identify a build.** It has read `4b.0` throughout every firmware
+     change in this file's history, including the whole display, capture and decoder work,
+     so today it distinguishes nothing. A version that does not change when the image does
+     cannot support rollout, rollback or anti-rollback, all three of which the update design
+     above depends on.
 
   **RP2350 hardware secure boot is a ONE-WAY DOOR** (it burns OTP fuses) and should not be
   part of a first increment. Note it, do not reach for it until the software path has been
