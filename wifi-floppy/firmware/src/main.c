@@ -259,6 +259,13 @@ static volatile uint32_t rev_count;
 static volatile uint32_t prev_revs;
 static volatile bool     index_traced;
 
+// Faster than any drive can step; see the STEP ISR. Pulses closer together than
+// this are electrical, not mechanical.
+#define STEP_MIN_INTERVAL_US 1000
+// Counted rather than silently dropped: if this ever climbs during normal use,
+// the threshold is wrong and the cure would be worse than the disease.
+static volatile uint32_t steps_rejected;
+
 static void start_streaming(const uint8_t *mfm, uint32_t bit_count) {
     uint32_t nwords = (bit_count + 31) / 32;
 
@@ -355,6 +362,35 @@ static void __isr __not_in_flash_func(dma_irq)(void) {
 // ---------------------------------------------------------------- bus ISRs
 static void __isr gpio_isr(uint gpio, uint32_t events) {
     if (gpio == PIN_STEP && (events & GPIO_IRQ_EDGE_FALL)) {
+        /*
+         * Reject pulses that arrive faster than a drive can step.
+         *
+         * Measured on real hardware 2026-09-13: a burst of SIXTEEN STEP edges
+         * inside one millisecond, with the direction bit reversing seven times
+         * within it. `cur_cyl` is moved by reading PIN_DIR here, so a burst
+         * like that random-walks the cylinder counter -- and nothing corrects
+         * it until the Amiga recalibrates against TRK0. From then on this
+         * board serves a track the Amiga did not ask for: valid MFM whose
+         * sector headers name the wrong cylinder, which trackdisk correctly
+         * calls a read error.
+         *
+         * A real Amiga steps every ~3-4 ms (measured: 120 gaps in 2-4 ms, and
+         * NOT ONE below 2 ms across 454 pulses). 1 ms therefore rejects only
+         * what no drive could produce, with a factor of two in hand.
+         *
+         * The burst was seen once, at a power event, so this is hardening
+         * rather than a fix for anything yet observed -- but a corrupted
+         * cylinder counter survives until recalibration, which makes one
+         * occurrence enough to matter.
+         */
+        static absolute_time_t last_step;    // zero at boot: the first pulse always passes
+        const absolute_time_t now_us = get_absolute_time();
+        if (absolute_time_diff_us(last_step, now_us) < STEP_MIN_INTERVAL_US) {
+            steps_rejected++;
+            return;
+        }
+        last_step = now_us;
+
         bool outwards = gpio_get(PIN_DIR);           // DIRC high = towards 0
         if (outwards) { if (cur_cyl > 0) cur_cyl--; }
         else          { if (cur_cyl < NUM_CYL - 1) cur_cyl++; }
@@ -1299,6 +1335,17 @@ int main(void) {
             }
         }
         display_pump(&g_disp, disk_mounted ? DISP_BUDGET_MOUNTED : DISP_BUDGET_IDLE);
+
+        {
+            static uint32_t reported_rejects;
+            uint32_t r = steps_rejected;
+            if (r != reported_rejects) {
+                reported_rejects = r;
+                wf_logf(WF_WARN, "step: %lu pulse(s) rejected as too fast (<%u us apart) "
+                                 "-- electrical noise, not a seek",
+                        (unsigned long)r, (unsigned)STEP_MIN_INTERVAL_US);
+            }
+        }
 
         // Bounded on purpose. Four lines per 1 ms iteration keeps up with a
         // seek across the whole disk, and caps what a host that has stopped
