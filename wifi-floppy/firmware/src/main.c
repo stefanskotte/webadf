@@ -106,6 +106,10 @@ static char g_ui_detail[DISP_DETAIL_MAX + 1];
 static volatile int g_ui_status = DS_BOOT;
 static volatile int g_ui_bars   = -1;
 static volatile int g_ui_pct    = -1;
+// Set from the SAME expression that drives the WPROT pin, never computed
+// separately: a pencil that disagreed with the pin would be worse than no
+// pencil, because it would be believed.
+static volatile bool g_ui_writable = false;
 
 static void ui_publish(disp_status_t st, const char *title, const char *detail, int pct) {
     g_ui_seq++;                     // odd: writing
@@ -125,9 +129,10 @@ static bool ui_snapshot(display_state_t *s) {
     __dmb();
     if (a & 1u) return false;
     memset(s, 0, sizeof *s);
-    s->status = (disp_status_t)g_ui_status;
-    s->bars   = g_ui_bars;
-    s->pct    = g_ui_pct;
+    s->status   = (disp_status_t)g_ui_status;
+    s->bars     = g_ui_bars;
+    s->pct      = g_ui_pct;
+    s->writable = g_ui_writable;
     memcpy(s->title,  g_ui_title,  sizeof s->title);
     memcpy(s->detail, g_ui_detail, sizeof s->detail);
     s->title[DISP_TITLE_MAX]   = '\0';
@@ -816,6 +821,12 @@ static void core1_main(void) {
             // now the only place that updates it afterward.
             bool wprot = !mounted || c.mounted_write_protected || !WRITE_BACK_IMPLEMENTED;
             gpio_put(PIN_WPROT, wprot ? OUT_ASSERT : OUT_RELEASE);
+            // The panel's pencil, from the same value and at the same moment.
+            // It is therefore dark today for a reason that is true rather than
+            // incidental: WRITE_BACK_IMPLEMENTED is 0, so every disk is
+            // read-only, and the pencil lighting up is exactly the signal that
+            // the switch has been thrown.
+            g_ui_writable = !wprot;
 
             // Item 4: the status heartbeat. ~60s (DC_STATUS_PERIOD_MS) or
             // immediately on a mount/swap/eject (spec §4.3, §10) -- tracked by

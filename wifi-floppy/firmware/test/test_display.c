@@ -134,6 +134,38 @@ static void test_the_lemming_stays_in_its_corner(void) {
         }
 }
 
+static void test_the_pencil_shows_only_when_the_disk_is_writable(void) {
+    /* It is the one thing on this panel that says what the Amiga is allowed
+       to do to your disk, so it must not appear when it is not true -- and
+       must be unmistakable when it is. */
+    display_state_t ro = base_state(), rw = base_state();
+    rw.writable = true;
+    uint8_t a[DISP_FB_BYTES], b[DISP_FB_BYTES];
+    display_render(&ro, a);
+    display_render(&rw, b);
+    CHECK(memcmp(a, b, DISP_FB_BYTES) != 0, "a writable disk must look different");
+    /* Its own 8 columns, just left of the lemming. */
+    CHECK(any_lit(b, 0, DISP_W - 8 - 2 - 8, DISP_W - 8 - 2), "the pencil is drawn");
+    CHECK(!any_lit(a, 0, DISP_W - 8 - 2 - 8, DISP_W - 8 - 2), "and only when writable");
+}
+
+static void test_the_pencil_disturbs_nothing_else(void) {
+    /* Same reason the lemming has this test: if turning write on redrew the
+       title or the counter, every toggle would cost a frame on the core that
+       services the floppy bus. */
+    display_state_t ro = base_state(), rw;
+    strcpy(ro.title, "Sensible Soccer"); strcpy(ro.detail, "Disk 1/2");
+    ro.show_track = true; ro.cyl = 12;
+    rw = ro; rw.writable = true;
+    uint8_t a[DISP_FB_BYTES], b[DISP_FB_BYTES];
+    display_render(&ro, a); display_render(&rw, b);
+    for (int p = 0; p < DISP_PAGES; p++)
+        for (int x = 0; x < DISP_W; x++) {
+            bool pencil = (p == 0 && x >= DISP_W - 18 && x < DISP_W - 10);
+            if (!pencil) CHECK_EQ_INT(a[p * DISP_W + x], b[p * DISP_W + x]);
+        }
+}
+
 static void test_a_walk_step_costs_one_small_blit(void) {
     begin();
     display_t d; display_init(&d, fake_blit, NULL);
@@ -370,6 +402,8 @@ int main(int argc, char **argv) {
     RUN(test_the_counter_wins_a_collision_with_the_detail);
     RUN(test_the_lemming_walks);
     RUN(test_the_lemming_stays_in_its_corner);
+    RUN(test_the_pencil_shows_only_when_the_disk_is_writable);
+    RUN(test_the_pencil_disturbs_nothing_else);
     RUN(test_a_walk_step_costs_one_small_blit);
     RUN(test_a_title_breaks_at_a_space_when_it_can);
     RUN(test_a_long_unbreakable_title_is_truncated_visibly);

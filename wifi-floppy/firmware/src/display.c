@@ -111,6 +111,21 @@ static const uint8_t LEMMING[LEM_FRAMES][8] = {
   { 0x00, 0x7E, 0x7E, 0x3C, 0x3C, 0x7E, 0x3C, 0x18 },   /* passing: feet together, bobbed */
 };
 
+
+// A PENCIL, shown only while the mounted disk is writable. Drawn from the
+// picture, like everything else here.
+//
+//   .....##.    the eraser end, top right
+//   ....####
+//   ...####.    the body, on the diagonal
+//   ..####..
+//   .####...
+//   ####....
+//   ###.....    tapering to
+//   #.......    a point, bottom left
+#define PENCIL_W 8
+static const uint8_t PENCIL[8] = { 0x06, 0x0F, 0x1E, 0x3C, 0x78, 0xF0, 0xE0, 0x80 };
+
 // ---------------------------------------------------------------- drawing
 static void px(uint8_t *fb, int x, int y) {
     if (x < 0 || x >= DISP_W || y < 0 || y >= DISP_H) return;
@@ -153,6 +168,12 @@ static void draw_lemming(uint8_t *fb, int x, int y, int frame) {
     for (int r = 0; r < 8; r++)
         for (int c = 0; c < LEM_W; c++)
             if (g[r] & (1u << (LEM_W - 1 - c))) px(fb, x + c, y + r);
+}
+
+static void draw_pencil(uint8_t *fb, int x, int y) {
+    for (int r = 0; r < 8; r++)
+        for (int c = 0; c < PENCIL_W; c++)
+            if (PENCIL[r] & (1u << (PENCIL_W - 1 - c))) px(fb, x + c, y + r);
 }
 
 static void draw_wifi(uint8_t *fb, int x, int y, int bars) {
@@ -216,10 +237,18 @@ void display_render(const display_state_t *s, uint8_t fb[DISP_FB_BYTES]) {
     // --- top line: wifi glyph, status word, and the track counter ---------
     draw_wifi(fb, 0, 0, s->bars);
 
-    // The lemming owns the top-right corner, so the status word's room ends
-    // where it begins.
+    // The lemming owns the top-right corner; the pencil, when there is one,
+    // sits immediately left of it. Both are on the RIGHT so the left half --
+    // the wifi glyph and the status word -- never moves: a status that shifted
+    // sideways when a disk became writable would be harder to read at a
+    // glance than the pencil is worth.
     draw_lemming(fb, DISP_W - LEM_W, 0, s->tick);
-    draw_text(fb, WIFI_W + 3, 0, status_word(s->status), DISP_W - LEM_W - 2);
+    int word_limit = DISP_W - LEM_W - 2;
+    if (s->writable) {
+        draw_pencil(fb, DISP_W - LEM_W - 2 - PENCIL_W, 0);
+        word_limit = DISP_W - LEM_W - 2 - PENCIL_W - 2;
+    }
+    draw_text(fb, WIFI_W + 3, 0, status_word(s->status), word_limit);
 
     // --- middle two lines: the disk name ----------------------------------
     char l1[22], l2[22];

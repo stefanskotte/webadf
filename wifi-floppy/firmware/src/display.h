@@ -54,6 +54,13 @@ typedef struct {
     // inside the renderer, so display_render stays pure and a given frame is
     // reproducible in a test. The caller advances it; see main.c.
     int  tick;
+    /** The mounted disk can be WRITTEN to. Shown because it is the one state
+     *  on this panel that changes what the Amiga is allowed to do to your
+     *  disk, and the operator asked to be able to see it from across the
+     *  room. Driven by the same value that drives WPROT, never a second
+     *  opinion about it -- a pencil that disagreed with the pin would be
+     *  worse than no pencil. */
+    bool writable;
 } display_state_t;
 
 /** Compose `s` into a framebuffer. Pure: same state, same 512 bytes. */
