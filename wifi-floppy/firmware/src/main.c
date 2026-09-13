@@ -234,6 +234,26 @@ static void ui_observe(void *ctx, const dc_obs_t *o) {
 #define WF_WRITE_CAPTURE 0
 #endif
 
+/*
+ * WF_VERIFY_TRACKS -- after every mount, read each of the 160 tracks back out
+ * of PSRAM and DECODE it the way the Amiga will, checking that all eleven
+ * sectors recover with valid header and data checksums.
+ *
+ * Diagnostic, off by default (-DWF_VERIFY_TRACKS=1). It exists because an
+ * Amiga reported an unreadable track that this board had demonstrably served
+ * whole, from an image proven byte-identical to the upload, encoded to MFM
+ * proven byte-identical to Greaseweazle on all 160 tracks. Everything software
+ * could check had been checked EXCEPT the copy actually sitting in PSRAM at the
+ * moment of serving -- image_loader verifies it once as it arrives and nothing
+ * looks at it again.
+ *
+ * Bounded: ONE track per service-loop iteration, so a sweep costs ~160
+ * iterations rather than one long stall in the loop that feeds the floppy.
+ */
+#ifndef WF_VERIFY_TRACKS
+#define WF_VERIFY_TRACKS 0
+#endif
+
 // Both gates, in one place: the firmware must be willing AND the server must
 // say the disk is writable (dc_desired_t.write_protected, defaulting to true
 // in the database).
@@ -423,11 +443,9 @@ static void __isr gpio_isr(uint gpio, uint32_t events) {
         if (writing) flux_capture_arm(); else flux_capture_disarm();
         wf_trace(WF_EV_WGATE, writing ? 1u : 0u, (uint32_t)(cur_cyl * 2 + cur_side));
     } else if (gpio == PIN_SIDE) {
-        // Traced, NOT acted on: the service loop samples the pin instead (see
-        // its comment). This trace is what revealed the bounce in the first
-        // place, so it stays.
         cur_side = gpio_get(PIN_SIDE) ? 0 : 1;       // low = side 1
-        wf_trace(WF_EV_SIDE, (uint32_t)cur_side, (uint32_t)(cur_cyl * 2 + cur_side));
+        want_track = cur_cyl * 2 + cur_side;
+        wf_trace(WF_EV_SIDE, (uint32_t)cur_side, (uint32_t)want_track);
     }
 }
 
@@ -1177,6 +1195,10 @@ int main(void) {
     // and the pump's budget, because the real-time duty only exists while
     // the Amiga has something to read.
     bool disk_mounted = false;
+#if WF_VERIFY_TRACKS
+    int verify_next = NUM_TRACKS;      // nothing to sweep until a disk mounts
+    unsigned verify_bad = 0;
+#endif
     display_state_t ui, last_ui;
     memset(&last_ui, 0, sizeof last_ui);
     while (true) {
@@ -1186,6 +1208,10 @@ int main(void) {
         if (track_cache_check_swap(&last_active_token, &now_mounted)) {
             loaded = -1;
             disk_mounted = now_mounted;
+#if WF_VERIFY_TRACKS
+            verify_next = now_mounted ? 0 : NUM_TRACKS;   // sweep on mount only
+            verify_bad = 0;
+#endif
             if (now_mounted) {
                 dskchg_image_inserted();
                 wf_trace(WF_EV_MOUNT, (uint32_t)last_active_token, 0);
@@ -1198,31 +1224,28 @@ int main(void) {
         }
 
         /*
-         * SIDE IS A LEVEL, NOT A PULSE -- sample it, do not chase its edges.
+         * REVERTED 2026-09-13, the same day it was written.
          *
-         * Measured on real hardware 2026-09-13: 3,725 SIDE edges arrived less
-         * than 1 ms apart, cleanly alternating, while an Amiga read. Each one
-         * set want_track, and each change made this loop call start_streaming()
-         * -- which ABORTS THE FLUX DMA AND RESTARTS THE TRACK FROM BIT 0, under
-         * an Amiga that was midway through reading it. 2,839 restarts inside
-         * 5 ms of a SIDE edge, and 4,076 of 4,295 track loads never survived a
-         * single revolution. The visible symptom was an intermittent "read
-         * error on block N" that always cleared on retry, because trackdisk
-         * eventually got a revolution that nothing interrupted.
+         * This briefly sampled the SIDE pin here and required it to be stable
+         * for one iteration, instead of taking want_track from the ISR. The
+         * reasoning looked sound -- SIDE is a level the host holds, not a
+         * pulse, and 3,725 edges under 1 ms apart had been measured -- but the
+         * board went from booting Workbench reliably to reporting "not a DOS
+         * disk", and that is the only change between those two states.
          *
-         * STEP genuinely is a pulse and stays edge-driven. SIDE is a level the
-         * host holds, so the pin's CURRENT state is the truth and its edge
-         * history is noise. Requiring the value to be stable for one further
-         * iteration filters anything shorter than this loop's ~1 ms turn, which
-         * covers everything measured, and costs at most 1 ms against a
-         * head-settle budget of ~15 ms.
+         * Two lessons, both mine. The bounce measurement came from a log that
+         * had silently dropped 2,091 records, so the number it rested on was
+         * never trustworthy. And the read errors it was meant to cure survived
+         * it, which should have been enough to revert immediately rather than
+         * leave a speculative change in the real-time path while hunting
+         * something else.
+         *
+         * If SIDE really does bounce, fix it where it can be proven: debounce
+         * in the ISR against a measured threshold, on a log verified to have
+         * dropped nothing.
          */
-        int want = cur_cyl * 2 + (gpio_get(PIN_SIDE) ? 0 : 1);
-        static int want_prev = -1;
-        const bool stable = (want == want_prev);
-        want_prev = want;
-
-        if (want >= 0 && want != loaded && stable) {
+        int want = want_track;
+        if (want >= 0 && want != loaded) {
             uint32_t bits;
             const uint8_t *mfm = track_cache_get(want, &bits);
             if (mfm) {
@@ -1312,6 +1335,35 @@ int main(void) {
                 }
             }
         }
+
+#if WF_VERIFY_TRACKS
+        if (verify_next < NUM_TRACKS) {
+            static uint8_t vmfm[TRACK_MAX_BYTES];
+            static uint8_t vdec[MFM_TRACK_DATA_BYTES];
+            const int t = verify_next++;
+            uint32_t bits = 0;
+            const int slot = psram_active_slot();
+            if (slot >= 0 && psram_image_read(slot, t, vmfm, &bits)) {
+                mfm_decode_result_t d;
+                memset(vdec, 0, sizeof vdec);
+                mfm_decode_track(vmfm, (bits + 7u) / 8u, vdec, &d);
+                if (d.found != 0x7ff || d.bad_checksums || d.track_no != t) {
+                    verify_bad++;
+                    wf_logf(WF_ERR, "verify: track %d BAD -- sectors 0x%03x (want 0x7ff), "
+                                    "bad-cksum %u, header says track %u, %lu bits",
+                            t, (unsigned)d.found, (unsigned)d.bad_checksums,
+                            (unsigned)d.track_no, (unsigned long)bits);
+                }
+            } else {
+                verify_bad++;
+                wf_logf(WF_ERR, "verify: track %d could not be read from PSRAM", t);
+            }
+            if (verify_next == NUM_TRACKS) {
+                wf_logf(verify_bad ? WF_ERR : WF_INFO,
+                        "verify: swept 160 tracks from PSRAM, %u bad", (unsigned)verify_bad);
+            }
+        }
+#endif
 
         // The display: composed here because the track counter is core0's
         // alone, and pushed a bounded slice at a time because a whole frame

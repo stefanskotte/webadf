@@ -101,6 +101,14 @@ target_compile_definitions(wifi_floppy PRIVATE PICO_USE_STACK_GUARDS=1)
 # see main.c's comment, which spells out that the Amiga will believe a write
 # succeeded and later read stale data back.
 option(WF_WRITE_CAPTURE "Release WPROT so writes can be captured (writes are discarded)" OFF)
+# Diagnostic: re-read and decode every track from PSRAM after a mount. See
+# main.c. Off by default -- it costs one track's decode per service-loop
+# iteration for 160 iterations after each mount.
+option(WF_VERIFY_TRACKS "Verify every track out of PSRAM after a mount" OFF)
+if (WF_VERIFY_TRACKS)
+  target_compile_definitions(wifi_floppy PRIVATE WF_VERIFY_TRACKS=1)
+  message(STATUS "WF_VERIFY_TRACKS is ON: every mount sweeps all 160 tracks.")
+endif ()
 if (WF_WRITE_CAPTURE)
   target_compile_definitions(wifi_floppy PRIVATE WF_WRITE_CAPTURE=1)
   message(WARNING "WF_WRITE_CAPTURE is ON: this image lets the Amiga write, and throws the writes away.")
