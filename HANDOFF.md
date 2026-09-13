@@ -1972,8 +1972,9 @@ separately.
   existing path with NO FIRMWARE CHANGE. ADF cannot represent any of them. The operator's
   call, and the backlog entry below is what it buys.
 
-- **HD floppies: 1.76 MB images, on a par with the 880 KB ones today.** Requested by the
-  operator 2026-09-13 -- create them, add files to them, mount them. The operator's own
+- **HD floppies: 1.76 MB images, on a par with the 880 KB ones today. DEFERRED by the
+  operator 2026-09-13**, same day it was raised -- kept here with its findings intact so
+  picking it up again costs nothing. Requested as: create them, add files to them, mount them. The operator's own
   estimate that the MFM would be ~4 MB is right: an Amiga HD disk is 22 sectors per track
   against DD's 11, and the flux is 1 us bitcells at 150 rpm rather than 2 us at 300, which
   is the same 500 kbit/s over a revolution twice as long. 160 tracks x ~25,000 bytes is
@@ -2471,6 +2472,36 @@ predicate is not scoped by the test that runs it. Point the run at a scratch dat
 in advance that it empties the table for everyone. This repo has no such database today — every
 e2e runs against live Neon — so "accept in advance" is currently the only option, and it should
 be an explicit decision each time rather than a side effect of following a plan step.
+
+### 4a. THE AMIGA READS DISKS — 2026-09-13
+
+**Operator-reported, and it is the milestone this whole project was pointed at:** a real
+Amiga, on the floppy cable, read disks served by the board, and it "works fine". Every
+earlier entry that says the floppy side is unrun is superseded by this one.
+
+What that single sentence actually establishes, because it is a lot: the MFM the server
+encodes is correct enough for Paula; the PIO's 2 us bitcell timing and the DMA's
+per-revolution restart hold up against real hardware rather than a calculation; INDEX,
+TRK0, SEL, MOTOR, SIDE and STEP are wired the right way round through the '541 and the
+BSS138s; `track_cache_get()` answers a seek inside the head-settle window; and the whole
+chain from a click in a browser to bytes in an Amiga's RAM closes.
+
+**NOT independently corroborated from the device log, and the reason is worth knowing.**
+Checked ~12 minutes after the report: the board had rebooted and `wf_log` had dropped 903
+records, so the session's STEP/TRACK-SERVED traces were gone. That is the ring's policy
+working as designed (it keeps the OLDEST records, so a boot history survives and later
+traffic does not) and not a defect -- but it means "the Amiga read disks" currently rests
+on the operator having watched it, which is good evidence and is not a measurement.
+
+**Still unverified, and now cheaply verifiable -- do these next time a disk is read:**
+* **The track counter on the OLED.** It renders and is wired, both host-tested, but has
+  never followed a real seek. A disk load walks the head across the disk; watch the panel.
+* **The activity LED under real traffic.** It blinks on `WF_EV_TRACK_SERVED` and has only
+  ever been seen doing its three-blink self-test.
+* **How many revolutions a track read actually costs.** `WF_EV_INDEX` carries the previous
+  track's revolution count in `b`. One revolution per track is the floor; two means
+  something is costing a retry, which would double every load time in the product and is
+  invisible without reading that field.
 
 ### 3x. Hardware bring-up begins, and a console log — 2026-09-10
 
