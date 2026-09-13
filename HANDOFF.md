@@ -1795,6 +1795,62 @@ separately.
   Nothing here is built; it needs designing before any write is applied, because the first
   increment that flattens a write forecloses it.
 
+- **Automatic firmware updates for devices, behind a password confirmation.** Requested by
+  the operator 2026-09-13.
+
+  **TREAT THIS AS THE MOST DANGEROUS FEATURE IN THE PRODUCT, because it is remote code
+  execution on hardware in someone's home, by design.** Everything else here can at worst
+  corrupt a disk image. This can turn the fleet into a botnet or brick every board at once,
+  and a bricked board recovers only by physically unplugging it and holding BOOTSEL --
+  which, for a device under a desk beside an Amiga, means the owner has to crawl under it.
+  Design the threat model FIRST and the convenience second.
+
+  **SIGN THE IMAGE WITH A KEY THAT IS NOT ON THE SERVER.** This is the one control that
+  matters and the one it would be easiest to skip, because TLS already feels like enough.
+  It is not: TLS protects the wire, and the device already verifies the server's chain
+  against pinned roots, but neither does anything about a compromised Vercel account or a
+  poisoned deploy pipeline. With releases signed offline and the public key compiled into
+  the firmware, whoever owns the pipeline can push a STALE image; without it they own every
+  board in the field, permanently and silently. Anti-rollback (refuse an image older than
+  the running one) closes the stale-image case.
+
+  **A/B slots, not in-place.** Flash is 16 MB on the PIM726 and the image is ~505 KB, so a
+  second slot costs nothing worth counting, while an in-place write means a power cut
+  mid-flash is a brick. The new slot is marked good only after it has booted AND associated
+  AND completed one poll -- a watchdog-confirmed boot, with the bootloader falling back
+  otherwise. An update that cannot verify itself is worse than no update.
+
+  **NEVER FLASH WHILE A DISK IS MOUNTED.** A flash write disables XIP, and the argument in
+  main.c above `dma_irq` spells out what that costs: `flash_safe_execute` parks core0
+  entirely -- interrupts off, nothing executing -- for the duration of the write. That is
+  survivable for a 4 KB token write and not survivable for 500 KB while the Amiga is reading
+  a track. Gate updates on nothing being mounted and, ideally, the motor being off.
+
+  **What already exists, so nobody rebuilds it:** TLS with pinned roots and the
+  fetch-then-verify-then-publish discipline from `dc_fetch_image` (which is exactly the
+  shape an update wants); `flash_safe_execute_core_init()` already called in main() and
+  already relied on by `config_store` and `token_store`; `pico_flash`/`hardware_flash`
+  already linked; ~3.7 MB of free PSRAM to stage a download into, which makes a power cut
+  mid-DOWNLOAD harmless because nothing has touched flash yet; and the poll loop as the
+  natural place to learn an update exists.
+
+  **The password confirmation the operator asked for is step-up auth, and it is worth being
+  precise about what it buys.** better-auth is configured with `emailAndPassword` enabled
+  (src/lib/auth.ts), so re-prompting for the password is available today. It defends against
+  a stolen session cookie -- someone with your laptop cannot silently reflash your hardware
+  -- and it defends against nothing else. It is NOT a substitute for the signature: a
+  compromised server can skip the prompt entirely. Time-box the elevated window (minutes,
+  not the session), and require it per update rather than once per login.
+
+  **Also worth having:** pinning a device to a version (so one board can stay behind while
+  the rest move), staged rollout, and the running version visible in the Devices tab -- the
+  first question after any update is "did it take", and today nothing on the web side knows
+  what firmware a device is running.
+
+  **RP2350 hardware secure boot is a ONE-WAY DOOR** (it burns OTP fuses) and should not be
+  part of a first increment. Note it, do not reach for it until the software path has been
+  proven on boards that can still be recovered.
+
 - **ARCHITECTURE DECISION 2026-09-13: the device keeps streaming FLUX, not ADF.**
   Raised while starting write support -- storing ADF on the Pico and encoding MFM there
   would cut the per-mount download by 2.25x (2,027,536 -> 901,120 bytes, ~3.2 s -> ~1.4 s
