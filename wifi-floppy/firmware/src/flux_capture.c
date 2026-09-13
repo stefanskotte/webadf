@@ -4,6 +4,7 @@
 #include "wf_log.h"
 #include "hardware/dma.h"
 #include "hardware/clocks.h"
+#include "pico/time.h"
 #include <string.h>
 
 /*
@@ -38,6 +39,7 @@ static uint32_t pio_hz;
 
 static flux_bits_t bits;
 static volatile bool armed;
+static volatile uint32_t armed_at_ms;
 static volatile bool ended;         /* set by disarm, cleared by take */
 
 void flux_capture_init(PIO pio, uint sm) {
@@ -81,6 +83,7 @@ void flux_capture_arm(void) {
     cap_read = 0;
     flux_bits_init(&bits, mfm_buf, sizeof mfm_buf);
     armed = true;
+    armed_at_ms = to_ms_since_boot(get_absolute_time());
     ended = false;
     pio_sm_set_enabled(cap_pio, cap_sm, true);
 }
@@ -110,6 +113,21 @@ uint32_t flux_capture_poll(void) {
         n++;
     }
     return n;
+}
+
+bool flux_capture_timeout(uint32_t now_ms) {
+    if (!armed) return false;
+    if ((uint32_t)(now_ms - armed_at_ms) <= FLUX_CAPTURE_MAX_MS) return false;
+
+    // Abandoned, NOT completed: `ended` stays clear, so flux_capture_take()
+    // never offers this to the decoder. A capture that ran for seconds holds
+    // whatever a floating line produced, and handing that to mfm_decode_track
+    // would at best waste the work and at worst report sectors that were never
+    // written.
+    pio_sm_set_enabled(cap_pio, cap_sm, false);
+    armed = false;
+    ended = false;
+    return true;
 }
 
 bool flux_capture_take(flux_capture_result_t *out) {

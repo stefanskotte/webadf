@@ -387,9 +387,11 @@ static void __isr gpio_isr(uint gpio, uint32_t events) {
         if (writing) flux_capture_arm(); else flux_capture_disarm();
         wf_trace(WF_EV_WGATE, writing ? 1u : 0u, (uint32_t)(cur_cyl * 2 + cur_side));
     } else if (gpio == PIN_SIDE) {
+        // Traced, NOT acted on: the service loop samples the pin instead (see
+        // its comment). This trace is what revealed the bounce in the first
+        // place, so it stays.
         cur_side = gpio_get(PIN_SIDE) ? 0 : 1;       // low = side 1
-        want_track = cur_cyl * 2 + cur_side;
-        wf_trace(WF_EV_SIDE, (uint32_t)cur_side, (uint32_t)want_track);
+        wf_trace(WF_EV_SIDE, (uint32_t)cur_side, (uint32_t)(cur_cyl * 2 + cur_side));
     }
 }
 
@@ -1159,8 +1161,32 @@ int main(void) {
             }
         }
 
-        int want = want_track;
-        if (want >= 0 && want != loaded) {
+        /*
+         * SIDE IS A LEVEL, NOT A PULSE -- sample it, do not chase its edges.
+         *
+         * Measured on real hardware 2026-09-13: 3,725 SIDE edges arrived less
+         * than 1 ms apart, cleanly alternating, while an Amiga read. Each one
+         * set want_track, and each change made this loop call start_streaming()
+         * -- which ABORTS THE FLUX DMA AND RESTARTS THE TRACK FROM BIT 0, under
+         * an Amiga that was midway through reading it. 2,839 restarts inside
+         * 5 ms of a SIDE edge, and 4,076 of 4,295 track loads never survived a
+         * single revolution. The visible symptom was an intermittent "read
+         * error on block N" that always cleared on retry, because trackdisk
+         * eventually got a revolution that nothing interrupted.
+         *
+         * STEP genuinely is a pulse and stays edge-driven. SIDE is a level the
+         * host holds, so the pin's CURRENT state is the truth and its edge
+         * history is noise. Requiring the value to be stable for one further
+         * iteration filters anything shorter than this loop's ~1 ms turn, which
+         * covers everything measured, and costs at most 1 ms against a
+         * head-settle budget of ~15 ms.
+         */
+        int want = cur_cyl * 2 + (gpio_get(PIN_SIDE) ? 0 : 1);
+        static int want_prev = -1;
+        const bool stable = (want == want_prev);
+        want_prev = want;
+
+        if (want >= 0 && want != loaded && stable) {
             uint32_t bits;
             const uint8_t *mfm = track_cache_get(want, &bits);
             if (mfm) {
@@ -1216,6 +1242,13 @@ int main(void) {
          * throw when this is ready to be tried for real, and it is one line.
          */
         flux_capture_poll();
+        if (flux_capture_timeout(clock_ms())) {
+            // Almost always the Amiga powering off: its outputs stop driving,
+            // the buffer inputs float, and WGATE reads as asserted forever.
+            wf_logf(WF_WARN, "write: WGATE asserted for over %u ms -- not a write, "
+                             "capture abandoned (is the Amiga powered off?)",
+                    (unsigned)FLUX_CAPTURE_MAX_MS);
+        }
         {
             flux_capture_result_t cap;
             if (flux_capture_take(&cap)) {

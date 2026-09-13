@@ -2111,6 +2111,28 @@ separately.
   page, `game-grid.tsx`, several `src/lib` modules and their tests, and e2e URL assertions, and
   the `/api/ingest/*` namespace is baked into the CLI and the design docs. That is a much wider
   change and should be its own decision.
+- **Refuse web-UI writes to a disk that is currently MOUNTED on a device.** Requested by the
+  operator 2026-09-13, while an Amiga was reading a disk he could also have edited in the
+  browser. Browsing a mounted disk is fine and should stay; editing it is not.
+
+  **Why it is worse than it sounds.** Editing an ADF in the browser writes a NEW blob with a
+  new digest and repoints the disk row. A device holding the old image keeps serving the old
+  bytes -- it has no idea -- so the two diverge silently, and the Amiga is reading a disk
+  that no longer exists anywhere else. Worse, the version bump makes the device re-fetch and
+  remount at whatever moment its long-poll returns: the disk changes UNDER a running Amiga,
+  which is exactly the eject-mid-use that produced today's read errors. AmigaDOS has no
+  concept of the media changing without the change line, so it is entitled to corrupt
+  whatever it was doing.
+
+  **Where the check goes:** every mutating path in `src/lib/adffs/write.ts`'s callers -- the
+  file add/rename/delete routes and the drop-staging commit -- not just the UI, since the UI
+  is not the only caller and a disabled button is not a guarantee. The query is already
+  available: `devices.desiredSha256` matching the disk's current digest, org-scoped.
+
+  **Offer the way out rather than only refusing:** "this disk is mounted on <device>; eject
+  it to edit" with an eject button, since the operator will usually be standing next to the
+  Amiga. A refusal that does not say what to do is a dead end.
+
 - **Propagate a write-protect flip to a device that already has the disk mounted.** Requested by
   the operator 2026-08-31, and it is part of the design's intent rather than a new feature. It
   does not work today, and the reason is specific: `PATCH /api/disks/[id]` updates only

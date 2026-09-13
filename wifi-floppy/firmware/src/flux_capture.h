@@ -26,6 +26,23 @@ void flux_capture_arm(void);
 void flux_capture_disarm(void);
 
 /**
+ * Abandon a capture that has run too long to be a write.
+ *
+ * One track write is a single revolution -- ~200 ms. A WGATE that stays
+ * asserted far past that is not a write: it is a floating input, which is
+ * exactly what the bus looks like when the Amiga is switched off and stops
+ * driving it. Seen on real hardware 2026-09-13, where a power event asserted
+ * WGATE eight times in one microsecond alongside every other line and never
+ * deasserted, leaving the capture armed indefinitely and filling its ring with
+ * noise. Called from the service loop; returns true if it aborted one.
+ */
+bool flux_capture_timeout(uint32_t now_ms);
+
+/** How long a capture may run before flux_capture_timeout() abandons it.
+ *  Generously more than the ~200 ms one revolution takes. */
+#define FLUX_CAPTURE_MAX_MS 400u
+
+/**
  * Drain whatever the DMA has landed since the last call and turn it into
  * bits. Call from core0's service loop.
  *
