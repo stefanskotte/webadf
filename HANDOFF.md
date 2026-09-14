@@ -1976,11 +1976,37 @@ separately.
   operator 2026-09-13**, same day it was raised -- kept here with its findings intact so
   picking it up again costs nothing. Requested as: create them, add files to them, mount them. The operator's own
   estimate that the MFM would be ~4 MB is right: an Amiga HD disk is 22 sectors per track
-  against DD's 11, and the flux is 1 us bitcells at 150 rpm rather than 2 us at 300, which
-  is the same 500 kbit/s over a revolution twice as long. 160 tracks x ~25,000 bytes is
-  ~4.0 MB per image.
+  against DD's 11, and the drive spins at 150 rpm rather than 300, so the SAME 2 us bitcells
+  and the same 500 kbit/s cover a revolution twice as long. (An earlier version of this entry
+  said "1 us bitcells" in the same sentence as "the same 500 kbit/s"; those contradict each
+  other -- 1 us would be 1 Mbit/s, which Paula cannot take and is the reason HD drives spin
+  at half speed. Verify against Greaseweazle's HD definition before relying on either.)
+  160 tracks x ~25,000 bytes is ~4.0 MB per image.
 
-  **THE BLOCKER IS PSRAM, and it is worth knowing before anyone starts.** The part is 8 MB
+  **OPERATOR RULING 2026-09-14: HD images are held on the device as ADF, not as flux.** The
+  reasoning, as given: no NDOS games or demos were ever released on 1.76 MB disks, so there
+  is no copy protection to preserve and the flux-not-ADF decision (README, "the device
+  streams flux rather than holding ADFs") buys nothing for HD. HD drives were rare -- only
+  the big-box Amigas had one natively. The use case is not software preservation but
+  **getting files larger than 880 KB onto an Amiga simply**: build an HD disk in the browser
+  (3u/3v already edit AmigaDOS volumes), mount it, copy off. That use case needs READ only,
+  so it does not wait on write support.
+
+  What the ruling changes:
+  * **The PSRAM blocker below mostly dissolves.** An HD ADF is 1.76 MB, so two slots are
+    ~3.5 MB against today's 4.26 MB for two DD flux slots -- the two-slot publish property
+    survives. The cost moves to CPU: the device must build each track's MFM itself.
+  * **A C port of the ADF->MFM encoder on the device**, producing one track on demand into
+    the track buffer (an HD track is ~25 KB of MFM; `TRACK_MAX_BYTES` is 13,312 today).
+    Verify it byte-for-byte against `src/lib/adfmfm` and Greaseweazle, the same way the DD
+    encoder was verified -- never against its own fixtures.
+  * **Measure the encode time before committing to it.** Core0 answers a seek in 1 ms median
+    against ~15 ms of head settle (4a); encoding 22 sectors (checksums plus odd/even split)
+    has to fit inside that margin, or be done ahead of the seek.
+  * **Two image kinds on the wire:** the poll/image protocol needs to say "flux container" or
+    "raw ADF", and `image_loader` needs a second parser. DD stays flux.
+
+  **THE BLOCKER WAS PSRAM -- for HD-as-flux, which the ruling above no longer requires.** The part is 8 MB
   and today two slots of DD cost 4.26 MB (`SLOT_COUNT 2`, `TRACK_MAX_BYTES 13312`). Doubling
   the track size for HD makes one slot ~4.26 MB and two of them ~8.5 MB -- **over the part**.
   So HD forces a choice: a single slot (losing the fetch-the-next-disk-while-the-current-one-
@@ -1992,7 +2018,9 @@ separately.
   * `src/lib/adfmfm/constants.ts` -- SECTORS, TRACK_BITS, the gaps, ADF_BYTES and WFMF_BYTES
     all assume DD. They are measured values verified against Greaseweazle, so the HD set
     needs verifying the same way rather than derived by doubling.
-  * The PIO clock divider: `flux_out` emits 2 us bitcells today. HD is 1 us.
+  * NOT the PIO clock divider: HD keeps 2 us bitcells (see the correction above). What changes
+    is the revolution: twice the bits per track, so the DMA wrap and INDEX come every
+    ~400 ms instead of ~200 ms.
   * `src/lib/adffs/` -- AmigaDOS scales to HD but the root block moves (block 1760 on an HD
     volume, not 880), so anything that hardcodes ROOT_BLOCK needs to take it from the
     volume's size.
