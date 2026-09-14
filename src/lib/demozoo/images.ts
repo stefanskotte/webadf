@@ -15,6 +15,17 @@ import { MAX_SCREENSHOTS } from './extract';
 export const DEMOZOO_IMAGES_PER_ROLLING_HOUR = 60;
 const DELAY_MS = 500;
 const RETRY_FAILED_AFTER_MS = 24 * 3_600_000;
+export const SCREENSHOT_TIMEOUT_MS = 30_000;
+/**
+ * standard_url is third-party data: only Demozoo's own media host is ever
+ * requested (every one of the 79,180 imported on 2026-09-14 is on it).
+ */
+export const SCREENSHOT_URL_PREFIX = 'https://media.demozoo.org/';
+/**
+ * Stored bytes are served same-origin by /api/images, so only raster types:
+ * never image/svg+xml, which can carry script.
+ */
+const ALLOWED_IMAGE_TYPES = new Set(['image/png', 'image/jpeg', 'image/gif', 'image/webp']);
 const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
 
 /** An identifier that fits imageStore and /api/images -- NOT a digest of the bytes. */
@@ -32,7 +43,6 @@ export async function ensureDemozooImage(
   if (prior[0]?.failedAt && Date.now() - prior[0].failedAt.getTime() < RETRY_FAILED_AFTER_MS) return { stored: false, bytes: 0 };
 
   const row = { sha1, screenshotId: s.id, productionId: s.productionId, ordinal: s.ordinal, sourceUrl: s.standardUrl };
-  await deps.wait(DELAY_MS);
 
   // Every attempt -- a non-ok status, a non-image content-type, or a thrown
   // network error -- MUST leave a row here. budgetRemaining() and the phase's
@@ -44,9 +54,21 @@ export async function ensureDemozooImage(
     .values({ ...row, storageKey: null, sizeBytes: null, fetchedAt: new Date(), failedAt: new Date() })
     .onConflictDoUpdate({ target: demozooImages.sha1, set: { fetchedAt: new Date(), failedAt: new Date() } });
 
+  // Not a request at all: recorded as a failure (so it is not re-selected for
+  // 24 h), with no delay and nothing sent anywhere.
+  if (!s.standardUrl.startsWith(SCREENSHOT_URL_PREFIX)) {
+    console.error(`demozoo: refusing screenshot URL outside ${SCREENSHOT_URL_PREFIX}: ${s.standardUrl}`);
+    await recordFailure();
+    return { stored: false, bytes: 0 };
+  }
+
+  await deps.wait(DELAY_MS);
   let res: Response;
   try {
-    res = await deps.fetch(s.standardUrl, { headers: { 'user-agent': DEMOZOO_USER_AGENT } });
+    // A timeout rejects here or in arrayBuffer() below; both record a failure.
+    res = await deps.fetch(s.standardUrl, {
+      headers: { 'user-agent': DEMOZOO_USER_AGENT }, signal: AbortSignal.timeout(SCREENSHOT_TIMEOUT_MS),
+    });
   } catch (err) {
     console.error(`demozoo: screenshot fetch failed for ${s.standardUrl}`, err);
     await recordFailure();
@@ -58,8 +80,8 @@ export async function ensureDemozooImage(
   // written to oagd/<sha1> and later served by /api/images as if it were the
   // shot. No default of 'image/png' -- a missing header is a failure, not an
   // assumption.
-  const contentType = res.headers.get('content-type');
-  if (!res.ok || !contentType?.startsWith('image/')) {
+  const contentType = res.headers.get('content-type')?.split(';')[0].trim().toLowerCase() ?? null;
+  if (!res.ok || !contentType || !ALLOWED_IMAGE_TYPES.has(contentType)) {
     await recordFailure();
     return { stored: false, bytes: 0 };
   }

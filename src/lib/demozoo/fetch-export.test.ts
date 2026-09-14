@@ -7,16 +7,22 @@ function fakeStore() {
 }
 
 describe('fetchExport — the only request to data.demozoo.org', () => {
-  it('makes exactly one conditional request with our User-Agent', async () => {
+  it('makes exactly one conditional request with our User-Agent, bounded by a 240 s timeout', async () => {
+    const timeout = vi.spyOn(AbortSignal, 'timeout');
     const fetch = vi.fn(async () => new Response(null, { status: 304 }));
     const out = await fetchExport({ etag: '"abc"', lastModified: 'Mon, 14 Sep 2026 02:38:00 GMT' }, { fetch, store: fakeStore() });
     expect(out).toEqual({ status: 'unchanged' });
     expect(fetch).toHaveBeenCalledTimes(1);
-    expect(fetch).toHaveBeenCalledWith(EXPORT_URL, { headers: {
-      'user-agent': DEMOZOO_USER_AGENT,
-      'if-none-match': '"abc"',
-      'if-modified-since': 'Mon, 14 Sep 2026 02:38:00 GMT',
-    } });
+    expect(fetch).toHaveBeenCalledWith(EXPORT_URL, {
+      headers: {
+        'user-agent': DEMOZOO_USER_AGENT,
+        'if-none-match': '"abc"',
+        'if-modified-since': 'Mon, 14 Sep 2026 02:38:00 GMT',
+      },
+      signal: expect.any(AbortSignal),
+    });
+    expect(timeout).toHaveBeenCalledWith(240_000);
+    timeout.mockRestore();
   });
 
   it('streams a 200 into our store and returns the validators', async () => {

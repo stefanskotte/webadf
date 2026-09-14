@@ -8,6 +8,11 @@ import { demozooExportStore, type DemozooExportStore } from '@/lib/storage';
 
 export const EXPORT_URL = 'https://data.demozoo.org/demozoo-export.sql.gz';
 export const DEMOZOO_USER_AGENT = 'webadf/1.0 (Amiga disk library; +https://webadf.vercel.app)';
+/**
+ * The request AND streaming its body into our store must finish inside the
+ * cron route's 300 s maxDuration; aborting also errors the body stream.
+ */
+export const EXPORT_TIMEOUT_MS = 240_000;
 
 export type FetchOutcome =
   | { status: 'unchanged' }
@@ -21,7 +26,7 @@ export async function fetchExport(
   if (prev?.etag) headers['if-none-match'] = prev.etag;
   if (prev?.lastModified) headers['if-modified-since'] = prev.lastModified;
 
-  const res = await deps.fetch(EXPORT_URL, { headers });
+  const res = await deps.fetch(EXPORT_URL, { headers, signal: AbortSignal.timeout(EXPORT_TIMEOUT_MS) });
   if (res.status === 304) return { status: 'unchanged' };
   if (!res.ok || !res.body) throw new Error(`demozoo export: HTTP ${res.status}`);
 

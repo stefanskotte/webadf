@@ -38,6 +38,9 @@ export async function GET(
       // Content-addressed by sha-1: the bytes at this URL can never change,
       // so the browser never needs to ask again.
       'cache-control': 'public, max-age=31536000, immutable',
+      // Stored content types come from third-party responses; never let a
+      // browser second-guess one into something executable.
+      'x-content-type-options': 'nosniff',
     },
   });
 }

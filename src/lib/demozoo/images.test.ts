@@ -38,13 +38,53 @@ describe('ensureDemozooImage — politeness', () => {
     expect(fetch).not.toHaveBeenCalled();
   });
 
-  it('fetches once, with our User-Agent, and stores the bytes', async () => {
+  it('fetches once, with our User-Agent and a 30 s timeout, and stores the bytes', async () => {
+    const timeout = vi.spyOn(AbortSignal, 'timeout');
     const fetch = vi.fn(async () => new Response(new Uint8Array([1, 2, 3]), { headers: { 'content-type': 'image/png' } }));
     const r = await ensureDemozooImage(shot, { fetch, wait: noWait });
     expect(r).toEqual({ stored: true, bytes: 3 });
     expect(fetch).toHaveBeenCalledTimes(1);
-    expect(fetch).toHaveBeenCalledWith(shot.standardUrl, { headers: { 'user-agent': expect.stringContaining('webadf') } });
+    expect(fetch).toHaveBeenCalledWith(shot.standardUrl, {
+      headers: { 'user-agent': expect.stringContaining('webadf') }, signal: expect.any(AbortSignal),
+    });
+    expect(timeout).toHaveBeenCalledWith(30_000);
+    timeout.mockRestore();
     expect(put).toHaveBeenCalledWith(imageKeyFor(shot.standardUrl), expect.any(Uint8Array), 'image/png');
+  });
+
+  it('records a timed-out request as a failure like any thrown fetch', async () => {
+    const fetch = vi.fn(async () => { throw new DOMException('The operation was aborted due to timeout', 'TimeoutError'); });
+    expect(await ensureDemozooImage(shot, { fetch, wait: noWait })).toEqual({ stored: false, bytes: 0 });
+    expect(put).not.toHaveBeenCalled();
+    expect(inserted).toHaveLength(1);
+    expect((inserted[0] as { failedAt: Date }).failedAt).toBeInstanceOf(Date);
+  });
+
+  it('never requests a URL outside media.demozoo.org, and records it as failed so it is not retried every run', async () => {
+    const fetch = vi.fn();
+    const wait = vi.fn(async () => {});
+    for (const standardUrl of ['https://evil.example/x.png', 'http://media.demozoo.org/x.png', 'https://media.demozoo.org.evil.example/x.png']) {
+      inserted.length = 0;
+      expect(await ensureDemozooImage({ ...shot, standardUrl }, { fetch, wait })).toEqual({ stored: false, bytes: 0 });
+      expect(inserted).toHaveLength(1);
+      expect((inserted[0] as { failedAt: Date }).failedAt).toBeInstanceOf(Date);
+    }
+    expect(fetch).not.toHaveBeenCalled();
+    expect(wait).not.toHaveBeenCalled();
+    expect(put).not.toHaveBeenCalled();
+  });
+
+  it('does not store an SVG (served same-origin, it could carry script)', async () => {
+    const fetch = vi.fn(async () => new Response('<svg xmlns="http://www.w3.org/2000/svg"/>', { headers: { 'content-type': 'image/svg+xml' } }));
+    expect(await ensureDemozooImage(shot, { fetch, wait: noWait })).toEqual({ stored: false, bytes: 0 });
+    expect(put).not.toHaveBeenCalled();
+    expect(inserted).toHaveLength(1);
+  });
+
+  it('accepts a raster type with parameters, storing the bare type', async () => {
+    const fetch = vi.fn(async () => new Response(new Uint8Array([1]), { headers: { 'content-type': 'IMAGE/JPEG; charset=binary' } }));
+    expect(await ensureDemozooImage(shot, { fetch, wait: noWait })).toEqual({ stored: true, bytes: 1 });
+    expect(put).toHaveBeenCalledWith(imageKeyFor(shot.standardUrl), expect.any(Uint8Array), 'image/jpeg');
   });
 
   it('fetchWithinBudget stops at the rolling-hour budget and at the deadline', async () => {
