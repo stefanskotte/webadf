@@ -42,7 +42,10 @@ test('a hash match retitles a badly named disk', async ({ page }) => {
   await seedDisk(user.orgId, { title: 'stateart', diskNo: 1, sha256 });
   const sha1 = await fakeHashes(sha256);
 
+  // Set name includes "- Games -" so Demozoo match phase skips this TOSEC-only test.
+  // This real demo title would otherwise auto-link against the live Demozoo import.
   await seedTosecEntry({
+    setName: 'e2e - Games - set',
     gameName: 'State of the Art (1992)(Spaceballs)',
     romName: 'State of the Art (1992)(Spaceballs).adf',
     sha1, title: 'State of the Art', sortTitle: 'state of the art',
@@ -109,17 +112,17 @@ test('a sweep is NEVER observable as an eject', async ({ page, request }) => {
 
   const sha1 = await fakeHashes(sha256);
   // setName MUST differ from "a hash match retitles a badly named disk"
-  // above: seedTosecEntry defaults setName to 'e2e-set' and derives its row
-  // id from stableId('tosec', setName, romName) alone -- the sha1 plays no
-  // part in the id. Reusing that test's identical romName under the same
-  // default setName would collide onto the SAME row, and its
-  // .onConflictDoNothing() would silently keep whichever entry landed
-  // first (that test's sha1, not this one's), making a match here
-  // impossible regardless of what sweep()/applyMatch() actually do. Found
-  // via the premise assertion below failing deterministically -- in
-  // isolation, with no other test or file involved -- until this was fixed.
+  // above: seedTosecEntry derives its row id from stableId('tosec', setName, romName)
+  // alone -- the sha1 plays no part in the id. Reusing that test's identical romName
+  // under a different setName is necessary to avoid colliding onto the SAME row, whose
+  // .onConflictDoNothing() would silently keep whichever entry landed first (that
+  // test's sha1, not this one's), making a match here impossible regardless of what
+  // sweep()/applyMatch() actually do. Found via the premise assertion below failing
+  // deterministically -- in isolation, with no other test or file involved -- until
+  // this was fixed. Set name includes "- Games -" so Demozoo match phase skips this
+  // TOSEC-only test.
   await seedTosecEntry({
-    setName: 'e2e-set-eject',
+    setName: 'e2e - Games - set-eject',
     gameName: 'State of the Art (1992)(Spaceballs)',
     romName: 'State of the Art (1992)(Spaceballs).adf',
     sha1, title: 'State of the Art', sortTitle: 'state of the art',
