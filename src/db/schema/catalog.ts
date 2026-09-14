@@ -35,10 +35,17 @@ export const blobs = pgTable('blobs', {
   openretroEntryId: text('openretro_entry_id'),
   enrichState: text('enrich_state'),            // 'enriched' | 'none' | 'ambiguous'
   enrichCheckedAt: timestamp('enrich_checked_at', { withTimezone: true }),
+
+  // Demozoo (spec §4). demozoo_production_id holds the AUTOMATIC link only --
+  // a person's confirmation lives on the org's game, never here.
+  demozooProductionId: integer('demozoo_production_id'),
+  demozooState: text('demozoo_state'),   // 'applied' | 'suggested' | 'none' | 'skipped_game'
+  demozooCheckedAt: timestamp('demozoo_checked_at', { withTimezone: true }),
 }, (t) => [
   index('blobs_hashed_at_idx').on(t.hashedAt),
   index('blobs_match_checked_idx').on(t.matchCheckedAt),
   index('blobs_enrich_checked_idx').on(t.enrichCheckedAt),
+  index('blobs_demozoo_checked_idx').on(t.demozooCheckedAt),
 ]);
 
 /** Proves a tenant uploaded these exact bytes. Gates every presigned GET. */
@@ -89,6 +96,10 @@ export const games = pgTable('games', {
    * the metadata -- true of any title whose details were edited by hand.
    */
   authored: boolean('authored').notNull().default(false),
+  // An org's confirmed Demozoo production (spec §6.2). Org-scoped by living on
+  // the game; the global automatic link is blobs.demozoo_production_id.
+  demozooProductionId: integer('demozoo_production_id'),
+  demozooLinkSource: text('demozoo_link_source'),   // 'confirmed'
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
 }, (t) => [
   index('games_org_sort_idx').on(t.orgId, t.sortTitle),

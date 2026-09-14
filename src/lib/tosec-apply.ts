@@ -25,7 +25,7 @@ import { collectionGames } from '@/db/schema/collections';
 // Exported because openretro-apply.ts enforces the same rule and must not
 // keep a second copy of this list: a source added to one and not the other
 // would silently make half the system treat a machine row as human-edited.
-export const MACHINE_SOURCES = ['filename', 'tosec', 'openretro'];
+export const MACHINE_SOURCES = ['filename', 'tosec', 'openretro', 'demozoo'];
 
 export interface ApplyResult { gamesUpdated: number; disksUpdated: number; gamesMerged: number }
 
