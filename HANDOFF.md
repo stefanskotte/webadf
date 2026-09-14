@@ -52,7 +52,7 @@ after plan 4a, rewritten again 2026-08-31 after plan 4b.**
 | **Image layout shift** | ✅ **done 2026-09-03.** The game page's cover and screenshots reserve their space; the library grid never had the bug; see 3k |
 | **Typeahead search** | ✅ **done, all 7 tasks, merged to `master` and live in production.** A Spotlight-style pill in both shells; migration 0012 applied; see 3h |
 | **Read-only ADF filesystem reader** | ✅ **done, all 10 tasks, `feat/adf-filesystem-reader`.** Reads 80.3% of the archive (49/61) against TOSEC's 45.9% and OpenRetro's 6.6%; see 3f |
-| **Demozoo identification** | ✅ **done 2026-09-14, all 16 tasks, on `feat/demozoo`, not merged.** Complements TOSEC for non-games: weekly import, nightly matching, automatic links, suggestions, review queue, screenshots; see 3af |
+| **Demozoo identification** | ✅ **done 2026-09-14, all 16 tasks, merged to `master`.** Complements TOSEC for non-games: weekly import, nightly matching, automatic links, suggestions, review queue, screenshots; see 3af |
 | **Hardware** | rev A scrap (mirrored), **rev A2 in hand and working**, **rev B is current and unfabricated** — keepout moved to the antenna end, a silkscreen that carries lettering, D1 polarity marked. Respin deliberately on hold until a board is known to work; see 3s and 3x |
 
 **Current branch:** `master`, clean and pushed. Everything below is merged and live in
@@ -66,8 +66,12 @@ already has the disk mounted**, specced as a backlog entry in §4. Take it with 
 desk — its flag is inert until write-back exists, so it is
 only observable on hardware, and it needs a protocol answer for "same disk, changed flag" rather
 than a version bump that would force an unrequested ~2 MB re-fetch and remount.
-**Suite on `master`:** 798 vitest (1 skipped) [measured on `feat/demozoo`, Task 16, 2026-09-14], `pnpm build` clean, **206 Playwright** — 201 desktop at
-1280×720 and 5 mobile at 390×844; `playwright.config.ts` now has two projects.
+**Suite on `master`:** 821 vitest (1 skipped), `pnpm build` clean, **256 Playwright** — 247 desktop at
+1280×720 and 9 mobile at 390×844 (measured 2026-09-14 before the Demozoo merge: a full run
+passed 250; the 6 failures were a missing `adf-archive/` in the worktree and two TOSEC tests
+whose real-demo fixture Demozoo now links, fixed with Games set names, and those three spec
+files then passed 16/16). `playwright.config.ts` has two projects. **A git worktree has no
+`adf-archive/`** (it is gitignored): symlink the main checkout's before running e2e there.
 
 **Known flake shape, so nobody debugs it twice:** the first two or three tests of a cold run can
 time out at the 30s per-test limit while Turbopack compiles a route for the first time —
