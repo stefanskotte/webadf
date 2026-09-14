@@ -104,6 +104,11 @@ export const games = pgTable('games', {
 }, (t) => [
   index('games_org_sort_idx').on(t.orgId, t.sortTitle),
   index('games_org_created_idx').on(t.orgId, t.createdAt),
+  // Declared so `drizzle-kit push` doesn't treat these (created directly by
+  // 0012_search_trgm.sql, outside the schema until now) as drift and drop
+  // them -- push diffs against the schema files, not the migration history.
+  index('games_title_trgm_idx').using('gin', t.title.op('gin_trgm_ops')),
+  index('games_publisher_trgm_idx').using('gin', t.publisher.op('gin_trgm_ops')),
 ]);
 
 export const disks = pgTable('disks', {

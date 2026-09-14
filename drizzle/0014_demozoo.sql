@@ -73,4 +73,10 @@ CREATE INDEX "dz_img_fetched_idx" ON "demozoo_images" USING btree ("fetched_at")
 CREATE INDEX "dz_prod_title_key_idx" ON "demozoo_productions" USING btree ("title_key");--> statement-breakpoint
 CREATE INDEX "dz_shot_prod_idx" ON "demozoo_screenshots" USING btree ("production_id");--> statement-breakpoint
 CREATE INDEX "dz_sugg_prod_idx" ON "demozoo_suggestions" USING btree ("production_id");--> statement-breakpoint
-CREATE INDEX "blobs_demozoo_checked_idx" ON "blobs" USING btree ("demozoo_checked_at");
+CREATE INDEX "blobs_demozoo_checked_idx" ON "blobs" USING btree ("demozoo_checked_at");--> statement-breakpoint
+-- Restores the two trigram indexes from 0012_search_trgm.sql, which were
+-- missing from the live database and undeclared in the Drizzle schema until
+-- now (see src/db/schema/catalog.ts). IF NOT EXISTS: a database that still
+-- has them must not fail.
+CREATE INDEX IF NOT EXISTS "games_title_trgm_idx" ON "games" USING gin ("title" gin_trgm_ops);--> statement-breakpoint
+CREATE INDEX IF NOT EXISTS "games_publisher_trgm_idx" ON "games" USING gin ("publisher" gin_trgm_ops);
