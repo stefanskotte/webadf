@@ -30,6 +30,19 @@ import { demozooDismissals } from '@/db/schema/demozoo';
 // would silently make half the system treat a machine row as human-edited.
 export const MACHINE_SOURCES = ['filename', 'tosec', 'openretro', 'demozoo'];
 
+// R5-revised: which machine sources a TOSEC retitle may overwrite. 'demozoo'
+// is deliberately EXCLUDED here even though it stays in MACHINE_SOURCES
+// above (mergeDuplicates' protected/machine split, and the Demozoo apply
+// guard in src/lib/demozoo/apply.ts, both still need 'demozoo' treated as
+// machine-authored -- otherwise a merge would treat an automatic Demozoo
+// link as a human edit and never absorb it, and applyDemozooToGames could
+// never re-apply itself). Demozoo is only ever written when TOSEC already
+// agreed (the sweep's automatic link starts from a TOSEC-identified sha256)
+// or a person confirmed it, so it outranks a later TOSEC retitle for title/
+// year/publisher; the way back down is Unlink, which re-derives from TOSEC
+// (src/lib/demozoo/rederive.ts), not a TOSEC sweep silently overwriting it.
+export const TOSEC_RETITLABLE_SOURCES = ['filename', 'tosec', 'openretro'];
+
 export interface ApplyResult { gamesUpdated: number; disksUpdated: number; gamesMerged: number }
 
 export async function applyMatch(sha256: string, entryId: string): Promise<ApplyResult> {
@@ -59,20 +72,23 @@ export async function applyMatch(sha256: string, entryId: string): Promise<Apply
     }).where(eq(disks.id, row.diskId)));
     disksUpdated++;
 
-    // Game level: only over machine-authored metadata. Gating on
-    // MACHINE_SOURCES (not just 'filename') keeps a game re-correctable
-    // after its first TOSEC match -- a row already at metadataSource:
-    // 'tosec' is still machine-authored, and importDat()'s promise that a
-    // newer release "corrects the entries it changed" would otherwise be
-    // false for any row already matched once. Idempotent either way: a
-    // repeat writes identical values. A human edit (any other value,
-    // including NULL) is never overwritten -- nothing writes such a value
-    // today, but the rule exists before the first edit UI can forget it.
+    // Game level: only over machine-authored metadata this TOSEC retitle is
+    // allowed to overwrite. Gating on TOSEC_RETITLABLE_SOURCES (not just
+    // 'filename') keeps a game re-correctable after its first TOSEC match --
+    // a row already at metadataSource: 'tosec' is still machine-authored,
+    // and importDat()'s promise that a newer release "corrects the entries
+    // it changed" would otherwise be false for any row already matched
+    // once. Idempotent either way: a repeat writes identical values. A
+    // human edit (any other value, including NULL) is never overwritten --
+    // nothing writes such a value today, but the rule exists before the
+    // first edit UI can forget it. 'demozoo' is deliberately excluded from
+    // this list (R5-revised, see TOSEC_RETITLABLE_SOURCES) even though it
+    // is a MACHINE_SOURCES entry: a Demozoo title outranks TOSEC's.
     stmts.push(db.update(games).set({
       title: entry.title, sortTitle: entry.sortTitle,
       year: entry.year, publisher: entry.publisher,
       metadataSource: 'tosec',
-    }).where(and(eq(games.id, row.gameId), inArray(games.metadataSource, MACHINE_SOURCES))));
+    }).where(and(eq(games.id, row.gameId), inArray(games.metadataSource, TOSEC_RETITLABLE_SOURCES))));
     gamesUpdated++;
   }
 
@@ -216,16 +232,18 @@ async function mergeDuplicates(orgId: string, sortTitle: string, year: number | 
     // rule protects it the same way protectedRows above protects title/year/
     // publisher: it must not be silently lost because the row that happened
     // to carry it was the one absorbed. Unlike title/year/publisher, a
-    // confirmation is not what decided survivor vs. absorbed above -- a game
-    // can be MACHINE_SOURCES-titled and still carry a human's confirmed link
-    // (confirmDemozoo does not touch metadataSource) -- so it needs its own
-    // carry-forward here, done as a single correlated UPDATE rather than a
-    // read-then-write because this statement runs inside the same atomic
-    // batch as every other repoint for `gone`, before the DELETE below removes
-    // the row these subqueries read from. Only fires when the survivor has NO
-    // confirmation of its own (demozoo_link_source IS NULL) and `gone` has
-    // one; if both have one, the survivor's stands, matching how a doubly
-    // human-edited pair is left alone above.
+    // confirmation is not what decided survivor vs. absorbed above -- a
+    // confirmation cannot make a row protected, because 'demozoo' is itself
+    // a machine source (confirmDemozoo's write, via applyDemozooToGames,
+    // sets metadataSource to 'demozoo', which MACHINE_SOURCES still
+    // includes) -- so it needs its own carry-forward here, done as a single
+    // correlated UPDATE rather than a read-then-write because this
+    // statement runs inside the same atomic batch as every other repoint
+    // for `gone`, before the DELETE below removes the row these subqueries
+    // read from. Only fires when the survivor has NO confirmation of its
+    // own (demozoo_link_source IS NULL) and `gone` has one; if both have
+    // one, the survivor's stands, matching how a doubly human-edited pair
+    // is left alone above.
     stmts.push(db.update(games).set({
       demozooProductionId: sql`(SELECT demozoo_production_id FROM games WHERE id = ${gone})`,
       demozooLinkSource: sql`(SELECT demozoo_link_source FROM games WHERE id = ${gone})`,

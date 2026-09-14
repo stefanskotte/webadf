@@ -5,7 +5,7 @@ import { tosecEntries } from '@/db/schema/tosec';
 import { demozooProductions, demozooDismissals } from '@/db/schema/demozoo';
 import { MACHINE_SOURCES } from '@/lib/tosec-apply';
 import { makeSortTitle } from '@/lib/tosec';
-import { effectiveLink } from './effective';
+import { productionToDismissAfterClear, agreesOnAutomaticLink } from './effective';
 import { rederiveMachineTitle } from './rederive';
 
 /**
@@ -33,6 +33,15 @@ export async function applyDemozooToGames(productionId: number, gameIds: string[
  * The sweep's automatic link, GLOBAL: every game in every org holding these
  * bytes, except games that confirmed a production themselves or dismissed
  * this one.
+ *
+ * R11: a game can hold several disks, and this function is triggered by ONE
+ * blob becoming 'applied' -- it must not write a title on the strength of
+ * that one disk alone if another of the game's disks disagrees (applied to
+ * a DIFFERENT production). effectiveLink shows nothing for a disagreement,
+ * so a title written here would be stale the instant it landed, and with no
+ * automatic path back to fix it (only Unlink re-derives). Checked via
+ * agreesOnAutomaticLink against every disk the candidate game holds, not
+ * just the one that matched `sha256`.
  */
 export async function applyAutomaticLink(sha256: string, productionId: number): Promise<number> {
   const db = getDb();
@@ -41,7 +50,31 @@ export async function applyAutomaticLink(sha256: string, productionId: number): 
     .innerJoin(games, eq(games.id, disks.gameId))
     .leftJoin(demozooDismissals, and(eq(demozooDismissals.gameId, games.id), eq(demozooDismissals.productionId, productionId)))
     .where(and(eq(disks.sha256, sha256), isNull(games.demozooLinkSource), isNull(demozooDismissals.gameId)));
-  return applyDemozooToGames(productionId, [...new Set(rows.map((r) => r.id))]);
+  const candidateIds = [...new Set(rows.map((r) => r.id))];
+  if (candidateIds.length === 0) return 0;
+
+  const appliedRows = await db.select({ gameId: disks.gameId, id: blobs.demozooProductionId })
+    .from(disks).innerJoin(blobs, eq(blobs.sha256, disks.sha256))
+    .where(and(inArray(disks.gameId, candidateIds), eq(blobs.demozooState, 'applied')));
+  const appliedByGame = new Map<string, number[]>();
+  for (const row of appliedRows) {
+    if (row.id === null) continue;
+    const list = appliedByGame.get(row.gameId);
+    if (list) list.push(row.id); else appliedByGame.set(row.gameId, [row.id]);
+  }
+
+  const dismissedRows = await db.select({ gameId: demozooDismissals.gameId, id: demozooDismissals.productionId })
+    .from(demozooDismissals).where(inArray(demozooDismissals.gameId, candidateIds));
+  const dismissedByGame = new Map<string, Set<number>>();
+  for (const row of dismissedRows) {
+    const set = dismissedByGame.get(row.gameId);
+    if (set) set.add(row.id); else dismissedByGame.set(row.gameId, new Set([row.id]));
+  }
+
+  const agreeing = candidateIds.filter((gameId) => agreesOnAutomaticLink(
+    appliedByGame.get(gameId) ?? [], dismissedByGame.get(gameId) ?? new Set(), productionId,
+  ));
+  return applyDemozooToGames(productionId, agreeing);
 }
 
 async function orgGame(orgId: string, gameId: string) {
@@ -80,9 +113,24 @@ export async function dismissDemozoo(orgId: string, gameId: string, productionId
 }
 
 /**
- * Unlink. A confirmation is cleared; an automatic link is hidden for this
- * org's game with a dismissal (the global link stays for other tenants).
- * Fields Demozoo wrote fall back to the next machine source.
+ * Unlink: this game shows no Demozoo link and no Demozoo-written title,
+ * afterwards, unconditionally (R11).
+ *
+ * (i) A confirmation, if any, is cleared. (ii) With the confirmation gone,
+ * whatever automatic link would now show (disks agree, and it isn't already
+ * dismissed) gets dismissed too, for this org's game only -- the global
+ * automatic link stays for other tenants. (iii) If Demozoo owns the title,
+ * it is re-derived to the next machine source.
+ *
+ * (iii) NEVER returns early ahead of (i)/(ii): two disks that disagree on
+ * the automatic link make effectiveLink return null even though the game's
+ * title still reads metadataSource: 'demozoo' (a race between this game
+ * acquiring a second disk and the sweep -- see agreesOnAutomaticLink); an
+ * early return here used to leave that title permanently stuck, because
+ * nothing else in this system ever revisits it. The same ordering also
+ * makes a retry after a partial failure (say, (i)/(ii) committed but a
+ * crash lost (iii)) safe: clearing an already-cleared confirmation and
+ * dismissing an already-dismissed production are both no-ops.
  */
 export async function unlinkDemozoo(orgId: string, gameId: string): Promise<boolean> {
   const game = await orgGame(orgId, gameId);
@@ -96,24 +144,29 @@ export async function unlinkDemozoo(orgId: string, gameId: string): Promise<bool
     .orderBy(disks.diskNo);
   const dismissedRows = await db.select({ id: demozooDismissals.productionId }).from(demozooDismissals)
     .where(eq(demozooDismissals.gameId, gameId));
-  const link = effectiveLink(game,
-    diskRows.filter((d) => d.state === 'applied' && d.auto !== null).map((d) => d.auto!),
-    new Set(dismissedRows.map((d) => d.id)));
-  if (!link) return true;
+  const automaticIds = diskRows.filter((d) => d.state === 'applied' && d.auto !== null).map((d) => d.auto!);
+  const dismissed = new Set(dismissedRows.map((d) => d.id));
 
-  if (link.source === 'confirmed') {
+  if (game.demozooLinkSource === 'confirmed') {
     await db.update(games).set({ demozooProductionId: null, demozooLinkSource: null })
       .where(and(eq(games.id, gameId), eq(games.orgId, orgId)));
-  } else {
-    await db.insert(demozooDismissals).values({ orgId, gameId, productionId: link.productionId }).onConflictDoNothing();
+  }
+
+  const toDismiss = productionToDismissAfterClear(automaticIds, dismissed);
+  if (toDismiss !== null) {
+    await db.insert(demozooDismissals).values({ orgId, gameId, productionId: toDismiss }).onConflictDoNothing();
   }
 
   if (game.metadataSource !== 'demozoo') return true;   // a human edited it since: leave it
-  const first = diskRows[0];
-  const tosec = first?.tosecEntryId
+  // Lowest-diskNo disk that actually HAS a TOSEC identity for the TOSEC
+  // branch (diskRows is already ordered by diskNo, so `.find` keeps that
+  // order); the filename branch stays on the lowest-diskNo disk regardless.
+  const firstWithTosec = diskRows.find((d) => d.tosecEntryId !== null) ?? null;
+  const tosec = firstWithTosec?.tosecEntryId
     ? (await db.select({ title: tosecEntries.title, year: tosecEntries.year, publisher: tosecEntries.publisher })
-        .from(tosecEntries).where(eq(tosecEntries.id, first.tosecEntryId)).limit(1))[0] ?? null
+        .from(tosecEntries).where(eq(tosecEntries.id, firstWithTosec.tosecEntryId)).limit(1))[0] ?? null
     : null;
+  const first = diskRows[0];
   const filename = first
     ? (await db.select({ f: entitlements.sourceFilename }).from(entitlements)
         .where(and(eq(entitlements.sha256, first.sha256), eq(entitlements.orgId, orgId))).limit(1))[0]?.f ?? null
