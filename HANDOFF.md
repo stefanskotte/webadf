@@ -1549,6 +1549,14 @@ separately.
     accept for automatic application -- so a second signal, or a human confirmation, is
     needed. Most of this archive's demo entries carry no TOSEC year or group to check.
 
+  **SPIKE RUN 2026-09-14 (gate + first import), on this Mac against the live production
+  DB, from the same local export:** EXTRACT 5,402 ms, rss 857 MB (gate: >200,000 ms or
+  >1,500 MB stops); 78,447 productions, 79,180 screenshots -- both well inside the
+  70,000-90,000 gate and matching the earlier spike exactly. WRITE 137,656 ms, one run,
+  result `done` (the daily cron budgets 240,000 ms and can resume across days if it ever
+  does not finish in one). `/api/cron/demozoo` is now registered in `vercel.ts`
+  (30 1 * * *, before the nightly scan).
+
 - **Enrich demos and applications from a source that actually has them.** Measured 2026-09-11
   (see 3ad): of the TOSEC-identified blobs OpenRetro cannot enrich, essentially all are
   demoscene productions -- 9 Fingers, State of the Art, Global Trash, Wayfarer, Ray of Hope 2
