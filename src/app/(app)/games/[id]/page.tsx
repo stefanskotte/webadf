@@ -10,6 +10,7 @@ import { LiveRefresh } from '@/components/devices/live-refresh';
 import { DiskRow } from '@/components/games/disk-row';
 import { GameFacts } from '@/components/games/game-facts';
 import { EditDetails } from '@/components/games/edit-details';
+import { DemozooPanel } from '@/components/games/demozoo-panel';
 
 export default async function GamePage(props: PageProps<'/games/[id]'>) {
   const { orgId } = await requireOrg();
@@ -58,6 +59,7 @@ export default async function GamePage(props: PageProps<'/games/[id]'>) {
           for a title nothing has enriched, which is exactly the title a
           person most wants to fill in by hand. */}
       <EditDetails game={game} />
+      <DemozooPanel game={game} />
       <GameFacts game={game} />
       <div className="flex flex-col gap-3 px-4 pb-10 sm:px-7">
         {game.disks.map((disk) => (
