@@ -48,6 +48,14 @@ describe('decideDemozoo — the spike cases (spec §10)', () => {
       .toEqual({ state: 'skipped_game' });
   });
 
+  it('a TOSEC game is skipped even when a verifiable unique candidate exists', () => {
+    // Synthetic candidate that would otherwise auto-apply (unique, year and group both
+    // agree) -- proves the game-set check wins before any candidate lookup happens.
+    const projectX: DemozooCandidate = { id: 999001, title: 'Project-X', releaseYear: 1992, groups: ['Team17'], supertype: 'production', isGame: false };
+    expect(decideDemozoo(tosec('Project-X', 1992, 'Team17', GAMES), (k) => (k === 'projectx' ? [projectX] : [])))
+      .toEqual({ state: 'skipped_game' });
+  });
+
   it('the "Millions" shape: unique title, group and year disagree -> suggestion, not applied', () => {
     const fake: DemozooCandidate = { id: 207031, title: 'Millions', releaseYear: 1993, groups: ['Abyss'], supertype: 'production', isGame: false };
     const v = decideDemozoo(tosec('Millions', 1994, 'Beyond'), (k) => (k === 'millions' ? [fake] : []));
