@@ -8,6 +8,7 @@ import { readVolume } from '@/lib/adffs';
 import { signUpFresh, runTag, createAdf } from './helpers';
 import { cleanupSeeded, seedDisk } from './device-helpers';
 import { synthDrop } from './drag-drop-helpers';
+import { seedProduction, seedSuggestion, cleanupDemozoo } from './demozoo-helpers';
 
 /**
  * The only specs in this repo that run at a phone's width.
@@ -22,7 +23,7 @@ import { synthDrop } from './drag-drop-helpers';
  * on screen.
  */
 
-test.afterAll(cleanupSeeded);
+test.afterAll(async () => { await cleanupDemozoo(); await cleanupSeeded(); });
 
 const sha = (s: string) => createHash('sha256').update(`mobile-${s}`).digest('hex');
 
@@ -425,4 +426,19 @@ test('the drop strip fits a phone, and a press-and-hold drags an entry onto a fo
     const destAfter = afterVolume.root.find((e) => e.name === 'DEST');
     return destAfter?.children.find((c) => c.name === 'DRAGME.TXT')?.block ?? null;
   }, { timeout: 15_000 }).toBe(dragged.block);
+});
+
+test('the Demozoo review queue does not overflow at 390px', async ({ page }) => {
+  const user = await signUpFresh(page);
+  const sha256 = createHash('sha256').update(randomUUID()).digest('hex');
+  await seedDisk(user.orgId, { title: `mobile-dz-${Date.now()}`, diskNo: 1, sha256 });
+  const pid = await seedProduction({ title: `A Rather Long Demozoo Production Title ${Date.now()}`, groups: ['Some Group With A Long Name'] });
+  await seedSuggestion(sha256, pid);
+
+  await page.goto('/library/demozoo');
+  await expect(page.getByTestId('review-item').first()).toBeVisible();
+  const overflow = await page.evaluate(
+    () => document.documentElement.scrollWidth - document.documentElement.clientWidth,
+  );
+  expect(overflow).toBeLessThanOrEqual(0);
 });
