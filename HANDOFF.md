@@ -2031,13 +2031,16 @@ separately.
   said an A500 cannot. Wrong: Paula is the same in every Amiga, and the 150 rpm spindle is
   exactly what keeps an HD disk inside Paula's data rate, so the chipset is not the limit.
   Aftermarket HD drives were sold for older models for this very use case. What remains to
-  check is not Paula but the two things the Amiga uses to decide a drive IS HD:
+  settle is not Paula but the two things the Amiga uses to decide a drive IS HD:
   * **The drive ID.** With the drive selected and the motor off, the Amiga clocks a 32-bit
     ID off RDY; DD and HD drives answer with different patterns. The board must answer with
     the HD one while an HD image is mounted -- and the DD one otherwise.
-  * **trackdisk.device support.** Which Kickstart first understood HD drives is NOT verified
-    here (believed 3.0, unconfirmed). Aftermarket drives for older machines may have supplied
-    their own driver. Establish both before building, rather than assuming either.
+  * **trackdisk.device support -- OPERATOR RULING 2026-09-14: HD requires Kickstart 3.0 or
+    later.** The operator's understanding is that 3.0 is where HD support arrived, and that
+    a ROM upgrade on an older Amiga is common and reasonable to require; the current
+    Kickstart for all models is 3.2.3 (as of 2026-09-14). So this is a documented
+    requirement of the feature, not a blocker. The UI should say so where an HD disk is
+    created or mounted, since a 1.3 machine would simply fail to read it.
 
 - **Support HFE and IPF, for copy-protected games.** Requested by the operator 2026-09-13,
   and the direct payoff of the decision above: both are flux/bitstream formats, which is
