@@ -9,6 +9,7 @@ import { pickCover, type CoverCandidate } from '@/lib/cover-pick';
 import { kindFromSetName, pickKind } from '@/lib/game-kind';
 import { tosecEntries } from '@/db/schema/tosec';
 import { orgFilter } from '@/db/scope';
+import { getGameDemozoo, demozooCovers, type GameDemozoo } from '@/lib/demozoo/queries';
 
 export interface GameListItem {
   id: string; title: string; year: number | null; publisher: string | null;
@@ -191,7 +192,7 @@ async function withDerived<T extends { id: string }>(
   if (ids.length === 0) return [];
   const db = getDb();
 
-  const [images, sets] = await Promise.all([
+  const [images, sets, dzCovers] = await Promise.all([
     db.select({
       gameId: disks.gameId,
       sha1: openretroImages.sha1,
@@ -211,6 +212,8 @@ async function withDerived<T extends { id: string }>(
       .innerJoin(blobs, eq(blobs.sha256, disks.sha256))
       .innerJoin(tosecEntries, eq(tosecEntries.id, blobs.tosecEntryId))
       .where(and(inArray(disks.gameId, ids), eq(disks.orgId, orgId))),
+
+    demozooCovers(orgId, ids),
   ]);
 
   const coversByGame = new Map<string, CoverCandidate[]>();
@@ -228,7 +231,9 @@ async function withDerived<T extends { id: string }>(
   }
 
   return rows.map((r) => {
-    const chosen = pickCover(coversByGame.get(r.id) ?? []);
+    // OpenRetro's front cover still wins over a Demozoo screenshot: pickCover
+    // ranks 'front' before 'screenshot'.
+    const chosen = pickCover([...(coversByGame.get(r.id) ?? []), ...(dzCovers.get(r.id) ?? [])]);
     return {
       ...r,
       coverUrl: chosen ? `/api/images/${chosen.sha1}` : null,
@@ -338,6 +343,8 @@ export interface GameDetail {
    *  offer handing the group back. Never NULL in practice -- ingest writes
    *  'filename' -- so a NULL here really would mean a human took the row. */
   metadataSource: string | null;
+  demozooProductionId: number | null; demozooLinkSource: string | null;
+  demozoo: GameDemozoo;
   languages: string | null;
   front: GameImage | null; title_: GameImage | null; screenshots: GameImage[];
   links: GameLinks | null;
@@ -360,6 +367,7 @@ export async function getGameDetail(orgId: string, gameId: string): Promise<Game
       description: games.description, history: games.history,
       factsSource: games.factsSource, proseSource: games.proseSource,
       metadataSource: games.metadataSource,
+      demozooProductionId: games.demozooProductionId, demozooLinkSource: games.demozooLinkSource,
     })
     .from(games)
     .where(orgFilter(games, orgId, eq(games.id, gameId)))
@@ -439,7 +447,13 @@ export async function getGameDetail(orgId: string, gameId: string): Promise<Game
     }
   }
 
+  // Demozoo (spec §6.2): the org's confirmation, else the blob's automatic
+  // link; suggestions only when there is no link. Scoped through shas, which
+  // came from org-filtered disks, and through orgId directly (D-5-5), since
+  // getGameDemozoo joins disks again inside linkInputs.
+  const demozoo = await getGameDemozoo(orgId, game, shas);
+
   return {
-    ...game, languages, front, title_: titleShot, screenshots, links, disks: diskRows,
+    ...game, languages, front, title_: titleShot, screenshots, links, disks: diskRows, demozoo,
   };
 }
