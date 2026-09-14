@@ -138,9 +138,14 @@ export async function runDemozooCron(budgetMs: number = DEFAULT_BUDGET_MS): Prom
         break;
       }
       const extract = await extractFromStream(stream);
+      // Captured before encoding so nothing below still references `extract`
+      // -- it (and the JSON string built from it) can be released while the
+      // putBytes upload of the encoded bytes is in flight.
+      const productionCount = extract.productions.length;
+      const screenshotCount = extract.screenshots.length;
       await demozooExportStore.putBytes('amiga.json', new TextEncoder().encode(JSON.stringify(extract)));
       await saveCursor({ step: 'extracted', runStartedAt: new Date(), productionsWritten: 0, screenshotsWritten: 0 });
-      report.steps.push({ step, ms: Date.now() - t0, detail: `${extract.productions.length} productions, ${extract.screenshots.length} screenshots` });
+      report.steps.push({ step, ms: Date.now() - t0, detail: `${productionCount} productions, ${screenshotCount} screenshots` });
       continue;
     }
 
