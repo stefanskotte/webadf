@@ -1524,6 +1524,31 @@ separately.
   twice if the dump is adopted later. **Pick dump or API deliberately; it determines
   everything else.** Amiga platform ids are 5 (OCS/ECS), 6 (AGA), 26 (PPC/RTG).
 
+  **SPIKE RUN 2026-09-14 -- measured, and two of the claims above are corrected.**
+  The 2026-09-14 export (200,800,986 bytes, one download) was read with a streaming Python
+  parser over its `COPY` blocks -- **no Postgres restore needed**, which removes the "why it is
+  not easy" objection above. 78,447 Amiga productions (platforms 5/6/26).
+
+  * **Correction: Demozoo DOES store hashes** -- `mirror_download(sha1, md5)` for files it
+    mirrors -- but only 438 of 84,560 Amiga download links are mirrored, and they are of the
+    download (zip/dms), not the ADF. **0 of the 40 live disks matched by hash.** Dead route.
+  * **Title matching is dangerous on games.** Unique title hits for already-identified
+    GAMES are wrong: Alien Breed II -> a Fairlight *cracktro*; Lemmings and Project-X ->
+    cracktros and music. Demozoo lists the scene releases around a game, not the game.
+  * **The rule that works: TOSEC set is "Demos" AND the Demozoo production type is a
+    demo-kind (Demo, Intro, sized intros, Musicdisk, Diskmag, Slideshow).** On the live
+    library: 5 of 5 TOSEC demos unique and correct by eye (9 Fingers, State of the Art,
+    Wayfarer -> Spaceballs; Global Trash -> The Silents; Ray of Hope 2 -> Majic 12), 8 non-demo
+    titles correctly skipped, 8-53 screenshots each.
+  * **At scale, across all 2,826 TOSEC Amiga demo titles:** 1,502 unique (53%), 304
+    ambiguous (11%), 1,020 none (36%). **Precision check** where TOSEC names a group: the
+    unique match names the same group in **270 of 304 (89%)**; year agrees in 252 of 304.
+    Some disagreements are spelling (3 Little Elks / "threelittleelks"), some are real
+    (Millions by Beyond -> Millions by Abyss). **Title-only is wrong ~1 time in 10**, which
+    this codebase's standing rule ("a wrong title is worse than a missing one") does not
+    accept for automatic application -- so a second signal, or a human confirmation, is
+    needed. Most of this archive's demo entries carry no TOSEC year or group to check.
+
 - **Enrich demos and applications from a source that actually has them.** Measured 2026-09-11
   (see 3ad): of the TOSEC-identified blobs OpenRetro cannot enrich, essentially all are
   demoscene productions -- 9 Fingers, State of the Art, Global Trash, Wayfarer, Ray of Hope 2
