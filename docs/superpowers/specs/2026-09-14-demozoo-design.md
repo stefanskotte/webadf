@@ -278,6 +278,36 @@ and cost-if-wrong in the plan's execution ledger, `progress.md`):
   `'demozoo'` specifically (`TOSEC_RETITLABLE_SOURCES`), so once Demozoo has written a title it
   stands until a human unlinks it. `'demozoo'` stays in `MACHINE_SOURCES` for merge absorption
   (R6) and the Demozoo apply guard itself.
+- **R6: a game merge carries Demozoo confirmations and dismissals to the survivor.**
+  `mergeDuplicates` in `tosec-apply.ts` now deletes an absorbed game's dismissals that
+  duplicate one the survivor already has, repoints the rest to the survivor, and — if the
+  survivor has no confirmation and the absorbed game does — copies its
+  `demozoo_production_id`/`demozoo_link_source` onto the survivor, all inside the existing
+  batch, before the games `DELETE`. HANDOFF 3g's standing rule: confirmations and dismissals
+  are human decisions nobody can regenerate, the same reason `collection_games` gets the same
+  delete-then-repoint treatment on a merge.
+- **R7: the pre-existing trigram search indexes on `games.title`/`games.publisher` are now
+  declared in the Drizzle schema.** They were created directly by migration 0012 and never
+  added to `catalog.ts`, so `drizzle-kit push` (which diffs against the schema files, not the
+  migration history) silently dropped them on the live DB before this plan's Task 1 even ran.
+  Declaring them stops every future `db:push` from re-dropping them; search still worked
+  either way (seq-scan is instant at this archive's size), so nothing was user-visible.
+- **R8: the parser fixture gained one real production with ≥2 types and ≥2 author nicks**
+  (188557, "Megademo 4", types Demo+Pack, groups Kefrens+7up Crew), regenerated from the
+  already-downloaded local export — spec §10 requires a multi-type/multi-author case and the
+  plan's original KEEP list didn't have one. `extract.test.ts`'s id list and one assertion on
+  that production's `types`/`groups` arrays were updated to match.
+- **R9 (decision): `groups` holds every author nick, not only Demozoo's "group" releasers.**
+  Individuals count as well as groups (`demoscene_releaser.is_group` is not read) — spec §4
+  calls the column "author names", the §5.3 agreement test is a containment check against
+  TOSEC's publisher field (itself sometimes a person for demos), and the UI labels the column
+  "By". Cost if wrong: a publisher substring that happens to match an individual scener's nick
+  could verify an automatic link, or the publisher shown may be a scener rather than a group.
+- **R10: `writeExtract` and `runDemozooCron` gained vitest coverage** (resume from a partial
+  cursor's offsets, deadline → `'partial'` with no deletes, `done` → deletes + both
+  link-clearing updates, a thrown fetch → `lastAttemptAt` still saved before the request, a
+  `304` → one step `'unchanged'`) — this path runs unattended once a day and no e2e spec
+  exercises it.
 - **R11: Unlink is the repair path and always re-derives.** §6.3 described unlink as clearing
   the org confirmation or adding a dismissal. Implementation makes it unconditional: whenever
   `games.metadata_source = 'demozoo'`, unlink clears the confirmation (if any), recomputes the
@@ -287,6 +317,25 @@ and cost-if-wrong in the plan's execution ledger, `progress.md`):
   later import moves a blob off `applied` or deletes a production). `applyAutomaticLink` also
   skips a game that has another disk whose blob is `applied` to a *different* production, so
   disagreeing multi-disk demos never get an automatic title.
+- **R12: re-derivation on unlink reads the first disk (by disk number) that carries a TOSEC
+  identity**, not disk 1 unconditionally — matters for a multi-disk demo whose boot disk has
+  no TOSEC match but a later disk does.
+- **R13: `linkInputs` (and `getGameDemozoo`) take `orgId` and join `disks` on
+  `(gameId, orgId)`, not `gameId` alone** (HANDOFF D-5-5) — joining by game alone would let a
+  drifted disk row count its automatic link into another org's game.
+- **R14: a screenshot fetch that throws, or returns a non-`image/*` content type, is recorded
+  as a failed `demozoo_images` row instead of being silently dropped.** A dropped fetch
+  previously wrote no row at all, so it escaped the 60/hour politeness cap across repeated
+  sweeps; now every attempt — success, wrong content type, or thrown error — counts against
+  the cap and is retried after 24h. `openretro-images.ts` keeps its pre-existing behaviour
+  (out of scope for this plan).
+- **R15: the review queue excludes games with a `skipped_game` disk, and `acceptSuggestions`
+  refuses one too** (defence in depth against a crafted POST — a TOSEC-identified game must
+  never be retitled by Accept via a suggested second disk). Search ranks an exact `titleKey`
+  match, then prefix, then infix, then plain title order, each with an id tiebreaker; the
+  queue's fold/dedupe/sort logic is a pure, unit-tested helper (`review-fold.ts`); the
+  `/library` badge uses a count-only `countReviewQueue(orgId)` query sharing the same filter,
+  rather than loading full productions and screenshots on every page load.
 - **R16: the suggestion card offers Unlink even with no effective link**, whenever
   `game.metadataSource === 'demozoo'` — the same stuck-title state R11 made repairable needs a
   button to reach it from the UI.
@@ -294,12 +343,12 @@ and cost-if-wrong in the plan's execution ledger, `progress.md`):
   unbounded — §8's review queue posts selected items in sequential chunks of 50 and sums the
   accepted count, refreshing after the last chunk (or the first failed one). Each confirm is
   idempotent, so a cut-off chunk just leaves the remainder visibly still in the queue.
-- **R7: the pre-existing trigram search indexes on `games.title`/`games.publisher` are now
-  declared in the Drizzle schema.** They were created directly by migration 0012 and never
-  added to `catalog.ts`, so `drizzle-kit push` (which diffs against the schema files, not the
-  migration history) silently dropped them on the live DB before this plan's Task 1 even ran.
-  Declaring them stops every future `db:push` from re-dropping them; search still worked
-  either way (seq-scan is instant at this archive's size), so nothing was user-visible.
+- **R18: the review queue derives each accepted pick from the CURRENT list, not a stale
+  `picked` map.** A user's earlier override survives only if its production is still present
+  on that item (or is an explicit skip); otherwise the default applies (single candidate → its
+  production, multiple → none). Accept sends only the current items' effective picks. Each
+  row also carries and shows the disk(s) — disk number and this org's entitlement source
+  filename — whose blob produced the suggestion (spec §8's "the disk it came from").
 
 ## Acceptance numbers (2026-09-14)
 

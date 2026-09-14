@@ -450,6 +450,11 @@ title. The admin page shows the running total in MB so it never becomes a surpri
   the real blobs and fetches their images. It is self-limiting (they are stamped afterward and
   images are never re-fetched) and it cost 7 images once. Re-importing `Amiga.sqlite` resets every
   enrichment verdict and will make it happen again.
+- **The same `/api/admin/scan` sweep also runs the Demozoo match and screenshot phases, and
+  the screenshot phase really does fetch from media.demozoo.org** (see 3af) — same shape as the
+  OpenRetro caveat above: any e2e spec that presses Run now over the live database walks the
+  Demozoo phases too, within the existing 60/hour politeness cap. 28 images were stored this
+  way on 2026-09-14.
 
 **Operator runbook:**
 
@@ -3387,14 +3392,23 @@ enriched 16/59; **28 Demozoo screenshots stored**, 0 failed, 7 suggestion rows a
 | Alien Breed II - The Horror Continues (4 disks), Apidya (2), Assassin v1 (2), Giana Sisters - Special Edition (2), Project-X (4 disks) | skipped_game (TOSEC identified these as games; Demozoo never answers for a game) |
 | World Construction Set v2.04 (7 disks), the five amiga-wb31_\* Workbench disks | none (no candidate; these are an application and OS install disks, outside Demozoo's demo/intro/diskmag coverage) |
 
-The one **applied** (automatic) link was eyeballed against its local `demozoo_productions` row
-(not demozoo.org, per the acceptance step's instruction): title "Ray of Hope 2" against a game
-already titled "Ray of Hope 2" -- correct, and matches the 2026-09-14 spike's by-eye check
-(Ray of Hope 2 → Majic 12). **No wrong automatic link on the live library; the plan's STOP
-condition was not triggered.** The other two orgs on this database hold 3 and 4 disks
-respectively (skipped_game / suggested / none only, no automatic links); their titles are not
-named here, by instruction -- counts only: `skipped_game: 3` for one, `suggested: 1, none: 1,
-skipped_game: 2` for the other.
+The one **applied** (automatic) link was eyeballed against its local `demozoo_productions` row:
+title "Ray of Hope 2" against a game already titled "Ray of Hope 2", production 737 (group
+Majic 12, 1991) -- correct. This is one of the five cases the 2026-09-14 spike itself verified
+against demozoo.org (spec §0.4, "Ray of Hope 2 → Majic 12"); this session deliberately made no
+further requests to demozoo.org. **No wrong automatic link on the live library; the plan's STOP
+condition was not triggered.**
+
+**All blobs held only by other orgs (27 of 59, everything not in the operator's own 32-blob
+library above):** 0 applied, 1 suggested, 5 skipped_game, 21 none -- computed by subtracting
+the operator's org breakdown from the live totals recorded above (1 applied, 6 suggested, 19
+skipped_game, 33 none), not by naming any other org or title, per instruction. This live
+database is a moving target for that figure: e2e fixture organizations are created and torn
+down by the Playwright suite and exist only transiently, so the count of non-operator orgs
+(and their blob totals) shifts between runs -- 13 orgs held entitlements at one later review
+point, most of them transient e2e fixtures present only while a suite was running. The
+operator's own applied/suggested/skipped_game/none figures above are the only ones this task
+treats as stable.
 
 **Acceptance numbers (Task 16 Step 2) against the spike, final matching rule, over 7,412
 distinct non-game TOSEC `(set_name, title, year, publisher)` rows:**
@@ -3419,13 +3433,19 @@ suggested-single / 9 suggested-multi / 730 none); Applications 2,252 (54/54/7/2,
 Coverdisks 987 (0/0/0/987 -- expected, coverdisk titles like "Amiga Format Coverdisk 55" don't
 title-match Demozoo productions); Educational 453 (19/20/4/410).
 
-**The five corrections made during implementation, and the rulings that extend them, are in
-the spec's "Corrections made during implementation" section** (`docs/superpowers/specs/
-2026-09-14-demozoo-design.md`): the daily-cron/weekly-fetch split, the two-step resumable
-import, `text[]` columns, `(game_id, production_id)` dismissals, `sha1(standard_url)` image
-keys, plus R5 (Demozoo ranks above TOSEC once linked), R11 (unlink always re-derives), R16
-(Unlink reachable even with no effective link), R17 (bulk accept chunked and capped), and R7
-(the trigram search indexes).
+**The six corrections made during implementation, and every ruling that changed behaviour or
+tests (R5–R18), are recorded in the spec's "Corrections made during implementation" section**
+(`docs/superpowers/specs/2026-09-14-demozoo-design.md`): the daily-cron/weekly-fetch split, the
+two-step resumable import, `text[]` columns, `(game_id, production_id)` dismissals,
+`sha1(standard_url)` image keys, plus R5 (Demozoo ranks above TOSEC once linked), R6 (a merge
+carries confirmations/dismissals to the survivor), R7 (the trigram search indexes), R8 (fixture
+multi-type/multi-author coverage), R9 (`groups` is every author nick, not only releaser
+groups), R10 (`writeExtract`/`runDemozooCron` test coverage), R11 (unlink always re-derives),
+R12 (re-derive from the first TOSEC-identified disk), R13 (`linkInputs` is org-scoped on
+disks), R14 (a failed screenshot fetch still counts against the hourly cap), R15 (the review
+queue and Accept both exclude `skipped_game` games; ranked search; count-only badge query),
+R16 (Unlink reachable even with no effective link), R17 (bulk accept chunked and capped), and
+R18 (the queue re-derives picks from the current list and shows the source disk).
 
 **Out of scope, per spec §11 and unchanged:** Pouet (the other scene database, a candidate if
 Demozoo coverage proves short); fuzzy title matching (exact keys only -- a wrong title is worse
