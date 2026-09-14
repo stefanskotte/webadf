@@ -1,4 +1,4 @@
-import { test, expect } from '@playwright/test';
+import { test, expect, type Page } from '@playwright/test';
 import { createHash, randomUUID } from 'node:crypto';
 import { eq } from 'drizzle-orm';
 import { getDb } from '@/db';
@@ -6,13 +6,28 @@ import { games, blobs } from '@/db/schema/catalog';
 import { makeSortTitle } from '@/lib/tosec';
 import { applyMatch } from '@/lib/tosec-apply';
 import { unlinkDemozoo } from '@/lib/demozoo/apply';
+import { diskStore } from '@/lib/storage';
 import { signUpFresh } from './helpers';
 import { seedDisk, addDisk, cleanupSeeded } from './device-helpers';
 import { seedProduction, seedDemozooImage, seedSuggestion, linkAutomatic, cleanupDemozoo } from './demozoo-helpers';
 import { seedTosecEntry, cleanupTosec } from './tosec-helpers';
 import { signInAsSuperAdmin } from './admin-helpers';
 
-test.afterAll(async () => { await cleanupDemozoo(); await cleanupTosec(); await cleanupSeeded(); });
+// e2e/device-helpers.ts's cleanupSeeded() deletes the `blobs` DB row it
+// tracks but never uploads real bytes for a seedDisk-created blob, so it has
+// no reason to call diskStore.remove either -- nothing is ever there. The
+// re-sweep test below is the one test in this file that writes REAL bytes
+// (diskStore.put), so it alone is responsible for removing them again.
+const storedDiskShas: string[] = [];
+
+test.afterAll(async () => {
+  await cleanupDemozoo();
+  await cleanupTosec();
+  await cleanupSeeded();
+  for (const sha256 of storedDiskShas.splice(0)) {
+    try { await diskStore.remove(sha256); } catch { /* best effort */ }
+  }
+});
 
 const freshSha = () => createHash('sha256').update(randomUUID()).digest('hex');
 const tag = () => Math.random().toString(36).slice(2, 8);
@@ -23,6 +38,23 @@ const tag = () => Math.random().toString(36).slice(2, 8);
 // genuinely run past Playwright's default 30s test timeout though it
 // comfortably fits inside sweep()'s own 240s budget.
 const SWEEP_TIMEOUT_MS = 280_000;
+
+/**
+ * Drive /api/admin/scan to completion. sweep()'s own budget (240s) can
+ * leave `done: false` after one call when the live database has a large
+ * backlog -- the admin page's own "Run now" polls the same way (see
+ * admin-scan.spec.ts) -- so this repeats the POST rather than trusting one
+ * call to have finished every phase.
+ */
+async function runSweepUntilDone(adminPage: Page, maxCalls = 5) {
+  for (let i = 0; i < maxCalls; i++) {
+    const res = await adminPage.request.post('/api/admin/scan');
+    expect(res.ok()).toBe(true);
+    const json = await res.json();
+    if (json.done) return json;
+  }
+  throw new Error(`sweep did not report done after ${maxCalls} calls`);
+}
 
 /** Give a blob a known sha1 directly, so the sweeper's hash-match phase can find it. */
 async function fakeHashes(sha256: string) {
@@ -158,6 +190,66 @@ test('bulk accept links exactly the ticked rows', async ({ page }) => {
   await expect(skipRow).toBeVisible();
   await page.goto(`/games/${keep}`);
   await expect(page.getByTestId('demozoo-panel')).toHaveAttribute('data-link-source', 'confirmed');
+});
+
+test('spec §10: "Not this" stays gone after a REAL re-sweep, not just a reload', async ({ page, browser }) => {
+  test.setTimeout(SWEEP_TIMEOUT_MS);
+  const user = await signUpFresh(page);
+  const t = tag();
+  const title = `Resweep Demo ${t}`;
+
+  // Real, uniquely-marked 901,120-byte content: demozooMatchPhase's
+  // filename branch calls diskStore.read (matchOne, src/lib/demozoo/sweep.ts)
+  // and the TOSEC hash phase ahead of it (tosec-sweep.ts phase 1) does too --
+  // a seeded row with no stored bytes would make phase 1 fail the read and
+  // stamp hashedAt with null hashes, and phase 2 would then short-circuit to
+  // 'none' without ever reaching the candidate query, which would make this
+  // test pass trivially. The marker keeps the bytes (and so the sha256)
+  // unique to each run.
+  const bytes = new Uint8Array(901_120);
+  bytes.set(Buffer.from(`resweep-${t}-${randomUUID()}`), 450_000);
+  const sha256 = createHash('sha256').update(bytes).digest('hex');
+  await diskStore.put(sha256, bytes);
+  storedDiskShas.push(sha256);
+
+  const { gameId } = await seedDisk(user.orgId, { title, diskNo: 1, sha256, sizeBytes: bytes.byteLength });
+  // entitlements.sourceFilename is `${title}-${diskNo}.adf` (seedDisk), which
+  // parseTosecName reads back as `title` -- the 'filename' suggestion source.
+  const pid = await seedProduction({ title });
+
+  // A separate context signed in as super-admin: running the sweep on the
+  // org user's own `page` would replace their session, and this test needs
+  // it alive afterward to dismiss the suggestion and reload as that user.
+  const adminCtx = await browser.newContext();
+  const adminPage = await adminCtx.newPage();
+  await signInAsSuperAdmin(adminPage);
+
+  await runSweepUntilDone(adminPage);
+  const db = getDb();
+  let blob = (await db.select().from(blobs).where(eq(blobs.sha256, sha256)))[0];
+  expect(blob.matchCheckedAt, 'the TOSEC hash/match phases must have run first').not.toBeNull();
+  expect(blob.demozooState, 'the real Demozoo match phase must find this production by filename').toBe('suggested');
+  expect(blob.demozooProductionId).toBeNull();
+
+  await page.goto(`/games/${gameId}`);
+  await page.locator(`[data-testid="demozoo-suggestion"][data-production-id="${pid}"]`).getByTestId('demozoo-dismiss').click();
+  await expect(page.locator(`[data-production-id="${pid}"]`)).toHaveCount(0);
+
+  // Force demozooMatchPhase to reconsider this blob. matchOne
+  // unconditionally deletes and re-inserts demozoo_suggestions for the blob
+  // on every pass (it has no notion of a per-game dismissal, which lives in
+  // demozoo_dismissals instead) -- this is exactly the scenario spec §10
+  // guards against: the RAW suggestion row comes back, and only the
+  // per-game dismissal is what must keep it off this game's page.
+  await db.update(blobs).set({ demozooCheckedAt: null }).where(eq(blobs.sha256, sha256));
+  await runSweepUntilDone(adminPage);
+  await adminCtx.close();
+
+  blob = (await db.select().from(blobs).where(eq(blobs.sha256, sha256)))[0];
+  expect(blob.demozooState, 'the phase must actually have re-run, not been skipped').toBe('suggested');
+
+  await page.reload();
+  await expect(page.locator(`[data-testid="demozoo-suggestion"][data-production-id="${pid}"]`)).toHaveCount(0);
 });
 
 // --- Additional controller-rulings coverage (Task 15 brief + controller notes) ---
@@ -305,7 +397,17 @@ test('R15: a skipped_game disk keeps its game out of the review queue, and Use r
   const pid = await seedProduction({ title: `Would-be Suggestion ${t}` });
   await seedSuggestion(shaSuggested, pid);
 
+  // A positive control in the SAME org: without it, "no review-item for
+  // gameId" would pass just as well if /library/demozoo rendered nothing at
+  // all (a broken page, an empty queue for an unrelated reason). This game
+  // has an ordinary, unblocked suggestion and MUST appear.
+  const shaOrdinary = freshSha();
+  const { gameId: ordinaryGameId } = await seedDisk(user.orgId, { title: `ordinary-${t}`, diskNo: 1, sha256: shaOrdinary });
+  const pOrdinary = await seedProduction({ title: `Ordinary Suggestion ${t}` });
+  await seedSuggestion(shaOrdinary, pOrdinary);
+
   await page.goto('/library/demozoo');
+  await expect(page.locator(`[data-testid="review-item"][data-game-id="${ordinaryGameId}"]`)).toBeVisible();
   await expect(page.locator(`[data-testid="review-item"][data-game-id="${gameId}"]`)).toHaveCount(0);
 
   const res = await page.request.post(`/api/games/${gameId}/demozoo`, { data: { productionId: pid } });

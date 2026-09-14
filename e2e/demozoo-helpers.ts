@@ -11,14 +11,25 @@ import { TINY_PNG } from './openretro-helpers';
 const seededIds: number[] = [];
 const storedImages: string[] = [];
 
+/**
+ * A 100M-wide random id range makes a collision unlikely per call, not
+ * impossible across a whole suite run -- `onConflictDoNothing` plus a
+ * re-roll turns that rare case into a retry instead of an opaque
+ * NeonDbError: duplicate key flake.
+ */
 export async function seedProduction(opts: { title: string; releaseYear?: number | null; groups?: string[]; types?: string[] }): Promise<number> {
-  const id = 2_000_000_000 + Math.floor(Math.random() * 100_000_000);
-  await getDb().insert(demozooProductions).values({
-    id, title: opts.title, titleKey: titleKey(opts.title), releaseYear: opts.releaseYear ?? null,
-    supertype: 'production', types: opts.types ?? ['Demo'], groups: opts.groups ?? ['Test Group'], isGame: false,
-  });
-  seededIds.push(id);
-  return id;
+  for (let attempt = 0; attempt < 5; attempt++) {
+    const id = 2_000_000_000 + Math.floor(Math.random() * 100_000_000);
+    const inserted = await getDb().insert(demozooProductions).values({
+      id, title: opts.title, titleKey: titleKey(opts.title), releaseYear: opts.releaseYear ?? null,
+      supertype: 'production', types: opts.types ?? ['Demo'], groups: opts.groups ?? ['Test Group'], isGame: false,
+    }).onConflictDoNothing().returning({ id: demozooProductions.id });
+    if (inserted.length > 0) {
+      seededIds.push(id);
+      return id;
+    }
+  }
+  throw new Error('seedProduction: could not allocate a unique id after 5 attempts');
 }
 
 /** Writes the bytes as well as the row, so an <img> assertion cannot pass against a 404. */
