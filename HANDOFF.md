@@ -3485,10 +3485,15 @@ Demozoo API (the bulk export makes per-lookup load on a non-profit unnecessary).
 - **The final whole-branch review's fixes (I1-I6, M2, M3) changed behaviour; each is in the
   spec's corrections.** In short: re-match after a TOSEC change; the weekly fetch is one atomic
   claim; an extract under 50,000 productions or 80% of what we hold is refused (`refused: ...`
-  in the cron report, step left `fetched`, re-fetched after a week); a transient match failure
-  keeps the blob's prior verdict; fetch and extract never share an invocation; screenshots only
-  from `https://media.demozoo.org/`, raster types only, `nosniff` on `/api/images`.
-- **Watch: the first production fetch is expected at the 2026-09-21/22 01:30 UTC cron run.**
+  in the cron report, step left `fetched`, re-fetched after a week); a failure while matching
+  (DB error, or anything thrown before the blob's writes) leaves the blob's prior state and
+  suggestions untouched and retries next run; a failure to READ the disk bytes for the volume
+  name is treated as "no volume name", so the blob can be re-stamped from TOSEC title and
+  filenames alone and lose a volume_name-only suggestion until the next re-match (an 'applied'
+  link cannot be demoted this way; applied only comes from the TOSEC branch, which needs no disk
+  read); fetch and extract never share an invocation; screenshots only from `https://media.demozoo.org/`,
+  raster types only, `nosniff` on `/api/images`.
+- **Watch: the first production fetch is expected at the 2026-09-22 01:30 UTC cron run.**
   Check that the `demozoo_import` row shows a new `fetched_at` and `step` moving
   `fetched` -> `extracted` -> `applied` over the following daily runs, not only a new
   `last_attempt_at` (which alone means the claim ran but the fetch threw, or answered `304`).
@@ -3505,6 +3510,16 @@ Demozoo API (the bulk export makes per-lookup load on a non-profit unnecessary).
   object store (no cached volume name).
 - **M7:** the e2e suite's seeded productions (ids from 2,000,000,000) are briefly visible in the
   live Demozoo search while a run is in progress; the teardown removes them.
+- **3c (phase-2 sibling):** a Demozoo blob that fails matching on every run keeps `sweep()`'s
+  `done` false permanently (it is skipped within a run, so there is no hot loop). The e2e helper
+  `runSweepUntilDone` in `e2e/demozoo.spec.ts` gives up after 5 calls without `done`, so such a
+  blob in the live DB would fail the Demozoo re-sweep e2e tests.
+- **Demozoo fallback:** if `demozoo/amiga.json` is missing and the last attempt is over a week
+  old, the write step's fallback re-fetches from Demozoo (still within the weekly claim) rather
+  than re-extracting our stored export.
+- **Screenshot redirects:** screenshot fetches follow redirects, so the `media.demozoo.org` host
+  allowlist checks only the first URL (the raster content-type allowlist and `nosniff` still apply).
+- **Cron drift:** the daily 01:30 cron against a 7-day gate can drift a refetch to 8 days.
 
 ## Known accepted risks
 

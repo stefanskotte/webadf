@@ -370,13 +370,15 @@ Final whole-branch review fixes (2026-09-14, `.superpowers/sdd/2026-09-14-demozo
   productions would delete every production and cascade away every dismissal. So a refused copy
   cannot stall imports forever, `nextStep` now turns a `fetched` cursor whose last attempt is a
   week old into a new `fetch` (a conditional request; a `304` keeps waiting).
-- **I5: a transient failure no longer overwrites a blob's Demozoo verdict.** A blob whose
-  matching throws keeps its prior state and `demozoo_checked_at`, is skipped for the rest of
-  the run (the phase reports not-done) and retried by the next. The disk's volume name is read
-  only when the TOSEC branch does not decide on its own, and an unreadable disk counts as having
-  no volume name rather than failing the blob. `applyAutomaticLink` runs before the blob is
-  stamped `applied` (work before stamp), and so treats the triggering blob as applied to the
-  production it is linking, whatever its stored state still reads.
+- **I5: a transient failure no longer overwrites a blob's Demozoo verdict.** A failure while
+  matching (a DB error, or anything thrown before the blob's writes) leaves the blob's prior
+  state and suggestions untouched and retries next run. A failure to READ the disk bytes for the
+  volume name is treated as "no volume name", so that blob can be re-stamped from TOSEC title
+  and filenames alone and lose a `volume_name`-only suggestion until the next re-match. An
+  `applied` link cannot be demoted this way (applied only comes from the TOSEC branch, which
+  needs no disk read). `applyAutomaticLink` runs before the blob is stamped `applied` (work
+  before stamp), and so treats the triggering blob as applied to the production it is linking,
+  whatever its stored state still reads.
 - **I6: a new export is stored in one cron invocation and extracted in the next**, never both
   in the same 300 s function.
 - **M3: screenshots are fetched only from `https://media.demozoo.org/` and stored only as
