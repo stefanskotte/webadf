@@ -1,4 +1,4 @@
-import { and, eq, inArray, isNotNull, isNull, lt, or } from 'drizzle-orm';
+import { and, eq, inArray, isNotNull, isNull, lt, notInArray, or } from 'drizzle-orm';
 import { getDb } from '@/db';
 import { blobs, entitlements } from '@/db/schema/catalog';
 import { tosecEntries } from '@/db/schema/tosec';
@@ -6,7 +6,7 @@ import { demozooImport, demozooProductions, demozooSuggestions } from '@/db/sche
 import { diskStore } from '@/lib/storage';
 import { readVolume } from '@/lib/adffs';
 import type { SweepResult } from '@/lib/tosec-sweep';
-import { decideDemozoo, isGameSet, matchKeys, type DemozooCandidate, type MatchInput } from './match';
+import { decideDemozoo, isGameSet, matchKeys, type DemozooCandidate, type MatchInput, type MatchVerdict } from './match';
 import { applyAutomaticLink } from './apply';
 import { IMPORT_ROW_ID } from './import';
 
@@ -15,8 +15,15 @@ const BATCH = 50;
 /**
  * Match blobs to Demozoo productions (spec §5). Runs only after an import has
  * been applied, over blobs TOSEC has already decided about and that were not
- * checked since that import. A failure stamps the blob `none` for this import
- * -- it is retried by the next import, never in a loop tonight.
+ * checked since that import -- or since TOSEC last re-decided them (a DAT
+ * import or a new upload resets match_checked_at, and phase 2 re-stamps it
+ * later than this phase's own stamp).
+ *
+ * A blob whose matching THROWS keeps its prior Demozoo state and checked-at
+ * untouched: a transient read or database error must not demote a verified
+ * automatic link. It is skipped for the rest of this run (so the queue behind
+ * it still moves) and retried by the next one; the phase reports not-done
+ * while any such failure remains.
  */
 export async function demozooMatchPhase(spent: () => number, budgetMs: number, out: SweepResult): Promise<boolean> {
   const db = getDb();
@@ -24,6 +31,7 @@ export async function demozooMatchPhase(spent: () => number, budgetMs: number, o
     .where(eq(demozooImport.id, IMPORT_ROW_ID)).limit(1))[0];
   if (!cursor?.appliedAt) return true;
   const appliedAt = cursor.appliedAt;
+  const failedThisRun = new Set<string>();
 
   while (spent() < budgetMs) {
     const todo = await db.select({
@@ -34,10 +42,15 @@ export async function demozooMatchPhase(spent: () => number, budgetMs: number, o
       .leftJoin(tosecEntries, eq(tosecEntries.id, blobs.tosecEntryId))
       .where(and(
         isNotNull(blobs.matchCheckedAt),
-        or(isNull(blobs.demozooCheckedAt), lt(blobs.demozooCheckedAt, appliedAt)),
+        or(
+          isNull(blobs.demozooCheckedAt),
+          lt(blobs.demozooCheckedAt, appliedAt),
+          lt(blobs.demozooCheckedAt, blobs.matchCheckedAt),
+        ),
+        failedThisRun.size > 0 ? notInArray(blobs.sha256, [...failedThisRun]) : undefined,
       ))
       .limit(BATCH);
-    if (todo.length === 0) return true;
+    if (todo.length === 0) return failedThisRun.size === 0;
 
     for (const b of todo) {
       if (spent() >= budgetMs) return false;
@@ -45,15 +58,31 @@ export async function demozooMatchPhase(spent: () => number, budgetMs: number, o
         await matchOne(b, out);
       } catch (err) {
         console.error(`demozoo: matching failed for blob ${b.sha256}`, err);
-        await db.delete(demozooSuggestions).where(eq(demozooSuggestions.sha256, b.sha256));
-        await db.update(blobs).set({ demozooState: 'none', demozooProductionId: null, demozooCheckedAt: new Date() })
-          .where(eq(blobs.sha256, b.sha256));
-        out.demozooNone++;
+        failedThisRun.add(b.sha256);
       }
     }
   }
   return false;
 }
+
+/** The volume name, or null when the bytes cannot be read or are not a readable ADF. */
+async function readVolumeName(sha256: string): Promise<string | null> {
+  try {
+    const v = readVolume(await diskStore.read(sha256));
+    return v.ok ? v.volume.name : null;
+  } catch (err) {
+    console.error(`demozoo: could not read volume name for blob ${sha256}`, err);
+    return null;
+  }
+}
+
+/**
+ * decideDemozoo's TOSEC branch decides on its own (skipped_game, applied, or
+ * tosec_title suggestions); only 'none' and volume/filename suggestions come
+ * from the fall-through a volume name could still change.
+ */
+const fellThroughTosec = (v: MatchVerdict) =>
+  v.state === 'none' || (v.state === 'suggested' && v.suggestions.some((s) => s.source !== 'tosec_title'));
 
 async function matchOne(
   b: { sha256: string; setName: string | null; title: string | null; year: number | null; publisher: string | null },
@@ -66,31 +95,49 @@ async function matchOne(
   if (!tosec || !isGameSet(tosec.setName)) {
     input.filenames = (await db.select({ f: entitlements.sourceFilename }).from(entitlements)
       .where(eq(entitlements.sha256, b.sha256))).map((r) => r.f).filter((f): f is string => !!f);
-    const v = readVolume(await diskStore.read(b.sha256));
-    input.volumeName = v.ok ? v.volume.name : null;
   }
 
-  const keys = matchKeys(input);
-  const rows = keys.length === 0 ? [] : await db.select({
-    id: demozooProductions.id, title: demozooProductions.title, titleKey: demozooProductions.titleKey,
-    releaseYear: demozooProductions.releaseYear, groups: demozooProductions.groups,
-    supertype: demozooProductions.supertype, isGame: demozooProductions.isGame,
-  }).from(demozooProductions).where(inArray(demozooProductions.titleKey, keys));
   const byKey = new Map<string, DemozooCandidate[]>();
-  for (const r of rows) byKey.set(r.titleKey, [...(byKey.get(r.titleKey) ?? []), r]);
+  const fetched = new Set<string>();
+  const loadKeys = async (keys: string[]) => {
+    const missing = keys.filter((k) => !fetched.has(k));
+    if (missing.length === 0) return;
+    for (const k of missing) fetched.add(k);
+    const rows = await db.select({
+      id: demozooProductions.id, title: demozooProductions.title, titleKey: demozooProductions.titleKey,
+      releaseYear: demozooProductions.releaseYear, groups: demozooProductions.groups,
+      supertype: demozooProductions.supertype, isGame: demozooProductions.isGame,
+    }).from(demozooProductions).where(inArray(demozooProductions.titleKey, missing));
+    for (const r of rows) byKey.set(r.titleKey, [...(byKey.get(r.titleKey) ?? []), r]);
+  };
+  const lookup = (k: string) => byKey.get(k) ?? [];
 
-  const verdict = decideDemozoo(input, (k) => byKey.get(k) ?? []);
+  // Decide without the disk's bytes first: reading them costs an object-store
+  // round trip, and the TOSEC branch never needs them.
+  await loadKeys(matchKeys(input));
+  let verdict = decideDemozoo(input, lookup);
+  if (fellThroughTosec(verdict)) {
+    input.volumeName = await readVolumeName(b.sha256);
+    if (input.volumeName) {
+      await loadKeys(matchKeys(input));
+      verdict = decideDemozoo(input, lookup);
+    }
+  }
   const now = new Date();
-  await db.delete(demozooSuggestions).where(eq(demozooSuggestions.sha256, b.sha256));
 
   switch (verdict.state) {
     case 'applied':
+      // Work before stamp (phase 2's rule): a throw here leaves the blob's
+      // prior state for the next run to retry, not a stamped 'applied' whose
+      // games never received the link.
+      await applyAutomaticLink(b.sha256, verdict.productionId);
+      await db.delete(demozooSuggestions).where(eq(demozooSuggestions.sha256, b.sha256));
       await db.update(blobs).set({ demozooState: 'applied', demozooProductionId: verdict.productionId, demozooCheckedAt: now })
         .where(eq(blobs.sha256, b.sha256));
-      await applyAutomaticLink(b.sha256, verdict.productionId);
       out.demozooApplied++;
       return;
     case 'suggested':
+      await db.delete(demozooSuggestions).where(eq(demozooSuggestions.sha256, b.sha256));
       await db.insert(demozooSuggestions)
         .values(verdict.suggestions.map((s) => ({ sha256: b.sha256, productionId: s.productionId, source: s.source })))
         .onConflictDoNothing();
@@ -100,6 +147,7 @@ async function matchOne(
       return;
     case 'skipped_game':
     case 'none':
+      await db.delete(demozooSuggestions).where(eq(demozooSuggestions.sha256, b.sha256));
       await db.update(blobs).set({ demozooState: verdict.state, demozooProductionId: null, demozooCheckedAt: now })
         .where(eq(blobs.sha256, b.sha256));
       if (verdict.state === 'none') out.demozooNone++; else out.demozooSkippedGame++;

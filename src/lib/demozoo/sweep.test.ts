@@ -13,10 +13,23 @@
 // the way the brief specifies.
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import type { SQL } from 'drizzle-orm';
+import { PgDialect } from 'drizzle-orm/pg-core';
 import { blobs } from '@/db/schema/catalog';
 import { demozooSuggestions } from '@/db/schema/demozoo';
 import type { SweepResult } from '@/lib/tosec-sweep';
 import { titleKey } from './title-key';
+
+// Renders a captured `.where(...)` back to the SQL text and params getDb()
+// would send (the disk-write.test.ts technique): the fake db below returns
+// queued rows whatever the condition says, so only the rendered condition
+// can prove which blobs a query would select.
+const dialect = new PgDialect();
+const render = (cond: unknown) => dialect.sqlToQuery(cond as SQL);
+
+// One ordered log across the database fake and applyAutomaticLink, so the
+// work-before-stamp order is observable.
+const events: string[] = [];
 
 const diskStoreRead = vi.fn();
 vi.mock('@/lib/storage', () => ({ diskStore: { read: diskStoreRead } }));
@@ -25,6 +38,7 @@ const applyAutomaticLinkMock = vi.fn();
 vi.mock('./apply', () => ({ applyAutomaticLink: applyAutomaticLinkMock }));
 
 let selectResults: unknown[][] = [];
+const selectCalls: Array<{ table: unknown; where: unknown }> = [];
 const insertCalls: Array<{ table: unknown; values: unknown }> = [];
 const updateCalls: Array<{ table: unknown; set: unknown }> = [];
 const deleteCalls: Array<{ table: unknown }> = [];
@@ -32,16 +46,18 @@ const deleteCalls: Array<{ table: unknown }> = [];
 function fakeDb() {
   const select = () => {
     const result = selectResults.shift() ?? [];
+    const call: { table: unknown; where: unknown } = { table: undefined, where: undefined };
+    selectCalls.push(call);
     const chain: {
-      from: () => typeof chain;
+      from: (table: unknown) => typeof chain;
       leftJoin: () => typeof chain;
-      where: () => typeof chain;
+      where: (where: unknown) => typeof chain;
       limit: () => Promise<unknown[]>;
       then: <T>(resolve: (v: unknown[]) => T, reject?: (e: unknown) => T) => Promise<T>;
     } = {
-      from: () => chain,
+      from: (table) => { call.table = table; return chain; },
       leftJoin: () => chain,
-      where: () => chain,
+      where: (where) => { call.where = where; return chain; },
       limit: () => Promise.resolve(result),
       then: (resolve, reject) => Promise.resolve(result).then(resolve, reject),
     };
@@ -55,11 +71,13 @@ function fakeDb() {
   });
   const update = (table: unknown) => ({
     set: (values: unknown) => {
+      events.push('update');
       updateCalls.push({ table, set: values });
       return { where: () => Promise.resolve(undefined) };
     },
   });
   const del = (table: unknown) => {
+    events.push('delete');
     deleteCalls.push({ table });
     return { where: () => Promise.resolve(undefined) };
   };
@@ -72,6 +90,9 @@ const { demozooMatchPhase } = await import('./sweep');
 beforeEach(() => {
   vi.clearAllMocks();
   selectResults = [];
+  selectCalls.length = 0;
+  events.length = 0;
+  applyAutomaticLinkMock.mockImplementation(async () => { events.push('applyAutomaticLink'); return 1; });
   insertCalls.length = 0;
   updateCalls.length = 0;
   deleteCalls.length = 0;
@@ -224,33 +245,101 @@ describe('demozooMatchPhase — per-blob outcomes', () => {
     expect(blobUpdate?.set).toMatchObject({ demozooState: 'none', demozooProductionId: null });
   });
 
-  it('on a per-blob failure, stamps that blob none and clears suggestions without aborting the batch', async () => {
-    const badRow = { sha256: 'b'.repeat(64), setName: 'Amiga - Demos', title: 'Broken Disk', year: 1990, publisher: null };
+  it('on a per-blob failure, keeps that blob\'s prior state, skips it for the rest of the run, and reports not-done', async () => {
+    const title = 'Verified Demo';
+    const badRow = { sha256: 'b'.repeat(64), setName: 'Amiga - Demos', title, year: 1990, publisher: null };
     const goodRow = { sha256: 'c'.repeat(64), setName: 'Amiga - Games - [ADF]', title: 'A Game', year: 1990, publisher: null };
+    const candidate = { id: 77, title, titleKey: titleKey(title), releaseYear: 1990, groups: [], supertype: 'production', isGame: false };
     selectResults = [
       [{ appliedAt: new Date('2026-09-01T00:00:00Z') }], // cursor
-      [badRow, goodRow],                                  // todo batch
-      [{ f: 'Broken.adf' }],                               // entitlements for badRow
-      [],                                                   // demozooProductions for goodRow (game set)
+      [badRow, goodRow],                                  // todo batch 1
+      [{ f: 'Verified.adf' }],                            // entitlements for badRow
+      [candidate],                                        // demozooProductions for badRow -> applied
+      [],                                                 // demozooProductions for goodRow (game set)
+      [],                                                 // todo batch 2: nothing else
     ];
+    // A transient database error while linking the games.
+    applyAutomaticLinkMock.mockRejectedValueOnce(new Error('neon: fetch failed'));
+
+    const out = freshOut();
+    const done = await demozooMatchPhase(() => 0, 240_000, out);
+
+    // Not done: the failed blob is still owed a decision, by the next run.
+    expect(done).toBe(false);
+    expect(applyAutomaticLinkMock).toHaveBeenCalledTimes(1);
+    // The next blob in the same batch still ran to completion.
+    expect(out.demozooSkippedGame).toBe(1);
+    expect(out.demozooNone).toBe(0);
+    expect(out.demozooApplied).toBe(0);
+
+    // Prior state preserved: the only blob write is the good blob's, and the
+    // only suggestion delete is the good blob's -- nothing demoted the bad
+    // blob's verified link, cleared its suggestions or stamped its checked-at.
+    const blobUpdates = updateCalls.filter((c) => c.table === blobs);
+    expect(blobUpdates).toHaveLength(1);
+    expect(blobUpdates[0].set).toMatchObject({ demozooState: 'skipped_game' });
+    expect(deleteCalls.filter((c) => c.table === demozooSuggestions)).toHaveLength(1);
+
+    // The second todo query excludes the failed blob, so it is not re-selected this run.
+    const todoQueries = selectCalls.filter((c) => c.table === blobs);
+    expect(todoQueries).toHaveLength(2);
+    expect(render(todoQueries[0].where).sql).not.toContain('not in');
+    const second = render(todoQueries[1].where);
+    expect(second.sql).toContain('"blobs"."sha256" not in');
+    expect(second.params).toContain(badRow.sha256);
+  });
+
+  it('re-selects a blob TOSEC re-decided after its Demozoo check, not only one older than the import', async () => {
+    selectResults = [[{ appliedAt: new Date('2026-09-01T00:00:00Z') }], []];
+
+    await demozooMatchPhase(() => 0, 240_000, freshOut());
+
+    const todo = selectCalls.find((c) => c.table === blobs);
+    expect(todo).toBeDefined();
+    expect(render(todo!.where).sql).toContain('"blobs"."demozoo_checked_at" < "blobs"."match_checked_at"');
+  });
+
+  it('links the games BEFORE stamping the blob applied', async () => {
+    const title = 'Order Matters';
+    const row = { sha256: SHA, setName: 'Amiga - Demos', title, year: 1993, publisher: null };
+    const candidate = { id: 9, title, titleKey: titleKey(title), releaseYear: 1993, groups: [], supertype: 'production', isGame: false };
+    selectResults = [[{ appliedAt: new Date('2026-09-01T00:00:00Z') }], [row], [], [candidate]];
+
+    await demozooMatchPhase(() => 0, 240_000, freshOut());
+
+    expect(events.indexOf('applyAutomaticLink')).toBeGreaterThanOrEqual(0);
+    expect(events.indexOf('applyAutomaticLink')).toBeLessThan(events.indexOf('update'));
+  });
+
+  it('does not read the disk when the TOSEC title decides', async () => {
+    const title = 'Tosec Decides';
+    const row = { sha256: SHA, setName: 'Amiga - Demos', title, year: 1993, publisher: null };
+    const candidate = { id: 9, title, titleKey: titleKey(title), releaseYear: 1993, groups: [], supertype: 'production', isGame: false };
+    selectResults = [[{ appliedAt: new Date('2026-09-01T00:00:00Z') }], [row], [{ f: 'Tosec Decides.adf' }], [candidate]];
+
+    const out = freshOut();
+    await demozooMatchPhase(() => 0, 240_000, out);
+
+    expect(out.demozooApplied).toBe(1);
+    expect(diskStoreRead).not.toHaveBeenCalled();
+  });
+
+  it('treats an unreadable disk as having no volume name: the filename suggestion still lands', async () => {
+    const title = 'Filename Demo';
+    const row = { sha256: SHA, setName: null, title: null, year: null, publisher: null };
+    const candidate = { id: 31, title, titleKey: titleKey(title), releaseYear: null, groups: [], supertype: 'production', isGame: false };
+    selectResults = [[{ appliedAt: new Date('2026-09-01T00:00:00Z') }], [row], [{ f: 'Filename Demo.adf' }], [candidate]];
     diskStoreRead.mockRejectedValueOnce(new Error('object store unavailable'));
 
     const out = freshOut();
     const done = await demozooMatchPhase(() => 0, 240_000, out);
 
+    expect(diskStoreRead).toHaveBeenCalledTimes(1);
     expect(done).toBe(true);
-    // The failing blob: caught, suggestions cleared, stamped none.
-    expect(out.demozooNone).toBe(1);
-    // The next blob in the same batch still ran to completion.
-    expect(out.demozooSkippedGame).toBe(1);
-
-    const blobUpdates = updateCalls.filter((c) => c.table === blobs);
-    expect(blobUpdates).toHaveLength(2);
-    const badUpdate = blobUpdates.find((c) => (c.set as { demozooState: string }).demozooState === 'none');
-    expect(badUpdate).toBeDefined();
-    const goodUpdate = blobUpdates.find((c) => (c.set as { demozooState: string }).demozooState === 'skipped_game');
-    expect(goodUpdate).toBeDefined();
-
-    expect(deleteCalls.filter((c) => c.table === demozooSuggestions)).toHaveLength(2);
+    expect(out.demozooSuggested).toBe(1);
+    expect(insertCalls.find((c) => c.table === demozooSuggestions)?.values)
+      .toEqual([{ sha256: SHA, productionId: 31, source: 'filename' }]);
+    const blobUpdate = updateCalls.find((c) => c.table === blobs);
+    expect(blobUpdate?.set).toMatchObject({ demozooState: 'suggested', demozooProductionId: null });
   });
 });

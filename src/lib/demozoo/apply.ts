@@ -1,4 +1,4 @@
-import { and, eq, inArray, isNull, sql } from 'drizzle-orm';
+import { and, eq, inArray, isNull, ne, sql } from 'drizzle-orm';
 import { getDb } from '@/db';
 import { games, disks, blobs, entitlements } from '@/db/schema/catalog';
 import { tosecEntries } from '@/db/schema/tosec';
@@ -42,6 +42,14 @@ export async function applyDemozooToGames(productionId: number, gameIds: string[
  * automatic path back to fix it (only Unlink re-derives). Checked via
  * agreesOnAutomaticLink against every disk the candidate game holds, not
  * just the one that matched `sha256`.
+ *
+ * The sweep calls this BEFORE stamping the blob 'applied' (work before stamp),
+ * so the triggering blob's own stored state may still be stale: it counts as
+ * applied to `productionId` for every candidate, whatever it reads now.
+ *
+ * A game with another disk TOSEC identified as a game (`skipped_game`, checked
+ * on the candidate game's own org's disks) never gets an automatic title --
+ * spec §5.3.1, and the same exclusion the review queue and confirm apply.
  */
 export async function applyAutomaticLink(sha256: string, productionId: number): Promise<number> {
   const db = getDb();
@@ -49,14 +57,22 @@ export async function applyAutomaticLink(sha256: string, productionId: number): 
     .from(disks)
     .innerJoin(games, eq(games.id, disks.gameId))
     .leftJoin(demozooDismissals, and(eq(demozooDismissals.gameId, games.id), eq(demozooDismissals.productionId, productionId)))
-    .where(and(eq(disks.sha256, sha256), isNull(games.demozooLinkSource), isNull(demozooDismissals.gameId)));
+    .where(and(
+      eq(disks.sha256, sha256), isNull(games.demozooLinkSource), isNull(demozooDismissals.gameId),
+      sql`not exists (
+        select 1 from disks d2
+        inner join blobs b2 on b2.sha256 = d2.sha256
+        where d2.game_id = ${games.id} and d2.org_id = ${games.orgId}
+          and d2.sha256 <> ${sha256} and b2.demozoo_state = 'skipped_game'
+      )`,
+    ));
   const candidateIds = [...new Set(rows.map((r) => r.id))];
   if (candidateIds.length === 0) return 0;
 
   const appliedRows = await db.select({ gameId: disks.gameId, id: blobs.demozooProductionId })
     .from(disks).innerJoin(blobs, eq(blobs.sha256, disks.sha256))
-    .where(and(inArray(disks.gameId, candidateIds), eq(blobs.demozooState, 'applied')));
-  const appliedByGame = new Map<string, number[]>();
+    .where(and(inArray(disks.gameId, candidateIds), eq(blobs.demozooState, 'applied'), ne(disks.sha256, sha256)));
+  const appliedByGame = new Map<string, number[]>(candidateIds.map((id) => [id, [productionId]]));
   for (const row of appliedRows) {
     if (row.id === null) continue;
     const list = appliedByGame.get(row.gameId);

@@ -12,7 +12,22 @@ export function DemozooPanel({ game }: { game: GameDetail }) {
 
   if (!link) {
     // Demozoo never answers for a game (spec §5.3.1) -- not even a search box.
-    if (isGame) return null;
+    // The one exception is the repair path: a game whose title Demozoo still
+    // owns (written before TOSEC identified a disk as a game) needs a way
+    // back, and TOSEC itself will not retitle a 'demozoo' title (R5).
+    if (isGame) {
+      if (game.metadataSource !== 'demozoo') return null;
+      return (
+        <div className="px-4 pb-3 sm:px-7" data-testid="demozoo-restore">
+          <div className="glass-card flex flex-col gap-2 p-5 sm:flex-row sm:items-center sm:justify-between">
+            <span className="text-[12.5px]" style={{ color: 'var(--muted)' }}>
+              This title&apos;s name came from Demozoo.
+            </span>
+            <UnlinkButton gameId={game.id} label="Restore original title" />
+          </div>
+        </div>
+      );
+    }
     return (
       <DemozooSuggestions
         gameId={game.id}

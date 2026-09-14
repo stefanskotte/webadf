@@ -463,3 +463,35 @@ test('R16: "Restore original title" repairs a game left with a Demozoo title and
   // parseTosecName reads back as the original title.
   await expect(page.getByRole('heading', { level: 1 })).toHaveText(`restore-${t}`);
 });
+
+test('a game with a skipped_game disk and a Demozoo-owned title offers only "Restore original title"', async ({ page }) => {
+  const user = await signUpFresh(page);
+  const t = tag();
+  const shaGame = freshSha();
+  const shaSuggested = freshSha();
+  const { gameId } = await seedDisk(user.orgId, { title: `restore-game-${t}`, diskNo: 1, sha256: shaGame });
+  await addDisk(user.orgId, gameId, { diskNo: 2, sha256: shaSuggested });
+
+  // A title Demozoo wrote before TOSEC identified disk 1 as a game: TOSEC
+  // will not retitle a 'demozoo' title (R5), so this button is the only way back.
+  await getDb().update(blobs).set({ demozooState: 'skipped_game', demozooCheckedAt: new Date() }).where(eq(blobs.sha256, shaGame));
+  await getDb().update(games).set({
+    metadataSource: 'demozoo', title: `Stale Game Title ${t}`, sortTitle: makeSortTitle(`Stale Game Title ${t}`),
+  }).where(eq(games.id, gameId));
+  // A suggestion on the other disk that must NOT be offered for a game.
+  const pid = await seedProduction({ title: `Not For Games ${t}` });
+  await seedSuggestion(shaSuggested, pid);
+
+  await page.goto(`/games/${gameId}`);
+  await expect(page.getByRole('heading', { level: 1 })).toHaveText(`Stale Game Title ${t}`);
+  const restore = page.getByTestId('demozoo-unlink');
+  await expect(restore).toHaveText('Restore original title');
+  await expect(page.getByTestId('demozoo-suggestions')).toHaveCount(0);
+  await expect(page.getByTestId('demozoo-suggestion')).toHaveCount(0);
+  await expect(page.getByTestId('demozoo-search')).toHaveCount(0);
+
+  await restore.click();
+  // seedDisk's entitlement filename is `${title}-${diskNo}.adf`, read back by parseTosecName.
+  await expect(page.getByRole('heading', { level: 1 })).toHaveText(`restore-game-${t}`);
+  await expect(page.getByTestId('demozoo-unlink')).toHaveCount(0);
+});
