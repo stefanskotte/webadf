@@ -14,8 +14,13 @@ import type { SuggestionSource } from './match';
 
 export interface QueueSuggestionRow {
   gameId: string; gameTitle: string; productionId: number; source: SuggestionSource;
+  // R18 (fix round 1, spec §8): which of this org's disks produced this
+  // suggestion row, and this org's own filename for it (entitlements,
+  // nullable if somehow missing one).
+  diskNo: number; filename: string | null;
 }
-export interface QueueEntry { productionId: number; sources: SuggestionSource[] }
+export interface QueueDisk { diskNo: number; filename: string | null }
+export interface QueueEntry { productionId: number; sources: SuggestionSource[]; disks: QueueDisk[] }
 export interface QueueGroup { gameId: string; gameTitle: string; entries: QueueEntry[] }
 
 /**
@@ -45,14 +50,25 @@ export function foldReviewQueue(
 
     const group = byGame.get(r.gameId) ?? { gameId: r.gameId, gameTitle: r.gameTitle, entries: [] };
     const existing = group.entries.find((e) => e.productionId === r.productionId);
-    if (existing) { if (!existing.sources.includes(r.source)) existing.sources.push(r.source); }
-    else group.entries.push({ productionId: r.productionId, sources: [r.source] });
+    if (existing) {
+      if (!existing.sources.includes(r.source)) existing.sources.push(r.source);
+      // Two disks of one game can independently suggest the same production
+      // (same sha256 duplicated, or two different disks each matching it):
+      // one entry, both disks, deduped by disk number.
+      if (!existing.disks.some((d) => d.diskNo === r.diskNo)) existing.disks.push({ diskNo: r.diskNo, filename: r.filename });
+    } else {
+      group.entries.push({ productionId: r.productionId, sources: [r.source], disks: [{ diskNo: r.diskNo, filename: r.filename }] });
+    }
     byGame.set(r.gameId, group);
   }
 
   // Production id tiebreaker within a queue item, so the suggestions list
-  // doesn't depend on row arrival order.
-  for (const g of byGame.values()) g.entries.sort((a, b) => a.productionId - b.productionId);
+  // doesn't depend on row arrival order; each entry's own disks are sorted
+  // the same way, by disk number, for the same reason.
+  for (const g of byGame.values()) {
+    g.entries.sort((a, b) => a.productionId - b.productionId);
+    for (const e of g.entries) e.disks.sort((a, b) => a.diskNo - b.diskNo);
+  }
 
   // Single-candidate items first (fewest choices = quickest to clear), then
   // title, then game id -- a total order: two games sharing a title never

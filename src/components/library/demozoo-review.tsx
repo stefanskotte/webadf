@@ -6,9 +6,19 @@ import { useRouter } from 'next/navigation';
 import { toast } from 'sonner';
 import type { ProductionLite } from '@/components/games/demozoo-actions';
 
-export interface ReviewItemLite { gameId: string; gameTitle: string; suggestions: Array<{ production: ProductionLite; sources: string[] }> }
+export interface ReviewItemLite {
+  gameId: string; gameTitle: string;
+  suggestions: Array<{
+    production: ProductionLite; sources: string[];
+    // R18 (spec §8): which of this org's disks produced this suggestion.
+    disks: Array<{ diskNo: number; filename: string | null }>;
+  }>;
+}
 
 const byline = (p: ProductionLite) => [p.groups.join(', '), p.releaseYear, p.types.join(', ')].filter(Boolean).join(' · ');
+
+const diskLine = (disks: ReviewItemLite['suggestions'][number]['disks']) =>
+  `from ${disks.map((d) => `disk ${d.diskNo}${d.filename ? ` · ${d.filename}` : ''}`).join(', ')}`;
 
 // R17: at most this many items per accept request (the API caps at 100 --
 // see src/app/api/demozoo/accept/route.ts -- this stays comfortably under it).
@@ -16,15 +26,34 @@ const ACCEPT_CHUNK_SIZE = 50;
 
 export function DemozooReview({ items }: { items: ReviewItemLite[] }) {
   const router = useRouter();
-  // Single-candidate rows start ticked; multi-candidate rows start unpicked (operator ruling).
-  const [picked, setPicked] = useState<Record<string, number | null>>(() =>
-    Object.fromEntries(items.map((i) => [i.gameId, i.suggestions.length === 1 ? i.suggestions[0].production.id : null])));
+  // R18 (fix round 1): state holds only EXPLICIT user overrides, never the
+  // full pick map. `router.refresh()` (after Accept or "Not this") re-renders
+  // this component with a new `items` prop, and the old plain `useState`
+  // lazy-initializer never re-ran for it -- a vanished game's stale pick
+  // stayed selected (and could be resent on a later Accept, even a
+  // just-dismissed pair), and a newly single-candidate row never got its
+  // free pre-tick. Deriving `picked` fresh from `items` + `overrides` on
+  // every render fixes both: a game not in the current `items` contributes
+  // nothing to `picked` at all, and an override naming a production the
+  // item no longer offers (dismissed away) falls back to the default.
+  // null = an explicit "skip this title" override.
+  const [overrides, setOverrides] = useState<Record<string, number | null>>({});
   const [busy, setBusy] = useState(false);
 
   if (items.length === 0) {
     return <p className="px-4 text-[13px] sm:px-7" style={{ color: 'var(--on-dark-muted)' }} data-testid="review-empty">Nothing to review.</p>;
   }
 
+  // Single-candidate rows default to ticked; multi-candidate rows default to
+  // unpicked (operator ruling) -- UNLESS an override exists and still names
+  // one of this item's current suggestions (or is an explicit skip).
+  const picked: Record<string, number | null> = Object.fromEntries(items.map((item) => {
+    if (item.gameId in overrides) {
+      const o = overrides[item.gameId];
+      if (o === null || item.suggestions.some((s) => s.production.id === o)) return [item.gameId, o];
+    }
+    return [item.gameId, item.suggestions.length === 1 ? item.suggestions[0].production.id : null];
+  }));
   const selected = Object.entries(picked).filter((e): e is [string, number] => e[1] !== null);
 
   // R17: the API caps a single request at 100 items, so a large selection is
@@ -76,10 +105,10 @@ export function DemozooReview({ items }: { items: ReviewItemLite[] }) {
         <div key={item.gameId} className="glass-card p-4" data-testid="review-item" data-game-id={item.gameId}>
           <div className="mb-2 text-[13px] font-semibold">{item.gameTitle}</div>
           <ul className="flex flex-col gap-2">
-            {item.suggestions.map(({ production: p }) => {
+            {item.suggestions.map(({ production: p, disks }) => {
               const single = item.suggestions.length === 1;
               const checked = picked[item.gameId] === p.id;
-              const toggle = () => setPicked((s) => ({ ...s, [item.gameId]: checked && single ? null : p.id }));
+              const toggle = () => setOverrides((s) => ({ ...s, [item.gameId]: checked && single ? null : p.id }));
               return (
                 <li key={p.id} className="flex flex-col gap-3 sm:flex-row sm:items-center">
                   <label className="flex min-w-0 flex-1 items-center gap-3">
@@ -91,6 +120,7 @@ export function DemozooReview({ items }: { items: ReviewItemLite[] }) {
                     <span className="min-w-0">
                       <span className="block font-semibold">{p.title}</span>
                       <span className="block text-[12.5px]" style={{ color: 'var(--muted)' }}>{byline(p)}</span>
+                      <span className="block min-w-0 truncate text-[12px]" style={{ color: 'var(--muted)' }}>{diskLine(disks)}</span>
                     </span>
                   </label>
                   <button type="button" data-testid="review-dismiss" data-production-id={p.id}
@@ -113,7 +143,7 @@ export function DemozooReview({ items }: { items: ReviewItemLite[] }) {
               <li className="flex items-center gap-3 pt-1">
                 <label className="flex items-center gap-3">
                   <input type="radio" name={`pick-${item.gameId}`} checked={picked[item.gameId] === null}
-                    onChange={() => setPicked((s) => ({ ...s, [item.gameId]: null }))}
+                    onChange={() => setOverrides((s) => ({ ...s, [item.gameId]: null }))}
                     data-testid="review-skip" />
                   <span className="text-[12.5px]" style={{ color: 'var(--muted)' }}>Skip for now</span>
                 </label>

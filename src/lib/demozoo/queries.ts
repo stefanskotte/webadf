@@ -10,13 +10,13 @@
 
 import { and, asc, eq, ilike, inArray, isNotNull, isNull, like, or, sql } from 'drizzle-orm';
 import { getDb } from '@/db';
-import { games, disks, blobs } from '@/db/schema/catalog';
+import { games, disks, blobs, entitlements } from '@/db/schema/catalog';
 import { demozooProductions, demozooImages, demozooSuggestions, demozooDismissals } from '@/db/schema/demozoo';
 import type { CoverCandidate } from '@/lib/cover-pick';
 import type { SuggestionSource } from './match';
 import { effectiveLink, type LinkSource } from './effective';
 import { titleKey } from './title-key';
-import { foldReviewQueue, type QueueSuggestionRow } from './review-fold';
+import { foldReviewQueue, type QueueSuggestionRow, type QueueDisk } from './review-fold';
 
 export const demozooUrl = (id: number) => `https://demozoo.org/productions/${id}/`;
 
@@ -32,7 +32,16 @@ export interface GameDemozoo {
   /** A disk of this game is a TOSEC game: Demozoo is never offered (spec §5.3.1). */
   isGame: boolean;
 }
-export interface ReviewItem { gameId: string; gameTitle: string; suggestions: DemozooSuggestionView[] }
+/**
+ * R18 (fix round 1, spec §8): the review queue additionally shows which of
+ * this org's disks produced each suggestion -- the game detail page's
+ * `DemozooSuggestionView` (above) has no such thing to show, since a game
+ * there is looked at one disk-set at a time already. A separate type, not an
+ * added optional field on `DemozooSuggestionView`, so `getGameDemozoo` keeps
+ * building the plain shape without a dangling `disks: []`.
+ */
+export interface ReviewSuggestionView extends DemozooSuggestionView { disks: QueueDisk[] }
+export interface ReviewItem { gameId: string; gameTitle: string; suggestions: ReviewSuggestionView[] }
 
 async function loadProductions(ids: number[]): Promise<Map<number, DemozooProductionView>> {
   const out = new Map<number, DemozooProductionView>();
@@ -163,10 +172,17 @@ async function reviewQueueRows(orgId: string): Promise<QueueSuggestionRow[]> {
   const rows = await getDb().select({
     gameId: games.id, gameTitle: games.title,
     productionId: demozooSuggestions.productionId, source: demozooSuggestions.source,
+    // R18: which disk produced this suggestion, and this org's own filename
+    // for it -- left-joined on (sha256, orgId), same predicate apply.ts uses
+    // to re-derive a machine title, so a disk somehow missing its own
+    // entitlement row shows a disk number with no filename rather than
+    // dropping the suggestion.
+    diskNo: disks.diskNo, filename: entitlements.sourceFilename,
   })
     .from(games)
     .innerJoin(disks, and(eq(disks.gameId, games.id), eq(disks.orgId, orgId)))
     .innerJoin(demozooSuggestions, eq(demozooSuggestions.sha256, disks.sha256))
+    .leftJoin(entitlements, and(eq(entitlements.sha256, disks.sha256), eq(entitlements.orgId, orgId)))
     .where(and(
       eq(games.orgId, orgId),
       isNull(games.demozooLinkSource),
@@ -176,7 +192,7 @@ async function reviewQueueRows(orgId: string): Promise<QueueSuggestionRow[]> {
         where d2.game_id = ${games.id} and d2.org_id = ${orgId} and b2.demozoo_state = 'skipped_game'
       )`,
     ));
-  return rows.map((r) => ({ ...r, source: r.source as SuggestionSource }));
+  return rows.map((r) => ({ ...r, source: r.source as SuggestionSource, filename: r.filename ?? null }));
 }
 
 /**
@@ -200,7 +216,7 @@ export async function listReviewQueue(orgId: string): Promise<ReviewItem[]> {
   return groups.flatMap((g) => {
     const suggestions = g.entries.flatMap((e) => {
       const production = prods.get(e.productionId);
-      return production ? [{ production, sources: e.sources }] : [];
+      return production ? [{ production, sources: e.sources, disks: e.disks }] : [];
     });
     return suggestions.length > 0 ? [{ gameId: g.gameId, gameTitle: g.gameTitle, suggestions }] : [];
   });
