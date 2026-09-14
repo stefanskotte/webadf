@@ -11,13 +11,33 @@ Two halves that only make sense together:
   connector, pretends to be a DD floppy drive, and streams whichever disk you
   picked in the web app over WiFi. No USB stick, no shuffling images by hand.
 
-Click *Mount* in a browser; the Amiga reads a disk.
+Click *Mount* in a browser; the Amiga reads a disk. **Reading works on a real
+Amiga over the floppy cable** — Workbench 3.1 boots from the board and
+`dir df0: all` walks every file without an error. Writing is what is being
+worked on now.
 
 ![The rev B board, top view: J1 floppy header on the left, U2 buffer in the middle, the Pico module on the right](wifi-floppy/hardware/pcb_render.svg)
 
 *Rev B, routed and not yet fabricated. Rev A2 is the board bring-up actually
 runs on. Red is the front copper layer, blue the back; the magenta box is the
 Pico's antenna keepout, which is why GP14–GP17 are left unused.*
+
+## The web app
+
+![The library: a grid of titles with cover art where the disk has been identified, and a collection rail on the left](docs/screenshots/library.png)
+
+*The library. Titles are grouped from their disks, typed and given cover art
+when TOSEC or OpenRetro recognises them, and filed into collections.*
+
+![A game page for Project-X: box art, publisher and year, screenshots, links to Hall of Light and MobyGames, and the first of its four disks with Download, Browse and mount controls](docs/screenshots/game.png)
+
+*A title, with each of its disks — download it, browse inside it, or send it
+to the board.*
+
+![Browsing inside a Workbench 3.1 disk: filesystem, volume name, space used, and the directory tree with rename, delete and move actions](docs/screenshots/disk-files.png)
+
+*Inside a disk. The AmigaDOS filesystem is read and written in the browser:
+add, rename, move and delete files without leaving the page.*
 
 ---
 
@@ -54,8 +74,8 @@ Honest version, because a README that only lists what works is not useful.
 | Device: provisioning portal, WiFi, TLS, pairing | verified on hardware |
 | Mount a disk from the browser, eject it | verified on hardware |
 | OLED status panel | verified on hardware |
-| Reading a disk **from an actual Amiga** | **not yet — no floppy cable connected** |
-| Writing (Amiga → disk image) | capture path built, unverified, WPROT still asserted |
+| Reading a disk **from an actual Amiga**, over the floppy cable | **verified on hardware** — Workbench 3.1 boots, `dir df0: all` reads clean |
+| Writing (Amiga → disk image) | **in progress** — capture path built; WGATE/WDATA read as always asserted, suspected missing pull-ups, being tested |
 | Disk history / rewind | storage model built, not wired up |
 
 ## Repository
