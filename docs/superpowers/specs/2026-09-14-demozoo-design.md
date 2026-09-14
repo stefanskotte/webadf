@@ -350,6 +350,44 @@ and cost-if-wrong in the plan's execution ledger, `progress.md`):
   row also carries and shows the disk(s) — disk number and this org's entitlement source
   filename — whose blob produced the suggestion (spec §8's "the disk it came from").
 
+Final whole-branch review fixes (2026-09-14, `.superpowers/sdd/2026-09-14-demozoo/final-findings.md`):
+
+- **I1: a blob is re-matched after TOSEC re-decides it, not only after a new Demozoo import.**
+  §5 re-matched only blobs never checked or checked before `demozoo_import.applied_at`. A DAT
+  import or a new upload resets `match_checked_at` alone, so a Demozoo verdict outlived any TOSEC
+  change (a blob later identified as a TOSEC game stayed `suggested`; a new game holding an
+  already-`applied` blob never got its link). The match phase now also selects
+  `demozoo_checked_at < match_checked_at`.
+- **I3: the weekly fetch is claimed atomically.** One conditional
+  `UPDATE demozoo_import SET last_attempt_at = now() WHERE id = 1 AND (last_attempt_at IS NULL OR
+  last_attempt_at <= now() - interval '7 days') RETURNING id` (after an idempotent insert of the
+  single row); only the invocation that gets a row back makes the request, so two overlapping
+  cron invocations cannot both fetch.
+- **I4: an extract that cannot be the catalogue is refused before anything is written.** Fewer
+  than 50,000 productions, or fewer than 80% of the productions already held, stops the extract
+  step (step stays `fetched`, the cron report says `refused: ...`), and `writeExtract` repeats
+  the check before any write or delete. Without it an upstream format change yielding 0
+  productions would delete every production and cascade away every dismissal. So a refused copy
+  cannot stall imports forever, `nextStep` now turns a `fetched` cursor whose last attempt is a
+  week old into a new `fetch` (a conditional request; a `304` keeps waiting).
+- **I5: a transient failure no longer overwrites a blob's Demozoo verdict.** A blob whose
+  matching throws keeps its prior state and `demozoo_checked_at`, is skipped for the rest of
+  the run (the phase reports not-done) and retried by the next. The disk's volume name is read
+  only when the TOSEC branch does not decide on its own, and an unreadable disk counts as having
+  no volume name rather than failing the blob. `applyAutomaticLink` runs before the blob is
+  stamped `applied` (work before stamp), and so treats the triggering blob as applied to the
+  production it is linking, whatever its stored state still reads.
+- **I6: a new export is stored in one cron invocation and extracted in the next**, never both
+  in the same 300 s function.
+- **M3: screenshots are fetched only from `https://media.demozoo.org/` and stored only as
+  PNG, JPEG, GIF or WebP.** Any other URL is recorded as a failed image row without a request;
+  `image/svg+xml` and every other type are refused; `/api/images/<sha1>` sends
+  `x-content-type-options: nosniff`. (All 79,180 imported screenshot URLs were on that host on
+  2026-09-14.) Also M2: the export fetch has a 240 s timeout and each screenshot fetch 30 s.
+- **I2 (spec §5.3.1 restated):** an automatic link skips a game with a `skipped_game` disk in
+  its own org, and a TOSEC game whose title Demozoo still owns shows only "Restore original
+  title" — no suggestions, no search.
+
 ## Acceptance numbers (2026-09-14)
 
 See HANDOFF §3af for the timing gate, the recomputed acceptance numbers against the spike, and

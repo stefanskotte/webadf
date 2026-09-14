@@ -3482,6 +3482,29 @@ Demozoo API (the bulk export makes per-lookup load on a non-profit unnecessary).
 - **The ~200 MB export is copied into the Blob store weekly**, not queried live -- `demozoo/
   export.sql.gz`, overwritten each fetch, with stage 2 extracting from OUR copy so a stage-2
   failure or timeout never triggers a second request to `data.demozoo.org`.
+- **The final whole-branch review's fixes (I1-I6, M2, M3) changed behaviour; each is in the
+  spec's corrections.** In short: re-match after a TOSEC change; the weekly fetch is one atomic
+  claim; an extract under 50,000 productions or 80% of what we hold is refused (`refused: ...`
+  in the cron report, step left `fetched`, re-fetched after a week); a transient match failure
+  keeps the blob's prior verdict; fetch and extract never share an invocation; screenshots only
+  from `https://media.demozoo.org/`, raster types only, `nosniff` on `/api/images`.
+- **Watch: the first production fetch is expected at the 2026-09-21/22 01:30 UTC cron run.**
+  Check that the `demozoo_import` row shows a new `fetched_at` and `step` moving
+  `fetched` -> `extracted` -> `applied` over the following daily runs, not only a new
+  `last_attempt_at` (which alone means the claim ran but the fetch threw, or answered `304`).
+
+**Known gaps, deferred from the final review (minor):**
+
+- **M1:** two sweeps running at once can each read the same remaining hourly screenshot budget,
+  so the 60/hour cap can be exceeded briefly.
+- **M4:** a Demozoo confirmation carried onto the survivor by a merge (R6) does not retitle the
+  survivor.
+- **M5:** a game identified only by OpenRetro (no TOSEC identity) still gets Demozoo
+  suggestions. Operator note: accept or dismiss them like any other; nothing is linked unasked.
+- **M6:** every re-match of a blob that TOSEC does not decide re-reads its volume name from the
+  object store (no cached volume name).
+- **M7:** the e2e suite's seeded productions (ids from 2,000,000,000) are briefly visible in the
+  live Demozoo search while a run is in progress; the teardown removes them.
 
 ## Known accepted risks
 
