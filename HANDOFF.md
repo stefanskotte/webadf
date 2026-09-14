@@ -3347,7 +3347,7 @@ Nested archives and file comments are out of scope by decision, not oversight.
 fixture and asserts ON THE BYTES read back out of the stored image -- including that an
 excluded member is absent from the DISK rather than merely greyed out in a list.
 
-### 3af. Demozoo identification — DONE 2026-09-14, all 16 tasks, on `feat/demozoo`, not merged
+### 3af. Demozoo identification — DONE 2026-09-14, all 16 tasks, merged to `master`
 
 Design: `docs/superpowers/specs/2026-09-14-demozoo-design.md`. Plan: `docs/superpowers/plans/
 2026-09-14-demozoo.md`. Execution ledger with every ruling and its cost-if-wrong:
