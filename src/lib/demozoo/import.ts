@@ -1,4 +1,4 @@
-import { eq, lt, sql } from 'drizzle-orm';
+import { and, eq, isNull, lt, lte, or, sql } from 'drizzle-orm';
 import { getDb } from '@/db';
 import { demozooImport, demozooProductions, demozooScreenshots } from '@/db/schema/demozoo';
 import { demozooExportStore } from '@/lib/storage';
@@ -14,16 +14,47 @@ export const REFETCH_AFTER_MS = 7 * 24 * 3_600_000;
 const PRODUCTION_CHUNK = 250;    // 9 columns -> 2,250 bind parameters
 const SCREENSHOT_CHUNK = 1_000;  // 5 columns -> 5,000
 const DEFAULT_BUDGET_MS = 240_000;
+/**
+ * An extract smaller than this is not an Amiga catalogue (78,447 productions
+ * on 2026-09-14) but an upstream format change, and writing it would delete
+ * every production -- cascading away every dismissal and clearing every link.
+ */
+export const MIN_EXTRACT_PRODUCTIONS = 50_000;
+/** ...nor may one shrink the catalogue we already hold by more than a fifth. */
+export const MIN_EXTRACT_SHARE_OF_CURRENT = 0.8;
 
 export type ImportCursor = typeof demozooImport.$inferSelect;
 export type CronStep = 'fetch' | 'extract' | 'write' | 'idle';
 
 export function nextStep(cursor: ImportCursor | null, now: number): CronStep {
   if (!cursor) return 'fetch';
-  if (cursor.step === 'fetched') return 'extract';
-  if (cursor.step === 'extracted') return 'write';
   const last = cursor.lastAttemptAt?.getTime();
-  return last === undefined || now - last >= REFETCH_AFTER_MS ? 'fetch' : 'idle';
+  const weekPassed = last === undefined || now - last >= REFETCH_AFTER_MS;
+  // A copy the extract guard refused stays 'fetched' and is re-checked daily;
+  // once a week has passed, a new fetch replaces it instead, so a refused
+  // export cannot stall imports forever.
+  if (cursor.step === 'fetched') return weekPassed ? 'fetch' : 'extract';
+  if (cursor.step === 'extracted') return 'write';
+  return weekPassed ? 'fetch' : 'idle';
+}
+
+/**
+ * null when an extract of `extracted` productions may replace a catalogue of
+ * `current`; otherwise why not. Guards writeExtract's destructive delete.
+ */
+export function extractRefusal(extracted: number, current: number): string | null {
+  if (extracted < MIN_EXTRACT_PRODUCTIONS) {
+    return `extract has ${extracted} productions, fewer than ${MIN_EXTRACT_PRODUCTIONS}`;
+  }
+  if (current > 0 && extracted < current * MIN_EXTRACT_SHARE_OF_CURRENT) {
+    return `extract has ${extracted} productions, fewer than ${MIN_EXTRACT_SHARE_OF_CURRENT * 100}% of the ${current} held`;
+  }
+  return null;
+}
+
+async function currentProductionCount(): Promise<number> {
+  const rows = await getDb().select({ n: sql<number>`count(*)::int` }).from(demozooProductions);
+  return Number(rows[0]?.n ?? 0);
 }
 
 export async function extractFromStream(stream: ReadableStream<Uint8Array>): Promise<DemozooExtract> {
@@ -53,6 +84,10 @@ export async function writeExtract(
   extract: DemozooExtract, cursor: ImportCursor, deadline: () => boolean,
 ): Promise<'done' | 'partial'> {
   const db = getDb();
+  // Defence in depth behind the extract step's own check: nothing below runs
+  // -- above all not the deletes -- for an extract that cannot be a catalogue.
+  const refusal = extractRefusal(extract.productions.length, await currentProductionCount());
+  if (refusal) throw new Error(`demozoo import: refusing to write: ${refusal}`);
   const stamp = cursor.runStartedAt ?? new Date();
 
   let written = cursor.productionsWritten;
@@ -101,6 +136,23 @@ export async function writeExtract(
   return 'done';
 }
 
+/**
+ * The weekly gate as ONE conditional update: true only for the invocation
+ * whose update moved last_attempt_at. The insert creates the single row the
+ * very first time (a no-op ever after).
+ */
+async function claimWeeklyFetch(): Promise<boolean> {
+  const db = getDb();
+  await db.insert(demozooImport).values({ id: IMPORT_ROW_ID }).onConflictDoNothing();
+  const claimed = await db.update(demozooImport).set({ lastAttemptAt: sql`now()` })
+    .where(and(
+      eq(demozooImport.id, IMPORT_ROW_ID),
+      or(isNull(demozooImport.lastAttemptAt), lte(demozooImport.lastAttemptAt, sql`now() - interval '7 days'`)),
+    ))
+    .returning({ id: demozooImport.id });
+  return claimed.length > 0;
+}
+
 export interface CronReport { steps: Array<{ step: CronStep; ms: number; detail?: string }> }
 
 export async function runDemozooCron(budgetMs: number = DEFAULT_BUDGET_MS): Promise<CronReport> {
@@ -115,8 +167,13 @@ export async function runDemozooCron(budgetMs: number = DEFAULT_BUDGET_MS): Prom
     const t0 = Date.now();
 
     if (step === 'fetch') {
-      // Stamped BEFORE the request: a failure waits a week like a success does.
-      await saveCursor({ lastAttemptAt: new Date() });
+      // Claimed atomically, and BEFORE the request: of two overlapping
+      // invocations only one fetches, and a failure waits a week like a
+      // success does.
+      if (!(await claimWeeklyFetch())) {
+        report.steps.push({ step, ms: Date.now() - t0, detail: 'not claimed: fetched within the week' });
+        break;
+      }
       const outcome = await fetchExport(cursor ? { etag: cursor.etag, lastModified: cursor.lastModified } : null);
       if (outcome.status === 'unchanged') {
         report.steps.push({ step, ms: Date.now() - t0, detail: 'unchanged' });
@@ -126,7 +183,9 @@ export async function runDemozooCron(budgetMs: number = DEFAULT_BUDGET_MS): Prom
         step: 'fetched', etag: outcome.etag, lastModified: outcome.lastModified, fetchedAt: new Date(),
       });
       report.steps.push({ step, ms: Date.now() - t0, detail: 'stored' });
-      continue;
+      // The ~200 MB download has had its share of this invocation; extract
+      // gets a whole one of its own (the next daily run).
+      break;
     }
 
     if (step === 'extract') {
@@ -138,6 +197,15 @@ export async function runDemozooCron(budgetMs: number = DEFAULT_BUDGET_MS): Prom
         break;
       }
       const extract = await extractFromStream(stream);
+      const current = await currentProductionCount();
+      const refusal = extractRefusal(extract.productions.length, current);
+      if (refusal) {
+        // Step stays 'fetched': nothing is written, and the next weekly fetch
+        // replaces this copy (nextStep).
+        console.error(`demozoo import: refusing extract: ${refusal}`);
+        report.steps.push({ step, ms: Date.now() - t0, detail: `refused: ${refusal}` });
+        break;
+      }
       // Captured before encoding so nothing below still references `extract`
       // -- it (and the JSON string built from it) can be released while the
       // putBytes upload of the encoded bytes is in flight.
