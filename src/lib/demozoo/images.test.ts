@@ -69,4 +69,26 @@ describe('ensureDemozooImage — politeness', () => {
     expect(put).not.toHaveBeenCalled();
     expect(inserted).toHaveLength(1);
   });
+
+  it('counts a thrown fetch against the rolling-hour budget instead of propagating', async () => {
+    const fetch = vi.fn(async () => { throw new Error('ECONNREFUSED'); });
+    expect(await ensureDemozooImage(shot, { fetch, wait: noWait })).toEqual({ stored: false, bytes: 0 });
+    expect(put).not.toHaveBeenCalled();
+    expect(inserted).toHaveLength(1);
+    expect((inserted[0] as { failedAt: Date }).failedAt).toBeInstanceOf(Date);
+  });
+
+  it('does not store a 200 response that is not an image', async () => {
+    const fetch = vi.fn(async () => new Response('<html>error</html>', { headers: { 'content-type': 'text/html' } }));
+    expect(await ensureDemozooImage(shot, { fetch, wait: noWait })).toEqual({ stored: false, bytes: 0 });
+    expect(put).not.toHaveBeenCalled();
+    expect(inserted).toHaveLength(1);
+  });
+
+  it('does not store a response with no content-type at all', async () => {
+    const fetch = vi.fn(async () => new Response(new Uint8Array([1, 2, 3])));
+    expect(await ensureDemozooImage(shot, { fetch, wait: noWait })).toEqual({ stored: false, bytes: 0 });
+    expect(put).not.toHaveBeenCalled();
+    expect(inserted).toHaveLength(1);
+  });
 });

@@ -33,14 +33,47 @@ export async function ensureDemozooImage(
 
   const row = { sha1, screenshotId: s.id, productionId: s.productionId, ordinal: s.ordinal, sourceUrl: s.standardUrl };
   await deps.wait(DELAY_MS);
-  const res = await deps.fetch(s.standardUrl, { headers: { 'user-agent': DEMOZOO_USER_AGENT } });
-  if (!res.ok) {
-    await db.insert(demozooImages).values({ ...row, storageKey: null, sizeBytes: null, fetchedAt: new Date(), failedAt: new Date() })
-      .onConflictDoUpdate({ target: demozooImages.sha1, set: { fetchedAt: new Date(), failedAt: new Date() } });
+
+  // Every attempt -- a non-ok status, a non-image content-type, or a thrown
+  // network error -- MUST leave a row here. budgetRemaining() and the phase's
+  // `not exists` selection both key off this table; an attempt that writes
+  // nothing is invisible to the rolling-hour cap and gets re-selected forever
+  // within the same hour (this is what fix round 1 corrects: a thrown fetch
+  // used to propagate past both db.insert branches).
+  const recordFailure = () => db.insert(demozooImages)
+    .values({ ...row, storageKey: null, sizeBytes: null, fetchedAt: new Date(), failedAt: new Date() })
+    .onConflictDoUpdate({ target: demozooImages.sha1, set: { fetchedAt: new Date(), failedAt: new Date() } });
+
+  let res: Response;
+  try {
+    res = await deps.fetch(s.standardUrl, { headers: { 'user-agent': DEMOZOO_USER_AGENT } });
+  } catch (err) {
+    console.error(`demozoo: screenshot fetch failed for ${s.standardUrl}`, err);
+    await recordFailure();
     return { stored: false, bytes: 0 };
   }
-  const bytes = new Uint8Array(await res.arrayBuffer());
-  const stored = await imageStore.put(sha1, bytes, res.headers.get('content-type') ?? 'image/png');
+
+  // Only a genuine image may be stored: an HTML error page (still a 200 from
+  // some CDNs) or a response with no content-type at all would otherwise be
+  // written to oagd/<sha1> and later served by /api/images as if it were the
+  // shot. No default of 'image/png' -- a missing header is a failure, not an
+  // assumption.
+  const contentType = res.headers.get('content-type');
+  if (!res.ok || !contentType?.startsWith('image/')) {
+    await recordFailure();
+    return { stored: false, bytes: 0 };
+  }
+
+  let bytes: Uint8Array;
+  try {
+    bytes = new Uint8Array(await res.arrayBuffer());
+  } catch (err) {
+    console.error(`demozoo: screenshot body read failed for ${s.standardUrl}`, err);
+    await recordFailure();
+    return { stored: false, bytes: 0 };
+  }
+
+  const stored = await imageStore.put(sha1, bytes, contentType);
   await db.insert(demozooImages).values({ ...row, storageKey: stored.key, sizeBytes: bytes.byteLength, fetchedAt: new Date(), failedAt: null })
     .onConflictDoUpdate({ target: demozooImages.sha1, set: { storageKey: stored.key, sizeBytes: bytes.byteLength, fetchedAt: new Date(), failedAt: null } });
   return { stored: true, bytes: bytes.byteLength };
