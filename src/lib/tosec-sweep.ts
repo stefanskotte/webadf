@@ -10,6 +10,7 @@ import { openretroEntries, openretroDiskSha1, openretroImages } from '@/db/schem
 import { matchIdentity, openretroSortTitle, type IdentityCandidate } from '@/lib/openretro-identity';
 import { applyEnrichment } from '@/lib/openretro-apply';
 import { ensureImage } from '@/lib/openretro-images';
+import { demozooMatchPhase } from '@/lib/demozoo/sweep';
 
 /** Stop well inside the 300 s function limit rather than being killed mid-write. */
 const DEFAULT_BUDGET_MS = 240_000;
@@ -83,6 +84,8 @@ export interface SweepResult {
    *  records that on THIS archive it is worth exactly one disk. */
   enrichedByIdentity: number;
   imagesStored: number; imageBytes: number;
+  demozooApplied: number; demozooSuggested: number; demozooNone: number; demozooSkippedGame: number;
+  demozooImagesStored: number;
   done: boolean;
 }
 
@@ -152,6 +155,8 @@ export async function sweep(budgetMs: number = DEFAULT_BUDGET_MS): Promise<Sweep
     hashed: 0, matched: 0, none: 0, ambiguous: 0, merged: 0,
     enriched: 0, enrichNone: 0, enrichAmbiguous: 0, enrichedByIdentity: 0,
     imagesStored: 0, imageBytes: 0,
+    demozooApplied: 0, demozooSuggested: 0, demozooNone: 0, demozooSkippedGame: 0,
+    demozooImagesStored: 0,
     done: false,
   };
   // `done` means EVERY phase drained, so each phase that can leave work
@@ -386,7 +391,9 @@ export async function sweep(budgetMs: number = DEFAULT_BUDGET_MS): Promise<Sweep
     }
   }
 
-  out.done = matchDone && enrichDone;
+  // Demozoo (spec §5): after TOSEC and OpenRetro, inside the same budget.
+  const demozooDone = spent() < budgetMs ? await demozooMatchPhase(spent, budgetMs, out) : false;
+  out.done = matchDone && enrichDone && demozooDone;
   return out;
 }
 
