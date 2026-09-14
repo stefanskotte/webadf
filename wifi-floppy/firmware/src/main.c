@@ -254,6 +254,17 @@ static void ui_observe(void *ctx, const dc_obs_t *o) {
 #define WF_VERIFY_TRACKS 0
 #endif
 
+/*
+ * WF_BUS_SNIFF -- log every change on the eight bus inputs, in exact order,
+ * from the bus_sniff PIO program. Diagnostic, off by default
+ * (-DWF_BUS_SNIFF=1). While it is on, the GPIO ISR's own SEL and SIDE traces
+ * are suppressed: they carry the same edges, in pin order and sampled late,
+ * and would only compete with these for log slots.
+ */
+#ifndef WF_BUS_SNIFF
+#define WF_BUS_SNIFF 0
+#endif
+
 // Both gates, in one place: the firmware must be willing AND the server must
 // say the disk is writable (dc_desired_t.write_protected, defaulting to true
 // in the database).
@@ -451,10 +462,33 @@ static void __isr step_pio_isr(void) {
         step_pulse((pio_sm_get(step_pio, step_sm) & 1u) != 0);
 }
 
+#if WF_BUS_SNIFF
+static uint sniff_sm;
+static volatile uint32_t sniff_records, sniff_gaps;
+
+// Drains bus_sniff. Order is exact; the timestamp is taken here, so it is late
+// by the interrupt latency. A set RXSTALL means the PIO dropped at least one
+// sample because the FIFO was full: flagged on the next record drained (bit 8),
+// so the gap lies within the eight records before it.
+static void __isr sniff_isr(void) {
+    const uint32_t stall = 1u << (PIO_FDEBUG_RXSTALL_LSB + sniff_sm);
+    while (!pio_sm_is_rx_fifo_empty(step_pio, sniff_sm)) {
+        uint32_t a = pio_sm_get(step_pio, sniff_sm) & 0xffu;
+        if (step_pio->fdebug & stall) {
+            step_pio->fdebug = stall;
+            sniff_gaps++;
+            a |= 0x100u;
+        }
+        sniff_records++;
+        wf_trace(WF_EV_BUS, a, (uint32_t)time_us_64());
+    }
+}
+#endif
+
 static void __isr gpio_isr(uint gpio, uint32_t events) {
     if (gpio == PIN_SEL0 && (events & GPIO_IRQ_EDGE_FALL)) {
         dskchg_on_sel_edge();
-        wf_trace(WF_EV_SEL, 1, 0);
+        if (!WF_BUS_SNIFF) wf_trace(WF_EV_SEL, 1, 0);
     } else if (gpio == PIN_MTR) {
         bool running = !gpio_get(PIN_MTR);           // active low
         dskchg_on_motor(running);
@@ -478,7 +512,7 @@ static void __isr gpio_isr(uint gpio, uint32_t events) {
     } else if (gpio == PIN_SIDE) {
         cur_side = gpio_get(PIN_SIDE) ? 0 : 1;       // low = side 1
         want_track = cur_cyl * 2 + cur_side;
-        wf_trace(WF_EV_SIDE, (uint32_t)cur_side, (uint32_t)want_track);
+        if (!WF_BUS_SNIFF) wf_trace(WF_EV_SIDE, (uint32_t)cur_side, (uint32_t)want_track);
     }
 }
 
@@ -1161,6 +1195,19 @@ int main(void) {
     irq_set_enabled(pio_get_irq_num(step_pio, 0), true);
     pio_sm_set_enabled(step_pio, step_sm, true);
 
+#if WF_BUS_SNIFF
+    uint off_sniff = pio_add_program(step_pio, &bus_sniff_program);
+    sniff_sm = pio_claim_unused_sm(step_pio, true);
+    bus_sniff_program_init(step_pio, sniff_sm, off_sniff, PIN_SEL0);
+    pio_set_irq1_source_enabled(step_pio, pio_get_rx_fifo_not_empty_interrupt_source(sniff_sm),
+                                true);
+    irq_set_exclusive_handler(pio_get_irq_num(step_pio, 1), sniff_isr);
+    irq_set_enabled(pio_get_irq_num(step_pio, 1), true);
+    pio_sm_set_enabled(step_pio, sniff_sm, true);
+    wf_logf(WF_WARN, "BUS SNIFF BUILD: every bus input change is logged "
+                     "(a bits 0..7 = SEL0 SEL1 MTR DIR STEP WDATA WGATE SIDE)");
+#endif
+
     gpio_set_irq_enabled_with_callback(PIN_SEL0, GPIO_IRQ_EDGE_FALL, true, gpio_isr);
     gpio_set_irq_enabled(PIN_MTR,  GPIO_IRQ_EDGE_FALL | GPIO_IRQ_EDGE_RISE, true);
     gpio_set_irq_enabled(PIN_SIDE, GPIO_IRQ_EDGE_FALL | GPIO_IRQ_EDGE_RISE, true);
@@ -1452,6 +1499,14 @@ int main(void) {
                                  "would have been wrong on %lu",
                         (unsigned long)n, (unsigned long)steps_dir_late);
             }
+#if WF_BUS_SNIFF
+            static uint32_t reported_gaps;
+            if (sniff_gaps != reported_gaps) {
+                reported_gaps = sniff_gaps;
+                wf_logf(WF_WARN, "sniff: PIO FIFO overflowed %lu time(s) in %lu records",
+                        (unsigned long)sniff_gaps, (unsigned long)sniff_records);
+            }
+#endif
         }
 
         // Bounded on purpose. Four lines per 1 ms iteration keeps up with a

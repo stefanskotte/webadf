@@ -109,6 +109,13 @@ if (WF_VERIFY_TRACKS)
   target_compile_definitions(wifi_floppy PRIVATE WF_VERIFY_TRACKS=1)
   message(STATUS "WF_VERIFY_TRACKS is ON: every mount sweeps all 160 tracks.")
 endif ()
+# Diagnostic: a PIO logic analyser on the eight bus inputs, one log record per
+# change. See bus_sniff in floppy.pio. Off by default.
+option(WF_BUS_SNIFF "Log every change on the bus inputs, in exact order" OFF)
+if (WF_BUS_SNIFF)
+  target_compile_definitions(wifi_floppy PRIVATE WF_BUS_SNIFF=1 WF_LOG_SLOTS=512)
+  message(STATUS "WF_BUS_SNIFF is ON: every bus input change is logged.")
+endif ()
 if (WF_WRITE_CAPTURE)
   target_compile_definitions(wifi_floppy PRIVATE WF_WRITE_CAPTURE=1)
   message(WARNING "WF_WRITE_CAPTURE is ON: this image lets the Amiga write, and throws the writes away.")

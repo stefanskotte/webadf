@@ -17,7 +17,9 @@
 // 1 ms drain keeps up comfortably. The ring exists for the case core0 is
 // busy servicing a track change, which is a PSRAM->SRAM copy, not for
 // sustained overload.
+#ifndef WF_LOG_SLOTS          // WF_BUS_SNIFF builds raise it: one record per bus change
 #define WF_LOG_SLOTS 64
+#endif
 #define WF_LOG_MSG   88
 
 typedef struct {
@@ -142,7 +144,7 @@ uint32_t wf_log_dropped(void) { return r_dropped; }
 static const char *const ev_name[WF_EV__COUNT] = {
     "BOOT", "SEL", "MOTOR", "STEP", "SIDE", "INDEX",
     "TRACK-WANT", "TRACK-SERVED", "TRACK-MISS", "WGATE", "MOUNT", "EJECT",
-    "DIR-LATE",
+    "DIR-LATE", "BUS",
 };
 static const char *const lvl_tag[] = { "", "WARN ", "ERROR " };
 

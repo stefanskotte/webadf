@@ -2532,12 +2532,40 @@ inward step.
 outward steps never misread (DIR idles high, which is outwards). Check which case a
 measurement covered before calling a mechanism ruled out.
 
-**STILL OPEN: SIDE.** SIDE is released to side 0 the same way (it looks like whenever the
-drive is deselected), and every edge restarts the stream from bit 0 underneath a read: 45%
-of serves land within 5 ms of a SIDE edge, before and after this fix. It did not stop a
-clean boot. The likely model is that a drive only honours SIDE while SEL is asserted, but
-SEL's *release* edge is not traced yet, so that is unmeasured -- trace it before changing
-anything. Last night's SIDE-sampling change was the wrong fix for this and was reverted.
+**SIDE: MEASURED, UNDERSTOOD, AND DELIBERATELY LEFT ALONE (2026-09-14).** Captured with
+`-DWF_BUS_SNIFF=1`, a PIO logic analyser on all eight inputs (`bus_sniff` in `floppy.pio`)
+that logs every change in exact order -- the GPIO ISR cannot, see the pin-order note above.
+Boot plus `dir df0: all`: 17,213 bus changes, 0 dropped, 0 FIFO overflows.
+
+What the Amiga does on every selection: one write asserts SEL0 with the SIDE (and DIR) it
+wants; it holds them for the whole selection; then it releases SIDE, then DIR, then SEL0, in
+separate writes microseconds apart. A track read is one long selection (~224 ms, one
+revolution). Idle polls and each step are selections under 0.1 ms.
+
+| | |
+|---|---|
+| long selections (reads) with SIDE constant from select to release | **183 of 183** |
+| stream restarts landing inside a read | **0** |
+| reads starting with the wrong side streaming (3 ms grace) | **0 of 196** |
+| short selections where SIDE moves inside the hold | 144, all step sequences <0.1 ms |
+
+The firmware reacts to every SIDE edge, including the release writes and edges while
+deselected, so it restarts the stream after most selections -- but never during a read, and
+both runs read clean. **That is churn, not a fault, so it was not changed:** last night's
+SIDE change broke mounting for reasons never pinned down, and there is no failure here for a
+new one to fix. If an index-sensitive loader or write support ever needs the stream left
+alone, the model is: honour SIDE only while SEL0 is asserted, and ignore the release writes
+before the deselect. The sniffer data is enough to test that rule offline first.
+
+**FOUND ON THE WAY, AND IT BLOCKS WRITE SUPPORT: WGATE and WDATA read LOW (asserted) in
+every sample with the Amiga on**, write-protect asserted and nothing writing. A line that
+never moves produces no edges, which is consistent with 4b never capturing a real write.
+Unconfirmed hypothesis: the Amiga's WGATE/WDATA outputs are open-drain and rely on the
+drive's pull-ups, and this board has no resistors at all (see `bom.csv`) -- the '541's CMOS
+inputs are high-impedance, so a released line sits low. Measure first: J1 pin 22 (WDATA)
+and pin 24 (WGATE) to ground with the Amiga on; ~0 V supports it, ~5 V does not. The fix, if
+it holds, is hardware -- a pull-up on the J1 side of U2 (the '541 inputs are 5 V tolerant);
+the RP2350's internal pulls are on the wrong side of the buffer.
 
 ### 4b. The write path on real hardware, and a read error still unexplained — 2026-09-13
 

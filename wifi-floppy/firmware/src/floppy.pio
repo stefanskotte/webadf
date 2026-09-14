@@ -63,8 +63,45 @@ public wait_high:
     jmp pin idle        ; wait out the pulse before looking for the next one
     jmp wait_high
 
+; ---------------------------------------------------------------------------
+; bus_sniff: a logic analyser for the eight bus inputs. DIAGNOSTIC, only
+; loaded when built with -DWF_BUS_SNIFF=1.
+;
+; Samples GP2..GP9 (bit 0..7 = SEL0 SEL1 MTR DIR STEP WDATA WGATE SIDE) together
+; every 4 PIO cycles (~27 ns) and pushes the byte only when it differs from the
+; last one. The ORDER of pushed samples is therefore exact, which a GPIO ISR
+; cannot give: the SDK dispatches pending edges in pin order and each callback
+; reads the level late (HANDOFF 4c). Time comes from the ISR that drains the
+; FIFO, so it is late by the interrupt latency but never out of order.
+;
+; `push noblock` so sampling never pauses; a push into a full FIFO is dropped
+; and flagged in FDEBUG.RXSTALL, which the ISR reports.
+; ---------------------------------------------------------------------------
+.program bus_sniff
+    mov x, ~null        ; no 8-bit sample equals this: the first is always pushed
+.wrap_target
+sample:
+    mov isr, null
+    in pins, 8
+    mov y, isr
+    jmp x!=y, changed   ; unchanged: falls through the .wrap back to sample
+.wrap
+changed:
+    mov x, y
+    push noblock
+    jmp sample
+
 % c-sdk {
 #include "hardware/clocks.h"
+static inline void bus_sniff_program_init(PIO pio, uint sm, uint offset, uint base_pin) {
+    pio_sm_config c = bus_sniff_program_get_default_config(offset);
+    sm_config_set_in_pin_base(&c, base_pin);
+    sm_config_set_in_pin_count(&c, 8);
+    sm_config_set_in_shift(&c, false, false, 32);
+    sm_config_set_fifo_join(&c, PIO_FIFO_JOIN_RX);
+    sm_config_set_clkdiv(&c, 1.0f);
+    pio_sm_init(pio, sm, offset, &c);
+}
 static inline void step_dir_program_init(PIO pio, uint sm, uint offset,
                                          uint step_pin, uint dir_pin) {
     pio_sm_config c = step_dir_program_get_default_config(offset);
