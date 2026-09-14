@@ -2594,9 +2594,21 @@ and pin 24 (WGATE) to ground with the Amiga on; ~0 V supports it, ~5 V does not.
 it holds, is hardware -- a pull-up on the J1 side of U2 (the '541 inputs are 5 V tolerant);
 the RP2350's internal pulls are on the wrong side of the buffer.
 
-**NEXT BOARD REVISION: floppy-line pull-ups -- PENDING THE RESISTOR TEST, operator decision
-2026-09-14.** Roll these into the next PCB only once the test below confirms the cause; do
-not edit `generate_pcb.py` before then. Rev B as routed has no resistors at all.
+**NEXT BOARD REVISION: floppy-line pull-ups -- THE RESISTOR TEST CONFIRMED THE CAUSE
+(2026-09-15), operator decision 2026-09-14.** Rev B as routed has no resistors at all; the
+table below goes on the next PCB.
+
+*Result, rev A2 board, `WF_BUS_SNIFF` capture, Amiga powered on with no disk and left idle:*
+with 1 kΩ from J1 pin 24 to +5 V fitted, **WGATE read high in 339 of 339 samples over 61 s,
+with 0 edges** once the power-on storm (the first ~20 µs, one dropped-sample flag) had passed.
+Before the resistor it read low in every sample. So WGATE was floating, not driven low.
+In the same window, **WDATA read low in 339 of 339 with 0 edges, and so did MTR (J1 pin 16)**.
+A released MTR is high (motor off), and an idle Amiga with no disk never held the motor on
+for a full minute from power-on, so both look like the same floating-line signature WGATE had.
+SEL0, SEL1, DIR and STEP toggled normally (183, 68, 76 and 46 edges) and SIDE sat high:
+those are driven. **Not yet proven for WDATA and MTR** -- the check is the same test with
+1 kΩ fitted on pins 22 and 16. MTR reading "always on" is also why reads never noticed it.
+Capture: 360 records from power-on at 748.7 s to 811.8 s.
 
 *The test:* Amiga off, 1 kΩ from J1 pin 24 (WGATE) to +5 V (J2 pin 1); Amiga on, read WGATE
 from a `WF_BUS_SNIFF` capture. Reads high when idle -> the line was floating and the table
@@ -2612,8 +2624,9 @@ the 74LVC541A, whose inputs are 5 V tolerant, so 5 V pull-ups on the J1 side are
 
 | lines | J1 pins | priority |
 |---|---|---|
-| WGATE, WDATA | 24, 22 | required -- write support depends on them |
-| DIR, STEP, SIDE, MTR | 18, 20, 32, 16 | match OpenFlops and a real drive; these read fine today without |
+| WGATE, WDATA | 24, 22 | required -- write support depends on them (WGATE confirmed floating 2026-09-15; WDATA reads the same way) |
+| MTR | 16 | required -- reads low (motor on) permanently without one, 2026-09-15 capture |
+| DIR, STEP, SIDE | 18, 20, 32 | match OpenFlops and a real drive; these toggle and read fine today without |
 | SEL0 (SEL1 optional) | 10 (12) | OpenFlops pulls up only the select line in use |
 | INDEX, TRK0, WPROT, RDATA, RDY, CHNG | 8, 26, 28, 30, 34, 2 | drive-side termination; faster RDATA rising edge; FETs sink the extra 5 mA easily |
 
