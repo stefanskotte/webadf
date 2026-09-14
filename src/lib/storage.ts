@@ -226,3 +226,42 @@ export const imageStore: ImageStore = {
     await del(imageKey(sha1));
   },
 };
+
+// ---------------------------------------------------------------- Demozoo export
+/**
+ * Our own copy of Demozoo's weekly export, and the Amiga extract made from it.
+ * Two fixed keys, overwritten each import. Streamed both ways: the export is
+ * ~200 MB gzipped and nothing here may buffer it whole. Retries of a failed
+ * import read THIS copy, so Demozoo is never asked twice for one export.
+ */
+export type DemozooExportName = 'export.sql.gz' | 'amiga.json';
+
+export interface DemozooExportStore {
+  putStream(name: DemozooExportName, body: ReadableStream<Uint8Array>): Promise<void>;
+  putBytes(name: DemozooExportName, bytes: Uint8Array): Promise<void>;
+  readStream(name: DemozooExportName): Promise<ReadableStream<Uint8Array> | null>;
+}
+
+const demozooKey = (name: DemozooExportName) => `demozoo/${name}`;
+const demozooContentType = (name: DemozooExportName) =>
+  name === 'amiga.json' ? 'application/json' : 'application/gzip';
+
+export const demozooExportStore: DemozooExportStore = {
+  async putStream(name, body) {
+    await put(demozooKey(name), body, {
+      access: 'private', contentType: demozooContentType(name),
+      addRandomSuffix: false, allowOverwrite: true, multipart: true,
+    });
+  },
+  async putBytes(name, bytes) {
+    await put(demozooKey(name), Buffer.from(bytes), {
+      access: 'private', contentType: demozooContentType(name),
+      addRandomSuffix: false, allowOverwrite: true, multipart: true,
+    });
+  },
+  async readStream(name) {
+    const result = await get(demozooKey(name), { access: 'private', useCache: false });
+    if (!result || result.statusCode !== 200) return null;
+    return result.stream;
+  },
+};
