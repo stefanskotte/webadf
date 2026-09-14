@@ -11,6 +11,7 @@ import { matchIdentity, openretroSortTitle, type IdentityCandidate } from '@/lib
 import { applyEnrichment } from '@/lib/openretro-apply';
 import { ensureImage } from '@/lib/openretro-images';
 import { demozooMatchPhase } from '@/lib/demozoo/sweep';
+import { demozooImagePhase } from '@/lib/demozoo/images';
 
 /** Stop well inside the 300 s function limit rather than being killed mid-write. */
 const DEFAULT_BUDGET_MS = 240_000;
@@ -393,6 +394,7 @@ export async function sweep(budgetMs: number = DEFAULT_BUDGET_MS): Promise<Sweep
 
   // Demozoo (spec §5): after TOSEC and OpenRetro, inside the same budget.
   const demozooDone = spent() < budgetMs ? await demozooMatchPhase(spent, budgetMs, out) : false;
+  if (spent() < budgetMs) await demozooImagePhase(spent, budgetMs, out);
   out.done = matchDone && enrichDone && demozooDone;
   return out;
 }
