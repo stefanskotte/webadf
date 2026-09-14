@@ -157,6 +157,7 @@ COPY public.productions_production (id, title, notes, release_date_date, release
 131752	CYB_POV.TTP		1994-09-30	d	2015-01-30 11:48:21.747998+00	2015-09-02 18:20:44.233409+00	production	t	\N	\N	\N	\N	t	cyb pov ttp	f	\N	cyb pov ttp	f	f
 218264	state-of-the-art		1990-11-01	m	2019-07-19 21:59:19.842696+00	2019-07-19 21:59:19.842373+00	music	t	\N	janeway	\N	\N	t	state of the art	f	\N	state of the art	f	f
 243512	Alien Breed II: The Horror Continues		1993-10-30	d	2019-07-28 08:18:01.154783+00	2026-08-14 14:37:20.104524+00	production	t	\N	janeway	\N	\N	t	alien breed ii the horror continues	t	\N	alien breed ii the horror continues	f	f
+188557	Megademo 4		1988-10-22	d	2018-06-21 16:09:47.938241+00	2023-11-06 06:57:57.783408+00	production	t	\N	\N	\N	\N	t	megademo 000000004	t	\N	megademo 4	f	f
 737	Ray of Hope 2	This demo was given a review in the november 1991 diskmagazine <a href="http://demozoo.org/productions/705/">R.A.W 1</a>.	1991-09-07	d	2010-12-22 05:57:08.575443+00	2021-04-06 11:12:53.219294+00	production	t	\N	\N	\N	\N	t	ray of hope 000000002	t	\N	ray of hope 2	f	f
 710	Global Trash	Voted split 7th best demo of 1991 in [R.A.W 2](https://demozoo.org/productions/1343/) (february 1992).	1991-04-28	d	2010-12-12 10:25:41.436721+00	2022-11-05 06:03:52.77922+00	production	t	\N	\N	\N	\N	t	global trash	t	\N	global trash	f	f
 4162	Wayfarer	Reviewed in <a href="http://demozoo.org/productions/89261/">R.A.W 3</a> (june 1992). Voted #4 best trackmo in [The Charts 1](https://demozoo.org/productions/112906/) (febuary 1993).	1992-04-19	d	2011-04-20 12:03:37.597801+00	2025-03-02 10:22:02.539126+00	production	t	\N	\N	\N	\N	t	wayfarer	t	\N	wayfarer	f	f
@@ -170,6 +171,7 @@ COPY public.productions_production_platforms (id, production_id, platform_id) FR
 1440	737	5
 2281	4162	5
 14856	710	5
+177018	188557	5
 202326	218264	5
 227451	243512	5
 \.
@@ -180,8 +182,10 @@ COPY public.productions_production_types (id, production_id, productiontype_id) 
 1395	737	1
 8493	4162	1
 30934	710	1
+403688	188557	1
 437842	218264	14
 463270	243512	13
+536469	188557	9
 \.
 COPY public.productions_production_author_nicks (id, production_id, nick_id) FROM stdin;
 278634	131752	2324
@@ -190,15 +194,19 @@ COPY public.productions_production_author_nicks (id, production_id, nick_id) FRO
 1576	737	930
 9509	4162	7
 32956	710	106
+362404	188557	696
+362405	188557	88233
 393160	218264	74213
 419734	243512	248
 \.
 COPY public.demoscene_nick (id, releaser_id, name, abbreviation, differentiator) FROM stdin;
 7	3	Spaceballs	SPB	amiga
+696	658	Kefrens		
 106	101	The Silents	TSL	
 248	239	Fairlight	FLT	c64/amiga/pc/consoles
 930	870	Majic 12	M12	
 74213	66916	Glide		
+88233	78925	7up Crew	7UP	amiga
 \.
 COPY public.productions_screenshot (id, production_id, original_url, original_width, original_height, thumbnail_url, thumbnail_width, thumbnail_height, standard_url, standard_width, standard_height, source_download_id, data_source, janeway_id, janeway_suffix) FROM stdin;
 74	2	https://media.demozoo.org/screens/o/6c/d4/3b52.74.png	360	284	https://media.demozoo.org/screens/t/6c/d4/3b52.74.png	190	150	https://media.demozoo.org/screens/s/6c/d4/3b52.74.png	360	284	\N	\N	\N	\N
@@ -259,8 +267,13 @@ COPY public.productions_screenshot (id, production_id, original_url, original_wi
 198196	710	https://media.demozoo.org/screens/o/9b/a4/2176.jw1334d.png	360	284	https://media.demozoo.org/screens/t/9b/a4/2176.jw1334d.png	190	150	https://media.demozoo.org/screens/s/9b/a4/2176.jw1334d.png	360	284	\N	janeway	1334	d
 198350	710	https://media.demozoo.org/screens/o/ba/54/b53f.jw1334l.png	360	284	https://media.demozoo.org/screens/t/ba/54/b53f.jw1334l.png	190	150	https://media.demozoo.org/screens/s/ba/54/b53f.jw1334l.png	360	284	\N	janeway	1334	l
 200724	710	https://media.demozoo.org/screens/o/17/cc/f9d1.jw1334b.png	360	284	https://media.demozoo.org/screens/t/17/cc/f9d1.jw1334b.png	190	150	https://media.demozoo.org/screens/s/17/cc/f9d1.jw1334b.png	360	284	\N	janeway	1334	b
+207756	188557	https://media.demozoo.org/screens/o/c3/09/7fa4.jw93174.png	750	570	https://media.demozoo.org/screens/t/c3/09/7fa4.jw93174.png	197	150	https://media.demozoo.org/screens/s/c3/09/7fa4.jw93174.png	394	300	\N	janeway	93174	
+211138	188557	https://media.demozoo.org/screens/o/96/2a/f60c.jw4976.png	720	568	https://media.demozoo.org/screens/t/96/2a/f60c.jw4976.png	190	150	https://media.demozoo.org/screens/s/96/2a/f60c.jw4976.png	380	300	\N	janeway	4976	
 211568	710	https://media.demozoo.org/screens/o/e2/88/0163.jw1334a.png	360	284	https://media.demozoo.org/screens/t/e2/88/0163.jw1334a.png	190	150	https://media.demozoo.org/screens/s/e2/88/0163.jw1334a.png	360	284	\N	janeway	1334	a
+212075	188557	https://media.demozoo.org/screens/o/2e/55/9287.jw2375.png	720	568	https://media.demozoo.org/screens/t/2e/55/9287.jw2375.png	190	150	https://media.demozoo.org/screens/s/2e/55/9287.jw2375.png	380	300	\N	janeway	2375	
 213571	710	https://media.demozoo.org/screens/o/91/5b/8ea4.jw1334m.png	360	284	https://media.demozoo.org/screens/t/91/5b/8ea4.jw1334m.png	190	150	https://media.demozoo.org/screens/s/91/5b/8ea4.jw1334m.png	360	284	\N	janeway	1334	m
+214086	188557	https://media.demozoo.org/screens/o/aa/28/2b28.jw93171.png	750	570	https://media.demozoo.org/screens/t/aa/28/2b28.jw93171.png	197	150	https://media.demozoo.org/screens/s/aa/28/2b28.jw93171.png	394	300	\N	janeway	93171	
+214938	188557	https://media.demozoo.org/screens/o/3e/50/39bc.jw92743.png	750	570	https://media.demozoo.org/screens/t/3e/50/39bc.jw92743.png	197	150	https://media.demozoo.org/screens/s/3e/50/39bc.jw92743.png	394	300	\N	janeway	92743	
 215098	710	https://media.demozoo.org/screens/o/44/2e/6289.jw1334c.png	360	284	https://media.demozoo.org/screens/t/44/2e/6289.jw1334c.png	190	150	https://media.demozoo.org/screens/s/44/2e/6289.jw1334c.png	360	284	\N	janeway	1334	c
 216192	710	https://media.demozoo.org/screens/o/76/90/1364.jw1334k.png	360	284	https://media.demozoo.org/screens/t/76/90/1364.jw1334k.png	190	150	https://media.demozoo.org/screens/s/76/90/1364.jw1334k.png	360	284	\N	janeway	1334	k
 218607	710	https://media.demozoo.org/screens/o/2e/72/76bd.jw1334g.png	360	284	https://media.demozoo.org/screens/t/2e/72/76bd.jw1334g.png	190	150	https://media.demozoo.org/screens/s/2e/72/76bd.jw1334g.png	360	284	\N	janeway	1334	g

@@ -10,7 +10,11 @@ import { gzipLines } from '../src/lib/demozoo/lines';
 
 // Spike cases (spec §0): 9 Fingers, State of the Art, Wayfarer, Global Trash,
 // Ray of Hope 2, Glide's "state-of-the-art" (music), Alien Breed II cracktro.
-const KEEP = new Set(['89', '2', '4162', '710', '737', '218264', '243512']);
+// 188557 "Megademo 4" (Kefrens/7up Crew, 1988) covers spec §10: a real
+// production with several types (Demo, Pack) and several authors (Kefrens,
+// 7up Crew), found by scanning the local export for Amiga productions with
+// >=2 productiontype rows and >=2 author_nicks rows.
+const KEEP = new Set(['89', '2', '4162', '710', '737', '218264', '243512', '188557']);
 const TABLES = [
   'platforms_platform', 'productions_productiontype', 'productions_production',
   'productions_production_platforms', 'productions_production_types',

@@ -14,9 +14,18 @@ beforeAll(async () => {
 const prod = (id: number) => x.productions.find((p) => p.id === id);
 
 describe('extractAmiga on real Demozoo rows', () => {
-  it('keeps the seven Amiga productions and drops the non-Amiga one', () => {
+  it('keeps the eight Amiga productions and drops the non-Amiga one', () => {
     expect(x.productions.map((p) => p.id).sort((a, b) => a - b))
-      .toEqual([2, 89, 710, 737, 4162, 218264, 243512]);
+      .toEqual([2, 89, 710, 737, 4162, 188557, 218264, 243512]);
+  });
+
+  // SPEC §10: a real production with several types and several authors.
+  it('resolves every type and every author for a multi-type, multi-author production', () => {
+    expect(prod(188557)).toMatchObject({ title: 'Megademo 4' });
+    expect(prod(188557)!.types).toEqual(expect.arrayContaining(['Demo', 'Pack']));
+    expect(prod(188557)!.types.length).toBeGreaterThanOrEqual(2);
+    expect(prod(188557)!.groups).toEqual(expect.arrayContaining(['Kefrens', '7up Crew']));
+    expect(prod(188557)!.groups.length).toBeGreaterThanOrEqual(2);
   });
 
   it('resolves titles, years and groups (the spike\'s own readings)', () => {
