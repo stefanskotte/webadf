@@ -52,6 +52,7 @@ after plan 4a, rewritten again 2026-08-31 after plan 4b.**
 | **Image layout shift** | ✅ **done 2026-09-03.** The game page's cover and screenshots reserve their space; the library grid never had the bug; see 3k |
 | **Typeahead search** | ✅ **done, all 7 tasks, merged to `master` and live in production.** A Spotlight-style pill in both shells; migration 0012 applied; see 3h |
 | **Read-only ADF filesystem reader** | ✅ **done, all 10 tasks, `feat/adf-filesystem-reader`.** Reads 80.3% of the archive (49/61) against TOSEC's 45.9% and OpenRetro's 6.6%; see 3f |
+| **Demozoo identification** | ✅ **done 2026-09-14, all 16 tasks, on `feat/demozoo`, not merged.** Complements TOSEC for non-games: weekly import, nightly matching, automatic links, suggestions, review queue, screenshots; see 3af |
 | **Hardware** | rev A scrap (mirrored), **rev A2 in hand and working**, **rev B is current and unfabricated** — keepout moved to the antenna end, a silkscreen that carries lettering, D1 polarity marked. Respin deliberately on hold until a board is known to work; see 3s and 3x |
 
 **Current branch:** `master`, clean and pushed. Everything below is merged and live in
@@ -65,7 +66,7 @@ already has the disk mounted**, specced as a backlog entry in §4. Take it with 
 desk — its flag is inert until write-back exists, so it is
 only observable on hardware, and it needs a protocol answer for "same disk, changed flag" rather
 than a version bump that would force an unrequested ~2 MB re-fetch and remount.
-**Suite on `master`:** 464 vitest, `pnpm build` clean, **206 Playwright** — 201 desktop at
+**Suite on `master`:** 798 vitest (1 skipped) [measured on `feat/demozoo`, Task 16, 2026-09-14], `pnpm build` clean, **206 Playwright** — 201 desktop at
 1280×720 and 5 mobile at 390×844; `playwright.config.ts` now has two projects.
 
 **Known flake shape, so nobody debugs it twice:** the first two or three tests of a cold run can
@@ -1494,68 +1495,14 @@ separately.
 
   Out of scope unless asked: .lha file comments and Amiga protection bits, and nested archives.
 
-- **DEMOZOO: assessed 2026-09-13, NOT a quick add -- and the design decision is already
-  made for you if you want it to be.** The operator asked for it "if it's easy", noting
-  Demozoo is a non-profit that should not be pounded. Two facts settle the shape:
-
-  1. **Demozoo publishes a daily bulk dump**: `https://data.demozoo.org/demozoo-export.sql.gz`,
-     ~200 MB gzipped, a Postgres dump, refreshed daily (checked 2026-09-13). Downloading it
-     once and querying locally is the arrangement that puts NO load on them at all -- the
-     same shape `openretro-db.ts` already uses for FS-UAE's Amiga.sqlite, and the thing a
-     non-profit would actually prefer.
-  2. **Demozoo stores NO file hashes.** A production's `download_links` are URLs to
-     scene.org and Aminet, nothing more. So matching cannot be by content the way OpenRetro's
-     SHA-1 match is; it is title-based, with all the false-positive risk that carries.
-
-  **Why it is still worth doing, unlike the OpenRetro identity matcher.** That one was
-  measured and produced exactly one new match, because OpenRetro is a GAMES database and the
-  misses were demos. Demozoo is the demoscene database: the very titles that failed --
-  9 Fingers, State of the Art, Global Trash, Wayfarer, Ray of Hope 2 -- are its core
-  content, and they are distinctive enough that a title match is not the coin-flip it would
-  be for generic names. **Measure it before building it**, the same way the OpenRetro claim
-  was measured and overturned: count how many unenriched TOSEC-identified disks find exactly
-  one Amiga production by title.
-
-  **Why it is not easy.** The dump is a Postgres dump and this project has no local
-  Postgres, so using it means a restore step (Docker) plus an extraction into a compact
-  local index -- heavier than OpenRetro's SQLite, which `node:sqlite` reads with no
-  dependency at all. The API alternative is much less code but puts load on them, needs the
-  rolling-hour budget from `tosec-sweep.ts` and negative-result caching, and would be built
-  twice if the dump is adopted later. **Pick dump or API deliberately; it determines
-  everything else.** Amiga platform ids are 5 (OCS/ECS), 6 (AGA), 26 (PPC/RTG).
-
-  **SPIKE RUN 2026-09-14 -- measured, and two of the claims above are corrected.**
-  The 2026-09-14 export (200,800,986 bytes, one download) was read with a streaming Python
-  parser over its `COPY` blocks -- **no Postgres restore needed**, which removes the "why it is
-  not easy" objection above. 78,447 Amiga productions (platforms 5/6/26).
-
-  * **Correction: Demozoo DOES store hashes** -- `mirror_download(sha1, md5)` for files it
-    mirrors -- but only 438 of 84,560 Amiga download links are mirrored, and they are of the
-    download (zip/dms), not the ADF. **0 of the 40 live disks matched by hash.** Dead route.
-  * **Title matching is dangerous on games.** Unique title hits for already-identified
-    GAMES are wrong: Alien Breed II -> a Fairlight *cracktro*; Lemmings and Project-X ->
-    cracktros and music. Demozoo lists the scene releases around a game, not the game.
-  * **The rule that works: TOSEC set is "Demos" AND the Demozoo production type is a
-    demo-kind (Demo, Intro, sized intros, Musicdisk, Diskmag, Slideshow).** On the live
-    library: 5 of 5 TOSEC demos unique and correct by eye (9 Fingers, State of the Art,
-    Wayfarer -> Spaceballs; Global Trash -> The Silents; Ray of Hope 2 -> Majic 12), 8 non-demo
-    titles correctly skipped, 8-53 screenshots each.
-  * **At scale, across all 2,826 TOSEC Amiga demo titles:** 1,502 unique (53%), 304
-    ambiguous (11%), 1,020 none (36%). **Precision check** where TOSEC names a group: the
-    unique match names the same group in **270 of 304 (89%)**; year agrees in 252 of 304.
-    Some disagreements are spelling (3 Little Elks / "threelittleelks"), some are real
-    (Millions by Beyond -> Millions by Abyss). **Title-only is wrong ~1 time in 10**, which
-    this codebase's standing rule ("a wrong title is worse than a missing one") does not
-    accept for automatic application -- so a second signal, or a human confirmation, is
-    needed. Most of this archive's demo entries carry no TOSEC year or group to check.
-
-  **SPIKE RUN 2026-09-14 (gate + first import), on this Mac against the live production
-  DB, from the same local export:** EXTRACT 5,402 ms, rss 857 MB (gate: >200,000 ms or
-  >1,500 MB stops); 78,447 productions, 79,180 screenshots -- both well inside the
-  70,000-90,000 gate and matching the earlier spike exactly. WRITE 137,656 ms, one run,
-  result `done` (the daily cron budgets 240,000 ms and can resume across days if it ever
-  does not finish in one). `/api/cron/demozoo` is now registered in `vercel.ts`
-  (30 1 * * *, before the nightly scan).
+- ~~**DEMOZOO: assessed 2026-09-13, NOT a quick add -- and the design decision is already
+  made for you if you want it to be.**~~ **DONE 2026-09-14 — see 3af.** Complements TOSEC for
+  everything that is not a game (demos, intros, diskmags, musicdisks, tools): a weekly bulk
+  import, a nightly matching phase, automatic links, a suggestion review queue, screenshots.
+  The two 2026-09-13/14 spikes that justified building it (daily bulk dump needs no Postgres
+  restore; title matching is dangerous on games but works at ~89% precision on demos) are
+  superseded by 3af's acceptance numbers against the real matcher and the live library —
+  see there for the full account, the timing gate, and what stayed out of scope.
 
 - **Enrich demos and applications from a source that actually has them.** Measured 2026-09-11
   (see 3ad): of the TOSEC-identified blobs OpenRetro cannot enrich, essentially all are
@@ -3390,6 +3337,131 @@ Nested archives and file comments are out of scope by decision, not oversight.
 **Verified:** 649 vitest (39 in the archive module alone), the e2e drops a real `lha`-produced
 fixture and asserts ON THE BYTES read back out of the stored image -- including that an
 excluded member is absent from the DISK rather than merely greyed out in a list.
+
+### 3af. Demozoo identification — DONE 2026-09-14, all 16 tasks, on `feat/demozoo`, not merged
+
+Design: `docs/superpowers/specs/2026-09-14-demozoo-design.md`. Plan: `docs/superpowers/plans/
+2026-09-14-demozoo.md`. Execution ledger with every ruling and its cost-if-wrong:
+`.superpowers/sdd/2026-09-14-demozoo/progress.md`.
+
+**What shipped.** Demozoo complements TOSEC for everything that is not a game -- demos, intros,
+diskmags, musicdisks, tools -- the majority of a demoscene-heavy Amiga archive TOSEC and
+OpenRetro cannot enrich (3ad). A weekly cron (`/api/cron/demozoo`, daily schedule, gated to one
+fetch per 7 days) downloads Demozoo's ~200 MB bulk export into our Blob store and extracts only
+Amiga productions into `demozoo_*` tables. A new nightly sweep phase matches every TOSEC-
+identified or unidentified blob against those productions by exact title key (spec §5): TOSEC
+games are always skipped; a single title match whose year or publisher/group agrees becomes an
+**automatic** link (global, on the blob); anything else with a title, volume-name, or filename
+hit becomes a **suggestion** a person resolves through a review queue (single-candidate rows
+pre-ticked, bulk accept chunked at 50). Screenshots are copied into our image store one at a
+time, capped at 60/hour, following `openretro-images.ts`'s politeness rules exactly. Unlink
+restores the game's TOSEC/filename-derived title. A hand-edited title always survives a link.
+
+**Timing gate (Task 7, measured against the live production DB):** EXTRACT 5,402 ms, RSS
+857 MB (gate: fails above 200,000 ms or 1,500 MB) for 78,447 productions and 79,180
+screenshots -- both inside the 70,000-90,000 expected range. WRITE (first import) 137,656 ms,
+one run, result `done` (the daily cron budgets 240,000 ms and can resume across days if it
+doesn't finish in one). The live cursor after that run: `step=applied`,
+`last_attempt_at` 2026-09-14 18:31 UTC, `etag` null -- **the deployed cron idles until
+~2026-09-21 18:31 UTC, then makes one unconditional fetch** (no `ETag` was returned to make a
+conditional request possible).
+
+**Task 16's sweep (2026-09-14, live library):** calling `sweep()` in a loop against the live
+DB converged in 1 iteration, `done: true`, with every demozoo counter at 0 -- the library was
+already fully matched (an admin-triggered sweep had run earlier the same day, after the
+import's `applied_at` of 18:34:05 UTC; `demozoo_checked_at` was already set on all 59 live
+blobs). The live totals that sweep converged to, read directly from the database: **1 applied,
+6 suggested, 19 skipped_game, 33 none** (out of 59 blobs); TOSEC matched 32/59, OpenRetro
+enriched 16/59; **28 Demozoo screenshots stored**, 0 failed, 7 suggestion rows across 6 blobs
+(one blob has 2 candidates), against 78,447 imported productions.
+
+**Live library per-blob outcome, by title, for this org (sfs@enhance-it.dk's library):**
+
+| Title | Demozoo outcome |
+|---|---|
+| 9 Fingers (2 disks) | suggested |
+| Global Trash | suggested |
+| State of the Art | suggested |
+| Wayfarer | suggested |
+| Ray of Hope 2 | **applied** → Demozoo production 737, "Ray of Hope 2" |
+| Alien Breed II - The Horror Continues (4 disks), Apidya (2), Assassin v1 (2), Giana Sisters - Special Edition (2), Project-X (4 disks) | skipped_game (TOSEC identified these as games; Demozoo never answers for a game) |
+| World Construction Set v2.04 (7 disks), the five amiga-wb31_\* Workbench disks | none (no candidate; these are an application and OS install disks, outside Demozoo's demo/intro/diskmag coverage) |
+
+The one **applied** (automatic) link was eyeballed against its local `demozoo_productions` row
+(not demozoo.org, per the acceptance step's instruction): title "Ray of Hope 2" against a game
+already titled "Ray of Hope 2" -- correct, and matches the 2026-09-14 spike's by-eye check
+(Ray of Hope 2 → Majic 12). **No wrong automatic link on the live library; the plan's STOP
+condition was not triggered.** The other two orgs on this database hold 3 and 4 disks
+respectively (skipped_game / suggested / none only, no automatic links); their titles are not
+named here, by instruction -- counts only: `skipped_game: 3` for one, `suggested: 1, none: 1,
+skipped_game: 2` for the other.
+
+**Acceptance numbers (Task 16 Step 2) against the spike, final matching rule, over 7,412
+distinct non-game TOSEC `(set_name, title, year, publisher)` rows:**
+
+| | applied | suggested (single) | suggested (multiple) | none |
+|---|---|---|---|---|
+| **All non-game sets** (7,412) | 386 (5.2%) | 1,451 (19.6%) | 395 (5.3%) | 5,180 (69.9%) |
+| **Demos set only** (2,881) | 291 (10.1%) | 1,299 (45.1%) | 375 (13.0%) | 916 (31.8%) |
+
+Combining `applied` + `suggested (single)` as the spike's "unique" bucket (the spike predates
+the automatic/suggested split): **1,590 / 2,881 = 55.2%** unique-like, **13.0%** ambiguous
+(multi-candidate), **31.8%** none, against the spike's 53% / 11% / 36% -- **all three within
+±2.2, +2.0, and −4.2 percentage points of the spike, well inside the ±10pp bar**; no explanation
+requirement triggered, but the expected cause was checked anyway: **the broader §5.2 candidate
+filter (any non-game `production`, not the spike's Demo/Intro/Musicdisk/Diskmag/Slideshow type
+allowlist) admits 6,836 extra candidate rows** across all sets that the spike's allowlist would
+have excluded (graphics/music-adjacent production types, coverdisk-shaped entries, etc.) --
+consistent with the small increase in matched/suggested share over the spike's numbers.
+
+**By set** (non-Demos sets, for completeness): Applications PD 839 titles (22 applied / 78
+suggested-single / 9 suggested-multi / 730 none); Applications 2,252 (54/54/7/2,137);
+Coverdisks 987 (0/0/0/987 -- expected, coverdisk titles like "Amiga Format Coverdisk 55" don't
+title-match Demozoo productions); Educational 453 (19/20/4/410).
+
+**The five corrections made during implementation, and the rulings that extend them, are in
+the spec's "Corrections made during implementation" section** (`docs/superpowers/specs/
+2026-09-14-demozoo-design.md`): the daily-cron/weekly-fetch split, the two-step resumable
+import, `text[]` columns, `(game_id, production_id)` dismissals, `sha1(standard_url)` image
+keys, plus R5 (Demozoo ranks above TOSEC once linked), R11 (unlink always re-derives), R16
+(Unlink reachable even with no effective link), R17 (bulk accept chunked and capped), and R7
+(the trigram search indexes).
+
+**Out of scope, per spec §11 and unchanged:** Pouet (the other scene database, a candidate if
+Demozoo coverage proves short); fuzzy title matching (exact keys only -- a wrong title is worse
+than a missing one); identification from disk contents beyond the volume name; the live
+Demozoo API (the bulk export makes per-lookup load on a non-profit unnecessary).
+
+**Things that will bite you here:**
+
+- **Demozoo ranks above TOSEC for title/year/publisher once linked (R5, revised).** A later
+  TOSEC DAT re-import does NOT retitle a Demozoo-linked game back to TOSEC's spelling --
+  `tosec-apply.ts`'s retitle guard now excludes `metadata_source = 'demozoo'` specifically.
+  If you need TOSEC's value back, that's what Unlink is for.
+- **Unlink is the repair path and always re-derives (R11/R16).** It doesn't just clear a
+  confirmation: whenever a game's `metadata_source` is `'demozoo'`, Unlink recomputes the
+  effective link, dismisses it if one remains, and unconditionally re-derives title/year/
+  publisher from the next machine source. It's also how you fix a game stuck showing a
+  Demozoo title with no effective link (reachable if a later import moves a blob off `applied`
+  or deletes a production) -- the suggestion card offers Unlink in that state too, not just
+  when linked.
+- **Bulk accept is chunked at 50, capped at 100 per request (R17).** The review queue's
+  "Accept selected" posts sequential chunks of 50 and sums the result; the API route itself
+  refuses more than 100 items in one call (`maxDuration = 300`). A very large accept takes
+  several round trips; nothing is lost if one is cut off -- each confirm is idempotent and the
+  remainder just stays visibly in the queue.
+- **The deployed cron idles until ~2026-09-21 18:31 UTC, then makes one unconditional fetch.**
+  No `ETag` came back from the first fetch, so the conditional-request path (§3.1) has not
+  actually been exercised yet; watch the next scheduled run's log for a `304` or a `200`.
+- **`db:push` drops undeclared indexes.** The `games.title`/`games.publisher` trigram indexes
+  from migration 0012 were never declared in `catalog.ts` and were found missing from the live
+  DB during this plan's Task 1 (R7) -- `drizzle-kit push` diffs against the schema files, not
+  migration history, so anything created outside Drizzle's own tracking is drift it will
+  silently drop on the next push. They're declared now; the lesson generalizes to any future
+  hand-written migration SQL.
+- **The ~200 MB export is copied into the Blob store weekly**, not queried live -- `demozoo/
+  export.sql.gz`, overwritten each fetch, with stage 2 extracting from OUR copy so a stage-2
+  failure or timeout never triggers a second request to `data.demozoo.org`.
 
 ## Known accepted risks
 

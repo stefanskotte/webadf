@@ -256,3 +256,52 @@ Independent checks, not own-fixture agreement:
 - **Identification from disk contents** beyond the volume name (bootblock text, file names).
 - **The live Demozoo API** — the bulk export makes it unnecessary, and it would put per-lookup
   load on a non-profit.
+
+## Corrections made during implementation
+
+1. **Cron runs daily and fetches weekly** (`/api/cron/demozoo`, `30 1 * * *`): a weekly cron could not resume a timed-out import for a week. `demozoo_import.last_attempt_at` gates the fetch to once per 7 days, including after a failure.
+2. **Stage 2 is two resumable steps:** `extract` (our copy → `demozoo/amiga.json`) and `write` (chunked upserts, offsets in the cursor).
+3. **`types` and `groups` are `text[]`** — group names contain commas.
+4. **Dismissals are `(game_id, production_id)`** with a cascading FK to `games`, not `(org_id, sha256, production_id)`.
+5. **Screenshot keys are `sha1(standard_url)`**, so `imageStore` and `/api/images/<sha1>` serve them unchanged.
+6. Timing gate and acceptance numbers: see HANDOFF (dated).
+
+Rulings made during implementation that also correct or extend the design above (full detail
+and cost-if-wrong in the plan's execution ledger, `progress.md`):
+
+- **R5 (revised): Demozoo ranks above TOSEC for title/year/publisher, not merely alongside it.**
+  §6.1 said a link updates the game "only where machines own the value" using the existing
+  `MACHINE_SOURCES` guard, with `'demozoo'` added to that set alongside `'tosec'` and
+  `'openretro'`. In practice that let a later TOSEC re-match (every DAT import, every e2e run)
+  retitle a Demozoo-linked game back to TOSEC's spelling, silently discarding a confirmed or
+  automatic Demozoo identification. The fix: `tosec-apply.ts`'s retitle guard now excludes
+  `'demozoo'` specifically (`TOSEC_RETITLABLE_SOURCES`), so once Demozoo has written a title it
+  stands until a human unlinks it. `'demozoo'` stays in `MACHINE_SOURCES` for merge absorption
+  (R6) and the Demozoo apply guard itself.
+- **R11: Unlink is the repair path and always re-derives.** §6.3 described unlink as clearing
+  the org confirmation or adding a dismissal. Implementation makes it unconditional: whenever
+  `games.metadata_source = 'demozoo'`, unlink clears the confirmation (if any), recomputes the
+  effective link and dismisses it if one remains, and *always* re-derives title/year/publisher
+  from the next machine source — no early return. This makes unlink safe to retry and the only
+  way to repair a game stuck showing a Demozoo title with no effective link (reachable after a
+  later import moves a blob off `applied` or deletes a production). `applyAutomaticLink` also
+  skips a game that has another disk whose blob is `applied` to a *different* production, so
+  disagreeing multi-disk demos never get an automatic title.
+- **R16: the suggestion card offers Unlink even with no effective link**, whenever
+  `game.metadataSource === 'demozoo'` — the same stuck-title state R11 made repairable needs a
+  button to reach it from the UI.
+- **R17: the bulk-accept route caps at 100 items per request** (`maxDuration = 300`), not
+  unbounded — §8's review queue posts selected items in sequential chunks of 50 and sums the
+  accepted count, refreshing after the last chunk (or the first failed one). Each confirm is
+  idempotent, so a cut-off chunk just leaves the remainder visibly still in the queue.
+- **R7: the pre-existing trigram search indexes on `games.title`/`games.publisher` are now
+  declared in the Drizzle schema.** They were created directly by migration 0012 and never
+  added to `catalog.ts`, so `drizzle-kit push` (which diffs against the schema files, not the
+  migration history) silently dropped them on the live DB before this plan's Task 1 even ran.
+  Declaring them stops every future `db:push` from re-dropping them; search still worked
+  either way (seq-scan is instant at this archive's size), so nothing was user-visible.
+
+## Acceptance numbers (2026-09-14)
+
+See HANDOFF §3af for the timing gate, the recomputed acceptance numbers against the spike, and
+the live library's per-blob outcome.
