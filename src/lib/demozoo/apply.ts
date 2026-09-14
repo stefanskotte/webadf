@@ -91,10 +91,26 @@ async function productionExists(productionId: number): Promise<boolean> {
   return rows.length > 0;
 }
 
+/**
+ * R15 (fix round 1), defence in depth: spec §5.3.1, a TOSEC-recognised game
+ * never gets a Demozoo link. The game page never offers Link/Accept for one
+ * (listReviewQueue/getGameDemozoo already exclude it), but nothing stops a
+ * crafted POST straight at the confirm/accept route from naming its id, so
+ * this check has to hold here too, org-scoped like every other disks join
+ * (D-5-5).
+ */
+async function hasSkippedGameDisk(orgId: string, gameId: string): Promise<boolean> {
+  const rows = await getDb().select({ sha256: disks.sha256 }).from(disks)
+    .innerJoin(blobs, eq(blobs.sha256, disks.sha256))
+    .where(and(eq(disks.gameId, gameId), eq(disks.orgId, orgId), eq(blobs.demozooState, 'skipped_game')))
+    .limit(1);
+  return rows.length > 0;
+}
+
 /** Use this. Org-scoped: stored on this org's game only. false = not found. */
 export async function confirmDemozoo(orgId: string, gameId: string, productionId: number): Promise<boolean> {
   const game = await orgGame(orgId, gameId);
-  if (!game || !(await productionExists(productionId))) return false;
+  if (!game || (await hasSkippedGameDisk(orgId, gameId)) || !(await productionExists(productionId))) return false;
   const db = getDb();
   await db.update(games).set({ demozooProductionId: productionId, demozooLinkSource: 'confirmed' })
     .where(and(eq(games.id, gameId), eq(games.orgId, orgId)));

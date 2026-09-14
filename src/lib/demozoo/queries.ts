@@ -8,7 +8,7 @@
 // already load-bearing in listGames, withDerived and search(); this file adds
 // it at each new site that reaches disks with an org in scope.
 
-import { and, asc, eq, ilike, inArray, isNotNull, isNull, like, or } from 'drizzle-orm';
+import { and, asc, eq, ilike, inArray, isNotNull, isNull, like, or, sql } from 'drizzle-orm';
 import { getDb } from '@/db';
 import { games, disks, blobs } from '@/db/schema/catalog';
 import { demozooProductions, demozooImages, demozooSuggestions, demozooDismissals } from '@/db/schema/demozoo';
@@ -16,6 +16,7 @@ import type { CoverCandidate } from '@/lib/cover-pick';
 import type { SuggestionSource } from './match';
 import { effectiveLink, type LinkSource } from './effective';
 import { titleKey } from './title-key';
+import { foldReviewQueue, type QueueSuggestionRow } from './review-fold';
 
 export const demozooUrl = (id: number) => `https://demozoo.org/productions/${id}/`;
 
@@ -94,6 +95,9 @@ export async function getGameDemozoo(
   if (link) {
     const prods = await loadProductions([link.productionId]);
     const production = prods.get(link.productionId);
+    // No FK from games/blobs to demozoo_productions (a weekly re-import
+    // prunes stale rows): a linked production that no longer exists shows no
+    // link at all, never a broken one.
     return { link: production ? { production, source: link.source } : null, suggestions: [], isGame };
   }
   if (shas.length === 0 || isGame) return { link: null, suggestions: [], isGame };
@@ -108,10 +112,12 @@ export async function getGameDemozoo(
   const prods = await loadProductions([...sourcesOf.keys()]);
   return {
     link: null,
+    // Production id tiebreaker: sourcesOf's Map iterates in insertion order
+    // (row arrival order), which is not a stable ordering on its own.
     suggestions: [...sourcesOf].flatMap(([id, sources]) => {
       const production = prods.get(id);
       return production ? [{ production, sources }] : [];
-    }),
+    }).sort((a, b) => a.production.id - b.production.id),
     isGame: false,
   };
 }
@@ -141,40 +147,79 @@ export async function demozooCovers(orgId: string, gameIds: string[]): Promise<M
 }
 
 /**
- * Games with an unresolved suggestion (no confirmed/automatic link, no
- * dismissal yet), single-candidate items first -- those are the quickest to
- * clear. Fixed at 5 queries regardless of the queue's size: the main select,
- * linkInputs' two (auto + dismissed), loadProductions' two (productions +
- * screenshots) -- no per-row query loop, since this runs on every /library
- * page load for the Task 14 badge.
+ * Every (game, suggested production) row a review queue could possibly show:
+ * this org's games, excluding any with a CONFIRMED link (nothing left to
+ * review) and, per spec §5.3.1, any game holding a disk TOSEC already
+ * identified as a game (`demozoo_state = 'skipped_game'`) -- checked with a
+ * NOT EXISTS scoped on BOTH disks.gameId and disks.orgId (D-5-5), same as
+ * `linkInputs`' disks join.
+ *
+ * Per-suggestion dismissal and the automatic-link drop are NOT applied here:
+ * both need `linkInputs`, and are left to `foldReviewQueue` so the exact same
+ * predicate produces both `listReviewQueue` and `countReviewQueue` (R15) --
+ * duplicating it per caller is exactly what would let them drift apart.
  */
-export async function listReviewQueue(orgId: string): Promise<ReviewItem[]> {
-  const db = getDb();
-  const rows = await db.select({ gameId: games.id, gameTitle: games.title, productionId: demozooSuggestions.productionId, source: demozooSuggestions.source })
+async function reviewQueueRows(orgId: string): Promise<QueueSuggestionRow[]> {
+  const rows = await getDb().select({
+    gameId: games.id, gameTitle: games.title,
+    productionId: demozooSuggestions.productionId, source: demozooSuggestions.source,
+  })
     .from(games)
     .innerJoin(disks, and(eq(disks.gameId, games.id), eq(disks.orgId, orgId)))
     .innerJoin(demozooSuggestions, eq(demozooSuggestions.sha256, disks.sha256))
-    .leftJoin(demozooDismissals, and(eq(demozooDismissals.gameId, games.id), eq(demozooDismissals.productionId, demozooSuggestions.productionId)))
-    .where(and(eq(games.orgId, orgId), isNull(games.demozooLinkSource), isNull(demozooDismissals.gameId)));
+    .where(and(
+      eq(games.orgId, orgId),
+      isNull(games.demozooLinkSource),
+      sql`not exists (
+        select 1 from disks d2
+        inner join blobs b2 on b2.sha256 = d2.sha256
+        where d2.game_id = ${games.id} and d2.org_id = ${orgId} and b2.demozoo_state = 'skipped_game'
+      )`,
+    ));
+  return rows.map((r) => ({ ...r, source: r.source as SuggestionSource }));
+}
+
+/**
+ * Games with an unresolved suggestion (no confirmed/automatic link, no
+ * dismissal yet, no TOSEC-recognised disk), single-candidate items first --
+ * those are the quickest to clear. Fixed at 5 queries regardless of the
+ * queue's size: `reviewQueueRows`, `linkInputs`' two (auto + dismissed),
+ * `loadProductions`' two (productions + screenshots) -- no per-row query
+ * loop, since this runs on every /library page load for the Task 14 badge.
+ */
+export async function listReviewQueue(orgId: string): Promise<ReviewItem[]> {
+  const rows = await reviewQueueRows(orgId);
   if (rows.length === 0) return [];
 
   const gameIds = [...new Set(rows.map((r) => r.gameId))];
   const { autoOf, dismissedOf } = await linkInputs(orgId, gameIds);
-  const prods = await loadProductions([...new Set(rows.map((r) => r.productionId))]);
+  const groups = foldReviewQueue(rows, autoOf, dismissedOf);
+  if (groups.length === 0) return [];
 
-  const byGame = new Map<string, ReviewItem>();
-  for (const r of rows) {
-    if (effectiveLink({ demozooProductionId: null, demozooLinkSource: null }, autoOf.get(r.gameId) ?? [], dismissedOf.get(r.gameId) ?? new Set())) continue;
-    const production = prods.get(r.productionId);
-    if (!production) continue;
-    const item = byGame.get(r.gameId) ?? { gameId: r.gameId, gameTitle: r.gameTitle, suggestions: [] };
-    const existing = item.suggestions.find((s) => s.production.id === r.productionId);
-    if (existing) { if (!existing.sources.includes(r.source as SuggestionSource)) existing.sources.push(r.source as SuggestionSource); }
-    else item.suggestions.push({ production, sources: [r.source as SuggestionSource] });
-    byGame.set(r.gameId, item);
-  }
-  return [...byGame.values()].sort((a, b) =>
-    (a.suggestions.length === 1 ? 0 : 1) - (b.suggestions.length === 1 ? 0 : 1) || a.gameTitle.localeCompare(b.gameTitle));
+  const prods = await loadProductions([...new Set(groups.flatMap((g) => g.entries.map((e) => e.productionId)))]);
+  return groups.flatMap((g) => {
+    const suggestions = g.entries.flatMap((e) => {
+      const production = prods.get(e.productionId);
+      return production ? [{ production, sources: e.sources }] : [];
+    });
+    return suggestions.length > 0 ? [{ gameId: g.gameId, gameTitle: g.gameTitle, suggestions }] : [];
+  });
+}
+
+/**
+ * The badge's count: how many games `listReviewQueue` would return, without
+ * paying for `loadProductions`' two extra queries -- the badge shows a
+ * number, not titles or screenshots. Shares `reviewQueueRows` and
+ * `foldReviewQueue` with `listReviewQueue`, so the two can never disagree
+ * about which games are in the queue (review-fold.test.ts pins the fold
+ * itself). 3 queries total: `reviewQueueRows`, `linkInputs`' two.
+ */
+export async function countReviewQueue(orgId: string): Promise<number> {
+  const rows = await reviewQueueRows(orgId);
+  if (rows.length === 0) return 0;
+  const gameIds = [...new Set(rows.map((r) => r.gameId))];
+  const { autoOf, dismissedOf } = await linkInputs(orgId, gameIds);
+  return foldReviewQueue(rows, autoOf, dismissedOf).length;
 }
 
 /**
@@ -184,19 +229,32 @@ export async function listReviewQueue(orgId: string): Promise<ReviewItem[]> {
  * an inserted backslash from an earlier step is never re-escaped by a later
  * one -- compared once here rather than imported, since this file only needs
  * ILIKE, not the normalize/likePattern wrapper search.ts uses.
+ *
+ * Ranked in SQL, like src/lib/search.ts's CASE, and total ahead of LIMIT 10:
+ * an exact titleKey match, then a titleKey prefix, then everything else
+ * (title-substring-only matches), then title, then id -- the trailing id is
+ * not decoration, matching search.ts's own reasoning: a non-unique ORDER BY
+ * paired with a LIMIT has already produced bugs in this codebase.
  */
 export async function searchDemozoo(q: string): Promise<DemozooProductionView[]> {
   const trimmed = q.trim();
   if (trimmed.length < 2) return [];
   const escaped = trimmed.replace(/[\\%_]/g, (c) => `\\${c}`);
   const key = titleKey(trimmed);
+  // No titleKey signal at all (e.g. the query is only punctuation): every row
+  // ranks equally here and title/id alone decide the order.
+  const rank = key
+    ? sql`(case when ${demozooProductions.titleKey} = ${key} then 0
+                when ${demozooProductions.titleKey} like ${`${key}%`} then 1
+                else 2 end)`
+    : sql`2`;
   const rows = await getDb().select({ id: demozooProductions.id }).from(demozooProductions)
     .where(and(
       eq(demozooProductions.supertype, 'production'),
       eq(demozooProductions.isGame, false),
       or(ilike(demozooProductions.title, `%${escaped}%`), ...(key ? [like(demozooProductions.titleKey, `${key}%`)] : [])),
     ))
-    .orderBy(asc(demozooProductions.title))
+    .orderBy(rank, asc(demozooProductions.title), asc(demozooProductions.id))
     .limit(10);
   const prods = await loadProductions(rows.map((r) => r.id));
   return rows.map((r) => prods.get(r.id)!).filter(Boolean);
