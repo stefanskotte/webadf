@@ -23,6 +23,10 @@ on:
 permissions:
   contents: read
 
+# Action majors are the first ones whose runtime is Node 24. The v4s ran on
+# Node 20, which GitHub deprecated and was already forcing onto Node 24 with a
+# warning on every run -- working, until Node 20 is removed from the runners.
+
 env:
   PICO_SDK_TAG: '2.3.0'                   # CMakeLists refuses anything older
   PICO_BOARD: pimoroni_pico_plus2_w_rp2350
@@ -31,7 +35,7 @@ jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0                  # git describe needs the history
 
@@ -46,7 +50,7 @@ jobs:
       # PICO_SDK_TAG does.
       - name: Cache pico-sdk
         id: sdk-cache
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: pico-sdk
           key: pico-sdk-${{ env.PICO_SDK_TAG }}
@@ -123,7 +127,7 @@ jobs:
           PY
           cat build/manifest.json
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: wifi-floppy-${{ steps.ver.outputs.value }}
           path: |
