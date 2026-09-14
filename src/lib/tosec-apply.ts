@@ -10,13 +10,16 @@
 // Duplicates are therefore resolved by CONTENT: two games in one org with the
 // same (sortTitle, year) are the same game, and are merged.
 
-import { and, eq, inArray, isNull, ne } from 'drizzle-orm';
+import {
+  and, eq, inArray, isNull, ne, sql,
+} from 'drizzle-orm';
 import type { BatchItem } from 'drizzle-orm/batch';
 import { getDb } from '@/db';
 import { games, disks } from '@/db/schema/catalog';
 import { devices } from '@/db/schema/devices';
 import { tosecEntries } from '@/db/schema/tosec';
 import { collectionGames } from '@/db/schema/collections';
+import { demozooDismissals } from '@/db/schema/demozoo';
 
 // Sources this system writes for itself. Anything else means a human decided
 // it, and a human's row is never deleted by a sweep -- the Authority rule
@@ -190,6 +193,47 @@ async function mergeDuplicates(orgId: string, sortTitle: string, year: number | 
     stmts.push(db.update(collectionGames)
       .set({ gameId: survivor })
       .where(eq(collectionGames.gameId, gone)));
+
+    // Demozoo dismissals ("not this production") are per-org-game, exactly
+    // like collectionGames above, and the same PRIMARY KEY violation applies:
+    // (game_id, production_id) means a repoint that lands on a production the
+    // survivor already dismissed would collide. Delete-then-update, same
+    // reason, same order, for the same atomicity consequence.
+    stmts.push(db.delete(demozooDismissals).where(and(
+      eq(demozooDismissals.gameId, gone),
+      inArray(
+        demozooDismissals.productionId,
+        db.select({ id: demozooDismissals.productionId })
+          .from(demozooDismissals)
+          .where(eq(demozooDismissals.gameId, survivor)),
+      ),
+    )));
+    stmts.push(db.update(demozooDismissals)
+      .set({ gameId: survivor })
+      .where(eq(demozooDismissals.gameId, gone)));
+
+    // A Demozoo CONFIRMATION is a human decision (spec §6.2) and the Authority
+    // rule protects it the same way protectedRows above protects title/year/
+    // publisher: it must not be silently lost because the row that happened
+    // to carry it was the one absorbed. Unlike title/year/publisher, a
+    // confirmation is not what decided survivor vs. absorbed above -- a game
+    // can be MACHINE_SOURCES-titled and still carry a human's confirmed link
+    // (confirmDemozoo does not touch metadataSource) -- so it needs its own
+    // carry-forward here, done as a single correlated UPDATE rather than a
+    // read-then-write because this statement runs inside the same atomic
+    // batch as every other repoint for `gone`, before the DELETE below removes
+    // the row these subqueries read from. Only fires when the survivor has NO
+    // confirmation of its own (demozoo_link_source IS NULL) and `gone` has
+    // one; if both have one, the survivor's stands, matching how a doubly
+    // human-edited pair is left alone above.
+    stmts.push(db.update(games).set({
+      demozooProductionId: sql`(SELECT demozoo_production_id FROM games WHERE id = ${gone})`,
+      demozooLinkSource: sql`(SELECT demozoo_link_source FROM games WHERE id = ${gone})`,
+    }).where(and(
+      eq(games.id, survivor),
+      isNull(games.demozooLinkSource),
+      sql`(SELECT demozoo_link_source FROM games WHERE id = ${gone}) IS NOT NULL`,
+    )));
 
     stmts.push(db.delete(games).where(and(eq(games.id, gone), ne(games.id, survivor))));
   }
