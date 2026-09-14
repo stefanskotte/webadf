@@ -1,6 +1,7 @@
 import { requireOrg } from '@/lib/session';
 import { listGames, countAllGames } from '@/lib/queries';
 import { listCollections, countUncategorized } from '@/lib/collections';
+import { countReviewQueue } from '@/lib/demozoo/queries';
 import { resolveLibraryView } from '@/lib/library-view';
 import { CategoryOverview } from '@/components/collections/category-overview';
 import { PageHeader } from '@/components/shell/page-header';
@@ -8,6 +9,7 @@ import { GameGrid } from '@/components/library/game-grid';
 import { GameTable } from '@/components/library/game-table';
 import { ViewToggle } from '@/components/library/view-toggle';
 import { CreateAdf } from '@/components/library/create-adf';
+import { DemozooBadge } from '@/components/library/demozoo-badge';
 import { CollectionsProvider } from '@/components/collections/collection-provider';
 import { CollectionRail } from '@/components/collections/collection-rail';
 
@@ -48,9 +50,13 @@ export default async function LibraryPage(props: PageProps<'/library'>) {
   // here would be a worse copy of it that only appears on brand-new accounts
   // -- which is exactly what it did on its first e2e run.
   const showOverview = view.kind === 'uncategorized' && games.length === 0 && collections.length > 0;
-  const [uncategorizedCount, libraryTotals] = await Promise.all([
+  const [uncategorizedCount, libraryTotals, reviewQueueCount] = await Promise.all([
     countUncategorized(orgId),
     showOverview ? countAllGames(orgId) : Promise.resolve(null),
+    // R15: the badge is a count, not the review queue's full item list --
+    // listReviewQueue also loads productions and screenshots, which this
+    // page must not pay for on every load. Only /library/demozoo does that.
+    countReviewQueue(orgId),
   ]);
 
   return (
@@ -67,6 +73,7 @@ export default async function LibraryPage(props: PageProps<'/library'>) {
           : `${games.length.toLocaleString()} titles · ${diskTotal.toLocaleString()} disks`}
         actions={
           <div className="flex flex-wrap items-center gap-3">
+            <DemozooBadge count={reviewQueueCount} />
             <CreateAdf />
             <ViewToggle view={viewMode} />
           </div>
