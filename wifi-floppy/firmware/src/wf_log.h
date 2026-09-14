@@ -59,6 +59,7 @@ typedef enum {
     WF_EV_WGATE,          // a = asserted
     WF_EV_MOUNT,          // a = token
     WF_EV_EJECT,
+    WF_EV_DIR_LATE,       // a = cylinder after the step, b = DIR read at interrupt time
     WF_EV__COUNT
 } wf_ev_t;
 

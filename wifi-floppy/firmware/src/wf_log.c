@@ -142,6 +142,7 @@ uint32_t wf_log_dropped(void) { return r_dropped; }
 static const char *const ev_name[WF_EV__COUNT] = {
     "BOOT", "SEL", "MOTOR", "STEP", "SIDE", "INDEX",
     "TRACK-WANT", "TRACK-SERVED", "TRACK-MISS", "WGATE", "MOUNT", "EJECT",
+    "DIR-LATE",
 };
 static const char *const lvl_tag[] = { "", "WARN ", "ERROR " };
 

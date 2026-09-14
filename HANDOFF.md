@@ -2495,7 +2495,54 @@ in advance that it empties the table for everyone. This repo has no such databas
 e2e runs against live Neon — so "accept in advance" is currently the only option, and it should
 be an explicit decision each time rather than a side effect of following a plan step.
 
+### 4c. THE READ ERROR WAS A MISREAD STEP DIRECTION — FIXED 2026-09-14
+
+**Cause, measured.** The Amiga drives DIR only for a window around each STEP pulse:
+low ~150 µs before STEP falls, released ~25-40 µs after it. The GPIO ISR read DIR with
+`gpio_get()` when the ISR *ran*, not when the edge happened, so any interrupt latency past
+~30 µs read an inward step as outward. Each misread left `cur_cyl` two cylinders behind the
+Amiga, which was then served valid MFM for the wrong cylinder. On 2026-09-14 the Amiga
+asked for cylinder 72 (track 145, block 1598) three times and got cylinder 70 each time,
+with a misread in each of the three seeks.
+
+| evidence | |
+|---|---|
+| one-step reversals mid-seek | present in all 9 earlier captures, both builds |
+| inward seek WITH a reversal -> Amiga re-homes | 44 of 59 (75%) |
+| clean inward seek -> Amiga re-homes | 10 of 102 (10%) |
+| read-only build (write capture compiled out) | same error, same block |
+
+**Fix: `step_dir` in `floppy.pio`**, on pio2, latches DIR within two PIO cycles (~13 ns)
+of STEP falling and pushes one word per pulse; `step_pio_isr` drains it. STEP and DIR are no
+longer GPIO interrupts. Measured on the same disk and workload afterwards: Workbench 3.1
+boots, `dir df0: all` completes with **no read error**, **0 reversals in 2,283 steps**,
+**0 of 46** inward seeks followed by a re-home. `DIR-LATE` traces and the periodic
+`step: N pulses; an interrupt-time DIR read would have been wrong on M` line count the
+misreads the old read would have made in the same run: **20 of 2,291**, every one on an
+inward step.
+
+**Two instrumentation facts that cost time and will again:**
+* The console prints **milliseconds**; records hold microseconds. "SIDE edges <1 ms apart"
+  meant "same millisecond", which hid the structure until a µs field was added.
+* The SDK's GPIO IRQ handler dispatches pending edges in **ascending pin order**
+  (SEL0=2, DIR=5, STEP=6, SIDE=9), and each callback reads the pin's *current* level. Log
+  order inside one millisecond is pin order, not time order.
+
+**Why 4b called step tracking exact:** it was measured on a 70-step seek *outward*, and
+outward steps never misread (DIR idles high, which is outwards). Check which case a
+measurement covered before calling a mechanism ruled out.
+
+**STILL OPEN: SIDE.** SIDE is released to side 0 the same way (it looks like whenever the
+drive is deselected), and every edge restarts the stream from bit 0 underneath a read: 45%
+of serves land within 5 ms of a SIDE edge, before and after this fix. It did not stop a
+clean boot. The likely model is that a drive only honours SIDE while SEL is asserted, but
+SEL's *release* edge is not traced yet, so that is unmeasured -- trace it before changing
+anything. Last night's SIDE-sampling change was the wrong fix for this and was reverted.
+
 ### 4b. The write path on real hardware, and a read error still unexplained — 2026-09-13
+
+> **Superseded by 4c:** the read error is solved. "STEP tracking is exact" and ruled-out
+> diagnosis 2 below were measured on an outward seek only, and are wrong for inward ones.
 
 **WRITE CAPTURE EXISTS AND IS UNPROVEN.** `-DWF_WRITE_CAPTURE=1` builds an image that
 releases WPROT so the Amiga will write; the flux is captured, decoded and logged, then

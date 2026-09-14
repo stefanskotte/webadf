@@ -38,8 +38,43 @@ wait_high:
     jmp wait_high
 .wrap
 
+; ---------------------------------------------------------------------------
+; step_dir: latch DIR at the instant STEP falls, in hardware. One RX word per
+; STEP pulse; its value is the DIR level (1 = outwards, towards track 0).
+;
+; Why this exists. The Amiga drives DIR only for a window around each pulse:
+; low ~150 us before STEP falls, released ~25-40 us after (measured on real
+; hardware 2026-09-14). The GPIO ISR that used to read DIR sampled it when the
+; ISR RAN, not when the edge happened, so any latency past ~30 us read an
+; inward step as outward and left the cylinder count two behind the Amiga --
+; 12 such misreads in one Workbench boot, each a wrong track served. Here the
+; sample is taken within two PIO cycles (~13 ns at clkdiv 1) of STEP falling,
+; which is what a real drive's logic does.
+;
+; jmp_pin = STEP, in_base = DIR. Starts at `wait_high` so a STEP line that is
+; already low when the machine starts (Amiga off, inputs floating) is not
+; counted as a pulse.
+; ---------------------------------------------------------------------------
+.program step_dir
+idle:
+    jmp pin idle        ; STEP high: no pulse
+    in pins, 1          ; STEP has fallen: sample DIR now (autopush, 1 bit)
+public wait_high:
+    jmp pin idle        ; wait out the pulse before looking for the next one
+    jmp wait_high
+
 % c-sdk {
 #include "hardware/clocks.h"
+static inline void step_dir_program_init(PIO pio, uint sm, uint offset,
+                                         uint step_pin, uint dir_pin) {
+    pio_sm_config c = step_dir_program_get_default_config(offset);
+    sm_config_set_jmp_pin(&c, step_pin);
+    sm_config_set_in_pin_base(&c, dir_pin);
+    sm_config_set_in_shift(&c, false, true, 1);          // autopush every bit
+    sm_config_set_fifo_join(&c, PIO_FIFO_JOIN_RX);       // 8 pulses of slack
+    sm_config_set_clkdiv(&c, 1.0f);
+    pio_sm_init(pio, sm, offset + step_dir_offset_wait_high, &c);
+}
 static inline void flux_out_program_init(PIO pio, uint sm, uint offset, uint pin) {
     pio_sm_config c = flux_out_program_get_default_config(offset);
     sm_config_set_sideset_pins(&c, pin);

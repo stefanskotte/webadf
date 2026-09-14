@@ -286,6 +286,21 @@ static volatile bool     index_traced;
 // the threshold is wrong and the cure would be worse than the disease.
 static volatile uint32_t steps_rejected;
 
+// DIR comes from the step_dir PIO program (floppy.pio), latched as STEP falls.
+// Measured 2026-09-14 across nine captures: inward seeks contained single pulses
+// read as OUTWARD, each leaving cur_cyl two cylinders behind the Amiga, and 44
+// of 59 such seeks were followed by the Amiga re-homing against 10 of 102 clean
+// ones. The cause was reading DIR when the ISR ran rather than at the edge; the
+// Amiga releases DIR ~30 us after the pulse.
+//
+// steps_dir_late counts the pulses where that old interrupt-time read would have
+// disagreed with the latched value -- the misreads this now prevents, measured
+// in the same run rather than inferred from a different one.
+static PIO  step_pio = pio2;
+static uint step_sm;
+static volatile uint32_t steps_seen;
+static volatile uint32_t steps_dir_late;
+
 static void start_streaming(const uint8_t *mfm, uint32_t bit_count) {
     uint32_t nwords = (bit_count + 31) / 32;
 
@@ -380,46 +395,64 @@ static void __isr __not_in_flash_func(dma_irq)(void) {
 }
 
 // ---------------------------------------------------------------- bus ISRs
-static void __isr gpio_isr(uint gpio, uint32_t events) {
-    if (gpio == PIN_STEP && (events & GPIO_IRQ_EDGE_FALL)) {
-        /*
-         * Reject pulses that arrive faster than a drive can step.
-         *
-         * Measured on real hardware 2026-09-13: a burst of SIXTEEN STEP edges
-         * inside one millisecond, with the direction bit reversing seven times
-         * within it. `cur_cyl` is moved by reading PIN_DIR here, so a burst
-         * like that random-walks the cylinder counter -- and nothing corrects
-         * it until the Amiga recalibrates against TRK0. From then on this
-         * board serves a track the Amiga did not ask for: valid MFM whose
-         * sector headers name the wrong cylinder, which trackdisk correctly
-         * calls a read error.
-         *
-         * A real Amiga steps every ~3-4 ms (measured: 120 gaps in 2-4 ms, and
-         * NOT ONE below 2 ms across 454 pulses). 1 ms therefore rejects only
-         * what no drive could produce, with a factor of two in hand.
-         *
-         * The burst was seen once, at a power event, so this is hardening
-         * rather than a fix for anything yet observed -- but a corrupted
-         * cylinder counter survives until recalibration, which makes one
-         * occurrence enough to matter.
-         */
-        static absolute_time_t last_step;    // zero at boot: the first pulse always passes
-        const absolute_time_t now_us = get_absolute_time();
-        if (absolute_time_diff_us(last_step, now_us) < STEP_MIN_INTERVAL_US) {
-            steps_rejected++;
-            return;
-        }
-        last_step = now_us;
+// One STEP pulse, with DIR as latched by the PIO at its falling edge.
+static void step_pulse(bool outwards) {
+    // DIR as read NOW, at interrupt time -- what the GPIO ISR used to act on.
+    // Compared against the latched value for steps_dir_late, never used.
+    const bool late = gpio_get(PIN_DIR);
 
-        bool outwards = gpio_get(PIN_DIR);           // DIRC high = towards 0
-        if (outwards) { if (cur_cyl > 0) cur_cyl--; }
-        else          { if (cur_cyl < NUM_CYL - 1) cur_cyl++; }
-        gpio_put(PIN_TRK0, cur_cyl == 0 ? OUT_ASSERT : OUT_RELEASE);
-        dskchg_on_step();
-        want_track = cur_cyl * 2 + cur_side;
-        wf_trace(WF_EV_STEP, (uint32_t)cur_cyl, outwards ? 1u : 0u);
-        led_blip();
-    } else if (gpio == PIN_SEL0 && (events & GPIO_IRQ_EDGE_FALL)) {
+    /*
+     * Reject pulses that arrive faster than a drive can step.
+     *
+     * Measured on real hardware 2026-09-13: a burst of SIXTEEN STEP edges
+     * inside one millisecond, with the direction bit reversing seven times
+     * within it. A burst like that random-walks the cylinder counter -- and
+     * nothing corrects it until the Amiga recalibrates against TRK0. From then
+     * on this board serves a track the Amiga did not ask for: valid MFM whose
+     * sector headers name the wrong cylinder, which trackdisk correctly calls a
+     * read error.
+     *
+     * A real Amiga steps every ~3-4 ms (measured: 120 gaps in 2-4 ms, and NOT
+     * ONE below 2 ms across 454 pulses). 1 ms therefore rejects only what no
+     * drive could produce, with a factor of two in hand. Timed at interrupt
+     * time, so pulses drained together from the FIFO count as a burst.
+     *
+     * The burst was seen once, at a power event, so this is hardening rather
+     * than a fix for anything yet observed -- but a corrupted cylinder counter
+     * survives until recalibration, which makes one occurrence enough to matter.
+     */
+    static absolute_time_t last_step;    // zero at boot: the first pulse always passes
+    const absolute_time_t now_us = get_absolute_time();
+    if (absolute_time_diff_us(last_step, now_us) < STEP_MIN_INTERVAL_US) {
+        steps_rejected++;
+        return;
+    }
+    last_step = now_us;
+
+    // DIRC high = towards 0
+    if (outwards) { if (cur_cyl > 0) cur_cyl--; }
+    else          { if (cur_cyl < NUM_CYL - 1) cur_cyl++; }
+    gpio_put(PIN_TRK0, cur_cyl == 0 ? OUT_ASSERT : OUT_RELEASE);
+    dskchg_on_step();
+    want_track = cur_cyl * 2 + cur_side;
+    wf_trace(WF_EV_STEP, (uint32_t)cur_cyl, outwards ? 1u : 0u);
+    steps_seen++;
+    if (late != outwards) {
+        steps_dir_late++;
+        wf_trace(WF_EV_DIR_LATE, (uint32_t)cur_cyl, late ? 1u : 0u);
+    }
+    led_blip();
+}
+
+// RX-not-empty on the step_dir state machine: one word per pulse. Drains the
+// FIFO so a burst cannot leave a pulse waiting for the next interrupt.
+static void __isr step_pio_isr(void) {
+    while (!pio_sm_is_rx_fifo_empty(step_pio, step_sm))
+        step_pulse((pio_sm_get(step_pio, step_sm) & 1u) != 0);
+}
+
+static void __isr gpio_isr(uint gpio, uint32_t events) {
+    if (gpio == PIN_SEL0 && (events & GPIO_IRQ_EDGE_FALL)) {
         dskchg_on_sel_edge();
         wf_trace(WF_EV_SEL, 1, 0);
     } else if (gpio == PIN_MTR) {
@@ -1116,8 +1149,19 @@ int main(void) {
     irq_set_exclusive_handler(DMA_IRQ_0, dma_irq);
     irq_set_enabled(DMA_IRQ_0, true);
 
-    gpio_set_irq_enabled_with_callback(PIN_STEP, GPIO_IRQ_EDGE_FALL, true, gpio_isr);
-    gpio_set_irq_enabled(PIN_SEL0, GPIO_IRQ_EDGE_FALL, true);
+    // STEP and DIR are not GPIO interrupts: see step_dir in floppy.pio. pio2 is
+    // claimed here on core0, before core1 exists, so the CYW43 driver (which
+    // takes any free state machine when core1 brings the radio up) cannot.
+    uint off_step = pio_add_program(step_pio, &step_dir_program);
+    step_sm = pio_claim_unused_sm(step_pio, true);
+    step_dir_program_init(step_pio, step_sm, off_step, PIN_STEP, PIN_DIR);
+    pio_set_irq0_source_enabled(step_pio, pio_get_rx_fifo_not_empty_interrupt_source(step_sm),
+                                true);
+    irq_set_exclusive_handler(pio_get_irq_num(step_pio, 0), step_pio_isr);
+    irq_set_enabled(pio_get_irq_num(step_pio, 0), true);
+    pio_sm_set_enabled(step_pio, step_sm, true);
+
+    gpio_set_irq_enabled_with_callback(PIN_SEL0, GPIO_IRQ_EDGE_FALL, true, gpio_isr);
     gpio_set_irq_enabled(PIN_MTR,  GPIO_IRQ_EDGE_FALL | GPIO_IRQ_EDGE_RISE, true);
     gpio_set_irq_enabled(PIN_SIDE, GPIO_IRQ_EDGE_FALL | GPIO_IRQ_EDGE_RISE, true);
     // Both edges: the falling one starts a capture and the rising one ends it,
@@ -1396,6 +1440,17 @@ int main(void) {
                 wf_logf(WF_WARN, "step: %lu pulse(s) rejected as too fast (<%u us apart) "
                                  "-- electrical noise, not a seek",
                         (unsigned long)r, (unsigned)STEP_MIN_INTERVAL_US);
+            }
+            // At most every 10 s, and only while steps are arriving. A zero is
+            // a result too: it says interrupt latency never exceeded DIR's
+            // hold time in that stretch, so say it rather than stay silent.
+            static uint32_t reported_seen, reported_at_ms;
+            uint32_t n = steps_seen;
+            if (n != reported_seen && clock_ms() - reported_at_ms >= 10000) {
+                reported_seen = n; reported_at_ms = clock_ms();
+                wf_logf(WF_INFO, "step: %lu pulses; an interrupt-time DIR read "
+                                 "would have been wrong on %lu",
+                        (unsigned long)n, (unsigned long)steps_dir_late);
             }
         }
 
