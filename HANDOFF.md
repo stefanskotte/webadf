@@ -2567,6 +2567,32 @@ and pin 24 (WGATE) to ground with the Amiga on; ~0 V supports it, ~5 V does not.
 it holds, is hardware -- a pull-up on the J1 side of U2 (the '541 inputs are 5 V tolerant);
 the RP2350's internal pulls are on the wrong side of the buffer.
 
+**NEXT BOARD REVISION: floppy-line pull-ups -- PENDING THE RESISTOR TEST, operator decision
+2026-09-14.** Roll these into the next PCB only once the test below confirms the cause; do
+not edit `generate_pcb.py` before then. Rev B as routed has no resistors at all.
+
+*The test:* Amiga off, 1 kΩ from J1 pin 24 (WGATE) to +5 V (J2 pin 1); Amiga on, read WGATE
+from a `WF_BUS_SNIFF` capture. Reads high when idle -> the line was floating and the table
+below goes on the board. Still low -> something drives it low; rethink before routing
+anything.
+
+*The reference design:* OpenFlops (github.com/SukkoPera/OpenFlops, V1 and V2rc3, which have
+identical floppy nets, and the original Gotek schematic they are based on) fits **1 kΩ to
++5 V on every floppy line it uses, both directions**, always fitted, no jumper. FlashFloppy
+configures every bus input as floating (`src/floppy.c: GPI_bus GPI_floating`), so those
+resistors are the only termination. Its inputs go straight to the MCU; ours pass through
+the 74LVC541A, whose inputs are 5 V tolerant, so 5 V pull-ups on the J1 side are safe.
+
+| lines | J1 pins | priority |
+|---|---|---|
+| WGATE, WDATA | 24, 22 | required -- write support depends on them |
+| DIR, STEP, SIDE, MTR | 18, 20, 32, 16 | match OpenFlops and a real drive; these read fine today without |
+| SEL0 (SEL1 optional) | 10 (12) | OpenFlops pulls up only the select line in use |
+| INDEX, TRK0, WPROT, RDATA, RDY, CHNG | 8, 26, 28, 30, 34, 2 | drive-side termination; faster RDATA rising edge; FETs sink the extra 5 mA easily |
+
+The activity LED's missing series resistor (backlog, "activity LED on GP22") belongs in
+the same respin.
+
 ### 4b. The write path on real hardware, and a read error still unexplained — 2026-09-13
 
 > **Superseded by 4c:** the read error is solved. "STEP tracking is exact" and ruled-out
