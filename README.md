@@ -13,7 +13,7 @@ Two halves that only make sense together:
 
 Click *Mount* in a browser; the Amiga reads a disk.
 
-![The rev B board, top view: J1 floppy header on the left, U2 buffer in the middle, the Pico module on the right](wifi-floppy/hardware/pcb_render.png)
+![The rev B board, top view: J1 floppy header on the left, U2 buffer in the middle, the Pico module on the right](wifi-floppy/hardware/pcb_render.svg)
 
 *Rev B, routed and not yet fabricated. Rev A2 is the board bring-up actually
 runs on. Red is the front copper layer, blue the back; the magenta box is the
