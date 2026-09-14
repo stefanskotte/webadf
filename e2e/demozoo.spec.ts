@@ -1,8 +1,9 @@
 import { test, expect, type Page } from '@playwright/test';
 import { createHash, randomUUID } from 'node:crypto';
-import { eq } from 'drizzle-orm';
+import { and, eq } from 'drizzle-orm';
 import { getDb } from '@/db';
 import { games, blobs } from '@/db/schema/catalog';
+import { demozooSuggestions, demozooDismissals } from '@/db/schema/demozoo';
 import { makeSortTitle } from '@/lib/tosec';
 import { applyMatch } from '@/lib/tosec-apply';
 import { unlinkDemozoo } from '@/lib/demozoo/apply';
@@ -21,12 +22,17 @@ import { signInAsSuperAdmin } from './admin-helpers';
 const storedDiskShas: string[] = [];
 
 test.afterAll(async () => {
-  await cleanupDemozoo();
-  await cleanupTosec();
-  await cleanupSeeded();
+  // Bytes first, then the row (the same rule purgeSignedUpOrgs follows in
+  // device-helpers.ts): a removed object with a surviving row shows up as
+  // unreadable and is recoverable; a deleted row whose object survives is
+  // invisible forever, since the sha is the only handle on it. cleanupSeeded
+  // below is what deletes this blob's row.
   for (const sha256 of storedDiskShas.splice(0)) {
     try { await diskStore.remove(sha256); } catch { /* best effort */ }
   }
+  await cleanupDemozoo();
+  await cleanupTosec();
+  await cleanupSeeded();
 });
 
 const freshSha = () => createHash('sha256').update(randomUUID()).digest('hex');
@@ -235,18 +241,39 @@ test('spec §10: "Not this" stays gone after a REAL re-sweep, not just a reload'
   await page.locator(`[data-testid="demozoo-suggestion"][data-production-id="${pid}"]`).getByTestId('demozoo-dismiss').click();
   await expect(page.locator(`[data-production-id="${pid}"]`)).toHaveCount(0);
 
-  // Force demozooMatchPhase to reconsider this blob. matchOne
-  // unconditionally deletes and re-inserts demozoo_suggestions for the blob
-  // on every pass (it has no notion of a per-game dismissal, which lives in
-  // demozoo_dismissals instead) -- this is exactly the scenario spec §10
-  // guards against: the RAW suggestion row comes back, and only the
-  // per-game dismissal is what must keep it off this game's page.
-  await db.update(blobs).set({ demozooCheckedAt: null }).where(eq(blobs.sha256, sha256));
+  // dismissDemozoo (src/lib/demozoo/apply.ts) ONLY inserts a
+  // demozoo_dismissals row -- it never touches blobs.demozoo_state or
+  // demozoo_suggestions. Left alone, both would still read exactly as the
+  // FIRST sweep left them ('suggested', with the suggestion row still in
+  // place), so asserting that state again below would pass even if the
+  // second sweep never ran at all. Wipe the evidence the second sweep must
+  // recreate -- the suggestion row and the blob's own state/checked-at --
+  // in one update, the same way a blob that has never been matched reads,
+  // so the post-sweep assertions can actually fail.
+  await db.delete(demozooSuggestions).where(and(eq(demozooSuggestions.sha256, sha256), eq(demozooSuggestions.productionId, pid)));
+  await db.update(blobs).set({ demozooState: null, demozooCheckedAt: null }).where(eq(blobs.sha256, sha256));
+
+  // Force demozooMatchPhase to reconsider this blob for real. matchOne
+  // (src/lib/demozoo/sweep.ts) has no notion of a per-game dismissal, which
+  // lives in demozoo_dismissals instead -- this is exactly the scenario
+  // spec §10 guards against: the RAW suggestion row comes back, and only
+  // the per-game dismissal is what must keep it off this game's page.
   await runSweepUntilDone(adminPage);
   await adminCtx.close();
 
   blob = (await db.select().from(blobs).where(eq(blobs.sha256, sha256)))[0];
+  expect(blob.demozooCheckedAt, 'the phase must actually have re-run, not been skipped').not.toBeNull();
   expect(blob.demozooState, 'the phase must actually have re-run, not been skipped').toBe('suggested');
+  const suggestionRows = await db.select().from(demozooSuggestions)
+    .where(and(eq(demozooSuggestions.sha256, sha256), eq(demozooSuggestions.productionId, pid)));
+  expect(suggestionRows, 'the suggestion row must have been recreated by the second sweep, not merely left over').toHaveLength(1);
+  expect(suggestionRows[0].source).toBe('filename');
+
+  // The dismissal itself must be untouched by the re-sweep -- it is a
+  // per-game decision the match phase never reads or writes.
+  const dismissalRows = await db.select().from(demozooDismissals)
+    .where(and(eq(demozooDismissals.gameId, gameId), eq(demozooDismissals.productionId, pid)));
+  expect(dismissalRows, 'the dismissal must survive the re-sweep untouched').toHaveLength(1);
 
   await page.reload();
   await expect(page.locator(`[data-testid="demozoo-suggestion"][data-production-id="${pid}"]`)).toHaveCount(0);
