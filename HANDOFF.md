@@ -2606,9 +2606,22 @@ In the same window, **WDATA read low in 339 of 339 with 0 edges, and so did MTR 
 A released MTR is high (motor off), and an idle Amiga with no disk never held the motor on
 for a full minute from power-on, so both look like the same floating-line signature WGATE had.
 SEL0, SEL1, DIR and STEP toggled normally (183, 68, 76 and 46 edges) and SIDE sat high:
-those are driven. **Not yet proven for WDATA and MTR** -- the check is the same test with
-1 kΩ fitted on pins 22 and 16. MTR reading "always on" is also why reads never noticed it.
+those are driven. MTR reading "always on" is also why reads never noticed it.
 Capture: 360 records from power-on at 748.7 s to 811.8 s.
+
+*Follow-up, same board, 2026-09-15 evening, 1 kΩ to +5 V on pins 24, 22 and 16:*
+**MTR is confirmed floating** -- high in 858 of 861 samples over 100 s from power-on, low
+only for a ~ms pulse 4.2 s in (the Amiga's boot probe). **WDATA was NOT a floating line: it
+was a firmware bug** (`95ce393`). It still read low in every sample with its resistor fitted,
+and the meter read 0 V across the resistor -- both legs at +5 V. `PIN_WDATA` was missing from
+main.c's input init loop because only PIO reads it, and an RP2350 pad stays isolated from
+reset until `gpio_set_function()` clears ISO; PIO reads an isolated pad as 0 whatever the
+pin carries. With the pad initialised, from an Amiga power-on: **WDATA, WGATE and SIDE high
+in 1051 of 1051 samples over 86 s, 0 edges; MTR high in 1048, 2 edges**; 0 records dropped,
+0 dropped-sample flags. So `flux_in` could never have seen a write edge -- a second reason 4b
+never captured a real write, alongside the floating WGATE. **Whether WDATA needs a pull-up is
+now UNMEASURED:** the bug hid its idle state, and the resistor was already fitted when the
+bug was fixed. Removing that one resistor and re-running the capture would settle it.
 
 *The test:* Amiga off, 1 kΩ from J1 pin 24 (WGATE) to +5 V (J2 pin 1); Amiga on, read WGATE
 from a `WF_BUS_SNIFF` capture. Reads high when idle -> the line was floating and the table
@@ -2624,8 +2637,9 @@ the 74LVC541A, whose inputs are 5 V tolerant, so 5 V pull-ups on the J1 side are
 
 | lines | J1 pins | priority |
 |---|---|---|
-| WGATE, WDATA | 24, 22 | required -- write support depends on them (WGATE confirmed floating 2026-09-15; WDATA reads the same way) |
-| MTR | 16 | required -- reads low (motor on) permanently without one, 2026-09-15 capture |
+| WGATE | 24 | required -- confirmed floating 2026-09-15; write support depends on it |
+| WDATA | 22 | fit it -- OpenFlops does, and write support depends on the line -- but its need is unmeasured: what looked like floating was the pad bug fixed in `95ce393` |
+| MTR | 16 | required -- confirmed floating 2026-09-15; reads low (motor on) permanently without one |
 | DIR, STEP, SIDE | 18, 20, 32 | match OpenFlops and a real drive; these toggle and read fine today without |
 | SEL0 (SEL1 optional) | 10 (12) | OpenFlops pulls up only the select line in use |
 | INDEX, TRK0, WPROT, RDATA, RDY, CHNG | 8, 26, 28, 30, 34, 2 | drive-side termination; faster RDATA rising edge; FETs sink the extra 5 mA easily |
