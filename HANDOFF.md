@@ -2570,8 +2570,21 @@ write line was being truncated at `WF_LOG_MSG` (88) and hid `OVERFLOWED` -- now 
 **Capture tip:** start the log reader in the same command as `picotool load`. Attaching
 ~25 s late let the Amiga's polling fill the 64-slot ring and drop the `wprot`/`MOUNT` lines.
 
-**Still not done:** a write reaching the image (history model undesigned); a big write
-(format, or a copy spanning many tracks); `WF_DRIVE_ID` done right; SEL-gated outputs.
+**Sustained write, same night (23:45):** `AddBuffers DF0: 200`, then `Copy SYS:Utilities RAM:u
+ALL`, `Delete SYS:Utilities ALL`, `Copy RAM:u SYS:Utilities ALL` -- a round trip that needs no
+free space on a full disk, and writes nothing the server keeps. **31 WGATE assertions over
+55 s, 31 captures, every one `0x7ff ALL bad 0`**, no wrong-track warnings, no overflows, 15
+distinct tracks (0-5, 69, 80 six times, 154-159). Backlog peaked at 668/4,096, loop gap 3 ms.
+0 log records dropped in the write window (the two drops were at Amiga power-off and during
+the boot reads, both minutes earlier). No error on the Amiga either -- AddBuffers kept
+AmigaDOS from re-reading blocks the board had discarded.
+
+**Harmless noise to know about:** at Amiga power-off WGATE (pulled up to the Amiga's own
++5 V) falls, the capture arms, and the log shows the 400 ms timeout plus an empty
+`write: trk N 0 iv` decode. Skipping zero-interval captures would silence it.
+
+**Still not done:** a write reaching the image (history model undesigned); a full-disk
+write (a format); `WF_DRIVE_ID` done right; SEL-gated outputs.
 
 ### 4c. THE READ ERROR WAS A MISREAD STEP DIRECTION — FIXED 2026-09-14
 
