@@ -2522,6 +2522,57 @@ in advance that it empties the table for everyone. This repo has no such databas
 e2e runs against live Neon — so "accept in advance" is currently the only option, and it should
 be an explicit decision each time rather than a side effect of following a plan step.
 
+### 4d. AN AMIGA WRITE IS CAPTURED WHOLE — 2026-09-15
+
+**The capture path works on real hardware.** Rev A2 board, 1 kΩ to +5 V on WGATE, WDATA and
+MTR, `-DWF_WRITE_CAPTURE=ON`, Workbench 3.1 marked writable on the server, `echo hello
+>SYS:t5` in a Shell. Three tracks written (80, 69, 80), every one: **`sec 0x7ff ALL bad 0`**,
+track number matching the head at WGATE assert. Ring backlog peaked at 711 of 4,096 words,
+service-loop gap 3 ms or less. Writes are still decoded, logged and DISCARDED --
+`WRITE_BACK_IMPLEMENTED` is 0 and nothing reaches PSRAM or the server. `6c1395f`.
+
+Four defects stood between the first WGATE and that line, and none of them could be seen
+before a real Amiga wrote:
+
+1. **WDATA's pad was never initialised** (`95ce393`). An RP2350 pad is isolated from reset
+   until `gpio_set_function()` clears ISO, and PIO reads it as 0. It looked exactly like the
+   floating WGATE line, and a pull-up did not change it -- 0 V across the resistor, both
+   legs high, was the reading that separated them. See §4c's follow-up.
+2. **The drive-ID shifter made the Amiga ignore DF0.** With MTR finally pulled up, motor-on
+   edges arrive, the ID phase runs, and Kickstart **does** read DF0's ID at power-on (the
+   file's comment said DF0 ignores it): 33 selects in ~141 µs, each held 1-4 µs, then 34 for
+   DF1. The GPIO ISR caught **0 of 33** and missed the 3 µs motor-on pulse too. The Amiga
+   then never selected DF0 again and asked for "DF0: in any drive", while polling DF1 -- the
+   board drives RDY without looking at SEL, so it answers DF1's ID too. A/B on the same
+   board and Amiga: shifter skipped, SEL0 2,128 edges, Workbench boots. **`WF_DRIVE_ID` now
+   defaults OFF.** Doing it properly needs something as fast as the select (PIO, or a level
+   held through the whole read), and the board should stop driving its outputs for
+   selects that are not its own.
+3. **`mfm_decode_track` searched for sync on byte boundaries.** A capture begins at whatever
+   edge came first, so the Amiga's bit grid lands at any of eight offsets. Two captures of
+   the same track, histograms ten intervals apart in 48,850, decoded 10 sectors and 0. The
+   existing "mid-track" test rotated by whole bytes, which is exactly the case that passes.
+   Sync is now found at every bit and each sector realigned from its own.
+4. **It demanded 1,084 bytes after a sync; a sector has 1,080** (the extra 4 are the NEXT
+   sector's preamble). A write is gap first (~13,264 bits) then eleven sectors, ending at bit
+   108,980 of a 108,992-bit capture -- so the last sector was never tried, every time.
+   Carried over from the byte-aligned version. Found by logging where decoded sectors sit.
+
+Each of 2-4 has a host test that failed first with the board's own signature (0x000,
+0x01f/0x3ff). 1,989 host checks. A false "track says 69, head is on 70" also went: the
+track is now sampled when WGATE asserts, not when the decode is logged.
+
+**Instruments that paid for themselves tonight, all still in:** per-write lines for sector
+positions, ring backlog, loop gap and the interval histogram (`write: first id..`,
+`write: backlog..`); an `id:` line per motor-on counting SEL0 edges the ISR saw. The first
+write line was being truncated at `WF_LOG_MSG` (88) and hid `OVERFLOWED` -- now shortened.
+
+**Capture tip:** start the log reader in the same command as `picotool load`. Attaching
+~25 s late let the Amiga's polling fill the 64-slot ring and drop the `wprot`/`MOUNT` lines.
+
+**Still not done:** a write reaching the image (history model undesigned); a big write
+(format, or a copy spanning many tracks); `WF_DRIVE_ID` done right; SEL-gated outputs.
+
 ### 4c. THE READ ERROR WAS A MISREAD STEP DIRECTION — FIXED 2026-09-14
 
 **Cause, measured.** The Amiga drives DIR only for a window around each STEP pulse:
