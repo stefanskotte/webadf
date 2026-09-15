@@ -489,7 +489,6 @@ static volatile int write_track;     // set when WGATE asserts
 
 static void __isr gpio_isr(uint gpio, uint32_t events) {
     if (gpio == PIN_SEL0 && (events & GPIO_IRQ_EDGE_FALL)) {
-        dskchg_on_sel_edge();
         if (!WF_BUS_SNIFF) wf_trace(WF_EV_SEL, 1, 0);
     } else if (gpio == PIN_MTR) {
         bool running = !gpio_get(PIN_MTR);           // active low
@@ -1306,30 +1305,8 @@ int main(void) {
 #endif
     display_state_t ui, last_ui;
     memset(&last_ui, 0, sizeof last_ui);
-    uint32_t id_sel_seen = 0, id_motor_seen = 0, id_window_ms = 0;
-    bool id_window_open = false;
     while (true) {
         dskchg_poll();
-
-        // How many of the Amiga's drive-ID selects the GPIO interrupt caught:
-        // one line, 100 ms after each motor-on edge. The bus sniffer counts 33
-        // SEL0 selects in the power-on ID read.
-        {
-            uint32_t sel, mon; int left;
-            dskchg_id_stats(&sel, &mon, &left);
-            if (mon != id_motor_seen) {
-                id_motor_seen = mon;
-                id_sel_seen = sel;
-                id_window_ms = clock_ms();
-                id_window_open = true;
-            } else if (id_window_open && clock_ms() - id_window_ms >= 100) {
-                id_window_open = false;
-                wf_logf(WF_INFO, "id: motor-on #%lu, ISR saw %lu SEL0 edge(s) in 100 ms, "
-                                 "ID bits left %d (drive ID %s)",
-                        (unsigned long)mon, (unsigned long)(sel - id_sel_seen), left,
-                        WF_DRIVE_ID_ON ? "on" : "OFF");
-            }
-        }
 
         bool now_mounted;
         if (track_cache_check_swap(&last_active_token, &now_mounted)) {
@@ -1437,7 +1414,16 @@ int main(void) {
         }
         {
             flux_capture_result_t cap;
-            if (flux_capture_take(&cap)) {
+            // Fewer intervals than one sector's worth of the longest legal gap
+            // cannot hold a sector. What produces them is WGATE (pulled up to the
+            // Amiga's own +5 V) falling and rising with the Amiga's power, not a
+            // write: a real track is 48,000-54,000 intervals (2026-09-15).
+            const uint32_t min_write_intervals = MFM_SECTOR_MFM_BYTES * 8u / 4u;
+            const bool took = flux_capture_take(&cap);
+            if (took && cap.intervals < min_write_intervals) {
+                wf_logf(WF_INFO, "write: WGATE pulse, %u intervals, not a write",
+                        (unsigned)cap.intervals);
+            } else if (took) {
                 static uint8_t decoded[MFM_TRACK_DATA_BYTES];
                 mfm_decode_result_t d;
                 memset(decoded, 0, sizeof decoded);

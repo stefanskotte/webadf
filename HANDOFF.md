@@ -2583,8 +2583,20 @@ AmigaDOS from re-reading blocks the board had discarded.
 +5 V) falls, the capture arms, and the log shows the 400 ms timeout plus an empty
 `write: trk N 0 iv` decode. Skipping zero-interval captures would silence it.
 
+**Follow-ups taken 2026-09-16, NOT YET FLASHED OR RUN ON HARDWARE:** the drive-ID shifter is
+deleted outright (operator agreed: nothing measured needs an ID answer, and a broken one
+behind a flag invites being switched back on), and a capture of fewer than 2,176 intervals
+-- less than one sector can hold -- logs `write: WGATE pulse, N intervals, not a write`
+instead of an empty decode. Host suite green, normal and capture builds clean. **To verify:**
+flash normal firmware, power-cycle the Amiga, expect a clean Workbench boot with 0
+TRACK-MISS and, at power-off, the one-line pulse message.
+
 **Still not done:** a write reaching the image (history model undesigned); a full-disk
-write (a format); `WF_DRIVE_ID` done right; SEL-gated outputs.
+write (a format); **SEL-gated outputs -- REQUIRED, operator 2026-09-16:** a second drive
+(external DF1 on A500/600/1200, or a second internal drive on big-box machines) is optional
+but must work, and today the board drives all six shared open-collector outputs regardless
+of which drive is selected. An interrupt cannot gate them (selects last microseconds), so
+this is PIO work that changes pin ownership; design before building.
 
 ### 4c. THE READ ERROR WAS A MISREAD STEP DIRECTION — FIXED 2026-09-14
 

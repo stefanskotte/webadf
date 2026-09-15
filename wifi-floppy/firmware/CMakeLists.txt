@@ -116,16 +116,6 @@ if (WF_BUS_SNIFF)
   target_compile_definitions(wifi_floppy PRIVATE WF_BUS_SNIFF=1 WF_LOG_SLOTS=512)
   message(STATUS "WF_BUS_SNIFF is ON: every bus input change is logged.")
 endif ()
-# The Amiga drive-ID shifter in dskchg.c. OFF by default since 2026-09-15: with
-# MTR pulled up it runs, cannot keep pace with the Amiga's ~141 us ID read, and
-# the Amiga then never selects DF0 again. See dskchg.c.
-option(WF_DRIVE_ID "Answer the Amiga drive-ID read on /RDY (breaks DF0 today)" OFF)
-if (WF_DRIVE_ID)
-  target_compile_definitions(wifi_floppy PRIVATE WF_DRIVE_ID=1 WF_DRIVE_ID_ON=1)
-  message(WARNING "WF_DRIVE_ID is ON: measured to make the Amiga ignore DF0.")
-else ()
-  target_compile_definitions(wifi_floppy PRIVATE WF_DRIVE_ID=0 WF_DRIVE_ID_ON=0)
-endif ()
 if (WF_WRITE_CAPTURE)
   target_compile_definitions(wifi_floppy PRIVATE WF_WRITE_CAPTURE=1)
   message(WARNING "WF_WRITE_CAPTURE is ON: this image lets the Amiga write, and throws the writes away.")
