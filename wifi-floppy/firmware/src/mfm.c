@@ -46,6 +46,16 @@ static uint32_t be32(const uint8_t *b) {
          | ((uint32_t)b[2] << 8)  | (uint32_t)b[3];
 }
 
+/* `n` bytes of `m`, starting `bit` bits in, into `dst`. */
+static void realign(const uint8_t *m, size_t bit, uint8_t *dst, size_t n) {
+    if ((bit & 7u) == 0) { memcpy(dst, m + (bit >> 3), n); return; }
+    const size_t byte = bit >> 3;
+    const unsigned sh = (unsigned)(bit & 7u);
+    for (size_t i = 0; i < n; i++) {
+        dst[i] = (uint8_t)((m[byte + i] << sh) | (m[byte + i + 1] >> (8u - sh)));
+    }
+}
+
 void mfm_decode_track(const uint8_t *mfm, size_t len, uint8_t *adf_out,
                       mfm_decode_result_t *out) {
     memset(out, 0, sizeof *out);
@@ -58,23 +68,42 @@ void mfm_decode_track(const uint8_t *mfm, size_t len, uint8_t *adf_out,
     uint8_t header[4], label[16], hdrsum_raw[4], datsum_raw[4];
     uint8_t data[MFM_SECTOR_DATA_BYTES];
     uint8_t header_and_label[20];
+    // The sector after its sync, realigned to a byte boundary: header, label,
+    // both checksums and data, 1,080 bytes. NOT MFM_SECTOR_MFM_BYTES - 4: that
+    // counts the next sector's 4-byte preamble too, and demanding it dropped
+    // the last sector of every real write, whose capture ends just past its
+    // data (2026-09-15). Static: another 1 KB would not fit that frame, and
+    // the function is not re-entrant.
+    static uint8_t sec[MFM_SECTOR_MFM_BYTES - 8];
+    const size_t body_bits = sizeof sec * 8u;
 
-    for (size_t i = 0; i + MFM_SECTOR_MFM_BYTES <= len; ) {
+    // The sync is searched for at EVERY BIT, not every byte. A write capture
+    // starts at whatever edge came first after WGATE, so the Amiga's bit grid
+    // lands at any of eight offsets -- and one interval bucketed wrongly in a
+    // gap shifts everything after it. Each sector carries its own sync, so each
+    // is realigned from its own. The byte-only search this replaces decoded
+    // 10 of 11 sectors or none at all from the first real writes (2026-09-15).
+    const size_t total_bits = len * 8u;
+    uint32_t sr = 0;
+    for (size_t b = 0; b < total_bits; b++) {
+        sr = (sr << 1) | ((mfm[b >> 3] >> (7u - (b & 7u))) & 1u);
         // 0x4489 twice. The sync word cannot occur in encoded data: it
         // deliberately breaks the MFM clock rule, which is the whole reason
         // Paula can lock onto it.
-        if (!(mfm[i] == 0x44 && mfm[i + 1] == 0x89 &&
-              mfm[i + 2] == 0x44 && mfm[i + 3] == 0x89)) {
-            i++;
-            continue;
-        }
+        if (b < 31u || sr != 0x44894489u) continue;
+        const size_t body = b + 1u;
+        // Every bit of the body must be in the capture. When the body starts
+        // off a byte boundary, realign() reads the byte holding its last bits,
+        // which this same condition guarantees exists.
+        if (body + body_bits > total_bits) break;
+        realign(mfm, body, sec, sizeof sec);
 
-        size_t at = i + 4;
-        mfm_join_odd_even(mfm + at, 4,   header);      at += 8;
-        mfm_join_odd_even(mfm + at, 16,  label);       at += 32;
-        mfm_join_odd_even(mfm + at, 4,   hdrsum_raw);  at += 8;
-        mfm_join_odd_even(mfm + at, 4,   datsum_raw);  at += 8;
-        mfm_join_odd_even(mfm + at, MFM_SECTOR_DATA_BYTES, data);
+        size_t at = 0;
+        mfm_join_odd_even(sec + at, 4,   header);      at += 8;
+        mfm_join_odd_even(sec + at, 16,  label);       at += 32;
+        mfm_join_odd_even(sec + at, 4,   hdrsum_raw);  at += 8;
+        mfm_join_odd_even(sec + at, 4,   datsum_raw);  at += 8;
+        mfm_join_odd_even(sec + at, MFM_SECTOR_DATA_BYTES, data);
 
         memcpy(header_and_label, header, 4);
         memcpy(header_and_label + 4, label, 16);
@@ -84,11 +113,10 @@ void mfm_decode_track(const uint8_t *mfm, size_t len, uint8_t *adf_out,
 
         uint8_t sector_id = header[2];
         if (!ok || sector_id >= MFM_SECTORS) {
-            // Advance by ONE, not by a sector: a false sync inside data would
-            // otherwise skip 1088 bytes and step over the real sector that
-            // follows it. Only a sector that verifies earns the long stride.
+            // Advance by ONE BIT, not by a sector: a false sync inside data
+            // would otherwise skip 1088 bytes and step over the real sector
+            // that follows it. Only a sector that verifies earns the long stride.
             out->bad_checksums++;
-            i++;
             continue;
         }
 
@@ -96,8 +124,13 @@ void mfm_decode_track(const uint8_t *mfm, size_t len, uint8_t *adf_out,
         // on the wrong cylinder produces a perfectly valid track whose id is
         // not the one the head is on -- the one corruption a checksum cannot
         // see, because every sector of it is internally consistent.
-        if (!have_track_no) { out->track_no = header[1]; have_track_no = true; }
-        else if (header[1] != out->track_no) { out->track_no_consistent = false; }
+        if (!have_track_no) {
+            out->track_no = header[1]; have_track_no = true;
+            out->first_sync_bit = (uint32_t)(body - 32u);
+            out->first_id = sector_id;
+        } else if (header[1] != out->track_no) { out->track_no_consistent = false; }
+        out->last_id = sector_id;
+        out->last_end_bit = (uint32_t)(body + body_bits);
 
         // First good copy wins. A capture over more than one revolution sees
         // each sector twice; both copies are the same bytes, and taking the
@@ -108,6 +141,7 @@ void mfm_decode_track(const uint8_t *mfm, size_t len, uint8_t *adf_out,
             memcpy(adf_out + (size_t)sector_id * MFM_SECTOR_DATA_BYTES,
                    data, MFM_SECTOR_DATA_BYTES);
         }
-        i += MFM_SECTOR_MFM_BYTES;
+        b = body + body_bits - 1u;
+        sr = 0;
     }
 }

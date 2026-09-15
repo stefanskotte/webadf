@@ -59,6 +59,12 @@ typedef struct {
     bool     overflowed;
     const uint8_t *mfm;
     uint32_t mfm_bytes;
+    // Diagnostics, added 2026-09-15 after the first real writes: one decoded
+    // 10 of 11 sectors and the next two decoded none.
+    uint32_t max_backlog;     /* most unread ring words seen at once */
+    uint32_t max_poll_gap_ms; /* longest gap between polls while armed */
+    uint32_t cells[3];        /* intervals classified as 2, 3, 4 cells */
+    uint32_t ns_min, ns_max;
 } flux_capture_result_t;
 
 /** True, once, after a capture ends: the bitstream is ready to decode.

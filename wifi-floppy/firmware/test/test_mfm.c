@@ -126,6 +126,110 @@ static void test_a_capture_starting_mid_track_still_decodes(void) {
     free(adf);
 }
 
+/* Copy `nbits` bits of src into dst starting `at` bits in. dst is zeroed first. */
+static void copy_bits(const uint8_t *src, size_t nbits, uint8_t *dst, size_t dst_bytes, size_t at) {
+    memset(dst, 0, dst_bytes);
+    for (size_t i = 0; i < nbits && (at + i) / 8 < dst_bytes; i++) {
+        if (src[i / 8] & (0x80u >> (i % 8))) dst[(at + i) / 8] |= (uint8_t)(0x80u >> ((at + i) % 8));
+    }
+}
+
+static void test_a_capture_off_a_byte_boundary_still_decodes(void) {
+    /*
+     * THE case a real write capture is in, and the byte rotation above cannot
+     * model: flux_bits starts the stream at whatever edge came first after
+     * WGATE, so the Amiga's bit grid lands at any of eight offsets. On
+     * 2026-09-15 the first real writes decoded 10 of 11 sectors or none at all
+     * from two captures of the same track whose interval histograms differed
+     * by ten intervals in 48,850 -- the signature of alignment, not of flux.
+     */
+    uint8_t mfm[TRACK_MFM_BYTES], two[TRACK_MFM_BYTES * 2];
+    uint8_t cap[TRACK_MFM_BYTES * 2 + 1], got[TRACK_DATA_BYTES];
+    if (!read_fixture("prng", 80, mfm)) { CHECK(0, "fixture"); return; }
+    uint8_t *adf = synthetic_adf("prng");
+    memcpy(two, mfm, TRACK_MFM_BYTES);
+    memcpy(two + TRACK_MFM_BYTES, mfm, TRACK_MFM_BYTES);
+
+    for (size_t shift = 1; shift < 8; shift++) {
+        copy_bits(two, sizeof two * 8, cap, sizeof cap, shift);
+        memset(got, 0xAA, sizeof got);
+        mfm_decode_result_t r;
+        mfm_decode_track(cap, sizeof cap, got, &r);
+        printf("    shift %zu bit(s): found 0x%03x\n", shift, r.found);
+        CHECK_EQ_INT(r.found, 0x7ff);
+        CHECK_EQ_INT(r.track_no, 80);
+        CHECK(memcmp(got, adf + 80u * TRACK_DATA_BYTES, TRACK_DATA_BYTES) == 0,
+              "a bit-shifted capture must decode to the same bytes");
+    }
+    free(adf);
+}
+
+static void test_a_one_bit_slip_between_sectors_loses_nothing_after_it(void) {
+    /*
+     * A capture that loses or gains one cell part-way through -- one interval
+     * measured into the wrong bucket in the gap before a sector -- changes the
+     * alignment of everything after it. Every sector carries its own sync, so
+     * every sector after the slip must still be found.
+     */
+    uint8_t mfm[TRACK_MFM_BYTES], cap[TRACK_MFM_BYTES + 1], got[TRACK_DATA_BYTES];
+    if (!read_fixture("prng", 80, mfm)) { CHECK(0, "fixture"); return; }
+    /* Sync of sector 5: find the 6th 0x4489 0x4489 pair at a byte offset. */
+    size_t syncs = 0, at = 0;
+    for (size_t i = 0; i + 3 < TRACK_MFM_BYTES; i++) {
+        if (mfm[i] == 0x44 && mfm[i+1] == 0x89 && mfm[i+2] == 0x44 && mfm[i+3] == 0x89) {
+            if (syncs++ == 5) { at = i; break; }
+        }
+    }
+    CHECK(at > 8, "fixture must have a sixth sector sync");
+    /* Bits before the slip point copied as-is; one extra 0 cell inserted just
+       before the sync's preceding gap byte; the rest shifted by one. */
+    const size_t slip = (at - 2) * 8;
+    copy_bits(mfm, slip, cap, sizeof cap, 0);
+    uint8_t tail[TRACK_MFM_BYTES + 1];
+    copy_bits(mfm + (at - 2), (TRACK_MFM_BYTES - (at - 2)) * 8, tail, sizeof tail, 0);
+    for (size_t i = 0; i < (TRACK_MFM_BYTES - (at - 2)) * 8; i++) {
+        size_t o = slip + 1 + i;
+        if (o / 8 >= sizeof cap) break;
+        if (tail[i / 8] & (0x80u >> (i % 8))) cap[o / 8] |= (uint8_t)(0x80u >> (o % 8));
+    }
+    mfm_decode_result_t r;
+    mfm_decode_track(cap, sizeof cap, got, &r);
+    printf("    slip before sector 5's sync: found 0x%03x\n", r.found);
+    CHECK_EQ_INT(r.found, 0x7ff);
+    CHECK_EQ_INT(r.bad_checksums, 0);
+}
+
+static void test_a_capture_ending_right_after_the_last_sector_keeps_it(void) {
+    /*
+     * A real write is gap first, then eleven sectors, and WGATE releases as the
+     * last data bit goes out -- so the capture ends a few bits past the final
+     * sector's data. On 2026-09-15 every capture decoded 10 of 11: the last
+     * sector ended at bit 108,980 of 108,992, and the decoder demanded 1,084
+     * bytes after a sync when a sector needs 1,080. Tried at every bit shift,
+     * since the stream's alignment is arbitrary.
+     */
+    uint8_t mfm[TRACK_MFM_BYTES], cap[TRACK_MFM_BYTES + 1], got[TRACK_DATA_BYTES];
+    if (!read_fixture("prng", 80, mfm)) { CHECK(0, "fixture"); return; }
+    size_t last = 0, syncs = 0;
+    for (size_t i = 0; i + 3 < TRACK_MFM_BYTES; i++) {
+        if (mfm[i] == 0x44 && mfm[i+1] == 0x89 && mfm[i+2] == 0x44 && mfm[i+3] == 0x89) {
+            last = i; syncs++; i += 3;
+        }
+    }
+    CHECK_EQ_INT((int)syncs, 11);
+    const size_t end_bits = (last + 4 + 1080) * 8;       /* just past the data */
+    for (size_t shift = 0; shift < 8; shift++) {
+        const size_t len = (end_bits + shift + 7) / 8;
+        copy_bits(mfm, end_bits, cap, sizeof cap, shift);
+        mfm_decode_result_t r;
+        mfm_decode_track(cap, len, got, &r);
+        printf("    shift %zu, %zu bytes ending at the last data bit: found 0x%03x\n",
+               shift, len, r.found);
+        CHECK_EQ_INT(r.found, 0x7ff);
+        CHECK_EQ_INT(r.bad_checksums, 0);
+    }
+}
+
 static void test_a_partial_capture_reports_what_is_missing(void) {
     /* Half a revolution cannot contain 11 sectors. The decoder must say which
        it got rather than claim a track, because the caller's choice between
@@ -262,6 +366,9 @@ static void test_interval_buckets(void) {
 int main(void) {
     RUN(test_round_trips_every_golden_track);
     RUN(test_a_capture_starting_mid_track_still_decodes);
+    RUN(test_a_capture_off_a_byte_boundary_still_decodes);
+    RUN(test_a_one_bit_slip_between_sectors_loses_nothing_after_it);
+    RUN(test_a_capture_ending_right_after_the_last_sector_keeps_it);
     RUN(test_a_partial_capture_reports_what_is_missing);
     RUN(test_untouched_sectors_are_left_alone);
     RUN(test_a_corrupted_sector_is_rejected_not_accepted);

@@ -39,6 +39,11 @@ typedef struct {
      *  cylinder, which must never be written back to the image. */
     uint8_t  track_no;
     bool     track_no_consistent;
+    /** Where the verified sectors sit in the stream, in bits: the first one's
+     *  sync and id, and the last one's id and the bit just past it. Says
+     *  whether a missing sector fell off the start, the end or the middle. */
+    uint32_t first_sync_bit, last_end_bit;
+    uint8_t  first_id, last_id;
 } mfm_decode_result_t;
 
 /**

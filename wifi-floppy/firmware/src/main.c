@@ -485,6 +485,8 @@ static void __isr sniff_isr(void) {
 }
 #endif
 
+static volatile int write_track;     // set when WGATE asserts
+
 static void __isr gpio_isr(uint gpio, uint32_t events) {
     if (gpio == PIN_SEL0 && (events & GPIO_IRQ_EDGE_FALL)) {
         dskchg_on_sel_edge();
@@ -507,7 +509,15 @@ static void __isr gpio_isr(uint gpio, uint32_t events) {
          * Active low, like every other input through the '541.
          */
         bool writing = !gpio_get(PIN_WGATE);
-        if (writing) flux_capture_arm(); else flux_capture_disarm();
+        if (writing) {
+            // The track under the head NOW. By the time the service loop logs
+            // the decode the Amiga may have stepped, which produced a false
+            // "track says 69, head is on 70" on 2026-09-15.
+            write_track = cur_cyl * 2 + cur_side;
+            flux_capture_arm();
+        } else {
+            flux_capture_disarm();
+        }
         wf_trace(WF_EV_WGATE, writing ? 1u : 0u, (uint32_t)(cur_cyl * 2 + cur_side));
     } else if (gpio == PIN_SIDE) {
         cur_side = gpio_get(PIN_SIDE) ? 0 : 1;       // low = side 1
@@ -1296,8 +1306,30 @@ int main(void) {
 #endif
     display_state_t ui, last_ui;
     memset(&last_ui, 0, sizeof last_ui);
+    uint32_t id_sel_seen = 0, id_motor_seen = 0, id_window_ms = 0;
+    bool id_window_open = false;
     while (true) {
         dskchg_poll();
+
+        // How many of the Amiga's drive-ID selects the GPIO interrupt caught:
+        // one line, 100 ms after each motor-on edge. The bus sniffer counts 33
+        // SEL0 selects in the power-on ID read.
+        {
+            uint32_t sel, mon; int left;
+            dskchg_id_stats(&sel, &mon, &left);
+            if (mon != id_motor_seen) {
+                id_motor_seen = mon;
+                id_sel_seen = sel;
+                id_window_ms = clock_ms();
+                id_window_open = true;
+            } else if (id_window_open && clock_ms() - id_window_ms >= 100) {
+                id_window_open = false;
+                wf_logf(WF_INFO, "id: motor-on #%lu, ISR saw %lu SEL0 edge(s) in 100 ms, "
+                                 "ID bits left %d (drive ID %s)",
+                        (unsigned long)mon, (unsigned long)(sel - id_sel_seen), left,
+                        WF_DRIVE_ID_ON ? "on" : "OFF");
+            }
+        }
 
         bool now_mounted;
         if (track_cache_check_swap(&last_active_token, &now_mounted)) {
@@ -1411,22 +1443,29 @@ int main(void) {
                 memset(decoded, 0, sizeof decoded);
                 mfm_decode_track(cap.mfm, cap.mfm_bytes, decoded, &d);
                 wf_logf(WF_INFO,
-                        "write: trk %d got %u intervals -> %u bytes, "
-                        "sectors 0x%03x%s, bad %u, range %u%s",
-                        cur_cyl * 2 + cur_side,
+                        "write: trk %d %u iv %u B sec 0x%03x%s bad %u rng %u%s",
+                        write_track,
                         (unsigned)cap.intervals, (unsigned)cap.mfm_bytes,
                         (unsigned)d.found,
-                        d.found == 0x7ff ? " (all 11)" : " INCOMPLETE",
+                        d.found == 0x7ff ? " ALL" : " PART",
                         (unsigned)d.bad_checksums, (unsigned)cap.out_of_range,
                         cap.overflowed ? " OVERFLOWED" : "");
+                wf_logf(WF_INFO, "write: first id %u sync@%lu, last id %u end@%lu, of %lu bits",
+                        (unsigned)d.first_id, (unsigned long)d.first_sync_bit,
+                        (unsigned)d.last_id, (unsigned long)d.last_end_bit,
+                        (unsigned long)cap.mfm_bytes * 8ul);
+                wf_logf(WF_INFO, "write: backlog %u/4096 gap %u ms ns %u-%u cells %u/%u/%u",
+                        (unsigned)cap.max_backlog, (unsigned)cap.max_poll_gap_ms,
+                        (unsigned)cap.ns_min, (unsigned)cap.ns_max,
+                        (unsigned)cap.cells[0], (unsigned)cap.cells[1], (unsigned)cap.cells[2]);
                 if (d.found && !d.track_no_consistent) {
                     wf_logf(WF_WARN, "write: sector headers disagree about the track");
-                } else if (d.found && d.track_no != cur_cyl * 2 + cur_side) {
+                } else if (d.found && d.track_no != write_track) {
                     // The one corruption a checksum cannot see: every sector
                     // internally valid, but written to a cylinder the head is
                     // not on. Never apply one of these.
                     wf_logf(WF_WARN, "write: track says %u, head is on %d",
-                            (unsigned)d.track_no, cur_cyl * 2 + cur_side);
+                            (unsigned)d.track_no, write_track);
                 }
             }
         }

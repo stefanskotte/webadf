@@ -13,8 +13,10 @@
 //  * /RDY asserted while motor is on and an image is inserted (spin-up
 //    delay emulated), deasserted otherwise.
 //  * Amiga drive-ID shifter: after a motor-on edge, the first 32 /SEL
-//    pulses clock the drive ID out on /RDY, MSB first. DF0 ignores this,
-//    external drives report ID_3_5_DD = 0xFFFFFFFF.
+//    pulses clock the drive ID out on /RDY, MSB first, reporting
+//    ID_3_5_DD = 0xFFFFFFFF. OFF by default -- see WF_DRIVE_ID below. "DF0
+//    ignores this" was the assumption; Kickstart reads DF0's ID at power-on
+//    and acts on it (measured 2026-09-15).
 // ---------------------------------------------------------------------------
 #include "dskchg.h"
 #include "floppy_io.h"
@@ -22,6 +24,23 @@
 
 #define AMIGA_ID_3_5_DD  0xFFFFFFFFu
 #define SPINUP_MS        150
+
+// WF_DRIVE_ID, OFF by default: never enter the ID phase, so /RDY behaves as it
+// did before J1 pin 16 had a pull-up -- MTR floated low, no motor-on edge ever
+// arrived, and the ID shifter never loaded. That board booted Workbench.
+//
+// MEASURED 2026-09-15, rev A2 board with 1k on MTR: with the shifter ON the
+// Amiga reads DF0's ID once at power-on -- 33 selects in ~141 us, each held
+// 1-4 us (bus sniffer) -- and never selects DF0 again: "insert DF0:". The GPIO
+// interrupt caught 0 of those 33 selects and missed the 3 us motor-on pulse
+// too. With it OFF, same board and Amiga: DF0 selected 2,128 times, Workbench
+// boots, writes capture. Answering the ID properly needs something as fast as
+// the select -- PIO, or a level held for the whole read -- not an interrupt.
+#ifndef WF_DRIVE_ID
+#define WF_DRIVE_ID 0
+#endif
+
+static volatile uint32_t sel_edges, motor_on_edges;
 
 static struct {
     bool     image_in;
@@ -70,9 +89,12 @@ void dskchg_on_step(void) {
 // call on MTR line change; 'on' = motor requested (bus line low)
 void dskchg_on_motor(bool on) {
     if (on && !st.motor_on) {
+        motor_on_edges++;
         st.motor_on_t = get_absolute_time();
-        st.id_shift = AMIGA_ID_3_5_DD;   // reload ID shifter on motor-on edge
-        st.id_bits_left = 32;
+        if (WF_DRIVE_ID) {
+            st.id_shift = AMIGA_ID_3_5_DD;   // reload ID shifter on motor-on edge
+            st.id_bits_left = 32;
+        }
     }
     st.motor_on = on;
     if (!on) drv(PIN_RDY, false);
@@ -80,6 +102,7 @@ void dskchg_on_motor(bool on) {
 
 // call on /SEL falling edge (drive selected): shifts ID when active
 void dskchg_on_sel_edge(void) {
+    sel_edges++;
     if (st.id_bits_left > 0) {
         bool bit = (st.id_shift & 0x80000000u) != 0;
         st.id_shift <<= 1;
@@ -99,3 +122,9 @@ void dskchg_poll(void) {
 }
 
 bool dskchg_image_in(void) { return st.image_in; }
+
+void dskchg_id_stats(uint32_t *sel, uint32_t *motor_on, int *id_bits_left) {
+    *sel = sel_edges;
+    *motor_on = motor_on_edges;
+    *id_bits_left = st.id_bits_left;
+}

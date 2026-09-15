@@ -1,5 +1,6 @@
 #include "flux_capture.h"
 #include "flux_bits.h"
+#include "mfm.h"
 #include "psram_image.h"
 #include "wf_log.h"
 #include "hardware/dma.h"
@@ -42,6 +43,19 @@ static volatile bool armed;
 static volatile uint32_t armed_at_ms;
 static volatile bool ended;         /* set by disarm, cleared by take */
 
+// Diagnostics for flux_capture_result_t. Reset on arm.
+static uint32_t d_max_backlog, d_max_gap_ms, d_last_poll_ms;
+static uint32_t d_cells[3], d_ns_min, d_ns_max;
+
+static void consume(uint32_t word) {
+    const uint32_t ns = flux_counter_to_ns(word, pio_hz);
+    const int c = mfm_interval_to_bits(ns);
+    if (c >= 2 && c <= 4) d_cells[c - 2]++;
+    if (ns < d_ns_min) d_ns_min = ns;
+    if (ns > d_ns_max) d_ns_max = ns;
+    flux_bits_feed(&bits, ns);
+}
+
 void flux_capture_init(PIO pio, uint sm) {
     cap_pio = pio;
     cap_sm  = sm;
@@ -82,6 +96,10 @@ void flux_capture_arm(void) {
 
     cap_read = 0;
     flux_bits_init(&bits, mfm_buf, sizeof mfm_buf);
+    d_max_backlog = d_max_gap_ms = 0;
+    d_cells[0] = d_cells[1] = d_cells[2] = 0;
+    d_ns_min = 0xffffffffu; d_ns_max = 0;
+    d_last_poll_ms = to_ms_since_boot(get_absolute_time());
     armed = true;
     armed_at_ms = to_ms_since_boot(get_absolute_time());
     ended = false;
@@ -102,13 +120,20 @@ uint32_t flux_capture_poll(void) {
 
     const uint32_t head = dma_head();
     uint32_t n = 0;
+    if (armed) {
+        const uint32_t now = to_ms_since_boot(get_absolute_time());
+        if (now - d_last_poll_ms > d_max_gap_ms) d_max_gap_ms = now - d_last_poll_ms;
+        d_last_poll_ms = now;
+        const uint32_t backlog = (head - cap_read) & (RING_WORDS - 1u);
+        if (backlog > d_max_backlog) d_max_backlog = backlog;
+    }
 
     // Bounded per call, for the same reason wf_log_drain() and display_pump()
     // are: this shares the 1 ms loop with track service. 512 intervals is
     // ~2 ms of flux and a few tens of microseconds of work, so a capture is
     // consumed faster than it arrives without ever owning the loop.
     while (cap_read != head && n < 512u) {
-        flux_bits_feed(&bits, flux_counter_to_ns(ring[cap_read], pio_hz));
+        consume(ring[cap_read]);
         cap_read = (cap_read + 1u) & (RING_WORDS - 1u);
         n++;
     }
@@ -135,7 +160,7 @@ bool flux_capture_take(flux_capture_result_t *out) {
     // Drain whatever the DMA landed between the last poll and WGATE going
     // away -- the tail of the track, which is where the last sector lives.
     while (cap_read != dma_head()) {
-        flux_bits_feed(&bits, flux_counter_to_ns(ring[cap_read], pio_hz));
+        consume(ring[cap_read]);
         cap_read = (cap_read + 1u) & (RING_WORDS - 1u);
     }
     ended = false;
@@ -146,5 +171,9 @@ bool flux_capture_take(flux_capture_result_t *out) {
     out->overflowed   = bits.overflowed;
     out->mfm          = mfm_buf;
     out->mfm_bytes    = (uint32_t)flux_bits_bytes(&bits);
+    out->max_backlog  = d_max_backlog;
+    out->max_poll_gap_ms = d_max_gap_ms;
+    out->cells[0] = d_cells[0]; out->cells[1] = d_cells[1]; out->cells[2] = d_cells[2];
+    out->ns_min = d_ns_min; out->ns_max = d_ns_max;
     return true;
 }
