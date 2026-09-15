@@ -1113,9 +1113,13 @@ int main(void) {
     // regardless: read-only until proven otherwise beats writable by default.
     gpio_put(PIN_WPROT, OUT_ASSERT);
 
-    // inputs
+    // inputs. PIN_WDATA belongs here too even though only PIO reads it: an
+    // RP2350 pad stays isolated from reset until gpio_set_function() clears
+    // ISO, and until then PIO reads it as 0 whatever the pin carries. Left
+    // out, WDATA read low in every sample, with 1k to +5V on J1 pin 22 and
+    // the Amiga idle (2026-09-15).
     const uint ins[] = {PIN_SEL0, PIN_SEL1, PIN_MTR, PIN_DIR,
-                        PIN_STEP, PIN_WGATE, PIN_SIDE};
+                        PIN_STEP, PIN_WDATA, PIN_WGATE, PIN_SIDE};
     for (unsigned i = 0; i < count_of(ins); i++) {
         gpio_init(ins[i]); gpio_set_dir(ins[i], GPIO_IN);
     }
