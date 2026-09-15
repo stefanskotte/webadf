@@ -2598,6 +2598,28 @@ but must work, and today the board drives all six shared open-collector outputs 
 of which drive is selected. An interrupt cannot gate them (selects last microseconds), so
 this is PIO work that changes pin ownership; design before building.
 
+  **Research for that design, 2026-09-16 (nothing built, nothing approved):**
+  * **Measured, from the 2026-09-15 no-ID sniffer boot:** 2,672 SEL0 selects after the ID
+    read -- median **56 us**, 95% under 100 us, minimum 5 us. The Amiga reads CHNG/WPROT/
+    TRK0/RDY inside those windows, so outputs must follow SEL0 in PIO time, not ISR time.
+  * **Inputs need gating as much as outputs.** The board counts STEP, follows MTR/SIDE and
+    captures WGATE whoever is selected. With a real DF1, the Amiga's DF1 disk-change stepping
+    would move DF0's cylinder, and a DF1 write would be captured -- and once write-back
+    exists, APPLIED -- as a DF0 write. So this is a prerequisite for write-back, not polish.
+    All 1,838 STEP falls in that boot came with SEL0 asserted, so qualifying STEP on SEL0 at
+    the falling edge loses nothing real.
+  * **Pin facts:** outputs are GP0 INDEX, GP1 CHNG, GP10 WPROT, GP11 RDATA (pio0 `flux_out`
+    side-set), GP12 RDY, GP13 TRK0; GPIO high = bus asserted. Releasing by output-disable is
+    too slow (pad pull-down into a BSS138 gate is ~ms), so gating must drive the pin low.
+    INDEX and TRK0 are written by the CPU from the DMA IRQ and the STEP ISR today.
+  * **Direction under consideration:** a PIO status-gate machine owning INDEX/CHNG/WPROT/
+    RDY/TRK0, fed a shadow value by the CPU and forcing them released while SEL0 is high;
+    `flux_out` checking SEL0 per bit cell with both paths still 8 cycles; `step_dir`
+    sampling SEL0 with DIR; MTR latched on SEL0's falling edge like a real drive; WGATE
+    captures only while selected. Verify by extending the sniffer to the output pins
+    ("nothing asserted while SEL0 is released") and, if a second drive is available, by
+    real DF1 traffic with DF0 mounted.
+
 ### 4c. THE READ ERROR WAS A MISREAD STEP DIRECTION — FIXED 2026-09-14
 
 **Cause, measured.** The Amiga drives DIR only for a window around each STEP pulse:
