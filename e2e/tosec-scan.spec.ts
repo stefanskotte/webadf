@@ -4,7 +4,10 @@ import { randomUUID, createHash } from 'node:crypto';
 import { getDb } from '@/db';
 import { games, disks, blobs, entitlements } from '@/db/schema/catalog';
 import { devices } from '@/db/schema/devices';
-import { signUpFresh } from './helpers';
+import { diskStore } from '@/lib/storage';
+import { formatVolume } from '@/lib/adffs/format';
+import { scanStatus } from '@/lib/tosec-sweep';
+import { signUpFresh, runTag } from './helpers';
 import { signInAsSuperAdmin } from './admin-helpers';
 import { cleanupSeeded, seedDisk, pairDevice } from './device-helpers';
 import { seedTosecEntry, trackTosecSet, cleanupTosec } from './tosec-helpers';
@@ -377,4 +380,54 @@ test('a disk landed after its blob was already matched still gets retitled', asy
     await db.delete(entitlements).where(eq(entitlements.sha256, sha256));
     await db.delete(blobs).where(eq(blobs.sha256, sha256));
   }
+});
+
+// --- Fix round 1, finding 2: a SUPERSEDED written image must stay decided ---
+
+test('a superseded written image is counted as decided, not a fresh miss', async ({ page }) => {
+  test.setTimeout(SWEEP_TIMEOUT_MS);
+  const user = await signUpFresh(page);
+  const adf = formatVolume({ filesystem: 'FFS', volumeName: `Sup${runTag().slice(0, 5)}` });
+  const original = createHash('sha256').update(adf).digest('hex');
+  await diskStore.put(original, adf);
+  const { diskId } = await seedDisk(user.orgId, { title: `Superseded ${runTag()}`, diskNo: 1, sha256: original });
+
+  // Two edits: the first write's image (B) is then SUPERSEDED by the second
+  // (C) -- the disk row moves on to C, so B is no longer named by any disks
+  // row at all. Before the fix, authored_none's write-back branch sat INSIDE
+  // "some disk points at it," so a superseded written image like B fell out
+  // of every branch and stayed a false TOSEC miss forever, even though it is
+  // just as much "not a preservation gap" as C, the current head.
+  const firstRename = await page.request.patch(`/api/disks/${diskId}/volume-name`, { data: { volumeName: 'First' } });
+  expect(firstRename.status()).toBe(200);
+  const { sha256: b } = await firstRename.json();
+
+  const secondRename = await page.request.patch(`/api/disks/${diskId}/volume-name`, { data: { volumeName: 'Second' } });
+  expect(secondRename.status()).toBe(200);
+  const { sha256: c } = await secondRename.json();
+  expect(c, 'the premise: two DIFFERENT images, B genuinely superseded by C').not.toBe(b);
+
+  const before = await scanStatus();
+
+  await signInAsSuperAdmin(page);
+  expect((await page.request.post('/api/admin/scan')).ok()).toBe(true);
+
+  const after = await scanStatus();
+  const db = getDb();
+  const [rowB, rowC] = await Promise.all([
+    db.select({ matchState: blobs.matchState }).from(blobs).where(eq(blobs.sha256, b)),
+    db.select({ matchState: blobs.matchState }).from(blobs).where(eq(blobs.sha256, c)),
+  ]);
+  // The premise this test depends on: neither image matched any real TOSEC
+  // entry, so both are genuinely in match_state 'none' -- the bucket
+  // authored_none exists to decide between "a real miss" and "not a miss".
+  expect(rowB[0]?.matchState, 'B must actually be a none-verdict for this test to mean anything').toBe('none');
+  expect(rowC[0]?.matchState, 'C must actually be a none-verdict for this test to mean anything').toBe('none');
+
+  // B (superseded -- no disk points at it any more) and C (the current head,
+  // which already worked before this fix) are BOTH written images
+  // (disk_versions.seq > 0) and must BOTH now be decided. Exactly 2: not
+  // original (seq 0, the un-written upload, which must stay a real
+  // candidate miss) and not any other blob this run could touch.
+  expect(after.authoredNone - before.authoredNone).toBe(2);
 });

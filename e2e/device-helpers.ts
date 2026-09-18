@@ -1,9 +1,10 @@
 import { randomUUID } from 'node:crypto';
-import { eq, inArray } from 'drizzle-orm';
+import { and, eq, inArray, notInArray } from 'drizzle-orm';
 import type { Page, APIRequestContext } from '@playwright/test';
 import { getDb } from '@/db';
 import { blobs, disks, games, entitlements } from '@/db/schema/catalog';
 import { devices, pairingCodes } from '@/db/schema/devices';
+import { diskVersions } from '@/db/schema/disk-history';
 import { collections } from '@/db/schema/collections';
 import { organization, member, user } from '@/db/schema/auth';
 import { diskStore } from '@/lib/storage';
@@ -133,6 +134,62 @@ export function authHeader(token: string) {
   return { Authorization: `Bearer ${token}` };
 }
 
+/**
+ * Remove the delta blobs (disk_versions.kind = 'delta') belonging to
+ * `diskIds`, but only the ones no disk_versions row OUTSIDE that set still
+ * names -- the same "only what nothing else references" rule
+ * purgeSignedUpOrgs below already applies to ordinary blobs.
+ *
+ * A delta encodes only sector indices and changed bytes, never its base disk
+ * (src/lib/disk-history/delta.ts), so the SAME edit applied to two different
+ * disks produces the SAME content-addressed sha. Deleting every delta sha
+ * found on `diskIds` without checking every OTHER disk's history first could
+ * delete bytes a disk outside this cleanup's scope still needs.
+ *
+ * MUST be called before the caller deletes `diskIds` from `disks` -- once
+ * those rows are gone, disk_versions cascades away with them (see
+ * src/db/schema/disk-history.ts) and this query would have nothing left to
+ * find, or to check against. This is exactly the bug fixed here: cleanupSeeded
+ * and purgeSignedUpOrgs both used to delete `disks` (and, transitively, its
+ * disk_versions rows) with no chance for anything to reclaim the delta
+ * objects those rows were the only record of -- so every run leaked them,
+ * silently, into the live blob store.
+ *
+ * Returns the number of blob-store objects ACTUALLY removed, not the number
+ * of candidates, so a caller can log a truthful count.
+ */
+export async function reclaimDeltaBlobs(diskIds: string[]): Promise<number> {
+  if (diskIds.length === 0) return 0;
+  const db = getDb();
+
+  const candidates = await db.selectDistinct({ sha: diskVersions.blobSha256 })
+    .from(diskVersions)
+    .where(and(eq(diskVersions.kind, 'delta'), inArray(diskVersions.diskId, diskIds)));
+  if (candidates.length === 0) return 0;
+
+  const shas = candidates.map((c) => c.sha);
+  // Any OTHER disk -- test or real, in or out of this run -- whose history
+  // still names one of these shas. Not scoped to kind = 'delta': the only
+  // fact that matters is whether the exact bytes at this sha are still
+  // referenced from anywhere outside `diskIds`.
+  const stillNamed = await db.selectDistinct({ sha: diskVersions.blobSha256 })
+    .from(diskVersions)
+    .where(and(inArray(diskVersions.blobSha256, shas), notInArray(diskVersions.diskId, diskIds)));
+  const keep = new Set(stillNamed.map((r) => r.sha));
+
+  let removed = 0;
+  for (const sha256 of shas) {
+    if (keep.has(sha256)) continue;
+    try { await diskStore.remove(sha256); removed++; } catch { /* never uploaded, or already gone */ }
+  }
+  // Visible, not silent: this is per-spec, best-effort cleanup with no other
+  // reporting path, and the whole point of this helper is that a delta blob
+  // must be reclaimed HERE, before the caller's disks delete takes the only
+  // disk_versions record of it with it. A silent no-op would look identical
+  // to a real reclaim from the outside.
+  if (removed > 0) console.log(`reclaimDeltaBlobs: removed ${removed} of ${shas.length} candidate delta blob(s)`);
+  return removed;
+}
 
 /**
  * Remove the whole catalog of every org signUpFresh created in this spec file.
@@ -179,15 +236,22 @@ async function purgeSignedUpOrgs(): Promise<void> {
   const purgeable = [...seen].filter((id) => !tainted.has(id));
   if (purgeable.length === 0) return;
 
-  // Collect the shas BEFORE the rows go -- afterwards there is no way back
-  // to them, and an object left in storage with no row is an invisible leak.
+  // Collect the shas AND disk ids BEFORE the rows go -- afterwards there is
+  // no way back to them, and an object left in storage with no row is an
+  // invisible leak.
   const shas = new Set<string>();
-  for (const r of await db.select({ sha256: disks.sha256 }).from(disks).where(inArray(disks.orgId, purgeable))) {
+  const diskIds: string[] = [];
+  for (const r of await db.select({ id: disks.id, sha256: disks.sha256 }).from(disks).where(inArray(disks.orgId, purgeable))) {
     shas.add(r.sha256);
+    diskIds.push(r.id);
   }
   for (const r of await db.select({ sha256: entitlements.sha256 }).from(entitlements).where(inArray(entitlements.orgId, purgeable))) {
     shas.add(r.sha256);
   }
+
+  // Delta blobs, before the disks delete below cascades their disk_versions
+  // rows away and takes with it the only record of where they live.
+  await reclaimDeltaBlobs(diskIds);
 
   // collection_games follows by cascade from collections.id, and again from
   // games.id -- but the collections rows themselves are reachable only here.
@@ -238,6 +302,9 @@ export async function cleanupSeeded(): Promise<void> {
       await db.delete(pairingCodes).where(inArray(pairingCodes.code, seeded.pairingCodes));
     }
     if (seeded.diskIds.length) {
+      // Before the delete below cascades disk_versions away and takes the
+      // only record of any delta blobs with it.
+      await reclaimDeltaBlobs(seeded.diskIds);
       await db.delete(disks).where(inArray(disks.id, seeded.diskIds));
     }
     if (seeded.shas.length) {

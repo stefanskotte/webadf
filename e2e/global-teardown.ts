@@ -4,6 +4,7 @@ import { blobs, disks, entitlements } from '@/db/schema/catalog';
 import { deleteUserCascade } from '@/lib/admin-delete';
 import { selectUnreferencedBlobs } from '@/lib/blob-gc';
 import { diskStore } from '@/lib/storage';
+import { reclaimDeltaBlobs } from './device-helpers';
 
 /**
  * Remove everything the suite created, from the live database it ran against.
@@ -70,16 +71,18 @@ export default async function globalTeardown() {
 
     // Delta blobs live only in the blob store (never a `blobs` row), and the
     // disk_versions rows naming them cascade away with the user below -- after
-    // which nothing could ever find them again.
-    const deltas = await db.execute<{ sha: string }>(sql`
-      select distinct v.blob_sha256 as sha from disk_versions v
-      join disks d on d.id = v.disk_id
+    // which nothing could ever find them again. reclaimDeltaBlobs (shared with
+    // cleanupSeeded and purgeSignedUpOrgs, e2e/device-helpers.ts) is what keeps
+    // this safe: a delta encodes only sector indices and bytes, never its base
+    // disk, so the identical edit on two disks yields the identical sha -- a
+    // shared helper is what makes "only delete what nothing else still names"
+    // one rule instead of three copies that could drift.
+    const doomedDisks = await db.execute<{ id: string }>(sql`
+      select distinct d.id from disks d
       join auth."member" m on m.organization_id = d.org_id
       join auth."user" u on u.id = m.user_id
-      where v.kind = 'delta' and u.email like ${TEST_EMAIL} and u.email <> ${KEEP}`);
-    for (const { sha } of deltas.rows) {
-      try { await diskStore.remove(sha); } catch { /* never uploaded, or already gone */ }
-    }
+      where u.email like ${TEST_EMAIL} and u.email <> ${KEEP}`);
+    const deltasRemoved = await reclaimDeltaBlobs(doomedDisks.rows.map((r) => r.id));
 
     for (const row of doomed.rows) {
       try {
@@ -161,7 +164,7 @@ export default async function globalTeardown() {
       `teardown: removed ${users} test users, ${games} games, `
       + `${codes.rows.length} invite codes, ${sessions.rowCount ?? 0} stale sessions, `
       + `${orphanBlobs} unreferenced blobs (${objectsRemoved} objects), `
-      + `${deltas.rows.length} delta blobs`,
+      + `${deltasRemoved} delta blobs`,
     );
   } catch (err) {
     // Never fail the run on teardown: the tests already passed or failed on

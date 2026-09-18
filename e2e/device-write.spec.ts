@@ -12,12 +12,12 @@ import { signUpFresh, runTag } from './helpers';
 import { pairDevice, seedDisk, authHeader, cleanupSeeded } from './device-helpers';
 
 const sha = (b: Uint8Array) => createHash('sha256').update(b).digest('hex');
-const deltaShas: string[] = [];
 
-test.afterAll(async () => {
-  for (const s of deltaShas) { try { await diskStore.remove(s); } catch { /* ignore */ } }
-  await cleanupSeeded();
-});
+// cleanupSeeded (e2e/device-helpers.ts) now reclaims this file's delta blobs
+// itself, via the shared reclaimDeltaBlobs helper, before it deletes the
+// seeded disks -- checked against every OTHER disk's history first, since a
+// delta's sha depends only on the edit, not on which disk it landed on.
+test.afterAll(cleanupSeeded);
 
 /** A signed-up org, a paired device, a writable disk with real bytes, mounted and reported. */
 async function mountedWritableDisk(page: import('@playwright/test').Page,
@@ -71,7 +71,6 @@ test('an upload and a close make a new version the board can download', async ({
   expect(rows.map((r) => [r.seq, r.source])).toEqual([[0, 'original'], [1, 'amiga']]);
   expect(rows[1].deviceId).toBe(m.deviceId);
   expect(rows[1].sectorCount).toBe(11);
-  if (rows[1].kind === 'delta') deltaShas.push(rows[1].blobSha256);
 
   // The session is gone, and the new image is downloadable by the board.
   expect(await getDb().select().from(diskWriteSessions)
@@ -93,8 +92,6 @@ test('a repeated seq is accepted and changes nothing', async ({ page, request })
     `/api/device/write/close?disk=${m.diskId}&mount=${m.mount}&seq=1&sha256=${sha(expected)}`,
     { headers: authHeader(m.token) });
   expect(close.status()).toBe(200);
-  const rows = await getDb().select().from(diskVersions).where(eq(diskVersions.diskId, m.diskId));
-  for (const r of rows) if (r.kind === 'delta') deltaShas.push(r.blobSha256);
 });
 
 test('a write-protected disk refuses uploads', async ({ page, request }) => {
@@ -139,8 +136,6 @@ test('a close whose digest disagrees: the server image wins and the board re-dow
   expect(after.desiredVersion).toBe(before.desiredVersion + 1);
   expect(after.desiredSha256).toBe(body.sha256);
   expect(after.lastError).toContain('mismatch');
-  const rows = await getDb().select().from(diskVersions).where(eq(diskVersions.diskId, m.diskId));
-  for (const r of rows) if (r.kind === 'delta') deltaShas.push(r.blobSha256);
 });
 
 test('a close against a head that moved answers 409 conflict and keeps the session to retry', async ({ page, request }) => {
@@ -186,8 +181,6 @@ test('a close against a head that moved answers 409 conflict and keeps the sessi
   const retried = await close();
   expect(retried.status()).toBe(200);
   expect((await retried.json()).sha256).toBe(want);
-  const rows = await getDb().select().from(diskVersions).where(eq(diskVersions.diskId, m.diskId));
-  for (const r of rows) if (r.kind === 'delta') deltaShas.push(r.blobSha256);
 });
 
 test('a close after the board was pointed at another disk leaves that disk desired', async ({ page, request }) => {
@@ -217,8 +210,6 @@ test('a close after the board was pointed at another disk leaves that disk desir
   expect(after.mountedSha256).toBe(want);          // what the board holds right now
   const [disk] = await getDb().select().from(disks).where(eq(disks.id, m.diskId));
   expect(disk.sha256).toBe(want);                  // A's write still recorded
-  const rows = await getDb().select().from(diskVersions).where(eq(diskVersions.diskId, m.diskId));
-  for (const r of rows) if (r.kind === 'delta') deltaShas.push(r.blobSha256);
 });
 
 test('an open session survives a version bump the board acknowledged', async ({ page, request }) => {
@@ -255,8 +246,6 @@ test('an open session survives a version bump the board acknowledged', async ({ 
   expect((await stale.json()).error).toBe('not_mounted');
   expect(await getDb().select().from(diskWriteSessions)
     .where(eq(diskWriteSessions.deviceId, m.deviceId))).toEqual([]);
-  const rows = await getDb().select().from(diskVersions).where(eq(diskVersions.diskId, m.diskId));
-  for (const r of rows) if (r.kind === 'delta') deltaShas.push(r.blobSha256);
 });
 
 test('no token is refused', async ({ request }) => {

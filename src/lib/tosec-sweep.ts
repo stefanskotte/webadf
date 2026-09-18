@@ -403,12 +403,18 @@ export interface ScanStatus {
   blobs: number; hashed: number; matched: number; none: number;
   ambiguous: number; unchecked: number; unreadable: number; tosecEntries: number;
   /**
-   * Blobs in match_state 'none' whose every referencing disk belongs to an
-   * AUTHORED game, OR whose image is a version written by a device or the
-   * browser (disk_versions.image_sha256, seq > 0). Neither is a miss: a disk
-   * somebody made, or wrote to, is in no preservation set and never will be,
-   * so counting either would make the coverage rate fall every time the
-   * operator creates one or writes to their own hardware.
+   * Blobs in match_state 'none' that are decided rather than a real miss --
+   * either because every disk that currently points at the blob belongs to an
+   * AUTHORED game, or because the blob is the image_sha256 of ANY
+   * disk_versions row with seq > 0 (a version written by a device or the
+   * browser), whether or not a disk still points at those exact bytes right
+   * now. The second clause is what keeps a SUPERSEDED written image (the
+   * disk has since moved on to a later write) counted: its disks-row branch
+   * stops applying the moment the disk repoints, but the write itself never
+   * stops being one. Neither case is a miss: a disk somebody made, or wrote
+   * to, is in no preservation set and never will be, so counting either would
+   * make the coverage rate fall every time the operator creates one or writes
+   * to their own hardware.
    */
   authoredNone: number;
   enriched: number; enrichNone: number; enrichAmbiguous: number; enrichUnchecked: number;
@@ -445,17 +451,29 @@ export async function scanStatus(): Promise<ScanStatus> {
       -- global and content-addressed: if the same bytes also back a real
       -- uploaded disk in any organization, then it IS an archive disk that
       -- TOSEC failed to recognise, and that is exactly what this rate is for.
+      --
+      -- The write-back branch below is a SEPARATE, unconditional OR, not
+      -- nested inside "some disk points at it": a write's image is decided
+      -- the moment it is recorded (disk_versions.seq > 0), and stays decided
+      -- after a LATER write moves the disk on to its next head. The disk row
+      -- always points at the current head only, so a superseded written image
+      -- would otherwise fall out of every disks-based branch entirely and sit
+      -- in match_state 'none' forever with nothing able to lower it.
       (select count(*)::int from blobs b
         where b.match_state = 'none'
-          and exists (select 1 from disks d where d.sha256 = b.sha256)
           and (
-            not exists (
-              select 1 from disks d
-              join games g on g.id = d.game_id
-              where d.sha256 = b.sha256 and g.authored = false
+            (
+              exists (select 1 from disks d where d.sha256 = b.sha256)
+              and not exists (
+                select 1 from disks d
+                join games g on g.id = d.game_id
+                where d.sha256 = b.sha256 and g.authored = false
+              )
             )
             -- A disk image that exists because someone WROTE to a disk
-            -- (write-back): in no preservation set, and not a gap in the archive.
+            -- (write-back): in no preservation set, and not a gap in the
+            -- archive -- whether or not a disk still points at these exact
+            -- bytes right now.
             or exists (
               select 1 from disk_versions v where v.image_sha256 = b.sha256 and v.seq > 0
             )

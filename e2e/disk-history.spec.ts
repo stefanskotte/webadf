@@ -11,12 +11,12 @@ import { signUpFresh, runTag } from './helpers';
 import { seedDisk, cleanupSeeded } from './device-helpers';
 
 const sha = (b: Uint8Array) => createHash('sha256').update(b).digest('hex');
-const deltaShas: string[] = [];
 
-test.afterAll(async () => {
-  for (const s of deltaShas) { try { await diskStore.remove(s); } catch { /* never uploaded */ } }
-  await cleanupSeeded();
-});
+// cleanupSeeded (e2e/device-helpers.ts) now reclaims this file's delta blobs
+// itself, via the shared reclaimDeltaBlobs helper, before it deletes the
+// seeded disks -- checked against every OTHER disk's history first, since a
+// delta's sha depends only on the edit, not on which disk it landed on.
+test.afterAll(cleanupSeeded);
 
 async function versions(diskId: string) {
   return getDb().select().from(diskVersions)
@@ -46,7 +46,6 @@ test('a rename is recorded as a browser version on top of version 0', async ({ p
   expect(rows[1].sectorCount).toBeGreaterThan(0);
 
   // The delta is a real WDLD blob in the store, and only names changed sectors.
-  deltaShas.push(rows[1].blobSha256);
   const delta = decodeDelta(await diskStore.read(rows[1].blobSha256));
   expect(delta.sectors.length).toBe(rows[1].sectorCount);
 
