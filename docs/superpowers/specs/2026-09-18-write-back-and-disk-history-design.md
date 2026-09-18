@@ -34,7 +34,7 @@ Measured on hardware before this design was written:
 | D5 | **A partial or corrupt capture is rejected, not applied.** | The stored copy keeps its previous contents; AmigaDOS reads the old data back. This is safer than serving damage, and every rejection is logged. |
 | D6 | **The board re-encodes a written track** in the standard format, and never serves the Amiga's raw bitstream. | Every served track then stays in the one format the pipeline has been proven on. |
 | D7 | **An eject never discards writes.** The board flushes and closes the session before it releases a disk, and holds the disk while it is offline. | It follows from D3. |
-| D8 | **A cloud icon on the OLED shows sync state** (requested by the operator). | It answers "can I switch off now?". See §4. |
+| D8 | **A cloud icon on the OLED shows sync state** (requested by the operator). | It answers "can I switch off now?". See §3.2. |
 
 ## 2. Piece 1 — the board applies a write
 
