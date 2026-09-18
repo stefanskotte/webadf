@@ -48,6 +48,12 @@ export const diskWriteSessions = pgTable('disk_write_sessions', {
   mount: integer('mount').notNull(),
   diskId: text('disk_id').notNull().references(() => disks.id, { onDelete: 'cascade' }),
   lastSeq: integer('last_seq').notNull().default(0),
+  // Board-chosen per boot: a new token at the same mount is a new session, so a
+  // rebooted board's seq 1 is never mistaken for a duplicate of the old one's.
+  token: text('token').notNull(),
+  // The disk's sha256 when the session opened: the image the board's tracks were
+  // written over. Close overlays onto this, not onto a head that moved since.
+  baseSha256: text('base_sha256').notNull(),
   openedAt: timestamp('opened_at', { withTimezone: true }).notNull().defaultNow(),
 }, (t) => [primaryKey({ columns: [t.deviceId, t.mount] })]);
 
