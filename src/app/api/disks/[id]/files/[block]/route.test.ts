@@ -15,6 +15,7 @@
 // `moveEntry` is even called.
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { createHash } from 'node:crypto';
 import { syntheticVolume } from '@/lib/adffs/synthetic';
 import { readVolume } from '@/lib/adffs';
 import { addFile, makeDirectory } from '@/lib/adffs/write';
@@ -32,6 +33,17 @@ vi.mock('@/lib/storage', () => ({
     storageKey: diskStoreStorageKey,
   },
 }));
+
+// The history store is the only writer of a disk's new image (it stores the
+// blob and entitlement, records the version and repoints disks.sha256), so
+// it is where this route's write lands. Faked here, answering with the real
+// digest of the bytes it was handed; its own DB work is proven end to end by
+// e2e/disk-history.spec.ts.
+const recordVersion = vi.fn(async (input: { next: Uint8Array }) => ({
+  sha256: createHash('sha256').update(input.next).digest('hex'),
+  seq: 1, kind: 'delta' as const, sectorCount: 1,
+}));
+vi.mock('@/lib/disk-history/store', () => ({ recordVersion }));
 
 const ORG_ID = 'org-1';
 
@@ -124,7 +136,11 @@ describe('PATCH /api/disks/[id]/files/[block] -- move (toParent)', () => {
     const body = await response.json();
     expect(body.sha256).not.toBe(OLD_SHA);
 
-    const written = diskStorePut.mock.calls[0][1] as Uint8Array;
+    expect(recordVersion).toHaveBeenCalledTimes(1);
+    expect(recordVersion).toHaveBeenCalledWith(expect.objectContaining({
+      orgId: ORG_ID, diskId: DISK_ID, headSha: OLD_SHA, source: 'browser', userId: 'user-1',
+    }));
+    const written = recordVersion.mock.calls[0][0].next;
     const v1 = readVolume(written);
     if (!v1.ok) throw new Error('read after move');
     expect(v1.root.map((e) => e.name)).toEqual(['Docs']);
@@ -161,6 +177,7 @@ describe('PATCH /api/disks/[id]/files/[block] -- move (toParent)', () => {
     const body = await response.json();
     expect(body.reason).toBe('not-a-directory');
     expect(diskStorePut).not.toHaveBeenCalled();
+    expect(recordVersion).not.toHaveBeenCalled();
     expect(updateCalls).toHaveLength(0);
   });
 
@@ -195,6 +212,7 @@ describe('PATCH /api/disks/[id]/files/[block] -- move (toParent)', () => {
     const body = await response.json();
     expect(body.reason).toBe('not-found');
     expect(diskStorePut).not.toHaveBeenCalled();
+    expect(recordVersion).not.toHaveBeenCalled();
     expect(updateCalls).toHaveLength(0);
   });
 });

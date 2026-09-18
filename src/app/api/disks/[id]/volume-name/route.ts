@@ -2,13 +2,14 @@ import { z } from 'zod';
 import { createHash } from 'node:crypto';
 import { and, eq } from 'drizzle-orm';
 import { getDb } from '@/db';
-import { games, disks, blobs, entitlements } from '@/db/schema/catalog';
+import { games, disks, entitlements } from '@/db/schema/catalog';
 import { devices } from '@/db/schema/devices';
 import { requireOrg } from '@/lib/session';
 import { diskStore } from '@/lib/storage';
 import { setVolumeName, MAX_VOLUME_NAME } from '@/lib/adffs/format';
 import { readVolume } from '@/lib/adffs';
 import { makeSortTitle } from '@/lib/tosec';
+import { recordVersion } from '@/lib/disk-history/store';
 
 export const maxDuration = 60;
 
@@ -34,7 +35,7 @@ const body = z.object({ volumeName: z.string().trim().min(1).max(MAX_VOLUME_NAME
  *    did not.
  */
 export async function PATCH(request: Request, ctx: { params: Promise<{ id: string }> }) {
-  const { orgId } = await requireOrg();
+  const { orgId, userId } = await requireOrg();
   const { id } = await ctx.params;
 
   let raw: unknown;
@@ -82,17 +83,14 @@ export async function PATCH(request: Request, ctx: { params: Promise<{ id: strin
     return Response.json({ id, sha256, volumeName, unchanged: true });
   }
 
-  await diskStore.put(sha256, after);
-  await db.insert(blobs).values({
-    sha256, sizeBytes: after.length, storageKey: diskStore.storageKey(sha256),
-  }).onConflictDoNothing();
-  // The entitlement is what lets this org read the new bytes at all.
-  await db.insert(entitlements).values({
-    orgId, sha256, sourceFilename: `${volumeName}.adf`,
-  }).onConflictDoNothing();
-
+  // The history store stores the new image (blob + entitlement), records it
+  // as the disk's next version and repoints disks.sha256, all in one batch.
+  await recordVersion({
+    orgId, diskId: id, headSha: disk.sha256, head: before, next: after,
+    source: 'browser', userId, sourceFilename: `${volumeName}.adf`,
+  });
   await db.update(disks)
-    .set({ sha256, tosecName: `${volumeName}.adf` })
+    .set({ tosecName: `${volumeName}.adf` })
     .where(and(eq(disks.id, id), eq(disks.orgId, orgId)));
 
   // The catalog title follows the volume name for a disk somebody made: the

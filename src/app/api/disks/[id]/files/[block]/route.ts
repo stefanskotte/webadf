@@ -136,7 +136,7 @@ export async function PATCH(
   request: Request,
   ctx: { params: Promise<{ id: string; block: string }> },
 ) {
-  const { orgId } = await requireOrg();
+  const { orgId, userId } = await requireOrg();
   const { id, block } = await ctx.params;
 
   const blockNo = Number(block);
@@ -217,7 +217,7 @@ export async function PATCH(
     }
   }
 
-  const result = await applyDiskEdit(orgId, id, edit);
+  const result = await applyDiskEdit(orgId, id, edit, userId);
   if (!result.ok) {
     // A bare "cycle" means nothing to a person -- say what it actually
     // means: dragging a folder into its own subtree.
@@ -238,7 +238,7 @@ export async function DELETE(
   _request: Request,
   ctx: { params: Promise<{ id: string; block: string }> },
 ) {
-  const { orgId } = await requireOrg();
+  const { orgId, userId } = await requireOrg();
   const { id, block } = await ctx.params;
 
   const blockNo = Number(block);
@@ -254,7 +254,7 @@ export async function DELETE(
     return deleteEntry(adf, found.parentBlock, blockNo);
   };
 
-  const result = await applyDiskEdit(orgId, id, edit);
+  const result = await applyDiskEdit(orgId, id, edit, userId);
   if (!result.ok) {
     return Response.json({ error: 'edit_failed', reason: result.reason }, { status: result.status });
   }

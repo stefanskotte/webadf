@@ -68,7 +68,7 @@ function isPathSafe(path: string): boolean {
  *     resembling a database write of its own.
  */
 export async function POST(request: Request, ctx: { params: Promise<{ id: string }> }) {
-  const { orgId } = await requireOrg();
+  const { orgId, userId } = await requireOrg();
   const { id } = await ctx.params;
 
   let form: FormData;
@@ -184,7 +184,7 @@ export async function POST(request: Request, ctx: { params: Promise<{ id: string
     }
   }
 
-  const result = await applyDiskEdit(orgId, id, applyBatch(ops));
+  const result = await applyDiskEdit(orgId, id, applyBatch(ops), userId);
   if (!result.ok) {
     return Response.json({ error: 'edit_failed', reason: result.reason }, { status: result.status });
   }

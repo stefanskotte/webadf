@@ -23,12 +23,12 @@
 // protocol question, on hardware that has never run a write. The operator
 // ejects the device first; there is no server-side "eject and proceed".
 
-import { createHash } from 'node:crypto';
 import { and, eq, or } from 'drizzle-orm';
 import { getDb } from '@/db';
-import { disks, blobs, entitlements } from '@/db/schema/catalog';
+import { disks, entitlements } from '@/db/schema/catalog';
 import { devices } from '@/db/schema/devices';
 import { diskStore } from '@/lib/storage';
+import { recordVersion } from '@/lib/disk-history/store';
 import type { WriteResult } from '@/lib/adffs';
 
 export type DiskEditOutcome =
@@ -52,6 +52,7 @@ export async function applyDiskEdit(
   orgId: string,
   diskId: string,
   edit: (adf: Uint8Array) => WriteResult,
+  userId: string | null = null,
 ): Promise<DiskEditOutcome> {
   const db = getDb();
 
@@ -109,24 +110,13 @@ export async function applyDiskEdit(
   }
   const after = result.adf;
 
-  const sha256 = createHash('sha256').update(after).digest('hex');
-
-  await diskStore.put(sha256, after);
-  await db.insert(blobs).values({
-    sha256, sizeBytes: after.length, storageKey: diskStore.storageKey(sha256),
-  }).onConflictDoNothing();
-  // The entitlement is what lets THIS org read the new bytes at all -- same
-  // reasoning as volume-name. sourceFilename carries the disk's existing
-  // name forward; a file operation, unlike a rename, has no new name of its
-  // own to give it.
-  await db.insert(entitlements).values({
-    orgId, sha256, sourceFilename: disk.tosecName ?? disk.sourceFilename ?? `${diskId}.adf`,
-  }).onConflictDoNothing();
-
-  // disks.id is NEVER part of this SET -- only sha256 moves.
-  await db.update(disks)
-    .set({ sha256 })
-    .where(and(eq(disks.id, diskId), eq(disks.orgId, orgId)));
+  const recorded = await recordVersion({
+    orgId, diskId, headSha: disk.sha256, head: before, next: after,
+    source: 'browser', userId,
+    sourceFilename: disk.tosecName ?? disk.sourceFilename ?? `${diskId}.adf`,
+  });
+  // An edit that changes nothing (writing a file's own bytes back) is a no-op.
+  const sha256 = recorded?.sha256 ?? disk.sha256;
 
   // THE OLD BLOB (disk.sha256) IS NEVER DELETED, and there is deliberately no
   // call to diskStore.remove or a `blobs`/`entitlements` delete anywhere in

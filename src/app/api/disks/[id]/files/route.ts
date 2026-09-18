@@ -30,7 +30,7 @@ function isDirectory(entries: AdfEntry[], block: number): boolean {
  * no filesystem mutation itself.
  */
 export async function POST(request: Request, ctx: { params: Promise<{ id: string }> }) {
-  const { orgId } = await requireOrg();
+  const { orgId, userId } = await requireOrg();
   const { id } = await ctx.params;
 
   let form: FormData;
@@ -78,7 +78,7 @@ export async function POST(request: Request, ctx: { params: Promise<{ id: string
       : makeDirectory(adf, parentBlock, name);
   };
 
-  const result = await applyDiskEdit(orgId, id, edit);
+  const result = await applyDiskEdit(orgId, id, edit, userId);
   if (!result.ok) {
     return Response.json({ error: 'edit_failed', reason: result.reason }, { status: result.status });
   }

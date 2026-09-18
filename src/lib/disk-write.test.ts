@@ -4,18 +4,16 @@
 // than the module under test being reshaped to fit a test double. Nothing
 // in this repo mocks the database directly yet, so the fake `getDb()` here
 // is deliberately narrow -- it supports exactly the chain shapes
-// applyDiskEdit calls (select/from/innerJoin/where/limit,
-// insert/values/onConflictDoNothing, update/set/where) and nothing more.
-// Table identity is checked by reference against the real schema modules,
-// which are safe to import: a pgTable() call builds metadata only and opens
-// no connection.
+// applyDiskEdit calls (select/from/innerJoin/where/limit) plus
+// insert/update/delete recorders that prove it writes nothing itself: every
+// write goes through the history store (@/lib/disk-history/store), which is
+// mocked here and exercised against the real database by
+// e2e/disk-history.spec.ts.
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { createHash } from 'node:crypto';
 import type { SQL } from 'drizzle-orm';
 import { PgDialect } from 'drizzle-orm/pg-core';
-import { disks, blobs, entitlements } from '@/db/schema/catalog';
-import { devices } from '@/db/schema/devices';
 import type { WriteResult } from '@/lib/adffs';
 
 // Drizzle's own dialect, used only to render a captured `.where(...)`
@@ -35,6 +33,12 @@ const diskStoreRead = vi.fn();
 const diskStorePut = vi.fn();
 const diskStoreRemove = vi.fn();
 const diskStoreStorageKey = vi.fn((sha: string) => `adf/${sha}`);
+
+// The history store is the only writer of a disk's new image; applyDiskEdit
+// hands it the before/after bytes and uses the digest it returns. Its own DB
+// work is covered end to end by e2e/disk-history.spec.ts.
+const recordVersion = vi.fn();
+vi.mock('@/lib/disk-history/store', () => ({ recordVersion }));
 
 vi.mock('@/lib/storage', () => ({
   diskStore: {
@@ -94,14 +98,6 @@ function fakeDb() {
 
 vi.mock('@/db', () => ({ getDb: () => fakeDb() }));
 
-function tableName(table: unknown): string {
-  if (table === disks) return 'disks';
-  if (table === blobs) return 'blobs';
-  if (table === entitlements) return 'entitlements';
-  if (table === devices) return 'devices';
-  return 'unknown';
-}
-
 const ORG_ID = 'org-1';
 const DISK_ID = 'disk-1';
 const OLD_SHA = 'a'.repeat(64);
@@ -127,6 +123,7 @@ describe('applyDiskEdit', () => {
 
     expect(result).toEqual({ ok: false, status: 404, reason: 'not_found' });
     expect(edit).not.toHaveBeenCalled();
+    expect(recordVersion).not.toHaveBeenCalled();
 
     // PROVES the org scoping, not just the 404 shape: a lookup accidentally
     // scoped by disks.id alone (orgId dropped) would still hit this queued
@@ -161,6 +158,7 @@ describe('applyDiskEdit', () => {
     expect(edit).not.toHaveBeenCalled();
     expect(diskStoreRead).not.toHaveBeenCalled();
     expect(diskStorePut).not.toHaveBeenCalled();
+    expect(recordVersion).not.toHaveBeenCalled();
 
     // PROVES both mount columns are checked, not just that a 409 came back:
     // a fixture with the holder row already queued would produce the same
@@ -176,13 +174,14 @@ describe('applyDiskEdit', () => {
     expect(holderCheck.params).toEqual(expect.arrayContaining([ORG_ID, OLD_SHA]));
   });
 
-  it('keeps disks.id and changes disks.sha256', async () => {
+  it('records the edit through the history store and returns its digest', async () => {
     const before = new Uint8Array([1, 2, 3]);
     const after = new Uint8Array([4, 5, 6, 7]);
     const newSha = createHash('sha256').update(after).digest('hex');
 
     selectResults = [[DISK_ROW], []]; // no device holds it
     diskStoreRead.mockResolvedValue(before);
+    recordVersion.mockResolvedValue({ sha256: newSha, seq: 1, kind: 'delta', sectorCount: 1 });
 
     const { applyDiskEdit } = await import('@/lib/disk-write');
     const edit = (adf: Uint8Array): WriteResult => {
@@ -190,19 +189,44 @@ describe('applyDiskEdit', () => {
       return { ok: true, adf: after };
     };
 
-    const result = await applyDiskEdit(ORG_ID, DISK_ID, edit);
+    const result = await applyDiskEdit(ORG_ID, DISK_ID, edit, 'user-1');
 
     expect(result).toEqual({ ok: true, sha256: newSha });
+    expect(recordVersion).toHaveBeenCalledTimes(1);
+    expect(recordVersion).toHaveBeenCalledWith({
+      orgId: ORG_ID, diskId: DISK_ID, headSha: OLD_SHA, head: before, next: after,
+      source: 'browser', userId: 'user-1', sourceFilename: 'Game.adf',
+    });
 
-    const diskUpdate = updateCalls.find((c) => tableName(c.table) === 'disks');
-    expect(diskUpdate).toBeDefined();
-    // sha256 moves, id never appears in the SET at all -- the standing rule
-    // that disks.id never changes is enforced by never writing to it, not by
-    // writing the same value back.
-    expect(diskUpdate!.set).toEqual({ sha256: newSha });
-    expect(diskUpdate!.set).not.toHaveProperty('id');
+    // applyDiskEdit writes nothing itself any more: the blob, entitlement,
+    // version rows and the disks.sha256 repoint are all the store's.
+    expect(diskStorePut).not.toHaveBeenCalled();
+    expect(insertCalls).toHaveLength(0);
+    expect(updateCalls).toHaveLength(0);
+  });
 
-    expect(diskStorePut).toHaveBeenCalledWith(newSha, after);
+  it('records a null userId when none is passed', async () => {
+    const after = new Uint8Array([9]);
+    selectResults = [[DISK_ROW], []];
+    diskStoreRead.mockResolvedValue(new Uint8Array([1]));
+    recordVersion.mockResolvedValue({ sha256: 'b'.repeat(64), seq: 1, kind: 'delta', sectorCount: 1 });
+
+    const { applyDiskEdit } = await import('@/lib/disk-write');
+    await applyDiskEdit(ORG_ID, DISK_ID, () => ({ ok: true, adf: after }));
+
+    expect(recordVersion).toHaveBeenCalledWith(expect.objectContaining({ userId: null }));
+  });
+
+  it('keeps the current digest when the edit changes nothing', async () => {
+    const same = new Uint8Array([1, 2, 3]);
+    selectResults = [[DISK_ROW], []];
+    diskStoreRead.mockResolvedValue(same);
+    recordVersion.mockResolvedValue(null); // identical bytes: nothing recorded
+
+    const { applyDiskEdit } = await import('@/lib/disk-write');
+    const result = await applyDiskEdit(ORG_ID, DISK_ID, () => ({ ok: true, adf: same }), 'user-1');
+
+    expect(result).toEqual({ ok: true, sha256: OLD_SHA });
   });
 
   it('never deletes the old blob', async () => {
@@ -211,6 +235,9 @@ describe('applyDiskEdit', () => {
 
     selectResults = [[DISK_ROW], []];
     diskStoreRead.mockResolvedValue(before);
+    recordVersion.mockResolvedValue({
+      sha256: createHash('sha256').update(after).digest('hex'), seq: 1, kind: 'delta', sectorCount: 1,
+    });
 
     const { applyDiskEdit } = await import('@/lib/disk-write');
     await applyDiskEdit(ORG_ID, DISK_ID, () => ({ ok: true, adf: after }));
@@ -220,11 +247,20 @@ describe('applyDiskEdit', () => {
     // is left exactly as it was. Only blob-gc.ts ever removes a blob.
     expect(deleteCalls).toHaveLength(0);
     expect(diskStoreRemove).not.toHaveBeenCalled();
+    expect(recordVersion).toHaveBeenCalledTimes(1);
+  });
 
-    // The new blob and entitlement are inserted, never used to overwrite
-    // the old ones.
-    expect(insertCalls.some((c) => tableName(c.table) === 'blobs')).toBe(true);
-    expect(insertCalls.some((c) => tableName(c.table) === 'entitlements')).toBe(true);
+  it('returns 503 and records nothing when the blob cannot be read', async () => {
+    selectResults = [[DISK_ROW], []];
+    diskStoreRead.mockRejectedValue(new Error('gone'));
+    const edit = vi.fn();
+
+    const { applyDiskEdit } = await import('@/lib/disk-write');
+    const result = await applyDiskEdit(ORG_ID, DISK_ID, edit, 'user-1');
+
+    expect(result).toEqual({ ok: false, status: 503, reason: 'blob_unavailable' });
+    expect(edit).not.toHaveBeenCalled();
+    expect(recordVersion).not.toHaveBeenCalled();
   });
 
   it('maps a WriteResult error to a 400 carrying its reason', async () => {
@@ -235,6 +271,7 @@ describe('applyDiskEdit', () => {
     const result = await applyDiskEdit(ORG_ID, DISK_ID, () => ({ ok: false, reason: 'disk-full' }));
 
     expect(result).toEqual({ ok: false, status: 400, reason: 'disk-full' });
+    expect(recordVersion).not.toHaveBeenCalled();
     expect(diskStorePut).not.toHaveBeenCalled();
     expect(updateCalls).toHaveLength(0);
   });

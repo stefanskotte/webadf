@@ -17,10 +17,9 @@
 // not an arbitrary Uint8Array a lenient reader might accept by accident.
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { createHash } from 'node:crypto';
 import type { SQL } from 'drizzle-orm';
 import { PgDialect } from 'drizzle-orm/pg-core';
-import { disks, blobs, entitlements } from '@/db/schema/catalog';
-import { devices } from '@/db/schema/devices';
 import { syntheticVolume } from '@/lib/adffs/synthetic';
 import { readVolume, readUsage, blocksForPlan } from '@/lib/adffs';
 
@@ -42,6 +41,17 @@ vi.mock('@/lib/storage', () => ({
     storageKey: diskStoreStorageKey,
   },
 }));
+
+// The history store is the only writer of a disk's new image (it stores the
+// blob and entitlement, records the version and repoints disks.sha256), so
+// it is where this route's write lands. Faked here, answering with the real
+// digest of the bytes it was handed; its own DB work is proven end to end by
+// e2e/disk-history.spec.ts.
+const recordVersion = vi.fn(async (input: { next: Uint8Array }) => ({
+  sha256: createHash('sha256').update(input.next).digest('hex'),
+  seq: 1, kind: 'delta' as const, sectorCount: 1,
+}));
+vi.mock('@/lib/disk-history/store', () => ({ recordVersion }));
 
 const ORG_ID = 'org-1';
 
@@ -92,14 +102,6 @@ function fakeDb() {
 }
 
 vi.mock('@/db', () => ({ getDb: () => fakeDb() }));
-
-function tableName(table: unknown): string {
-  if (table === disks) return 'disks';
-  if (table === blobs) return 'blobs';
-  if (table === entitlements) return 'entitlements';
-  if (table === devices) return 'devices';
-  return 'unknown';
-}
 
 const DISK_ID = 'disk-1';
 const OLD_SHA = 'a'.repeat(64);
@@ -157,6 +159,7 @@ describe('POST /api/disks/[id]/files/batch', () => {
     expect(whereConditions).toHaveLength(1);
     expect(diskStoreRead).toHaveBeenCalledTimes(1);
     expect(diskStorePut).not.toHaveBeenCalled();
+    expect(recordVersion).not.toHaveBeenCalled();
     expect(updateCalls).toHaveLength(0);
   });
 
@@ -199,6 +202,7 @@ describe('POST /api/disks/[id]/files/batch', () => {
     // Named, so the operator knows where to eject it from.
     expect(body.reason).toContain('Amiga 500 #1');
     expect(diskStorePut).not.toHaveBeenCalled();
+    expect(recordVersion).not.toHaveBeenCalled();
     expect(updateCalls).toHaveLength(0);
 
     // PROVES both mount columns are checked (D-W-4), the same reasoning
@@ -211,7 +215,7 @@ describe('POST /api/disks/[id]/files/batch', () => {
     expect(holderCheck.params).toEqual(expect.arrayContaining([ORG_ID, OLD_SHA]));
   });
 
-  it('commits a batch that fits, changing disks.sha256 while disks.id never appears in the write', async () => {
+  it('commits a batch that fits, recording it through the history store', async () => {
     const adf = emptyDisk();
     selectResults = [
       [{ sha256: OLD_SHA }],
@@ -238,20 +242,24 @@ describe('POST /api/disks/[id]/files/batch', () => {
     expect(body.id).toBe(DISK_ID);
     expect(body.sha256).not.toBe(OLD_SHA);
 
-    const diskUpdate = updateCalls.find((c) => tableName(c.table) === 'disks');
-    expect(diskUpdate).toBeDefined();
-    // sha256 moves; id never appears in the SET at all -- disks.id is
-    // enforced never to change by never writing to it.
-    expect(diskUpdate!.set).toEqual({ sha256: body.sha256 });
-    expect(diskUpdate!.set).not.toHaveProperty('id');
-    expect(insertCalls.some((c) => tableName(c.table) === 'blobs')).toBe(true);
-    expect(insertCalls.some((c) => tableName(c.table) === 'entitlements')).toBe(true);
+    // The write goes through the history store, exactly once, as a browser
+    // edit on top of the digest the disk pointed at -- the store, not this
+    // route, repoints disks.sha256 (never disks.id) and inserts the new
+    // blob and entitlement.
+    expect(recordVersion).toHaveBeenCalledTimes(1);
+    expect(recordVersion).toHaveBeenCalledWith(expect.objectContaining({
+      orgId: ORG_ID, diskId: DISK_ID, headSha: OLD_SHA, head: adf,
+      source: 'browser', userId: 'user-1',
+    }));
+    expect(updateCalls).toHaveLength(0);
+    expect(insertCalls).toHaveLength(0);
 
     // Prove the OUTCOME, not just the response shape: the bytes actually
-    // handed to diskStore.put really contain the tree the manifest asked
+    // handed to the history store really contain the tree the manifest asked
     // for, with the child correctly resolved under the parent the SAME
     // batch created despite arriving first in the manifest.
-    const written = diskStorePut.mock.calls[0][1] as Uint8Array;
+    const written = recordVersion.mock.calls[0][0].next;
+    expect(body.sha256).toBe(createHash('sha256').update(written).digest('hex'));
     const volume = readVolume(written);
     expect(volume.ok).toBe(true);
     if (!volume.ok) return;
