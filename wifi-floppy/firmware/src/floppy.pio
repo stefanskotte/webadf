@@ -3,19 +3,32 @@
 ; 8 PIO cycles per bit cell. clkdiv = clk_sys * 2us / 8  (150 MHz -> 37.5)
 ; Bus RD pulse = FET on = side-set 1 for 3 cycles (~750 ns low on the bus).
 ; Bit = 1 -> flux transition (pulse); bit = 0 -> no pulse.
+;
+; SEL0-gated (jmp_pin = SEL0): a 1 bit is only pulsed while DF0 is selected.
+; RDATA is shared with any second drive, and measured 2026-09-18 a DOS floppy
+; in a real DF1 came up as DF1:???? because this board's flux was on the line
+; while DF1 was being read. The bits are still consumed at the same rate
+; either way, so the "disk" keeps turning while deselected, as a real one does.
+; A pulse already under way when SEL0 releases runs out its 750 ns.
+;
+; Every path is exactly 8 cycles -- the bit cell is the timing:
+;   1, selected   : 2 + 1 + 1 + 3 + 1
+;   1, deselected : 2 + 1 + 1 + 4        (via skip4)
+;   0             : 2 + 1 + 1 + 4        (via skip5)
 ; ---------------------------------------------------------------------------
 .program flux_out
 .side_set 1 opt
 .wrap_target
+top:
     out x, 1            side 0 [1]   ; 2 cycles, idle (FET off, bus high)
-    jmp !x, nopulse     side 0       ; 1
+    jmp !x, skip5       side 0       ; 1
+    jmp pin, skip4      side 0       ; 1  SEL0 high: not our select
     nop                 side 1 [2]   ; 3 cycles asserted  = 750 ns pulse
-    jmp done            side 0       ; 1
-nopulse:
-    nop                 side 0 [2]   ; 3
-    jmp done            side 0       ; 1
-done:
-    nop                 side 0       ; 1  -> 8 total both paths
+    jmp top             side 0       ; 1
+skip5:
+    nop                 side 0       ; 1
+skip4:
+    nop                 side 0 [3]   ; 4
 .wrap
 
 ; ---------------------------------------------------------------------------
@@ -39,8 +52,16 @@ wait_high:
 .wrap
 
 ; ---------------------------------------------------------------------------
-; step_dir: latch DIR at the instant STEP falls, in hardware. One RX word per
-; STEP pulse; its value is the DIR level (1 = outwards, towards track 0).
+; step_dir: latch DIR -- and SEL0 -- at the instant STEP falls, in hardware.
+; One RX word per STEP pulse: GP2..GP5 (SEL0 SEL1 MTR DIR) as they were at
+; that instant, decoded by bus_step_decode(). DIR 1 = outwards, towards track 0.
+;
+; SEL0 is sampled with it because STEP is shared: measured 2026-09-18 with a
+; real DF1 attached, every DF1 disk-change click moved DF0's head one cylinder
+; (30 -> 79 in two minutes), and DF1's 80-step recalibrate moved it back. A
+; step whose SEL0 was released is not ours and is not acted on. In the
+; 2026-09-15 sniffer boot all 1,838 STEP falls came with SEL0 asserted, so
+; this loses nothing real.
 ;
 ; Why this exists. The Amiga drives DIR only for a window around each pulse:
 ; low ~150 us before STEP falls, released ~25-40 us after (measured on real
@@ -51,38 +72,109 @@ wait_high:
 ; sample is taken within two PIO cycles (~13 ns at clkdiv 1) of STEP falling,
 ; which is what a real drive's logic does.
 ;
-; jmp_pin = STEP, in_base = DIR. Starts at `wait_high` so a STEP line that is
+; jmp_pin = STEP, in_base = SEL0. Starts at `wait_high` so a STEP line that is
 ; already low when the machine starts (Amiga off, inputs floating) is not
 ; counted as a pulse.
 ; ---------------------------------------------------------------------------
 .program step_dir
 idle:
     jmp pin idle        ; STEP high: no pulse
-    in pins, 1          ; STEP has fallen: sample DIR now (autopush, 1 bit)
+    in pins, 4          ; STEP has fallen: SEL0 SEL1 MTR DIR now (autopush, 4 bits)
 public wait_high:
     jmp pin idle        ; wait out the pulse before looking for the next one
     jmp wait_high
 
 ; ---------------------------------------------------------------------------
-; bus_sniff: a logic analyser for the eight bus inputs. DIAGNOSTIC, only
-; loaded when built with -DWF_BUS_SNIFF=1.
+; status_gate: the five status outputs, released unless DF0 is selected.
 ;
-; Samples GP2..GP9 (bit 0..7 = SEL0 SEL1 MTR DIR STEP WDATA WGATE SIDE) together
-; every 4 PIO cycles (~27 ns) and pushes the byte only when it differs from the
-; last one. The ORDER of pushed samples is therefore exact, which a GPIO ISR
-; cannot give: the SDK dispatches pending edges in pin order and each callback
-; reads the level late (HANDOFF 4c). Time comes from the ISR that drains the
-; FIFO, so it is late by the interrupt latency but never out of order.
+; INDEX, CHNG, WPROT, RDY and TRK0 are shared open-collector lines. A real
+; drive gates them with its select line; this board drove them regardless,
+; so with a second drive attached the Amiga read this board's TRK0/CHNG/RDY
+; as DF1's. Selects last 5-100 us (HANDOFF 4d: median 56 us, 2,672 measured),
+; and the Amiga reads the status lines inside them, so the gate has to follow
+; SEL0 in PIO time: this loop is 5 cycles, ~33 ns at clkdiv 1.
+;
+; The CPU never writes these pads. bus_out.c keeps the desired levels as one
+; GPIO mask and pushes it here; `pull noblock` takes the newest, or keeps the
+; last (X) when nothing new has arrived.
+;
+; jmp_pin = SEL0. OUT pins = GP0..GP13; only the five status pads are handed
+; to this PIO, so the rest of the window -- inputs, and RDATA, which pio0
+; owns -- reaches no pad.
+; ---------------------------------------------------------------------------
+.program status_gate
+.wrap_target
+top:
+    pull noblock        ; OSR = newest mask, or X if none is waiting
+    mov x, osr
+    jmp pin, released   ; SEL0 high: not our select
+    mov pins, x
+    jmp top
+released:
+    mov pins, null
+.wrap
+
+; ---------------------------------------------------------------------------
+; sel_mtr: latch MTR on SEL0's falling edge, as a real drive does.
+;
+; MTR is shared: the Amiga sets it and then pulses the select of the drive it
+; means, and only that drive takes it. Following MTR's edges directly, as a
+; GPIO interrupt did, turned DF1's motor on and off as well as DF0's. Pushes
+; only when the latched value CHANGES (1 = motor on), so 2,672 selects in a
+; boot cost a handful of interrupts, not 2,672.
+;
+; in_base = SEL0 (for `wait pin`), jmp_pin = MTR (active low).
+; ---------------------------------------------------------------------------
+.program sel_mtr
+    mov y, ~null        ; nothing equals this: the first latch is always reported
+.wrap_target
+top:
+    wait 1 pin 0        ; SEL0 released
+    wait 0 pin 0 [7]    ; SEL0 falls; ~53 ns for MTR, which the Amiga set first
+    set x, 1            ; MTR low: motor on ...
+    jmp pin, off
+    jmp check
+off:
+    set x, 0            ; ... MTR high: motor off
+check:
+    jmp x!=y, changed
+    jmp top
+changed:
+    mov y, x
+    mov isr, x
+    push noblock
+.wrap
+
+; ---------------------------------------------------------------------------
+; bus_sniff: a logic analyser for the bus. DIAGNOSTIC, only loaded when built
+; with -DWF_BUS_SNIFF=1.
+;
+; Samples GP0..GP13 together every 9 PIO cycles (~60 ns) and pushes only when
+; the sample differs from the last one, so the ORDER of pushed samples is
+; exact, which a GPIO ISR cannot give (HANDOFF 4c). Time comes from the ISR
+; that drains the FIFO, so it is late by the interrupt latency but never out
+; of order.
+;
+; Inputs AND outputs: reading a pad returns its level whoever drives it, which
+; is how SEL0 gating is checked -- no status output asserted while SEL0 is
+; released (bus_sniff_violation). WDATA (GP7) and RDATA (GP11) are dropped:
+; their flux would flood the FIFO. Packed as GP0..6, GP8..10, GP12..13 into
+; 12 bits; bus_sniff_decode() turns that back into a GPIO mask.
 ;
 ; `push noblock` so sampling never pauses; a push into a full FIFO is dropped
 ; and flagged in FDEBUG.RXSTALL, which the ISR reports.
 ; ---------------------------------------------------------------------------
 .program bus_sniff
-    mov x, ~null        ; no 8-bit sample equals this: the first is always pushed
+    mov x, ~null        ; no sample equals this: the first is always pushed
 .wrap_target
 sample:
+    mov osr, pins       ; GP0..GP13 (in_count 14)
     mov isr, null
-    in pins, 8
+    in osr, 7           ; GP0..GP6
+    out null, 8         ; drop them and WDATA
+    in osr, 3           ; GP8..GP10
+    out null, 4         ; drop them and RDATA
+    in osr, 2           ; GP12..GP13
     mov y, isr
     jmp x!=y, changed   ; unchanged: falls through the .wrap back to sample
 .wrap
@@ -93,28 +185,56 @@ changed:
 
 % c-sdk {
 #include "hardware/clocks.h"
-static inline void bus_sniff_program_init(PIO pio, uint sm, uint offset, uint base_pin) {
+static inline void bus_sniff_program_init(PIO pio, uint sm, uint offset) {
     pio_sm_config c = bus_sniff_program_get_default_config(offset);
-    sm_config_set_in_pin_base(&c, base_pin);
-    sm_config_set_in_pin_count(&c, 8);
-    sm_config_set_in_shift(&c, false, false, 32);
+    sm_config_set_in_pin_base(&c, 0);
+    sm_config_set_in_pin_count(&c, 14);                  // GP0..GP13 for mov osr, pins
+    sm_config_set_in_shift(&c, false, false, 32);        // left, no autopush
+    sm_config_set_out_shift(&c, true, false, 32);        // right: `out null` drops low bits
     sm_config_set_fifo_join(&c, PIO_FIFO_JOIN_RX);
     sm_config_set_clkdiv(&c, 1.0f);
     pio_sm_init(pio, sm, offset, &c);
 }
 static inline void step_dir_program_init(PIO pio, uint sm, uint offset,
-                                         uint step_pin, uint dir_pin) {
+                                         uint step_pin, uint sel0_pin) {
     pio_sm_config c = step_dir_program_get_default_config(offset);
     sm_config_set_jmp_pin(&c, step_pin);
-    sm_config_set_in_pin_base(&c, dir_pin);
-    sm_config_set_in_shift(&c, false, true, 1);          // autopush every bit
+    sm_config_set_in_pin_base(&c, sel0_pin);             // SEL0 SEL1 MTR DIR
+    sm_config_set_in_shift(&c, false, true, 4);          // autopush every sample
     sm_config_set_fifo_join(&c, PIO_FIFO_JOIN_RX);       // 8 pulses of slack
     sm_config_set_clkdiv(&c, 1.0f);
     pio_sm_init(pio, sm, offset + step_dir_offset_wait_high, &c);
 }
-static inline void flux_out_program_init(PIO pio, uint sm, uint offset, uint pin) {
+static inline void status_gate_program_init(PIO pio, uint sm, uint offset,
+                                            uint sel0_pin, uint out_count,
+                                            uint32_t pin_mask) {
+    pio_sm_config c = status_gate_program_get_default_config(offset);
+    sm_config_set_out_pins(&c, 0, out_count);
+    sm_config_set_jmp_pin(&c, sel0_pin);
+    sm_config_set_fifo_join(&c, PIO_FIFO_JOIN_TX);
+    sm_config_set_clkdiv(&c, 1.0f);
+    // Level first, then direction, then hand the pads over: no glitch on the
+    // way. Released = low (the FET drivers invert).
+    pio_sm_set_pins_with_mask(pio, sm, 0, pin_mask);
+    pio_sm_set_pindirs_with_mask(pio, sm, pin_mask, pin_mask);
+    for (uint p = 0; p < 32; p++)
+        if (pin_mask & (1u << p)) pio_gpio_init(pio, p);
+    pio_sm_init(pio, sm, offset, &c);
+}
+static inline void sel_mtr_program_init(PIO pio, uint sm, uint offset,
+                                        uint sel0_pin, uint mtr_pin) {
+    pio_sm_config c = sel_mtr_program_get_default_config(offset);
+    sm_config_set_in_pin_base(&c, sel0_pin);
+    sm_config_set_jmp_pin(&c, mtr_pin);
+    sm_config_set_fifo_join(&c, PIO_FIFO_JOIN_RX);
+    sm_config_set_clkdiv(&c, 1.0f);
+    pio_sm_init(pio, sm, offset, &c);
+}
+static inline void flux_out_program_init(PIO pio, uint sm, uint offset, uint pin,
+                                         uint sel0_pin) {
     pio_sm_config c = flux_out_program_get_default_config(offset);
     sm_config_set_sideset_pins(&c, pin);
+    sm_config_set_jmp_pin(&c, sel0_pin);
     sm_config_set_out_shift(&c, false, true, 32);        // MSB first, autopull
     sm_config_set_fifo_join(&c, PIO_FIFO_JOIN_TX);
     float div = (float)clock_get_hz(clk_sys) * 2e-6f / 8.0f;

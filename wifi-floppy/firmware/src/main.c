@@ -14,6 +14,8 @@
 #include "floppy.pio.h"
 #include "floppy_io.h"
 #include "dskchg.h"
+#include "bus_gate.h"
+#include "bus_out.h"
 #include "track_cache.h"
 #include "psram_image.h"
 #include "image_loader.h"
@@ -311,6 +313,9 @@ static PIO  step_pio = pio2;
 static uint step_sm;
 static volatile uint32_t steps_seen;
 static volatile uint32_t steps_dir_late;
+// STEP pulses with SEL0 released: another drive's, not acted on (bus_gate.h).
+// Counted so the gate's effect is a number in the log, not an absence.
+static volatile uint32_t steps_other_drive;
 
 static void start_streaming(const uint8_t *mfm, uint32_t bit_count) {
     uint32_t nwords = (bit_count + 31) / 32;
@@ -354,7 +359,7 @@ static void start_streaming(const uint8_t *mfm, uint32_t bit_count) {
 
 // index pulse + wrap: retrigger DMA each revolution
 static int64_t index_off(alarm_id_t id, void *ud) {
-    gpio_put(PIN_INDEX, OUT_RELEASE);
+    bus_out_set(PIN_INDEX, false);
     return 0;
 }
 // Flash writes disable XIP. This handler re-arms the DMA each revolution and
@@ -379,7 +384,7 @@ static void __isr __not_in_flash_func(dma_irq)(void) {
     if (!track_live) return;
     dma_channel_set_read_addr(dma_ch, track_words, false);
     dma_channel_set_trans_count(dma_ch, track_word_count, true);
-    gpio_put(PIN_INDEX, OUT_ASSERT);                 // ~2 ms index at wrap
+    bus_out_set(PIN_INDEX, true);                    // ~2 ms index at wrap
     add_alarm_in_us(INDEX_PULSE_US, index_off, NULL, true);
     rev_count++;
     // ONCE PER STREAM, NOT ONCE PER REVOLUTION, and the difference is not
@@ -406,8 +411,18 @@ static void __isr __not_in_flash_func(dma_irq)(void) {
 }
 
 // ---------------------------------------------------------------- bus ISRs
-// One STEP pulse, with DIR as latched by the PIO at its falling edge.
-static void step_pulse(bool outwards) {
+// One STEP pulse, with SEL0 and DIR as latched by the PIO at its falling edge.
+static void step_pulse(uint32_t word) {
+    const bus_step_t st = bus_step_decode(word);
+    // Another drive's step. Checked before anything else: it must not move the
+    // head, clear CHNG, or count towards the too-fast filter, whose clock a
+    // DF1 seek would otherwise reset.
+    if (!st.selected) {
+        steps_other_drive++;
+        return;
+    }
+    const bool outwards = st.outwards;
+
     // DIR as read NOW, at interrupt time -- what the GPIO ISR used to act on.
     // Compared against the latched value for steps_dir_late, never used.
     const bool late = gpio_get(PIN_DIR);
@@ -443,7 +458,7 @@ static void step_pulse(bool outwards) {
     // DIRC high = towards 0
     if (outwards) { if (cur_cyl > 0) cur_cyl--; }
     else          { if (cur_cyl < NUM_CYL - 1) cur_cyl++; }
-    gpio_put(PIN_TRK0, cur_cyl == 0 ? OUT_ASSERT : OUT_RELEASE);
+    bus_out_set(PIN_TRK0, cur_cyl == 0);
     dskchg_on_step();
     want_track = cur_cyl * 2 + cur_side;
     wf_trace(WF_EV_STEP, (uint32_t)cur_cyl, outwards ? 1u : 0u);
@@ -459,25 +474,43 @@ static void step_pulse(bool outwards) {
 // FIFO so a burst cannot leave a pulse waiting for the next interrupt.
 static void __isr step_pio_isr(void) {
     while (!pio_sm_is_rx_fifo_empty(step_pio, step_sm))
-        step_pulse((pio_sm_get(step_pio, step_sm) & 1u) != 0);
+        step_pulse(pio_sm_get(step_pio, step_sm));
+}
+
+// pio1 carries the SEL0 gating: status_gate (bus_out.c), sel_mtr, and the
+// diagnostic sniffer. Nothing else claims it -- the CYW43 driver searches
+// pio2 FIRST (pio_claim_free_sm_and_add_program_for_gpio_range counts down),
+// so the radio sits beside step_dir, not here.
+static PIO  bus_pio = pio1;
+static uint mtr_sm;
+
+// sel_mtr pushes the MTR level latched on each SEL0 fall, only when it changes.
+static void __isr mtr_pio_isr(void) {
+    while (!pio_sm_is_rx_fifo_empty(bus_pio, mtr_sm)) {
+        const bool running = (pio_sm_get(bus_pio, mtr_sm) & 1u) != 0;
+        dskchg_on_motor(running);
+        wf_trace(WF_EV_MOTOR, running ? 1u : 0u, 0);
+    }
 }
 
 #if WF_BUS_SNIFF
 static uint sniff_sm;
-static volatile uint32_t sniff_records, sniff_gaps;
+static volatile uint32_t sniff_records, sniff_gaps, sniff_violations;
 
 // Drains bus_sniff. Order is exact; the timestamp is taken here, so it is late
 // by the interrupt latency. A set RXSTALL means the PIO dropped at least one
-// sample because the FIFO was full: flagged on the next record drained (bit 8),
-// so the gap lies within the eight records before it.
+// sample because the FIFO was full: flagged on the next record drained (bit
+// 16), so the gap lies within the eight records before it. `a` is a GPIO mask
+// (bit n = GPn; WDATA and RDATA never sampled).
 static void __isr sniff_isr(void) {
     const uint32_t stall = 1u << (PIO_FDEBUG_RXSTALL_LSB + sniff_sm);
-    while (!pio_sm_is_rx_fifo_empty(step_pio, sniff_sm)) {
-        uint32_t a = pio_sm_get(step_pio, sniff_sm) & 0xffu;
-        if (step_pio->fdebug & stall) {
-            step_pio->fdebug = stall;
+    while (!pio_sm_is_rx_fifo_empty(bus_pio, sniff_sm)) {
+        uint32_t a = bus_sniff_decode(pio_sm_get(bus_pio, sniff_sm));
+        if (bus_sniff_violation(a)) sniff_violations++;
+        if (bus_pio->fdebug & stall) {
+            bus_pio->fdebug = stall;
             sniff_gaps++;
-            a |= 0x100u;
+            a |= 1u << 16;
         }
         sniff_records++;
         wf_trace(WF_EV_BUS, a, (uint32_t)time_us_64());
@@ -486,14 +519,14 @@ static void __isr sniff_isr(void) {
 #endif
 
 static volatile int write_track;     // set when WGATE asserts
+// WGATE asserted with SEL0 released: another drive being written. Not captured
+// -- once write-back exists, capturing it would APPLY DF1's write to DF0.
+static volatile uint32_t writes_other_drive;
+static volatile bool     write_ours;
 
 static void __isr gpio_isr(uint gpio, uint32_t events) {
     if (gpio == PIN_SEL0 && (events & GPIO_IRQ_EDGE_FALL)) {
         if (!WF_BUS_SNIFF) wf_trace(WF_EV_SEL, 1, 0);
-    } else if (gpio == PIN_MTR) {
-        bool running = !gpio_get(PIN_MTR);           // active low
-        dskchg_on_motor(running);
-        wf_trace(WF_EV_MOTOR, running ? 1u : 0u, 0);
     } else if (gpio == PIN_WGATE) {
         /*
          * The Amiga is writing. WGATE brackets exactly one track, so this is
@@ -508,6 +541,17 @@ static void __isr gpio_isr(uint gpio, uint32_t events) {
          * Active low, like every other input through the '541.
          */
         bool writing = !gpio_get(PIN_WGATE);
+        /*
+         * Only DF0's writes. SEL0 is read here, at interrupt time, and that is
+         * enough -- unlike STEP's DIR -- because the Amiga holds the drive
+         * selected for the whole ~200 ms write, not for microseconds.
+         */
+        if (writing && gpio_get(PIN_SEL0)) {
+            writes_other_drive++;
+            return;
+        }
+        if (!writing && !write_ours) return;     // the end of someone else's
+        write_ours = writing;
         if (writing) {
             // The track under the head NOW. By the time the service loop logs
             // the decode the Amiga may have stepped, which produced a false
@@ -684,6 +728,17 @@ static void core1_main(void) {
         while (1) tight_loop_contents();
     }
     wf_logf(WF_INFO, "radio up (RM2)");
+    {
+        // Which state machines are claimed on each PIO once the radio has
+        // taken its own. Measured rather than assumed: the SDK's search order
+        // (pio2 first) is not what this file's comments said until 2026-09-18,
+        // and pio1 must stay free for the SEL0 gate (bus_pio).
+        unsigned m[3] = {0, 0, 0};
+        for (unsigned p = 0; p < 3; p++)
+            for (unsigned sm = 0; sm < 4; sm++)
+                if (pio_sm_is_claimed(pio_get_instance(p), sm)) m[p] |= 1u << sm;
+        wf_logf(WF_INFO, "pio claims: pio0=%x pio1=%x pio2=%x", m[0], m[1], m[2]);
+    }
     cyw43_arch_enable_sta_mode();
 
     // Plan 4b: decide whether to serve the captive portal or run plan 4a's
@@ -977,10 +1032,10 @@ static void core1_main(void) {
             // through untouched; and -- see WRITE_BACK_IMPLEMENTED's comment
             // above -- the write path's absence forces this true regardless of
             // either, until that path exists. Only main()'s core0 loop ever
-            // wrote PIN_WPROT before this (a fixed boot-time default); this is
+            // set WPROT before this (a fixed boot-time default); this is
             // now the only place that updates it afterward.
             bool wprot = !mounted || c.mounted_write_protected || !WF_ACCEPTS_WRITES;
-            gpio_put(PIN_WPROT, wprot ? OUT_ASSERT : OUT_RELEASE);
+            bus_out_set(PIN_WPROT, wprot);
             /*
              * Say so when it CHANGES, with the reason.
              *
@@ -1108,19 +1163,6 @@ int main(void) {
                      "does not change. Do not use a disk you care about.");
 #endif
 
-    // outputs (FET gates, idle released)
-    const uint outs[] = {PIN_WPROT, PIN_RDY, PIN_TRK0, PIN_INDEX, PIN_CHNG};
-    for (unsigned i = 0; i < count_of(outs); i++) {
-        gpio_init(outs[i]); gpio_set_dir(outs[i], GPIO_OUT);
-        gpio_put(outs[i], OUT_RELEASE);
-    }
-    gpio_put(PIN_TRK0, OUT_ASSERT);          // powered on at cyl 0
-    // Boot-time default, before core1 has even started, let alone learned
-    // whether a disk is mounted or what the server says about it -- core1's
-    // main loop is the only thing that writes PIN_WPROT after this (see its
-    // WPROT comment), but "asserted" is the only safe value to boot with
-    // regardless: read-only until proven otherwise beats writable by default.
-    gpio_put(PIN_WPROT, OUT_ASSERT);
 
     // inputs. PIN_WDATA belongs here too even though only PIO reads it: an
     // RP2350 pad stays isolated from reset until gpio_set_function() clears
@@ -1132,6 +1174,20 @@ int main(void) {
     for (unsigned i = 0; i < count_of(ins); i++) {
         gpio_init(ins[i]); gpio_set_dir(ins[i], GPIO_IN);
     }
+
+    // Status outputs (FET gates): handed to the status_gate PIO, which drives
+    // them only while SEL0 is asserted -- so AFTER the inputs, or the gate's
+    // first loops read SEL0's still-isolated pad as 0, "selected". From here
+    // on bus_out_set() is the only way to change one -- gpio_put() on these
+    // pads does nothing.
+    //
+    // TRK0: powered on at cyl 0. WPROT: a boot-time default, before core1 has
+    // even started, let alone learned whether a disk is mounted or what the
+    // server says about it -- core1's main loop is the only thing that writes
+    // WPROT after this (see its WPROT comment), but "asserted" is the only
+    // safe value to boot with regardless: read-only until proven otherwise
+    // beats writable by default.
+    bus_out_init(bus_pio, (1u << PIN_TRK0) | (1u << PIN_WPROT));
 
     dskchg_init();
     track_cache_init();
@@ -1180,7 +1236,7 @@ int main(void) {
     // PIO
     uint off_out = pio_add_program(pio, &flux_out_program);
     sm_out = pio_claim_unused_sm(pio, true);
-    flux_out_program_init(pio, sm_out, off_out, PIN_RDATA);
+    flux_out_program_init(pio, sm_out, off_out, PIN_RDATA, PIN_SEL0);
     pio_sm_set_enabled(pio, sm_out, true);
 
     uint off_in = pio_add_program(pio, &flux_in_program);
@@ -1196,33 +1252,44 @@ int main(void) {
     irq_set_exclusive_handler(DMA_IRQ_0, dma_irq);
     irq_set_enabled(DMA_IRQ_0, true);
 
-    // STEP and DIR are not GPIO interrupts: see step_dir in floppy.pio. pio2 is
-    // claimed here on core0, before core1 exists, so the CYW43 driver (which
-    // takes any free state machine when core1 brings the radio up) cannot.
+    // STEP and DIR are not GPIO interrupts: see step_dir in floppy.pio. This
+    // shares pio2 with the CYW43 driver, which claims a state machine there
+    // when core1 brings the radio up -- its search starts at pio2 (see
+    // bus_pio above), and "pio claims" in the log says where it landed.
     uint off_step = pio_add_program(step_pio, &step_dir_program);
     step_sm = pio_claim_unused_sm(step_pio, true);
-    step_dir_program_init(step_pio, step_sm, off_step, PIN_STEP, PIN_DIR);
+    step_dir_program_init(step_pio, step_sm, off_step, PIN_STEP, PIN_SEL0);
     pio_set_irq0_source_enabled(step_pio, pio_get_rx_fifo_not_empty_interrupt_source(step_sm),
                                 true);
     irq_set_exclusive_handler(pio_get_irq_num(step_pio, 0), step_pio_isr);
     irq_set_enabled(pio_get_irq_num(step_pio, 0), true);
     pio_sm_set_enabled(step_pio, step_sm, true);
 
-#if WF_BUS_SNIFF
-    uint off_sniff = pio_add_program(step_pio, &bus_sniff_program);
-    sniff_sm = pio_claim_unused_sm(step_pio, true);
-    bus_sniff_program_init(step_pio, sniff_sm, off_sniff, PIN_SEL0);
-    pio_set_irq1_source_enabled(step_pio, pio_get_rx_fifo_not_empty_interrupt_source(sniff_sm),
+    // MTR is latched on SEL0's falling edge (sel_mtr), not followed edge by
+    // edge: MTR is shared, and only the selected drive takes it.
+    uint off_mtr = pio_add_program(bus_pio, &sel_mtr_program);
+    mtr_sm = pio_claim_unused_sm(bus_pio, true);
+    sel_mtr_program_init(bus_pio, mtr_sm, off_mtr, PIN_SEL0, PIN_MTR);
+    pio_set_irq0_source_enabled(bus_pio, pio_get_rx_fifo_not_empty_interrupt_source(mtr_sm),
                                 true);
-    irq_set_exclusive_handler(pio_get_irq_num(step_pio, 1), sniff_isr);
-    irq_set_enabled(pio_get_irq_num(step_pio, 1), true);
-    pio_sm_set_enabled(step_pio, sniff_sm, true);
-    wf_logf(WF_WARN, "BUS SNIFF BUILD: every bus input change is logged "
-                     "(a bits 0..7 = SEL0 SEL1 MTR DIR STEP WDATA WGATE SIDE)");
+    irq_set_exclusive_handler(pio_get_irq_num(bus_pio, 0), mtr_pio_isr);
+    irq_set_enabled(pio_get_irq_num(bus_pio, 0), true);
+    pio_sm_set_enabled(bus_pio, mtr_sm, true);
+
+#if WF_BUS_SNIFF
+    uint off_sniff = pio_add_program(bus_pio, &bus_sniff_program);
+    sniff_sm = pio_claim_unused_sm(bus_pio, true);
+    bus_sniff_program_init(bus_pio, sniff_sm, off_sniff);
+    pio_set_irq1_source_enabled(bus_pio, pio_get_rx_fifo_not_empty_interrupt_source(sniff_sm),
+                                true);
+    irq_set_exclusive_handler(pio_get_irq_num(bus_pio, 1), sniff_isr);
+    irq_set_enabled(pio_get_irq_num(bus_pio, 1), true);
+    pio_sm_set_enabled(bus_pio, sniff_sm, true);
+    wf_logf(WF_WARN, "BUS SNIFF BUILD: every bus change is logged "
+                     "(a = GPIO mask, GP0..13 without WDATA/RDATA; bit 16 = samples dropped before)");
 #endif
 
     gpio_set_irq_enabled_with_callback(PIN_SEL0, GPIO_IRQ_EDGE_FALL, true, gpio_isr);
-    gpio_set_irq_enabled(PIN_MTR,  GPIO_IRQ_EDGE_FALL | GPIO_IRQ_EDGE_RISE, true);
     gpio_set_irq_enabled(PIN_SIDE, GPIO_IRQ_EDGE_FALL | GPIO_IRQ_EDGE_RISE, true);
     // Both edges: the falling one starts a capture and the rising one ends it,
     // and an end that is missed would run the ring into the next write.
@@ -1528,7 +1595,27 @@ int main(void) {
                                  "would have been wrong on %lu",
                         (unsigned long)n, (unsigned long)steps_dir_late);
             }
+            // Another drive's traffic, ignored. Summarised rather than traced
+            // per pulse: a DF1 recalibrate is 80 steps in 0.4 s, and one
+            // record each would flood the ring.
+            static uint32_t reported_other_steps, reported_other_writes, other_at_ms;
+            uint32_t os = steps_other_drive, ow = writes_other_drive;
+            if ((os != reported_other_steps || ow != reported_other_writes) &&
+                clock_ms() - other_at_ms >= 10000) {
+                reported_other_steps = os; reported_other_writes = ow;
+                other_at_ms = clock_ms();
+                wf_logf(WF_INFO, "sel0: ignored %lu step(s) and %lu write(s) "
+                                 "for another drive",
+                        (unsigned long)os, (unsigned long)ow);
+            }
 #if WF_BUS_SNIFF
+            static uint32_t reported_violations;
+            if (sniff_violations != reported_violations) {
+                reported_violations = sniff_violations;
+                wf_logf(WF_ERR, "sniff: %lu sample(s) with a status output asserted "
+                                "while SEL0 was released",
+                        (unsigned long)sniff_violations);
+            }
             static uint32_t reported_gaps;
             if (sniff_gaps != reported_gaps) {
                 reported_gaps = sniff_gaps;

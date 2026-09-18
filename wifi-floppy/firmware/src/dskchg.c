@@ -22,6 +22,7 @@
 // it would need something as fast as the select; nothing measured needs it.
 // ---------------------------------------------------------------------------
 #include "dskchg.h"
+#include "bus_out.h"
 #include "floppy_io.h"
 #include "pico/stdlib.h"
 
@@ -34,8 +35,10 @@ static struct {
     absolute_time_t motor_on_t;
 } st;
 
+// Through the status gate, never gpio_put: PIO owns these pads (bus_out.h),
+// and the gate releases them whenever DF0 is not selected.
 static inline void drv(uint pin, bool assert) {
-    gpio_put(pin, assert ? OUT_ASSERT : OUT_RELEASE);
+    bus_out_set(pin, assert);
 }
 
 void dskchg_init(void) {
@@ -68,7 +71,9 @@ void dskchg_on_step(void) {
     }
 }
 
-// call on MTR line change; 'on' = motor requested (bus line low)
+// call when the MTR level latched on SEL0's falling edge changes (sel_mtr in
+// floppy.pio); 'on' = motor requested (bus line low). Not on MTR's own edges:
+// those also switch a second drive's motor.
 void dskchg_on_motor(bool on) {
     if (on && !st.motor_on) st.motor_on_t = get_absolute_time();
     st.motor_on = on;

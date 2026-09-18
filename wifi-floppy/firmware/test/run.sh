@@ -19,6 +19,10 @@ fail=0
 #                       device-only by construction and hold no logic a host
 #                       test could judge -- what they assert is about wiring,
 #                       which only a board can answer.
+#   bus_out.c         - the status gate's PIO state machine and the spinlock
+#                       around its word. What that word MEANS -- which pins,
+#                       which bits, what a step or sniffer sample decodes to --
+#                       is in bus_gate.c, which is pure and IS tested.
 #   flux_capture.c    - the PIO state machine and DMA ring that carry WDATA off
 #                       the bus. Only a floppy bus can exercise those. Every
 #                       DECISION the capture makes lives in flux_bits.c and
@@ -47,7 +51,7 @@ for t in test_*.c; do
   # which is exactly why nothing caught it until a second toolchain did.
   cc -std=c11 -D_DEFAULT_SOURCE -g -O1 -Wall -Wextra -Werror -DWFMF_HOST_TEST=1 \
      -o "$out" "$t" transport_fake.c \
-     $(ls ../src/*.c | grep -vE 'main\.c|transport_tls\.c|sntp_time\.c|portal_net\.c|dskchg\.c|activity_led\.c|i2c_probe\.c|ssd1306\.c|flux_capture\.c') \
+     $(ls ../src/*.c | grep -vE 'main\.c|transport_tls\.c|sntp_time\.c|portal_net\.c|dskchg\.c|activity_led\.c|i2c_probe\.c|ssd1306\.c|flux_capture\.c|bus_out\.c') \
      || { echo "COMPILE FAIL: $t"; fail=1; continue; }
   if ! "$out"; then
     rc=$?
@@ -60,4 +64,13 @@ for t in test_*.c; do
     fail=1
   fi
 done
+
+# The status outputs belong to the status_gate PIO (bus_out.h). Once PIO owns a
+# pad, gpio_put() on it does NOTHING -- no error, no warning, just a line that
+# never moves -- so a single call that slipped back in would be invisible on
+# the bench. bus_out_set() is the only way to set one.
+if grep -nE 'gpio_put\(PIN_(INDEX|CHNG|WPROT|RDY|TRK0|RDATA)\b' ../src/*.c; then
+  echo "FAIL: gpio_put on a PIO-owned bus output (use bus_out_set)"
+  fail=1
+fi
 exit $fail

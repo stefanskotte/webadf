@@ -60,7 +60,7 @@ typedef enum {
     WF_EV_MOUNT,          // a = token
     WF_EV_EJECT,
     WF_EV_DIR_LATE,       // a = cylinder after the step, b = DIR read at interrupt time
-    WF_EV_BUS,            // WF_BUS_SNIFF: a = GP2..GP9 levels (bit 8 = samples dropped before), b = time_us
+    WF_EV_BUS,            // WF_BUS_SNIFF: a = GPIO mask GP0..13, no WDATA/RDATA (bit 16 = samples dropped before), b = time_us
     WF_EV__COUNT
 } wf_ev_t;
 
