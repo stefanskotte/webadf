@@ -363,6 +363,51 @@ static void test_interval_buckets(void) {
     CHECK_EQ_INT(mfm_interval_to_bits(8800), 4);   /* 8us +10% */
 }
 
+/* ------------------------------------------------------------------ */
+/* The encoder must reproduce the golden tracks BYTE FOR BYTE. They are the
+ * TypeScript encoder's output, asserted identical to Greaseweazle -- so this
+ * checks the C port against an independent implementation, not itself. */
+static void test_encoder_matches_every_golden_track(void) {
+    uint8_t want[TRACK_MFM_BYTES];
+    static uint8_t got[MFM_TRACK_BYTES];
+    for (size_t k = 0; k < sizeof KINDS / sizeof KINDS[0]; k++) {
+        uint8_t *adf = synthetic_adf(KINDS[k]);
+        for (size_t t = 0; t < sizeof TRACKS_TESTED / sizeof TRACKS_TESTED[0]; t++) {
+            int track_no = TRACKS_TESTED[t];
+            if (!read_fixture(KINDS[k], track_no, want)) { CHECK(0, "fixture missing"); continue; }
+            uint32_t bits = mfm_encode_track(adf + (size_t)track_no * TRACK_DATA_BYTES,
+                                             (uint8_t)track_no, got);
+            CHECK_EQ_INT(bits, MFM_TRACK_BITS);
+            if (memcmp(got, want, TRACK_MFM_BYTES) != 0) {
+                size_t i = 0;
+                while (got[i] == want[i]) i++;
+                printf("  %s track %d: first difference at byte %zu (got %02x want %02x)\n",
+                       KINDS[k], track_no, i, got[i], want[i]);
+                CHECK(0, "encoded track must equal the golden fixture");
+            }
+        }
+        free(adf);
+    }
+}
+
+/* encode -> decode gives back every byte, on a track no fixture covers. */
+static void test_encode_then_decode_round_trips(void) {
+    uint8_t *adf = synthetic_adf("prng");
+    static uint8_t mfm[MFM_TRACK_BYTES];
+    static uint8_t got[TRACK_DATA_BYTES];
+    const int track_no = 97;
+    mfm_encode_track(adf + (size_t)track_no * TRACK_DATA_BYTES, (uint8_t)track_no, mfm);
+    memset(got, 0, sizeof got);
+    mfm_decode_result_t r;
+    mfm_decode_track(mfm, sizeof mfm, got, &r);
+    CHECK_EQ_INT(r.found, 0x7ff);
+    CHECK_EQ_INT(r.bad_checksums, 0);
+    CHECK_EQ_INT(r.track_no, track_no);
+    CHECK(memcmp(got, adf + (size_t)track_no * TRACK_DATA_BYTES, TRACK_DATA_BYTES) == 0,
+          "decode(encode(x)) == x");
+    free(adf);
+}
+
 int main(void) {
     RUN(test_round_trips_every_golden_track);
     RUN(test_a_capture_starting_mid_track_still_decodes);
@@ -375,5 +420,7 @@ int main(void) {
     RUN(test_a_false_sync_does_not_swallow_the_next_sector);
     RUN(test_noise_decodes_to_nothing);
     RUN(test_interval_buckets);
+    RUN(test_encoder_matches_every_golden_track);
+    RUN(test_encode_then_decode_round_trips);
     return REPORT();
 }

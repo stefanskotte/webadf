@@ -1,8 +1,10 @@
 #ifndef MFM_H
 #define MFM_H
-// Amiga MFM, the WRITE direction: turning what the Amiga wrote back into ADF
-// bytes. The read direction never needs any of this -- the server ships
-// pre-encoded MFM and the DMA streams it verbatim.
+// Amiga MFM, both directions: turning what the Amiga wrote back into ADF
+// bytes, and the reverse -- encoding ADF bytes back into MFM so a captured
+// write can be re-served (write-back spec §2). The read direction never
+// needs any of this -- the server ships pre-encoded MFM and the DMA streams
+// it verbatim.
 //
 // Pure C, no pico-sdk: the same rule device_client.h states, and for the same
 // reason. All of this is host-tested against src/lib/adfmfm, the TypeScript
@@ -69,5 +71,26 @@ uint32_t mfm_checksum(const uint8_t *src, size_t len);
 
 /** Inverse of the odd/even bit split. `dst` holds `n` bytes, `src` holds 2n. */
 void mfm_join_odd_even(const uint8_t *src, size_t n, uint8_t *dst);
+
+#define MFM_TRACK_BYTES      12668    /* src/lib/adfmfm TRACK_BYTES */
+#define MFM_TRACK_BITS       101344   /* src/lib/adfmfm TRACK_BITS  */
+#define MFM_GAP_LEAD_BYTES   256      /* src/lib/adfmfm GAP_LEAD_BYTES */
+
+/** Odd/even bit split, per field: dst[0..n) = odd bits, dst[n..2n) = even. */
+void mfm_split_odd_even(const uint8_t *src, size_t n, uint8_t *dst);
+
+/** Fill clock bits into the 0xAA lanes over a whole assembled track, in place. */
+void mfm_fill_clock_bits(uint8_t *track, size_t len);
+
+/**
+ * Encode one 5,632-byte ADF track as a standard Amiga MFM track, byte-identical
+ * to src/lib/adfmfm encodeTrack() (and so to Greaseweazle). `out` must hold
+ * MFM_TRACK_BYTES. Returns the track's bit count, MFM_TRACK_BITS.
+ *
+ * Why the board encodes at all (write-back spec D6): a captured write is
+ * re-served in the one format the whole pipeline is proven on, never as the
+ * Amiga's raw bitstream.
+ */
+uint32_t mfm_encode_track(const uint8_t *data, uint8_t track_no, uint8_t *out);
 
 #endif

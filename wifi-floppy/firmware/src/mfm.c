@@ -145,3 +145,55 @@ void mfm_decode_track(const uint8_t *mfm, size_t len, uint8_t *adf_out,
         sr = 0;
     }
 }
+
+/* ---- the read direction's encoder, ported from src/lib/adfmfm ---------- */
+
+void mfm_split_odd_even(const uint8_t *src, size_t n, uint8_t *dst) {
+    for (size_t i = 0; i < n; i++) {
+        dst[i]     = (uint8_t)((src[i] >> 1) & 0x55);
+        dst[n + i] = (uint8_t)(src[i] & 0x55);
+    }
+}
+
+/* A clock bit goes wherever neither neighbouring data bit is set. The 16-bit
+ * window carries the rule across byte boundaries; the 0x4489 sync needs no
+ * special case (see fillClockBits in mfm.ts for why). */
+void mfm_fill_clock_bits(uint8_t *track, size_t len) {
+    uint32_t y = 0;
+    for (size_t i = 0; i < len; i++) {
+        const uint32_t x = track[i];
+        y = ((y << 8) | x) & 0xffffu;
+        if ((x & 0xaau) == 0) y |= ~((y >> 1) | (y << 1)) & 0xaaaau;
+        y &= 0xffu;
+        track[i] = (uint8_t)y;
+    }
+}
+
+static void put_be32(uint8_t *b, uint32_t v) {
+    b[0] = (uint8_t)(v >> 24); b[1] = (uint8_t)(v >> 16);
+    b[2] = (uint8_t)(v >> 8);  b[3] = (uint8_t)v;
+}
+
+uint32_t mfm_encode_track(const uint8_t *data, uint8_t track_no, uint8_t *out) {
+    static const uint8_t label[16];            /* all zero, as encodeTrack writes */
+    memset(out, 0, MFM_TRACK_BYTES);           /* the gaps are zeros before clocking */
+    for (unsigned n = 0; n < MFM_SECTORS; n++) {
+        const uint8_t *sd = data + (size_t)n * MFM_SECTOR_DATA_BYTES;
+        /* Header: format 0xff, track, sector, sectors left to the gap. The
+         * checksum covers header AND label, raw, before the split. */
+        uint8_t hl[20] = { 0xff, track_no, (uint8_t)n, (uint8_t)(MFM_SECTORS - n) };
+        uint8_t sum[4];
+        uint8_t *p = out + MFM_GAP_LEAD_BYTES + (size_t)n * MFM_SECTOR_MFM_BYTES;
+        p[0] = 0x44; p[1] = 0x89; p[2] = 0x44; p[3] = 0x89;      p += 4;
+        mfm_split_odd_even(hl, 4, p);                             p += 8;
+        mfm_split_odd_even(label, 16, p);                         p += 32;
+        put_be32(sum, mfm_checksum(hl, 20));
+        mfm_split_odd_even(sum, 4, p);                            p += 8;
+        put_be32(sum, mfm_checksum(sd, MFM_SECTOR_DATA_BYTES));
+        mfm_split_odd_even(sum, 4, p);                            p += 8;
+        mfm_split_odd_even(sd, MFM_SECTOR_DATA_BYTES, p);
+        /* The trailing 2 zero bytes split to 4 zero bytes: already zero. */
+    }
+    mfm_fill_clock_bits(out, MFM_TRACK_BYTES);
+    return MFM_TRACK_BITS;
+}
