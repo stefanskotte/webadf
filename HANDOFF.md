@@ -2522,6 +2522,57 @@ in advance that it empties the table for everyone. This repo has no such databas
 e2e runs against live Neon — so "accept in advance" is currently the only option, and it should
 be an explicit decision each time rather than a side effect of following a plan step.
 
+### 4e. A SECOND DRIVE WORKS: THE BUS IS GATED ON SEL0 — 2026-09-18
+
+**Verified on hardware** (`0ece072`), rev A2 board, real external DF1 on an A500-class machine:
+Workbench 3.1 boots from DF0, a DOS floppy in DF1 shows its real name (Sysinfo), and `dir df0:`
+and `dir df1:` both list. Over 10,684 log lines: **2,063 DF0 steps followed, 250 DF1 steps
+ignored, 0 TRACK-MISS, 0 records dropped, 0 errors.** Operator-confirmed.
+
+**Why it was needed, measured first on the ungated firmware (same day, same drive):** every DF1
+disk-change click moved DF0's head one cylinder (30 -> 79 in two minutes); DF1's 80-step
+recalibrate on insert walked it back to 0; and the floppy came up as `DF1:????`, because the
+board's flux was on the shared RDATA line while DF1 was selected.
+
+**What changed.** The design is the one §4d's research sketched:
+* **Outputs.** `status_gate` (pio1) owns INDEX, CHNG, WPROT, RDY and TRK0 and drives them only
+  while SEL0 is asserted, with a ~33 ns loop. `bus_out_set()` is the only writer: one shadow word
+  under a hardware spinlock, because it is written from the DMA IRQ, the STEP ISR, dskchg and
+  core1's poll loop. **`gpio_put()` on those pads now does NOTHING, silently**, so `test/run.sh`
+  fails on one (mutation-checked). `flux_out` pulses RDATA only while SEL0 is asserted, with
+  every path still exactly 8 cycles; the stream keeps turning while deselected.
+* **Inputs.** `step_dir` samples SEL0 with DIR at STEP's fall (`bus_step_decode`); another
+  drive's steps are counted (`sel0: ignored N step(s)`), not acted on. `sel_mtr` (pio1) latches
+  MTR on SEL0's falling edge like a real drive, replacing the MTR edge interrupt. WGATE is
+  captured only with SEL0 asserted, read at interrupt time, which is enough because the Amiga
+  holds the select for the whole ~200 ms write. **That last one is a write-back prerequisite:**
+  without it a DF1 write would be applied to DF0's image.
+* **Pure half:** `bus_gate.c`, 45 host checks.
+
+**The radio is on pio2, not a free block.** `pio_claim_free_sm_and_add_program_for_gpio_range`
+searches pio2 FIRST (it counts down), so CYW43 has always sat beside `step_dir`. The old
+comment claiming otherwise was wrong. pio1 is now the gate's: `status_gate` 6 + `sel_mtr` 12 +
+sniffer 13 = **31 of 32 instructions** in a sniffer build. There is no room for another program
+there. A boot line, `pio claims: pio0=.. pio1=.. pio2=..`, records the real assignment, **but it
+has not been read yet:** the capture attached 12 s late and missed it. Read it on the next boot.
+
+**The sniffer changed** (`-DWF_BUS_SNIFF=ON`, not yet run): it is on pio1, samples GP0..13
+without WDATA/RDATA, and logs `a` as a plain GPIO mask. It also counts any status output
+asserted while SEL0 is released (`sniff: N sample(s) ...`, as an ERR). That is the direct
+electrical check of the gate; the DF1 test above is the functional one.
+
+**`f55d415` is now verified too:** a clean WB boot, and at Amiga power-ON (not off, as §4d
+predicted) one `write: WGATE pulse, 33 intervals, not a write` line in place of an empty decode.
+
+**Known limits:**
+* A read pulse already under way when SEL0 releases runs out its 750 ns.
+* SIDE is deliberately not gated: the Amiga sets it before selecting, so a latch would miss it.
+* The board is DF0 only. Every program takes the select pin as a parameter, so becoming DF1
+  on a big-box machine is small. Nobody has asked for it.
+* Every other DF1 click reads outward when checked late but was latched inward at the edge. The
+  Amiga may change DIR in the same CIA write as STEP for DF1. Those steps are ignored now, so it
+  no longer matters to us.
+
 ### 4d. AN AMIGA WRITE IS CAPTURED WHOLE — 2026-09-15
 
 **The capture path works on real hardware.** Rev A2 board, 1 kΩ to +5 V on WGATE, WDATA and
@@ -2583,7 +2634,7 @@ AmigaDOS from re-reading blocks the board had discarded.
 +5 V) falls, the capture arms, and the log shows the 400 ms timeout plus an empty
 `write: trk N 0 iv` decode. Skipping zero-interval captures would silence it.
 
-**Follow-ups taken 2026-09-16, NOT YET FLASHED OR RUN ON HARDWARE:** the drive-ID shifter is
+**Follow-ups taken 2026-09-16 (flashed and verified 2026-09-18, see §4e):** the drive-ID shifter is
 deleted outright (operator agreed: nothing measured needs an ID answer, and a broken one
 behind a flag invites being switched back on), and a capture of fewer than 2,176 intervals
 -- less than one sector can hold -- logs `write: WGATE pulse, N intervals, not a write`
@@ -2592,7 +2643,7 @@ flash normal firmware, power-cycle the Amiga, expect a clean Workbench boot with
 TRACK-MISS and, at power-off, the one-line pulse message.
 
 **Still not done:** a write reaching the image (history model undesigned); a full-disk
-write (a format); **SEL-gated outputs -- REQUIRED, operator 2026-09-16:** a second drive
+write (a format); **SEL-gated outputs -- DONE 2026-09-18, §4e. Originally REQUIRED, operator 2026-09-16:** a second drive
 (external DF1 on A500/600/1200, or a second internal drive on big-box machines) is optional
 but must work, and today the board drives all six shared open-collector outputs regardless
 of which drive is selected. An interrupt cannot gate them (selects last microseconds), so
