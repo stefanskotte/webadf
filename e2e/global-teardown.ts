@@ -1,6 +1,7 @@
 import { sql, inArray } from 'drizzle-orm';
 import { getDb } from '@/db';
 import { blobs, disks, entitlements } from '@/db/schema/catalog';
+import { diskVersions } from '@/db/schema/disk-history';
 import { deleteUserCascade } from '@/lib/admin-delete';
 import { selectUnreferencedBlobs } from '@/lib/blob-gc';
 import { diskStore } from '@/lib/storage';
@@ -77,11 +78,21 @@ export default async function globalTeardown() {
     // disk, so the identical edit on two disks yields the identical sha -- a
     // shared helper is what makes "only delete what nothing else still names"
     // one rule instead of three copies that could drift.
+    //
+    // Only disks of orgs that will actually GO: deleteUserCascade removes an
+    // org only when its last member goes, so an org with any member outside
+    // the doomed set (a real user, or the kept admin) survives, and reclaiming
+    // its disks' deltas would break a surviving history. Same rule as
+    // purgeSignedUpOrgs' `tainted` guard: at least one member, and every
+    // member a doomed test user.
     const doomedDisks = await db.execute<{ id: string }>(sql`
-      select distinct d.id from disks d
-      join auth."member" m on m.organization_id = d.org_id
-      join auth."user" u on u.id = m.user_id
-      where u.email like ${TEST_EMAIL} and u.email <> ${KEEP}`);
+      select d.id from disks d
+      where exists (select 1 from auth."member" m where m.organization_id = d.org_id)
+        and not exists (
+          select 1 from auth."member" m
+          join auth."user" u on u.id = m.user_id
+          where m.organization_id = d.org_id
+            and (u.email not like ${TEST_EMAIL} or u.email = ${KEEP}))`);
     const deltasRemoved = await reclaimDeltaBlobs(doomedDisks.rows.map((r) => r.id));
 
     for (const row of doomed.rows) {
@@ -130,16 +141,23 @@ export default async function globalTeardown() {
     // touch a global content-addressed table, because a blob can be shared
     // across organizations. Only blobs that NOTHING references anywhere are
     // reclaimable, and that rule is tested in src/lib/blob-gc.test.ts.
-    const [stored, diskRefs, entRefs] = await Promise.all([
+    // A disk's history counts as a reference too: an earlier version of a
+    // surviving disk can be named by no disk and no entitlement (the org
+    // deleted the other disk that shared those bytes), and it is still the
+    // only way to rebuild that history.
+    const [stored, diskRefs, entRefs, historyBlobs, historyImages] = await Promise.all([
       db.select({ sha256: blobs.sha256 }).from(blobs),
       db.select({ sha256: disks.sha256 }).from(disks),
       db.select({ sha256: entitlements.sha256 }).from(entitlements),
+      db.selectDistinct({ sha256: diskVersions.blobSha256 }).from(diskVersions),
+      db.selectDistinct({ sha256: diskVersions.imageSha256 }).from(diskVersions),
     ]);
 
     const unreferenced = selectUnreferencedBlobs(
       stored.map((b) => b.sha256),
       diskRefs.map((d) => d.sha256),
       entRefs.map((e) => e.sha256),
+      [...historyBlobs, ...historyImages].map((h) => h.sha256),
     );
 
     if (unreferenced.length > 0) {

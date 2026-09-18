@@ -20,6 +20,14 @@ describe('selectUnreferencedBlobs', () => {
     expect(selectUnreferencedBlobs(['shared'], ['shared'], [])).toEqual([]);
   });
 
+  it('keeps a blob that only a disk history still names', () => {
+    // Disks D and E share S0; D is edited, so its history starts at S0; E is
+    // deleted, which drops the org's entitlement to S0. No disk and no
+    // entitlement names S0 any more, but D's history cannot be rebuilt
+    // without it.
+    expect(selectUnreferencedBlobs(['s0', 'x'], [], [], ['s0'])).toEqual(['x']);
+  });
+
   it('returns a blob nothing references at all', () => {
     expect(selectUnreferencedBlobs(['orphan'], [], [])).toEqual(['orphan']);
   });

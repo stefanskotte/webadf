@@ -269,6 +269,10 @@ async function purgeSignedUpOrgs(): Promise<void> {
   const stillUsed = new Set<string>([
     ...(await db.select({ sha256: disks.sha256 }).from(disks).where(inArray(disks.sha256, all))).map((r) => r.sha256),
     ...(await db.select({ sha256: entitlements.sha256 }).from(entitlements).where(inArray(entitlements.sha256, all))).map((r) => r.sha256),
+    // Any disk's history, as a version's blob or its image: an earlier version
+    // a surviving disk still needs to rebuild.
+    ...(await db.select({ sha256: diskVersions.blobSha256 }).from(diskVersions).where(inArray(diskVersions.blobSha256, all))).map((r) => r.sha256),
+    ...(await db.select({ sha256: diskVersions.imageSha256 }).from(diskVersions).where(inArray(diskVersions.imageSha256, all))).map((r) => r.sha256),
   ]);
   const orphaned = all.filter((sha) => !stillUsed.has(sha));
   if (orphaned.length === 0) return;

@@ -6,10 +6,11 @@
 // removes is THIS org's claim on those bytes -- the entitlement -- which is
 // what makes the blob reclaimable later. src/lib/blob-gc.ts decides when.
 
-import { and, eq, inArray } from 'drizzle-orm';
+import { and, eq, inArray, or } from 'drizzle-orm';
 import { getDb } from '@/db';
 import { games, disks, entitlements } from '@/db/schema/catalog';
 import { devices } from '@/db/schema/devices';
+import { diskVersions } from '@/db/schema/disk-history';
 import { clearDesired } from '@/lib/mount';
 
 export interface DeleteResult {
@@ -59,6 +60,18 @@ async function ejectHolders(orgId: string, diskIds: string[], shas: string[]): P
 }
 
 /**
+ * The shas an org must stay entitled to: every one a current disk points at,
+ * and every one its disk history names, as a version's blob or its image.
+ */
+export function entitlementsToKeep(
+  diskShas: string[], history: { blob: string; image: string }[],
+): Set<string> {
+  const keep = new Set(diskShas);
+  for (const h of history) { keep.add(h.blob); keep.add(h.image); }
+  return keep;
+}
+
+/**
  * Drop this org's entitlement to bytes it no longer holds a disk for.
  *
  * ONLY when no OTHER disk in the same org still references that sha256. The
@@ -66,15 +79,23 @@ async function ejectHolders(orgId: string, diskIds: string[], shas: string[]): P
  * titles that happen to be identical -- and removing the entitlement while
  * one of those remains would break the survivor's download and its device
  * fetch, because the entitlement IS the access boundary those paths check.
+ * Nor while the org's disk history still names it (entitlementsToKeep).
  */
 async function releaseEntitlements(orgId: string, shas: string[]): Promise<string[]> {
   if (shas.length === 0) return [];
   const db = getDb();
-  const stillUsed = await db
-    .select({ sha256: disks.sha256 })
-    .from(disks)
-    .where(and(eq(disks.orgId, orgId), inArray(disks.sha256, shas)));
-  const keep = new Set(stillUsed.map((r) => r.sha256));
+  const [stillUsed, inHistory] = await Promise.all([
+    db.select({ sha256: disks.sha256 }).from(disks)
+      .where(and(eq(disks.orgId, orgId), inArray(disks.sha256, shas))),
+    // A sha the org's disk HISTORY still names -- an earlier version of a
+    // surviving disk, as its snapshot or its image -- is still needed: the
+    // entitlement is what keeps the e2e blob GC from reclaiming those bytes,
+    // and without them that disk's history can never be rebuilt.
+    db.select({ blob: diskVersions.blobSha256, image: diskVersions.imageSha256 }).from(diskVersions)
+      .where(and(eq(diskVersions.orgId, orgId),
+        or(inArray(diskVersions.blobSha256, shas), inArray(diskVersions.imageSha256, shas)))),
+  ]);
+  const keep = entitlementsToKeep(stillUsed.map((r) => r.sha256), inHistory);
   const release = shas.filter((s) => !keep.has(s));
   if (release.length === 0) return [];
   await db.delete(entitlements)

@@ -18,12 +18,14 @@
  * @param stored     every sha-256 in `blobs`
  * @param diskRefs   every `disks.sha256`, across ALL organizations
  * @param entRefs    every `entitlements.sha256`, across ALL organizations
- * @returns the subset of `stored` that neither list mentions, deduplicated
+ * @param historyRefs every `disk_versions.blob_sha256` and `image_sha256`: an
+ *                   earlier version a disk's history still needs to rebuild
+ * @returns the subset of `stored` that no list mentions, deduplicated
  */
 export function selectUnreferencedBlobs(
-  stored: string[], diskRefs: string[], entRefs: string[],
+  stored: string[], diskRefs: string[], entRefs: string[], historyRefs: string[] = [],
 ): string[] {
-  const referenced = new Set<string>([...diskRefs, ...entRefs]);
+  const referenced = new Set<string>([...diskRefs, ...entRefs, ...historyRefs]);
   const out = new Set<string>();
   for (const sha of stored) {
     if (!referenced.has(sha)) out.add(sha);
