@@ -1,7 +1,8 @@
 import { z } from 'zod';
-import { and, eq } from 'drizzle-orm';
+import { and, eq, sql } from 'drizzle-orm';
 import { getDb } from '@/db';
 import { disks } from '@/db/schema/catalog';
+import { devices } from '@/db/schema/devices';
 import { requireOrg } from '@/lib/session';
 import { deleteDisk } from '@/lib/disk-delete';
 
@@ -30,6 +31,15 @@ export async function PATCH(request: Request, ctx: { params: Promise<{ id: strin
     .returning({ id: disks.id, writeProtected: disks.writeProtected });
 
   if (updated.length === 0) return Response.json({ error: 'not_found' }, { status: 404 });
+
+  // Live write-protect (write-back spec §3.5): a board holding this disk learns
+  // the flag on its next poll. The digest is unchanged, so the board takes its
+  // already-mounted path and applies the flag to WPROT without re-downloading
+  // (device_client.c dc_handle_poll_body).
+  await getDb().update(devices)
+    .set({ desiredVersion: sql`${devices.desiredVersion} + 1` })
+    .where(and(eq(devices.orgId, orgId), eq(devices.desiredDiskId, id)));
+
   return Response.json(updated[0]);
 }
 

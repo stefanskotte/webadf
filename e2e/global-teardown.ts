@@ -68,6 +68,19 @@ export default async function globalTeardown() {
       select id from auth."user"
       where email like ${TEST_EMAIL} and email <> ${KEEP}`);
 
+    // Delta blobs live only in the blob store (never a `blobs` row), and the
+    // disk_versions rows naming them cascade away with the user below -- after
+    // which nothing could ever find them again.
+    const deltas = await db.execute<{ sha: string }>(sql`
+      select distinct v.blob_sha256 as sha from disk_versions v
+      join disks d on d.id = v.disk_id
+      join auth."member" m on m.organization_id = d.org_id
+      join auth."user" u on u.id = m.user_id
+      where v.kind = 'delta' and u.email like ${TEST_EMAIL} and u.email <> ${KEEP}`);
+    for (const { sha } of deltas.rows) {
+      try { await diskStore.remove(sha); } catch { /* never uploaded, or already gone */ }
+    }
+
     for (const row of doomed.rows) {
       try {
         // The application's OWN cascade, already covered by
@@ -147,7 +160,8 @@ export default async function globalTeardown() {
     console.log(
       `teardown: removed ${users} test users, ${games} games, `
       + `${codes.rows.length} invite codes, ${sessions.rowCount ?? 0} stale sessions, `
-      + `${orphanBlobs} unreferenced blobs (${objectsRemoved} objects)`,
+      + `${orphanBlobs} unreferenced blobs (${objectsRemoved} objects), `
+      + `${deltas.rows.length} delta blobs`,
     );
   } catch (err) {
     // Never fail the run on teardown: the tests already passed or failed on

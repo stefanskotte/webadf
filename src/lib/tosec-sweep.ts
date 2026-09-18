@@ -404,9 +404,11 @@ export interface ScanStatus {
   ambiguous: number; unchecked: number; unreadable: number; tosecEntries: number;
   /**
    * Blobs in match_state 'none' whose every referencing disk belongs to an
-   * AUTHORED game. Not misses: a disk somebody made is in no preservation set
-   * and never will be, so counting it would make the coverage rate fall every
-   * time the operator creates one.
+   * AUTHORED game, OR whose image is a version written by a device or the
+   * browser (disk_versions.image_sha256, seq > 0). Neither is a miss: a disk
+   * somebody made, or wrote to, is in no preservation set and never will be,
+   * so counting either would make the coverage rate fall every time the
+   * operator creates one or writes to their own hardware.
    */
   authoredNone: number;
   enriched: number; enrichNone: number; enrichAmbiguous: number; enrichUnchecked: number;
@@ -446,10 +448,17 @@ export async function scanStatus(): Promise<ScanStatus> {
       (select count(*)::int from blobs b
         where b.match_state = 'none'
           and exists (select 1 from disks d where d.sha256 = b.sha256)
-          and not exists (
-            select 1 from disks d
-            join games g on g.id = d.game_id
-            where d.sha256 = b.sha256 and g.authored = false
+          and (
+            not exists (
+              select 1 from disks d
+              join games g on g.id = d.game_id
+              where d.sha256 = b.sha256 and g.authored = false
+            )
+            -- A disk image that exists because someone WROTE to a disk
+            -- (write-back): in no preservation set, and not a gap in the archive.
+            or exists (
+              select 1 from disk_versions v where v.image_sha256 = b.sha256 and v.seq > 0
+            )
           ))                                                                     as authored_none,
       (select count(*)::int from tosec_entries)                                  as tosec_entries,
       (select count(*)::int from blobs where enrich_state = 'enriched')          as enriched,
