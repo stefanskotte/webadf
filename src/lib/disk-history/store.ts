@@ -103,14 +103,14 @@ export async function recordVersion(input: RecordInput): Promise<Recorded | null
   const sha256 = sha256Of(input.next);
   const seq = history[history.length - 1].seq + 1;
 
-  await diskStore.put(sha256, input.next);
-  let blobSha256 = sha256;
-  if (plan.deltaBlob) {
-    // A delta is not a disk image: stored, but never a `blobs` row, which is
-    // the table the scanners walk as disks.
-    blobSha256 = sha256Of(plan.deltaBlob);
-    await diskStore.put(blobSha256, plan.deltaBlob);
-  }
+  // A delta is not a disk image: stored, but never a `blobs` row, which is
+  // the table the scanners walk as disks. The two PUTs are independent, so
+  // they run together.
+  const blobSha256 = plan.deltaBlob ? sha256Of(plan.deltaBlob) : sha256;
+  await Promise.all([
+    diskStore.put(sha256, input.next),
+    ...(plan.deltaBlob ? [diskStore.put(blobSha256, plan.deltaBlob)] : []),
+  ]);
 
   const stmts: BatchItem<'pg'>[] = [];
   stmts.push(db.insert(blobs).values({
