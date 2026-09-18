@@ -114,10 +114,11 @@ The state is a pure function of (writable, dirty-or-open-session, online), host-
 differ.** That is the rule from the "show both values of a state" lesson: a test that only
 checks one state passes a broken icon.
 
-**Unverified assumption:** the board takes its 5 V from the Amiga's floppy connector, so
-switching the Amiga off also switches the board off. If so, the cloud answers "can I switch the
-Amiga off?". If the board has its own supply, it answers "can I unplug the board?". Confirm on
-the bench.
+**Power, confirmed by the operator 2026-09-18:** in the finished setup, the board is powered
+solely from the Amiga's 5 V rail. Switching the Amiga off switches the board off, so the cloud
+answers "can I switch the Amiga off now?". USB power is used only on the bench during
+development. There, the board keeps running and uploading after the Amiga is off, so a bench
+test of the offline or power-loss case must cut USB as well.
 
 ### 3.3 Server: the write API
 
