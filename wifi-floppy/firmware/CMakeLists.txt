@@ -125,12 +125,13 @@ endif ()
 # Write-back piece 1 (docs/superpowers/specs/2026-09-18-write-back-and-disk-history-design.md
 # §2): a whole, clean captured track is written into the board's copy of the disk, so the
 # Amiga reads its own writes back. NOTHING is sent upstream yet -- writes are lost at eject.
-# Implies write capture. Removed in piece 2, when writes reach the server.
+# Capture is always compiled in; WF_WRITE_CAPTURE need not be set. Removed in piece 2,
+# when writes reach the server.
 option(WF_WRITE_BACK "Apply captured writes to the board's copy (lost at eject)" OFF)
 if (WF_WRITE_BACK)
   target_compile_definitions(wifi_floppy PRIVATE WF_WRITE_BACK=1)
   message(WARNING "WF_WRITE_BACK is ON: writes change the board's copy of the disk and are LOST at eject.")
-endif()
+endif ()
 
 set(FIRMWARE_VERSION "4b.0-dev" CACHE STRING
     "Version string the device reports at registration")

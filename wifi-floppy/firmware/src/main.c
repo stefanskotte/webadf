@@ -204,14 +204,14 @@ static void ui_observe(void *ctx, const dc_obs_t *o) {
     }
 }
 
-// Write-back to the SERVER does not exist yet (piece 2 of the write-back
-// spec). With WF_WRITE_BACK the board applies writes to its own copy, and
-// they are lost at eject. Until that lands, WPROT must stay asserted for
-// every mounted disk regardless of what the server
-// reports, because presenting a disk the server marks writable would let
-// the Amiga believe writes land somewhere, and every one of them would
-// silently vanish. See core1_main's WPROT comment for how this is wired;
-// flip this to 1 (and see the comment there) once the write path exists.
+// WRITE_BACK_IMPLEMENTED means writes reach the SERVER (piece 2 of the
+// write-back spec) -- that piece does not exist yet. It is separate from
+// WF_WRITE_CAPTURE and WF_WRITE_BACK, which apply (or discard) writes on
+// the board alone: WPROT follows the server's writeProtected flag whenever
+// WF_ACCEPTS_WRITES is true (a capture or write-back build), and is forced
+// asserted otherwise, so a plain build never lets the Amiga believe a write
+// landed anywhere. See core1_main's WPROT comment for how this is wired;
+// flip this to 1 (and see the comment there) once writes reach the server.
 #define WRITE_BACK_IMPLEMENTED 0
 
 /*
@@ -1071,10 +1071,11 @@ static void core1_main(void) {
                         WF_ACCEPTS_WRITES ? "accepts writes" : "refuses writes");
             }
             // The panel's pencil, from the same value and at the same moment.
-            // It is therefore dark today for a reason that is true rather than
-            // incidental: WRITE_BACK_IMPLEMENTED is 0, so every disk is
-            // read-only, and the pencil lighting up is exactly the signal that
-            // the switch has been thrown.
+            // WRITE_BACK_IMPLEMENTED being 0 means writes never reach the
+            // SERVER; it does not mean every disk is read-only -- a capture
+            // or write-back build (WF_ACCEPTS_WRITES) releases WPROT exactly
+            // when the server's own flag allows it, and the pencil lights up
+            // then, on the board alone.
             g_ui_writable = !wprot;
 
             // Item 4: the status heartbeat. ~60s (DC_STATUS_PERIOD_MS) or
@@ -1176,6 +1177,11 @@ int main(void) {
     wf_logf(WF_WARN, "WRITE CAPTURE BUILD: WPROT released for writable disks. "
                      "Writes are decoded and LOGGED, then DISCARDED -- the image "
                      "does not change. Do not use a disk you care about.");
+#endif
+#if WF_WRITE_BACK
+    wf_logf(WF_WARN, "WRITE-BACK BUILD: whole, clean writes are applied to the "
+                     "board's copy of the disk; they are NOT sent upstream and "
+                     "are LOST at eject or power-off.");
 #endif
 
 
@@ -1502,13 +1508,21 @@ int main(void) {
                 wf_logf(WF_INFO, "write: WGATE pulse, %u intervals, not a write",
                         (unsigned)cap.intervals);
             } else if (took) {
+                // Snapshot: write_track/write_token are volatile and gpio_isr
+                // rewrites both the instant the Amiga asserts WGATE for the
+                // NEXT track (e.g. the other head, same cylinder). Re-reading
+                // them across this branch could decode/log one track but
+                // apply under another's number. Everything below uses only
+                // wt/wtok, never write_track/write_token directly.
+                const int     wt   = write_track;
+                const int32_t wtok = write_token;
                 static uint8_t decoded[MFM_TRACK_DATA_BYTES];
                 mfm_decode_result_t d;
                 memset(decoded, 0, sizeof decoded);
                 mfm_decode_track(cap.mfm, cap.mfm_bytes, decoded, &d);
                 wf_logf(WF_INFO,
                         "write: trk %d %u iv %u B sec 0x%03x%s bad %u rng %u%s",
-                        write_track,
+                        wt,
                         (unsigned)cap.intervals, (unsigned)cap.mfm_bytes,
                         (unsigned)d.found,
                         d.found == 0x7ff ? " ALL" : " PART",
@@ -1524,30 +1538,33 @@ int main(void) {
                         (unsigned)cap.cells[0], (unsigned)cap.cells[1], (unsigned)cap.cells[2]);
                 if (d.found && !d.track_no_consistent) {
                     wf_logf(WF_WARN, "write: sector headers disagree about the track");
-                } else if (d.found && d.track_no != write_track) {
+                } else if (d.found && d.track_no != wt) {
                     // The one corruption a checksum cannot see: every sector
                     // internally valid, but written to a cylinder the head is
                     // not on. Never apply one of these.
                     wf_logf(WF_WARN, "write: track says %u, head is on %d",
-                            (unsigned)d.track_no, write_track);
+                            (unsigned)d.track_no, wt);
                 }
 #if WF_WRITE_BACK
                 {
+                    const uint64_t t0 = time_us_64();
                     const int32_t now_tok = psram_active_token();
-                    const wb_verdict_t v = write_back_verdict(&d, write_track, cap.overflowed,
-                                                              write_token, now_tok);
+                    const wb_verdict_t v = write_back_verdict(&d, wt, cap.overflowed,
+                                                              wtok, now_tok);
                     if (v != WB_APPLY) {
                         wf_logf(WF_WARN, "write: trk %d rejected: %s",
-                                write_track, write_back_reason(v));
-                    } else if (write_back_apply(psram_token_slot(now_tok), write_track, decoded)) {
+                                wt, write_back_reason(v));
+                    } else if (write_back_apply(psram_token_slot(now_tok), wt, decoded)) {
                         // The SRAM copy is keyed on (track, token) and a write
                         // changes neither: drop it, and if the head is still on
                         // this track re-serve it now rather than at the next seek.
-                        track_cache_invalidate(write_track);
-                        if (loaded == write_track) loaded = -1;
-                        wf_logf(WF_INFO, "write: trk %d applied", write_track);
+                        track_cache_invalidate(wt);
+                        if (loaded == wt) loaded = -1;
+                        const uint64_t us = time_us_64() - t0;
+                        wf_logf(WF_INFO, "write: trk %d applied in %lu us",
+                                wt, (unsigned long)us);
                     } else {
-                        wf_logf(WF_ERR, "write: trk %d apply failed (PSRAM)", write_track);
+                        wf_logf(WF_ERR, "write: trk %d apply failed (PSRAM)", wt);
                     }
                 }
 #endif
