@@ -53,6 +53,7 @@ after plan 4a, rewritten again 2026-08-31 after plan 4b.**
 | **Typeahead search** | ✅ **done, all 7 tasks, merged to `master` and live in production.** A Spotlight-style pill in both shells; migration 0012 applied; see 3h |
 | **Read-only ADF filesystem reader** | ✅ **done, all 10 tasks, `feat/adf-filesystem-reader`.** Reads 80.3% of the archive (49/61) against TOSEC's 45.9% and OpenRetro's 6.6%; see 3f |
 | **Demozoo identification** | ✅ **done 2026-09-14, all 16 tasks, merged to `master`.** Complements TOSEC for non-games: weekly import, nightly matching, automatic links, suggestions, review queue, screenshots; see 3af |
+| **Write-back piece 2a (server)** | ✅ **done 2026-09-18, 5 tasks + final fix wave, merged to `master`.** Disk history tables, browser edits and renames recorded as versions, `POST /api/device/write` + `/close`, live write-protect. The board does not call it yet (plan 2b); see 4g |
 | **Hardware** | rev A scrap (mirrored), **rev A2 in hand and working**, **rev B is current and unfabricated** — keepout moved to the antenna end, a silkscreen that carries lettering, D1 polarity marked. Respin deliberately on hold until a board is known to work; see 3s and 3x |
 
 **Current branch:** `master`, clean and pushed. Everything below is merged and live in
@@ -2528,6 +2529,77 @@ predicate is not scoped by the test that runs it. Point the run at a scratch dat
 in advance that it empties the table for everyone. This repo has no such database today — every
 e2e runs against live Neon — so "accept in advance" is currently the only option, and it should
 be an explicit decision each time rather than a side effect of following a plan step.
+
+### 4g. THE SERVER SIDE OF WRITE-BACK — 2026-09-18 (write-back piece 2a)
+
+**Merged and live; not yet exercised by a board.** Plan
+`docs/superpowers/plans/2026-09-18-write-back-piece-2a-server.md`, spec §3 of
+`docs/superpowers/specs/2026-09-18-write-back-and-disk-history-design.md`. Migrations 0015 and
+0016 are applied (`db:push`, 2026-09-18). Gate: 850 vitest, build clean, **275/275 Playwright**
+(47.8 min, no flakes).
+
+**What exists:**
+- `disk_versions`, `disk_write_sessions`, `disk_write_tracks` (`src/db/schema/disk-history.ts`).
+- `src/lib/disk-history/version.ts` (pure: `overlayTracks`, `planNextVersion`) and
+  `store.ts`: **`recordVersion` is the only writer of a new disk image.** Browser edits
+  (`applyDiskEdit`) and renames (`volume-name`) now go through it, so every browser edit
+  already makes history in production.
+- `recordVersion` refuses a **stale head** (`StaleHeadError`: the history's last image is not
+  `disks.sha256`, or a concurrent writer took the same seq). Edit routes answer 409
+  `{error:'edit_failed', reason:'conflict'}`, volume-name 409 `{error:'conflict'}`.
+- `src/lib/device-write.ts` behind `POST /api/device/write` and `/api/device/write/close`.
+- Live write-protect: `PATCH /api/disks/[id]` bumps `desiredVersion` for every device that
+  desires the disk.
+- TOSEC `authored_none` treats any `disk_versions` image with `seq > 0` as decided.
+- e2e: `reclaimDeltaBlobs` (e2e/device-helpers.ts) runs before every disk delete; both blob GCs
+  and `releaseEntitlements` treat anything `disk_versions` names as referenced.
+
+**The device protocol plan 2b must implement — it differs from the spec text in four places:**
+1. **`session=<token>` on upload and close** (1-64 chars `[A-Za-z0-9_-]`), random per session,
+   kept until close resolves. A new token at the same mount discards the old session's tracks.
+   *Why:* a reboot does not bump `desiredVersion`, so without it the rebooted board's seq 1..N
+   were swallowed as duplicates.
+2. **A session's `mount` is fixed from open to close.** Keep sending the mount the session
+   opened under even after the poll reports a bumped version for the same disk (live WP,
+   another board's close). Only opening a session needs the current version.
+3. **Write-protect is decided at open.** An open session keeps accepting tracks; only a new
+   session is refused `write_protected`.
+4. **Close answers:** 200 `{sha256}` (adopt it, no re-fetch); 200 `{sha256, unchanged:true}`;
+   409 `mismatch` (the server's image won; take the bumped poll and re-download — do not
+   re-close); 409 `conflict` (the session is KEPT; retry with backoff, cap it); 409
+   `incomplete` (`seq` ≠ the session's last seq — the session is kept; re-upload its tracks);
+   409 `not_mounted`. A nothing-staged close with a digest that differs from the head now
+   answers `mismatch`, so a lost 409 cannot turn into a silent 200.
+   Close overlays the staged tracks onto the session's **base** image (the head when it
+   opened), so the digest matches the board's; it is then recorded on top of whatever the
+   head is now — **last writer wins, the other write stays in history.**
+
+**Operator decision, open:** because of that last rule, a browser rename made while the Amiga
+is mid-save is superseded at the head when the save closes; it survives only as a history
+version. Reversible — the alternative is refusing renames of a mounted disk.
+
+**Fix before plan 2b builds on it** (parked at the final review; dormant until a board calls
+the endpoints):
+- A session opened while the board has not yet acknowledged a same-disk bump takes the new
+  head as its base, not the image the board holds — refuse to open while
+  `desiredDiskId = disk and desiredVersion > mountedVersion`.
+- A retried close after a crash between `recordVersion` and the close batch skips bumping other
+  boards (`recorded` is null) — bump when `recorded || sha256 !== session.baseSha256`.
+- An old boot's in-flight upload can wipe a new token's session; it surfaces as a mismatch,
+  not silently.
+- A status report in flight can overwrite the `mountedSha256` a close just set; the board
+  should keep one request in flight across uploader and status.
+
+**`db:push` re-emits constraints every time, harmlessly.** It drops and re-adds the composite
+PKs on `entitlements`, `collection_games`, `demozoo_dismissals`, `demozoo_suggestions`, and the
+`disk_write_tracks` → `disk_write_sessions` FK (its generated name exceeds Postgres's 63 chars
+and is stored truncated). Verified intact after both pushes, rows unchanged. Giving that FK an
+explicit short name would stop one of them.
+
+**`e2e/disk-files-edit.spec.ts` flaked 3 of 6 solo runs during the build** (different locators,
+never reproducible), then passed every run after the image and delta PUTs were made parallel,
+and in the full suite. If it returns, capture the edit request's status from the trace: a 409
+`conflict` would mean a real race, not latency.
 
 ### 4f. THE BOARD APPLIES WRITES — 2026-09-18 (write-back piece 1)
 
