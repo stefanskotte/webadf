@@ -131,17 +131,19 @@ Both endpoints use device bearer auth (`requireDevice`); an unknown or cross-org
   and logs it.
 - **Idempotent** on `(device, mount, seq)`: a `seq` at or below the last one applied returns 200
   and changes nothing.
-- Otherwise the server diffs the 11 sectors against the **current** version (the head blob plus
-  staged sectors) and stages only the sectors that differ.
+- Otherwise the server stages the track (`disk_write_tracks`; a later upload of the same track
+  replaces it) and advances `last_seq`. The diff against the current version happens once, at
+  close (§3.4).
 
 `POST /api/device/write/close`:
-- The server builds the new image (the head plus staged sectors) and hashes it.
+- The server builds the new image (the head plus the staged tracks) and hashes it.
 - **If the hash matches the board's:**
   - It stores a blob via `diskStore` (for a new digest) and an entitlement row for the disk's
     org.
-  - It creates a `disk_versions` row and moves the staged sectors into `disk_version_sectors`.
-  - It repoints `disks.sha256`, `devices.mountedSha256` and `devices.desiredSha256`, all in one
-    transaction. It does **not** bump `desiredVersion`.
+  - It records the version per §3.4 and deletes the session and its staged tracks.
+  - It repoints `disks.sha256`, `devices.mountedSha256` and `devices.desiredSha256`. The
+    database writes go in one `db.batch` (neon-http has no interactive transactions; this is
+    the pattern `mergeDuplicates` uses). It does **not** bump `desiredVersion`.
   - It returns `{ sha256 }`.
 - **If the hashes differ:** the server's image wins. It logs the mismatch with both digests to
   `devices.lastError`, commits the version anyway, bumps `desiredVersion` so the board
@@ -150,58 +152,86 @@ Both endpoints use device bearer auth (`requireDevice`); an unknown or cross-org
 
 ### 3.4 Server: storage
 
+**Amended 2026-09-18, after writing piece 1.** The first draft of this section stored changed
+sectors as `bytea` rows. Then `src/lib/disk-history/` turned up: `delta.ts` and `chain.ts`,
+built on 2026-09-13 for exactly this purpose, pure and tested, and not yet called by anything.
+This section now builds on them. Only the storage mechanism changes; decisions D1–D8 stand.
+
+- **Deltas are blobs, not rows.** `delta.ts` diffs two images at sector granularity
+  (`buildDelta`) and serialises the result as a self-describing `WDLD` blob (`encodeDelta`).
+  Disk bytes live in the blob store and never in Postgres, as everywhere else in this codebase.
+- **Snapshots are the keyframes** (`chain.ts`). A version is a `snapshot` (a full image) or a
+  `delta` against the previous version. `nextKind()` takes a snapshot when a delta would reach
+  half the disk (`SNAPSHOT_THRESHOLD`), or after `MAX_CHAIN_DEPTH` = 64 deltas. Any rewind then
+  reads at most one snapshot plus 64 deltas, however much the disk has been written. The first
+  draft replayed every change since the original, which gets slower without bound.
+- **Version 0 is the original upload,** a snapshot whose blob is the disk's original digest. The
+  row is created at the disk's first write, so a disk that is never written costs nothing.
+
 ```
 disk_versions
-  id            text pk
+  id            text pk                    -- randomUUID()
   disk_id       text  -> disks.id (cascade)
   org_id        text
-  seq           integer          -- 1, 2, 3 ... per disk
-  parent_sha256 text             -- the image this version was applied to
-  sha256        text             -- the image it produced
-  source        text             -- 'amiga' | 'browser' | 'rewind'
-  device_id     text null        -- for 'amiga'
-  user_id       text null        -- for 'browser' / 'rewind'
-  rewind_of     text null        -- the version restored, for 'rewind'
-  sector_count  integer
-  created_at    timestamptz
+  seq           integer                    -- 0 = original, then 1, 2, 3 ...
+  kind          text                       -- 'snapshot' | 'delta'
+  blob_sha256   text                       -- snapshot: the image; delta: the WDLD blob
+  image_sha256  text                       -- digest of the COMPLETE image at this version
+  source        text                       -- 'original' | 'amiga' | 'browser' | 'rewind'
+  device_id     text null
+  user_id       text null
+  rewind_of     integer null               -- the seq restored, for 'rewind'
+  sector_count  integer                    -- sectors changed vs the previous version
+  created_at    timestamptz default now()
   unique (disk_id, seq)
+  index (image_sha256)
 
-disk_version_sectors
-  version_id text -> disk_versions.id (cascade)
-  sector     integer   -- 0..1759 (track * 11 + sector)
-  data       bytea     -- 512 bytes
-  primary key (version_id, sector)
-
-disk_write_sessions                -- one open session per (device, mount)
-  device_id  text
+disk_write_sessions                        -- one open session per (device, mount)
+  device_id  text -> devices.id (cascade)
   mount      integer
-  disk_id    text
-  last_seq   integer             -- the idempotence key's high-water mark
-  opened_at  timestamptz
+  disk_id    text -> disks.id (cascade)
+  last_seq   integer                       -- the idempotence high-water mark
+  opened_at  timestamptz default now()
   primary key (device_id, mount)
 
-disk_write_staging                 -- sectors that differ from the head, not yet a version
+disk_write_tracks                          -- tracks uploaded in the open session
   device_id  text
   mount      integer
-  sector     integer
-  data       bytea
-  primary key (device_id, mount, sector)   -- a later upload of a sector replaces it
+  track      integer                       -- 0..159
+  data       bytea                         -- 5,632 bytes
+  primary key (device_id, mount, track)    -- a later upload of a track replaces it
+  foreign key (device_id, mount) -> disk_write_sessions (cascade)
 ```
 
-- **The original image stays shared (dedupe).** The first version's `parent_sha256` is the
-  disk's original digest, and that blob remains the shared, cross-tenant one. Written images are
-  new blobs.
-- **Building an image** (`materialise(diskId, versionSeq)`): start from the disk's original
-  image, then apply the sectors of versions 1…n in order. Pure and host-testable. Cached
-  in-process by `(disk, seq)`.
-- **Old versions' blobs are only a cache.** Every version can be rebuilt, so deleting a
-  non-head version's blob loses nothing. Wiring this into blob GC is out of scope here.
-- **Disk identity is untouched.** `games`, the TOSEC match and titles stay attached to the disk.
-  A written disk's new digest has no match, and it must **not** be reported as a new
-  unrecognised disk. The sweeper and the `/admin/scan` coverage rate must skip blobs that
-  are head images of written disks (the same rule as for user-authored disks, HANDOFF §3q).
-- `mergeDuplicates` must learn `disk_versions` as a holder of a disk. The rule since
-  collections: anything new that references a game or disk id belongs in its statement list.
+**Staging is the one `bytea`, deliberately.** Staged tracks are transient scratch: at most 160
+rows of 5.6 KB per open session, deleted when it closes. Staging them as blobs would cost a
+blob-store write per uploaded track.
+
+**On close:**
+1. Take the head image (the blob `disks.sha256` names) and overlay the staged tracks.
+2. `buildDelta(head, new)`. An empty delta closes the session with no new version.
+3. `nextKind(changed, deltasSinceSnapshot(entries))` decides the kind:
+   - **snapshot:** `blob_sha256` = the new image's digest;
+   - **delta:** `blob_sha256` = the digest of `encodeDelta(...)`, stored via `diskStore.put`
+     and **not** inserted into `blobs`. `blobs` is the table of disk images the scanners walk,
+     and a delta is not one.
+4. The new image is always stored as an ordinary blob with an **entitlement** for the org
+   (the `applyDiskEdit` pattern), and `disks.sha256` points at it. Every existing reader works
+   unchanged. The entitlement also keeps the e2e teardown's GC
+   (`selectUnreferencedBlobs`) from reclaiming a snapshot that history depends on.
+5. Old versions' full-image blobs are a cache only; `materialise()` can rebuild any version.
+
+**Identity is untouched.** `games`, the TOSEC match and titles stay attached to the disk. A
+written disk's head image has no TOSEC match and must not count as a miss. `scanStatus()`'s
+`authoredNone` predicate (`src/lib/tosec-sweep.ts`) is extended to treat a blob as decided
+when it is the `image_sha256` of any `disk_versions` row with `seq > 0`.
+
+**`mergeDuplicates` needs no change:** `disk_versions` holds a `disks.id`, never a `games.id`,
+and `disks.id` never moves.
+
+**The e2e teardown** must delete delta blobs from the blob store before the cascade removes the
+`disk_versions` rows that name them. Otherwise every run would leave delta objects in Vercel
+Blob with nothing pointing at them.
 
 ### 3.5 Browser edits and live write-protect
 
@@ -230,8 +260,9 @@ A **History** panel on the disk page lists versions newest first. Each entry sho
 
 Each version has two actions:
 - **Browse:** the existing file browser, read-only, on the materialised version.
-- **Restore:** creates a `rewind` version whose sectors turn the current image into the target
-  one, repoints, and bumps `desiredVersion`. **Refused while the disk is mounted or desired by a
+- **Restore:** `materialise()`s the target version and records it as a new `rewind` version
+  (a delta or snapshot against the current image, per `nextKind`), repoints, and bumps
+  `desiredVersion`. **Refused while the disk is mounted or desired by a
   device**, with an "Eject to restore" button beside the refusal.
 
 A scrubber-style control is deferred until the list has been used.
