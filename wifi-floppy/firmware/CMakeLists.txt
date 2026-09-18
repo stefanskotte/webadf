@@ -56,7 +56,7 @@ add_executable(wifi_floppy
   src/main.c src/dskchg.c src/track_cache.c src/psram_image.c
   src/image_loader.c src/device_client.c src/http.c src/json_scan.c
   src/token_store.c src/config_store.c src/provisioning.c
-  src/mfm.c src/dns_server.c src/dhcp_server.c src/portal_http.c
+  src/mfm.c src/write_back.c src/dns_server.c src/dhcp_server.c src/portal_http.c
   src/portal_net.c
   src/transport_tls.c src/sntp_time.c
   ${WFMF_PSA_CRYPTO_RANDOM_SRC}
@@ -121,6 +121,16 @@ if (WF_WRITE_CAPTURE)
   target_compile_definitions(wifi_floppy PRIVATE WF_WRITE_CAPTURE=1)
   message(WARNING "WF_WRITE_CAPTURE is ON: this image lets the Amiga write, and throws the writes away.")
 endif ()
+
+# Write-back piece 1 (docs/superpowers/specs/2026-09-18-write-back-and-disk-history-design.md
+# §2): a whole, clean captured track is written into the board's copy of the disk, so the
+# Amiga reads its own writes back. NOTHING is sent upstream yet -- writes are lost at eject.
+# Implies write capture. Removed in piece 2, when writes reach the server.
+option(WF_WRITE_BACK "Apply captured writes to the board's copy (lost at eject)" OFF)
+if (WF_WRITE_BACK)
+  target_compile_definitions(wifi_floppy PRIVATE WF_WRITE_BACK=1)
+  message(WARNING "WF_WRITE_BACK is ON: writes change the board's copy of the disk and are LOST at eject.")
+endif()
 
 set(FIRMWARE_VERSION "4b.0-dev" CACHE STRING
     "Version string the device reports at registration")

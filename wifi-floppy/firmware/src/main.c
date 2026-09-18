@@ -36,6 +36,7 @@
 #include "flux_capture.h"
 #include "flux_bits.h"
 #include "mfm.h"
+#include "write_back.h"
 #include "hardware/sync.h"   // __dmb(), for the display seqlock below
 #include <string.h>
 
@@ -203,10 +204,10 @@ static void ui_observe(void *ctx, const dc_obs_t *o) {
     }
 }
 
-// Write-back (WGATE -> PSRAM -> flush to the server) does not exist yet --
-// flux_in_program is only ever set up, never enabled, and there is no code
-// anywhere that walks psram_image_next_dirty(). Until that lands, WPROT
-// must stay asserted for every mounted disk regardless of what the server
+// Write-back to the SERVER does not exist yet (piece 2 of the write-back
+// spec). With WF_WRITE_BACK the board applies writes to its own copy, and
+// they are lost at eject. Until that lands, WPROT must stay asserted for
+// every mounted disk regardless of what the server
 // reports, because presenting a disk the server marks writable would let
 // the Amiga believe writes land somewhere, and every one of them would
 // silently vanish. See core1_main's WPROT comment for how this is wired;
@@ -234,6 +235,16 @@ static void ui_observe(void *ctx, const dc_obs_t *o) {
  */
 #ifndef WF_WRITE_CAPTURE
 #define WF_WRITE_CAPTURE 0
+#endif
+
+/*
+ * WF_WRITE_BACK -- write-back piece 1: a whole, clean captured track is
+ * re-encoded and written into the ACTIVE disk copy in PSRAM, so the Amiga
+ * reads back what it wrote. Nothing goes upstream: the write is lost at eject
+ * or power-off. Piece 2 (upload, sessions) removes this flag.
+ */
+#ifndef WF_WRITE_BACK
+#define WF_WRITE_BACK 0
 #endif
 
 /*
@@ -270,7 +281,7 @@ static void ui_observe(void *ctx, const dc_obs_t *o) {
 // Both gates, in one place: the firmware must be willing AND the server must
 // say the disk is writable (dc_desired_t.write_protected, defaulting to true
 // in the database).
-#define WF_ACCEPTS_WRITES (WRITE_BACK_IMPLEMENTED || WF_WRITE_CAPTURE)
+#define WF_ACCEPTS_WRITES (WRITE_BACK_IMPLEMENTED || WF_WRITE_CAPTURE || WF_WRITE_BACK)
 
 static PIO  pio = pio0;
 static uint sm_out, sm_in;
@@ -519,6 +530,9 @@ static void __isr sniff_isr(void) {
 #endif
 
 static volatile int write_track;     // set when WGATE asserts
+// The disk that was mounted when WGATE asserted. A write belongs to that disk
+// and no other; write_back_verdict() rejects it if a swap landed since.
+static volatile int32_t write_token;
 // WGATE asserted with SEL0 released: another drive being written. Not captured
 // -- once write-back exists, capturing it would APPLY DF1's write to DF0.
 static volatile uint32_t writes_other_drive;
@@ -557,6 +571,7 @@ static void __isr gpio_isr(uint gpio, uint32_t events) {
             // the decode the Amiga may have stepped, which produced a false
             // "track says 69, head is on 70" on 2026-09-15.
             write_track = cur_cyl * 2 + cur_side;
+            write_token = psram_active_token();
             flux_capture_arm();
         } else {
             flux_capture_disarm();
@@ -1458,18 +1473,14 @@ int main(void) {
          * Write capture. Two bounded steps, both of which do nothing at all
          * unless the Amiga is writing.
          *
-         * REPORTED, NOT YET APPLIED. This increment proves the path end to end
-         * -- flux off the wire, intervals to bits, bits to sectors, checksums
-         * verified -- and says so in the log. It deliberately does NOT write
-         * the result into PSRAM or send it upstream: the disk the Amiga is
-         * reading must not start changing underneath it until the capture has
-         * been seen to be correct on real hardware, and the history model that
-         * will receive these tracks is not designed yet.
+         * With WF_WRITE_BACK, a whole, clean track is applied to the board's
+         * copy of the disk (write-back spec §2); anything else is rejected and
+         * logged. Without it, the capture is decoded and LOGGED only -- the
+         * behaviour of the WF_WRITE_CAPTURE diagnostic build.
          *
-         * Nothing here can run in the field either way: WPROT is asserted for
-         * every mounted disk (see WRITE_BACK_IMPLEMENTED), so the Amiga
-         * refuses to write and WGATE never goes active. That is the switch to
-         * throw when this is ready to be tried for real, and it is one line.
+         * Re-serving a rewritten track restarts the stream mid-revolution: one
+         * torn revolution if the Amiga reads that track at that instant, which
+         * trackdisk retries. It has just finished writing it, so it rarely is.
          */
         flux_capture_poll();
         if (flux_capture_timeout(clock_ms())) {
@@ -1520,6 +1531,26 @@ int main(void) {
                     wf_logf(WF_WARN, "write: track says %u, head is on %d",
                             (unsigned)d.track_no, write_track);
                 }
+#if WF_WRITE_BACK
+                {
+                    const int32_t now_tok = psram_active_token();
+                    const wb_verdict_t v = write_back_verdict(&d, write_track, cap.overflowed,
+                                                              write_token, now_tok);
+                    if (v != WB_APPLY) {
+                        wf_logf(WF_WARN, "write: trk %d rejected: %s",
+                                write_track, write_back_reason(v));
+                    } else if (write_back_apply(psram_token_slot(now_tok), write_track, decoded)) {
+                        // The SRAM copy is keyed on (track, token) and a write
+                        // changes neither: drop it, and if the head is still on
+                        // this track re-serve it now rather than at the next seek.
+                        track_cache_invalidate(write_track);
+                        if (loaded == write_track) loaded = -1;
+                        wf_logf(WF_INFO, "write: trk %d applied", write_track);
+                    } else {
+                        wf_logf(WF_ERR, "write: trk %d apply failed (PSRAM)", write_track);
+                    }
+                }
+#endif
             }
         }
 
