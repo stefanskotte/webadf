@@ -1,7 +1,7 @@
 'use client';
 
 import { Link } from '@/components/shell/link';
-import { useState } from 'react';
+import { useId, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { toast } from 'sonner';
 import { useDraggable } from '@dnd-kit/core';
@@ -102,11 +102,20 @@ function dragStyle(translate: string | undefined, isDragging: boolean) {
  * new sha-256, new blob, repointed disks.sha256 -- and "which disk?" has no
  * answer on a multi-disk game, which is why this is gated on `authored`
  * rather than on metadataSource 'human' (true of any hand-edited title).
+ *
+ * A disk a board holds cannot be renamed (operator decision 2026-09-18: a
+ * mounted volume is changed only from the Amiga side). The field is still
+ * drawn -- disabled, with the reason written under it -- rather than hidden:
+ * an absent field would read the same as "this title cannot be renamed".
  */
 function VolumeNameField({ game: g }: { game: GameListItem }) {
   const router = useRouter();
   const [name, setName] = useState(g.title);
   const [busy, setBusy] = useState(false);
+  const reasonId = useId();
+  const locked = g.holderName !== null
+    ? `This disk is mounted on "${g.holderName}" — eject it there before renaming.`
+    : null;
 
   async function commit() {
     const trimmed = name.trim();
@@ -119,6 +128,15 @@ function VolumeNameField({ game: g }: { game: GameListItem }) {
         body: JSON.stringify({ volumeName: trimmed }),
       });
       if (!res.ok) {
+        // Mounted between this page loading and the edit: say where, and
+        // refresh so the card shows the lock instead of the field.
+        const body = await res.json().catch(() => null) as { error?: string; reason?: string } | null;
+        if (res.status === 409 && body?.error === 'mounted' && body.reason) {
+          toast.error(`This disk is ${body.reason} — eject it there before renaming.`);
+          setName(g.title);
+          router.refresh();
+          return;
+        }
         toast.error('Could not rename the disk');
         setName(g.title);
         return;
@@ -138,11 +156,14 @@ function VolumeNameField({ game: g }: { game: GameListItem }) {
   const stop = (e: React.SyntheticEvent) => { e.stopPropagation(); };
 
   return (
+    <>
     <input
       data-testid={`volume-name-${g.id}`}
       aria-label={`Volume name for ${g.title}`}
+      aria-describedby={locked ? reasonId : undefined}
+      title={locked ?? undefined}
       value={name}
-      disabled={busy}
+      disabled={busy || locked !== null}
       onChange={(e) => setName(e.target.value)}
       onPointerDown={stop}
       onMouseDown={stop}
@@ -153,9 +174,16 @@ function VolumeNameField({ game: g }: { game: GameListItem }) {
         if (e.key === 'Escape') { setName(g.title); e.currentTarget.blur(); }
       }}
       onBlur={commit}
-      className="w-full truncate rounded border bg-transparent px-1 py-0.5 text-[13px] font-semibold"
+      className="w-full truncate rounded border bg-transparent px-1 py-0.5 text-[13px] font-semibold disabled:opacity-60"
       style={{ borderColor: 'var(--hairline)', color: 'var(--ink)' }}
     />
+    {locked && (
+      <span id={reasonId} data-testid={`volume-name-locked-${g.id}`}
+            className="text-[10.5px] leading-snug" style={{ color: 'var(--amber-text)' }}>
+        {locked}
+      </span>
+    )}
+    </>
   );
 }
 

@@ -1,10 +1,13 @@
 import { test, expect } from '@playwright/test';
+import { createHash } from 'node:crypto';
 import { and, eq } from 'drizzle-orm';
 import { getDb } from '@/db';
 import { games, disks } from '@/db/schema/catalog';
+import { devices } from '@/db/schema/devices';
+import { diskVersions } from '@/db/schema/disk-history';
 import { readVolume } from '@/lib/adffs';
 import { signUpFresh, runTag, createAdf } from './helpers';
-import { cleanupSeeded } from './device-helpers';
+import { cleanupSeeded, pairDevice, seedDisk, authHeader } from './device-helpers';
 
 test.afterAll(cleanupSeeded);
 
@@ -188,4 +191,63 @@ test('the filesystem is chosen per disk, not left set from last time', async ({ 
     if (v.ok) filesystems.push(v.volume.filesystem);
   }
   expect(filesystems.sort()).toEqual(['FFS', 'OFS']);
+});
+
+// Operator decision 2026-09-18: "if a volume is mounted, it cannot be modified
+// by the server. If modifications should happen, these must come from the
+// (mounted) Amiga side of things." The rename obeys it like the content edits.
+test('a disk a board wants or holds cannot be renamed, and the card says so', async ({ page, request }) => {
+  const run = runTag();
+  const u = await signUpFresh(page);
+  await page.goto('/library');
+  await createAdf(page);
+  await expect(page.getByTestId('game-card')).toHaveCount(1);
+
+  const [game] = await getDb().select().from(games)
+    .where(and(eq(games.orgId, u.orgId), eq(games.authored, true)));
+  const [disk] = await getDb().select().from(disks).where(eq(disks.gameId, game.id));
+  const versionsOf = () => getDb().select().from(diskVersions).where(eq(diskVersions.diskId, disk.id));
+  const historyBefore = await versionsOf();
+
+  const { deviceId, token } = await pairDevice(page, request);
+  // Registration names the device itself (from its MAC); read it back rather
+  // than assume the name passed to pairing.
+  const [{ name: deviceName }] = await getDb().select({ name: devices.name })
+    .from(devices).where(eq(devices.id, deviceId));
+
+  const expectRefused = async () => {
+    const res = await page.request.patch(`/api/disks/${disk.id}/volume-name`, { data: { volumeName: 'Nope' } });
+    expect(res.status()).toBe(409);
+    expect(await res.json()).toEqual({ error: 'mounted', reason: `mounted on "${deviceName}"` });
+    // Nothing moved: the bytes, the title and the history are all as they were.
+    expect((await diskRow(disk.id)).sha256).toBe(disk.sha256);
+    expect((await gameRow(game.id)).title).toBe(game.title);
+    expect(await versionsOf()).toEqual(historyBefore);
+  };
+
+  // DESIRED: the board has been told to mount it but has not reported yet.
+  const mounted = await page.request.post(`/api/devices/${deviceId}/mount`, { data: { diskId: disk.id } });
+  expect(mounted.status()).toBe(200);
+  const { version } = await mounted.json();
+  await expectRefused();
+
+  // MOUNTED only: the board holds it, and has since been pointed at another disk.
+  expect((await request.post('/api/device/status', {
+    headers: authHeader(token), data: { mountedSha256: disk.sha256, mountedDiskId: disk.id, version },
+  })).status()).toBe(204);
+  const otherSha = createHash('sha256').update(`other-${run}`).digest('hex');
+  const { diskId: otherDiskId } = await seedDisk(u.orgId, { title: `Other ${run}`, diskNo: 1, sha256: otherSha });
+  expect((await page.request.post(`/api/devices/${deviceId}/mount`, { data: { diskId: otherDiskId } })).status()).toBe(200);
+  await expectRefused();
+
+  // The card shows the lock up front: the field is there, disabled, with the
+  // reason stated -- not hidden.
+  await page.goto('/library');
+  const field = page.getByTestId(`volume-name-${game.id}`);
+  await expect(field).toBeVisible();
+  await expect(field).toBeDisabled();
+  const reason = `This disk is mounted on "${deviceName}" — eject it there before renaming.`;
+  await expect(field).toHaveAttribute('title', reason);
+  await expect(page.getByTestId(`volume-name-locked-${game.id}`)).toHaveText(reason);
+  await expect(field).toHaveAccessibleDescription(reason);
 });
