@@ -238,7 +238,15 @@ Blob with nothing pointing at them.
 - **Browser edits join the history.** `applyDiskEdit` (`src/lib/disk-write.ts`) diffs the old
   and new images sector by sector and records a `browser` version in the same transaction as
   the repoint. The existing refusal to edit a mounted disk (D-W-4) stays, so the board and the
-  browser never write one disk concurrently.
+  browser never write one disk concurrently. Renames (`PATCH /api/disks/[id]/volume-name`) are
+  refused the same way (operator decision 2026-09-18): 409 `{error:'mounted', reason}` for a disk
+  any device in the org has mounted or desires, checked by the same `findHolder`
+  (`src/lib/disk-holder.ts`), and the library card shows the field disabled with that reason. So
+  no browser action can move the head of a disk a board holds. The operator's rule, verbatim:
+  "if a volume is mounted, it cannot be modified by the server. If modifications should happen,
+  these must come from the (mounted) Amiga side of things." It covers the disk's bytes; the
+  write-protect flag is a setting and still applies live, and title/metadata edits do not touch
+  the disk.
 - **Write-protect applies live.** `PATCH /api/disks/[id]` with `writeProtected` bumps
   `desiredVersion` for every device whose `desiredDiskId` is that disk. The digest is unchanged,
   so the board takes the no-op path and applies the flag to WPROT. HANDOFF's entry on this is
