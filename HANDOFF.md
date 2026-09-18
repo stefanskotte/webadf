@@ -2529,6 +2529,42 @@ in advance that it empties the table for everyone. This repo has no such databas
 e2e runs against live Neon — so "accept in advance" is currently the only option, and it should
 be an explicit decision each time rather than a side effect of following a plan step.
 
+### 4f. THE BOARD APPLIES WRITES — 2026-09-18 (write-back piece 1)
+
+**Verified on hardware**, rev A2 board, `-DWF_WRITE_BACK=ON`, Workbench 3.1 marked writable
+on the server and then remounted (the flag is read at mount until piece 2).
+- `echo "written by the amiga" >SYS:wb-test`, then `type`: correct.
+- **After a Ctrl-Amiga-Amiga reset**, which discards AmigaDOS's own buffers: still correct,
+  so the file came back from the board's copy.
+- A `Copy SYS:Utilities RAM:u ALL` / `Delete` / `Copy back` round trip, then a reset:
+  `dir SYS:Utilities` complete.
+
+Operator-confirmed. **32 track writes over 14 distinct tracks, every one applied, 0 rejected,
+0 partial, 0 overflowed, 0 apply failures.** Apply time (verdict + encode + PSRAM store) was
+2.4–5.7 ms. Two `record(s) dropped` lines, both outside the write window (reboot read bursts).
+
+**What exists** (spec `docs/superpowers/specs/2026-09-18-write-back-and-disk-history-design.md`
+§2; plan `docs/superpowers/plans/2026-09-18-write-back-piece-1-board-applies-writes.md`):
+- `mfm_encode_track()`: a C port of `src/lib/adfmfm`, byte-identical to the golden tracks.
+- `write_back.c`: the verdict applies only a whole, clean track on the disk that was mounted
+  when WGATE asserted (spec D5). The apply re-encodes it and stores it DIRTY in the active slot.
+- `track_cache_invalidate()`: SRAM copies are keyed on (track, token), and a write changes
+  neither, so without this the old bytes would keep being served. A test asserts that failure.
+- `main.c`: wired behind `WF_WRITE_BACK`, with a boot banner and `write: trk N applied in U us`.
+  **`write_track`/`write_token` are snapshotted once per capture.** The whole-branch review
+  found the ISR could rewrite them mid-block when the next track's write began, which would
+  have stored track N's data under track N+1's number. All three per-task reviews had passed it.
+- `write_back.c` was missing from CMake's source list in the plan; Task 3 added it.
+
+**Still NOT done:** writes are lost at eject and power-off, because nothing goes upstream.
+That is spec piece 2 (upload, sessions, server history, live write-protect, the cloud icon),
+followed by piece 3 (the time-machine UI). The normal build is unchanged, and WPROT is always
+asserted there.
+
+**Log capture misses the first ~12 s of boot** on `picotool load -x` + `cat`, twice today, so
+the banner and `pio claims:` lines have never been read. Worth a look before piece 2's bench
+work.
+
 ### 4e. A SECOND DRIVE WORKS: THE BUS IS GATED ON SEL0 — 2026-09-18
 
 **Verified on hardware** (`0ece072`), rev A2 board, real external DF1 on an A500-class machine:
