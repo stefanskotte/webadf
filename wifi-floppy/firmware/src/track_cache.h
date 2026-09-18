@@ -53,6 +53,11 @@ bool track_cache_check_swap(int32_t *last_token, bool *mounted_out);
 // or the track is not in the active slot's image - do not stream anything.
 const uint8_t *track_cache_get(int track, uint32_t *bit_count);
 
+// Drop any SRAM copy of `track`. Needed after a write rewrites that track in
+// PSRAM: track_cache_get() keys its copies on (track, token), and a write
+// changes neither, so without this the OLD bytes would keep being served.
+void track_cache_invalidate(int track);
+
 bool track_cache_image_complete(void);
 int  track_cache_fill_percent(void);
 

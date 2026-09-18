@@ -87,6 +87,11 @@ const uint8_t *track_cache_get(int track, uint32_t *bit_count) {
     return 0;      // not in PSRAM: image incomplete, caller must not stream
 }
 
+void track_cache_invalidate(int track) {
+    for (int i = 0; i < 2; i++)
+        if (buf[i].track == track) buf[i].track = -1;
+}
+
 bool track_cache_image_complete(void) {
     int slot = psram_active_slot();
     return slot != SLOT_NONE && psram_image_available() &&
