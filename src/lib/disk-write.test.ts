@@ -38,7 +38,8 @@ const diskStoreStorageKey = vi.fn((sha: string) => `adf/${sha}`);
 // hands it the before/after bytes and uses the digest it returns. Its own DB
 // work is covered end to end by e2e/disk-history.spec.ts.
 const recordVersion = vi.fn();
-vi.mock('@/lib/disk-history/store', () => ({ recordVersion }));
+class StaleHeadError extends Error {}
+vi.mock('@/lib/disk-history/store', () => ({ recordVersion, StaleHeadError }));
 
 vi.mock('@/lib/storage', () => ({
   diskStore: {
@@ -248,6 +249,28 @@ describe('applyDiskEdit', () => {
     expect(deleteCalls).toHaveLength(0);
     expect(diskStoreRemove).not.toHaveBeenCalled();
     expect(recordVersion).toHaveBeenCalledTimes(1);
+  });
+
+  it('returns 409 conflict when the disk changed under the edit', async () => {
+    selectResults = [[DISK_ROW], []];
+    diskStoreRead.mockResolvedValue(new Uint8Array([1]));
+    recordVersion.mockRejectedValue(new StaleHeadError());
+
+    const { applyDiskEdit } = await import('@/lib/disk-write');
+    const result = await applyDiskEdit(ORG_ID, DISK_ID, () => ({ ok: true, adf: new Uint8Array([2]) }), 'user-1');
+
+    expect(result).toEqual({ ok: false, status: 409, reason: 'conflict' });
+  });
+
+  it('lets any other store failure propagate', async () => {
+    selectResults = [[DISK_ROW], []];
+    diskStoreRead.mockResolvedValue(new Uint8Array([1]));
+    const down = new Error('connection refused');
+    recordVersion.mockRejectedValue(down);
+
+    const { applyDiskEdit } = await import('@/lib/disk-write');
+    await expect(applyDiskEdit(ORG_ID, DISK_ID, () => ({ ok: true, adf: new Uint8Array([2]) })))
+      .rejects.toBe(down);
   });
 
   it('returns 503 and records nothing when the blob cannot be read', async () => {

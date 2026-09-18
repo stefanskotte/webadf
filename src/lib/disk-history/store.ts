@@ -35,6 +35,33 @@ export interface Recorded { sha256: string; seq: number; kind: VersionKind; sect
 
 const sha256Of = (b: Uint8Array) => createHash('sha256').update(b).digest('hex');
 
+/**
+ * The disk moved on under this write: the head the caller read is no longer
+ * the head its history ends at, or another write took this seq first.
+ * Recording anyway would store a delta against the wrong base, and
+ * materialise() would replay it onto bytes it was never computed from.
+ * Callers answer 409 { error: 'conflict' }; nothing has been recorded.
+ */
+export class StaleHeadError extends Error {
+  constructor(message = 'the disk changed since it was read') {
+    super(message);
+    this.name = 'StaleHeadError';
+  }
+}
+
+const SEQ_CONSTRAINT = 'disk_versions_disk_seq';
+
+/** A unique violation on (disk_id, seq). neon-http's batch throws the raw
+ *  NeonDbError (code, constraint); a drizzle-wrapped one carries it as cause. */
+function isSeqCollision(err: unknown): boolean {
+  for (const e of [err, (err as { cause?: unknown } | null)?.cause]) {
+    if (e && typeof e === 'object'
+      && (e as { code?: unknown }).code === '23505'
+      && (e as { constraint?: unknown }).constraint === SEQ_CONSTRAINT) return true;
+  }
+  return false;
+}
+
 export async function loadEntries(diskId: string): Promise<VersionEntry[]> {
   const rows = await getDb()
     .select({
@@ -58,6 +85,11 @@ export async function loadEntries(diskId: string): Promise<VersionEntry[]> {
 export async function recordVersion(input: RecordInput): Promise<Recorded | null> {
   const db = getDb();
   const entries = await loadEntries(input.diskId);
+  // The caller's head must be the version history ends at, or `next` was
+  // computed from bytes that are no longer the disk. Checked before any PUT.
+  if (entries.length && entries[entries.length - 1].imageSha256 !== input.headSha) {
+    throw new StaleHeadError();
+  }
 
   // Version 0 is the image when history began: created lazily at the first
   // change, so a disk never written costs nothing (chain.ts).
@@ -106,6 +138,13 @@ export async function recordVersion(input: RecordInput): Promise<Recorded | null
   stmts.push(db.update(disks).set({ sha256 })
     .where(and(eq(disks.id, input.diskId), eq(disks.orgId, input.orgId))));
 
-  await db.batch(stmts as [BatchItem<'pg'>, ...BatchItem<'pg'>[]]);
+  try {
+    await db.batch(stmts as [BatchItem<'pg'>, ...BatchItem<'pg'>[]]);
+  } catch (err) {
+    // Two writes that read the same history both claimed this seq; the batch
+    // is atomic, so the loser recorded nothing.
+    if (isSeqCollision(err)) throw new StaleHeadError();
+    throw err;
+  }
   return { sha256, seq, kind: plan.kind, sectorCount: plan.sectorCount };
 }

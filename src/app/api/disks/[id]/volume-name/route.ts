@@ -9,7 +9,7 @@ import { diskStore } from '@/lib/storage';
 import { setVolumeName, MAX_VOLUME_NAME } from '@/lib/adffs/format';
 import { readVolume } from '@/lib/adffs';
 import { makeSortTitle } from '@/lib/tosec';
-import { recordVersion } from '@/lib/disk-history/store';
+import { recordVersion, StaleHeadError } from '@/lib/disk-history/store';
 
 export const maxDuration = 60;
 
@@ -85,10 +85,17 @@ export async function PATCH(request: Request, ctx: { params: Promise<{ id: strin
 
   // The history store stores the new image (blob + entitlement), records it
   // as the disk's next version and repoints disks.sha256, all in one batch.
-  await recordVersion({
-    orgId, diskId: id, headSha: disk.sha256, head: before, next: after,
-    source: 'browser', userId, sourceFilename: `${volumeName}.adf`,
-  });
+  try {
+    await recordVersion({
+      orgId, diskId: id, headSha: disk.sha256, head: before, next: after,
+      source: 'browser', userId, sourceFilename: `${volumeName}.adf`,
+    });
+  } catch (err) {
+    // The disk changed since it was read: nothing recorded, and nothing
+    // below (name, title, holders) may run for a rename that did not land.
+    if (err instanceof StaleHeadError) return Response.json({ error: 'conflict' }, { status: 409 });
+    throw err;
+  }
   await db.update(disks)
     .set({ tosecName: `${volumeName}.adf` })
     .where(and(eq(disks.id, id), eq(disks.orgId, orgId)));

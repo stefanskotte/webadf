@@ -51,7 +51,8 @@ const recordVersion = vi.fn(async (input: { next: Uint8Array }) => ({
   sha256: createHash('sha256').update(input.next).digest('hex'),
   seq: 1, kind: 'delta' as const, sectorCount: 1,
 }));
-vi.mock('@/lib/disk-history/store', () => ({ recordVersion }));
+class StaleHeadError extends Error {}
+vi.mock('@/lib/disk-history/store', () => ({ recordVersion, StaleHeadError }));
 
 const ORG_ID = 'org-1';
 
@@ -265,6 +266,22 @@ describe('POST /api/disks/[id]/files/batch', () => {
     if (!volume.ok) return;
     expect(volume.root.map((e) => e.name)).toEqual(['C']);
     expect(volume.root[0].children.map((e) => e.name)).toEqual(['Assign']);
+  });
+
+  it('answers 409 conflict when the disk changed between read and record', async () => {
+    selectResults = [
+      [{ sha256: OLD_SHA }],
+      [{ sha256: OLD_SHA, tosecName: 'Game.adf', sourceFilename: 'Game.adf' }],
+      [], // no device holds it
+    ];
+    diskStoreRead.mockResolvedValue(emptyDisk());
+    recordVersion.mockRejectedValueOnce(new StaleHeadError());
+
+    const { POST } = await import('./route');
+    const response = await POST(makeRequest([{ op: 'mkdir', path: 'C' }]), { params: Promise.resolve({ id: DISK_ID }) });
+
+    expect(response.status).toBe(409);
+    expect(await response.json()).toEqual({ error: 'edit_failed', reason: 'conflict' });
   });
 
   it('rejects a manifest whose add/replace entry has no matching file part', async () => {

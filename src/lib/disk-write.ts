@@ -28,7 +28,7 @@ import { getDb } from '@/db';
 import { disks, entitlements } from '@/db/schema/catalog';
 import { devices } from '@/db/schema/devices';
 import { diskStore } from '@/lib/storage';
-import { recordVersion } from '@/lib/disk-history/store';
+import { recordVersion, StaleHeadError, type Recorded } from '@/lib/disk-history/store';
 import type { WriteResult } from '@/lib/adffs';
 
 export type DiskEditOutcome =
@@ -110,11 +110,19 @@ export async function applyDiskEdit(
   }
   const after = result.adf;
 
-  const recorded = await recordVersion({
-    orgId, diskId, headSha: disk.sha256, head: before, next: after,
-    source: 'browser', userId,
-    sourceFilename: disk.tosecName ?? disk.sourceFilename ?? `${diskId}.adf`,
-  });
+  let recorded: Recorded | null;
+  try {
+    recorded = await recordVersion({
+      orgId, diskId, headSha: disk.sha256, head: before, next: after,
+      source: 'browser', userId,
+      sourceFilename: disk.tosecName ?? disk.sourceFilename ?? `${diskId}.adf`,
+    });
+  } catch (err) {
+    // Another write landed between this read and this record: refused like
+    // the mounted case, with nothing recorded.
+    if (err instanceof StaleHeadError) return { ok: false, status: 409, reason: 'conflict' };
+    throw err;
+  }
   // An edit that changes nothing (writing a file's own bytes back) is a no-op.
   const sha256 = recorded?.sha256 ?? disk.sha256;
 
