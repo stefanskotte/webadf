@@ -38,10 +38,13 @@ async function mountedWritableDisk(page: import('@playwright/test').Page,
   return { orgId, deviceId, token, diskId, adf, original, mount: version as number };
 }
 
+/** The board's session token for one boot; a reboot picks a new one. */
+const BOOT = 'boot-1';
+
 function upload(request: import('@playwright/test').APIRequestContext, token: string,
-                q: { diskId: string; mount: number; track: number; seq: number }, data: Uint8Array) {
+                q: { diskId: string; mount: number; track: number; seq: number; session?: string }, data: Uint8Array) {
   return request.post(
-    `/api/device/write?disk=${q.diskId}&mount=${q.mount}&track=${q.track}&seq=${q.seq}`,
+    `/api/device/write?disk=${q.diskId}&mount=${q.mount}&track=${q.track}&session=${q.session ?? BOOT}&seq=${q.seq}`,
     { headers: { ...authHeader(token), 'content-type': 'application/octet-stream' }, data: Buffer.from(data) });
 }
 
@@ -55,7 +58,7 @@ test('an upload and a close make a new version the board can download', async ({
   const expected = m.adf.slice(); expected.set(written, 40 * TRACK_DATA_BYTES);
   const want = sha(expected);
   const close = await request.post(
-    `/api/device/write/close?disk=${m.diskId}&mount=${m.mount}&seq=1&sha256=${want}`,
+    `/api/device/write/close?disk=${m.diskId}&mount=${m.mount}&session=${BOOT}&seq=1&sha256=${want}`,
     { headers: authHeader(m.token) });
   expect(close.status()).toBe(200);
   expect((await close.json()).sha256).toBe(want);
@@ -89,7 +92,7 @@ test('a repeated seq is accepted and changes nothing', async ({ page, request })
 
   const expected = m.adf.slice(); expected.set(a, 7 * TRACK_DATA_BYTES);   // a, not b
   const close = await request.post(
-    `/api/device/write/close?disk=${m.diskId}&mount=${m.mount}&seq=1&sha256=${sha(expected)}`,
+    `/api/device/write/close?disk=${m.diskId}&mount=${m.mount}&session=${BOOT}&seq=1&sha256=${sha(expected)}`,
     { headers: authHeader(m.token) });
   expect(close.status()).toBe(200);
 });
@@ -119,6 +122,19 @@ test('a short body and a bad query are 400s', async ({ page, request }) => {
   const bad = await upload(request, m.token, { diskId: m.diskId, mount: m.mount, track: 160, seq: 1 },
                            new Uint8Array(TRACK_DATA_BYTES));
   expect(bad.status()).toBe(400);
+  // The session token: required, and 1-64 of [A-Za-z0-9_-].
+  for (const session of ['', 'has space', 'x'.repeat(65), 'semi;colon']) {
+    const res = await upload(request, m.token,
+      { diskId: m.diskId, mount: m.mount, track: 0, seq: 1, session: encodeURIComponent(session) },
+      new Uint8Array(TRACK_DATA_BYTES));
+    expect(res.status()).toBe(400);
+    expect((await res.json()).error).toBe('invalid_query');
+  }
+  const noSession = await request.post(
+    `/api/device/write/close?disk=${m.diskId}&mount=${m.mount}&seq=0&sha256=${m.original}`,
+    { headers: authHeader(m.token) });
+  expect(noSession.status()).toBe(400);
+  expect((await noSession.json()).error).toBe('invalid_query');
 });
 
 test('a close whose digest disagrees: the server image wins and the board re-downloads', async ({ page, request }) => {
@@ -127,7 +143,7 @@ test('a close whose digest disagrees: the server image wins and the board re-dow
                new Uint8Array(TRACK_DATA_BYTES).fill(9));
   const [before] = await getDb().select().from(devices).where(eq(devices.id, m.deviceId));
   const close = await request.post(
-    `/api/device/write/close?disk=${m.diskId}&mount=${m.mount}&seq=1&sha256=${'0'.repeat(64)}`,
+    `/api/device/write/close?disk=${m.diskId}&mount=${m.mount}&session=${BOOT}&seq=1&sha256=${'0'.repeat(64)}`,
     { headers: authHeader(m.token) });
   expect(close.status()).toBe(409);
   const body = await close.json();
@@ -155,7 +171,7 @@ test('a close against a head that moved answers 409 conflict and keeps the sessi
   const want = sha(expected);
   const [before] = await getDb().select().from(devices).where(eq(devices.id, m.deviceId));
   const close = () => request.post(
-    `/api/device/write/close?disk=${m.diskId}&mount=${m.mount}&seq=1&sha256=${want}`,
+    `/api/device/write/close?disk=${m.diskId}&mount=${m.mount}&session=${BOOT}&seq=1&sha256=${want}`,
     { headers: authHeader(m.token) });
 
   const refused = await close();
@@ -198,7 +214,7 @@ test('a close after the board was pointed at another disk leaves that disk desir
   const expected = m.adf.slice(); expected.set(written, 20 * TRACK_DATA_BYTES);
   const want = sha(expected);
   const close = await request.post(
-    `/api/device/write/close?disk=${m.diskId}&mount=${m.mount}&seq=1&sha256=${want}`,
+    `/api/device/write/close?disk=${m.diskId}&mount=${m.mount}&session=${BOOT}&seq=1&sha256=${want}`,
     { headers: authHeader(m.token) });
   expect(close.status()).toBe(200);
   expect((await close.json()).sha256).toBe(want);
@@ -235,7 +251,7 @@ test('an open session survives a version bump the board acknowledged', async ({ 
   expected.set(a, 5 * TRACK_DATA_BYTES); expected.set(b, 6 * TRACK_DATA_BYTES);
   const want = sha(expected);
   const close = await request.post(
-    `/api/device/write/close?disk=${m.diskId}&mount=${m.mount}&seq=2&sha256=${want}`,
+    `/api/device/write/close?disk=${m.diskId}&mount=${m.mount}&session=${BOOT}&seq=2&sha256=${want}`,
     { headers: authHeader(m.token) });
   expect(close.status()).toBe(200);
   expect((await close.json()).sha256).toBe(want);
@@ -248,8 +264,150 @@ test('an open session survives a version bump the board acknowledged', async ({ 
     .where(eq(diskWriteSessions.deviceId, m.deviceId))).toEqual([]);
 });
 
+function close(request: import('@playwright/test').APIRequestContext, token: string,
+               q: { diskId: string; mount: number; seq: number; sha256: string; session?: string }) {
+  return request.post(
+    `/api/device/write/close?disk=${q.diskId}&mount=${q.mount}&session=${q.session ?? BOOT}&seq=${q.seq}&sha256=${q.sha256}`,
+    { headers: authHeader(token) });
+}
+
+const sessionsOf = (deviceId: string) =>
+  getDb().select().from(diskWriteSessions).where(eq(diskWriteSessions.deviceId, deviceId));
+const tracksOf = async (deviceId: string) =>
+  (await getDb().select().from(diskWriteTracks).where(eq(diskWriteTracks.deviceId, deviceId)))
+    .map((t) => [t.mount, t.track]).sort();
+
+test('a reboot (new session token) at the same mount is a fresh session, not duplicates', async ({ page, request }) => {
+  const m = await mountedWritableDisk(page, request);
+  const a = new Uint8Array(TRACK_DATA_BYTES).fill(0x71);
+  const b = new Uint8Array(TRACK_DATA_BYTES).fill(0x72);
+  const c = new Uint8Array(TRACK_DATA_BYTES).fill(0x73);
+  // Boot T1 writes two tracks, then the board loses power before closing.
+  expect((await upload(request, m.token, { diskId: m.diskId, mount: m.mount, track: 1, seq: 1, session: 'T1' }, a)).status()).toBe(200);
+  expect((await upload(request, m.token, { diskId: m.diskId, mount: m.mount, track: 2, seq: 2, session: 'T1' }, b)).status()).toBe(200);
+
+  // Boot T2 comes back at the SAME mount and restarts at seq 1.
+  const fresh = await upload(request, m.token, { diskId: m.diskId, mount: m.mount, track: 3, seq: 1, session: 'T2' }, c);
+  expect(fresh.status()).toBe(200);
+  expect(await fresh.json()).toEqual({ staged: 3 });
+  // T1's session and tracks are gone.
+  const sessions = await sessionsOf(m.deviceId);
+  expect(sessions.map((x) => [x.mount, x.token, x.lastSeq])).toEqual([[m.mount, 'T2', 1]]);
+  expect(await tracksOf(m.deviceId)).toEqual([[m.mount, 3]]);
+
+  // Closing T2 records only T2's track.
+  const expected = m.adf.slice(); expected.set(c, 3 * TRACK_DATA_BYTES);
+  const want = sha(expected);
+  const done = await close(request, m.token, { diskId: m.diskId, mount: m.mount, seq: 1, sha256: want, session: 'T2' });
+  expect(done.status()).toBe(200);
+  expect((await done.json()).sha256).toBe(want);
+  const [disk] = await getDb().select().from(disks).where(eq(disks.id, m.diskId));
+  expect(disk.sha256).toBe(want);
+});
+
+test('write-protect turned on mid-session: the open session finishes, a new one is refused', async ({ page, request }) => {
+  const m = await mountedWritableDisk(page, request);
+  const a = new Uint8Array(TRACK_DATA_BYTES).fill(0x81);
+  const b = new Uint8Array(TRACK_DATA_BYTES).fill(0x82);
+  expect((await upload(request, m.token, { diskId: m.diskId, mount: m.mount, track: 8, seq: 1 }, a)).status()).toBe(200);
+
+  // The live toggle bumps the board; it acknowledges the new version.
+  expect((await page.request.patch(`/api/disks/${m.diskId}`, { data: { writeProtected: true } })).status()).toBe(200);
+  const [bumped] = await getDb().select().from(devices).where(eq(devices.id, m.deviceId));
+  expect(bumped.desiredVersion).toBe(m.mount + 1);
+  expect((await request.post('/api/device/status', {
+    headers: authHeader(m.token),
+    data: { mountedSha256: m.original, mountedDiskId: m.diskId, version: bumped.desiredVersion },
+  })).status()).toBe(204);
+
+  // The rest of the save already under way is still accepted.
+  const rest = await upload(request, m.token, { diskId: m.diskId, mount: m.mount, track: 9, seq: 2 }, b);
+  expect(rest.status()).toBe(200);
+  expect((await rest.json()).staged).toBe(9);
+
+  // A new session (a new boot, at the current mount) is refused.
+  const refused = await upload(request, m.token,
+    { diskId: m.diskId, mount: bumped.desiredVersion, track: 0, seq: 1, session: 'boot-2' }, a);
+  expect(refused.status()).toBe(409);
+  expect((await refused.json()).error).toBe('write_protected');
+
+  // And the open session still closes, write-protect notwithstanding.
+  const expected = m.adf.slice();
+  expected.set(a, 8 * TRACK_DATA_BYTES); expected.set(b, 9 * TRACK_DATA_BYTES);
+  const want = sha(expected);
+  const done = await close(request, m.token, { diskId: m.diskId, mount: m.mount, seq: 2, sha256: want });
+  expect(done.status()).toBe(200);
+  expect((await done.json()).sha256).toBe(want);
+});
+
+test('a close after the head moved records the board\'s image over its own base', async ({ page, request }) => {
+  const m = await mountedWritableDisk(page, request);
+  const written = new Uint8Array(TRACK_DATA_BYTES).fill(0x91);
+  // Track 80 is the root block's track on a DD disk; a far track keeps the
+  // board's write clear of the rename below.
+  expect((await upload(request, m.token, { diskId: m.diskId, mount: m.mount, track: 150, seq: 1 }, written)).status()).toBe(200);
+
+  // Another writer (the browser) moves the head while the session is open.
+  const renamed = await page.request.patch(`/api/disks/${m.diskId}/volume-name`, { data: { volumeName: 'Moved' } });
+  expect(renamed.status()).toBe(200);
+  const [moved] = await getDb().select().from(disks).where(eq(disks.id, m.diskId));
+  expect(moved.sha256).not.toBe(m.original);
+
+  // The board's digest: its tracks over the image IT downloaded.
+  const board = m.adf.slice(); board.set(written, 150 * TRACK_DATA_BYTES);
+  const want = sha(board);
+  const done = await close(request, m.token, { diskId: m.diskId, mount: m.mount, seq: 1, sha256: want });
+  expect(done.status()).toBe(200);
+  expect((await done.json()).sha256).toBe(want);
+  const [disk] = await getDb().select().from(disks).where(eq(disks.id, m.diskId));
+  expect(disk.sha256).toBe(want);
+  // The rename stays in history; the board's write is the head.
+  const rows = await getDb().select().from(diskVersions)
+    .where(eq(diskVersions.diskId, m.diskId)).orderBy(asc(diskVersions.seq));
+  expect(rows.map((r) => [r.seq, r.source, r.imageSha256])).toEqual([
+    [0, 'original', m.original], [1, 'browser', moved.sha256], [2, 'amiga', want]]);
+});
+
+test('a close with nothing staged and a wrong digest answers mismatch and bumps the board', async ({ page, request }) => {
+  const m = await mountedWritableDisk(page, request);
+  const [before] = await getDb().select().from(devices).where(eq(devices.id, m.deviceId));
+  // The retry of a close whose 409 mismatch was lost: its session is gone.
+  const res = await close(request, m.token, { diskId: m.diskId, mount: m.mount, seq: 3, sha256: 'a'.repeat(64) });
+  expect(res.status()).toBe(409);
+  expect(await res.json()).toEqual({ error: 'mismatch', sha256: m.original });
+  const [after] = await getDb().select().from(devices).where(eq(devices.id, m.deviceId));
+  expect(after.desiredVersion).toBe(before.desiredVersion + 1);
+  expect(after.desiredSha256).toBe(m.original);
+  expect(after.lastError).toContain('mismatch');
+
+  // With the right digest it is simply unchanged.
+  const same = await close(request, m.token, { diskId: m.diskId, mount: m.mount, seq: 0, sha256: m.original });
+  expect(same.status()).toBe(200);
+  expect(await same.json()).toEqual({ sha256: m.original, unchanged: true });
+});
+
+test('a close whose seq is not the last upload answers incomplete and keeps the session', async ({ page, request }) => {
+  const m = await mountedWritableDisk(page, request);
+  const a = new Uint8Array(TRACK_DATA_BYTES).fill(0xa1);
+  expect((await upload(request, m.token, { diskId: m.diskId, mount: m.mount, track: 30, seq: 1 }, a)).status()).toBe(200);
+  const [before] = await getDb().select().from(devices).where(eq(devices.id, m.deviceId));
+
+  const expected = m.adf.slice(); expected.set(a, 30 * TRACK_DATA_BYTES);
+  const res = await close(request, m.token, { diskId: m.diskId, mount: m.mount, seq: 2, sha256: sha(expected) });
+  expect(res.status()).toBe(409);
+  expect(res.headers()['cache-control']).toBe('no-store');
+  expect((await res.json()).error).toBe('incomplete');
+
+  expect((await sessionsOf(m.deviceId)).map((x) => [x.token, x.lastSeq])).toEqual([[BOOT, 1]]);
+  expect(await tracksOf(m.deviceId)).toEqual([[m.mount, 30]]);
+  expect(await getDb().select().from(diskVersions).where(eq(diskVersions.diskId, m.diskId))).toEqual([]);
+  const [after] = await getDb().select().from(devices).where(eq(devices.id, m.deviceId));
+  expect([after.mountedSha256, after.desiredSha256, after.desiredVersion, after.lastError])
+    .toEqual([before.mountedSha256, before.desiredSha256, before.desiredVersion, before.lastError]);
+});
+
 test('no token is refused', async ({ request }) => {
-  const res = await request.post('/api/device/write?disk=x&mount=1&track=0&seq=1', { data: Buffer.alloc(5632) });
+  const res = await request.post('/api/device/write?disk=x&mount=1&track=0&session=b&seq=1', { data: Buffer.alloc(5632) });
   expect([401, 404]).toContain(res.status());
   expect(res.headers()['cache-control']).toBe('no-store');
 });
