@@ -2167,7 +2167,14 @@ separately.
   version-gated (`version > clampedFrom` in `src/app/api/device/poll/route.ts`), so a board
   holding that disk sits in its 25 s poll and never learns the flag changed.
 
-  **The fix is not simply "bump the version", and that is the part worth knowing before planning
+  **CORRECTED 2026-09-18: bumping the version IS enough.** `dc_handle_poll_body` in
+  `device_client.c` already skips the fetch when the polled digest equals the mounted one and
+  applies `writeProtected` in place. So a flag-only bump costs one poll, not a re-download. The
+  paragraph below predates that check, and write-back's spec
+  (`docs/superpowers/specs/2026-09-18-write-back-and-disk-history-design.md` §3.5) builds on
+  the correction.
+
+  **(Superseded) The fix is not simply "bump the version", and that is the part worth knowing before planning
   it.** A version bump is what tells the device its *desired disk* changed, and the device
   reconciles by fetching the image — roughly 2 MB of WFMF over TLS — and remounting. For a
   flag-only change that is an unrequested eject-and-remount of a disk nobody asked to touch,
