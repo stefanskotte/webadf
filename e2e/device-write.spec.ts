@@ -190,6 +190,75 @@ test('a close against a head that moved answers 409 conflict and keeps the sessi
   for (const r of rows) if (r.kind === 'delta') deltaShas.push(r.blobSha256);
 });
 
+test('a close after the board was pointed at another disk leaves that disk desired', async ({ page, request }) => {
+  const m = await mountedWritableDisk(page, request);
+  const written = new Uint8Array(TRACK_DATA_BYTES).fill(0x44);
+  expect((await upload(request, m.token, { diskId: m.diskId, mount: m.mount, track: 20, seq: 1 }, written)).status()).toBe(200);
+
+  // D7's swap: the browser points the board at disk B before it closes A's session.
+  const otherSha = createHash('sha256').update(`other-${runTag()}`).digest('hex');
+  const { diskId: otherDiskId } = await seedDisk(m.orgId, { title: `Other ${runTag()}`, diskNo: 1, sha256: otherSha });
+  expect((await page.request.post(`/api/devices/${m.deviceId}/mount`, { data: { diskId: otherDiskId } })).status()).toBe(200);
+  const [before] = await getDb().select().from(devices).where(eq(devices.id, m.deviceId));
+  expect(before.desiredDiskId).toBe(otherDiskId);
+
+  const expected = m.adf.slice(); expected.set(written, 20 * TRACK_DATA_BYTES);
+  const want = sha(expected);
+  const close = await request.post(
+    `/api/device/write/close?disk=${m.diskId}&mount=${m.mount}&seq=1&sha256=${want}`,
+    { headers: authHeader(m.token) });
+  expect(close.status()).toBe(200);
+  expect((await close.json()).sha256).toBe(want);
+
+  const [after] = await getDb().select().from(devices).where(eq(devices.id, m.deviceId));
+  expect(after.desiredDiskId).toBe(otherDiskId);
+  expect(after.desiredSha256).toBe(otherSha);
+  expect(after.desiredVersion).toBe(before.desiredVersion);
+  expect(after.mountedSha256).toBe(want);          // what the board holds right now
+  const [disk] = await getDb().select().from(disks).where(eq(disks.id, m.diskId));
+  expect(disk.sha256).toBe(want);                  // A's write still recorded
+  const rows = await getDb().select().from(diskVersions).where(eq(diskVersions.diskId, m.diskId));
+  for (const r of rows) if (r.kind === 'delta') deltaShas.push(r.blobSha256);
+});
+
+test('an open session survives a version bump the board acknowledged', async ({ page, request }) => {
+  const m = await mountedWritableDisk(page, request);
+  const a = new Uint8Array(TRACK_DATA_BYTES).fill(0x61);
+  const b = new Uint8Array(TRACK_DATA_BYTES).fill(0x62);
+  expect((await upload(request, m.token, { diskId: m.diskId, mount: m.mount, track: 5, seq: 1 }, a)).status()).toBe(200);
+
+  // A bump that is not a remount (write-protect toggle, another board's close),
+  // and the board's status report acknowledging it.
+  const bumped = m.mount + 1;
+  await getDb().update(devices).set({ desiredVersion: bumped }).where(eq(devices.id, m.deviceId));
+  expect((await request.post('/api/device/status', {
+    headers: authHeader(m.token), data: { mountedSha256: m.original, mountedDiskId: m.diskId, version: bumped },
+  })).status()).toBe(204);
+
+  // The session opened under the old mount is still the one being written.
+  const second = await upload(request, m.token, { diskId: m.diskId, mount: m.mount, track: 6, seq: 2 }, b);
+  expect(second.status()).toBe(200);
+  expect((await second.json()).staged).toBe(6);
+
+  const expected = m.adf.slice();
+  expected.set(a, 5 * TRACK_DATA_BYTES); expected.set(b, 6 * TRACK_DATA_BYTES);
+  const want = sha(expected);
+  const close = await request.post(
+    `/api/device/write/close?disk=${m.diskId}&mount=${m.mount}&seq=2&sha256=${want}`,
+    { headers: authHeader(m.token) });
+  expect(close.status()).toBe(200);
+  expect((await close.json()).sha256).toBe(want);
+
+  // With no session left, the stale mount cannot open a new one.
+  const stale = await upload(request, m.token, { diskId: m.diskId, mount: m.mount, track: 7, seq: 3 }, a);
+  expect(stale.status()).toBe(409);
+  expect((await stale.json()).error).toBe('not_mounted');
+  expect(await getDb().select().from(diskWriteSessions)
+    .where(eq(diskWriteSessions.deviceId, m.deviceId))).toEqual([]);
+  const rows = await getDb().select().from(diskVersions).where(eq(diskVersions.diskId, m.diskId));
+  for (const r of rows) if (r.kind === 'delta') deltaShas.push(r.blobSha256);
+});
+
 test('no token is refused', async ({ request }) => {
   const res = await request.post('/api/device/write?disk=x&mount=1&track=0&seq=1', { data: Buffer.alloc(5632) });
   expect([401, 404]).toContain(res.status());

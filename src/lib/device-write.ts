@@ -24,21 +24,41 @@ export interface WriteQuery { diskId: string; mount: number }
 export type Outcome = { status: number; body: Record<string, unknown> };
 type Device = { deviceId: string; orgId: string };
 
-/** 409 not_mounted unless this board holds exactly this disk at exactly this mount. */
-async function holdsMount(device: Device, q: WriteQuery): Promise<boolean> {
-  const rows = await getDb()
+/**
+ * Whether this board may write under `q.mount`. A session's mount is fixed
+ * from open to close: desiredVersion also moves for reasons that are not a
+ * remount (the live write-protect toggle, another board's close, a mismatch
+ * bump), and once the board acknowledges that new version the session it is
+ * still in the middle of must stay reachable, or the Amiga's saves are lost.
+ *
+ *   'current' -- the board holds this disk at exactly this mount.
+ *   'session' -- it holds this disk, and a session is already open for it at
+ *                this mount (continue or close it, but never open a new one).
+ *   null      -- 409 not_mounted.
+ */
+async function holdsMount(device: Device, q: WriteQuery): Promise<'current' | 'session' | null> {
+  const db = getDb();
+  const rows = await db
     .select({ diskId: devices.mountedDiskId, version: devices.mountedVersion })
     .from(devices)
     .where(and(eq(devices.id, device.deviceId), eq(devices.orgId, device.orgId)))
     .limit(1);
-  return rows[0]?.diskId === q.diskId && rows[0]?.version === q.mount;
+  if (rows[0]?.diskId !== q.diskId) return null;
+  if (rows[0].version === q.mount) return 'current';
+  const open = await db.select({ mount: diskWriteSessions.mount }).from(diskWriteSessions)
+    .where(and(
+      eq(diskWriteSessions.deviceId, device.deviceId), eq(diskWriteSessions.mount, q.mount),
+      eq(diskWriteSessions.diskId, q.diskId)))
+    .limit(1);
+  return open.length ? 'session' : null;
 }
 
 export async function stageTrack(
   device: Device, q: WriteQuery & { track: number; seq: number }, data: Uint8Array,
 ): Promise<Outcome> {
   if (!isTrackUpload(q.track, data)) return { status: 400, body: { error: 'invalid_body' } };
-  if (!(await holdsMount(device, q))) return { status: 409, body: { error: 'not_mounted' } };
+  const held = await holdsMount(device, q);
+  if (!held) return { status: 409, body: { error: 'not_mounted' } };
 
   const db = getDb();
   const disk = (await db.select({ wp: disks.writeProtected }).from(disks)
@@ -50,6 +70,9 @@ export async function stageTrack(
     .where(and(eq(diskWriteSessions.deviceId, device.deviceId), eq(diskWriteSessions.mount, q.mount)))
     .limit(1))[0];
   if (!session) {
+    // Opening a NEW session needs the board's current mount; only an already
+    // open one outlives a version bump (the session vanished since holdsMount).
+    if (held !== 'current') return { status: 409, body: { error: 'not_mounted' } };
     // A session left open under an EARLIER mount means the board lost power
     // before closing it. After a reboot the board re-downloads the head image,
     // which does not contain those tracks; applying them later would make the
@@ -117,17 +140,22 @@ export async function closeSession(
     eq(diskWriteSessions.deviceId, device.deviceId), eq(diskWriteSessions.mount, q.mount)));
 
   const mismatch = sha256 !== q.sha256;
-  // This board already holds `sha256` -- unless the digests disagree, in which
-  // case the server's image wins and the version bump makes it re-download.
-  await db.update(devices).set({
-    mountedSha256: mismatch ? undefined : sha256,
-    desiredSha256: sha256,
-    ...(mismatch ? {
-      desiredVersion: sql`${devices.desiredVersion} + 1`,
+  const thisDevice = and(eq(devices.id, device.deviceId), eq(devices.orgId, device.orgId));
+  await db.batch([
+    // This board already holds `sha256` -- unless the digests disagree, in
+    // which case the server's image wins (below) and the error is recorded.
+    db.update(devices).set(mismatch ? {
       lastError: `write close mismatch: board ${q.sha256.slice(0, 12)} server ${sha256.slice(0, 12)}`,
       lastErrorAt: new Date(),
-    } : {}),
-  }).where(and(eq(devices.id, device.deviceId), eq(devices.orgId, device.orgId)));
+    } : { mountedSha256: sha256 }).where(thisDevice),
+    // Only while this board still WANTS this disk. After a swap or eject the
+    // browser has already pointed it elsewhere (setDesired), and repointing
+    // it here would pair the other disk's identity with these bytes.
+    db.update(devices).set({
+      desiredSha256: sha256,
+      ...(mismatch ? { desiredVersion: sql`${devices.desiredVersion} + 1` } : {}),
+    }).where(and(thisDevice, eq(devices.desiredDiskId, q.diskId))),
+  ]);
 
   // Any OTHER board that wants this disk is now behind: point it at the new
   // image and bump it, so it re-downloads (the volume-name holder pattern).
