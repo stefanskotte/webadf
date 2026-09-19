@@ -55,7 +55,8 @@ export function MountAction({ diskId, choices }: { diskId: string; choices: Moun
       }
       // Requested, not done. A mount still has to fetch ~2 MB and swap, which
       // measured ~4 s on hardware, and either way the device only acts on its
-      // next poll. LiveRefresh on the page is what turns this into fact.
+      // next poll. The layout's live poller (src/components/shell/live-refresh.tsx)
+      // is what turns this into fact once the board reports.
       toast.success(ejecting ? 'Eject requested' : 'Mount requested');
       router.refresh();
     } finally {

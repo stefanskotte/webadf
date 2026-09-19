@@ -126,36 +126,6 @@ test('last_error is displayed in the card for that device', async ({ page, reque
   await expect(page.getByTestId(`device-error-${deviceId}`)).toHaveText(message);
 });
 
-test('LiveRefresh is inactive when everything has converged and active when something is pending', async ({ page, request }) => {
-  const { orgId } = await signUpFresh(page);
-  const { deviceId } = await pairDevice(page, request);
-  const tag = runTag();
-  const { gameId, diskId } = await seedDisk(orgId, { title: `Live-${tag}`, diskNo: 1, sha256: sha(tag) });
-
-  await setDevice(deviceId, {
-    desiredGameId: gameId, desiredDiskId: diskId, desiredSha256: sha(tag), desiredDiskNo: 1,
-    mountedGameId: gameId, mountedDiskId: diskId, mountedSha256: sha(tag), mountedDiskNo: 1,
-    lastSeenAt: new Date(),
-  });
-
-  await page.goto('/devices');
-  await expect(page.getByTestId('live-refresh')).toHaveAttribute('data-active', 'false');
-
-  // Something now differs -- the timer must prove itself active.
-  await setDevice(deviceId, { mountedGameId: null, mountedDiskId: null, mountedSha256: null, mountedDiskNo: null });
-  await page.reload();
-  await expect(page.getByTestId('live-refresh')).toHaveAttribute('data-active', 'true');
-
-  // A stale device (same divergence, just not seen recently) is still
-  // unresolved, not settled -- if the hardware power-cycles and starts
-  // talking again, the page must already be polling so the operator sees it
-  // reconcile without a manual reload. "stale" must keep the timer active on
-  // its own, with no other pending device on the page to carry it.
-  await setDevice(deviceId, { lastSeenAt: new Date(Date.now() - 5 * 60_000) });
-  await page.reload();
-  await expect(page.getByTestId('live-refresh')).toHaveAttribute('data-active', 'true');
-});
-
 test('clicking eject nulls the desired disk and bumps the version', async ({ page, request }) => {
   const { orgId } = await signUpFresh(page);
   const { deviceId } = await pairDevice(page, request);

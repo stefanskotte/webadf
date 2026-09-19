@@ -3,10 +3,8 @@ import { requireOrg } from '@/lib/session';
 import { getGameDetail, listDevices } from '@/lib/queries';
 import { listCollections } from '@/lib/collections';
 import { resolveFrom, libraryTrail } from '@/lib/trail';
-import { deviceState } from '@/lib/device-state';
 import { mountChoices } from '@/lib/mount-choice';
 import { PageHeader } from '@/components/shell/page-header';
-import { LiveRefresh } from '@/components/devices/live-refresh';
 import { DiskRow } from '@/components/games/disk-row';
 import { GameFacts } from '@/components/games/game-facts';
 import { EditDetails } from '@/components/games/edit-details';
@@ -31,11 +29,6 @@ export default async function GamePage(props: PageProps<'/games/[id]'>) {
 
   const now = Date.now();
 
-  const anyPending = devices.some((d) => {
-    const s = deviceState(d, now);
-    return s === 'pending' || s === 'stale';
-  });
-
   return (
     <>
       <PageHeader
@@ -54,7 +47,6 @@ export default async function GamePage(props: PageProps<'/games/[id]'>) {
                    `${game.disks.length} disk${game.disks.length === 1 ? '' : 's'}`]
                   .filter(Boolean).join(' · ')}
       />
-      <LiveRefresh active={anyPending} />
       {/* Above GameFacts, and outside it: GameFacts renders nothing at all
           for a title nothing has enriched, which is exactly the title a
           person most wants to fill in by hand. */}
