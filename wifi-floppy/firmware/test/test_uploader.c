@@ -5,6 +5,7 @@
 #include "../src/psram_image.h"
 #include "../src/mfm.h"
 #include "../src/sha256.h"
+#include "../src/wf_log.h"
 #include <stdlib.h>
 #include <string.h>
 #include <stdio.h>
@@ -18,6 +19,16 @@ static bool gen_moves;                           // Task 6: a write lands mid-ha
 static uint32_t write_gen(void) { return gen_moves ? gen++ : gen; }
 static uint32_t last_write(void) { return last_ms; }
 
+// Everything the uploader logged, drained into one buffer: the WARN/ERROR
+// lines are behaviour too -- the operator's only view of a park or a
+// refused request.
+static char logbuf[16384];
+static void log_sink(const char *line) {
+    size_t n = strlen(logbuf);
+    snprintf(logbuf + n, sizeof logbuf - n, "%s\n", line);
+}
+static const char *logs(void) { wf_log_drain(1000); return logbuf; }
+
 static void store_track(int t, const uint8_t *data, bool dirty) {
     static uint8_t mfm[MFM_TRACK_BYTES];
     uint32_t bits = mfm_encode_track(data, (uint8_t)t, mfm);
@@ -30,6 +41,7 @@ static void store_track(int t, const uint8_t *data, bool dirty) {
 // writes on top: the image the board would hold after a save.
 static void mounted(void) {
     fake_reset(); fake_set_clock(10000);
+    wf_log_test_reset(); wf_log_test_set_sink(log_sink); logbuf[0] = '\0';
     psram_image_reset_slot(0); psram_image_reset_slot(1);
     for (int t = 0; t < NUM_TRACKS; t++) {
         for (int i = 0; i < TB; i++) adf[t * TB + i] = (uint8_t)(t * 7 + i);
@@ -298,6 +310,61 @@ static void unchanged_is_adopted_too(void) {
     CHECK(!u.open, "closed");
 }
 
+// Review (final), Critical C2: a seq is never reused. Before, u->seq only
+// advanced on a 200, so a transport failure's seq was handed to the NEXT
+// request -- possibly a different track. If the failed request had in fact
+// reached the server (the answer was lost), the server holds that seq, and
+// the next track under it is a "duplicate" the server drops: a 200 that
+// staged nothing, and a close whose image is missing that write.
+static void a_seq_is_never_reused_after_a_failed_attempt(void) {
+    mounted();
+    upload_one(5, 0x11);                                  // seq 1, ok
+    CHECK(strstr(fake_last_request(), "track=5&session=boot-abc&seq=1 ") != NULL, "seq 1");
+    amiga_writes(80, 0x22);
+    fake_push_connect_failure();
+    CHECK_EQ_INT(up_step(&u), UP_DID_REQUEST);            // seq 2: lost, maybe after the server saw it
+    amiga_writes(40, 0x33);                               // the Amiga dirties a lower track meanwhile
+    fake_set_clock(fake_clock_ms() + u.backoff_ms);
+    push_json("HTTP/1.1 200 OK", "{\"staged\":40}");
+    CHECK_EQ_INT(up_step(&u), UP_DID_REQUEST);
+    CHECK(strstr(fake_last_request(), "track=40&session=boot-abc&seq=3 ") != NULL,
+          "the next request never reuses seq 2 -- the server may already hold it");
+    push_json("HTTP/1.1 200 OK", "{\"staged\":80}");
+    CHECK_EQ_INT(up_step(&u), UP_DID_REQUEST);
+    CHECK(strstr(fake_last_request(), "track=80&session=boot-abc&seq=4 ") != NULL, "then seq 4");
+    fake_set_clock(last_ms + UP_IDLE_CLOSE_MS);
+    char want[65]; board_digest(want);
+    char body[128]; snprintf(body, sizeof body, "{\"sha256\":\"%s\"}", want);
+    push_json("HTTP/1.1 200 OK", body);
+    CHECK_EQ_INT(up_step(&u), UP_DID_REQUEST);
+    CHECK(strstr(fake_last_request(), "&seq=4&sha256=") != NULL, "the close names the last seq attempted");
+}
+
+// A refused attempt (5xx) spends its seq too -- the server may have staged
+// it before failing -- so the retry goes out one above.
+static void a_refused_attempt_also_spends_its_seq(void) {
+    mounted();
+    upload_one(5, 0x11);                                  // seq 1 ok
+    amiga_writes(6, 0x12);
+    push_json("HTTP/1.1 503 Service Unavailable", "{}"); // seq 2: server says no
+    up_step(&u);
+    fake_set_clock(fake_clock_ms() + u.backoff_ms);
+    push_json("HTTP/1.1 200 OK", "{\"staged\":6}");
+    up_step(&u);
+    CHECK(strstr(fake_last_request(), "track=6&session=boot-abc&seq=3 ") != NULL, "seq 3");
+    CHECK_EQ_INT(u.seq, 3);
+}
+
+// Under this rule the server should never answer {duplicate:true}; if it
+// does, something is wrong enough to say so.
+static void a_duplicate_answer_is_warned_about(void) {
+    mounted();
+    amiga_writes(40, 0x5a);
+    push_json("HTTP/1.1 200 OK", "{\"duplicate\":true}");
+    up_step(&u);
+    CHECK(strstr(logs(), "WARN upload: trk 40 seq 1 duplicate") != NULL, "WF_WARN on a duplicate");
+}
+
 int main(void) {
     size_t len = (size_t)TRACK_MAX_BYTES * NUM_TRACKS * SLOT_COUNT;
     void *mem = malloc(len);
@@ -318,6 +385,9 @@ int main(void) {
     RUN(conflict_keeps_the_session_and_retries);
     RUN(incomplete_resends_the_sessions_tracks);
     RUN(unchanged_is_adopted_too);
+    RUN(a_seq_is_never_reused_after_a_failed_attempt);
+    RUN(a_refused_attempt_also_spends_its_seq);
+    RUN(a_duplicate_answer_is_warned_about);
     free(mem);
     return REPORT();
 }

@@ -56,7 +56,16 @@ typedef struct {
     bool     open;                 // a server session exists for (mount, session)
     uint32_t mount;                // fixed from open to close (HANDOFF 4g rule 2)
     char     disk_id[65];
-    uint32_t seq;                  // last seq the server accepted in this session
+    // The last seq ATTEMPTED in this session -- advanced before every
+    // upload request, whatever its outcome, and what the close sends.
+    // Review (final), Critical C2: a seq is never reused. A request whose
+    // answer was lost may still have been staged under its seq, and the
+    // server answers any seq <= its last with {duplicate:true} and stages
+    // nothing -- so reusing it for the next (possibly different) track
+    // silently drops that track. If the last attempt never reached the
+    // server, the close's seq is ahead of the server's and it answers 409
+    // incomplete, whose resend path converges.
+    uint32_t seq;
     uint8_t  sent[(NUM_TRACKS + 7) / 8];
     bool     parked;               // after not_mounted, until the mount changes
     uint32_t parked_version;

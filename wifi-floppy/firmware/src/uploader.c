@@ -191,11 +191,14 @@ static up_step_t up_send_track(uploader_t *u, int slot, int t) {
         return UP_WAITING;
     }
 
+    // C2: this attempt spends its seq now, before the request, whatever
+    // comes back -- see uploader.h's `seq`.
+    u->seq++;
     static char path[256];
     snprintf(path, sizeof path,
         "/api/device/write?disk=%s&mount=%lu&track=%d&session=%s&seq=%lu",
         u->disk_id, (unsigned long)u->mount, t, u->session,
-        (unsigned long)(u->seq + 1u));
+        (unsigned long)u->seq);
 
     static char resp[256];
     int status = dc_post(dc, path, "application/octet-stream", trk,
@@ -222,9 +225,16 @@ static up_step_t up_send_track(uploader_t *u, int slot, int t) {
     if (status == 200) {
         u->online = true;
         u->backoff_ms = 0;
-        u->seq++;
         u->sent[t / 8] |= (uint8_t)(1u << (t % 8));
-        wf_logf(WF_INFO, "upload: trk %d seq %lu ok", t, (unsigned long)u->seq);
+        bool dup = false;
+        if (json_bool(resp, "duplicate", &dup) && dup) {
+            // Never expected: no seq is ever reused (C2). The server staged
+            // nothing for this track, so say so loudly.
+            wf_logf(WF_WARN, "upload: trk %d seq %lu duplicate -- the server staged nothing",
+                    t, (unsigned long)u->seq);
+        } else {
+            wf_logf(WF_INFO, "upload: trk %d seq %lu ok", t, (unsigned long)u->seq);
+        }
         return UP_DID_REQUEST;
     }
 
