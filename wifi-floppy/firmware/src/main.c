@@ -37,6 +37,7 @@
 #include "flux_bits.h"
 #include "mfm.h"
 #include "write_back.h"
+#include "reinsert.h"
 #include "uploader.h"
 #include "pico/rand.h"
 #include "hardware/sync.h"   // __dmb(), for the display seqlock below
@@ -518,6 +519,16 @@ static volatile bool     write_ours;
 // sees the time of the write that made it.
 static volatile uint32_t g_write_last_ms;
 static volatile uint32_t g_write_gen;
+// core1 -> core0: the write-protect flag changed on the SAME mounted disk, so
+// the Amiga must be told the way an insert is (reinsert.h). core0 acts on it
+// only while the Amiga is idle -- see REINSERT_IDLE_MS -- and drops it if the
+// disk itself changes first, since the mount/eject path announces that.
+static volatile bool g_reinsert_req;
+// No write for this long before the change is announced. AmigaDOS may still
+// hold unwritten buffers for the volume just after a save, and a disk change
+// then brings up "You MUST replace volume ...". Same interval as the
+// uploader's idle close (UP_IDLE_CLOSE_MS), for the same reason.
+#define REINSERT_IDLE_MS 3000u
 static uint32_t wb_write_gen(void)    { return g_write_gen; }
 static uint32_t wb_last_write_ms(void) { return g_write_last_ms; }
 
@@ -1010,6 +1021,8 @@ static void core1_main(void) {
         static uploader_t up;
         up_init(&up, &c, session, wb_write_gen, wb_last_write_ms);
         dc_set_hold(&c, up_holds, &up);
+        static reinsert_t reins;
+        reinsert_init(&reins);
         wf_logf(WF_INFO, "write-back: session %s", session);
         wf_logf(WF_INFO, "entering poll loop against %s", WEBADF_HOST);
 
@@ -1113,6 +1126,12 @@ static void core1_main(void) {
             bool up_forced = up_forces_wprot(&up);
             bool wprot = !mounted || c.mounted_write_protected || up_forced;
             bus_out_set(PIN_WPROT, wprot);
+            // The pin is set first, THEN the change is announced: the Amiga
+            // must read the new state when it looks.
+            if (reinsert_on_wprot(&reins, mounted, c.mounted_disk_id, wprot)) {
+                g_reinsert_req = true;
+                wf_logf(WF_INFO, "wprot: changed on the mounted disk -- announcing a disk change");
+            }
             /*
              * Say so when it CHANGES, with the reason.
              *
@@ -1496,8 +1515,19 @@ int main(void) {
     while (true) {
         dskchg_poll();
 
+        // A write-protect flip on the same disk (g_reinsert_req's comment),
+        // announced only while the Amiga is not writing and has not written
+        // for REINSERT_IDLE_MS. WGATE is active low.
+        if (g_reinsert_req && disk_mounted && gpio_get(PIN_WGATE)
+            && clock_ms() - g_write_last_ms >= REINSERT_IDLE_MS) {
+            g_reinsert_req = false;
+            dskchg_image_inserted();
+            wf_logf(WF_INFO, "reinsert: /CHNG asserted until the next step (write-protect changed)");
+        }
+
         bool now_mounted;
         if (track_cache_check_swap(&last_active_token, &now_mounted)) {
+            g_reinsert_req = false;   // the mount/eject below announces this
             loaded = -1;
             disk_mounted = now_mounted;
 #if WF_VERIFY_TRACKS
