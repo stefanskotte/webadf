@@ -27,6 +27,19 @@ static void up_refresh(uploader_t *u) {
     device_client_t *dc = u->dc;
     if (u->parked && (dc->mounted_version != u->parked_version ||
                        strcmp(dc->mounted_sha256, u->parked_sha) != 0)) {
+        // Review (final), Important I4: a DIFFERENT disk (or none) now
+        // mounted means the parked disk's writes will never be sent -- the
+        // new image lives in the other slot, and the parked slot is the next
+        // fetch's target. Say how many, rather than let them vanish without
+        // a trace. (Same disk, new version: nothing is lost -- they are
+        // re-sent under a fresh session at the new mount.)
+        if (strcmp(dc->mounted_sha256, u->parked_sha) != 0) {
+            int n = psram_image_dirty_count(u->parked_slot);
+            if (n > 0) {
+                wf_logf(WF_WARN, "upload: parked disk %.12s replaced -- %d dirty track(s) discarded",
+                        u->parked_sha, n);
+            }
+        }
         u->parked = false;
     }
     if (u->force_wprot && dc->mounted_version != u->wprot_version) {
@@ -76,6 +89,7 @@ static void up_park(uploader_t *u, int slot) {
     }
     up_clear_session(u);
     u->parked = true;
+    u->parked_slot = slot;
     u->parked_version = dc->mounted_version;
     snprintf(u->parked_sha, sizeof u->parked_sha, "%s", dc->mounted_sha256);
     wf_logf(WF_WARN, "upload: parked (%s) until the mount changes", u->parked_sha);
@@ -90,6 +104,28 @@ static void up_server_wins(uploader_t *u, int slot) {
     up_clear_session(u);
     dc_force_refetch(dc);
     wf_logf(WF_WARN, "upload: server image wins (%s), refetching", dc->mounted_sha256);
+}
+
+// Review (final), Important I3: a 400 or 422 means the server will never
+// accept this request as sent -- retrying it would hold the disk and
+// suppress the poll forever. Log it as the error it is, with the body (the
+// only clue to which field was wrong), then park: the writes stay in PSRAM,
+// the hold is released, WPROT is forced (I4), and a fresh session retries
+// once the mount changes.
+static bool up_is_permanent(int status) {
+    return status == 400 || status == 422;
+}
+
+// A 64-char lowercase hex SHA-256, exactly -- what the server's close
+// answers with on success, and the only thing dc_adopt_image may be given.
+static bool up_is_sha256_hex(const char *s) {
+    size_t n = strlen(s);
+    if (n != 64) return false;
+    for (size_t i = 0; i < n; i++) {
+        char ch = s[i];
+        if (!((ch >= '0' && ch <= '9') || (ch >= 'a' && ch <= 'f'))) return false;
+    }
+    return true;
 }
 
 void up_init(uploader_t *u, device_client_t *dc, const char *session,
@@ -120,9 +156,14 @@ bool up_holds(void *u) {
     return up_has_work((uploader_t *)u);
 }
 
+// Review (final), Important I4: parked forces WPROT too. While parked the
+// hold is released (the poll must run to reconcile), so a write the Amiga
+// made now would sit dirty on a disk the poll may replace at any moment --
+// accepted by the drive, then gone. Refusing it at the drive is the honest
+// answer until the mount changes and up_refresh() unparks.
 bool up_forces_wprot(uploader_t *u) {
     up_refresh(u);
-    return u->force_wprot;
+    return u->force_wprot || u->parked;
 }
 
 up_sync_t up_sync(const uploader_t *u) {
@@ -195,10 +236,20 @@ static up_step_t up_send_track(uploader_t *u, int slot, int t) {
     // comes back -- see uploader.h's `seq`.
     u->seq++;
     static char path[256];
-    snprintf(path, sizeof path,
+    int pn = snprintf(path, sizeof path,
         "/api/device/write?disk=%s&mount=%lu&track=%d&session=%s&seq=%lu",
         u->disk_id, (unsigned long)u->mount, t, u->session,
         (unsigned long)u->seq);
+    if (pn < 0 || (size_t)pn >= sizeof path) {
+        // Review (final), Important I5: never send a truncated query -- it
+        // would name a different disk or session. Cannot happen with the
+        // current limits (64-char disk id and session: 202 bytes), which is
+        // exactly why it must fail loudly if they ever change.
+        psram_image_set_dirty(slot, t);
+        wf_logf(WF_ERR, "upload: trk %d request too long (%d bytes), parking", t, pn);
+        up_park(u, slot);
+        return UP_WAITING;
+    }
 
     static char resp[256];
     int status = dc_post(dc, path, "application/octet-stream", trk,
@@ -209,6 +260,9 @@ static up_step_t up_send_track(uploader_t *u, int slot, int t) {
     err[0] = '\0';
     reason[0] = '\0';
     if (status > 0) {
+        // Review (final), Minor M1: ANY HTTP answer means the server is
+        // reachable -- a 409 or a 401 is not an offline spell.
+        u->online = true;
         json_str(resp, "error", err, sizeof err);
         json_str(resp, "reason", reason, sizeof reason);
     }
@@ -223,7 +277,6 @@ static up_step_t up_send_track(uploader_t *u, int slot, int t) {
     }
 
     if (status == 200) {
-        u->online = true;
         u->backoff_ms = 0;
         u->sent[t / 8] |= (uint8_t)(1u << (t % 8));
         bool dup = false;
@@ -238,9 +291,16 @@ static up_step_t up_send_track(uploader_t *u, int slot, int t) {
         return UP_DID_REQUEST;
     }
 
-    // Every non-200 (short of the transport failure above, which has no
-    // status or body to report) is logged with its status and error/reason
-    // -- whatever the specific handling below does on top of this.
+    if (up_is_permanent(status)) {
+        psram_image_set_dirty(slot, t);
+        wf_logf(WF_ERR, "upload: trk %d status %d, parking: %s", t, status, resp);
+        up_park(u, slot);
+        return UP_DID_REQUEST;
+    }
+
+    // Every other non-200 (short of the transport failure above, which has
+    // no status or body to report) is logged with its status and
+    // error/reason -- whatever the specific handling below does on top.
     wf_logf(WF_WARN, "upload: trk %d status %d error=%s reason=%s",
             t, status, err, reason);
 
@@ -265,9 +325,8 @@ static up_step_t up_send_track(uploader_t *u, int slot, int t) {
     }
 
     // Anything else (5xx, an unrecognised 4xx): transient. The server was
-    // reachable, so this does not count as offline.
+    // reachable, so this does not count as offline (set above, M1).
     psram_image_set_dirty(slot, t);
-    u->online = true;
     up_backoff(u);
     return UP_DID_REQUEST;
 }
@@ -310,18 +369,30 @@ static up_step_t up_close(uploader_t *u, int slot) {
     static char board_sha[65];
     sha256_hex(digest, board_sha);
 
-    static char path[192];
-    snprintf(path, sizeof path,
+    // Review (final), Important I5: 256, and a truncated query is never
+    // sent. At both limits (64-char disk id AND 64-char session) this path
+    // is 270 bytes -- it cannot fit, and parking says so; the ids actually
+    // in use (a 17-char boot session, short disk ids) are far below.
+    static char path[256];
+    int pn = snprintf(path, sizeof path,
         "/api/device/write/close?disk=%s&mount=%lu&session=%s&seq=%lu&sha256=%s",
         u->disk_id, (unsigned long)u->mount, u->session,
         (unsigned long)u->seq, board_sha);
+    if (pn < 0 || (size_t)pn >= sizeof path) {
+        wf_logf(WF_ERR, "close: request too long (%d bytes), parking", pn);
+        up_park(u, slot);
+        return UP_WAITING;
+    }
 
     static char resp[256];
     int status = dc_post(dc, path, NULL, NULL, 0, resp, sizeof resp);
 
     static char err[32];
     err[0] = '\0';
-    if (status > 0) json_str(resp, "error", err, sizeof err);
+    if (status > 0) {
+        u->online = true;                  // M1: any HTTP answer
+        json_str(resp, "error", err, sizeof err);
+    }
 
     if (status == -1) {
         u->online = false;
@@ -332,9 +403,21 @@ static up_step_t up_close(uploader_t *u, int slot) {
     }
 
     if (status == 200) {
-        static char server_sha[65];
+        // Wider than a digest on purpose: json_str truncates to fit, so a
+        // 65-char value read into [65] would come back as 64 plausible
+        // chars. Read it whole, then demand exactly 64 hex.
+        static char server_sha[80];
         server_sha[0] = '\0';
         json_str(resp, "sha256", server_sha, sizeof server_sha);
+        if (!up_is_sha256_hex(server_sha)) {
+            // Review (final), Important I6: a 200 without a digest adopted
+            // "" -- the board then believed it held nothing, and the next
+            // poll refetched the disk it had just written. Treat it like
+            // any other unexpected answer: keep the session, retry later.
+            wf_logf(WF_WARN, "close: 200 without a sha256, retrying: %s", resp);
+            up_backoff(u);
+            return UP_DID_REQUEST;
+        }
         bool unchanged = false;
         json_bool(resp, "unchanged", &unchanged);
         dc_adopt_image(dc, server_sha);
@@ -344,8 +427,14 @@ static up_step_t up_close(uploader_t *u, int slot) {
                     server_sha, board_sha);
         }
         up_clear_session(u);
-        u->online = true;
         u->backoff_ms = 0;
+        return UP_DID_REQUEST;
+    }
+
+    if (up_is_permanent(status)) {
+        // I3. up_park re-dirties every track this session sent.
+        wf_logf(WF_ERR, "close: status %d, parking: %s", status, resp);
+        up_park(u, slot);
         return UP_DID_REQUEST;
     }
 
@@ -378,7 +467,6 @@ static up_step_t up_close(uploader_t *u, int slot) {
     // The server was reachable, so this does not count as offline; the
     // session stays open and the whole close is retried once the backoff
     // elapses.
-    u->online = true;
     up_backoff(u);
     return UP_DID_REQUEST;
 }

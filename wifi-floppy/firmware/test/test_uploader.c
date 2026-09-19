@@ -304,9 +304,13 @@ static void unchanged_is_adopted_too(void) {
     mounted();
     upload_one(40, 0x5a);
     fake_set_clock(last_ms + UP_IDLE_CLOSE_MS);
-    push_json("HTTP/1.1 200 OK", "{\"sha256\":\"dd\",\"unchanged\":true}");
+    // A real 64-hex digest: I6 refuses to adopt anything else (this test
+    // used "dd", which was only ever adopted because nothing checked).
+    const char *dd = "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd";
+    char body[160]; snprintf(body, sizeof body, "{\"sha256\":\"%s\",\"unchanged\":true}", dd);
+    push_json("HTTP/1.1 200 OK", body);
     up_step(&u);
-    CHECK(strcmp(c.mounted_sha256, "dd") == 0, "adopted");
+    CHECK(strcmp(c.mounted_sha256, dd) == 0, "adopted");
     CHECK(!u.open, "closed");
 }
 
@@ -365,6 +369,204 @@ static void a_duplicate_answer_is_warned_about(void) {
     CHECK(strstr(logs(), "WARN upload: trk 40 seq 1 duplicate") != NULL, "WF_WARN on a duplicate");
 }
 
+// The session's close is due: one track uploaded, the Amiga quiet since.
+static void close_due(void) {
+    mounted();
+    upload_one(40, 0x5a);
+    fake_set_clock(last_ms + UP_IDLE_CLOSE_MS);
+}
+
+// ---- I3: 400 and 422 are permanent -- park, never retry forever ----------
+
+static void a_400_upload_parks(void) {
+    mounted();
+    amiga_writes(40, 0x5a);
+    push_json("HTTP/1.1 400 Bad Request", "{\"error\":\"invalid_body\"}");
+    CHECK_EQ_INT(up_step(&u), UP_DID_REQUEST);
+    CHECK(u.parked, "parked, not retried");
+    CHECK_EQ_INT(psram_image_state(0, 40), TRK_DIRTY);    // the write is kept
+    CHECK(!up_holds(&u), "the hold is released");
+    CHECK(up_forces_wprot(&u), "and the Amiga stops writing (I4)");
+    CHECK(strstr(logs(), "ERROR upload: trk 40 status 400") != NULL, "logged as an error");
+    CHECK(strstr(logbuf, "invalid_body") != NULL, "with the response body");
+    CHECK_EQ_INT(up_step(&u), UP_NOTHING);
+    CHECK_EQ_INT(fake_request_count(), 1);
+}
+
+static void a_422_upload_parks(void) {
+    mounted();
+    amiga_writes(40, 0x5a);
+    push_json("HTTP/1.1 422 Unprocessable Entity", "{\"error\":\"bad_track\"}");
+    up_step(&u);
+    CHECK(u.parked, "parked");
+    CHECK(strstr(logs(), "ERROR upload: trk 40 status 422") != NULL, "error");
+    CHECK(strstr(logbuf, "bad_track") != NULL, "body");
+}
+
+static void a_400_close_parks(void) {
+    close_due();
+    push_json("HTTP/1.1 400 Bad Request", "{\"error\":\"invalid_query\"}");
+    CHECK_EQ_INT(up_step(&u), UP_DID_REQUEST);
+    CHECK(u.parked, "parked");
+    CHECK(!u.open, "the session is abandoned");
+    CHECK_EQ_INT(psram_image_state(0, 40), TRK_DIRTY);    // re-sent under a fresh session
+    CHECK(strstr(logs(), "ERROR close: status 400") != NULL, "error");
+    CHECK(strstr(logbuf, "invalid_query") != NULL, "body");
+}
+
+static void a_422_close_parks(void) {
+    close_due();
+    push_json("HTTP/1.1 422 Unprocessable Entity", "{\"error\":\"x\"}");
+    up_step(&u);
+    CHECK(u.parked, "parked");
+    CHECK(strstr(logs(), "ERROR close: status 422") != NULL, "error");
+}
+
+// ---- I4: parked means write-protected, until the mount changes ------------
+
+static void parked_forces_wprot_until_the_mount_changes(void) {
+    mounted();
+    amiga_writes(3, 1);
+    push_json("HTTP/1.1 409 Conflict", "{\"error\":\"not_mounted\",\"reason\":\"behind\"}");
+    up_step(&u);
+    CHECK(u.parked, "parked");
+    CHECK(up_forces_wprot(&u), "a write now would land nowhere: WPROT");
+    c.mounted_version = 8;                                // same disk, bumped
+    CHECK(!up_forces_wprot(&u), "the new mount decides again");
+    CHECK(!u.parked, "unparked");
+    CHECK(strstr(logs(), "discarded") == NULL, "same disk: nothing discarded, it is re-sent");
+    CHECK_EQ_INT(psram_image_state(0, 3), TRK_DIRTY);
+}
+
+static void a_parked_disk_replaced_says_what_was_lost(void) {
+    mounted();
+    amiga_writes(3, 1); amiga_writes(4, 2);
+    push_json("HTTP/1.1 409 Conflict", "{\"error\":\"not_mounted\"}");
+    up_step(&u);
+    CHECK(u.parked, "parked");
+    // The poll (no longer held) delivers another disk into the other slot.
+    psram_publish_slot(1);
+    strcpy(c.mounted_sha256, "bb"); c.mounted_version = 8;
+    CHECK(!up_forces_wprot(&u), "a new disk decides again");
+    CHECK(strstr(logs(), "WARN upload: parked disk aa replaced -- 2 dirty track(s) discarded") != NULL,
+          "the loss is logged with its size");
+}
+
+// ---- I5: a request that does not fit is never sent truncated --------------
+
+static void an_overlong_close_is_not_sent_truncated(void) {
+    mounted();
+    // Disk id and session both at their maximum (64) and a 10-digit mount:
+    // the upload's path fits in 256 (201 bytes), the close's -- which also
+    // carries a 64-char digest -- does not (261).
+    const char *id64 = "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd0064";
+    const char *ss64 = "ssssssssssssssssssssssssssssssssssssssssssssssssssssssssssss0064";
+    strcpy(c.mounted_disk_id, id64);
+    c.mounted_version = 4000000000u; c.since = 4000000000u;
+    up_init(&u, &c, ss64, write_gen, last_write);
+    upload_one(40, 0x5a);
+    CHECK(strstr(fake_last_request(), id64) != NULL, "the upload fit");
+    fake_set_clock(last_ms + UP_IDLE_CLOSE_MS);
+    // Scripted so a truncated close, if sent, fails this CHECK below rather
+    // than aborting the fake transport.
+    push_json("HTTP/1.1 400 Bad Request", "{\"error\":\"invalid_query\"}");
+    up_step(&u);
+    CHECK_EQ_INT(fake_request_count(), 1);                // no truncated close
+    CHECK(u.parked, "parked");
+    CHECK(strstr(logs(), "ERROR close: request too long") != NULL, "error");
+}
+
+// ---- I6: a 200 close without a digest is not adopted ---------------------
+
+static void a_close_without_a_digest_is_not_adopted(void) {
+    close_due();
+    push_json("HTTP/1.1 200 OK", "{\"ok\":true}");
+    CHECK_EQ_INT(up_step(&u), UP_DID_REQUEST);
+    CHECK(strcmp(c.mounted_sha256, "aa") == 0, "nothing adopted");
+    CHECK(u.open, "the session is kept");
+    CHECK(u.waiting && u.backoff_ms >= 1000, "backed off, the close retried later");
+}
+
+static void a_close_with_a_short_digest_is_not_adopted(void) {
+    close_due();
+    push_json("HTTP/1.1 200 OK", "{\"sha256\":\"abc\"}");
+    up_step(&u);
+    CHECK(strcmp(c.mounted_sha256, "aa") == 0, "nothing adopted");
+    CHECK(u.open, "kept");
+}
+
+static void a_close_with_an_overlong_digest_is_not_adopted(void) {
+    close_due();
+    // 65 hex chars: must not be silently cut to 64 and adopted.
+    push_json("HTTP/1.1 200 OK",
+        "{\"sha256\":\"00000000000000000000000000000000000000000000000000000000000000000\"}");
+    up_step(&u);
+    CHECK(strcmp(c.mounted_sha256, "aa") == 0, "nothing adopted");
+    CHECK(u.open, "kept");
+}
+
+// ---- M1: any HTTP answer means online ------------------------------------
+
+static void any_answer_means_online(void) {
+    mounted();
+    amiga_writes(3, 1);
+    fake_push_connect_failure();
+    up_step(&u);
+    CHECK_EQ_INT(up_sync(&u), UP_OFFLINE);
+    fake_set_clock(fake_clock_ms() + u.backoff_ms);
+    push_json("HTTP/1.1 409 Conflict", "{\"error\":\"not_mounted\"}");
+    up_step(&u);
+    CHECK(u.parked, "parked");
+    CHECK(up_sync(&u) != UP_OFFLINE, "the server answered: not offline");
+}
+
+// ---- T: the remaining branches ------------------------------------------
+
+static void a_404_upload_parks(void) {
+    mounted();
+    amiga_writes(40, 0x5a);
+    push_json("HTTP/1.1 404 Not Found", "{\"error\":\"not_found\"}");
+    up_step(&u);
+    CHECK(u.parked, "parked");
+    CHECK_EQ_INT(psram_image_state(0, 40), TRK_DIRTY);
+}
+
+static void a_401_upload_keeps_the_write(void) {
+    mounted();
+    amiga_writes(40, 0x5a);
+    push_json("HTTP/1.1 401 Unauthorized", "{\"error\":\"unauthorized\"}");
+    up_step(&u);
+    CHECK_EQ_INT(c.state, DC_HALTED);                     // dc_post halted the client
+    CHECK_EQ_INT(psram_image_state(0, 40), TRK_DIRTY);    // kept for re-provisioning
+    CHECK(!u.parked, "not parked");
+    CHECK(!up_has_work(&u), "halted: nothing more to send");
+    CHECK_EQ_INT(up_sync(&u), UP_PENDING);                // it answered: online
+}
+
+static void not_mounted_at_close_parks(void) {
+    close_due();
+    push_json("HTTP/1.1 409 Conflict", "{\"error\":\"not_mounted\"}");
+    up_step(&u);
+    CHECK(u.parked, "parked");
+    CHECK(!u.open, "abandoned");
+    CHECK_EQ_INT(psram_image_state(0, 40), TRK_DIRTY);    // re-sent under a fresh session
+    CHECK(up_forces_wprot(&u), "WPROT while parked");
+}
+
+static void a_torn_track_during_the_hash_backs_off(void) {
+    close_due();
+    // core0 mid-rewrite of a CLEAN track: damaged bytes, state still PRESENT.
+    static uint8_t mfm[MFM_TRACK_BYTES]; uint32_t bits;
+    psram_image_read(0, 100, mfm, &bits);
+    mfm[3000] ^= 0xff;
+    psram_image_write_at(0, 100, 0, mfm, (int)((bits + 7) / 8));
+    psram_image_commit(0, 100, bits);
+    CHECK_EQ_INT(up_step(&u), UP_WAITING);
+    CHECK_EQ_INT(fake_request_count(), 1);                // no close sent
+    CHECK(u.waiting && u.backoff_ms >= 1000, "backed off");
+    CHECK(u.open, "the session is kept");
+}
+
 int main(void) {
     size_t len = (size_t)TRACK_MAX_BYTES * NUM_TRACKS * SLOT_COUNT;
     void *mem = malloc(len);
@@ -388,6 +590,21 @@ int main(void) {
     RUN(a_seq_is_never_reused_after_a_failed_attempt);
     RUN(a_refused_attempt_also_spends_its_seq);
     RUN(a_duplicate_answer_is_warned_about);
+    RUN(a_400_upload_parks);
+    RUN(a_422_upload_parks);
+    RUN(a_400_close_parks);
+    RUN(a_422_close_parks);
+    RUN(parked_forces_wprot_until_the_mount_changes);
+    RUN(a_parked_disk_replaced_says_what_was_lost);
+    RUN(an_overlong_close_is_not_sent_truncated);
+    RUN(a_close_without_a_digest_is_not_adopted);
+    RUN(a_close_with_a_short_digest_is_not_adopted);
+    RUN(a_close_with_an_overlong_digest_is_not_adopted);
+    RUN(any_answer_means_online);
+    RUN(a_404_upload_parks);
+    RUN(a_401_upload_keeps_the_write);
+    RUN(not_mounted_at_close_parks);
+    RUN(a_torn_track_during_the_hash_backs_off);
     free(mem);
     return REPORT();
 }

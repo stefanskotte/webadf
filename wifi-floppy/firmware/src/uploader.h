@@ -67,7 +67,10 @@ typedef struct {
     // incomplete, whose resend path converges.
     uint32_t seq;
     uint8_t  sent[(NUM_TRACKS + 7) / 8];
-    bool     parked;               // after not_mounted, until the mount changes
+    // After not_mounted/404, a 400/422 (I3), or a request too long to send
+    // (I5), until the mount changes. Forces WPROT while set (I4).
+    bool     parked;
+    int      parked_slot;          // the slot the park happened on (I4's discard count)
     uint32_t parked_version;
     char     parked_sha[65];
     bool     online;               // last request reached the server
@@ -97,6 +100,6 @@ bool      up_has_work(uploader_t *u);         // run up_step instead of polling
 bool      up_holds(void *u);                  // a dc_hold_fn
 up_step_t up_step(uploader_t *u);             // at most one request
 up_sync_t up_sync(const uploader_t *u);
-bool      up_forces_wprot(uploader_t *u);
+bool      up_forces_wprot(uploader_t *u);   // 409 write_protected, or parked
 
 #endif
