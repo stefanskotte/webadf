@@ -2530,6 +2530,37 @@ in advance that it empties the table for everyone. This repo has no such databas
 e2e runs against live Neon — so "accept in advance" is currently the only option, and it should
 be an explicit decision each time rather than a side effect of following a plan step.
 
+### 4h. A MOUNTED DISK IS CHANGED ONLY FROM THE AMIGA; THE FILES-EDIT FLAKE WAS A TIMEOUT — 2026-09-19
+
+**Merged (`682f127`) and live.** Gate on the merged tree: 853 vitest, tsc and build clean,
+**276/276 Playwright** (48.5 min, no flakes).
+
+**The rename lock settles 4g's open decision.** The operator's rule, verbatim: "if a volume is
+mounted, it cannot be modified by the server. If modifications should happen, these must come
+from the (mounted) Amiga side of things." Renames (`PATCH /api/disks/[id]/volume-name`) are now
+refused like file edits: 409 `{error:'mounted', reason}` for a disk any device in the org has
+mounted or desires, from the one `findHolder` (`src/lib/disk-holder.ts`); the library card shows
+the field disabled with the reason (wording from `src/lib/mount-wording.ts`, client-safe). The
+write-protect flag is a setting and still applies live; title/metadata edits do not touch the
+disk. Spec §3.5 records it.
+- **The race it had to close:** a board can start wanting the disk after the refusal check and
+  before the edit is recorded. `repointLateMounts` moves exactly those boards onto the new head;
+  it never runs when the edit changed nothing, was refused, or hit a conflict.
+
+**`e2e/disk-files-edit.spec.ts` flaked about one run in three, and it was the test, not the
+product.** Its post-edit tree assertions used Playwright's default 5 s. Each UI edit is two
+sequential round trips to the live DB from a dev machine: the edit route (median ~2.2 s, max
+4.4 s) and then the `router.refresh()` re-render (median ~1.1 s, max 1.9 s). Click-to-refresh-
+complete had a median of ~3.4 s and a tail of 4.95 s over 77 traced edits. **75 of 75 completed
+refreshes carried the edited tree; 0 stale.** The failures were refreshes still streaming when
+the 5 s expired. The earlier note's "20 ms refresh with the old tree" was time-to-headers, with
+the body never delivered. Delaying every edit by 2 s (a `page.route` hold) failed 5/5 UI-edit
+tests unfixed and 0/7 fixed. It failed 3 of 5 runs on the commit before piece 2a, so 2a did not
+cause it. Fix: `AFTER_EDIT = { timeout: 15_000 }` on those assertions (the same 15 s that
+`mobile.spec.ts` and `disk-drag-drop.spec.ts` already use); 5/5 solo runs green since.
+**If this spec fails again, read the trace's RSC refresh first:** `receive -1` means a cut
+stream (latency), a completed body without the edit would be a real staleness bug.
+
 ### 4g. THE SERVER SIDE OF WRITE-BACK — 2026-09-18 (write-back piece 2a)
 
 **Merged and live; not yet exercised by a board.** Plan
@@ -2574,9 +2605,9 @@ be an explicit decision each time rather than a side effect of following a plan 
    opened), so the digest matches the board's; it is then recorded on top of whatever the
    head is now — **last writer wins, the other write stays in history.**
 
-**Operator decision, open:** because of that last rule, a browser rename made while the Amiga
-is mid-save is superseded at the head when the save closes; it survives only as a history
-version. Reversible — the alternative is refusing renames of a mounted disk.
+**Operator decision, SETTLED 2026-09-19 (see 4h):** renames of a mounted disk are refused, so a
+browser rename can no longer be superseded by an Amiga save. Last writer wins still governs two
+boards.
 
 **Fix before plan 2b builds on it** (parked at the final review; dormant until a board calls
 the endpoints):
@@ -2596,10 +2627,8 @@ PKs on `entitlements`, `collection_games`, `demozoo_dismissals`, `demozoo_sugges
 and is stored truncated). Verified intact after both pushes, rows unchanged. Giving that FK an
 explicit short name would stop one of them.
 
-**`e2e/disk-files-edit.spec.ts` flaked 3 of 6 solo runs during the build** (different locators,
-never reproducible), then passed every run after the image and delta PUTs were made parallel,
-and in the full suite. If it returns, capture the edit request's status from the trace: a 409
-`conflict` would mean a real race, not latency.
+**`e2e/disk-files-edit.spec.ts` flaked during the build.** Root-caused and fixed 2026-09-19: a
+5 s timeout against two live round trips, not a race and not stale data. See 4h.
 
 ### 4f. THE BOARD APPLIES WRITES — 2026-09-18 (write-back piece 1)
 
