@@ -2530,6 +2530,59 @@ in advance that it empties the table for everyone. This repo has no such databas
 e2e runs against live Neon — so "accept in advance" is currently the only option, and it should
 be an explicit decision each time rather than a side effect of following a plan step.
 
+### 4j. A WRITE-PROTECT FLIP ON THE MOUNTED DISK IS ANNOUNCED AS A DISK CHANGE — 2026-09-20
+
+**Branch `feat/wp-reinsert`.** AmigaDOS reads a disk's write-protect state only when it believes
+a disk was inserted — a real floppy's tab sliding while it sits in the drive changes nothing
+until it is re-inserted. The board can flip WPROT live (the server bumps it for a flag-only
+change, or the uploader forces it, §4i), so a flip on the SAME mounted disk now has to be told
+to the Amiga the way an insert is: `/CHNG` asserted until the next STEP, same as
+`dskchg_image_inserted()`'s normal path (`src/reinsert.c/.h`, `src/dskchg.c`, `src/main.c`).
+
+**Verified on hardware:** writable → write succeeded; protected → the Amiga refused the very
+next write with no reset; writable again → succeeded once more. The server's disk history shows
+exactly two versions across the sequence — the refused write, being refused, created none.
+
+**Review found the first cut's idle window could be defeated, and its "may we announce" gate
+could starve; both are fixed here:**
+- The idle window before announcing (`REINSERT_IDLE_MS`, 3 s) used to key off
+  `g_write_last_ms`, stamped only when a capture was *applied*. A rejected capture — torn, a bad
+  checksum, the wrong track, an overflow — left it stale, so the gate could pass immediately
+  after the Amiga had just finished writing: exactly the case the window exists to avoid. A new
+  `g_wgate_last_ms` is now stamped in the WGATE ISR on both edges (a volatile store only, no
+  logging — it is an ISR), and the window is measured against the later of the two timestamps.
+- The gate itself could starve: `dskchg_motor_on()` only changes when the Amiga next selects
+  DF0, and a powered-off Amiga leaves WGATE reading asserted forever. A pending request now
+  carries a deadline (`g_reinsert_raised_ms`, `REINSERT_FORCE_MS` = 15 s): past it, the board
+  announces anyway — a step clearing `/CHNG` early is recoverable, since the next flip re-raises
+  it — and logs one `WF_WARN` saying it was forced, so a request that never fires is never
+  silent.
+- The gate is now a pure function, `reinsert_may_announce()` (`src/reinsert.h/.c`), taking every
+  input — `now`, when the request was raised, motor state, WGATE state, the last-activity
+  timestamp — as a parameter and returning the decision plus whether it was the forced case.
+  `main.c`'s core0 loop keeps only the volatile reads and the `dskchg_image_inserted()` call.
+  Host-tested (`test/test_reinsert.c`): idle-and-quiet announces; motor on waits; WGATE asserted
+  waits; inside the idle window of a write (applied OR merely attempted) waits; past the 15 s
+  deadline announces forced; and unsigned time wraparound is handled with the same
+  `(int32_t)(now - x) >= 0` idiom `uploader.c` uses, not treated as a special case.
+- `reinsert_on_wprot()` (`reinsert.c`) no longer lets an empty disk id (the poll omitting
+  `diskId`) overwrite the remembered one — it kept the "never claim an empty id is the same
+  disk" rule for the CURRENT pass, but used to still stomp the stored id with `""`, so the next
+  poll that DID carry the real id looked like a different disk and swallowed the flip it should
+  have announced. Three-pass test added: id, empty, id + flip → announces.
+- Two minor items from the same review: the read-then-clear of `g_reinsert_req` in `main.c` is
+  not atomic against a concurrent set from core1, and a comment at the clear site now says why
+  that is harmless (core1 always stores the new WPROT pad state before setting the flag, so
+  whichever announcement fires still conveys the newest state); and `dskchg.c`'s `st` is now
+  `volatile` (written by the STEP ISR, polled from the main loop — safe today only because there
+  is no LTO).
+
+**Known, not yet exercised on hardware:** `up_forces_wprot()` (`src/uploader.h`) — a `409
+write_protected` answer, or a parked uploader — also forces WPROT true, and clearing it forces
+WPROT back, so both edges now go through this same announce path. Defensible (the Amiga has to
+be told either way), but it has only been exercised host-side so far, and an application holding
+an open file on the volume when it fires can see "You MUST replace volume ...".
+
 ### 4i. THE AMIGA'S WRITES REACH THE SERVER — 2026-09-19 (write-back piece 2b)
 
 **Verified on hardware** (board WifiFloppy1, rev A2; Workbench 3.1 disk `190f63eb…`, marked
