@@ -136,7 +136,7 @@ static void test_the_lemming_stays_in_its_corner(void) {
 
 static void test_the_write_state_is_always_shown(void) {
     /*
-     * THE bug the operator found: the first version drew a pencil when the
+     * THE bug the operator found: the first version drew a cloud when the
      * disk was writable and NOTHING when it was not. No disk is writable
      * today, so the panel showed nothing -- which cannot be told apart from a
      * firmware that has no such indicator.
@@ -371,6 +371,26 @@ static void dump(const char *what, const display_state_t *s) {
     printf("+\n");
 }
 
+static void the_three_cloud_states_all_draw_and_all_differ(void) {
+    display_state_t s; memset(&s, 0, sizeof s);
+    s.status = DS_LOADED; s.writable = true;
+    uint8_t fb[3][DISP_FB_BYTES];
+    for (int k = 0; k < 3; k++) {
+        s.sync = (disp_sync_t)k;
+        display_render(&s, fb[k]);
+        int lit = 0;
+        for (int x = DISP_W - 18; x < DISP_W - 10; x++) lit += fb[k][x] != 0;
+        CHECK(lit > 0, "every sync state must draw something");
+    }
+    CHECK(memcmp(fb[0], fb[1], DISP_FB_BYTES) != 0, "synced != pending");
+    CHECK(memcmp(fb[1], fb[2], DISP_FB_BYTES) != 0, "pending != offline");
+    CHECK(memcmp(fb[0], fb[2], DISP_FB_BYTES) != 0, "synced != offline");
+    s.writable = false; s.sync = DISP_SYNC_SYNCED;
+    uint8_t ro[DISP_FB_BYTES]; display_render(&s, ro);
+    for (int k = 0; k < 3; k++)
+        CHECK(memcmp(ro, fb[k], DISP_FB_BYTES) != 0, "read-only (padlock) differs from every cloud");
+}
+
 static void dump_all(void) {
     // The walk cycle, side by side -- the sprite is 8 px and no assertion can
     // say whether it reads as a lemming.
@@ -417,6 +437,7 @@ int main(int argc, char **argv) {
     RUN(test_no_radio_is_distinguishable_from_a_weak_one);
     RUN(test_rendering_is_pure);
     RUN(test_unprintable_characters_do_not_read_past_the_font);
+    RUN(the_three_cloud_states_all_draw_and_all_differ);
     RUN(test_the_pump_never_exceeds_its_budget);
     RUN(test_an_idle_pump_sends_nothing);
     RUN(test_a_track_step_sends_a_small_span_not_a_frame);

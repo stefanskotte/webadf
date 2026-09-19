@@ -302,6 +302,37 @@ static void test_unmounted_reports_null_not_omitted(void) {
           "an unmounted device must report null explicitly");
 }
 
+// Fix round 1 (write-back piece 2b task 8): dc_report_status's return value
+// is what main.c now relies on to decide whether it may advance its own
+// "last reported to the server" bookkeeping. A failed report that was
+// silently treated as sent let the server's mountedVersion fall behind the
+// board's, which a later upload attempt then read as not_mounted and got
+// parked, with no path back except a further mount change -- see the
+// finding this fixes. These three pin the boundary a `bool` return has to
+// get right: a genuinely delivered report (204), a transport failure that
+// never reached the server at all, and a reply that reached the server but
+// says it did NOT act on the report (500).
+static void test_status_returns_true_on_204(void) {
+    boot();
+    fake_push_response("HTTP/1.1 204 No Content\r\n\r\n");
+    CHECK(dc_report_status(&c, 4096, -55, NULL),
+          "a 204 is a report the server actually received");
+}
+
+static void test_status_returns_false_on_connect_failure(void) {
+    boot();
+    fake_push_connect_failure();
+    CHECK(!dc_report_status(&c, 4096, -55, NULL),
+          "a transport failure never reached the server -- not delivered");
+}
+
+static void test_status_returns_false_on_500(void) {
+    boot();
+    fake_push_response("HTTP/1.1 500 Internal Server Error\r\n\r\n");
+    CHECK(!dc_report_status(&c, 4096, -55, NULL),
+          "a 5xx means the server did not act on the report -- not delivered");
+}
+
 // --- Task 10: a genuinely successful image fetch really publishes --------
 // Every other test above that reaches dc_fetch_image's 200 branch uses a
 // truncated or non-200 response, so none of them ever call
@@ -742,6 +773,106 @@ static void test_an_over_long_poll_body_is_refused_not_truncated(void) {
     CHECK_EQ_INT(fake_request_count(), 1);
 }
 
+// --- Task 3 (write-back 2b): hold, force refetch, adopt, post ------------
+
+static bool hold_true(void *ctx)  { (void)ctx; return true; }
+static bool hold_false(void *ctx) { (void)ctx; return false; }
+
+static void hold_keeps_the_disk_through_a_swap(void) {
+    boot();
+    psram_publish_slot(0);
+    strcpy(c.mounted_sha256, "old"); strcpy(c.mounted_disk_id, "d1");
+    c.since = 3; c.mounted_version = 3;
+    dc_set_hold(&c, hold_true, NULL);
+    push_ok_json("{\"version\":8,\"desired\":{\"sha256\":\"new\",\"diskId\":\"d2\",\"gameId\":\"g\","
+                 "\"game\":\"G\",\"diskNo\":1,\"diskCount\":1,\"writeProtected\":false}}");
+    dc_state_t s = dc_step(&c);
+    CHECK_EQ_INT(s, DC_IDLE_POLL);
+    CHECK_EQ_INT(fake_request_count(), 1);            // the poll, and no image fetch
+    CHECK(strcmp(c.mounted_sha256, "old") == 0, "D7: never swap away from unsent writes");
+    CHECK_EQ_INT(c.since, 3);                         // asked again once the hold lifts
+    CHECK_EQ_INT(psram_active_slot(), 0);
+}
+
+static void hold_keeps_the_disk_through_an_eject(void) {
+    boot();
+    psram_publish_slot(0);
+    strcpy(c.mounted_sha256, "old"); c.since = 3; c.mounted_version = 3;
+    dc_set_hold(&c, hold_true, NULL);
+    push_ok_json("{\"version\":9,\"desired\":null}");
+    dc_step(&c);
+    CHECK(strcmp(c.mounted_sha256, "old") == 0, "D7: never eject with unsent writes");
+    CHECK_EQ_INT(psram_active_slot(), 0);
+    CHECK_EQ_INT(c.since, 3);
+}
+
+static void a_lifted_hold_lets_the_eject_through(void) {
+    boot();
+    psram_publish_slot(0);
+    strcpy(c.mounted_sha256, "old"); c.since = 3;
+    dc_set_hold(&c, hold_false, NULL);
+    push_ok_json("{\"version\":9,\"desired\":null}");
+    dc_step(&c);
+    CHECK(c.mounted_sha256[0] == '\0', "no pending writes: the eject happens");
+    CHECK_EQ_INT(psram_active_slot(), SLOT_NONE);
+}
+
+static void force_refetch_fetches_the_digest_already_mounted(void) {
+    boot();
+    psram_publish_slot(0);
+    strcpy(c.mounted_sha256, "aa"); c.since = 7; c.mounted_version = 7;
+    dc_force_refetch(&c);
+    CHECK_EQ_INT(c.since, 0);
+    push_ok_json("{\"version\":8,\"desired\":{\"sha256\":\"aa\",\"diskId\":\"d1\",\"gameId\":\"g\","
+                 "\"game\":\"G\",\"diskNo\":1,\"diskCount\":1,\"writeProtected\":false}}");
+    push_image_response();
+    dc_step(&c);
+    CHECK(strstr(fake_last_request(), "GET /api/device/image/aa") != NULL,
+          "the server's image won: the board's copy must be replaced even though the digest matches");
+    CHECK_EQ_INT(c.mounted_version, 8);
+}
+
+static void adopt_makes_the_next_poll_a_no_op(void) {
+    boot();
+    psram_publish_slot(0);
+    strcpy(c.mounted_sha256, "aa"); c.since = 7;
+    dc_adopt_image(&c, "bb");
+    CHECK(strcmp(c.mounted_sha256, "bb") == 0, "adopted");
+    push_ok_json("{\"version\":8,\"desired\":{\"sha256\":\"bb\",\"diskId\":\"d1\",\"gameId\":\"g\","
+                 "\"game\":\"G\",\"diskNo\":1,\"diskCount\":1,\"writeProtected\":false}}");
+    dc_step(&c);
+    CHECK_EQ_INT(fake_request_count(), 1);            // no image fetch: already held
+    CHECK_EQ_INT(c.mounted_version, 8);
+}
+
+static void post_sends_a_binary_body_whole(void) {
+    boot();
+    static uint8_t body[DC_POST_BODY_MAX];
+    for (int i = 0; i < DC_POST_BODY_MAX; i++) body[i] = (uint8_t)(i * 13);
+    push_ok_json("{\"staged\":3}");
+    char resp[64];
+    int st = dc_post(&c, "/api/device/write?track=3", "application/octet-stream",
+                     body, DC_POST_BODY_MAX, resp, sizeof resp);
+    CHECK_EQ_INT(st, 200);
+    CHECK(strcmp(resp, "{\"staged\":3}") == 0, "response body returned");
+    CHECK(strstr(fake_last_request(), "POST /api/device/write?track=3 HTTP/1.1") != NULL, "line");
+    CHECK(strstr(fake_last_request(), "Content-Length: 5632\r\n") != NULL, "length");
+    int n = fake_last_request_len();
+    CHECK(n > DC_POST_BODY_MAX, "head + body");
+    CHECK(memcmp(fake_last_request() + n - DC_POST_BODY_MAX, body, DC_POST_BODY_MAX) == 0,
+          "the body arrives byte for byte, NULs and all");
+}
+
+static void post_reports_a_dead_link_and_a_dead_token(void) {
+    boot();
+    char resp[64];
+    fake_push_connect_failure();
+    CHECK_EQ_INT(dc_post(&c, "/c", NULL, NULL, 0, resp, sizeof resp), -1);
+    push_status_json("HTTP/1.1 401 Unauthorized", "{\"error\":\"unauthorized\"}");
+    CHECK_EQ_INT(dc_post(&c, "/c", NULL, NULL, 0, resp, sizeof resp), 401);
+    CHECK_EQ_INT(c.state, DC_HALTED);
+}
+
 int main(void) {
     // Only test_successful_image_fetch_publishes_and_reflects_write_protected
     // needs real PSRAM backing (everything else in this file either never
@@ -772,6 +903,9 @@ int main(void) {
     RUN(test_status_success_does_not_reset_poll_backoff);
     RUN(test_status_sends_all_six_fields);
     RUN(test_unmounted_reports_null_not_omitted);
+    RUN(test_status_returns_true_on_204);
+    RUN(test_status_returns_false_on_connect_failure);
+    RUN(test_status_returns_false_on_500);
     RUN(test_corrupt_image_body_blocks_the_digest_but_does_not_publish);
     RUN(test_successful_image_fetch_publishes_and_reflects_write_protected);
     RUN(test_register_body_has_the_three_required_fields);
@@ -786,6 +920,14 @@ int main(void) {
     RUN(test_a_successful_swap_still_clears_the_backoff);
     RUN(test_an_eject_still_clears_the_backoff);
     RUN(test_an_over_long_poll_body_is_refused_not_truncated);
+
+    RUN(hold_keeps_the_disk_through_a_swap);
+    RUN(hold_keeps_the_disk_through_an_eject);
+    RUN(a_lifted_hold_lets_the_eject_through);
+    RUN(force_refetch_fetches_the_digest_already_mounted);
+    RUN(adopt_makes_the_next_poll_a_no_op);
+    RUN(post_sends_a_binary_body_whole);
+    RUN(post_reports_a_dead_link_and_a_dead_token);
 
     // The observation tests run BEFORE the backing is released: several of
     // them drive a real fetch, which writes into PSRAM. Appending them after

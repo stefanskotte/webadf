@@ -2530,6 +2530,128 @@ in advance that it empties the table for everyone. This repo has no such databas
 e2e runs against live Neon — so "accept in advance" is currently the only option, and it should
 be an explicit decision each time rather than a side effect of following a plan step.
 
+### 4i. THE AMIGA'S WRITES REACH THE SERVER — 2026-09-19 (write-back piece 2b)
+
+**Verified on hardware** (board WifiFloppy1, rev A2; Workbench 3.1 disk `190f63eb…`, marked
+writable). Plan `docs/superpowers/plans/2026-09-19-write-back-piece-2b-firmware-upload.md`.
+`WF_WRITE_BACK`/`WF_WRITE_CAPTURE` are gone: **write-back is on in the normal build.**
+
+**What the board does now** (`src/uploader.c`, core1, pure C, host-tested; the protocol is §4g's):
+- Each dirty track goes up as `POST /api/device/write` under a per-boot session token
+  (`b` + 16 hex, `get_rand_32`). One request at a time: the uploader runs **instead of** the
+  poll while writes are pending, so a status report can never race a close (§4g item 4).
+- 3 s after the last applied write it hashes all 160 decoded tracks (`src/sha256.c`) and closes;
+  a 200 digest is adopted with no re-fetch. A write landing mid-hash postpones the close.
+- **Every attempt spends a seq** (never reused: a lost response followed by a different track
+  would otherwise be answered `duplicate` and dropped). A lost last attempt → `incomplete` →
+  resend.
+- `not_mounted` (incl. `behind`), 404, 400, 422 → **parked**: the hold is released and WPROT is
+  forced until the mount changes. `write_protected` / `mismatch` → the server's image wins:
+  dirty tracks discarded, `dc_force_refetch`. Transport failure → offline, capped backoff, disk
+  held (D3/D7).
+- `dc_set_hold`: a poll naming another disk, or an eject, is not acted on while writes are
+  pending and not parked. An owed status report (mount sha or version changed) goes out
+  **before** any upload, and only a 2xx counts — the server decides `behind` from the version
+  it last heard.
+- The OLED: the pencil became a cloud — plain = nothing unsent, up-arrow = pending, struck =
+  pending and the server unreachable. Read-only still shows the padlock.
+- `mfm_decode_track_r`: the decoder now takes caller scratch. It had a static buffer, and core0
+  (captures) and core1 (uploads, the close hash) now decode at the same time — found by the
+  final review, as was the seq reuse. Both would have recorded a checksum-valid corrupt image.
+
+**Measured on the bench:**
+- A save of 2–3 tracks: **~1.4–1.6 s per upload** (a fresh TLS handshake, ~1.1 s, dominates),
+  close **~2.7 s** after the last upload (hash + handshake, not separately timed).
+- Write-to-synced: **5.7 s** when core1 was free; **12.3 s** when the write landed inside a
+  25 s long poll (the upload waits for the poll to return — **not fixed**; a server-side early
+  return or a shorter hold would fix it).
+- Offline (board blocked on the UniFi): writes kept; attempts every 7 s (DNS) with backoff
+  1.1→2.2→4.5→9.0 s; ~11 s after the block lifted the save was on the server.
+- Reboot: the board re-fetches the server's post-write image; the Amiga read the file back
+  after a reset. Eject within 3 s of a save: the eject happened only after the close.
+- Server after four saves: `disk_versions` 0 original + 3 `amiga` deltas (4, 5, 4 sectors);
+  xdftool reads `wb2b.txt`, `wb2b-2.txt`, `wb2b-3.txt` in the head image.
+
+**Found on hardware and fixed (6bb5454):** the cloud read *synced* for ~6 s over unsent writes,
+because only core1 set it and core1 was in a long poll. core0 now shows pending whenever the
+active slot has dirty tracks.
+
+**Not verified / still open:**
+- The struck (offline) cloud was not confirmed by eye; the log shows the offline state.
+- `dc_set_hold` never fired on hardware: polls are suppressed while pending, so the eject was
+  simply read after the close. Host-tested only.
+- Restore (spec §6 acceptance 4) is piece 3.
+- Deferred minors from the SDD ledger worth doing: every request is a new TLS handshake; the
+  panel has no distinct "parked" state; `wifi_rssi()` is queried every 50 ms while waiting; a
+  parked slot's discarded dirty flags are not cleared.
+- One cold `vitest` run straight after a fresh `pnpm install` in the worktree failed 2 tests
+  (not captured); two reruns were 853/853.
+
+### 4i. THE AMIGA'S WRITES REACH THE SERVER — 2026-09-19 (write-back piece 2b)
+
+**Verified on hardware** (board WifiFloppy1, rev A2, the Workbench 3.1 disk the operator marked
+writable). Plan `docs/superpowers/plans/2026-09-19-write-back-piece-2b-firmware-upload.md`.
+`WF_WRITE_BACK`, `WF_WRITE_CAPTURE` and `WRITE_BACK_IMPLEMENTED` are gone: write-back is on in the
+normal build. Gate: host suite green, vitest 853, device build clean with the new code confirmed
+linked (`nm`), full Playwright suite on the branch before merge.
+
+**What the board does now** (src/uploader.c, pure and host-tested; main.c wires it):
+- Each dirty track goes up as `POST /api/device/write?...&session=<per-boot token>&seq=<n>`, one
+  request at a time on core1. **Every attempt spends a seq** (a lost response must never make the
+  next track reuse a seq the server already staged: it would be answered `duplicate` and
+  dropped). The close sends the last seq attempted; a lost last upload converges through `409
+  incomplete`.
+- 3 s after the last applied write the board hashes all 160 decoded tracks (src/sha256.c) and
+  closes; on 200 it adopts the digest (no re-fetch). A write landing mid-hash postpones the close.
+- While writes are pending the uploader runs **instead of** the 25 s long poll, and
+  `dc_set_hold` stops a swap or eject from releasing the disk (D7).
+- A status report owed after a mount-version change goes out before any upload, and counts only
+  on a 2xx: the server decides `not_mounted`/`behind` from the mountedVersion it last heard.
+- `409 mismatch` / `write_protected`: the server's image wins (dirty tracks discarded, forced
+  re-fetch even of the same digest). `not_mounted` / `behind` / 404 / 400 / 422: **parked** —
+  hold released, WPROT forced until the mount changes. Offline and 5xx: back off (1 s doubling,
+  60 s cap) and keep holding.
+- The OLED pencil became a cloud on writable disks: plain = synced, up-arrow = unsent writes,
+  struck = unsent and the server unreachable. Read-only keeps the padlock.
+- `mfm_decode_track` is now called from both cores; `mfm_decode_track_r` takes caller-owned
+  scratch (the final review found the shared static buffer could splice sectors with valid
+  checksums across cores).
+
+**Hardware results (operator-confirmed, server checked with xdftool, not the app's reader):**
+| test | result |
+|---|---|
+| `echo >DF0:wb2b.txt` | uploads trk 69, 80 (~1.6 s each), close; `disk_versions` 0 original + 1 amiga (4 sectors); xdftool reads the file |
+| board restart | re-fetched the post-write image; after Ctrl-A-A `type` printed the file |
+| write then eject within 3 s (D7) | 3 uploads + close at 436.1 s, EJECT at 439.0 s; server image has both files |
+| board blocked on the UniFi, then write | 4 failed attempts (DNS), backoff 1.1→9 s; unblocked → seq 5, 6, close; server image has the file |
+
+**Measured:** TLS handshake ~1.1 s per request (every request is a new connection), so ~1.6 s per
+track and ~2.7 s for the close including the 160-track hash. Write-to-synced ~7–12 s.
+
+**Found on the bench and fixed (6bb5454):** a write landing during the long poll waited for it
+(6 s) **and the cloud read plain meanwhile** — up_sync was only recomputed on core1. core0 now
+shows the up-arrow whenever the active slot has dirty tracks.
+
+**Still open:**
+- **Upload latency behind a long poll**: a write that lands mid-poll waits up to ~25 s before the
+  first upload (the cloud is honest about it now). A shorter server hold, or an early return,
+  would fix it.
+- **One connection per request**: a full-disk DiskCopy would be 160 handshakes (~4–5 min). TLS
+  keep-alive or batching tracks would fix it.
+- The **struck cloud** was not seen by the operator during the offline test (they looked before
+  the first failed attempt); the dc hold path was not exercised on hardware either (polls are
+  suppressed while pending, so the eject was only seen after the close). Both are host-tested.
+- **Acceptance 4 (restore) waits for piece 3.** The panel has no distinct "parked" state.
+- Two vitest failures appeared once in the worktree before a crash and did not recur (853/853).
+- Deferred minors from the reviews (none blocking): the ~50 ms `wifi_rssi()` radio query during
+  waits; a failed owed status report sent twice in one pass; the dead-token log undercounts
+  sent-but-unclosed tracks; torn-read retries without delay; a parked slot's dirty flags are not
+  cleared after replacement; stale comments in uploader.h/.c and main.c; `PENCIL_W`/test wording;
+  `http_build_head` duplicates `http_build_request`'s header pattern.
+
+**Next: piece 3, the time-machine UI** (spec §4): History panel, Browse and Restore — and then
+hardware acceptance 4.
+
 ### 4h. A MOUNTED DISK IS CHANGED ONLY FROM THE AMIGA; THE FILES-EDIT FLAKE WAS A TIMEOUT — 2026-09-19
 
 **Merged (`682f127`) and live.** Gate on the merged tree: 853 vitest, tsc and build clean,

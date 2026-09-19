@@ -36,10 +36,11 @@
 // Two things matter about the ordering: `sha256` is emitted first, so a
 // truncated body still yields a plausible-looking digest, while
 // `writeProtected` is emitted LAST, so it is the first field a long title
-// pushes off the end. Losing it silently is only harmless while
-// dc_handle_poll_body's absent-value default (true) and main.c's
-// WRITE_BACK_IMPLEMENTED=0 both hold; the day write-back lands it would
-// be a disk presented as writable purely because its title was long.
+// pushes off the end. Losing it silently would be a disk presented as
+// writable purely because its title was long -- so this is never resolved
+// by a favourable default: a truncated body is refused outright (dc_step's
+// DC_IDLE_POLL/backoff path below never calls dc_handle_poll_body on one),
+// which means a lost writeProtected can never present a disk as writable.
 // So: the buffer is generous (~1.1 KB for the two free-text fields), AND
 // truncation is recorded rather than silently swallowed -- dc_step
 // refuses to act on a truncated body at all (see its DC_IDLE_POLL/backoff
@@ -214,9 +215,19 @@ static void dc_image_sink(void *ctx, const uint8_t *b, int n) {
 //   * These functions never call each other in a cycle. The only call
 //     graph is  core1_main -> dc_step -> dc_handle_poll_body ->
 //     dc_fetch_image -> dc_exchange,  core1_main -> dc_report_status ->
-//     dc_exchange,  and  core1_main -> dc_register -> dc_exchange. Every
-//     path is a straight line; dc_exchange is shared by three callers but
-//     is never nested inside itself.
+//     dc_exchange,  core1_main -> dc_register -> dc_exchange,
+//     core1_main -> up_step -> dc_post -> dc_exchange (uploader.c,
+//     Task 5: one dirty track at a time), and its close counterpart,
+//     core1_main -> up_step -> (sha256_*, psram_image_read,
+//     mfm_decode_track_r) -> dc_post -> dc_exchange (uploader.c, Task 6:
+//     hashes the whole image, then posts the digest). Every path is a
+//     straight line, including the close's hash loop -- sha256_*,
+//     psram_image_read and mfm_decode_track_r never call back into any
+//     dc_*/up_* function, so nothing here is re-entered while its statics
+//     are live; dc_exchange is shared by four callers but is never nested
+//     inside itself, and dc_post is never nested inside dc_step -- the
+//     uploader runs from its own call site in the main loop, not from inside the
+//     poll.
 //   * Each function owns its own statics -- dc_exchange's read chunk is
 //     not shared with dc_step's body buffer, and so on -- so a caller's
 //     buffer can never be clobbered by a callee. (The one buffer that IS
@@ -358,6 +369,7 @@ static void dc_complete_transition(device_client_t *c, uint32_t version,
     strncpy(c->mounted_disk_id, disk_id, sizeof(c->mounted_disk_id) - 1);
     c->mounted_disk_id[sizeof(c->mounted_disk_id) - 1] = '\0';
     c->mounted_write_protected = write_protected;
+    c->_refetch = false;
 }
 
 // Fetches `d->sha256` from the image endpoint. Only reached once the poll
@@ -507,6 +519,30 @@ static dc_state_t dc_fetch_image(device_client_t *c, const dc_desired_t *d) {
     }
 }
 
+void dc_set_hold(device_client_t *c, dc_hold_fn fn, void *ctx) {
+    c->_hold = fn;
+    c->_hold_ctx = ctx;
+}
+
+void dc_force_refetch(device_client_t *c) {
+    c->_refetch = true;
+    c->since = 0;
+}
+
+void dc_adopt_image(device_client_t *c, const char *sha256) {
+    strncpy(c->mounted_sha256, sha256, sizeof(c->mounted_sha256) - 1);
+    c->mounted_sha256[sizeof(c->mounted_sha256) - 1] = '\0';
+}
+
+// D7: a disk with writes the server has not got is never released. Only
+// when something IS mounted -- with nothing mounted there is nothing to lose.
+static bool dc_held(device_client_t *c) {
+    if (c->mounted_sha256[0] == '\0' || !c->_hold) return false;
+    if (!c->_hold(c->_hold_ctx)) return false;
+    wf_logf(WF_INFO, "hold: writes pending, not releasing the disk yet");
+    return true;
+}
+
 // Acts on a fully-received 200 poll body. `json` is NUL-terminated.
 static dc_state_t dc_handle_poll_body(device_client_t *c, const char *json) {
     uint32_t version = 0;
@@ -517,6 +553,7 @@ static dc_state_t dc_handle_poll_body(device_client_t *c, const char *json) {
     }
 
     if (json_is_null(json, "desired")) {
+        if (dc_held(c)) { c->state = DC_IDLE_POLL; return c->state; }
         // The one explicit, unambiguous eject instruction. No fetch is
         // needed -- the transition is "hold no disk", which is complete
         // the instant it is acted on. Task 8: that now includes publishing
@@ -578,7 +615,7 @@ static dc_state_t dc_handle_poll_body(device_client_t *c, const char *json) {
     d.version = version;
     d.present = true;
 
-    if (c->mounted_sha256[0] != '\0' && strcmp(d.sha256, c->mounted_sha256) == 0) {
+    if (!c->_refetch && c->mounted_sha256[0] != '\0' && strcmp(d.sha256, c->mounted_sha256) == 0) {
         // Already holding exactly this disk: nothing to fetch. Catching
         // `since` up here (rather than leaving it behind version after
         // version) avoids re-attempting this same no-op every poll.
@@ -603,6 +640,8 @@ static dc_state_t dc_handle_poll_body(device_client_t *c, const char *json) {
         // land right back here at full TLS-handshake rate.
         return dc_enter_backoff(c);
     }
+
+    if (dc_held(c)) { c->state = DC_IDLE_POLL; return c->state; }
 
     return dc_fetch_image(c, &d);
 }
@@ -770,13 +809,18 @@ dc_register_result_t dc_register(device_client_t *c, const char *pairing_code,
 // null says "I am holding no disk" -- reporting the wrong one leaves a
 // stale disk showing in the operator UI after an eject.
 //
-// Best-effort: a connect/write/read failure or an unexpected status here
-// does not touch `backoff_ms` or `state` -- the poll loop is what keeps the
-// device from looking dead (spec: "a device with a broken status path but
-// a healthy poll loop still reads as recently seen"). The one exception is
-// 401: the token is dead everywhere it appears, so this halts exactly as
-// the poll and image endpoints do.
-void dc_report_status(device_client_t *c, int psram_free, int rssi, const char *err) {
+// Best-effort as far as `backoff_ms`/`state` go: a connect/write/read
+// failure or an unexpected status here does not touch either -- the poll
+// loop is what keeps the device from looking dead (spec: "a device with a
+// broken status path but a healthy poll loop still reads as recently
+// seen"). The one exception is 401: the token is dead everywhere it
+// appears, so this halts exactly as the poll and image endpoints do.
+//
+// The return value is NOT best-effort, though (fix round 1): the caller
+// needs to know whether the report actually reached the server before it
+// updates its own idea of "what I last told the server", or the two can
+// drift -- see the header comment.
+bool dc_report_status(device_client_t *c, int psram_free, int rssi, const char *err) {
     bool mounted = c->mounted_sha256[0] != '\0';
 
     // static: see the STACK note above. Called only from core1_main's
@@ -802,18 +846,50 @@ void dc_report_status(device_client_t *c, int psram_free, int rssi, const char *
         "\"error\":%s,\"psramFree\":%d,\"rssi\":%d}",
         sha_field, disk_field, (unsigned long)c->mounted_version,
         err_field, psram_free, rssi);
-    if (body_len < 0 || body_len >= (int)sizeof body) return; // should never happen; give up quietly
+    if (body_len < 0 || body_len >= (int)sizeof body) return false; // should never happen; give up quietly
 
     static char req[DC_STATUS_REQ_BYTES];
     int req_len = http_build_request(req, sizeof req, "POST", DC_STATUS_PATH,
                                      c->host, c->token, body);
-    if (req_len < 0) return;
+    if (req_len < 0) return false;
 
     static http_resp_t r;   // static: see the STACK note above
     bool ok = dc_exchange(c, req, req_len, dc_discard_sink, NULL, &r);
-    if (!ok || !r.body_complete) return; // best-effort; the poll loop is what matters
+    if (!ok || !r.body_complete) return false; // best-effort; the poll loop is what matters
 
-    if (r.status == 401) c->state = DC_HALTED; // token is dead; 401 anywhere halts
+    if (r.status == 401) {
+        c->state = DC_HALTED; // token is dead; 401 anywhere halts
+        return false;
+    }
+    return r.status >= 200 && r.status < 300;
+}
+
+#define DC_POST_HEAD_BYTES 512
+
+// Write-back (piece 2b; see device_client.h). Shares dc_exchange like every
+// other request in this file, but builds the request with http_build_head
+// (Task 2) plus a raw memcpy of `body` rather than http_build_request's
+// C-string body, since a disk track is full of NUL bytes. Called from
+// up_step (uploader.c, a later task), never from inside dc_step -- see the
+// STACK note's call graph above.
+int dc_post(device_client_t *c, const char *path, const char *content_type,
+            const uint8_t *body, int body_len, char *resp, int resp_cap) {
+    if (body_len < 0 || body_len > DC_POST_BODY_MAX) return -1;
+    // static: see the STACK note above. One head + one track, ~6.1 KB.
+    static char req[DC_POST_HEAD_BYTES + DC_POST_BODY_MAX];
+    int n = http_build_head(req, DC_POST_HEAD_BYTES, "POST", path, c->host, c->token,
+                            content_type, body_len);
+    if (n < 0) return -1;
+    if (body_len) memcpy(req + n, body, (size_t)body_len);
+
+    static dc_body_buf_t out;
+    out.len = 0; out.truncated = false; out.buf[0] = '\0';
+    static http_resp_t r;
+    bool ok = dc_exchange(c, req, n + body_len, dc_body_sink, &out, &r);
+    if (resp && resp_cap > 0) snprintf(resp, (size_t)resp_cap, "%s", out.buf);
+    if (!ok || !r.body_complete) return -1;
+    if (r.status == 401) c->state = DC_HALTED;    // 401 anywhere halts
+    return r.status;
 }
 
 dc_state_t dc_step(device_client_t *c) {

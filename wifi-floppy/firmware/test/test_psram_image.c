@@ -69,6 +69,24 @@ static void test_eject_publishes_slot_none(void) {
     CHECK_EQ_INT(psram_active_slot(), SLOT_NONE);
 }
 
+static void set_dirty_and_discard(void) {
+    psram_image_reset_slot(0);
+    uint8_t buf[16] = {1, 2, 3};
+    psram_image_write_at(0, 5, 0, buf, sizeof buf);
+    psram_image_commit(0, 5, 128);
+    psram_image_set_dirty(0, 7);                          // ABSENT: refused
+    CHECK_EQ_INT(psram_image_state(0, 7), TRK_ABSENT);
+    psram_image_set_dirty(0, 5);
+    CHECK_EQ_INT(psram_image_state(0, 5), TRK_DIRTY);
+    CHECK_EQ_INT(psram_image_dirty_count(0), 1);
+    uint8_t got[16]; uint32_t bits = 0;
+    CHECK(psram_image_read(0, 5, got, &bits), "payload still there");
+    CHECK(memcmp(got, buf, sizeof buf) == 0, "set_dirty never touches the payload");
+    psram_image_discard_dirty(0);
+    CHECK_EQ_INT(psram_image_state(0, 5), TRK_PRESENT);
+    CHECK_EQ_INT(psram_image_dirty_count(0), 0);
+}
+
 int main(void) {
     size_t len = (size_t)TRACK_MAX_BYTES * NUM_TRACKS * SLOT_COUNT;
     void *mem = malloc(len);
@@ -77,6 +95,7 @@ int main(void) {
     RUN(test_fetch_targets_the_inactive_slot);
     RUN(test_publish_is_all_or_nothing);
     RUN(test_eject_publishes_slot_none);
+    RUN(set_dirty_and_discard);
     free(mem);
     return REPORT();
 }

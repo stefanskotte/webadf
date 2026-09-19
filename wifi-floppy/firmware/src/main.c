@@ -37,6 +37,8 @@
 #include "flux_bits.h"
 #include "mfm.h"
 #include "write_back.h"
+#include "uploader.h"
+#include "pico/rand.h"
 #include "hardware/sync.h"   // __dmb(), for the display seqlock below
 #include <string.h>
 
@@ -113,6 +115,11 @@ static volatile int g_ui_pct    = -1;
 // separately: a pencil that disagreed with the pin would be worse than no
 // pencil, because it would be believed.
 static volatile bool g_ui_writable = false;
+// Same idea as g_ui_writable: set from up_sync(&up) at the same moment, on
+// core1, and read by core0 in ui_snapshot below -- never computed from a
+// cast, since up_sync_t and disp_sync_t are converted by a switch (see
+// core1_main's WPROT block).
+static volatile int g_ui_sync = DISP_SYNC_SYNCED;
 
 static void ui_publish(disp_status_t st, const char *title, const char *detail, int pct) {
     g_ui_seq++;                     // odd: writing
@@ -136,6 +143,14 @@ static bool ui_snapshot(display_state_t *s) {
     s->bars     = g_ui_bars;
     s->pct      = g_ui_pct;
     s->writable = g_ui_writable;
+    s->sync     = (disp_sync_t)g_ui_sync;
+    // core1 recomputes g_ui_sync only between requests, and a long poll holds
+    // it for up to 25 s. A write core0 applied meanwhile must not read as
+    // "synced": that is the one question the cloud answers ("can I switch
+    // off now?"). core0 set these dirty flags itself, so it sees them at once.
+    // Found on the bench 2026-09-19: ~6 s of a plain cloud over unsent writes.
+    if (s->sync == DISP_SYNC_SYNCED && psram_image_dirty_count(psram_active_slot()) > 0)
+        s->sync = DISP_SYNC_PENDING;
     memcpy(s->title,  g_ui_title,  sizeof s->title);
     memcpy(s->detail, g_ui_detail, sizeof s->detail);
     s->title[DISP_TITLE_MAX]   = '\0';
@@ -204,48 +219,13 @@ static void ui_observe(void *ctx, const dc_obs_t *o) {
     }
 }
 
-// WRITE_BACK_IMPLEMENTED means writes reach the SERVER (piece 2 of the
-// write-back spec) -- that piece does not exist yet. It is separate from
-// WF_WRITE_CAPTURE and WF_WRITE_BACK, which apply (or discard) writes on
-// the board alone: WPROT follows the server's writeProtected flag whenever
-// WF_ACCEPTS_WRITES is true (a capture or write-back build), and is forced
-// asserted otherwise, so a plain build never lets the Amiga believe a write
-// landed anywhere. See core1_main's WPROT comment for how this is wired;
-// flip this to 1 (and see the comment there) once writes reach the server.
-#define WRITE_BACK_IMPLEMENTED 0
-
-/*
- * WF_WRITE_CAPTURE -- release WPROT so the Amiga will actually write, for
- * testing the capture path against a real drive. OFF unless -DWF_WRITE_CAPTURE=1.
- *
- * SEPARATE FROM WRITE_BACK_IMPLEMENTED ON PURPOSE. That flag means "a write
- * reaches the image", and it is still 0 because that is still true. Flipping it
- * to enable an experiment would make it a lie, and it is exactly the kind of
- * lie a later reader believes.
- *
- * WHAT THIS BUILD ACTUALLY DOES, and it is not what the Amiga will think:
- * the flux is captured, decoded, checksummed and LOGGED, and then discarded.
- * Nothing is written to PSRAM and nothing is sent upstream. So the Amiga sees
- * a successful write, and reads the OLD data back once its own cache is gone.
- * AmigaDOS may then decide the disk is corrupt -- correctly, from where it is
- * standing. Use a disk you do not mind losing.
- *
- * The panel's pencil lights in this build, which is honest as far as it goes:
- * the disk IS presented as writable. It does not say the writes go nowhere.
- */
-#ifndef WF_WRITE_CAPTURE
-#define WF_WRITE_CAPTURE 0
-#endif
-
-/*
- * WF_WRITE_BACK -- write-back piece 1: a whole, clean captured track is
- * re-encoded and written into the ACTIVE disk copy in PSRAM, so the Amiga
- * reads back what it wrote. Nothing goes upstream: the write is lost at eject
- * or power-off. Piece 2 (upload, sessions) removes this flag.
- */
-#ifndef WF_WRITE_BACK
-#define WF_WRITE_BACK 0
-#endif
+// Write-back is on unconditionally (write-back spec piece 2b): a whole,
+// clean captured track is applied to the board's copy of the disk AND
+// uploaded to the server by core1's uploader (uploader.c, driven from
+// core1_main). WPROT follows the server's writeProtected flag, forced
+// asserted whenever nothing is mounted or the uploader itself has been
+// refused a write (up_forces_wprot) -- see core1_main's WPROT comment for
+// how this is wired.
 
 /*
  * WF_VERIFY_TRACKS -- after every mount, read each of the 160 tracks back out
@@ -277,11 +257,6 @@ static void ui_observe(void *ctx, const dc_obs_t *o) {
 #ifndef WF_BUS_SNIFF
 #define WF_BUS_SNIFF 0
 #endif
-
-// Both gates, in one place: the firmware must be willing AND the server must
-// say the disk is writable (dc_desired_t.write_protected, defaulting to true
-// in the database).
-#define WF_ACCEPTS_WRITES (WRITE_BACK_IMPLEMENTED || WF_WRITE_CAPTURE || WF_WRITE_BACK)
 
 static PIO  pio = pio0;
 static uint sm_out, sm_in;
@@ -533,10 +508,18 @@ static volatile int write_track;     // set when WGATE asserts
 // The disk that was mounted when WGATE asserted. A write belongs to that disk
 // and no other; write_back_verdict() rejects it if a swap landed since.
 static volatile int32_t write_token;
-// WGATE asserted with SEL0 released: another drive being written. Not captured
-// -- once write-back exists, capturing it would APPLY DF1's write to DF0.
+// WGATE asserted with SEL0 released: another drive being written. Not
+// captured -- capturing it would apply DF1's write to DF0.
 static volatile uint32_t writes_other_drive;
 static volatile bool     write_ours;
+
+// Written by core0 when a write lands, read by core1's uploader. last_ms
+// first, then the barrier, then gen: a reader that sees the new gen also
+// sees the time of the write that made it.
+static volatile uint32_t g_write_last_ms;
+static volatile uint32_t g_write_gen;
+static uint32_t wb_write_gen(void)    { return g_write_gen; }
+static uint32_t wb_last_write_ms(void) { return g_write_last_ms; }
 
 static void __isr gpio_isr(uint gpio, uint32_t events) {
     if (gpio == PIN_SEL0 && (events & GPIO_IRQ_EDGE_FALL)) {
@@ -1019,13 +1002,87 @@ static void core1_main(void) {
         dc_init(&c, tls_transport(), clock_ms, WEBADF_HOST, token);
         // AFTER dc_init, which zeroes the struct (device_client.h).
         dc_set_observer(&c, ui_observe, NULL);
+        // HANDOFF 4g rule 1: a token chosen per boot, so a rebooted board's seq 1
+        // is never mistaken for the previous boot's seq 1.
+        static char session[20];
+        snprintf(session, sizeof session, "b%08lx%08lx",
+                 (unsigned long)get_rand_32(), (unsigned long)get_rand_32());
+        static uploader_t up;
+        up_init(&up, &c, session, wb_write_gen, wb_last_write_ms);
+        dc_set_hold(&c, up_holds, &up);
+        wf_logf(WF_INFO, "write-back: session %s", session);
         wf_logf(WF_INFO, "entering poll loop against %s", WEBADF_HOST);
 
         static char last_reported_sha[65] = "";
+        static uint32_t last_reported_version = 0;
         uint32_t last_status_ms = clock_ms();
 
         while (true) {
-            dc_state_t s = dc_step(&c);
+            // Item 0 (fix round 1, Important): a status report is OWED
+            // whenever the mounted disk's identity or version differs from
+            // the values last SUCCESSFULLY reported -- checked, and sent if
+            // so, before the uploader/poll choice below even runs.
+            //
+            // Why this has to come first: the server decides an upload's
+            // not_mounted/behind verdict purely from the mountedVersion it
+            // last heard over this same status channel (HANDOFF 4g), not
+            // from anything the poll or the upload itself carries. A report
+            // that FAILS to reach the server (transport error, 5xx) used to
+            // still be recorded here as sent -- dc_report_status returned
+            // void and this loop advanced last_reported_sha/_version
+            // regardless. The next dirty-track upload then went out under a
+            // version the server had never heard of, got 409 not_mounted,
+            // and up_park()'d; parking only clears on a further mount
+            // change, never on the plain 60 s heartbeat below (which is
+            // exactly this same report, so it would have failed too, for
+            // the same reason) -- and while parked, up_holds() is false, so
+            // a swap or eject arriving before the next mount change could
+            // drop the parked disk's dirty tracks with no trace at all.
+            //
+            // So: send first, and only believe it worked -- advancing this
+            // loop's own bookkeeping -- when dc_report_status says so. A
+            // failure while the uploader has work is worth an extra beat of
+            // delay (rather than letting up_step race ahead and upload
+            // under the still-unreported version): the disk stays held
+            // regardless, since up_holds() does not depend on any of this.
+            //
+            // Review (final), Minor M3: that beat used to be a `continue`,
+            // which also skipped the WPROT and panel refresh below for the
+            // pass -- so a gate that changed during it (a park, say) waited
+            // for the next successful pass to reach the pin. Now the pass
+            // runs on with `report_retry` set: no up_step, no dc_step, no
+            // heartbeat (no network call beyond the failed report itself),
+            // but WPROT and the panel are refreshed, and the 1 s beat is
+            // slept at the bottom instead of the top.
+            bool report_retry = false;
+            bool report_owed = strcmp(c.mounted_sha256, last_reported_sha) != 0 ||
+                                c.mounted_version != last_reported_version;
+            if (report_owed && c.state != DC_HALTED) {
+                if (dc_report_status(&c, psram_free_estimate(), wifi_rssi(), NULL)) {
+                    last_status_ms = clock_ms();
+                    strncpy(last_reported_sha, c.mounted_sha256, sizeof(last_reported_sha) - 1);
+                    last_reported_sha[sizeof(last_reported_sha) - 1] = '\0';
+                    last_reported_version = c.mounted_version;
+                } else if (up_has_work(&up)) {
+                    report_retry = true;
+                }
+            }
+
+            dc_state_t s;
+            bool polled = false;
+            if (report_retry) {
+                // Neither the uploader nor the poll this pass: see Item 0.
+                s = c.state;
+            } else if (up_has_work(&up)) {
+                // Writes are pending: no long poll (it would hold the close for up
+                // to 25 s), and no swap or eject (dc_set_hold). One request, then
+                // round the loop so WPROT, status and the panel stay current.
+                if (up_step(&up) == UP_WAITING) sleep_ms(50);
+                s = c.state;
+            } else {
+                s = dc_step(&c);
+                polled = true;
+            }
 
             // Item 1: the drive may only ever report a disk once an image is
             // genuinely resident and published -- dc_step only reaches here
@@ -1043,47 +1100,61 @@ static void core1_main(void) {
             bool mounted = c.mounted_sha256[0] != '\0';
 
             // Item 3: WPROT. Nothing mounted -> nothing to write to regardless
-            // of the flag's stale value; a mounted disk's writeProtected flows
-            // through untouched; and -- see WRITE_BACK_IMPLEMENTED's comment
-            // above -- the write path's absence forces this true regardless of
-            // either, until that path exists. Only main()'s core0 loop ever
-            // set WPROT before this (a fixed boot-time default); this is
-            // now the only place that updates it afterward.
-            bool wprot = !mounted || c.mounted_write_protected || !WF_ACCEPTS_WRITES;
+            // of the server's flag; a mounted disk's writeProtected flows
+            // through untouched; and the uploader forces this true after a
+            // refused write (409 write_protected) and while it is parked,
+            // both until the mount changes (up_forces_wprot), so a write
+            // already rejected server-side can never be retried as though it
+            // had been accepted, and a write made while parked is refused at
+            // the drive rather than kept on a disk the poll may replace.
+            // Only main()'s core0 loop ever set WPROT before this (a fixed
+            // boot-time default); this is now the only place that updates it
+            // afterward.
+            bool up_forced = up_forces_wprot(&up);
+            bool wprot = !mounted || c.mounted_write_protected || up_forced;
             bus_out_set(PIN_WPROT, wprot);
             /*
              * Say so when it CHANGES, with the reason.
              *
              * Added after a write test that produced nothing: WGATE never
              * fired, and working out why meant inferring the pin's state from
-             * the absence of an event. Three separate things force WPROT --
-             * no disk, the server's flag, and this firmware's own willingness
-             * -- and from the log they were indistinguishable. A gate nobody
-             * can observe is a gate nobody can debug.
+             * the absence of an event. THREE separate gates force WPROT --
+             * no disk, the server's flag, and the uploader (up_forces_wprot:
+             * after a refused write, or while parked) -- and none folds into
+             * another, so each is its own field below. Without them the
+             * reasons were indistinguishable from the log. A gate nobody can
+             * observe is a gate nobody can debug.
              */
             static int last_wprot = -1;
             if ((int)wprot != last_wprot) {
                 last_wprot = (int)wprot;
-                wf_logf(WF_INFO, "wprot: %s (mounted=%s server=%s firmware=%s)",
+                wf_logf(WF_INFO, "wprot: %s (mounted=%s server=%s uploader=%s)",
                         wprot ? "ASSERTED -- the Amiga cannot write" : "RELEASED -- the Amiga may write",
                         mounted ? "yes" : "no",
                         mounted ? (c.mounted_write_protected ? "protected" : "writable") : "n/a",
-                        WF_ACCEPTS_WRITES ? "accepts writes" : "refuses writes");
+                        up_forced ? "forced" : "ok");
             }
-            // The panel's pencil, from the same value and at the same moment.
-            // WRITE_BACK_IMPLEMENTED being 0 means writes never reach the
-            // SERVER; it does not mean every disk is read-only -- a capture
-            // or write-back build (WF_ACCEPTS_WRITES) releases WPROT exactly
-            // when the server's own flag allows it, and the pencil lights up
-            // then, on the board alone.
+            // The panel's pencil, from the same value and at the same moment
+            // -- lit exactly when the Amiga may actually write, which now
+            // also means those writes are on their way to the server via
+            // core1's uploader, not merely tolerated on the board alone.
             g_ui_writable = !wprot;
+            switch (up_sync(&up)) {
+            case UP_SYNCED:  g_ui_sync = DISP_SYNC_SYNCED;  break;
+            case UP_PENDING: g_ui_sync = DISP_SYNC_PENDING; break;
+            case UP_OFFLINE: g_ui_sync = DISP_SYNC_OFFLINE; break;
+            default:         g_ui_sync = DISP_SYNC_SYNCED;  break;
+            }
 
             // Item 4: the status heartbeat. ~60s (DC_STATUS_PERIOD_MS) or
             // immediately on a mount/swap/eject (spec §4.3, §10) -- tracked by
-            // the mounted disk's identity (sha256), not dc_state_t or
-            // mounted_version (which can advance on a no-op reconciliation poll
-            // that names the same already-mounted disk, which is not a
-            // transition anyone needs an out-of-band report for).
+            // the mounted disk's identity (sha256) and version, though Item 0
+            // above already sends and records a change-triggered report as
+            // soon as one is owed, before the uploader/poll choice even runs;
+            // what is left here to trigger on disk_changed/version_changed is
+            // only the case where dc_step()/up_step() itself just moved
+            // c.mounted_sha256/mounted_version further during THIS same pass
+            // -- otherwise this is just the plain 60s timer.
             // Review (final), Minor 5: not while halted. DC_HALTED means a 401
             // (or a 404 device row) -- the bearer is dead everywhere it
             // appears, and /api/device/status uses the same one, so every
@@ -1097,11 +1168,21 @@ static void core1_main(void) {
 
             uint32_t now = clock_ms();
             bool disk_changed = strcmp(c.mounted_sha256, last_reported_sha) != 0;
-            if (s != DC_HALTED && (disk_changed || (now - last_status_ms) >= DC_STATUS_PERIOD_MS)) {
-                dc_report_status(&c, psram_free_estimate(), wifi_rssi(), NULL);
-                last_status_ms = now;
-                strncpy(last_reported_sha, c.mounted_sha256, sizeof(last_reported_sha) - 1);
-                last_reported_sha[sizeof(last_reported_sha) - 1] = '\0';
+            bool version_changed = c.mounted_version != last_reported_version;
+            // Fix round 1: only advance the bookkeeping below when the send
+            // actually succeeded (dc_report_status now returns whether it
+            // did) -- see Item 0's comment for what a false positive here
+            // used to cost.
+            // Not on a report_retry pass (M3): Item 0's report just failed,
+            // and sending the same report again here would double it.
+            if (!report_retry && s != DC_HALTED && (disk_changed || version_changed ||
+                                    (now - last_status_ms) >= DC_STATUS_PERIOD_MS)) {
+                if (dc_report_status(&c, psram_free_estimate(), wifi_rssi(), NULL)) {
+                    last_status_ms = now;
+                    strncpy(last_reported_sha, c.mounted_sha256, sizeof(last_reported_sha) - 1);
+                    last_reported_sha[sizeof(last_reported_sha) - 1] = '\0';
+                    last_reported_version = c.mounted_version;
+                }
             }
 
             // Item 5: actually honour c.backoff_ms between attempts -- dc_step
@@ -1112,8 +1193,27 @@ static void core1_main(void) {
             // server-side. DC_HALTED means the token is dead (401 anywhere);
             // re-provisioning is plan 4b's job, so this just idles rather than
             // hammering a dead token in a tight loop.
-            if (s == DC_BACKOFF) {
-                sleep_ms(c.backoff_ms);
+            //
+            // `polled` gates this: when the loop above skipped dc_step to run
+            // the uploader instead, `s` is a snapshot of `c.state` taken
+            // without our own network attempt, and up_step() already did its
+            // own short wait (UP_WAITING) -- sleeping the FULL backoff on top
+            // of that would needlessly delay the next dirty-track POST. Slept
+            // in 100 ms steps, breaking out early the moment a write lands
+            // and up_has_work(&up) goes true, so a write is never held behind
+            // the tail of a poll backoff that no longer matters to it.
+            if (report_retry) {
+                // Item 0's beat (M3): a failed owed report, uploader waiting.
+                // DC_HALTED from that same report (a 401) is handled on the
+                // next pass, exactly as the old `continue` left it.
+                sleep_ms(1000);
+            } else if (polled && s == DC_BACKOFF) {
+                uint32_t remaining = c.backoff_ms;
+                while (remaining > 0 && !up_has_work(&up)) {
+                    uint32_t step = remaining < 100 ? remaining : 100;
+                    sleep_ms(step);
+                    remaining -= step;
+                }
             } else if (s == DC_HALTED) {
                 // Review round 2, Important 1: DC_HALTED used to be a
                 // permanent, unrecoverable strand. This `while (true)`
@@ -1149,6 +1249,17 @@ static void core1_main(void) {
                 // invalid_or_used_code (DC_REG_BAD_CODE), landing on
                 // prov_on_pairing_code_rejected() and the portal, exactly
                 // where a human can supply a fresh pairing code.
+                //
+                // A dead token can leave dirty tracks with nowhere to go: the
+                // uploader (uploader.c) can only push them with a live
+                // bearer, and the eject just below discards the board's own
+                // copy along with them. Say so, with a count, rather than
+                // let a write silently vanish with no trace at all.
+                {
+                    int dirty = psram_image_dirty_count(psram_active_slot());
+                    if (dirty > 0)
+                        wf_logf(WF_WARN, "write-back: %d dirty tracks lost (token dead)", dirty);
+                }
                 psram_publish_slot(SLOT_NONE);
                 token_store_erase();
                 break;
@@ -1173,17 +1284,6 @@ int main(void) {
     stdio_init_all();
     wf_log_init();
     wf_logf(WF_INFO, "wifi-floppy boot: %s", PICO_BOARD);
-#if WF_WRITE_CAPTURE
-    wf_logf(WF_WARN, "WRITE CAPTURE BUILD: WPROT released for writable disks. "
-                     "Writes are decoded and LOGGED, then DISCARDED -- the image "
-                     "does not change. Do not use a disk you care about.");
-#endif
-#if WF_WRITE_BACK
-    wf_logf(WF_WARN, "WRITE-BACK BUILD: whole, clean writes are applied to the "
-                     "board's copy of the disk; they are NOT sent upstream and "
-                     "are LOST at eject or power-off.");
-#endif
-
 
     // inputs. PIN_WDATA belongs here too even though only PIO reads it: an
     // RP2350 pad stays isolated from reset until gpio_set_function() clears
@@ -1479,10 +1579,12 @@ int main(void) {
          * Write capture. Two bounded steps, both of which do nothing at all
          * unless the Amiga is writing.
          *
-         * With WF_WRITE_BACK, a whole, clean track is applied to the board's
-         * copy of the disk (write-back spec §2); anything else is rejected and
-         * logged. Without it, the capture is decoded and LOGGED only -- the
-         * behaviour of the WF_WRITE_CAPTURE diagnostic build.
+         * A whole, clean track is applied to the board's copy of the disk
+         * (write-back spec §2); anything else is rejected and logged. Applying
+         * it marks the track dirty (psram_image.h) and bumps g_write_gen --
+         * core1's uploader (uploader.c, driven from core1_main) is what
+         * notices that and gets the track to the server, so a write no longer
+         * needs the board to stay powered and mounted to survive.
          *
          * Re-serving a rewritten track restarts the stream mid-revolution: one
          * torn revolution if the Amiga reads that track at that instant, which
@@ -1545,7 +1647,6 @@ int main(void) {
                     wf_logf(WF_WARN, "write: track says %u, head is on %d",
                             (unsigned)d.track_no, wt);
                 }
-#if WF_WRITE_BACK
                 {
                     const uint64_t t0 = time_us_64();
                     const int32_t now_tok = psram_active_token();
@@ -1560,6 +1661,11 @@ int main(void) {
                         // this track re-serve it now rather than at the next seek.
                         track_cache_invalidate(wt);
                         if (loaded == wt) loaded = -1;
+                        // Publish to core1's uploader: last_ms first, then the
+                        // barrier, then gen -- see g_write_last_ms's comment.
+                        g_write_last_ms = clock_ms();
+                        __dmb();
+                        g_write_gen++;
                         const uint64_t us = time_us_64() - t0;
                         wf_logf(WF_INFO, "write: trk %d applied in %lu us",
                                 wt, (unsigned long)us);
@@ -1567,7 +1673,6 @@ int main(void) {
                         wf_logf(WF_ERR, "write: trk %d apply failed (PSRAM)", wt);
                     }
                 }
-#endif
             }
         }
 

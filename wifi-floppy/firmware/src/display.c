@@ -115,28 +115,37 @@ static const uint8_t LEMMING[LEM_FRAMES][8] = {
 // THE WRITE STATE, as one of two glyphs -- never as the ABSENCE of one.
 //
 // The first version drew a pencil when the disk was writable and nothing when
-// it was not. That is unreadable: no disk is writable today (WPROT is asserted
-// for every mount while WRITE_BACK_IMPLEMENTED is 0), so the panel showed
+// it was not. That is unreadable: no disk was writable at the time (WPROT was
+// asserted for every mount, before write-back existed), so the panel showed
 // nothing at all, and nothing is indistinguishable from a firmware that has no
 // such indicator. Reported by the operator the moment it was flashed.
 //
 // The same rule the wifi glyph already follows, where "no radio" is a struck
 // glyph rather than a blank: a state worth showing is worth showing in both of
-// its values. Both occupy the same 8 columns, so the status word beside them
-// never moves.
+// its values. The cloud replaces the pencil: a cloud is only ever drawn on a
+// writable disk, so it still says "writable" (and the padlock still says
+// "read-only"), which keeps both values of the write state visible. Both
+// occupy the same 8 columns, so the status word beside them never moves.
 //
-//   pencil, writable        padlock, read-only
-//   .....##.                ..####..
-//   ....####                .##..##.     the shackle
-//   ...####.                .##..##.
-//   ..####..                ########
-//   .####...                ###..###     a keyhole, so it reads as a lock
-//   ####....                ###..###     and not as a filled box
-//   ###.....                ########
-//   #.......                ........
+//   cloud (synced/pending/offline), writable    padlock, read-only
+//   .....##.  (synced: filled)                  ..####..
+//   ....####  (pending: up-arrow cut out)       .##..##.     the shackle
+//   ...####.  (offline: diagonal strike)        .##..##.
+//   ..####..                                    ########
+//   .####...                                    ###..###     a keyhole, so
+//   ####....                                    ###..###     it reads as a lock
+//   ###.....                                    ########     and not as a
+//   #.......                                    ........     filled box
 #define PENCIL_W 8
 static const uint8_t LOCK[8] = { 0x3C, 0x66, 0x66, 0xFF, 0xE7, 0xE7, 0xFF, 0x00 };
-static const uint8_t PENCIL[8] = { 0x06, 0x0F, 0x1E, 0x3C, 0x78, 0xF0, 0xE0, 0x80 };
+// synced: a plain cloud. pending: the same cloud with an up-arrow cut out of
+// it. offline: the same cloud with a diagonal strike through it. All three
+// share an outline, so they read as one symbol in three states.
+static const uint8_t CLOUD[3][8] = {
+    { 0x00, 0x18, 0x3C, 0x7E, 0xFF, 0xFF, 0x7E, 0x00 },   // DISP_SYNC_SYNCED
+    { 0x00, 0x18, 0x24, 0x42, 0xE7, 0xE7, 0x66, 0x00 },   // DISP_SYNC_PENDING
+    { 0x80, 0x58, 0x1C, 0x6E, 0xF7, 0xFB, 0x7C, 0x01 },   // DISP_SYNC_OFFLINE
+};
 
 // ---------------------------------------------------------------- drawing
 static void px(uint8_t *fb, int x, int y) {
@@ -182,8 +191,8 @@ static void draw_lemming(uint8_t *fb, int x, int y, int frame) {
             if (g[r] & (1u << (LEM_W - 1 - c))) px(fb, x + c, y + r);
 }
 
-static void draw_write_state(uint8_t *fb, int x, int y, bool writable) {
-    const uint8_t *g = writable ? PENCIL : LOCK;
+static void draw_write_state(uint8_t *fb, int x, int y, bool writable, disp_sync_t sync) {
+    const uint8_t *g = writable ? CLOUD[sync] : LOCK;
     for (int r = 0; r < 8; r++)
         for (int c = 0; c < PENCIL_W; c++)
             if (g[r] & (1u << (PENCIL_W - 1 - c))) px(fb, x + c, y + r);
@@ -250,13 +259,13 @@ void display_render(const display_state_t *s, uint8_t fb[DISP_FB_BYTES]) {
     // --- top line: wifi glyph, status word, and the track counter ---------
     draw_wifi(fb, 0, 0, s->bars);
 
-    // The lemming owns the top-right corner; the pencil, when there is one,
+    // The lemming owns the top-right corner; the cloud, when there is one,
     // sits immediately left of it. Both are on the RIGHT so the left half --
     // the wifi glyph and the status word -- never moves: a status that shifted
     // sideways when a disk became writable would be harder to read at a
-    // glance than the pencil is worth.
+    // glance than the cloud is worth.
     draw_lemming(fb, DISP_W - LEM_W, 0, s->tick);
-    draw_write_state(fb, DISP_W - LEM_W - 2 - PENCIL_W, 0, s->writable);
+    draw_write_state(fb, DISP_W - LEM_W - 2 - PENCIL_W, 0, s->writable, s->sync);
     // Constant, because the glyph is always there. The earlier version moved
     // this depending on whether a pencil was drawn, which made the status word
     // shift sideways as a disk mounted.

@@ -43,4 +43,12 @@ bool http_resp_feed(http_resp_t *r, const uint8_t *data, int len,
 int  http_build_request(char *out, int out_len, const char *method, const char *path,
                         const char *host, const char *bearer, const char *body);
 
+// Headers only, for a body the caller sends straight after them. Binary-safe
+// where http_build_request is not: that one takes the body as a C string, and
+// a disk track is full of NUL bytes. Always carries Content-Length (0 for no
+// body). `content_type` NULL omits the header. Returns bytes written, or -1.
+int  http_build_head(char *out, int out_len, const char *method, const char *path,
+                     const char *host, const char *bearer, const char *content_type,
+                     int body_len);
+
 #endif

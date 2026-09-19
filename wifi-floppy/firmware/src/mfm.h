@@ -65,6 +65,27 @@ typedef struct {
 void mfm_decode_track(const uint8_t *mfm, size_t len, uint8_t *adf_out,
                       mfm_decode_result_t *out);
 
+/** Working memory mfm_decode_track_r needs: one realigned sector body
+ *  (MFM_SECTOR_MFM_BYTES - 8) plus one decoded sector's data. 1,592 bytes. */
+#define MFM_DECODE_SCRATCH_BYTES ((MFM_SECTOR_MFM_BYTES - 8) + MFM_SECTOR_DATA_BYTES)
+
+/**
+ * mfm_decode_track, re-entrant: every large working buffer is `scratch`
+ * (MFM_DECODE_SCRATCH_BYTES, caller-owned), nothing is static. Two calls
+ * through two different scratch buffers may run at the same time on two
+ * cores.
+ *
+ * WHO CALLS WHICH (review (final), Critical C1): the decoder runs on BOTH
+ * cores -- core0 decodes the Amiga's captured writes (main.c), core1's
+ * uploader decodes PSRAM tracks to upload them and to hash the image for
+ * the close (uploader.c). mfm_decode_track is core0's: a wrapper over a
+ * static scratch that only core0 uses. Core1 calls mfm_decode_track_r with
+ * a static scratch of its own. A new caller on either core must use a
+ * scratch that no other concurrent caller can reach.
+ */
+void mfm_decode_track_r(const uint8_t *mfm, size_t len, uint8_t *adf_out,
+                        mfm_decode_result_t *out, uint8_t *scratch);
+
 /** Amiga checksum: XOR of the big-endian u32 words, folded to the 0x55555555
  *  lanes. `len` must be a multiple of 4. */
 uint32_t mfm_checksum(const uint8_t *src, size_t len);

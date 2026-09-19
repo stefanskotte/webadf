@@ -408,6 +408,66 @@ static void test_encode_then_decode_round_trips(void) {
     free(adf);
 }
 
+/*
+ * Review (final), Critical C1: mfm_decode_track kept its working buffer in
+ * static storage, and it is now called from BOTH cores -- core0 decodes the
+ * Amiga's captured writes, core1's uploader decodes PSRAM tracks to upload
+ * and to hash for the close. Two decodes overlapping on one static buffer
+ * splice one track's sector body into the other's, and every spliced
+ * sector still carries a valid checksum (it is a real sector, just the
+ * wrong one), so nothing downstream can catch it.
+ *
+ * A host test cannot show that race: the host build is single-threaded, so
+ * no two decodes ever overlap here. What it CAN pin is the property that
+ * removes the race -- every byte of mfm_decode_track_r's mutable working
+ * state lives in the scratch its caller hands it. So: decode track A
+ * through scratch A, snapshot it, decode track B through scratch B, and
+ * require (1) both results right, (2) scratch A byte-identical to its
+ * snapshot -- B's decode touched nothing A's decode was using -- and (3)
+ * each scratch actually used (not merely ignored in favour of a static).
+ */
+static void test_decodes_through_separate_scratch_do_not_share_state(void) {
+    uint8_t *adf = synthetic_adf("prng");
+    static uint8_t mfm_a[MFM_TRACK_BYTES], mfm_b[MFM_TRACK_BYTES];
+    static uint8_t got_a[TRACK_DATA_BYTES], got_b[TRACK_DATA_BYTES];
+    static uint8_t sa[MFM_DECODE_SCRATCH_BYTES], sb[MFM_DECODE_SCRATCH_BYTES];
+    static uint8_t snap[MFM_DECODE_SCRATCH_BYTES];
+    const int ta = 12, tb = 140;
+    mfm_encode_track(adf + (size_t)ta * TRACK_DATA_BYTES, (uint8_t)ta, mfm_a);
+    mfm_encode_track(adf + (size_t)tb * TRACK_DATA_BYTES, (uint8_t)tb, mfm_b);
+    memset(sa, 0xa5, sizeof sa);
+    memset(sb, 0xa5, sizeof sb);
+    mfm_decode_result_t ra, rb;
+
+    mfm_decode_track_r(mfm_a, sizeof mfm_a, got_a, &ra, sa);
+    memcpy(snap, sa, sizeof snap);
+    uint8_t untouched[MFM_DECODE_SCRATCH_BYTES];
+    memset(untouched, 0xa5, sizeof untouched);
+    CHECK(memcmp(sa, untouched, sizeof sa) != 0, "scratch A is where A's decode worked");
+
+    mfm_decode_track_r(mfm_b, sizeof mfm_b, got_b, &rb, sb);
+    CHECK(memcmp(sa, snap, sizeof sa) == 0, "B's decode left A's scratch alone");
+    CHECK(memcmp(sb, untouched, sizeof sb) != 0, "scratch B is where B's decode worked");
+
+    // And the core0 wrapper, over its own static scratch, touches neither.
+    static uint8_t got_w[TRACK_DATA_BYTES];
+    memcpy(snap, sb, sizeof snap);
+    uint8_t snap_a[MFM_DECODE_SCRATCH_BYTES];
+    memcpy(snap_a, sa, sizeof snap_a);
+    mfm_decode_result_t rw;
+    mfm_decode_track(mfm_a, sizeof mfm_a, got_w, &rw);
+    CHECK(memcmp(sa, snap_a, sizeof sa) == 0 && memcmp(sb, snap, sizeof sb) == 0,
+          "mfm_decode_track uses its own scratch, not a caller's");
+
+    CHECK_EQ_INT(ra.found, 0x7ff); CHECK_EQ_INT(ra.track_no, ta);
+    CHECK_EQ_INT(rb.found, 0x7ff); CHECK_EQ_INT(rb.track_no, tb);
+    CHECK_EQ_INT(rw.found, 0x7ff);
+    CHECK(memcmp(got_a, adf + (size_t)ta * TRACK_DATA_BYTES, TRACK_DATA_BYTES) == 0, "A whole");
+    CHECK(memcmp(got_b, adf + (size_t)tb * TRACK_DATA_BYTES, TRACK_DATA_BYTES) == 0, "B whole");
+    CHECK(memcmp(got_w, got_a, TRACK_DATA_BYTES) == 0, "wrapper agrees");
+    free(adf);
+}
+
 int main(void) {
     RUN(test_round_trips_every_golden_track);
     RUN(test_a_capture_starting_mid_track_still_decodes);
@@ -422,5 +482,6 @@ int main(void) {
     RUN(test_interval_buckets);
     RUN(test_encoder_matches_every_golden_track);
     RUN(test_encode_then_decode_round_trips);
+    RUN(test_decodes_through_separate_scratch_do_not_share_state);
     return REPORT();
 }

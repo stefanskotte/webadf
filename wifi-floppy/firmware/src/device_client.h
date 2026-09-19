@@ -65,6 +65,10 @@ typedef struct {
 
 typedef void (*dc_observe_fn)(void *ctx, const dc_obs_t *o);
 
+// Returning true means "unsent writes exist for the mounted disk" -- see
+// dc_set_hold below.
+typedef bool (*dc_hold_fn)(void *ctx);
+
 // Read timeout for one request/response cycle. The server holds a poll
 // open for up to 25s before answering 204 (spec §4.3); a timeout at or
 // under that tears down a healthy poll mid-hold and looks exactly like a
@@ -114,6 +118,12 @@ typedef struct {
     // --- observation, see dc_set_observer ---
     dc_observe_fn _obs;
     void         *_obs_ctx;
+
+    // --- write-back, see dc_set_hold / dc_force_refetch ---
+    dc_hold_fn _hold;
+    void      *_hold_ctx;
+    bool       _refetch;
+
     // The in-flight disk's identity, so a progress observation can carry the
     // title without re-parsing the poll body it came from.
     char          _fetch_title[DC_TITLE_MAX + 1];
@@ -192,10 +202,65 @@ dc_register_result_t dc_register(device_client_t *c, const char *pairing_code,
 // rssi. `err` may be NULL (reported as JSON null); mountedSha256/
 // mountedDiskId are reported as explicit null when nothing is mounted,
 // never omitted -- an absent key means "leave the column alone" server
-// side, while null means "I hold no disk" (spec §10, F-2). Best-effort:
-// a transport failure or unexpected status here is not reflected in
-// `backoff_ms` or `state`, except a 401 (token dead), which halts exactly
-// as it does for the poll and image endpoints.
-void dc_report_status(device_client_t *c, int psram_free, int rssi, const char *err);
+// side, while null means "I hold no disk" (spec §10, F-2). Best-effort as
+// far as `backoff_ms`/`state` go -- a transport failure or unexpected
+// status here does not touch either, except a 401 (token dead), which
+// halts exactly as it does for the poll and image endpoints.
+//
+// Returns true iff a complete response with a 2xx status (204 included)
+// actually arrived; false otherwise (a transport failure, a truncated
+// response, a non-2xx status, or the 401 case above). Fix round 1 (write-
+// back piece 2b task 8): the caller (main.c) MUST NOT treat the mounted
+// disk's identity/version as reported to the server unless this returns
+// true -- the server decides an upload's not_mounted/behind verdict from
+// the mountedVersion it last successfully heard (HANDOFF 4g), and a caller
+// that advanced its own bookkeeping on a failed send would let the two
+// drift apart with no way to notice.
+bool dc_report_status(device_client_t *c, int psram_free, int rssi, const char *err);
+
+// Write-back (piece 2b): what an uploader needs from the poll/fetch state
+// machine to hold a disk open while writes are still on the way to the
+// server, and to push those writes out itself.
+
+// Registers `fn` (with `ctx`) as the hold check: while something is mounted
+// (mounted_sha256[0] != '\0') and `fn(ctx)` returns true, dc_handle_poll_body
+// treats a `desired` that would eject or replace the mounted disk as a
+// no-op -- nothing is ejected, fetched or published, `since` does not
+// advance, and backoff is untouched, so the poll is retried again once the
+// hold lifts. `fn` may be NULL to stop holding. With nothing mounted the
+// hold is ignored -- there is nothing to protect.
+void dc_set_hold(device_client_t *c, dc_hold_fn fn, void *ctx);
+
+// Forces the next poll to take the fetch path even if it names the digest
+// already mounted -- for when the server's copy of a disk must win over the
+// board's own (e.g. after closing a write session server-side). Resets
+// `since` to 0 so the poll is answered immediately rather than waiting for
+// the next version bump; dc_complete_transition() clears the flag once the
+// resulting transition completes.
+void dc_force_refetch(device_client_t *c);
+
+// Adopts `sha256` as the mounted digest without fetching or verifying
+// anything -- for when a write session on this same disk has already been
+// closed server-side and the server's new digest is known to match what is
+// already sitting in PSRAM. Nothing else (version, disk id, PSRAM slot)
+// changes; the next poll naming this digest is then a no-op, exactly as if
+// it had arrived by a normal fetch.
+void dc_adopt_image(device_client_t *c, const char *sha256);
+
+// Largest body dc_post will send in one call -- one head plus one track
+// (see the STACK note in device_client.c for why the request buffer this
+// backs is `static` and sized from this).
+#define DC_POST_BODY_MAX 5632
+
+// Sends one POST with a binary body (`body`/`body_len`, up to
+// DC_POST_BODY_MAX -- NUL bytes and all, unlike http_build_request's
+// C-string body) and copies the response body, NUL-terminated, into `resp`
+// (`resp_cap` bytes, truncated if it doesn't fit; `resp` may be NULL to
+// discard it). Returns the HTTP status on a well-formed exchange, or -1 for
+// a transport/framing failure, an incomplete body, `body_len` out of range,
+// or a request head that does not fit. A 401 halts (state = DC_HALTED) the
+// same as every other endpoint in this file, and still returns 401.
+int dc_post(device_client_t *c, const char *path, const char *content_type,
+            const uint8_t *body, int body_len, char *resp, int resp_cap);
 
 #endif

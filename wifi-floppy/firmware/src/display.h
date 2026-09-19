@@ -35,6 +35,8 @@ typedef enum {
     DS_ERROR,      // backoff / halted / no route
 } disp_status_t;
 
+typedef enum { DISP_SYNC_SYNCED = 0, DISP_SYNC_PENDING, DISP_SYNC_OFFLINE } disp_sync_t;
+
 typedef struct {
     disp_status_t status;
     // 0..3 arcs, or -1 for "no radio at all" which draws the bare dot. This
@@ -58,9 +60,10 @@ typedef struct {
      *  on this panel that changes what the Amiga is allowed to do to your
      *  disk, and the operator asked to be able to see it from across the
      *  room. Driven by the same value that drives WPROT, never a second
-     *  opinion about it -- a pencil that disagreed with the pin would be
-     *  worse than no pencil. */
+     *  opinion about it -- a cloud that disagreed with the pin would be
+     *  worse than no cloud. */
     bool writable;
+    disp_sync_t sync;
 } display_state_t;
 
 /** Compose `s` into a framebuffer. Pure: same state, same 512 bytes. */
