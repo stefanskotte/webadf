@@ -71,6 +71,9 @@ void psram_image_mark_dirty(int slot, int track, const uint8_t *src, uint32_t bi
 // Next dirty track for the writeback walker, or -1 when the image is clean.
 int  psram_image_next_dirty(int slot);
 void psram_image_clear_dirty(int slot, int track);
+void psram_image_set_dirty(int slot, int track);      // flag only; a PRESENT track becomes DIRTY
+int  psram_image_dirty_count(int slot);
+void psram_image_discard_dirty(int slot);             // every DIRTY track becomes PRESENT
 
 // Fill progress, for the background loader and any UI.
 int  psram_image_missing_count(int slot);

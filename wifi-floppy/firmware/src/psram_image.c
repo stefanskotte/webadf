@@ -151,6 +151,7 @@ static void store(int slot, int track, const uint8_t *src, uint32_t bit_count,
     if (nbytes > TRACK_MAX_BYTES) return;          // oversized track, drop
     memcpy(track_ptr(slot, track), src, nbytes);
     bits[slot][track]  = bit_count;
+    wfmf_barrier();     // payload must be visible to core1 before the flag that tells it to read it
     state[slot][track] = st;
 }
 
@@ -179,7 +180,27 @@ int psram_image_next_dirty(int slot) {
 }
 
 void psram_image_clear_dirty(int slot, int track) {
-    if (psram_image_state(slot, track) == TRK_DIRTY) state[slot][track] = TRK_PRESENT;
+    if (psram_image_state(slot, track) == TRK_DIRTY) {
+        state[slot][track] = TRK_PRESENT;
+        wfmf_barrier();     // payload must be visible to core1 before the flag that tells it to read it
+    }
+}
+
+void psram_image_set_dirty(int slot, int track) {
+    if (psram_image_state(slot, track) == TRK_PRESENT) state[slot][track] = TRK_DIRTY;
+}
+
+int psram_image_dirty_count(int slot) {
+    if (!have_psram || !slot_ok(slot)) return 0;
+    int n = 0;
+    for (int t = 0; t < NUM_TRACKS; t++) if (state[slot][t] == TRK_DIRTY) n++;
+    return n;
+}
+
+void psram_image_discard_dirty(int slot) {
+    if (!have_psram || !slot_ok(slot)) return;
+    for (int t = 0; t < NUM_TRACKS; t++)
+        if (state[slot][t] == TRK_DIRTY) state[slot][t] = TRK_PRESENT;
 }
 
 int psram_image_missing_count(int slot) {
