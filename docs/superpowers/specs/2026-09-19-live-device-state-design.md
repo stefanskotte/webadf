@@ -37,12 +37,14 @@ mounted disk).
 ### 3.1 `src/lib/live-state.ts` (pure core plus one query)
 
 - `liveStateRows(db, orgId)`: one query over the org's `devices`. For each device: `id`,
-  `desiredDiskId`, `desiredSha256`, `desiredVersion`, `mountedSha256`, `mountedVersion`,
-  `lastSeenAt`, `name`, `lastError`, `lastErrorAt`. It left-joins `disks` on `desiredDiskId` for
-  that disk's `sha256` and `writeProtected`. Ordered by device id, so the output does not depend
-  on row order.
+  `desiredDiskId`, `desiredSha256`, `desiredVersion`, `mountedDiskId`, `mountedSha256`,
+  `mountedVersion`, `lastSeenAt`, `name`, `firmwareVersion`, `lastError`, `lastErrorAt`. It
+  left-joins `disks` on `desiredDiskId` **and** the org (`disks.orgId`) for that disk's `sha256` and
+  `writeProtected`, so a `desiredDiskId` that somehow named a row in another org can never pull that
+  row's `sha256`/`writeProtected` into this org's fingerprint. Ordered by device id, so the output
+  does not depend on row order.
 - `liveFingerprint(rows, now)`: pure. It builds one canonical string per device:
-  `id|desiredDiskId|desiredSha|desiredVersion|mountedSha|mountedVersion|deviceState(row, now)|diskSha|diskWP|name|lastError|lastErrorAt|online|staleRelative`.
+  `id|desiredDiskId|desiredSha|desiredVersion|mountedDiskId|mountedSha|mountedVersion|deviceState(row, now)|diskSha|diskWP|name|firmwareVersion|lastError|lastErrorAt|online|staleRelative`.
   It joins them and returns a short hash (sha-256, the first 16 hex characters). `lastSeenAt`
   itself is **not** part of it, since it moves every 25 s; only what the pages actually derive
   from it is:
@@ -62,18 +64,30 @@ mounted disk).
 
 ### 3.2 `GET /api/live-state`
 
-- Authenticated by the session (`requireOrg`), scoped to the active organisation. Answers
-  `200 {"fingerprint": "<16 hex>"}` with `Cache-Control: no-store`. An unauthenticated request gets
-  the same answer every API route gives today (redirect/401 per `requireOrg`).
+- Scoped to the active organisation, checked the same way `requireOrg()` is (`auth.api.getSession`
+  against the session's `activeOrganizationId`) -- but unlike a page under `(app)`, a missing
+  session or active organisation answers `401 {"error": "unauthorized"}` with
+  `Cache-Control: no-store`, not `requireOrg()`'s redirect. A `fetch()` follows a redirect and
+  resolves it as a 200 carrying the sign-in page's HTML, which LiveRefresh would try to parse as
+  JSON; a 401 is a plain non-2xx answer LiveRefresh already ignores by design (§4).
+- Otherwise answers `200 {"fingerprint": "<16 hex>"}` with `Cache-Control: no-store`.
 - No request body, no parameters.
 
 ### 3.3 `src/components/shell/live-refresh.tsx` (client, in the app layout)
 
 - Mounted once in `src/app/(app)/layout.tsx`, so every page under it is covered. It renders
   nothing.
-- On mount it fetches the fingerprint and remembers it without refreshing. After that it fetches
-  every 3000 ms while `document.visibilityState === 'visible'`. When the fingerprint differs from
-  the last one, it calls `router.refresh()` and remembers the new value.
+- Its baseline is not its own first fetch, but the fingerprint the layout computed server-side for
+  THIS render (`liveFingerprint`/`liveStateRows` -- the same functions `/api/live-state` uses),
+  passed down as an `initial` prop. Seeding from the server closes a window a first-fetch baseline
+  would leave open: a change landing between the server render and the client's first tick (client
+  hydration plus one round trip, unbounded on a slow device or network) would otherwise be folded
+  straight into that baseline and never surface until some later, unrelated change gave the poller
+  something to compare against. After mount it fetches every 3000 ms while
+  `document.visibilityState === 'visible'`, comparing each answer against that baseline; when the
+  fingerprint differs from the last one, it calls `router.refresh()` and remembers the new value. A
+  fresh `initial` (from that `router.refresh()` or a full navigation) is re-adopted as the baseline
+  with nothing owed.
 - On `visibilitychange` to visible it fetches at once, then resumes the interval. While hidden, no
   requests are made.
 - At most one request in flight at a time: a tick that finds one still pending is skipped.
@@ -82,16 +96,21 @@ mounted disk).
 - It does not refresh while the user is typing in a form on the page. If `document.activeElement`
   is an `input`, `textarea` or contenteditable element, the refresh is deferred until focus leaves
   it. Otherwise a rename field could be re-rendered mid-edit. The fingerprint is still recorded,
-  and the deferred refresh runs on the first tick after focus leaves.
+  and the deferred refresh runs on the first tick after focus leaves. The one exception is the
+  header search box (`SearchBox`, mounted in the layout): its input carries `data-live-ok`, and an
+  element with that attribute is never treated as "typing" here -- focus lingering there is not the
+  same thing as an in-progress edit the way it is for a rename field, and must not hold back live
+  updates for the rest of the page.
 
 ## 4. Error handling
 
 | Failure | Behaviour |
 |---|---|
-| fetch fails or times out | ignored; retried next tick; no refresh |
-| 401 (session ended) | ignored; the next navigation hits `requireOrg` and signs out as today |
+| fetch times out | `AbortSignal.timeout(10_000)` aborts the fetch; the same `catch` that handles a network failure ignores it and retries next tick |
+| fetch fails (network, 5xx) | ignored; retried next tick; no refresh |
+| 401 (session ended) | the route answers this directly (§3.2), never a redirect; ignored like any other non-2xx; the next navigation hits `requireOrg` and signs out as today |
 | a refresh is already running | the next tick compares against the fingerprint recorded after it |
-| the user is typing | refresh deferred until focus leaves the field (§3.3) |
+| the user is typing | refresh deferred until focus leaves the field (§3.3); the header search box is exempt (§3.3) |
 
 ## 5. Testing
 
