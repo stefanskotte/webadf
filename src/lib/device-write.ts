@@ -19,8 +19,9 @@ export interface WriteQuery { diskId: string; mount: number }
 export const SESSION_TOKEN = /^[A-Za-z0-9_-]{1,64}$/;
 /**
  * What a route answers, verbatim. stageTrack: 200 { staged } | 200 { duplicate }
- * | 400 invalid_body | 404 not_found | 409 not_mounted | 409 write_protected
- * (only when opening a session). closeSession: 200 { sha256 } | 200 { sha256,
+ * | 400 invalid_body | 404 not_found | 409 not_mounted | 409 { not_mounted,
+ * reason: 'behind' } | 409 write_protected (these two only when opening a
+ * session). closeSession: 200 { sha256 } | 200 { sha256,
  * unchanged } | 404 not_found | 409 not_mounted | 409 { mismatch, sha256 }
  * | 409 incomplete (seq is not the session's last; kept) | 409 conflict (the
  * disk moved on; the session is kept for a retry).
@@ -36,19 +37,32 @@ type Device = { deviceId: string; orgId: string };
  * still in the middle of must stay reachable, or the Amiga's saves are lost.
  *
  *   'current' -- the board holds this disk at exactly this mount.
+ *   'behind'  -- it does, but the server has since bumped it for this same
+ *                disk and it has not acknowledged the bump. Its open session
+ *                continues; a NEW one is refused, because a session's base is
+ *                the head when it opens, and after a bump (another board's
+ *                close, a mismatch) the head may not be the image this board
+ *                holds -- its tracks would land on bytes it never had.
  *   'session' -- it holds this disk, and a session is already open for it at
  *                this mount (continue or close it, but never open a new one).
  *   null      -- 409 not_mounted.
  */
-async function holdsMount(device: Device, q: WriteQuery): Promise<'current' | 'session' | null> {
+async function holdsMount(device: Device, q: WriteQuery): Promise<'current' | 'behind' | 'session' | null> {
   const db = getDb();
   const rows = await db
-    .select({ diskId: devices.mountedDiskId, version: devices.mountedVersion })
+    .select({
+      diskId: devices.mountedDiskId, version: devices.mountedVersion,
+      desiredDiskId: devices.desiredDiskId, desiredVersion: devices.desiredVersion,
+    })
     .from(devices)
     .where(and(eq(devices.id, device.deviceId), eq(devices.orgId, device.orgId)))
     .limit(1);
-  if (rows[0]?.diskId !== q.diskId) return null;
-  if (rows[0].version === q.mount) return 'current';
+  const row = rows[0];
+  if (row?.diskId !== q.diskId) return null;
+  if (row.version === q.mount) {
+    const bumped = row.desiredDiskId === q.diskId && row.desiredVersion > row.version;
+    return bumped ? 'behind' : 'current';
+  }
   const open = await db.select({ mount: diskWriteSessions.mount }).from(diskWriteSessions)
     .where(and(
       eq(diskWriteSessions.deviceId, device.deviceId), eq(diskWriteSessions.mount, q.mount),
@@ -76,11 +90,14 @@ export async function stageTrack(
     // Opening a NEW session -- no session here, or one a previous boot of the
     // board left behind (its token differs). Needs the board's current mount;
     // only an already open session outlives a version bump.
-    if (held !== 'current') return { status: 409, body: { error: 'not_mounted' } };
+    if (held === 'session') return { status: 409, body: { error: 'not_mounted' } };
     // Write-protect is decided when a session opens, never in the middle of
     // one: refusing the rest of an open session would tear the save the Amiga
-    // is part-way through (the board applied those tracks already).
+    // is part-way through (the board applied those tracks already). Checked
+    // before 'behind': turning write-protect on bumps the board too, and the
+    // true reason is the flag, not the bump.
     if (disk.wp) return { status: 409, body: { error: 'write_protected' } };
+    if (held === 'behind') return { status: 409, body: { error: 'not_mounted', reason: 'behind' } };
     // Any other session of this board -- under an earlier mount, or under this
     // mount with another token -- means the board lost power before closing it.
     // After a reboot the board re-downloads the head image, which does not
@@ -198,15 +215,17 @@ export async function closeSession(
       ...(mismatch ? { desiredVersion: sql`${devices.desiredVersion} + 1` } : {}),
     }).where(and(thisDevice, eq(devices.desiredDiskId, q.diskId))),
   ];
-  if (recorded) {
-    // Any OTHER board that wants this disk is now behind: point it at the new
-    // image and bump it, so it re-downloads.
-    // Not when nothing changed -- there is nothing new for it to fetch.
-    stmts.push(db.update(devices).set({
-      desiredSha256: sha256, desiredVersion: sql`${devices.desiredVersion} + 1`,
-    }).where(and(
-      eq(devices.orgId, device.orgId), eq(devices.desiredDiskId, q.diskId), ne(devices.id, device.deviceId))));
-  }
+  // Any OTHER board that wants this disk but not its head is behind: point it
+  // at the head and bump it, so it re-downloads. Keyed on the digest, not on
+  // whether THIS call recorded: a close that recorded and then died before
+  // this batch is retried, records nothing the second time (the image is
+  // already the head), and must still move those boards. A board already at
+  // the head is left alone, so nothing changed means nothing bumped.
+  stmts.push(db.update(devices).set({
+    desiredSha256: sha256, desiredVersion: sql`${devices.desiredVersion} + 1`,
+  }).where(and(
+    eq(devices.orgId, device.orgId), eq(devices.desiredDiskId, q.diskId), ne(devices.id, device.deviceId),
+    ne(devices.desiredSha256, sha256))));
   await db.batch(stmts as [BatchItem<'pg'>, ...BatchItem<'pg'>[]]);
 
   if (mismatch) return { status: 409, body: { error: 'mismatch', sha256 } };
