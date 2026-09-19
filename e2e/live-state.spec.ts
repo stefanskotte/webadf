@@ -64,17 +64,18 @@ test('write-protect changed in one browser shows in another without a reload',
       const { deviceId } = await pairDevice(page, request);
       const { gameId, diskId } = await diskFor(orgId);
       // B loads the game page BEFORE the mount below, while the paired device is
-      // still 'empty' (nothing desired yet). That matters: games/[id]/page.tsx
-      // also mounts the OLDER, unrelated src/components/devices/live-refresh.tsx
-      // with active={anyPending}, which -- unlike the new global poller this spec
-      // is proving -- is a blind interval timer with no fingerprint check at all.
-      // If B's FIRST render already saw a pending/stale device, that old timer
-      // would start ticking on its own and could make this assertion pass for a
-      // reason that has nothing to do with the new poller. Loading before the
-      // mount keeps that prop false at mount time, so its effect never starts a
-      // timer, and nothing but the new global fingerprint poller can be the thing
-      // that later refreshes this page. (A follow-up task removes the old
-      // component entirely; this ordering is sound whether or not it exists.)
+      // still 'empty' (nothing desired yet). Until it was deleted (this task's
+      // predecessor), games/[id]/page.tsx also mounted an older, unrelated
+      // src/components/devices/live-refresh.tsx with active={anyPending} -- a
+      // blind interval timer with no fingerprint check at all, unlike the new
+      // global poller this spec proves. Had B's FIRST render already seen a
+      // pending/stale device back then, that old timer would have started
+      // ticking on its own and could have made this assertion pass for a
+      // reason that had nothing to do with the new poller. Loading before the
+      // mount kept that prop false at mount time, so its effect never started
+      // a timer. The component is gone now, but this ordering is still sound
+      // and still isolates the new global fingerprint poller as the only thing
+      // that can refresh this page.
       await pageB.goto(`/games/${gameId}`);
       const toggle = pageB.getByTestId(`wp-${diskId}`);
       await expect(toggle).toHaveAttribute('data-protected', 'true');
@@ -89,13 +90,57 @@ test('write-protect changed in one browser shows in another without a reload',
     }
   });
 
+test('a status report carrying only a new error shows in another browser without a reload',
+  async ({ browser, page, request }) => {
+    const { pageB, closeB } = await twoBrowsers(browser, page);
+    try {
+      const { deviceId, token } = await pairDevice(page, request);
+      // No poll needed to establish "seen" here, unlike the mount test above:
+      // nothing is ever desired or mounted on this device, so deviceState()
+      // stays 'empty' regardless of lastSeenAt -- 'stale' only applies once
+      // desired and mounted diverge. (A since=0 poll before any version bump
+      // would also hold for the full 25 s HOLD_MS with nothing to report,
+      // which is not what "establish seen" is for.)
+      await pageB.goto('/devices');
+      const card = pageB.getByTestId(`device-${deviceId}`);
+      await expect(card).toHaveAttribute('data-state', 'empty');
+      await expect(pageB.getByTestId(`device-error-${deviceId}`)).toHaveCount(0);
+
+      // LiveRefresh's FIRST /api/live-state fetch only records a baseline and
+      // never compares (see its `last.current === null` branch) -- it never
+      // refreshes off of it. If that baseline fetch is still in flight (client
+      // hydration can lag behind the server-rendered HTML Playwright already
+      // sees above) when the status report below lands, the baseline itself
+      // would already be the POST-change fingerprint, and the poller would
+      // have nothing left to notice: no comparison ever sees a diff, and this
+      // test would hang on a change that already happened. Waiting for that
+      // first request here, before making the change, is the same guard the
+      // idle test below applies for the same reason.
+      await pageB.waitForResponse((r) => r.url().includes('/api/live-state'));
+
+      const message = `SPI timeout ${runTag()}`;
+      // Per the status route's schema (src/app/api/device/status/route.ts),
+      // mountedSha256 is required but nullable -- null here reports "still
+      // holding nothing", exactly this never-mounted device's actual state,
+      // so `error` is the only thing that actually changes.
+      expect((await request.post('/api/device/status', {
+        headers: authHeader(token), data: { mountedSha256: null, error: message },
+      })).status()).toBe(204);
+
+      await expect(pageB.getByTestId(`device-error-${deviceId}`)).toHaveText(message, LIVE);
+    } finally {
+      await closeB();
+    }
+  });
+
 test('the fingerprint poller re-renders on a real change and does nothing while idle', async ({ page, request }) => {
   await signUpFresh(page);
   // This device stays untouched for the whole test -- what makes the idle
   // half of this test idle. It also renders the devices page's first card,
-  // which is 'empty' at this, the only browser's, first render, so the
-  // older devices/live-refresh.tsx (see the write-protect test above) never
-  // starts its own timer and cannot be mistaken for the new poller.
+  // which is 'empty' at this, the only browser's, first render, so back when
+  // the older devices/live-refresh.tsx still existed (see the write-protect
+  // test above), it never started its own timer to be mistaken for the new
+  // poller. That component is deleted now; this ordering is kept regardless.
   await pairDevice(page, request);
   await page.goto('/devices');
   let polls = 0, rsc = 0;
@@ -109,10 +154,10 @@ test('the fingerprint poller re-renders on a real change and does nothing while 
   // an untouched counter proves nothing if it can never go non-zero. Pairing a
   // SECOND device changes this org's fingerprint by exactly one row -- and,
   // deliberately, leaves both devices 'empty' (nothing mounted or desired), so
-  // proving the detector cannot itself start the older devices/live-refresh.tsx's
-  // blind timer and confound the idle measurement that follows. Within one
-  // poll window (LIVE_POLL_MS) the new poller's router.refresh() must show up
-  // as a real RSC request.
+  // it could never have started the older devices/live-refresh.tsx's blind
+  // timer (now deleted) and confounded the idle measurement that follows.
+  // Within one poll window (LIVE_POLL_MS) the new poller's router.refresh()
+  // must show up as a real RSC request.
   await pairDevice(page, request, 'Second Device');
   await expect.poll(() => rsc, { timeout: 5_000 }).toBeGreaterThanOrEqual(1);
   // Let any requests the refresh itself triggered settle before the clean

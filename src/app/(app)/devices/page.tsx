@@ -1,6 +1,6 @@
 import { requireOrg } from '@/lib/session';
 import { listDevices } from '@/lib/queries';
-import { STALE_AFTER_MS } from '@/lib/device-state';
+import { isOnline } from '@/lib/device-state';
 import { PageHeader } from '@/components/shell/page-header';
 import { DeviceCard } from '@/components/devices/device-card';
 import { PairButton } from '@/components/devices/pair-button';
@@ -13,9 +13,7 @@ export default async function DevicesPage() {
   // "now" is and flip each other across the staleness boundary.
   const now = Date.now();
 
-  const online = devices.filter(
-    (d) => d.lastSeenAt && now - d.lastSeenAt.getTime() <= STALE_AFTER_MS,
-  ).length;
+  const online = devices.filter((d) => isOnline(d.lastSeenAt, now)).length;
 
   return (
     <>

@@ -8,6 +8,7 @@ const base: LiveStateRow = {
   desiredDiskId: 'disk-1', desiredSha256: 'a'.repeat(64), desiredVersion: 4,
   mountedSha256: 'a'.repeat(64), mountedVersion: 4, lastSeenAt: new Date(NOW - 5_000),
   diskSha256: 'a'.repeat(64), diskWriteProtected: false,
+  lastError: null, lastErrorAt: null,
 };
 const other: LiveStateRow = { ...base, id: 'dev-b', name: 'Second' };
 const fp = (rows: LiveStateRow[], now = NOW) => liveFingerprint(rows, now);
@@ -27,6 +28,8 @@ describe('liveFingerprint', () => {
     ['write-protect', { diskWriteProtected: true }],
     ['the disk digest (a board write)', { diskSha256: 'd'.repeat(64) }],
     ['the device name', { name: 'Renamed' }],
+    ['the last error', { lastError: 'SPI timeout' }],
+    ['the last error timestamp', { lastErrorAt: new Date(NOW) }],
   ] as const)('changes when the %s changes', (_what, patch) => {
     expect(fp([{ ...base, ...patch }])).not.toBe(fp([base]));
   });
@@ -40,6 +43,21 @@ describe('liveFingerprint', () => {
   it('does not change when only lastSeenAt moves within the threshold', () => {
     expect(fp([{ ...base, lastSeenAt: new Date(NOW - 20_000) }]))
       .toBe(fp([{ ...base, lastSeenAt: new Date(NOW - 1_000) }]));
+  });
+
+  it('changes when a converged device crosses the online threshold', () => {
+    // base is converged (desired === mounted), so deviceState() itself never
+    // moves here -- only the online/offline boundary the header count reads.
+    const justOnline = { ...base, lastSeenAt: new Date(NOW - (STALE_AFTER_MS - 1_000)) };
+    const justOffline = { ...base, lastSeenAt: new Date(NOW - (STALE_AFTER_MS + 1_000)) };
+    expect(fp([justOnline], NOW)).not.toBe(fp([justOffline], NOW));
+  });
+
+  it("changes when a stale device's relative-time text changes", () => {
+    // Diverged and long past the threshold at both points below, so
+    // deviceState() stays 'stale' throughout -- only the "Nm ago" text moves.
+    const stale = { ...base, mountedSha256: null, mountedVersion: null, lastSeenAt: new Date(NOW) };
+    expect(fp([stale], NOW + 5 * 60_000)).not.toBe(fp([stale], NOW + 6 * 60_000));
   });
 
   it('distinguishes no devices from one device', () => {

@@ -38,14 +38,27 @@ mounted disk).
 
 - `liveStateRows(db, orgId)`: one query over the org's `devices`. For each device: `id`,
   `desiredDiskId`, `desiredSha256`, `desiredVersion`, `mountedSha256`, `mountedVersion`,
-  `lastSeenAt`, `name`. It left-joins `disks` on `desiredDiskId` for that disk's `sha256` and
-  `writeProtected`. Ordered by device id, so the output does not depend on row order.
+  `lastSeenAt`, `name`, `lastError`, `lastErrorAt`. It left-joins `disks` on `desiredDiskId` for
+  that disk's `sha256` and `writeProtected`. Ordered by device id, so the output does not depend
+  on row order.
 - `liveFingerprint(rows, now)`: pure. It builds one canonical string per device:
-  `id|desiredDiskId|desiredSha|desiredVersion|mountedSha|mountedVersion|deviceState(row, now)|diskSha|diskWP|name`.
+  `id|desiredDiskId|desiredSha|desiredVersion|mountedSha|mountedVersion|deviceState(row, now)|diskSha|diskWP|name|lastError|lastErrorAt|online|staleRelative`.
   It joins them and returns a short hash (sha-256, the first 16 hex characters). `lastSeenAt`
-  itself is **not** part of it, since it moves every 25 s; only its derived state is.
+  itself is **not** part of it, since it moves every 25 s; only what the pages actually derive
+  from it is:
+  - `online`: `'1'`/`'0'`, from `isOnline(lastSeenAt, now)` (`src/lib/device-state.ts`) -- the same
+    predicate `devices/page.tsx`'s header count uses, so the two can never disagree. Needed
+    because a converged device going offline does not change `deviceState()` at all, and the
+    header's online count would otherwise freeze.
+  - `staleRelative`: for a device whose `deviceState()` is `'stale'`, the exact
+    `relative(lastSeenAt, now)` text (`'5m ago'`, etc.) `DeviceCard` renders; `''` otherwise. Also
+    from `src/lib/device-state.ts`, imported back into `DeviceCard` so the card and the
+    fingerprint use one function and can never drift apart.
 - The disk's own `sha256` is included because a board's write moves it (§1) even while the
   device row's desired/mounted digests follow a moment later.
+- `lastError`/`lastErrorAt` are included because `DeviceCard` renders `lastError` in every state:
+  a status report that only sets an error, with every other hashed field unchanged, must still
+  change the fingerprint.
 
 ### 3.2 `GET /api/live-state`
 
@@ -85,9 +98,14 @@ mounted disk).
 - **vitest** (`src/lib/live-state.test.ts`):
   - the fingerprint is stable for identical rows in any input order;
   - it changes when any of these change: desired disk, desired or mounted digest, desired or
-    mounted version, write-protect, the disk's digest, the device name;
+    mounted version, write-protect, the disk's digest, the device name, `lastError`,
+    `lastErrorAt`;
   - it changes when time alone moves a device across `STALE_AFTER_MS` (the same rows, `now` moved
     past the threshold);
+  - it changes when time alone moves a **converged** device across the online/offline boundary
+    (`deviceState()` itself does not move, only `online`);
+  - it changes when time alone moves a **stale** device's relative-time text (e.g. `now` moving
+    from 5 minutes to 6 minutes past `lastSeenAt`, both already well past the threshold);
   - it does **not** change when only `lastSeenAt` moves within the threshold.
 - **e2e** (`e2e/live-state.spec.ts`), two browser contexts signed in to the same org:
   - A mounts a disk on a paired device; B, which never reloads and never clicks, shows it as
@@ -95,6 +113,8 @@ mounted disk).
   - A turns the disk's write-protect off; B's toggle reflects it within 5 s.
   - A device status report sent through the device API (a converged mount) moves B's device
     card from "pending" to "mounted" within 5 s.
+  - A device status report that changes only `error` (nothing else in the body) makes B's
+    `device-error-<id>` element appear within 5 s.
   - An idle page makes requests to `/api/live-state` only, and does not re-render while nothing
     changes. The test counts RSC refetches over 10 s: zero.
 - The existing suite stays green. Specs that assert on a page right after an action are
@@ -107,3 +127,7 @@ mounted disk).
   write-protect flag of a disk **no device has asked for** is not watched. That flag changes only
   from a browser, never from a board, and the browser that changed it has already refreshed.
 - Push transports (SSE, WebSockets) (L1).
+- A game renamed while a device is pending on it: the fingerprint does not include the desired
+  game's title, only its id/disk/digest, so a rename made in another browser while a mount is in
+  flight is not itself a reason to re-render. Rare, and the next unrelated re-render (or a manual
+  reload) shows the new title.
