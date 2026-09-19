@@ -58,6 +58,22 @@ async function fetchAdf(page: Page, diskId: string): Promise<Uint8Array> {
   return new Uint8Array(await res.body());
 }
 
+/**
+ * How long a tree assertion that follows an edit may wait. NOT the 5 s default.
+ *
+ * An edit here is two server round trips before the page can change: the
+ * edit request itself, then the `router.refresh()` that re-renders the files
+ * page (file-actions.tsx). Against the live database from a dev machine,
+ * measured 2026-09-19 over 77 traced edits: the edit took 1.7-4.4 s, the
+ * refresh 0.8-1.9 s, and click-to-refresh-complete reached 4.95 s -- right
+ * on the default 5 s, which is what made this file fail one run in three,
+ * a different test each time. Every refresh that completed carried the
+ * edited tree (75 of 75); the failures were refreshes still streaming when
+ * the default timeout expired, NOT stale data. Same 15 s, for the same
+ * reason, as mobile.spec.ts's upload and disk-drag-drop.spec.ts's commit.
+ */
+const AFTER_EDIT = { timeout: 15_000 };
+
 function findByName(entries: AdfEntry[], name: string): AdfEntry | null {
   for (const e of entries) if (e.name === name) return e;
   return null;
@@ -78,7 +94,7 @@ test('uploading a file adds it to the disk, and it reads back byte for byte', as
   });
   await expect(page.getByTestId('upload-name')).toHaveValue('HELLO.TXT');
   await page.getByTestId('upload-submit').click();
-  await expect(page.locator('[data-testid="fs-entry"][data-name="HELLO.TXT"]')).toBeVisible();
+  await expect(page.locator('[data-testid="fs-entry"][data-name="HELLO.TXT"]')).toBeVisible(AFTER_EDIT);
 
   // disks.id NEVER changes; disks.sha256 always does -- a re-keyed row reads
   // as an eject in the device protocol (disk-write.ts).
@@ -114,7 +130,7 @@ test('deleting a file changes the digest but leaves the id alone', async ({ page
     name: 'DOOMED', mimeType: 'application/octet-stream', buffer: content,
   });
   await page.getByTestId('upload-submit').click();
-  await expect(page.locator('[data-testid="fs-entry"][data-name="DOOMED"]')).toBeVisible();
+  await expect(page.locator('[data-testid="fs-entry"][data-name="DOOMED"]')).toBeVisible(AFTER_EDIT);
 
   const afterUpload = await diskRow(disk.id);
   const uploadedAdf = await fetchAdf(page, disk.id);
@@ -126,7 +142,7 @@ test('deleting a file changes the digest but leaves the id alone', async ({ page
   await page.getByTestId(`fs-delete-${entry.block}`).click();
   await expect(page.getByTestId(`fs-delete-confirm-${entry.block}`)).toBeVisible();
   await page.getByTestId(`fs-delete-confirm-${entry.block}`).click();
-  await expect(page.locator('[data-testid="fs-entry"][data-name="DOOMED"]')).toHaveCount(0);
+  await expect(page.locator('[data-testid="fs-entry"][data-name="DOOMED"]')).toHaveCount(0, AFTER_EDIT);
 
   const afterDelete = await diskRow(disk.id);
   expect(afterDelete.id).toBe(disk.id);
@@ -151,7 +167,7 @@ test('renaming rewrites the entry on the bytes, not just on the page', async ({ 
     name: 'OLDNAME', mimeType: 'application/octet-stream', buffer: content,
   });
   await page.getByTestId('upload-submit').click();
-  await expect(page.locator('[data-testid="fs-entry"][data-name="OLDNAME"]')).toBeVisible();
+  await expect(page.locator('[data-testid="fs-entry"][data-name="OLDNAME"]')).toBeVisible(AFTER_EDIT);
 
   const uploadedAdf = await fetchAdf(page, disk.id);
   const uploadedVolume = readVolume(uploadedAdf);
@@ -163,7 +179,7 @@ test('renaming rewrites the entry on the bytes, not just on the page', async ({ 
   await page.getByTestId(`fs-rename-${block}`).click();
   await page.getByTestId(`fs-rename-name-${block}`).fill('NEWNAME');
   await page.getByTestId(`fs-rename-submit-${block}`).click();
-  await expect(page.locator('[data-testid="fs-entry"][data-name="NEWNAME"]')).toBeVisible();
+  await expect(page.locator('[data-testid="fs-entry"][data-name="NEWNAME"]')).toBeVisible(AFTER_EDIT);
   await expect(page.locator('[data-testid="fs-entry"][data-name="OLDNAME"]')).toHaveCount(0);
 
   const adf = await fetchAdf(page, disk.id);
@@ -192,7 +208,7 @@ test('a new folder is a real directory on the disk, not just a row on the page',
   await page.getByTestId('new-folder-submit').click();
 
   const dirRow = page.locator('[data-testid="fs-entry"][data-name="STUFF"]');
-  await expect(dirRow).toBeVisible();
+  await expect(dirRow).toBeVisible(AFTER_EDIT);
   await expect(dirRow.locator('[data-testid^="fs-toggle-"]')).toHaveCount(1);
 
   const adf = await fetchAdf(page, disk.id);
@@ -279,7 +295,7 @@ test('a TOSEC-matched disk warns before the first edit drops its identity (D-W-3
   await page.getByTestId('new-folder-submit').click();
   await expect(page.getByTestId('identity-confirm-dialog')).toBeVisible();
   await page.getByTestId('identity-confirm-proceed').click();
-  await expect(page.locator('[data-testid="fs-entry"][data-name="Proceeded"]')).toBeVisible();
+  await expect(page.locator('[data-testid="fs-entry"][data-name="Proceeded"]')).toBeVisible(AFTER_EDIT);
 
   const afterProceed = await diskRow(disk.id);
   expect(afterProceed.id).toBe(disk.id);
