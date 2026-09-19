@@ -16,17 +16,15 @@
 //  - The OLD blob is NEVER deleted (spec §7). Blobs are content-addressed and
 //    global; other tenants may still be entitled to those exact bytes.
 //
-// D-W-4 is the one place this path DIFFERS from volume-name: a disk any
-// device has mounted or desires is refused outright, before anything is
-// read or written, rather than being written and then propagated to
-// holders. That is deliberate -- it keeps this increment free of any
-// protocol question, on hardware that has never run a write. The operator
-// ejects the device first; there is no server-side "eject and proceed".
+// D-W-4: a disk any device has mounted or desires is refused outright,
+// before anything is read or written. The operator ejects the device first;
+// there is no server-side "eject and proceed". The volume rename follows the
+// same rule (operator decision 2026-09-18) through the same findHolder.
 
-import { and, eq, or } from 'drizzle-orm';
+import { and, eq } from 'drizzle-orm';
 import { getDb } from '@/db';
 import { disks, entitlements } from '@/db/schema/catalog';
-import { devices } from '@/db/schema/devices';
+import { findHolder, mountedReason, repointLateMounts } from '@/lib/disk-holder';
 import { diskStore } from '@/lib/storage';
 import { recordVersion, StaleHeadError, type Recorded } from '@/lib/disk-history/store';
 import type { WriteResult } from '@/lib/adffs';
@@ -77,24 +75,12 @@ export async function applyDiskEdit(
   const disk = rows[0];
   if (!disk) return { ok: false, status: 404, reason: 'not_found' };
 
-  // D-W-4: refuse before anything is read or written -- checked against
-  // EITHER side of a device's state, because a board polling toward a new
-  // disk (desiredSha256) is just as much "somewhere this edit would land on
-  // hardware" as one that has already converged (mountedSha256). Named in
-  // the reason so the operator knows exactly where to eject from, rather
-  // than being told only that something, somewhere, refused.
-  const holders = await db
-    .select({ name: devices.name })
-    .from(devices)
-    .where(and(
-      eq(devices.orgId, orgId),
-      or(eq(devices.mountedSha256, disk.sha256), eq(devices.desiredSha256, disk.sha256)),
-    ))
-    .limit(1);
-
-  const holder = holders[0];
+  // D-W-4: refuse before anything is read or written. The holder lookup and
+  // the rule behind it live in findHolder (src/lib/disk-holder.ts), shared
+  // with the volume rename and the pages that offer both.
+  const holder = await findHolder(db, orgId, disk.sha256);
   if (holder) {
-    return { ok: false, status: 409, reason: `mounted on "${holder.name}"` };
+    return { ok: false, status: 409, reason: mountedReason(holder.name) };
   }
 
   let before: Uint8Array;
@@ -126,14 +112,19 @@ export async function applyDiskEdit(
   // An edit that changes nothing (writing a file's own bytes back) is a no-op.
   const sha256 = recorded?.sha256 ?? disk.sha256;
 
+  // A board that asked for this disk AFTER the refusal check above wants the
+  // old bytes now; point it at the new head (repointLateMounts says why this
+  // does not break the mounted-disk rule). Nothing to do when nothing moved.
+  if (recorded) await repointLateMounts(db, orgId, diskId, disk.sha256, recorded.sha256);
+
   // THE OLD BLOB (disk.sha256) IS NEVER DELETED, and there is deliberately no
   // call to diskStore.remove or a `blobs`/`entitlements` delete anywhere in
   // this function. blob-gc.ts, not this path, decides when bytes become
   // reclaimable.
   //
-  // No device is repointed either -- unlike volume-name's holder loop.
-  // There cannot be one: any device that wanted or held these bytes was
-  // already refused above, before this line could ever be reached.
+  // Every device that wanted or held these bytes at check time was refused
+  // above; the only repoint is repointLateMounts' completion of a mount that
+  // began after it.
 
   return { ok: true, sha256 };
 }

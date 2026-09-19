@@ -52,7 +52,7 @@ vi.mock('@/lib/storage', () => ({
 
 let selectResults: unknown[][] = [];
 const insertCalls: { table: unknown; values: unknown }[] = [];
-const updateCalls: { table: unknown; set: unknown }[] = [];
+const updateCalls: { table: unknown; set: unknown; where?: unknown }[] = [];
 const deleteCalls: unknown[] = [];
 // One entry per `.select(...)` call, in call order: the disk lookup's
 // `.where(...)` argument first, then the device-holder check's.
@@ -86,8 +86,9 @@ function fakeDb() {
   });
   const update = (table: unknown) => ({
     set: (values: unknown) => {
-      updateCalls.push({ table, set: values });
-      return { where: () => Promise.resolve(undefined) };
+      const call: { table: unknown; set: unknown; where?: unknown } = { table, set: values };
+      updateCalls.push(call);
+      return { where: (cond: unknown) => { call.where = cond; return Promise.resolve(undefined); } };
     },
   });
   const del = (table: unknown) => {
@@ -199,11 +200,15 @@ describe('applyDiskEdit', () => {
       source: 'browser', userId: 'user-1', sourceFilename: 'Game.adf',
     });
 
-    // applyDiskEdit writes nothing itself any more: the blob, entitlement,
-    // version rows and the disks.sha256 repoint are all the store's.
+    // The blob, entitlement, version rows and the disks.sha256 repoint are
+    // all the store's. applyDiskEdit's one write of its own is
+    // repointLateMounts: a board that asked for this disk after the refusal
+    // check (still wanting OLD_SHA) is moved to the new head.
     expect(diskStorePut).not.toHaveBeenCalled();
     expect(insertCalls).toHaveLength(0);
-    expect(updateCalls).toHaveLength(0);
+    expect(updateCalls).toHaveLength(1);
+    expect((updateCalls[0].set as { desiredSha256: string }).desiredSha256).toBe(newSha);
+    expect(renderWhere(updateCalls[0].where).params).toEqual([ORG_ID, DISK_ID, OLD_SHA]);
   });
 
   it('records a null userId when none is passed', async () => {
@@ -228,6 +233,8 @@ describe('applyDiskEdit', () => {
     const result = await applyDiskEdit(ORG_ID, DISK_ID, () => ({ ok: true, adf: same }), 'user-1');
 
     expect(result).toEqual({ ok: true, sha256: OLD_SHA });
+    // Nothing moved, so no device is repointed.
+    expect(updateCalls).toHaveLength(0);
   });
 
   it('never deletes the old blob', async () => {

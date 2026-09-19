@@ -3,7 +3,7 @@ import { createHash } from 'node:crypto';
 import { and, eq } from 'drizzle-orm';
 import { getDb } from '@/db';
 import { games, disks, entitlements } from '@/db/schema/catalog';
-import { devices } from '@/db/schema/devices';
+import { findHolder, mountedReason, repointLateMounts } from '@/lib/disk-holder';
 import { requireOrg } from '@/lib/session';
 import { diskStore } from '@/lib/storage';
 import { setVolumeName, MAX_VOLUME_NAME } from '@/lib/adffs/format';
@@ -28,11 +28,15 @@ const body = z.object({ volumeName: z.string().trim().min(1).max(MAX_VOLUME_NAME
  *    nothing -- which in this protocol IS an eject.
  *  - The OLD blob is never deleted. Other tenants may still be entitled to
  *    those exact bytes; blob-gc.ts decides when it becomes reclaimable.
- *  - A device holding this disk polls on the SHA, so repointing really is a
- *    disk change to the hardware and the version bump below is deliberate,
- *    not incidental. Compare the write-protect backlog entry: same protocol
- *    question, opposite answer, because there the flag changed and the bytes
- *    did not.
+ *  - A disk a board holds is REFUSED, never renamed and then pushed to the
+ *    board (operator decision 2026-09-18): "if a volume is mounted, it cannot
+ *    be modified by the server. If modifications should happen, these must
+ *    come from the (mounted) Amiga side of things." Same rule, same
+ *    findHolder and same reason string as applyDiskEdit's D-W-4, so no device
+ *    at check time wants or holds the bytes this replaces; only a mount that
+ *    began mid-rename is completed onto the new head (repointLateMounts). The
+ *    write-protect flag is different: a setting, not the bytes, so it still
+ *    applies live.
  */
 export async function PATCH(request: Request, ctx: { params: Promise<{ id: string }> }) {
   const { orgId, userId } = await requireOrg();
@@ -65,6 +69,13 @@ export async function PATCH(request: Request, ctx: { params: Promise<{ id: strin
   const disk = rows[0];
   if (!disk) return Response.json({ error: 'not_found' }, { status: 404 });
 
+  // Before the bytes are even read: a board that holds (or is polling toward)
+  // this disk owns it until it is ejected there.
+  const holder = await findHolder(db, orgId, disk.sha256);
+  if (holder) {
+    return Response.json({ error: 'mounted', reason: mountedReason(holder.name) }, { status: 409 });
+  }
+
   const before = await diskStore.read(disk.sha256);
   // A disk with no filesystem has no volume name to change. Renaming it would
   // mean writing a root block onto bytes that never had one, which is a
@@ -85,17 +96,23 @@ export async function PATCH(request: Request, ctx: { params: Promise<{ id: strin
 
   // The history store stores the new image (blob + entitlement), records it
   // as the disk's next version and repoints disks.sha256, all in one batch.
+  let recorded: Awaited<ReturnType<typeof recordVersion>>;
   try {
-    await recordVersion({
+    recorded = await recordVersion({
       orgId, diskId: id, headSha: disk.sha256, head: before, next: after,
       source: 'browser', userId, sourceFilename: `${volumeName}.adf`,
     });
   } catch (err) {
     // The disk changed since it was read: nothing recorded, and nothing
-    // below (name, title, holders) may run for a rename that did not land.
+    // below (name, title) may run for a rename that did not land.
     if (err instanceof StaleHeadError) return Response.json({ error: 'conflict' }, { status: 409 });
     throw err;
   }
+  // A board that asked for this disk after the refusal check wants the old
+  // bytes now: point it at the new head (see repointLateMounts). Null only
+  // when nothing was recorded, which the unchanged check above already rules
+  // out -- guarded anyway.
+  if (recorded) await repointLateMounts(db, orgId, id, disk.sha256, recorded.sha256);
   await db.update(disks)
     .set({ tosecName: `${volumeName}.adf` })
     .where(and(eq(disks.id, id), eq(disks.orgId, orgId)));
@@ -108,27 +125,5 @@ export async function PATCH(request: Request, ctx: { params: Promise<{ id: strin
     .set({ title: volumeName, sortTitle: makeSortTitle(volumeName), metadataSource: 'human' })
     .where(and(eq(games.id, disk.gameId), eq(games.orgId, orgId)));
 
-  // Any board that wants or holds these old bytes is now looking at a disk
-  // that no longer exists under that digest. Point it at the new one and bump
-  // the version, which is what the long poll is gated on -- without this the
-  // board sits in its 25 s poll and never learns.
-  // DESIRED only, not mounted. A device whose MOUNTED sha is the old one but
-  // whose desired sha is something else has already been told to change to a
-  // different disk; overwriting its desire here would silently redirect it to
-  // this one instead. readDesired reports devices.desiredSha256, and
-  // desiredDiskId is untouched because disks.id never changes -- so the join
-  // that resolves the label and the write-protect flag still lands.
-  const holders = await db.select({ id: devices.id, version: devices.desiredVersion })
-    .from(devices)
-    .where(and(
-      eq(devices.orgId, orgId),
-      eq(devices.desiredSha256, disk.sha256),
-    ));
-  for (const d of holders) {
-    await db.update(devices)
-      .set({ desiredSha256: sha256, desiredVersion: (d.version ?? 0) + 1 })
-      .where(and(eq(devices.id, d.id), eq(devices.orgId, orgId)));
-  }
-
-  return Response.json({ id, sha256, volumeName, devicesRepointed: holders.length });
+  return Response.json({ id, sha256, volumeName });
 }

@@ -1,8 +1,9 @@
 import { notFound } from 'next/navigation';
-import { and, eq, or } from 'drizzle-orm';
+import { and, eq } from 'drizzle-orm';
 import { getDb } from '@/db';
 import { disks, entitlements, games, blobs } from '@/db/schema/catalog';
-import { devices } from '@/db/schema/devices';
+import { findHolder } from '@/lib/disk-holder';
+import { ejectMessage, mountedReason } from '@/lib/mount-wording';
 import { requireOrg } from '@/lib/session';
 import { diskStore } from '@/lib/storage';
 import { readVolume, readUsage, type AdfEntry } from '@/lib/adffs';
@@ -120,21 +121,13 @@ export default async function DiskFilesPage(props: PageProps<'/disks/[id]/files'
   const usage = bytes ? readUsage(bytes) : null;
   const title = volume?.ok ? volume.volume.name || filename : filename;
 
-  // Same holder check applyDiskEdit runs before any write (D-W-4): a device
+  // Same holder check applyDiskEdit runs before any write (D-W-4, findHolder): a device
   // that has this disk mounted OR merely desires it is a reason to refuse,
   // because a board polling toward it is just as much "somewhere this edit
   // would land on hardware" as one already converged. Run here too, before
   // any edit is attempted, so the controls can say so up front instead of
   // only failing once someone tries.
-  const holders = bytes ? await getDb()
-    .select({ name: devices.name })
-    .from(devices)
-    .where(and(
-      eq(devices.orgId, orgId),
-      or(eq(devices.mountedSha256, disk.sha256), eq(devices.desiredSha256, disk.sha256)),
-    ))
-    .limit(1) : [];
-  const holder = holders[0] ?? null;
+  const holder = bytes ? await findHolder(getDb(), orgId, disk.sha256) : null;
 
   // The three ways editing is refused, in the same priority applyDiskEdit
   // itself would hit them: mounted is checked BEFORE the bytes are even
@@ -148,7 +141,7 @@ export default async function DiskFilesPage(props: PageProps<'/disks/[id]/files'
   // missing".
   const disabled: EditDisabled | null =
     holder
-      ? { reason: 'mounted', message: `This disk is mounted on "${holder.name}" — eject it there before editing.` }
+      ? { reason: 'mounted', message: ejectMessage(mountedReason(holder.name), 'editing') }
       : volume && !volume.ok
         ? { reason: 'no-filesystem', message: 'This disk has no filesystem, so there is nothing to add files to.' }
         : usage === null

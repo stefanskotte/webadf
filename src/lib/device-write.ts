@@ -200,7 +200,7 @@ export async function closeSession(
   ];
   if (recorded) {
     // Any OTHER board that wants this disk is now behind: point it at the new
-    // image and bump it, so it re-downloads (the volume-name holder pattern).
+    // image and bump it, so it re-downloads.
     // Not when nothing changed -- there is nothing new for it to fetch.
     stmts.push(db.update(devices).set({
       desiredSha256: sha256, desiredVersion: sql`${devices.desiredVersion} + 1`,

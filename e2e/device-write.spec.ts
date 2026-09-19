@@ -343,17 +343,32 @@ test('write-protect turned on mid-session: the open session finishes, a new one 
 test('a close after the head moved records the board\'s image over its own base', async ({ page, request }) => {
   const m = await mountedWritableDisk(page, request);
   const written = new Uint8Array(TRACK_DATA_BYTES).fill(0x91);
-  // Track 80 is the root block's track on a DD disk; a far track keeps the
-  // board's write clear of the rename below.
   expect((await upload(request, m.token, { diskId: m.diskId, mount: m.mount, track: 150, seq: 1 }, written)).status()).toBe(200);
 
-  // Another writer (the browser) moves the head while the session is open.
-  const renamed = await page.request.patch(`/api/disks/${m.diskId}/volume-name`, { data: { volumeName: 'Moved' } });
-  expect(renamed.status()).toBe(200);
+  // The browser cannot move the head of a disk a board holds (operator
+  // decision 2026-09-18: a mounted volume changes only from the Amiga side),
+  // so the only other writer left is a SECOND board holding the same disk.
+  // It opens its session on the same base, writes another track and closes
+  // first, while the first board's session is still open.
+  const second = await pairDevice(page, request, 'Second Board');
+  const mountedB = await page.request.post(`/api/devices/${second.deviceId}/mount`, { data: { diskId: m.diskId } });
+  expect(mountedB.status()).toBe(200);
+  const mountB = (await mountedB.json()).version as number;
+  expect((await request.post('/api/device/status', {
+    headers: authHeader(second.token), data: { mountedSha256: m.original, mountedDiskId: m.diskId, version: mountB },
+  })).status()).toBe(204);
+  const other = new Uint8Array(TRACK_DATA_BYTES).fill(0x92);
+  expect((await upload(request, second.token, { diskId: m.diskId, mount: mountB, track: 140, seq: 1 }, other)).status()).toBe(200);
+  const boardB = m.adf.slice(); boardB.set(other, 140 * TRACK_DATA_BYTES);
+  const movedSha = sha(boardB);
+  const first = await close(request, second.token, { diskId: m.diskId, mount: mountB, seq: 1, sha256: movedSha });
+  expect(first.status()).toBe(200);
   const [moved] = await getDb().select().from(disks).where(eq(disks.id, m.diskId));
+  expect(moved.sha256).toBe(movedSha);
   expect(moved.sha256).not.toBe(m.original);
 
-  // The board's digest: its tracks over the image IT downloaded.
+  // The board's digest: its tracks over the image IT downloaded (the base),
+  // not over the moved head -- so the second board's track 140 is NOT in it.
   const board = m.adf.slice(); board.set(written, 150 * TRACK_DATA_BYTES);
   const want = sha(board);
   const done = await close(request, m.token, { diskId: m.diskId, mount: m.mount, seq: 1, sha256: want });
@@ -361,11 +376,13 @@ test('a close after the head moved records the board\'s image over its own base'
   expect((await done.json()).sha256).toBe(want);
   const [disk] = await getDb().select().from(disks).where(eq(disks.id, m.diskId));
   expect(disk.sha256).toBe(want);
-  // The rename stays in history; the board's write is the head.
+  // The other board's write stays in history; this board's write is the head.
   const rows = await getDb().select().from(diskVersions)
     .where(eq(diskVersions.diskId, m.diskId)).orderBy(asc(diskVersions.seq));
-  expect(rows.map((r) => [r.seq, r.source, r.imageSha256])).toEqual([
-    [0, 'original', m.original], [1, 'browser', moved.sha256], [2, 'amiga', want]]);
+  expect(rows.map((r) => [r.seq, r.source, r.deviceId, r.imageSha256])).toEqual([
+    [0, 'original', null, m.original],
+    [1, 'amiga', second.deviceId, movedSha],
+    [2, 'amiga', m.deviceId, want]]);
 });
 
 test('a close with nothing staged and a wrong digest answers mismatch and bumps the board', async ({ page, request }) => {

@@ -1,4 +1,4 @@
-import { sql, desc, eq, and, inArray } from 'drizzle-orm';
+import { sql, desc, eq, and, or, inArray } from 'drizzle-orm';
 import { alias } from 'drizzle-orm/pg-core';
 import { getDb } from '@/db';
 import { games, disks, blobs, entitlements } from '@/db/schema/catalog';
@@ -26,6 +26,14 @@ export interface GameListItem {
    * rename uses it for. Do not reach for it on a multi-disk title.
    */
   diskId: string | null;
+  /**
+   * The device that holds (has mounted, or is polling toward) this title's
+   * disk -- set only for an authored title, the one case the grid offers a
+   * rename. A held disk cannot be renamed until it is ejected there
+   * (findHolder, src/lib/disk-holder.ts), and the card says so rather than
+   * offering a field the server will refuse.
+   */
+  holderName: string | null;
   /**
    * Our own image route, or null when nothing has been enriched for this
    * game -- which is the MAJORITY case (OpenRetro recognises 4 of 61 real
@@ -185,14 +193,17 @@ export async function countAllGames(orgId: string): Promise<{ titles: number; di
  * other's fan-out. Two narrow queries run concurrently are simpler and cost
  * one round trip, not two, in wall-clock terms.
  */
-async function withDerived<T extends { id: string }>(
+async function withDerived<T extends { id: string; authored: boolean; diskId: string | null }>(
   orgId: string, rows: T[],
-): Promise<Array<T & { coverUrl: string | null; kind: string | null }>> {
+): Promise<Array<T & { coverUrl: string | null; kind: string | null; holderName: string | null }>> {
   const ids = rows.map((r) => r.id);
   if (ids.length === 0) return [];
   const db = getDb();
 
-  const [images, sets, dzCovers] = await Promise.all([
+  // Only authored titles offer the rename, so only their disks need a holder.
+  const authoredDiskIds = rows.flatMap((r) => (r.authored && r.diskId ? [r.diskId] : []));
+
+  const [images, sets, dzCovers, held] = await Promise.all([
     db.select({
       gameId: disks.gameId,
       sha1: openretroImages.sha1,
@@ -214,7 +225,24 @@ async function withDerived<T extends { id: string }>(
       .where(and(inArray(disks.gameId, ids), eq(disks.orgId, orgId))),
 
     demozooCovers(orgId, ids),
+
+    // ONE query for the page, not one per card: the same rule findHolder
+    // (src/lib/disk-holder.ts) applies -- same org, and the disk's sha is a
+    // device's mounted OR desired sha -- joined across every authored disk.
+    authoredDiskIds.length === 0 ? Promise.resolve([]) : db
+      .select({ diskId: disks.id, name: devices.name })
+      .from(disks)
+      .innerJoin(devices, and(
+        eq(devices.orgId, orgId),
+        or(eq(devices.mountedSha256, disks.sha256), eq(devices.desiredSha256, disks.sha256)),
+      ))
+      .where(and(inArray(disks.id, authoredDiskIds), eq(disks.orgId, orgId))),
   ]);
+
+  // Any one holder names where to eject from; several boards on one disk is
+  // rare, and the first found is as good an answer as findHolder's.
+  const holderByDisk = new Map<string, string>();
+  for (const h of held) if (!holderByDisk.has(h.diskId)) holderByDisk.set(h.diskId, h.name);
 
   const coversByGame = new Map<string, CoverCandidate[]>();
   for (const f of images) {
@@ -238,6 +266,7 @@ async function withDerived<T extends { id: string }>(
       ...r,
       coverUrl: chosen ? `/api/images/${chosen.sha1}` : null,
       kind: pickKind(kindsByGame.get(r.id) ?? []),
+      holderName: r.authored && r.diskId ? holderByDisk.get(r.diskId) ?? null : null,
     };
   });
 }

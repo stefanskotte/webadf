@@ -5,6 +5,7 @@ import { createPortal } from 'react-dom';
 import { useRouter } from 'next/navigation';
 import { toast } from 'sonner';
 import { ROOT_BLOCK } from '@/lib/adffs/constants';
+import { ejectMessage, isMountedReason } from '@/lib/mount-wording';
 
 /**
  * Every AmigaDOS name field this app writes is 30 bytes (`bcplString(...,
@@ -31,9 +32,7 @@ export type EditDisabled =
 export function describeEditError(reason: string): string {
   // The 409 case: applyDiskEdit's own reason string, verbatim, naming the
   // device so the operator knows exactly where to eject from.
-  if (reason.startsWith('mounted on ')) {
-    return `This disk is ${reason} — eject it there first.`;
-  }
+  if (isMountedReason(reason)) return ejectMessage(reason);
   switch (reason) {
     case 'disk-full': return 'The disk is full — there is no room for this change.';
     case 'name-too-long': return `Names are limited to ${MAX_NAME_LENGTH} characters.`;
