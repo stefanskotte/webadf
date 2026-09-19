@@ -83,6 +83,15 @@ test('write-protect changed in one browser shows in another without a reload',
       // Watched only for a disk a device has asked for (spec §6).
       expect((await page.request.post(`/api/devices/${deviceId}/mount`, { data: { diskId } })).status()).toBe(200);
 
+      // Wait for B to actually show the mount (the holder line DiskRow renders
+      // once some device isThisDisk) BEFORE flipping write-protect below.
+      // Without this, the mount's own refresh and the WP-driven refresh could
+      // land in the same render -- or the mount's refresh could still be
+      // pending when the WP assertion below happens to pass -- so the WP
+      // assertion would not actually prove the write-protect change is what
+      // caused B's refresh, only that SOME refresh eventually reflected both.
+      await expect(pageB.getByTestId(`holder-${diskId}`)).toBeVisible(LIVE);
+
       expect((await page.request.patch(`/api/disks/${diskId}`, { data: { writeProtected: false } })).status()).toBe(200);
       await expect(toggle).toHaveAttribute('data-protected', 'false', LIVE);
     } finally {
@@ -106,16 +115,18 @@ test('a status report carrying only a new error shows in another browser without
       await expect(card).toHaveAttribute('data-state', 'empty');
       await expect(pageB.getByTestId(`device-error-${deviceId}`)).toHaveCount(0);
 
-      // LiveRefresh's FIRST /api/live-state fetch only records a baseline and
-      // never compares (see its `last.current === null` branch) -- it never
-      // refreshes off of it. If that baseline fetch is still in flight (client
-      // hydration can lag behind the server-rendered HTML Playwright already
-      // sees above) when the status report below lands, the baseline itself
-      // would already be the POST-change fingerprint, and the poller would
-      // have nothing left to notice: no comparison ever sees a diff, and this
-      // test would hang on a change that already happened. Waiting for that
-      // first request here, before making the change, is the same guard the
-      // idle test below applies for the same reason.
+      // LiveRefresh's baseline is now the fingerprint the server already
+      // computed for this render (the `initial` prop -- see the component's
+      // doc comment), not whatever its first client fetch happens to see, so
+      // that fetch DOES compare against it like any other tick. What this
+      // still waits for is simpler: that the effect has actually started
+      // polling at all. Client hydration can lag behind the server-rendered
+      // HTML Playwright already sees above, and if the status report below
+      // landed before LiveRefresh's first tick ever ran, that first tick
+      // would see the post-change fingerprint, compare it against the
+      // server-seeded baseline, and still refresh correctly -- but then the
+      // wait below for the error text would be timing the hydration delay,
+      // not the poller, which is not what this test means to measure.
       await pageB.waitForResponse((r) => r.url().includes('/api/live-state'));
 
       const message = `SPI timeout ${runTag()}`;

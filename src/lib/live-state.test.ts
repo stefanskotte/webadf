@@ -6,8 +6,10 @@ const NOW = 1_800_000_000_000;
 const base: LiveStateRow = {
   id: 'dev-a', name: 'Bench',
   desiredDiskId: 'disk-1', desiredSha256: 'a'.repeat(64), desiredVersion: 4,
-  mountedSha256: 'a'.repeat(64), mountedVersion: 4, lastSeenAt: new Date(NOW - 5_000),
+  mountedDiskId: 'disk-1', mountedSha256: 'a'.repeat(64), mountedVersion: 4,
+  lastSeenAt: new Date(NOW - 5_000),
   diskSha256: 'a'.repeat(64), diskWriteProtected: false,
+  firmwareVersion: '1.0.0',
   lastError: null, lastErrorAt: null,
 };
 const other: LiveStateRow = { ...base, id: 'dev-b', name: 'Second' };
@@ -23,11 +25,13 @@ describe('liveFingerprint', () => {
     ['desired disk', { desiredDiskId: 'disk-2' }],
     ['desired digest', { desiredSha256: 'b'.repeat(64) }],
     ['desired version', { desiredVersion: 5 }],
+    ['mounted disk id', { mountedDiskId: 'disk-2' }],
     ['mounted digest', { mountedSha256: 'c'.repeat(64) }],
     ['mounted version', { mountedVersion: 5 }],
     ['write-protect', { diskWriteProtected: true }],
     ['the disk digest (a board write)', { diskSha256: 'd'.repeat(64) }],
     ['the device name', { name: 'Renamed' }],
+    ['the firmware version', { firmwareVersion: '1.1.0' }],
     ['the last error', { lastError: 'SPI timeout' }],
     ['the last error timestamp', { lastErrorAt: new Date(NOW) }],
   ] as const)('changes when the %s changes', (_what, patch) => {

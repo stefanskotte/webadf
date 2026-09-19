@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { asc, eq } from 'drizzle-orm';
+import { and, asc, eq } from 'drizzle-orm';
 import type { getDb } from '@/db';
 import { devices } from '@/db/schema/devices';
 import { disks } from '@/db/schema/catalog';
@@ -14,8 +14,10 @@ import { deviceState, isOnline, relative } from '@/lib/device-state';
 export interface LiveStateRow {
   id: string; name: string;
   desiredDiskId: string | null; desiredSha256: string | null; desiredVersion: number;
-  mountedSha256: string | null; mountedVersion: number | null; lastSeenAt: Date | null;
+  mountedDiskId: string | null; mountedSha256: string | null; mountedVersion: number | null;
+  lastSeenAt: Date | null;
   diskSha256: string | null; diskWriteProtected: boolean | null;
+  firmwareVersion: string | null;
   lastError: string | null; lastErrorAt: Date | null;
 }
 
@@ -34,8 +36,9 @@ export function liveFingerprint(rows: readonly LiveStateRow[], now: number): str
       const state = deviceState(r, now);
       return [
         r.id, r.desiredDiskId ?? '', r.desiredSha256 ?? '', r.desiredVersion,
-        r.mountedSha256 ?? '', r.mountedVersion ?? '', state,
+        r.mountedDiskId ?? '', r.mountedSha256 ?? '', r.mountedVersion ?? '', state,
         r.diskSha256 ?? '', r.diskWriteProtected === null ? '' : String(r.diskWriteProtected), r.name,
+        r.firmwareVersion ?? '',
         r.lastError ?? '', r.lastErrorAt?.toISOString() ?? '',
         isOnline(r.lastSeenAt, now) ? '1' : '0',
         state === 'stale' ? relative(r.lastSeenAt, now) : '',
@@ -50,13 +53,19 @@ export async function liveStateRows(db: ReturnType<typeof getDb>, orgId: string)
       id: devices.id, name: devices.name,
       desiredDiskId: devices.desiredDiskId, desiredSha256: devices.desiredSha256,
       desiredVersion: devices.desiredVersion,
+      mountedDiskId: devices.mountedDiskId,
       mountedSha256: devices.mountedSha256, mountedVersion: devices.mountedVersion,
       lastSeenAt: devices.lastSeenAt,
       diskSha256: disks.sha256, diskWriteProtected: disks.writeProtected,
+      firmwareVersion: devices.firmwareVersion,
       lastError: devices.lastError, lastErrorAt: devices.lastErrorAt,
     })
     .from(devices)
-    .leftJoin(disks, eq(disks.id, devices.desiredDiskId))
+    // Org-scoped on both sides of the join: without `disks.orgId`, a
+    // `desiredDiskId` that somehow named a disk row in another org (it never
+    // should, but nothing at the type level prevents it) would join in that
+    // other org's `sha256`/`writeProtected` into THIS org's fingerprint.
+    .leftJoin(disks, and(eq(disks.id, devices.desiredDiskId), eq(disks.orgId, orgId)))
     .where(eq(devices.orgId, orgId))
     .orderBy(asc(devices.id));
 }

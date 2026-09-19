@@ -9,6 +9,12 @@ export const LIVE_POLL_MS = 3000;
 function typing(): boolean {
   const el = document.activeElement as HTMLElement | null;
   if (!el) return false;
+  // The header search box (SearchBox) marks its input `data-live-ok`: it
+  // lives in the layout, focus can linger there for reasons that have
+  // nothing to do with mid-edit text (a result panel left open, a stray
+  // click), and that must not hold back live updates for the rest of the
+  // page the way a genuine rename field should.
+  if (el.hasAttribute('data-live-ok')) return false;
   return el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.isContentEditable;
 }
 
@@ -27,6 +33,17 @@ function typing(): boolean {
  * Seeding the baseline from the server closes that window to zero: the very
  * first tick already compares against ground truth instead of just
  * recording it.
+ *
+ * Two races are known and accepted rather than closed. First, the layout's
+ * server render and this component's client mount are not the same instant:
+ * `Date.now()` inside the layout's query and the millisecond the browser
+ * paints can straddle a change by a few ms either way, same as any
+ * server-rendered page. Second, deploy skew: an old tab, still running the
+ * previous build's client code, can poll a server already running the new
+ * build and see a fingerprint that differs from the new deploy alone; its
+ * `router.refresh()` then fetches an RSC payload the old client cannot parse,
+ * which Next.js turns into a hard reload -- surprising once, but it leaves
+ * the tab on the new build, which is what the reload was for.
  */
 export function LiveRefresh({ initial }: { initial: string }) {
   const router = useRouter();
@@ -51,7 +68,7 @@ export function LiveRefresh({ initial }: { initial: string }) {
       if (inFlight.current || document.visibilityState !== 'visible') return;
       inFlight.current = true;
       try {
-        const res = await fetch('/api/live-state', { cache: 'no-store' });
+        const res = await fetch('/api/live-state', { cache: 'no-store', signal: AbortSignal.timeout(10_000) });
         if (!res.ok) return;
         const { fingerprint } = (await res.json()) as { fingerprint?: string };
         if (typeof fingerprint !== 'string') return;

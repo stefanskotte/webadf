@@ -253,6 +253,14 @@ export function SearchBox() {
       <input
         ref={inputRef}
         data-testid="search-input"
+        // Tells LiveRefresh's `typing()` guard (src/components/shell/live-refresh.tsx)
+        // not to treat focus here as "editing a form on the page". This box
+        // lives in the layout, not on a page, and focus can linger in it for
+        // reasons that have nothing to do with an in-progress edit (a result
+        // panel left open, a stray click) -- that must not hold back live
+        // updates for the rest of the page the way a genuine rename field
+        // should.
+        data-live-ok
         aria-label="Search titles"
         title="Search titles — press / to focus"
         placeholder="Search titles"
