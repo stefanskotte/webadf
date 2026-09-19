@@ -115,8 +115,8 @@ static const uint8_t LEMMING[LEM_FRAMES][8] = {
 // THE WRITE STATE, as one of two glyphs -- never as the ABSENCE of one.
 //
 // The first version drew a pencil when the disk was writable and nothing when
-// it was not. That is unreadable: no disk is writable today (WPROT is asserted
-// for every mount while WRITE_BACK_IMPLEMENTED is 0), so the panel showed
+// it was not. That is unreadable: no disk was writable at the time (WPROT was
+// asserted for every mount, before write-back existed), so the panel showed
 // nothing at all, and nothing is indistinguishable from a firmware that has no
 // such indicator. Reported by the operator the moment it was flashed.
 //

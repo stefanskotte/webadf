@@ -79,7 +79,7 @@ target_link_libraries(wifi_floppy
   pico_stdlib pico_multicore hardware_pio hardware_dma hardware_irq
   hardware_psram hardware_sync hardware_flash pico_flash hardware_i2c
   pico_cyw43_arch_lwip_threadsafe_background
-  pico_lwip_mbedtls pico_mbedtls pico_lwip_sntp)
+  pico_lwip_mbedtls pico_mbedtls pico_lwip_sntp pico_rand)
 # Review (final), Critical 1: RP2350's Arm stack guard is the msplim
 # register (pico_runtime_init/runtime_init_stack_guard.c) -- one instruction
 # per core at init, no MPU region consumed -- but PICO_USE_STACK_GUARDS
@@ -99,11 +99,6 @@ target_compile_definitions(wifi_floppy PRIVATE PICO_USE_STACK_GUARDS=1)
 # flux capture, the MFM decoder -- so as a default it distinguishes nothing.
 # CI passes the git description; rollout, rollback and anti-rollback in the
 # firmware-update design all need a version that moves when the image does.
-# An experiment build that lets the Amiga write, so the capture path can be
-# tested against a real drive. Writes are decoded and logged, NEVER applied --
-# see main.c's comment, which spells out that the Amiga will believe a write
-# succeeded and later read stale data back.
-option(WF_WRITE_CAPTURE "Release WPROT so writes can be captured (writes are discarded)" OFF)
 # Diagnostic: re-read and decode every track from PSRAM after a mount. See
 # main.c. Off by default -- it costs one track's decode per service-loop
 # iteration for 160 iterations after each mount.
@@ -118,21 +113,6 @@ option(WF_BUS_SNIFF "Log every change on the bus inputs, in exact order" OFF)
 if (WF_BUS_SNIFF)
   target_compile_definitions(wifi_floppy PRIVATE WF_BUS_SNIFF=1 WF_LOG_SLOTS=512)
   message(STATUS "WF_BUS_SNIFF is ON: every bus input change is logged.")
-endif ()
-if (WF_WRITE_CAPTURE)
-  target_compile_definitions(wifi_floppy PRIVATE WF_WRITE_CAPTURE=1)
-  message(WARNING "WF_WRITE_CAPTURE is ON: this image lets the Amiga write, and throws the writes away.")
-endif ()
-
-# Write-back piece 1 (docs/superpowers/specs/2026-09-18-write-back-and-disk-history-design.md
-# §2): a whole, clean captured track is written into the board's copy of the disk, so the
-# Amiga reads its own writes back. NOTHING is sent upstream yet -- writes are lost at eject.
-# Capture is always compiled in; WF_WRITE_CAPTURE need not be set. Removed in piece 2,
-# when writes reach the server.
-option(WF_WRITE_BACK "Apply captured writes to the board's copy (lost at eject)" OFF)
-if (WF_WRITE_BACK)
-  target_compile_definitions(wifi_floppy PRIVATE WF_WRITE_BACK=1)
-  message(WARNING "WF_WRITE_BACK is ON: writes change the board's copy of the disk and are LOST at eject.")
 endif ()
 
 set(FIRMWARE_VERSION "4b.0-dev" CACHE STRING

@@ -36,10 +36,11 @@
 // Two things matter about the ordering: `sha256` is emitted first, so a
 // truncated body still yields a plausible-looking digest, while
 // `writeProtected` is emitted LAST, so it is the first field a long title
-// pushes off the end. Losing it silently is only harmless while
-// dc_handle_poll_body's absent-value default (true) and main.c's
-// WRITE_BACK_IMPLEMENTED=0 both hold; the day write-back lands it would
-// be a disk presented as writable purely because its title was long.
+// pushes off the end. Losing it silently would be a disk presented as
+// writable purely because its title was long -- so this is never resolved
+// by a favourable default: a truncated body is refused outright (dc_step's
+// DC_IDLE_POLL/backoff path below never calls dc_handle_poll_body on one),
+// which means a lost writeProtected can never present a disk as writable.
 // So: the buffer is generous (~1.1 KB for the two free-text fields), AND
 // truncation is recorded rather than silently swallowed -- dc_step
 // refuses to act on a truncated body at all (see its DC_IDLE_POLL/backoff
