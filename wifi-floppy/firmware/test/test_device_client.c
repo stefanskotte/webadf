@@ -302,6 +302,37 @@ static void test_unmounted_reports_null_not_omitted(void) {
           "an unmounted device must report null explicitly");
 }
 
+// Fix round 1 (write-back piece 2b task 8): dc_report_status's return value
+// is what main.c now relies on to decide whether it may advance its own
+// "last reported to the server" bookkeeping. A failed report that was
+// silently treated as sent let the server's mountedVersion fall behind the
+// board's, which a later upload attempt then read as not_mounted and got
+// parked, with no path back except a further mount change -- see the
+// finding this fixes. These three pin the boundary a `bool` return has to
+// get right: a genuinely delivered report (204), a transport failure that
+// never reached the server at all, and a reply that reached the server but
+// says it did NOT act on the report (500).
+static void test_status_returns_true_on_204(void) {
+    boot();
+    fake_push_response("HTTP/1.1 204 No Content\r\n\r\n");
+    CHECK(dc_report_status(&c, 4096, -55, NULL),
+          "a 204 is a report the server actually received");
+}
+
+static void test_status_returns_false_on_connect_failure(void) {
+    boot();
+    fake_push_connect_failure();
+    CHECK(!dc_report_status(&c, 4096, -55, NULL),
+          "a transport failure never reached the server -- not delivered");
+}
+
+static void test_status_returns_false_on_500(void) {
+    boot();
+    fake_push_response("HTTP/1.1 500 Internal Server Error\r\n\r\n");
+    CHECK(!dc_report_status(&c, 4096, -55, NULL),
+          "a 5xx means the server did not act on the report -- not delivered");
+}
+
 // --- Task 10: a genuinely successful image fetch really publishes --------
 // Every other test above that reaches dc_fetch_image's 200 branch uses a
 // truncated or non-200 response, so none of them ever call
@@ -872,6 +903,9 @@ int main(void) {
     RUN(test_status_success_does_not_reset_poll_backoff);
     RUN(test_status_sends_all_six_fields);
     RUN(test_unmounted_reports_null_not_omitted);
+    RUN(test_status_returns_true_on_204);
+    RUN(test_status_returns_false_on_connect_failure);
+    RUN(test_status_returns_false_on_500);
     RUN(test_corrupt_image_body_blocks_the_digest_but_does_not_publish);
     RUN(test_successful_image_fetch_publishes_and_reflects_write_protected);
     RUN(test_register_body_has_the_three_required_fields);

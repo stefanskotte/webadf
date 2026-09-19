@@ -809,13 +809,18 @@ dc_register_result_t dc_register(device_client_t *c, const char *pairing_code,
 // null says "I am holding no disk" -- reporting the wrong one leaves a
 // stale disk showing in the operator UI after an eject.
 //
-// Best-effort: a connect/write/read failure or an unexpected status here
-// does not touch `backoff_ms` or `state` -- the poll loop is what keeps the
-// device from looking dead (spec: "a device with a broken status path but
-// a healthy poll loop still reads as recently seen"). The one exception is
-// 401: the token is dead everywhere it appears, so this halts exactly as
-// the poll and image endpoints do.
-void dc_report_status(device_client_t *c, int psram_free, int rssi, const char *err) {
+// Best-effort as far as `backoff_ms`/`state` go: a connect/write/read
+// failure or an unexpected status here does not touch either -- the poll
+// loop is what keeps the device from looking dead (spec: "a device with a
+// broken status path but a healthy poll loop still reads as recently
+// seen"). The one exception is 401: the token is dead everywhere it
+// appears, so this halts exactly as the poll and image endpoints do.
+//
+// The return value is NOT best-effort, though (fix round 1): the caller
+// needs to know whether the report actually reached the server before it
+// updates its own idea of "what I last told the server", or the two can
+// drift -- see the header comment.
+bool dc_report_status(device_client_t *c, int psram_free, int rssi, const char *err) {
     bool mounted = c->mounted_sha256[0] != '\0';
 
     // static: see the STACK note above. Called only from core1_main's
@@ -841,18 +846,22 @@ void dc_report_status(device_client_t *c, int psram_free, int rssi, const char *
         "\"error\":%s,\"psramFree\":%d,\"rssi\":%d}",
         sha_field, disk_field, (unsigned long)c->mounted_version,
         err_field, psram_free, rssi);
-    if (body_len < 0 || body_len >= (int)sizeof body) return; // should never happen; give up quietly
+    if (body_len < 0 || body_len >= (int)sizeof body) return false; // should never happen; give up quietly
 
     static char req[DC_STATUS_REQ_BYTES];
     int req_len = http_build_request(req, sizeof req, "POST", DC_STATUS_PATH,
                                      c->host, c->token, body);
-    if (req_len < 0) return;
+    if (req_len < 0) return false;
 
     static http_resp_t r;   // static: see the STACK note above
     bool ok = dc_exchange(c, req, req_len, dc_discard_sink, NULL, &r);
-    if (!ok || !r.body_complete) return; // best-effort; the poll loop is what matters
+    if (!ok || !r.body_complete) return false; // best-effort; the poll loop is what matters
 
-    if (r.status == 401) c->state = DC_HALTED; // token is dead; 401 anywhere halts
+    if (r.status == 401) {
+        c->state = DC_HALTED; // token is dead; 401 anywhere halts
+        return false;
+    }
+    return r.status >= 200 && r.status < 300;
 }
 
 #define DC_POST_HEAD_BYTES 512

@@ -202,11 +202,21 @@ dc_register_result_t dc_register(device_client_t *c, const char *pairing_code,
 // rssi. `err` may be NULL (reported as JSON null); mountedSha256/
 // mountedDiskId are reported as explicit null when nothing is mounted,
 // never omitted -- an absent key means "leave the column alone" server
-// side, while null means "I hold no disk" (spec §10, F-2). Best-effort:
-// a transport failure or unexpected status here is not reflected in
-// `backoff_ms` or `state`, except a 401 (token dead), which halts exactly
-// as it does for the poll and image endpoints.
-void dc_report_status(device_client_t *c, int psram_free, int rssi, const char *err);
+// side, while null means "I hold no disk" (spec §10, F-2). Best-effort as
+// far as `backoff_ms`/`state` go -- a transport failure or unexpected
+// status here does not touch either, except a 401 (token dead), which
+// halts exactly as it does for the poll and image endpoints.
+//
+// Returns true iff a complete response with a 2xx status (204 included)
+// actually arrived; false otherwise (a transport failure, a truncated
+// response, a non-2xx status, or the 401 case above). Fix round 1 (write-
+// back piece 2b task 8): the caller (main.c) MUST NOT treat the mounted
+// disk's identity/version as reported to the server unless this returns
+// true -- the server decides an upload's not_mounted/behind verdict from
+// the mountedVersion it last successfully heard (HANDOFF 4g), and a caller
+// that advanced its own bookkeeping on a failed send would let the two
+// drift apart with no way to notice.
+bool dc_report_status(device_client_t *c, int psram_free, int rssi, const char *err);
 
 // Write-back (piece 2b): what an uploader needs from the poll/fetch state
 // machine to hold a disk open while writes are still on the way to the

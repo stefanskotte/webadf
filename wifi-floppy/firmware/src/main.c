@@ -1011,6 +1011,47 @@ static void core1_main(void) {
         uint32_t last_status_ms = clock_ms();
 
         while (true) {
+            // Item 0 (fix round 1, Important): a status report is OWED
+            // whenever the mounted disk's identity or version differs from
+            // the values last SUCCESSFULLY reported -- checked, and sent if
+            // so, before the uploader/poll choice below even runs.
+            //
+            // Why this has to come first: the server decides an upload's
+            // not_mounted/behind verdict purely from the mountedVersion it
+            // last heard over this same status channel (HANDOFF 4g), not
+            // from anything the poll or the upload itself carries. A report
+            // that FAILS to reach the server (transport error, 5xx) used to
+            // still be recorded here as sent -- dc_report_status returned
+            // void and this loop advanced last_reported_sha/_version
+            // regardless. The next dirty-track upload then went out under a
+            // version the server had never heard of, got 409 not_mounted,
+            // and up_park()'d; parking only clears on a further mount
+            // change, never on the plain 60 s heartbeat below (which is
+            // exactly this same report, so it would have failed too, for
+            // the same reason) -- and while parked, up_holds() is false, so
+            // a swap or eject arriving before the next mount change could
+            // drop the parked disk's dirty tracks with no trace at all.
+            //
+            // So: send first, and only believe it worked -- advancing this
+            // loop's own bookkeeping -- when dc_report_status says so. A
+            // failure while the uploader has work is worth an extra beat of
+            // delay (rather than letting up_step race ahead and upload
+            // under the still-unreported version): the disk stays held
+            // regardless, since up_holds() does not depend on any of this.
+            bool report_owed = strcmp(c.mounted_sha256, last_reported_sha) != 0 ||
+                                c.mounted_version != last_reported_version;
+            if (report_owed && c.state != DC_HALTED) {
+                if (dc_report_status(&c, psram_free_estimate(), wifi_rssi(), NULL)) {
+                    last_status_ms = clock_ms();
+                    strncpy(last_reported_sha, c.mounted_sha256, sizeof(last_reported_sha) - 1);
+                    last_reported_sha[sizeof(last_reported_sha) - 1] = '\0';
+                    last_reported_version = c.mounted_version;
+                } else if (up_has_work(&up)) {
+                    sleep_ms(1000);
+                    continue;
+                }
+            }
+
             dc_state_t s;
             bool polled = false;
             if (up_has_work(&up)) {
@@ -1082,10 +1123,13 @@ static void core1_main(void) {
 
             // Item 4: the status heartbeat. ~60s (DC_STATUS_PERIOD_MS) or
             // immediately on a mount/swap/eject (spec §4.3, §10) -- tracked by
-            // the mounted disk's identity (sha256), not dc_state_t or
-            // mounted_version (which can advance on a no-op reconciliation poll
-            // that names the same already-mounted disk, which is not a
-            // transition anyone needs an out-of-band report for).
+            // the mounted disk's identity (sha256) and version, though Item 0
+            // above already sends and records a change-triggered report as
+            // soon as one is owed, before the uploader/poll choice even runs;
+            // what is left here to trigger on disk_changed/version_changed is
+            // only the case where dc_step()/up_step() itself just moved
+            // c.mounted_sha256/mounted_version further during THIS same pass
+            // -- otherwise this is just the plain 60s timer.
             // Review (final), Minor 5: not while halted. DC_HALTED means a 401
             // (or a 404 device row) -- the bearer is dead everywhere it
             // appears, and /api/device/status uses the same one, so every
@@ -1099,19 +1143,19 @@ static void core1_main(void) {
 
             uint32_t now = clock_ms();
             bool disk_changed = strcmp(c.mounted_sha256, last_reported_sha) != 0;
-            // A mount-version change (with the same sha256) is reported too:
-            // the server decides `behind` and `not_mounted` for an upload
-            // (uploader.c) from the mountedVersion it last heard in a status
-            // report, so until this fires after a version bump every upload
-            // under it is refused.
             bool version_changed = c.mounted_version != last_reported_version;
+            // Fix round 1: only advance the bookkeeping below when the send
+            // actually succeeded (dc_report_status now returns whether it
+            // did) -- see Item 0's comment for what a false positive here
+            // used to cost.
             if (s != DC_HALTED && (disk_changed || version_changed ||
                                     (now - last_status_ms) >= DC_STATUS_PERIOD_MS)) {
-                dc_report_status(&c, psram_free_estimate(), wifi_rssi(), NULL);
-                last_status_ms = now;
-                strncpy(last_reported_sha, c.mounted_sha256, sizeof(last_reported_sha) - 1);
-                last_reported_sha[sizeof(last_reported_sha) - 1] = '\0';
-                last_reported_version = c.mounted_version;
+                if (dc_report_status(&c, psram_free_estimate(), wifi_rssi(), NULL)) {
+                    last_status_ms = now;
+                    strncpy(last_reported_sha, c.mounted_sha256, sizeof(last_reported_sha) - 1);
+                    last_reported_sha[sizeof(last_reported_sha) - 1] = '\0';
+                    last_reported_version = c.mounted_version;
+                }
             }
 
             // Item 5: actually honour c.backoff_ms between attempts -- dc_step
