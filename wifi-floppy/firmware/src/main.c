@@ -144,6 +144,13 @@ static bool ui_snapshot(display_state_t *s) {
     s->pct      = g_ui_pct;
     s->writable = g_ui_writable;
     s->sync     = (disp_sync_t)g_ui_sync;
+    // core1 recomputes g_ui_sync only between requests, and a long poll holds
+    // it for up to 25 s. A write core0 applied meanwhile must not read as
+    // "synced": that is the one question the cloud answers ("can I switch
+    // off now?"). core0 set these dirty flags itself, so it sees them at once.
+    // Found on the bench 2026-09-19: ~6 s of a plain cloud over unsent writes.
+    if (s->sync == DISP_SYNC_SYNCED && psram_image_dirty_count(psram_active_slot()) > 0)
+        s->sync = DISP_SYNC_PENDING;
     memcpy(s->title,  g_ui_title,  sizeof s->title);
     memcpy(s->detail, g_ui_detail, sizeof s->detail);
     s->title[DISP_TITLE_MAX]   = '\0';
