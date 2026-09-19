@@ -47,6 +47,12 @@ static void up_backoff(uploader_t *u) {
     if (next > DC_BACKOFF_CAP_MS) next = DC_BACKOFF_CAP_MS;
     u->backoff_ms = next;
     u->retry_at_ms = u->dc->now() + next;
+    // Review round 1, Important: this is the ONLY place `waiting` is set.
+    // up_step consults `retry_at_ms` only while it is true, and clears it
+    // itself once the wait is over -- see uploader.h's comment on `waiting`
+    // for why a bare "now - retry_at_ms" comparison with no such guard goes
+    // wrong across a long uptime.
+    u->waiting = true;
 }
 
 static void up_clear_session(uploader_t *u) {
@@ -239,8 +245,18 @@ up_step_t up_step(uploader_t *u) {
     if (!up_has_work(u)) return UP_NOTHING;
 
     device_client_t *dc = u->dc;
-    uint32_t now = dc->now();
-    if ((int32_t)(now - u->retry_at_ms) < 0) return UP_WAITING;
+    // `retry_at_ms` is only ever consulted while `waiting` is true (set by
+    // up_backoff() alone), and cleared here the moment the wait it named is
+    // over -- never compared against `now` again until the next backoff
+    // sets both together. This is what keeps a wait that ended days ago
+    // from ever being re-read as still pending, no matter how far `now` has
+    // since moved: once `waiting` is false, the stale value in
+    // `retry_at_ms` is simply never looked at.
+    if (u->waiting) {
+        uint32_t now = dc->now();
+        if ((int32_t)(now - u->retry_at_ms) < 0) return UP_WAITING;
+        u->waiting = false;
+    }
 
     int slot = psram_active_slot();
     int t = psram_image_next_dirty(slot);

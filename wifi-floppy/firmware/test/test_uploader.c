@@ -178,6 +178,30 @@ static void write_protected_discards_and_refetches(void) {
     CHECK(!up_forces_wprot(&u), "the next mount decides again");
 }
 
+// Review round 1, Important: retry_at_ms is only meaningful while a wait is
+// actually in progress. Back off once, let that wait elapse with a success,
+// then jump the clock past retry_at_ms + 2^31 ms (~24.8 days) before the
+// next write -- a comparison that still trusted the stale retry_at_ms would
+// see `(int32_t)(now - retry_at_ms)` flip negative and report UP_WAITING
+// forever (until the 32-bit clock wraps back), even though nothing is
+// backing off any more.
+static void a_stale_retry_at_does_not_stall_a_later_write(void) {
+    mounted();
+    amiga_writes(40, 0x5a);
+    fake_push_connect_failure();
+    CHECK_EQ_INT(up_step(&u), UP_DID_REQUEST);        // fails, backs off
+    uint32_t retry_at = u.retry_at_ms;
+    fake_set_clock(retry_at);
+    push_json("HTTP/1.1 200 OK", "{\"staged\":40}");
+    CHECK_EQ_INT(up_step(&u), UP_DID_REQUEST);        // the wait is over, and it succeeds
+    amiga_writes(41, 0x5b);
+    fake_set_clock(retry_at + 0x80000000u + 1000u);   // > retry_at + 2^31 ms
+    push_json("HTTP/1.1 200 OK", "{\"staged\":41}");
+    CHECK_EQ_INT(up_step(&u), UP_DID_REQUEST);
+    CHECK(strstr(fake_last_request(), "track=41") != NULL,
+          "sent immediately, not stalled by a stale retry_at_ms");
+}
+
 int main(void) {
     size_t len = (size_t)TRACK_MAX_BYTES * NUM_TRACKS * SLOT_COUNT;
     void *mem = malloc(len);
@@ -191,6 +215,7 @@ int main(void) {
     RUN(a_torn_read_is_never_sent);
     RUN(not_mounted_parks_until_the_mount_changes);
     RUN(write_protected_discards_and_refetches);
+    RUN(a_stale_retry_at_does_not_stall_a_later_write);
     free(mem);
     return REPORT();
 }

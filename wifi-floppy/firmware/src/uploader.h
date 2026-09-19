@@ -63,7 +63,20 @@ typedef struct {
     char     parked_sha[65];
     bool     online;               // last request reached the server
     uint32_t backoff_ms;
-    uint32_t retry_at_ms;
+    uint32_t retry_at_ms;          // meaningful only while `waiting` is true
+    // Review round 1, Important: set true only by the backoff itself, and
+    // consulted (then cleared) only at the top of up_step -- never compared
+    // against `now` once cleared. Without this, a `retry_at_ms` set once
+    // during a transient failure and never touched again by a long run of
+    // successes goes stale, and `(int32_t)(now - retry_at_ms)` silently
+    // flips sign once `now` drifts more than 2^31 ms (~24.8 days) past it --
+    // up_step would then wrongly report UP_WAITING (while up_has_work/
+    // up_holds still read true, so the disk stays held and polling stays
+    // suppressed) until the 32-bit clock wraps back, even though nothing is
+    // actually backing off any more. A gate that only ever looks at the
+    // timer while this flag says a wait is in progress cannot be fooled by
+    // how stale the timer's last value is.
+    bool     waiting;
     bool     force_wprot;          // after 409 write_protected, until the mount changes
     uint32_t wprot_version;
 } uploader_t;
