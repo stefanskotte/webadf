@@ -65,6 +65,7 @@ add_executable(wifi_floppy
   src/flux_capture.c src/flux_bits.c
   src/bus_gate.c src/bus_out.c
   src/sha256.c
+  src/uploader.c
 )
 pico_generate_pio_header(wifi_floppy ${CMAKE_CURRENT_LIST_DIR}/src/floppy.pio)
 target_include_directories(wifi_floppy PRIVATE src ${CMAKE_CURRENT_LIST_DIR})
