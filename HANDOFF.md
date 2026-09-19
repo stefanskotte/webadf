@@ -2599,7 +2599,9 @@ stream (latency), a completed body without the edit would be a real staleness bu
    409 `mismatch` (the server's image won; take the bumped poll and re-download — do not
    re-close); 409 `conflict` (the session is KEPT; retry with backoff, cap it); 409
    `incomplete` (`seq` ≠ the session's last seq — the session is kept; re-upload its tracks);
-   409 `not_mounted`. A nothing-staged close with a digest that differs from the head now
+   409 `not_mounted`. Opening a session (the first upload of a token) can also answer 409
+   `{error:'not_mounted', reason:'behind'}` (see below). A nothing-staged close with a digest
+   that differs from the head now
    answers `mismatch`, so a lost 409 cannot turn into a silent 200.
    Close overlays the staged tracks onto the session's **base** image (the head when it
    opened), so the digest matches the board's; it is then recorded on top of whatever the
@@ -2609,17 +2611,27 @@ stream (latency), a completed body without the edit would be a real staleness bu
 browser rename can no longer be superseded by an Amiga save. Last writer wins still governs two
 boards.
 
-**Fix before plan 2b builds on it** (parked at the final review; dormant until a board calls
-the endpoints):
-- A session opened while the board has not yet acknowledged a same-disk bump takes the new
-  head as its base, not the image the board holds — refuse to open while
-  `desiredDiskId = disk and desiredVersion > mountedVersion`.
-- A retried close after a crash between `recordVersion` and the close batch skips bumping other
-  boards (`recorded` is null) — bump when `recorded || sha256 !== session.baseSha256`.
-- An old boot's in-flight upload can wipe a new token's session; it surfaces as a mismatch,
-  not silently.
-- A status report in flight can overwrite the `mountedSha256` a close just set; the board
-  should keep one request in flight across uploader and status.
+**The four items parked at the final review — settled 2026-09-19:**
+- **FIXED (e8f817f):** a session opened while the board had not yet acknowledged a same-disk
+  bump took the new head as its base, not the image the board holds. Opening is now refused
+  with **409 `{error:'not_mounted', reason:'behind'}`** while `desiredDiskId = disk and
+  desiredVersion > mountedVersion`; an already open session still continues and closes.
+  Write-protect is checked first (turning it on bumps the board as well, and the flag is the
+  real reason). **Plan 2b: on `behind`, take the bumped poll and re-download, like
+  `not_mounted`.**
+- **FIXED (e8f817f):** a close retried after a crash between `recordVersion` and its device
+  batch recorded nothing the second time and so never bumped the other boards. The other-board
+  bump is now keyed on `desiredSha256 <> head`, run on every close: a retry repairs them, and a
+  close that changed nothing bumps nobody.
+- **Firmware requirement for 2b, not fixable server-side:** an old boot's upload still being
+  processed when the new boot's first upload lands discards the new token's session (random
+  tokens have no order). It surfaces as a close `mismatch` (the server image wins, the board
+  re-downloads), never silently. Accepted as force majeure; a boot counter in the token would
+  let the server order them if it ever matters.
+- **Firmware requirement for 2b:** a status report in flight can overwrite the `mountedSha256`
+  a close just set. The rename lock is not weakened (`findHolder` also matches
+  `desiredSha256`, which the close sets); the board only reads as unconverged until its next
+  report. **Keep one request in flight across the uploader and the status reporter.**
 
 **`db:push` re-emits constraints every time, harmlessly.** It drops and re-adds the composite
 PKs on `entitlements`, `collection_games`, `demozoo_dismissals`, `demozoo_suggestions`, and the

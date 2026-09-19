@@ -6,6 +6,7 @@ import { disks } from '@/db/schema/catalog';
 import { devices } from '@/db/schema/devices';
 import { diskVersions, diskWriteSessions, diskWriteTracks } from '@/db/schema/disk-history';
 import { diskStore } from '@/lib/storage';
+import { recordVersion } from '@/lib/disk-history/store';
 import { formatVolume } from '@/lib/adffs/format';
 import { TRACK_DATA_BYTES } from '@/lib/adfmfm';
 import { signUpFresh, runTag } from './helpers';
@@ -427,4 +428,75 @@ test('no token is refused', async ({ request }) => {
   const res = await request.post('/api/device/write?disk=x&mount=1&track=0&session=b&seq=1', { data: Buffer.alloc(5632) });
   expect([401, 404]).toContain(res.status());
   expect(res.headers()['cache-control']).toBe('no-store');
+});
+
+test('a board behind a same-disk bump finishes its open session but cannot open a new one', async ({ page, request }) => {
+  const m = await mountedWritableDisk(page, request);
+  const a = new Uint8Array(TRACK_DATA_BYTES).fill(0xb1);
+  const b = new Uint8Array(TRACK_DATA_BYTES).fill(0xb2);
+  expect((await upload(request, m.token, { diskId: m.diskId, mount: m.mount, track: 8, seq: 1 }, a)).status()).toBe(200);
+
+  // The server bumps the board for this same disk (another board's close, a
+  // write-protect toggle) and the board has NOT acknowledged it yet.
+  const bumped = m.mount + 1;
+  await getDb().update(devices).set({ desiredVersion: bumped }).where(eq(devices.id, m.deviceId));
+
+  // The session already open keeps going: the Amiga is mid-save.
+  expect((await upload(request, m.token, { diskId: m.diskId, mount: m.mount, track: 9, seq: 2 }, b)).status()).toBe(200);
+  const board = m.adf.slice(); board.set(a, 8 * TRACK_DATA_BYTES); board.set(b, 9 * TRACK_DATA_BYTES);
+  const done = await close(request, m.token, { diskId: m.diskId, mount: m.mount, seq: 2, sha256: sha(board) });
+  expect(done.status()).toBe(200);
+
+  // A NEW session would take the server's head as its base, and the board may
+  // not hold it: refused until the board takes the bump and re-downloads.
+  const refused = await upload(request, m.token, { diskId: m.diskId, mount: m.mount, track: 10, seq: 3, session: 'boot-2' }, a);
+  expect(refused.status()).toBe(409);
+  expect(await refused.json()).toEqual({ error: 'not_mounted', reason: 'behind' });
+  expect(await sessionsOf(m.deviceId)).toEqual([]);
+
+  // Once the board reports the bumped version, it writes under that mount.
+  expect((await request.post('/api/device/status', {
+    headers: authHeader(m.token), data: { mountedSha256: sha(board), mountedDiskId: m.diskId, version: bumped },
+  })).status()).toBe(204);
+  const ok = await upload(request, m.token, { diskId: m.diskId, mount: bumped, track: 10, seq: 1, session: 'boot-2' }, a);
+  expect(ok.status()).toBe(200);
+});
+
+test('a close retried after a crash between the record and the device batch still bumps the other boards', async ({ page, request }) => {
+  const m = await mountedWritableDisk(page, request);
+  const second = await pairDevice(page, request, 'Second Board');
+  const mountedB = await page.request.post(`/api/devices/${second.deviceId}/mount`, { data: { diskId: m.diskId } });
+  expect(mountedB.status()).toBe(200);
+  const [bBefore] = await getDb().select().from(devices).where(eq(devices.id, second.deviceId));
+  expect(bBefore.desiredSha256).toBe(m.original);
+
+  const written = new Uint8Array(TRACK_DATA_BYTES).fill(0xc3);
+  expect((await upload(request, m.token, { diskId: m.diskId, mount: m.mount, track: 60, seq: 1 }, written)).status()).toBe(200);
+  const board = m.adf.slice(); board.set(written, 60 * TRACK_DATA_BYTES);
+  const want = sha(board);
+
+  // The first close got as far as recording the version and then died before
+  // its device batch: the head moved, the session is still there, and the
+  // second board was never told.
+  await recordVersion({
+    orgId: m.orgId, diskId: m.diskId, headSha: m.original, head: m.adf, next: board,
+    source: 'amiga', deviceId: m.deviceId, sourceFilename: `${m.diskId}.adf`,
+  });
+  const [moved] = await getDb().select().from(disks).where(eq(disks.id, m.diskId));
+  expect(moved.sha256).toBe(want);
+  expect((await getDb().select().from(devices).where(eq(devices.id, second.deviceId)))[0].desiredSha256).toBe(m.original);
+
+  // The board's retry records nothing new (the image is already the head)...
+  const retried = await close(request, m.token, { diskId: m.diskId, mount: m.mount, seq: 1, sha256: want });
+  expect(retried.status()).toBe(200);
+  expect((await retried.json()).sha256).toBe(want);
+  const rows = await getDb().select().from(diskVersions)
+    .where(eq(diskVersions.diskId, m.diskId)).orderBy(asc(diskVersions.seq));
+  expect(rows.map((r) => [r.seq, r.imageSha256])).toEqual([[0, m.original], [1, want]]);
+  expect(await sessionsOf(m.deviceId)).toEqual([]);
+
+  // ...but the second board is now pointed at the new head and bumped.
+  const [bAfter] = await getDb().select().from(devices).where(eq(devices.id, second.deviceId));
+  expect(bAfter.desiredSha256).toBe(want);
+  expect(bAfter.desiredVersion).toBe(bBefore.desiredVersion + 1);
 });
