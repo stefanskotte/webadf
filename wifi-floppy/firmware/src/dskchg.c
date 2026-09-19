@@ -25,6 +25,7 @@
 #include "bus_out.h"
 #include "floppy_io.h"
 #include "pico/stdlib.h"
+#include "hardware/sync.h"   // save_and_disable_interrupts
 
 #define SPINUP_MS        150
 
@@ -49,18 +50,28 @@ void dskchg_init(void) {
     drv(PIN_RDY,  false);
 }
 
+// The flag and the pin change together, with interrupts off: the STEP ISR
+// (dskchg_on_step) reads the flag and releases the pin. Between a flag store
+// and a pin store it could release /CHNG for the old state and leave the new
+// one asserted with the flag already clear -- /CHNG then stays low, and the
+// Amiga believes the drive is empty until the next mount. Rare while only a
+// mount called this; the write-protect re-insert (reinsert.h) calls it too.
 void dskchg_image_inserted(void) {
+    const uint32_t irq = save_and_disable_interrupts();
     st.image_in = true;
     // /CHNG remains asserted until a STEP with disk in (chgrst=step)
     st.chng_asserted = true;
     drv(PIN_CHNG, true);
+    restore_interrupts(irq);
 }
 
 void dskchg_image_ejected(void) {
+    const uint32_t irq = save_and_disable_interrupts();   // see dskchg_image_inserted
     st.image_in = false;
     st.chng_asserted = true;
     drv(PIN_CHNG, true);
     drv(PIN_RDY, false);
+    restore_interrupts(irq);
 }
 
 // call from STEP edge ISR
@@ -88,3 +99,4 @@ void dskchg_poll(void) {
 }
 
 bool dskchg_image_in(void) { return st.image_in; }
+bool dskchg_motor_on(void) { return st.motor_on; }

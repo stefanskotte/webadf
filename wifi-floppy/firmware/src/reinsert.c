@@ -7,7 +7,8 @@ void reinsert_init(reinsert_t *r) {
 
 bool reinsert_on_wprot(reinsert_t *r, bool mounted, const char *disk_id, bool wprot) {
     if (!mounted) { r->known = false; return false; }
-    const bool same = r->known && strcmp(r->disk_id, disk_id) == 0;
+    // An empty id (the poll omitted diskId) identifies nothing: never "same".
+    const bool same = r->known && disk_id[0] != '\0' && strcmp(r->disk_id, disk_id) == 0;
     const bool flip = same && r->wprot != wprot;
     r->known = true;
     r->wprot = wprot;

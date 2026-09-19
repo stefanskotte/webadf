@@ -36,13 +36,12 @@ static void eject_and_remount_do_not(void) {
     CHECK(!reinsert_on_wprot(&r, true, "disk-1", false), "a remount of the same disk is announced by the mount path");
 }
 
-// Keyed on the disk's ID, not its digest: a close gives the same disk a new
-// digest (write-back), and a flip landing in that same pass must still be
-// announced -- to the Amiga it is the disk it has been writing to.
-static void a_flip_together_with_a_new_digest_is_still_the_same_disk(void) {
+// The poll reads diskId best-effort. Without one, two different disks would
+// look identical, and a swap between them would be announced twice.
+static void an_empty_disk_id_is_never_the_same_disk(void) {
     reinsert_t r; reinsert_init(&r);
-    reinsert_on_wprot(&r, true, "disk-1", false);
-    CHECK(reinsert_on_wprot(&r, true, "disk-1", true), "same disk id: announced, whatever the digest did");
+    reinsert_on_wprot(&r, true, "", true);
+    CHECK(!reinsert_on_wprot(&r, true, "", false), "no id, no claim that it is the same disk");
 }
 
 int main(void) {
@@ -50,6 +49,6 @@ int main(void) {
     RUN(a_flip_on_the_same_disk_requests_once);
     RUN(a_flip_that_comes_with_another_disk_does_not);
     RUN(eject_and_remount_do_not);
-    RUN(a_flip_together_with_a_new_digest_is_still_the_same_disk);
+    RUN(an_empty_disk_id_is_never_the_same_disk);
     return REPORT();
 }

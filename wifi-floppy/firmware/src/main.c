@@ -1516,9 +1516,13 @@ int main(void) {
         dskchg_poll();
 
         // A write-protect flip on the same disk (g_reinsert_req's comment),
-        // announced only while the Amiga is not writing and has not written
-        // for REINSERT_IDLE_MS. WGATE is active low.
-        if (g_reinsert_req && disk_mounted && gpio_get(PIN_WGATE)
+        // announced only while the Amiga is idle: not writing, no write for
+        // REINSERT_IDLE_MS, and the motor off. With the motor on it may be
+        // seeking, and the very next STEP would clear /CHNG before trackdisk's
+        // ~2 s change check saw it -- the request would be spent and lost.
+        // trackdisk switches the motor off ~2 s after its last access, so
+        // this waits seconds, not forever. WGATE is active low.
+        if (g_reinsert_req && disk_mounted && !dskchg_motor_on() && gpio_get(PIN_WGATE)
             && clock_ms() - g_write_last_ms >= REINSERT_IDLE_MS) {
             g_reinsert_req = false;
             dskchg_image_inserted();
