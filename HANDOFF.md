@@ -2530,6 +2530,63 @@ in advance that it empties the table for everyone. This repo has no such databas
 e2e runs against live Neon — so "accept in advance" is currently the only option, and it should
 be an explicit decision each time rather than a side effect of following a plan step.
 
+### 4i. THE AMIGA'S WRITES REACH THE SERVER — 2026-09-19 (write-back piece 2b)
+
+**Verified on hardware** (board WifiFloppy1, rev A2; Workbench 3.1 disk `190f63eb…`, marked
+writable). Plan `docs/superpowers/plans/2026-09-19-write-back-piece-2b-firmware-upload.md`.
+`WF_WRITE_BACK`/`WF_WRITE_CAPTURE` are gone: **write-back is on in the normal build.**
+
+**What the board does now** (`src/uploader.c`, core1, pure C, host-tested; the protocol is §4g's):
+- Each dirty track goes up as `POST /api/device/write` under a per-boot session token
+  (`b` + 16 hex, `get_rand_32`). One request at a time: the uploader runs **instead of** the
+  poll while writes are pending, so a status report can never race a close (§4g item 4).
+- 3 s after the last applied write it hashes all 160 decoded tracks (`src/sha256.c`) and closes;
+  a 200 digest is adopted with no re-fetch. A write landing mid-hash postpones the close.
+- **Every attempt spends a seq** (never reused: a lost response followed by a different track
+  would otherwise be answered `duplicate` and dropped). A lost last attempt → `incomplete` →
+  resend.
+- `not_mounted` (incl. `behind`), 404, 400, 422 → **parked**: the hold is released and WPROT is
+  forced until the mount changes. `write_protected` / `mismatch` → the server's image wins:
+  dirty tracks discarded, `dc_force_refetch`. Transport failure → offline, capped backoff, disk
+  held (D3/D7).
+- `dc_set_hold`: a poll naming another disk, or an eject, is not acted on while writes are
+  pending and not parked. An owed status report (mount sha or version changed) goes out
+  **before** any upload, and only a 2xx counts — the server decides `behind` from the version
+  it last heard.
+- The OLED: the pencil became a cloud — plain = nothing unsent, up-arrow = pending, struck =
+  pending and the server unreachable. Read-only still shows the padlock.
+- `mfm_decode_track_r`: the decoder now takes caller scratch. It had a static buffer, and core0
+  (captures) and core1 (uploads, the close hash) now decode at the same time — found by the
+  final review, as was the seq reuse. Both would have recorded a checksum-valid corrupt image.
+
+**Measured on the bench:**
+- A save of 2–3 tracks: **~1.4–1.6 s per upload** (a fresh TLS handshake, ~1.1 s, dominates),
+  close **~2.7 s** after the last upload (hash + handshake, not separately timed).
+- Write-to-synced: **5.7 s** when core1 was free; **12.3 s** when the write landed inside a
+  25 s long poll (the upload waits for the poll to return — **not fixed**; a server-side early
+  return or a shorter hold would fix it).
+- Offline (board blocked on the UniFi): writes kept; attempts every 7 s (DNS) with backoff
+  1.1→2.2→4.5→9.0 s; ~11 s after the block lifted the save was on the server.
+- Reboot: the board re-fetches the server's post-write image; the Amiga read the file back
+  after a reset. Eject within 3 s of a save: the eject happened only after the close.
+- Server after four saves: `disk_versions` 0 original + 3 `amiga` deltas (4, 5, 4 sectors);
+  xdftool reads `wb2b.txt`, `wb2b-2.txt`, `wb2b-3.txt` in the head image.
+
+**Found on hardware and fixed (6bb5454):** the cloud read *synced* for ~6 s over unsent writes,
+because only core1 set it and core1 was in a long poll. core0 now shows pending whenever the
+active slot has dirty tracks.
+
+**Not verified / still open:**
+- The struck (offline) cloud was not confirmed by eye; the log shows the offline state.
+- `dc_set_hold` never fired on hardware: polls are suppressed while pending, so the eject was
+  simply read after the close. Host-tested only.
+- Restore (spec §6 acceptance 4) is piece 3.
+- Deferred minors from the SDD ledger worth doing: every request is a new TLS handshake; the
+  panel has no distinct "parked" state; `wifi_rssi()` is queried every 50 ms while waiting; a
+  parked slot's discarded dirty flags are not cleared.
+- One cold `vitest` run straight after a fresh `pnpm install` in the worktree failed 2 tests
+  (not captured); two reruns were 853/853.
+
 ### 4h. A MOUNTED DISK IS CHANGED ONLY FROM THE AMIGA; THE FILES-EDIT FLAKE WAS A TIMEOUT — 2026-09-19
 
 **Merged (`682f127`) and live.** Gate on the merged tree: 853 vitest, tsc and build clean,
