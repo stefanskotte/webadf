@@ -133,6 +133,54 @@ test('a status report carrying only a new error shows in another browser without
     }
   });
 
+test('a change landing between the server render and the client\'s first poll is not lost',
+  async ({ browser, page, request }) => {
+    const { orgId, pageB, closeB } = await twoBrowsers(browser, page);
+    try {
+      const { deviceId, token } = await pairDevice(page, request);
+      const { diskId } = await diskFor(orgId);
+
+      // Hold ONLY B's first /api/live-state request -- every later one goes
+      // through untouched -- for long enough (3 s) that a real change can
+      // land in the exact window this task's fix closes: between the
+      // server's render of B's /devices page (LiveRefresh's `initial` prop,
+      // captured the instant before this intercept is even installed) and
+      // the client's first comparison tick. Before the fix, that first tick
+      // only RECORDED whatever it saw as the baseline and never compared --
+      // so a change already reflected in it would be silently adopted as
+      // "nothing changed" and never shown until some OTHER, later change
+      // gave the poller something new to notice (never, in this test).
+      let heldOnce = false;
+      await pageB.route('**/api/live-state', async (route) => {
+        if (!heldOnce) {
+          heldOnce = true;
+          await new Promise((r) => setTimeout(r, 3_000));
+        }
+        await route.continue();
+      });
+
+      await pageB.goto('/devices');
+      const card = pageB.getByTestId(`device-${deviceId}`);
+      await expect(card).toHaveAttribute('data-state', 'empty');
+
+      // While that first request is still held (route.continue() has not
+      // even dispatched it to the network yet), make the real change from
+      // browser A: mount a disk, then establish the device as seen -- the
+      // mount above already bumped the version past `since=0`, so this poll
+      // returns immediately rather than holding -- so it reads 'pending',
+      // not 'stale'.
+      const mounted = await page.request.post(`/api/devices/${deviceId}/mount`, { data: { diskId } });
+      expect(mounted.status()).toBe(200);
+      await request.get('/api/device/poll?since=0', { headers: authHeader(token) });
+
+      // 8 s: the 3 s hold plus the same 5 s budget every other live test in
+      // this file gets, for the fetch, comparison and re-render that follow.
+      await expect(card).toHaveAttribute('data-state', 'pending', { timeout: 8_000 });
+    } finally {
+      await closeB();
+    }
+  });
+
 test('the fingerprint poller re-renders on a real change and does nothing while idle', async ({ page, request }) => {
   await signUpFresh(page);
   // This device stays untouched for the whole test -- what makes the idle
