@@ -519,18 +519,29 @@ static volatile bool     write_ours;
 // sees the time of the write that made it.
 static volatile uint32_t g_write_last_ms;
 static volatile uint32_t g_write_gen;
+// Stamped in the WGATE ISR on both edges (see gpio_isr below) -- unlike
+// g_write_last_ms, this marks the Amiga TOUCHING the write path at all, not
+// only a capture that was later accepted. A torn/bad-checksum/wrong-track/
+// overflowed capture never reaches g_write_last_ms, so without this the idle
+// window (REINSERT_IDLE_MS, reinsert_may_announce) could pass immediately
+// after such a write -- exactly the case it exists to avoid.
+static volatile uint32_t g_wgate_last_ms;
 // core1 -> core0: the write-protect flag changed on the SAME mounted disk, so
 // the Amiga must be told the way an insert is (reinsert.h). core0 acts on it
 // only while the Amiga is idle -- see REINSERT_IDLE_MS -- and drops it if the
 // disk itself changes first, since the mount/eject path announces that.
 static volatile bool g_reinsert_req;
-// No write for this long before the change is announced. AmigaDOS may still
-// hold unwritten buffers for the volume just after a save, and a disk change
-// then brings up "You MUST replace volume ...". Same interval as the
-// uploader's idle close (UP_IDLE_CLOSE_MS), for the same reason.
-#define REINSERT_IDLE_MS 3000u
+// When g_reinsert_req was (most recently) raised -- reinsert_may_announce's
+// deadline (REINSERT_FORCE_MS) is measured from this, so a request that the
+// idle/motor/WGATE gate never lets through is still announced eventually
+// instead of silently starving forever.
+static volatile uint32_t g_reinsert_raised_ms;
 static uint32_t wb_write_gen(void)    { return g_write_gen; }
 static uint32_t wb_last_write_ms(void) { return g_write_last_ms; }
+
+static uint32_t clock_ms(void) {
+    return to_ms_since_boot(get_absolute_time());
+}
 
 static void __isr gpio_isr(uint gpio, uint32_t events) {
     if (gpio == PIN_SEL0 && (events & GPIO_IRQ_EDGE_FALL)) {
@@ -548,6 +559,9 @@ static void __isr gpio_isr(uint gpio, uint32_t events) {
          *
          * Active low, like every other input through the '541.
          */
+        // Both edges, unconditionally, before anything else in this branch --
+        // see g_wgate_last_ms's comment. ISR: a volatile store only, no log.
+        g_wgate_last_ms = clock_ms();
         bool writing = !gpio_get(PIN_WGATE);
         /*
          * Only DF0's writes. SEL0 is read here, at interrupt time, and that is
@@ -576,10 +590,6 @@ static void __isr gpio_isr(uint gpio, uint32_t events) {
         want_track = cur_cyl * 2 + cur_side;
         if (!WF_BUS_SNIFF) wf_trace(WF_EV_SIDE, (uint32_t)cur_side, (uint32_t)want_track);
     }
-}
-
-static uint32_t clock_ms(void) {
-    return to_ms_since_boot(get_absolute_time());
 }
 
 // Coarse "psramFree" for the status report (device_client.h): there is no
@@ -1129,6 +1139,7 @@ static void core1_main(void) {
             // The pin is set first, THEN the change is announced: the Amiga
             // must read the new state when it looks.
             if (reinsert_on_wprot(&reins, mounted, c.mounted_disk_id, wprot)) {
+                g_reinsert_raised_ms = clock_ms();
                 g_reinsert_req = true;
                 wf_logf(WF_INFO, "wprot: changed on the mounted disk -- announcing a disk change");
             }
@@ -1515,18 +1526,38 @@ int main(void) {
     while (true) {
         dskchg_poll();
 
-        // A write-protect flip on the same disk (g_reinsert_req's comment),
-        // announced only while the Amiga is idle: not writing, no write for
-        // REINSERT_IDLE_MS, and the motor off. With the motor on it may be
-        // seeking, and the very next STEP would clear /CHNG before trackdisk's
-        // ~2 s change check saw it -- the request would be spent and lost.
-        // trackdisk switches the motor off ~2 s after its last access, so
-        // this waits seconds, not forever. WGATE is active low.
-        if (g_reinsert_req && disk_mounted && !dskchg_motor_on() && gpio_get(PIN_WGATE)
-            && clock_ms() - g_write_last_ms >= REINSERT_IDLE_MS) {
-            g_reinsert_req = false;
-            dskchg_image_inserted();
-            wf_logf(WF_INFO, "reinsert: /CHNG asserted until the next step (write-protect changed)");
+        // A write-protect flip on the same disk (g_reinsert_req's comment).
+        // The decision itself is pure (reinsert.h, host-tested): idle (no
+        // write applied OR merely attempted for REINSERT_IDLE_MS -- the later
+        // of g_write_last_ms and g_wgate_last_ms), motor off and WGATE clear
+        // -> announce; otherwise wait, unless the request has been pending
+        // since before REINSERT_FORCE_MS, in which case it is forced through
+        // rather than left to starve. Only the volatile reads and the
+        // dskchg call live here.
+        if (g_reinsert_req && disk_mounted) {
+            uint32_t last_activity_ms = g_write_last_ms;
+            if ((int32_t)(g_wgate_last_ms - last_activity_ms) > 0) {
+                last_activity_ms = g_wgate_last_ms;
+            }
+            bool forced;
+            if (reinsert_may_announce(clock_ms(), g_reinsert_raised_ms, dskchg_motor_on(),
+                                       !gpio_get(PIN_WGATE), last_activity_ms, &forced)) {
+                // Read-then-clear, not atomic: if core1 raises a NEW request
+                // between the `if` above and this store, it is lost here.
+                // Harmless -- core1 always stores the new WPROT pad state
+                // before setting the flag (the "wprot:" site above), so the
+                // announcement this triggers still conveys whatever is
+                // newest on the pin, lost request or not.
+                g_reinsert_req = false;
+                dskchg_image_inserted();
+                if (forced) {
+                    wf_logf(WF_WARN, "reinsert: forced after %u ms pending "
+                                      "(motor still on, or WGATE still asserted?)",
+                            (unsigned)REINSERT_FORCE_MS);
+                } else {
+                    wf_logf(WF_INFO, "reinsert: /CHNG asserted until the next step (write-protect changed)");
+                }
+            }
         }
 
         bool now_mounted;

@@ -29,7 +29,11 @@
 
 #define SPINUP_MS        150
 
-static struct {
+// volatile: written from dskchg_on_step (the STEP edge ISR) and read from
+// dskchg_poll/dskchg_motor_on/dskchg_image_in in the main loop. Safe today
+// only because there is no LTO to reorder or cache a plain struct's fields
+// across that boundary -- volatile makes it safe regardless.
+static volatile struct {
     bool     image_in;
     bool     chng_asserted;
     bool     motor_on;
