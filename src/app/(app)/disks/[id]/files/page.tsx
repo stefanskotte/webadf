@@ -3,6 +3,7 @@ import { and, eq } from 'drizzle-orm';
 import { getDb } from '@/db';
 import { disks, entitlements, games, blobs } from '@/db/schema/catalog';
 import { findHolder } from '@/lib/disk-holder';
+import { ejectMessage, mountedReason } from '@/lib/mount-wording';
 import { requireOrg } from '@/lib/session';
 import { diskStore } from '@/lib/storage';
 import { readVolume, readUsage, type AdfEntry } from '@/lib/adffs';
@@ -140,7 +141,7 @@ export default async function DiskFilesPage(props: PageProps<'/disks/[id]/files'
   // missing".
   const disabled: EditDisabled | null =
     holder
-      ? { reason: 'mounted', message: `This disk is mounted on "${holder.name}" — eject it there before editing.` }
+      ? { reason: 'mounted', message: ejectMessage(mountedReason(holder.name), 'editing') }
       : volume && !volume.ok
         ? { reason: 'no-filesystem', message: 'This disk has no filesystem, so there is nothing to add files to.' }
         : usage === null

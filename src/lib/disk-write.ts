@@ -24,7 +24,7 @@
 import { and, eq } from 'drizzle-orm';
 import { getDb } from '@/db';
 import { disks, entitlements } from '@/db/schema/catalog';
-import { findHolder, mountedReason } from '@/lib/disk-holder';
+import { findHolder, mountedReason, repointLateMounts } from '@/lib/disk-holder';
 import { diskStore } from '@/lib/storage';
 import { recordVersion, StaleHeadError, type Recorded } from '@/lib/disk-history/store';
 import type { WriteResult } from '@/lib/adffs';
@@ -80,7 +80,7 @@ export async function applyDiskEdit(
   // with the volume rename and the pages that offer both.
   const holder = await findHolder(db, orgId, disk.sha256);
   if (holder) {
-    return { ok: false, status: 409, reason: mountedReason(holder) };
+    return { ok: false, status: 409, reason: mountedReason(holder.name) };
   }
 
   let before: Uint8Array;
@@ -112,14 +112,19 @@ export async function applyDiskEdit(
   // An edit that changes nothing (writing a file's own bytes back) is a no-op.
   const sha256 = recorded?.sha256 ?? disk.sha256;
 
+  // A board that asked for this disk AFTER the refusal check above wants the
+  // old bytes now; point it at the new head (repointLateMounts says why this
+  // does not break the mounted-disk rule). Nothing to do when nothing moved.
+  if (recorded) await repointLateMounts(db, orgId, diskId, disk.sha256, recorded.sha256);
+
   // THE OLD BLOB (disk.sha256) IS NEVER DELETED, and there is deliberately no
   // call to diskStore.remove or a `blobs`/`entitlements` delete anywhere in
   // this function. blob-gc.ts, not this path, decides when bytes become
   // reclaimable.
   //
-  // No device is repointed either. There cannot be one: any device that
-  // wanted or held these bytes was already refused above, before this line
-  // could ever be reached.
+  // Every device that wanted or held these bytes at check time was refused
+  // above; the only repoint is repointLateMounts' completion of a mount that
+  // began after it.
 
   return { ok: true, sha256 };
 }

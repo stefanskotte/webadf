@@ -3,7 +3,7 @@ import { createHash } from 'node:crypto';
 import { and, eq } from 'drizzle-orm';
 import { getDb } from '@/db';
 import { games, disks, entitlements } from '@/db/schema/catalog';
-import { findHolder, mountedReason } from '@/lib/disk-holder';
+import { findHolder, mountedReason, repointLateMounts } from '@/lib/disk-holder';
 import { requireOrg } from '@/lib/session';
 import { diskStore } from '@/lib/storage';
 import { setVolumeName, MAX_VOLUME_NAME } from '@/lib/adffs/format';
@@ -33,7 +33,8 @@ const body = z.object({ volumeName: z.string().trim().min(1).max(MAX_VOLUME_NAME
  *    be modified by the server. If modifications should happen, these must
  *    come from the (mounted) Amiga side of things." Same rule, same
  *    findHolder and same reason string as applyDiskEdit's D-W-4, so no device
- *    ever wants or holds the bytes this replaces and none is repointed. The
+ *    at check time wants or holds the bytes this replaces; only a mount that
+ *    began mid-rename is completed onto the new head (repointLateMounts). The
  *    write-protect flag is different: a setting, not the bytes, so it still
  *    applies live.
  */
@@ -72,7 +73,7 @@ export async function PATCH(request: Request, ctx: { params: Promise<{ id: strin
   // this disk owns it until it is ejected there.
   const holder = await findHolder(db, orgId, disk.sha256);
   if (holder) {
-    return Response.json({ error: 'mounted', reason: mountedReason(holder) }, { status: 409 });
+    return Response.json({ error: 'mounted', reason: mountedReason(holder.name) }, { status: 409 });
   }
 
   const before = await diskStore.read(disk.sha256);
@@ -95,8 +96,9 @@ export async function PATCH(request: Request, ctx: { params: Promise<{ id: strin
 
   // The history store stores the new image (blob + entitlement), records it
   // as the disk's next version and repoints disks.sha256, all in one batch.
+  let recorded: Awaited<ReturnType<typeof recordVersion>>;
   try {
-    await recordVersion({
+    recorded = await recordVersion({
       orgId, diskId: id, headSha: disk.sha256, head: before, next: after,
       source: 'browser', userId, sourceFilename: `${volumeName}.adf`,
     });
@@ -106,6 +108,11 @@ export async function PATCH(request: Request, ctx: { params: Promise<{ id: strin
     if (err instanceof StaleHeadError) return Response.json({ error: 'conflict' }, { status: 409 });
     throw err;
   }
+  // A board that asked for this disk after the refusal check wants the old
+  // bytes now: point it at the new head (see repointLateMounts). Null only
+  // when nothing was recorded, which the unchanged check above already rules
+  // out -- guarded anyway.
+  if (recorded) await repointLateMounts(db, orgId, id, disk.sha256, recorded.sha256);
   await db.update(disks)
     .set({ tosecName: `${volumeName}.adf` })
     .where(and(eq(disks.id, id), eq(disks.orgId, orgId)));

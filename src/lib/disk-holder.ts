@@ -1,4 +1,4 @@
-import { and, eq, or } from 'drizzle-orm';
+import { and, eq, or, sql } from 'drizzle-orm';
 import type { getDb } from '@/db';
 import { devices } from '@/db/schema/devices';
 
@@ -36,7 +36,42 @@ export async function findHolder(
   return rows[0] ?? null;
 }
 
-/** The refusal reason every caller states, so they all read the same. */
-export function mountedReason(holder: { name: string }): string {
-  return `mounted on "${holder.name}"`;
+export { mountedReason } from '@/lib/mount-wording';
+
+/**
+ * Run right after a browser edit or rename RECORDED a new head for `diskId`:
+ * any device in `orgId` that desires this disk but still wants `oldSha` is
+ * pointed at `newSha` and bumped (desiredVersion + 1, atomically -- the same
+ * shape closeSession uses for other boards), so it re-downloads.
+ *
+ *  - It only completes a mount that began AFTER the refusal check. Between
+ *    findHolder and recordVersion's commit a human can mount the disk;
+ *    setDesired then copies the OLD sha into desiredSha256, the head moves on
+ *    without that board, and from then on findHolder(head) finds nobody --
+ *    the lock would be off while that board holds the disk, and its next
+ *    close could silently revert the edit.
+ *  - The operator's rule still holds: no board that was holding the disk at
+ *    check time is ever touched here, because every one of those was refused
+ *    before anything was written. This moves only a board that asked for
+ *    the disk mid-edit, and moves it to the disk's own head.
+ *  - It restores the invariant that every device desiring disk D wants D's
+ *    head.
+ *
+ * Scoped on desiredSha256 = oldSha, so a board already pointed elsewhere, or
+ * already at the new head, is left alone.
+ */
+export async function repointLateMounts(
+  db: ReturnType<typeof getDb>,
+  orgId: string,
+  diskId: string,
+  oldSha: string,
+  newSha: string,
+): Promise<void> {
+  await db.update(devices)
+    .set({ desiredSha256: newSha, desiredVersion: sql`${devices.desiredVersion} + 1` })
+    .where(and(
+      eq(devices.orgId, orgId),
+      eq(devices.desiredDiskId, diskId),
+      eq(devices.desiredSha256, oldSha),
+    ));
 }

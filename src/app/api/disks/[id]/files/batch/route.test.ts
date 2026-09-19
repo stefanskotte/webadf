@@ -20,6 +20,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { createHash } from 'node:crypto';
 import type { SQL } from 'drizzle-orm';
 import { PgDialect } from 'drizzle-orm/pg-core';
+import { devices } from '@/db/schema/devices';
 import { syntheticVolume } from '@/lib/adffs/synthetic';
 import { readVolume, readUsage, blocksForPlan } from '@/lib/adffs';
 
@@ -252,7 +253,11 @@ describe('POST /api/disks/[id]/files/batch', () => {
       orgId: ORG_ID, diskId: DISK_ID, headSha: OLD_SHA, head: adf,
       source: 'browser', userId: 'user-1',
     }));
-    expect(updateCalls).toHaveLength(0);
+    // The only update is applyDiskEdit's repointLateMounts guard (devices,
+    // not disks): a mount that began after the refusal check moves to the
+    // new head.
+    expect(updateCalls).toHaveLength(1);
+    expect(updateCalls[0].table).toBe(devices);
     expect(insertCalls).toHaveLength(0);
 
     // Prove the OUTCOME, not just the response shape: the bytes actually

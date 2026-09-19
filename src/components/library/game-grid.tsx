@@ -10,6 +10,7 @@ import { CSS } from '@dnd-kit/utilities';
 import { X } from 'lucide-react';
 import { DeleteDiskDialog } from '@/components/library/delete-disk-dialog';
 import { fromQuery } from '@/lib/trail';
+import { ejectMessage, isMountedReason, mountedReason } from '@/lib/mount-wording';
 import { Cover } from './cover';
 import type { GameListItem } from '@/lib/queries';
 import { useCollectionsContext, type GameDragData } from '@/components/collections/collection-provider';
@@ -114,7 +115,7 @@ function VolumeNameField({ game: g }: { game: GameListItem }) {
   const [busy, setBusy] = useState(false);
   const reasonId = useId();
   const locked = g.holderName !== null
-    ? `This disk is mounted on "${g.holderName}" — eject it there before renaming.`
+    ? ejectMessage(mountedReason(g.holderName), 'renaming')
     : null;
 
   async function commit() {
@@ -131,8 +132,8 @@ function VolumeNameField({ game: g }: { game: GameListItem }) {
         // Mounted between this page loading and the edit: say where, and
         // refresh so the card shows the lock instead of the field.
         const body = await res.json().catch(() => null) as { error?: string; reason?: string } | null;
-        if (res.status === 409 && body?.error === 'mounted' && body.reason) {
-          toast.error(`This disk is ${body.reason} — eject it there before renaming.`);
+        if (res.status === 409 && body?.error === 'mounted' && body.reason && isMountedReason(body.reason)) {
+          toast.error(ejectMessage(body.reason, 'renaming'));
           setName(g.title);
           router.refresh();
           return;
