@@ -111,6 +111,37 @@ static void test_chunked_split_inside_size_line_and_boundary(void) {
     CHECK(r.body_complete, "zero chunk terminates the body");
 }
 
+static void head_for_a_binary_body(void) {
+    char out[512];
+    int n = http_build_head(out, sizeof out, "POST", "/api/device/write?track=3",
+                            "h.example", "tok", "application/octet-stream", 5632);
+    CHECK(n > 0, "fits");
+    CHECK(strcmp(out,
+        "POST /api/device/write?track=3 HTTP/1.1\r\n"
+        "Host: h.example\r\n"
+        "Authorization: Bearer tok\r\n"
+        "Content-Type: application/octet-stream\r\n"
+        "Content-Length: 5632\r\n"
+        "Connection: keep-alive\r\n"
+        "\r\n") == 0, "exact head");
+    CHECK_EQ_INT(n, (long)strlen(out));
+}
+
+static void head_for_an_empty_post_still_says_zero(void) {
+    char out[512];
+    int n = http_build_head(out, sizeof out, "POST", "/c", "h", "tok", NULL, 0);
+    CHECK(n > 0, "fits");
+    CHECK(strstr(out, "Content-Length: 0\r\n") != NULL,
+          "a POST with no body must still say so, or a proxy may wait for one");
+    CHECK(strstr(out, "Content-Type") == NULL, "no type when there is no body");
+}
+
+static void head_that_does_not_fit_is_refused(void) {
+    char out[40];
+    CHECK_EQ_INT(http_build_head(out, sizeof out, "POST", "/a/long/path", "host", "tok",
+                                 "application/octet-stream", 1), -1);
+}
+
 // Multiple small chunks, each split across its own feed boundary -- the
 // case the real transport (arbitrary TCP/TLS record fragments) produces
 // constantly, unlike the brief's single-feed chunked test.
@@ -212,5 +243,7 @@ int main(void) {
     RUN(test_content_length_overflow_rejected);
     RUN(test_chunk_size_overflow_rejected);
     RUN(test_chunk_trailer_linelen_bounded);
+    RUN(head_for_a_binary_body); RUN(head_for_an_empty_post_still_says_zero);
+    RUN(head_that_does_not_fit_is_refused);
     return REPORT();
 }

@@ -275,3 +275,23 @@ int http_build_request(char *out, int out_len, const char *method, const char *p
     if (n < 0 || n >= out_len) return -1;
     return n;
 }
+
+int http_build_head(char *out, int out_len, const char *method, const char *path,
+                    const char *host, const char *bearer, const char *content_type,
+                    int body_len) {
+    int n = snprintf(out, (size_t)out_len,
+        "%s %s HTTP/1.1\r\n"
+        "Host: %s\r\n"
+        "%s%s%s"
+        "%s%s%s"
+        "Content-Length: %d\r\n"
+        "Connection: keep-alive\r\n"
+        "\r\n",
+        method, path, host,
+        bearer ? "Authorization: Bearer " : "", bearer ? bearer : "", bearer ? "\r\n" : "",
+        content_type ? "Content-Type: " : "", content_type ? content_type : "",
+        content_type ? "\r\n" : "",
+        body_len);
+    if (n < 0 || n >= out_len) return -1;
+    return n;
+}

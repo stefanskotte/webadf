@@ -17,7 +17,7 @@
 // one of those in full, per the task brief.
 #define FAKE_MAX_QUEUE 8
 #define FAKE_MAX_RESPONSE_BYTES 8192
-#define FAKE_MAX_REQUEST_BYTES 4096
+#define FAKE_MAX_REQUEST_BYTES 16384
 
 typedef enum { FAKE_EV_RESPONSE, FAKE_EV_CONNECT_FAIL } fake_event_type_t;
 
@@ -185,6 +185,10 @@ transport_t *fake_transport(void) {
 
 const char *fake_last_request(void) {
     return g_request;
+}
+
+int fake_last_request_len(void) {
+    return g_request_len;
 }
 
 int fake_request_count(void) {

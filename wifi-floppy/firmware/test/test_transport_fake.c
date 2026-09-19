@@ -73,10 +73,24 @@ static void test_write_cap_forces_partial_writes(void) {
           "repeated partial writes reassemble the whole request");
 }
 
+static void records_binary_writes_with_their_length(void) {
+    fake_reset();
+    fake_push_response("HTTP/1.1 204 No Content\r\n\r\n");
+    transport_t *t = fake_transport();
+    CHECK_EQ_INT(t->connect(t, "h", 443), 0);
+    static uint8_t body[6000];
+    for (int i = 0; i < (int)sizeof body; i++) body[i] = (uint8_t)(i % 7);   // NULs included
+    CHECK_EQ_INT(t->write(t, body, (int)sizeof body), (int)sizeof body);
+    CHECK_EQ_INT(fake_last_request_len(), (int)sizeof body);
+    CHECK(memcmp(fake_last_request(), body, sizeof body) == 0, "bytes past a NUL are kept");
+    t->close(t);
+}
+
 int main(void) {
     RUN(test_truncation_reports_close); RUN(test_connect_failure_is_negative);
     RUN(test_records_request);
     RUN(test_request_count_tracks_connects_not_writes);
     RUN(test_write_cap_forces_partial_writes);
+    RUN(records_binary_writes_with_their_length);
     return REPORT();
 }

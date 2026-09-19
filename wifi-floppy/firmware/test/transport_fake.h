@@ -38,6 +38,10 @@ transport_t *fake_transport(void);
 // terminated. Valid until the next fake_reset() or connect().
 const char *fake_last_request(void);
 
+// Exact length of the bytes written since the most recent connect(). Use it
+// for a binary body: fake_last_request()'s C string stops at the first NUL.
+int fake_last_request_len(void);
+
 // Number of connect() calls made since fake_reset() -- i.e. how many
 // request/response cycles the client under test has run (the fake's model
 // is one queued event consumed per connect(), regardless of how many
