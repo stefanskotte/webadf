@@ -5,6 +5,7 @@ import { SearchBox } from "@/components/shell/search-box";
 import { SignOutButton } from "@/components/sign-out-button";
 import { Logo } from "@/components/shell/logo";
 import { NavProgressProvider } from "@/components/shell/nav-progress";
+import { LiveRefresh } from "@/components/shell/live-refresh";
 
 export default async function AppLayout({
   children,
@@ -17,6 +18,7 @@ export default async function AppLayout({
   const showAdmin = isSuperAdminEmail(email);
   return (
     <NavProgressProvider>
+      <LiveRefresh />
       {/* The bottom padding is the room the fixed mobile nav bar occupies (see
           the wrapper below). It lives here, once, rather than on each page:
           every page under this layout is behind that bar, and a page that
