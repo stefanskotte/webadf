@@ -202,6 +202,102 @@ static void a_stale_retry_at_does_not_stall_a_later_write(void) {
           "sent immediately, not stalled by a stale retry_at_ms");
 }
 
+static void board_digest(char hex[65]) {
+    sha256_t s; uint8_t d[32];
+    sha256_init(&s); sha256_update(&s, adf, sizeof adf); sha256_final(&s, d);
+    sha256_hex(d, hex);
+}
+
+static void upload_one(int t, uint8_t fill) {
+    amiga_writes(t, fill);
+    push_json("HTTP/1.1 200 OK", "{\"staged\":1}");
+    up_step(&u);
+}
+
+static void closes_three_seconds_after_the_last_write(void) {
+    mounted();
+    upload_one(40, 0x5a);
+    fake_set_clock(last_ms + UP_IDLE_CLOSE_MS - 1);
+    CHECK_EQ_INT(up_step(&u), UP_WAITING);
+    CHECK_EQ_INT(fake_request_count(), 1);
+    fake_set_clock(last_ms + UP_IDLE_CLOSE_MS);
+    char want[65]; board_digest(want);
+    char body[128]; snprintf(body, sizeof body, "{\"sha256\":\"%s\"}", want);
+    push_json("HTTP/1.1 200 OK", body);
+    CHECK_EQ_INT(up_step(&u), UP_DID_REQUEST);
+    char line[256];
+    snprintf(line, sizeof line,
+        "POST /api/device/write/close?disk=d1&mount=7&session=boot-abc&seq=1&sha256=%s HTTP/1.1", want);
+    CHECK(strstr(fake_last_request(), line) != NULL,
+          "the close names the digest of the whole image the board holds");
+    CHECK(strcmp(c.mounted_sha256, want) == 0, "spec 3.1: adopted, no re-fetch");
+    CHECK(!u.open, "closed");
+    CHECK(!up_has_work(&u), "nothing left");
+    CHECK_EQ_INT(up_sync(&u), UP_SYNCED);
+}
+
+static void a_write_during_the_hash_postpones_the_close(void) {
+    mounted();
+    upload_one(40, 0x5a);
+    fake_set_clock(last_ms + UP_IDLE_CLOSE_MS);
+    gen_moves = true;
+    CHECK_EQ_INT(up_step(&u), UP_WAITING);
+    CHECK_EQ_INT(fake_request_count(), 1);              // no close sent
+}
+
+static void mismatch_lets_the_server_image_win(void) {
+    mounted();
+    upload_one(40, 0x5a);
+    fake_set_clock(last_ms + UP_IDLE_CLOSE_MS);
+    push_json("HTTP/1.1 409 Conflict", "{\"error\":\"mismatch\",\"sha256\":\"cc\"}");
+    up_step(&u);
+    CHECK(!u.open, "never re-close after a mismatch (HANDOFF 4g)");
+    CHECK_EQ_INT(c.since, 0);                           // re-download what the server holds
+    CHECK(strcmp(c.mounted_sha256, "aa") == 0, "nothing adopted");
+}
+
+static void conflict_keeps_the_session_and_retries(void) {
+    mounted();
+    upload_one(40, 0x5a);
+    fake_set_clock(last_ms + UP_IDLE_CLOSE_MS);
+    push_json("HTTP/1.1 409 Conflict", "{\"error\":\"conflict\"}");
+    up_step(&u);
+    CHECK(u.open, "kept");
+    CHECK(u.backoff_ms >= 1000, "backed off");
+    CHECK_EQ_INT(up_step(&u), UP_WAITING);
+    fake_set_clock(fake_clock_ms() + u.backoff_ms);
+    char want[65]; board_digest(want);
+    char body[128]; snprintf(body, sizeof body, "{\"sha256\":\"%s\"}", want);
+    push_json("HTTP/1.1 200 OK", body);
+    CHECK_EQ_INT(up_step(&u), UP_DID_REQUEST);
+    CHECK(strstr(fake_last_request(), "/api/device/write/close?") != NULL, "the same close again");
+    CHECK(!u.open, "closed on the retry");
+}
+
+static void incomplete_resends_the_sessions_tracks(void) {
+    mounted();
+    upload_one(40, 0x5a);
+    fake_set_clock(last_ms + UP_IDLE_CLOSE_MS);
+    push_json("HTTP/1.1 409 Conflict", "{\"error\":\"incomplete\"}");
+    up_step(&u);
+    CHECK(u.open, "kept");
+    CHECK_EQ_INT(psram_image_state(0, 40), TRK_DIRTY);
+    push_json("HTTP/1.1 200 OK", "{\"staged\":40}");
+    up_step(&u);
+    CHECK(strstr(fake_last_request(), "track=40&session=boot-abc&seq=2") != NULL,
+          "re-sent above the seq the server may already hold");
+}
+
+static void unchanged_is_adopted_too(void) {
+    mounted();
+    upload_one(40, 0x5a);
+    fake_set_clock(last_ms + UP_IDLE_CLOSE_MS);
+    push_json("HTTP/1.1 200 OK", "{\"sha256\":\"dd\",\"unchanged\":true}");
+    up_step(&u);
+    CHECK(strcmp(c.mounted_sha256, "dd") == 0, "adopted");
+    CHECK(!u.open, "closed");
+}
+
 int main(void) {
     size_t len = (size_t)TRACK_MAX_BYTES * NUM_TRACKS * SLOT_COUNT;
     void *mem = malloc(len);
@@ -216,6 +312,12 @@ int main(void) {
     RUN(not_mounted_parks_until_the_mount_changes);
     RUN(write_protected_discards_and_refetches);
     RUN(a_stale_retry_at_does_not_stall_a_later_write);
+    RUN(closes_three_seconds_after_the_last_write);
+    RUN(a_write_during_the_hash_postpones_the_close);
+    RUN(mismatch_lets_the_server_image_win);
+    RUN(conflict_keeps_the_session_and_retries);
+    RUN(incomplete_resends_the_sessions_tracks);
+    RUN(unchanged_is_adopted_too);
     free(mem);
     return REPORT();
 }

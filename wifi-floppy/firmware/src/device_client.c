@@ -214,13 +214,18 @@ static void dc_image_sink(void *ctx, const uint8_t *b, int n) {
 //   * These functions never call each other in a cycle. The only call
 //     graph is  core1_main -> dc_step -> dc_handle_poll_body ->
 //     dc_fetch_image -> dc_exchange,  core1_main -> dc_report_status ->
-//     dc_exchange,  core1_main -> dc_register -> dc_exchange,  and
-//     core1_main -> up_step -> dc_post -> dc_exchange (uploader.c does not
-//     exist yet -- Task 3 of write-back piece 2b only gives dc_post
-//     somewhere to be called from). Every path is a straight line;
-//     dc_exchange is shared by four callers but is never nested inside
-//     itself, and dc_post is never nested inside dc_step -- the uploader
-//     runs from its own call site in the main loop, not from inside the
+//     dc_exchange,  core1_main -> dc_register -> dc_exchange,
+//     core1_main -> up_step -> dc_post -> dc_exchange (uploader.c,
+//     Task 5: one dirty track at a time), and its close counterpart,
+//     core1_main -> up_step -> (sha256_*, psram_image_read,
+//     mfm_decode_track) -> dc_post -> dc_exchange (uploader.c, Task 6:
+//     hashes the whole image, then posts the digest). Every path is a
+//     straight line, including the close's hash loop -- sha256_*,
+//     psram_image_read and mfm_decode_track never call back into any
+//     dc_*/up_* function, so nothing here is re-entered while its statics
+//     are live; dc_exchange is shared by four callers but is never nested
+//     inside itself, and dc_post is never nested inside dc_step -- the
+//     uploader runs from its own call site in the main loop, not from inside the
 //     poll.
 //   * Each function owns its own statics -- dc_exchange's read chunk is
 //     not shared with dc_step's body buffer, and so on -- so a caller's

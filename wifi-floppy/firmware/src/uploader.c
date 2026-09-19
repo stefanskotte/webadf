@@ -19,6 +19,7 @@
 #include "mfm.h"
 #include "json_scan.h"
 #include "wf_log.h"
+#include "sha256.h"
 #include <string.h>
 #include <stdio.h>
 
@@ -129,6 +130,30 @@ up_sync_t up_sync(const uploader_t *u) {
     return u->online ? UP_PENDING : UP_OFFLINE;
 }
 
+// Reads track `t` out of `slot`, decodes it, and returns a pointer to the
+// shared static decode buffer if it came back whole (all sectors found,
+// consistently numbered, matching `t`) -- NULL otherwise. Shared by
+// up_send_track (one track, Task 5) and up_close's whole-image hash (Task
+// 6, every track): a torn read -- core0 rewriting the track while this read
+// is in progress -- must never be sent OR hashed, and both call sites
+// resolve it exactly the same way, using the exact same statics, so this is
+// the one place that check lives.
+static uint8_t *up_read_whole_track(int slot, int t) {
+    static uint8_t mfm[TRACK_MAX_BYTES];
+    uint32_t bits = 0;
+    psram_image_read(slot, t, mfm, &bits);
+
+    static uint8_t trk[MFM_TRACK_DATA_BYTES];
+    memset(trk, 0, sizeof trk);
+    mfm_decode_result_t d;
+    memset(&d, 0, sizeof d);
+    mfm_decode_track(mfm, (size_t)((bits + 7u) / 8u), trk, &d);
+
+    if (d.found != 0x7ffu || !d.track_no_consistent || d.track_no != (uint8_t)t)
+        return NULL;
+    return trk;
+}
+
 // Sends dirty track `t` out of `slot`, opening a session first if none is
 // open yet. See uploader.h / the brief for the per-response behaviour this
 // implements verbatim: what each status does to the dirty flag, the
@@ -151,17 +176,8 @@ static up_step_t up_send_track(uploader_t *u, int slot, int t) {
     // against core0.
     psram_image_clear_dirty(slot, t);
 
-    static uint8_t mfm[TRACK_MAX_BYTES];
-    uint32_t bits = 0;
-    psram_image_read(slot, t, mfm, &bits);
-
-    static uint8_t trk[MFM_TRACK_DATA_BYTES];
-    memset(trk, 0, sizeof trk);
-    mfm_decode_result_t d;
-    memset(&d, 0, sizeof d);
-    mfm_decode_track(mfm, (size_t)((bits + 7u) / 8u), trk, &d);
-
-    if (d.found != 0x7ffu || !d.track_no_consistent || d.track_no != (uint8_t)t) {
+    uint8_t *trk = up_read_whole_track(slot, t);
+    if (!trk) {
         // core0 was rewriting this track while this read was in progress --
         // a damaged track is never sent. Put the dirty flag back so it is
         // retried once the write settles.
@@ -241,6 +257,117 @@ static up_step_t up_send_track(uploader_t *u, int slot, int t) {
     return UP_DID_REQUEST;
 }
 
+// Closes the session: hashes the whole image the board holds (every track,
+// in order, through the same torn-read check up_send_track uses) and posts
+// the digest. See uploader.h / the brief for the per-response behaviour
+// this implements verbatim.
+static up_step_t up_close(uploader_t *u, int slot) {
+    device_client_t *dc = u->dc;
+
+    // If a write lands mid-hash, the bytes just fed to sha256_update may
+    // already be stale -- caught below by re-checking write_gen() and the
+    // dirty state once the loop finishes, not by trusting a single read.
+    uint32_t g0 = u->write_gen();
+
+    static sha256_t s;
+    sha256_init(&s);
+    for (int t = 0; t < NUM_TRACKS; t++) {
+        uint8_t *trk = up_read_whole_track(slot, t);
+        if (!trk) {
+            // core0 is rewriting this track right now: hashing a torn read
+            // would produce a digest that matches nothing. No request is
+            // sent; back off and try the whole hash again later.
+            wf_logf(WF_WARN, "close: trk %d unreadable", t);
+            up_backoff(u);
+            return UP_WAITING;
+        }
+        sha256_update(&s, trk, MFM_TRACK_DATA_BYTES);
+    }
+
+    if (u->write_gen() != g0 || psram_image_next_dirty(slot) >= 0) {
+        // A write landed while hashing -- resend it (on a later up_step),
+        // not close over a digest that no longer matches what is held.
+        return UP_WAITING;
+    }
+
+    uint8_t digest[32];
+    sha256_final(&s, digest);
+    static char board_sha[65];
+    sha256_hex(digest, board_sha);
+
+    static char path[192];
+    snprintf(path, sizeof path,
+        "/api/device/write/close?disk=%s&mount=%lu&session=%s&seq=%lu&sha256=%s",
+        u->disk_id, (unsigned long)u->mount, u->session,
+        (unsigned long)u->seq, board_sha);
+
+    static char resp[256];
+    int status = dc_post(dc, path, NULL, NULL, 0, resp, sizeof resp);
+
+    static char err[32];
+    err[0] = '\0';
+    if (status > 0) json_str(resp, "error", err, sizeof err);
+
+    if (status == -1) {
+        u->online = false;
+        up_backoff(u);
+        wf_logf(WF_WARN, "close: transport failure, backing off %lu ms",
+                (unsigned long)u->backoff_ms);
+        return UP_DID_REQUEST;
+    }
+
+    if (status == 200) {
+        static char server_sha[65];
+        server_sha[0] = '\0';
+        json_str(resp, "sha256", server_sha, sizeof server_sha);
+        bool unchanged = false;
+        json_bool(resp, "unchanged", &unchanged);
+        dc_adopt_image(dc, server_sha);
+        wf_logf(WF_INFO, "close: %.12s%s", server_sha, unchanged ? " unchanged" : "");
+        if (strcmp(server_sha, board_sha) != 0) {
+            wf_logf(WF_WARN, "close: server digest %.12s differs from the board's %.12s",
+                    server_sha, board_sha);
+        }
+        up_clear_session(u);
+        u->online = true;
+        u->backoff_ms = 0;
+        return UP_DID_REQUEST;
+    }
+
+    wf_logf(WF_WARN, "close: status %d error=%s", status, err);
+
+    if (status == 409 && strcmp(err, "mismatch") == 0) {
+        // The server's copy wins: whatever this board holds is discarded
+        // and refetched, exactly as a write_protected upload resolves.
+        up_server_wins(u, slot);
+        return UP_DID_REQUEST;
+    }
+
+    if (status == 409 && strcmp(err, "incomplete") == 0) {
+        // The server did not see every track this session claims to have
+        // sent -- resend them under the same session, above the seq the
+        // server may already hold.
+        for (int t = 0; t < NUM_TRACKS; t++) {
+            if (u->sent[t / 8] & (uint8_t)(1u << (t % 8)))
+                psram_image_set_dirty(slot, t);
+        }
+        return UP_DID_REQUEST;
+    }
+
+    if ((status == 409 && strcmp(err, "not_mounted") == 0) || status == 404) {
+        up_park(u, slot);
+        return UP_DID_REQUEST;
+    }
+
+    // 409 conflict, and anything else (5xx, an unrecognised 4xx): transient.
+    // The server was reachable, so this does not count as offline; the
+    // session stays open and the whole close is retried once the backoff
+    // elapses.
+    u->online = true;
+    up_backoff(u);
+    return UP_DID_REQUEST;
+}
+
 up_step_t up_step(uploader_t *u) {
     if (!up_has_work(u)) return UP_NOTHING;
 
@@ -261,9 +388,11 @@ up_step_t up_step(uploader_t *u) {
     int slot = psram_active_slot();
     int t = psram_image_next_dirty(slot);
     if (t < 0) {
-        // Session open, nothing dirty: closing it is Task 6. For now,
-        // there is nothing this task does but wait.
-        return UP_WAITING;
+        // Session open, nothing dirty: close it once the Amiga has been
+        // quiet for UP_IDLE_CLOSE_MS -- closing any sooner would risk
+        // catching a burst of writes still in flight.
+        if (dc->now() - u->last_write_ms() < UP_IDLE_CLOSE_MS) return UP_WAITING;
+        return up_close(u, slot);
     }
 
     return up_send_track(u, slot, t);
