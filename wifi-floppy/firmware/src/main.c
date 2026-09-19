@@ -1038,6 +1038,16 @@ static void core1_main(void) {
             // delay (rather than letting up_step race ahead and upload
             // under the still-unreported version): the disk stays held
             // regardless, since up_holds() does not depend on any of this.
+            //
+            // Review (final), Minor M3: that beat used to be a `continue`,
+            // which also skipped the WPROT and panel refresh below for the
+            // pass -- so a gate that changed during it (a park, say) waited
+            // for the next successful pass to reach the pin. Now the pass
+            // runs on with `report_retry` set: no up_step, no dc_step, no
+            // heartbeat (no network call beyond the failed report itself),
+            // but WPROT and the panel are refreshed, and the 1 s beat is
+            // slept at the bottom instead of the top.
+            bool report_retry = false;
             bool report_owed = strcmp(c.mounted_sha256, last_reported_sha) != 0 ||
                                 c.mounted_version != last_reported_version;
             if (report_owed && c.state != DC_HALTED) {
@@ -1047,14 +1057,16 @@ static void core1_main(void) {
                     last_reported_sha[sizeof(last_reported_sha) - 1] = '\0';
                     last_reported_version = c.mounted_version;
                 } else if (up_has_work(&up)) {
-                    sleep_ms(1000);
-                    continue;
+                    report_retry = true;
                 }
             }
 
             dc_state_t s;
             bool polled = false;
-            if (up_has_work(&up)) {
+            if (report_retry) {
+                // Neither the uploader nor the poll this pass: see Item 0.
+                s = c.state;
+            } else if (up_has_work(&up)) {
                 // Writes are pending: no long poll (it would hold the close for up
                 // to 25 s), and no swap or eject (dc_set_hold). One request, then
                 // round the loop so WPROT, status and the panel stay current.
@@ -1083,31 +1095,37 @@ static void core1_main(void) {
             // Item 3: WPROT. Nothing mounted -> nothing to write to regardless
             // of the server's flag; a mounted disk's writeProtected flows
             // through untouched; and the uploader forces this true after a
-            // refused write (409 write_protected) until the mount changes
-            // (up_forces_wprot), so a write already rejected server-side can
-            // never be retried as though it had been accepted. Only main()'s
-            // core0 loop ever set WPROT before this (a fixed boot-time
-            // default); this is now the only place that updates it afterward.
-            bool wprot = !mounted || c.mounted_write_protected || up_forces_wprot(&up);
+            // refused write (409 write_protected) and while it is parked,
+            // both until the mount changes (up_forces_wprot), so a write
+            // already rejected server-side can never be retried as though it
+            // had been accepted, and a write made while parked is refused at
+            // the drive rather than kept on a disk the poll may replace.
+            // Only main()'s core0 loop ever set WPROT before this (a fixed
+            // boot-time default); this is now the only place that updates it
+            // afterward.
+            bool up_forced = up_forces_wprot(&up);
+            bool wprot = !mounted || c.mounted_write_protected || up_forced;
             bus_out_set(PIN_WPROT, wprot);
             /*
              * Say so when it CHANGES, with the reason.
              *
              * Added after a write test that produced nothing: WGATE never
              * fired, and working out why meant inferring the pin's state from
-             * the absence of an event. Two separate things force WPROT -- no
-             * disk and the server's flag (which the uploader's own
-             * up_forces_wprot folds back into, after a refused write) -- and
-             * from the log they were indistinguishable. A gate nobody can
+             * the absence of an event. THREE separate gates force WPROT --
+             * no disk, the server's flag, and the uploader (up_forces_wprot:
+             * after a refused write, or while parked) -- and none folds into
+             * another, so each is its own field below. Without them the
+             * reasons were indistinguishable from the log. A gate nobody can
              * observe is a gate nobody can debug.
              */
             static int last_wprot = -1;
             if ((int)wprot != last_wprot) {
                 last_wprot = (int)wprot;
-                wf_logf(WF_INFO, "wprot: %s (mounted=%s server=%s)",
+                wf_logf(WF_INFO, "wprot: %s (mounted=%s server=%s uploader=%s)",
                         wprot ? "ASSERTED -- the Amiga cannot write" : "RELEASED -- the Amiga may write",
                         mounted ? "yes" : "no",
-                        mounted ? (c.mounted_write_protected ? "protected" : "writable") : "n/a");
+                        mounted ? (c.mounted_write_protected ? "protected" : "writable") : "n/a",
+                        up_forced ? "forced" : "ok");
             }
             // The panel's pencil, from the same value and at the same moment
             // -- lit exactly when the Amiga may actually write, which now
@@ -1148,7 +1166,9 @@ static void core1_main(void) {
             // actually succeeded (dc_report_status now returns whether it
             // did) -- see Item 0's comment for what a false positive here
             // used to cost.
-            if (s != DC_HALTED && (disk_changed || version_changed ||
+            // Not on a report_retry pass (M3): Item 0's report just failed,
+            // and sending the same report again here would double it.
+            if (!report_retry && s != DC_HALTED && (disk_changed || version_changed ||
                                     (now - last_status_ms) >= DC_STATUS_PERIOD_MS)) {
                 if (dc_report_status(&c, psram_free_estimate(), wifi_rssi(), NULL)) {
                     last_status_ms = now;
@@ -1175,7 +1195,12 @@ static void core1_main(void) {
             // in 100 ms steps, breaking out early the moment a write lands
             // and up_has_work(&up) goes true, so a write is never held behind
             // the tail of a poll backoff that no longer matters to it.
-            if (polled && s == DC_BACKOFF) {
+            if (report_retry) {
+                // Item 0's beat (M3): a failed owed report, uploader waiting.
+                // DC_HALTED from that same report (a 401) is handled on the
+                // next pass, exactly as the old `continue` left it.
+                sleep_ms(1000);
+            } else if (polled && s == DC_BACKOFF) {
                 uint32_t remaining = c.backoff_ms;
                 while (remaining > 0 && !up_has_work(&up)) {
                     uint32_t step = remaining < 100 ? remaining : 100;
