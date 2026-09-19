@@ -145,9 +145,14 @@ static uint8_t *up_read_whole_track(int slot, int t) {
 
     static uint8_t trk[MFM_TRACK_DATA_BYTES];
     memset(trk, 0, sizeof trk);
+    // Review (final), Critical C1: the re-entrant decoder, through core1's
+    // OWN scratch. mfm_decode_track (no _r) is core0's -- its static
+    // scratch is in use whenever core0 is decoding a captured write, which
+    // can be exactly now. Static here for the STACK note above.
+    static uint8_t scratch[MFM_DECODE_SCRATCH_BYTES];
     mfm_decode_result_t d;
     memset(&d, 0, sizeof d);
-    mfm_decode_track(mfm, (size_t)((bits + 7u) / 8u), trk, &d);
+    mfm_decode_track_r(mfm, (size_t)((bits + 7u) / 8u), trk, &d, scratch);
 
     if (d.found != 0x7ffu || !d.track_no_consistent || d.track_no != (uint8_t)t)
         return NULL;

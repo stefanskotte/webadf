@@ -219,10 +219,10 @@ static void dc_image_sink(void *ctx, const uint8_t *b, int n) {
 //     core1_main -> up_step -> dc_post -> dc_exchange (uploader.c,
 //     Task 5: one dirty track at a time), and its close counterpart,
 //     core1_main -> up_step -> (sha256_*, psram_image_read,
-//     mfm_decode_track) -> dc_post -> dc_exchange (uploader.c, Task 6:
+//     mfm_decode_track_r) -> dc_post -> dc_exchange (uploader.c, Task 6:
 //     hashes the whole image, then posts the digest). Every path is a
 //     straight line, including the close's hash loop -- sha256_*,
-//     psram_image_read and mfm_decode_track never call back into any
+//     psram_image_read and mfm_decode_track_r never call back into any
 //     dc_*/up_* function, so nothing here is re-entered while its statics
 //     are live; dc_exchange is shared by four callers but is never nested
 //     inside itself, and dc_post is never nested inside dc_step -- the

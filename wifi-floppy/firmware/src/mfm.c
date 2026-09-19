@@ -56,26 +56,35 @@ static void realign(const uint8_t *m, size_t bit, uint8_t *dst, size_t n) {
     }
 }
 
-void mfm_decode_track(const uint8_t *mfm, size_t len, uint8_t *adf_out,
-                      mfm_decode_result_t *out) {
+// The sector after its sync, realigned to a byte boundary: header, label,
+// both checksums and data, 1,080 bytes. NOT MFM_SECTOR_MFM_BYTES - 4: that
+// counts the next sector's 4-byte preamble too, and demanding it dropped the
+// last sector of every real write, whose capture ends just past its data
+// (2026-09-15).
+#define SEC_BODY_BYTES (MFM_SECTOR_MFM_BYTES - 8)
+
+void mfm_decode_track_r(const uint8_t *mfm, size_t len, uint8_t *adf_out,
+                        mfm_decode_result_t *out, uint8_t *scratch) {
     memset(out, 0, sizeof *out);
     out->track_no_consistent = true;
     bool have_track_no = false;
 
-    // Sector fields, decoded per candidate. Stack, not static: this runs on
-    // core0 and is not re-entrant anyway, and 1 KB of frame is affordable
-    // there in a way it would not be on core1's 2 KB stack.
+    // Review (final), Critical C1: EVERY large working buffer lives in the
+    // caller's scratch (mfm.h, MFM_DECODE_SCRATCH_BYTES), none in static
+    // storage. This decoder now runs on both cores at once -- core0 decoding
+    // the Amiga's captured writes, core1's uploader decoding PSRAM tracks to
+    // upload and hash -- and a shared static `sec` let one core's realign()
+    // splice its sector body into the other's mid-decode: a real sector
+    // with a valid checksum, on the wrong track. Nor on the stack: core1's
+    // stack is 2 KB (device_client.c's STACK note), so its caller keeps its
+    // scratch static instead -- its own, never core0's.
+    uint8_t *sec  = scratch;
+    uint8_t *data = scratch + SEC_BODY_BYTES;
+    // The small per-candidate fields stay on the stack: 48 bytes, private to
+    // this call by construction.
     uint8_t header[4], label[16], hdrsum_raw[4], datsum_raw[4];
-    uint8_t data[MFM_SECTOR_DATA_BYTES];
     uint8_t header_and_label[20];
-    // The sector after its sync, realigned to a byte boundary: header, label,
-    // both checksums and data, 1,080 bytes. NOT MFM_SECTOR_MFM_BYTES - 4: that
-    // counts the next sector's 4-byte preamble too, and demanding it dropped
-    // the last sector of every real write, whose capture ends just past its
-    // data (2026-09-15). Static: another 1 KB would not fit that frame, and
-    // the function is not re-entrant.
-    static uint8_t sec[MFM_SECTOR_MFM_BYTES - 8];
-    const size_t body_bits = sizeof sec * 8u;
+    const size_t body_bits = (size_t)SEC_BODY_BYTES * 8u;
 
     // The sync is searched for at EVERY BIT, not every byte. A write capture
     // starts at whatever edge came first after WGATE, so the Amiga's bit grid
@@ -96,7 +105,7 @@ void mfm_decode_track(const uint8_t *mfm, size_t len, uint8_t *adf_out,
         // off a byte boundary, realign() reads the byte holding its last bits,
         // which this same condition guarantees exists.
         if (body + body_bits > total_bits) break;
-        realign(mfm, body, sec, sizeof sec);
+        realign(mfm, body, sec, SEC_BODY_BYTES);
 
         size_t at = 0;
         mfm_join_odd_even(sec + at, 4,   header);      at += 8;
@@ -144,6 +153,16 @@ void mfm_decode_track(const uint8_t *mfm, size_t len, uint8_t *adf_out,
         b = body + body_bits - 1u;
         sr = 0;
     }
+}
+
+// core0's decoder: the capture decode and the verify re-decode, both on
+// core0's service loop, one at a time -- never core1, which calls
+// mfm_decode_track_r with scratch of its own (uploader.c). This static is
+// core0's alone for exactly that reason; see mfm.h.
+void mfm_decode_track(const uint8_t *mfm, size_t len, uint8_t *adf_out,
+                      mfm_decode_result_t *out) {
+    static uint8_t core0_scratch[MFM_DECODE_SCRATCH_BYTES];
+    mfm_decode_track_r(mfm, len, adf_out, out, core0_scratch);
 }
 
 /* ---- the read direction's encoder, ported from src/lib/adfmfm ---------- */
