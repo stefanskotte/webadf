@@ -1,22 +1,32 @@
 import { requireOrg } from "@/lib/session";
 import { isSuperAdminEmail } from "@/lib/superadmin";
+import { getDb } from "@/db";
+import { liveFingerprint, liveStateRows } from "@/lib/live-state";
 import { TopNav } from "@/components/shell/top-nav";
 import { SearchBox } from "@/components/shell/search-box";
 import { SignOutButton } from "@/components/sign-out-button";
 import { Logo } from "@/components/shell/logo";
 import { NavProgressProvider } from "@/components/shell/nav-progress";
+import { LiveRefresh } from "@/components/shell/live-refresh";
 
 export default async function AppLayout({
   children,
 }: {
   children: React.ReactNode;
 }) {
-  const { email } = await requireOrg();
+  const { email, orgId } = await requireOrg();
   // Decided here, on the server, and passed down as a plain boolean -- the
   // allowlist itself never reaches the client.
   const showAdmin = isSuperAdminEmail(email);
+  // Computed with the SAME functions /api/live-state uses, so LiveRefresh's
+  // baseline is exactly what this render already reflects -- not "whatever
+  // the client's first fetch happens to see". A change landing between this
+  // render and that first fetch would otherwise be silently absorbed into
+  // the baseline and never shown (see LiveRefresh's doc comment).
+  const fingerprint = liveFingerprint(await liveStateRows(getDb(), orgId), Date.now());
   return (
     <NavProgressProvider>
+      <LiveRefresh initial={fingerprint} />
       {/* The bottom padding is the room the fixed mobile nav bar occupies (see
           the wrapper below). It lives here, once, rather than on each page:
           every page under this layout is behind that bar, and a page that

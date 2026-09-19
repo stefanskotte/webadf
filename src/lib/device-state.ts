@@ -36,3 +36,28 @@ export function deviceState(row: DeviceStateRow, now: number): DeviceState {
   if (seen === undefined || now - seen > STALE_AFTER_MS) return 'stale';
   return 'pending';
 }
+
+/**
+ * Same threshold as `deviceState`'s stale check, but asked as its own
+ * question: is this device online right now, independent of whether
+ * anything is desired of it. devices/page.tsx's header count and the live
+ * fingerprint both need exactly this predicate, so it lives here once
+ * rather than twice.
+ */
+export function isOnline(lastSeenAt: Date | null, now: number): boolean {
+  return lastSeenAt !== null && now - lastSeenAt.getTime() <= STALE_AFTER_MS;
+}
+
+/**
+ * "5m ago", "never" -- the human-readable age of a timestamp. Shared by
+ * DeviceCard (what a person reads) and the live fingerprint (what proves
+ * that text stale), so the two can never drift apart.
+ */
+export function relative(from: Date | null, now: number): string {
+  if (!from) return 'never';
+  const s = Math.max(0, Math.round((now - from.getTime()) / 1000));
+  if (s < 60) return `${s}s ago`;
+  if (s < 3600) return `${Math.round(s / 60)}m ago`;
+  if (s < 86_400) return `${Math.round(s / 3600)}h ago`;
+  return `${Math.round(s / 86_400)}d ago`;
+}

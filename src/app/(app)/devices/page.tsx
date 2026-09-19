@@ -1,10 +1,9 @@
 import { requireOrg } from '@/lib/session';
 import { listDevices } from '@/lib/queries';
-import { deviceState, STALE_AFTER_MS } from '@/lib/device-state';
+import { isOnline } from '@/lib/device-state';
 import { PageHeader } from '@/components/shell/page-header';
 import { DeviceCard } from '@/components/devices/device-card';
 import { PairButton } from '@/components/devices/pair-button';
-import { LiveRefresh } from '@/components/devices/live-refresh';
 
 export default async function DevicesPage() {
   const { orgId } = await requireOrg();
@@ -14,13 +13,7 @@ export default async function DevicesPage() {
   // "now" is and flip each other across the staleness boundary.
   const now = Date.now();
 
-  const online = devices.filter(
-    (d) => d.lastSeenAt && now - d.lastSeenAt.getTime() <= STALE_AFTER_MS,
-  ).length;
-  const anyPending = devices.some((d) => {
-    const s = deviceState(d, now);
-    return s === 'pending' || s === 'stale';
-  });
+  const online = devices.filter((d) => isOnline(d.lastSeenAt, now)).length;
 
   return (
     <>
@@ -30,7 +23,6 @@ export default async function DevicesPage() {
         subtitle={`${devices.length} paired · ${online} online · long-poll every 25 s`}
         actions={<PairButton />}
       />
-      <LiveRefresh active={anyPending} />
       <div className="flex flex-col gap-3 px-4 pb-10 sm:px-7">
         {devices.length === 0 ? (
           <div className="glass-card p-6 text-[13px]" style={{ color: 'var(--muted)' }}>
