@@ -54,36 +54,6 @@ const MAX_BATCH = 500;
 // same load on the store.
 const UPLOAD_CONCURRENCY = 6;
 
-// Finished rows carry the mount action (Spec D9): the fast path is
-// drop -> click -> play, so a row whose bytes are safely stored -- whether
-// freshly uploaded or already known -- should offer to mount immediately.
-// Mounting itself lands in a later plan, so the control is rendered
-// disabled with an honest label rather than a button that looks live and
-// does nothing.
-const MOUNTABLE: RowState[] = ['done', 'deduped'];
-
-function MountButton({ state }: { state: RowState }) {
-  if (!MOUNTABLE.includes(state)) {
-    return <span aria-hidden style={{ color: 'var(--faint)' }}>—</span>;
-  }
-  return (
-    <button
-      type="button"
-      disabled
-      title="Mounting arrives in a later release -- this disk is stored and will be playable from here."
-      aria-label="Mount, coming soon"
-      className="ml-auto flex items-center gap-1 rounded-md px-2 py-1 text-[10px] font-semibold uppercase tracking-wide"
-      style={{
-        background: 'rgb(22 39 58 / 0.35)',
-        color: 'rgb(238 243 246 / 0.55)',
-        cursor: 'not-allowed',
-      }}
-    >
-      Mount — soon
-    </button>
-  );
-}
-
 export function Dropzone() {
   const router = useRouter();
   const [rows, setRows] = useState<Row[]>([]);
@@ -413,14 +383,13 @@ export function Dropzone() {
                 exist -- and its own 400px of fixed tracks would be clipped by
                 the card's overflow-hidden regardless. */}
             <div
-              className="hidden grid-cols-[1fr_90px_100px_90px_120px] items-center px-4 py-1.5 font-mono text-[10px] uppercase tracking-wide sm:grid"
+              className="hidden grid-cols-[1fr_90px_100px_90px] items-center px-4 py-1.5 font-mono text-[10px] uppercase tracking-wide sm:grid"
               style={{ background: 'rgb(255 255 255 / 0.5)', borderBottom: '1px solid var(--hairline)', color: 'var(--muted-2)' }}
             >
               <span>File</span>
               <span className="text-right">Size</span>
               <span className="text-right">SHA-256</span>
               <span className="text-right">State</span>
-              <span className="text-right">Mount</span>
             </div>
 
             <div data-testid="ingest-rows">
@@ -435,7 +404,7 @@ export function Dropzone() {
                   // `sm` the row becomes a card of its own: filename on the
                   // first line, the rest wrapped beneath it. The grid returns
                   // at `sm` untouched.
-                  className="flex flex-wrap items-center gap-x-3 gap-y-1 px-4 py-2 font-mono text-[11px] sm:grid sm:grid-cols-[1fr_90px_100px_90px_120px] sm:gap-x-0 sm:gap-y-0"
+                  className="flex flex-wrap items-center gap-x-3 gap-y-1 px-4 py-2 font-mono text-[11px] sm:grid sm:grid-cols-[1fr_90px_100px_90px] sm:gap-x-0 sm:gap-y-0"
                   style={{ borderBottom: '1px solid var(--hairline)' }}
                 >
                   <span className="w-full truncate pr-3 sm:w-auto" style={{ color: 'var(--foreground)' }}>
@@ -467,9 +436,6 @@ export function Dropzone() {
                   >
                     {r.state}
                   </span>
-                  <div className="ml-auto flex justify-end sm:ml-0">
-                    <MountButton state={r.state} />
-                  </div>
                 </div>
               ))}
             </div>
