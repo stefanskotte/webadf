@@ -23,6 +23,17 @@ typedef struct transport {
     // failed usually says only that the server had closed it since -- and
     // that one is worth retrying immediately, once, on a new connection.
     bool (*reused)(struct transport *t);
+    // Optional, may be NULL -- NULL means "just close()". Ends the
+    // connection for real, whatever close() would have done with it.
+    //
+    // close() cannot tell "the response finished" from "we gave up on it":
+    // both look like the caller being done. A transport that keeps a clean
+    // connection alive would keep one the caller ABANDONED mid-response
+    // too -- and then every later response belongs to the previous
+    // request, permanently, because nothing in the protocol ever
+    // resynchronises. So every non-clean exit calls this instead, and it
+    // can never hand the socket back.
+    void (*abandon)(struct transport *t);
     void *impl;
 } transport_t;
 

@@ -55,7 +55,15 @@ static void fake_fatal(const char *msg) {
     abort();
 }
 
+// --- keep-alive model (see transport_fake.h) ---------------------------
+// g_kept      : a connection was close()d, not abandon()ed, and is held open
+// g_kept_dead : that held connection is dead at the far end
+// g_reused    : did the LAST connect() hand a held connection back
+// g_dead      : the CURRENT connection is dead -- write()/read() both fail
+static bool g_kept;
+static bool g_kept_dead;
 static bool g_reused;
+static bool g_dead;
 
 void fake_reset(void) {
     g_queue_count = 0;
@@ -68,7 +76,10 @@ void fake_reset(void) {
     g_request_count = 0;
     g_max_write_bytes = 0;
     g_clock_ms = 0;
+    g_kept = false;
+    g_kept_dead = false;
     g_reused = false;
+    g_dead = false;
 }
 
 static fake_event_t *fake_push_slot(void) {
@@ -118,11 +129,13 @@ void fake_push_connect_failure(void) {
 
 static int fake_connect(struct transport *t, const char *host, int port) {
     (void)t; (void)host; (void)port;
-    if (g_queue_pos >= g_queue_count) {
-        fake_fatal("connect() called with no scripted response or "
-                    "connect-failure queued -- push one before connecting");
-    }
-    g_active_slot = g_queue_pos++;
+    // A kept connection is handed back here, and only here: `reused` is a
+    // property of THIS connect(), not a mode left switched on.
+    g_reused = g_kept;
+    g_dead = g_kept && g_kept_dead;
+    g_kept = false;
+    g_kept_dead = false;
+
     g_cursor = 0;
     g_request_len = 0;
     g_request[0] = '\0';
@@ -131,6 +144,21 @@ static int fake_connect(struct transport *t, const char *host, int port) {
     // one request across multiple writes (e.g. header then body) must not
     // inflate this count (review round 1, finding 1).
     g_request_count++;
+
+    if (g_dead) {
+        // A socket the far end dropped while it sat idle announces nothing:
+        // connect() "succeeds", because there is nothing to connect. It
+        // consumes no scripted response -- no request will reach a server.
+        g_active_slot = -1;
+        g_connected = 1;
+        return 0;
+    }
+
+    if (g_queue_pos >= g_queue_count) {
+        fake_fatal("connect() called with no scripted response or "
+                    "connect-failure queued -- push one before connecting");
+    }
+    g_active_slot = g_queue_pos++;
     if (g_queue[g_active_slot].type == FAKE_EV_CONNECT_FAIL) {
         g_connected = 0;
         return -1;
@@ -141,7 +169,7 @@ static int fake_connect(struct transport *t, const char *host, int port) {
 
 static int fake_write(struct transport *t, const uint8_t *b, int n) {
     (void)t;
-    if (!g_connected) return -1;
+    if (!g_connected || g_dead) return -1;
     if (n < 0) return -1;
     int to_write = n;
     if (g_max_write_bytes > 0 && to_write > g_max_write_bytes) {
@@ -158,7 +186,7 @@ static int fake_write(struct transport *t, const uint8_t *b, int n) {
 
 static int fake_read(struct transport *t, uint8_t *b, int cap, int timeout_ms) {
     (void)t; (void)timeout_ms;
-    if (!g_connected || g_active_slot < 0) return -1;
+    if (!g_connected || g_dead || g_active_slot < 0) return -1;
     fake_event_t *e = &g_queue[g_active_slot];
     if (g_cursor >= e->deliver_limit) return 0; // clean close: exhausted or truncated
     int avail = e->deliver_limit - g_cursor;
@@ -169,14 +197,25 @@ static int fake_read(struct transport *t, uint8_t *b, int cap, int timeout_ms) {
     return n;
 }
 
+// transport.h's `close`: the caller is done and the response finished, so
+// the connection is HELD OPEN for the next connect() -- exactly what the
+// real transport does. A dead connection is not worth holding.
 static void fake_close(struct transport *t) {
     (void)t;
     g_connected = 0;
+    g_kept = !g_dead;
+    g_dead = false;
 }
 
-// The fake opens a new connection every time, so nothing it hands back is
-// ever "reused" -- except when a test says otherwise (fake_set_reused),
-// which is how the retry-on-a-dead-kept-alive-socket path is exercised.
+// transport.h's `abandon`: the caller gave up. Nothing is held. Idempotent,
+// because dc_exchange calls it on a path dc_attempt has already taken.
+static void fake_abandon(struct transport *t) {
+    (void)t;
+    g_connected = 0;
+    g_kept = false;
+    g_kept_dead = false;
+    g_dead = false;
+}
 
 static bool fake_reused(struct transport *t) {
     (void)t;
@@ -184,7 +223,24 @@ static bool fake_reused(struct transport *t) {
 }
 
 void fake_set_reused(bool reused) {
-    g_reused = reused;
+    g_kept = reused;
+    g_kept_dead = false;
+}
+
+void fake_kill_kept_connection(void) {
+    if (!g_kept) {
+        fake_fatal("fake_kill_kept_connection(): no connection is being held "
+                    "open -- run a clean exchange, or fake_set_reused(true), first");
+    }
+    g_kept_dead = true;
+}
+
+bool fake_last_reused(void) {
+    return g_reused;
+}
+
+bool fake_connection_is_kept(void) {
+    return g_kept;
 }
 
 static transport_t g_transport = {
@@ -193,6 +249,7 @@ static transport_t g_transport = {
     .read = fake_read,
     .close = fake_close,
     .reused = fake_reused,
+    .abandon = fake_abandon,
     .impl = NULL,
 };
 

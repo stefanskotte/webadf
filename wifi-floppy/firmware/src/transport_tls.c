@@ -64,10 +64,19 @@
 #define TLS_ERR_CONNECT             (-104)
 #define TLS_ERR_HANDSHAKE_TIMEOUT   (-105)
 #define TLS_ERR_BAD_ARG             (-106) // read() called with cap <= 0
+#define TLS_ERR_HOST_TOO_LONG       (-107) // host does not fit tls_conn_t.host
 
 #define DNS_TIMEOUT_MS       10000u
 #define CONNECT_TIMEOUT_MS   15000u
 #define WRITE_TIMEOUT_MS     10000u
+// How long a kept-open connection may sit unused before it is closed rather
+// than reused. The gap between exchanges is unbounded (dc_enter_backoff goes
+// up to 60 s), and a socket the far end dropped silently costs a full 30 s
+// read timeout to discover -- far more than the ~1.25 s handshake reuse was
+// meant to save. Ten seconds keeps the poll/fetch/report burst on one
+// connection, which is where the whole saving is, and pays a handshake for
+// anything slower than that rather than gambling a timeout on it.
+#define IDLE_REUSE_MAX_MS    10000u
 
 typedef struct {
     struct altcp_pcb *pcb;
@@ -104,12 +113,18 @@ typedef struct {
                               // file-header comment above.
     uint16_t     rx_off;     // bytes already consumed out of rx_head
     // Which host/port this connection is to, so a kept one is only ever
-    // reused for the same destination.
+    // reused for the same destination. A host that does not FIT here is
+    // refused outright (tls_connect) rather than truncated: a truncated
+    // name would never compare equal to the argument again, so every
+    // connection would silently be a fresh one and the bug would show up
+    // only as unexplained slowness.
     char         host[64];
     int          port;
     // Set by tls_close() when it hands the open connection back instead of
-    // closing it, cleared by the next tls_connect(). See KEEP-ALIVE below.
+    // closing it, cleared by the next tls_connect() and by tls_abandon().
+    // See KEEP-ALIVE below.
     bool         idle;
+    uint32_t     idle_since; // tls_now_ms() when `idle` was set
     // Did the connect() that opened this exchange reuse an idle connection?
     bool         was_reused;
 } tls_conn_t;
@@ -261,57 +276,98 @@ static int tls_fail(int code, const char *why, int detail) {
 
 // ---------------------------------------------------------------------
 // KEEP-ALIVE. Measured on hardware 2026-09-20: a connection costs ~1.25 s,
-// essentially all of it the handshake, with DNS cached to nothing. (Session
-// resumption was tried first and appeared to barely help -- 1302 ms "full"
-// against 1215-1253 ms "resumed". That comparison was full handshake against
-// full handshake; see the commit removing the ticket code for why none of it
-// was ever compiled in.) The only way to stop paying it per request is not
-// to make the connection: an
+// essentially all of it the handshake, with DNS cached to nothing. The only
+// way to stop paying that per request is not to make the connection: an
 // exchange that finishes cleanly hands the socket back instead of closing
-// it, and the next request reuses it.
+// it, and the next request reuses it. (Session tickets were tried first and
+// are NOT part of this file any more -- see the commit that removed them:
+// the client-side ticket path was never compiled into this build, so the
+// comparison that appeared to measure it was full handshake against full
+// handshake. Keep-alive stands on its own.)
 //
-// Two rules keep that honest:
+// Three rules keep that honest:
 //   * Only a connection that is CLEAN is kept: the handshake completed, the
 //     peer has not closed, no error was seen, and the response was drained
 //     to the last byte (leftover bytes would be read as the next response's
-//     first bytes -- the classic keep-alive desync).
-//   * A reused connection can die between exchanges without anyone noticing
-//     (an idle timeout at the far end looks like nothing at all until the
-//     next write). So `reused` is reported to the caller, which retries such
-//     a failure once on a fresh connection -- see dc_exchange.
-static bool tls_can_reuse(const tls_conn_t *c, const char *host, int port) {
-    return c->idle && c->pcb && c->connected && !c->closed && c->err == ERR_OK
-        && c->rx_head == NULL && c->port == port
-        && strcmp(c->host, host) == 0;
+//     first bytes -- the classic keep-alive desync). An exchange the caller
+//     ABANDONED is never clean, whatever it looked like here, which is why
+//     tls_abandon() exists at all: close() alone cannot tell the two apart.
+//   * A kept connection goes stale. The far end times it out with nothing
+//     to say, and the gap between exchanges is unbounded (backoff runs to
+//     60 s), so past IDLE_REUSE_MAX_MS it is closed rather than gambled on
+//     -- discovering a dead socket costs a 30 s read timeout, which dwarfs
+//     the handshake this was saving.
+//   * A reused connection can still die inside that window with nothing to
+//     say so. `reused` is reported to the caller, which retries such a
+//     failure once on a fresh connection -- see dc_exchange.
+
+// rx_head is written by on_recv() on the background context, so even a bare
+// read of it belongs inside the lock (review, Minor): an unlocked read here
+// decides whether a connection is kept, and that is not a decision to make
+// from a possibly-stale word.
+static bool tls_rx_pending(tls_conn_t *c) {
+    cyw43_arch_lwip_begin();
+    const bool pending = (c->rx_head != NULL);
+    cyw43_arch_lwip_end();
+    return pending;
 }
 
-static int tls_connect(struct transport *t, const char *host, int port) {
+static bool tls_can_reuse(tls_conn_t *c, const char *host, int port) {
+    if (!c->idle || !c->pcb || !c->connected || c->closed || c->err != ERR_OK)
+        return false;
+    if (c->port != port || strcmp(c->host, host) != 0) return false;
+    // Unsigned subtraction: correct across the 49-day to_ms_since_boot wrap.
+    if ((tls_now_ms() - c->idle_since) > IDLE_REUSE_MAX_MS) return false;
+    return !tls_rx_pending(c);
+}
+
+// transport.h's `abandon`: end the connection for real. Never keeps the
+// socket, whatever state it is in -- this is the call the layer above makes
+// when it gave up on a response, and a connection carrying the tail of an
+// abandoned response would poison every request after it.
+static void tls_abandon(struct transport *t) {
     tls_conn_t *c = (tls_conn_t *)t->impl;
-
-    if (tls_can_reuse(c, host, port)) {
-        c->idle = false;
-        c->was_reused = true;
-        return 0;
-    }
+    c->idle = false;
     c->was_reused = false;
-
-    // Not reusable: if something was still open, it goes now.
     if (c->pcb) {
         struct altcp_pcb *pcb = c->pcb;
         c->pcb = NULL;
-        c->idle = false;
-        detach_and_close(pcb);
+        detach_and_close(pcb); // deregisters arg/recv/err first, so
+                                // on_recv() cannot fire for this `c` again
+                                // after this returns.
     }
-
-    uint32_t next_gen = c->gen + 1;
-
     cyw43_arch_lwip_begin();
     if (c->rx_head) {
         pbuf_free(c->rx_head);
         c->rx_head = NULL;
     }
     cyw43_arch_lwip_end();
+}
 
+static int tls_connect(struct transport *t, const char *host, int port) {
+    tls_conn_t *c = (tls_conn_t *)t->impl;
+
+    // Refused, not truncated (review, Minor): snprintf into c->host used to
+    // cut a long name down silently, after which strcmp() against the
+    // caller's full name could never match -- so a misconfigured host would
+    // present as "keep-alive mysteriously never works", not as an error.
+    if (strlen(host) >= sizeof c->host) {
+        return tls_fail(TLS_ERR_HOST_TOO_LONG, "host name too long for this transport",
+                        (int)strlen(host));
+    }
+
+    if (tls_can_reuse(c, host, port)) {
+        c->idle = false;
+        c->was_reused = true;
+        return 0;
+    }
+    // Not reusable: whatever was still open goes now, together with
+    // anything left queued on it. tls_abandon() is exactly that teardown,
+    // so this path does not repeat it (review, Minor: the duplicated
+    // close-then-free here was a second copy of the same three steps).
+    tls_abandon(t);
+
+    uint32_t next_gen = c->gen + 1;
     memset(c, 0, sizeof *c);
     c->gen = next_gen; // must survive the memset above
     snprintf(c->host, sizeof c->host, "%s", host);
@@ -326,11 +382,12 @@ static int tls_connect(struct transport *t, const char *host, int port) {
     if (!sntp_time_valid())
         return tls_fail(TLS_ERR_TIME_UNSET, "no clock, refusing handshake", 0);
 
-    // Where a connection's seconds actually go. Every request this device
-    // makes is its own connection (dc_exchange connects, writes, reads,
-    // closes), measured at ~1.1 s each on hardware, and "1.1 s" alone does
-    // not say whether to attack the round trips or the crypto -- so the two
-    // halves are timed separately and logged together below.
+    // Where a connection's seconds actually go. A connection measured at
+    // ~1.1-1.25 s on hardware, and "1.25 s" alone does not say whether to
+    // attack the round trips or the crypto -- so the two halves are timed
+    // separately and logged together below. Still logged now that
+    // keep-alive makes connections rare: it is the line that says how rare,
+    // and what one still costs when the kept socket goes.
     const uint32_t t_start = tls_now_ms();
 
     g_dns_token.c = c;
@@ -571,33 +628,24 @@ static int tls_read(struct transport *t, uint8_t *b, int cap, int timeout_ms) {
     return copied;
 }
 
+// transport.h's `close`: the exchange is over AND the response was taken to
+// its last byte -- the caller promises that much by choosing close() over
+// abandon(). If the connection is still clean, hand it back for the next
+// exchange instead of closing it (KEEP-ALIVE above): that is the ~1.25 s
+// this device would otherwise pay again for the very next request. Anything
+// less than clean falls through to a real close.
 static void tls_close(struct transport *t) {
     tls_conn_t *c = (tls_conn_t *)t->impl;
 
-    // The exchange is over. If the connection is still clean, hand it back
-    // for the next one instead of closing it (KEEP-ALIVE above): that is the
-    // ~1.25 s this device would otherwise pay again for the very next
-    // request. `rx_head == NULL` is the load-bearing half of "clean" -- a
-    // byte left unread here would be read as the next response's first byte.
-    if (c->pcb && c->connected && !c->closed && c->err == ERR_OK && c->rx_head == NULL) {
+    // `rx_head` empty is the load-bearing half of "clean" -- a byte left
+    // unread here would be read as the next response's first byte.
+    if (c->pcb && c->connected && !c->closed && c->err == ERR_OK &&
+        !tls_rx_pending(c)) {
         c->idle = true;
+        c->idle_since = tls_now_ms();
         return;
     }
-    c->idle = false;
-
-    if (c->pcb) {
-        struct altcp_pcb *pcb = c->pcb;
-        c->pcb = NULL;
-        detach_and_close(pcb); // deregisters arg/recv/err first, so
-                                // on_recv() cannot fire for this `c` again
-                                // after this returns.
-    }
-    cyw43_arch_lwip_begin();
-    if (c->rx_head) {
-        pbuf_free(c->rx_head);
-        c->rx_head = NULL;
-    }
-    cyw43_arch_lwip_end();
+    tls_abandon(t);
 }
 
 /** transport.h's `reused`: was the last connect() an already-open socket? */
@@ -611,6 +659,7 @@ static transport_t g_transport = {
     .read    = tls_read,
     .close   = tls_close,
     .reused  = tls_reused,
+    .abandon = tls_abandon,
     .impl    = &g_conn,
 };
 

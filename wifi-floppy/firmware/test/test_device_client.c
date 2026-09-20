@@ -886,6 +886,142 @@ static void a_request_the_server_began_answering_is_never_resent(void) {
     CHECK_EQ_INT(c.mounted_version, 5);      // nothing acted on
 }
 
+// --- keep-alive, round 2: what close() may and may not keep -----------
+//
+// The fake now models the real transport: close() HOLDS the connection open,
+// abandon() ends it, and `reused` is reported per connect(). That is what
+// makes the rules below testable at all -- with a sticky "pretend reused"
+// flag, none of these could tell a kept socket from an abandoned one.
+
+// C1. The retry is once. A dead kept connection that fails, then a fresh
+// connection that also says nothing, is the network being unreachable --
+// not a third attempt. (Before abandon() existed, the failed attempt's
+// close() handed the dead socket back, so the retry reused it too and the
+// "reused and silent" condition stayed true for as long as anyone looked.)
+static void two_dead_connections_in_a_row_stop_at_two_requests(void) {
+    boot();
+    fake_set_reused(true);                                     // a socket is held
+    fake_push_truncated("HTTP/1.1 204 No Content\r\n\r\n", 0); // it says nothing
+    fake_push_truncated("HTTP/1.1 204 No Content\r\n\r\n", 0); // nor does the retry
+    dc_state_t st = dc_step(&c);
+    CHECK_EQ_INT(fake_request_count(), 2);
+    CHECK_EQ_INT(st, DC_BACKOFF);
+    CHECK(!fake_connection_is_kept(),
+          "a connection that answered nothing must not be held for the next request");
+}
+
+// C1. The retry must land on a NEW connection -- the whole point of it.
+static void the_retry_lands_on_a_fresh_connection(void) {
+    boot();
+    fake_set_reused(true);
+    fake_push_truncated("HTTP/1.1 204 No Content\r\n\r\n", 0);
+    push_ok_json("{\"version\":4,\"desired\":null}");
+    CHECK_EQ_INT(dc_step(&c), DC_IDLE_POLL);
+    CHECK_EQ_INT(fake_request_count(), 2);
+    CHECK(!fake_last_reused(),
+          "the retry must be a fresh connection, not the same dead socket again");
+}
+
+// C2 regression. `r` is static in every caller, so it still holds the last
+// exchange's 200 when the next one fails before a byte goes out. With
+// http_resp_init() after the write loop, dc_exchange read that stale 200,
+// concluded the server had answered, and skipped the retry -- so a kept
+// connection that died between requests cost the whole exchange, every time,
+// with nothing in the log to say why. A WRITE failure is the case that
+// reaches it: the socket is gone, the request never left.
+static void a_write_failure_on_a_kept_connection_is_retried_once(void) {
+    boot();
+    push_ok_json("{\"version\":3,\"desired\":null}");   // leaves r.status == 200
+    CHECK_EQ_INT(dc_step(&c), DC_IDLE_POLL);
+    CHECK(fake_connection_is_kept(), "a clean exchange keeps its connection");
+
+    fake_kill_kept_connection();                       // it died while idle
+    push_ok_json("{\"version\":4,\"desired\":null}");   // the retry is answered
+    dc_state_t st = dc_step(&c);
+    CHECK_EQ_INT(fake_request_count(), 3);             // 1 + (dead + retry)
+    CHECK_EQ_INT(st, DC_IDLE_POLL);
+    CHECK_EQ_INT(c.since, 4);
+}
+
+// I3. `status == 0` is not "the server never saw it". Bytes that arrived
+// without amounting to a status line still mean the request was delivered
+// and the server is answering -- the same shape a read timeout on a POST
+// the server is still working on has. Only NOTHING arriving is safe to
+// repeat, so the count of bytes read is the condition, not the status.
+static void bytes_that_arrived_without_a_status_line_block_the_retry(void) {
+    boot();
+    fake_set_reused(true);
+    // Part of a status line, then the connection dies: status stays 0, but
+    // this request unquestionably reached the server.
+    fake_push_truncated("HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nhi", 7);
+    // A trap, never consumed: without it a wrong retry aborts the binary on
+    // the empty queue instead of failing the count below readably.
+    push_ok_json("{\"version\":99,\"desired\":null}");
+    dc_state_t st = dc_step(&c);
+    CHECK_EQ_INT(fake_request_count(), 1);
+    CHECK_EQ_INT(st, DC_BACKOFF);
+}
+
+// I3. /api/device/register has no idempotency: the pairing code is
+// single-use, so a resend of a registration the server may already have
+// processed turns a lost response into a terminal invalid_or_used_code and
+// sends the board back to the portal for a code a human must re-issue. It is
+// the one request that is never repeated, whatever the socket did.
+static void a_register_post_is_never_retried(void) {
+    boot();
+    fake_set_reused(true);
+    fake_push_truncated("HTTP/1.1 200 OK\r\n\r\n", 0);  // kept socket, silent
+    // A trap, never consumed: a registration that got resent would take
+    // this and succeed, which is exactly the outcome being forbidden.
+    push_ok_json("{\"token\":\"t0k3n\"}");
+    CHECK_EQ_INT(dc_register(&c, "ABC123", "4a.0", "aa:bb:cc:dd:ee:ff"), DC_REG_RETRY);
+    CHECK_EQ_INT(fake_request_count(), 1);
+}
+
+// C1. The load-bearing one. A response we gave up on leaves the rest of
+// itself on the socket; keeping it means the NEXT request reads the tail of
+// THIS one as its answer -- a permanent off-by-one that never self-heals.
+// close() cannot see the difference, which is why abandon() exists.
+static void an_abandoned_exchange_never_reuses_the_socket(void) {
+    boot();
+    // Malformed: a chunk body not followed by CRLF. http_resp_feed rejects
+    // it mid-response, with bytes still unread on the wire.
+    fake_push_response("HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n"
+                       "5\r\nhelloXX");
+    CHECK_EQ_INT(dc_step(&c), DC_BACKOFF);
+    CHECK(!fake_connection_is_kept(),
+          "a malformed response must not leave its connection open");
+
+    push_ok_json("{\"version\":7,\"desired\":null}");
+    CHECK_EQ_INT(dc_step(&c), DC_IDLE_POLL);
+    CHECK(!fake_last_reused(),
+          "the next request must be on a new connection, not the abandoned one");
+}
+
+// I7. A response that says it is the last one on this connection must not be
+// kept, however cleanly it finished.
+static void a_connection_close_response_is_not_kept(void) {
+    boot();
+    fake_push_response("HTTP/1.1 204 No Content\r\nConnection: close\r\n\r\n");
+    CHECK_EQ_INT(dc_step(&c), DC_IDLE_POLL);
+    CHECK(!fake_connection_is_kept(),
+          "Connection: close means the peer is going away -- do not hold the socket");
+}
+
+// A clean exchange DOES keep its connection, and the next request rides it.
+// Without this the tests above would all pass on a transport that never
+// reused anything at all.
+static void a_clean_exchange_hands_its_connection_to_the_next_one(void) {
+    boot();
+    fake_push_response("HTTP/1.1 204 No Content\r\n\r\n");
+    push_ok_json("{\"version\":2,\"desired\":null}");
+    CHECK_EQ_INT(dc_step(&c), DC_IDLE_POLL);
+    CHECK(fake_connection_is_kept(), "a drained response leaves a reusable socket");
+    CHECK_EQ_INT(dc_step(&c), DC_IDLE_POLL);
+    CHECK(fake_last_reused(), "the second request must ride the kept connection");
+    CHECK_EQ_INT(fake_request_count(), 2);
+}
+
 static void post_sends_a_binary_body_whole(void) {
     boot();
     static uint8_t body[DC_POST_BODY_MAX];
@@ -970,6 +1106,14 @@ int main(void) {
     RUN(a_dead_reused_connection_is_retried_once);
     RUN(a_fresh_connection_that_says_nothing_is_not_retried);
     RUN(a_request_the_server_began_answering_is_never_resent);
+    RUN(two_dead_connections_in_a_row_stop_at_two_requests);
+    RUN(the_retry_lands_on_a_fresh_connection);
+    RUN(a_write_failure_on_a_kept_connection_is_retried_once);
+    RUN(bytes_that_arrived_without_a_status_line_block_the_retry);
+    RUN(a_register_post_is_never_retried);
+    RUN(an_abandoned_exchange_never_reuses_the_socket);
+    RUN(a_connection_close_response_is_not_kept);
+    RUN(a_clean_exchange_hands_its_connection_to_the_next_one);
     RUN(post_sends_a_binary_body_whole);
     RUN(post_reports_a_dead_link_and_a_dead_token);
 

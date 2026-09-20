@@ -1292,6 +1292,14 @@ static void core1_main(void) {
                 }
                 psram_publish_slot(SLOT_NONE);
                 token_store_erase();
+                // The transport may be holding a TLS connection open for a
+                // next request that is never coming (keep-alive,
+                // transport_tls.c). Breaking out of here without ending it
+                // leaks the pcb and ~32 KB of mbedTLS buffers for the rest
+                // of this boot, and leaves a socket that can outlive the AP
+                // episode the portal is about to start. abandon(), not
+                // close(): close() is allowed to keep it.
+                if (c.t->abandon) c.t->abandon(c.t);
                 break;
             } else if (s == DC_UNPROVISIONED) {
                 // Review (final), Important 2: DC_UNPROVISIONED gets the same

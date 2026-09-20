@@ -58,12 +58,35 @@ int fake_request_count(void);
 // rest of their request.
 void fake_set_max_write(int n);
 
-// Make the fake claim its last connect() reused an already-open connection
-// (transport.h's `reused`). The real transport keeps a clean socket open
-// between exchanges; this is how a test drives the caller's retry path for a
-// kept-alive connection the server had closed in the meantime. Cleared by
-// fake_reset().
+// --- keep-alive ---------------------------------------------------------
+// The fake models the real transport's keep-alive, because the retry rule
+// above it cannot be tested honestly otherwise:
+//   * close() KEEPS the connection (the caller is saying the response
+//     finished); abandon() really ends it.
+//   * the next connect() hands a kept connection back and reports
+//     reused == true for THAT connect only -- `reused` is per-connect, not
+//     a mode the test switches on.
+//   * a kept connection consumes no scripted response until it is used.
+//
+// Pretend a previous exchange left a connection open (true), or that none is
+// held (false). Equivalent to running a clean exchange first, for tests that
+// care only about what happens to the NEXT one. Cleared by fake_reset().
 void fake_set_reused(bool reused);
+
+// The connection currently being held open is dead at the far end: the next
+// connect() still hands it back (reused == true -- nothing announces a
+// socket that expired), and then write() and read() on it both fail. This is
+// the one failure keep-alive introduces and the only one the retry rule is
+// allowed to act on.
+void fake_kill_kept_connection(void);
+
+// Did the most recent connect() hand back a kept connection? The same value
+// the client under test saw through transport.h's `reused`, recorded per
+// connect, so a test can assert that a RETRY landed on a fresh connection.
+bool fake_last_reused(void);
+
+// Is a connection being held open right now (close()d, not abandon()ed)?
+bool fake_connection_is_kept(void);
 
 // Drive the injected clock (see transport.h's clock_ms_fn).
 void fake_set_clock(uint32_t ms);
