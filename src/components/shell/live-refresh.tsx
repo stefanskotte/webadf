@@ -2,12 +2,17 @@
 
 import { useEffect, useRef } from 'react';
 import { useRouter } from 'next/navigation';
-import { LIVE_POLL_MS, isIdle, livePollDelay } from '@/lib/live-poll';
-
-export { LIVE_POLL_MS };
+import { isIdle, livePollDelay } from '@/lib/live-poll';
 
 /** What counts as "someone is using this tab". Passive, so scrolling stays smooth. */
-const INPUT_EVENTS = ['pointerdown', 'keydown', 'wheel', 'scroll', 'touchstart'] as const;
+const INPUT_EVENTS = ['pointerdown', 'keydown', 'wheel', 'scroll', 'touchstart', 'pointermove'] as const;
+
+/** pointermove fires on every pixel of movement; anything less than this since
+ * the last recorded input is not worth a ref write -- someone watching this
+ * page on a second monitor without touching anything still counts as "in
+ * use" as long as the mouse moves, at the cost of one comparison per event
+ * rather than one write. */
+const POINTERMOVE_THROTTLE_MS = 30_000;
 
 function typing(): boolean {
   const el = document.activeElement as HTMLElement | null;
@@ -60,7 +65,7 @@ export function LiveRefresh({ initial }: { initial: string }) {
   const last = useRef(initial);
   const owed = useRef(false);        // a change seen while the user was typing
   const inFlight = useRef(false);
-  const lastInputAt = useRef(Date.now());
+  const lastInputAt = useRef(performance.now());
 
   // A fresh `initial` means a new server render landed (our own
   // router.refresh() below, or a full navigation) and already reflects
@@ -77,13 +82,19 @@ export function LiveRefresh({ initial }: { initial: string }) {
     let stopped = false;
 
     async function check() {
-      if (inFlight.current || document.visibilityState !== 'visible') return;
+      if (stopped || inFlight.current || document.visibilityState !== 'visible') return;
       inFlight.current = true;
       try {
         const res = await fetch('/api/live-state', { cache: 'no-store', signal: AbortSignal.timeout(10_000) });
-        if (!res.ok) return;
+        // Cleanup can land while this fetch is still in flight (a fast
+        // unmount, or React's dev-mode double-invoke discarding this effect
+        // instance); re-checked here, after the only await, so a response
+        // that arrives afterward cannot mutate `last`/`owed` or call
+        // router.refresh() for a layout this component has already
+        // navigated away from.
+        if (stopped || !res.ok) return;
         const { fingerprint } = (await res.json()) as { fingerprint?: string };
-        if (typeof fingerprint !== 'string') return;
+        if (stopped || typeof fingerprint !== 'string') return;
         if (fingerprint !== last.current) { last.current = fingerprint; owed.current = true; }
         if (owed.current && !typing()) { owed.current = false; router.refresh(); }
       } catch {
@@ -100,35 +111,39 @@ export function LiveRefresh({ initial }: { initial: string }) {
       if (stopped || timer !== null || document.visibilityState !== 'visible') return;
       timer = setTimeout(async () => {
         timer = null;
-        await check();
-        arm();
-      }, livePollDelay(Date.now(), lastInputAt.current));
+        try { await check(); } finally { arm(); }
+      }, livePollDelay(performance.now(), lastInputAt.current));
     }
     function disarm() {
       if (timer !== null) { clearTimeout(timer); timer = null; }
     }
 
-    function onInput() {
-      const wasIdle = isIdle(Date.now(), lastInputAt.current);
-      lastInputAt.current = Date.now();
+    function onInput(e: Event) {
+      const now = performance.now();
+      // pointermove fires on every pixel: without this, watching the screen
+      // while moving the mouse would write the ref hundreds of times a
+      // second. Every other input type still updates on every event.
+      if (e.type === 'pointermove' && now - lastInputAt.current < POINTERMOVE_THROTTLE_MS) return;
+      const wasIdle = isIdle(now, lastInputAt.current);
+      lastInputAt.current = now;
       // Coming back to a tab that had slowed down: it may be up to 30 s into
       // a long wait, so poll now and re-arm at the fast rate instead of
       // serving stale state until that timer happens to fire.
-      if (wasIdle) { disarm(); void check().then(arm); }
+      if (wasIdle) { disarm(); void check().finally(arm); }
     }
 
     function onVisibility() {
       if (document.visibilityState === 'visible') {
         // Returning to a hidden tab is itself a sign of use: a tab brought to
         // the front is being looked at, whatever the last pointer event says.
-        lastInputAt.current = Date.now();
-        void check().then(arm);
+        lastInputAt.current = performance.now();
+        void check().finally(arm);
       } else {
         disarm();
       }
     }
 
-    void check().then(arm);
+    void check().finally(arm);
     for (const e of INPUT_EVENTS) {
       document.addEventListener(e, onInput, { passive: true, capture: true });
     }
