@@ -1468,6 +1468,11 @@ separately.
 
 ### 4. Backlog, not blocking anything
 
+- **The upload page should lose its Mount column** (operator, 2026-09-20). On the ingest
+  screen it serves no purpose: people organise what they have just uploaded, and only mount
+  afterwards, from the library or the game page. Removing the column also removes the mount
+  controls from a screen where the disks are still being sorted out.
+
 - ~~**Drop .lha and .zip onto a disk and pick files out of them.**~~ **DONE 2026-09-11 — see 3ae.** Requested:
   "most are distributed like this (from aminet typically), so many times you want to pick a
   few files out of archives". Cap the archive at ~25 MB.
@@ -2539,9 +2544,22 @@ change, or the uploader forces it, §4i), so a flip on the SAME mounted disk now
 to the Amiga the way an insert is: `/CHNG` asserted until the next STEP, same as
 `dskchg_image_inserted()`'s normal path (`src/reinsert.c/.h`, `src/dskchg.c`, `src/main.c`).
 
-**Verified on hardware:** writable → write succeeded; protected → the Amiga refused the very
-next write with no reset; writable again → succeeded once more. The server's disk history shows
-exactly two versions across the sequence — the refused write, being refused, created none.
+**Verified on hardware TWICE — the second time on this exact build, with the board's log
+running** (2026-09-20, Install disk, one boot, no reset between steps):
+
+    218.1-219.4  write: trk 80/19/80 applied      -- t1.txt, disk writable
+    243.6        close: 6610d5958801
+    254.4        wprot: changed on the mounted disk -- announcing a disk change
+    254.4        reinsert: /CHNG asserted until the next step (write-protect changed)
+    254-295      (t2.txt attempted here -- NOTHING captured: the Amiga refused it itself)
+    295.1        wprot: changed ... announcing a disk change   -- writable again
+    314.0-316.3  write: trk 80/20/19/80 applied   -- t3.txt
+    330.2        close: 3d16e0ac320d
+
+The server's history gained exactly those two versions (9: `6610d5958801`, 10: `3d16e0ac320d`),
+and xdftool reads `t1.txt` and `t3.txt` in the head image with no `t2.txt`: the refused write
+created nothing, anywhere. Both announcements fired in the same millisecond as the flag change
+(the Amiga was idle), so the 15 s forced path below was never needed and logged nothing.
 
 **Review found the first cut's idle window could be defeated, and its "may we announce" gate
 could starve; both are fixed here:**
