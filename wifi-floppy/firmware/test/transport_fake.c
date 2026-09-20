@@ -55,6 +55,8 @@ static void fake_fatal(const char *msg) {
     abort();
 }
 
+static bool g_reused;
+
 void fake_reset(void) {
     g_queue_count = 0;
     g_queue_pos = 0;
@@ -66,6 +68,7 @@ void fake_reset(void) {
     g_request_count = 0;
     g_max_write_bytes = 0;
     g_clock_ms = 0;
+    g_reused = false;
 }
 
 static fake_event_t *fake_push_slot(void) {
@@ -171,11 +174,25 @@ static void fake_close(struct transport *t) {
     g_connected = 0;
 }
 
+// The fake opens a new connection every time, so nothing it hands back is
+// ever "reused" -- except when a test says otherwise (fake_set_reused),
+// which is how the retry-on-a-dead-kept-alive-socket path is exercised.
+
+static bool fake_reused(struct transport *t) {
+    (void)t;
+    return g_reused;
+}
+
+void fake_set_reused(bool reused) {
+    g_reused = reused;
+}
+
 static transport_t g_transport = {
     .connect = fake_connect,
     .write = fake_write,
     .read = fake_read,
     .close = fake_close,
+    .reused = fake_reused,
     .impl = NULL,
 };
 

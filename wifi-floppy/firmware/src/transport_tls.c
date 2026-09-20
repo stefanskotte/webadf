@@ -103,6 +103,16 @@ typedef struct {
                               // under cyw43_arch_lwip_begin/end, see the
                               // file-header comment above.
     uint16_t     rx_off;     // bytes already consumed out of rx_head
+    // Whose session the one saved below belongs to. Recorded per connection
+    // because tls_close() saves the ticket and no longer has tls_connect()'s
+    // `host` argument in scope.
+    char         host[64];
+    int          port;
+    // Set by tls_close() when it hands the open connection back instead of
+    // closing it, cleared by the next tls_connect(). See KEEP-ALIVE below.
+    bool         idle;
+    // Did the connect() that opened this exchange reuse an idle connection?
+    bool         was_reused;
 } tls_conn_t;
 
 // mbedtls_config.h sets MBEDTLS_PLATFORM_MS_TIME_ALT because mbedtls's own
@@ -112,6 +122,11 @@ typedef struct {
 // needed here at all.
 mbedtls_ms_time_t mbedtls_ms_time(void) {
     return (mbedtls_ms_time_t)to_ms_since_boot(get_absolute_time());
+}
+
+/** Monotonic ms since boot, for this file's own timing lines. */
+static uint32_t tls_now_ms(void) {
+    return to_ms_since_boot(get_absolute_time());
 }
 
 static tls_conn_t g_conn;
@@ -134,6 +149,35 @@ static dns_token_t g_dns_token;
 // process for its whole life between resets; leaking one static config for
 // that lifetime is the normal embedded trade here, not an actual leak.
 static struct altcp_tls_config *g_tls_config;
+
+// ---------------------------------------------------------------------
+// Session resumption. Every request this device makes is its own
+// connection, and a full handshake costs a round trip plus the public-key
+// work an RP2350 does in software. A resumed handshake skips the
+// certificate chain entirely, which is the expensive half.
+//
+// TLS 1.3 hands the ticket over AFTER the handshake, in a NewSessionTicket
+// the server sends when it feels like it -- so the session is saved on
+// CLOSE (below), not when the handshake completes, and it is re-saved every
+// time, because a server that hands out single-use tickets has given us a
+// fresh one by then. Keeping a stale ticket around would mean offering a
+// ticket the server refuses and paying for a full handshake anyway.
+//
+// One session, for one host: this device talks to exactly one server. The
+// host is checked anyway, so a config change can never offer webadf's
+// ticket to someone else.
+static mbedtls_ssl_session g_saved;
+static bool                g_saved_valid;
+static char                g_saved_host[64];
+static bool                g_offered;   // did THIS connection offer the session?
+
+static void tls_forget_session(void) {
+    if (g_saved_valid) {
+        mbedtls_ssl_session_free(&g_saved);
+        g_saved_valid = false;
+        g_saved_host[0] = '\0';
+    }
+}
 
 static void dns_found_cb(const char *name, const ip_addr_t *ipaddr, void *arg) {
     (void)name;
@@ -245,8 +289,48 @@ static int tls_fail(int code, const char *why, int detail) {
     return code;
 }
 
+// ---------------------------------------------------------------------
+// KEEP-ALIVE. Measured on hardware 2026-09-20: a connection costs ~1.25 s,
+// essentially all of it the handshake, and session resumption barely moved
+// it (1302 ms full vs 1215-1253 ms resumed) because TLS 1.3 still runs a
+// key exchange on resumption and this MCU does that in software. The only
+// way to stop paying it per request is not to make the connection: an
+// exchange that finishes cleanly hands the socket back instead of closing
+// it, and the next request reuses it.
+//
+// Two rules keep that honest:
+//   * Only a connection that is CLEAN is kept: the handshake completed, the
+//     peer has not closed, no error was seen, and the response was drained
+//     to the last byte (leftover bytes would be read as the next response's
+//     first bytes -- the classic keep-alive desync).
+//   * A reused connection can die between exchanges without anyone noticing
+//     (an idle timeout at the far end looks like nothing at all until the
+//     next write). So `reused` is reported to the caller, which retries such
+//     a failure once on a fresh connection -- see dc_exchange.
+static bool tls_can_reuse(const tls_conn_t *c, const char *host, int port) {
+    return c->idle && c->pcb && c->connected && !c->closed && c->err == ERR_OK
+        && c->rx_head == NULL && c->port == port
+        && strcmp(c->host, host) == 0;
+}
+
 static int tls_connect(struct transport *t, const char *host, int port) {
     tls_conn_t *c = (tls_conn_t *)t->impl;
+
+    if (tls_can_reuse(c, host, port)) {
+        c->idle = false;
+        c->was_reused = true;
+        return 0;
+    }
+    c->was_reused = false;
+
+    // Not reusable: if something was still open, it goes now.
+    if (c->pcb) {
+        struct altcp_pcb *pcb = c->pcb;
+        c->pcb = NULL;
+        c->idle = false;
+        detach_and_close(pcb);
+    }
+
     uint32_t next_gen = c->gen + 1;
 
     cyw43_arch_lwip_begin();
@@ -258,6 +342,8 @@ static int tls_connect(struct transport *t, const char *host, int port) {
 
     memset(c, 0, sizeof *c);
     c->gen = next_gen; // must survive the memset above
+    snprintf(c->host, sizeof c->host, "%s", host);
+    c->port = port;
 
     // The single most important check in this file: refuse to even try a
     // handshake without a trustworthy clock. mbedtls verifies certificate
@@ -267,6 +353,13 @@ static int tls_connect(struct transport *t, const char *host, int port) {
     // expiry checking either meaninglessly always-pass or always-fail.
     if (!sntp_time_valid())
         return tls_fail(TLS_ERR_TIME_UNSET, "no clock, refusing handshake", 0);
+
+    // Where a connection's seconds actually go. Every request this device
+    // makes is its own connection (dc_exchange connects, writes, reads,
+    // closes), measured at ~1.1 s each on hardware, and "1.1 s" alone does
+    // not say whether to attack the round trips or the crypto -- so the two
+    // halves are timed separately and logged together below.
+    const uint32_t t_start = tls_now_ms();
 
     g_dns_token.c = c;
     g_dns_token.gen = c->gen;
@@ -288,6 +381,7 @@ static int tls_connect(struct transport *t, const char *host, int port) {
         return tls_fail(TLS_ERR_DNS, "DNS call refused", (int)derr);
     }
     if (!c->dns_ok) return tls_fail(TLS_ERR_DNS, "DNS did not resolve", 0);
+    const uint32_t t_dns_done = tls_now_ms();
 
     if (!g_tls_config) {
         g_tls_config = altcp_tls_create_config_client(
@@ -339,6 +433,22 @@ static int tls_connect(struct transport *t, const char *host, int port) {
         return tls_fail(TLS_ERR_TLS_CONFIG, "mbedtls_ssl_set_hostname failed", 0);
     }
 
+    // Offer the ticket from the last connection to this host, if we have one.
+    // A refusal is not an error: the server simply runs a full handshake.
+    g_offered = false;
+    if (g_saved_valid && strcmp(g_saved_host, host) == 0) {
+        const int sr = mbedtls_ssl_set_session(ssl, &g_saved);
+        if (sr == 0) {
+            g_offered = true;
+        } else {
+            // Nothing to do but drop it -- an unusable session offered on
+            // every connection would cost a failed call each time and never
+            // heal itself.
+            wf_logf(WF_WARN, "tls: saved session unusable (-0x%04x), dropped", -sr);
+            tls_forget_session();
+        }
+    }
+
     err_t cerr = altcp_connect(c->pcb, &c->remote_ip, (u16_t)port, on_connected);
     cyw43_arch_lwip_end();
     if (cerr != ERR_OK) {
@@ -356,7 +466,12 @@ static int tls_connect(struct transport *t, const char *host, int port) {
         sleep_ms(1);
     }
     if (c->connected) {
-        wf_logf(WF_INFO, "tls: handshake OK with %s:%d", host, port);
+        const uint32_t t_done = tls_now_ms();
+        wf_logf(WF_INFO, "tls: up with %s:%d in %lu ms (dns %lu, handshake %lu, %s)",
+                host, port, (unsigned long)(t_done - t_start),
+                (unsigned long)(t_dns_done - t_start),
+                (unsigned long)(t_done - t_dns_done),
+                g_offered ? "ticket offered" : "full");
         return 0;
     }
 
@@ -367,6 +482,14 @@ static int tls_connect(struct transport *t, const char *host, int port) {
     }
     // c->err is on_err()'s snapshot of the lwIP err_t -- the ONLY place the
     // real reason for a refused handshake survives.
+    // The ticket is the one thing that changed between a connection that
+    // worked and this one; a server that has rotated its ticket key, or
+    // decided this ticket is spent, must not cost us every future
+    // connection too.
+    if (g_offered) {
+        wf_logf(WF_WARN, "tls: handshake failed while offering a ticket -- dropping it");
+        tls_forget_session();
+    }
     return c->closed
         ? tls_fail(TLS_ERR_CONNECT, "closed during handshake", (int)c->err)
         : tls_fail(TLS_ERR_HANDSHAKE_TIMEOUT, "handshake timed out", (int)c->err);
@@ -503,7 +626,46 @@ static int tls_read(struct transport *t, uint8_t *b, int cap, int timeout_ms) {
 
 static void tls_close(struct transport *t) {
     tls_conn_t *c = (tls_conn_t *)t->impl;
+
+    // The exchange is over. If the connection is still clean, hand it back
+    // for the next one instead of closing it (KEEP-ALIVE above): that is the
+    // ~1.25 s this device would otherwise pay again for the very next
+    // request. `rx_head == NULL` is the load-bearing half of "clean" -- a
+    // byte left unread here would be read as the next response's first byte.
+    if (c->pcb && c->connected && !c->closed && c->err == ERR_OK && c->rx_head == NULL) {
+        c->idle = true;
+        return;
+    }
+    c->idle = false;
+
     if (c->pcb) {
+        // Save the session on the way out, not when the handshake finished:
+        // in TLS 1.3 the ticket arrives afterwards, in a NewSessionTicket
+        // the server sends during the exchange. By here it has arrived if
+        // it is going to, and it is the freshest one we will ever hold --
+        // servers that issue single-use tickets have replaced the one we
+        // offered. Saving unconditionally (not only when we did a full
+        // handshake) is what keeps a chain of resumed connections resumable.
+        mbedtls_ssl_context *ssl = (mbedtls_ssl_context *)altcp_tls_context(c->pcb);
+        if (ssl && c->connected) {
+            mbedtls_ssl_session fresh;
+            mbedtls_ssl_session_init(&fresh);
+            const int gr = mbedtls_ssl_get_session(ssl, &fresh);
+            if (gr == 0) {
+                tls_forget_session();
+                g_saved = fresh;          // takes ownership of fresh's buffers
+                g_saved_valid = true;
+                snprintf(g_saved_host, sizeof g_saved_host, "%s", c->host);
+            } else {
+                // MBEDTLS_ERR_SSL_BAD_INPUT_DATA here means "no ticket yet",
+                // which is normal and not worth a line at WARN: a server
+                // that never sends one would otherwise log on every close.
+                mbedtls_ssl_session_free(&fresh);
+                if (gr != MBEDTLS_ERR_SSL_BAD_INPUT_DATA) {
+                    wf_logf(WF_WARN, "tls: could not save session (-0x%04x)", -gr);
+                }
+            }
+        }
         struct altcp_pcb *pcb = c->pcb;
         c->pcb = NULL;
         detach_and_close(pcb); // deregisters arg/recv/err first, so
@@ -518,11 +680,17 @@ static void tls_close(struct transport *t) {
     cyw43_arch_lwip_end();
 }
 
+/** transport.h's `reused`: was the last connect() an already-open socket? */
+static bool tls_reused(struct transport *t) {
+    return ((tls_conn_t *)t->impl)->was_reused;
+}
+
 static transport_t g_transport = {
     .connect = tls_connect,
     .write   = tls_write,
     .read    = tls_read,
     .close   = tls_close,
+    .reused  = tls_reused,
     .impl    = &g_conn,
 };
 

@@ -58,6 +58,13 @@ int fake_request_count(void);
 // rest of their request.
 void fake_set_max_write(int n);
 
+// Make the fake claim its last connect() reused an already-open connection
+// (transport.h's `reused`). The real transport keeps a clean socket open
+// between exchanges; this is how a test drives the caller's retry path for a
+// kept-alive connection the server had closed in the meantime. Cleared by
+// fake_reset().
+void fake_set_reused(bool reused);
+
 // Drive the injected clock (see transport.h's clock_ms_fn).
 void fake_set_clock(uint32_t ms);
 uint32_t fake_clock_ms(void);

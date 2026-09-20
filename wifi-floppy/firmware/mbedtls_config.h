@@ -110,6 +110,13 @@
 #define MBEDTLS_SSL_CLI_C
 #define MBEDTLS_SSL_PROTO_TLS1_2
 #define MBEDTLS_SSL_PROTO_TLS1_3
+
+// Session resumption (transport_tls.c): the client keeps the server's ticket
+// and offers it on the next connection, which skips the certificate chain --
+// the expensive half of a handshake on a software-crypto MCU. Every request
+// this device makes is its own connection, so this is the difference between
+// paying for a full handshake per track uploaded and paying for one.
+#define MBEDTLS_SSL_SESSION_TICKETS
 #define MBEDTLS_SSL_TLS1_3_COMPATIBILITY_MODE   // middlebox interop
 #define MBEDTLS_SSL_TLS1_3_KEY_EXCHANGE_MODE_EPHEMERAL_ENABLED
 #define MBEDTLS_SSL_KEEP_PEER_CERTIFICATE        // required by TLS 1.3

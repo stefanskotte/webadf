@@ -845,6 +845,47 @@ static void adopt_makes_the_next_poll_a_no_op(void) {
     CHECK_EQ_INT(c.mounted_version, 8);
 }
 
+// --- keep-alive: a reused connection can be dead without anyone knowing ---
+//
+// The real transport hands a clean socket back instead of closing it, so the
+// next request skips the ~1.25 s handshake. The cost of that is a connection
+// the server may have closed since: the failure surfaces only when we try to
+// use it. Retrying THAT once, on a fresh connection, is safe -- nothing was
+// answered, so nothing was acted on twice.
+
+static void a_dead_reused_connection_is_retried_once(void) {
+    boot();
+    fake_set_reused(true);
+    fake_push_truncated("HTTP/1.1 204 No Content\r\n\r\n", 0);  // closed, said nothing
+    push_ok_json("{\"version\":4,\"desired\":null}");            // the retry is answered
+    dc_state_t st = dc_step(&c);
+    CHECK_EQ_INT(fake_request_count(), 2);
+    CHECK_EQ_INT(st, DC_IDLE_POLL);
+    CHECK_EQ_INT(c.since, 4);
+}
+
+static void a_fresh_connection_that_says_nothing_is_not_retried(void) {
+    boot();
+    fake_set_reused(false);
+    fake_push_truncated("HTTP/1.1 204 No Content\r\n\r\n", 0);
+    dc_state_t st = dc_step(&c);
+    CHECK_EQ_INT(fake_request_count(), 1);   // that is the network being down
+    CHECK_EQ_INT(st, DC_BACKOFF);
+}
+
+static void a_request_the_server_began_answering_is_never_resent(void) {
+    boot();
+    c.mounted_version = 5;
+    fake_set_reused(true);
+    // Status line arrives, then the connection dies: the server HAS acted on
+    // this request. Sending it again could repeat whatever it did.
+    fake_push_truncated("HTTP/1.1 200 OK\r\nContent-Length: 400\r\n\r\n{\"version\":9", 45);
+    dc_state_t st = dc_step(&c);
+    CHECK_EQ_INT(fake_request_count(), 1);
+    CHECK_EQ_INT(st, DC_BACKOFF);
+    CHECK_EQ_INT(c.mounted_version, 5);      // nothing acted on
+}
+
 static void post_sends_a_binary_body_whole(void) {
     boot();
     static uint8_t body[DC_POST_BODY_MAX];
@@ -926,6 +967,9 @@ int main(void) {
     RUN(a_lifted_hold_lets_the_eject_through);
     RUN(force_refetch_fetches_the_digest_already_mounted);
     RUN(adopt_makes_the_next_poll_a_no_op);
+    RUN(a_dead_reused_connection_is_retried_once);
+    RUN(a_fresh_connection_that_says_nothing_is_not_retried);
+    RUN(a_request_the_server_began_answering_is_never_resent);
     RUN(post_sends_a_binary_body_whole);
     RUN(post_reports_a_dead_link_and_a_dead_token);
 

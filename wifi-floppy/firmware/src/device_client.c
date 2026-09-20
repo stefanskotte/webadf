@@ -291,10 +291,16 @@ static void dc_backoff_reset(device_client_t *c) {
 // a clean close mid-body returns true with `r->body_complete` still false
 // -- the caller decides what an incomplete body means for that endpoint;
 // this function only reports what happened on the wire.
-static bool dc_exchange(device_client_t *c, const char *req, int req_len,
-                        void (*sink)(void *ctx, const uint8_t *b, int n),
-                        void *sink_ctx, http_resp_t *r) {
-    if (c->t->connect(c->t, c->host, 443) < 0) return false;
+// One attempt: connect (which may hand back an already-open connection),
+// write the request, read until the response is framed or the peer closes.
+static bool dc_attempt(device_client_t *c, const char *req, int req_len,
+                       void (*sink)(void *ctx, const uint8_t *b, int n),
+                       void *sink_ctx, http_resp_t *r, bool *reused_out) {
+    if (c->t->connect(c->t, c->host, 443) < 0) {
+        *reused_out = false;
+        return false;
+    }
+    *reused_out = c->t->reused ? c->t->reused(c->t) : false;
 
     int sent = 0;
     while (sent < req_len) {
@@ -332,6 +338,38 @@ static bool dc_exchange(device_client_t *c, const char *req, int req_len,
     }
     c->t->close(c->t);
     return true;
+}
+
+/**
+ * One exchange, with one retry reserved for exactly one situation.
+ *
+ * The transport keeps a clean connection open between exchanges (a handshake
+ * costs ~1.25 s on this hardware, measured, and session resumption barely
+ * dented it). A kept connection can be closed by the far end while idle, and
+ * nothing says so until the next request goes out and gets nothing back. That
+ * failure is not the network being down; it is a socket that expired, and the
+ * request was never answered -- so it is retried once, on a fresh connection.
+ *
+ * The retry is deliberately narrow: only when the connection was REUSED, and
+ * only when the response never started (no status line). A request the server
+ * has already begun answering has been acted on, whatever happened to the
+ * connection afterwards, and this device's requests are not all safe to repeat
+ * blindly -- the retry that matters for those is the protocol's own, with its
+ * seq numbers and backoff.
+ */
+static bool dc_exchange(device_client_t *c, const char *req, int req_len,
+                        void (*sink)(void *ctx, const uint8_t *b, int n),
+                        void *sink_ctx, http_resp_t *r) {
+    bool reused = false;
+    const bool ok = dc_attempt(c, req, req_len, sink, sink_ctx, r, &reused);
+    if (ok && r->status != 0) return true;
+    if (!reused || r->status != 0) return ok;
+
+    // The socket was stale. Close it and say the request again, once.
+    wf_logf(WF_INFO, "http: kept connection was closed, retrying on a new one");
+    c->t->close(c->t);
+    bool again = false;
+    return dc_attempt(c, req, req_len, sink, sink_ctx, r, &again);
 }
 
 bool dc_digest_is_blocked(const device_client_t *c, const char *sha256) {
