@@ -1,5 +1,15 @@
 import { defineConfig } from '@playwright/test';
 
+// One machine, more than one checkout: this repo is worked on in several
+// worktrees at once, and a run that hard-codes :3000 both collides with a
+// neighbouring run and -- because reuseExistingServer is on -- can silently
+// attach to a dev server built from ANOTHER branch. Worse, the cleanup that
+// frees the port afterwards kills whatever is listening, which is how two
+// full runs were lost on 2026-09-20. Set PORT (or BASE_URL) to keep runs
+// apart; 3000 stays the default, so nothing changes for a single run.
+const PORT = Number(process.env.PORT ?? 3000);
+const BASE_URL = process.env.BASE_URL ?? `http://localhost:${PORT}`;
+
 export default defineConfig({
   testDir: './e2e',
   // Runs once after the whole suite. Without it a single run left ~70 users,
@@ -26,7 +36,7 @@ export default defineConfig({
   workers: 1,           // ...and one worker, for the reason above
   retries: 0,
   timeout: 30_000,
-  use: { baseURL: 'http://localhost:3000', trace: 'retain-on-failure' },
+  use: { baseURL: BASE_URL, trace: 'retain-on-failure' },
   // Two projects, because until now the suite proved nothing about the width
   // it was most likely to be broken at. Everything ran at Playwright's DEFAULT
   // 1280x720 -- no viewport was ever configured -- so the responsive work had
@@ -54,8 +64,14 @@ export default defineConfig({
     },
   ],
   webServer: {
-    command: 'pnpm dev',
-    url: 'http://localhost:3000',
+    command: `pnpm dev --port ${PORT}`,
+    url: BASE_URL,
+    // The dev server has to agree with the tests about what this origin is:
+    // better-auth refuses a request whose Origin is not its own base URL, and
+    // .env.local pins that to :3000. Next does not let a .env file overwrite a
+    // variable already in the environment, so passing it here wins for the
+    // server this config spawns, and nothing outside the test run is affected.
+    env: { PORT: String(PORT), BETTER_AUTH_URL: BASE_URL },
     reuseExistingServer: true,
     // Raised from the brief's 120_000: Turbopack's first cold compile of the
     // auth/library routes plus the Neon connection warmup can exceed two
