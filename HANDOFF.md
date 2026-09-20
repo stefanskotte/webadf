@@ -3137,21 +3137,48 @@ from a `WF_BUS_SNIFF` capture. Reads high when idle -> the line was floating and
 below goes on the board. Still low -> something drives it low; rethink before routing
 anything.
 
-*The reference design:* OpenFlops (github.com/SukkoPera/OpenFlops, V1 and V2rc3, which have
-identical floppy nets, and the original Gotek schematic they are based on) fits **1 kΩ to
-+5 V on every floppy line it uses, both directions**, always fitted, no jumper. FlashFloppy
-configures every bus input as floating (`src/floppy.c: GPI_bus GPI_floating`), so those
-resistors are the only termination. Its inputs go straight to the MCU; ours pass through
-the 74LVC541A, whose inputs are 5 V tolerant, so 5 V pull-ups on the J1 side are safe.
+*The reference designs, read from their own schematics 2026-09-20:*
 
-| lines | J1 pins | priority |
-|---|---|---|
-| WGATE | 24 | required -- confirmed floating 2026-09-15; write support depends on it |
-| WDATA | 22 | fit it -- OpenFlops does, and write support depends on the line -- but its need is unmeasured: what looked like floating was the pad bug fixed in `95ce393` |
-| MTR | 16 | required -- confirmed floating 2026-09-15; reads low (motor on) permanently without one |
-| DIR, STEP, SIDE | 18, 20, 32 | match OpenFlops and a real drive; these toggle and read fine today without |
-| SEL0 (SEL1 optional) | 10 (12) | OpenFlops pulls up only the select line in use |
-| INDEX, TRK0, WPROT, RDATA, RDY, CHNG | 8, 26, 28, 30, 34, 2 | drive-side termination; faster RDATA rising edge; FETs sink the extra 5 mA easily |
+- **OpenFlops** (github.com/SukkoPera/OpenFlops, V1 and V2rc3, identical floppy nets): 15
+  resistors `PU1`-`PU15`, **1 kΩ to +5 V, one per Shugart line, both directions**, always
+  fitted, no jumper. FlashFloppy configures every bus input as floating (`src/floppy.c:
+  GPI_bus GPI_floating`), so those resistors are the only termination.
+- **Nano-Tek** (github.com/stefanskotte/Nano-Tek, the operator's own Gotek-class board:
+  STM32F105 + 74LCX07, FlashFloppy, OpenFlops-derived) fits **six 1 kΩ pull-ups and no more**,
+  and its sheet says why: *"1K pull-ups on host-driven inputs"* — R6 SEL0 (10), R11 DIR (18),
+  R7 STEP (20), R8 WDATA (22), R9 WGATE (24), R10 SIDE (32). Nothing on the drive-side outputs
+  (INDEX, TRK0, WPROT, RDATA, RDY, CHNG): its 74LCX07 is open-drain and the Amiga pulls those
+  up itself. **Pins 15/16 are unconnected** — a Gotek-class board drives RDY from the select
+  line and never reads MTR, which is why it needs no resistor there and we do.
+- **FlashFloppy's wiki** documents **1 kΩ from pin 16 (MTR) to +5 V** as a hardware mod: the
+  same pin and value as our fix, arrived at independently.
+- **Why the split exists:** the Amiga's outputs TO the drive (MTR, WGATE, DIR, STEP, SIDE,
+  SEL, WDATA) leave an open-collector stage with no pull-up on the motherboard, while the
+  lines the Amiga READS (RDY, TRK0, WPROT, CHNG, INDEX) are pulled up on the motherboard.
+  That is exactly the split measured here — the host-driven lines floated, the drive-side ones
+  never needed anything. Blog-grade (two Amiga-facing emulator builds), not schematic-verified,
+  but it matches the measurement.
+- **The value:** 5.25"/8" drives used 150-330 Ω; modern practice for short cables into CMOS
+  receivers is 1 kΩ, where both boards above sit. At 1 kΩ/5 V that is 5 mA per line, ~40 mA
+  worst case for the Amiga's drivers to sink. Nothing suggests 1 kΩ is too strong or too weak.
+- Their inputs go straight to the MCU (OpenFlops) or through an open-drain 74LCX07 (Nano-Tek);
+  ours pass through the 74LVC541A, whose inputs are 5 V tolerant, so 5 V pull-ups on the J1
+  side are safe. **The '541 is push-pull, not open-drain**, so every line it buffers must stay
+  an input on our side — a pull-up and a driven output would fight.
+
+Full research, with sources and what is schematic-verified versus forum/blog-grade:
+`scratchpad/pullup-research.md` of the 2026-09-19/20 session.
+
+**All 1 kΩ to +5 V. Fit the host-driven seven; leave the drive-side six as unpopulated pads.**
+
+| lines | J1 pins | fit? | why |
+|---|---|---|---|
+| WGATE | 24 | **required** | confirmed floating 2026-09-15; write support depends on it. Nano-Tek and OpenFlops both fit it |
+| MTR | 16 | **required** | confirmed floating 2026-09-15; reads low (motor on) permanently without one. FlashFloppy documents this exact mod; Nano-Tek does not use the pin at all |
+| WDATA | 22 | **fit** | both references fit it and write support depends on the line -- but OUR need is still unmeasured: what looked like floating was the pad bug fixed in `95ce393`, and the resistor was already on when it was fixed. Removing that one resistor and re-running the capture would settle it |
+| DIR, STEP, SIDE | 18, 20, 32 | **fit** | host-driven, same as Nano-Tek's six; they toggle and read fine today without, so this is insurance, not a fix |
+| SEL0 (SEL1 optional) | 10 (12) | **fit SEL0** | host-driven; OpenFlops and Nano-Tek pull up only the select line in use |
+| INDEX, TRK0, WPROT, RDATA, RDY, CHNG | 8, 26, 28, 30, 34, 2 | **pads, unpopulated** | the Amiga pulls these up on its own motherboard, our side drives them through FETs, and Nano-Tek ships without them. OpenFlops fits them (it pulls up everything); keep the footprints in case a long cable ever argues for termination or a faster RDATA edge |
 
 The activity LED's missing series resistor (backlog, "activity LED on GP22") belongs in
 the same respin.
