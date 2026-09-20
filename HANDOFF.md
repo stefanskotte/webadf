@@ -1468,6 +1468,17 @@ separately.
 
 ### 4. Backlog, not blocking anything
 
+- **Make uploads faster by reusing the TLS connection** (operator, 2026-09-20). Every request
+  the board makes is its own connection: `dc_exchange()` connects, writes, reads and closes.
+  Measured on hardware (§4i): ~1.1 s of TLS handshake per request, so ~1.6 s per uploaded track
+  and ~2.7 s for a close. A whole-disk write would be 160 handshakes. Worth trying, cheapest
+  first: mbedTLS **session resumption** (keep the session ticket between connections, which
+  skips the expensive half of the handshake), then **keep-alive** — the requests already say
+  `Connection: keep-alive`, but nothing reuses the socket, and the server is Vercel, so a pooled
+  connection may be closed under the board at any time; whatever is built has to treat a
+  half-closed socket as an ordinary retry, not an error. The write path's correctness does not
+  depend on this: seq numbering and the close already converge through retries (§4g).
+
 - **The upload page should lose its Mount column** (operator, 2026-09-20). On the ingest
   screen it serves no purpose: people organise what they have just uploaded, and only mount
   afterwards, from the library or the game page. Removing the column also removes the mount
