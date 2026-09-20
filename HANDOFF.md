@@ -3169,7 +3169,15 @@ anything.
 Full research, with sources and what is schematic-verified versus forum/blog-grade:
 `docs/decisions/2026-09-20-floppy-bus-pullups.md`.
 
-**All 1 kΩ to +5 V. Fit the host-driven seven; leave the drive-side six as unpopulated pads.**
+**DECIDED 2026-09-20 (operator): copy Nano-Tek verbatim — its six 1 kΩ pull-ups to +5 V on the
+host-driven inputs — plus MTR, which only we read.** The operator confirmed all six of Nano-Tek's
+are needed on that board. Nano-Tek's rail is **+5 V** (its pull-up column sits under the +5 V
+symbol; the +3V3 nearby is the 74LCX07's supply, labelled "Open Drain Buffers to 5V TTL"), so
+"verbatim" and OpenFlops agree on both value and rail. The one thing NOT copied is the buffer:
+theirs is open-drain (74LCX07), ours is push-pull (74LVC541A), so every pulled-up line must stay
+an input on our side — a pull-up and a driven output would fight.
+
+**All 1 kΩ to +5 V. Fit the host-driven seven; leave the drive-side six off (footprints optional).**
 
 | lines | J1 pins | fit? | why |
 |---|---|---|---|
