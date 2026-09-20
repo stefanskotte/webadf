@@ -68,6 +68,32 @@ static bool ci_starts_with(const char *s, const char *prefix) {
     return true;
 }
 
+// Is `tok` one of the comma-separated tokens in `val` (case-insensitive,
+// surrounding whitespace ignored)? `val` is not NUL-bounded at `vlen`, so
+// the length is carried explicitly.
+static bool header_has_token(const char *val, int vlen, const char *tok) {
+    const int tlen = (int)strlen(tok);
+    int i = 0;
+    while (i < vlen) {
+        while (i < vlen && (val[i] == ' ' || val[i] == '\t' || val[i] == ',')) i++;
+        int start = i;
+        while (i < vlen && val[i] != ',') i++;
+        int end = i;
+        while (end > start && (val[end - 1] == ' ' || val[end - 1] == '\t')) end--;
+        if (end - start == tlen) {
+            int k = 0;
+            for (; k < tlen; k++) {
+                char a = val[start + k], b = tok[k];
+                if (a >= 'A' && a <= 'Z') a += 'a' - 'A';
+                if (b >= 'A' && b <= 'Z') b += 'a' - 'A';
+                if (a != b) break;
+            }
+            if (k == tlen) return true;
+        }
+    }
+    return false;
+}
+
 static void parse_status_line(http_resp_t *r) {
     // "HTTP/1.1 NNN reason"
     const char *sp = strchr(r->_linebuf, ' ');
@@ -94,6 +120,14 @@ static void handle_header_line(http_resp_t *r) {
         r->content_length = v;
     } else if (ci_equal(name, "transfer-encoding")) {
         if (ci_starts_with(val, "chunked")) r->chunked = true;
+    } else if (ci_equal(name, "connection")) {
+        // A comma-separated list of tokens ("close", "keep-alive", and
+        // whatever hop-by-hop header names a proxy adds), so the token is
+        // matched inside the list rather than only at the start: a
+        // "Connection: keep-alive, close" that only looked at the first
+        // token would read as reusable, which is the one mistake that
+        // costs a desynchronised connection.
+        if (header_has_token(val, vlen, "close")) r->connection_close = true;
     }
 }
 
@@ -144,7 +178,24 @@ bool http_resp_feed(http_resp_t *r, const uint8_t *data, int len,
                 } else {
                     handle_header_line(r);
                     if (r->_state == ST_ERROR) return false;
-                    if (r->headers_done) start_body_phase(r);
+                    if (r->headers_done) {
+                        if (r->status >= 100 && r->status < 200) {
+                            // An interim response (100 Continue, 103 Early
+                            // Hints): no body, terminated by the blank line
+                            // just consumed, and the REAL response follows
+                            // on the same connection. Parsed as THE status
+                            // line it would be reported as the response,
+                            // `body_complete` declared with no framing
+                            // header at all, and the socket kept with the
+                            // actual response still inbound -- every later
+                            // response then belonging to the previous
+                            // request. Start over instead; the final
+                            // response is the one that counts.
+                            http_resp_init(r);
+                            continue;   // _linelen zeroed by the init
+                        }
+                        start_body_phase(r);
+                    }
                 }
                 r->_linelen = 0;
                 continue;

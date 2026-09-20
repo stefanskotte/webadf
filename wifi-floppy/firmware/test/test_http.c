@@ -231,6 +231,87 @@ static void test_chunk_trailer_linelen_bounded(void) {
           "_linelen must be capped at the line buffer size, not grown unbounded");
 }
 
+// I7: a 1xx is an INTERIM response -- no body, terminated by its own blank
+// line, with the real response still to come on the same connection. Parsed
+// as the status line it would be reported as THE response, `body_complete`
+// declared with no framing header at all (start_body_phase's "nothing
+// further can be delimited" arm), and the socket handed back with the actual
+// response still inbound -- so every later response would belong to the
+// previous request.
+static void test_1xx_is_not_the_response(void) {
+    http_resp_t r; http_resp_init(&r); body_len = 0;
+    CHECK(FEED(&r, "HTTP/1.1 100 Continue\r\n\r\n"
+                   "HTTP/1.1 200 OK\r\nContent-Length: 5\r\n\r\nhello"),
+          "an interim response followed by the real one parses");
+    CHECK_EQ_INT(r.status, 200);
+    CHECK(r.body_complete, "the final response's body is framed normally");
+    CHECK_EQ_INT(body_len, 5);
+    CHECK(memcmp(body, "hello", 5) == 0, "the body is the FINAL response's body");
+}
+
+// 103 Early Hints carries headers of its own (Link:, typically). None of
+// them belong to the final response -- in particular a Content-Length or a
+// Connection there must not frame or close anything.
+static void test_103_early_hints_headers_do_not_leak(void) {
+    http_resp_t r; http_resp_init(&r); body_len = 0;
+    CHECK(FEED(&r, "HTTP/1.1 103 Early Hints\r\n"
+                   "Link: </s.css>; rel=preload\r\n"
+                   "Connection: close\r\n"
+                   "\r\n"
+                   "HTTP/1.1 204 No Content\r\n\r\n"),
+          "early hints then the real response parses");
+    CHECK_EQ_INT(r.status, 204);
+    CHECK(r.body_complete, "204 completes at the headers");
+    CHECK(!r.connection_close,
+          "an interim response's Connection: close is not the final response's");
+    CHECK_EQ_INT(body_len, 0);
+}
+
+// The same, split at every awkward boundary the transport can deliver:
+// mid-status-line, between \r and \n, and across the interim/final seam.
+static void test_1xx_split_across_feeds(void) {
+    http_resp_t r; http_resp_init(&r); body_len = 0;
+    CHECK(FEED(&r, "HTTP/1.1 10"), "half an interim status line");
+    CHECK(FEED(&r, "0 Continue\r"), "the rest of it, up to the CR");
+    CHECK(FEED(&r, "\n\r"), "its blank line, split");
+    CHECK(FEED(&r, "\nHTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nhi"), "the real one");
+    CHECK_EQ_INT(r.status, 200);
+    CHECK(r.body_complete, "the final response still frames");
+    CHECK_EQ_INT(body_len, 2);
+}
+
+// I7: `Connection: close` says the peer is going away after this response.
+// The parser records it; device_client.c is what acts on it (it abandons the
+// connection instead of keeping it).
+static void test_connection_close_is_recorded(void) {
+    http_resp_t r; http_resp_init(&r); body_len = 0;
+    CHECK(FEED(&r, "HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\nok"),
+          "should parse");
+    CHECK(r.connection_close, "Connection: close must be visible to the caller");
+    CHECK(r.body_complete, "and the body still frames normally");
+}
+
+static void test_connection_keep_alive_is_not_close(void) {
+    http_resp_t r; http_resp_init(&r); body_len = 0;
+    CHECK(FEED(&r, "HTTP/1.1 204 No Content\r\nConnection: keep-alive\r\n\r\n"),
+          "should parse");
+    CHECK(!r.connection_close, "keep-alive is not close");
+}
+
+// A list, and the case that a prefix test would get wrong: "close" is a
+// token anywhere in it, and "close" must not be found inside a longer token.
+static void test_connection_close_inside_a_token_list(void) {
+    http_resp_t r; http_resp_init(&r); body_len = 0;
+    CHECK(FEED(&r, "HTTP/1.1 204 No Content\r\nCONNECTION: keep-alive, Close \r\n\r\n"),
+          "should parse");
+    CHECK(r.connection_close, "close as a later token, odd case and spacing, still counts");
+
+    http_resp_t r2; http_resp_init(&r2);
+    CHECK(FEED(&r2, "HTTP/1.1 204 No Content\r\nConnection: close-enough\r\n\r\n"),
+          "should parse");
+    CHECK(!r2.connection_close, "a longer token that merely starts with close is not close");
+}
+
 int main(void) {
     RUN(test_content_length_body); RUN(test_chunked_body);
     RUN(test_split_across_feeds); RUN(test_204_has_no_body);
@@ -243,6 +324,12 @@ int main(void) {
     RUN(test_content_length_overflow_rejected);
     RUN(test_chunk_size_overflow_rejected);
     RUN(test_chunk_trailer_linelen_bounded);
+    RUN(test_1xx_is_not_the_response);
+    RUN(test_103_early_hints_headers_do_not_leak);
+    RUN(test_1xx_split_across_feeds);
+    RUN(test_connection_close_is_recorded);
+    RUN(test_connection_keep_alive_is_not_close);
+    RUN(test_connection_close_inside_a_token_list);
     RUN(head_for_a_binary_body); RUN(head_for_an_empty_post_still_says_zero);
     RUN(head_that_does_not_fit_is_refused);
     return REPORT();

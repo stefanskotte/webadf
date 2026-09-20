@@ -19,6 +19,13 @@ typedef struct {
     bool     chunked;
     long     content_length;    // -1 if absent
     bool     body_complete;
+    // The response carried `Connection: close`. The peer will shut this
+    // connection down after it, so it must not be kept for the next
+    // request -- see device_client.c's dc_attempt, which abandons rather
+    // than closes when this is set. A 1xx interim response's own headers
+    // never land here: the parser resets on 1xx (below) and this reflects
+    // the FINAL response only.
+    bool     connection_close;
     // --- internal parser state; do not touch from outside http.c ---
     int      _state;
     char     _linebuf[128];
