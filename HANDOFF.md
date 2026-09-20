@@ -3167,7 +3167,7 @@ anything.
   an input on our side — a pull-up and a driven output would fight.
 
 Full research, with sources and what is schematic-verified versus forum/blog-grade:
-`scratchpad/pullup-research.md` of the 2026-09-19/20 session.
+`docs/decisions/2026-09-20-floppy-bus-pullups.md`.
 
 **All 1 kΩ to +5 V. Fit the host-driven seven; leave the drive-side six as unpopulated pads.**
 
