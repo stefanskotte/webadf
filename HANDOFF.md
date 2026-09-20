@@ -4096,6 +4096,51 @@ Demozoo API (the bulk export makes per-lookup load on a non-profit unnecessary).
   allowlist checks only the first URL (the raster content-type allowlist and `nosniff` still apply).
 - **Cron drift:** the daily 01:30 cron against a 7-day gate can drift a refetch to 8 days.
 
+### 3ag. Live device state in every open browser — DONE 2026-09-20, merged to `master`
+
+Spec: `docs/superpowers/specs/2026-09-19-live-device-state-design.md`. Plan:
+`docs/superpowers/plans/2026-09-19-live-device-state.md`. Asked for after the operator saw two
+computers disagree about what was mounted until one of them was reloaded.
+
+**What shipped.** `src/lib/live-state.ts` builds a **fingerprint** of the org's device state --
+16 hex of a sha-256 over one canonical line per device -- served by `GET /api/live-state`
+(session-scoped; a missing session answers 401, never a redirect, because `fetch` would follow
+the redirect and hand LiveRefresh the sign-in page's HTML). `src/components/shell/live-refresh.tsx`
+sits in the `(app)` layout, polls it, and calls `router.refresh()` when it changes, so every page
+re-renders through its own existing server code. No page grew a second, client-side copy of the
+state.
+
+**The fingerprint covers exactly what the pages render**, which took two review rounds to get
+right: desired/mounted disk ids, digests and versions, `deviceState()`, the disk's own `sha256`
+and `writeProtected` (a board's write moves the disk digest before the device row follows),
+`lastError`/`lastErrorAt`, the device name, `firmwareVersion`, an `online` bit, and -- for a
+stale device -- the exact "last seen 5m ago" text the card draws. `lastSeenAt` itself is NOT in
+it (it moves every 25 s); only what the pages derive from it, so the fingerprint changes when,
+and only when, a page would look different.
+
+**Two bugs the reviews caught, both of which would have been invisible in use:**
+- The old per-page 5 s timer on `/devices` and `/games/[id]` was the only thing refreshing
+  `lastError` and the header's online count. Deleting it (one mechanism, not two) would have
+  left a board error sitting unseen until a manual reload; the fingerprint gained those fields
+  in the same change.
+- The poller used its own first fetch as the baseline, so a change landing between the server
+  render and that fetch was folded into the baseline and never shown. The baseline now comes
+  from the server render itself (`initial` prop), and an e2e holds the first poll response for
+  3 s while making a change to prove it.
+
+**Rate (operator, 2026-09-20):** 3 s while the tab is in use, 30 s after ten minutes without
+input; any input -- including mouse movement -- or returning to the tab polls at once and
+restores 3 s. A visible tab polled around the clock otherwise: ~1,200 requests an hour, each a
+session lookup plus a query, keeping Neon awake for a tab nobody was looking at. The rule is the
+pure `src/lib/live-poll.ts`; the e2e drives active → idle → input → fast with Playwright's fake
+clock rather than waiting ten minutes.
+
+**Known and accepted:** a game renamed while a device is pending on it is not watched (§6 of the
+spec); `AbortSignal.timeout` needs Safari 15.4+ (older browsers simply never poll -- the page
+still works); the layout runs one extra query per full render to compute `initial`.
+
+**Gates:** vitest 875, build clean, full Playwright 283/283.
+
 ## Known accepted risks
 
 - **`/api/ingest/check` is a global cross-tenant existence oracle**, and an entitlement is
