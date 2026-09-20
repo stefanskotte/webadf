@@ -27,7 +27,7 @@ mounted disk).
 | # | Decision | Why |
 |---|---|---|
 | L1 | **Poll a fingerprint; re-render when it changes.** | A server push (SSE or WebSocket) would still have to poll the database to learn of a change, since Neon over HTTP has no LISTEN/NOTIFY. Polling is the same cost with none of the connection handling, and `router.refresh()` reuses every page's existing server rendering, so no page needs a second, client-side copy of the state. |
-| L2 | **Every 3 s, only while the tab is visible.** | The operator said 3 s is fine. A hidden tab costs nothing, and it checks at once when it becomes visible again, so a tab brought to the front is never stale for 3 s. |
+| L2 | **Every 3 s while the tab is visible AND in use; every 30 s after ten minutes without input** (operator, 2026-09-20). | The operator said 3 s is fine for someone using the app. A hidden tab costs nothing, and it checks at once when it becomes visible again, so a tab brought to the front is never stale for 3 s. A VISIBLE tab nobody is looking at is the case 3 s gets wrong: it polls for as long as it is open (~1,200 requests an hour, each a session lookup plus a query) and keeps the database awake all night. Idleness is measured from the last input in that tab, not from the last change on the server -- a board mounting a disk on its own must not make the tab consider itself in use. "Input" is deliberately broad, so a visible tab nobody is looking at is actually true as written rather than true only of a tab nobody's mouse is anywhere near: pointer move or down, a key, the wheel, a scroll, a touch, and returning to the tab all count (§3.3); a pointer move alone, at any rate, is enough to stay active. Any of these polls at once and restores 3 s, so coming back never costs 30 s of staleness. The rule is `src/lib/live-poll.ts`, pure and tested, including a clock that jumps backwards (a laptop waking, an NTP step), which reads as input just now rather than as ten minutes of idleness -- the component feeds it `performance.now()`, not `Date.now()`, so that jump is never visible to it in the first place. |
 | L3 | **The fingerprint covers what the pages show about devices and mounted disks, and nothing else.** | Refreshing on unrelated changes (other users' library edits, the admin plane) would re-render pages for nothing. Anything that is not device state already refreshes after the user's own actions. |
 | L4 | **Online/offline is computed at request time and included in the fingerprint.** | It changes without any row changing (§1). Using the same `deviceState()` the pages use means the fingerprint changes exactly when a page would render differently. |
 | L5 | **No upload progress (the cloud) in the browser.** | The operator does not need it now. The server could only infer it from open `disk_write_sessions` rows; it can be added to the fingerprint later. |
@@ -83,13 +83,29 @@ mounted disk).
   would leave open: a change landing between the server render and the client's first tick (client
   hydration plus one round trip, unbounded on a slow device or network) would otherwise be folded
   straight into that baseline and never surface until some later, unrelated change gave the poller
-  something to compare against. After mount it fetches every 3000 ms while
-  `document.visibilityState === 'visible'`, comparing each answer against that baseline; when the
-  fingerprint differs from the last one, it calls `router.refresh()` and remembers the new value. A
-  fresh `initial` (from that `router.refresh()` or a full navigation) is re-adopted as the baseline
-  with nothing owed.
-- On `visibilitychange` to visible it fetches at once, then resumes the interval. While hidden, no
-  requests are made.
+  something to compare against. After mount it fetches while
+  `document.visibilityState === 'visible'`, at the rate `livePollDelay` gives for how recently this
+  tab saw input (L2): every 3000 ms while in use, every 30000 ms once ten minutes have passed with
+  none. Each answer is compared against that baseline; when the fingerprint differs from the last
+  one, it calls `router.refresh()` and remembers the new value. A fresh `initial` (from that
+  `router.refresh()` or a full navigation) is re-adopted as the baseline with nothing owed.
+- On `visibilitychange` to visible it fetches at once, then resumes polling, and counts the return
+  itself as input (a tab brought to the front is being looked at, whatever the last pointer event
+  says). While hidden, no requests are made.
+- The timer is a self-scheduling `setTimeout`, re-armed after each tick at whatever the rate is by
+  then (`livePollDelay`), rather than a fixed `setInterval`: a tab that goes idle slows down without
+  the polling loop being torn down and rebuilt. "Input", for L2's purposes, is any of: `pointerdown`,
+  `keydown`, `wheel`, `scroll`, `touchstart`, `pointermove`, or the tab becoming visible again --
+  spelled out here so "a visible tab nobody is looking at" (L2) is true as written: a tab with the
+  mouse merely resting over it, generating none of these, counts as unused. All are watched with
+  passive, capturing listeners; `pointermove` additionally self-throttles inside its handler (a
+  ref comparison, no write, unless at least ~30 s have passed since the last recorded input), since
+  it fires on every pixel of movement and a high-rate move stream must cost one comparison per
+  event, not one ref write.
+- Idleness is timed with `performance.now()`, not `Date.now()`, for both the last-input timestamp
+  and the comparison against it: a monotonic clock so a laptop waking (a forward jump in wall-clock
+  time) cannot make an active tab read as ten minutes idle. `src/lib/live-poll.ts` itself stays
+  clock-agnostic -- it takes two numbers and does not care which clock produced them.
 - At most one request in flight at a time: a tick that finds one still pending is skipped.
 - A failed fetch (network, 401, 5xx) is ignored silently and retried on the next tick. It never
   throws, never toasts, and never refreshes.
@@ -126,6 +142,13 @@ mounted disk).
   - it changes when time alone moves a **stale** device's relative-time text (e.g. `now` moving
     from 5 minutes to 6 minutes past `lastSeenAt`, both already well past the threshold);
   - it does **not** change when only `lastSeenAt` moves within the threshold.
+- **vitest** (`src/lib/live-poll.test.ts`), the L2 rate rule in isolation:
+  - `livePollDelay` returns the fast rate for any gap under the ten-minute threshold, and the slow
+    rate once it is reached or passed;
+  - a `now` before `lastInputAt` (a clock that jumped backwards) reads as input just now, never as
+    idleness;
+  - the three constants (`LIVE_POLL_MS`, `LIVE_IDLE_POLL_MS`, `LIVE_IDLE_AFTER_MS`) are pinned to
+    3 s / 30 s / 10 min, so a later change to any of them is deliberate.
 - **e2e** (`e2e/live-state.spec.ts`), two browser contexts signed in to the same org:
   - A mounts a disk on a paired device; B, which never reloads and never clicks, shows it as
     requested within 5 s (the 3 s interval plus slack).
@@ -135,7 +158,15 @@ mounted disk).
   - A device status report that changes only `error` (nothing else in the body) makes B's
     `device-error-<id>` element appear within 5 s.
   - An idle page makes requests to `/api/live-state` only, and does not re-render while nothing
-    changes. The test counts RSC refetches over 10 s: zero.
+    changes. The test counts RSC refetches over 15 s: zero (widened from an earlier 10 s, which
+    against the live production database's real round trips could land exactly on the boundary of
+    the poll-count assertion with no margin).
+  - A single-browser test drives the whole L2 transition using Playwright's clock API (`page.clock`),
+    which can jump the tab's `performance.now()`/`Date.now()` forward without the test actually
+    waiting ten minutes: it measures the fast rate active, `fastForward()`s past the idle threshold
+    (once, since a recursive `setTimeout` chain only needs its next-due tick fired, not replayed
+    tick by tick), measures the slow rate idle, then dispatches a real `page.mouse.move` and
+    confirms it polls immediately and is back to the fast rate.
 - The existing suite stays green. Specs that assert on a page right after an action are
   unaffected: a refresh re-renders the same data.
 

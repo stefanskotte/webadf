@@ -2,6 +2,7 @@ import { test, expect, type Browser, type Page } from '@playwright/test';
 import { createHash } from 'node:crypto';
 import { signUpFresh, runTag } from './helpers';
 import { pairDevice, seedDisk, authHeader, cleanupSeeded } from './device-helpers';
+import { LIVE_POLL_MS, LIVE_IDLE_POLL_MS, LIVE_IDLE_AFTER_MS } from '@/lib/live-poll';
 
 test.afterAll(cleanupSeeded);
 
@@ -224,11 +225,133 @@ test('the fingerprint poller re-renders on a real change and does nothing while 
   await page.waitForTimeout(1_000);
 
   // Now measure the idle baseline with a clean slate: nothing changes for
-  // 10 s, so the poller must keep polling (>= 2 ticks at a 3 s interval) but
-  // never re-render (0 RSC requests) -- the detector just proved it would
-  // catch a real change, so this silence is evidence, not an unproven assumption.
+  // 15 s, so the poller must keep polling (>= 3 ticks at a 3 s interval, with
+  // margin: against the live production database the effective period is
+  // 3 s plus a round trip, so a 10 s window could land exactly on 2 with no
+  // slack) but never re-render (0 RSC requests) -- the detector just proved
+  // it would catch a real change, so this silence is evidence, not an
+  // unproven assumption.
   polls = 0; rsc = 0;
-  await page.waitForTimeout(10_000);
-  expect(polls).toBeGreaterThanOrEqual(2);
+  await page.waitForTimeout(15_000);
+  expect(polls).toBeGreaterThanOrEqual(3);
   expect(rsc).toBe(0);
 });
+
+test('an idle tab slows its live-state polling after ten minutes, and a real input restores the fast rate',
+  async ({ page }) => {
+    // Real time would make this test take 10+ minutes for nothing: Playwright's
+    // clock lets the tab's own `performance.now()`/`Date.now()` jump straight
+    // past the idle threshold. It has to be installed before ANY navigation,
+    // not just before the assertions below -- LiveRefresh reads
+    // performance.now() once at mount (`lastInputAt`'s initial value), and
+    // installing the clock AFTER that mount rebases performance.now() to a
+    // fresh near-zero epoch (confirmed by hand: a value read moments before
+    // install() reads back near 0 immediately after), making every later
+    // `now - lastInputAt` comparison meaningless. signUpFresh's own
+    // navigation (to /sign-up, outside the (app) layout, which never mounts
+    // LiveRefresh) happens after this, so the clock is already live for the
+    // whole session by the time LiveRefresh first mounts on /library.
+    //
+    // fastForward() is used throughout rather than runFor(): fastForward is
+    // the "closed the laptop lid" primitive, firing whatever timer was
+    // already due exactly once and leaving the clock at the new time, which
+    // is exactly what simulating "ten minutes with nobody touching the tab"
+    // needs. runFor() instead walks the clock forward tick by tick -- but
+    // each tick here does a REAL fetch to a REAL server, and runFor's own
+    // advance does not itself wait in real wall-clock time for that fetch to
+    // land (confirmed by hand: a recursive setTimeout chain whose callback
+    // does a genuine network fetch left every tick's fetch permanently
+    // in-flight under runFor, since it raced ahead of the real time that
+    // fetch needed -- and every following tick then found `inFlight.current`
+    // still true and silently no-opped). fastForward avoids this by firing
+    // at most one real fetch per call, which this test then explicitly waits
+    // for in real time (`page.waitForResponse`/`expect.poll`) before the next
+    // jump, giving `check()`'s `finally { inFlight.current = false }` and
+    // `arm()`'s re-scheduling a real chance to run first.
+    //
+    // Each phase is sized to be sensitive to the actual scheduled delay, not
+    // just to "some tick eventually happens": a jump smaller than the fast
+    // rate proves silence, one past the fast rate but short of the slow rate
+    // proves "not fast", and one further still proves "genuinely slow" -- so
+    // a regression that left the rate always fast (or dropped the slow rate
+    // entirely) fails a `toBe(0)` here rather than an easily-satisfied lower
+    // bound.
+    test.setTimeout(60_000);
+    await page.clock.install({ time: Date.now() });
+    await signUpFresh(page);
+
+    let polls = 0;
+    page.on('request', (r) => { if (r.url().includes('/api/live-state')) polls++; });
+
+    function nextPoll() {
+      return page.waitForResponse((r) => r.url().includes('/api/live-state'), { timeout: 10_000 });
+    }
+
+    // Let the dev server's Strict-Mode double-mount settle: its first,
+    // discarded effect instance still fires one real fetch before its
+    // cleanup runs, and that fetch's `finally` must clear `inFlight.current`
+    // (a ref shared with the surviving instance) before this test starts
+    // driving the clock, or the surviving instance's very first tick would
+    // find it still busy and silently skip.
+    await page.waitForTimeout(2_000);
+
+    // Active: a small jump (a bit over the fast rate) must land a real poll.
+    polls = 0;
+    {
+      const resp = nextPoll();
+      await page.clock.fastForward(LIVE_POLL_MS + 1_000);
+      await resp;
+    }
+    expect(polls).toBeGreaterThanOrEqual(1);
+    await page.waitForTimeout(300); // let the tick's `finally { arm() }` re-schedule before the next jump
+
+    // Jump past the ten-minute idle threshold in one step. Whatever was
+    // still scheduled at the fast rate fires once; the `arm()` inside that
+    // tick recomputes the delay against the now-far-future clock and
+    // re-arms at the slow rate.
+    {
+      const resp = nextPoll();
+      await page.clock.fastForward(LIVE_IDLE_AFTER_MS + 60_000);
+      await resp;
+    }
+    await page.waitForTimeout(300);
+
+    // Not fast any more: the same small jump that landed a poll while active
+    // must land NOTHING now -- if the idle rate rule were ever removed (or
+    // `livePollDelay` always returned the fast rate), this tick would still
+    // be scheduled at 3 s and this assertion would catch it.
+    polls = 0;
+    await page.clock.fastForward(LIVE_POLL_MS + 1_000);
+    await page.waitForTimeout(800); // real settle: long enough for a wrongly-fast tick's fetch to be dispatched
+    expect(polls).toBe(0);
+
+    // Genuinely slow: advancing the rest of the way to the 30 s mark lands
+    // the poll the fast-only jump above proved was NOT already scheduled.
+    {
+      const resp = nextPoll();
+      await page.clock.fastForward(LIVE_IDLE_POLL_MS);
+      await resp;
+    }
+    await page.waitForTimeout(300);
+
+    // A real input -- an actual mouse move dispatched over the page, not a
+    // simulated clock tick -- must poll at once rather than wait out the
+    // rest of the 30 s already scheduled. Waited for as a full response, not
+    // just the request firing, so `arm()` (which only re-schedules once this
+    // immediate `check()` resolves) has actually run before the next jump.
+    polls = 0;
+    {
+      const resp = nextPoll();
+      await page.mouse.move(200, 200);
+      await resp;
+    }
+    expect(polls).toBeGreaterThanOrEqual(1);
+    await page.waitForTimeout(300);
+
+    // Genuinely fast again, not just a one-off catch-up poll: the same small
+    // jump that proved silence while idle must now land a poll.
+    polls = 0;
+    await page.clock.fastForward(LIVE_POLL_MS + 1_000);
+    await page.waitForTimeout(800);
+    expect(polls).toBeGreaterThanOrEqual(1);
+  });
