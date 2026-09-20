@@ -27,7 +27,7 @@ mounted disk).
 | # | Decision | Why |
 |---|---|---|
 | L1 | **Poll a fingerprint; re-render when it changes.** | A server push (SSE or WebSocket) would still have to poll the database to learn of a change, since Neon over HTTP has no LISTEN/NOTIFY. Polling is the same cost with none of the connection handling, and `router.refresh()` reuses every page's existing server rendering, so no page needs a second, client-side copy of the state. |
-| L2 | **Every 3 s, only while the tab is visible.** | The operator said 3 s is fine. A hidden tab costs nothing, and it checks at once when it becomes visible again, so a tab brought to the front is never stale for 3 s. |
+| L2 | **Every 3 s while the tab is visible AND in use; every 30 s after ten minutes without input** (operator, 2026-09-20). | The operator said 3 s is fine for someone using the app. A hidden tab costs nothing, and it checks at once when it becomes visible again, so a tab brought to the front is never stale for 3 s. A VISIBLE tab nobody is looking at is the case 3 s gets wrong: it polls for as long as it is open (~1,200 requests an hour, each a session lookup plus a query) and keeps the database awake all night. Idleness is measured from the last input in that tab, not from the last change on the server -- a board mounting a disk on its own must not make the tab consider itself in use. Any input, or returning to the tab, polls at once and restores 3 s, so coming back never costs 30 s of staleness. The rule is `src/lib/live-poll.ts`, pure and tested, including a clock that jumps backwards (a laptop waking, an NTP step), which reads as input just now rather than as ten minutes of idleness. |
 | L3 | **The fingerprint covers what the pages show about devices and mounted disks, and nothing else.** | Refreshing on unrelated changes (other users' library edits, the admin plane) would re-render pages for nothing. Anything that is not device state already refreshes after the user's own actions. |
 | L4 | **Online/offline is computed at request time and included in the fingerprint.** | It changes without any row changing (§1). Using the same `deviceState()` the pages use means the fingerprint changes exactly when a page would render differently. |
 | L5 | **No upload progress (the cloud) in the browser.** | The operator does not need it now. The server could only infer it from open `disk_write_sessions` rows; it can be added to the fingerprint later. |
@@ -88,8 +88,13 @@ mounted disk).
   fingerprint differs from the last one, it calls `router.refresh()` and remembers the new value. A
   fresh `initial` (from that `router.refresh()` or a full navigation) is re-adopted as the baseline
   with nothing owed.
-- On `visibilitychange` to visible it fetches at once, then resumes the interval. While hidden, no
-  requests are made.
+- On `visibilitychange` to visible it fetches at once, then resumes polling, and counts the return
+  itself as input (a tab brought to the front is being looked at, whatever the last pointer event
+  says). While hidden, no requests are made.
+- The timer is a self-scheduling `setTimeout`, re-armed after each tick at whatever the rate is by
+  then (`livePollDelay`), rather than a fixed `setInterval`: a tab that goes idle slows down without
+  the polling loop being torn down and rebuilt. Input is watched with passive, capturing listeners
+  for `pointerdown`, `keydown`, `wheel`, `scroll` and `touchstart`.
 - At most one request in flight at a time: a tick that finds one still pending is skipped.
 - A failed fetch (network, 401, 5xx) is ignored silently and retried on the next tick. It never
   throws, never toasts, and never refreshes.
