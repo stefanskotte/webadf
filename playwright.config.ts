@@ -66,6 +66,12 @@ export default defineConfig({
   webServer: {
     command: `pnpm dev --port ${PORT}`,
     url: BASE_URL,
+    // The dev server has to agree with the tests about what this origin is:
+    // better-auth refuses a request whose Origin is not its own base URL, and
+    // .env.local pins that to :3000. Next does not let a .env file overwrite a
+    // variable already in the environment, so passing it here wins for the
+    // server this config spawns, and nothing outside the test run is affected.
+    env: { PORT: String(PORT), BETTER_AUTH_URL: BASE_URL },
     reuseExistingServer: true,
     // Raised from the brief's 120_000: Turbopack's first cold compile of the
     // auth/library routes plus the Neon connection warmup can exceed two
