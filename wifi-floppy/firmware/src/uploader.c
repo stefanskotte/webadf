@@ -281,9 +281,24 @@ static up_step_t up_send_track(uploader_t *u, int slot, int t) {
         u->sent[t / 8] |= (uint8_t)(1u << (t % 8));
         bool dup = false;
         if (json_bool(resp, "duplicate", &dup) && dup) {
-            // Never expected: no seq is ever reused (C2). The server staged
-            // nothing for this track, so say so loudly.
-            wf_logf(WF_WARN, "upload: trk %d seq %lu duplicate -- the server staged nothing",
+            // Expected in exactly one place, and that place is new: this
+            // uploader still never reuses a seq (C2), but dc_exchange retries
+            // a kept connection that produced nothing, resending the SAME
+            // bytes -- seq included. A server that had in fact received
+            // attempt 1 and was slow to answer it answers the retry with
+            // duplicate:true. That is the retry working as designed, not a
+            // seq collision: the track is staged exactly once either way,
+            // which is the whole point of the idempotency key.
+            //
+            // INFO, not WARN, because of that: this is now a normal outcome
+            // on a flaky link, and a WARN that fires on normal behaviour
+            // trains the reader to skip it -- which costs the next real
+            // warning. Still logged, because a duplicate arriving WITHOUT a
+            // preceding retry would be a genuine seq bug, and the retry logs
+            // its own line ("kept connection was closed, retrying on a new
+            // one") immediately above it. The pair is the signal.
+            wf_logf(WF_INFO, "upload: trk %d seq %lu duplicate -- already staged "
+                    "(expected after a retried request)",
                     t, (unsigned long)u->seq);
         } else {
             wf_logf(WF_INFO, "upload: trk %d seq %lu ok", t, (unsigned long)u->seq);

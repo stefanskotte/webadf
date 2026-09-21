@@ -30,7 +30,9 @@
 // nothing. MBEDTLS_PLATFORM_MS_TIME_ALT hands that job to our own
 // mbedtls_ms_time() (transport_tls.c), built on pico/time.h's
 // to_ms_since_boot(get_absolute_time()) -- a monotonic ms counter, which is
-// all this is used for (handshake/session-ticket timing, not wall time).
+// all this is used for (handshake timing and mbedtls's own internal
+// timeouts, not wall time; the session-ticket path that also used it is
+// gone -- see the commit that removed it).
 #define MBEDTLS_PLATFORM_MS_TIME_ALT
 
 // --- Entropy / RNG -----------------------------------------------------

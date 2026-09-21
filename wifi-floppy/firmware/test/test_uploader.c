@@ -359,14 +359,25 @@ static void a_refused_attempt_also_spends_its_seq(void) {
     CHECK_EQ_INT(u.seq, 3);
 }
 
-// Under this rule the server should never answer {duplicate:true}; if it
-// does, something is wrong enough to say so.
-static void a_duplicate_answer_is_warned_about(void) {
+// This uploader still never reuses a seq, but dc_exchange's keep-alive retry
+// resends a request byte for byte -- seq included -- when a kept connection
+// produced nothing. A server that had received attempt 1 and was slow to
+// answer answers the retry {duplicate:true}, and that is the idempotency key
+// doing its job: the track is staged once. So it is logged at INFO (a normal
+// outcome on a flaky link), not WARN, and the line says what it means.
+static void a_duplicate_answer_is_logged_as_already_staged(void) {
     mounted();
     amiga_writes(40, 0x5a);
     push_json("HTTP/1.1 200 OK", "{\"duplicate\":true}");
     up_step(&u);
-    CHECK(strstr(logs(), "WARN upload: trk 40 seq 1 duplicate") != NULL, "WF_WARN on a duplicate");
+    // WF_INFO carries no level tag (wf_log.c's lvl_tag), so the absence of
+    // "WARN " in front of the line is what says it was demoted.
+    CHECK(strstr(logs(), "upload: trk 40 seq 1 duplicate -- already staged") != NULL,
+          "a duplicate says the track was already staged");
+    CHECK(strstr(logs(), "WARN upload: trk 40 seq 1 duplicate") == NULL,
+          "and is no longer a warning about something that now happens by design");
+    // The track is still marked sent: a duplicate means staged, not lost.
+    CHECK_EQ_INT(u.seq, 1);
 }
 
 // The session's close is due: one track uploaded, the Amiga quiet since.
@@ -589,7 +600,7 @@ int main(void) {
     RUN(unchanged_is_adopted_too);
     RUN(a_seq_is_never_reused_after_a_failed_attempt);
     RUN(a_refused_attempt_also_spends_its_seq);
-    RUN(a_duplicate_answer_is_warned_about);
+    RUN(a_duplicate_answer_is_logged_as_already_staged);
     RUN(a_400_upload_parks);
     RUN(a_422_upload_parks);
     RUN(a_400_close_parks);
