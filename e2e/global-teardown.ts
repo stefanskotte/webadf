@@ -5,7 +5,7 @@ import { diskVersions } from '@/db/schema/disk-history';
 import { deleteUserCascade } from '@/lib/admin-delete';
 import { selectUnreferencedBlobs } from '@/lib/blob-gc';
 import { diskStore } from '@/lib/storage';
-import { reclaimDeltaBlobs } from './device-helpers';
+import { reclaimDeltaBlobs, cleanupTestReleases } from './device-helpers';
 
 /**
  * Remove everything the suite created, from the live database it ran against.
@@ -178,11 +178,15 @@ export default async function globalTeardown() {
       orphanBlobs = unreferenced.length;
     }
 
+    // firmware_releases is global, so no email predicate reaches it -- the
+    // version prefix is the whole boundary. See publishTestRelease.
+    const releases = await cleanupTestReleases();
+
     console.log(
       `teardown: removed ${users} test users, ${games} games, `
       + `${codes.rows.length} invite codes, ${sessions.rowCount ?? 0} stale sessions, `
       + `${orphanBlobs} unreferenced blobs (${objectsRemoved} objects), `
-      + `${deltasRemoved} delta blobs`,
+      + `${deltasRemoved} delta blobs, ${releases} firmware releases`,
     );
   } catch (err) {
     // Never fail the run on teardown: the tests already passed or failed on
