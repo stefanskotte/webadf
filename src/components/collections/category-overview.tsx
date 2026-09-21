@@ -103,9 +103,18 @@ export function CategoryOverview({
     <div className="flex flex-col gap-4" data-testid="category-overview">
       {/* Just the totals. "Everything is filed." went with the bare cards
           (operator, 2026-09-21): it was there to explain why the page was not
-          the grid you expected, and a wall of collection art explains itself. */}
+          the grid you expected, and a wall of collection art explains itself.
+
+          `--on-dark-muted`, NOT `--muted-2`. The grey ramp (globals.css) is
+          for text on a LIGHT surface -- inside a glass card -- and #5f6874 on
+          the shell's dark band is very nearly invisible, which is exactly what
+          this line was (operator, 2026-09-21). This text sits directly on the
+          page background, in the same dark band as the PageHeader subtitle
+          immediately above it, so it takes the same colour that subtitle does.
+          Anything rendered outside a card on this shell has the same
+          question to answer. */}
       <div className="flex flex-wrap items-baseline gap-x-2 gap-y-1 px-1">
-        <span className="font-mono text-[11.5px]" style={{ color: 'var(--muted-2)' }}>
+        <span className="font-mono text-[11.5px]" style={{ color: 'var(--on-dark-muted)' }}>
           {totalTitles.toLocaleString()} titles · {totalDisks.toLocaleString()} disks ·{' '}
           {collections.length.toLocaleString()} {collections.length === 1 ? 'collection' : 'collections'}
         </span>
