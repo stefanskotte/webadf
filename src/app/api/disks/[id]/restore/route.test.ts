@@ -67,8 +67,21 @@ describe('POST /api/disks/[id]/restore', () => {
     expect(restoreVersion).not.toHaveBeenCalled();
   });
 
+  it('passes a no-op restore through as ok with recorded false', async () => {
+    // The target's bytes already WERE the head, so nothing was recorded. Still
+    // a 200 -- the disk does hold that version -- but the panel needs to tell
+    // the two apart, or it claims a restore that never happened.
+    restoreVersion.mockResolvedValue({ ok: true, sha256: 'a'.repeat(64), seq: 7, recorded: false });
+
+    const { POST } = await import('./route');
+    const response = await POST(makeRequest({ seq: 7 }), { params: Promise.resolve({ id: DISK_ID }) });
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({ sha256: 'a'.repeat(64), seq: 7, recorded: false });
+  });
+
   it('calls restoreVersion with the org, disk id, parsed seq and user, and returns 200 on success', async () => {
-    restoreVersion.mockResolvedValue({ ok: true, sha256: 'f'.repeat(64), seq: 4 });
+    restoreVersion.mockResolvedValue({ ok: true, sha256: 'f'.repeat(64), seq: 4, recorded: true });
 
     const { POST } = await import('./route');
     const request = makeRequest({ seq: 2 });
@@ -76,7 +89,7 @@ describe('POST /api/disks/[id]/restore', () => {
 
     expect(restoreVersion).toHaveBeenCalledWith(ORG_ID, DISK_ID, 2, USER_ID);
     expect(response.status).toBe(200);
-    expect(await response.json()).toEqual({ sha256: 'f'.repeat(64), seq: 4 });
+    expect(await response.json()).toEqual({ sha256: 'f'.repeat(64), seq: 4, recorded: true });
   });
 
   it('maps a held disk to 409 {error: "mounted", reason}', async () => {

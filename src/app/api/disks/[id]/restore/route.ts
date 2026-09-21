@@ -53,5 +53,8 @@ export async function POST(request: Request, ctx: { params: Promise<{ id: string
     return Response.json({ error: result.reason }, { status: result.status });
   }
 
-  return Response.json({ sha256: result.sha256, seq: result.seq });
+  // `recorded` distinguishes "this version is back" from "it was already the
+  // current content, so nothing was recorded" -- both are successes, and the
+  // panel says different things about them.
+  return Response.json({ sha256: result.sha256, seq: result.seq, recorded: result.recorded });
 }

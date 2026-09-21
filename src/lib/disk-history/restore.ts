@@ -18,7 +18,8 @@ import { DeltaError } from '@/lib/disk-history/delta';
 import { loadEntries, recordVersion, StaleHeadError, type Recorded } from '@/lib/disk-history/store';
 
 export type RestoreOutcome =
-  | { ok: true; sha256: string; seq: number }
+  /** `recorded` false means the target's bytes already WERE the head: nothing recorded, nothing wrong. */
+  | { ok: true; sha256: string; seq: number; recorded: boolean }
   | { ok: false; status: number; reason: string };
 
 /**
@@ -102,6 +103,21 @@ export async function restoreVersion(
 
   const currentSeq = entries[entries.length - 1].seq;
 
+  // THE HOLDER CHECK ABOVE RAN BEFORE `materialise`, which is up to 65
+  // sequential blob reads -- two orders of magnitude longer than the single
+  // read applyDiskEdit does between its own check and its record. That window
+  // is wide enough for a board to be mounted, converge, and open a write
+  // session inside it, and `closeSession` deliberately lets an ALREADY OPEN
+  // session outlive a version bump (device-write.ts: only a new session is
+  // refused as 'behind'). `repointLateMounts` below therefore would not stop
+  // it: the Amiga's save would land on top of this rewind, while the person
+  // who clicked Restore was told it succeeded. One more query closes the
+  // window to applyDiskEdit's size. Deliberately NOT solved by moving
+  // `materialise` after the check -- that would read a disk's bytes before
+  // refusing, against D-W-4.
+  const late = await findHolder(db, orgId, disk.sha256);
+  if (late) return { ok: false, status: 409, reason: mountedReason(late.name) };
+
   let recorded: Recorded | null;
   try {
     recorded = await recordVersion({
@@ -118,11 +134,11 @@ export async function restoreVersion(
   // Restoring the head, or a version whose bytes already equal it: nothing
   // to record, and NOT turned into a fake new version (see the doc comment
   // above) -- answer with the CURRENT sha and seq, unchanged.
-  if (!recorded) return { ok: true, sha256: disk.sha256, seq: currentSeq };
+  if (!recorded) return { ok: true, sha256: disk.sha256, seq: currentSeq, recorded: false };
 
   // A board that asked for this disk between the holder check above and this
   // commit wants the OLD bytes now; point it at the new head.
   await repointLateMounts(db, orgId, diskId, disk.sha256, recorded.sha256);
 
-  return { ok: true, sha256: recorded.sha256, seq: recorded.seq };
+  return { ok: true, sha256: recorded.sha256, seq: recorded.seq, recorded: true };
 }

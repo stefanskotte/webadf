@@ -190,6 +190,96 @@ describe('loadHistory', () => {
   // deltas deep, so a reintroduced per-version materialise() call would blow
   // this assertion up (45 reads for 9 versions, not 9), not merely round
   // differently.
+  it('stops reading bytes for versions older than the detail window', async () => {
+    // THE COST THIS BOUNDS: history grows by one version per Amiga save, and
+    // the panel shows 20 rows. Without a bound, rendering the disk page reads
+    // and parses EVERY version -- forever, on the page people open most.
+    const { recordVersion } = await import('./store');
+    const { loadHistory } = await import('./history');
+
+    let head = formatVolume({ filesystem: 'FFS', volumeName: 'Long' });
+    blobBytes.set(sha256Of(head), head);
+
+    const COUNT = 110; // comfortably past DETAILED (25) + MAX_CHAIN_DEPTH (64)
+    for (let i = 0; i < COUNT; i++) {
+      const result = addFile(head, ROOT_BLOCK, `F${i}.TXT`, new TextEncoder().encode(`v${i}`));
+      expect(result.ok).toBe(true);
+      if (!result.ok) return;
+      await recordVersion({
+        orgId: ORG, diskId: DISK,
+        headSha: sha256Of(head), head, next: result.adf,
+        source: 'browser', userId: 'user-1', sourceFilename: 'Long.adf',
+      });
+      head = result.adf;
+    }
+
+    readCount = 0;
+    const history = await loadHistory(ORG, DISK, new Map());
+    expect(history).toHaveLength(COUNT + 1);
+
+    // Bounded, not proportional: the walk starts at the nearest snapshot at
+    // or before the window, and `nextKind` forces one every MAX_CHAIN_DEPTH.
+    expect(readCount).toBeLessThanOrEqual(25 + 64 + 1);
+    expect(readCount).toBeLessThan(history.length);
+
+    // Newest first: the rows the panel actually shows still carry real file
+    // changes -- the bound must not cost the visible rows their detail.
+    for (const version of history.slice(0, 20)) {
+      expect(version.changes.length).toBeGreaterThan(0);
+      expect(version.sectorNote).toBeNull();
+    }
+
+    // The oldest rows are the ones that were not read. They still say what
+    // they did, out of metadata alone -- never a blank row, and never the
+    // panel's "No file changes." for a version that changed something.
+    const oldest = history[history.length - 2];
+    expect(oldest.changes).toHaveLength(0);
+    expect(oldest.sectorNote).toMatch(/sector/);
+  });
+
+  it('propagates a corrupt delta as DeltaError and an unreadable blob as a plain Error -- neither is a HistoryError', async () => {
+    // WHY THIS MATTERS BEYOND THIS FILE: the disk files page renders inside a
+    // try/catch, and a caller that catches only HistoryError crashes the
+    // whole page on either of these. This is the regression test for that.
+    const { recordVersion } = await import('./store');
+    const { loadHistory } = await import('./history');
+    const { DeltaError } = await import('./delta');
+    const { HistoryError } = await import('./chain');
+
+    let head = formatVolume({ filesystem: 'FFS', volumeName: 'Broken' });
+    blobBytes.set(sha256Of(head), head);
+    for (const name of ['A.TXT', 'B.TXT']) {
+      const result = addFile(head, ROOT_BLOCK, name, new TextEncoder().encode(name));
+      expect(result.ok).toBe(true);
+      if (!result.ok) return;
+      await recordVersion({
+        orgId: ORG, diskId: DISK,
+        headSha: sha256Of(head), head, next: result.adf,
+        source: 'browser', userId: 'user-1', sourceFilename: 'Broken.adf',
+      });
+      head = result.adf;
+    }
+
+    const deltaRow = diskVersionRows.find((r) => r.kind === 'delta');
+    expect(deltaRow).toBeDefined();
+    const deltaSha = deltaRow!.blobSha256 as string;
+    const goodDelta = blobBytes.get(deltaSha)!;
+
+    // 1. A payload that will not decode.
+    blobBytes.set(deltaSha, new Uint8Array(96).fill(0xff));
+    const corrupt = await loadHistory(ORG, DISK, new Map()).catch((e) => e);
+    expect(corrupt).toBeInstanceOf(DeltaError);
+    expect(corrupt).not.toBeInstanceOf(HistoryError);
+
+    // 2. A blob that is simply not there (a missing or unreachable object).
+    blobBytes.set(deltaSha, goodDelta);
+    blobBytes.delete(deltaSha);
+    const missing = await loadHistory(ORG, DISK, new Map()).catch((e) => e);
+    expect(missing).toBeInstanceOf(Error);
+    expect(missing).not.toBeInstanceOf(HistoryError);
+    expect(missing).not.toBeInstanceOf(DeltaError);
+  });
+
   it('reads each version\'s blob exactly once, regardless of chain depth', async () => {
     const { recordVersion } = await import('./store');
     const { loadHistory } = await import('./history');

@@ -13,7 +13,7 @@ import { readVolume, readUsage, type AdfEntry } from '@/lib/adffs';
 import { listCollections } from '@/lib/collections';
 import { resolveFrom, libraryTrail, fromQuery } from '@/lib/trail';
 import { loadEntries } from '@/lib/disk-history/store';
-import { materialise, HistoryError } from '@/lib/disk-history/chain';
+import { materialise } from '@/lib/disk-history/chain';
 import { loadHistory, type HistoryVersion } from '@/lib/disk-history/history';
 import { PageHeader } from '@/components/shell/page-header';
 import { VolumeHeader } from '@/components/disks/volume-header';
@@ -23,6 +23,14 @@ import { FileEditProvider, FileToolbar, type EditDisabled } from '@/components/d
 import { HistoryPanel } from '@/components/disks/history-panel';
 
 export const dynamic = 'force-dynamic';
+
+// The same 60s every byte-touching handler in this app sets (volume-name,
+// files, files/[block], files/batch, disks/[id]/adf, restore), and this page
+// does more blob I/O than any of them: materialising a `?version=` can read a
+// snapshot plus up to MAX_CHAIN_DEPTH deltas, and the History panel then walks
+// the newest stretch of the chain. The platform default would cut a
+// long-history disk off mid-render.
+export const maxDuration = 60;
 
 /**
  * Every directory already on this disk, keyed by its root-relative path
@@ -255,8 +263,20 @@ export default async function DiskFilesPage(props: PageProps<'/disks/[id]/files'
     const deviceNames = new Map(deviceRows.map((d) => [d.id, d.name] as const));
     historyVersions = await loadHistory(orgId, id, deviceNames);
   } catch (err) {
-    if (err instanceof HistoryError) historyUnavailable = true;
-    else throw err;
+    // EVERY failure here degrades to the banner, deliberately. `loadHistory`
+    // throws three unrelated classes -- HistoryError for a broken chain,
+    // DeltaError for a delta payload that will not decode or apply, and a
+    // plain Error from `diskStore.read` for a blob that is missing or
+    // unreachable -- and catching only the first would let the other two
+    // replace this ENTIRE page (tree, toolbar, volume header, chrome) with
+    // Next's default error page, for a disk whose current bytes are perfectly
+    // readable. There is no error.tsx anywhere under src/app to soften that.
+    // The read failure is the likely one: it happens once per version, with
+    // useCache false, so the chance of catching a transient 5xx rises with
+    // history length. Logged, because a broken chain or an unreadable blob is
+    // a server-side fault worth seeing, not a normal state.
+    console.error(`disk files page: history unavailable for disk ${id}`, err);
+    historyUnavailable = true;
   }
 
   return (

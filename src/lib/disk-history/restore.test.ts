@@ -58,6 +58,11 @@ vi.mock('@/lib/storage', () => ({
 let diskVersionRows: Record<string, unknown>[] = [];
 let diskLookupResult: unknown[] = [];
 let holderResult: unknown[] = [];
+// When set, findHolder's nth query answers `holderByCall[n - 1]` instead of
+// `holderResult` -- how a scenario makes a board MOUNT BETWEEN restore's two
+// holder checks (nothing held it when the read began; something does by the
+// time the record is about to happen).
+let holderByCall: (unknown[] | undefined)[] | null = null;
 let orderByCalls = 0;
 let holderLimitCalls = 0;
 
@@ -83,7 +88,10 @@ function fakeDb() {
         );
       },
       limit: () => {
-        if (!joined) holderLimitCalls++;
+        if (!joined) {
+          holderLimitCalls++;
+          if (holderByCall) return Promise.resolve(holderByCall[holderLimitCalls - 1] ?? []);
+        }
         return Promise.resolve(joined ? diskLookupResult : holderResult);
       },
     };
@@ -123,6 +131,7 @@ beforeEach(() => {
   diskVersionRows = [];
   diskLookupResult = [];
   holderResult = [];
+  holderByCall = null;
   orderByCalls = 0;
   holderLimitCalls = 0;
 });
@@ -165,7 +174,7 @@ describe('restoreVersion', () => {
     const { restoreVersion } = await import('./restore');
     const result = await restoreVersion(ORG, DISK, targetSeq, 'user-2');
 
-    expect(result).toEqual({ ok: true, sha256: sha256Of(images[targetSeq]), seq: headSeq + 1 });
+    expect(result).toEqual({ ok: true, sha256: sha256Of(images[targetSeq]), seq: headSeq + 1, recorded: true });
 
     // History GREW: every prior row is still there, unchanged...
     for (const before of rowsBefore) {
@@ -191,7 +200,10 @@ describe('restoreVersion', () => {
     const { restoreVersion } = await import('./restore');
     const result = await restoreVersion(ORG, DISK, headSeq, null);
 
-    expect(result).toEqual({ ok: true, sha256: sha256Of(images[headSeq]), seq: headSeq });
+    // `recorded: false` is the difference the panel needs: the disk holds
+    // that version's bytes, but nothing was written, so telling someone
+    // "Restored" would describe an event that did not happen.
+    expect(result).toEqual({ ok: true, sha256: sha256Of(images[headSeq]), seq: headSeq, recorded: false });
     expect(diskVersionRows).toHaveLength(rowCountBefore); // nothing recorded
   });
 
@@ -254,6 +266,33 @@ describe('restoreVersion', () => {
     expect(holderLimitCalls).toBe(0);
     expect(orderByCalls).toBe(0);
     expect(diskStoreRead).not.toHaveBeenCalled();
+  });
+
+  it('refuses a board that mounts DURING the read, and records nothing', async () => {
+    // THE WINDOW THIS CLOSES: the first holder check runs before
+    // `materialise`, which is up to 65 sequential blob reads. A board that
+    // mounts inside that window opens a write session, and closeSession
+    // deliberately lets an ALREADY OPEN session outlive a version bump
+    // (device-write.ts) -- so repointLateMounts would not stop the Amiga's
+    // save landing on top of this rewind, while the person who clicked
+    // Restore was told it worked. Nothing held the disk when the read began;
+    // something does by the time the record would happen.
+    const images = await buildChain(['A', 'B']);
+    diskLookupResult = [{ sha256: sha256Of(images[2]), tosecName: 'Chain.adf', sourceFilename: 'Chain.adf' }];
+    holderByCall = [[], [{ name: 'Amiga 500 #1' }]];
+    const rowCountBefore = diskVersionRows.length;
+
+    const { restoreVersion } = await import('./restore');
+    const result = await restoreVersion(ORG, DISK, 0, 'user-1');
+
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error('expected a refusal');
+    expect(result.status).toBe(409);
+    expect(result.reason).toContain('Amiga 500 #1');
+    // The refusal is the point, but so is WHERE it happened: both checks ran,
+    // and no version was recorded despite the first one passing.
+    expect(holderLimitCalls).toBe(2);
+    expect(diskVersionRows).toHaveLength(rowCountBefore);
   });
 
   it('a StaleHeadError (the head moved under us) surfaces as 409 conflict', async () => {

@@ -133,7 +133,7 @@ export function HistoryPanel({
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ seq: version.seq }),
       });
-      const data: { error?: string; reason?: string } | null = await res.json().catch(() => null);
+      const data: { error?: string; reason?: string; recorded?: boolean } | null = await res.json().catch(() => null);
 
       if (!res.ok) {
         if (res.status === 409 && data?.error === 'mounted' && typeof data.reason === 'string') {
@@ -156,7 +156,17 @@ export function HistoryPanel({
         return;
       }
 
-      toast.success(`Restored to version ${version.seq}`, { description: version.label });
+      // A no-op restore (the target's bytes already were the head -- reachable
+      // whenever a disk went A -> B -> A) records nothing and refreshes into an
+      // identical list. Saying "Restored" there reads as a silently failed
+      // click, so it says what actually happened instead.
+      if (data?.recorded === false) {
+        toast.success('Nothing to restore', {
+          description: `Version ${version.seq} is already this disk's current content.`,
+        });
+      } else {
+        toast.success(`Restored to version ${version.seq}`, { description: version.label });
+      }
       setRestoreTarget(null);
       // The live-state poller will notice a rewritten head on its own, but
       // whoever just clicked Restore should not wait out its cycle to see

@@ -134,15 +134,40 @@ function labelFor(meta: VersionMeta, deviceNames: ReadonlyMap<string, string>): 
  * version.
  *
  * Can throw `HistoryError` (a broken chain, or a version whose blob or
- * metadata is missing). Left to propagate: the page decides what to show for
- * a broken history, and swallowing it here would hide a real fault as an
- * empty list.
+ * metadata is missing), `DeltaError` (a delta payload that will not decode or
+ * apply) and a plain `Error` from `diskStore.read` (a blob that is missing or
+ * unreachable). ALL THREE, not only the first -- a caller that catches just
+ * `HistoryError` will crash on the other two, which is exactly what the files
+ * page did before fix round 2. Left to propagate rather than swallowed here:
+ * the page decides what to show, and an empty list would read as "nothing has
+ * ever changed on this disk", which is a lie about a server-side fault.
  */
 export async function loadHistory(
   orgId: string, diskId: string, deviceNames: ReadonlyMap<string, string>,
 ): Promise<HistoryVersion[]> {
   const [entries, metaBySeq] = await Promise.all([loadEntries(diskId), loadMeta(orgId, diskId)]);
   const read = (sha256: string) => diskStore.read(sha256);
+
+  // HOW FAR BACK THE WALK ACTUALLY READS BYTES. The panel shows the newest 20
+  // rows and hides the rest behind "show all", but an unbounded walk reads and
+  // parses EVERY version to build that list: one uncached blob read and one
+  // full FFS tree parse each, strictly sequential. History grows by one
+  // version per Amiga save (`closeSession`, device-write.ts), so on the disk
+  // page's primary route that cost rises forever with the operator's own use
+  // of the board -- ~200 reads and ~200 parses to render 20 rows is a normal
+  // future, not a pathological one.
+  //
+  // So: the newest DETAILED versions get real file-level changes, and
+  // everything older renders the sector summary its metadata row ALREADY
+  // holds, at no I/O cost whatsoever. The walk still has to start at a
+  // snapshot -- a delta only means anything applied to the version before it
+  // -- so it backs up to the nearest one, which `nextKind` guarantees is at
+  // most MAX_CHAIN_DEPTH entries away. Reads are therefore bounded at about
+  // DETAILED + 64 however long the history gets, the same order `materialise`
+  // already pays to fetch ONE version.
+  const DETAILED = 25;
+  let start = Math.max(0, entries.length - (DETAILED + 1));
+  while (start > 0 && entries[start].kind !== 'snapshot') start--;
 
   const results: HistoryVersion[] = [];
   // Only the previous version's RAW bytes and parsed tree are ever kept --
@@ -151,32 +176,57 @@ export async function loadHistory(
   // would re-pay for every version past the first snapshot).
   let prevRaw: Uint8Array | null = null;
   let prevVolume: ReturnType<typeof readVolume> | null = null;
+  let prevSeq: number | null = null;
 
-  for (const entry of entries) {
+  for (const [index, entry] of entries.entries()) {
     const meta = metaBySeq.get(entry.seq);
     if (!meta) throw new HistoryError(`no metadata recorded for version ${entry.seq}`);
-
-    let image: Uint8Array;
-    if (entry.kind === 'snapshot') {
-      image = await read(entry.blobSha256);
-      if (image.length !== ADF_BYTES) {
-        throw new HistoryError(`snapshot ${entry.seq} is ${image.length} bytes, not a disk image`);
-      }
-    } else {
-      if (!prevRaw) throw new HistoryError(`version ${entry.seq} has no snapshot to replay from`);
-      image = applyDelta(prevRaw, decodeDelta(await read(entry.blobSha256)));
-    }
-    const volume = readVolume(image);
 
     let changes: TreeChange[] = [];
     let sectorNote: string | null = null;
 
-    if (prevVolume !== null) {
-      if (!prevVolume.ok || !volume.ok) {
+    if (index < start) {
+      // Older than the detail window: no read, no parse. The row still says
+      // what it did -- "12 sectors changed" -- out of the `sectorCount`
+      // recordVersion stored when the version was created.
+      sectorNote = sectorSummary(meta.sectorCount);
+    } else {
+      let image: Uint8Array;
+      if (entry.kind === 'snapshot') {
+        image = await read(entry.blobSha256);
+        if (image.length !== ADF_BYTES) {
+          throw new HistoryError(`snapshot ${entry.seq} is ${image.length} bytes, not a disk image`);
+        }
+      } else {
+        if (!prevRaw) throw new HistoryError(`version ${entry.seq} has no snapshot to replay from`);
+        // The contiguity rule `chain.ts`'s replayPlan enforces, for the same
+        // reason it gives: a delta describes the step from the version
+        // IMMEDIATELY before it, so a gap would apply it to the wrong image
+        // and render a fabricated diff as fact -- while `?version=` on the
+        // same page threw HistoryError for the same disk. Nothing on this
+        // branch can create a gap (recordVersion never deletes), which is
+        // why it is checked rather than assumed.
+        if (prevSeq !== null && entry.seq !== prevSeq + 1) {
+          throw new HistoryError(`version ${entry.seq} follows ${prevSeq}: the chain has a gap`);
+        }
+        image = applyDelta(prevRaw, decodeDelta(await read(entry.blobSha256)));
+      }
+      const volume = readVolume(image);
+
+      if (prevVolume === null) {
+        // Nothing to compare against: either the genuine oldest version,
+        // which has no predecessor ("as uploaded"), or the first row of a
+        // detail window that starts further back -- where the sector summary
+        // is true and the panel's "No file changes." would not be.
+        if (index > 0) sectorNote = sectorSummary(meta.sectorCount);
+      } else if (!prevVolume.ok || !volume.ok) {
         sectorNote = sectorSummary(meta.sectorCount);
       } else {
         changes = diffTrees(prevVolume.root, volume.root);
       }
+
+      prevRaw = image;
+      prevVolume = volume;
     }
 
     results.push({
@@ -193,8 +243,7 @@ export async function loadHistory(
       isHead: false,
     });
 
-    prevRaw = image;
-    prevVolume = volume;
+    prevSeq = entry.seq;
   }
 
   if (results.length > 0) results[results.length - 1].isHead = true;
