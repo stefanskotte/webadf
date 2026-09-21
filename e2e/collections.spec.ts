@@ -9,6 +9,7 @@ import { signUpFresh, runTag } from './helpers';
 import { signInAsSuperAdmin } from './admin-helpers';
 import { cleanupSeeded, seedDisk } from './device-helpers';
 import { seedTosecEntry, cleanupTosec } from './tosec-helpers';
+import { seedOpenRetroEntry, seedOpenRetroImage, cleanupOpenRetro } from './openretro-helpers';
 
 /**
  * Collections created by this file, tracked so the run cleans up after
@@ -34,6 +35,7 @@ test.afterAll(async () => {
     }
   }
   await cleanupTosec();
+  await cleanupOpenRetro();
   await cleanupSeeded();
 });
 
@@ -570,6 +572,80 @@ test('the landing view is the uncategorized inbox, and filing empties it', async
   await page.getByTestId(`overview-card-${id}`).click();
   await expect(page).toHaveURL(new RegExp(`collection=${id}`));
   await expect(page.getByTestId('game-card')).toHaveCount(1);
+});
+
+test('an overview card tiles the covers of what is inside it', async ({ page }) => {
+  const run = runTag();
+  const u = await signUpFresh(page);
+
+  /** A seeded title whose disk resolves to a stored OpenRetro front cover. */
+  async function coveredGame(title: string, tag: string) {
+    const sha256 = createHash('sha256').update(`${run}-${tag}`).digest('hex');
+    const { gameId } = await seedDisk(u.orgId, { title: `${title} ${run}`, diskNo: 1, sha256 });
+    const uuid = await seedOpenRetroEntry({ gameName: `${title} ${run}` });
+    const sha1 = createHash('sha1').update(`${run}-${tag}-front`).digest('hex');
+    await seedOpenRetroImage({ sha1, entryUuid: uuid, kind: 'front' });
+    await getDb().update(blobs)
+      .set({ openretroEntryId: uuid, enrichState: 'enriched', enrichCheckedAt: new Date() })
+      .where(eq(blobs.sha256, sha256));
+    return { gameId, sha1 };
+  }
+
+  // Three covered titles and one with no image at all: the mosaic must skip
+  // the bare one rather than stopping at it, which is the ordinary case for a
+  // real archive where most titles are unidentified.
+  const one = await coveredGame('Mosaic one', 'a');
+  const two = await coveredGame('Mosaic two', 'b');
+  const three = await coveredGame('Mosaic three', 'c');
+  const bare = await seedDisk(u.orgId, {
+    title: `Mosaic bare ${run}`, diskNo: 1,
+    sha256: createHash('sha256').update(`${run}-bare`).digest('hex'),
+  });
+
+  const filled = await apiCreateCollection(page, `Filled ${run}`);
+  await apiAddGame(page, filled, one.gameId);
+  await apiAddGame(page, filled, bare.gameId);
+  await apiAddGame(page, filled, two.gameId);
+  await apiAddGame(page, filled, three.gameId);
+
+  // A second collection holding only the unidentified title: it must still
+  // render, as a card with no tiles, rather than disappearing or breaking.
+  const imageless = await apiCreateCollection(page, `Imageless ${run}`);
+  const loose = await seedDisk(u.orgId, {
+    title: `Loose bare ${run}`, diskNo: 1,
+    sha256: createHash('sha256').update(`${run}-loose`).digest('hex'),
+  });
+  await apiAddGame(page, imageless, loose.gameId);
+
+  await page.goto('/library');
+  await expect(page.getByTestId('category-overview')).toBeVisible();
+
+  const card = page.getByTestId(`overview-card-${filled}`);
+  const tiles = card.getByTestId('mosaic-tile');
+  await expect(tiles).toHaveCount(3);
+  // In membership order, with the imageless member skipped -- not reordered,
+  // and not filled in with somebody else's cover.
+  await expect(tiles.nth(0)).toHaveAttribute('src', `/api/images/${one.sha1}`);
+  await expect(tiles.nth(1)).toHaveAttribute('src', `/api/images/${two.sha1}`);
+  await expect(tiles.nth(2)).toHaveAttribute('src', `/api/images/${three.sha1}`);
+
+  // An <img> element is not a picture: assert the browser decoded pixels, the
+  // same way library-covers.spec.ts does.
+  await expect.poll(async () => tiles.first().evaluate((el: HTMLImageElement) => el.naturalWidth)).toBeGreaterThan(0);
+
+  // The card is square, whatever the name's length -- the whole point of the
+  // shape (operator, 2026-09-21). Measured, not asserted from the class list.
+  const box = (await card.boundingBox())!;
+  expect(Math.abs(box.width - box.height)).toBeLessThanOrEqual(2);
+
+  // The count still reads, over the art.
+  await expect(card).toContainText('4 titles');
+
+  // No covers is a card with no tiles, not a missing card.
+  const empty = page.getByTestId(`overview-card-${imageless}`);
+  await expect(empty).toBeVisible();
+  await expect(empty.getByTestId('mosaic-tile')).toHaveCount(0);
+  await expect(empty).toContainText('1 title');
 });
 
 test('All titles sits at the bottom of the rail and still shows everything', async ({ page }) => {

@@ -1,6 +1,6 @@
 import { requireOrg } from '@/lib/session';
 import { listGames, countAllGames } from '@/lib/queries';
-import { listCollections, countUncategorized } from '@/lib/collections';
+import { listCollections, countUncategorized, collectionMosaics } from '@/lib/collections';
 import { countReviewQueue } from '@/lib/demozoo/queries';
 import { resolveLibraryView } from '@/lib/library-view';
 import { CategoryOverview } from '@/components/collections/category-overview';
@@ -50,13 +50,18 @@ export default async function LibraryPage(props: PageProps<'/library'>) {
   // here would be a worse copy of it that only appears on brand-new accounts
   // -- which is exactly what it did on its first e2e run.
   const showOverview = view.kind === 'uncategorized' && games.length === 0 && collections.length > 0;
-  const [uncategorizedCount, libraryTotals, reviewQueueCount] = await Promise.all([
+  const [uncategorizedCount, libraryTotals, reviewQueueCount, mosaics] = await Promise.all([
     countUncategorized(orgId),
     showOverview ? countAllGames(orgId) : Promise.resolve(null),
     // R15: the badge is a count, not the review queue's full item list --
     // listReviewQueue also loads productions and screenshots, which this
     // page must not pay for on every load. Only /library/demozoo does that.
     countReviewQueue(orgId),
+    // Only for the overview, and only then: every other view of this page
+    // renders the game cards themselves, which carry their own covers.
+    showOverview
+      ? collectionMosaics(orgId, collections.map((c) => c.id))
+      : Promise.resolve(null),
   ]);
 
   return (
@@ -101,6 +106,7 @@ export default async function LibraryPage(props: PageProps<'/library'>) {
                   collections={collections}
                   totalTitles={libraryTotals?.titles ?? 0}
                   totalDisks={libraryTotals?.disks ?? 0}
+                  mosaics={mosaics ?? undefined}
                 />
               )
               : viewMode === 'table'

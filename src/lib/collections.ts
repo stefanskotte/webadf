@@ -11,15 +11,73 @@
 // comment on orgFilter makes the same point about an empty org id).
 
 import { randomUUID } from 'node:crypto';
-import { and, eq, sql } from 'drizzle-orm';
+import { and, eq, inArray, sql } from 'drizzle-orm';
 import type { BatchItem } from 'drizzle-orm/batch';
 import { getDb } from '@/db';
 import { games } from '@/db/schema/catalog';
 import { collections, collectionGames } from '@/db/schema/collections';
 import { orgFilter } from '@/db/scope';
 import { planReorder, type ReorderResult } from '@/lib/collection-order';
+import { coverUrlsForGames } from '@/lib/queries';
+import { chooseMosaic, mosaicCandidates, MOSAIC_TILES } from '@/lib/collection-mosaic';
 
 export interface CollectionListItem { id: string; name: string; sortKey: number; gameCount: number }
+
+/**
+ * Up to four cover URLs for each of `collectionIds`, in the collection's own
+ * membership order -- what its card tiles as a preview of what is inside it.
+ *
+ * The CHOOSING lives in `collection-mosaic.ts` and is tested without a
+ * database; this function is the query that feeds it.
+ *
+ * Collections with nothing to show are ABSENT from the map rather than
+ * present-and-empty: the card renders its gradient then, and "no covers" and
+ * "no games" are meant to look the same.
+ *
+ * SCOPE: `collection_games` carries no org_id of its own (D-4-5), so both
+ * sides are joined and BOTH are org-scoped -- the collection and the game.
+ * Neither predicate is redundant: the caller proves the collection ids, and
+ * the game side stops a membership row pointing at another tenant's game (the
+ * table has no foreign key that would prevent one) from putting that tenant's
+ * cover art on this page. `listDevices` carries the same predicate for the
+ * same reason, and there is a live production case behind it.
+ *
+ * Cost: two queries whatever the number of collections, never one per card.
+ * `mosaicCandidates` is what bounds the second one.
+ */
+export async function collectionMosaics(
+  orgId: string, collectionIds: string[],
+): Promise<Map<string, string[]>> {
+  const out = new Map<string, string[]>();
+  if (collectionIds.length === 0) return out;
+
+  const rows = await getDb()
+    .select({ collectionId: collectionGames.collectionId, gameId: collectionGames.gameId })
+    .from(collectionGames)
+    .innerJoin(collections, and(
+      eq(collections.id, collectionGames.collectionId),
+      eq(collections.orgId, orgId),
+    ))
+    .innerJoin(games, and(
+      eq(games.id, collectionGames.gameId),
+      eq(games.orgId, orgId),
+    ))
+    .where(inArray(collectionGames.collectionId, collectionIds))
+    // The grid's own order (collection-order.ts), so the mosaic previews the
+    // titles a person sees FIRST when they open the collection. Tie-broken by
+    // game id for the same reason listCollections orders by (sortKey, id):
+    // sortKey is not unique, and a non-total order reshuffles between renders.
+    .orderBy(collectionGames.sortKey, collectionGames.gameId);
+
+  const candidates = mosaicCandidates(rows);
+  const coverUrls = await coverUrlsForGames(orgId, [...new Set([...candidates.values()].flat())]);
+
+  for (const [collectionId, gameIds] of candidates) {
+    const urls = chooseMosaic(gameIds, (id) => coverUrls.get(id), MOSAIC_TILES);
+    if (urls.length > 0) out.set(collectionId, urls);
+  }
+  return out;
+}
 
 /**
  * A tenant's collections with their member counts.

@@ -193,6 +193,55 @@ export async function countAllGames(orgId: string): Promise<{ titles: number; di
  * other's fan-out. Two narrow queries run concurrently are simpler and cost
  * one round trip, not two, in wall-clock terms.
  */
+/**
+ * The cover URL each of `gameIds` should show, by the ONE ranking the whole
+ * library uses (`pickCover`: an OpenRetro front cover before a Demozoo
+ * screenshot). Games with no image at all are simply absent from the map.
+ *
+ * Exported because the collection mosaics (src/lib/collections.ts) have to
+ * arrive at the same answer the cards do -- two rankings would put a cover on
+ * a collection's tile that the title's own card does not show, and the tile
+ * is supposed to be a preview OF those cards.
+ *
+ * Two queries whatever the count, never one per game: the OpenRetro join is
+ * batched over every id, and `demozooCovers` batches its own.
+ */
+export async function coverUrlsForGames(orgId: string, gameIds: string[]): Promise<Map<string, string>> {
+  const out = new Map<string, string>();
+  if (gameIds.length === 0) return out;
+  const db = getDb();
+
+  const [images, dzCovers] = await Promise.all([
+    db.select({
+      gameId: disks.gameId,
+      sha1: openretroImages.sha1,
+      kind: openretroImages.kind,
+      ordinal: openretroImages.ordinal,
+    })
+      .from(disks)
+      .innerJoin(blobs, eq(blobs.sha256, disks.sha256))
+      // blobs and openretro_images are GLOBAL tables, so the org scope has to
+      // come from the disks side.
+      .innerJoin(openretroImages, eq(openretroImages.entryUuid, blobs.openretroEntryId))
+      .where(and(inArray(disks.gameId, gameIds), eq(disks.orgId, orgId))),
+
+    demozooCovers(orgId, gameIds),
+  ]);
+
+  const byGame = new Map<string, CoverCandidate[]>();
+  for (const f of images) {
+    const list = byGame.get(f.gameId) ?? [];
+    list.push({ sha1: f.sha1, kind: f.kind, ordinal: f.ordinal });
+    byGame.set(f.gameId, list);
+  }
+
+  for (const id of new Set(gameIds)) {
+    const chosen = pickCover([...(byGame.get(id) ?? []), ...(dzCovers.get(id) ?? [])]);
+    if (chosen) out.set(id, `/api/images/${chosen.sha1}`);
+  }
+  return out;
+}
+
 async function withDerived<T extends { id: string; authored: boolean; diskId: string | null }>(
   orgId: string, rows: T[],
 ): Promise<Array<T & { coverUrl: string | null; kind: string | null; holderName: string | null }>> {
@@ -203,28 +252,14 @@ async function withDerived<T extends { id: string; authored: boolean; diskId: st
   // Only authored titles offer the rename, so only their disks need a holder.
   const authoredDiskIds = rows.flatMap((r) => (r.authored && r.diskId ? [r.diskId] : []));
 
-  const [images, sets, dzCovers, held] = await Promise.all([
-    db.select({
-      gameId: disks.gameId,
-      sha1: openretroImages.sha1,
-      kind: openretroImages.kind,
-      ordinal: openretroImages.ordinal,
-    })
-      .from(disks)
-      .innerJoin(blobs, eq(blobs.sha256, disks.sha256))
-      // blobs, openretro_images and tosec_entries are all GLOBAL tables, so
-      // the org scope has to come from the disks side -- the same reasoning
-      // as the leftJoin above.
-      .innerJoin(openretroImages, eq(openretroImages.entryUuid, blobs.openretroEntryId))
-      .where(and(inArray(disks.gameId, ids), eq(disks.orgId, orgId))),
+  const [coverUrls, sets, held] = await Promise.all([
+    coverUrlsForGames(orgId, ids),
 
     db.select({ gameId: disks.gameId, setName: tosecEntries.setName })
       .from(disks)
       .innerJoin(blobs, eq(blobs.sha256, disks.sha256))
       .innerJoin(tosecEntries, eq(tosecEntries.id, blobs.tosecEntryId))
       .where(and(inArray(disks.gameId, ids), eq(disks.orgId, orgId))),
-
-    demozooCovers(orgId, ids),
 
     // ONE query for the page, not one per card: the same rule findHolder
     // (src/lib/disk-holder.ts) applies -- same org, and the disk's sha is a
@@ -244,13 +279,6 @@ async function withDerived<T extends { id: string; authored: boolean; diskId: st
   const holderByDisk = new Map<string, string>();
   for (const h of held) if (!holderByDisk.has(h.diskId)) holderByDisk.set(h.diskId, h.name);
 
-  const coversByGame = new Map<string, CoverCandidate[]>();
-  for (const f of images) {
-    const list = coversByGame.get(f.gameId) ?? [];
-    list.push({ sha1: f.sha1, kind: f.kind, ordinal: f.ordinal });
-    coversByGame.set(f.gameId, list);
-  }
-
   const kindsByGame = new Map<string, Array<string | null>>();
   for (const s of sets) {
     const list = kindsByGame.get(s.gameId) ?? [];
@@ -259,12 +287,9 @@ async function withDerived<T extends { id: string; authored: boolean; diskId: st
   }
 
   return rows.map((r) => {
-    // OpenRetro's front cover still wins over a Demozoo screenshot: pickCover
-    // ranks 'front' before 'screenshot'.
-    const chosen = pickCover([...(coversByGame.get(r.id) ?? []), ...(dzCovers.get(r.id) ?? [])]);
     return {
       ...r,
-      coverUrl: chosen ? `/api/images/${chosen.sha1}` : null,
+      coverUrl: coverUrls.get(r.id) ?? null,
       kind: pickKind(kindsByGame.get(r.id) ?? []),
       holderName: r.authored && r.diskId ? holderByDisk.get(r.diskId) ?? null : null,
     };
