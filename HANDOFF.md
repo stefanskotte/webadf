@@ -2546,6 +2546,58 @@ in advance that it empties the table for everyone. This repo has no such databas
 e2e runs against live Neon — so "accept in advance" is currently the only option, and it should
 be an explicit decision each time rather than a side effect of following a plan step.
 
+### 4k. THE BOARD KEEPS ITS CONNECTION OPEN — 2026-09-21
+
+**Measured first, twice.** Every request the board made was its own TLS connection: ~1.25 s each,
+of which DNS was ~0 ms (cached) and the handshake was everything. Session tickets were tried
+first and looked like they barely helped (1302 ms "full" vs 1215-1253 ms "ticket offered") --
+**that measurement was wrong, and the review caught it**: only
+`MBEDTLS_SSL_TLS1_3_KEY_EXCHANGE_MODE_EPHEMERAL_ENABLED` is defined in this build, so the
+client's pre-shared-key writer is compiled out, mbedTLS 3.6 defaults client NewSessionTicket
+handling to off, and the SDK's altcp_tls swallows `MBEDTLS_ERR_SSL_RECEIVED_NEW_SESSION_TICKET`
+anyway. `mbedtls_ssl_set_session()` returns 0 regardless, so the log said "ticket offered" while
+running a full handshake: the comparison was full vs full. The ticket code is gone.
+
+**What shipped instead: keep-alive.** `tls_close()` hands a connection back rather than closing
+it, and the next `tls_connect()` to the same host and port reuses it. **After: one handshake in
+three minutes of polling, with the 2 MB image fetch and the status report riding the connection
+the poll opened** (before: one per request).
+
+**The whole difficulty is knowing when a connection is safe to keep**, and two review rounds went
+into it:
+- `transport.h` gained **`abandon()`** — the thing `close()` could not say. Every non-clean exit
+  from `dc_attempt` (connect failure, a write that stalled after a partial request, a read error
+  or timeout, a malformed response) abandons. Without it, `tls_close()` could not tell "the
+  response finished" from "we gave up while it was still coming", and a kept socket would have
+  made **every later response belong to the previous request, permanently** -- it never
+  self-heals, because each exchange then finds a complete stale response already waiting.
+- A response being **complete is not the same as being framed**. `http.c` declares
+  `body_complete` at end-of-headers for a close-delimited response, so the keep now also requires
+  explicit framing (Content-Length, chunked, or a bodyless status) and no `Connection: close` and
+  no bytes seen after completion. `Transfer-Encoding: gzip, chunked` is matched by token, not by
+  prefix. A 1xx resets the parser instead of being taken for the response.
+- **The retry is deliberately narrow.** A kept connection can die while idle with nothing to say
+  so, so `dc_exchange` retries once -- but only when the connection was reused AND not one byte
+  arrived, and never for `/api/device/register`, whose pairing code is single-use (a resend would
+  turn a lost response into a terminal `invalid_or_used_code`). A request the server has begun
+  answering is never resent.
+- **Idle connections are released, not just refused.** `tls_idle_expired()` is the single
+  comparison behind both `tls_can_reuse()`'s refusal and `tls_release_if_unreusable()`, which
+  core1 calls once per pass of each waiting loop. An earlier version guarded "before a sleep of
+  10 s or more" and missed every busy-wait -- notably the uploader's, which backs off to 60 s in
+  50 ms naps. The connection is also released on every way out of the loop (DC_HALTED, a rejected
+  pairing code, and the portal catch-all), where it used to be held across an AP episode with
+  ~32 KB of mbedTLS buffers.
+
+**Gates:** host suite 22 binaries green (device_client 220 checks, http 185, uploader 144),
+device build clean, measured on hardware as above. `transport_tls.c` and `main.c` are excluded
+from the host build by name, so the idle release and the loop wiring rest on the argument and the
+measurement, not on a test.
+
+**Next, if uploads still feel slow:** the remaining per-request cost is one round trip, not a
+handshake. What has NOT been measured is a burst of track uploads over a reused connection --
+that needs an Amiga write.
+
 ### 4j. A WRITE-PROTECT FLIP ON THE MOUNTED DISK IS ANNOUNCED AS A DISK CHANGE — 2026-09-20
 
 **Branch `feat/wp-reinsert`.** AmigaDOS reads a disk's write-protect state only when it believes
