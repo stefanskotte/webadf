@@ -49,6 +49,13 @@
 // linked in regardless of whether anything referenced it yet. Declaring
 // the one entry point here, now that this file is that "anything".
 transport_t *tls_transport(void);
+// Same file, same reason it has no header. Releases a kept TLS connection
+// once it has sat idle past the point tls_connect() would reuse it -- the
+// transport owns both the "when did it go idle" stamp and the cap, so this
+// asks it rather than inferring either here. Called once per pass of core1's
+// two waiting loops; see release_kept_connection() below for the other,
+// unconditional half.
+bool tls_release_if_unreusable(void);
 
 // ---------------------------------------------------------------- display
 //
@@ -738,6 +745,31 @@ static const char *assoc_failure_message(int err) {
     return "Could not connect";
 }
 
+// transport_tls.c keeps a clean TLS connection open between requests, which
+// is worth ~1.25 s per request and costs a pcb plus ~32 KB of mbedTLS
+// buffers held for as long as it is open. Two things have to give it back,
+// and neither is a request failing:
+//
+//   * leaving the poll loop, or going anywhere near the portal. portal_run()
+//     raises an AP; a socket from the STA side must not outlive that, and
+//     the memory is wanted for the portal's own stack and sockets. That is
+//     unconditional, and it is what this function is for.
+//   * idling past the point the transport would reuse it. That one is
+//     conditional and belongs to the transport, which knows when the
+//     connection went idle and what its own cap is: it is
+//     tls_release_if_unreusable(), called once per pass of each loop below.
+//     Round 3 replaced three "release before a sleep this long" guards with
+//     that single per-pass rule -- guarding on sleep LENGTH missed every
+//     busy-wait, notably the uploader's, which backs off to 60 s in 50 ms
+//     naps and so never sleeps long enough to trip a guard.
+//
+// abandon(), never close(): close() is allowed to hand the socket back, and
+// on these paths there is nothing to hand it back to.
+static void release_kept_connection(void) {
+    transport_t *t = tls_transport();
+    if (t && t->abandon) t->abandon(t);
+}
+
 static void core1_main(void) {
     if (cyw43_arch_init()) {
         // This loop never exits, but core0 is what drains the log, so this
@@ -774,6 +806,12 @@ static void core1_main(void) {
 
     for (;;) {
         if (prov.state == PROV_PORTAL) {
+            // The catch-all, deliberately here rather than only at the sites
+            // that set PROV_PORTAL: this is the single door every route into
+            // the portal goes through, so a future one cannot miss it. The
+            // AP goes up a few lines below, and a kept STA socket must not
+            // still be holding its buffers when it does.
+            release_kept_connection();
             wf_logf(WF_INFO, "portal: raising AP%s%s",
                     last_error ? ", last error: " : "", last_error ? last_error : "");
             // Blocks until a POST /save decodes to a complete
@@ -992,6 +1030,14 @@ static void core1_main(void) {
                             "(single-use, 10 min TTL) -- back to the portal");
                     last_error = "Invalid or already-used pairing code";
                     code_rejected = true;
+                    // DC_REG_BAD_CODE comes from a clean 400, so the socket
+                    // was KEPT -- this leaks exactly as the DC_HALTED path
+                    // used to, and lands in the portal the same way. The
+                    // PROV_PORTAL branch would catch it anyway; it is
+                    // released here as well so that "we are done with the
+                    // network" and "we let go of it" are the same statement
+                    // in the same place.
+                    release_kept_connection();
                     break;
                 }
                 // Edge-triggered by construction: one line per ATTEMPT, and
@@ -999,11 +1045,15 @@ static void core1_main(void) {
                 // this the loop is a silent forever-retry -- the shape a
                 // missing clock, a DNS failure and an unreachable host all
                 // collapse into.
+                const uint32_t wait_ms =
+                    reg.backoff_ms ? reg.backoff_ms : DC_BACKOFF_FLOOR_MS;
                 wf_logf(WF_WARN, "register failed (rr=%d), retrying in %lu ms",
-                        (int)rr,
-                        (unsigned long)(reg.backoff_ms ? reg.backoff_ms
-                                                       : DC_BACKOFF_FLOOR_MS));
-                sleep_ms(reg.backoff_ms ? reg.backoff_ms : DC_BACKOFF_FLOOR_MS);
+                        (int)rr, (unsigned long)wait_ms);
+                // Once per pass of this loop, at the point its network work
+                // is done -- not "if the coming sleep looks long". See the
+                // note on release_kept_connection() above.
+                tls_release_if_unreusable();
+                sleep_ms(wait_ms);
             }
             if (code_rejected) continue;   // prov.state is now PROV_PORTAL
             wf_logf(WF_INFO, "register: OK, token stored");
@@ -1014,7 +1064,10 @@ static void core1_main(void) {
                 // register again is deliberate: the pairing code has
                 // almost certainly been single-used server-side by the
                 // successful attempt above, so retrying would just fail
-                // forever.
+                // forever. Nothing on this core runs again, so the kept
+                // connection goes first -- core0 still has a panel and a log
+                // to drive out of the same heap.
+                release_kept_connection();
                 while (1) tight_loop_contents();
             }
         }
@@ -1232,6 +1285,28 @@ static void core1_main(void) {
             // in 100 ms steps, breaking out early the moment a write lands
             // and up_has_work(&up) goes true, so a write is never held behind
             // the tail of a poll backoff that no longer matters to it.
+
+            // ONE rule, once per pass, and it is the last thing this pass
+            // does with the network. Every way this loop can wait runs
+            // through the chain below or falls off its end back to the top,
+            // and every one of them is covered by being here:
+            //
+            //   * the poll backoff, up to 60 s;
+            //   * DC_UNPROVISIONED's 60 s idle, which never sends again;
+            //   * the 1 s report-retry beat (inside the window, so this is
+            //     a no-op there -- correctly, the next act is a request);
+            //   * the uploader arm's 50 ms naps, which is the case a
+            //     sleep-length guard could never catch: up_backoff() climbs
+            //     to 60 s while up_has_work() stays true, so a 5xx on a
+            //     track upload (cleanly framed, so the socket was KEPT) held
+            //     ~32 KB for the whole minute without ever reaching a sleep
+            //     long enough to guard;
+            //   * up_step()'s 3 s UP_IDLE_CLOSE_MS quiet window, same shape.
+            //
+            // A future wait added anywhere in this body is covered too, which
+            // the old per-sleep guards could not promise.
+            tls_release_if_unreusable();
+
             if (report_retry) {
                 // Item 0's beat (M3): a failed owed report, uploader waiting.
                 // DC_HALTED from that same report (a 401) is handled on the
@@ -1292,6 +1367,13 @@ static void core1_main(void) {
                 }
                 psram_publish_slot(SLOT_NONE);
                 token_store_erase();
+                // The transport may be holding a TLS connection open for a
+                // next request that is never coming (keep-alive,
+                // transport_tls.c). Breaking out of here without ending it
+                // leaks the pcb and ~32 KB of mbedTLS buffers for the rest
+                // of this boot, and leaves a socket that can outlive the AP
+                // episode the portal is about to start.
+                release_kept_connection();
                 break;
             } else if (s == DC_UNPROVISIONED) {
                 // Review (final), Important 2: DC_UNPROVISIONED gets the same
@@ -1303,6 +1385,10 @@ static void core1_main(void) {
                 // cyw43_wifi_get_rssi forever. This state cannot change
                 // from inside this loop (unlike DC_HALTED, above, which
                 // now recovers), so idling is the whole correct behaviour.
+                // Idling holding a TLS connection is not, and this state
+                // never sends another request -- but that is now the per-pass
+                // tls_release_if_unreusable() above's job, not a guard of its
+                // own here.
                 sleep_ms(DC_BACKOFF_CAP_MS);
             }
         }

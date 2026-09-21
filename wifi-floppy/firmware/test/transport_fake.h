@@ -28,7 +28,11 @@ void fake_push_response_bytes(const uint8_t *raw, int len);
 // be <= strlen(raw).
 void fake_push_truncated(const char *raw, int n);
 
-// The next connect() call fails (returns < 0) instead of succeeding.
+// The next connect() call fails (returns < 0) instead of succeeding. A
+// connect that failed reached nothing and changes nothing: in particular a
+// connection being held open stays held, exactly as a real transport whose
+// held socket was not reusable (idle cap expired) and whose fresh attempt
+// then failed would leave it. Releasing it is the caller's abandon().
 void fake_push_connect_failure(void);
 
 // The fake transport_t. Always returns the same instance.
@@ -57,6 +61,41 @@ int fake_request_count(void);
 // callers that don't loop on a short write will visibly fail to send the
 // rest of their request.
 void fake_set_max_write(int n);
+
+// --- keep-alive ---------------------------------------------------------
+// The fake models the real transport's keep-alive, because the retry rule
+// above it cannot be tested honestly otherwise:
+//   * close() KEEPS the connection (the caller is saying the response
+//     finished); abandon() really ends it.
+//   * the next connect() hands a kept connection back and reports
+//     reused == true for THAT connect only -- `reused` is per-connect, not
+//     a mode the test switches on.
+//   * a kept connection consumes no scripted response until it is used.
+//
+// Pretend a previous exchange left a connection open (true), or that none is
+// held (false). Equivalent to running a clean exchange first, for tests that
+// care only about what happens to the NEXT one. Cleared by fake_reset().
+void fake_set_reused(bool reused);
+
+// The connection currently being held open is dead at the far end: the next
+// connect() still hands it back (reused == true -- nothing announces a
+// socket that expired), and then read() fails. write() fails too, except
+// with fake_set_max_write() in force, where the first write is swallowed (a
+// dying socket's local buffer takes one segment) and the next one fails --
+// a half-sent request, which is the shape that must never be left on a
+// socket for the next request to append to. A close() on such a connection
+// holds it AND keeps it dead: nothing announced its death, so close() has no
+// way to know. This is the one failure keep-alive introduces and the only
+// one the retry rule is allowed to act on.
+void fake_kill_kept_connection(void);
+
+// Did the most recent connect() hand back a kept connection? The same value
+// the client under test saw through transport.h's `reused`, recorded per
+// connect, so a test can assert that a RETRY landed on a fresh connection.
+bool fake_last_reused(void);
+
+// Is a connection being held open right now (close()d, not abandon()ed)?
+bool fake_connection_is_kept(void);
 
 // Drive the injected clock (see transport.h's clock_ms_fn).
 void fake_set_clock(uint32_t ms);

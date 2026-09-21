@@ -19,6 +19,29 @@ typedef struct {
     bool     chunked;
     long     content_length;    // -1 if absent
     bool     body_complete;
+    // The response carried `Connection: close`. The peer will shut this
+    // connection down after it, so it must not be kept for the next
+    // request -- see device_client.c's dc_attempt, which abandons rather
+    // than closes when this is set. A 1xx interim response's own headers
+    // never land here: the parser resets on 1xx (below) and this reflects
+    // the FINAL response only.
+    bool     connection_close;
+    // Did this response say how long its body is? True for a Content-Length
+    // (including 0), for Transfer-Encoding: chunked, and for a status that
+    // is bodyless by definition (204, 304). False for a CLOSE-DELIMITED
+    // response -- one whose body ends only when the connection does.
+    //
+    // `body_complete` alone cannot be read as "we have the whole body":
+    // http.c declares it at the end of the headers when there is no framing
+    // header at all, because nothing further can be delimited. That is
+    // honest as a parser verdict and dangerous as a keep-alive signal -- the
+    // body may still be arriving. A connection is only ever kept when the
+    // framing was EXPLICIT; see device_client.c's dc_attempt.
+    bool     has_explicit_framing;
+    // Bytes arrived after the response was complete. On a kept connection
+    // that means the stream is already out of step -- they belong to
+    // something nobody asked for -- so the connection must not be reused.
+    bool     extra_after_complete;
     // --- internal parser state; do not touch from outside http.c ---
     int      _state;
     char     _linebuf[128];

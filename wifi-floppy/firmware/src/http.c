@@ -58,14 +58,33 @@ static bool ci_equal(const char *a, const char *b) {
     return *a == *b;
 }
 
-static bool ci_starts_with(const char *s, const char *prefix) {
-    for (; *prefix; s++, prefix++) {
-        char a = *s, b = *prefix;
-        if (a >= 'A' && a <= 'Z') a += 'a' - 'A';
-        if (b >= 'A' && b <= 'Z') b += 'a' - 'A';
-        if (a != b) return false;
+// Is `tok` one of the comma-separated tokens in `val` (case-insensitive,
+// surrounding whitespace ignored)? `val` is not NUL-bounded at `vlen`, so
+// the length is carried explicitly. Used for both list-valued headers this
+// parser reads -- Connection and Transfer-Encoding -- because for both of
+// them the token that matters is legal anywhere in the list, and for both
+// of them missing it costs a desynchronised connection.
+static bool header_has_token(const char *val, int vlen, const char *tok) {
+    const int tlen = (int)strlen(tok);
+    int i = 0;
+    while (i < vlen) {
+        while (i < vlen && (val[i] == ' ' || val[i] == '\t' || val[i] == ',')) i++;
+        int start = i;
+        while (i < vlen && val[i] != ',') i++;
+        int end = i;
+        while (end > start && (val[end - 1] == ' ' || val[end - 1] == '\t')) end--;
+        if (end - start == tlen) {
+            int k = 0;
+            for (; k < tlen; k++) {
+                char a = val[start + k], b = tok[k];
+                if (a >= 'A' && a <= 'Z') a += 'a' - 'A';
+                if (b >= 'A' && b <= 'Z') b += 'a' - 'A';
+                if (a != b) break;
+            }
+            if (k == tlen) return true;
+        }
     }
-    return true;
+    return false;
 }
 
 static void parse_status_line(http_resp_t *r) {
@@ -93,7 +112,21 @@ static void handle_header_line(http_resp_t *r) {
         }
         r->content_length = v;
     } else if (ci_equal(name, "transfer-encoding")) {
-        if (ci_starts_with(val, "chunked")) r->chunked = true;
+        // Token-aware, not prefix-aware: "Transfer-Encoding: gzip, chunked"
+        // is RFC-legal and IS chunked -- chunked is required to be the last
+        // coding applied. A prefix test saw only "gzip", left `chunked`
+        // false, found no Content-Length either, and so framed the response
+        // as close-delimited: body_complete declared at the end of the
+        // headers with the entire body still inbound.
+        if (header_has_token(val, vlen, "chunked")) r->chunked = true;
+    } else if (ci_equal(name, "connection")) {
+        // A comma-separated list of tokens ("close", "keep-alive", and
+        // whatever hop-by-hop header names a proxy adds), so the token is
+        // matched inside the list rather than only at the start: a
+        // "Connection: keep-alive, close" that only looked at the first
+        // token would read as reusable, which is the one mistake that
+        // costs a desynchronised connection.
+        if (header_has_token(val, vlen, "close")) r->connection_close = true;
     }
 }
 
@@ -105,6 +138,11 @@ void http_resp_init(http_resp_t *r) {
 
 static void start_body_phase(http_resp_t *r) {
     int s = r->status;
+    // Recorded before the arms below, because the last of them -- no framing
+    // header at all -- is precisely the case that must NOT look framed. 1xx
+    // never reaches here (http_resp_feed restarts the parser on it).
+    r->has_explicit_framing =
+        (s == 204 || s == 304) || r->chunked || r->content_length >= 0;
     if (s == 204 || s == 304) {
         r->body_complete = true;
         r->_state = ST_DONE;
@@ -144,7 +182,24 @@ bool http_resp_feed(http_resp_t *r, const uint8_t *data, int len,
                 } else {
                     handle_header_line(r);
                     if (r->_state == ST_ERROR) return false;
-                    if (r->headers_done) start_body_phase(r);
+                    if (r->headers_done) {
+                        if (r->status >= 100 && r->status < 200) {
+                            // An interim response (100 Continue, 103 Early
+                            // Hints): no body, terminated by the blank line
+                            // just consumed, and the REAL response follows
+                            // on the same connection. Parsed as THE status
+                            // line it would be reported as the response,
+                            // `body_complete` declared with no framing
+                            // header at all, and the socket kept with the
+                            // actual response still inbound -- every later
+                            // response then belonging to the previous
+                            // request. Start over instead; the final
+                            // response is the one that counts.
+                            http_resp_init(r);
+                            continue;   // _linelen zeroed by the init
+                        }
+                        start_body_phase(r);
+                    }
                 }
                 r->_linelen = 0;
                 continue;
@@ -224,7 +279,14 @@ bool http_resp_feed(http_resp_t *r, const uint8_t *data, int len,
 
         case ST_DONE:
         default:
-            continue; // extra bytes after completion are ignored
+            // Not ignored any more, recorded. These bytes are past the end
+            // of a response that is already complete: on a connection about
+            // to be kept they are the next reader's first bytes, and that
+            // reader will mis-frame everything after them. The parser cannot
+            // say what they are; it can say they were there, which is all
+            // the caller needs to decide not to reuse the socket.
+            r->extra_after_complete = true;
+            continue;
         }
     }
     return true;

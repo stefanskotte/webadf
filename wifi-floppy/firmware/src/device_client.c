@@ -272,6 +272,15 @@ static void dc_backoff_reset(device_client_t *c) {
     c->backoff_ms = 0;
 }
 
+// Ends the connection for real. transport.h's `abandon` is optional, so a
+// transport that does not implement it falls back to close() -- which is
+// correct for any transport that does not keep connections alive in the
+// first place.
+static void dc_abandon(device_client_t *c) {
+    if (c->t->abandon) c->t->abandon(c->t);
+    else c->t->close(c->t);
+}
+
 // Runs one full request/response exchange over `c->t`: writes the `req_len`
 // bytes of an already-built request at `req` -- looping on partial writes,
 // since transport_t.write may accept fewer bytes than offered exactly as a
@@ -291,19 +300,41 @@ static void dc_backoff_reset(device_client_t *c) {
 // a clean close mid-body returns true with `r->body_complete` still false
 // -- the caller decides what an incomplete body means for that endpoint;
 // this function only reports what happened on the wire.
-static bool dc_exchange(device_client_t *c, const char *req, int req_len,
-                        void (*sink)(void *ctx, const uint8_t *b, int n),
-                        void *sink_ctx, http_resp_t *r) {
-    if (c->t->connect(c->t, c->host, 443) < 0) return false;
+// One attempt: connect (which may hand back an already-open connection),
+// write the request, read until the response is framed or the peer closes.
+//
+// Every exit that is not "the response finished" goes through dc_abandon()
+// rather than close(): a keep-alive transport's close() means "this
+// exchange is over", which it cannot distinguish from "we gave up
+// mid-response" -- and a connection kept after we gave up hands the rest of
+// THIS response to the NEXT request, permanently. `read_bytes_out` reports
+// whether anything at all arrived on this attempt, which is the only honest
+// basis for deciding a request is safe to repeat (see dc_exchange).
+static bool dc_attempt(device_client_t *c, const char *req, int req_len,
+                       void (*sink)(void *ctx, const uint8_t *b, int n),
+                       void *sink_ctx, http_resp_t *r, bool *reused_out,
+                       int *read_bytes_out) {
+    // FIRST, before anything can return: every caller's `r` is static and
+    // still holds the PREVIOUS exchange's status/flags. An early return
+    // (connect refused, a write that failed) used to leave all of it in
+    // place, and dc_exchange would then read a stale `status` and conclude
+    // the server had answered a request that never went out.
+    http_resp_init(r);
+    *read_bytes_out = 0;
+    if (c->t->connect(c->t, c->host, 443) < 0) {
+        *reused_out = false;
+        dc_abandon(c);
+        return false;
+    }
+    *reused_out = c->t->reused ? c->t->reused(c->t) : false;
 
     int sent = 0;
     while (sent < req_len) {
         int w = c->t->write(c->t, (const uint8_t *)req + sent, req_len - sent);
-        if (w <= 0) { c->t->close(c->t); return false; }
+        if (w <= 0) { dc_abandon(c); return false; }
         sent += w;
     }
 
-    http_resp_init(r);
     g_ms_read = 0;
     g_ms_feed = 0;
     // static: see the STACK note above. Live only inside this loop, and
@@ -320,18 +351,92 @@ static bool dc_exchange(device_client_t *c, const char *req, int req_len,
         int got = c->t->read(c->t, buf, sizeof buf, (int)DC_POLL_TIMEOUT_MS);
         uint32_t t_b = c->now();
         g_ms_read += t_b - t_a;
-        if (got < 0) { c->t->close(c->t); return false; } // error or timeout
-        if (got == 0) break;                              // clean close
+        if (got < 0) { dc_abandon(c); return false; } // error or timeout
+        if (got == 0) break;                          // clean close
+        *read_bytes_out += got;
         bool fed = http_resp_feed(r, buf, got, sink, sink_ctx);
         g_ms_feed += c->now() - t_b;
         if (!fed) {
-            c->t->close(c->t);
+            dc_abandon(c);
             return false; // malformed response
         }
         if (r->body_complete) break;
     }
-    c->t->close(c->t);
+    // The ONE exit that may hand the connection back, and it takes four
+    // conditions, not one:
+    //
+    //   * body_complete -- the parser reached the end of the response;
+    //   * has_explicit_framing -- and it KNEW where that end was. Without a
+    //     Content-Length, a chunked encoding or a bodyless status, http.c
+    //     declares completion at the end of the headers simply because
+    //     nothing further can be delimited. That response is close-delimited:
+    //     its body is still arriving, and keeping the socket hands it to the
+    //     next request. This is C1's desync by another door -- the one door
+    //     abandon() alone does not cover, because this path never looked
+    //     like a failure;
+    //   * !connection_close -- the peer said it is going away, so keeping
+    //     the socket only means discovering that on the next request;
+    //   * !extra_after_complete -- bytes arrived past the end of the
+    //     response. Whatever they are, the stream is out of step, and the
+    //     next reader would start mid-something.
+    //
+    // A break here with `body_complete` still false is the peer closing
+    // mid-body: the caller is told (true, incomplete), and the connection is
+    // finished either way.
+    if (r->body_complete && r->has_explicit_framing &&
+        !r->connection_close && !r->extra_after_complete) {
+        c->t->close(c->t);
+    } else {
+        dc_abandon(c);
+    }
     return true;
+}
+
+/**
+ * One exchange, with one retry reserved for exactly one situation.
+ *
+ * The transport keeps a clean connection open between exchanges (a handshake
+ * costs ~1.25 s on this hardware, measured, and session resumption barely
+ * dented it). A kept connection can be closed by the far end while idle, and
+ * nothing says so until the next request goes out and gets nothing back. That
+ * failure is not the network being down; it is a socket that expired, and the
+ * request was never answered -- so it is retried once, on a fresh connection.
+ *
+ * The retry is deliberately narrow, on three counts:
+ *
+ *   * only when the connection was REUSED -- a fresh connection that failed
+ *     says something about the network, not about a socket that expired;
+ *   * only when NOT ONE BYTE arrived on it. `status == 0` is not the same
+ *     thing: a read timeout on a POST the server is still working on also
+ *     leaves status at 0, and that request HAS been received. Bytes read is
+ *     the only signal here that distinguishes "never left" from "no answer
+ *     yet", and even it is conservative by design;
+ *   * only when the caller says the request is safe to repeat.
+ *     `retryable` is false for /api/device/register, which has no
+ *     idempotency at all: the pairing code is single-use, so a resend of a
+ *     registration whose response was lost turns a recoverable timeout into
+ *     a terminal `invalid_or_used_code` and sends the board back to the
+ *     portal for a code the user has to re-issue.
+ */
+static bool dc_exchange(device_client_t *c, const char *req, int req_len,
+                        void (*sink)(void *ctx, const uint8_t *b, int n),
+                        void *sink_ctx, http_resp_t *r, bool retryable) {
+    bool reused = false;
+    int got = 0;
+    const bool ok = dc_attempt(c, req, req_len, sink, sink_ctx, r, &reused, &got);
+    if (ok && r->status != 0) return true;
+    if (!retryable || !reused || got != 0) return ok;
+
+    // The socket was stale: it was handed to us already open, and it
+    // produced nothing at all. dc_attempt has already abandoned it on every
+    // path that reaches here; this call is what makes that a guarantee
+    // rather than an assumption about a function that may grow another exit
+    // -- abandon() is idempotent in both implementations.
+    wf_logf(WF_INFO, "http: kept connection was closed, retrying on a new one");
+    dc_abandon(c);
+    bool again = false;
+    int got_again = 0;
+    return dc_attempt(c, req, req_len, sink, sink_ctx, r, &again, &got_again);
 }
 
 bool dc_digest_is_blocked(const device_client_t *c, const char *sha256) {
@@ -415,7 +520,7 @@ static dc_state_t dc_fetch_image(device_client_t *c, const dc_desired_t *d) {
     g_img_resp = &r;
     c->_fetch_pct = -1;     // a fresh transfer reports 0% again
     dc_emit(c, DC_OBS_FETCH_BEGIN, 0, 0);
-    bool ok = dc_exchange(c, req, req_len, dc_image_sink, c, &r);
+    bool ok = dc_exchange(c, req, req_len, dc_image_sink, c, &r, /*retryable=*/true);
 
     if (!ok || !r.body_complete) {
         // Deliberately detailed: this branch NEVER blocks the digest, so it
@@ -753,7 +858,9 @@ dc_register_result_t dc_register(device_client_t *c, const char *pairing_code,
     static http_resp_t r;
     static char token[TOKEN_STORE_MAX_LEN + 1];
 
-    bool ok = dc_exchange(c, req, req_len, dc_body_sink, &resp, &r);
+    bool ok = dc_exchange(c, req, req_len, dc_body_sink, &resp, &r,
+                             // A single-use pairing code: never resend this one.
+                             /*retryable=*/false);
     if (!ok || !r.body_complete || resp.truncated) {
         // resp.truncated: the register response is a small fixed-shape
         // object and cannot legitimately overrun DC_POLL_BODY_BYTES, so a
@@ -854,7 +961,7 @@ bool dc_report_status(device_client_t *c, int psram_free, int rssi, const char *
     if (req_len < 0) return false;
 
     static http_resp_t r;   // static: see the STACK note above
-    bool ok = dc_exchange(c, req, req_len, dc_discard_sink, NULL, &r);
+    bool ok = dc_exchange(c, req, req_len, dc_discard_sink, NULL, &r, /*retryable=*/true);
     if (!ok || !r.body_complete) return false; // best-effort; the poll loop is what matters
 
     if (r.status == 401) {
@@ -885,7 +992,7 @@ int dc_post(device_client_t *c, const char *path, const char *content_type,
     static dc_body_buf_t out;
     out.len = 0; out.truncated = false; out.buf[0] = '\0';
     static http_resp_t r;
-    bool ok = dc_exchange(c, req, n + body_len, dc_body_sink, &out, &r);
+    bool ok = dc_exchange(c, req, n + body_len, dc_body_sink, &out, &r, /*retryable=*/true);
     if (resp && resp_cap > 0) snprintf(resp, (size_t)resp_cap, "%s", out.buf);
     if (!ok || !r.body_complete) return -1;
     if (r.status == 401) c->state = DC_HALTED;    // 401 anywhere halts
@@ -920,7 +1027,7 @@ dc_state_t dc_step(device_client_t *c) {
     body.truncated = false;
     body.buf[0] = '\0';
     static http_resp_t r;
-    bool ok = dc_exchange(c, req, req_len, dc_body_sink, &body, &r);
+    bool ok = dc_exchange(c, req, req_len, dc_body_sink, &body, &r, /*retryable=*/true);
 
     if (!ok || !r.body_complete) {
         // Transport/framing failure, or a connection dropped before the

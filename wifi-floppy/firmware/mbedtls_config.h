@@ -3,8 +3,8 @@
 // Minimal mbedTLS 3.6 config for a single-purpose TLS 1.2/1.3 *client*,
 // verifying a server certificate against tools/gen_roots.sh's pinned root
 // bundle. No server side, no DTLS, no PSK/session resumption -- the device
-// makes short-lived outbound connections to one host (WEBADF_HOST) and
-// nothing else needs to be in the image.
+// makes outbound connections to one host (WEBADF_HOST), kept open between
+// requests (transport_tls.c), and nothing else needs to be in the image.
 //
 // Verified empirically against the live host before picking curves/suites
 // (see task-9-report.md): TLSv1.3, TLS_AES_128_GCM_SHA256, and -groups
@@ -30,7 +30,9 @@
 // nothing. MBEDTLS_PLATFORM_MS_TIME_ALT hands that job to our own
 // mbedtls_ms_time() (transport_tls.c), built on pico/time.h's
 // to_ms_since_boot(get_absolute_time()) -- a monotonic ms counter, which is
-// all this is used for (handshake/session-ticket timing, not wall time).
+// all this is used for (handshake timing and mbedtls's own internal
+// timeouts, not wall time; the session-ticket path that also used it is
+// gone -- see the commit that removed it).
 #define MBEDTLS_PLATFORM_MS_TIME_ALT
 
 // --- Entropy / RNG -----------------------------------------------------
@@ -110,6 +112,19 @@
 #define MBEDTLS_SSL_CLI_C
 #define MBEDTLS_SSL_PROTO_TLS1_2
 #define MBEDTLS_SSL_PROTO_TLS1_3
+
+// No MBEDTLS_SSL_SESSION_TICKETS, deliberately. Client-side TLS 1.3
+// resumption was tried and removed: it cannot work in this build. Only
+// MBEDTLS_SSL_TLS1_3_KEY_EXCHANGE_MODE_EPHEMERAL_ENABLED is defined below,
+// which compiles the client's pre_shared_key extension writer out; mbedtls
+// 3.6 additionally defaults client NewSessionTicket handling to disabled;
+// and the SDK's altcp_tls_mbedtls.c swallows
+// MBEDTLS_ERR_SSL_RECEIVED_NEW_SESSION_TICKET. mbedtls_ssl_set_session()
+// still returned 0 through all of that, so the transport logged "ticket
+// offered" while running a full handshake -- and the measurement that
+// seemed to show resumption barely helping was full-vs-full. Keeping the
+// connection open instead (transport_tls.c) is what actually removed the
+// per-request handshake.
 #define MBEDTLS_SSL_TLS1_3_COMPATIBILITY_MODE   // middlebox interop
 #define MBEDTLS_SSL_TLS1_3_KEY_EXCHANGE_MODE_EPHEMERAL_ENABLED
 #define MBEDTLS_SSL_KEEP_PEER_CERTIFICATE        // required by TLS 1.3
