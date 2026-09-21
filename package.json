@@ -18,6 +18,8 @@
     "adfmfm:diff": "~/.local/pipx/venvs/greaseweazle/bin/python scripts/adfmfm-diff.py adf-archive",
     "firmware:build": "cd wifi-floppy/firmware && cmake -B build -G Ninja -DPICO_SDK_PATH=$HOME/pico-sdk -DPICO_BOARD=pimoroni_pico_plus2_w_rp2350 && cmake --build build",
     "firmware:test": "wifi-floppy/firmware/test/run.sh",
+    "firmware:keygen": "tsx scripts/firmware-keygen.ts",
+    "firmware:publish": "dotenv -e .env.local -- tsx scripts/firmware-release.ts",
     "lha:verify": "tsx scripts/lha-verify.ts",
     "dms:verify": "tsx scripts/dms-verify.ts"
   },

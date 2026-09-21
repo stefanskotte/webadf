@@ -28,6 +28,11 @@ build/
 /coverage
 /out
 *.pem
+# ...except the firmware signing PUBLIC keys, which exist to be distributed:
+# increment 2 compiles one into the image and verifies downloaded firmware
+# against it. The private half lives at ~/.webadf/firmware-signing-key and is
+# never in this tree at all, so the blanket rule above protects nothing here.
+!wifi-floppy/firmware/keys/*.pem
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
