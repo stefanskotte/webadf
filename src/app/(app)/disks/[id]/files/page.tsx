@@ -3,6 +3,8 @@ import Link from 'next/link';
 import { and, eq } from 'drizzle-orm';
 import { getDb } from '@/db';
 import { disks, entitlements, games, blobs } from '@/db/schema/catalog';
+import { devices } from '@/db/schema/devices';
+import { orgFilter } from '@/db/scope';
 import { findHolder } from '@/lib/disk-holder';
 import { ejectMessage, mountedReason } from '@/lib/mount-wording';
 import { requireOrg } from '@/lib/session';
@@ -11,12 +13,14 @@ import { readVolume, readUsage, type AdfEntry } from '@/lib/adffs';
 import { listCollections } from '@/lib/collections';
 import { resolveFrom, libraryTrail, fromQuery } from '@/lib/trail';
 import { loadEntries } from '@/lib/disk-history/store';
-import { materialise } from '@/lib/disk-history/chain';
+import { materialise, HistoryError } from '@/lib/disk-history/chain';
+import { loadHistory, type HistoryVersion } from '@/lib/disk-history/history';
 import { PageHeader } from '@/components/shell/page-header';
 import { VolumeHeader } from '@/components/disks/volume-header';
 import { FileTree } from '@/components/disks/file-tree';
 import { DropStaging } from '@/components/disks/drop-staging';
 import { FileEditProvider, FileToolbar, type EditDisabled } from '@/components/disks/file-actions';
+import { HistoryPanel } from '@/components/disks/history-panel';
 
 export const dynamic = 'force-dynamic';
 
@@ -67,11 +71,20 @@ export default async function DiskFilesPage(props: PageProps<'/disks/[id]/files'
   // Number.isInteger on its own. Anything else here is a 404, never a
   // silent fallback to the head: a URL that says version 3 must never show
   // version 7 (task brief).
-  const versionParam = typeof sp.version === 'string' ? sp.version : undefined;
+  //
+  // `sp.version` is a `string[]` when the param is repeated
+  // (`?version=1&version=2`) -- Task 3 fix round 1's carried-over finding.
+  // The old `typeof === 'string'` check treated that shape the same as
+  // "absent", so a repeated param silently fell through to the head with no
+  // banner at all: the one case this whole gate exists to prevent, reached
+  // by a different route. `sp.version !== undefined` catches it alongside
+  // every other malformed value, and the `typeof` check below turns it into
+  // the same 404 as any other malformed version rather than a silent
+  // fallback.
   let historicalSeq: number | null = null;
-  if (versionParam !== undefined) {
-    if (!/^\d+$/.test(versionParam)) notFound();
-    historicalSeq = Number(versionParam);
+  if (sp.version !== undefined) {
+    if (typeof sp.version !== 'string' || !/^\d+$/.test(sp.version)) notFound();
+    historicalSeq = Number(sp.version);
     if (!Number.isSafeInteger(historicalSeq)) notFound();
   }
 
@@ -164,10 +177,14 @@ export default async function DiskFilesPage(props: PageProps<'/disks/[id]/files'
   // because a board polling toward it is just as much "somewhere this edit
   // would land on hardware" as one already converged. Run here too, before
   // any edit is attempted, so the controls can say so up front instead of
-  // only failing once someone tries. Skipped while browsing a historical
-  // version: editing is refused there regardless of the CURRENT disk's mount
-  // state (see `disabled` below), so there is nothing this query would add.
-  const holder = historicalSeq === null && bytes ? await findHolder(getDb(), orgId, disk.sha256) : null;
+  // only failing once someone tries.
+  //
+  // Computed regardless of `historicalSeq` -- Task 5's History panel needs
+  // it too (a Restore always rewrites the CURRENT head, `disk.sha256`,
+  // whichever version happens to be on screen), even though `disabled`
+  // below still ignores it while browsing a historical version, for the
+  // reason its own comment gives.
+  const holder = bytes ? await findHolder(getDb(), orgId, disk.sha256) : null;
 
   // The four ways editing is refused. Browsing a historical version takes
   // priority over every other reason -- mounted, no-filesystem and
@@ -204,6 +221,43 @@ export default async function DiskFilesPage(props: PageProps<'/disks/[id]/files'
                 message: "This disk's allocation bitmap can't be trusted, so blocks can't be safely allocated. Editing is disabled.",
               }
             : null;
+
+  // The mounted-refusal wording for the History panel's Restore action --
+  // reusing the exact ejectMessage/mountedReason pair `disabled` above
+  // already builds for editing, per the task brief ("do not invent an eject
+  // here"). Restore has no "editing"/"renaming" action word of its own, so
+  // it is left off, landing on ejectMessage's own default ("eject it there
+  // first").
+  const mountedMessage = holder ? ejectMessage(mountedReason(holder.name)) : null;
+
+  // Every version of this disk, newest first, for the History panel below
+  // the tree -- always attempted, whether the page is showing the head or a
+  // historical version, since the panel itself is the one place both are
+  // reachable from. `deviceNames` is looked up once here rather than by
+  // `loadHistory` itself, so a disk with a long history costs one query for
+  // every device label, not one per version (loadHistory's own doc comment).
+  //
+  // A broken chain here is NOT folded into the same `bytes === null` /
+  // blob-unavailable branch the volume read above uses: that branch is
+  // about today's readable bytes, and a broken OLDER link in the chain must
+  // not hide a disk whose current bytes are perfectly fine. Reported as its
+  // own degrade instead (`historyUnavailable`), distinct from "this disk
+  // has never been edited" (`historyVersions` simply empty, no error) --
+  // conflating the two would show a person a false "nothing has changed
+  // here" for what is actually a server-side fault.
+  let historyVersions: HistoryVersion[] = [];
+  let historyUnavailable = false;
+  try {
+    const deviceRows = await getDb()
+      .select({ id: devices.id, name: devices.name })
+      .from(devices)
+      .where(orgFilter(devices, orgId));
+    const deviceNames = new Map(deviceRows.map((d) => [d.id, d.name] as const));
+    historyVersions = await loadHistory(orgId, id, deviceNames);
+  } catch (err) {
+    if (err instanceof HistoryError) historyUnavailable = true;
+    else throw err;
+  }
 
   return (
     <>
@@ -280,6 +334,26 @@ export default async function DiskFilesPage(props: PageProps<'/disks/[id]/files'
               entries={volume.ok ? volume.root : []}
             />
           </FileEditProvider>
+        )}
+        {/*
+          Rendered regardless of whether today's bytes could be read above --
+          a disk whose CURRENT blob is unavailable is exactly a disk someone
+          might want to restore an earlier, readable version onto, so the
+          history is not hidden behind that same failure.
+        */}
+        {historyUnavailable ? (
+          <div className="glass-card p-4 text-[13px]" style={{ color: 'var(--amber-text)' }}
+               data-testid="history-unavailable">
+            This disk&apos;s version history could not be loaded.
+          </div>
+        ) : (
+          <HistoryPanel
+            diskId={id}
+            from={from}
+            versions={historyVersions}
+            viewingSeq={historicalSeq}
+            mountedMessage={mountedMessage}
+          />
         )}
       </div>
     </>
