@@ -20,7 +20,14 @@ export const MAX_NAME_LENGTH = 30;
 export type EditDisabled =
   | { reason: 'no-filesystem'; message: string }
   | { reason: 'bitmap-untrusted'; message: string }
-  | { reason: 'mounted'; message: string };
+  | { reason: 'mounted'; message: string }
+  // Browsing an earlier version via `?version=` (time machine, Task 3): the
+  // materialised tree is read-only regardless of the disk's own mount or
+  // filesystem state, and the reason has to say so distinctly -- a person
+  // reading "this disk is mounted" while looking at version 3 would think
+  // ejecting the board gets them editing back, when returning to the head is
+  // what actually does.
+  | { reason: 'historical'; message: string };
 
 /**
  * Turns one `reason` string from `{ error: 'edit_failed', reason }` (or the

@@ -407,6 +407,18 @@ test('the drop strip fits a phone, and a press-and-hold drags an entry onto a fo
   const dropZone = page.getByTestId(`fs-drop-${dest.block}`);
   const entryRow = page.locator('[data-testid="fs-entry"][data-name="DRAGME.TXT"]');
   await expect(grip).toBeVisible();
+  // PUT BOTH ROWS MID-VIEWPORT FIRST. The History panel (the time machine)
+  // made this page taller than a phone viewport, so it now scrolls -- and
+  // dnd-kit auto-scrolls a scrollable container whenever a drag's pointer
+  // sits in its top or bottom quarter. This drag is scripted from
+  // coordinates measured BEFORE it starts, so an auto-scroll slides the
+  // target out from under a finger that cannot chase it the way a person's
+  // would: measured at 156px of drift (the drop zone went from y=31 to
+  // y=205 mid-drag), which is more than two rows, and the drop then lands on
+  // nothing. A person gets the auto-scroll ON PURPOSE -- it is how you reach
+  // a folder that is off-screen -- so the behaviour is right and the
+  // assumption "this page does not scroll" is what stopped being true.
+  await grip.evaluate((el) => el.scrollIntoView({ block: 'center' }));
   const gripBox = (await grip.boundingBox())!;
   const dropBox = (await dropZone.boundingBox())!;
   const from = { x: gripBox.x + gripBox.width / 2, y: gripBox.y + gripBox.height / 2 };
