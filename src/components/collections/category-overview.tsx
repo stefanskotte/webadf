@@ -13,9 +13,10 @@ import type { CollectionListItem } from '@/lib/collections';
  * falls through to the collections themselves, as cards that go exactly where
  * the rail rows go.
  *
- * The totals are here for the same reason the cards are: the page had nothing
- * on it, and a number you would otherwise have to count by hand is worth more
- * than whitespace.
+ * The totals stay because a number you would otherwise count by hand is worth
+ * the line. The "Everything is filed." that used to sit beside them does not:
+ * it was explaining why this page was not the grid, back when the cards were
+ * bare rectangles with a name on them.
  *
  * Only rendered when there ARE collections. An account with no collections and
  * no titles is an EMPTY library, and the grid already says so properly; a
@@ -100,10 +101,10 @@ export function CategoryOverview({
 }) {
   return (
     <div className="flex flex-col gap-4" data-testid="category-overview">
+      {/* Just the totals. "Everything is filed." went with the bare cards
+          (operator, 2026-09-21): it was there to explain why the page was not
+          the grid you expected, and a wall of collection art explains itself. */}
       <div className="flex flex-wrap items-baseline gap-x-2 gap-y-1 px-1">
-        <span className="text-[13px] font-semibold" style={{ color: 'var(--ink)' }}>
-          Everything is filed.
-        </span>
         <span className="font-mono text-[11.5px]" style={{ color: 'var(--muted-2)' }}>
           {totalTitles.toLocaleString()} titles · {totalDisks.toLocaleString()} disks ·{' '}
           {collections.length.toLocaleString()} {collections.length === 1 ? 'collection' : 'collections'}
@@ -123,17 +124,32 @@ export function CategoryOverview({
           >
             <Mosaic id={c.id} covers={mosaics?.get(c.id) ?? []} />
             {/* The name sits ON the mosaic rather than under it, which is what
-                keeps the card square whatever the name's length -- and the
-                scrim is the same one the untitled game cover uses, so a long
-                name stays readable over four unrelated pictures. */}
+                keeps the card square whatever the name's length.
+
+                A SOFT SCRIM WAS NOT ENOUGH (operator, 2026-09-21: "the text is
+                not easy to read"). Box art is bright, saturated and
+                unpredictable -- amber and pale covers put white text on a
+                near-white ground, and a gradient that fades to transparent
+                offers no floor. So the label block is its own surface: a band
+                that is essentially opaque where the text actually sits, only
+                fading out ABOVE it, with the app's ink colour rather than flat
+                black so it belongs to the card. The hairline along its top
+                edge is what keeps it from reading as a smudge over the art,
+                and the blur softens whatever detail still shows through. */}
             <div
-              className="absolute inset-x-0 bottom-0 flex flex-col gap-0.5 p-3"
-              style={{ background: 'linear-gradient(to top, rgba(0,0,0,0.78) 0%, rgba(0,0,0,0.30) 55%, transparent 100%)' }}
+              className="absolute inset-x-0 bottom-0 flex flex-col gap-0.5 px-3 pb-2.5 pt-6 backdrop-blur-[3px]"
+              style={{
+                background: 'linear-gradient(to top, rgb(9 15 24 / 0.94) 0%, rgb(9 15 24 / 0.90) 62%, rgb(9 15 24 / 0) 100%)',
+                boxShadow: 'inset 0 1px 0 rgb(255 255 255 / 0.14)',
+              }}
             >
-              <span className="truncate text-[14px] font-semibold" style={{ color: '#fff' }}>
+              <span
+                className="truncate text-[14px] font-semibold"
+                style={{ color: '#fff', textShadow: '0 1px 2px rgb(0 0 0 / 0.55)' }}
+              >
                 {c.name}
               </span>
-              <span className="font-mono text-[11px]" style={{ color: 'rgba(255,255,255,0.72)' }}>
+              <span className="font-mono text-[11px]" style={{ color: 'rgb(255 255 255 / 0.78)' }}>
                 {c.gameCount.toLocaleString()} {c.gameCount === 1 ? 'title' : 'titles'}
               </span>
             </div>
