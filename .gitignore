@@ -67,3 +67,9 @@ playwright-report/
 
 # Harness-managed git worktrees (Claude Code). Never commit them.
 .claude/worktrees/
+
+# Local editor config. Machine-specific (it hardcodes an absolute path to the
+# firmware source dir), and an untracked file here marks the git tree dirty --
+# which the firmware version generator reports as +g<hash>-dirty and the
+# release script refuses to publish.
+.vscode/
