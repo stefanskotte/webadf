@@ -1487,9 +1487,9 @@ separately.
   afterwards, from the library or the game page. Removing the column also removes the mount
   controls from a screen where the disks are still being sorted out.
 
-- **The library's category cards should be square, with a mosaic of cover art** (operator,
-  2026-09-20). "The main library page, when everything is organized, looks bare with the
-  categories as cards -- it would be nice if they were square and displayed a mosaic of main
+- ~~**The library's category cards should be square, with a mosaic of cover art**~~ **DONE
+  2026-09-21 — see 3ah.** The original request: "The main library page, when everything is
+  organized, looks bare with the categories as cards -- it would be nice if they were square and displayed a mosaic of main
   title images of the floppies below it." Nothing is built. The covers are already on the cards'
   own children (the grid shows real cover art, see 3h), so this is a layout and query question,
   not a new data source: the card needs the first few covers under that category, and a square
@@ -2523,6 +2523,21 @@ Learned the hard way; several cost real debugging time.
     `vercel ls`'s Environment column makes a preview-only push easy to skim past.
 
 ---
+
+## Two sessions running e2e will kill each other's dev server
+
+`playwright.config.ts` takes `PORT` (and hands `BASE_URL`/`BETTER_AUTH_URL` to the server it
+spawns), so two chats can run the suite at once -- **but only if they pick different ports.**
+Twice on 2026-09-21 a full run died mid-suite with `ECONNREFUSED`: the dev server was gone, with
+no crash trace, no stack, and no memory pressure (RSS was sampled through a whole run and sat at
+1.3-1.9 GB). That is what a killed process looks like, not a crashed one -- the other session had
+been told to use the same port and its own teardown swept the listener away. The tell is that the
+failures are `ECONNREFUSED`/`ERR_CONNECTION_REFUSED` rather than assertion failures, and that
+everything before the death passed.
+
+**Agree the port before starting**, and if in doubt take an unusual one (4100 rather than 4000).
+Re-running the affected spec alone on a free port is enough to tell a killed server from a real
+regression: the same file that failed 3 tests went 9/9.
 
 ## The e2e suite leaves live invite codes behind
 
@@ -4206,6 +4221,71 @@ Demozoo API (the bulk export makes per-lookup load on a non-profit unnecessary).
 - **Screenshot redirects:** screenshot fetches follow redirects, so the `media.demozoo.org` host
   allowlist checks only the first URL (the raster content-type allowlist and `nosniff` still apply).
 - **Cron drift:** the daily 01:30 cron against a 7-day gate can drift a refetch to 8 days.
+
+### 3ah. The library reaches the history, and the category cards show what is in them — DONE 2026-09-21, merged and live
+
+Three operator requests from the same morning, after piece 3 (§4l) shipped. No spec and no plan:
+each is a single component plus, in one case, a query.
+
+**The history is one click from the gallery.** A disk's version history was four steps away --
+open the title, find the disk, Browse, scroll. Every **single-disk** library card now carries a
+clock-and-arrow button that lands on `/disks/<id>/files#disk-history`; the panel anchors that id
+and carries `scroll-mt-20` so its heading clears the header instead of tucking under it. Offered
+only on single-disk titles for the reason the inline rename already gives: `diskId` is a `min()`
+aggregate and "which disk's history?" has no answer on a multi-disk set. The operator confirmed
+that scope ("do it for single disk titles for now").
+
+**Remove-from-collection became a minus** in the card's footer row, immediately left of the
+delete icon and sharing its subdued `--faint` resting colour, instead of a red circled X floating
+over the cover art. The destructive pair still goes red on hover; the history control does not.
+
+**All three controls are BUTTONS, including the history one that is really a navigation.** The
+card is an `<a href>`, and an anchor inside an anchor is invalid HTML that browsers repair by
+closing the outer one early -- which would break the card around it. The cost is no
+middle-click-to-new-tab on that icon, which the operator accepted explicitly. Each control stops
+its pointer events before they reach the card's link or dnd-kit's drag listeners, exactly as the
+inline rename field does.
+
+**The wordmark links to `/library`.** Every other shell had an explicit way back; the app shell
+had only the nav pill, and the mark is where people click first. The admin shell's wordmark is
+deliberately left alone -- it already has "Back to library".
+
+**The category cards are square, with a mosaic of what is filed in them.** The overview (what an
+empty inbox falls through to -- exactly the tidy-library state the operator was describing) now
+shows each collection as a square whose face is up to four covers of its titles, name and count
+over a scrim so the shape survives a long name. The cases that are not a neat four were each
+decided by rendering them and looking:
+
+- **1 cover fills the square.** One picture is a picture, not a broken grid.
+- **2 or 3 tile a 2x2, and the empty cells show ONE continuous gradient** behind the whole
+  mosaic rather than a gradient each. Per-cell hues beside two real covers read as noise.
+- **0 is the plain gradient**, the app's own "no image" look (`Cover`), so a collection of
+  unidentified titles looks intentional rather than half-loaded. **That is the common case**:
+  OpenRetro recognises 6.6% of the archive (3d).
+
+It looks THROUGH unidentified titles rather than stopping at them -- up to 12 members are
+considered to find 4 covers -- because a collection whose first few happen to be unrecognised
+would otherwise show an empty mosaic while the fifth has perfectly good box art.
+
+**One ranking, not two.** `coverUrlsForGames` was extracted from `withDerived` (src/lib/queries.ts)
+so the mosaic and the game cards choose a cover the same way; two rankings would tile a collection
+with art its own title cards do not show. Cost: **two queries per page whatever the number of
+collections**, bounded by the candidate cap, and only on the overview -- every other view renders
+the game cards, which carry their own covers.
+
+The choosing is pure, in `src/lib/collection-mosaic.ts` with its own tests, following
+`collection-order.ts`'s split: rules deserve tests that do not need a database.
+
+**Gates:** 911 unit tests, build clean, 290/290 Playwright. The two new e2e tests were each proved
+non-vacuous by breaking what they cover (the history control rendered null: the card test fails on
+the missing element; the mosaic query short-circuited: 3 tiles vs 0). The mosaic test also asserts
+the browser decoded real pixels -- an `<img>` element is not a picture -- and measures the card
+square rather than reading its class list.
+
+**Watch this if you make the disk files page taller:** `mobile.spec.ts`'s press-and-hold drag
+broke when the History panel made that page scrollable, because dnd-kit auto-scrolls near a
+container edge and a scripted drag cannot chase a target that moves 174px mid-gesture (§4l). It
+is the canary for that whole class of change.
 
 ### 3ag. Live device state in every open browser — DONE 2026-09-20, merged to `master`
 
