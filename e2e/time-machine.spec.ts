@@ -86,6 +86,31 @@ test('history lists what changed, newest first, with version 0 as uploaded', asy
   await expect(page.getByTestId('version-0')).toContainText('As uploaded');
 });
 
+test('the library card reaches the history, and the wordmark leads back', async ({ page }) => {
+  const u = await signUpFresh(page);
+  await page.goto('/library');
+  await createAdf(page);
+  const disk = await authoredDisk(page, u.orgId);
+
+  // The gallery is where people start, and before this the history was only
+  // reachable by opening the title, then the disk, then scrolling (operator,
+  // 2026-09-21).
+  const history = page.getByTestId(`history-${disk.gameId}`);
+  await expect(history).toBeVisible();
+  await history.click();
+
+  await expect(page).toHaveURL(new RegExp(`/disks/${disk.id}/files#disk-history$`));
+  await expect(page.getByTestId('history-panel')).toBeVisible();
+  // The card must not ALSO navigate to the title: the button lives inside the
+  // card's own <a href>, and an unstopped click would do both.
+  await expect(page).not.toHaveURL(new RegExp(`/games/${disk.gameId}`));
+
+  // And the way home, from a page deep in the app.
+  await page.getByTestId('wordmark-home').click();
+  await expect(page).toHaveURL(/\/library$/);
+  await expect(page.getByTestId('game-card')).toHaveCount(1);
+});
+
 test('browsing an old version shows its tree read-only, with no edit controls', async ({ page }) => {
   const u = await signUpFresh(page);
   await page.goto('/library');
