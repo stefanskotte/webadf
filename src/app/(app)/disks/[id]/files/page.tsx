@@ -1,4 +1,5 @@
 import { notFound } from 'next/navigation';
+import Link from 'next/link';
 import { and, eq } from 'drizzle-orm';
 import { getDb } from '@/db';
 import { disks, entitlements, games, blobs } from '@/db/schema/catalog';
@@ -9,6 +10,8 @@ import { diskStore } from '@/lib/storage';
 import { readVolume, readUsage, type AdfEntry } from '@/lib/adffs';
 import { listCollections } from '@/lib/collections';
 import { resolveFrom, libraryTrail, fromQuery } from '@/lib/trail';
+import { loadEntries } from '@/lib/disk-history/store';
+import { materialise } from '@/lib/disk-history/chain';
 import { PageHeader } from '@/components/shell/page-header';
 import { VolumeHeader } from '@/components/disks/volume-header';
 import { FileTree } from '@/components/disks/file-tree';
@@ -56,6 +59,21 @@ export default async function DiskFilesPage(props: PageProps<'/disks/[id]/files'
   const sp = await props.searchParams;
   const from = typeof sp.from === 'string' ? sp.from : undefined;
   const collections = await listCollections(orgId);
+
+  // `?version=<seq>` (time machine, Task 3): browse an earlier version of
+  // this disk instead of its head. Validated strictly against digits only --
+  // `Number('')`, `Number(' ')` and `Number('1e3')` all coerce to something
+  // that LOOKS numeric, so a regex on the raw string is the actual gate, not
+  // Number.isInteger on its own. Anything else here is a 404, never a
+  // silent fallback to the head: a URL that says version 3 must never show
+  // version 7 (task brief).
+  const versionParam = typeof sp.version === 'string' ? sp.version : undefined;
+  let historicalSeq: number | null = null;
+  if (versionParam !== undefined) {
+    if (!/^\d+$/.test(versionParam)) notFound();
+    historicalSeq = Number(versionParam);
+    if (!Number.isSafeInteger(historicalSeq)) notFound();
+  }
 
   // THE ENTITLEMENT is the boundary, not the disk row -- disks.orgId is an
   // independent column that can drift from its game's org. Identical to the
@@ -108,9 +126,29 @@ export default async function DiskFilesPage(props: PageProps<'/disks/[id]/files'
   // so the two stay in lockstep for exactly the disks this should fire for.
   const matchedTosecName = disk.matchState === 'matched' ? disk.tosecName : null;
 
+  // A version other than the head must exist in THIS disk's own history --
+  // checked against loadEntries(id), not against the seq space in general,
+  // so version 3 of a different disk can never be reached through this
+  // disk's URL. An unwritten disk has no rows here at all (version 0 is
+  // created lazily at the first change, store.ts), so any `?version=` on it
+  // is unknown -- correctly a 404, not a re-derived "version 0".
+  let historyEntries: Awaited<ReturnType<typeof loadEntries>> | null = null;
+  if (historicalSeq !== null) {
+    historyEntries = await loadEntries(id);
+    if (!historyEntries.some((entry) => entry.seq === historicalSeq)) notFound();
+  }
+
+  // Read the bytes to show: the materialised historical version when one was
+  // asked for, the disk's own head blob otherwise. Both failure modes land
+  // on the same "stored bytes could not be read" branch below, including a
+  // broken delta chain (HistoryError) -- a person browsing history gets a
+  // clear degrade rather than a crashed page for what is, either way, bytes
+  // this page cannot show.
   let bytes: Uint8Array | null = null;
   try {
-    bytes = await diskStore.read(disk.sha256);
+    bytes = historicalSeq !== null && historyEntries
+      ? await materialise(historyEntries, historicalSeq, (sha256) => diskStore.read(sha256))
+      : await diskStore.read(disk.sha256);
   } catch {
     bytes = null;
   }
@@ -126,30 +164,46 @@ export default async function DiskFilesPage(props: PageProps<'/disks/[id]/files'
   // because a board polling toward it is just as much "somewhere this edit
   // would land on hardware" as one already converged. Run here too, before
   // any edit is attempted, so the controls can say so up front instead of
-  // only failing once someone tries.
-  const holder = bytes ? await findHolder(getDb(), orgId, disk.sha256) : null;
+  // only failing once someone tries. Skipped while browsing a historical
+  // version: editing is refused there regardless of the CURRENT disk's mount
+  // state (see `disabled` below), so there is nothing this query would add.
+  const holder = historicalSeq === null && bytes ? await findHolder(getDb(), orgId, disk.sha256) : null;
 
-  // The three ways editing is refused, in the same priority applyDiskEdit
-  // itself would hit them: mounted is checked BEFORE the bytes are even
-  // read (D-W-4), so it takes precedence here too; no-filesystem and
-  // bitmap-untrusted only arise once the (pure) edit is actually attempted
-  // against the volume, no-filesystem first since it is the more
-  // fundamental refusal. A disk that isn't even readable never reaches
-  // this (the blob-unavailable branch below skips the editor entirely).
-  // Stated as a reason, never by just hiding the controls (§6) -- "this
-  // disk is unusual" has to read differently from "this feature is
-  // missing".
+  // The four ways editing is refused. Browsing a historical version takes
+  // priority over every other reason -- mounted, no-filesystem and
+  // bitmap-untrusted all describe the CURRENT disk, and while looking at an
+  // old version none of them is the reason editing is off; the reason is
+  // that this isn't the disk's current state at all. Reusing the SAME
+  // `EditDisabled` mechanism (not a second gate) is what already turns off
+  // every edit control, the toolbar, and drop staging in one place -- see
+  // file-actions.tsx, file-tree.tsx and drop-staging.tsx, all of which read
+  // `disabled` from this one context.
+  //
+  // The other three, in the same priority applyDiskEdit itself would hit
+  // them: mounted is checked BEFORE the bytes are even read (D-W-4), so it
+  // takes precedence here too; no-filesystem and bitmap-untrusted only
+  // arise once the (pure) edit is actually attempted against the volume,
+  // no-filesystem first since it is the more fundamental refusal. A disk
+  // that isn't even readable never reaches this (the blob-unavailable
+  // branch below skips the editor entirely). Stated as a reason, never by
+  // just hiding the controls (§6) -- "this disk is unusual" has to read
+  // differently from "this feature is missing".
   const disabled: EditDisabled | null =
-    holder
-      ? { reason: 'mounted', message: ejectMessage(mountedReason(holder.name), 'editing') }
-      : volume && !volume.ok
-        ? { reason: 'no-filesystem', message: 'This disk has no filesystem, so there is nothing to add files to.' }
-        : usage === null
-          ? {
-              reason: 'bitmap-untrusted',
-              message: "This disk's allocation bitmap can't be trusted, so blocks can't be safely allocated. Editing is disabled.",
-            }
-          : null;
+    historicalSeq !== null
+      ? {
+          reason: 'historical',
+          message: `This is version ${historicalSeq} of this disk, shown read-only. Return to the current version to make changes.`,
+        }
+      : holder
+        ? { reason: 'mounted', message: ejectMessage(mountedReason(holder.name), 'editing') }
+        : volume && !volume.ok
+          ? { reason: 'no-filesystem', message: 'This disk has no filesystem, so there is nothing to add files to.' }
+          : usage === null
+            ? {
+                reason: 'bitmap-untrusted',
+                message: "This disk's allocation bitmap can't be trusted, so blocks can't be safely allocated. Editing is disabled.",
+              }
+            : null;
 
   return (
     <>
@@ -175,6 +229,28 @@ export default async function DiskFilesPage(props: PageProps<'/disks/[id]/files'
         subtitle={filename}
       />
       <div className="flex flex-col gap-3 px-4 pb-10 sm:px-7">
+        {/*
+          Shown above everything else, including the blob-unavailable
+          branch below -- a person who asked for version 3 and got "could
+          not be read" still needs to know WHICH version failed and how to
+          get back, not just that something did.
+        */}
+        {historicalSeq !== null && (
+          <div
+            className="glass-card p-4 text-[13px]"
+            style={{ color: 'var(--amber-text)' }}
+            data-testid="version-banner"
+            data-version={historicalSeq}
+          >
+            Viewing version {historicalSeq} of this disk, read-only.{' '}
+            <Link
+              href={`/disks/${id}/files${fromQuery(from)}`}
+              className="font-semibold underline underline-offset-2"
+            >
+              Return to the current version
+            </Link>
+          </div>
+        )}
         {volume === null ? (
           <div className="glass-card p-5 text-[13px]" style={{ color: 'var(--amber-text)' }}
                data-testid="blob-unavailable">

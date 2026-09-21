@@ -683,16 +683,42 @@ function FileRow({
           same reasoning as the Download control on the game detail
           page (disk-row.tsx). A plain fetch-then-save would buffer the
           whole file in memory to achieve the same result.
+
+          That route addresses a file by BLOCK NUMBER against the disk's
+          CURRENT head bytes (the [block]/route.ts GET reads
+          `diskStore.read(disk.sha256)`, not any particular version) -- it
+          has no way to serve an old version's bytes. While browsing a
+          historical version (Task 3, `editDisabled.reason ===
+          'historical'`) the block numbers on screen belong to a
+          materialised tree that may not even match what that route would
+          walk, so the link is withdrawn rather than risk it silently
+          downloading the WRONG file's bytes, or the right file's current
+          contents mislabelled as this version's. Every other disabled
+          reason (mounted, no filesystem, bitmap untrusted) still allows
+          downloading -- those all describe the same, current disk this
+          route already serves correctly.
         */}
         {!isDir ? (
-          <a
-            href={`/api/disks/${diskId}/files/${entry.block}`}
-            data-testid={`fs-download-${entry.block}`}
-            className="shrink-0 rounded px-2 py-0.5 text-[11px] font-semibold"
-            style={{ background: 'var(--glass-strong)', color: 'var(--ink)' }}
-          >
-            Download
-          </a>
+          editDisabled?.reason === 'historical' ? (
+            <span
+              data-testid={`fs-download-${entry.block}`}
+              title={editDisabled.message}
+              aria-disabled="true"
+              className="shrink-0 rounded px-2 py-0.5 text-[11px] font-semibold opacity-50"
+              style={{ background: 'var(--glass-strong)', color: 'var(--ink)' }}
+            >
+              Download
+            </span>
+          ) : (
+            <a
+              href={`/api/disks/${diskId}/files/${entry.block}`}
+              data-testid={`fs-download-${entry.block}`}
+              className="shrink-0 rounded px-2 py-0.5 text-[11px] font-semibold"
+              style={{ background: 'var(--glass-strong)', color: 'var(--ink)' }}
+            >
+              Download
+            </a>
+          )
         ) : (
           // Keeps the file column above aligned when a directory row has
           // no download link of its own. Only from `sm` up: on the
