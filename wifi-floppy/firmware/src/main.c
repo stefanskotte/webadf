@@ -738,6 +738,27 @@ static const char *assoc_failure_message(int err) {
     return "Could not connect";
 }
 
+// transport_tls.c keeps a clean TLS connection open between requests, which
+// is worth ~1.25 s per request and costs a pcb plus ~32 KB of mbedTLS
+// buffers held for as long as it is open. Two things have to give it back,
+// and neither is a request failing:
+//
+//   * leaving the poll loop, or going anywhere near the portal. portal_run()
+//     raises an AP; a socket from the STA side must not outlive that, and
+//     the memory is wanted for the portal's own stack and sockets.
+//   * idling longer than the transport will reuse it for. Past
+//     IDLE_REUSE_MAX_MS tls_connect() refuses to reuse it anyway, so holding
+//     it across a long sleep buys nothing and costs the whole 32 KB.
+//
+// abandon(), never close(): close() is allowed to hand the socket back, and
+// on these paths there is nothing to hand it back to.
+#define KEPT_CONNECTION_IDLE_MAX_MS 10000u   // == transport_tls.c's IDLE_REUSE_MAX_MS
+
+static void release_kept_connection(void) {
+    transport_t *t = tls_transport();
+    if (t && t->abandon) t->abandon(t);
+}
+
 static void core1_main(void) {
     if (cyw43_arch_init()) {
         // This loop never exits, but core0 is what drains the log, so this
@@ -774,6 +795,12 @@ static void core1_main(void) {
 
     for (;;) {
         if (prov.state == PROV_PORTAL) {
+            // The catch-all, deliberately here rather than only at the sites
+            // that set PROV_PORTAL: this is the single door every route into
+            // the portal goes through, so a future one cannot miss it. The
+            // AP goes up a few lines below, and a kept STA socket must not
+            // still be holding its buffers when it does.
+            release_kept_connection();
             wf_logf(WF_INFO, "portal: raising AP%s%s",
                     last_error ? ", last error: " : "", last_error ? last_error : "");
             // Blocks until a POST /save decodes to a complete
@@ -992,6 +1019,14 @@ static void core1_main(void) {
                             "(single-use, 10 min TTL) -- back to the portal");
                     last_error = "Invalid or already-used pairing code";
                     code_rejected = true;
+                    // DC_REG_BAD_CODE comes from a clean 400, so the socket
+                    // was KEPT -- this leaks exactly as the DC_HALTED path
+                    // used to, and lands in the portal the same way. The
+                    // PROV_PORTAL branch would catch it anyway; it is
+                    // released here as well so that "we are done with the
+                    // network" and "we let go of it" are the same statement
+                    // in the same place.
+                    release_kept_connection();
                     break;
                 }
                 // Edge-triggered by construction: one line per ATTEMPT, and
@@ -999,11 +1034,15 @@ static void core1_main(void) {
                 // this the loop is a silent forever-retry -- the shape a
                 // missing clock, a DNS failure and an unreachable host all
                 // collapse into.
+                const uint32_t wait_ms =
+                    reg.backoff_ms ? reg.backoff_ms : DC_BACKOFF_FLOOR_MS;
                 wf_logf(WF_WARN, "register failed (rr=%d), retrying in %lu ms",
-                        (int)rr,
-                        (unsigned long)(reg.backoff_ms ? reg.backoff_ms
-                                                       : DC_BACKOFF_FLOOR_MS));
-                sleep_ms(reg.backoff_ms ? reg.backoff_ms : DC_BACKOFF_FLOOR_MS);
+                        (int)rr, (unsigned long)wait_ms);
+                // Registration backs off to the same 60 s cap the poll loop
+                // does; anything at or past the reuse window is time the
+                // connection is held for nothing.
+                if (wait_ms >= KEPT_CONNECTION_IDLE_MAX_MS) release_kept_connection();
+                sleep_ms(wait_ms);
             }
             if (code_rejected) continue;   // prov.state is now PROV_PORTAL
             wf_logf(WF_INFO, "register: OK, token stored");
@@ -1014,7 +1053,10 @@ static void core1_main(void) {
                 // register again is deliberate: the pairing code has
                 // almost certainly been single-used server-side by the
                 // successful attempt above, so retrying would just fail
-                // forever.
+                // forever. Nothing on this core runs again, so the kept
+                // connection goes first -- core0 still has a panel and a log
+                // to drive out of the same heap.
+                release_kept_connection();
                 while (1) tight_loop_contents();
             }
         }
@@ -1239,6 +1281,14 @@ static void core1_main(void) {
                 sleep_ms(1000);
             } else if (polled && s == DC_BACKOFF) {
                 uint32_t remaining = c.backoff_ms;
+                // The backoff climbs to DC_BACKOFF_CAP_MS (60 s). Past the
+                // reuse window the transport will refuse the connection
+                // anyway, so waiting it out while still holding ~32 KB is a
+                // pure loss -- and this is the state a board sits in for
+                // hours when the server is unreachable. (The loop below can
+                // break out early on a write landing; that just means the
+                // next request pays a handshake it was going to pay.)
+                if (remaining >= KEPT_CONNECTION_IDLE_MAX_MS) release_kept_connection();
                 while (remaining > 0 && !up_has_work(&up)) {
                     uint32_t step = remaining < 100 ? remaining : 100;
                     sleep_ms(step);
@@ -1297,9 +1347,8 @@ static void core1_main(void) {
                 // transport_tls.c). Breaking out of here without ending it
                 // leaks the pcb and ~32 KB of mbedTLS buffers for the rest
                 // of this boot, and leaves a socket that can outlive the AP
-                // episode the portal is about to start. abandon(), not
-                // close(): close() is allowed to keep it.
-                if (c.t->abandon) c.t->abandon(c.t);
+                // episode the portal is about to start.
+                release_kept_connection();
                 break;
             } else if (s == DC_UNPROVISIONED) {
                 // Review (final), Important 2: DC_UNPROVISIONED gets the same
@@ -1311,6 +1360,10 @@ static void core1_main(void) {
                 // cyw43_wifi_get_rssi forever. This state cannot change
                 // from inside this loop (unlike DC_HALTED, above, which
                 // now recovers), so idling is the whole correct behaviour.
+                // Idling holding a TLS connection is not: this state never
+                // sends another request, so the connection would be held for
+                // the rest of the process's life.
+                release_kept_connection();
                 sleep_ms(DC_BACKOFF_CAP_MS);
             }
         }
