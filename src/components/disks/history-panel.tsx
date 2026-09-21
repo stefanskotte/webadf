@@ -6,6 +6,7 @@ import { useRouter } from 'next/navigation';
 import { toast } from 'sonner';
 import { Link } from '@/components/shell/link';
 import { ejectMessage } from '@/lib/mount-wording';
+import { fromQuery } from '@/lib/trail';
 import type { HistoryVersion } from '@/lib/disk-history/history';
 import type { TreeChange } from '@/lib/disk-history/diff';
 
@@ -174,6 +175,7 @@ export function HistoryPanel({
 
       {mountedBanner && (
         <p
+          id="history-mounted-reason"
           className="text-[12.5px] font-semibold"
           style={{ color: 'var(--amber-text)' }}
           data-testid="history-mounted-notice"
@@ -202,7 +204,7 @@ export function HistoryPanel({
               // old one". Route the head's Browse back to the plain URL
               // instead; every other row still gets its own `?version=`.
               const browseHref = version.isHead
-                ? `/disks/${diskId}/files${from ? `?from=${encodeURIComponent(from)}` : ''}`
+                ? `/disks/${diskId}/files${fromQuery(from)}`
                 : `/disks/${diskId}/files?version=${version.seq}${from ? `&from=${encodeURIComponent(from)}` : ''}`;
 
               return (
@@ -258,8 +260,16 @@ export function HistoryPanel({
                       ) : (
                         <button
                           type="button"
-                          disabled={!!mountedMessage}
-                          title={mountedMessage ?? undefined}
+                          // Keyed off `mountedBanner`, not the page-load-only
+                          // `mountedMessage` -- a 409 arriving mid-session
+                          // (a board mounting the disk after this page
+                          // loaded) already shows the refusal via
+                          // `reactiveMounted`; the control has to agree with
+                          // it, or a person can keep clicking a button that
+                          // reads as live but is known to be refused.
+                          disabled={!!mountedBanner}
+                          title={mountedBanner ?? undefined}
+                          aria-describedby={mountedBanner ? 'history-mounted-reason' : undefined}
                           onClick={() => setRestoreTarget(version)}
                           data-testid={`restore-${version.seq}`}
                           className="rounded-full px-2.5 py-1 text-[11.5px] font-semibold text-white disabled:opacity-50"
