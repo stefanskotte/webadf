@@ -15,8 +15,11 @@ import { diskVersions } from '@/db/schema/disk-history';
 const sha256Of = (b: Uint8Array) => createHash('sha256').update(b).digest('hex');
 
 // ---- fake diskStore: an in-memory content-addressed map, same shape as the
-// real one, just backed by a Map instead of Vercel Blob. ----
+// real one, just backed by a Map instead of Vercel Blob. `readCount` counts
+// every call to `read`, across every test -- the fix-round-1 regression test
+// below asserts on it directly rather than swapping the mock mid-file. ----
 const blobBytes = new Map<string, Uint8Array>();
+let readCount = 0;
 vi.mock('@/lib/storage', () => ({
   diskStore: {
     put: (sha256: string, bytes: Uint8Array) => {
@@ -24,6 +27,7 @@ vi.mock('@/lib/storage', () => ({
       return Promise.resolve({ key: `adf/${sha256}` });
     },
     read: (sha256: string) => {
+      readCount++;
       const b = blobBytes.get(sha256);
       if (!b) throw new Error(`fake diskStore: no blob ${sha256}`);
       return Promise.resolve(b);
@@ -88,6 +92,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   blobBytes.clear();
   diskVersionRows = [];
+  readCount = 0;
 });
 
 const ORG = 'org-1';
@@ -138,7 +143,7 @@ describe('loadHistory', () => {
     });
 
     const deviceNames = new Map([['dev-1', 'Bench board']]);
-    const history = await loadHistory(DISK, deviceNames);
+    const history = await loadHistory(ORG, DISK, deviceNames);
 
     expect(history.map((v) => v.seq)).toEqual([3, 2, 1, 0]);
 
@@ -176,5 +181,44 @@ describe('loadHistory', () => {
       expect(v.createdAt).toBeInstanceOf(Date);
       expect(v.rewindOf).toBeNull();
     }
+  });
+
+  // Fix round 1, finding 1: loadHistory must walk the chain incrementally --
+  // one blob read per version -- not call materialise() per version, which
+  // replays from the nearest snapshot every time and turns an N-entry chain
+  // into ~N²/2 blob reads. A chain of small edits is deliberately several
+  // deltas deep, so a reintroduced per-version materialise() call would blow
+  // this assertion up (45 reads for 9 versions, not 9), not merely round
+  // differently.
+  it('reads each version\'s blob exactly once, regardless of chain depth', async () => {
+    const { recordVersion } = await import('./store');
+    const { loadHistory } = await import('./history');
+
+    let head = formatVolume({ filesystem: 'FFS', volumeName: 'Chain' });
+    blobBytes.set(sha256Of(head), head);
+
+    const names = ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H'];
+    for (const name of names) {
+      const result = addFile(head, ROOT_BLOCK, name, new TextEncoder().encode(name));
+      expect(result.ok).toBe(true);
+      if (!result.ok) return;
+      await recordVersion({
+        orgId: ORG, diskId: DISK,
+        headSha: sha256Of(head), head, next: result.adf,
+        source: 'browser', userId: 'user-1', sourceFilename: 'Chain.adf',
+      });
+      head = result.adf;
+    }
+
+    // Confirm the fixture is actually a chain of deltas, not snapshots that
+    // would trivially need only one read each regardless of the bug.
+    const kinds = diskVersionRows.map((r) => r.kind);
+    expect(kinds.filter((k) => k === 'delta').length).toBeGreaterThanOrEqual(names.length);
+
+    readCount = 0;
+    const history = await loadHistory(ORG, DISK, new Map());
+
+    expect(history).toHaveLength(names.length + 1); // +1 for version 0
+    expect(readCount).toBe(history.length);
   });
 });
