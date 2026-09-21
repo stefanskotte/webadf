@@ -33,6 +33,9 @@
 #include "i2c_probe.h"
 #include "ssd1306.h"
 #include "display.h"
+// Generated at BUILD time by cmake/gen_version_header.cmake, so the string
+// always matches the commit this image was compiled from.
+#include "wifi_floppy_version.h"
 #include "flux_capture.h"
 #include "flux_bits.h"
 #include "mfm.h"
@@ -1004,7 +1007,7 @@ static void core1_main(void) {
             static device_client_t reg;
             dc_init(&reg, tls_transport(), clock_ms, WEBADF_HOST, NULL);
             dc_register_result_t rr;
-            while ((rr = dc_register(&reg, prov.cfg.code, FIRMWARE_VERSION, mac))
+            while ((rr = dc_register(&reg, prov.cfg.code, WF_FIRMWARE_VERSION, mac))
                    != DC_REG_OK) {
                 if (rr == DC_REG_BAD_CODE) {
                     // Spec D-4b-4: terminal, not retryable -- the code is

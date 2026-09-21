@@ -97,8 +97,6 @@ target_compile_definitions(wifi_floppy PRIVATE PICO_USE_STACK_GUARDS=1)
 # Overridable so a build can identify ITSELF. The default has read "4b.0"
 # through every firmware change in this project's history -- the display, the
 # flux capture, the MFM decoder -- so as a default it distinguishes nothing.
-# CI passes the git description; rollout, rollback and anti-rollback in the
-# firmware-update design all need a version that moves when the image does.
 # Diagnostic: re-read and decode every track from PSRAM after a mount. See
 # main.c. Off by default -- it costs one track's decode per service-loop
 # iteration for 160 iterations after each mount.
@@ -115,8 +113,31 @@ if (WF_BUS_SNIFF)
   message(STATUS "WF_BUS_SNIFF is ON: every bus input change is logged.")
 endif ()
 
-set(FIRMWARE_VERSION "4b.0-dev" CACHE STRING
-    "Version string the device reports at registration")
+# The hand-maintained half of the version. Bump this for a release; the git
+# identity is appended automatically by cmake/gen_version_header.cmake, so two
+# different images can never claim the same string.
+#
+# It used to be the WHOLE version, a hand-set cache string, and it read
+# "4b.0"/"4b.0-dev" through every firmware change this project has made --
+# the display work, the capture work, the decoder, SEL0 gating and all three
+# write-back pieces. A version that does not move when the image does cannot
+# support rollout, rollback or anti-rollback, which is why the generator
+# exists and why it runs at BUILD time rather than configure time. Read the
+# note at the top of that file before changing how this works.
+set(FIRMWARE_SEMVER "1.0.0" CACHE STRING
+    "Hand-set semver; the build appends +g<hash> and, when dirty, -dirty")
+
+set(WF_VERSION_HEADER "${CMAKE_CURRENT_BINARY_DIR}/generated/wifi_floppy_version.h")
+add_custom_target(wf_version_header ALL
+  BYPRODUCTS "${WF_VERSION_HEADER}"
+  COMMAND ${CMAKE_COMMAND}
+          -DSEMVER=${FIRMWARE_SEMVER}
+          -DSRC_DIR=${CMAKE_CURRENT_SOURCE_DIR}
+          -DOUT=${WF_VERSION_HEADER}
+          -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/gen_version_header.cmake
+  COMMENT "Resolving firmware version")
+add_dependencies(wifi_floppy wf_version_header)
+target_include_directories(wifi_floppy PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/generated")
 
 target_compile_definitions(wifi_floppy PRIVATE
   WEBADF_HOST=\"webadf.vercel.app\"
@@ -126,7 +147,12 @@ target_compile_definitions(wifi_floppy PRIVATE
   # a prior boot's flash write or by the captive portal at runtime. Neither
   # has a compile-time value any more, so there is nothing left for these
   # defines to do.
-  FIRMWARE_VERSION=\"${FIRMWARE_VERSION}\")
+  #
+  # FIRMWARE_VERSION used to be defined here too. It now arrives as
+  # WF_FIRMWARE_VERSION from the generated header above, because a define set
+  # at configure time keeps its old value until someone re-runs CMake -- and
+  # a version that survives a commit change is exactly the bug being removed.
+  )
 if (NOT WFMF_OMIT_AUTHMODE)
   target_compile_definitions(wifi_floppy PRIVATE
     ALTCP_MBEDTLS_AUTHMODE=MBEDTLS_SSL_VERIFY_REQUIRED)
