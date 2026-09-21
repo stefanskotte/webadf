@@ -5,6 +5,15 @@ import { isMountedReason } from '@/lib/mount-wording';
 
 export const dynamic = 'force-dynamic';
 
+// The heaviest byte route in the app: `materialise` can read a snapshot plus
+// up to MAX_CHAIN_DEPTH (64) delta blobs SEQUENTIALLY, then the current head
+// image again, before the PUTs and the batch even start -- and the disk most
+// likely to be rewound is exactly the one with the longest chain. Every other
+// route that touches disk bytes sets the same 60s (volume-name, files,
+// files/[block], files/batch, disks/[id]/adf); the platform default would
+// fail this one first.
+export const maxDuration = 60;
+
 const body = z.object({ seq: z.number().int().min(0) });
 
 /**
@@ -26,7 +35,7 @@ export async function POST(request: Request, ctx: { params: Promise<{ id: string
 
   let raw: unknown;
   try { raw = await request.json(); } catch {
-    return Response.json({ error: 'invalid_body' }, { status: 400 });
+    return Response.json({ error: 'invalid_json' }, { status: 400 });
   }
   const parsed = body.safeParse(raw);
   if (!parsed.success) {

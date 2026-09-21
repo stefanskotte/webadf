@@ -14,6 +14,7 @@ import { disks, entitlements } from '@/db/schema/catalog';
 import { findHolder, mountedReason, repointLateMounts } from '@/lib/disk-holder';
 import { diskStore } from '@/lib/storage';
 import { materialise, HistoryError } from '@/lib/disk-history/chain';
+import { DeltaError } from '@/lib/disk-history/delta';
 import { loadEntries, recordVersion, StaleHeadError, type Recorded } from '@/lib/disk-history/store';
 
 export type RestoreOutcome =
@@ -77,14 +78,19 @@ export async function restoreVersion(
   try {
     target = await materialise(entries, seq, (sha256) => diskStore.read(sha256));
   } catch (err) {
-    if (err instanceof HistoryError) {
-      // A broken chain (a gap, a missing snapshot, a corrupt blob) is a
-      // server-side fault, logged for investigation -- never silently
-      // answered as if nothing changed.
+    if (err instanceof HistoryError || err instanceof DeltaError) {
+      // A broken chain (a gap, a missing snapshot) or a corrupt delta
+      // payload (one that fails to decode or apply) is a server-side fault,
+      // logged for investigation -- never silently answered as if nothing
+      // changed.
       console.error(`restoreVersion: broken chain for disk ${diskId} at seq ${seq}: ${err.message}`);
       return { ok: false, status: 500, reason: 'broken_history' };
     }
-    throw err;
+    // Anything else here is `diskStore.read` failing outright (a missing or
+    // unreachable blob, not a corrupt one) while replaying the chain -- the
+    // same failure mode as the head-blob read just below, answered the same
+    // way rather than propagating as an unhandled 500.
+    return { ok: false, status: 503, reason: 'blob_unavailable' };
   }
 
   let before: Uint8Array;

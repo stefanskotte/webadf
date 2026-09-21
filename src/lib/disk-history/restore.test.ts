@@ -21,19 +21,22 @@ import { diskVersions } from '@/db/schema/disk-history';
 const sha256Of = (b: Uint8Array) => createHash('sha256').update(b).digest('hex');
 
 // ---- fake diskStore: an in-memory content-addressed map, same shape as
-// store.test.ts / history.test.ts's fakes. ----
+// store.test.ts / history.test.ts's fakes. `read` is a vi.fn() (not a plain
+// closure) so tests can prove NEGATIVES with it -- "the disk is held, so no
+// blob was ever read" is a claim about a call count, not just an outcome. ----
 const blobBytes = new Map<string, Uint8Array>();
+const diskStoreRead = vi.fn((sha256: string) => {
+  const b = blobBytes.get(sha256);
+  if (!b) throw new Error(`fake diskStore: no blob ${sha256}`);
+  return Promise.resolve(b);
+});
 vi.mock('@/lib/storage', () => ({
   diskStore: {
     put: (sha256: string, bytes: Uint8Array) => {
       blobBytes.set(sha256, bytes);
       return Promise.resolve({ key: `adf/${sha256}` });
     },
-    read: (sha256: string) => {
-      const b = blobBytes.get(sha256);
-      if (!b) throw new Error(`fake diskStore: no blob ${sha256}`);
-      return Promise.resolve(b);
-    },
+    read: diskStoreRead,
     storageKey: (sha256: string) => `adf/${sha256}`,
   },
 }));
@@ -46,9 +49,17 @@ vi.mock('@/lib/storage', () => ({
 // diskVersions query; `.innerJoin()` followed by `.limit()` is
 // restoreVersion's own entitlement lookup (same shape as applyDiskEdit's);
 // a bare `.limit()` with no join is findHolder's devices query.
+//
+// `orderByCalls` and `holderLimitCalls` count how many times loadEntries and
+// findHolder's own query actually ran -- so a test can capture a count
+// mid-scenario and later assert it did NOT move, proving an ORDER (nothing
+// past the holder check ran) rather than merely an outcome a reordered
+// implementation could produce by accident.
 let diskVersionRows: Record<string, unknown>[] = [];
 let diskLookupResult: unknown[] = [];
 let holderResult: unknown[] = [];
+let orderByCalls = 0;
+let holderLimitCalls = 0;
 
 function project(row: Record<string, unknown>, cols: Record<string, unknown>) {
   const out: Record<string, unknown> = {};
@@ -63,12 +74,18 @@ function fakeDb() {
       from: () => chain,
       innerJoin: () => { joined = true; return chain; },
       where: () => chain,
-      orderBy: () => Promise.resolve(
-        diskVersionRows.slice()
-          .sort((a, b) => (a.seq as number) - (b.seq as number))
-          .map((r) => project(r, cols)),
-      ),
-      limit: () => Promise.resolve(joined ? diskLookupResult : holderResult),
+      orderBy: () => {
+        orderByCalls++;
+        return Promise.resolve(
+          diskVersionRows.slice()
+            .sort((a, b) => (a.seq as number) - (b.seq as number))
+            .map((r) => project(r, cols)),
+        );
+      },
+      limit: () => {
+        if (!joined) holderLimitCalls++;
+        return Promise.resolve(joined ? diskLookupResult : holderResult);
+      },
     };
     return chain;
   };
@@ -106,6 +123,8 @@ beforeEach(() => {
   diskVersionRows = [];
   diskLookupResult = [];
   holderResult = [];
+  orderByCalls = 0;
+  holderLimitCalls = 0;
 });
 
 /** Records `names.length` real versions (one file added per version) on top
@@ -193,6 +212,11 @@ describe('restoreVersion', () => {
     diskLookupResult = [{ sha256: sha256Of(images[2]), tosecName: 'Chain.adf', sourceFilename: 'Chain.adf' }];
     holderResult = [{ name: 'Amiga 500 #1' }];
     const rowCountBefore = diskVersionRows.length;
+    // buildChain's own recordVersion calls already ran loadEntries several
+    // times; capture the count AFTER fixture setup so the assertion below is
+    // about the call under test, not the chain that built it.
+    const orderByCallsBefore = orderByCalls;
+    diskStoreRead.mockClear();
 
     const { restoreVersion } = await import('./restore');
     const result = await restoreVersion(ORG, DISK, 0, 'user-1');
@@ -202,6 +226,34 @@ describe('restoreVersion', () => {
     expect(result.status).toBe(409);
     expect(result.reason).toContain('Amiga 500 #1');
     expect(diskVersionRows).toHaveLength(rowCountBefore);
+
+    // THE OPERATOR'S RULE, turned into something that can fail: a device
+    // holding this disk means NOTHING past the holder check ran -- not
+    // loadEntries (so not materialise, so not a single chain blob), and not
+    // even the current-head blob read. A findHolder call moved to just
+    // before recordVersion (still producing the same 409, since the check
+    // still runs eventually) would fail these two assertions even though
+    // the outcome above is identical.
+    expect(orderByCalls).toBe(orderByCallsBefore);
+    expect(diskStoreRead).not.toHaveBeenCalled();
+  });
+
+  it('returns 404, never 403, for a disk outside this org -- and never consults the holder or the history for it', async () => {
+    diskLookupResult = []; // the org-scoped entitlement join finds nothing
+    const rowCountBefore = diskVersionRows.length;
+
+    const { restoreVersion } = await import('./restore');
+    const result = await restoreVersion(ORG, DISK, 0, 'user-1');
+
+    expect(result).toEqual({ ok: false, status: 404, reason: 'not_found' });
+    expect(diskVersionRows).toHaveLength(rowCountBefore);
+
+    // Nothing past the entitlement lookup ran: no holder check, no history
+    // read, no blob read -- a diskId this org has no entitlement for is
+    // refused before any of that, the same as applyDiskEdit's own 404.
+    expect(holderLimitCalls).toBe(0);
+    expect(orderByCalls).toBe(0);
+    expect(diskStoreRead).not.toHaveBeenCalled();
   });
 
   it('a StaleHeadError (the head moved under us) surfaces as 409 conflict', async () => {
