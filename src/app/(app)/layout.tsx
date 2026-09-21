@@ -6,6 +6,7 @@ import { TopNav } from "@/components/shell/top-nav";
 import { SearchBox } from "@/components/shell/search-box";
 import { SignOutButton } from "@/components/sign-out-button";
 import { Logo } from "@/components/shell/logo";
+import { Link } from "@/components/shell/link";
 import { NavProgressProvider } from "@/components/shell/nav-progress";
 import { LiveRefresh } from "@/components/shell/live-refresh";
 
@@ -37,13 +38,20 @@ export default async function AppLayout({
             not fit on one line, and nowrap would push the sign-out button off
             the right edge rather than shrinking anything. */}
         <header className="relative flex flex-wrap items-center gap-3 px-4 pt-4 sm:flex-nowrap sm:gap-4 sm:px-7">
-          <span
+          {/* The wordmark is the way home. Every other shell in the app has an
+              explicit way back to the library; this one only had the nav pill,
+              and the mark is where people click first (operator, 2026-09-21).
+              Uses the shell's own Link, so it drives the navigation bar like
+              every other in-app link. */}
+          <Link
+            href="/library"
+            data-testid="wordmark-home"
             className="flex items-center gap-2.5 text-base font-bold tracking-[-0.02em]"
             style={{ color: "var(--on-dark)" }}
           >
             <Logo size={22} />
             webadf
-          </span>
+          </Link>
         {/* The nav is centred on the VIEWPORT, which means taking it out of
             flow. Two weaker versions were tried and measured first: mx-auto
             only centres within the space its siblings leave over, so the

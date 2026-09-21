@@ -180,7 +180,10 @@ export function HistoryPanel({
   }
 
   return (
-    <div className="glass-card flex flex-col gap-3 p-4" data-testid="history-panel">
+    // `id` is the anchor the library card's history button lands on
+    // (game-grid.tsx), and scroll-mt keeps the heading clear of the shell's
+    // header rather than tucking it underneath.
+    <div id="disk-history" className="glass-card flex scroll-mt-20 flex-col gap-3 p-4" data-testid="history-panel">
       <h2 className="text-[13px] font-bold" style={{ color: 'var(--ink)' }}>History</h2>
 
       {mountedBanner && (

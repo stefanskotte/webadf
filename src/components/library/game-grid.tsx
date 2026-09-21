@@ -7,7 +7,7 @@ import { toast } from 'sonner';
 import { useDraggable } from '@dnd-kit/core';
 import { SortableContext, rectSortingStrategy, useSortable } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
-import { X } from 'lucide-react';
+import { History, Minus } from 'lucide-react';
 import { DeleteDiskDialog } from '@/components/library/delete-disk-dialog';
 import { fromQuery } from '@/lib/trail';
 import { ejectMessage, isMountedReason, mountedReason } from '@/lib/mount-wording';
@@ -188,7 +188,97 @@ function VolumeNameField({ game: g }: { game: GameListItem }) {
   );
 }
 
-function CardBody({ game: g }: { game: GameListItem }) {
+/**
+ * The three card controls, in the order they read: history, remove from the
+ * collection, delete. All three are BUTTONS, including the history one that
+ * is really a navigation -- the card itself is an <a href>, and an anchor
+ * inside an anchor is invalid HTML that browsers "fix" by closing the outer
+ * one early, which would break the card it sits in. Every one of them stops
+ * its pointer events before they reach the card's link or dnd-kit's drag
+ * listeners, the same way the inline rename field does.
+ *
+ * They share one subdued resting colour (`--faint`) and take their meaning
+ * from hover: destructive controls go red, the history one does not.
+ */
+function HistoryButton({ game: g, collectionId }: { game: GameListItem; collectionId?: string }) {
+  const router = useRouter();
+
+  // `diskId` is a min() aggregate, so it names a real disk only on a
+  // single-disk title -- the same reason the inline rename is offered only
+  // there. "Which disk's history?" has no answer on a multi-disk set, and the
+  // card already leads to the title page where each disk is listed with its
+  // own Browse.
+  if (g.diskCount !== 1 || !g.diskId) return null;
+  const href = `/disks/${g.diskId}/files${fromQuery(collectionId)}#disk-history`;
+
+  return (
+    <button
+      type="button"
+      data-testid={`history-${g.id}`}
+      aria-label={`Version history for ${g.title}`}
+      title="Version history"
+      onClick={(e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        router.push(href);
+      }}
+      className="shrink-0 rounded p-1 transition-colors hover:bg-[var(--glass-strong)] hover:text-[var(--ink)]"
+      style={{ color: 'var(--faint)' }}
+    >
+      <History size={14} strokeWidth={1.75} aria-hidden />
+    </button>
+  );
+}
+
+function RemoveFromCollectionButton({ game: g, collectionId }: { game: GameListItem; collectionId: string }) {
+  const router = useRouter();
+  const [busy, setBusy] = useState(false);
+
+  async function onRemove(e: React.MouseEvent) {
+    // Must not reach the card's own Link -- this button sits inside it, and
+    // an unstopped click would both remove the title AND navigate to it.
+    e.preventDefault();
+    e.stopPropagation();
+
+    setBusy(true);
+    try {
+      let res: Response;
+      try {
+        res = await fetch(`/api/collections/${collectionId}/games/${g.id}`, { method: 'DELETE' });
+      } catch {
+        toast.error('Could not reach the server', { description: 'The title was not removed from the collection.' });
+        return;
+      }
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        toast.error('Could not remove the title from the collection', {
+          description: typeof body.error === 'string' ? body.error : undefined,
+        });
+        return;
+      }
+    } finally {
+      setBusy(false);
+      router.refresh();
+    }
+  }
+
+  return (
+    <button
+      type="button"
+      data-testid={`remove-from-collection-${g.id}`}
+      aria-label={`Remove ${g.title} from collection`}
+      title="Remove from collection"
+      disabled={busy}
+      onClick={onRemove}
+      className="shrink-0 rounded p-1 transition-colors hover:bg-[var(--danger-bg)] hover:text-[var(--danger-fg)] disabled:opacity-50"
+      style={{ color: 'var(--faint)' }}
+    >
+      <Minus size={14} strokeWidth={2.25} aria-hidden />
+    </button>
+  );
+}
+
+function CardBody({ game: g, collectionId }: { game: GameListItem; collectionId?: string }) {
   return (
     <>
       <Cover id={g.id} title={g.title} diskCount={g.diskCount} coverUrl={g.coverUrl} kind={g.kind} />
@@ -204,11 +294,14 @@ function CardBody({ game: g }: { game: GameListItem }) {
           <span className="truncate font-mono text-[10.5px]" style={{ color: 'var(--muted-2)' }}>
             {[g.year, g.publisher].filter(Boolean).join(' · ') || (g.authored ? 'made here' : 'unidentified')}
           </span>
-          {/* Inside the card's <a href>, like the rename field and the
-              collection remove button, and safe the same way: the dialog
-              stops every pointer event before it reaches the anchor or
-              dnd-kit's drag listeners. */}
-          <DeleteDiskDialog kind="game" id={g.id} title={g.title} diskCount={g.diskCount} />
+          {/* Inside the card's <a href>, like the rename field, and safe the
+              same way: each control stops every pointer event before it
+              reaches the anchor or dnd-kit's drag listeners. */}
+          <div className="flex shrink-0 items-center">
+            <HistoryButton game={g} collectionId={collectionId} />
+            {collectionId && <RemoveFromCollectionButton game={g} collectionId={collectionId} />}
+            <DeleteDiskDialog kind="game" id={g.id} title={g.title} diskCount={g.diskCount} />
+          </div>
         </div>
       </div>
     </>
@@ -254,7 +347,6 @@ function DraggableCard({ game: g }: { game: GameListItem }) {
 
 /** Filtered-to-a-collection view: sortable against siblings (reorders the collection), plus a remove control. */
 function SortableCard({ game: g, collectionId }: { game: GameListItem; collectionId: string }) {
-  const router = useRouter();
   // See DraggableCard on why `role` is discarded rather than spread.
   const { attributes: dragAttributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
     id: g.id,
@@ -262,36 +354,6 @@ function SortableCard({ game: g, collectionId }: { game: GameListItem; collectio
   });
   const attributes = { ...dragAttributes, role: undefined };
   const style = { ...dragStyle(CSS.Translate.toString(transform), isDragging), transition };
-
-  const [busy, setBusy] = useState(false);
-
-  async function onRemove(e: React.MouseEvent) {
-    // Must not reach the card's own Link -- this button sits inside it, and
-    // an unstopped click would both remove the title AND navigate to it.
-    e.preventDefault();
-    e.stopPropagation();
-
-    setBusy(true);
-    try {
-      let res: Response;
-      try {
-        res = await fetch(`/api/collections/${collectionId}/games/${g.id}`, { method: 'DELETE' });
-      } catch {
-        toast.error('Could not reach the server', { description: 'The title was not removed from the collection.' });
-        return;
-      }
-      if (!res.ok) {
-        const body = await res.json().catch(() => ({}));
-        toast.error('Could not remove the title from the collection', {
-          description: typeof body.error === 'string' ? body.error : undefined,
-        });
-        return;
-      }
-    } finally {
-      setBusy(false);
-      router.refresh();
-    }
-  }
 
   return (
     <Link
@@ -304,24 +366,12 @@ function SortableCard({ game: g, collectionId }: { game: GameListItem; collectio
       data-testid="game-card"
       // See DraggableCard on why an anchor must opt out of native dragging.
       draggable={false}
-      className="glass-card relative flex flex-col p-2.5"
+      className="glass-card flex flex-col p-2.5"
       style={style}
       {...attributes}
       {...listeners}
     >
-      <button
-        type="button"
-        data-testid={`remove-from-collection-${g.id}`}
-        aria-label={`Remove ${g.title} from collection`}
-        title="Remove from collection"
-        disabled={busy}
-        onClick={onRemove}
-        className="absolute right-1.5 top-1.5 z-10 grid h-5 w-5 place-items-center rounded-full text-[12px] font-bold leading-none"
-        style={{ background: 'var(--danger-bg)', color: 'var(--danger-fg)' }}
-      >
-        <X size={11} />
-      </button>
-      <CardBody game={g} />
+      <CardBody game={g} collectionId={collectionId} />
     </Link>
   );
 }
