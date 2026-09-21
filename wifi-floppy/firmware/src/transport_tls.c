@@ -312,12 +312,23 @@ static bool tls_rx_pending(tls_conn_t *c) {
     return pending;
 }
 
+// Has a kept connection sat idle past the point it would be reused? ONE
+// comparison, used by both the refusal (tls_can_reuse, below) and the
+// release (tls_release_if_unreusable, at the foot of this file), so the two
+// can never drift into disagreeing about what "too old" means -- which is
+// the whole hazard: a connection the caller is still holding for a reuse
+// that will be refused is ~32 KB of mbedTLS buffers plus a pcb held for
+// nothing.
+// Unsigned subtraction: correct across the 49-day to_ms_since_boot wrap.
+static bool tls_idle_expired(const tls_conn_t *c) {
+    return (tls_now_ms() - c->idle_since) > IDLE_REUSE_MAX_MS;
+}
+
 static bool tls_can_reuse(tls_conn_t *c, const char *host, int port) {
     if (!c->idle || !c->pcb || !c->connected || c->closed || c->err != ERR_OK)
         return false;
     if (c->port != port || strcmp(c->host, host) != 0) return false;
-    // Unsigned subtraction: correct across the 49-day to_ms_since_boot wrap.
-    if ((tls_now_ms() - c->idle_since) > IDLE_REUSE_MAX_MS) return false;
+    if (tls_idle_expired(c)) return false;
     return !tls_rx_pending(c);
 }
 
@@ -667,4 +678,35 @@ static transport_t g_transport = {
 // device_client_t in place of test/transport_fake.c's fake_transport()).
 transport_t *tls_transport(void) {
     return &g_transport;
+}
+
+/**
+ * Release a kept connection that has sat idle past the point tls_connect()
+ * would reuse it. Returns true if one was released.
+ *
+ * Cheap (two loads and a compare when there is nothing to do), idempotent,
+ * and safe to call as often as the caller likes -- it is meant to be called
+ * once per pass of main.c's core1 loops, which is the only way the rule can
+ * be honest. The alternative, releasing before each sleep that looks long
+ * enough, misses every busy-wait: the uploader's backoff climbs to 60 s
+ * while up_has_work() stays true, so that path sleeps 50 ms at a time and
+ * never reaches a "long sleep" at all, holding the socket through the whole
+ * minute after a 5xx on a track upload (a cleanly framed response, so the
+ * connection was KEPT).
+ *
+ * The decision lives HERE rather than in main.c deliberately. This file is
+ * the only one that knows when the connection actually went idle
+ * (tls_close() stamps it) and what its own reuse cap is -- main.c could only
+ * infer the first by guessing which calls made a request, and would have to
+ * duplicate the second. Both belong to the transport, and tls_idle_expired()
+ * is the single comparison both the refusal and this release go through.
+ */
+bool tls_release_if_unreusable(void) {
+    tls_conn_t *c = &g_conn;
+    if (!c->idle || !tls_idle_expired(c)) return false;
+    wf_logf(WF_INFO, "tls: releasing a connection idle for more than %lu ms "
+            "-- it could no longer be reused anyway",
+            (unsigned long)IDLE_REUSE_MAX_MS);
+    tls_abandon(&g_transport);
+    return true;
 }
