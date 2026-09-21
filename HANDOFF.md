@@ -53,6 +53,7 @@ after plan 4a, rewritten again 2026-08-31 after plan 4b.**
 | **Typeahead search** | ✅ **done, all 7 tasks, merged to `master` and live in production.** A Spotlight-style pill in both shells; migration 0012 applied; see 3h |
 | **Read-only ADF filesystem reader** | ✅ **done, all 10 tasks, `feat/adf-filesystem-reader`.** Reads 80.3% of the archive (49/61) against TOSEC's 45.9% and OpenRetro's 6.6%; see 3f |
 | **Demozoo identification** | ✅ **done 2026-09-14, all 16 tasks, merged to `master`.** Complements TOSEC for non-games: weekly import, nightly matching, automatic links, suggestions, review queue, screenshots; see 3af |
+| **Write-back piece 3 — the time machine** | ✅ **done 2026-09-21, merged to `master`.** History panel on every disk page: what changed per version, Browse read-only, Restore as a new version. 288/288 Playwright. Not yet driven on hardware; see 4l |
 | **Write-back piece 2a (server)** | ✅ **done 2026-09-18, 5 tasks + final fix wave, merged to `master`.** Disk history tables, browser edits and renames recorded as versions, `POST /api/device/write` + `/close`, live write-protect. The board does not call it yet (plan 2b); see 4g |
 | **Hardware** | rev A scrap (mirrored), **rev A2 in hand and working**, **rev B is current and unfabricated** — keepout moved to the antenna end, a silkscreen that carries lettering, D1 polarity marked. Respin deliberately on hold until a board is known to work; see 3s and 3x |
 
@@ -1468,7 +1469,9 @@ separately.
 
 ### 4. Backlog, not blocking anything
 
-- **Make uploads faster by reusing the TLS connection** (operator, 2026-09-20). Every request
+- ~~**Make uploads faster by reusing the TLS connection**~~ **DONE 2026-09-21 — see 4k.** Keep-alive
+  shipped; session tickets were tried, measured wrong, and cannot work in this mbedTLS build.
+  The original entry, for the reasoning it records: Every request
   the board makes is its own connection: `dc_exchange()` connects, writes, reads and closes.
   Measured on hardware (§4i): ~1.1 s of TLS handshake per request, so ~1.6 s per uploaded track
   and ~2.7 s for a close. A whole-disk write would be 160 handshakes. Worth trying, cheapest
@@ -1479,10 +1482,19 @@ separately.
   half-closed socket as an ordinary retry, not an error. The write path's correctness does not
   depend on this: seq numbering and the close already converge through retries (§4g).
 
-- **The upload page should lose its Mount column** (operator, 2026-09-20). On the ingest
+- ~~**The upload page should lose its Mount column**~~ **DONE 2026-09-20.** On the ingest
   screen it serves no purpose: people organise what they have just uploaded, and only mount
   afterwards, from the library or the game page. Removing the column also removes the mount
   controls from a screen where the disks are still being sorted out.
+
+- **The library's category cards should be square, with a mosaic of cover art** (operator,
+  2026-09-20). "The main library page, when everything is organized, looks bare with the
+  categories as cards -- it would be nice if they were square and displayed a mosaic of main
+  title images of the floppies below it." Nothing is built. The covers are already on the cards'
+  own children (the grid shows real cover art, see 3h), so this is a layout and query question,
+  not a new data source: the card needs the first few covers under that category, and a square
+  aspect the grid can hold at every breakpoint. Note what "below it" means -- a category can
+  contain collections as well as games, so decide whether the mosaic reaches through them.
 
 - ~~**Drop .lha and .zip onto a disk and pick files out of them.**~~ **DONE 2026-09-11 — see 3ae.** Requested:
   "most are distributed like this (from aminet typically), so many times you want to pick a
@@ -2546,6 +2558,100 @@ in advance that it empties the table for everyone. This repo has no such databas
 e2e runs against live Neon — so "accept in advance" is currently the only option, and it should
 be an explicit decision each time rather than a side effect of following a plan step.
 
+### 4l. THE TIME MACHINE: BROWSE ANY VERSION, PUT ONE BACK — 2026-09-21 (write-back piece 3)
+
+**What the operator can now do.** Every disk page has a **History panel**: each version, what
+changed in it as files (added / changed / removed, with a sector count), who or what made it (an
+edit, a board's write-back with the device's name, a rewind), newest first, the newest 20 with a
+"show all". Two controls per row: **Browse** opens `/disks/[id]/files?version=<seq>` — the whole
+file tree of that version, read-only, with a banner saying which version is on screen and every
+edit control disabled — and **Restore**, which puts that version's image back.
+
+**Restore ADDS a version; it never rewinds in place** (spec D2, "history only grows"). The target
+version's image is materialised and recorded on top of the CURRENT head as a new version with
+`source: 'rewind'` and `rewindOf: <seq>`, so everything between the target and the head is still
+there afterwards and can itself be restored. Restoring the head, or a version whose bytes already
+equal the head, records nothing and answers "nothing moved" rather than inventing a version that
+never happened -- `recordVersion` already returns null for identical bytes, and `restore.ts`
+honours that instead of treating it as an error.
+
+`restore.ts` deliberately copies `applyDiskEdit`'s shape (`src/lib/disk-write.ts`), because the
+rules are the same ones and only the source of the new bytes differs: entitlement-scoped lookup
+(a disk outside the org's entitlements answers 404, never 403), `findHolder` **before any read or
+write** so a mounted disk is refused 409 with the same wording the eject flow uses,
+`recordVersion` as the sole writer, `StaleHeadError` -> 409 conflict, and `repointLateMounts` for
+a board that asked for the disk between the holder check and the commit.
+
+**The defect the review caught was a cost, not a bug.** The first history loader called
+`materialise()` once per version, so a disk with N versions did O(N²) blob reads -- 45 reads for a
+9-version disk, and it grows with every write the Amiga makes. It now walks the chain once,
+carrying the previous raw image forward: a snapshot costs one read, a delta costs one read and an
+`applyDelta`. Same 9-version disk: **9 reads**. There is a regression test that asserts the read
+count, not just the output, because the output was never wrong -- only the bill was.
+
+**THE WHOLE-BRANCH REVIEW EARNED ITS KEEP AGAIN** (it is the only pass that has ever caught a
+Critical on this project, and this is the fourth time). Three findings, all real, all fixed in
+`c496fc5`:
+
+- **Critical: the files page caught one of three throw classes.** `loadHistory` throws
+  `HistoryError` for a broken chain, `DeltaError` for a payload that will not decode, and a plain
+  `Error` from `diskStore.read` for a blob that is missing or unreachable. The page caught the
+  first and rethrew the rest -- and there is no `error.tsx` anywhere under `src/app`, so ONE
+  transient blob read failure on ONE old version replaced the entire page (tree, toolbar, volume
+  header, chrome) with Next's default error page, for a disk whose current bytes are perfectly
+  fine. Those reads are `useCache: false`, one per version, so the odds rose with history length.
+  The SDD ledger had "no test triggers DeltaError" logged as a cosmetic minor; it was pointing
+  straight at this. Note the shape of the mistake: Task 2 defined the throw contract, Task 5 wrote
+  the catch, and each per-task review saw only its own half.
+- **Important: the history walk was unbounded.** It read and parsed EVERY version to render a
+  panel that shows 20 rows. History grows by one version per Amiga save, so the cost rose forever
+  with the operator's own use of the board, on the disk page's primary route. Now the newest 25
+  get real file-level changes and everything older renders the sector count already in its
+  metadata row, at no I/O at all; the walk starts at the nearest snapshot, which `nextKind` keeps
+  within MAX_CHAIN_DEPTH. **110 versions: 90 reads instead of 111, and the bound does not move
+  again.** The page also sets `maxDuration = 60`, which every other byte-touching handler already
+  did.
+- **Important: restore's holder check ran up to 65 sequential reads before its record.** A board
+  that mounted inside that window opens a write session, and `closeSession` deliberately lets an
+  already-open session outlive a version bump (§4g), so `repointLateMounts` would not have stopped
+  the Amiga's save landing on top of the rewind -- while the person who clicked Restore was told
+  it worked. Checked again immediately before recording. NOT fixed by moving `materialise` after
+  the check: that would read a disk's bytes before refusing it, against D-W-4.
+
+**And the full suite caught something no reviewer did.** `mobile.spec.ts`'s press-and-hold drag
+started failing on this branch: the History panel made the files page taller than a phone
+viewport (1332px against 844), so the page now SCROLLS -- and dnd-kit auto-scrolls a container
+whenever a drag's pointer sits in its top or bottom quarter. Mid-drag the page scrolled 488 -> 314
+and the drop zone slid 174px out from under a finger that, being scripted from coordinates
+measured beforehand, could not chase it. Proved rather than assumed: master's `src` passes the
+same test, the branch's fails at both 30 s and 180 s, with no page error and no failed request.
+**A person gets that auto-scroll on purpose** -- it is how you drag a file to a folder that is
+off-screen -- so the product is right and the test's assumption ("this page does not scroll") is
+what stopped being true. The test now puts both rows mid-viewport first. **If you make this page
+taller again, that test is the thing that will tell you.**
+
+**Gates:** 903 unit tests green, production build clean, full Playwright suite green on port 4000
+(the port is configurable now, so two sessions can run e2e at once). `e2e/time-machine.spec.ts`
+covers the list, read-only browsing, restore, the mounted refusal and a foreign tenant's 404 --
+and **each was proved non-vacuous by breaking the code it covers**: with restore's `recordVersion`
+short-circuited the restore test fails on the content that should have come back, and with the
+`findHolder` refusal removed the mounted test gets 200 where it demands 409. The restore test
+carries an explicit 120 s budget (a describe block, not a global change): it signs up, creates a
+disk, uploads twice, restores, then downloads the ~880 KB ADF from the live database, measured at
+~70 s, which is past Playwright's 30 s default for reasons that are not the code's fault.
+
+**Known and accepted, from the SDD ledger** (the review re-examined each and agreed, except where
+noted above): `diff.ts` sorts with `localeCompare` and no pinned
+locale; no test triggers `DeltaError` or a bare blob-read failure inside `materialise` (both
+answer 503/500 by argument, not by coverage); and the panel's proactive mounted banner is only
+computed when the head bytes read OK, so a mounted disk whose head blob is unreadable shows
+Restore enabled -- the server still refuses it and the panel then says so, making the cost one
+wasted click. `?version=0` on a never-edited disk 404s, and no link in the product produces that
+URL. **Also still true and not this branch's doing:** `pnpm lint` reports 5 errors, all in files
+this branch never touches (`devices/page.tsx`, `games/[id]/page.tsx`, `(app)/layout.tsx`,
+`pair-button.tsx`, `live-refresh.tsx`) -- they arrived with the live-state work in §3ag and are
+identical on master.
+
 ### 4k. THE BOARD KEEPS ITS CONNECTION OPEN — 2026-09-21
 
 **Measured first, twice.** Every request the board made was its own TLS connection: ~1.25 s each,
@@ -2666,63 +2772,6 @@ an open file on the volume when it fires can see "You MUST replace volume ...".
 
 ### 4i. THE AMIGA'S WRITES REACH THE SERVER — 2026-09-19 (write-back piece 2b)
 
-**Verified on hardware** (board WifiFloppy1, rev A2; Workbench 3.1 disk `190f63eb…`, marked
-writable). Plan `docs/superpowers/plans/2026-09-19-write-back-piece-2b-firmware-upload.md`.
-`WF_WRITE_BACK`/`WF_WRITE_CAPTURE` are gone: **write-back is on in the normal build.**
-
-**What the board does now** (`src/uploader.c`, core1, pure C, host-tested; the protocol is §4g's):
-- Each dirty track goes up as `POST /api/device/write` under a per-boot session token
-  (`b` + 16 hex, `get_rand_32`). One request at a time: the uploader runs **instead of** the
-  poll while writes are pending, so a status report can never race a close (§4g item 4).
-- 3 s after the last applied write it hashes all 160 decoded tracks (`src/sha256.c`) and closes;
-  a 200 digest is adopted with no re-fetch. A write landing mid-hash postpones the close.
-- **Every attempt spends a seq** (never reused: a lost response followed by a different track
-  would otherwise be answered `duplicate` and dropped). A lost last attempt → `incomplete` →
-  resend.
-- `not_mounted` (incl. `behind`), 404, 400, 422 → **parked**: the hold is released and WPROT is
-  forced until the mount changes. `write_protected` / `mismatch` → the server's image wins:
-  dirty tracks discarded, `dc_force_refetch`. Transport failure → offline, capped backoff, disk
-  held (D3/D7).
-- `dc_set_hold`: a poll naming another disk, or an eject, is not acted on while writes are
-  pending and not parked. An owed status report (mount sha or version changed) goes out
-  **before** any upload, and only a 2xx counts — the server decides `behind` from the version
-  it last heard.
-- The OLED: the pencil became a cloud — plain = nothing unsent, up-arrow = pending, struck =
-  pending and the server unreachable. Read-only still shows the padlock.
-- `mfm_decode_track_r`: the decoder now takes caller scratch. It had a static buffer, and core0
-  (captures) and core1 (uploads, the close hash) now decode at the same time — found by the
-  final review, as was the seq reuse. Both would have recorded a checksum-valid corrupt image.
-
-**Measured on the bench:**
-- A save of 2–3 tracks: **~1.4–1.6 s per upload** (a fresh TLS handshake, ~1.1 s, dominates),
-  close **~2.7 s** after the last upload (hash + handshake, not separately timed).
-- Write-to-synced: **5.7 s** when core1 was free; **12.3 s** when the write landed inside a
-  25 s long poll (the upload waits for the poll to return — **not fixed**; a server-side early
-  return or a shorter hold would fix it).
-- Offline (board blocked on the UniFi): writes kept; attempts every 7 s (DNS) with backoff
-  1.1→2.2→4.5→9.0 s; ~11 s after the block lifted the save was on the server.
-- Reboot: the board re-fetches the server's post-write image; the Amiga read the file back
-  after a reset. Eject within 3 s of a save: the eject happened only after the close.
-- Server after four saves: `disk_versions` 0 original + 3 `amiga` deltas (4, 5, 4 sectors);
-  xdftool reads `wb2b.txt`, `wb2b-2.txt`, `wb2b-3.txt` in the head image.
-
-**Found on hardware and fixed (6bb5454):** the cloud read *synced* for ~6 s over unsent writes,
-because only core1 set it and core1 was in a long poll. core0 now shows pending whenever the
-active slot has dirty tracks.
-
-**Not verified / still open:**
-- The struck (offline) cloud was not confirmed by eye; the log shows the offline state.
-- `dc_set_hold` never fired on hardware: polls are suppressed while pending, so the eject was
-  simply read after the close. Host-tested only.
-- Restore (spec §6 acceptance 4) is piece 3.
-- Deferred minors from the SDD ledger worth doing: every request is a new TLS handshake; the
-  panel has no distinct "parked" state; `wifi_rssi()` is queried every 50 ms while waiting; a
-  parked slot's discarded dirty flags are not cleared.
-- One cold `vitest` run straight after a fresh `pnpm install` in the worktree failed 2 tests
-  (not captured); two reruns were 853/853.
-
-### 4i. THE AMIGA'S WRITES REACH THE SERVER — 2026-09-19 (write-back piece 2b)
-
 **Verified on hardware** (board WifiFloppy1, rev A2, the Workbench 3.1 disk the operator marked
 writable). Plan `docs/superpowers/plans/2026-09-19-write-back-piece-2b-firmware-upload.md`.
 `WF_WRITE_BACK`, `WF_WRITE_CAPTURE` and `WRITE_BACK_IMPLEMENTED` are gone: write-back is on in the
@@ -2759,8 +2808,13 @@ linked (`nm`), full Playwright suite on the branch before merge.
 | write then eject within 3 s (D7) | 3 uploads + close at 436.1 s, EJECT at 439.0 s; server image has both files |
 | board blocked on the UniFi, then write | 4 failed attempts (DNS), backoff 1.1→9 s; unblocked → seq 5, 6, close; server image has the file |
 
-**Measured:** TLS handshake ~1.1 s per request (every request is a new connection), so ~1.6 s per
-track and ~2.7 s for the close including the 160-track hash. Write-to-synced ~7–12 s.
+**Measured:** TLS handshake ~1.1 s per request (every request was a new connection then; see 4k),
+so ~1.6 s per track and ~2.7 s for the close including the 160-track hash. Write-to-synced split
+by what core1 was doing: **5.7 s** when it was free, **12.3 s** when the write landed inside a 25 s
+long poll. Offline recovery: attempts every ~7 s (DNS), backoff 1.1 → 2.2 → 4.5 → 9.0 s, and ~11 s
+from the block lifting to the save being on the server. After four saves the server held 0
+`original` + 3 `amiga` deltas (4, 5 and 4 sectors), with xdftool reading `wb2b.txt`, `wb2b-2.txt`
+and `wb2b-3.txt` in the head image.
 
 **Found on the bench and fixed (6bb5454):** a write landing during the long poll waited for it
 (6 s) **and the cloud read plain meanwhile** — up_sync was only recomputed on core1. core0 now
@@ -2770,12 +2824,14 @@ shows the up-arrow whenever the active slot has dirty tracks.
 - **Upload latency behind a long poll**: a write that lands mid-poll waits up to ~25 s before the
   first upload (the cloud is honest about it now). A shorter server hold, or an early return,
   would fix it.
-- **One connection per request**: a full-disk DiskCopy would be 160 handshakes (~4–5 min). TLS
-  keep-alive or batching tracks would fix it.
+- ~~**One connection per request**~~ **FIXED 2026-09-21 — see 4k.** Keep-alive: one handshake per
+  three minutes of polling instead of one per request. What has still never been measured is a
+  burst of track uploads over a reused connection; that needs an Amiga write.
 - The **struck cloud** was not seen by the operator during the offline test (they looked before
   the first failed attempt); the dc hold path was not exercised on hardware either (polls are
   suppressed while pending, so the eject was only seen after the close). Both are host-tested.
-- **Acceptance 4 (restore) waits for piece 3.** The panel has no distinct "parked" state.
+- **Acceptance 4 (restore): built and merged 2026-09-21 (4l), never driven on hardware.** The
+  panel has no distinct "parked" state.
 - Two vitest failures appeared once in the worktree before a crash and did not recur (853/853).
 - Deferred minors from the reviews (none blocking): the ~50 ms `wifi_rssi()` radio query during
   waits; a failed owed status report sent twice in one pass; the dead-token log undercounts
@@ -2783,8 +2839,11 @@ shows the up-arrow whenever the active slot has dirty tracks.
   cleared after replacement; stale comments in uploader.h/.c and main.c; `PENCIL_W`/test wording;
   `http_build_head` duplicates `http_build_request`'s header pattern.
 
-**Next: piece 3, the time-machine UI** (spec §4): History panel, Browse and Restore — and then
-hardware acceptance 4.
+~~**Next: piece 3, the time-machine UI**~~ **DONE 2026-09-21 — see 4l.** History panel, Browse
+and Restore are merged and live. **What is left is hardware acceptance 4**: restore a version
+from the browser while the board is attached, then check the Amiga reads the restored content
+after a re-insert. Nothing in 4l has run on hardware -- the Amiga side of restore is exactly the
+`repointLateMounts` path, which only e2e and unit tests have exercised.
 
 ### 4h. A MOUNTED DISK IS CHANGED ONLY FROM THE AMIGA; THE FILES-EDIT FLAKE WAS A TIMEOUT — 2026-09-19
 
