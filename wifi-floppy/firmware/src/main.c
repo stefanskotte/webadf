@@ -1137,7 +1137,7 @@ static void core1_main(void) {
             bool report_owed = strcmp(c.mounted_sha256, last_reported_sha) != 0 ||
                                 c.mounted_version != last_reported_version;
             if (report_owed && c.state != DC_HALTED) {
-                if (dc_report_status(&c, psram_free_estimate(), wifi_rssi(), NULL)) {
+                if (dc_report_status(&c, psram_free_estimate(), wifi_rssi(), NULL, WF_FIRMWARE_VERSION)) {
                     last_status_ms = clock_ms();
                     strncpy(last_reported_sha, c.mounted_sha256, sizeof(last_reported_sha) - 1);
                     last_reported_sha[sizeof(last_reported_sha) - 1] = '\0';
@@ -1263,7 +1263,7 @@ static void core1_main(void) {
             // and sending the same report again here would double it.
             if (!report_retry && s != DC_HALTED && (disk_changed || version_changed ||
                                     (now - last_status_ms) >= DC_STATUS_PERIOD_MS)) {
-                if (dc_report_status(&c, psram_free_estimate(), wifi_rssi(), NULL)) {
+                if (dc_report_status(&c, psram_free_estimate(), wifi_rssi(), NULL, WF_FIRMWARE_VERSION)) {
                     last_status_ms = now;
                     strncpy(last_reported_sha, c.mounted_sha256, sizeof(last_reported_sha) - 1);
                     last_reported_sha[sizeof(last_reported_sha) - 1] = '\0';

@@ -275,14 +275,14 @@ static void test_status_success_does_not_reset_poll_backoff(void) {
     uint32_t after_fail = c.backoff_ms;
     CHECK(after_fail > 0, "failure sets backoff");
     fake_push_response("HTTP/1.1 204 No Content\r\n\r\n");
-    dc_report_status(&c, 4096, -55, NULL);
+    dc_report_status(&c, 4096, -55, NULL, "1.0.0+gtest");
     CHECK_EQ_INT(c.backoff_ms, after_fail);
 }
 
-static void test_status_sends_all_six_fields(void) {
+static void test_status_sends_all_seven_fields(void) {
     boot();
     fake_push_response("HTTP/1.1 204 No Content\r\n\r\n");
-    dc_report_status(&c, 4096, -55, NULL);
+    dc_report_status(&c, 4096, -55, NULL, "1.0.0+gd16a1da");
     const char *r = fake_last_request();
     CHECK(strstr(r, "mountedSha256") != NULL, "mountedSha256");
     CHECK(strstr(r, "mountedDiskId") != NULL, "mountedDiskId");
@@ -290,6 +290,50 @@ static void test_status_sends_all_six_fields(void) {
     CHECK(strstr(r, "\"error\"")     != NULL, "error");
     CHECK(strstr(r, "psramFree")     != NULL, "psramFree");
     CHECK(strstr(r, "\"rssi\"")      != NULL, "rssi");
+    CHECK(strstr(r, "\"firmwareVersion\":\"1.0.0+gd16a1da\"") != NULL, "firmwareVersion");
+}
+
+// A NULL version reports null rather than omitting the key, the same honesty
+// rule mountedSha256 follows: an absent key means "no opinion" to the server
+// and leaves its column alone, which is not what a board with no version
+// would be saying.
+static void test_status_reports_a_null_version_explicitly(void) {
+    boot();
+    fake_push_response("HTTP/1.1 204 No Content\r\n\r\n");
+    dc_report_status(&c, 4096, -55, NULL, NULL);
+    CHECK(strstr(fake_last_request(), "\"firmwareVersion\":null") != NULL,
+          "a version-less report must say null, not omit the key");
+}
+
+// The body buffer was already within ~16 bytes of full before this field
+// existed, and dc_report_status fails SILENTLY on overflow (`return false`),
+// so an over-long body does not error -- the heartbeat simply stops, and only
+// when an error string happens to be long. That is a state-dependent failure
+// of the exact mechanism this field adds, so the budget gets a test rather
+// than a comment.
+static void test_status_body_fits_at_maximum(void) {
+    boot();
+    static char long_err[DC_STATUS_ERR_BYTES];
+    memset(long_err, 'E', sizeof long_err - 1);
+    long_err[sizeof long_err - 1] = '\0';
+
+    // Longest of everything the body can carry at once: 64-hex sha, a 64-char
+    // disk id, the largest mounted_version, and a 64-char firmware version
+    // (FIRMWARE_VERSION_MAX, the server's own bound).
+    memset(c.mounted_sha256, 'a', 64); c.mounted_sha256[64] = '\0';
+    memset(c.mounted_disk_id, 'b', 64); c.mounted_disk_id[64] = '\0';
+    c.mounted_version = 4294967295u;
+    static char long_ver[65];
+    memset(long_ver, 'v', 64); long_ver[64] = '\0';
+
+    fake_push_response("HTTP/1.1 204 No Content\r\n\r\n");
+    CHECK(dc_report_status(&c, 2147483647, -200, long_err, long_ver),
+          "a maximal body must still be sent, not silently dropped");
+    const char *r = fake_last_request();
+    CHECK(strstr(r, "\"firmwareVersion\"") != NULL,
+          "the version survives a maximal body");
+    CHECK(strstr(r, "\"rssi\":-200") != NULL,
+          "the last field is not truncated away");
 }
 
 static void test_unmounted_reports_null_not_omitted(void) {
@@ -297,7 +341,7 @@ static void test_unmounted_reports_null_not_omitted(void) {
     // "no opinion" and leaves the server's column stale.
     boot();
     fake_push_response("HTTP/1.1 204 No Content\r\n\r\n");
-    dc_report_status(&c, 4096, -55, NULL);
+    dc_report_status(&c, 4096, -55, NULL, "1.0.0+gtest");
     CHECK(strstr(fake_last_request(), "\"mountedSha256\":null") != NULL,
           "an unmounted device must report null explicitly");
 }
@@ -315,21 +359,21 @@ static void test_unmounted_reports_null_not_omitted(void) {
 static void test_status_returns_true_on_204(void) {
     boot();
     fake_push_response("HTTP/1.1 204 No Content\r\n\r\n");
-    CHECK(dc_report_status(&c, 4096, -55, NULL),
+    CHECK(dc_report_status(&c, 4096, -55, NULL, "1.0.0+gtest"),
           "a 204 is a report the server actually received");
 }
 
 static void test_status_returns_false_on_connect_failure(void) {
     boot();
     fake_push_connect_failure();
-    CHECK(!dc_report_status(&c, 4096, -55, NULL),
+    CHECK(!dc_report_status(&c, 4096, -55, NULL, "1.0.0+gtest"),
           "a transport failure never reached the server -- not delivered");
 }
 
 static void test_status_returns_false_on_500(void) {
     boot();
     fake_push_response("HTTP/1.1 500 Internal Server Error\r\n\r\n");
-    CHECK(!dc_report_status(&c, 4096, -55, NULL),
+    CHECK(!dc_report_status(&c, 4096, -55, NULL, "1.0.0+gtest"),
           "a 5xx means the server did not act on the report -- not delivered");
 }
 
@@ -1158,7 +1202,9 @@ int main(void) {
     RUN(test_jitter_is_added_from_the_clock_not_silently_zero);
     RUN(test_jitter_never_pushes_backoff_past_the_cap);
     RUN(test_status_success_does_not_reset_poll_backoff);
-    RUN(test_status_sends_all_six_fields);
+    RUN(test_status_sends_all_seven_fields);
+    RUN(test_status_reports_a_null_version_explicitly);
+    RUN(test_status_body_fits_at_maximum);
     RUN(test_unmounted_reports_null_not_omitted);
     RUN(test_status_returns_true_on_204);
     RUN(test_status_returns_false_on_connect_failure);

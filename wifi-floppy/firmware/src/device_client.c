@@ -52,18 +52,11 @@
 // read calls, each taking the lwIP lock, memcpy'ing and crediting the window.
 #define DC_READ_CHUNK_BYTES 4096
 
-// The status report is the one request this file POSTs a body with, so it
-// needs a bigger request buffer than a bare GET line (DC_REQ_BUF_BYTES):
-// two 64-hex-char fields, a version, an escaped error string, and two ints,
-// plus the request line and headers around them.
+// The status buffer budgets moved to device_client.h, so that
+// test_status_body_fits_at_maximum can name them. A budget a test cannot
+// name is a budget that gets checked by hand, which is how this body came to
+// sit ~16 bytes below its own limit unnoticed.
 #define DC_STATUS_PATH        "/api/device/status"
-#define DC_STATUS_BODY_BYTES  512
-#define DC_STATUS_REQ_BYTES   1024
-// `err` is firmware-authored (a short static string or errno-derived text,
-// never network input), but it still has to survive being embedded in a
-// JSON string unescaped -- truncated well short of DC_STATUS_BODY_BYTES so
-// there is always room left for the rest of the fields.
-#define DC_STATUS_ERR_BYTES   256
 
 // Registration (spec §7): pairingCode, firmwareVersion, macAddress -- all
 // short, firmware-authored or compile-time values, so a generous fixed
@@ -927,7 +920,8 @@ dc_register_result_t dc_register(device_client_t *c, const char *pairing_code,
 // needs to know whether the report actually reached the server before it
 // updates its own idea of "what I last told the server", or the two can
 // drift -- see the header comment.
-bool dc_report_status(device_client_t *c, int psram_free, int rssi, const char *err) {
+bool dc_report_status(device_client_t *c, int psram_free, int rssi, const char *err,
+                      const char *fw_version) {
     bool mounted = c->mounted_sha256[0] != '\0';
 
     // static: see the STACK note above. Called only from core1_main's
@@ -947,12 +941,27 @@ bool dc_report_status(device_client_t *c, int psram_free, int rssi, const char *
         snprintf(err_field, sizeof err_field, "null");
     }
 
+    // Escaped like the error string. The version is a compile-time constant
+    // today, but it reaches this function as a `const char *`, and a body
+    // that can be made invalid by its input is a body that eventually will
+    // be. NULL reports null rather than omitting the key -- the same honesty
+    // rule mountedSha256 follows, since an absent key means "no opinion" to
+    // the server and leaves its column alone.
+    static char ver_field[DC_STATUS_VER_BYTES + 2];
+    if (fw_version) {
+        static char ver_esc[DC_STATUS_VER_BYTES];
+        dc_json_escape(ver_esc, sizeof ver_esc, fw_version);
+        snprintf(ver_field, sizeof ver_field, "\"%s\"", ver_esc);
+    } else {
+        snprintf(ver_field, sizeof ver_field, "null");
+    }
+
     static char body[DC_STATUS_BODY_BYTES];
     int body_len = snprintf(body, sizeof body,
         "{\"mountedSha256\":%s,\"mountedDiskId\":%s,\"version\":%lu,"
-        "\"error\":%s,\"psramFree\":%d,\"rssi\":%d}",
+        "\"error\":%s,\"psramFree\":%d,\"firmwareVersion\":%s,\"rssi\":%d}",
         sha_field, disk_field, (unsigned long)c->mounted_version,
-        err_field, psram_free, rssi);
+        err_field, psram_free, ver_field, rssi);
     if (body_len < 0 || body_len >= (int)sizeof body) return false; // should never happen; give up quietly
 
     static char req[DC_STATUS_REQ_BYTES];
