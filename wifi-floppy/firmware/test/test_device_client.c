@@ -1022,6 +1022,86 @@ static void a_clean_exchange_hands_its_connection_to_the_next_one(void) {
     CHECK_EQ_INT(fake_request_count(), 2);
 }
 
+// --- keep-alive, round 3: body_complete is not a keep signal -----------
+
+// A close-delimited response -- no Content-Length, no chunked encoding, not
+// a bodyless status -- is "complete" only in the sense that http.c cannot
+// delimit anything further. The body is still arriving. Keeping that socket
+// hands the rest of it to the next request, which is C1's desync arriving
+// through the one door abandon() does not cover, because nothing about this
+// path looks like a failure.
+static void a_close_delimited_response_is_not_kept(void) {
+    boot();
+    fake_push_response("HTTP/1.1 200 OK\r\n\r\n{\"version\":4,\"desired\":null}");
+    dc_step(&c);
+    CHECK(!fake_connection_is_kept(),
+          "a response with no framing header at all must not leave its socket open");
+}
+
+// The same rule, from the other side: a response that DID say how long it is
+// still gets kept. Without this the fix could be "never keep anything".
+static void an_explicitly_framed_response_is_still_kept(void) {
+    boot();
+    push_ok_json("{\"version\":4,\"desired\":null}");   // carries Content-Length
+    CHECK_EQ_INT(dc_step(&c), DC_IDLE_POLL);
+    CHECK(fake_connection_is_kept(), "Content-Length is explicit framing -- keep it");
+}
+
+// Minor: bytes past the end of a complete response. The parser discards them
+// (they belong to nothing anyone asked for), so by the time tls_close() looks
+// at the socket they are already out of rx_head and "drained to the last
+// byte" cannot see them. Recorded now, and abandoned on.
+static void bytes_after_a_complete_response_are_not_kept(void) {
+    boot();
+    fake_push_response("HTTP/1.1 204 No Content\r\n\r\nHTTP/1.1 200 OK\r\n"
+                       "Content-Length: 2\r\n\r\nhi");
+    CHECK_EQ_INT(dc_step(&c), DC_IDLE_POLL);
+    CHECK(!fake_connection_is_kept(),
+          "a stream with bytes left over after the response is already out of step");
+}
+
+// Item 7. A request that went out in part and then hit a socket that was
+// already gone. The half-sent bytes are sitting in whatever the far end has
+// left; that connection can never carry another request, and the retry must
+// not land on it. Nothing was answered, so the retry itself is legitimate.
+static void a_partial_write_that_then_fails_is_abandoned_and_retried(void) {
+    boot();
+    push_ok_json("{\"version\":2,\"desired\":null}");
+    CHECK_EQ_INT(dc_step(&c), DC_IDLE_POLL);
+    CHECK(fake_connection_is_kept(), "a clean exchange keeps its connection");
+
+    fake_kill_kept_connection();
+    fake_set_max_write(16);                            // 16 bytes out, then gone
+    push_ok_json("{\"version\":5,\"desired\":null}");   // the retry is answered
+    dc_state_t st = dc_step(&c);
+
+    CHECK_EQ_INT(fake_request_count(), 3);             // 1 + (half-sent + retry)
+    CHECK(!fake_last_reused(),
+          "the retry must not land on the socket holding half a request");
+    CHECK_EQ_INT(st, DC_IDLE_POLL);
+    CHECK_EQ_INT(c.since, 5);
+    CHECK(strncmp(fake_last_request(), "GET /api/device/poll?since=", 27) == 0 &&
+          strstr(fake_last_request(), "\r\n\r\n") != NULL,
+          "the server saw one whole request, not the tail of a truncated one");
+}
+
+// Item 7. A connect that failed reached nothing -- so nothing in the fake
+// releases the connection still being held. Only dc_attempt's abandon() on
+// the connect-failure path does, and without it the board would carry that
+// pcb (and its ~32 KB of mbedTLS buffers) through every later failure.
+static void a_connect_failure_releases_a_held_connection(void) {
+    boot();
+    push_ok_json("{\"version\":2,\"desired\":null}");
+    CHECK_EQ_INT(dc_step(&c), DC_IDLE_POLL);
+    CHECK(fake_connection_is_kept(), "a clean exchange keeps its connection");
+
+    fake_push_connect_failure();
+    CHECK_EQ_INT(dc_step(&c), DC_BACKOFF);
+    CHECK_EQ_INT(fake_request_count(), 2);
+    CHECK(!fake_connection_is_kept(),
+          "a connect that failed must still release the connection being held");
+}
+
 static void post_sends_a_binary_body_whole(void) {
     boot();
     static uint8_t body[DC_POST_BODY_MAX];
@@ -1114,6 +1194,11 @@ int main(void) {
     RUN(an_abandoned_exchange_never_reuses_the_socket);
     RUN(a_connection_close_response_is_not_kept);
     RUN(a_clean_exchange_hands_its_connection_to_the_next_one);
+    RUN(a_close_delimited_response_is_not_kept);
+    RUN(an_explicitly_framed_response_is_still_kept);
+    RUN(bytes_after_a_complete_response_are_not_kept);
+    RUN(a_partial_write_that_then_fails_is_abandoned_and_retried);
+    RUN(a_connect_failure_releases_a_held_connection);
     RUN(post_sends_a_binary_body_whole);
     RUN(post_reports_a_dead_link_and_a_dead_token);
 

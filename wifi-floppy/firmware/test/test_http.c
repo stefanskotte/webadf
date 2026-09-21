@@ -312,6 +312,74 @@ static void test_connection_close_inside_a_token_list(void) {
     CHECK(!r2.connection_close, "a longer token that merely starts with close is not close");
 }
 
+// Round 2, Important 1. `body_complete` is set at the end of the headers
+// when nothing can delimit a body -- honest as a parser verdict, and
+// unusable as a keep-alive signal, because the body is still on its way.
+// has_explicit_framing is what tells the two apart.
+static void test_close_delimited_is_complete_but_not_framed(void) {
+    http_resp_t r; http_resp_init(&r); body_len = 0;
+    CHECK(FEED(&r, "HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\n\r\n"), "should parse");
+    CHECK(r.body_complete, "http.c still reports completion -- nothing can be delimited");
+    CHECK(!r.has_explicit_framing,
+          "but a close-delimited response was never framed, and must not be kept");
+}
+
+static void test_explicit_framing_is_recorded(void) {
+    struct { const char *raw; const char *what; } ok[] = {
+        { "HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nhi",           "content-length" },
+        { "HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n",             "content-length 0" },
+        { "HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n0\r\n\r\n", "chunked" },
+        { "HTTP/1.1 204 No Content\r\n\r\n",                          "204" },
+        { "HTTP/1.1 304 Not Modified\r\n\r\n",                        "304" },
+    };
+    for (unsigned i = 0; i < sizeof ok / sizeof ok[0]; i++) {
+        http_resp_t r; http_resp_init(&r); body_len = 0;
+        CHECK(FEED(&r, ok[i].raw), ok[i].what);
+        CHECK(r.has_explicit_framing, ok[i].what);
+    }
+}
+
+// "Transfer-Encoding: gzip, chunked" is RFC-legal -- chunked is required to
+// be the LAST coding applied, so it is routinely not the first token. A
+// prefix test saw "gzip", left `chunked` false, found no Content-Length
+// either, and framed the whole thing as close-delimited: complete at the end
+// of the headers, with every body byte still to come.
+static void test_transfer_encoding_list_is_chunked(void) {
+    http_resp_t r; http_resp_init(&r); body_len = 0;
+    CHECK(FEED(&r, "HTTP/1.1 200 OK\r\nTransfer-Encoding: gzip, chunked\r\n\r\n"
+                   "5\r\nhello\r\n0\r\n\r\n"), "should parse");
+    CHECK(r.chunked, "chunked is chunked wherever it sits in the list");
+    CHECK(r.has_explicit_framing, "and that counts as explicit framing");
+    CHECK(r.body_complete, "the zero chunk terminates the body");
+    CHECK_EQ_INT(body_len, 5);
+}
+
+static void test_transfer_encoding_not_chunked_is_not_framed(void) {
+    http_resp_t r; http_resp_init(&r); body_len = 0;
+    CHECK(FEED(&r, "HTTP/1.1 200 OK\r\nTransfer-Encoding: gzip\r\n\r\n"), "should parse");
+    CHECK(!r.chunked, "gzip alone is not chunked");
+    CHECK(!r.has_explicit_framing, "and gzip alone delimits nothing");
+}
+
+// Round 2, Minor 3. Bytes after the end of a complete response used to be
+// discarded silently, so by the time the transport decided whether to keep
+// the connection they were gone and "drained to the last byte" could not be
+// checked at all.
+static void test_bytes_after_completion_are_recorded(void) {
+    http_resp_t r; http_resp_init(&r); body_len = 0;
+    CHECK(FEED(&r, "HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nhi"), "should parse");
+    CHECK(!r.extra_after_complete, "nothing arrived after this one");
+    CHECK(FEED(&r, "HTTP/1.1 200 OK\r\n"), "trailing bytes are not themselves an error");
+    CHECK(r.extra_after_complete, "but they must be recorded");
+}
+
+static void test_bytes_after_completion_in_the_same_feed(void) {
+    http_resp_t r; http_resp_init(&r); body_len = 0;
+    CHECK(FEED(&r, "HTTP/1.1 204 No Content\r\n\r\nleftovers"), "should parse");
+    CHECK(r.body_complete, "204 completes at the headers");
+    CHECK(r.extra_after_complete, "the leftovers in the same buffer count too");
+}
+
 int main(void) {
     RUN(test_content_length_body); RUN(test_chunked_body);
     RUN(test_split_across_feeds); RUN(test_204_has_no_body);
@@ -330,6 +398,12 @@ int main(void) {
     RUN(test_connection_close_is_recorded);
     RUN(test_connection_keep_alive_is_not_close);
     RUN(test_connection_close_inside_a_token_list);
+    RUN(test_close_delimited_is_complete_but_not_framed);
+    RUN(test_explicit_framing_is_recorded);
+    RUN(test_transfer_encoding_list_is_chunked);
+    RUN(test_transfer_encoding_not_chunked_is_not_framed);
+    RUN(test_bytes_after_completion_are_recorded);
+    RUN(test_bytes_after_completion_in_the_same_feed);
     RUN(head_for_a_binary_body); RUN(head_for_an_empty_post_still_says_zero);
     RUN(head_that_does_not_fit_is_refused);
     return REPORT();

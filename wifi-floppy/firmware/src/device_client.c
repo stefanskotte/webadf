@@ -362,15 +362,33 @@ static bool dc_attempt(device_client_t *c, const char *req, int req_len,
         }
         if (r->body_complete) break;
     }
-    // The ONE exit that may hand the connection back: the response was
-    // framed to its last byte, so nothing of it is left on the socket.
-    // `Connection: close` overrides even that -- the peer said it is going
-    // away, so keeping the socket would just mean discovering that on the
-    // next request. A break here with `body_complete` still false is the
-    // peer closing mid-body: the caller is told (true, incomplete), but the
-    // connection is finished either way.
-    if (r->body_complete && !r->connection_close) c->t->close(c->t);
-    else dc_abandon(c);
+    // The ONE exit that may hand the connection back, and it takes four
+    // conditions, not one:
+    //
+    //   * body_complete -- the parser reached the end of the response;
+    //   * has_explicit_framing -- and it KNEW where that end was. Without a
+    //     Content-Length, a chunked encoding or a bodyless status, http.c
+    //     declares completion at the end of the headers simply because
+    //     nothing further can be delimited. That response is close-delimited:
+    //     its body is still arriving, and keeping the socket hands it to the
+    //     next request. This is C1's desync by another door -- the one door
+    //     abandon() alone does not cover, because this path never looked
+    //     like a failure;
+    //   * !connection_close -- the peer said it is going away, so keeping
+    //     the socket only means discovering that on the next request;
+    //   * !extra_after_complete -- bytes arrived past the end of the
+    //     response. Whatever they are, the stream is out of step, and the
+    //     next reader would start mid-something.
+    //
+    // A break here with `body_complete` still false is the peer closing
+    // mid-body: the caller is told (true, incomplete), and the connection is
+    // finished either way.
+    if (r->body_complete && r->has_explicit_framing &&
+        !r->connection_close && !r->extra_after_complete) {
+        c->t->close(c->t);
+    } else {
+        dc_abandon(c);
+    }
     return true;
 }
 

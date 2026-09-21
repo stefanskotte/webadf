@@ -28,7 +28,11 @@ void fake_push_response_bytes(const uint8_t *raw, int len);
 // be <= strlen(raw).
 void fake_push_truncated(const char *raw, int n);
 
-// The next connect() call fails (returns < 0) instead of succeeding.
+// The next connect() call fails (returns < 0) instead of succeeding. A
+// connect that failed reached nothing and changes nothing: in particular a
+// connection being held open stays held, exactly as a real transport whose
+// held socket was not reusable (idle cap expired) and whose fresh attempt
+// then failed would leave it. Releasing it is the caller's abandon().
 void fake_push_connect_failure(void);
 
 // The fake transport_t. Always returns the same instance.
@@ -75,9 +79,14 @@ void fake_set_reused(bool reused);
 
 // The connection currently being held open is dead at the far end: the next
 // connect() still hands it back (reused == true -- nothing announces a
-// socket that expired), and then write() and read() on it both fail. This is
-// the one failure keep-alive introduces and the only one the retry rule is
-// allowed to act on.
+// socket that expired), and then read() fails. write() fails too, except
+// with fake_set_max_write() in force, where the first write is swallowed (a
+// dying socket's local buffer takes one segment) and the next one fails --
+// a half-sent request, which is the shape that must never be left on a
+// socket for the next request to append to. A close() on such a connection
+// holds it AND keeps it dead: nothing announced its death, so close() has no
+// way to know. This is the one failure keep-alive introduces and the only
+// one the retry rule is allowed to act on.
 void fake_kill_kept_connection(void);
 
 // Did the most recent connect() hand back a kept connection? The same value

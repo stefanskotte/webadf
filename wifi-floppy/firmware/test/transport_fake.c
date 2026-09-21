@@ -64,6 +64,7 @@ static bool g_kept;
 static bool g_kept_dead;
 static bool g_reused;
 static bool g_dead;
+static bool g_dead_wrote;   // the dead connection has swallowed its one write
 
 void fake_reset(void) {
     g_queue_count = 0;
@@ -80,6 +81,7 @@ void fake_reset(void) {
     g_kept_dead = false;
     g_reused = false;
     g_dead = false;
+    g_dead_wrote = false;
 }
 
 static fake_event_t *fake_push_slot(void) {
@@ -129,26 +131,24 @@ void fake_push_connect_failure(void) {
 
 static int fake_connect(struct transport *t, const char *host, int port) {
     (void)t; (void)host; (void)port;
-    // A kept connection is handed back here, and only here: `reused` is a
-    // property of THIS connect(), not a mode left switched on.
-    g_reused = g_kept;
-    g_dead = g_kept && g_kept_dead;
-    g_kept = false;
-    g_kept_dead = false;
-
     g_cursor = 0;
     g_request_len = 0;
     g_request[0] = '\0';
+    g_dead_wrote = false;
     // Count completed connect() cycles, not write() calls: the fake's model
     // is one queued event consumed per connect(), and a client that splits
     // one request across multiple writes (e.g. header then body) must not
     // inflate this count (review round 1, finding 1).
     g_request_count++;
 
-    if (g_dead) {
+    if (g_kept && g_kept_dead) {
         // A socket the far end dropped while it sat idle announces nothing:
         // connect() "succeeds", because there is nothing to connect. It
         // consumes no scripted response -- no request will reach a server.
+        g_reused = true;
+        g_dead = true;
+        g_kept = false;
+        g_kept_dead = false;
         g_active_slot = -1;
         g_connected = 1;
         return 0;
@@ -158,19 +158,50 @@ static int fake_connect(struct transport *t, const char *host, int port) {
         fake_fatal("connect() called with no scripted response or "
                     "connect-failure queued -- push one before connecting");
     }
-    g_active_slot = g_queue_pos++;
-    if (g_queue[g_active_slot].type == FAKE_EV_CONNECT_FAIL) {
+    if (g_queue[g_queue_pos].type == FAKE_EV_CONNECT_FAIL) {
+        // A connect that FAILED reached nothing and changed nothing -- in
+        // particular it does not release a connection still being held
+        // (which is what a real transport's held-but-not-reusable case looks
+        // like: the idle cap expired, so a fresh connection was attempted,
+        // and that attempt failed). Only the caller's abandon() releases it,
+        // which is exactly what this lets a test check.
+        g_queue_pos++;
+        g_active_slot = -1;
         g_connected = 0;
+        g_reused = false;
         return -1;
     }
+    // A kept connection is handed back here, and only here: `reused` is a
+    // property of THIS connect(), not a mode left switched on.
+    g_reused = g_kept;
+    g_dead = false;
+    g_kept = false;
+    g_kept_dead = false;
+    g_active_slot = g_queue_pos++;
     g_connected = 1;
     return 0;
 }
 
 static int fake_write(struct transport *t, const uint8_t *b, int n) {
     (void)t;
-    if (!g_connected || g_dead) return -1;
-    if (n < 0) return -1;
+    if (!g_connected || n < 0) return -1;
+    if (g_dead) {
+        // A socket the far end dropped can still swallow the first segment
+        // -- the local stack buffers it and only notices later -- so with a
+        // write cap set this models one short write that succeeds followed
+        // by failure, which is how a half-sent request happens in the field.
+        // Without a cap there is nothing partial to model and it fails flat.
+        if (g_max_write_bytes <= 0 || g_dead_wrote) return -1;
+        g_dead_wrote = true;
+        int took = n < g_max_write_bytes ? n : g_max_write_bytes;
+        if (g_request_len + took > (int)sizeof(g_request) - 1) {
+            fake_fatal("recorded request exceeds FAKE_MAX_REQUEST_BYTES");
+        }
+        memcpy(g_request + g_request_len, b, (size_t)took);
+        g_request_len += took;
+        g_request[g_request_len] = '\0';
+        return took;
+    }
     int to_write = n;
     if (g_max_write_bytes > 0 && to_write > g_max_write_bytes) {
         to_write = g_max_write_bytes;
@@ -203,7 +234,12 @@ static int fake_read(struct transport *t, uint8_t *b, int cap, int timeout_ms) {
 static void fake_close(struct transport *t) {
     (void)t;
     g_connected = 0;
-    g_kept = !g_dead;
+    // Held, AND still dead if it was dead: a silently-dropped socket
+    // announces nothing, so close() cannot know to drop it. That is the
+    // whole reason abandon() exists, and a fake that quietly cleaned up here
+    // would hide it.
+    g_kept = true;
+    g_kept_dead = g_dead;
     g_dead = false;
 }
 
