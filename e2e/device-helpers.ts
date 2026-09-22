@@ -418,3 +418,19 @@ export async function setDesiredFirmware(deviceId: string, version: string): Pro
     })
     .where(eq(devices.id, deviceId));
 }
+
+/**
+ * What firmware a device has been told to run, straight from the row.
+ *
+ * Used instead of a poll when a test asserts that NOTHING was written: a poll
+ * with no update pending holds for the full 25 s by design, so using it to
+ * prove an absence times the test out rather than answering the question.
+ */
+export async function desiredFirmwareOf(deviceId: string): Promise<string | null> {
+  const [row] = await getDb()
+    .select({ want: devices.desiredFirmwareVersion })
+    .from(devices)
+    .where(eq(devices.id, deviceId))
+    .limit(1);
+  return row?.want ?? null;
+}
