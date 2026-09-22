@@ -55,7 +55,7 @@ set(WFMF_PSA_CRYPTO_RANDOM_SRC ${PICO_MBEDTLS_PATH}/library/psa_crypto_random.c)
 add_executable(wifi_floppy
   src/main.c src/dskchg.c src/track_cache.c src/psram_image.c
   src/image_loader.c src/device_client.c src/http.c src/json_scan.c
-  src/token_store.c src/config_store.c src/fw_state.c src/fw_trial.c src/provisioning.c
+  src/token_store.c src/config_store.c src/fw_state.c src/fw_trial.c src/fw_rom.c src/provisioning.c
   src/mfm.c src/write_back.c src/reinsert.c src/dns_server.c src/dhcp_server.c src/portal_http.c
   src/portal_net.c
   src/transport_tls.c src/sntp_time.c
@@ -77,7 +77,7 @@ target_include_directories(wifi_floppy PRIVATE src ${CMAKE_CURRENT_LIST_DIR})
 pico_configure_ip4_address(wifi_floppy PRIVATE CYW43_DEFAULT_IP_AP_ADDRESS 192.168.4.1)
 target_link_libraries(wifi_floppy
   pico_stdlib pico_multicore hardware_pio hardware_dma hardware_irq
-  hardware_psram hardware_sync hardware_flash pico_flash hardware_i2c
+  hardware_psram hardware_sync hardware_flash pico_flash hardware_i2c hardware_watchdog
   pico_cyw43_arch_lwip_threadsafe_background
   pico_lwip_mbedtls pico_mbedtls pico_lwip_sntp pico_rand)
 # Review (final), Critical 1: RP2350's Arm stack guard is the msplim
@@ -304,5 +304,22 @@ target_compile_definitions(wifi_floppy PRIVATE PICO_STDIO_USB_STDOUT_TIMEOUT_US=
 # UART stdio would drive the floppy bus. The log goes out over USB CDC only.
 pico_enable_stdio_uart(wifi_floppy 0)
 pico_enable_stdio_usb(wifi_floppy 1)
+
+# 2b (spec D1/D10): every image is a try-before-you-buy image with a hash the
+# boot ROM checks. A TBYB image boots only through a flash-update reboot and
+# is reverted unless it confirms itself (rom_explicit_buy) -- measured, spec
+# M5-M8. The publish script refuses an image that lacks either.
+target_compile_definitions(wifi_floppy PRIVATE PICO_CRT0_IMAGE_TYPE_TBYB=1)
+pico_hash_binary(wifi_floppy)
+
+# The partition table, as a UF2 for first installs over USB (spec D11).
+find_program(WF_PICOTOOL picotool REQUIRED)
+add_custom_command(
+  OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/wifi_floppy_pt.uf2
+  COMMAND ${WF_PICOTOOL} partition create ${CMAKE_CURRENT_LIST_DIR}/partitions.json
+          ${CMAKE_CURRENT_BINARY_DIR}/wifi_floppy_pt.uf2
+  DEPENDS ${CMAKE_CURRENT_LIST_DIR}/partitions.json
+  COMMENT "partition table -> wifi_floppy_pt.uf2")
+add_custom_target(wifi_floppy_pt ALL DEPENDS ${CMAKE_CURRENT_BINARY_DIR}/wifi_floppy_pt.uf2)
 
 pico_add_extra_outputs(wifi_floppy)

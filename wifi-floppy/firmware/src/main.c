@@ -42,6 +42,9 @@
 #include "write_back.h"
 #include "reinsert.h"
 #include "uploader.h"
+#include "fw_rom.h"
+#include "fw_state.h"
+#include "fw_trial.h"
 #include "pico/rand.h"
 #include "hardware/sync.h"   // __dmb(), for the display seqlock below
 #include <string.h>
@@ -1092,6 +1095,41 @@ static void core1_main(void) {
         wf_logf(WF_INFO, "write-back: session %s", session);
         wf_logf(WF_INFO, "entering poll loop against %s", WEBADF_HOST);
 
+        // 2b trial (spec D8): prove the network works, THEN confirm, THEN poll.
+        {
+            static fw_state_t fst;
+            fw_state_load(&fst);                        // zeroed if no record
+            if (fw_rom_trial_boot()) {
+                for (;;) {
+                    bool hb = dc_report_status(&c, psram_free_estimate(), wifi_rssi(), NULL,
+                                               WF_FIRMWARE_VERSION);
+                    fw_trial_in_t tin = { true, &fst, WF_FIRMWARE_VERSION, hb, clock_ms() };
+                    const char *why = NULL;
+                    fw_trial_action_t a = fw_trial_decide(&tin, &why);
+                    if (a == FW_TRIAL_BUY) {
+                        if (!fw_rom_buy()) {
+                            wf_logf(WF_ERR, "trial: buy failed -- rebooting to revert");
+                            fw_rom_request_reboot(0);
+                            for (;;) sleep_ms(1000);
+                        }
+                        if (fw_trial_after_buy(&fst) && !fw_state_save(&fst))
+                            wf_logf(WF_ERR, "trial: bought, but the state record did not save");
+                        wf_logf(WF_INFO, "trial: confirmed %s", WF_FIRMWARE_VERSION);
+                        break;
+                    }
+                    if (a == FW_TRIAL_GIVE_UP) {
+                        wf_logf(WF_WARN, "trial: giving up (%s) -- rebooting to revert", why);
+                        snprintf(fst.failure, sizeof fst.failure, "%s", why);
+                        fw_state_save(&fst);
+                        fw_rom_request_reboot(0);
+                        for (;;) sleep_ms(1000);
+                    }
+                    tls_release_if_unreusable();
+                    sleep_ms(5000);
+                }
+            }
+        }
+
         static char last_reported_sha[65] = "";
         static uint32_t last_reported_version = 0;
         uint32_t last_status_ms = clock_ms();
@@ -1540,6 +1578,7 @@ int main(void) {
     // measured ~4.9 KB worst case (foreground TLS setup plus the lwIP/
     // mbedTLS IRQ chain that runs on the same stack). See core1_stack's
     // comment above.
+    fw_rom_boot_init();
     multicore_launch_core1_with_stack(core1_main, core1_stack, sizeof core1_stack);
     // Lets core1's (rare, one-time) token flash write -- token_store.c,
     // guarded to only ever run before any disk is mounted -- pause core0
@@ -1612,7 +1651,9 @@ int main(void) {
 #endif
     display_state_t ui, last_ui;
     memset(&last_ui, 0, sizeof last_ui);
+    fw_rom_watchdog_start();
     while (true) {
+        fw_rom_service();
         dskchg_poll();
 
         // A write-protect flip on the same disk (g_reinsert_req's comment).

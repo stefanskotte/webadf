@@ -1,0 +1,43 @@
+File wifi-floppy/firmware/build/wifi_floppy.bin:
+
+Program Information
+ name:                wifi_floppy
+ features:            USB stdin / stdout
+ binary start:        0x10000000
+ binary end:          0x10082dd4
+ target chip:         RP2350
+ image type:          ARM Secure
+ tbyb:                not bought
+ hash:                verified
+
+Fixed Pin Information
+ none
+
+Build Information
+ sdk version:         2.3.0
+ pico_board:          pimoroni_pico_plus2_w_rp2350
+ boot2_name:          boot2_w25q080
+ build date:          Sep 22 2026
+ build attributes:    Release
+
+Metadata Block 1
+ address:             0x10000138
+ next block address:  0x10082dd4
+ block type:          image def
+ target chip:         RP2350
+ image type:          ARM Secure
+ tbyb:                not bought
+ extra security:      not enabled
+
+Metadata Block 2
+ address:             0x10082dd4
+ next block address:  0x10000138
+ block type:          image def
+ target chip:         RP2350
+ image type:          ARM Secure
+ tbyb:                not bought
+ extra security:      not enabled
+ load map entry 0:    Load 0x10000000->0x10080834
+ load map entry 1:    Copy 0x10080834->0x10082dd4 to 0x20000120->0x200026c0
+ hash:                verified
+ hash value:          9C0E2B45EA41B363C670A33458E4A2D004D2D1F34C653222B89B30C4EF76F0DD
