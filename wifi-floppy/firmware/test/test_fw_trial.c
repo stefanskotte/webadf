@@ -131,6 +131,24 @@ static void test_usb_install_no_heartbeat_at_deadline_gives_up(void) {
     CHECK(why && strstr(why, "5 minutes") != NULL, "reason names the deadline");
 }
 
+// Fix round 1 (Important 2): buy vs. deadline-reboot race. A heartbeat that
+// lands right at the cutoff must NOT buy -- there would be no margin left
+// before fw_rom_service's own deadline reboot could fire mid-buy.
+static void test_heartbeat_at_the_buy_cutoff_gives_up(void) {
+    fw_state_t s = st_pending("1.1.0+gnew", 5);
+    fw_trial_in_t in = in_for(&s, true, true, FW_TRIAL_BUY_CUTOFF_MS);
+    const char *why = NULL;
+    CHECK_EQ_INT(fw_trial_decide(&in, &why), FW_TRIAL_GIVE_UP);
+    CHECK(why && strstr(why, "5 minutes") != NULL, "reason names the deadline");
+}
+// One millisecond earlier, there is still a full cutoff window left: buy.
+static void test_heartbeat_just_before_the_buy_cutoff_buys(void) {
+    fw_state_t s = st_pending("1.1.0+gnew", 5);
+    fw_trial_in_t in = in_for(&s, true, true, FW_TRIAL_BUY_CUTOFF_MS - 1);
+    const char *why = NULL;
+    CHECK_EQ_INT(fw_trial_decide(&in, &why), FW_TRIAL_BUY);
+}
+
 int main(void) {
     RUN(test_a_normal_boot_is_not_a_trial);
     RUN(test_waits_until_a_heartbeat_lands);
@@ -145,5 +163,7 @@ int main(void) {
     RUN(test_reconcile_confirms_a_buy_whose_record_was_lost);
     RUN(test_give_up_reasons_fit_in_failure_field);
     RUN(test_usb_install_no_heartbeat_at_deadline_gives_up);
+    RUN(test_heartbeat_at_the_buy_cutoff_gives_up);
+    RUN(test_heartbeat_just_before_the_buy_cutoff_buys);
     return REPORT();
 }

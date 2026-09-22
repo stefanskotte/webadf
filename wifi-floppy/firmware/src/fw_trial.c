@@ -9,11 +9,19 @@ fw_trial_action_t fw_trial_decide(const fw_trial_in_t *in, const char **reason) 
         *reason = "version mismatch";
         return FW_TRIAL_GIVE_UP;
     }
-    if (in->ms_since_boot >= FW_TRIAL_DEADLINE_MS) {
+    // Fix round 1 (Important 2): stop offering a buy once there is no longer
+    // a safe margin before fw_rom_service's own deadline reboot -- a buy in
+    // flight when that reboot fires can leave no bootable slot at all. At or
+    // past the cutoff, give up (with the existing deadline reason) instead of
+    // buying, even with a heartbeat.
+    if (in->heartbeat_ok && in->ms_since_boot < FW_TRIAL_BUY_CUTOFF_MS) {
+        return FW_TRIAL_BUY;
+    }
+    if (in->ms_since_boot >= FW_TRIAL_BUY_CUTOFF_MS) {
         *reason = "no heartbeat within 5 minutes";
         return FW_TRIAL_GIVE_UP;
     }
-    return in->heartbeat_ok ? FW_TRIAL_BUY : FW_TRIAL_WAIT;
+    return FW_TRIAL_WAIT;
 }
 
 static void clear_pending(fw_state_t *st) {

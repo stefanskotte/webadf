@@ -313,12 +313,34 @@ target_compile_definitions(wifi_floppy PRIVATE PICO_CRT0_IMAGE_TYPE_TBYB=1)
 pico_hash_binary(wifi_floppy)
 
 # The partition table, as a UF2 for first installs over USB (spec D11).
-find_program(WF_PICOTOOL picotool REQUIRED)
+#
+# Fix round 1 (Important 1): CI installs no picotool, but the SDK finds or
+# fetches/builds its own (tools/CMakeLists.txt's pico_init_picotool(),
+# creating a `picotool` target either way) -- a plain
+# `find_program(... REQUIRED)` ignores that and aborts configure wherever
+# picotool isn't already on PATH. pico_hash_binary() above only sets a
+# target property; it does NOT itself call pico_init_picotool() (that
+# happens later, inside pico_add_uf2_output(), called from
+# pico_add_extra_outputs() below) -- so `TARGET picotool` would read as
+# "not found" here even in the case this exists to handle. Call it directly
+# first to force that resolution now, then prefer the resulting target over
+# find_program.
+pico_init_picotool()
+if (TARGET picotool)
+  set(WF_PICOTOOL_CMD $<TARGET_FILE:picotool>)
+  set(WF_PICOTOOL_DEPENDS picotool)
+  message(STATUS "wifi_floppy_pt: using the SDK-built picotool target")
+else ()
+  find_program(WF_PICOTOOL picotool REQUIRED)
+  set(WF_PICOTOOL_CMD ${WF_PICOTOOL})
+  set(WF_PICOTOOL_DEPENDS)
+  message(STATUS "wifi_floppy_pt: no picotool target; using find_program: ${WF_PICOTOOL}")
+endif ()
 add_custom_command(
   OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/wifi_floppy_pt.uf2
-  COMMAND ${WF_PICOTOOL} partition create ${CMAKE_CURRENT_LIST_DIR}/partitions.json
+  COMMAND ${WF_PICOTOOL_CMD} partition create ${CMAKE_CURRENT_LIST_DIR}/partitions.json
           ${CMAKE_CURRENT_BINARY_DIR}/wifi_floppy_pt.uf2
-  DEPENDS ${CMAKE_CURRENT_LIST_DIR}/partitions.json
+  DEPENDS ${CMAKE_CURRENT_LIST_DIR}/partitions.json ${WF_PICOTOOL_DEPENDS}
   COMMENT "partition table -> wifi_floppy_pt.uf2")
 add_custom_target(wifi_floppy_pt ALL DEPENDS ${CMAKE_CURRENT_BINARY_DIR}/wifi_floppy_pt.uf2)
 

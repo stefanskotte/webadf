@@ -4,6 +4,14 @@
 #include "fw_state.h"
 
 #define FW_TRIAL_DEADLINE_MS 300000u
+// Fix round 1 (Important 2): buy vs. deadline-reboot race. fw_rom_buy's
+// flash_safe_execute can still be in flight when core0's deadline check
+// (fw_rom_service, at FW_TRIAL_DEADLINE_MS) decides to reboot for reverting;
+// a reset mid-buy can leave the old slot's header erased and the new image
+// unbought -- no bootable slot at all. Stop offering a buy this close to the
+// deadline, so any buy that does start has the whole cutoff window to finish
+// well before fw_rom_service's own reboot could fire.
+#define FW_TRIAL_BUY_CUTOFF_MS (FW_TRIAL_DEADLINE_MS - 15000u)
 
 typedef enum {
     FW_TRIAL_NONE,

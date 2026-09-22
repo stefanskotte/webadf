@@ -19,6 +19,12 @@ static int      g_partition = -1;
 static volatile bool     g_bought;
 static volatile uint32_t g_reboot_req;        // 0 none, 1 normal, 2 flash update
 static volatile uint32_t g_reboot_off;
+// Fix round 1 (Important 2): buy vs. deadline-reboot race. fw_trial.c's own
+// cutoff (FW_TRIAL_BUY_CUTOFF_MS) stops core1 from STARTING a buy too close
+// to the deadline, but a buy already in flight and this core0 deadline check
+// are still two independent paths to a flash write / a reboot -- g_buying
+// makes them mutually exclusive so neither can act while the other is live.
+static volatile bool      g_buying;
 static uint8_t __aligned(4) g_work[4096];     // PT load (3.25 KB) and explicit_buy (4 KB)
 
 void fw_rom_boot_init(void) {
@@ -56,10 +62,17 @@ bool fw_rom_other_slot(uint32_t *off, uint32_t *len) {
 static void do_buy(void *p) { *(int *)p = rom_explicit_buy(g_work, sizeof g_work); }
 
 bool fw_rom_buy(void) {
+    // Claim the race against fw_rom_service's deadline reboot before doing
+    // anything else; if a reboot has already been requested, back off rather
+    // than start a flash write a reset could interrupt.
+    g_buying = true;
+    __dmb();
+    if (g_reboot_req != 0) { g_buying = false; return false; }
     int rc = -1;
-    if (flash_safe_execute(do_buy, &rc, 2000) != PICO_OK) return false;
+    if (flash_safe_execute(do_buy, &rc, 2000) != PICO_OK) { g_buying = false; return false; }
     wf_logf(rc == 0 ? WF_INFO : WF_ERR, "boot: explicit buy rc %d", rc);
     if (rc == 0) g_bought = true;
+    g_buying = false;
     return rc == 0;
 }
 
@@ -74,7 +87,9 @@ void fw_rom_watchdog_start(void) { watchdog_enable(8000, true); }
 void fw_rom_service(void) {
     // The trial deadline is enforced HERE, on core0, independent of core1: a
     // trial image whose network side hangs must still revert (spec M5/M6).
-    if (g_trial && !g_bought && g_reboot_req == 0 &&
+    // Skipped while a buy is in flight (g_buying) -- see fw_rom_buy and its
+    // comment: the two are mutually exclusive so a reset never lands mid-buy.
+    if (g_trial && !g_bought && !g_buying && g_reboot_req == 0 &&
         to_ms_since_boot(get_absolute_time()) >= FW_TRIAL_DEADLINE_MS) {
         wf_logf(WF_WARN, "boot: trial not confirmed within 5 minutes -- rebooting to revert");
         g_reboot_req = 1u;
