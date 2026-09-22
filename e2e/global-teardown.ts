@@ -115,6 +115,20 @@ export default async function globalTeardown() {
             and (u.email not like ${TEST_EMAIL} or u.email = ${KEEP}))`);
     const deltasRemoved = await reclaimDeltaBlobs(doomedDisks.rows.map((r) => r.id));
 
+    // BEFORE the cascade loop, not after.
+    //
+    // step_up_attempts is keyed by user id with no foreign key, so
+    // deleteUserCascade does not reach it -- and a delete that joins back to
+    // auth."user" only works while those rows still exist. Written after the
+    // loop it matched nothing and left a row per failed password attempt,
+    // which is precisely how 73 invite codes came to survive for weeks: a
+    // cleanup whose predicate depends on data an earlier step has already
+    // removed. Deleted by the doomed id list instead, which is in hand here.
+    if (doomed.rows.length > 0) {
+      await db.delete(stepUpAttempts)
+        .where(inArray(stepUpAttempts.userId, doomed.rows.map((r) => r.id)));
+    }
+
     for (const row of doomed.rows) {
       try {
         // The application's OWN cascade, already covered by
@@ -152,13 +166,6 @@ export default async function globalTeardown() {
     // The kept admin signs in afresh on every run, so its sessions only ever
     // accumulate -- 486 had built up from one row per suite run. Deleting
     // them logs nobody out who will not simply sign in again.
-    // Keyed by user id with no foreign key, so deleteUserCascade does not
-    // reach it and a row would outlive the account that made it.
-    await db.execute(sql`
-      delete from step_up_attempts
-      where user_id in (select id from auth."user" where email like ${TEST_EMAIL})
-    `);
-
     const sessions = await db.execute(sql`
       delete from auth."session" s
       using auth."user" u
