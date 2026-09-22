@@ -2,6 +2,7 @@ import { z } from 'zod';
 import { requireDevice, deviceAuthResponse } from '@/lib/device-auth';
 import { recordStatus } from '@/lib/mount';
 import { firmwareVersionSchema } from '@/lib/firmware-version';
+import { updateStateSchema, updateProtocolSchema } from '@/lib/firmware-update-state';
 
 export const maxDuration = 60;
 
@@ -26,6 +27,11 @@ const statusBody = z.object({
   // devices.firmware_version being whatever was true at pairing. Nullable so
   // a board with no version can say so explicitly rather than by omission.
   firmwareVersion: firmwareVersionSchema.nullable().optional(),
+  /** What this board can do. Absent leaves the column alone, as everywhere here. */
+  updateProtocol: updateProtocolSchema.optional(),
+  /** Null explicitly clears it -- "I am no longer mid-update". */
+  firmwareUpdateState: updateStateSchema.nullable().optional(),
+  firmwareUpdateError: z.string().max(200).nullable().optional(),
   error: z.string().max(500).nullable().optional(),
   psramFree: z.number().int().nonnegative().nullable().optional(),
   // Real WiFi RSSI ranges roughly -100..0 dBm, but a marginal link can report
@@ -84,6 +90,9 @@ export async function POST(request: Request) {
     mountedDiskId: parsed.data.mountedDiskId,
     version: parsed.data.version,
     firmwareVersion: parsed.data.firmwareVersion,
+    updateProtocol: parsed.data.updateProtocol,
+    firmwareUpdateState: parsed.data.firmwareUpdateState,
+    firmwareUpdateError: parsed.data.firmwareUpdateError,
     error: parsed.data.error,
     psramFree: parsed.data.psramFree,
     rssi: parsed.data.rssi,

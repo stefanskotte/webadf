@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import { firmwareVersionSchema } from '@/lib/firmware-version';
+import { updateProtocolSchema } from '@/lib/firmware-update-state';
 import { and, eq, gt, isNull } from 'drizzle-orm';
 import { getDb } from '@/db';
 import { devices, pairingCodes } from '@/db/schema/devices';
@@ -18,6 +19,7 @@ const MAC_RE = /^([0-9A-Fa-f]{2}:){5}[0-9A-Fa-f]{2}$/;
 const registerBody = z.object({
   pairingCode: z.string().min(1).max(32),
   firmwareVersion: firmwareVersionSchema,
+  updateProtocol: updateProtocolSchema.optional(),
   macAddress: z.string().regex(MAC_RE),
 });
 
@@ -92,6 +94,7 @@ export async function POST(request: Request) {
     name,
     tokenHash: hash,
     firmwareVersion: parsed.data.firmwareVersion,
+    updateProtocol: parsed.data.updateProtocol,
     macAddress: parsed.data.macAddress,
   });
 

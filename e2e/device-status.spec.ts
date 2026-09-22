@@ -281,3 +281,62 @@ test('an over-long version is refused rather than truncated', async ({ page, req
   });
   expect(res.status()).toBe(400);
 });
+
+test('a device reports its update capability and its progress', async ({ page, request }) => {
+  await signUpFresh(page);
+  const { deviceId, token } = await pairDevice(page, request);
+
+  const res = await request.post('/api/device/status', {
+    headers: authHeader(token),
+    data: {
+      mountedSha256: null, updateProtocol: 1,
+      firmwareUpdateState: 'downloading', firmwareUpdateError: null,
+    },
+  });
+  expect(res.status()).toBe(204);
+
+  const row = await deviceRow(deviceId);
+  expect(row.updateProtocol).toBe(1);
+  expect(row.firmwareUpdateState).toBe('downloading');
+});
+
+/**
+ * The whole verification story. Nothing tells the server the update worked --
+ * the board simply reports the version it is running, and that ending up equal
+ * to what was asked for IS the success signal.
+ */
+test('reporting the desired version clears the update, with no success message', async ({ page, request }) => {
+  await signUpFresh(page);
+  const { deviceId, token } = await pairDevice(page, request);
+
+  await getDb().update(devices)
+    .set({ desiredFirmwareVersion: '9.9.9+gfeedface', firmwareUpdateState: 'applying' })
+    .where(eq(devices.id, deviceId));
+
+  await request.post('/api/device/status', {
+    headers: authHeader(token),
+    data: { mountedSha256: null, firmwareVersion: '9.9.9+gfeedface' },
+  });
+
+  const row = await deviceRow(deviceId);
+  expect(row.firmwareVersion).toBe('9.9.9+gfeedface');
+  expect(row.desiredFirmwareVersion).toBeNull();
+  expect(row.firmwareUpdateState).toBeNull();
+});
+
+test('reporting a DIFFERENT version leaves the update pending', async ({ page, request }) => {
+  await signUpFresh(page);
+  const { deviceId, token } = await pairDevice(page, request);
+
+  await getDb().update(devices)
+    .set({ desiredFirmwareVersion: '9.9.9+gfeedface' })
+    .where(eq(devices.id, deviceId));
+
+  await request.post('/api/device/status', {
+    headers: authHeader(token),
+    data: { mountedSha256: null, firmwareVersion: '1.0.0+gsomething' },
+  });
+
+  const row = await deviceRow(deviceId);
+  expect(row.desiredFirmwareVersion).toBe('9.9.9+gfeedface');
+});

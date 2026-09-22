@@ -188,6 +188,9 @@ export async function recordStatus(
     version?: number;
     /** The board's own firmware version, refreshed on every heartbeat. */
     firmwareVersion?: string | null;
+    updateProtocol?: number;
+    firmwareUpdateState?: string | null;
+    firmwareUpdateError?: string | null;
     error?: string | null;
     psramFree?: number | null;
     rssi?: number | null;
@@ -210,6 +213,32 @@ export async function recordStatus(
   // every other optional field here -- a partial report must never wipe a
   // value a fuller one established.
   if (s.firmwareVersion !== undefined) patch.firmwareVersion = s.firmwareVersion;
+  if (s.updateProtocol !== undefined) patch.updateProtocol = s.updateProtocol;
+  if (s.firmwareUpdateState !== undefined) patch.firmwareUpdateState = s.firmwareUpdateState;
+  if (s.firmwareUpdateError !== undefined) patch.firmwareUpdateError = s.firmwareUpdateError;
+
+  // An update is COMPLETE when the board reports running the exact version it
+  // was asked to run. The device never says "I succeeded" -- this is the only
+  // evidence that counts, and the board produces it by running rather than by
+  // claiming. Read the current desired value first: it is not in `patch`, and
+  // a partial report must not clear an update it said nothing about.
+  //
+  // In the SAME write as the version, so there is never an instant where the
+  // device reads as running the target while the update still looks pending.
+  if (s.firmwareVersion) {
+    const [want] = await db
+      .select({ desired: devices.desiredFirmwareVersion })
+      .from(devices)
+      .where(eq(devices.id, deviceId))
+      .limit(1);
+    if (want?.desired && want.desired === s.firmwareVersion) {
+      patch.desiredFirmwareVersion = null;
+      patch.desiredFirmwareSetAt = null;
+      patch.desiredFirmwareSetByUserId = null;
+      patch.firmwareUpdateState = null;
+      patch.firmwareUpdateError = null;
+    }
+  }
 
   if (s.mountedDiskId !== undefined) {
     patch.mountedDiskId = s.mountedDiskId;
