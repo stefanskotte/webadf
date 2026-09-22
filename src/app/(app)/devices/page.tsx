@@ -2,9 +2,10 @@ import { requireOrg } from '@/lib/session';
 import { listDevices } from '@/lib/queries';
 import { listReleases } from '@/lib/firmware-releases';
 import { firmwareState, countBehind, buildRegistry } from '@/lib/firmware-state';
+import { refuseTarget } from '@/lib/firmware-update-rules';
 import { isOnline } from '@/lib/device-state';
 import { PageHeader } from '@/components/shell/page-header';
-import { DeviceCard } from '@/components/devices/device-card';
+import { DeviceList } from '@/components/devices/device-list';
 import { PairButton } from '@/components/devices/pair-button';
 import { FirmwareNotice } from '@/components/devices/firmware-notice';
 
@@ -31,6 +32,13 @@ export default async function DevicesPage() {
   // ordinary one must not go quiet for the boards still missing the fix.
   const securityPending = states.some((s) => s.kind === 'behind' && s.securityPending);
 
+  // Computed HERE, with the same refuseTarget the batch route rejects with, so
+  // the UI can never offer a checkbox for something the server would refuse.
+  // A board that cannot update gets no control at all rather than a dead one.
+  const selectableIds = registry.latest
+    ? devices.filter((d) => refuseTarget(d, registry.latest!, registry) === null).map((d) => d.id)
+    : [];
+
   return (
     <>
       <PageHeader
@@ -49,7 +57,8 @@ export default async function DevicesPage() {
             No devices paired yet. Press <strong>Pair a device</strong> and enter the code on the hardware.
           </div>
         ) : (
-          devices.map((d, i) => <DeviceCard key={d.id} device={d} now={now} firmware={states[i]} />)
+          <DeviceList devices={devices} now={now} states={states}
+                      selectableIds={selectableIds} latest={registry.latest} />
         )}
       </div>
     </>

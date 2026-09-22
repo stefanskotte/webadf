@@ -1,14 +1,27 @@
 import { deviceState, relative } from '@/lib/device-state';
-import { firmwareLabel, type FirmwareState } from '@/lib/firmware-state';
+import { firmwareLabel, updateLabel, type FirmwareState } from '@/lib/firmware-state';
 import { isDefaultDeviceName } from '@/lib/device-name';
 import type { DeviceListItem } from '@/lib/queries';
 import { EjectButton } from './eject-button';
 import { DeviceAlias } from './device-alias';
 
 export function DeviceCard(
-  { device, now, firmware }: { device: DeviceListItem; now: number; firmware: FirmwareState },
+  { device, now, firmware, selection }: {
+    device: DeviceListItem; now: number; firmware: FirmwareState;
+    /** Absent when this board cannot be updated -- no checkbox is drawn at all. */
+    selection?: { selected: boolean; onToggle: (id: string) => void };
+  },
 ) {
   const state = deviceState(device, now);
+
+  // An update in flight REPLACES the firmware line: there is no value in
+  // telling someone watching a download that they are two releases behind.
+  const update = updateLabel({
+    state: device.firmwareUpdateState,
+    mounted: device.mountedSha256 !== null,
+    target: device.desiredFirmwareVersion,
+    error: device.firmwareUpdateError,
+  });
 
 
   // A pending state means desired and actual differ. That is a MOUNT when a
@@ -51,6 +64,15 @@ export function DeviceCard(
           width where the line already fits.
         */}
         <div className="flex min-w-0 flex-col gap-0.5">
+          {selection && (
+            <label className="flex items-center gap-2 text-[11px]"
+                   style={{ color: 'var(--muted)' }}>
+              <input type="checkbox" checked={selection.selected}
+                     onChange={() => selection.onToggle(device.id)}
+                     data-testid={`device-select-${device.id}`} />
+              Select for update
+            </label>
+          )}
           <DeviceAlias deviceId={device.id} name={device.name}
                        isDefault={isDefaultDeviceName(device.name, device.macAddress)} />
           <span className="break-words font-mono text-[11px]" style={{ color: 'var(--muted)' }}>
@@ -63,9 +85,12 @@ export function DeviceCard(
             is the one thing on this card a human acts on.
           */}
           <span className="break-words font-mono text-[11px]"
-                style={{ color: firmware.kind === 'behind' ? 'var(--amber-text)' : 'var(--muted)' }}
+                style={{
+                  color: update || firmware.kind === 'behind'
+                    ? 'var(--amber-text)' : 'var(--muted)',
+                }}
                 data-testid={`device-firmware-${device.id}`}>
-            {firmwareLabel(firmware)}
+            {update ?? firmwareLabel(firmware)}
           </span>
         </div>
         {(device.desiredSha256 || device.mountedSha256) && <EjectButton deviceId={device.id} />}

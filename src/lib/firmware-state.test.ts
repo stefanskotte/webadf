@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import {
-  firmwareState, countBehind, buildRegistry, firmwareLabel, type ReleaseRef,
+  firmwareState, countBehind, buildRegistry, firmwareLabel, updateLabel, type ReleaseRef,
 } from './firmware-state';
 
 const rel = (version: string, sequence: number, semver: string, security = false): ReleaseRef =>
@@ -137,5 +137,36 @@ describe('countBehind', () => {
 
   it('is zero for an empty fleet', () => {
     expect(countBehind([])).toBe(0);
+  });
+});
+
+describe('updateLabel', () => {
+  it('says what is happening, and warns before a flash', () => {
+    expect(updateLabel({ state: 'queued', mounted: true, target: '1.2.0+gc333333' }))
+      .toBe('update queued — waiting for eject');
+    expect(updateLabel({ state: 'queued', mounted: false, target: '1.2.0+gc333333' }))
+      .toBe('update queued');
+    expect(updateLabel({ state: 'downloading', mounted: false, target: '1.2.0+gc333333' }))
+      .toBe('downloading 1.2.0+gc333333');
+    expect(updateLabel({ state: 'applying', mounted: false, target: '1.2.0+gc333333' }))
+      .toBe('applying 1.2.0+gc333333 — do not power off');
+  });
+
+  it('names the reason a failure gives, rather than just "failed"', () => {
+    expect(updateLabel({ state: 'failed', mounted: false, target: '1.2.0+gc333333',
+                         error: 'signature mismatch' }))
+      .toBe('update failed — signature mismatch');
+    expect(updateLabel({ state: 'failed', mounted: false, target: '1.2.0+gc333333' }))
+      .toBe('update failed — reason not reported');
+  });
+
+  // The gap between the operator pressing Update and the board's next poll.
+  it('says an update is requested before the board has said anything', () => {
+    expect(updateLabel({ state: null, mounted: false, target: '1.2.0+gc333333' }))
+      .toBe('update requested');
+  });
+
+  it('is null when nothing is wanted, so the card falls back to the plain line', () => {
+    expect(updateLabel({ state: null, mounted: false, target: null })).toBeNull();
   });
 });

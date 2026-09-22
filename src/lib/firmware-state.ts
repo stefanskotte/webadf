@@ -111,3 +111,34 @@ export function firmwareLabel(state: FirmwareState): string {
     : `${state.releasesBehind} ${state.releasesBehind === 1 ? 'release' : 'releases'} behind`;
   return `fw ${state.version} · ${suffix}`;
 }
+
+/**
+ * How an update IN FLIGHT is worded. Null when none is wanted, in which case
+ * the card shows the plain firmware line instead.
+ *
+ * Here rather than in the component, for the same reason firmwareLabel is:
+ * the wording is then covered by vitest rather than only by a full Playwright
+ * run against the live database, and no second surface can drift on what
+ * these states are called.
+ *
+ * It takes no FirmwareState. An update in flight is described entirely by the
+ * update's own fields; how far behind the board was before it started is not
+ * something anyone watching a download needs to be told.
+ */
+export function updateLabel(u: {
+  state: string | null;
+  mounted: boolean;
+  target: string | null;
+  error?: string | null;
+}): string | null {
+  if (!u.target) return null;
+  switch (u.state) {
+    // Reporting what the BOARD decided, not what the server hopes: the device
+    // enforces the never-flash-while-mounted rule itself.
+    case 'queued': return u.mounted ? 'update queued — waiting for eject' : 'update queued';
+    case 'downloading': return `downloading ${u.target}`;
+    case 'applying': return `applying ${u.target} — do not power off`;
+    case 'failed': return `update failed — ${u.error ?? 'reason not reported'}`;
+    default: return 'update requested';
+  }
+}

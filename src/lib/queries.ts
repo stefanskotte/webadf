@@ -299,6 +299,12 @@ async function withDerived<T extends { id: string; authored: boolean; diskId: st
 export interface DeviceListItem {
   id: string; name: string;
   firmwareVersion: string | null; macAddress: string | null;
+  // Firmware updates. updateProtocol is the capability gate -- null means the
+  // board cannot be updated, so no control is offered for it at all.
+  updateProtocol: number | null;
+  desiredFirmwareVersion: string | null;
+  firmwareUpdateState: string | null;
+  firmwareUpdateError: string | null;
   rssi: number | null; psramFree: number | null;
   lastSeenAt: Date | null; lastError: string | null; lastErrorAt: Date | null;
   desiredSha256: string | null; mountedSha256: string | null;
@@ -334,6 +340,10 @@ export async function listDevices(orgId: string): Promise<DeviceListItem[]> {
     .select({
       id: devices.id, name: devices.name,
       firmwareVersion: devices.firmwareVersion, macAddress: devices.macAddress,
+      updateProtocol: devices.updateProtocol,
+      desiredFirmwareVersion: devices.desiredFirmwareVersion,
+      firmwareUpdateState: devices.firmwareUpdateState,
+      firmwareUpdateError: devices.firmwareUpdateError,
       rssi: devices.rssi, psramFree: devices.psramFree,
       lastSeenAt: devices.lastSeenAt,
       lastError: devices.lastError, lastErrorAt: devices.lastErrorAt,

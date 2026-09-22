@@ -2,6 +2,7 @@ import { test, expect, type APIRequestContext } from '@playwright/test';
 import { signUpFresh } from './helpers';
 import {
   pairDevice, authHeader, publishTestRelease, cleanupSeeded, cleanupTestReleases,
+  desiredFirmwareOf,
 } from './device-helpers';
 
 // Both, and the releases FIRST. cleanupSeeded does not touch
@@ -126,3 +127,58 @@ test('a security release skipped over by a later ordinary one still says securit
  * publishes a genuine release the registry is never empty again. A test that
  * can only pass on a database nobody has used yet is worse than no test.
  */
+
+test('a board that cannot update gets no checkbox', async ({ page, request }) => {
+  await signUpFresh(page);
+  const { deviceId, token } = await pairDevice(page, request);
+  await publishTestRelease('0.0.0-e2e.60+gaa60000');
+  await report(request, token, '0.0.0-e2e.60+gaa60000');   // no updateProtocol
+
+  await page.goto('/devices');
+  // Not a disabled control -- nothing at all. Every board in the field today
+  // is in this state, and a dead button on all of them would be worse than none.
+  await expect(page.getByTestId(`device-select-${deviceId}`)).toHaveCount(0);
+});
+
+test('a capable board behind the newest release can be selected and updated', async ({ page, request }) => {
+  const { password } = await signUpFresh(page);
+  const { deviceId, token } = await pairDevice(page, request);
+  await publishTestRelease('0.0.0-e2e.61+gaa61000');
+  await publishTestRelease('0.0.0-e2e.62+gaa62000');
+  await request.post('/api/device/status', {
+    headers: authHeader(token),
+    data: { mountedSha256: null, firmwareVersion: '0.0.0-e2e.61+gaa61000', updateProtocol: 1 },
+  });
+
+  await page.goto('/devices');
+  await page.getByTestId(`device-select-${deviceId}`).check();
+  await expect(page.getByTestId('update-bar')).toContainText('1 selected');
+  await page.getByTestId('update-start').click();
+  await expect(page.getByTestId('update-dialog'))
+    .toContainText('will wait until it is ejected');
+  await page.getByTestId('update-password').fill(password);
+  await page.getByTestId('update-confirm').click();
+
+  await expect(page.getByTestId(`device-firmware-${deviceId}`))
+    .toContainText('update requested');
+});
+
+test('a wrong password in the dialog changes nothing', async ({ page, request }) => {
+  await signUpFresh(page);
+  const { deviceId, token } = await pairDevice(page, request);
+  await publishTestRelease('0.0.0-e2e.63+gaa63000');
+  await publishTestRelease('0.0.0-e2e.64+gaa64000');
+  await request.post('/api/device/status', {
+    headers: authHeader(token),
+    data: { mountedSha256: null, firmwareVersion: '0.0.0-e2e.63+gaa63000', updateProtocol: 1 },
+  });
+
+  await page.goto('/devices');
+  await page.getByTestId(`device-select-${deviceId}`).check();
+  await page.getByTestId('update-start').click();
+  await page.getByTestId('update-password').fill('not-the-password');
+  await page.getByTestId('update-confirm').click();
+
+  await expect(page.getByTestId('update-dialog')).toBeVisible();
+  expect(await desiredFirmwareOf(deviceId)).toBeNull();
+});
