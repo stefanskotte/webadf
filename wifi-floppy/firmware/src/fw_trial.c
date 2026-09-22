@@ -6,7 +6,7 @@ fw_trial_action_t fw_trial_decide(const fw_trial_in_t *in, const char **reason) 
     *reason = NULL;
     if (!in->trial_boot) return FW_TRIAL_NONE;
     if (in->st->pending && strcmp(in->st->pending_version, in->running_version) != 0) {
-        *reason = "version mismatch: the image does not report the release version";
+        *reason = "version mismatch";
         return FW_TRIAL_GIVE_UP;
     }
     if (in->ms_since_boot >= FW_TRIAL_DEADLINE_MS) {

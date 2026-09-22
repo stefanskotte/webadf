@@ -1,5 +1,6 @@
 #include "harness.h"
 #include "../src/fw_trial.h"
+#include "../src/fw_state.h"
 #include <string.h>
 
 static fw_state_t st_pending(const char *ver, uint32_t seq) {
@@ -97,6 +98,39 @@ static void test_reconcile_confirms_a_buy_whose_record_was_lost(void) {
     CHECK(!s.pending, "cleared");
 }
 
+// Verify that all GIVE_UP reasons fit in the failure field (FW_STATE_REASON_MAX = 48 bytes).
+static void test_give_up_reasons_fit_in_failure_field(void) {
+    // Test version mismatch reason
+    {
+        fw_state_t s = st_pending("1.1.0+gOTHER", 5);
+        fw_trial_in_t in = in_for(&s, true, true, 10);
+        const char *why = NULL;
+        CHECK_EQ_INT(fw_trial_decide(&in, &why), FW_TRIAL_GIVE_UP);
+        CHECK(why != NULL, "reason is set");
+        CHECK(strlen(why) <= FW_STATE_REASON_MAX,
+              "version mismatch reason fits in failure field");
+    }
+    // Test deadline reason
+    {
+        fw_state_t s = st_pending("1.1.0+gnew", 5);
+        fw_trial_in_t in = in_for(&s, true, true, FW_TRIAL_DEADLINE_MS);
+        const char *why = NULL;
+        CHECK_EQ_INT(fw_trial_decide(&in, &why), FW_TRIAL_GIVE_UP);
+        CHECK(why != NULL, "reason is set");
+        CHECK(strlen(why) <= FW_STATE_REASON_MAX,
+              "deadline reason fits in failure field");
+    }
+}
+
+// USB install with no heartbeat that reaches deadline gives up (not a buy).
+static void test_usb_install_no_heartbeat_at_deadline_gives_up(void) {
+    fw_state_t s; memset(&s, 0, sizeof s);
+    fw_trial_in_t in = in_for(&s, true, false, FW_TRIAL_DEADLINE_MS);
+    const char *why = NULL;
+    CHECK_EQ_INT(fw_trial_decide(&in, &why), FW_TRIAL_GIVE_UP);
+    CHECK(why && strstr(why, "5 minutes") != NULL, "reason names the deadline");
+}
+
 int main(void) {
     RUN(test_a_normal_boot_is_not_a_trial);
     RUN(test_waits_until_a_heartbeat_lands);
@@ -109,5 +143,7 @@ int main(void) {
     RUN(test_reconcile_revert_reports_the_trial_reason);
     RUN(test_reconcile_revert_without_a_reason);
     RUN(test_reconcile_confirms_a_buy_whose_record_was_lost);
+    RUN(test_give_up_reasons_fit_in_failure_field);
+    RUN(test_usb_install_no_heartbeat_at_deadline_gives_up);
     return REPORT();
 }
