@@ -37,7 +37,7 @@ after plan 4a, rewritten again 2026-08-31 after plan 4b.**
 | **e2e cleanup** | ✅ **done, merged and live 2026-09-01.** A run no longer leaks; 4,600 accumulated rows and 73 live invite codes swept; see 3e |
 | **User-defined collections** | ✅ **done, all 9 tasks, merged to `master` and live in production.** A rail on `/library`, drag to file and to reorder; migration 0011 applied; see 3g |
 | **Library covers, type pills, contrast** | ✅ **done, merged and live 2026-09-01.** Grid shows real cover art; grid and table both show a TOSEC-derived type; the grey ramp now passes WCAG AA |
-| **Firmware update (server half)** | ✅ **done 2026-09-22, increment 2a.** Select boards, press Update, password, and each converges. **No firmware implements the protocol** — every test drives a simulated device, and the control is gated on a capability no board reports yet; see 3aj |
+| **Firmware update (server half)** | 🔵 **on `feat/firmware-update-server`, NOT merged, 2026-09-22.** Select boards, press Update, password, and each converges. **No firmware implements the protocol** — every test drives a simulated device, and the control is gated on a capability no board reports yet; see 3aj |
 | **Firmware release registry** | ✅ **done 2026-09-22, increment 1 of 2.** The version identifies a build and is refreshed on every heartbeat; `firmware_releases` + `/admin/firmware`; Devices says which boards are behind. **No device is updated by it** — no OTA path exists in the firmware; see 3ai |
 | **Shell polish** | ✅ **done 2026-09-02.** The "/" hint, both navs centred on the viewport, zebra-striped file tree, and a navigation bar + scrim; see 3i |
 | **Mobile responsive** | ✅ **done 2026-09-02, all surfaces.** Usable at 390px; nav becomes a bottom bar, touch drag no longer eats scrolling; see 3j |
@@ -4223,7 +4223,11 @@ Demozoo API (the bulk export makes per-lookup load on a non-profit unnecessary).
   allowlist checks only the first URL (the raster content-type allowlist and `nosniff` still apply).
 - **Cron drift:** the daily 01:30 cron against a 7-day gate can drift a refetch to 8 days.
 
-### 3aj. Select boards, press Update — the server half — DONE 2026-09-22
+### 3aj. Select boards, press Update — the server half — ON A BRANCH 2026-09-22, NOT MERGED
+
+**STATUS: `feat/firmware-update-server`, not merged, not pushed, not deployed.** Production
+runs §3ai only. Read the "Where it stands" note at the end of this section before resuming.
+
 
 Increment 2a. Spec: `docs/superpowers/specs/2026-09-22-firmware-update-server-design.md`.
 Plan: `docs/superpowers/plans/2026-09-22-firmware-update-server.md`. Builds directly on
@@ -4259,8 +4263,14 @@ consistent with the first, for fleet-scale observability one board does not need
   dialog listing every board, the release notes, the security flag, and the sentence that a
   board holding a disk will wait.
 
-**Gates:** 974 vitest, build clean, 2,467 firmware host checks (untouched), **full Playwright
-green**.
+**Gates as at the end of 2026-09-22:** 978 vitest, `pnpm build` clean, 2,467 firmware host
+checks (untouched), Playwright **324 passed / 2 failed** — `adf-browser.spec.ts:180` and
+`disk-files-edit.spec.ts:259`, both of which **pass in isolation (14/14)**. Neither touches
+firmware. Two earlier full runs on this branch failed on *different* unrelated specs that
+also passed alone (`create-adf` x4, `demozoo`), and one run was 326/0, so the suite has
+intermittent cross-spec interference that predates this work. **Do not treat that as
+settled** — it deserves a bisect of its own, and until then a full run's result has to be
+read with the isolation re-run beside it.
 
 **THE TWO THINGS TO READ BEFORE TOUCHING THIS**
 
@@ -4308,6 +4318,31 @@ green**.
 **Fixtures:** `publishTestRelease` records a `blobPath` with **no object behind it** — fine
 for UI specs, useless for the download path. `publishTestReleaseWithBlob` puts real bytes
 and registers them for teardown.
+
+**WHERE IT STANDS, AND WHAT TO DO NEXT (written 2026-09-22, end of session).**
+
+The branch is complete against its plan and has been through **two whole-branch review
+rounds**. Round one found fourteen findings; round two found seven more, **two of which were
+regressions round one's own fixes introduced** — so a third pass over the round-two fixes is
+the next thing, before any merge. That is not pessimism: each round so far has found real
+defects in the previous round's fixes, and there is no evidence yet that it has stopped.
+
+Round two's fixes, in case a fresh session needs the shape of them: the completion `CASE`
+was clobbering the state carried by the same heartbeat; a cancellation moved the cursor but
+sent nothing to acknowledge, so the hold collapsed into an immediate-return loop; the lockout
+counter never decayed; `content-length` came from a row rather than the bytes; the tick read
+had become two queries; and the Update button could post an empty batch.
+
+**Known and NOT fixed**, deliberately, each with a reason:
+- **The e2e suite writes to the live global `firmware_releases`.** During a run its rows are
+  the newest release the product compares every board against. The real fix is a separate
+  database for the suite (Neon branching) and it is its own increment. It is bounded today
+  because no real board reports `updateProtocol`, so `refuseTarget` refuses every one of
+  them — a `channel` column was written to close this and then reverted, because any guard
+  strong enough to protect a real board also blocks the simulated one that tests the feature.
+- **The 50-device batch cap has no UI counterpart** — it surfaces as a generic toast.
+- **The confirm dialog is a third hand-rolled modal**, missing `role="dialog"`,
+  `aria-modal`, Escape-to-close and the portal that `delete-user-dialog.tsx` has.
 
 **What increment 2b owes:** the firmware. A/B flash slots, the download, signature
 verification against the compiled-in public key, anti-rollback on the `sequence` this
