@@ -1,10 +1,11 @@
 import { randomUUID } from 'node:crypto';
-import { and, eq, inArray, notInArray } from 'drizzle-orm';
+import { and, eq, inArray, like, notInArray } from 'drizzle-orm';
 import type { Page, APIRequestContext } from '@playwright/test';
 import { getDb } from '@/db';
 import { blobs, disks, games, entitlements } from '@/db/schema/catalog';
 import { devices, pairingCodes } from '@/db/schema/devices';
 import { diskVersions } from '@/db/schema/disk-history';
+import { firmwareReleases } from '@/db/schema/firmware';
 import { collections } from '@/db/schema/collections';
 import { organization, member, user } from '@/db/schema/auth';
 import { diskStore } from '@/lib/storage';
@@ -334,4 +335,70 @@ export async function cleanupSeeded(): Promise<void> {
     seeded.pairingCodes.length = 0;
     signedUpOrgIds.length = 0;
   }
+}
+
+// --- firmware releases -------------------------------------------------
+//
+// firmware_releases is GLOBAL, not org-scoped, so the @example.test email
+// boundary that protects everything else in this suite does NOT cover it.
+// The version prefix is the only guard, and it is applied on both sides:
+// publishTestRelease refuses to write anything without it, and
+// cleanupTestReleases deletes by exactly it. Widening either is how the
+// operator's real registry -- the one the Devices tab compares every board
+// against -- would start accumulating rows from a test run.
+
+/** Every release this suite publishes carries this prefix. Nothing else may use it. */
+export const E2E_RELEASE_PREFIX = '0.0.0-e2e';
+
+/**
+ * Inserted directly rather than through publishRelease(), for two reasons:
+ * the publish rules refuse a semver below the current maximum (so a suite
+ * publishing real-looking versions would be ordered against whatever the
+ * operator last shipped), and they require version to start with `semver+`
+ * (which a prefixed test version deliberately does not).
+ */
+export async function publishTestRelease(
+  version: string,
+  opts: { security?: boolean; notes?: string } = {},
+): Promise<void> {
+  if (!version.startsWith(E2E_RELEASE_PREFIX)) {
+    throw new Error(`e2e releases must start with ${E2E_RELEASE_PREFIX}, got ${version}`);
+  }
+  const db = getDb();
+  // max+1 across the WHOLE table, so a seeded release is always newest.
+  //
+  // That is what makes the specs deterministic AND what makes them visible:
+  // while these rows exist, they are the newest release production compares
+  // every real board against. The window is bounded by cleanupTestReleases in
+  // each spec's afterAll -- not only by the global teardown, which runs once
+  // at the very end of a multi-minute suite.
+  const rows = await db.select({ sequence: firmwareReleases.sequence }).from(firmwareReleases);
+  const sequence = rows.reduce((m, r) => (r.sequence > m ? r.sequence : m), 0) + 1;
+  await db.insert(firmwareReleases).values({
+    id: randomUUID(),
+    version,
+    semver: '0.0.0',
+    sequence,
+    sha256: 'e'.repeat(64),
+    sizeBytes: 1024,
+    blobPath: `firmware/${version}.uf2`,
+    signature: 'ZTJlLXRlc3Q=',
+    signingKeyId: 'e2e',
+    notes: opts.notes ?? null,
+    security: opts.security ?? false,
+    publishedByUserId: 'e2e',
+  })
+    // The version strings are fixed literals, so a run whose cleanup did not
+    // complete would make every later run die on a duplicate-key error that
+    // names nothing about firmware. Same idiom seedDisk already uses.
+    .onConflictDoNothing();
+}
+
+/** Removes every release this suite published. Called from the global teardown. */
+export async function cleanupTestReleases(): Promise<number> {
+  const removed = await getDb()
+    .delete(firmwareReleases)
+    .where(like(firmwareReleases.version, `${E2E_RELEASE_PREFIX}%`))
+    .returning({ id: firmwareReleases.id });
+  return removed.length;
 }

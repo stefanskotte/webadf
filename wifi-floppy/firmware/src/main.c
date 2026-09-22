@@ -33,6 +33,9 @@
 #include "i2c_probe.h"
 #include "ssd1306.h"
 #include "display.h"
+// Generated at BUILD time by cmake/gen_version_header.cmake, so the string
+// always matches the commit this image was compiled from.
+#include "wifi_floppy_version.h"
 #include "flux_capture.h"
 #include "flux_bits.h"
 #include "mfm.h"
@@ -1004,7 +1007,7 @@ static void core1_main(void) {
             static device_client_t reg;
             dc_init(&reg, tls_transport(), clock_ms, WEBADF_HOST, NULL);
             dc_register_result_t rr;
-            while ((rr = dc_register(&reg, prov.cfg.code, FIRMWARE_VERSION, mac))
+            while ((rr = dc_register(&reg, prov.cfg.code, WF_FIRMWARE_VERSION, mac))
                    != DC_REG_OK) {
                 if (rr == DC_REG_BAD_CODE) {
                     // Spec D-4b-4: terminal, not retryable -- the code is
@@ -1134,7 +1137,7 @@ static void core1_main(void) {
             bool report_owed = strcmp(c.mounted_sha256, last_reported_sha) != 0 ||
                                 c.mounted_version != last_reported_version;
             if (report_owed && c.state != DC_HALTED) {
-                if (dc_report_status(&c, psram_free_estimate(), wifi_rssi(), NULL)) {
+                if (dc_report_status(&c, psram_free_estimate(), wifi_rssi(), NULL, WF_FIRMWARE_VERSION)) {
                     last_status_ms = clock_ms();
                     strncpy(last_reported_sha, c.mounted_sha256, sizeof(last_reported_sha) - 1);
                     last_reported_sha[sizeof(last_reported_sha) - 1] = '\0';
@@ -1260,7 +1263,7 @@ static void core1_main(void) {
             // and sending the same report again here would double it.
             if (!report_retry && s != DC_HALTED && (disk_changed || version_changed ||
                                     (now - last_status_ms) >= DC_STATUS_PERIOD_MS)) {
-                if (dc_report_status(&c, psram_free_estimate(), wifi_rssi(), NULL)) {
+                if (dc_report_status(&c, psram_free_estimate(), wifi_rssi(), NULL, WF_FIRMWARE_VERSION)) {
                     last_status_ms = now;
                     strncpy(last_reported_sha, c.mounted_sha256, sizeof(last_reported_sha) - 1);
                     last_reported_sha[sizeof(last_reported_sha) - 1] = '\0';

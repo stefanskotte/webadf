@@ -186,6 +186,8 @@ export async function recordStatus(
     mountedSha256: string | null;
     mountedDiskId?: string | null;
     version?: number;
+    /** The board's own firmware version, refreshed on every heartbeat. */
+    firmwareVersion?: string | null;
     error?: string | null;
     psramFree?: number | null;
     rssi?: number | null;
@@ -204,6 +206,10 @@ export async function recordStatus(
     patch.lastErrorAt = s.error ? new Date() : null;
   }
   if (s.version !== undefined) patch.mountedVersion = s.version;
+  // Absent leaves the column alone; an explicit null clears it. Same rule as
+  // every other optional field here -- a partial report must never wipe a
+  // value a fuller one established.
+  if (s.firmwareVersion !== undefined) patch.firmwareVersion = s.firmwareVersion;
 
   if (s.mountedDiskId !== undefined) {
     patch.mountedDiskId = s.mountedDiskId;

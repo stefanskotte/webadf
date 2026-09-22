@@ -4,12 +4,13 @@ import { usePathname } from 'next/navigation';
 
 // Mirrors the app shell's TopNav styling, but over the admin routes. Exact
 // matching on href, not startsWith: '/admin' is a prefix of every other entry,
-// so startsWith would light up Overview on all three pages.
+// so startsWith would light up Overview on every other page.
 const ITEMS = [
   { href: '/admin', label: 'Overview' },
   { href: '/admin/users', label: 'Users' },
   { href: '/admin/invites', label: 'Invites' },
   { href: '/admin/scan', label: 'Scan' },
+  { href: '/admin/firmware', label: 'Firmware' },
 ];
 
 export function AdminNav() {

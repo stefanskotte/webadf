@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import { requireDevice, deviceAuthResponse } from '@/lib/device-auth';
 import { recordStatus } from '@/lib/mount';
+import { firmwareVersionSchema } from '@/lib/firmware-version';
 
 export const maxDuration = 60;
 
@@ -19,6 +20,12 @@ const statusBody = z.object({
   // The desired_version this report reflects (spec §4). Optional: older
   // firmware, or a report sent before any version has ever been observed.
   version: z.number().int().nonnegative().optional(),
+  // Telemetry, like rssi and psramFree below: optional, and ABSENT means
+  // "not reported" rather than "cleared" (the same rule mountedDiskId's note
+  // above states). A board sends it on every heartbeat, which is what stops
+  // devices.firmware_version being whatever was true at pairing. Nullable so
+  // a board with no version can say so explicitly rather than by omission.
+  firmwareVersion: firmwareVersionSchema.nullable().optional(),
   error: z.string().max(500).nullable().optional(),
   psramFree: z.number().int().nonnegative().nullable().optional(),
   // Real WiFi RSSI ranges roughly -100..0 dBm, but a marginal link can report
@@ -76,6 +83,7 @@ export async function POST(request: Request) {
     mountedSha256: parsed.data.mountedSha256,
     mountedDiskId: parsed.data.mountedDiskId,
     version: parsed.data.version,
+    firmwareVersion: parsed.data.firmwareVersion,
     error: parsed.data.error,
     psramFree: parsed.data.psramFree,
     rssi: parsed.data.rssi,

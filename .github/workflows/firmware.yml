@@ -81,16 +81,31 @@ jobs:
       # Signed release builds for the in-app updater will need a different
       # arrangement: see HANDOFF.md, which argues the signing key must not
       # live on the server either.
+      #
+      # FIRMWARE_VERSION is NOT passed any more. It was deleted from
+      # CMakeLists.txt when the version became a build-time generated header
+      # (cmake/gen_version_header.cmake), and CMake answers an unused -D with
+      # a warning and exit 0 -- so passing it would silently do nothing while
+      # the manifest below claimed a version the image does not carry. That is
+      # exactly the drift the generated header exists to remove.
       - name: Build
-        env:
-          FW_VERSION: ${{ steps.ver.outputs.value }}
         run: |
           cmake -S wifi-floppy/firmware -B build -G Ninja \
             -DPICO_SDK_PATH="$PWD/pico-sdk" \
-            -DPICO_BOARD="$PICO_BOARD" \
-            -DFIRMWARE_VERSION="$FW_VERSION"
+            -DPICO_BOARD="$PICO_BOARD"
           cmake --build build
           ls -la build/wifi_floppy.uf2 build/wifi_floppy.elf
+
+      # The version the IMAGE carries, read out of the generated header, which
+      # is the only string a board will ever report. `git describe` is kept
+      # below as `describe` -- useful provenance, but not an identity.
+      - name: Read the built version
+        id: builtver
+        run: |
+          v=$(sed -n 's/^#define WF_FIRMWARE_VERSION "\(.*\)"$/\1/p' \
+                build/generated/wifi_floppy_version.h)
+          test -n "$v" || { echo "no WF_FIRMWARE_VERSION in the generated header"; exit 1; }
+          echo "value=$v" >> "$GITHUB_OUTPUT"
 
       # Every ${{ }} value reaches the script through env, never by string
       # interpolation into the shell. A branch name is attacker-chosen on a
@@ -99,7 +114,8 @@ jobs:
       # this file, which is exactly the sort of thing it is there for.
       - name: Manifest
         env:
-          FW_VERSION: ${{ steps.ver.outputs.value }}
+          FW_VERSION: ${{ steps.builtver.outputs.value }}
+          FW_DESCRIBE: ${{ steps.ver.outputs.value }}
           FW_COMMIT: ${{ github.sha }}
           FW_REF: ${{ github.ref }}
         run: |
@@ -110,6 +126,7 @@ jobs:
           data = open(path, 'rb').read()
           json.dump({
               "version":   os.environ["FW_VERSION"],
+              "describe":  os.environ["FW_DESCRIBE"],
               "commit":    os.environ["FW_COMMIT"],
               "ref":       os.environ["FW_REF"],
               "builtAt":   datetime.datetime.now(datetime.timezone.utc)
@@ -129,7 +146,7 @@ jobs:
 
       - uses: actions/upload-artifact@v7
         with:
-          name: wifi-floppy-${{ steps.ver.outputs.value }}
+          name: wifi-floppy-${{ steps.builtver.outputs.value }}
           path: |
             build/wifi_floppy.uf2
             build/wifi_floppy.elf

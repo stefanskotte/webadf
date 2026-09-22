@@ -1,0 +1,98 @@
+/**
+ * The rules that decide whether a firmware release may be published, and what
+ * sequence it gets.
+ *
+ * Pure, and separate from the database write, because these rules are the
+ * whole safety of the registry and this repo's vitest has no DATABASE_URL --
+ * so anything that needs a connection is only ever exercised by e2e. The
+ * rules deserve better coverage than that.
+ */
+
+import { semverOf, identifiesItsSource } from '@/lib/firmware-version';
+
+export type PublishRefusalReason =
+  | 'unidentifiable_build'
+  | 'duplicate_version'
+  | 'semver_regression'
+  | 'bad_semver';
+
+export class PublishRefused extends Error {
+  constructor(public readonly reason: PublishRefusalReason) {
+    super(`firmware publish refused: ${reason}`);
+    this.name = 'PublishRefused';
+  }
+}
+
+export interface ExistingRelease {
+  version: string;
+  semver: string;
+  sequence: number;
+}
+
+export interface PublishCandidate {
+  version: string;
+  /** Ignored -- kept so callers may pass what they derived. Never trusted. */
+  semver?: string;
+}
+
+const SEMVER_RE = /^(\d+)\.(\d+)\.(\d+)$/;
+
+function parts(s: string): [number, number, number] | null {
+  const m = SEMVER_RE.exec(s);
+  return m ? [Number(m[1]), Number(m[2]), Number(m[3])] : null;
+}
+
+/** -1, 0 or 1. Numeric per component, so "1.10.0" is above "1.9.0". */
+function compareSemver(a: [number, number, number], b: [number, number, number]): number {
+  for (let i = 0; i < 3; i++) {
+    if (a[i] !== b[i]) return a[i] < b[i] ? -1 : 1;
+  }
+  return 0;
+}
+
+/**
+ * Returns the sequence the release should get, or throws PublishRefused.
+ *
+ * `existing` is every release already in the registry. It is passed whole
+ * rather than pre-aggregated so that every rule reads the same snapshot --
+ * a max(sequence) and a separate duplicate check could otherwise disagree.
+ */
+export function decidePublish(
+  existing: readonly ExistingRelease[],
+  candidate: PublishCandidate,
+): number {
+  // The semver is DERIVED from the version rather than taken as a second
+  // field. It used to be passed in alongside, with a rule checking the two
+  // agreed -- a rule that was a tautology for the only real caller (which
+  // computed it the same way) and unreachable for the only caller that
+  // violated it. Derived data validated against itself is depth in the wrong
+  // place; deriving it removes the rule and the disagreement together.
+  const semver = semverOf(candidate.version);
+  if (!semver) throw new PublishRefused('bad_semver');
+
+  // Refuses BOTH spellings of "this build cannot be accounted for": -dirty
+  // and +nogit. The original rule matched only the first, so a build made
+  // where git was unavailable -- which names not even a base commit, and
+  // which two different images produce identically -- published cleanly.
+  if (!identifiesItsSource(candidate.version)) {
+    throw new PublishRefused('unidentifiable_build');
+  }
+
+  if (existing.some((r) => r.version === candidate.version)) {
+    throw new PublishRefused('duplicate_version');
+  }
+
+  const cand = parts(semver)!;   // semverOf already proved the shape
+  for (const r of existing) {
+    // An EXISTING row that does not parse is skipped rather than throwing.
+    // It used to throw bad_semver, which blamed a perfectly well-formed
+    // candidate for a malformed row already in the table -- and did so after
+    // the artifact had been uploaded.
+    const have = parts(r.semver);
+    if (have && compareSemver(cand, have) < 0) {
+      throw new PublishRefused('semver_regression');
+    }
+  }
+
+  return existing.reduce((m, r) => (r.sequence > m ? r.sequence : m), 0) + 1;
+}

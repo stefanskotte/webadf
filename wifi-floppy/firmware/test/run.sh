@@ -73,4 +73,10 @@ if grep -nE 'gpio_put\(PIN_(INDEX|CHNG|WPROT|RDY|TRK0|RDATA)\b' ../src/*.c; then
   echo "FAIL: gpio_put on a PIO-owned bus output (use bus_out_set)"
   fail=1
 fi
+
+# Not a C binary: the firmware version header is produced by a CMake script
+# (cmake/gen_version_header.cmake), so its test drives that script directly
+# rather than linking anything.
+if ! ./test_version_header.sh; then fail=1; fi
+
 exit $fail

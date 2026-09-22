@@ -7,8 +7,14 @@
  * for tests is safe.
  *
  * This module reads no environment variables itself -- SUPERADMIN_EMAILS is
- * read in exactly one place, superadmin.ts, and passed in here as `raw`.
- * Keep it that way: exactly one file may read SUPERADMIN_EMAILS.
+ * passed in as `raw`. Keep it that way.
+ *
+ * Exactly one file in the SERVER reads SUPERADMIN_EMAILS: superadmin.ts. The
+ * one other reader is scripts/firmware-release.ts, which runs on the
+ * operator's own machine and cannot import superadmin.ts at all -- that module
+ * statically pulls in `@/lib/auth`, which calls getDb() at module scope, so a
+ * plain node script would crash on the import before printing any of its own
+ * diagnostics. It calls isAllowed()/parseAllowlist() here instead.
  */
 
 /** Pure. Exported for tests; nothing else should call it. */

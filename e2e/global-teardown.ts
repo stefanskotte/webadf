@@ -5,7 +5,7 @@ import { diskVersions } from '@/db/schema/disk-history';
 import { deleteUserCascade } from '@/lib/admin-delete';
 import { selectUnreferencedBlobs } from '@/lib/blob-gc';
 import { diskStore } from '@/lib/storage';
-import { reclaimDeltaBlobs } from './device-helpers';
+import { reclaimDeltaBlobs, cleanupTestReleases } from './device-helpers';
 
 /**
  * Remove everything the suite created, from the live database it ran against.
@@ -64,6 +64,25 @@ export default async function globalTeardown() {
   let games = 0;
   let orphanBlobs = 0;
   let objectsRemoved = 0;
+
+  // FIRST, and in its OWN try.
+  //
+  // Every other leftover this file removes is org-scoped and invisible to
+  // anyone else -- the @example.test email predicate sees to that. These are
+  // not: firmware_releases is global, seeded rows carry the highest sequence,
+  // and while they exist every real device in every org reads as "behind" a
+  // release that was never one. So the cleanup whose boundary is weakest must
+  // not sit last behind ten other fallible steps inside a catch that only
+  // warns. Each firmware spec also sweeps in its own afterAll; this is the
+  // backstop for a spec that crashed before it got there.
+  try {
+    const releases = await cleanupTestReleases();
+    if (releases > 0) console.log(`teardown: removed ${releases} firmware releases`);
+  } catch (err) {
+    console.error('teardown: FAILED to remove seeded firmware releases —',
+                  (err as Error).message);
+    console.error('  Run: delete from firmware_releases where version like \'0.0.0-e2e%\';');
+  }
 
   try {
     const doomed = await db.execute<{ id: string }>(sql`

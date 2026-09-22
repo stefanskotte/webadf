@@ -29,7 +29,21 @@ export interface LiveStateRow {
  * card shows (DeviceCard). Both are derived facts that change only when they
  * would change what is on screen, not every time the clock ticks.
  */
-export function liveFingerprint(rows: readonly LiveStateRow[], now: number): string {
+export function liveFingerprint(
+  rows: readonly LiveStateRow[],
+  now: number,
+  /**
+   * The newest release's sequence, or 0 when nothing is published.
+   *
+   * /devices renders the firmware verdict from TWO inputs -- the device's
+   * reported version (above) and the registry -- and only the first was in
+   * here. Publishing a release therefore changed what every open Devices tab
+   * should show while leaving the fingerprint identical, so the callout only
+   * appeared on a manual reload. The sequence is monotonic and assigned at
+   * publish, so it moves exactly when the registry does.
+   */
+  latestReleaseSequence = 0,
+): string {
   const lines = [...rows]
     .sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0))
     .map((r) => {
@@ -44,7 +58,10 @@ export function liveFingerprint(rows: readonly LiveStateRow[], now: number): str
         state === 'stale' ? relative(r.lastSeenAt, now) : '',
       ].join('|');
     });
-  return createHash('sha256').update(`${lines.length}\n${lines.join('\n')}`).digest('hex').slice(0, 16);
+  return createHash('sha256')
+    .update(`${lines.length}\n${latestReleaseSequence}\n${lines.join('\n')}`)
+    .digest('hex')
+    .slice(0, 16);
 }
 
 export async function liveStateRows(db: ReturnType<typeof getDb>, orgId: string): Promise<LiveStateRow[]> {

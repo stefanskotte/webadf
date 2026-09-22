@@ -230,3 +230,54 @@ test('bad credentials are a 401 for every flavour', async ({ request }) => {
     expect(res.status(), label).toBe(401);
   }
 });
+
+/**
+ * The firmware version used to be captured once, at registration, and a board
+ * does not re-register after a reflash -- so the Devices tab showed whatever
+ * was true at pairing and went stale the first time anyone flashed. These
+ * three pin the heartbeat's half of the fix.
+ */
+test('a heartbeat refreshes the firmware version', async ({ page, request }) => {
+  await signUpFresh(page);
+  const { deviceId, token } = await pairDevice(page, request);
+
+  const res = await request.post('/api/device/status', {
+    headers: authHeader(token),
+    data: { mountedSha256: null, firmwareVersion: '1.2.3+gabcdef0' },
+  });
+  expect(res.status()).toBe(204);
+
+  const row = await deviceRow(deviceId);
+  expect(row.firmwareVersion).toBe('1.2.3+gabcdef0');
+});
+
+test('a report that omits the version leaves the known one alone', async ({ page, request }) => {
+  await signUpFresh(page);
+  const { deviceId, token } = await pairDevice(page, request);
+
+  await request.post('/api/device/status', {
+    headers: authHeader(token),
+    data: { mountedSha256: null, firmwareVersion: '1.2.3+gabcdef0' },
+  });
+  // Older firmware, or any partial report: absent means "no opinion", never
+  // "clear it".
+  const res = await request.post('/api/device/status', {
+    headers: authHeader(token),
+    data: { mountedSha256: null },
+  });
+  expect(res.status()).toBe(204);
+
+  const row = await deviceRow(deviceId);
+  expect(row.firmwareVersion).toBe('1.2.3+gabcdef0');
+});
+
+test('an over-long version is refused rather than truncated', async ({ page, request }) => {
+  await signUpFresh(page);
+  const { token } = await pairDevice(page, request);
+
+  const res = await request.post('/api/device/status', {
+    headers: authHeader(token),
+    data: { mountedSha256: null, firmwareVersion: 'v'.repeat(65) },
+  });
+  expect(res.status()).toBe(400);
+});

@@ -28,6 +28,11 @@ build/
 /coverage
 /out
 *.pem
+# ...except the firmware signing PUBLIC keys, which exist to be distributed:
+# increment 2 compiles one into the image and verifies downloaded firmware
+# against it. The private half lives at ~/.webadf/firmware-signing-key and is
+# never in this tree at all, so the blanket rule above protects nothing here.
+!wifi-floppy/firmware/keys/*.pem
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
@@ -62,3 +67,14 @@ playwright-report/
 
 # Harness-managed git worktrees (Claude Code). Never commit them.
 .claude/worktrees/
+
+# Local editor config. Machine-specific (it hardcodes an absolute path to the
+# firmware source dir), and an untracked file here marks the git tree dirty --
+# which the firmware version generator reports as +g<hash>-dirty and the
+# release script refuses to publish.
+.vscode/
+
+# The firmware CI clones the pico-sdk into the workspace, which is the git
+# work tree. Untracked, it would make every CI build report itself -dirty via
+# cmake/gen_version_header.cmake and therefore be unpublishable.
+/pico-sdk/

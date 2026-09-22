@@ -1,16 +1,13 @@
 import { Link } from '@/components/shell/link';
 import { fromQuery } from '@/lib/trail';
 import type { GameListItem } from '@/lib/queries';
+import { fmtSize } from '@/lib/format';
 
 // TYPE sits between title and year: it qualifies what the row IS, so it
 // belongs next to the name rather than out among the numbers.
 // 104px, not 82: "Educational" is the longest label and at 82 its pill ran
 // into the YEAR column.
 const COLS = 'grid-cols-[30px_1fr_104px_50px_128px_40px_74px_100px]';
-
-function fmtSize(bytes: number): string {
-  return bytes >= 1_000_000 ? `${(bytes / 1_048_576).toFixed(2)} MB` : `${Math.round(bytes / 1024)} KB`;
-}
 
 export function GameTable({ games, collectionId }: {
   games: GameListItem[];

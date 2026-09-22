@@ -83,6 +83,33 @@ typedef bool (*dc_hold_fn)(void *ctx);
 #define DC_BACKOFF_FLOOR_MS 1000u
 #define DC_BACKOFF_CAP_MS   60000u
 
+// The status report is the one request this file POSTs a body with, so it
+// needs a bigger request buffer than a bare GET line (DC_REQ_BUF_BYTES):
+// two 64-hex-char fields, a mount version, an escaped error string, the
+// firmware version, and two ints, plus the request line and headers.
+//
+// Raised from 512/1024 when firmwareVersion joined the body. A maximal body
+// -- 64-hex sha, 64-char disk id, 10-digit version, 256-byte error, 64-char
+// firmware version, plus keys -- is ~560 bytes, and the old 512 would have
+// overflowed. dc_report_status fails SILENTLY on overflow (it returns false
+// with no log line), so that would have shown up as a heartbeat that stopped
+// whenever an error string happened to be long, not as an error. Both
+// buffers are `static` (see the STACK note in device_client.c), so the cost
+// is .bss rather than stack. test_status_body_fits_at_maximum is what keeps
+// the headroom honest when the next field is added.
+#define DC_STATUS_BODY_BYTES  640
+#define DC_STATUS_REQ_BYTES   1152
+// `err` is firmware-authored (a short static string or errno-derived text,
+// never network input), but it still has to survive being embedded in a
+// JSON string unescaped -- truncated well short of DC_STATUS_BODY_BYTES so
+// there is always room left for the rest of the fields.
+#define DC_STATUS_ERR_BYTES   256
+// 64 characters plus the terminator: FIRMWARE_VERSION_MAX in
+// src/lib/firmware-version.ts is the server's bound on the same string, and
+// a board that could report a version the server rejects would be a gap with
+// no reason to exist.
+#define DC_STATUS_VER_BYTES   65
+
 // Roughly how often dc_report_status should be called by the driving main
 // loop (Task 7 only defines the constant and the report primitive; the
 // periodic/on-transition call sites are wired up by whichever task owns the
@@ -216,7 +243,12 @@ dc_register_result_t dc_register(device_client_t *c, const char *pairing_code,
 // the mountedVersion it last successfully heard (HANDOFF 4g), and a caller
 // that advanced its own bookkeeping on a failed send would let the two
 // drift apart with no way to notice.
-bool dc_report_status(device_client_t *c, int psram_free, int rssi, const char *err);
+// `fw_version` may be NULL, which reports firmwareVersion as null rather
+// than omitting the key. It travels as a parameter, the way dc_register
+// already takes it, so that device_client.c never includes the generated
+// version header -- host tests compile this file without the firmware build.
+bool dc_report_status(device_client_t *c, int psram_free, int rssi, const char *err,
+                      const char *fw_version);
 
 // Write-back (piece 2b): what an uploader needs from the poll/fetch state
 // machine to hold a disk open while writes are still on the way to the

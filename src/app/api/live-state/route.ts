@@ -3,6 +3,7 @@ import { headers } from 'next/headers';
 import { getDb } from '@/db';
 import { auth } from '@/lib/auth';
 import { liveFingerprint, liveStateRows } from '@/lib/live-state';
+import { latestReleaseSequence } from '@/lib/firmware-releases';
 
 export const dynamic = 'force-dynamic';
 
@@ -32,6 +33,10 @@ export async function GET() {
   const orgId = session?.session.activeOrganizationId;
   if (!session || !orgId) return unauthorized();
 
-  const fingerprint = liveFingerprint(await liveStateRows(getDb(), orgId), Date.now());
+  const [rows, latestRelease] = await Promise.all([
+    liveStateRows(getDb(), orgId),
+    latestReleaseSequence(),
+  ]);
+  const fingerprint = liveFingerprint(rows, Date.now(), latestRelease);
   return NextResponse.json({ fingerprint }, { headers: { 'Cache-Control': 'no-store' } });
 }

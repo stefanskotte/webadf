@@ -9,6 +9,7 @@ import { ejectMessage } from '@/lib/mount-wording';
 import { fromQuery } from '@/lib/trail';
 import type { HistoryVersion } from '@/lib/disk-history/history';
 import type { TreeChange } from '@/lib/disk-history/diff';
+import { fmtTimeUtc } from '@/lib/format';
 
 /**
  * The History panel: every version of this disk, newest first, what changed
@@ -35,10 +36,7 @@ const SHOWN_BY_DEFAULT = 20;
  * is exactly the place where "which one happened first" has to be
  * unambiguous.
  */
-function formatVersionTime(d: Date): string {
-  const iso = d.toISOString(); // 2026-09-21T14:32:07.000Z
-  return `${iso.slice(0, 10)} ${iso.slice(11, 16)} UTC`;
-}
+const formatVersionTime = fmtTimeUtc;
 
 const CHANGE_STYLE: Record<TreeChange['kind'], { bg: string; fg: string; mark: string; word: string }> = {
   added: { bg: 'var(--success-bg)', fg: 'var(--success-fg)', mark: '+', word: 'added' },
