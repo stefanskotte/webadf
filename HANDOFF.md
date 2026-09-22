@@ -1776,6 +1776,49 @@ separately.
   up to `DC_POLL_TIMEOUT_MS`. "Mounted" should mean the device reported it (`mountedSha256`
   came back), not that we asked -- 3y's status heartbeat is what makes that observable.
 
+- **Every wifi-floppy as a small floppy chip beside the top menu, each with a caret menu.**
+  Requested by the operator 2026-09-22. One small floppy symbol per paired device, next to the
+  `TopNav` pill, and a caret on each opening a menu with three actions: **go to the mounted
+  floppy**, **eject**, and **writable / protected**. It is quick access only: **`/devices`
+  stays where devices are managed** (pairing, alias, firmware, unpairing), and the operator was
+  explicit that this does not change.
+
+  **Nothing new on the server.** All three actions already exist as endpoints the app uses:
+  `POST /api/devices/[id]/eject` (`EjectButton`), `PATCH /api/disks/[id]` with
+  `{ writeProtected }` (`WriteProtectToggle`), and the disk page for "go to". The flip reaches a
+  board that holds the disk since 4j. The work is a layout query, a client component, and
+  keeping the chips fresh.
+
+  **Things to settle before building it:**
+  - **Write protection belongs to the DISK, not the device.** The toggle in a device's menu
+    flips `disks.write_protected` on the disk that device has mounted, so it also changes on the
+    disk's own page, and on any other board holding the same disk. Word the menu item so it
+    reads as the disk's state, and turn it off when nothing is mounted. "Go to" and "eject"
+    are turned off when the drive is empty too.
+  - **Show both values of every state on the chip itself**
+    ([[show-both-values-of-a-state]] in memory): online or offline, empty or loaded, protected
+    or writable. An icon that just isn't there is not a reading. Show the device alias in a
+    tooltip and at the top of the menu, because several identical floppies say nothing on their
+    own.
+  - **"Mounted" means the board reported it** (`mountedSha256` came back), not that we asked,
+    the same rule as the mount-target entry above. Eject converges on the board's next poll
+    (up to ~25 s) and a mount takes ~4-6 s, so the chip needs a pending state rather than
+    showing success optimistically.
+  - **Freshness.** The `(app)` layout renders on the server and `TopNav` is a client component
+    that is handed its props. Today nothing refreshes a layout on its own, so a chip would be
+    stale until the next navigation. Decide how it updates, whether by polling a small
+    org-scoped read or by refreshing after the chip's own actions, and keep in mind that it
+    runs on every page.
+  - **Phones.** Below `sm` the nav is a fixed bottom bar, and the pill already scrolls with four
+    items at 390 px. The chips need somewhere else to go on a phone, or a single "drives"
+    chip, rather than a fifth-plus item in that bar. Also decide what happens with many boards:
+    show N chips, then a "+k" overflow.
+  - **Eject is outward-facing.** It pulls a disk out from under a running Amiga. The per-device
+    `EjectButton` on `/devices` has no confirmation, so match that, but the caret menu puts it
+    one mis-click from the other two actions. Worth a second look when it's built.
+  - The chip must stay out of the admin plane's layout. Devices are org-scoped, and `(admin)`
+    has its own nav.
+
 - ~~**Make the app usable on a phone.**~~ **DONE 2026-09-02**, merged and live — see 3j.
   Requested by the operator 2026-09-01. The two notes below are kept because they were the
   hard parts and both are now settled:
@@ -2846,7 +2889,14 @@ shows the up-arrow whenever the active slot has dirty tracks.
 - The **struck cloud** was not seen by the operator during the offline test (they looked before
   the first failed attempt); the dc hold path was not exercised on hardware either (polls are
   suppressed while pending, so the eject was only seen after the close). Both are host-tested.
-- **Acceptance 4 (restore): built and merged 2026-09-21 (4l), never driven on hardware.** The
+- ~~**Acceptance 4 (restore): built and merged 2026-09-21 (4l), never driven on hardware.**~~
+  **PASSED ON HARDWARE 2026-09-22.** The operator ran all six steps and every one behaved as
+  written: Restore was refused while the board held the disk, it succeeded after an eject, and
+  after a re-insert the Amiga showed the earlier content. The live database agrees. On disk
+  `cf490572…`, v11 is the Amiga write (18:54 UTC) and v12 is `source='rewind', rewind_of=10`
+  (18:55), whose `image_sha256` is byte-identical to v10's (`3d16e0ac…`). v11 was kept (D2). The
+  board then reported `mounted_sha256 = 3d16e0ac…` with desired = mounted = 81. The refusal in
+  step 3 is the operator's report only, because a 409 leaves no row. The
   panel has no distinct "parked" state.
 - Two vitest failures appeared once in the worktree before a crash and did not recur (853/853).
 - Deferred minors from the reviews (none blocking): the ~50 ms `wifi_rssi()` radio query during
@@ -2856,10 +2906,11 @@ shows the up-arrow whenever the active slot has dirty tracks.
   `http_build_head` duplicates `http_build_request`'s header pattern.
 
 ~~**Next: piece 3, the time-machine UI**~~ **DONE 2026-09-21 — see 4l.** History panel, Browse
-and Restore are merged and live. **What is left is hardware acceptance 4**: restore a version
-from the browser while the board is attached, then check the Amiga reads the restored content
-after a re-insert. Nothing in 4l has run on hardware -- the Amiga side of restore is exactly the
-`repointLateMounts` path, which only e2e and unit tests have exercised.
+and Restore are merged and live. ~~**What is left is hardware acceptance 4**~~ **PASSED ON
+HARDWARE 2026-09-22** (see the acceptance-4 bullet above for the rows that confirm it). The
+Amiga reads the restored content after a re-insert, so the board side of restore
+(`findHolder` refusing, then the board picking up the rewound image) has now run on real
+hardware, not only in e2e and unit tests.
 
 ### 4h. A MOUNTED DISK IS CHANGED ONLY FROM THE AMIGA; THE FILES-EDIT FLAKE WAS A TIMEOUT — 2026-09-19
 
