@@ -10,6 +10,7 @@ const base: LiveStateRow = {
   lastSeenAt: new Date(NOW - 5_000),
   diskSha256: 'a'.repeat(64), diskWriteProtected: false,
   firmwareVersion: '1.0.0',
+  desiredFirmwareVersion: null, firmwareUpdateState: null,
   lastError: null, lastErrorAt: null,
 };
 const other: LiveStateRow = { ...base, id: 'dev-b', name: 'Second' };
@@ -88,5 +89,14 @@ describe('the release registry', () => {
 
   it('treats an empty registry as 0, the default', () => {
     expect(liveFingerprint([base], NOW)).toBe(liveFingerprint([base], NOW, 0));
+  });
+});
+
+describe('an update in flight', () => {
+  it('changes the fingerprint when one is requested, and as its state moves', () => {
+    const pending: LiveStateRow = { ...base, desiredFirmwareVersion: '1.2.0+gc333333' };
+    const downloading: LiveStateRow = { ...pending, firmwareUpdateState: 'downloading' };
+    expect(fp([base])).not.toBe(fp([pending]));
+    expect(fp([pending])).not.toBe(fp([downloading]));
   });
 });

@@ -394,8 +394,56 @@ export async function publishTestRelease(
     .onConflictDoNothing();
 }
 
+/** Blob objects this suite put in the firmware store, removed alongside the rows. */
+const seededFirmwareBlobs: string[] = [];
+
+/**
+ * A seeded release whose blob ACTUALLY EXISTS.
+ *
+ * publishTestRelease records a blobPath with no object behind it, which is
+ * fine for the UI specs and useless for the download path -- a test that
+ * asserted on 200 bytes with that fixture would fail for the wrong reason.
+ */
+export async function publishTestReleaseWithBlob(version: string): Promise<string> {
+  if (!version.startsWith(E2E_RELEASE_PREFIX)) {
+    throw new Error(`e2e releases must start with ${E2E_RELEASE_PREFIX}, got ${version}`);
+  }
+  const { put } = await import('@vercel/blob');
+  const { createHash } = await import('node:crypto');
+  const bytes = Buffer.from(`e2e firmware ${version}`);
+  const blobPath = `firmware/${version}.uf2`;
+  // allowOverwrite because a previous run's object may survive -- the same
+  // re-runnability reasoning that gave publishTestRelease its onConflictDoNothing.
+  await put(blobPath, bytes, {
+    access: 'private', contentType: 'application/octet-stream',
+    addRandomSuffix: false, allowOverwrite: true,
+  });
+  seededFirmwareBlobs.push(blobPath);
+
+  const db = getDb();
+  const rows = await db.select({ sequence: firmwareReleases.sequence }).from(firmwareReleases);
+  const sequence = rows.reduce((m, r) => (r.sequence > m ? r.sequence : m), 0) + 1;
+  await db.insert(firmwareReleases).values({
+    id: randomUUID(), version, semver: '0.0.0', sequence,
+    sha256: createHash('sha256').update(bytes).digest('hex'),
+    sizeBytes: bytes.byteLength, blobPath,
+    signature: 'ZTJlLXRlc3Q=', signingKeyId: 'e2e', notes: null,
+    security: false, publishedByUserId: 'e2e',
+  }).onConflictDoNothing();
+  return version;
+}
+
 /** Removes every release this suite published. Called from the global teardown. */
 export async function cleanupTestReleases(): Promise<number> {
+  // Objects first: an orphaned firmware blob in the operator's private store
+  // is exactly the kind of leftover this teardown exists to prevent, and the
+  // row is what remembers where it is.
+  if (seededFirmwareBlobs.length > 0) {
+    const { del } = await import('@vercel/blob');
+    for (const path of seededFirmwareBlobs.splice(0)) {
+      await del(path).catch(() => { /* never uploaded, or already gone */ });
+    }
+  }
   const removed = await getDb()
     .delete(firmwareReleases)
     .where(like(firmwareReleases.version, `${E2E_RELEASE_PREFIX}%`))

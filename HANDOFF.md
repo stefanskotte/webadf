@@ -37,6 +37,7 @@ after plan 4a, rewritten again 2026-08-31 after plan 4b.**
 | **e2e cleanup** | ✅ **done, merged and live 2026-09-01.** A run no longer leaks; 4,600 accumulated rows and 73 live invite codes swept; see 3e |
 | **User-defined collections** | ✅ **done, all 9 tasks, merged to `master` and live in production.** A rail on `/library`, drag to file and to reorder; migration 0011 applied; see 3g |
 | **Library covers, type pills, contrast** | ✅ **done, merged and live 2026-09-01.** Grid shows real cover art; grid and table both show a TOSEC-derived type; the grey ramp now passes WCAG AA |
+| **Firmware update (server half)** | ✅ **done 2026-09-22, increment 2a.** Select boards, press Update, password, and each converges. **No firmware implements the protocol** — every test drives a simulated device, and the control is gated on a capability no board reports yet; see 3aj |
 | **Firmware release registry** | ✅ **done 2026-09-22, increment 1 of 2.** The version identifies a build and is refreshed on every heartbeat; `firmware_releases` + `/admin/firmware`; Devices says which boards are behind. **No device is updated by it** — no OTA path exists in the firmware; see 3ai |
 | **Shell polish** | ✅ **done 2026-09-02.** The "/" hint, both navs centred on the viewport, zebra-striped file tree, and a navigation bar + scrim; see 3i |
 | **Mobile responsive** | ✅ **done 2026-09-02, all surfaces.** Usable at 390px; nav becomes a bottom bar, touch drag no longer eats scrolling; see 3j |
@@ -4221,6 +4222,82 @@ Demozoo API (the bulk export makes per-lookup load on a non-profit unnecessary).
 - **Screenshot redirects:** screenshot fetches follow redirects, so the `media.demozoo.org` host
   allowlist checks only the first URL (the raster content-type allowlist and `nosniff` still apply).
 - **Cron drift:** the daily 01:30 cron against a 7-day gate can drift a refetch to 8 days.
+
+### 3aj. Select boards, press Update — the server half — DONE 2026-09-22
+
+Increment 2a. Spec: `docs/superpowers/specs/2026-09-22-firmware-update-server-design.md`.
+Plan: `docs/superpowers/plans/2026-09-22-firmware-update-server.md`. Builds directly on
+§3ai, which is what makes "did the update take?" answerable at all.
+
+**NO FIRMWARE IMPLEMENTS THIS.** Every test drives a *simulated* device — the e2e suite
+holds a real bearer token via `pairDevice`, so it polls, downloads and reports like a board.
+That proves the server instructs, serves, tracks and verifies correctly. It proves nothing
+about a board flashing itself. **Expect this protocol to move when firmware lands**: it
+happened to write-back, where HANDOFF §4g had to become the authority over the spec text.
+
+**An update is desired state, not a job.** It rides the poll body the device already parses,
+is fetched through a route mirroring `/api/device/image/[sha256]`, and is confirmed by the
+heartbeat. There is no `update_jobs` table: a second state machine that must be kept
+consistent with the first, for fleet-scale observability one board does not need.
+
+**What shipped**
+
+- **A capability gate.** `updateProtocol` in the register and status bodies. Absent means
+  the board cannot be updated — which is every board today — and **no control is rendered
+  for it at all**, not a disabled one. This is what let the increment ship to production
+  honestly before any firmware exists.
+- **Six columns on `devices`** (migration 0018, applied as the generated `ADD COLUMN`
+  statements with a guard, **not** via `db:push`): `update_protocol`,
+  `desired_firmware_version`, `desired_firmware_set_at`, `desired_firmware_set_by_user_id`,
+  `firmware_update_state`, `firmware_update_error`.
+- **`POST /api/devices/firmware-update`** — all-or-nothing across the batch, behind a
+  password re-verified per request. `DELETE` cancels, with no password.
+- **`GET /api/device/firmware/[version]`** — bearer-authed, 404 for anything unpublished,
+  **503 rather than 404** when the row exists but the object does not, so a board retries
+  instead of concluding the version is gone.
+- **Multi-select in the Devices tab**, a selection bar naming the full version, and a confirm
+  dialog listing every board, the release notes, the security flag, and the sentence that a
+  board holding a disk will wait.
+
+**Gates:** 974 vitest, build clean, 2,467 firmware host checks (untouched), **full Playwright
+green**.
+
+**THE TWO THINGS TO READ BEFORE TOUCHING THIS**
+
+1. **How an update wakes a long-holding device (spec §4.2).** The poll returns a body only
+   when `desiredVersion` moves, and a 204 carries no `update` object. **Do not bump
+   `desiredVersion` to announce an update:** the device echoes it back as `mountedVersion`
+   and the server reads that for an upload's `not_mounted`/`behind` verdict (§4g) — an
+   unrelated feature could strand an Amiga write mid-session. Instead the hold releases
+   early **only while an update is wanted AND `firmwareUpdateState` is still null**. That
+   one condition also gives: no busy loop, no auto-retry after a failure, and a capability
+   gate that protects the poll rather than only the UI.
+2. **Completion is derived, never reported.** There is deliberately no `succeeded` state.
+   `recordStatus` clears the desired firmware when the board reports running that exact
+   version, in the same write as the version — so there is never an instant where a device
+   reads as current while the update still looks pending. A device that reports success is
+   a device that can be wrong about it.
+
+**Two test traps this increment walked into, both mine, both worth knowing**
+
+- **A poll with no update pending HOLDS for 25 s.** Asserting "nothing was written" by
+  polling times the test out instead of answering the question. Use `desiredFirmwareOf()`
+  and read the row.
+- **`since=1` against a device whose `desiredVersion` is 0** trips the pre-existing
+  "since ahead of version" clamp, which delivers immediately by design — so a hold test
+  written that way passes whether or not the rule under test is correct.
+
+**Fixtures:** `publishTestRelease` records a `blobPath` with **no object behind it** — fine
+for UI specs, useless for the download path. `publishTestReleaseWithBlob` puts real bytes
+and registers them for teardown.
+
+**What increment 2b owes:** the firmware. A/B flash slots, the download, signature
+verification against the compiled-in public key, anti-rollback on the `sequence` this
+protocol already sends, refusing to flash while a disk is mounted (the device must enforce
+this itself), and reporting the four states. Then a real board on the bench, which is the
+only acceptance that counts. The per-device auto-update opt-in (**default OFF**, ruling
+2026-09-13) is still not built and still not needed: every update here is a human pressing
+a button.
 
 ### 3ai. The firmware version identifies a build, and the registry knows what is current — DONE 2026-09-22
 
