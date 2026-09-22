@@ -1819,6 +1819,44 @@ separately.
   - The chip must stay out of the admin plane's layout. Devices are org-scoped, and `(admin)`
     has its own nav.
 
+- **BUG: the Devices header's "N online" never shows the real count.** Reported by the operator
+  2026-09-22: it reads "0 online" while a board is up. **It is meant to be live, and the data
+  is right**, so the bug is in between. What was checked the same day:
+  - The board heartbeats every ~25 s. Sampled `last_seen_at` ages were 1-22 s, on production
+    firmware `1.0.0+gf53ad10`. So `isOnline()` (`src/lib/device-state.ts`, 60 s window) would
+    say 1.
+  - `DevicesPage` computes the count on the server from that predicate at render time
+    (`src/app/(app)/devices/page.tsx`), and `next.config.ts` enables no caching.
+  - The live fingerprint (`src/lib/live-state.ts`) already includes the online/offline
+    boundary, and `live-state.test.ts` tests that it flips. So the test covers the design, not
+    whatever is actually going wrong.
+
+  **Start by reproducing it on production with the board online, and measure before
+  fixing.** Things to rule out:
+  - whether `/api/live-state` is actually polled on `/devices`
+  - whether the fingerprint the page is born with is computed the same way the route computes
+    it
+  - whether the page reads `lastSeenAt` through the same `listDevices` the fingerprint sees
+  - whether the render's `now` and the database clock disagree
+
+  The cards' own "online" wording and the header must stay one predicate. Fix the path, not
+  the count.
+
+- **Devices page: square, floppy-disk-looking cards instead of full-width rows.** Requested by
+  the operator 2026-09-22. Today each board is a full-width card with Eject at the far right,
+  which spends the width on nothing. Lay them out as a grid of squares that look like floppy
+  disks, the same visual idea as the library's square category cards (3ah) and the floppy
+  chips beside the top menu (entry above), so a board reads as a drive everywhere in the app.
+
+  **What a square has to carry, all of which the current card already shows:** alias, online
+  or offline, the mounted disk (or empty), write protection, the firmware line with its five
+  states, the update state and its Cancel, the checkbox from §3aj's multi-select, and Eject.
+  Of these, the firmware and update wording is the longest text and will set the minimum
+  square size. Measure it at 390 px before choosing the grid. Show both values of every
+  state: an empty drive and a read-only disk must be visible states,
+  not missing icons. Eject stays, just not stretched across the page. `/devices` remains where
+  pairing, alias and firmware are managed.
+
 - ~~**Make the app usable on a phone.**~~ **DONE 2026-09-02**, merged and live — see 3j.
   Requested by the operator 2026-09-01. The two notes below are kept because they were the
   hard parts and both are now settled:
