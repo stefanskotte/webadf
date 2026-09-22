@@ -265,3 +265,22 @@ export const demozooExportStore: DemozooExportStore = {
     return result.stream;
   },
 };
+
+/**
+ * Firmware images.
+ *
+ * Separate from diskStore because both the key space and the entitlement
+ * model differ: the key is a version string rather than a digest, and
+ * firmware is a product artifact every paired device may fetch, where a disk
+ * belongs to one org.
+ *
+ * Here rather than in the route, for the reason stated above diskStore: this
+ * is the only module that may import @vercel/blob.
+ */
+export const firmwareStore = {
+  async read(blobPath: string): Promise<Uint8Array | null> {
+    const result = await get(blobPath, { access: 'private' });
+    if (!result || result.statusCode !== 200) return null;
+    return new Uint8Array(await new Response(result.stream).arrayBuffer());
+  },
+};
