@@ -10,6 +10,7 @@
 // directory up instead -- still matched by vitest's `src/**/*.test.ts`
 // include, following the precedent of src/db/scope.test.ts.
 import { describe, it, expect } from 'vitest';
+import { getTableConfig } from 'drizzle-orm/pg-core';
 import { devices, invites, pairingCodes } from './schema/devices';
 import * as deviceSchema from './schema/devices';
 import { disks } from './schema/catalog';
@@ -115,5 +116,29 @@ describe('devices.mountedDiskId and mountedVersion (F-3)', () => {
     expect(devices.mountedDiskId.getSQLType()).toBe('text');
     expect(devices.mountedVersion.name).toBe('mounted_version');
     expect(devices.mountedVersion.getSQLType()).toBe('integer');
+  });
+});
+
+describe('firmware update columns', () => {
+  const col = (name: string) => getTableConfig(devices).columns.find((c) => c.name === name);
+
+  it('carries the capability the device declares', () => {
+    expect(col('update_protocol')).toBeDefined();
+    // Nullable: every board in the field today reports nothing, and "absent"
+    // must mean "cannot update" rather than defaulting to some level.
+    expect(col('update_protocol')!.notNull).toBe(false);
+  });
+
+  it('carries the desired firmware and who asked for it', () => {
+    for (const n of ['desired_firmware_version', 'desired_firmware_set_at',
+                     'desired_firmware_set_by_user_id']) {
+      expect(col(n), `missing ${n}`).toBeDefined();
+      expect(col(n)!.notNull, `${n} must be nullable`).toBe(false);
+    }
+  });
+
+  it('carries what the device reports about an update in flight', () => {
+    expect(col('firmware_update_state')).toBeDefined();
+    expect(col('firmware_update_error')).toBeDefined();
   });
 });

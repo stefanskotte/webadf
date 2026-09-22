@@ -35,6 +35,37 @@ export const devices = pgTable('devices', {
   // device that has never sent it (or an older firmware) simply has none.
   mountedVersion: integer('mounted_version'),
 
+  // --- firmware updates (spec 2026-09-22-firmware-update-server-design) ---
+
+  /**
+   * What this board's firmware can do, as IT reports. Absent or 0 means it
+   * cannot be updated -- which is every board in the field today, and is what
+   * keeps the Update control invisible rather than dead. The capability gate
+   * protects the poll as well as the UI: a device that cannot report update
+   * state can never be targeted, so it can never busy-loop the hold (spec 4.2).
+   */
+  updateProtocol: integer('update_protocol'),
+
+  /**
+   * The release this board should end up running. Null means no update is
+   * wanted. It is CLEARED by recordStatus the moment the device reports this
+   * exact version -- completion is derived from what the board is running,
+   * never from the board claiming success.
+   */
+  desiredFirmwareVersion: text('desired_firmware_version'),
+  desiredFirmwareSetAt: timestamp('desired_firmware_set_at', { withTimezone: true }),
+  /** Who asked. The super-admin plane has no audit log; this does not repeat that. */
+  desiredFirmwareSetByUserId: text('desired_firmware_set_by_user_id'),
+
+  /**
+   * 'queued' | 'downloading' | 'applying' | 'failed', as the device reports.
+   * Null means nothing in flight -- and, while desiredFirmwareVersion is set,
+   * null specifically means "not acknowledged yet", which is what releases the
+   * poll's hold exactly once (spec 4.2).
+   */
+  firmwareUpdateState: text('firmware_update_state'),
+  firmwareUpdateError: text('firmware_update_error'),
+
   // Desired state. Null across all three means ejected -- there is no separate
   // "ejected" flag, because "no disk is desired" and "eject" are the same fact.
   desiredSha256: text('desired_sha256'),

@@ -127,6 +127,13 @@
       "when": 1790030227640,
       "tag": "0017_cheerful_silver_surfer",
       "breakpoints": true
+    },
+    {
+      "idx": 18,
+      "version": "7",
+      "when": 1790059968952,
+      "tag": "0018_low_boom_boom",
+      "breakpoints": true
     }
   ]
 }
