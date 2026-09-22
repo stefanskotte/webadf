@@ -117,19 +117,12 @@ test('a security release skipped over by a later ordinary one still says securit
   await expect(page.getByTestId('firmware-notice')).toContainText(/security/i);
 });
 
-/**
- * Before any release is published -- which is the state this ships in, since
- * the first one needs the operator at the Mac with the signing key -- a board
- * must not be accused of running an unrecognised build.
+/*
+ * The empty-registry case -- "no releases published", which is the state this
+ * increment ships in -- is covered in src/lib/firmware-state.test.ts and
+ * deliberately NOT here. firmware_releases is global and shared with the
+ * operator's real data, so a spec cannot create an empty registry: the rows
+ * this file seeds are still there when it would run, and once the operator
+ * publishes a genuine release the registry is never empty again. A test that
+ * can only pass on a database nobody has used yet is worse than no test.
  */
-test('with nothing published, a device is not called unrecognised', async ({ page, request }) => {
-  await signUpFresh(page);
-  const { deviceId, token } = await pairDevice(page, request);
-  await report(request, token, '1.0.0+gabcdef0');
-
-  await page.goto('/devices');
-  const line = page.getByTestId(`device-firmware-${deviceId}`);
-  await expect(line).toContainText('no releases published');
-  await expect(line).not.toContainText('unrecognised');
-  await expect(page.getByTestId('firmware-notice')).toHaveCount(0);
-});
