@@ -37,6 +37,7 @@ after plan 4a, rewritten again 2026-08-31 after plan 4b.**
 | **e2e cleanup** | ✅ **done, merged and live 2026-09-01.** A run no longer leaks; 4,600 accumulated rows and 73 live invite codes swept; see 3e |
 | **User-defined collections** | ✅ **done, all 9 tasks, merged to `master` and live in production.** A rail on `/library`, drag to file and to reorder; migration 0011 applied; see 3g |
 | **Library covers, type pills, contrast** | ✅ **done, merged and live 2026-09-01.** Grid shows real cover art; grid and table both show a TOSEC-derived type; the grey ramp now passes WCAG AA |
+| **Firmware release registry** | ✅ **done 2026-09-22, increment 1 of 2.** The version identifies a build and is refreshed on every heartbeat; `firmware_releases` + `/admin/firmware`; Devices says which boards are behind. **No device is updated by it** — no OTA path exists in the firmware; see 3ai |
 | **Shell polish** | ✅ **done 2026-09-02.** The "/" hint, both navs centred on the viewport, zebra-striped file tree, and a navigation bar + scrim; see 3i |
 | **Mobile responsive** | ✅ **done 2026-09-02, all surfaces.** Usable at 390px; nav becomes a bottom bar, touch drag no longer eats scrolling; see 3j |
 | **Delete a title or a disk** | ✅ **done 2026-09-04.** Confirmation dialog, deliberate eject, blob never destroyed; see 3o |
@@ -94,7 +95,7 @@ forever with **no output at all**, which reads exactly like a slow cold compile.
 test reports. A spec launched into that window has its freshly signed-up user deleted
 underneath it, which shows up as several tests in one file failing in ~500ms each — a cascade
 that looks alarming and is nothing. Observed 2026-09-03. Wait for the teardown line
-(`teardown: removed N test users...`) before re-running anything. Firmware: `pnpm firmware:test` green (506 checks, 13
+(`teardown: removed N test users...`) before re-running anything. Firmware: `pnpm firmware:test` green (2,467 checks, 13
 binaries), `pnpm firmware:build` produces a `.uf2` — **and now requires
 `PORTAL_AP_PASSWORD` set in the environment, or the configure step fails by design**; see
 "Plan 4b" below for the full command.
@@ -1900,16 +1901,15 @@ separately.
   stores it in `devices.firmware_version`, and `device-card.tsx` already renders it as
   "fw <version>". The plumbing exists end to end.
 
-  **The actual gap is that it is captured ONCE, at pairing.** The status heartbeat carries
-  mountedDiskId, desired version, error, psramFree and rssi -- not the firmware version --
-  and a device does not re-register after an update. So the value shown in the Devices tab
-  is whatever the board had when it was paired, and it goes stale the first time anyone
-  reflashes. That is worse than showing nothing, because it looks authoritative: "did the
-  update take?" is the first question after any update, and this field would answer it
-  confidently and wrongly.
+  **The actual gap was that it was captured ONCE, at pairing.** The status heartbeat
+  carried mountedDiskId, desired version, error, psramFree and rssi -- not the firmware
+  version -- and a device does not re-register after an update. So the value shown in the
+  Devices tab was whatever the board had when it was paired, and went stale the first time
+  anyone reflashed. That is worse than showing nothing, because it looks authoritative.
 
-  **Two small pieces of work, both worth doing BEFORE any update mechanism exists**, since
-  they make an already-shipped display honest:
+  **BOTH of the two small pieces below are DONE as of 2026-09-22 (§3ai).** The heartbeat
+  carries the version, and the version identifies a build. Read §3ai, not this paragraph,
+  for what actually exists; the two items are kept here because they explain why:
 
   1. Add `firmwareVersion` to the status report -- firmware side in `dc_report_status`,
      server side one more optional field in the status schema and `recordStatus`. The
@@ -4222,6 +4222,112 @@ Demozoo API (the bulk export makes per-lookup load on a non-profit unnecessary).
   allowlist checks only the first URL (the raster content-type allowlist and `nosniff` still apply).
 - **Cron drift:** the daily 01:30 cron against a 7-day gate can drift a refetch to 8 days.
 
+### 3ai. The firmware version identifies a build, and the registry knows what is current — DONE 2026-09-22
+
+Increment 1 of 2 toward the operator's request for in-app firmware updates. Spec:
+`docs/superpowers/specs/2026-09-22-firmware-release-registry-design.md`. Plan:
+`docs/superpowers/plans/2026-09-22-firmware-release-registry.md`.
+
+**Why it is only half.** The operator asked for a pending-upgrade callout in Devices and a
+multi-select Update button. **The board has no way to update itself** — there is no OTA path
+in the firmware at all: no second flash slot, no image download, no verify-and-boot, no
+rollback. `config_store.c` and `token_store.c` each write a single 4 KB sector and that is
+the entire extent of flash-writing code. So this increment is the half that can be built and
+verified with zero risk of bricking a board, and that makes the other half safe to build.
+**There is deliberately no Update button.** A control that cannot work is worse than none.
+
+**What shipped**
+
+- **`FIRMWARE_VERSION` is gone.** It was a hand-set CMake cache string and had read
+  `4b.0`/`4b.0-dev` through the display work, the capture work, the decoder, SEL0 gating and
+  all three write-back pieces. `FIRMWARE_SEMVER` (`1.0.0`, hand-set, **not** a CACHE
+  variable) plus `cmake/gen_version_header.cmake` now produce `1.0.0+g<hash>`, regenerated
+  on **every build** rather than at configure time.
+- **Every heartbeat carries it.** `dc_report_status` gained a `firmwareVersion` field;
+  `devices.firmware_version` stops being write-once. Status body budgets moved to
+  `device_client.h` and widened 512/1024 → 640/1152 (the old 512 would have overflowed at a
+  maximal body, and `dc_report_status` fails **silently** on overflow — the heartbeat would
+  just have stopped whenever an error string was long).
+- **`firmware_releases`** (migration 0017), **global rather than org-scoped**, with a
+  server-assigned monotonic `sequence`. "Is this board behind?" is a registry lookup, never
+  a version comparison — a dirty bench build of `1.0.0` compares EQUAL to released `1.0.0`
+  and differs only in the git suffix.
+- **`pnpm firmware:keygen` / `pnpm firmware:publish`.** ed25519, private key at
+  `~/.webadf/firmware-signing-key` (0600), public key committed under
+  `wifi-floppy/firmware/keys/`. The key id is a **fingerprint of the key**, not a date.
+- **Devices tab**: a notice band when any board is behind, and a per-card firmware line with
+  five states — `unknown`, `no releases published`, `unrecognised build`, `up to date`,
+  `N releases behind`. **`/admin/firmware`** lists releases read-only.
+
+**Gates:** 956 vitest, 2,467 firmware host checks + 8 version-header checks, `pnpm build`
+clean, **300/300 Playwright**.
+
+**THE SIGNATURE IS RECORDED AND VERIFIED BY NOTHING.** No code checks it until increment 2
+compiles the public key into the firmware. It is stored from the first release so increment
+2 adds a check rather than re-signing a registry's worth of history. `/admin/firmware` says
+`signed <keyid> (unverified)` out loud rather than implying a check with a padlock.
+
+**What the whole-branch review caught — the fifth branch in this repo where it was the only
+pass to find a Critical.** Per-task reviews passed clean; these were all composition:
+
+- **CI was publishing mislabelled artifacts.** `.github/workflows/firmware.yml` still passed
+  `-DFIRMWARE_VERSION`, which this branch deleted. **CMake answers an unused `-D` with a
+  warning and exit 0**, so every CI build compiled `1.0.0+g<hash>` while the manifest — the
+  thing that workflow's own header calls "THE POINT" — recorded a `git describe` string. It
+  now reads the version out of the built header.
+- **The dirty/identity test was repo-wide.** `git status --porcelain` and `rev-parse` ignore
+  `WORKING_DIRECTORY`; they need a pathspec. So any uncommitted web-app file stamped the
+  firmware `-dirty` and unpublishable, and an app-only commit produced a new firmware
+  version for a byte-identical image. Both are `-- .` scoped now. **Gitignoring `.vscode/`
+  had been treating one instance of an unbounded class** — `next dev` rewrites a block into
+  the *tracked* AGENTS.md, which no ignore can cover.
+- **`stat -f %m` is BSD-only** and CI is ubuntu. The check it guards would have failed the
+  job or passed vacuously.
+- **e2e seeded the GLOBAL registry at max+1**, making a fake release the newest one
+  production compared every real board against **for the whole run** — including a
+  `security: true` row, i.e. a fabricated security banner on the operator's real Devices
+  page. The only cleanup was the *last* statement of a teardown whose catch merely warns.
+  Now: swept first in its own try, again per spec file, and the insert is idempotent.
+- **`+nogit` passed the "unidentifiable build" rule**, which matched only `-dirty`. It is the
+  worse of the two: a dirty build at least names its base commit.
+- **The blob uploaded before any rule ran**, with `allowOverwrite: false` — so a fixable
+  refusal permanently wedged a version derived from the commit hash. Decide first now.
+- **`--dry-run` exited before the rules**, so it could not report the refusal the real
+  publish would hit; and **a typo'd `--dry-run` did a real, irreversible publish**. Both
+  closed by `util.parseArgs`.
+- **The signing key id came from `new Date().getFullYear()`**, computed independently at
+  keygen and at publish — agreeing only within one calendar year.
+- **The notice named a semver**, which two releases may share, so it could tell you that you
+  were behind the version your own card said you were running.
+- **The security flag read only the newest release**, going quiet for exactly the boards
+  still missing a fix when an ordinary release followed a security one.
+- **An empty registry called every board an unrecognised build** — the state this ships in.
+  `unavailable` is now its own state.
+- **`dc_register` truncated the version at 31 characters** against the new 64-character
+  contract, so a long version registered short and changed on the first heartbeat.
+- **Publishing never refreshed an open Devices tab**: the registry was not in the live
+  fingerprint, though the plan asserted the opposite.
+
+**Traps worth knowing**
+
+- **`pnpm db:push` offered to TRUNCATE `disk_versions`** to add `disk_versions_disk_seq` — a
+  constraint that **already exists**, on a table holding real Amiga write history. Measured:
+  zero duplicate `(disk_id, seq)` pairs, constraint present. Migration 0017 was applied as
+  the generated `CREATE TABLE` alone. **Read what push proposes before answering.**
+- **The empty-registry case is covered in vitest, not e2e, deliberately.**
+  `firmware_releases` is global and shared with real data: no spec can create an empty
+  registry, and once a genuine release exists it never is one again.
+- **There is no `/api/admin/firmware/releases` route.** The spec's §3.4 said POST; an admin
+  route is guarded by a session cookie and there is no honest way to hand a CLI one, while
+  the script already holds `DATABASE_URL` and `BLOB_READ_WRITE_TOKEN` — strictly more
+  authority. It would have added a hop and an auth problem without adding a control.
+
+**What increment 2 owes:** A/B flash slots, signed image download with the public key
+compiled in, anti-rollback on `sequence`, never flashing while a disk is mounted, step-up
+password auth per update, the per-device opt-in (**default OFF**, per the operator's ruling
+of 2026-09-13), the prompt at pairing, and the multi-select Update button the operator
+actually asked for. Read the backlog entry above — it carries the threat model.
+
 ### 3ah. The library reaches the history, and the category cards show what is in them — DONE 2026-09-21, merged and live
 
 Three operator requests from the same morning, after piece 3 (§4l) shipped. No spec and no plan:
@@ -4544,12 +4650,15 @@ recognizing the next time a "this trigger is not transient" argument gets made.
 `pnpm adfmfm:diff` (Greaseweazle differential gate, needs `adf-archive/` + pipx) ·
 `pnpm adfmfm:fixtures` (regenerate golden fixtures) ·
 `pnpm db:generate && pnpm db:push` · `npx webadf push <dir>` (CLI bulk import) ·
-`pnpm firmware:build` (needs pico-sdk ≥ 2.3.0 on `PICO_SDK_PATH`, the official ARM GNU
-Toolchain on `PATH` (not homebrew's `arm-none-eabi-gcc`), **and `PORTAL_AP_PASSWORD` set in
-the environment to a WPA2 PSK — the configure step fails by design otherwise**; see "Plan
-4b" above for the full command) ·
-`pnpm firmware:test` (plain-C host suite, clang, no SDK/toolchain/env vars needed — 506
-checks, 13 binaries)
+`pnpm firmware:build` (needs pico-sdk ≥ 2.3.0 on `PICO_SDK_PATH` and the official ARM GNU
+Toolchain on `PATH`, not homebrew's `arm-none-eabi-gcc`. `PORTAL_AP_PASSWORD` is **no longer
+required** — it has a documented default, `wififloppy`; it is fatal only if set-but-empty) ·
+`pnpm firmware:test` (plain-C host suite, clang, no SDK/toolchain/env vars needed — 2,467
+checks across 13 binaries, plus 8 shell checks for the version header) ·
+`pnpm firmware:keygen` (once, ever — writes `~/.webadf/firmware-signing-key` 0600 and the
+public half into `wifi-floppy/firmware/keys/`; refuses to overwrite) ·
+`pnpm firmware:publish [--notes "..."] [--security] [--dry-run]` (signs and records a
+release; reads the version out of the built header, never an argument)
 
 **Infrastructure:** Vercel project `webadf` · Neon Postgres (`auth` + `public` schemas) ·
 Vercel Blob store `webadf-disks` (**private** access) · Vercel CLI 59.10.0
