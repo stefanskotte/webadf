@@ -72,7 +72,7 @@ static bool page_build(uint8_t *out, size_t page_len, const char *token) {
 
 #ifndef WFMF_HOST_TEST
 #include "hardware/flash.h"
-#include "hardware/address_mapped.h"   // XIP_BASE
+#include "hardware/address_mapped.h"   // XIP_NOCACHE_NOALLOC_NOTRANSLATE_BASE
 #include "pico/flash.h"                // flash_safe_execute
 
 // Carve the token sector out of the very top of flash. PICO_FLASH_SIZE_BYTES
@@ -109,7 +109,8 @@ static void do_program(void *param) {
 
 bool token_store_load(char *out, int out_len) {
     if (out_len <= 0) return false;
-    const uint8_t *p = (const uint8_t *)(XIP_BASE + TOKEN_FLASH_OFFSET);
+    // NOTRANSLATE: see config_store_load -- XIP_BASE faults here from an A/B boot.
+    const uint8_t *p = (const uint8_t *)(XIP_NOCACHE_NOALLOC_NOTRANSLATE_BASE + TOKEN_FLASH_OFFSET);
     return page_load(p, TOKEN_STORE_CAP, out, out_len);
 }
 

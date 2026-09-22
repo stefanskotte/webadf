@@ -137,7 +137,7 @@ static bool page_build(uint8_t *out, size_t page_len, const device_config_t *cfg
 
 #ifndef WFMF_HOST_TEST
 #include "hardware/flash.h"
-#include "hardware/address_mapped.h"   // XIP_BASE
+#include "hardware/address_mapped.h"   // XIP_NOCACHE_NOALLOC_NOTRANSLATE_BASE
 #include "pico/flash.h"                // flash_safe_execute
 
 // The sector immediately below token_store's: that one claims the very top
@@ -166,7 +166,11 @@ static void do_program(void *param) {
 }
 
 bool config_store_load(device_config_t *out) {
-    const uint8_t *p = (const uint8_t *)(XIP_BASE + CONFIG_FLASH_OFFSET);
+    // NOTRANSLATE, never XIP_BASE: from a partitioned (A/B) boot the boot ROM
+    // maps only the booted slot at XIP_BASE, and reading the top of flash
+    // through it hard-faults (spec M3, measured). This window is physical
+    // flash in every layout, partitioned or not.
+    const uint8_t *p = (const uint8_t *)(XIP_NOCACHE_NOALLOC_NOTRANSLATE_BASE + CONFIG_FLASH_OFFSET);
     return page_load(p, CONFIG_STORE_CAP, out);
 }
 

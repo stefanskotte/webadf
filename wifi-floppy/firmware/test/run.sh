@@ -74,6 +74,16 @@ if grep -nE 'gpio_put\(PIN_(INDEX|CHNG|WPROT|RDY|TRK0|RDATA)\b' ../src/*.c; then
   fail=1
 fi
 
+# M3 (spec 2026-09-22-firmware-update-device-design.md): once the board boots
+# from a partition, the boot ROM's address translation maps only the booted
+# slot at XIP_BASE. Reading anything else through XIP_BASE -- the config and
+# token sectors at the top of flash -- HARD-FAULTS, measured on the bench.
+# XIP_NOCACHE_NOALLOC_NOTRANSLATE_BASE reads physical flash in every layout.
+if grep -nE 'XIP_BASE[[:space:]]*\+' ../src/*.c; then
+  echo "FAIL: flash read through XIP_BASE (use XIP_NOCACHE_NOALLOC_NOTRANSLATE_BASE)"
+  fail=1
+fi
+
 # Not a C binary: the firmware version header is produced by a CMake script
 # (cmake/gen_version_header.cmake), so its test drives that script directly
 # rather than linking anything.
