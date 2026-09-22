@@ -145,7 +145,37 @@ load-bearing disk fields — the same ordering argument `DC_POLL_BODY_BYTES`
 already makes. **A board that loses this field simply does not update**, which
 is the safe direction.
 
-### 4.2 Download
+### 4.2 Waking the device, without disturbing the mount
+
+**Found while planning, and it decides the shape.** The poll long-holds for 25 s
+and returns a body only when `desiredVersion` moves; otherwise it 204s, and a
+204 carries no `update` object. So merely setting `desiredFirmwareVersion`
+would never reach the board.
+
+**Bumping `desiredVersion` is not the answer.** The device echoes it back as
+`mountedVersion`, and the server decides an upload's `not_mounted`/`behind`
+verdict from the last `mountedVersion` it heard (HANDOFF §4g). Bumping it to
+announce a firmware change could strand an Amiga write that was mid-session —
+a disk-integrity failure caused by an unrelated feature.
+
+**The rule instead:** the hold releases early when `desiredFirmwareVersion` is
+set **and** `firmwareUpdateState` is still null — that is, an update is wanted
+and the device has not yet acknowledged it. The body returned carries the
+unchanged `version` (so the device's disk logic is a no-op) plus the `update`
+object. Once the device POSTs any state, the hold returns to normal.
+
+Three properties this has, all of them load-bearing:
+
+- **No busy loop.** Without the state check the poll would return immediately
+  on every request for as long as the update stayed pending.
+- **No auto-retry.** A device reporting `failed` has a non-null state, so it is
+  not re-instructed. A human decides (§8).
+- **Old firmware is unreachable by construction.** A board that never reports
+  state could busy-loop the poll — but a board that cannot report state has no
+  `updateProtocol`, so §5.1 step 5 refuses to target it in the first place. The
+  capability gate protects the poll, not just the UI.
+
+### 4.3 Download
 
 `GET /api/device/firmware/[version]`, bearer-authed by `requireDevice`,
 mirroring `/api/device/image/[sha256]`:
@@ -161,7 +191,7 @@ product artifact, global by design (increment 1, D5), and every paired device
 is entitled to the firmware it has been told to run. The authentication is the
 boundary.
 
-### 4.3 Status body gains two fields
+### 4.4 Status body gains two fields
 
 `firmwareUpdateState` and `firmwareUpdateError`, both optional, following the
 rule this schema already states: **absent means "not reported" and leaves the
