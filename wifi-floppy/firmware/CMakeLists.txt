@@ -55,7 +55,7 @@ set(WFMF_PSA_CRYPTO_RANDOM_SRC ${PICO_MBEDTLS_PATH}/library/psa_crypto_random.c)
 add_executable(wifi_floppy
   src/main.c src/dskchg.c src/track_cache.c src/psram_image.c
   src/image_loader.c src/device_client.c src/http.c src/json_scan.c
-  src/token_store.c src/config_store.c src/provisioning.c
+  src/token_store.c src/config_store.c src/fw_state.c src/provisioning.c
   src/mfm.c src/write_back.c src/reinsert.c src/dns_server.c src/dhcp_server.c src/portal_http.c
   src/portal_net.c
   src/transport_tls.c src/sntp_time.c
