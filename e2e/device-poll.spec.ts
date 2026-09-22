@@ -4,11 +4,17 @@ import { eq } from 'drizzle-orm';
 import { getDb } from '@/db';
 import { devices } from '@/db/schema/devices';
 import { signUpFresh, runTag } from './helpers';
-import { pairDevice, seedDisk, authHeader, cleanupSeeded } from './device-helpers';
+import {
+  pairDevice, seedDisk, authHeader, cleanupSeeded, publishTestRelease,
+  cleanupTestReleases, setDesiredFirmware,
+} from './device-helpers';
 
 const sha = (s: string) => createHash('sha256').update(s).digest('hex');
 
-test.afterAll(cleanupSeeded);
+// Releases first: firmware_releases is global, so the window in which a
+// seeded release is the newest one production compares real boards against
+// closes with this file rather than with the whole suite.
+test.afterAll(async () => { await cleanupTestReleases(); await cleanupSeeded(); });
 
 test('a device polling from version 0 is told what to mount', async ({ page, request }) => {
   const { orgId } = await signUpFresh(page);
@@ -166,4 +172,70 @@ test('the poll rejects every flavour of bad credential with a bare 401', async (
     const body = await res.text();
     expect(body, label).not.toMatch(/token|hash|bearer|device/i);
   }
+});
+
+/**
+ * The poll long-holds and returns a body only when desiredVersion moves, and a
+ * 204 carries no update object -- so an update has to release the hold by
+ * itself. It must do that exactly ONCE: releasing while the update merely
+ * stays pending would turn the 25 s hold into a busy loop.
+ */
+test('a pending update releases the hold and rides the poll body', async ({ page, request }) => {
+  await signUpFresh(page);
+  const { deviceId, token } = await pairDevice(page, request);
+  await publishTestRelease('0.0.0-e2e.20+gaa20000');
+  await setDesiredFirmware(deviceId, '0.0.0-e2e.20+gaa20000');
+
+  const res = await request.get('/api/device/poll?since=0', { headers: authHeader(token) });
+  expect(res.status()).toBe(200);
+  const body = await res.json();
+  expect(body.update).toMatchObject({
+    version: '0.0.0-e2e.20+gaa20000',
+    sha256: 'e'.repeat(64),
+    keyId: 'e2e',
+  });
+  expect(typeof body.update.sequence).toBe('number');
+});
+
+test('once the device acknowledges, the poll holds normally again', async ({ page, request }) => {
+  // The hold is 25 s and the default test timeout is 30 s, which the setup
+  // below eats into. Raised so the assertion is about the poll's behaviour
+  // rather than about the clock.
+  test.setTimeout(60_000);
+  await signUpFresh(page);
+  const { deviceId, token } = await pairDevice(page, request);
+  await publishTestRelease('0.0.0-e2e.21+gaa21000');
+  await setDesiredFirmware(deviceId, '0.0.0-e2e.21+gaa21000');
+
+  // Acknowledge, the way a board would.
+  await request.post('/api/device/status', {
+    headers: authHeader(token),
+    data: { mountedSha256: null, firmwareUpdateState: 'downloading' },
+  });
+
+  // since=0 against a device whose desiredVersion is also 0: no disk change to
+  // report. `since=1` would NOT work here and the difference matters -- a
+  // `since` ahead of the real version trips the existing clamp path, which
+  // delivers immediately by design, and the test would pass for the wrong
+  // reason whether or not the update rule were correct.
+  //
+  // Asserted by whether the request has SETTLED after 3 s rather than by
+  // measuring how long it took: the question is "did it answer at once",
+  // and waiting out the full 25 s hold to find out would make a fast,
+  // precise check slow and flaky.
+  let settled = false;
+  const polling = request.get('/api/device/poll?since=0', { headers: authHeader(token) })
+    .then((r) => { settled = true; return r; });
+  await new Promise((r) => setTimeout(r, 3000));
+  expect(settled, 'an acknowledged update must not keep releasing the hold').toBe(false);
+
+  const res = await polling;
+  expect([200, 204]).toContain(res.status());
+});
+
+test('a device with no update gets no update field', async ({ page, request }) => {
+  await signUpFresh(page);
+  const { token } = await pairDevice(page, request);
+  const res = await request.get('/api/device/poll?since=999999', { headers: authHeader(token) });
+  if (res.status() === 200) expect((await res.json()).update).toBeUndefined();
 });

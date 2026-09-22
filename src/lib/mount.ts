@@ -1,6 +1,7 @@
 import { and, eq, sql } from 'drizzle-orm';
 import { getDb } from '@/db';
 import { devices } from '@/db/schema/devices';
+import { firmwareReleases } from '@/db/schema/firmware';
 import { disks, games } from '@/db/schema/catalog';
 import { ADF_BYTES } from '@/lib/adfmfm';
 
@@ -279,4 +280,71 @@ export async function touchLastSeen(deviceId: string): Promise<void> {
   await getDb().update(devices)
     .set({ lastSeenAt: new Date() })
     .where(eq(devices.id, deviceId));
+}
+
+export interface FirmwareInstruction {
+  version: string;
+  /**
+   * For the board's OWN anti-rollback check. A rule only the server enforces
+   * is a rule a compromised server can skip.
+   */
+  sequence: number;
+  sha256: string;
+  sizeBytes: number;
+  signature: string;
+  keyId: string;
+}
+
+/**
+ * What firmware this device should be running, if any, and whether it has yet
+ * said anything about it.
+ *
+ * `unacknowledged` is what lets the poll release its hold exactly once: while
+ * an update is wanted and firmwareUpdateState is still null, the device has
+ * not seen it. The moment it reports any state -- including 'failed' -- the
+ * hold goes back to normal, which is also why a failed update never
+ * auto-retries.
+ */
+export async function readFirmwareInstruction(deviceId: string): Promise<{
+  update: FirmwareInstruction | null;
+  unacknowledged: boolean;
+}> {
+  const [row] = await getDb()
+    .select({
+      want: devices.desiredFirmwareVersion,
+      state: devices.firmwareUpdateState,
+      version: firmwareReleases.version,
+      sequence: firmwareReleases.sequence,
+      sha256: firmwareReleases.sha256,
+      sizeBytes: firmwareReleases.sizeBytes,
+      signature: firmwareReleases.signature,
+      keyId: firmwareReleases.signingKeyId,
+    })
+    .from(devices)
+    .leftJoin(firmwareReleases, eq(firmwareReleases.version, devices.desiredFirmwareVersion))
+    .where(eq(devices.id, deviceId))
+    .limit(1);
+
+  // A desired version whose release has been deleted resolves to NO
+  // instruction rather than a half-built one. The device simply does not
+  // update, which is the safe direction.
+  //
+  // Every release column is checked, not just `version`: they come from a LEFT
+  // JOIN, so they are nullable together, and building an instruction out of a
+  // partially-resolved row would hand a board a digest or a signature it could
+  // not check.
+  if (
+    !row?.want || row.version === null || row.sequence === null || row.sha256 === null
+    || row.sizeBytes === null || row.signature === null || row.keyId === null
+  ) {
+    return { update: null, unacknowledged: false };
+  }
+
+  return {
+    update: {
+      version: row.version, sequence: row.sequence, sha256: row.sha256,
+      sizeBytes: row.sizeBytes, signature: row.signature, keyId: row.keyId,
+    },
+    unacknowledged: row.state === null,
+  };
 }

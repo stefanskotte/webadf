@@ -1,5 +1,7 @@
 import { requireDevice, deviceAuthResponse } from '@/lib/device-auth';
-import { readDesired, readDesiredVersion, touchLastSeen } from '@/lib/mount';
+import {
+  readDesired, readDesiredVersion, readFirmwareInstruction, touchLastSeen,
+} from '@/lib/mount';
 
 // Holds up to 25 s. maxDuration covers the hold plus slack; the platform
 // default would cut the connection mid-hold.
@@ -71,11 +73,29 @@ export async function GET(request: Request) {
     // value (`clampedFrom !== from`), `since` was already invalid, and that
     // alone must be enough to deliver the current state immediately rather
     // than waiting for a version that can never arrive.
+    const fw = await readFirmwareInstruction(device.deviceId);
+
     const clampedFrom = Math.min(from, version);
-    if (version > clampedFrom || clampedFrom !== from) {
+    // An update the device has not acknowledged releases the hold on its own.
+    // desiredVersion is deliberately NOT bumped to announce one: the device
+    // echoes it back as mountedVersion and the server reads that for an
+    // upload's not_mounted/behind verdict (HANDOFF 4g), so bumping it could
+    // strand an Amiga write that was mid-session. See spec 4.2.
+    if (version > clampedFrom || clampedFrom !== from || fw.unacknowledged) {
       const state = await readDesired(device.deviceId);
       if (!state) return notFound();
-      return Response.json({ version: state.version, desired: state.desired }, { headers: NO_STORE });
+      return Response.json(
+        // `update` LAST, after the disk fields, so a truncated body loses it
+        // rather than losing what the disk depends on -- the same ordering
+        // argument DC_POLL_BODY_BYTES already makes. A board that loses it
+        // simply does not update.
+        {
+          version: state.version,
+          desired: state.desired,
+          ...(fw.update ? { update: fw.update } : {}),
+        },
+        { headers: NO_STORE },
+      );
     }
     if (Date.now() >= deadline) return new Response(null, { status: 204, headers: NO_STORE });
     // Works where the platform wires request cancellation into `signal`,

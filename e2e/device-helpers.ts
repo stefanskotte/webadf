@@ -402,3 +402,19 @@ export async function cleanupTestReleases(): Promise<number> {
     .returning({ id: firmwareReleases.id });
   return removed.length;
 }
+
+/** Sets desired firmware directly, the way the batch route does. */
+export async function setDesiredFirmware(deviceId: string, version: string): Promise<void> {
+  await getDb().update(devices)
+    .set({
+      desiredFirmwareVersion: version,
+      desiredFirmwareSetAt: new Date(),
+      desiredFirmwareSetByUserId: 'e2e',
+      // Null so the poll reads this as unacknowledged and releases its hold
+      // once -- a leftover state from a previous attempt would mean the
+      // device is never told about the new one.
+      firmwareUpdateState: null,
+      firmwareUpdateError: null,
+    })
+    .where(eq(devices.id, deviceId));
+}
