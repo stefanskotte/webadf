@@ -50,7 +50,8 @@ test('the whole loop: request, poll, download, apply, verify', async ({ page, re
   //    desiredVersion having moved.
   const poll = await request.get('/api/device/poll?since=0', { headers: authHeader(token) });
   expect(poll.status()).toBe(200);
-  const instruction = (await poll.json()).update;
+  const pollBody = await poll.json();
+  const instruction = pollBody.update;
   expect(instruction.version).toBe(version);
   expect(instruction.sequence).toBeGreaterThan(0);
   expect(instruction.signature).toBeTruthy();
@@ -62,10 +63,19 @@ test('the whole loop: request, poll, download, apply, verify', async ({ page, re
   expect(dl.status()).toBe(200);
   expect((await dl.body()).byteLength).toBe(instruction.sizeBytes);
 
-  // 4. It reports progress.
+  // 4. It acknowledges and reports progress. A real board carries its
+  //    firmwareVersion on every heartbeat, so the state is sent ALONGSIDE a
+  //    version -- which is the shape that used to lose the state to the
+  //    completion CASE, leaving progress invisible and letting an operator
+  //    re-target a board mid-flash.
   for (const state of ['downloading', 'applying'] as const) {
     const r = await request.post('/api/device/status', {
-      headers: authHeader(token), data: { mountedSha256: null, firmwareUpdateState: state },
+      headers: authHeader(token),
+      data: {
+        mountedSha256: null, firmwareUpdateState: state,
+        firmwareVersion: '0.0.0+e2e70', updateProtocol: 1,
+        firmwareInstructionAck: pollBody.instructionVersion,
+      },
     });
     expect(r.status()).toBe(204);
   }

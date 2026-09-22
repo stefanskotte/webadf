@@ -4268,15 +4268,33 @@ green**.
    when `desiredVersion` moves, and a 204 carries no `update` object. **Do not bump
    `desiredVersion` to announce an update:** the device echoes it back as `mountedVersion`
    and the server reads that for an upload's `not_mounted`/`behind` verdict (§4g) — an
-   unrelated feature could strand an Amiga write mid-session. Instead the hold releases
-   early **only while an update is wanted AND `firmwareUpdateState` is still null**. That
-   one condition also gives: no busy loop, no auto-retry after a failure, and a capability
-   gate that protects the poll rather than only the UI.
+   unrelated feature could strand an Amiga write mid-session.
+
+   Instead there is a SECOND counter: `firmware_instruction_version`, bumped whenever the
+   desired firmware changes (set, changed **or cancelled**), against
+   `firmware_instruction_ack`, which the device echoes. The hold releases while
+   `version > ack`. **The poll body always carries `instructionVersion`, and carries
+   `update` only when there is one** — that asymmetry is load-bearing: a cancellation
+   delivers no instruction, and without a cursor to echo the board could never acknowledge
+   it, so the hold would collapse into an immediate-return loop forever.
+
+   It was first written as a level-triggered boolean (`firmwareUpdateState === null`) and
+   that was wrong in a way worth remembering: it could not express a re-request while one
+   was in flight, a retry of a version the board had already failed, or a cancellation an
+   acknowledged board needed to hear about — which meant a board waiting for an eject would
+   have flashed a release the operator had already withdrawn. Every other wake on that
+   route is an edge-triggered cursor comparison; this one now matches.
 2. **Completion is derived, never reported.** There is deliberately no `succeeded` state.
    `recordStatus` clears the desired firmware when the board reports running that exact
-   version, in the same write as the version — so there is never an instant where a device
-   reads as current while the update still looks pending. A device that reports success is
-   a device that can be wrong about it.
+   version, as a **compare-and-clear `CASE` inside the single UPDATE** — not a SELECT, a
+   decision in JS, and then a write. On the neon-http driver those are two round trips with
+   no transaction available, and an operator requesting a new version inside that window
+   had their request silently erased: 200 returned, success toasted, nothing pending.
+
+   The `else` branches of that CASE carry **whatever the same report asked for**, not the
+   column's old value. Written the other way, a heartbeat carrying both a version and a
+   state — the normal shape, since a board sends its version every time — had its state
+   overwritten, so progress never landed and the `update_in_flight` guard could never fire.
 
 **Two test traps this increment walked into, both mine, both worth knowing**
 

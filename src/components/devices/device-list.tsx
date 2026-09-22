@@ -84,7 +84,7 @@ export function DeviceList({
   }
 
   async function confirm() {
-    if (!latest) return;
+    if (!latest || chosen.length === 0) return;
     setBusy(true);
     setRefusals([]);
     try {
@@ -137,8 +137,13 @@ export function DeviceList({
             {/* The FULL version, never the semver: two releases can share one. */}
             <strong className="break-all font-mono">{latest.version}</strong>
           </span>
+          {/* `chosen` can empty out under a live refresh while `picked` still
+              has ids -- a ticked board that reports the target version stops
+              being selectable. Disabled rather than hidden, so the bar does
+              not shift under the cursor mid-click. */}
           <button type="button" data-testid="update-start" onClick={() => setOpen(true)}
-                  className="rounded-full px-4 py-1.5 text-[13px] font-semibold"
+                  disabled={chosen.length === 0}
+                  className="rounded-full px-4 py-1.5 text-[13px] font-semibold disabled:opacity-50"
                   style={{ background: 'var(--amber-text)', color: '#16273a' }}>
             Update
           </button>

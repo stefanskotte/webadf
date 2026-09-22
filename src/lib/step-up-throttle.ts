@@ -30,7 +30,18 @@ export async function lockoutRemaining(userId: string, now = Date.now()): Promis
  * to lock.
  */
 export async function recordFailure(userId: string, now = Date.now()): Promise<number> {
-  const next = sql`${stepUpAttempts.failures} + 1`;
+  // The count DECAYS: an expired lockout starts the tally over. Without this,
+  // `failures` only ever climbed, so after the first lockout every single
+  // wrong password re-locked for another fifteen minutes forever -- an
+  // operator who mistyped once a month would be permanently one typo away
+  // from being locked out, and an attacker got a cheap standing denial of
+  // firmware updates.
+  const next = sql`case
+    when ${stepUpAttempts.lockedUntil} is not null
+     and ${stepUpAttempts.lockedUntil} <= ${new Date(now)}::timestamptz
+    then 1
+    else ${stepUpAttempts.failures} + 1
+  end`;
   const [row] = await getDb()
     .insert(stepUpAttempts)
     .values({ userId, failures: 1, lastFailedAt: new Date(now) })

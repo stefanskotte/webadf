@@ -55,18 +55,20 @@ export async function GET(
   // resident per request, at exactly the moment every targeted board asks at
   // once, because the poll releases them all together. content-length comes
   // from the row, which already had it.
-  const stream = await firmwareStore.readStream(rel.blobPath).catch(() => null);
+  const blob = await firmwareStore.readStream(rel.blobPath).catch(() => null);
   // A row whose object is missing is a 503, not a 404: the release exists and
   // the board should retry, rather than conclude the version is gone and give
   // up on an update it was told to take.
-  if (!stream) {
+  if (!blob) {
     return Response.json({ error: 'blob_unavailable' }, { status: 503, headers: NO_STORE });
   }
 
-  return new Response(stream, {
+  return new Response(blob.stream, {
     headers: {
       'content-type': 'application/octet-stream',
-      'content-length': String(rel.sizeBytes),
+      // From the object being streamed. Falling back to the row only when the
+      // store did not say, so the header can never contradict the body.
+      'content-length': String(blob.sizeBytes ?? rel.sizeBytes),
       ...NO_STORE,
     },
   });

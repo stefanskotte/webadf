@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { and, eq, inArray, like, notInArray, sql } from 'drizzle-orm';
+import { and, eq, inArray, like, notInArray, or, sql } from 'drizzle-orm';
 import type { Page, APIRequestContext } from '@playwright/test';
 import { getDb } from '@/db';
 import { blobs, disks, games, entitlements } from '@/db/schema/catalog';
@@ -434,6 +434,14 @@ export async function publishTestReleaseWithBlob(version: string): Promise<strin
 }
 
 /** Removes every release this suite published. Called from the global teardown. */
+/**
+ * Both spellings. The prefix changed from `0.0.0-e2e` to `0.0.0+e2e` when the
+ * download route started validating the version grammar -- the old shape is
+ * not `<semver>+<identity>` and production can never produce it. Rows seeded
+ * by a run from before that change would otherwise be swept by nothing.
+ */
+const RELEASE_PREFIXES = ['0.0.0+e2e', '0.0.0-e2e'];
+
 export async function cleanupTestReleases(): Promise<number> {
   // Objects first: an orphaned firmware blob in the operator's private store
   // is exactly the kind of leftover this teardown exists to prevent, and the
@@ -446,7 +454,7 @@ export async function cleanupTestReleases(): Promise<number> {
   }
   const removed = await getDb()
     .delete(firmwareReleases)
-    .where(like(firmwareReleases.version, `${E2E_RELEASE_PREFIX}%`))
+    .where(or(...RELEASE_PREFIXES.map((p) => like(firmwareReleases.version, `${p}%`))))
     .returning({ id: firmwareReleases.id });
   return removed.length;
 }

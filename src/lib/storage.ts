@@ -299,9 +299,17 @@ export const firmwareStore = {
    * update releases every targeted board's poll in the same tick, so the
    * downloads arrive together.
    */
-  async readStream(blobPath: string): Promise<ReadableStream | null> {
+  async readStream(
+    blobPath: string,
+  ): Promise<{ stream: ReadableStream; sizeBytes: number | null } | null> {
     const result = await get(blobPath, { access: 'private', useCache: false });
     if (!result || result.statusCode !== 200) return null;
-    return result.stream;
+    // The size of THESE bytes, not the size a database row remembers. The key
+    // is a version rather than a digest, so the object behind it is not
+    // immutable by construction (this module's own note says a publish could
+    // be corrected) -- and a content-length that disagrees with the body is a
+    // truncated download the board would then fail to verify.
+    const len = Number(result.headers?.get?.('content-length'));
+    return { stream: result.stream, sizeBytes: Number.isFinite(len) && len > 0 ? len : null };
   },
 };

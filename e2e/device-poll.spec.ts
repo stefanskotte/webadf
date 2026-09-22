@@ -223,7 +223,7 @@ test('once the device acknowledges, the poll holds normally again', async ({ pag
   // NOT count as acknowledgement -- a board that says "downloading" without
   // echoing the cursor has not told the server which instruction it means.
   const first = await request.get('/api/device/poll?since=0', { headers: authHeader(token) });
-  const seen = (await first.json()).update.instructionVersion;
+  const seen = (await first.json()).instructionVersion;
   await request.post('/api/device/status', {
     headers: authHeader(token),
     data: { mountedSha256: null, firmwareUpdateState: 'downloading',
@@ -265,13 +265,14 @@ test('a device with no update gets no update field', async ({ page, request }) =
  * a wake, and the body that arrives simply has no `update` in it.
  */
 test('a cancelled update wakes an already-acknowledged board, with no instruction', async ({ page, request }) => {
+  test.setTimeout(60_000);
   await signUpFresh(page);
   const { deviceId, token } = await pairDevice(page, request);
   await publishTestRelease('0.0.0+e2e22');
   await setDesiredFirmware(deviceId, '0.0.0+e2e22');
 
   const told = await request.get('/api/device/poll?since=0', { headers: authHeader(token) });
-  const seen = (await told.json()).update.instructionVersion;
+  const seen = (await told.json()).instructionVersion;
   await request.post('/api/device/status', {
     headers: authHeader(token),
     data: { mountedSha256: null, firmwareUpdateState: 'queued', firmwareInstructionAck: seen },
@@ -281,5 +282,23 @@ test('a cancelled update wakes an already-acknowledged board, with no instructio
 
   const after = await request.get('/api/device/poll?since=0', { headers: authHeader(token) });
   expect(after.status()).toBe(200);
-  expect((await after.json()).update).toBeUndefined();
+  const body = await after.json();
+  expect(body.update).toBeUndefined();
+
+  // AND the board can acknowledge the cancellation. Without a cursor in a
+  // body that carries no `update`, `want > ack` would stay true forever and
+  // this 25 s hold would collapse into an immediate-return loop -- the exact
+  // busy loop the cursor was introduced to make impossible.
+  expect(body.instructionVersion).toBeGreaterThan(seen);
+  await request.post('/api/device/status', {
+    headers: authHeader(token),
+    data: { mountedSha256: null, firmwareInstructionAck: body.instructionVersion },
+  });
+
+  let settled = false;
+  const polling = request.get('/api/device/poll?since=0', { headers: authHeader(token) })
+    .then((r) => { settled = true; return r; });
+  await new Promise((r) => setTimeout(r, 3000));
+  expect(settled, 'an acknowledged cancellation must not keep releasing the hold').toBe(false);
+  await polling;
 });

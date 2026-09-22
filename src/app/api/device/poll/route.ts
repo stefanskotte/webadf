@@ -1,7 +1,6 @@
 import { requireDevice, deviceAuthResponse } from '@/lib/device-auth';
 import {
-  readDesired, readDesiredVersion, readFirmwareCursor, readFirmwareInstruction,
-  touchLastSeen,
+  readDesired, readPollTick, readFirmwareInstruction, touchLastSeen,
 } from '@/lib/mount';
 
 // Holds up to 25 s. maxDuration covers the hold plus slack; the platform
@@ -56,12 +55,13 @@ export async function GET(request: Request) {
   for (;;) {
     // Cheap single-column read per tick. The three-table join runs only when
     // the version has actually moved — 25 joins per hold would be waste.
-    const version = await readDesiredVersion(device.deviceId);
+    const tick = await readPollTick(device.deviceId);
 
     // The device authenticated against this row, so it existed a moment ago.
     // If it has been deleted mid-poll that is a 404 — NEVER a 200 the device
     // could read as an eject instruction. Spec §1 rule 1.
-    if (version === null) return notFound();
+    if (tick === null) return notFound();
+    const { version } = tick;
 
     // `since` can end up ahead of the version we are about to compare it to
     // -- reachable after a database restore rolls desired_version backward.
@@ -74,10 +74,9 @@ export async function GET(request: Request) {
     // value (`clampedFrom !== from`), `since` was already invalid, and that
     // alone must be enough to deliver the current state immediately rather
     // than waiting for a version that can never arrive.
-    // Two integers off the devices row the tick already touches -- NOT the
-    // release join, which belongs on the delivery path below. The comment
-    // above about 25 joins per hold applies to this read too.
-    const firmwareMoved = await readFirmwareCursor(device.deviceId);
+    // Off the SAME row read above -- no second query, no join. The comment
+    // about 25 joins per hold applies to this just as much.
+    const firmwareMoved = tick.instructionVersion > tick.instructionAck;
 
     const clampedFrom = Math.min(from, version);
     // A firmware instruction the device has not acknowledged releases the
@@ -98,14 +97,23 @@ export async function GET(request: Request) {
       // already failed -- both of which the spec forbids.
       const update = firmwareMoved ? await readFirmwareInstruction(device.deviceId) : null;
       return Response.json(
-        // `update` last. NOTE: this is for readability, not safety -- the
-        // firmware refuses a truncated body OUTRIGHT (device_client.c's
+        // `instructionVersion` is ALWAYS present, `update` only when there is
+        // one. That asymmetry is the point: a cancellation moves the cursor
+        // and delivers no instruction, so without a cursor to echo the board
+        // could never acknowledge it -- `want > ack` would stay true and the
+        // 25 s hold would collapse into an immediate-return loop, forever.
+        // The board echoes this as firmwareInstructionAck whether or not an
+        // update came with it.
+        //
+        // `update` last. NOTE: that ordering is for readability, not safety --
+        // the firmware refuses a truncated body OUTRIGHT (device_client.c's
         // body.truncated check), so nothing is "lost last". What keeps the
         // body inside DC_POLL_BODY_BYTES is readDesired bounding its own
         // free-text fields; see the note there.
         {
           version: state.version,
           desired: state.desired,
+          instructionVersion: tick.instructionVersion,
           ...(update ? { update } : {}),
         },
         { headers: NO_STORE },

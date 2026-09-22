@@ -1,4 +1,4 @@
-import { and, eq, inArray, sql } from 'drizzle-orm';
+import { and, eq, inArray, isNotNull, sql } from 'drizzle-orm';
 import { getDb } from '@/db';
 import { devices } from '@/db/schema/devices';
 import { listReleases } from '@/lib/firmware-releases';
@@ -93,7 +93,14 @@ export async function cancelFirmwareUpdate(
       // not the one that mattered.
       firmwareInstructionVersion: sql`${devices.firmwareInstructionVersion} + 1`,
     })
-    .where(and(eq(devices.orgId, orgId), inArray(devices.id, deviceIds)))
+    // Only rows that actually had something pending. Bumping the cursor on an
+    // idle board arms a wake it has nothing to answer, and the returned count
+    // then claims to have cancelled something that was never requested.
+    .where(and(
+      eq(devices.orgId, orgId),
+      inArray(devices.id, deviceIds),
+      isNotNull(devices.desiredFirmwareVersion),
+    ))
     .returning({ id: devices.id });
   return rows.length;
 }

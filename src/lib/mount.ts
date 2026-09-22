@@ -99,13 +99,33 @@ export async function clearDesired(orgId: string, deviceId: string): Promise<num
  * stay a single-column read on the primary key — never the join below.
  * Null means the device row is gone.
  */
-export async function readDesiredVersion(deviceId: string): Promise<number | null> {
-  const rows = await getDb()
-    .select({ version: devices.desiredVersion })
+export interface PollTick {
+  /** desiredVersion: the disk-state counter the device echoes as mountedVersion. */
+  version: number;
+  /** The firmware instruction counter, and what the device has acknowledged. */
+  instructionVersion: number;
+  instructionAck: number;
+}
+
+/**
+ * Everything the 25 s hold loop needs, in ONE row read on the primary key.
+ *
+ * It must stay a single query: the loop calls this once a second, and the
+ * joins belong on the delivery path. It briefly was two -- desiredVersion and
+ * a separate firmware-cursor read -- which doubled the fleet's steady-state
+ * query count while a comment claimed otherwise.
+ */
+export async function readPollTick(deviceId: string): Promise<PollTick | null> {
+  const [row] = await getDb()
+    .select({
+      version: devices.desiredVersion,
+      instructionVersion: devices.firmwareInstructionVersion,
+      instructionAck: devices.firmwareInstructionAck,
+    })
     .from(devices)
     .where(eq(devices.id, deviceId))
     .limit(1);
-  return rows[0]?.version ?? null;
+  return row ?? null;
 }
 
 /**
@@ -262,10 +282,19 @@ export async function recordStatus(
       sql`case when ${done} then null else ${devices.desiredFirmwareSetAt} end`;
     patch.desiredFirmwareSetByUserId =
       sql`case when ${done} then null else ${devices.desiredFirmwareSetByUserId} end`;
-    patch.firmwareUpdateState =
-      sql`case when ${done} then null else ${devices.firmwareUpdateState} end`;
-    patch.firmwareUpdateError =
-      sql`case when ${done} then null else ${devices.firmwareUpdateError} end`;
+    // The `else` branches carry whatever this same report asked for, not the
+    // column's old value. Written the other way, a heartbeat carrying BOTH a
+    // version and a state -- the normal shape -- had its state silently
+    // overwritten by the completion CASE, so progress never landed and
+    // refuseTarget's update_in_flight guard could never fire.
+    const elseState = s.firmwareUpdateState !== undefined
+      ? sql`${s.firmwareUpdateState}`
+      : sql`${devices.firmwareUpdateState}`;
+    const elseError = s.firmwareUpdateError !== undefined
+      ? sql`${s.firmwareUpdateError}`
+      : sql`${devices.firmwareUpdateError}`;
+    patch.firmwareUpdateState = sql`case when ${done} then null else ${elseState} end`;
+    patch.firmwareUpdateError = sql`case when ${done} then null else ${elseError} end`;
   }
 
   if (s.mountedDiskId !== undefined) {
@@ -320,28 +349,6 @@ export interface FirmwareInstruction {
   sizeBytes: number;
   signature: string;
   keyId: string;
-  /** The cursor the board must echo back once it has seen this. */
-  instructionVersion: number;
-}
-
-/**
- * The cheap per-tick read: has the firmware instruction moved past what the
- * device has acknowledged?
- *
- * Two integers off the same devices row the poll already reads. It must stay
- * that way -- the poll loop calls this once a second for 25 s, and the join
- * that resolves the release belongs on the delivery path, not the tick.
- */
-export async function readFirmwareCursor(deviceId: string): Promise<boolean> {
-  const [row] = await getDb()
-    .select({
-      want: devices.firmwareInstructionVersion,
-      ack: devices.firmwareInstructionAck,
-    })
-    .from(devices)
-    .where(eq(devices.id, deviceId))
-    .limit(1);
-  return row ? row.want > row.ack : false;
 }
 
 /**
@@ -358,7 +365,6 @@ export async function readFirmwareInstruction(
   const [row] = await getDb()
     .select({
       want: devices.desiredFirmwareVersion,
-      instructionVersion: devices.firmwareInstructionVersion,
       version: firmwareReleases.version,
       sequence: firmwareReleases.sequence,
       sha256: firmwareReleases.sha256,
@@ -379,6 +385,5 @@ export async function readFirmwareInstruction(
     sizeBytes: row.sizeBytes!,
     signature: row.signature!,
     keyId: row.keyId!,
-    instructionVersion: row.instructionVersion,
   };
 }
