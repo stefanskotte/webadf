@@ -279,7 +279,16 @@ export const demozooExportStore: DemozooExportStore = {
  */
 export const firmwareStore = {
   async read(blobPath: string): Promise<Uint8Array | null> {
-    const result = await get(blobPath, { access: 'private' });
+    // useCache: false, for the same reason diskStore.read gives.
+    //
+    // The key is a VERSION, not a digest, so the bytes behind it are not
+    // immutable by construction: the e2e fixture overwrites and deletes the
+    // same path, and a publish could be corrected. A cached MISS is the one
+    // that actually bit -- it outlived a deleted object and made the route
+    // answer 503 for a release whose row and bytes both existed, which reads
+    // as "the store is down" rather than "you are being served a stale
+    // answer". Diagnosed by this exact failure.
+    const result = await get(blobPath, { access: 'private', useCache: false });
     if (!result || result.statusCode !== 200) return null;
     return new Uint8Array(await new Response(result.stream).arrayBuffer());
   },

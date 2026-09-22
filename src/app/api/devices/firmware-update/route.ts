@@ -13,7 +13,7 @@ const body = z.object({
 });
 
 export async function POST(request: Request) {
-  const { orgId, userId, email } = await requireOrg();
+  const { orgId, userId } = await requireOrg();
 
   let raw: unknown;
   try { raw = await request.json(); } catch { raw = null; }
@@ -22,7 +22,7 @@ export async function POST(request: Request) {
 
   // BEFORE anything is read or written. A wrong password must leave no trace
   // and reveal nothing about which devices or versions exist.
-  if (!(await verifyPassword(email, parsed.data.password))) {
+  if (!(await verifyPassword(parsed.data.password))) {
     return Response.json({ error: 'bad_password' }, { status: 401 });
   }
 

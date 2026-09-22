@@ -24,6 +24,11 @@ export interface LiveStateRow {
   // that silently stops updating itself.
   desiredFirmwareVersion: string | null;
   firmwareUpdateState: string | null;
+  // Also page inputs, and also missed the first time: updateProtocol decides
+  // whether a checkbox is drawn at all, and firmwareUpdateError is rendered
+  // verbatim in the "update failed -- <reason>" line.
+  updateProtocol: number | null;
+  firmwareUpdateError: string | null;
   lastError: string | null; lastErrorAt: Date | null;
 }
 
@@ -45,10 +50,16 @@ export function liveFingerprint(
    * reported version (above) and the registry -- and only the first was in
    * here. Publishing a release therefore changed what every open Devices tab
    * should show while leaving the fingerprint identical, so the callout only
-   * appeared on a manual reload. The sequence is monotonic and assigned at
-   * publish, so it moves exactly when the registry does.
+   * appeared on a manual reload.
+   *
+   * REQUIRED, deliberately. It shipped with `= 0`, and the app layout kept
+   * calling with two arguments -- so the server-seeded baseline was hashed
+   * with 0 while every poll hashed the real sequence, and no two ever matched
+   * once a release existed. Every idle tab refreshed itself forever. A
+   * default parameter is an ignored input: it lets a stale call site compile
+   * and be wrong.
    */
-  latestReleaseSequence = 0,
+  latestReleaseSequence: number,
 ): string {
   const lines = [...rows]
     .sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0))
@@ -60,6 +71,7 @@ export function liveFingerprint(
         r.diskSha256 ?? '', r.diskWriteProtected === null ? '' : String(r.diskWriteProtected), r.name,
         r.firmwareVersion ?? '',
         r.desiredFirmwareVersion ?? '', r.firmwareUpdateState ?? '',
+        r.updateProtocol ?? '', r.firmwareUpdateError ?? '',
         r.lastError ?? '', r.lastErrorAt?.toISOString() ?? '',
         isOnline(r.lastSeenAt, now) ? '1' : '0',
         state === 'stale' ? relative(r.lastSeenAt, now) : '',
@@ -84,6 +96,8 @@ export async function liveStateRows(db: ReturnType<typeof getDb>, orgId: string)
       firmwareVersion: devices.firmwareVersion,
       desiredFirmwareVersion: devices.desiredFirmwareVersion,
       firmwareUpdateState: devices.firmwareUpdateState,
+      updateProtocol: devices.updateProtocol,
+      firmwareUpdateError: devices.firmwareUpdateError,
       lastError: devices.lastError, lastErrorAt: devices.lastErrorAt,
     })
     .from(devices)

@@ -1,3 +1,4 @@
+import { headers } from 'next/headers';
 import { auth } from '@/lib/auth';
 
 /**
@@ -8,22 +9,35 @@ import { auth } from '@/lib/auth';
  * and NOTHING else. A compromised server can skip the prompt entirely. It is
  * not a substitute for the image signature.
  *
- * Verified per request rather than by opening an elevated window, so there is
- * no window to time-box, leak, or forget to expire. The 2026-09-13 ruling
- * asked for "minutes, not the session" and "per update rather than once per
- * login"; per request satisfies both more simply than a window does.
+ * USE verifyPassword, NOT signInEmail. The first version of this called
+ * `auth.api.signInEmail` for its boolean and claimed in a comment that the
+ * session it mints was "inert". Measured, it is not: better-auth persists a
+ * real 7-day session row, and `nextCookies()` -- whose after-hook matcher
+ * returns true for every path, and whose only escape hatch is a `_flag` that
+ * exists solely on the HTTP router path -- forwards its Set-Cookie onto this
+ * route's response. So every press of Update silently rotated the operator's
+ * session onto a brand-new one and left the old row alive. An attacker
+ * holding a stolen, near-expiry cookie who guessed the password was handed a
+ * fresh 7-day session BY THE CHECK MEANT TO STOP THEM.
+ *
+ * `verifyPassword` takes no email: it checks the password of the session's
+ * own user, which is what step-up means, and it mints nothing. Both facts
+ * were confirmed by running it, not read off the types.
+ *
+ * NOT SOLVED HERE: this is an unthrottled oracle. better-auth's rate limiter
+ * runs in its HTTP router and is bypassed by every direct `auth.api.*` call,
+ * and this app has no rate limiting of its own. See the caller.
  */
-export async function verifyPassword(email: string, password: string): Promise<boolean> {
+export async function verifyPassword(password: string): Promise<boolean> {
   try {
-    // signInEmail mints a session as a side effect. It is inert here: this
-    // function returns a boolean, the result is never handed back to the
-    // caller, and no Set-Cookie is forwarded -- the caller's existing session
-    // is what the surrounding route already authenticated against.
-    const result = await auth.api.signInEmail({ body: { email, password } });
-    return Boolean(result);
+    const result = await auth.api.verifyPassword({
+      body: { password },
+      headers: await headers(),
+    });
+    return Boolean(result?.status);
   } catch {
-    // better-auth throws APIError on bad credentials. A wrong password is an
-    // ordinary answer here, not an exception worth propagating.
+    // A wrong password throws BAD_REQUEST/INVALID_PASSWORD; no session means
+    // UNAUTHORIZED. Both are ordinary answers here, not exceptions to raise.
     return false;
   }
 }

@@ -29,10 +29,51 @@ export function DeviceList({
   const [open, setOpen] = useState(false);
   const [password, setPassword] = useState('');
   const [busy, setBusy] = useState(false);
-  const [refusals, setRefusals] = useState<{ name: string; reason: string }[]>([]);
+  const [refusals, setRefusals] = useState<{ deviceId: string; name: string; reason: string }[]>([]);
 
   const selectable = new Set(selectableIds);
-  const chosen = devices.filter((d) => picked.has(d.id));
+  // Intersected with `selectable`, not just with `devices`. LiveRefresh calls
+  // router.refresh() while an update is in flight -- that is the point of
+  // putting the update into the fingerprint -- so a ticked board can stop
+  // being selectable (it reports the target version, or starts applying)
+  // and its checkbox disappears while its id is still in `picked`. Submitting
+  // it would 409 the whole ALL-OR-NOTHING batch on a device the operator can
+  // no longer see or untick.
+  const chosen = devices.filter((d) => picked.has(d.id) && selectable.has(d.id));
+
+  function close() {
+    setOpen(false);
+    setRefusals([]);
+    setPassword('');
+  }
+
+  /**
+   * Stand an update down. No password: this is not the privileged direction.
+   *
+   * It exists because without it there is NO way out of a stuck update from
+   * the app -- a board that reports 'failed', or one that goes offline after
+   * being told, keeps its request forever and its card keeps showing it.
+   * The endpoint shipped with no caller; this is the caller.
+   */
+  async function cancel(id: string) {
+    try {
+      const res = await fetch('/api/devices/firmware-update', {
+        method: 'DELETE',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ deviceIds: [id] }),
+      });
+      if (res.redirected || !res.ok) {
+        toast.error('Could not cancel the update.');
+        return;
+      }
+      // Precise about what this did: a board that already flashed keeps the
+      // firmware. Cancelling clears intent, not flash.
+      toast.success('Update cancelled. A board that already applied it keeps it.');
+      router.refresh();
+    } catch {
+      toast.error('Could not reach the server. Nothing was changed.');
+    }
+  }
 
   function toggle(id: string) {
     setPicked((prev) => {
@@ -54,14 +95,28 @@ export function DeviceList({
           deviceIds: chosen.map((d) => d.id), version: latest.version, password,
         }),
       });
+      // An expired session makes requireOrg() redirect; fetch FOLLOWS the
+      // 307 (preserving the POST) to /sign-in, which answers 200 text/html.
+      // Every status check below would miss it and the operator would be
+      // told three boards were updated when nothing was written and no
+      // password was ever checked. Detected before anything else.
+      if (res.redirected || !res.headers.get('content-type')?.includes('application/json')) {
+        toast.error('Your session expired. Sign in again and retry.');
+        return;
+      }
       if (res.status === 401) { toast.error('That password was not right.'); return; }
       if (res.status === 409) { setRefusals((await res.json()).refusals ?? []); return; }
       if (!res.ok) { toast.error('Could not request the update.'); return; }
       toast.success(`Update requested for ${chosen.length} device${chosen.length === 1 ? '' : 's'}.`);
-      setOpen(false);
+      close();
       setPicked(new Set());
-      setPassword('');
       router.refresh();
+    } catch {
+      // Without this, a dropped connection or a non-JSON body left the dialog
+      // looking exactly as it does before the first click -- on a
+      // password-gated action that flashes hardware, where the operator's
+      // only recourse is to press it again and hope.
+      toast.error('Could not reach the server. Nothing was changed.');
     } finally {
       setBusy(false);
     }
@@ -94,6 +149,7 @@ export function DeviceList({
           selection={selectable.has(d.id)
             ? { selected: picked.has(d.id), onToggle: toggle }
             : undefined}
+          onCancelUpdate={d.desiredFirmwareVersion ? cancel : undefined}
         />
       ))}
 
@@ -131,13 +187,16 @@ export function DeviceList({
             </label>
             {refusals.length > 0 && (
               <ul className="flex flex-col gap-1 text-[12px]" style={{ color: 'var(--amber-text)' }}>
+                {/* Keyed by deviceId: device names have no unique constraint
+                    and are freely editable, so two boards called "Amiga" in
+                    one refused batch would collide. */}
                 {refusals.map((r) => (
-                  <li key={r.name}>{r.name}: {r.reason.replace(/_/g, ' ')}</li>
+                  <li key={r.deviceId}>{r.name}: {r.reason.replace(/_/g, ' ')}</li>
                 ))}
               </ul>
             )}
             <div className="flex justify-end gap-2">
-              <button type="button" onClick={() => setOpen(false)} className="text-[13px]"
+              <button type="button" onClick={close} className="text-[13px]"
                       style={{ color: 'var(--muted)' }}>Cancel</button>
               <button type="button" data-testid="update-confirm"
                       disabled={busy || password.length === 0} onClick={confirm}

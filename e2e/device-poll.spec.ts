@@ -6,7 +6,7 @@ import { devices } from '@/db/schema/devices';
 import { signUpFresh, runTag } from './helpers';
 import {
   pairDevice, seedDisk, authHeader, cleanupSeeded, publishTestRelease,
-  cleanupTestReleases, setDesiredFirmware,
+  cleanupTestReleases, setDesiredFirmware, clearDesiredFirmware,
 } from './device-helpers';
 
 const sha = (s: string) => createHash('sha256').update(s).digest('hex');
@@ -207,10 +207,16 @@ test('once the device acknowledges, the poll holds normally again', async ({ pag
   await publishTestRelease('0.0.0-e2e.21+gaa21000');
   await setDesiredFirmware(deviceId, '0.0.0-e2e.21+gaa21000');
 
-  // Acknowledge, the way a board would.
+  // Acknowledge the way a board does: echo back the instruction cursor the
+  // poll body carried. Reporting a STATE is telemetry and deliberately does
+  // NOT count as acknowledgement -- a board that says "downloading" without
+  // echoing the cursor has not told the server which instruction it means.
+  const first = await request.get('/api/device/poll?since=0', { headers: authHeader(token) });
+  const seen = (await first.json()).update.instructionVersion;
   await request.post('/api/device/status', {
     headers: authHeader(token),
-    data: { mountedSha256: null, firmwareUpdateState: 'downloading' },
+    data: { mountedSha256: null, firmwareUpdateState: 'downloading',
+            firmwareInstructionAck: seen },
   });
 
   // since=0 against a device whose desiredVersion is also 0: no disk change to
@@ -238,4 +244,31 @@ test('a device with no update gets no update field', async ({ page, request }) =
   const { token } = await pairDevice(page, request);
   const res = await request.get('/api/device/poll?since=999999', { headers: authHeader(token) });
   if (res.status() === 200) expect((await res.json()).update).toBeUndefined();
+});
+
+/**
+ * The case the first design could not express at all. A board that has
+ * acknowledged and is waiting for an eject must LEARN that the operator stood
+ * the update down -- otherwise it flashes a withdrawn release the moment the
+ * disk comes out. Cancelling moves the cursor, so the cancellation is itself
+ * a wake, and the body that arrives simply has no `update` in it.
+ */
+test('a cancelled update wakes an already-acknowledged board, with no instruction', async ({ page, request }) => {
+  await signUpFresh(page);
+  const { deviceId, token } = await pairDevice(page, request);
+  await publishTestRelease('0.0.0-e2e.22+gaa22000');
+  await setDesiredFirmware(deviceId, '0.0.0-e2e.22+gaa22000');
+
+  const told = await request.get('/api/device/poll?since=0', { headers: authHeader(token) });
+  const seen = (await told.json()).update.instructionVersion;
+  await request.post('/api/device/status', {
+    headers: authHeader(token),
+    data: { mountedSha256: null, firmwareUpdateState: 'queued', firmwareInstructionAck: seen },
+  });
+
+  await clearDesiredFirmware(deviceId);
+
+  const after = await request.get('/api/device/poll?since=0', { headers: authHeader(token) });
+  expect(after.status()).toBe(200);
+  expect((await after.json()).update).toBeUndefined();
 });

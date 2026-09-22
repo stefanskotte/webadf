@@ -134,6 +134,20 @@
       "when": 1790059968952,
       "tag": "0018_low_boom_boom",
       "breakpoints": true
+    },
+    {
+      "idx": 19,
+      "version": "7",
+      "when": 1790066492599,
+      "tag": "0019_hard_bloodscream",
+      "breakpoints": true
+    },
+    {
+      "idx": 20,
+      "version": "7",
+      "when": 1790067024334,
+      "tag": "0020_workable_fantastic_four",
+      "breakpoints": true
     }
   ]
 }

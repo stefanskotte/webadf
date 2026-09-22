@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { desc } from 'drizzle-orm';
+import { desc, eq } from 'drizzle-orm';
 import { getDb } from '@/db';
 import { firmwareReleases } from '@/db/schema/firmware';
 import type { ReleaseRef } from '@/lib/firmware-state';

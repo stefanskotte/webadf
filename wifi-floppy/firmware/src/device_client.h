@@ -83,6 +83,37 @@ typedef bool (*dc_hold_fn)(void *ctx);
 #define DC_BACKOFF_FLOOR_MS 1000u
 #define DC_BACKOFF_CAP_MS   60000u
 
+// Sized from the poll body's actual shape, not guessed. readDesired()
+// (src/lib/mount.ts) emits, in this order: version, sha256 (64 hex),
+// diskId, gameId, game, diskNo, diskCount, label, writeProtected. The
+// fixed part -- keys, punctuation, the two 64-char-capable ids, the
+// 64-hex digest and three small integers -- comes to under 400 bytes;
+// everything above that is headroom for the two free-text fields (`game`,
+// a title, and `label`), which are `text` columns with no length limit at
+// all in the schema, so no buffer size can be *proved* sufficient here.
+//
+// Two things matter about the ordering: `sha256` is emitted first, so a
+// truncated body still yields a plausible-looking digest, while
+// `writeProtected` is emitted LAST, so it is the first field a long title
+// pushes off the end. Losing it silently would be a disk presented as
+// writable purely because its title was long -- so this is never resolved
+// by a favourable default: a truncated body is refused outright (dc_step's
+// DC_IDLE_POLL/backoff path below never calls dc_handle_poll_body on one),
+// which means a lost writeProtected can never present a disk as writable.
+// So: the buffer is generous (~1.1 KB for the two free-text fields), AND
+// truncation is recorded rather than silently swallowed -- dc_step
+// refuses to act on a truncated body at all (see its DC_IDLE_POLL/backoff
+// path), which is the same "touch nothing" resolution every other
+// malformed-response case takes.
+#define DC_POLL_BODY_BYTES 1536
+//
+// Moved here from device_client.c so the server side can assert against it:
+// src/lib/device-limits.test.ts computes the worst-case body from the real
+// field bounds and fails if it would not fit. That matters more than it
+// looks, because dc_step REFUSES a truncated body outright rather than
+// parsing a prefix -- an over-long body costs the whole instruction, so the
+// board stops mounting and ejecting, not merely updating.
+
 // The status report is the one request this file POSTs a body with, so it
 // needs a bigger request buffer than a bare GET line (DC_REQ_BUF_BYTES):
 // two 64-hex-char fields, a mount version, an escaped error string, the

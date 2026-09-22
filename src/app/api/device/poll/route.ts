@@ -1,6 +1,7 @@
 import { requireDevice, deviceAuthResponse } from '@/lib/device-auth';
 import {
-  readDesired, readDesiredVersion, readFirmwareInstruction, touchLastSeen,
+  readDesired, readDesiredVersion, readFirmwareCursor, readFirmwareInstruction,
+  touchLastSeen,
 } from '@/lib/mount';
 
 // Holds up to 25 s. maxDuration covers the hold plus slack; the platform
@@ -73,26 +74,39 @@ export async function GET(request: Request) {
     // value (`clampedFrom !== from`), `since` was already invalid, and that
     // alone must be enough to deliver the current state immediately rather
     // than waiting for a version that can never arrive.
-    const fw = await readFirmwareInstruction(device.deviceId);
+    // Two integers off the devices row the tick already touches -- NOT the
+    // release join, which belongs on the delivery path below. The comment
+    // above about 25 joins per hold applies to this read too.
+    const firmwareMoved = await readFirmwareCursor(device.deviceId);
 
     const clampedFrom = Math.min(from, version);
-    // An update the device has not acknowledged releases the hold on its own.
-    // desiredVersion is deliberately NOT bumped to announce one: the device
-    // echoes it back as mountedVersion and the server reads that for an
+    // A firmware instruction the device has not acknowledged releases the
+    // hold. It is a CURSOR comparison, like every other wake on this route --
+    // so delivery is self-recording, a cancelled instruction is itself a wake,
+    // and a board that has answered cannot re-trigger one.
+    //
+    // desiredVersion is deliberately NOT bumped to announce firmware: the
+    // device echoes it back as mountedVersion and the server reads that for an
     // upload's not_mounted/behind verdict (HANDOFF 4g), so bumping it could
     // strand an Amiga write that was mid-session. See spec 4.2.
-    if (version > clampedFrom || clampedFrom !== from || fw.unacknowledged) {
+    if (version > clampedFrom || clampedFrom !== from || firmwareMoved) {
       const state = await readDesired(device.deviceId);
       if (!state) return notFound();
+      // Resolved only here, and only when the device has not acknowledged it.
+      // Sending it again to a board that already answered is what re-issued
+      // an instruction to a board mid-flash and re-tried an update that had
+      // already failed -- both of which the spec forbids.
+      const update = firmwareMoved ? await readFirmwareInstruction(device.deviceId) : null;
       return Response.json(
-        // `update` LAST, after the disk fields, so a truncated body loses it
-        // rather than losing what the disk depends on -- the same ordering
-        // argument DC_POLL_BODY_BYTES already makes. A board that loses it
-        // simply does not update.
+        // `update` last. NOTE: this is for readability, not safety -- the
+        // firmware refuses a truncated body OUTRIGHT (device_client.c's
+        // body.truncated check), so nothing is "lost last". What keeps the
+        // body inside DC_POLL_BODY_BYTES is readDesired bounding its own
+        // free-text fields; see the note there.
         {
           version: state.version,
           desired: state.desired,
-          ...(fw.update ? { update: fw.update } : {}),
+          ...(update ? { update } : {}),
         },
         { headers: NO_STORE },
       );

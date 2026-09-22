@@ -1,0 +1,1 @@
+ALTER TABLE "firmware_releases" DROP COLUMN "channel";

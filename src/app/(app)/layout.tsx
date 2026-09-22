@@ -2,6 +2,7 @@ import { requireOrg } from "@/lib/session";
 import { isSuperAdminEmail } from "@/lib/superadmin";
 import { getDb } from "@/db";
 import { liveFingerprint, liveStateRows } from "@/lib/live-state";
+import { latestReleaseSequence } from "@/lib/firmware-releases";
 import { TopNav } from "@/components/shell/top-nav";
 import { SearchBox } from "@/components/shell/search-box";
 import { SignOutButton } from "@/components/sign-out-button";
@@ -24,7 +25,13 @@ export default async function AppLayout({
   // the client's first fetch happens to see". A change landing between this
   // render and that first fetch would otherwise be silently absorbed into
   // the baseline and never shown (see LiveRefresh's doc comment).
-  const fingerprint = liveFingerprint(await liveStateRows(getDb(), orgId), Date.now());
+  // Both inputs, and the SAME ones /api/live-state hashes -- a baseline that
+  // disagrees with the poll makes every idle tab refresh forever.
+  const [liveRows, latestRelease] = await Promise.all([
+    liveStateRows(getDb(), orgId),
+    latestReleaseSequence(),
+  ]);
+  const fingerprint = liveFingerprint(liveRows, Date.now(), latestRelease);
   return (
     <NavProgressProvider>
       <LiveRefresh initial={fingerprint} />

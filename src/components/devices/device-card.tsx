@@ -6,10 +6,12 @@ import { EjectButton } from './eject-button';
 import { DeviceAlias } from './device-alias';
 
 export function DeviceCard(
-  { device, now, firmware, selection }: {
+  { device, now, firmware, selection, onCancelUpdate }: {
     device: DeviceListItem; now: number; firmware: FirmwareState;
     /** Absent when this board cannot be updated -- no checkbox is drawn at all. */
     selection?: { selected: boolean; onToggle: (id: string) => void };
+    /** Absent when no update is pending. */
+    onCancelUpdate?: (id: string) => void;
   },
 ) {
   const state = deviceState(device, now);
@@ -92,6 +94,14 @@ export function DeviceCard(
                 data-testid={`device-firmware-${device.id}`}>
             {update ?? firmwareLabel(firmware)}
           </span>
+          {update && onCancelUpdate && (
+            <button type="button" onClick={() => onCancelUpdate(device.id)}
+                    data-testid={`device-cancel-update-${device.id}`}
+                    className="self-start text-[11px] underline"
+                    style={{ color: 'var(--muted)' }}>
+              Cancel update
+            </button>
+          )}
         </div>
         {(device.desiredSha256 || device.mountedSha256) && <EjectButton deviceId={device.id} />}
       </div>

@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { and, eq, inArray, like, notInArray } from 'drizzle-orm';
+import { and, eq, inArray, like, notInArray, sql } from 'drizzle-orm';
 import type { Page, APIRequestContext } from '@playwright/test';
 import { getDb } from '@/db';
 import { blobs, disks, games, entitlements } from '@/db/schema/catalog';
@@ -463,6 +463,9 @@ export async function setDesiredFirmware(deviceId: string, version: string): Pro
       // device is never told about the new one.
       firmwareUpdateState: null,
       firmwareUpdateError: null,
+      // The cursor IS the wake. Writing the desired version without moving it
+      // would seed a state the real route can never produce.
+      firmwareInstructionVersion: sql`${devices.firmwareInstructionVersion} + 1`,
     })
     .where(eq(devices.id, deviceId));
 }
@@ -481,4 +484,16 @@ export async function desiredFirmwareOf(deviceId: string): Promise<string | null
     .where(eq(devices.id, deviceId))
     .limit(1);
   return row?.want ?? null;
+}
+
+/** Stands an update down the way the cancel route does -- cursor and all. */
+export async function clearDesiredFirmware(deviceId: string): Promise<void> {
+  await getDb().update(devices)
+    .set({
+      desiredFirmwareVersion: null, desiredFirmwareSetAt: null,
+      desiredFirmwareSetByUserId: null, firmwareUpdateState: null,
+      firmwareUpdateError: null,
+      firmwareInstructionVersion: sql`${devices.firmwareInstructionVersion} + 1`,
+    })
+    .where(eq(devices.id, deviceId));
 }

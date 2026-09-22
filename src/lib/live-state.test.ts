@@ -11,10 +11,11 @@ const base: LiveStateRow = {
   diskSha256: 'a'.repeat(64), diskWriteProtected: false,
   firmwareVersion: '1.0.0',
   desiredFirmwareVersion: null, firmwareUpdateState: null,
+  updateProtocol: null, firmwareUpdateError: null,
   lastError: null, lastErrorAt: null,
 };
 const other: LiveStateRow = { ...base, id: 'dev-b', name: 'Second' };
-const fp = (rows: LiveStateRow[], now = NOW) => liveFingerprint(rows, now);
+const fp = (rows: LiveStateRow[], now = NOW) => liveFingerprint(rows, now, 0);
 
 describe('liveFingerprint', () => {
   it('is 16 hex characters and stable across row order', () => {
@@ -87,8 +88,23 @@ describe('the release registry', () => {
     expect(liveFingerprint([base], NOW, 4)).toBe(liveFingerprint([base], NOW, 4));
   });
 
-  it('treats an empty registry as 0, the default', () => {
-    expect(liveFingerprint([base], NOW)).toBe(liveFingerprint([base], NOW, 0));
+  it('distinguishes an empty registry from a published one', () => {
+    expect(liveFingerprint([base], NOW, 0)).not.toBe(liveFingerprint([base], NOW, 1));
+  });
+
+  /**
+   * Both of these are rendered by /devices and both were missed when the
+   * update fields were first added -- the same gap, in the same file, twice.
+   */
+  it('changes when the capability or the failure reason moves', () => {
+    const capable: LiveStateRow = { ...base, updateProtocol: 1 };
+    const failed: LiveStateRow = {
+      ...base, desiredFirmwareVersion: '1.2.0+gc', firmwareUpdateState: 'failed',
+      firmwareUpdateError: 'signature mismatch',
+    };
+    const failedDifferently: LiveStateRow = { ...failed, firmwareUpdateError: 'short read' };
+    expect(fp([base])).not.toBe(fp([capable]));
+    expect(fp([failed])).not.toBe(fp([failedDifferently]));
   });
 });
 

@@ -1,4 +1,4 @@
-import { and, eq, inArray } from 'drizzle-orm';
+import { and, eq, inArray, sql } from 'drizzle-orm';
 import { getDb } from '@/db';
 import { devices } from '@/db/schema/devices';
 import { listReleases } from '@/lib/firmware-releases';
@@ -42,6 +42,8 @@ export async function requestFirmwareUpdate(
       id: devices.id, name: devices.name,
       updateProtocol: devices.updateProtocol,
       firmwareVersion: devices.firmwareVersion,
+      desiredFirmwareVersion: devices.desiredFirmwareVersion,
+      firmwareUpdateState: devices.firmwareUpdateState,
     })
     .from(devices)
     .where(and(eq(devices.orgId, orgId), inArray(devices.id, deviceIds)));
@@ -63,9 +65,9 @@ export async function requestFirmwareUpdate(
       desiredFirmwareVersion: target.version,
       desiredFirmwareSetAt: new Date(),
       desiredFirmwareSetByUserId: userId,
-      // Cleared so the poll reads this as unacknowledged and releases its hold
-      // once (spec 4.2). A leftover 'failed' from a previous attempt would
-      // otherwise mean the device is never told about the new one.
+      // The cursor moves, which IS the wake. Computed column-relative so two
+      // concurrent batches cannot land on the same value.
+      firmwareInstructionVersion: sql`${devices.firmwareInstructionVersion} + 1`,
       firmwareUpdateState: null,
       firmwareUpdateError: null,
     })
@@ -83,6 +85,13 @@ export async function cancelFirmwareUpdate(
       desiredFirmwareVersion: null, desiredFirmwareSetAt: null,
       desiredFirmwareSetByUserId: null, firmwareUpdateState: null,
       firmwareUpdateError: null,
+      // Cancelling bumps the cursor too, so a board that ALREADY acknowledged
+      // the instruction is woken and learns it is withdrawn. Without this, a
+      // board sitting in 'queued' waiting for an eject would never hear about
+      // the cancellation and would flash the withdrawn release when the disk
+      // came out -- the cancel would clear intent the operator could see and
+      // not the one that mattered.
+      firmwareInstructionVersion: sql`${devices.firmwareInstructionVersion} + 1`,
     })
     .where(and(eq(devices.orgId, orgId), inArray(devices.id, deviceIds)))
     .returning({ id: devices.id });

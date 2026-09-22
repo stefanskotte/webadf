@@ -58,10 +58,33 @@ export const devices = pgTable('devices', {
   desiredFirmwareSetByUserId: text('desired_firmware_set_by_user_id'),
 
   /**
+   * Monotonic, bumped every time the desired firmware CHANGES -- set, changed,
+   * or cancelled. The device echoes back the highest it has seen as
+   * firmwareInstructionAck, and the poll releases its hold while
+   * firmwareInstructionVersion > firmwareInstructionAck.
+   *
+   * This is a CURSOR, not a flag, and that is the whole point. The first
+   * design used "firmwareUpdateState is null" to mean "has not seen it",
+   * which cannot express: a second request while the first is in flight, a
+   * retry of a version the board already failed, or a cancellation a board
+   * has already acknowledged (it would simply never hear about it and would
+   * flash the withdrawn release at the next eject). Every other wake on this
+   * route is an edge-triggered cursor comparison; this one now matches.
+   *
+   * Deliberately NOT desiredVersion: the device echoes that back as
+   * mountedVersion and the server reads it for an upload's
+   * not_mounted/behind verdict (HANDOFF 4g), so bumping it to announce
+   * firmware could strand an Amiga write mid-session.
+   */
+  firmwareInstructionVersion: integer('firmware_instruction_version').notNull().default(0),
+  /** The highest instruction version the device says it has seen. */
+  firmwareInstructionAck: integer('firmware_instruction_ack').notNull().default(0),
+
+  /**
    * 'queued' | 'downloading' | 'applying' | 'failed', as the device reports.
-   * Null means nothing in flight -- and, while desiredFirmwareVersion is set,
-   * null specifically means "not acknowledged yet", which is what releases the
-   * poll's hold exactly once (spec 4.2).
+   * Null means nothing in flight. It is telemetry for the operator -- it no
+   * longer decides whether the poll wakes, which is what the cursor above is
+   * for.
    */
   firmwareUpdateState: text('firmware_update_state'),
   firmwareUpdateError: text('firmware_update_error'),

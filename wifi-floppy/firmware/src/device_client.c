@@ -24,29 +24,8 @@
 // poll or the image endpoint (the sha256 in the image path is 64 hex
 // chars); nowhere near HTTP_MAX_BODY_BYTES.
 #define DC_REQ_BUF_BYTES  256
-// Sized from the poll body's actual shape, not guessed. readDesired()
-// (src/lib/mount.ts) emits, in this order: version, sha256 (64 hex),
-// diskId, gameId, game, diskNo, diskCount, label, writeProtected. The
-// fixed part -- keys, punctuation, the two 64-char-capable ids, the
-// 64-hex digest and three small integers -- comes to under 400 bytes;
-// everything above that is headroom for the two free-text fields (`game`,
-// a title, and `label`), which are `text` columns with no length limit at
-// all in the schema, so no buffer size can be *proved* sufficient here.
-//
-// Two things matter about the ordering: `sha256` is emitted first, so a
-// truncated body still yields a plausible-looking digest, while
-// `writeProtected` is emitted LAST, so it is the first field a long title
-// pushes off the end. Losing it silently would be a disk presented as
-// writable purely because its title was long -- so this is never resolved
-// by a favourable default: a truncated body is refused outright (dc_step's
-// DC_IDLE_POLL/backoff path below never calls dc_handle_poll_body on one),
-// which means a lost writeProtected can never present a disk as writable.
-// So: the buffer is generous (~1.1 KB for the two free-text fields), AND
-// truncation is recorded rather than silently swallowed -- dc_step
-// refuses to act on a truncated body at all (see its DC_IDLE_POLL/backoff
-// path), which is the same "touch nothing" resolution every other
-// malformed-response case takes.
-#define DC_POLL_BODY_BYTES 1536
+// DC_POLL_BODY_BYTES moved to device_client.h so a test can name it -- see
+// the note there. A budget a test cannot name is a budget checked by hand.
 // 512 was never under load before the image fetch: every other response on
 // this device is a few hundred bytes of poll JSON. At 2 MB it means ~4,000
 // read calls, each taking the lwIP lock, memcpy'ing and crediting the window.

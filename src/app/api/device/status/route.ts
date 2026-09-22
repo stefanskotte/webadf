@@ -27,11 +27,17 @@ const statusBody = z.object({
   // devices.firmware_version being whatever was true at pairing. Nullable so
   // a board with no version can say so explicitly rather than by omission.
   firmwareVersion: firmwareVersionSchema.nullable().optional(),
-  /** What this board can do. Absent leaves the column alone, as everywhere here. */
-  updateProtocol: updateProtocolSchema.optional(),
-  /** Null explicitly clears it -- "I am no longer mid-update". */
-  firmwareUpdateState: updateStateSchema.nullable().optional(),
-  firmwareUpdateError: z.string().max(200).nullable().optional(),
+  // All four DROP a value they cannot use rather than rejecting the report.
+  // The rssi note above states the rule: telemetry validation must never be
+  // able to reject the whole report -- and with it the load-bearing
+  // mountedSha256 -- over a field nobody acts on precisely. A 2b board
+  // reporting a state this server predates, or a driver returning protocol
+  // 16, must not stop the server learning what disk the board holds.
+  updateProtocol: updateProtocolSchema.optional().catch(undefined),
+  firmwareUpdateState: updateStateSchema.nullable().optional().catch(undefined),
+  firmwareUpdateError: z.string().max(200).nullable().optional().catch(undefined),
+  /** The highest firmware instruction the board has seen. Monotonic server-side. */
+  firmwareInstructionAck: z.number().int().min(0).optional().catch(undefined),
   error: z.string().max(500).nullable().optional(),
   psramFree: z.number().int().nonnegative().nullable().optional(),
   // Real WiFi RSSI ranges roughly -100..0 dBm, but a marginal link can report
@@ -93,6 +99,7 @@ export async function POST(request: Request) {
     updateProtocol: parsed.data.updateProtocol,
     firmwareUpdateState: parsed.data.firmwareUpdateState,
     firmwareUpdateError: parsed.data.firmwareUpdateError,
+    firmwareInstructionAck: parsed.data.firmwareInstructionAck,
     error: parsed.data.error,
     psramFree: parsed.data.psramFree,
     rssi: parsed.data.rssi,

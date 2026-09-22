@@ -1,4 +1,6 @@
 import { and, eq, sql } from 'drizzle-orm';
+import type { PgUpdateSetSource } from 'drizzle-orm/pg-core';
+import { DC_TITLE_MAX, DC_LABEL_MAX } from '@/lib/device-limits';
 import { getDb } from '@/db';
 import { devices } from '@/db/schema/devices';
 import { firmwareReleases } from '@/db/schema/firmware';
@@ -151,7 +153,16 @@ export async function readDesired(deviceId: string): Promise<DesiredState | null
       sha256: r.sha256,
       diskId: r.diskId,
       gameId: r.gameId,
-      game: r.title ?? 'Unknown',
+      // BOUNDED, and this is load-bearing. `game` and `label` come from
+      // `text` columns with no length limit, while the firmware's poll buffer
+      // is a fixed DC_POLL_BODY_BYTES -- and the firmware REFUSES a truncated
+      // body outright rather than losing the last field, so one long TOSEC
+      // title could make a board stop mounting and ejecting entirely. The
+      // limits are the firmware's own DC_TITLE_MAX / DC_LABEL_MAX, so nothing
+      // the board could have used is lost: it truncates to exactly these
+      // anyway. src/lib/firmware-version.test.ts asserts the whole worst-case
+      // body still fits.
+      game: (r.title ?? 'Unknown').slice(0, DC_TITLE_MAX),
       diskNo: r.diskNo,
       // count(*) returns 0, not null, after a cascade delete leaves no rows
       // for this game -- `|| 1` would treat that 0 as falsy and fall through
@@ -159,7 +170,7 @@ export async function readDesired(deviceId: string): Promise<DesiredState | null
       // catches; Math.max is explicit about the floor being 1, not "anything
       // falsy".
       diskCount: Math.max(r.diskCount ?? 1, 1),
-      label: r.label ?? `Disk ${r.diskNo}`,
+      label: (r.label ?? `Disk ${r.diskNo}`).slice(0, DC_LABEL_MAX),
       // A disk row that has gone missing is not a licence to allow writes.
       writeProtected: r.writeProtected ?? true,
     },
@@ -192,6 +203,8 @@ export async function recordStatus(
     updateProtocol?: number;
     firmwareUpdateState?: string | null;
     firmwareUpdateError?: string | null;
+    /** Highest firmware instruction the board has seen. Monotonic. */
+    firmwareInstructionAck?: number;
     error?: string | null;
     psramFree?: number | null;
     rssi?: number | null;
@@ -199,7 +212,11 @@ export async function recordStatus(
 ): Promise<void> {
   const db = getDb();
 
-  const patch: Partial<typeof devices.$inferInsert> = {
+  // SQL is allowed alongside plain values: the firmware-completion clear and
+  // the acknowledgement cursor below are expressed as column-relative
+  // expressions so they evaluate against the row's pre-image under one lock,
+  // rather than against a value read a round trip earlier.
+  const patch: PgUpdateSetSource<typeof devices> = {
     mountedSha256: s.mountedSha256,
     lastSeenAt: new Date(),
   };
@@ -217,28 +234,38 @@ export async function recordStatus(
   if (s.updateProtocol !== undefined) patch.updateProtocol = s.updateProtocol;
   if (s.firmwareUpdateState !== undefined) patch.firmwareUpdateState = s.firmwareUpdateState;
   if (s.firmwareUpdateError !== undefined) patch.firmwareUpdateError = s.firmwareUpdateError;
+  // The acknowledgement cursor only ever goes UP. A late report carrying an
+  // older value must not re-open a wake the device has already answered.
+  if (s.firmwareInstructionAck !== undefined) {
+    patch.firmwareInstructionAck = sql`greatest(${devices.firmwareInstructionAck}, ${s.firmwareInstructionAck})`;
+  }
 
   // An update is COMPLETE when the board reports running the exact version it
   // was asked to run. The device never says "I succeeded" -- this is the only
   // evidence that counts, and the board produces it by running rather than by
-  // claiming. Read the current desired value first: it is not in `patch`, and
-  // a partial report must not clear an update it said nothing about.
+  // claiming.
   //
-  // In the SAME write as the version, so there is never an instant where the
-  // device reads as running the target while the update still looks pending.
+  // Expressed as a COMPARE-AND-CLEAR inside the single UPDATE, not as a read
+  // then a write. It used to SELECT the desired version, decide in JS, and
+  // write the decision -- two round trips on the neon-http driver, with no
+  // transaction available (see admin-delete.ts). An operator requesting a new
+  // version inside that window had their request silently erased by the
+  // heartbeat's stale decision: 200 returned, success toasted, nothing
+  // pending, nothing logged. Each CASE below evaluates against the same
+  // pre-image under one row lock, so a concurrent request either wins or is
+  // left entirely alone.
   if (s.firmwareVersion) {
-    const [want] = await db
-      .select({ desired: devices.desiredFirmwareVersion })
-      .from(devices)
-      .where(eq(devices.id, deviceId))
-      .limit(1);
-    if (want?.desired && want.desired === s.firmwareVersion) {
-      patch.desiredFirmwareVersion = null;
-      patch.desiredFirmwareSetAt = null;
-      patch.desiredFirmwareSetByUserId = null;
-      patch.firmwareUpdateState = null;
-      patch.firmwareUpdateError = null;
-    }
+    const done = sql`${devices.desiredFirmwareVersion} = ${s.firmwareVersion}`;
+    patch.desiredFirmwareVersion =
+      sql`case when ${done} then null else ${devices.desiredFirmwareVersion} end`;
+    patch.desiredFirmwareSetAt =
+      sql`case when ${done} then null else ${devices.desiredFirmwareSetAt} end`;
+    patch.desiredFirmwareSetByUserId =
+      sql`case when ${done} then null else ${devices.desiredFirmwareSetByUserId} end`;
+    patch.firmwareUpdateState =
+      sql`case when ${done} then null else ${devices.firmwareUpdateState} end`;
+    patch.firmwareUpdateError =
+      sql`case when ${done} then null else ${devices.firmwareUpdateError} end`;
   }
 
   if (s.mountedDiskId !== undefined) {
@@ -293,26 +320,45 @@ export interface FirmwareInstruction {
   sizeBytes: number;
   signature: string;
   keyId: string;
+  /** The cursor the board must echo back once it has seen this. */
+  instructionVersion: number;
 }
 
 /**
- * What firmware this device should be running, if any, and whether it has yet
- * said anything about it.
+ * The cheap per-tick read: has the firmware instruction moved past what the
+ * device has acknowledged?
  *
- * `unacknowledged` is what lets the poll release its hold exactly once: while
- * an update is wanted and firmwareUpdateState is still null, the device has
- * not seen it. The moment it reports any state -- including 'failed' -- the
- * hold goes back to normal, which is also why a failed update never
- * auto-retries.
+ * Two integers off the same devices row the poll already reads. It must stay
+ * that way -- the poll loop calls this once a second for 25 s, and the join
+ * that resolves the release belongs on the delivery path, not the tick.
  */
-export async function readFirmwareInstruction(deviceId: string): Promise<{
-  update: FirmwareInstruction | null;
-  unacknowledged: boolean;
-}> {
+export async function readFirmwareCursor(deviceId: string): Promise<boolean> {
+  const [row] = await getDb()
+    .select({
+      want: devices.firmwareInstructionVersion,
+      ack: devices.firmwareInstructionAck,
+    })
+    .from(devices)
+    .where(eq(devices.id, deviceId))
+    .limit(1);
+  return row ? row.want > row.ack : false;
+}
+
+/**
+ * What firmware this device should be running, if any.
+ *
+ * Resolved only on the delivery path. A desired version whose release has
+ * been deleted -- or which is not on the 'release' channel -- yields NO
+ * instruction rather than a half-built one; the device simply does not
+ * update, which is the safe direction.
+ */
+export async function readFirmwareInstruction(
+  deviceId: string,
+): Promise<FirmwareInstruction | null> {
   const [row] = await getDb()
     .select({
       want: devices.desiredFirmwareVersion,
-      state: devices.firmwareUpdateState,
+      instructionVersion: devices.firmwareInstructionVersion,
       version: firmwareReleases.version,
       sequence: firmwareReleases.sequence,
       sha256: firmwareReleases.sha256,
@@ -325,26 +371,14 @@ export async function readFirmwareInstruction(deviceId: string): Promise<{
     .where(eq(devices.id, deviceId))
     .limit(1);
 
-  // A desired version whose release has been deleted resolves to NO
-  // instruction rather than a half-built one. The device simply does not
-  // update, which is the safe direction.
-  //
-  // Every release column is checked, not just `version`: they come from a LEFT
-  // JOIN, so they are nullable together, and building an instruction out of a
-  // partially-resolved row would hand a board a digest or a signature it could
-  // not check.
-  if (
-    !row?.want || row.version === null || row.sequence === null || row.sha256 === null
-    || row.sizeBytes === null || row.signature === null || row.keyId === null
-  ) {
-    return { update: null, unacknowledged: false };
-  }
-
+  if (!row?.want || row.version === null) return null;
   return {
-    update: {
-      version: row.version, sequence: row.sequence, sha256: row.sha256,
-      sizeBytes: row.sizeBytes, signature: row.signature, keyId: row.keyId,
-    },
-    unacknowledged: row.state === null,
+    version: row.version,
+    sequence: row.sequence!,
+    sha256: row.sha256!,
+    sizeBytes: row.sizeBytes!,
+    signature: row.signature!,
+    keyId: row.keyId!,
+    instructionVersion: row.instructionVersion,
   };
 }

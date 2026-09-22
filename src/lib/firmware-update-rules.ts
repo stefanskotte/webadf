@@ -7,13 +7,21 @@ import type { ReleaseRef, Registry } from '@/lib/firmware-state';
  * Devices page decides whether to offer a checkbox with it. One rule with two
  * readers cannot drift into a UI that offers what the server refuses.
  */
-export type TargetRefusal = 'cannot_update' | 'would_roll_back' | 'already_current';
+export type TargetRefusal =
+  | 'cannot_update'
+  | 'would_roll_back'
+  | 'already_current'
+  | 'update_in_flight';
 
 export interface TargetCandidate {
   id: string;
   name: string;
   updateProtocol: number | null;
   firmwareVersion: string | null;
+  /** What it has already been told to run, if anything. */
+  desiredFirmwareVersion?: string | null;
+  /** What it says it is doing about that. */
+  firmwareUpdateState?: string | null;
 }
 
 export function refuseTarget(
@@ -25,6 +33,19 @@ export function refuseTarget(
   // cannot report update state could otherwise release the hold forever
   // (spec 4.2), because the hold releases while the state is unacknowledged.
   if (!d.updateProtocol || d.updateProtocol < 1) return 'cannot_update';
+
+  // A board that is already downloading or writing flash must not be
+  // re-targeted. Re-requesting resets its reported state, which both erases
+  // the live progress the operator is watching and re-arms the wake -- so the
+  // instruction would be re-issued to a board mid-flash while its card
+  // silently reverted from "do not power off" to "update requested".
+  //
+  // 'queued' and 'failed' are deliberately NOT in flight: queued means the
+  // board is waiting for an eject and re-pointing it is harmless, and failed
+  // is exactly the state an operator needs to be able to retry out of.
+  if (d.firmwareUpdateState === 'downloading' || d.firmwareUpdateState === 'applying') {
+    return 'update_in_flight';
+  }
 
   const running = d.firmwareVersion ? reg.byVersion.get(d.firmwareVersion) : undefined;
 
