@@ -8,12 +8,13 @@
  * rules deserve better coverage than that.
  */
 
+import { semverOf, identifiesItsSource } from '@/lib/firmware-version';
+
 export type PublishRefusalReason =
-  | 'dirty'
+  | 'unidentifiable_build'
   | 'duplicate_version'
   | 'semver_regression'
-  | 'bad_semver'
-  | 'version_semver_mismatch';
+  | 'bad_semver';
 
 export class PublishRefused extends Error {
   constructor(public readonly reason: PublishRefusalReason) {
@@ -30,23 +31,21 @@ export interface ExistingRelease {
 
 export interface PublishCandidate {
   version: string;
-  semver: string;
+  /** Ignored -- kept so callers may pass what they derived. Never trusted. */
+  semver?: string;
 }
 
 const SEMVER_RE = /^(\d+)\.(\d+)\.(\d+)$/;
 
-function semverParts(s: string): [number, number, number] {
+function parts(s: string): [number, number, number] | null {
   const m = SEMVER_RE.exec(s);
-  if (!m) throw new PublishRefused('bad_semver');
-  return [Number(m[1]), Number(m[2]), Number(m[3])];
+  return m ? [Number(m[1]), Number(m[2]), Number(m[3])] : null;
 }
 
 /** -1, 0 or 1. Numeric per component, so "1.10.0" is above "1.9.0". */
-function compareSemver(a: string, b: string): number {
-  const pa = semverParts(a);
-  const pb = semverParts(b);
+function compareSemver(a: [number, number, number], b: [number, number, number]): number {
   for (let i = 0; i < 3; i++) {
-    if (pa[i] !== pb[i]) return pa[i] < pb[i] ? -1 : 1;
+    if (a[i] !== b[i]) return a[i] < b[i] ? -1 : 1;
   }
   return 0;
 }
@@ -62,25 +61,35 @@ export function decidePublish(
   existing: readonly ExistingRelease[],
   candidate: PublishCandidate,
 ): number {
-  // Validate the semver first, so a malformed one is reported as bad_semver
-  // rather than as whatever the later comparisons happen to do with it.
-  semverParts(candidate.semver);
+  // The semver is DERIVED from the version rather than taken as a second
+  // field. It used to be passed in alongside, with a rule checking the two
+  // agreed -- a rule that was a tautology for the only real caller (which
+  // computed it the same way) and unreachable for the only caller that
+  // violated it. Derived data validated against itself is depth in the wrong
+  // place; deriving it removes the rule and the disagreement together.
+  const semver = semverOf(candidate.version);
+  if (!semver) throw new PublishRefused('bad_semver');
 
-  // The version must actually carry the semver it claims. Without this a
-  // release could be filed under an ordering its own string contradicts,
-  // and the Devices tab would show a version that no board could report.
-  if (!candidate.version.startsWith(`${candidate.semver}+`)) {
-    throw new PublishRefused('version_semver_mismatch');
+  // Refuses BOTH spellings of "this build cannot be accounted for": -dirty
+  // and +nogit. The original rule matched only the first, so a build made
+  // where git was unavailable -- which names not even a base commit, and
+  // which two different images produce identically -- published cleanly.
+  if (!identifiesItsSource(candidate.version)) {
+    throw new PublishRefused('unidentifiable_build');
   }
-
-  if (candidate.version.endsWith('-dirty')) throw new PublishRefused('dirty');
 
   if (existing.some((r) => r.version === candidate.version)) {
     throw new PublishRefused('duplicate_version');
   }
 
+  const cand = parts(semver)!;   // semverOf already proved the shape
   for (const r of existing) {
-    if (compareSemver(candidate.semver, r.semver) < 0) {
+    // An EXISTING row that does not parse is skipped rather than throwing.
+    // It used to throw bad_semver, which blamed a perfectly well-formed
+    // candidate for a malformed row already in the table -- and did so after
+    // the artifact had been uploaded.
+    const have = parts(r.semver);
+    if (have && compareSemver(cand, have) < 0) {
       throw new PublishRefused('semver_regression');
     }
   }

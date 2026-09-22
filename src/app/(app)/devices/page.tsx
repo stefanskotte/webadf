@@ -1,7 +1,7 @@
 import { requireOrg } from '@/lib/session';
 import { listDevices } from '@/lib/queries';
 import { listReleases } from '@/lib/firmware-releases';
-import { firmwareState, countBehind } from '@/lib/firmware-state';
+import { firmwareState, countBehind, buildRegistry } from '@/lib/firmware-state';
 import { isOnline } from '@/lib/device-state';
 import { PageHeader } from '@/components/shell/page-header';
 import { DeviceCard } from '@/components/devices/device-card';
@@ -19,13 +19,17 @@ export default async function DevicesPage() {
 
   const online = devices.filter((d) => isOnline(d.lastSeenAt, now)).length;
 
-  // One firmware verdict per device, computed once here so the notice and the
-  // cards can never disagree about who is behind. listReleases orders by
-  // sequence desc, so releases[0] is the newest; firmwareState does not rely
-  // on that ordering, but the notice does.
-  const states = devices.map((d) => firmwareState(d.firmwareVersion, releases));
+  // The registry is indexed ONCE and shared, so "which release is newest" is
+  // computed in exactly one place -- the notice and the cards cannot disagree
+  // about it, and the per-device step is a map lookup rather than three walks
+  // of the whole release list.
+  const registry = buildRegistry(releases);
+  const states = devices.map((d) => firmwareState(d.firmwareVersion, registry));
   const behind = countBehind(states);
-  const latest = releases[0];
+  // True when any release a BEHIND device is missing is a security release --
+  // not merely when the newest one is. A security release followed by an
+  // ordinary one must not go quiet for the boards still missing the fix.
+  const securityPending = states.some((s) => s.kind === 'behind' && s.securityPending);
 
   return (
     <>
@@ -36,7 +40,10 @@ export default async function DevicesPage() {
         actions={<PairButton />}
       />
       <div className="flex flex-col gap-3 px-4 pb-10 sm:px-7">
-        {latest && <FirmwareNotice behind={behind} total={devices.length} latest={latest} />}
+        {registry.latest && (
+          <FirmwareNotice behind={behind} total={devices.length}
+                          latest={registry.latest} security={securityPending} />
+        )}
         {devices.length === 0 ? (
           <div className="glass-card p-6 text-[13px]" style={{ color: 'var(--muted)' }}>
             No devices paired yet. Press <strong>Pair a device</strong> and enter the code on the hardware.

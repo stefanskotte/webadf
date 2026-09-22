@@ -805,7 +805,12 @@ dc_register_result_t dc_register(device_client_t *c, const char *pairing_code,
     // static: see the STACK note above. dc_register runs only from
     // core1_main's registration loop, one call at a time, and never while
     // dc_step or dc_report_status is on the stack.
-    static char pc_esc[80], fv_esc[32], mac_esc[32];
+    // fv_esc is sized from DC_STATUS_VER_BYTES, not a literal: a board that
+    // could REGISTER a version it may not REPORT would send two different
+    // identities for one image. dc_json_escape truncates silently, so at 32
+    // a version past 31 characters registered short and then changed on the
+    // first heartbeat -- reading as an unrecognised build in between.
+    static char pc_esc[80], fv_esc[DC_STATUS_VER_BYTES], mac_esc[32];
     dc_json_escape(pc_esc, sizeof pc_esc, pairing_code);
     dc_json_escape(fv_esc, sizeof fv_esc, firmware_version);
     dc_json_escape(mac_esc, sizeof mac_esc, mac);

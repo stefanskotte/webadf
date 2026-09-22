@@ -8,6 +8,13 @@ TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
 fail=0
 checks=0
+
+# GNU coreutils spells the format `-c %Y`; BSD/macOS spells it `-f %m`, where
+# GNU's `-f` means --file-system and would fail. This script runs on both:
+# ubuntu-latest in .github/workflows/firmware.yml, and darwin on the bench.
+mtime() {
+  stat -c %Y "$1" 2>/dev/null || stat -f %m "$1"
+}
 check() { # check <description> <result>
   checks=$((checks + 1))
   if [ "$2" = "0" ]; then echo "  ok   - $1"; else echo "  FAIL - $1"; fail=1; fi
@@ -53,10 +60,10 @@ grep -q "#define WF_FIRMWARE_VERSION" "$TMP/v3.h" && check "defines WF_FIRMWARE_
 
 # 5. Rewriting with an unchanged value must not touch the file's mtime, or
 #    every build relinks the whole image.
-BEFORE=$(stat -f %m "$TMP/v3.h")
+BEFORE=$(mtime "$TMP/v3.h")
 sleep 1
 cmake -DSEMVER=1.0.0 -DSRC_DIR="$TMP/nogit" -DOUT="$TMP/v3.h" -P "$GEN" >/dev/null
-AFTER=$(stat -f %m "$TMP/v3.h")
+AFTER=$(mtime "$TMP/v3.h")
 [ "$BEFORE" = "$AFTER" ] && check "an unchanged value does not rewrite the file" 0 \
   || check "an unchanged value does not rewrite the file" 1
 
@@ -65,6 +72,30 @@ AFTER=$(stat -f %m "$TMP/v3.h")
 cmake -DSEMVER=1.2.3 -DSRC_DIR="$TMP/nogit" -DOUT="$TMP/v3.h" -P "$GEN" >/dev/null
 grep -q '"1.2.3+nogit"' "$TMP/v3.h" && check "a changed value is written" 0 \
   || check "a changed value is written" 1
+
+# 7. A change OUTSIDE the firmware subtree must NOT mark the image dirty.
+#    Without the `-- .` pathspec, git status is repo-wide however
+#    WORKING_DIRECTORY is set, so any stray file anywhere in this monorepo
+#    made a spotless firmware tree unpublishable.
+mkdir -p "$TMP/repo/wifi-floppy/firmware" "$TMP/repo/webapp"
+(
+  cd "$TMP/repo"
+  git checkout -q -- f.txt
+  echo fw > wifi-floppy/firmware/src.c
+  echo app > webapp/page.tsx
+  git add -A && git commit -qm second
+)
+FWHASH="$(git -C "$TMP/repo" log -1 --format=%h -- wifi-floppy/firmware)"
+echo "edited outside the firmware tree" >> "$TMP/repo/webapp/page.tsx"
+cmake -DSEMVER=1.0.0 -DSRC_DIR="$TMP/repo/wifi-floppy/firmware" -DOUT="$TMP/v7.h" -P "$GEN" >/dev/null
+grep -q "\"1.0.0+g${FWHASH}\"" "$TMP/v7.h" && check "a change outside the firmware tree is not -dirty" 0 \
+  || check "a change outside the firmware tree is not -dirty" 1
+
+# 8. ...but a change INSIDE it still is.
+echo "edited inside" >> "$TMP/repo/wifi-floppy/firmware/src.c"
+cmake -DSEMVER=1.0.0 -DSRC_DIR="$TMP/repo/wifi-floppy/firmware" -DOUT="$TMP/v8.h" -P "$GEN" >/dev/null
+grep -q -- "-dirty" "$TMP/v8.h" && check "a change inside the firmware tree is -dirty" 0 \
+  || check "a change inside the firmware tree is -dirty" 1
 
 echo "  ${checks} checks"
 exit $fail

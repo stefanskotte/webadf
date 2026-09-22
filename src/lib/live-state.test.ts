@@ -68,3 +68,25 @@ describe('liveFingerprint', () => {
     expect(fp([])).not.toBe(fp([base]));
   });
 });
+
+/**
+ * /devices renders its firmware verdict from two inputs -- the device's
+ * reported version and the release registry -- and only the first used to be
+ * in here. Publishing a release changed what every open tab should show while
+ * leaving the fingerprint identical, so the callout appeared only on a manual
+ * reload. That also broke this function's own stated contract: "a change here
+ * means some page would render differently, and nothing else changes it."
+ */
+describe('the release registry', () => {
+  it('changes the fingerprint when a release is published', () => {
+    expect(liveFingerprint([base], NOW, 3)).not.toBe(liveFingerprint([base], NOW, 4));
+  });
+
+  it('does not change it when the registry has not moved', () => {
+    expect(liveFingerprint([base], NOW, 4)).toBe(liveFingerprint([base], NOW, 4));
+  });
+
+  it('treats an empty registry as 0, the default', () => {
+    expect(liveFingerprint([base], NOW)).toBe(liveFingerprint([base], NOW, 0));
+  });
+});

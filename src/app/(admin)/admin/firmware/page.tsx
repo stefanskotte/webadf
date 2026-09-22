@@ -1,5 +1,6 @@
 import { listReleasesFull } from '@/lib/firmware-releases';
 import { PageHeader } from '@/components/shell/page-header';
+import { fmtSize, fmtTimeUtc } from '@/lib/format';
 
 export const dynamic = 'force-dynamic';
 
@@ -58,8 +59,11 @@ export default async function AdminFirmwarePage() {
               <span className="break-words text-[11px]" style={{ color: 'var(--muted)' }}>
                 {[
                   `seq ${r.sequence}`,
-                  `${Math.round(r.sizeBytes / 1024)} KB`,
-                  r.publishedAt.toISOString().slice(0, 16).replace('T', ' '),
+                  fmtSize(r.sizeBytes),
+                  fmtTimeUtc(r.publishedAt),
+                  // Who shipped it. The column was written on every row and
+                  // read by nothing, so a wrong attribution was undetectable.
+                  r.publishedByEmail ?? 'unknown publisher',
                   // Recorded but not verified by anything yet (spec §4). Said
                   // out loud here rather than implied by a padlock, so this
                   // page never suggests a check that does not run.

@@ -1,5 +1,7 @@
 import { describe, it, expect } from 'vitest';
-import { firmwareVersionSchema, FIRMWARE_VERSION_MAX } from './firmware-version';
+import {
+  firmwareVersionSchema, FIRMWARE_VERSION_MAX, semverOf, identifiesItsSource,
+} from './firmware-version';
 
 describe('firmwareVersionSchema', () => {
   it('bounds a version at the shared maximum', () => {
@@ -31,5 +33,33 @@ describe('firmwareVersionSchema', () => {
     const m = /#define DC_STATUS_VER_BYTES\s+(\d+)/.exec(header);
     expect(m, 'DC_STATUS_VER_BYTES not found in device_client.h').not.toBeNull();
     expect(Number(m![1])).toBe(FIRMWARE_VERSION_MAX + 1);
+  });
+});
+
+describe('semverOf', () => {
+  it('reads the semver out of a real version string', () => {
+    expect(semverOf('1.0.0+gd16a1da')).toBe('1.0.0');
+    expect(semverOf('1.10.2+gd16a1da-dirty')).toBe('1.10.2');
+    expect(semverOf('1.0.0+nogit')).toBe('1.0.0');
+  });
+
+  it('refuses anything that is not <semver>+<identity>', () => {
+    for (const bad of ['1.0.0', 'weird+ga1', '1.0+ga1', '1.0.0.0+ga1', 'v1.0.0+ga1', '1.0.0+a+b']) {
+      expect(semverOf(bad), bad).toBeNull();
+    }
+  });
+});
+
+describe('identifiesItsSource', () => {
+  it('accepts a clean build', () => {
+    expect(identifiesItsSource('1.0.0+gd16a1da')).toBe(true);
+  });
+
+  // +nogit is worse than -dirty: a dirty build at least names its base
+  // commit, while a nogit build names nothing and two different images
+  // produce the identical string.
+  it('refuses a build whose source cannot be identified', () => {
+    expect(identifiesItsSource('1.0.0+gd16a1da-dirty')).toBe(false);
+    expect(identifiesItsSource('1.0.0+nogit')).toBe(false);
   });
 });

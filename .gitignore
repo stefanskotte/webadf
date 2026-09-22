@@ -73,3 +73,8 @@ playwright-report/
 # which the firmware version generator reports as +g<hash>-dirty and the
 # release script refuses to publish.
 .vscode/
+
+# The firmware CI clones the pico-sdk into the workspace, which is the git
+# work tree. Untracked, it would make every CI build report itself -dirty via
+# cmake/gen_version_header.cmake and therefore be unpublishable.
+/pico-sdk/

@@ -1,8 +1,17 @@
 import { test, expect, type APIRequestContext } from '@playwright/test';
 import { signUpFresh } from './helpers';
-import { pairDevice, authHeader, publishTestRelease, cleanupSeeded } from './device-helpers';
+import {
+  pairDevice, authHeader, publishTestRelease, cleanupSeeded, cleanupTestReleases,
+} from './device-helpers';
 
-test.afterAll(cleanupSeeded);
+// Both, and the releases FIRST. cleanupSeeded does not touch
+// firmware_releases, which is global: while a seeded release exists it is the
+// newest one production compares every real board against, so the window has
+// to close when this file finishes rather than when the whole suite does.
+test.afterAll(async () => {
+  await cleanupTestReleases();
+  await cleanupSeeded();
+});
 
 /**
  * The Devices tab's firmware line. Before this increment it read
@@ -80,9 +89,47 @@ test('a security release says so in the callout', async ({ page, request }) => {
   await signUpFresh(page);
   const { token } = await pairDevice(page, request);
   await publishTestRelease('0.0.0-e2e.6+gf666666');
-  await publishTestRelease('0.0.0-e2e.7+gg777777', { security: true });
+  await publishTestRelease('0.0.0-e2e.7+gg777777', { security: true, notes: 'Closes the TLS resume hang' });
   await report(request, token, '0.0.0-e2e.6+gf666666');
 
   await page.goto('/devices');
+  const notice = page.getByTestId('firmware-notice');
+  await expect(notice).toContainText(/security/i);
+  // The notes reach a non-admin here or they reach nobody: /admin/firmware,
+  // the only other place that renders them, redirects every non-admin.
+  await expect(notice).toContainText('Closes the TLS resume hang');
+});
+
+/**
+ * The case reading only the NEWEST release's flag got wrong. A security
+ * release followed by an ordinary one still leaves a behind board missing the
+ * security fix, and the callout must not go quiet for exactly those boards.
+ */
+test('a security release skipped over by a later ordinary one still says security', async ({ page, request }) => {
+  await signUpFresh(page);
+  const { token } = await pairDevice(page, request);
+  await publishTestRelease('0.0.0-e2e.8+gh888888');
+  await publishTestRelease('0.0.0-e2e.9+gi999999', { security: true });
+  await publishTestRelease('0.0.0-e2e.10+gj101010');   // ordinary, and newest
+  await report(request, token, '0.0.0-e2e.8+gh888888');
+
+  await page.goto('/devices');
   await expect(page.getByTestId('firmware-notice')).toContainText(/security/i);
+});
+
+/**
+ * Before any release is published -- which is the state this ships in, since
+ * the first one needs the operator at the Mac with the signing key -- a board
+ * must not be accused of running an unrecognised build.
+ */
+test('with nothing published, a device is not called unrecognised', async ({ page, request }) => {
+  await signUpFresh(page);
+  const { deviceId, token } = await pairDevice(page, request);
+  await report(request, token, '1.0.0+gabcdef0');
+
+  await page.goto('/devices');
+  const line = page.getByTestId(`device-firmware-${deviceId}`);
+  await expect(line).toContainText('no releases published');
+  await expect(line).not.toContainText('unrecognised');
+  await expect(page.getByTestId('firmware-notice')).toHaveCount(0);
 });

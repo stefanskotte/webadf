@@ -15,10 +15,13 @@ export function FirmwareNotice({
   behind,
   total,
   latest,
+  security,
 }: {
   behind: number;
   total: number;
   latest: ReleaseRef;
+  /** True when any release newer than some behind device's is a security one. */
+  security: boolean;
 }) {
   if (behind === 0) return null;
 
@@ -32,12 +35,26 @@ export function FirmwareNotice({
         className="text-[11px] font-semibold uppercase tracking-wide"
         style={{ color: 'var(--amber-text)' }}
       >
-        {latest.security ? 'Security update available' : 'Firmware update available'}
+        {security ? 'Security update available' : 'Firmware update available'}
       </span>
       <span className="text-[13px]" style={{ color: 'var(--ink)' }}>
         {behind} of {total} {total === 1 ? 'device is' : 'devices are'} behind{' '}
-        <strong>{latest.semver}</strong>.
+        {/*
+          The FULL version, not the semver. Two releases may share a semver --
+          decidePublish allows a rebuild that did not warrant a bump -- and
+          naming the semver then told a user they were behind the exact
+          version their own card said they were running. The suffix is what
+          makes a version an identity; dropping it here reintroduced, in the
+          one place a human reads for what to do, the confusion this whole
+          increment exists to remove.
+        */}
+        <strong className="break-all font-mono">{latest.version}</strong>.
       </span>
+      {latest.notes && (
+        <span className="text-[13px]" style={{ color: 'var(--muted)' }}>
+          {latest.notes}
+        </span>
+      )}
     </div>
   );
 }

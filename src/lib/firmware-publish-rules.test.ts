@@ -1,16 +1,16 @@
 import { describe, it, expect } from 'vitest';
 import { decidePublish, PublishRefused, type ExistingRelease } from './firmware-publish-rules';
 
-const input = (version: string, semver: string) => ({ version, semver });
+const input = (version: string) => ({ version });
 
 describe('decidePublish', () => {
   it('gives the first release sequence 1', () => {
-    expect(decidePublish([], input('1.0.0+ga111111', '1.0.0'))).toBe(1);
+    expect(decidePublish([], input('1.0.0+ga111111'))).toBe(1);
   });
 
   it('gives each later release the next sequence', () => {
     const existing: ExistingRelease[] = [{ version: '1.0.0+ga111111', semver: '1.0.0', sequence: 1 }];
-    expect(decidePublish(existing, input('1.1.0+gb222222', '1.1.0'))).toBe(2);
+    expect(decidePublish(existing, input('1.1.0+gb222222'))).toBe(2);
   });
 
   // Sequences need not be contiguous, but they must only ever go up, because
@@ -20,7 +20,7 @@ describe('decidePublish', () => {
       { version: '1.0.0+ga111111', semver: '1.0.0', sequence: 1 },
       { version: '9.0.0+gz999999', semver: '9.0.0', sequence: 97 },
     ];
-    expect(decidePublish(existing, input('9.0.1+gy888888', '9.0.1'))).toBe(98);
+    expect(decidePublish(existing, input('9.0.1+gy888888'))).toBe(98);
   });
 
   /**
@@ -30,13 +30,25 @@ describe('decidePublish', () => {
    * can be skipped by anyone who calls the route directly.
    */
   it('refuses a dirty version', () => {
-    expect(() => decidePublish([], input('1.0.0+ga111111-dirty', '1.0.0')))
-      .toThrow(expect.objectContaining({ reason: 'dirty' }));
+    expect(() => decidePublish([], input('1.0.0+ga111111-dirty')))
+      .toThrow(expect.objectContaining({ reason: 'unidentifiable_build' }));
+  });
+
+  /**
+   * +nogit is WORSE than -dirty: a dirty build at least names its base
+   * commit, while a nogit build names nothing, and two different images
+   * produce the identical string. The original rule was a string match on
+   * '-dirty' alone, so this published cleanly and could have become the
+   * thing the whole fleet was compared against.
+   */
+  it('refuses a build made where git was unavailable', () => {
+    expect(() => decidePublish([], input('1.0.0+nogit')))
+      .toThrow(expect.objectContaining({ reason: 'unidentifiable_build' }));
   });
 
   it('refuses a duplicate version', () => {
     const existing: ExistingRelease[] = [{ version: '1.0.0+ga111111', semver: '1.0.0', sequence: 1 }];
-    expect(() => decidePublish(existing, input('1.0.0+ga111111', '1.0.0')))
+    expect(() => decidePublish(existing, input('1.0.0+ga111111')))
       .toThrow(expect.objectContaining({ reason: 'duplicate_version' }));
   });
 
@@ -45,15 +57,15 @@ describe('decidePublish', () => {
   // contradicts the version every human reads.
   it('refuses a semver below the current maximum', () => {
     const existing: ExistingRelease[] = [{ version: '1.1.0+gb222222', semver: '1.1.0', sequence: 1 }];
-    expect(() => decidePublish(existing, input('1.0.0+ga111111', '1.0.0')))
+    expect(() => decidePublish(existing, input('1.0.0+ga111111')))
       .toThrow(expect.objectContaining({ reason: 'semver_regression' }));
   });
 
   it('compares semver numerically, so 1.10.0 is above 1.9.0', () => {
     const existing: ExistingRelease[] = [{ version: '1.9.0+ga111111', semver: '1.9.0', sequence: 1 }];
-    expect(decidePublish(existing, input('1.10.0+gb222222', '1.10.0'))).toBe(2);
+    expect(decidePublish(existing, input('1.10.0+gb222222'))).toBe(2);
     const higher: ExistingRelease[] = [{ version: '1.10.0+gb222222', semver: '1.10.0', sequence: 1 }];
-    expect(() => decidePublish(higher, input('1.9.0+ga111111', '1.9.0')))
+    expect(() => decidePublish(higher, input('1.9.0+ga111111')))
       .toThrow(expect.objectContaining({ reason: 'semver_regression' }));
   });
 
@@ -61,27 +73,39 @@ describe('decidePublish', () => {
   // with a fix that did not warrant a bump. Only going DOWN is refused.
   it('allows the same semver with a new build', () => {
     const existing: ExistingRelease[] = [{ version: '1.1.0+gb222222', semver: '1.1.0', sequence: 1 }];
-    expect(decidePublish(existing, input('1.1.0+gc333333', '1.1.0'))).toBe(2);
+    expect(decidePublish(existing, input('1.1.0+gc333333'))).toBe(2);
   });
 
-  it('refuses a semver that is not three numbers', () => {
+  it('refuses a version whose semver is not three numbers', () => {
     for (const bad of ['weird', '1.0', '1.0.0.0', 'v1.0.0', '1.0.0-rc1', '']) {
-      expect(() => decidePublish([], input(`${bad}+ga111111`, bad)), bad)
+      expect(() => decidePublish([], input(`${bad}+ga111111`)), bad)
         .toThrow(expect.objectContaining({ reason: 'bad_semver' }));
     }
   });
 
-  // The suffix is what makes a version unique; a semver alone cannot identify
-  // a build, and accepting one would put a string in the registry that no
-  // board can ever report.
-  it('refuses a version that does not carry the semver it claims', () => {
-    expect(() => decidePublish([], input('2.0.0+ga111111', '1.0.0')))
-      .toThrow(expect.objectContaining({ reason: 'version_semver_mismatch' }));
+  // The suffix is what makes a version unique; a bare semver identifies no
+  // build and no board could ever report it.
+  it('refuses a version with no build identity at all', () => {
+    expect(() => decidePublish([], input('1.0.0')))
+      .toThrow(expect.objectContaining({ reason: 'bad_semver' }));
+  });
+
+  /**
+   * One malformed row already in the registry used to make EVERY later
+   * publish die reporting bad_semver -- blaming a well-formed candidate for
+   * a row it had nothing to do with, after the artifact was already uploaded.
+   */
+  it('ignores an existing row whose semver does not parse', () => {
+    const existing: ExistingRelease[] = [
+      { version: 'junk', semver: 'not-a-semver', sequence: 1 },
+      { version: '1.0.0+ga111111', semver: '1.0.0', sequence: 2 },
+    ];
+    expect(decidePublish(existing, input('1.1.0+gb222222'))).toBe(3);
   });
 
   it('is a PublishRefused, so callers can map it to one status', () => {
     try {
-      decidePublish([], input('1.0.0+ga111111-dirty', '1.0.0'));
+      decidePublish([], input('1.0.0+ga111111-dirty'));
       expect.unreachable('should have thrown');
     } catch (e) {
       expect(e).toBeInstanceOf(PublishRefused);

@@ -16,16 +16,27 @@ endif ()
 set(_suffix "+nogit")
 find_package(Git QUIET)
 if (GIT_FOUND)
+  # `-- .` scopes this to the firmware subtree. Without the pathspec, git
+  # reports the LAST COMMIT OF THE WHOLE REPO, so a commit touching only the
+  # Next.js app would produce a new firmware version for a byte-identical
+  # image -- every board would read "1 release behind" for a change that never
+  # touched firmware. WORKING_DIRECTORY alone does not scope anything.
   execute_process(
-    COMMAND "${GIT_EXECUTABLE}" rev-parse --short HEAD
+    COMMAND "${GIT_EXECUTABLE}" log -1 --format=%h -- .
     WORKING_DIRECTORY "${SRC_DIR}"
     OUTPUT_VARIABLE _hash OUTPUT_STRIP_TRAILING_WHITESPACE
     ERROR_QUIET RESULT_VARIABLE _hash_rc)
   if (_hash_rc EQUAL 0 AND _hash)
     # --porcelain prints one line per changed path and nothing at all when the
-    # tree is clean, so emptiness IS the cleanliness test.
+    # tree is clean, so emptiness IS the cleanliness test -- but it is
+    # REPO-WIDE unless given a pathspec, whatever WORKING_DIRECTORY says. `-- .`
+    # scopes it to the firmware sources that actually went into the image, so
+    # an uncommitted change under src/ or a stray scratch file at the repo root
+    # can no longer stamp a spotless firmware tree as -dirty and make it
+    # unpublishable. Chasing those one at a time through .gitignore was the
+    # wrong fix for an unbounded class.
     execute_process(
-      COMMAND "${GIT_EXECUTABLE}" status --porcelain
+      COMMAND "${GIT_EXECUTABLE}" status --porcelain -- .
       WORKING_DIRECTORY "${SRC_DIR}"
       OUTPUT_VARIABLE _dirty OUTPUT_STRIP_TRAILING_WHITESPACE
       ERROR_QUIET RESULT_VARIABLE _dirty_rc)

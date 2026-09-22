@@ -1,5 +1,5 @@
 import { deviceState, relative } from '@/lib/device-state';
-import type { FirmwareState } from '@/lib/firmware-state';
+import { firmwareLabel, type FirmwareState } from '@/lib/firmware-state';
 import { isDefaultDeviceName } from '@/lib/device-name';
 import type { DeviceListItem } from '@/lib/queries';
 import { EjectButton } from './eject-button';
@@ -10,17 +10,6 @@ export function DeviceCard(
 ) {
   const state = deviceState(device, now);
 
-  // Four states, four different sentences. "unrecognised" exists so that a
-  // build the registry has never seen -- a bench build, or anything flashed
-  // by hand -- is never reported as up to date: its semver matches a release
-  // and only its git suffix differs, so any version COMPARISON would call it
-  // current. See firmwareState.
-  const firmwareLabel =
-    firmware.kind === 'unknown' ? 'fw unknown'
-    : firmware.kind === 'unrecognised' ? `fw ${firmware.version} · unrecognised build`
-    : firmware.kind === 'current' ? `fw ${firmware.version} · up to date`
-    : `fw ${firmware.version} · ${firmware.releasesBehind} `
-      + `${firmware.releasesBehind === 1 ? 'release' : 'releases'} behind`;
 
   // A pending state means desired and actual differ. That is a MOUNT when a
   // disk is desired and an EJECT when none is -- same state, opposite words.
@@ -76,7 +65,7 @@ export function DeviceCard(
           <span className="break-words font-mono text-[11px]"
                 style={{ color: firmware.kind === 'behind' ? 'var(--amber-text)' : 'var(--muted)' }}
                 data-testid={`device-firmware-${device.id}`}>
-            {firmwareLabel}
+            {firmwareLabel(firmware)}
           </span>
         </div>
         {(device.desiredSha256 || device.mountedSha256) && <EjectButton deviceId={device.id} />}

@@ -65,6 +65,25 @@ export default async function globalTeardown() {
   let orphanBlobs = 0;
   let objectsRemoved = 0;
 
+  // FIRST, and in its OWN try.
+  //
+  // Every other leftover this file removes is org-scoped and invisible to
+  // anyone else -- the @example.test email predicate sees to that. These are
+  // not: firmware_releases is global, seeded rows carry the highest sequence,
+  // and while they exist every real device in every org reads as "behind" a
+  // release that was never one. So the cleanup whose boundary is weakest must
+  // not sit last behind ten other fallible steps inside a catch that only
+  // warns. Each firmware spec also sweeps in its own afterAll; this is the
+  // backstop for a spec that crashed before it got there.
+  try {
+    const releases = await cleanupTestReleases();
+    if (releases > 0) console.log(`teardown: removed ${releases} firmware releases`);
+  } catch (err) {
+    console.error('teardown: FAILED to remove seeded firmware releases —',
+                  (err as Error).message);
+    console.error('  Run: delete from firmware_releases where version like \'0.0.0-e2e%\';');
+  }
+
   try {
     const doomed = await db.execute<{ id: string }>(sql`
       select id from auth."user"
@@ -178,15 +197,11 @@ export default async function globalTeardown() {
       orphanBlobs = unreferenced.length;
     }
 
-    // firmware_releases is global, so no email predicate reaches it -- the
-    // version prefix is the whole boundary. See publishTestRelease.
-    const releases = await cleanupTestReleases();
-
     console.log(
       `teardown: removed ${users} test users, ${games} games, `
       + `${codes.rows.length} invite codes, ${sessions.rowCount ?? 0} stale sessions, `
       + `${orphanBlobs} unreferenced blobs (${objectsRemoved} objects), `
-      + `${deltasRemoved} delta blobs, ${releases} firmware releases`,
+      + `${deltasRemoved} delta blobs`,
     );
   } catch (err) {
     // Never fail the run on teardown: the tests already passed or failed on

@@ -15,9 +15,20 @@ server's chain against pinned roots, but neither does anything about a compromis
 account or a poisoned deploy pipeline. With the key offline, whoever owns the pipeline can
 push a **stale** image and nothing worse — and anti-rollback closes that too.
 
-Generate with `pnpm firmware:keygen`, once. Regenerating orphans every release signed with
-the previous key, which is why the script refuses to overwrite an existing one.
+Generate with `pnpm firmware:keygen`, once. It writes the public half into this directory
+itself rather than printing it for you to copy: the private key now exists, so the
+refuse-to-overwrite guard blocks every re-run, and a scrolled-away terminal used to leave
+the public half unrecoverable through the tool. (`openssl pkey -in
+~/.webadf/firmware-signing-key -pubout` recovers it by hand.) Regenerating orphans every
+release signed with the previous key, which is why the guard exists.
+
+**The key id is a fingerprint of the key itself** — `wf-` plus the first 16 hex of the
+sha-256 of its SPKI DER — not a date. It was briefly `wf-release-<year>`, computed
+independently at keygen and at publish time: the same expression evaluated at two moments,
+which agree only within one calendar year. The first publish after New Year would have
+recorded a `signingKeyId` naming a file that does not exist, and increment 2 resolves the
+verifying key by exactly that id.
 
 | key id | generated | status |
 |---|---|---|
-| `wf-release-2026` | 2026-09-22 | current |
+| `wf-1138f25902223da4` | 2026-09-22 | current |

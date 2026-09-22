@@ -359,30 +359,39 @@ export const E2E_RELEASE_PREFIX = '0.0.0-e2e';
  */
 export async function publishTestRelease(
   version: string,
-  opts: { security?: boolean; semver?: string } = {},
+  opts: { security?: boolean; notes?: string } = {},
 ): Promise<void> {
   if (!version.startsWith(E2E_RELEASE_PREFIX)) {
     throw new Error(`e2e releases must start with ${E2E_RELEASE_PREFIX}, got ${version}`);
   }
   const db = getDb();
-  // max+1 across the WHOLE table, so a seeded release is always newest and
-  // can never reorder a real one.
+  // max+1 across the WHOLE table, so a seeded release is always newest.
+  //
+  // That is what makes the specs deterministic AND what makes them visible:
+  // while these rows exist, they are the newest release production compares
+  // every real board against. The window is bounded by cleanupTestReleases in
+  // each spec's afterAll -- not only by the global teardown, which runs once
+  // at the very end of a multi-minute suite.
   const rows = await db.select({ sequence: firmwareReleases.sequence }).from(firmwareReleases);
   const sequence = rows.reduce((m, r) => (r.sequence > m ? r.sequence : m), 0) + 1;
   await db.insert(firmwareReleases).values({
     id: randomUUID(),
     version,
-    semver: opts.semver ?? '0.0.0',
+    semver: '0.0.0',
     sequence,
     sha256: 'e'.repeat(64),
     sizeBytes: 1024,
     blobPath: `firmware/${version}.uf2`,
     signature: 'ZTJlLXRlc3Q=',
     signingKeyId: 'e2e',
-    notes: null,
+    notes: opts.notes ?? null,
     security: opts.security ?? false,
     publishedByUserId: 'e2e',
-  });
+  })
+    // The version strings are fixed literals, so a run whose cleanup did not
+    // complete would make every later run die on a duplicate-key error that
+    // names nothing about firmware. Same idiom seedDisk already uses.
+    .onConflictDoNothing();
 }
 
 /** Removes every release this suite published. Called from the global teardown. */

@@ -1,7 +1,11 @@
 import { test, expect } from '@playwright/test';
 import { signUpFresh } from './helpers';
 import { signInAsSuperAdmin } from './admin-helpers';
-import { publishTestRelease } from './device-helpers';
+import { publishTestRelease, cleanupTestReleases } from './device-helpers';
+
+// firmware_releases is global, so these rows are visible to every org while
+// they exist. The window closes with this file, not with the whole suite.
+test.afterAll(cleanupTestReleases);
 
 /**
  * /admin/firmware is read-only. Publishing happens from the operator's Mac,

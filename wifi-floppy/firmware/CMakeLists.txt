@@ -94,9 +94,6 @@ target_link_libraries(wifi_floppy
 # function pointers are exactly what it cannot see.
 target_compile_definitions(wifi_floppy PRIVATE PICO_USE_STACK_GUARDS=1)
 
-# Overridable so a build can identify ITSELF. The default has read "4b.0"
-# through every firmware change in this project's history -- the display, the
-# flux capture, the MFM decoder -- so as a default it distinguishes nothing.
 # Diagnostic: re-read and decode every track from PSRAM after a mount. See
 # main.c. Off by default -- it costs one track's decode per service-loop
 # iteration for 160 iterations after each mount.
@@ -124,8 +121,15 @@ endif ()
 # support rollout, rollback or anti-rollback, which is why the generator
 # exists and why it runs at BUILD time rather than configure time. Read the
 # note at the top of that file before changing how this works.
-set(FIRMWARE_SEMVER "1.0.0" CACHE STRING
-    "Hand-set semver; the build appends +g<hash> and, when dirty, -dirty")
+# NOT a CACHE variable. `set(... CACHE ...)` is a no-op once the entry exists,
+# so bumping this line and rebuilding in the existing build/ would keep the OLD
+# semver -- the same stale-cache bug that FIRMWARE_VERSION was deleted for, one
+# level up. A plain set() is re-read on every configure, and Ninja re-runs
+# configure whenever this file changes. `-DFIRMWARE_SEMVER=` still overrides,
+# for a one-off build, because -D defines it before this point.
+if (NOT DEFINED FIRMWARE_SEMVER)
+  set(FIRMWARE_SEMVER "1.0.0")
+endif ()
 
 set(WF_VERSION_HEADER "${CMAKE_CURRENT_BINARY_DIR}/generated/wifi_floppy_version.h")
 add_custom_target(wf_version_header ALL
