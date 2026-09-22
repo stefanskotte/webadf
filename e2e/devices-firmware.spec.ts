@@ -10,8 +10,11 @@ import {
 // newest one production compares every real board against, so the window has
 // to close when this file finishes rather than when the whole suite does.
 test.afterAll(async () => {
-  await cleanupTestReleases();
-  await cleanupSeeded();
+  try {
+    await cleanupTestReleases();
+  } finally {
+    await cleanupSeeded();
+  }
 });
 
 /**
@@ -34,9 +37,9 @@ async function report(request: APIRequestContext, token: string, firmwareVersion
 test('a device behind the newest release is called out', async ({ page, request }) => {
   await signUpFresh(page);
   const { deviceId, token } = await pairDevice(page, request);
-  await publishTestRelease('0.0.0-e2e.1+ga111111');
-  await publishTestRelease('0.0.0-e2e.2+gb222222');
-  await report(request, token, '0.0.0-e2e.1+ga111111');
+  await publishTestRelease('0.0.0+e2e1');
+  await publishTestRelease('0.0.0+e2e2');
+  await report(request, token, '0.0.0+e2e1');
 
   await page.goto('/devices');
   await expect(page.getByTestId('firmware-notice')).toContainText('1 of 1');
@@ -46,8 +49,8 @@ test('a device behind the newest release is called out', async ({ page, request 
 test('a device on the newest release shows no callout', async ({ page, request }) => {
   await signUpFresh(page);
   const { deviceId, token } = await pairDevice(page, request);
-  await publishTestRelease('0.0.0-e2e.3+gc333333');
-  await report(request, token, '0.0.0-e2e.3+gc333333');
+  await publishTestRelease('0.0.0+e2e3');
+  await report(request, token, '0.0.0+e2e3');
 
   await page.goto('/devices');
   await expect(page.getByTestId(`device-firmware-${deviceId}`)).toContainText('up to date');
@@ -62,8 +65,8 @@ test('a device on the newest release shows no callout', async ({ page, request }
 test('an unregistered build is called unrecognised, not up to date', async ({ page, request }) => {
   await signUpFresh(page);
   const { deviceId, token } = await pairDevice(page, request);
-  await publishTestRelease('0.0.0-e2e.4+gd444444');
-  await report(request, token, '0.0.0-e2e.4+gdeadbee-dirty');
+  await publishTestRelease('0.0.0+e2e4');
+  await report(request, token, '0.0.0+e2e4-dirty');
 
   await page.goto('/devices');
   await expect(page.getByTestId(`device-firmware-${deviceId}`)).toContainText('unrecognised build');
@@ -73,7 +76,7 @@ test('an unregistered build is called unrecognised, not up to date', async ({ pa
 test('a device that has never reported a version says so', async ({ page, request }) => {
   await signUpFresh(page);
   const { deviceId } = await pairDevice(page, request);
-  await publishTestRelease('0.0.0-e2e.5+ge555555');
+  await publishTestRelease('0.0.0+e2e5');
 
   // pairDevice registers, which DOES carry a version -- so clear it to model
   // a row from before the heartbeat carried one.
@@ -89,9 +92,9 @@ test('a device that has never reported a version says so', async ({ page, reques
 test('a security release says so in the callout', async ({ page, request }) => {
   await signUpFresh(page);
   const { token } = await pairDevice(page, request);
-  await publishTestRelease('0.0.0-e2e.6+gf666666');
-  await publishTestRelease('0.0.0-e2e.7+gg777777', { security: true, notes: 'Closes the TLS resume hang' });
-  await report(request, token, '0.0.0-e2e.6+gf666666');
+  await publishTestRelease('0.0.0+e2e6');
+  await publishTestRelease('0.0.0+e2e7', { security: true, notes: 'Closes the TLS resume hang' });
+  await report(request, token, '0.0.0+e2e6');
 
   await page.goto('/devices');
   const notice = page.getByTestId('firmware-notice');
@@ -109,10 +112,10 @@ test('a security release says so in the callout', async ({ page, request }) => {
 test('a security release skipped over by a later ordinary one still says security', async ({ page, request }) => {
   await signUpFresh(page);
   const { token } = await pairDevice(page, request);
-  await publishTestRelease('0.0.0-e2e.8+gh888888');
-  await publishTestRelease('0.0.0-e2e.9+gi999999', { security: true });
-  await publishTestRelease('0.0.0-e2e.10+gj101010');   // ordinary, and newest
-  await report(request, token, '0.0.0-e2e.8+gh888888');
+  await publishTestRelease('0.0.0+e2e8');
+  await publishTestRelease('0.0.0+e2e9', { security: true });
+  await publishTestRelease('0.0.0+e2e10');   // ordinary, and newest
+  await report(request, token, '0.0.0+e2e8');
 
   await page.goto('/devices');
   await expect(page.getByTestId('firmware-notice')).toContainText(/security/i);
@@ -131,8 +134,8 @@ test('a security release skipped over by a later ordinary one still says securit
 test('a board that cannot update gets no checkbox', async ({ page, request }) => {
   await signUpFresh(page);
   const { deviceId, token } = await pairDevice(page, request);
-  await publishTestRelease('0.0.0-e2e.60+gaa60000');
-  await report(request, token, '0.0.0-e2e.60+gaa60000');   // no updateProtocol
+  await publishTestRelease('0.0.0+e2e60');
+  await report(request, token, '0.0.0+e2e60');   // no updateProtocol
 
   await page.goto('/devices');
   // Not a disabled control -- nothing at all. Every board in the field today
@@ -143,11 +146,11 @@ test('a board that cannot update gets no checkbox', async ({ page, request }) =>
 test('a capable board behind the newest release can be selected and updated', async ({ page, request }) => {
   const { password } = await signUpFresh(page);
   const { deviceId, token } = await pairDevice(page, request);
-  await publishTestRelease('0.0.0-e2e.61+gaa61000');
-  await publishTestRelease('0.0.0-e2e.62+gaa62000');
+  await publishTestRelease('0.0.0+e2e61');
+  await publishTestRelease('0.0.0+e2e62');
   await request.post('/api/device/status', {
     headers: authHeader(token),
-    data: { mountedSha256: null, firmwareVersion: '0.0.0-e2e.61+gaa61000', updateProtocol: 1 },
+    data: { mountedSha256: null, firmwareVersion: '0.0.0+e2e61', updateProtocol: 1 },
   });
 
   await page.goto('/devices');
@@ -166,11 +169,11 @@ test('a capable board behind the newest release can be selected and updated', as
 test('a wrong password in the dialog changes nothing', async ({ page, request }) => {
   await signUpFresh(page);
   const { deviceId, token } = await pairDevice(page, request);
-  await publishTestRelease('0.0.0-e2e.63+gaa63000');
-  await publishTestRelease('0.0.0-e2e.64+gaa64000');
+  await publishTestRelease('0.0.0+e2e63');
+  await publishTestRelease('0.0.0+e2e64');
   await request.post('/api/device/status', {
     headers: authHeader(token),
-    data: { mountedSha256: null, firmwareVersion: '0.0.0-e2e.63+gaa63000', updateProtocol: 1 },
+    data: { mountedSha256: null, firmwareVersion: '0.0.0+e2e63', updateProtocol: 1 },
   });
 
   await page.goto('/devices');

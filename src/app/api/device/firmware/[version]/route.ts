@@ -3,7 +3,7 @@ import { getDb } from '@/db';
 import { firmwareReleases } from '@/db/schema/firmware';
 import { requireDevice, deviceAuthResponse } from '@/lib/device-auth';
 import { firmwareStore } from '@/lib/storage';
-import { FIRMWARE_VERSION_MAX } from '@/lib/firmware-version';
+import { firmwareVersionSchema, semverOf } from '@/lib/firmware-version';
 
 // A .uf2 is ~1 MB. Well inside the default, but stated for the same reason
 // the image route states it.
@@ -31,15 +31,18 @@ export async function GET(
   }
 
   const { version } = await ctx.params;
-  // Checked before the lookup so a malformed version never reaches the
-  // database. FIRMWARE_VERSION_MAX is reused rather than a new literal -- it
-  // is the same constant the firmware's own buffer is sized from.
-  if (!version || version.length > FIRMWARE_VERSION_MAX) {
+  // Bound AND grammar, both from the shared module. The bound alone let
+  // anything under 64 characters reach the database as an equality lookup and
+  // come back 404, so the 400 the spec documents was unreachable. semverOf is
+  // the grammar the generator produces and the publish rules already enforce;
+  // this route takes its version from a URL path segment rather than a JSON
+  // body, and it was the one reader checking neither.
+  if (!firmwareVersionSchema.safeParse(version).success || semverOf(version) === null) {
     return Response.json({ error: 'bad_version' }, { status: 400, headers: NO_STORE });
   }
 
   const [rel] = await getDb()
-    .select({ blobPath: firmwareReleases.blobPath })
+    .select({ blobPath: firmwareReleases.blobPath, sizeBytes: firmwareReleases.sizeBytes })
     .from(firmwareReleases)
     .where(eq(firmwareReleases.version, version))
     .limit(1);
@@ -47,18 +50,23 @@ export async function GET(
   // 404, not 403: a caller learns nothing about which versions exist.
   if (!rel) return Response.json({ error: 'not_found' }, { status: 404, headers: NO_STORE });
 
-  const bytes = await firmwareStore.read(rel.blobPath).catch(() => null);
+  // STREAMED, not buffered. The first version read the whole image into an
+  // ArrayBuffer and then copied it again with Buffer.from -- ~3x the image
+  // resident per request, at exactly the moment every targeted board asks at
+  // once, because the poll releases them all together. content-length comes
+  // from the row, which already had it.
+  const stream = await firmwareStore.readStream(rel.blobPath).catch(() => null);
   // A row whose object is missing is a 503, not a 404: the release exists and
   // the board should retry, rather than conclude the version is gone and give
   // up on an update it was told to take.
-  if (!bytes) {
+  if (!stream) {
     return Response.json({ error: 'blob_unavailable' }, { status: 503, headers: NO_STORE });
   }
 
-  return new Response(Buffer.from(bytes), {
+  return new Response(stream, {
     headers: {
       'content-type': 'application/octet-stream',
-      'content-length': String(bytes.byteLength),
+      'content-length': String(rel.sizeBytes),
       ...NO_STORE,
     },
   });

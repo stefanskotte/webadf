@@ -1,6 +1,7 @@
 import { sql, inArray } from 'drizzle-orm';
 import { getDb } from '@/db';
 import { blobs, disks, entitlements } from '@/db/schema/catalog';
+import { stepUpAttempts } from '@/db/schema/step-up';
 import { diskVersions } from '@/db/schema/disk-history';
 import { deleteUserCascade } from '@/lib/admin-delete';
 import { selectUnreferencedBlobs } from '@/lib/blob-gc';
@@ -81,7 +82,7 @@ export default async function globalTeardown() {
   } catch (err) {
     console.error('teardown: FAILED to remove seeded firmware releases —',
                   (err as Error).message);
-    console.error('  Run: delete from firmware_releases where version like \'0.0.0-e2e%\';');
+    console.error('  Run: delete from firmware_releases where version like \'0.0.0+e2e%\';');
   }
 
   try {
@@ -151,6 +152,13 @@ export default async function globalTeardown() {
     // The kept admin signs in afresh on every run, so its sessions only ever
     // accumulate -- 486 had built up from one row per suite run. Deleting
     // them logs nobody out who will not simply sign in again.
+    // Keyed by user id with no foreign key, so deleteUserCascade does not
+    // reach it and a row would outlive the account that made it.
+    await db.execute(sql`
+      delete from step_up_attempts
+      where user_id in (select id from auth."user" where email like ${TEST_EMAIL})
+    `);
+
     const sessions = await db.execute(sql`
       delete from auth."session" s
       using auth."user" u

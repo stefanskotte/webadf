@@ -292,4 +292,16 @@ export const firmwareStore = {
     if (!result || result.statusCode !== 200) return null;
     return new Uint8Array(await new Response(result.stream).arrayBuffer());
   },
+
+  /**
+   * The same read, handed straight to the response. Constant memory whatever
+   * the image size or the concurrency -- which matters because a fleet-wide
+   * update releases every targeted board's poll in the same tick, so the
+   * downloads arrive together.
+   */
+  async readStream(blobPath: string): Promise<ReadableStream | null> {
+    const result = await get(blobPath, { access: 'private', useCache: false });
+    if (!result || result.statusCode !== 200) return null;
+    return result.stream;
+  },
 };

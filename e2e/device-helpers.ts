@@ -348,7 +348,7 @@ export async function cleanupSeeded(): Promise<void> {
 // against -- would start accumulating rows from a test run.
 
 /** Every release this suite publishes carries this prefix. Nothing else may use it. */
-export const E2E_RELEASE_PREFIX = '0.0.0-e2e';
+export const E2E_RELEASE_PREFIX = '0.0.0+e2e';
 
 /**
  * Inserted directly rather than through publishRelease(), for two reasons:

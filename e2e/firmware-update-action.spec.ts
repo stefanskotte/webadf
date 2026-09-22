@@ -5,7 +5,18 @@ import {
   desiredFirmwareOf,
 } from './device-helpers';
 
-test.afterAll(async () => { await cleanupTestReleases(); await cleanupSeeded(); });
+// try/finally, not two awaits. cleanupSeeded is deliberately self-protecting
+// ("a failure here must not fail a passing spec") and resets its tracking
+// arrays in its own finally; a throw from the release sweep would skip it
+// entirely and strand seeded users, orgs, disks and blobs in the LIVE
+// database -- the exact accumulation the global teardown was written after.
+test.afterAll(async () => {
+  try {
+    await cleanupTestReleases();
+  } finally {
+    await cleanupSeeded();
+  }
+});
 
 /** Report a capability, so the device is targetable at all. */
 async function announceCapable(request: APIRequestContext, token: string, version: string) {
@@ -19,12 +30,12 @@ async function announceCapable(request: APIRequestContext, token: string, versio
 test('a wrong password writes nothing', async ({ page, request }) => {
   await signUpFresh(page);
   const { deviceId, token } = await pairDevice(page, request);
-  await publishTestRelease('0.0.0-e2e.30+gaa30000');
-  await publishTestRelease('0.0.0-e2e.31+gaa31000');
-  await announceCapable(request, token, '0.0.0-e2e.30+gaa30000');
+  await publishTestRelease('0.0.0+e2e30');
+  await publishTestRelease('0.0.0+e2e31');
+  await announceCapable(request, token, '0.0.0+e2e30');
 
   const res = await page.request.post('/api/devices/firmware-update', {
-    data: { deviceIds: [deviceId], version: '0.0.0-e2e.31+gaa31000', password: 'wrong-password' },
+    data: { deviceIds: [deviceId], version: '0.0.0+e2e31', password: 'wrong-password' },
   });
   expect(res.status()).toBe(401);
 
@@ -40,13 +51,13 @@ test('one refused device leaves the whole batch unwritten', async ({ page, reque
   const { password } = await signUpFresh(page);
   const a = await pairDevice(page, request, 'Able');
   const b = await pairDevice(page, request, 'Baker');
-  await publishTestRelease('0.0.0-e2e.32+gaa32000');
-  await publishTestRelease('0.0.0-e2e.33+gaa33000');
-  await announceCapable(request, a.token, '0.0.0-e2e.32+gaa32000');
+  await publishTestRelease('0.0.0+e2e32');
+  await publishTestRelease('0.0.0+e2e33');
+  await announceCapable(request, a.token, '0.0.0+e2e32');
   // Baker never reports a capability, so it cannot be updated.
 
   const res = await page.request.post('/api/devices/firmware-update', {
-    data: { deviceIds: [a.deviceId, b.deviceId], version: '0.0.0-e2e.33+gaa33000', password },
+    data: { deviceIds: [a.deviceId, b.deviceId], version: '0.0.0+e2e33', password },
   });
   expect(res.status()).toBe(409);
   expect((await res.json()).refusals)
@@ -60,20 +71,65 @@ test('one refused device leaves the whole batch unwritten', async ({ page, reque
 test('a rollback is refused', async ({ page, request }) => {
   const { password } = await signUpFresh(page);
   const { deviceId, token } = await pairDevice(page, request);
-  await publishTestRelease('0.0.0-e2e.34+gaa34000');
-  await publishTestRelease('0.0.0-e2e.35+gaa35000');
-  await announceCapable(request, token, '0.0.0-e2e.35+gaa35000');   // on the NEWER one
+  await publishTestRelease('0.0.0+e2e34');
+  await publishTestRelease('0.0.0+e2e35');
+  await announceCapable(request, token, '0.0.0+e2e35');   // on the NEWER one
 
   const res = await page.request.post('/api/devices/firmware-update', {
-    data: { deviceIds: [deviceId], version: '0.0.0-e2e.34+gaa34000', password },
+    data: { deviceIds: [deviceId], version: '0.0.0+e2e34', password },
   });
   expect(res.status()).toBe(409);
   expect((await res.json()).refusals[0].reason).toBe('would_roll_back');
+  // The half that was missing: a refusal must also WRITE NOTHING.
+  expect(await desiredFirmwareOf(deviceId)).toBeNull();
+});
+
+/**
+ * The step-up is otherwise an unlimited oracle for the operator's real
+ * password, aimed at precisely the attacker it exists to stop -- one who
+ * already holds the session cookie.
+ */
+test('repeated wrong passwords lock the door', async ({ page, request }) => {
+  await signUpFresh(page);
+  const { deviceId, token } = await pairDevice(page, request);
+  await publishTestRelease('0.0.0+e2e43');
+  await publishTestRelease('0.0.0+e2e44');
+  await announceCapable(request, token, '0.0.0+e2e43');
+
+  const attempt = () => page.request.post('/api/devices/firmware-update', {
+    data: { deviceIds: [deviceId], version: '0.0.0+e2e44', password: 'nope' },
+  });
+
+  const codes: number[] = [];
+  for (let i = 0; i < 6; i++) codes.push((await attempt()).status());
+
+  // The first few are ordinary refusals; the door closes before the sixth.
+  expect(codes.slice(0, 4)).toEqual([401, 401, 401, 401]);
+  expect(codes[5]).toBe(429);
+  expect(await desiredFirmwareOf(deviceId)).toBeNull();
+});
+
+test('a correct password after failures still works, and clears the count', async ({ page, request }) => {
+  const { password } = await signUpFresh(page);
+  const { deviceId, token } = await pairDevice(page, request);
+  await publishTestRelease('0.0.0+e2e45');
+  await publishTestRelease('0.0.0+e2e46');
+  await announceCapable(request, token, '0.0.0+e2e45');
+
+  for (let i = 0; i < 3; i++) {
+    await page.request.post('/api/devices/firmware-update', {
+      data: { deviceIds: [deviceId], version: '0.0.0+e2e46', password: 'nope' },
+    });
+  }
+  const ok = await page.request.post('/api/devices/firmware-update', {
+    data: { deviceIds: [deviceId], version: '0.0.0+e2e46', password },
+  });
+  expect(ok.status()).toBe(200);
 });
 
 test('a device in another org is a 404', async ({ page, request, browser }) => {
   const { password } = await signUpFresh(page);
-  await publishTestRelease('0.0.0-e2e.36+gaa36000');
+  await publishTestRelease('0.0.0+e2e36');
 
   const other = await browser.newPage();
   await signUpFresh(other);
@@ -81,7 +137,7 @@ test('a device in another org is a 404', async ({ page, request, browser }) => {
   await other.close();
 
   const res = await page.request.post('/api/devices/firmware-update', {
-    data: { deviceIds: [stranger.deviceId], version: '0.0.0-e2e.36+gaa36000', password },
+    data: { deviceIds: [stranger.deviceId], version: '0.0.0+e2e36', password },
   });
   expect(res.status()).toBe(404);
 });
@@ -93,12 +149,12 @@ test('a device in another org is a 404', async ({ page, request, browser }) => {
 test('cancelling clears a pending update, with no password', async ({ page, request }) => {
   const { password } = await signUpFresh(page);
   const { deviceId, token } = await pairDevice(page, request);
-  await publishTestRelease('0.0.0-e2e.39+gaa39000');
-  await publishTestRelease('0.0.0-e2e.40+gaa40000');
-  await announceCapable(request, token, '0.0.0-e2e.39+gaa39000');
+  await publishTestRelease('0.0.0+e2e39');
+  await publishTestRelease('0.0.0+e2e40');
+  await announceCapable(request, token, '0.0.0+e2e39');
 
   await page.request.post('/api/devices/firmware-update', {
-    data: { deviceIds: [deviceId], version: '0.0.0-e2e.40+gaa40000', password },
+    data: { deviceIds: [deviceId], version: '0.0.0+e2e40', password },
   });
   const cancel = await page.request.delete('/api/devices/firmware-update', {
     data: { deviceIds: [deviceId] },
@@ -110,17 +166,17 @@ test('cancelling clears a pending update, with no password', async ({ page, requ
 test('a good batch sets the update and the device sees it', async ({ page, request }) => {
   const { password } = await signUpFresh(page);
   const { deviceId, token } = await pairDevice(page, request);
-  await publishTestRelease('0.0.0-e2e.37+gaa37000');
-  await publishTestRelease('0.0.0-e2e.38+gaa38000');
-  await announceCapable(request, token, '0.0.0-e2e.37+gaa37000');
+  await publishTestRelease('0.0.0+e2e37');
+  await publishTestRelease('0.0.0+e2e38');
+  await announceCapable(request, token, '0.0.0+e2e37');
 
   const res = await page.request.post('/api/devices/firmware-update', {
-    data: { deviceIds: [deviceId], version: '0.0.0-e2e.38+gaa38000', password },
+    data: { deviceIds: [deviceId], version: '0.0.0+e2e38', password },
   });
   expect(res.status()).toBe(200);
   expect((await res.json()).count).toBe(1);
 
   const poll = await request.get('/api/device/poll?since=0', { headers: authHeader(token) });
   expect(poll.status()).toBe(200);
-  expect((await poll.json()).update.version).toBe('0.0.0-e2e.38+gaa38000');
+  expect((await poll.json()).update.version).toBe('0.0.0+e2e38');
 });

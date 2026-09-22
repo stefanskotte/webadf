@@ -23,17 +23,17 @@ test('an ordinary user cannot reach the firmware page', async ({ page }) => {
 });
 
 test('an admin sees published releases newest first', async ({ page }) => {
-  await publishTestRelease('0.0.0-e2e.10+ga111111');
-  await publishTestRelease('0.0.0-e2e.11+gb222222');
+  await publishTestRelease('0.0.0+e2e10');
+  await publishTestRelease('0.0.0+e2e11');
   await signInAsSuperAdmin(page);
 
   await page.goto('/admin/firmware');
   const rows = page.getByTestId('firmware-release-row');
-  await expect(rows.first()).toContainText('0.0.0-e2e.11+gb222222');
+  await expect(rows.first()).toContainText('0.0.0+e2e11');
 });
 
 test('a security release is marked as one', async ({ page }) => {
-  await publishTestRelease('0.0.0-e2e.12+gc333333', { security: true });
+  await publishTestRelease('0.0.0+e2e12', { security: true });
   await signInAsSuperAdmin(page);
 
   await page.goto('/admin/firmware');

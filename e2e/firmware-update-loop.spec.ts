@@ -5,7 +5,18 @@ import {
   cleanupTestReleases, cleanupSeeded,
 } from './device-helpers';
 
-test.afterAll(async () => { await cleanupTestReleases(); await cleanupSeeded(); });
+// try/finally, not two awaits. cleanupSeeded is deliberately self-protecting
+// ("a failure here must not fail a passing spec") and resets its tracking
+// arrays in its own finally; a throw from the release sweep would skip it
+// entirely and strand seeded users, orgs, disks and blobs in the LIVE
+// database -- the exact accumulation the global teardown was written after.
+test.afterAll(async () => {
+  try {
+    await cleanupTestReleases();
+  } finally {
+    await cleanupSeeded();
+  }
+});
 
 /**
  * The whole server side, driven by a SIMULATED device.
@@ -20,13 +31,13 @@ test('the whole loop: request, poll, download, apply, verify', async ({ page, re
   const { password } = await signUpFresh(page);
   const { deviceId, token } = await pairDevice(page, request);
 
-  await publishTestRelease('0.0.0-e2e.70+gaa70000');                       // the old one
-  const version = await publishTestReleaseWithBlob('0.0.0-e2e.71+gaa71000'); // the target
+  await publishTestRelease('0.0.0+e2e70');                       // the old one
+  const version = await publishTestReleaseWithBlob('0.0.0+e2e71'); // the target
 
   // The board announces what it is running and what it can do.
   await request.post('/api/device/status', {
     headers: authHeader(token),
-    data: { mountedSha256: null, firmwareVersion: '0.0.0-e2e.70+gaa70000', updateProtocol: 1 },
+    data: { mountedSha256: null, firmwareVersion: '0.0.0+e2e70', updateProtocol: 1 },
   });
 
   // 1. The operator asks.

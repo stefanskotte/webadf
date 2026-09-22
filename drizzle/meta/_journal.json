@@ -148,6 +148,13 @@
       "when": 1790067024334,
       "tag": "0020_workable_fantastic_four",
       "breakpoints": true
+    },
+    {
+      "idx": 21,
+      "version": "7",
+      "when": 1790067959021,
+      "tag": "0021_worried_vector",
+      "breakpoints": true
     }
   ]
 }

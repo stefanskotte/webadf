@@ -14,7 +14,18 @@ const sha = (s: string) => createHash('sha256').update(s).digest('hex');
 // Releases first: firmware_releases is global, so the window in which a
 // seeded release is the newest one production compares real boards against
 // closes with this file rather than with the whole suite.
-test.afterAll(async () => { await cleanupTestReleases(); await cleanupSeeded(); });
+// try/finally, not two awaits. cleanupSeeded is deliberately self-protecting
+// ("a failure here must not fail a passing spec") and resets its tracking
+// arrays in its own finally; a throw from the release sweep would skip it
+// entirely and strand seeded users, orgs, disks and blobs in the LIVE
+// database -- the exact accumulation the global teardown was written after.
+test.afterAll(async () => {
+  try {
+    await cleanupTestReleases();
+  } finally {
+    await cleanupSeeded();
+  }
+});
 
 test('a device polling from version 0 is told what to mount', async ({ page, request }) => {
   const { orgId } = await signUpFresh(page);
@@ -183,14 +194,14 @@ test('the poll rejects every flavour of bad credential with a bare 401', async (
 test('a pending update releases the hold and rides the poll body', async ({ page, request }) => {
   await signUpFresh(page);
   const { deviceId, token } = await pairDevice(page, request);
-  await publishTestRelease('0.0.0-e2e.20+gaa20000');
-  await setDesiredFirmware(deviceId, '0.0.0-e2e.20+gaa20000');
+  await publishTestRelease('0.0.0+e2e20');
+  await setDesiredFirmware(deviceId, '0.0.0+e2e20');
 
   const res = await request.get('/api/device/poll?since=0', { headers: authHeader(token) });
   expect(res.status()).toBe(200);
   const body = await res.json();
   expect(body.update).toMatchObject({
-    version: '0.0.0-e2e.20+gaa20000',
+    version: '0.0.0+e2e20',
     sha256: 'e'.repeat(64),
     keyId: 'e2e',
   });
@@ -204,8 +215,8 @@ test('once the device acknowledges, the poll holds normally again', async ({ pag
   test.setTimeout(60_000);
   await signUpFresh(page);
   const { deviceId, token } = await pairDevice(page, request);
-  await publishTestRelease('0.0.0-e2e.21+gaa21000');
-  await setDesiredFirmware(deviceId, '0.0.0-e2e.21+gaa21000');
+  await publishTestRelease('0.0.0+e2e21');
+  await setDesiredFirmware(deviceId, '0.0.0+e2e21');
 
   // Acknowledge the way a board does: echo back the instruction cursor the
   // poll body carried. Reporting a STATE is telemetry and deliberately does
@@ -256,8 +267,8 @@ test('a device with no update gets no update field', async ({ page, request }) =
 test('a cancelled update wakes an already-acknowledged board, with no instruction', async ({ page, request }) => {
   await signUpFresh(page);
   const { deviceId, token } = await pairDevice(page, request);
-  await publishTestRelease('0.0.0-e2e.22+gaa22000');
-  await setDesiredFirmware(deviceId, '0.0.0-e2e.22+gaa22000');
+  await publishTestRelease('0.0.0+e2e22');
+  await setDesiredFirmware(deviceId, '0.0.0+e2e22');
 
   const told = await request.get('/api/device/poll?since=0', { headers: authHeader(token) });
   const seen = (await told.json()).update.instructionVersion;

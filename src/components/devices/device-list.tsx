@@ -104,6 +104,12 @@ export function DeviceList({
         toast.error('Your session expired. Sign in again and retry.');
         return;
       }
+      if (res.status === 429) {
+        const { retryAfterMs } = await res.json();
+        const mins = Math.ceil((retryAfterMs ?? 0) / 60000);
+        toast.error(`Too many wrong passwords. Try again in ${mins} minute${mins === 1 ? '' : 's'}.`);
+        return;
+      }
       if (res.status === 401) { toast.error('That password was not right.'); return; }
       if (res.status === 409) { setRefusals((await res.json()).refusals ?? []); return; }
       if (!res.ok) { toast.error('Could not request the update.'); return; }
