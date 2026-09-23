@@ -36,6 +36,11 @@ typedef struct {
 
 void fwu_init(fwu_t *u, uint8_t *stage_buf, uint32_t stage_cap);
 void fwu_fail(fwu_t *u, const char *why);
+// fwu_fail behind fwu_on_instruction's guard: a no-op while APPLYING or
+// REBOOTING (past the point of no return), otherwise FAILED with `why`.
+// For refusals decided outside fwu (malformed instruction, a board that
+// cannot update).
+void fwu_refuse(fwu_t *u, const char *why);
 void fwu_on_instruction(fwu_t *u, const fw_offer_t *offer_or_null, fw_verdict_t verdict);
 bool fwu_step(fwu_t *u, const fwu_ops_t *ops, fw_state_t *st, bool idle, uint32_t now_ms);
 const char *fwu_state_text(const fwu_t *u);   // NULL when there is nothing to report

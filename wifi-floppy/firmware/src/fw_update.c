@@ -14,6 +14,11 @@ void fwu_fail(fwu_t *u, const char *why) {
     snprintf(u->error, sizeof u->error, "%s", why);
 }
 
+void fwu_refuse(fwu_t *u, const char *why) {
+    if (u->phase == FWU_APPLYING || u->phase == FWU_REBOOTING) return;   // past the point of no return
+    fwu_fail(u, why);
+}
+
 void fwu_on_instruction(fwu_t *u, const fw_offer_t *offer, fw_verdict_t verdict) {
     if (u->phase == FWU_APPLYING || u->phase == FWU_REBOOTING) return;   // past the point of no return
     u->error[0] = '\0';

@@ -1145,7 +1145,18 @@ static void core1_main(void) {
         static fwu_ops_t fwu_ops;
         static dc_fw_report_t fw_report;          // static: dc_set_fw_report keeps the pointer
         static bool fw_booted = false;
-        if (!fw_booted) {
+        if (fw_booted) {
+            // Re-entry after a DC_HALTED re-pair: a new token and a new
+            // device row, so an instruction the old one received no longer
+            // applies. Cancel anything not yet past the point of no return
+            // (fwu_on_instruction ignores APPLYING/REBOOTING). Not on the
+            // first entry after boot: a boot-time FAILED must be reported.
+            fwu_on_instruction(&fwu, NULL, FW_OK);
+            fw_report.instruction_ack = 0;   // the new row's cursor starts over
+            fw_report.state = fwu_state_text(&fwu);
+            fw_report.error = fwu_error_text(&fwu);
+            wf_logf(WF_INFO, "fw: re-paired -- any pending update offer is dropped");
+        } else {
             fw_booted = true;
             fw_state_load(&fst);                      // zeroed if no record
             fwu_init(&fwu, g_fw_stage, sizeof g_fw_stage);
@@ -1336,6 +1347,9 @@ static void core1_main(void) {
                                 snprintf(c.fw_update_json, sizeof c.fw_update_json, "%s", dbg_buf + 6);
                                 c.fw_offer_present = true;
                                 c.fw_instruction_new = true;
+                                // A boot-time sync leaves this set; the
+                                // injection is an offer, never a sync.
+                                c.fw_instruction_is_sync = false;
                                 wf_logf(WF_WARN, "fwdbg: injected an offer");
                             }
                         }
@@ -1365,7 +1379,7 @@ static void core1_main(void) {
                     // Never stage into a g_fw_stage PSRAM does not back, or
                     // flash an unpartitioned board. The server should never
                     // target one (2a D1); refuse if it somehow does.
-                    fwu_fail(&fwu, "refused: this board cannot update");
+                    fwu_refuse(&fwu, "refused: this board cannot update");
                     wf_logf(WF_WARN, "fw: offer refused -- this board cannot update");
                 } else if (c.fw_offer_present) {
                     static fw_offer_t o;   // static: ~300 bytes, off core1's measured stack
@@ -1377,7 +1391,7 @@ static void core1_main(void) {
                     } else {
                         wf_logf(WF_WARN, "fw: malformed update instruction %lu",
                                 (unsigned long)c.fw_instruction_version);
-                        fwu_fail(&fwu, "refused: malformed update instruction");
+                        fwu_refuse(&fwu, "refused: malformed update instruction");
                     }
                 } else {
                     wf_logf(WF_INFO, "fw: instruction %lu carries no update (cancelled)",

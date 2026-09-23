@@ -127,6 +127,30 @@ static void test_flash_failure_is_reported_and_no_reboot(void) {
     CHECK(!saved.pending, "nothing pending recorded for an image that did not write");
 }
 
+// Task 11 fix round 2: a refusal from main.c (malformed instruction, a board
+// that cannot update) goes through the same point-of-no-return guard as
+// fwu_on_instruction -- it may never knock an apply or a reboot back.
+static void test_refuse_is_ignored_past_the_point_of_no_return(void) {
+    fresh();
+    fw_offer_t o = offer();
+    fwu_on_instruction(&u, &o, FW_OK);
+    run_until_quiet(true);
+    CHECK_EQ_INT(u.phase, FWU_REBOOTING);
+    fwu_refuse(&u, "refused: malformed update instruction");
+    CHECK_EQ_INT(u.phase, FWU_REBOOTING);
+    CHECK(fwu_error_text(&u) == NULL, "no error attached while rebooting");
+}
+static void test_refuse_while_queued_fails_with_the_reason(void) {
+    fresh();
+    fw_offer_t o = offer();
+    fwu_on_instruction(&u, &o, FW_OK);
+    CHECK_EQ_INT(u.phase, FWU_QUEUED);
+    fwu_refuse(&u, "refused: this board cannot update");
+    CHECK_EQ_INT(u.phase, FWU_FAILED);
+    CHECK(fwu_error_text(&u) && strcmp(fwu_error_text(&u), "refused: this board cannot update") == 0,
+          "the reason is reported");
+}
+
 int main(void) {
     RUN(test_fresh_updater_reports_nothing);
     RUN(test_happy_path_ends_in_a_reboot_with_pending_recorded);
@@ -138,5 +162,7 @@ int main(void) {
     RUN(test_hash_mismatch_fails_without_applying);
     RUN(test_404_fails_5xx_retries_with_backoff);
     RUN(test_flash_failure_is_reported_and_no_reboot);
+    RUN(test_refuse_is_ignored_past_the_point_of_no_return);
+    RUN(test_refuse_while_queued_fails_with_the_reason);
     return REPORT();
 }
