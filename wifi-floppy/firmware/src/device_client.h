@@ -377,4 +377,9 @@ void dc_adopt_image(device_client_t *c, const char *sha256);
 int dc_post(device_client_t *c, const char *path, const char *content_type,
             const uint8_t *body, int body_len, char *resp, int resp_cap);
 
+// GET /api/device/firmware/<version>. Body bytes go to `sink`. Returns the HTTP status of a
+// COMPLETE response, or -1 (transport, framing, incomplete). 401 halts, as everywhere.
+int dc_fetch_firmware(device_client_t *c, const char *version,
+                      void (*sink)(void *ctx, const uint8_t *b, int n), void *ctx);
+
 #endif

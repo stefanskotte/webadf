@@ -1239,6 +1239,28 @@ static void post_reports_a_dead_link_and_a_dead_token(void) {
     CHECK_EQ_INT(c.state, DC_HALTED);
 }
 
+static uint8_t fw_got[64]; static int fw_got_n;
+static void fw_sink(void *ctx, const uint8_t *b, int n) { (void)ctx; memcpy(fw_got + fw_got_n, b, (size_t)n); fw_got_n += n; }
+
+static void test_fetch_firmware_streams_the_body(void) {
+    boot(); fw_got_n = 0;
+    fake_push_response("HTTP/1.1 200 OK\r\nContent-Length: 5\r\n\r\nHELLO");
+    CHECK_EQ_INT(dc_fetch_firmware(&c, "1.1.0+gx", fw_sink, NULL), 200);
+    CHECK(strstr(fake_last_request(), "GET /api/device/firmware/1.1.0+gx ") != NULL, "path");
+    CHECK(fw_got_n == 5 && memcmp(fw_got, "HELLO", 5) == 0, "body streamed to the sink");
+}
+static void test_fetch_firmware_incomplete_is_minus_one(void) {
+    boot(); fw_got_n = 0;
+    fake_push_truncated("HTTP/1.1 200 OK\r\nContent-Length: 50\r\n\r\nHELLO", 44);
+    CHECK_EQ_INT(dc_fetch_firmware(&c, "1.1.0+gx", fw_sink, NULL), -1);
+}
+static void test_fetch_firmware_401_halts(void) {
+    boot();
+    fake_push_response("HTTP/1.1 401 Unauthorized\r\nContent-Length: 0\r\n\r\n");
+    CHECK_EQ_INT(dc_fetch_firmware(&c, "1.1.0+gx", fw_sink, NULL), 401);
+    CHECK_EQ_INT(c.state, DC_HALTED);
+}
+
 int main(void) {
     // Only test_successful_image_fetch_publishes_and_reflects_write_protected
     // needs real PSRAM backing (everything else in this file either never
@@ -1318,6 +1340,9 @@ int main(void) {
     RUN(a_connect_failure_releases_a_held_connection);
     RUN(post_sends_a_binary_body_whole);
     RUN(post_reports_a_dead_link_and_a_dead_token);
+    RUN(test_fetch_firmware_streams_the_body);
+    RUN(test_fetch_firmware_incomplete_is_minus_one);
+    RUN(test_fetch_firmware_401_halts);
 
     // The observation tests run BEFORE the backing is released: several of
     // them drive a real fetch, which writes into PSRAM. Appending them after

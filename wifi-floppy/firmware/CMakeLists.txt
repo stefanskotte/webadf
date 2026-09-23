@@ -65,6 +65,7 @@ add_executable(wifi_floppy
   src/flux_capture.c src/flux_bits.c
   src/bus_gate.c src/bus_out.c
   src/sha256.c
+  src/fw_stage.c
   src/uploader.c
   src/fw_offer.c src/fw_verify.c
   src/vendor/monocypher/monocypher.c src/vendor/monocypher/monocypher-ed25519.c

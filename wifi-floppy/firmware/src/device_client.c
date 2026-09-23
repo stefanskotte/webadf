@@ -188,6 +188,7 @@ static void dc_image_sink(void *ctx, const uint8_t *b, int n) {
 //     graph is  core1_main -> dc_step -> dc_handle_poll_body ->
 //     dc_fetch_image -> dc_exchange,  core1_main -> dc_report_status ->
 //     dc_exchange,  core1_main -> dc_register -> dc_exchange,
+//     core1_main -> fw_update -> dc_fetch_firmware -> dc_exchange,
 //     core1_main -> up_step -> dc_post -> dc_exchange (uploader.c,
 //     Task 5: one dirty track at a time), and its close counterpart,
 //     core1_main -> up_step -> (sha256_*, psram_image_read,
@@ -196,8 +197,8 @@ static void dc_image_sink(void *ctx, const uint8_t *b, int n) {
 //     straight line, including the close's hash loop -- sha256_*,
 //     psram_image_read and mfm_decode_track_r never call back into any
 //     dc_*/up_* function, so nothing here is re-entered while its statics
-//     are live; dc_exchange is shared by four callers but is never nested
-//     inside itself, and dc_post is never nested inside dc_step -- the
+//     are live; dc_exchange is shared by five callers but is never nested
+//     inside itself, and dc_post/dc_fetch_firmware are never nested inside dc_step -- the
 //     uploader runs from its own call site in the main loop, not from inside the
 //     poll.
 //   * Each function owns its own statics -- dc_exchange's read chunk is
@@ -1042,6 +1043,21 @@ int dc_post(device_client_t *c, const char *path, const char *content_type,
     if (resp && resp_cap > 0) snprintf(resp, (size_t)resp_cap, "%s", out.buf);
     if (!ok || !r.body_complete) return -1;
     if (r.status == 401) c->state = DC_HALTED;    // 401 anywhere halts
+    return r.status;
+}
+
+int dc_fetch_firmware(device_client_t *c, const char *version,
+                      void (*sink)(void *ctx, const uint8_t *b, int n), void *ctx) {
+    static char path[DC_REQ_BUF_BYTES];   // static: see the STACK note above
+    int pn = snprintf(path, sizeof path, "/api/device/firmware/%s", version);
+    if (pn < 0 || pn >= (int)sizeof path) return -1;
+    static char req[DC_REQ_BUF_BYTES];
+    int req_len = http_build_request(req, sizeof req, "GET", path, c->host, c->token, NULL);
+    if (req_len < 0) return -1;
+    static http_resp_t r;
+    bool ok = dc_exchange(c, req, req_len, sink, ctx, &r, /*retryable=*/true);
+    if (!ok || !r.body_complete) return -1;
+    if (r.status == 401) c->state = DC_HALTED;   // 401 anywhere halts
     return r.status;
 }
 
