@@ -53,9 +53,13 @@ export function fixtureHeader(): string {
     `#define FIX_KEY_ID "${keyIdOf(der)}"`,
     `static const uint8_t FIX_PUBKEY[32] = { ${cBytes(der.subarray(12))} };`,
     `#define FIX_VERSION "${offer.version}"`,
-    `#define FIX_SEQUENCE ${offer.sequence}u`,
+    // No 'u' suffix (unlike a plain uint32_t literal would normally take):
+    // test_fw_verify.c stringifies these via the preprocessor to embed them
+    // in a JSON literal, and "7u" is not a valid JSON number. Both values
+    // are small positive integers, so plain `int` literals are exact here.
+    `#define FIX_SEQUENCE ${offer.sequence}`,
     `#define FIX_SHA256 "${offer.sha256}"`,
-    `#define FIX_SIZE ${offer.sizeBytes}u`,
+    `#define FIX_SIZE ${offer.sizeBytes}`,
     `#define FIX_SIGNATURE_B64 "${sig.toString('base64')}"`,
     `#define FIX_MANIFEST ${JSON.stringify(manifest)}`,
     '#endif',

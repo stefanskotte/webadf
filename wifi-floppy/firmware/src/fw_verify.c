@@ -16,8 +16,8 @@ bool fw_ed25519_check(const uint8_t sig[64], const uint8_t pk[32], const uint8_t
 
 fw_verdict_t fw_check_offer_with_key(const fw_offer_t *o, uint32_t installed_sequence,
                                      const char *key_id, const uint8_t pubkey[32]) {
-    if (o->version[0] == '\0' || strlen(o->sha256) != 64 || o->sequence == 0) return FW_BAD_FIELDS;
-    if (o->size_bytes == 0 || o->size_bytes > FW_MAX_IMAGE_BYTES) return FW_TOO_BIG;
+    if (o->version[0] == '\0' || strlen(o->sha256) != 64 || o->sequence == 0 || o->size_bytes == 0) return FW_BAD_FIELDS;
+    if (o->size_bytes > FW_MAX_IMAGE_BYTES) return FW_TOO_BIG;
     if (o->sequence <= installed_sequence) return FW_ROLLBACK;
     if (strcmp(o->key_id, key_id) != 0) return FW_UNKNOWN_KEY;
     char m[192];

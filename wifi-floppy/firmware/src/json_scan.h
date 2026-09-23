@@ -12,6 +12,14 @@
 // being null (returns true with out[0] == 0).
 bool json_str(const char *json, const char *key, char *out, int out_len);
 bool json_u32(const char *json, const char *key, uint32_t *out);
+// Like json_u32, but refuses what json_u32 silently accepts: trailing
+// garbage right after the digits (a decimal point, an exponent, a stray
+// letter -- "7.9" and "7e2" both read as 7 through json_u32) and a value
+// that overflows uint32_t (json_u32 wraps -- 4294967303 reads as 7).
+// Existing callers of json_u32 are unaffected; this is a new, additive
+// entry point, added for fw_offer.c, where a wrapped or truncated number
+// is a spoofing surface rather than a cosmetic parsing quirk.
+bool json_u32_strict(const char *json, const char *key, uint32_t *out);
 bool json_bool(const char *json, const char *key, bool *out);
 // True if `key` is present with a literal null value.
 bool json_is_null(const char *json, const char *key);

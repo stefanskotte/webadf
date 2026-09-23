@@ -80,6 +80,26 @@ bool json_u32(const char *json, const char *key, uint32_t *out) {
     return true;
 }
 
+bool json_u32_strict(const char *json, const char *key, uint32_t *out) {
+    const char *v = find_value(json, key);
+    if (!v || *v < '0' || *v > '9') return false; // rejects null/negative too
+    uint64_t val = 0;
+    while (*v >= '0' && *v <= '9') {
+        val = val * 10u + (uint32_t)(*v - '0');
+        if (val > 0xFFFFFFFFu) return false; // overflow past uint32, bail before it could wrap
+        v++;
+    }
+    // Only a JSON value delimiter (comma, closing brace/bracket, whitespace,
+    // or end of input) may follow the digits. Anything else -- '.', 'e',
+    // a bare letter -- means this was not an integer in the first place.
+    if (*v != '\0' && *v != ',' && *v != '}' && *v != ']' &&
+        *v != ' ' && *v != '\t' && *v != '\n' && *v != '\r') {
+        return false;
+    }
+    *out = (uint32_t)val;
+    return true;
+}
+
 bool json_bool(const char *json, const char *key, bool *out) {
     const char *v = find_value(json, key);
     if (!v) return false;

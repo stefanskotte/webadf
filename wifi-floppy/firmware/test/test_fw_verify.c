@@ -5,9 +5,15 @@
 #include "../src/fw_pubkey.h"
 #include <string.h>
 
+// FIX_SEQUENCE/FIX_SIZE are plain integer macros (see firmware-c-headers.ts);
+// this turns one into the JSON-literal text of its value, without hardcoding
+// the fixture's numbers a second time here.
+#define WF_STR2(x) #x
+#define WF_STR(x) WF_STR2(x)
+
 static const char *OFFER_JSON =
-    "{\"version\":\"" FIX_VERSION "\",\"sequence\":7,\"sha256\":\"" FIX_SHA256 "\","
-    "\"sizeBytes\":533624,\"signature\":\"" FIX_SIGNATURE_B64 "\",\"keyId\":\"" FIX_KEY_ID "\"}";
+    "{\"version\":\"" FIX_VERSION "\",\"sequence\":" WF_STR(FIX_SEQUENCE) ",\"sha256\":\"" FIX_SHA256 "\","
+    "\"sizeBytes\":" WF_STR(FIX_SIZE) ",\"signature\":\"" FIX_SIGNATURE_B64 "\",\"keyId\":\"" FIX_KEY_ID "\"}";
 
 static fw_offer_t parsed(void) {
     fw_offer_t o; memset(&o, 0, sizeof o);
@@ -68,6 +74,17 @@ static void test_the_release_key_is_compiled_in(void) {
     fw_offer_t o = parsed();   // signed by the TEST key: the real key must refuse it
     CHECK_EQ_INT(fw_check_offer(&o, 0), FW_UNKNOWN_KEY);
 }
+// Fix round 1: the previous test only proved a mismatched key id is
+// refused. It says nothing about what actually happens once the key id
+// DOES match -- an offer signed by the test key but RELABELED to claim the
+// release key id must still fail, on the signature, not slip through on
+// the id alone. The id is a lookup hint; the signature is the actual gate.
+static void test_relabeling_the_key_id_does_not_forge_the_release_signature(void) {
+    fw_offer_t o = parsed();
+    strncpy(o.key_id, FW_PUBKEY_ID, sizeof o.key_id - 1);
+    o.key_id[sizeof o.key_id - 1] = '\0';
+    CHECK_EQ_INT(fw_check_offer(&o, 0), FW_BAD_SIGNATURE);
+}
 static void test_malformed_offers_do_not_parse(void) {
     fw_offer_t o;
     CHECK(!fw_offer_parse("{\"version\":\"1.0.0+g\",\"sequence\":7}", &o), "missing fields");
@@ -80,6 +97,36 @@ static void test_malformed_offers_do_not_parse(void) {
     CHECK(!fw_offer_parse("{\"version\":\"\",\"sequence\":7,\"sha256\":\"" FIX_SHA256 "\","
                           "\"sizeBytes\":1,\"signature\":\"" FIX_SIGNATURE_B64 "\",\"keyId\":\"k\"}", &o),
           "an empty version");
+    // Fix round 1: fw_offer_parse used to silently TRUNCATE an over-long
+    // field into a smaller, different-but-valid-looking one, rather than
+    // refusing it. Each of these truncates, in the old code, to exactly
+    // FIX_SHA256/a valid-looking value -- which is exactly why truncation
+    // instead of refusal is dangerous here, not merely untidy.
+    CHECK(!fw_offer_parse("{\"version\":\"" FIX_VERSION "\",\"sequence\":" WF_STR(FIX_SEQUENCE) ","
+                          "\"sha256\":\"" FIX_SHA256 "ab\","   // 66 hex chars: truncates to exactly FIX_SHA256
+                          "\"sizeBytes\":" WF_STR(FIX_SIZE) ",\"signature\":\"" FIX_SIGNATURE_B64 "\",\"keyId\":\"" FIX_KEY_ID "\"}", &o),
+          "a 66-char sha256 does not truncate into a valid-looking hex-64");
+    CHECK(!fw_offer_parse("{\"version\":\"" FIX_VERSION "\",\"sequence\":" WF_STR(FIX_SEQUENCE) ","
+                          "\"sha256\":\"" FIX_SHA256 "ZZZZ\","  // 64 hex + 4 garbage chars
+                          "\"sizeBytes\":" WF_STR(FIX_SIZE) ",\"signature\":\"" FIX_SIGNATURE_B64 "\",\"keyId\":\"" FIX_KEY_ID "\"}", &o),
+          "64 valid hex chars plus trailing garbage does not truncate into a valid hex-64");
+    CHECK(!fw_offer_parse("{\"version\":\"1.0.0+gxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\","
+                          "\"sequence\":" WF_STR(FIX_SEQUENCE) ",\"sha256\":\"" FIX_SHA256 "\","
+                          "\"sizeBytes\":" WF_STR(FIX_SIZE) ",\"signature\":\"" FIX_SIGNATURE_B64 "\",\"keyId\":\"" FIX_KEY_ID "\"}", &o),
+          "a 70-char version (over the 64-char field) is refused, not truncated");
+    CHECK(!fw_offer_parse("{\"version\":\"" FIX_VERSION "\",\"sequence\":" WF_STR(FIX_SEQUENCE) ","
+                          "\"sha256\":\"" FIX_SHA256 "\",\"sizeBytes\":" WF_STR(FIX_SIZE) ","
+                          "\"signature\":\"" FIX_SIGNATURE_B64 "\","
+                          "\"keyId\":\"kkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkk\"}", &o),  // 40 chars, over FW_KEY_ID_MAX(32)
+          "an over-long keyId is refused, not truncated");
+    CHECK(!fw_offer_parse("{\"version\":\"" FIX_VERSION "\",\"sequence\":4294967303,"  // 2^32 + 7
+                          "\"sha256\":\"" FIX_SHA256 "\",\"sizeBytes\":" WF_STR(FIX_SIZE) ","
+                          "\"signature\":\"" FIX_SIGNATURE_B64 "\",\"keyId\":\"" FIX_KEY_ID "\"}", &o),
+          "a sequence that overflows uint32 is refused, not wrapped");
+    CHECK(!fw_offer_parse("{\"version\":\"" FIX_VERSION "\",\"sequence\":7.9,"
+                          "\"sha256\":\"" FIX_SHA256 "\",\"sizeBytes\":" WF_STR(FIX_SIZE) ","
+                          "\"signature\":\"" FIX_SIGNATURE_B64 "\",\"keyId\":\"" FIX_KEY_ID "\"}", &o),
+          "a non-integer sequence (7.9) is refused, not read as 7");
 }
 
 int main(void) {
@@ -91,6 +138,7 @@ int main(void) {
     RUN(test_unknown_key_is_refused);
     RUN(test_too_big_is_refused);
     RUN(test_the_release_key_is_compiled_in);
+    RUN(test_relabeling_the_key_id_does_not_forge_the_release_signature);
     RUN(test_malformed_offers_do_not_parse);
     return REPORT();
 }
