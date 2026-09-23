@@ -6,7 +6,7 @@ import { games, disks } from '@/db/schema/catalog';
 import { syntheticVolume } from '@/lib/adffs/synthetic';
 import { readVolume } from '@/lib/adffs';
 import { signUpFresh, runTag, createAdf } from './helpers';
-import { cleanupSeeded, seedDisk } from './device-helpers';
+import { cleanupSeeded, seedDisk, pairDevice } from './device-helpers';
 import { synthDrop } from './drag-drop-helpers';
 import { seedProduction, seedSuggestion, cleanupDemozoo } from './demozoo-helpers';
 
@@ -111,6 +111,31 @@ test('the library grid is two columns, and nothing overflows the viewport', asyn
 
   // The whole document, not just the grid: a single overflowing element
   // makes the entire page pan sideways, which is the symptom people notice.
+  const overflow = await page.evaluate(
+    () => document.documentElement.scrollWidth - document.documentElement.clientWidth,
+  );
+  expect(overflow).toBeLessThanOrEqual(0);
+});
+
+test('the Devices grid is two columns at 390px, and nothing overflows the viewport', async ({ page, request }) => {
+  await signUpFresh(page);
+  const { deviceId: idA } = await pairDevice(page, request, 'Mobile A');
+  const { deviceId: idB } = await pairDevice(page, request, 'Mobile B');
+  const { deviceId: idC } = await pairDevice(page, request, 'Mobile C');
+
+  await page.goto('/devices');
+  const a = (await page.getByTestId(`device-${idA}`).boundingBox())!;
+  const b = (await page.getByTestId(`device-${idB}`).boundingBox())!;
+  const c = (await page.getByTestId(`device-${idC}`).boundingBox())!;
+
+  // Two across: A and B share a row (device-list.tsx's grid-cols-2 base,
+  // below the lg breakpoint that switches to three), C starts the next one.
+  expect(Math.abs(a.y - b.y)).toBeLessThan(4);
+  expect(c.y).toBeGreaterThan(a.y + a.height / 2);
+
+  // The whole document, exactly like the library grid's equivalent check
+  // above -- a single card overflowing panned the entire page sideways
+  // before this redesign existed to prove it doesn't.
   const overflow = await page.evaluate(
     () => document.documentElement.scrollWidth - document.documentElement.clientWidth,
   );

@@ -272,6 +272,89 @@ test('a pending eject says "Ejecting", never "Mounting"', async ({ page, request
   expect(text).not.toContain('Mounting');
 });
 
+// --- the square-card redesign (option A -- "the disk in the middle") -----
+
+test('three paired devices share one row of the grid and are roughly square', async ({ page, request }) => {
+  await signUpFresh(page);
+  const { deviceId: idA } = await pairDevice(page, request, 'Card A');
+  const { deviceId: idB } = await pairDevice(page, request, 'Card B');
+  const { deviceId: idC } = await pairDevice(page, request, 'Card C');
+
+  // Default desktop viewport (playwright.config.ts's "desktop" project sets
+  // none, so this is 1280x720) is above the lg breakpoint device-list.tsx
+  // switches on -- 3 per row is what should render here.
+  await page.goto('/devices');
+  const a = (await page.getByTestId(`device-${idA}`).boundingBox())!;
+  const b = (await page.getByTestId(`device-${idB}`).boundingBox())!;
+  const c = (await page.getByTestId(`device-${idC}`).boundingBox())!;
+
+  // Same row: all three tops line up.
+  expect(Math.abs(a.y - b.y)).toBeLessThan(4);
+  expect(Math.abs(a.y - c.y)).toBeLessThan(4);
+
+  // Roughly square -- these are freshly paired devices with nothing mounted,
+  // so there is no long title or error to grow a card past its aspect-ratio.
+  // A generous tolerance because "at least square, grows taller" (the spec)
+  // deliberately does not promise an EXACT ratio once real content is in it.
+  for (const box of [a, b, c]) {
+    expect(box.height / box.width).toBeGreaterThan(0.8);
+    expect(box.height / box.width).toBeLessThan(1.3);
+  }
+});
+
+test('the Online/Offline badge renders both values, and only Offline gets a last-seen line', async ({ page, request }) => {
+  await signUpFresh(page);
+  const { deviceId: idOnline } = await pairDevice(page, request, 'Badge Online');
+  const { deviceId: idOffline } = await pairDevice(page, request, 'Badge Offline');
+
+  await setDevice(idOnline, { lastSeenAt: new Date() });
+  await setDevice(idOffline, { lastSeenAt: new Date(Date.now() - 60 * 60_000) });
+
+  await page.goto('/devices');
+  await expect(page.getByTestId(`device-status-${idOnline}`)).toHaveText('Online');
+  await expect(page.getByTestId(`device-status-${idOffline}`)).toHaveText('Offline');
+
+  // Both states are visibly rendered -- a badge in each, never an absent icon
+  // standing in for one of them.
+  await expect(page.getByTestId(`device-last-seen-${idOnline}`)).toHaveCount(0);
+  await expect(page.getByTestId(`device-${idOffline}`)).toContainText('last seen');
+});
+
+test('the write-protect tag reads the MOUNTED disk: Protected, Writable, or "—" when empty', async ({ page, request }) => {
+  const { orgId } = await signUpFresh(page);
+  const { deviceId: idProtected } = await pairDevice(page, request, 'WP Protected');
+  const { deviceId: idWritable } = await pairDevice(page, request, 'WP Writable');
+  const { deviceId: idEmpty } = await pairDevice(page, request, 'WP Empty');
+  const tag = runTag();
+
+  const { gameId: gameP, diskId: diskP } = await seedDisk(orgId, {
+    title: `WP-Protected-${tag}`, diskNo: 1, sha256: sha(`${tag}-p`), writeProtected: true,
+  });
+  const { gameId: gameW, diskId: diskW } = await seedDisk(orgId, {
+    title: `WP-Writable-${tag}`, diskNo: 1, sha256: sha(`${tag}-w`), writeProtected: false,
+  });
+
+  // Mounted (not merely desired) is what the tag reads -- both desired and
+  // mounted are set to the same disk here so `deviceState` reads 'converged'
+  // and the mount is not merely in flight.
+  await setDevice(idProtected, {
+    desiredGameId: gameP, desiredDiskId: diskP, desiredSha256: sha(`${tag}-p`), desiredDiskNo: 1,
+    mountedGameId: gameP, mountedDiskId: diskP, mountedSha256: sha(`${tag}-p`), mountedDiskNo: 1,
+    lastSeenAt: new Date(),
+  });
+  await setDevice(idWritable, {
+    desiredGameId: gameW, desiredDiskId: diskW, desiredSha256: sha(`${tag}-w`), desiredDiskNo: 1,
+    mountedGameId: gameW, mountedDiskId: diskW, mountedSha256: sha(`${tag}-w`), mountedDiskNo: 1,
+    lastSeenAt: new Date(),
+  });
+  // idEmpty stays exactly as pairDevice left it -- nothing desired or mounted.
+
+  await page.goto('/devices');
+  await expect(page.getByTestId(`device-protection-${idProtected}`)).toHaveText('Protected');
+  await expect(page.getByTestId(`device-protection-${idWritable}`)).toHaveText('Writable');
+  await expect(page.getByTestId(`device-protection-${idEmpty}`)).toHaveText('—');
+});
+
 test('a pairing code is shown with a live expiry, and disappears when it expires', async ({ page }) => {
   await page.clock.install();
   await signUpFresh(page);

@@ -154,15 +154,26 @@ export function DeviceList({
         </div>
       )}
 
-      {devices.map((d, i) => (
-        <DeviceCard
-          key={d.id} device={d} now={now} firmware={states[i]}
-          selection={selectable.has(d.id)
-            ? { selected: picked.has(d.id), onToggle: toggle }
-            : undefined}
-          onCancelUpdate={d.desiredFirmwareVersion ? cancel : undefined}
-        />
-      ))}
+      {/*
+        Square-ish cards in a grid rather than the old full-width stacked
+        list (the approved redesign, option A -- "the disk in the middle").
+        2 per row is the base (mobile-first, so this is what a 390px phone
+        gets with no override needed), 3 per row from lg up: this card carries
+        more prose than the library's thumbnails, so it needs tablet-width
+        room that a switch at `sm` (library's own breakpoint, game-grid.tsx)
+        would not give it.
+      */}
+      <div className="grid grid-cols-2 gap-3 lg:grid-cols-3">
+        {devices.map((d, i) => (
+          <DeviceCard
+            key={d.id} device={d} now={now} firmware={states[i]}
+            selection={selectable.has(d.id)
+              ? { selected: picked.has(d.id), onToggle: toggle }
+              : undefined}
+            onCancelUpdate={d.desiredFirmwareVersion ? cancel : undefined}
+          />
+        ))}
+      </div>
 
       {open && latest && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4"

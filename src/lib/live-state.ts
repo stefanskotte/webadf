@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto';
 import { and, asc, eq } from 'drizzle-orm';
+import { alias } from 'drizzle-orm/pg-core';
 import type { getDb } from '@/db';
 import { devices } from '@/db/schema/devices';
 import { disks } from '@/db/schema/catalog';
@@ -17,6 +18,11 @@ export interface LiveStateRow {
   mountedDiskId: string | null; mountedSha256: string | null; mountedVersion: number | null;
   lastSeenAt: Date | null;
   diskSha256: string | null; diskWriteProtected: boolean | null;
+  // The MOUNTED disk's write-protect, distinct from `diskWriteProtected`
+  // above (which is the DESIRED disk's -- what a board is about to be told to
+  // hold, not what it already does). The Devices card's bottom tag reads this
+  // one, and a flip must reach every open tab the same way a mount does.
+  mountedDiskWriteProtected: boolean | null;
   firmwareVersion: string | null;
   // What the Devices tab renders about an update in flight. Increment 1
   // shipped with exactly this gap for the release registry and it had to be
@@ -68,7 +74,8 @@ export function liveFingerprint(
       return [
         r.id, r.desiredDiskId ?? '', r.desiredSha256 ?? '', r.desiredVersion,
         r.mountedDiskId ?? '', r.mountedSha256 ?? '', r.mountedVersion ?? '', state,
-        r.diskSha256 ?? '', r.diskWriteProtected === null ? '' : String(r.diskWriteProtected), r.name,
+        r.diskSha256 ?? '', r.diskWriteProtected === null ? '' : String(r.diskWriteProtected),
+        r.mountedDiskWriteProtected === null ? '' : String(r.mountedDiskWriteProtected), r.name,
         r.firmwareVersion ?? '',
         r.desiredFirmwareVersion ?? '', r.firmwareUpdateState ?? '',
         r.updateProtocol ?? '', r.firmwareUpdateError ?? '',
@@ -84,6 +91,13 @@ export function liveFingerprint(
 }
 
 export async function liveStateRows(db: ReturnType<typeof getDb>, orgId: string): Promise<LiveStateRow[]> {
+  // A second alias of `disks`, keyed on mountedDiskId rather than
+  // desiredDiskId -- the same reasoning as listDevices' own mountedDisk join
+  // (src/lib/queries.ts): a device's desired and mounted disks are frequently
+  // different rows, and this fingerprint has to notice a write-protect flip
+  // on EITHER one.
+  const mountedDisk = alias(disks, 'mounted_disk');
+
   return db
     .select({
       id: devices.id, name: devices.name,
@@ -93,6 +107,7 @@ export async function liveStateRows(db: ReturnType<typeof getDb>, orgId: string)
       mountedSha256: devices.mountedSha256, mountedVersion: devices.mountedVersion,
       lastSeenAt: devices.lastSeenAt,
       diskSha256: disks.sha256, diskWriteProtected: disks.writeProtected,
+      mountedDiskWriteProtected: mountedDisk.writeProtected,
       firmwareVersion: devices.firmwareVersion,
       desiredFirmwareVersion: devices.desiredFirmwareVersion,
       firmwareUpdateState: devices.firmwareUpdateState,
@@ -101,11 +116,13 @@ export async function liveStateRows(db: ReturnType<typeof getDb>, orgId: string)
       lastError: devices.lastError, lastErrorAt: devices.lastErrorAt,
     })
     .from(devices)
-    // Org-scoped on both sides of the join: without `disks.orgId`, a
-    // `desiredDiskId` that somehow named a disk row in another org (it never
-    // should, but nothing at the type level prevents it) would join in that
-    // other org's `sha256`/`writeProtected` into THIS org's fingerprint.
+    // Org-scoped on both sides of both joins: without `disks.orgId`, a
+    // `desiredDiskId`/`mountedDiskId` that somehow named a disk row in
+    // another org (it never should, but nothing at the type level prevents
+    // it) would join in that other org's `sha256`/`writeProtected` into THIS
+    // org's fingerprint.
     .leftJoin(disks, and(eq(disks.id, devices.desiredDiskId), eq(disks.orgId, orgId)))
+    .leftJoin(mountedDisk, and(eq(mountedDisk.id, devices.mountedDiskId), eq(mountedDisk.orgId, orgId)))
     .where(eq(devices.orgId, orgId))
     .orderBy(asc(devices.id));
 }

@@ -316,6 +316,13 @@ export interface DeviceListItem {
   desiredGame: string | null; desiredDiskNo: number | null; desiredDiskCount: number | null;
   // The disk the device says it holds, when it says it holds one.
   mountedGame: string | null; mountedDiskNo: number | null;
+  /**
+   * The write-protect flag of the disk row `mountedDiskId` names -- not the
+   * `disks` row's org, the DEVICE's, via an org-scoped join (see below). Null
+   * whenever no disk is mounted, which the card renders as "--" rather than
+   * guessing a protection state for a drive that is empty.
+   */
+  mountedWriteProtected: boolean | null;
 }
 
 /**
@@ -335,6 +342,10 @@ export async function listDevices(orgId: string): Promise<DeviceListItem[]> {
   // as well would add two joins nothing selects from.
   const desiredGame = alias(games, 'desired_game');
   const mountedGame = alias(games, 'mounted_game');
+  // The mounted DISK row, for its write-protect flag -- the card's bottom tag
+  // needs it and nothing above already carries it (mountedSha256 identifies
+  // the bytes, not a specific disks row, and two rows can share one sha).
+  const mountedDisk = alias(disks, 'mounted_disk');
 
   return getDb()
     .select({
@@ -357,14 +368,16 @@ export async function listDevices(orgId: string): Promise<DeviceListItem[]> {
       )`,
       mountedGame: mountedGame.title,
       mountedDiskNo: devices.mountedDiskNo,
+      mountedWriteProtected: mountedDisk.writeProtected,
     })
     .from(devices)
-    // Both joins are org-scoped in the ON clause itself, not just filtered
-    // afterwards: desired_game_id/mounted_game_id are plain text columns with
-    // no foreign key, so nothing at the database level stops a device row
-    // from naming another org's game.
+    // Every join here is org-scoped in the ON clause itself, not just
+    // filtered afterwards: desired_game_id/mounted_game_id/mounted_disk_id
+    // are plain text columns with no foreign key, so nothing at the database
+    // level stops a device row from naming another org's row.
     .leftJoin(desiredGame, and(eq(desiredGame.id, devices.desiredGameId), eq(desiredGame.orgId, orgId)))
     .leftJoin(mountedGame, and(eq(mountedGame.id, devices.mountedGameId), eq(mountedGame.orgId, orgId)))
+    .leftJoin(mountedDisk, and(eq(mountedDisk.id, devices.mountedDiskId), eq(mountedDisk.orgId, orgId)))
     .where(orgFilter(devices, orgId))
     .orderBy(devices.name);
 }

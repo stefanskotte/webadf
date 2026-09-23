@@ -9,6 +9,7 @@ const base: LiveStateRow = {
   mountedDiskId: 'disk-1', mountedSha256: 'a'.repeat(64), mountedVersion: 4,
   lastSeenAt: new Date(NOW - 5_000),
   diskSha256: 'a'.repeat(64), diskWriteProtected: false,
+  mountedDiskWriteProtected: true,
   firmwareVersion: '1.0.0',
   desiredFirmwareVersion: null, firmwareUpdateState: null,
   updateProtocol: null, firmwareUpdateError: null,
@@ -31,6 +32,10 @@ describe('liveFingerprint', () => {
     ['mounted digest', { mountedSha256: 'c'.repeat(64) }],
     ['mounted version', { mountedVersion: 5 }],
     ['write-protect', { diskWriteProtected: true }],
+    // The Devices card's bottom tag ("Protected"/"Writable") reads the
+    // MOUNTED disk's flag, not the desired disk's above -- a flip there must
+    // move the fingerprint on its own, or every open tab misses it.
+    ['the mounted disk\'s write-protect', { mountedDiskWriteProtected: false }],
     ['the disk digest (a board write)', { diskSha256: 'd'.repeat(64) }],
     ['the device name', { name: 'Renamed' }],
     ['the firmware version', { firmwareVersion: '1.1.0' }],
