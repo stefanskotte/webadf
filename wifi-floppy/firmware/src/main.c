@@ -1326,7 +1326,11 @@ static void core1_main(void) {
                                               "the watchdog must reset within 8 s");
                             fw_rom_debug_wedge();
                         } else if (strncmp(dbg_buf, "fwdbg ", 6) == 0) {
-                            if (strlen(dbg_buf + 6) >= sizeof c.fw_update_json) {
+                            if (c.fw_instruction_new) {
+                                // A real instruction arrived this pass: never
+                                // overwrite its offer under the cursor it acks.
+                                wf_logf(WF_WARN, "fwdbg: a real instruction is pending -- injection refused");
+                            } else if (strlen(dbg_buf + 6) >= sizeof c.fw_update_json) {
                                 wf_logf(WF_WARN, "fwdbg: offer too long -- ignored");
                             } else {
                                 snprintf(c.fw_update_json, sizeof c.fw_update_json, "%s", dbg_buf + 6);
@@ -1350,7 +1354,20 @@ static void core1_main(void) {
             if (c.fw_instruction_new) {
                 c.fw_instruction_new = false;
                 fw_report.instruction_ack = c.fw_instruction_version;
-                if (c.fw_offer_present) {
+                if (c.fw_instruction_is_sync) {
+                    // The first cursor after dc_init with no update: the
+                    // server's normal echo (device_client.h). Ack it, but it
+                    // is NOT a cancel -- a boot-time "failed" (reverted, or a
+                    // trial that gave up) must survive to be reported (D8).
+                    wf_logf(WF_INFO, "fw: instruction cursor %lu (sync)",
+                            (unsigned long)c.fw_instruction_version);
+                } else if (c.fw_offer_present && fw_report.update_protocol == 0) {
+                    // Never stage into a g_fw_stage PSRAM does not back, or
+                    // flash an unpartitioned board. The server should never
+                    // target one (2a D1); refuse if it somehow does.
+                    fwu_fail(&fwu, "refused: this board cannot update");
+                    wf_logf(WF_WARN, "fw: offer refused -- this board cannot update");
+                } else if (c.fw_offer_present) {
                     static fw_offer_t o;   // static: ~300 bytes, off core1's measured stack
                     if (fw_offer_parse(c.fw_update_json, &o)) {
                         fw_verdict_t v = fw_check_offer(&o, fst.installed_sequence);
@@ -1370,8 +1387,12 @@ static void core1_main(void) {
                 fw_report_owed = true;
             }
             {
-                // D6: nothing mounted, no unsent writes, motor off.
-                bool idle = c.mounted_sha256[0] == '\0' && !up_has_work(&up) && !g_motor_on;
+                // D6: nothing mounted, no unsent writes, motor off. The
+                // published slot is checked too -- the same predicate
+                // fw_state_save refuses on -- so the gate and the pending
+                // record's write can never disagree.
+                bool idle = c.mounted_sha256[0] == '\0' && psram_active_slot() == SLOT_NONE &&
+                            !up_has_work(&up) && !g_motor_on;
                 if (fwu_step(&fwu, &fwu_ops, &fst, idle, clock_ms())) {
                     const char *st = fwu_state_text(&fwu);
                     const char *er = fwu_error_text(&fwu);

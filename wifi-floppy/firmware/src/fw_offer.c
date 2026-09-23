@@ -53,14 +53,18 @@ static bool is_hex64(const char *s) {
 // (dc_fetch_firmware). The signature does cover it, but a malformed version
 // should never reach a request line at all: only the characters a release
 // version is actually made of (semver + build metadata, "-dirty") pass.
+// Also refused: a leading '.', and a version with no alphanumeric at all --
+// either could still be a path segment of its own ("." / "..").
 static bool is_path_safe_version(const char *s) {
+    if (s[0] == '.') return false;
+    bool alnum = false;
     for (; *s; s++) {
         char c = *s;
-        if (!((c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') ||
-              c == '.' || c == '+' || c == '-'))
-            return false;
+        bool a = (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9');
+        if (!a && c != '.' && c != '+' && c != '-') return false;
+        alnum = alnum || a;
     }
-    return true;
+    return alnum;
 }
 
 // json_str truncates silently past out_len -- fine for its other callers,

@@ -21,8 +21,9 @@ typedef struct {
 // Parses `update_json` (the poll response's "update" object) into `out`.
 // Returns false if any field is missing or malformed: a wrong-length hex
 // sha256, a signature that does not decode to exactly 64 bytes, an empty
-// version or key id, or a version with any character outside [A-Za-z0-9.+-]
-// (it becomes part of the firmware GET's request path).
+// version or key id, or a version with any character outside [A-Za-z0-9.+-],
+// a leading '.', or no alphanumeric at all (it becomes part of the firmware
+// GET's request path).
 bool fw_offer_parse(const char *update_json, fw_offer_t *out);
 
 #endif

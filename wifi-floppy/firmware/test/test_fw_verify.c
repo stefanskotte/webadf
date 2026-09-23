@@ -147,6 +147,13 @@ static void test_version_outside_the_path_safe_set_is_refused(void) {
     CHECK(!fw_offer_parse(OFFER_WITH_VERSION("1.2.0%2F"), &o), "a '%' is refused");
     CHECK(!fw_offer_parse(OFFER_WITH_VERSION("1.2.0\\r\\nX: y"), &o), "an escaped CR/LF is refused");
     CHECK(!fw_offer_parse(OFFER_WITH_VERSION("1.2.0_x"), &o), "an underscore is refused");
+    // Fix round 1: a version made only of path punctuation, or starting with
+    // '.', would still be a path segment of its own ("." / "..").
+    CHECK(!fw_offer_parse(OFFER_WITH_VERSION("."), &o), "'.' is refused");
+    CHECK(!fw_offer_parse(OFFER_WITH_VERSION(".."), &o), "'..' is refused");
+    CHECK(!fw_offer_parse(OFFER_WITH_VERSION(".1.2.0"), &o), "a leading '.' is refused");
+    CHECK(!fw_offer_parse(OFFER_WITH_VERSION("+-."), &o), "no alphanumeric at all is refused");
+    CHECK(fw_offer_parse(OFFER_WITH_VERSION("1"), &o), "a single alphanumeric parses");
 }
 
 int main(void) {

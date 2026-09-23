@@ -134,6 +134,43 @@ static void test_a_cancel_is_new_with_no_offer(void) {
     CHECK(c.fw_instruction_new && !c.fw_offer_present, "moved, no update: a cancellation");
 }
 
+// Fix round 1 (Task 11 review, Important): after dc_init the cursor is 0, and
+// the server echoes its instructionVersion on every poll -- sending `update`
+// only while un-acked. So the FIRST cursor seen after boot with no update is
+// a cursor sync, not a cancel: acting on it as a cancel wiped a boot-time
+// "failed: reverted" before it was ever reported (spec D8).
+static void test_first_cursor_after_boot_without_update_is_a_sync(void) {
+    boot();
+    push_ok_json("{\"version\":1,\"desired\":null,\"instructionVersion\":5}");
+    dc_step(&c);
+    CHECK(c.fw_instruction_new, "the first cursor is still new (it must be acked)");
+    CHECK(c.fw_instruction_is_sync, "but with no update it is a sync, not a cancel");
+    CHECK(!c.fw_offer_present, "and carries no offer");
+    CHECK_EQ_INT(c.fw_instruction_version, 5);
+}
+static void test_a_later_cursor_move_without_update_is_a_real_cancel(void) {
+    boot();
+    push_ok_json("{\"version\":1,\"desired\":null,\"instructionVersion\":5}");
+    dc_step(&c);
+    c.fw_instruction_new = false;              // main.c acted on the sync
+    push_ok_json("{\"version\":2,\"desired\":null,\"instructionVersion\":6}");
+    dc_step(&c);
+    CHECK(c.fw_instruction_new, "a moved cursor is new");
+    CHECK(!c.fw_instruction_is_sync, "a later move with no update is a real cancel");
+    CHECK(!c.fw_offer_present, "no offer");
+}
+static void test_first_cursor_after_boot_with_update_is_a_real_instruction(void) {
+    boot();
+    push_ok_json("{\"version\":7,\"desired\":null,\"instructionVersion\":2,"
+                 "\"update\":{\"version\":\"1.1.0+gx\",\"sequence\":5,\"sha256\":\""
+                 "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc\","
+                 "\"sizeBytes\":1000,\"signature\":\"AA==\",\"keyId\":\"wf-x\"}}");
+    dc_step(&c);
+    CHECK(c.fw_instruction_new, "new");
+    CHECK(!c.fw_instruction_is_sync, "an update on the first cursor is a real instruction");
+    CHECK(c.fw_offer_present, "with its offer");
+}
+
 static void test_poll_404_keeps_the_disk_mounted(void) {
     boot();
     c.mounted_version = 5; strcpy(c.mounted_sha256, "deadbeef");
@@ -1278,6 +1315,9 @@ int main(void) {
     RUN(test_update_object_does_not_leak_into_disk_fields);
     RUN(test_unchanged_instruction_is_not_new);
     RUN(test_a_cancel_is_new_with_no_offer);
+    RUN(test_first_cursor_after_boot_without_update_is_a_sync);
+    RUN(test_a_later_cursor_move_without_update_is_a_real_cancel);
+    RUN(test_first_cursor_after_boot_with_update_is_a_real_instruction);
     RUN(test_poll_404_keeps_the_disk_mounted);
     RUN(test_poll_404_without_device_not_found_marker_is_retryable);
     RUN(test_401_halts);

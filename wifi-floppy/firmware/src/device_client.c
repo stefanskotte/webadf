@@ -611,6 +611,9 @@ static void dc_take_fw_fields(device_client_t *c, char *json) {
                                       sizeof c->fw_update_json, true);
     uint32_t iv = 0;
     if (json_u32(json, "instructionVersion", &iv) && iv > c->fw_instruction_version) {
+        // The first cursor since dc_init (still 0) with no update is the
+        // server's normal echo -- a sync to ack, not a cancel (device_client.h).
+        c->fw_instruction_is_sync = c->fw_instruction_version == 0 && !c->fw_offer_present;
         c->fw_instruction_version = iv;
         c->fw_instruction_new = true;
     } else if (c->fw_offer_present) {

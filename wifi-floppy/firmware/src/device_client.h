@@ -229,6 +229,14 @@ typedef struct {
     // --- firmware self-update (piece 2b); see dc_take_fw_fields ---
     // Set by dc_step when instructionVersion moved past fw_instruction_version.
     bool     fw_instruction_new;
+    // Fix round 1 (Task 11 review): true when this new instruction is the
+    // FIRST cursor seen since dc_init (fw_instruction_version was still 0)
+    // and no update object came with it. The server echoes its cursor on
+    // every poll and sends `update` only while un-acked, so this is a cursor
+    // sync to ack, NOT a cancel -- acting on it as one would wipe a boot-time
+    // "failed" before it is reported. A later move with no update is a real
+    // cancel. Meaningful only while fw_instruction_new is set.
+    bool     fw_instruction_is_sync;
     uint32_t fw_instruction_version;
     bool     fw_offer_present;       // an "update" object came with it
     char     fw_update_json[DC_FW_UPDATE_JSON_BYTES];
