@@ -15,6 +15,8 @@
 #include "boot/bootrom_constants.h"
 #include "boot/picobin.h"
 #include "boot/picoboot_constants.h"
+#include "fw_apply.h"
+#include "hardware/address_mapped.h"   // XIP_NOCACHE_NOALLOC_NOTRANSLATE_BASE
 
 static bool     g_trial;
 static int      g_partition = -1;
@@ -230,6 +232,28 @@ void fw_rom_service(void) {
     }
     watchdog_update();
 }
+
+// ---- device flash ops for fw_apply_image (D7) ------------------------------
+//
+// hardware_flash under pico/flash's flash_safe_execute, which saves/restores
+// PSRAM's QMI CS1 state around the callback -- see fw_rom_boot_early's
+// comment above for the measured reason that matters and why the boot-ROM
+// buy itself must NOT go through this path. Each sector gets its own short
+// flash_safe_execute window (tens of ms with core0 parked), never one long
+// window spanning the whole image, so the watchdog never has to cover it.
+typedef struct { uint32_t off; const uint8_t *data; } fr_prog_t;
+static void do_erase(void *p) { flash_range_erase(*(uint32_t *)p, FLASH_SECTOR_SIZE); }
+static void do_prog(void *p) { fr_prog_t *a = p; flash_range_program(a->off, a->data, FLASH_SECTOR_SIZE); }
+static bool fr_erase(void *ctx, uint32_t off) { (void)ctx; return flash_safe_execute(do_erase, &off, 1000) == PICO_OK; }
+static bool fr_program(void *ctx, uint32_t off, const uint8_t data[4096]) {
+    (void)ctx; fr_prog_t a = { off, data };
+    return flash_safe_execute(do_prog, &a, 1000) == PICO_OK;
+}
+// NOTRANSLATE: the other slot is not mapped at XIP_BASE (spec M3).
+static const uint8_t *fr_raw(void *ctx, uint32_t off) {
+    (void)ctx; return (const uint8_t *)(XIP_NOCACHE_NOALLOC_NOTRANSLATE_BASE + off);
+}
+const fw_flash_t fw_rom_flash = { fr_erase, fr_program, fr_raw, NULL };
 
 #if WF_FW_DEBUG
 static void debug_wedge_cb(void *p) {

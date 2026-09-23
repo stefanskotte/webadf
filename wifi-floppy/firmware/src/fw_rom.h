@@ -3,6 +3,7 @@
 
 #include <stdint.h>
 #include <stdbool.h>
+#include "fw_apply.h"
 
 // FIRST statement of main(): single-core, before stdio, core1, PSRAM users.
 // Loads boot info and the PT, consumes the "proven" mark in watchdog
@@ -13,6 +14,13 @@ void fw_rom_boot_init(void);           // core0, after wf_log_init, before core1
 bool fw_rom_trial_boot(void);          // this boot is an unconfirmed TBYB trial
 int  fw_rom_booted_partition(void);    // 0, 1, or -1 (unpartitioned)
 bool fw_rom_other_slot(uint32_t *flash_off, uint32_t *len);
+// Device flash ops for fw_apply_image: hardware_flash under pico/flash's
+// flash_safe_execute (which saves/restores PSRAM's QMI CS1 state around
+// each call -- see fw_rom_boot_early's comment for why that matters), one
+// short flash_safe_execute window per sector. Reads go through
+// XIP_NOCACHE_NOALLOC_NOTRANSLATE_BASE (Task 1 guard, M3): the other slot
+// is not mapped at XIP_BASE once the board has booted a partition.
+extern const fw_flash_t fw_rom_flash;
 // Any core. The trial proved itself: mark scratch[0..1] for running_version
 // and request a FLASH_UPDATE reboot into the booted slot, so the next boot
 // buys in fw_rom_boot_early. Refused (logged) if a reboot is already pending.
