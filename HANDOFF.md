@@ -1842,7 +1842,7 @@ separately.
   The cards' own "online" wording and the header must stay one predicate. Fix the path, not
   the count.
 
-- **Devices page: square, floppy-disk-looking cards instead of full-width rows.** Requested by
+- ~~**Devices page: square, floppy-disk-looking cards instead of full-width rows.**~~ **DONE 2026-09-24** (master 5343934). The operator dropped the floppy DRAWINGS after seeing mockups ("not fond of the icons"): plain minimal square cards, 3 per row on desktop and 2 per row on a phone. Layout A puts the disk in the middle: name + Online/Offline badge on top, the mounted disk as big text, then Protected/Writable ("—" when empty or mid-mount), firmware, select, Eject. `listDevices` gained `mountedWriteProtected` (org-scoped join), and the live fingerprint now carries it plus "last seen" for every offline card. A browser-measured review caught the name vanishing and page overflow at 390 px before merge. Full e2e 332/332. **The menu floppy chips (entry above) were deliberately left out of this round.** Original entry follows. Requested by
   the operator 2026-09-22. Today each board is a full-width card with Eject at the far right,
   which spends the width on nothing. Lay them out as a grid of squares that look like floppy
   disks, the same visual idea as the library's square category cards (3ah) and the floppy
@@ -2142,7 +2142,7 @@ separately.
     requirement of the feature, not a blocker. The UI should say so where an HD disk is
     created or mounted, since a 1.3 machine would simply fail to read it.
 
-- **Support HFE and IPF, for copy-protected games.** Requested by the operator 2026-09-13,
+- **Support HFE and IPF, for copy-protected games.** **2026-09-24: IPF IS RULED OUT** by the operator ("riddled with licensing": the CAPS/SPS decoder library's terms), so do not propose it again. HFE, including v3, is being planned. Requested by the operator 2026-09-13,
   and the direct payoff of the decision above: both are flux/bitstream formats, which is
   exactly what WFMF already carries, so the work is server-side conversion into the
   container the device already streams. **No firmware change, and no board change.**
