@@ -16,6 +16,8 @@ export interface ReleaseRef {
   semver: string;
   security: boolean;
   notes: string | null;
+  /** 1 = signature over the sha256 only. 2 = over the manifest (spec D4). */
+  signatureFormat?: number;
 }
 
 export type FirmwareState =

@@ -37,6 +37,8 @@ export const firmwareReleases = pgTable('firmware_releases', {
   /** ed25519 over the artifact's sha256, base64. Signed offline (spec D3). */
   signature: text('signature').notNull(),
   signingKeyId: text('signing_key_id').notNull(),
+  /** 1 = signature over the sha256 only (release 1). 2 = over the manifest (spec D4). Only 2 is offered to a board. */
+  signatureFormat: integer('signature_format').notNull().default(1),
   notes: text('notes'),
   security: boolean('security').notNull().default(false),
   publishedAt: timestamp('published_at', { withTimezone: true }).notNull().defaultNow(),

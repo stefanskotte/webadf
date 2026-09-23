@@ -1,0 +1,1 @@
+ALTER TABLE "firmware_releases" ADD COLUMN "signature_format" integer DEFAULT 1 NOT NULL;

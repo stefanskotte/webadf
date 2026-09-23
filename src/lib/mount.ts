@@ -371,6 +371,7 @@ export async function readFirmwareInstruction(
       sizeBytes: firmwareReleases.sizeBytes,
       signature: firmwareReleases.signature,
       keyId: firmwareReleases.signingKeyId,
+      signatureFormat: firmwareReleases.signatureFormat,
     })
     .from(devices)
     .leftJoin(firmwareReleases, eq(firmwareReleases.version, devices.desiredFirmwareVersion))
@@ -378,6 +379,9 @@ export async function readFirmwareInstruction(
     .limit(1);
 
   if (!row?.want || row.version === null) return null;
+  // Only a format-2 signature covers the manifest (spec D4); a format-1
+  // release cannot be verified by the board and must never be offered.
+  if (row.signatureFormat !== 2) return null;
   return {
     version: row.version,
     sequence: row.sequence!,

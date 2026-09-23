@@ -3,7 +3,7 @@ import { desc, eq } from 'drizzle-orm';
 import { getDb } from '@/db';
 import { firmwareReleases } from '@/db/schema/firmware';
 import type { ReleaseRef } from '@/lib/firmware-state';
-import { decidePublish, type ExistingRelease } from '@/lib/firmware-publish-rules';
+import { decidePublish, PublishRefused, type ExistingRelease } from '@/lib/firmware-publish-rules';
 
 export interface PublishInput {
   version: string;
@@ -15,6 +15,7 @@ export interface PublishInput {
   signingKeyId: string;
   notes: string | null;
   security: boolean;
+  signatureFormat: number;
 }
 
 /** What decidePublish needs, and nothing else. */
@@ -45,10 +46,16 @@ export async function readExistingReleases(): Promise<ExistingRelease[]> {
 export async function publishRelease(
   input: PublishInput,
   userId: string,
+  expectedSequence: number,
 ): Promise<{ id: string; sequence: number }> {
   const db = getDb();
   const existing = await readExistingReleases();
   const sequence = decidePublish(existing, input);
+  if (sequence !== expectedSequence) {
+    // The signature covers the sequence (spec D4). A sequence that moved between
+    // signing and recording would publish a signature that never verifies.
+    throw new PublishRefused(`sequence moved from ${expectedSequence} to ${sequence} while publishing; re-run`);
+  }
   const id = randomUUID();
   await db.insert(firmwareReleases).values({ ...input, id, sequence, publishedByUserId: userId });
   return { id, sequence };
@@ -70,6 +77,7 @@ export async function listReleases(): Promise<ReleaseRef[]> {
       semver: firmwareReleases.semver,
       security: firmwareReleases.security,
       notes: firmwareReleases.notes,
+      signatureFormat: firmwareReleases.signatureFormat,
     })
     .from(firmwareReleases)
     .orderBy(desc(firmwareReleases.sequence));

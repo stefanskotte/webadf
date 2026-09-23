@@ -11,7 +11,8 @@ export type TargetRefusal =
   | 'cannot_update'
   | 'would_roll_back'
   | 'already_current'
-  | 'update_in_flight';
+  | 'update_in_flight'
+  | 'unverifiable_release';
 
 export interface TargetCandidate {
   id: string;
@@ -33,6 +34,11 @@ export function refuseTarget(
   // cannot report update state could otherwise release the hold forever
   // (spec 4.2), because the hold releases while the state is unacknowledged.
   if (!d.updateProtocol || d.updateProtocol < 1) return 'cannot_update';
+
+  // A release the board cannot verify is never offered (readFirmwareInstruction
+  // filters it out). Targeting it would leave the card on "update requested"
+  // forever, so refuse it up front.
+  if ((target.signatureFormat ?? 1) < 2) return 'unverifiable_release';
 
   // A board that is already downloading or writing flash must not be
   // re-targeted. Re-requesting resets its reported state, which both erases

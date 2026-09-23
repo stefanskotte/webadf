@@ -3,7 +3,7 @@ import { buildRegistry, type ReleaseRef } from './firmware-state';
 import { refuseTarget, type TargetCandidate } from './firmware-update-rules';
 
 const rel = (version: string, sequence: number, semver: string): ReleaseRef =>
-  ({ version, sequence, semver, security: false, notes: null });
+  ({ version, sequence, semver, security: false, notes: null, signatureFormat: 2 });
 
 const releases = [
   rel('1.0.0+ga111111', 1, '1.0.0'),
@@ -58,5 +58,11 @@ describe('refuseTarget', () => {
   it('treats an equal sequence as already current, not a rollback', () => {
     expect(refuseTarget(dev({ firmwareVersion: '1.1.0+gb222222' }), releases[1], reg))
       .toBe('already_current');
+  });
+
+  it('refuses a target release the board cannot verify (signature format 1)', () => {
+    const unverifiable = buildRegistry([{ ...rel('1.1.0+ga', 2, '1.1.0'), signatureFormat: 1 }]);
+    expect(refuseTarget(dev({ firmwareVersion: '1.0.0+gold' }), unverifiable.latest!, unverifiable))
+      .toBe('unverifiable_release');
   });
 });

@@ -12,8 +12,14 @@
  * route would grant -- so routing through HTTP would add a hop and an auth
  * problem without adding a control.
  *
+ * The artifact is the raw `.bin`, not the `.uf2`: picotool reads it directly
+ * for the TBYB/hash/debug-command checks (spec D10), and the signature covers
+ * a manifest over the same bytes the board downloads and verifies (spec D4),
+ * so the published blob and the signed bytes must be identical.
+ *
  * Usage:  pnpm firmware:publish [--notes "..."] [--security] [--dry-run]
  */
+import { execFileSync } from 'node:child_process';
 import { createHash, createPrivateKey, createPublicKey, sign as edSign } from 'node:crypto';
 import { readFileSync, existsSync, statSync } from 'node:fs';
 import { join } from 'node:path';
@@ -24,13 +30,14 @@ import { getDb } from '@/db';
 import { user } from '@/db/schema/auth';
 import { publishRelease, readExistingReleases } from '@/lib/firmware-releases';
 import { decidePublish, PublishRefused } from '@/lib/firmware-publish-rules';
+import { firmwareManifest, refuseReleaseImage } from '@/lib/firmware-manifest';
 import { isAllowed, parseAllowlist } from '@/lib/superadmin-allowlist';
 import { semverOf } from '@/lib/firmware-version';
 import { signingKeyId, PRIVATE_KEY_PATH } from './firmware-signing-key';
 
 const repoRoot = process.cwd();
 const headerPath = join(repoRoot, 'wifi-floppy/firmware/build/generated/wifi_floppy_version.h');
-const uf2Path = join(repoRoot, 'wifi-floppy/firmware/build/wifi_floppy.uf2');
+const binPath = join(repoRoot, 'wifi-floppy/firmware/build/wifi_floppy.bin');
 
 function die(msg: string): never {
   console.error(msg);
@@ -78,43 +85,52 @@ if (!semver) die(`Cannot read a semver out of ${version}.`);
 //
 // The version header is regenerated BEFORE compilation (it is an ALL target
 // the executable depends on), so a build that fails after that point leaves a
-// NEW header beside the PREVIOUS successful .uf2. Publishing then records the
+// NEW header beside the PREVIOUS successful .bin. Publishing then records the
 // new version against the old image's digest -- a version that does not match
 // its image, which is the whole class of lie this increment removes. The
 // version string is embedded in the image, so the check is exact rather than
 // a timestamp heuristic.
-if (!existsSync(uf2Path)) die(`No artifact at ${uf2Path}.\nRun pnpm firmware:build first.`);
-const bytes = readFileSync(uf2Path);
+if (!existsSync(binPath)) die(`No artifact at ${binPath}.\nRun pnpm firmware:build first.`);
+const bytes = readFileSync(binPath);
 if (!bytes.includes(Buffer.from(version, 'ascii'))) {
   die(
-    `${uf2Path} does not contain the version ${version} from the generated header.\n`
+    `${binPath} does not contain the version ${version} from the generated header.\n`
     + `The header is regenerated before compilation, so this usually means the last\n`
     + `build FAILED and left the previous image in place. Re-run pnpm firmware:build\n`
     + `and check it succeeds.`,
   );
 }
-if (statSync(uf2Path).mtimeMs < statSync(headerPath).mtimeMs) {
-  die(`${uf2Path} is older than the generated header. Re-run pnpm firmware:build.`);
+
+// picotool reads the image itself for the safety properties a build cannot
+// otherwise be trusted to have (spec D10): TBYB (so a bad update reverts
+// rather than bricking the board), a hash for the boot ROM to check, and no
+// debug-only firmware command compiled in.
+const info = execFileSync('picotool', ['info', '-a', binPath, '-t', 'bin'], { encoding: 'utf8' });
+const refusal = refuseReleaseImage(info, bytes.byteLength, bytes);
+if (refusal) die(`Publish refused: ${refusal}`);
+
+if (statSync(binPath).mtimeMs < statSync(headerPath).mtimeMs) {
+  die(`${binPath} is older than the generated header. Re-run pnpm firmware:build.`);
 }
 const sha256 = createHash('sha256').update(bytes).digest('hex');
 
-// 3. Sign the digest offline. An absent key stops the publish -- it never
-//    falls back to publishing unsigned, because a registry with a mix of
-//    signed and unsigned rows cannot be checked by increment 2 at all.
+// 3. Load the signing key. An absent key stops the publish here -- before
+//    anything else runs -- and it never falls back to publishing unsigned,
+//    because a registry with a mix of signed and unsigned rows cannot be
+//    checked by increment 2 at all. The manifest itself is signed later, once
+//    `sequence` is known (spec D4: the signature covers the sequence).
 if (!existsSync(PRIVATE_KEY_PATH)) {
   die(`No signing key at ${PRIVATE_KEY_PATH}.\nRun pnpm firmware:keygen first.`);
 }
 const key = createPrivateKey(readFileSync(PRIVATE_KEY_PATH));
-const signature = edSign(null, Buffer.from(sha256, 'hex'), key).toString('base64');
 const keyId = signingKeyId(createPublicKey(key));
 
-const blobPath = `firmware/${version}.uf2`;
+const blobPath = `firmware/${version}.bin`;
 
 console.log(`version   ${version}`);
 console.log(`semver    ${semver}`);
 console.log(`sha256    ${sha256}`);
 console.log(`size      ${bytes.byteLength} bytes`);
-console.log(`signature ${signature.slice(0, 16)}... (${keyId})`);
 console.log(`blob      ${blobPath}`);
 console.log(`notes     ${notes ?? '(none)'}`);
 if (security) console.log('security  YES');
@@ -136,6 +152,14 @@ try {
   throw e;
 }
 console.log(`sequence  ${sequence}`);
+
+// The manifest, not the bare digest, is what the board verifies (spec D4):
+// binding the sequence into the signed bytes is what makes the board's own
+// anti-rollback check (readFirmwareInstruction's `sequence`) trustworthy even
+// if the server were compromised.
+const manifest = firmwareManifest({ version, sequence, sha256, sizeBytes: bytes.byteLength });
+const signature = edSign(null, Buffer.from(manifest, 'ascii'), key).toString('base64');
+console.log(`signature ${signature.slice(0, 16)}... (${keyId})`);
 
 if (dryRun) {
   console.log('\n--dry-run: nothing uploaded, nothing recorded.');
@@ -181,8 +205,12 @@ if (!already) {
 
 try {
   const published = await publishRelease(
-    { version, semver, sha256, sizeBytes: bytes.byteLength, blobPath, signature, signingKeyId: keyId, notes, security },
+    {
+      version, semver, sha256, sizeBytes: bytes.byteLength, blobPath, signature, signingKeyId: keyId, notes,
+      security, signatureFormat: 2,
+    },
     userId,
+    sequence,
   );
   console.log(`\nPublished ${version} as sequence ${published.sequence}.`);
 } catch (e) {

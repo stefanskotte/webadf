@@ -384,6 +384,7 @@ export async function publishTestRelease(
     blobPath: `firmware/${version}.uf2`,
     signature: 'ZTJlLXRlc3Q=',
     signingKeyId: 'e2e',
+    signatureFormat: 2,
     notes: opts.notes ?? null,
     security: opts.security ?? false,
     publishedByUserId: 'e2e',
@@ -427,7 +428,7 @@ export async function publishTestReleaseWithBlob(version: string): Promise<strin
     id: randomUUID(), version, semver: '0.0.0', sequence,
     sha256: createHash('sha256').update(bytes).digest('hex'),
     sizeBytes: bytes.byteLength, blobPath,
-    signature: 'ZTJlLXRlc3Q=', signingKeyId: 'e2e', notes: null,
+    signature: 'ZTJlLXRlc3Q=', signingKeyId: 'e2e', signatureFormat: 2, notes: null,
     security: false, publishedByUserId: 'e2e',
   }).onConflictDoNothing();
   return version;
