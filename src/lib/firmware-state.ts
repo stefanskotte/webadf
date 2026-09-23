@@ -116,7 +116,8 @@ export function firmwareLabel(state: FirmwareState): string {
 
 /**
  * How an update IN FLIGHT is worded. Null when none is wanted, in which case
- * the card shows the plain firmware line instead.
+ * the card shows the plain firmware line instead -- except a failure, which is
+ * worded whether or not a target remains.
  *
  * Here rather than in the component, for the same reason firmwareLabel is:
  * the wording is then covered by vitest rather than only by a full Playwright
@@ -133,6 +134,10 @@ export function updateLabel(u: {
   target: string | null;
   error?: string | null;
 }): string | null {
+  // A failure is shown even with no target (final review I2): the target is
+  // cleared by completion or a cancel, but a revert's reason still has to
+  // reach whoever looks at the card. Every other state needs a target.
+  if (u.state === 'failed') return `update failed — ${u.error ?? 'reason not reported'}`;
   if (!u.target) return null;
   switch (u.state) {
     // Reporting what the BOARD decided, not what the server hopes: the device
@@ -140,7 +145,16 @@ export function updateLabel(u: {
     case 'queued': return u.mounted ? 'update queued — waiting for eject' : 'update queued';
     case 'downloading': return `downloading ${u.target}`;
     case 'applying': return `applying ${u.target} — do not power off`;
-    case 'failed': return `update failed — ${u.error ?? 'reason not reported'}`;
     default: return 'update requested';
   }
+}
+
+/**
+ * How /admin/firmware words a release's signature. Format 2 is verified by
+ * the board before it flashes anything (increment 2b); format 1 was recorded
+ * but never checked by anything, and still says so rather than implying a
+ * check that does not run (final review m3).
+ */
+export function signatureLabel(keyId: string, signatureFormat: number): string {
+  return signatureFormat >= 2 ? `signed ${keyId}` : `signed ${keyId} (unverified)`;
 }

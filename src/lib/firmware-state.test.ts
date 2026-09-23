@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {
-  firmwareState, countBehind, buildRegistry, firmwareLabel, updateLabel, type ReleaseRef,
+  firmwareState, countBehind, buildRegistry, firmwareLabel, updateLabel, signatureLabel,
+  type ReleaseRef,
 } from './firmware-state';
 
 const rel = (version: string, sequence: number, semver: string, security = false): ReleaseRef =>
@@ -168,5 +169,31 @@ describe('updateLabel', () => {
 
   it('is null when nothing is wanted, so the card falls back to the plain line', () => {
     expect(updateLabel({ state: null, mounted: false, target: null })).toBeNull();
+  });
+
+  // Final review I2: a failure outlives its target. A trial that reverted
+  // (or a cancelled update's last failure) still has something to say, and
+  // hiding it behind "no target" is how a revert used to read as up to date.
+  it('shows a failure even when no update is wanted any more', () => {
+    expect(updateLabel({ state: 'failed', mounted: false, target: null,
+                         error: 'reverted: no heartbeat within 5 minutes' }))
+      .toBe('update failed — reverted: no heartbeat within 5 minutes');
+    expect(updateLabel({ state: 'failed', mounted: false, target: null }))
+      .toBe('update failed — reason not reported');
+  });
+
+  it('stays null without a target for every state but failed', () => {
+    for (const state of ['queued', 'downloading', 'applying', 'weird']) {
+      expect(updateLabel({ state, mounted: false, target: null })).toBeNull();
+    }
+  });
+});
+
+describe('signatureLabel', () => {
+  it('calls a format-1 signature unverified: nothing checks it', () => {
+    expect(signatureLabel('wf-2026a', 1)).toBe('signed wf-2026a (unverified)');
+  });
+  it('drops "unverified" for format 2: the board verifies it before flashing', () => {
+    expect(signatureLabel('wf-2026a', 2)).toBe('signed wf-2026a');
   });
 });

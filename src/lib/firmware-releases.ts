@@ -93,6 +93,7 @@ export interface FirmwareReleaseListItem {
   security: boolean;
   publishedAt: Date;
   publishedByEmail: string | null;
+  signatureFormat: number;
 }
 
 /**
@@ -116,6 +117,7 @@ export async function listReleasesFull(limit = 100): Promise<FirmwareReleaseList
       // Resolved to an address: the column holds an id, and "who shipped
       // this" is unanswerable from one without a join.
       publishedByEmail: user.email,
+      signatureFormat: firmwareReleases.signatureFormat,
     })
     .from(firmwareReleases)
     .leftJoin(user, eq(user.id, firmwareReleases.publishedByUserId))

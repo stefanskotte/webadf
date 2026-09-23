@@ -1,6 +1,7 @@
 import { listReleasesFull } from '@/lib/firmware-releases';
 import { PageHeader } from '@/components/shell/page-header';
 import { fmtSize, fmtTimeUtc } from '@/lib/format';
+import { signatureLabel } from '@/lib/firmware-state';
 
 export const dynamic = 'force-dynamic';
 
@@ -64,10 +65,11 @@ export default async function AdminFirmwarePage() {
                   // Who shipped it. The column was written on every row and
                   // read by nothing, so a wrong attribution was undetectable.
                   r.publishedByEmail ?? 'unknown publisher',
-                  // Recorded but not verified by anything yet (spec §4). Said
-                  // out loud here rather than implied by a padlock, so this
-                  // page never suggests a check that does not run.
-                  `signed ${r.signingKeyId} (unverified)`,
+                  // Format 1 was recorded but never verified by anything
+                  // (spec §4) and still says so; format 2 is checked by the
+                  // board before it flashes (2b). Said out loud rather than
+                  // implied by a padlock.
+                  signatureLabel(r.signingKeyId, r.signatureFormat),
                 ].join(' · ')}
               </span>
               {r.notes && (

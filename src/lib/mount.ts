@@ -274,7 +274,16 @@ export async function recordStatus(
   // pending, nothing logged. Each CASE below evaluates against the same
   // pre-image under one row lock, so a concurrent request either wins or is
   // left entirely alone.
-  if (s.firmwareVersion) {
+  //
+  // Final review I2: running the version is not yet KEEPING it. A board in
+  // its TBYB trial already runs (and reports) the new version, but the boot
+  // ROM will revert it unless the trial confirms -- so the trial says
+  // firmwareUpdateState "applying", and completion waits for the confirmed
+  // boot, which reports null. Taking the trial's heartbeat as completion
+  // cleared the target and error, and a later revert then showed "up to
+  // date" with the failure nowhere. An absent state (a board that predates
+  // the field) is not "applying" and still completes.
+  if (s.firmwareVersion && s.firmwareUpdateState !== 'applying') {
     const done = sql`${devices.desiredFirmwareVersion} = ${s.firmwareVersion}`;
     patch.desiredFirmwareVersion =
       sql`case when ${done} then null else ${devices.desiredFirmwareVersion} end`;
