@@ -4410,8 +4410,9 @@ and `psram_reinitialize` are gone — not needed once the buy never sees PSRAM a
    `1.1.0+ga2dd854` (seq 3). Update pressed with disk mounted → held in `queued`; operator
    ejected → applying → flashed slot A → reboot → trial partition 0 → proven reboot → early
    buy → "update to 1.1.0+ga2dd854 confirmed (sequence 3)" → cursor sync. **Measured
-   deviation**: the server derived completion at 13:14:54 from the TRIAL heartbeat, ~5 s
-   *before* the image was actually confirmed (bought) — see deviations below.
+   deviation, since fixed**: the server derived completion at 13:14:54 from the TRIAL
+   heartbeat, ~5 s *before* the image was actually confirmed (bought) — fixed in the final
+   fix wave (I2), see below; not re-run on the bench.
 3. **N+1 → N+2, the B → A direction** — PASS (13:16): `1.1.0` in slot A → `1.1.1+g9323c86`
    (seq 4) into slot B: offered → downloading → queued(staged) → applying 13:16:35 → trial
    partition 1 → proven reboot → confirmed (sequence 4) → cursor sync.
@@ -4440,19 +4441,36 @@ and `psram_reinitialize` are gone — not needed once the buy never sees PSRAM a
 
 **Accepted deviations and known gaps:**
 
-- **The server derives completion from the trial heartbeat, ~5 s before the image is actually
-  confirmed** (observed in item 2 above; was a Task 4 deferred-minor, now measured on the
-  bench). The trial reports its new version before the buy; if the buy then failed, the
-  server could already have derived success before the old firmware's "reverted" report
-  landed. Not fixed this increment — flagged for whoever revisits completion derivation.
+- **Completion from the trial heartbeat — FIXED (final review I2), host-tested, not yet
+  re-run on the bench.** Measured in item 2: the trial reported its new version before the
+  buy, and the server cleared the target on it; a trial that then reverted left the card
+  reading "up to date" with the failure nowhere. Now the trial's heartbeats carry
+  `firmwareUpdateState: "applying"`, and `recordStatus` completes (clears desired/state/error)
+  only when the reported version matches AND the state is not `applying` — still the single
+  compare-and-clear UPDATE. The confirmed (bought) boot reports `null` and completes; a board
+  that omits the field entirely still completes. `updateLabel` now shows `update failed —
+  <reason>` even with no target left, and a trial whose heartbeat landed only past the buy
+  cutoff gives up with "heartbeat came too late to confirm", not "no heartbeat".
 - **`updateProtocol` reaches the server with the first status report, not at registration**
   (`dc_set_fw_report` is attached after `dc_register`) — matches the same accepted deviation
   §3aj already notes on the server side; the server accepts it on status.
-- **A failed first USB install ends in BOOTSEL** (A unbought, B empty, old IMAGE_DEF
-  overwritten). Recovery is the flash backup the install script takes — there is no other
-  recovery path.
-- **Builds are TBYB-only now.** Any load path except a flash-update boot (`picotool load
-  ... -x`) lands an unpartitioned board in BOOTSEL — there is no longer a "just runs" load.
+- **A USB-install trial has no deadline (final review I3).** A trial with no pending update
+  record (a USB install — on a new board the other slot is empty, nothing to revert to) no
+  longer reboots at 5 minutes: it waits through the portal and pairing as long as they take
+  and confirms on its first heartbeat. `main()` loads the update record before core1 starts
+  and tells `fw_rom` (`fw_rom_set_trial_revertible`); only an OTA trial (pending record) arms
+  the core0 deadline and `fw_trial_decide`'s deadline give-up. Before this, a new board's
+  first install hit the deadline in the portal and landed in BOOTSEL. Host-tested; not yet
+  re-run on the bench.
+- **A first USB install that HANGS still ends in BOOTSEL** (the watchdog resets the unbought
+  trial; A unbought, B empty, old IMAGE_DEF overwritten). Recovery is the flash backup the
+  install script takes — there is no other recovery path.
+- **Builds are TBYB-only now, and refuse an unpartitioned board.** On an UNPARTITIONED board
+  even `picotool load -x` ends in BOOTSEL: the image starts as a trial, finds no partition to
+  reboot into to confirm itself, and is never bought. The firmware does not stay on an
+  unpartitioned board by design. **`pnpm firmware:install-partitioned` (partition table +
+  image) is the only way on**; `load -p 0 -x` is how that script, and a bench reload of an
+  already-partitioned board, start the image.
 - **The ROM's own buy (flag-sector erase, then rewrite) is still a reset-sensitive window** —
   inherent to the boot ROM, not something this design can close further; covered in spirit by
   the power-cut acceptance item (8), which tests the slot write, not the buy itself.

@@ -133,7 +133,8 @@ liked.
 **D5. Anti-rollback is the board's own rule, and it rests on signed data.**
 - **Where it lives:** a new 4 KB **firmware-state sector** at 16 MB − 12 KB, unpartitioned,
   next to config and token. It holds `installed_sequence`, the `pending` release (version,
-  sequence), and an attempt counter, in a magic-tagged record like the other two sectors.
+  sequence), and the trial's give-up reason, in a magic-tagged record like the other two
+  sectors. (No attempt counter — see §9's note on D5.)
 - **The rule:** refuse any update whose signed `sequence` ≤ `installed_sequence`. A board
   with no record (hand-flashed, or the first USB install) has `installed_sequence = 0` and
   accepts any signed release. That matches 2a's server rule 6, "unrecognised build is the
@@ -180,7 +181,7 @@ says a buy is pending:
   connectivity proof, skips the version check because there is nothing to compare against,
   and leaves `installed_sequence` as it is (0 on a first install).
 - **On a boot that is NOT a trial but finds `pending` set:** that is a revert. Report
-  `failed: reverted (<reason>)`, where the reason is taken from the attempt record, then
+  `failed: reverted (<reason>)`, where the reason is taken from the record's give-up reason, then
   clear `pending`. A human decides whether to try again (2a §8: no automatic retry).
 
 **D9. The protocol is 2a's, with nothing new invented on the board.**
@@ -225,7 +226,7 @@ the same path.
 |---|---|---|
 | `fw_manifest` | builds the canonical manifest text; parses the poll body's `update` object | host tests |
 | `fw_verify` | ed25519 over the manifest (Monocypher), keyId match | RFC 8032 vectors + a real publish-script signature |
-| `fw_state` | the firmware-state sector record: read, write, magic, attempt counter | host tests, as `config_store` already is |
+| `fw_state` | the firmware-state sector record: read, write, magic, give-up reason | host tests, as `config_store` already is |
 | `fw_stage` | streams the download into PSRAM with a running SHA-256 and a size cap | host tests with truncated and oversized streams |
 | `fw_apply` | slot choice, first-sector-last write, readback hash, pending, reboot | host tests against a fake flash; bench |
 | `fw_trial` | boot-time trial logic: buy conditions, deadline, revert detection and the failure report | host tests of the decision table; bench |
@@ -356,3 +357,17 @@ boot-time REVERTED failure (D8/M11's revert path) still reach the server: the bo
 poll after a revert carries no `update`, and treating that as a cancel would silently wipe the
 failure report before it was ever sent. Verified on the bench in acceptance item 4 (§8): the
 "reverted: no heartbeat within 5 minutes" state survived the next cursor sync.
+
+**D5, corrected after the final review: there is no attempt counter.** D5 as first written
+listed one in the firmware-state record; it was never implemented and never needed — there
+is no automatic retry (2a §8), so a trial is attempted exactly once, and the record carries
+the trial's give-up reason instead. D5's text above was edited to match (an exception to
+"nothing above this line is rewritten", made so the design does not describe a field no
+code has).
+
+**I2/I3, from the final review (host-tested, not yet bench-run).** A trial's heartbeats report
+`firmwareUpdateState: "applying"`, and the server completes an update only on a report whose
+version matches AND whose state is not `applying` — the confirmed boot reports `null`. And
+only an OTA trial (a pending record) has the 5-minute deadline; a USB-install trial has
+nothing to revert to and waits for connectivity (portal, pairing) for as long as it takes,
+the watchdog still covering hangs.
