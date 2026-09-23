@@ -66,9 +66,18 @@ add_executable(wifi_floppy
   src/bus_gate.c src/bus_out.c
   src/sha256.c
   src/uploader.c
+  src/fw_offer.c src/fw_verify.c
+  src/vendor/monocypher/monocypher.c src/vendor/monocypher/monocypher-ed25519.c
 )
 pico_generate_pio_header(wifi_floppy ${CMAKE_CURRENT_LIST_DIR}/src/floppy.pio)
 target_include_directories(wifi_floppy PRIVATE src ${CMAKE_CURRENT_LIST_DIR})
+# Task 6 (spec D4/D5): Monocypher 4.0.2, vendored unmodified under
+# src/vendor/monocypher (see VENDORED.md). It is not our code and is not
+# held to this project's -Wall -Wextra -Werror.
+target_include_directories(wifi_floppy PRIVATE src/vendor/monocypher)
+set_source_files_properties(
+  src/vendor/monocypher/monocypher.c src/vendor/monocypher/monocypher-ed25519.c
+  PROPERTIES COMPILE_OPTIONS "-w")
 # Task 6: the provisioning AP's own address. cyw43_arch_enable_ap_mode()
 # (portal_net.c) brings the interface up; this is what makes it come up as
 # 192.168.4.1 specifically, matching dns_server.h/dhcp_server.c's PORTAL_IP_*
