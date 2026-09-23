@@ -129,6 +129,26 @@ static void test_malformed_offers_do_not_parse(void) {
           "a non-integer sequence (7.9) is refused, not read as 7");
 }
 
+// Defense in depth (Task 11, ruled in from Task 8's review): the version is
+// interpolated into the firmware GET's request path (dc_fetch_firmware), so a
+// character outside [A-Za-z0-9.+-] -- a space, a slash, a CR/LF, a '?' -- is
+// refused at parse time, before any signature check or request is built.
+#define OFFER_WITH_VERSION(v) \
+    "{\"version\":\"" v "\",\"sequence\":" WF_STR(FIX_SEQUENCE) ",\"sha256\":\"" FIX_SHA256 "\"," \
+    "\"sizeBytes\":" WF_STR(FIX_SIZE) ",\"signature\":\"" FIX_SIGNATURE_B64 "\",\"keyId\":\"" FIX_KEY_ID "\"}"
+static void test_version_outside_the_path_safe_set_is_refused(void) {
+    fw_offer_t o;
+    CHECK(fw_offer_parse(OFFER_WITH_VERSION("1.2.0+gABCdef-dirty.9"), &o),
+          "a version of only [A-Za-z0-9.+-] parses");
+    CHECK(!fw_offer_parse(OFFER_WITH_VERSION("1.2.0 HTTP/1.1"), &o), "a space is refused");
+    CHECK(!fw_offer_parse(OFFER_WITH_VERSION("../../api/x"), &o), "a slash is refused");
+    CHECK(!fw_offer_parse(OFFER_WITH_VERSION("1.2.0?a=b"), &o), "a '?' is refused");
+    CHECK(!fw_offer_parse(OFFER_WITH_VERSION("1.2.0#x"), &o), "a '#' is refused");
+    CHECK(!fw_offer_parse(OFFER_WITH_VERSION("1.2.0%2F"), &o), "a '%' is refused");
+    CHECK(!fw_offer_parse(OFFER_WITH_VERSION("1.2.0\\r\\nX: y"), &o), "an escaped CR/LF is refused");
+    CHECK(!fw_offer_parse(OFFER_WITH_VERSION("1.2.0_x"), &o), "an underscore is refused");
+}
+
 int main(void) {
     RUN(test_cross_implementation_signature_verifies);
     RUN(test_rfc8032_test2);
@@ -140,5 +160,6 @@ int main(void) {
     RUN(test_the_release_key_is_compiled_in);
     RUN(test_relabeling_the_key_id_does_not_forge_the_release_signature);
     RUN(test_malformed_offers_do_not_parse);
+    RUN(test_version_outside_the_path_safe_set_is_refused);
     return REPORT();
 }

@@ -1,8 +1,8 @@
 #ifndef FW_OFFER_H
 #define FW_OFFER_H
 // A parsed, not-yet-verified firmware update offer (spec D4/D5). Parsing here
-// only checks shape (fields present, right lengths); fw_verify.h checks
-// whether it should be trusted.
+// only checks shape (fields present, right lengths, a path-safe version);
+// fw_verify.h checks whether it should be trusted.
 #include <stdint.h>
 #include <stdbool.h>
 
@@ -21,7 +21,8 @@ typedef struct {
 // Parses `update_json` (the poll response's "update" object) into `out`.
 // Returns false if any field is missing or malformed: a wrong-length hex
 // sha256, a signature that does not decode to exactly 64 bytes, an empty
-// version or key id.
+// version or key id, or a version with any character outside [A-Za-z0-9.+-]
+// (it becomes part of the firmware GET's request path).
 bool fw_offer_parse(const char *update_json, fw_offer_t *out);
 
 #endif

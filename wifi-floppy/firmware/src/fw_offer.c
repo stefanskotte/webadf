@@ -49,6 +49,20 @@ static bool is_hex64(const char *s) {
     return true;
 }
 
+// The version is interpolated into the firmware GET's request path
+// (dc_fetch_firmware). The signature does cover it, but a malformed version
+// should never reach a request line at all: only the characters a release
+// version is actually made of (semver + build metadata, "-dirty") pass.
+static bool is_path_safe_version(const char *s) {
+    for (; *s; s++) {
+        char c = *s;
+        if (!((c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') ||
+              c == '.' || c == '+' || c == '-'))
+            return false;
+    }
+    return true;
+}
+
 // json_str truncates silently past out_len -- fine for its other callers,
 // wrong here: a 66-char sha256 truncates to exactly 64 hex characters and
 // sails through is_hex64() below; a too-long version or keyId truncates
@@ -71,7 +85,8 @@ static bool json_str_strict(const char *json, const char *key, char *out, int ca
 bool fw_offer_parse(const char *j, fw_offer_t *o) {
     memset(o, 0, sizeof *o);
     char sig_b64[96];
-    if (!json_str_strict(j, "version", o->version, sizeof o->version) || o->version[0] == '\0') return false;
+    if (!json_str_strict(j, "version", o->version, sizeof o->version) || o->version[0] == '\0' ||
+        !is_path_safe_version(o->version)) return false;
     if (!json_u32_strict(j, "sequence", &o->sequence) || o->sequence == 0) return false;
     if (!json_str_strict(j, "sha256", o->sha256, sizeof o->sha256) || !is_hex64(o->sha256)) return false;
     if (!json_u32_strict(j, "sizeBytes", &o->size_bytes) || o->size_bytes == 0) return false;

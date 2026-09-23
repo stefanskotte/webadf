@@ -45,6 +45,8 @@
 #include "fw_rom.h"
 #include "fw_state.h"
 #include "fw_trial.h"
+#include "fw_update.h"       // fwu_*, and through it fw_offer/fw_verify/fw_stage/fw_apply
+#include "hardware/psram.h"  // psram_check_address, for g_fw_stage below
 #include "pico/rand.h"
 #include "hardware/sync.h"   // __dmb(), for the display seqlock below
 #include <string.h>
@@ -776,6 +778,44 @@ static void release_kept_connection(void) {
     if (t && t->abandon) t->abandon(t);
 }
 
+// ---------------------------------------------------------------- firmware update (2b)
+//
+// 2b staging (spec D3): a verified download lives here until it is flashed.
+// Separate from the disk image's two slots (psram_image.c), which take ~4.26 MB
+// of the 8 MB; 2 MB here is the release cap (FW_MAX_IMAGE_BYTES).
+// __uninitialized_psram ONLY: PSRAM is brought up by main() itself
+// (PICO_RUNTIME_SKIP_INIT_PSRAM=1), after crt0 has run, so nothing initialised
+// may live there -- crt0 would copy into it before it exists.
+static __uninitialized_psram("fwstage") uint8_t g_fw_stage[FW_MAX_IMAGE_BYTES];
+// Set by main() after PSRAM is up (runtime_init_setup_psram) and
+// psram_image_init has run: true only if the stage's last byte really is
+// backed by PSRAM. updateProtocol is declared only when it is.
+static volatile bool g_fw_stage_ok;
+
+// fwu_ops_t (fw_update.h). All of these run on core1, from fwu_step in
+// core1_main's poll loop -- fw_apply_image in particular takes seconds and
+// may never run on core0, which feeds the 8 s watchdog (fw_apply.h).
+static int fwu_fetch(void *ctx, const char *version, fw_stage_t *stage) {
+    return dc_fetch_firmware((device_client_t *)ctx, version, fw_stage_sink, stage);
+}
+static fw_apply_result_t fwu_apply(void *ctx, const uint8_t *img, uint32_t len,
+                                   const char *sha, uint32_t *slot_off) {
+    (void)ctx;
+    uint32_t off, slot_len;
+    if (!fw_rom_other_slot(&off, &slot_len)) return FWA_TOO_BIG;   // unpartitioned: no OTA
+    *slot_off = off;
+    return fw_apply_image(&fw_rom_flash, off, slot_len, img, len, sha);
+}
+static bool fwu_save(void *ctx, const fw_state_t *st) { (void)ctx; return fw_state_save(st); }
+// FLASH_UPDATE into the OTHER slot (the one just written): the new image then
+// trial-boots. fw_rom_request_reboot never overwrites an already-pending
+// request (g_boot_cs, fw_rom.c); core0's fw_rom_service performs it (M9).
+static void fwu_reboot(void *ctx, uint32_t off) { (void)ctx; fw_rom_request_reboot(off); }
+
+// Published by core0 every loop turn. core1 reads it for the update's idle
+// gate only (D6); dskchg.c's own state stays core0's.
+static volatile bool g_motor_on;
+
 static void core1_main(void) {
     if (cyw43_arch_init()) {
         // This loop never exits, but core0 is what drains the log, so this
@@ -1095,10 +1135,55 @@ static void core1_main(void) {
         wf_logf(WF_INFO, "write-back: session %s", session);
         wf_logf(WF_INFO, "entering poll loop against %s", WEBADF_HOST);
 
+        // 2b: the update state, shared by the trial below and the updater in
+        // the poll loop. Loaded, and on a non-trial boot reconciled, ONCE per
+        // boot -- this branch is re-entered after a DC_HALTED re-pair, and the
+        // updater's state must survive that. dc_set_fw_report, though, runs
+        // on every entry: dc_init above zeroes `c`, pointer included.
+        static fw_state_t fst;
+        static fwu_t fwu;
+        static fwu_ops_t fwu_ops;
+        static dc_fw_report_t fw_report;          // static: dc_set_fw_report keeps the pointer
+        static bool fw_booted = false;
+        if (!fw_booted) {
+            fw_booted = true;
+            fw_state_load(&fst);                      // zeroed if no record
+            fwu_init(&fwu, g_fw_stage, sizeof g_fw_stage);
+            if (!fw_rom_trial_boot()) {
+                // The ONLY place an OTA's pending record is cleared and
+                // installed_sequence advanced (CONFIRMED_LATE): the buy itself
+                // happened in fw_rom_boot_early, before PSRAM, and a bought
+                // image comes back here as a non-trial boot. REVERTED: the
+                // boot ROM ran the old image again -- the new one never proved
+                // itself -- and the server hears why as a failed update.
+                static char why[FWU_ERROR_MAX + 1];   // static: core1's stack is measured tight
+                why[0] = '\0';
+                fw_boot_t b = fw_boot_reconcile(&fst, WF_FIRMWARE_VERSION, why, (int)sizeof why);
+                if (b != FW_BOOT_CLEAN && !fw_state_save(&fst))
+                    wf_logf(WF_ERR, "fw: could not save the reconciled update state");
+                if (b == FW_BOOT_CONFIRMED_LATE)
+                    wf_logf(WF_INFO, "fw: update to %s confirmed (sequence %lu)",
+                            WF_FIRMWARE_VERSION, (unsigned long)fst.installed_sequence);
+                if (b == FW_BOOT_REVERTED) { fwu_fail(&fwu, why); wf_logf(WF_WARN, "fw: %s", why); }
+            }
+            // The capability is declared ONLY by a build that can update
+            // itself, on a partitioned board with a working PSRAM stage. An
+            // unpartitioned board says nothing (0 = omit), and the server
+            // never targets it (2a D1).
+            fw_report.update_protocol =
+                (g_fw_stage_ok && fw_rom_booted_partition() >= 0) ? DC_UPDATE_PROTOCOL : 0;
+            fw_report.state = fwu_state_text(&fwu);
+            fw_report.error = fwu_error_text(&fwu);
+            wf_logf(WF_INFO, "fw: updateProtocol %d (stage %s, partition %d)",
+                    fw_report.update_protocol, g_fw_stage_ok ? "ok" : "MISSING",
+                    fw_rom_booted_partition());
+        }
+        fwu_ops = (fwu_ops_t){ fwu_fetch, fwu_apply, fwu_save, fwu_reboot, &c };
+        dc_set_fw_report(&c, &fw_report);
+        bool fw_report_owed = true;
+
         // 2b trial (spec D8): prove the network works, THEN confirm, THEN poll.
         {
-            static fw_state_t fst;
-            fw_state_load(&fst);                        // zeroed if no record
             if (fw_rom_trial_boot()) {
                 for (;;) {
                     bool hb = dc_report_status(&c, psram_free_estimate(), wifi_rssi(), NULL,
@@ -1178,6 +1263,7 @@ static void core1_main(void) {
             if (report_owed && c.state != DC_HALTED) {
                 if (dc_report_status(&c, psram_free_estimate(), wifi_rssi(), NULL, WF_FIRMWARE_VERSION)) {
                     last_status_ms = clock_ms();
+                    fw_report_owed = false;   // the same report carries the fw fields
                     strncpy(last_reported_sha, c.mounted_sha256, sizeof(last_reported_sha) - 1);
                     last_reported_sha[sizeof(last_reported_sha) - 1] = '\0';
                     last_reported_version = c.mounted_version;
@@ -1186,37 +1272,6 @@ static void core1_main(void) {
                 }
             }
 
-#if WF_FW_DEBUG
-            // Fix round 3, bench-only: a minimal USB-serial command that
-            // deliberately reproduces the nested-flash_safe_execute wedge the
-            // bench hit, to prove the watchdog now resets the board instead
-            // of hanging forever (see fw_rom_watchdog_start's
-            // pause_on_debug=false, and fw_rom_debug_wedge's own comment).
-            // Never built into a release -- WF_FW_DEBUG defaults OFF, and
-            // the publish script refuses an image built with it on. Polled
-            // non-blockingly so it costs nothing when nothing is typed.
-            // Task 11 will add the real fwdbg offer command next to this.
-            {
-                static char dbg_buf[16];
-                static int  dbg_len = 0;
-                int ch;
-                while ((ch = getchar_timeout_us(0)) != PICO_ERROR_TIMEOUT) {
-                    if (ch == '\n' || ch == '\r') {
-                        dbg_buf[dbg_len] = '\0';
-                        if (strcmp(dbg_buf, "fwdbg-wdtest") == 0) {
-                            wf_logf(WF_WARN, "fwdbg: wedging core1 inside flash_safe_execute -- "
-                                              "the watchdog must reset within 8 s");
-                            fw_rom_debug_wedge();
-                        }
-                        dbg_len = 0;
-                    } else if (dbg_len + 1 < (int)sizeof dbg_buf) {
-                        dbg_buf[dbg_len++] = (char)ch;
-                    } else {
-                        dbg_len = 0;   // overflow: drop the partial line and resync
-                    }
-                }
-            }
-#endif
             dc_state_t s;
             bool polled = false;
             if (report_retry) {
@@ -1228,9 +1283,112 @@ static void core1_main(void) {
                 // round the loop so WPROT, status and the panel stay current.
                 if (up_step(&up) == UP_WAITING) sleep_ms(50);
                 s = c.state;
+            } else if (fwu.phase == FWU_DOWNLOADING || fwu.phase == FWU_APPLYING) {
+                // The updater has announced a step ("downloading"/"applying",
+                // already reported below) and runs it THIS pass. No poll first:
+                // a 25 s long poll would delay it, and before APPLYING it could
+                // mount a disk after the idle gate (D6) already passed --
+                // fwu_step's APPLYING does not look at `idle` again.
+                s = c.state;
             } else {
                 s = dc_step(&c);
                 polled = true;
+            }
+
+#if WF_FW_DEBUG
+            // Fix round 3, bench-only: a minimal USB-serial command that
+            // deliberately reproduces the nested-flash_safe_execute wedge the
+            // bench hit, to prove the watchdog now resets the board instead
+            // of hanging forever (see fw_rom_watchdog_start's
+            // pause_on_debug=false, and fw_rom_debug_wedge's own comment).
+            // Never built into a release -- WF_FW_DEBUG defaults OFF, and
+            // the publish script refuses an image built with it on. Polled
+            // non-blockingly so it costs nothing when nothing is typed.
+            //
+            // Task 11 (spec 8.5/8.6), the same single reader: "fwdbg {json}"
+            // hands a crafted update object to the SAME parse -> check -> fwu
+            // path a real poll's instruction takes (the block after the poll
+            // below). c.fw_instruction_version is left alone, so the ack
+            // reported is still the real server's. The string "fwdbg" is what
+            // the publish script refuses to ship.
+            // Read AFTER the poll: a 200 poll body rewrites c.fw_offer_present
+            // (dc_take_fw_fields), which would turn an offer injected before
+            // it into a "cancel" in the block below.
+            {
+                static char dbg_buf[DC_FW_UPDATE_JSON_BYTES + 8];
+                static int  dbg_len = 0;
+                int ch;
+                while ((ch = getchar_timeout_us(0)) != PICO_ERROR_TIMEOUT) {
+                    if (ch == '\n' || ch == '\r') {
+                        dbg_buf[dbg_len] = '\0';
+                        if (strcmp(dbg_buf, "fwdbg-wdtest") == 0) {
+                            wf_logf(WF_WARN, "fwdbg: wedging core1 inside flash_safe_execute -- "
+                                              "the watchdog must reset within 8 s");
+                            fw_rom_debug_wedge();
+                        } else if (strncmp(dbg_buf, "fwdbg ", 6) == 0) {
+                            if (strlen(dbg_buf + 6) >= sizeof c.fw_update_json) {
+                                wf_logf(WF_WARN, "fwdbg: offer too long -- ignored");
+                            } else {
+                                snprintf(c.fw_update_json, sizeof c.fw_update_json, "%s", dbg_buf + 6);
+                                c.fw_offer_present = true;
+                                c.fw_instruction_new = true;
+                                wf_logf(WF_WARN, "fwdbg: injected an offer");
+                            }
+                        }
+                        dbg_len = 0;
+                    } else if (dbg_len + 1 < (int)sizeof dbg_buf) {
+                        dbg_buf[dbg_len++] = (char)ch;
+                    } else {
+                        dbg_len = 0;   // overflow: drop the partial line and resync
+                    }
+                }
+            }
+#endif
+            // 2b: a new update instruction (a real poll's, or -- bench only --
+            // fwdbg's), then one step of the updater. Its ack must reach the
+            // server, or the server's poll keeps answering with it.
+            if (c.fw_instruction_new) {
+                c.fw_instruction_new = false;
+                fw_report.instruction_ack = c.fw_instruction_version;
+                if (c.fw_offer_present) {
+                    static fw_offer_t o;   // static: ~300 bytes, off core1's measured stack
+                    if (fw_offer_parse(c.fw_update_json, &o)) {
+                        fw_verdict_t v = fw_check_offer(&o, fst.installed_sequence);
+                        wf_logf(v == FW_OK ? WF_INFO : WF_WARN, "fw: offered %s (seq %lu): %s",
+                                o.version, (unsigned long)o.sequence, fw_verdict_text(v));
+                        fwu_on_instruction(&fwu, &o, v);
+                    } else {
+                        wf_logf(WF_WARN, "fw: malformed update instruction %lu",
+                                (unsigned long)c.fw_instruction_version);
+                        fwu_fail(&fwu, "refused: malformed update instruction");
+                    }
+                } else {
+                    wf_logf(WF_INFO, "fw: instruction %lu carries no update (cancelled)",
+                            (unsigned long)c.fw_instruction_version);
+                    fwu_on_instruction(&fwu, NULL, FW_OK);
+                }
+                fw_report_owed = true;
+            }
+            {
+                // D6: nothing mounted, no unsent writes, motor off.
+                bool idle = c.mounted_sha256[0] == '\0' && !up_has_work(&up) && !g_motor_on;
+                if (fwu_step(&fwu, &fwu_ops, &fst, idle, clock_ms())) {
+                    const char *st = fwu_state_text(&fwu);
+                    const char *er = fwu_error_text(&fwu);
+                    wf_logf(er ? WF_WARN : WF_INFO, "fw: %s%s%s", st ? st : "idle",
+                            er ? " -- " : "", er ? er : "");
+                    fw_report_owed = true;
+                }
+                fw_report.state = fwu_state_text(&fwu);
+                fw_report.error = fwu_error_text(&fwu);
+                if (fwu.phase == FWU_REBOOTING) {
+                    // The other slot is written and the pending record saved;
+                    // core0's fw_rom_service performs the reboot (M9). One
+                    // last report (best effort -- core0 may reset first; the
+                    // "applying" before the flash write already went out), then stop.
+                    dc_report_status(&c, psram_free_estimate(), wifi_rssi(), NULL, WF_FIRMWARE_VERSION);
+                    for (;;) sleep_ms(1000);
+                }
             }
 
             // Item 1: the drive may only ever report a disk once an image is
@@ -1331,10 +1489,11 @@ static void core1_main(void) {
             // used to cost.
             // Not on a report_retry pass (M3): Item 0's report just failed,
             // and sending the same report again here would double it.
-            if (!report_retry && s != DC_HALTED && (disk_changed || version_changed ||
+            if (!report_retry && s != DC_HALTED && (disk_changed || version_changed || fw_report_owed ||
                                     (now - last_status_ms) >= DC_STATUS_PERIOD_MS)) {
                 if (dc_report_status(&c, psram_free_estimate(), wifi_rssi(), NULL, WF_FIRMWARE_VERSION)) {
                     last_status_ms = now;
+                    fw_report_owed = false;
                     strncpy(last_reported_sha, c.mounted_sha256, sizeof(last_reported_sha) - 1);
                     last_reported_sha[sizeof(last_reported_sha) - 1] = '\0';
                     last_reported_version = c.mounted_version;
@@ -1562,6 +1721,12 @@ int main(void) {
                 (unsigned)((size_t)SLOT_COUNT * NUM_TRACKS * TRACK_MAX_BYTES / 1024u),
                 SLOT_COUNT);
     }
+    // The firmware-update stage (2b) sits after the image slots in PSRAM.
+    // Checked here -- after runtime_init_setup_psram() above -- and before
+    // core1 launches, which is the only reader of g_fw_stage_ok.
+    g_fw_stage_ok = psram_check_address(&g_fw_stage[FW_MAX_IMAGE_BYTES - 1]);
+    if (!g_fw_stage_ok)
+        wf_logf(WF_ERR, "fw: the update stage is not backed by PSRAM -- updates disabled");
 
     // PIO
     uint off_out = pio_add_program(pio, &flux_out_program);
@@ -1707,6 +1872,7 @@ int main(void) {
     while (true) {
         fw_rom_service();
         dskchg_poll();
+        g_motor_on = dskchg_motor_on();
 
         // A write-protect flip on the same disk (g_reinsert_req's comment).
         // The decision itself is pure (reinsert.h, host-tested): idle (no
