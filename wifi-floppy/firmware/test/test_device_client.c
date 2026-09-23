@@ -171,6 +171,65 @@ static void test_first_cursor_after_boot_with_update_is_a_real_instruction(void)
     CHECK(c.fw_offer_present, "with its offer");
 }
 
+// Final review m2: an `update` key whose object cannot be lifted (too large
+// for fw_update_json here) is a MALFORMED instruction -- not a cancel, and on
+// the first cursor not a sync. The cursor still moved and must be acked; the
+// flag lets main.c refuse it ("refused: malformed update instruction").
+// Pushes a 200 poll whose `update` object is larger than fw_update_json
+// (DC_FW_UPDATE_JSON_BYTES) but whose body still fits DC_POLL_BODY_BYTES --
+// too big for push_ok_json's 512-byte fixture buffer, so built here.
+static void push_big_update(uint32_t iv) {
+    static char body[1024], resp[1200];
+    char sig[DC_FW_UPDATE_JSON_BYTES + 32];
+    memset(sig, 'A', sizeof sig - 1); sig[sizeof sig - 1] = '\0';
+    snprintf(body, sizeof body,
+             "{\"version\":1,\"desired\":null,\"instructionVersion\":%lu,"
+             "\"update\":{\"version\":\"1.1.0+gx\",\"sequence\":5,\"signature\":\"%s\"}}",
+             (unsigned long)iv, sig);
+    CHECK(strlen(body) < DC_POLL_BODY_BYTES, "fixture: the body itself fits the poll buffer");
+    snprintf(resp, sizeof resp, "HTTP/1.1 200 OK\r\nContent-Length: %zu\r\n\r\n%s", strlen(body), body);
+    fake_push_response(resp);
+}
+static void test_oversized_update_on_first_cursor_is_malformed_not_sync(void) {
+    boot();
+    push_big_update(4);
+    dc_step(&c);
+    CHECK(c.fw_instruction_new, "the moved cursor is new (it must be acked)");
+    CHECK_EQ_INT(c.fw_instruction_version, 4);
+    CHECK(!c.fw_instruction_is_sync, "an update key is never a sync");
+    CHECK(!c.fw_offer_present, "no offer could be lifted");
+    CHECK(c.fw_offer_malformed, "flagged malformed");
+}
+static void test_oversized_update_on_a_later_cursor_is_malformed_not_cancel(void) {
+    boot();
+    c.fw_instruction_version = 2;
+    push_big_update(3);
+    dc_step(&c);
+    CHECK(c.fw_instruction_new, "new");
+    CHECK(!c.fw_offer_present, "no offer");
+    CHECK(c.fw_offer_malformed, "malformed, so main.c refuses rather than cancels");
+}
+static void test_update_null_is_a_cancel_not_malformed(void) {
+    boot();
+    c.fw_instruction_version = 2;
+    push_ok_json("{\"version\":1,\"desired\":null,\"instructionVersion\":3,\"update\":null}");
+    dc_step(&c);
+    CHECK(c.fw_instruction_new && !c.fw_offer_present, "a cancel");
+    CHECK(!c.fw_offer_malformed, "null is not malformed");
+}
+static void test_a_good_update_clears_malformed(void) {
+    boot();
+    c.fw_instruction_version = 2;
+    push_big_update(3);
+    dc_step(&c);
+    c.fw_instruction_new = false;
+    push_ok_json("{\"version\":2,\"desired\":null,\"instructionVersion\":4,"
+                 "\"update\":{\"version\":\"1.1.0+gx\",\"sequence\":5}}");
+    dc_step(&c);
+    CHECK(c.fw_offer_present, "offer");
+    CHECK(!c.fw_offer_malformed, "the flag does not stick");
+}
+
 static void test_poll_404_keeps_the_disk_mounted(void) {
     boot();
     c.mounted_version = 5; strcpy(c.mounted_sha256, "deadbeef");
@@ -1318,6 +1377,10 @@ int main(void) {
     RUN(test_first_cursor_after_boot_without_update_is_a_sync);
     RUN(test_a_later_cursor_move_without_update_is_a_real_cancel);
     RUN(test_first_cursor_after_boot_with_update_is_a_real_instruction);
+    RUN(test_oversized_update_on_first_cursor_is_malformed_not_sync);
+    RUN(test_oversized_update_on_a_later_cursor_is_malformed_not_cancel);
+    RUN(test_update_null_is_a_cancel_not_malformed);
+    RUN(test_a_good_update_clears_malformed);
     RUN(test_poll_404_keeps_the_disk_mounted);
     RUN(test_poll_404_without_device_not_found_marker_is_retryable);
     RUN(test_401_halts);

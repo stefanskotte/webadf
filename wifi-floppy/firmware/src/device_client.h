@@ -239,6 +239,11 @@ typedef struct {
     bool     fw_instruction_is_sync;
     uint32_t fw_instruction_version;
     bool     fw_offer_present;       // an "update" object came with it
+    // Final review m2: an "update" key came with the moved cursor but could
+    // not be lifted (too large, unterminated, not an object). Neither a cancel
+    // nor a sync: main.c acks the cursor and refuses. Meaningful only while
+    // fw_instruction_new is set.
+    bool     fw_offer_malformed;
     char     fw_update_json[DC_FW_UPDATE_JSON_BYTES];
     // Set via dc_set_fw_report; the pointer is kept, not copied -- see its
     // own comment.

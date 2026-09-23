@@ -609,11 +609,19 @@ void dc_set_fw_report(device_client_t *c, const dc_fw_report_t *r) { c->_fw_repo
 static void dc_take_fw_fields(device_client_t *c, char *json) {
     c->fw_offer_present = json_object(json, "update", c->fw_update_json,
                                       sizeof c->fw_update_json, true);
+    // Final review m2: an `update` that is there but could not be lifted (too
+    // large, unterminated, not an object) is malformed -- never read as "no
+    // update", which would make it a cancel (or, on the first cursor, a sync).
+    bool malformed = !c->fw_offer_present && json_has(json, "update") &&
+                     !json_is_null(json, "update");
+    c->fw_offer_malformed = false;
     uint32_t iv = 0;
     if (json_u32(json, "instructionVersion", &iv) && iv > c->fw_instruction_version) {
         // The first cursor since dc_init (still 0) with no update is the
         // server's normal echo -- a sync to ack, not a cancel (device_client.h).
-        c->fw_instruction_is_sync = c->fw_instruction_version == 0 && !c->fw_offer_present;
+        c->fw_instruction_is_sync = c->fw_instruction_version == 0 &&
+                                    !c->fw_offer_present && !malformed;
+        c->fw_offer_malformed = malformed;
         c->fw_instruction_version = iv;
         c->fw_instruction_new = true;
     } else if (c->fw_offer_present) {

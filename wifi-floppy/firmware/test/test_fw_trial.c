@@ -44,7 +44,7 @@ static void test_version_mismatch_gives_up_immediately(void) {
 }
 static void test_deadline_gives_up(void) {
     fw_state_t s = st_pending("1.1.0+gnew", 5);
-    fw_trial_in_t in = in_for(&s, true, true, FW_TRIAL_DEADLINE_MS);
+    fw_trial_in_t in = in_for(&s, true, false, FW_TRIAL_DEADLINE_MS);
     const char *why = NULL;
     CHECK_EQ_INT(fw_trial_decide(&in, &why), FW_TRIAL_GIVE_UP);
     CHECK(why && strstr(why, "5 minutes") != NULL, "the reason names the deadline");
@@ -120,15 +120,57 @@ static void test_give_up_reasons_fit_in_failure_field(void) {
         CHECK(strlen(why) <= FW_STATE_REASON_MAX,
               "deadline reason fits in failure field");
     }
+    // Test no-heartbeat deadline reason
+    {
+        fw_state_t s = st_pending("1.1.0+gnew", 5);
+        fw_trial_in_t in = in_for(&s, true, false, FW_TRIAL_DEADLINE_MS);
+        const char *why = NULL;
+        CHECK_EQ_INT(fw_trial_decide(&in, &why), FW_TRIAL_GIVE_UP);
+        CHECK(why != NULL && strlen(why) <= FW_STATE_REASON_MAX,
+              "no-heartbeat reason fits in failure field");
+    }
 }
 
-// USB install with no heartbeat that reaches deadline gives up (not a buy).
-static void test_usb_install_no_heartbeat_at_deadline_gives_up(void) {
+// Final review I3: a USB-install trial (no pending record) has no older
+// image of ours to revert to -- on a new board the other slot is empty, and
+// the 5 minutes would have to cover the portal and pairing. It keeps waiting
+// for connectivity, however long that takes (the watchdog still covers a
+// hang), and never gives up on the deadline.
+static void test_usb_install_no_heartbeat_past_deadline_waits(void) {
     fw_state_t s; memset(&s, 0, sizeof s);
     fw_trial_in_t in = in_for(&s, true, false, FW_TRIAL_DEADLINE_MS);
     const char *why = NULL;
+    CHECK_EQ_INT(fw_trial_decide(&in, &why), FW_TRIAL_WAIT);
+    CHECK(why == NULL, "no give-up reason");
+    in.ms_since_boot = 3600000u;   // an hour at the portal
+    CHECK_EQ_INT(fw_trial_decide(&in, &why), FW_TRIAL_WAIT);
+}
+// ...and confirms whenever connectivity comes: there is no deadline reboot
+// to race, so the buy cutoff does not apply either.
+static void test_usb_install_heartbeat_past_deadline_buys(void) {
+    fw_state_t s; memset(&s, 0, sizeof s);
+    fw_trial_in_t in = in_for(&s, true, true, FW_TRIAL_DEADLINE_MS + 60000u);
+    const char *why = NULL;
+    CHECK_EQ_INT(fw_trial_decide(&in, &why), FW_TRIAL_BUY);
+}
+// An OTA trial (pending record) past the deadline still gives up.
+static void test_ota_trial_past_deadline_gives_up(void) {
+    fw_state_t s = st_pending("1.1.0+gnew", 5);
+    fw_trial_in_t in = in_for(&s, true, false, FW_TRIAL_DEADLINE_MS + 1000u);
+    const char *why = NULL;
     CHECK_EQ_INT(fw_trial_decide(&in, &why), FW_TRIAL_GIVE_UP);
-    CHECK(why && strstr(why, "5 minutes") != NULL, "reason names the deadline");
+    CHECK(why && strstr(why, "no heartbeat") != NULL, "no heartbeat ever came");
+}
+// Final review I2: a heartbeat that DID land, but only past the cutoff, must
+// not be reported as "no heartbeat" -- the network worked; it was too late.
+static void test_late_heartbeat_gives_up_with_its_own_reason(void) {
+    fw_state_t s = st_pending("1.1.0+gnew", 5);
+    fw_trial_in_t in = in_for(&s, true, true, FW_TRIAL_BUY_CUTOFF_MS + 5u);
+    const char *why = NULL;
+    CHECK_EQ_INT(fw_trial_decide(&in, &why), FW_TRIAL_GIVE_UP);
+    CHECK(why && strstr(why, "no heartbeat") == NULL, "does not claim no heartbeat");
+    CHECK(why && strstr(why, "too late") != NULL, "says it came too late");
+    CHECK(why && strlen(why) <= FW_STATE_REASON_MAX, "fits the failure field");
 }
 
 // Fix round 1 (Important 2): buy vs. deadline-reboot race. A heartbeat that
@@ -139,7 +181,7 @@ static void test_heartbeat_at_the_buy_cutoff_gives_up(void) {
     fw_trial_in_t in = in_for(&s, true, true, FW_TRIAL_BUY_CUTOFF_MS);
     const char *why = NULL;
     CHECK_EQ_INT(fw_trial_decide(&in, &why), FW_TRIAL_GIVE_UP);
-    CHECK(why && strstr(why, "5 minutes") != NULL, "reason names the deadline");
+    CHECK(why && strstr(why, "too late") != NULL, "reason: the heartbeat came too late");
 }
 // One millisecond earlier, there is still a full cutoff window left: buy.
 static void test_heartbeat_just_before_the_buy_cutoff_buys(void) {
@@ -194,7 +236,10 @@ int main(void) {
     RUN(test_reconcile_revert_without_a_reason);
     RUN(test_reconcile_confirms_a_buy_whose_record_was_lost);
     RUN(test_give_up_reasons_fit_in_failure_field);
-    RUN(test_usb_install_no_heartbeat_at_deadline_gives_up);
+    RUN(test_usb_install_no_heartbeat_past_deadline_waits);
+    RUN(test_usb_install_heartbeat_past_deadline_buys);
+    RUN(test_ota_trial_past_deadline_gives_up);
+    RUN(test_late_heartbeat_gives_up_with_its_own_reason);
     RUN(test_heartbeat_at_the_buy_cutoff_gives_up);
     RUN(test_heartbeat_just_before_the_buy_cutoff_buys);
     RUN(test_version_hash_is_fnv1a_32);

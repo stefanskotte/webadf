@@ -1196,6 +1196,15 @@ static void core1_main(void) {
         // 2b trial (spec D8): prove the network works, THEN confirm, THEN poll.
         {
             if (fw_rom_trial_boot()) {
+                // Final review I2: the trial RUNS the new version but has not
+                // kept it -- the boot ROM reverts it unless this loop
+                // confirms. Say so: the server does not count the version as
+                // installed while the state is "applying". The confirmed boot
+                // (a non-trial boot) reports the updater's own state, null.
+                // fw_report is already attached (dc_set_fw_report above), so
+                // every heartbeat below carries it.
+                fw_report.state = "applying";
+                fw_report.error = NULL;
                 for (;;) {
                     bool hb = dc_report_status(&c, psram_free_estimate(), wifi_rssi(), NULL,
                                                WF_FIRMWARE_VERSION);
@@ -1350,6 +1359,7 @@ static void core1_main(void) {
                                 // A boot-time sync leaves this set; the
                                 // injection is an offer, never a sync.
                                 c.fw_instruction_is_sync = false;
+                                c.fw_offer_malformed = false;
                                 wf_logf(WF_WARN, "fwdbg: injected an offer");
                             }
                         }
@@ -1375,6 +1385,13 @@ static void core1_main(void) {
                     // trial that gave up) must survive to be reported (D8).
                     wf_logf(WF_INFO, "fw: instruction cursor %lu (sync)",
                             (unsigned long)c.fw_instruction_version);
+                } else if (c.fw_offer_malformed) {
+                    // Final review m2: an `update` that could not be lifted
+                    // (too large, say). The cursor is acked above; the
+                    // instruction is refused, never read as a cancel.
+                    wf_logf(WF_WARN, "fw: malformed update instruction %lu",
+                            (unsigned long)c.fw_instruction_version);
+                    fwu_refuse(&fwu, "refused: malformed update instruction");
                 } else if (c.fw_offer_present && fw_report.update_protocol == 0) {
                     // Never stage into a g_fw_stage PSRAM does not back, or
                     // flash an unpartitioned board. The server should never
@@ -1405,8 +1422,13 @@ static void core1_main(void) {
                 // published slot is checked too -- the same predicate
                 // fw_state_save refuses on -- so the gate and the pending
                 // record's write can never disagree.
+                //
+                // Final review m1: and no state report owed. The instruction's
+                // ack and the updater's last state must have LANDED before
+                // the flash write starts -- otherwise the server can still be
+                // re-sending an instruction the board is already acting on.
                 bool idle = c.mounted_sha256[0] == '\0' && psram_active_slot() == SLOT_NONE &&
-                            !up_has_work(&up) && !g_motor_on;
+                            !up_has_work(&up) && !g_motor_on && !fw_report_owed;
                 if (fwu_step(&fwu, &fwu_ops, &fst, idle, clock_ms())) {
                     const char *st = fwu_state_text(&fwu);
                     const char *er = fwu_error_text(&fwu);
@@ -1831,6 +1853,20 @@ int main(void) {
     // mbedTLS IRQ chain that runs on the same stack). See core1_stack's
     // comment above.
     fw_rom_boot_init();
+    {
+        // Final review I3: tell fw_rom whether a trial has anything to revert
+        // to, BEFORE core1 starts -- the portal and pairing come first on a
+        // new board, and a USB-install trial (no pending record) must not
+        // hit the 5-minute deadline there. A plain XIP read; core1 loads
+        // the record again for itself in the poll loop's branch.
+        static fw_state_t early_fst;   // static: off core0's stack
+        fw_state_load(&early_fst);     // zeroed if no record
+        fw_rom_set_trial_revertible(early_fst.pending);
+        if (fw_rom_trial_boot())
+            wf_logf(WF_INFO, "boot: trial is %s", early_fst.pending
+                    ? "an OTA update (5-minute deadline armed)"
+                    : "a USB install (no deadline: waiting for connectivity)");
+    }
     multicore_launch_core1_with_stack(core1_main, core1_stack, sizeof core1_stack);
     // Lets core1's (rare, one-time) token flash write -- token_store.c,
     // guarded to only ever run before any disk is mounted -- pause core0

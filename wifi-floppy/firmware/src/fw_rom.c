@@ -23,6 +23,7 @@ static int      g_partition = -1;
 static uint32_t g_boot_type;
 static int      g_pt_rc;
 static volatile bool     g_bought;
+static volatile bool     g_revertible = true;  // I3: see fw_rom_set_trial_revertible
 static volatile uint32_t g_reboot_req;        // 0 none, 1 normal, 2 flash update
 static volatile uint32_t g_reboot_off;
 // g_reboot_req/g_reboot_off are read and written from BOTH cores
@@ -127,6 +128,7 @@ void fw_rom_boot_init(void) {
 }
 
 bool fw_rom_trial_boot(void)      { return g_trial && !g_bought; }
+void fw_rom_set_trial_revertible(bool revertible) { g_revertible = revertible; }
 int  fw_rom_booted_partition(void) { return g_partition; }
 
 static bool part_range(int n, uint32_t *off, uint32_t *len) {
@@ -206,7 +208,10 @@ void fw_rom_service(void) {
     // which is safe because once set it is never cleared.
     bool deadline_hit = false;
     critical_section_enter_blocking(&g_boot_cs);
-    if (g_trial && !g_bought && g_reboot_req == 0 &&
+    // Final review I3: only an OTA trial (a pending record: an image of ours
+    // to go back to) has a deadline. A USB-install trial waits for the portal
+    // and pairing as long as they take; the watchdog still covers a hang.
+    if (g_trial && !g_bought && g_revertible && g_reboot_req == 0 &&
         to_ms_since_boot(get_absolute_time()) >= FW_TRIAL_DEADLINE_MS) {
         g_reboot_req = 1u;
         deadline_hit = true;

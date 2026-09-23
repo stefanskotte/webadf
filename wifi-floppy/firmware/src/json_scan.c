@@ -113,6 +113,10 @@ bool json_is_null(const char *json, const char *key) {
     return v && strncmp(v, "null", 4) == 0;
 }
 
+bool json_has(const char *json, const char *key) {
+    return find_value(json, key) != NULL;
+}
+
 bool json_object(char *json, const char *key, char *out, int out_len, bool blank) {
     const char *v = find_value(json, key);
     if (!v || *v != '{' || out_len <= 0) return false;

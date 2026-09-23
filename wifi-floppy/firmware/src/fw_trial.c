@@ -9,16 +9,25 @@ fw_trial_action_t fw_trial_decide(const fw_trial_in_t *in, const char **reason) 
         *reason = "version mismatch";
         return FW_TRIAL_GIVE_UP;
     }
+    // Final review I3: a USB-install trial (no pending record) has no image
+    // of ours to revert to, so it has no deadline -- fw_rom_service does not
+    // arm one either (fw_rom_set_trial_revertible). It waits for
+    // connectivity however long the portal and pairing take (the watchdog
+    // still covers a hang) and confirms whenever a heartbeat lands; with no
+    // deadline reboot to race, the buy cutoff below does not apply.
+    if (!in->st->pending) return in->heartbeat_ok ? FW_TRIAL_BUY : FW_TRIAL_WAIT;
     // Fix round 1 (Important 2): stop offering a buy once there is no longer
     // a safe margin before fw_rom_service's own deadline reboot -- a buy in
     // flight when that reboot fires can leave no bootable slot at all. At or
-    // past the cutoff, give up (with the existing deadline reason) instead of
-    // buying, even with a heartbeat.
+    // past the cutoff, give up instead of buying, even with a heartbeat.
     if (in->heartbeat_ok && in->ms_since_boot < FW_TRIAL_BUY_CUTOFF_MS) {
         return FW_TRIAL_BUY;
     }
     if (in->ms_since_boot >= FW_TRIAL_BUY_CUTOFF_MS) {
-        *reason = "no heartbeat within 5 minutes";
+        // Final review I2: a heartbeat that landed only past the cutoff is
+        // not "no heartbeat" -- the network worked, too late to confirm.
+        *reason = in->heartbeat_ok ? "heartbeat came too late to confirm"
+                                   : "no heartbeat within 5 minutes";
         return FW_TRIAL_GIVE_UP;
     }
     return FW_TRIAL_WAIT;
