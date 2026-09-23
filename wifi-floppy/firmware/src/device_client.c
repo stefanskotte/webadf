@@ -826,7 +826,7 @@ dc_register_result_t dc_register(device_client_t *c, const char *pairing_code,
     // Firmware self-update (piece 2b): register declares the protocol the
     // same way status does -- only when a report has been set AND it opted
     // in, never as a bare claim from an unset report.
-    char reg_tail[24] = "";
+    char reg_tail[32] = "";  // Sized for literal (18) + int width (11) + NUL; gcc -Wformat-truncation
     if (c->_fw_report && c->_fw_report->update_protocol > 0) {
         snprintf(reg_tail, sizeof reg_tail, ",\"updateProtocol\":%d",
                  c->_fw_report->update_protocol);
