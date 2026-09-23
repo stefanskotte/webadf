@@ -16,4 +16,9 @@ bool json_bool(const char *json, const char *key, bool *out);
 // True if `key` is present with a literal null value.
 bool json_is_null(const char *json, const char *key);
 
+// Copies the {...} value of `key` (brace-matched, strings respected) into out.
+// If `blank` is true the object is overwritten with spaces in `json` afterwards, so
+// later flat key lookups can no longer see keys nested inside it.
+bool json_object(char *json, const char *key, char *out, int out_len, bool blank);
+
 #endif

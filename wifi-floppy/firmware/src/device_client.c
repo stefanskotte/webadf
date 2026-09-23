@@ -601,6 +601,23 @@ void dc_set_hold(device_client_t *c, dc_hold_fn fn, void *ctx) {
     c->_hold_ctx = ctx;
 }
 
+void dc_set_fw_report(device_client_t *c, const dc_fw_report_t *r) { c->_fw_report = r; }
+
+// Lifts `update` out of a 200 poll body BEFORE anything else reads it: its
+// version/sha256 keys would otherwise be found by the disk logic's flat scans.
+static void dc_take_fw_fields(device_client_t *c, char *json) {
+    c->fw_offer_present = json_object(json, "update", c->fw_update_json,
+                                      sizeof c->fw_update_json, true);
+    uint32_t iv = 0;
+    if (json_u32(json, "instructionVersion", &iv) && iv > c->fw_instruction_version) {
+        c->fw_instruction_version = iv;
+        c->fw_instruction_new = true;
+    } else if (c->fw_offer_present) {
+        // An update with no moved cursor is stale. Never act on it.
+        c->fw_offer_present = false;
+    }
+}
+
 void dc_force_refetch(device_client_t *c) {
     c->_refetch = true;
     c->since = 0;
@@ -794,10 +811,19 @@ dc_register_result_t dc_register(device_client_t *c, const char *pairing_code,
     dc_json_escape(fv_esc, sizeof fv_esc, firmware_version);
     dc_json_escape(mac_esc, sizeof mac_esc, mac);
 
+    // Firmware self-update (piece 2b): register declares the protocol the
+    // same way status does -- only when a report has been set AND it opted
+    // in, never as a bare claim from an unset report.
+    char reg_tail[24] = "";
+    if (c->_fw_report && c->_fw_report->update_protocol > 0) {
+        snprintf(reg_tail, sizeof reg_tail, ",\"updateProtocol\":%d",
+                 c->_fw_report->update_protocol);
+    }
+
     static char body[DC_REGISTER_BODY_BYTES];
     int body_len = snprintf(body, sizeof body,
-        "{\"pairingCode\":\"%s\",\"firmwareVersion\":\"%s\",\"macAddress\":\"%s\"}",
-        pc_esc, fv_esc, mac_esc);
+        "{\"pairingCode\":\"%s\",\"firmwareVersion\":\"%s\",\"macAddress\":\"%s\"%s}",
+        pc_esc, fv_esc, mac_esc, reg_tail);
     // Review round 1, Important I-2: every failure path below calls
     // dc_enter_backoff() -- the same exponential-from-the-floor, jittered,
     // capped backoff dc_step()/dc_fetch_image() already use -- rather than
@@ -940,12 +966,39 @@ bool dc_report_status(device_client_t *c, int psram_free, int rssi, const char *
         snprintf(ver_field, sizeof ver_field, "null");
     }
 
+    // Firmware self-update (piece 2b): an opted-in report (update_protocol
+    // > 0) appends updateProtocol/firmwareUpdateState/firmwareUpdateError/
+    // firmwareInstructionAck; a board that has not opted in sends none of
+    // them, not even as null -- claiming the capability at all is an
+    // assertion this board can act on an update, which an unset report
+    // must never make.
+    static char fw_tail[DC_STATUS_ERR_BYTES + 160];
+    fw_tail[0] = '\0';
+    if (c->_fw_report && c->_fw_report->update_protocol > 0) {
+        const dc_fw_report_t *f = c->_fw_report;
+        static char st_field[40], er_field[DC_STATUS_ERR_BYTES + 2];
+        if (f->state) {
+            static char st_esc[32];
+            dc_json_escape(st_esc, sizeof st_esc, f->state);
+            snprintf(st_field, sizeof st_field, "\"%s\"", st_esc);
+        } else snprintf(st_field, sizeof st_field, "null");
+        if (f->error) {
+            static char er_esc[201];
+            dc_json_escape(er_esc, sizeof er_esc, f->error);
+            snprintf(er_field, sizeof er_field, "\"%s\"", er_esc);
+        } else snprintf(er_field, sizeof er_field, "null");
+        snprintf(fw_tail, sizeof fw_tail,
+                 ",\"updateProtocol\":%d,\"firmwareUpdateState\":%s,"
+                 "\"firmwareUpdateError\":%s,\"firmwareInstructionAck\":%lu",
+                 f->update_protocol, st_field, er_field, (unsigned long)f->instruction_ack);
+    }
+
     static char body[DC_STATUS_BODY_BYTES];
     int body_len = snprintf(body, sizeof body,
         "{\"mountedSha256\":%s,\"mountedDiskId\":%s,\"version\":%lu,"
-        "\"error\":%s,\"psramFree\":%d,\"firmwareVersion\":%s,\"rssi\":%d}",
+        "\"error\":%s,\"psramFree\":%d,\"firmwareVersion\":%s,\"rssi\":%d%s}",
         sha_field, disk_field, (unsigned long)c->mounted_version,
-        err_field, psram_free, ver_field, rssi);
+        err_field, psram_free, ver_field, rssi, fw_tail);
     if (body_len < 0 || body_len >= (int)sizeof body) return false; // should never happen; give up quietly
 
     static char req[DC_STATUS_REQ_BYTES];
@@ -1100,6 +1153,7 @@ dc_state_t dc_step(device_client_t *c) {
             // takes -- rather than parsing whatever prefix arrived.
             return dc_enter_backoff(c);
         }
+        dc_take_fw_fields(c, body.buf);
         return dc_handle_poll_body(c, body.buf);
 
     default:

@@ -104,6 +104,36 @@ static void test_current_disk_survives_a_failed_replacement_fetch(void) {
           "a failed fetch must leave the Amiga holding the disk it had");
 }
 
+// Review Focus 1: a disk and an update in one body. Both carry version/sha256.
+static void test_update_object_does_not_leak_into_disk_fields(void) {
+    boot();
+    push_ok_json("{\"version\":7,\"desired\":null,\"instructionVersion\":2,"
+                 "\"update\":{\"version\":\"1.1.0+gx\",\"sequence\":5,\"sha256\":\""
+                 "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc\","
+                 "\"sizeBytes\":1000,\"signature\":\"AA==\",\"keyId\":\"wf-x\"}}");
+    dc_step(&c);
+    CHECK_EQ_INT(c.since, 7);                  // the top-level version, not the update's
+    CHECK(c.mounted_sha256[0] == '\0', "desired:null stays an eject; the update's sha256 is not a disk");
+    CHECK(c.fw_instruction_new, "a moved instruction is flagged");
+    CHECK_EQ_INT(c.fw_instruction_version, 2);
+    CHECK(c.fw_offer_present, "the update came with it");
+    CHECK(strstr(c.fw_update_json, "\"sequence\":5") != NULL, "and is kept whole for the parser");
+}
+static void test_unchanged_instruction_is_not_new(void) {
+    boot();
+    c.fw_instruction_version = 2;
+    push_ok_json("{\"version\":1,\"desired\":null,\"instructionVersion\":2}");
+    dc_step(&c);
+    CHECK(!c.fw_instruction_new, "the same cursor again is not a new instruction");
+}
+static void test_a_cancel_is_new_with_no_offer(void) {
+    boot();
+    c.fw_instruction_version = 2;
+    push_ok_json("{\"version\":1,\"desired\":null,\"instructionVersion\":3}");
+    dc_step(&c);
+    CHECK(c.fw_instruction_new && !c.fw_offer_present, "moved, no update: a cancellation");
+}
+
 static void test_poll_404_keeps_the_disk_mounted(void) {
     boot();
     c.mounted_version = 5; strcpy(c.mounted_sha256, "deadbeef");
@@ -326,6 +356,10 @@ static void test_status_body_fits_at_maximum(void) {
     static char long_ver[65];
     memset(long_ver, 'v', 64); long_ver[64] = '\0';
 
+    static char long_fw_err[201]; memset(long_fw_err, 'F', 200); long_fw_err[200] = '\0';
+    dc_fw_report_t fr = { DC_UPDATE_PROTOCOL, "downloading", long_fw_err, 4294967295u };
+    dc_set_fw_report(&c, &fr);
+
     fake_push_response("HTTP/1.1 204 No Content\r\n\r\n");
     CHECK(dc_report_status(&c, 2147483647, -200, long_err, long_ver),
           "a maximal body must still be sent, not silently dropped");
@@ -334,6 +368,28 @@ static void test_status_body_fits_at_maximum(void) {
           "the version survives a maximal body");
     CHECK(strstr(r, "\"rssi\":-200") != NULL,
           "the last field is not truncated away");
+    CHECK(strstr(r, "\"firmwareInstructionAck\":4294967295") != NULL,
+          "the last firmware field survives");
+}
+
+static void test_status_carries_the_firmware_fields(void) {
+    boot();
+    dc_fw_report_t r = { DC_UPDATE_PROTOCOL, "downloading", NULL, 4 };
+    dc_set_fw_report(&c, &r);
+    fake_push_response("HTTP/1.1 204 No Content\r\n\r\n");
+    CHECK(dc_report_status(&c, 0, -50, NULL, "1.0.0+gt"), "sent");
+    const char *q = fake_last_request();
+    CHECK(strstr(q, "\"updateProtocol\":1") != NULL, "protocol");
+    CHECK(strstr(q, "\"firmwareUpdateState\":\"downloading\"") != NULL, "state");
+    CHECK(strstr(q, "\"firmwareUpdateError\":null") != NULL, "an absent error is an explicit null");
+    CHECK(strstr(q, "\"firmwareInstructionAck\":4") != NULL, "ack");
+}
+static void test_status_without_a_fw_report_omits_the_fields(void) {
+    boot();
+    fake_push_response("HTTP/1.1 204 No Content\r\n\r\n");
+    dc_report_status(&c, 0, -50, NULL, "1.0.0+gt");
+    CHECK(strstr(fake_last_request(), "updateProtocol") == NULL,
+          "a board that has not opted in must not claim the capability");
 }
 
 static void test_unmounted_reports_null_not_omitted(void) {
@@ -622,6 +678,15 @@ static void test_register_stores_the_returned_token(void) {
     CHECK_EQ_INT(dc_register(&c, "ABC123", "4a.0", "aa:bb:cc:dd:ee:ff"), DC_REG_OK);
     CHECK(token_store_load(buf, sizeof buf), "token persisted");
     CHECK(strcmp(buf, "t-1") == 0, "the returned token");
+}
+
+static void test_register_sends_the_protocol_only_when_set(void) {
+    boot();
+    dc_fw_report_t r = { DC_UPDATE_PROTOCOL, NULL, NULL, 0 };
+    dc_set_fw_report(&c, &r);
+    push_ok_json("{\"token\":\"t\"}");
+    dc_register(&c, "ABC123", "1.0.0+gt", "aa:bb:cc:dd:ee:ff");
+    CHECK(strstr(fake_last_request(), "\"updateProtocol\":1") != NULL, "register declares it");
 }
 
 static void test_bad_code_does_not_store_anything(void) {
@@ -1188,6 +1253,9 @@ int main(void) {
     RUN(test_request_survives_single_byte_writes);
     RUN(test_since_does_not_advance_on_a_failed_fetch);
     RUN(test_current_disk_survives_a_failed_replacement_fetch);
+    RUN(test_update_object_does_not_leak_into_disk_fields);
+    RUN(test_unchanged_instruction_is_not_new);
+    RUN(test_a_cancel_is_new_with_no_offer);
     RUN(test_poll_404_keeps_the_disk_mounted);
     RUN(test_poll_404_without_device_not_found_marker_is_retryable);
     RUN(test_401_halts);
@@ -1205,6 +1273,8 @@ int main(void) {
     RUN(test_status_sends_all_seven_fields);
     RUN(test_status_reports_a_null_version_explicitly);
     RUN(test_status_body_fits_at_maximum);
+    RUN(test_status_carries_the_firmware_fields);
+    RUN(test_status_without_a_fw_report_omits_the_fields);
     RUN(test_unmounted_reports_null_not_omitted);
     RUN(test_status_returns_true_on_204);
     RUN(test_status_returns_false_on_connect_failure);
@@ -1213,6 +1283,7 @@ int main(void) {
     RUN(test_successful_image_fetch_publishes_and_reflects_write_protected);
     RUN(test_register_body_has_the_three_required_fields);
     RUN(test_register_stores_the_returned_token);
+    RUN(test_register_sends_the_protocol_only_when_set);
     RUN(test_bad_code_does_not_store_anything);
     RUN(test_invalid_code_is_reported_as_bad_code_not_retry);
     RUN(test_other_400_is_still_retryable);

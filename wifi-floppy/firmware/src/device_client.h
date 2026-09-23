@@ -128,8 +128,13 @@ typedef bool (*dc_hold_fn)(void *ctx);
 // buffers are `static` (see the STACK note in device_client.c), so the cost
 // is .bss rather than stack. test_status_body_fits_at_maximum is what keeps
 // the headroom honest when the next field is added.
-#define DC_STATUS_BODY_BYTES  640
-#define DC_STATUS_REQ_BYTES   1152
+// Raised for the four firmware-update fields dc_report_status may append
+// (updateProtocol, firmwareUpdateState, firmwareUpdateError,
+// firmwareInstructionAck): worst case adds ~
+// ,"updateProtocol":1,"firmwareUpdateState":"downloading","firmwareUpdateError":"<200>","firmwareInstructionAck":4294967295
+// -- about 300 bytes.
+#define DC_STATUS_BODY_BYTES  1024
+#define DC_STATUS_REQ_BYTES   1536
 // `err` is firmware-authored (a short static string or errno-derived text,
 // never network input), but it still has to survive being embedded in a
 // JSON string unescaped -- truncated well short of DC_STATUS_BODY_BYTES so
@@ -152,6 +157,32 @@ typedef bool (*dc_hold_fn)(void *ctx);
 // digests, and an unbounded set on a device with no allocator is worse than
 // forgetting the oldest.
 #define DC_BLOCKED_MAX 4
+
+// Firmware self-update (piece 2b): the wire fields this board can speak
+// once it opts in. DC_UPDATE_PROTOCOL is the one version this firmware
+// implements; dc_set_fw_report's update_protocol field is compared against
+// it (well, is just the value sent) -- 0 means "say nothing, this build
+// does not participate".
+#define DC_UPDATE_PROTOCOL        1
+// Sized like DC_POLL_BODY_BYTES's `update` object: version (up to
+// FIRMWARE_VERSION_MAX), sequence, a 64-hex sha256, sizeBytes, an ed25519
+// signature (base64, 88 chars), keyId and instructionVersion, plus keys and
+// punctuation -- comfortably under 512.
+#define DC_FW_UPDATE_JSON_BYTES   512
+
+// What main.c (a later task) hands dc_report_status to describe, so this
+// file never has to know what "downloading" or "applying" mean -- only how
+// to put them on the wire. `state`/`error` are `const char *` rather than
+// copied in, so the caller's own storage (a static string literal, or its
+// own escaped buffer) is what dc_report_status reads at send time; NULL
+// means an explicit JSON null for either, never an omitted key -- the same
+// honesty rule every other optional field in this file follows.
+typedef struct {
+    int         update_protocol;   // 0 = omit the field (and send 0 at register)
+    const char *state;             // NULL => JSON null
+    const char *error;             // NULL => JSON null
+    uint32_t    instruction_ack;
+} dc_fw_report_t;
 
 typedef struct {
     transport_t *t;
@@ -194,6 +225,16 @@ typedef struct {
     char _blocked[DC_BLOCKED_MAX][65];
     int  _blocked_count;
     int  _blocked_next;
+
+    // --- firmware self-update (piece 2b); see dc_take_fw_fields ---
+    // Set by dc_step when instructionVersion moved past fw_instruction_version.
+    bool     fw_instruction_new;
+    uint32_t fw_instruction_version;
+    bool     fw_offer_present;       // an "update" object came with it
+    char     fw_update_json[DC_FW_UPDATE_JSON_BYTES];
+    // Set via dc_set_fw_report; the pointer is kept, not copied -- see its
+    // own comment.
+    const dc_fw_report_t *_fw_report;
 } device_client_t;
 
 void dc_init(device_client_t *c, transport_t *t, clock_ms_fn now,
@@ -280,6 +321,16 @@ dc_register_result_t dc_register(device_client_t *c, const char *pairing_code,
 // version header -- host tests compile this file without the firmware build.
 bool dc_report_status(device_client_t *c, int psram_free, int rssi, const char *err,
                       const char *fw_version);
+
+// Registers `r` as the firmware-update report dc_report_status and
+// dc_register append to their bodies (updateProtocol, firmwareUpdateState,
+// firmwareUpdateError, firmwareInstructionAck) -- the pointer is kept, not
+// copied, so the caller's own storage must outlive it. `r` may be NULL to
+// stop reporting. update_protocol <= 0 means "say nothing, this build does
+// not participate": dc_report_status omits all four fields entirely (not
+// merely as null) and dc_register omits updateProtocol -- a board that has
+// not opted in must never claim the capability.
+void dc_set_fw_report(device_client_t *c, const dc_fw_report_t *r);
 
 // Write-back (piece 2b): what an uploader needs from the poll/fetch state
 // machine to hold a disk open while writes are still on the way to the

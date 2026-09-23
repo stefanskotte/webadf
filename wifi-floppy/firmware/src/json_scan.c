@@ -7,7 +7,9 @@
 // unit (respecting backslash escapes), and only a quoted string that is
 // itself immediately followed by a colon is considered a candidate key.
 // This does not track nesting depth; it doesn't need to, because every key
-// this device reads is unique across the whole response shape.
+// this device reads is unique across the whole response shape, once `update`
+// has been lifted out by json_object(..., true); dc_step does that before
+// anything else reads the body.
 static const char *find_value(const char *json, const char *key) {
     size_t keylen = strlen(key);
     const char *p = json;
@@ -89,4 +91,28 @@ bool json_bool(const char *json, const char *key, bool *out) {
 bool json_is_null(const char *json, const char *key) {
     const char *v = find_value(json, key);
     return v && strncmp(v, "null", 4) == 0;
+}
+
+bool json_object(char *json, const char *key, char *out, int out_len, bool blank) {
+    const char *v = find_value(json, key);
+    if (!v || *v != '{' || out_len <= 0) return false;
+    int depth = 0;
+    const char *p = v;
+    for (; *p; p++) {
+        if (*p == '"') {                       // walk a string whole, escapes included
+            p++;
+            while (*p && *p != '"') { if (*p == '\\' && p[1]) p++; p++; }
+            if (!*p) return false;
+            continue;
+        }
+        if (*p == '{') depth++;
+        else if (*p == '}' && --depth == 0) break;
+    }
+    if (!*p) return false;                     // unterminated object
+    int n = (int)(p - v) + 1;
+    if (n >= out_len) return false;
+    memcpy(out, v, (size_t)n);
+    out[n] = '\0';
+    if (blank) memset((char *)v, ' ', (size_t)n);
+    return true;
 }
