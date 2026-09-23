@@ -149,6 +149,38 @@ static void test_heartbeat_just_before_the_buy_cutoff_buys(void) {
     CHECK_EQ_INT(fw_trial_decide(&in, &why), FW_TRIAL_BUY);
 }
 
+// Fix round 4: the trial proves itself on core1, then reboots with a "proven"
+// mark in watchdog scratch[0..1]; the NEXT boot buys single-core, early in
+// main(). The mark names the version that proved itself (FNV-1a 32).
+static void test_version_hash_is_fnv1a_32(void) {
+    CHECK_EQ_INT(fw_version_hash(""), 0x811c9dc5u);
+    CHECK_EQ_INT(fw_version_hash("a"), 0xe40c292cu);
+    CHECK_EQ_INT(fw_version_hash("foobar"), 0xbf9cf968u);
+}
+static void test_proven_mark_for_this_version_buys_early(void) {
+    CHECK(fw_trial_proven(true, FW_PROVEN_MAGIC, fw_version_hash("1.1.0+gnew"), "1.1.0+gnew"),
+          "a trial boot carrying this version's proven mark buys early");
+}
+static void test_proven_mark_is_ignored_on_a_normal_boot(void) {
+    CHECK(!fw_trial_proven(false, FW_PROVEN_MAGIC, fw_version_hash("1.1.0+gnew"), "1.1.0+gnew"),
+          "no buy on a boot that is not a trial");
+}
+static void test_proven_mark_for_another_version_is_stale(void) {
+    CHECK(!fw_trial_proven(true, FW_PROVEN_MAGIC, fw_version_hash("1.0.0+gold"), "1.1.0+gnew"),
+          "a mark left by another version never buys this one");
+}
+static void test_no_proven_mark_is_a_plain_trial(void) {
+    CHECK(!fw_trial_proven(true, 0, fw_version_hash("1.1.0+gnew"), "1.1.0+gnew"),
+          "scratch[0] without the magic is not a mark");
+    CHECK(!fw_trial_proven(true, FW_PROVEN_MAGIC ^ 1u, fw_version_hash("1.1.0+gnew"), "1.1.0+gnew"),
+          "a near-miss magic is not a mark");
+}
+static void test_proven_magic_is_not_an_sdk_or_rom_watchdog_magic(void) {
+    CHECK(FW_PROVEN_MAGIC != 0xb007c0d3u, "distinct from the boot ROM's reboot magic");
+    CHECK(FW_PROVEN_MAGIC != 0x6ab73121u, "distinct from the SDK's non-reboot magic");
+    CHECK(FW_PROVEN_MAGIC != 0u && FW_PROVEN_MAGIC != 0xffffffffu, "not a reset-looking value");
+}
+
 int main(void) {
     RUN(test_a_normal_boot_is_not_a_trial);
     RUN(test_waits_until_a_heartbeat_lands);
@@ -165,5 +197,11 @@ int main(void) {
     RUN(test_usb_install_no_heartbeat_at_deadline_gives_up);
     RUN(test_heartbeat_at_the_buy_cutoff_gives_up);
     RUN(test_heartbeat_just_before_the_buy_cutoff_buys);
+    RUN(test_version_hash_is_fnv1a_32);
+    RUN(test_proven_mark_for_this_version_buys_early);
+    RUN(test_proven_mark_is_ignored_on_a_normal_boot);
+    RUN(test_proven_mark_for_another_version_is_stale);
+    RUN(test_no_proven_mark_is_a_plain_trial);
+    RUN(test_proven_magic_is_not_an_sdk_or_rom_watchdog_magic);
     return REPORT();
 }

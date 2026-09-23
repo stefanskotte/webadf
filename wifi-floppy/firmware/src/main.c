@@ -1107,15 +1107,16 @@ static void core1_main(void) {
                     const char *why = NULL;
                     fw_trial_action_t a = fw_trial_decide(&tin, &why);
                     if (a == FW_TRIAL_BUY) {
-                        if (!fw_rom_buy()) {
-                            wf_logf(WF_ERR, "trial: buy failed -- rebooting to revert");
-                            fw_rom_request_reboot(0);
-                            for (;;) sleep_ms(1000);
-                        }
-                        if (fw_trial_after_buy(&fst) && !fw_state_save(&fst))
-                            wf_logf(WF_ERR, "trial: bought, but the state record did not save");
-                        wf_logf(WF_INFO, "trial: confirmed %s", WF_FIRMWARE_VERSION);
-                        break;
+                        // Fix round 4: never buy from here. Calling the ROM buy
+                        // on core1 wedged the board twice. Mark this version as
+                        // proven and reboot into our own slot; the next boot
+                        // buys in fw_rom_boot_early, single-core, before
+                        // anything else runs, and comes back as a NON-trial
+                        // boot -- where fw_boot_reconcile (CONFIRMED_LATE for
+                        // an OTA's pending record, CLEAN for a USB install)
+                        // does the bookkeeping fw_trial_after_buy used to do.
+                        fw_rom_request_proven_reboot(WF_FIRMWARE_VERSION);
+                        for (;;) sleep_ms(1000);
                     }
                     if (a == FW_TRIAL_GIVE_UP) {
                         wf_logf(WF_WARN, "trial: giving up (%s) -- rebooting to revert", why);
@@ -1469,6 +1470,9 @@ static void core1_main(void) {
 
 // ---------------------------------------------------------------- main
 int main(void) {
+    // FIRST, before stdio, core1, or any PSRAM user: a trial that proved
+    // itself last boot is bought here, single-core (fw_rom.c, fix round 4).
+    fw_rom_boot_early(WF_FIRMWARE_VERSION);
     stdio_init_all();
     wf_log_init();
     wf_logf(WF_INFO, "wifi-floppy boot: %s", PICO_BOARD);

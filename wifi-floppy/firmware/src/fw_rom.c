@@ -11,35 +11,120 @@
 #include "pico/critical_section.h"
 #include "hardware/flash.h"
 #include "hardware/watchdog.h"
+#include "hardware/psram.h"
+#include "hardware/sync.h"
+#include "hardware/xip_cache.h"
+#include "hardware/structs/qmi.h"
+#include "hardware/structs/pads_qspi.h"
 #include "boot/bootrom_constants.h"
 #include "boot/picobin.h"
 #include "boot/picoboot_constants.h"
 
 static bool     g_trial;
 static int      g_partition = -1;
+static uint32_t g_boot_type;
+static int      g_pt_rc;
 static volatile bool     g_bought;
 static volatile uint32_t g_reboot_req;        // 0 none, 1 normal, 2 flash update
 static volatile uint32_t g_reboot_off;
-// Fix round 2 (Important 2b, still open after round 1): g_buying and
-// g_reboot_req are a check-then-act pair read and written from BOTH cores
-// (fw_rom_buy on core1, fw_rom_service's deadline check on core0). Round 1's
-// __dmb only orders each core's OWN accesses -- it gives no mutual exclusion
-// between them, so the two checks could still interleave: core0 reads
-// !g_buying, core1 sets g_buying and reads g_reboot_req == 0, core0 then
-// sets g_reboot_req and reboots mid-buy. g_boot_cs (a hardware spinlock +
-// IRQs off on the owning core) makes the check-and-set atomic across both
-// cores instead. It is held only around the flag check-and-set, NEVER
-// across the flash write itself (flash_safe_execute has its own, separate
-// multicore lockout for that) -- so core1 never holds this lock while
-// parking core0 inside flash_safe_execute, which is what rules out a
-// deadlock between the two mechanisms.
+// g_reboot_req/g_reboot_off are read and written from BOTH cores
+// (fw_rom_request_reboot / fw_rom_request_proven_reboot on core1,
+// fw_rom_service's deadline check on core0). g_boot_cs (a hardware spinlock +
+// IRQs off on the owning core) makes each check-and-set atomic across the
+// cores: whichever side sets g_reboot_req first wins, and the other side
+// sees it and backs off. It is held only around register/flag writes, never
+// across a flash operation.
 static critical_section_t g_boot_cs;
-static volatile bool      g_buying;
 static uint8_t __aligned(4) g_work[4096];     // PT load (3.25 KB) and explicit_buy (4 KB)
 
-void fw_rom_boot_init(void) {
-    // Before core1 launches, so g_boot_cs is ready for fw_rom_buy the first
-    // moment core1 could possibly call it.
+// What fw_rom_boot_early saw and did, for fw_rom_boot_init to log once
+// logging is up.
+typedef enum { EARLY_NO_MARK, EARLY_STALE_MARK, EARLY_BOUGHT, EARLY_BUY_FAILED } early_t;
+static early_t  g_early = EARLY_NO_MARK;
+static uint32_t g_mark0, g_mark1;
+static int      g_buy_rc;
+
+// ---- the early buy (fix round 4) ------------------------------------------
+//
+// Why the buy moved here, out of core1: twice on the bench, calling the buy
+// from core1 (with core0 running and PSRAM in use) wedged the board, and the
+// only measured-good buy (spec M7) ran single-core, first thing, with no
+// PSRAM in use. The concrete difference found in the SDK: every
+// hardware_flash operation saves QMI window 1 (PSRAM, on CS1) before the ROM
+// flash routines and restores it after (~/pico-sdk/src/rp2_common/
+// hardware_flash/flash.c, flash_save_hardware_state /
+// flash_restore_hardware_state), because the ROM's flash_exit_xip also takes
+// CS1 out of its XIP mode and rewrites M1 to a plain 03h read.
+// rom_explicit_buy (pico/bootrom.h) runs the ROM function under
+// flash_safe_execute and does NOT do that -- so after it returns, PSRAM is
+// left in the wrong mode. Here the buy runs with only core0 alive, IRQs off,
+// and QMI saved/restored exactly as flash.c does it.
+
+typedef struct {
+    uint32_t timing, rcmd, rfmt;                   // flash_rp2350_qmi_save_state_t
+    uint32_t qspi_pads[count_of(pads_qspi_hw->io)];
+} qmi_save_t;
+
+// Mirrors flash.c's flash_save_hardware_state (RP2350 branch).
+static void __no_inline_not_in_flash_func(qmi_save)(qmi_save_t *st) {
+    // Commit pending writes to external RAM: the ROM's cache flush would
+    // otherwise discard dirty PSRAM lines.
+    xip_cache_clean_all();
+    for (size_t i = 0; i < count_of(pads_qspi_hw->io); ++i) st->qspi_pads[i] = pads_qspi_hw->io[i];
+    st->timing = qmi_hw->m[1].timing;
+    st->rcmd   = qmi_hw->m[1].rcmd;
+    st->rfmt   = qmi_hw->m[1].rfmt;
+}
+
+// Mirrors flash.c's flash_restore_hardware_state + flash_rp2350_restore_qmi_cs1,
+// case for case. The SDK's own first case -- "a CS1 setup function is
+// registered, call it" -- is the one that applies on this board:
+// runtime_init_setup_psram registers psram_initialize_internal through
+// psram_reinitialize() before main(). Both are static in the SDK, so the
+// public psram_reinitialize() is how that case is reached here: it
+// re-registers the same function and runs flash_start_xip(), which ends by
+// calling it (QUAD_ENABLE to the PSRAM, then every M1 register). Must run
+// with IRQs off and core1 not started -- fw_rom_boot_early guarantees both.
+static void qmi_restore(const qmi_save_t *st) {
+    for (size_t i = 0; i < count_of(pads_qspi_hw->io); ++i) pads_qspi_hw->io[i] = st->qspi_pads[i];
+    if (psram_is_available()) {
+        (void)psram_reinitialize();
+    } else if (flash_devinfo_get_cs_size(1) == FLASH_DEVINFO_SIZE_NONE) {
+        // flash.c Case 1: CS1 not enabled, the ROM never sent it an XIP exit;
+        // the saved config is still correct.
+        qmi_hw->m[1].timing = st->timing;
+        qmi_hw->m[1].rcmd   = st->rcmd;
+        qmi_hw->m[1].rfmt   = st->rfmt;
+    } else {
+        // flash.c Case 2: RAM on CS1 got an XIP exit; restore the serial write
+        // command config (reads stay on the ROM's serial 03h config).
+        qmi_hw->m[1].wfmt = QMI_M1_WFMT_RESET;
+        qmi_hw->m[1].wcmd = QMI_M1_WCMD_RESET;
+    }
+}
+
+static int early_buy(void) {
+    // A hang safety net for the buy itself: the regular watchdog is not armed
+    // until core0's loop, and a buy that hangs with nothing armed is the
+    // bench's wedge again. 8 s is ~100x a 4 KB erase + program. Disarmed
+    // afterwards so main()'s init keeps its current, unwatched timing.
+    watchdog_enable(8000, false);
+    uint32_t irq = save_and_disable_interrupts();
+    qmi_save_t st;
+    qmi_save(&st);
+    // Core1 is not started, so flash_safe_execute inside rom_explicit_buy
+    // takes the PICO_MULTICORE_LOCKOUT_BEFORE_CORE1_STARTED path (no
+    // handshake) and just disables IRQs, which are already off.
+    int rc = rom_explicit_buy(g_work, sizeof g_work);
+    qmi_restore(&st);
+    restore_interrupts(irq);
+    watchdog_disable();
+    return rc;
+}
+
+void fw_rom_boot_early(const char *running_version) {
+    // Before core1 launches, so g_boot_cs is ready for every cross-core
+    // request, including the one a failed buy below makes.
     critical_section_init(&g_boot_cs);
     boot_info_t bi;
     memset(&bi, 0, sizeof bi);
@@ -47,9 +132,49 @@ void fw_rom_boot_init(void) {
         g_partition = bi.partition;
         g_trial = (bi.tbyb_and_update_info & BOOT_TBYB_AND_UPDATE_FLAG_BUY_PENDING) != 0;
     }
-    int rc = rom_load_partition_table(g_work, sizeof g_work, false);
+    g_boot_type = bi.boot_type;
+    // Before any part_range() use, and before the buy.
+    g_pt_rc = rom_load_partition_table(g_work, sizeof g_work, false);
+
+    // Consume the mark whatever it says: cleared FIRST, so neither a failed
+    // buy nor a later boot can ever act on it twice.
+    g_mark0 = watchdog_hw->scratch[0];
+    g_mark1 = watchdog_hw->scratch[1];
+    watchdog_hw->scratch[0] = 0;
+    watchdog_hw->scratch[1] = 0;
+
+    if (!fw_trial_proven(g_trial, g_mark0, g_mark1, running_version)) {
+        g_early = (g_mark0 == FW_PROVEN_MAGIC) ? EARLY_STALE_MARK : EARLY_NO_MARK;
+        return;                                   // a plain trial, or no trial at all
+    }
+    g_buy_rc = early_buy();
+    if (g_buy_rc == 0) {
+        g_bought = true;                          // trial over; the deadline stands down
+        g_early = EARLY_BOUGHT;
+    } else {
+        g_early = EARLY_BUY_FAILED;
+        fw_rom_request_reboot(0);                 // unbought -> the old slot (M5)
+    }
+}
+
+void fw_rom_boot_init(void) {
     wf_logf(WF_INFO, "boot: partition %d type 0x%02x%s, pt load rc %d",
-            g_partition, (unsigned)bi.boot_type, g_trial ? " TRIAL (buy pending)" : "", rc);
+            g_partition, (unsigned)g_boot_type,
+            fw_rom_trial_boot() ? " TRIAL (buy pending)" : "", g_pt_rc);
+    switch (g_early) {
+    case EARLY_BOUGHT:
+        wf_logf(WF_INFO, "boot: proven trial -- explicit buy rc 0, confirmed");
+        break;
+    case EARLY_BUY_FAILED:
+        wf_logf(WF_ERR, "boot: proven trial -- explicit buy rc %d, rebooting to revert", g_buy_rc);
+        break;
+    case EARLY_STALE_MARK:
+        wf_logf(WF_WARN, "boot: ignored a proven mark not for this boot (%08lx %08lx)",
+                (unsigned long)g_mark0, (unsigned long)g_mark1);
+        break;
+    case EARLY_NO_MARK:
+        break;
+    }
 }
 
 bool fw_rom_trial_boot(void)      { return g_trial && !g_bought; }
@@ -72,52 +197,38 @@ bool fw_rom_other_slot(uint32_t *off, uint32_t *len) {
     return part_range(g_partition == 0 ? 1 : 0, off, len);
 }
 
-bool fw_rom_buy(void) {
-    // Check-and-set against fw_rom_service's deadline reboot, under the
-    // lock: if a reboot has already been requested, back off rather than
-    // start a flash write a reset could interrupt. The lock is released
-    // before the flash write itself -- see g_boot_cs's comment.
-    critical_section_enter_blocking(&g_boot_cs);
-    if (g_reboot_req != 0) {
-        critical_section_exit(&g_boot_cs);
-        return false;
+void fw_rom_request_proven_reboot(const char *running_version) {
+    uint32_t off = 0, len = 0;
+    if ((g_partition != 0 && g_partition != 1) || !part_range(g_partition, &off, &len) || off == 0) {
+        // Cannot name our own slot, so cannot come back to it as a trial.
+        // Revert instead: an unbought image never becomes current.
+        wf_logf(WF_ERR, "trial: no range for booted partition %d -- rebooting to revert",
+                g_partition);
+        fw_rom_request_reboot(0);
+        return;
     }
-    g_buying = true;
-    critical_section_exit(&g_boot_cs);
-
-    // Fix round 3 (bench): rom_explicit_buy() itself already calls
-    // flash_safe_execute(rom_helper_explicit_buy, ..., UINT32_MAX) --
-    // see ~/pico-sdk/src/rp2_common/pico_bootrom/include/pico/bootrom.h,
-    // lines 941-987. Round 1/2 wrapped this in a SECOND, outer
-    // flash_safe_execute (a `do_buy` callback around it) -- a nested
-    // multicore lockout, which is not reentrant: the outer call parks core0
-    // and waits for it to acknowledge the lockout; called again from
-    // *inside* that already-locked-out execution, the inner call tries to
-    // start a second handshake core0 can never acknowledge, because core0
-    // is already spinning inside the outer wait rather than running its
-    // normal loop. That is exactly the bench failure: slot A came back with
-    // only its last 4 KiB (the "explicit buy" flag sector, offset 0x82000)
-    // erased and never reprogrammed, board wedged, watchdog never fired --
-    // rom_explicit_buy started erasing the flag sector, called
-    // flash_safe_execute a second time to do so, and both cores hung
-    // waiting on each other. Call the ROM function directly; it manages its
-    // own multicore lockout and must not be wrapped in another one.
-    int rc = rom_explicit_buy(g_work, sizeof g_work);
-    wf_logf(rc == 0 ? WF_INFO : WF_ERR, "boot: explicit buy rc %d", rc);
-    if (rc == 0) g_bought = true;
-
+    uint32_t h = fw_version_hash(running_version);
+    bool accepted = false;
     critical_section_enter_blocking(&g_boot_cs);
-    g_buying = false;
+    if (g_reboot_req == 0) {
+        watchdog_hw->scratch[0] = FW_PROVEN_MAGIC;
+        watchdog_hw->scratch[1] = h;
+        g_reboot_off = off;
+        g_reboot_req = 2u;
+        accepted = true;
+    }
     critical_section_exit(&g_boot_cs);
-
-    return rc == 0;
+    if (accepted)
+        wf_logf(WF_INFO, "trial: proven -- rebooting into slot %d (0x%lx) to buy",
+                g_partition, (unsigned long)off);
+    else
+        wf_logf(WF_WARN, "trial: proven, but a reboot is already pending -- not marking");
 }
 
 void fw_rom_request_reboot(uint32_t flash_update_off) {
-    // Under the same lock as fw_rom_buy/fw_rom_service, and only if nothing
-    // is pending yet -- never overwrite an already-requested reboot (in
-    // particular, never let a later, unrelated call race past a revert
-    // that's already on its way out).
+    // Under the same lock as fw_rom_service/fw_rom_request_proven_reboot,
+    // and only if nothing is pending yet -- never overwrite an
+    // already-requested reboot.
     critical_section_enter_blocking(&g_boot_cs);
     if (g_reboot_req == 0) {
         g_reboot_off = flash_update_off;
@@ -139,18 +250,14 @@ void fw_rom_watchdog_start(void) {
 void fw_rom_service(void) {
     // The trial deadline is enforced HERE, on core0, independent of core1: a
     // trial image whose network side hangs must still revert (spec M5/M6).
-    // The read-decide-set below runs under g_boot_cs, the same lock
-    // fw_rom_buy takes for its own check-and-set -- so the two can never
-    // interleave: either this sees g_buying already true (a buy is under
-    // way; skip) or fw_rom_buy sees g_reboot_req already nonzero (a reboot
-    // is already decided; refuse to start). There is no window where a buy
-    // has started and this path can still slip a reboot request underneath
-    // it. wf_logf is kept OUTSIDE the lock (spinlock + IRQs-off sections
-    // must stay short); g_reboot_req itself is read again below, outside
-    // the lock, which is safe because once set it is never cleared.
+    // The read-decide-set runs under g_boot_cs, so it cannot interleave with
+    // core1's fw_rom_request_proven_reboot: whichever sets g_reboot_req first
+    // wins. It never fires once the early buy set g_bought. wf_logf is kept
+    // OUTSIDE the lock; g_reboot_req is read again below outside the lock,
+    // which is safe because once set it is never cleared.
     bool deadline_hit = false;
     critical_section_enter_blocking(&g_boot_cs);
-    if (g_trial && !g_bought && !g_buying && g_reboot_req == 0 &&
+    if (g_trial && !g_bought && g_reboot_req == 0 &&
         to_ms_since_boot(get_absolute_time()) >= FW_TRIAL_DEADLINE_MS) {
         g_reboot_req = 1u;
         deadline_hit = true;

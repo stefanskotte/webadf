@@ -4,11 +4,19 @@
 #include <stdint.h>
 #include <stdbool.h>
 
-void fw_rom_boot_init(void);           // core0, before core1 launches: loads PT, records boot info
+// FIRST statement of main(): single-core, before stdio, core1, PSRAM users.
+// Loads boot info and the PT, consumes the "proven" mark in watchdog
+// scratch[0..1], and on a proven trial boot performs the explicit buy here.
+// Logs nothing (logging is not up yet); fw_rom_boot_init reports the outcome.
+void fw_rom_boot_early(const char *running_version);
+void fw_rom_boot_init(void);           // core0, after wf_log_init, before core1: logs boot info
 bool fw_rom_trial_boot(void);          // this boot is an unconfirmed TBYB trial
 int  fw_rom_booted_partition(void);    // 0, 1, or -1 (unpartitioned)
 bool fw_rom_other_slot(uint32_t *flash_off, uint32_t *len);
-bool fw_rom_buy(void);                 // rom_explicit_buy (which itself uses flash_safe_execute) -- never wrap it in another one
+// Any core. The trial proved itself: mark scratch[0..1] for running_version
+// and request a FLASH_UPDATE reboot into the booted slot, so the next boot
+// buys in fw_rom_boot_early. Refused (logged) if a reboot is already pending.
+void fw_rom_request_proven_reboot(const char *running_version);
 void fw_rom_request_reboot(uint32_t flash_update_off); // 0 = normal reboot; any core
 void fw_rom_watchdog_start(void);      // core0, right before its loop
 void fw_rom_service(void);             // core0, every loop turn: feed, deadline, honour reboot

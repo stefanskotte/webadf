@@ -24,6 +24,21 @@ fw_trial_action_t fw_trial_decide(const fw_trial_in_t *in, const char **reason) 
     return FW_TRIAL_WAIT;
 }
 
+uint32_t fw_version_hash(const char *version) {
+    uint32_t h = 0x811c9dc5u;
+    for (const unsigned char *p = (const unsigned char *)version; *p; p++) {
+        h ^= *p;
+        h *= 0x01000193u;
+    }
+    return h;
+}
+
+bool fw_trial_proven(bool trial_boot, uint32_t scratch0, uint32_t scratch1,
+                     const char *running_version) {
+    return trial_boot && scratch0 == FW_PROVEN_MAGIC &&
+           scratch1 == fw_version_hash(running_version);
+}
+
 static void clear_pending(fw_state_t *st) {
     st->pending = false;
     st->pending_sequence = 0;
