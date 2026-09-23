@@ -19,6 +19,9 @@ echo "backup: $out ($(shasum -a 256 "$out" | cut -c1-16)...)"
 picotool load "$FW/wifi_floppy_pt.uf2"
 picotool reboot -u; wait_bootsel
 picotool partition info
-picotool load -p 0 "$FW/wifi_floppy.uf2"
-picotool reboot
-echo "installed into slot A; watch the serial log for 'trial: confirmed'"
+# BENCH T4.8 (2026-09-23): a plain `picotool reboot` after `load -p 0` left the
+# board in BOOTSEL instead of booting -- the image is TBYB (spec D1/D10) and a
+# plain reboot never starts an unconfirmed trial. `-x` on the load itself DOES
+# start it; this used to be two steps and silently failed the install.
+picotool load -p 0 -x "$FW/wifi_floppy.uf2"
+echo "installed into slot A; watch the serial log for 'trial: proven'"

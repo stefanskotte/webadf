@@ -4312,6 +4312,175 @@ Demozoo API (the bulk export makes per-lookup load on a non-profit unnecessary).
   allowlist checks only the first URL (the raster content-type allowlist and `nosniff` still apply).
 - **Cron drift:** the daily 01:30 cron against a 7-day gate can drift a refetch to 8 days.
 
+### 3ak. The board updates itself — 2b
+
+**STATUS: `feat/firmware-update-device`, not merged, not pushed, not deployed.** Production
+runs §3ai + §3aj's server half only; no board in the field can update itself yet.
+**Gates: <controller fills in>**
+
+Increment 2b. Spec: `docs/superpowers/specs/2026-09-22-firmware-update-device-design.md`
+(read its new §9 addendum first — the bench moved the design past D8's text). Plan:
+`docs/superpowers/plans/2026-09-22-firmware-update-device.md`, 12 tasks. Ledger (every ruling
+and bench measurement, in order): `.superpowers/sdd/2026-09-22-firmware-update-device/progress.md`.
+Commits `ecbe76f..71424e7` (`git log --oneline ecbe76f..HEAD`).
+
+**What shipped**
+
+- **A/B partitions + try-before-you-buy via the RP2350 boot ROM** (`partitions.json`: A at
+  32K+4MB, B at the next 4MB). No bootloader of our own — the ROM already does slot choice,
+  trial boot and revert.
+- **Prove, THEN proven-reboot, THEN early-buy** (`fw_rom.c`, replaces spec D8's in-place buy —
+  see THE FINDING below). The trial proves itself with a heartbeat naming its own version,
+  writes a "proven" mark (magic + hash of `WF_FIRMWARE_VERSION`) to watchdog `scratch[0..1]`,
+  and requests a `FLASH_UPDATE` reboot into its OWN slot. The next boot, single-core, before
+  core1 launches and before PSRAM is touched, `fw_rom_boot_init` sees trial + matching mark,
+  clears it, and calls `rom_explicit_buy` directly. Post-buy bookkeeping (`installed_sequence`,
+  clearing `pending`) is the existing `fw_boot_reconcile` CONFIRMED_LATE path on core1.
+- **Signed manifest, not just a hash** (`fw_verify.c`, vendored Monocypher 4.0.2
+  `crypto_eddsa_check`): `webadf-fw-v1\n<version>\n<sequence>\n<sha256 hex>\n<sizeBytes>`,
+  ed25519 against the compiled-in public key, keyId checked. `signature_format=2` rows only
+  are offered to a board with `updateProtocol` ≥ 1.
+- **Anti-rollback record**: a 4 KB firmware-state sector at 16 MB − 12 KB holds
+  `installed_sequence` + `pending`; refuses any signed `sequence` ≤ installed.
+- **PSRAM staging**: the release streams into PSRAM over the existing TLS client, hashing as
+  it goes; nothing touches flash until SHA-256 and signature both pass.
+- **Header-last slot writer** (`fw_apply.c`): writes the other slot with the first sector
+  (IMAGE_DEF) LAST, reads the whole slot back through the no-translate window and compares
+  SHA-256, then writes `pending`, then `rom_reboot` — a power cut before the header lands
+  leaves the old slot as the only bootable one (bench item 8 below).
+- **Idle gate** (D6): flashing starts only with no disk mounted, motor off, no write-back
+  session open — same predicate as `fw_state_save`'s.
+- **The instruction-cursor sync rule** (fix round 1, carried from §3aj): the first
+  `instructionVersion` seen after `dc_init` with no update is a CURSOR SYNC — ack only, never
+  `fwu_on_instruction` — so a boot-time REVERTED failure still reaches the server (spec D8/D9);
+  a real cancel moves the cursor past the sync and still clears normally.
+- **`WF_FW_DEBUG` bench build** (`cmake -DWF_FW_DEBUG=ON`): serial commands `fwdbg {json}`
+  (injects a crafted offer through the SAME parse → check → fwu path a real poll takes) and
+  `fwdbg-wdtest` (deliberately wedges core1 inside `flash_safe_execute` to prove the watchdog
+  resets it). **Never publishable**: `firmware-manifest.ts`'s `refuseReleaseImage` byte-scans
+  the built `.bin` for the literal string `fwdbg` and refuses to publish if found, on top of
+  requiring `tbyb: not bought` and `hash: verified` in `picotool info` output.
+
+**THE FINDING, load-bearing for the whole design**: the RP2350 boot ROM's `rom_explicit_buy`
+**HANGS whenever PSRAM (QMI CS1) is configured, and the watchdog does NOT rescue it.** Three
+separate wedges on the operator's board before this was isolated (BENCH T4.8, and two more
+during the fix-round-4/5 bench isolation) — the trial image sent one heartbeat then went
+silent: USB enumerated, serial dead, `picotool reset` ignored, the 8 s watchdog never fired.
+Isolated with a throwaway probe against the same board+partition-table:
+- no PSRAM configured → `rom_explicit_buy` returns rc=0 fine (V2H).
+- PSRAM configured (`hardware_psram`, SDK runtime PSRAM init pre-main) → buy WEDGES, and an
+  armed 4 s watchdog does NOT reset it (V2P).
+- `PICO_RUNTIME_SKIP_INIT_PSRAM=1`, buy FIRST (PSRAM size reads 0 at that point), THEN
+  `runtime_init_setup_psram()` explicitly afterward → buy rc=0, PSRAM comes up
+  (size=8388608) right after, normal reboot keeps the bought slot (V2L). **Root cause
+  confirmed.**
+
+Hence the design: the firmware never calls the ROM buy with PSRAM live. `main()` calls
+`fw_rom_boot_early` (the early buy) FIRST on every boot, before anything touches PSRAM, then
+calls `runtime_init_setup_psram()` explicitly. The build sets
+`PICO_RUNTIME_SKIP_INIT_PSRAM=1` so crt0 never brings PSRAM up on its own, and there is an
+assertion that no *initialized* `__psram` data exists (only `__uninitialized_psram`), since
+crt0 would otherwise copy it before PSRAM is up. Round 4's QMI M1 save/restore around the buy
+and `psram_reinitialize` are gone — not needed once the buy never sees PSRAM at all.
+
+**Other measured facts, each load-bearing somewhere in the code:**
+
+- **`picotool load -p 0 -x <uf2>` STARTS a TBYB image; a plain `picotool reboot` after
+  `load -p 0` leaves the board in BOOTSEL instead.** (BENCH T4.8.) This is why
+  `scripts/firmware-install-partitioned.sh` needed fixing — see below.
+- **The watchdog DOES rescue a core1 `flash_safe_execute` lockout wedge** (`fwdbg-wdtest`:
+  reset ~21 s after the command, came back on the same bought image, heartbeat 3 s) **but does
+  NOT rescue a hang inside the ROM buy itself** (the PSRAM finding above). The design keeps
+  the buy away from PSRAM rather than relying on the watchdog to catch it.
+- **The SDK's `rom_explicit_buy` already wraps itself in `flash_safe_execute`** (`bootrom.h`
+  974-987). The plan's original `fw_rom_buy` wrapped it a second time → nested multicore
+  lockout → deadlock. Fixed in fix round 3: call `rom_explicit_buy` DIRECTLY, never nest
+  `flash_safe_execute` around it.
+- **`XIP_BASE` reads outside the booted slot hard-fault** on a partitioned boot; `config_store.c`
+  and `token_store.c` read through `XIP_NOCACHE_NOALLOC_NOTRANSLATE_BASE` instead (D2), shipped
+  first as its own safe-on-unpartitioned-boards step (Task 1).
+
+**Every bench acceptance item (spec §8), with evidence:**
+
+1. **USB install** — BENCH T4.8 PASS (2026-09-23 10:08): debug build `1.0.0+g5e826aa` via
+   `picotool load -p 0 -x`; trial boot → TLS up → "trial: proven — rebooting into slot 0
+   (0x8000) to buy" at 16.5 s → reboot → second boot not a trial (bought), PSRAM ok: fetched
+   mounted disk `3d16e0ac` into PSRAM; DB heartbeats 4-9 s, pairing intact.
+2. **N → N+1 from the Devices tab** — PASS (13:13-13:14:54): `1.0.0+g2ac2617` (seq 2) →
+   `1.1.0+ga2dd854` (seq 3). Update pressed with disk mounted → held in `queued`; operator
+   ejected → applying → flashed slot A → reboot → trial partition 0 → proven reboot → early
+   buy → "update to 1.1.0+ga2dd854 confirmed (sequence 3)" → cursor sync. **Measured
+   deviation**: the server derived completion at 13:14:54 from the TRIAL heartbeat, ~5 s
+   *before* the image was actually confirmed (bought) — see deviations below.
+3. **N+1 → N+2, the B → A direction** — PASS (13:16): `1.1.0` in slot A → `1.1.1+g9323c86`
+   (seq 4) into slot B: offered → downloading → queued(staged) → applying 13:16:35 → trial
+   partition 1 → proven reboot → confirmed (sequence 4) → cursor sync.
+4. **A deliberately broken release that never buys** — PASS (13:33-13:38): `1.1.2+g959e9a6`
+   (seq 5, throwaway branch, no heartbeat) applied into slot A → trial partition 0 → at
+   287.85 s "trial: giving up (no heartbeat within 5 minutes) — rebooting to revert" → slot B
+   `1.1.1` re-booted → "fw: reverted: no heartbeat within 5 minutes" → the next cursor sync did
+   NOT wipe the failure. This release is deliberately superseded (`1.1.3+g71424e7`, seq 6,
+   fixes it) — it exists only to prove the revert path and was never meant to be the board's
+   final state.
+5. **A tampered signature refused before any flash write** — PASS, item 5+6 together (13:42,
+   debug build `1.1.3+g71424e7` via USB `-x`): `fwdbg`-injected a genuinely-signed seq-6 offer
+   with one base64 character flipped → "signature does not verify", no download, slot
+   untouched.
+6. **A rollback target refused by the board even when the server is bypassed** — same run:
+   `fwdbg`-injected a genuinely signed seq-3 offer (`1.1.0`, older than the installed `1.1.1`)
+   → "not newer than the installed release (anti-rollback)", no download.
+7. **Update requested while a disk is mounted waits, then proceeds** — covered by item 2
+   above (held in `queued` until the operator ejected).
+8. **A power cut during `applying`** — PASS (13:42): Update to `1.1.3` → applying at 13:42:28
+   → operator pulled USB power → power-up booted the intact slot B (`1.1.1`, partition 1),
+   cursor sync; DB read `1.1.1`, desired `1.1.3`, state null (the cut landed before `pending`
+   was written, so the card read "update requested" — no auto-retry, by design).
+
+**All 8 acceptance items PASS.**
+
+**Accepted deviations and known gaps:**
+
+- **The server derives completion from the trial heartbeat, ~5 s before the image is actually
+  confirmed** (observed in item 2 above; was a Task 4 deferred-minor, now measured on the
+  bench). The trial reports its new version before the buy; if the buy then failed, the
+  server could already have derived success before the old firmware's "reverted" report
+  landed. Not fixed this increment — flagged for whoever revisits completion derivation.
+- **`updateProtocol` reaches the server with the first status report, not at registration**
+  (`dc_set_fw_report` is attached after `dc_register`) — matches the same accepted deviation
+  §3aj already notes on the server side; the server accepts it on status.
+- **A failed first USB install ends in BOOTSEL** (A unbought, B empty, old IMAGE_DEF
+  overwritten). Recovery is the flash backup the install script takes — there is no other
+  recovery path.
+- **Builds are TBYB-only now.** Any load path except a flash-update boot (`picotool load
+  ... -x`) lands an unpartitioned board in BOOTSEL — there is no longer a "just runs" load.
+- **The ROM's own buy (flag-sector erase, then rewrite) is still a reset-sensitive window** —
+  inherent to the boot ROM, not something this design can close further; covered in spirit by
+  the power-cut acceptance item (8), which tests the slot write, not the buy itself.
+
+**How to operate:**
+
+- **One-time per board**: `pnpm firmware:install-partitioned`. **This task fixed the script**
+  — see below.
+- **Publish a release**: `pnpm firmware:publish` (signs the manifest, refuses TBYB/hash/debug
+  violations, refuses a non-newer sequence).
+- **Push an update**: Devices tab → select boards → Update → confirm with password (§3aj's
+  UI). The board enforces the idle gate itself regardless of what the server thinks.
+- **Bench-only debug builds**: `cmake -B build -G Ninja -DWF_FW_DEBUG=ON ...`, then
+  `fwdbg {"version":"...", ...}` to inject a crafted offer, `fwdbg-wdtest` to prove the
+  watchdog rescues a lockout wedge. Never build a debug image for `firmware:publish` — it
+  will refuse it, but don't rely on that; it's a backstop, not the plan.
+
+**The install script needed fixing, and this task fixed it**: `scripts/firmware-install-partitioned.sh`
+ended its sequence with `picotool load -p 0 "$FW/wifi_floppy.uf2"` followed by a separate
+plain `picotool reboot` — exactly the sequence BENCH T4.8 measured as landing in BOOTSEL, not
+booting. It now loads with `-x` in one step (`picotool load -p 0 -x "$FW/wifi_floppy.uf2"`),
+which BENCH T4.8 confirmed starts the image directly, and the trailing `picotool reboot` is
+gone.
+
+**Do not copy secrets out of a flash backup.** `scripts/firmware-install-partitioned.sh` saves
+a full flash image to `~/.webadf/board-backups/` (0600, owner-only) before every install —
+it contains the Wi-Fi password and device token. Location only; contents stay off the record.
+
 ### 3aj. Select boards, press Update — the server half — ON A BRANCH 2026-09-22, NOT MERGED
 
 **STATUS: `feat/firmware-update-server`, not merged, not pushed, not deployed.** Production
@@ -4327,6 +4496,8 @@ holds a real bearer token via `pairDevice`, so it polls, downloads and reports l
 That proves the server instructs, serves, tracks and verifies correctly. It proves nothing
 about a board flashing itself. **Expect this protocol to move when firmware lands**: it
 happened to write-back, where HANDOFF §4g had to become the authority over the spec text.
+**It has now landed — see §3ak, on its own unmerged branch — and it did move: D8's in-place
+buy could not survive contact with PSRAM.**
 
 **An update is desired state, not a job.** It rides the poll body the device already parses,
 is fetched through a route mirroring `/api/device/image/[sha256]`, and is confirmed by the

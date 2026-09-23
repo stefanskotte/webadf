@@ -736,6 +736,12 @@ Co-Authored-By: Claude Opus 5.5 (1M context) <noreply@anthropic.com>"
 
 ### Task 4: Partitioned TBYB build, boot-ROM glue, watchdog, and the USB install (D1, D8, D10, D11)
 
+**Correction from the bench (2026-09-23): D8's in-place buy (prove, then buy right there in
+the trial boot) does not survive contact with PSRAM — `rom_explicit_buy` hangs whenever QMI
+CS1/PSRAM is configured, and the watchdog does not rescue it. It was replaced by
+prove-then-proven-reboot-then-early-buy, implemented across this task's fix rounds. See spec
+§9 (M11-M14) for the measurements and HANDOFF §3ak for the full account.**
+
 This is the first task that changes how the board boots. **It ends at a BENCH checkpoint**:
 the operator's board running the current firmware from slot A, confirmed by itself, with
 its pairing intact.
@@ -1405,20 +1411,32 @@ export const FIXTURE_SEED_HEX: string;                           // test-only ke
 
 - [ ] **Step 1: Vendor Monocypher 4.0.2**
 
+**Correction (fix round 1, 2026-09-23): the original form of this step extracted both
+tarballs into directories that differ only in case (`monocypher-4.0.2` vs
+`Monocypher-4.0.2`). macOS's default filesystem is case-insensitive, so the second `tar xzf`
+landed on top of the first extraction, and the `diff -r` that followed compared that merged
+directory with itself — a vacuous pass regardless of whether the sources actually agreed.
+Unpack each tarball into its own explicitly-named directory instead, which is correct on any
+filesystem, case-sensitive or not:**
+
 ```bash
 cd "$(mktemp -d)"
 curl -fsSLO https://monocypher.org/download/monocypher-4.0.2.tar.gz
 curl -fsSL -o gh.tar.gz https://github.com/LoupVaillant/Monocypher/archive/refs/tags/4.0.2.tar.gz
 shasum -a 256 monocypher-4.0.2.tar.gz
-tar xzf monocypher-4.0.2.tar.gz
+mkdir -p release gh
+tar xzf monocypher-4.0.2.tar.gz -C release --strip-components=1
+tar xzf gh.tar.gz -C gh --strip-components=1
 D=/Users/sfs/Devel/webadf/wifi-floppy/firmware/src/vendor/monocypher; mkdir -p $D
-cp monocypher-4.0.2/src/monocypher.[ch] monocypher-4.0.2/src/optional/monocypher-ed25519.[ch] $D/
-cp monocypher-4.0.2/LICENCE.md $D/
-tar xzf gh.tar.gz && diff -r monocypher-4.0.2/src Monocypher-4.0.2/src && echo "tarball matches the GitHub tag"
+cp release/src/monocypher.[ch] release/src/optional/monocypher-ed25519.[ch] $D/
+cp release/LICENCE.md $D/
+diff -r release/src gh/src && echo "tarball matches the GitHub tag"
 ```
 
 If the diff reports differences, **stop**. Two sources disagreeing about a crypto library
-is not a mismatch to work around.
+is not a mismatch to work around. (Run for real on 2026-09-23: the two sources differ only in
+a version comment line and a LICENCE note — record the real differences in `VENDORED.md`
+rather than claiming an exact match.)
 
 Write `$D/VENDORED.md` with the version, both URLs, the tarball's SHA-256 as printed, the
 date, and the note: "unmodified; only `crypto_ed25519_check` (RFC 8032, SHA-512) is used."

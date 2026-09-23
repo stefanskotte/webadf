@@ -293,3 +293,66 @@ Each item is run on the operator's board and read from both the serial log and t
    proceeds.
 8. **A power cut during `applying`:** the board boots the old firmware and reports the
    failure.
+
+---
+
+## 9. Addenda from the bench (2026-09-23)
+
+Everything below was measured after this spec was written and approved, during Task 4's
+bench work (HANDOFF §3ak carries the full account, with log lines and DB rows). Each addendum
+records what M1-M10 and D8 did not, and correspondingly the design change it forced. Nothing
+above this line is rewritten; where the bench and the text above disagree, this section wins.
+
+**M11. `rom_explicit_buy` hangs whenever PSRAM (QMI CS1) is configured, and the watchdog does
+NOT rescue it.** Three real wedges on the operator's board (BENCH T4.8 and two more during
+fix rounds 4-5) before this was isolated with a throwaway probe on the same board and
+partition table:
+- no PSRAM configured: buy returns rc=0 fine (probe V2H).
+- PSRAM configured (`hardware_psram`, SDK runtime PSRAM init pre-main, size=8388608): buy
+  WEDGES; an armed 4 s watchdog does not reset it (probe V2P).
+- `PICO_RUNTIME_SKIP_INIT_PSRAM=1`, buy first (PSRAM reads size 0 at that point), THEN
+  `runtime_init_setup_psram()` explicitly afterward: buy rc=0, PSRAM comes up right after
+  (size=8388608), a normal reboot keeps the bought slot (probe V2L). **Root cause confirmed**:
+  the boot ROM's explicit-buy path does not save/restore QMI M1 (PSRAM) around its flash
+  operations the way `hardware_flash` does for ordinary flash ops; buying with PSRAM live
+  corrupts that state and hangs.
+
+  **This supersedes D8's in-place buy.** D8 said: on boot, if a buy is pending, prove
+  connectivity and buy right there, in the trial boot, with PSRAM already up (the trial has
+  already fetched a mounted disk into PSRAM by the time it proves itself). That is exactly the
+  wedging condition. The design that replaces it (implemented in `fw_rom.c`, HANDOFF §3ak):
+  the trial proves itself with a heartbeat naming its own version, marks itself "proven" in
+  watchdog `scratch[0..1]` (magic + hash of `WF_FIRMWARE_VERSION`), and requests a
+  `FLASH_UPDATE` reboot into its own slot. The NEXT boot calls the buy first, single-core,
+  before core1 launches and before PSRAM is brought up at all (build sets
+  `PICO_RUNTIME_SKIP_INIT_PSRAM=1`; `main()` calls `runtime_init_setup_psram()` explicitly
+  right after the early buy). Post-buy bookkeeping runs afterward on the existing
+  `fw_boot_reconcile` CONFIRMED_LATE path. One extra reboot per update; the buy never again
+  runs with PSRAM live.
+
+**M12. `picotool load -p 0 -x <uf2>` starts a TBYB image directly; a plain `picotool reboot`
+after a separate `picotool load -p 0` does not — it leaves the board in BOOTSEL.** (BENCH
+T4.8.) D11's install sequence needed correcting for this — `scripts/firmware-install-partitioned.sh`
+now ends with the combined `load -p 0 -x` step, not a `load` followed by a bare `reboot`.
+
+**M13. The watchdog DOES rescue a core1 `flash_safe_execute` lockout wedge, but does NOT
+rescue a hang inside the ROM buy itself.** `fwdbg-wdtest` (WF_FW_DEBUG only) deliberately
+wedges core1 inside `flash_safe_execute`; the board reset ~21 s later (one long poll plus the
+8 s watchdog) and came back on the same bought image. This is the opposite of M11's hang,
+which the same watchdog does not catch — confirming the fix has to keep the buy away from
+PSRAM rather than lean on the watchdog to catch a PSRAM-induced hang.
+
+**M14. The SDK's `rom_explicit_buy` already wraps itself in `flash_safe_execute`**
+(`bootrom.h:974-987`). Do not nest another `flash_safe_execute` around a call to it — fix
+round 3's bug was exactly this: a second wrapper around an already-wrapped call produced a
+nested multicore lockout and deadlocked every buy, independent of M11's PSRAM finding. Call
+`rom_explicit_buy` directly.
+
+**The instruction-cursor sync rule** (device-side, carried into this branch from §3aj's fix
+round 1, and re-confirmed on this bench): the first `instructionVersion` seen after `dc_init`
+with no `update` attached is a CURSOR SYNC, not a cancellation — ack it (echo
+`firmwareInstructionAck`) but never route it through `fwu_on_instruction`. This is what lets a
+boot-time REVERTED failure (D8/M11's revert path) still reach the server: the boot's first
+poll after a revert carries no `update`, and treating that as a cancel would silently wipe the
+failure report before it was ever sent. Verified on the bench in acceptance item 4 (§8): the
+"reverted: no heartbeat within 5 minutes" state survived the next cursor sync.
