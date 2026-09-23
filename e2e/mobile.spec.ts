@@ -3,6 +3,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import { and, eq } from 'drizzle-orm';
 import { getDb } from '@/db';
 import { games, disks } from '@/db/schema/catalog';
+import { devices } from '@/db/schema/devices';
 import { syntheticVolume } from '@/lib/adffs/synthetic';
 import { readVolume } from '@/lib/adffs';
 import { signUpFresh, runTag, createAdf } from './helpers';
@@ -26,6 +27,12 @@ import { seedProduction, seedSuggestion, cleanupDemozoo } from './demozoo-helper
 test.afterAll(async () => { await cleanupDemozoo(); await cleanupSeeded(); });
 
 const sha = (s: string) => createHash('sha256').update(`mobile-${s}`).digest('hex');
+
+/** Same pattern as devices-page.spec.ts's setDevice: write directly to a
+ * devices row -- how these tests drive a device into a specific state. */
+async function setDevice(deviceId: string, patch: Partial<typeof devices.$inferInsert>) {
+  await getDb().update(devices).set(patch).where(eq(devices.id, deviceId));
+}
 
 /**
  * A real finger, via CDP.
@@ -123,19 +130,52 @@ test('the Devices grid is two columns at 390px, and nothing overflows the viewpo
   const { deviceId: idB } = await pairDevice(page, request, 'Mobile B');
   const { deviceId: idC } = await pairDevice(page, request, 'Mobile C');
 
+  // A long, real-shaped firmware version (fix round 1, critical 2): no
+  // spaces, so nothing breaks it unless the card itself provides a wrap point.
+  await setDevice(idC, { firmwareVersion: '1.1.4+g137a4db-dirty' });
+  // A failure reason containing a URL, on a FOURTH device -- the other shape
+  // critical 2 named, and a card this narrow has never had to wrap one.
+  const { deviceId: idD } = await pairDevice(page, request, 'Mobile D');
+  await setDevice(idD, {
+    desiredFirmwareVersion: '1.1.5+ge5f6a7b',
+    firmwareUpdateState: 'failed',
+    firmwareUpdateError: 'reverted: could not reach https://updates.example.test/firmware/1.1.5+ge5f6a7b.bin within 5 minutes',
+  });
+
   await page.goto('/devices');
-  const a = (await page.getByTestId(`device-${idA}`).boundingBox())!;
-  const b = (await page.getByTestId(`device-${idB}`).boundingBox())!;
-  const c = (await page.getByTestId(`device-${idC}`).boundingBox())!;
+  const ids = [idA, idB, idC, idD];
+  // listDevices orders by `devices.name` -- and register/route.ts names every
+  // device "Device <mac>" from a RANDOM mac, ignoring the label pairDevice()
+  // was given (same landmine devices-page.spec.ts's own "org B's device"
+  // test comments on). So which of these four lands in row 1 vs row 2 is not
+  // predictable from pairing order -- group by actual Y position instead of
+  // assuming idA/idB share the first row.
+  const boxes = await Promise.all(ids.map((id) => page.getByTestId(`device-${id}`).boundingBox()));
+  const nonNull = boxes.filter((b): b is NonNullable<typeof b> => b !== null);
+  expect(nonNull).toHaveLength(4);
+  const byRow = [...nonNull].sort((x, y) => x.y - y.y);
+  const [row1a, row1b, row2a] = byRow;
 
-  // Two across: A and B share a row (device-list.tsx's grid-cols-2 base,
-  // below the lg breakpoint that switches to three), C starts the next one.
-  expect(Math.abs(a.y - b.y)).toBeLessThan(4);
-  expect(c.y).toBeGreaterThan(a.y + a.height / 2);
+  // Two across: the two topmost cards share a row (device-list.tsx's
+  // grid-cols-2 base, below the lg breakpoint that switches to three), the
+  // third starts the next one.
+  expect(Math.abs(row1a.y - row1b.y)).toBeLessThan(4);
+  expect(row2a.y).toBeGreaterThan(row1a.y + row1a.height / 2);
 
-  // The whole document, exactly like the library grid's equivalent check
-  // above -- a single card overflowing panned the entire page sideways
-  // before this redesign existed to prove it doesn't.
+  // CRITICAL 1 guard: the device name must not be squeezed to nothing next
+  // to the online badge and the Name/Rename control on a 173px-wide card.
+  for (const id of ids) {
+    const nameBox = (await page.getByTestId(`device-name-${id}`).boundingBox())!;
+    expect(nameBox.width).toBeGreaterThan(40);
+  }
+
+  // CRITICAL 2 guard: no card's right edge may exceed the viewport, and
+  // neither may the document as a whole -- a long unbroken firmware version
+  // or a URL-bearing failure reason forced BOTH before this fix (the first
+  // pushed one card 20px past its column, the second panned the whole page).
+  for (const box of nonNull) {
+    expect(box.x + box.width).toBeLessThanOrEqual(390);
+  }
   const overflow = await page.evaluate(
     () => document.documentElement.scrollWidth - document.documentElement.clientWidth,
   );

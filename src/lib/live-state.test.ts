@@ -71,6 +71,30 @@ describe('liveFingerprint', () => {
     expect(fp([stale], NOW + 5 * 60_000)).not.toBe(fp([stale], NOW + 6 * 60_000));
   });
 
+  /**
+   * Fix round 1, important 2: the card's "last seen" line now renders for
+   * EVERY offline device, not just a diverged 'stale' one -- this device has
+   * nothing desired or mounted (state 'empty') throughout, so before this fix
+   * its "Nm ago" text was not in the fingerprint at all and an offline empty
+   * (or converged) card would freeze at whatever it first rendered.
+   */
+  it("an offline EMPTY device's relative-time text moves the fingerprint too", () => {
+    const offlineEmpty: LiveStateRow = {
+      ...base, desiredDiskId: null, desiredSha256: null,
+      mountedDiskId: null, mountedSha256: null, mountedVersion: null,
+      lastSeenAt: new Date(NOW - 70_000),
+    };
+    // Offline (> STALE_AFTER_MS) at both points -- only "1m ago" vs "2m ago" moves.
+    expect(fp([offlineEmpty], NOW)).not.toBe(fp([offlineEmpty], NOW + 60_000));
+  });
+
+  it("an ONLINE device's fingerprint does not move with the clock alone", () => {
+    // Well within STALE_AFTER_MS of `now` at both points -- online throughout,
+    // so relative-time text is not even computed for it (see liveFingerprint).
+    const onlineDevice: LiveStateRow = { ...base, lastSeenAt: new Date(NOW - 5_000) };
+    expect(fp([onlineDevice], NOW)).toBe(fp([onlineDevice], NOW + 1_000));
+  });
+
   it('distinguishes no devices from one device', () => {
     expect(fp([])).not.toBe(fp([base]));
   });

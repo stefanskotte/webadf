@@ -109,11 +109,27 @@ export function DeviceAlias({ deviceId, name, isDefault }: {
       </span>
       <button type="button" onClick={beginEdit}
               data-testid={`alias-edit-${deviceId}`}
-              className="shrink-0 rounded-lg border px-2 py-0.5 text-[11px] font-semibold"
+              // aria-label rather than relying on the visible word: below
+              // `sm` the word is visually hidden (see the span below) and the
+              // pencil glyph alone would otherwise have no accessible name.
+              aria-label={isDefault ? 'Name' : 'Rename'}
+              // The pencil glyph is CSS generated content (a `::before`), not
+              // a DOM node -- deliberately, so it can NEVER show up in
+              // `element.textContent`. A sibling <span> holding "✎" looked
+              // equivalent but isn't: `display:none` on that span still left
+              // its text in textContent (Node.textContent ignores CSS
+              // entirely), so `toHaveText('Name')` in device-alias.spec.ts
+              // saw "Name✎" the first time this was tried. A pseudo-element
+              // has no such hazard.
+              className="shrink-0 rounded-lg border px-2 py-0.5 text-[11px] font-semibold max-sm:before:content-['✎']"
               style={{ borderColor: 'var(--hairline)', color: 'var(--muted)' }}>
         {/* "Name" while it is still wearing its MAC, "Rename" once it is not:
-            the first is an invitation, the second is a correction. */}
-        {isDefault ? 'Name' : 'Rename'}
+            the first is an invitation, the second is a correction. Visually
+            hidden below `sm`, collapsing the button to just the pencil above
+            (fix round 1, critical 1): on a 390px phone the full word left the
+            truncating device name itself 0-2px wide next to the online badge
+            and this button. */}
+        <span className="max-sm:hidden">{isDefault ? 'Name' : 'Rename'}</span>
       </button>
     </div>
   );

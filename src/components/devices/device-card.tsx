@@ -71,10 +71,23 @@ export function DeviceCard(
         ? `Removing disk ${device.mountedDiskNo ?? '?'}`
         : `disk ${device.desiredDiskNo ?? '?'}`
           + (device.mountedSha256 ? ` · currently holding ${device.mountedGame ?? 'a disk'} disk ${device.mountedDiskNo ?? '?'}` : '')
-    : `disk ${device.desiredDiskNo ?? '?'} · device last seen ${relative(device.lastSeenAt, now)}`; // stale
+    // stale: NOT "device last seen ..." any more (fix round 1, minor 2) --
+    // every offline card now carries its own "last seen" line up in the
+    // badge row (isOnline and 'stale' share the same STALE_AFTER_MS
+    // threshold, so a stale device is always offline), and repeating the
+    // same fact here just cluttered the sub-line. The disk number is the
+    // one piece of information that line alone still carries.
+    : `disk ${device.desiredDiskNo ?? '?'}`;
 
+  // While a mount or eject is still in flight (state === 'pending'), the
+  // MOUNTED disk is the OLD one -- bigText above is already showing the NEW
+  // disk's title (what's being mounted) or, while ejecting, the disk on its
+  // way out. Either way, tagging that title with the OLD disk's write-protect
+  // would describe the wrong disk, so the tag reads "--" until convergence
+  // (fix round 1, controller ruling).
   const protection: 'protected' | 'writable' | 'none' =
-    device.mountedWriteProtected === true ? 'protected'
+    state === 'pending' ? 'none'
+    : device.mountedWriteProtected === true ? 'protected'
     : device.mountedWriteProtected === false ? 'writable'
     : 'none';
 
@@ -82,12 +95,17 @@ export function DeviceCard(
     <div className="glass-card flex aspect-square flex-col gap-2 p-5" data-testid={`device-${device.id}`}
          data-state={state}>
       {/*
-        TOP: identity. min-w-0 on the name column and shrink-0 on the badge --
-        same reasoning file-wide as the MAC/RSSI line below -- a long name has
-        to wrap or truncate before it pushes the badge off a card this narrow.
+        TOP: identity. Below `lg` this is a NARROW card (two per row on a
+        phone -- 173px measured at 390px, 133px once p-5 is subtracted), and
+        the badge sharing a row with the name plus DeviceAlias's own
+        Name/Rename control left the name 0-2px wide there (fix round 1,
+        critical 1). Below `lg` the badge drops to its own line UNDER the
+        name, so the name gets the full row to itself minus only the Rename
+        control; at `lg` and up the card is wide enough that the badge goes
+        back to sharing the name's row.
       */}
-      <div className="flex items-start justify-between gap-2">
-        <div className="min-w-0 flex-1">
+      <div className="flex flex-col gap-1 lg:flex-row lg:items-start lg:justify-between lg:gap-2">
+        <div className="min-w-0 lg:flex-1">
           <DeviceAlias deviceId={device.id} name={device.name}
                        isDefault={isDefaultDeviceName(device.name, device.macAddress)} />
         </div>
@@ -96,8 +114,10 @@ export function DeviceCard(
           never an absent icon standing in for one of them. Offline additionally
           gets its own "last seen" line right below, so the badge is not the
           only thing telling a person how stale the card in front of them is.
+          `self-start` stops it stretching to the row's full width in the
+          column layout below `lg`.
         */}
-        <span className="inline-flex shrink-0 items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide"
+        <span className="inline-flex w-fit shrink-0 items-center gap-1 self-start rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide"
               style={{
                 background: online ? 'var(--success-bg)' : 'var(--danger-bg)',
                 color: online ? 'var(--success-fg)' : 'var(--danger-fg)',
@@ -127,13 +147,18 @@ export function DeviceCard(
           square note on the grid in device-list.tsx). */}
       <div className="flex-1" />
 
-      <div className="flex flex-col items-start gap-0.5">
+      <div className="flex w-full min-w-0 flex-col items-start gap-0.5">
         <span className="text-[11px] font-semibold uppercase tracking-wide"
               style={{ color: state === 'stale' ? 'var(--amber-text)' : 'var(--muted)' }}>
           {heading}
         </span>
-        <span className="text-[17px] font-bold leading-tight"
-              style={{ color: state === 'empty' ? 'var(--muted)' : 'var(--ink)' }}>
+        {/*
+          A disk's title is often a filename-derived string with no spaces
+          (fix round 1, minor 1) -- overflow-wrap: anywhere lets it break
+          instead of stretching the card (and the grid row) past its column.
+        */}
+        <span className="w-full text-[17px] font-bold leading-tight"
+              style={{ overflowWrap: 'anywhere', color: state === 'empty' ? 'var(--muted)' : 'var(--ink)' }}>
           {bigText}
         </span>
         <span className="text-[12px]" style={{ color: 'var(--muted)' }}>{subText}</span>
@@ -143,33 +168,38 @@ export function DeviceCard(
 
       {/* BOTTOM: write protection, firmware, and every existing action. */}
       <div className="flex flex-col gap-2">
-        <div className="flex items-center justify-between gap-2">
-          <span className="shrink-0 rounded-md border px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide"
-                style={{
-                  borderColor: 'var(--hairline)',
-                  color: protection === 'none' ? 'var(--muted)' : 'var(--ink)',
-                  // Amber is FILL ONLY (globals.css: --accent-amber "fails AA
-                  // as text") -- Writable gets an accent bar, never amber
-                  // text, which is exactly what --amber-text exists to avoid.
-                  boxShadow: protection === 'writable' ? 'inset 3px 0 0 var(--accent-amber)' : undefined,
-                }}
-                data-testid={`device-protection-${device.id}`}>
-            {protection === 'protected' ? 'Protected' : protection === 'writable' ? 'Writable' : '—'}
-          </span>
-          {/*
-            Its own element rather than joined into the identity string above:
-            the firmware state is a sentence rather than a token, and it is
-            the one thing on this card a human acts on.
-          */}
-          <span className="break-words text-right font-mono text-[11px]"
-                style={{
-                  color: update || firmware.kind === 'behind'
-                    ? 'var(--amber-text)' : 'var(--muted)',
-                }}
-                data-testid={`device-firmware-${device.id}`}>
-            {update ?? firmwareLabel(firmware)}
-          </span>
-        </div>
+        <span className="w-fit shrink-0 self-start rounded-md border px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide"
+              style={{
+                borderColor: 'var(--hairline)',
+                color: protection === 'none' ? 'var(--muted)' : 'var(--ink)',
+                // Amber is FILL ONLY (globals.css: --accent-amber "fails AA
+                // as text") -- Writable gets an accent bar, never amber
+                // text, which is exactly what --amber-text exists to avoid.
+                boxShadow: protection === 'writable' ? 'inset 3px 0 0 var(--accent-amber)' : undefined,
+              }}
+              data-testid={`device-protection-${device.id}`}>
+          {protection === 'protected' ? 'Protected' : protection === 'writable' ? 'Writable' : '—'}
+        </span>
+
+        {/*
+          Its OWN full-width row rather than sharing one with the tag above
+          (fix round 1, critical 2): a flex item next to a shrink-0 sibling
+          with no min-w-0 cannot shrink below its content's intrinsic width,
+          and a real version string like "1.1.4+g137a4db" or a failure
+          reason containing a URL has no natural break point -- that pushed
+          the whole PAGE into horizontal scroll at 390px. min-w-0 plus
+          overflow-wrap: anywhere (the update bar's break-all is the same
+          escape hatch for the same shape of content) lets it wrap instead.
+        */}
+        <span className="block min-w-0 w-full font-mono text-[11px]"
+              style={{
+                overflowWrap: 'anywhere',
+                color: update || firmware.kind === 'behind'
+                  ? 'var(--amber-text)' : 'var(--muted)',
+              }}
+              data-testid={`device-firmware-${device.id}`}>
+          {update ?? firmwareLabel(firmware)}
+        </span>
 
         {update && onCancelUpdate && (
           <button type="button" onClick={() => onCancelUpdate(device.id)}

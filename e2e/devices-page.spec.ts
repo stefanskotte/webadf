@@ -136,8 +136,15 @@ test('a stale card shows how long it has been since the device was last seen', a
 
   await page.goto('/devices');
   const card = page.getByTestId(`device-${deviceId}`);
-  await expect(card).toContainText('last seen');
-  await expect(card).toContainText(/\d+m ago/);
+  // 'stale' is always offline (same STALE_AFTER_MS threshold as isOnline), so
+  // the fact now lives in the badge row's own "last seen" line -- fix round 1
+  // dropped the "device last seen ..." phrase from the stale sub-line, since
+  // it duplicated exactly this. Target that element directly (important 1)
+  // rather than the old toContainText('last seen') on the whole card, which
+  // the badge line alone would now satisfy for ANY offline card, not just a
+  // diverged/stale one. The heading is what still says 'stale' specifically.
+  await expect(page.getByTestId(`device-last-seen-${deviceId}`)).toContainText(/\d+m ago/);
+  await expect(card).toContainText('Requested');
 });
 
 test('last_error is displayed in the card for that device', async ({ page, request }) => {
@@ -315,9 +322,12 @@ test('the Online/Offline badge renders both values, and only Offline gets a last
   await expect(page.getByTestId(`device-status-${idOffline}`)).toHaveText('Offline');
 
   // Both states are visibly rendered -- a badge in each, never an absent icon
-  // standing in for one of them.
+  // standing in for one of them. The last-seen element itself (important 1),
+  // not just a toContainText on the whole card -- that would also pass on
+  // whatever else happens to say "last seen" somewhere in the card.
   await expect(page.getByTestId(`device-last-seen-${idOnline}`)).toHaveCount(0);
-  await expect(page.getByTestId(`device-${idOffline}`)).toContainText('last seen');
+  await expect(page.getByTestId(`device-last-seen-${idOffline}`)).toContainText('last seen');
+  await expect(page.getByTestId(`device-last-seen-${idOffline}`)).toContainText(/\d+[a-z] ago/);
 });
 
 test('the write-protect tag reads the MOUNTED disk: Protected, Writable, or "—" when empty', async ({ page, request }) => {
@@ -349,10 +359,27 @@ test('the write-protect tag reads the MOUNTED disk: Protected, Writable, or "—
   });
   // idEmpty stays exactly as pairDevice left it -- nothing desired or mounted.
 
+  // A fourth device, MID-MOUNT: desired and mounted differ (state 'pending'),
+  // still holding the PROTECTED disk while a DIFFERENT one is on its way in.
+  // The big text above already shows the new (desired) disk's title, so
+  // tagging it with the OLD (mounted) disk's write-protect would describe
+  // the wrong disk -- fix round 1, minor 3.
+  const { deviceId: idPending } = await pairDevice(page, request, 'WP Pending');
+  const { gameId: gameP2, diskId: diskP2 } = await seedDisk(orgId, {
+    title: `WP-Pending-target-${tag}`, diskNo: 1, sha256: sha(`${tag}-p2`),
+  });
+  await setDevice(idPending, {
+    desiredGameId: gameP2, desiredDiskId: diskP2, desiredSha256: sha(`${tag}-p2`), desiredDiskNo: 1,
+    mountedGameId: gameP, mountedDiskId: diskP, mountedSha256: sha(`${tag}-p`), mountedDiskNo: 1,
+    lastSeenAt: new Date(),
+  });
+
   await page.goto('/devices');
   await expect(page.getByTestId(`device-protection-${idProtected}`)).toHaveText('Protected');
   await expect(page.getByTestId(`device-protection-${idWritable}`)).toHaveText('Writable');
   await expect(page.getByTestId(`device-protection-${idEmpty}`)).toHaveText('—');
+  await expect(page.getByTestId(`device-${idPending}`)).toHaveAttribute('data-state', 'pending');
+  await expect(page.getByTestId(`device-protection-${idPending}`)).toHaveText('—');
 });
 
 test('a pairing code is shown with a live expiry, and disappears when it expires', async ({ page }) => {

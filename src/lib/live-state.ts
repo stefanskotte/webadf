@@ -42,9 +42,13 @@ export interface LiveStateRow {
  * First 16 hex of a sha-256 over one canonical line per device, ordered by id.
  * `lastSeenAt` itself is NOT in it -- it moves every poll -- only what the
  * pages actually render from it: the online/offline boundary (DevicesPage's
- * header count), and, for a device stuck 'stale', the exact "Nm ago" text a
- * card shows (DeviceCard). Both are derived facts that change only when they
- * would change what is on screen, not every time the clock ticks.
+ * header count), and, for any OFFLINE device, the exact "Nm ago" text its
+ * card's "last seen" line shows (DeviceCard). That line is not limited to a
+ * device stuck 'stale' -- fix round 1 made it render for EVERY offline card
+ * (empty and converged included), so the fingerprint has to track the same
+ * set or an offline empty/converged card freezes at whatever "Nm ago" it
+ * first rendered. Both are derived facts that change only when they would
+ * change what is on screen, not every time the clock ticks.
  */
 export function liveFingerprint(
   rows: readonly LiveStateRow[],
@@ -81,7 +85,8 @@ export function liveFingerprint(
         r.updateProtocol ?? '', r.firmwareUpdateError ?? '',
         r.lastError ?? '', r.lastErrorAt?.toISOString() ?? '',
         isOnline(r.lastSeenAt, now) ? '1' : '0',
-        state === 'stale' ? relative(r.lastSeenAt, now) : '',
+        // Every offline card, not just 'stale' -- see the doc comment above.
+        isOnline(r.lastSeenAt, now) ? '' : relative(r.lastSeenAt, now),
       ].join('|');
     });
   return createHash('sha256')
