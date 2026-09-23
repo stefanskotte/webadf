@@ -54,7 +54,7 @@ export async function publishRelease(
   if (sequence !== expectedSequence) {
     // The signature covers the sequence (spec D4). A sequence that moved between
     // signing and recording would publish a signature that never verifies.
-    throw new PublishRefused(`sequence moved from ${expectedSequence} to ${sequence} while publishing; re-run`);
+    throw new PublishRefused('sequence_moved', `sequence moved from ${expectedSequence} to ${sequence} while publishing; re-run`);
   }
   const id = randomUUID();
   await db.insert(firmwareReleases).values({ ...input, id, sequence, publishedByUserId: userId });

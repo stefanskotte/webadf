@@ -34,7 +34,12 @@ export const firmwareReleases = pgTable('firmware_releases', {
   sizeBytes: integer('size_bytes').notNull(),
   /** Private blob store pathname. Nothing serves it in this increment. */
   blobPath: text('blob_path').notNull(),
-  /** ed25519 over the artifact's sha256, base64. Signed offline (spec D3). */
+  /**
+   * ed25519, base64, signed offline (spec D3). Format 1 (release 1 only):
+   * over the artifact's sha256 alone. Format 2: over the manifest built by
+   * firmwareManifest() -- version, sequence, sha256 and size together. See
+   * signatureFormat.
+   */
   signature: text('signature').notNull(),
   signingKeyId: text('signing_key_id').notNull(),
   /** 1 = signature over the sha256 only (release 1). 2 = over the manifest (spec D4). Only 2 is offered to a board. */

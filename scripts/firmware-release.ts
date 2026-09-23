@@ -28,6 +28,7 @@ import { eq } from 'drizzle-orm';
 import { put, head } from '@vercel/blob';
 import { getDb } from '@/db';
 import { user } from '@/db/schema/auth';
+import { firmwareStore } from '@/lib/storage';
 import { publishRelease, readExistingReleases } from '@/lib/firmware-releases';
 import { decidePublish, PublishRefused } from '@/lib/firmware-publish-rules';
 import { firmwareManifest, refuseReleaseImage } from '@/lib/firmware-manifest';
@@ -105,7 +106,12 @@ if (!bytes.includes(Buffer.from(version, 'ascii'))) {
 // otherwise be trusted to have (spec D10): TBYB (so a bad update reverts
 // rather than bricking the board), a hash for the boot ROM to check, and no
 // debug-only firmware command compiled in.
-const info = execFileSync('picotool', ['info', '-a', binPath, '-t', 'bin'], { encoding: 'utf8' });
+let info: string;
+try {
+  info = execFileSync('picotool', ['info', '-a', binPath, '-t', 'bin'], { encoding: 'utf8' });
+} catch (e) {
+  die(`picotool not found or failed: ${(e as Error).message} — install picotool 2.x (brew install picotool)`);
+}
 const refusal = refuseReleaseImage(info, bytes.byteLength, bytes);
 if (refusal) die(`Publish refused: ${refusal}`);
 
@@ -148,7 +154,7 @@ let sequence: number;
 try {
   sequence = decidePublish(existing, { version, semver });
 } catch (e) {
-  if (e instanceof PublishRefused) die(`\nPublish refused: ${e.reason}`);
+  if (e instanceof PublishRefused) die(`\nPublish refused: ${e.detail ?? e.reason}`);
   throw e;
 }
 console.log(`sequence  ${sequence}`);
@@ -188,9 +194,16 @@ const userId = rows[0].id;
 
 // 6. Upload, then record. This order matters for the crash case: an orphaned
 //    blob is recoverable, whereas a registry row pointing at nothing is an
-//    image increment 2 would try to flash. A blob already present with the
-//    same digest is treated as success -- it is content this script uploaded
-//    on an earlier attempt, and refusing forever would strand the version.
+//    image increment 2 would try to flash. A blob already present is reused
+//    ONLY when its content matches this build's digest -- it is then
+//    genuinely content this script uploaded on an earlier attempt, and
+//    refusing forever would strand the version. Without the digest check, a
+//    blob left behind by an earlier attempt (the sequence-moved refusal below
+//    fires AFTER this upload, so a retry is the expected path) would be
+//    reused unchecked while a REBUILD in between -- which embeds a new build
+//    date -- changed the bytes: the manifest signed above covers the new
+//    bytes, but the object a board would download is the old ones. A release
+//    no board could ever verify.
 const already = await head(blobPath).catch(() => null);
 if (!already) {
   await put(blobPath, bytes, {
@@ -200,7 +213,21 @@ if (!already) {
     allowOverwrite: false,
   });
 } else {
-  console.log('blob already present from an earlier attempt; reusing it.');
+  // Read through the same store the download route serves from, rather than
+  // trusting `head`'s size/etag -- the content itself is what has to match.
+  const existingBytes = await firmwareStore.read(blobPath);
+  if (!existingBytes) {
+    die(`${blobPath} is present in the blob store but could not be read. Delete it and re-run.`);
+  }
+  const existingSha256 = createHash('sha256').update(existingBytes).digest('hex');
+  if (existingSha256 !== sha256) {
+    die(
+      `${blobPath} already exists in the blob store but its content does not match this build\n`
+      + `(stored sha256 ${existingSha256}, built sha256 ${sha256}). It is very likely left over\n`
+      + `from an earlier, differently-built attempt. Delete ${blobPath} from the blob store and re-run.`,
+    );
+  }
+  console.log('blob already present from an earlier attempt, with matching content; reusing it.');
 }
 
 try {
@@ -214,6 +241,6 @@ try {
   );
   console.log(`\nPublished ${version} as sequence ${published.sequence}.`);
 } catch (e) {
-  if (e instanceof PublishRefused) die(`\nPublish refused: ${e.reason}`);
+  if (e instanceof PublishRefused) die(`\nPublish refused: ${e.detail ?? e.reason}`);
   throw e;
 }

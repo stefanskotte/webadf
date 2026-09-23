@@ -19,7 +19,13 @@ export function refuseReleaseImage(picotoolInfo: string, sizeBytes: number, byte
   if (!/^\s*tbyb:\s+not bought\s*$/m.test(picotoolInfo)) {
     return 'image is not a TBYB (try-before-you-buy) image; build with PICO_CRT0_IMAGE_TYPE_TBYB=1';
   }
-  if (!/hash/i.test(picotoolInfo)) return 'image carries no hash for the boot ROM to check; build with pico_hash_binary';
+  // Exact line match, not a substring search: /hash/i also matched a path
+  // that merely contained the word, and matched picotool's own "hash:
+  // incorrect" -- printed for a PATCHED image whose hash the boot ROM would
+  // then also reject, which is exactly the image this check exists to catch.
+  if (!/^\s*hash:\s+verified\s*$/m.test(picotoolInfo)) {
+    return 'image carries no hash for the boot ROM to check; build with pico_hash_binary';
+  }
   if (bytes.includes(Buffer.from('fwdbg', 'ascii'))) return 'image contains the debug-only firmware command (WF_FW_DEBUG)';
   return null;
 }

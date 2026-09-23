@@ -381,7 +381,7 @@ export async function publishTestRelease(
     sequence,
     sha256: 'e'.repeat(64),
     sizeBytes: 1024,
-    blobPath: `firmware/${version}.uf2`,
+    blobPath: `firmware/${version}.bin`,
     signature: 'ZTJlLXRlc3Q=',
     signingKeyId: 'e2e',
     signatureFormat: 2,
@@ -412,7 +412,7 @@ export async function publishTestReleaseWithBlob(version: string): Promise<strin
   const { put } = await import('@vercel/blob');
   const { createHash } = await import('node:crypto');
   const bytes = Buffer.from(`e2e firmware ${version}`);
-  const blobPath = `firmware/${version}.uf2`;
+  const blobPath = `firmware/${version}.bin`;
   // allowOverwrite because a previous run's object may survive -- the same
   // re-runnability reasoning that gave publishTestRelease its onConflictDoNothing.
   await put(blobPath, bytes, {

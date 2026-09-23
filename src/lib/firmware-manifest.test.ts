@@ -23,6 +23,9 @@ describe('refuseReleaseImage', () => {
   it('refuses an image with no hash for the boot ROM to check', () => {
     expect(refuseReleaseImage(realInfo.replace(/^.*hash.*$/gim, ''), 533624, bytes)).toMatch(/hash/);
   });
+  it('refuses an image whose hash does not verify', () => {
+    expect(refuseReleaseImage(realInfo.replace(/verified/g, 'incorrect'), 533624, bytes)).toMatch(/hash/);
+  });
   it('refuses anything over 2 MB', () => {
     expect(refuseReleaseImage(realInfo, FIRMWARE_MAX_BYTES + 1, bytes)).toMatch(/2 MB/);
   });
