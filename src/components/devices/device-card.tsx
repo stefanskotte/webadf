@@ -225,8 +225,12 @@ export function DeviceCard(
       </div>
 
       {device.lastError && (
-        <div className="rounded-lg px-3 py-2 text-[12px]"
-             style={{ background: 'var(--input-bg)', color: 'var(--amber-text)' }}
+        // overflowWrap: same reasoning as the firmware line above (fix round
+        // 1, critical 2) -- a device-reported error can be URL-shaped with no
+        // natural break point, which overflowed the card by 238px and gave
+        // the whole page horizontal scroll at 390px (re-review finding).
+        <div className="min-w-0 rounded-lg px-3 py-2 text-[12px]"
+             style={{ background: 'var(--input-bg)', color: 'var(--amber-text)', overflowWrap: 'anywhere' }}
              data-testid={`device-error-${device.id}`}>
           {device.lastError}
         </div>

@@ -130,6 +130,14 @@ test('the Devices grid is two columns at 390px, and nothing overflows the viewpo
   const { deviceId: idB } = await pairDevice(page, request, 'Mobile B');
   const { deviceId: idC } = await pairDevice(page, request, 'Mobile C');
 
+  // A URL-shaped lastError (re-review finding): no spaces, so nothing breaks
+  // it unless the card's amber error block itself wraps -- this one
+  // overflowed its card by 238px and gave the whole page horizontal scroll
+  // at 390px before the overflowWrap fix.
+  await setDevice(idA, {
+    lastError: 'SPI timeout: see https://errors.example.test/incidents/9f8e7d6c5b4a3928170615243342526a1b2c3d4e5f60718293a4b5c6d7e8f90 for details',
+    lastErrorAt: new Date(),
+  });
   // A long, real-shaped firmware version (fix round 1, critical 2): no
   // spaces, so nothing breaks it unless the card itself provides a wrap point.
   await setDevice(idC, { firmwareVersion: '1.1.4+g137a4db-dirty' });
@@ -170,12 +178,14 @@ test('the Devices grid is two columns at 390px, and nothing overflows the viewpo
   }
 
   // CRITICAL 2 guard: no card's right edge may exceed the viewport, and
-  // neither may the document as a whole -- a long unbroken firmware version
-  // or a URL-bearing failure reason forced BOTH before this fix (the first
-  // pushed one card 20px past its column, the second panned the whole page).
+  // neither may the document as a whole -- a long unbroken firmware version,
+  // a URL-bearing failure reason, or a URL-shaped lastError forced this
+  // before the fixes (238px for lastError alone, per the re-review finding).
   for (const box of nonNull) {
     expect(box.x + box.width).toBeLessThanOrEqual(390);
   }
+  const errorBox = (await page.getByTestId(`device-error-${idA}`).boundingBox())!;
+  expect(errorBox.x + errorBox.width).toBeLessThanOrEqual(390);
   const overflow = await page.evaluate(
     () => document.documentElement.scrollWidth - document.documentElement.clientWidth,
   );
