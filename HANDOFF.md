@@ -4323,12 +4323,14 @@ picotool, `-DPICOTOOL_FORCE_FETCH_FROM_GIT=ON`); full Playwright 322/4, where al
 (`.git/info/exclude`) — with it symlinked, those two specs ran 10/10, so effectively 326/326.
 **A worktree needs `adf-archive/` linked in or four device specs fail for a reason that is not code.**
 
-**Not yet proven on hardware: the server half of the final-review I2 fix** ("no completion while
-the trial reports `applying`"). The bench run on 1.1.4 (15:02 UTC, operator away, triggered by the
-controller directly in the DB with the operator's OK) went through cleanly — queued, applying,
-confirmed, 1.1.4 steady — but production still ran master's OLD completion rule, so it could not
-show the new one. **After deploy, run one more update and watch that the row holds `applying`
-(with `firmware_version` already the new one) until the confirmed boot.**
+**MERGED AND DEPLOYED 2026-09-23 (master b4c44f3).** CI's first run failed on Linux gcc
+`-Wformat-truncation` (a 24-byte register-body tail that macOS clang never flags); b4c44f3 sized it
+32 and CI went green.
+**The server half of the final-review I2 fix is PROVEN on hardware after deploy** (operator pressed
+Update to `1.1.4+gb4c44f3`, seq 8, 21:16 CEST; device row sampled every second):
+queued 21:16:36 -> applying 21:16:53 -> **21:17:16 `firmware_version=1.1.4+gb4c44f3`, desired still
+set, `state=applying`** (the trial's heartbeat; before I2 this completed) -> 21:17:31 completed
+(desired and state null) only after the confirmed boot.
 
 Increment 2b. Spec: `docs/superpowers/specs/2026-09-22-firmware-update-device-design.md`
 (read its new §9 addendum first — the bench moved the design past D8's text). Plan:
