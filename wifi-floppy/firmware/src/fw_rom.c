@@ -244,9 +244,34 @@ void fw_rom_service(void) {
 typedef struct { uint32_t off; const uint8_t *data; } fr_prog_t;
 static void do_erase(void *p) { flash_range_erase(*(uint32_t *)p, FLASH_SECTOR_SIZE); }
 static void do_prog(void *p) { fr_prog_t *a = p; flash_range_program(a->off, a->data, FLASH_SECTOR_SIZE); }
-static bool fr_erase(void *ctx, uint32_t off) { (void)ctx; return flash_safe_execute(do_erase, &off, 1000) == PICO_OK; }
+// Hardening round (post-approval): recomputed on every call rather than
+// cached once, so it always reflects the current g_partition and never
+// trusts a value that could go stale -- fw_rom_other_slot() is a cheap
+// boot-ROM partition-table query (already called uncached elsewhere in this
+// file, e.g. fw_rom_request_proven_reboot's part_range()), not a flash
+// access, so there is no cost worth caching against. Refuses any offset
+// that is not sector-aligned or that falls outside the OTHER slot's range,
+// so the booted slot, the partition table at offset 0, and the
+// config/token/state sectors at the top of flash are all unwritable
+// through fw_rom_flash even if a caller ever passed a wrong offset.
+static bool sector_in_other_slot(uint32_t off) {
+    if ((off % FLASH_SECTOR_SIZE) != 0) return false;
+    uint32_t slot_off, slot_len;
+    if (!fw_rom_other_slot(&slot_off, &slot_len)) return false;
+    if (slot_len < FLASH_SECTOR_SIZE) return false;
+    if (off < slot_off) return false;
+    if (off - slot_off > slot_len - FLASH_SECTOR_SIZE) return false;
+    return true;
+}
+static bool fr_erase(void *ctx, uint32_t off) {
+    (void)ctx;
+    if (!sector_in_other_slot(off)) return false;
+    return flash_safe_execute(do_erase, &off, 1000) == PICO_OK;
+}
 static bool fr_program(void *ctx, uint32_t off, const uint8_t data[4096]) {
-    (void)ctx; fr_prog_t a = { off, data };
+    (void)ctx;
+    if (!sector_in_other_slot(off)) return false;
+    fr_prog_t a = { off, data };
     return flash_safe_execute(do_prog, &a, 1000) == PICO_OK;
 }
 // NOTRANSLATE: the other slot is not mapped at XIP_BASE (spec M3).

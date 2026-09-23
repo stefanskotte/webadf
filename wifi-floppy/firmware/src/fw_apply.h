@@ -21,6 +21,10 @@ typedef struct {
 
 typedef enum { FWA_OK, FWA_TOO_BIG, FWA_ERASE_FAILED, FWA_PROGRAM_FAILED, FWA_READBACK_MISMATCH } fw_apply_result_t;
 
+// Core1 only. A whole apply (erase+program, one 4 KB sector at a time) takes
+// several seconds -- core0 is the one feeding the 8 s watchdog
+// (fw_rom_service), and must keep running its own loop throughout, so this
+// may never be called from core0.
 fw_apply_result_t fw_apply_image(const fw_flash_t *f, uint32_t slot_off, uint32_t slot_len,
                                  const uint8_t *img, uint32_t len, const char *sha_hex);
 const char *fw_apply_text(fw_apply_result_t r);

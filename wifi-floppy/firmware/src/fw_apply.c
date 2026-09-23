@@ -11,8 +11,12 @@ static bool program_chunk(const fw_flash_t *f, uint32_t off, const uint8_t *src,
 
 fw_apply_result_t fw_apply_image(const fw_flash_t *f, uint32_t slot_off, uint32_t slot_len,
                                  const uint8_t *img, uint32_t len, const char *sha_hex) {
+    // len + FW_SECTOR_BYTES - 1 wraps for len > 0xFFFFF000 (UINT32_MAX -
+    // FW_SECTOR_BYTES + 1), which would make nsec 0 and let the too-big
+    // check below pass. Reject huge/zero lengths before that arithmetic.
+    if (len == 0 || len > slot_len) return FWA_TOO_BIG;
     uint32_t nsec = (len + FW_SECTOR_BYTES - 1) / FW_SECTOR_BYTES;
-    if (len == 0 || nsec * FW_SECTOR_BYTES > slot_len) return FWA_TOO_BIG;
+    if (nsec * FW_SECTOR_BYTES > slot_len) return FWA_TOO_BIG;
     // Header first: from here until the very last program, the slot holds no
     // valid IMAGE_DEF -- neither the old image's nor a half-written new one.
     if (!f->erase_sector(f->ctx, slot_off)) return FWA_ERASE_FAILED;

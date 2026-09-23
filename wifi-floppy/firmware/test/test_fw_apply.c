@@ -7,8 +7,13 @@
 static uint8_t flash[FLASH_BYTES];
 static uint32_t log_off[64]; static char log_op[64]; static int log_n;
 static int fail_program_at = -1;
+static int fail_erase_at = -1;
 
-static bool fe(void *ctx, uint32_t off) { (void)ctx; memset(flash + off, 0xFF, 4096); log_op[log_n] = 'E'; log_off[log_n++] = off; return true; }
+static bool fe(void *ctx, uint32_t off) {
+    (void)ctx;
+    if ((int)(off / 4096) == fail_erase_at) return false;
+    memset(flash + off, 0xFF, 4096); log_op[log_n] = 'E'; log_off[log_n++] = off; return true;
+}
 static bool fp(void *ctx, uint32_t off, const uint8_t d[4096]) {
     (void)ctx;
     if ((int)(off / 4096) == fail_program_at) return false;
@@ -24,7 +29,7 @@ static void hex_of(const uint8_t *p, uint32_t n, char out[65]) {
 }
 static void reset(void) {
     memset(flash, 0x5a, sizeof flash);   // the slot holds an OLD image
-    log_n = 0; fail_program_at = -1;
+    log_n = 0; fail_program_at = -1; fail_erase_at = -1;
     for (uint32_t i = 0; i < sizeof img; i++) img[i] = (uint8_t)(i * 7u);
 }
 
@@ -62,6 +67,25 @@ static void test_readback_mismatch_is_reported(void) {
     reset();
     CHECK_EQ_INT(fw_apply_image(&F, 8 * 4096, 16 * 4096, img, sizeof img, "00"), FWA_READBACK_MISMATCH);
 }
+// Hardening round: len + FW_SECTOR_BYTES - 1 wraps in uint32_t arithmetic for
+// len this large, which used to make nsec 0 and let the too-big check pass.
+static void test_huge_len_does_not_overflow(void) {
+    reset();
+    CHECK_EQ_INT(fw_apply_image(&F, 8 * 4096, 16 * 4096, img, 0xFFFFFFFFu, "00"), FWA_TOO_BIG);
+    CHECK_EQ_INT(log_n, 0);
+}
+static void test_zero_len_touches_nothing(void) {
+    reset();
+    CHECK_EQ_INT(fw_apply_image(&F, 8 * 4096, 16 * 4096, img, 0, "00"), FWA_TOO_BIG);
+    CHECK_EQ_INT(log_n, 0);
+}
+static void test_erase_failure_leaves_header_erased(void) {
+    reset();
+    fail_erase_at = 10;   // a later sector's erase fails partway through
+    char want[65]; hex_of(img, sizeof img, want);
+    CHECK_EQ_INT(fw_apply_image(&F, 8 * 4096, 16 * 4096, img, sizeof img, want), FWA_ERASE_FAILED);
+    for (int i = 0; i < 4096; i++) if (flash[8 * 4096 + (uint32_t)i] != 0xFF) { CHECK(false, "header sector must still be erased"); break; }
+}
 
 int main(void) {
     RUN(test_writes_and_verifies);
@@ -69,5 +93,8 @@ int main(void) {
     RUN(test_power_cut_midway_leaves_no_header);
     RUN(test_too_big_touches_nothing);
     RUN(test_readback_mismatch_is_reported);
+    RUN(test_huge_len_does_not_overflow);
+    RUN(test_zero_len_touches_nothing);
+    RUN(test_erase_failure_leaves_header_erased);
     return REPORT();
 }

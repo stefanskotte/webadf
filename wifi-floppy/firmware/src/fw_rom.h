@@ -19,7 +19,11 @@ bool fw_rom_other_slot(uint32_t *flash_off, uint32_t *len);
 // each call -- see fw_rom_boot_early's comment for why that matters), one
 // short flash_safe_execute window per sector. Reads go through
 // XIP_NOCACHE_NOALLOC_NOTRANSLATE_BASE (Task 1 guard, M3): the other slot
-// is not mapped at XIP_BASE once the board has booted a partition.
+// is not mapped at XIP_BASE once the board has booted a partition. The
+// erase/program ops refuse any offset outside fw_rom_other_slot()'s range
+// or not sector-aligned, so the booted slot, the partition table, and the
+// config/token/state sectors are unwritable through this table.
+// Core1 only, via fw_apply_image -- see that function's own comment.
 extern const fw_flash_t fw_rom_flash;
 // Any core. The trial proved itself: mark scratch[0..1] for running_version
 // and request a FLASH_UPDATE reboot into the booted slot, so the next boot
