@@ -4316,7 +4316,19 @@ Demozoo API (the bulk export makes per-lookup load on a non-profit unnecessary).
 
 **STATUS: `feat/firmware-update-device`, not merged, not pushed, not deployed.** Production
 runs §3ai + §3aj's server half only; no board in the field can update itself yet.
-**Gates: <controller fills in>**
+**Gates (branch head 137a4db, 2026-09-23):** firmware host suite 2,706 checks / 0 failed; vitest
+996 passed / 1 skipped; `pnpm build` clean; the firmware builds under CI's condition (SDK-fetched
+picotool, `-DPICOTOOL_FORCE_FETCH_FROM_GIT=ON`); full Playwright 322/4, where all four failures were
+`ENOENT scandir 'adf-archive'` because the worktree lacked the untracked `adf-archive/` folder
+(`.git/info/exclude`) — with it symlinked, those two specs ran 10/10, so effectively 326/326.
+**A worktree needs `adf-archive/` linked in or four device specs fail for a reason that is not code.**
+
+**Not yet proven on hardware: the server half of the final-review I2 fix** ("no completion while
+the trial reports `applying`"). The bench run on 1.1.4 (15:02 UTC, operator away, triggered by the
+controller directly in the DB with the operator's OK) went through cleanly — queued, applying,
+confirmed, 1.1.4 steady — but production still ran master's OLD completion rule, so it could not
+show the new one. **After deploy, run one more update and watch that the row holds `applying`
+(with `firmware_version` already the new one) until the confirmed boot.**
 
 Increment 2b. Spec: `docs/superpowers/specs/2026-09-22-firmware-update-device-design.md`
 (read its new §9 addendum first — the bench moved the design past D8's text). Plan:
@@ -4462,9 +4474,16 @@ and `psram_reinitialize` are gone — not needed once the buy never sees PSRAM a
   the core0 deadline and `fw_trial_decide`'s deadline give-up. Before this, a new board's
   first install hit the deadline in the portal and landed in BOOTSEL. Host-tested; not yet
   re-run on the bench.
-- **A first USB install that HANGS still ends in BOOTSEL** (the watchdog resets the unbought
-  trial; A unbought, B empty, old IMAGE_DEF overwritten). Recovery is the flash backup the
-  install script takes — there is no other recovery path.
+- **A first USB install whose core0 HANGS still ends in BOOTSEL** (the watchdog, fed only by
+  core0, resets the unbought trial; A unbought, B empty, old IMAGE_DEF overwritten). **A core1
+  (network-side) hang in a USB-install trial is not caught at all** — with no deadline since I3,
+  the board waits until someone power-cycles it, and then lands in BOOTSEL. Recovery either way is
+  the flash backup the install script takes — there is no other recovery path.
+- **PSRAM-stage failure corner:** a board whose PSRAM stage check fails reports `updateProtocol 0`,
+  which omits every firmware field — so a trial on such a board would let the server complete
+  during the trial (the pre-I2 behaviour), and a confirmed boot that omits the state could leave a
+  changed target stuck at `applying` (`update_in_flight`). Needs a PSRAM failure on the new image;
+  recorded, not fixed.
 - **Builds are TBYB-only now, and refuse an unpartitioned board.** On an UNPARTITIONED board
   even `picotool load -x` ends in BOOTSEL: the image starts as a trial, finds no partition to
   reboot into to confirm itself, and is never bought. The firmware does not stay on an

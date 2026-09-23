@@ -12,8 +12,8 @@ fw_trial_action_t fw_trial_decide(const fw_trial_in_t *in, const char **reason) 
     // Final review I3: a USB-install trial (no pending record) has no image
     // of ours to revert to, so it has no deadline -- fw_rom_service does not
     // arm one either (fw_rom_set_trial_revertible). It waits for
-    // connectivity however long the portal and pairing take (the watchdog
-    // still covers a hang) and confirms whenever a heartbeat lands; with no
+    // connectivity however long the portal and pairing take (the watchdog,
+    // fed by core0, covers a core0 hang; a core1 hang waits for a power cycle) and confirms whenever a heartbeat lands; with no
     // deadline reboot to race, the buy cutoff below does not apply.
     if (!in->st->pending) return in->heartbeat_ok ? FW_TRIAL_BUY : FW_TRIAL_WAIT;
     // Fix round 1 (Important 2): stop offering a buy once there is no longer
