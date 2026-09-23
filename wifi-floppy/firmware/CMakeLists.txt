@@ -109,6 +109,15 @@ if (WF_BUS_SNIFF)
   target_compile_definitions(wifi_floppy PRIVATE WF_BUS_SNIFF=1 WF_LOG_SLOTS=512)
   message(STATUS "WF_BUS_SNIFF is ON: every bus input change is logged.")
 endif ()
+# Bench-only (fix round 3): a bare-bones "fwdbg-wdtest" USB-serial command
+# that deliberately reproduces the nested-flash_safe_execute wedge shape, to
+# prove the watchdog now resets the board instead of hanging forever. NEVER
+# in a release -- the publish script refuses an image built with this on;
+# see fw_rom_debug_wedge's own comment for what it does.
+option(WF_FW_DEBUG "Bench-only: accept a crafted firmware offer over USB serial. NEVER in a release (the publish script refuses it)." OFF)
+if (WF_FW_DEBUG)
+  target_compile_definitions(wifi_floppy PRIVATE WF_FW_DEBUG=1)
+endif ()
 
 # The hand-maintained half of the version. Bump this for a release; the git
 # identity is appended automatically by cmake/gen_version_header.cmake, so two

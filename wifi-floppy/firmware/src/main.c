@@ -1185,6 +1185,37 @@ static void core1_main(void) {
                 }
             }
 
+#if WF_FW_DEBUG
+            // Fix round 3, bench-only: a minimal USB-serial command that
+            // deliberately reproduces the nested-flash_safe_execute wedge the
+            // bench hit, to prove the watchdog now resets the board instead
+            // of hanging forever (see fw_rom_watchdog_start's
+            // pause_on_debug=false, and fw_rom_debug_wedge's own comment).
+            // Never built into a release -- WF_FW_DEBUG defaults OFF, and
+            // the publish script refuses an image built with it on. Polled
+            // non-blockingly so it costs nothing when nothing is typed.
+            // Task 11 will add the real fwdbg offer command next to this.
+            {
+                static char dbg_buf[16];
+                static int  dbg_len = 0;
+                int ch;
+                while ((ch = getchar_timeout_us(0)) != PICO_ERROR_TIMEOUT) {
+                    if (ch == '\n' || ch == '\r') {
+                        dbg_buf[dbg_len] = '\0';
+                        if (strcmp(dbg_buf, "fwdbg-wdtest") == 0) {
+                            wf_logf(WF_WARN, "fwdbg: wedging core1 inside flash_safe_execute -- "
+                                              "the watchdog must reset within 8 s");
+                            fw_rom_debug_wedge();
+                        }
+                        dbg_len = 0;
+                    } else if (dbg_len + 1 < (int)sizeof dbg_buf) {
+                        dbg_buf[dbg_len++] = (char)ch;
+                    } else {
+                        dbg_len = 0;   // overflow: drop the partial line and resync
+                    }
+                }
+            }
+#endif
             dc_state_t s;
             bool polled = false;
             if (report_retry) {

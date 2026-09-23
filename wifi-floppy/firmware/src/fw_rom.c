@@ -72,8 +72,6 @@ bool fw_rom_other_slot(uint32_t *off, uint32_t *len) {
     return part_range(g_partition == 0 ? 1 : 0, off, len);
 }
 
-static void do_buy(void *p) { *(int *)p = rom_explicit_buy(g_work, sizeof g_work); }
-
 bool fw_rom_buy(void) {
     // Check-and-set against fw_rom_service's deadline reboot, under the
     // lock: if a reboot has already been requested, back off rather than
@@ -87,18 +85,32 @@ bool fw_rom_buy(void) {
     g_buying = true;
     critical_section_exit(&g_boot_cs);
 
-    int rc = -1;
-    bool ok = flash_safe_execute(do_buy, &rc, 2000) == PICO_OK;
-    if (ok) {
-        wf_logf(rc == 0 ? WF_INFO : WF_ERR, "boot: explicit buy rc %d", rc);
-        if (rc == 0) g_bought = true;
-    }
+    // Fix round 3 (bench): rom_explicit_buy() itself already calls
+    // flash_safe_execute(rom_helper_explicit_buy, ..., UINT32_MAX) --
+    // see ~/pico-sdk/src/rp2_common/pico_bootrom/include/pico/bootrom.h,
+    // lines 941-987. Round 1/2 wrapped this in a SECOND, outer
+    // flash_safe_execute (a `do_buy` callback around it) -- a nested
+    // multicore lockout, which is not reentrant: the outer call parks core0
+    // and waits for it to acknowledge the lockout; called again from
+    // *inside* that already-locked-out execution, the inner call tries to
+    // start a second handshake core0 can never acknowledge, because core0
+    // is already spinning inside the outer wait rather than running its
+    // normal loop. That is exactly the bench failure: slot A came back with
+    // only its last 4 KiB (the "explicit buy" flag sector, offset 0x82000)
+    // erased and never reprogrammed, board wedged, watchdog never fired --
+    // rom_explicit_buy started erasing the flag sector, called
+    // flash_safe_execute a second time to do so, and both cores hung
+    // waiting on each other. Call the ROM function directly; it manages its
+    // own multicore lockout and must not be wrapped in another one.
+    int rc = rom_explicit_buy(g_work, sizeof g_work);
+    wf_logf(rc == 0 ? WF_INFO : WF_ERR, "boot: explicit buy rc %d", rc);
+    if (rc == 0) g_bought = true;
 
     critical_section_enter_blocking(&g_boot_cs);
     g_buying = false;
     critical_section_exit(&g_boot_cs);
 
-    return ok && rc == 0;
+    return rc == 0;
 }
 
 void fw_rom_request_reboot(uint32_t flash_update_off) {
@@ -114,7 +126,15 @@ void fw_rom_request_reboot(uint32_t flash_update_off) {
     critical_section_exit(&g_boot_cs);
 }
 
-void fw_rom_watchdog_start(void) { watchdog_enable(8000, true); }
+void fw_rom_watchdog_start(void) {
+    // Fix round 3 (bench): pause_on_debug is now OFF. This board never runs
+    // under a debugger (no SWD probe attached in the field or on the
+    // bench), and a watchdog left paused while the chip is halted in a
+    // debug/lockup state is the leading explanation for the observed
+    // failure mode -- USB enumerated but dead, and the 8 s watchdog never
+    // reset the board during the nested-flash_safe_execute wedge above.
+    watchdog_enable(8000, false);
+}
 
 void fw_rom_service(void) {
     // The trial deadline is enforced HERE, on core0, independent of core1: a
@@ -156,3 +176,28 @@ void fw_rom_service(void) {
     }
     watchdog_update();
 }
+
+#if WF_FW_DEBUG
+static void debug_wedge_cb(void *p) {
+    (void)p;
+    for (;;) tight_loop_contents();
+}
+
+// Bench-only (fix round 3): deliberately reproduces the exact wedge shape
+// the bench hit -- a core1 callback that never returns while it holds
+// flash_safe_execute's multicore lockout, so core0 is parked (interrupts
+// disabled, spinning) for as long as core1 spins. Nothing feeds the
+// watchdog from inside that lockout, so the only way off the board is the
+// watchdog itself firing at 8 s (see fw_rom_watchdog_start's
+// pause_on_debug=false fix, in the same round). This function exists to
+// let the bench PROVE that reset happens now, on demand, without having to
+// wait for another real bug to reproduce it. The caller (main.c's
+// WF_FW_DEBUG poll loop) logs before calling this -- core1 only ever
+// produces log records (wf_log.h), never drains them, so whether that
+// record reaches the USB port before the reset depends on core0's own
+// drain winning the race against the lockout; the record itself is not
+// lost either way.
+void fw_rom_debug_wedge(void) {
+    flash_safe_execute(debug_wedge_cb, NULL, UINT32_MAX);
+}
+#endif
