@@ -1469,10 +1469,27 @@ static void core1_main(void) {
 }
 
 // ---------------------------------------------------------------- main
+// Defined by the SDK (hardware_psram/psram.c) but not declared in any public
+// header; normally run before main() by runtime init, which this build skips
+// (PICO_RUNTIME_SKIP_INIT_PSRAM=1 -- see CMakeLists.txt and main() below).
+extern void runtime_init_setup_psram(void);
+
 int main(void) {
     // FIRST, before stdio, core1, or any PSRAM user: a trial that proved
     // itself last boot is bought here, single-core (fw_rom.c, fix round 4).
     fw_rom_boot_early(WF_FIRMWARE_VERSION);
+    // THEN PSRAM, on every boot, before anything that touches it (the log
+    // ring is SRAM; track_cache_init/psram_image_init and everything after
+    // use PSRAM). The SDK's pre-main PSRAM init is skipped
+    // (PICO_RUNTIME_SKIP_INIT_PSRAM=1) because the ROM buy above hangs,
+    // measured, whenever PSRAM is configured. IRQs off around it: it runs
+    // flash_start_xip() (XIP briefly down), which pre-main init ran with no
+    // IRQ sources live; here the default alarm pool's timer IRQ already is.
+    {
+        uint32_t irq = save_and_disable_interrupts();
+        runtime_init_setup_psram();
+        restore_interrupts(irq);
+    }
     stdio_init_all();
     wf_log_init();
     wf_logf(WF_INFO, "wifi-floppy boot: %s", PICO_BOARD);

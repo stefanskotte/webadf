@@ -319,6 +319,15 @@ pico_enable_stdio_usb(wifi_floppy 1)
 # is reverted unless it confirms itself (rom_explicit_buy) -- measured, spec
 # M5-M8. The publish script refuses an image that lacks either.
 target_compile_definitions(wifi_floppy PRIVATE PICO_CRT0_IMAGE_TYPE_TBYB=1)
+# Fix round 5 (Task 4), MEASURED on the board: rom_explicit_buy hangs --
+# after erasing the image's trailing metadata sector, before rewriting it --
+# whenever PSRAM (QMI CS1) is configured, and an armed watchdog does not
+# reset it. The same buy with PSRAM unconfigured returns 0. So PSRAM is NOT
+# brought up before main(): main() calls fw_rom_boot_early() (which buys a
+# proven trial) first, then runtime_init_setup_psram() itself, on every boot,
+# before anything touches PSRAM. Nothing initialised may live in PSRAM
+# (crt0 cannot copy into it before main now) -- only __uninitialized_psram.
+target_compile_definitions(wifi_floppy PRIVATE PICO_RUNTIME_SKIP_INIT_PSRAM=1)
 pico_hash_binary(wifi_floppy)
 
 # The partition table, as a UF2 for first installs over USB (spec D11).
