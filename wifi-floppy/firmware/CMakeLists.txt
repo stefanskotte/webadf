@@ -368,8 +368,15 @@ add_custom_command(
   OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/wifi_floppy_pt.uf2
   COMMAND ${WF_PICOTOOL_CMD} partition create ${CMAKE_CURRENT_LIST_DIR}/partitions.json
           ${CMAKE_CURRENT_BINARY_DIR}/wifi_floppy_pt.uf2
-  DEPENDS ${CMAKE_CURRENT_LIST_DIR}/partitions.json ${WF_PICOTOOL_DEPENDS}
+  DEPENDS ${CMAKE_CURRENT_LIST_DIR}/partitions.json
   COMMENT "partition table -> wifi_floppy_pt.uf2")
 add_custom_target(wifi_floppy_pt ALL DEPENDS ${CMAKE_CURRENT_BINARY_DIR}/wifi_floppy_pt.uf2)
+# Final review C1: the SDK-built picotool is an IMPORTED/external-project
+# target, and a file-level DEPENDS on it has no rule to make it in a fresh
+# build tree (CI: "no known rule to make picotool"). Order the targets
+# instead: the SDK's picotool build runs before this command.
+if (WF_PICOTOOL_DEPENDS)
+  add_dependencies(wifi_floppy_pt ${WF_PICOTOOL_DEPENDS})
+endif ()
 
 pico_add_extra_outputs(wifi_floppy)
