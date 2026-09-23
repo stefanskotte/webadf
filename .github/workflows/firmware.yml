@@ -1,7 +1,8 @@
 name: firmware
 
 # Builds the RP2350 firmware on every push that touches it, runs the host test
-# suite, and publishes a .uf2 with a manifest beside it.
+# suite, and publishes the .bin (the OTA artifact), the .uf2, the partition
+# table (wifi_floppy_pt.uf2) and a manifest beside them.
 #
 # THE MANIFEST IS THE POINT, not the .uf2. It is the shape the in-app firmware
 # updater (see HANDOFF.md, "Automatic firmware updates") will consume: a
@@ -94,7 +95,7 @@ jobs:
             -DPICO_SDK_PATH="$PWD/pico-sdk" \
             -DPICO_BOARD="$PICO_BOARD"
           cmake --build build
-          ls -la build/wifi_floppy.uf2 build/wifi_floppy.elf
+          ls -la build/wifi_floppy.bin build/wifi_floppy.uf2 build/wifi_floppy_pt.uf2 build/wifi_floppy.elf
 
       # The version the IMAGE carries, read out of the generated header, which
       # is the only string a board will ever report. `git describe` is kept
@@ -112,6 +113,9 @@ jobs:
       # pull request, so interpolating github.ref directly is a command
       # injection with extra steps -- flagged by semgrep on the first draft of
       # this file, which is exactly the sort of thing it is there for.
+      # The digest is of the .bin: that is the artifact `pnpm firmware:publish`
+      # signs and the board downloads, hashes and verifies (increment 2b). The
+      # .uf2 is a USB-install convenience wrapping the same bytes.
       - name: Manifest
         env:
           FW_VERSION: ${{ steps.builtver.outputs.value }}
@@ -119,8 +123,8 @@ jobs:
           FW_COMMIT: ${{ github.sha }}
           FW_REF: ${{ github.ref }}
         run: |
-          uf2=build/wifi_floppy.uf2
-          python3 - "$uf2" > build/manifest.json <<'PY'
+          bin=build/wifi_floppy.bin
+          python3 - "$bin" > build/manifest.json <<'PY'
           import hashlib, json, os, sys, datetime
           path = sys.argv[1]
           data = open(path, 'rb').read()
@@ -148,7 +152,9 @@ jobs:
         with:
           name: wifi-floppy-${{ steps.builtver.outputs.value }}
           path: |
+            build/wifi_floppy.bin
             build/wifi_floppy.uf2
+            build/wifi_floppy_pt.uf2
             build/wifi_floppy.elf
             build/manifest.json
           if-no-files-found: error
