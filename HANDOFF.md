@@ -1819,7 +1819,7 @@ separately.
   - The chip must stay out of the admin plane's layout. Devices are org-scoped, and `(admin)`
     has its own nav.
 
-- **BUG: the Devices header's "N online" never shows the real count.** Reported by the operator
+- ~~**BUG: the Devices header's "N online" never shows the real count.**~~ **NOT A BUG, CLOSED 2026-09-23.** The count was correct: the report came in at 20:25 on 2026-09-22, while the board was being restored from its flash backup and really was offline. Measured: the page's own `listDevices` + `isOnline` against the live DB said online; two new e2e tests in `devices-page.spec.ts` prove the header follows a device coming online (offline to online) AND going quiet with no data change (online to stale after 60 s) while the page is open; and the operator confirmed production shows the right count. The original entry follows for the record. Reported by the operator
   2026-09-22: it reads "0 online" while a board is up. **It is meant to be live, and the data
   is right**, so the bug is in between. What was checked the same day:
   - The board heartbeats every ~25 s. Sampled `last_seen_at` ages were 1-22 s, on production

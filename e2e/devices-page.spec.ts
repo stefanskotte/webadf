@@ -42,6 +42,31 @@ test('the header subtitle counts online devices by lastSeenAt, not just how many
   await expect(page.getByText('2 paired · 1 online', { exact: false })).toBeVisible();
 });
 
+test('the header online count follows a device coming online while the page is open', async ({ page, request }) => {
+  await signUpFresh(page);
+  const { deviceId } = await pairDevice(page, request, 'Waking Device');
+  await setDevice(deviceId, { lastSeenAt: new Date(Date.now() - 60 * 60_000) });
+
+  await page.goto('/devices');
+  await expect(page.getByText('1 paired · 0 online', { exact: false })).toBeVisible();
+
+  // The board starts polling again. No reload: LiveRefresh must carry it.
+  await setDevice(deviceId, { lastSeenAt: new Date() });
+  await expect(page.getByText('1 paired · 1 online', { exact: false })).toBeVisible({ timeout: 15_000 });
+});
+
+test('the header online count drops when a device goes quiet while the page is open', async ({ page, request }) => {
+  test.setTimeout(150_000);
+  await signUpFresh(page);
+  const { deviceId } = await pairDevice(page, request, 'Quiet Device');
+  // Seen 50 s ago: online now, stale (STALE_AFTER_MS = 60 s) about 10 s from now with no data change.
+  await setDevice(deviceId, { lastSeenAt: new Date(Date.now() - 50_000) });
+
+  await page.goto('/devices');
+  await expect(page.getByText('1 paired · 1 online', { exact: false })).toBeVisible();
+  await expect(page.getByText('1 paired · 0 online', { exact: false })).toBeVisible({ timeout: 60_000 });
+});
+
 test('all four device states render with distinct data-state and distinct visible text', async ({ page, request }) => {
   const { orgId } = await signUpFresh(page);
 
