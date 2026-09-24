@@ -2143,6 +2143,34 @@ separately.
     requirement of the feature, not a blocker. The UI should say so where an HD disk is
     created or mounted, since a 1.3 machine would simply fail to read it.
 
+- **NFC "tap a card to mount" on the board (PN532, I2C, read only).** Requested by the operator
+  2026-09-24: a PN532 module reads a disk's hash off an NFC card, the board calls the web app, and the
+  web app mounts the matching ADF. The module connects over I2C, and only reading is needed (no
+  card writing on the board). Nothing designed yet. Facts to start from:
+  - **The I2C bus already exists.** The OLED is on I2C1, GP18 (SDA) / GP19 (SCL), header pins
+    24/25 (`floppy_io.h:57-58`). The PN532's I2C address is 0x24 and the SSD1306's is 0x3C, so
+    they can share the bus. Check the pull-ups and the PN532 board's own level/DIP settings (I2C
+    mode, 3.3 V) before assuming.
+  - **Keep it off core0.** An I2C transfer is milliseconds (`activity_led.h:17`: ~20 ms per OLED
+    write) and core0 is the real-time floppy side. Card polling belongs on core1, next to the
+    display and the network, and it must share the bus with the OLED code (one owner, or a lock).
+  - **What the card holds.** A SHA-256 is 32 bytes (64 hex characters), which fits an NTAG213
+    (144 bytes of user memory) as an NDEF text record. Decide raw digest vs a disk id. A digest is
+    content, and one org can have several disk rows with the same bytes (the disk id is what
+    `readDesired` resolves). A disk id names exactly one row but only means something inside one
+    org.
+  - **The boundary is the device's org, not the card.** The card is untrusted input: the server
+    must mount only what the device's own org is entitled to (the same entitlement check
+    `/api/device/image` makes), answer "not found" identically for an unknown and a foreign
+    digest, and go through the same holder/`setDesired` path the web UI uses, so write-back and
+    mounted-disk rules still hold. It needs a new device-authenticated endpoint (for example
+    `POST /api/device/mount` with the digest), bumping `desiredVersion` like a web mount.
+  - **Open questions for the operator:** what the card stores (digest vs disk id), how cards get
+    written (a "write NFC card" helper in the web app for a phone, or an external tool), what a
+    tap does when a disk is already mounted (replace, or ignore until eject), and whether a tap
+    of the mounted disk's own card should eject it.
+  - Bench-only: needs the module wired to a board, so it waits for the board like HD.
+
 - **Support HFE and IPF, for copy-protected games.** **2026-09-24: IPF IS RULED OUT** by the operator ("riddled with licensing": the CAPS/SPS decoder library's terms), so do not propose it again. HFE, including v3, is being planned. Requested by the operator 2026-09-13,
   and the direct payoff of the decision above: both are flux/bitstream formats, which is
   exactly what WFMF already carries, so the work is server-side conversion into the
