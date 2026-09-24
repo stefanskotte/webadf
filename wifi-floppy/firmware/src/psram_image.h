@@ -32,9 +32,17 @@
 // Reconciled UPWARDS to 13312: the SRAM staging buffer grows by 312 bytes,
 // which is free, and no previously-valid image becomes invalid. Reconciling
 // downwards to 13000 would have been a silent format restriction.
-#define TRACK_MAX_BYTES 13312u                      // 13 KB, 4-byte aligned
-// 160 * 13312 = 2,129,920 B (~2.03 MB) per disk. 8 MB fits 3 with room over;
-// two slots (task 8) use ~4.06 MB, comfortably inside the 8 MB part.
+//
+// Raised to 14336 (14 KB) on 2026-09-24 for HFE disks with long tracks:
+// Turrican's custom format writes 13,500 bytes per side (108,000 cells, a
+// 216 ms revolution at our fixed 2 us cell), every byte of it data. The
+// server learns a board's limit from the status report ("trackMaxBytes")
+// and will not mount a disk with longer tracks on a board that cannot hold
+// them; a board too old to report is assumed to hold 13312.
+#define TRACK_MAX_BYTES 14336u                      // 14 KB, 4-byte aligned
+// 160 * 14336 = 2,293,760 B (~2.19 MB) per disk; two slots use ~4.37 MiB.
+// With the 2 MiB firmware-update stage (g_fw_stage, main.c) behind them,
+// ~6.4 MiB of the 8 MB part is spoken for.
 
 #define SLOT_COUNT 2
 #define SLOT_NONE  (-1)

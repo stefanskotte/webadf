@@ -417,6 +417,7 @@ static void test_status_sends_all_seven_fields(void) {
     CHECK(strstr(r, "psramFree")     != NULL, "psramFree");
     CHECK(strstr(r, "\"rssi\"")      != NULL, "rssi");
     CHECK(strstr(r, "\"firmwareVersion\":\"1.0.0+gd16a1da\"") != NULL, "firmwareVersion");
+    CHECK(strstr(r, "\"trackMaxBytes\":14336") != NULL, "trackMaxBytes reports this build's TRACK_MAX_BYTES");
 }
 
 // A NULL version reports null rather than omitting the key, the same honesty
