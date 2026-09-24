@@ -4421,6 +4421,13 @@ The fix (operator approved "its good, proceed"):
   so nothing is corrupted, but the Devices card shows the disk as pending with no reason.
   Fix only if it ever happens: clear the desired disk when the reset lowers the limit below
   its `max_track_bits`.
+- **SHIPPED 2026-09-25 00:25 CEST.** Merged as `cca8299` after full e2e 349/349; deployed.
+  Firmware `1.2.0+ge8ac726` (commit e8ac726 bumped the semver; the build dir had a stale cached
+  `FIRMWARE_SEMVER=1.0.0`, cleared with `cmake -U`) was published as sequence 9. The operator pressed
+  Update. Measured from the row: queued 00:23:36, applying 00:24:31 (disk ejected first), trial
+  heartbeat 00:24:52 with `track_max_bytes=14336`, confirmed 00:25:10. Before the update, the
+  1.1.4 board had `track_max_bytes` null after the deploy (legacy path confirmed).
+  **Still owed:** re-upload Turrican_ECS.hfe, mount, and boot it on the Amiga.
 - **Unproven until the bench:** a 108,000-cell track plays as a 216 ms revolution at the
   fixed 2 µs cell, and INDEX follows the DMA wrap. A Gotek plays this HFE the same way, but
   only booting Turrican on the board proves the loader accepts it.
