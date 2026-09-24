@@ -49,8 +49,12 @@ export function MountAction({ diskId, choices }: { diskId: string; choices: Moun
             },
       );
       if (!res.ok) {
-        toast.error(ejecting ? 'Could not eject' : 'Could not mount',
-                    { description: `The server answered ${res.status}.` });
+        // A refusal the person can act on carries its own sentence (e.g. a
+        // long-track HFE on a board whose firmware is too old); anything
+        // else falls back to the status.
+        const body = await res.json().catch(() => null) as { reason?: unknown } | null;
+        const reason = typeof body?.reason === 'string' ? body.reason : `The server answered ${res.status}.`;
+        toast.error(ejecting ? 'Could not eject' : 'Could not mount', { description: reason });
         return;
       }
       // Requested, not done. A mount still has to fetch ~2 MB and swap, which

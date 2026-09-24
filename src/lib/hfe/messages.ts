@@ -11,6 +11,9 @@ export const WEAK_BIT_NOTICE =
 
 export const NOT_EXTRACTABLE = 'Not a standard AmigaDOS disk — play only';
 
+export const TRACK_TOO_LONG =
+  "This disk has tracks longer than this board's firmware can hold — update the board's firmware to play it.";
+
 export const HFE_READ_ONLY = 'HFE disks are read-only. Extract it as an ADF to change its files.';
 
 export function extraCylindersNotice(cylinders: number): string {

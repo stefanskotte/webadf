@@ -47,6 +47,15 @@ export const devices = pgTable('devices', {
   updateProtocol: integer('update_protocol'),
 
   /**
+   * The longest track (bytes a side) this board's firmware holds, as IT
+   * reports in every status (TRACK_MAX_BYTES, psram_image.h). Null means a
+   * build from before the field existed, which held 13312
+   * (LEGACY_BOARD_TRACK_MAX_BYTES). The mount gate compares it with
+   * disks.max_track_bits, so a board is never sent an image it would reject.
+   */
+  trackMaxBytes: integer('track_max_bytes'),
+
+  /**
    * The release this board should end up running. Null means no update is
    * wanted. It is CLEARED by recordStatus the moment the device reports this
    * exact version -- completion is derived from what the board is running,

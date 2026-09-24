@@ -38,6 +38,10 @@ const statusBody = z.object({
   firmwareUpdateError: z.string().max(200).nullable().optional().catch(undefined),
   /** The highest firmware instruction the board has seen. Monotonic server-side. */
   firmwareInstructionAck: z.number().int().min(0).optional().catch(undefined),
+  // TRACK_MAX_BYTES of the running build (psram_image.h). Dropped, not
+  // rejected, when out of range -- the telemetry rule above -- and an absent
+  // value then reads as a legacy board (13312), the safe side.
+  trackMaxBytes: z.number().int().min(1024).max(65536).optional().catch(undefined),
   error: z.string().max(500).nullable().optional(),
   psramFree: z.number().int().nonnegative().nullable().optional(),
   // Real WiFi RSSI ranges roughly -100..0 dBm, but a marginal link can report
@@ -103,6 +107,7 @@ export async function POST(request: Request) {
     error: parsed.data.error,
     psramFree: parsed.data.psramFree,
     rssi: parsed.data.rssi,
+    trackMaxBytes: parsed.data.trackMaxBytes,
   });
 
   return new Response(null, { status: 204, headers: { 'cache-control': 'no-store' } });

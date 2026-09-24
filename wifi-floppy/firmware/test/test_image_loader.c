@@ -118,6 +118,44 @@ static void test_bit_count_overflow_is_refused(void) {
           "and let the rest of the image through");
 }
 
+
+// A full image whose track 0 carries `track0_bytes` of real payload (bits =
+// bytes * 8), every other track a valid 16-byte one. Used to prove a long
+// track -- Turrican's 13,500-byte custom format, the reason TRACK_MAX_BYTES
+// grew to 14336 -- loads end to end, and that one byte over the limit does not.
+static void build_full_image_with_long_track0(uint32_t track0_bytes) {
+    memset(buf, 0, sizeof buf);
+    put_u32(0, IMAGE_MAGIC); put_u32(4, IMAGE_VERSION); put_u32(8, NUM_TRACKS); put_u32(12, 0);
+    size_t at = 16;
+    for (int t = 0; t < NUM_TRACKS; t++) {
+        uint32_t bytes = t == 0 ? track0_bytes : 16u;
+        put_u32(at, bytes * 8u);
+        at += 4;
+        memset(buf + at, t == 0 ? 0x5A : (uint8_t)t, bytes);
+        at += bytes + ((4u - (bytes & 3u)) & 3u);
+    }
+    buf_len = at;
+}
+
+static void test_a_13500_byte_track_loads(void) {
+    psram_image_reset_slot(0);
+    build_full_image_with_long_track0(13500u);
+    CHECK(image_parse_buffer(0, buf, buf_len),
+          "a 13,500-byte track (Turrican's custom format) is within TRACK_MAX_BYTES and must load");
+    static uint8_t out[TRACK_MAX_BYTES];
+    uint32_t bits = 0;
+    CHECK(psram_image_read(0, 0, out, &bits), "the long track must read back");
+    CHECK_EQ_INT((int)bits, 13500 * 8);
+    CHECK(out[0] == 0x5A && out[13499] == 0x5A, "the long track's payload is intact end to end");
+}
+
+static void test_one_byte_over_the_limit_is_refused(void) {
+    psram_image_reset_slot(0);
+    build_full_image_with_long_track0(TRACK_MAX_BYTES + 1u);
+    CHECK(!image_parse_buffer(0, buf, buf_len),
+          "a track one byte over TRACK_MAX_BYTES must be refused");
+}
+
 int main(void) {
     size_t len = (size_t)TRACK_MAX_BYTES * NUM_TRACKS * SLOT_COUNT;
     void *mem = malloc(len);
@@ -125,6 +163,8 @@ int main(void) {
     RUN(test_read_does_not_overflow_a_track_cache_sized_buffer);
     RUN(test_staging_buffer_is_at_least_the_max_accepted_track);
     RUN(test_bit_count_overflow_is_refused);
+    RUN(test_a_13500_byte_track_loads);
+    RUN(test_one_byte_over_the_limit_is_refused);
     free(mem);
     return REPORT();
 }

@@ -1005,12 +1005,18 @@ bool dc_report_status(device_client_t *c, int psram_free, int rssi, const char *
                  f->update_protocol, st_field, er_field, (unsigned long)f->instruction_ack);
     }
 
+    // trackMaxBytes: the longest track this build's PSRAM slots hold. The
+    // server refuses to mount a disk with longer tracks here (an HFE with a
+    // long-track format) instead of sending an image image_loader.c would
+    // reject whole. A board built before this field existed sends nothing,
+    // and the server assumes 13312, which is what those builds held.
     static char body[DC_STATUS_BODY_BYTES];
     int body_len = snprintf(body, sizeof body,
         "{\"mountedSha256\":%s,\"mountedDiskId\":%s,\"version\":%lu,"
-        "\"error\":%s,\"psramFree\":%d,\"firmwareVersion\":%s,\"rssi\":%d%s}",
+        "\"error\":%s,\"psramFree\":%d,\"firmwareVersion\":%s,\"rssi\":%d,"
+        "\"trackMaxBytes\":%u%s}",
         sha_field, disk_field, (unsigned long)c->mounted_version,
-        err_field, psram_free, ver_field, rssi, fw_tail);
+        err_field, psram_free, ver_field, rssi, (unsigned)TRACK_MAX_BYTES, fw_tail);
     if (body_len < 0 || body_len >= (int)sizeof body) return false; // should never happen; give up quietly
 
     static char req[DC_STATUS_REQ_BYTES];

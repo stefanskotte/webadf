@@ -6,7 +6,16 @@ import { fixture, zeroSide, setTrackLength } from './__fixtures__/load';
 describe('inspectHfe', () => {
   it('accepts the clean fixture: extractable, weak-bit notice', () => {
     const r = inspectHfe(fixture('clean'));
-    expect(r).toEqual({ ok: true, cylinders: 80, notices: [WEAK_BIT_NOTICE], extractable: true, extractReason: null });
+    expect(r).toEqual({
+      ok: true, cylinders: 80, notices: [WEAK_BIT_NOTICE], extractable: true, extractReason: null,
+      maxTrackBits: 12_668 * 8,
+    });
+  });
+
+  it('accepts a 13,500-byte-a-side track (Turrican) and reports it as the longest', () => {
+    const r = inspectHfe(setTrackLength(fixture('clean'), 3, 27_000));
+    if (!r.ok) throw new Error(r.reason);
+    expect(r.maxTrackBits).toBe(13_500 * 8);
   });
 
   it('accepts a damaged disk as play-only and says which track', () => {
@@ -24,10 +33,10 @@ describe('inspectHfe', () => {
   });
 
   it('refuses an over-long served track at upload', () => {
-    // 2 x 13,400 bytes: the file is long enough (cylinders are 50 blocks apart), the track is not playable.
-    const r = inspectHfe(setTrackLength(fixture('clean'), 3, 26_800));
+    // 2 x 14,400 bytes: past the 14,336-byte limit, still inside the file (the read runs on into the next cylinders).
+    const r = inspectHfe(setTrackLength(fixture('clean'), 3, 28_800));
     expect(r.ok).toBe(false);
-    if (!r.ok) expect(r.reason).toMatch(/^Cylinder 3 side 0 is 107200 bits/);
+    if (!r.ok) expect(r.reason).toMatch(/^Cylinder 3 side 0 is 115200 bits/);
   });
 
   it('never throws on garbage', () => {

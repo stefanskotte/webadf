@@ -167,24 +167,25 @@ test.describe('HFE batch and size limits', () => {
     expect((await page.request.post('/api/ingest/complete', { data: { files: mixed } })).status()).toBe(409);
   });
 
-  test('presign admits a 2.25 MiB image and refuses one byte more', async ({ page }) => {
+  test('presign admits a 2.5 MiB image and refuses one byte more', async ({ page }) => {
     await signUpFresh(page);
     const sign = (sizeBytes: number) => page.request.post('/api/ingest/presign',
       { data: { files: [{ sha256: fakeSha(), sizeBytes }] } });
-    // 84 cylinders at the board's longest track: refused under the old 2 MiB cap.
-    expect((await sign(1024 + 84 * 2 * 13_312)).status()).toBe(200);
-    expect((await sign(2_359_296)).status()).toBe(200);
-    expect((await sign(2_359_297)).status()).toBe(400);
+    // 84 cylinders at the board's longest track (14,336 B a side): refused
+    // under the old 2 MiB and 2.25 MiB caps.
+    expect((await sign(1024 + 84 * 2 * 14_336)).status()).toBe(200);
+    expect((await sign(2_621_440)).status()).toBe(200);
+    expect((await sign(2_621_441)).status()).toBe(400);
   });
 
   test('an oversize file fails on its row with the size and the limit', async ({ page }) => {
     await signUpFresh(page);
     await page.goto('/ingest');
     await page.getByTestId('file-input').setInputFiles({
-      name: 'Too Big.adf', mimeType: 'application/octet-stream', buffer: Buffer.alloc(2_516_582, 1),
+      name: 'Too Big.adf', mimeType: 'application/octet-stream', buffer: Buffer.alloc(2_831_155, 1),
     });
     await expect(page.getByTestId('ingest-row').first().getByTestId('ingest-note'))
-      .toHaveText('Too Big.adf is 2.4 MB; the limit is 2.25 MB');
+      .toHaveText('Too Big.adf is 2.7 MB; the limit is 2.5 MB');
   });
 
   test('the dropzone splits a drop of 51 HFEs so every one lands', async ({ page }) => {
@@ -315,5 +316,84 @@ test.describe('an HFE on the game page', () => {
     const body = await res.body();
     expect(res.headers()['content-length']).toBe(String(body.length));
     expect(parseLikeFirmware([new Uint8Array(body)]).ok).toBe(true);
+  });
+});
+
+// Turrican's HFE writes 13,500 bytes a side on its custom-format cylinders:
+// longer than the 13,312 every board built before 2026-09-24 holds, inside
+// the 14,336 builds hold since. Made here from the clean fixture by
+// lengthening one cylinder's track-table entry (the read runs on into the
+// next cylinder's data, which is fine: it is only the length that matters).
+function longTrackHfe(): Buffer {
+  const b = Buffer.from(hfeFixture('clean'));
+  const lut = (b[18] | (b[19] << 8)) * 512 + 3 * 4;
+  b[lut + 2] = 27_000 & 0xff;
+  b[lut + 3] = 27_000 >> 8;
+  return b;
+}
+
+async function uploadViaApi(page: import('@playwright/test').Page, bytes: Buffer, filename: string) {
+  const sha256 = createHash('sha256').update(bytes).digest('hex');
+  const check = await page.request.post('/api/ingest/check', { data: { hashes: [sha256] } });
+  if (!(await check.json()).known.includes(sha256)) {
+    const { uploads } = await (await page.request.post('/api/ingest/presign', {
+      data: { files: [{ sha256, sizeBytes: bytes.length }] },
+    })).json();
+    const put = await fetch(uploads[0].url, { method: 'PUT', body: new Uint8Array(bytes) });
+    expect(put.ok || put.status === 400).toBe(true); // 400: already stored by an earlier run
+  }
+  const res = await page.request.post('/api/ingest/complete', {
+    data: { files: [{ sha256, sizeBytes: bytes.length, filename }] },
+  });
+  expect(res.status()).toBe(200);
+  return sha256;
+}
+
+test.describe('long-track HFE disks and the board that must hold them', () => {
+  test('a 13,500-byte track is accepted and recorded; only a board reporting 14 KB tracks may mount it', async ({ page, request }) => {
+    const { orgId } = await signUpFresh(page);
+    const { deviceId, token } = await pairDevice(page, request);
+    await uploadViaApi(page, longTrackHfe(), 'Long Track Test.hfe');
+
+    const [d] = await getDb().select({ id: disks.id, f: disks.imageFormat, bits: disks.maxTrackBits })
+      .from(disks).where(eq(disks.orgId, orgId));
+    expect(d.f).toBe('hfe');
+    expect(d.bits).toBe(13_500 * 8);
+
+    const report = (extra: Record<string, unknown>) => request.post('/api/device/status', {
+      headers: authHeader(token),
+      data: { mountedSha256: null, firmwareVersion: '9.9.9+e2e', ...extra },
+    });
+    const mount = () => page.request.post(`/api/devices/${deviceId}/mount`, { data: { diskId: d.id } });
+
+    // A board that has never reported a limit is a legacy one: refused, and said why.
+    let res = await mount();
+    expect(res.status()).toBe(409);
+    expect(await res.json()).toMatchObject({ error: 'track_too_long', reason: expect.stringContaining("update the board's firmware") });
+
+    // It reports the new build's limit: now it may mount.
+    expect((await report({ trackMaxBytes: 14_336 })).status()).toBe(204);
+    res = await mount();
+    expect(res.status()).toBe(200);
+
+    // It rolls back to a build that does not know the field: back to the legacy limit.
+    expect((await report({})).status()).toBe(204);
+    res = await mount();
+    expect(res.status()).toBe(409);
+  });
+
+  test('another org cannot learn anything from the track gate: its disk is a plain 404', async ({ browser }) => {
+    const pageA = await (await browser.newContext()).newPage();
+    const { orgId: orgA } = await signUpFresh(pageA);
+    await uploadViaApi(pageA, longTrackHfe(), 'Long Track A.hfe');
+    const [d] = await getDb().select({ id: disks.id }).from(disks).where(eq(disks.orgId, orgA));
+
+    const pageB = await (await browser.newContext()).newPage();
+    await signUpFresh(pageB);
+    const { deviceId } = await pairDevice(pageB, pageB.request);
+    const res = await pageB.request.post(`/api/devices/${deviceId}/mount`, { data: { diskId: d.id } });
+    expect(res.status()).toBe(404);
+    await pageA.context().close();
+    await pageB.context().close();
   });
 });

@@ -166,15 +166,16 @@ describe('parseLikeFirmware', () => {
 
   it('refuses a track longer than TRACK_MAX_BYTES', () => {
     const b = writeWfmf(tracks());
-    new DataView(b.buffer, b.byteOffset, b.byteLength).setUint32(16, 13313 * 8, true);
+    new DataView(b.buffer, b.byteOffset, b.byteLength).setUint32(16, 14337 * 8, true);
     const r = parseLikeFirmware([b]);
     expect(r.ok).toBe(false);
-    // 13313 * 8 = 106504 bits already exceeds the 106496-bit ceiling this
+    // 14337 * 8 = 114696 bits already exceeds the 114688-bit ceiling this
     // task's defect-2 fix checks first, so the failure now names that check
-    // (106496 bits) rather than the byte-count one (13312 bytes) below it --
-    // the two ceilings agree exactly (13312 * 8 === 106496), so a bits value
+    // (114688 bits) rather than the byte-count one (14336 bytes) below it --
+    // the two ceilings agree exactly (14336 * 8 === 114688), so a bits value
     // can never fail the byte check without having already failed this one.
-    expect(r.reason).toMatch(/106496|bits/i);
+    // (TRACK_MAX_BYTES was 13312 until 2026-09-24.)
+    expect(r.reason).toMatch(/114688|bits/i);
   });
 
   it('rejects a bit_count so large that (bits + 7) wraps to 0 under ToUint32, agreeing with readWfmf', () => {
