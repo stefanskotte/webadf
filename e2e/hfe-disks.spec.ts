@@ -26,6 +26,18 @@ test.describe('an HFE disk is read-only on every path', () => {
     expect((await off.json()).error).toBe('hfe_read_only');
     const on = await page.request.patch(`/api/disks/${diskId}`, { data: { writeProtected: true } });
     expect(on.status()).toBe(200);
+    // The refusal is decided in the UPDATE; a miss must still tell "no such
+    // disk" (404) apart from "an HFE" (409), including another org's HFE.
+    const missing = await page.request.patch(`/api/disks/${randomUUID()}`, { data: { writeProtected: false } });
+    expect(missing.status()).toBe(404);
+    const other = await page.context().browser()!.newContext();
+    const otherPage = await other.newPage();
+    await signUpFresh(otherPage);
+    const foreign = await otherPage.request.patch(`/api/disks/${diskId}`, { data: { writeProtected: false } });
+    expect(foreign.status()).toBe(404);
+    await other.close();
+    const [row] = await getDb().select({ wp: disks.writeProtected }).from(disks).where(eq(disks.id, diskId));
+    expect(row.wp).toBe(true);
   });
 
   test('file add, volume rename and restore are refused before any bytes are read', async ({ page }) => {
