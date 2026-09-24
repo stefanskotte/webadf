@@ -4393,6 +4393,38 @@ Things a successor needs:
 
   No HFE has ever been played on real hardware.
 
+#### 3al-a. Long-track HFEs: 14 KB tracks, and each board says what it holds (2026-09-24)
+
+`Turrican_ECS.hfe` (the operator's) was refused at upload. Cylinders 9–78 use Turrican's
+own track format: no 0x4489 sync, 13,500 bytes a side (108,000 cells), and **every byte is
+data** (the non-filler span is 13,277–13,500). Trimming can't work. Cylinders 0–8 are
+AmigaDOS.
+
+The fix (operator approved "its good, proceed"):
+- **Firmware:** `TRACK_MAX_BYTES` 13312 → **14336**.
+  - PSRAM: 2×160×14,336 + the 2 MiB update stage = 6.68 MB of 8 MB.
+  - SRAM: +17 KB, because track_cache holds several track-sized buffers.
+  - Every status report now carries `"trackMaxBytes":14336`.
+- **Server:**
+  - `devices.track_max_bytes` stores the board's report.
+  - `disks.max_track_bits` stores each HFE's longest served track, recorded at ingest.
+  - `setDesired` refuses, inside its UPDATE, a disk longer than the board holds. The
+    answer is `409 track_too_long`, with a sentence the mount toast shows.
+  - A board that never reported the field counts as legacy (13,312).
+  - Upload cap is **2.5 MiB**.
+  - Migration 0024 is applied to production.
+- **The reset rule:** a status report that names a firmware version but has no
+  `trackMaxBytes` resets the column to null (legacy). Such a report comes from a board that
+  rolled back to an older build.
+- **ACCEPTED GAP:** if a board already HOLDS or WANTS a long-track disk when it rolls back,
+  the desired disk stays set. The old loader refuses tracks over 13,312 (`image_loader.c`),
+  so nothing is corrupted, but the Devices card shows the disk as pending with no reason.
+  Fix only if it ever happens: clear the desired disk when the reset lowers the limit below
+  its `max_track_bits`.
+- **Unproven until the bench:** a 108,000-cell track plays as a 216 ms revolution at the
+  fixed 2 µs cell, and INDEX follows the DMA wrap. A Gotek plays this HFE the same way, but
+  only booting Turrican on the board proves the loader accepts it.
+
 ### 3ak. The board updates itself — 2b
 
 **STATUS: `feat/firmware-update-device`, not merged, not pushed, not deployed.** Production
