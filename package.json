@@ -23,7 +23,8 @@
     "firmware:headers": "tsx scripts/firmware-c-headers.ts",
     "firmware:publish": "dotenv -e .env.local -- tsx scripts/firmware-release.ts",
     "lha:verify": "tsx scripts/lha-verify.ts",
-    "dms:verify": "tsx scripts/dms-verify.ts"
+    "dms:verify": "tsx scripts/dms-verify.ts",
+    "hfe:fixtures": "rm -rf /tmp/hfe-fix && tsx scripts/hfe-write-sources.ts /tmp/hfe-fix && gw convert --format amiga.amigados /tmp/hfe-fix/sparse.adf /tmp/hfe-fix/clean.hfe >/dev/null && gw convert --format amiga.amigados /tmp/hfe-fix/sparse.adf '/tmp/hfe-fix/v3.hfe::version=3' >/dev/null && gw convert --format ibm.720 /tmp/hfe-fix/pc.img /tmp/hfe-fix/pc.hfe >/dev/null && for f in clean v3 pc; do gzip -9 -n -c /tmp/hfe-fix/$f.hfe > src/lib/hfe/__fixtures__/$f.hfe.gz; done"
   },
   "dependencies": {
     "@base-ui/react": "^1.7.0",
