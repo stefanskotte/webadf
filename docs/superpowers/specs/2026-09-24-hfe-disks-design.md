@@ -73,11 +73,20 @@ page accepts `.hfe`. The server validates before storing:
   v1 (e.g. with HxC or Greaseweazle) if the disk doesn't need them."
 - `formatrevision` must be 0 (HFE v1). Revision 1 (HFE v2) already uses the opcode stream
   and is refused with the same message as v3.
-- `track_encoding` must be an MFM value (`AMIGA_MFM` or `ISOIBM_MFM`; playback does not depend
-  on the label, only on the bits). FM, EMU_FM and unknown encodings are refused.
-- `bitRate` must be the DD value. The documents disagree (250 vs 500 kbit/s), so the accepted
-  value is **pinned by the test fixture produced by Greaseweazle/HxC** (§6), not by the docs;
-  anything else is refused.
+- `track_encoding`: accept the MFM values (`AMIGA_MFM`, `ISOIBM_MFM`) **and `0xFF`
+  (unspecified)**. Only explicit FM encodings (`ISOIBM_FM`, `EMU_FM`) are refused. **MEASURED
+  2026-09-24:** Greaseweazle 1.x (`gw convert --format amiga.amigados x.adf x.hfe`) writes
+  encoding `0xFF` and interface mode `0xFF`, so a rule requiring an MFM label would have refused
+  every Greaseweazle HFE.
+- `bitRate`: accept 250 kbit/s **±5%** (238–262). **MEASURED 2026-09-24:** Greaseweazle writes
+  the measured rate, `253`, not a nominal 250 or 500. The accepted range is pinned by that
+  fixture (§6).
+- **"Is this an Amiga disk?" is decided by content, not the header** (the header cannot tell a
+  PC 720 KB HFE from an Amiga one: same geometry, same rate, same `0xFF`s). Every Amiga disk has
+  a standard AmigaDOS track 0 — Kickstart reads the bootblock through trackdisk — so an HFE whose
+  cylinder 0 side 0 yields no Amiga-format sectors 0 and 1 is refused: "Not an Amiga disk: track
+  0 has no Amiga boot sectors." (A protected title's other tracks may be non-standard; track 0
+  may not.)
 - 2 sides; 80–84 cylinders. Cylinders 80–83, when present, are **accepted but not served**
   (the board serves cylinders 0–79, `NUM_TRACKS` = 160), and the upload result says so
   ("cylinders 80–83 present: not served by the board").
@@ -144,7 +153,7 @@ HFE hashes). The library shows HFE disks with an "HFE" tag.
   HxC (both on this machine or installable), commit them under `src/lib/hfe/__fixtures__/`, and
   record the exact commands. Include at least: a clean AmigaDOS DD disk; a disk with one damaged
   sector (not extractable, reason names the track); an HFE v3 file (refused); a non-Amiga (PC
-  MFM) HFE (refused).
+  MFM, e.g. `gw convert --format ibm.720`) HFE (refused by the track-0 rule).
 - **Round trip:** ADF → (independent tool) → HFE → `hfeToWfmf` → `decodeDisk` must equal the
   original ADF byte-for-byte; and `hfeToWfmf` must pass `firmware-parser.ts` (the firmware
   acceptance mirror).
