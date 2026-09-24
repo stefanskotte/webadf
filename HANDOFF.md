@@ -2072,6 +2072,7 @@ separately.
   existing path with NO FIRMWARE CHANGE. ADF cannot represent any of them. The operator's
   call, and the backlog entry below is what it buys.
 
+- **HD floppies -- 2026-09-24 RESEARCH ADDED, STILL DEFERRED until the operator has the board to test on** (operator: "HD implementation will come later when I have the board you can test on"). Findings, sources in `docs/superpowers/research/2026-09-24-hfe-and-hd-floppies.md` Part C: (1) the ADF-on-device ruling below holds, and the unknown is CPU: an HD track (22 sectors, ~25 KB MFM) encoded on demand is ESTIMATED at ~1-10 ms on the RP2350 against ~15 ms of head settle -- measure it on the board before designing around it. (2) **The board answers NO drive ID today** (`dskchg.c`: removed because a GPIO ISR could not catch the 1-4 us select pulses). Amiga IDs: `0xFFFFFFFF` DD, `0xAAAAAAAA` HD, `0x00000000` none. HD needs a dedicated PIO state machine to shift the HD ID on RDY. (3) Kickstart 3.0+ for HD is still UNCONFIRMED by source (operator ruling stands). The planned first step when the board is back: a spike that ports the ADF->MFM track encoder to C (byte-identical to `src/lib/adfmfm`), times it on the board, and proves a PIO can answer the ID.
 - **HD floppies: 1.76 MB images, on a par with the 880 KB ones today. DEFERRED by the
   operator 2026-09-13**, same day it was raised -- kept here with its findings intact so
   picking it up again costs nothing. Requested as: create them, add files to them, mount them. The operator's own

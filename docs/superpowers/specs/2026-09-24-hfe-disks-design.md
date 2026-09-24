@@ -7,8 +7,8 @@ lets do Approach A"); this written spec awaits their review.
 operator 2026-09-24). **HD (1.76 MB) is a separate, later increment** (operator 2026-09-24:
 "will come later when I have the board").
 
-Research this rests on (with sources): `scratchpad/research-hfe-hd.md` from the 2026-09-24
-session, summarised in §2. The HANDOFF backlog entry "Support HFE and IPF" is the origin.
+Research this rests on (with sources): `docs/superpowers/research/2026-09-24-hfe-and-hd-floppies.md`,
+summarised in §2. The HANDOFF backlog entry "Support HFE and IPF" is the origin.
 
 ---
 
