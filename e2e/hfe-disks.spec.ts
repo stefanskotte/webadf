@@ -1,6 +1,6 @@
 import { test, expect } from '@playwright/test';
 import { createHash, randomUUID } from 'node:crypto';
-import { readFileSync } from 'node:fs';
+import { readFileSync, writeFileSync } from 'node:fs';
 import { gunzipSync } from 'node:zlib';
 import { and, eq } from 'drizzle-orm';
 import { getDb } from '@/db';
@@ -137,6 +137,64 @@ test.describe('uploading HFE', () => {
 });
 
 /** Upload the clean fixture through the real UI and wait until /complete has written the disk row. */
+test.describe('HFE batch and size limits', () => {
+  test('/complete refuses more than 50 .hfe files in one call before touching storage', async ({ page }) => {
+    await signUpFresh(page);
+    const files = (n: number) => Array.from({ length: n }, (_, i) =>
+      ({ sha256: fakeSha(), sizeBytes: 2_049_024, filename: `Cap ${i}.hfe` }));
+    const over = await page.request.post('/api/ingest/complete', { data: { files: files(51) } });
+    expect(over.status()).toBe(400);
+    expect(await over.json()).toEqual({ error: 'too_many_hfe', max: 50 });
+    // At the cap the call proceeds: nothing is stored, so every file is
+    // refused as not-stored (409), not refused as a batch.
+    const at = await page.request.post('/api/ingest/complete', { data: { files: files(50) } });
+    expect(at.status()).toBe(409);
+    // Only .hfe names count: 51 more .adf names ride along without a 400.
+    const mixed = [...files(50), ...Array.from({ length: 51 }, (_, i) =>
+      ({ sha256: fakeSha(), sizeBytes: 901_120, filename: `Cap ${i}.adf` }))];
+    expect((await page.request.post('/api/ingest/complete', { data: { files: mixed } })).status()).toBe(409);
+  });
+
+  test('presign admits a 2.25 MiB image and refuses one byte more', async ({ page }) => {
+    await signUpFresh(page);
+    const sign = (sizeBytes: number) => page.request.post('/api/ingest/presign',
+      { data: { files: [{ sha256: fakeSha(), sizeBytes }] } });
+    // 84 cylinders at the board's longest track: refused under the old 2 MiB cap.
+    expect((await sign(1024 + 84 * 2 * 13_312)).status()).toBe(200);
+    expect((await sign(2_359_296)).status()).toBe(200);
+    expect((await sign(2_359_297)).status()).toBe(400);
+  });
+
+  test('an oversize file fails on its row with the size and the limit', async ({ page }) => {
+    await signUpFresh(page);
+    await page.goto('/ingest');
+    await page.getByTestId('file-input').setInputFiles({
+      name: 'Too Big.adf', mimeType: 'application/octet-stream', buffer: Buffer.alloc(2_516_582, 1),
+    });
+    await expect(page.getByTestId('ingest-row').first().getByTestId('ingest-note'))
+      .toHaveText('Too Big.adf is 2.4 MB; the limit is 2.25 MB');
+  });
+
+  test('the dropzone splits a drop of 51 HFEs so every one lands', async ({ page }) => {
+    test.setTimeout(120_000); // 51 browser-side inspections of ~2 MB each
+    const { orgId } = await signUpFresh(page);
+    await page.goto('/ingest');
+    // Same bytes, 51 names, 51 games: one call carrying all of them would be
+    // refused as too_many_hfe and not one disk would land.
+    // Written to disk: Playwright refuses more than 50 MB of in-memory buffers.
+    const buffer = hfeFixture('clean');
+    const paths = Array.from({ length: 51 }, (_, i) => {
+      const p = test.info().outputPath(
+        `HFE Split ${String.fromCharCode(65 + (i % 26))}${Math.floor(i / 26)} (1993)(Webadf).hfe`);
+      writeFileSync(p, buffer);
+      return p;
+    });
+    await page.getByTestId('file-input').setInputFiles(paths);
+    await expect.poll(async () => (await getDb().select({ id: disks.id }).from(disks)
+      .where(eq(disks.orgId, orgId))).length, { timeout: 90_000 }).toBe(51);
+  });
+});
+
 async function uploadHfeThroughUi(page: import('@playwright/test').Page, orgId: string, title: string) {
   await page.goto('/ingest');
   await page.getByTestId('file-input').setInputFiles({

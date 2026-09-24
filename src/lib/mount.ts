@@ -52,7 +52,7 @@ export async function setDesired(
     .limit(1);
   const disk = rows[0];
   if (!disk) return null;
-  // Ingest accepts anything from 1 byte to 2 MiB (a truncated .adf from a
+  // Ingest accepts anything from 1 byte to 2.25 MiB (a truncated .adf from a
   // scraped archive included), but the image route can only serve an exact
   // DD ADF or an HFE validated at ingest (isServable). A disk the route
   // cannot serve must not become mountable: without this check, mount

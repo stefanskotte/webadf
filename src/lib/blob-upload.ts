@@ -32,15 +32,68 @@
  * signed maximumSizeInBytes, say) into a silent success.
  */
 /**
- * Hard ceiling on a single disk image. An uncompressed Amiga DD floppy is
- * 901,120 bytes and an HD one is 1,802,240; 2 MiB covers both with room for
- * the odd oversized dump, and nothing legitimate in an ADF archive is bigger.
- * The server enforces this in presignBody (src/lib/ingest.ts, which imports
- * this constant) — clients screen against the SAME number so a single bad
- * file is reported as that one file's problem instead of 400-ing the presign
- * call for the other 499 files in its batch.
+ * Hard ceiling on a single disk image, for every format. An uncompressed Amiga
+ * HD floppy is 1,802,240 bytes (DD is 901,120). An HFE v1 is bigger: the spec
+ * accepts up to 84 cylinders, and at the board's longest track (13,312 B a
+ * side, 26,624 B a cylinder) that is 1,024 + 84 x 26,624 = 2,237,440 bytes.
+ * 2.25 MiB covers all of them; 2 MiB refused a legitimate 82-84 cylinder
+ * Greaseweazle capture. The server enforces this in presignBody
+ * (src/lib/ingest.ts, which imports this constant) -- clients screen against
+ * the SAME number so a single bad file is reported as that one file's problem
+ * instead of 400-ing the presign call for the other 499 files in its batch.
  */
-export const MAX_DISK_BYTES = 2 * 1024 * 1024;
+export const MAX_DISK_BYTES = 2_359_296;
+
+/**
+ * What a row or a CLI line says about a file isUploadableSize() refused. A
+ * failed row with no reason reads as a bug; this says what to do about it.
+ * MB here means MiB, the unit the limit is a round number in.
+ */
+export function describeUnuploadableSize(name: string, sizeBytes: number): string {
+  if (sizeBytes === 0) return `${name} is empty (0 bytes)`;
+  const mb = (n: number) => (n / (1024 * 1024)).toFixed(2).replace(/\.?0+$/, '');
+  return `${name} is ${mb(sizeBytes)} MB; the limit is ${mb(MAX_DISK_BYTES)} MB`;
+}
+
+/**
+ * HFE files per /api/ingest/complete call. Each costs ~100 ms of inspection
+ * plus, on a dedupe hit, a ~2 MB read, on top of verification, inside the
+ * route's 60 s budget; a few hundred in one 500-file batch time out, and a
+ * retry repeats it. The server refuses a call over this (400 too_many_hfe);
+ * both clients split with splitBatches() so they never send one.
+ */
+export const MAX_HFE_PER_BATCH = 50;
+
+/** The one filename rule for HFE; src/lib/disk-format.ts delegates to it. */
+export function isHfeName(name: string): boolean {
+  return /\.hfe$/i.test(name);
+}
+
+/**
+ * Splits a file list into batches of at most `maxBatch` items, of which at
+ * most `maxHfe` are HFE by name. Order is kept, and a batch closes only when
+ * the next item would break a cap, so a list with no HFE splits exactly like
+ * chunk() does.
+ */
+export function splitBatches<T>(
+  items: T[], nameOf: (item: T) => string, maxBatch: number, maxHfe: number,
+): T[][] {
+  const out: T[][] = [];
+  let cur: T[] = [];
+  let hfe = 0;
+  for (const item of items) {
+    const isHfe = isHfeName(nameOf(item));
+    if (cur.length === maxBatch || (isHfe && hfe === maxHfe)) {
+      out.push(cur);
+      cur = [];
+      hfe = 0;
+    }
+    cur.push(item);
+    if (isHfe) hfe++;
+  }
+  if (cur.length > 0) out.push(cur);
+  return out;
+}
 
 /**
  * True when a file can possibly be presigned. Catches the two shapes that

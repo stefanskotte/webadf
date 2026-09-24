@@ -2,12 +2,14 @@
 // src/lib/game-kind.ts already means Game/Demo/... by "kind", on the same pages.
 
 import { ADF_BYTES } from '@/lib/adfmfm';
+import { isHfeName } from '@/lib/blob-upload';
 
 export type { ImageFormat } from '@/db/schema/catalog';
 
-export function isHfeFilename(name: string): boolean {
-  return /\.hfe$/i.test(name);
-}
+// One rule, shared with both upload clients through blob-upload (which must
+// stay import-free for the CLI): the server's too_many_hfe count and the
+// clients' batch split have to agree on what an HFE name is.
+export const isHfeFilename = isHfeName;
 
 /**
  * Can the device image route turn this disk into WFMF? Decided by the row's

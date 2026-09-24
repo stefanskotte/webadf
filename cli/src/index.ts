@@ -8,7 +8,8 @@ import { hashFile } from './hash.ts';
 // how the MAX_BATCH divergence silently ate a whole batch. The module is
 // dependency-free and has no node:/DOM import, so both runtimes can load it.
 import {
-  classifyUpload, isExpiredPresign, isUploadableSize, MAX_DISK_BYTES, type UploadOutcome,
+  classifyUpload, isExpiredPresign, isUploadableSize, describeUnuploadableSize,
+  splitBatches, MAX_HFE_PER_BATCH, type UploadOutcome,
 } from '../../src/lib/blob-upload.ts';
 
 const DISK_EXT = new Set(['.adf', '.dsk', '.adz', '.dms', '.hfe']);
@@ -24,12 +25,6 @@ async function* walk(dir: string): AsyncGenerator<string> {
     if (entry.isDirectory()) yield* walk(p);
     else if (DISK_EXT.has(extname(entry.name).toLowerCase())) yield p;
   }
-}
-
-function chunk<T>(xs: T[], n: number): T[][] {
-  const out: T[][] = [];
-  for (let i = 0; i < xs.length; i += n) out.push(xs.slice(i, i + n));
-  return out;
 }
 
 async function main() {
@@ -114,19 +109,16 @@ async function main() {
   for (const f of files) {
     if (isUploadableSize(f.sizeBytes)) pushable.push(f);
     else {
-      failures.push({
-        what: f.filename,
-        why: f.sizeBytes === 0
-          ? 'empty file (0 bytes)'
-          : `size ${f.sizeBytes} outside 1..${MAX_DISK_BYTES} bytes`,
-      });
+      failures.push({ what: f.filename, why: describeUnuploadableSize(f.filename, f.sizeBytes) });
     }
   }
   if (pushable.length < files.length) {
     console.log(`  skipping ....... ${files.length - pushable.length} unusable file(s)`);
   }
 
-  const batches = chunk(pushable, BATCH);
+  // At most MAX_HFE_PER_BATCH HFEs per batch: /complete inspects each one
+  // inside its 60 s budget and answers 400 too_many_hfe to a call with more.
+  const batches = splitBatches(pushable, (f) => f.filename, BATCH, MAX_HFE_PER_BATCH);
 
   for (const [batchNo, group] of batches.entries()) {
     const label = `batch ${batchNo + 1}/${batches.length}`;

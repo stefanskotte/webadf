@@ -3,10 +3,10 @@ import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { toAdf, DISK_IMAGE_PATTERN } from '@/lib/archive/disk-image';
 import { hashBlob } from '@/lib/browser-hash';
-import { chunk } from '@/lib/chunk';
 import { mapLimit } from '@/lib/pool';
 import {
-  classifyUpload, isExpiredPresign, isUploadableSize, type UploadOutcome,
+  classifyUpload, isExpiredPresign, isUploadableSize, describeUnuploadableSize,
+  splitBatches, MAX_HFE_PER_BATCH, type UploadOutcome,
 } from '@/lib/blob-upload';
 import { inspectHfe, describeInspection } from '@/lib/hfe/inspect';
 import { isHfeFilename } from '@/lib/disk-format';
@@ -316,11 +316,17 @@ export function Dropzone() {
       // group -- one truncated .adf in a dropped folder would take every
       // other file in its batch down with it. Failing just that row keeps
       // the rest of the drop working.
+      // The row says why: it used to turn red still wearing the positive HFE
+      // note, which reads as a bug rather than as "this file is too big".
       const unusable = hashed.filter((h) => !isUploadableSize(h.file.size));
-      for (const h of unusable) patch(h.sha256, { state: 'failed' });
+      for (const h of unusable) {
+        patch(h.sha256, { state: 'failed', note: describeUnuploadableSize(h.file.name, h.file.size) });
+      }
       const usable = hashed.filter((h) => isUploadableSize(h.file.size));
 
-      for (const group of chunk(usable, MAX_BATCH)) {
+      // At most MAX_HFE_PER_BATCH HFEs per group: /complete inspects each
+      // one inside its 60 s budget and refuses a call carrying more.
+      for (const group of splitBatches(usable, (h) => h.file.name, MAX_BATCH, MAX_HFE_PER_BATCH)) {
         await processGroup(group);
       }
     } finally {

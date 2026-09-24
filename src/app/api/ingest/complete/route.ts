@@ -16,6 +16,7 @@ import { mapLimit } from '@/lib/pool';
 import { chunk } from '@/lib/chunk';
 import { inspectHfe, type HfeInspection } from '@/lib/hfe/inspect';
 import { isHfeFilename } from '@/lib/disk-format';
+import { MAX_HFE_PER_BATCH } from '@/lib/blob-upload';
 
 // A batch is up to MAX_BATCH (500) files. Verification reads back every
 // genuinely-new blob (~880 KB each), so this is the one ingest route that can
@@ -36,7 +37,11 @@ type Verdict =
       // Present only on the first-registration path, which is the only
       // branch that reads the bytes. A dedupe hit skips the read-back by
       // design and its blob already carries hashes from that first write.
-      hashes: { crc32: string; md5: string; sha1: string } | null }
+      hashes: { crc32: string; md5: string; sha1: string } | null;
+      // The bytes verify() read, kept only when the caller asked (an HFE,
+      // which is inspected next): holding every read of a 500-file batch
+      // would be ~440 MB.
+      bytes?: Uint8Array }
   | { ok: false; reason: 'not-stored' | 'size-mismatch' | 'digest-mismatch' | 'hfe-refused' };
 
 /**
@@ -60,7 +65,9 @@ type Verdict =
  * described them — which matters, because leaving them would park unverified
  * content at a key nobody can ever overwrite.
  */
-async function verify(sha256: string, claimedSize: number, alreadyRegistered: boolean): Promise<Verdict> {
+async function verify(
+  sha256: string, claimedSize: number, alreadyRegistered: boolean, keepBytes = false,
+): Promise<Verdict> {
   const stat = await diskStore.stat(sha256);
   if (!stat) return { ok: false, reason: 'not-stored' };
 
@@ -94,6 +101,7 @@ async function verify(sha256: string, claimedSize: number, alreadyRegistered: bo
     sizeBytes: bytes.byteLength,
     gzipSizeBytes: gzipSync(bytes).byteLength,
     hashes: { crc32: h.crc32, md5: h.md5, sha1: h.sha1 },
+    ...(keepBytes ? { bytes } : {}),
   };
 }
 
@@ -125,6 +133,15 @@ export async function POST(request: Request) {
 
   const db = getDb();
   const files = parsed.data.files;
+
+  // Each HFE costs ~100 ms of inspection (spec D3), and a ~2 MB read on a
+  // dedupe hit, on top of verification, inside a 60 s budget. Both clients split their batches
+  // with splitBatches(), so only a hand-rolled caller ever sees this.
+  const hfeFiles = files.filter((f) => isHfeFilename(f.filename));
+  if (hfeFiles.length > MAX_HFE_PER_BATCH) {
+    return Response.json({ error: 'too_many_hfe', max: MAX_HFE_PER_BATCH }, { status: 400 });
+  }
+  const hfeNamed = new Set(hfeFiles.map((f) => f.sha256));
   const uniqueShas = [...new Set(files.map((f) => f.sha256))];
 
   // Which of these already have a blobs row? Drives whether verification has
@@ -155,7 +172,7 @@ export async function POST(request: Request) {
     const knownVerdicts = await mapLimit(alreadyKnown, STAT_CONCURRENCY, (s) =>
       verify(s, claimed.get(s)!, true));
     const newVerdicts = await mapLimit(needsRead, VERIFY_CONCURRENCY, (s) =>
-      verify(s, claimed.get(s)!, false));
+      verify(s, claimed.get(s)!, false, hfeNamed.has(s)));
 
     alreadyKnown.forEach((s, i) => verdictFor.set(s, knownVerdicts[i]));
     needsRead.forEach((s, i) => verdictFor.set(s, newVerdicts[i]));
@@ -164,11 +181,15 @@ export async function POST(request: Request) {
     // included: skipping the read-back above rests on the digest having been
     // proven once, which says nothing about whether these bytes are an HFE
     // the board can play -- another org may have uploaded them as anything.
-    // ~2 MB each and rare, so the extra read is affordable.
-    const hfeShas = uniqueShas.filter((s) => verdictFor.get(s)!.ok
-      && files.some((f) => f.sha256 === s && isHfeFilename(f.filename)));
-    const inspections = await mapLimit(hfeShas, VERIFY_CONCURRENCY, async (s) =>
-      inspectHfe(await diskStore.read(s)));
+    // A first registration reuses the bytes verify() already read; only a
+    // dedupe hit pays for a read here.
+    const hfeShas = uniqueShas.filter((s) => verdictFor.get(s)!.ok && hfeNamed.has(s));
+    const inspections = await mapLimit(hfeShas, VERIFY_CONCURRENCY, async (s) => {
+      const v = verdictFor.get(s) as Extract<Verdict, { ok: true }>;
+      const bytes = v.bytes ?? await diskStore.read(s);
+      delete v.bytes; // not needed past this point; let it go before the inserts
+      return inspectHfe(bytes);
+    });
     hfeShas.forEach((s, i) => {
       const r = inspections[i];
       if (r.ok) {
