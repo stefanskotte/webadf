@@ -1,4 +1,4 @@
-import { notFound } from 'next/navigation';
+import { notFound, redirect } from 'next/navigation';
 import Link from 'next/link';
 import { and, eq } from 'drizzle-orm';
 import { getDb } from '@/db';
@@ -113,6 +113,7 @@ export default async function DiskFilesPage(props: PageProps<'/disks/[id]/files'
       // yet checked) -- and only 'matched' means this disk really has a
       // TOSEC identity to lose.
       matchState: blobs.matchState,
+      imageFormat: disks.imageFormat,
     })
     .from(disks)
     .innerJoin(entitlements, and(
@@ -136,6 +137,11 @@ export default async function DiskFilesPage(props: PageProps<'/disks/[id]/files'
   // organization's disk exists.
   const disk = rows[0];
   if (!disk) notFound();
+
+  // An HFE has no filesystem to browse and can never be edited (HFE spec
+  // D2); its game page states that and offers Extract as ADF. A hand-typed
+  // URL lands there instead of on an editor that would refuse everything.
+  if (disk.imageFormat === 'hfe') redirect(`/games/${disk.gameId}${fromQuery(from)}`);
 
   const filename = disk.tosecName ?? disk.sourceFilename ?? `${disk.sha256.slice(0, 12)}.adf`;
 

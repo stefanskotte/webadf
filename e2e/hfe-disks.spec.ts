@@ -6,7 +6,9 @@ import { and, eq } from 'drizzle-orm';
 import { getDb } from '@/db';
 import { disks } from '@/db/schema/catalog';
 import { signUpFresh } from './helpers';
-import { seedDisk, cleanupSeeded } from './device-helpers';
+import { seedDisk, cleanupSeeded, pairDevice, authHeader } from './device-helpers';
+import { parseLikeFirmware } from '@/lib/adfmfm/firmware-parser';
+import { sparseAdf as sparseAdfBytes } from '@/lib/hfe/__fixtures__/source';
 
 test.afterAll(cleanupSeeded);
 
@@ -131,5 +133,81 @@ test.describe('uploading HFE', () => {
     const row = page.getByTestId('ingest-row').first();
     await expect(row.locator('[data-state="failed"]')).toBeVisible({ timeout: 15_000 });
     await expect(row.getByTestId('ingest-note')).toHaveText(reason);
+  });
+});
+
+/** Upload the clean fixture through the real UI and wait until /complete has written the disk row. */
+async function uploadHfeThroughUi(page: import('@playwright/test').Page, orgId: string, title: string) {
+  await page.goto('/ingest');
+  await page.getByTestId('file-input').setInputFiles({
+    name: `${title} (1993)(Webadf).hfe`, mimeType: 'application/octet-stream', buffer: hfeFixture('clean'),
+  });
+  // Not the row state: "deduped" shows before /complete runs.
+  await expect.poll(async () => (await getDb().select({ id: disks.id }).from(disks).where(eq(disks.orgId, orgId))).length,
+    { timeout: 30_000 }).toBe(1);
+}
+
+test.describe('an HFE on the game page', () => {
+  test('shows the tag, the notice and Read-only, offers Extract, and no Browse or write-protect toggle', async ({ page }) => {
+    const { orgId } = await signUpFresh(page);
+    await uploadHfeThroughUi(page, orgId, 'HFE Row');
+    const [d] = await getDb().select({ id: disks.id, gameId: disks.gameId }).from(disks).where(eq(disks.orgId, orgId));
+    await page.goto(`/games/${d.gameId}`);
+    await expect(page.getByTestId(`hfe-tag-${d.id}`)).toHaveText('HFE');
+    await expect(page.getByTestId(`hfe-notice-${d.id}`)).toContainText("Weak-bit copy protections aren't supported");
+    await expect(page.getByTestId(`hfe-readonly-${d.id}`)).toHaveText('Read-only (HFE)');
+    await expect(page.getByTestId(`wp-${d.id}`)).toHaveCount(0);
+    await expect(page.getByTestId(`browse-${d.id}`)).toHaveCount(0);
+    await expect(page.getByTestId(`extract-${d.id}`)).toBeVisible();
+
+    // The file browser URL, typed by hand, lands back on the game page.
+    await page.goto(`/disks/${d.id}/files`);
+    await expect(page).toHaveURL(new RegExp(`/games/${d.gameId}`));
+  });
+
+  test('Extract as ADF creates a browsable ADF disk in the same game whose bytes are the source', async ({ page }) => {
+    const { orgId } = await signUpFresh(page);
+    await uploadHfeThroughUi(page, orgId, 'HFE Extract');
+    const [h] = await getDb().select({ id: disks.id, gameId: disks.gameId, sha256: disks.sha256 }).from(disks).where(eq(disks.orgId, orgId));
+    await page.goto(`/games/${h.gameId}`);
+    await page.getByTestId(`extract-${h.id}`).click();
+
+    const expectedSha = createHash('sha256').update(sparseAdfBytes()).digest('hex');
+    await expect.poll(async () => (await getDb().select({ sha: disks.sha256, f: disks.imageFormat, g: disks.gameId })
+      .from(disks).where(and(eq(disks.orgId, orgId), eq(disks.imageFormat, 'adf')))))
+      .toEqual([{ sha: expectedSha, f: 'adf', g: h.gameId }]);
+
+    const [x] = await getDb().select({ id: disks.id }).from(disks).where(and(eq(disks.orgId, orgId), eq(disks.imageFormat, 'adf')));
+    await page.reload();
+    await expect(page.getByTestId(`browse-${x.id}`)).toBeVisible();
+    // The HFE is untouched.
+    const [again] = await getDb().select({ sha: disks.sha256 }).from(disks).where(eq(disks.id, h.id));
+    expect(again.sha).toBe(h.sha256);
+    // Extracting twice is idempotent: still exactly one ADF row.
+    const second = await page.request.post(`/api/disks/${h.id}/extract`);
+    expect(second.status()).toBe(200);
+    expect(await getDb().select().from(disks).where(and(eq(disks.orgId, orgId), eq(disks.imageFormat, 'adf')))).toHaveLength(1);
+  });
+
+  test('download names the file .hfe and serves the original bytes', async ({ page }) => {
+    const { orgId } = await signUpFresh(page);
+    await uploadHfeThroughUi(page, orgId, 'HFE Download');
+    const [d] = await getDb().select({ id: disks.id }).from(disks).where(eq(disks.orgId, orgId));
+    const res = await page.request.get(`/api/disks/${d.id}/adf`);
+    expect(res.status()).toBe(200);
+    expect(res.headers()['content-disposition']).toContain('.hfe');
+    expect(Buffer.compare(await res.body(), hfeFixture('clean'))).toBe(0);
+  });
+
+  test('a paired device fetches WFMF for an HFE its org owns: computed length, firmware-acceptable', async ({ page, request }) => {
+    const { orgId } = await signUpFresh(page);
+    const { token } = await pairDevice(page, request);
+    await uploadHfeThroughUi(page, orgId, 'HFE Device');
+    const [d] = await getDb().select({ sha: disks.sha256 }).from(disks).where(eq(disks.orgId, orgId));
+    const res = await request.get(`/api/device/image/${d.sha}`, { headers: authHeader(token) });
+    expect(res.status()).toBe(200);
+    const body = await res.body();
+    expect(res.headers()['content-length']).toBe(String(body.length));
+    expect(parseLikeFirmware([new Uint8Array(body)]).ok).toBe(true);
   });
 });
