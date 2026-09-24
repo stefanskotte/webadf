@@ -16,7 +16,7 @@ export { TrackDecodeError } from './track';
 export { WfmfFormatError } from './wfmf';
 export { MfmFormatError } from './mfm';
 export { encodeTrack, decodeTrack } from './track';
-export { writeWfmf, readWfmf } from './wfmf';
+export { writeWfmf, writeWfmfTracks, readWfmf } from './wfmf';
 
 /**
  * Encode a whole disk. 901,120 bytes in, 2,027,536 bytes out.

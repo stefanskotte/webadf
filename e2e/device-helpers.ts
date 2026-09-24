@@ -58,7 +58,7 @@ export async function seedDisk(
   // writeProtected is omitted by default, leaving the schema's own default
   // (protected) in force -- passed explicitly only by a caller proving the
   // Devices card's "Writable" tag, which needs a disk that is NOT protected.
-  opts: { title: string; diskNo: number; sha256: string; sizeBytes?: number; writeProtected?: boolean },
+  opts: { title: string; diskNo: number; sha256: string; sizeBytes?: number; writeProtected?: boolean; imageFormat?: 'adf' | 'hfe' },
 ) {
   const db = getDb();
   const gameId = `gam_${randomUUID()}`;
@@ -86,6 +86,7 @@ export async function seedDisk(
     id: diskId, gameId, orgId, diskNo: opts.diskNo, sha256: opts.sha256,
     label: `${opts.title} (Disk ${opts.diskNo})`, sizeBytes,
     ...(opts.writeProtected !== undefined ? { writeProtected: opts.writeProtected } : {}),
+    ...(opts.imageFormat !== undefined ? { imageFormat: opts.imageFormat } : {}),
   });
 
   await db.insert(entitlements).values({

@@ -9,7 +9,8 @@ import { downloadFilename, contentDisposition } from '@/lib/download-name';
 export const maxDuration = 60;
 
 /**
- * Download one disk as a raw ADF, for a human.
+ * Download one disk as its stored image, for a human: a raw ADF, or an HFE
+ * exactly as uploaded.
  *
  * Distinct from /api/device/image/<sha256>, which serves the same disk as
  * MFM-encoded WFMF (~2 MB) to a board. A person wants the 901,120-byte image
@@ -37,6 +38,7 @@ export async function GET(_request: Request, ctx: { params: Promise<{ id: string
       sha256: disks.sha256,
       tosecName: disks.tosecName,
       sourceFilename: entitlements.sourceFilename,
+      imageFormat: disks.imageFormat,
     })
     .from(disks)
     .innerJoin(entitlements, and(
@@ -61,11 +63,14 @@ export async function GET(_request: Request, ctx: { params: Promise<{ id: string
     return Response.json({ error: 'blob_unavailable' }, { status: 503 });
   }
 
-  const name = downloadFilename(disk.tosecName, disk.sourceFilename, disk.sha256);
+  // An HFE is downloaded as what it is -- the original image, named .hfe --
+  // not as an ADF (spec D1: it was never converted).
+  const isHfe = disk.imageFormat === 'hfe';
+  const name = downloadFilename(disk.tosecName, disk.sourceFilename, disk.sha256, isHfe ? '.hfe' : '.adf');
 
   return new Response(bytes as unknown as BodyInit, {
     headers: {
-      'content-type': 'application/x-amiga-disk-file',
+      'content-type': isHfe ? 'application/octet-stream' : 'application/x-amiga-disk-file',
       'content-length': String(bytes.byteLength),
       'content-disposition': contentDisposition(name),
       // Content-addressed: these exact bytes never change. Private, because

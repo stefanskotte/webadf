@@ -3,11 +3,13 @@ import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { toAdf, DISK_IMAGE_PATTERN } from '@/lib/archive/disk-image';
 import { hashBlob } from '@/lib/browser-hash';
-import { chunk } from '@/lib/chunk';
 import { mapLimit } from '@/lib/pool';
 import {
-  classifyUpload, isExpiredPresign, isUploadableSize, type UploadOutcome,
+  classifyUpload, isExpiredPresign, isUploadableSize, describeUnuploadableSize,
+  splitBatches, MAX_HFE_PER_BATCH, type UploadOutcome,
 } from '@/lib/blob-upload';
+import { inspectHfe, describeInspection } from '@/lib/hfe/inspect';
+import { isHfeFilename } from '@/lib/disk-format';
 
 type RowState = 'hashing' | 'deduped' | 'uploading' | 'done' | 'failed';
 
@@ -80,6 +82,38 @@ export function Dropzone() {
       throw new Error(`${path} -> ${res.status} ${await res.text()}`);
     }
     return res.json();
+  }
+
+  // /complete's own failure shape: a batch that is refused ENTIRELY (every
+  // file rejected -- e.g. a lone v3 HFE) answers 409 with a real, structured
+  // result -- { created: 0, rejected, rejectedReasons } -- not a transport
+  // failure. post()'s throw-on-non-OK would surface that as a plain error
+  // before the per-file rejectedReasons handling below ever ran: a refused
+  // row that had already been marked 'deduped' would keep showing
+  // 'deduped', and the rest would land 'failed' with no note -- a refusal
+  // that reads as success, or as an unexplained failure. This treats a 409
+  // whose body actually has rejectedReasons as data, same as the 200 case,
+  // so every refusal in the batch reaches its row. Any other /complete
+  // failure -- network error, 400, 503, a 409 that doesn't look like this --
+  // still throws, matching post()'s behaviour for every other endpoint.
+  async function postComplete(body: unknown): Promise<{ rejectedReasons?: Record<string, string> }> {
+    const res = await fetch('/api/ingest/complete', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    if (res.ok) return res.json();
+    const text = await res.text();
+    if (res.status === 409) {
+      try {
+        const data = JSON.parse(text);
+        if (data && typeof data === 'object' && data.rejectedReasons) return data;
+      } catch {
+        // Not the structured shape -- fall through to the same throw as
+        // any other non-OK response.
+      }
+    }
+    throw new Error(`/api/ingest/complete -> ${res.status} ${text}`);
   }
 
   // One PUT attempt straight to Blob. Never logs, stores or renders `url` --
@@ -185,15 +219,19 @@ export function Dropzone() {
       // disk real.
       const okToComplete = group.filter((h) => uploadOk.get(h.sha256) !== false);
       if (okToComplete.length > 0) {
-        await post('/api/ingest/complete', {
+        const res = await postComplete({
           files: okToComplete.map((h) => ({
             sha256: h.sha256,
             sizeBytes: h.file.size,
             filename: h.file.name,
           })),
         });
+        const refused = res.rejectedReasons ?? {};
+        for (const h of okToComplete) {
+          if (refused[h.sha256]) patch(h.sha256, { state: 'failed', note: refused[h.sha256] });
+        }
         for (const h of toUpload) {
-          if (uploadOk.get(h.sha256) !== false) patch(h.sha256, { state: 'done' });
+          if (uploadOk.get(h.sha256) !== false && !refused[h.sha256]) patch(h.sha256, { state: 'done' });
         }
       }
     } catch (err) {
@@ -221,21 +259,41 @@ export function Dropzone() {
 
       const hashed: Array<{ file: File; sha256: string }> = [];
       for (const original of dropped) {
-        // .adz and .dms become a plain ADF here, BEFORE hashing -- so the
-        // stored blob, its sha256 and its TOSEC identity are identical to
-        // those of the same disk uploaded as a .adf. Converting later would
-        // give one disk two identities depending on how it arrived.
-        const conv = await toAdf(original.name, new Uint8Array(await original.arrayBuffer()));
-        if (!conv.ok) {
-          setRows((rs) => [...rs, {
-            filename: original.name, sizeBytes: original.size, sha256: `bad:${original.name}`,
-            state: 'failed' as RowState, note: conv.reason,
-          }]);
-          continue;
+        let file: File;
+        let note: string | undefined;
+        if (isHfeFilename(original.name)) {
+          // Stored as uploaded (HFE spec D1) -- never through toAdf. Checked
+          // here so a refusal is on the row at once; /complete checks again,
+          // because the CLI never runs this.
+          const r = inspectHfe(new Uint8Array(await original.arrayBuffer()));
+          if (!r.ok) {
+            setRows((rs) => [...rs, {
+              filename: original.name, sizeBytes: original.size, sha256: `bad:${original.name}`,
+              state: 'failed' as RowState, note: r.reason,
+            }]);
+            continue;
+          }
+          file = original;
+          note = describeInspection(r);
+        } else {
+          // .adz and .dms become a plain ADF here, BEFORE hashing -- so the
+          // stored blob, its sha256 and its TOSEC identity are identical to
+          // those of the same disk uploaded as a .adf. Converting later would
+          // give one disk two identities depending on how it arrived.
+          const conv = await toAdf(original.name, new Uint8Array(await original.arrayBuffer()));
+          if (!conv.ok) {
+            setRows((rs) => [...rs, {
+              filename: original.name, sizeBytes: original.size, sha256: `bad:${original.name}`,
+              state: 'failed' as RowState, note: conv.reason,
+            }]);
+            continue;
+          }
+          file = conv.from === 'adf'
+            ? original
+            : new File([conv.bytes as unknown as BlobPart], conv.name, { type: 'application/octet-stream' });
+          note = conv.from === 'adf' ? undefined
+            : `from ${original.name}${conv.note ? ` (${conv.note})` : ''}`;
         }
-        const file = conv.from === 'adf'
-          ? original
-          : new File([conv.bytes as unknown as BlobPart], conv.name, { type: 'application/octet-stream' });
         const sha256 = await hashBlob(file);
         hashed.push({ file, sha256 });
         // If this exact content is already a row (the user dropped it
@@ -246,11 +304,7 @@ export function Dropzone() {
         // This also has to reach into functional-update state, since the
         // loop can hash faster than React commits each prior setRows call.
         setRows((rs) => {
-          const row: Row = {
-            filename: file.name, sizeBytes: file.size, sha256, state: 'hashing',
-            note: conv.from === 'adf' ? undefined
-              : `from ${original.name}${conv.note ? ` (${conv.note})` : ''}`,
-          };
+          const row: Row = { filename: file.name, sizeBytes: file.size, sha256, state: 'hashing', note };
           return rs.some((r) => r.sha256 === sha256)
             ? rs.map((r) => (r.sha256 === sha256 ? row : r))
             : [...rs, row];
@@ -262,11 +316,17 @@ export function Dropzone() {
       // group -- one truncated .adf in a dropped folder would take every
       // other file in its batch down with it. Failing just that row keeps
       // the rest of the drop working.
+      // The row says why: it used to turn red still wearing the positive HFE
+      // note, which reads as a bug rather than as "this file is too big".
       const unusable = hashed.filter((h) => !isUploadableSize(h.file.size));
-      for (const h of unusable) patch(h.sha256, { state: 'failed' });
+      for (const h of unusable) {
+        patch(h.sha256, { state: 'failed', note: describeUnuploadableSize(h.file.name, h.file.size) });
+      }
       const usable = hashed.filter((h) => isUploadableSize(h.file.size));
 
-      for (const group of chunk(usable, MAX_BATCH)) {
+      // At most MAX_HFE_PER_BATCH HFEs per group: /complete inspects each
+      // one inside its 60 s budget and refuses a call carrying more.
+      for (const group of splitBatches(usable, (h) => h.file.name, MAX_BATCH, MAX_HFE_PER_BATCH)) {
         await processGroup(group);
       }
     } finally {
@@ -301,7 +361,7 @@ export function Dropzone() {
           <path d="M3 16v3a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-3" />
         </svg>
         <span className="text-[15px] font-semibold" style={{ color: 'var(--ink)' }}>
-          Drop ADF, ADZ, DMS
+          Drop ADF, ADZ, DMS, HFE
         </span>
         <span className="font-mono text-[10.5px]" style={{ color: 'var(--muted-2)' }}>
           hashed in your browser before upload
@@ -315,7 +375,7 @@ export function Dropzone() {
         <input
           type="file"
           multiple
-          accept=".adf,.dsk,.adz,.dms"
+          accept=".adf,.dsk,.adz,.dms,.hfe"
           className="sr-only"
           data-testid="file-input"
           disabled={busy}

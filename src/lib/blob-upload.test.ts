@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   isBlobAlreadyExists, isExpiredPresign, classifyUpload, isUploadableSize, MAX_DISK_BYTES,
+  MAX_HFE_PER_BATCH, splitBatches, describeUnuploadableSize, isHfeName,
 } from './blob-upload';
 
 // The exact body Vercel Blob returns for a second PUT to a key presigned with
@@ -89,3 +90,67 @@ describe('isUploadableSize', () => {
     expect(isUploadableSize(NaN)).toBe(false);
   });
 });
+
+describe('MAX_DISK_BYTES', () => {
+  it('is 2.25 MiB', () => {
+    expect(MAX_DISK_BYTES).toBe(2_359_296);
+  });
+
+  // The two largest legitimate images: an HD ADF, and an 84-cylinder HFE v1
+  // at the board's longest track (13,312 B a side). 2 MiB refused the second.
+  it('admits an HD ADF and the largest HFE the spec accepts', () => {
+    expect(isUploadableSize(1_802_240)).toBe(true);
+    expect(isUploadableSize(1024 + 84 * 2 * 13_312)).toBe(true);
+    expect(isUploadableSize(2_359_296 + 1)).toBe(false);
+  });
+});
+
+describe('describeUnuploadableSize', () => {
+  it('states the size and the limit for an oversize file', () => {
+    expect(describeUnuploadableSize('Big.hfe', 2_516_582)).toBe('Big.hfe is 2.4 MB; the limit is 2.25 MB');
+  });
+
+  it('says a zero-byte file is empty', () => {
+    expect(describeUnuploadableSize('Trunc.adf', 0)).toBe('Trunc.adf is empty (0 bytes)');
+  });
+});
+
+describe('splitBatches', () => {
+  const names = (prefix: string, n: number, ext: string) =>
+    Array.from({ length: n }, (_, i) => `${prefix}${i}.${ext}`);
+  const id = (s: string) => s;
+
+  it('splits a list with no HFE exactly like a plain chunk', () => {
+    const out = splitBatches(names('a', 1001, 'adf'), id, 500, 50);
+    expect(out.map((b) => b.length)).toEqual([500, 500, 1]);
+  });
+
+  it('never puts more than maxHfe HFE files in one batch', () => {
+    const out = splitBatches(names('h', 120, 'hfe'), id, 500, 50);
+    expect(out.map((b) => b.length)).toEqual([50, 50, 20]);
+  });
+
+  it('fills a batch with ADFs around its HFE quota and keeps order', () => {
+    const items = [...names('h', 60, 'HFE'), ...names('a', 10, 'adf')];
+    const out = splitBatches(items, id, 500, 50);
+    expect(out.map((b) => b.length)).toEqual([50, 20]);
+    expect(out.flat()).toEqual(items);
+    for (const b of out) expect(b.filter(isHfeName).length).toBeLessThanOrEqual(50);
+  });
+
+  it('honours both caps at once', () => {
+    const items = [...names('a', 480, 'adf'), ...names('h', 60, 'hfe')];
+    const out = splitBatches(items, id, 500, MAX_HFE_PER_BATCH);
+    for (const b of out) {
+      expect(b.length).toBeLessThanOrEqual(500);
+      expect(b.filter(isHfeName).length).toBeLessThanOrEqual(MAX_HFE_PER_BATCH);
+    }
+    expect(out.flat()).toEqual(items);
+    expect(out.map((b) => b.length)).toEqual([500, 40]);
+  });
+
+  it('returns no batches for no files', () => {
+    expect(splitBatches([], id, 500, 50)).toEqual([]);
+  });
+});
+

@@ -2,6 +2,8 @@ import { Link } from '@/components/shell/link';
 import type { GameDetailDisk } from '@/lib/queries';
 import { WriteProtectToggle } from './write-protect-toggle';
 import { MountAction } from './mount-action';
+import { ExtractAction } from './extract-action';
+import { WEAK_BIT_NOTICE } from '@/lib/hfe/messages';
 import { holderText, type MountChoice } from '@/lib/mount-choice';
 import { DeleteDiskDialog } from '@/components/library/delete-disk-dialog';
 import { libraryHref } from '@/lib/trail';
@@ -22,6 +24,7 @@ export function DiskRow({ disk, choices, from }: {
   // a separate sha256-keyed map in the page, which could name a different
   // device than the button did whenever two disk rows shared one digest.
   const held = holderText(choices);
+  const isHfe = disk.imageFormat === 'hfe';
 
   return (
     <div
@@ -40,6 +43,11 @@ export function DiskRow({ disk, choices, from }: {
           {disk.isBoot && (
             <span className="rounded px-1.5 py-0.5 text-[9.5px] font-bold uppercase tracking-wide text-white"
                   style={{ background: 'var(--accent-amber)' }}>Boot</span>
+          )}
+          {isHfe && (
+            <span className="rounded px-1.5 py-0.5 text-[9.5px] font-bold uppercase tracking-wide"
+                  style={{ border: '1px solid var(--hairline-strong)', color: 'var(--ink)' }}
+                  data-testid={`hfe-tag-${disk.id}`}>HFE</span>
           )}
         </div>
         {/*
@@ -64,6 +72,11 @@ export function DiskRow({ disk, choices, from }: {
         <span className="truncate font-mono text-[11px]" style={{ color: 'var(--muted)' }}>
           {(disk.sizeBytes / 1024).toFixed(0)} KB · {disk.sha256.slice(0, 12)}
         </span>
+        {isHfe && (
+          <span className="text-[11.5px]" style={{ color: 'var(--muted)' }} data-testid={`hfe-notice-${disk.id}`}>
+            {WEAK_BIT_NOTICE}
+          </span>
+        )}
         {held && (
           <span className="text-[11.5px] font-semibold"
                 style={{ color: held.stale ? 'var(--amber-text)' : 'var(--muted)' }}
@@ -103,15 +116,27 @@ export function DiskRow({ disk, choices, from }: {
           page and should be client-side, unlike Download above which must be
           a real request so the browser streams the response to disk.
         */}
-        <Link
-          href={`/disks/${disk.id}/files${fromQuery(from)}`}
-          data-testid={`browse-${disk.id}`}
-          className="btn-like shrink-0 rounded-lg px-3 py-1.5 text-[12px] font-semibold"
-          style={{ background: 'var(--glass-strong)', color: 'var(--ink)' }}
-        >
-          Browse
-        </Link>
-        <WriteProtectToggle diskId={disk.id} writeProtected={disk.writeProtected} />
+        {isHfe ? (
+          <ExtractAction diskId={disk.id} extractable={disk.extractable === true} reason={disk.extractReason} />
+        ) : (
+          <Link
+            href={`/disks/${disk.id}/files${fromQuery(from)}`}
+            data-testid={`browse-${disk.id}`}
+            className="btn-like shrink-0 rounded-lg px-3 py-1.5 text-[12px] font-semibold"
+            style={{ background: 'var(--glass-strong)', color: 'var(--ink)' }}
+          >
+            Browse
+          </Link>
+        )}
+        {isHfe ? (
+          // Stated, not hidden (show-both-values): an HFE is never writable.
+          <span className="rounded-md border px-2 py-1 text-[10.5px] font-semibold uppercase tracking-wide"
+                style={{ borderColor: 'var(--hairline-strong)', color: 'var(--muted)' }}
+                title="HFE disks are preserved originals: extract as ADF to change files"
+                data-testid={`hfe-readonly-${disk.id}`}>Read-only (HFE)</span>
+        ) : (
+          <WriteProtectToggle diskId={disk.id} writeProtected={disk.writeProtected} />
+        )}
         <MountAction diskId={disk.id} choices={choices} />
         {/* Last in the row, after the actions someone actually came here to
             use. Named for the disk, not the title: on a multi-disk set this

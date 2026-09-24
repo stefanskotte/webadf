@@ -10,6 +10,7 @@ import { kindFromSetName, pickKind } from '@/lib/game-kind';
 import { tosecEntries } from '@/db/schema/tosec';
 import { orgFilter } from '@/db/scope';
 import { getGameDemozoo, demozooCovers, type GameDemozoo } from '@/lib/demozoo/queries';
+import type { ImageFormat } from '@/lib/disk-format';
 
 export interface GameListItem {
   id: string; title: string; year: number | null; publisher: string | null;
@@ -398,6 +399,12 @@ export interface GameDetailDisk {
    * different tenants, and `blobs` carries no filename at all.
    */
   sourceFilename: string | null;
+  /** 'adf' | 'hfe' (HFE spec D2): an HFE is read-only and may be extractable. */
+  imageFormat: ImageFormat;
+  /** HFE only: every AmigaDOS sector decoded at ingest. Null on an ADF. */
+  extractable: boolean | null;
+  /** HFE only, when not extractable: which track failed and how. */
+  extractReason: string | null;
 }
 export interface GameImage {
   sha1: string;
@@ -460,6 +467,7 @@ export async function getGameDetail(orgId: string, gameId: string): Promise<Game
       isBoot: disks.isBoot, writeProtected: disks.writeProtected,
       tosecName: disks.tosecName,
       sourceFilename: entitlements.sourceFilename,
+      imageFormat: disks.imageFormat, extractable: disks.extractable, extractReason: disks.extractReason,
     })
     .from(disks)
     // Scoped on BOTH columns of the entitlement's primary key. Joining on

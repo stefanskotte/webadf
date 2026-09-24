@@ -19,7 +19,7 @@ export function makeSortTitle(title: string): string {
 }
 
 export function parseTosecName(filename: string): ParsedName {
-  const stem = filename.replace(/\.(adf|dsk|adz|dms)$/i, '');
+  const stem = filename.replace(/\.(adf|dsk|adz|dms|hfe)$/i, '');
 
   const flags = [...stem.matchAll(/\[([^\]]+)\]/g)].map((m) => m[1]);
   const parens = [...stem.matchAll(/\(([^)]+)\)/g)].map((m) => m[1]);

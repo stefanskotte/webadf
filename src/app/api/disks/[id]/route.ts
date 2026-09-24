@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { and, eq, sql } from 'drizzle-orm';
+import { and, eq, ne, sql } from 'drizzle-orm';
 import { getDb } from '@/db';
 import { disks } from '@/db/schema/catalog';
 import { devices } from '@/db/schema/devices';
@@ -24,13 +24,23 @@ export async function PATCH(request: Request, ctx: { params: Promise<{ id: strin
     return Response.json({ error: 'invalid_body', detail: z.flattenError(parsed.error) }, { status: 400 });
   }
 
+  // An HFE is always write-protected (spec D2). Refused here, not only hidden
+  // in the UI: a direct call must not be able to make one writable. The
+  // format is a condition of the UPDATE itself, not a SELECT before it: a
+  // concurrent /complete can flip this row to 'hfe' between the two.
   // Org-scoped in the statement, not in a WHERE a later edit could drop.
+  const scope = and(eq(disks.id, id), eq(disks.orgId, orgId));
   const updated = await getDb().update(disks)
     .set({ writeProtected: parsed.data.writeProtected })
-    .where(and(eq(disks.id, id), eq(disks.orgId, orgId)))
+    .where(parsed.data.writeProtected ? scope : and(scope, ne(disks.imageFormat, 'hfe')))
     .returning({ id: disks.id, writeProtected: disks.writeProtected });
 
-  if (updated.length === 0) return Response.json({ error: 'not_found' }, { status: 404 });
+  if (updated.length === 0) {
+    // Nothing updated: either no such disk in this org, or an HFE refused.
+    const row = await getDb().select({ imageFormat: disks.imageFormat }).from(disks).where(scope).limit(1);
+    if (row[0]?.imageFormat === 'hfe') return Response.json({ error: 'hfe_read_only' }, { status: 409 });
+    return Response.json({ error: 'not_found' }, { status: 404 });
+  }
 
   // Live write-protect (write-back spec §3.5): a board holding this disk learns
   // the flag on its next poll. The digest is unchanged, so the board takes its

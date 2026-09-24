@@ -63,6 +63,7 @@ export async function applyDiskEdit(
       sha256: disks.sha256,
       tosecName: disks.tosecName,
       sourceFilename: entitlements.sourceFilename,
+      imageFormat: disks.imageFormat,
     })
     .from(disks)
     .innerJoin(entitlements, and(
@@ -74,6 +75,10 @@ export async function applyDiskEdit(
 
   const disk = rows[0];
   if (!disk) return { ok: false, status: 404, reason: 'not_found' };
+
+  // Spec D2: an HFE is a preserved original. Refused before the holder
+  // check and before any read -- nothing about it can be edited, mounted or not.
+  if (disk.imageFormat === 'hfe') return { ok: false, status: 409, reason: 'hfe_read_only' };
 
   // D-W-4: refuse before anything is read or written. The holder lookup and
   // the rule behind it live in findHolder (src/lib/disk-holder.ts), shared
