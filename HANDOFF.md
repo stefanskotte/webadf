@@ -2143,7 +2143,7 @@ separately.
     requirement of the feature, not a blocker. The UI should say so where an HD disk is
     created or mounted, since a 1.3 machine would simply fail to read it.
 
-- **Support HFE and IPF, for copy-protected games.** **2026-09-24: IPF IS RULED OUT** by the operator ("riddled with licensing": the CAPS/SPS decoder library's terms), so do not propose it again. HFE, including v3, is being planned. Requested by the operator 2026-09-13,
+- **Support HFE and IPF, for copy-protected games.** **HFE v1 IMPLEMENTED 2026-09-24, see §3al (bench acceptance owed; v3 later).** **2026-09-24: IPF IS RULED OUT** by the operator ("riddled with licensing": the CAPS/SPS decoder library's terms), so do not propose it again. HFE, including v3, is being planned. Requested by the operator 2026-09-13,
   and the direct payoff of the decision above: both are flux/bitstream formats, which is
   exactly what WFMF already carries, so the work is server-side conversion into the
   container the device already streams. **No firmware change, and no board change.**
@@ -4312,6 +4312,58 @@ Demozoo API (the bulk export makes per-lookup load on a non-profit unnecessary).
 - **Screenshot redirects:** screenshot fetches follow redirects, so the `media.demozoo.org` host
   allowlist checks only the first URL (the raster content-type allowlist and `nosniff` still apply).
 - **Cron drift:** the daily 01:30 cron against a 7-day gate can drift a refetch to 8 days.
+
+### 3al. HFE v1 disks — upload, play, extract as ADF (2026-09-24)
+
+**STATUS: on branch `hfe-disks`, all 9 plan tasks done and reviewed; merge pending the
+full e2e re-run.** Spec `docs/superpowers/specs/2026-09-24-hfe-disks-design.md`, plan
+`docs/superpowers/plans/2026-09-24-hfe-disks.md`. Migration 0023 (three additive columns on
+`disks`) is **already applied to production**. It was applied as a guarded `ADD COLUMN IF NOT
+EXISTS`; this database has no `__drizzle_migrations` table, so nothing records it.
+
+What it does:
+- `.hfe` uploads are accepted by the dropzone and the CLI, and the original bytes are stored
+  (never converted).
+- The board is sent WFMF built from the HFE on every fetch: `hfeToWfmf`, per-track bit counts,
+  and a `content-length` computed from the body.
+- HFE disks are read-only on every path: edit, rename, restore, write-back, and write-protect
+  off.
+- The game page shows an HFE tag, the weak-bit notice and "Read-only (HFE)". It offers
+  **Extract as ADF** when every AmigaDOS sector decodes, and otherwise says why not.
+- Extract creates a new ordinary ADF disk in the same game.
+
+Things a successor needs:
+- **The column is `disks.image_format`, not `kind`.** `game-kind.ts` already uses "kind" for
+  Game/Demo on the same pages.
+- **HFE v3 files keep `formatrevision` 0 (measured).** Only the `HXCHFEV3` signature tells v3
+  apart from v1.
+- **What Greaseweazle writes (measured):** encoding 0xFF, 253 kbit/s, 12,668-byte sides. A PC
+  720 KB image is 250 kbit/s with 12,500-byte sides.
+- **Fixtures are made by Greaseweazle from synthetic ADFs** (`pnpm hfe:fixtures`), gzipped and
+  reproducible, never from a real disk.
+- **Amiga-ness is decided by content:** track 0 must decode AmigaDOS sectors 0 and 1.
+- **The sector decoder scans bit by bit** and handles a sync word split across the index. A
+  test was added for this after mutation testing showed the plan's own tests missed it.
+- **Upload limits:** `MAX_DISK_BYTES` is now **2.25 MiB** for every file, because an HFE with
+  82–84 cylinders or long tracks exceeds 2 MiB. At most **50 HFE files go in one `/complete`
+  call** (`MAX_HFE_PER_BATCH`, and `splitBatches` in both clients).
+- **Rulings made during the work** (reversible):
+  - The HFE tag is on the disk rows, not the library grid.
+  - The file browser redirects an HFE disk to its game page.
+  - Clients validate HFE in the browser, and the server validates again on every
+    registration, including dedupe hits.
+- **Deferred minors, in the SDD ledger:**
+  - Re-extracting after the extracted ADF was edited is a silent no-op that returns 200.
+  - The not-extractable reason is only in a tooltip, which touch devices can't show.
+  - Refused HFE bytes stay in storage with no database row.
+  - HFE disks count as unidentified in TOSEC coverage.
+- **BENCH ACCEPTANCE IS STILL OWED** (spec §7), for when the board is available:
+  1. A clean AmigaDOS HFE boots.
+  2. A long-track protected title loads.
+  3. A weak-bit title fails the way the notice says.
+  4. Extract, then mount the ADF; it behaves the same.
+
+  No HFE has ever been played on real hardware.
 
 ### 3ak. The board updates itself — 2b
 
