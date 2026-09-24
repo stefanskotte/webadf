@@ -40,6 +40,44 @@ export function writeWfmf(tracks: Uint8Array[]): Uint8Array {
   return out;
 }
 
+/**
+ * Like writeWfmf, but each track carries its own bit count. For a disk that
+ * came from flux (HFE) rather than from our encoder: its tracks are whatever
+ * length the original was, and the firmware times INDEX from the count
+ * (start_streaming), so padding to nominal would change the disk.
+ */
+export function writeWfmfTracks(tracks: ReadonlyArray<{ bits: number; bytes: Uint8Array }>): Uint8Array {
+  if (tracks.length !== TRACKS) {
+    throw new WfmfFormatError(`expected ${TRACKS} tracks, got ${tracks.length}`);
+  }
+  let size = WFMF_HEADER_BYTES;
+  tracks.forEach((tr, t) => {
+    if (tr.bits <= 0 || tr.bits > FIRMWARE_ACCEPT_TRACK_BITS) {
+      throw new WfmfFormatError(`track ${t} has ${tr.bits} bits, outside 1..${FIRMWARE_ACCEPT_TRACK_BITS}`);
+    }
+    if (tr.bytes.length !== (tr.bits + 7) >>> 3) {
+      throw new WfmfFormatError(`track ${t}: ${tr.bits} bits but ${tr.bytes.length} bytes`);
+    }
+    size += 4 + tr.bytes.length + ((4 - (tr.bytes.length & 3)) & 3);
+  });
+
+  const out = new Uint8Array(size);
+  const dv = new DataView(out.buffer, out.byteOffset, out.byteLength);
+  dv.setUint32(0, WFMF_MAGIC, true);
+  dv.setUint32(4, WFMF_VERSION, true);
+  dv.setUint32(8, TRACKS, true);
+  dv.setUint32(12, 0, true);
+
+  let at = WFMF_HEADER_BYTES;
+  for (const tr of tracks) {
+    dv.setUint32(at, tr.bits, true);
+    at += 4;
+    out.set(tr.bytes, at);
+    at += tr.bytes.length + ((4 - (tr.bytes.length & 3)) & 3); // zero padding, as readWfmf and image_loader.c skip it
+  }
+  return out;
+}
+
 /** Parse a container back into its tracks. Strict — this is our own output. */
 export function readWfmf(blob: Uint8Array): Uint8Array[] {
   if (blob.length < WFMF_HEADER_BYTES) {
