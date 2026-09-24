@@ -70,4 +70,19 @@ describe('groupDisks', () => {
     expect(games[0].disks[0].sha256).toBe('a');
     expect(games[0].disks[1].sha256).toBe('b');
   });
+
+  it('groups .hfe disks exactly as it groups the same names as .adf', () => {
+    const shape = (ext: string) => groupDisks([
+      d(`Lotus-1.${ext}`, 'a'), d(`Lotus-2.${ext}`, 'b'), d(`Foo.${ext}`, 'c'),
+    ]).map((g) => ({ title: g.title, disks: g.disks.map((x) => [x.diskNo, x.sha256]) }));
+    expect(shape('hfe')).toEqual(shape('adf'));
+    expect(shape('hfe')).toEqual([
+      { title: 'Foo', disks: [[1, 'c']] },
+      { title: 'Lotus', disks: [[1, 'a'], [2, 'b']] },
+    ]);
+  });
+
+  it('puts an .hfe and its extracted .adf in the same game', () => {
+    expect(groupDisks([d('Foo.hfe', 'a'), d('Foo.adf', 'b')])).toHaveLength(1);
+  });
 });

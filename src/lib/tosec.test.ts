@@ -94,4 +94,14 @@ describe('parseTosecName', () => {
     expect(r.title).toBe('Weird_D1');
     expect(r.diskNo).toBe(2);
   });
+
+  // A Gotek user's HFE is named like any other disk image; the extension
+  // must not survive into the title the library shows.
+  it('strips .hfe like the other disk image extensions', () => {
+    expect(parseTosecName('Turrican.hfe').title).toBe('Turrican');
+    expect(parseTosecName('Turrican.HFE').sortTitle).toBe('turrican');
+    const r = parseTosecName('Lotus-2.hfe');
+    expect(r.title).toBe('Lotus');
+    expect(r.diskNo).toBe(2);
+  });
 });
