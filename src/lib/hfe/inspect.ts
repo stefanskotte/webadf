@@ -3,11 +3,15 @@
 
 import { parseHfe } from './parse';
 import { hasAmigaBootTrack, extractAdf } from './extract';
-import { tooLongTrack } from './to-wfmf';
+import { tooLongTrack, longestServedTrackBits } from './to-wfmf';
 import { NOT_AMIGA, WEAK_BIT_NOTICE, extraCylindersNotice } from './messages';
 
 export type HfeInspection =
-  | { ok: true; cylinders: number; notices: string[]; extractable: boolean; extractReason: string | null }
+  | {
+      ok: true; cylinders: number; notices: string[]; extractable: boolean; extractReason: string | null;
+      /** The longest served side, in bits: what a board's firmware must hold to play it. */
+      maxTrackBits: number;
+    }
   | { ok: false; reason: string };
 
 export function inspectHfe(bytes: Uint8Array): HfeInspection {
@@ -23,6 +27,7 @@ export function inspectHfe(bytes: Uint8Array): HfeInspection {
     return {
       ok: true, cylinders: p.disk.cylinders, notices,
       extractable: x.ok, extractReason: x.ok ? null : x.reason,
+      maxTrackBits: longestServedTrackBits(p.disk),
     };
   } catch {
     return { ok: false, reason: 'This HFE file could not be read.' };

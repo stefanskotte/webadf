@@ -36,7 +36,7 @@
 const IMAGE_MAGIC = 0x464d4657;
 const IMAGE_VERSION = 1;
 const NUM_TRACKS = 160;
-const TRACK_MAX_BYTES = 13312;
+const TRACK_MAX_BYTES = 14336;
 
 export interface FirmwareParseResult {
   ok: boolean;

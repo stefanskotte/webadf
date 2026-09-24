@@ -6,6 +6,7 @@ import { devices } from '@/db/schema/devices';
 import { firmwareReleases } from '@/db/schema/firmware';
 import { disks, games } from '@/db/schema/catalog';
 import { isServable } from '@/lib/disk-format';
+import { LEGACY_BOARD_TRACK_MAX_BYTES } from '@/lib/adfmfm';
 
 export interface DesiredDisk {
   sha256: string;
@@ -36,29 +37,45 @@ export interface DesiredState {
  * device that belongs to someone else from one that does not exist -- and
  * now also cannot tell that from a disk the encoder will refuse.
  */
+export type SetDesiredOutcome =
+  | { ok: true; version: number }
+  // not_found covers an unknown device, an unknown or unservable disk, and
+  // either belonging to another org -- deliberately indistinguishable.
+  // track_too_long is only ever reported for a device AND disk this org owns.
+  | { ok: false; reason: 'not_found' | 'track_too_long' };
+
 export async function setDesired(
   orgId: string, deviceId: string, diskId: string,
-): Promise<number | null> {
+): Promise<SetDesiredOutcome> {
   const db = getDb();
 
   // Org-scoped in the statement. A disk id alone is not enough to name a disk.
   const rows = await db
     .select({
       id: disks.id, sha256: disks.sha256, gameId: disks.gameId, diskNo: disks.diskNo,
-      sizeBytes: disks.sizeBytes, imageFormat: disks.imageFormat,
+      sizeBytes: disks.sizeBytes, imageFormat: disks.imageFormat, maxTrackBits: disks.maxTrackBits,
     })
     .from(disks)
     .where(and(eq(disks.id, diskId), eq(disks.orgId, orgId)))
     .limit(1);
   const disk = rows[0];
-  if (!disk) return null;
+  if (!disk) return { ok: false, reason: 'not_found' };
   // Ingest accepts anything from 1 byte to 2.25 MiB (a truncated .adf from a
   // scraped archive included), but the image route can only serve an exact
   // DD ADF or an HFE validated at ingest (isServable). A disk the route
   // cannot serve must not become mountable: without this check, mount
   // succeeds, the poll succeeds, and /api/device/image/<sha256> 500s forever
   // with nothing telling the human why the Amiga never sees a disk.
-  if (!isServable(disk)) return null;
+  if (!isServable(disk)) return { ok: false, reason: 'not_found' };
+
+  // A disk with tracks longer than this board's firmware holds (an HFE with a
+  // long-track format, e.g. Turrican's 13,500-byte sides) would be rejected
+  // WHOLE by image_loader.c, so the board would never load anything. In the
+  // UPDATE's own WHERE, not a read before it: a status report that changes
+  // the board's firmware between the two cannot slip past.
+  const fits = disk.maxTrackBits === null
+    ? sql`true`
+    : sql`coalesce(${devices.trackMaxBytes}, ${LEGACY_BOARD_TRACK_MAX_BYTES}) * 8 >= ${disk.maxTrackBits}`;
 
   // The version bump is in the same UPDATE as the state it describes, so a
   // poller can never observe a new version beside the old disk, or the reverse.
@@ -71,10 +88,16 @@ export async function setDesired(
       desiredSetAt: new Date(),
       desiredVersion: sql`${devices.desiredVersion} + 1`,
     })
-    .where(and(eq(devices.id, deviceId), eq(devices.orgId, orgId)))
+    .where(and(eq(devices.id, deviceId), eq(devices.orgId, orgId), fits))
     .returning({ version: devices.desiredVersion });
 
-  return updated[0]?.version ?? null;
+  if (updated[0]) return { ok: true, version: updated[0].version };
+  if (disk.maxTrackBits === null) return { ok: false, reason: 'not_found' };
+  // Nothing updated: tell a board of this org that is too old apart from a
+  // device that is not this org's at all (still 404 for the latter).
+  const owned = await db.select({ id: devices.id }).from(devices)
+    .where(and(eq(devices.id, deviceId), eq(devices.orgId, orgId))).limit(1);
+  return { ok: false, reason: owned.length > 0 ? 'track_too_long' : 'not_found' };
 }
 
 /** Eject: no disk is desired. Returns the new version, or null if out of org. */
@@ -228,6 +251,8 @@ export async function recordStatus(
     error?: string | null;
     psramFree?: number | null;
     rssi?: number | null;
+    /** TRACK_MAX_BYTES of the firmware the board runs. Absent from builds before 2026-09-24. */
+    trackMaxBytes?: number;
   },
 ): Promise<void> {
   const db = getDb();
@@ -251,6 +276,13 @@ export async function recordStatus(
   // every other optional field here -- a partial report must never wipe a
   // value a fuller one established.
   if (s.firmwareVersion !== undefined) patch.firmwareVersion = s.firmwareVersion;
+  // NOT the absent-leaves-it-alone rule: trackMaxBytes belongs to the build.
+  // A report that names its firmware but carries no trackMaxBytes comes from
+  // a build too old to know the field -- a board that rolled back after a
+  // failed trial boot, say -- and must drop to the legacy limit rather than
+  // keep the newer build's claim and be sent tracks it would reject.
+  if (s.trackMaxBytes !== undefined) patch.trackMaxBytes = s.trackMaxBytes;
+  else if (s.firmwareVersion !== undefined) patch.trackMaxBytes = null;
   if (s.updateProtocol !== undefined) patch.updateProtocol = s.updateProtocol;
   if (s.firmwareUpdateState !== undefined) patch.firmwareUpdateState = s.firmwareUpdateState;
   if (s.firmwareUpdateError !== undefined) patch.firmwareUpdateError = s.firmwareUpdateError;

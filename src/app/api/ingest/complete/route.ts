@@ -314,6 +314,7 @@ export async function POST(request: Request) {
           ...(hfe ? {
             imageFormat: 'hfe' as const, writeProtected: true,
             extractable: hfe.extractable, extractReason: hfe.extractReason,
+            maxTrackBits: hfe.maxTrackBits,
           } : {}),
         });
       }
@@ -346,6 +347,7 @@ export async function POST(request: Request) {
       set: {
         imageFormat: 'hfe', writeProtected: true,
         extractable: sql`excluded.extractable`, extractReason: sql`excluded.extract_reason`,
+        maxTrackBits: sql`excluded.max_track_bits`,
       },
     });
   }

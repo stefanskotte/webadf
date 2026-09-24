@@ -24,8 +24,15 @@ export const WFMF_HEADER_BYTES = 16;
 export const WFMF_BYTES = WFMF_HEADER_BYTES + TRACKS * (4 + TRACK_BYTES); // 2027536
 
 // The largest bit_count image_loader.c will accept before rejecting the
-// container outright: TRACK_MAX_BYTES (psram_image.h) * 8.
-export const FIRMWARE_ACCEPT_TRACK_BITS = 106496;
+// container outright: TRACK_MAX_BYTES (psram_image.h) * 8. 14336 since
+// 2026-09-24 (long-track HFE disks); it was 13312.
+export const FIRMWARE_ACCEPT_TRACK_BITS = 114688;
+
+// What a board that does not report `trackMaxBytes` in its status can hold:
+// every build before the field existed had TRACK_MAX_BYTES = 13312. The mount
+// gate uses it so such a board is never sent a disk image_loader.c would
+// reject whole.
+export const LEGACY_BOARD_TRACK_MAX_BYTES = 13312;
 
 // Historically this repo's task-3 spec (§7) recorded a *second*, tighter
 // ceiling here: TRACK_MFM_MAX (13000, floppy_io.h) * 8 = 104000. That was a

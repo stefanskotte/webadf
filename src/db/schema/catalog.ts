@@ -139,6 +139,10 @@ export const disks = pgTable('disks', {
   // Null on an ADF, where the question does not arise.
   extractable: boolean('extractable'),
   extractReason: text('extract_reason'),
+  // HFE only: the longest served side, in bits (inspectHfe). Null on an ADF,
+  // whose tracks are all the nominal 101,344. The mount gate refuses a board
+  // whose reported trackMaxBytes cannot hold it.
+  maxTrackBits: integer('max_track_bits'),
 }, (t) => [
   index('disks_game_idx').on(t.gameId),
   index('disks_org_idx').on(t.orgId),

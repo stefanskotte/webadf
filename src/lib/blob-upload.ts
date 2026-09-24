@@ -34,15 +34,16 @@
 /**
  * Hard ceiling on a single disk image, for every format. An uncompressed Amiga
  * HD floppy is 1,802,240 bytes (DD is 901,120). An HFE v1 is bigger: the spec
- * accepts up to 84 cylinders, and at the board's longest track (13,312 B a
- * side, 26,624 B a cylinder) that is 1,024 + 84 x 26,624 = 2,237,440 bytes.
- * 2.25 MiB covers all of them; 2 MiB refused a legitimate 82-84 cylinder
- * Greaseweazle capture. The server enforces this in presignBody
- * (src/lib/ingest.ts, which imports this constant) -- clients screen against
+ * accepts up to 84 cylinders, and at the board's longest track (14,336 B a
+ * side since 2026-09-24, 28,672 B a cylinder) that is 1,024 + 84 x 28,672 =
+ * 2,409,472 bytes. 2.5 MiB covers all of them; 2 MiB refused a legitimate
+ * 82-84 cylinder Greaseweazle capture, and 2.25 MiB a long-track one. The
+ * server enforces this in presignBody (src/lib/ingest.ts, which imports this
+ * constant) -- clients screen against
  * the SAME number so a single bad file is reported as that one file's problem
  * instead of 400-ing the presign call for the other 499 files in its batch.
  */
-export const MAX_DISK_BYTES = 2_359_296;
+export const MAX_DISK_BYTES = 2_621_440;
 
 /**
  * What a row or a CLI line says about a file isUploadableSize() refused. A

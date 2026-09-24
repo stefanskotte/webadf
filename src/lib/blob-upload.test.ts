@@ -92,22 +92,22 @@ describe('isUploadableSize', () => {
 });
 
 describe('MAX_DISK_BYTES', () => {
-  it('is 2.25 MiB', () => {
-    expect(MAX_DISK_BYTES).toBe(2_359_296);
+  it('is 2.5 MiB', () => {
+    expect(MAX_DISK_BYTES).toBe(2_621_440);
   });
 
   // The two largest legitimate images: an HD ADF, and an 84-cylinder HFE v1
-  // at the board's longest track (13,312 B a side). 2 MiB refused the second.
+  // at the board's longest track (14,336 B a side). 2 MiB refused the second.
   it('admits an HD ADF and the largest HFE the spec accepts', () => {
     expect(isUploadableSize(1_802_240)).toBe(true);
-    expect(isUploadableSize(1024 + 84 * 2 * 13_312)).toBe(true);
-    expect(isUploadableSize(2_359_296 + 1)).toBe(false);
+    expect(isUploadableSize(1024 + 84 * 2 * 14_336)).toBe(true);
+    expect(isUploadableSize(2_621_440 + 1)).toBe(false);
   });
 });
 
 describe('describeUnuploadableSize', () => {
   it('states the size and the limit for an oversize file', () => {
-    expect(describeUnuploadableSize('Big.hfe', 2_516_582)).toBe('Big.hfe is 2.4 MB; the limit is 2.25 MB');
+    expect(describeUnuploadableSize('Big.hfe', 2_831_155)).toBe('Big.hfe is 2.7 MB; the limit is 2.5 MB');
   });
 
   it('says a zero-byte file is empty', () => {

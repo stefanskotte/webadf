@@ -39,16 +39,16 @@ describe('hfeToWfmf', () => {
 
   it('tooLongTrack names the cylinder and side; hfeToWfmf refuses it', () => {
     const d = disk();
-    const big = { bits: 13_313 * 8, bytes: new Uint8Array(13_313) };
+    const big = { bits: 14_337 * 8, bytes: new Uint8Array(14_337) };
     const bad = { ...d, tracks: d.tracks.map((t, c) => (c === 12 ? [t[0], big] as typeof t : t)) };
     expect(tooLongTrack(d)).toBeNull();
-    expect(tooLongTrack(bad)).toBe("Cylinder 12 side 1 is 106504 bits — longer than the board's 106496-bit track limit.");
+    expect(tooLongTrack(bad)).toBe("Cylinder 12 side 1 is 114696 bits — longer than the board's 114688-bit track limit.");
     expect(() => hfeToWfmf(bad)).toThrow(WfmfFormatError);
   });
 
   it('ignores a too-long track on an unserved cylinder (80+)', () => {
     const d = disk();
-    const big = { bits: 13_313 * 8, bytes: new Uint8Array(13_313) };
+    const big = { bits: 14_337 * 8, bytes: new Uint8Array(14_337) };
     const extra = { ...d, cylinders: 81, tracks: [...d.tracks, [big, big] as [typeof big, typeof big]] };
     expect(tooLongTrack(extra)).toBeNull();
   });
