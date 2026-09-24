@@ -28,15 +28,6 @@ export interface DesiredState {
   desired: DesiredDisk | null;
 }
 
-/**
- * Point a device at a disk. Returns the new version, or null when either the
- * device or the disk is outside `orgId`, or the disk is not exactly one
- * standard 901,120-byte DD image (see the sizeBytes check below).
- *
- * Null rather than a thrown "not found" on purpose: a caller cannot tell a
- * device that belongs to someone else from one that does not exist -- and
- * now also cannot tell that from a disk the encoder will refuse.
- */
 export type SetDesiredOutcome =
   | { ok: true; version: number }
   // not_found covers an unknown device, an unknown or unservable disk, and
@@ -44,6 +35,16 @@ export type SetDesiredOutcome =
   // track_too_long is only ever reported for a device AND disk this org owns.
   | { ok: false; reason: 'not_found' | 'track_too_long' };
 
+/**
+ * Point a device at a disk. Returns the new version; not_found when either
+ * the device or the disk is outside `orgId`, or the image route cannot serve
+ * the disk (isServable); track_too_long when both are this org's but the
+ * disk's longest track exceeds what the board's firmware holds.
+ *
+ * not_found rather than a thrown error on purpose: a caller cannot tell a
+ * device that belongs to someone else from one that does not exist -- and
+ * cannot tell that from a disk the route will refuse.
+ */
 export async function setDesired(
   orgId: string, deviceId: string, diskId: string,
 ): Promise<SetDesiredOutcome> {
@@ -60,7 +61,7 @@ export async function setDesired(
     .limit(1);
   const disk = rows[0];
   if (!disk) return { ok: false, reason: 'not_found' };
-  // Ingest accepts anything from 1 byte to 2.25 MiB (a truncated .adf from a
+  // Ingest accepts anything from 1 byte to 2.5 MiB (a truncated .adf from a
   // scraped archive included), but the image route can only serve an exact
   // DD ADF or an HFE validated at ingest (isServable). A disk the route
   // cannot serve must not become mountable: without this check, mount

@@ -60,3 +60,26 @@ describe('recordStatus firmware completion', () => {
     expect(render(patches[0].desiredFirmwareVersion)).toMatch(/^case when/);
   });
 });
+
+// trackMaxBytes belongs to the firmware build (psram_image.h TRACK_MAX_BYTES),
+// so it does NOT follow the absent-leaves-it-alone rule: a report that names
+// a firmware version without it comes from a build too old to know the field
+// (a board that rolled back after a failed trial boot) and must fall back to
+// the legacy limit, or the mount gate would send it tracks it rejects.
+describe('recordStatus trackMaxBytes', () => {
+  it('stores the limit a board reports', async () => {
+    await recordStatus('dev-1', { ...base, trackMaxBytes: 14_336 });
+    expect(patches[0].trackMaxBytes).toBe(14_336);
+  });
+
+  it('resets to null (legacy) when a report names its firmware but carries no limit', async () => {
+    await recordStatus('dev-1', { ...base });
+    expect('trackMaxBytes' in patches[0]).toBe(true);
+    expect(patches[0].trackMaxBytes).toBeNull();
+  });
+
+  it('leaves the limit alone when a report names no firmware at all', async () => {
+    await recordStatus('dev-1', { mountedSha256: null });
+    expect('trackMaxBytes' in patches[0]).toBe(false);
+  });
+});
