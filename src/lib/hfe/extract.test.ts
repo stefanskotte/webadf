@@ -54,6 +54,31 @@ describe('decodeSectors', () => {
     const d = disk(fixture('clean'));
     expect(decodeSectors(d.tracks[3][0], 7).size).toBe(0);
   });
+
+  it('finds a sector whose sync word itself straddles the end of the revolution', () => {
+    const side = disk(fixture('clean')).tracks[0][0];
+    const SYNC = 0x44894489;
+    const bitAt = (s: HfeSide, i: number) => (s.bytes[i >>> 3] >>> (7 - (i & 7))) & 1;
+
+    // Same bit order as bitAt (MSB-first): after processing bit i, reg holds
+    // bits [i-31, i], so the sync's first bit is 31 back from where reg matches.
+    let reg = 0;
+    let p = -1;
+    for (let i = 0; i < side.bits; i++) {
+      reg = ((reg << 1) | bitAt(side, i)) >>> 0;
+      if (reg === SYNC) {
+        p = i - 31;
+        break;
+      }
+    }
+    if (p < 0) throw new Error('no 0x44894489 sync found in track 0 side 0');
+
+    // off = how many of the sync's 32 bits land before the wrap.
+    for (const off of [1, 16, 31]) {
+      const rotated = rotate(side, p + 32 - off);
+      expect(decodeSectors(rotated, 0).size, `off ${off}`).toBe(11);
+    }
+  });
 });
 
 describe('hasAmigaBootTrack', () => {
