@@ -4,7 +4,7 @@ import { readFileSync } from 'node:fs';
 import { gunzipSync } from 'node:zlib';
 import { and, eq } from 'drizzle-orm';
 import { getDb } from '@/db';
-import { disks } from '@/db/schema/catalog';
+import { blobs, disks } from '@/db/schema/catalog';
 import { signUpFresh } from './helpers';
 import { seedDisk, cleanupSeeded, pairDevice, authHeader } from './device-helpers';
 import { parseLikeFirmware } from '@/lib/adfmfm/firmware-parser';
@@ -187,6 +187,42 @@ test.describe('an HFE on the game page', () => {
     const second = await page.request.post(`/api/disks/${h.id}/extract`);
     expect(second.status()).toBe(200);
     expect(await getDb().select().from(disks).where(and(eq(disks.orgId, orgId), eq(disks.imageFormat, 'adf')))).toHaveLength(1);
+  });
+
+  test('extracting to an ADF whose blob already has a verdict puts it back in front of the sweeper', async ({ browser }) => {
+    // Spec D7. The extracted bytes are fixed, so after the first run ever the
+    // ADF blob exists and is decided. The sweeper only picks up a null cursor,
+    // so without the reset a second org's extracted disk is never identified.
+    test.setTimeout(120_000); // two sign-ups and two uploads
+    const expectedSha = createHash('sha256').update(sparseAdfBytes()).digest('hex');
+    const extractIn = async (title: string) => {
+      const page = await (await browser.newContext()).newPage();
+      const { orgId } = await signUpFresh(page);
+      await uploadHfeThroughUi(page, orgId, title);
+      const [h] = await getDb().select({ id: disks.id }).from(disks).where(eq(disks.orgId, orgId));
+      expect((await page.request.post(`/api/disks/${h.id}/extract`)).status()).toBe(200);
+      await page.context().close();
+    };
+    await extractIn('HFE Verdict A'); // guarantees the ADF blob exists
+
+    // A sentinel verdict no real sweep would write, so "changed" is provable
+    // even if the sweeper re-decides the blob before we look.
+    const sentinel = new Date('2001-01-01T00:00:00Z');
+    const [before] = await getDb().select({ at: blobs.matchCheckedAt, st: blobs.matchState, e: blobs.tosecEntryId })
+      .from(blobs).where(eq(blobs.sha256, expectedSha));
+    await getDb().update(blobs).set({ matchCheckedAt: sentinel, matchState: 'none', tosecEntryId: null })
+      .where(eq(blobs.sha256, expectedSha));
+    try {
+      await extractIn('HFE Verdict B');
+      await expect.poll(async () => {
+        const [b] = await getDb().select({ at: blobs.matchCheckedAt }).from(blobs).where(eq(blobs.sha256, expectedSha));
+        return b.at === null || b.at.getTime() !== sentinel.getTime();
+      }, { timeout: 20_000 }).toBe(true);
+    } finally {
+      // Only undo our own stamp; a verdict the sweeper wrote since is genuine.
+      await getDb().update(blobs).set({ matchCheckedAt: before.at, matchState: before.st, tosecEntryId: before.e })
+        .where(and(eq(blobs.sha256, expectedSha), eq(blobs.matchCheckedAt, sentinel)));
+    }
   });
 
   test('download names the file .hfe and serves the original bytes', async ({ page }) => {

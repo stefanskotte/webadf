@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import { after } from 'next/server';
-import { and, eq } from 'drizzle-orm';
+import { and, eq, isNotNull } from 'drizzle-orm';
 import { getDb } from '@/db';
 import { disks, entitlements, blobs } from '@/db/schema/catalog';
 import { requireOrg } from '@/lib/session';
@@ -72,6 +72,15 @@ export async function POST(_request: Request, ctx: { params: Promise<{ id: strin
     label: `Extracted from ${hfeName}`, tosecName: adfName, isBoot: disk.isBoot,
     sizeBytes: x.adf.length, imageFormat: 'adf',
   }).onConflictDoNothing();
+
+  // The extracted ADF of a clean title is usually the canonical one, so its
+  // blob has often been decided already, by any org. The sweeper only picks up
+  // a null cursor and applyMatch rewrites only the rows that exist when it
+  // runs, so without this the row just inserted is never identified. The same
+  // guarded reset /api/ingest/complete does.
+  await db.update(blobs).set({
+    matchCheckedAt: null, matchState: null, tosecEntryId: null,
+  }).where(and(eq(blobs.sha256, sha256), isNotNull(blobs.matchCheckedAt)));
 
   // Identify the new ADF now rather than at 03:00 -- same reasoning, and the
   // same never-surface-a-failure rule, as /api/ingest/complete.
