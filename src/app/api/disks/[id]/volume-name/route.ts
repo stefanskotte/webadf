@@ -57,7 +57,7 @@ export async function PATCH(request: Request, ctx: { params: Promise<{ id: strin
   // independent and can drift. Identical to the pair /api/disks/[id]/adf and
   // the file browser use.
   const rows = await db
-    .select({ sha256: disks.sha256, gameId: disks.gameId, diskNo: disks.diskNo })
+    .select({ sha256: disks.sha256, gameId: disks.gameId, diskNo: disks.diskNo, imageFormat: disks.imageFormat })
     .from(disks)
     .innerJoin(entitlements, and(
       eq(entitlements.sha256, disks.sha256),
@@ -68,6 +68,10 @@ export async function PATCH(request: Request, ctx: { params: Promise<{ id: strin
 
   const disk = rows[0];
   if (!disk) return Response.json({ error: 'not_found' }, { status: 404 });
+
+  if (disk.imageFormat === 'hfe') {
+    return Response.json({ error: 'hfe_read_only' }, { status: 409 });
+  }
 
   // Before the bytes are even read: a board that holds (or is polling toward)
   // this disk owns it until it is ejected there.

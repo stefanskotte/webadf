@@ -79,7 +79,7 @@ export async function stageTrack(
   if (!held) return { status: 409, body: { error: 'not_mounted' } };
 
   const db = getDb();
-  const disk = (await db.select({ wp: disks.writeProtected, sha256: disks.sha256 }).from(disks)
+  const disk = (await db.select({ wp: disks.writeProtected, sha256: disks.sha256, imageFormat: disks.imageFormat }).from(disks)
     .where(and(eq(disks.id, q.diskId), eq(disks.orgId, device.orgId))).limit(1))[0];
   if (!disk) return { status: 404, body: { error: 'not_found' } };
 
@@ -96,7 +96,9 @@ export async function stageTrack(
     // is part-way through (the board applied those tracks already). Checked
     // before 'behind': turning write-protect on bumps the board too, and the
     // true reason is the flag, not the bump.
-    if (disk.wp) return { status: 409, body: { error: 'write_protected' } };
+    // Belt and braces: an HFE row is always write-protected, but a board must
+    // never get a write session onto one even if that flag were wrong.
+    if (disk.wp || disk.imageFormat === 'hfe') return { status: 409, body: { error: 'write_protected' } };
     if (held === 'behind') return { status: 409, body: { error: 'not_mounted', reason: 'behind' } };
     // Any other session of this board -- under an earlier mount, or under this
     // mount with another token -- means the board lost power before closing it.

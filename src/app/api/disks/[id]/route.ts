@@ -24,6 +24,16 @@ export async function PATCH(request: Request, ctx: { params: Promise<{ id: strin
     return Response.json({ error: 'invalid_body', detail: z.flattenError(parsed.error) }, { status: 400 });
   }
 
+  // An HFE is always write-protected (spec D2). Refused here, not only hidden
+  // in the UI: a direct call must not be able to make one writable.
+  if (!parsed.data.writeProtected) {
+    const row = await getDb().select({ imageFormat: disks.imageFormat }).from(disks)
+      .where(and(eq(disks.id, id), eq(disks.orgId, orgId))).limit(1);
+    if (row[0]?.imageFormat === 'hfe') {
+      return Response.json({ error: 'hfe_read_only' }, { status: 409 });
+    }
+  }
+
   // Org-scoped in the statement, not in a WHERE a later edit could drop.
   const updated = await getDb().update(disks)
     .set({ writeProtected: parsed.data.writeProtected })
