@@ -2,7 +2,7 @@ import { after } from 'next/server';
 import { sweep } from '@/lib/tosec-sweep';
 import { gzipSync } from 'node:zlib';
 import { z } from 'zod';
-import { and, inArray, isNotNull } from 'drizzle-orm';
+import { and, inArray, isNotNull, sql } from 'drizzle-orm';
 import { BlobServiceRateLimited } from '@vercel/blob';
 import { getDb } from '@/db';
 import { blobs, entitlements, games, disks } from '@/db/schema/catalog';
@@ -14,6 +14,8 @@ import { parseTosecName } from '@/lib/tosec';
 import { contentHashes } from '@/lib/content-hashes';
 import { mapLimit } from '@/lib/pool';
 import { chunk } from '@/lib/chunk';
+import { inspectHfe, type HfeInspection } from '@/lib/hfe/inspect';
+import { isHfeFilename } from '@/lib/disk-format';
 
 // A batch is up to MAX_BATCH (500) files. Verification reads back every
 // genuinely-new blob (~880 KB each), so this is the one ingest route that can
@@ -35,7 +37,7 @@ type Verdict =
       // branch that reads the bytes. A dedupe hit skips the read-back by
       // design and its blob already carries hashes from that first write.
       hashes: { crc32: string; md5: string; sha1: string } | null }
-  | { ok: false; reason: 'not-stored' | 'size-mismatch' | 'digest-mismatch' };
+  | { ok: false; reason: 'not-stored' | 'size-mismatch' | 'digest-mismatch' | 'hfe-refused' };
 
 /**
  * Decides whether the store really holds the content this file claims, and at
@@ -139,6 +141,9 @@ export async function POST(request: Request) {
   const claimed = new Map<string, number>();
   for (const f of files) if (!claimed.has(f.sha256)) claimed.set(f.sha256, f.sizeBytes);
 
+  const hfeInfo = new Map<string, Extract<HfeInspection, { ok: true }>>();
+  const hfeRefusal = new Map<string, string>();
+
   const verdictFor = new Map<string, Verdict>();
   try {
     // Split by cost. Already-registered hashes are one head() each and run
@@ -154,6 +159,27 @@ export async function POST(request: Request) {
 
     alreadyKnown.forEach((s, i) => verdictFor.set(s, knownVerdicts[i]));
     needsRead.forEach((s, i) => verdictFor.set(s, newVerdicts[i]));
+
+    // HFE (spec D3) is validated on EVERY registration, a dedupe hit
+    // included: skipping the read-back above rests on the digest having been
+    // proven once, which says nothing about whether these bytes are an HFE
+    // the board can play -- another org may have uploaded them as anything.
+    // ~2 MB each and rare, so the extra read is affordable.
+    const hfeShas = uniqueShas.filter((s) => verdictFor.get(s)!.ok
+      && files.some((f) => f.sha256 === s && isHfeFilename(f.filename)));
+    const inspections = await mapLimit(hfeShas, VERIFY_CONCURRENCY, async (s) =>
+      inspectHfe(await diskStore.read(s)));
+    hfeShas.forEach((s, i) => {
+      const r = inspections[i];
+      if (r.ok) {
+        hfeInfo.set(s, r);
+      } else {
+        // Authentic bytes, deliberately NOT released: same rule as a
+        // size-mismatch -- they are provably this key's content.
+        verdictFor.set(s, { ok: false, reason: 'hfe-refused' });
+        hfeRefusal.set(s, r.reason);
+      }
+    });
   } catch (err) {
     // Unhandled before: the blob service rate-limiting one batch used to 500
     // the whole request with a stack trace. It is transient and retryable, so
@@ -173,7 +199,7 @@ export async function POST(request: Request) {
     const v = verdictFor.get(s)!;
     if (!v.ok) {
       rejected.push(s);
-      rejectedReasons[s] = v.reason;
+      rejectedReasons[s] = v.reason === 'hfe-refused' ? hfeRefusal.get(s)! : v.reason;
     }
   }
 
@@ -255,9 +281,14 @@ export async function POST(request: Request) {
     for (const d of g.disks) {
       const diskId = stableId('disk', gameId, d.sha256);
       if (!diskRows.has(diskId)) {
+        const hfe = isHfeFilename(d.filename) ? hfeInfo.get(d.sha256) : undefined;
         diskRows.set(diskId, {
           id: diskId, gameId, orgId, diskNo: d.diskNo, sha256: d.sha256,
           tosecName: d.filename, isBoot: d.isBoot, sizeBytes: d.sizeBytes,
+          ...(hfe ? {
+            imageFormat: 'hfe' as const, writeProtected: true,
+            extractable: hfe.extractable, extractReason: hfe.extractReason,
+          } : {}),
         });
       }
     }
@@ -267,8 +298,25 @@ export async function POST(request: Request) {
     await db.insert(games).values(part).onConflictDoNothing();
   }
   // Strictly after the games inserts: disks.game_id has an FK onto games.id.
-  for (const part of chunk([...diskRows.values()], INSERT_CHUNK)) {
+  //
+  // Split by format: the disk id is stableId('disk', gameId, sha256), so the
+  // same bytes first uploaded under a .adf name already have a row. A later
+  // .hfe upload of them must turn that row into an HFE, not leave it an
+  // unmountable "ADF".
+  const allDiskRows = [...diskRows.values()];
+  const adfRows = allDiskRows.filter((r) => r.imageFormat !== 'hfe');
+  const hfeRows = allDiskRows.filter((r) => r.imageFormat === 'hfe');
+  for (const part of chunk(adfRows, INSERT_CHUNK)) {
     await db.insert(disks).values(part).onConflictDoNothing();
+  }
+  for (const part of chunk(hfeRows, INSERT_CHUNK)) {
+    await db.insert(disks).values(part).onConflictDoUpdate({
+      target: disks.id,
+      set: {
+        imageFormat: 'hfe', writeProtected: true,
+        extractable: sql`excluded.extractable`, extractReason: sql`excluded.extract_reason`,
+      },
+    });
   }
 
   // applyMatch rewrites the games/disks rows that exist when it runs, so a blob
@@ -320,5 +368,6 @@ export async function POST(request: Request) {
     rejected,
     rejectedReasons,
     skippedTitle,
+    notices: Object.fromEntries([...hfeInfo].map(([s, r]) => [s, r.notices])),
   });
 }

@@ -16,10 +16,15 @@ import { readDms } from './dms';
  * filename since it was written, nothing converted them, and the raw bytes
  * were stored as a "disk" that could never be mounted -- visible in the
  * library, refused at mount time, with nothing said about why.
+ *
+ * An .hfe is the exception: it is stored as uploaded (HFE spec D1), because
+ * converting it to an ADF would discard exactly the flux a copy-protected
+ * disk needs. It never reaches toAdf; the dropzone validates it with
+ * inspectHfe instead.
  */
 
-export const DISK_IMAGE_EXTENSIONS = ['adf', 'dsk', 'adz', 'dms'] as const;
-export const DISK_IMAGE_PATTERN = /\.(adf|dsk|adz|dms)$/i;
+export const DISK_IMAGE_EXTENSIONS = ['adf', 'dsk', 'adz', 'dms', 'hfe'] as const;
+export const DISK_IMAGE_PATTERN = /\.(adf|dsk|adz|dms|hfe)$/i;
 /** A compressed image can expand to far more than it occupies; this bounds
  *  what a single dropped file may cost the tab, in the same spirit as
  *  MAX_ARCHIVE_BYTES next door. An ADF is 880 KB, so this is generous. */

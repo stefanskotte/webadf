@@ -11,7 +11,7 @@ import {
   classifyUpload, isExpiredPresign, isUploadableSize, MAX_DISK_BYTES, type UploadOutcome,
 } from '../../src/lib/blob-upload.ts';
 
-const DISK_EXT = new Set(['.adf', '.dsk', '.adz', '.dms']);
+const DISK_EXT = new Set(['.adf', '.dsk', '.adz', '.dms', '.hfe']);
 const BATCH = 500;
 const CONCURRENCY = 6;
 
