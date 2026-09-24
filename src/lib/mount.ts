@@ -5,7 +5,7 @@ import { getDb } from '@/db';
 import { devices } from '@/db/schema/devices';
 import { firmwareReleases } from '@/db/schema/firmware';
 import { disks, games } from '@/db/schema/catalog';
-import { ADF_BYTES } from '@/lib/adfmfm';
+import { isServable } from '@/lib/disk-format';
 
 export interface DesiredDisk {
   sha256: string;
@@ -45,7 +45,7 @@ export async function setDesired(
   const rows = await db
     .select({
       id: disks.id, sha256: disks.sha256, gameId: disks.gameId, diskNo: disks.diskNo,
-      sizeBytes: disks.sizeBytes,
+      sizeBytes: disks.sizeBytes, imageFormat: disks.imageFormat,
     })
     .from(disks)
     .where(and(eq(disks.id, diskId), eq(disks.orgId, orgId)))
@@ -53,12 +53,12 @@ export async function setDesired(
   const disk = rows[0];
   if (!disk) return null;
   // Ingest accepts anything from 1 byte to 2 MiB (a truncated .adf from a
-  // scraped archive included), but encodeDisk throws on anything that is not
-  // exactly a standard DD image. A disk the encoder cannot serve must not
-  // become mountable: without this check, mount succeeds, the poll succeeds,
-  // and /api/device/image/<sha256> 500s forever with nothing telling the
-  // human why the Amiga never sees a disk.
-  if (disk.sizeBytes !== ADF_BYTES) return null;
+  // scraped archive included), but the image route can only serve an exact
+  // DD ADF or an HFE validated at ingest (isServable). A disk the route
+  // cannot serve must not become mountable: without this check, mount
+  // succeeds, the poll succeeds, and /api/device/image/<sha256> 500s forever
+  // with nothing telling the human why the Amiga never sees a disk.
+  if (!isServable(disk)) return null;
 
   // The version bump is in the same UPDATE as the state it describes, so a
   // poller can never observe a new version beside the old disk, or the reverse.

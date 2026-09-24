@@ -111,6 +111,9 @@ export const games = pgTable('games', {
   index('games_publisher_trgm_idx').using('gin', t.publisher.op('gin_trgm_ops')),
 ]);
 
+/** What a disk row's bytes are (HFE spec D2). Re-exported by src/lib/disk-format.ts. */
+export type ImageFormat = 'adf' | 'hfe';
+
 export const disks = pgTable('disks', {
   id: text('id').primaryKey(),
   gameId: text('game_id').notNull().references(() => games.id, { onDelete: 'cascade' }),
@@ -127,6 +130,15 @@ export const disks = pgTable('disks', {
   // the same disk. Defaults to protected: games shipped read-only.
   writeProtected: boolean('write_protected').notNull().default(true),
   sizeBytes: bigint('size_bytes', { mode: 'number' }).notNull(),
+
+  // 'adf' | 'hfe' (spec D2). Every ADF-assuming gate branches on this --
+  // never on sizeBytes. An HFE row is always write-protected (see
+  // /api/disks/[id] PATCH) and never enters disk history.
+  imageFormat: text('image_format').$type<ImageFormat>().notNull().default('adf'),
+  // HFE only (spec D5): could every AmigaDOS sector be decoded at ingest?
+  // Null on an ADF, where the question does not arise.
+  extractable: boolean('extractable'),
+  extractReason: text('extract_reason'),
 }, (t) => [
   index('disks_game_idx').on(t.gameId),
   index('disks_org_idx').on(t.orgId),

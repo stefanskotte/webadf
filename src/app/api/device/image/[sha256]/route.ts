@@ -1,11 +1,13 @@
 import { and, eq } from 'drizzle-orm';
 import { getDb } from '@/db';
-import { entitlements } from '@/db/schema/catalog';
+import { disks, entitlements } from '@/db/schema/catalog';
 import { requireDevice, deviceAuthResponse } from '@/lib/device-auth';
 import { diskStore } from '@/lib/storage';
-import { encodeDisk, WFMF_BYTES } from '@/lib/adfmfm';
+import { encodeDisk } from '@/lib/adfmfm';
+import { parseHfe } from '@/lib/hfe/parse';
+import { hfeToWfmf } from '@/lib/hfe/to-wfmf';
 
-// Fetch 880 KB from Blob, encode (~10 ms), stream 2,027,536 bytes out.
+// Fetch the stored image from Blob, convert (~10 ms), stream ~2 MB out.
 export const maxDuration = 60;
 
 const SHA256_RE = /^[0-9a-f]{64}$/;
@@ -43,16 +45,31 @@ export async function GET(
     return Response.json({ error: 'not_found' }, { status: 404 });
   }
 
-  let adf: Uint8Array;
+  // Which conversion these bytes need is a property of the disk row, never
+  // of the bytes' size (spec D2). Scoped to this device's org, like the
+  // entitlement above.
+  const formats = await getDb()
+    .select({ imageFormat: disks.imageFormat })
+    .from(disks)
+    .where(and(eq(disks.orgId, device.orgId), eq(disks.sha256, sha256)));
+  const isHfe = formats.some((r) => r.imageFormat === 'hfe');
+
+  let stored: Uint8Array;
   try {
-    adf = await diskStore.read(sha256);
+    stored = await diskStore.read(sha256);
   } catch {
     return Response.json({ error: 'blob_unavailable' }, { status: 503 });
   }
 
   let wfmf: Uint8Array;
   try {
-    wfmf = encodeDisk(adf);
+    if (isHfe) {
+      const parsed = parseHfe(stored);
+      if (!parsed.ok) throw new Error(parsed.reason);
+      wfmf = hfeToWfmf(parsed.disk);
+    } else {
+      wfmf = encodeDisk(stored);
+    }
   } catch (e) {
     // A stored blob that will not encode is our bug or a corrupt object, not
     // the device's fault -- but it is also never going to start encoding on a
@@ -61,7 +78,8 @@ export async function GET(
     // freshly mounted disk; it remains here for a disk that became desired
     // before that guard existed. 422, not 500: this is permanent, not
     // transient, and a device must not treat it as a server fault worth
-    // retrying.
+    // retrying. An HFE was validated at ingest, so this is equally
+    // unreachable for one.
     return Response.json(
       { error: 'encode_failed', sha256, detail: (e as Error).message },
       { status: 422 },
@@ -72,7 +90,8 @@ export async function GET(
     status: 200,
     headers: {
       'content-type': 'application/octet-stream',
-      'content-length': String(WFMF_BYTES),
+      // Computed, not WFMF_BYTES: an HFE's tracks keep their own lengths.
+      'content-length': String(wfmf.byteLength),
       'cache-control': 'no-store',
     },
   });
