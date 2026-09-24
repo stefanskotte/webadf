@@ -281,7 +281,12 @@ export async function POST(request: Request) {
     for (const d of g.disks) {
       const diskId = stableId('disk', gameId, d.sha256);
       if (!diskRows.has(diskId)) {
-        const hfe = isHfeFilename(d.filename) ? hfeInfo.get(d.sha256) : undefined;
+        // Decided by the bytes (did this sha256 pass HFE inspection in this
+        // batch?), not by this row's filename: the same bytes can appear
+        // under an .adf name elsewhere in the same batch (or in `disks.set`,
+        // which keeps only the FIRST filename seen per diskId), and a
+        // filename check would silently drop the HFE stamping in that case.
+        const hfe = hfeInfo.get(d.sha256);
         diskRows.set(diskId, {
           id: diskId, gameId, orgId, diskNo: d.diskNo, sha256: d.sha256,
           tosecName: d.filename, isBoot: d.isBoot, sizeBytes: d.sizeBytes,
@@ -312,6 +317,11 @@ export async function POST(request: Request) {
   for (const part of chunk(hfeRows, INSERT_CHUNK)) {
     await db.insert(disks).values(part).onConflictDoUpdate({
       target: disks.id,
+      // Write-back can move disks.sha256 while keeping disks.id, so an
+      // existing row at this id may by now hold different (ADF) bytes.
+      // Guarded so this upsert only flips a row that still holds these
+      // exact HFE bytes -- never one that write-back has since replaced.
+      setWhere: sql`${disks.sha256} = excluded.sha256`,
       set: {
         imageFormat: 'hfe', writeProtected: true,
         extractable: sql`excluded.extractable`, extractReason: sql`excluded.extract_reason`,

@@ -84,6 +84,38 @@ export function Dropzone() {
     return res.json();
   }
 
+  // /complete's own failure shape: a batch that is refused ENTIRELY (every
+  // file rejected -- e.g. a lone v3 HFE) answers 409 with a real, structured
+  // result -- { created: 0, rejected, rejectedReasons } -- not a transport
+  // failure. post()'s throw-on-non-OK would surface that as a plain error
+  // before the per-file rejectedReasons handling below ever ran: a refused
+  // row that had already been marked 'deduped' would keep showing
+  // 'deduped', and the rest would land 'failed' with no note -- a refusal
+  // that reads as success, or as an unexplained failure. This treats a 409
+  // whose body actually has rejectedReasons as data, same as the 200 case,
+  // so every refusal in the batch reaches its row. Any other /complete
+  // failure -- network error, 400, 503, a 409 that doesn't look like this --
+  // still throws, matching post()'s behaviour for every other endpoint.
+  async function postComplete(body: unknown): Promise<{ rejectedReasons?: Record<string, string> }> {
+    const res = await fetch('/api/ingest/complete', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    if (res.ok) return res.json();
+    const text = await res.text();
+    if (res.status === 409) {
+      try {
+        const data = JSON.parse(text);
+        if (data && typeof data === 'object' && data.rejectedReasons) return data;
+      } catch {
+        // Not the structured shape -- fall through to the same throw as
+        // any other non-OK response.
+      }
+    }
+    throw new Error(`/api/ingest/complete -> ${res.status} ${text}`);
+  }
+
   // One PUT attempt straight to Blob. Never logs, stores or renders `url` --
   // a presigned URL is a credential, and it exists only as this argument.
   async function putOnce(url: string, file: File) {
@@ -187,13 +219,13 @@ export function Dropzone() {
       // disk real.
       const okToComplete = group.filter((h) => uploadOk.get(h.sha256) !== false);
       if (okToComplete.length > 0) {
-        const res = await post('/api/ingest/complete', {
+        const res = await postComplete({
           files: okToComplete.map((h) => ({
             sha256: h.sha256,
             sizeBytes: h.file.size,
             filename: h.file.name,
           })),
-        }) as { rejectedReasons?: Record<string, string> };
+        });
         const refused = res.rejectedReasons ?? {};
         for (const h of okToComplete) {
           if (refused[h.sha256]) patch(h.sha256, { state: 'failed', note: refused[h.sha256] });

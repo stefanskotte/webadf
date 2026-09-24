@@ -94,4 +94,42 @@ test.describe('uploading HFE', () => {
     expect(res.status()).toBe(409);
     expect((await res.json()).rejectedReasons[sha256]).toMatch(/^HFE v3 isn't supported yet/);
   });
+
+  test('a server-side refusal reaches the row, even when the browser check is bypassed and the whole batch is refused', async ({ page }) => {
+    await signUpFresh(page);
+    await page.goto('/ingest');
+    const bytes = hfeFixture('clean');
+    const sha256 = createHash('sha256').update(bytes).digest('hex');
+
+    // A batch that is refused ENTIRELY -- the real shape /complete answers
+    // with when every file in it fails validation (Finding 1) -- is 409, not
+    // 200. post()'s old throw-on-any-non-OK behaviour surfaced that 409 as a
+    // plain transport error before the per-file rejectedReasons handling
+    // ever ran, so a refused row that had already been marked 'deduped'
+    // stayed showing 'deduped' (looked like success), and any other refused
+    // row landed 'failed' with no note. The browser's own inspectHfe would
+    // accept this fixture (it's the clean/valid one), so the only way to
+    // reach that code path from the UI is a refusal that originates on the
+    // server -- exactly what the CLI path exercises for real. Routed here
+    // instead of relying on a second real upload of the same bytes deduping
+    // (which the DB state at the moment this test runs cannot guarantee),
+    // so the assertion is about the client's handling of the response shape,
+    // not about store state left behind by other tests.
+    const reason = "HFE v3 isn't supported yet — test";
+    await page.route('**/api/ingest/complete', (route) =>
+      route.fulfill({
+        status: 409,
+        contentType: 'application/json',
+        body: JSON.stringify({ created: 0, rejected: [sha256], rejectedReasons: { [sha256]: reason } }),
+      }),
+    );
+
+    await page.getByTestId('file-input').setInputFiles({
+      name: 'Server Refusal Test.hfe', mimeType: 'application/octet-stream', buffer: bytes,
+    });
+
+    const row = page.getByTestId('ingest-row').first();
+    await expect(row.locator('[data-state="failed"]')).toBeVisible({ timeout: 15_000 });
+    await expect(row.getByTestId('ingest-note')).toHaveText(reason);
+  });
 });
