@@ -2,6 +2,8 @@ import { requireDevice, deviceAuthResponse } from '@/lib/device-auth';
 import {
   readDesired, readPollTick, readFirmwareInstruction, touchLastSeen,
 } from '@/lib/mount';
+import { readNfcWriteRow } from '@/lib/nfc/store';
+import { nfcWriteForPoll } from '@/lib/nfc/rules';
 
 // Holds up to 25 s. maxDuration covers the hold plus slack; the platform
 // default would cut the connection mid-hold.
@@ -51,6 +53,15 @@ export async function GET(request: Request) {
     ? Number(sinceRaw)
     : 0;
 
+  // nfcAck is the board's own cursor for the write request (spec §5.3),
+  // parsed exactly like `since` above and for the same reason: a garbled
+  // value must fall back to "never acknowledged" (0), never be read as
+  // "caught up" and strand the board on a request it has not actually seen.
+  const nfcAckRaw = new URL(request.url).searchParams.get('nfcAck') ?? '0';
+  const nfcAck = /^\d+$/.test(nfcAckRaw) && Number.isSafeInteger(Number(nfcAckRaw))
+    ? Number(nfcAckRaw)
+    : 0;
+
   const deadline = Date.now() + HOLD_MS;
   for (;;) {
     // Cheap single-column read per tick. The three-table join runs only when
@@ -77,6 +88,13 @@ export async function GET(request: Request) {
     // Off the SAME row read above -- no second query, no join. The comment
     // about 25 joins per hold applies to this just as much.
     const firmwareMoved = tick.instructionVersion > tick.instructionAck;
+    // Same cursor comparison as firmwareMoved, off the same row read. A
+    // cancelled or expired request is still DELIVERED below (as a disarm,
+    // diskId null) rather than silently dropped, so nfcAck catches up to
+    // nfcWriteSeq on the very poll that wakes for it -- without that, the
+    // hold would release every second forever on a request the board can
+    // never acknowledge.
+    const nfcMoved = tick.nfcWriteSeq > nfcAck;
 
     const clampedFrom = Math.min(from, version);
     // A firmware instruction the device has not acknowledged releases the
@@ -88,7 +106,7 @@ export async function GET(request: Request) {
     // device echoes it back as mountedVersion and the server reads that for an
     // upload's not_mounted/behind verdict (HANDOFF 4g), so bumping it could
     // strand an Amiga write that was mid-session. See spec 4.2.
-    if (version > clampedFrom || clampedFrom !== from || firmwareMoved) {
+    if (version > clampedFrom || clampedFrom !== from || firmwareMoved || nfcMoved) {
       const state = await readDesired(device.deviceId);
       if (!state) return notFound();
       // Resolved only here, and only when the device has not acknowledged it.
@@ -96,6 +114,13 @@ export async function GET(request: Request) {
       // an instruction to a board mid-flash and re-tried an update that had
       // already failed -- both of which the spec forbids.
       const update = firmwareMoved ? await readFirmwareInstruction(device.deviceId) : null;
+      // Same pattern as `update`: resolved only when the cursor says the
+      // board has not caught up, never on every tick. nfcWriteForPoll turns
+      // a cancelled/expired/already-answered request into the disarm
+      // (diskId null) that lets nfcAck catch up -- see the comment on
+      // nfcMoved above.
+      const nfcRow = nfcMoved ? await readNfcWriteRow(device.deviceId) : null;
+      const nfc = nfcRow ? nfcWriteForPoll(nfcRow, nfcAck, new Date()) : null;
       return Response.json(
         // `instructionVersion` is ALWAYS present, `update` only when there is
         // one. That asymmetry is the point: a cancellation moves the cursor
@@ -103,7 +128,9 @@ export async function GET(request: Request) {
         // could never acknowledge it -- `want > ack` would stay true and the
         // 25 s hold would collapse into an immediate-return loop, forever.
         // The board echoes this as firmwareInstructionAck whether or not an
-        // update came with it.
+        // update came with it. nfcWrite works the same way off nfcAck: the
+        // key is present only when nfcWriteForPoll has something to say
+        // (including a disarm), never merely because nfcMoved was true.
         //
         // `update` last. NOTE: that ordering is for readability, not safety --
         // the firmware refuses a truncated body OUTRIGHT (device_client.c's
@@ -114,6 +141,9 @@ export async function GET(request: Request) {
           version: state.version,
           desired: state.desired,
           instructionVersion: tick.instructionVersion,
+          ...(nfc
+            ? { nfcWrite: { seq: nfc.seq, diskId: nfc.diskId, title: nfc.diskId ? nfcRow!.title : null } }
+            : {}),
           ...(update ? { update } : {}),
         },
         { headers: NO_STORE },

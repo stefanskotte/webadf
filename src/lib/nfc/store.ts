@@ -37,3 +37,16 @@ export async function tapDevice(
     .where(and(eq(disks.id, diskId), eq(disks.orgId, orgId))).limit(1);
   return t ? { outcome, title: t.title } : { outcome };
 }
+
+/** The write-request columns plus the disk's title, for the poll payload. */
+export async function readNfcWriteRow(deviceId: string) {
+  const [r] = await getDb().select({
+    nfcWriteSeq: devices.nfcWriteSeq, nfcWriteDiskId: devices.nfcWriteDiskId,
+    nfcWriteExpiresAt: devices.nfcWriteExpiresAt, nfcWriteResultSeq: devices.nfcWriteResultSeq,
+    title: games.title,
+  }).from(devices)
+    .leftJoin(disks, and(eq(disks.id, devices.nfcWriteDiskId), eq(disks.orgId, devices.orgId)))
+    .leftJoin(games, eq(games.id, disks.gameId))
+    .where(eq(devices.id, deviceId)).limit(1);
+  return r ?? null;
+}

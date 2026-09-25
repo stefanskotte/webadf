@@ -46,8 +46,31 @@ describe('the firmware bounds the server respects', () => {
       + `,"signature":"${'s'.repeat(88)}"`
       + `,"keyId":"${'k'.repeat(64)}"`
       + ',"instructionVersion":4294967295}}';
+    // Task 4: the write request rides the same poll (spec §5.3). diskId is
+    // exactly 36 chars (the stableId pattern, global-constraints.md), not
+    // ID's 64 -- nfc_write_disk_id is a real disks.id, never free text. The
+    // title is DC_TITLE_MAX codepoints of a 4-byte UTF-8 character
+    // (U+1F600), deliberately worse than the ASCII 'G' used for `game`
+    // above: it is unbounded (readNfcWriteRow reads games.title raw), and a
+    // char-count measure (.length / String slicing) would undercount its
+    // real wire size by 2x (surrogate-pair UTF-16 units) against the 4
+    // bytes each one actually costs as UTF-8 -- the encoding the firmware's
+    // buffer is sized in.
+    const nfcWrite =
+      ',"nfcWrite":{"seq":4294967295'
+      + `,"diskId":"${'e'.repeat(36)}"`
+      + `,"title":"${'\u{1F600}'.repeat(DC_TITLE_MAX)}"}`;
 
-    const worst = (disk + update).length;
+    // Buffer.byteLength, not .length: DC_POLL_BODY_BYTES is a byte budget,
+    // and .length counts UTF-16 code units -- fine while every field above
+    // was ASCII, but wrong now that nfcWrite's title is not.
+    //
+    // With nfcWrite included this comes to 1121 bytes against the 1536-byte
+    // buffer (415 to spare), so readNfcWriteRow/the poll route leave
+    // nfcWrite.title unbounded -- no DC_TITLE_MAX slice, unlike readDesired's
+    // `game`. If a future field pushes this over budget, bound the title the
+    // same way readDesired bounds `game`.
+    const worst = Buffer.byteLength(disk + update + nfcWrite, 'utf8');
     const budget = define('DC_POLL_BODY_BYTES');
     // Reported rather than just asserted, so a future reader sees the margin
     // instead of rediscovering it.

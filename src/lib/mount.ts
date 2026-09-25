@@ -129,6 +129,8 @@ export interface PollTick {
   /** The firmware instruction counter, and what the device has acknowledged. */
   instructionVersion: number;
   instructionAck: number;
+  /** The NFC write-request cursor (spec §5.3): compared against the board's ?nfcAck=. */
+  nfcWriteSeq: number;
 }
 
 /**
@@ -145,6 +147,7 @@ export async function readPollTick(deviceId: string): Promise<PollTick | null> {
       version: devices.desiredVersion,
       instructionVersion: devices.firmwareInstructionVersion,
       instructionAck: devices.firmwareInstructionAck,
+      nfcWriteSeq: devices.nfcWriteSeq,
     })
     .from(devices)
     .where(eq(devices.id, deviceId))
@@ -254,6 +257,8 @@ export async function recordStatus(
     rssi?: number | null;
     /** TRACK_MAX_BYTES of the firmware the board runs. Absent from builds before 2026-09-24. */
     trackMaxBytes?: number;
+    /** Whether the Si512 reader answered its init on the board's last check (spec §5). */
+    nfcReader?: 'present' | 'absent';
   },
 ): Promise<void> {
   const db = getDb();
@@ -284,6 +289,11 @@ export async function recordStatus(
   // keep the newer build's claim and be sent tracks it would reject.
   if (s.trackMaxBytes !== undefined) patch.trackMaxBytes = s.trackMaxBytes;
   else if (s.firmwareVersion !== undefined) patch.trackMaxBytes = null;
+  // Plain absent-leaves-it-alone, unlike trackMaxBytes above: the reader's
+  // presence is not tied to the firmware build, so there is no "drop to a
+  // legacy default" case here -- a report that omits it simply has nothing
+  // new to say about the reader.
+  if (s.nfcReader !== undefined) patch.nfcReader = s.nfcReader;
   if (s.updateProtocol !== undefined) patch.updateProtocol = s.updateProtocol;
   if (s.firmwareUpdateState !== undefined) patch.firmwareUpdateState = s.firmwareUpdateState;
   if (s.firmwareUpdateError !== undefined) patch.firmwareUpdateError = s.firmwareUpdateError;
