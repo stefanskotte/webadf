@@ -14,6 +14,9 @@ const base: LiveStateRow = {
   desiredFirmwareVersion: null, firmwareUpdateState: null,
   updateProtocol: null, firmwareUpdateError: null,
   lastError: null, lastErrorAt: null,
+  mountedGameId: 'gam-1', mountedGameTitle: 'Turrican', mountedDiskNo: 1,
+  mountedDiskCount: 2, mountedImageFormat: 'adf', desiredGameTitle: 'Turrican',
+  macAddress: 'AA:BB:CC:DD:EE:FF',
 };
 const other: LiveStateRow = { ...base, id: 'dev-b', name: 'Second' };
 const fp = (rows: LiveStateRow[], now = NOW) => liveFingerprint(rows, now, 0);
@@ -41,6 +44,14 @@ describe('liveFingerprint', () => {
     ['the firmware version', { firmwareVersion: '1.1.0' }],
     ['the last error', { lastError: 'SPI timeout' }],
     ['the last error timestamp', { lastErrorAt: new Date(NOW) }],
+    // The header drive chips render these on every page (drive-chips.ts); a
+    // chip input missing here is a chip that silently stops updating.
+    ['the mounted game', { mountedGameId: 'gam-2' }],
+    ['the mounted game\'s title (a rename)', { mountedGameTitle: 'Turrican II' }],
+    ['the mounted disk number', { mountedDiskNo: 2 }],
+    ['the mounted game\'s disk count', { mountedDiskCount: 3 }],
+    ['the mounted disk\'s image format', { mountedImageFormat: 'hfe' }],
+    ['the desired game\'s title', { desiredGameTitle: 'Other' }],
   ] as const)('changes when the %s changes', (_what, patch) => {
     expect(fp([{ ...base, ...patch }])).not.toBe(fp([base]));
   });
