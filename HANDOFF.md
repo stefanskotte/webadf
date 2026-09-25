@@ -4427,8 +4427,12 @@ The fix (operator approved "its good, proceed"):
   Update. Measured from the row: queued 00:23:36, applying 00:24:31 (disk ejected first), trial
   heartbeat 00:24:52 with `track_max_bytes=14336`, confirmed 00:25:10. Before the update, the
   1.1.4 board had `track_max_bytes` null after the deploy (legacy path confirmed).
-  **Still owed:** re-upload Turrican_ECS.hfe, mount, and boot it on the Amiga.
-- **Unproven until the bench:** a 108,000-cell track plays as a 216 ms revolution at the
+  **BENCH-PROVEN 2026-09-25 morning:** the operator uploaded Turrican_ECS.hfe, mounted it and booted it
+  on the Amiga: "it works perfectly". The DB agrees: mounted disk image_format=hfe,
+  max_track_bits=108000, board 1.2.0 with track_max_bytes=14336, no last_error. The 216 ms
+  revolution (108,000 cells at 2 us) is accepted by a real Amiga. The rest of spec §7's HFE bench items
+  are still to run.
+- **(Proven 2026-09-25, above.) Was unproven until the bench:** a 108,000-cell track plays as a 216 ms revolution at the
   fixed 2 µs cell, and INDEX follows the DMA wrap. A Gotek plays this HFE the same way, but
   only booting Turrican on the board proves the loader accepts it.
 
