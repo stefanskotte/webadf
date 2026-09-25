@@ -69,14 +69,26 @@ export async function waitForWrite(deps: WaitForWriteDeps): Promise<WaitForWrite
       const { cancelError } = await tryCancel(deps);
       return cancelError === undefined ? { kind: 'error', error } : { kind: 'error', error, cancelError };
     }
-    if (result) {
-      return result.result === 'ok'
-        ? { kind: 'ok', uid: result.uid }
-        : { kind: 'failed', reason: result.result, uid: result.uid };
-    }
+    if (result) return answered(result);
   }
 
   const { cancelError } = await tryCancel(deps);
+  // The board may have answered between the last poll and the cancel. The
+  // cancel moves the cursor but leaves the stored answer for `seq` readable,
+  // so one re-read tells a write that DID land apart from a real timeout.
+  // Best-effort: a failing re-read keeps the original timeout/cancelled.
+  try {
+    const late = await readWriteResult(deviceId, seq);
+    if (late) return answered(late);
+  } catch {
+    // fall through to the timeout/cancelled report
+  }
   const kind = isCancelled() ? 'cancelled' as const : 'timeout' as const;
   return cancelError === undefined ? { kind } : { kind, cancelError };
+}
+
+function answered(r: { result: string; uid: string | null }): WaitForWriteResult {
+  return r.result === 'ok'
+    ? { kind: 'ok', uid: r.uid }
+    : { kind: 'failed', reason: r.result, uid: r.uid };
 }

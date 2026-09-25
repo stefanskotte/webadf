@@ -61,7 +61,10 @@ describe('waitForWrite', () => {
     readWriteResult.mockResolvedValue(null);
     await expect(waitForWrite(deps)).resolves.toEqual({ kind: 'cancelled' });
     expect(cancelNfcWrite).toHaveBeenCalledTimes(1);
-    expect(readWriteResult).not.toHaveBeenCalled();
+    // Never polled inside the loop -- only the single re-read AFTER the cancel.
+    expect(readWriteResult).toHaveBeenCalledTimes(1);
+    expect(cancelNfcWrite.mock.invocationCallOrder[0])
+      .toBeLessThan(readWriteResult.mock.invocationCallOrder[0]);
   });
 
   it('a thrown readWriteResult cancels exactly once and reports the error, instead of unwinding uncaught', async () => {
@@ -107,5 +110,46 @@ describe('waitForWrite', () => {
     cancelNfcWrite.mockRejectedValue(cancelBoom);
     await expect(waitForWrite(deps)).resolves.toEqual({ kind: 'cancelled', cancelError: cancelBoom });
     expect(cancelNfcWrite).toHaveBeenCalledTimes(1);
+  });
+
+  it('a result that lands just before the timeout cancel is reported, not "Timed out"', async () => {
+    // The board answered between the last poll and the cancel. The cancel
+    // bumps the cursor but leaves the stored result for `seq` readable, so
+    // one re-read after cancelling finds it.
+    let time = 0;
+    let landed = false;
+    const { deps, cancelNfcWrite, readWriteResult } = makeDeps({
+      now: () => time,
+      sleep: vi.fn().mockImplementation(async () => { time += 1000; }),
+    });
+    cancelNfcWrite.mockImplementation(async () => { landed = true; });
+    readWriteResult.mockImplementation(async () => (landed ? { result: 'ok', uid: 'AA:BB' } : null));
+    await expect(waitForWrite(deps)).resolves.toEqual({ kind: 'ok', uid: 'AA:BB' });
+    expect(cancelNfcWrite).toHaveBeenCalledTimes(1);
+  });
+
+  it('a failure result that lands just before a SIGINT cancel is reported as that failure', async () => {
+    let cancelled = false;
+    const { deps, readWriteResult } = makeDeps({
+      isCancelled: () => cancelled,
+      sleep: vi.fn().mockImplementation(async () => { cancelled = true; }),
+    });
+    readWriteResult.mockResolvedValue({ result: 'verify_failed', uid: 'CC:DD' });
+    await expect(waitForWrite(deps)).resolves.toEqual({ kind: 'failed', reason: 'verify_failed', uid: 'CC:DD' });
+  });
+
+  it('a re-read that throws after the cancel still reports the timeout (never throws out)', async () => {
+    let time = 0;
+    let cancelledAlready = false;
+    const { deps, cancelNfcWrite, readWriteResult } = makeDeps({
+      now: () => time,
+      sleep: vi.fn().mockImplementation(async () => { time += 1000; }),
+    });
+    cancelNfcWrite.mockImplementation(async () => { cancelledAlready = true; });
+    readWriteResult.mockImplementation(async () => {
+      if (cancelledAlready) throw new Error('DB gone');
+      return null;
+    });
+    await expect(waitForWrite(deps)).resolves.toEqual({ kind: 'timeout' });
   });
 });
