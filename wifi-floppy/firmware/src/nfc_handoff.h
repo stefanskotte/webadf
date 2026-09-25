@@ -41,12 +41,12 @@ bool nfc_ev_box_take(nfc_ev_box_t *b, uint32_t *last, nfc_event_t *out);
 bool nfc_ev_box_pending(const nfc_ev_box_t *b, uint32_t last);
 
 // A write request as core1 hands it to core0: arm `disk_id` under the server's
-// `seq`, showing `line` while armed; disk_id "" = disarm.
-#define NFC_WREQ_LINE_BYTES (DISP_DETAIL_MAX + 1)
+// `seq`, showing `title` on the title line while armed; disk_id "" = disarm.
+#define NFC_WREQ_TITLE_BYTES (DISP_TITLE_MAX + 1)
 typedef struct {
     uint32_t seq;
     char     disk_id[37];
-    char     line[NFC_WREQ_LINE_BYTES];
+    char     title[NFC_WREQ_TITLE_BYTES];
 } nfc_wreq_t;
 
 typedef struct {

@@ -28,11 +28,11 @@ static void tap_lines_are_the_spec_table(void) {
           "the same disk again");
     CHECK(strcmp(nfc_ui_tap_line(DC_TAP_NOT_FOUND, "", b, sizeof b), "Tag: not in library") == 0,
           "not in this library");
-    // The spec's words are 23 characters and the detail line holds 21
-    // (DISP_DETAIL_MAX), so the glass shows them clipped. Pinned here so a
-    // rewording is a deliberate change, not a surprise on the bench.
-    CHECK(strcmp(nfc_ui_tap_line(DC_TAP_TOO_LONG, "X", b, sizeof b), "Tag: too long for boa") == 0,
-          "tracks too long (clipped to the line)");
+    // Reworded to fit the 21-character detail line whole (controller ruling
+    // after the whole-branch review): the spec's "too long for board" was
+    // 23 and showed clipped.
+    CHECK(strcmp(nfc_ui_tap_line(DC_TAP_TOO_LONG, "X", b, sizeof b), "Tag: tracks too long") == 0,
+          "tracks too long");
     CHECK(strcmp(nfc_ui_tap_line(DC_TAP_FAILED, "", b, sizeof b), "Tag: offline") == 0,
           "no usable answer reads as offline");
 }
@@ -45,10 +45,40 @@ static void a_mount_without_a_title_still_says_something(void) {
           "NULL title too");
 }
 
-static void a_rate_limited_tap_changes_nothing(void) {
+static void a_rate_limited_tap_says_so(void) {
     char b[NFC_UI_LINE_BYTES];
-    CHECK(nfc_ui_tap_line(DC_TAP_IGNORED, "Turrican", b, sizeof b) == NULL,
-          "the server ignored it within its 1 s limit: the line stays as it was");
+    const char *s = nfc_ui_tap_line(DC_TAP_IGNORED, "Turrican", b, sizeof b);
+    CHECK(s != NULL && strcmp(s, "Tag: too fast") == 0,
+          "the server ignored it within its 1 s limit -- and the glass says why");
+}
+
+// Every FIXED line must fit the 21-character detail line whole. Rendered into
+// a buffer far wider than the line, so a string that only fits because
+// snprintf clipped it still fails here.
+static void every_fixed_line_fits_the_detail_line(void) {
+    char b[64];
+    const dc_tap_outcome_t fixed[] = { DC_TAP_ALREADY, DC_TAP_NOT_FOUND, DC_TAP_TOO_LONG,
+                                       DC_TAP_IGNORED, DC_TAP_FAILED };
+    for (unsigned k = 0; k < sizeof fixed / sizeof fixed[0]; k++) {
+        const char *s = nfc_ui_tap_line(fixed[k], "", b, sizeof b);
+        CHECK(s != NULL, "every verdict has words");
+        if (s) {
+            if ((int)strlen(s) > DISP_DETAIL_MAX) printf("  too long: \"%s\"\n", s);
+            CHECK((int)strlen(s) <= DISP_DETAIL_MAX, "tap line fits 21");
+        }
+    }
+    CHECK((int)strlen(nfc_ui_tap_line(DC_TAP_MOUNTING, "", b, sizeof b)) <= DISP_DETAIL_MAX,
+          "the untitled mount line fits");
+    const char *whys[] = { NULL, "locked", "bad data", "moved", "verify" };
+    const nfc_ev_kind_t kinds[] = { NFC_EV_NOT_OURS, NFC_EV_UNREADABLE, NFC_EV_WRITE_DONE };
+    for (unsigned k = 0; k < sizeof kinds / sizeof kinds[0]; k++)
+        for (unsigned w = 0; w < sizeof whys / sizeof whys[0]; w++)
+            for (int ok = 0; ok < 2; ok++) {
+                nfc_event_t e = ev_of(kinds[k], whys[w]); e.ok = ok;
+                const char *s = nfc_ui_event_line(&e);
+                CHECK(s != NULL && (int)strlen(s) <= DISP_DETAIL_MAX, "event line fits 21");
+            }
+    CHECK((int)strlen(NFC_UI_ARMED_DETAIL) <= DISP_DETAIL_MAX, "the armed line fits 21");
 }
 
 static void a_long_title_is_clipped_to_the_line(void) {
@@ -86,15 +116,9 @@ static void events_with_no_line_of_their_own(void) {
     CHECK(nfc_ui_event_line(&e) == NULL, "absence likewise");
 }
 
-static void the_armed_line(void) {
-    char b[NFC_UI_LINE_BYTES];
-    nfc_ui_armed_line("Turrican", b, sizeof b);
-    CHECK(strncmp(b, "Tap tag to write: ", 18) == 0, "the spec's words, then the title");
-    CHECK_EQ_INT((int)strlen(b), DISP_DETAIL_MAX);
-    nfc_ui_armed_line("", b, sizeof b);
-    CHECK(strcmp(b, "Tap tag to write") == 0, "no title: no dangling colon");
-    nfc_ui_armed_line(NULL, b, sizeof b);
-    CHECK(strcmp(b, "Tap tag to write") == 0, "NULL title too");
+static void the_armed_line_is_fixed_words(void) {
+    CHECK(strcmp(NFC_UI_ARMED_DETAIL, "Tap tag to write") == 0,
+          "the detail line while armed; the disk's title goes on the title line");
 }
 
 static void uid_as_hex(void) {
@@ -110,34 +134,88 @@ static void uid_as_hex(void) {
 // ---- which line is on the glass -------------------------------------------------
 
 static void the_tag_line_holds_for_three_seconds(void) {
+    nfc_tag_clock_t c; nfc_tag_clock_init(&c);
+    CHECK(nfc_tag_clock_live(&c, 1, 1000, 1000), "at once");
+    CHECK(nfc_tag_clock_live(&c, 1, 1000, 3999), "still at 2.999 s");
+    CHECK(!nfc_tag_clock_live(&c, 1, 1000, 4000), "gone at 3 s");
+    CHECK(nfc_tag_clock_live(&c, 2, 9000, 9001), "a NEW line is live again");
     nfc_armed_t a; nfc_armed_init(&a);
-    CHECK(strcmp(nfc_ui_detail("Disk 1/2", "Tag: offline", 1000, 1000, &a), "Tag: offline") == 0,
-          "at once");
-    CHECK(strcmp(nfc_ui_detail("Disk 1/2", "Tag: offline", 1000, 3999, &a), "Tag: offline") == 0,
-          "still at 2.999 s");
-    CHECK(strcmp(nfc_ui_detail("Disk 1/2", "Tag: offline", 1000, 4000, &a), "Disk 1/2") == 0,
-          "the observer's line is back at 3 s");
+    CHECK(strcmp(nfc_ui_detail("Disk 1/2", "Tag: offline", true, &a), "Tag: offline") == 0,
+          "a live tag line shows");
+    CHECK(strcmp(nfc_ui_detail("Disk 1/2", "Tag: offline", false, &a), "Disk 1/2") == 0,
+          "an expired one does not");
+}
+
+static void nothing_published_is_never_live(void) {
+    nfc_tag_clock_t c; nfc_tag_clock_init(&c);
+    CHECK(!nfc_tag_clock_live(&c, 0, 0, 10), "boot: no line has been published");
+}
+
+// The ms clock wraps every 49.7 days. A line three seconds old must not come
+// back for three seconds when `now - at` wraps round to small again.
+static void an_old_tag_line_stays_gone_across_the_wrap(void) {
+    nfc_tag_clock_t c; nfc_tag_clock_init(&c);
+    CHECK(nfc_tag_clock_live(&c, 1, 1000, 1000), "live when published");
+    CHECK(!nfc_tag_clock_live(&c, 1, 1000, 5000), "gone after 3 s");
+    CHECK(!nfc_tag_clock_live(&c, 1, 1000, 1000u + 0x80000000u), "gone 24 days later");
+    CHECK(!nfc_tag_clock_live(&c, 1, 1000, 999u), "gone at 2^32 - 1 ms elapsed, just before the wrap");
+    CHECK(!nfc_tag_clock_live(&c, 1, 1000, 1500), "and gone once the clock has wrapped past it");
+}
+
+static void a_line_published_just_before_the_wrap_lasts_three_seconds(void) {
+    nfc_tag_clock_t c; nfc_tag_clock_init(&c);
+    CHECK(nfc_tag_clock_live(&c, 1, 0xFFFFFF00u, 0xFFFFFF00u), "published");
+    CHECK(nfc_tag_clock_live(&c, 1, 0xFFFFFF00u, 0x00000100u), "0.5 s later, across the wrap");
+    CHECK(!nfc_tag_clock_live(&c, 1, 0xFFFFFF00u, 0xFFFFFF00u + NFC_UI_LINE_MS), "3 s, across the wrap");
 }
 
 static void no_tag_line_shows_the_base(void) {
     nfc_armed_t a; nfc_armed_init(&a);
-    CHECK(strcmp(nfc_ui_detail("192.168.1.9", "", 0, 10, &a), "192.168.1.9") == 0, "nothing tapped yet");
-    CHECK(strcmp(nfc_ui_detail("192.168.1.9", NULL, 0, 10, &a), "192.168.1.9") == 0, "NULL tag");
-    CHECK(strcmp(nfc_ui_detail("x", "Tag: offline", 0, 10, NULL), "Tag: offline") == 0,
+    CHECK(strcmp(nfc_ui_detail("192.168.1.9", "", true, &a), "192.168.1.9") == 0, "empty tag");
+    CHECK(strcmp(nfc_ui_detail("192.168.1.9", NULL, true, &a), "192.168.1.9") == 0, "NULL tag");
+    CHECK(strcmp(nfc_ui_detail("x", "Tag: offline", true, NULL), "Tag: offline") == 0,
           "NULL armed state is 'not armed'");
+    CHECK(strcmp(nfc_ui_title("Turrican II", NULL), "Turrican II") == 0, "NULL armed: the base title");
 }
 
-static void the_armed_line_holds_until_the_request_ends(void) {
+// While armed: the disk to be written on the TITLE line, "Tap tag to write"
+// on the detail line. Both go back to what they were (they are overlays, the
+// published lines underneath are never touched) when the request ends.
+static void armed_shows_the_title_and_the_instruction(void) {
     nfc_armed_t a; nfc_armed_init(&a);
-    nfc_armed_set(&a, 7, "Tap tag to write: X", 1000);
-    CHECK(strcmp(nfc_ui_detail("base", "", 0, 50000, &a), "Tap tag to write: X") == 0,
+    nfc_armed_set(&a, 7, "Turrican II", 1000);
+    CHECK(strcmp(nfc_ui_title("Lemmings", &a), "Turrican II") == 0, "the disk to write, on the title line");
+    CHECK(strcmp(nfc_ui_detail("base", "", false, &a), "Tap tag to write") == 0,
           "persistent while armed, not a 3 s line");
-    CHECK(strcmp(nfc_ui_detail("base", "Tag: not a disk tag", 50000, 51000, &a), "Tag: not a disk tag") == 0,
+    CHECK(strcmp(nfc_ui_detail("base", "Tag: not a disk tag", true, &a), "Tag: not a disk tag") == 0,
           "an event line shows over it...");
-    CHECK(strcmp(nfc_ui_detail("base", "Tag: not a disk tag", 50000, 53000, &a), "Tap tag to write: X") == 0,
+    CHECK(strcmp(nfc_ui_detail("base", "Tag: not a disk tag", false, &a), "Tap tag to write") == 0,
           "...and the armed line comes back after it, not the base");
     nfc_armed_clear(&a);
-    CHECK(strcmp(nfc_ui_detail("base", "", 0, 60000, &a), "base") == 0, "disarmed: the normal line");
+    CHECK(strcmp(nfc_ui_detail("base", "", false, &a), "base") == 0, "disarmed: the normal detail");
+    CHECK(strcmp(nfc_ui_title("Lemmings", &a), "Lemmings") == 0, "disarmed: the normal title");
+}
+
+static void armed_without_a_title_keeps_the_title_line(void) {
+    nfc_armed_t a; nfc_armed_init(&a);
+    nfc_armed_set(&a, 7, "", 0);
+    CHECK(strcmp(nfc_ui_title("Lemmings", &a), "Lemmings") == 0, "no title to show: leave it");
+    CHECK(strcmp(nfc_ui_detail("base", "", false, &a), "Tap tag to write") == 0, "still the instruction");
+    nfc_armed_set(&a, 8, NULL, 0);
+    CHECK(strcmp(nfc_ui_title("Lemmings", &a), "Lemmings") == 0, "NULL title too");
+}
+
+static void write_done_and_expiry_restore_the_lines(void) {
+    nfc_armed_t a; nfc_armed_init(&a);
+    nfc_armed_set(&a, 9, "Turrican II", 0);
+    nfc_event_t e = ev_of(NFC_EV_WRITE_DONE, NULL); e.seq = 9; e.ok = true;
+    nfc_armed_on_event(&a, &e);
+    CHECK(strcmp(nfc_ui_title("Lemmings", &a), "Lemmings") == 0, "WRITE_DONE: title back");
+    CHECK(strcmp(nfc_ui_detail("base", "", false, &a), "base") == 0, "WRITE_DONE: detail back");
+    nfc_armed_set(&a, 10, "Turrican II", 0);
+    CHECK(nfc_armed_expired(&a, NFC_WRITE_LIFETIME_MS), "expired");
+    CHECK(strcmp(nfc_ui_title("Lemmings", &a), "Lemmings") == 0, "expiry: title back");
+    CHECK(strcmp(nfc_ui_detail("base", "", false, &a), "base") == 0, "expiry: detail back");
 }
 
 // ---- the write request's life on the board ----------------------------------------
@@ -156,9 +234,23 @@ static void re_arming_restarts_the_clock(void) {
     nfc_armed_set(&a, 3, "l", 0);
     nfc_armed_set(&a, 4, "m", 100000);
     CHECK(!nfc_armed_expired(&a, 130000), "the newer request's two minutes");
-    CHECK(nfc_armed_expired(&a, 220000), "and they end");
     CHECK_EQ_INT(a.seq, 4);
-    CHECK(strcmp(a.line, "m") == 0, "the newer line");
+    CHECK(strcmp(a.title, "m") == 0, "the newer title");
+    CHECK(nfc_armed_expired(&a, 220000), "and they end");
+}
+
+// An expired arm ends ONCE: it is cleared by the check that finds it
+// expired, so when `now - since` wraps round to small 49.7 days later it
+// cannot read as armed (or unexpired) again, even if the caller never
+// cleared it.
+static void an_expired_arm_stays_ended_across_the_wrap(void) {
+    nfc_armed_t a; nfc_armed_init(&a);
+    nfc_armed_set(&a, 5, "Turrican II", 5000);
+    CHECK(nfc_armed_expired(&a, 5000 + NFC_WRITE_LIFETIME_MS), "expired at two minutes");
+    CHECK(!a.armed, "and ended by that check");
+    CHECK(!nfc_armed_expired(&a, 5000 + NFC_WRITE_LIFETIME_MS + 1), "reported once");
+    CHECK(strcmp(nfc_ui_detail("base", "", false, &a), "base") == 0, "not armed after the wrap");
+    CHECK(strcmp(nfc_ui_title("Lemmings", &a), "Lemmings") == 0, "title not back after the wrap");
 }
 
 static void expiry_survives_the_clock_wrapping(void) {
@@ -193,17 +285,24 @@ static void only_its_own_write_done_ends_a_request(void) {
 int main(void) {
     RUN(tap_lines_are_the_spec_table);
     RUN(a_mount_without_a_title_still_says_something);
-    RUN(a_rate_limited_tap_changes_nothing);
+    RUN(a_rate_limited_tap_says_so);
+    RUN(every_fixed_line_fits_the_detail_line);
     RUN(a_long_title_is_clipped_to_the_line);
     RUN(local_event_lines);
     RUN(events_with_no_line_of_their_own);
-    RUN(the_armed_line);
+    RUN(the_armed_line_is_fixed_words);
     RUN(uid_as_hex);
     RUN(the_tag_line_holds_for_three_seconds);
+    RUN(nothing_published_is_never_live);
+    RUN(an_old_tag_line_stays_gone_across_the_wrap);
+    RUN(a_line_published_just_before_the_wrap_lasts_three_seconds);
     RUN(no_tag_line_shows_the_base);
-    RUN(the_armed_line_holds_until_the_request_ends);
+    RUN(armed_shows_the_title_and_the_instruction);
+    RUN(armed_without_a_title_keeps_the_title_line);
+    RUN(write_done_and_expiry_restore_the_lines);
     RUN(a_write_expires_after_two_minutes);
     RUN(re_arming_restarts_the_clock);
+    RUN(an_expired_arm_stays_ended_across_the_wrap);
     RUN(expiry_survives_the_clock_wrapping);
     RUN(only_its_own_write_done_ends_a_request);
     return REPORT();

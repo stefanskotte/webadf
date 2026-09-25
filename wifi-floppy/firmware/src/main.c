@@ -140,12 +140,15 @@ static volatile bool g_ui_writable = false;
 // cast, since up_sync_t and disp_sync_t are converted by a switch (see
 // core1_main's WPROT block).
 static volatile int g_ui_sync = DISP_SYNC_SYNCED;
-// A tap's line (nfc_ui.h), published by core1 with the time it was published.
-// core0 shows it OVER g_ui_detail while it is under NFC_UI_LINE_MS old
-// (nfc_ui_detail), so the observer's line underneath is never overwritten and
-// the revert is on time even while core1 sits in a 25 s held poll.
+// A tap's line (nfc_ui.h), published by core1 with the time it was published
+// and a count of publications. core0 shows it OVER g_ui_detail while it is
+// under NFC_UI_LINE_MS old (nfc_tag_clock_live, nfc_ui_detail), so the
+// observer's line underneath is never overwritten and the revert is on time
+// even while core1 sits in a 25 s held poll. The count is what lets core0 end
+// a line for good: an age alone comes back when the ms clock wraps.
 static char g_ui_tag[NFC_UI_LINE_BYTES];
 static uint32_t g_ui_tag_at;
+static uint32_t g_ui_tag_n;
 
 static void ui_publish(disp_status_t st, const char *title, const char *detail, int pct) {
     g_ui_seq++;                     // odd: writing
@@ -164,13 +167,15 @@ static void ui_publish_tag(const char *line, uint32_t now) {
     __dmb();
     snprintf(g_ui_tag, sizeof g_ui_tag, "%s", line);
     g_ui_tag_at = now;
+    g_ui_tag_n++;
     __dmb();
     g_ui_seq++;                     // even: settled
 }
 
-/** Copy the published state, and the tap line with its time. False means
- *  "torn, ask again" -- never a stale half-string handed to the renderer. */
-static bool ui_snapshot(display_state_t *s, char tag[NFC_UI_LINE_BYTES], uint32_t *tag_at) {
+/** Copy the published state, and the tap line with its time and count. False
+ *  means "torn, ask again" -- never a stale half-string handed to the renderer. */
+static bool ui_snapshot(display_state_t *s, char tag[NFC_UI_LINE_BYTES], uint32_t *tag_at,
+                        uint32_t *tag_n) {
     uint32_t a = g_ui_seq;
     __dmb();
     if (a & 1u) return false;
@@ -194,6 +199,7 @@ static bool ui_snapshot(display_state_t *s, char tag[NFC_UI_LINE_BYTES], uint32_
     memcpy(tag, g_ui_tag, NFC_UI_LINE_BYTES);
     tag[NFC_UI_LINE_BYTES - 1] = '\0';
     *tag_at = g_ui_tag_at;
+    *tag_n  = g_ui_tag_n;
     __dmb();
     return g_ui_seq == a;
 }
@@ -621,7 +627,7 @@ static void nfc_core0_step(nfc_armed_t *armed, bool short_pass) {
     if (nfc_wreq_box_take(&g_nfc_wreq, &wreq_last, &req)) {
         if (req.disk_id[0]) {
             nfc_arm_write(&g_nfc, req.seq, req.disk_id);
-            nfc_armed_set(armed, req.seq, req.line, now);
+            nfc_armed_set(armed, req.seq, req.title, now);
             wf_logf(WF_INFO, "nfc: write %lu armed (%s)", (unsigned long)req.seq, req.disk_id);
         } else {
             nfc_disarm(&g_nfc);
@@ -629,9 +635,8 @@ static void nfc_core0_step(nfc_armed_t *armed, bool short_pass) {
             wf_logf(WF_INFO, "nfc: write %lu disarmed", (unsigned long)req.seq);
         }
     }
-    if (nfc_armed_expired(armed, now)) {
+    if (nfc_armed_expired(armed, now)) {       // true once; it has ended `armed`
         nfc_disarm(&g_nfc);
-        nfc_armed_clear(armed);
         wf_logf(WF_INFO, "nfc: write %lu expired on the board (2 min)", (unsigned long)armed->seq);
     }
 
@@ -668,8 +673,7 @@ static void nfc_core1_event(device_client_t *c) {
         const dc_tap_outcome_t o = online ? dc_tap(c, ev.disk_id, title, sizeof title)
                                           : DC_TAP_FAILED;
         show = nfc_ui_tap_line(o, title, line, sizeof line);
-        wf_logf(WF_INFO, "nfc: tap %s -> %s", ev.disk_id,
-                show ? show : "ignored (rate limit)");
+        wf_logf(WF_INFO, "nfc: tap %s -> %s", ev.disk_id, show);
     } else if (ev.kind == NFC_EV_WRITE_DONE) {
         char uid[NFC_UI_UID_HEX_BYTES];
         nfc_ui_uid_hex(&ev, uid);
@@ -692,7 +696,7 @@ static void nfc_core1_write_request(device_client_t *c) {
     memset(&req, 0, sizeof req);
     req.seq = c->nfc_write_seq;
     snprintf(req.disk_id, sizeof req.disk_id, "%s", c->nfc_write_disk_id);
-    if (req.disk_id[0]) nfc_ui_armed_line(c->nfc_write_title, req.line, sizeof req.line);
+    if (req.disk_id[0]) snprintf(req.title, sizeof req.title, "%s", c->nfc_write_title);
     nfc_wreq_box_put(&g_nfc_wreq, &req);
     // Acted on -- armed or disarmed -- so say so, or the server keeps its
     // hold released and the poll keeps coming back with the same request.
@@ -2127,7 +2131,9 @@ int main(void) {
     display_state_t ui, last_ui;
     memset(&last_ui, 0, sizeof last_ui);
     char     ui_tag[NFC_UI_LINE_BYTES];
-    uint32_t ui_tag_at;
+    uint32_t ui_tag_at, ui_tag_n;
+    nfc_tag_clock_t ui_tag_clock;        // ends each tag line once (nfc_ui.h)
+    nfc_tag_clock_init(&ui_tag_clock);
     nfc_armed_t nfc_armed;               // core0's view of the armed tag write
     nfc_armed_init(&nfc_armed);
     bool pump_failed = false;            // the last pump had work and sent nothing
@@ -2385,11 +2391,15 @@ int main(void) {
         // alone, and pushed a bounded slice at a time because a whole frame
         // is ~11 ms against this loop's 1 ms turn. See the display section at
         // the top of this file for why core1 cannot own this.
-        if (ui_snapshot(&ui, ui_tag, &ui_tag_at)) {
+        if (ui_snapshot(&ui, ui_tag, &ui_tag_at, &ui_tag_n)) {
             // A tap's line for 3 s, else "Tap tag to write" while armed, else
-            // the observer's own line (nfc_ui_detail).
-            const char *d = nfc_ui_detail(ui.detail, ui_tag, ui_tag_at, clock_ms(), &nfc_armed);
+            // the observer's own line (nfc_ui_detail); and while armed, the
+            // disk to be written on the title line (nfc_ui_title).
+            const bool tag_live = nfc_tag_clock_live(&ui_tag_clock, ui_tag_n, ui_tag_at, clock_ms());
+            const char *d = nfc_ui_detail(ui.detail, ui_tag, tag_live, &nfc_armed);
             if (d != ui.detail) snprintf(ui.detail, sizeof ui.detail, "%s", d);
+            const char *t = nfc_ui_title(ui.title, &nfc_armed);
+            if (t != ui.title) snprintf(ui.title, sizeof ui.title, "%s", t);
             ui.show_track = disk_mounted;
             ui.cyl        = cur_cyl;
             ui.max_cyl    = NUM_CYL - 1;

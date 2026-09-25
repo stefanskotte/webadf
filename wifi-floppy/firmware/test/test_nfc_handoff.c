@@ -73,13 +73,13 @@ static void write_request_box(void) {
     memset(&r, 0, sizeof r);
     r.seq = 12;
     snprintf(r.disk_id, sizeof r.disk_id, "%s", "0e5c1a2b-3c4d-5e6f-8a9b-0c1d2e3f4a5b");
-    snprintf(r.line, sizeof r.line, "%s", "Tap tag to write: X");
+    snprintf(r.title, sizeof r.title, "%s", "Turrican II");
     CHECK(!nfc_wreq_box_take(&b, &last, &out), "nothing yet");
     nfc_wreq_box_put(&b, &r);
     CHECK(nfc_wreq_box_take(&b, &last, &out), "taken");
     CHECK_EQ_INT(out.seq, 12);
     CHECK(strcmp(out.disk_id, r.disk_id) == 0, "the id");
-    CHECK(strcmp(out.line, r.line) == 0, "the line");
+    CHECK(strcmp(out.title, r.title) == 0, "the title");
     CHECK(!nfc_wreq_box_take(&b, &last, &out), "once");
     // A disarm is a request with no disk.
     memset(&r, 0, sizeof r);
