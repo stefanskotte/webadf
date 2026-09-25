@@ -2160,6 +2160,26 @@ separately.
   disk's sha256 (from the file, or the DB by name), send it to the board over the USB CDC console
   (e.g. an `nfc write <sha256>` command the firmware accepts), and report the read-back. No UI, no
   server endpoint for writing. This answers the "how cards get written" question below.
+  **THE MODULE IS ON THE BENCH AND READS TAGS (2026-09-25), branch `nfc-identify`.** It is NOT a
+  PN532, whatever the listing said: it is an **HW-147C with a Si512** (sanded chip; the operator's
+  vendor pack `~/Downloads/HW-147C-V0.0.1-20240904-1` names it, with datasheet and example code).
+  Measured: I2C address **0x28** (vendor `SLA_ADDR 0x50`, 8-bit), no answer to the PN532 protocol
+  at 0x24 or 0x28, VersionReg 0x82, 7 of 8 MFRC522 reset values match (ModeReg 0x3b, not 0x3f).
+  It is a **PN512-style part**: it answers RC522 register access, but **reads no tag until
+  ControlReg's Initiator bit (0x10) is set** -- two tag watches saw nothing without it. With the
+  vendor's `PCD_SI512_TypeA_Init` copied line for line (Initiator, TxMode/RxMode 0, ModWidth 0x26,
+  RFCfg 0x68, 25 ms timer, 100 % ASK, ModeReg 0x3D), both kit tags read at once: white card UID
+  73 4a 0f 29, blue fob 24 19 b6 01, both ATQA 04 00 = **MIFARE Classic 1K** (writing the 32-byte
+  digest needs Crypto1 auth, default key FF..FF; NTAG stickers would be simpler), 173/173 WUPA
+  clean. Wiring: VCC pin 36 (3V3), GND, SDA pin 24, SCL pin 25 shared with the OLED; DIP switch 1
+  ON, 2 OFF. **A loose SDA/SCL lead makes it vanish from the bus while the OLED carries on** --
+  seen once, the boot scan's missing 0x28 line is the tell. `src/nfc_probe.c` is a BENCH probe:
+  it blocks boot 20 s for a tag watch (skipped on trial boots, whose ROM deadline it would miss),
+  so it must not ship; the board currently runs it (`1.2.0+g6b9db28`, not a published release).
+  Flash backup from before: `~/.webadf/board-backups/2026-09-25-192817-before-nfc-identify.bin`.
+  **`picotool reboot -f` does NOT reboot this firmware** (it reports success; USB never drops), so
+  every bench install needs the operator's BOOTSEL. And `cat` of the CDC port does not raise DTR
+  on this Mac; a reader that sets DTR with TIOCMBIS works.
   Nothing designed yet. Facts to start from:
   - **The I2C bus already exists.** The OLED is on I2C1, GP18 (SDA) / GP19 (SCL), header pins
     24/25 (`floppy_io.h:57-58`). The PN532's I2C address is 0x24 and the SSD1306's is 0x3C, so
