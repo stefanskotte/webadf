@@ -15,6 +15,7 @@ import { devices } from '@/db/schema/devices';
 import { disks, games, entitlements } from '@/db/schema/catalog';
 import { resolveDiskQuery, type DiskCandidate } from '@/lib/nfc/resolve';
 import { requestNfcWrite, cancelNfcWrite, readWriteResult } from '@/lib/nfc/store';
+import { waitForWrite } from '@/lib/nfc/wait-for-write';
 
 const POLL_MS = 1000;
 const WAIT_MS = 120_000;
@@ -66,11 +67,12 @@ async function main() {
   } else if (allDevices.length === 1) {
     [device] = allDevices;
   } else {
-    console.error('More than one device is paired; pass --device <name-or-id>.');
+    console.error(allDevices.length === 0
+      ? 'No devices are paired.'
+      : 'More than one device is paired; pass --device <name-or-id>.');
     for (const d of allDevices) console.error(`  ${d.name} — ${d.id}`);
     process.exit(2);
   }
-  if (!device) die('No devices found.');
 
   // 3. Refuse a board without a reader.
   if (device.nfcReader !== 'present') {
@@ -101,34 +103,58 @@ async function main() {
 
   console.log(`Tap a tag on ${device.name} to write "${disk.title} disk ${disk.diskNo}" (2 min)… Ctrl-C cancels.`);
 
-  let cancelled = false;
-  const onSigint = () => { cancelled = true; };
+  let sigint = false;
+  const onSigint = () => { sigint = true; };
   process.once('SIGINT', onSigint);
 
-  const deadline = Date.now() + WAIT_MS;
+  let outcome;
   try {
-    while (Date.now() < deadline) {
-      if (cancelled) break;
-      await new Promise((r) => setTimeout(r, POLL_MS));
-      if (cancelled) break;
-      const result = await readWriteResult(device.id, seq);
-      if (result) {
-        if (result.result === 'ok') {
-          console.log(`Written to tag ${result.uid}, read back OK.`);
-          process.exit(0);
-        } else {
-          console.error(`Write failed: ${result.result} (tag ${result.uid})`);
-          process.exit(1);
-        }
-      }
-    }
+    outcome = await waitForWrite({
+      deviceId: device.id,
+      seq,
+      deadline: Date.now() + WAIT_MS,
+      pollMs: POLL_MS,
+      isCancelled: () => sigint,
+      sleep: (ms) => new Promise((r) => setTimeout(r, ms)),
+      now: () => Date.now(),
+      readWriteResult,
+      cancelNfcWrite,
+    });
   } finally {
     process.removeListener('SIGINT', onSigint);
   }
 
-  await cancelNfcWrite(device.id, seq);
-  console.error(cancelled ? 'Cancelled.' : 'Timed out waiting for a tap.');
-  process.exit(1);
+  switch (outcome.kind) {
+    case 'ok':
+      console.log(`Written to tag ${outcome.uid}, read back OK.`);
+      process.exit(0);
+      break;
+    case 'failed':
+      console.error(`Write failed: ${outcome.reason} (tag ${outcome.uid})`);
+      process.exit(1);
+      break;
+    case 'timeout':
+      console.error('Timed out waiting for a tap.');
+      process.exit(1);
+      break;
+    case 'cancelled':
+      console.error('Cancelled.');
+      process.exit(1);
+      break;
+    case 'error':
+      console.error(`Error while waiting for the tap: ${
+        outcome.error instanceof Error ? outcome.error.message : String(outcome.error)
+      } (cancelling the request; it also disarms on its own within 2 min either way)`);
+      process.exit(1);
+      break;
+    default: {
+      const exhaustive: never = outcome;
+      throw new Error(`unreachable outcome: ${JSON.stringify(exhaustive)}`);
+    }
+  }
 }
 
-main();
+main().catch((error: unknown) => {
+  console.error(error instanceof Error ? error.message : String(error));
+  process.exit(1);
+});
