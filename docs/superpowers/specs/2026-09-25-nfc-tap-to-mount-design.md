@@ -105,14 +105,18 @@ For about 3 s after an event, the OLED's detail line shows one of these, through
 | Tap mounted a disk | `Tag: <title>` |
 | Tap of the disk already in the drive | `Tag: already in drive` |
 | Disk not in this library | `Tag: not in library` |
-| Disk's tracks too long for this board | `Tag: too long for board` |
+| Disk's tracks too long for this board | `Tag: tracks too long` |
 | Tag without the marker | `Tag: not a disk tag` |
 | Tag unreadable or locked | `Tag: unreadable` / `Tag: locked` |
 | Board offline | `Tag: offline` |
-| Write armed | `Tap tag to write: <title>` |
+| Tap ignored (within 1 s of the last) | `Tag: too fast` |
+| Write armed | detail `Tap tag to write`, with the disk's title on the TITLE line |
 | Write finished | `Tag written` / `Write failed` |
 
 The activity LED blinks once on every tag arrival.
+
+*Amended 2026-09-26 (controller ruling during implementation): the detail line holds 21 characters, so the
+original "Tag: too long for board" and "Tap tag to write: <title>" did not fit.*
 
 ### 4.5 Tag format v1 (MIFARE Classic 1K, sector 1)
 
