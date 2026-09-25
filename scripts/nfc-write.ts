@@ -11,9 +11,9 @@
 import { parseArgs } from 'node:util';
 import { and, eq } from 'drizzle-orm';
 import { getDb } from '@/db';
-import { devices } from '@/db/schema/devices';
 import { disks, games, entitlements } from '@/db/schema/catalog';
 import { resolveDiskQuery, type DiskCandidate } from '@/lib/nfc/resolve';
+import { selectableDevicesQuery } from '@/lib/nfc/devices';
 import { requestNfcWrite, cancelNfcWrite, readWriteResult } from '@/lib/nfc/store';
 import { waitForWrite } from '@/lib/nfc/wait-for-write';
 
@@ -47,13 +47,13 @@ const deviceArg = args.device;
 async function main() {
   const db = getDb();
 
-  // 2. Pick the device. Only one org exists on this deployment, but the
+  // 2. Pick the device. Only one real org exists on this deployment, but the
   // selection is still by device, not by org: with --device, match name or
   // id; with none and exactly one device anywhere, use it; otherwise print
-  // the devices and exit.
-  const allDevices = await db.select({
-    id: devices.id, orgId: devices.orgId, name: devices.name, nfcReader: devices.nfcReader,
-  }).from(devices);
+  // the devices and exit. Devices in e2e test orgs (every member
+  // @example.test -- live e2e runs pair boards on this same database) are
+  // never candidates; see src/lib/nfc/devices.ts.
+  const allDevices = await selectableDevicesQuery(db);
 
   let device: typeof allDevices[number] | undefined;
   if (deviceArg) {
