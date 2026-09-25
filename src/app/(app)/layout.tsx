@@ -10,6 +10,8 @@ import { Logo } from "@/components/shell/logo";
 import { Link } from "@/components/shell/link";
 import { NavProgressProvider } from "@/components/shell/nav-progress";
 import { LiveRefresh } from "@/components/shell/live-refresh";
+import { DriveChips } from "@/components/shell/drive-chips";
+import { driveChips } from "@/lib/drive-chips";
 
 export default async function AppLayout({
   children,
@@ -31,7 +33,15 @@ export default async function AppLayout({
     liveStateRows(getDb(), orgId),
     latestReleaseSequence(),
   ]);
-  const fingerprint = liveFingerprint(liveRows, Date.now(), latestRelease);
+  // ONE clock reading for both: the chips and the fingerprint must describe
+  // the same instant, or a board crossing the online threshold between two
+  // Date.now() calls would render one way and fingerprint as the other.
+  const now = Date.now();
+  const fingerprint = liveFingerprint(liveRows, now, latestRelease);
+  // The header's drive chips, from the SAME rows -- no query of their own on
+  // every page, and every field they show is in the fingerprint above, so
+  // LiveRefresh keeps them exactly as fresh as the Devices page.
+  const chips = driveChips(liveRows, now);
   return (
     <NavProgressProvider>
       <LiveRefresh initial={fingerprint} />
@@ -59,6 +69,13 @@ export default async function AppLayout({
             <Logo size={22} />
             webadf
           </Link>
+          {/* Beside the wordmark, in flow, rather than beside the pill: the
+              pill is absolutely centred (below), so anything placed next to
+              it would have to be absolute too, and would run into the search
+              box on the right. Here the chips take real width and the pill's
+              own centring is untouched. Full chips only from xl; see
+              DriveChips for the compact control used below that. */}
+          <DriveChips chips={chips} />
         {/* The nav is centred on the VIEWPORT, which means taking it out of
             flow. Two weaker versions were tried and measured first: mx-auto
             only centres within the space its siblings leave over, so the

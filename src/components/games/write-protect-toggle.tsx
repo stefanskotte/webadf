@@ -2,7 +2,7 @@
 
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { toast } from 'sonner';
+import { requestWriteProtect } from '@/components/devices/device-actions';
 
 export function WriteProtectToggle({ diskId, writeProtected }: { diskId: string; writeProtected: boolean }) {
   const router = useRouter();
@@ -11,16 +11,7 @@ export function WriteProtectToggle({ diskId, writeProtected }: { diskId: string;
   async function onToggle() {
     setBusy(true);
     try {
-      const res = await fetch(`/api/disks/${diskId}`, {
-        method: 'PATCH',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ writeProtected: !writeProtected }),
-      });
-      if (!res.ok) {
-        toast.error('Could not change write protection', { description: `The server answered ${res.status}.` });
-        return;
-      }
-      router.refresh();
+      if (await requestWriteProtect(diskId, !writeProtected)) router.refresh();
     } finally {
       setBusy(false);
     }

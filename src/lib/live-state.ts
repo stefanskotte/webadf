@@ -1,9 +1,9 @@
 import { createHash } from 'node:crypto';
-import { and, asc, eq } from 'drizzle-orm';
+import { and, asc, eq, sql } from 'drizzle-orm';
 import { alias } from 'drizzle-orm/pg-core';
 import type { getDb } from '@/db';
 import { devices } from '@/db/schema/devices';
-import { disks } from '@/db/schema/catalog';
+import { disks, games } from '@/db/schema/catalog';
 import { deviceState, isOnline, relative } from '@/lib/device-state';
 
 /**
@@ -36,6 +36,22 @@ export interface LiveStateRow {
   updateProtocol: number | null;
   firmwareUpdateError: string | null;
   lastError: string | null; lastErrorAt: Date | null;
+  // What the header's drive chips (DriveChips) render about the MOUNTED disk
+  // -- the one the board reported, never the one it was asked for -- plus
+  // the desired disk's title for the "loading <title>…" line while a mount
+  // is in flight. The layout renders the chips straight from these rows on
+  // every page, so each of them is a page input and has to be in the
+  // fingerprint below: a rename of the mounted game, or an HFE arriving in
+  // place of an ADF, must reach every open tab like a mount does.
+  mountedGameId: string | null;
+  mountedGameTitle: string | null;
+  mountedDiskNo: number | null;
+  /** How many disks the mounted disk's game has -- "disk 2" is only worth saying on a multi-disk game. */
+  mountedDiskCount: number | null;
+  mountedImageFormat: string | null;
+  desiredGameTitle: string | null;
+  /** Only to recognise the default "Device <MAC>" name, which the chip shortens. */
+  macAddress: string | null;
 }
 
 /**
@@ -84,6 +100,10 @@ export function liveFingerprint(
         r.desiredFirmwareVersion ?? '', r.firmwareUpdateState ?? '',
         r.updateProtocol ?? '', r.firmwareUpdateError ?? '',
         r.lastError ?? '', r.lastErrorAt?.toISOString() ?? '',
+        // The drive chips' inputs (see LiveStateRow).
+        r.mountedGameId ?? '', r.mountedGameTitle ?? '', r.mountedDiskNo ?? '',
+        r.mountedDiskCount ?? '', r.mountedImageFormat ?? '', r.desiredGameTitle ?? '',
+        r.macAddress ?? '',
         isOnline(r.lastSeenAt, now) ? '1' : '0',
         // Every offline card, not just 'stale' -- see the doc comment above.
         isOnline(r.lastSeenAt, now) ? '' : relative(r.lastSeenAt, now),
@@ -102,6 +122,13 @@ export async function liveStateRows(db: ReturnType<typeof getDb>, orgId: string)
   // different rows, and this fingerprint has to notice a write-protect flip
   // on EITHER one.
   const mountedDisk = alias(disks, 'mounted_disk');
+  // The two games behind those two disks, for the drive chips' titles.
+  // Reached THROUGH the disk rows rather than devices.mountedGameId /
+  // desiredGameId: mountedDiskId is the exact row the board reported, and
+  // (gameId, diskNo) is not unique, so going via the disk keeps the title,
+  // the number and the write-protect all describing one and the same row.
+  const mountedGame = alias(games, 'mounted_game');
+  const desiredGame = alias(games, 'desired_game');
 
   return db
     .select({
@@ -119,6 +146,19 @@ export async function liveStateRows(db: ReturnType<typeof getDb>, orgId: string)
       updateProtocol: devices.updateProtocol,
       firmwareUpdateError: devices.firmwareUpdateError,
       lastError: devices.lastError, lastErrorAt: devices.lastErrorAt,
+      mountedGameId: mountedDisk.gameId,
+      mountedGameTitle: mountedGame.title,
+      mountedDiskNo: mountedDisk.diskNo,
+      // Null (not 0) when the join found no disk, so "nothing to count" never
+      // reads as "a game with no disks". Org-scoped like every join here.
+      mountedDiskCount: sql<number | null>`(
+        select case when ${mountedDisk.gameId} is null then null else count(*)::int end
+        from disks dc
+        where dc.game_id = ${mountedDisk.gameId} and dc.org_id = ${orgId}
+      )`,
+      mountedImageFormat: mountedDisk.imageFormat,
+      desiredGameTitle: desiredGame.title,
+      macAddress: devices.macAddress,
     })
     .from(devices)
     // Org-scoped on both sides of both joins: without `disks.orgId`, a
@@ -128,6 +168,8 @@ export async function liveStateRows(db: ReturnType<typeof getDb>, orgId: string)
     // org's fingerprint.
     .leftJoin(disks, and(eq(disks.id, devices.desiredDiskId), eq(disks.orgId, orgId)))
     .leftJoin(mountedDisk, and(eq(mountedDisk.id, devices.mountedDiskId), eq(mountedDisk.orgId, orgId)))
+    .leftJoin(mountedGame, and(eq(mountedGame.id, mountedDisk.gameId), eq(mountedGame.orgId, orgId)))
+    .leftJoin(desiredGame, and(eq(desiredGame.id, disks.gameId), eq(desiredGame.orgId, orgId)))
     .where(eq(devices.orgId, orgId))
     .orderBy(asc(devices.id));
 }
