@@ -1,4 +1,4 @@
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { and, eq, inArray, like, notInArray, or, sql } from 'drizzle-orm';
 import type { Page, APIRequestContext } from '@playwright/test';
 import { getDb } from '@/db';
@@ -44,6 +44,28 @@ export async function pairDevice(page: Page, request: APIRequestContext, name = 
   const { token, deviceId } = await reg.json();
   seeded.deviceIds.push(deviceId as string);
   return { deviceId: deviceId as string, token: token as string };
+}
+
+/**
+ * Insert `n` update-capable devices straight into the org, no pairing.
+ *
+ * For the update bar's batch cap, which needs more boards than it is sane to
+ * pair one at a time. Nothing here can ever authenticate as a device: the
+ * token hash is of a random value nobody holds. Tracked in `seeded` and
+ * deleted by cleanupSeeded like every paired one.
+ */
+export async function seedDevices(
+  orgId: string, n: number, firmwareVersion: string,
+): Promise<string[]> {
+  const rows = Array.from({ length: n }, (_, i) => ({
+    id: randomUUID(), orgId, name: `Seeded ${String(i + 1).padStart(2, '0')}`,
+    tokenHash: createHash('sha256').update(randomUUID()).digest('hex'),
+    firmwareVersion, updateProtocol: 1, lastSeenAt: new Date(),
+  }));
+  await getDb().insert(devices).values(rows);
+  const ids = rows.map((r) => r.id);
+  seeded.deviceIds.push(...ids);
+  return ids;
 }
 
 /**

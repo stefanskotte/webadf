@@ -4,10 +4,11 @@ import { readFileSync, writeFileSync } from 'node:fs';
 import { gunzipSync } from 'node:zlib';
 import { and, eq } from 'drizzle-orm';
 import { getDb } from '@/db';
-import { blobs, disks } from '@/db/schema/catalog';
+import { blobs, disks, entitlements } from '@/db/schema/catalog';
 import { signUpFresh } from './helpers';
 import { seedDisk, cleanupSeeded, pairDevice, authHeader } from './device-helpers';
 import { parseLikeFirmware } from '@/lib/adfmfm/firmware-parser';
+import { diskStore } from '@/lib/storage';
 import { sparseAdf as sparseAdfBytes } from '@/lib/hfe/__fixtures__/source';
 
 test.afterAll(cleanupSeeded);
@@ -107,6 +108,14 @@ test.describe('uploading HFE', () => {
     });
     expect(res.status()).toBe(409);
     expect((await res.json()).rejectedReasons[sha256]).toMatch(/^HFE v3 isn't supported yet/);
+
+    // The refused bytes do not stay parked in the store with no row -- unless
+    // something does name them (another org registered these exact bytes),
+    // in which case they must survive. Decided from the database, so the
+    // assertion holds on a store that has seen these bytes before.
+    const [row] = await getDb().select({ sha: blobs.sha256 }).from(blobs).where(eq(blobs.sha256, sha256));
+    if (row) expect(await diskStore.stat(sha256)).not.toBeNull();
+    else expect(await diskStore.stat(sha256)).toBeNull();
   });
 
   test('a server-side refusal reaches the row, even when the browser check is bypassed and the whole batch is refused', async ({ page }) => {
@@ -258,6 +267,46 @@ test.describe('an HFE on the game page', () => {
     const second = await page.request.post(`/api/disks/${h.id}/extract`);
     expect(second.status()).toBe(200);
     expect(await getDb().select().from(disks).where(and(eq(disks.orgId, orgId), eq(disks.imageFormat, 'adf')))).toHaveLength(1);
+  });
+
+  test('extracting again after the extracted ADF was edited is a 409 that links to it, not a silent 200', async ({ page }) => {
+    // The ADF's id derives from its bytes, and an edit moves disks.sha256
+    // but never disks.id -- so the second extract lands on the edited row.
+    const { orgId } = await signUpFresh(page);
+    await uploadHfeThroughUi(page, orgId, 'HFE Reextract');
+    const [h] = await getDb().select({ id: disks.id, gameId: disks.gameId }).from(disks).where(eq(disks.orgId, orgId));
+    const first = await page.request.post(`/api/disks/${h.id}/extract`);
+    expect(first.status()).toBe(200);
+    const { diskId: adfId, sha256: extractedSha } = await first.json();
+
+    // The edit, as the one thing this route can see of it: disks.sha256
+    // repointed at new bytes under the SAME disks.id, which is exactly the
+    // UPDATE recordVersion (disk-history/store.ts) ends with. Written
+    // directly because no editing route can reach this fixture's ADF: its
+    // sectors carry no filesystem, so the volume rename and every file
+    // operation refuse it as no_filesystem. The blob and entitlement rows are
+    // the ones recordVersion writes alongside; the org purge reclaims both.
+    const editedSha = fakeSha();
+    await getDb().insert(blobs).values({ sha256: editedSha, sizeBytes: 901_120, storageKey: `adf/${editedSha}` });
+    await getDb().insert(entitlements).values({ orgId, sha256: editedSha, sourceFilename: 'Edited.adf' });
+    await getDb().update(disks).set({ sha256: editedSha }).where(eq(disks.id, adfId));
+    const edited = { sha: editedSha };
+    expect(edited.sha).not.toBe(extractedSha);
+
+    const again = await page.request.post(`/api/disks/${h.id}/extract`);
+    expect(again.status()).toBe(409);
+    expect(await again.json()).toEqual({ error: 'already_extracted', diskId: adfId });
+    // Nothing was overwritten or added.
+    const [still] = await getDb().select({ sha: disks.sha256 }).from(disks).where(eq(disks.id, adfId));
+    expect(still.sha).toBe(edited.sha);
+    expect(await getDb().select().from(disks).where(and(eq(disks.orgId, orgId), eq(disks.imageFormat, 'adf')))).toHaveLength(1);
+
+    // And the page says so, with the way back to the original.
+    await page.goto(`/games/${h.gameId}`);
+    await page.getByTestId(`extract-${h.id}`).click();
+    await expect(page.getByTestId(`extract-edited-${h.id}`)).toContainText('has been edited since');
+    await expect(page.getByTestId(`extract-edited-link-${h.id}`))
+      .toHaveAttribute('href', `/disks/${adfId}/files#disk-history`);
   });
 
   test('extracting to an ADF whose blob already has a verdict puts it back in front of the sweeper', async ({ browser }) => {

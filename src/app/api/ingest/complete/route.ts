@@ -2,10 +2,12 @@ import { after } from 'next/server';
 import { sweep } from '@/lib/tosec-sweep';
 import { gzipSync } from 'node:zlib';
 import { z } from 'zod';
-import { and, inArray, isNotNull, sql } from 'drizzle-orm';
+import { and, inArray, isNotNull, or, sql } from 'drizzle-orm';
 import { BlobServiceRateLimited } from '@vercel/blob';
 import { getDb } from '@/db';
 import { blobs, entitlements, games, disks } from '@/db/schema/catalog';
+import { diskVersions } from '@/db/schema/disk-history';
+import { selectReleasableUploads } from '@/lib/blob-gc';
 import { requireOrg } from '@/lib/session';
 import { diskStore } from '@/lib/storage';
 import { completeBody, stableId } from '@/lib/ingest';
@@ -123,6 +125,51 @@ async function release(sha256: string): Promise<void> {
   }
 }
 
+/**
+ * Deletes the stored bytes of refused uploads that NOTHING references.
+ *
+ * `blobs` is global and content-addressed: another org may hold these exact
+ * bytes (uploaded as an .adf, or as a playable copy of the same file), and
+ * deleting them would break its disk. So this asks the teardown's own
+ * question -- is the sha named by any blobs row, disk, entitlement or disk
+ * history? -- and asks it NOW, not from the lookup at the top of the request:
+ * a concurrent upload may have registered the same bytes since.
+ *
+ * A window remains between that check and the delete: a request that
+ * verifies and registers the same bytes inside it would get a blobs row whose
+ * object is gone. Closing it would need a lock spanning the store and the
+ * database, which nothing in ingest takes; the window is two round trips
+ * wide, and the bytes are ones this very request just refused.
+ *
+ * Best effort, like release(): a failed lookup leaves the bytes where they
+ * were, which is the state before this existed, and never fails the request.
+ */
+async function releaseRefused(shas: string[]): Promise<void> {
+  if (shas.length === 0) return;
+  const db = getDb();
+  let rowed, diskRefs, entRefs, history;
+  try {
+    [rowed, diskRefs, entRefs, history] = await Promise.all([
+      db.select({ sha256: blobs.sha256 }).from(blobs).where(inArray(blobs.sha256, shas)),
+      db.select({ sha256: disks.sha256 }).from(disks).where(inArray(disks.sha256, shas)),
+      db.select({ sha256: entitlements.sha256 }).from(entitlements).where(inArray(entitlements.sha256, shas)),
+      db.select({ blob: diskVersions.blobSha256, image: diskVersions.imageSha256 }).from(diskVersions)
+        .where(or(inArray(diskVersions.blobSha256, shas), inArray(diskVersions.imageSha256, shas))),
+    ]);
+  } catch (err) {
+    console.error('ingest: could not check refused uploads for references; keeping their bytes', err);
+    return;
+  }
+  const releasable = selectReleasableUploads(
+    shas,
+    rowed.map((r) => r.sha256),
+    diskRefs.map((r) => r.sha256),
+    entRefs.map((r) => r.sha256),
+    history.flatMap((h) => [h.blob, h.image]),
+  );
+  for (const s of releasable) await release(s);
+}
+
 export async function POST(request: Request) {
   const { orgId } = await requireOrg();
 
@@ -195,12 +242,18 @@ export async function POST(request: Request) {
       if (r.ok) {
         hfeInfo.set(s, r);
       } else {
-        // Authentic bytes, deliberately NOT released: same rule as a
-        // size-mismatch -- they are provably this key's content.
         verdictFor.set(s, { ok: false, reason: 'hfe-refused' });
         hfeRefusal.set(s, r.reason);
       }
     });
+
+    // A REFUSED HFE IS RELEASED, unlike a size-mismatch. Both are authentic
+    // bytes, but a size-mismatch is a mis-described upload the next correct
+    // /complete will register, while a refused HFE never can be: the bytes
+    // themselves are what was refused. Kept, they sat at adf/<sha> with no
+    // row, invisible to every scanner and to the teardown's GC. Only when
+    // nothing at all names them -- see releaseRefused.
+    await releaseRefused([...hfeRefusal.keys()].filter((s) => !registered.has(s)));
   } catch (err) {
     // Unhandled before: the blob service rate-limiting one batch used to 500
     // the whole request with a stack trace. It is transient and retryable, so

@@ -64,3 +64,19 @@ export function refuseTarget(
   if (running.sequence > target.sequence) return 'would_roll_back';
   return null;
 }
+
+/**
+ * The most boards one update request may name.
+ *
+ * Here, in the pure module both sides already share, so the route's schema
+ * and the Devices page's update bar read ONE number. The server alone used to
+ * know it: a 51st tick went through the dialog and the password, then came
+ * back as a bare 400 the client could only call "Could not request the
+ * update." -- nothing in it said what to change.
+ */
+export const MAX_UPDATE_BATCH = 50;
+
+/** How many boards to untick before a selection of `count` may be sent; 0 when it may. */
+export function overBatchCap(count: number): number {
+  return Math.max(0, count - MAX_UPDATE_BATCH);
+}

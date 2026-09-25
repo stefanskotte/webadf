@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { selectUnreferencedBlobs } from './blob-gc';
+import { selectUnreferencedBlobs, selectReleasableUploads } from './blob-gc';
 
 describe('selectUnreferencedBlobs', () => {
   it('keeps a blob that a disk still points at', () => {
@@ -50,5 +50,30 @@ describe('selectUnreferencedBlobs', () => {
 
   it('deduplicates, so a blob with two disks is reported once if freed', () => {
     expect(selectUnreferencedBlobs(['a', 'a'], [], [])).toEqual(['a']);
+  });
+});
+
+describe('selectReleasableUploads', () => {
+  // A refused upload's bytes sit in the store with no row of their own. They
+  // may go only when NOTHING claims them: the same rule as the teardown's GC,
+  // plus the one fact that rule gets for free from walking `blobs` -- that no
+  // blobs row names the sha at all.
+
+  it('releases bytes no blobs row and no reference names', () => {
+    expect(selectReleasableUploads(['r'], [], [], [], [])).toEqual(['r']);
+  });
+
+  it('keeps bytes a blobs row names, even with nothing else pointing at them', () => {
+    // Another org registered these exact bytes (as an ADF, say): the row is
+    // the proof they are somebody's content, and deleting would break it.
+    expect(selectReleasableUploads(['r'], ['r'], [], [], [])).toEqual([]);
+  });
+
+  it('keeps bytes a disk, an entitlement or a history names', () => {
+    expect(selectReleasableUploads(['d', 'e', 'h', 'x'], [], ['d'], ['e'], ['h'])).toEqual(['x']);
+  });
+
+  it('handles no candidates', () => {
+    expect(selectReleasableUploads([], ['a'], [], [], [])).toEqual([]);
   });
 });

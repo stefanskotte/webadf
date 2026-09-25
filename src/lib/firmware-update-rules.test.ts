@@ -1,6 +1,8 @@
 import { describe, it, expect } from 'vitest';
 import { buildRegistry, type ReleaseRef } from './firmware-state';
-import { refuseTarget, type TargetCandidate } from './firmware-update-rules';
+import {
+  refuseTarget, overBatchCap, MAX_UPDATE_BATCH, type TargetCandidate,
+} from './firmware-update-rules';
 
 const rel = (version: string, sequence: number, semver: string): ReleaseRef =>
   ({ version, sequence, semver, security: false, notes: null, signatureFormat: 2 });
@@ -64,5 +66,28 @@ describe('refuseTarget', () => {
     const unverifiable = buildRegistry([{ ...rel('1.1.0+ga', 2, '1.1.0'), signatureFormat: 1 }]);
     expect(refuseTarget(dev({ firmwareVersion: '1.0.0+gold' }), unverifiable.latest!, unverifiable))
       .toBe('unverifiable_release');
+  });
+});
+
+/**
+ * The batch cap is one number with two readers: the route's zod schema
+ * refuses past it, and the update bar disables Update and says how many to
+ * untick. A cap the UI did not know about surfaced as a generic
+ * "Could not request the update." with nothing to act on.
+ */
+describe('overBatchCap', () => {
+  it('is 50, the number the route has always enforced', () => {
+    expect(MAX_UPDATE_BATCH).toBe(50);
+  });
+
+  it('is zero at and under the cap', () => {
+    expect(overBatchCap(0)).toBe(0);
+    expect(overBatchCap(1)).toBe(0);
+    expect(overBatchCap(MAX_UPDATE_BATCH)).toBe(0);
+  });
+
+  it('is how many to untick past the cap', () => {
+    expect(overBatchCap(MAX_UPDATE_BATCH + 1)).toBe(1);
+    expect(overBatchCap(73)).toBe(23);
   });
 });
