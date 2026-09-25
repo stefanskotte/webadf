@@ -18,8 +18,7 @@ SHA-256; you browse them and press mount; a custom board emulates the floppy dri
 
 ## Where things stand
 
-**Written 2026-08-29, rewritten 2026-08-30 after plan 3b, rewritten again 2026-08-30
-after plan 4a, rewritten again 2026-08-31 after plan 4b.**
+**Written 2026-08-29; table re-checked row by row against git and the board on 2026-09-25.**
 
 | | Status |
 |---|---|
@@ -30,15 +29,15 @@ after plan 4a, rewritten again 2026-08-31 after plan 4b.**
 | **Plan 3b — device UI** | ✅ **done, all 7 tasks, merged to `master`** |
 | **Plan 4a — firmware protocol plane** | ✅ **done, merged to `master`, pushed.** Firmware compiles and has a green host suite. |
 | **Plan 4b — captive portal** | ✅ **done, all 8 tasks.** Compile-time WiFi/pairing-code defines are gone, replaced by an AP-mode portal. Merged to `master` and pushed. |
-| **Plan 5 — hardware bring-up** | 🔵 **started 2026-09-10.** The captive portal runs on a real board: RM2 radio up, AP raised, DHCP/DNS/HTTP serving the form, iOS raising the sign-in sheet by itself. Everything past pressing Save, and the whole floppy side, is still unrun; see 3x |
+| **Plan 5 — hardware bring-up** | ✅ **done on rev A2.** Portal, TLS, pairing, mount/eject, OLED, LED; the Amiga reads (WB3.1 boots), writes, and a second drive (DF1) works via SEL0 gating; see 3x, 3y, 4b–4e |
 | **Super-admin plane** | ✅ **done, all 6 tasks, merged to `master` and live in production.** `/admin`: overview, user list with cascade delete, invites |
 | **TOSEC identity scan** | ✅ **done, 12 tasks, merged to `master`.** `/admin/scan`: DAT import, hashing, matching, backfill |
 | **OpenRetro enrichment** | ✅ **done, all 9 tasks, merged to `master` and live in production.** Enriches 6.6% of the real archive against TOSEC's 45.9%; see 3d |
 | **e2e cleanup** | ✅ **done, merged and live 2026-09-01.** A run no longer leaks; 4,600 accumulated rows and 73 live invite codes swept; see 3e |
 | **User-defined collections** | ✅ **done, all 9 tasks, merged to `master` and live in production.** A rail on `/library`, drag to file and to reorder; migration 0011 applied; see 3g |
 | **Library covers, type pills, contrast** | ✅ **done, merged and live 2026-09-01.** Grid shows real cover art; grid and table both show a TOSEC-derived type; the grey ramp now passes WCAG AA |
-| **Firmware update (server half)** | 🔵 **on `feat/firmware-update-server`, NOT merged, 2026-09-22.** Select boards, press Update, password, and each converges. **No firmware implements the protocol** — every test drives a simulated device, and the control is gated on a capability no board reports yet; see 3aj |
-| **Firmware release registry** | ✅ **done 2026-09-22, increment 1 of 2.** The version identifies a build and is refreshed on every heartbeat; `firmware_releases` + `/admin/firmware`; Devices says which boards are behind. **No device is updated by it** — no OTA path exists in the firmware; see 3ai |
+| **Firmware updates (OTA) — CLOSED** | ✅ **done and closed 2026-09-25.** Registry (3ai), server half 2a (3aj, merged 2026-09-22) and board half 2b (3ak, merged 2026-09-23): select boards, press Update, confirm with the password, the board downloads a signed image into its other slot and confirms on boot. Used for real to ship 1.1.4 (seq 8) and 1.2.0 (seq 9). **Operator ruling 2026-09-25: the password-to-update flow is the finished feature** — no auto-update opt-in, no further increment |
+| **Firmware release registry** | ✅ **done 2026-09-22.** The version identifies a build and is refreshed on every heartbeat; `firmware_releases` + `/admin/firmware`; Devices says which boards are behind; see 3ai |
 | **Shell polish** | ✅ **done 2026-09-02.** The "/" hint, both navs centred on the viewport, zebra-striped file tree, and a navigation bar + scrim; see 3i |
 | **Mobile responsive** | ✅ **done 2026-09-02, all surfaces.** Usable at 390px; nav becomes a bottom bar, touch drag no longer eats scrolling; see 3j |
 | **Delete a title or a disk** | ✅ **done 2026-09-04.** Confirmation dialog, deliberate eject, blob never destroyed; see 3o |
@@ -48,28 +47,29 @@ after plan 4a, rewritten again 2026-08-31 after plan 4b.**
 | **Files inside an ADF** | ✅ **done 2026-09-04.** Add, delete, rename, replace contents, make and remove directories, through the browse page; every operation checked against xdftool rather than against our own reader; see 3u |
 | **Drop a folder in, drag to rearrange** | ✅ **done 2026-09-05.** Drop from the OS into a staging area that checks fit in BLOCKS before writing; one commit, one blob; drag or keyboard to move entries between folders; see 3v |
 | **Deleting the last disk no longer 404s** | ✅ **done 2026-09-05.** Navigates on the server's own `gameDeleted`, replaces rather than pushes, and goes where the breadcrumb points; see 3w |
-| **Drag and drop inside an ADF** | ✅ **done 2026-09-05, all 11 tasks, on `feat/adf-drag-drop`, not merged.** Drop a folder from the OS to stage and batch-commit it as one blob; drag or keyboard-move an entry between directories; a cycle refusal our own reader cannot see the need for; see 3v |
+| **Drag and drop inside an ADF** | ✅ **done 2026-09-05, all 11 tasks, merged to `master` and live.** Drop a folder from the OS to stage and batch-commit it as one blob; drag or keyboard-move an entry between directories; a cycle refusal our own reader cannot see the need for; see 3v |
 | **Edit a title by hand** | ✅ **done 2026-09-03.** Per-group authority, and a scan never silently undoes an edit; see 3m |
 | **Unified breadcrumb** | ✅ **done 2026-09-03**, and 2026-09-04 it follows the collection you came from; see 3l and 3r |
 | **Image layout shift** | ✅ **done 2026-09-03.** The game page's cover and screenshots reserve their space; the library grid never had the bug; see 3k |
 | **Typeahead search** | ✅ **done, all 7 tasks, merged to `master` and live in production.** A Spotlight-style pill in both shells; migration 0012 applied; see 3h |
-| **Read-only ADF filesystem reader** | ✅ **done, all 10 tasks, `feat/adf-filesystem-reader`.** Reads 80.3% of the archive (49/61) against TOSEC's 45.9% and OpenRetro's 6.6%; see 3f |
+| **Read-only ADF filesystem reader** | ✅ **done, all 10 tasks, merged to `master` (`src/lib/adffs`).** Reads 80.3% of the archive (49/61) against TOSEC's 45.9% and OpenRetro's 6.6%; see 3f |
 | **Demozoo identification** | ✅ **done 2026-09-14, all 16 tasks, merged to `master`.** Complements TOSEC for non-games: weekly import, nightly matching, automatic links, suggestions, review queue, screenshots; see 3af |
-| **Write-back piece 3 — the time machine** | ✅ **done 2026-09-21, merged to `master`.** History panel on every disk page: what changed per version, Browse read-only, Restore as a new version. 288/288 Playwright. Not yet driven on hardware; see 4l |
-| **Write-back piece 2a (server)** | ✅ **done 2026-09-18, 5 tasks + final fix wave, merged to `master`.** Disk history tables, browser edits and renames recorded as versions, `POST /api/device/write` + `/close`, live write-protect. The board does not call it yet (plan 2b); see 4g |
-| **Hardware** | rev A scrap (mirrored), **rev A2 in hand and working**, **rev B is current and unfabricated** — keepout moved to the antenna end, a silkscreen that carries lettering, D1 polarity marked. Respin deliberately on hold until a board is known to work; see 3s and 3x |
+| **Write-back piece 3 — the time machine** | ✅ **done 2026-09-21, merged to `master`.** History panel on every disk page: what changed per version, Browse read-only, Restore as a new version. **Restore passed on hardware 2026-09-22** (DB-confirmed rewind of v10 as v12); see 4l |
+| **Write-back piece 2b (board)** | ✅ **done 2026-09-19, verified on hardware.** Amiga saves upload, close and land on the server as history versions, including offline and eject-right-after; keep-alive connection (4k). Two paths never yet run on the board: a multi-file save burst over keep-alive, and `up_forces_wprot`; see 4i–4k |
+| **Write-back piece 2a (server)** | ✅ **done 2026-09-18, 5 tasks + final fix wave, merged to `master`.** Disk history tables, browser edits and renames recorded as versions, `POST /api/device/write` + `/close`, live write-protect; see 4g |
+| **HFE v1 disks** | ✅ **done 2026-09-24, merged and live; bench-proven 2026-09-25.** Upload keeps the `.hfe`, the board plays it read-only, "Extract as ADF" when every sector decodes. Long-track HFEs (fw 1.2.0, 14 KB tracks, per-board `trackMaxBytes`): **Turrican boots on the Amiga**; extract round trip passed byte-exact. Only the weak-bit bench item is owed (needs a weak-bit HFE). A cylinder-17 hang after a disk swap is parked; see 3al, 3al-a |
+| **Hardware** | rev A scrap (mirrored), **rev A2 in hand and working**, **rev B is current and unfabricated** — keepout moved to the antenna end, a silkscreen that carries lettering, D1 polarity marked. Respin is deliberately LAST; it owes the LED series resistor and 1k pull-ups on the floppy lines (4c), and an Amiga-reset wire if reboot detection is ever wanted (3al-a); see 3s and 3x |
 
-**Current branch:** `master`, clean and pushed. Everything below is merged and live in
-production. **Plan 5 (hardware bring-up) is under way as of 2026-09-10 — see 3x.** The first PCB came back
-**mirrored** and a corrected revision was ordered on 2026-09-04, so bring-up cannot start before
-the week of **2026-09-08** — and nothing in plan 4a or 4b has ever run on real silicon.
+**Current branch (2026-09-25):** `master`, clean and pushed; everything in the table is merged
+and live. The board runs firmware `1.2.0+ge8ac726` (seq 9). **No increment is in flight.**
 
-**Next, at the operator's direction (2026-09-03):** the breadcrumb (3l) and editing a title by
-hand (3m) are both DONE. Remaining is **propagating a write-protect flip to a device that
-already has the disk mounted**, specced as a backlog entry in §4. Take it with a board on the
-desk — its flag is inert until write-back exists, so it is
-only observable on hardware, and it needs a protocol answer for "same disk, changed flag" rather
-than a version bump that would force an unrequested ~2 MB re-fetch and remount.
+**Still open, none started:** the HFE weak-bit bench item; the two hardware-untested write-back
+paths (2b row); the menu floppy chips (§4 backlog); the super-admin audit log; the rev B respin.
+
+*Historical (2026-09-03 onward), kept for the record:* the write-protect flip on a mounted disk
+was built in 4j. The suite counts below are from 2026-09-14; the full suite is now **349
+Playwright tests, ~1.1 h** (2026-09-24) — run it on port 3100 with a dev server you start
+yourself, logged to a file.
 **Suite on `master`:** 821 vitest (1 skipped), `pnpm build` clean, **256 Playwright** — 247 desktop at
 1280×720 and 9 mobile at 390×844 (measured 2026-09-14 before the Demozoo merge: a full run
 passed 250; the 6 failures were a missing `adf-archive/` in the worktree and two TOSEC tests
@@ -101,10 +101,8 @@ binaries), `pnpm firmware:build` produces a `.uf2` — **and now requires
 `PORTAL_AP_PASSWORD` set in the environment, or the configure step fails by design**; see
 "Plan 4b" below for the full command.
 
-**The whole web side is built, the firmware compiles and passes its own host suite, and
-provisioning is no longer compile-time.** The only thing left before hardware bring-up is
-plan 5 itself — nothing in plan 4a or plan 4b has been exercised on a real board. See "What
-to do next" below.
+*(2026-08-31 text, superseded: plans 4a and 4b have since run end to end on a real board —
+see the table above.)*
 
 ### Before you touch the device UI
 
@@ -1926,8 +1924,10 @@ separately.
   Nothing here is built; it needs designing before any write is applied, because the first
   increment that flattens a write forecloses it.
 
-- **Automatic firmware updates for devices, behind a password confirmation.** Requested by
-  the operator 2026-09-13.
+- ~~**Automatic firmware updates for devices, behind a password confirmation.**~~ **DONE AND
+  CLOSED 2026-09-25** (3ai, 3aj, 3ak). The operator ruled the password-confirmed Update button
+  is the finished feature: the per-device auto-update opt-in below is NOT to be built. The
+  original entry follows for the threat model. Requested by the operator 2026-09-13.
 
   **TREAT THIS AS THE MOST DANGEROUS FEATURE IN THE PRODUCT, because it is remote code
   execution on hardware in someone's home, by design.** Everything else here can at worst
@@ -4343,8 +4343,8 @@ Demozoo API (the bulk export makes per-lookup load on a non-profit unnecessary).
 
 ### 3al. HFE v1 disks — upload, play, extract as ADF (2026-09-24)
 
-**STATUS: on branch `hfe-disks`, all 9 plan tasks done and reviewed; merge pending the
-full e2e re-run.** Spec `docs/superpowers/specs/2026-09-24-hfe-disks-design.md`, plan
+**STATUS: merged and deployed 2026-09-24 (`e8126e8`); bench-proven 2026-09-25 (see 3al-a).**
+The status text that follows is as written before the merge. Spec `docs/superpowers/specs/2026-09-24-hfe-disks-design.md`, plan
 `docs/superpowers/plans/2026-09-24-hfe-disks.md`. Migration 0023 (three additive columns on
 `disks`) is **already applied to production**. It was applied as a guarded `ADD COLUMN IF NOT
 EXISTS`; this database has no `__drizzle_migrations` table, so nothing records it.
@@ -4453,8 +4453,8 @@ The fix (operator approved "its good, proceed"):
 
 ### 3ak. The board updates itself — 2b
 
-**STATUS: `feat/firmware-update-device`, not merged, not pushed, not deployed.** Production
-runs §3ai + §3aj's server half only; no board in the field can update itself yet.
+**STATUS: MERGED AND DEPLOYED 2026-09-23 (see below); feature CLOSED 2026-09-25.** The lines
+that follow up to "MERGED AND DEPLOYED" describe the branch before merge.
 **Gates (branch head 137a4db, 2026-09-23):** firmware host suite 2,706 checks / 0 failed; vitest
 996 passed / 1 skipped; `pnpm build` clean; the firmware builds under CI's condition (SDK-fetched
 picotool, `-DPICOTOOL_FORCE_FETCH_FROM_GIT=ON`); full Playwright 322/4, where all four failures were
@@ -4659,10 +4659,10 @@ gone.
 a full flash image to `~/.webadf/board-backups/` (0600, owner-only) before every install —
 it contains the Wi-Fi password and device token. Location only; contents stay off the record.
 
-### 3aj. Select boards, press Update — the server half — ON A BRANCH 2026-09-22, NOT MERGED
+### 3aj. Select boards, press Update — the server half — MERGED 2026-09-22
 
-**STATUS: `feat/firmware-update-server`, not merged, not pushed, not deployed.** Production
-runs §3ai only. Read the "Where it stands" note at the end of this section before resuming.
+**STATUS: merged to `master` (`7c22892`) and live since 2026-09-22; the board half is 3ak; the
+feature is CLOSED (2026-09-25).** The status text below is as written before the merge.
 
 
 Increment 2a. Spec: `docs/superpowers/specs/2026-09-22-firmware-update-server-design.md`.
