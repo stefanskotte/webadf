@@ -8,6 +8,7 @@ import { blobs, disks, entitlements } from '@/db/schema/catalog';
 import { signUpFresh } from './helpers';
 import { seedDisk, cleanupSeeded, pairDevice, authHeader } from './device-helpers';
 import { parseLikeFirmware } from '@/lib/adfmfm/firmware-parser';
+import { diskStore } from '@/lib/storage';
 import { sparseAdf as sparseAdfBytes } from '@/lib/hfe/__fixtures__/source';
 
 test.afterAll(cleanupSeeded);
@@ -107,6 +108,14 @@ test.describe('uploading HFE', () => {
     });
     expect(res.status()).toBe(409);
     expect((await res.json()).rejectedReasons[sha256]).toMatch(/^HFE v3 isn't supported yet/);
+
+    // The refused bytes do not stay parked in the store with no row -- unless
+    // something does name them (another org registered these exact bytes),
+    // in which case they must survive. Decided from the database, so the
+    // assertion holds on a store that has seen these bytes before.
+    const [row] = await getDb().select({ sha: blobs.sha256 }).from(blobs).where(eq(blobs.sha256, sha256));
+    if (row) expect(await diskStore.stat(sha256)).not.toBeNull();
+    else expect(await diskStore.stat(sha256)).toBeNull();
   });
 
   test('a server-side refusal reaches the row, even when the browser check is bypassed and the whole batch is refused', async ({ page }) => {

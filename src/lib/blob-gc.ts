@@ -32,3 +32,24 @@ export function selectUnreferencedBlobs(
   }
   return [...out];
 }
+
+/**
+ * Which refused uploads' stored bytes may be deleted.
+ *
+ * The SAME rule as selectUnreferencedBlobs, applied to bytes that have no
+ * blobs row yet: an upload PUTs to the store before /api/ingest/complete
+ * runs, so a refusal there leaves an object the teardown's GC (which walks
+ * `blobs`) can never find. It may go only if no blobs row names it either --
+ * one that does is somebody's registered content, however the refused
+ * request described it.
+ *
+ * @param candidates the refused uploads' sha-256s
+ * @param registered every `blobs.sha256` among them, read at the refusal
+ */
+export function selectReleasableUploads(
+  candidates: string[], registered: string[],
+  diskRefs: string[], entRefs: string[], historyRefs: string[] = [],
+): string[] {
+  const rowed = new Set(registered);
+  return selectUnreferencedBlobs(candidates.filter((s) => !rowed.has(s)), diskRefs, entRefs, historyRefs);
+}
