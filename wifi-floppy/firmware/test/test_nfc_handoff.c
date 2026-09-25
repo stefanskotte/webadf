@@ -142,14 +142,84 @@ static void pending_means_either_box(void) {
 static void a_report_is_owed_until_heard(void) {
     nfc_report_t r; nfc_report_init(&r);
     nfc_event_t out;
-    CHECK(!nfc_report_next(&r, &out), "nothing owed at boot");
+    CHECK(!nfc_report_next(&r, 0, &out), "nothing owed at boot");
     nfc_event_t d = done_n(5, true);
     nfc_report_hold(&r, &d);
-    CHECK(nfc_report_next(&r, &out) && out.seq == 5, "owed");
-    nfc_report_sent(&r, 5, false);
-    CHECK(nfc_report_next(&r, &out) && out.seq == 5, "not heard (offline, 5xx): still owed, retried next pass");
-    nfc_report_sent(&r, 5, true);
-    CHECK(!nfc_report_next(&r, &out), "heard: done");
+    CHECK(nfc_report_next(&r, 1000, &out) && out.seq == 5, "owed, and offered at once");
+    nfc_report_sent(&r, 5, false, 1000);
+    CHECK(nfc_report_next(&r, 1000 + NFC_REPORT_RETRY_FIRST_MS, &out) && out.seq == 5,
+          "not heard (offline, 5xx): still owed, offered again after the floor");
+    nfc_report_sent(&r, 5, true, 3000);
+    CHECK(!nfc_report_next(&r, 999999, &out), "heard: done");
+}
+
+// Scoped re-review, Important: core1's pass can turn every ~50 ms while the
+// uploader waits without network traffic, so "retry every pass" was a
+// ~20 requests/s loop against a failing server. A failed send is not offered
+// again before its retry time.
+static void a_failed_send_is_not_re_offered_before_the_floor(void) {
+    nfc_report_t r; nfc_report_init(&r);
+    nfc_event_t out, d = done_n(5, false);
+    nfc_report_hold(&r, &d);
+    CHECK(nfc_report_next(&r, 10000, &out), "first offer");
+    nfc_report_sent(&r, 5, false, 10000);
+    CHECK(!nfc_report_next(&r, 10050, &out), "50 ms later: not yet");
+    CHECK(!nfc_report_next(&r, 10000 + NFC_REPORT_RETRY_FIRST_MS - 1, &out), "not a millisecond early");
+    CHECK(nfc_report_next(&r, 10000 + NFC_REPORT_RETRY_FIRST_MS, &out), "at the floor");
+    CHECK_EQ_INT(NFC_REPORT_RETRY_FIRST_MS, 2000);
+}
+
+static void the_retry_interval_doubles_and_caps(void) {
+    nfc_report_t r; nfc_report_init(&r);
+    nfc_event_t out, d = done_n(5, false);
+    nfc_report_hold(&r, &d);
+    uint32_t t = 0, want = NFC_REPORT_RETRY_FIRST_MS;
+    const uint32_t expect[] = { 2000, 4000, 8000, 16000, 32000, 60000, 60000, 60000 };
+    for (unsigned k = 0; k < sizeof expect / sizeof expect[0]; k++) {
+        CHECK(nfc_report_next(&r, t, &out), "offered when due");
+        nfc_report_sent(&r, 5, false, t);
+        want = expect[k];
+        CHECK(!nfc_report_next(&r, t + want - 1, &out), "not before the interval");
+        CHECK(nfc_report_next(&r, t + want, &out), "at the interval");
+        t += want;
+    }
+    CHECK_EQ_INT(NFC_REPORT_RETRY_CAP_MS, 60000);
+}
+
+static void a_new_report_resets_the_schedule(void) {
+    nfc_report_t r; nfc_report_init(&r);
+    nfc_event_t out, d = done_n(5, false);
+    nfc_report_hold(&r, &d);
+    for (uint32_t t = 0; t < 5; t++) nfc_report_sent(&r, 5, false, t);   // backed off to 32 s
+    d = done_n(6, true);
+    nfc_report_hold(&r, &d);
+    CHECK(nfc_report_next(&r, 5, &out) && out.seq == 6, "a new WRITE_DONE is offered at once");
+    nfc_report_sent(&r, 6, false, 5);
+    CHECK(nfc_report_next(&r, 5 + NFC_REPORT_RETRY_FIRST_MS, &out), "and backs off from the floor again");
+}
+
+static void a_success_after_failures_clears_it(void) {
+    nfc_report_t r; nfc_report_init(&r);
+    nfc_event_t out, d = done_n(5, true);
+    nfc_report_hold(&r, &d);
+    nfc_report_sent(&r, 5, false, 0);
+    nfc_report_sent(&r, 5, false, 2000);
+    nfc_report_sent(&r, 5, true, 6000);
+    CHECK(!nfc_report_next(&r, 999999, &out), "heard: nothing owed");
+    d = done_n(6, true);
+    nfc_report_hold(&r, &d);
+    CHECK(nfc_report_next(&r, 999999, &out), "and the next report starts fresh");
+}
+
+// The ms clock wraps every 49.7 days: a retry scheduled just before the wrap
+// comes due just after it, not 49.7 days later.
+static void the_retry_schedule_survives_the_wrap(void) {
+    nfc_report_t r; nfc_report_init(&r);
+    nfc_event_t out, d = done_n(5, false);
+    nfc_report_hold(&r, &d);
+    nfc_report_sent(&r, 5, false, 0xFFFFFC00u);                 // 1 s before the wrap
+    CHECK(!nfc_report_next(&r, 0x00000200u, &out), "1.5 s later, across the wrap: not yet");
+    CHECK(nfc_report_next(&r, 0xFFFFFC00u + NFC_REPORT_RETRY_FIRST_MS, &out), "2 s later, across the wrap: due");
 }
 
 static void a_newer_request_supersedes_an_unreported_write(void) {
@@ -157,11 +227,11 @@ static void a_newer_request_supersedes_an_unreported_write(void) {
     nfc_event_t out, d = done_n(5, false);
     nfc_report_hold(&r, &d);
     nfc_report_supersede(&r, 5);
-    CHECK(nfc_report_next(&r, &out), "the same request does not supersede its own report");
+    CHECK(nfc_report_next(&r, 0, &out), "the same request does not supersede its own report");
     nfc_report_supersede(&r, 4);
-    CHECK(nfc_report_next(&r, &out), "nor does an older one");
+    CHECK(nfc_report_next(&r, 0, &out), "nor does an older one");
     nfc_report_supersede(&r, 6);
-    CHECK(!nfc_report_next(&r, &out), "a newer request (or its withdrawal): the old report is moot");
+    CHECK(!nfc_report_next(&r, 0, &out), "a newer request (or its withdrawal): the old report is moot");
 }
 
 static void a_stale_ack_does_not_clear_a_newer_report(void) {
@@ -170,9 +240,20 @@ static void a_stale_ack_does_not_clear_a_newer_report(void) {
     nfc_report_hold(&r, &d);
     d = done_n(6, true);
     nfc_report_hold(&r, &d);
-    CHECK(nfc_report_next(&r, &out) && out.seq == 6, "the newer write is the one owed");
-    nfc_report_sent(&r, 5, true);
-    CHECK(nfc_report_next(&r, &out) && out.seq == 6, "hearing seq 5 does not settle seq 6");
+    CHECK(nfc_report_next(&r, 0, &out) && out.seq == 6, "the newer write is the one owed");
+    nfc_report_sent(&r, 5, true, 0);
+    CHECK(nfc_report_next(&r, 0, &out) && out.seq == 6, "hearing seq 5 does not settle seq 6");
+}
+
+// Minor: a tap never waits behind a report retry (which can block through
+// DNS/connect/read timeouts on a dead network). A pass that handled a tap
+// skips the retry; the report goes on a later pass.
+static void a_pass_with_a_tap_skips_the_report(void) {
+    nfc_report_t r; nfc_report_init(&r);
+    nfc_event_t out, d = done_n(5, true);
+    nfc_report_hold(&r, &d);
+    CHECK(!nfc_report_turn(&r, 0, true, &out), "a tap this pass: no report");
+    CHECK(nfc_report_turn(&r, 0, false, &out) && out.seq == 5, "no tap: the report goes");
 }
 
 // Torn-read safety under a real second thread: every event the reader accepts
@@ -228,6 +309,12 @@ int main(void) {
     RUN(a_write_done_survives_later_tag_events);
     RUN(pending_means_either_box);
     RUN(a_report_is_owed_until_heard);
+    RUN(a_failed_send_is_not_re_offered_before_the_floor);
+    RUN(the_retry_interval_doubles_and_caps);
+    RUN(a_new_report_resets_the_schedule);
+    RUN(a_success_after_failures_clears_it);
+    RUN(the_retry_schedule_survives_the_wrap);
+    RUN(a_pass_with_a_tap_skips_the_report);
     RUN(a_newer_request_supersedes_an_unreported_write);
     RUN(a_stale_ack_does_not_clear_a_newer_report);
     RUN(no_torn_event_is_ever_accepted);

@@ -55,20 +55,47 @@ void nfc_report_init(nfc_report_t *r) {
 void nfc_report_hold(nfc_report_t *r, const nfc_event_t *done) {
     r->ev = *done;
     r->owed = true;
+    r->backing_off = false;
+    r->wait = 0;
 }
 
-bool nfc_report_next(const nfc_report_t *r, nfc_event_t *out) {
+bool nfc_report_next(nfc_report_t *r, uint32_t now, nfc_event_t *out) {
     if (!r->owed) return false;
+    if (r->backing_off) {
+        // Elapsed, not a deadline: `now - sent_at` is right across the wrap.
+        if (now - r->sent_at < r->wait) return false;
+        r->backing_off = false;      // due, and it stays due: a later wrap cannot un-due it
+    }
     *out = r->ev;
     return true;
 }
 
-void nfc_report_sent(nfc_report_t *r, uint32_t seq, bool heard) {
-    if (heard && r->owed && r->ev.seq == seq) r->owed = false;
+void nfc_report_sent(nfc_report_t *r, uint32_t seq, bool heard, uint32_t now) {
+    if (!r->owed || r->ev.seq != seq) return;
+    if (heard) {
+        r->owed = false;
+        r->backing_off = false;
+        r->wait = 0;
+        return;
+    }
+    r->wait = r->wait == 0 ? NFC_REPORT_RETRY_FIRST_MS
+            : r->wait >= NFC_REPORT_RETRY_CAP_MS / 2 ? NFC_REPORT_RETRY_CAP_MS
+            : r->wait * 2u;
+    r->sent_at = now;
+    r->backing_off = true;
 }
 
 void nfc_report_supersede(nfc_report_t *r, uint32_t request_seq) {
-    if (r->owed && request_seq > r->ev.seq) r->owed = false;
+    if (r->owed && request_seq > r->ev.seq) {
+        r->owed = false;
+        r->backing_off = false;
+        r->wait = 0;
+    }
+}
+
+bool nfc_report_turn(nfc_report_t *r, uint32_t now, bool tapped, nfc_event_t *out) {
+    if (tapped) return false;        // the tap went first; the report waits a pass
+    return nfc_report_next(r, now, out);
 }
 
 void nfc_wreq_box_put(nfc_wreq_box_t *b, const nfc_wreq_t *r) {

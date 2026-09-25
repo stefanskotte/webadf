@@ -63,21 +63,37 @@ bool nfc_ev_boxes_pending(const nfc_ev_boxes_t *b, const nfc_ev_cursor_t *c);
 // retried between polls until then. Core1-only, so no seqlock. A newer write
 // request (or its withdrawal, which also moves the seq) makes an unreported
 // older result moot: nfc_report_supersede drops it.
+#define NFC_REPORT_RETRY_FIRST_MS  2000u
+#define NFC_REPORT_RETRY_CAP_MS   60000u
+
 typedef struct {
     bool        owed;
     nfc_event_t ev;      // the WRITE_DONE; `why` points at the reader's literals
+    // Its own retry schedule: core1's pass can turn every ~50 ms (the
+    // uploader's quiet windows send nothing), so "every pass" is not a rate.
+    bool        backing_off;   // a send failed; not offered before sent_at + wait
+    uint32_t    sent_at;
+    uint32_t    wait;          // 0, then 2 s doubling to 60 s
 } nfc_report_t;
 
 void nfc_report_init(nfc_report_t *r);
-// A WRITE_DONE to report. Replaces an older one still owed.
+// A WRITE_DONE to report. Replaces an older one still owed, and starts the
+// schedule afresh: offered at once.
 void nfc_report_hold(nfc_report_t *r, const nfc_event_t *done);
-// True = `out` is the report to (re)send now.
-bool nfc_report_next(const nfc_report_t *r, nfc_event_t *out);
-// The outcome of sending the report for `seq`: heard settles it, if it is
-// still the one owed.
-void nfc_report_sent(nfc_report_t *r, uint32_t seq, bool heard);
+// True = `out` is the report to (re)send now: owed, and not waiting out a
+// failed send's retry interval. Wrap-safe (elapsed time, not a deadline);
+// once due it stays due until the next send.
+bool nfc_report_next(nfc_report_t *r, uint32_t now, nfc_event_t *out);
+// The outcome of sending the report for `seq` at `now`: heard settles it, if
+// it is still the one owed; not heard schedules the retry (2 s, doubling,
+// capped at 60 s).
+void nfc_report_sent(nfc_report_t *r, uint32_t seq, bool heard, uint32_t now);
 // A write request `request_seq` arrived: an owed report for an older seq is dropped.
 void nfc_report_supersede(nfc_report_t *r, uint32_t request_seq);
+// core1's turn for the report this pass: never on a pass that handled a tap
+// (a send on a dead network can block through DNS/connect/read timeouts),
+// otherwise nfc_report_next.
+bool nfc_report_turn(nfc_report_t *r, uint32_t now, bool tapped, nfc_event_t *out);
 
 // A write request as core1 hands it to core0: arm `disk_id` under the server's
 // `seq`, showing `title` on the title line while armed; disk_id "" = disarm.

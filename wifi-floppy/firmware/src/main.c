@@ -665,10 +665,12 @@ static void nfc_core0_step(nfc_armed_t *armed, bool short_pass) {
 
 /** core1, between requests: a write's result first (it is held as a report
  *  owed the server, and shown), then one tap or other reader event, then the
- *  owed report -- last, so a retry against a dead network never delays a tap.
- *  The report is kept until the server has HEARD it (any 2xx) and retried on
- *  every pass until then; a newer write request makes it moot
- *  (nfc_core1_write_request). */
+ *  owed report -- last, and not at all on a pass that had a tap, so a send
+ *  blocking through DNS/connect/read timeouts on a dead network never delays
+ *  one (nfc_report_turn). The report is kept until the server has HEARD it
+ *  (any 2xx), retried on its own schedule (2 s doubling to 60 s -- core1's
+ *  pass can turn every ~50 ms while the uploader waits, so "every pass" is
+ *  not a rate); a newer write request makes it moot (nfc_core1_write_request). */
 static void nfc_core1_event(device_client_t *c) {
     static uint32_t warned_seq;                 // log a failed report once per seq
     const bool online = c->state != DC_UNPROVISIONED && c->state != DC_HALTED;
@@ -682,7 +684,9 @@ static void nfc_core1_event(device_client_t *c) {
                 ev.ok ? "" : (ev.why ? ev.why : "?"));
         ui_publish_tag(nfc_ui_event_line(&ev), clock_ms());
     }
+    bool tapped = false;
     if (nfc_ev_box_take(&g_nfc_ev.taps, &g_nfc_ev_cur.taps, &ev)) {
+        tapped = true;
         char line[NFC_UI_LINE_BYTES];
         const char *show;
         if (ev.kind == NFC_EV_TAG_READ) {
@@ -697,15 +701,17 @@ static void nfc_core1_event(device_client_t *c) {
         }
         if (show) ui_publish_tag(show, clock_ms());
     }
-    if (online && nfc_report_next(&g_nfc_report, &ev)) {
+    // A tap that arrived while this one was handled goes first too.
+    tapped = tapped || nfc_ev_box_pending(&g_nfc_ev.taps, g_nfc_ev_cur.taps);
+    if (online && nfc_report_turn(&g_nfc_report, clock_ms(), tapped, &ev)) {
         nfc_ui_uid_hex(&ev, uid);
         const bool heard = dc_tap_write_report(c, ev.seq, ev.ok, uid, ev.why);
-        nfc_report_sent(&g_nfc_report, ev.seq, heard);
+        nfc_report_sent(&g_nfc_report, ev.seq, heard, clock_ms());
         if (heard) {
             wf_logf(WF_INFO, "nfc: write %lu reported", (unsigned long)ev.seq);
         } else if (warned_seq != ev.seq) {
             warned_seq = ev.seq;
-            wf_logf(WF_WARN, "nfc: write %lu report not delivered -- retrying between polls",
+            wf_logf(WF_WARN, "nfc: write %lu report not delivered -- retrying (2 s, doubling to 60 s)",
                     (unsigned long)ev.seq);
         }
     }
