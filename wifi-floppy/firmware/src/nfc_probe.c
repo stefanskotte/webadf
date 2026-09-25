@@ -41,7 +41,8 @@ static void rc_clr(uint8_t reg, uint8_t mask) { int v = rc_r(reg); if (v >= 0) r
 
 enum { CommandReg = 0x01, ComIEnReg = 0x02, ComIrqReg = 0x04, ErrorReg = 0x06,
        FIFODataReg = 0x09, FIFOLevelReg = 0x0A, ControlReg = 0x0C, BitFramingReg = 0x0D,
-       CollReg = 0x0E, ModeReg = 0x11, TxControlReg = 0x14, TxASKReg = 0x15,
+       CollReg = 0x0E, Status2Reg = 0x08, ModeReg = 0x11, TxModeReg = 0x12, RxModeReg = 0x13,
+       TxControlReg = 0x14, TxASKReg = 0x15, ModWidthReg = 0x24,
        RFCfgReg = 0x26, GsNReg = 0x27, CWGsPReg = 0x28, ModGsPReg = 0x29,
        TModeReg = 0x2A, TPrescalerReg = 0x2B, TReloadRegH = 0x2C, TReloadRegL = 0x2D };
 
@@ -76,6 +77,8 @@ static void rc522_reset_check(void) {
  * receive into `out`. Returns bytes received, or -1 (timeout / no card) or -2
  * (protocol error; ErrorReg logged by the caller if it cares).
  */
+static int g_last_err = 0;
+
 static int rc_transceive(const uint8_t *tx, int n, uint8_t last_bits, uint8_t *out, int cap) {
     rc_w(CommandReg, 0x00);                        // Idle
     rc_w(ComIrqReg, 0x7F);                         // clear every IRQ bit
@@ -95,7 +98,9 @@ static int rc_transceive(const uint8_t *tx, int n, uint8_t last_bits, uint8_t *o
     rc_clr(BitFramingReg, 0x80);
     if (!(irq & 0x30)) return -1;
     int err = rc_r(ErrorReg);
-    if (err < 0 || (err & 0x13)) return -2;        // BufferOvfl | ParityErr | ProtocolErr
+    // The vendor's mask (SI512_App.c PcdComMF522): BufferOvfl | CollErr |
+    // ParityErr | ProtocolErr.
+    if (err < 0 || (err & 0x1B)) { g_last_err = err; return -2; }
     int got = rc_r(FIFOLevelReg);
     if (got < 0) return -2;
     if (got > cap) got = cap;
@@ -109,20 +114,37 @@ static int rc_transceive(const uint8_t *tx, int n, uint8_t last_bits, uint8_t *o
  * blocks core0's init for the whole window, before the drive is serving.
  */
 static void rc522_watch_cards(int seconds) {
+    // The vendor's reader init, line for line (SI512_App.c
+    // PCD_SI512_TypeA_Init). The FIRST line is the one an RC522 driver does
+    // not have: the Si512 is a PN512-style part that can also be a CARD, and
+    // until ControlReg's Initiator bit is set it is not a reader at all --
+    // the first tag watch saw nothing, twice, without it.
+    rc_w(ControlReg, 0x10);                               // Initiator
+    rc_clr(Status2Reg, 0x08);                             // MFCrypto1On off
+    rc_w(TxModeReg, 0x00); rc_w(RxModeReg, 0x00);         // 106 kbit, ISO 14443A framing
+    rc_w(ModWidthReg, 0x26);
+    rc_w(RFCfgReg, 0x68);                                 // RxGain 43 dB (vendor RFCfgReg_Val)
     rc_w(TModeReg, 0x80); rc_w(TPrescalerReg, 0xA9);     // ~25 ms timer, auto-start
     rc_w(TReloadRegH, 0x03); rc_w(TReloadRegL, 0xE8);
     rc_w(TxASKReg, 0x40);                                 // 100 % ASK
     rc_w(ModeReg, 0x3D);                                  // CRC preset 0x6363
+    rc_w(CommandReg, 0x00);                               // receiver analog part on
     rc_set(TxControlReg, 0x03);                           // antenna on
+    wf_logf(WF_INFO, "nfc: init readback Control 0x%02x TxControl 0x%02x Command 0x%02x",
+            rc_r(ControlReg), rc_r(TxControlReg), rc_r(CommandReg));
     wf_logf(WF_INFO, "nfc: antenna on -- hold a tag on the reader now (%d s)", seconds);
 
     uint8_t last[5] = {0}; bool present = false; int seen = 0;
+    int tries = 0, timeouts = 0, errors = 0;
     absolute_time_t end = make_timeout_time_ms((uint32_t)seconds * 1000u);
     while (!time_reached(end)) {
         uint8_t atqa[2], uid[5];
         rc_clr(CollReg, 0x80);
         uint8_t wupa = 0x52;                              // WUPA: wakes IDLE and HALT tags
         int n = rc_transceive(&wupa, 1, 0x07, atqa, sizeof atqa);
+        tries++;
+        if (n == -1) timeouts++;
+        else if (n < 0) errors++;
         if (n == 2) {
             static const uint8_t anticoll[2] = { 0x93, 0x20 };
             int m = rc_transceive(anticoll, 2, 0x00, uid, sizeof uid);
@@ -147,7 +169,8 @@ static void rc522_watch_cards(int seconds) {
         sleep_ms(100);
     }
     rc_clr(TxControlReg, 0x03);
-    wf_logf(WF_INFO, "nfc: antenna off -- %d tag arrival(s) seen", seen);
+    wf_logf(WF_INFO, "nfc: antenna off -- %d tag arrival(s) seen; %d WUPA tries: %d timeouts, "
+            "%d errors (last ErrorReg 0x%02x)", seen, tries, timeouts, errors, g_last_err);
 }
 
 static void rc522_version(void) {
