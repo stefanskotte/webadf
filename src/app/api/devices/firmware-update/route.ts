@@ -4,8 +4,12 @@ import { verifyPassword } from '@/lib/step-up';
 import { requestFirmwareUpdate, cancelFirmwareUpdate } from '@/lib/firmware-update';
 import { firmwareVersionSchema } from '@/lib/firmware-version';
 import { lockoutRemaining, recordFailure, clearFailures } from '@/lib/step-up-throttle';
+import { MAX_UPDATE_BATCH } from '@/lib/firmware-update-rules';
 
-const deviceIdList = z.array(z.string().min(1).max(64)).min(1).max(50);
+// The cap is shared with the update bar, which disables Update past it and
+// says how many to untick -- so a 400 here means a hand-rolled caller, not
+// an operator who ticked one board too many.
+const deviceIdList = z.array(z.string().min(1).max(64)).min(1).max(MAX_UPDATE_BATCH);
 
 const body = z.object({
   deviceIds: deviceIdList,

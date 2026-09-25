@@ -2,7 +2,7 @@ import { test, expect, type APIRequestContext } from '@playwright/test';
 import { signUpFresh } from './helpers';
 import {
   pairDevice, authHeader, publishTestRelease, cleanupSeeded, cleanupTestReleases,
-  desiredFirmwareOf,
+  desiredFirmwareOf, seedDevices,
 } from './device-helpers';
 
 // Both, and the releases FIRST. cleanupSeeded does not touch
@@ -184,4 +184,67 @@ test('a wrong password in the dialog changes nothing', async ({ page, request })
 
   await expect(page.getByTestId('update-dialog')).toBeVisible();
   expect(await desiredFirmwareOf(deviceId)).toBeNull();
+});
+
+/**
+ * The confirm dialog is a real modal: announced as one, the caret in the
+ * password field, Enter submits, Escape backs out. It used to be a bare div
+ * a screen reader walked straight past and no key could dismiss.
+ */
+test('the update dialog is a keyboard modal: focused password, Enter submits, Escape closes', async ({ page, request }) => {
+  await signUpFresh(page);
+  const { deviceId, token } = await pairDevice(page, request);
+  await publishTestRelease('0.0.0+e2e65');
+  await publishTestRelease('0.0.0+e2e66');
+  await request.post('/api/device/status', {
+    headers: authHeader(token),
+    data: { mountedSha256: null, firmwareVersion: '0.0.0+e2e65', updateProtocol: 1 },
+  });
+
+  await page.goto('/devices');
+  await page.getByTestId(`device-select-${deviceId}`).check();
+  await page.getByTestId('update-start').click();
+
+  const dialog = page.getByRole('dialog', { name: 'Update 1 device' });
+  await expect(dialog).toBeVisible();
+  await expect(dialog).toHaveAttribute('aria-modal', 'true');
+  await expect(page.getByTestId('update-password')).toBeFocused();
+
+  await page.keyboard.press('Escape');
+  await expect(page.getByTestId('update-dialog')).toHaveCount(0);
+
+  // Reopened, a wrong password submitted with Enter alone reaches the server:
+  // the 401 toast is proof the form submitted, and nothing was written.
+  await page.getByTestId('update-start').click();
+  await page.getByTestId('update-password').fill('not-the-password');
+  await page.getByTestId('update-password').press('Enter');
+  await expect(page.getByText('That password was not right.')).toBeVisible();
+  await expect(page.getByTestId('update-dialog')).toBeVisible();
+  expect(await desiredFirmwareOf(deviceId)).toBeNull();
+});
+
+/**
+ * The route refuses more than MAX_UPDATE_BATCH boards; the bar has to say so
+ * before the password rather than after it as a generic failure.
+ */
+test('more boards than one update may carry disables Update and says how many to untick', async ({ page }) => {
+  test.setTimeout(90_000); // 51 checkboxes
+  const { orgId } = await signUpFresh(page);
+  await publishTestRelease('0.0.0+e2e67');
+  await publishTestRelease('0.0.0+e2e68');
+  const ids = await seedDevices(orgId, 51, '0.0.0+e2e67');
+
+  await page.goto('/devices');
+  for (const id of ids.slice(0, 50)) await page.getByTestId(`device-select-${id}`).check();
+  await expect(page.getByTestId('update-bar')).toContainText('50 selected');
+  await expect(page.getByTestId('update-cap')).toHaveCount(0);
+  await expect(page.getByTestId('update-start')).toBeEnabled();
+
+  await page.getByTestId(`device-select-${ids[50]}`).check();
+  await expect(page.getByTestId('update-cap')).toHaveText('At most 50 boards per update — untick 1.');
+  await expect(page.getByTestId('update-start')).toBeDisabled();
+
+  await page.getByTestId(`device-select-${ids[0]}`).uncheck();
+  await expect(page.getByTestId('update-cap')).toHaveCount(0);
+  await expect(page.getByTestId('update-start')).toBeEnabled();
 });

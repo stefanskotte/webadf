@@ -1,9 +1,11 @@
 'use client';
-import { useState } from 'react';
+import { useEffect, useId, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { useRouter } from 'next/navigation';
 import { toast } from 'sonner';
 import type { DeviceListItem } from '@/lib/queries';
 import type { FirmwareState, ReleaseRef } from '@/lib/firmware-state';
+import { MAX_UPDATE_BATCH, overBatchCap } from '@/lib/firmware-update-rules';
 import { DeviceCard } from './device-card';
 
 /**
@@ -40,12 +42,32 @@ export function DeviceList({
   // it would 409 the whole ALL-OR-NOTHING batch on a device the operator can
   // no longer see or untick.
   const chosen = devices.filter((d) => picked.has(d.id) && selectable.has(d.id));
+  // Counted on `chosen`, the list that is actually sent, not on `picked`.
+  const untick = overBatchCap(chosen.length);
+  const titleId = useId();
 
   function close() {
     setOpen(false);
     setRefusals([]);
     setPassword('');
   }
+
+  // Escape closes, as on every other dialog here (delete-user-dialog.tsx) --
+  // except while the request is in flight. Closing then would hide the
+  // outcome of a password-gated action that flashes hardware: the toast
+  // still fires, but the refusal list it may come back with has nowhere to
+  // render, and the operator is left guessing whether it went.
+  useEffect(() => {
+    if (!open || busy) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape') return;
+      setOpen(false);
+      setRefusals([]);
+      setPassword('');
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [open, busy]);
 
   /**
    * Stand an update down. No password: this is not the privileged direction.
@@ -84,7 +106,7 @@ export function DeviceList({
   }
 
   async function confirm() {
-    if (!latest || chosen.length === 0) return;
+    if (!latest || chosen.length === 0 || untick > 0 || busy || password.length === 0) return;
     setBusy(true);
     setRefusals([]);
     try {
@@ -112,6 +134,16 @@ export function DeviceList({
       }
       if (res.status === 401) { toast.error('That password was not right.'); return; }
       if (res.status === 409) { setRefusals((await res.json()).refusals ?? []); return; }
+      // The update bar keeps a selection inside the cap, so a 400 from this
+      // page is a batch that grew past it under a live refresh, or a version
+      // string the schema refused. Said as what it is rather than the generic
+      // line below, which gives the operator nothing to change.
+      if (res.status === 400) {
+        toast.error('The server refused this request as malformed.', {
+          description: `At most ${MAX_UPDATE_BATCH} boards per update. Nothing was changed.`,
+        });
+        return;
+      }
       if (!res.ok) { toast.error('Could not request the update.'); return; }
       toast.success(`Update requested for ${chosen.length} device${chosen.length === 1 ? '' : 's'}.`);
       close();
@@ -137,12 +169,21 @@ export function DeviceList({
             {/* The FULL version, never the semver: two releases can share one. */}
             <strong className="break-all font-mono">{latest.version}</strong>
           </span>
+          {/* The route's own cap, stated before the password rather than
+              discovered after it as a bare 400. Plain text, and only when it
+              bites: under the cap it is noise on every update. */}
+          {untick > 0 && (
+            <span className="basis-full text-[12.5px] sm:basis-auto" data-testid="update-cap"
+                  style={{ color: 'var(--amber-text)' }}>
+              At most {MAX_UPDATE_BATCH} boards per update — untick {untick}.
+            </span>
+          )}
           {/* `chosen` can empty out under a live refresh while `picked` still
               has ids -- a ticked board that reports the target version stops
               being selectable. Disabled rather than hidden, so the bar does
               not shift under the cursor mid-click. */}
           <button type="button" data-testid="update-start" onClick={() => setOpen(true)}
-                  disabled={chosen.length === 0}
+                  disabled={chosen.length === 0 || untick > 0}
                   className="rounded-full px-4 py-1.5 text-[13px] font-semibold disabled:opacity-50"
                   style={{ background: 'var(--amber-text)', color: '#16273a' }}>
             Update
@@ -175,11 +216,25 @@ export function DeviceList({
         ))}
       </div>
 
-      {open && latest && (
+      {/*
+        PORTALLED, as DeleteDiskDialog and the history panel's restore dialog
+        are: nothing here sets backdrop-filter today, but a card or wrapper
+        that did would become the containing block for `fixed inset-0` and
+        wedge the overlay inside it. `open` is only ever set from a click, so
+        document is always there by the time this renders.
+
+        A <form>, so Enter in the password field submits -- the keyboard path
+        a password prompt is expected to have. confirm() re-checks every
+        condition the Update button's `disabled` does, since a form submit
+        does not consult that attribute on its own.
+      */}
+      {open && latest && createPortal((
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4"
-             style={{ background: 'rgb(0 0 0 / 0.5)' }} data-testid="update-dialog">
-          <div className="glass-card flex w-full max-w-lg flex-col gap-3 p-6">
-            <h2 className="text-[15px] font-semibold" style={{ color: 'var(--ink)' }}>
+             style={{ background: 'rgb(0 0 0 / 0.5)' }}>
+          <form role="dialog" aria-modal="true" aria-labelledby={titleId} data-testid="update-dialog"
+                onSubmit={(e) => { e.preventDefault(); void confirm(); }}
+                className="glass-card flex max-h-full w-full max-w-lg flex-col gap-3 overflow-y-auto p-6">
+            <h2 id={titleId} className="text-[15px] font-semibold" style={{ color: 'var(--ink)' }}>
               Update {chosen.length} device{chosen.length === 1 ? '' : 's'}
             </h2>
             <ul className="flex flex-col gap-1 text-[12px]" style={{ color: 'var(--muted)' }}>
@@ -202,7 +257,10 @@ export function DeviceList({
             </p>
             <label className="flex flex-col gap-1 text-[12px]" style={{ color: 'var(--muted)' }}>
               Confirm with your password
+              {/* autoFocus: the password is the one thing this dialog needs
+                  typed, so the caret starts there. */}
               <input type="password" data-testid="update-password" value={password}
+                     autoFocus autoComplete="current-password"
                      onChange={(e) => setPassword(e.target.value)}
                      className="rounded-lg px-3 py-2 text-[13px]"
                      style={{ background: 'var(--input-bg)', color: 'var(--ink)' }} />
@@ -218,18 +276,18 @@ export function DeviceList({
               </ul>
             )}
             <div className="flex justify-end gap-2">
-              <button type="button" onClick={close} className="text-[13px]"
+              <button type="button" onClick={close} disabled={busy} className="text-[13px] disabled:opacity-50"
                       style={{ color: 'var(--muted)' }}>Cancel</button>
-              <button type="button" data-testid="update-confirm"
-                      disabled={busy || password.length === 0} onClick={confirm}
+              <button type="submit" data-testid="update-confirm"
+                      disabled={busy || password.length === 0}
                       className="rounded-full px-4 py-1.5 text-[13px] font-semibold disabled:opacity-50"
                       style={{ background: 'var(--amber-text)', color: '#16273a' }}>
                 {busy ? 'Requesting…' : 'Update'}
               </button>
             </div>
-          </div>
+          </form>
         </div>
-      )}
+      ), document.body)}
     </>
   );
 }
