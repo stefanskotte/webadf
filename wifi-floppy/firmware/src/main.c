@@ -31,6 +31,7 @@
 #include "wf_log.h"
 #include "activity_led.h"
 #include "i2c_probe.h"
+#include "nfc_probe.h"
 #include "ssd1306.h"
 #include "display.h"
 // Generated at BUILD time by cmake/gen_version_header.cmake, so the string
@@ -1764,6 +1765,8 @@ int main(void) {
             ui_publish(DS_BOOT, "wifi-floppy", "starting", -1);
         }
     }
+    // Bring-up: which NFC reader is on the bus (nfc_probe.h). Logs only.
+    nfc_probe_identify();
     // psram_image_init() runs inside track_cache_init() and its bool result is
     // discarded there. Say it out loud, because PSRAM is the one part of this
     // board no footprint check and no host test can vouch for: a pin-compatible
