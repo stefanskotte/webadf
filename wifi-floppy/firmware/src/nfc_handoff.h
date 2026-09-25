@@ -1,9 +1,12 @@
 #ifndef NFC_HANDOFF_H
 #define NFC_HANDOFF_H
-// The two mailboxes between the cores for tap-to-mount (spec 2026-09-25 §4.2).
+// The mailboxes between the cores for tap-to-mount (spec 2026-09-25 §4.2).
 //
 //   * reader events, core0 -> core1: core0 owns the I2C bus and the reader,
-//     core1 owns the network that turns a TAG_READ into POST /tap;
+//     core1 owns the network that turns a TAG_READ into POST /tap. Two
+//     boxes (nfc_ev_boxes_t): WRITE_DONE in one of its own, everything else
+//     in the other -- so a write's result core1 has not taken yet (it may be
+//     inside a 2 MB fetch or a dc_tap) is never replaced by a later tap;
 //   * the write request, core1 -> core0: the poll delivers it, the reader
 //     acts on it.
 //
@@ -39,6 +42,42 @@ void nfc_ev_box_put(nfc_ev_box_t *b, const nfc_event_t *ev);
 bool nfc_ev_box_take(nfc_ev_box_t *b, uint32_t *last, nfc_event_t *out);
 // Something newer than `last` was published (or is being). One load.
 bool nfc_ev_box_pending(const nfc_ev_box_t *b, uint32_t last);
+
+// Both event boxes, and core1's cursor into each.
+typedef struct {
+    nfc_ev_box_t taps;   // TAG_READ, NOT_OURS, UNREADABLE
+    nfc_ev_box_t done;   // WRITE_DONE only
+} nfc_ev_boxes_t;
+typedef struct {
+    uint32_t taps;
+    uint32_t done;
+} nfc_ev_cursor_t;
+
+// core0: WRITE_DONE to `done`, anything else to `taps`.
+void nfc_ev_route(nfc_ev_boxes_t *b, const nfc_event_t *ev);
+// core1: something newer in EITHER box. One load each.
+bool nfc_ev_boxes_pending(const nfc_ev_boxes_t *b, const nfc_ev_cursor_t *c);
+
+// The write report core1 owes the server (POST /tap-write), held until it is
+// HEARD -- any 2xx; the server acknowledges a stale seq and ignores it -- and
+// retried between polls until then. Core1-only, so no seqlock. A newer write
+// request (or its withdrawal, which also moves the seq) makes an unreported
+// older result moot: nfc_report_supersede drops it.
+typedef struct {
+    bool        owed;
+    nfc_event_t ev;      // the WRITE_DONE; `why` points at the reader's literals
+} nfc_report_t;
+
+void nfc_report_init(nfc_report_t *r);
+// A WRITE_DONE to report. Replaces an older one still owed.
+void nfc_report_hold(nfc_report_t *r, const nfc_event_t *done);
+// True = `out` is the report to (re)send now.
+bool nfc_report_next(const nfc_report_t *r, nfc_event_t *out);
+// The outcome of sending the report for `seq`: heard settles it, if it is
+// still the one owed.
+void nfc_report_sent(nfc_report_t *r, uint32_t seq, bool heard);
+// A write request `request_seq` arrived: an owed report for an older seq is dropped.
+void nfc_report_supersede(nfc_report_t *r, uint32_t request_seq);
 
 // A write request as core1 hands it to core0: arm `disk_id` under the server's
 // `seq`, showing `title` on the title line while armed; disk_id "" = disarm.

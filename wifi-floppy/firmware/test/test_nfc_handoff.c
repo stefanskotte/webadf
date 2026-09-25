@@ -89,6 +89,92 @@ static void write_request_box(void) {
     CHECK(out.disk_id[0] == '\0', "empty id = disarm");
 }
 
+// ---- WRITE_DONE has its own box ------------------------------------------------
+//
+// Whole-branch review, Important: with one slot for everything, a WRITE_DONE
+// core1 had not yet taken (it can sit in a 2 MB fetch or a dc_tap for
+// seconds) was overwritten by the next tag event, and the write's report was
+// lost. The routing puts it in a slot no tap can touch.
+
+static nfc_event_t done_n(uint32_t seq, bool ok) {
+    nfc_event_t e;
+    memset(&e, 0, sizeof e);
+    e.kind = NFC_EV_WRITE_DONE;
+    e.seq = seq;
+    e.ok = ok;
+    e.uid_len = 4;
+    return e;
+}
+
+static void a_write_done_survives_later_tag_events(void) {
+    static nfc_ev_boxes_t b;
+    nfc_ev_cursor_t cur = { 0, 0 };
+    nfc_event_t d = done_n(7, true), out;
+    nfc_ev_route(&b, &d);
+    for (uint32_t n = 1; n <= 3; n++) { nfc_event_t t = ev_n(n); nfc_ev_route(&b, &t); }
+    CHECK(nfc_ev_box_take(&b.done, &cur.done, &out), "the WRITE_DONE is still there");
+    CHECK_EQ_INT(out.kind, NFC_EV_WRITE_DONE);
+    CHECK_EQ_INT(out.seq, 7);
+    CHECK(nfc_ev_box_take(&b.taps, &cur.taps, &out), "and the newest tap beside it");
+    CHECK_EQ_INT(out.kind, NFC_EV_TAG_READ);
+    CHECK_EQ_INT(out.seq, 3);
+}
+
+static void pending_means_either_box(void) {
+    static nfc_ev_boxes_t b;
+    nfc_ev_cursor_t cur = { 0, 0 };
+    nfc_event_t out;
+    CHECK(!nfc_ev_boxes_pending(&b, &cur), "nothing yet");
+    nfc_event_t d = done_n(1, false);
+    nfc_ev_route(&b, &d);
+    CHECK(nfc_ev_boxes_pending(&b, &cur), "a WRITE_DONE alone wakes the poll");
+    CHECK(nfc_ev_box_take(&b.done, &cur.done, &out), "taken");
+    CHECK(!nfc_ev_boxes_pending(&b, &cur), "drained");
+    nfc_event_t t = ev_n(4);
+    nfc_ev_route(&b, &t);
+    CHECK(nfc_ev_boxes_pending(&b, &cur), "a tap alone wakes it too");
+    CHECK(nfc_ev_box_take(&b.taps, &cur.taps, &out), "taken");
+    CHECK(!nfc_ev_boxes_pending(&b, &cur), "drained again");
+}
+
+// ---- the write report core1 owes the server ----------------------------------
+
+static void a_report_is_owed_until_heard(void) {
+    nfc_report_t r; nfc_report_init(&r);
+    nfc_event_t out;
+    CHECK(!nfc_report_next(&r, &out), "nothing owed at boot");
+    nfc_event_t d = done_n(5, true);
+    nfc_report_hold(&r, &d);
+    CHECK(nfc_report_next(&r, &out) && out.seq == 5, "owed");
+    nfc_report_sent(&r, 5, false);
+    CHECK(nfc_report_next(&r, &out) && out.seq == 5, "not heard (offline, 5xx): still owed, retried next pass");
+    nfc_report_sent(&r, 5, true);
+    CHECK(!nfc_report_next(&r, &out), "heard: done");
+}
+
+static void a_newer_request_supersedes_an_unreported_write(void) {
+    nfc_report_t r; nfc_report_init(&r);
+    nfc_event_t out, d = done_n(5, false);
+    nfc_report_hold(&r, &d);
+    nfc_report_supersede(&r, 5);
+    CHECK(nfc_report_next(&r, &out), "the same request does not supersede its own report");
+    nfc_report_supersede(&r, 4);
+    CHECK(nfc_report_next(&r, &out), "nor does an older one");
+    nfc_report_supersede(&r, 6);
+    CHECK(!nfc_report_next(&r, &out), "a newer request (or its withdrawal): the old report is moot");
+}
+
+static void a_stale_ack_does_not_clear_a_newer_report(void) {
+    nfc_report_t r; nfc_report_init(&r);
+    nfc_event_t out, d = done_n(5, true);
+    nfc_report_hold(&r, &d);
+    d = done_n(6, true);
+    nfc_report_hold(&r, &d);
+    CHECK(nfc_report_next(&r, &out) && out.seq == 6, "the newer write is the one owed");
+    nfc_report_sent(&r, 5, true);
+    CHECK(nfc_report_next(&r, &out) && out.seq == 6, "hearing seq 5 does not settle seq 6");
+}
+
 // Torn-read safety under a real second thread: every event the reader accepts
 // must be one the writer wrote whole. Each event's fields are all derived from
 // one counter, so a mix of two writes shows up as fields that disagree.
@@ -139,6 +225,11 @@ int main(void) {
     RUN(a_newer_put_replaces_an_unconsumed_one);
     RUN(a_write_in_progress_is_not_taken);
     RUN(write_request_box);
+    RUN(a_write_done_survives_later_tag_events);
+    RUN(pending_means_either_box);
+    RUN(a_report_is_owed_until_heard);
+    RUN(a_newer_request_supersedes_an_unreported_write);
+    RUN(a_stale_ack_does_not_clear_a_newer_report);
     RUN(no_torn_event_is_ever_accepted);
     return REPORT();
 }

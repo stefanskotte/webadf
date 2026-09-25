@@ -40,6 +40,37 @@ bool nfc_ev_box_pending(const nfc_ev_box_t *b, uint32_t last) {
     return b->seq != last;
 }
 
+void nfc_ev_route(nfc_ev_boxes_t *b, const nfc_event_t *ev) {
+    nfc_ev_box_put(ev->kind == NFC_EV_WRITE_DONE ? &b->done : &b->taps, ev);
+}
+
+bool nfc_ev_boxes_pending(const nfc_ev_boxes_t *b, const nfc_ev_cursor_t *c) {
+    return nfc_ev_box_pending(&b->done, c->done) || nfc_ev_box_pending(&b->taps, c->taps);
+}
+
+void nfc_report_init(nfc_report_t *r) {
+    memset(r, 0, sizeof *r);
+}
+
+void nfc_report_hold(nfc_report_t *r, const nfc_event_t *done) {
+    r->ev = *done;
+    r->owed = true;
+}
+
+bool nfc_report_next(const nfc_report_t *r, nfc_event_t *out) {
+    if (!r->owed) return false;
+    *out = r->ev;
+    return true;
+}
+
+void nfc_report_sent(nfc_report_t *r, uint32_t seq, bool heard) {
+    if (heard && r->owed && r->ev.seq == seq) r->owed = false;
+}
+
+void nfc_report_supersede(nfc_report_t *r, uint32_t request_seq) {
+    if (r->owed && request_seq > r->ev.seq) r->owed = false;
+}
+
 void nfc_wreq_box_put(nfc_wreq_box_t *b, const nfc_wreq_t *r) {
     box_put(&b->seq, &b->req, r, sizeof *r);
 }
