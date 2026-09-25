@@ -34,8 +34,30 @@ typedef struct transport {
     // resynchronises. So every non-clean exit calls this instead, and it
     // can never hand the socket back.
     void (*abandon)(struct transport *t);
+    // Optional, may be NULL -- NULL means "never". Asked by read() while it
+    // is WAITING for data (nothing buffered yet), and never otherwise: a read
+    // that already has bytes to hand over returns them. True makes that read
+    // give up at once with TRANSPORT_INTERRUPTED instead of waiting out its
+    // timeout.
+    //
+    // Why: the server holds a poll open for up to 25 s, and core1 can send
+    // nothing else on this connection until the poll returns -- so a tag
+    // tapped on the reader would wait up to 25 s to be sent. The device
+    // client installs this ONLY around the poll request (see dc_step), and an
+    // interrupted poll abandons its connection: the response is still owed
+    // on that socket, so it can never carry another request.
+    bool (*interrupted)(void *ctx);
+    void *interrupt_ctx;
     void *impl;
 } transport_t;
+
+// read()'s "the interrupted() predicate said stop" -- distinct from every
+// other negative (an error or a timeout), because the caller must treat it
+// differently: not a network fault, so no backoff, and not a dead socket, so
+// no reused-connection retry. transport_tls.c's connect-side TLS_ERR_* codes
+// start at the same number, but they come back from connect(), never from
+// read(), so the two cannot be confused by a caller that checks read().
+#define TRANSPORT_INTERRUPTED (-100)
 
 // Injected clock: milliseconds since boot, monotonic.
 typedef uint32_t (*clock_ms_fn)(void);

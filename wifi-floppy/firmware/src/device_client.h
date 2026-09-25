@@ -248,6 +248,35 @@ typedef struct {
     // Set via dc_set_fw_report; the pointer is kept, not copied -- see its
     // own comment.
     const dc_fw_report_t *_fw_report;
+
+    // --- NFC tap-to-mount (spec 2026-09-25 §4.2, §5.3) ---
+    // The last write-request sequence the board has ACTED ON (armed, disarmed
+    // or answered), echoed as &nfcAck= on every poll. A cursor rather than a
+    // flag, like `since`: the server keeps the hold released while its
+    // nfc_write_seq is ahead of this, so a request is re-delivered until the
+    // board says it has it. dc_step never moves it -- the caller does, by
+    // setting it to nfc_write_seq once it has acted, so a request that
+    // arrived while the caller could not act is delivered again.
+    uint32_t nfc_ack;
+    // Set by dc_step when a poll carried nfcWrite with seq > nfc_ack; the
+    // caller clears it. Left alone by a poll that carried nothing new.
+    bool     nfc_write_new;
+    uint32_t nfc_write_seq;
+    // The disk to write, or "" = disarm: the server's null (cancelled,
+    // expired or answered), and ALSO an id that is not the disk-id shape --
+    // a malformed id is never armed, since a tag written with it could never
+    // be read back as a disk.
+    char     nfc_write_disk_id[37];
+    char     nfc_write_title[DC_TITLE_MAX + 1];
+    // True when the LAST dc_step ended because the poll-interrupt predicate
+    // said so (see dc_set_poll_interrupt). Nothing else about the client
+    // changed on that step -- not state, not backoff, not since -- so the
+    // caller can do what it interrupted the poll for and simply poll again.
+    bool     poll_interrupted;
+    bool   (*_poll_intr)(void *ctx);
+    void    *_poll_intr_ctx;
+    // "present" / "absent" / "" (= omit the key); see dc_set_nfc_reader.
+    char     _nfc_reader[8];
 } device_client_t;
 
 void dc_init(device_client_t *c, transport_t *t, clock_ms_fn now,
@@ -389,6 +418,51 @@ void dc_adopt_image(device_client_t *c, const char *sha256);
 // same as every other endpoint in this file, and still returns 401.
 int dc_post(device_client_t *c, const char *path, const char *content_type,
             const uint8_t *body, int body_len, char *resp, int resp_cap);
+
+// --- NFC tap-to-mount (spec 2026-09-25) ---------------------------------
+
+// Registers `fn` (with `ctx`) as the poll's interrupt: while the poll is
+// WAITING for the server's answer (the held long poll), the transport asks
+// `fn`, and true ends dc_step at once -- the connection abandoned (the
+// response is still owed on it), c->poll_interrupted set, and nothing else
+// touched: no backoff (nothing failed), no reused-connection retry (the
+// socket was not dead), `since` and state as they were. Installed on the
+// transport ONLY for the poll request: dc_tap, dc_tap_write_report and every
+// other request run to completion whatever `fn` says. NULL stops it.
+// Must be cheap and must not block; it runs in the transport's wait loop.
+void dc_set_poll_interrupt(device_client_t *c, bool (*fn)(void *ctx), void *ctx);
+
+typedef enum {
+    DC_TAP_MOUNTING,    // the server set the tag's disk as desired; `title` given
+    DC_TAP_ALREADY,     // that disk is already the desired one
+    DC_TAP_NOT_FOUND,   // not in this device's library (foreign and unknown alike)
+    DC_TAP_TOO_LONG,    // the disk's tracks are too long for this board
+    DC_TAP_IGNORED,     // within the server's 1 s per-device tap rate limit
+    DC_TAP_FAILED,      // no usable answer: offline, non-2xx, or a body we
+                        // could not read. The tap is NOT queued (spec §6).
+} dc_tap_outcome_t;
+
+// POST /api/device/tap {"diskId":"<disk_id>"} and returns the server's
+// verdict. `title_out` (`title_cap` bytes, may be NULL/0) receives the
+// disk's title, clipped to fit -- "" when the answer carried none. A 401
+// halts, as everywhere, and reads as DC_TAP_FAILED. Call between dc_steps,
+// never from inside one (see the STACK note in device_client.c).
+dc_tap_outcome_t dc_tap(device_client_t *c, const char *disk_id, char *title_out, int title_cap);
+
+// POST /api/device/tap-write {"seq":N,"ok":true|false,"uid":"..","reason":".."}
+// -- the read-back verdict of a tag write. `why` is sent only when !ok (and
+// may be NULL then); `uid_hex` and `why` are clipped to the server's bounds
+// (32 and 64 characters) rather than risking a 400 that would lose the
+// report. Returns true iff the server answered 2xx: it heard the report,
+// whether or not it stored it (a stale seq is acknowledged and ignored).
+bool dc_tap_write_report(device_client_t *c, uint32_t seq, bool ok, const char *uid_hex,
+                         const char *why);
+
+// What dc_report_status says about the reader: "present" or "absent", or
+// NULL to omit the key (older firmware's shape -- the server leaves its
+// column alone). Anything else is also treated as NULL: the server accepts
+// only those two words, and a third would be dropped there anyway.
+void dc_set_nfc_reader(device_client_t *c, const char *state);
 
 // GET /api/device/firmware/<version>. Body bytes go to `sink`. Returns the HTTP status of a
 // COMPLETE response, or -1 (transport, framing, incomplete). 401 halts, as everywhere.

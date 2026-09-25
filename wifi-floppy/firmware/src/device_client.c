@@ -17,6 +17,7 @@
 #include "psram_image.h"
 #include "image_loader.h"
 #include "token_store.h"
+#include "nfc_tag.h"
 #include <string.h>
 #include <stdio.h>
 
@@ -193,7 +194,10 @@ static void dc_image_sink(void *ctx, const uint8_t *b, int n) {
 //     Task 5: one dirty track at a time), and its close counterpart,
 //     core1_main -> up_step -> (sha256_*, psram_image_read,
 //     mfm_decode_track_r) -> dc_post -> dc_exchange (uploader.c, Task 6:
-//     hashes the whole image, then posts the digest). Every path is a
+//     hashes the whole image, then posts the digest), and the NFC pair,
+//     core1_main -> dc_tap / dc_tap_write_report -> dc_post -> dc_exchange,
+//     sent BETWEEN dc_steps -- an interrupted poll returns first, and only
+//     then does the tap go out. Every path is a
 //     straight line, including the close's hash loop -- sha256_*,
 //     psram_image_read and mfm_decode_track_r never call back into any
 //     dc_*/up_* function, so nothing here is re-entered while its statics
@@ -286,7 +290,7 @@ static void dc_abandon(device_client_t *c) {
 static bool dc_attempt(device_client_t *c, const char *req, int req_len,
                        void (*sink)(void *ctx, const uint8_t *b, int n),
                        void *sink_ctx, http_resp_t *r, bool *reused_out,
-                       int *read_bytes_out) {
+                       int *read_bytes_out, bool *interrupted_out) {
     // FIRST, before anything can return: every caller's `r` is static and
     // still holds the PREVIOUS exchange's status/flags. An early return
     // (connect refused, a write that failed) used to leave all of it in
@@ -294,6 +298,7 @@ static bool dc_attempt(device_client_t *c, const char *req, int req_len,
     // the server had answered a request that never went out.
     http_resp_init(r);
     *read_bytes_out = 0;
+    *interrupted_out = false;
     if (c->t->connect(c->t, c->host, 443) < 0) {
         *reused_out = false;
         dc_abandon(c);
@@ -324,6 +329,15 @@ static bool dc_attempt(device_client_t *c, const char *req, int req_len,
         int got = c->t->read(c->t, buf, sizeof buf, (int)DC_POLL_TIMEOUT_MS);
         uint32_t t_b = c->now();
         g_ms_read += t_b - t_a;
+        if (got == TRANSPORT_INTERRUPTED) {
+            // The caller's poll-interrupt said stop (spec 2026-09-25 §4.2).
+            // Not a failure, but the response is still owed on this socket
+            // -- possibly half of it already read -- so the socket can never
+            // carry another request: abandoned exactly like a failure.
+            *interrupted_out = true;
+            dc_abandon(c);
+            return false;
+        }
         if (got < 0) { dc_abandon(c); return false; } // error or timeout
         if (got == 0) break;                          // clean close
         *read_bytes_out += got;
@@ -391,12 +405,24 @@ static bool dc_attempt(device_client_t *c, const char *req, int req_len,
  *     a terminal `invalid_or_used_code` and sends the board back to the
  *     portal for a code the user has to re-issue.
  */
-static bool dc_exchange(device_client_t *c, const char *req, int req_len,
-                        void (*sink)(void *ctx, const uint8_t *b, int n),
-                        void *sink_ctx, http_resp_t *r, bool retryable) {
+// `interrupted_out` (may be NULL) is set when an attempt ended on
+// TRANSPORT_INTERRUPTED. That is checked BEFORE the retry rule, and it has
+// to be: an interrupt usually lands on a reused connection with nothing read
+// yet -- exactly the shape of a dead socket -- so the retry would otherwise
+// re-send the poll the caller just asked to stop, and wait the full hold again.
+static bool dc_exchange_i(device_client_t *c, const char *req, int req_len,
+                          void (*sink)(void *ctx, const uint8_t *b, int n),
+                          void *sink_ctx, http_resp_t *r, bool retryable,
+                          bool *interrupted_out) {
     bool reused = false;
     int got = 0;
-    const bool ok = dc_attempt(c, req, req_len, sink, sink_ctx, r, &reused, &got);
+    bool intr = false;
+    if (interrupted_out) *interrupted_out = false;
+    const bool ok = dc_attempt(c, req, req_len, sink, sink_ctx, r, &reused, &got, &intr);
+    if (intr) {
+        if (interrupted_out) *interrupted_out = true;
+        return false;
+    }
     if (ok && r->status != 0) return true;
     if (!retryable || !reused || got != 0) return ok;
 
@@ -409,7 +435,17 @@ static bool dc_exchange(device_client_t *c, const char *req, int req_len,
     dc_abandon(c);
     bool again = false;
     int got_again = 0;
-    return dc_attempt(c, req, req_len, sink, sink_ctx, r, &again, &got_again);
+    const bool ok_again = dc_attempt(c, req, req_len, sink, sink_ctx, r, &again, &got_again, &intr);
+    if (intr && interrupted_out) *interrupted_out = true;
+    return ok_again;
+}
+
+// Every caller but the poll: no interrupt is ever installed for them, so
+// there is nothing to report.
+static bool dc_exchange(device_client_t *c, const char *req, int req_len,
+                        void (*sink)(void *ctx, const uint8_t *b, int n),
+                        void *sink_ctx, http_resp_t *r, bool retryable) {
+    return dc_exchange_i(c, req, req_len, sink, sink_ctx, r, retryable, NULL);
 }
 
 bool dc_digest_is_blocked(const device_client_t *c, const char *sha256) {
@@ -628,6 +664,33 @@ static void dc_take_fw_fields(device_client_t *c, char *json) {
         // An update with no moved cursor is stale. Never act on it.
         c->fw_offer_present = false;
     }
+}
+
+// Lifts `nfcWrite` out of a 200 poll body BEFORE the disk logic reads it,
+// for the same reason dc_take_fw_fields lifts `update`: its "diskId" would
+// otherwise be found by dc_handle_poll_body's flat scans -- and with nfcWrite
+// ahead of `desired` in the body, it would be read as the desired disk's id.
+//
+// The copy buffer is DC_POLL_BODY_BYTES, the size of the body itself, so a
+// well-formed object can never be too big to lift: a lift that failed for
+// size would leave the object un-blanked, its diskId visible to those scans.
+static void dc_take_nfc_write(device_client_t *c, char *json) {
+    static char obj[DC_POLL_BODY_BYTES];   // static: see the STACK note above
+    if (!json_object(json, "nfcWrite", obj, sizeof obj, true)) return;  // absent (or null)
+    uint32_t seq = 0;
+    // Strict: a wrapped or fractional seq could jump the cursor past a real
+    // request, which would then never be delivered again.
+    if (!json_u32_strict(obj, "seq", &seq) || seq <= c->nfc_ack) return;
+    // Read into a buffer wider than an id, THEN check the shape: a fixed
+    // 37-byte copy would clip an over-long value back into a valid-looking id.
+    char id[NFC_DISK_ID_LEN + 8];
+    id[0] = '\0';
+    if (!json_str(obj, "diskId", id, sizeof id) || !nfc_disk_id_valid(id)) id[0] = '\0';
+    c->nfc_write_seq = seq;
+    snprintf(c->nfc_write_disk_id, sizeof c->nfc_write_disk_id, "%s", id);
+    c->nfc_write_title[0] = '\0';
+    if (id[0]) json_str(obj, "title", c->nfc_write_title, sizeof c->nfc_write_title);
+    c->nfc_write_new = true;
 }
 
 void dc_force_refetch(device_client_t *c) {
@@ -1005,6 +1068,15 @@ bool dc_report_status(device_client_t *c, int psram_free, int rssi, const char *
                  f->update_protocol, st_field, er_field, (unsigned long)f->instruction_ack);
     }
 
+    // nfcReader: "present"/"absent" once main.c knows, and no key at all
+    // before then -- an absent key leaves the server's column alone, which is
+    // what older firmware (no reader support at all) also sends.
+    static char nfc_tail[32];
+    nfc_tail[0] = '\0';
+    if (c->_nfc_reader[0]) {
+        snprintf(nfc_tail, sizeof nfc_tail, ",\"nfcReader\":\"%s\"", c->_nfc_reader);
+    }
+
     // trackMaxBytes: the longest track this build's PSRAM slots hold. The
     // server refuses to mount a disk with longer tracks here (an HFE with a
     // long-track format) instead of sending an image image_loader.c would
@@ -1014,9 +1086,9 @@ bool dc_report_status(device_client_t *c, int psram_free, int rssi, const char *
     int body_len = snprintf(body, sizeof body,
         "{\"mountedSha256\":%s,\"mountedDiskId\":%s,\"version\":%lu,"
         "\"error\":%s,\"psramFree\":%d,\"firmwareVersion\":%s,\"rssi\":%d,"
-        "\"trackMaxBytes\":%u%s}",
+        "\"trackMaxBytes\":%u%s%s}",
         sha_field, disk_field, (unsigned long)c->mounted_version,
-        err_field, psram_free, ver_field, rssi, (unsigned)TRACK_MAX_BYTES, fw_tail);
+        err_field, psram_free, ver_field, rssi, (unsigned)TRACK_MAX_BYTES, fw_tail, nfc_tail);
     if (body_len < 0 || body_len >= (int)sizeof body) return false; // should never happen; give up quietly
 
     static char req[DC_STATUS_REQ_BYTES];
@@ -1079,6 +1151,8 @@ int dc_fetch_firmware(device_client_t *c, const char *version,
 }
 
 dc_state_t dc_step(device_client_t *c) {
+    // Describes THIS step only: cleared before any return below.
+    c->poll_interrupted = false;
     if (c->state == DC_UNPROVISIONED) {
         // No token yet; Task 10 adds dc_register() to get one. Nothing to
         // poll with in the meantime.
@@ -1094,8 +1168,10 @@ dc_state_t dc_step(device_client_t *c) {
     }
 
     // static: see the STACK note above.
+    // Worst case "/api/device/poll?since=4294967295&nfcAck=4294967295" is 51.
     static char path[64];
-    snprintf(path, sizeof path, "/api/device/poll?since=%lu", (unsigned long)c->since);
+    snprintf(path, sizeof path, "/api/device/poll?since=%lu&nfcAck=%lu",
+             (unsigned long)c->since, (unsigned long)c->nfc_ack);
 
     static char req[DC_REQ_BUF_BYTES];
     int req_len = http_build_request(req, sizeof req, "GET", path, c->host, c->token, NULL);
@@ -1106,7 +1182,25 @@ dc_state_t dc_step(device_client_t *c) {
     body.truncated = false;
     body.buf[0] = '\0';
     static http_resp_t r;
-    bool ok = dc_exchange(c, req, req_len, dc_body_sink, &body, &r, /*retryable=*/true);
+    // The poll-interrupt is on the transport for this one exchange and no
+    // other: set just before, cleared just after, whatever happened.
+    c->t->interrupted = c->_poll_intr;
+    c->t->interrupt_ctx = c->_poll_intr_ctx;
+    bool interrupted = false;
+    bool ok = dc_exchange_i(c, req, req_len, dc_body_sink, &body, &r, /*retryable=*/true,
+                            &interrupted);
+    c->t->interrupted = NULL;
+    c->t->interrupt_ctx = NULL;
+
+    if (interrupted) {
+        // The caller wanted core1 back (a tag was tapped -- spec 2026-09-25
+        // §4.2). Nothing failed, so no backoff: a backoff here would delay
+        // the very poll that picks up the tap's new disk. dc_exchange_i has
+        // abandoned the connection; state, since and backoff_ms are exactly
+        // as they were on entry.
+        c->poll_interrupted = true;
+        return c->state;
+    }
 
     if (!ok || !r.body_complete) {
         // Transport/framing failure, or a connection dropped before the
@@ -1187,10 +1281,88 @@ dc_state_t dc_step(device_client_t *c) {
             return dc_enter_backoff(c);
         }
         dc_take_fw_fields(c, body.buf);
+        dc_take_nfc_write(c, body.buf);
         return dc_handle_poll_body(c, body.buf);
 
     default:
         // Any other/unlisted status: transient, never destructive.
         return dc_enter_backoff(c);
     }
+}
+
+// --- NFC tap-to-mount (spec 2026-09-25) -----------------------------------
+
+void dc_set_poll_interrupt(device_client_t *c, bool (*fn)(void *ctx), void *ctx) {
+    c->_poll_intr = fn;
+    c->_poll_intr_ctx = ctx;
+}
+
+void dc_set_nfc_reader(device_client_t *c, const char *state) {
+    // Copied, not kept as a pointer: two fixed words, and a copy cannot
+    // dangle. Anything else is omitted -- the server's enum has no third
+    // value, so sending one would only be dropped there.
+    if (state && (strcmp(state, "present") == 0 || strcmp(state, "absent") == 0)) {
+        snprintf(c->_nfc_reader, sizeof c->_nfc_reader, "%s", state);
+    } else {
+        c->_nfc_reader[0] = '\0';
+    }
+}
+
+#define DC_TAP_PATH       "/api/device/tap"
+#define DC_TAP_WRITE_PATH "/api/device/tap-write"
+#define DC_JSON           "application/json"
+
+dc_tap_outcome_t dc_tap(device_client_t *c, const char *disk_id, char *title_out, int title_cap) {
+    if (title_out && title_cap > 0) title_out[0] = '\0';
+    // The tag codec already checked the shape; checked again because this is
+    // what goes into hand-built JSON unescaped, and the server would answer
+    // anything else with a 400 regardless.
+    if (!disk_id || !nfc_disk_id_valid(disk_id)) return DC_TAP_FAILED;
+
+    static char body[64];   // static: see the STACK note above
+    int n = snprintf(body, sizeof body, "{\"diskId\":\"%s\"}", disk_id);
+    if (n < 0 || n >= (int)sizeof body) return DC_TAP_FAILED;
+
+    // The title is an unbounded games.title server-side, so this can clip
+    // it -- harmless: `outcome` is emitted first (src/lib/nfc/store.ts), and
+    // the title is clipped to the caller's buffer anyway.
+    static char resp[256];
+    int st = dc_post(c, DC_TAP_PATH, DC_JSON, (const uint8_t *)body, n, resp, sizeof resp);
+    // -1 (offline, incomplete), 400 invalid_body, 401 (dc_post halted), 5xx:
+    // all "no answer" as far as the person at the reader is concerned.
+    if (st < 200 || st >= 300) return DC_TAP_FAILED;
+
+    char outcome[16];
+    if (!json_str(resp, "outcome", outcome, sizeof outcome)) return DC_TAP_FAILED;
+    dc_tap_outcome_t o;
+    if      (strcmp(outcome, "mounting")  == 0) o = DC_TAP_MOUNTING;
+    else if (strcmp(outcome, "already")   == 0) o = DC_TAP_ALREADY;
+    else if (strcmp(outcome, "not_found") == 0) o = DC_TAP_NOT_FOUND;
+    else if (strcmp(outcome, "too_long")  == 0) o = DC_TAP_TOO_LONG;
+    else if (strcmp(outcome, "ignored")   == 0) o = DC_TAP_IGNORED;
+    else return DC_TAP_FAILED;   // a word this build does not know is not a verdict
+    if (title_out && title_cap > 0) json_str(resp, "title", title_out, title_cap);
+    return o;
+}
+
+bool dc_tap_write_report(device_client_t *c, uint32_t seq, bool ok, const char *uid_hex,
+                         const char *why) {
+    // Escaped into buffers one byte over the server's bounds (uid <= 32,
+    // reason <= 64): dc_json_escape stops before an escape sequence would
+    // overflow, so what arrives decodes to at most those lengths, and a long
+    // reason is clipped here instead of turning the whole report into a 400.
+    static char uid_esc[33], why_esc[65];   // static: see the STACK note above
+    dc_json_escape(uid_esc, sizeof uid_esc, uid_hex ? uid_hex : "");
+    static char reason[80];
+    reason[0] = '\0';
+    if (!ok && why) {
+        dc_json_escape(why_esc, sizeof why_esc, why);
+        snprintf(reason, sizeof reason, ",\"reason\":\"%s\"", why_esc);
+    }
+    static char body[192];
+    int n = snprintf(body, sizeof body, "{\"seq\":%lu,\"ok\":%s,\"uid\":\"%s\"%s}",
+                     (unsigned long)seq, ok ? "true" : "false", uid_esc, reason);
+    if (n < 0 || n >= (int)sizeof body) return false;
+    int st = dc_post(c, DC_TAP_WRITE_PATH, DC_JSON, (const uint8_t *)body, n, NULL, 0);
+    return st >= 200 && st < 300;
 }

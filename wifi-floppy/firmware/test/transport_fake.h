@@ -35,6 +35,20 @@ void fake_push_truncated(const char *raw, int n);
 // then failed would leave it. Releasing it is the caller's abandon().
 void fake_push_connect_failure(void);
 
+// The server HOLDS the next request: deliver `prefix` (may be "", which is
+// the long poll's normal shape -- nothing at all until the server has news),
+// then, instead of a clean close, every read() WAITS. A waiting read() does
+// what transport_tls.c's does: it asks the transport's `interrupted`
+// predicate, and returns TRANSPORT_INTERRUPTED if one is installed and says
+// true -- otherwise it waits out its timeout and returns -1. So a test sees
+// an interrupt only when the client under test actually installed the
+// predicate for this request, which is the property being tested.
+void fake_push_held(const char *prefix);
+
+// How many times abandon() has been called since fake_reset(). Idempotent
+// abandons (dc_exchange repeats one dc_attempt already made) count each time.
+int fake_abandon_count(void);
+
 // The fake transport_t. Always returns the same instance.
 transport_t *fake_transport(void);
 
