@@ -73,17 +73,17 @@ describe('waitForWrite', () => {
     expect(cancelNfcWrite).toHaveBeenCalledWith(DEVICE_ID, SEQ);
   });
 
-  it('a cancel that itself fails after a thrown read still reports an error (never throws out)', async () => {
+  it('a cancel that itself fails after a thrown read preserves the ORIGINAL read error, alongside the cancel failure (never throws out)', async () => {
     const readBoom = new Error('DB unreachable');
     const cancelBoom = new Error('cancel also failed');
     const { deps, cancelNfcWrite, readWriteResult } = makeDeps();
     readWriteResult.mockRejectedValue(readBoom);
     cancelNfcWrite.mockRejectedValue(cancelBoom);
-    await expect(waitForWrite(deps)).resolves.toEqual({ kind: 'error', error: cancelBoom });
+    await expect(waitForWrite(deps)).resolves.toEqual({ kind: 'error', error: readBoom, cancelError: cancelBoom });
     expect(cancelNfcWrite).toHaveBeenCalledTimes(1);
   });
 
-  it('a cancel that fails on a plain timeout still reports an error (never throws out)', async () => {
+  it('a cancel that fails on a plain timeout still reports the timeout, with the cancel failure attached (never throws out)', async () => {
     let time = 0;
     const cancelBoom = new Error('cancel failed');
     const { deps, cancelNfcWrite, readWriteResult } = makeDeps({
@@ -92,7 +92,20 @@ describe('waitForWrite', () => {
     });
     readWriteResult.mockResolvedValue(null);
     cancelNfcWrite.mockRejectedValue(cancelBoom);
-    await expect(waitForWrite(deps)).resolves.toEqual({ kind: 'error', error: cancelBoom });
+    await expect(waitForWrite(deps)).resolves.toEqual({ kind: 'timeout', cancelError: cancelBoom });
+    expect(cancelNfcWrite).toHaveBeenCalledTimes(1);
+  });
+
+  it('a cancel that fails on a SIGINT cancellation still reports cancelled, with the cancel failure attached', async () => {
+    let cancelled = false;
+    const cancelBoom = new Error('cancel failed');
+    const { deps, cancelNfcWrite, readWriteResult } = makeDeps({
+      isCancelled: () => cancelled,
+      sleep: vi.fn().mockImplementation(async () => { cancelled = true; }),
+    });
+    readWriteResult.mockResolvedValue(null);
+    cancelNfcWrite.mockRejectedValue(cancelBoom);
+    await expect(waitForWrite(deps)).resolves.toEqual({ kind: 'cancelled', cancelError: cancelBoom });
     expect(cancelNfcWrite).toHaveBeenCalledTimes(1);
   });
 });

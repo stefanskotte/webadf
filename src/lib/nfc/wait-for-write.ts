@@ -11,14 +11,21 @@
  * invoked bare, with no `.catch()` -- leaving the board armed until its own
  * 2-minute expiry and the operator with nothing but an unhandled-rejection
  * dump. That path now cancels too, and reports as an `error` outcome.
+ *
+ * A cancel that itself fails is carried as `cancelError` alongside whatever
+ * ended the loop -- the ORIGINAL reason (a thrown read, a timeout, or a
+ * cancellation request) is never replaced by the cancel's own failure. Fix
+ * round 1 got this wrong for the thrown-read case: a failing cancel there
+ * discarded the original error entirely, which is exactly the "operator sees
+ * nothing useful" failure mode this module exists to prevent.
  */
 
 export type WaitForWriteResult =
   | { kind: 'ok'; uid: string | null }
   | { kind: 'failed'; reason: string; uid: string | null }
-  | { kind: 'timeout' }
-  | { kind: 'cancelled' }
-  | { kind: 'error'; error: unknown };
+  | { kind: 'timeout'; cancelError?: unknown }
+  | { kind: 'cancelled'; cancelError?: unknown }
+  | { kind: 'error'; error: unknown; cancelError?: unknown };
 
 export type WaitForWriteDeps = {
   deviceId: string;
@@ -35,16 +42,15 @@ export type WaitForWriteDeps = {
   cancelNfcWrite: (deviceId: string, seq: number) => Promise<void>;
 };
 
-/** Best-effort: a cancel that itself fails must not hide the original reason
- *  the loop is ending -- unless there IS no original reason (the loop simply
- *  ran out of time or was told to stop), in which case the cancel failure
- *  becomes the thing to report. */
-async function cancelReporting(deps: WaitForWriteDeps, onCancelFailure: (error: unknown) => WaitForWriteResult): Promise<WaitForWriteResult | null> {
+/** Best-effort: never throws. Returns the cancel's own error, if it failed,
+ *  so the caller can attach it to whatever original reason it already has --
+ *  rather than letting a cancel failure stand in for that reason. */
+async function tryCancel(deps: WaitForWriteDeps): Promise<{ cancelError?: unknown }> {
   try {
     await deps.cancelNfcWrite(deps.deviceId, deps.seq);
-    return null;
-  } catch (error) {
-    return onCancelFailure(error);
+    return {};
+  } catch (cancelError) {
+    return { cancelError };
   }
 }
 
@@ -60,8 +66,8 @@ export async function waitForWrite(deps: WaitForWriteDeps): Promise<WaitForWrite
     try {
       result = await readWriteResult(deviceId, seq);
     } catch (error) {
-      const cancelFailure = await cancelReporting(deps, (e) => ({ kind: 'error', error: e }));
-      return cancelFailure ?? { kind: 'error', error };
+      const { cancelError } = await tryCancel(deps);
+      return cancelError === undefined ? { kind: 'error', error } : { kind: 'error', error, cancelError };
     }
     if (result) {
       return result.result === 'ok'
@@ -70,7 +76,7 @@ export async function waitForWrite(deps: WaitForWriteDeps): Promise<WaitForWrite
     }
   }
 
-  const cancelFailure = await cancelReporting(deps, (error) => ({ kind: 'error', error }));
-  if (cancelFailure) return cancelFailure;
-  return isCancelled() ? { kind: 'cancelled' } : { kind: 'timeout' };
+  const { cancelError } = await tryCancel(deps);
+  const kind = isCancelled() ? 'cancelled' as const : 'timeout' as const;
+  return cancelError === undefined ? { kind } : { kind, cancelError };
 }

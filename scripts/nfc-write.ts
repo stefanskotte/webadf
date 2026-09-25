@@ -134,17 +134,15 @@ async function main() {
       process.exit(1);
       break;
     case 'timeout':
-      console.error('Timed out waiting for a tap.');
+      console.error(`Timed out waiting for a tap.${cancelFailureNote(outcome.cancelError)}`);
       process.exit(1);
       break;
     case 'cancelled':
-      console.error('Cancelled.');
+      console.error(`Cancelled.${cancelFailureNote(outcome.cancelError)}`);
       process.exit(1);
       break;
     case 'error':
-      console.error(`Error while waiting for the tap: ${
-        outcome.error instanceof Error ? outcome.error.message : String(outcome.error)
-      } (cancelling the request; it also disarms on its own within 2 min either way)`);
+      console.error(`Error while waiting for the tap: ${errorMessage(outcome.error)}${cancelFailureNote(outcome.cancelError)}`);
       process.exit(1);
       break;
     default: {
@@ -152,6 +150,20 @@ async function main() {
       throw new Error(`unreachable outcome: ${JSON.stringify(exhaustive)}`);
     }
   }
+}
+
+function errorMessage(e: unknown): string {
+  return e instanceof Error ? e.message : String(e);
+}
+
+/** Reported alongside a timeout, a cancellation or a read error whenever the
+ *  cancel itself ALSO failed -- the original reason above is never replaced
+ *  by this, only appended to, so the operator still learns what ended the
+ *  wait even when cancelling could not be confirmed. */
+function cancelFailureNote(cancelError: unknown): string {
+  if (cancelError === undefined) return '';
+  return ` Also failed to cancel the write request: ${errorMessage(cancelError)} -- `
+    + 'the board may stay armed until the 2-minute expiry.';
 }
 
 main().catch((error: unknown) => {
