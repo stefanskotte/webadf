@@ -1475,6 +1475,33 @@ static void poll_interrupted_returns_without_backoff(void) {
     CHECK_EQ_INT(c.since, 9);
 }
 
+// Fix round 1 (controller ruling): "state unchanged" includes DC_BACKOFF.
+// Here a failed poll has put the client in backoff; main.c sleeps it and
+// polls again, and THAT poll is interrupted by a tap. dc_step then returns
+// DC_BACKOFF with backoff_ms intact -- which is NOT a result. main.c must
+// check c.poll_interrupted FIRST and, when set, skip its
+// `else if (polled && s == DC_BACKOFF)` sleep (up to 60 s) and all state
+// handling: send the pending tap (dc_tap), then call dc_step again.
+static void a_poll_interrupted_after_a_backoff_keeps_the_backoff_but_is_flagged(void) {
+    boot();
+    fake_push_connect_failure();
+    CHECK_EQ_INT(dc_step(&c), DC_BACKOFF);           // the prior failed poll
+    uint32_t backoff = c.backoff_ms;
+    CHECK(backoff > 0, "precondition: the client is backing off");
+
+    dc_set_poll_interrupt(&c, intr_yes, NULL);
+    fake_push_held("");
+    push_ok_json("{\"version\":9,\"desired\":null}");  // a trap: a retry would take it
+    int abandons_before = fake_abandon_count();
+    dc_state_t st = dc_step(&c);
+    CHECK(c.poll_interrupted, "flagged -- the one thing main.c must read first");
+    CHECK_EQ_INT(st, DC_BACKOFF);                    // unchanged, and NOT a result
+    CHECK_EQ_INT(c.backoff_ms, backoff);             // no second backoff step either
+    CHECK_EQ_INT(fake_request_count(), 2);           // failed poll + interrupted poll, no retry
+    CHECK(fake_abandon_count() > abandons_before, "the interrupted connection is abandoned");
+    CHECK(!fake_connection_is_kept(), "and never kept");
+}
+
 // tls_read only consults the predicate while nothing is buffered -- so it can
 // fire with half a response already read. That socket is out of step too.
 static void a_poll_interrupted_mid_response_is_abandoned(void) {
@@ -1726,6 +1753,7 @@ int main(void) {
     RUN(nfc_write_bad_id_disarms);
     RUN(nfc_write_title_is_clipped);
     RUN(poll_interrupted_returns_without_backoff);
+    RUN(a_poll_interrupted_after_a_backoff_keeps_the_backoff_but_is_flagged);
     RUN(a_poll_interrupted_mid_response_is_abandoned);
     RUN(a_poll_interrupt_that_says_no_changes_nothing);
     RUN(the_interrupt_is_installed_for_the_poll_only);

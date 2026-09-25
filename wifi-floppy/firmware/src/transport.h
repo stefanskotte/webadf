@@ -54,10 +54,9 @@ typedef struct transport {
 // read()'s "the interrupted() predicate said stop" -- distinct from every
 // other negative (an error or a timeout), because the caller must treat it
 // differently: not a network fault, so no backoff, and not a dead socket, so
-// no reused-connection retry. transport_tls.c's connect-side TLS_ERR_* codes
-// start at the same number, but they come back from connect(), never from
-// read(), so the two cannot be confused by a caller that checks read().
-#define TRANSPORT_INTERRUPTED (-100)
+// no reused-connection retry. Kept clear of transport_tls.c's TLS_ERR_*
+// range (-100..-107) so a raw number in a log line names one thing only.
+#define TRANSPORT_INTERRUPTED (-200)
 
 // Injected clock: milliseconds since boot, monotonic.
 typedef uint32_t (*clock_ms_fn)(void);

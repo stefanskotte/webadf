@@ -270,8 +270,15 @@ typedef struct {
     char     nfc_write_title[DC_TITLE_MAX + 1];
     // True when the LAST dc_step ended because the poll-interrupt predicate
     // said so (see dc_set_poll_interrupt). Nothing else about the client
-    // changed on that step -- not state, not backoff, not since -- so the
-    // caller can do what it interrupted the poll for and simply poll again.
+    // changed on that step -- not state, not backoff, not since.
+    //
+    // WHILE THIS IS SET, dc_step's return value IS NOT A RESULT and must not
+    // be acted on: it is merely the state the client was already in. Entered
+    // from DC_BACKOFF (a poll after a backoff sleep), it returns DC_BACKOFF
+    // with backoff_ms intact -- and a caller that treated that as "sleep the
+    // backoff" would hold the tap for up to DC_BACKOFF_CAP_MS (60 s), the
+    // very delay the interrupt exists to remove. Check this FIRST: no backoff
+    // sleep, no state handling -- send the pending tap, then poll again.
     bool     poll_interrupted;
     bool   (*_poll_intr)(void *ctx);
     void    *_poll_intr_ctx;
@@ -287,7 +294,13 @@ void dc_init(device_client_t *c, transport_t *t, clock_ms_fn now,
  *  inside dc_step -- including from the image read loop, so it must be cheap
  *  and must not block: on this device that loop is the 2 MB transfer. */
 void dc_set_observer(device_client_t *c, dc_observe_fn fn, void *ctx);
-// One iteration: poll, and act on whatever comes back. Returns the new state.
+// One iteration: poll, and act on whatever comes back. Returns the new state
+// -- EXCEPT when c->poll_interrupted is set afterwards: then the poll was cut
+// short by the interrupt (dc_set_poll_interrupt), nothing was decided, and
+// the return value is just the unchanged prior state (DC_BACKOFF included).
+// The caller must check poll_interrupted BEFORE reading the return value, and
+// on true do no backoff sleep and no state handling: send what it interrupted
+// the poll for, then call dc_step again.
 dc_state_t dc_step(device_client_t *c);
 
 bool dc_digest_is_blocked(const device_client_t *c, const char *sha256);

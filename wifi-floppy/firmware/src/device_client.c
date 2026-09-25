@@ -1197,7 +1197,9 @@ dc_state_t dc_step(device_client_t *c) {
         // §4.2). Nothing failed, so no backoff: a backoff here would delay
         // the very poll that picks up the tap's new disk. dc_exchange_i has
         // abandoned the connection; state, since and backoff_ms are exactly
-        // as they were on entry.
+        // as they were on entry -- so the return value below may well be
+        // DC_BACKOFF, and is NOT a result. The caller checks poll_interrupted
+        // first and skips its backoff sleep (device_client.h).
         c->poll_interrupted = true;
         return c->state;
     }
