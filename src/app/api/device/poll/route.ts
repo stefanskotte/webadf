@@ -54,14 +54,20 @@ export async function GET(request: Request) {
     ? Number(sinceRaw)
     : 0;
 
-  // nfcAck is the board's own cursor for the write request (spec §5.3),
-  // parsed exactly like `since` above and for the same reason: a garbled
-  // value must fall back to "never acknowledged" (0), never be read as
-  // "caught up" and strand the board on a request it has not actually seen.
-  const nfcAckRaw = new URL(request.url).searchParams.get('nfcAck') ?? '0';
-  const nfcAck = /^\d+$/.test(nfcAckRaw) && Number.isSafeInteger(Number(nfcAckRaw))
-    ? Number(nfcAckRaw)
-    : 0;
+  // nfcAck is the board's own cursor for the write request (spec §5.3).
+  // A MISSING parameter means the board does not speak NFC at all (firmware
+  // before 1.3.0 sends ?since= alone): read as 0, any nfc_write_seq > 0 would
+  // wake every poll at once, forever, on a board that can never acknowledge.
+  // So absent -> null -> nfcMoved is always false and no nfcWrite key.
+  // A PRESENT value is parsed exactly like `since` above and for the same
+  // reason: a garbled value falls back to "never acknowledged" (0), never
+  // "caught up", which would strand the board on a request it has not seen.
+  const nfcAckRaw = new URL(request.url).searchParams.get('nfcAck');
+  const nfcAck = nfcAckRaw === null
+    ? null
+    : /^\d+$/.test(nfcAckRaw) && Number.isSafeInteger(Number(nfcAckRaw))
+      ? Number(nfcAckRaw)
+      : 0;
 
   const deadline = Date.now() + HOLD_MS;
   for (;;) {
@@ -95,7 +101,7 @@ export async function GET(request: Request) {
     // nfcWriteSeq on the very poll that wakes for it -- without that, the
     // hold would release every second forever on a request the board can
     // never acknowledge.
-    const nfcMoved = tick.nfcWriteSeq > nfcAck;
+    const nfcMoved = nfcAck !== null && tick.nfcWriteSeq > nfcAck;
 
     const clampedFrom = Math.min(from, version);
     // A firmware instruction the device has not acknowledged releases the
@@ -121,7 +127,7 @@ export async function GET(request: Request) {
       // (diskId null) that lets nfcAck catch up -- see the comment on
       // nfcMoved above.
       const nfcRow = nfcMoved ? await readNfcWriteRow(device.deviceId) : null;
-      const nfc = nfcRow ? nfcWriteForPoll(nfcRow, nfcAck, new Date()) : null;
+      const nfc = nfcRow && nfcAck !== null ? nfcWriteForPoll(nfcRow, nfcAck, new Date()) : null;
       return Response.json(
         // `instructionVersion` is ALWAYS present, `update` only when there is
         // one. That asymmetry is the point: a cancellation moves the cursor

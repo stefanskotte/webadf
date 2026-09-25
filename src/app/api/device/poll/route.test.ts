@@ -54,7 +54,7 @@ beforeEach(() => {
 });
 
 describe('GET /api/device/poll -- nfcAck and nfcWrite', () => {
-  it('defaults a missing nfcAck to 0, and wakes on the first tick when nfcWriteSeq has moved', async () => {
+  it('wakes on the first tick when nfcWriteSeq has moved past nfcAck=0', async () => {
     readPollTick.mockResolvedValue(baseTick({ nfcWriteSeq: 1 }));
     readNfcWriteRow.mockResolvedValue({
       nfcWriteSeq: 1, nfcWriteDiskId: 'disk-1',
@@ -63,15 +63,15 @@ describe('GET /api/device/poll -- nfcAck and nfcWrite', () => {
     });
     const { GET } = await import('./route');
     // since=1 matches the tick's version, so ONLY the nfcWriteSeq cursor
-    // (never acknowledged: no ?nfcAck= at all) can be what wakes this.
-    const res = await GET(get('?since=1'));
+    // (never acknowledged: nfcAck=0) can be what wakes this.
+    const res = await GET(get('?since=1&nfcAck=0'));
     expect(res.status).toBe(200);
     expect(await res.json()).toMatchObject({
       nfcWrite: { seq: 1, diskId: 'disk-1', title: 'Turrican II' },
     });
   });
 
-  it('parses nfcAck exactly like since: a garbled value falls back to 0, same as absent', async () => {
+  it('parses a PRESENT nfcAck exactly like since: a garbled value falls back to 0', async () => {
     readPollTick.mockResolvedValue(baseTick({ nfcWriteSeq: 1 }));
     readNfcWriteRow.mockResolvedValue({
       nfcWriteSeq: 1, nfcWriteDiskId: 'disk-1',
@@ -113,7 +113,7 @@ describe('GET /api/device/poll -- nfcAck and nfcWrite', () => {
       title: longTitle,
     });
     const { GET } = await import('./route');
-    const res = await GET(get('?since=1'));
+    const res = await GET(get('?since=1&nfcAck=0'));
     expect(res.status).toBe(200);
     const body = await res.json();
     expect(body.nfcWrite.title.length).toBeLessThanOrEqual(DC_TITLE_MAX);
@@ -128,10 +128,37 @@ describe('GET /api/device/poll -- nfcAck and nfcWrite', () => {
       nfcWriteResultSeq: null, title: 'Turrican II',
     });
     const { GET } = await import('./route');
-    const res = await GET(get('?since=1'));
+    const res = await GET(get('?since=1&nfcAck=0'));
     expect(res.status).toBe(200);
     expect(await res.json()).toMatchObject({
       nfcWrite: { seq: 2, diskId: null, title: null },
     });
+  });
+
+  it('a MISSING nfcAck means firmware that does not speak NFC: the hold holds (no wake, no nfcWrite)', async () => {
+    // Firmware before 1.3.0 sends ?since= alone. Read as nfcAck=0, any
+    // nfc_write_seq > 0 would wake every poll at once, forever -- that board
+    // re-polls immediately and can never acknowledge. Absent must mean "not
+    // an NFC board", so the only way out of this poll is the 25 s hold.
+    vi.useFakeTimers();
+    try {
+      readPollTick.mockResolvedValue(baseTick({ nfcWriteSeq: 3 }));
+      readNfcWriteRow.mockResolvedValue({
+        nfcWriteSeq: 3, nfcWriteDiskId: 'disk-1',
+        nfcWriteExpiresAt: new Date(Date.now() + 60_000), nfcWriteResultSeq: null,
+        title: 'Turrican II',
+      });
+      const { GET } = await import('./route');
+      let settled = false;
+      const pending = GET(get('?since=1')).then((r) => { settled = true; return r; });
+      await vi.advanceTimersByTimeAsync(5_000);
+      expect(settled).toBe(false);
+      await vi.advanceTimersByTimeAsync(25_000);
+      const res = await pending;
+      expect(res.status).toBe(204);
+      expect(readNfcWriteRow).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
