@@ -4,6 +4,7 @@ import {
 } from '@/lib/mount';
 import { readNfcWriteRow } from '@/lib/nfc/store';
 import { nfcWriteForPoll } from '@/lib/nfc/rules';
+import { DC_TITLE_MAX } from '@/lib/device-limits';
 
 // Holds up to 25 s. maxDuration covers the hold plus slack; the platform
 // default would cut the connection mid-hold.
@@ -132,6 +133,19 @@ export async function GET(request: Request) {
         // key is present only when nfcWriteForPoll has something to say
         // (including a disarm), never merely because nfcMoved was true.
         //
+        // nfcWrite.title is bounded to DC_TITLE_MAX HERE, the same way
+        // readDesired bounds `game` -- games.title is an unlimited `text`
+        // column (readNfcWriteRow reads it raw), and DC_POLL_BODY_BYTES is a
+        // fixed buffer the firmware refuses to parse AT ALL when the body
+        // doesn't fit whole (device-limits.ts). Left unbounded, one long
+        // TOSEC title would make nfcWrite alone push the body over budget --
+        // the board could then never parse the poll, never advance nfcAck,
+        // and the hold would wake immediately for the whole 2 min request
+        // lifetime with mounting/ejecting dead for that long. Bounding right
+        // here, not in readNfcWriteRow, keeps it visible at the one place
+        // the body is actually assembled -- see device-limits.test.ts for
+        // the worst-case byte count this bound is sized against.
+        //
         // `update` last. NOTE: that ordering is for readability, not safety --
         // the firmware refuses a truncated body OUTRIGHT (device_client.c's
         // body.truncated check), so nothing is "lost last". What keeps the
@@ -142,7 +156,15 @@ export async function GET(request: Request) {
           desired: state.desired,
           instructionVersion: tick.instructionVersion,
           ...(nfc
-            ? { nfcWrite: { seq: nfc.seq, diskId: nfc.diskId, title: nfc.diskId ? nfcRow!.title : null } }
+            ? {
+                nfcWrite: {
+                  seq: nfc.seq,
+                  diskId: nfc.diskId,
+                  title: nfc.diskId
+                    ? (nfcRow!.title !== null ? nfcRow!.title.slice(0, DC_TITLE_MAX) : null)
+                    : null,
+                },
+              }
             : {}),
           ...(update ? { update } : {}),
         },

@@ -10,6 +10,7 @@
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import type { PollTick, DesiredState } from '@/lib/mount';
+import { DC_TITLE_MAX } from '@/lib/device-limits';
 
 const requireDevice = vi.fn<(r: Request) => Promise<{ deviceId: string; orgId: string }>>(
   async () => ({ deviceId: 'dev-1', orgId: 'org-1' }),
@@ -95,6 +96,28 @@ describe('GET /api/device/poll -- nfcAck and nfcWrite', () => {
     const body = await res.json();
     expect(body).not.toHaveProperty('nfcWrite');
     expect(readNfcWriteRow).not.toHaveBeenCalled();
+  });
+
+  it('bounds a long title to DC_TITLE_MAX before it goes on the wire (review round 1 finding)', async () => {
+    // readNfcWriteRow can hand back games.title raw -- an unbounded `text`
+    // column -- so the route itself must be what enforces the bound, the
+    // same way readDesired bounds `game`. Mocking store.ts here means this
+    // test only proves anything if the ROUTE does the slicing; a title this
+    // long sailing through unbounded is exactly what review round 1 flagged
+    // (a body over DC_POLL_BODY_BYTES the firmware can never parse at all).
+    const longTitle = 'x'.repeat(1000);
+    readPollTick.mockResolvedValue(baseTick({ nfcWriteSeq: 1 }));
+    readNfcWriteRow.mockResolvedValue({
+      nfcWriteSeq: 1, nfcWriteDiskId: 'disk-1',
+      nfcWriteExpiresAt: new Date(Date.now() + 60_000), nfcWriteResultSeq: null,
+      title: longTitle,
+    });
+    const { GET } = await import('./route');
+    const res = await GET(get('?since=1'));
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.nfcWrite.title.length).toBeLessThanOrEqual(DC_TITLE_MAX);
+    expect(body.nfcWrite.title).toBe(longTitle.slice(0, DC_TITLE_MAX));
   });
 
   it('delivers a disarm (diskId and title both null) for an expired request, so the board can catch up', async () => {

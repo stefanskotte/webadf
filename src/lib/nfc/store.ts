@@ -38,7 +38,13 @@ export async function tapDevice(
   return t ? { outcome, title: t.title } : { outcome };
 }
 
-/** The write-request columns plus the disk's title, for the poll payload. */
+/**
+ * The write-request columns plus the disk's title, for the poll payload.
+ *
+ * `title` comes back RAW (unbounded) -- the poll route is the one that
+ * bounds it to DC_TITLE_MAX before it goes on the wire, the same way
+ * readDesired (mount.ts) bounds `game`. See the comment there for why.
+ */
 export async function readNfcWriteRow(deviceId: string) {
   const [r] = await getDb().select({
     nfcWriteSeq: devices.nfcWriteSeq, nfcWriteDiskId: devices.nfcWriteDiskId,
