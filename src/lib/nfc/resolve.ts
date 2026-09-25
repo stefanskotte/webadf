@@ -31,8 +31,10 @@ const TRAILING_DISK_NO_RE = /\s+disk\s+(\d+)$/i;
  *  2. An exact, case-insensitive match on `tosecName` or `sourceFilename`
  *     is a candidate.
  *  3. A trailing "disk N" is stripped from the query and remembered.
- *  4. Any row whose title contains what's left (case-insensitive), filtered
- *     to that disk number when one was given, is also a candidate.
+ *  4. Any row whose title EQUALS what's left (case-insensitive), filtered to
+ *     that disk number when one was given, is a candidate. Only when no title
+ *     is an exact match does containment count instead -- so "Turrican disk 1"
+ *     is Turrican, not Turrican II too.
  *  5. The candidates from 2 and 4 are combined (deduplicated by id): one ->
  *     `one`, several -> `many`, none -> `none`. Combining rather than
  *     short-circuiting on step 2 is what makes an exact filename match on one
@@ -49,9 +51,11 @@ export function resolveDiskQuery(rows: DiskCandidate[], query: string): ResolveR
   const m = TRAILING_DISK_NO_RE.exec(query);
   const rest = m ? query.slice(0, m.index) : query;
   const diskNo = m ? Number(m[1]) : null;
-  const titleMatches = rows.filter(
-    (r) => containsCI(r.title, rest) && (diskNo === null || r.diskNo === diskNo),
-  );
+  const diskOk = (r: DiskCandidate) => diskNo === null || r.diskNo === diskNo;
+  const exactTitle = rows.filter((r) => eqCI(r.title, rest) && diskOk(r));
+  const titleMatches = exactTitle.length > 0
+    ? exactTitle
+    : rows.filter((r) => containsCI(r.title, rest) && diskOk(r));
 
   const candidates: DiskCandidate[] = [];
   const seen = new Set<string>();

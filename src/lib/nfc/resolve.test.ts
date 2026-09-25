@@ -64,4 +64,17 @@ describe('resolveDiskQuery', () => {
     ];
     expect(resolveDiskQuery(rows, 'amberstar')).toEqual({ kind: 'many', disks: rows });
   });
+
+  it('an exact title match beats a substring match: "Turrican disk 1" is Turrican, not Turrican II', () => {
+    const ID3 = '00000000-1111-5222-8333-444444444444';
+    const rows = [
+      disk({ id: ID, title: 'Turrican', diskNo: 1 }),
+      disk({ id: ID2, title: 'Turrican II', diskNo: 1 }),
+      disk({ id: ID3, title: 'Turrican III', diskNo: 1 }),
+    ];
+    expect(resolveDiskQuery(rows, 'Turrican disk 1')).toEqual({ kind: 'one', disk: rows[0] });
+    expect(resolveDiskQuery(rows, 'TURRICAN')).toEqual({ kind: 'one', disk: rows[0] });
+    // With no exact title, substring matching still applies.
+    expect(resolveDiskQuery(rows, 'turr disk 1')).toEqual({ kind: 'many', disks: rows });
+  });
 });
