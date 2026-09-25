@@ -66,6 +66,71 @@ static int first_read_op(void) {
     return F.first_read_at;
 }
 
+// Steps `steps` times, `gap` ms apart, with a per-step cap check of `cap`.
+// Models core0 at 100 kHz with a disk mounted: the reader gets one register
+// operation per pass, and passes are far apart in reader time.
+static int cap_breaks;
+static void run_capped(int steps, uint32_t gap, int cap) {
+    for (int k = 0; k < steps; k++) {
+        int before = F.ops;
+        int n = nfc_step(&R);
+        if (n > cap || F.ops - before != n) {
+            if (cap_breaks++ == 0)
+                printf("  cap: step at %u ms returned %d, bus saw %d (cap %d)\n",
+                       (unsigned)now, n, F.ops - before, cap);
+        }
+        nfc_event_t e;
+        if (nfc_take_event(&R, &e) && nev < 64) evs[nev++] = e;
+        now += gap;
+    }
+}
+
+static void the_ops_cap_is_honoured(void) {
+    setup();
+    cap_breaks = 0;
+    nfc_set_max_ops(&R, 1);
+    put_id(ID);
+    run_capped(20000, 1, 1);
+    CHECK_EQ_INT(cap_breaks, 0);
+    CHECK_EQ_INT(count(NFC_EV_TAG_READ), 1);     // slower, but it still gets there
+    // Back to the full budget: steps may use up to NFC_MAX_OPS_PER_STEP again.
+    nfc_set_max_ops(&R, NFC_MAX_OPS_PER_STEP);
+    F.tag_present = false;
+    run(2000);
+    F.tag_present = true;
+    int widest = 0;
+    for (int k = 0; k < 2000; k++) {
+        int n = nfc_step(&R);
+        if (n > widest) widest = n;
+        nfc_event_t e;
+        if (nfc_take_event(&R, &e) && nev < 64) evs[nev++] = e;
+        now++;
+    }
+    CHECK_EQ_INT(widest, NFC_MAX_OPS_PER_STEP);  // the full budget is back
+    CHECK_EQ_INT(count(NFC_EV_TAG_READ), 2);
+    // Out-of-range caps are clamped, never 0 (the reader must still move) and
+    // never above the global budget.
+    nfc_set_max_ops(&R, 0);
+    CHECK_EQ_INT(R.max_ops, 1);
+    nfc_set_max_ops(&R, 99);
+    CHECK_EQ_INT(R.max_ops, NFC_MAX_OPS_PER_STEP);
+    end_checks();
+}
+
+// The debounce anchor is the moment the tap was REPORTED, not the anticoll
+// that began it. At one op per pass and passes 10 ms apart, a read takes well
+// over a second from anticoll to report; anchored at anticoll, the tag still
+// held on the reader would be "new" again on the very next poll.
+static void a_slow_read_held_tag_reports_once(void) {
+    setup();
+    cap_breaks = 0;
+    nfc_set_max_ops(&R, 1);
+    put_id(ID);
+    run_capped(3000, 10, 1);                     // 30 s, tag held throughout
+    CHECK_EQ_INT(cap_breaks, 0);
+    CHECK_EQ_INT(count(NFC_EV_TAG_READ), 1);
+}
+
 static void absent_chip_stays_absent_and_rechecks(void) {
     setup();
     F.vanish_after_ops = 0;
@@ -353,5 +418,7 @@ int main(void) {
     RUN(two_failed_transfers_are_not_a_loss);
     RUN(bad_id_is_refused_not_written);
     RUN(untaken_event_holds_the_reader);
+    RUN(the_ops_cap_is_honoured);
+    RUN(a_slow_read_held_tag_reports_once);
     return REPORT();
 }

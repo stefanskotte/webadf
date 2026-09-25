@@ -59,6 +59,7 @@ typedef struct nfc_reader {
     int i;               // byte counter for FIFO loads and unloads
     int tmp;             // the read half of a read-modify-write
     int ops;             // register operations used in this step
+    int max_ops;         // this step's cap: 1..NFC_MAX_OPS_PER_STEP (nfc_set_max_ops)
     int fails;           // consecutive failed transfers
     uint32_t t0;         // when the current wait began
     bool checked_once;   // ABSENT has made its first presence check
@@ -78,7 +79,6 @@ typedef struct nfc_reader {
 
     // The tag being handled. Discarded whole if the chip is lost.
     uint8_t  uid[4];
-    uint32_t seen_at;
     int      block;
     bool     writing;    // this arrival runs WRITE, decided when it arrived
     uint32_t write_seq;
@@ -111,6 +111,12 @@ void nfc_init(nfc_reader_t *r, const nfc_bus_t *bus, uint32_t (*now_ms)(void));
 // event is ever overwritten, so the caller need only drain the slot between
 // steps.
 int  nfc_step(nfc_reader_t *r);
+
+// Caps each later nfc_step() at `cap` register operations, clamped to
+// 1..NFC_MAX_OPS_PER_STEP (nfc_init sets the full budget). The caller lowers
+// it where a pass must stay short -- on the board, while a disk is mounted
+// and the bus runs at 100 kHz (no panel), where 4 operations are ~2 ms.
+void nfc_set_max_ops(nfc_reader_t *r, int cap);
 
 // One-slot mailbox; false = none.
 bool nfc_take_event(nfc_reader_t *r, nfc_event_t *out);

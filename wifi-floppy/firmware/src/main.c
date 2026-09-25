@@ -610,8 +610,11 @@ static bool nfc_event_pending(void *ctx) {
 
 /** core0, in the display pump's slot: never both on the bus in one pass.
  *  Arms or disarms on a new write request, expires one after two minutes,
- *  runs one budgeted step, and forwards what it produced to core1. */
-static void nfc_core0_step(nfc_armed_t *armed) {
+ *  runs one budgeted step, and forwards what it produced to core1.
+ *  `short_pass`: a disk is mounted AND no panel answered, so the bus is still
+ *  at the probe's 100 kHz -- one register op there is ~0.5 ms of a pass the
+ *  Amiga is waiting on, so the reader gets 1 op instead of 4. */
+static void nfc_core0_step(nfc_armed_t *armed, bool short_pass) {
     static uint32_t wreq_last;
     const uint32_t now = clock_ms();
     nfc_wreq_t req;
@@ -632,6 +635,7 @@ static void nfc_core0_step(nfc_armed_t *armed) {
         wf_logf(WF_INFO, "nfc: write %lu expired on the board (2 min)", (unsigned long)armed->seq);
     }
 
+    nfc_set_max_ops(&g_nfc, short_pass ? 1 : NFC_MAX_OPS_PER_STEP);
     nfc_step(&g_nfc);
     const int level = nfc_present(&g_nfc) ? 1 : 2;
     if (level != g_nfc_reader) {
@@ -2404,7 +2408,8 @@ int main(void) {
         }
         // One bus user per pass (spec §4.1): the panel when it has bytes
         // queued, otherwise the tag reader, whose nfc_step caps itself at
-        // NFC_MAX_OPS_PER_STEP register operations.
+        // NFC_MAX_OPS_PER_STEP register operations -- 1 while a disk is
+        // mounted on a panel-less (100 kHz) bus.
         //
         // Gated on display_in_sync, not on display_pump's return: that is the
         // bytes SENT, and it is 0 both when there was nothing to send and when
@@ -2416,7 +2421,7 @@ int main(void) {
                                                              : DISP_BUDGET_IDLE) == 0;
         } else {
             pump_failed = false;
-            nfc_core0_step(&nfc_armed);
+            nfc_core0_step(&nfc_armed, disk_mounted && g_panel_addr == 0);
         }
 
         {

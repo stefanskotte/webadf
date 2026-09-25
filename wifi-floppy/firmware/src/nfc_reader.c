@@ -487,7 +487,6 @@ static bool st_anticoll(nfc_reader_t *r) {
         go(r, ST_COOLDOWN);
         return true;
     }
-    r->seen_at = now;
     // Read or write is decided here, once, from what was armed when the tag
     // arrived; a disarm or re-arm from now on does not change this tag's run.
     r->writing = r->armed;
@@ -642,10 +641,13 @@ static bool st_write(nfc_reader_t *r) {
 
 static bool st_report(nfc_reader_t *r) {
     // The tap is now reported: from here on, this UID held on the reader is
-    // the same tap.
+    // the same tap. Anchored at NOW, not at the anticoll that began it: at
+    // one register op per pass (a mounted disk at 100 kHz) a read can take
+    // over a second from anticoll to here, and an anchor that old would make
+    // the still-held tag a fresh arrival on the very next poll.
     r->have_last = true;
     memcpy(r->last_uid, r->uid, 4);
-    r->last_seen = r->seen_at;
+    r->last_seen = r->now_ms();
     if (r->built.kind == NFC_EV_WRITE_DONE && r->armed && r->arm_seq == r->built.seq)
         r->armed = false;            // only the request that ran; a newer one stays
     r->writing = false;
@@ -716,6 +718,7 @@ void nfc_init(nfc_reader_t *r, const nfc_bus_t *bus, uint32_t (*now_ms)(void)) {
     memset(r, 0, sizeof *r);
     r->bus = *bus;
     r->now_ms = now_ms;
+    r->max_ops = NFC_MAX_OPS_PER_STEP;
     go(r, ST_ABSENT);
 }
 
@@ -731,7 +734,7 @@ int nfc_step(nfc_reader_t *r) {
         emit(r, &e);
         return 0;
     }
-    while (r->ops < NFC_MAX_OPS_PER_STEP && !r->has_ev) {
+    while (r->ops < r->max_ops && !r->has_ev) {
         bool more = handle(r);
         if (r->fails >= LOSS_FAILS && r->state != ST_ABSENT) {
             lose_chip(r);
@@ -762,4 +765,8 @@ void nfc_disarm(nfc_reader_t *r) {
 
 bool nfc_present(const nfc_reader_t *r) {
     return r->state != ST_ABSENT;
+}
+
+void nfc_set_max_ops(nfc_reader_t *r, int cap) {
+    r->max_ops = cap < 1 ? 1 : cap > NFC_MAX_OPS_PER_STEP ? NFC_MAX_OPS_PER_STEP : cap;
 }
