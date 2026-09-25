@@ -58,13 +58,17 @@ SHA-256; you browse them and press mount; a custom board emulates the floppy dri
 | **Write-back piece 2b (board)** | ✅ **done 2026-09-19, verified on hardware.** Amiga saves upload, close and land on the server as history versions, including offline and eject-right-after; keep-alive connection (4k). Two paths never yet run on the board: a multi-file save burst over keep-alive, and `up_forces_wprot`; see 4i–4k |
 | **Write-back piece 2a (server)** | ✅ **done 2026-09-18, 5 tasks + final fix wave, merged to `master`.** Disk history tables, browser edits and renames recorded as versions, `POST /api/device/write` + `/close`, live write-protect; see 4g |
 | **HFE v1 disks** | ✅ **done 2026-09-24, merged and live; bench-proven 2026-09-25.** Upload keeps the `.hfe`, the board plays it read-only, "Extract as ADF" when every sector decodes. Long-track HFEs (fw 1.2.0, 14 KB tracks, per-board `trackMaxBytes`): **Turrican boots on the Amiga**; extract round trip passed byte-exact. Only the weak-bit bench item is owed (needs a weak-bit HFE). A cylinder-17 hang after a disk swap is parked; see 3al, 3al-a |
+| **Drive chips in the header** | ✅ **done 2026-09-25, merged and live.** Every paired board as a chip beside the wordmark: status dot, name, mounted disk; caret menu with Go to disk (the game page), Disk is Protected/Writable, and Eject (no confirm, below a divider). Pending states while a mount or eject converges. 1 chip + "+k" at 1280, 2 at 1536, 3 at 1920; below 1280 a single "Drives" list. Fed by `liveStateRows` (now carries the mounted game/title/disk no/format, all in `liveFingerprint`); `src/lib/drive-chips.ts`, `src/components/shell/drive-chips.tsx`. Unverified: 640–700 px the Drives button overlaps the pill (the search box already does, 640–767 px, on master) |
+| **Five minors, 2026-09-25** | ✅ **merged and live.** Update confirm is a real modal (role=dialog, Escape, focus, Enter submits); the 50-board cap (`MAX_UPDATE_BATCH`) shows in the update bar; re-extracting an EDITED extract is a 409 `already_extracted` with a link; the not-extractable reason is visible text; a refused HFE's bytes are deleted when nothing references them (a two-round-trip race is documented in `releaseRefused`) |
 | **Hardware** | rev A scrap (mirrored), **rev A2 in hand and working**, **rev B is current and unfabricated** — keepout moved to the antenna end, a silkscreen that carries lettering, D1 polarity marked. Respin is OUTSOURCED to Shanshe (2026-09-25), who returns a complete KiCad project to fold back in (§4 backlog); it owes the LED series resistor and 1k pull-ups on the floppy lines (4c), and an Amiga-reset wire if reboot detection is ever wanted (3al-a); see 3s and 3x |
 
 **Current branch (2026-09-25):** `master`, clean and pushed; everything in the table is merged
 and live. The board runs firmware `1.2.0+ge8ac726` (seq 9). **No increment is in flight.**
 
 **Still open, none started:** the HFE weak-bit bench item; the two hardware-untested write-back
-paths (2b row); the menu floppy chips (§4 backlog); the super-admin audit log; the rev B respin.
+paths (2b row); the super-admin audit log; the rev B respin (with Shanshe); NFC (designed later,
+tag writing is a Claude-driven USB tool). **Suite on master 2026-09-25: 1,101 vitest, build clean,
+362/362 Playwright (1.1 h), run alone on the database.**
 
 *Historical (2026-09-03 onward), kept for the record:* the write-protect flip on a mounted disk
 was built in 4j. The suite counts below are from 2026-09-14; the full suite is now **349
@@ -1774,7 +1778,9 @@ separately.
   up to `DC_POLL_TIMEOUT_MS`. "Mounted" should mean the device reported it (`mountedSha256`
   came back), not that we asked -- 3y's status heartbeat is what makes that observable.
 
-- **Every wifi-floppy as a small floppy chip beside the top menu, each with a caret menu.**
+- ~~**Every wifi-floppy as a small floppy chip beside the top menu, each with a caret menu.**~~
+  **DONE 2026-09-25 as "drive chips"** (status table). No floppy pictogram (operator dropped the
+  drawings in the device-card round). The original entry follows.
   Requested by the operator 2026-09-22. One small floppy symbol per paired device, next to the
   `TopNav` pill, and a caret on each opening a menu with three actions: **go to the mounted
   floppy**, **eject**, and **writable / protected**. It is quick access only: **`/devices`
@@ -2656,6 +2662,13 @@ was most likely this environment rather than the code: a VS Code `rg` process ea
 processes from other chats being killed by pattern (`pkill -f`, since forbidden). Do not open a
 bisect for it. If a full run on port 3100, with a dev server you started and logged yourself,
 still fails a spec that passes alone, THEN it is real.
+
+**AND A MECHANISM, measured the same day: separate ports do NOT isolate two runs.** There is one
+database. Every run's `globalTeardown` (and per-spec cleanup) deletes ALL `@example.test` users,
+so it deletes the other run's users mid-test: 307s to /sign-in, HTML from JSON routes, sign-ups
+that never reach /library. Two of my subagents on 3100 and 3200 hit exactly this; a lone run
+straight after was 362/362. **Run e2e one at a time across every session and chat.** The real
+fix is a Neon branch for the suite (3aj's note).
 
 `playwright.config.ts` takes `PORT` (and hands `BASE_URL`/`BETTER_AUTH_URL` to the server it
 spawns), so two chats can run the suite at once -- **but only if they pick different ports.**
