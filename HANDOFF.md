@@ -58,7 +58,7 @@ SHA-256; you browse them and press mount; a custom board emulates the floppy dri
 | **Write-back piece 2b (board)** | ✅ **done 2026-09-19, verified on hardware.** Amiga saves upload, close and land on the server as history versions, including offline and eject-right-after; keep-alive connection (4k). Two paths never yet run on the board: a multi-file save burst over keep-alive, and `up_forces_wprot`; see 4i–4k |
 | **Write-back piece 2a (server)** | ✅ **done 2026-09-18, 5 tasks + final fix wave, merged to `master`.** Disk history tables, browser edits and renames recorded as versions, `POST /api/device/write` + `/close`, live write-protect; see 4g |
 | **HFE v1 disks** | ✅ **done 2026-09-24, merged and live; bench-proven 2026-09-25.** Upload keeps the `.hfe`, the board plays it read-only, "Extract as ADF" when every sector decodes. Long-track HFEs (fw 1.2.0, 14 KB tracks, per-board `trackMaxBytes`): **Turrican boots on the Amiga**; extract round trip passed byte-exact. Only the weak-bit bench item is owed (needs a weak-bit HFE). A cylinder-17 hang after a disk swap is parked; see 3al, 3al-a |
-| **Hardware** | rev A scrap (mirrored), **rev A2 in hand and working**, **rev B is current and unfabricated** — keepout moved to the antenna end, a silkscreen that carries lettering, D1 polarity marked. Respin is deliberately LAST; it owes the LED series resistor and 1k pull-ups on the floppy lines (4c), and an Amiga-reset wire if reboot detection is ever wanted (3al-a); see 3s and 3x |
+| **Hardware** | rev A scrap (mirrored), **rev A2 in hand and working**, **rev B is current and unfabricated** — keepout moved to the antenna end, a silkscreen that carries lettering, D1 polarity marked. Respin is OUTSOURCED to Shanshe (2026-09-25), who returns a complete KiCad project to fold back in (§4 backlog); it owes the LED series resistor and 1k pull-ups on the floppy lines (4c), and an Amiga-reset wire if reboot detection is ever wanted (3al-a); see 3s and 3x |
 
 **Current branch (2026-09-25):** `master`, clean and pushed; everything in the table is merged
 and live. The board runs firmware `1.2.0+ge8ac726` (seq 9). **No increment is in flight.**
@@ -2143,10 +2143,14 @@ separately.
     requirement of the feature, not a blocker. The UI should say so where an HD disk is
     created or mounted, since a 1.3 machine would simply fail to read it.
 
-- **NFC "tap a card to mount" on the board (PN532, I2C, read only).** Requested by the operator
+- **NFC "tap a card to mount" on the board (PN532, I2C, read AND write).** Requested by the operator
   2026-09-24: a PN532 module reads a disk's hash off an NFC card, the board calls the web app, and the
-  web app mounts the matching ADF. The module connects over I2C, and only reading is needed (no
-  card writing on the board). Nothing designed yet. Facts to start from:
+  web app mounts the matching ADF. The module connects over I2C. **REVISED 2026-09-25: the board
+  must also WRITE tags** — the operator has no other NFC writer, so for testing (at least) the same
+  board has to put a disk's identity onto a blank card, e.g. "write the mounted disk to the next
+  card tapped", armed from the web app. The PN532 writes NTAG21x natively, so this is firmware and
+  protocol work, not a hardware change. This answers the "how cards get written" question below.
+  Nothing designed yet. Facts to start from:
   - **The I2C bus already exists.** The OLED is on I2C1, GP18 (SDA) / GP19 (SCL), header pins
     24/25 (`floppy_io.h:57-58`). The PN532's I2C address is 0x24 and the SSD1306's is 0x3C, so
     they can share the bus. Check the pull-ups and the PN532 board's own level/DIP settings (I2C
@@ -2487,6 +2491,12 @@ separately.
 - **Moving ADF→MFM encoding onto the Pico** (spec §13) if server-side encoding
   (9.6 ms/disk, ~2 MB over TLS) ever turns out not to hold up. `adfmfm` is written
   dependency-free specifically so this would be a transliteration, not a rewrite.
+- **Rev B respin is OUTSOURCED (operator, 2026-09-25).** A contractor, Shanshe, is making it and
+  will return a COMPLETE KiCad project. When it arrives, fold it into `wifi-floppy/hardware/`
+  (replacing, not merging by hand), then run `pnpm hw:verify` and check it carries what rev B owes:
+  the LED series resistor, 1k pull-ups on the floppy lines (4c), PIM726 for U1 (the PSRAM part),
+  and ideally the Amiga-reset wire (3al-a). Diff the netlist against rev A2's, don't eyeball it.
+
 - **Blob garbage collection** — reclaiming blobs whose last referencing disk is gone. Needs
   cross-org reference counting and deletion from Vercel Blob as well as Postgres. Deferred at
   the operator's direction during the super-admin design; the admin cascade delete deliberately
@@ -2636,6 +2646,12 @@ Learned the hard way; several cost real debugging time.
 ---
 
 ## Two sessions running e2e will kill each other's dev server
+
+**Operator's reading, 2026-09-25:** the "intermittent cross-spec interference" logged in 3aj/3ak
+was most likely this environment rather than the code: a VS Code `rg` process eating memory, and
+processes from other chats being killed by pattern (`pkill -f`, since forbidden). Do not open a
+bisect for it. If a full run on port 3100, with a dev server you started and logged yourself,
+still fails a spec that passes alone, THEN it is real.
 
 `playwright.config.ts` takes `PORT` (and hands `BASE_URL`/`BETTER_AUTH_URL` to the server it
 spawns), so two chats can run the suite at once -- **but only if they pick different ports.**
