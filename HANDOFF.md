@@ -60,7 +60,7 @@ SHA-256; you browse them and press mount; a custom board emulates the floppy dri
 | **HFE v1 disks** | ✅ **done 2026-09-24, merged and live; bench-proven 2026-09-25.** Upload keeps the `.hfe`, the board plays it read-only, "Extract as ADF" when every sector decodes. Long-track HFEs (fw 1.2.0, 14 KB tracks, per-board `trackMaxBytes`): **Turrican boots on the Amiga**; extract round trip passed byte-exact. Only the weak-bit bench item is owed (needs a weak-bit HFE). A cylinder-17 hang after a disk swap is parked; see 3al, 3al-a |
 | **Drive chips in the header** | ✅ **done 2026-09-25, merged and live.** Every paired board as a chip beside the wordmark: status dot, name, mounted disk; caret menu with Go to disk (the game page), Disk is Protected/Writable, and Eject (no confirm, below a divider). Pending states while a mount or eject converges. 1 chip + "+k" at 1280, 2 at 1536, 3 at 1920; below 1280 a single "Drives" list. Fed by `liveStateRows` (now carries the mounted game/title/disk no/format, all in `liveFingerprint`); `src/lib/drive-chips.ts`, `src/components/shell/drive-chips.tsx`. Unverified: 640–700 px the Drives button overlaps the pill (the search box already does, 640–767 px, on master) |
 | **Five minors, 2026-09-25** | ✅ **merged and live.** Update confirm is a real modal (role=dialog, Escape, focus, Enter submits); the 50-board cap (`MAX_UPDATE_BATCH`) shows in the update bar; re-extracting an EDITED extract is a 409 `already_extracted` with a link; the not-extractable reason is visible text; a refused HFE's bytes are deleted when nothing references them (a two-round-trip race is documented in `releaseRefused`) |
-| **Hardware** | rev A scrap (mirrored), **rev A2 in hand and working**, **rev B is current and unfabricated** — keepout moved to the antenna end, a silkscreen that carries lettering, D1 polarity marked. Respin is OUTSOURCED to Shanshe (2026-09-25), who returns a complete KiCad project to fold back in (§4 backlog); it owes the LED series resistor and 1k pull-ups on the floppy lines (4c), and an Amiga-reset wire if reboot detection is ever wanted (3al-a); see 3s and 3x |
+| **Hardware** | rev A scrap (mirrored), **rev A2 in hand and working**, **rev B is current and unfabricated** — keepout moved to the antenna end, a silkscreen that carries lettering, D1 polarity marked. Respin is OUTSOURCED to Shanshe (2026-09-25), who returns a complete KiCad project to fold back in (§4 backlog); it owes the LED series resistor and 1k pull-ups on the floppy lines (4c), and an Amiga-reset wire if reboot detection is ever wanted (3al-a), and I2C connectors for the OLED and the NFC reader (§4 rev B entry); see 3s and 3x |
 
 **Current branch (2026-09-25):** `master`, clean and pushed; everything in the table is merged
 and live. The board runs firmware `1.2.0+ge8ac726` (seq 9). **No increment is in flight.**
@@ -2525,7 +2525,12 @@ separately.
   will return a COMPLETE KiCad project. When it arrives, fold it into `wifi-floppy/hardware/`
   (replacing, not merging by hand), then run `pnpm hw:verify` and check it carries what rev B owes:
   the LED series resistor, 1k pull-ups on the floppy lines (4c), PIM726 for U1 (the PSRAM part),
-  and ideally the Amiga-reset wire (3al-a). Diff the netlist against rev A2's, don't eyeball it.
+  ideally the Amiga-reset wire (3al-a), and **I2C connectors for the OLED AND the NFC reader**
+  (operator, 2026-09-25): two 4-pin headers (3V3/GND/SDA/SCL) on GP18/GP19, or Qwiic/STEMMA-QT
+  style JST-SH sockets, so both plug in instead of sharing flying leads -- a loose lead cost most
+  of the NFC bench session. 3V3 only (the modules pull SDA/SCL up to their own VCC; RP2350 pins
+  are not 5 V tolerant), and ideally GP20 (IRQ) / GP21 (reset) broken out beside them for the
+  reader. Diff the netlist against rev A2's, don't eyeball it.
 
 - **Blob garbage collection** — reclaiming blobs whose last referencing disk is gone. Needs
   cross-org reference counting and deletion from Vercel Blob as well as Postgres. Deferred at
