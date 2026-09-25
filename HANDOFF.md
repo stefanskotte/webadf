@@ -4440,8 +4440,13 @@ The fix (operator approved "its good, proceed"):
   operator declined to act unless reboots can be detected with certainty. The board has no RESET
   wire; only the bus pattern (select idle, re-home to TRK0, read cyl 0) is visible, and a trackloader
   can mimic it. A certain signal needs the Amiga's reset wired to a spare pin on a future board rev.
-  The extract round trip is also still to run on the board. Locally, AmigaTestKit.hfe (made by
-  `gw convert` from adf-archive/AmigaTestKit.adf) extracts back byte-identical, sha 4111eb94...
+  **Extract round trip PASSED on the board, 2026-09-25.** AmigaTestKit.hfe (made by `gw convert` from
+  adf-archive/AmigaTestKit.adf) was uploaded and booted as an HFE. Extract as ADF then produced sha
+  4111eb94..., byte-identical to the original and to the local prediction. TOSEC independently
+  matched it as "Amiga Test Kit v1.4 (2019-06-03)(Keirf)" and moved the HFE and the ADF into that
+  game. The extracted ADF (disk d65dbe62) was mounted with the Amiga off, then booted to the Test Kit
+  diagnostics. Spec §7 HFE bench status: clean HFE boots ✓, long-track HFE boots ✓ (Turrican),
+  extract then mount the ADF ✓, weak-bit title ✗ (still owed; the operator needs a weak-bit HFE).
 - **(Proven 2026-09-25, above.) Was unproven until the bench:** a 108,000-cell track plays as a 216 ms revolution at the
   fixed 2 µs cell, and INDEX follows the DMA wrap. A Gotek plays this HFE the same way, but
   only booting Turrican on the board proves the loader accepts it.
