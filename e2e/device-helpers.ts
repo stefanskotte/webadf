@@ -9,6 +9,7 @@ import { firmwareReleases } from '@/db/schema/firmware';
 import { collections } from '@/db/schema/collections';
 import { organization, member, user } from '@/db/schema/auth';
 import { diskStore } from '@/lib/storage';
+import { stableId } from '@/lib/ingest';
 import { signedUpOrgIds } from './helpers';   // also a side effect: loads .env.local before @/db is used
 
 // Playwright runs one module instance per spec file with fullyParallel: false,
@@ -84,7 +85,11 @@ export async function seedDisk(
 ) {
   const db = getDb();
   const gameId = `gam_${randomUUID()}`;
-  const diskId = randomUUID();
+  // Same formula the real ingest route uses (src/app/api/ingest/complete/
+  // route.ts): stableId('disk', gameId, sha256) -- src/lib/nfc/rules.ts's
+  // DISK_ID_RE (the tap endpoint's tag-format check) matches only that
+  // shape, and a seeded disk that doesn't match it can never be tapped.
+  const diskId = stableId('disk', gameId, opts.sha256);
   const sizeBytes = opts.sizeBytes ?? 901120;
 
   await db.insert(blobs).values({
@@ -136,7 +141,8 @@ export async function addDisk(
   opts: { diskNo: number; sha256: string; label?: string; writeProtected?: boolean },
 ) {
   const db = getDb();
-  const diskId = randomUUID();
+  // Same formula seedDisk above now uses -- see its comment.
+  const diskId = stableId('disk', gameId, opts.sha256);
 
   await db.insert(blobs).values({
     sha256: opts.sha256, sizeBytes: 901120, storageKey: `adf/${opts.sha256}`,
