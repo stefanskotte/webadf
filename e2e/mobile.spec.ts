@@ -192,6 +192,28 @@ test('the Devices grid is two columns at 390px, and nothing overflows the viewpo
   expect(overflow).toBeLessThanOrEqual(0);
 });
 
+test('an HFE that cannot be extracted says why on screen, not only in a tooltip, without overflowing', async ({ page }) => {
+  // A phone has no hover, so a `title` alone left "play only" with no why.
+  const u = await signUpFresh(page);
+  const { gameId, diskId } = await seedDisk(u.orgId, {
+    title: `Mobile HFE ${runTag()}`, diskNo: 1, sha256: sha(`hfe-${randomUUID()}`),
+    sizeBytes: 2_049_024, imageFormat: 'hfe',
+  });
+  const reason = 'Track 12 (cylinder 6, side 0): 3 of 11 sectors readable';
+  await getDb().update(disks).set({ extractable: false, extractReason: reason }).where(eq(disks.id, diskId));
+
+  await page.goto(`/games/${gameId}`);
+  const why = page.getByTestId(`extract-why-${diskId}`);
+  await expect(why).toBeVisible();
+  await expect(why).toHaveText(reason);
+  const box = (await why.boundingBox())!;
+  expect(box.x + box.width).toBeLessThanOrEqual(390);
+  const overflow = await page.evaluate(
+    () => document.documentElement.scrollWidth - document.documentElement.clientWidth,
+  );
+  expect(overflow).toBeLessThanOrEqual(0);
+});
+
 test('a file tree row shows its name AND its download control', async ({ page }) => {
   const u = await signUpFresh(page);
   const tag = randomUUID().slice(0, 8);

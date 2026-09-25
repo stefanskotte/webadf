@@ -17,7 +17,8 @@ export const maxDuration = 60;
  * Extract as ADF (HFE spec D5): a NEW, ordinary adf disk in the same game,
  * made from the HFE's AmigaDOS sectors. The HFE row and its bytes are never
  * touched. Idempotent: the ADF's id derives from its content, so extracting
- * twice lands on the same row.
+ * twice lands on the same row -- unless that row has been edited since,
+ * which is a 409 `already_extracted` rather than a silent no-op (below).
  *
  * THE ENTITLEMENT is the boundary, as on every byte route; 404, never 403.
  */
@@ -59,6 +60,23 @@ export async function POST(_request: Request, ctx: { params: Promise<{ id: strin
   const sha256 = createHash('sha256').update(x.adf).digest('hex');
   const hfeName = disk.tosecName ?? disk.sourceFilename ?? `${disk.sha256.slice(0, 12)}.hfe`;
   const adfName = hfeName.replace(/\.hfe$/i, '') + '.adf';
+  const diskId = stableId('disk', disk.gameId, sha256);
+
+  // ALREADY EXTRACTED, AND EDITED SINCE. disks.id never changes when a disk
+  // is edited -- only disks.sha256 moves (disk-history/store.ts) -- so the
+  // row at this content-derived id can hold different bytes by now. The
+  // insert below would then do nothing, and answering 200 with this id
+  // claimed a fresh extract while handing back somebody's edited disk.
+  // Refused before anything is written, naming the disk so the page can link
+  // to it; its History still holds these exact bytes as version 0, and a
+  // restore gets them back. The same bytes on that row is a plain repeat,
+  // and stays the idempotent 200 it always was.
+  const [existing] = await db.select({ sha256: disks.sha256 }).from(disks)
+    .where(and(eq(disks.id, diskId), eq(disks.orgId, orgId)))
+    .limit(1);
+  if (existing && existing.sha256 !== sha256) {
+    return Response.json({ error: 'already_extracted', diskId }, { status: 409 });
+  }
 
   await diskStore.put(sha256, x.adf);
   await db.insert(blobs).values({
@@ -66,7 +84,6 @@ export async function POST(_request: Request, ctx: { params: Promise<{ id: strin
   }).onConflictDoNothing();
   await db.insert(entitlements).values({ orgId, sha256, sourceFilename: adfName }).onConflictDoNothing();
 
-  const diskId = stableId('disk', disk.gameId, sha256);
   await db.insert(disks).values({
     id: diskId, gameId: disk.gameId, orgId, diskNo: disk.diskNo, sha256,
     label: `Extracted from ${hfeName}`, tosecName: adfName, isBoot: disk.isBoot,
