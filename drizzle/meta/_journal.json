@@ -176,6 +176,13 @@
       "when": 1790277384752,
       "tag": "0024_swift_tombstone",
       "breakpoints": true
+    },
+    {
+      "idx": 25,
+      "version": "7",
+      "when": 1790360359951,
+      "tag": "0025_nfc_tap",
+      "breakpoints": true
     }
   ]
 }
