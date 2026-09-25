@@ -73,6 +73,18 @@ Core1 publishes the write request to core0 the same way: `{ seq, diskId }`, or n
 Core1 turns `TAG_READ` into `POST /api/device/tap` and shows the answer through `ui_publish`.
 All the other events are shown locally.
 
+**A pending tap interrupts the held poll** (amendment, 2026-09-25, found while planning). Core1
+spends up to 25 s inside a held poll (`dc_step` → `tls_read`'s wait loop), and a tap cannot be sent
+on the same connection until that returns, so a naive design would make a tap take up to 25 s.
+Instead:
+- `transport_t` gains an optional `interrupted(ctx)` predicate. `tls_read`'s wait loop checks it
+  and returns a distinct `TRANSPORT_INTERRUPTED` code.
+- The device client installs the predicate only around the poll request. On
+  `TRANSPORT_INTERRUPTED` it abandons the connection (it can't be reused mid-response) and
+  returns from `dc_step` **without** backoff.
+- Core1 then posts the tap. The next poll returns immediately with the new desired disk.
+- **Cost:** one fresh TLS handshake (~1.25 s, measured) per tap, instead of up to 25 s of waiting.
+
 ### 4.3 Presence and loose leads
 
 - **At boot:** one presence check at 0x28. Absent → state `ABSENT`, one log line, and the board
@@ -158,10 +170,14 @@ The activity LED blinks once on every tag arrival.
 
 - `nfc:write` sets `nfc_write_seq = seq + 1`, `nfc_write_disk_id`, and `nfc_write_expires_at =
   now + 2 min`, and clears the result columns.
-- **The poll's tick includes `nfc_write_seq`**, so a new request wakes a held poll like a mount
-  does (a wake signal is a cursor, not a flag).
-- **The poll response** carries `nfcWrite: { seq, diskId, title } | null`: present while
-  unexpired and not yet answered for that seq.
+- **The board carries its own cursor:** the poll request gains `&nfcAck=<seq>`, the last write
+  sequence the board has acted on (armed, disarmed or answered). This works like `since`, so no
+  ack column is needed.
+- **The poll's tick reads `nfc_write_seq`**, and the hold is released while
+  `nfc_write_seq > nfcAck`. A wake signal is a cursor, not a flag.
+- **The poll response** then carries `nfcWrite: { seq, diskId, title }`. `diskId` is `null` when
+  the request was cancelled or has expired, which tells the board to disarm. The key is absent
+  when the board is up to date.
 - **Cancel:** the command exits on Ctrl-C (or times out) by writing `nfc_write_disk_id = NULL`
   with the seq bumped, so the board disarms on its next poll.
 
