@@ -44,6 +44,8 @@ fail=0
 # transport_fake.c (this directory) is test infrastructure -- a scriptable
 # transport_t used by task 6+'s protocol-state-machine tests -- so it is
 # compiled into every test binary alongside src/*.c, not excluded from it.
+# si512_fake.c is the same kind of thing for nfc_reader.c: a register model
+# of the Si512 with a scripted tag, linked into every test binary likewise.
 # Vendored Monocypher 4.0.2 (src/vendor/monocypher/VENDORED.md): compiled once,
 # warnings off -- it is not our code and is not edited -- and linked into every
 # test binary. It lives under src/vendor/, so the ../src/*.c glob never sees it.
@@ -58,7 +60,7 @@ for t in test_*.c; do
   # ran on Linux in CI. The device build is unaffected -- newlib declares it --
   # which is exactly why nothing caught it until a second toolchain did.
   cc -std=c11 -D_DEFAULT_SOURCE -g -O1 -Wall -Wextra -Werror -DWFMF_HOST_TEST=1 \
-     -o "$out" "$t" transport_fake.c \
+     -o "$out" "$t" transport_fake.c si512_fake.c \
      $(ls ../src/*.c | grep -vE 'main\.c|transport_tls\.c|sntp_time\.c|portal_net\.c|dskchg\.c|activity_led\.c|i2c_probe\.c|ssd1306\.c|flux_capture\.c|bus_out\.c|fw_rom\.c') \
      .build/monocypher.o .build/monocypher-ed25519.o -I../src/vendor/monocypher \
      || { echo "COMPILE FAIL: $t"; fail=1; continue; }
