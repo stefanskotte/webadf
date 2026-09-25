@@ -4432,6 +4432,16 @@ The fix (operator approved "its good, proceed"):
   max_track_bits=108000, board 1.2.0 with track_max_bytes=14336, no last_error. The 216 ms
   revolution (108,000 cells at 2 us) is accepted by a real Amiga. The rest of spec §7's HFE bench items
   are still to run.
+  **Observed, not investigated (operator's call, 2026-09-25):** booting AmigaTestKit.hfe right after
+  Turrican once hung at cylinder 17 (OLED) and needed a second Amiga power cycle. The board is on USB-C,
+  so an Amiga power cycle never resets it. Hypothesis (unproven): the Amiga was booting Turrican,
+  which was still mounted while the new image downloaded; the swap (published only once the image is
+  complete) landed mid-boot, and Turrican's trackloader (cyl 9+) then read AmigaTestKit's tracks. The
+  operator declined to act unless reboots can be detected with certainty. The board has no RESET
+  wire; only the bus pattern (select idle, re-home to TRK0, read cyl 0) is visible, and a trackloader
+  can mimic it. A certain signal needs the Amiga's reset wired to a spare pin on a future board rev.
+  The extract round trip is also still to run on the board. Locally, AmigaTestKit.hfe (made by
+  `gw convert` from adf-archive/AmigaTestKit.adf) extracts back byte-identical, sha 4111eb94...
 - **(Proven 2026-09-25, above.) Was unproven until the bench:** a 108,000-cell track plays as a 216 ms revolution at the
   fixed 2 µs cell, and INDEX follows the DMA wrap. A Gotek plays this HFE the same way, but
   only booting Turrican on the board proves the loader accepts it.
