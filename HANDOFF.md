@@ -2148,8 +2148,12 @@ separately.
   web app mounts the matching ADF. The module connects over I2C. **REVISED 2026-09-25: the board
   must also WRITE tags** — the operator has no other NFC writer, so for testing (at least) the same
   board has to put a disk's identity onto a blank card, e.g. "write the mounted disk to the next
-  card tapped", armed from the web app. The PN532 writes NTAG21x natively, so this is firmware and
-  protocol work, not a hardware change. This answers the "how cards get written" question below.
+  card tapped". The PN532 writes NTAG21x natively, so this is firmware work, not a hardware change.
+  **Clarified the same day: writing is a DEV TOOL that Claude drives, not a web-app feature.** The
+  operator says "write the hash of diskxyz.adf to the NFC tag" and Claude does it: resolve the
+  disk's sha256 (from the file, or the DB by name), send it to the board over the USB CDC console
+  (e.g. an `nfc write <sha256>` command the firmware accepts), and report the read-back. No UI, no
+  server endpoint for writing. This answers the "how cards get written" question below.
   Nothing designed yet. Facts to start from:
   - **The I2C bus already exists.** The OLED is on I2C1, GP18 (SDA) / GP19 (SCL), header pins
     24/25 (`floppy_io.h:57-58`). The PN532's I2C address is 0x24 and the SSD1306's is 0x3C, so
