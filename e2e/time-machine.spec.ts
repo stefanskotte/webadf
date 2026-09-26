@@ -195,6 +195,12 @@ test('restoring an old version brings its content back as a new version', async 
 
 });
 
+// Same reasoning as the restore test above (HANDOFF §4l): fetchAdf downloads
+// the same ~880 KB image, which alone is well inside 30 s but leaves no slack
+// once the setup, mount, and two restore round trips ahead of it are counted.
+test.describe(() => {
+  test.setTimeout(120_000);
+
 test('restore is refused while a board holds the disk, and succeeds once ejected', async ({ page, request }) => {
   const u = await signUpFresh(page);
   await page.goto('/library');
@@ -246,6 +252,8 @@ test('restore is refused while a board holds the disk, and succeeds once ejected
   expect(volume.ok).toBe(true);
   if (!volume.ok) return;
   expect(findByName(volume.root, 'ONLY.TXT')).toBeNull();
+});
+
 });
 
 test('another tenant gets 404 from restore and from browsing history', async ({ browser }) => {

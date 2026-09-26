@@ -57,18 +57,37 @@ test('the same tag again is already, and the desired version does not move', asy
 
 test('a burst is ignored', async ({ page, request }) => {
   const { orgId } = await signUpFresh(page);
-  const { token } = await pairDevice(page, request);
+  const { deviceId, token } = await pairDevice(page, request);
   const { diskId } = await seedDisk(orgId, { title: `Burst ${runTag()}`, diskNo: 1, sha256: sha(runTag()) });
 
-  const first = await request.post('/api/device/tap', { headers: authHeader(token), data: { diskId } });
-  expect(first.status()).toBe(200);
-  expect((await first.json()).outcome).toBe('mounting');
+  // Seeded directly rather than raced with a real first tap: decideTap's 1 s
+  // window is measured from lastTapAt, which the FIRST request's handler sets
+  // to ITS OWN start time -- from this Mac, that request's round trip to the
+  // remote production DB can itself take over a second, so the window can
+  // close before a second real request ever lands. Setting lastTapAt to now
+  // ourselves makes the burst deterministic without depending on latency.
+  const seededAt = new Date();
+  await getDb().update(devices).set({ lastTapAt: seededAt }).where(eq(devices.id, deviceId));
+  // Read straight from the row, not the long poll: a fresh device's
+  // desiredVersion is still 0, and /api/device/poll?since=0 against a
+  // version-0 device holds for the full ~25 s (device-poll.spec.ts's own
+  // "once the device acknowledges" test spells this out) -- exactly the kind
+  // of latency this test exists to avoid.
+  const [before] = await getDb()
+    .select({ lastTapAt: devices.lastTapAt, desiredVersion: devices.desiredVersion })
+    .from(devices).where(eq(devices.id, deviceId));
 
-  // Immediately again, well inside the 1 s rate limit -- decideTap must
-  // refuse this before it ever looks at which disk was named.
-  const second = await request.post('/api/device/tap', { headers: authHeader(token), data: { diskId } });
-  expect(second.status()).toBe(200);
-  expect(await second.json()).toEqual({ outcome: 'ignored' });
+  const res = await request.post('/api/device/tap', { headers: authHeader(token), data: { diskId } });
+  expect(res.status()).toBe(200);
+  expect(await res.json()).toEqual({ outcome: 'ignored' });
+
+  // decideTap's own point: an ignored tap is not recorded, so neither
+  // lastTapAt nor the desired version may move.
+  const [after] = await getDb()
+    .select({ lastTapAt: devices.lastTapAt, desiredVersion: devices.desiredVersion })
+    .from(devices).where(eq(devices.id, deviceId));
+  expect(after.lastTapAt?.getTime()).toBe(before.lastTapAt?.getTime());
+  expect(after.desiredVersion).toBe(before.desiredVersion);
 });
 
 test("another org's disk is indistinguishable from an unknown one", async ({ page, request, browser }) => {
