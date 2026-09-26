@@ -61,7 +61,7 @@ SHA-256; you browse them and press mount; a custom board emulates the floppy dri
 | **NFC tap-to-mount** | ✅ **merged and live 2026-09-26 (master 0f6fbd1); firmware 1.3.0 (seq 10) confirmed on the board.** Tap a tag → the board mounts that disk from its own org's library (swap; same tag = no-op; 1 s rate limit). Claude writes tags: `pnpm nfc:write "<disk>"` arms the board through the poll, you tap a blank tag, the read-back is reported. HW-147C/Si512 reader on I2C1 (0x28). **Firmware 1.3.1 (seq 11, 2026-09-26): a tap needs 3 s of absence; a write never lands on a tag already on the reader.** Bench: write + tap-mount + same-tag proven; see §3am. **Fob button (2026-09-26, b6c4e7c):** an NFC icon on every library card and disk row writes that disk to a tag from the web (dialog picks disk and board, 2:00 countdown, read-back shown; withdraws on close/cancel/leave); shown only when a board reports a reader |
 | **Drive chips in the header** | ✅ **done 2026-09-25, merged and live.** Every paired board as a chip beside the wordmark: status dot, name, mounted disk; caret menu with Go to disk (the game page), Disk is Protected/Writable, and Eject (no confirm, below a divider). Pending states while a mount or eject converges. 1 chip + "+k" at 1280, 2 at 1536, 3 at 1920; below 1280 a single "Drives" list. Fed by `liveStateRows` (now carries the mounted game/title/disk no/format, all in `liveFingerprint`); `src/lib/drive-chips.ts`, `src/components/shell/drive-chips.tsx`. Unverified: 640–700 px the Drives button overlaps the pill (the search box already does, 640–767 px, on master) |
 | **Five minors, 2026-09-25** | ✅ **merged and live.** Update confirm is a real modal (role=dialog, Escape, focus, Enter submits); the 50-board cap (`MAX_UPDATE_BATCH`) shows in the update bar; re-extracting an EDITED extract is a 409 `already_extracted` with a link; the not-extractable reason is visible text; a refused HFE's bytes are deleted when nothing references them (a two-round-trip race is documented in `releaseRefused`) |
-| **Hardware** | rev A scrap (mirrored), **rev A2 in hand and working**, **rev B is current and unfabricated** — keepout moved to the antenna end, a silkscreen that carries lettering, D1 polarity marked. Respin is OUTSOURCED to Shanshe (2026-09-25), who returns a complete KiCad project to fold back in (§4 backlog); it owes the LED series resistor and 1k pull-ups on the floppy lines (4c), and an Amiga-reset wire if reboot detection is ever wanted (3al-a), and I2C connectors for the OLED and the NFC reader (§4 rev B entry); see 3s and 3x |
+| **Hardware** | rev A scrap (mirrored), **rev A2 in hand and working**. **Rev B is Shanshe's KiCad project, merged 2026-09-26 (PR #1, `22d3556`) and now the primary PCB** -- the generated-board toolchain (`generate_pcb.py`, `verify_board.py`, `export_gerbers.py`, renders) is gone. `pnpm hw:verify` (`wifi-floppy/hardware/hw_verify.py`) runs KiCad ERC/DRC + parity and checks the netlist against the firmware and §4c. **Not fab-ready yet: J2 sits in U1's RF keepout** (the one failing check); 4 of the 7 decided pull-ups (DIR, STEP, SIDE, SEL0) are not fitted; U2 and several SMD parts are DNP / have no LCSC number in the assembly BOM; GP20 (NFC reset) is not wired. See the rev B entry in §4 |
 
 **Current branch (2026-09-25):** `master`, clean and pushed; everything in the table is merged
 and live. The board runs firmware `1.2.0+ge8ac726` (seq 9). **No increment is in flight.**
@@ -2522,7 +2522,22 @@ separately.
 - **Moving ADF→MFM encoding onto the Pico** (spec §13) if server-side encoding
   (9.6 ms/disk, ~2 MB over TLS) ever turns out not to hold up. `adfmfm` is written
   dependency-free specifically so this would be a transliteration, not a rewrite.
-- **Rev B respin is OUTSOURCED (operator, 2026-09-25).** A contractor, Shanshe, is making it and
+- **REV B RECEIVED AND MERGED 2026-09-26 (Shanshe, PR #1, `22d3556`); it is the primary PCB.**
+  Checked with the new `pnpm hw:verify` and by reading the netlist:
+  - **Matches the firmware:** every Pico pin (GP0-13 floppy in `floppy_io.h` order, GP18/19 I2C
+    to J3 OLED and J4 NFC, GP21 buzzer, GP22 LED), every J1 floppy pin, GP14-17 unconnected.
+    Inputs through U2 74LVC541A at 3.3 V; outputs through BSS138 open-drain FETs.
+  - **Buzzer:** GP21 → R5 1k → Q7 gate, R6 10k pull-down, BZ1 fed from +5V, Q8 (gate tied to
+    source) as the flyback diode. LED: GP22 → R4 1k → D2.
+  - **Must fix before ordering: J2 (power connector) is inside U1's 'RF Copper Keep Out'** (DRC
+    error) -- move it clear of the antenna.
+  - **Pull-ups:** 1k to +5V on WGATE, WDATA, MTR (the required ones). DIR, STEP, SIDE, SEL0 --
+    part of the 2026-09-20 decision (§4c) -- are not fitted.
+  - **Assembly BOM:** U1, U2, J1, J2, J4, BZ1 are DNP (U2 is the SMD 74LVC541A -- confirm that is
+    meant to be hand-soldered); C1, C3, D1 and the BSS138s have no LCSC number.
+  - GP20 (optional NFC reset) is not wired; ERC has 54 symbol-library warnings and the known
+    VSYS/GND Pico-symbol quirks; parity reports DNP flags that differ between schematic and board.
+- *(History)* **Rev B respin is OUTSOURCED (operator, 2026-09-25).** A contractor, Shanshe, is making it and
   will return a COMPLETE KiCad project. When it arrives, fold it into `wifi-floppy/hardware/`
   (replacing, not merging by hand), then run `pnpm hw:verify` and check it carries what rev B owes:
   the LED series resistor, 1k pull-ups on the floppy lines (4c), PIM726 for U1 (the PSRAM part),

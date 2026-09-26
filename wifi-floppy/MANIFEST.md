@@ -57,30 +57,27 @@ is a real attack surface nobody needs.
 
 ## hardware/
 
-    generate_pcb.py    emits wifi_floppy.kicad_pcb + a built-in DRC-lite pass.
-                       THE BOARD IS GENERATED: edit this, never the .kicad_pcb
-    export_gerbers.py  Gerber + Excellon; computes the B.Cu pour geometry.
-                       Needs shapely — use ./.venv/bin/python
-    render_pcb.py      pcb_render.svg
-    verify_board.py    RUN BEFORE ANY FAB ORDER — `pnpm hw:verify`
-    stroke_font.py     single-stroke vector font, so the exporter can put
-                       reference designators on the silkscreen at all
-    ref_footprints/    canonical KiCad land patterns to compare against
-    bom.csv            regenerated with the board
+The board is a KiCad project, designed by Shanshe (rev B, merged 2026-09-26 as PR #1).
+Edit it in KiCad; there is no generator.
 
-**The first revision came back MIRRORED and was scrapped.** `verify_board.py`
-exists to catch that class of mistake, and checks four things: that no footprint
-is a reflection of its canonical land pattern, that the exported Gerber is
-correctly Y-flipped (Gerber is Y-up, KiCad is Y-down), that the antenna keepout
-void is at the antenna end of U1, and that no silkscreen feature is below the
-fab's minimum width. The last two are read back out of the emitted Gerbers
-rather than re-derived from the exporter, because each of those three failures
-reached a fabricated board.
+    wifi_floppy.kicad_pro / .kicad_sch / .kicad_pcb   the project
+    wifi-floppy-lib.kicad_sym, wifi-floppy-lib.pretty/ its symbol and footprint library
+    production/                                        JLCPCB outputs: gerbers zip, BOM,
+                                                       positions, designators, IPC netlist
+    hw_verify.py                                       RUN BEFORE ANY FAB ORDER: `pnpm hw:verify`
 
-Two limits it states about itself rather than hiding: a mirror-symmetric part
-(0603, 0805, SMA, 1x04 header) cannot fail a chirality test at all, and U1's
-module footprint has no upstream reference and must be checked by hand.
+`hw_verify.py` runs KiCad's ERC and DRC (with schematic parity) through `kicad-cli`, then checks
+the netlist against the firmware and the recorded design decisions:
 
-Only **U2** carries silkscreen — the buffer IC is the one part that can be
-fitted the wrong way round without it being obvious. Caps and SOT-23s are
-deliberately bare.
+- every Pico pin carries the net `src/floppy_io.h` expects (GP0-13 floppy, GP18/19 I2C,
+  GP21 buzzer, GP22 LED) and GP14-17 stay unconnected (antenna keepout);
+- every J1 pin carries the right floppy line;
+- WGATE and MTR have their 1 kOhm pull-ups to +5 V (required); the other decided pull-ups
+  (WDATA, DIR, STEP, SIDE, SEL0 -- HANDOFF §4c) are reported if missing;
+- the activity LED has a series resistor, the buzzer FET gate has a 10 kOhm pull-down;
+- J3 (OLED) and J4 (NFC) are 1 GND, 2 +3.3V, 3 SCL, 4 SDA.
+
+It exits non-zero on anything that should stop an order. Accepted and not reported: U1's own
+GP14-17 pads inside its keepout, and the Pico symbol's VSYS/GND ERC quirks.
+
+**Rev A (the first fab) came back MIRRORED and was scrapped; rev A2 is the working bench board.**
