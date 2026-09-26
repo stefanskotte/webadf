@@ -19,6 +19,8 @@ const POLL_MS = 1000;
 // How long past zero the dialog keeps asking before it stops believing the
 // server will ever say "expired" (a dropped connection, a sleeping laptop).
 const GRACE_MS = 10_000;
+// One status read longer than this is a failed poll, not a frozen dialog.
+const POLL_TIMEOUT_MS = 5000;
 
 type Phase =
   | { k: 'choose' }
@@ -57,14 +59,12 @@ export function FobButton({ testId, title, disks, devices }: {
   // The armed request, if any. A ref, not state: the unmount cleanup and the
   // close path must see the CURRENT one, not the one captured at render.
   const armed = useRef<{ deviceId: string; seq: number } | null>(null);
-  // Bumped on every close, so a POST or poll that answers after the dialog
-  // closed knows it is stale.
+  // Bumped on every close, open, unmount and pagehide, so a POST or poll
+  // that answers after its dialog went away knows it is stale.
   const generation = useRef(0);
 
-  function withdraw() {
-    const a = armed.current;
-    armed.current = null;
-    if (!a) return;
+  /** Withdraw one request, by its own seq. */
+  function cancelRequest(a: { deviceId: string; seq: number }) {
     // keepalive: the page may be unloading (navigation away), and a dropped
     // cancel leaves the board armed until its own expiry.
     void fetch('/api/nfc/write', {
@@ -72,6 +72,12 @@ export function FobButton({ testId, title, disks, devices }: {
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify(a),
     }).catch(() => {});
+  }
+
+  function withdraw() {
+    const a = armed.current;
+    armed.current = null;
+    if (a) cancelRequest(a);
   }
 
   function close() {
@@ -108,9 +114,13 @@ export function FobButton({ testId, title, disks, devices }: {
       });
       return;
     }
-    armed.current = { deviceId: body.deviceId, seq: body.seq };
-    // Closed while the POST was in flight: the board is armed for nobody.
-    if (gen !== generation.current) { withdraw(); return; }
+    const mine = { deviceId: body.deviceId, seq: body.seq };
+    // Closed (or closed and reopened) while this POST was in flight: the
+    // board is armed for nobody. Withdraw THIS answer's own seq and leave
+    // `armed` alone -- by now it may hold a newer POST's request, and
+    // clearing it would leave that one with no way to be cancelled.
+    if (gen !== generation.current) { cancelRequest(mine); return; }
+    armed.current = mine;
     const t = Date.now();
     setNow(t);
     setPhase({ k: 'waiting', deviceId: body.deviceId, deviceName: body.deviceName ?? 'the board', seq: body.seq, deadline: t + WAIT_MS });
@@ -137,19 +147,28 @@ export function FobButton({ testId, title, disks, devices }: {
     if (!waiting) return;
     const gen = generation.current;
     let inFlight = false;
+    // Whether the LAST poll failed. Past the grace that decides the wording:
+    // polls that were answering and never said "expired" did not happen, so
+    // a failing connection is the only way here, and then the dialog does
+    // not know whether a tag was written -- it must not claim none was.
+    let failing = false;
     const id = window.setInterval(async () => {
       const t = Date.now();
       setNow(t);
-      if (inFlight) return;
+      // Checked before the in-flight guard, so a hung request cannot hold
+      // the dialog at 0:00 forever.
       if (t > waiting.deadline + GRACE_MS) {
+        window.clearInterval(id);
         withdraw();
-        setPhase({ k: 'failed', text: 'Timed out — no tag was written.' });
+        setPhase({ k: 'failed', text: failing ? 'Could not confirm the write.' : 'Timed out — no tag was written.' });
         return;
       }
+      if (inFlight) return;
       inFlight = true;
       try {
         const res = await fetch(`/api/nfc/write?deviceId=${encodeURIComponent(waiting.deviceId)}&seq=${waiting.seq}`,
-          { cache: 'no-store' });
+          { cache: 'no-store', signal: AbortSignal.timeout(POLL_TIMEOUT_MS) });
+        failing = !res.ok;
         if (!res.ok || gen !== generation.current) return;
         const s = await res.json() as NfcWriteStatus;
         if (gen !== generation.current || s.state === 'waiting') return;
@@ -160,7 +179,9 @@ export function FobButton({ testId, title, disks, devices }: {
         else if (s.state === 'superseded') setPhase({ k: 'failed', text: 'Replaced by another write request.' });
         else setPhase({ k: 'failed', text: 'Timed out — no tag was written.' });
       } catch {
-        // A dropped poll is retried on the next tick; the grace above ends it.
+        // A dropped or timed-out poll is retried on the next tick; the grace
+        // above ends it.
+        failing = true;
       } finally {
         inFlight = false;
       }
@@ -181,12 +202,31 @@ export function FobButton({ testId, title, disks, devices }: {
   }, [open]);
 
   // Unmount while armed (a client-side navigation away mid-wait) withdraws
-  // too. A full unload -- closing the tab, a reload, typing a URL -- runs no
-  // React cleanup at all, so pagehide covers that; withdraw's keepalive is
-  // what lets the DELETE outlive the page.
+  // too, and bumps the generation so a POST still in flight withdraws its
+  // own answer when it lands. A full unload -- closing the tab, a reload,
+  // typing a URL -- runs no React cleanup at all, so pagehide covers that;
+  // the keepalive in cancelRequest is what lets the DELETE outlive the page.
+  //
+  // pagehide also fires when the page goes into the back/forward cache, and
+  // then it comes BACK: the dialog must not return still "waiting" on a
+  // request it withdrew (the next poll would call it replaced), so it says
+  // what happened instead.
   useEffect(() => {
-    window.addEventListener('pagehide', withdraw);
-    return () => { window.removeEventListener('pagehide', withdraw); withdraw(); };
+    const onHide = () => {
+      generation.current += 1;
+      const had = armed.current !== null;
+      withdraw();
+      if (had) setPhase({ k: 'failed', text: 'The write was cancelled when you left the page.' });
+      else setPhase((p) => (p.k === 'starting'
+        ? { k: 'failed', text: 'The write was cancelled when you left the page.' } : p));
+    };
+    window.addEventListener('pagehide', onHide);
+    return () => {
+      window.removeEventListener('pagehide', onHide);
+      generation.current += 1;
+      withdraw();
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- reads only refs and setters
   }, []);
 
   const trigger = (
@@ -198,6 +238,7 @@ export function FobButton({ testId, title, disks, devices }: {
       onClick={onOpen}
       onPointerDown={(e) => e.stopPropagation()}
       onMouseDown={(e) => e.stopPropagation()}
+      onTouchStart={(e) => e.stopPropagation()}
       className="shrink-0 rounded p-1 transition-colors hover:bg-[var(--glass-strong)] hover:text-[var(--ink)]"
       style={{ color: 'var(--faint)' }}
     >
@@ -222,8 +263,11 @@ export function FobButton({ testId, title, disks, devices }: {
   // PORTALLED, like DeleteDiskDialog and for the same reason: a library card
   // sets backdrop-filter, which would make it the containing block of this
   // `fixed inset-0` overlay. Events still bubble through the React tree to
-  // the card's link and drag listeners, so the overlay stops them -- but
-  // does not preventDefault, which the choice buttons do not need either.
+  // the card, so the overlay stops every one the card listens for: click
+  // (its link), mousedown and touchstart (dnd-kit's MouseSensor and
+  // TouchSensor activators -- without touchstart a 250 ms hold anywhere in
+  // the dialog picked up the card behind it), and pointerdown. It does not
+  // preventDefault, which the choice buttons do not need either.
   return (
     <>
       {trigger}
@@ -233,6 +277,7 @@ export function FobButton({ testId, title, disks, devices }: {
           style={{ background: 'rgb(11 18 28 / 0.55)' }}
           onPointerDown={(e) => e.stopPropagation()}
           onMouseDown={(e) => e.stopPropagation()}
+          onTouchStart={(e) => e.stopPropagation()}
           onClick={(e) => e.stopPropagation()}
           onKeyDown={(e) => { e.stopPropagation(); if (e.key === 'Escape') close(); }}
         >

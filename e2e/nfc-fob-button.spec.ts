@@ -83,6 +83,53 @@ test('Cancel withdraws the request, and the board is told to disarm', async ({ p
   expect(req!.diskId).toBeNull();
 });
 
+test('a POST answering after its dialog was cancelled and reopened withdraws only its own seq', async ({ page, request }) => {
+  const { orgId, token } = await readerOrg(page, request);
+  const { gameId, diskId } = await seedDisk(orgId, { title: `Fob Race ${runTag()}`, diskNo: 1, sha256: sha(runTag()) });
+
+  // Hold the FIRST POST's answer back after the server has armed the board,
+  // so it lands after the dialog was cancelled and reopened -- the stale
+  // answer that used to overwrite and then clear the live request.
+  let release!: () => void;
+  const released = new Promise<void>((r) => { release = r; });
+  let reached!: () => void;
+  const firstArmed = new Promise<void>((r) => { reached = r; });
+  let first = true;
+  await page.route('**/api/nfc/write', async (route) => {
+    if (route.request().method() !== 'POST' || !first) return route.fallback();
+    first = false;
+    const response = await route.fetch();
+    reached();
+    await released;
+    await route.fulfill({ response });
+  });
+
+  await page.goto('/library');
+  await page.getByTestId(`fob-${gameId}`).click();
+  await firstArmed;
+  await page.getByTestId('fob-cancel').click();             // cancel while "starting"
+  await expect(page.getByTestId('fob-dialog')).toHaveCount(0);
+  await page.getByTestId(`fob-${gameId}`).click();           // reopen: auto-starts POST 2
+  await expect(page.getByTestId('fob-waiting')).toBeVisible();
+  const live = await boardPoll(request, token);
+  expect(live?.diskId).toBe(diskId);
+
+  // POST 1 answers now; the dialog withdraws THAT seq, not the live one.
+  const staleCancel = page.waitForRequest((r) => r.url().includes('/api/nfc/write') && r.method() === 'DELETE');
+  release();
+  const staleSeq = (await staleCancel).postDataJSON().seq as number;
+  expect(staleSeq).toBeLessThan(live!.seq);
+  const still = await boardPoll(request, token);
+  expect(still).toEqual(expect.objectContaining({ seq: live!.seq, diskId }));
+
+  // And the live request is still cancellable.
+  const cancelled = page.waitForResponse((r) => r.url().includes('/api/nfc/write') && r.request().method() === 'DELETE'
+    && r.request().postDataJSON().seq === live!.seq);
+  await page.getByTestId('fob-cancel').click();
+  expect((await cancelled).status()).toBe(204);
+  expect((await boardPoll(request, token))?.diskId).toBeNull();
+});
+
 test('leaving the page mid-wait withdraws the request', async ({ page, request }) => {
   const { orgId, token } = await readerOrg(page, request);
   const { gameId } = await seedDisk(orgId, { title: `Fob Leave ${runTag()}`, diskNo: 1, sha256: sha(runTag()) });
