@@ -2150,6 +2150,25 @@ separately.
     requirement of the feature, not a blocker. The UI should say so where an HD disk is
     created or mounted, since a 1.3 machine would simply fail to read it.
 
+- **Multi-disk games while playing: a smart way to advance to the next disk.** Requested by the operator
+  2026-09-26. Nothing designed yet. What the board already has to build on:
+  - it knows the set: every mount carries diskNo/diskCount ("disk 1 of 2" on the OLED);
+  - two PSRAM image slots (SLOT_COUNT 2), one idle while playing;
+  - a working disk-change (CHNG) path, so a swap looks like a real eject + insert to the Amiga;
+  - rev B wires SEL1 (pulled up), the second drive's select.
+  Ideas, simplest first:
+  1. **One action "Next disk"**: in the drive chip's menu, and as a long-press / double-tap of the game's
+     NFC tag (must not clash with "same tag = no-op"). Server side it is setDesired(next disk of the game).
+  2. **Prefetch the next disk into the idle slot** as soon as disk N mounts, so any swap is instant instead
+     of a ~5 s fetch (needs the loader to fill the non-active slot without disturbing the served one).
+  3. **Answer as DF0 AND DF1 at once** (disk N on SEL0, disk N+1 on SEL1, one per slot): many multi-disk
+     games read disk 2 from DF1 and never ask for a swap. Needs two-drive emulation in firmware; hardware
+     is on rev B.
+  4. **Detect "insert disk 2"**: a game waiting for a disk usually re-reads the same track in a loop; spot that
+     on an unchanged disk, show "Disk 2?" on the OLED and swap on a tap or after a delay. Risk of false
+     positives -- measure real games first (log seek/read patterns while a swap prompt is on screen).
+  Suggested order: 1 + 2 (cheap, predictable), then 3, with 4 as an experiment.
+
 - **NFC "tap a card to mount" on the board (PN532, I2C, read AND write).** Requested by the operator
   2026-09-24: a PN532 module reads a disk's hash off an NFC card, the board calls the web app, and the
   web app mounts the matching ADF. The module connects over I2C. **REVISED 2026-09-25: the board
