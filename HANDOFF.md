@@ -2530,8 +2530,14 @@ separately.
   (operator, 2026-09-25): two 4-pin headers (3V3/GND/SDA/SCL) on GP18/GP19, or Qwiic/STEMMA-QT
   style JST-SH sockets, so both plug in instead of sharing flying leads -- a loose lead cost most
   of the NFC bench session. 3V3 only (the modules pull SDA/SCL up to their own VCC; RP2350 pins
-  are not 5 V tolerant), and ideally GP20 (IRQ) / GP21 (reset) broken out beside them for the
-  reader. Diff the netlist against rev A2's, don't eyeball it.
+  are not 5 V tolerant). **Pin plan, final (operator 2026-09-26, Shanshe building to it):**
+  **GP20 (pin 26) = NFC reader reset (RSTPDN), optional; NFC IRQ is NOT wired** (the reader runs fully
+  polled over I2C, proven on the bench). **GP21 (pin 27) = Gotek-style buzzer**: a PASSIVE buzzer (firmware
+  drives the frequency: step clicks and tones; PWM slice 2B) switched low-side by an N-MOSFET (AO3400/2N7002),
+  ~100 R–1 k gate resistor, **10 k gate pull-down** (silent through boot), buzzer fed from 5 V (VSYS/VBUS) not
+  3V3, flyback diode if magnetic, a solder jumper/2-pin header to silence it. GP26/27/28 stay free (the only
+  ADC pins, for rail sensing); GP14-17 unusable (antenna keepout). Firmware support for the buzzer comes later.
+  Diff the netlist against rev A2's, don't eyeball it.
 
 - **Blob garbage collection** — reclaiming blobs whose last referencing disk is gone. Needs
   cross-org reference counting and deletion from Vercel Blob as well as Postgres. Deferred at
