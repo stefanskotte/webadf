@@ -58,7 +58,7 @@ SHA-256; you browse them and press mount; a custom board emulates the floppy dri
 | **Write-back piece 2b (board)** | ✅ **done 2026-09-19, verified on hardware.** Amiga saves upload, close and land on the server as history versions, including offline and eject-right-after; keep-alive connection (4k). Two paths never yet run on the board: a multi-file save burst over keep-alive, and `up_forces_wprot`; see 4i–4k |
 | **Write-back piece 2a (server)** | ✅ **done 2026-09-18, 5 tasks + final fix wave, merged to `master`.** Disk history tables, browser edits and renames recorded as versions, `POST /api/device/write` + `/close`, live write-protect; see 4g |
 | **HFE v1 disks** | ✅ **done 2026-09-24, merged and live; bench-proven 2026-09-25.** Upload keeps the `.hfe`, the board plays it read-only, "Extract as ADF" when every sector decodes. Long-track HFEs (fw 1.2.0, 14 KB tracks, per-board `trackMaxBytes`): **Turrican boots on the Amiga**; extract round trip passed byte-exact. Only the weak-bit bench item is owed (needs a weak-bit HFE). A cylinder-17 hang after a disk swap is parked; see 3al, 3al-a |
-| **NFC tap-to-mount** | ✅ **merged and live 2026-09-26 (master 0f6fbd1); firmware 1.3.0 (seq 10) confirmed on the board.** Tap a tag → the board mounts that disk from its own org's library (swap; same tag = no-op; 1 s rate limit). Claude writes tags: `pnpm nfc:write "<disk>"` arms the board through the poll, you tap a blank tag, the read-back is reported. HW-147C/Si512 reader on I2C1 (0x28). Bench acceptance NOT yet run -- see §3am |
+| **NFC tap-to-mount** | ✅ **merged and live 2026-09-26 (master 0f6fbd1); firmware 1.3.0 (seq 10) confirmed on the board.** Tap a tag → the board mounts that disk from its own org's library (swap; same tag = no-op; 1 s rate limit). Claude writes tags: `pnpm nfc:write "<disk>"` arms the board through the poll, you tap a blank tag, the read-back is reported. HW-147C/Si512 reader on I2C1 (0x28). **Firmware 1.3.1 (seq 11, 2026-09-26): a tap needs 3 s of absence; a write never lands on a tag already on the reader.** Bench: write + tap-mount + same-tag proven; see §3am |
 | **Drive chips in the header** | ✅ **done 2026-09-25, merged and live.** Every paired board as a chip beside the wordmark: status dot, name, mounted disk; caret menu with Go to disk (the game page), Disk is Protected/Writable, and Eject (no confirm, below a divider). Pending states while a mount or eject converges. 1 chip + "+k" at 1280, 2 at 1536, 3 at 1920; below 1280 a single "Drives" list. Fed by `liveStateRows` (now carries the mounted game/title/disk no/format, all in `liveFingerprint`); `src/lib/drive-chips.ts`, `src/components/shell/drive-chips.tsx`. Unverified: 640–700 px the Drives button overlaps the pill (the search box already does, 640–767 px, on master) |
 | **Five minors, 2026-09-25** | ✅ **merged and live.** Update confirm is a real modal (role=dialog, Escape, focus, Enter submits); the 50-board cap (`MAX_UPDATE_BATCH`) shows in the update bar; re-extracting an EDITED extract is a 409 `already_extracted` with a link; the not-extractable reason is visible text; a refused HFE's bytes are deleted when nothing references them (a two-round-trip race is documented in `releaseRefused`) |
 | **Hardware** | rev A scrap (mirrored), **rev A2 in hand and working**, **rev B is current and unfabricated** — keepout moved to the antenna end, a silkscreen that carries lettering, D1 polarity marked. Respin is OUTSOURCED to Shanshe (2026-09-25), who returns a complete KiCad project to fold back in (§4 backlog); it owes the LED series resistor and 1k pull-ups on the floppy lines (4c), and an Amiga-reset wire if reboot detection is ever wanted (3al-a), and I2C connectors for the OLED and the NFC reader (§4 rev B entry); see 3s and 3x |
@@ -4444,6 +4444,18 @@ and those two specs re-run green.
 6. Tap during an Amiga disk read -> 0 TRACK-MISS.
 7. Write, then tap a different tag at once -> the write result still reaches the CLI.
 8. Unverified on hardware: the soft reset before the vendor init (the prototype had none).
+
+**Bench results 2026-09-26 (morning):**
+- **Write proven:** `pnpm nfc:write` Turrican II disk 1 → blue fob `24 19 B6 01`, "read back OK", result recorded.
+- **Tap-to-mount proven:** tap → server "mounting" → fetch 1.8 MB in 3.2 s (615 KB/s) → MOUNT; about 5.5 s end to end
+  (≈1.1 s TLS handshake after the poll interrupt, 0.25 s tap, 3.2 s fetch). A second tap → "Tag: already in drive".
+- **A defect the bench found, fixed in 1.3.1 (`1a65cc6`, seq 11):** a fob lying UNTOUCHED on the reader was re-detected
+  as a new arrival three times in ~4.5 min, once receiving a write it was never presented for. Cause: detection dropouts
+  longer than the 1 s debounce. 1.3.1 requires 3 s of absence, never writes a tag that was held when the write was armed,
+  treats the reader chip's return like a sighting (review found a chip outage bypassed the guard), and logs every dropout
+  (`nfc: held tag … unseen N ms`). First measured dropout on 1.3.1: 817 ms, correctly absorbed.
+- Still owed from the list above: blank tag, pull-SDA, tap during an Amiga disk read (TRACK-MISS), write-then-other-tag.
+- **1.3.1 was installed via `requestFirmwareUpdate` directly (operator-authorised)**; it queued until the disk was ejected.
 
 **Known and deferred (reviewed, none blocking):** nfcAck ahead of the server after a DB restore misses requests
 until a reboot; a tag pulled during AUTH reads "locked"; a write NAK reads "moved" (should be "locked"); a
