@@ -62,8 +62,16 @@ playwright-report/
 # Playwright MCP browser session artifacts (snapshots, console logs).
 .playwright-mcp/
 
-# Editor/tool backups (generate_pcb.py.bak and friends).
+# Editor/tool backups.
 *.bak
+
+# KiCad local state: per-user history, backups, caches and ad-hoc reports.
+wifi-floppy/hardware/**/.history/
+wifi-floppy/hardware/**/*-backups/
+wifi-floppy/hardware/**/fp-info-cache
+wifi-floppy/hardware/**/*.rpt
+wifi-floppy/hardware/**/*.lck
+wifi-floppy/hardware/schematic/
 
 # Harness-managed git worktrees (Claude Code). Never commit them.
 .claude/worktrees/

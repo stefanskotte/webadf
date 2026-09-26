@@ -19,8 +19,8 @@ in the web app as new versions of the disk.
 
 *Rev B, designed by Shanshe: 34-pin floppy header, floppy power connector, OLED
 display, buzzer, a 4-pin header (J4), and a Pimoroni Pico Plus 2 W.
-The KiCad project will be added to `wifi-floppy/hardware/`. The current bench board is
-rev A2.*
+The KiCad project is in `wifi-floppy/hardware/`; check it with `pnpm hw:verify` before
+ordering. The current bench board is rev A2.*
 
 ## Features
 
