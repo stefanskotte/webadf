@@ -12,6 +12,8 @@ import { CreateAdf } from '@/components/library/create-adf';
 import { DemozooBadge } from '@/components/library/demozoo-badge';
 import { CollectionsProvider } from '@/components/collections/collection-provider';
 import { CollectionRail } from '@/components/collections/collection-rail';
+import { listNfcReaders, listDisksForNfc } from '@/lib/nfc/store';
+import type { FobContext, FobDisk } from '@/components/nfc/fob-button';
 
 export default async function LibraryPage(props: PageProps<'/library'>) {
   const { orgId } = await requireOrg();
@@ -50,7 +52,7 @@ export default async function LibraryPage(props: PageProps<'/library'>) {
   // here would be a worse copy of it that only appears on brand-new accounts
   // -- which is exactly what it did on its first e2e run.
   const showOverview = view.kind === 'uncategorized' && games.length === 0 && collections.length > 0;
-  const [uncategorizedCount, libraryTotals, reviewQueueCount, mosaics] = await Promise.all([
+  const [uncategorizedCount, libraryTotals, reviewQueueCount, mosaics, readers] = await Promise.all([
     countUncategorized(orgId),
     showOverview ? countAllGames(orgId) : Promise.resolve(null),
     // R15: the badge is a count, not the review queue's full item list --
@@ -62,7 +64,22 @@ export default async function LibraryPage(props: PageProps<'/library'>) {
     showOverview
       ? collectionMosaics(orgId, collections.map((c) => c.id))
       : Promise.resolve(null),
+    // The fob button's visibility, decided here with the page rather than by
+    // a client fetch: every card would otherwise flash it in or out.
+    listNfcReaders(orgId),
   ]);
+
+  // Only a multi-disk card asks "which disk?", and only an org with a reader
+  // draws the button at all -- so the disk list is loaded for exactly those.
+  let fob: FobContext = null;
+  if (readers.length > 0 && viewMode === 'grid' && !showOverview) {
+    const multi = games.filter((g) => g.diskCount > 1).map((g) => g.id);
+    const disksByGame: Record<string, FobDisk[]> = {};
+    for (const d of await listDisksForNfc(orgId, multi)) {
+      (disksByGame[d.gameId] ??= []).push({ id: d.id, diskNo: d.diskNo });
+    }
+    fob = { devices: readers, disksByGame };
+  }
 
   return (
     <>
@@ -111,7 +128,7 @@ export default async function LibraryPage(props: PageProps<'/library'>) {
               )
               : viewMode === 'table'
                 ? <GameTable games={games} collectionId={filteredCollectionId} />
-                : <GameGrid games={games} />}
+                : <GameGrid games={games} fob={fob} />}
           </div>
         </div>
       </CollectionsProvider>

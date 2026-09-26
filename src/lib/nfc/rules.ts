@@ -47,3 +47,79 @@ export function shouldStoreWriteResult(
 ): boolean {
   return reportSeq === row.nfcWriteSeq && row.nfcWriteResultSeq !== reportSeq;
 }
+
+/**
+ * Which board a web write goes to (the fob button). `devices` is the caller's
+ * OWN org's boards, so a named id that is not in it -- another org's or one
+ * that never existed -- is not_found either way. Only a reader the board has
+ * reported 'present' counts: 'absent' and NULL (firmware older than the
+ * report) both mean nothing would ever answer the request.
+ */
+export function chooseNfcDevice<D extends { id: string; name: string; nfcReader: string | null }>(
+  devices: D[], deviceId?: string,
+): { ok: true; device: D } | { ok: false; error: 'not_found' | 'no_reader' | 'device_required' } {
+  if (deviceId !== undefined) {
+    const d = devices.find((x) => x.id === deviceId);
+    if (!d) return { ok: false, error: 'not_found' };
+    return d.nfcReader === 'present' ? { ok: true, device: d } : { ok: false, error: 'no_reader' };
+  }
+  const readers = devices.filter((d) => d.nfcReader === 'present');
+  if (readers.length === 0) return { ok: false, error: 'no_reader' };
+  // Guessing between two readers would arm a board the person is not
+  // standing at; the dialog asks instead.
+  if (readers.length > 1) return { ok: false, error: 'device_required' };
+  return { ok: true, device: readers[0] };
+}
+
+export type NfcWriteStatus =
+  | { state: 'waiting' }
+  | { state: 'ok'; uid: string | null }
+  | { state: 'failed'; reason: string; uid: string | null }
+  | { state: 'superseded' }
+  | { state: 'expired' };
+
+/**
+ * Where ONE write request stands, for the web dialog polling it. An answer
+ * stored for `seq` wins over everything else: a cancel moves the cursor but
+ * leaves the answer readable (cancelNfcWrite), and a board may answer just
+ * after the expiry -- in both cases the tag really was written. Without an
+ * answer, a cursor past `seq` means something else (a newer request, from
+ * the CLI or another tab, or a cancel) replaced it. null: `seq` was never
+ * issued on this board.
+ */
+export function nfcWriteStatus(
+  row: {
+    nfcWriteSeq: number; nfcWriteExpiresAt: Date | null;
+    nfcWriteResultSeq: number | null; nfcWriteResult: string | null; nfcWriteResultUid: string | null;
+  },
+  seq: number, now: Date,
+): NfcWriteStatus | null {
+  if (row.nfcWriteResultSeq === seq && row.nfcWriteResult) {
+    return row.nfcWriteResult === 'ok'
+      ? { state: 'ok', uid: row.nfcWriteResultUid }
+      : { state: 'failed', reason: row.nfcWriteResult, uid: row.nfcWriteResultUid };
+  }
+  if (seq > row.nfcWriteSeq) return null;
+  if (seq < row.nfcWriteSeq) return { state: 'superseded' };
+  if (row.nfcWriteExpiresAt === null || now.getTime() > row.nfcWriteExpiresAt.getTime()) return { state: 'expired' };
+  return { state: 'waiting' };
+}
+
+/** A tag uid as a person reads it off a tag reader app: "24 19 B6 01". The
+ *  board sends contiguous upper-case hex, or "none" when it had no uid. */
+export function formatTagUid(uid: string | null): string | null {
+  const hex = (uid ?? '').replace(/[^0-9a-f]/gi, '').toUpperCase();
+  if (hex.length === 0 || uid?.toLowerCase() === 'none') return null;
+  return hex.match(/.{1,2}/g)!.join(' ');
+}
+
+/** The board's failure reasons (firmware nfc_reader.c: locked, moved,
+ *  verify) as plain words. An unknown one is shown verbatim, not hidden. */
+export function writeFailureText(reason: string): string {
+  switch (reason) {
+    case 'locked': return 'Locked tag — it cannot be written.';
+    case 'moved': return 'Tag moved — hold it still until the board confirms.';
+    case 'verify': return 'Verify failed — the tag read back differently.';
+    default: return `Write failed (${reason}).`;
+  }
+}

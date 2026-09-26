@@ -87,6 +87,7 @@ export function DeleteDiskDialog({
         onClick={(e) => { e.preventDefault(); e.stopPropagation(); setOpen(true); }}
         onPointerDown={(e) => e.stopPropagation()}
         onMouseDown={(e) => e.stopPropagation()}
+        onTouchStart={(e) => e.stopPropagation()}
         /*
          * A quiet icon, not a red pill.
          *
@@ -136,6 +137,9 @@ export function DeleteDiskDialog({
       // every event that could reach the card is stopped at the overlay.
       onPointerDown={(e) => e.stopPropagation()}
       onMouseDown={(e) => e.stopPropagation()}
+      // touchstart too: dnd-kit's TouchSensor activates on it, and without
+      // this a press-and-hold inside the dialog dragged the card behind it.
+      onTouchStart={(e) => e.stopPropagation()}
       onClick={(e) => { e.preventDefault(); e.stopPropagation(); }}
     >
       <div

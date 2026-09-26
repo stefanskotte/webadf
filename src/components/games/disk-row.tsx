@@ -8,8 +8,9 @@ import { holderText, type MountChoice } from '@/lib/mount-choice';
 import { DeleteDiskDialog } from '@/components/library/delete-disk-dialog';
 import { libraryHref } from '@/lib/trail';
 import { fromQuery } from '@/lib/trail';
+import { FobButton, type FobDevice } from '@/components/nfc/fob-button';
 
-export function DiskRow({ disk, choices, from }: {
+export function DiskRow({ disk, choices, from, fobDevices = [] }: {
   disk: GameDetailDisk;
   /** Per-device verdict for THIS disk -- see lib/mount-choice.ts. */
   choices: MountChoice[];
@@ -19,6 +20,8 @@ export function DiskRow({ disk, choices, from }: {
    * a game is in many collections and nothing downstream can work out which.
    */
   from?: string;
+  /** Boards with a reader present; the fob button is drawn only when there is one. */
+  fobDevices?: FobDevice[];
 }) {
   // Derived from the SAME choices the mount picker uses. It used to come from
   // a separate sha256-keyed map in the page, which could name a different
@@ -138,6 +141,13 @@ export function DiskRow({ disk, choices, from }: {
           <WriteProtectToggle diskId={disk.id} writeProtected={disk.writeProtected} />
         )}
         <MountAction diskId={disk.id} choices={choices} />
+        {/* Write this disk onto an NFC tag, so tapping it mounts this disk.
+            Before Delete, which stays last. */}
+        {fobDevices.length > 0 && (
+          <FobButton testId={`fob-${disk.id}`}
+                     title={disk.tosecName ?? disk.sourceFilename ?? `Disk ${disk.diskNo}`}
+                     disks={[{ id: disk.id, diskNo: disk.diskNo }]} devices={fobDevices} />
+        )}
         {/* Last in the row, after the actions someone actually came here to
             use. Named for the disk, not the title: on a multi-disk set this
             removes one ADF and leaves the rest. */}
