@@ -13,11 +13,19 @@ static si512_fake_t F;
 static nfc_reader_t R;
 static nfc_event_t evs[64];
 static int nev;
+static nfc_gap_t gaps[16];
+static int ngap;
 static int budget_breaks;
+
+static void take_gap(void) {
+    nfc_gap_t g;
+    if (nfc_take_gap(&R, &g) && ngap < 16) gaps[ngap++] = g;
+}
 
 static void setup(void) {
     now = 0;
     nev = 0;
+    ngap = 0;
     budget_breaks = 0;
     si512_fake_init(&F, &now);
     nfc_bus_t bus = si512_fake_bus(&F);
@@ -38,6 +46,7 @@ static void run(int ms) {
         }
         nfc_event_t e;
         if (nfc_take_event(&R, &e) && nev < 64) evs[nev++] = e;
+        take_gap();
         now++;
     }
 }
@@ -81,6 +90,7 @@ static void run_capped(int steps, uint32_t gap, int cap) {
         }
         nfc_event_t e;
         if (nfc_take_event(&R, &e) && nev < 64) evs[nev++] = e;
+        take_gap();
         now += gap;
     }
 }
@@ -130,6 +140,8 @@ static void a_slow_read_held_tag_reports_once(void) {
     run_capped(3000, 10, 1);                     // 30 s, tag held throughout
     CHECK_EQ_INT(cap_breaks, 0);
     CHECK_EQ_INT(count(NFC_EV_TAG_READ), 1);
+    // Slow polls are not dropouts: a gap is only one a poll found empty.
+    CHECK_EQ_INT(ngap, 0);
 }
 
 static void absent_chip_stays_absent_and_rechecks(void) {
@@ -180,6 +192,7 @@ static void same_tag_held_reports_once(void) {
     CHECK_EQ_INT(count(NFC_EV_TAG_READ), 1);
     CHECK_EQ_INT(nev, 2);
     CHECK_EQ_INT(F.reads, 3);                // held, it is not read again either
+    CHECK_EQ_INT(ngap, 0);                   // and it never dropped out
     end_checks();
 }
 
@@ -500,6 +513,49 @@ static void write_armed_during_a_dropout_waits_a_full_window_from_the_arm(void) 
     end_checks();
 }
 
+// ---- Measuring the dropouts -------------------------------------------------
+//
+// The 3 s window is a guess from three bench sightings. Every detection gap
+// on a held tag over 500 ms is reported once, with its length, so the board's
+// log can say how long the dropouts really are.
+
+static void a_1800ms_dropout_is_reported_once_with_its_length(void) {
+    setup();
+    put_id(ID);
+    run(2000);
+    F.tag_present = false;
+    run(1800);
+    F.tag_present = true;
+    run(3000);
+    CHECK_EQ_INT(ngap, 1);
+    if (ngap >= 1) {
+        // From the last sighting to the next: the absence, plus up to one
+        // poll period (~260 ms) either side of it.
+        CHECK(gaps[0].ms >= 1800 && gaps[0].ms <= 2350, "about 1800 ms");
+        CHECK(!gaps[0].new_arrival, "still the same tap");
+        CHECK(memcmp(gaps[0].uid, F.uid, 4) == 0, "uid");
+    }
+    end_checks();
+}
+
+static void a_gap_past_the_window_is_reported_once_as_new_arrival(void) {
+    setup();
+    put_id(ID);
+    run(2000);
+    F.tag_present = false;
+    run(6000);                               // crosses 3 s, keeps going
+    CHECK_EQ_INT(ngap, 1);                   // reported as it crosses, once
+    if (ngap >= 1) {
+        CHECK(gaps[0].new_arrival, "new arrival");
+        CHECK(gaps[0].ms >= 3000 && gaps[0].ms <= 3300, "at the crossing");
+    }
+    F.tag_present = true;
+    run(1000);
+    CHECK_EQ_INT(ngap, 1);                   // its return adds no second line
+    CHECK_EQ_INT(count(NFC_EV_TAG_READ), 2);
+    end_checks();
+}
+
 int main(void) {
     RUN(absent_chip_stays_absent_and_rechecks);
     RUN(present_chip_inits_and_emits_present);
@@ -526,5 +582,7 @@ int main(void) {
     RUN(write_armed_over_a_lying_tag_waits_for_it_to_return);
     RUN(write_armed_over_a_lying_tag_goes_to_a_different_tag_at_once);
     RUN(write_armed_during_a_dropout_waits_a_full_window_from_the_arm);
+    RUN(a_1800ms_dropout_is_reported_once_with_its_length);
+    RUN(a_gap_past_the_window_is_reported_once_as_new_arrival);
     return REPORT();
 }

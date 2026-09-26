@@ -29,6 +29,7 @@ enum { MI_OK, MI_NOTAGERR, MI_ERR };
 // it, and it re-mounted its disk after a web eject. A tap is deliberate: a
 // hand lifts the tag and brings it back, which takes longer than this.
 #define NFC_REARRIVAL_ABSENT_MS 3000
+#define GAP_REPORT_MS            500   // a held tag's dropout longer than this is logged
 #define FIELD_OFF_MS        10   // long enough for every tag to lose power and reset
 #define COM_TIMEOUT_MS      25   // the chip's own timer: TReload 1000 x 25 us
 #define CRC_TIMEOUT_MS      10
@@ -395,9 +396,17 @@ static void moved(nfc_reader_t *r) {
 // The held tag has been unseen for the whole re-arrival window: it has left,
 // and the same UID seen from now on is a new arrival. Decided here and only
 // here, so a poll and the anticoll after it cannot disagree about it.
+static void post_gap(nfc_reader_t *r, uint32_t now, bool new_arrival) {
+    memcpy(r->gap.uid, r->last_uid, 4);
+    r->gap.ms = now - r->last_detect;
+    r->gap.new_arrival = new_arrival;
+    r->has_gap = true;
+}
+
 static void expire_hold(nfc_reader_t *r, uint32_t now) {
     if (!r->held || now - r->last_seen < NFC_REARRIVAL_ABSENT_MS) return;
     r->held = false;
+    post_gap(r, now, true);          // the gap's one line: it ended the tap
 }
 
 static bool st_absent(nfc_reader_t *r) {
@@ -463,8 +472,14 @@ static bool st_req(nfc_reader_t *r) {
     }
     // An ATQA is 16 bits. Anything else (TimerIRq, a timeout, an error) is
     // "no tag", and says nothing.
-    if (r->status == MI_OK && r->rx_bits == 16) go(r, ST_ANTICOLL);
-    else enter_idle(r, false);
+    if (r->status == MI_OK && r->rx_bits == 16) {
+        go(r, ST_ANTICOLL);
+    } else {
+        // Only an empty poll makes a gap a dropout: at one op per pass a
+        // held tag can go a long while between polls without ever leaving.
+        if (r->held) r->missed = true;
+        enter_idle(r, false);
+    }
     return true;
 }
 
@@ -501,7 +516,9 @@ static bool st_anticoll(nfc_reader_t *r) {
     uint32_t now = r->now_ms();
     expire_hold(r, now);
     if (r->held && memcmp(r->uid, r->last_uid, 4) == 0) {
-        r->last_seen = now;
+        if (r->missed && now - r->last_detect > GAP_REPORT_MS) post_gap(r, now, false);
+        r->last_seen = r->last_detect = now;
+        r->missed = false;
         go(r, ST_COOLDOWN);
         return true;
     }
@@ -665,7 +682,8 @@ static bool st_report(nfc_reader_t *r) {
     // into the re-arrival window before the tag had been polled even once.
     r->held = true;
     memcpy(r->last_uid, r->uid, 4);
-    r->last_seen = r->now_ms();
+    r->last_seen = r->last_detect = r->now_ms();
+    r->missed = false;
     if (r->built.kind == NFC_EV_WRITE_DONE && r->armed && r->arm_seq == r->built.seq)
         r->armed = false;            // only the request that ran; a newer one stays
     r->writing = false;
@@ -767,6 +785,13 @@ bool nfc_take_event(nfc_reader_t *r, nfc_event_t *out) {
     if (!r->has_ev) return false;
     *out = r->ev;
     r->has_ev = false;
+    return true;
+}
+
+bool nfc_take_gap(nfc_reader_t *r, nfc_gap_t *out) {
+    if (!r->has_gap) return false;
+    *out = r->gap;
+    r->has_gap = false;
     return true;
 }
 
