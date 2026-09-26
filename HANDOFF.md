@@ -2535,6 +2535,11 @@ separately.
   - **Assembly BOM (the operator's side -- Shanshe only does layout and placement files; the
     operator orders and sources parts on LCSC):** U1, U2, J1, J2, J4, BZ1 are DNP (U2 is the SMD
     74LVC541A); C1, C3, D1 and the BSS138s have no LCSC number.
+  - **Buzzer change requested from Shanshe (2026-09-26):** BZ1 → magnetic passive 5 V S&S SEA-1295Y-0520-42Ω-38P6.5
+    (LCSC C2687681; Ø12×9.6 mm, pins Ø0.6 mm at 6.5 mm) with a 22 Ω in series from +5 V (Gotek style). The TDK piezo
+    would only click once: nothing discharges a piezo behind a low-side switch. See wifi-floppy/hardware/SOURCING.md.
+    Also found: Nano-Tek's speaker diode D1 is in SERIES and reversed (K on SPK-, A on Q1 collector) -- its speaker
+    should be silent as drawn; it was meant as a flyback across the speaker.
   - GP20 (optional NFC reset) is not wired; ERC has 54 symbol-library warnings and the known
     VSYS/GND Pico-symbol quirks; parity reports DNP flags that differ between schematic and board.
 - *(History)* **Rev B respin is OUTSOURCED (operator, 2026-09-25).** A contractor, Shanshe, is making it and
