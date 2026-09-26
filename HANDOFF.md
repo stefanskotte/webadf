@@ -58,6 +58,7 @@ SHA-256; you browse them and press mount; a custom board emulates the floppy dri
 | **Write-back piece 2b (board)** | ✅ **done 2026-09-19, verified on hardware.** Amiga saves upload, close and land on the server as history versions, including offline and eject-right-after; keep-alive connection (4k). Two paths never yet run on the board: a multi-file save burst over keep-alive, and `up_forces_wprot`; see 4i–4k |
 | **Write-back piece 2a (server)** | ✅ **done 2026-09-18, 5 tasks + final fix wave, merged to `master`.** Disk history tables, browser edits and renames recorded as versions, `POST /api/device/write` + `/close`, live write-protect; see 4g |
 | **HFE v1 disks** | ✅ **done 2026-09-24, merged and live; bench-proven 2026-09-25.** Upload keeps the `.hfe`, the board plays it read-only, "Extract as ADF" when every sector decodes. Long-track HFEs (fw 1.2.0, 14 KB tracks, per-board `trackMaxBytes`): **Turrican boots on the Amiga**; extract round trip passed byte-exact. Only the weak-bit bench item is owed (needs a weak-bit HFE). A cylinder-17 hang after a disk swap is parked; see 3al, 3al-a |
+| **NFC tap-to-mount** | ✅ **merged and live 2026-09-26 (master 0f6fbd1); firmware 1.3.0 (seq 10) confirmed on the board.** Tap a tag → the board mounts that disk from its own org's library (swap; same tag = no-op; 1 s rate limit). Claude writes tags: `pnpm nfc:write "<disk>"` arms the board through the poll, you tap a blank tag, the read-back is reported. HW-147C/Si512 reader on I2C1 (0x28). Bench acceptance NOT yet run -- see §3am |
 | **Drive chips in the header** | ✅ **done 2026-09-25, merged and live.** Every paired board as a chip beside the wordmark: status dot, name, mounted disk; caret menu with Go to disk (the game page), Disk is Protected/Writable, and Eject (no confirm, below a divider). Pending states while a mount or eject converges. 1 chip + "+k" at 1280, 2 at 1536, 3 at 1920; below 1280 a single "Drives" list. Fed by `liveStateRows` (now carries the mounted game/title/disk no/format, all in `liveFingerprint`); `src/lib/drive-chips.ts`, `src/components/shell/drive-chips.tsx`. Unverified: 640–700 px the Drives button overlaps the pill (the search box already does, 640–767 px, on master) |
 | **Five minors, 2026-09-25** | ✅ **merged and live.** Update confirm is a real modal (role=dialog, Escape, focus, Enter submits); the 50-board cap (`MAX_UPDATE_BATCH`) shows in the update bar; re-extracting an EDITED extract is a 409 `already_extracted` with a link; the not-extractable reason is visible text; a refused HFE's bytes are deleted when nothing references them (a two-round-trip race is documented in `releaseRefused`) |
 | **Hardware** | rev A scrap (mirrored), **rev A2 in hand and working**, **rev B is current and unfabricated** — keepout moved to the antenna end, a silkscreen that carries lettering, D1 polarity marked. Respin is OUTSOURCED to Shanshe (2026-09-25), who returns a complete KiCad project to fold back in (§4 backlog); it owes the LED series resistor and 1k pull-ups on the floppy lines (4c), and an Amiga-reset wire if reboot detection is ever wanted (3al-a), and I2C connectors for the OLED and the NFC reader (§4 rev B entry); see 3s and 3x |
@@ -65,7 +66,7 @@ SHA-256; you browse them and press mount; a custom board emulates the floppy dri
 **Current branch (2026-09-25):** `master`, clean and pushed; everything in the table is merged
 and live. The board runs firmware `1.2.0+ge8ac726` (seq 9). **No increment is in flight.**
 
-**Still open, none started:** the HFE weak-bit bench item; the two hardware-untested write-back
+**Owed at the bench:** NFC tap-to-mount acceptance (§3am). **Still open, none started:** the HFE weak-bit bench item; the two hardware-untested write-back
 paths (2b row); the super-admin audit log; the rev B respin (with Shanshe); NFC (designed later,
 tag writing is a Claude-driven USB tool). **Suite on master 2026-09-25: 1,101 vitest, build clean,
 362/362 Playwright (1.1 h), run alone on the database.**
@@ -2175,7 +2176,7 @@ separately.
   ON, 2 OFF. **A loose SDA/SCL lead makes it vanish from the bus while the OLED carries on** --
   seen once, the boot scan's missing 0x28 line is the tell. `src/nfc_probe.c` is a BENCH probe:
   it blocks boot 20 s for a tag watch (skipped on trial boots, whose ROM deadline it would miss),
-  so it must not ship; the board currently runs it (`1.2.0+g6b9db28`, not a published release).
+  so it must not ship. *(Superseded 2026-09-26: the board now runs release 1.3.0, seq 10 -- §3am.)*
   Flash backup from before: `~/.webadf/board-backups/2026-09-25-192817-before-nfc-identify.bin`.
   **`picotool reboot -f` does NOT reboot this firmware** (it reports success; USB never drops), so
   every bench install needs the operator's BOOTSEL. And `cat` of the CDC port does not raise DTR
@@ -4398,6 +4399,57 @@ Demozoo API (the bulk export makes per-lookup load on a non-profit unnecessary).
 - **Screenshot redirects:** screenshot fetches follow redirects, so the `media.demozoo.org` host
   allowlist checks only the first URL (the raster content-type allowlist and `nosniff` still apply).
 - **Cron drift:** the daily 01:30 cron against a 7-day gate can drift a refetch to 8 days.
+
+### 3am. NFC tap-to-mount -- 2026-09-26 (spec/plan 2026-09-25-nfc-tap-to-mount)
+
+**Built and shipped, not yet bench-accepted.** Spec `docs/superpowers/specs/2026-09-25-nfc-tap-to-mount-design.md`
+(incl. the poll-interrupt/nfcAck amendment and the 21-char OLED amendment), plan
+`docs/superpowers/plans/2026-09-25-nfc-tap-to-mount.md`. 12 tasks, subagent-driven, each reviewed; the
+whole-branch review found an Important no task review could see (below); two fix passes.
+
+**How it works.** The tag (MIFARE Classic 1K, sector 1, blocks 4-6, factory key A) holds `WFDK` v1 + the 36-char
+`disks.id` + CRC-16 -- the disk id, not the sha, because the sha moves on every Amiga save. The reader is a
+step-wise state machine on core0 in the display pump's slot (<= 4 register ops/pass; 1 op/pass while mounted on a
+no-panel 100 kHz bus), handing events to core1 through seqlock mailboxes (WRITE_DONE has its own box, and its
+report is retried 2 s doubling to 60 s until the server hears it). A tap POSTs `/api/device/tap`; a pending tap
+INTERRUPTS the 25 s held poll (transport `interrupted` hook, `TRANSPORT_INTERRUPTED` -200) at the cost of a fresh
+TLS handshake. Writing: `pnpm nfc:write` sets a write request on the device row; the poll carries it on the
+board's `nfcAck` cursor; the board writes the next tag that ARRIVES (a tag already lying there is not written),
+reads all 48 bytes back and POSTs `/api/device/tap-write`. The org always comes from the device token.
+
+**The whole-branch review's catch:** a board on pre-1.3.0 firmware sends no `nfcAck`; treated as 0 it would have
+made every poll return at once, forever, for any row that ever had a write request -- a tight loop per board.
+Fixed: a missing `nfcAck` means the board does not speak NFC. Second fix pass: the write-report retry could run
+every 50 ms while the uploader waited; it now has its own backoff.
+
+**Rollout, 2026-09-26 02:13-02:15 CEST:** migration 0025 (nine additive `devices` columns) applied with guarded
+SQL before e2e; merged `0f6fbd1`, deployed; firmware `1.3.0+g1457e53` published as seq 10 and targeted with
+`requestFirmwareUpdate` directly (operator authorised the install overnight, in lieu of pressing Update with the
+password). The board was on the unregistered bench build `1.2.0+g6b9db28`, which `refuseTarget` treats as the
+recovery path. queued -> staged (waited for idle) -> applying -> trial proven -> bought -> "update to
+1.3.0+g1457e53 confirmed (sequence 10)"; the DB shows `nfc_reader = present`; the blue fob lying on the reader read
+as "Tag: not a disk tag" (correct -- it is blank); boot no longer pauses. `pnpm nfc:write` checked live up to its
+pre-arming exit only.
+
+**Gates:** vitest 1164; build clean; firmware host 3148/0; full e2e 367 passed + 2 latency failures, both test
+fragility, fixed (`286ecce`: the burst test seeds `last_tap_at`; time-machine:198 gets its sibling's 120 s budget)
+and those two specs re-run green.
+
+**Bench acceptance still owed (operator present, one turn per physical step):**
+1. `pnpm nfc:write "<a disk>"`, then tap the blue fob -> "written to tag 24:19:b6:01, read back OK".
+2. Tap it -> the disk mounts. Tap again -> no-op ("Tag: already in drive").
+3. Write the white card with another disk, tap it -> swap.
+4. A blank tag -> "Tag: not a disk tag".
+5. Pull the reader's SDA lead -> the drive carries on, status goes `absent`; reseat -> `present`. Watch TRACK-MISS.
+6. Tap during an Amiga disk read -> 0 TRACK-MISS.
+7. Write, then tap a different tag at once -> the write result still reaches the CLI.
+8. Unverified on hardware: the soft reset before the vendor init (the prototype had none).
+
+**Known and deferred (reviewed, none blocking):** nfcAck ahead of the server after a DB restore misses requests
+until a reboot; a tag pulled during AUTH reads "locked"; a write NAK reads "moved" (should be "locked"); a
+bad-id arm replaces a pending good one; 7-byte UIDs are shown as 4 bytes; test gaps (chip loss while writing, the
+fake's ErrorReg is always 0). The e2e suite shares the live DB: never run two e2e runs at once (§ "Two sessions
+running e2e").
 
 ### 3al. HFE v1 disks — upload, play, extract as ADF (2026-09-24)
 
