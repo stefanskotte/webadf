@@ -650,6 +650,14 @@ static void nfc_core0_step(nfc_armed_t *armed, bool short_pass) {
         wf_logf(WF_INFO, "nfc: reader %s at 0x%02x", level == 1 ? "present" : "absent",
                 NFC_I2C_ADDR);
     }
+    // The dropout measurement (nfc_reader.h nfc_gap_t): the 3 s re-arrival
+    // window is a guess from three bench sightings, and these lines are how
+    // the board says how long a lying tag's dropouts really are.
+    nfc_gap_t gap;
+    if (nfc_take_gap(&g_nfc, &gap))
+        wf_logf(WF_INFO, "nfc: held tag %02X%02X%02X%02X unseen %lu ms %s",
+                gap.uid[0], gap.uid[1], gap.uid[2], gap.uid[3], (unsigned long)gap.ms,
+                gap.new_arrival ? "-> new arrival" : "(still the same tap)");
     // Every pass: while an event waits in the reader's slot, nfc_step does
     // nothing at all (nfc_reader.h).
     nfc_event_t ev;

@@ -42,6 +42,16 @@ typedef struct {
     uint32_t seq; bool ok;           // WRITE_DONE
 } nfc_event_t;
 
+// A detection gap on a held tag: `ms` unseen, reported when it is seen again
+// (new_arrival false: still the same tap) or as the gap crosses the 3 s
+// re-arrival window (new_arrival true). Measurement only -- it decides
+// nothing. This file may not log (the RULE above), so the caller does.
+typedef struct {
+    uint8_t  uid[4];
+    uint32_t ms;
+    bool     new_arrival;
+} nfc_gap_t;
+
 #define NFC_MAX_OPS_PER_STEP 4
 
 // The vendor's MAXRLEN: the largest frame either way (16 data bytes + CRC_A).
@@ -86,10 +96,19 @@ typedef struct nfc_reader {
     uint8_t  back[NFC_TAG_BYTES];      // the read-back after a write
     nfc_event_t built;
 
-    // Debounce.
-    bool     have_last;
+    // The held tag: the last one reported, until it has been unseen for the
+    // re-arrival window (3 s). last_seen is the anchor that window runs from:
+    // the report, every later sighting, an arm while it is held, and the
+    // chip's return after an outage (which says nothing about the tag).
+    bool     held;
     uint8_t  last_uid[4];
     uint32_t last_seen;
+    uint32_t last_detect;  // the last time it truly answered (arming is no sighting)
+    bool     missed;       // a poll since then found no tag at all
+
+    // The newest dropout, for the log; a later one replaces an untaken one.
+    bool      has_gap;
+    nfc_gap_t gap;
 
     // The armed write.
     bool     armed;
@@ -121,9 +140,19 @@ void nfc_set_max_ops(nfc_reader_t *r, int cap);
 // One-slot mailbox; false = none.
 bool nfc_take_event(nfc_reader_t *r, nfc_event_t *out);
 
-// While armed, the next tag ARRIVAL (debounce as for reads) is written with
-// `disk_id` instead of read, whatever it holds, and reports WRITE_DONE with
-// `seq`. Re-arming replaces the request. An id without the disk-id shape is
+// The dropout measurement (nfc_gap_t); false = none. At most one per gap:
+// a held tag's gap over 500 ms that a poll found empty. Slow polls -- one
+// register op per pass while a disk is mounted -- are not gaps.
+bool nfc_take_gap(nfc_reader_t *r, nfc_gap_t *out);
+
+// While armed, the next tag ARRIVAL is written with `disk_id` instead of
+// read, whatever it holds, and reports WRITE_DONE with `seq`. An arrival is
+// a different UID, or the same UID after 3 s continuously unseen (as for
+// reads). A write never goes to a tag that was already on the reader when it
+// was armed: if a tag is held at this call, that UID is written only after
+// it has been unseen for 3 s counted from no earlier than this call, and has
+// arrived again; a different tag arriving is written at once. Re-arming
+// replaces the request. An id without the disk-id shape is
 // refused with WRITE_DONE{seq, ok=false, why="bad data"} on the next step.
 void nfc_arm_write(nfc_reader_t *r, uint32_t seq, const char *disk_id);
 // Withdraws the armed write. A write already under way finishes and reports.

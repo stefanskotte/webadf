@@ -148,7 +148,7 @@ endif ()
 # configure whenever this file changes. `-DFIRMWARE_SEMVER=` still overrides,
 # for a one-off build, because -D defines it before this point.
 if (NOT DEFINED FIRMWARE_SEMVER)
-  set(FIRMWARE_SEMVER "1.3.0")
+  set(FIRMWARE_SEMVER "1.3.1")
 endif ()
 
 set(WF_VERSION_HEADER "${CMAKE_CURRENT_BINARY_DIR}/generated/wifi_floppy_version.h")

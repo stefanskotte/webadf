@@ -101,7 +101,9 @@ async function main() {
   const seq = await requestNfcWrite(device.orgId, device.id, disk.id, new Date());
   if (seq === null) die(`"${disk.title}" is no longer in this org's catalog.`);
 
-  console.log(`Tap a tag on ${device.name} to write "${disk.title} disk ${disk.diskNo}" (2 min)… Ctrl-C cancels.`);
+  // A tag already lying on the reader is never written (firmware 1.3.1,
+  // nfc_reader.h nfc_arm_write): it must leave for 3 s and come back.
+  console.log(`Tap a tag on ${device.name} to write "${disk.title} disk ${disk.diskNo}" (2 min) -- lift any tag already on the reader first… Ctrl-C cancels.`);
 
   let sigint = false;
   const onSigint = () => { sigint = true; };
