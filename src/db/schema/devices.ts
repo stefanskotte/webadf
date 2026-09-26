@@ -89,6 +89,22 @@ export const devices = pgTable('devices', {
   /** The highest instruction version the device says it has seen. */
   firmwareInstructionAck: integer('firmware_instruction_ack').notNull().default(0),
 
+  // --- NFC tap-to-mount (spec 2026-09-25) ---
+
+  // 'present' | 'absent' as the board last reported; NULL = a board that has
+  // never said (older firmware).
+  nfcReader: text('nfc_reader'),
+  // The write request (spec §5.3): a cursor the board echoes as ?nfcAck=,
+  // never a flag -- a cancel and a retry are both just the next seq.
+  nfcWriteSeq: integer('nfc_write_seq').notNull().default(0),
+  nfcWriteDiskId: text('nfc_write_disk_id'),
+  nfcWriteExpiresAt: timestamp('nfc_write_expires_at', { withTimezone: true }),
+  nfcWriteResultSeq: integer('nfc_write_result_seq'),
+  nfcWriteResult: text('nfc_write_result'),
+  nfcWriteResultUid: text('nfc_write_result_uid'),
+  lastTapAt: timestamp('last_tap_at', { withTimezone: true }),
+  lastTapOutcome: text('last_tap_outcome'),
+
   /**
    * 'queued' | 'downloading' | 'applying' | 'failed', as the device reports.
    * Null means nothing in flight. It is telemetry for the operator -- it no

@@ -456,6 +456,7 @@ static void test_status_body_fits_at_maximum(void) {
     static char long_fw_err[201]; memset(long_fw_err, 'F', 200); long_fw_err[200] = '\0';
     dc_fw_report_t fr = { DC_UPDATE_PROTOCOL, "downloading", long_fw_err, 4294967295u };
     dc_set_fw_report(&c, &fr);
+    dc_set_nfc_reader(&c, "present");   // the longer of the two words
 
     fake_push_response("HTTP/1.1 204 No Content\r\n\r\n");
     CHECK(dc_report_status(&c, 2147483647, -200, long_err, long_ver),
@@ -467,6 +468,8 @@ static void test_status_body_fits_at_maximum(void) {
           "the last field is not truncated away");
     CHECK(strstr(r, "\"firmwareInstructionAck\":4294967295") != NULL,
           "the last firmware field survives");
+    CHECK(strstr(r, "\"nfcReader\":\"present\"}") != NULL,
+          "and so does the reader, the very last field");
 }
 
 static void test_status_carries_the_firmware_fields(void) {
@@ -1358,6 +1361,302 @@ static void test_fetch_firmware_401_halts(void) {
     CHECK_EQ_INT(c.state, DC_HALTED);
 }
 
+// --- NFC tap-to-mount (spec 2026-09-25 §4.2, §5.2-5.4) -------------------
+
+#define NFC_ID "0123abcd-4567-5890-a123-456789abcdef"
+
+static bool intr_yes(void *ctx) { (void)ctx; return true; }
+static bool intr_no(void *ctx)  { (void)ctx; return false; }
+
+static void poll_carries_nfc_ack(void) {
+    boot();
+    c.nfc_ack = 5;
+    fake_push_response("HTTP/1.1 204 No Content\r\n\r\n");
+    dc_step(&c);
+    CHECK(strstr(fake_last_request(), "GET /api/device/poll?since=0&nfcAck=5 ") != NULL,
+          "the board's write cursor rides every poll, or the server can never stop re-sending");
+}
+
+// nfcWrite is placed BEFORE `desired` on purpose: the flat scans find the
+// first "diskId" in the body, so an nfcWrite that was not lifted out would
+// hand its id to the disk logic as the mounted disk's.
+static void poll_body_nfc_write_arms(void) {
+    boot();
+    psram_publish_slot(0);
+    strcpy(c.mounted_sha256, "aa"); c.since = 3; c.mounted_version = 3;
+    push_ok_json("{\"version\":4,\"nfcWrite\":{\"seq\":6,\"diskId\":\"" NFC_ID "\",\"title\":\"T\"},"
+                 "\"desired\":{\"sha256\":\"aa\",\"diskId\":\"d1\",\"gameId\":\"g\","
+                 "\"game\":\"G\",\"diskNo\":1,\"diskCount\":1,\"writeProtected\":false}}");
+    CHECK_EQ_INT(dc_step(&c), DC_IDLE_POLL);
+    CHECK(c.nfc_write_new, "a write request with seq > nfc_ack is new");
+    CHECK_EQ_INT(c.nfc_write_seq, 6);
+    CHECK(strcmp(c.nfc_write_disk_id, NFC_ID) == 0, "armed with the request's disk");
+    CHECK(strcmp(c.nfc_write_title, "T") == 0, "and its title");
+    CHECK(strcmp(c.mounted_disk_id, "d1") == 0,
+          "the desired disk's id is desired.diskId, never nfcWrite's");
+    CHECK_EQ_INT(c.mounted_version, 4);
+    CHECK_EQ_INT(c.nfc_ack, 0);   // the caller acks, after acting -- never dc_step
+}
+
+static void nfc_write_cancel_disarms(void) {
+    boot();
+    c.nfc_ack = 6;
+    strcpy(c.nfc_write_disk_id, NFC_ID);
+    push_ok_json("{\"version\":0,\"desired\":null,\"nfcWrite\":{\"seq\":7,\"diskId\":null,\"title\":null}}");
+    dc_step(&c);
+    CHECK(c.nfc_write_new, "a disarm is news too -- nfcAck must catch up to it");
+    CHECK_EQ_INT(c.nfc_write_seq, 7);
+    CHECK(c.nfc_write_disk_id[0] == '\0', "null diskId disarms");
+    CHECK(c.nfc_write_title[0] == '\0', "and carries no title");
+}
+
+static void nfc_write_stale_seq_ignored(void) {
+    boot();
+    c.nfc_ack = 7;
+    push_ok_json("{\"version\":0,\"desired\":null,\"nfcWrite\":{\"seq\":7,\"diskId\":\"" NFC_ID "\",\"title\":\"T\"}}");
+    dc_step(&c);
+    CHECK(!c.nfc_write_new, "seq == nfc_ack: already acted on");
+    CHECK(c.nfc_write_disk_id[0] == '\0', "and nothing armed from it");
+    push_ok_json("{\"version\":0,\"desired\":null,\"nfcWrite\":{\"seq\":2,\"diskId\":\"" NFC_ID "\",\"title\":\"T\"}}");
+    dc_step(&c);
+    CHECK(!c.nfc_write_new, "seq < nfc_ack: older still");
+}
+
+static void nfc_write_bad_id_disarms(void) {
+    boot();
+    push_ok_json("{\"version\":0,\"desired\":null,\"nfcWrite\":{\"seq\":3,\"diskId\":\"not-a-disk\",\"title\":\"T\"}}");
+    dc_step(&c);
+    CHECK(c.nfc_write_new, "still new, so the cursor can move past it");
+    CHECK(c.nfc_write_disk_id[0] == '\0', "a malformed id is never armed");
+    // A valid id with a tail: a fixed-size copy would clip it back to a
+    // perfectly valid-looking id. It must be refused whole instead.
+    push_ok_json("{\"version\":0,\"desired\":null,\"nfcWrite\":{\"seq\":4,\"diskId\":\"" NFC_ID "ff\",\"title\":\"T\"}}");
+    dc_step(&c);
+    CHECK_EQ_INT(c.nfc_write_seq, 4);
+    CHECK(c.nfc_write_disk_id[0] == '\0', "an over-long id is not clipped into a valid one");
+}
+
+static void nfc_write_title_is_clipped(void) {
+    boot();
+    char body[400], title[DC_TITLE_MAX + 20];
+    memset(title, 'x', sizeof title - 1); title[sizeof title - 1] = '\0';
+    snprintf(body, sizeof body, "{\"version\":0,\"desired\":null,\"nfcWrite\":"
+             "{\"seq\":1,\"diskId\":\"" NFC_ID "\",\"title\":\"%s\"}}", title);
+    push_ok_json(body);
+    dc_step(&c);
+    CHECK_EQ_INT(strlen(c.nfc_write_title), DC_TITLE_MAX);
+}
+
+static void poll_interrupted_returns_without_backoff(void) {
+    boot();
+    c.since = 3; c.backoff_ms = 2000;
+    dc_set_poll_interrupt(&c, intr_yes, NULL);
+    // A REUSED connection, so the narrow retry's own conditions all hold
+    // (reused, not one byte read): only the interrupt keeps it from firing.
+    fake_set_reused(true);
+    fake_push_held("");
+    push_ok_json("{\"version\":9,\"desired\":null}");   // a trap: a retry would take it
+    dc_state_t st = dc_step(&c);
+    CHECK(c.poll_interrupted, "the step says why it ended");
+    CHECK_EQ_INT(st, DC_IDLE_POLL);
+    CHECK_EQ_INT(c.state, DC_IDLE_POLL);
+    CHECK_EQ_INT(c.backoff_ms, 2000);          // nothing failed: no backoff
+    CHECK_EQ_INT(c.since, 3);
+    CHECK_EQ_INT(fake_request_count(), 1);     // an interrupt is not a dead socket
+    CHECK(fake_abandon_count() >= 1, "the connection is abandoned");
+    CHECK(!fake_connection_is_kept(), "the response is still owed on it: never reuse it");
+    CHECK(fake_transport()->interrupted == NULL, "the predicate is removed after the poll");
+
+    // The next poll clears the flag and runs normally on a NEW connection.
+    dc_state_t st2 = dc_step(&c);
+    CHECK(!c.poll_interrupted, "a normal step clears the flag");
+    CHECK(!fake_last_reused(), "the abandoned socket is not handed back");
+    CHECK_EQ_INT(st2, DC_IDLE_POLL);
+    CHECK_EQ_INT(c.since, 9);
+}
+
+// Fix round 1 (controller ruling): "state unchanged" includes DC_BACKOFF.
+// Here a failed poll has put the client in backoff; main.c sleeps it and
+// polls again, and THAT poll is interrupted by a tap. dc_step then returns
+// DC_BACKOFF with backoff_ms intact -- which is NOT a result. main.c must
+// check c.poll_interrupted FIRST and, when set, skip its
+// `else if (polled && s == DC_BACKOFF)` sleep (up to 60 s) and all state
+// handling: send the pending tap (dc_tap), then call dc_step again.
+static void a_poll_interrupted_after_a_backoff_keeps_the_backoff_but_is_flagged(void) {
+    boot();
+    fake_push_connect_failure();
+    CHECK_EQ_INT(dc_step(&c), DC_BACKOFF);           // the prior failed poll
+    uint32_t backoff = c.backoff_ms;
+    CHECK(backoff > 0, "precondition: the client is backing off");
+
+    dc_set_poll_interrupt(&c, intr_yes, NULL);
+    fake_push_held("");
+    push_ok_json("{\"version\":9,\"desired\":null}");  // a trap: a retry would take it
+    int abandons_before = fake_abandon_count();
+    dc_state_t st = dc_step(&c);
+    CHECK(c.poll_interrupted, "flagged -- the one thing main.c must read first");
+    CHECK_EQ_INT(st, DC_BACKOFF);                    // unchanged, and NOT a result
+    CHECK_EQ_INT(c.backoff_ms, backoff);             // no second backoff step either
+    CHECK_EQ_INT(fake_request_count(), 2);           // failed poll + interrupted poll, no retry
+    CHECK(fake_abandon_count() > abandons_before, "the interrupted connection is abandoned");
+    CHECK(!fake_connection_is_kept(), "and never kept");
+}
+
+// tls_read only consults the predicate while nothing is buffered -- so it can
+// fire with half a response already read. That socket is out of step too.
+static void a_poll_interrupted_mid_response_is_abandoned(void) {
+    boot();
+    dc_set_poll_interrupt(&c, intr_yes, NULL);
+    fake_push_held("HTTP/1.1 200 OK\r\nContent-Length: 40\r\n\r\n{\"ver");
+    dc_step(&c);
+    CHECK(c.poll_interrupted, "interrupted");
+    CHECK(!fake_connection_is_kept(), "never keep a socket mid-response");
+    CHECK_EQ_INT(c.backoff_ms, 0);
+}
+
+// The predicate is asked, not assumed: one that says no leaves the held poll
+// to time out exactly as it always did.
+static void a_poll_interrupt_that_says_no_changes_nothing(void) {
+    boot();
+    dc_set_poll_interrupt(&c, intr_no, NULL);
+    fake_push_held("");
+    CHECK_EQ_INT(dc_step(&c), DC_BACKOFF);   // a read timeout, as before
+    CHECK(!c.poll_interrupted, "a timeout is not an interrupt");
+}
+
+// Only the poll: the tap itself must run to completion even while the
+// predicate still says "interrupt" (it will, until the tap is sent).
+static void the_interrupt_is_installed_for_the_poll_only(void) {
+    boot();
+    dc_set_poll_interrupt(&c, intr_yes, NULL);
+    CHECK(fake_transport()->interrupted == NULL, "not installed outside dc_step");
+    fake_push_held("");
+    CHECK_EQ_INT(dc_tap(&c, NFC_ID, NULL, 0), DC_TAP_FAILED);   // timed out, not interrupted
+    CHECK(!c.poll_interrupted, "a tap is never 'interrupted'");
+    push_status_json("HTTP/1.1 200 OK", "{\"outcome\":\"mounting\",\"title\":\"G\"}");
+    CHECK_EQ_INT(dc_tap(&c, NFC_ID, NULL, 0), DC_TAP_MOUNTING);
+}
+
+static void tap_maps_outcomes(void) {
+    static const struct { const char *wire; dc_tap_outcome_t want; } cases[] = {
+        { "mounting",  DC_TAP_MOUNTING },  { "already", DC_TAP_ALREADY },
+        { "not_found", DC_TAP_NOT_FOUND }, { "too_long", DC_TAP_TOO_LONG },
+        { "ignored",   DC_TAP_IGNORED },   { "exploded", DC_TAP_FAILED },
+    };
+    char title[16], body[96];
+    for (size_t i = 0; i < sizeof cases / sizeof cases[0]; i++) {
+        boot();
+        snprintf(body, sizeof body, "{\"outcome\":\"%s\"}", cases[i].wire);
+        push_ok_json(body);
+        strcpy(title, "stale");
+        CHECK_EQ_INT(dc_tap(&c, NFC_ID, title, sizeof title), cases[i].want);
+        CHECK(title[0] == '\0', "no title in the answer: none reported, not a stale one");
+    }
+
+    boot();
+    push_ok_json("{\"outcome\":\"mounting\",\"title\":\"Turrican II - The Final Fight\"}");
+    CHECK_EQ_INT(dc_tap(&c, NFC_ID, title, sizeof title), DC_TAP_MOUNTING);
+    CHECK(strcmp(title, "Turrican II - T") == 0, "the title is clipped to the caller's buffer");
+    const char *q = fake_last_request();
+    CHECK(strstr(q, "POST /api/device/tap HTTP/1.1") != NULL, "path");
+    CHECK(strstr(q, "Content-Type: application/json") != NULL, "a JSON body");
+    CHECK(strstr(q, "\r\n\r\n{\"diskId\":\"" NFC_ID "\"}") != NULL, "exact body");
+
+    boot();
+    push_ok_json("<html>garbage</html>");
+    CHECK_EQ_INT(dc_tap(&c, NFC_ID, title, sizeof title), DC_TAP_FAILED);
+
+    boot();
+    push_status_json("HTTP/1.1 400 Bad Request", "{\"error\":\"invalid_body\"}");
+    CHECK_EQ_INT(dc_tap(&c, NFC_ID, title, sizeof title), DC_TAP_FAILED);
+
+    boot();
+    push_status_json("HTTP/1.1 500 Internal Server Error", "{\"outcome\":\"mounting\"}");
+    CHECK_EQ_INT(dc_tap(&c, NFC_ID, title, sizeof title), DC_TAP_FAILED);
+
+    boot();
+    fake_push_connect_failure();
+    CHECK_EQ_INT(dc_tap(&c, NFC_ID, title, sizeof title), DC_TAP_FAILED);
+    CHECK_EQ_INT(c.backoff_ms, 0);   // a tap never moves the poll's backoff
+
+    boot();
+    push_status_json("HTTP/1.1 401 Unauthorized", "{\"error\":\"unauthorized\"}");
+    CHECK_EQ_INT(dc_tap(&c, NFC_ID, title, sizeof title), DC_TAP_FAILED);
+    CHECK_EQ_INT(c.state, DC_HALTED);
+}
+
+static const char *body_of_last_request(void) {
+    const char *b = strstr(fake_last_request(), "\r\n\r\n");
+    return b ? b + 4 : "";
+}
+
+static void tap_write_report_body(void) {
+    boot();
+    push_ok_json("{\"stored\":true}");
+    CHECK(dc_tap_write_report(&c, 7, true, "04a1b2c3d4", "ignored when ok"), "a 200 is heard");
+    CHECK(strstr(fake_last_request(), "POST /api/device/tap-write HTTP/1.1") != NULL, "path");
+    CHECK(strstr(fake_last_request(), "Content-Type: application/json") != NULL, "JSON");
+    CHECK(strcmp(body_of_last_request(), "{\"seq\":7,\"ok\":true,\"uid\":\"04a1b2c3d4\"}") == 0,
+          "ok: no reason at all");
+
+    boot();
+    push_ok_json("{\"stored\":false}");
+    CHECK(dc_tap_write_report(&c, 8, false, "04a1b2c3d4", "read-back \"mismatch\""),
+          "stored:false is still heard");
+    CHECK(strcmp(body_of_last_request(),
+                 "{\"seq\":8,\"ok\":false,\"uid\":\"04a1b2c3d4\",\"reason\":\"read-back \\\"mismatch\\\"\"}") == 0,
+          "a failure carries its reason, escaped");
+
+    // The server's own bounds: uid <= 32, reason <= 64. Past them it answers
+    // 400 and the report is lost, so they are clipped here instead.
+    boot();
+    push_ok_json("{\"stored\":true}");
+    char uid[50], why[100];
+    memset(uid, 'u', sizeof uid - 1); uid[sizeof uid - 1] = '\0';
+    memset(why, 'w', sizeof why - 1); why[sizeof why - 1] = '\0';
+    CHECK(dc_tap_write_report(&c, 9, false, uid, why), "sent");
+    char want[200];
+    snprintf(want, sizeof want, "{\"seq\":9,\"ok\":false,\"uid\":\"%.32s\",\"reason\":\"%.64s\"}", uid, why);
+    CHECK(strcmp(body_of_last_request(), want) == 0, "clipped to the server's bounds");
+
+    boot();
+    fake_push_connect_failure();
+    CHECK(!dc_tap_write_report(&c, 9, false, "04", NULL), "offline: not heard");
+    boot();
+    push_ok_json("{\"stored\":false}");
+    CHECK(dc_tap_write_report(&c, 9, false, "04", NULL), "a NULL reason is sent as none");
+    CHECK(strcmp(body_of_last_request(), "{\"seq\":9,\"ok\":false,\"uid\":\"04\"}") == 0, "no reason key");
+}
+
+static void status_includes_nfc_reader(void) {
+    boot();
+    fake_push_response("HTTP/1.1 204 No Content\r\n\r\n");
+    dc_report_status(&c, 0, -50, NULL, "1.3.0+gt");
+    CHECK(strstr(fake_last_request(), "nfcReader") == NULL,
+          "never set: the key is omitted, and the server leaves its column alone");
+
+    dc_set_nfc_reader(&c, "present");
+    fake_push_response("HTTP/1.1 204 No Content\r\n\r\n");
+    dc_report_status(&c, 0, -50, NULL, "1.3.0+gt");
+    CHECK(strstr(fake_last_request(), ",\"nfcReader\":\"present\"") != NULL, "present");
+
+    dc_set_nfc_reader(&c, "absent");
+    fake_push_response("HTTP/1.1 204 No Content\r\n\r\n");
+    dc_report_status(&c, 0, -50, NULL, "1.3.0+gt");
+    CHECK(strstr(fake_last_request(), ",\"nfcReader\":\"absent\"") != NULL,
+          "absent is said out loud -- show both values of a state");
+
+    dc_set_nfc_reader(&c, "maybe");
+    fake_push_response("HTTP/1.1 204 No Content\r\n\r\n");
+    dc_report_status(&c, 0, -50, NULL, "1.3.0+gt");
+    CHECK(strstr(fake_last_request(), "nfcReader") == NULL, "a word the server would reject is omitted");
+
+    dc_set_nfc_reader(&c, NULL);
+    fake_push_response("HTTP/1.1 204 No Content\r\n\r\n");
+    dc_report_status(&c, 0, -50, NULL, "1.3.0+gt");
+    CHECK(strstr(fake_last_request(), "nfcReader") == NULL, "NULL omits");
+}
+
 int main(void) {
     // Only test_successful_image_fetch_publishes_and_reflects_write_protected
     // needs real PSRAM backing (everything else in this file either never
@@ -1447,6 +1746,20 @@ int main(void) {
     RUN(test_fetch_firmware_streams_the_body);
     RUN(test_fetch_firmware_incomplete_is_minus_one);
     RUN(test_fetch_firmware_401_halts);
+    RUN(poll_carries_nfc_ack);
+    RUN(poll_body_nfc_write_arms);
+    RUN(nfc_write_cancel_disarms);
+    RUN(nfc_write_stale_seq_ignored);
+    RUN(nfc_write_bad_id_disarms);
+    RUN(nfc_write_title_is_clipped);
+    RUN(poll_interrupted_returns_without_backoff);
+    RUN(a_poll_interrupted_after_a_backoff_keeps_the_backoff_but_is_flagged);
+    RUN(a_poll_interrupted_mid_response_is_abandoned);
+    RUN(a_poll_interrupt_that_says_no_changes_nothing);
+    RUN(the_interrupt_is_installed_for_the_poll_only);
+    RUN(tap_maps_outcomes);
+    RUN(tap_write_report_body);
+    RUN(status_includes_nfc_reader);
 
     // The observation tests run BEFORE the backing is released: several of
     // them drive a real fetch, which writes into PSRAM. Appending them after

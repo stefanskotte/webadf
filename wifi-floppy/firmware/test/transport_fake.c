@@ -28,6 +28,8 @@ typedef struct {
     int deliver_limit;  // how many bytes read() will ever hand out for this
                          // event -- == len for a full response, == n for a
                          // truncated one
+    bool held;          // once deliver_limit is reached, read() WAITS rather
+                         // than reporting a clean close (fake_push_held)
 } fake_event_t;
 
 static fake_event_t g_queue[FAKE_MAX_QUEUE];
@@ -65,6 +67,8 @@ static bool g_kept_dead;
 static bool g_reused;
 static bool g_dead;
 static bool g_dead_wrote;   // the dead connection has swallowed its one write
+static int  g_abandon_count;
+static transport_t g_transport;
 
 void fake_reset(void) {
     g_queue_count = 0;
@@ -82,6 +86,11 @@ void fake_reset(void) {
     g_reused = false;
     g_dead = false;
     g_dead_wrote = false;
+    g_abandon_count = 0;
+    // A predicate left installed by one test (or by a client that forgot to
+    // clear it) must not decide the next test's reads.
+    g_transport.interrupted = NULL;
+    g_transport.interrupt_ctx = NULL;
 }
 
 static fake_event_t *fake_push_slot(void) {
@@ -105,6 +114,7 @@ void fake_push_response_bytes(const uint8_t *raw, int len) {
     memcpy(e->data, raw, (size_t)len);
     e->len = len;
     e->deliver_limit = len;
+    e->held = false;
 }
 
 void fake_push_truncated(const char *raw, int n) {
@@ -120,6 +130,12 @@ void fake_push_truncated(const char *raw, int n) {
     memcpy(e->data, raw, len);
     e->len = (int)len;
     e->deliver_limit = n;
+    e->held = false;
+}
+
+void fake_push_held(const char *prefix) {
+    fake_push_response(prefix);
+    g_queue[g_queue_count - 1].held = true;
 }
 
 void fake_push_connect_failure(void) {
@@ -127,6 +143,7 @@ void fake_push_connect_failure(void) {
     e->type = FAKE_EV_CONNECT_FAIL;
     e->len = 0;
     e->deliver_limit = 0;
+    e->held = false;
 }
 
 static int fake_connect(struct transport *t, const char *host, int port) {
@@ -216,9 +233,16 @@ static int fake_write(struct transport *t, const uint8_t *b, int n) {
 }
 
 static int fake_read(struct transport *t, uint8_t *b, int cap, int timeout_ms) {
-    (void)t; (void)timeout_ms;
+    (void)timeout_ms;
     if (!g_connected || g_dead || g_active_slot < 0) return -1;
     fake_event_t *e = &g_queue[g_active_slot];
+    if (g_cursor >= e->deliver_limit && e->held) {
+        // Nothing buffered and the server is still holding: WAITING, which
+        // is the one place tls_read consults the predicate. Without one (or
+        // with one that says no) the wait simply runs out.
+        if (t->interrupted && t->interrupted(t->interrupt_ctx)) return TRANSPORT_INTERRUPTED;
+        return -1;
+    }
     if (g_cursor >= e->deliver_limit) return 0; // clean close: exhausted or truncated
     int avail = e->deliver_limit - g_cursor;
     int n = (avail < cap) ? avail : cap;
@@ -247,6 +271,7 @@ static void fake_close(struct transport *t) {
 // because dc_exchange calls it on a path dc_attempt has already taken.
 static void fake_abandon(struct transport *t) {
     (void)t;
+    g_abandon_count++;
     g_connected = 0;
     g_kept = false;
     g_kept_dead = false;
@@ -277,6 +302,10 @@ bool fake_last_reused(void) {
 
 bool fake_connection_is_kept(void) {
     return g_kept;
+}
+
+int fake_abandon_count(void) {
+    return g_abandon_count;
 }
 
 static transport_t g_transport = {

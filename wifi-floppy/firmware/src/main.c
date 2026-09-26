@@ -33,6 +33,10 @@
 #include "i2c_probe.h"
 #include "ssd1306.h"
 #include "display.h"
+#include "nfc_reader.h"
+#include "nfc_bus_i2c.h"
+#include "nfc_handoff.h"
+#include "nfc_ui.h"
 // Generated at BUILD time by cmake/gen_version_header.cmake, so the string
 // always matches the commit this image was compiled from.
 #include "wifi_floppy_version.h"
@@ -136,6 +140,15 @@ static volatile bool g_ui_writable = false;
 // cast, since up_sync_t and disp_sync_t are converted by a switch (see
 // core1_main's WPROT block).
 static volatile int g_ui_sync = DISP_SYNC_SYNCED;
+// A tap's line (nfc_ui.h), published by core1 with the time it was published
+// and a count of publications. core0 shows it OVER g_ui_detail while it is
+// under NFC_UI_LINE_MS old (nfc_tag_clock_live, nfc_ui_detail), so the
+// observer's line underneath is never overwritten and the revert is on time
+// even while core1 sits in a 25 s held poll. The count is what lets core0 end
+// a line for good: an age alone comes back when the ms clock wraps.
+static char g_ui_tag[NFC_UI_LINE_BYTES];
+static uint32_t g_ui_tag_at;
+static uint32_t g_ui_tag_n;
 
 static void ui_publish(disp_status_t st, const char *title, const char *detail, int pct) {
     g_ui_seq++;                     // odd: writing
@@ -148,9 +161,21 @@ static void ui_publish(disp_status_t st, const char *title, const char *detail, 
     g_ui_pct    = pct;
 }
 
-/** Copy the published state. False means "torn, ask again" -- never a stale
- *  half-string handed to the renderer. */
-static bool ui_snapshot(display_state_t *s) {
+/** core1: show `line` on the detail line for NFC_UI_LINE_MS from `now`. */
+static void ui_publish_tag(const char *line, uint32_t now) {
+    g_ui_seq++;                     // odd: writing
+    __dmb();
+    snprintf(g_ui_tag, sizeof g_ui_tag, "%s", line);
+    g_ui_tag_at = now;
+    g_ui_tag_n++;
+    __dmb();
+    g_ui_seq++;                     // even: settled
+}
+
+/** Copy the published state, and the tap line with its time and count. False
+ *  means "torn, ask again" -- never a stale half-string handed to the renderer. */
+static bool ui_snapshot(display_state_t *s, char tag[NFC_UI_LINE_BYTES], uint32_t *tag_at,
+                        uint32_t *tag_n) {
     uint32_t a = g_ui_seq;
     __dmb();
     if (a & 1u) return false;
@@ -171,6 +196,10 @@ static bool ui_snapshot(display_state_t *s) {
     memcpy(s->detail, g_ui_detail, sizeof s->detail);
     s->title[DISP_TITLE_MAX]   = '\0';
     s->detail[DISP_DETAIL_MAX] = '\0';
+    memcpy(tag, g_ui_tag, NFC_UI_LINE_BYTES);
+    tag[NFC_UI_LINE_BYTES - 1] = '\0';
+    *tag_at = g_ui_tag_at;
+    *tag_n  = g_ui_tag_n;
     __dmb();
     return g_ui_seq == a;
 }
@@ -556,6 +585,153 @@ static uint32_t wb_last_write_ms(void) { return g_write_last_ms; }
 
 static uint32_t clock_ms(void) {
     return to_ms_since_boot(get_absolute_time());
+}
+
+// ---------------------------------------------------------------- NFC tap
+//
+// Tap-to-mount (spec 2026-09-25 §4). The reader is core0's: it shares i2c1
+// with the OLED, and the bus belongs to core0, so nfc_step() runs in the
+// display pump's slot (main()'s loop). The network is core1's: a TAG_READ
+// becomes POST /tap there. Single-slot seqlock mailboxes carry the rest
+// (nfc_handoff.h): reader events one way (WRITE_DONE in a box of its own, so
+// no tap can replace an untaken result), the write request the other.
+// Every decision about what to show, and when a write request ends, is in
+// nfc_ui.c; this section only moves values between the cores.
+static nfc_reader_t   g_nfc;           // core0 only
+static nfc_ev_boxes_t  g_nfc_ev;       // core0 -> core1
+static nfc_wreq_box_t  g_nfc_wreq;     // core1 -> core0
+static nfc_ev_cursor_t g_nfc_ev_cur;   // core1's cursors into g_nfc_ev
+static nfc_report_t    g_nfc_report;   // core1 only: the write report owed the server
+// The reader as a LEVEL, not an event: 0 = not checked yet, 1 = present,
+// 2 = absent. Written by core0 after every nfc_step, read by core1 for the
+// status report. A level because the event slot keeps only the newest event,
+// and a PRESENT overwritten by a tap before core1 looked would leave the
+// server believing "absent" (or nothing) for as long as the chip stayed.
+static volatile int   g_nfc_reader;
+
+/** core1, from inside tls_read's wait while a poll is held: cut the poll
+ *  short, a tap is waiting (device_client.h). One load. */
+static bool nfc_event_pending(void *ctx) {
+    (void)ctx;
+    return nfc_ev_boxes_pending(&g_nfc_ev, &g_nfc_ev_cur);
+}
+
+/** core0, in the display pump's slot: never both on the bus in one pass.
+ *  Arms or disarms on a new write request, expires one after two minutes,
+ *  runs one budgeted step, and forwards what it produced to core1.
+ *  `short_pass`: a disk is mounted AND no panel answered, so the bus is still
+ *  at the probe's 100 kHz -- one register op there is ~0.5 ms of a pass the
+ *  Amiga is waiting on, so the reader gets 1 op instead of 4. */
+static void nfc_core0_step(nfc_armed_t *armed, bool short_pass) {
+    static uint32_t wreq_last;
+    const uint32_t now = clock_ms();
+    nfc_wreq_t req;
+    if (nfc_wreq_box_take(&g_nfc_wreq, &wreq_last, &req)) {
+        if (req.disk_id[0]) {
+            nfc_arm_write(&g_nfc, req.seq, req.disk_id);
+            nfc_armed_set(armed, req.seq, req.title, now);
+            wf_logf(WF_INFO, "nfc: write %lu armed (%s)", (unsigned long)req.seq, req.disk_id);
+        } else {
+            nfc_disarm(&g_nfc);
+            nfc_armed_clear(armed);
+            wf_logf(WF_INFO, "nfc: write %lu disarmed", (unsigned long)req.seq);
+        }
+    }
+    if (nfc_armed_expired(armed, now)) {       // true once; it has ended `armed`
+        nfc_disarm(&g_nfc);
+        wf_logf(WF_INFO, "nfc: write %lu expired on the board (2 min)", (unsigned long)armed->seq);
+    }
+
+    nfc_set_max_ops(&g_nfc, short_pass ? 1 : NFC_MAX_OPS_PER_STEP);
+    nfc_step(&g_nfc);
+    const int level = nfc_present(&g_nfc) ? 1 : 2;
+    if (level != g_nfc_reader) {
+        g_nfc_reader = level;
+        wf_logf(WF_INFO, "nfc: reader %s at 0x%02x", level == 1 ? "present" : "absent",
+                NFC_I2C_ADDR);
+    }
+    // Every pass: while an event waits in the reader's slot, nfc_step does
+    // nothing at all (nfc_reader.h).
+    nfc_event_t ev;
+    if (nfc_take_event(&g_nfc, &ev)) {
+        nfc_armed_on_event(armed, &ev);
+        if (ev.uid_len > 0) led_blip();         // a tag arrived (spec §4.4)
+        // PRESENT/ABSENT travel as g_nfc_reader above; forwarded, they would
+        // wake a held poll for nothing and could overwrite a waiting tap.
+        if (ev.kind != NFC_EV_PRESENT && ev.kind != NFC_EV_ABSENT)
+            nfc_ev_route(&g_nfc_ev, &ev);
+    }
+}
+
+/** core1, between requests: a write's result first (it is held as a report
+ *  owed the server, and shown), then one tap or other reader event, then the
+ *  owed report -- last, and not at all on a pass that had a tap, so a send
+ *  blocking through DNS/connect/read timeouts on a dead network never delays
+ *  one (nfc_report_turn). The report is kept until the server has HEARD it
+ *  (any 2xx), retried on its own schedule (2 s doubling to 60 s -- core1's
+ *  pass can turn every ~50 ms while the uploader waits, so "every pass" is
+ *  not a rate); a newer write request makes it moot (nfc_core1_write_request). */
+static void nfc_core1_event(device_client_t *c) {
+    static uint32_t warned_seq;                 // log a failed report once per seq
+    const bool online = c->state != DC_UNPROVISIONED && c->state != DC_HALTED;
+    char uid[NFC_UI_UID_HEX_BYTES];
+    nfc_event_t ev;
+    if (nfc_ev_box_take(&g_nfc_ev.done, &g_nfc_ev_cur.done, &ev)) {
+        nfc_report_hold(&g_nfc_report, &ev);
+        nfc_ui_uid_hex(&ev, uid);
+        wf_logf(ev.ok ? WF_INFO : WF_WARN, "nfc: write %lu to tag %s: %s%s",
+                (unsigned long)ev.seq, uid, ev.ok ? "ok" : "FAILED ",
+                ev.ok ? "" : (ev.why ? ev.why : "?"));
+        ui_publish_tag(nfc_ui_event_line(&ev), clock_ms());
+    }
+    bool tapped = false;
+    if (nfc_ev_box_take(&g_nfc_ev.taps, &g_nfc_ev_cur.taps, &ev)) {
+        tapped = true;
+        char line[NFC_UI_LINE_BYTES];
+        const char *show;
+        if (ev.kind == NFC_EV_TAG_READ) {
+            static char title[DC_TITLE_MAX + 1];    // static: core1's stack is measured tight
+            const dc_tap_outcome_t o = online ? dc_tap(c, ev.disk_id, title, sizeof title)
+                                              : DC_TAP_FAILED;
+            show = nfc_ui_tap_line(o, title, line, sizeof line);
+            wf_logf(WF_INFO, "nfc: tap %s -> %s", ev.disk_id, show);
+        } else {
+            show = nfc_ui_event_line(&ev);
+            if (show) wf_logf(WF_INFO, "nfc: %s", show);
+        }
+        if (show) ui_publish_tag(show, clock_ms());
+    }
+    // A tap that arrived while this one was handled goes first too.
+    tapped = tapped || nfc_ev_box_pending(&g_nfc_ev.taps, g_nfc_ev_cur.taps);
+    if (online && nfc_report_turn(&g_nfc_report, clock_ms(), tapped, &ev)) {
+        nfc_ui_uid_hex(&ev, uid);
+        const bool heard = dc_tap_write_report(c, ev.seq, ev.ok, uid, ev.why);
+        nfc_report_sent(&g_nfc_report, ev.seq, heard, clock_ms());
+        if (heard) {
+            wf_logf(WF_INFO, "nfc: write %lu reported", (unsigned long)ev.seq);
+        } else if (warned_seq != ev.seq) {
+            warned_seq = ev.seq;
+            wf_logf(WF_WARN, "nfc: write %lu report not delivered -- retrying (2 s, doubling to 60 s)",
+                    (unsigned long)ev.seq);
+        }
+    }
+}
+
+/** core1, after a poll delivered nfcWrite: hand it to core0, and ack it. */
+static void nfc_core1_write_request(device_client_t *c) {
+    nfc_wreq_t req;
+    memset(&req, 0, sizeof req);
+    req.seq = c->nfc_write_seq;
+    snprintf(req.disk_id, sizeof req.disk_id, "%s", c->nfc_write_disk_id);
+    // A newer request (or its withdrawal) makes an unreported older result
+    // moot: the server would acknowledge and ignore it as stale.
+    nfc_report_supersede(&g_nfc_report, req.seq);
+    if (req.disk_id[0]) snprintf(req.title, sizeof req.title, "%s", c->nfc_write_title);
+    nfc_wreq_box_put(&g_nfc_wreq, &req);
+    // Acted on -- armed or disarmed -- so say so, or the server keeps its
+    // hold released and the poll keeps coming back with the same request.
+    c->nfc_ack = c->nfc_write_seq;
+    c->nfc_write_new = false;
 }
 
 static void __isr gpio_isr(uint gpio, uint32_t events) {
@@ -1130,6 +1306,10 @@ static void core1_main(void) {
         static uploader_t up;
         up_init(&up, &c, session, wb_write_gen, wb_last_write_ms);
         dc_set_hold(&c, up_holds, &up);
+        // A waiting tap cuts a held poll short (spec §4.2 amendment). Set on
+        // every entry: dc_init above zeroes `c`, and nfc_ack with it -- a
+        // re-paired board is a new device row whose cursor starts over.
+        dc_set_poll_interrupt(&c, nfc_event_pending, NULL);
         static reinsert_t reins;
         reinsert_init(&reins);
         wf_logf(WF_INFO, "write-back: session %s", session);
@@ -1192,6 +1372,10 @@ static void core1_main(void) {
         fwu_ops = (fwu_ops_t){ fwu_fetch, fwu_apply, fwu_save, fwu_reboot, &c };
         dc_set_fw_report(&c, &fw_report);
         bool fw_report_owed = true;
+        // The reader's presence as last put on the status report (g_nfc_reader),
+        // and whether a report is owed because it changed.
+        int  nfc_reader_seen = 0;
+        bool nfc_report_owed = false;
 
         // 2b trial (spec D8): prove the network works, THEN confirm, THEN poll.
         {
@@ -1241,6 +1425,19 @@ static void core1_main(void) {
         uint32_t last_status_ms = clock_ms();
 
         while (true) {
+            // Tap-to-mount, first: a tap that cut the last poll short goes out
+            // now, ahead of anything else this pass sends. Between requests,
+            // never inside one -- the uploader's included (dc_tap's rule).
+            nfc_core1_event(&c);
+            {
+                const int r = g_nfc_reader;
+                if (r != nfc_reader_seen) {
+                    nfc_reader_seen = r;
+                    dc_set_nfc_reader(&c, r == 1 ? "present" : r == 2 ? "absent" : NULL);
+                    nfc_report_owed = true;
+                }
+            }
+
             // Item 0 (fix round 1, Important): a status report is OWED
             // whenever the mounted disk's identity or version differs from
             // the values last SUCCESSFULLY reported -- checked, and sent if
@@ -1284,6 +1481,7 @@ static void core1_main(void) {
                 if (dc_report_status(&c, psram_free_estimate(), wifi_rssi(), NULL, WF_FIRMWARE_VERSION)) {
                     last_status_ms = clock_ms();
                     fw_report_owed = false;   // the same report carries the fw fields
+                    nfc_report_owed = false;  // ...and nfcReader
                     strncpy(last_reported_sha, c.mounted_sha256, sizeof(last_reported_sha) - 1);
                     last_reported_sha[sizeof(last_reported_sha) - 1] = '\0';
                     last_reported_version = c.mounted_version;
@@ -1314,6 +1512,11 @@ static void core1_main(void) {
                 s = dc_step(&c);
                 polled = true;
             }
+            // Task 10's contract: a poll cut short by a waiting tap decided
+            // NOTHING, and `s` is not a result -- DC_BACKOFF included, whose
+            // sleep would hold the tap up to 60 s. No state handling at all:
+            // round to the top, send the tap, poll again.
+            if (polled && c.poll_interrupted) continue;
 
 #if WF_FW_DEBUG
             // Fix round 3, bench-only: a minimal USB-serial command that
@@ -1416,6 +1619,13 @@ static void core1_main(void) {
                     fwu_on_instruction(&fwu, NULL, FW_OK);
                 }
                 fw_report_owed = true;
+            }
+            // Tap-to-mount: a write request (or its withdrawal) came with the
+            // poll. Handed to core0, which owns the reader, and acked.
+            if (c.nfc_write_new) {
+                wf_logf(WF_INFO, "nfc: write request %lu: %s", (unsigned long)c.nfc_write_seq,
+                        c.nfc_write_disk_id[0] ? c.nfc_write_disk_id : "withdrawn");
+                nfc_core1_write_request(&c);
             }
             {
                 // D6: nothing mounted, no unsent writes, motor off. The
@@ -1547,10 +1757,12 @@ static void core1_main(void) {
             // Not on a report_retry pass (M3): Item 0's report just failed,
             // and sending the same report again here would double it.
             if (!report_retry && s != DC_HALTED && (disk_changed || version_changed || fw_report_owed ||
+                                    nfc_report_owed ||
                                     (now - last_status_ms) >= DC_STATUS_PERIOD_MS)) {
                 if (dc_report_status(&c, psram_free_estimate(), wifi_rssi(), NULL, WF_FIRMWARE_VERSION)) {
                     last_status_ms = now;
                     fw_report_owed = false;
+                    nfc_report_owed = false;
                     strncpy(last_reported_sha, c.mounted_sha256, sizeof(last_reported_sha) - 1);
                     last_reported_sha[sizeof(last_reported_sha) - 1] = '\0';
                     last_reported_version = c.mounted_version;
@@ -1603,7 +1815,9 @@ static void core1_main(void) {
                 sleep_ms(1000);
             } else if (polled && s == DC_BACKOFF) {
                 uint32_t remaining = c.backoff_ms;
-                while (remaining > 0 && !up_has_work(&up)) {
+                // A tap ends the sleep too: it is answered now ("Tag: offline"
+                // if the fault persists), not after up to 60 s of backoff.
+                while (remaining > 0 && !up_has_work(&up) && !nfc_event_pending(NULL)) {
                     uint32_t step = remaining < 100 ? remaining : 100;
                     sleep_ms(step);
                     remaining -= step;
@@ -1763,6 +1977,13 @@ int main(void) {
             display_init(&g_disp, panel_blit, NULL);
             ui_publish(DS_BOOT, "wifi-floppy", "starting", -1);
         }
+        // The tag reader, on the bus i2c_probe_bus just initialised: 400 kHz
+        // if a panel answered, else still the probe's 100 kHz, left as is.
+        // Nothing touches the chip here -- the first nfc_step() is the
+        // boot-time presence check, in the service loop's display slot.
+        nfc_bus_t nfc_bus;
+        nfc_bus_i2c(&nfc_bus);
+        nfc_init(&g_nfc, &nfc_bus, clock_ms);
     }
     // psram_image_init() runs inside track_cache_init() and its bool result is
     // discarded there. Say it out loud, because PSRAM is the one part of this
@@ -1939,6 +2160,13 @@ int main(void) {
 #endif
     display_state_t ui, last_ui;
     memset(&last_ui, 0, sizeof last_ui);
+    char     ui_tag[NFC_UI_LINE_BYTES];
+    uint32_t ui_tag_at, ui_tag_n;
+    nfc_tag_clock_t ui_tag_clock;        // ends each tag line once (nfc_ui.h)
+    nfc_tag_clock_init(&ui_tag_clock);
+    nfc_armed_t nfc_armed;               // core0's view of the armed tag write
+    nfc_armed_init(&nfc_armed);
+    bool pump_failed = false;            // the last pump had work and sent nothing
     fw_rom_watchdog_start();
     while (true) {
         fw_rom_service();
@@ -2193,7 +2421,15 @@ int main(void) {
         // alone, and pushed a bounded slice at a time because a whole frame
         // is ~11 ms against this loop's 1 ms turn. See the display section at
         // the top of this file for why core1 cannot own this.
-        if (ui_snapshot(&ui)) {
+        if (ui_snapshot(&ui, ui_tag, &ui_tag_at, &ui_tag_n)) {
+            // A tap's line for 3 s, else "Tap tag to write" while armed, else
+            // the observer's own line (nfc_ui_detail); and while armed, the
+            // disk to be written on the title line (nfc_ui_title).
+            const bool tag_live = nfc_tag_clock_live(&ui_tag_clock, ui_tag_n, ui_tag_at, clock_ms());
+            const char *d = nfc_ui_detail(ui.detail, ui_tag, tag_live, &nfc_armed);
+            if (d != ui.detail) snprintf(ui.detail, sizeof ui.detail, "%s", d);
+            const char *t = nfc_ui_title(ui.title, &nfc_armed);
+            if (t != ui.title) snprintf(ui.title, sizeof ui.title, "%s", t);
             ui.show_track = disk_mounted;
             ui.cyl        = cur_cyl;
             ui.max_cyl    = NUM_CYL - 1;
@@ -2210,7 +2446,23 @@ int main(void) {
                 last_ui = ui;
             }
         }
-        display_pump(&g_disp, disk_mounted ? DISP_BUDGET_MOUNTED : DISP_BUDGET_IDLE);
+        // One bus user per pass (spec §4.1): the panel when it has bytes
+        // queued, otherwise the tag reader, whose nfc_step caps itself at
+        // NFC_MAX_OPS_PER_STEP register operations -- 1 while a disk is
+        // mounted on a panel-less (100 kHz) bus.
+        //
+        // Gated on display_in_sync, not on display_pump's return: that is the
+        // bytes SENT, and it is 0 both when there was nothing to send and when
+        // the blit failed -- and a failed blit has already used the bus this
+        // pass. A panel whose blits keep failing (a loose lead) is given every
+        // other pass, so it cannot starve the reader either.
+        if (g_panel_addr != 0 && !display_in_sync(&g_disp) && !pump_failed) {
+            pump_failed = display_pump(&g_disp, disk_mounted ? DISP_BUDGET_MOUNTED
+                                                             : DISP_BUDGET_IDLE) == 0;
+        } else {
+            pump_failed = false;
+            nfc_core0_step(&nfc_armed, disk_mounted && g_panel_addr == 0);
+        }
 
         {
             static uint32_t reported_rejects;

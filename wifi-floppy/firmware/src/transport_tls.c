@@ -560,6 +560,11 @@ static int tls_read(struct transport *t, uint8_t *b, int cap, int timeout_ms) {
                                 // comment -- a stale "not yet" here just
                                 // costs one more 1ms loop iteration.
         if (c->closed) return c->err ? -1 : 0;
+        // Asked only here, while nothing is buffered: data that has already
+        // arrived is always handed over first. See transport.h -- this is
+        // what lets a tapped tag cut short a held poll instead of waiting
+        // out the server's 25 s hold. The caller abandons the connection.
+        if (t->interrupted && t->interrupted(t->interrupt_ctx)) return TRANSPORT_INTERRUPTED;
         if (absolute_time_diff_us(get_absolute_time(), deadline) <= 0) {
             // 3z: THE moment of the stall. Nothing has arrived for the whole
             // timeout while the peer still holds most of the body, so whatever
