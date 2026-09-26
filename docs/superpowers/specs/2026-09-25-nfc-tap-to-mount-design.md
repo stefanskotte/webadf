@@ -52,7 +52,11 @@ States (sketch): `ABSENT → INIT (vendor Type A init, spread across steps) → 
 WUPA → WAIT_IRQ → ANTICOLL → SELECT → AUTH (sector 1, key A) → READ blocks 4..6 → REPORT →
 COOLDOWN`, with `WRITE` / `READBACK` in place of `READ` while a write is armed. Tag detection runs
 about every 250 ms. **A tag is reported only when it ARRIVES**: the same UID staying on the field
-triggers nothing until it has been absent for more than 1 s (debounce).
+triggers nothing until it has been continuously unseen for at least 3 s (firmware 1.3.1; 1.3.0 used
+1 s, and a fob lying on the reader dropped out for longer than that three times in 4.5 minutes on the
+bench, 2026-09-26). A write never goes to a tag already held when the write was armed: that UID must
+be away 3 s, counted from no earlier than the arm, and come back; a different tag is written at once.
+Every dropout over 500 ms on a held tag is logged with its length.
 
 `nfc_probe.c` and its 20 s boot-time tag watch (branch `nfc-identify`) are **deleted**. The only
 boot-time work is one presence check at 0x28.
