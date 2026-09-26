@@ -287,6 +287,22 @@ test('the chips are centred between the wordmark and the pill, and stay centred 
     }).toBe(true);
   });
 
+test('the "+k" chip shows exactly one number, the right one, at every chip width', async ({ page, request }) => {
+  test.setTimeout(60_000);
+  await signUpFresh(page);
+  for (const n of ['One', 'Two', 'Three', 'Four']) await onlineBoard(page, request, n);
+  // 4 boards: 1 chip + "+3" at 1280, 2 + "+2" at 1536, 3 + "+1" at 1920.
+  for (const [width, label] of [[1280, '+3'], [1536, '+2'], [1920, '+1']] as const) {
+    await page.setViewportSize({ width, height: 800 });
+    await page.goto('/library');
+    const more = page.getByTestId('drive-chip-more');
+    await expect(more).toBeVisible();
+    // innerText: what is RENDERED -- textContent would include the
+    // display:none numbers of the other breakpoints.
+    expect((await more.evaluate((el: HTMLElement) => el.innerText)).trim(), `at ${width}`).toBe(label);
+  }
+});
+
 test('at 390px one Drives control on the top line lists every board, and nothing overflows', async ({ page, request }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await signUpFresh(page);
