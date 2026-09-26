@@ -156,3 +156,11 @@ export async function readNfcWriteState(orgId: string, deviceId: string) {
   }).from(devices).where(and(eq(devices.id, deviceId), eq(devices.orgId, orgId))).limit(1);
   return r ?? null;
 }
+
+/** The boards the fob button can write with: this org's, reader present. An
+ *  empty list is the page's cue not to draw the button at all. */
+export async function listNfcReaders(orgId: string): Promise<{ id: string; name: string }[]> {
+  return (await listNfcDevices(orgId))
+    .filter((d) => d.nfcReader === 'present')
+    .map(({ id, name }) => ({ id, name }));
+}

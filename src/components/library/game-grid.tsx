@@ -9,13 +9,18 @@ import { SortableContext, rectSortingStrategy, useSortable } from '@dnd-kit/sort
 import { CSS } from '@dnd-kit/utilities';
 import { History, Minus } from 'lucide-react';
 import { DeleteDiskDialog } from '@/components/library/delete-disk-dialog';
+import { FobButton, type FobContext } from '@/components/nfc/fob-button';
 import { fromQuery } from '@/lib/trail';
 import { ejectMessage, isMountedReason, mountedReason } from '@/lib/mount-wording';
 import { Cover } from './cover';
 import type { GameListItem } from '@/lib/queries';
 import { useCollectionsContext, type GameDragData } from '@/components/collections/collection-provider';
 
-export function GameGrid({ games }: { games: GameListItem[] }) {
+export function GameGrid({ games, fob = null }: {
+  games: GameListItem[];
+  /** The fob button's boards and multi-disk lists; null (no reader in the org) draws no button. */
+  fob?: FobContext;
+}) {
   const { gameIds, filteredCollectionId } = useCollectionsContext();
 
   if (games.length === 0) {
@@ -51,8 +56,8 @@ export function GameGrid({ games }: { games: GameListItem[] }) {
     <div className="mx-4 grid grid-cols-2 gap-4 sm:mx-7 sm:grid-cols-3 md:grid-cols-5" data-testid="game-grid">
       {ordered.map((g) =>
         filteredCollectionId
-          ? <SortableCard key={g.id} game={g} collectionId={filteredCollectionId} />
-          : <DraggableCard key={g.id} game={g} />,
+          ? <SortableCard key={g.id} game={g} collectionId={filteredCollectionId} fob={fob} />
+          : <DraggableCard key={g.id} game={g} fob={fob} />,
       )}
     </div>
   );
@@ -189,8 +194,9 @@ function VolumeNameField({ game: g }: { game: GameListItem }) {
 }
 
 /**
- * The three card controls, in the order they read: history, remove from the
- * collection, delete. All three are BUTTONS, including the history one that
+ * The card controls, in the order they read: history, write to an NFC tag
+ * (the fob button, only when the org has a reader), remove from the
+ * collection, delete. All of them are BUTTONS, including the history one that
  * is really a navigation -- the card itself is an <a href>, and an anchor
  * inside an anchor is invalid HTML that browsers "fix" by closing the outer
  * one early, which would break the card it sits in. Every one of them stops
@@ -278,7 +284,21 @@ function RemoveFromCollectionButton({ game: g, collectionId }: { game: GameListI
   );
 }
 
-function CardBody({ game: g, collectionId }: { game: GameListItem; collectionId?: string }) {
+/**
+ * The fob button on a card. A single-disk title writes its one disk; a set
+ * asks which disk first. `diskId` is a min() aggregate and names the disk
+ * only on a single-disk title (see HistoryButton), so a set's disks come
+ * from the page's own list instead.
+ */
+function CardFobButton({ game: g, fob }: { game: GameListItem; fob: NonNullable<FobContext> }) {
+  const disks = g.diskCount === 1 && g.diskId
+    ? [{ id: g.diskId, diskNo: 1 }]
+    : fob.disksByGame[g.id] ?? [];
+  if (disks.length === 0) return null;
+  return <FobButton testId={`fob-${g.id}`} title={g.title} disks={disks} devices={fob.devices} />;
+}
+
+function CardBody({ game: g, collectionId, fob }: { game: GameListItem; collectionId?: string; fob: FobContext }) {
   return (
     <>
       <Cover id={g.id} title={g.title} diskCount={g.diskCount} coverUrl={g.coverUrl} kind={g.kind} />
@@ -299,6 +319,7 @@ function CardBody({ game: g, collectionId }: { game: GameListItem; collectionId?
               reaches the anchor or dnd-kit's drag listeners. */}
           <div className="flex shrink-0 items-center">
             <HistoryButton game={g} collectionId={collectionId} />
+            {fob && <CardFobButton game={g} fob={fob} />}
             {collectionId && <RemoveFromCollectionButton game={g} collectionId={collectionId} />}
             <DeleteDiskDialog kind="game" id={g.id} title={g.title} diskCount={g.diskCount} />
           </div>
@@ -309,7 +330,7 @@ function CardBody({ game: g, collectionId }: { game: GameListItem; collectionId?
 }
 
 /** Unfiltered recently-added view: draggable onto a rail collection, not sortable against siblings. */
-function DraggableCard({ game: g }: { game: GameListItem }) {
+function DraggableCard({ game: g, fob }: { game: GameListItem; fob: FobContext }) {
   // `role` is pulled OUT of dnd-kit's attributes and thrown away: it is
   // "button", and this card is an <a href> that really does navigate. Spread
   // whole, it would have a screen reader announce every game in the library
@@ -340,13 +361,13 @@ function DraggableCard({ game: g }: { game: GameListItem }) {
       {...attributes}
       {...listeners}
     >
-      <CardBody game={g} />
+      <CardBody game={g} fob={fob} />
     </Link>
   );
 }
 
 /** Filtered-to-a-collection view: sortable against siblings (reorders the collection), plus a remove control. */
-function SortableCard({ game: g, collectionId }: { game: GameListItem; collectionId: string }) {
+function SortableCard({ game: g, collectionId, fob }: { game: GameListItem; collectionId: string; fob: FobContext }) {
   // See DraggableCard on why `role` is discarded rather than spread.
   const { attributes: dragAttributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
     id: g.id,
@@ -371,7 +392,7 @@ function SortableCard({ game: g, collectionId }: { game: GameListItem; collectio
       {...attributes}
       {...listeners}
     >
-      <CardBody game={g} collectionId={collectionId} />
+      <CardBody game={g} collectionId={collectionId} fob={fob} />
     </Link>
   );
 }
