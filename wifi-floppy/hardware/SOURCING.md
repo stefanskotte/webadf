@@ -1,5 +1,8 @@
 # Rev B sourcing list
 
+Designators as of PR #2 (2026-09-26): 1 kΩ pull-ups on all eight host-driven floppy lines, plus
+the LED and buzzer-gate resistors.
+
 Every LCSC number below was checked on its lcsc.com product page on 2026-09-26 (value, package,
 manufacturer part). Stock figures are from that day.
 
@@ -10,8 +13,8 @@ manufacturer part). Stock figures are from that day.
 | D1 | SS14 Schottky, SMA | 1 | [C2480](https://www.lcsc.com/product-detail/C2480.html) | MDD SS14 | Basic | 890 k |
 | D2 | LED red, 1206 | 1 | [C49018](https://www.lcsc.com/product-detail/C49018.html) | Hubei Kento KT-1206R | Extended | 59 k |
 | Q1–Q8 | BSS138 N-MOSFET, SOT-23 | 8 | [C78284](https://www.lcsc.com/product-detail/C78284.html) | JSCJ BSS138 | Extended | 210 k |
-| R1–R5 | 1 kΩ, 1206 | 5 | [C1469](https://www.lcsc.com/product-detail/C1469.html) | Uni-Royal 1206W4J0102T5E | Extended | 146 k |
-| R6 | 10 kΩ, 1206 | 1 | [C1489](https://www.lcsc.com/product-detail/C1489.html) | Uni-Royal 1206W4J0103T5E | Extended | 199 k |
+| R1–R9, R11 | 1 kΩ, 1206 | 10 | [C1469](https://www.lcsc.com/product-detail/C1469.html) | Uni-Royal 1206W4J0102T5E | Extended | 146 k |
+| R10 | 10 kΩ, 1206 | 1 | [C1489](https://www.lcsc.com/product-detail/C1489.html) | Uni-Royal 1206W4J0103T5E | Extended | 199 k |
 | U2 | 74LVC541A buffer, SOIC-20 wide (300 mil) | 1 | [C2652110](https://www.lcsc.com/product-detail/C2652110.html) | TI SN74LVC541ADWR | Extended | **1,773 (low)** |
 | BZ1 | Piezo buzzer, passive, 12.2 mm | 1 | [C76871](https://www.lcsc.com/product-detail/C76871.html) | TDK PS1240P02BT | Extended | 25 k |
 | J1 | 2×17 (34-pin) 2.54 mm shrouded box header, vertical | 1 | [C20920](https://www.lcsc.com/product-detail/C20920.html) | Boomele 2.54-2×17P | Extended | 3.7 k |
