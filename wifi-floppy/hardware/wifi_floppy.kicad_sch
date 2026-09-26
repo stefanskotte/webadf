@@ -4353,7 +4353,7 @@
 					(alternate "UART1_RTS" output line)
 					(alternate "USB_OVCUR_DET" input line)
 				)
-				(pin power_out line
+				(pin power_in line
 					(at 22.86 -22.86 180)
 					(length 3.81)
 					(name "AGND"
@@ -4584,7 +4584,7 @@
 		(uuid "4bd8f6ed-40ad-4fcd-bb03-32c4cd2a21de")
 	)
 	(junction
-		(at 43.18 31.75)
+		(at 60.96 31.75)
 		(diameter 0)
 		(color 0 0 0 0)
 		(uuid "644fabcf-4b7b-421c-8136-bd8bd10d1be3")
@@ -4600,6 +4600,12 @@
 		(diameter 0)
 		(color 0 0 0 0)
 		(uuid "8651883f-11e7-4471-9379-2764c5e06d0e")
+	)
+	(junction
+		(at 30.48 31.75)
+		(diameter 0)
+		(color 0 0 0 0)
+		(uuid "865438ba-7172-44d6-b854-d0d5811a5285")
 	)
 	(junction
 		(at 22.86 92.71)
@@ -4632,7 +4638,7 @@
 		(uuid "aa37ba83-aff4-4cd4-849d-4796c892fb0c")
 	)
 	(junction
-		(at 35.56 31.75)
+		(at 53.34 31.75)
 		(diameter 0)
 		(color 0 0 0 0)
 		(uuid "ab0857bf-ea09-46bf-b95c-aee233ea5a24")
@@ -4656,7 +4662,7 @@
 		(uuid "cb942d27-7792-456d-b28a-347cf1cb03be")
 	)
 	(junction
-		(at 55.88 31.75)
+		(at 73.66 31.75)
 		(diameter 0)
 		(color 0 0 0 0)
 		(uuid "d365c925-a604-424a-9b3d-84c0535fcb3e")
@@ -4678,7 +4684,7 @@
 		(uuid "033b595d-3ac9-4da4-9bbd-5ea7b87fbbb4")
 	)
 	(no_connect
-		(at 58.42 27.94)
+		(at 76.2 27.94)
 		(uuid "1a9537ae-f264-41cf-a4eb-7b21c29b81bd")
 	)
 	(no_connect
@@ -4769,6 +4775,16 @@
 	)
 	(wire
 		(pts
+			(xy 60.96 147.32) (xy 60.96 144.78)
+		)
+		(stroke
+			(width 0)
+			(type default)
+		)
+		(uuid "0283d77f-c5b6-487a-8fa6-87a945bf6481")
+	)
+	(wire
+		(pts
 			(xy 22.86 95.25) (xy 30.48 95.25)
 		)
 		(stroke
@@ -4819,7 +4835,7 @@
 	)
 	(wire
 		(pts
-			(xy 55.88 27.94) (xy 55.88 31.75)
+			(xy 73.66 27.94) (xy 73.66 31.75)
 		)
 		(stroke
 			(width 0)
@@ -4879,6 +4895,16 @@
 	)
 	(wire
 		(pts
+			(xy 60.96 138.43) (xy 60.96 139.7)
+		)
+		(stroke
+			(width 0)
+			(type default)
+		)
+		(uuid "14363eab-4b34-4237-8c54-c35bd10e4e62")
+	)
+	(wire
+		(pts
 			(xy 205.74 36.83) (xy 205.74 31.75)
 		)
 		(stroke
@@ -4889,7 +4915,7 @@
 	)
 	(wire
 		(pts
-			(xy 35.56 39.37) (xy 35.56 40.64)
+			(xy 53.34 39.37) (xy 53.34 40.64)
 		)
 		(stroke
 			(width 0)
@@ -4979,6 +5005,16 @@
 	)
 	(wire
 		(pts
+			(xy 30.48 31.75) (xy 41.91 31.75)
+		)
+		(stroke
+			(width 0)
+			(type default)
+		)
+		(uuid "23f6ec75-c33a-46c8-803a-357f3963ef8d")
+	)
+	(wire
+		(pts
 			(xy 22.86 64.77) (xy 30.48 64.77)
 		)
 		(stroke
@@ -4989,7 +5025,7 @@
 	)
 	(wire
 		(pts
-			(xy 31.75 31.75) (xy 35.56 31.75)
+			(xy 49.53 31.75) (xy 53.34 31.75)
 		)
 		(stroke
 			(width 0)
@@ -5039,6 +5075,16 @@
 	)
 	(wire
 		(pts
+			(xy 60.96 177.8) (xy 60.96 175.26)
+		)
+		(stroke
+			(width 0)
+			(type default)
+		)
+		(uuid "2f95bab7-adb9-4506-b15d-9eef76ef9800")
+	)
+	(wire
+		(pts
 			(xy 22.86 67.31) (xy 30.48 67.31)
 		)
 		(stroke
@@ -5076,6 +5122,16 @@
 			(type default)
 		)
 		(uuid "35ae66be-ff57-4408-abe5-1a0d37815034")
+	)
+	(wire
+		(pts
+			(xy 55.88 147.32) (xy 60.96 147.32)
+		)
+		(stroke
+			(width 0)
+			(type default)
+		)
+		(uuid "373287b7-882f-44fe-9aa7-59effb319d30")
 	)
 	(wire
 		(pts
@@ -5159,6 +5215,16 @@
 	)
 	(wire
 		(pts
+			(xy 34.29 177.8) (xy 39.37 177.8)
+		)
+		(stroke
+			(width 0)
+			(type default)
+		)
+		(uuid "439d75db-311d-4239-889a-f2c2b3f2bb8a")
+	)
+	(wire
+		(pts
 			(xy 237.49 97.79) (xy 237.49 99.06)
 		)
 		(stroke
@@ -5179,7 +5245,7 @@
 	)
 	(wire
 		(pts
-			(xy 53.34 31.75) (xy 55.88 31.75)
+			(xy 71.12 31.75) (xy 73.66 31.75)
 		)
 		(stroke
 			(width 0)
@@ -5219,7 +5285,7 @@
 	)
 	(wire
 		(pts
-			(xy 34.29 152.4) (xy 39.37 152.4)
+			(xy 34.29 147.32) (xy 39.37 147.32)
 		)
 		(stroke
 			(width 0)
@@ -5269,7 +5335,7 @@
 	)
 	(wire
 		(pts
-			(xy 39.37 152.4) (xy 39.37 149.86)
+			(xy 39.37 147.32) (xy 39.37 144.78)
 		)
 		(stroke
 			(width 0)
@@ -5409,7 +5475,7 @@
 	)
 	(wire
 		(pts
-			(xy 19.05 31.75) (xy 24.13 31.75)
+			(xy 19.05 31.75) (xy 30.48 31.75)
 		)
 		(stroke
 			(width 0)
@@ -5509,7 +5575,7 @@
 	)
 	(wire
 		(pts
-			(xy 44.45 166.37) (xy 48.26 166.37)
+			(xy 44.45 187.96) (xy 48.26 187.96)
 		)
 		(stroke
 			(width 0)
@@ -5589,7 +5655,7 @@
 	)
 	(wire
 		(pts
-			(xy 35.56 29.21) (xy 35.56 31.75)
+			(xy 53.34 29.21) (xy 53.34 31.75)
 		)
 		(stroke
 			(width 0)
@@ -5619,7 +5685,27 @@
 	)
 	(wire
 		(pts
-			(xy 26.67 166.37) (xy 26.67 170.18)
+			(xy 39.37 177.8) (xy 39.37 175.26)
+		)
+		(stroke
+			(width 0)
+			(type default)
+		)
+		(uuid "83dd694e-9bc2-4219-8e63-0769fb500ce4")
+	)
+	(wire
+		(pts
+			(xy 60.96 168.91) (xy 60.96 170.18)
+		)
+		(stroke
+			(width 0)
+			(type default)
+		)
+		(uuid "8497d70c-1610-4ee8-b2a9-07cab54427ed")
+	)
+	(wire
+		(pts
+			(xy 26.67 187.96) (xy 26.67 191.77)
 		)
 		(stroke
 			(width 0)
@@ -5699,7 +5785,7 @@
 	)
 	(wire
 		(pts
-			(xy 35.56 34.29) (xy 35.56 31.75)
+			(xy 53.34 34.29) (xy 53.34 31.75)
 		)
 		(stroke
 			(width 0)
@@ -5726,6 +5812,16 @@
 			(type default)
 		)
 		(uuid "92abaca0-b574-4cc4-9478-c117bd1d3c96")
+	)
+	(wire
+		(pts
+			(xy 39.37 153.67) (xy 39.37 154.94)
+		)
+		(stroke
+			(width 0)
+			(type default)
+		)
+		(uuid "960ee8e2-3718-4f73-89fd-e75324765b3d")
 	)
 	(wire
 		(pts
@@ -5829,7 +5925,7 @@
 	)
 	(wire
 		(pts
-			(xy 29.21 166.37) (xy 26.67 166.37)
+			(xy 29.21 187.96) (xy 26.67 187.96)
 		)
 		(stroke
 			(width 0)
@@ -5839,7 +5935,7 @@
 	)
 	(wire
 		(pts
-			(xy 43.18 31.75) (xy 50.8 31.75)
+			(xy 60.96 31.75) (xy 68.58 31.75)
 		)
 		(stroke
 			(width 0)
@@ -5889,6 +5985,16 @@
 	)
 	(wire
 		(pts
+			(xy 60.96 162.56) (xy 60.96 160.02)
+		)
+		(stroke
+			(width 0)
+			(type default)
+		)
+		(uuid "ae063473-0595-430b-b35a-6d24648cd3ee")
+	)
+	(wire
+		(pts
 			(xy 173.99 69.85) (xy 187.96 69.85)
 		)
 		(stroke
@@ -5909,7 +6015,7 @@
 	)
 	(wire
 		(pts
-			(xy 50.8 31.75) (xy 50.8 27.94)
+			(xy 68.58 31.75) (xy 68.58 27.94)
 		)
 		(stroke
 			(width 0)
@@ -5919,7 +6025,7 @@
 	)
 	(wire
 		(pts
-			(xy 35.56 31.75) (xy 43.18 31.75)
+			(xy 53.34 31.75) (xy 60.96 31.75)
 		)
 		(stroke
 			(width 0)
@@ -5959,7 +6065,7 @@
 	)
 	(wire
 		(pts
-			(xy 55.88 31.75) (xy 55.88 40.64)
+			(xy 73.66 31.75) (xy 73.66 40.64)
 		)
 		(stroke
 			(width 0)
@@ -5969,7 +6075,7 @@
 	)
 	(wire
 		(pts
-			(xy 53.34 27.94) (xy 53.34 31.75)
+			(xy 71.12 27.94) (xy 71.12 31.75)
 		)
 		(stroke
 			(width 0)
@@ -6069,13 +6175,33 @@
 	)
 	(wire
 		(pts
-			(xy 39.37 140.97) (xy 39.37 144.78)
+			(xy 34.29 162.56) (xy 39.37 162.56)
+		)
+		(stroke
+			(width 0)
+			(type default)
+		)
+		(uuid "c426467d-2672-4070-9570-96fdbc87cfa2")
+	)
+	(wire
+		(pts
+			(xy 39.37 138.43) (xy 39.37 139.7)
 		)
 		(stroke
 			(width 0)
 			(type default)
 		)
 		(uuid "c677bf3d-3f6b-4c5d-9830-ceb9ee014b50")
+	)
+	(wire
+		(pts
+			(xy 55.88 177.8) (xy 60.96 177.8)
+		)
+		(stroke
+			(width 0)
+			(type default)
+		)
+		(uuid "c74bfdcd-c9ee-4b19-b142-440202bf7522")
 	)
 	(wire
 		(pts
@@ -6269,6 +6395,16 @@
 	)
 	(wire
 		(pts
+			(xy 55.88 162.56) (xy 60.96 162.56)
+		)
+		(stroke
+			(width 0)
+			(type default)
+		)
+		(uuid "e1af223e-c39d-4784-928e-4f012f27d08d")
+	)
+	(wire
+		(pts
 			(xy 129.54 77.47) (xy 139.7 77.47)
 		)
 		(stroke
@@ -6279,7 +6415,7 @@
 	)
 	(wire
 		(pts
-			(xy 60.96 120.65) (xy 60.96 124.46)
+			(xy 60.96 123.19) (xy 60.96 124.46)
 		)
 		(stroke
 			(width 0)
@@ -6309,7 +6445,7 @@
 	)
 	(wire
 		(pts
-			(xy 39.37 120.65) (xy 39.37 124.46)
+			(xy 39.37 123.19) (xy 39.37 124.46)
 		)
 		(stroke
 			(width 0)
@@ -6359,6 +6495,16 @@
 	)
 	(wire
 		(pts
+			(xy 60.96 153.67) (xy 60.96 154.94)
+		)
+		(stroke
+			(width 0)
+			(type default)
+		)
+		(uuid "efbcb415-c4f1-418b-b192-ea3751e2807f")
+	)
+	(wire
+		(pts
 			(xy 90.17 132.08) (xy 90.17 134.62)
 		)
 		(stroke
@@ -6389,6 +6535,16 @@
 	)
 	(wire
 		(pts
+			(xy 39.37 162.56) (xy 39.37 160.02)
+		)
+		(stroke
+			(width 0)
+			(type default)
+		)
+		(uuid "f456dea1-7d9e-4190-8f68-921a823740e5")
+	)
+	(wire
+		(pts
 			(xy 22.86 82.55) (xy 30.48 82.55)
 		)
 		(stroke
@@ -6409,13 +6565,23 @@
 	)
 	(wire
 		(pts
-			(xy 36.83 166.37) (xy 39.37 166.37)
+			(xy 36.83 187.96) (xy 39.37 187.96)
 		)
 		(stroke
 			(width 0)
 			(type default)
 		)
 		(uuid "fb2b8dc9-7771-40bb-b233-bc8fcca5aec8")
+	)
+	(wire
+		(pts
+			(xy 39.37 168.91) (xy 39.37 170.18)
+		)
+		(stroke
+			(width 0)
+			(type default)
+		)
+		(uuid "fdb44a28-cfe4-48fa-a529-324baac49ce5")
 	)
 	(wire
 		(pts
@@ -6456,6 +6622,30 @@
 			(justify left bottom)
 		)
 		(uuid "a2e44533-d9c9-4e58-9267-0ae248abdff4")
+	)
+	(global_label "STEP_B"
+		(shape input)
+		(at 34.29 162.56 180)
+		(fields_autoplaced yes)
+		(effects
+			(font
+				(size 1.27 1.27)
+			)
+			(justify right)
+		)
+		(uuid "06608ed9-b67c-4b77-81ba-fbf985e8f3fe")
+		(property "Intersheetrefs" "${INTERSHEET_REFS}"
+			(at 24.4711 162.56 0)
+			(hide yes)
+			(show_name no)
+			(do_not_autoplace no)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(justify right)
+			)
+		)
 	)
 	(global_label "INDEX_B"
 		(shape output)
@@ -6579,7 +6769,7 @@
 	)
 	(global_label "ACT_LED"
 		(shape input)
-		(at 48.26 166.37 0)
+		(at 48.26 187.96 0)
 		(fields_autoplaced yes)
 		(effects
 			(font
@@ -6589,7 +6779,7 @@
 		)
 		(uuid "0b637d48-4b35-4fed-8c76-cb35136b13a2")
 		(property "Intersheetrefs" "${INTERSHEET_REFS}"
-			(at 58.9861 166.37 0)
+			(at 58.9861 187.96 0)
 			(hide yes)
 			(show_name no)
 			(do_not_autoplace no)
@@ -6646,6 +6836,30 @@
 					(size 1.27 1.27)
 				)
 				(justify left)
+			)
+		)
+	)
+	(global_label "DIR_B"
+		(shape input)
+		(at 55.88 147.32 180)
+		(fields_autoplaced yes)
+		(effects
+			(font
+				(size 1.27 1.27)
+			)
+			(justify right)
+		)
+		(uuid "1439f3cb-bd0b-469b-b084-95f86f0f2784")
+		(property "Intersheetrefs" "${INTERSHEET_REFS}"
+			(at 47.5124 147.32 0)
+			(hide yes)
+			(show_name no)
+			(do_not_autoplace no)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(justify right)
 			)
 		)
 	)
@@ -7201,6 +7415,54 @@
 			)
 		)
 	)
+	(global_label "SIDE_B"
+		(shape input)
+		(at 55.88 162.56 180)
+		(fields_autoplaced yes)
+		(effects
+			(font
+				(size 1.27 1.27)
+			)
+			(justify right)
+		)
+		(uuid "72384545-4024-4b8c-89ac-dfc40c176245")
+		(property "Intersheetrefs" "${INTERSHEET_REFS}"
+			(at 46.4239 162.56 0)
+			(hide yes)
+			(show_name no)
+			(do_not_autoplace no)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(justify right)
+			)
+		)
+	)
+	(global_label "SEL0_B"
+		(shape input)
+		(at 34.29 177.8 180)
+		(fields_autoplaced yes)
+		(effects
+			(font
+				(size 1.27 1.27)
+			)
+			(justify right)
+		)
+		(uuid "7447969a-98fe-4a3c-b9fe-73b8b71fb23d")
+		(property "Intersheetrefs" "${INTERSHEET_REFS}"
+			(at 24.4711 177.8 0)
+			(hide yes)
+			(show_name no)
+			(do_not_autoplace no)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(justify right)
+			)
+		)
+	)
 	(global_label "STEP"
 		(shape output)
 		(at 139.7 77.47 0)
@@ -7526,6 +7788,30 @@
 		(uuid "a71a701e-7668-460b-8bc8-449a1a3b9e86")
 		(property "Intersheetrefs" "${INTERSHEET_REFS}"
 			(at 69.5862 120.65 0)
+			(hide yes)
+			(show_name no)
+			(do_not_autoplace no)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(justify right)
+			)
+		)
+	)
+	(global_label "SEL1_B"
+		(shape input)
+		(at 55.88 177.8 180)
+		(fields_autoplaced yes)
+		(effects
+			(font
+				(size 1.27 1.27)
+			)
+			(justify right)
+		)
+		(uuid "a7ad0197-5073-42d4-85ce-c6bcf8728090")
+		(property "Intersheetrefs" "${INTERSHEET_REFS}"
+			(at 46.0611 177.8 0)
 			(hide yes)
 			(show_name no)
 			(do_not_autoplace no)
@@ -7899,7 +8185,7 @@
 	)
 	(global_label "MTR_B"
 		(shape input)
-		(at 34.29 152.4 180)
+		(at 34.29 147.32 180)
 		(fields_autoplaced yes)
 		(effects
 			(font
@@ -7909,7 +8195,7 @@
 		)
 		(uuid "d8943fd8-f123-4148-b3ee-11ad03cb2e91")
 		(property "Intersheetrefs" "${INTERSHEET_REFS}"
-			(at 25.3782 152.4 0)
+			(at 25.3782 147.32 0)
 			(hide yes)
 			(show_name no)
 			(do_not_autoplace no)
@@ -8211,6 +8497,99 @@
 		)
 	)
 	(symbol
+		(lib_id "wifi-floppy-lib:R_Small")
+		(at 60.96 172.72 0)
+		(unit 1)
+		(body_style 1)
+		(exclude_from_sim no)
+		(in_bom yes)
+		(on_board yes)
+		(in_pos_files yes)
+		(dnp no)
+		(fields_autoplaced yes)
+		(uuid "11a763d0-bff5-4a5d-8acf-1887d0837a72")
+		(property "Reference" "R7"
+			(at 62.4586 171.5078 0)
+			(show_name no)
+			(do_not_autoplace no)
+			(effects
+				(font
+					(size 1.016 1.016)
+				)
+				(justify left)
+			)
+		)
+		(property "Value" "1k"
+			(at 62.4586 173.7277 0)
+			(show_name no)
+			(do_not_autoplace no)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(justify left)
+			)
+		)
+		(property "Footprint" "wifi-floppy-lib:R_1206_3216Metric_Pad1.30x1.75mm_HandSolder"
+			(at 60.96 172.72 0)
+			(hide yes)
+			(show_name no)
+			(do_not_autoplace no)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "Datasheet" ""
+			(at 60.96 172.72 0)
+			(hide yes)
+			(show_name no)
+			(do_not_autoplace no)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "Description" "Resistor, small symbol"
+			(at 60.96 172.72 0)
+			(hide yes)
+			(show_name no)
+			(do_not_autoplace no)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "LCSC" "C1469"
+			(at 60.96 172.72 0)
+			(hide yes)
+			(show_name no)
+			(do_not_autoplace no)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(pin "1"
+			(uuid "a0884670-6283-4636-bff1-8dc41a4bfdc2")
+		)
+		(pin "2"
+			(uuid "70066792-37e1-44f8-98a4-36f7d5fcf17f")
+		)
+		(instances
+			(project "wifi_floppy"
+				(path "/c9178abf-c4d6-4242-b99e-f9f08c77f33c"
+					(reference "R7")
+					(unit 1)
+				)
+			)
+		)
+	)
+	(symbol
 		(lib_id "power:GND")
 		(at 90.17 157.48 0)
 		(unit 1)
@@ -8283,6 +8662,162 @@
 			(project "wifi_floppy"
 				(path "/c9178abf-c4d6-4242-b99e-f9f08c77f33c"
 					(reference "#PWR012")
+					(unit 1)
+				)
+			)
+		)
+	)
+	(symbol
+		(lib_id "power:+5V")
+		(at 39.37 168.91 0)
+		(unit 1)
+		(body_style 1)
+		(exclude_from_sim no)
+		(in_bom yes)
+		(on_board yes)
+		(in_pos_files yes)
+		(dnp no)
+		(fields_autoplaced yes)
+		(uuid "1393cfe4-3aa8-48f2-b801-c59044227034")
+		(property "Reference" "#PWR031"
+			(at 39.37 172.72 0)
+			(hide yes)
+			(show_name no)
+			(do_not_autoplace no)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "Value" "+5V"
+			(at 39.37 164.7769 0)
+			(show_name no)
+			(do_not_autoplace no)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "Footprint" ""
+			(at 39.37 168.91 0)
+			(hide yes)
+			(show_name no)
+			(do_not_autoplace no)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "Datasheet" ""
+			(at 39.37 168.91 0)
+			(hide yes)
+			(show_name no)
+			(do_not_autoplace no)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "Description" "Power symbol creates a global label with name \"+5V\""
+			(at 39.37 168.91 0)
+			(hide yes)
+			(show_name no)
+			(do_not_autoplace no)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(pin "1"
+			(uuid "38a64f95-7fec-42a9-8b53-c8345d29c840")
+		)
+		(instances
+			(project "wifi_floppy"
+				(path "/c9178abf-c4d6-4242-b99e-f9f08c77f33c"
+					(reference "#PWR031")
+					(unit 1)
+				)
+			)
+		)
+	)
+	(symbol
+		(lib_id "power:+5V")
+		(at 60.96 138.43 0)
+		(unit 1)
+		(body_style 1)
+		(exclude_from_sim no)
+		(in_bom yes)
+		(on_board yes)
+		(in_pos_files yes)
+		(dnp no)
+		(fields_autoplaced yes)
+		(uuid "14ffe55f-c10f-44ab-b837-a8c3529935ba")
+		(property "Reference" "#PWR029"
+			(at 60.96 142.24 0)
+			(hide yes)
+			(show_name no)
+			(do_not_autoplace no)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "Value" "+5V"
+			(at 60.96 134.2969 0)
+			(show_name no)
+			(do_not_autoplace no)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "Footprint" ""
+			(at 60.96 138.43 0)
+			(hide yes)
+			(show_name no)
+			(do_not_autoplace no)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "Datasheet" ""
+			(at 60.96 138.43 0)
+			(hide yes)
+			(show_name no)
+			(do_not_autoplace no)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "Description" "Power symbol creates a global label with name \"+5V\""
+			(at 60.96 138.43 0)
+			(hide yes)
+			(show_name no)
+			(do_not_autoplace no)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(pin "1"
+			(uuid "e9630642-d216-4860-9526-e5a12f15c138")
+		)
+		(instances
+			(project "wifi_floppy"
+				(path "/c9178abf-c4d6-4242-b99e-f9f08c77f33c"
+					(reference "#PWR029")
 					(unit 1)
 				)
 			)
@@ -8446,7 +8981,7 @@
 	)
 	(symbol
 		(lib_id "power:GND")
-		(at 55.88 40.64 0)
+		(at 73.66 40.64 0)
 		(unit 1)
 		(body_style 1)
 		(exclude_from_sim no)
@@ -8457,7 +8992,7 @@
 		(fields_autoplaced yes)
 		(uuid "22280db8-db96-4615-90fe-49bfe36a3e6f")
 		(property "Reference" "#PWR03"
-			(at 55.88 46.99 0)
+			(at 73.66 46.99 0)
 			(hide yes)
 			(show_name no)
 			(do_not_autoplace no)
@@ -8468,7 +9003,7 @@
 			)
 		)
 		(property "Value" "GND"
-			(at 55.88 44.7731 0)
+			(at 73.66 44.7731 0)
 			(show_name no)
 			(do_not_autoplace no)
 			(effects
@@ -8478,7 +9013,7 @@
 			)
 		)
 		(property "Footprint" ""
-			(at 55.88 40.64 0)
+			(at 73.66 40.64 0)
 			(hide yes)
 			(show_name no)
 			(do_not_autoplace no)
@@ -8489,7 +9024,7 @@
 			)
 		)
 		(property "Datasheet" ""
-			(at 55.88 40.64 0)
+			(at 73.66 40.64 0)
 			(hide yes)
 			(show_name no)
 			(do_not_autoplace no)
@@ -8500,7 +9035,7 @@
 			)
 		)
 		(property "Description" "Power symbol creates a global label with name \"GND\" , ground"
-			(at 55.88 40.64 0)
+			(at 73.66 40.64 0)
 			(hide yes)
 			(show_name no)
 			(do_not_autoplace no)
@@ -8523,8 +9058,8 @@
 		)
 	)
 	(symbol
-		(lib_id "wifi-floppy-lib:Conn_01x04")
-		(at 53.34 22.86 90)
+		(lib_id "power:+5V")
+		(at 60.96 153.67 0)
 		(unit 1)
 		(body_style 1)
 		(exclude_from_sim no)
@@ -8533,9 +9068,10 @@
 		(in_pos_files yes)
 		(dnp no)
 		(fields_autoplaced yes)
-		(uuid "2628604b-d3ab-46c1-8524-b8c77e768d93")
-		(property "Reference" "J2"
-			(at 54.61 17.4455 90)
+		(uuid "2500cb80-dc24-4582-8414-69ad30b9766a")
+		(property "Reference" "#PWR032"
+			(at 60.96 157.48 0)
+			(hide yes)
 			(show_name no)
 			(do_not_autoplace no)
 			(effects
@@ -8544,8 +9080,8 @@
 				)
 			)
 		)
-		(property "Value" "Conn_01x04"
-			(at 54.61 19.8698 90)
+		(property "Value" "+5V"
+			(at 60.96 149.5369 0)
 			(show_name no)
 			(do_not_autoplace no)
 			(effects
@@ -8554,8 +9090,8 @@
 				)
 			)
 		)
-		(property "Footprint" "wifi-floppy-lib:PinHeader_1x04_P2.54mm_Horizontal"
-			(at 53.34 22.86 0)
+		(property "Footprint" ""
+			(at 60.96 153.67 0)
 			(hide yes)
 			(show_name no)
 			(do_not_autoplace no)
@@ -8566,7 +9102,84 @@
 			)
 		)
 		(property "Datasheet" ""
-			(at 53.34 22.86 0)
+			(at 60.96 153.67 0)
+			(hide yes)
+			(show_name no)
+			(do_not_autoplace no)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "Description" "Power symbol creates a global label with name \"+5V\""
+			(at 60.96 153.67 0)
+			(hide yes)
+			(show_name no)
+			(do_not_autoplace no)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(pin "1"
+			(uuid "34ce5a53-0f99-4c98-95f5-68c8c37c7b93")
+		)
+		(instances
+			(project "wifi_floppy"
+				(path "/c9178abf-c4d6-4242-b99e-f9f08c77f33c"
+					(reference "#PWR032")
+					(unit 1)
+				)
+			)
+		)
+	)
+	(symbol
+		(lib_id "wifi-floppy-lib:Conn_01x04")
+		(at 71.12 22.86 90)
+		(unit 1)
+		(body_style 1)
+		(exclude_from_sim no)
+		(in_bom yes)
+		(on_board yes)
+		(in_pos_files yes)
+		(dnp no)
+		(fields_autoplaced yes)
+		(uuid "2628604b-d3ab-46c1-8524-b8c77e768d93")
+		(property "Reference" "J2"
+			(at 72.39 17.4455 90)
+			(show_name no)
+			(do_not_autoplace no)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "Value" "Conn_01x04"
+			(at 72.39 19.8698 90)
+			(show_name no)
+			(do_not_autoplace no)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "Footprint" "wifi-floppy-lib:PinHeader_1x04_P2.54mm_Horizontal"
+			(at 71.12 22.86 0)
+			(hide yes)
+			(show_name no)
+			(do_not_autoplace no)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "Datasheet" ""
+			(at 71.12 22.86 0)
 			(hide yes)
 			(show_name no)
 			(do_not_autoplace no)
@@ -8577,7 +9190,7 @@
 			)
 		)
 		(property "Description" "Generic connector, single row, 01x04, script generated (kicad-library-utils/schlib/autogen/connector/)"
-			(at 53.34 22.86 0)
+			(at 71.12 22.86 0)
 			(hide yes)
 			(show_name no)
 			(do_not_autoplace no)
@@ -8588,7 +9201,7 @@
 			)
 		)
 		(property "LCSC" "DNP"
-			(at 53.34 22.86 90)
+			(at 71.12 22.86 90)
 			(hide yes)
 			(show_name no)
 			(do_not_autoplace no)
@@ -8698,6 +9311,99 @@
 		)
 	)
 	(symbol
+		(lib_id "wifi-floppy-lib:R_Small")
+		(at 60.96 157.48 0)
+		(unit 1)
+		(body_style 1)
+		(exclude_from_sim no)
+		(in_bom yes)
+		(on_board yes)
+		(in_pos_files yes)
+		(dnp no)
+		(fields_autoplaced yes)
+		(uuid "2c984d24-210a-4aa5-ba3c-02ee95848dd5")
+		(property "Reference" "R1"
+			(at 62.4586 156.2678 0)
+			(show_name no)
+			(do_not_autoplace no)
+			(effects
+				(font
+					(size 1.016 1.016)
+				)
+				(justify left)
+			)
+		)
+		(property "Value" "1k"
+			(at 62.4586 158.4877 0)
+			(show_name no)
+			(do_not_autoplace no)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(justify left)
+			)
+		)
+		(property "Footprint" "wifi-floppy-lib:R_1206_3216Metric_Pad1.30x1.75mm_HandSolder"
+			(at 60.96 157.48 0)
+			(hide yes)
+			(show_name no)
+			(do_not_autoplace no)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "Datasheet" ""
+			(at 60.96 157.48 0)
+			(hide yes)
+			(show_name no)
+			(do_not_autoplace no)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "Description" "Resistor, small symbol"
+			(at 60.96 157.48 0)
+			(hide yes)
+			(show_name no)
+			(do_not_autoplace no)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "LCSC" "C1469"
+			(at 60.96 157.48 0)
+			(hide yes)
+			(show_name no)
+			(do_not_autoplace no)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(pin "1"
+			(uuid "5d8ddc12-f537-4048-8a0a-590fdae2406b")
+		)
+		(pin "2"
+			(uuid "e4a5d91e-e353-4e78-b5de-f04d29708e1b")
+		)
+		(instances
+			(project "wifi_floppy"
+				(path "/c9178abf-c4d6-4242-b99e-f9f08c77f33c"
+					(reference "R1")
+					(unit 1)
+				)
+			)
+		)
+	)
+	(symbol
 		(lib_id "power:GND")
 		(at 99.06 105.41 0)
 		(unit 1)
@@ -8787,7 +9493,7 @@
 		(dnp no)
 		(fields_autoplaced yes)
 		(uuid "36d960eb-b8f0-404c-a35b-16005263b985")
-		(property "Reference" "R1"
+		(property "Reference" "R2"
 			(at 40.8686 125.7878 0)
 			(show_name no)
 			(do_not_autoplace no)
@@ -8862,7 +9568,7 @@
 		(instances
 			(project "wifi_floppy"
 				(path "/c9178abf-c4d6-4242-b99e-f9f08c77f33c"
-					(reference "R1")
+					(reference "R2")
 					(unit 1)
 				)
 			)
@@ -8958,7 +9664,7 @@
 	)
 	(symbol
 		(lib_id "power:+5V")
-		(at 39.37 120.65 0)
+		(at 39.37 123.19 0)
 		(unit 1)
 		(body_style 1)
 		(exclude_from_sim no)
@@ -8969,7 +9675,7 @@
 		(fields_autoplaced yes)
 		(uuid "45908800-c74a-40cf-b00b-ac7b98e66742")
 		(property "Reference" "#PWR019"
-			(at 39.37 124.46 0)
+			(at 39.37 127 0)
 			(hide yes)
 			(show_name no)
 			(do_not_autoplace no)
@@ -8980,7 +9686,7 @@
 			)
 		)
 		(property "Value" "+5V"
-			(at 39.37 116.5169 0)
+			(at 39.37 119.0569 0)
 			(show_name no)
 			(do_not_autoplace no)
 			(effects
@@ -8990,7 +9696,7 @@
 			)
 		)
 		(property "Footprint" ""
-			(at 39.37 120.65 0)
+			(at 39.37 123.19 0)
 			(hide yes)
 			(show_name no)
 			(do_not_autoplace no)
@@ -9001,7 +9707,7 @@
 			)
 		)
 		(property "Datasheet" ""
-			(at 39.37 120.65 0)
+			(at 39.37 123.19 0)
 			(hide yes)
 			(show_name no)
 			(do_not_autoplace no)
@@ -9012,7 +9718,7 @@
 			)
 		)
 		(property "Description" "Power symbol creates a global label with name \"+5V\""
-			(at 39.37 120.65 0)
+			(at 39.37 123.19 0)
 			(hide yes)
 			(show_name no)
 			(do_not_autoplace no)
@@ -9202,7 +9908,7 @@
 	)
 	(symbol
 		(lib_id "wifi-floppy-lib:R_Small")
-		(at 39.37 147.32 0)
+		(at 39.37 142.24 0)
 		(unit 1)
 		(body_style 1)
 		(exclude_from_sim no)
@@ -9212,8 +9918,8 @@
 		(dnp no)
 		(fields_autoplaced yes)
 		(uuid "4a4272f7-516a-4b60-9d8d-c2d7245c0cce")
-		(property "Reference" "R3"
-			(at 40.8686 146.1078 0)
+		(property "Reference" "R6"
+			(at 40.8686 141.0278 0)
 			(show_name no)
 			(do_not_autoplace no)
 			(effects
@@ -9224,7 +9930,7 @@
 			)
 		)
 		(property "Value" "1k"
-			(at 40.8686 148.3277 0)
+			(at 40.8686 143.2477 0)
 			(show_name no)
 			(do_not_autoplace no)
 			(effects
@@ -9235,7 +9941,7 @@
 			)
 		)
 		(property "Footprint" "wifi-floppy-lib:R_1206_3216Metric_Pad1.30x1.75mm_HandSolder"
-			(at 39.37 147.32 0)
+			(at 39.37 142.24 0)
 			(hide yes)
 			(show_name no)
 			(do_not_autoplace no)
@@ -9246,7 +9952,7 @@
 			)
 		)
 		(property "Datasheet" ""
-			(at 39.37 147.32 0)
+			(at 39.37 142.24 0)
 			(hide yes)
 			(show_name no)
 			(do_not_autoplace no)
@@ -9257,7 +9963,7 @@
 			)
 		)
 		(property "Description" "Resistor, small symbol"
-			(at 39.37 147.32 0)
+			(at 39.37 142.24 0)
 			(hide yes)
 			(show_name no)
 			(do_not_autoplace no)
@@ -9268,7 +9974,7 @@
 			)
 		)
 		(property "LCSC" "C1469"
-			(at 39.37 147.32 0)
+			(at 39.37 142.24 0)
 			(hide yes)
 			(show_name no)
 			(do_not_autoplace no)
@@ -9287,7 +9993,7 @@
 		(instances
 			(project "wifi_floppy"
 				(path "/c9178abf-c4d6-4242-b99e-f9f08c77f33c"
-					(reference "R3")
+					(reference "R6")
 					(unit 1)
 				)
 			)
@@ -9366,6 +10072,99 @@
 			(project "wifi_floppy"
 				(path "/c9178abf-c4d6-4242-b99e-f9f08c77f33c"
 					(reference "#PWR06")
+					(unit 1)
+				)
+			)
+		)
+	)
+	(symbol
+		(lib_id "wifi-floppy-lib:R_Small")
+		(at 39.37 172.72 0)
+		(unit 1)
+		(body_style 1)
+		(exclude_from_sim no)
+		(in_bom yes)
+		(on_board yes)
+		(in_pos_files yes)
+		(dnp no)
+		(fields_autoplaced yes)
+		(uuid "557b706c-d2f1-449c-92e4-9d5638ce34e7")
+		(property "Reference" "R8"
+			(at 40.8686 171.5078 0)
+			(show_name no)
+			(do_not_autoplace no)
+			(effects
+				(font
+					(size 1.016 1.016)
+				)
+				(justify left)
+			)
+		)
+		(property "Value" "1k"
+			(at 40.8686 173.7277 0)
+			(show_name no)
+			(do_not_autoplace no)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(justify left)
+			)
+		)
+		(property "Footprint" "wifi-floppy-lib:R_1206_3216Metric_Pad1.30x1.75mm_HandSolder"
+			(at 39.37 172.72 0)
+			(hide yes)
+			(show_name no)
+			(do_not_autoplace no)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "Datasheet" ""
+			(at 39.37 172.72 0)
+			(hide yes)
+			(show_name no)
+			(do_not_autoplace no)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "Description" "Resistor, small symbol"
+			(at 39.37 172.72 0)
+			(hide yes)
+			(show_name no)
+			(do_not_autoplace no)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "LCSC" "C1469"
+			(at 39.37 172.72 0)
+			(hide yes)
+			(show_name no)
+			(do_not_autoplace no)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(pin "1"
+			(uuid "0e34702f-5043-414a-acab-92675f93fcd9")
+		)
+		(pin "2"
+			(uuid "dffaff73-58ed-4011-8b04-b13a4a67fad0")
+		)
+		(instances
+			(project "wifi_floppy"
+				(path "/c9178abf-c4d6-4242-b99e-f9f08c77f33c"
+					(reference "R8")
 					(unit 1)
 				)
 			)
@@ -9616,6 +10415,84 @@
 		)
 	)
 	(symbol
+		(lib_id "power:+5V")
+		(at 39.37 153.67 0)
+		(unit 1)
+		(body_style 1)
+		(exclude_from_sim no)
+		(in_bom yes)
+		(on_board yes)
+		(in_pos_files yes)
+		(dnp no)
+		(fields_autoplaced yes)
+		(uuid "634b5932-53ff-4fab-b30b-5f8e5cb3dda0")
+		(property "Reference" "#PWR030"
+			(at 39.37 157.48 0)
+			(hide yes)
+			(show_name no)
+			(do_not_autoplace no)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "Value" "+5V"
+			(at 39.37 149.5369 0)
+			(show_name no)
+			(do_not_autoplace no)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "Footprint" ""
+			(at 39.37 153.67 0)
+			(hide yes)
+			(show_name no)
+			(do_not_autoplace no)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "Datasheet" ""
+			(at 39.37 153.67 0)
+			(hide yes)
+			(show_name no)
+			(do_not_autoplace no)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "Description" "Power symbol creates a global label with name \"+5V\""
+			(at 39.37 153.67 0)
+			(hide yes)
+			(show_name no)
+			(do_not_autoplace no)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(pin "1"
+			(uuid "6ef75ceb-cfa9-4392-8dbd-690c80731fbb")
+		)
+		(instances
+			(project "wifi_floppy"
+				(path "/c9178abf-c4d6-4242-b99e-f9f08c77f33c"
+					(reference "#PWR030")
+					(unit 1)
+				)
+			)
+		)
+	)
+	(symbol
 		(lib_id "wifi-floppy-lib:C_Small")
 		(at 101.6 49.53 0)
 		(unit 1)
@@ -9699,7 +10576,7 @@
 	)
 	(symbol
 		(lib_id "power:PWR_FLAG")
-		(at 43.18 31.75 0)
+		(at 60.96 31.75 0)
 		(unit 1)
 		(body_style 1)
 		(exclude_from_sim no)
@@ -9710,7 +10587,7 @@
 		(fields_autoplaced yes)
 		(uuid "6e5e8059-f523-4428-bf7b-c1142cacf707")
 		(property "Reference" "#FLG01"
-			(at 43.18 29.845 0)
+			(at 60.96 29.845 0)
 			(hide yes)
 			(show_name no)
 			(do_not_autoplace no)
@@ -9721,7 +10598,7 @@
 			)
 		)
 		(property "Value" "PWR_FLAG"
-			(at 43.18 27.6169 0)
+			(at 60.96 27.6169 0)
 			(show_name no)
 			(do_not_autoplace no)
 			(effects
@@ -9731,7 +10608,7 @@
 			)
 		)
 		(property "Footprint" ""
-			(at 43.18 31.75 0)
+			(at 60.96 31.75 0)
 			(hide yes)
 			(show_name no)
 			(do_not_autoplace no)
@@ -9742,7 +10619,7 @@
 			)
 		)
 		(property "Datasheet" ""
-			(at 43.18 31.75 0)
+			(at 60.96 31.75 0)
 			(hide yes)
 			(show_name no)
 			(do_not_autoplace no)
@@ -9753,7 +10630,7 @@
 			)
 		)
 		(property "Description" "Special symbol for telling ERC where power comes from"
-			(at 43.18 31.75 0)
+			(at 60.96 31.75 0)
 			(hide yes)
 			(show_name no)
 			(do_not_autoplace no)
@@ -9943,7 +10820,7 @@
 	)
 	(symbol
 		(lib_id "power:+5V")
-		(at 60.96 120.65 0)
+		(at 60.96 123.19 0)
 		(unit 1)
 		(body_style 1)
 		(exclude_from_sim no)
@@ -9954,7 +10831,7 @@
 		(fields_autoplaced yes)
 		(uuid "75904259-ac57-48ed-a635-f7a498354c20")
 		(property "Reference" "#PWR020"
-			(at 60.96 124.46 0)
+			(at 60.96 127 0)
 			(hide yes)
 			(show_name no)
 			(do_not_autoplace no)
@@ -9965,7 +10842,7 @@
 			)
 		)
 		(property "Value" "+5V"
-			(at 60.96 116.5169 0)
+			(at 60.96 119.0569 0)
 			(show_name no)
 			(do_not_autoplace no)
 			(effects
@@ -9975,7 +10852,7 @@
 			)
 		)
 		(property "Footprint" ""
-			(at 60.96 120.65 0)
+			(at 60.96 123.19 0)
 			(hide yes)
 			(show_name no)
 			(do_not_autoplace no)
@@ -9986,7 +10863,7 @@
 			)
 		)
 		(property "Datasheet" ""
-			(at 60.96 120.65 0)
+			(at 60.96 123.19 0)
 			(hide yes)
 			(show_name no)
 			(do_not_autoplace no)
@@ -9997,7 +10874,7 @@
 			)
 		)
 		(property "Description" "Power symbol creates a global label with name \"+5V\""
-			(at 60.96 120.65 0)
+			(at 60.96 123.19 0)
 			(hide yes)
 			(show_name no)
 			(do_not_autoplace no)
@@ -10384,7 +11261,7 @@
 		(dnp no)
 		(fields_autoplaced yes)
 		(uuid "79138c5f-07a3-449f-bdf8-07065f9b1af7")
-		(property "Reference" "R2"
+		(property "Reference" "R3"
 			(at 62.4586 125.7878 0)
 			(show_name no)
 			(do_not_autoplace no)
@@ -10459,7 +11336,7 @@
 		(instances
 			(project "wifi_floppy"
 				(path "/c9178abf-c4d6-4242-b99e-f9f08c77f33c"
-					(reference "R2")
+					(reference "R3")
 					(unit 1)
 				)
 			)
@@ -10467,7 +11344,7 @@
 	)
 	(symbol
 		(lib_id "power:GND")
-		(at 35.56 40.64 0)
+		(at 53.34 40.64 0)
 		(unit 1)
 		(body_style 1)
 		(exclude_from_sim no)
@@ -10478,7 +11355,7 @@
 		(fields_autoplaced yes)
 		(uuid "7e714c83-e665-44fe-ba5c-81319edda41b")
 		(property "Reference" "#PWR01"
-			(at 35.56 46.99 0)
+			(at 53.34 46.99 0)
 			(hide yes)
 			(show_name no)
 			(do_not_autoplace no)
@@ -10489,7 +11366,7 @@
 			)
 		)
 		(property "Value" "GND"
-			(at 35.56 44.7731 0)
+			(at 53.34 44.7731 0)
 			(show_name no)
 			(do_not_autoplace no)
 			(effects
@@ -10499,7 +11376,7 @@
 			)
 		)
 		(property "Footprint" ""
-			(at 35.56 40.64 0)
+			(at 53.34 40.64 0)
 			(hide yes)
 			(show_name no)
 			(do_not_autoplace no)
@@ -10510,7 +11387,7 @@
 			)
 		)
 		(property "Datasheet" ""
-			(at 35.56 40.64 0)
+			(at 53.34 40.64 0)
 			(hide yes)
 			(show_name no)
 			(do_not_autoplace no)
@@ -10521,7 +11398,7 @@
 			)
 		)
 		(property "Description" "Power symbol creates a global label with name \"GND\" , ground"
-			(at 35.56 40.64 0)
+			(at 53.34 40.64 0)
 			(hide yes)
 			(show_name no)
 			(do_not_autoplace no)
@@ -10545,7 +11422,7 @@
 	)
 	(symbol
 		(lib_id "wifi-floppy-lib:D_Schottky")
-		(at 27.94 31.75 0)
+		(at 45.72 31.75 0)
 		(unit 1)
 		(body_style 1)
 		(exclude_from_sim no)
@@ -10556,7 +11433,7 @@
 		(fields_autoplaced yes)
 		(uuid "8092b5d1-5de5-4a0a-936e-fac499256b0f")
 		(property "Reference" "D1"
-			(at 27.6225 26.3355 0)
+			(at 45.4025 26.3355 0)
 			(show_name no)
 			(do_not_autoplace no)
 			(effects
@@ -10566,7 +11443,7 @@
 			)
 		)
 		(property "Value" "SS14"
-			(at 27.6225 28.7598 0)
+			(at 45.4025 28.7598 0)
 			(show_name no)
 			(do_not_autoplace no)
 			(effects
@@ -10576,7 +11453,7 @@
 			)
 		)
 		(property "Footprint" "wifi-floppy-lib:D_SMA_Handsoldering"
-			(at 27.94 31.75 0)
+			(at 45.72 31.75 0)
 			(hide yes)
 			(show_name no)
 			(do_not_autoplace no)
@@ -10587,7 +11464,7 @@
 			)
 		)
 		(property "Datasheet" ""
-			(at 27.94 31.75 0)
+			(at 45.72 31.75 0)
 			(hide yes)
 			(show_name no)
 			(do_not_autoplace no)
@@ -10598,7 +11475,7 @@
 			)
 		)
 		(property "Description" "Schottky diode"
-			(at 27.94 31.75 0)
+			(at 45.72 31.75 0)
 			(hide yes)
 			(show_name no)
 			(do_not_autoplace no)
@@ -10625,7 +11502,7 @@
 	)
 	(symbol
 		(lib_id "power:+5V")
-		(at 39.37 140.97 0)
+		(at 39.37 138.43 0)
 		(unit 1)
 		(body_style 1)
 		(exclude_from_sim no)
@@ -10636,7 +11513,7 @@
 		(fields_autoplaced yes)
 		(uuid "86183266-519c-4105-92d5-1cb4c3a877d0")
 		(property "Reference" "#PWR021"
-			(at 39.37 144.78 0)
+			(at 39.37 142.24 0)
 			(hide yes)
 			(show_name no)
 			(do_not_autoplace no)
@@ -10647,7 +11524,7 @@
 			)
 		)
 		(property "Value" "+5V"
-			(at 39.37 136.8369 0)
+			(at 39.37 134.2969 0)
 			(show_name no)
 			(do_not_autoplace no)
 			(effects
@@ -10657,7 +11534,7 @@
 			)
 		)
 		(property "Footprint" ""
-			(at 39.37 140.97 0)
+			(at 39.37 138.43 0)
 			(hide yes)
 			(show_name no)
 			(do_not_autoplace no)
@@ -10668,7 +11545,7 @@
 			)
 		)
 		(property "Datasheet" ""
-			(at 39.37 140.97 0)
+			(at 39.37 138.43 0)
 			(hide yes)
 			(show_name no)
 			(do_not_autoplace no)
@@ -10679,7 +11556,7 @@
 			)
 		)
 		(property "Description" "Power symbol creates a global label with name \"+5V\""
-			(at 39.37 140.97 0)
+			(at 39.37 138.43 0)
 			(hide yes)
 			(show_name no)
 			(do_not_autoplace no)
@@ -10774,6 +11651,177 @@
 			(project "wifi_floppy"
 				(path "/c9178abf-c4d6-4242-b99e-f9f08c77f33c"
 					(reference "#PWR015")
+					(unit 1)
+				)
+			)
+		)
+	)
+	(symbol
+		(lib_id "power:+5V")
+		(at 60.96 168.91 0)
+		(unit 1)
+		(body_style 1)
+		(exclude_from_sim no)
+		(in_bom yes)
+		(on_board yes)
+		(in_pos_files yes)
+		(dnp no)
+		(fields_autoplaced yes)
+		(uuid "9c605ecf-87a8-4a7c-ab88-d96f99346ee3")
+		(property "Reference" "#PWR033"
+			(at 60.96 172.72 0)
+			(hide yes)
+			(show_name no)
+			(do_not_autoplace no)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "Value" "+5V"
+			(at 60.96 164.7769 0)
+			(show_name no)
+			(do_not_autoplace no)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "Footprint" ""
+			(at 60.96 168.91 0)
+			(hide yes)
+			(show_name no)
+			(do_not_autoplace no)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "Datasheet" ""
+			(at 60.96 168.91 0)
+			(hide yes)
+			(show_name no)
+			(do_not_autoplace no)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "Description" "Power symbol creates a global label with name \"+5V\""
+			(at 60.96 168.91 0)
+			(hide yes)
+			(show_name no)
+			(do_not_autoplace no)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(pin "1"
+			(uuid "b1e24b68-cc51-4efd-8544-3190a74ad61f")
+		)
+		(instances
+			(project "wifi_floppy"
+				(path "/c9178abf-c4d6-4242-b99e-f9f08c77f33c"
+					(reference "#PWR033")
+					(unit 1)
+				)
+			)
+		)
+	)
+	(symbol
+		(lib_id "wifi-floppy-lib:R_Small")
+		(at 60.96 142.24 0)
+		(unit 1)
+		(body_style 1)
+		(exclude_from_sim no)
+		(in_bom yes)
+		(on_board yes)
+		(in_pos_files yes)
+		(dnp no)
+		(fields_autoplaced yes)
+		(uuid "9e134292-554d-4d93-bba2-d86bfbf02e49")
+		(property "Reference" "R5"
+			(at 62.4586 141.0278 0)
+			(show_name no)
+			(do_not_autoplace no)
+			(effects
+				(font
+					(size 1.016 1.016)
+				)
+				(justify left)
+			)
+		)
+		(property "Value" "1k"
+			(at 62.4586 143.2477 0)
+			(show_name no)
+			(do_not_autoplace no)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(justify left)
+			)
+		)
+		(property "Footprint" "wifi-floppy-lib:R_1206_3216Metric_Pad1.30x1.75mm_HandSolder"
+			(at 60.96 142.24 0)
+			(hide yes)
+			(show_name no)
+			(do_not_autoplace no)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "Datasheet" ""
+			(at 60.96 142.24 0)
+			(hide yes)
+			(show_name no)
+			(do_not_autoplace no)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "Description" "Resistor, small symbol"
+			(at 60.96 142.24 0)
+			(hide yes)
+			(show_name no)
+			(do_not_autoplace no)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "LCSC" "C1469"
+			(at 60.96 142.24 0)
+			(hide yes)
+			(show_name no)
+			(do_not_autoplace no)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(pin "1"
+			(uuid "debd7a44-1a48-4b30-a46e-bf2b4f297998")
+		)
+		(pin "2"
+			(uuid "bad4cd5b-2f91-4633-a088-67abcef90ea1")
+		)
+		(instances
+			(project "wifi_floppy"
+				(path "/c9178abf-c4d6-4242-b99e-f9f08c77f33c"
+					(reference "R5")
 					(unit 1)
 				)
 			)
@@ -10971,7 +12019,7 @@
 	)
 	(symbol
 		(lib_id "power:GND")
-		(at 26.67 170.18 0)
+		(at 26.67 191.77 0)
 		(unit 1)
 		(body_style 1)
 		(exclude_from_sim no)
@@ -10982,7 +12030,7 @@
 		(fields_autoplaced yes)
 		(uuid "a424c8c4-7d51-4748-bc77-25ac2908afa8")
 		(property "Reference" "#PWR022"
-			(at 26.67 176.53 0)
+			(at 26.67 198.12 0)
 			(hide yes)
 			(show_name no)
 			(do_not_autoplace no)
@@ -10993,7 +12041,7 @@
 			)
 		)
 		(property "Value" "GND"
-			(at 26.67 174.3131 0)
+			(at 26.67 195.9031 0)
 			(show_name no)
 			(do_not_autoplace no)
 			(effects
@@ -11003,7 +12051,7 @@
 			)
 		)
 		(property "Footprint" ""
-			(at 26.67 170.18 0)
+			(at 26.67 191.77 0)
 			(hide yes)
 			(show_name no)
 			(do_not_autoplace no)
@@ -11014,7 +12062,7 @@
 			)
 		)
 		(property "Datasheet" ""
-			(at 26.67 170.18 0)
+			(at 26.67 191.77 0)
 			(hide yes)
 			(show_name no)
 			(do_not_autoplace no)
@@ -11025,7 +12073,7 @@
 			)
 		)
 		(property "Description" "Power symbol creates a global label with name \"GND\" , ground"
-			(at 26.67 170.18 0)
+			(at 26.67 191.77 0)
 			(hide yes)
 			(show_name no)
 			(do_not_autoplace no)
@@ -11371,7 +12419,7 @@
 	)
 	(symbol
 		(lib_id "wifi-floppy-lib:R_Small")
-		(at 41.91 166.37 90)
+		(at 41.91 187.96 90)
 		(unit 1)
 		(body_style 1)
 		(exclude_from_sim no)
@@ -11381,8 +12429,8 @@
 		(dnp no)
 		(fields_autoplaced yes)
 		(uuid "b43b21e9-398e-4eb9-bea3-82e6488984f8")
-		(property "Reference" "R4"
-			(at 41.91 161.6933 90)
+		(property "Reference" "R9"
+			(at 41.91 183.2833 90)
 			(show_name no)
 			(do_not_autoplace no)
 			(effects
@@ -11392,7 +12440,7 @@
 			)
 		)
 		(property "Value" "1k"
-			(at 41.91 163.9132 90)
+			(at 41.91 185.5032 90)
 			(show_name no)
 			(do_not_autoplace no)
 			(effects
@@ -11402,7 +12450,7 @@
 			)
 		)
 		(property "Footprint" "wifi-floppy-lib:R_1206_3216Metric_Pad1.30x1.75mm_HandSolder"
-			(at 41.91 166.37 0)
+			(at 41.91 187.96 0)
 			(hide yes)
 			(show_name no)
 			(do_not_autoplace no)
@@ -11413,7 +12461,7 @@
 			)
 		)
 		(property "Datasheet" ""
-			(at 41.91 166.37 0)
+			(at 41.91 187.96 0)
 			(hide yes)
 			(show_name no)
 			(do_not_autoplace no)
@@ -11424,7 +12472,7 @@
 			)
 		)
 		(property "Description" "Resistor, small symbol"
-			(at 41.91 166.37 0)
+			(at 41.91 187.96 0)
 			(hide yes)
 			(show_name no)
 			(do_not_autoplace no)
@@ -11435,7 +12483,7 @@
 			)
 		)
 		(property "LCSC" "C1469"
-			(at 41.91 166.37 90)
+			(at 41.91 187.96 90)
 			(hide yes)
 			(show_name no)
 			(do_not_autoplace no)
@@ -11454,7 +12502,7 @@
 		(instances
 			(project "wifi_floppy"
 				(path "/c9178abf-c4d6-4242-b99e-f9f08c77f33c"
-					(reference "R4")
+					(reference "R9")
 					(unit 1)
 				)
 			)
@@ -11472,7 +12520,7 @@
 		(dnp no)
 		(fields_autoplaced yes)
 		(uuid "b66d67f4-1cf0-4f7c-8427-b62e35c2775c")
-		(property "Reference" "R5"
+		(property "Reference" "R11"
 			(at 184.15 122.3233 90)
 			(show_name no)
 			(do_not_autoplace no)
@@ -11545,15 +12593,15 @@
 		(instances
 			(project "wifi_floppy"
 				(path "/c9178abf-c4d6-4242-b99e-f9f08c77f33c"
-					(reference "R5")
+					(reference "R11")
 					(unit 1)
 				)
 			)
 		)
 	)
 	(symbol
-		(lib_id "power:+5V")
-		(at 35.56 29.21 0)
+		(lib_id "power:PWR_FLAG")
+		(at 30.48 31.75 0)
 		(unit 1)
 		(body_style 1)
 		(exclude_from_sim no)
@@ -11562,9 +12610,9 @@
 		(in_pos_files yes)
 		(dnp no)
 		(fields_autoplaced yes)
-		(uuid "cb4c9904-da10-41af-b2dc-681d2a81f359")
-		(property "Reference" "#PWR02"
-			(at 35.56 33.02 0)
+		(uuid "c688983d-e35a-4623-8705-158c6746d965")
+		(property "Reference" "#FLG02"
+			(at 30.48 29.845 0)
 			(hide yes)
 			(show_name no)
 			(do_not_autoplace no)
@@ -11574,8 +12622,8 @@
 				)
 			)
 		)
-		(property "Value" "+5V"
-			(at 35.56 25.0769 0)
+		(property "Value" "PWR_FLAG"
+			(at 30.48 27.6169 0)
 			(show_name no)
 			(do_not_autoplace no)
 			(effects
@@ -11585,7 +12633,7 @@
 			)
 		)
 		(property "Footprint" ""
-			(at 35.56 29.21 0)
+			(at 30.48 31.75 0)
 			(hide yes)
 			(show_name no)
 			(do_not_autoplace no)
@@ -11596,7 +12644,85 @@
 			)
 		)
 		(property "Datasheet" ""
-			(at 35.56 29.21 0)
+			(at 30.48 31.75 0)
+			(hide yes)
+			(show_name no)
+			(do_not_autoplace no)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "Description" "Special symbol for telling ERC where power comes from"
+			(at 30.48 31.75 0)
+			(hide yes)
+			(show_name no)
+			(do_not_autoplace no)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(pin "1"
+			(uuid "3428c8bb-10eb-4327-9ae0-74da06c32b76")
+		)
+		(instances
+			(project "wifi_floppy"
+				(path "/c9178abf-c4d6-4242-b99e-f9f08c77f33c"
+					(reference "#FLG02")
+					(unit 1)
+				)
+			)
+		)
+	)
+	(symbol
+		(lib_id "power:+5V")
+		(at 53.34 29.21 0)
+		(unit 1)
+		(body_style 1)
+		(exclude_from_sim no)
+		(in_bom yes)
+		(on_board yes)
+		(in_pos_files yes)
+		(dnp no)
+		(fields_autoplaced yes)
+		(uuid "cb4c9904-da10-41af-b2dc-681d2a81f359")
+		(property "Reference" "#PWR02"
+			(at 53.34 33.02 0)
+			(hide yes)
+			(show_name no)
+			(do_not_autoplace no)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "Value" "+5V"
+			(at 53.34 25.0769 0)
+			(show_name no)
+			(do_not_autoplace no)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "Footprint" ""
+			(at 53.34 29.21 0)
+			(hide yes)
+			(show_name no)
+			(do_not_autoplace no)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "Datasheet" ""
+			(at 53.34 29.21 0)
 			(hide yes)
 			(show_name no)
 			(do_not_autoplace no)
@@ -11607,7 +12733,7 @@
 			)
 		)
 		(property "Description" "Power symbol creates a global label with name \"+5V\""
-			(at 35.56 29.21 0)
+			(at 53.34 29.21 0)
 			(hide yes)
 			(show_name no)
 			(do_not_autoplace no)
@@ -12228,8 +13354,8 @@
 		)
 	)
 	(symbol
-		(lib_id "wifi-floppy-lib:C_Small")
-		(at 35.56 36.83 0)
+		(lib_id "wifi-floppy-lib:R_Small")
+		(at 39.37 157.48 0)
 		(unit 1)
 		(body_style 1)
 		(exclude_from_sim no)
@@ -12238,9 +13364,20 @@
 		(in_pos_files yes)
 		(dnp no)
 		(fields_autoplaced yes)
-		(uuid "e058e108-60ce-4bfc-bdb3-375154725fb6")
-		(property "Reference" "C3"
-			(at 37.8841 35.6241 0)
+		(uuid "de386e53-ca2c-41ae-a7a3-db94850aec47")
+		(property "Reference" "R4"
+			(at 40.8686 156.2678 0)
+			(show_name no)
+			(do_not_autoplace no)
+			(effects
+				(font
+					(size 1.016 1.016)
+				)
+				(justify left)
+			)
+		)
+		(property "Value" "1k"
+			(at 40.8686 158.4877 0)
 			(show_name no)
 			(do_not_autoplace no)
 			(effects
@@ -12250,19 +13387,8 @@
 				(justify left)
 			)
 		)
-		(property "Value" "10uF"
-			(at 37.8841 38.0484 0)
-			(show_name no)
-			(do_not_autoplace no)
-			(effects
-				(font
-					(size 1.27 1.27)
-				)
-				(justify left)
-			)
-		)
-		(property "Footprint" "wifi-floppy-lib:C_1206_3216Metric_Pad1.33x1.80mm_HandSolder"
-			(at 35.56 36.83 0)
+		(property "Footprint" "wifi-floppy-lib:R_1206_3216Metric_Pad1.30x1.75mm_HandSolder"
+			(at 39.37 157.48 0)
 			(hide yes)
 			(show_name no)
 			(do_not_autoplace no)
@@ -12273,7 +13399,100 @@
 			)
 		)
 		(property "Datasheet" ""
-			(at 35.56 36.83 0)
+			(at 39.37 157.48 0)
+			(hide yes)
+			(show_name no)
+			(do_not_autoplace no)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "Description" "Resistor, small symbol"
+			(at 39.37 157.48 0)
+			(hide yes)
+			(show_name no)
+			(do_not_autoplace no)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "LCSC" "C1469"
+			(at 39.37 157.48 0)
+			(hide yes)
+			(show_name no)
+			(do_not_autoplace no)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(pin "1"
+			(uuid "a079867b-0216-490e-bc10-1716fe1c5f78")
+		)
+		(pin "2"
+			(uuid "95942056-7a10-430a-80f6-1e67b87269a0")
+		)
+		(instances
+			(project "wifi_floppy"
+				(path "/c9178abf-c4d6-4242-b99e-f9f08c77f33c"
+					(reference "R4")
+					(unit 1)
+				)
+			)
+		)
+	)
+	(symbol
+		(lib_id "wifi-floppy-lib:C_Small")
+		(at 53.34 36.83 0)
+		(unit 1)
+		(body_style 1)
+		(exclude_from_sim no)
+		(in_bom yes)
+		(on_board yes)
+		(in_pos_files yes)
+		(dnp no)
+		(fields_autoplaced yes)
+		(uuid "e058e108-60ce-4bfc-bdb3-375154725fb6")
+		(property "Reference" "C3"
+			(at 55.6641 35.6241 0)
+			(show_name no)
+			(do_not_autoplace no)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(justify left)
+			)
+		)
+		(property "Value" "10uF"
+			(at 55.6641 38.0484 0)
+			(show_name no)
+			(do_not_autoplace no)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(justify left)
+			)
+		)
+		(property "Footprint" "wifi-floppy-lib:C_1206_3216Metric_Pad1.33x1.80mm_HandSolder"
+			(at 53.34 36.83 0)
+			(hide yes)
+			(show_name no)
+			(do_not_autoplace no)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "Datasheet" ""
+			(at 53.34 36.83 0)
 			(hide yes)
 			(show_name no)
 			(do_not_autoplace no)
@@ -12284,7 +13503,7 @@
 			)
 		)
 		(property "Description" "Unpolarized capacitor, small symbol"
-			(at 35.56 36.83 0)
+			(at 53.34 36.83 0)
 			(hide yes)
 			(show_name no)
 			(do_not_autoplace no)
@@ -12321,7 +13540,7 @@
 		(dnp no)
 		(fields_autoplaced yes)
 		(uuid "e1615b44-9b94-4a1b-b513-a565613457ad")
-		(property "Reference" "R6"
+		(property "Reference" "R10"
 			(at 180.5686 129.5978 0)
 			(show_name no)
 			(do_not_autoplace no)
@@ -12396,7 +13615,7 @@
 		(instances
 			(project "wifi_floppy"
 				(path "/c9178abf-c4d6-4242-b99e-f9f08c77f33c"
-					(reference "R6")
+					(reference "R10")
 					(unit 1)
 				)
 			)
@@ -12482,7 +13701,7 @@
 	)
 	(symbol
 		(lib_id "wifi-floppy-lib:LED")
-		(at 33.02 166.37 0)
+		(at 33.02 187.96 0)
 		(unit 1)
 		(body_style 1)
 		(exclude_from_sim no)
@@ -12493,7 +13712,7 @@
 		(fields_autoplaced yes)
 		(uuid "e30ab2a7-d265-4e5b-8588-66fccd32daca")
 		(property "Reference" "D2"
-			(at 31.4325 160.9555 0)
+			(at 31.4325 182.5455 0)
 			(show_name no)
 			(do_not_autoplace no)
 			(effects
@@ -12503,7 +13722,7 @@
 			)
 		)
 		(property "Value" "LED"
-			(at 31.4325 163.3798 0)
+			(at 31.4325 184.9698 0)
 			(show_name no)
 			(do_not_autoplace no)
 			(effects
@@ -12513,7 +13732,7 @@
 			)
 		)
 		(property "Footprint" "wifi-floppy-lib:LED_1206_3216Metric_Pad1.42x1.75mm_HandSolder"
-			(at 33.02 166.37 0)
+			(at 33.02 187.96 0)
 			(hide yes)
 			(show_name no)
 			(do_not_autoplace no)
@@ -12524,7 +13743,7 @@
 			)
 		)
 		(property "Datasheet" ""
-			(at 33.02 166.37 0)
+			(at 33.02 187.96 0)
 			(hide yes)
 			(show_name no)
 			(do_not_autoplace no)
@@ -12535,7 +13754,7 @@
 			)
 		)
 		(property "Description" "Light emitting diode"
-			(at 33.02 166.37 0)
+			(at 33.02 187.96 0)
 			(hide yes)
 			(show_name no)
 			(do_not_autoplace no)
@@ -12546,7 +13765,7 @@
 			)
 		)
 		(property "Sim.Pins" "1=K 2=A"
-			(at 33.02 166.37 0)
+			(at 33.02 187.96 0)
 			(hide yes)
 			(show_name no)
 			(do_not_autoplace no)
@@ -12557,7 +13776,7 @@
 			)
 		)
 		(property "LCSC" "C49018"
-			(at 33.02 166.37 0)
+			(at 33.02 187.96 0)
 			(hide yes)
 			(show_name no)
 			(do_not_autoplace no)

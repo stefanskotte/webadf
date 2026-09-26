@@ -3842,7 +3842,7 @@
 				(alternate "UART1_RTS" output line)
 				(alternate "USB_OVCUR_DET" input line)
 			)
-			(pin power_out line
+			(pin power_in line
 				(at 22.86 -22.86 180)
 				(length 3.81)
 				(name "AGND"
