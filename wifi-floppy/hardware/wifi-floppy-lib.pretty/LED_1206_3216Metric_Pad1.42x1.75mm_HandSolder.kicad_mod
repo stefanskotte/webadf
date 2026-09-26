@@ -1,0 +1,210 @@
+(footprint "LED_1206_3216Metric_Pad1.42x1.75mm_HandSolder"
+	(version 20260206)
+	(generator "pcbnew")
+	(generator_version "10.0")
+	(layer "F.Cu")
+	(descr "LED SMD 1206 (3216 Metric), square (rectangular) end terminal, IPC-7351 nominal, (Body size source: http://www.tortai-tech.com/upload/download/2011102023233369053.pdf)")
+	(tags "LED handsolder")
+	(property "Reference" "REF**"
+		(at 3.05 -0.05 270)
+		(layer "F.SilkS")
+		(uuid "85c1c217-f149-4101-a27f-eab0b289e644")
+		(effects
+			(font
+				(size 1 1)
+				(thickness 0.15)
+			)
+		)
+	)
+	(property "Value" "LED"
+		(at 0 1.83 180)
+		(layer "F.Fab")
+		(uuid "f15441f3-383a-40f4-81f3-e80dad886735")
+		(effects
+			(font
+				(size 1 1)
+				(thickness 0.15)
+			)
+		)
+	)
+	(property "Datasheet" ""
+		(at 0 0 180)
+		(layer "F.Fab")
+		(hide yes)
+		(uuid "90ec57da-7b10-4853-847e-df73b75e9812")
+		(effects
+			(font
+				(size 1.27 1.27)
+			)
+		)
+	)
+	(property "Description" "Light emitting diode"
+		(at 0 0 180)
+		(layer "F.Fab")
+		(hide yes)
+		(uuid "1a1b002c-1b51-4f4a-ba59-ecb7eae3a7ac")
+		(effects
+			(font
+				(size 1.27 1.27)
+			)
+		)
+	)
+	(property "KiLib_Generator" "SMD_2terminal_chip_molded"
+		(at 0 0 180)
+		(layer "F.SilkS")
+		(hide yes)
+		(uuid "ca089b0f-fa38-49eb-99bc-97f07f09b49d")
+		(effects
+			(font
+				(size 1 1)
+				(thickness 0.15)
+			)
+		)
+	)
+	(property "Sim.Pins" "1=K 2=A"
+		(at 0 0 0)
+		(unlocked yes)
+		(layer "F.Fab")
+		(hide yes)
+		(uuid "7a80e09a-0af1-4a4c-984d-72727b12709b")
+		(effects
+			(font
+				(size 1 1)
+				(thickness 0.15)
+			)
+		)
+	)
+	(property ki_fp_filters "LED* LED_SMD:* LED_THT:*")
+	(sheetname "/")
+	(sheetfile "wifi_floppy.kicad_sch")
+	(attr smd)
+	(duplicate_pad_numbers_are_jumpers no)
+	(fp_line
+		(start -2.46 -1.135)
+		(end -2.46 1.135)
+		(stroke
+			(width 0.12)
+			(type solid)
+		)
+		(layer "F.SilkS")
+		(uuid "f4aa98d2-a893-4cca-a6e1-0c1d4a7950a5")
+	)
+	(fp_line
+		(start -2.46 1.135)
+		(end 1.6 1.135)
+		(stroke
+			(width 0.12)
+			(type solid)
+		)
+		(layer "F.SilkS")
+		(uuid "82a34630-2625-47c3-babe-9c45e5254d89")
+	)
+	(fp_line
+		(start 1.6 -1.135)
+		(end -2.46 -1.135)
+		(stroke
+			(width 0.12)
+			(type solid)
+		)
+		(layer "F.SilkS")
+		(uuid "c03f2c56-c585-426b-a888-982112460bf3")
+	)
+	(fp_rect
+		(start -2.45 -1.13)
+		(end 2.45 1.13)
+		(stroke
+			(width 0.05)
+			(type solid)
+		)
+		(fill no)
+		(layer "F.CrtYd")
+		(uuid "dbd381b0-a7f6-4bec-bf7c-11c58280fd90")
+	)
+	(fp_line
+		(start -1.6 -0.4)
+		(end -1.6 0.8)
+		(stroke
+			(width 0.1)
+			(type solid)
+		)
+		(layer "F.Fab")
+		(uuid "e97d698b-7e15-4bde-974d-27032b511bd8")
+	)
+	(fp_line
+		(start -1.6 0.8)
+		(end 1.6 0.8)
+		(stroke
+			(width 0.1)
+			(type solid)
+		)
+		(layer "F.Fab")
+		(uuid "ffc93082-b6e5-42c1-a5d6-22f7a6edec95")
+	)
+	(fp_line
+		(start -1.2 -0.8)
+		(end -1.6 -0.4)
+		(stroke
+			(width 0.1)
+			(type solid)
+		)
+		(layer "F.Fab")
+		(uuid "6ea356ca-f10b-4f07-82ff-d34a50d36a09")
+	)
+	(fp_line
+		(start 1.6 -0.8)
+		(end -1.2 -0.8)
+		(stroke
+			(width 0.1)
+			(type solid)
+		)
+		(layer "F.Fab")
+		(uuid "15fea59b-da19-4bf1-ab15-2df79ff88581")
+	)
+	(fp_line
+		(start 1.6 0.8)
+		(end 1.6 -0.8)
+		(stroke
+			(width 0.1)
+			(type solid)
+		)
+		(layer "F.Fab")
+		(uuid "dc2ccf97-0ce6-4f94-8c06-d3ddf7792218")
+	)
+	(fp_text user "${REFERENCE}"
+		(at 0 0 180)
+		(layer "F.Fab")
+		(uuid "c13b4cba-548b-4f3d-9a91-90f546d51db6")
+		(effects
+			(font
+				(size 0.8 0.8)
+				(thickness 0.12)
+			)
+		)
+	)
+	(pad "1" smd roundrect
+		(at -1.4875 0)
+		(size 1.425 1.75)
+		(layers "F.Cu" "F.Mask" "F.Paste")
+		(roundrect_rratio 0.175439)
+		(uuid "61bdb170-0fb1-47de-81f9-af799779f046")
+	)
+	(pad "2" smd roundrect
+		(at 1.4875 0)
+		(size 1.425 1.75)
+		(layers "F.Cu" "F.Mask" "F.Paste")
+		(roundrect_rratio 0.175439)
+		(uuid "be9faa17-30ee-46bf-963d-23bd73e26154")
+	)
+	(embedded_fonts no)
+	(model "${KICAD10_3DMODEL_DIR}/LED_SMD.3dshapes/LED_1206_3216Metric.step"
+		(offset
+			(xyz 0 0 0)
+		)
+		(scale
+			(xyz 1 1 1)
+		)
+		(rotate
+			(xyz 0 0 0)
+		)
+	)
+)
