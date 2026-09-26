@@ -31,4 +31,5 @@ manufacturer part). Stock figures are from that day.
 
 - U2 is the only thin line in stock; check it again close to ordering.
 - The three LCSC numbers already in the design's BOM (C1469, C1489, C49018) are correct.
-- The piezo is rated 3 V nominal and is driven from +5 V through Q7; that is within its rating.
+- The piezo is listed at 3 V nominal and the board drives it from +5 V through Q7. Check the TDK
+  datasheet's maximum input voltage before ordering (not yet verified).
