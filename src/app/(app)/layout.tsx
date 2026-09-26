@@ -11,6 +11,7 @@ import { Link } from "@/components/shell/link";
 import { NavProgressProvider } from "@/components/shell/nav-progress";
 import { LiveRefresh } from "@/components/shell/live-refresh";
 import { DriveChips } from "@/components/shell/drive-chips";
+import { HeaderStart } from "@/components/shell/header-start";
 import { driveChips } from "@/lib/drive-chips";
 
 export default async function AppLayout({
@@ -55,27 +56,37 @@ export default async function AppLayout({
             not fit on one line, and nowrap would push the sign-out button off
             the right edge rather than shrinking anything. */}
         <header className="relative flex flex-wrap items-center gap-3 px-4 pt-4 sm:flex-nowrap sm:gap-4 sm:px-7">
-          {/* The wordmark is the way home. Every other shell in the app has an
-              explicit way back to the library; this one only had the nav pill,
-              and the mark is where people click first (operator, 2026-09-21).
-              Uses the shell's own Link, so it drives the navigation bar like
-              every other in-app link. */}
-          <Link
-            href="/library"
-            data-testid="wordmark-home"
-            className="flex items-center gap-2.5 text-base font-bold tracking-[-0.02em]"
-            style={{ color: "var(--on-dark)" }}
-          >
-            <Logo size={22} />
-            webadf
-          </Link>
-          {/* Beside the wordmark, in flow, rather than beside the pill: the
-              pill is absolutely centred (below), so anything placed next to
-              it would have to be absolute too, and would run into the search
-              box on the right. Here the chips take real width and the pill's
-              own centring is untouched. Full chips only from xl; see
-              DriveChips for the compact control used below that. */}
-          <DriveChips chips={chips} />
+          {/* The wordmark and, after it, a lane that centres the drive chips
+              between the wordmark and the pill -- see HeaderStart for the
+              geometry. The estimate is only the first paint's; the pill is
+              measured on the client. */}
+          <HeaderStart pillEstimate={showAdmin ? 322 : 248}>
+            {/* The wordmark is the way home. Every other shell in the app has an
+                explicit way back to the library; this one only had the nav pill,
+                and the mark is where people click first (operator, 2026-09-21).
+                Uses the shell's own Link, so it drives the navigation bar like
+                every other in-app link. */}
+            <Link
+              href="/library"
+              data-testid="wordmark-home"
+              className="flex items-center gap-2.5 text-base font-bold tracking-[-0.02em]"
+              style={{ color: "var(--on-dark)" }}
+            >
+              <Logo size={22} />
+              webadf
+            </Link>
+            {/* Beside the wordmark, in flow, rather than beside the pill: the
+                pill is absolutely centred (below), so anything placed next to
+                it would have to be absolute too, and would run into the search
+                box on the right. Here the chips take real width and the pill's
+                own centring is untouched. Full chips only from xl; see
+                DriveChips for the compact control used below that. The lane
+                centres them from sm up (HeaderStart); below sm the compact
+                control's own ml-auto still puts it at the line's right end. */}
+            <div className="flex flex-1 items-center sm:justify-center">
+              <DriveChips chips={chips} />
+            </div>
+          </HeaderStart>
         {/* The nav is centred on the VIEWPORT, which means taking it out of
             flow. Two weaker versions were tried and measured first: mx-auto
             only centres within the space its siblings leave over, so the
@@ -116,7 +127,8 @@ export default async function AppLayout({
                 scrolling around it: a justify-center scroll container puts
                 the start of its own content out of reach once it overflows,
                 which with four items is a 320px-wide phone away. */}
-            <div className="pointer-events-auto max-w-full overflow-x-auto sm:max-w-none sm:overflow-visible">
+            {/* data-nav-pill: what HeaderStart measures. */}
+            <div data-nav-pill className="pointer-events-auto max-w-full overflow-x-auto sm:max-w-none sm:overflow-visible">
               <TopNav showAdmin={showAdmin} />
             </div>
           </div>

@@ -243,6 +243,50 @@ test('at 1280 the chips stay between the wordmark and the centred pill, and "+k"
     await expect(page.getByTestId(`drive-entry-${ids[0]}`)).toHaveCount(0);
   });
 
+/**
+ * The chip group's gaps: wordmark-right to the first visible chip, and the
+ * last visible chip (or "+k") to the pill's left edge.
+ */
+async function chipGaps(page: Page) {
+  return page.evaluate(() => {
+    const wm = document.querySelector('[data-testid=wordmark-home]')!.getBoundingClientRect();
+    const pill = document.querySelector('header nav')!.getBoundingClientRect();
+    const kids = [...document.querySelector('[data-testid=drive-chips]')!.children]
+      .map((c) => c.getBoundingClientRect()).filter((r) => r.width > 0);
+    return {
+      left: Math.min(...kids.map((r) => r.left)) - wm.right,
+      right: pill.left - Math.max(...kids.map((r) => r.right)),
+    };
+  });
+}
+
+test('the chips are centred between the wordmark and the pill, and stay centred when the pill changes width',
+  async ({ page, request }) => {
+    test.setTimeout(60_000);
+    await signUpFresh(page);
+    for (const n of ['Alpha living room A1200', 'Bravo workbench A500', 'Charlie attic CDTV', 'Delta spare']) {
+      await onlineBoard(page, request, n);
+    }
+    for (const width of [1280, 1920]) {
+      await page.setViewportSize({ width, height: 800 });
+      await page.goto('/library');
+      await expect(page.getByTestId('drive-chip-more')).toBeVisible();
+      const g = await chipGaps(page);
+      expect(Math.abs(g.left - g.right), `gaps at ${width}: ${JSON.stringify(g)}`).toBeLessThanOrEqual(4);
+      expect(g.left).toBeGreaterThanOrEqual(16);
+      expect(g.right).toBeGreaterThanOrEqual(16);
+    }
+
+    // The pill's width is MEASURED, not assumed: widen it (as the Admin item
+    // or a longer label would) and the group re-centres on the new edge.
+    const before = await chipGaps(page);
+    await page.locator('header nav').evaluate((n: HTMLElement) => { n.style.paddingInline = '60px'; });
+    await expect.poll(async () => {
+      const g = await chipGaps(page);
+      return Math.abs(g.left - g.right) <= 4 && g.right < before.right - 20;
+    }).toBe(true);
+  });
+
 test('at 390px one Drives control on the top line lists every board, and nothing overflows', async ({ page, request }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await signUpFresh(page);
