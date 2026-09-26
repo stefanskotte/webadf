@@ -94,9 +94,10 @@ static void the_ops_cap_is_honoured(void) {
     CHECK_EQ_INT(cap_breaks, 0);
     CHECK_EQ_INT(count(NFC_EV_TAG_READ), 1);     // slower, but it still gets there
     // Back to the full budget: steps may use up to NFC_MAX_OPS_PER_STEP again.
+    // Away 3.5 s -- past the 3 s re-arrival window -- so it is read again.
     nfc_set_max_ops(&R, NFC_MAX_OPS_PER_STEP);
     F.tag_present = false;
-    run(2000);
+    run(3500);
     F.tag_present = true;
     int widest = 0;
     for (int k = 0; k < 2000; k++) {
@@ -182,12 +183,13 @@ static void same_tag_held_reports_once(void) {
     end_checks();
 }
 
+// Absent 3.5 s, past the 3 s re-arrival window: a new arrival.
 static void tag_removed_and_returned_reports_twice(void) {
     setup();
     put_id(ID);
     run(2000);
     F.tag_present = false;
-    run(2000);
+    run(3500);
     F.tag_present = true;
     run(2000);
     CHECK_EQ_INT(count(NFC_EV_TAG_READ), 2);
@@ -256,9 +258,9 @@ static void write_armed_writes_and_verifies(void) {
     CHECK(memcmp(F.sector1, want, NFC_TAG_BYTES) == 0, "the tag holds the encoding");
     CHECK_EQ_INT(F.trailer_writes, 0);
     CHECK_EQ_INT(count(NFC_EV_TAG_READ), 0);
-    // Away 1.5 s, back: a plain read now -- the write disarmed itself.
+    // Away 3.5 s, back: a plain read now -- the write disarmed itself.
     F.tag_present = false;
-    run(1500);
+    run(3500);
     F.tag_present = true;
     run(1000);
     CHECK_EQ_INT(count(NFC_EV_WRITE_DONE), 1);
@@ -399,6 +401,105 @@ static void untaken_event_holds_the_reader(void) {
     end_checks();
 }
 
+// ---- 1.3.1: a tap is a deliberate arrival ---------------------------------
+//
+// On the bench (2026-09-26) a fob lying untouched on the reader dropped out of
+// detection for over a second three times in 4.5 minutes, and each return was
+// a fresh tap: a write landed on it, and it re-mounted its disk. The same UID
+// is a new arrival only after 3 s of continuous absence.
+
+static void held_tag_dropout_2s_is_the_same_tap(void) {
+    setup();
+    put_id(ID);
+    run(2000);
+    F.tag_present = false;                   // a detection dropout, not a lift
+    run(2000);
+    F.tag_present = true;
+    run(3000);
+    CHECK_EQ_INT(count(NFC_EV_TAG_READ), 1);
+    CHECK_EQ_INT(nev, 2);                    // PRESENT and the one read
+    end_checks();
+}
+
+// A tag already on the reader when the write is armed, rereading `id` there.
+static void lying_tag_then_arm(const char *id, uint32_t seq) {
+    setup();
+    put_id(id);
+    run(2000);
+    CHECK_EQ_INT(count(NFC_EV_TAG_READ), 1);
+    nfc_arm_write(&R, seq, ID);
+    run(1000);                               // held: nothing happens
+}
+
+static void write_armed_over_a_lying_tag_skips_a_2s_dropout(void) {
+    lying_tag_then_arm(ID2, 11);
+    F.tag_present = false;
+    run(2000);
+    F.tag_present = true;
+    run(3000);
+    CHECK_EQ_INT(count(NFC_EV_WRITE_DONE), 0);
+    CHECK_EQ_INT(count(NFC_EV_TAG_READ), 1);
+    uint8_t want[NFC_TAG_BYTES];
+    nfc_tag_encode(ID2, want);
+    CHECK(memcmp(F.sector1, want, NFC_TAG_BYTES) == 0, "the lying tag is untouched");
+    CHECK(R.armed, "still armed for a real arrival");
+    end_checks();
+}
+
+static void write_armed_over_a_lying_tag_waits_for_it_to_return(void) {
+    lying_tag_then_arm(ID2, 12);
+    F.tag_present = false;
+    run(3500);
+    F.tag_present = true;
+    run(1000);
+    CHECK_EQ_INT(count(NFC_EV_WRITE_DONE), 1);
+    const nfc_event_t *e = first(NFC_EV_WRITE_DONE);
+    if (e) {
+        CHECK_EQ_INT(e->seq, 12);
+        CHECK(e->ok, "ok");
+    }
+    uint8_t want[NFC_TAG_BYTES];
+    nfc_tag_encode(ID, want);
+    CHECK(memcmp(F.sector1, want, NFC_TAG_BYTES) == 0, "written");
+    end_checks();
+}
+
+static void write_armed_over_a_lying_tag_goes_to_a_different_tag_at_once(void) {
+    lying_tag_then_arm(ID2, 13);
+    F.tag_present = false;                   // swapped for another tag
+    run(300);
+    static const uint8_t other[4] = { 0x24, 0x19, 0xB6, 0x01 };
+    memcpy(F.uid, other, 4);
+    F.tag_present = true;
+    run(1000);
+    CHECK_EQ_INT(count(NFC_EV_WRITE_DONE), 1);
+    const nfc_event_t *e = first(NFC_EV_WRITE_DONE);
+    if (e) {
+        CHECK_EQ_INT(e->seq, 13);
+        CHECK(e->ok, "ok");
+        CHECK(memcmp(e->uid, other, 4) == 0, "the other tag");
+    }
+    end_checks();
+}
+
+// Armed while the lying tag is mid-dropout (2.5 s unseen), back 0.7 s later:
+// 3.2 s unseen in all, but it was on the reader when the write was armed and
+// has not been away a full window since -- so it is not written.
+static void write_armed_during_a_dropout_waits_a_full_window_from_the_arm(void) {
+    setup();
+    put_id(ID2);
+    run(2000);
+    F.tag_present = false;
+    run(2500);
+    nfc_arm_write(&R, 14, ID);
+    run(700);
+    F.tag_present = true;
+    run(2000);
+    CHECK_EQ_INT(count(NFC_EV_WRITE_DONE), 0);
+    CHECK_EQ_INT(count(NFC_EV_TAG_READ), 1);
+    end_checks();
+}
+
 int main(void) {
     RUN(absent_chip_stays_absent_and_rechecks);
     RUN(present_chip_inits_and_emits_present);
@@ -420,5 +521,10 @@ int main(void) {
     RUN(untaken_event_holds_the_reader);
     RUN(the_ops_cap_is_honoured);
     RUN(a_slow_read_held_tag_reports_once);
+    RUN(held_tag_dropout_2s_is_the_same_tap);
+    RUN(write_armed_over_a_lying_tag_skips_a_2s_dropout);
+    RUN(write_armed_over_a_lying_tag_waits_for_it_to_return);
+    RUN(write_armed_over_a_lying_tag_goes_to_a_different_tag_at_once);
+    RUN(write_armed_during_a_dropout_waits_a_full_window_from_the_arm);
     return REPORT();
 }

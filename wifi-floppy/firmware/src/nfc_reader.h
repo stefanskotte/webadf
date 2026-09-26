@@ -86,8 +86,10 @@ typedef struct nfc_reader {
     uint8_t  back[NFC_TAG_BYTES];      // the read-back after a write
     nfc_event_t built;
 
-    // Debounce.
-    bool     have_last;
+    // The held tag: the last one reported, until it has been unseen for the
+    // re-arrival window (3 s). last_seen is the anchor that window runs from:
+    // the report, every later sighting, and an arm while it is held.
+    bool     held;
     uint8_t  last_uid[4];
     uint32_t last_seen;
 
@@ -121,9 +123,14 @@ void nfc_set_max_ops(nfc_reader_t *r, int cap);
 // One-slot mailbox; false = none.
 bool nfc_take_event(nfc_reader_t *r, nfc_event_t *out);
 
-// While armed, the next tag ARRIVAL (debounce as for reads) is written with
-// `disk_id` instead of read, whatever it holds, and reports WRITE_DONE with
-// `seq`. Re-arming replaces the request. An id without the disk-id shape is
+// While armed, the next tag ARRIVAL is written with `disk_id` instead of
+// read, whatever it holds, and reports WRITE_DONE with `seq`. An arrival is
+// a different UID, or the same UID after 3 s continuously unseen (as for
+// reads). A write never goes to a tag that was already on the reader when it
+// was armed: if a tag is held at this call, that UID is written only after
+// it has been unseen for 3 s counted from no earlier than this call, and has
+// arrived again; a different tag arriving is written at once. Re-arming
+// replaces the request. An id without the disk-id shape is
 // refused with WRITE_DONE{seq, ok=false, why="bad data"} on the next step.
 void nfc_arm_write(nfc_reader_t *r, uint32_t seq, const char *disk_id);
 // Withdraws the armed write. A write already under way finishes and reports.

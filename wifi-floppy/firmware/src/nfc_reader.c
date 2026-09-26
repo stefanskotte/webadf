@@ -22,7 +22,13 @@ enum { MI_OK, MI_NOTAGERR, MI_ERR };
 
 #define ABSENT_RECHECK_MS 5000   // spec §4.3
 #define POLL_MS            250   // spec §4.1: tag detection about every 250 ms
-#define DEBOUNCE_MS       1000   // the same UID within this is the same tap
+// The same UID is a new arrival only after this long continuously unseen.
+// 1 s was not enough: a fob lying untouched at the edge of the antenna's
+// range dropped out for over a second three times in 4.5 minutes on the
+// bench (2026-09-26), and each return was a fresh tap -- a write landed on
+// it, and it re-mounted its disk after a web eject. A tap is deliberate: a
+// hand lifts the tag and brings it back, which takes longer than this.
+#define NFC_REARRIVAL_ABSENT_MS 3000
 #define FIELD_OFF_MS        10   // long enough for every tag to lose power and reset
 #define COM_TIMEOUT_MS      25   // the chip's own timer: TReload 1000 x 25 us
 #define CRC_TIMEOUT_MS      10
@@ -386,6 +392,14 @@ static void moved(nfc_reader_t *r) {
 
 // ---- Protocol states ----------------------------------------------------------
 
+// The held tag has been unseen for the whole re-arrival window: it has left,
+// and the same UID seen from now on is a new arrival. Decided here and only
+// here, so a poll and the anticoll after it cannot disagree about it.
+static void expire_hold(nfc_reader_t *r, uint32_t now) {
+    if (!r->held || now - r->last_seen < NFC_REARRIVAL_ABSENT_MS) return;
+    r->held = false;
+}
+
 static bool st_absent(nfc_reader_t *r) {
     uint32_t now = r->now_ms();
     if (r->checked_once && now - r->t0 < ABSENT_RECHECK_MS) return false;
@@ -432,7 +446,9 @@ static bool st_init(nfc_reader_t *r) {
 }
 
 static bool st_idle(nfc_reader_t *r) {
-    if (r->now_ms() - r->t0 < POLL_MS) return false;
+    uint32_t now = r->now_ms();
+    if (now - r->t0 < POLL_MS) return false;
+    expire_hold(r, now);
     go(r, ST_REQ);
     return true;
 }
@@ -479,10 +495,12 @@ static bool st_anticoll(nfc_reader_t *r) {
         if (r->phase == 3) { go(r, ST_COOLDOWN); return true; }   // collision or garbage
         break;
     }
-    // Debounce: a tag held on the reader is seen every ~quarter second, and
-    // only its ARRIVAL is a tap.
+    // A tag held on the reader is seen every ~quarter second, and only its
+    // ARRIVAL is a tap: the held UID seen again is the same tap until it has
+    // been unseen for the whole re-arrival window.
     uint32_t now = r->now_ms();
-    if (r->have_last && memcmp(r->uid, r->last_uid, 4) == 0 && now - r->last_seen <= DEBOUNCE_MS) {
+    expire_hold(r, now);
+    if (r->held && memcmp(r->uid, r->last_uid, 4) == 0) {
         r->last_seen = now;
         go(r, ST_COOLDOWN);
         return true;
@@ -643,9 +661,9 @@ static bool st_report(nfc_reader_t *r) {
     // The tap is now reported: from here on, this UID held on the reader is
     // the same tap. Anchored at NOW, not at the anticoll that began it: at
     // one register op per pass (a mounted disk at 100 kHz) a read can take
-    // over a second from anticoll to here, and an anchor that old would make
-    // the still-held tag a fresh arrival on the very next poll.
-    r->have_last = true;
+    // over a second from anticoll to here, and an anchor that old would eat
+    // into the re-arrival window before the tag had been polled even once.
+    r->held = true;
     memcpy(r->last_uid, r->uid, 4);
     r->last_seen = r->now_ms();
     if (r->built.kind == NFC_EV_WRITE_DONE && r->armed && r->arm_seq == r->built.seq)
@@ -753,6 +771,13 @@ bool nfc_take_event(nfc_reader_t *r, nfc_event_t *out) {
 }
 
 void nfc_arm_write(nfc_reader_t *r, uint32_t seq, const char *disk_id) {
+    // A tag held right now was on the reader before the write existed: the
+    // arm counts as a sighting of it, so it is written only after a full
+    // window away that began after the arm -- even if it was already part-
+    // way through a dropout. A different tag is still written at once.
+    uint32_t now = r->now_ms();
+    expire_hold(r, now);
+    if (r->held) r->last_seen = now;
     r->arm_seq = seq;
     r->armed = disk_id != NULL && nfc_tag_encode(disk_id, r->arm_payload);
     r->arm_bad = !r->armed;
