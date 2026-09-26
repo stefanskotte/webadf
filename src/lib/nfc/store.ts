@@ -1,4 +1,4 @@
-import { and, eq, sql } from 'drizzle-orm';
+import { and, asc, eq, inArray, sql } from 'drizzle-orm';
 import { getDb } from '@/db';
 import { devices } from '@/db/schema/devices';
 import { disks, games } from '@/db/schema/catalog';
@@ -113,4 +113,46 @@ export async function readWriteResult(deviceId: string, seq: number): Promise<{ 
     resultSeq: devices.nfcWriteResultSeq, result: devices.nfcWriteResult, uid: devices.nfcWriteResultUid,
   }).from(devices).where(eq(devices.id, deviceId)).limit(1);
   return r && r.resultSeq === seq && r.result ? { result: r.result, uid: r.uid } : null;
+}
+
+/**
+ * This org's boards and whether each has a reader, for the fob button: the
+ * pages draw it only when one reports 'present', and /api/nfc/write chooses
+ * among them (chooseNfcDevice). Org-scoped here, so a board of another org
+ * never reaches either.
+ */
+export async function listNfcDevices(orgId: string) {
+  return getDb().select({ id: devices.id, name: devices.name, nfcReader: devices.nfcReader })
+    .from(devices).where(eq(devices.orgId, orgId)).orderBy(asc(devices.name), asc(devices.id));
+}
+
+/** The disk's title and number, or null when it is not this org's -- the
+ *  write route names the disk back to the dialog, and a foreign id must get
+ *  the same null as an unknown one. */
+export async function readDiskForNfc(orgId: string, diskId: string): Promise<{ title: string; diskNo: number } | null> {
+  const [r] = await getDb().select({ title: games.title, diskNo: disks.diskNo }).from(disks)
+    .innerJoin(games, eq(games.id, disks.gameId))
+    .where(and(eq(disks.id, diskId), eq(disks.orgId, orgId))).limit(1);
+  return r ?? null;
+}
+
+/** Every disk of the given titles, in disk order -- the library card's
+ *  "which disk?" choice for a multi-disk set. Loaded with the page only when
+ *  the org has a reader, so a library without one pays nothing. */
+export async function listDisksForNfc(orgId: string, gameIds: string[]) {
+  if (gameIds.length === 0) return [];
+  return getDb().select({ id: disks.id, gameId: disks.gameId, diskNo: disks.diskNo }).from(disks)
+    .where(and(eq(disks.orgId, orgId), inArray(disks.gameId, gameIds)))
+    .orderBy(asc(disks.gameId), asc(disks.diskNo), asc(disks.id));
+}
+
+/** The write-request columns of one board, or null when the board is not
+ *  this org's. nfcWriteStatus (rules.ts) reads a request's state from it. */
+export async function readNfcWriteState(orgId: string, deviceId: string) {
+  const [r] = await getDb().select({
+    nfcWriteSeq: devices.nfcWriteSeq, nfcWriteExpiresAt: devices.nfcWriteExpiresAt,
+    nfcWriteResultSeq: devices.nfcWriteResultSeq, nfcWriteResult: devices.nfcWriteResult,
+    nfcWriteResultUid: devices.nfcWriteResultUid,
+  }).from(devices).where(and(eq(devices.id, deviceId), eq(devices.orgId, orgId))).limit(1);
+  return r ?? null;
 }
