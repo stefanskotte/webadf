@@ -118,7 +118,12 @@ function MoreChip({ chips }: { chips: DriveChip[] }) {
       <DropdownMenuTrigger data-testid="drive-chip-more" title="More drives"
                            className={`${CHIP_CLASS} ${moreVisibility(n)}`} style={CHIP_STYLE}>
         <span className="2xl:hidden">{label(1)}</span>
-        <span className="hidden 2xl:inline min-[1920px]:hidden">{label(2)}</span>
+        {/* Bounded on BOTH sides by its own variant, not "2xl:inline
+            min-[1920px]:hidden": that pair relies on the stylesheet emitting
+            min-[1920px] after 2xl, and it does not -- at 1920 the chip read
+            "+2 +1". max-[1920px] is width < 1920px, the exact complement of
+            min-[1920px], so exactly one number shows in every band. */}
+        <span className="hidden 2xl:max-[1920px]:inline">{label(2)}</span>
         <span className="hidden min-[1920px]:inline">{label(3)}</span>
         <ChevronDownIcon className="h-3 w-3 opacity-70" aria-hidden />
       </DropdownMenuTrigger>
