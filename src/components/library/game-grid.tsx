@@ -173,6 +173,7 @@ function VolumeNameField({ game: g }: { game: GameListItem }) {
       onChange={(e) => setName(e.target.value)}
       onPointerDown={stop}
       onMouseDown={stop}
+      onTouchStart={stop}
       onClick={(e) => { e.preventDefault(); e.stopPropagation(); }}
       onKeyDown={(e) => {
         e.stopPropagation();
@@ -200,12 +201,17 @@ function VolumeNameField({ game: g }: { game: GameListItem }) {
  * is really a navigation -- the card itself is an <a href>, and an anchor
  * inside an anchor is invalid HTML that browsers "fix" by closing the outer
  * one early, which would break the card it sits in. Every one of them stops
- * its pointer events before they reach the card's link or dnd-kit's drag
- * listeners, the same way the inline rename field does.
+ * its pointer, mouse and touch-start events before they reach the card's
+ * link or dnd-kit's drag listeners (stopDrag), the same way the inline
+ * rename field does.
  *
  * They share one subdued resting colour (`--faint`) and take their meaning
  * from hover: destructive controls go red, the history one does not.
  */
+/** A card control's press must not reach dnd-kit's activators on the card:
+ *  mousedown for the MouseSensor, touchstart for the TouchSensor. */
+const stopDrag = (e: React.SyntheticEvent) => { e.stopPropagation(); };
+
 function HistoryButton({ game: g, collectionId }: { game: GameListItem; collectionId?: string }) {
   const router = useRouter();
 
@@ -228,6 +234,9 @@ function HistoryButton({ game: g, collectionId }: { game: GameListItem; collecti
         e.stopPropagation();
         router.push(href);
       }}
+      onPointerDown={stopDrag}
+      onMouseDown={stopDrag}
+      onTouchStart={stopDrag}
       className="shrink-0 rounded p-1 transition-colors hover:bg-[var(--glass-strong)] hover:text-[var(--ink)]"
       style={{ color: 'var(--faint)' }}
     >
@@ -276,6 +285,9 @@ function RemoveFromCollectionButton({ game: g, collectionId }: { game: GameListI
       title="Remove from collection"
       disabled={busy}
       onClick={onRemove}
+      onPointerDown={stopDrag}
+      onMouseDown={stopDrag}
+      onTouchStart={stopDrag}
       className="shrink-0 rounded p-1 transition-colors hover:bg-[var(--danger-bg)] hover:text-[var(--danger-fg)] disabled:opacity-50"
       style={{ color: 'var(--faint)' }}
     >

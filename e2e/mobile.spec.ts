@@ -7,7 +7,7 @@ import { devices } from '@/db/schema/devices';
 import { syntheticVolume } from '@/lib/adffs/synthetic';
 import { readVolume } from '@/lib/adffs';
 import { signUpFresh, runTag, createAdf } from './helpers';
-import { cleanupSeeded, seedDisk, pairDevice } from './device-helpers';
+import { cleanupSeeded, seedDisk, pairDevice, authHeader } from './device-helpers';
 import { synthDrop } from './drag-drop-helpers';
 import { seedProduction, seedSuggestion, cleanupDemozoo } from './demozoo-helpers';
 
@@ -550,4 +550,41 @@ test('the Demozoo review queue does not overflow at 390px', async ({ page }) => 
     () => document.documentElement.scrollWidth - document.documentElement.clientWidth,
   );
   expect(overflow).toBeLessThanOrEqual(0);
+});
+
+test('a press-and-hold inside a card\'s dialog does not drag the card behind it', async ({ page, request }) => {
+  // Both dialogs are portalled out of the card, but React bubbles their
+  // events through the card anyway -- and dnd-kit's TouchSensor activates on
+  // touchstart, which the overlays used to let through.
+  const { orgId } = await signUpFresh(page);
+  const { token } = await pairDevice(page, request);
+  const status = await request.post('/api/device/status', {
+    headers: authHeader(token), data: { mountedSha256: null, nfcReader: 'present' },
+  });
+  expect(status.status()).toBe(204);
+  const { gameId } = await seedDisk(orgId, { title: `Mobile Hold ${runTag()}`, diskNo: 1, sha256: sha(runTag()) });
+  await page.goto('/library');
+  const card = page.getByTestId('game-card').first();
+
+  async function holdInside(target: ReturnType<Page['getByTestId']>) {
+    const b = (await target.boundingBox())!;
+    const held = await touchDrag(page, { x: b.x + b.width / 2, y: b.y + b.height / 2 }, -120, { holdMs: 400 });
+    // Past the TouchSensor's 250 ms delay and then some: a drag would have
+    // dropped the card to opacity 0.4 by now (see the press-and-hold test).
+    await page.waitForTimeout(400);
+    expect(await card.evaluate((el) => getComputedStyle(el).opacity)).toBe('1');
+    await held.end();
+  }
+
+  await page.getByTestId(`fob-${gameId}`).tap();
+  await expect(page.getByTestId('fob-waiting')).toBeVisible();
+  await holdInside(page.getByTestId('fob-waiting'));
+  await page.getByTestId('fob-cancel').tap();
+  await expect(page.getByTestId('fob-dialog')).toHaveCount(0);
+
+  await page.getByTestId(`delete-game-${gameId}`).tap();
+  await expect(page.getByTestId('delete-dialog')).toBeVisible();
+  await holdInside(page.getByTestId('delete-dialog'));
+  await page.getByTestId('delete-cancel').tap();
+  await expect(page.getByTestId('delete-dialog')).toHaveCount(0);
 });
