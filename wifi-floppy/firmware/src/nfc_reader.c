@@ -393,9 +393,8 @@ static void moved(nfc_reader_t *r) {
 
 // ---- Protocol states ----------------------------------------------------------
 
-// The held tag has been unseen for the whole re-arrival window: it has left,
-// and the same UID seen from now on is a new arrival. Decided here and only
-// here, so a poll and the anticoll after it cannot disagree about it.
+// A held tag's detection gap, for the log (nfc_take_gap): measured from the
+// last time it truly answered, which an arm's sighting does not move.
 static void post_gap(nfc_reader_t *r, uint32_t now, bool new_arrival) {
     memcpy(r->gap.uid, r->last_uid, 4);
     r->gap.ms = now - r->last_detect;
@@ -403,6 +402,9 @@ static void post_gap(nfc_reader_t *r, uint32_t now, bool new_arrival) {
     r->has_gap = true;
 }
 
+// The held tag has been unseen for the whole re-arrival window: it has left,
+// and the same UID seen from now on is a new arrival. Decided here and only
+// here, so a poll and the anticoll after it cannot disagree about it.
 static void expire_hold(nfc_reader_t *r, uint32_t now) {
     if (!r->held || now - r->last_seen < NFC_REARRIVAL_ABSENT_MS) return;
     r->held = false;
