@@ -419,6 +419,14 @@ static bool st_absent(nfc_reader_t *r) {
     int v = rd(r, VersionReg);
     r->fails = 0;                    // silence is what ABSENT expects
     if (v < 0) return false;
+    // The chip is back. While it was gone nothing could see the held tag, so
+    // its absence says nothing about the tag: the return counts as a sighting,
+    // and a working chip must find it gone for the whole window. Without this
+    // the 5 s recheck alone expires the hold, and a tag that never moved is a
+    // new arrival -- written over if armed, its disk re-mounted if not -- and
+    // logged as a tag gap it never had.
+    if (r->held) r->last_seen = r->last_detect = now;
+    r->missed = false;
     go(r, ST_RESET);
     nfc_event_t e = { .kind = NFC_EV_PRESENT };
     emit(r, &e);
@@ -802,8 +810,10 @@ void nfc_arm_write(nfc_reader_t *r, uint32_t seq, const char *disk_id) {
     // arm counts as a sighting of it, so it is written only after a full
     // window away that began after the arm -- even if it was already part-
     // way through a dropout. A different tag is still written at once.
+    // While the chip is ABSENT the hold cannot expire (see st_absent): the
+    // chip's return decides it, not this call.
     uint32_t now = r->now_ms();
-    expire_hold(r, now);
+    if (r->state != ST_ABSENT) expire_hold(r, now);
     if (r->held) r->last_seen = now;
     r->arm_seq = seq;
     r->armed = disk_id != NULL && nfc_tag_encode(disk_id, r->arm_payload);

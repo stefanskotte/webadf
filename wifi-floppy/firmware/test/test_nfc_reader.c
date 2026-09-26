@@ -556,6 +556,35 @@ static void a_gap_past_the_window_is_reported_once_as_new_arrival(void) {
     end_checks();
 }
 
+// A chip outage is not a tag gap. The chip is re-probed only every 5 s, so on
+// its return the held tag's anchor is at least 5 s old; unless the return
+// re-anchors it, the untouched tag would be a new arrival (a write lands on
+// it, or it re-mounts its disk) and the log would blame the tag.
+static void chip_outage_under_a_lying_tag(bool arm, bool arm_while_absent) {
+    setup();
+    put_id(ID2);
+    run(2000);
+    CHECK_EQ_INT(count(NFC_EV_TAG_READ), 1);
+    if (arm && !arm_while_absent) nfc_arm_write(&R, 21, ID);
+    F.vanish_after_ops = F.ops;              // the chip drops off the bus
+    run(4000);
+    CHECK_EQ_INT(count(NFC_EV_ABSENT), 1);
+    if (arm && arm_while_absent) nfc_arm_write(&R, 22, ID);
+    F.vanish_after_ops = -1;                 // back; the tag never moved
+    run(8000);
+    CHECK_EQ_INT(count(NFC_EV_PRESENT), 2);
+    CHECK_EQ_INT(count(NFC_EV_WRITE_DONE), 0);
+    CHECK_EQ_INT(count(NFC_EV_TAG_READ), 1);
+    CHECK_EQ_INT(ngap, 0);
+    uint8_t want[NFC_TAG_BYTES];
+    nfc_tag_encode(ID2, want);
+    CHECK(memcmp(F.sector1, want, NFC_TAG_BYTES) == 0, "the lying tag is untouched");
+    end_checks();
+}
+static void chip_outage_keeps_a_lying_tag_held(void) { chip_outage_under_a_lying_tag(false, false); }
+static void chip_outage_does_not_write_a_lying_tag_armed_before(void) { chip_outage_under_a_lying_tag(true, false); }
+static void chip_outage_does_not_write_a_lying_tag_armed_during(void) { chip_outage_under_a_lying_tag(true, true); }
+
 int main(void) {
     RUN(absent_chip_stays_absent_and_rechecks);
     RUN(present_chip_inits_and_emits_present);
@@ -584,5 +613,8 @@ int main(void) {
     RUN(write_armed_during_a_dropout_waits_a_full_window_from_the_arm);
     RUN(a_1800ms_dropout_is_reported_once_with_its_length);
     RUN(a_gap_past_the_window_is_reported_once_as_new_arrival);
+    RUN(chip_outage_keeps_a_lying_tag_held);
+    RUN(chip_outage_does_not_write_a_lying_tag_armed_before);
+    RUN(chip_outage_does_not_write_a_lying_tag_armed_during);
     return REPORT();
 }

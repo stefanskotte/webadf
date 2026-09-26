@@ -98,7 +98,8 @@ typedef struct nfc_reader {
 
     // The held tag: the last one reported, until it has been unseen for the
     // re-arrival window (3 s). last_seen is the anchor that window runs from:
-    // the report, every later sighting, and an arm while it is held.
+    // the report, every later sighting, an arm while it is held, and the
+    // chip's return after an outage (which says nothing about the tag).
     bool     held;
     uint8_t  last_uid[4];
     uint32_t last_seen;
