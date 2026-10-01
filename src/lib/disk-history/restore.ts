@@ -10,12 +10,13 @@
 
 import { and, eq } from 'drizzle-orm';
 import { getDb } from '@/db';
-import { disks, entitlements } from '@/db/schema/catalog';
+import { blobs, disks, entitlements } from '@/db/schema/catalog';
 import { findHolder, mountedReason, repointLateMounts } from '@/lib/disk-holder';
 import { diskStore } from '@/lib/storage';
 import { materialise, HistoryError } from '@/lib/disk-history/chain';
 import { DeltaError } from '@/lib/disk-history/delta';
-import { loadEntries, recordVersion, StaleHeadError, type Recorded } from '@/lib/disk-history/store';
+import { loadEntries, recordVersion, StaleHeadError, type BlobIdentity, type Recorded } from '@/lib/disk-history/store';
+import { bumpVolumeDate, hasVolume, sameExceptVolumeDate } from '@/lib/disk-history/volume-date';
 
 export type RestoreOutcome =
   /** `recorded` false means the target's bytes already WERE the head: nothing recorded, nothing wrong. */
@@ -24,6 +25,9 @@ export type RestoreOutcome =
 
 /**
  * Restore `diskId` (scoped to `orgId`) to the image it held at version `seq`.
+ * The image is put back exactly, except that an AmigaDOS volume's creation
+ * date moves one tick later (volume-date.ts), so it is no longer
+ * byte-identical to version `seq`.
  *
  * This is not an in-place rewind: `seq`'s image is recorded as a brand-new
  * version ON TOP of the CURRENT head, with `source: 'rewind'` and
@@ -113,6 +117,47 @@ export async function restoreVersion(
 
   const currentSeq = entries[entries.length - 1].seq;
 
+  // Restoring the head, or a version whose bytes already equal it, changes
+  // nothing. Decided on the target's OWN bytes, before the volume date moves
+  // below -- otherwise every restore of the head would become a one-tick
+  // change. A head that is a re-dated copy of the target (it was restored
+  // from it, and nothing has been written since) already holds it too.
+  if (bytesEqual(target, before) || sameExceptVolumeDate(target, before)) {
+    return { ok: true, sha256: disk.sha256, seq: currentSeq, recorded: false };
+  }
+
+  // The restored disk gets a creation date one tick past every date the Amiga
+  // may remember for it -- the head's, and the highest date any earlier
+  // restore issued, which is the latest restore's (volume-date.ts) -- so a running
+  // Amiga takes it for a NEW volume and does not write what it remembers of
+  // the old one over it (HANDOFF 3ar). A disk with no AmigaDOS volume is
+  // restored byte for byte.
+  const seen = [before];
+  // The latest restore that re-dated a volume: a byte-for-byte restore of a
+  // disk with no volume issued no date, so the walk goes back past it. An
+  // image that cannot be read is skipped rather than refusing every restore
+  // of this disk from now on; the walk carries on to the next one.
+  for (const e of entries.filter((v) => v.source === 'rewind' && v.imageSha256 !== disk.sha256).reverse()) {
+    let image: Uint8Array;
+    try {
+      image = await diskStore.read(e.imageSha256);
+    } catch {
+      console.error(`restoreVersion: could not read restore image ${e.imageSha256} of disk ${diskId}`);
+      continue;
+    }
+    if (hasVolume(image)) { seen.push(image); break; }
+  }
+  const bumped = bumpVolumeDate(target, seen);
+  const next = bumped ?? target;
+  // ...and the near-copy is identified as the image it came from (TOSEC
+  // match, cover, type) -- which a restore of the untouched original
+  // got for free when the bytes were identical. `derivedFromSha256` is what
+  // keeps it so: the sweeps match it by its source's hashes, so a DAT import
+  // or OpenRetro sync that resets every verdict decides it the same way again.
+  const identity = bumped
+    ? await identityOf(db, entries.find((e) => e.seq === seq)!.imageSha256)
+    : null;
+
   // THE HOLDER CHECK ABOVE RAN BEFORE `materialise`, which is up to 65
   // sequential blob reads -- two orders of magnitude longer than the single
   // read applyDiskEdit does between its own check and its record. That window
@@ -131,8 +176,8 @@ export async function restoreVersion(
   let recorded: Recorded | null;
   try {
     recorded = await recordVersion({
-      orgId, diskId, headSha: disk.sha256, head: before, next: target,
-      source: 'rewind', rewindOf: seq, userId,
+      orgId, diskId, headSha: disk.sha256, head: before, next,
+      source: 'rewind', rewindOf: seq, userId, identity,
       sourceFilename: disk.tosecName ?? disk.sourceFilename ?? `${diskId}.adf`,
     });
   } catch (err) {
@@ -151,4 +196,28 @@ export async function restoreVersion(
   await repointLateMounts(db, orgId, diskId, disk.sha256, recorded.sha256);
 
   return { ok: true, sha256: recorded.sha256, seq: recorded.seq, recorded: true };
+}
+
+function bytesEqual(a: Uint8Array, b: Uint8Array): boolean {
+  if (a.length !== b.length) return false;
+  for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) return false;
+  return true;
+}
+
+/**
+ * The TOSEC and OpenRetro verdicts recorded for the image `sha256`, and its
+ * provenance for the copy. Demozoo is left for its own sweep to decide afresh:
+ * its suggestions are rows keyed by the blob, which a copied state would not
+ * bring along (it decides from the inherited TOSEC entry, so it agrees). The
+ * copy: the copy derives from `sha256` itself, or from what `sha256` itself
+ * derives from, so the chain never grows past one link.
+ */
+async function identityOf(db: ReturnType<typeof getDb>, sha256: string): Promise<BlobIdentity> {
+  const rows = await db.select({
+    tosecEntryId: blobs.tosecEntryId, matchState: blobs.matchState, matchCheckedAt: blobs.matchCheckedAt,
+    openretroEntryId: blobs.openretroEntryId, enrichState: blobs.enrichState, enrichCheckedAt: blobs.enrichCheckedAt,
+    derivedFromSha256: blobs.derivedFromSha256,
+  }).from(blobs).where(eq(blobs.sha256, sha256)).limit(1);
+  const row = rows[0];
+  return { ...(row ?? {}), derivedFromSha256: row?.derivedFromSha256 ?? sha256 };
 }

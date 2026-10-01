@@ -29,7 +29,20 @@ export interface RecordInput {
   rewindOf?: number | null;
   /** Carried onto the new image's entitlement row. */
   sourceFilename: string;
+  /**
+   * The identity (TOSEC and OpenRetro verdicts, and provenance) to give the new image's
+   * blob row, when it is a near-copy of an image that already has one -- a
+   * restore whose only change is the volume date (volume-date.ts). Ignored
+   * when the blob row already exists.
+   */
+  identity?: BlobIdentity | null;
 }
+
+/** The per-blob verdicts a restore carries from the version it came from. */
+export type BlobIdentity = Pick<typeof blobs.$inferInsert,
+  | 'tosecEntryId' | 'matchState' | 'matchCheckedAt'
+  | 'openretroEntryId' | 'enrichState' | 'enrichCheckedAt'
+  | 'derivedFromSha256'>;
 
 export interface Recorded { sha256: string; seq: number; kind: VersionKind; sectorCount: number }
 
@@ -67,6 +80,7 @@ export async function loadEntries(diskId: string): Promise<VersionEntry[]> {
     .select({
       seq: diskVersions.seq, kind: diskVersions.kind,
       blobSha256: diskVersions.blobSha256, imageSha256: diskVersions.imageSha256,
+      source: diskVersions.source,
     })
     .from(diskVersions)
     .where(eq(diskVersions.diskId, diskId))
@@ -115,6 +129,7 @@ export async function recordVersion(input: RecordInput): Promise<Recorded | null
   const stmts: BatchItem<'pg'>[] = [];
   stmts.push(db.insert(blobs).values({
     sha256, sizeBytes: input.next.length, storageKey: diskStore.storageKey(sha256),
+    ...(input.identity ?? {}),
   }).onConflictDoNothing());
   // The entitlement is what lets this org read the new bytes at all, and what
   // keeps the e2e teardown's GC from reclaiming a snapshot history needs.

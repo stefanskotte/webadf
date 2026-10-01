@@ -1,4 +1,5 @@
 import { and, eq, isNull, or, sql } from 'drizzle-orm';
+import { alias } from 'drizzle-orm/pg-core';
 import { getDb } from '@/db';
 import { blobs } from '@/db/schema/catalog';
 import { tosecEntries } from '@/db/schema/tosec';
@@ -197,13 +198,28 @@ export async function sweep(budgetMs: number = DEFAULT_BUDGET_MS): Promise<Sweep
     }
   }
 
+  // A restore's re-dated copy (blobs.derived_from_sha256) is identified by its
+  // SOURCE's hashes, not its own: its bytes differ from the source only in the
+  // volume's creation date, which no DAT or OpenRetro sha1 will ever contain. Matching
+  // it as its source means a reset (a DAT import, an OpenRetro sync) decides
+  // it the same way the source is decided, and applyMatch / applyEnrichment
+  // still reach the disk that points at the copy. It waits for its source to
+  // be hashed; a source row that has gone falls back to the copy's own hashes.
+  const src = alias(blobs, 'src');
+  const idCrc32 = sql<string | null>`coalesce(${src.crc32}, ${blobs.crc32})`;
+  const idMd5 = sql<string | null>`coalesce(${src.md5}, ${blobs.md5})`;
+  const idSha1 = sql<string | null>`coalesce(${src.sha1}, ${blobs.sha1})`;
+  const sourceReady = sql`(${blobs.derivedFromSha256} is null or ${src.sha256} is null or ${src.hashedAt} is not null)`;
+
   // Phase 2 -- match.
   while (spent() < budgetMs) {
     const todo = await db.select({
-      sha256: blobs.sha256, crc32: blobs.crc32, md5: blobs.md5,
-      sha1: blobs.sha1, sizeBytes: blobs.sizeBytes,
+      sha256: blobs.sha256,
+      crc32: idCrc32, md5: idMd5, sha1: idSha1,
+      sizeBytes: blobs.sizeBytes,
     }).from(blobs)
-      .where(and(isNull(blobs.matchCheckedAt), sql`${blobs.hashedAt} is not null`))
+      .leftJoin(src, eq(src.sha256, blobs.derivedFromSha256))
+      .where(and(isNull(blobs.matchCheckedAt), sql`${blobs.hashedAt} is not null`, sourceReady))
       .limit(MATCH_BATCH);
     if (todo.length === 0) { matchDone = true; break; }
 
@@ -302,17 +318,23 @@ export async function sweep(budgetMs: number = DEFAULT_BUDGET_MS): Promise<Sweep
   // budget.
   let imageBudget = 0;
   let identityIndex: Map<string, IdentityCandidate[]> | null = null;
+  // Across batches, not per batch: declared inside the loop it was empty at
+  // every check, so a blob failing every time was picked up again by each
+  // batch until the budget ran out.
+  const failedThisRun = new Set<string>();
   while (spent() < budgetMs) {
     const todo = await db.select({
-        sha256: blobs.sha256, sha1: blobs.sha1,
+        // A re-dated copy is looked up by its source's sha1 (see phase 2).
+        sha256: blobs.sha256, sha1: idSha1,
         // Carried so a hash miss can fall back to TOSEC identity without a
         // second round trip per blob. LEFT join: most blobs have no TOSEC
         // identity, and those simply skip the fallback.
         tosecSortTitle: tosecEntries.sortTitle, tosecYear: tosecEntries.year,
       })
       .from(blobs)
+      .leftJoin(src, eq(src.sha256, blobs.derivedFromSha256))
       .leftJoin(tosecEntries, eq(tosecEntries.id, blobs.tosecEntryId))
-      .where(and(isNull(blobs.enrichCheckedAt), sql`${blobs.sha1} is not null`))
+      .where(and(isNull(blobs.enrichCheckedAt), sql`${idSha1} is not null`, sourceReady))
       .limit(ENRICH_BATCH);
     if (todo.length === 0) { enrichDone = true; break; }
 
@@ -321,7 +343,6 @@ export async function sweep(budgetMs: number = DEFAULT_BUDGET_MS): Promise<Sweep
     // to burn the entire 240 s budget every night while nothing else advanced.
     // Skipping it for the rest of THIS run lets the queue behind it move; the
     // next run still retries it, which is what a transient fault needs.
-    const failedThisRun = new Set<string>();
     if (todo.every((t) => failedThisRun.has(t.sha256))) { enrichDone = true; break; }
 
     for (const b of todo) {
@@ -427,19 +448,29 @@ export async function scanStatus(): Promise<ScanStatus> {
   const db = getDb();
   const { rows } = await db.execute<Record<string, number>>(sql`
     select
-      (select count(*)::int from blobs)                                          as blobs,
-      (select count(*)::int from blobs where hashed_at is not null)              as hashed,
-      (select count(*)::int from blobs where match_state = 'matched')            as matched,
-      (select count(*)::int from blobs where match_state = 'none')               as none,
-      (select count(*)::int from blobs where match_state = 'ambiguous')          as ambiguous,
-      (select count(*)::int from blobs where match_checked_at is null)           as unchecked,
+      (select count(*)::int from blobs where derived_from_sha256 is null)       as blobs,
+      (select count(*)::int from blobs where hashed_at is not null
+        and derived_from_sha256 is null)                                         as hashed,
+      -- A restore's re-dated copy (blobs.derived_from_sha256) is matched as
+      -- its source, and the source is the archive disk counted here; the copy
+      -- is not a second hit, or a miss. Every blob count here leaves it out
+      -- (blobs and hashed above too, so the tiles still add up), and a restore
+      -- never moves the coverage figures.
+      (select count(*)::int from blobs where match_state = 'matched'
+        and derived_from_sha256 is null)                                         as matched,
+      (select count(*)::int from blobs where match_state = 'none'
+        and derived_from_sha256 is null)                                         as none,
+      (select count(*)::int from blobs where match_state = 'ambiguous'
+        and derived_from_sha256 is null)                                         as ambiguous,
+      (select count(*)::int from blobs where match_checked_at is null
+        and derived_from_sha256 is null)                                         as unchecked,
       -- Distinguishes "the object store could not produce these bytes"
       -- (hashed_at set, but no hash landed) from a genuine TOSEC miss (a
       -- real hash was computed and just isn't in tosec_entries). Both would
       -- otherwise read as match_state = 'none' and silently worsen the
       -- reported TOSEC hit rate during, say, a storage outage.
       (select count(*)::int from blobs where hashed_at is not null
-        and sha1 is null)                                                        as unreadable,
+        and sha1 is null and derived_from_sha256 is null)                        as unreadable,
       -- Disks somebody MADE here rather than uploaded. They will hash to
       -- something no DAT contains, so they land in match_state 'none' --
       -- correct, and not a miss: a disk the operator authored is in no
@@ -460,7 +491,7 @@ export async function scanStatus(): Promise<ScanStatus> {
       -- would otherwise fall out of every disks-based branch entirely and sit
       -- in match_state 'none' forever with nothing able to lower it.
       (select count(*)::int from blobs b
-        where b.match_state = 'none'
+        where b.match_state = 'none' and b.derived_from_sha256 is null
           and (
             (
               exists (select 1 from disks d where d.sha256 = b.sha256)
@@ -479,15 +510,18 @@ export async function scanStatus(): Promise<ScanStatus> {
             )
           ))                                                                     as authored_none,
       (select count(*)::int from tosec_entries)                                  as tosec_entries,
-      (select count(*)::int from blobs where enrich_state = 'enriched')          as enriched,
-      (select count(*)::int from blobs where enrich_state = 'none')              as enrich_none,
-      (select count(*)::int from blobs where enrich_state = 'ambiguous')         as enrich_ambiguous,
+      (select count(*)::int from blobs where enrich_state = 'enriched'
+        and derived_from_sha256 is null)                                         as enriched,
+      (select count(*)::int from blobs where enrich_state = 'none'
+        and derived_from_sha256 is null)                                         as enrich_none,
+      (select count(*)::int from blobs where enrich_state = 'ambiguous'
+        and derived_from_sha256 is null)                                         as enrich_ambiguous,
       -- Counts only HASHED blobs: phase 3's cursor requires a sha1, so a blob
       -- with no hash is not pending enrichment, it is permanently outside it.
       -- Counting those here would leave enrich-unchecked stuck above zero
       -- with no run able to lower it.
       (select count(*)::int from blobs where enrich_checked_at is null
-        and sha1 is not null)                                                    as enrich_unchecked,
+        and sha1 is not null and derived_from_sha256 is null)                    as enrich_unchecked,
       (select count(*)::int from openretro_entries)                              as openretro_entries,
       (select count(*)::int from openretro_images)                               as images_stored,
       (select coalesce(sum(size_bytes), 0)::bigint from openretro_images)        as image_bytes

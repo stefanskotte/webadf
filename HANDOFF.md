@@ -4621,6 +4621,22 @@ motor edge -- not done; revisit if the bench ever shows it).
 4. (Review M5) Amiga powered OFF with a disk mounted: an eject or mount from the web still happens within ~20 s. If
    it never does, WGATE is floating/chattering with the Amiga off and keeps stamping activity.
 
+**BUILT 2026-10-01 (operator: "its a go on the design"), branch `feat/restore-new-volume-date`:** a restore re-dates
+the volume, so the "power-cycle before a restore" rule goes away once this ships.
+- `src/lib/disk-history/volume-date.ts`: the restored image's creation date (root+484) = one tick past the latest of
+  the target's, the head's and the latest earlier restore's (each restore issues a later date than the one before,
+  so that one holds the highest date ever issued). The root checksum is fixed. A disk with no readable AmigaDOS root
+  (NDOS, trackloaders such as Gods) is restored byte for byte; DOS\0..DOS\7 are re-dated. Verified on all 49 DOS
+  disks in `adf-archive/`: xdftool opens each one, listings are identical, and exactly 2 bytes differ (ticks + checksum).
+- Restoring the head, or a version the head is a re-dated copy of, is still a no-op.
+- **Identity:** the copy's blob gets `derived_from_sha256` (migration **0029, applied 2026-10-01**) and the source's
+  verdicts. The TOSEC and OpenRetro sweep phases match a copy by its SOURCE's hashes, so a DAT import or OpenRetro
+  sync decides it the same way, and the cover, type pill, D-W-3 warning and catalog updates stay. `scanStatus` leaves
+  copies out of every verdict count. e2e `tosec-scan.spec.ts` "a restored original keeps its TOSEC match…" (it fails
+  if phase 2 matches on the copy's own hashes; checked by mutation).
+- What changes for the user: a restored disk is no longer byte-identical to its version (different sha on
+  download); the day-only "Created" fact does not change.
+
 ### 3aq. Disk sets -- 2026-09-29 (spec/plan 2026-09-28-disk-sets)
 
 **STATUS: MERGED (`aa3520d`) and deployed; migration 0028 (`games.disk_order_source`) applied.** Subagent-driven, 10 tasks each

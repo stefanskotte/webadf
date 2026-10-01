@@ -41,6 +41,13 @@ export const blobs = pgTable('blobs', {
   demozooProductionId: integer('demozoo_production_id'),
   demozooState: text('demozoo_state'),   // 'applied' | 'suggested' | 'none' | 'skipped_game'
   demozooCheckedAt: timestamp('demozoo_checked_at', { withTimezone: true }),
+
+  // A restore's re-dated copy (src/lib/disk-history/volume-date.ts) differs
+  // from the image it came from only in the volume's creation date, so it is
+  // identified by THAT image's hashes: the sweeps match it as its source, and
+  // scanStatus leaves it out of the archive counts. Null for every other blob.
+  // Always the original, never another copy. No FK, like the other identity columns.
+  derivedFromSha256: text('derived_from_sha256'),
 }, (t) => [
   index('blobs_hashed_at_idx').on(t.hashedAt),
   index('blobs_match_checked_idx').on(t.matchCheckedAt),
