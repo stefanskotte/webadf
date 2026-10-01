@@ -4568,6 +4568,16 @@ fix, to bring to the operator before building: a restore gives the volume a new 
 treats it as a different disk (drops what it remembers; asks for the old one if it still has unsaved changes). Cost: the
 restored image is no longer byte-identical to the version it came from.
 
+**One tick is enough -- read from the ROM 2026-10-01.** `docs/kickstart3.1.rom` (the operator's A500 ROM, SHA-1
+`e21545723fe8374e91342617604f1b3d703094f1`, Kickstart 3.1 40.068; ROM filesystem `fs 40.1 (15.2.93)` at ROM offset
+`0x2825e`), disassembled with capstone. On a disk insertion (`$faae46`-`$faaf38`) the filesystem walks the DOS list
+(DOSBase -> `dl_Root` -> `rn_Info` -> `di_DevInfo`, helper `$fab058`). For each `DLT_VOLUME` node it first compares
+the node's `dl_VolumeDate` with the root block's creation date (end of block -`$1c`, i.e. offset 484) as three longs
+with `cmpm.l`: days, minutes and ticks, all of which must be equal. Only then does it compare the name, case-insensitively (`$faa64a`). On a
+match it reuses the node, together with its locks and buffered state. On no match it builds a new volume node. A
+one-tick change to the ticks long (offset 492) is therefore a different volume to this Kickstart. The "Created" fact on the disk
+page shows the day only, so a one-tick change does not show there. Not checked: the FFS loaded from disk on 3.1.4/3.2 systems.
+
 **What happened (bench 3ap step 4, 18:45):** a Next-disk tap during a save on Locale (disk 5 of the Workbench 3.1 set,
 RW) swapped to disk 6 after the save uploaded -- as designed -- and Locale then reported a checksum error on block 597.
 Measured from the server's versions (`disk_versions` seq 0-3, images read from the blob store and compared per block):
