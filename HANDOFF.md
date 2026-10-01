@@ -1492,8 +1492,7 @@ separately.
   - About 45 OS and tool disks show no protection.
   - Several trackloaders are unknown.
 
-  Scanner and emulator: the session scratchpad `gods-analysis/` (`scan_protect.py`, `cl_run.py`). Copy them into the
-  repo if this is pursued. **What would make such originals whole:** HFE v3 (bit-rate opcodes) plus firmware that
+  Scanner and emulator: `tools/protection/` (README there). **What would make such originals whole:** HFE v3 (bit-rate opcodes) plus firmware that
   changes the bitcell timing within a track. HFE v1 cannot hold it, and IPF is ruled out. Not scoped yet.
 
 - **A board's name in the drives fold-out menu links to its device page** (operator, 2026-10-01). In the header's
