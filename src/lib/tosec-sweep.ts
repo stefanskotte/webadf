@@ -429,7 +429,19 @@ export async function scanStatus(): Promise<ScanStatus> {
     select
       (select count(*)::int from blobs)                                          as blobs,
       (select count(*)::int from blobs where hashed_at is not null)              as hashed,
-      (select count(*)::int from blobs where match_state = 'matched')            as matched,
+      -- A restore re-dates the volume (volume-date.ts) and its image inherits
+      -- the match of the version it came from, so the disk keeps its identity.
+      -- That image is a copy of an archive disk already counted here, not a
+      -- second hit: left out, or every restore of an original would raise
+      -- the coverage. "Not also a version 0" keeps a restore that came back
+      -- byte for byte (no AmigaDOS volume to re-date) counted once, as the
+      -- original it is.
+      (select count(*)::int from blobs b
+        where b.match_state = 'matched'
+          and not (
+            exists (select 1 from disk_versions v where v.image_sha256 = b.sha256 and v.source = 'rewind')
+            and not exists (select 1 from disk_versions v where v.image_sha256 = b.sha256 and v.seq = 0)
+          ))                                                                     as matched,
       (select count(*)::int from blobs where match_state = 'none')               as none,
       (select count(*)::int from blobs where match_state = 'ambiguous')          as ambiguous,
       (select count(*)::int from blobs where match_checked_at is null)           as unchecked,

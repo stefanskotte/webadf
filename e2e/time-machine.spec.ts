@@ -158,6 +158,10 @@ test('restoring an old version brings its content back as a new version', async 
   await uploadFile(page, 'SECOND.TXT', 'the second file');
 
   const beforeRestore = await diskRow(disk.id);
+  // Browser edits keep the volume's creation date, so this is also version 1's.
+  const before = readVolume(await fetchAdf(page, disk.id));
+  if (!before.ok) throw new Error('fixture: the disk should read before the restore');
+  const createdBefore = before.volume.createdAt!.getTime();
 
   await page.getByTestId('restore-1').click();
   await expect(page.getByTestId('restore-dialog')).toBeVisible();
@@ -191,6 +195,10 @@ test('restoring an old version brings its content back as a new version', async 
   const bytes = readFile(adf, first!.block);
   expect(bytes).not.toBeNull();
   expect(Buffer.from(bytes!.bytes).toString()).toBe('the first file');
+
+  // The restored volume is one tick (1/50 s) younger, so a running Amiga takes
+  // it for a new volume instead of the one it remembers (HANDOFF 3ar).
+  expect(volume.volume.createdAt!.getTime() - createdBefore).toBe(20);
 });
 
 });

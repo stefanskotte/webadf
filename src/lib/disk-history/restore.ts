@@ -10,12 +10,13 @@
 
 import { and, eq } from 'drizzle-orm';
 import { getDb } from '@/db';
-import { disks, entitlements } from '@/db/schema/catalog';
+import { blobs, disks, entitlements } from '@/db/schema/catalog';
 import { findHolder, mountedReason, repointLateMounts } from '@/lib/disk-holder';
 import { diskStore } from '@/lib/storage';
 import { materialise, HistoryError } from '@/lib/disk-history/chain';
 import { DeltaError } from '@/lib/disk-history/delta';
-import { loadEntries, recordVersion, StaleHeadError, type Recorded } from '@/lib/disk-history/store';
+import { loadEntries, recordVersion, StaleHeadError, type BlobIdentity, type Recorded } from '@/lib/disk-history/store';
+import { bumpVolumeDate } from '@/lib/disk-history/volume-date';
 
 export type RestoreOutcome =
   /** `recorded` false means the target's bytes already WERE the head: nothing recorded, nothing wrong. */
@@ -24,6 +25,9 @@ export type RestoreOutcome =
 
 /**
  * Restore `diskId` (scoped to `orgId`) to the image it held at version `seq`.
+ * The image is put back exactly, except that an AmigaDOS volume's creation
+ * date moves one tick later (volume-date.ts), so it is no longer
+ * byte-identical to version `seq`.
  *
  * This is not an in-place rewind: `seq`'s image is recorded as a brand-new
  * version ON TOP of the CURRENT head, with `source: 'rewind'` and
@@ -113,6 +117,24 @@ export async function restoreVersion(
 
   const currentSeq = entries[entries.length - 1].seq;
 
+  // Restoring the head, or a version whose bytes already equal it, changes
+  // nothing. Decided on the target's OWN bytes, before the volume date moves
+  // below -- otherwise every restore of the head would become a one-tick change.
+  if (bytesEqual(target, before)) return { ok: true, sha256: disk.sha256, seq: currentSeq, recorded: false };
+
+  // The restored disk gets a creation date one tick later, so a running Amiga
+  // takes it for a NEW volume and does not write what it remembers of the old
+  // one over it (volume-date.ts, HANDOFF 3ar). A disk with no AmigaDOS volume
+  // is restored byte for byte.
+  const bumped = bumpVolumeDate(target, before);
+  const next = bumped ?? target;
+  // ...and the near-copy keeps the identity of the image it came from (TOSEC
+  // match, cover, type, Demozoo), which a restore of the untouched original
+  // got for free when the bytes were identical.
+  const identity = bumped
+    ? await identityOf(db, entries.find((e) => e.seq === seq)!.imageSha256)
+    : null;
+
   // THE HOLDER CHECK ABOVE RAN BEFORE `materialise`, which is up to 65
   // sequential blob reads -- two orders of magnitude longer than the single
   // read applyDiskEdit does between its own check and its record. That window
@@ -131,8 +153,8 @@ export async function restoreVersion(
   let recorded: Recorded | null;
   try {
     recorded = await recordVersion({
-      orgId, diskId, headSha: disk.sha256, head: before, next: target,
-      source: 'rewind', rewindOf: seq, userId,
+      orgId, diskId, headSha: disk.sha256, head: before, next,
+      source: 'rewind', rewindOf: seq, userId, identity,
       sourceFilename: disk.tosecName ?? disk.sourceFilename ?? `${diskId}.adf`,
     });
   } catch (err) {
@@ -151,4 +173,21 @@ export async function restoreVersion(
   await repointLateMounts(db, orgId, diskId, disk.sha256, recorded.sha256);
 
   return { ok: true, sha256: recorded.sha256, seq: recorded.seq, recorded: true };
+}
+
+function bytesEqual(a: Uint8Array, b: Uint8Array): boolean {
+  if (a.length !== b.length) return false;
+  for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) return false;
+  return true;
+}
+
+/** The verdicts recorded for an image's bytes, or null when it has no blob row. */
+async function identityOf(db: ReturnType<typeof getDb>, sha256: string): Promise<BlobIdentity | null> {
+  const rows = await db.select({
+    tosecEntryId: blobs.tosecEntryId, matchState: blobs.matchState, matchCheckedAt: blobs.matchCheckedAt,
+    openretroEntryId: blobs.openretroEntryId, enrichState: blobs.enrichState, enrichCheckedAt: blobs.enrichCheckedAt,
+    demozooProductionId: blobs.demozooProductionId, demozooState: blobs.demozooState,
+    demozooCheckedAt: blobs.demozooCheckedAt,
+  }).from(blobs).where(eq(blobs.sha256, sha256)).limit(1);
+  return rows[0] ?? null;
 }

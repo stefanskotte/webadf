@@ -17,6 +17,8 @@ import { addFile } from '@/lib/adffs';
 import { formatVolume } from '@/lib/adffs/format';
 import { ROOT_BLOCK } from '@/lib/adffs/constants';
 import { diskVersions } from '@/db/schema/disk-history';
+import { blobs } from '@/db/schema/catalog';
+import { bumpVolumeDate } from './volume-date';
 
 const sha256Of = (b: Uint8Array) => createHash('sha256').update(b).digest('hex');
 
@@ -58,6 +60,11 @@ vi.mock('@/lib/storage', () => ({
 let diskVersionRows: Record<string, unknown>[] = [];
 let diskLookupResult: unknown[] = [];
 let holderResult: unknown[] = [];
+// The source image's blob row, as restore's identity lookup reads it, and
+// every blob row the batch inserted (so a test can see what identity the
+// restored image was given).
+let identityResult: unknown[] = [];
+let insertedBlobs: Record<string, unknown>[] = [];
 // When set, findHolder's nth query answers `holderByCall[n - 1]` instead of
 // `holderResult` -- how a scenario makes a board MOUNT BETWEEN restore's two
 // holder checks (nothing held it when the read began; something does by the
@@ -75,8 +82,9 @@ function project(row: Record<string, unknown>, cols: Record<string, unknown>) {
 function fakeDb() {
   const select = (cols: Record<string, unknown>) => {
     let joined = false;
+    let table: unknown = null;
     const chain = {
-      from: () => chain,
+      from: (t: unknown) => { table = t; return chain; },
       innerJoin: () => { joined = true; return chain; },
       where: () => chain,
       orderBy: () => {
@@ -88,6 +96,7 @@ function fakeDb() {
         );
       },
       limit: () => {
+        if (table === blobs) return Promise.resolve(identityResult);
         if (!joined) {
           holderLimitCalls++;
           if (holderByCall) return Promise.resolve(holderByCall[holderLimitCalls - 1] ?? []);
@@ -101,6 +110,7 @@ function fakeDb() {
     values: (row: Record<string, unknown>) => {
       const stmt = {
         __apply: () => {
+          if (table === blobs) insertedBlobs.push(row);
           if (table === diskVersions) {
             diskVersionRows.push({
               deviceId: null, userId: null, rewindOf: null,
@@ -131,6 +141,8 @@ beforeEach(() => {
   diskVersionRows = [];
   diskLookupResult = [];
   holderResult = [];
+  identityResult = [];
+  insertedBlobs = [];
   holderByCall = null;
   orderByCalls = 0;
   holderLimitCalls = 0;
@@ -174,7 +186,9 @@ describe('restoreVersion', () => {
     const { restoreVersion } = await import('./restore');
     const result = await restoreVersion(ORG, DISK, targetSeq, 'user-2');
 
-    expect(result).toEqual({ ok: true, sha256: sha256Of(images[targetSeq]), seq: headSeq + 1, recorded: true });
+    // The older image comes back with only its volume date moved (volume-date.ts).
+    const restored = bumpVolumeDate(images[targetSeq], images[headSeq])!;
+    expect(result).toEqual({ ok: true, sha256: sha256Of(restored), seq: headSeq + 1, recorded: true });
 
     // History GREW: every prior row is still there, unchanged...
     for (const before of rowsBefore) {
@@ -182,11 +196,11 @@ describe('restoreVersion', () => {
       expect(still).toEqual(before);
     }
     // ...plus exactly one new row, recorded as a rewind of the target seq,
-    // whose image is the OLDER version's image, not a copy of the old head.
+    // whose image is the OLDER version's image (re-dated), not a copy of the old head.
     expect(diskVersionRows).toHaveLength(rowsBefore.length + 1);
     const newRow = diskVersionRows.find((r) => r.seq === headSeq + 1);
     expect(newRow).toMatchObject({
-      source: 'rewind', rewindOf: targetSeq, imageSha256: sha256Of(images[targetSeq]),
+      source: 'rewind', rewindOf: targetSeq, imageSha256: sha256Of(restored),
     });
   });
 
@@ -366,6 +380,43 @@ describe('restoreVersion', () => {
 
     const { restoreVersion } = await import('./restore');
     expect(await restoreVersion(ORG, DISK, 1, 'user-2'))
-      .toEqual({ ok: true, sha256: sha256Of(images[1]), seq: 3, recorded: true });
+      .toEqual({ ok: true, sha256: sha256Of(bumpVolumeDate(images[1], images[2])!), seq: 3, recorded: true });
+  });
+
+  it('gives the restored image the identity of the version it came from', async () => {
+    const images = await buildChain(['A', 'B']);
+    diskLookupResult = [{ sha256: sha256Of(images[2]), tosecName: 'Chain.adf', sourceFilename: 'Chain.adf' }];
+    const checked = new Date('2026-09-01T00:00:00Z');
+    identityResult = [{
+      tosecEntryId: 'tosec-1', matchState: 'matched', matchCheckedAt: checked,
+      openretroEntryId: 'or-1', enrichState: 'enriched', enrichCheckedAt: checked,
+      demozooProductionId: null, demozooState: 'skipped_game', demozooCheckedAt: checked,
+    }];
+
+    const { restoreVersion } = await import('./restore');
+    const result = await restoreVersion(ORG, DISK, 0, 'user-2');
+    expect(result.ok && result.recorded).toBe(true);
+
+    const restored = sha256Of(bumpVolumeDate(images[0], images[2])!);
+    expect(insertedBlobs.find((b) => b.sha256 === restored)).toMatchObject(identityResult[0] as object);
+  });
+
+  it('restores a disk with no AmigaDOS volume byte for byte, and carries no identity', async () => {
+    const { recordVersion } = await import('./store');
+    const v0 = new Uint8Array(901_120).fill(0x4e); // no 'DOS' boot block: a trackloader-style disk
+    const v1 = v0.slice(); v1[5000] = 1;
+    blobBytes.set(sha256Of(v0), v0);
+    await recordVersion({
+      orgId: ORG, diskId: DISK, headSha: sha256Of(v0), head: v0, next: v1,
+      source: 'browser', userId: 'user-1', sourceFilename: 'Game.adf',
+    });
+    diskLookupResult = [{ sha256: sha256Of(v1), tosecName: 'Game.adf', sourceFilename: 'Game.adf' }];
+    identityResult = [{ matchState: 'matched', tosecEntryId: 'tosec-1' }];
+
+    const { restoreVersion } = await import('./restore');
+    expect(await restoreVersion(ORG, DISK, 0, 'user-2'))
+      .toEqual({ ok: true, sha256: sha256Of(v0), seq: 2, recorded: true });
+    const row = insertedBlobs.find((b) => b.sha256 === sha256Of(v0));
+    expect(row?.matchState).toBeUndefined();
   });
 });
