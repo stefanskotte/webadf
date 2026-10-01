@@ -4576,7 +4576,7 @@ the node's `dl_VolumeDate` with the root block's creation date (end of block -`$
 with `cmpm.l`: days, minutes and ticks, all of which must be equal. Only then does it compare the name, case-insensitively (`$faa64a`). On a
 match it reuses the node, together with its locks and buffered state. On no match it builds a new volume node. A
 one-tick change to the ticks long (offset 492) is therefore a different volume to this Kickstart. The "Created" fact on the disk
-page shows the day only, so a one-tick change does not show there. Not checked: the FFS loaded from disk on 3.1.4/3.2 systems.
+page shows the day only, so a one-tick change does not show there. **Same in 3.1.4 and 3.2:** `kickstart3.1.4.rom` (SHA-1 `6355a9ed…`, `fs 46.13`, match loop at `$faa2fc`) and `kickstart3.2.rom` (SHA-1 `5b298287…`, `fs 47.4`, at `$faa1f0`) have the identical loop: a date compare of three longs with `cmpm.l`, then the name. The ROMs live in `docs/` and are gitignored (purchased, copyrighted).
 
 **What happened (bench 3ap step 4, 18:45):** a Next-disk tap during a save on Locale (disk 5 of the Workbench 3.1 set,
 RW) swapped to disk 6 after the save uploaded -- as designed -- and Locale then reported a checksum error on block 597.
