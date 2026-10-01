@@ -1478,6 +1478,24 @@ separately.
 
 ### 4. Backlog, not blocking anything
 
+- **Copy-protected originals boot from an ADF but are not whole: Gods measured 2026-10-01.** The library's `Gods v1.00
+  (Renegade)` disk 1 is an UNMODIFIED original. A subagent emulated its Rob Northen Copylock (Musashi via
+  `machine68k`; the encrypted code decodes itself one instruction at a time from a trace handler):
+  - It reads track 1 (cyl 0 side 1) for sync `$8914`, then `$8911`, and times the bytes.
+  - The ADF's track 1 is all zero, so the board serves plain MFM, the read times out, and the key comes back as 0, silently.
+  - The game adds the key to four immediates. INFERRED: the world-1 boss's health becomes about 1.27e9 (unkillable)
+    and extra lives are not added. The real key is inferred as `$B4863D88`; nothing external confirms it.
+  - The operator saw it boot and play. The penalty only shows at the world-1 boss: a bench check is owed.
+
+  Survey of `adf-archive/`:
+  - Giana Sisters SE and Project-X are cracks.
+  - About 45 OS and tool disks show no protection.
+  - Several trackloaders are unknown.
+
+  Scanner and emulator: the session scratchpad `gods-analysis/` (`scan_protect.py`, `cl_run.py`). Copy them into the
+  repo if this is pursued. **What would make such originals whole:** HFE v3 (bit-rate opcodes) plus firmware that
+  changes the bitcell timing within a track. HFE v1 cannot hold it, and IPF is ruled out. Not scoped yet.
+
 - **A board's name in the drives fold-out menu links to its device page** (operator, 2026-10-01). In the header's
   drive menus (`DriveList` in `src/components/shell/drive-chips.tsx`: the compact "Drives" menu and the "+k" overflow
   menu), clicking a WiFi floppy's name should go to the device page, and the name should carry a small link arrow
@@ -4621,8 +4639,13 @@ motor edge -- not done; revisit if the bench ever shows it).
 4. (Review M5) Amiga powered OFF with a disk mounted: an eject or mount from the web still happens within ~20 s. If
    it never does, WGATE is floating/chattering with the Amiga off and keeps stamping activity.
 
-**BUILT 2026-10-01 (operator: "its a go on the design"), branch `feat/restore-new-volume-date`:** a restore re-dates
-the volume, so the "power-cycle before a restore" rule goes away once this ships.
+**SHIPPED 2026-10-02 (merge `0887702`, operator: "its a go on the design"):** a restore re-dates the volume, so the
+"power-cycle before a restore" rule is gone. Gates: vitest 1571; full e2e 433 passed + 1 network blip
+(device-image cross-tenant, "fetch failed" connecting to Neon during signUpFresh; the file passed 5/5 alone). Two
+independent reviews: the first found I-1 (copied verdicts wiped by a DAT reset) and I-2 (date repeat), both fixed; the
+second, a review of the fixes, found only Minors, also fixed. Still unproven on hardware: a restore while the Amiga is running, which
+the ROM reading says is now safe -- worth one bench run (restore a disk the Amiga has mounted and written, remount,
+wait 2 min, check the next version for a stray root/bitmap write).
 - `src/lib/disk-history/volume-date.ts`: the restored image's creation date (root+484) = one tick past the latest of
   the target's, the head's and the latest earlier restore's (each restore issues a later date than the one before,
   so that one holds the highest date ever issued). The root checksum is fixed. A disk with no readable AmigaDOS root
