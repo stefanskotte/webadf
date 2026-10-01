@@ -42,7 +42,8 @@ export interface RecordInput {
 export type BlobIdentity = Pick<typeof blobs.$inferInsert,
   | 'tosecEntryId' | 'matchState' | 'matchCheckedAt'
   | 'openretroEntryId' | 'enrichState' | 'enrichCheckedAt'
-  | 'demozooProductionId' | 'demozooState' | 'demozooCheckedAt'>;
+  | 'demozooProductionId' | 'demozooState' | 'demozooCheckedAt'
+  | 'derivedFromSha256'>;
 
 export interface Recorded { sha256: string; seq: number; kind: VersionKind; sectorCount: number }
 
@@ -80,6 +81,7 @@ export async function loadEntries(diskId: string): Promise<VersionEntry[]> {
     .select({
       seq: diskVersions.seq, kind: diskVersions.kind,
       blobSha256: diskVersions.blobSha256, imageSha256: diskVersions.imageSha256,
+      source: diskVersions.source,
     })
     .from(diskVersions)
     .where(eq(diskVersions.diskId, diskId))

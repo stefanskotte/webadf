@@ -29,9 +29,10 @@ type Stamp = [days: number, mins: number, ticks: number];
 function rootOf(adf: Uint8Array): number | null {
   const g = geometryOf(adf);
   if (!g) return null;
-  // 'DOS' + a flags byte: the same signature the ROM checks before it reads
-  // the root at all (DOS\0..DOS\5).
-  if (adf[0] !== 0x44 || adf[1] !== 0x4f || adf[2] !== 0x53 || adf[3] > 5) return null;
+  // 'DOS' + a flags byte. DOS\0..DOS\5 are what Kickstart 3.1 checks for; 3.2
+  // also mounts the long-filename DOS\6 and DOS\7, whose root keeps the same
+  // creation date at 484. Re-dating a type an older ROM won't mount is harmless.
+  if (adf[0] !== 0x44 || adf[1] !== 0x4f || adf[2] !== 0x53 || adf[3] > 7) return null;
   const root = blockAt(adf, g.rootBlock);
   if (!root) return null;
   if (be32(root, 0) !== T_HEADER || be32(root, 508) !== ST_ROOT) return null;
@@ -57,22 +58,29 @@ function nextTick([d, m, t]: Stamp): Stamp {
 }
 
 /**
- * `target` with its volume creation date moved one tick past the later of its
- * own and `head`'s, and the root checksum fixed; `target` itself is untouched.
+ * `target` with its volume creation date moved one tick past the latest of its
+ * own and every image in `seen`, and the root checksum fixed; `target` itself
+ * is untouched.
  *
- * Going past the HEAD as well is what keeps restoring the same version twice
- * from handing the Amiga a date it already saw at the first restore.
+ * `seen` is every image the Amiga may still remember under this name: the
+ * current head, and the disk's latest earlier restore. Each restore issues a
+ * date later than the one before it, so the latest restore holds the highest
+ * date ever issued for the disk. Going past all of them means restoring the same
+ * version twice, or restoring after the head lost its root, never hands the
+ * Amiga a date it has already seen. Images without a readable root are ignored.
  *
  * Null when `target` has no readable AmigaDOS root (NDOS, a trackloader disk,
  * a damaged root): such a disk has no volume for the Amiga to remember, and its
  * bytes are restored exactly.
  */
-export function bumpVolumeDate(target: Uint8Array, head: Uint8Array): Uint8Array | null {
+export function bumpVolumeDate(target: Uint8Array, seen: readonly Uint8Array[]): Uint8Array | null {
   const rootBlock = rootOf(target);
   if (rootBlock === null) return null;
   let base = stampOf(target, rootBlock);
-  const headRoot = rootOf(head);
-  if (headRoot !== null) base = later(base, stampOf(head, headRoot));
+  for (const image of seen) {
+    const r = rootOf(image);
+    if (r !== null) base = later(base, stampOf(image, r));
+  }
 
   const [d, m, t] = nextTick(base);
   const out = target.slice();
@@ -82,4 +90,23 @@ export function bumpVolumeDate(target: Uint8Array, head: Uint8Array): Uint8Array
   putBe32(out, o + 8, t);
   recheck(out, rootBlock);
   return out;
+}
+
+/**
+ * True when `a` and `b` differ at most in the volume creation date and the
+ * root checksum. A head that is a re-dated copy of the version being restored
+ * already holds that version, so restoring it again changes nothing.
+ */
+export function sameExceptVolumeDate(a: Uint8Array, b: Uint8Array): boolean {
+  if (a.length !== b.length) return false;
+  const rootBlock = rootOf(a);
+  if (rootBlock === null || rootOf(b) !== rootBlock) return false;
+  const date = rootBlock * 512 + CREATED;
+  const sum = rootBlock * 512 + CHECKSUM_WORD * 4;
+  for (let i = 0; i < a.length; i++) {
+    if (a[i] === b[i]) continue;
+    if ((i >= date && i < date + 12) || (i >= sum && i < sum + 4)) continue;
+    return false;
+  }
+  return true;
 }

@@ -431,3 +431,63 @@ test('a superseded written image is counted as decided, not a fresh miss', async
   // candidate miss) and not any other blob this run could touch.
   expect(after.authoredNone - before.authoredNone).toBe(2);
 });
+
+// --- A restore's re-dated copy keeps its source's identity (HANDOFF 3ar) ---
+
+test('a restored original keeps its TOSEC match through a DAT reset, and is not counted twice', async ({ page, browser }) => {
+  test.setTimeout(SWEEP_TIMEOUT_MS);
+  const user = await signUpFresh(page);
+  const adf = formatVolume({ filesystem: 'FFS', volumeName: `Rd${runTag().slice(0, 6)}` });
+  const original = createHash('sha256').update(adf).digest('hex');
+  await diskStore.put(original, adf);
+  const { diskId } = await seedDisk(user.orgId, { title: `Redated ${runTag()}`, diskNo: 1, sha256: original });
+
+  const setName = `e2e-redate-${runTag()}`;
+  trackTosecSet(setName);
+  const entryId = await seedTosecEntry({
+    setName, gameName: 'Redate Classic (1990)(E2E)', romName: 'Redate Classic (1990)(E2E).adf',
+    sha1: createHash('sha1').update(adf).digest('hex'),
+    title: 'Redate Classic', sortTitle: 'redate classic', year: 1990, publisher: 'E2E',
+  });
+
+  const db = getDb();
+  const verdict = async (sha256: string) =>
+    (await db.select().from(blobs).where(eq(blobs.sha256, sha256)))[0];
+
+  // The super-admin sweeps from its own context; `page` stays the org's user.
+  const admin = await (await browser.newContext()).newPage();
+  await signInAsSuperAdmin(admin);
+  const sweep = async () => expect((await admin.request.post('/api/admin/scan')).ok()).toBe(true);
+
+  await sweep();
+  expect((await verdict(original)).matchState, 'the premise: the original really matches').toBe('matched');
+
+  // Change the disk, then put the original back. The restore is a re-dated
+  // copy -- different bytes -- that carries the original's identity.
+  const rename = await page.request.patch(`/api/disks/${diskId}/volume-name`, { data: { volumeName: 'Changed' } });
+  expect(rename.status()).toBe(200);
+  const restore = await page.request.post(`/api/disks/${diskId}/restore`, { data: { seq: 0 } });
+  expect(restore.status(), await restore.text()).toBe(200);
+  const { sha256: copy } = await restore.json();
+  expect(copy, 'the restore is a re-dated copy, not the original bytes').not.toBe(original);
+
+  const inherited = await verdict(copy);
+  expect(inherited.derivedFromSha256).toBe(original);
+  expect(inherited.matchState).toBe('matched');
+  expect(inherited.tosecEntryId).toBe(entryId);
+
+  // What a DAT import does to every verdict: the copy must be decided the
+  // same way again, by its source's hashes -- its own bytes are in no DAT.
+  await db.update(blobs).set({ matchCheckedAt: null, matchState: null, tosecEntryId: null })
+    .where(eq(blobs.sha256, copy));
+  const before = await scanStatus();
+  await sweep();
+  const after = await scanStatus();
+
+  const redecided = await verdict(copy);
+  expect(redecided.matchState).toBe('matched');
+  expect(redecided.tosecEntryId).toBe(entryId);
+  // Not a second archive hit.
+  expect(after.matched - before.matched).toBe(0);
+  await admin.context().close();
+});

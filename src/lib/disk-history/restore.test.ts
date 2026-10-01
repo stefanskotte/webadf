@@ -187,7 +187,7 @@ describe('restoreVersion', () => {
     const result = await restoreVersion(ORG, DISK, targetSeq, 'user-2');
 
     // The older image comes back with only its volume date moved (volume-date.ts).
-    const restored = bumpVolumeDate(images[targetSeq], images[headSeq])!;
+    const restored = bumpVolumeDate(images[targetSeq], [images[headSeq]])!;
     expect(result).toEqual({ ok: true, sha256: sha256Of(restored), seq: headSeq + 1, recorded: true });
 
     // History GREW: every prior row is still there, unchanged...
@@ -380,7 +380,7 @@ describe('restoreVersion', () => {
 
     const { restoreVersion } = await import('./restore');
     expect(await restoreVersion(ORG, DISK, 1, 'user-2'))
-      .toEqual({ ok: true, sha256: sha256Of(bumpVolumeDate(images[1], images[2])!), seq: 3, recorded: true });
+      .toEqual({ ok: true, sha256: sha256Of(bumpVolumeDate(images[1], [images[2]])!), seq: 3, recorded: true });
   });
 
   it('gives the restored image the identity of the version it came from', async () => {
@@ -397,7 +397,7 @@ describe('restoreVersion', () => {
     const result = await restoreVersion(ORG, DISK, 0, 'user-2');
     expect(result.ok && result.recorded).toBe(true);
 
-    const restored = sha256Of(bumpVolumeDate(images[0], images[2])!);
+    const restored = sha256Of(bumpVolumeDate(images[0], [images[2]])!);
     expect(insertedBlobs.find((b) => b.sha256 === restored)).toMatchObject(identityResult[0] as object);
   });
 
@@ -418,5 +418,64 @@ describe('restoreVersion', () => {
       .toEqual({ ok: true, sha256: sha256Of(v0), seq: 2, recorded: true });
     const row = insertedBlobs.find((b) => b.sha256 === sha256Of(v0));
     expect(row?.matchState).toBeUndefined();
+  });
+
+  it('restoring the same version again, with nothing written since, records nothing', async () => {
+    const images = await buildChain(['A', 'B']);
+    diskLookupResult = [{ sha256: sha256Of(images[2]), tosecName: 'Chain.adf', sourceFilename: 'Chain.adf' }];
+    const { restoreVersion } = await import('./restore');
+    const first = await restoreVersion(ORG, DISK, 0, 'user-2');
+    if (!first.ok) throw new Error('fixture: first restore');
+
+    diskLookupResult = [{ sha256: first.sha256, tosecName: 'Chain.adf', sourceFilename: 'Chain.adf' }];
+    const rows = diskVersionRows.length;
+    expect(await restoreVersion(ORG, DISK, 0, 'user-2'))
+      .toEqual({ ok: true, sha256: first.sha256, seq: first.seq, recorded: false });
+    expect(diskVersionRows).toHaveLength(rows);
+  });
+
+  it('a later restore goes past the date an earlier one issued, even when the head has no volume', async () => {
+    const { recordVersion } = await import('./store');
+    const images = await buildChain(['A']);
+    diskLookupResult = [{ sha256: sha256Of(images[1]), tosecName: 'Chain.adf', sourceFilename: 'Chain.adf' }];
+    const { restoreVersion } = await import('./restore');
+    const first = await restoreVersion(ORG, DISK, 0, 'user-2');
+    if (!first.ok) throw new Error('fixture: first restore');
+    const firstImage = blobBytes.get(first.sha256)!;
+
+    // The Amiga overwrites the disk with something that has no volume at all
+    // (a trackloader copy): the head no longer carries the issued date.
+    const ndos = firstImage.slice(); ndos[0] = 0x4e;
+    await recordVersion({
+      orgId: ORG, diskId: DISK, headSha: first.sha256, head: firstImage, next: ndos,
+      source: 'amiga', sourceFilename: 'Chain.adf',
+    });
+    diskLookupResult = [{ sha256: sha256Of(ndos), tosecName: 'Chain.adf', sourceFilename: 'Chain.adf' }];
+
+    const second = await restoreVersion(ORG, DISK, 0, 'user-2');
+    if (!second.ok) throw new Error('second restore');
+    // Not the first restore's date again: one tick past it.
+    expect(second.sha256).toBe(sha256Of(bumpVolumeDate(images[0], [firstImage])!));
+    expect(second.sha256).not.toBe(first.sha256);
+  });
+
+  it('records where a re-dated copy came from, and flattens a copy of a copy to the original', async () => {
+    const images = await buildChain(['A']);
+    diskLookupResult = [{ sha256: sha256Of(images[1]), tosecName: 'Chain.adf', sourceFilename: 'Chain.adf' }];
+    const { restoreVersion } = await import('./restore');
+    const first = await restoreVersion(ORG, DISK, 0, 'user-2');
+    if (!first.ok) throw new Error('fixture');
+    expect(insertedBlobs.find((b) => b.sha256 === first.sha256)?.derivedFromSha256).toBe(sha256Of(images[0]));
+
+    // Restore version 1, then restore version 2 (itself a copy of version 0):
+    // the new copy points at version 0's image, not at version 2's.
+    diskLookupResult = [{ sha256: first.sha256, tosecName: 'Chain.adf', sourceFilename: 'Chain.adf' }];
+    const back = await restoreVersion(ORG, DISK, 1, 'user-2');
+    if (!back.ok) throw new Error('fixture');
+    diskLookupResult = [{ sha256: back.sha256, tosecName: 'Chain.adf', sourceFilename: 'Chain.adf' }];
+    identityResult = [{ derivedFromSha256: sha256Of(images[0]), matchState: 'matched' }];
+    const again = await restoreVersion(ORG, DISK, first.seq, 'user-2');
+    if (!again.ok) throw new Error('restore of a copy');
+    expect(insertedBlobs.find((b) => b.sha256 === again.sha256)?.derivedFromSha256).toBe(sha256Of(images[0]));
   });
 });

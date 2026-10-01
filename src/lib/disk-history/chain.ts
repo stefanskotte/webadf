@@ -36,6 +36,8 @@ export interface VersionEntry {
    *  It also makes two versions that happen to hold the same disk share a blob
    *  for free. */
   imageSha256: string;
+  /** Who made it ('original', 'amiga', 'browser', 'rewind'); loadEntries fills it. */
+  source?: string;
 }
 
 export class HistoryError extends Error {

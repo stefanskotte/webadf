@@ -16,7 +16,7 @@ import { diskStore } from '@/lib/storage';
 import { materialise, HistoryError } from '@/lib/disk-history/chain';
 import { DeltaError } from '@/lib/disk-history/delta';
 import { loadEntries, recordVersion, StaleHeadError, type BlobIdentity, type Recorded } from '@/lib/disk-history/store';
-import { bumpVolumeDate } from '@/lib/disk-history/volume-date';
+import { bumpVolumeDate, sameExceptVolumeDate } from '@/lib/disk-history/volume-date';
 
 export type RestoreOutcome =
   /** `recorded` false means the target's bytes already WERE the head: nothing recorded, nothing wrong. */
@@ -119,18 +119,35 @@ export async function restoreVersion(
 
   // Restoring the head, or a version whose bytes already equal it, changes
   // nothing. Decided on the target's OWN bytes, before the volume date moves
-  // below -- otherwise every restore of the head would become a one-tick change.
-  if (bytesEqual(target, before)) return { ok: true, sha256: disk.sha256, seq: currentSeq, recorded: false };
+  // below -- otherwise every restore of the head would become a one-tick
+  // change. A head that is a re-dated copy of the target (it was restored
+  // from it, and nothing has been written since) already holds it too.
+  if (bytesEqual(target, before) || sameExceptVolumeDate(target, before)) {
+    return { ok: true, sha256: disk.sha256, seq: currentSeq, recorded: false };
+  }
 
-  // The restored disk gets a creation date one tick later, so a running Amiga
-  // takes it for a NEW volume and does not write what it remembers of the old
-  // one over it (volume-date.ts, HANDOFF 3ar). A disk with no AmigaDOS volume
-  // is restored byte for byte.
-  const bumped = bumpVolumeDate(target, before);
+  // The restored disk gets a creation date one tick past every date the Amiga
+  // may remember for it -- the head's, and the highest date any earlier
+  // restore issued, which is the latest restore's (volume-date.ts) -- so a running
+  // Amiga takes it for a NEW volume and does not write what it remembers of
+  // the old one over it (HANDOFF 3ar). A disk with no AmigaDOS volume is
+  // restored byte for byte.
+  const seen = [before];
+  const lastRestore = entries.filter((e) => e.source === 'rewind').at(-1);
+  if (lastRestore && lastRestore.imageSha256 !== disk.sha256) {
+    try {
+      seen.push(await diskStore.read(lastRestore.imageSha256));
+    } catch {
+      return { ok: false, status: 503, reason: 'blob_unavailable' };
+    }
+  }
+  const bumped = bumpVolumeDate(target, seen);
   const next = bumped ?? target;
-  // ...and the near-copy keeps the identity of the image it came from (TOSEC
-  // match, cover, type, Demozoo), which a restore of the untouched original
-  // got for free when the bytes were identical.
+  // ...and the near-copy is identified as the image it came from (TOSEC
+  // match, cover, type, Demozoo) -- which a restore of the untouched original
+  // got for free when the bytes were identical. `derivedFromSha256` is what
+  // keeps it so: the sweeps match it by its source's hashes, so a DAT import
+  // or OpenRetro sync that resets every verdict decides it the same way again.
   const identity = bumped
     ? await identityOf(db, entries.find((e) => e.seq === seq)!.imageSha256)
     : null;
@@ -181,13 +198,18 @@ function bytesEqual(a: Uint8Array, b: Uint8Array): boolean {
   return true;
 }
 
-/** The verdicts recorded for an image's bytes, or null when it has no blob row. */
-async function identityOf(db: ReturnType<typeof getDb>, sha256: string): Promise<BlobIdentity | null> {
+/**
+ * The verdicts recorded for the image `sha256`, and its provenance for the
+ * copy: the copy derives from `sha256` itself, or from what `sha256` itself
+ * derives from, so the chain never grows past one link.
+ */
+async function identityOf(db: ReturnType<typeof getDb>, sha256: string): Promise<BlobIdentity> {
   const rows = await db.select({
     tosecEntryId: blobs.tosecEntryId, matchState: blobs.matchState, matchCheckedAt: blobs.matchCheckedAt,
     openretroEntryId: blobs.openretroEntryId, enrichState: blobs.enrichState, enrichCheckedAt: blobs.enrichCheckedAt,
     demozooProductionId: blobs.demozooProductionId, demozooState: blobs.demozooState,
-    demozooCheckedAt: blobs.demozooCheckedAt,
+    demozooCheckedAt: blobs.demozooCheckedAt, derivedFromSha256: blobs.derivedFromSha256,
   }).from(blobs).where(eq(blobs.sha256, sha256)).limit(1);
-  return rows[0] ?? null;
+  const row = rows[0];
+  return { ...(row ?? {}), derivedFromSha256: row?.derivedFromSha256 ?? sha256 };
 }
