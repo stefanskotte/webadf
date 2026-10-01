@@ -1478,6 +1478,11 @@ separately.
 
 ### 4. Backlog, not blocking anything
 
+- **A board's name in the drives fold-out menu links to its device page** (operator, 2026-10-01). In the header's
+  drive menus (`DriveList` in `src/components/shell/drive-chips.tsx`: the compact "Drives" menu and the "+k" overflow
+  menu), clicking a WiFi floppy's name should go to the device page, and the name should carry a small link arrow
+  so it reads as a link. There is no per-board page today: `/devices` lists every board, so link to `/devices` with
+  an anchor on that board's card (none exists yet) so the right one is in view.
 - **Mount/Eject button on the Browse disk pages** (operator, 2026-09-29). The disk pages under Browse should carry
   the same Mount / Eject a title card and the drive chips already offer, so a disk can be mounted from where it is
   being looked at.
