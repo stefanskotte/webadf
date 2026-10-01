@@ -25,6 +25,11 @@ const MINUTES_PER_DAY = 1440;
 
 type Stamp = [days: number, mins: number, ticks: number];
 
+/** True when `adf` holds a readable AmigaDOS volume, i.e. one the Amiga can remember. */
+export function hasVolume(adf: Uint8Array): boolean {
+  return rootOf(adf) !== null;
+}
+
 /** The root block number of a readable AmigaDOS volume, or null. */
 function rootOf(adf: Uint8Array): number | null {
   const g = geometryOf(adf);
@@ -63,9 +68,9 @@ function nextTick([d, m, t]: Stamp): Stamp {
  * is untouched.
  *
  * `seen` is every image the Amiga may still remember under this name: the
- * current head, and the disk's latest earlier restore. Each restore issues a
- * date later than the one before it, so the latest restore holds the highest
- * date ever issued for the disk. Going past all of them means restoring the same
+ * current head, and the disk's latest earlier restore that has a volume. Each
+ * re-dating restore issues a date later than the one before it, so that one
+ * holds the highest date ever issued for the disk. Going past all of them means restoring the same
  * version twice, or restoring after the head lost its root, never hands the
  * Amiga a date it has already seen. Images without a readable root are ignored.
  *

@@ -390,7 +390,6 @@ describe('restoreVersion', () => {
     identityResult = [{
       tosecEntryId: 'tosec-1', matchState: 'matched', matchCheckedAt: checked,
       openretroEntryId: 'or-1', enrichState: 'enriched', enrichCheckedAt: checked,
-      demozooProductionId: null, demozooState: 'skipped_game', demozooCheckedAt: checked,
     }];
 
     const { restoreVersion } = await import('./restore');
@@ -477,5 +476,32 @@ describe('restoreVersion', () => {
     const again = await restoreVersion(ORG, DISK, first.seq, 'user-2');
     if (!again.ok) throw new Error('restore of a copy');
     expect(insertedBlobs.find((b) => b.sha256 === again.sha256)?.derivedFromSha256).toBe(sha256Of(images[0]));
+  });
+
+  it('a byte-for-byte restore in between does not hide the date an earlier restore issued', async () => {
+    const { recordVersion } = await import('./store');
+    const images = await buildChain(['A']);
+    diskLookupResult = [{ sha256: sha256Of(images[1]), tosecName: 'Chain.adf', sourceFilename: 'Chain.adf' }];
+    const { restoreVersion } = await import('./restore');
+    const first = await restoreVersion(ORG, DISK, 0, 'user-2'); // re-dated: D+1
+    if (!first.ok) throw new Error('fixture');
+    const firstImage = blobBytes.get(first.sha256)!;
+
+    // Two volume-less writes, then a restore of the first of them: a rewind
+    // that issued no date, and is now the LATEST rewind.
+    const ndosA = firstImage.slice(); ndosA[0] = 0x4e;
+    const ndosB = ndosA.slice(); ndosB[7000] ^= 1;
+    await recordVersion({ orgId: ORG, diskId: DISK, headSha: first.sha256, head: firstImage, next: ndosA, source: 'amiga', sourceFilename: 'Chain.adf' });
+    await recordVersion({ orgId: ORG, diskId: DISK, headSha: sha256Of(ndosA), head: ndosA, next: ndosB, source: 'amiga', sourceFilename: 'Chain.adf' });
+    diskLookupResult = [{ sha256: sha256Of(ndosB), tosecName: 'Chain.adf', sourceFilename: 'Chain.adf' }];
+    const ndosSeq = diskVersionRows.find((r) => r.imageSha256 === sha256Of(ndosA))!.seq as number;
+    const exact = await restoreVersion(ORG, DISK, ndosSeq, 'user-2');
+    if (!exact.ok) throw new Error('fixture');
+    expect(exact.sha256).toBe(sha256Of(ndosA)); // no volume: restored byte for byte
+
+    diskLookupResult = [{ sha256: exact.sha256, tosecName: 'Chain.adf', sourceFilename: 'Chain.adf' }];
+    const again = await restoreVersion(ORG, DISK, 0, 'user-2');
+    if (!again.ok) throw new Error('restore');
+    expect(again.sha256).toBe(sha256Of(bumpVolumeDate(images[0], [firstImage])!)); // D+2, not D+1
   });
 });

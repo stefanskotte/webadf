@@ -30,7 +30,7 @@ export interface RecordInput {
   /** Carried onto the new image's entitlement row. */
   sourceFilename: string;
   /**
-   * The identity (TOSEC, OpenRetro, Demozoo verdicts) to give the new image's
+   * The identity (TOSEC and OpenRetro verdicts, and provenance) to give the new image's
    * blob row, when it is a near-copy of an image that already has one -- a
    * restore whose only change is the volume date (volume-date.ts). Ignored
    * when the blob row already exists.
@@ -42,7 +42,6 @@ export interface RecordInput {
 export type BlobIdentity = Pick<typeof blobs.$inferInsert,
   | 'tosecEntryId' | 'matchState' | 'matchCheckedAt'
   | 'openretroEntryId' | 'enrichState' | 'enrichCheckedAt'
-  | 'demozooProductionId' | 'demozooState' | 'demozooCheckedAt'
   | 'derivedFromSha256'>;
 
 export interface Recorded { sha256: string; seq: number; kind: VersionKind; sectorCount: number }

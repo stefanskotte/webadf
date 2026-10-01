@@ -455,39 +455,41 @@ test('a restored original keeps its TOSEC match through a DAT reset, and is not 
     (await db.select().from(blobs).where(eq(blobs.sha256, sha256)))[0];
 
   // The super-admin sweeps from its own context; `page` stays the org's user.
-  const admin = await (await browser.newContext()).newPage();
-  await signInAsSuperAdmin(admin);
-  const sweep = async () => expect((await admin.request.post('/api/admin/scan')).ok()).toBe(true);
+  const adminContext = await browser.newContext();
+  try {
+    const admin = await adminContext.newPage();
+    await signInAsSuperAdmin(admin);
+    const sweep = async () => expect((await admin.request.post('/api/admin/scan')).ok()).toBe(true);
 
-  await sweep();
-  expect((await verdict(original)).matchState, 'the premise: the original really matches').toBe('matched');
+    await sweep();
+    expect((await verdict(original)).matchState, 'the premise: the original really matches').toBe('matched');
 
-  // Change the disk, then put the original back. The restore is a re-dated
-  // copy -- different bytes -- that carries the original's identity.
-  const rename = await page.request.patch(`/api/disks/${diskId}/volume-name`, { data: { volumeName: 'Changed' } });
-  expect(rename.status()).toBe(200);
-  const restore = await page.request.post(`/api/disks/${diskId}/restore`, { data: { seq: 0 } });
-  expect(restore.status(), await restore.text()).toBe(200);
-  const { sha256: copy } = await restore.json();
-  expect(copy, 'the restore is a re-dated copy, not the original bytes').not.toBe(original);
+    // Change the disk, then put the original back. The restore is a re-dated
+    // copy -- different bytes -- that carries the original's identity.
+    const rename = await page.request.patch(`/api/disks/${diskId}/volume-name`, { data: { volumeName: 'Changed' } });
+    expect(rename.status()).toBe(200);
+    const restore = await page.request.post(`/api/disks/${diskId}/restore`, { data: { seq: 0 } });
+    expect(restore.status(), await restore.text()).toBe(200);
+    const { sha256: copy } = await restore.json();
+    expect(copy, 'the restore is a re-dated copy, not the original bytes').not.toBe(original);
 
-  const inherited = await verdict(copy);
-  expect(inherited.derivedFromSha256).toBe(original);
-  expect(inherited.matchState).toBe('matched');
-  expect(inherited.tosecEntryId).toBe(entryId);
+    const inherited = await verdict(copy);
+    expect(inherited.derivedFromSha256).toBe(original);
+    expect(inherited.matchState).toBe('matched');
+    expect(inherited.tosecEntryId).toBe(entryId);
 
-  // What a DAT import does to every verdict: the copy must be decided the
-  // same way again, by its source's hashes -- its own bytes are in no DAT.
-  await db.update(blobs).set({ matchCheckedAt: null, matchState: null, tosecEntryId: null })
-    .where(eq(blobs.sha256, copy));
-  const before = await scanStatus();
-  await sweep();
-  const after = await scanStatus();
+    // What a DAT import does to every verdict: the copy must be decided the
+    // same way again, by its source's hashes -- its own bytes are in no DAT.
+    await db.update(blobs).set({ matchCheckedAt: null, matchState: null, tosecEntryId: null })
+      .where(eq(blobs.sha256, copy));
+    await sweep();
 
-  const redecided = await verdict(copy);
-  expect(redecided.matchState).toBe('matched');
-  expect(redecided.tosecEntryId).toBe(entryId);
-  // Not a second archive hit.
-  expect(after.matched - before.matched).toBe(0);
-  await admin.context().close();
+    const redecided = await verdict(copy);
+    expect(redecided.matchState).toBe('matched');
+    expect(redecided.tosecEntryId).toBe(entryId);
+    // Not a second archive hit: scanStatus counts only blobs without a source.
+    expect(redecided.derivedFromSha256).toBe(original);
+  } finally {
+    await adminContext.close();
+  }
 });

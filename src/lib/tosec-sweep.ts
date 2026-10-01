@@ -318,6 +318,10 @@ export async function sweep(budgetMs: number = DEFAULT_BUDGET_MS): Promise<Sweep
   // budget.
   let imageBudget = 0;
   let identityIndex: Map<string, IdentityCandidate[]> | null = null;
+  // Across batches, not per batch: declared inside the loop it was empty at
+  // every check, so a blob failing every time was picked up again by each
+  // batch until the budget ran out.
+  const failedThisRun = new Set<string>();
   while (spent() < budgetMs) {
     const todo = await db.select({
         // A re-dated copy is looked up by its source's sha1 (see phase 2).
@@ -339,7 +343,6 @@ export async function sweep(budgetMs: number = DEFAULT_BUDGET_MS): Promise<Sweep
     // to burn the entire 240 s budget every night while nothing else advanced.
     // Skipping it for the rest of THIS run lets the queue behind it move; the
     // next run still retries it, which is what a transient fault needs.
-    const failedThisRun = new Set<string>();
     if (todo.every((t) => failedThisRun.has(t.sha256))) { enrichDone = true; break; }
 
     for (const b of todo) {
@@ -445,12 +448,14 @@ export async function scanStatus(): Promise<ScanStatus> {
   const db = getDb();
   const { rows } = await db.execute<Record<string, number>>(sql`
     select
-      (select count(*)::int from blobs)                                          as blobs,
-      (select count(*)::int from blobs where hashed_at is not null)              as hashed,
+      (select count(*)::int from blobs where derived_from_sha256 is null)       as blobs,
+      (select count(*)::int from blobs where hashed_at is not null
+        and derived_from_sha256 is null)                                         as hashed,
       -- A restore's re-dated copy (blobs.derived_from_sha256) is matched as
       -- its source, and the source is the archive disk counted here; the copy
-      -- is not a second hit, or a miss. Every verdict count below leaves it
-      -- out, so a restore never moves the coverage figures.
+      -- is not a second hit, or a miss. Every blob count here leaves it out
+      -- (blobs and hashed above too, so the tiles still add up), and a restore
+      -- never moves the coverage figures.
       (select count(*)::int from blobs where match_state = 'matched'
         and derived_from_sha256 is null)                                         as matched,
       (select count(*)::int from blobs where match_state = 'none'

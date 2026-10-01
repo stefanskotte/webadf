@@ -16,7 +16,7 @@ import { diskStore } from '@/lib/storage';
 import { materialise, HistoryError } from '@/lib/disk-history/chain';
 import { DeltaError } from '@/lib/disk-history/delta';
 import { loadEntries, recordVersion, StaleHeadError, type BlobIdentity, type Recorded } from '@/lib/disk-history/store';
-import { bumpVolumeDate, sameExceptVolumeDate } from '@/lib/disk-history/volume-date';
+import { bumpVolumeDate, hasVolume, sameExceptVolumeDate } from '@/lib/disk-history/volume-date';
 
 export type RestoreOutcome =
   /** `recorded` false means the target's bytes already WERE the head: nothing recorded, nothing wrong. */
@@ -133,18 +133,24 @@ export async function restoreVersion(
   // the old one over it (HANDOFF 3ar). A disk with no AmigaDOS volume is
   // restored byte for byte.
   const seen = [before];
-  const lastRestore = entries.filter((e) => e.source === 'rewind').at(-1);
-  if (lastRestore && lastRestore.imageSha256 !== disk.sha256) {
+  // The latest restore that re-dated a volume: a byte-for-byte restore of a
+  // disk with no volume issued no date, so the walk goes back past it. An
+  // image that cannot be read is skipped rather than refusing every restore
+  // of this disk from now on; the walk carries on to the next one.
+  for (const e of entries.filter((v) => v.source === 'rewind' && v.imageSha256 !== disk.sha256).reverse()) {
+    let image: Uint8Array;
     try {
-      seen.push(await diskStore.read(lastRestore.imageSha256));
+      image = await diskStore.read(e.imageSha256);
     } catch {
-      return { ok: false, status: 503, reason: 'blob_unavailable' };
+      console.error(`restoreVersion: could not read restore image ${e.imageSha256} of disk ${diskId}`);
+      continue;
     }
+    if (hasVolume(image)) { seen.push(image); break; }
   }
   const bumped = bumpVolumeDate(target, seen);
   const next = bumped ?? target;
   // ...and the near-copy is identified as the image it came from (TOSEC
-  // match, cover, type, Demozoo) -- which a restore of the untouched original
+  // match, cover, type) -- which a restore of the untouched original
   // got for free when the bytes were identical. `derivedFromSha256` is what
   // keeps it so: the sweeps match it by its source's hashes, so a DAT import
   // or OpenRetro sync that resets every verdict decides it the same way again.
@@ -199,7 +205,10 @@ function bytesEqual(a: Uint8Array, b: Uint8Array): boolean {
 }
 
 /**
- * The verdicts recorded for the image `sha256`, and its provenance for the
+ * The TOSEC and OpenRetro verdicts recorded for the image `sha256`, and its
+ * provenance for the copy. Demozoo is left for its own sweep to decide afresh:
+ * its suggestions are rows keyed by the blob, which a copied state would not
+ * bring along (it decides from the inherited TOSEC entry, so it agrees). The
  * copy: the copy derives from `sha256` itself, or from what `sha256` itself
  * derives from, so the chain never grows past one link.
  */
@@ -207,8 +216,7 @@ async function identityOf(db: ReturnType<typeof getDb>, sha256: string): Promise
   const rows = await db.select({
     tosecEntryId: blobs.tosecEntryId, matchState: blobs.matchState, matchCheckedAt: blobs.matchCheckedAt,
     openretroEntryId: blobs.openretroEntryId, enrichState: blobs.enrichState, enrichCheckedAt: blobs.enrichCheckedAt,
-    demozooProductionId: blobs.demozooProductionId, demozooState: blobs.demozooState,
-    demozooCheckedAt: blobs.demozooCheckedAt, derivedFromSha256: blobs.derivedFromSha256,
+    derivedFromSha256: blobs.derivedFromSha256,
   }).from(blobs).where(eq(blobs.sha256, sha256)).limit(1);
   const row = rows[0];
   return { ...(row ?? {}), derivedFromSha256: row?.derivedFromSha256 ?? sha256 };
