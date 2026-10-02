@@ -1,5 +1,7 @@
 import { requireOrg } from '@/lib/session';
-import { listGames, countAllGames } from '@/lib/queries';
+import { listGames, countAllGames, listDevices } from '@/lib/queries';
+import { holdsByGame } from '@/lib/drive-holds';
+import type { DriveContext, DriveDisk } from '@/components/library/card-mount-button';
 import { listCollections, countUncategorized, collectionMosaics } from '@/lib/collections';
 import { countReviewQueue } from '@/lib/demozoo/queries';
 import { resolveLibraryView } from '@/lib/library-view';
@@ -52,7 +54,11 @@ export default async function LibraryPage(props: PageProps<'/library'>) {
   // here would be a worse copy of it that only appears on brand-new accounts
   // -- which is exactly what it did on its first e2e run.
   const showOverview = view.kind === 'uncategorized' && games.length === 0 && collections.length > 0;
-  const [uncategorizedCount, libraryTotals, reviewQueueCount, mosaics, readers] = await Promise.all([
+  // The grid's cards carry the mount control and the NFC button, both of
+  // which need the boards and the disks of the titles on the page. Loaded
+  // with everything else, in parallel; the disk list is one query for both.
+  const cards = viewMode === 'grid' && !showOverview;
+  const [uncategorizedCount, libraryTotals, reviewQueueCount, mosaics, readers, boards, pageDisks] = await Promise.all([
     countUncategorized(orgId),
     showOverview ? countAllGames(orgId) : Promise.resolve(null),
     // R15: the badge is a count, not the review queue's full item list --
@@ -67,19 +73,32 @@ export default async function LibraryPage(props: PageProps<'/library'>) {
     // The fob button's visibility, decided here with the page rather than by
     // a client fetch: every card would otherwise flash it in or out.
     listNfcReaders(orgId),
+    cards ? listDevices(orgId) : Promise.resolve([]),
+    cards ? listDisksForNfc(orgId, games.map((g) => g.id)) : Promise.resolve([]),
   ]);
 
-  // Only a multi-disk card asks "which disk?", and only an org with a reader
-  // draws the button at all -- so the disk list is loaded for exactly those.
-  let fob: FobContext = null;
-  if (readers.length > 0 && viewMode === 'grid' && !showOverview) {
-    const multi = games.filter((g) => g.diskCount > 1).map((g) => g.id);
-    const disksByGame: Record<string, FobDisk[]> = {};
-    for (const d of await listDisksForNfc(orgId, multi)) {
-      (disksByGame[d.gameId] ??= []).push({ id: d.id, diskNo: d.diskNo });
-    }
-    fob = { devices: readers, disksByGame };
+  // "Which disk?" on a set: the mount picker and the fob picker both use it.
+  const disksByGame: Record<string, DriveDisk[]> = {};
+  for (const d of pageDisks) (disksByGame[d.gameId] ??= []).push({ id: d.id, diskNo: d.diskNo });
+
+  // The card mount control and its ring (card-mount-button.tsx): every board
+  // and what each holds, decided here with the page so a card's ring is right
+  // on first paint. Null without a board: no control, no ring.
+  let drives: DriveContext = null;
+  if (cards && boards.length > 0) {
+    // One clock for the render, as devices/page.tsx does.
+    const now = Date.now();
+    drives = {
+      devices: boards.map((b) => ({ id: b.id, name: b.name })),
+      holds: holdsByGame(boards, pageDisks, now),
+      disksByGame,
+    };
   }
+
+  // Only an org with a reader draws the fob button at all.
+  const fob: FobContext = cards && readers.length > 0
+    ? { devices: readers, disksByGame: disksByGame as Record<string, FobDisk[]> }
+    : null;
 
   return (
     <>
@@ -128,7 +147,7 @@ export default async function LibraryPage(props: PageProps<'/library'>) {
               )
               : viewMode === 'table'
                 ? <GameTable games={games} collectionId={filteredCollectionId} />
-                : <GameGrid games={games} fob={fob} />}
+                : <GameGrid games={games} fob={fob} drives={drives} />}
           </div>
         </div>
       </CollectionsProvider>

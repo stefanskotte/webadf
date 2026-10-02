@@ -35,6 +35,13 @@ export interface MountChoice {
   action: 'mount' | 'eject';
   /** What the button should say. */
   actionLabel: string;
+  /**
+   * For a Cancel on a board that still holds a CONFIRMED disk: that disk, which
+   * the Cancel asks for again (a mount) instead of emptying the drive. Calling
+   * off a swap must not eject the disk the Amiga may be running from. Null
+   * otherwise: an Eject, or a Cancel with nothing confirmed in the drive.
+   */
+  revertDiskId: string | null;
 }
 
 /** "Lemmings — disk 2", degrading rather than rendering "null — disk null". */
@@ -86,7 +93,10 @@ export function mountChoice(
     : converged ? 'Eject'
     : 'Cancel';
 
-  return { id: row.id, name: row.name, state, holding, isThisDisk, action, actionLabel };
+  const revertDiskId = isThisDisk && !converged && row.mountedDiskId !== null && row.mountedDiskId !== activeDiskId
+    ? row.mountedDiskId : null;
+
+  return { id: row.id, name: row.name, state, holding, isThisDisk, action, actionLabel, revertDiskId };
 }
 
 export function mountChoices(

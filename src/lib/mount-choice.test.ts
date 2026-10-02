@@ -236,3 +236,28 @@ describe('holderText', () => {
     expect(line).toEqual({ text: 'In Has It', stale: false });
   });
 });
+
+describe('Cancel on a swap does not empty the drive', () => {
+  it('asks for the disk the board still holds when one is confirmed', () => {
+    const c = choose(row({
+      desiredSha256: THIS_SHA, desiredDiskId: THIS_DISK,
+      mountedSha256: OTHER_SHA, mountedDiskId: 'disk-held',
+    }));
+    expect(c.actionLabel).toBe('Cancel');
+    expect(c.revertDiskId).toBe('disk-held');
+  });
+
+  it('empties the drive when nothing is confirmed in it', () => {
+    const c = choose(row({ desiredSha256: THIS_SHA, desiredDiskId: THIS_DISK }));
+    expect(c.actionLabel).toBe('Cancel');
+    expect(c.revertDiskId).toBeNull();
+  });
+
+  it('a confirmed Eject never reverts', () => {
+    const c = choose(row({
+      desiredSha256: THIS_SHA, mountedSha256: THIS_SHA, desiredDiskId: THIS_DISK, mountedDiskId: THIS_DISK,
+    }));
+    expect(c.actionLabel).toBe('Eject');
+    expect(c.revertDiskId).toBeNull();
+  });
+});

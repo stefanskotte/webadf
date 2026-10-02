@@ -10,16 +10,20 @@ import { CSS } from '@dnd-kit/utilities';
 import { History, Minus } from 'lucide-react';
 import { DeleteDiskDialog } from '@/components/library/delete-disk-dialog';
 import { FobButton, type FobContext } from '@/components/nfc/fob-button';
+import { CardMountButton, DriveRing, type DriveContext } from './card-mount-button';
+import { holdLabel } from '@/lib/drive-holds';
 import { fromQuery } from '@/lib/trail';
 import { ejectMessage, isMountedReason, mountedReason } from '@/lib/mount-wording';
 import { Cover } from './cover';
 import type { GameListItem } from '@/lib/queries';
 import { useCollectionsContext, type GameDragData, type PendingHide, SET_DROP_RETURN_MS } from '@/components/collections/collection-provider';
 
-export function GameGrid({ games, fob = null }: {
+export function GameGrid({ games, fob = null, drives = null }: {
   games: GameListItem[];
   /** The fob button's boards and multi-disk lists; null (no reader in the org) draws no button. */
   fob?: FobContext;
+  /** Boards, what each holds, and sets' disks; null (no board in the org) draws no mount control or ring. */
+  drives?: DriveContext;
 }) {
   const { gameIds, filteredCollectionId, previewGameId, armedGameId, pendingHide: hidden } = useCollectionsContext();
 
@@ -59,8 +63,8 @@ export function GameGrid({ games, fob = null }: {
         // other card, including the drop's TARGET, renders exactly as today.
         const pendingHide = hidden?.sourceId === g.id ? hidden : null;
         return filteredCollectionId
-          ? <SortableCard key={g.id} game={g} collectionId={filteredCollectionId} fob={fob} armed={armedGameId === g.id} pendingHide={pendingHide} />
-          : <DraggableCard key={g.id} game={g} fob={fob} pendingHide={pendingHide} />;
+          ? <SortableCard key={g.id} game={g} collectionId={filteredCollectionId} fob={fob} drives={drives} armed={armedGameId === g.id} pendingHide={pendingHide} />
+          : <DraggableCard key={g.id} game={g} fob={fob} drives={drives} pendingHide={pendingHide} />;
       })}
     </div>
   );
@@ -108,6 +112,13 @@ function dragStyle(translate: string | undefined, isDragging: boolean) {
     transform: isDragging ? `${translate ?? ''} scale(0.55)`.trim() : translate,
     opacity: isDragging ? 0.4 : 1,
   };
+}
+
+/** 'mounted' / 'fetching' for a card whose disk is in a drive (the ring's state), else absent. */
+function driveState(drives: DriveContext, gameId: string): 'mounted' | 'fetching' | undefined {
+  const holds = drives?.holds[gameId];
+  if (!holds || holds.length === 0) return undefined;
+  return holds.some((h) => h.state === 'mounted') ? 'mounted' : 'fetching'; // requested reads as fetching: dashed
 }
 
 /** SET_DROP_RETURN_MS (collection-provider.tsx) is the one place this duration lives. */
@@ -357,10 +368,15 @@ function CardFobButton({ game: g, fob }: { game: GameListItem; fob: NonNullable<
   return <FobButton testId={`fob-${g.id}`} title={g.title} disks={disks} devices={fob.devices} />;
 }
 
-function CardBody({ game: g, collectionId, fob }: { game: GameListItem; collectionId?: string; fob: FobContext }) {
+function CardBody({ game: g, collectionId, fob, drives }: {
+  game: GameListItem; collectionId?: string; fob: FobContext; drives: DriveContext;
+}) {
+  const holds = drives?.holds[g.id];
   return (
     <>
       <Cover id={g.id} title={g.title} diskCount={g.diskCount} coverUrl={g.coverUrl} kind={g.kind} />
+      {/* The ring says it visually; this says it to a screen reader. */}
+      {holds && <span className="sr-only">{holds.map((h) => holdLabel(h, g.diskCount)).join('; ')}</span>}
       <div className="flex flex-col gap-0.5 px-0.5 pb-1 pt-2.5">
         {g.authored && g.diskId ? (
           <VolumeNameField game={g} />
@@ -378,6 +394,10 @@ function CardBody({ game: g, collectionId, fob }: { game: GameListItem; collecti
               reaches the anchor or dnd-kit's drag listeners. */}
           <div className="flex shrink-0 items-center">
             <HistoryButton game={g} collectionId={collectionId} />
+            {drives && (
+              <CardMountButton gameId={g.id} title={g.title} diskCount={g.diskCount}
+                               singleDiskId={g.diskCount === 1 ? g.diskId : null} drives={drives} />
+            )}
             {fob && <CardFobButton game={g} fob={fob} />}
             {collectionId && <RemoveFromCollectionButton game={g} collectionId={collectionId} />}
             <DeleteDiskDialog kind="game" id={g.id} title={g.title} diskCount={g.diskCount} />
@@ -415,7 +435,9 @@ function SetDropHint() {
  * collection, and a drop target for another card (make a disk set) -- not
  * sortable against siblings.
  */
-function DraggableCard({ game: g, fob, pendingHide }: { game: GameListItem; fob: FobContext; pendingHide: PendingHide | null }) {
+function DraggableCard({ game: g, fob, drives, pendingHide }: {
+  game: GameListItem; fob: FobContext; drives: DriveContext; pendingHide: PendingHide | null;
+}) {
   // `role` is pulled OUT of dnd-kit's attributes and thrown away: it is
   // "button", and this card is an <a href> that really does navigate. Spread
   // whole, it would have a screen reader announce every game in the library
@@ -442,6 +464,7 @@ function DraggableCard({ game: g, fob, pendingHide }: { game: GameListItem; fob:
       ref={setNodeRef}
       href={`/games/${g.id}`}
       data-testid="game-card"
+      data-drive={driveState(drives, g.id)}
       aria-hidden={pendingHide ? true : undefined}
       // An <a href> is natively draggable, so pressing one and moving started
       // the BROWSER's own link drag alongside dnd-kit's -- and dropping a
@@ -455,7 +478,8 @@ function DraggableCard({ game: g, fob, pendingHide }: { game: GameListItem; fob:
       {...attributes}
       {...listeners}
     >
-      <CardBody game={g} fob={fob} />
+      <CardBody game={g} fob={fob} drives={drives} />
+      <DriveRing holds={drives?.holds[g.id]} />
       {hinting && <SetDropHint />}
     </Link>
   );
@@ -466,8 +490,8 @@ function DraggableCard({ game: g, fob, pendingHide }: { game: GameListItem; fob:
  * collection), plus a remove control. `armed`: the pointer has rested in this
  * card's centre long enough that a drop makes a disk set (src/lib/set-folder.ts).
  */
-function SortableCard({ game: g, collectionId, fob, armed, pendingHide }: {
-  game: GameListItem; collectionId: string; fob: FobContext; armed: boolean; pendingHide: PendingHide | null;
+function SortableCard({ game: g, collectionId, fob, drives, armed, pendingHide }: {
+  game: GameListItem; collectionId: string; fob: FobContext; drives: DriveContext; armed: boolean; pendingHide: PendingHide | null;
 }) {
   // See DraggableCard on why `role` is discarded rather than spread.
   const { attributes: dragAttributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
@@ -496,6 +520,7 @@ function SortableCard({ game: g, collectionId, fob, armed, pendingHide }: {
       // collection_games is many-to-many.
       href={`/games/${g.id}${fromQuery(collectionId)}`}
       data-testid="game-card"
+      data-drive={driveState(drives, g.id)}
       aria-hidden={pendingHide ? true : undefined}
       // See DraggableCard on why an anchor must opt out of native dragging.
       draggable={false}
@@ -504,7 +529,8 @@ function SortableCard({ game: g, collectionId, fob, armed, pendingHide }: {
       {...attributes}
       {...listeners}
     >
-      <CardBody game={g} collectionId={collectionId} fob={fob} />
+      <CardBody game={g} collectionId={collectionId} fob={fob} drives={drives} />
+      <DriveRing holds={drives?.holds[g.id]} />
       {armed && <SetDropHint />}
     </Link>
   );
