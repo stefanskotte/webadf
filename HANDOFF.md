@@ -1514,6 +1514,21 @@ separately.
       touch the cylinder-17 hang without it).
     - Everything rev B gained: the eight 1 kOhm floppy-line pull-ups, R12 22 Ohm and the double BZ1 footprint,
       and the I2C headers for OLED and NFC.
+  - **Considered and set aside, kept as the fallback (2026-10-02): iLabs Challenger+ RP2350 WiFi6/BLE5 IPEX3**
+    (https://ilabs.se/challenger-rp2350-wifi-ble/).
+    - What it is: an RP2350A board, 8 MB PSRAM, 8 MB flash, and an ESP32-C6-MINI-1 running ESP-AT over SPI1 and a
+      UART, with an IPEX3/MHF III antenna connector.
+    - For: the antenna connector, and the C6's hardware crypto for TLS.
+    - Against, from the datasheet:
+      - The C6 link plus the LED take GP4, 5, 8, 9, 10, 11, 13, 14, 15 and 22. That is 10 of the RP2350A's 30 GPIOs,
+        right in our GP0-13 floppy block. The PSRAM CS is presumably GP19 (not stated).
+      - About 17 pins would remain for our 16, scattered, and only if all of them are broken out.
+      - PIO rework: drive_id waits on GP2 literally.
+      - A network-layer rewrite to AT commands: TLS, keep-alive and abandon, the AP portal, SNTP, the image and OTA
+        downloads.
+      - No PSRAM growth.
+    - Decision rule: if the mbedTLS speed-ups (in flight 2026-10-02) leave the handshake slow, the C6 route earns a
+      second look. Otherwise the CYW43439 path above wins.
   - **Measure before designing:**
     - Rev B inside a closed big box: RSSI with the lid open and closed, which sizes the antenna problem.
     - Rev B's large HD copy (`short 0`). If the 2,880 ns glitch seen 2026-10-02 (1 capture in 23, data intact)
