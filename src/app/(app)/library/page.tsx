@@ -1,5 +1,7 @@
 import { requireOrg } from '@/lib/session';
-import { listGames, countAllGames } from '@/lib/queries';
+import { listGames, countAllGames, listDevices } from '@/lib/queries';
+import { holdsByGame, type DiskRef } from '@/lib/drive-holds';
+import type { DriveContext, DriveDisk } from '@/components/library/card-mount-button';
 import { listCollections, countUncategorized, collectionMosaics } from '@/lib/collections';
 import { countReviewQueue } from '@/lib/demozoo/queries';
 import { resolveLibraryView } from '@/lib/library-view';
@@ -69,6 +71,28 @@ export default async function LibraryPage(props: PageProps<'/library'>) {
     listNfcReaders(orgId),
   ]);
 
+  // The card mount control and its ring (card-mount-button.tsx): every board,
+  // what each holds, and the disks of the titles on this page -- one query
+  // for both "which disk?" on a set and mapping a held disk to its card.
+  // Decided here, with the page, so a card's ring is right on first paint.
+  let drives: DriveContext = null;
+  if (viewMode === 'grid' && !showOverview) {
+    const boards = await listDevices(orgId);
+    if (boards.length > 0) {
+      const pageDisks = await listDisksForNfc(orgId, games.map((g) => g.id));
+      const disksById = new Map<string, DiskRef>(pageDisks.map((d) => [d.id, d]));
+      const disksByGame: Record<string, DriveDisk[]> = {};
+      for (const d of pageDisks) (disksByGame[d.gameId] ??= []).push({ id: d.id, diskNo: d.diskNo });
+      // One clock for the render, as devices/page.tsx does.
+      const now = Date.now();
+      drives = {
+        devices: boards.map((b) => ({ id: b.id, name: b.name })),
+        holds: holdsByGame(boards, disksById, now),
+        disksByGame,
+      };
+    }
+  }
+
   // Only a multi-disk card asks "which disk?", and only an org with a reader
   // draws the button at all -- so the disk list is loaded for exactly those.
   let fob: FobContext = null;
@@ -128,7 +152,7 @@ export default async function LibraryPage(props: PageProps<'/library'>) {
               )
               : viewMode === 'table'
                 ? <GameTable games={games} collectionId={filteredCollectionId} />
-                : <GameGrid games={games} fob={fob} />}
+                : <GameGrid games={games} fob={fob} drives={drives} />}
           </div>
         </div>
       </CollectionsProvider>
