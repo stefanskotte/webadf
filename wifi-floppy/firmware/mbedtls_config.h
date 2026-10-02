@@ -94,6 +94,22 @@
                                    // rsa_pss_rsae_sha256 for RSA certs.
 #define MBEDTLS_ECP_C
 #define MBEDTLS_ECP_DP_SECP256R1_ENABLED
+
+// --- Speed (2026-10-02) ---------------------------------------------------
+// The TLS handshake measured 1.2-1.3 s on rev B (`tls: up ... handshake N`),
+// almost all of it P-256 arithmetic (TLS 1.3 ECDHE; the RSA chain checks are
+// cheap public-key verifies). None of mbedTLS's standard speed-ups were on:
+// - HAVE_ASM: bn_mul.h's UMAAL multiply-accumulate for ARMv7E-M/ARMv8-M
+//   with DSP -- the Cortex-M33 qualifies.
+// - ECP_NIST_OPTIM: P-256's dedicated modular reduction instead of the
+//   generic one.
+// - ECP_WINDOW_SIZE 5 (default 4): mbedTLS's own table gives ~+5% for 256-bit
+//   curves at ~1 KB more peak heap during a handshake; the TLS heap low-water
+//   was ~45 KB against a 20 KB floor.
+// FIXED_POINT_OPTIM is already on by default (static secp256r1 comb table).
+#define MBEDTLS_HAVE_ASM
+#define MBEDTLS_ECP_NIST_OPTIM
+#define MBEDTLS_ECP_WINDOW_SIZE 5
 #define MBEDTLS_ECDH_C
 #define MBEDTLS_ECDSA_C            // Not needed by *this* chain (RSA
                                    // throughout), but cheap and keeps an

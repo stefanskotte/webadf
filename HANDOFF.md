@@ -4604,6 +4604,46 @@ Demozoo API (the bulk export makes per-lookup load on a non-profit unnecessary).
   allowlist checks only the first URL (the raster content-type allowlist and `nosniff` still apply).
 - **Cron drift:** the daily 01:30 cron against a 7-day gate can drift a refetch to 8 days.
 
+### 3au. TLS handshake 3.8x faster: mbedTLS P-256 speed-ups -- firmware 1.6.2 (2026-10-03)
+
+**SHIPPED and on WifiFloppy1 (rev B), sequence 34, `1.6.2+gcff84a9`.** Only `mbedtls_config.h` changed:
+`MBEDTLS_HAVE_ASM` (bn_mul.h's UMAAL path on the Cortex-M33), `MBEDTLS_ECP_NIST_OPTIM`, `MBEDTLS_ECP_WINDOW_SIZE 5`.
+Fixed-point optimisation was already on by default. No clock change and no floppy timing touched.
+Measured from the board's own `tls: up ... handshake N` log:
+
+| | handshake |
+|---|---|
+| 1.6.1 | 1,279 ms, 1,208 ms |
+| 1.6.2 | 328 ms, 331 ms |
+
+This settles the overclock question (150 -> 200 MHz would have saved at most ~25 % of the CPU part, at the cost
+of re-proving the PIO timing): not needed. It also takes away the ESP32-C6 Challenger's TLS argument in the rev C
+section. The host suite passed 4,749 checks.
+
+**First self-installed update** (operator 2026-10-02: "I'm okay with you installing the firmware updates as you
+see fit, there are no users on the system"):
+- installed through `requestFirmwareUpdate` (the Update button's server path), using `.fw-target.mts`, which
+  ejects first because a board applies firmware only with an empty drive;
+- the mounted disk (HD Bench) was put back with `setDesired` afterwards;
+- the Amiga had been off for about 50 minutes, judged from the serial log.
+
+Merged without a second full e2e: the branch touched only `wifi-floppy/firmware/` (CMakeLists version and the
+mbedTLS config), and the web tree is byte-identical to `e84528c`, which passed 437/437.
+
+### 3at. Mount and eject from a library card; a ring shows what is in a drive (2026-10-02)
+
+**SHIPPED (`e84528c`), full e2e 437/437.** Operator asks: cover art untouched, and icons like the NFC, delete and
+browse controls.
+- `card-mount-button.tsx`: HardDriveDownload to mount, Eject when held. A set asks which disk, and several boards
+  ask which board (the NFC button's picker).
+- The ring is its own element 2 px outside the card, so the link keeps its focus ring. Dashed means asked for or
+  fetching, solid means confirmed.
+- `drive-holds.ts` follows `mount-choice.ts` exactly: id first, digest fallback, and "Requested on X -- not
+  confirmed" when the board is offline.
+- **Review finding, fixed in both callers:** Cancel during a swap used to EMPTY the drive, ejecting the disk the
+  board still held. It now asks for that disk again (`revertDiskId`). `e2e/library-mount.spec.ts` covers mount,
+  ring states, eject, the set picker and this cancel.
+
 ### 3as. Disk-set polish, and one "Find on Demozoo or TOSEC" search -- 2026-09-29
 
 **STATUS: merged to master together with 3ar (integration branch `integrate/polish-identify`), full e2e green.**
