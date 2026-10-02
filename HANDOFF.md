@@ -1478,6 +1478,47 @@ separately.
 
 ### 4. Backlog, not blocking anything
 
+- **REV C BOARD: own RP2350 design with an antenna port (operator, 2026-10-02: "this is the best solution").**
+  Collected here so rev C is designed once, not retrofitted. Roles as for rev B: Shanshe does layout and placement
+  files, the operator does BOM and LCSC sourcing.
+  - **Why: big-box Amigas.** In an A2000, A3000 or A4000 the board sits on the internal floppy cable inside a metal case,
+    which acts close to a Faraday cage at 2.4 GHz. Rev B cannot take an external antenna: the PIM726's radio is the
+    Raspberry Pi RM2, which has only its built-in antenna (no u.FL, no RF pad). A u.FL hack on the RM2 was
+    rejected (fiddly RF rework, unmatched). Rev B in the open (A500 bench, case off) reads -49..-53 dBm.
+  - **Chip-down RP2350B instead of the PIM726 module:** RP2350B, 16 MB QSPI flash on CS0, PSRAM on CS1 (GP47),
+    crystal, 3V3 regulator, USB-C, BOOTSEL and RUN buttons. Keep the PIM726's pin map so the firmware's
+    `pimoroni_pico_plus2_w_rp2350` board definition, or a copy of it, needs no changes:
+    - radio on GP23 (WL_REG_ON), GP24 (data/host-wake), GP25 (CS), GP29 (clock);
+    - PSRAM CS on GP47;
+    - floppy, I2C and buzzer as on rev B.
+  - **Radio with an RF pin plus u.FL.** It must be a module on the same Infineon CYW43439 as the RM2, so the pico-sdk
+    `cyw43` driver and the firmware stay as they are. Candidate to verify: Murata Type 1YN (LBEE5KL1YN). Check its
+    pinout, the gSPI wiring the driver expects, the module's certification conditions and its antenna list.
+    - A u.FL on the PCB, and ideally a 0-ohm selectable path to an on-board chip antenna, so an A500 or A1200 board
+      outside the case needs no external antenna.
+    - Big boxes: a u.FL-to-SMA pigtail to a bulkhead SMA in a rear expansion-slot blanking plate (all three
+      machines have them, so no case modification), and a standard 2.4 GHz rubber-duck antenna on the back.
+  - **More PSRAM (operator, 2026-10-02).** Today's budget (psram_image.h) is 2 slots x 160 x 14,336 B = 4.37 MiB,
+    plus the 2 MiB firmware-update stage, which is about 6.4 MiB of 8 MB. 16 MB would allow about 5 disk slots,
+    enough to preload a whole disk set so Next disk is instant and a set plays offline. To verify before choosing
+    a part:
+    - the RP2350's limit per QMI chip select (believed to be 16 MB);
+    - that a 16 MB QSPI (not octal) PSRAM part exists and is stocked at LCSC.
+
+    Firmware: PICO_PSRAM_SIZE_BYTES and SLOT_COUNT become per-board; the server already learns per-board
+    capabilities (trackMaxBytes and playsHd set the pattern).
+  - **Already decided for rev C, carried here:**
+    - DF0 passthrough via a second floppy connector, J5 "DRIVE" (2026-09-28 decision above; firmware passthrough
+      mode still owed).
+    - The Amiga RESET line to a spare GPIO, so a reboot is detected with certainty (3al-a: the operator won't
+      touch the cylinder-17 hang without it).
+    - Everything rev B gained: the eight 1 kOhm floppy-line pull-ups, R12 22 Ohm and the double BZ1 footprint,
+      and the I2C headers for OLED and NFC.
+  - **Measure before designing:**
+    - Rev B inside a closed big box: RSSI with the lid open and closed, which sizes the antenna problem.
+    - Rev B's large HD copy (`short 0`). If the 2,880 ns glitch seen 2026-10-02 (1 capture in 23, data intact)
+      persists, rev C's WDATA input path needs another look.
+
 - **Copy-protected originals boot from an ADF but are not whole: Gods measured 2026-10-01.** The library's `Gods v1.00
   (Renegade)` disk 1 is an UNMODIFIED original. A subagent emulated its Rob Northen Copylock (Musashi via
   `machine68k`; the encrypted code decodes itself one instruction at a time from a trace handler):
