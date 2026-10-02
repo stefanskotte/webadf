@@ -200,7 +200,7 @@ export async function readDiskForNfc(orgId: string, diskId: string): Promise<{ t
  *  the org has a reader, so a library without one pays nothing. */
 export async function listDisksForNfc(orgId: string, gameIds: string[]) {
   if (gameIds.length === 0) return [];
-  return getDb().select({ id: disks.id, gameId: disks.gameId, diskNo: disks.diskNo }).from(disks)
+  return getDb().select({ id: disks.id, gameId: disks.gameId, diskNo: disks.diskNo, sha256: disks.sha256 }).from(disks)
     .where(and(eq(disks.orgId, orgId), inArray(disks.gameId, gameIds)))
     .orderBy(asc(disks.gameId), asc(disks.diskNo), asc(disks.id));
 }

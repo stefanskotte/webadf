@@ -37,16 +37,19 @@ export function MountAction({ diskId, choices }: { diskId: string; choices: Moun
     setBusy(true);
     setExpanded(false);
     const ejecting = choice.action === 'eject';
+    // A Cancel on a board that still holds a confirmed disk asks for that disk
+    // again (mount-choice.ts revertDiskId); only a real eject empties the drive.
+    const mountId = ejecting ? choice.revertDiskId : diskId;
     try {
       const res = await fetch(
-        `/api/devices/${choice.id}/${ejecting ? 'eject' : 'mount'}`,
-        ejecting
-          ? { method: 'POST' }
-          : {
+        `/api/devices/${choice.id}/${mountId ? 'mount' : 'eject'}`,
+        mountId
+          ? {
               method: 'POST',
               headers: { 'content-type': 'application/json' },
-              body: JSON.stringify({ diskId }),
-            },
+              body: JSON.stringify({ diskId: mountId }),
+            }
+          : { method: 'POST' },
       );
       if (!res.ok) {
         // A refusal the person can act on carries its own sentence (e.g. a
@@ -61,7 +64,7 @@ export function MountAction({ diskId, choices }: { diskId: string; choices: Moun
       // measured ~4 s on hardware, and either way the device only acts on its
       // next poll. The layout's live poller (src/components/shell/live-refresh.tsx)
       // is what turns this into fact once the board reports.
-      toast.success(ejecting ? 'Eject requested' : 'Mount requested');
+      toast.success(!ejecting ? 'Mount requested' : choice.revertDiskId ? 'Mount cancelled' : 'Eject requested');
       router.refresh();
     } finally {
       setBusy(false);

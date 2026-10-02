@@ -1,11 +1,11 @@
 'use client';
 
-import { useEffect, useId, useState } from 'react';
+import { useEffect, useId, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useRouter } from 'next/navigation';
 import { toast } from 'sonner';
 import { Eject, HardDriveDownload } from 'lucide-react';
-import { holdLabel, type Hold } from '@/lib/drive-holds';
+import { holdAction, holdLabel, type Hold } from '@/lib/drive-holds';
 
 /** A board the org has paired, as the page loaded it. */
 export type DriveDevice = { id: string; name: string };
@@ -22,13 +22,24 @@ export type DriveContext = {
   disksByGame: Record<string, DriveDisk[]>;
 } | null;
 
-/** The ring on a card whose disk is in a drive: solid once the board confirms, dashed while it fetches. */
-export function driveRingStyle(holds: Hold[] | undefined): React.CSSProperties | undefined {
-  if (!holds || holds.length === 0) return undefined;
+/**
+ * The ring on a card whose disk is in a drive: solid once the board confirms,
+ * dashed while it is only asked for. Drawn by its own element 2px outside the
+ * card -- no layout space, nothing over the cover -- rather than by the card's
+ * `outline`, which would replace the link's keyboard focus ring.
+ */
+export function DriveRing({ holds }: { holds: Hold[] | undefined }) {
+  if (!holds || holds.length === 0) return null;
   const mounted = holds.some((h) => h.state === 'mounted');
-  // An outline, not a border: it takes no layout space and draws outside the
-  // card, so the cover and everything in the card stay exactly where they are.
-  return { outline: `2px ${mounted ? 'solid' : 'dashed'} var(--primary-action)`, outlineOffset: '2px' };
+  return (
+    <span aria-hidden data-testid="drive-ring"
+          className="pointer-events-none absolute -inset-[4px] border-2"
+          style={{
+            borderStyle: mounted ? 'solid' : 'dashed',
+            borderColor: 'var(--primary-action)',
+            borderRadius: 'calc(var(--radius-card) + 4px)',
+          }} />
+  );
 }
 
 const stop = (e: React.SyntheticEvent) => { e.stopPropagation(); };
@@ -58,10 +69,17 @@ export function CardMountButton({ gameId, title, diskCount, singleDiskId, drives
   const [diskId, setDiskId] = useState<string | null>(null);
   const [deviceId, setDeviceId] = useState<string | null>(null);
   const titleId = useId();
+  const triggerRef = useRef<HTMLButtonElement>(null);
+
+  /** Close the picker and hand focus back to the button that opened it. */
+  function close() {
+    setOpen(false);
+    triggerRef.current?.focus();
+  }
 
   useEffect(() => {
     if (!open) return;
-    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') setOpen(false); };
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') { setOpen(false); triggerRef.current?.focus(); } };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
   }, [open]);
@@ -69,7 +87,8 @@ export function CardMountButton({ gameId, title, diskCount, singleDiskId, drives
   if (drives.devices.length === 0 || disks.length === 0) return null;
   const ejecting = holds.length > 0;
 
-  async function act(device: string, disk: string | null) {
+  /** Mount `disk` on `device`, or empty the drive (`disk` null). `cancel`: this undoes a request. */
+  async function act(device: string, disk: string | null, cancel = false) {
     setBusy(true);
     setOpen(false);
     try {
@@ -83,24 +102,37 @@ export function CardMountButton({ gameId, title, diskCount, singleDiskId, drives
         return;
       }
       if (!res.ok) {
-        const body = await res.json().catch(() => null) as { reason?: unknown } | null;
-        toast.error(disk ? 'Could not mount' : 'Could not eject', {
-          description: typeof body?.reason === 'string' ? body.reason : `The server answered ${res.status}.`,
+        const body = await res.json().catch(() => null) as { reason?: unknown; error?: unknown } | null;
+        toast.error(cancel ? 'Could not cancel' : disk ? 'Could not mount' : 'Could not eject', {
+          description: typeof body?.reason === 'string' ? body.reason
+            : body?.error === 'not_found' ? 'That disk or board is no longer in your library.'
+            : `The server answered ${res.status}.`,
         });
         return;
       }
-      toast.success(disk ? 'Mount requested' : 'Eject requested');
+      toast.success(cancel ? 'Mount cancelled' : disk ? 'Mount requested' : 'Eject requested');
       router.refresh();
     } finally {
       setBusy(false);
     }
   }
 
+  /**
+   * Eject a confirmed disk; Cancel a request. A Cancel while the board still
+   * holds a confirmed other disk asks for that disk again rather than emptying
+   * the drive -- calling off a swap must not eject what the Amiga may be
+   * running from (drive-holds.ts revertDiskId, as mount-choice.ts does).
+   */
+  function undo(h: Hold) {
+    const cancel = holdAction(h) === 'Cancel';
+    return act(h.deviceId, cancel ? h.revertDiskId : null, cancel);
+  }
+
   function onClick(e: React.MouseEvent) {
     e.preventDefault();
     e.stopPropagation();
     if (ejecting) {
-      if (holds.length === 1) { void act(holds[0].deviceId, null); return; }
+      if (holds.length === 1) { void undo(holds[0]); return; }
       setDeviceId(null);
       setOpen(true);
       return;
@@ -113,14 +145,19 @@ export function CardMountButton({ gameId, title, diskCount, singleDiskId, drives
     setOpen(true);
   }
 
+  const single = holds.length === 1 ? holds[0] : null;
+  const verb = single ? holdAction(single) : 'Eject';
   const label = ejecting
-    ? `${holds.map((h) => holdLabel(h, diskCount)).join('; ')} · ${holds.every((h) => h.state === 'fetching') ? 'Cancel' : 'Eject'}`
+    ? `${holds.map((h) => holdLabel(h, diskCount)).join('; ')} · ${single ? verb : 'Eject or cancel'}`
     : 'Mount';
   const trigger = (
     <button
+      ref={triggerRef}
       type="button"
       data-testid={`${ejecting ? 'card-eject' : 'card-mount'}-${gameId}`}
-      aria-label={ejecting ? `${label} — ${title}` : `Mount ${title}`}
+      aria-label={ejecting
+        ? (single ? `${verb} ${title} — ${holdLabel(single, diskCount)}` : `Eject or cancel ${title}`)
+        : `Mount ${title}`}
       title={label}
       disabled={busy}
       onClick={onClick}
@@ -150,6 +187,7 @@ export function CardMountButton({ gameId, title, diskCount, singleDiskId, drives
     ? holds.map((h) => ({ id: h.deviceId, name: holdLabel(h, diskCount) }))
     : drives.devices;
   const ready = ejecting ? deviceId !== null : diskId !== null && deviceId !== null;
+  const chosenHold = ejecting ? holds.find((h) => h.deviceId === deviceId) ?? null : null;
 
   return (
     <>
@@ -159,12 +197,13 @@ export function CardMountButton({ gameId, title, diskCount, singleDiskId, drives
           className="fixed inset-0 z-50 flex items-center justify-center p-4"
           style={{ background: 'rgb(11 18 28 / 0.55)' }}
           onPointerDown={stop} onMouseDown={stop} onTouchStart={stop}
-          onClick={(e) => { e.stopPropagation(); if (e.target === e.currentTarget) setOpen(false); }}
+          onKeyDown={(e) => { e.stopPropagation(); if (e.key === 'Escape') close(); }}
+          onClick={(e) => { e.stopPropagation(); if (e.target === e.currentTarget) close(); }}
         >
           <div role="dialog" aria-modal="true" aria-labelledby={titleId} data-testid="card-mount-dialog"
                className="glass-card flex max-h-full w-full max-w-[440px] flex-col gap-3 overflow-y-auto p-6 text-left">
             <h2 id={titleId} className="text-[15px] font-bold" style={{ color: 'var(--ink)' }}>
-              {ejecting ? 'Eject' : 'Mount'}
+              {ejecting ? 'Eject or cancel' : 'Mount'}
             </h2>
             <p className="break-words text-[13px] font-semibold" style={{ color: 'var(--ink)' }}>{title}</p>
             {!ejecting && disks.length > 1 && (
@@ -194,11 +233,14 @@ export function CardMountButton({ gameId, title, diskCount, singleDiskId, drives
               </div>
             )}
             <div className="mt-2 flex items-center justify-end gap-2">
-              <button type="button" onClick={() => setOpen(false)} className={pill} style={{ color: 'var(--muted)' }}>Cancel</button>
-              <button type="button" data-testid="card-mount-confirm" autoFocus disabled={!ready}
-                      onClick={() => { if (deviceId) void act(deviceId, ejecting ? null : diskId); }}
+              <button type="button" onClick={close} autoFocus={!ready} className={pill} style={{ color: 'var(--muted)' }}>Close</button>
+              <button type="button" data-testid="card-mount-confirm" autoFocus={ready} disabled={!ready}
+                      onClick={() => {
+                        if (chosenHold) void undo(chosenHold);
+                        else if (deviceId && diskId) void act(deviceId, diskId);
+                      }}
                       className={`${pill} text-white`} style={{ background: 'var(--primary-action)' }}>
-                {ejecting ? 'Eject' : 'Mount'}
+                {chosenHold ? holdAction(chosenHold) : ejecting ? 'Eject' : 'Mount'}
               </button>
             </div>
           </div>

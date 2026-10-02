@@ -1,15 +1,15 @@
 import { describe, it, expect } from 'vitest';
-import { holdsByGame, holdLabel, type DiskRef, type HoldDeviceRow } from './drive-holds';
+import { holdsByGame, holdLabel, holdAction, type DiskRef, type HoldDeviceRow, type Hold } from './drive-holds';
 
 const NOW = Date.UTC(2026, 9, 2, 12, 0, 0);
 const fresh = new Date(NOW - 5_000);
 const old = new Date(NOW - 10 * 60_000);
 
-const disks = new Map<string, DiskRef>([
-  ['d-solo', { id: 'd-solo', gameId: 'g-solo', diskNo: 1 }],
-  ['d-set-1', { id: 'd-set-1', gameId: 'g-set', diskNo: 1 }],
-  ['d-set-2', { id: 'd-set-2', gameId: 'g-set', diskNo: 2 }],
-]);
+const disks: DiskRef[] = [
+  { id: 'd-solo', gameId: 'g-solo', diskNo: 1, sha256: 'sha-solo' },
+  { id: 'd-set-1', gameId: 'g-set', diskNo: 1, sha256: 'sha-set-1' },
+  { id: 'd-set-2', gameId: 'g-set', diskNo: 2, sha256: 'sha-set-2' },
+];
 
 const row = (over: Partial<HoldDeviceRow>): HoldDeviceRow => ({
   id: 'dev-1', name: 'WifiFloppy1', lastSeenAt: fresh,
@@ -20,20 +20,29 @@ const row = (over: Partial<HoldDeviceRow>): HoldDeviceRow => ({
 describe('holdsByGame', () => {
   it('a converged board holds what it REPORTS, as mounted', () => {
     const h = holdsByGame([row({ desiredSha256: 'a', mountedSha256: 'a', desiredDiskId: 'd-solo', mountedDiskId: 'd-solo' })], disks, NOW);
-    expect(h['g-solo']).toEqual([expect.objectContaining({ diskId: 'd-solo', state: 'mounted', online: true })]);
+    expect(h['g-solo']).toEqual([expect.objectContaining({ diskId: 'd-solo', state: 'mounted', online: true, revertDiskId: null })]);
   });
 
-  it('a board with a request outstanding rings the disk ASKED for, as fetching, not the old one', () => {
+  it('a board with a request outstanding rings the disk ASKED for, and Cancel goes back to the one it holds', () => {
     const h = holdsByGame([row({
       desiredSha256: 'b', mountedSha256: 'a', desiredDiskId: 'd-set-2', mountedDiskId: 'd-solo',
     })], disks, NOW);
-    expect(h['g-set']).toEqual([expect.objectContaining({ diskNo: 2, state: 'fetching' })]);
+    expect(h['g-set']).toEqual([expect.objectContaining({ diskNo: 2, state: 'fetching', revertDiskId: 'd-solo' })]);
     expect(h['g-solo']).toBeUndefined();
   });
 
+  it('an offline board with a request outstanding is requested, not fetching', () => {
+    const h = holdsByGame([row({ desiredSha256: 'b', desiredDiskId: 'd-solo', lastSeenAt: old })], disks, NOW);
+    expect(h['g-solo']).toEqual([expect.objectContaining({ state: 'requested', online: false, revertDiskId: null })]);
+  });
+
+  it('matches on the digest when the disk id is null, as mount-choice does', () => {
+    const h = holdsByGame([row({ desiredSha256: 'sha-set-1', mountedSha256: 'sha-set-1' })], disks, NOW);
+    expect(h['g-set']).toEqual([expect.objectContaining({ diskId: 'd-set-1', state: 'mounted' })]);
+  });
+
   it('an eject in flight rings nothing', () => {
-    const h = holdsByGame([row({ desiredSha256: null, mountedSha256: 'a', mountedDiskId: 'd-solo' })], disks, NOW);
-    expect(h).toEqual({});
+    expect(holdsByGame([row({ desiredSha256: null, mountedSha256: 'a', mountedDiskId: 'd-solo' })], disks, NOW)).toEqual({});
   });
 
   it('an empty drive, or a disk not on this page, rings nothing', () => {
@@ -50,11 +59,18 @@ describe('holdsByGame', () => {
   });
 });
 
-describe('holdLabel', () => {
+describe('holdLabel and holdAction', () => {
+  const h: Hold = { deviceId: 'x', deviceName: 'WifiFloppy1', diskId: 'd', diskNo: 2, state: 'mounted', online: true, revertDiskId: null };
   it('says where, which disk of a set, and offline', () => {
-    const h = { deviceId: 'x', deviceName: 'WifiFloppy1', diskId: 'd', diskNo: 2, state: 'mounted' as const, online: true };
     expect(holdLabel(h, 1)).toBe('In WifiFloppy1');
     expect(holdLabel(h, 3)).toBe('In WifiFloppy1 — disk 2');
-    expect(holdLabel({ ...h, state: 'fetching', online: false }, 3)).toBe('Fetching to WifiFloppy1 — disk 2 (offline)');
+    expect(holdLabel({ ...h, online: false }, 1)).toBe('In WifiFloppy1 (offline)');
+    expect(holdLabel({ ...h, state: 'fetching' }, 3)).toBe('Fetching to WifiFloppy1 — disk 2');
+    expect(holdLabel({ ...h, state: 'requested', online: false }, 1)).toBe('Requested on WifiFloppy1 — not confirmed');
+  });
+  it('ejects a confirmed disk and cancels a request', () => {
+    expect(holdAction(h)).toBe('Eject');
+    expect(holdAction({ ...h, state: 'fetching' })).toBe('Cancel');
+    expect(holdAction({ ...h, state: 'requested' })).toBe('Cancel');
   });
 });

@@ -50,8 +50,10 @@ test('a card mounts its disk, rings dashed until the board confirms, then solid 
   // The board's own name, read back rather than assumed from the pairing call.
   const { name } = await deviceRow(deviceId);
   await expect(eject).toHaveAttribute('title', `In ${name} · Eject`);
-  // The ring is an outline outside the card: the cover keeps its size.
-  expect(await c.evaluate((el) => getComputedStyle(el).outlineStyle)).toBe('solid');
+  // The ring is its own element outside the card: solid once confirmed, and
+  // the card's own outline (the keyboard focus ring) is left alone.
+  expect(await c.getByTestId('drive-ring').evaluate((el) => getComputedStyle(el).borderTopStyle)).toBe('solid');
+  expect(await c.evaluate((el) => el.style.outline)).toBe('');
 
   await eject.click();
   await expect(page.getByText('Eject requested')).toBeVisible();
@@ -86,12 +88,44 @@ test('a disk set asks which disk, and the ring names it', async ({ page, request
     await expect(page.getByText('Mount requested')).toBeVisible();
     expect((await deviceRow(deviceId)).desiredDiskId).toBe(disk2);
     await expect(c).toHaveAttribute('data-drive', 'fetching');
-    // Never reported, so also offline -- which the label says rather than hides.
+    // Never reported, so offline: asked for, not confirmed -- the same words
+    // the title page uses (mount-choice.ts), never "In".
     const { name } = await deviceRow(deviceId);
     await expect(c.getByTestId(`card-eject-${gameId}`))
-      .toHaveAttribute('title', `Fetching to ${name} — disk 2 (offline) · Cancel`);
+      .toHaveAttribute('title', `Requested on ${name} — disk 2 — not confirmed · Cancel`);
   } finally {
     await getDb().update(devices).set({ desiredDiskId: null, desiredSha256: null }).where(eq(devices.id, deviceId));
     await getDb().delete(disks).where(eq(disks.id, disk2));
   }
 });
+
+test('Cancel on a swap keeps the disk the board holds, rather than emptying the drive', async ({ page, request }) => {
+  const u = await signUpFresh(page);
+  const run = runTag();
+  const held = await seedDisk(u.orgId, { title: `Held ${run}`, diskNo: 1, sha256: sha(`held-${run}`) });
+  const next = await seedDisk(u.orgId, { title: `Next ${run}`, diskNo: 1, sha256: sha(`next-${run}`) });
+  const { deviceId, token } = await pairDevice(page, request, `Bench ${run.slice(0, 6)}`);
+
+  // The board confirms `held`, then is asked for `next`.
+  expect((await page.request.post(`/api/devices/${deviceId}/mount`, { data: { diskId: held.diskId } })).status()).toBe(200);
+  const r = await deviceRow(deviceId);
+  expect((await request.post('/api/device/status', {
+    headers: authHeader(token), data: { mountedSha256: r.desiredSha256, mountedDiskId: held.diskId, version: r.desiredVersion },
+  })).status()).toBe(204);
+  expect((await page.request.post(`/api/devices/${deviceId}/mount`, { data: { diskId: next.diskId } })).status()).toBe(200);
+
+  await page.goto('/library');
+  const nextCard = card(page, `Next ${run}`);
+  await expect(nextCard).toHaveAttribute('data-drive', 'fetching');
+  await nextCard.getByTestId(`card-eject-${next.gameId}`).click();
+  await expect(page.getByText('Mount cancelled')).toBeVisible();
+
+  // The drive is asked for `held` again -- not emptied -- so the board is
+  // back in step with what it holds, and that card rings solid.
+  const after = await deviceRow(deviceId);
+  expect(after.desiredDiskId).toBe(held.diskId);
+  expect(after.mountedDiskId).toBe(held.diskId);
+  await expect(card(page, `Held ${run}`)).toHaveAttribute('data-drive', 'mounted');
+  await expect(nextCard).not.toHaveAttribute('data-drive', /.+/);
+});
+

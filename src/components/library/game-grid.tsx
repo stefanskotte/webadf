@@ -10,7 +10,7 @@ import { CSS } from '@dnd-kit/utilities';
 import { History, Minus } from 'lucide-react';
 import { DeleteDiskDialog } from '@/components/library/delete-disk-dialog';
 import { FobButton, type FobContext } from '@/components/nfc/fob-button';
-import { CardMountButton, driveRingStyle, type DriveContext } from './card-mount-button';
+import { CardMountButton, DriveRing, type DriveContext } from './card-mount-button';
 import { holdLabel } from '@/lib/drive-holds';
 import { fromQuery } from '@/lib/trail';
 import { ejectMessage, isMountedReason, mountedReason } from '@/lib/mount-wording';
@@ -118,7 +118,7 @@ function dragStyle(translate: string | undefined, isDragging: boolean) {
 function driveState(drives: DriveContext, gameId: string): 'mounted' | 'fetching' | undefined {
   const holds = drives?.holds[gameId];
   if (!holds || holds.length === 0) return undefined;
-  return holds.some((h) => h.state === 'mounted') ? 'mounted' : 'fetching';
+  return holds.some((h) => h.state === 'mounted') ? 'mounted' : 'fetching'; // requested reads as fetching: dashed
 }
 
 /** SET_DROP_RETURN_MS (collection-provider.tsx) is the one place this duration lives. */
@@ -455,7 +455,7 @@ function DraggableCard({ game: g, fob, drives, pendingHide }: {
   // of a drag (an inline ref callback is a new function each time).
   const setNodeRef = useCallback((el: HTMLElement | null) => { setDragRef(el); setDropRef(el); }, [setDragRef, setDropRef]);
   const attributes = { ...dragAttributes, role: undefined };
-  const style = { ...driveRingStyle(drives?.holds[g.id]), ...dragStyle(CSS.Translate.toString(transform), isDragging), ...pendingHideStyle(pendingHide) };
+  const style = { ...dragStyle(CSS.Translate.toString(transform), isDragging), ...pendingHideStyle(pendingHide) };
   const hinting = isOver && active !== null && active.id !== g.id
     && (active.data.current as { type?: string } | undefined)?.type === 'game';
 
@@ -479,6 +479,7 @@ function DraggableCard({ game: g, fob, drives, pendingHide }: {
       {...listeners}
     >
       <CardBody game={g} fob={fob} drives={drives} />
+      <DriveRing holds={drives?.holds[g.id]} />
       {hinting && <SetDropHint />}
     </Link>
   );
@@ -508,7 +509,7 @@ function SortableCard({ game: g, collectionId, fob, drives, armed, pendingHide }
   // fading back) for this card, its own opacity/visibility and transition
   // replace the reorder glide above -- there is no reorder to glide through
   // on a card-on-card drop, and this card must not visibly move at all.
-  const style = { ...driveRingStyle(drives?.holds[g.id]), ...dragStyle(CSS.Translate.toString(transform), isDragging), transition, ...pendingHideStyle(pendingHide) };
+  const style = { ...dragStyle(CSS.Translate.toString(transform), isDragging), transition, ...pendingHideStyle(pendingHide) };
 
   return (
     <Link
@@ -529,6 +530,7 @@ function SortableCard({ game: g, collectionId, fob, drives, armed, pendingHide }
       {...listeners}
     >
       <CardBody game={g} collectionId={collectionId} fob={fob} drives={drives} />
+      <DriveRing holds={drives?.holds[g.id]} />
       {armed && <SetDropHint />}
     </Link>
   );
