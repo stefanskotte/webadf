@@ -8,7 +8,10 @@ vi.mock('@/lib/device-auth', () => ({
   deviceAuthResponse: () => null,
 }));
 
-type RecordStatusArg = { preload?: { sha256: string; state: 'loading' | 'ready' } | null };
+type RecordStatusArg = {
+  preload?: { sha256: string; state: 'loading' | 'ready' } | null;
+  displayLayouts?: boolean; displayVersion?: number; displayError?: string | null;
+};
 const recordStatus = vi.fn<(deviceId: string, s: RecordStatusArg) => Promise<void>>(
   async () => undefined,
 );
@@ -51,5 +54,36 @@ describe('POST /api/device/status -- preload', () => {
     expect(res.status).toBe(204);
     expect(recordStatus).toHaveBeenCalledTimes(1);
     expect(recordStatus.mock.calls[0]![1].preload).toBeUndefined();
+  });
+});
+
+// OLED layouts spec §7: capability, the board's ack, and its rejection reason.
+describe('POST /api/device/status -- display', () => {
+  it('passes displayLayouts, displayVersion and displayError through', async () => {
+    const { POST } = await import('./route');
+    const res = await POST(post({
+      mountedSha256: null, displayLayouts: true, displayVersion: 4, displayError: 'title: w below 12',
+    }));
+    expect(res.status).toBe(204);
+    const s = recordStatus.mock.calls[0]![1];
+    expect(s).toMatchObject({ displayLayouts: true, displayVersion: 4, displayError: 'title: w below 12' });
+  });
+
+  it('passes displayError: null (applied) through as null', async () => {
+    const { POST } = await import('./route');
+    await POST(post({ mountedSha256: null, displayLayouts: true, displayVersion: 4, displayError: null }));
+    expect(recordStatus.mock.calls[0]![1].displayError).toBeNull();
+  });
+
+  it('drops malformed display telemetry -- never a 400', async () => {
+    const { POST } = await import('./route');
+    const res = await POST(post({
+      mountedSha256: null, displayLayouts: 'yes', displayVersion: 4294967295, displayError: 'x'.repeat(81),
+    }));
+    expect(res.status).toBe(204);
+    const s = recordStatus.mock.calls[0]![1];
+    expect(s.displayLayouts).toBeUndefined();
+    expect(s.displayVersion).toBeUndefined();
+    expect(s.displayError).toBeUndefined();
   });
 });

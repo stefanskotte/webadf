@@ -40,9 +40,30 @@ interface Exports {
   validate(len: number): number; render(panel: number, len: number): number; default_blob(panel: number): number;
 }
 
-/** Browser: fetches /display.wasm. Node/tests: pass the module's bytes. */
-export async function loadDisplayWasm(bytes?: ArrayBuffer): Promise<DisplayWasm> {
-  const buf = bytes ?? (await (await fetch('/display.wasm')).arrayBuffer());
+const WHY_CAP = 80; // g_why[80] in display_wasm.c
+
+// The browser's one instance per page. A failed load is not kept, so a later
+// caller (a remount, a retry) fetches again instead of inheriting the error.
+let browserLoad: Promise<DisplayWasm> | null = null;
+
+/**
+ * Browser: fetches /display.wasm, once per page (memoised). Node/tests: pass
+ * the module's bytes -- that path is deliberately NOT cached, so each test
+ * gets a fresh instance.
+ */
+export function loadDisplayWasm(bytes?: ArrayBuffer): Promise<DisplayWasm> {
+  if (bytes) return instantiate(bytes);
+  browserLoad ??= fetch('/display.wasm')
+    .then((res) => {
+      if (!res.ok) throw new Error(`could not load /display.wasm: HTTP ${res.status}`);
+      return res.arrayBuffer();
+    })
+    .then(instantiate)
+    .catch((e: unknown) => { browserLoad = null; throw e; });
+  return browserLoad;
+}
+
+async function instantiate(buf: ArrayBuffer): Promise<DisplayWasm> {
   const { instance } = await WebAssembly.instantiate(buf, {
     wasi_snapshot_preview1: new Proxy({}, { get: () => () => 0 }),
   });
@@ -62,6 +83,12 @@ export async function loadDisplayWasm(bytes?: ArrayBuffer): Promise<DisplayWasm>
     mem().set(blob.subarray(0, 132), x.blob_ptr());
     return blob.length;
   };
+  // The validator's NUL-terminated reason, read no further than its buffer.
+  const why = (): string => {
+    const m = mem(); const p = x.why_ptr();
+    let e = p; while (e < p + WHY_CAP && m[e] !== 0) e++;
+    return new TextDecoder().decode(m.subarray(p, e));
+  };
   const putStr = (at: number, cap: number, s: string) => {
     const enc = new TextEncoder().encode(s).subarray(0, cap - 1);
     const m = mem();
@@ -74,9 +101,7 @@ export async function loadDisplayWasm(bytes?: ArrayBuffer): Promise<DisplayWasm>
       if (blob.length > 132) return 'blob too long';
       const len = setBlob(blob);
       if (x.validate(len)) return null;
-      const m = mem(); const p = x.why_ptr();
-      let e = p; while (m[e] !== 0) e++;
-      return new TextDecoder().decode(m.subarray(p, e));
+      return why();
     },
     render(state, panel, blob) {
       const base = x.state_ptr();
@@ -95,9 +120,7 @@ export async function loadDisplayWasm(bytes?: ArrayBuffer): Promise<DisplayWasm>
       if (blob && blob.length > 132) throw new Error('layout blob too long');
       const len = setBlob(blob);
       if (!x.render(panel, len)) {
-        const m = mem(); const p = x.why_ptr();
-        let e = p; while (m[e] !== 0) e++;
-        throw new Error(`invalid layout: ${new TextDecoder().decode(m.subarray(p, e))}`);
+        throw new Error(`invalid layout: ${why()}`);
       }
       return mem().slice(x.fb_ptr(), x.fb_ptr() + FB_SIZE);
     },

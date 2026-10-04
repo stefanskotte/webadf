@@ -24,6 +24,7 @@ const loaded: LiveStateRow = {
   desiredGameTitle: 'Turrican',
   macAddress: 'AA:BB:CC:DD:EE:FF',
   trackMaxBytes: null, playsHd: false, preloadSha256: null, preloadState: null, next: null,
+  displayVersion: 0, displayAppliedVersion: null, displayError: null, displayLayouts: null, displayPanel: '128x32',
 };
 
 const empty: LiveStateRow = {

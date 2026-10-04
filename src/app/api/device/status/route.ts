@@ -54,6 +54,14 @@ const statusBody = z.object({
   // Multi-disk spec §3.5: what the idle slot holds. Telemetry -- dropped, never rejected.
   preload: z.object({ sha256: z.string().regex(SHA256_RE), state: z.enum(['loading', 'ready']) })
     .nullable().optional().catch(undefined),
+  // OLED layouts spec §7. All telemetry: dropped, never rejected. displayLayouts
+  // absent alongside a firmwareVersion reads as "no" (recordStatus, the playsHd
+  // rule). displayVersion is the board's displayAck (the highest version it
+  // has handled, applied OR rejected) and is capped at the int4 column's
+  // range, so a wild u32 is dropped instead of failing the whole UPDATE.
+  displayLayouts: z.boolean().optional().catch(undefined),
+  displayVersion: z.number().int().min(0).max(2_147_483_647).optional().catch(undefined),
+  displayError: z.string().max(80).nullable().optional().catch(undefined),
   error: z.string().max(500).nullable().optional(),
   psramFree: z.number().int().nonnegative().nullable().optional(),
   // Real WiFi RSSI ranges roughly -100..0 dBm, but a marginal link can report
@@ -123,6 +131,9 @@ export async function POST(request: Request) {
     playsHd: parsed.data.playsHd,
     nfcReader: parsed.data.nfcReader,
     preload: parsed.data.preload,
+    displayLayouts: parsed.data.displayLayouts,
+    displayVersion: parsed.data.displayVersion,
+    displayError: parsed.data.displayError,
   });
 
   return new Response(null, { status: 204, headers: { 'cache-control': 'no-store' } });

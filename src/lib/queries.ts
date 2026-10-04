@@ -338,6 +338,18 @@ export interface DeviceListItem {
   playsHd: boolean;
   preloadSha256: string | null;
   preloadState: string | null;
+  // OLED layouts spec §7: what the Display editor needs.
+  displayPanel: '128x32' | '128x64';
+  /** The server's display cursor, raised by every save or reset. */
+  displayVersion: number;
+  /** The board's ack (applied OR rejected); null = never reported. */
+  displayAppliedVersion: number | null;
+  /** Why the board rejected displayAppliedVersion; null = applied. */
+  displayError: string | null;
+  /** The capability; false also for a board that never said (null in the row). */
+  displayLayouts: boolean;
+  /** The stored layout blob, base64; null = the panel's default. */
+  displayLayout: string | null;
 }
 
 /**
@@ -362,7 +374,7 @@ export async function listDevices(orgId: string): Promise<DeviceListItem[]> {
   // the bytes, not a specific disks row, and two rows can share one sha).
   const mountedDisk = alias(disks, 'mounted_disk');
 
-  return getDb()
+  const rows = await getDb()
     .select({
       id: devices.id, name: devices.name,
       firmwareVersion: devices.firmwareVersion, macAddress: devices.macAddress,
@@ -386,6 +398,12 @@ export async function listDevices(orgId: string): Promise<DeviceListItem[]> {
       mountedWriteProtected: mountedDisk.writeProtected,
       trackMaxBytes: devices.trackMaxBytes, playsHd: devices.playsHd,
       preloadSha256: devices.preloadSha256, preloadState: devices.preloadState,
+      displayPanel: devices.displayPanel,
+      displayVersion: devices.displayVersion,
+      displayAppliedVersion: devices.displayAppliedVersion,
+      displayError: devices.displayError,
+      displayLayouts: devices.displayLayouts,
+      displayLayout: devices.displayLayout,
     })
     .from(devices)
     // Every join here is org-scoped in the ON clause itself, not just
@@ -397,6 +415,16 @@ export async function listDevices(orgId: string): Promise<DeviceListItem[]> {
     .leftJoin(mountedDisk, and(eq(mountedDisk.id, devices.mountedDiskId), eq(mountedDisk.orgId, orgId)))
     .where(orgFilter(devices, orgId))
     .orderBy(devices.name);
+  // The layout crosses to the client component as base64 (a Uint8Array does
+  // not survive the server -> client props boundary as bytes).
+  return rows.map((r) => ({
+    ...r,
+    displayPanel: r.displayPanel === '128x64' ? '128x64' : '128x32',
+    displayLayouts: r.displayLayouts === true,
+    displayLayout: r.displayLayout && r.displayLayout.length > 0
+      ? Buffer.from(r.displayLayout).toString('base64')
+      : null,
+  }));
 }
 
 export interface GameDetailDisk {

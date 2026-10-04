@@ -70,6 +70,23 @@ export async function GET(request: Request) {
       ? Number(nfcAckRaw)
       : 0;
 
+  // displayAck is the board's display-layout cursor (OLED layouts, 1.7.0):
+  // the highest display version it has HANDLED -- applied OR rejected.
+  // Parsed exactly like nfcAck and for the same reasons: ABSENT means a board
+  // before 1.7.0 that can never acknowledge, so it is never woken for display
+  // (null); a garbled value falls back to 0, never to "caught up".
+  //
+  // A layout the board REJECTS cannot loop: the board still advances its ack
+  // to that version (and reports the reason as displayError), so
+  // display_version > displayAck is false on its next poll. The wake is
+  // edge-triggered on the cursor, never on "the board has not applied it".
+  const displayAckRaw = new URL(request.url).searchParams.get('displayAck');
+  const displayAck = displayAckRaw === null
+    ? null
+    : /^\d+$/.test(displayAckRaw) && Number.isSafeInteger(Number(displayAckRaw))
+      ? Number(displayAckRaw)
+      : 0;
+
   const deadline = Date.now() + HOLD_MS;
   for (;;) {
     // Cheap single-column read per tick. The three-table join runs only when
@@ -103,6 +120,10 @@ export async function GET(request: Request) {
     // hold would release every second forever on a request the board can
     // never acknowledge.
     const nfcMoved = nfcAck !== null && tick.nfcWriteSeq > nfcAck;
+    // Same cursor comparison, off the same row read. The board fetches the
+    // layout itself (GET /api/device/display) when it sees displayVersion
+    // ahead of its ack; the poll body only announces the number.
+    const displayMoved = displayAck !== null && tick.displayVersion > displayAck;
 
     const clampedFrom = Math.min(from, version);
     // A firmware instruction the device has not acknowledged releases the
@@ -114,7 +135,7 @@ export async function GET(request: Request) {
     // device echoes it back as mountedVersion and the server reads that for an
     // upload's not_mounted/behind verdict (HANDOFF 4g), so bumping it could
     // strand an Amiga write that was mid-session. See spec 4.2.
-    if (version > clampedFrom || clampedFrom !== from || firmwareMoved || nfcMoved) {
+    if (version > clampedFrom || clampedFrom !== from || firmwareMoved || nfcMoved || displayMoved) {
       const state = await readDesired(device.deviceId);
       if (!state) return notFound();
       // Multi-disk spec §3.3 / plan R1: the disk the board should preload.
@@ -166,6 +187,13 @@ export async function GET(request: Request) {
           desired: state.desired,
           ...(next !== undefined ? { next } : {}),
           instructionVersion: tick.instructionVersion,
+          // On EVERY body answering a poll that sent displayAck, not only one
+          // woken by the display: the board reads a displayVersion BELOW its
+          // ack as a server-side reset (a re-paired board carrying the old
+          // row's ack) and starts over at 0 -- which it can only do if the
+          // number reaches it on whatever wakes it next. Absent for a board
+          // that sent no displayAck (before 1.7.0).
+          ...(displayAck !== null ? { displayVersion: tick.displayVersion } : {}),
           ...(nfc
             ? {
                 nfcWrite: {

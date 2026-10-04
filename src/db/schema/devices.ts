@@ -1,4 +1,17 @@
-import { pgTable, text, timestamp, index, integer, boolean } from 'drizzle-orm/pg-core';
+import { pgTable, text, timestamp, index, integer, boolean, customType } from 'drizzle-orm/pg-core';
+
+// bytea, used by devices.display_layout (a <=132-byte layout blob) and by
+// disk-history's staged track bytes. Kept here because disk-history already
+// imports this module (it references devices).
+export const bytea = customType<{ data: Uint8Array; driverData: Buffer | string }>({
+  dataType() { return 'bytea'; },
+  toDriver(v) { return Buffer.from(v.buffer, v.byteOffset, v.byteLength); },
+  fromDriver(v) {
+    // neon-http returns bytea as a '\x..' hex string; the pg driver as a Buffer.
+    if (typeof v === 'string') return Uint8Array.from(Buffer.from(v.slice(2), 'hex'));
+    return new Uint8Array(v);
+  },
+});
 
 export const invites = pgTable('invites', {
   code: text('code').primaryKey(),          // normalized, uppercase
@@ -122,6 +135,25 @@ export const devices = pgTable('devices', {
   // old to report -- the UI then says nothing rather than guessing.
   preloadSha256: text('preload_sha256'),
   preloadState: text('preload_state'),
+
+  // --- OLED display layouts (spec 2026-10-04-oled-layouts §7) ---
+
+  /** '128x32' | '128x64': the panel the user says this board has. */
+  displayPanel: text('display_panel').notNull().default('128x32'),
+  /** The layout blob (spec §5), validated by the board's own C validator; null = the panel's default. */
+  displayLayout: bytea('display_layout'),
+  /**
+   * Cursor, bumped on every save or reset. The board echoes the highest
+   * version it has HANDLED (applied or rejected) as ?displayAck=, and the poll
+   * wakes while displayVersion > displayAck -- so a rejected layout cannot loop.
+   */
+  displayVersion: integer('display_version').notNull().default(0),
+  /** The board's displayAck as it last reported in a status; null = never reported. */
+  displayAppliedVersion: integer('display_applied_version'),
+  /** Why the board rejected the layout at displayAppliedVersion; null = applied. */
+  displayError: text('display_error'),
+  /** The capability, as the board reports; null = never said, false = firmware before 1.7.0. */
+  displayLayouts: boolean('display_layouts'),
 
   /**
    * 'queued' | 'downloading' | 'applying' | 'failed', as the device reports.

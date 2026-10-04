@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi, afterEach } from 'vitest';
 import { readFile } from 'node:fs/promises';
 import { loadDisplayWasm, STATE_SIZE } from './display-wasm';
 
@@ -40,5 +40,46 @@ describe('display wasm', () => {
     const c = await readFile('wifi-floppy/firmware/test/fixtures/layouts/custom64.bin');
     expect(w.validate(new Uint8Array(c))).toBeNull();
     expect(w.render(st, 1, new Uint8Array(c)).length).toBe(1024);
+  });
+});
+
+// The browser path (no bytes): fetches /display.wasm, once per page.
+describe('display wasm in the browser', () => {
+  afterEach(() => { vi.unstubAllGlobals(); vi.resetModules(); });
+
+  it('throws a message naming /display.wasm when the fetch is not ok', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => new Response('nope', { status: 404 })));
+    const { loadDisplayWasm: load } = await import('./display-wasm');
+    await expect(load()).rejects.toThrow(/\/display\.wasm.*404/);
+  });
+
+  it('memoises the no-argument load: one fetch for two callers', async () => {
+    const bytes = await wasmBytes();
+    const fetchMock = vi.fn(async () => new Response(bytes.slice(0), { status: 200 }));
+    vi.stubGlobal('fetch', fetchMock);
+    const { loadDisplayWasm: load } = await import('./display-wasm');
+    const [a, b] = await Promise.all([load(), load()]);
+    expect(a).toBe(b);
+    expect(await load()).toBe(a);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not memoise a failed load: the next call fetches again', async () => {
+    const bytes = await wasmBytes();
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(new Response('x', { status: 503 }))
+      .mockResolvedValueOnce(new Response(bytes.slice(0), { status: 200 }));
+    vi.stubGlobal('fetch', fetchMock);
+    const { loadDisplayWasm: load } = await import('./display-wasm');
+    await expect(load()).rejects.toThrow();
+    await expect(load()).resolves.toBeDefined();
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it('keeps the bytes path uncached (tests get a fresh instance each call)', async () => {
+    const { loadDisplayWasm: load } = await import('./display-wasm');
+    const a = await load(await wasmBytes());
+    const b = await load(await wasmBytes());
+    expect(a).not.toBe(b);
   });
 });
