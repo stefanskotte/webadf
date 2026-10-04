@@ -567,7 +567,7 @@ static dc_fetch_result_t dc_fetch_into(device_client_t *c, const char *sha256, i
         // dc_exchange_i has abandoned the connection (the rest of the body is
         // still owed on it). `target` holds a partial image: never published,
         // and the caller's record was dropped before the transfer began.
-        wf_logf(WF_INFO, "fetch: %.12s interrupted after %ld bytes -- a tap is waiting",
+        wf_logf(WF_INFO, "fetch: %.12s interrupted after %ld bytes -- a tap or a write is waiting",
                 sha256, g_img_got);
         return DC_FETCH_INTERRUPTED;
     }
@@ -1407,7 +1407,7 @@ dc_state_t dc_step(device_client_t *c) {
 
     if (interrupted) {
         // The caller wanted core1 back (a tag was tapped -- spec 2026-09-25
-        // §4.2). Nothing failed, so no backoff: a backoff here would delay
+        // §4.2 -- or a write landed, HANDOFF 3av). Nothing failed, so no backoff: a backoff here would delay
         // the very poll that picks up the tap's new disk. dc_exchange_i has
         // abandoned the connection; state, since and backoff_ms are exactly
         // as they were on entry -- so the return value below may well be

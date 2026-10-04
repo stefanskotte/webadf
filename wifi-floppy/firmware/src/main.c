@@ -1591,6 +1591,12 @@ static void core1_main(void) {
         uint32_t last_status_ms = clock_ms();
 
         while (true) {
+            // The write cursor's mark for this pass (poll_wake.h), taken FIRST,
+            // before any up_has_work() below: a write landing after it is then
+            // either seen as work by those checks or cuts this pass's poll
+            // short. Taken later -- just before dc_step -- a write landing
+            // between a "no work" answer and the mark would wait out the poll.
+            const uint32_t pass_write_mark = g_write_last_ms;
             // Tap-to-mount, first: a tap that cut the last poll short goes out
             // now, ahead of anything else this pass sends. Between requests,
             // never inside one -- the uploader's included (dc_tap's rule).
@@ -1676,16 +1682,17 @@ static void core1_main(void) {
                 // fwu_step's APPLYING does not look at `idle` again.
                 s = c.state;
             } else {
-                // The write cursor's mark for this poll (poll_wake.h): a write
-                // applied from here on cuts the poll short.
-                g_poll_write_mark = g_write_last_ms;
+                // This pass's write mark (taken at the top): a write applied
+                // since then cuts the poll short.
+                g_poll_write_mark = pass_write_mark;
                 s = dc_step(&c);
                 polled = true;
             }
-            // Task 10's contract: a poll cut short by a waiting tap decided
-            // NOTHING, and `s` is not a result -- DC_BACKOFF included, whose
-            // sleep would hold the tap up to 60 s. No state handling at all:
-            // round to the top, send the tap, poll again.
+            // Task 10's contract: a poll cut short by a waiting tap -- or a
+            // write that landed during it (HANDOFF 3av) -- decided NOTHING,
+            // and `s` is not a result -- DC_BACKOFF included, whose sleep
+            // would hold the tap up to 60 s. No state handling at all: round
+            // to the top, send the tap or upload the write, poll again.
             if (polled && c.poll_interrupted) continue;
             // The poll asked for a disk change the hold refused (swap_holds):
             // `since` did not advance, so the next poll would be answered at
