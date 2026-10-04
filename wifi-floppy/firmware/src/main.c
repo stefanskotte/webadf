@@ -2159,6 +2159,18 @@ int main(void) {
     wf_log_init();
     wf_logf(WF_INFO, "wifi-floppy boot: %s", PICO_BOARD);
 
+    {
+        char why[96];
+        if (!board_check(g_board, why, sizeof why)) {
+            // A code error, not a field condition: the table in board.c is
+            // wrong. Stop before driving a single pad; the OTA trial (if this
+            // is one) reverts after FW_TRIAL_DEADLINE_MS with no heartbeat.
+            wf_logf(WF_ERR, "board: %s fails its check: %s", g_board->name, why);
+            while (1) tight_loop_contents();
+        }
+        wf_logf(WF_INFO, "board: %s", g_board->name);
+    }
+
     // inputs. PIN_WDATA belongs here too even though only PIO reads it: an
     // RP2350 pad stays isolated from reset until gpio_set_function() clears
     // ISO, and until then PIO reads it as 0 whatever the pin carries. Left

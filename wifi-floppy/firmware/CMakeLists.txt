@@ -64,7 +64,7 @@ add_executable(wifi_floppy
   src/activity_led.c src/i2c_probe.c src/ssd1306.c src/display.c src/nfc_tag.c
   src/nfc_reader.c src/nfc_bus_i2c.c src/nfc_handoff.c src/nfc_ui.c
   src/flux_capture.c src/flux_bits.c
-  src/bus_gate.c src/bus_out.c
+  src/board.c src/bus_gate.c src/bus_out.c
   src/sha256.c
   src/fw_stage.c
   src/uploader.c

@@ -3,6 +3,7 @@
 #include "wf_log.h"
 #include "pico/stdlib.h"
 #include "hardware/i2c.h"
+#include "board_hw.h"
 
 /**
  * A SELF-TEST for an SSD1306 panel, not a display driver.
@@ -53,7 +54,7 @@ static bool cmd(uint8_t addr, const uint8_t *bytes, size_t n) {
   if (n + 1 > sizeof buf) return false;
   buf[0] = 0x00;
   for (size_t i = 0; i < n; i++) buf[i + 1] = bytes[i];
-  return i2c_write_timeout_us(i2c1, addr, buf, n + 1, false, I2C_TIMEOUT_US) >= 0;
+  return i2c_write_timeout_us(board_i2c(), addr, buf, n + 1, false, I2C_TIMEOUT_US) >= 0;
 }
 
 bool ssd1306_init(uint8_t addr) {
@@ -100,7 +101,7 @@ bool ssd1306_init(uint8_t addr) {
    * core0's service loop is blocked per update. At 100 kHz every display
    * write would cost four times as much of that loop, for no gain.
    */
-  i2c_set_baudrate(i2c1, 400000);
+  i2c_set_baudrate(board_i2c(), 400000);
 
   if (!ssd1306_clear(addr)) return false;
   return true;
@@ -124,7 +125,7 @@ bool ssd1306_blit(uint8_t addr, int page, int col, const uint8_t *bytes, int n) 
   uint8_t buf[1 + WIDTH];
   buf[0] = 0x40;                          /* "data follows" */
   for (int i = 0; i < n; i++) buf[1 + i] = bytes[i];
-  return i2c_write_timeout_us(i2c1, addr, buf, (size_t)n + 1, false,
+  return i2c_write_timeout_us(board_i2c(), addr, buf, (size_t)n + 1, false,
                               I2C_TIMEOUT_US * 4) >= 0;
 }
 
