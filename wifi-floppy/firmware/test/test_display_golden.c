@@ -1,6 +1,7 @@
 // wifi-floppy/firmware/test/test_display_golden.c
 #include "harness.h"
 #include "../src/display.h"
+#include "../src/display_layout.h"
 #include <stdlib.h>
 #include <string.h>
 
@@ -57,7 +58,10 @@ static void path_for(char *out, size_t n, const char *name) {
 }
 
 static void render_golden(display_state_t s, uint8_t fb[FB_BYTES]) {
-    display_render(&s, fb);
+    uint8_t full[DISP_FB_MAX];
+    display_render(&s, display_layout_for(&s, layout_default(PANEL_128x32)), full);
+    memcpy(fb, full, FB_BYTES);          // a 32-row panel uses pages 0..3
+    for (int i = FB_BYTES; i < DISP_FB_MAX; i++) CHECK(full[i] == 0, "nothing below row 32");
 }
 
 static void every_golden_state_matches(void) {
@@ -86,7 +90,56 @@ static void every_golden_state_matches(void) {
     }
 }
 
+static int lit(const uint8_t *fb, int x0, int y0, int x1, int y1) {
+    int n = 0;
+    for (int y = y0; y < y1; y++) for (int x = x0; x < x1; x++)
+        if (fb[(y / 8) * DISP_W + x] & (1u << (y % 8))) n++;
+    return n;
+}
+
+static void test_track_wins_overlap_with_download(void) {
+    // Review Focus 1, in a CUSTOM layout: download and track overlapping.
+    layout_t l = *layout_default(PANEL_128x32);
+    display_state_t s; memset(&s, 0, sizeof s);
+    s.status = DS_DOWNLOAD; s.pct = 50; s.show_track = true; s.cyl = 12; s.max_cyl = 79; s.bars = 3;
+    uint8_t fb[DISP_FB_MAX]; display_render(&s, &l, fb);
+    // "50%" would start at 128-23 = 105; "12/79" starts at 128-29 = 99. Only the counter's pixels.
+    uint8_t only_track[DISP_FB_MAX]; display_state_t t = s; t.status = DS_LOADED;
+    display_render(&t, &l, only_track);
+    CHECK(memcmp(fb + 3 * DISP_W + 98, only_track + 3 * DISP_W + 98, 30) == 0, "row 3 right side = counter only");
+}
+
+static void test_2x_doubles_pixels(void) {
+    layout_t one = { PANEL_128x64, 1, { { EL_WIFI, 1, 1, 0, 0, 0, 0 } } };
+    layout_t two = { PANEL_128x64, 1, { { EL_WIFI, 1, 2, 0, 0, 0, 0 } } };
+    display_state_t s; memset(&s, 0, sizeof s); s.status = DS_READY; s.bars = 3;
+    uint8_t a[DISP_FB_MAX], b[DISP_FB_MAX];
+    display_render(&s, &one, a); display_render(&s, &two, b);
+    CHECK_EQ_INT(lit(b, 0, 0, 22, 16), 4 * lit(a, 0, 0, 11, 8));
+}
+
+static void test_built_in_states_ignore_a_custom_layout(void) {
+    layout_t l = { PANEL_128x32, 0, {{0}} };           // blank custom layout
+    display_state_t s; memset(&s, 0, sizeof s); s.status = DS_PORTAL; strcpy(s.title, "wifi-floppy-6A38");
+    uint8_t fb[DISP_FB_MAX];
+    display_render(&s, display_layout_for(&s, &l), fb);
+    CHECK(lit(fb, 0, 8, 128, 16) > 0, "the portal SSID still shows");
+    s.status = DS_LOADED; display_render(&s, display_layout_for(&s, &l), fb);
+    CHECK_EQ_INT(lit(fb, 0, 0, 128, 32), 0);   // running state: the blank layout really is blank
+}
+
+static void test_128x64_default_draws_below_row_32(void) {
+    display_state_t s; memset(&s, 0, sizeof s);
+    s.status = DS_LOADED; strcpy(s.title, "Turrican"); s.show_track = true; s.cyl = 9; s.max_cyl = 79;
+    uint8_t fb[DISP_FB_MAX]; display_render(&s, layout_default(PANEL_128x64), fb);
+    CHECK(lit(fb, 0, 32, 128, 64) > 0, "lower half used");
+}
+
 int main(void) {
     RUN(every_golden_state_matches);
+    RUN(test_track_wins_overlap_with_download);
+    RUN(test_2x_doubles_pixels);
+    RUN(test_built_in_states_ignore_a_custom_layout);
+    RUN(test_128x64_default_draws_below_row_32);
     return REPORT();
 }
