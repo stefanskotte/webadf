@@ -123,7 +123,7 @@ static uint8_t    g_panel_addr;          // 0 == no panel answered at boot
 
 static bool panel_blit(void *ctx, int page, int col, const uint8_t *b, int n) {
     (void)ctx;
-    return ssd1306_blit(g_panel_addr, page, col, b, n);
+    return ssd1306_blit(g_panel_addr, g_disp.panel, page, col, b, n);
 }
 
 // The published half: written by core1, read by core0. `g_ui_seq` is odd
@@ -2239,13 +2239,13 @@ int main(void) {
         // Only when a panel actually answered: a missing display must cost
         // nothing, and must certainly not put bounded-but-real bus writes in
         // front of a board that is trying to boot.
-        if (panel != 0 && ssd1306_selftest(panel)) {
+        if (panel != 0 && ssd1306_selftest(panel, PANEL_128x32)) {
             // The self-test leaves the frame-and-X on the glass. Clear it, or
             // the pump's first update would show the test pattern through
             // every byte the new frame happens to leave blank -- display.c's
             // shadow starts all-zero and only sends what DIFFERS, which is
             // the whole reason a track step costs a few bytes and not a frame.
-            ssd1306_clear(panel);
+            ssd1306_clear(panel, PANEL_128x32);
             g_panel_addr = panel;
             display_init(&g_disp, panel_blit, NULL);
             ui_publish(DS_BOOT, "wifi-floppy", "starting", -1);

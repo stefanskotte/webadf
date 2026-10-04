@@ -425,6 +425,52 @@ static void dump_all(void) {
     dump("online, idle", &r);
 }
 
+static void test_panel_change_resends_every_page(void) {
+    begin();
+    display_t d; display_init(&d, fake_blit, NULL);
+    display_state_t s = base_state(); strcpy(s.title, "x");
+    display_set(&d, &s);
+    while (display_pump(&d, 4096) > 0) {}
+    CHECK(display_in_sync(&d), "settled at 128x32");
+
+    display_set_panel(&d, PANEL_128x64);
+    CHECK(d.layout == layout_default(PANEL_128x64), "set_panel resets the layout to the panel's default");
+    CHECK(!display_in_sync(&d), "a panel change is out of sync until resent");
+    display_set(&d, &s);
+    // A lit page: all 0xFF. A sentinel-shadow resend would skip it.
+    memset(&d.fb[6 * DISP_W], 0xFF, DISP_W);
+    n_blits = 0; bool page_sent[8] = { false }; int page6_bytes = 0;
+    while (display_pump(&d, 4096) > 0) {
+        for (int i = 0; i < n_blits && i < MAX_BLITS; i++) {
+            page_sent[blits[i].page] = true;
+            if (blits[i].page == 6) page6_bytes += blits[i].n;
+        }
+        n_blits = 0;
+    }
+    for (int p = 0; p < 8; p++) CHECK(page_sent[p], "every page of the 64-row panel is sent");
+    CHECK(page6_bytes == DISP_W, "an all-0xFF page is still sent in full after a panel change");
+    CHECK(display_in_sync(&d), "in sync after the resend");
+
+    display_set_panel(&d, PANEL_128x32);
+    display_set(&d, &s);
+    n_blits = 0; int total = 0;
+    while (display_pump(&d, 64) > 0) {
+        for (int i = 0; i < n_blits && i < MAX_BLITS; i++) { CHECK(blits[i].page < 4, "never past page 3 on 128x32"); total += blits[i].n; }
+        n_blits = 0;
+    }
+    CHECK(total == 4 * DISP_W, "every byte of the 4 pages resent under a small budget");
+}
+
+static void test_set_layout_refuses_a_foreign_panel(void) {
+    begin();
+    display_t d; display_init(&d, fake_blit, NULL);
+    CHECK(!display_set_layout(&d, layout_default(PANEL_128x64)), "64-row layout refused on a 32-row pump");
+    CHECK(d.layout == layout_default(PANEL_128x32), "layout unchanged after a refusal");
+    display_set_panel(&d, PANEL_128x64);
+    CHECK(display_set_layout(&d, layout_default(PANEL_128x64)), "matching layout accepted");
+    CHECK(!display_set_layout(&d, layout_default(PANEL_128x32)), "32-row layout refused on a 64-row pump");
+}
+
 int main(int argc, char **argv) {
     if (argc > 1 && strcmp(argv[1], "--dump") == 0) { dump_all(); return 0; }
     RUN(test_the_track_counter_is_right_aligned_and_exact);
@@ -445,6 +491,8 @@ int main(int argc, char **argv) {
     RUN(test_an_idle_pump_sends_nothing);
     RUN(test_a_track_step_sends_a_small_span_not_a_frame);
     RUN(test_a_failed_transfer_is_retried_not_lost);
+    RUN(test_panel_change_resends_every_page);
+    RUN(test_set_layout_refuses_a_foreign_panel);
     RUN(test_the_pump_writes_within_one_page_per_call);
     return REPORT();
 }

@@ -93,6 +93,7 @@ typedef struct {
     uint8_t shadow[DISP_FB_MAX];     // what we believe is on it
     panel_t panel;                   // how many pages the pump sends
     const layout_t *layout;          // the custom layout for running states
+    int resend_page, resend_col;     // -1: none; else next byte of a full resend after a panel change
     disp_blit_fn blit;
     void   *ctx;
 } display_t;
@@ -106,13 +107,20 @@ void display_init(display_t *d, disp_blit_fn blit, void *ctx);
 void display_set(display_t *d, const display_state_t *s);
 
 /** Use `l` for running states from the next display_set on. `l` must outlive
- *  its use; the pointer is stored, not copied. */
-void display_set_layout(display_t *d, const layout_t *l);
+ *  its use; the pointer is stored, not copied. Refuses (returns false, layout
+ *  unchanged) when l->panel differs from d->panel. */
+bool display_set_layout(display_t *d, const layout_t *l);
+
+/** Switch panel type: layout back to layout_default(p), fb and shadow cleared,
+ *  and the pump resends EVERY byte of every page of the new panel (even 0xFF
+ *  ones). The caller re-runs ssd1306_init for the new type first; the caller
+ *  may then display_set_layout a custom layout for p. */
+void display_set_panel(display_t *d, panel_t p);
 
 /**
  * Send at most `budget` bytes, then return. THE WHOLE POINT: this is called
- * from core0's 1 ms service loop, where a full 512-byte frame (~11 ms at
- * 400 kHz) would stall the floppy exactly as a flood of USB writes would.
+ * from core0's 1 ms service loop, where a full 1024-byte frame (~22 ms at
+ * 400 kHz; 512 bytes on a 128x32) would stall the floppy exactly as a flood of USB writes would.
  * Returns bytes sent; 0 means the panel is already in sync.
  */
 int display_pump(display_t *d, int budget);

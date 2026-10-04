@@ -252,6 +252,7 @@ static void split_title_n(const char *title, char a[64], char b[64], int line) {
     int n = (int)strlen(title);
     a[0] = b[0] = '\0';
     if (line > 63) line = 63;
+    if (line < 2) line = 2;     // the ".." tail below needs two columns; a tiny hand-built w must not underflow
     if (n <= line) { memcpy(a, title, (size_t)n + 1); return; }
 
     int cut = -1;
@@ -330,6 +331,7 @@ static void pct_text(const display_state_t *s, char out[8]) {
     snprintf(out, 8, "%d%%", pct);
 }
 
+// Uses the file-scope g_scale/g_rows while drawing: not reentrant.
 void display_render(const display_state_t *s, const layout_t *l, uint8_t fb[DISP_FB_MAX]) {
     memset(fb, 0, DISP_FB_MAX);
     g_rows = panel_height(l->panel);
@@ -420,17 +422,33 @@ void display_init(display_t *d, disp_blit_fn blit, void *ctx) {
     d->ctx    = ctx;
     d->panel  = PANEL_128x32;
     d->layout = layout_default(PANEL_128x32);
+    d->resend_page = -1;
 }
 
 void display_set(display_t *d, const display_state_t *s) {
     display_render(s, display_layout_for(s, d->layout), d->fb);
 }
 
-void display_set_layout(display_t *d, const layout_t *l) {
+bool display_set_layout(display_t *d, const layout_t *l) {
+    if (!l || l->panel != d->panel) return false;   // pump and layout must agree on the panel
     d->layout = l;
+    return true;
+}
+
+void display_set_panel(display_t *d, panel_t p) {
+    d->panel  = p;
+    d->layout = layout_default(p);
+    memset(d->fb, 0, DISP_FB_MAX);
+    memset(d->shadow, 0, DISP_FB_MAX);
+    // An explicit resend cursor, NOT a sentinel shadow: a lit 0xFF framebuffer
+    // byte would compare equal to a 0xFF shadow and never be sent, leaving
+    // stale glass after the controller's re-init.
+    d->resend_page = 0;
+    d->resend_col  = 0;
 }
 
 bool display_in_sync(const display_t *d) {
+    if (d->resend_page >= 0) return false;
     return memcmp(d->fb, d->shadow, (size_t)(pages_of(d) * DISP_W)) == 0;
 }
 
@@ -438,6 +456,21 @@ int display_pump(display_t *d, int budget) {
     if (budget <= 0 || !d->blit) return 0;
 
     const int pages = pages_of(d);
+
+    // A pending panel change: send every byte of every page, in order,
+    // regardless of what the shadow says.
+    if (d->resend_page >= 0) {
+        const int p = d->resend_page, col = d->resend_col;
+        int n = DISP_W - col;
+        if (n > budget) n = budget;
+        if (!d->blit(d->ctx, p, col, &d->fb[p * DISP_W + col], n)) return 0;
+        memcpy(&d->shadow[p * DISP_W + col], &d->fb[p * DISP_W + col], (size_t)n);
+        d->resend_col += n;
+        if (d->resend_col >= DISP_W) { d->resend_col = 0; d->resend_page++; }
+        if (d->resend_page >= pages) d->resend_page = -1;
+        return n;
+    }
+
     for (int p = 0; p < pages; p++) {
         const int base = p * DISP_W;
         int lo = -1;
