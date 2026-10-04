@@ -138,6 +138,13 @@ typedef bool (*dc_hold_fn)(void *ctx);
 // and pushed the maximal body past 1024 (test_status_body_fits_at_maximum
 // failed at the old budget). Measured with a ready record: body 1053 bytes,
 // whole request 1187.
+// OLED layouts (spec 2026-10-04 §6) add
+// ,"displayLayouts":true,"displayVersion":4294967295,"displayError":"<48 bytes escaped, up to 94>"
+// -- 162 bytes at most. Measured with every field at its maximum
+// (test_status_body_fits_at_maximum, the reason all quotes): body 1217 bytes,
+// whole request 1351 with the test's 3-byte token (~1396 with a real 48-byte
+// one). Both budgets still hold, so neither is raised -- but the body has 63
+// bytes left, and the next field will need a raise.
 #define DC_STATUS_BODY_BYTES  1280
 #define DC_STATUS_REQ_BYTES   1792
 // `err` is firmware-authored (a short static string or errno-derived text,
@@ -334,6 +341,22 @@ typedef struct {
     dc_preload_t preload;
     bool (*_preload_ok)(void *ctx);   // dc_set_preload_gate
     void  *_preload_ok_ctx;
+
+    // --- OLED layouts (spec 2026-10-04 §6) ---
+    // The display cursor, echoed as &displayAck= on every poll: the highest
+    // display version the board has HANDLED -- applied OR rejected. A rejected
+    // layout advances it too, so the server stops waking the poll for it and
+    // it can never loop. dc_step never moves it; dc_display_handled does.
+    // main.c seeds it from display_store_load at boot (after dc_init).
+    uint32_t display_ack;
+    // The poll body's displayVersion, 0 until one arrives; left alone by a
+    // body without the key. Owed = display_want > display_ack.
+    uint32_t display_want;
+    // The last handled version's reason for refusal, "" when it was applied.
+    // Sent as displayError (null when empty).
+    char     display_error[48];
+    // displayLayouts:true in every status report; set by dc_init.
+    bool     display_layouts;
 } device_client_t;
 
 void dc_init(device_client_t *c, transport_t *t, clock_ms_fn now,
@@ -566,5 +589,29 @@ void dc_set_plays_hd(device_client_t *c, bool on);
 // COMPLETE response, or -1 (transport, framing, incomplete). 401 halts, as everywhere.
 int dc_fetch_firmware(device_client_t *c, const char *version,
                       void (*sink)(void *ctx, const uint8_t *b, int n), void *ctx);
+
+// --- OLED layouts (spec 2026-10-04 §6) -----------------------------------
+
+// GET /api/device/display into `buf` (at most `cap` bytes kept; a longer body
+// is cut, and dc_display_parse then refuses it). Returns the bytes kept from
+// a COMPLETE 200 response, or -1: transport, framing, incomplete, or any other
+// status. 401 halts, as everywhere. Call between dc_steps, never inside one.
+int dc_fetch_display(device_client_t *c, uint8_t *buf, int cap);
+
+// The display version the last poll named is ahead of the one handled.
+bool dc_display_owed(const device_client_t *c);
+
+// Pure. The endpoint's body: [u32 big-endian version][u8 panel][u8 has_layout]
+// [blob, only when has_layout]. True with the fields out, `blob` pointing
+// into `buf` (NULL and 0 for the panel's default). Refused: shorter than 6,
+// panel not a panel_t, has_layout not 0/1, a layout with no blob or one over
+// LAYOUT_BLOB_MAX, and a default with bytes after it. The blob itself is
+// NOT validated here -- that is layout_decode's job.
+bool dc_display_parse(const uint8_t *buf, int n, uint32_t *version, uint8_t *panel,
+                      const uint8_t **blob, int *blob_len);
+
+// `version` was handled: the ack moves to it, and `error` (NULL = applied)
+// becomes displayError, clipped to the field.
+void dc_display_handled(device_client_t *c, uint32_t version, const char *error);
 
 #endif

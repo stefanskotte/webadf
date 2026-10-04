@@ -36,6 +36,8 @@
 #include "i2c_probe.h"
 #include "ssd1306.h"
 #include "display.h"
+#include "display_layout.h"
+#include "display_store.h"
 #include "nfc_reader.h"
 #include "nfc_bus_i2c.h"
 #include "nfc_handoff.h"
@@ -124,6 +126,100 @@ static uint8_t    g_panel_addr;          // 0 == no panel answered at boot
 static bool panel_blit(void *ctx, int page, int col, const uint8_t *b, int n) {
     (void)ctx;
     return ssd1306_blit(g_panel_addr, g_disp.panel, page, col, b, n);
+}
+
+// ------------------------------------------------- display layouts (§6)
+//
+// Spec 2026-10-04 oled-layouts §6. core1 fetches GET /api/device/display when
+// the poll's displayVersion is ahead of c.display_ack, validates the layout
+// (layout_decode) and hands it to core0, which owns the panel. The handoff is
+// two slots and a sequence: core1 fills the slot the sequence does NOT name,
+// then advances the sequence behind a barrier; core0 copies the named slot and
+// re-reads the sequence. A sequence that moved by two or more during the copy
+// means core1 lapped it and may have rewritten that very slot -- torn, so core0
+// tries again next pass. Publishes are one per network round trip (seconds);
+// core0's copy is microseconds, so in practice the retry never happens.
+//
+// core0 then applies it at once from RAM and writes it to flash later, only
+// with the drive empty (display_store.h) -- in core0's own loop, so no disk can
+// start being SERVED between the empty check and the write: serving a newly
+// published slot is core0's job (track_cache_check_swap), and core0 is busy
+// writing. That makes core0 the initiator of a flash_safe_execute for the
+// first time, so core1 must be a lockout victim: core1_main calls
+// flash_safe_execute_core_init() first thing.
+typedef struct {
+    display_record_t rec;     // version, panel, blob: what the store will hold
+    layout_t         layout;  // decoded; meaningful only when rec.has_layout
+} display_slot_t;
+static display_slot_t     g_display_slots[2];   // core1 writes, core0 reads
+static volatile uint32_t  g_display_seq;        // slot g_display_seq & 1 is the newest
+
+// core0 only. g_disp.layout points at g_layout_applied whenever a custom
+// layout is on (display_set_layout keeps the pointer), so it is static and is
+// only ever rewritten by core0, between renders.
+static layout_t           g_layout_applied;
+static display_record_t   g_display_rec;            // what the deferred write saves
+static bool               g_display_store_pending;
+// Set by main() before core1 launches; core1 seeds c.display_ack from it.
+static uint32_t           g_display_boot_ack;
+
+/** core1: publish a validated display for core0. `l` NULL = the panel's
+ *  default. `blob`/`bl` are the encoded layout as fetched, for the store. */
+static void display_handoff_publish(uint8_t panel, const layout_t *l, uint32_t version,
+                                    const uint8_t *blob, int bl) {
+    const uint32_t s = g_display_seq;
+    display_slot_t *slot = &g_display_slots[(s + 1u) & 1u];
+    memset(slot, 0, sizeof *slot);
+    slot->rec.version    = version;
+    slot->rec.panel      = panel;
+    slot->rec.has_layout = l ? 1 : 0;
+    slot->rec.blob_len   = (uint8_t)(l ? bl : 0);
+    if (l) {
+        memcpy(slot->rec.blob, blob, (size_t)bl);
+        slot->layout = *l;
+    }
+    __dmb();                 // the slot is whole before the sequence names it
+    g_display_seq = s + 1u;
+}
+
+/** core0: copy the newest published slot if it is newer than *last. False =
+ *  nothing new, or torn (ask again next pass). */
+static bool display_handoff_take(uint32_t *last, display_slot_t *out) {
+    const uint32_t s = g_display_seq;
+    if (s == *last) return false;
+    __dmb();
+    *out = g_display_slots[s & 1u];
+    __dmb();
+    if (g_display_seq - s >= 2u) return false;   // lapped mid-copy
+    *last = s;
+    return true;
+}
+
+/** core0: put a taken slot on the glass, and owe the flash its record. The
+ *  panel is re-initialised first when its type changed (ssd1306_init, then
+ *  display_set_panel, then the layout -- the order display.h asks for). */
+static void display_apply(const display_slot_t *in) {
+    const panel_t p = (panel_t)in->rec.panel;
+    if (g_panel_addr != 0) {
+        if (p != g_disp.panel) {
+            if (!ssd1306_init(g_panel_addr, p))
+                wf_logf(WF_WARN, "display: panel re-init for %s failed",
+                        p == PANEL_128x64 ? "128x64" : "128x32");
+            display_set_panel(&g_disp, p);
+        }
+        if (in->rec.has_layout) {
+            g_layout_applied = in->layout;
+            display_set_layout(&g_disp, &g_layout_applied);
+        } else {
+            display_set_layout(&g_disp, layout_default(p));
+        }
+    }
+    g_display_rec = in->rec;
+    g_display_store_pending = true;
+    wf_logf(WF_INFO, "display: version %lu applied (%s, %s)%s",
+            (unsigned long)in->rec.version, p == PANEL_128x64 ? "128x64" : "128x32",
+            in->rec.has_layout ? "custom layout" : "default layout",
+            g_panel_addr ? "" : " -- no panel attached, stored only");
 }
 
 // The published half: written by core1, read by core0. `g_ui_seq` is odd
@@ -859,6 +955,66 @@ static void nfc_core1_write_request(device_client_t *c) {
     c->nfc_write_new = false;
 }
 
+// core1 only: the display fetch's retry schedule. A fetch that fails (offline,
+// a 5xx) is NOT handled -- the version stays owed and is fetched again -- but
+// not on every pass: the server keeps answering the poll at once while the
+// version is owed, so an unpaced retry would be a request storm. 2 s,
+// doubling, capped at 60 s, reset by any fetch that completes.
+static bool     g_display_fetch_failing;
+static uint32_t g_display_retry_at;
+static uint32_t g_display_retry_wait;
+
+static void display_fetch_backoff(void) {
+    g_display_retry_wait = g_display_retry_wait ? g_display_retry_wait * 2u : 2000u;
+    if (g_display_retry_wait > 60000u) g_display_retry_wait = 60000u;
+    g_display_retry_at = clock_ms() + g_display_retry_wait;
+    g_display_fetch_failing = true;
+}
+
+/** core1, between requests: fetch, validate and hand over the owed display.
+ *  True when a version was HANDLED (applied or refused) -- a status report is
+ *  then owed, carrying the new displayVersion and displayError. */
+static bool display_core1_fetch(device_client_t *c) {
+    if (g_display_fetch_failing && (int32_t)(clock_ms() - g_display_retry_at) < 0) return false;
+    // static: core1's stack is measured tight (see CORE1_STACK_BYTES).
+    static uint8_t  dbuf[8 + LAYOUT_BLOB_MAX];
+    static layout_t l;
+    static char     why[sizeof c->display_error];
+    const uint32_t want = c->display_want;
+    const int n = dc_fetch_display(c, dbuf, (int)sizeof dbuf);
+    if (n < 0) {
+        display_fetch_backoff();
+        wf_logf(WF_WARN, "display: fetch for version %lu failed -- retry in %lu s",
+                (unsigned long)want, (unsigned long)(g_display_retry_wait / 1000u));
+        return false;
+    }
+    g_display_fetch_failing = false;
+    g_display_retry_wait = 0;
+
+    uint32_t v; uint8_t p; const uint8_t *blob; int bl;
+    if (!dc_display_parse(dbuf, n, &v, &p, &blob, &bl)) {
+        // A complete 200 this board cannot read. Refused, as the version the
+        // poll named -- not retried, or it would be fetched forever.
+        dc_display_handled(c, want, "malformed display body");
+        wf_logf(WF_WARN, "display: version %lu refused -- malformed body (%d bytes)",
+                (unsigned long)want, n);
+        return true;
+    }
+    why[0] = '\0';
+    bool ok = bl == 0 ? true : layout_decode(blob, (size_t)bl, &l, why, sizeof why);
+    if (ok && bl > 0 && l.panel != (panel_t)p) {
+        ok = false;
+        snprintf(why, sizeof why, "panel mismatch");
+    }
+    if (ok) display_handoff_publish(p, bl ? &l : NULL, v, blob, bl);   // core0 applies; store deferred
+    dc_display_handled(c, v, ok ? NULL : why);
+    if (!ok) wf_logf(WF_WARN, "display: version %lu refused -- %s", (unsigned long)v, why);
+    // An answer older than the poll's word (a lagging read on the server)
+    // leaves the version owed: pace the refetch like a failure.
+    if (dc_display_owed(c)) display_fetch_backoff();
+    return true;
+}
+
 static void __isr gpio_isr(uint gpio, uint32_t events) {
     if (gpio == PIN_SEL0 && (events & GPIO_IRQ_EDGE_FALL)) {
         if (!WF_BUS_SNIFF) wf_trace(WF_EV_SEL, 1, 0);
@@ -1150,6 +1306,12 @@ static bool swap_hold_check(void *up, bool decide) {
 static bool swap_holds(void *up) { return swap_hold_check(up, true); }
 
 static void core1_main(void) {
+    // OLED layouts: core0 writes the display record to flash itself (see the
+    // display layouts section at the top), so core0 must be able to park this
+    // core -- the mirror of main()'s flash_safe_execute_core_init() for core1's
+    // own writes. Before the radio: nothing on this core may write flash
+    // before it, and nothing on core0 does until a layout arrives.
+    flash_safe_execute_core_init();
     if (net_radio_init()) {
         // This loop never exits, but core0 is what drains the log, so this
         // line does get out -- which is the whole reason the drain lives
@@ -1454,6 +1616,16 @@ static void core1_main(void) {
         // HD spec §5.5: this build can play HD only if the drive-ID responder
         // is in it. After dc_init, which zeroes the struct.
         dc_set_plays_hd(&c, WF_DRIVE_ID != 0);
+        // OLED layouts: the display cursor. dc_init zeroes it; the first entry
+        // after boot resumes from the stored record's version, so a layout
+        // already on the glass is not fetched again. A re-entry is a re-pair:
+        // a new device row, whose cursor starts over -- the rule nfcAck and
+        // the firmware instruction ack follow too.
+        {
+            static bool display_seeded = false;
+            c.display_ack = display_seeded ? 0 : g_display_boot_ack;
+            display_seeded = true;
+        }
         // HANDOFF 4g rule 1: a token chosen per boot, so a rebooted board's seq 1
         // is never mistaken for the previous boot's seq 1.
         static char session[20];
@@ -1542,6 +1714,9 @@ static void core1_main(void) {
         // Multi-disk: the preload record moved (dc_preload_t.changed) and no
         // report carrying it has reached the server yet.
         bool preload_report_owed = false;
+        // OLED layouts: a display version was handled and no report carrying
+        // its displayVersion/displayError has reached the server yet.
+        bool display_report_owed = false;
 
         // 2b trial (spec D8): prove the network works, THEN confirm, THEN poll.
         {
@@ -1655,12 +1830,23 @@ static void core1_main(void) {
                     fw_report_owed = false;   // the same report carries the fw fields
                     nfc_report_owed = false;  // ...and nfcReader
                     preload_report_owed = false;  // ...and preload
+                    display_report_owed = false;  // ...and displayVersion
                     strncpy(last_reported_sha, c.mounted_sha256, sizeof(last_reported_sha) - 1);
                     last_reported_sha[sizeof(last_reported_sha) - 1] = '\0';
                     last_reported_version = c.mounted_version;
                 } else if (up_has_work(&up)) {
                     report_retry = true;
                 }
+            }
+
+            // OLED layouts (spec 2026-10-04 §6): the poll named a display
+            // version this board has not handled. Fetched here, between
+            // requests, and only with no write-back work waiting (a write goes
+            // first) and no owed mount report retrying. Applied or refused, it
+            // is acked (dc_display_handled) and reported by Item 4 below.
+            if (!report_retry && c.state != DC_HALTED && c.state != DC_UNPROVISIONED &&
+                dc_display_owed(&c) && !up_has_work(&up)) {
+                if (display_core1_fetch(&c)) display_report_owed = true;
             }
 
             dc_state_t s;
@@ -1699,6 +1885,9 @@ static void core1_main(void) {
             // once. Pace it -- the Amiga going idle is seconds away, and a
             // release is then at most this much later.
             if (polled && c.held) sleep_ms(1000);
+            // Same for a display version whose fetch is waiting out a failure:
+            // the server answers every poll at once while it is owed.
+            if (polled && dc_display_owed(&c) && g_display_fetch_failing) sleep_ms(1000);
 
 #if WF_FW_DEBUG
             // Fix round 3, bench-only: a minimal USB-serial command that
@@ -1951,7 +2140,7 @@ static void core1_main(void) {
             // A preload report owed from an earlier pass (see the preload
             // below) rides here too -- but never ahead of a waiting tap.
             if (!report_retry && s != DC_HALTED && (disk_changed || version_changed || fw_report_owed ||
-                                    nfc_report_owed ||
+                                    nfc_report_owed || display_report_owed ||
                                     (preload_report_owed && !nfc_event_pending(NULL)) ||
                                     (now - last_status_ms) >= DC_STATUS_PERIOD_MS)) {
                 if (dc_report_status(&c, psram_free_estimate(), wifi_rssi(), NULL, WF_FIRMWARE_VERSION)) {
@@ -1959,6 +2148,7 @@ static void core1_main(void) {
                     fw_report_owed = false;
                     nfc_report_owed = false;
                     preload_report_owed = false;   // every report carries `preload`
+                    display_report_owed = false;   // ...and displayVersion
                     strncpy(last_reported_sha, c.mounted_sha256, sizeof(last_reported_sha) - 1);
                     last_reported_sha[sizeof(last_reported_sha) - 1] = '\0';
                     last_reported_version = c.mounted_version;
@@ -2017,6 +2207,7 @@ static void core1_main(void) {
                     fw_report_owed = false;
                     nfc_report_owed = false;
                     preload_report_owed = false;
+                    display_report_owed = false;
                     strncpy(last_reported_sha, c.mounted_sha256, sizeof(last_reported_sha) - 1);
                     last_reported_sha[sizeof(last_reported_sha) - 1] = '\0';
                     last_reported_version = c.mounted_version;
@@ -2234,20 +2425,60 @@ int main(void) {
     // working LED from a backwards one before the cable goes on.
     led_selftest(3);
     {
+        // OLED layouts (spec 2026-10-04 §6): the stored panel type and layout,
+        // loaded before the first frame. Nothing stored, a bad CRC, or a
+        // record whose fields are out of range all mean the 128x32 default
+        // and a display cursor of 0 -- the board then takes whatever the
+        // server holds. A stored blob that no longer validates keeps the
+        // stored panel and version but draws that panel's default.
+        panel_t boot_panel = PANEL_128x32;
+        const layout_t *boot_layout = NULL;          // NULL = the panel's default
+        {
+            static display_record_t rec;             // static: ~140 bytes, read once
+            if (display_store_load(&rec)) {
+                const bool sane = rec.panel <= PANEL_128x64 && rec.has_layout <= 1 &&
+                                  rec.blob_len <= LAYOUT_BLOB_MAX &&
+                                  (rec.has_layout ? rec.blob_len > 0 : rec.blob_len == 0);
+                if (!sane) {
+                    wf_logf(WF_WARN, "display: stored record out of range -- 128x32 default");
+                } else {
+                    boot_panel = (panel_t)rec.panel;
+                    g_display_boot_ack = rec.version;
+                    if (rec.has_layout) {
+                        char why[48];
+                        if (layout_decode(rec.blob, rec.blob_len, &g_layout_applied, why, sizeof why) &&
+                            g_layout_applied.panel == boot_panel) {
+                            boot_layout = &g_layout_applied;
+                        } else {
+                            wf_logf(WF_WARN, "display: stored layout refused (%s) -- the panel's default",
+                                    why[0] ? why : "panel mismatch");
+                        }
+                    }
+                    wf_logf(WF_INFO, "display: stored version %lu, %s, %s layout",
+                            (unsigned long)rec.version,
+                            boot_panel == PANEL_128x64 ? "128x64" : "128x32",
+                            boot_layout ? "custom" : "default");
+                }
+            }
+        }
         uint8_t panel = 0;
         i2c_probe_bus(&panel);
         // Only when a panel actually answered: a missing display must cost
         // nothing, and must certainly not put bounded-but-real bus writes in
         // front of a board that is trying to boot.
-        if (panel != 0 && ssd1306_selftest(panel, PANEL_128x32)) {
+        if (panel != 0 && ssd1306_selftest(panel, boot_panel)) {
             // The self-test leaves the frame-and-X on the glass. Clear it, or
             // the pump's first update would show the test pattern through
             // every byte the new frame happens to leave blank -- display.c's
             // shadow starts all-zero and only sends what DIFFERS, which is
             // the whole reason a track step costs a few bytes and not a frame.
-            ssd1306_clear(panel, PANEL_128x32);
+            ssd1306_clear(panel, boot_panel);
             g_panel_addr = panel;
             display_init(&g_disp, panel_blit, NULL);
+            // display_init assumes 128x32; a stored 128x64 switches it (the
+            // panel is already initialised for it by the self-test above).
+            if (boot_panel != g_disp.panel) display_set_panel(&g_disp, boot_panel);
+            if (boot_layout) display_set_layout(&g_disp, boot_layout);
             ui_publish(DS_BOOT, "wifi-floppy", "starting", -1);
         }
         // The tag reader, on the bus i2c_probe_bus just initialised: 400 kHz
@@ -2448,6 +2679,13 @@ int main(void) {
     nfc_armed_t nfc_armed;               // core0's view of the armed tag write
     nfc_armed_init(&nfc_armed);
     bool pump_failed = false;            // the last pump had work and sent nothing
+    // OLED layouts: core0's cursor into core1's display handoff, a forced
+    // re-render after a new layout (the state may not have changed at all),
+    // and the deferred store write's retry time after a failed save.
+    uint32_t display_seen = g_display_seq;
+    bool     display_rerender = false;
+    uint32_t display_save_retry_at = 0;
+    bool     display_save_failed = false;
     fw_rom_watchdog_start();
     while (true) {
         fw_rom_service();
@@ -2804,6 +3042,39 @@ int main(void) {
         }
 #endif
 
+        // OLED layouts: a display core1 fetched and validated. Applied here,
+        // in the display slot, before this pass renders.
+        {
+            static display_slot_t in;   // static: a layout plus a record, ~250 bytes
+            if (display_handoff_take(&display_seen, &in)) {
+                display_apply(&in);
+                display_rerender = true;
+                display_save_failed = false;   // a new record gets a fresh try
+            }
+        }
+        // ...and its flash record, deferred to a moment the drive is empty
+        // (display_store.h). Here, in core0's loop: a slot core1 publishes
+        // after this check is not served (track_cache_check_swap, above) until
+        // this pass is over, so the write can never run under a disk the Amiga
+        // is reading. Both views of "empty" are checked: core0's own
+        // (disk_mounted) and the published slot, which display_store_save
+        // checks again itself. A failed save waits 10 s, not one loop turn --
+        // flash_safe_execute parks core1 every time it is tried.
+        if (display_store_should_write(g_display_store_pending,
+                                       disk_mounted || psram_active_slot() != SLOT_NONE) &&
+            (!display_save_failed || (int32_t)(clock_ms() - display_save_retry_at) >= 0)) {
+            if (display_store_save(&g_display_rec)) {
+                g_display_store_pending = false;
+                display_save_failed = false;
+                wf_logf(WF_INFO, "display: version %lu stored", (unsigned long)g_display_rec.version);
+            } else {
+                display_save_failed = true;
+                display_save_retry_at = clock_ms() + 10000u;
+                wf_logf(WF_WARN, "display: storing version %lu failed -- retry in 10 s",
+                        (unsigned long)g_display_rec.version);
+            }
+        }
+
         // The display: composed here because the track counter is core0's
         // alone, and pushed a bounded slice at a time because a whole frame
         // is ~11 ms against this loop's 1 ms turn. See the display section at
@@ -2828,9 +3099,11 @@ int main(void) {
             // Re-render only on a real change. display_render() is cheap but
             // it is not free, and this loop runs a thousand times a second
             // while nothing at all is happening.
-            if (memcmp(&ui, &last_ui, sizeof ui) != 0) {
+            // A new layout (or panel) re-renders even an unchanged state.
+            if (display_rerender || memcmp(&ui, &last_ui, sizeof ui) != 0) {
                 display_set(&g_disp, &ui);
                 last_ui = ui;
+                display_rerender = false;
             }
         }
         // One bus user per pass (spec §4.1): the panel when it has bytes

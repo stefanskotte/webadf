@@ -18,13 +18,21 @@
 #include "image_loader.h"
 #include "token_store.h"
 #include "nfc_tag.h"
+#include "display_layout.h"   // pure: LAYOUT_BLOB_MAX, panel_t
 #include <string.h>
 #include <stdio.h>
 
 // Generous for a GET line plus Host/Authorization headers to either the
 // poll or the image endpoint (the sha256 in the image path is 64 hex
 // chars); nowhere near HTTP_MAX_BODY_BYTES.
-#define DC_REQ_BUF_BYTES  256
+// Raised from 256 for OLED layouts' &displayAck= (the poll path's worst case
+// went from 51 to 73). With a real token (wadf_ + 43 base64url = 48 bytes,
+// src/lib/device-token.ts) and WEBADF_HOST, the worst poll request is 211
+// bytes; but token_store accepts up to TOKEN_STORE_MAX_LEN (127), and at that
+// length the worst poll request is 290 -- already 268 before this change, so
+// 256 silently could not carry the longest token the store would hand it.
+// 320 covers it; the buffers using this are static, so the cost is .bss.
+#define DC_REQ_BUF_BYTES  320
 // DC_POLL_BODY_BYTES moved to device_client.h so a test can name it -- see
 // the note there. A budget a test cannot name is a budget checked by hand.
 // 512 was never under load before the image fetch: every other response on
@@ -872,6 +880,13 @@ static bool dc_held(device_client_t *c) {
 
 // Acts on a fully-received 200 poll body. `json` is NUL-terminated.
 static dc_state_t dc_handle_poll_body(device_client_t *c, const char *json) {
+    // OLED layouts (spec 2026-10-04 §6): the server's display version, read
+    // before anything about the disk can return early. Absent (an older
+    // server, or no layout ever published) leaves the cursor alone; strict, so
+    // a wrapped or malformed number is not mistaken for a version.
+    uint32_t dv;
+    if (json_u32_strict(json, "displayVersion", &dv)) c->display_want = dv;
+
     uint32_t version = 0;
     if (!json_u32(json, "version", &version)) {
         // Can't even read the reconciliation counter: nothing here can be
@@ -1020,6 +1035,8 @@ void dc_init(device_client_t *c, transport_t *t, clock_ms_fn now,
     // and spec §4.1. Nothing here persists it.
     c->state = (token && token[0]) ? DC_IDLE_POLL : DC_UNPROVISIONED;
     c->preload.slot = SLOT_NONE;   // 0 is a real slot; memset's zero is not "none"
+    // Every build from 1.7.0 can take a layout (spec 2026-10-04 §6).
+    c->display_layouts = true;
 }
 
 // Escapes `"` and `\` (the two bytes that would break out of a JSON string)
@@ -1290,14 +1307,38 @@ bool dc_report_status(device_client_t *c, int psram_free, int rssi, const char *
         snprintf(preload_tail, sizeof preload_tail, ",\"preload\":null");
     }
 
+    // OLED layouts (spec 2026-10-04 §6): the capability, the display cursor
+    // (the version HANDLED, applied or rejected) and the last refusal's
+    // reason, null when it was applied -- both values of the state, always.
+    // The reason is layout_decode's text (or main.c's), which can carry
+    // quotes or colons, so it is escaped like `err`. Its 47 characters escape
+    // to at most 94.
+    // 162 at most: 22 (displayLayouts) + 28 (displayVersion) + 16 (key) + 96
+    // (94 escaped bytes and the two quotes). test_status_body_fits_at_maximum
+    // checks the whole all-quotes reason arrives, closing quote included.
+    static char display_tail[192];
+    if (c->display_layouts) {
+        static char de_field[2 * sizeof c->display_error + 2];
+        if (c->display_error[0]) {
+            static char de_esc[2 * sizeof c->display_error];
+            dc_json_escape(de_esc, sizeof de_esc, c->display_error);
+            snprintf(de_field, sizeof de_field, "\"%s\"", de_esc);
+        } else snprintf(de_field, sizeof de_field, "null");
+        snprintf(display_tail, sizeof display_tail,
+                 ",\"displayLayouts\":true,\"displayVersion\":%lu,\"displayError\":%s",
+                 (unsigned long)c->display_ack, de_field);
+    } else {
+        display_tail[0] = '\0';
+    }
+
     static char body[DC_STATUS_BODY_BYTES];
     int body_len = snprintf(body, sizeof body,
         "{\"mountedSha256\":%s,\"mountedDiskId\":%s,\"version\":%lu,"
         "\"error\":%s,\"psramFree\":%d,\"firmwareVersion\":%s,\"rssi\":%d,"
-        "\"trackMaxBytes\":%u%s%s%s%s}",
+        "\"trackMaxBytes\":%u%s%s%s%s%s}",
         sha_field, disk_field, (unsigned long)c->mounted_version,
         err_field, psram_free, ver_field, rssi, (unsigned)TRACK_MAX_BYTES, fw_tail, nfc_tail,
-        preload_tail,
+        display_tail, preload_tail,
         // playsHd: only from a build with the drive-ID responder (HD spec §5.5).
         c->_plays_hd ? ",\"playsHd\":true" : "");
     if (body_len < 0 || body_len >= (int)sizeof body) return false; // should never happen; give up quietly
@@ -1361,6 +1402,63 @@ int dc_fetch_firmware(device_client_t *c, const char *version,
     return r.status;
 }
 
+// --- OLED layouts (spec 2026-10-04 §6) -------------------------------------
+
+typedef struct { uint8_t *buf; int cap; int len; } dc_bytes_sink_t;
+
+// Keeps the first `cap` bytes and drops the rest: a body longer than any
+// legal one is cut, and dc_display_parse refuses the result -- so an
+// over-long answer reads as a rejected layout, never as a buffer overrun.
+static void dc_bytes_sink(void *ctx, const uint8_t *b, int n) {
+    dc_bytes_sink_t *s = ctx;
+    if (n <= 0) return;
+    int space = s->cap - s->len;
+    int take = n < space ? n : space;
+    if (take <= 0) return;
+    memcpy(s->buf + s->len, b, (size_t)take);
+    s->len += take;
+}
+
+int dc_fetch_display(device_client_t *c, uint8_t *buf, int cap) {
+    if (!buf || cap <= 0) return -1;
+    static char req[DC_REQ_BUF_BYTES];   // static: see the STACK note above
+    int req_len = http_build_request(req, sizeof req, "GET", "/api/device/display",
+                                     c->host, c->token, NULL);
+    if (req_len < 0) return -1;
+    dc_bytes_sink_t s = { buf, cap, 0 };
+    static http_resp_t r;
+    bool ok = dc_exchange(c, req, req_len, dc_bytes_sink, &s, &r, /*retryable=*/true);
+    if (!ok || !r.body_complete) return -1;
+    if (r.status == 401) { c->state = DC_HALTED; return -1; }   // 401 anywhere halts
+    if (r.status != 200) return -1;
+    return s.len;
+}
+
+bool dc_display_owed(const device_client_t *c) {
+    return c->display_want > c->display_ack;
+}
+
+bool dc_display_parse(const uint8_t *buf, int n, uint32_t *version, uint8_t *panel,
+                      const uint8_t **blob, int *blob_len) {
+    if (!buf || n < 6) return false;
+    if (buf[4] > PANEL_128x64) return false;
+    if (buf[5] > 1) return false;
+    const int bl = n - 6;
+    if (buf[5] == 1 && (bl < 1 || bl > LAYOUT_BLOB_MAX)) return false;
+    if (buf[5] == 0 && bl != 0) return false;
+    *version  = ((uint32_t)buf[0] << 24) | ((uint32_t)buf[1] << 16) |
+                ((uint32_t)buf[2] << 8)  |  (uint32_t)buf[3];
+    *panel    = buf[4];
+    *blob     = bl ? buf + 6 : NULL;
+    *blob_len = bl;
+    return true;
+}
+
+void dc_display_handled(device_client_t *c, uint32_t version, const char *error) {
+    c->display_ack = version;
+    snprintf(c->display_error, sizeof c->display_error, "%s", error ? error : "");
+}
+
 dc_state_t dc_step(device_client_t *c) {
     // Describes THIS step only: cleared before any return below.
     c->poll_interrupted = false;
@@ -1381,10 +1479,12 @@ dc_state_t dc_step(device_client_t *c) {
     }
 
     // static: see the STACK note above.
-    // Worst case "/api/device/poll?since=4294967295&nfcAck=4294967295" is 51.
-    static char path[64];
-    snprintf(path, sizeof path, "/api/device/poll?since=%lu&nfcAck=%lu",
-             (unsigned long)c->since, (unsigned long)c->nfc_ack);
+    // Worst case
+    // "/api/device/poll?since=4294967295&nfcAck=4294967295&displayAck=4294967295"
+    // is 73 (51 before displayAck). test_poll_url_carries_display_ack sends it.
+    static char path[96];
+    snprintf(path, sizeof path, "/api/device/poll?since=%lu&nfcAck=%lu&displayAck=%lu",
+             (unsigned long)c->since, (unsigned long)c->nfc_ack, (unsigned long)c->display_ack);
 
     static char req[DC_REQ_BUF_BYTES];
     int req_len = http_build_request(req, sizeof req, "GET", path, c->host, c->token, NULL);
