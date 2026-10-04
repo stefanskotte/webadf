@@ -58,14 +58,18 @@ Ids are fixed forever; new elements get new ids.
 
 | id | Element | Size at 1× (w×h) | `w` field | `opt` field |
 |---|---|---|---|---|
-| 1 | Status word | its text, 6 px per character × 8 | 0 = natural | — |
+| 1 | Status word | 6 × `STATUS_MAX_CHARS` (the longest status word) × 8 | 0 | — |
 | 2 | WiFi bars | 11×8 | 0 | — |
 | 3 | Write state (cloud/padlock, with sync) | 8×8 | 0 | — |
 | 4 | Title | `w` × (8 × lines) | box width, ≥ 12 | lines: 1 or 2 |
 | 5 | Detail line | `w` × 8 | box width, ≥ 12 | — |
-| 6 | Track counter | its text × 8 | 0 = natural | 0 = number |
+| 6 | Track counter | 6 × `TRACK_MAX_CHARS` (the widest counter text) × 8 | 0 | 0 = number |
 | 7 | Download | `w` × 8 | bar width (0 = percent only, else ≥ 8) | — |
 | 8 | Lemming | 8×8 | 0 | — |
+
+**Sizes are fixed per element**, never measured from the current text, so a layout that validates fits in every
+state. `STATUS_MAX_CHARS` and `TRACK_MAX_CHARS` are constants in `display_layout.h`, taken from the longest strings
+`display.c` can produce; a host test asserts that every string fits.
 
 **2× sizing:** every pixel is doubled, so width, height and box width all double.
 
