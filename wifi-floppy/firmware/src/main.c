@@ -6,6 +6,7 @@
 #include "pico/stdlib.h"
 #include "pico/multicore.h"
 #include "net_radio.h"
+#include "poll_wake.h"
 #include "pico/flash.h"
 #include "pico/time.h"
 #include "hardware/pio.h"
@@ -664,6 +665,18 @@ static volatile int   g_nfc_reader;
 static bool nfc_event_pending(void *ctx) {
     (void)ctx;
     return nfc_ev_boxes_pending(&g_nfc_ev, &g_nfc_ev_cur);
+}
+
+// g_write_last_ms as it was just before core1 began the current long poll:
+// the write cursor's mark (poll_wake.h). core1 only.
+static uint32_t g_poll_write_mark;
+
+/** core1, from inside tls_read's wait while a poll is held: cut the poll
+ *  short when a tap is waiting OR a write has landed since the poll began,
+ *  so a save made during a held poll is uploaded at once instead of when
+ *  the poll comes back (HANDOFF 3av). Two loads. */
+static bool poll_wake_pending(void *ctx) {
+    return poll_should_yield(nfc_event_pending(ctx), g_write_last_ms, g_poll_write_mark);
 }
 
 /** core0, in the display pump's slot: never both on the bus in one pass.
@@ -1449,10 +1462,11 @@ static void core1_main(void) {
         static uploader_t up;
         up_init(&up, &c, session, wb_write_gen, wb_last_write_ms);
         dc_set_hold(&c, swap_holds, &up);
-        // A waiting tap cuts a held poll short (spec §4.2 amendment). Set on
+        // A waiting tap -- or a write landed since the poll began (HANDOFF
+        // 3av) -- cuts a held poll short (spec §4.2 amendment). Set on
         // every entry: dc_init above zeroes `c`, and nfc_ack with it -- a
         // re-paired board is a new device row whose cursor starts over.
-        dc_set_poll_interrupt(&c, nfc_event_pending, NULL);
+        dc_set_poll_interrupt(&c, poll_wake_pending, NULL);
         static reinsert_t reins;
         reinsert_init(&reins);
         wf_logf(WF_INFO, "write-back: session %s", session);
@@ -1662,6 +1676,9 @@ static void core1_main(void) {
                 // fwu_step's APPLYING does not look at `idle` again.
                 s = c.state;
             } else {
+                // The write cursor's mark for this poll (poll_wake.h): a write
+                // applied from here on cuts the poll short.
+                g_poll_write_mark = g_write_last_ms;
                 s = dc_step(&c);
                 polled = true;
             }
@@ -2688,6 +2705,12 @@ int main(void) {
                         (unsigned)cap.ns_min, (unsigned)cap.ns_max,
                         (unsigned)cap.cells[0], (unsigned)cap.cells[1], (unsigned)cap.cells[2],
                         (unsigned)cap.glitches);
+                // HANDOFF 3av (b): is a sub-3000 ns minimum the capture's first
+                // word (an arm artifact, word 0) or a real glitch mid-stream?
+                // Its own line: the one above is near WF_LOG_MSG (88) already.
+                wf_logf(WF_INFO, "write: lead %u ns, shortest %u ns at word %u of %u",
+                        (unsigned)cap.lead_ns, (unsigned)cap.ns_min,
+                        (unsigned)cap.min_at, (unsigned)cap.intervals);
                 if (d.found && !d.track_no_consistent) {
                     wf_logf(WF_WARN, "write: sector headers disagree about the track");
                 } else if (d.found && d.track_no != wt) {

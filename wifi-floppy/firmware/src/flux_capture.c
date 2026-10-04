@@ -46,12 +46,15 @@ static volatile bool ended;         /* set by disarm, cleared by take */
 // Diagnostics for flux_capture_result_t. Reset on arm.
 static uint32_t d_max_backlog, d_max_gap_ms, d_last_poll_ms;
 static uint32_t d_cells[3], d_ns_min, d_ns_max, d_glitches;
+static uint32_t d_count, d_lead_ns, d_min_at;   // HANDOFF 3av (b)
 
 static void consume(uint32_t word) {
     const uint32_t ns = flux_counter_to_ns(word, pio_hz);
     const int c = mfm_interval_to_bits(ns);
     if (c >= 2 && c <= 4) d_cells[c - 2]++;
-    if (ns < d_ns_min) d_ns_min = ns;
+    if (d_count == 0) d_lead_ns = ns;
+    if (ns < d_ns_min) { d_ns_min = ns; d_min_at = d_count; }
+    d_count++;
     if (ns > d_ns_max) d_ns_max = ns;
     if (flux_ns_is_glitch(ns)) d_glitches++;
     flux_bits_feed(&bits, ns);
@@ -101,6 +104,7 @@ void flux_capture_arm(void) {
     d_cells[0] = d_cells[1] = d_cells[2] = 0;
     d_ns_min = 0xffffffffu; d_ns_max = 0;
     d_glitches = 0;
+    d_count = d_lead_ns = d_min_at = 0;
     d_last_poll_ms = to_ms_since_boot(get_absolute_time());
     armed = true;
     armed_at_ms = to_ms_since_boot(get_absolute_time());
@@ -177,6 +181,7 @@ bool flux_capture_take(flux_capture_result_t *out) {
     out->max_poll_gap_ms = d_max_gap_ms;
     out->cells[0] = d_cells[0]; out->cells[1] = d_cells[1]; out->cells[2] = d_cells[2];
     out->ns_min = d_ns_min; out->ns_max = d_ns_max;
+    out->lead_ns = d_lead_ns; out->min_at = d_min_at;
     out->glitches = d_glitches;
     return true;
 }

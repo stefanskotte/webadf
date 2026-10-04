@@ -68,6 +68,14 @@ typedef struct {
     uint32_t glitches;        /* intervals below FLUX_GLITCH_NS (flux_bits.h): a
                                 * glitched line, not data -- see the bench note
                                 * at 3ao step 3 in HANDOFF.md */
+    /* Where the shortest interval sat, and what the FIRST one measured
+     * (HANDOFF 3av (b)). The first word of a capture is not a flux interval:
+     * arming only restarts flux_in, so it counts from the arm (or carries the
+     * previous capture's count) to the first edge. If the sub-3000 ns minimum
+     * seen in session-first captures is min_at 0, it is that artifact; if it is
+     * mid-stream, the WDATA line really glitched. Measure, then decide. */
+    uint32_t lead_ns;         /* the capture's first word, as ns */
+    uint32_t min_at;          /* 0-based index of ns_min among the capture's words */
 } flux_capture_result_t;
 
 /** True, once, after a capture ends: the bitstream is ready to decode.
