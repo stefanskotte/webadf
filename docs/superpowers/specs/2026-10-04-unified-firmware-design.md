@@ -150,8 +150,23 @@ second implementation over AT commands. That would be two network stacks to keep
 network adapter and keeps one stack. arduino-pico's Challenger variant already names ESP-Hosted's pins (data-ready,
 handshake, CS, reset), which suggests the board was designed for it.
 
+**Answered 2026-10-04: two host-side paths, each with a catch.**
+
+| | esp-hosted-mcu (Espressif, current) | ESPHost (Arduino / J. Andrassy, used by arduino-pico's `lwIP_ESPHost`) |
+|---|---|---|
+| C6 co-processor | yes, the reference pairing | **not listed**: speaks esp-hosted-**FG** 0.5.0 (ESP32, S2/S3, C2/C3). C6 support in FG must be checked |
+| SoftAP (our portal) | yes: `examples/wifi/softap`, `apsta` (operator, 2026-10-04; confirmed in the repo) | FG has AP control; to confirm |
+| Non-ESP bare-metal host | a "real port": implement `port/os/include/eh_host_port*.h` (tasks, queues, sync, timers, GPIO, DMA) and use its vendored `esp_netif`/`lwip`. Our firmware has **no RTOS** | **already bare-metal**: a low-level driver meant to sit under an lwIP netif; proven on iLabs' Challenger RP2040 WiFi/BLE (C3) and the Nano RP2040 Connect |
+| Licence | Apache-2.0 (Linux kmod GPL-2.0, not used; shared protocol files GPL-2.0 OR Apache-2.0) | LGPL-2.1: fine for an open-source firmware, but its source and notices must ship with our binaries |
+
+Choosing between them is V2's decision. Either a minimal "OS" shim for esp-hosted-mcu on our core1 loop (or FreeRTOS,
+which pico-sdk supports, though a big change to our dual-core design), or ESPHost if the FG firmware runs on a C6. The
+first step is to check FG's C6 support. If it is missing, esp-hosted-mcu with a shim is the path.
+
 **The C6's own firmware.**
-- It ships with ESP-AT, so ESP-Hosted's slave firmware has to be flashed onto it once. The RP2350 controls the C6's
+- It ships with ESP-AT (operator, 2026-10-04, from the iLabs datasheet), so the ESP-Hosted co-processor firmware has
+  to be flashed onto it once. arduino-pico's Challenger helper already has `flashReset()`: MODE (GP14) low, then a
+  reset pulse on GP15, which puts the C6 into its ROM serial loader on the UART (GP4/5). So the RP2350 can flash it. The RP2350 controls the C6's
   BOOT (GP14) and RESET (GP15) pins and has its UART (GP4/5), so our firmware could do that itself through Espressif's
   serial ROM loader.
 - That would also bring C6 firmware updates under our signed OTA.
@@ -190,8 +205,8 @@ coupling.
 
 | | Question | How |
 |---|---|---|
-| V1 | Does ESP-Hosted on the ESP32-C6 support softAP as well as station? (The setup portal needs AP.) | Espressif's ESP-Hosted docs and release notes for the C6 target |
-| V2 | Is there a usable host-side driver for a bare-metal RP2350 + lwIP, rather than Linux or ESP-IDF? Under what licence? | arduino-pico's `ChallengerWiFi`/ESP-Hosted code, and Espressif's MCU-host variant |
+| V1 | ~~Does ESP-Hosted on the ESP32-C6 support softAP?~~ **ANSWERED: yes**, esp-hosted-mcu has SoftAP and AP+STA (operator, 2026-10-04; the repo's examples) | done |
+| V2 | **PARTLY ANSWERED (§8 table).** esp-hosted-mcu needs an OS port on our RTOS-less firmware. ESPHost is bare-metal but targets esp-hosted-FG, with no C6 listed. Next: does FG run on a C6? If not, how small can an `eh_host_port` shim on core1 be? | esp-hosted FG docs; esp-hosted-mcu `port/os/stm32` as the bare-metal reference |
 | V3 | The C6's range and throughput behind the IPEX3 antenna, compared with the RM2 (2 MB image fetch time, RSSI in a closed big box) | bench |
 | V4 | PSRAM started at runtime with a chosen chip-select pin | SDK source, then bench (§7) |
 | V5 | Where the C6 slave firmware lives and how it is first installed and updated | design after V1/V2 |
