@@ -4620,6 +4620,48 @@ Demozoo API (the bulk export makes per-lookup load on a non-profit unnecessary).
   allowlist checks only the first URL (the raster content-type allowlist and `nosniff` still apply).
 - **Cron drift:** the daily 01:30 cron against a 7-day gate can drift a refetch to 8 days.
 
+### 3av. Unified firmware P1 -- board table and net_radio seam, firmware 1.6.3 (2026-10-04)
+
+**SHIPPED: 1.6.3+g4faf91a, sequence 35, installed and confirmed on WifiFloppy1 (rev B).** Spec
+`docs/superpowers/specs/2026-10-04-unified-firmware-design.md`, plan `docs/superpowers/plans/2026-10-04-unified-firmware-p1.md`.
+Run subagent-driven: 3 tasks, each reviewed, plus a final opus review ("ready to merge") and one fix wave.
+
+- **Board table:** `src/board.{h,c}` holds `board_t` with `BOARD_PIM726`. `g_board` is a compile-time `const board_t *const`.
+  - `floppy_io.h`'s `PIN_*` names are kept, but now read `*g_board`.
+  - `board_check()` is host-tested (`test_board.c`): SEL0..DIR consecutive, SEL0 = GP2 until P2, no pin used twice,
+    nothing on a radio pin, status pins inside the status_gate window.
+  - It runs at boot and logs `board: pim726`. On failure it halts and drains the log; a TBYB trial image is reverted by
+    the boot ROM watchdog.
+  - The I2C instance goes through `board_i2c()` (`board_hw.h`).
+- **WiFi seam:** `src/net_radio.h`, with `src/net_radio_cyw43.c` as the ONLY file that may name the chip.
+  - Every lwIP lock call goes through it (17 lock and 27 unlock calls, 1:1), as do init, STA, connect, AP, the STA
+    netif, MAC and RSSI.
+  - `test/run.sh` enforces this with a case-insensitive guard on `cyw43` (comments stripped) over `src/` and
+    `lwipopts.h`. It is proven by mutation.
+- **Intended log changes:** the new `board: pim726` line, and `radio init failed, radio is dead` (was `cyw43_arch_init failed...`).
+- **Proven:**
+  - The old `cyw43_hal_get_mac(0)` and the new `net_radio_mac()` return the same bytes (pico-sdk 2.3.0
+    `cyw43_ctrl.c:539`), so the portal SSID on the OLED always matched the AP's. The portal bench check was skipped.
+  - Reading pins through the table costs one hoisted load in `gpio_isr` (measured in the Release ELF).
+  - Bench 2026-10-04: boot and read OK, two DD saves OK (Workbench 3.1 Install v16, v17), the OTA trial confirmed,
+    TLS still ~333 ms.
+- **Deferred to P2 (from the reviews):**
+  - `g_board` becomes a pointer set first in `main()`, and host tests need a way to select a second table.
+  - The board table and PIN reads currently come from flash inside RAM functions. They are covered by the flash
+    lockout; decide in P2 whether to make them RAM-resident.
+  - PSRAM chip-select disjointness in `board_check`, and range checks on RDATA and the input pins.
+  - Board-specific log strings: `radio up (RM2)`, and i2c_probe's `i2c1:` / "header pins 24/25".
+  - The AP IP from `net_radio` rather than the CYW43 CMake macro.
+  - The guard's comment stripping: multi-line `/* */` blocks cause false failures (reword the comment); a `//` inside a
+    string can hide the rest of the line.
+- **Found on the bench (both pre-existing, not P1):**
+  - (a) A save that lands while the board waits in the server's long poll is held until the poll returns (up to
+    ~25 s), because only an NFC event interrupts the poll. Seen: 20 s on 1.6.3, 14 s on 1.6.1.
+  - (b) The FIRST write capture of a session twice showed one interval under 3,000 ns (2,880 ns on 2026-10-02 HD,
+    2,533 ns on 2026-10-04 DD), with the data intact both times.
+
+  Both are being fixed next.
+
 ### 3au. TLS handshake 3.8x faster: mbedTLS P-256 speed-ups -- firmware 1.6.2 (2026-10-03)
 
 **SHIPPED and on WifiFloppy1 (rev B), sequence 34, `1.6.2+gcff84a9`.** Only `mbedtls_config.h` changed:
