@@ -10,7 +10,7 @@
 // context while this thread just polls a flag and sleep_ms()s.
 #include "sntp_time.h"
 #include "lwip/apps/sntp.h"
-#include "pico/cyw43_arch.h"
+#include "net_radio.h"
 #include "pico/time.h"
 #include <sys/time.h>
 
@@ -35,7 +35,7 @@ bool sntp_sync_blocking(uint32_t timeout_ms) {
     if (g_time_valid) return true;
 
     if (!g_started) {
-        cyw43_arch_lwip_begin();
+        net_radio_lock();
         sntp_setoperatingmode(SNTP_OPMODE_POLL);
         // A fixed, well-known pool rather than DHCP-supplied servers: most
         // home/office routers don't hand out option 42, and a device that
@@ -43,7 +43,7 @@ bool sntp_sync_blocking(uint32_t timeout_ms) {
         // for a reason nobody could see from the LAN side.
         sntp_setservername(0, "pool.ntp.org");
         sntp_init();
-        cyw43_arch_lwip_end();
+        net_radio_unlock();
         g_started = true;
     }
 

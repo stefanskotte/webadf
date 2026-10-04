@@ -57,14 +57,14 @@ add_executable(wifi_floppy
   src/image_loader.c src/device_client.c src/http.c src/json_scan.c
   src/token_store.c src/config_store.c src/fw_state.c src/fw_trial.c src/fw_apply.c src/fw_update.c src/fw_rom.c src/provisioning.c
   src/mfm.c src/adf_mfm.c src/write_back.c src/reinsert.c src/swap_gate.c src/dns_server.c src/dhcp_server.c src/portal_http.c
-  src/portal_net.c
+  src/portal_net.c src/net_radio_cyw43.c
   src/transport_tls.c src/sntp_time.c
   ${WFMF_PSA_CRYPTO_RANDOM_SRC}
   src/wf_log.c
   src/activity_led.c src/i2c_probe.c src/ssd1306.c src/display.c src/nfc_tag.c
   src/nfc_reader.c src/nfc_bus_i2c.c src/nfc_handoff.c src/nfc_ui.c
   src/flux_capture.c src/flux_bits.c
-  src/bus_gate.c src/bus_out.c
+  src/board.c src/bus_gate.c src/bus_out.c
   src/sha256.c
   src/fw_stage.c
   src/uploader.c
@@ -163,7 +163,7 @@ endif ()
 # configure whenever this file changes. `-DFIRMWARE_SEMVER=` still overrides,
 # for a one-off build, because -D defines it before this point.
 if (NOT DEFINED FIRMWARE_SEMVER)
-  set(FIRMWARE_SEMVER "1.6.2")
+  set(FIRMWARE_SEMVER "1.6.3")
 endif ()
 
 set(WF_VERSION_HEADER "${CMAKE_CURRENT_BINARY_DIR}/generated/wifi_floppy_version.h")

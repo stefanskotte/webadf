@@ -5,7 +5,7 @@
 // ---------------------------------------------------------------------------
 #include "pico/stdlib.h"
 #include "pico/multicore.h"
-#include "pico/cyw43_arch.h"
+#include "net_radio.h"
 #include "pico/flash.h"
 #include "pico/time.h"
 #include "hardware/pio.h"
@@ -214,10 +214,10 @@ static bool ui_snapshot(display_state_t *s, char tag[NFC_UI_LINE_BYTES], uint32_
  *  never from core0's service loop, and never from an interrupt. */
 static const char *ip_str(void) {
     static char buf[20];
-    cyw43_arch_lwip_begin();
+    net_radio_lock();
     struct netif *nif = netif_default;
     snprintf(buf, sizeof buf, "%s", nif ? ip4addr_ntoa(netif_ip4_addr(nif)) : "no route");
-    cyw43_arch_lwip_end();
+    net_radio_unlock();
     return buf;
 }
 
@@ -905,9 +905,7 @@ static int psram_free_estimate(void) {
 }
 
 static int wifi_rssi(void) {
-    int32_t rssi = 0;
-    cyw43_wifi_get_rssi(&cyw43_state, &rssi);
-    return (int)rssi;
+    return (int)net_radio_rssi();
 }
 
 // Renders lwIP's default route. This exists for ONE open question that plan
@@ -922,21 +920,21 @@ static int wifi_rssi(void) {
 // this is safe from core1's ordinary flow. Never call it from an interrupt.
 static const char *default_route_str(void) {
     static char buf[48];
-    cyw43_arch_lwip_begin();
+    net_radio_lock();
     struct netif *nif = netif_default;
     if (!nif) {
-        cyw43_arch_lwip_end();
+        net_radio_unlock();
         return "NONE -- netif_default is NULL";
     }
     snprintf(buf, sizeof buf, "%c%c%d ip=%s", nif->name[0], nif->name[1],
              nif->num, ip4addr_ntoa(netif_ip4_addr(nif)));
-    cyw43_arch_lwip_end();
+    net_radio_unlock();
     return buf;
 }
 
 static void mac_address_string(char *out, size_t out_len) {
     uint8_t mac[6] = {0};
-    cyw43_wifi_get_mac(&cyw43_state, CYW43_ITF_STA, mac);
+    net_radio_mac(mac);
     snprintf(out, out_len, "%02x:%02x:%02x:%02x:%02x:%02x",
              mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
 }
@@ -1139,11 +1137,11 @@ static bool swap_hold_check(void *up, bool decide) {
 static bool swap_holds(void *up) { return swap_hold_check(up, true); }
 
 static void core1_main(void) {
-    if (cyw43_arch_init()) {
+    if (net_radio_init()) {
         // This loop never exits, but core0 is what drains the log, so this
         // line does get out -- which is the whole reason the drain lives
         // there and not here.
-        wf_logf(WF_ERR, "cyw43_arch_init failed, radio is dead");
+        wf_logf(WF_ERR, "radio init failed, radio is dead");
         while (1) tight_loop_contents();
     }
     wf_logf(WF_INFO, "radio up (RM2)");
@@ -1158,7 +1156,7 @@ static void core1_main(void) {
                 if (pio_sm_is_claimed(pio_get_instance(p), sm)) m[p] |= 1u << sm;
         wf_logf(WF_INFO, "pio claims: pio0=%x pio1=%x pio2=%x", m[0], m[1], m[2]);
     }
-    cyw43_arch_enable_sta_mode();
+    net_radio_sta_enable();
 
     // Plan 4b: decide whether to serve the captive portal or run plan 4a's
     // protocol loop against stored credentials. Touches no radio itself
@@ -1189,7 +1187,7 @@ static void core1_main(void) {
             // extra teardown first.
             {
                 uint8_t mac[6] = {0};
-                cyw43_hal_get_mac(0, mac);
+                net_radio_mac(mac);
                 char ssid[DISP_DETAIL_MAX + 1];
                 snprintf(ssid, sizeof ssid, "wifi-floppy-%02X%02X", mac[4], mac[5]);
                 // The SSID to join, not the IP: standing at the board, the
@@ -1243,9 +1241,7 @@ static void core1_main(void) {
             wf_logf(WF_INFO, "portal: AP down, default route now %s",
                     default_route_str());
 
-            int err = cyw43_arch_wifi_connect_timeout_ms(
-                submitted.ssid, submitted.pass,
-                CYW43_AUTH_WPA2_AES_PSK, 15000);
+            int err = net_radio_sta_connect(submitted.ssid, submitted.pass, 15000);
             if (err != PICO_OK) {
                 last_error = assoc_failure_message(err);
                 wf_logf(WF_WARN, "portal: association failed (%d): %s",
@@ -1281,9 +1277,7 @@ static void core1_main(void) {
         // config already on flash) or by prov_on_verified_submit() just
         // above.
         ui_publish(DS_WIFI, "Connecting", prov.cfg.ssid, -1);
-        int err = cyw43_arch_wifi_connect_timeout_ms(
-            prov.cfg.ssid, prov.cfg.pass,
-            CYW43_AUTH_WPA2_AES_PSK, 15000);
+        int err = net_radio_sta_connect(prov.cfg.ssid, prov.cfg.pass, 15000);
         if (err != PICO_OK) {
             // prov_on_assoc_result(p, false) is the only call in this
             // loop that may move `state`: three consecutive failures
@@ -2158,6 +2152,25 @@ int main(void) {
     stdio_init_all();
     wf_log_init();
     wf_logf(WF_INFO, "wifi-floppy boot: %s", PICO_BOARD);
+
+    {
+        char why[96];
+        if (!board_check(g_board, why, sizeof why)) {
+            // A code error, not a field condition: the table in board.c is
+            // wrong. Stop before driving a single pad. A TBYB trial image is
+            // reverted by the watchdog the boot ROM armed for it (not by
+            // FW_TRIAL_DEADLINE_MS: fw_rom_service() runs on core0's loop,
+            // which this never reaches); any other boot just stays halted.
+            // Core0's loop is what drains the log ring, so drain it here or
+            // the line below never reaches the console.
+            wf_logf(WF_ERR, "board: %s fails its check: %s", g_board->name, why);
+            while (1) {
+                wf_log_drain(4);
+                tight_loop_contents();
+            }
+        }
+        wf_logf(WF_INFO, "board: %s", g_board->name);
+    }
 
     // inputs. PIN_WDATA belongs here too even though only PIO reads it: an
     // RP2350 pad stays isolated from reset until gpio_set_function() clears

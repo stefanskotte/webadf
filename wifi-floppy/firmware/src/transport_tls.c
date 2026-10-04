@@ -34,7 +34,7 @@
 #include "sntp_time.h"
 #include "roots.h"
 
-#include "pico/cyw43_arch.h"
+#include "net_radio.h"
 #include "pico/time.h"
 #include "wf_log.h"
 #include "mbedtls/x509_crt.h"   // root-CA parse probe, see tls_connect()
@@ -252,14 +252,14 @@ static void on_err(void *arg, err_t err) {
 // SDK's own altcp_tls_mbedtls.c (around its close path) falls back to
 // altcp_abort() when altcp_close() doesn't return ERR_OK; matched here.
 static void detach_and_close(struct altcp_pcb *pcb) {
-    cyw43_arch_lwip_begin();
+    net_radio_lock();
     altcp_arg(pcb, NULL);
     altcp_recv(pcb, NULL);
     altcp_err(pcb, NULL);
     if (altcp_close(pcb) != ERR_OK) {
         altcp_abort(pcb);
     }
-    cyw43_arch_lwip_end();
+    net_radio_unlock();
 }
 
 // Every failure exit below goes through this. tls_connect() already
@@ -306,9 +306,9 @@ static int tls_fail(int code, const char *why, int detail) {
 // decides whether a connection is kept, and that is not a decision to make
 // from a possibly-stale word.
 static bool tls_rx_pending(tls_conn_t *c) {
-    cyw43_arch_lwip_begin();
+    net_radio_lock();
     const bool pending = (c->rx_head != NULL);
-    cyw43_arch_lwip_end();
+    net_radio_unlock();
     return pending;
 }
 
@@ -347,12 +347,12 @@ static void tls_abandon(struct transport *t) {
                                 // on_recv() cannot fire for this `c` again
                                 // after this returns.
     }
-    cyw43_arch_lwip_begin();
+    net_radio_lock();
     if (c->rx_head) {
         pbuf_free(c->rx_head);
         c->rx_head = NULL;
     }
-    cyw43_arch_lwip_end();
+    net_radio_unlock();
 }
 
 static int tls_connect(struct transport *t, const char *host, int port) {
@@ -403,9 +403,9 @@ static int tls_connect(struct transport *t, const char *host, int port) {
 
     g_dns_token.c = c;
     g_dns_token.gen = c->gen;
-    cyw43_arch_lwip_begin();
+    net_radio_lock();
     err_t derr = dns_gethostbyname(host, &c->remote_ip, dns_found_cb, &g_dns_token);
-    cyw43_arch_lwip_end();
+    net_radio_unlock();
     if (derr == ERR_OK) {
         c->dns_ok = true;
         c->dns_done = true;
@@ -449,10 +449,10 @@ static int tls_connect(struct transport *t, const char *host, int port) {
         }
     }
 
-    cyw43_arch_lwip_begin();
+    net_radio_lock();
     c->pcb = altcp_tls_new(g_tls_config, IPADDR_TYPE_V4);
     if (!c->pcb) {
-        cyw43_arch_lwip_end();
+        net_radio_unlock();
         return tls_fail(TLS_ERR_TLS_CONFIG, "altcp_tls_new failed (out of memory)", 0);
     }
     altcp_arg(c->pcb, c);
@@ -468,13 +468,13 @@ static int tls_connect(struct transport *t, const char *host, int port) {
     if (!ssl || mbedtls_ssl_set_hostname(ssl, host) != 0) {
         struct altcp_pcb *pcb = c->pcb;
         c->pcb = NULL;
-        cyw43_arch_lwip_end();
+        net_radio_unlock();
         detach_and_close(pcb);
         return tls_fail(TLS_ERR_TLS_CONFIG, "mbedtls_ssl_set_hostname failed", 0);
     }
 
     err_t cerr = altcp_connect(c->pcb, &c->remote_ip, (u16_t)port, on_connected);
-    cyw43_arch_lwip_end();
+    net_radio_unlock();
     if (cerr != ERR_OK) {
         struct altcp_pcb *pcb = c->pcb;
         c->pcb = NULL;
@@ -523,19 +523,19 @@ static int tls_write(struct transport *t, const uint8_t *b, int n) {
     u16_t avail;
     for (;;) {
         if (!c->pcb || c->closed) return -1;
-        cyw43_arch_lwip_begin();
+        net_radio_lock();
         avail = altcp_sndbuf(c->pcb);
-        cyw43_arch_lwip_end();
+        net_radio_unlock();
         if (avail > 0) break;
         if (absolute_time_diff_us(get_absolute_time(), deadline) <= 0) return -1;
         sleep_ms(1);
     }
 
     int to_write = (avail < (u16_t)n) ? (int)avail : n;
-    cyw43_arch_lwip_begin();
+    net_radio_lock();
     err_t werr = altcp_write(c->pcb, b, (u16_t)to_write, TCP_WRITE_FLAG_COPY);
     if (werr == ERR_OK) altcp_output(c->pcb);
-    cyw43_arch_lwip_end();
+    net_radio_unlock();
     if (werr != ERR_OK) return -1;
     return to_write;
 }
@@ -616,7 +616,7 @@ static int tls_read(struct transport *t, uint8_t *b, int cap, int timeout_ms) {
     // have its own new pbuf orphaned (rx_head overwritten out from under
     // it). Locked for the whole sequence now.
     int copied = 0;
-    cyw43_arch_lwip_begin();
+    net_radio_lock();
     while (cap > 0 && c->rx_head) {
         struct pbuf *head = c->rx_head;
         int avail_here = (int)head->len - (int)c->rx_off;
@@ -640,7 +640,7 @@ static int tls_read(struct transport *t, uint8_t *b, int cap, int timeout_ms) {
     // server now pauses when this loop falls behind, which is what keeps a
     // 2 MB body bounded in a 16 KB lwIP heap.
     if (copied > 0) altcp_recved(c->pcb, (u16_t)copied);
-    cyw43_arch_lwip_end();
+    net_radio_unlock();
     return copied;
 }
 

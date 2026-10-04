@@ -3,6 +3,7 @@
 #include "wf_log.h"
 #include "pico/stdlib.h"
 #include "hardware/i2c.h"
+#include "board_hw.h"
 
 // 100 kHz, not 400: this runs once at boot over hand-wired Dupont leads, where
 // signal integrity is whatever the wires happen to give. The slow rate is the
@@ -27,7 +28,7 @@ static const char *known(uint8_t addr) {
 
 int i2c_probe_bus(uint8_t *panel_addr) {
     uint8_t panel = 0;
-    i2c_init(i2c1, PROBE_HZ);
+    i2c_init(board_i2c(), PROBE_HZ);
     gpio_set_function(PIN_I2C_SDA, GPIO_FUNC_I2C);
     gpio_set_function(PIN_I2C_SCL, GPIO_FUNC_I2C);
     // Internal pull-ups are weak (~50k) and a real module brings its own
@@ -42,7 +43,7 @@ int i2c_probe_bus(uint8_t *panel_addr) {
         uint8_t discard;
         // A 1-byte read is the standard probe: it is the address phase that
         // answers, and the byte itself is thrown away.
-        if (i2c_read_timeout_us(i2c1, a, &discard, 1, false, PROBE_TIMEOUT_US) >= 0) {
+        if (i2c_read_timeout_us(board_i2c(), a, &discard, 1, false, PROBE_TIMEOUT_US) >= 0) {
             wf_logf(WF_INFO, "i2c1: device at 0x%02x%s", a, known(a));
             if (panel == 0 && (a == 0x3c || a == 0x3d)) panel = a;
             found++;

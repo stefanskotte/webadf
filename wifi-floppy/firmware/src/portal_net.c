@@ -105,7 +105,8 @@
 #include "dns_server.h"
 #include "portal_http.h"
 
-#include "pico/cyw43_arch.h"
+#include "net_radio.h"
+#include "pico.h"            // pico/platform.h refuses to be the first SDK include
 #include "pico/platform.h"   // tight_loop_contents(), see fatal_setup_failure()
 #include "pico/time.h"
 #include "lwip/udp.h"
@@ -222,7 +223,7 @@ static void fatal_setup_failure(void) {
 
 static void format_mac_colon(char *out, size_t out_len) {
     uint8_t mac[6] = {0};
-    cyw43_wifi_get_mac(&cyw43_state, CYW43_ITF_STA, mac);
+    net_radio_mac(mac);
     snprintf(out, out_len, "%02x:%02x:%02x:%02x:%02x:%02x",
              mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
 }
@@ -643,42 +644,42 @@ static err_t http_accept_cb(void *arg, struct tcp_pcb *newpcb, err_t err) {
 // ------------------------------------------------------------- lifecycle
 
 static void setup_dhcp(void) {
-    cyw43_arch_lwip_begin();
+    net_radio_lock();
     struct udp_pcb *pcb = udp_new_ip_type(IPADDR_TYPE_V4);
-    if (!pcb) { cyw43_arch_lwip_end(); fatal_setup_failure(); }
+    if (!pcb) { net_radio_unlock(); fatal_setup_failure(); }
     if (udp_bind(pcb, IP_ADDR_ANY, DHCP_SERVER_PORT) != ERR_OK) {
         udp_remove(pcb);
-        cyw43_arch_lwip_end();
+        net_radio_unlock();
         fatal_setup_failure();
     }
     udp_recv(pcb, dhcp_recv_cb, NULL);
     g_dhcp_pcb = pcb;
-    cyw43_arch_lwip_end();
+    net_radio_unlock();
 }
 
 static void setup_dns(void) {
-    cyw43_arch_lwip_begin();
+    net_radio_lock();
     struct udp_pcb *pcb = udp_new_ip_type(IPADDR_TYPE_V4);
-    if (!pcb) { cyw43_arch_lwip_end(); fatal_setup_failure(); }
+    if (!pcb) { net_radio_unlock(); fatal_setup_failure(); }
     if (udp_bind(pcb, IP_ADDR_ANY, DNS_SERVER_PORT) != ERR_OK) {
         udp_remove(pcb);
-        cyw43_arch_lwip_end();
+        net_radio_unlock();
         fatal_setup_failure();
     }
     udp_recv(pcb, dns_recv_cb, NULL);
     g_dns_pcb = pcb;
-    cyw43_arch_lwip_end();
+    net_radio_unlock();
 }
 
 static void setup_http(void) {
-    cyw43_arch_lwip_begin();
+    net_radio_lock();
     struct tcp_pcb *pcb = tcp_new_ip_type(IPADDR_TYPE_V4);
-    if (!pcb) { cyw43_arch_lwip_end(); fatal_setup_failure(); }
+    if (!pcb) { net_radio_unlock(); fatal_setup_failure(); }
     if (tcp_bind(pcb, IP_ADDR_ANY, HTTP_SERVER_PORT) != ERR_OK) {
         tcp_close(pcb); // pcb is still CLOSED-state here (never listened,
                          // never connected); tcp_close() on that never
                          // needs the FIN dance tcp_abort() exists for.
-        cyw43_arch_lwip_end();
+        net_radio_unlock();
         fatal_setup_failure();
     }
     struct tcp_pcb *listen_pcb = tcp_listen_with_backlog(pcb, MAX_HTTP_CONNS);
@@ -686,12 +687,12 @@ static void setup_http(void) {
         // tcp_listen_with_backlog() only frees `pcb` itself on success;
         // on failure it is untouched and still ours to close.
         tcp_close(pcb);
-        cyw43_arch_lwip_end();
+        net_radio_unlock();
         fatal_setup_failure();
     }
     g_http_listen_pcb = listen_pcb;
     tcp_accept(g_http_listen_pcb, http_accept_cb);
-    cyw43_arch_lwip_end();
+    net_radio_unlock();
 }
 
 portal_run_result_t portal_run(device_config_t *out, const char *err,
@@ -717,11 +718,11 @@ portal_run_result_t portal_run(device_config_t *out, const char *err,
     // just later in that file's flow); nothing here depends on whether
     // STA mode has been set up.
     uint8_t mac[6] = {0};
-    cyw43_wifi_get_mac(&cyw43_state, CYW43_ITF_STA, mac);
+    net_radio_mac(mac);
     char ssid[24];
     snprintf(ssid, sizeof ssid, "wifi-floppy-%02X%02X", mac[4], mac[5]);
 
-    cyw43_arch_enable_ap_mode(ssid, PORTAL_AP_PASSWORD, CYW43_AUTH_WPA2_AES_PSK);
+    net_radio_ap_start(ssid, PORTAL_AP_PASSWORD);
 
     // A previous portal session's leases must not linger into this one --
     // see dhcp_server.h's comment on dhcp_reset_leases().
@@ -782,14 +783,14 @@ portal_run_result_t portal_run(device_config_t *out, const char *err,
         return PORTAL_RUN_IDLE_TIMEOUT;
     }
 
-    cyw43_arch_lwip_begin();
+    net_radio_lock();
     *out = g_pending_cfg;
-    cyw43_arch_lwip_end();
+    net_radio_unlock();
     return PORTAL_RUN_SUBMITTED;
 }
 
 void portal_stop(void) {
-    cyw43_arch_lwip_begin();
+    net_radio_lock();
 
     for (int i = 0; i < MAX_HTTP_CONNS; i++) {
         if (g_http_conns[i].in_use) {
@@ -818,9 +819,9 @@ void portal_stop(void) {
         g_dhcp_pcb = NULL;
     }
 
-    cyw43_arch_lwip_end();
+    net_radio_unlock();
 
-    cyw43_arch_disable_ap_mode();
+    net_radio_ap_stop();
 
     // Review round 1 (Critical): cyw43_arch_disable_ap_mode() ->
     // cyw43_wifi_set_up(CYW43_ITF_AP, false, ...) -> cyw43_cb_tcpip_deinit()
@@ -853,7 +854,7 @@ void portal_stop(void) {
     // re-designating which already-registered netif is the default one.
     // netif_set_default() is a plain lwIP call made from foreground code,
     // so it needs the lock like every other one above.
-    cyw43_arch_lwip_begin();
-    netif_set_default(&cyw43_state.netif[CYW43_ITF_STA]);
-    cyw43_arch_lwip_end();
+    net_radio_lock();
+    netif_set_default(net_radio_sta_netif());
+    net_radio_unlock();
 }
