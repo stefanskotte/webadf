@@ -6,6 +6,7 @@
 #include "pico/stdlib.h"
 #include "pico/multicore.h"
 #include "pico/cyw43_arch.h"
+#include "net_radio.h"
 #include "pico/flash.h"
 #include "pico/time.h"
 #include "hardware/pio.h"
@@ -214,10 +215,10 @@ static bool ui_snapshot(display_state_t *s, char tag[NFC_UI_LINE_BYTES], uint32_
  *  never from core0's service loop, and never from an interrupt. */
 static const char *ip_str(void) {
     static char buf[20];
-    cyw43_arch_lwip_begin();
+    net_radio_lock();
     struct netif *nif = netif_default;
     snprintf(buf, sizeof buf, "%s", nif ? ip4addr_ntoa(netif_ip4_addr(nif)) : "no route");
-    cyw43_arch_lwip_end();
+    net_radio_unlock();
     return buf;
 }
 
@@ -922,15 +923,15 @@ static int wifi_rssi(void) {
 // this is safe from core1's ordinary flow. Never call it from an interrupt.
 static const char *default_route_str(void) {
     static char buf[48];
-    cyw43_arch_lwip_begin();
+    net_radio_lock();
     struct netif *nif = netif_default;
     if (!nif) {
-        cyw43_arch_lwip_end();
+        net_radio_unlock();
         return "NONE -- netif_default is NULL";
     }
     snprintf(buf, sizeof buf, "%c%c%d ip=%s", nif->name[0], nif->name[1],
              nif->num, ip4addr_ntoa(netif_ip4_addr(nif)));
-    cyw43_arch_lwip_end();
+    net_radio_unlock();
     return buf;
 }
 

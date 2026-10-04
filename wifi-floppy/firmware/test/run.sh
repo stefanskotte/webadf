@@ -12,6 +12,8 @@ fail=0
 #                       own -- everything it calls (dhcp_handle/dns_handle/
 #                       portal_request) is already covered by its own
 #                       host-tested source file
+#   net_radio_cyw43.c - the CYW43 driver behind net_radio.h (spec 2026-10-04 §8);
+#                       each function is one SDK call, nothing to judge on a host
 #   dskchg.c          - pulls in pico/stdlib.h (gpio_put, absolute_time_t);
 #                       genuinely device-only, no host-portable logic to test
 #   activity_led.c    } bring-up aids on hand-wired pins: a GPIO write plus an
@@ -65,7 +67,7 @@ for t in test_*.c; do
   # which is exactly why nothing caught it until a second toolchain did.
   cc -std=c11 -D_DEFAULT_SOURCE -g -O1 -Wall -Wextra -Werror -DWFMF_HOST_TEST=1 \
      -o "$out" "$t" transport_fake.c si512_fake.c \
-     $(ls ../src/*.c | grep -vE 'main\.c|transport_tls\.c|sntp_time\.c|portal_net\.c|dskchg\.c|activity_led\.c|i2c_probe\.c|nfc_bus_i2c\.c|ssd1306\.c|flux_capture\.c|bus_out\.c|fw_rom\.c') \
+     $(ls ../src/*.c | grep -vE 'net_radio_cyw43\.c|main\.c|transport_tls\.c|sntp_time\.c|portal_net\.c|dskchg\.c|activity_led\.c|i2c_probe\.c|nfc_bus_i2c\.c|ssd1306\.c|flux_capture\.c|bus_out\.c|fw_rom\.c') \
      .build/monocypher.o .build/monocypher-ed25519.o -I../src/vendor/monocypher \
      || { echo "COMPILE FAIL: $t"; fail=1; continue; }
   if ! "$out"; then
@@ -121,5 +123,21 @@ fi
 # (cmake/gen_version_header.cmake), so its test drives that script directly
 # rather than linking anything.
 if ! ./test_version_header.sh; then fail=1; fi
+
+# Spec 2026-10-04 §8: the WiFi chip sits behind net_radio.h. Only
+# net_radio_cyw43.c may name it. // and single-line /* */ comments are
+# stripped first: comments all over the tree explain cyw43 behaviour, and
+# that is welcome. Identifiers, not just calls: cyw43_state and CYW43_ITF_STA
+# count.
+radio_leak=$(for f in ../src/*.c ../src/*.h; do
+  case "$f" in */net_radio_cyw43.c) continue ;; esac
+  sed -E -e 's#//.*##' -e 's#/\*.*\*/##g' "$f" |
+    { grep -nE '\b(cyw43_[a-z_]+|CYW43_[A-Z_]+|pico/cyw43_arch\.h)' || true; } | sed "s#^#$f:#"
+done | grep -E "${RADIO_GUARD_FILES:-transport_tls|sntp_time}" || true)
+if [ -n "$radio_leak" ]; then
+  echo "$radio_leak"
+  echo "FAIL: the WiFi chip is named outside net_radio_cyw43.c (use net_radio.h)"
+  fail=1
+fi
 
 exit $fail
