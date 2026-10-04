@@ -61,7 +61,7 @@ add_executable(wifi_floppy
   src/transport_tls.c src/sntp_time.c
   ${WFMF_PSA_CRYPTO_RANDOM_SRC}
   src/wf_log.c
-  src/activity_led.c src/i2c_probe.c src/ssd1306.c src/display.c src/display_layout.c src/nfc_tag.c
+  src/activity_led.c src/i2c_probe.c src/ssd1306.c src/display.c src/display_layout.c src/display_store.c src/nfc_tag.c
   src/nfc_reader.c src/nfc_bus_i2c.c src/nfc_handoff.c src/nfc_ui.c
   src/flux_capture.c src/flux_bits.c
   src/board.c src/bus_gate.c src/bus_out.c
