@@ -1972,7 +1972,8 @@ static void core1_main(void) {
             // pass (which never polls). Nothing NFC may be waiting either: a
             // tap, a write result, a write request, or a write report owed --
             // a preload is a whole-disk fetch, seconds long, and every one of
-            // those is answered first; a tap that arrives DURING it cuts the
+            // those is answered first; a tap -- or a write (HANDOFF 3av) --
+            // that arrives DURING it cuts the
             // transfer short (dc_preload_step installs the poll-interrupt:
             // no record, no backoff, `s` untouched, and the pass rounds to
             // the top where nfc_core1_event sends the tap -- final review I1).
