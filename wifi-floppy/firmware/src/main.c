@@ -6,6 +6,7 @@
 #include "pico/stdlib.h"
 #include "pico/multicore.h"
 #include "net_radio.h"
+#include "poll_wake.h"
 #include "pico/flash.h"
 #include "pico/time.h"
 #include "hardware/pio.h"
@@ -664,6 +665,18 @@ static volatile int   g_nfc_reader;
 static bool nfc_event_pending(void *ctx) {
     (void)ctx;
     return nfc_ev_boxes_pending(&g_nfc_ev, &g_nfc_ev_cur);
+}
+
+// g_write_last_ms as it was just before core1 began the current long poll:
+// the write cursor's mark (poll_wake.h). core1 only.
+static uint32_t g_poll_write_mark;
+
+/** core1, from inside tls_read's wait while a poll is held: cut the poll
+ *  short when a tap is waiting OR a write has landed since the poll began,
+ *  so a save made during a held poll is uploaded at once instead of when
+ *  the poll comes back (HANDOFF 3av). Two loads. */
+static bool poll_wake_pending(void *ctx) {
+    return poll_should_yield(nfc_event_pending(ctx), g_write_last_ms, g_poll_write_mark);
 }
 
 /** core0, in the display pump's slot: never both on the bus in one pass.
@@ -1449,10 +1462,11 @@ static void core1_main(void) {
         static uploader_t up;
         up_init(&up, &c, session, wb_write_gen, wb_last_write_ms);
         dc_set_hold(&c, swap_holds, &up);
-        // A waiting tap cuts a held poll short (spec §4.2 amendment). Set on
+        // A waiting tap -- or a write landed since the poll began (HANDOFF
+        // 3av) -- cuts a held poll short (spec §4.2 amendment). Set on
         // every entry: dc_init above zeroes `c`, and nfc_ack with it -- a
         // re-paired board is a new device row whose cursor starts over.
-        dc_set_poll_interrupt(&c, nfc_event_pending, NULL);
+        dc_set_poll_interrupt(&c, poll_wake_pending, NULL);
         static reinsert_t reins;
         reinsert_init(&reins);
         wf_logf(WF_INFO, "write-back: session %s", session);
@@ -1577,6 +1591,12 @@ static void core1_main(void) {
         uint32_t last_status_ms = clock_ms();
 
         while (true) {
+            // The write cursor's mark for this pass (poll_wake.h), taken FIRST,
+            // before any up_has_work() below: a write landing after it is then
+            // either seen as work by those checks or cuts this pass's poll
+            // short. Taken later -- just before dc_step -- a write landing
+            // between a "no work" answer and the mark would wait out the poll.
+            const uint32_t pass_write_mark = g_write_last_ms;
             // Tap-to-mount, first: a tap that cut the last poll short goes out
             // now, ahead of anything else this pass sends. Between requests,
             // never inside one -- the uploader's included (dc_tap's rule).
@@ -1662,13 +1682,17 @@ static void core1_main(void) {
                 // fwu_step's APPLYING does not look at `idle` again.
                 s = c.state;
             } else {
+                // This pass's write mark (taken at the top): a write applied
+                // since then cuts the poll short.
+                g_poll_write_mark = pass_write_mark;
                 s = dc_step(&c);
                 polled = true;
             }
-            // Task 10's contract: a poll cut short by a waiting tap decided
-            // NOTHING, and `s` is not a result -- DC_BACKOFF included, whose
-            // sleep would hold the tap up to 60 s. No state handling at all:
-            // round to the top, send the tap, poll again.
+            // Task 10's contract: a poll cut short by a waiting tap -- or a
+            // write that landed during it (HANDOFF 3av) -- decided NOTHING,
+            // and `s` is not a result -- DC_BACKOFF included, whose sleep
+            // would hold the tap up to 60 s. No state handling at all: round
+            // to the top, send the tap or upload the write, poll again.
             if (polled && c.poll_interrupted) continue;
             // The poll asked for a disk change the hold refused (swap_holds):
             // `since` did not advance, so the next poll would be answered at
@@ -1948,7 +1972,8 @@ static void core1_main(void) {
             // pass (which never polls). Nothing NFC may be waiting either: a
             // tap, a write result, a write request, or a write report owed --
             // a preload is a whole-disk fetch, seconds long, and every one of
-            // those is answered first; a tap that arrives DURING it cuts the
+            // those is answered first; a tap -- or a write (HANDOFF 3av) --
+            // that arrives DURING it cuts the
             // transfer short (dc_preload_step installs the poll-interrupt:
             // no record, no backoff, `s` untouched, and the pass rounds to
             // the top where nfc_core1_event sends the tap -- final review I1).
@@ -2688,6 +2713,13 @@ int main(void) {
                         (unsigned)cap.ns_min, (unsigned)cap.ns_max,
                         (unsigned)cap.cells[0], (unsigned)cap.cells[1], (unsigned)cap.cells[2],
                         (unsigned)cap.glitches);
+                // HANDOFF 3av: the capture's first word (`lead`, the arm-to-
+                // first-edge time, NOT counted in the line above) and where the
+                // shortest real interval sat. Its own line: the one above is
+                // near WF_LOG_MSG (88) already.
+                wf_logf(WF_INFO, "write: lead %u ns, shortest %u ns at word %u of %u",
+                        (unsigned)cap.lead_ns, (unsigned)cap.ns_min,
+                        (unsigned)cap.min_at, (unsigned)cap.intervals);
                 if (d.found && !d.track_no_consistent) {
                     wf_logf(WF_WARN, "write: sector headers disagree about the track");
                 } else if (d.found && d.track_no != wt) {

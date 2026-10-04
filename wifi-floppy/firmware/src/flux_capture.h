@@ -68,6 +68,13 @@ typedef struct {
     uint32_t glitches;        /* intervals below FLUX_GLITCH_NS (flux_bits.h): a
                                 * glitched line, not data -- see the bench note
                                 * at 3ao step 3 in HANDOFF.md */
+    /* The FIRST word of a capture, and where the shortest real interval sat
+     * (HANDOFF 3av). Word 0 is not a flux interval -- arming only restarts
+     * flux_in, so it counts from the arm to the first edge -- and measured
+     * 2026-10-04 it was the only sub-3000 ns value. It is reported here as
+     * lead_ns and excluded from cells, ns_min/ns_max and glitches. */
+    uint32_t lead_ns;         /* the capture's first word, as ns */
+    uint32_t min_at;          /* 0-based index of ns_min among the capture's words */
 } flux_capture_result_t;
 
 /** True, once, after a capture ends: the bitstream is ready to decode.

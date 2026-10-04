@@ -213,7 +213,8 @@ typedef struct {
     // failed preload that had no record to drop changes nothing reported.
     bool     changed;
     // The last dc_preload_step was cut short by the poll-interrupt (a tap
-    // waiting): no record, no backoff, state as on entry. Cleared on entry.
+    // or a write waiting): no record, no backoff, state as on entry. Cleared
+    // on entry.
     bool     interrupted;
 } dc_preload_t;
 

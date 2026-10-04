@@ -4620,6 +4620,30 @@ Demozoo API (the bulk export makes per-lookup load on a non-profit unnecessary).
   allowlist checks only the first URL (the raster content-type allowlist and `nosniff` still apply).
 - **Cron drift:** the daily 01:30 cron against a 7-day gate can drift a refetch to 8 days.
 
+### 3aw. A save no longer waits for the long poll; rev B's "WDATA glitch" was a measurement artifact -- 1.6.4/1.6.5 (2026-10-04)
+
+**SHIPPED:** 1.6.4+g5abe179 (seq 36) and 1.6.5+g3f4df0a (seq 37), both self-installed and confirmed on
+WifiFloppy1. Each change had an independent review plus a scoped re-review of its fixes.
+
+- **(a) A save made during a held long poll waited for the poll to return** (20 s on 1.6.3, 14 s on 1.6.1). Only an
+  NFC tap could cut a poll short.
+  - Fix: `src/poll_wake.h`, `poll_should_yield(tap, g_write_last_ms, mark)`, host-tested in `test_poll_wake.c`.
+  - The mark is taken FIRST in each pass of core1's loop, before any `up_has_work()` (review: taken later, a write
+    landing in between waited out the poll).
+  - It is a cursor, so a seen write never cuts a later poll short and cannot hot-loop.
+  - The preload shares the interrupt and runs only in a pass that just polled, so it always has a fresh mark.
+  - Bench, 1.6.4: every capture was uploaded 0.2-0.6 s after it was written (version 18).
+- **(b) The `short 1` in session-first captures (2,880 ns 10-02, 2,533 ns 10-04) was never the line.** 1.6.4 logged
+  `write: lead N ns, shortest M ns at word K of T`, and the only sub-3000 ns value was **word 0**
+  (`lead 2613 ns, shortest 2613 ns at word 0`). Every real interval in six captures was >= 3,333 ns.
+  - Word 0 is arm-to-first-edge time: arming only restarts flux_in.
+  - 1.6.5 keeps word 0 out of cells, ns_min/ns_max and `short`. It is still logged as `lead` and still fed to the
+    decoder, before the first sync.
+  - **Rev B's WDATA line is clean.** The large HD copy is still the stress test to run.
+- **Known, logging only:** the decoder's `rng` (out_of_range) count includes word 0 whenever the lead is >= 9000 ns.
+  That is why most `write: trk` lines read `rng 1` on a clean line. Left as is, because fixing it means touching the
+  decoder for a log number.
+
 ### 3av. Unified firmware P1 -- board table and net_radio seam, firmware 1.6.3 (2026-10-04)
 
 **SHIPPED: 1.6.3+g4faf91a, sequence 35, installed and confirmed on WifiFloppy1 (rev B).** Spec
