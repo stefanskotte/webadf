@@ -884,8 +884,17 @@ static dc_state_t dc_handle_poll_body(device_client_t *c, const char *json) {
     // before anything about the disk can return early. Absent (an older
     // server, or no layout ever published) leaves the cursor alone; strict, so
     // a wrapped or malformed number is not mistaken for a version.
+    //
+    // A version BELOW the ack is a server-side reset, not news: the cursor
+    // belongs to another device row (a re-paired board, whose stored ack is
+    // the old row's). The server sends displayVersion on every poll body when
+    // the board sends displayAck, so this is seen at the first 200. Start
+    // over: ack 0, so a positive version is fetched once and 0 owes nothing.
     uint32_t dv;
-    if (json_u32_strict(json, "displayVersion", &dv)) c->display_want = dv;
+    if (json_u32_strict(json, "displayVersion", &dv)) {
+        if (dv < c->display_ack) { c->display_ack = 0; c->display_error[0] = '\0'; }
+        c->display_want = dv;
+    }
 
     uint32_t version = 0;
     if (!json_u32(json, "version", &version)) {
@@ -1457,6 +1466,30 @@ bool dc_display_parse(const uint8_t *buf, int n, uint32_t *version, uint8_t *pan
 void dc_display_handled(device_client_t *c, uint32_t version, const char *error) {
     c->display_ack = version;
     snprintf(c->display_error, sizeof c->display_error, "%s", error ? error : "");
+}
+
+dc_display_action_t dc_display_decide(const device_client_t *c, const uint8_t *buf, int n,
+                                      dc_display_verdict_t *out) {
+    memset(out, 0, sizeof *out);
+    if (n < 0) return DC_DISP_RETRY;
+    if (!dc_display_parse(buf, n, &out->version, &out->panel, &out->blob, &out->blob_len)) {
+        out->version = c->display_want;
+        out->blob = NULL; out->blob_len = 0;
+        snprintf(out->why, sizeof out->why, "malformed display body");
+        return DC_DISP_MALFORMED;
+    }
+    // Stale: acking it would move the cursor BACKWARDS past what the poll
+    // named, and applying it would put an older layout on the glass.
+    if (out->version < c->display_want) return DC_DISP_RETRY;
+    if (out->blob_len > 0) {
+        if (!layout_decode(out->blob, (size_t)out->blob_len, &out->layout, out->why, sizeof out->why))
+            return DC_DISP_REJECT;
+        if (out->layout.panel != (panel_t)out->panel) {
+            snprintf(out->why, sizeof out->why, "panel mismatch");
+            return DC_DISP_REJECT;
+        }
+    }
+    return DC_DISP_APPLY;
 }
 
 dc_state_t dc_step(device_client_t *c) {

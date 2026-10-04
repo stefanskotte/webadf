@@ -14,6 +14,7 @@
 #include <stdint.h>
 #include <stdbool.h>
 #include "transport.h"
+#include "display_layout.h"   // pure: layout_t, for dc_display_verdict_t
 
 typedef enum {
     DC_UNPROVISIONED, DC_IDLE_POLL, DC_FETCHING, DC_VERIFYING,
@@ -613,5 +614,29 @@ bool dc_display_parse(const uint8_t *buf, int n, uint32_t *version, uint8_t *pan
 // `version` was handled: the ack moves to it, and `error` (NULL = applied)
 // becomes displayError, clipped to the field.
 void dc_display_handled(device_client_t *c, uint32_t version, const char *error);
+
+// What to do with a dc_fetch_display result -- every decision main.c's fetch
+// acts on, pure, so main.c keeps only the side effects:
+//   RETRY     n < 0 (nothing complete arrived), or a body OLDER than the
+//             version the poll named (a lagging server read): neither applied
+//             nor acked -- the caller backs off and fetches again.
+//   MALFORMED a complete 200 dc_display_parse refuses: acked as the version
+//             the POLL named (display_want), reason "malformed display body",
+//             or it would be fetched forever.
+//   REJECT    the blob fails layout_decode, or its panel is not the body's:
+//             acked under the body's version, with the reason.
+//   APPLY     publish it (layout is decoded when blob_len > 0; a 0 blob_len
+//             is the panel's default), then ack it with no error.
+typedef enum { DC_DISP_RETRY, DC_DISP_MALFORMED, DC_DISP_REJECT, DC_DISP_APPLY } dc_display_action_t;
+typedef struct {
+    uint32_t       version;      // what to ack (MALFORMED: display_want)
+    uint8_t        panel;
+    const uint8_t *blob;         // into the caller's buffer; NULL = default
+    int            blob_len;
+    layout_t       layout;       // APPLY with blob_len > 0
+    char           why[48];      // REJECT / MALFORMED; "" otherwise
+} dc_display_verdict_t;
+dc_display_action_t dc_display_decide(const device_client_t *c, const uint8_t *buf, int n,
+                                      dc_display_verdict_t *out);
 
 #endif

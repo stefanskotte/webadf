@@ -2292,6 +2292,85 @@ static void test_fetch_display_failures(void) {
     CHECK_EQ_INT(c.state, DC_HALTED);
 }
 
+// Review fix (Ruling J b): a poll's displayVersion BELOW the ack is a
+// server-side reset (a re-paired board's new device row): the cursor starts
+// over, and a positive version is fetched once.
+static void test_display_version_below_the_ack_resets_the_cursor(void) {
+    boot();
+    c.display_ack = 9;
+    dc_display_handled(&c, 9, "old row's refusal");
+    push_ok_json("{\"version\":1,\"displayVersion\":3,\"desired\":null}");
+    dc_step(&c);
+    CHECK_EQ_INT((int)c.display_ack, 0);
+    CHECK(c.display_error[0] == '\0', "the old row's reason goes with its cursor");
+    CHECK_EQ_INT((int)c.display_want, 3);
+    CHECK(dc_display_owed(&c), "the new row's version 3 is fetched");
+    // A reset to 0 (nothing published on the new row) owes nothing.
+    boot();
+    c.display_ack = 9;
+    push_ok_json("{\"version\":1,\"displayVersion\":0,\"desired\":null}");
+    dc_step(&c);
+    CHECK_EQ_INT((int)c.display_ack, 0);
+    CHECK(!dc_display_owed(&c), "version 0: nothing to fetch");
+    // Equal to the ack is not a reset.
+    boot();
+    c.display_ack = 9;
+    push_ok_json("{\"version\":1,\"displayVersion\":9,\"desired\":null}");
+    dc_step(&c);
+    CHECK_EQ_INT((int)c.display_ack, 9);
+    CHECK(!dc_display_owed(&c), "already handled");
+}
+
+// Review fix (Minor 5): every decision display_core1_fetch acts on, pure.
+// A valid 128x32 layout blob: format 1, panel 0, one element (status, visible).
+static const uint8_t good_blob_32[] = { 1, 0, 1, 0,   1, 1, 0, 0, 0, 0, 0, 0 };
+
+static int disp_body(uint8_t *out, uint32_t v, uint8_t panel, const uint8_t *blob, int bl) {
+    out[0] = (uint8_t)(v >> 24); out[1] = (uint8_t)(v >> 16); out[2] = (uint8_t)(v >> 8); out[3] = (uint8_t)v;
+    out[4] = panel; out[5] = bl ? 1 : 0;
+    if (bl) memcpy(out + 6, blob, (size_t)bl);
+    return 6 + bl;
+}
+
+static void test_display_decide_branches(void) {
+    device_client_t d; memset(&d, 0, sizeof d);
+    d.display_ack = 4; d.display_want = 5;
+    static dc_display_verdict_t vd;
+    uint8_t body[8 + LAYOUT_BLOB_MAX];
+
+    CHECK_EQ_INT(dc_display_decide(&d, body, -1, &vd), DC_DISP_RETRY);      // transport failure
+
+    int n = disp_body(body, 5, 0, NULL, 0);
+    CHECK_EQ_INT(dc_display_decide(&d, body, n, &vd), DC_DISP_APPLY);       // the default
+    CHECK(vd.version == 5 && vd.panel == 0 && vd.blob_len == 0 && vd.blob == NULL, "default fields");
+
+    n = disp_body(body, 5, 0, good_blob_32, (int)sizeof good_blob_32);
+    CHECK_EQ_INT(dc_display_decide(&d, body, n, &vd), DC_DISP_APPLY);       // a custom layout
+    CHECK(vd.blob == body + 6 && vd.blob_len == (int)sizeof good_blob_32, "blob points into the body");
+    CHECK(vd.layout.panel == PANEL_128x32 && vd.layout.n == 1, "decoded");
+
+    n = disp_body(body, 6, 1, good_blob_32, (int)sizeof good_blob_32);
+    CHECK_EQ_INT(dc_display_decide(&d, body, n, &vd), DC_DISP_REJECT);      // blob says 128x32, body 128x64
+    CHECK(vd.version == 6 && strcmp(vd.why, "panel mismatch") == 0, "mismatch is refused under its version");
+
+    static const uint8_t bad_blob[] = { 9, 0, 0, 0 };                        // unknown format
+    n = disp_body(body, 7, 0, bad_blob, (int)sizeof bad_blob);
+    CHECK_EQ_INT(dc_display_decide(&d, body, n, &vd), DC_DISP_REJECT);
+    CHECK(vd.version == 7 && strcmp(vd.why, "format: unknown") == 0, "the validator's reason");
+
+    const uint8_t junk[] = { 0, 0, 0, 5, 7 };                                // unparseable
+    CHECK_EQ_INT(dc_display_decide(&d, junk, (int)sizeof junk, &vd), DC_DISP_MALFORMED);
+    CHECK(vd.version == 5, "a malformed body acks the version the POLL named");
+    CHECK(strcmp(vd.why, "malformed display body") == 0, "with a reason");
+
+    n = disp_body(body, 4, 0, NULL, 0);                                     // older than the poll said
+    CHECK_EQ_INT(dc_display_decide(&d, body, n, &vd), DC_DISP_RETRY);       // stale: neither applied nor acked
+
+    n = disp_body(body, 8, 0, NULL, 0);                                     // newer than the poll said
+    CHECK_EQ_INT(dc_display_decide(&d, body, n, &vd), DC_DISP_APPLY);
+    CHECK_EQ_INT((int)vd.version, 8);
+}
+
 int main(void) {
     // Only test_successful_image_fetch_publishes_and_reflects_write_protected
     // needs real PSRAM backing (everything else in this file either never
@@ -2425,6 +2504,8 @@ int main(void) {
     RUN(test_status_carries_display_fields);
     RUN(test_fetch_display_returns_the_body);
     RUN(test_fetch_display_failures);
+    RUN(test_display_version_below_the_ack_resets_the_cursor);
+    RUN(test_display_decide_branches);
 
     // The observation tests run BEFORE the backing is released: several of
     // them drive a real fetch, which writes into PSRAM. Appending them after

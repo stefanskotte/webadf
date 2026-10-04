@@ -135,10 +135,13 @@ static bool panel_blit(void *ctx, int page, int col, const uint8_t *b, int n) {
 // (layout_decode) and hands it to core0, which owns the panel. The handoff is
 // two slots and a sequence: core1 fills the slot the sequence does NOT name,
 // then advances the sequence behind a barrier; core0 copies the named slot and
-// re-reads the sequence. A sequence that moved by two or more during the copy
-// means core1 lapped it and may have rewritten that very slot -- torn, so core0
-// tries again next pass. Publishes are one per network round trip (seconds);
-// core0's copy is microseconds, so in practice the retry never happens.
+// re-reads the sequence. ANY move during the copy means core1 may be writing
+// the slot being read: its next publish after `s` writes slot (s+1)&1, but the
+// one after that writes (s+2)&1 == s&1 -- this very slot -- and names it only
+// once it is done, so a re-read in the middle of that write still sees s+1.
+// Torn or not, core0 drops the copy and tries again next pass. Publishes are
+// one per network round trip (seconds); core0's copy is microseconds, so in
+// practice the retry never happens.
 //
 // core0 then applies it at once from RAM and writes it to flash later, only
 // with the drive empty (display_store.h) -- in core0's own loop, so no disk can
@@ -162,6 +165,10 @@ static display_record_t   g_display_rec;            // what the deferred write s
 static bool               g_display_store_pending;
 // Set by main() before core1 launches; core1 seeds c.display_ack from it.
 static uint32_t           g_display_boot_ack;
+// The panel type the board has: main() sets it from the stored record before
+// core1 launches, and from then on only core1 writes it (each publish). It is
+// the hardware's, not a device row's, so a re-pair keeps it (Ruling J).
+static uint8_t            g_display_panel = PANEL_128x32;
 
 /** core1: publish a validated display for core0. `l` NULL = the panel's
  *  default. `blob`/`bl` are the encoded layout as fetched, for the store. */
@@ -180,6 +187,7 @@ static void display_handoff_publish(uint8_t panel, const layout_t *l, uint32_t v
     }
     __dmb();                 // the slot is whole before the sequence names it
     g_display_seq = s + 1u;
+    g_display_panel = panel;
 }
 
 /** core0: copy the newest published slot if it is newer than *last. False =
@@ -190,7 +198,7 @@ static bool display_handoff_take(uint32_t *last, display_slot_t *out) {
     __dmb();
     *out = g_display_slots[s & 1u];
     __dmb();
-    if (g_display_seq - s >= 2u) return false;   // lapped mid-copy
+    if (g_display_seq != s) return false;   // core1 may be writing this slot: retry
     *last = s;
     return true;
 }
@@ -973,45 +981,38 @@ static void display_fetch_backoff(void) {
 
 /** core1, between requests: fetch, validate and hand over the owed display.
  *  True when a version was HANDLED (applied or refused) -- a status report is
- *  then owed, carrying the new displayVersion and displayError. */
+ *  then owed, carrying the new displayVersion and displayError. Every decision
+ *  is dc_display_decide's (pure, host-tested); this is only what it causes. */
 static bool display_core1_fetch(device_client_t *c) {
     if (g_display_fetch_failing && (int32_t)(clock_ms() - g_display_retry_at) < 0) return false;
     // static: core1's stack is measured tight (see CORE1_STACK_BYTES).
-    static uint8_t  dbuf[8 + LAYOUT_BLOB_MAX];
-    static layout_t l;
-    static char     why[sizeof c->display_error];
+    static uint8_t dbuf[8 + LAYOUT_BLOB_MAX];
+    static dc_display_verdict_t vd;
     const uint32_t want = c->display_want;
     const int n = dc_fetch_display(c, dbuf, (int)sizeof dbuf);
-    if (n < 0) {
+    switch (dc_display_decide(c, dbuf, n, &vd)) {
+    case DC_DISP_RETRY:
+        // Nothing complete arrived, or an answer older than the poll's word
+        // (a lagging read on the server): neither applied nor acked.
         display_fetch_backoff();
-        wf_logf(WF_WARN, "display: fetch for version %lu failed -- retry in %lu s",
-                (unsigned long)want, (unsigned long)(g_display_retry_wait / 1000u));
+        wf_logf(WF_WARN, "display: fetch for version %lu %s -- retry in %lu s",
+                (unsigned long)want, n < 0 ? "failed" : "answered with an older version",
+                (unsigned long)(g_display_retry_wait / 1000u));
         return false;
+    case DC_DISP_MALFORMED:
+    case DC_DISP_REJECT:
+        dc_display_handled(c, vd.version, vd.why);
+        wf_logf(WF_WARN, "display: version %lu refused -- %s (%d bytes)",
+                (unsigned long)vd.version, vd.why, n);
+        break;
+    case DC_DISP_APPLY:
+        display_handoff_publish(vd.panel, vd.blob_len ? &vd.layout : NULL, vd.version,
+                                vd.blob, vd.blob_len);   // core0 applies; store deferred
+        dc_display_handled(c, vd.version, NULL);
+        break;
     }
     g_display_fetch_failing = false;
     g_display_retry_wait = 0;
-
-    uint32_t v; uint8_t p; const uint8_t *blob; int bl;
-    if (!dc_display_parse(dbuf, n, &v, &p, &blob, &bl)) {
-        // A complete 200 this board cannot read. Refused, as the version the
-        // poll named -- not retried, or it would be fetched forever.
-        dc_display_handled(c, want, "malformed display body");
-        wf_logf(WF_WARN, "display: version %lu refused -- malformed body (%d bytes)",
-                (unsigned long)want, n);
-        return true;
-    }
-    why[0] = '\0';
-    bool ok = bl == 0 ? true : layout_decode(blob, (size_t)bl, &l, why, sizeof why);
-    if (ok && bl > 0 && l.panel != (panel_t)p) {
-        ok = false;
-        snprintf(why, sizeof why, "panel mismatch");
-    }
-    if (ok) display_handoff_publish(p, bl ? &l : NULL, v, blob, bl);   // core0 applies; store deferred
-    dc_display_handled(c, v, ok ? NULL : why);
-    if (!ok) wf_logf(WF_WARN, "display: version %lu refused -- %s", (unsigned long)v, why);
-    // An answer older than the poll's word (a lagging read on the server)
-    // leaves the version owed: pace the refetch like a failure.
-    if (dc_display_owed(c)) display_fetch_backoff();
     return true;
 }
 
@@ -1621,9 +1622,22 @@ static void core1_main(void) {
         // already on the glass is not fetched again. A re-entry is a re-pair:
         // a new device row, whose cursor starts over -- the rule nfcAck and
         // the firmware instruction ack follow too.
+        //
+        // Ruling J (review fix): a re-pair also puts the FRESH-board state on
+        // the glass and in the store -- this panel type's default layout under
+        // version 0. The custom layout on the glass belongs to the old row;
+        // left there it would also be re-seeded as that row's ack after a
+        // reboot, silently skipping the new row's versions up to it. The panel
+        // TYPE is kept: it is the hardware's, not the row's.
         {
             static bool display_seeded = false;
-            c.display_ack = display_seeded ? 0 : g_display_boot_ack;
+            if (display_seeded) {
+                display_handoff_publish(g_display_panel, NULL, 0, NULL, 0);
+                c.display_ack = 0;
+                wf_logf(WF_INFO, "display: re-paired -- default layout, version 0");
+            } else {
+                c.display_ack = g_display_boot_ack;
+            }
             display_seeded = true;
         }
         // HANDOFF 4g rule 1: a token chosen per boot, so a rebooted board's seq 1
@@ -2444,8 +2458,9 @@ int main(void) {
                 } else {
                     boot_panel = (panel_t)rec.panel;
                     g_display_boot_ack = rec.version;
+                    g_display_panel = rec.panel;   // before core1 launches
                     if (rec.has_layout) {
-                        char why[48];
+                        char why[48] = "";
                         if (layout_decode(rec.blob, rec.blob_len, &g_layout_applied, why, sizeof why) &&
                             g_layout_applied.panel == boot_panel) {
                             boot_layout = &g_layout_applied;
