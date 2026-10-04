@@ -2713,9 +2713,10 @@ int main(void) {
                         (unsigned)cap.ns_min, (unsigned)cap.ns_max,
                         (unsigned)cap.cells[0], (unsigned)cap.cells[1], (unsigned)cap.cells[2],
                         (unsigned)cap.glitches);
-                // HANDOFF 3av (b): is a sub-3000 ns minimum the capture's first
-                // word (an arm artifact, word 0) or a real glitch mid-stream?
-                // Its own line: the one above is near WF_LOG_MSG (88) already.
+                // HANDOFF 3av: the capture's first word (`lead`, the arm-to-
+                // first-edge time, NOT counted in the line above) and where the
+                // shortest real interval sat. Its own line: the one above is
+                // near WF_LOG_MSG (88) already.
                 wf_logf(WF_INFO, "write: lead %u ns, shortest %u ns at word %u of %u",
                         (unsigned)cap.lead_ns, (unsigned)cap.ns_min,
                         (unsigned)cap.min_at, (unsigned)cap.intervals);

@@ -50,13 +50,24 @@ static uint32_t d_count, d_lead_ns, d_min_at;   // HANDOFF 3av (b)
 
 static void consume(uint32_t word) {
     const uint32_t ns = flux_counter_to_ns(word, pio_hz);
-    const int c = mfm_interval_to_bits(ns);
-    if (c >= 2 && c <= 4) d_cells[c - 2]++;
-    if (d_count == 0) d_lead_ns = ns;
-    if (ns < d_ns_min) { d_ns_min = ns; d_min_at = d_count; }
+    // Word 0 is not a flux interval: arming only restarts flux_in, so it
+    // counts from the arm (or carries the previous capture's count) to the
+    // first edge. Measured 2026-10-04 (HANDOFF 3av): the sub-3000 ns minimum
+    // that made rev B look glitched was word 0 every time (lead 2613 ns,
+    // shortest at word 0), and every real interval was >= 3333 ns. It is
+    // logged as `lead` and kept out of the statistics -- min/max, cells and
+    // `short` describe the line, not the arm. Still fed to the decoder: it
+    // lands before the first sync, where the decoder looks for nothing.
+    if (d_count == 0) {
+        d_lead_ns = ns;
+    } else {
+        const int c = mfm_interval_to_bits(ns);
+        if (c >= 2 && c <= 4) d_cells[c - 2]++;
+        if (ns < d_ns_min) { d_ns_min = ns; d_min_at = d_count; }
+        if (ns > d_ns_max) d_ns_max = ns;
+        if (flux_ns_is_glitch(ns)) d_glitches++;
+    }
     d_count++;
-    if (ns > d_ns_max) d_ns_max = ns;
-    if (flux_ns_is_glitch(ns)) d_glitches++;
     flux_bits_feed(&bits, ns);
 }
 
