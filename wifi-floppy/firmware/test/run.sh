@@ -125,14 +125,16 @@ fi
 if ! ./test_version_header.sh; then fail=1; fi
 
 # Spec 2026-10-04 §8: the WiFi chip sits behind net_radio.h. Only
-# net_radio_cyw43.c may name it. // and single-line /* */ comments are
-# stripped first: comments all over the tree explain cyw43 behaviour, and
-# that is welcome. Identifiers, not just calls: cyw43_state and CYW43_ITF_STA
-# count.
-radio_leak=$(for f in ../src/*.c ../src/*.h; do
+# net_radio_cyw43.c may name it. Scope: ../src/*.c, ../src/*.h and
+# ../lwipopts.h. // and single-line /* */ comments are stripped first:
+# comments all over the tree explain the chip's behaviour, and that is
+# welcome. The match is the bare chip name, case-insensitive, with no
+# underscore or word boundary required, so every spelling counts: cyw43_state,
+# CYW43_ITF_STA, PICO_CYW43_ARCH_POLL, #include "cyw43.h", pico/cyw43_arch.h.
+radio_leak=$(for f in ../src/*.c ../src/*.h ../lwipopts.h; do
   case "$f" in */net_radio_cyw43.c) continue ;; esac
   sed -E -e 's#//.*##' -e 's#/\*.*\*/##g' "$f" |
-    { grep -nE '\b(cyw43_[a-z_]+|CYW43_[A-Z_]+|pico/cyw43_arch\.h)' || true; } | sed "s#^#$f:#"
+    { grep -inE 'cyw43' || true; } | sed "s#^#$f:#"
 done || true)
 if [ -n "$radio_leak" ]; then
   echo "$radio_leak"

@@ -2157,10 +2157,17 @@ int main(void) {
         char why[96];
         if (!board_check(g_board, why, sizeof why)) {
             // A code error, not a field condition: the table in board.c is
-            // wrong. Stop before driving a single pad; the OTA trial (if this
-            // is one) reverts after FW_TRIAL_DEADLINE_MS with no heartbeat.
+            // wrong. Stop before driving a single pad. A TBYB trial image is
+            // reverted by the watchdog the boot ROM armed for it (not by
+            // FW_TRIAL_DEADLINE_MS: fw_rom_service() runs on core0's loop,
+            // which this never reaches); any other boot just stays halted.
+            // Core0's loop is what drains the log ring, so drain it here or
+            // the line below never reaches the console.
             wf_logf(WF_ERR, "board: %s fails its check: %s", g_board->name, why);
-            while (1) tight_loop_contents();
+            while (1) {
+                wf_log_drain(4);
+                tight_loop_contents();
+            }
         }
         wf_logf(WF_INFO, "board: %s", g_board->name);
     }
