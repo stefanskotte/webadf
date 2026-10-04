@@ -14,7 +14,7 @@ int  net_radio_init(void);
 /** Station mode on (no association yet). */
 void net_radio_sta_enable(void);
 /** Associate with a WPA2-PSK network. Returns PICO_OK (0) or a PICO_ERROR_* code,
- *  exactly as cyw43_arch_wifi_connect_timeout_ms did (main.c's assoc_failure_message maps them). */
+ *  exactly as the SDK's blocking WiFi connect call did (main.c's assoc_failure_message maps them). */
 int  net_radio_sta_connect(const char *ssid, const char *pass, uint32_t timeout_ms);
 /** Start / stop the WPA2-PSK access point the setup portal serves on. */
 void net_radio_ap_start(const char *ssid, const char *pass);

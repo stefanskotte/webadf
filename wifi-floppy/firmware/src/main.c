@@ -5,7 +5,6 @@
 // ---------------------------------------------------------------------------
 #include "pico/stdlib.h"
 #include "pico/multicore.h"
-#include "pico/cyw43_arch.h"
 #include "net_radio.h"
 #include "pico/flash.h"
 #include "pico/time.h"
@@ -906,9 +905,7 @@ static int psram_free_estimate(void) {
 }
 
 static int wifi_rssi(void) {
-    int32_t rssi = 0;
-    cyw43_wifi_get_rssi(&cyw43_state, &rssi);
-    return (int)rssi;
+    return (int)net_radio_rssi();
 }
 
 // Renders lwIP's default route. This exists for ONE open question that plan
@@ -937,7 +934,7 @@ static const char *default_route_str(void) {
 
 static void mac_address_string(char *out, size_t out_len) {
     uint8_t mac[6] = {0};
-    cyw43_wifi_get_mac(&cyw43_state, CYW43_ITF_STA, mac);
+    net_radio_mac(mac);
     snprintf(out, out_len, "%02x:%02x:%02x:%02x:%02x:%02x",
              mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
 }
@@ -1140,11 +1137,11 @@ static bool swap_hold_check(void *up, bool decide) {
 static bool swap_holds(void *up) { return swap_hold_check(up, true); }
 
 static void core1_main(void) {
-    if (cyw43_arch_init()) {
+    if (net_radio_init()) {
         // This loop never exits, but core0 is what drains the log, so this
         // line does get out -- which is the whole reason the drain lives
         // there and not here.
-        wf_logf(WF_ERR, "cyw43_arch_init failed, radio is dead");
+        wf_logf(WF_ERR, "radio init failed, radio is dead");
         while (1) tight_loop_contents();
     }
     wf_logf(WF_INFO, "radio up (RM2)");
@@ -1159,7 +1156,7 @@ static void core1_main(void) {
                 if (pio_sm_is_claimed(pio_get_instance(p), sm)) m[p] |= 1u << sm;
         wf_logf(WF_INFO, "pio claims: pio0=%x pio1=%x pio2=%x", m[0], m[1], m[2]);
     }
-    cyw43_arch_enable_sta_mode();
+    net_radio_sta_enable();
 
     // Plan 4b: decide whether to serve the captive portal or run plan 4a's
     // protocol loop against stored credentials. Touches no radio itself
@@ -1190,7 +1187,7 @@ static void core1_main(void) {
             // extra teardown first.
             {
                 uint8_t mac[6] = {0};
-                cyw43_hal_get_mac(0, mac);
+                net_radio_mac(mac);
                 char ssid[DISP_DETAIL_MAX + 1];
                 snprintf(ssid, sizeof ssid, "wifi-floppy-%02X%02X", mac[4], mac[5]);
                 // The SSID to join, not the IP: standing at the board, the
@@ -1244,9 +1241,7 @@ static void core1_main(void) {
             wf_logf(WF_INFO, "portal: AP down, default route now %s",
                     default_route_str());
 
-            int err = cyw43_arch_wifi_connect_timeout_ms(
-                submitted.ssid, submitted.pass,
-                CYW43_AUTH_WPA2_AES_PSK, 15000);
+            int err = net_radio_sta_connect(submitted.ssid, submitted.pass, 15000);
             if (err != PICO_OK) {
                 last_error = assoc_failure_message(err);
                 wf_logf(WF_WARN, "portal: association failed (%d): %s",
@@ -1282,9 +1277,7 @@ static void core1_main(void) {
         // config already on flash) or by prov_on_verified_submit() just
         // above.
         ui_publish(DS_WIFI, "Connecting", prov.cfg.ssid, -1);
-        int err = cyw43_arch_wifi_connect_timeout_ms(
-            prov.cfg.ssid, prov.cfg.pass,
-            CYW43_AUTH_WPA2_AES_PSK, 15000);
+        int err = net_radio_sta_connect(prov.cfg.ssid, prov.cfg.pass, 15000);
         if (err != PICO_OK) {
             // prov_on_assoc_result(p, false) is the only call in this
             // loop that may move `state`: three consecutive failures

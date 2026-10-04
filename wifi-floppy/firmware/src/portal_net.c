@@ -105,8 +105,8 @@
 #include "dns_server.h"
 #include "portal_http.h"
 
-#include "pico/cyw43_arch.h"
 #include "net_radio.h"
+#include "pico.h"            // pico/platform.h refuses to be the first SDK include
 #include "pico/platform.h"   // tight_loop_contents(), see fatal_setup_failure()
 #include "pico/time.h"
 #include "lwip/udp.h"
@@ -223,7 +223,7 @@ static void fatal_setup_failure(void) {
 
 static void format_mac_colon(char *out, size_t out_len) {
     uint8_t mac[6] = {0};
-    cyw43_wifi_get_mac(&cyw43_state, CYW43_ITF_STA, mac);
+    net_radio_mac(mac);
     snprintf(out, out_len, "%02x:%02x:%02x:%02x:%02x:%02x",
              mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
 }
@@ -718,11 +718,11 @@ portal_run_result_t portal_run(device_config_t *out, const char *err,
     // just later in that file's flow); nothing here depends on whether
     // STA mode has been set up.
     uint8_t mac[6] = {0};
-    cyw43_wifi_get_mac(&cyw43_state, CYW43_ITF_STA, mac);
+    net_radio_mac(mac);
     char ssid[24];
     snprintf(ssid, sizeof ssid, "wifi-floppy-%02X%02X", mac[4], mac[5]);
 
-    cyw43_arch_enable_ap_mode(ssid, PORTAL_AP_PASSWORD, CYW43_AUTH_WPA2_AES_PSK);
+    net_radio_ap_start(ssid, PORTAL_AP_PASSWORD);
 
     // A previous portal session's leases must not linger into this one --
     // see dhcp_server.h's comment on dhcp_reset_leases().
@@ -821,7 +821,7 @@ void portal_stop(void) {
 
     net_radio_unlock();
 
-    cyw43_arch_disable_ap_mode();
+    net_radio_ap_stop();
 
     // Review round 1 (Critical): cyw43_arch_disable_ap_mode() ->
     // cyw43_wifi_set_up(CYW43_ITF_AP, false, ...) -> cyw43_cb_tcpip_deinit()
@@ -855,6 +855,6 @@ void portal_stop(void) {
     // netif_set_default() is a plain lwIP call made from foreground code,
     // so it needs the lock like every other one above.
     net_radio_lock();
-    netif_set_default(&cyw43_state.netif[CYW43_ITF_STA]);
+    netif_set_default(net_radio_sta_netif());
     net_radio_unlock();
 }

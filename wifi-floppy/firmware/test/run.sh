@@ -133,7 +133,7 @@ radio_leak=$(for f in ../src/*.c ../src/*.h; do
   case "$f" in */net_radio_cyw43.c) continue ;; esac
   sed -E -e 's#//.*##' -e 's#/\*.*\*/##g' "$f" |
     { grep -nE '\b(cyw43_[a-z_]+|CYW43_[A-Z_]+|pico/cyw43_arch\.h)' || true; } | sed "s#^#$f:#"
-done | grep -E "${RADIO_GUARD_FILES:-transport_tls|sntp_time}" || true)
+done || true)
 if [ -n "$radio_leak" ]; then
   echo "$radio_leak"
   echo "FAIL: the WiFi chip is named outside net_radio_cyw43.c (use net_radio.h)"
