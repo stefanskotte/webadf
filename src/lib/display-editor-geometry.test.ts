@@ -1,6 +1,8 @@
 import { describe, it, expect } from 'vitest';
+import { readFile } from 'node:fs/promises';
 import { elementSize, hitTest, placeElement, overlapping } from './display-editor-geometry';
-import type { ElementJson } from './display-layout';
+import { decodeLayout, type ElementJson } from './display-layout';
+import { loadDisplayWasm } from './display-wasm';
 
 const el = (p: Partial<ElementJson> & Pick<ElementJson, 'id'>): ElementJson =>
   ({ visible: true, scale: 1, x: 0, y: 0, w: 0, opt: 0, ...p });
@@ -72,15 +74,40 @@ describe('hitTest', () => {
   });
 });
 
-describe('overlapping', () => {
-  it('flags both elements of every intersecting visible pair', () => {
-    const els = [
-      el({ id: 'track', x: 98, y: 24 }),
-      el({ id: 'download', x: 104, y: 24 }),
-      el({ id: 'wifi', x: 0, y: 0 }),
-      el({ id: 'status', x: 14, y: 0 }),
-    ];
+describe('overlapping (Ruling L: only what the renderer does not resolve)', () => {
+  const wasmBytes = () => readFile('public/display.wasm')
+    .then((b) => b.buffer.slice(b.byteOffset, b.byteOffset + b.byteLength) as ArrayBuffer);
+
+  it('both factory defaults have no outlined overlap', async () => {
+    const w = await loadDisplayWasm(await wasmBytes());
+    for (const panel of [0, 1] as const) {
+      const l = decodeLayout(w.defaultBlob(panel));
+      expect(overlapping(l.elements).size, l.panel).toBe(0);
+    }
+  });
+  it('track over download is resolved: the counter wins', () => {
+    expect(overlapping([el({ id: 'track', x: 98, y: 24 }), el({ id: 'download', x: 104, y: 24 })]).size).toBe(0);
+  });
+  it('detail beside a number to its right is resolved: detail is clipped', () => {
+    const els = [el({ id: 'detail', x: 0, y: 24, w: 128 }), el({ id: 'track', x: 98, y: 24 })];
+    expect(overlapping(els).size).toBe(0);
+  });
+  it('a detail starting right of the track start is still flagged (the clip does not apply)', () => {
+    const els = [el({ id: 'detail', x: 100, y: 24, w: 20 }), el({ id: 'track', x: 98, y: 24 })];
     expect([...overlapping(els)].sort()).toEqual([0, 1]);
+    // ...and one too close to it: the clip point (start - ADVANCE) is not right of the detail's x.
+    const near = [el({ id: 'detail', x: 0, y: 24, w: 128 }), el({ id: 'track', x: 4, y: 24 })];
+    expect(overlapping(near).size).toBe(2);
+  });
+  it('a detail over a download BAR is flagged: only the percent text is protected', () => {
+    const els = [el({ id: 'detail', x: 0, y: 24, w: 128 }), el({ id: 'download', x: 40, y: 24, w: 40 })];
+    expect(overlapping(els).size).toBe(2);
+  });
+  it('title/detail and status/wifi overlaps are flagged', () => {
+    expect([...overlapping([
+      el({ id: 'title', x: 0, y: 16, w: 128, opt: 2 }), el({ id: 'detail', x: 0, y: 24, w: 128 }),
+    ])].sort()).toEqual([0, 1]);
+    expect([...overlapping([el({ id: 'wifi', x: 0, y: 0 }), el({ id: 'status', x: 8, y: 0 })])].sort()).toEqual([0, 1]);
   });
   it('ignores hidden elements and boxes that only touch', () => {
     const els = [

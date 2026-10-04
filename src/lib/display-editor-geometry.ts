@@ -86,7 +86,52 @@ function intersects(a: Box, b: Box): boolean {
     && a.x < b.x + b.w && b.x < a.x + a.w && a.y < b.y + b.h && b.y < a.y + a.h;
 }
 
-/** Indices of visible elements whose box intersects another visible element's. */
+/**
+ * Where the right-aligned text of a track/download element can start at the
+ * earliest (its longest text): the box's left edge for track, just past the
+ * bar for download. display.c right_text() with the widest string.
+ */
+function textMinLeft(o: ElementJson): number {
+  const s = o.scale === 2 ? 2 : 1;
+  return o.id === 'download' && o.w ? o.x + (o.w + 2) * s : o.x;
+}
+
+/**
+ * Whether display_render() itself keeps a detail line off a track/download
+ * element on its rows: detail is clipped one ADVANCE (at the detail's scale)
+ * before the number's first pixel -- but only when that point lies to the
+ * right of the detail's x, and a download BAR is never protected (the clip
+ * is against the percent text only). Checked against the longest text, so
+ * "resolved" holds in every state.
+ */
+function detailClipped(detail: ElementJson, o: ElementJson): boolean {
+  const ds = detail.scale === 2 ? 2 : 1;
+  if (textMinLeft(o) - ADVANCE * ds <= detail.x) return false;
+  if (o.id === 'download' && o.w) {
+    const bar: Box = { x: o.x, y: o.y, w: o.w * (o.scale === 2 ? 2 : 1), h: elementSize(o).h };
+    if (intersects(elementBox(detail), bar)) return false;
+  }
+  return true;
+}
+
+/**
+ * Overlaps the renderer does NOT resolve (Controller Ruling L). Two cases
+ * display_render() resolves on its own and are not outlined:
+ *   - track and download intersecting: the counter wins, download is not drawn;
+ *   - detail beside a track/download number on its rows, number to the right:
+ *     detail is clipped before it.
+ * Every other intersecting pair of visible elements is a real overlap.
+ */
+function resolvedByRenderer(a: ElementJson, b: ElementJson): boolean {
+  const ids = new Set([a.id, b.id]);
+  if (ids.has('track') && ids.has('download')) return true;
+  if (ids.has('detail') && (ids.has('track') || ids.has('download'))) {
+    return a.id === 'detail' ? detailClipped(a, b) : detailClipped(b, a);
+  }
+  return false;
+}
+
+/** Indices of visible elements in an overlap the renderer does not resolve. */
 export function overlapping(elements: readonly ElementJson[]): Set<number> {
   const out = new Set<number>();
   const boxes = elements.map(elementBox);
@@ -94,7 +139,9 @@ export function overlapping(elements: readonly ElementJson[]): Set<number> {
     if (!elements[i].visible) continue;
     for (let j = i + 1; j < elements.length; j++) {
       if (!elements[j].visible) continue;
-      if (intersects(boxes[i], boxes[j])) { out.add(i); out.add(j); }
+      if (!intersects(boxes[i], boxes[j])) continue;
+      if (resolvedByRenderer(elements[i], elements[j])) continue;
+      out.add(i); out.add(j);
     }
   }
   return out;

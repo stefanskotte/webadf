@@ -51,13 +51,27 @@ function fromBase64(s: string): Uint8Array {
   return Uint8Array.from(atob(s), (c) => c.charCodeAt(0));
 }
 
+/**
+ * A decoded title with opt 0 is one line to the C side (layout_el_size); the
+ * lines select only offers 1 and 2, so say 1 in the state the select shows.
+ */
+function normalise(l: LayoutJson): LayoutJson {
+  return { ...l, elements: l.elements.map((e) => (e.id === 'title' && e.opt === 0 ? { ...e, opt: 1 } : e)) };
+}
+
+function defaultLayout(wasm: DisplayWasm, panel: LayoutJson['panel']): LayoutJson {
+  return normalise(decodeLayout(wasm.defaultBlob(panelId(panel))));
+}
+
 /** What the board holds: its stored layout, or the built-in default for its panel when none is stored. */
 function boardLayout(device: DeviceListItem, wasm: DisplayWasm): LayoutJson {
   if (device.displayLayout) {
-    try { return decodeLayout(fromBase64(device.displayLayout)); } catch { /* unreadable: fall back to the default */ }
+    try { return normalise(decodeLayout(fromBase64(device.displayLayout))); } catch { /* unreadable: fall back to the default */ }
   }
-  return decodeLayout(wasm.defaultBlob(panelId(device.displayPanel)));
+  return defaultLayout(wasm, device.displayPanel);
 }
+
+const message = (e: unknown) => (e instanceof Error ? e.message : String(e));
 
 /**
  * Both values of "did the board take it", never an absent line standing in
@@ -139,7 +153,21 @@ function LoadedEditor({ device, wasm }: { device: DeviceListItem; wasm: DisplayW
   const [saveError, setSaveError] = useState<string | null>(null);
 
   const blob = useMemo(() => encodeLayout(layout), [layout]);
-  const reason = useMemo(() => wasm.validate(blob), [wasm, blob]);
+  // Neither call is expected to throw, but a throw here would take the whole
+  // device list down with it; it becomes a reason instead (Save disabled,
+  // the last good frame shown).
+  const reason = useMemo(() => {
+    try { return wasm.validate(blob); } catch (e) { return `could not validate: ${message(e)}`; }
+  }, [wasm, blob]);
+  const rendered = useMemo((): { fb: Uint8Array | null; error: string | null } => {
+    if (reason) return { fb: null, error: null };
+    try {
+      return { fb: wasm.render(previewState(preview, tick), panelId(layout.panel), blob), error: null };
+    } catch (e) {
+      return { fb: null, error: `could not render: ${message(e)}` };
+    }
+  }, [wasm, reason, preview, tick, layout.panel, blob]);
+  const problem = reason ?? rendered.error;
   const overlaps = useMemo(() => overlapping(layout.elements), [layout]);
   const rows = panelHeight(layout.panel);
 
@@ -154,7 +182,8 @@ function LoadedEditor({ device, wasm }: { device: DeviceListItem; wasm: DisplayW
   // The last framebuffer that rendered: an invalid layout cannot be rendered
   // (the renderer refuses it, as the board would), so the canvas keeps the
   // last good frame, faded, with the boxes outlined to show where things are.
-  const lastGood = useRef<Uint8Array | null>(null);
+  // Kept with its panel: another panel's frame is not a picture of this one.
+  const lastGood = useRef<{ panel: LayoutJson['panel']; fb: Uint8Array } | null>(null);
   useEffect(() => {
     const c = canvasRef.current;
     const ctx = c?.getContext('2d');
@@ -163,12 +192,10 @@ function LoadedEditor({ device, wasm }: { device: DeviceListItem; wasm: DisplayW
     const ink = css.getPropertyValue('--ink').trim() || '#16232f';
     const amber = css.getPropertyValue('--accent-amber').trim() || '#f5822e';
 
-    let fb: Uint8Array | null = null;
-    if (!reason) {
-      fb = wasm.render(previewState(preview, tick), panelId(layout.panel), blob);
-      lastGood.current = fb;
-    }
-    const frame = fb ?? lastGood.current;
+    const fb = rendered.fb;
+    if (fb) lastGood.current = { panel: layout.panel, fb };
+    else if (lastGood.current?.panel !== layout.panel) lastGood.current = null;
+    const frame = fb ?? lastGood.current?.fb ?? null;
     ctx.clearRect(0, 0, c.width, c.height);
     if (frame) {
       ctx.globalAlpha = fb ? 1 : 0.35;
@@ -188,7 +215,7 @@ function LoadedEditor({ device, wasm }: { device: DeviceListItem; wasm: DisplayW
       const b = elementBox(e);
       ctx.strokeRect(b.x * ZOOM + 0.5, b.y * ZOOM + 0.5, b.w * ZOOM - 1, b.h * ZOOM - 1);
     });
-  }, [wasm, layout, blob, reason, overlaps, preview, tick, rows]);
+  }, [layout, rendered, overlaps, rows]);
 
   // ----- drag -----
   // Panel coordinates from a pointer: the canvas is drawn at 4x but CSS
@@ -231,8 +258,8 @@ function LoadedEditor({ device, wasm }: { device: DeviceListItem; wasm: DisplayW
   // "only over an element" (it is fixed when the touch starts), so a
   // non-passive touchstart cancels the scroll for exactly those touches.
   // Pointer events still fire, so the drag above is the same for both.
-  const elementsRef = useRef(layout.elements);
-  useEffect(() => { elementsRef.current = layout.elements; }, [layout.elements]);
+  const layoutRef = useRef(layout);
+  useEffect(() => { layoutRef.current = layout; }, [layout]);
   useEffect(() => {
     const c = canvasRef.current;
     if (!c) return;
@@ -241,7 +268,7 @@ function LoadedEditor({ device, wasm }: { device: DeviceListItem; wasm: DisplayW
       const r = c.getBoundingClientRect();
       const px = ((t.clientX - r.left) * PANEL_W) / r.width;
       const py = ((t.clientY - r.top) * (c.height / ZOOM)) / r.height;
-      if (hitTest(elementsRef.current, px, py) >= 0) ev.preventDefault();
+      if (hitTest(layoutRef.current.elements, px, py) >= 0) ev.preventDefault();
     };
     c.addEventListener('touchstart', onTouchStart, { passive: false });
     return () => c.removeEventListener('touchstart', onTouchStart);
@@ -293,11 +320,23 @@ function LoadedEditor({ device, wasm }: { device: DeviceListItem; wasm: DisplayW
       setBusy(false);
     }
   }
-  const save = () => send({ panel: layout.panel, elements: layout.elements }, () => setDirty(false));
-  const reset = () => send({ reset: true, panel: layout.panel }, () => {
-    setLayout(decodeLayout(wasm.defaultBlob(panelId(layout.panel))));
-    setDirty(false);
-  });
+  // An edit made while the request is in flight is NOT what was sent: only a
+  // layout still identical to the snapshot is marked clean (or replaced, for
+  // a reset), so the refresh that follows cannot overwrite the newer edit.
+  const save = () => {
+    const sent = layout;
+    return send({ panel: sent.panel, elements: sent.elements }, () => {
+      if (layoutRef.current === sent) setDirty(false);
+    });
+  };
+  const reset = () => {
+    const sent = layout;
+    return send({ reset: true, panel: sent.panel }, () => {
+      if (layoutRef.current !== sent) return;
+      setLayout(defaultLayout(wasm, sent.panel));
+      setDirty(false);
+    });
+  };
 
   const status = statusLine(device);
   const inputStyle = { background: 'var(--input-bg)', borderColor: 'var(--hairline)', color: 'var(--ink)' };
@@ -316,7 +355,7 @@ function LoadedEditor({ device, wasm }: { device: DeviceListItem; wasm: DisplayW
         <label className="flex min-w-0 max-w-full flex-wrap items-center gap-1" style={{ color: 'var(--muted)' }}>
           Panel
           <select value={layout.panel} className={field} style={inputStyle} data-testid={`display-panel-${id}`}
-                  onChange={(ev) => edit(decodeLayout(wasm.defaultBlob(ev.target.value === '128x64' ? 1 : 0)))}>
+                  onChange={(ev) => edit(defaultLayout(wasm, ev.target.value === '128x64' ? '128x64' : '128x32'))}>
             <option value="128x32">128×32</option>
             <option value="128x64">128×64</option>
           </select>
@@ -347,9 +386,9 @@ function LoadedEditor({ device, wasm }: { device: DeviceListItem; wasm: DisplayW
                 imageRendering: 'pixelated',
               }} />
 
-      {reason && (
+      {problem && (
         <span style={{ color: 'var(--amber-text)', overflowWrap: 'anywhere' }} data-testid={`display-reason-${id}`}>
-          {reason}
+          {problem}
         </span>
       )}
 
@@ -390,7 +429,7 @@ function LoadedEditor({ device, wasm }: { device: DeviceListItem; wasm: DisplayW
       </ul>
 
       <div className="flex flex-wrap items-center gap-2">
-        <button type="button" onClick={save} disabled={!!reason || busy || refreshing}
+        <button type="button" onClick={save} disabled={!!problem || busy || refreshing}
                 data-testid={`display-save-${id}`}
                 className="rounded-lg px-3 py-1.5 text-[12px] font-semibold disabled:opacity-50"
                 style={{ background: 'var(--primary-action)', color: 'var(--on-dark)' }}>
