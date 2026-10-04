@@ -37,6 +37,7 @@ describe('saveDisplay', () => {
     expect(selects).toBe(0);
     expect(sets[0].displayPanel).toBe('128x32');
     expect(sets[0].displayLayout).toBe(blob);
+    expect('displayError' in sets[0] && sets[0].displayError === null).toBe(true);
     expect(render(sets[0].displayVersion).sql).toMatch(/"display_version" \+ 1/);
     const w = render(wheres[0]);
     expect(w.sql).toMatch(/"id" = \$1 and "devices"."org_id" = \$2.*"display_layouts" = \$3/);
@@ -48,6 +49,7 @@ describe('saveDisplay', () => {
     await saveDisplay('org-1', 'dev-1', '128x64', null);
     expect(sets[0].displayLayout).toBeNull();
     expect(sets[0].displayPanel).toBe('128x64');
+    expect('displayError' in sets[0] && sets[0].displayError === null).toBe(true);
   });
 
   it('no row updated, but the org has the device: firmware_too_old', async () => {

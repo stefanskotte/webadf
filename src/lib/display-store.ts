@@ -31,6 +31,9 @@ export async function saveDisplay(
       displayPanel: panel,
       displayLayout: blob,
       displayVersion: sql`${devices.displayVersion} + 1`,
+      // A new version has not been judged yet: the old rejection reason
+      // would read as "The board rejected it" for a layout it has not seen.
+      displayError: null,
     })
     .where(and(scope, eq(devices.displayLayouts, true)))
     .returning({ version: devices.displayVersion });

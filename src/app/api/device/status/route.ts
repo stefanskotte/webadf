@@ -61,7 +61,9 @@ const statusBody = z.object({
   // range, so a wild u32 is dropped instead of failing the whole UPDATE.
   displayLayouts: z.boolean().optional().catch(undefined),
   displayVersion: z.number().int().min(0).max(2_147_483_647).optional().catch(undefined),
-  displayError: z.string().max(80).nullable().optional().catch(undefined),
+  // Truncated, not dropped: dropping it while displayVersion is still stored
+  // would make a rejected layout read as applied.
+  displayError: z.string().transform((v) => v.slice(0, 80)).nullable().optional().catch(undefined),
   error: z.string().max(500).nullable().optional(),
   psramFree: z.number().int().nonnegative().nullable().optional(),
   // Real WiFi RSSI ranges roughly -100..0 dBm, but a marginal link can report

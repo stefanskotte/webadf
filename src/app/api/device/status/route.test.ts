@@ -78,12 +78,23 @@ describe('POST /api/device/status -- display', () => {
   it('drops malformed display telemetry -- never a 400', async () => {
     const { POST } = await import('./route');
     const res = await POST(post({
-      mountedSha256: null, displayLayouts: 'yes', displayVersion: 4294967295, displayError: 'x'.repeat(81),
+      mountedSha256: null, displayLayouts: 'yes', displayVersion: 4294967295, displayError: 42,
     }));
     expect(res.status).toBe(204);
     const s = recordStatus.mock.calls[0]![1];
     expect(s.displayLayouts).toBeUndefined();
     expect(s.displayVersion).toBeUndefined();
     expect(s.displayError).toBeUndefined();
+  });
+
+  it('truncates a displayError over 80 characters (never drops it, or a rejection reads as applied)', async () => {
+    const { POST } = await import('./route');
+    const res = await POST(post({
+      mountedSha256: null, displayLayouts: true, displayVersion: 5, displayError: 'y'.repeat(81) + 'z',
+    }));
+    expect(res.status).toBe(204);
+    const s = recordStatus.mock.calls[0]![1];
+    expect(s.displayError).toBe('y'.repeat(80));
+    expect(s.displayVersion).toBe(5);
   });
 });
