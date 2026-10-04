@@ -1514,7 +1514,15 @@ separately.
       touch the cylinder-17 hang without it).
     - Everything rev B gained: the eight 1 kOhm floppy-line pull-ups, R12 22 Ohm and the double BZ1 footprint,
       and the I2C headers for OLED and NFC.
-  - **Considered and set aside, kept as the fallback (2026-10-02): iLabs Challenger+ RP2350 WiFi6/BLE5 IPEX3**
+  - **DECISION 2026-10-04 (operator): rev C carries a DUAL footprint, PIM726 OR the Challenger below**, so either
+    module can be fitted: the PIM726 where the on-board antenna suffices, the Challenger's IPEX3 antenna for big
+    boxes. Net-by-net mapping for Shanshe: `wifi-floppy/hardware/REV-C-DUAL-FOOTPRINT.md`.
+    - Key constraint: SEL0/SEL1/MTR/DIR must be four consecutive GPIOs. That is GP2-5 on the PIM726 and GP26-29 on
+      the Challenger.
+    - The Challenger then has no spare header GPIO.
+    - Firmware needs a per-board pin map, and `drive_id`'s literal `gpio 2` must follow SEL0.
+    - The network side (ESP32-C6) is the real cost. ESP-Hosted over SPI may keep lwIP and mbedTLS. To evaluate.
+  - **Evaluated 2026-10-02 (notes still valid): iLabs Challenger+ RP2350 WiFi6/BLE5 IPEX3**
     (https://ilabs.se/challenger-rp2350-wifi-ble/).
     - What it is: an RP2350A board, 8 MB PSRAM, 8 MB flash, and an ESP32-C6-MINI-1 running ESP-AT over SPI1 and a
       UART, with an IPEX3/MHF III antenna connector.
