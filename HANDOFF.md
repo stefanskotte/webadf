@@ -1522,6 +1522,14 @@ separately.
     - The Challenger then has no spare header GPIO.
     - Firmware needs a per-board pin map, and `drive_id`'s literal `gpio 2` must follow SEL0.
     - The network side (ESP32-C6) is the real cost. ESP-Hosted over SPI may keep lwIP and mbedTLS. To evaluate.
+    - **Unified firmware (operator, 2026-10-04): one firmware for both modules.** Design spec, awaiting review:
+      `docs/superpowers/specs/2026-10-04-unified-firmware-design.md`.
+      - One binary picks its board at boot from `SYSINFO_PACKAGE_SEL` (QFN80 = PIM726, QFN60 = Challenger).
+      - A board table, and a `net_radio` interface with CYW43 and ESP-Hosted implementations.
+      - Phases P1-P4. P1 and P2 run on the PIM726 alone.
+      - Questions V1-V7 must be answered before P3.
+      - Found while writing it: `partitions.json` ends at 8,224 KB, so the Challenger's 8 MB needs its own table;
+        and PSRAM is started before `main()` from a compile-time chip-select pin.
   - **Evaluated 2026-10-02 (notes still valid): iLabs Challenger+ RP2350 WiFi6/BLE5 IPEX3**
     (https://ilabs.se/challenger-rp2350-wifi-ble/).
     - What it is: an RP2350A board, 8 MB PSRAM, 8 MB flash, and an ESP32-C6-MINI-1 running ESP-AT over SPI1 and a
