@@ -471,6 +471,18 @@ static void test_set_layout_refuses_a_foreign_panel(void) {
     CHECK(!display_set_layout(&d, layout_default(PANEL_128x32)), "32-row layout refused on a 64-row pump");
 }
 
+// 1.7.1 faulted on a board with no panel: core0 renders into a display_t that
+// was never display_init'ed, whose layout pointer is NULL.
+static void test_render_without_a_layout_draws_the_default(void) {
+    display_t d; memset(&d, 0, sizeof d);
+    display_state_t s = base_state(); strcpy(s.title, "x");
+    s.status = DS_READY;  display_set(&d, &s);
+    s.status = DS_BOOT;   display_set(&d, &s);
+    uint8_t want[DISP_FB_MAX];
+    display_render(&s, layout_default(PANEL_128x32), want);
+    CHECK(memcmp(d.fb, want, DISP_FB_MAX) == 0, "NULL layout renders the 128x32 default");
+}
+
 int main(int argc, char **argv) {
     if (argc > 1 && strcmp(argv[1], "--dump") == 0) { dump_all(); return 0; }
     RUN(test_the_track_counter_is_right_aligned_and_exact);
@@ -492,6 +504,7 @@ int main(int argc, char **argv) {
     RUN(test_a_track_step_sends_a_small_span_not_a_frame);
     RUN(test_a_failed_transfer_is_retried_not_lost);
     RUN(test_panel_change_resends_every_page);
+    RUN(test_render_without_a_layout_draws_the_default);
     RUN(test_set_layout_refuses_a_foreign_panel);
     RUN(test_the_pump_writes_within_one_page_per_call);
     return REPORT();

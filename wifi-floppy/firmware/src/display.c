@@ -297,6 +297,9 @@ bool display_state_is_running(disp_status_t st) {
 }
 
 const layout_t *display_layout_for(const display_state_t *s, const layout_t *custom) {
+    // No layout at all (a display_t that was never display_init'ed) draws the
+    // 128x32 default rather than dereferencing NULL.
+    if (!custom) return layout_default(PANEL_128x32);
     return display_state_is_running(s->status) ? custom : layout_default(custom->panel);
 }
 

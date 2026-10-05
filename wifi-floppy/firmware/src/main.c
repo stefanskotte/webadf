@@ -2497,6 +2497,12 @@ int main(void) {
                 }
             }
         }
+        // Always initialised, panel or not: core0's loop renders into g_disp on
+        // every state change, and display_render needs a layout. 1.7.1 only set
+        // one up when a panel answered, so a board with no (or a dead) panel
+        // drew through a NULL layout and faulted ~1 s after boot. The pump is
+        // what touches the bus, and it stays gated on g_panel_addr.
+        display_init(&g_disp, panel_blit, NULL);
         uint8_t panel = 0;
         i2c_probe_bus(&panel);
         // Only when a panel actually answered: a missing display must cost
@@ -2510,7 +2516,6 @@ int main(void) {
             // the whole reason a track step costs a few bytes and not a frame.
             ssd1306_clear(panel, boot_panel);
             g_panel_addr = panel;
-            display_init(&g_disp, panel_blit, NULL);
             // display_init assumes 128x32; a stored 128x64 switches it (the
             // panel is already initialised for it by the self-test above).
             if (boot_panel != g_disp.panel) display_set_panel(&g_disp, boot_panel);
