@@ -4650,6 +4650,11 @@ PID 11081, left untouched pending the operator).
   binary, not JSON; a rejected layout still advances the ack. Others: the editor outlines only overlaps the
   renderer does not resolve; a save clears `display_error`; the editor shows "rejected" only once the board has
   handled the current version; a panel switch re-inits without the synchronous clear (`ssd1306_reinit`).
+- **1.7.2 (seq 41, master 0f2d6bf):** 1.7.1 faulted ~1 s after boot when NO panel answered (g_disp was only
+  display_init'ed when a panel did; core0 then rendered through a NULL layout). Fixed and confirmed on the board.
+- **Bench 2026-10-05:** step 1 PASSED (128x32 identical on 1.7.1). Step 2 BLOCKED: the operator's 0.92" 128x64
+  module answers nothing on I2C, and with it fitted the board does not boot or enumerate USB at all (likely a
+  shorted module pulling 3V3 down). The operator is getting a replacement; 128x64 is unproven on hardware.
 - **Bench owed (operator):**
   1. 128x32 looks unchanged on 1.7.1.
   2. Fit the 0.92" 128x64, choose 128x64 in the editor: the whole panel draws (not half), no stale half.
