@@ -149,6 +149,6 @@ describe('statusLine (final review I2: a stale rejection is not this version\'s)
 
   it('no capability: needs firmware', () => {
     expect(statusLine(dev({ displayLayouts: false })))
-      .toEqual({ text: 'Needs firmware 1.7.0 or newer', warn: true });
+      .toEqual({ text: 'Needs firmware 1.7.1 or newer', warn: true });
   });
 });

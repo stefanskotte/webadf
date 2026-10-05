@@ -50,7 +50,7 @@ export async function PATCH(request: Request, ctx: { params: Promise<{ id: strin
   const r = await saveDisplay(orgId, id, parsed.data.panel, blob);
   if (r === 'not_found') return Response.json({ error: 'not_found' }, { status: 404 });
   if (r === 'firmware_too_old') {
-    return Response.json({ error: 'firmware_too_old', reason: 'Needs firmware 1.7.0 or newer' }, { status: 409 });
+    return Response.json({ error: 'firmware_too_old', reason: 'Needs firmware 1.7.1 or newer' }, { status: 409 });
   }
   return Response.json({ version: r.version });
 }

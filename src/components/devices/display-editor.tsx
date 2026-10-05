@@ -96,7 +96,7 @@ export function DisplayEditor({ device }: { device: DeviceListItem }) {
         : (
           <span className="text-[12px]" style={{ color: 'var(--amber-text)' }}
                 data-testid={`display-needs-fw-${device.id}`}>
-            Needs firmware 1.7.0 or newer
+            Needs firmware 1.7.1 or newer
           </span>
         ))}
     </div>

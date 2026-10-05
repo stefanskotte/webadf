@@ -170,7 +170,7 @@ export interface DisplayStatusFields {
  * version has handled it, so applied === version alone would read as success.
  */
 export function statusLine(device: DisplayStatusFields): { text: string; warn: boolean } {
-  if (!device.displayLayouts) return { text: 'Needs firmware 1.7.0 or newer', warn: true };
+  if (!device.displayLayouts) return { text: 'Needs firmware 1.7.1 or newer', warn: true };
   if (device.displayAppliedVersion !== device.displayVersion) {
     return { text: 'Waiting for the board', warn: false };
   }

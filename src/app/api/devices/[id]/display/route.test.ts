@@ -48,7 +48,7 @@ describe('PATCH /api/devices/[id]/display', () => {
     const { PATCH } = await import('./route');
     const res = await PATCH(patch(await fixture('custom64')), ctx());
     expect(res.status).toBe(409);
-    expect(await res.json()).toEqual({ error: 'firmware_too_old', reason: 'Needs firmware 1.7.0 or newer' });
+    expect(await res.json()).toEqual({ error: 'firmware_too_old', reason: 'Needs firmware 1.7.1 or newer' });
   });
 
   it('answers 404 for a device that is not this org\'s, and scopes the save by the session org', async () => {

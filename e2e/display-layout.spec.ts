@@ -36,7 +36,7 @@ test('a board without display support is told it needs firmware 1.7.0', async ({
   await reportStatus(request, token, {});   // an old board: no displayLayouts
 
   await openEditor(page, deviceId);
-  await expect(page.getByTestId(`display-needs-fw-${deviceId}`)).toHaveText('Needs firmware 1.7.0 or newer');
+  await expect(page.getByTestId(`display-needs-fw-${deviceId}`)).toHaveText('Needs firmware 1.7.1 or newer');
   await expect(page.getByTestId(`display-canvas-${deviceId}`)).toHaveCount(0);
 });
 
