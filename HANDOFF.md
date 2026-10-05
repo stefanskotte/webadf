@@ -2278,7 +2278,9 @@ separately.
 - ~~**Review Shanshe's updated PR #3**~~ DONE 2026-09-28: merged (`e2eb1f5`), hw:verify passes, BZ1 has a 6.5/5 mm double footprint. (operator, 2026-09-27): the buzzer footprint must be 6.5 mm pitch for the
   SEA-1295Y (comment posted 2026-09-27); run `pnpm hw:verify` on the PR's OWN files (the script checks the files
   next to it) and check BZ1's pad pitch.
-- **Context help for functions not everyone will understand** (operator, 2026-09-28). Example: "Write a Next-disk
+- ~~**Context help for functions not everyone will understand**~~ **DONE 2026-10-05** (master d48bafb): "?" popovers +
+  /help, 8 topics in `src/lib/help/topics.tsx` (one typed source; each claim cites its code). Deferred: the HFE "?"
+  repeats per HFE row; nav pill width estimate predates the Help item. (operator, 2026-09-28). Example: "Write a Next-disk
   card" on the Devices page means nothing until you know what the card does. Options to decide between, not designed:
   - short inline hints: a small "?" beside such controls opening a popover with one or two sentences and a "More" link;
   - a Help subpage (e.g. /help) with a section per feature (NFC cards, Next disk and preloading, disk sets, write-back
