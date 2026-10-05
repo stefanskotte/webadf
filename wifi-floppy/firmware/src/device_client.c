@@ -890,9 +890,20 @@ static dc_state_t dc_handle_poll_body(device_client_t *c, const char *json) {
     // the old row's). The server sends displayVersion on every poll body when
     // the board sends displayAck, so this is seen at the first 200. Start
     // over: ack 0, so a positive version is fetched once and 0 owes nothing.
+    //
+    // Final review I1: the reset must also take the OLD row's layout off the
+    // glass. A positive version does that by being fetched; version 0 fetches
+    // nothing, so it raises display_reset_to_default and main.c puts the
+    // panel's default on under version 0 (the same-boot re-pair's path).
+    // The server wakes the poll on ANY ack/version mismatch, so a stale
+    // higher ack seeded across a reboot reaches this at the first poll.
     uint32_t dv;
     if (json_u32_strict(json, "displayVersion", &dv)) {
-        if (dv < c->display_ack) { c->display_ack = 0; c->display_error[0] = '\0'; }
+        if (dv < c->display_ack) {
+            c->display_ack = 0;
+            c->display_error[0] = '\0';
+            if (dv == 0) c->display_reset_to_default = true;
+        }
         c->display_want = dv;
     }
 
@@ -1445,6 +1456,12 @@ int dc_fetch_display(device_client_t *c, uint8_t *buf, int cap) {
 
 bool dc_display_owed(const device_client_t *c) {
     return c->display_want > c->display_ack;
+}
+
+bool dc_display_take_reset_to_default(device_client_t *c) {
+    const bool r = c->display_reset_to_default;
+    c->display_reset_to_default = false;
+    return r;
 }
 
 bool dc_display_parse(const uint8_t *buf, int n, uint32_t *version, uint8_t *panel,

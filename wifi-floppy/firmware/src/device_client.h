@@ -358,6 +358,13 @@ typedef struct {
     char     display_error[48];
     // displayLayouts:true in every status report; set by dc_init.
     bool     display_layouts;
+    // Set by a poll body whose displayVersion is 0 and BELOW the ack: a reset
+    // (re-paired board, new device row) with nothing published on the new
+    // row, so no fetch will replace the old row's layout on the glass.
+    // main.c consumes it with dc_display_take_reset_to_default and puts the
+    // panel's default on under version 0. (A reset to a POSITIVE version
+    // needs nothing extra: the fetch it owes replaces the layout.)
+    bool     display_reset_to_default;
 } device_client_t;
 
 void dc_init(device_client_t *c, transport_t *t, clock_ms_fn now,
@@ -601,6 +608,11 @@ int dc_fetch_display(device_client_t *c, uint8_t *buf, int cap);
 
 // The display version the last poll named is ahead of the one handled.
 bool dc_display_owed(const device_client_t *c);
+
+// True ONCE after a poll body reset the display cursor to version 0 (see
+// display_reset_to_default): the caller must show the panel's default layout
+// under version 0 and report it. Clears the flag.
+bool dc_display_take_reset_to_default(device_client_t *c);
 
 // Pure. The endpoint's body: [u32 big-endian version][u8 panel][u8 has_layout]
 // [blob, only when has_layout]. True with the fields out, `blob` pointing

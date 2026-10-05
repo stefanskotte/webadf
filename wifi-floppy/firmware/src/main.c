@@ -190,6 +190,16 @@ static void display_handoff_publish(uint8_t panel, const layout_t *l, uint32_t v
     g_display_panel = panel;
 }
 
+/** core1: the FRESH-board display -- this panel type's default layout under
+ *  version 0 -- on the glass and (deferred) in the store. Both re-pair paths
+ *  use it: the same-boot re-entry below, and a poll body that resets the
+ *  cursor to 0 (dc_display_take_reset_to_default: a re-pair across a reboot,
+ *  whose seeded ack was the old row's). The panel TYPE is kept (Ruling J). */
+static void display_publish_fresh(const char *why) {
+    display_handoff_publish(g_display_panel, NULL, 0, NULL, 0);
+    wf_logf(WF_INFO, "display: %s -- default layout, version 0", why);
+}
+
 /** core0: copy the newest published slot if it is newer than *last. False =
  *  nothing new, or torn (ask again next pass). */
 static bool display_handoff_take(uint32_t *last, display_slot_t *out) {
@@ -1632,9 +1642,8 @@ static void core1_main(void) {
         {
             static bool display_seeded = false;
             if (display_seeded) {
-                display_handoff_publish(g_display_panel, NULL, 0, NULL, 0);
+                display_publish_fresh("re-paired");
                 c.display_ack = 0;
-                wf_logf(WF_INFO, "display: re-paired -- default layout, version 0");
             } else {
                 c.display_ack = g_display_boot_ack;
             }
@@ -1858,6 +1867,15 @@ static void core1_main(void) {
             // requests, and only with no write-back work waiting (a write goes
             // first) and no owed mount report retrying. Applied or refused, it
             // is acked (dc_display_handled) and reported by Item 4 below.
+            // Final review I1: a poll body reset the display cursor to 0 (a
+            // re-pair across a reboot: the ack seeded at boot was the OLD
+            // row's). Nothing will be fetched, so take the old row's layout
+            // off the glass here -- the same fresh-board state the same-boot
+            // re-pair publishes -- and report version 0.
+            if (dc_display_take_reset_to_default(&c)) {
+                display_publish_fresh("cursor reset by the server (re-paired)");
+                display_report_owed = true;
+            }
             if (!report_retry && c.state != DC_HALTED && c.state != DC_UNPROVISIONED &&
                 dc_display_owed(&c) && !up_has_work(&up)) {
                 if (display_core1_fetch(&c)) display_report_owed = true;

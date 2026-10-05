@@ -2319,6 +2319,40 @@ static void test_display_version_below_the_ack_resets_the_cursor(void) {
     dc_step(&c);
     CHECK_EQ_INT((int)c.display_ack, 9);
     CHECK(!dc_display_owed(&c), "already handled");
+    CHECK(!dc_display_take_reset_to_default(&c), "not a reset: the glass is left alone");
+}
+
+// Final review I1: a reset must take the OLD row's layout off the glass. A
+// reset to 0 fetches nothing, so it asks main.c (once) for the default under
+// version 0; a reset to a positive version leaves that to the fetch it owes.
+static void test_display_reset_to_zero_asks_for_the_default_once(void) {
+    boot();
+    CHECK(!dc_display_take_reset_to_default(&c), "a fresh client owes no reset");
+    c.display_ack = 5;                       // seeded from the old row's record
+    push_ok_json("{\"version\":1,\"displayVersion\":0,\"desired\":null}");
+    dc_step(&c);
+    CHECK(dc_display_take_reset_to_default(&c), "reset to 0: put the default on");
+    CHECK(!dc_display_take_reset_to_default(&c), "taken once");
+    CHECK_EQ_INT((int)c.display_ack, 0);
+    CHECK(!dc_display_owed(&c), "and nothing to fetch");
+    // The next body, now matching, raises nothing.
+    push_ok_json("{\"version\":1,\"displayVersion\":0,\"desired\":null}");
+    dc_step(&c);
+    CHECK(!dc_display_take_reset_to_default(&c), "a matching ack is not a reset");
+
+    // A reset to a positive version: the fetch replaces the layout.
+    boot();
+    c.display_ack = 5;
+    push_ok_json("{\"version\":1,\"displayVersion\":2,\"desired\":null}");
+    dc_step(&c);
+    CHECK(!dc_display_take_reset_to_default(&c), "positive: the fetch replaces it");
+    CHECK(dc_display_owed(&c), "version 2 is fetched");
+
+    // A version of 0 with an ack of 0 is not a reset (a fresh board).
+    boot();
+    push_ok_json("{\"version\":1,\"displayVersion\":0,\"desired\":null}");
+    dc_step(&c);
+    CHECK(!dc_display_take_reset_to_default(&c), "0 == 0: nothing to reset");
 }
 
 // Review fix (Minor 5): every decision display_core1_fetch acts on, pure.
@@ -2505,6 +2539,7 @@ int main(void) {
     RUN(test_fetch_display_returns_the_body);
     RUN(test_fetch_display_failures);
     RUN(test_display_version_below_the_ack_resets_the_cursor);
+    RUN(test_display_reset_to_zero_asks_for_the_default_once);
     RUN(test_display_decide_branches);
 
     // The observation tests run BEFORE the backing is released: several of

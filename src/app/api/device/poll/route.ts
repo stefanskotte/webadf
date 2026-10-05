@@ -76,9 +76,18 @@ export async function GET(request: Request) {
   // before 1.7.0 that can never acknowledge, so it is never woken for display
   // (null); a garbled value falls back to 0, never to "caught up".
   //
-  // A layout the board REJECTS cannot loop: the board still advances its ack
-  // to that version (and reports the reason as displayError), so
-  // display_version > displayAck is false on its next poll. The wake is
+  // The wake fires on ANY mismatch (display_version !== displayAck), not only
+  // on display_version > displayAck. An ack ABOVE the version is real: a board
+  // that re-paired across a reboot seeds its ack from the OLD row's stored
+  // record (say 5) while the new row is at 0..4. With `>` that board was never
+  // woken, never saw a body, so its `dv < ack` reset never ran -- the glass
+  // kept the old row's custom layout and the editor said "Waiting" forever.
+  //
+  // It cannot loop. On a mismatch the board either fetches (dv > ack) and
+  // acks dv, or resets its ack to dv (dv < ack); either way its next poll
+  // sends displayAck === display_version and the hold holds. A layout the
+  // board REJECTS is the same: the board still advances its ack to that
+  // version (and reports the reason as displayError). The wake is
   // edge-triggered on the cursor, never on "the board has not applied it".
   const displayAckRaw = new URL(request.url).searchParams.get('displayAck');
   const displayAck = displayAckRaw === null
@@ -120,10 +129,12 @@ export async function GET(request: Request) {
     // hold would release every second forever on a request the board can
     // never acknowledge.
     const nfcMoved = nfcAck !== null && tick.nfcWriteSeq > nfcAck;
-    // Same cursor comparison, off the same row read. The board fetches the
-    // layout itself (GET /api/device/display) when it sees displayVersion
-    // ahead of its ack; the poll body only announces the number.
-    const displayMoved = displayAck !== null && tick.displayVersion > displayAck;
+    // Cursor comparison off the same row read, but on INEQUALITY (see the
+    // displayAck comment above: an ack above the version must wake too, so
+    // the board can reset). The board fetches the layout itself
+    // (GET /api/device/display) when it sees displayVersion ahead of its ack;
+    // the poll body only announces the number.
+    const displayMoved = displayAck !== null && tick.displayVersion !== displayAck;
 
     const clampedFrom = Math.min(from, version);
     // A firmware instruction the device has not acknowledged releases the

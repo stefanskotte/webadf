@@ -227,7 +227,7 @@ describe('GET /api/device/poll -- next (multi-disk plan R1)', () => {
 
 // OLED layouts (plan Global Constraints, "the display cursor"): the board sends
 // &displayAck=<n>, the highest display version it has HANDLED (applied or
-// rejected). The server wakes while display_version > displayAck and ALWAYS
+// rejected). The server wakes while display_version !== displayAck and ALWAYS
 // carries displayVersion in a body answering a poll that sent displayAck --
 // the board reads displayVersion < its ack as a server-side reset (re-pair).
 describe('GET /api/device/poll -- displayAck and displayVersion', () => {
@@ -252,6 +252,24 @@ describe('GET /api/device/poll -- displayAck and displayVersion', () => {
     readPollTick.mockResolvedValue(baseTick({ displayVersion: 0, version: 2 }));
     const { GET } = await import('./route');
     const res = await GET(get('?since=1&displayAck=7'));
+    expect(res.status).toBe(200);
+    expect(await res.json()).toMatchObject({ displayVersion: 0 });
+  });
+
+  it('wakes when displayAck is ABOVE displayVersion (cross-boot re-pair: stale higher ack), and carries the lower version', async () => {
+    // since=1 matches the tick's version and nothing else moved: only the
+    // display mismatch can wake this. Before the fix (`>`), this held 30 s.
+    readPollTick.mockResolvedValue(baseTick({ displayVersion: 2 }));
+    const { GET } = await import('./route');
+    const res = await GET(get('?since=1&nfcAck=0&displayAck=5'));
+    expect(res.status).toBe(200);
+    expect(await res.json()).toMatchObject({ displayVersion: 2 });
+  });
+
+  it('wakes when displayAck is above a row reset to displayVersion 0', async () => {
+    readPollTick.mockResolvedValue(baseTick({ displayVersion: 0 }));
+    const { GET } = await import('./route');
+    const res = await GET(get('?since=1&displayAck=5'));
     expect(res.status).toBe(200);
     expect(await res.json()).toMatchObject({ displayVersion: 0 });
   });
