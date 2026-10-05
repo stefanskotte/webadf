@@ -1557,7 +1557,8 @@ separately.
   - The ADF's track 1 is all zero, so the board serves plain MFM, the read times out, and the key comes back as 0, silently.
   - The game adds the key to four immediates. INFERRED: the world-1 boss's health becomes about 1.27e9 (unkillable)
     and extra lives are not added. The real key is inferred as `$B4863D88`; nothing external confirms it.
-  - The operator saw it boot and play. The penalty only shows at the world-1 boss: a bench check is owed.
+  - The operator saw it boot and play. The penalty would only show at the world-1 boss. **Closed 2026-10-05 without a
+    bench check:** it was a research question, and the operator has images with the Copylock (RNC) removed.
 
   Survey of `adf-archive/`:
   - Giana Sisters SE and Project-X are cracks.
