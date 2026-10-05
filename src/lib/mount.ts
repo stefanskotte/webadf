@@ -140,6 +140,8 @@ export interface PollTick {
   instructionAck: number;
   /** The NFC write-request cursor (spec §5.3): compared against the board's ?nfcAck=. */
   nfcWriteSeq: number;
+  /** The display-layout cursor (OLED layouts spec §7): compared against the board's ?displayAck=. */
+  displayVersion: number;
 }
 
 /**
@@ -157,6 +159,7 @@ export async function readPollTick(deviceId: string): Promise<PollTick | null> {
       instructionVersion: devices.firmwareInstructionVersion,
       instructionAck: devices.firmwareInstructionAck,
       nfcWriteSeq: devices.nfcWriteSeq,
+      displayVersion: devices.displayVersion,
     })
     .from(devices)
     .where(eq(devices.id, deviceId))
@@ -274,6 +277,12 @@ export async function recordStatus(
     nfcReader?: 'present' | 'absent';
     /** What the board's idle slot holds (multi-disk spec §3.5). */
     preload?: { sha256: string; state: 'loading' | 'ready' } | null;
+    /** The build renders per-board layouts (OLED layouts, 1.7.0+). */
+    displayLayouts?: boolean;
+    /** The board's displayAck: the highest display version it has handled, applied or rejected. */
+    displayVersion?: number;
+    /** Why the board rejected the layout at displayVersion; null = applied. */
+    displayError?: string | null;
   },
 ): Promise<void> {
   const db = getDb();
@@ -319,6 +328,17 @@ export async function recordStatus(
     patch.preloadSha256 = null;
     patch.preloadState = null;
   }
+  // Build-bound, the same rule as playsHd: a report naming its firmware but
+  // silent on display layouts is a build before 1.7.0 (or a reverted trial
+  // boot), and the editor must stop offering a layout it cannot apply.
+  if (s.displayLayouts !== undefined) patch.displayLayouts = s.displayLayouts;
+  else if (s.firmwareVersion !== undefined) patch.displayLayouts = false;
+  // Plain assignment, NOT greatest(): the board's ack can legitimately go
+  // DOWN -- a re-paired board resets it to 0 when the poll's displayVersion
+  // is below it (device_client.c) -- and this column is what the editor's
+  // "Applied on the board" compares with display_version.
+  if (s.displayVersion !== undefined) patch.displayAppliedVersion = s.displayVersion;
+  if (s.displayError !== undefined) patch.displayError = s.displayError;
   // Plain absent-leaves-it-alone, unlike trackMaxBytes above: the reader's
   // presence is not tied to the firmware build, so there is no "drop to a
   // legacy default" case here -- a report that omits it simply has nothing

@@ -13,10 +13,10 @@
 #include <stdint.h>
 #include <stdbool.h>
 
-#define DISP_W        128
-#define DISP_H        32
-#define DISP_PAGES    (DISP_H / 8)
-#define DISP_FB_BYTES (DISP_W * DISP_PAGES)
+#include "display_layout.h"
+#define DISP_W       128
+#define DISP_H_MAX   64
+#define DISP_FB_MAX  (DISP_W * DISP_H_MAX / 8)    // 1024: room for a 128x64 panel
 
 // Long enough for two rendered lines of 21 characters. Titles longer than
 // this are truncated with an ellipsis rather than wrapped to a third line --
@@ -66,8 +66,19 @@ typedef struct {
     disp_sync_t sync;
 } display_state_t;
 
-/** Compose `s` into a framebuffer. Pure: same state, same 512 bytes. */
-void display_render(const display_state_t *s, uint8_t fb[DISP_FB_BYTES]);
+/** Compose `s` into a framebuffer by drawing each visible element of `l`, in
+ *  list order, at its position and scale. Renders into the first
+ *  panel_height(l->panel)/8 pages and zeroes the rest. Pure: same state and
+ *  layout, same 1024 bytes. */
+void display_render(const display_state_t *s, const layout_t *l, uint8_t fb[DISP_FB_MAX]);
+
+/** READY, DOWNLOAD, VERIFY and LOADED: the states a custom layout draws. */
+bool display_state_is_running(disp_status_t st);
+
+/** The layout to draw `s` with: `custom` in a running state, otherwise the
+ *  built-in default for custom's panel -- boot, portal, connecting and error
+ *  screens never depend on a user's layout. */
+const layout_t *display_layout_for(const display_state_t *s, const layout_t *custom);
 
 /**
  * Push bytes to the panel: one page, starting at column `col`, `n` bytes.
@@ -78,8 +89,11 @@ typedef bool (*disp_blit_fn)(void *ctx, int page, int col,
                              const uint8_t *bytes, int n);
 
 typedef struct {
-    uint8_t fb[DISP_FB_BYTES];       // what should be on the glass
-    uint8_t shadow[DISP_FB_BYTES];   // what we believe is on it
+    uint8_t fb[DISP_FB_MAX];         // what should be on the glass
+    uint8_t shadow[DISP_FB_MAX];     // what we believe is on it
+    panel_t panel;                   // how many pages the pump sends
+    const layout_t *layout;          // the custom layout for running states
+    int resend_page, resend_col;     // -1: none; else next byte of a full resend after a panel change
     disp_blit_fn blit;
     void   *ctx;
 } display_t;
@@ -88,13 +102,25 @@ typedef struct {
  *  agree at init and only genuine changes are ever sent. */
 void display_init(display_t *d, disp_blit_fn blit, void *ctx);
 
-/** Re-render into `fb`. Sends nothing; display_pump does that. */
+/** Re-render into `fb` with display_layout_for(s, d->layout). Sends
+ *  nothing; display_pump does that. */
 void display_set(display_t *d, const display_state_t *s);
+
+/** Use `l` for running states from the next display_set on. `l` must outlive
+ *  its use; the pointer is stored, not copied. Refuses (returns false, layout
+ *  unchanged) when l->panel differs from d->panel. */
+bool display_set_layout(display_t *d, const layout_t *l);
+
+/** Switch panel type: layout back to layout_default(p), fb and shadow cleared,
+ *  and the pump resends EVERY byte of every page of the new panel (even 0xFF
+ *  ones). The caller re-runs ssd1306_init for the new type first; the caller
+ *  may then display_set_layout a custom layout for p. */
+void display_set_panel(display_t *d, panel_t p);
 
 /**
  * Send at most `budget` bytes, then return. THE WHOLE POINT: this is called
- * from core0's 1 ms service loop, where a full 512-byte frame (~11 ms at
- * 400 kHz) would stall the floppy exactly as a flood of USB writes would.
+ * from core0's 1 ms service loop, where a full 1024-byte frame (~22 ms at
+ * 400 kHz; 512 bytes on a 128x32) would stall the floppy exactly as a flood of USB writes would.
  * Returns bytes sent; 0 means the panel is already in sync.
  */
 int display_pump(display_t *d, int budget);

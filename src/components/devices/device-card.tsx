@@ -7,6 +7,7 @@ import { preloadText } from '@/lib/drive-chips';
 import { EjectButton } from './eject-button';
 import { NextDiskButton } from './next-disk-button';
 import { DeviceAlias } from './device-alias';
+import { DisplayEditor } from './display-editor';
 
 /**
  * Layout A from the approved redesign (.superpowers/brainstorm/79975-1790191889):
@@ -239,6 +240,11 @@ export function DeviceCard(
           </div>
         </div>
       </div>
+
+      {/* The OLED layout editor (OLED layouts spec §7), collapsed by default:
+          opened, it grows the card taller -- the same escape hatch the
+          aspect-square note above describes for long content. */}
+      <DisplayEditor device={device} />
 
       {device.lastError && (
         // overflowWrap: same reasoning as the firmware line above (fix round

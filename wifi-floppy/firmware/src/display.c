@@ -150,10 +150,25 @@ static const uint8_t CLOUD[3][8] = {
 };
 
 // ---------------------------------------------------------------- drawing
+// Every drawing primitive goes through px(); a scale of 2 makes each pixel a
+// 2x2 block, so glyphs, bitmaps and text all double without separate fonts.
+// Callers draw in the element's own 1x units: (x, y) here is in scaled space,
+// and the clip is the panel's real height, set per render from the layout.
+static int g_scale = 1;
+static int g_rows  = 32;
 static void px(uint8_t *fb, int x, int y) {
-    if (x < 0 || x >= DISP_W || y < 0 || y >= DISP_H) return;
-    fb[(y / 8) * DISP_W + x] |= (uint8_t)(1u << (y % 8));
+    for (int dy = 0; dy < g_scale; dy++) for (int dx = 0; dx < g_scale; dx++) {
+        const int X = x * g_scale + dx, Y = y * g_scale + dy;
+        if (X < 0 || X >= DISP_W || Y < 0 || Y >= g_rows) continue;
+        fb[(Y / 8) * DISP_W + X] |= (uint8_t)(1u << (Y % 8));
+    }
 }
+
+// An element origin in the current scaled coordinate space. 2x origins are
+// even in any layout the editor saves (it snaps them); an odd one decoded
+// from elsewhere simply lands one pixel up/left, still inside the bounds the
+// validator checked.
+#define AT(v) ((v) / g_scale)
 
 static void draw_glyph(uint8_t *fb, int x, int y, char c) {
     unsigned char u = (unsigned char)c;
@@ -227,109 +242,236 @@ static const char *status_word(disp_status_t s) {
 }
 
 /**
- * Split `title` across the two middle lines at a space where one is
+ * Split `title` across two lines of `line` characters at a space where one is
  * available. A hard split mid-word is legible but a break at a space reads
  * as the name it is; the fallback exists because a 30-character single word
- * is a real filename and must not vanish.
+ * is a real filename and must not vanish. At line = 21 (128 px) this is
+ * exactly 1.6.5's split_title; the goldens hold it to that.
  */
-static void split_title(const char *title, char a[22], char b[22]) {
-    const int LINE = DISP_W / ADVANCE;          // 21 characters
+static void split_title_n(const char *title, char a[64], char b[64], int line) {
     int n = (int)strlen(title);
     a[0] = b[0] = '\0';
-    if (n <= LINE) { memcpy(a, title, (size_t)n + 1); return; }
+    if (line > 63) line = 63;
+    if (line < 2) line = 2;     // the ".." tail below needs two columns; a tiny hand-built w must not underflow
+    if (n <= line) { memcpy(a, title, (size_t)n + 1); return; }
 
     int cut = -1;
-    for (int i = 0; i <= LINE && i < n; i++) if (title[i] == ' ') cut = i;
-    int take = (cut > 0) ? cut : LINE;
+    for (int i = 0; i <= line && i < n; i++) if (title[i] == ' ') cut = i;
+    int take = (cut > 0) ? cut : line;
     memcpy(a, title, (size_t)take); a[take] = '\0';
 
     int from = (cut > 0) ? cut + 1 : take;
     int rest = n - from;
-    if (rest > LINE) {
+    if (rest > line) {
         // Truncated rather than dropped: ".." says "there was more", which a
         // silently shortened name does not.
-        memcpy(b, title + from, (size_t)LINE - 2);
-        b[LINE - 2] = '.'; b[LINE - 1] = '.'; b[LINE] = '\0';
+        memcpy(b, title + from, (size_t)line - 2);
+        b[line - 2] = '.'; b[line - 1] = '.'; b[line] = '\0';
     } else {
         memcpy(b, title + from, (size_t)rest); b[rest] = '\0';
     }
 }
 
-void display_render(const display_state_t *s, uint8_t fb[DISP_FB_BYTES]) {
-    memset(fb, 0, DISP_FB_BYTES);
+/** One line of at most `line` characters; a longer title ends in "..". */
+static void one_line_n(const char *title, char a[64], int line) {
+    int n = (int)strlen(title);
+    if (line > 63) line = 63;
+    if (n <= line) { memcpy(a, title, (size_t)n + 1); return; }
+    memcpy(a, title, (size_t)line); a[line] = '\0';
+    if (line >= 3) { a[line - 2] = '.'; a[line - 1] = '.'; }
+}
 
-    // --- top line: wifi glyph, status word, and the track counter ---------
-    draw_wifi(fb, 0, 0, s->bars);
+// Outline 7 rows tall, filled left to right to pct; the percent text sits
+// right-aligned after it (the element's size reserves a 2 px gap).
+static void draw_bar(uint8_t *fb, int x, int y, int w, int pct) {
+    if (pct < 0) pct = 0;
+    if (pct > 100) pct = 100;
+    for (int i = 0; i < w; i++) { px(fb, x + i, y); px(fb, x + i, y + 6); }
+    for (int j = 0; j < 7; j++) { px(fb, x, y + j); px(fb, x + w - 1, y + j); }
+    const int fill = (w - 2) * pct / 100;
+    for (int i = 0; i < fill; i++) for (int j = 2; j < 5; j++) px(fb, x + 1 + i, y + j);
+}
 
-    // The lemming owns the top-right corner; the cloud, when there is one,
-    // sits immediately left of it. Both are on the RIGHT so the left half --
-    // the wifi glyph and the status word -- never moves: a status that shifted
-    // sideways when a disk became writable would be harder to read at a
-    // glance than the cloud is worth.
-    draw_lemming(fb, DISP_W - LEM_W, 0, s->tick);
-    draw_write_state(fb, DISP_W - LEM_W - 2 - PENCIL_W, 0, s->writable, s->sync);
-    // Constant, because the glyph is always there. The earlier version moved
-    // this depending on whether a pencil was drawn, which made the status word
-    // shift sideways as a disk mounted.
-    draw_text(fb, WIFI_W + 3, 0, status_word(s->status),
-              DISP_W - LEM_W - 2 - PENCIL_W - 2);
+bool display_state_is_running(disp_status_t st) {
+    return st == DS_READY || st == DS_DOWNLOAD || st == DS_VERIFY || st == DS_LOADED;
+}
 
-    // --- middle two lines: the disk name ----------------------------------
-    char l1[22], l2[22];
-    split_title(s->title, l1, l2);
-    draw_text(fb, 0, LINE_H,     l1, DISP_W);
-    draw_text(fb, 0, LINE_H * 2, l2, DISP_W);
+const layout_t *display_layout_for(const display_state_t *s, const layout_t *custom) {
+    return display_state_is_running(s->status) ? custom : layout_default(custom->panel);
+}
 
-    // --- bottom line: detail on the left, the number on the right ---------
-    //
-    // The counter lives here rather than the top-right because the lemming
-    // took that corner. It is drawn FIRST and the detail text is clipped
-    // against it, never the other way round: a half-drawn "12/79" would be a
-    // lie about which track is being read, where a clipped label is only
-    // shorter. Same rule as before the move, same reason.
-    int right = DISP_W;
-    if (s->show_track) {
-        char t[16];
-        snprintf(t, sizeof t, "%d/%d", s->cyl, s->max_cyl);
-        int w = text_px(t);
-        draw_text(fb, DISP_W - w, LINE_H * 3, t, DISP_W);
-        right = DISP_W - w - ADVANCE;
-    } else if (s->status == DS_DOWNLOAD && s->pct >= 0) {
-        // Clamped, not merely assumed. `pct` is an int and a caller can hand
-        // this anything; "%d%%" of INT_MAX is 12 bytes into 8. GCC says so and
-        // clang does not, which is why it took a second toolchain to notice.
-        // Clamping beats widening the buffer: a percentage over 100 is a bug
-        // in the caller, and showing "100%" is a better failure than showing
-        // a number that cannot be true.
-        const int pct = s->pct > 100 ? 100 : s->pct;
-        char t[8];
-        snprintf(t, sizeof t, "%d%%", pct);
-        int w = text_px(t);
-        draw_text(fb, DISP_W - w, LINE_H * 3, t, DISP_W);
-        right = DISP_W - w - ADVANCE;
+static const layout_el_t *find(const layout_t *l, int id) {
+    for (int i = 0; i < l->n; i++) if (l->el[i].id == id && l->el[i].visible) return &l->el[i];
+    return NULL;
+}
+
+// Where the right-aligned text of a track/download element starts: the
+// element's fixed box, flush right. Screen pixels.
+static int right_text(const layout_el_t *e, const char *t) {
+    int bw, bh; layout_el_size(e, &bw, &bh);
+    return e->x + bw - text_px(t) * e->scale;
+}
+
+// Both numbers clamped to 0..99, which is what TRACK_MAX_CHARS (5, "99/99")
+// sizes the element for. 1.6.5 printed them raw; no real disk has 100
+// cylinders, and a box that fits every state is the layout model's rule.
+static void track_text(const display_state_t *s, char out[8]) {
+    const int c = s->cyl < 0 ? 0 : s->cyl > 99 ? 99 : s->cyl;
+    const int m = s->max_cyl < 0 ? 0 : s->max_cyl > 99 ? 99 : s->max_cyl;
+    snprintf(out, 8, "%d/%d", c, m);
+}
+
+// Clamped, not merely assumed. `pct` is an int and a caller can hand this
+// anything; "%d%%" of INT_MAX is 12 bytes into 8. GCC says so and clang does
+// not, which is why it took a second toolchain to notice. Clamping beats
+// widening the buffer: a percentage over 100 is a bug in the caller, and
+// showing "100%" is a better failure than a number that cannot be true.
+static void pct_text(const display_state_t *s, char out[8]) {
+    const int pct = s->pct < 0 ? 0 : s->pct > 100 ? 100 : s->pct;
+    snprintf(out, 8, "%d%%", pct);
+}
+
+// Uses the file-scope g_scale/g_rows while drawing: not reentrant.
+void display_render(const display_state_t *s, const layout_t *l, uint8_t fb[DISP_FB_MAX]) {
+    memset(fb, 0, DISP_FB_MAX);
+    g_rows = panel_height(l->panel);
+
+    // The track counter only while a disk is mounted; the percent only while
+    // downloading with a known percent.
+    const layout_el_t *track = s->show_track ? find(l, EL_TRACK) : NULL;
+    const layout_el_t *dl = (s->status == DS_DOWNLOAD && s->pct >= 0) ? find(l, EL_DOWNLOAD) : NULL;
+    // Review Focus 1: where both would be drawn on top of each other, the
+    // counter wins -- a half-drawn "12/79" is a lie about which track is
+    // being read (1.6.5's rule: a swap downloading while a disk is mounted).
+    if (track && dl) {
+        int tw, th, dw, dh; layout_el_size(track, &tw, &th); layout_el_size(dl, &dw, &dh);
+        const bool overlap = track->x < dl->x + dw && dl->x < track->x + tw &&
+                             track->y < dl->y + dh && dl->y < track->y + th;
+        if (overlap) dl = NULL;
     }
-    draw_text(fb, 0, LINE_H * 3, s->detail, right);
+
+    for (int i = 0; i < l->n; i++) {
+        const layout_el_t *e = &l->el[i];
+        if (!e->visible) continue;
+        g_scale = e->scale == 2 ? 2 : 1;
+        const int x = AT(e->x), y = AT(e->y);
+        int bw, bh; layout_el_size(e, &bw, &bh);
+        switch (e->id) {
+            case EL_WIFI:    draw_wifi(fb, x, y, s->bars); break;
+            case EL_LEMMING: draw_lemming(fb, x, y, s->tick); break;
+            case EL_WRITE:   draw_write_state(fb, x, y, s->writable, s->sync); break;
+            case EL_STATUS:  draw_text(fb, x, y, status_word(s->status), x + bw / g_scale); break;
+            case EL_TITLE: {
+                const int line = e->w / ADVANCE;            // characters per line, 1x units
+                char a[64], b[64];
+                if (e->opt == 2) {
+                    split_title_n(s->title, a, b, line);
+                    draw_text(fb, x, y, a, x + e->w);
+                    draw_text(fb, x, y + LINE_H, b, x + e->w);
+                } else {
+                    one_line_n(s->title, a, line);
+                    draw_text(fb, x, y, a, x + e->w);
+                }
+                break;
+            }
+            case EL_TRACK:
+                if (track == e) {
+                    char t[8]; track_text(s, t);
+                    draw_text(fb, AT(right_text(e, t)), y, t, AT(e->x + bw));
+                }
+                break;
+            case EL_DOWNLOAD:
+                if (dl == e) {
+                    char t[8]; pct_text(s, t);
+                    if (e->w) draw_bar(fb, x, y, e->w, s->pct);
+                    draw_text(fb, AT(right_text(e, t)), y, t, AT(e->x + bw));
+                }
+                break;
+            case EL_DETAIL: {
+                // Clipped against a drawn counter/percent on its rows to its
+                // right, exactly as 1.6.5: the limit is that text's first pixel
+                // minus one ADVANCE. The number is never the one clipped -- a
+                // clipped label is only shorter.
+                int limit = e->x + bw;
+                const layout_el_t *rt[2] = { track, dl };
+                for (int k = 0; k < 2; k++) {
+                    const layout_el_t *o = rt[k];
+                    if (!o) continue;
+                    int ow, oh; layout_el_size(o, &ow, &oh);
+                    if (o->y >= e->y + bh || e->y >= o->y + oh) continue;   // different rows
+                    char t[8];
+                    if (o->id == EL_TRACK) track_text(s, t); else pct_text(s, t);
+                    const int left = right_text(o, t) - ADVANCE * g_scale;
+                    if (left > e->x && left < limit) limit = left;
+                }
+                draw_text(fb, x, y, s->detail, AT(limit));
+                break;
+            }
+            default: break;
+        }
+    }
+    g_scale = 1;
 }
 
 // ---------------------------------------------------------------- pump
+static int pages_of(const display_t *d) { return panel_height(d->panel) / 8; }
+
 void display_init(display_t *d, disp_blit_fn blit, void *ctx) {
     memset(d, 0, sizeof *d);
-    d->blit = blit;
-    d->ctx  = ctx;
+    d->blit   = blit;
+    d->ctx    = ctx;
+    d->panel  = PANEL_128x32;
+    d->layout = layout_default(PANEL_128x32);
+    d->resend_page = -1;
 }
 
 void display_set(display_t *d, const display_state_t *s) {
-    display_render(s, d->fb);
+    display_render(s, display_layout_for(s, d->layout), d->fb);
+}
+
+bool display_set_layout(display_t *d, const layout_t *l) {
+    if (!l || l->panel != d->panel) return false;   // pump and layout must agree on the panel
+    d->layout = l;
+    return true;
+}
+
+void display_set_panel(display_t *d, panel_t p) {
+    d->panel  = p;
+    d->layout = layout_default(p);
+    memset(d->fb, 0, DISP_FB_MAX);
+    memset(d->shadow, 0, DISP_FB_MAX);
+    // An explicit resend cursor, NOT a sentinel shadow: a lit 0xFF framebuffer
+    // byte would compare equal to a 0xFF shadow and never be sent, leaving
+    // stale glass after the controller's re-init.
+    d->resend_page = 0;
+    d->resend_col  = 0;
 }
 
 bool display_in_sync(const display_t *d) {
-    return memcmp(d->fb, d->shadow, DISP_FB_BYTES) == 0;
+    if (d->resend_page >= 0) return false;
+    return memcmp(d->fb, d->shadow, (size_t)(pages_of(d) * DISP_W)) == 0;
 }
 
 int display_pump(display_t *d, int budget) {
     if (budget <= 0 || !d->blit) return 0;
 
-    for (int p = 0; p < DISP_PAGES; p++) {
+    const int pages = pages_of(d);
+
+    // A pending panel change: send every byte of every page, in order,
+    // regardless of what the shadow says.
+    if (d->resend_page >= 0) {
+        const int p = d->resend_page, col = d->resend_col;
+        int n = DISP_W - col;
+        if (n > budget) n = budget;
+        if (!d->blit(d->ctx, p, col, &d->fb[p * DISP_W + col], n)) return 0;
+        memcpy(&d->shadow[p * DISP_W + col], &d->fb[p * DISP_W + col], (size_t)n);
+        d->resend_col += n;
+        if (d->resend_col >= DISP_W) { d->resend_col = 0; d->resend_page++; }
+        if (d->resend_page >= pages) d->resend_page = -1;
+        return n;
+    }
+
+    for (int p = 0; p < pages; p++) {
         const int base = p * DISP_W;
         int lo = -1;
         for (int x = 0; x < DISP_W; x++)

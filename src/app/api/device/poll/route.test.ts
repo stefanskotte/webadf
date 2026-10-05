@@ -48,7 +48,7 @@ vi.mock('@/lib/next-disk', () => ({
 const get = (qs = '') => new Request(`http://test/api/device/poll${qs}`);
 
 const baseTick = (over: Partial<PollTick> = {}): PollTick => ({
-  version: 1, instructionVersion: 0, instructionAck: 0, nfcWriteSeq: 0, ...over,
+  version: 1, instructionVersion: 0, instructionAck: 0, nfcWriteSeq: 0, displayVersion: 0, ...over,
 });
 
 beforeEach(() => {
@@ -222,5 +222,103 @@ describe('GET /api/device/poll -- next (multi-disk plan R1)', () => {
     const body = await res.json();
     const text = JSON.stringify(body);
     expect(text.indexOf('"next"')).toBeGreaterThan(text.indexOf('"desired"'));
+  });
+});
+
+// OLED layouts (plan Global Constraints, "the display cursor"): the board sends
+// &displayAck=<n>, the highest display version it has HANDLED (applied or
+// rejected). The server wakes while display_version !== displayAck and ALWAYS
+// carries displayVersion in a body answering a poll that sent displayAck --
+// the board reads displayVersion < its ack as a server-side reset (re-pair).
+describe('GET /api/device/poll -- displayAck and displayVersion', () => {
+  it('wakes on the first tick when displayVersion has moved past displayAck, and carries it', async () => {
+    readPollTick.mockResolvedValue(baseTick({ displayVersion: 3 }));
+    const { GET } = await import('./route');
+    // since=1 matches the tick's version: only the display cursor can wake this.
+    const res = await GET(get('?since=1&nfcAck=0&displayAck=2'));
+    expect(res.status).toBe(200);
+    expect(await res.json()).toMatchObject({ displayVersion: 3 });
+  });
+
+  it('carries displayVersion on a body woken by something else, even when the board is caught up', async () => {
+    readPollTick.mockResolvedValue(baseTick({ displayVersion: 5, instructionVersion: 1, instructionAck: 0 }));
+    const { GET } = await import('./route');
+    const res = await GET(get('?since=1&displayAck=5'));
+    expect(res.status).toBe(200);
+    expect(await res.json()).toMatchObject({ displayVersion: 5 });
+  });
+
+  it('carries a displayVersion BELOW the ack (a reset server row) on whatever wakes the poll', async () => {
+    readPollTick.mockResolvedValue(baseTick({ displayVersion: 0, version: 2 }));
+    const { GET } = await import('./route');
+    const res = await GET(get('?since=1&displayAck=7'));
+    expect(res.status).toBe(200);
+    expect(await res.json()).toMatchObject({ displayVersion: 0 });
+  });
+
+  it('wakes when displayAck is ABOVE displayVersion (cross-boot re-pair: stale higher ack), and carries the lower version', async () => {
+    // since=1 matches the tick's version and nothing else moved: only the
+    // display mismatch can wake this. Before the fix (`>`), this held 30 s.
+    readPollTick.mockResolvedValue(baseTick({ displayVersion: 2 }));
+    const { GET } = await import('./route');
+    const res = await GET(get('?since=1&nfcAck=0&displayAck=5'));
+    expect(res.status).toBe(200);
+    expect(await res.json()).toMatchObject({ displayVersion: 2 });
+  });
+
+  it('wakes when displayAck is above a row reset to displayVersion 0', async () => {
+    readPollTick.mockResolvedValue(baseTick({ displayVersion: 0 }));
+    const { GET } = await import('./route');
+    const res = await GET(get('?since=1&displayAck=5'));
+    expect(res.status).toBe(200);
+    expect(await res.json()).toMatchObject({ displayVersion: 0 });
+  });
+
+  it('parses a garbled displayAck as 0 (never "caught up"), so a positive version wakes', async () => {
+    readPollTick.mockResolvedValue(baseTick({ displayVersion: 1 }));
+    const { GET } = await import('./route');
+    const res = await GET(get('?since=1&displayAck=1abc'));
+    expect(res.status).toBe(200);
+    expect(await res.json()).toMatchObject({ displayVersion: 1 });
+  });
+
+  it('a MISSING displayAck (a board before 1.7.0) is never woken for display and gets no displayVersion', async () => {
+    vi.useFakeTimers();
+    try {
+      readPollTick.mockResolvedValue(baseTick({ displayVersion: 4 }));
+      const { GET } = await import('./route');
+      let settled = false;
+      const pending = GET(get('?since=1&nfcAck=0')).then((r) => { settled = true; return r; });
+      await vi.advanceTimersByTimeAsync(5_000);
+      expect(settled).toBe(false);
+      await vi.advanceTimersByTimeAsync(25_000);
+      expect((await pending).status).toBe(204);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('leaves displayVersion out of a woken body when the board sent no displayAck', async () => {
+    readPollTick.mockResolvedValue(baseTick({ displayVersion: 4, instructionVersion: 1, instructionAck: 0 }));
+    const { GET } = await import('./route');
+    const res = await GET(get('?since=1'));
+    expect(res.status).toBe(200);
+    expect(await res.json()).not.toHaveProperty('displayVersion');
+  });
+
+  it('a caught-up board (displayAck = displayVersion) is not woken by the display', async () => {
+    vi.useFakeTimers();
+    try {
+      readPollTick.mockResolvedValue(baseTick({ displayVersion: 4 }));
+      const { GET } = await import('./route');
+      let settled = false;
+      const pending = GET(get('?since=1&displayAck=4')).then((r) => { settled = true; return r; });
+      await vi.advanceTimersByTimeAsync(5_000);
+      expect(settled).toBe(false);
+      await vi.advanceTimersByTimeAsync(25_000);
+      expect((await pending).status).toBe(204);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

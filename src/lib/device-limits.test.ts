@@ -77,15 +77,18 @@ describe('the firmware bounds the server respects', () => {
       + `,"sha256":"${'a'.repeat(SHA)}"`
       + ',"diskNo":4294967295}';
     const nfcKind = ',"kind":"next"';
+    // OLED layouts: displayVersion rides every body answering a poll that sent
+    // displayAck (an int4 column; the u32 maximum is the generous bound).
+    const display = ',"displayVersion":4294967295';
 
     // Buffer.byteLength, not .length: DC_POLL_BODY_BYTES is a byte budget,
     // and .length counts UTF-16 code units -- fine while every field above
     // was ASCII, but wrong now that nfcWrite's title is escaped multi-byte
     // sequences.
     //
-    // With next, nfcWrite and nfcWrite.kind included this comes to 1384
-    // bytes against the 1536-byte buffer (152 to spare).
-    const worst = Buffer.byteLength(disk + next + update + nfcWrite + nfcKind, 'utf8');
+    // With next, nfcWrite, nfcWrite.kind and displayVersion included this
+    // comes to 1412 bytes against the 1536-byte buffer (124 to spare).
+    const worst = Buffer.byteLength(disk + next + display + update + nfcWrite + nfcKind, 'utf8');
     const budget = define('DC_POLL_BODY_BYTES');
     // Reported rather than just asserted, so a future reader sees the margin
     // instead of rediscovering it.

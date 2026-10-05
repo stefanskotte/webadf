@@ -1,21 +1,12 @@
 import {
-  pgTable, text, integer, timestamp, index, unique, primaryKey, foreignKey, customType,
+  pgTable, text, integer, timestamp, index, unique, primaryKey, foreignKey,
 } from 'drizzle-orm/pg-core';
 import { disks } from './catalog';
-import { devices } from './devices';
+import { bytea, devices } from './devices';
 
-// Staged track bytes are the ONE bytea in this schema, deliberately (write-back
-// spec §3.4): transient scratch, at most 160 x 5,632 bytes per open session,
-// deleted at close. Disk images and history deltas live in the blob store.
-const bytea = customType<{ data: Uint8Array; driverData: Buffer | string }>({
-  dataType() { return 'bytea'; },
-  toDriver(v) { return Buffer.from(v.buffer, v.byteOffset, v.byteLength); },
-  fromDriver(v) {
-    // neon-http returns bytea as a '\x..' hex string; the pg driver as a Buffer.
-    if (typeof v === 'string') return Uint8Array.from(Buffer.from(v.slice(2), 'hex'));
-    return new Uint8Array(v);
-  },
-});
+// Staged track bytes are transient scratch (write-back spec §3.4), at most
+// 160 x 5,632 bytes per open session, deleted at close. Disk images and
+// history deltas live in the blob store. The bytea type lives in ./devices.
 
 /**
  * A disk's history, one row per version (write-back spec §3.4). Version 0 is

@@ -142,4 +142,14 @@ if [ -n "$radio_leak" ]; then
   fail=1
 fi
 
+# Spec 2026-10-04-oled-layouts §7: the editor's preview IS this renderer. A
+# changed display source without a rebuilt module would preview pixels the
+# board does not draw. The hash comes from the build script itself (--hash).
+want=$(bash ../../../scripts/display-wasm.sh --hash)
+have=$(cat ../../../src/lib/display-wasm.version 2>/dev/null || echo missing)
+if [ "$want" != "$have" ]; then
+  echo "FAIL: public/display.wasm is stale -- run pnpm display:wasm"
+  fail=1
+fi
+
 exit $fail

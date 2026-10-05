@@ -211,6 +211,13 @@
       "when": 1790890694675,
       "tag": "0029_restore_derived_from",
       "breakpoints": true
+    },
+    {
+      "idx": 30,
+      "version": "7",
+      "when": 1791153993974,
+      "tag": "0030_display_layouts",
+      "breakpoints": true
     }
   ]
 }

@@ -19,6 +19,7 @@ const base: LiveStateRow = {
   desiredGameTitle: 'Turrican',
   macAddress: 'AA:BB:CC:DD:EE:FF',
   trackMaxBytes: null, playsHd: false, preloadSha256: null, preloadState: null, next: null,
+  displayVersion: 0, displayAppliedVersion: null, displayError: null, displayLayouts: null, displayPanel: '128x32',
 };
 const other: LiveStateRow = { ...base, id: 'dev-b', name: 'Second' };
 const fp = (rows: LiveStateRow[], now = NOW) => liveFingerprint(rows, now, 0);
@@ -34,6 +35,19 @@ describe('the next-disk fields', () => {
     const two = { ...base, next: { diskNo: 2, diskCount: 3, wraps: false, preload: null } };
     const three = { ...base, next: { diskNo: 3, diskCount: 3, wraps: false, preload: null } };
     expect(fp([two])).not.toBe(fp([three]));
+  });
+});
+
+// OLED layouts spec §7: the Display editor's status line updates without a reload.
+describe('the display fields', () => {
+  it.each([
+    ['displayVersion', { displayVersion: 1 }],
+    ['displayAppliedVersion', { displayAppliedVersion: 0 }],
+    ['displayError', { displayError: 'title: w below 12' }],
+    ['displayLayouts', { displayLayouts: true }],
+    ['displayPanel', { displayPanel: '128x64' }],
+  ] as const)('changes the fingerprint when %s changes', (_n, over) => {
+    expect(fp([{ ...base, ...over }])).not.toBe(fp([base]));
   });
 });
 

@@ -14,6 +14,7 @@
 #include <stdint.h>
 #include <stdbool.h>
 #include "transport.h"
+#include "display_layout.h"   // pure: layout_t, for dc_display_verdict_t
 
 typedef enum {
     DC_UNPROVISIONED, DC_IDLE_POLL, DC_FETCHING, DC_VERIFYING,
@@ -138,6 +139,13 @@ typedef bool (*dc_hold_fn)(void *ctx);
 // and pushed the maximal body past 1024 (test_status_body_fits_at_maximum
 // failed at the old budget). Measured with a ready record: body 1053 bytes,
 // whole request 1187.
+// OLED layouts (spec 2026-10-04 §6) add
+// ,"displayLayouts":true,"displayVersion":4294967295,"displayError":"<48 bytes escaped, up to 94>"
+// -- 162 bytes at most. Measured with every field at its maximum
+// (test_status_body_fits_at_maximum, the reason all quotes): body 1217 bytes,
+// whole request 1351 with the test's 3-byte token (~1396 with a real 48-byte
+// one). Both budgets still hold, so neither is raised -- but the body has 63
+// bytes left, and the next field will need a raise.
 #define DC_STATUS_BODY_BYTES  1280
 #define DC_STATUS_REQ_BYTES   1792
 // `err` is firmware-authored (a short static string or errno-derived text,
@@ -334,6 +342,29 @@ typedef struct {
     dc_preload_t preload;
     bool (*_preload_ok)(void *ctx);   // dc_set_preload_gate
     void  *_preload_ok_ctx;
+
+    // --- OLED layouts (spec 2026-10-04 §6) ---
+    // The display cursor, echoed as &displayAck= on every poll: the highest
+    // display version the board has HANDLED -- applied OR rejected. A rejected
+    // layout advances it too, so the server stops waking the poll for it and
+    // it can never loop. dc_step never moves it; dc_display_handled does.
+    // main.c seeds it from display_store_load at boot (after dc_init).
+    uint32_t display_ack;
+    // The poll body's displayVersion, 0 until one arrives; left alone by a
+    // body without the key. Owed = display_want > display_ack.
+    uint32_t display_want;
+    // The last handled version's reason for refusal, "" when it was applied.
+    // Sent as displayError (null when empty).
+    char     display_error[48];
+    // displayLayouts:true in every status report; set by dc_init.
+    bool     display_layouts;
+    // Set by a poll body whose displayVersion is 0 and BELOW the ack: a reset
+    // (re-paired board, new device row) with nothing published on the new
+    // row, so no fetch will replace the old row's layout on the glass.
+    // main.c consumes it with dc_display_take_reset_to_default and puts the
+    // panel's default on under version 0. (A reset to a POSITIVE version
+    // needs nothing extra: the fetch it owes replaces the layout.)
+    bool     display_reset_to_default;
 } device_client_t;
 
 void dc_init(device_client_t *c, transport_t *t, clock_ms_fn now,
@@ -566,5 +597,58 @@ void dc_set_plays_hd(device_client_t *c, bool on);
 // COMPLETE response, or -1 (transport, framing, incomplete). 401 halts, as everywhere.
 int dc_fetch_firmware(device_client_t *c, const char *version,
                       void (*sink)(void *ctx, const uint8_t *b, int n), void *ctx);
+
+// --- OLED layouts (spec 2026-10-04 §6) -----------------------------------
+
+// GET /api/device/display into `buf` (at most `cap` bytes kept; a longer body
+// is cut, and dc_display_parse then refuses it). Returns the bytes kept from
+// a COMPLETE 200 response, or -1: transport, framing, incomplete, or any other
+// status. 401 halts, as everywhere. Call between dc_steps, never inside one.
+int dc_fetch_display(device_client_t *c, uint8_t *buf, int cap);
+
+// The display version the last poll named is ahead of the one handled.
+bool dc_display_owed(const device_client_t *c);
+
+// True ONCE after a poll body reset the display cursor to version 0 (see
+// display_reset_to_default): the caller must show the panel's default layout
+// under version 0 and report it. Clears the flag.
+bool dc_display_take_reset_to_default(device_client_t *c);
+
+// Pure. The endpoint's body: [u32 big-endian version][u8 panel][u8 has_layout]
+// [blob, only when has_layout]. True with the fields out, `blob` pointing
+// into `buf` (NULL and 0 for the panel's default). Refused: shorter than 6,
+// panel not a panel_t, has_layout not 0/1, a layout with no blob or one over
+// LAYOUT_BLOB_MAX, and a default with bytes after it. The blob itself is
+// NOT validated here -- that is layout_decode's job.
+bool dc_display_parse(const uint8_t *buf, int n, uint32_t *version, uint8_t *panel,
+                      const uint8_t **blob, int *blob_len);
+
+// `version` was handled: the ack moves to it, and `error` (NULL = applied)
+// becomes displayError, clipped to the field.
+void dc_display_handled(device_client_t *c, uint32_t version, const char *error);
+
+// What to do with a dc_fetch_display result -- every decision main.c's fetch
+// acts on, pure, so main.c keeps only the side effects:
+//   RETRY     n < 0 (nothing complete arrived), or a body OLDER than the
+//             version the poll named (a lagging server read): neither applied
+//             nor acked -- the caller backs off and fetches again.
+//   MALFORMED a complete 200 dc_display_parse refuses: acked as the version
+//             the POLL named (display_want), reason "malformed display body",
+//             or it would be fetched forever.
+//   REJECT    the blob fails layout_decode, or its panel is not the body's:
+//             acked under the body's version, with the reason.
+//   APPLY     publish it (layout is decoded when blob_len > 0; a 0 blob_len
+//             is the panel's default), then ack it with no error.
+typedef enum { DC_DISP_RETRY, DC_DISP_MALFORMED, DC_DISP_REJECT, DC_DISP_APPLY } dc_display_action_t;
+typedef struct {
+    uint32_t       version;      // what to ack (MALFORMED: display_want)
+    uint8_t        panel;
+    const uint8_t *blob;         // into the caller's buffer; NULL = default
+    int            blob_len;
+    layout_t       layout;       // APPLY with blob_len > 0
+    char           why[48];      // REJECT / MALFORMED; "" otherwise
+} dc_display_verdict_t;
+dc_display_action_t dc_display_decide(const device_client_t *c, const uint8_t *buf, int n,
+                                      dc_display_verdict_t *out);
 
 #endif

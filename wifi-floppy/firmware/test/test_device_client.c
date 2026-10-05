@@ -4,6 +4,7 @@
 #include "../src/psram_image.h"
 #include "../src/image_loader.h"
 #include "../src/token_store.h"
+#include "../src/display_layout.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -464,6 +465,11 @@ static void test_status_body_fits_at_maximum(void) {
     c.preload.slot = SLOT_NONE;
     c.preload.loading = true;
     memset(c.preload.next_sha256, 'd', 64); c.preload.next_sha256[64] = '\0';
+    // OLED layouts: the largest ack, and a reason made entirely of quotes --
+    // every byte escapes to two, the longest displayError can get.
+    c.display_ack = 4294967295u;
+    memset(c.display_error, '"', sizeof c.display_error - 1);
+    c.display_error[sizeof c.display_error - 1] = '\0';
 
     fake_push_response("HTTP/1.1 204 No Content\r\n\r\n");
     CHECK(dc_report_status(&c, 2147483647, -200, long_err, long_ver),
@@ -481,6 +487,15 @@ static void test_status_body_fits_at_maximum(void) {
           "the preload record survives a maximal body");
     CHECK(strstr(r, "\"playsHd\":true}") != NULL,
           "playsHd survives a maximal body, the very last field");
+    CHECK(strstr(r, "\"displayVersion\":4294967295") != NULL, "the display ack survives");
+    {
+        // The whole reason, escaped, closing quote included: 47 x \" then ".
+        static char want[16 + 2 * sizeof c.display_error + 2];
+        int k = snprintf(want, sizeof want, "\"displayError\":\"");
+        for (size_t i = 0; i + 1 < sizeof c.display_error; i++) { want[k++] = '\\'; want[k++] = '"'; }
+        want[k++] = '"'; want[k] = '\0';
+        CHECK(strstr(r, want) != NULL, "and the whole escaped reason");
+    }
 }
 
 static void test_status_carries_the_firmware_fields(void) {
@@ -1386,7 +1401,7 @@ static void poll_carries_nfc_ack(void) {
     c.nfc_ack = 5;
     fake_push_response("HTTP/1.1 204 No Content\r\n\r\n");
     dc_step(&c);
-    CHECK(strstr(fake_last_request(), "GET /api/device/poll?since=0&nfcAck=5 ") != NULL,
+    CHECK(strstr(fake_last_request(), "GET /api/device/poll?since=0&nfcAck=5&displayAck=0 ") != NULL,
           "the board's write cursor rides every poll, or the server can never stop re-sending");
 }
 
@@ -2143,6 +2158,253 @@ static void an_eject_clears_next(void) {
     dc_set_hold(&c, NULL, NULL);
 }
 
+// --- OLED layouts (spec 2026-10-04 §6): the display cursor and fetch -------
+
+static void test_display_body_parses(void) {
+    const uint8_t body[] = { 0, 0, 0, 9,  1,  1,   1, 1, 0, 0 };   // v9, 128x64, has layout, a 4-byte blob
+    uint32_t v; uint8_t p; const uint8_t *b; int bl;
+    CHECK(dc_display_parse(body, sizeof body, &v, &p, &b, &bl), "parses");
+    CHECK(v == 9 && p == 1 && bl == 4 && b == body + 6, "fields");
+    const uint8_t dflt[] = { 0, 0, 0, 3, 0, 0 };                     // v3, 128x32, default
+    CHECK(dc_display_parse(dflt, sizeof dflt, &v, &p, &b, &bl) && bl == 0, "default has no blob");
+    CHECK(!dc_display_parse(body, 5, &v, &p, &b, &bl), "short is refused");
+    const uint8_t bad[] = { 0, 0, 0, 9, 1, 1 };                        // claims a layout, carries none
+    CHECK(!dc_display_parse(bad, sizeof bad, &v, &p, &b, &bl), "missing blob is refused");
+    // Big-endian, all four bytes.
+    const uint8_t big[] = { 0x01, 0x02, 0x03, 0x04, 0, 0 };
+    CHECK(dc_display_parse(big, sizeof big, &v, &p, &b, &bl) && v == 0x01020304u, "version is big-endian");
+    const uint8_t panel2[] = { 0, 0, 0, 9, 2, 0 };
+    CHECK(!dc_display_parse(panel2, sizeof panel2, &v, &p, &b, &bl), "an unknown panel is refused");
+    const uint8_t flag2[] = { 0, 0, 0, 9, 0, 2, 1 };
+    CHECK(!dc_display_parse(flag2, sizeof flag2, &v, &p, &b, &bl), "has_layout other than 0/1 is refused");
+    const uint8_t tail[] = { 0, 0, 0, 9, 0, 0, 7 };
+    CHECK(!dc_display_parse(tail, sizeof tail, &v, &p, &b, &bl), "a default with trailing bytes is refused");
+    static uint8_t huge[6 + LAYOUT_BLOB_MAX + 1];
+    memset(huge, 0, sizeof huge); huge[3] = 9; huge[5] = 1;
+    CHECK(!dc_display_parse(huge, sizeof huge, &v, &p, &b, &bl), "a blob over LAYOUT_BLOB_MAX is refused");
+    CHECK(dc_display_parse(huge, sizeof huge - 1, &v, &p, &b, &bl) && bl == LAYOUT_BLOB_MAX,
+          "a blob of exactly LAYOUT_BLOB_MAX is taken");
+}
+
+static void test_rejected_layout_still_acks(void) {
+    // The cursor rule: a layout the board refuses is still HANDLED, so it never re-wakes the poll.
+    device_client_t c; memset(&c, 0, sizeof c);
+    c.display_ack = 4; c.display_want = 5;
+    CHECK(dc_display_owed(&c), "v5 owed");
+    dc_display_handled(&c, 5, "outside the panel");
+    CHECK(!dc_display_owed(&c) && c.display_ack == 5, "acked despite the rejection");
+    CHECK(strcmp(c.display_error, "outside the panel") == 0, "reason kept for the status");
+    dc_display_handled(&c, 6, NULL);
+    CHECK(c.display_error[0] == '\0', "an applied layout clears the error");
+    // A reason longer than the field is clipped, never overrun.
+    static char longwhy[200]; memset(longwhy, 'w', sizeof longwhy - 1); longwhy[sizeof longwhy - 1] = '\0';
+    dc_display_handled(&c, 7, longwhy);
+    CHECK(strlen(c.display_error) == sizeof c.display_error - 1, "clipped to the field");
+}
+
+static void test_poll_url_carries_display_ack(void) {
+    boot();
+    c.nfc_ack = 5;
+    c.display_ack = 12;
+    fake_push_response("HTTP/1.1 204 No Content\r\n\r\n");
+    dc_step(&c);
+    CHECK(strstr(fake_last_request(), "GET /api/device/poll?since=0&nfcAck=5&displayAck=12 ") != NULL,
+          "the display cursor rides every poll, or the server re-wakes it forever");
+    // Worst case: every cursor at its maximum still fits the path buffer.
+    boot();
+    c.since = 4294967295u; c.nfc_ack = 4294967295u; c.display_ack = 4294967295u;
+    fake_push_response("HTTP/1.1 204 No Content\r\n\r\n");
+    dc_step(&c);
+    CHECK(strstr(fake_last_request(),
+                 "GET /api/device/poll?since=4294967295&nfcAck=4294967295&displayAck=4294967295 ") != NULL,
+          "a maximal poll path is sent whole, not truncated");
+}
+
+static void test_poll_body_reads_display_version(void) {
+    boot();
+    c.display_ack = 2;
+    push_ok_json("{\"version\":1,\"displayVersion\":3,\"desired\":null}");
+    dc_step(&c);
+    CHECK_EQ_INT((int)c.display_want, 3);
+    CHECK(dc_display_owed(&c), "a newer display version is owed");
+    // A body without the key leaves the cursor alone.
+    push_ok_json("{\"version\":2,\"desired\":null}");
+    c.since = 1;
+    dc_step(&c);
+    CHECK_EQ_INT((int)c.display_want, 3);
+    // A non-integer is not read.
+    push_ok_json("{\"version\":3,\"displayVersion\":\"9\",\"desired\":null}");
+    c.since = 2;
+    dc_step(&c);
+    CHECK_EQ_INT((int)c.display_want, 3);
+}
+
+static void test_status_carries_display_fields(void) {
+    boot();
+    CHECK(c.display_layouts, "dc_init declares the capability");
+    c.display_ack = 7;
+    fake_push_response("HTTP/1.1 204 No Content\r\n\r\n");
+    CHECK(dc_report_status(&c, 0, -50, NULL, "1.7.0+gt"), "sent");
+    const char *q = fake_last_request();
+    CHECK(strstr(q, "\"displayLayouts\":true") != NULL, "capability, a JSON boolean");
+    CHECK(strstr(q, "\"displayVersion\":7") != NULL, "the ack");
+    CHECK(strstr(q, "\"displayError\":null") != NULL, "no error is an explicit null");
+
+    dc_display_handled(&c, 8, "panel: \"x\" \\ bad");
+    fake_push_response("HTTP/1.1 204 No Content\r\n\r\n");
+    CHECK(dc_report_status(&c, 0, -50, NULL, "1.7.0+gt"), "sent");
+    q = fake_last_request();
+    CHECK(strstr(q, "\"displayVersion\":8") != NULL, "the ack moved");
+    CHECK(strstr(q, "\"displayError\":\"panel: \\\"x\\\" \\\\ bad\"") != NULL, "the reason, JSON-escaped");
+}
+
+static uint8_t display_bytes[] = { 0, 0, 0, 9, 1, 1, 1, 1, 0, 0 };
+
+static void test_fetch_display_returns_the_body(void) {
+    boot();
+    static uint8_t resp[128];
+    int h = snprintf((char *)resp, sizeof resp,
+                     "HTTP/1.1 200 OK\r\nContent-Type: application/octet-stream\r\n"
+                     "Content-Length: %d\r\n\r\n", (int)sizeof display_bytes);
+    memcpy(resp + h, display_bytes, sizeof display_bytes);
+    fake_push_response_bytes(resp, h + (int)sizeof display_bytes);
+    uint8_t got[16];
+    CHECK_EQ_INT(dc_fetch_display(&c, got, sizeof got), (int)sizeof display_bytes);
+    CHECK(strstr(fake_last_request(), "GET /api/device/display ") != NULL, "path");
+    CHECK(strstr(fake_last_request(), "Authorization: Bearer tok") != NULL, "device-authenticated");
+    CHECK(memcmp(got, display_bytes, sizeof display_bytes) == 0, "bytes, NULs and all");
+
+    // A body larger than the buffer keeps only what fits (the parse refuses it).
+    fake_push_response_bytes(resp, h + (int)sizeof display_bytes);
+    CHECK_EQ_INT(dc_fetch_display(&c, got, 4), 4);
+}
+
+static void test_fetch_display_failures(void) {
+    boot();
+    uint8_t got[16];
+    fake_push_truncated("HTTP/1.1 200 OK\r\nContent-Length: 10\r\n\r\nabc", 41);
+    CHECK_EQ_INT(dc_fetch_display(&c, got, sizeof got), -1);
+    push_status_json("HTTP/1.1 500 Internal Server Error", "{\"error\":\"x\"}");
+    CHECK_EQ_INT(dc_fetch_display(&c, got, sizeof got), -1);
+    CHECK(c.state != DC_HALTED, "a 5xx does not halt");
+    fake_push_response("HTTP/1.1 401 Unauthorized\r\nContent-Length: 0\r\n\r\n");
+    CHECK_EQ_INT(dc_fetch_display(&c, got, sizeof got), -1);
+    CHECK_EQ_INT(c.state, DC_HALTED);
+}
+
+// Review fix (Ruling J b): a poll's displayVersion BELOW the ack is a
+// server-side reset (a re-paired board's new device row): the cursor starts
+// over, and a positive version is fetched once.
+static void test_display_version_below_the_ack_resets_the_cursor(void) {
+    boot();
+    c.display_ack = 9;
+    dc_display_handled(&c, 9, "old row's refusal");
+    push_ok_json("{\"version\":1,\"displayVersion\":3,\"desired\":null}");
+    dc_step(&c);
+    CHECK_EQ_INT((int)c.display_ack, 0);
+    CHECK(c.display_error[0] == '\0', "the old row's reason goes with its cursor");
+    CHECK_EQ_INT((int)c.display_want, 3);
+    CHECK(dc_display_owed(&c), "the new row's version 3 is fetched");
+    // A reset to 0 (nothing published on the new row) owes nothing.
+    boot();
+    c.display_ack = 9;
+    push_ok_json("{\"version\":1,\"displayVersion\":0,\"desired\":null}");
+    dc_step(&c);
+    CHECK_EQ_INT((int)c.display_ack, 0);
+    CHECK(!dc_display_owed(&c), "version 0: nothing to fetch");
+    // Equal to the ack is not a reset.
+    boot();
+    c.display_ack = 9;
+    push_ok_json("{\"version\":1,\"displayVersion\":9,\"desired\":null}");
+    dc_step(&c);
+    CHECK_EQ_INT((int)c.display_ack, 9);
+    CHECK(!dc_display_owed(&c), "already handled");
+    CHECK(!dc_display_take_reset_to_default(&c), "not a reset: the glass is left alone");
+}
+
+// Final review I1: a reset must take the OLD row's layout off the glass. A
+// reset to 0 fetches nothing, so it asks main.c (once) for the default under
+// version 0; a reset to a positive version leaves that to the fetch it owes.
+static void test_display_reset_to_zero_asks_for_the_default_once(void) {
+    boot();
+    CHECK(!dc_display_take_reset_to_default(&c), "a fresh client owes no reset");
+    c.display_ack = 5;                       // seeded from the old row's record
+    push_ok_json("{\"version\":1,\"displayVersion\":0,\"desired\":null}");
+    dc_step(&c);
+    CHECK(dc_display_take_reset_to_default(&c), "reset to 0: put the default on");
+    CHECK(!dc_display_take_reset_to_default(&c), "taken once");
+    CHECK_EQ_INT((int)c.display_ack, 0);
+    CHECK(!dc_display_owed(&c), "and nothing to fetch");
+    // The next body, now matching, raises nothing.
+    push_ok_json("{\"version\":1,\"displayVersion\":0,\"desired\":null}");
+    dc_step(&c);
+    CHECK(!dc_display_take_reset_to_default(&c), "a matching ack is not a reset");
+
+    // A reset to a positive version: the fetch replaces the layout.
+    boot();
+    c.display_ack = 5;
+    push_ok_json("{\"version\":1,\"displayVersion\":2,\"desired\":null}");
+    dc_step(&c);
+    CHECK(!dc_display_take_reset_to_default(&c), "positive: the fetch replaces it");
+    CHECK(dc_display_owed(&c), "version 2 is fetched");
+
+    // A version of 0 with an ack of 0 is not a reset (a fresh board).
+    boot();
+    push_ok_json("{\"version\":1,\"displayVersion\":0,\"desired\":null}");
+    dc_step(&c);
+    CHECK(!dc_display_take_reset_to_default(&c), "0 == 0: nothing to reset");
+}
+
+// Review fix (Minor 5): every decision display_core1_fetch acts on, pure.
+// A valid 128x32 layout blob: format 1, panel 0, one element (status, visible).
+static const uint8_t good_blob_32[] = { 1, 0, 1, 0,   1, 1, 0, 0, 0, 0, 0, 0 };
+
+static int disp_body(uint8_t *out, uint32_t v, uint8_t panel, const uint8_t *blob, int bl) {
+    out[0] = (uint8_t)(v >> 24); out[1] = (uint8_t)(v >> 16); out[2] = (uint8_t)(v >> 8); out[3] = (uint8_t)v;
+    out[4] = panel; out[5] = bl ? 1 : 0;
+    if (bl) memcpy(out + 6, blob, (size_t)bl);
+    return 6 + bl;
+}
+
+static void test_display_decide_branches(void) {
+    device_client_t d; memset(&d, 0, sizeof d);
+    d.display_ack = 4; d.display_want = 5;
+    static dc_display_verdict_t vd;
+    uint8_t body[8 + LAYOUT_BLOB_MAX];
+
+    CHECK_EQ_INT(dc_display_decide(&d, body, -1, &vd), DC_DISP_RETRY);      // transport failure
+
+    int n = disp_body(body, 5, 0, NULL, 0);
+    CHECK_EQ_INT(dc_display_decide(&d, body, n, &vd), DC_DISP_APPLY);       // the default
+    CHECK(vd.version == 5 && vd.panel == 0 && vd.blob_len == 0 && vd.blob == NULL, "default fields");
+
+    n = disp_body(body, 5, 0, good_blob_32, (int)sizeof good_blob_32);
+    CHECK_EQ_INT(dc_display_decide(&d, body, n, &vd), DC_DISP_APPLY);       // a custom layout
+    CHECK(vd.blob == body + 6 && vd.blob_len == (int)sizeof good_blob_32, "blob points into the body");
+    CHECK(vd.layout.panel == PANEL_128x32 && vd.layout.n == 1, "decoded");
+
+    n = disp_body(body, 6, 1, good_blob_32, (int)sizeof good_blob_32);
+    CHECK_EQ_INT(dc_display_decide(&d, body, n, &vd), DC_DISP_REJECT);      // blob says 128x32, body 128x64
+    CHECK(vd.version == 6 && strcmp(vd.why, "panel mismatch") == 0, "mismatch is refused under its version");
+
+    static const uint8_t bad_blob[] = { 9, 0, 0, 0 };                        // unknown format
+    n = disp_body(body, 7, 0, bad_blob, (int)sizeof bad_blob);
+    CHECK_EQ_INT(dc_display_decide(&d, body, n, &vd), DC_DISP_REJECT);
+    CHECK(vd.version == 7 && strcmp(vd.why, "format: unknown") == 0, "the validator's reason");
+
+    const uint8_t junk[] = { 0, 0, 0, 5, 7 };                                // unparseable
+    CHECK_EQ_INT(dc_display_decide(&d, junk, (int)sizeof junk, &vd), DC_DISP_MALFORMED);
+    CHECK(vd.version == 5, "a malformed body acks the version the POLL named");
+    CHECK(strcmp(vd.why, "malformed display body") == 0, "with a reason");
+
+    n = disp_body(body, 4, 0, NULL, 0);                                     // older than the poll said
+    CHECK_EQ_INT(dc_display_decide(&d, body, n, &vd), DC_DISP_RETRY);       // stale: neither applied nor acked
+
+    n = disp_body(body, 8, 0, NULL, 0);                                     // newer than the poll said
+    CHECK_EQ_INT(dc_display_decide(&d, body, n, &vd), DC_DISP_APPLY);
+    CHECK_EQ_INT((int)vd.version, 8);
+}
+
 int main(void) {
     // Only test_successful_image_fetch_publishes_and_reflects_write_protected
     // needs real PSRAM backing (everything else in this file either never
@@ -2269,6 +2531,16 @@ int main(void) {
     RUN(preload_404_blocks_the_digest_and_leaves_no_record);
     RUN(an_uppercase_next_is_refused);
     RUN(an_eject_clears_next);
+    RUN(test_display_body_parses);
+    RUN(test_rejected_layout_still_acks);
+    RUN(test_poll_url_carries_display_ack);
+    RUN(test_poll_body_reads_display_version);
+    RUN(test_status_carries_display_fields);
+    RUN(test_fetch_display_returns_the_body);
+    RUN(test_fetch_display_failures);
+    RUN(test_display_version_below_the_ack_resets_the_cursor);
+    RUN(test_display_reset_to_zero_asks_for_the_default_once);
+    RUN(test_display_decide_branches);
 
     // The observation tests run BEFORE the backing is released: several of
     // them drive a real fetch, which writes into PSRAM. Appending them after

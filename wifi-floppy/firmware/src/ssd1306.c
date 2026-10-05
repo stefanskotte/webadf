@@ -31,7 +31,7 @@
 #define I2C_TIMEOUT_US 5000
 #define WIDTH  128
 /*
- * 128x32, NOT 128x64. Confirmed by the operator 2026-09-11 after a long
+ * The panel height is a PARAMETER now (128x32 or 128x64), but the lesson stands. Confirmed by the operator 2026-09-11 after a long
  * detour: the panel is half the height this code first assumed, and all three
  * places that assumption was written down have to agree or the display lies
  * about which of them is wrong.
@@ -45,9 +45,6 @@
  * before the operator supplied the one fact none of the tests could: the
  * number printed on the part.
  */
-#define HEIGHT 32
-#define PAGES  (HEIGHT / 8)
-
 static bool cmd(uint8_t addr, const uint8_t *bytes, size_t n) {
   // Control byte 0x00 says "everything after this is a command".
   uint8_t buf[8];
@@ -57,11 +54,13 @@ static bool cmd(uint8_t addr, const uint8_t *bytes, size_t n) {
   return i2c_write_timeout_us(board_i2c(), addr, buf, n + 1, false, I2C_TIMEOUT_US) >= 0;
 }
 
-bool ssd1306_init(uint8_t addr) {
-  static const uint8_t init[] = {
+/* The controller configuration for `panel`, and nothing else: no clear. */
+static bool send_init_sequence(uint8_t addr, panel_t panel) {
+  const int height = panel_height(panel);
+  const uint8_t init[] = {
     0xAE,              /* display off while it is reconfigured           */
     0xD5, 0x80,        /* clock divide / oscillator frequency            */
-    0xA8, HEIGHT - 1,  /* multiplex ratio: one less than the row count   */
+    0xA8, (uint8_t)(height - 1), /* multiplex ratio: rows - 1           */
     0xD3, 0x00,        /* no vertical offset                             */
     0x40,              /* start line 0                                   */
     0x8D, 0x14,        /* CHARGE PUMP ON -- without this a correctly     */
@@ -69,9 +68,10 @@ bool ssd1306_init(uint8_t addr) {
     0x20, 0x00,        /* horizontal addressing: RAM auto-advances       */
     0xA1,              /* segment remap, so column 0 is on the left      */
     0xC8,              /* COM scan descending, so row 0 is at the top    */
-    0xDA, 0x02,        /* SEQUENTIAL COM pins, the 128x32 layout. 0x12   */
-                       /* (alternating) is the 128x64 value and is the   */
-                       /* half of this bug that survives fixing 0xA8     */
+    0xDA, (uint8_t)(panel == PANEL_128x64 ? 0x12 : 0x02),
+                       /* COM pins: 0x02 SEQUENTIAL for 128x32, 0x12     */
+                       /* ALTERNATING for 128x64. A mismatch is the half */
+                       /* of the 32/64 bug that survives fixing 0xA8     */
     0x81, 0xCF,        /* contrast                                       */
     0xD9, 0xF1, 0xDB, 0x40,
     0xA4,              /* show RAM, not an all-on test pattern -- an
@@ -92,6 +92,11 @@ bool ssd1306_init(uint8_t addr) {
     if (!cmd(addr, &init[i], n)) return false;
     i += n;
   }
+  return true;
+}
+
+bool ssd1306_init(uint8_t addr, panel_t panel) {
+  if (!send_init_sequence(addr, panel)) return false;
 
   /*
    * 400 kHz now that a device has answered and the wiring is known good.
@@ -103,13 +108,30 @@ bool ssd1306_init(uint8_t addr) {
    */
   i2c_set_baudrate(board_i2c(), 400000);
 
-  if (!ssd1306_clear(addr)) return false;
+  if (!ssd1306_clear(addr, panel)) return false;
   return true;
 }
 
+/*
+ * The panel-TYPE switch at runtime (display_apply in main.c, core0), which
+ * must not do what ssd1306_init does last: a synchronous full clear. That is
+ * every page at 400 kHz -- (128 + 9) bytes x ~9 bits per page, 4 pages ~12 ms
+ * on a 128x32, 8 pages ~25 ms on a 128x64 -- with core0's 1 ms service loop
+ * blocked, possibly while the Amiga is reading a disk. It is also redundant:
+ * the caller follows this with display_set_panel, whose pump resends EVERY
+ * byte of the new panel's pages through the budgeted 1 ms loop. What is left
+ * here is the command sequence alone, ~25 short transfers (~2 ms at 400 kHz,
+ * already set by the boot-time init). Until the pump catches up the glass can
+ * briefly show stale RAM (on a 32 -> 64 switch, pages 4-7 were never
+ * written), which is cosmetic and gone within one resend.
+ */
+bool ssd1306_reinit(uint8_t addr, panel_t panel) {
+  return send_init_sequence(addr, panel);
+}
+
 /** Address one page and stream `n` bytes into it. */
-bool ssd1306_blit(uint8_t addr, int page, int col, const uint8_t *bytes, int n) {
-  if (page < 0 || page >= PAGES || col < 0 || n <= 0 || col + n > WIDTH) return false;
+bool ssd1306_blit(uint8_t addr, panel_t panel, int page, int col, const uint8_t *bytes, int n) {
+  if (page < 0 || page >= panel_height(panel) / 8 || col < 0 || n <= 0 || col + n > WIDTH) return false;
 
   // The column END is the last byte of THIS write, not the edge of the panel.
   // With horizontal addressing the controller auto-advances and wraps at the
@@ -129,19 +151,20 @@ bool ssd1306_blit(uint8_t addr, int page, int col, const uint8_t *bytes, int n) 
                               I2C_TIMEOUT_US * 4) >= 0;
 }
 
-bool ssd1306_clear(uint8_t addr) {
+bool ssd1306_clear(uint8_t addr, panel_t panel) {
   // Leaves the panel matching display.c's all-zero shadow, which is what lets
   // the pump send only genuine changes from the very first frame instead of
   // having to push a full one to establish agreement.
   uint8_t zero[WIDTH];
   for (int x = 0; x < WIDTH; x++) zero[x] = 0;
-  for (int p = 0; p < PAGES; p++)
-    if (!ssd1306_blit(addr, p, 0, zero, WIDTH)) return false;
+  for (int p = 0; p < panel_height(panel) / 8; p++)
+    if (!ssd1306_blit(addr, panel, p, 0, zero, WIDTH)) return false;
   return true;
 }
 
-bool ssd1306_selftest(uint8_t addr) {
-  if (!ssd1306_init(addr)) return false;
+bool ssd1306_selftest(uint8_t addr, panel_t panel) {
+  const int height = panel_height(panel), pages = height / 8;
+  if (!ssd1306_init(addr, panel)) return false;
 
   /*
    * A FRAME AND AN X, because counting failed three times.
@@ -167,18 +190,18 @@ bool ssd1306_selftest(uint8_t addr) {
    * Frame closed AND strokes clean -> geometry is right, and the display is
    * ready for a driver. Anything else is now specific enough to act on.
    */
-  uint8_t fb[PAGES][WIDTH];
-  for (int p = 0; p < PAGES; p++)
+  uint8_t fb[8][WIDTH];
+  for (int p = 0; p < pages; p++)
     for (int x = 0; x < WIDTH; x++) fb[p][x] = 0;
 
   #define PIX(x, y) (fb[(y) / 8][(x)] |= (uint8_t)(1u << ((y) % 8)))
-  for (int x = 0; x < WIDTH; x++)  { PIX(x, 0); PIX(x, HEIGHT - 1); }
-  for (int y = 0; y < HEIGHT; y++) { PIX(0, y); PIX(WIDTH - 1, y); }
-  // Both diagonals. x advances WIDTH/HEIGHT per row so each stroke reaches the
+  for (int x = 0; x < WIDTH; x++)  { PIX(x, 0); PIX(x, height - 1); }
+  for (int y = 0; y < height; y++) { PIX(0, y); PIX(WIDTH - 1, y); }
+  // Both diagonals. x advances WIDTH/height per row so each stroke reaches the
   // opposite corner exactly, rather than stopping short and leaving a gap that
   // would read as the very breakage this is meant to detect.
-  for (int y = 0; y < HEIGHT; y++) {
-    const int x = y * (WIDTH - 1) / (HEIGHT - 1);
+  for (int y = 0; y < height; y++) {
+    const int x = y * (WIDTH - 1) / (height - 1);
     PIX(x, y);
     PIX(WIDTH - 1 - x, y);
   }
@@ -187,11 +210,11 @@ bool ssd1306_selftest(uint8_t addr) {
   // Pushed through ssd1306_blit(), deliberately: that is the path the display
   // driver uses for every update, so a self-test that bypassed it would prove
   // the panel works and leave the code that actually drives it untested.
-  for (int page = 0; page < PAGES; page++)
-    if (!ssd1306_blit(addr, page, 0, fb[page], WIDTH)) return false;
+  for (int page = 0; page < pages; page++)
+    if (!ssd1306_blit(addr, panel, page, 0, fb[page], WIDTH)) return false;
 
   wf_logf(WF_INFO, "oled: 0x%02x initialised as %dx%d, frame + X drawn — "
                    "is the box closed on all four edges, strokes unbroken?",
-          addr, WIDTH, HEIGHT);
+          addr, WIDTH, height);
   return true;
 }

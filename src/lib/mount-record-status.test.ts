@@ -137,3 +137,35 @@ describe('recordStatus preload', () => {
     expect('preloadState' in patches[0]).toBe(false);
   });
 });
+
+// OLED layouts spec §7: the capability is build-bound like playsHd; the ack is
+// stored as display_applied_version by plain assignment (it can go DOWN when a
+// re-paired board resets it), and the reason rides alongside.
+describe('recordStatus display layouts', () => {
+  it('stores the capability, the ack as displayAppliedVersion, and the error', async () => {
+    await recordStatus('dev-1', { ...base, displayLayouts: true, displayVersion: 4, displayError: 'bad' });
+    const p = patches[0];
+    expect(p.displayLayouts).toBe(true);
+    expect(p.displayAppliedVersion).toBe(4);
+    expect(p.displayError).toBe('bad');
+  });
+
+  it('a report naming its firmware but silent on displayLayouts sets it false', async () => {
+    await recordStatus('dev-1', { ...base });
+    expect('displayLayouts' in patches[0]).toBe(true);
+    expect(patches[0].displayLayouts).toBe(false);
+    expect('displayAppliedVersion' in patches[0]).toBe(false);
+    expect('displayError' in patches[0]).toBe(false);
+  });
+
+  it('a report with no firmwareVersion and no display fields leaves all three alone', async () => {
+    await recordStatus('dev-1', { mountedSha256: null });
+    expect('displayLayouts' in patches[0]).toBe(false);
+  });
+
+  it('stores an ack lower than before as-is (no greatest())', async () => {
+    await recordStatus('dev-1', { ...base, displayLayouts: true, displayVersion: 0, displayError: null });
+    expect(patches[0].displayAppliedVersion).toBe(0);
+    expect(patches[0].displayError).toBeNull();
+  });
+});

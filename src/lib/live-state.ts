@@ -66,6 +66,17 @@ export interface LiveStateRow {
   playsHd: boolean;
   preloadSha256: string | null;
   preloadState: string | null;
+  /**
+   * The Display editor's status line (OLED layouts spec §7): "Applied on the
+   * board" / "Waiting for the board" / "The board rejected it", and "Needs
+   * firmware 1.7.0 or newer". All page inputs, so all in the fingerprint --
+   * the editor updates without a reload when the board acks.
+   */
+  displayVersion: number;
+  displayAppliedVersion: number | null;
+  displayError: string | null;
+  displayLayouts: boolean | null;
+  displayPanel: string;
   /** The computed next-disk verdict for this device, or null (multi-disk plan R3). */
   next: NextInfo | null;
 }
@@ -120,6 +131,8 @@ export function liveFingerprint(
         r.mountedGameId ?? '', r.mountedGameTitle ?? '', r.mountedDiskNo ?? '',
         r.mountedDiskCount ?? '', r.mountedImageFormat ?? '', r.mountedSizeBytes ?? '', r.desiredGameTitle ?? '',
         r.macAddress ?? '',
+        r.displayVersion, r.displayAppliedVersion ?? '', r.displayError ?? '',
+        r.displayLayouts === null ? '' : String(r.displayLayouts), r.displayPanel,
         r.next ? `${r.next.diskNo}/${r.next.diskCount}/${r.next.wraps ? 1 : 0}/${r.next.preload ?? ''}` : '',
         isOnline(r.lastSeenAt, now) ? '1' : '0',
         // Every offline card, not just 'stale' -- see the doc comment above.
@@ -179,6 +192,11 @@ export async function liveStateRows(db: ReturnType<typeof getDb>, orgId: string)
       macAddress: devices.macAddress,
       trackMaxBytes: devices.trackMaxBytes, playsHd: devices.playsHd,
       preloadSha256: devices.preloadSha256, preloadState: devices.preloadState,
+      displayVersion: devices.displayVersion,
+      displayAppliedVersion: devices.displayAppliedVersion,
+      displayError: devices.displayError,
+      displayLayouts: devices.displayLayouts,
+      displayPanel: devices.displayPanel,
     })
     .from(devices)
     // Org-scoped on both sides of both joins: without `disks.orgId`, a
