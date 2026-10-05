@@ -10,6 +10,7 @@ const ITEMS = [
   // referenced by the CLI, the proxy matcher and the design docs, so renaming
   // those is a separate, much wider decision.
   { href: "/ingest", label: "Upload" },
+  { href: "/help", label: "Help" },
 ];
 
 // Rendered only when the layout says so. `showAdmin` is decided on the server
