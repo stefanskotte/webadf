@@ -7,7 +7,7 @@ import {
   decodeLayout, encodeLayout, panelId, type ElementJson, type ElementName, type LayoutJson,
 } from '@/lib/display-layout';
 import {
-  elementBox, hitTest, overlapping, panelHeight, placeElement, PANEL_W,
+  elementBox, hitTest, overlapping, panelHeight, placeElement, PANEL_W, statusLine,
 } from '@/lib/display-editor-geometry';
 import type { DeviceListItem } from '@/lib/queries';
 
@@ -72,17 +72,6 @@ function boardLayout(device: DeviceListItem, wasm: DisplayWasm): LayoutJson {
 }
 
 const message = (e: unknown) => (e instanceof Error ? e.message : String(e));
-
-/**
- * Both values of "did the board take it", never an absent line standing in
- * for one of them (the rejection wins: a board that refused a version has
- * handled it, so applied === version would read as success).
- */
-function statusLine(device: DeviceListItem): { text: string; warn: boolean } {
-  if (device.displayError) return { text: `The board rejected it: ${device.displayError}`, warn: true };
-  if (device.displayAppliedVersion === device.displayVersion) return { text: 'Applied on the board', warn: false };
-  return { text: 'Waiting for the board', warn: false };
-}
 
 export function DisplayEditor({ device }: { device: DeviceListItem }) {
   const [open, setOpen] = useState(false);

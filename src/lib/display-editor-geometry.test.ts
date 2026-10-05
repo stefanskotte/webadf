@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { readFile } from 'node:fs/promises';
-import { elementSize, hitTest, placeElement, overlapping } from './display-editor-geometry';
+import { elementSize, hitTest, placeElement, overlapping, statusLine } from './display-editor-geometry';
 import { decodeLayout, type ElementJson } from './display-layout';
 import { loadDisplayWasm } from './display-wasm';
 
@@ -116,5 +116,39 @@ describe('overlapping (Ruling L: only what the renderer does not resolve)', () =
       el({ id: 'lemming', x: 2, y: 2, visible: false }),
     ];
     expect(overlapping(els).size).toBe(0);
+  });
+});
+
+describe('statusLine (final review I2: a stale rejection is not this version\'s)', () => {
+  const dev = (over: Partial<Parameters<typeof statusLine>[0]>) => ({
+    displayLayouts: true, displayVersion: 4, displayAppliedVersion: 4, displayError: null, ...over,
+  });
+
+  it('applied, no error: applied', () => {
+    expect(statusLine(dev({}))).toEqual({ text: 'Applied on the board', warn: false });
+  });
+
+  it('handled the current version with an error: rejected', () => {
+    expect(statusLine(dev({ displayError: 'outside the panel' })))
+      .toEqual({ text: 'The board rejected it: outside the panel', warn: true });
+  });
+
+  it('behind the current version with a stale error from the previous one: waiting', () => {
+    expect(statusLine(dev({ displayVersion: 5, displayError: 'outside the panel' })))
+      .toEqual({ text: 'Waiting for the board', warn: false });
+  });
+
+  it('behind the current version with no error: waiting', () => {
+    expect(statusLine(dev({ displayVersion: 5 }))).toEqual({ text: 'Waiting for the board', warn: false });
+  });
+
+  it('never reported (applied null): waiting, even with an error', () => {
+    expect(statusLine(dev({ displayAppliedVersion: null, displayError: 'x' })))
+      .toEqual({ text: 'Waiting for the board', warn: false });
+  });
+
+  it('no capability: needs firmware', () => {
+    expect(statusLine(dev({ displayLayouts: false })))
+      .toEqual({ text: 'Needs firmware 1.7.0 or newer', warn: true });
   });
 });

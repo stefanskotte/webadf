@@ -146,3 +146,34 @@ export function overlapping(elements: readonly ElementJson[]): Set<number> {
   }
   return out;
 }
+
+/** The device fields statusLine reads (a structural slice of DeviceListItem). */
+export interface DisplayStatusFields {
+  displayLayouts: boolean;
+  displayVersion: number;
+  displayAppliedVersion: number | null;
+  displayError: string | null;
+}
+
+/**
+ * Both values of "did the board take it", never an absent line standing in
+ * for one of them.
+ *
+ * The board's verdict -- applied OR rejected -- is only about the version it
+ * last HANDLED, so it is shown only once that is the current version
+ * (displayAppliedVersion === displayVersion). Final review I2: a save clears
+ * displayError (Ruling K), but the board keeps reporting its last reason in
+ * every status until it handles the new version, and that report writes it
+ * back -- so an error alongside an OLDER applied version is the previous
+ * layout's refusal, not this one's: "Waiting", never "rejected". Among the
+ * current version's verdicts the rejection wins: a board that refused a
+ * version has handled it, so applied === version alone would read as success.
+ */
+export function statusLine(device: DisplayStatusFields): { text: string; warn: boolean } {
+  if (!device.displayLayouts) return { text: 'Needs firmware 1.7.0 or newer', warn: true };
+  if (device.displayAppliedVersion !== device.displayVersion) {
+    return { text: 'Waiting for the board', warn: false };
+  }
+  if (device.displayError) return { text: `The board rejected it: ${device.displayError}`, warn: true };
+  return { text: 'Applied on the board', warn: false };
+}
