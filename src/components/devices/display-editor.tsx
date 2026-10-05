@@ -10,6 +10,7 @@ import {
   elementBox, hitTest, overlapping, panelHeight, placeElement, PANEL_W, statusLine,
 } from '@/lib/display-editor-geometry';
 import type { DeviceListItem } from '@/lib/queries';
+import { HelpTip } from '@/components/help/help-tip';
 
 /**
  * The per-board OLED layout editor (spec 2026-10-04-oled-layouts §7 "Editor").
@@ -80,12 +81,16 @@ export function DisplayEditor({ device }: { device: DeviceListItem }) {
   const [open, setOpen] = useState(false);
   return (
     <div className="flex min-w-0 flex-col gap-2">
-      <button type="button" onClick={() => setOpen((o) => !o)} aria-expanded={open}
-              data-testid={`display-toggle-${device.id}`}
-              className="self-start text-[11px] font-semibold uppercase tracking-wide"
-              style={{ color: 'var(--muted)' }}>
-        {open ? '▾' : '▸'} Display
-      </button>
+      {/* The "?" is the toggle's sibling, never inside it: a button in a button
+          is invalid, and opening help must not expand the editor. */}
+      <span className="flex items-center gap-1 self-start" style={{ color: 'var(--muted)' }}>
+        <button type="button" onClick={() => setOpen((o) => !o)} aria-expanded={open}
+                data-testid={`display-toggle-${device.id}`}
+                className="text-[11px] font-semibold uppercase tracking-wide">
+          {open ? '▾' : '▸'} Display
+        </button>
+        <HelpTip topic="display" />
+      </span>
       {open && (device.displayLayouts
         ? <Editor device={device} />
         : (

@@ -6,6 +6,7 @@ import { refuseTarget } from '@/lib/firmware-update-rules';
 import { isOnline } from '@/lib/device-state';
 import { readNextForDevices, nextInfo } from '@/lib/next-disk';
 import { listNextCardWriters } from '@/lib/nfc/store';
+import { HelpTip } from '@/components/help/help-tip';
 import { PageHeader } from '@/components/shell/page-header';
 import { DeviceList } from '@/components/devices/device-list';
 import { PairButton } from '@/components/devices/pair-button';
@@ -55,8 +56,9 @@ export default async function DevicesPage() {
       <PageHeader
         eyebrow="Hardware"
         title="Devices"
+        help="boards"
         subtitle={`${devices.length} paired · ${online} online · long-poll every 25 s`}
-        actions={<div className="flex items-center gap-2">{writers.length > 0 && <FobButton mode="next" testId="write-next-card" title="Next-disk card" disks={[]} devices={writers} />}<PairButton /></div>}
+        actions={<div className="flex items-center gap-2">{writers.length > 0 && <><FobButton mode="next" testId="write-next-card" title="Next-disk card" disks={[]} devices={writers} /><span style={{ color: 'var(--on-dark)' }}><HelpTip topic="nfc" /></span></>}<PairButton /></div>}
       />
       <div className="flex flex-col gap-3 px-4 pb-10 sm:px-7">
         {registry.latest && (

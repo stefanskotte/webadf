@@ -1,6 +1,7 @@
 import { Link } from '@/components/shell/link';
 import type { GameDetailDisk } from '@/lib/queries';
 import { WriteProtectToggle } from './write-protect-toggle';
+import { HelpTip } from '@/components/help/help-tip';
 import { MountAction } from './mount-action';
 import { ExtractAction } from './extract-action';
 import { WEAK_BIT_NOTICE } from '@/lib/hfe/messages';
@@ -13,7 +14,7 @@ import { HdTag } from '@/components/disks/hd-tag';
 import { isHdAdf } from '@/lib/disk-format';
 import { DiskSetMenu, LoneDiskMenu, type DiskSetControls } from './disk-set-menu';
 
-export function DiskRow({ disk, choices, from, fobDevices = [], setControls, loneGameId }: {
+export function DiskRow({ disk, choices, from, fobDevices = [], setControls, loneGameId, helpProtect, helpNfc }: {
   disk: GameDetailDisk;
   /** Per-device verdict for THIS disk -- see lib/mount-choice.ts. */
   choices: MountChoice[];
@@ -25,6 +26,10 @@ export function DiskRow({ disk, choices, from, fobDevices = [], setControls, lon
   from?: string;
   /** Boards with a reader present; the fob button is drawn only when there is one. */
   fobDevices?: FobDevice[];
+  /** Draw the write-protection "?" on this row -- one row per page, chosen by the parent. */
+  helpProtect?: boolean;
+  /** Draw the NFC "?" on this row -- one row per page, chosen by the parent. */
+  helpNfc?: boolean;
   /**
    * Present only when the row is one of a disk set (two or more disks):
    * draws the ⋯ menu with Move up / Move down / Move out of set.
@@ -158,7 +163,10 @@ export function DiskRow({ disk, choices, from, fobDevices = [], setControls, lon
                 title="HFE disks are preserved originals: extract as ADF to change files"
                 data-testid={`hfe-readonly-${disk.id}`}>Read-only (HFE)</span>
         ) : (
-          <WriteProtectToggle diskId={disk.id} writeProtected={disk.writeProtected} />
+          <>
+            <WriteProtectToggle diskId={disk.id} writeProtected={disk.writeProtected} />
+            {helpProtect && <HelpTip topic="write-protect" />}
+          </>
         )}
         <MountAction diskId={disk.id} choices={choices} />
         {/* Write this disk onto an NFC tag, so tapping it mounts this disk.
@@ -168,6 +176,7 @@ export function DiskRow({ disk, choices, from, fobDevices = [], setControls, lon
                      title={disk.tosecName ?? disk.sourceFilename ?? `Disk ${disk.diskNo}`}
                      disks={[{ id: disk.id, diskNo: disk.diskNo }]} devices={fobDevices} />
         )}
+        {fobDevices.length > 0 && helpNfc && <HelpTip topic="nfc" />}
         {/* Last in the row, after the actions someone actually came here to
             use. Named for the disk, not the title: on a multi-disk set this
             removes one ADF and leaves the rest. */}

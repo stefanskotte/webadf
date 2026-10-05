@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation';
 import { toast } from 'sonner';
 import { Link } from '@/components/shell/link';
 import { NOT_EXTRACTABLE } from '@/lib/hfe/messages';
+import { HelpTip } from '@/components/help/help-tip';
 
 /**
  * Extract as ADF, or -- when the HFE is not a clean AmigaDOS disk -- the one
@@ -28,7 +29,9 @@ export function ExtractAction({ diskId, extractable, reason }: {
     return (
       <span className="flex min-w-0 max-w-full flex-col gap-0.5 sm:max-w-[240px]"
             title={reason ?? undefined} data-testid={`extract-reason-${diskId}`}>
-        <span className="text-[11.5px]" style={{ color: 'var(--muted)' }}>{NOT_EXTRACTABLE}</span>
+        <span className="flex items-center gap-1 text-[11.5px]" style={{ color: 'var(--muted)' }}>
+          {NOT_EXTRACTABLE}<HelpTip topic="hd-hfe" />
+        </span>
         {reason && (
           <span className="break-words text-[10.5px]" style={{ color: 'var(--muted-2)' }}
                 data-testid={`extract-why-${diskId}`}>
@@ -66,11 +69,14 @@ export function ExtractAction({ diskId, extractable, reason }: {
 
   return (
     <span className="flex min-w-0 max-w-full flex-col gap-1 sm:max-w-[260px]">
-      <button type="button" onClick={onExtract} disabled={busy} data-testid={`extract-${diskId}`}
-              className="btn-like shrink-0 self-start rounded-lg px-3 py-1.5 text-[12px] font-semibold disabled:opacity-50"
-              style={{ background: 'var(--glass-strong)', color: 'var(--ink)' }}>
-        Extract as ADF
-      </button>
+      <span className="flex items-center gap-1 self-start" style={{ color: 'var(--ink)' }}>
+        <button type="button" onClick={onExtract} disabled={busy} data-testid={`extract-${diskId}`}
+                className="btn-like shrink-0 rounded-lg px-3 py-1.5 text-[12px] font-semibold disabled:opacity-50"
+                style={{ background: 'var(--glass-strong)', color: 'var(--ink)' }}>
+          Extract as ADF
+        </button>
+        <HelpTip topic="hd-hfe" />
+      </span>
       {/*
         Inline rather than a toast: it carries a link, and it is the answer to
         "why did nothing new appear?" -- which should stay on screen while the

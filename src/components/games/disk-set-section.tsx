@@ -35,6 +35,7 @@ import type { MountChoice } from '@/lib/mount-choice';
 import type { FobDevice } from '@/components/nfc/fob-button';
 import { DiskRow } from './disk-row';
 import { AddDisksDialog } from './add-disks-dialog';
+import { HelpTip } from '@/components/help/help-tip';
 
 export interface DiskSetEntry {
   disk: GameDetailDisk;
@@ -164,6 +165,7 @@ export function DiskSetSection({ gameId, title, entries, from, fobDevices = [] }
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div className="flex min-w-0 flex-wrap items-center gap-x-1.5">
           <span className="text-[13px] font-bold" style={{ color: 'var(--ink)' }}>Disk set</span>
+          <HelpTip topic="disk-sets" />
           <SetName gameId={gameId} title={title} />
           <span className="text-[11.5px]" style={{ color: 'var(--muted)' }}>
             {reordering
@@ -210,6 +212,8 @@ export function DiskSetSection({ gameId, title, entries, from, fobDevices = [] }
           return (
             <DiskRow
               key={disk.id} disk={disk} from={from} fobDevices={fobDevices} choices={choices}
+              helpNfc={i === 0}
+              helpProtect={id === shown.find((sid) => byId.get(sid)!.disk.imageFormat !== 'hfe')}
               setControls={{
                 canUp: i > 0,
                 canDown: i < shown.length - 1,

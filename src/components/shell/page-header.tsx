@@ -1,10 +1,13 @@
 import { Breadcrumb, type Crumb } from '@/components/shell/breadcrumb';
+import { HelpTip } from '@/components/help/help-tip';
+import type { HelpTopicId } from '@/lib/help/topics';
 
 export function PageHeader({
   eyebrow,
   title,
   subtitle,
   actions,
+  help,
 }: {
   /**
    * A plain label for a page that is not a drill-down ("Admin", "Hardware"),
@@ -17,6 +20,8 @@ export function PageHeader({
   title: string;
   subtitle?: string;
   actions?: React.ReactNode;
+  /** A "?" beside the title, explaining what this page is about. */
+  help?: HelpTopicId;
 }) {
   return (
     // Stacked below sm: the actions sit beside a title of unknown length, and
@@ -37,15 +42,20 @@ export function PageHeader({
             {eyebrow}
           </span>
         ) : null}
-        <h1
-          // 26px below sm: at 34px a two-word title ("Disk contents") wraps
-          // on a 390px screen, and leading-none makes a wrapped heading read
-          // as one solid block.
-          className="text-[26px] font-bold leading-none tracking-[-0.032em] sm:text-[34px]"
-          style={{ color: "var(--on-dark)" }}
-        >
-          {title}
-        </h1>
+        {/* The "?" sits beside the heading, not inside it: inside, its label
+            would become part of the heading's accessible name. */}
+        <div className="flex items-center gap-2" style={{ color: "var(--on-dark)" }}>
+          <h1
+            // 26px below sm: at 34px a two-word title ("Disk contents") wraps
+            // on a 390px screen, and leading-none makes a wrapped heading read
+            // as one solid block.
+            className="text-[26px] font-bold leading-none tracking-[-0.032em] sm:text-[34px]"
+            style={{ color: "var(--on-dark)" }}
+          >
+            {title}
+          </h1>
+          {help && <HelpTip topic={help} />}
+        </div>
         {subtitle && (
           <span
             className="mt-1 font-mono text-[11.5px]"

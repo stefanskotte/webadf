@@ -68,7 +68,7 @@ export default async function GamePage(props: PageProps<'/games/[id]'>) {
               disk, choices: mountChoices(devices, disk.id, disk.sha256, now),
             }))}
           />
-        ) : game.disks.map((disk) => (
+        ) : game.disks.map((disk, i) => (
           /*
             Per disk, not once for the page: whether a device offers "Mount
             here" or "Eject" is a fact about THIS disk and that device, so one
@@ -76,6 +76,10 @@ export default async function GamePage(props: PageProps<'/games/[id]'>) {
             handful of rows either way.
           */
           <DiskRow key={disk.id} disk={disk} from={from} fobDevices={readers}
+                   // One "?" per feature per page: NFC on the first row, write
+                   // protection on the first row that has the toggle (not HFE).
+                   helpNfc={i === 0}
+                   helpProtect={disk.id === game.disks.find((d) => d.imageFormat !== 'hfe')?.id}
                    choices={mountChoices(devices, disk.id, disk.sha256, now)}
                    // A lone disk: its ⋯ menu offers "Add to a disk set…".
                    loneGameId={game.id} />

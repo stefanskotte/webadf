@@ -10,6 +10,7 @@ import { fromQuery } from '@/lib/trail';
 import type { HistoryVersion } from '@/lib/disk-history/history';
 import type { TreeChange } from '@/lib/disk-history/diff';
 import { fmtTimeUtc } from '@/lib/format';
+import { HelpTip } from '@/components/help/help-tip';
 
 /**
  * The History panel: every version of this disk, newest first, what changed
@@ -182,7 +183,10 @@ export function HistoryPanel({
     // (game-grid.tsx), and scroll-mt keeps the heading clear of the shell's
     // header rather than tucking it underneath.
     <div id="disk-history" className="glass-card flex scroll-mt-20 flex-col gap-3 p-4" data-testid="history-panel">
-      <h2 className="text-[13px] font-bold" style={{ color: 'var(--ink)' }}>History</h2>
+      <div className="flex items-center gap-1" style={{ color: 'var(--ink)' }}>
+        <h2 className="text-[13px] font-bold">History</h2>
+        <HelpTip topic="write-back" />
+      </div>
 
       {mountedBanner && (
         <p

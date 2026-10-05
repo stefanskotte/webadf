@@ -4,6 +4,7 @@ import { isDefaultDeviceName } from '@/lib/device-name';
 import type { DeviceListItem } from '@/lib/queries';
 import type { NextInfo } from '@/lib/next-disk';
 import { preloadText } from '@/lib/drive-chips';
+import { HelpTip } from '@/components/help/help-tip';
 import { EjectButton } from './eject-button';
 import { NextDiskButton } from './next-disk-button';
 import { DeviceAlias } from './device-alias';
@@ -171,9 +172,12 @@ export function DeviceCard(
         {/* Gated like the Next button below: the line is about the disk
             in the drive, which only a converged board has. */}
         {next?.preload && state === 'converged' && (
-          <span className="text-[11px]" style={{ color: 'var(--muted)' }} data-testid={`device-preload-${device.id}`}
-                data-preload={next.preload}>
-            {preloadText(next.diskNo, next.preload)}
+          <span className="flex items-center gap-1">
+            <span className="text-[11px]" style={{ color: 'var(--muted)' }} data-testid={`device-preload-${device.id}`}
+                  data-preload={next.preload}>
+              {preloadText(next.diskNo, next.preload)}
+            </span>
+            <HelpTip topic="next-disk" />
           </span>
         )}
       </div>
@@ -205,14 +209,17 @@ export function DeviceCard(
           overflow-wrap: anywhere (the update bar's break-all is the same
           escape hatch for the same shape of content) lets it wrap instead.
         */}
-        <span className="block min-w-0 w-full font-mono text-[11px]"
-              style={{
-                overflowWrap: 'anywhere',
-                color: update || firmware.kind === 'behind'
-                  ? 'var(--amber-text)' : 'var(--muted)',
-              }}
-              data-testid={`device-firmware-${device.id}`}>
-          {update ?? firmwareLabel(firmware)}
+        <span className="flex min-w-0 w-full items-start gap-1">
+          <span className="block min-w-0 flex-1 font-mono text-[11px]"
+                style={{
+                  overflowWrap: 'anywhere',
+                  color: update || firmware.kind === 'behind'
+                    ? 'var(--amber-text)' : 'var(--muted)',
+                }}
+                data-testid={`device-firmware-${device.id}`}>
+            {update ?? firmwareLabel(firmware)}
+          </span>
+          <HelpTip topic="boards" className="-mt-1" />
         </span>
 
         {update && onCancelUpdate && (
