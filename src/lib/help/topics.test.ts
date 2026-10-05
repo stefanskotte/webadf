@@ -45,3 +45,27 @@ describe('help topics', () => {
     });
   }
 });
+
+// Final review fixes (2026-10-05): claims that were wrong, incomplete or unverifiable.
+describe('help topics say what the app really does', () => {
+  it('nfc names the tag type that works (MIFARE Classic; NTAG stickers are refused)', () => {
+    expect(HELP_TOPICS.nfc.short + bodyText('nfc')).toMatch(/MIFARE Classic/);
+  });
+  it('boards gives the setup network password and the Update + password step', () => {
+    const b = bodyText('boards');
+    expect(b).toMatch(/wififloppy/);
+    expect(b).toMatch(/Update/);
+    expect(b).toMatch(/password/);
+  });
+  it('write-protect makes no unconfirmed claim about prompts to click through', () => {
+    expect(bodyText('write-protect')).not.toMatch(/click through|put the volume back/i);
+  });
+  it('next-disk ties "Saving, then disk N" to the Next-disk card, the only case that shows it', () => {
+    const b = bodyText('next-disk');
+    const sentence = b.split(/(?<=[.!?])\s+/).find((s) => s.includes('Saving, then disk'));
+    if (sentence) expect(sentence).toMatch(/Next-disk card/);
+  });
+  it('hd-hfe says the board must be able to play HD', () => {
+    expect(bodyText('hd-hfe')).toMatch(/boards? that can play HD/i);
+  });
+});

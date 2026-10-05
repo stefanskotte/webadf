@@ -29,16 +29,16 @@ export const HELP_TOPICS = {
       <>
         <p>
           <strong>Pairing.</strong> Press <em>Pair a device</em> to get a short code. A new board starts its own Wi-Fi
-          network named <em>wifi-floppy-…</em>; join it, and in the page that opens enter your home Wi-Fi details and
-          the code. If the code runs out first, mint a new one.
+          network named <em>wifi-floppy-…</em> (password <em>wififloppy</em>); join it, and in the page that opens
+          enter your home Wi-Fi details and the code. If the code runs out first, mint a new one.
         </p>
         <p>
           <strong>Online / Offline.</strong> A board counts as online while it has been heard from in the last minute.
         </p>
         <p>
           <strong>Firmware updates.</strong> When a newer version is published, tick <em>Select for update</em> on the
-          board. Its card then shows <em>update queued</em>, <em>downloading</em> and <em>applying — do not power
-          off</em>. A new version first runs on trial: if it doesn&apos;t start up and check in within 5 minutes, the
+          board, press <em>Update</em> and confirm with your password. Its card then shows <em>update queued</em>,{' '}
+          <em>downloading</em> and <em>applying — do not power off</em>. A new version first runs on trial: if it doesn&apos;t start up and check in within 5 minutes, the
           board goes back to the version it had by itself, and the card says <em>update failed</em> with the reason.
         </p>
         <GoodToKnow items={[
@@ -58,7 +58,8 @@ export const HELP_TOPICS = {
     body: (
       <>
         <p>
-          <strong>Linking a tag.</strong> Press the NFC button on a disk — it only appears when one of your boards has
+          <strong>Linking a tag.</strong> Use MIFARE Classic 1K tags; other kinds, such as the common NTAG stickers,
+          are not recognised. Press the NFC button on a disk — it only appears when one of your boards has
           an NFC reader. Pick the disk and the board, then hold the tag on that board&apos;s reader within two
           minutes. Lift any tag that is already on the reader first: the board never writes to a tag that was lying
           there when you started.
@@ -96,8 +97,8 @@ export const HELP_TOPICS = {
         <p>
           <strong>Why a swap sometimes waits.</strong> After a save, the Amiga goes on writing for a moment. Taking
           the disk away then would damage it, just like ejecting a real floppy with the drive light on. So the board
-          swaps only when the drive light is off and nothing has been written for 3 seconds. Its display says{' '}
-          <em>Saving, then disk N</em> meanwhile.
+          swaps only when the drive light is off and nothing has been written for 3 seconds. When you tap a Next-disk
+          card during that wait, its display shows <em>Saving, then disk N</em> for a moment.
         </p>
         <GoodToKnow items={[
           'If the drive stays busy without writing (some games keep the motor running), the board swaps anyway after 20 seconds of quiet.',
@@ -150,9 +151,8 @@ export const HELP_TOPICS = {
           board mounts it.
         </p>
         <p>
-          Changing it while the disk is mounted tells the Amiga the disk was taken out and put back. A program with a
-          file open on that disk may then ask you to put the volume back in. That is normal: click through, and carry
-          on.
+          You can change it while the disk is mounted: the board tells the Amiga the disk was taken out and put back,
+          so the Amiga notices the new setting.
         </p>
         <GoodToKnow items={[
           'The board can also protect a disk by itself, when this site refuses its saves (for example because the disk was changed here meanwhile). It stays protected until the disk is mounted again.',
@@ -197,8 +197,8 @@ export const HELP_TOPICS = {
     body: (
       <>
         <p>
-          <strong>HD disks.</strong> Create one from <em>New disk</em>, or upload one. Saving to HD disks needs board
-          firmware 1.5.0 or newer.
+          <strong>HD disks.</strong> Create one from <em>New disk</em>, or upload one. They mount only on boards that
+          can play HD; saving to them needs board firmware 1.5.0 or newer.
         </p>
         <p>
           <strong>HFE images.</strong> Some games use tracks longer or stranger than a normal disk&apos;s (Turrican is

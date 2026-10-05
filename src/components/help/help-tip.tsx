@@ -21,7 +21,8 @@ export function HelpTip({ topic, className }: { topic: HelpTopicId; className?: 
         aria-label={`About ${t.title}`}
         onClick={(e) => e.stopPropagation()}
         onPointerDown={(e) => e.stopPropagation()}
-        className={`inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-full align-middle opacity-60 transition-opacity hover:opacity-100 focus-visible:opacity-100 ${className ?? ''}`}
+        // Full strength, not faded: on --muted text a faded icon fell below 3:1.
+        className={`inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-full align-middle ${className ?? ''}`}
       >
         <CircleHelpIcon className="h-4 w-4" aria-hidden />
       </Popover.Trigger>
