@@ -73,6 +73,25 @@ add_executable(wifi_floppy
 )
 pico_generate_pio_header(wifi_floppy ${CMAKE_CURRENT_LIST_DIR}/src/floppy.pio)
 target_include_directories(wifi_floppy PRIVATE src ${CMAKE_CURRENT_LIST_DIR})
+# Stack frames (HANDOFF 3ax): 1.7.0 died because one 1232-byte frame took core0's
+# boot path past its stack (2 KB then, 4 KB since 1.7.1) -- a hard fault before
+# USB came up, invisible to every host test. Any frame of ours over 768 bytes now
+# fails the build instead; the largest today is main() at 616. SDK and vendored
+# code are not ours and are not held to it. portal_net.c's DNS/DHCP callbacks
+# keep ~1 KB datagram buffers on core1's 16 KB stack (portal mode only); making
+# them static would cost 2 KB of heap for nothing, so that file gets 1280.
+get_target_property(WFMF_SOURCES wifi_floppy SOURCES)
+foreach(src IN LISTS WFMF_SOURCES)
+  if (src MATCHES "^src/" AND NOT src MATCHES "^src/vendor/")
+    if (src STREQUAL "src/portal_net.c")
+      set(WFMF_FRAME_LIMIT 1280)
+    else ()
+      set(WFMF_FRAME_LIMIT 768)
+    endif ()
+    set_property(SOURCE ${src} APPEND PROPERTY COMPILE_OPTIONS
+                 "-Werror=frame-larger-than=${WFMF_FRAME_LIMIT}")
+  endif ()
+endforeach()
 # Task 6 (spec D4/D5): Monocypher 4.0.2, vendored unmodified under
 # src/vendor/monocypher (see VENDORED.md). It is not our code and is not
 # held to this project's -Wall -Wextra -Werror.

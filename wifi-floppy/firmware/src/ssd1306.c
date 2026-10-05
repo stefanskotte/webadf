@@ -190,7 +190,9 @@ bool ssd1306_selftest(uint8_t addr, panel_t panel) {
    * Frame closed AND strokes clean -> geometry is right, and the display is
    * ready for a driver. Anything else is now specific enough to act on.
    */
-  uint8_t fb[8][WIDTH];
+  // static, not on the stack: 1 KB here put core0's boot path past its 2 KB
+  // stack in 1.7.0 (a hard fault before USB came up). Boot-only, one caller.
+  static uint8_t fb[8][WIDTH];
   for (int p = 0; p < pages; p++)
     for (int x = 0; x < WIDTH; x++) fb[p][x] = 0;
 
