@@ -4703,6 +4703,9 @@ WifiFloppy1. Each change had an independent review plus a scoped re-review of it
 
 ### 3av. Unified firmware P1 -- board table and net_radio seam, firmware 1.6.3 (2026-10-04)
 
+**PARKED 2026-10-05 (operator): P2-P4 wait until the Challenger boards are in hand. The ESPHost vs esp-hosted-mcu
+decision is still open.**
+
 **SHIPPED: 1.6.3+g4faf91a, sequence 35, installed and confirmed on WifiFloppy1 (rev B).** Spec
 `docs/superpowers/specs/2026-10-04-unified-firmware-design.md`, plan `docs/superpowers/plans/2026-10-04-unified-firmware-p1.md`.
 Run subagent-driven: 3 tasks, each reviewed, plus a final opus review ("ready to merge") and one fix wave.
