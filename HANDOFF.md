@@ -4659,6 +4659,8 @@ PID 11081, left untouched pending the operator).
   empty; after a replug `display: stored version 3, 128x32, custom layout` at boot -- the boot/connecting screens
   stay default by design). Step 4 PASSED (layout v4/v5 stored while Kickstart clicked the empty drive, then
   Workbench booted cleanly). Editor preview now white-on-black like the glass (90c17c7).
+  Step 5 (cross-boot re-pair) SKIPPED by the operator on WifiFloppy1 -- do it at the next real pairing (rev C or
+  a fresh board). Step 2 (128x64) waits on a replacement module.
 - **Bench owed (operator):**
   1. 128x32 looks unchanged on 1.7.1.
   2. Fit the 0.92" 128x64, choose 128x64 in the editor: the whole panel draws (not half), no stale half.
