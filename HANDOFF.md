@@ -4620,6 +4620,48 @@ Demozoo API (the bulk export makes per-lookup load on a non-profit unnecessary).
   allowlist checks only the first URL (the raster content-type allowlist and `nosniff` still apply).
 - **Cron drift:** the daily 01:30 cron against a 7-day gate can drift a refetch to 8 days.
 
+### 3ax. OLED panel type and per-board layouts -- firmware 1.7.1 (2026-10-05)
+
+**SHIPPED:** master 7815ff6 (feature), f36b99b (1.7.1). 1.7.1+gf36b99b (seq 40) self-installed and confirmed on
+WifiFloppy1; the board reports `displayLayouts`. Spec `docs/superpowers/specs/2026-10-04-oled-layouts-design.md`,
+plan `docs/superpowers/plans/2026-10-04-oled-layouts.md`. Migration 0030 applied to the live DB before deploy.
+Full e2e 442/442 on the branch head (PORT 3103: port 3100 was held by an unknown 2-day-old next-server,
+PID 11081, left untouched pending the operator).
+
+- **What it is:** each board's panel (128x32 / 128x64) and running-screen layout (free placement, show/hide, 1x/2x)
+  are edited under Devices -> Display. The preview is the board's own renderer (`display.c` + `display_layout.c`)
+  compiled to WebAssembly (`public/display.wasm`, `pnpm display:wasm`; `test/run.sh` fails on a stale module).
+  The server validates with the same C validator. The 128x32 default is byte-identical to 1.6.5 (16 golden
+  framebuffers in `test/fixtures/display_golden/`).
+- **Protocol:** poll `&displayAck=` (the highest version HANDLED, applied or rejected) / `displayVersion` in the
+  body whenever the ack was sent; wakes when they DIFFER (a board with a stale higher ack after a cross-boot
+  re-pair is reset). Binary `GET /api/device/display` = `[u32 BE version][u8 panel][u8 has_layout][blob]`.
+  Status: `displayLayouts`, `displayVersion` (= ack), `displayError`.
+- **Flash:** new `display_store` sector at top - 4 sectors (map: token -1, config -2, fw_state -3, display -4).
+  The plan put it at -3, which is fw_state's OTA sector -- caught before Task 5. Written on core0 only with no
+  disk mounted; core1 is now a flash-lockout victim too (`flash_safe_execute_core_init` on core1).
+- **1.7.0 (seq 38) faulted at boot and is never to be installed:** core0's stack is the SDK default 2 KB under
+  `PICO_USE_STACK_GUARDS`; the panel-aware `ssd1306_selftest` frame took the boot path to ~2480 bytes. It
+  hard-faulted ~15 ms in, before USB enumerated, and TBYB reverted it twice. 1.7.1 gives core0 4 KB
+  (`PICO_STACK_SIZE=0x1000`). 1.6.5's deepest boot path was ~1840 bytes, so this was close before.
+  Test build 1.7.0+g95a6726 (seq 39) is published, notes "TEST build". Heap low-water 36864 (was 40960).
+- **Rulings (the operator was told at plan handoff):** built-in screens (boot/portal/connecting/error) use the
+  panel's default layout -- on 128x64 they sit at the top, not centred as the spec said; the device endpoint is
+  binary, not JSON; a rejected layout still advances the ack. Others: the editor outlines only overlaps the
+  renderer does not resolve; a save clears `display_error`; the editor shows "rejected" only once the board has
+  handled the current version; a panel switch re-inits without the synchronous clear (`ssd1306_reinit`).
+- **Bench owed (operator):**
+  1. 128x32 looks unchanged on 1.7.1.
+  2. Fit the 0.92" 128x64, choose 128x64 in the editor: the whole panel draws (not half), no stale half.
+  3. A custom layout appears within one poll and survives a USB replug (drive empty at least once so it is
+     stored: serial shows "display: version N stored").
+  4. With the Amiga on and the drive empty, save a layout, then insert a disk and boot (the ~45 ms flash write
+     runs with core0 IRQs off; check no step pulses are lost).
+  5. Re-pair across a reboot onto a row with no layout: the glass returns to the default, the editor says Applied.
+- **Backlog:** the server never learns which panel the board physically has (a re-paired 128x64 board shows as
+  128x32 until the first save); a `-Wframe-larger-than=` guard so a stack regression fails the build; the
+  side-list test ids lack the device id; deferred minors are in the plan's ledger rulings above.
+
 ### 3aw. A save no longer waits for the long poll; rev B's "WDATA glitch" was a measurement artifact -- 1.6.4/1.6.5 (2026-10-04)
 
 **SHIPPED:** 1.6.4+g5abe179 (seq 36) and 1.6.5+g3f4df0a (seq 37), both self-installed and confirmed on
