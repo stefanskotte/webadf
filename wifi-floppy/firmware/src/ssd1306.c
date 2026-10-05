@@ -54,7 +54,8 @@ static bool cmd(uint8_t addr, const uint8_t *bytes, size_t n) {
   return i2c_write_timeout_us(board_i2c(), addr, buf, n + 1, false, I2C_TIMEOUT_US) >= 0;
 }
 
-bool ssd1306_init(uint8_t addr, panel_t panel) {
+/* The controller configuration for `panel`, and nothing else: no clear. */
+static bool send_init_sequence(uint8_t addr, panel_t panel) {
   const int height = panel_height(panel);
   const uint8_t init[] = {
     0xAE,              /* display off while it is reconfigured           */
@@ -91,6 +92,11 @@ bool ssd1306_init(uint8_t addr, panel_t panel) {
     if (!cmd(addr, &init[i], n)) return false;
     i += n;
   }
+  return true;
+}
+
+bool ssd1306_init(uint8_t addr, panel_t panel) {
+  if (!send_init_sequence(addr, panel)) return false;
 
   /*
    * 400 kHz now that a device has answered and the wiring is known good.
@@ -104,6 +110,23 @@ bool ssd1306_init(uint8_t addr, panel_t panel) {
 
   if (!ssd1306_clear(addr, panel)) return false;
   return true;
+}
+
+/*
+ * The panel-TYPE switch at runtime (display_apply in main.c, core0), which
+ * must not do what ssd1306_init does last: a synchronous full clear. That is
+ * every page at 400 kHz -- (128 + 9) bytes x ~9 bits per page, 4 pages ~12 ms
+ * on a 128x32, 8 pages ~25 ms on a 128x64 -- with core0's 1 ms service loop
+ * blocked, possibly while the Amiga is reading a disk. It is also redundant:
+ * the caller follows this with display_set_panel, whose pump resends EVERY
+ * byte of the new panel's pages through the budgeted 1 ms loop. What is left
+ * here is the command sequence alone, ~25 short transfers (~2 ms at 400 kHz,
+ * already set by the boot-time init). Until the pump catches up the glass can
+ * briefly show stale RAM (on a 32 -> 64 switch, pages 4-7 were never
+ * written), which is cosmetic and gone within one resend.
+ */
+bool ssd1306_reinit(uint8_t addr, panel_t panel) {
+  return send_init_sequence(addr, panel);
 }
 
 /** Address one page and stream `n` bytes into it. */

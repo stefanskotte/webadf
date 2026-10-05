@@ -11,6 +11,13 @@
  *  all-zero, which is the state display.c's shadow buffer assumes. */
 bool ssd1306_init(uint8_t addr, panel_t panel);
 
+/** Reconfigure an already-initialised panel for `panel` WITHOUT clearing it:
+ *  the init command sequence only. For a runtime panel-type switch, where the
+ *  caller's display_set_panel resends every byte anyway and a synchronous
+ *  clear would block core0 for 12-25 ms (see ssd1306.c). Boot uses
+ *  ssd1306_init. */
+bool ssd1306_reinit(uint8_t addr, panel_t panel);
+
 /** Write `n` bytes into one page starting at column `col`. Each call is a
  *  complete, independent transfer -- see the window comment in ssd1306.c.
  *  THE cost that matters: (n + 8) bytes at 400 kHz, ~9 bits each, which is

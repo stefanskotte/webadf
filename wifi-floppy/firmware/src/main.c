@@ -214,13 +214,16 @@ static bool display_handoff_take(uint32_t *last, display_slot_t *out) {
 }
 
 /** core0: put a taken slot on the glass, and owe the flash its record. The
- *  panel is re-initialised first when its type changed (ssd1306_init, then
- *  display_set_panel, then the layout -- the order display.h asks for). */
+ *  panel is re-initialised first when its type changed (ssd1306_reinit, then
+ *  display_set_panel, then the layout -- the order display.h asks for).
+ *  ssd1306_reinit, NOT ssd1306_init: init's synchronous full clear would block
+ *  this loop for 12-25 ms of I2C, and display_set_panel's resend repaints
+ *  every byte anyway, through the budgeted pump. */
 static void display_apply(const display_slot_t *in) {
     const panel_t p = (panel_t)in->rec.panel;
     if (g_panel_addr != 0) {
         if (p != g_disp.panel) {
-            if (!ssd1306_init(g_panel_addr, p))
+            if (!ssd1306_reinit(g_panel_addr, p))
                 wf_logf(WF_WARN, "display: panel re-init for %s failed",
                         p == PANEL_128x64 ? "128x64" : "128x32");
             display_set_panel(&g_disp, p);
