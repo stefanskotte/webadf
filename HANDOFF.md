@@ -4655,6 +4655,10 @@ PID 11081, left untouched pending the operator).
 - **Bench 2026-10-05:** step 1 PASSED (128x32 identical on 1.7.1). Step 2 BLOCKED: the operator's 0.92" 128x64
   module answers nothing on I2C, and with it fitted the board does not boot or enumerate USB at all (likely a
   shorted module pulling 3V3 down). The operator is getting a replacement; 128x64 is unproven on hardware.
+  Step 3 PASSED on 1.7.2 (custom layout applied within a poll; `display: version 2 stored` once the drive was
+  empty; after a replug `display: stored version 3, 128x32, custom layout` at boot -- the boot/connecting screens
+  stay default by design). Step 4 PASSED (layout v4/v5 stored while Kickstart clicked the empty drive, then
+  Workbench booted cleanly). Editor preview now white-on-black like the glass (90c17c7).
 - **Bench owed (operator):**
   1. 128x32 looks unchanged on 1.7.1.
   2. Fit the 0.92" 128x64, choose 128x64 in the editor: the whole panel draws (not half), no stale half.
