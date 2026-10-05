@@ -22,6 +22,9 @@ import type { DeviceListItem } from '@/lib/queries';
  */
 
 const ZOOM = 4;
+// The SSD1306 modules on these boards are white-on-black; the preview matches.
+const OLED_DARK = '#000000';
+const OLED_LIT = '#ffffff';
 
 const PREVIEWS = {
   ready: 'Ready',
@@ -178,7 +181,6 @@ function LoadedEditor({ device, wasm }: { device: DeviceListItem; wasm: DisplayW
     const ctx = c?.getContext('2d');
     if (!c || !ctx) return;
     const css = getComputedStyle(c);
-    const ink = css.getPropertyValue('--ink').trim() || '#16232f';
     const amber = css.getPropertyValue('--accent-amber').trim() || '#f5822e';
 
     const fb = rendered.fb;
@@ -188,7 +190,9 @@ function LoadedEditor({ device, wasm }: { device: DeviceListItem; wasm: DisplayW
     ctx.clearRect(0, 0, c.width, c.height);
     if (frame) {
       ctx.globalAlpha = fb ? 1 : 0.35;
-      ctx.fillStyle = ink;
+      // Lit pixels as the glass shows them: white on black, in either theme.
+      // This canvas is a picture of the hardware, not page chrome.
+      ctx.fillStyle = OLED_LIT;
       // SSD1306 page layout: byte (page * 128 + x), bit (y % 8).
       for (let y = 0; y < rows; y++) {
         for (let x = 0; x < PANEL_W; x++) {
@@ -369,7 +373,7 @@ function LoadedEditor({ device, wasm }: { device: DeviceListItem; wasm: DisplayW
               onPointerUp={endDrag} onPointerCancel={endDrag}
               className="block h-auto w-full rounded"
               style={{
-                background: 'var(--panel-bg, var(--input-bg))',
+                background: OLED_DARK,
                 border: '1px solid var(--hairline-strong)',
                 aspectRatio: `${PANEL_W} / ${rows}`,
                 imageRendering: 'pixelated',
