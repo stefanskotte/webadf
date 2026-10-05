@@ -104,6 +104,20 @@ target_link_libraries(wifi_floppy
 # direct-call graph -- the indirect calls through mbedTLS's and lwIP's
 # function pointers are exactly what it cannot see.
 target_compile_definitions(wifi_floppy PRIVATE PICO_USE_STACK_GUARDS=1)
+# Core 0's stack: the WHOLE 4 KB SCRATCH_Y bank, not the SDK's 2 KB default.
+# The guard above is MSPLIM = __StackBottom = __StackTop - PICO_STACK_SIZE, so
+# with the default core 0 had exactly 2048 bytes, and fw 1.7.0 overran them at
+# boot: main() (624 bytes of frame) -> ssd1306_selftest (1232: its fb grew to
+# 8 pages x 128 for the 128x64 panel) -> send_init_sequence (104) ->
+# i2c_write_blocking_until (64) -> i2c_write_blocking_internal (56) is 2080,
+# and the ssd1306_clear (320) -> ssd1306_blit (184) path is ~2480. The stack
+# guard turned that into a HardFault at the first I2C command, before USB
+# enumerated, and the TBYB watchdog reverted the trial (2026-10-05, measured
+# from the ELF and confirmed on the board). 1.6.5's deepest boot path was
+# ~1840 bytes -- it was already within ~200 bytes of the same fault.
+# SCRATCH_Y holds nothing else (.scratch_y is empty), so the 4 KB is free; the
+# heap (which ends at SCRATCH_X) is untouched.
+target_compile_definitions(wifi_floppy PRIVATE PICO_STACK_SIZE=0x1000)
 
 # Diagnostic: re-read and decode every track from PSRAM after a mount. See
 # main.c. Off by default -- it costs one track's decode per service-loop
