@@ -4669,8 +4669,11 @@ PID 11081, left untouched pending the operator).
   4. With the Amiga on and the drive empty, save a layout, then insert a disk and boot (the ~45 ms flash write
      runs with core0 IRQs off; check no step pulses are lost).
   5. Re-pair across a reboot onto a row with no layout: the glass returns to the default, the editor says Applied.
+- **1.7.3 (seq 42, master 9b3bdea), confirmed on the board:** the device build now fails on any stack frame of
+  ours over 768 bytes (`-Werror=frame-larger-than`, portal_net.c 1280; SDK/vendor exempt). Proven by putting the
+  self-test buffer back on the stack (1176 > 768 fails). The self-test buffer is static. Largest frame: main, 616.
 - **Backlog:** the server never learns which panel the board physically has (a re-paired 128x64 board shows as
-  128x32 until the first save); a `-Wframe-larger-than=` guard so a stack regression fails the build; the
+  128x32 until the first save); the
   side-list test ids lack the device id; deferred minors are in the plan's ledger rulings above.
 
 ### 3aw. A save no longer waits for the long poll; rev B's "WDATA glitch" was a measurement artifact -- 1.6.4/1.6.5 (2026-10-04)
