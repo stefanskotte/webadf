@@ -145,3 +145,28 @@ test('the poll wakes for a display version above the board\'s ack, and only then
   });
   expect(held.status()).toBe(204);
 });
+
+test('Cancel throws away unsaved edits and closes the drawer without asking the server', async ({ page, request }) => {
+  await signUpFresh(page);
+  const { deviceId, token } = await pairDevice(page, request);
+  await reportStatus(request, token, { displayLayouts: true, displayVersion: 0 });
+
+  await openEditor(page, deviceId);
+  const width = page.getByTestId('display-width-title');
+  const before = await width.inputValue();
+  await width.fill('100');
+  await expect(page.getByText('Unsaved changes')).toBeVisible();
+
+  const writes: string[] = [];
+  page.on('request', (r) => { if (r.url().includes(`/api/devices/${deviceId}/display`)) writes.push(r.method()); });
+  await page.getByTestId(`display-cancel-${deviceId}`).click();
+
+  await expect(page.getByTestId(`display-drawer-${deviceId}`)).toHaveCount(0);
+  await expect(page.getByTestId(`display-toggle-${deviceId}`)).toHaveText('▸ Change Display');
+  expect(writes).toEqual([]);
+  expect((await deviceRow(deviceId)).displayVersion).toBe(0);
+
+  // Reopened, the editor starts from the board's layout again.
+  await page.getByTestId(`display-toggle-${deviceId}`).click();
+  await expect(page.getByTestId('display-width-title')).toHaveValue(before);
+});

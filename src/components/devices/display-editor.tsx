@@ -11,6 +11,7 @@ import {
 } from '@/lib/display-editor-geometry';
 import type { DeviceListItem } from '@/lib/queries';
 import { HelpTip } from '@/components/help/help-tip';
+import { paintFramebuffer } from '@/lib/display-paint';
 
 /**
  * The per-board OLED layout editor (spec 2026-10-04-oled-layouts §7 "Editor").
@@ -51,7 +52,7 @@ function previewState(key: PreviewKey, tick: number): PreviewState {
   }
 }
 
-function fromBase64(s: string): Uint8Array {
+export function fromBase64(s: string): Uint8Array {
   return Uint8Array.from(atob(s), (c) => c.charCodeAt(0));
 }
 
@@ -77,33 +78,56 @@ function boardLayout(device: DeviceListItem, wasm: DisplayWasm): LayoutJson {
 
 const message = (e: unknown) => (e instanceof Error ? e.message : String(e));
 
-export function DisplayEditor({ device }: { device: DeviceListItem }) {
-  const [open, setOpen] = useState(false);
+/** The bezel's charcoal (drive-bezel.tsx): the drawer is framed in it, so it reads as part of the drive. */
+export const BEZEL_EDGE = '#1d2126';
+
+/**
+ * "Change Display" and, opened, the editor in a drawer that slides out from
+ * under the card's drive bezel. Open state is the caller's (drive-front.tsx),
+ * because the bezel above dims while the drawer is out.
+ *
+ * Closing -- the toggle or Cancel -- unmounts the editor, which is what
+ * discards unsaved edits: nothing is sent, and the next open starts from the
+ * board's stored layout again. Reset is the other thing, and stays separate:
+ * it asks the server to put the board back to the built-in default.
+ */
+export function DisplayEditor({ device, open, onOpenChange }: {
+  device: DeviceListItem; open: boolean; onOpenChange: (open: boolean) => void;
+}) {
+  /* The "?" is the toggle's sibling, never inside it: a button in a button
+     is invalid, and opening help must not expand the editor. */
+  const toggle = (
+    <span className="flex items-center gap-1 self-start" style={{ color: 'var(--muted)' }}>
+      <button type="button" onClick={() => onOpenChange(!open)} aria-expanded={open}
+              data-testid={`display-toggle-${device.id}`}
+              className="text-[11px] font-semibold uppercase tracking-wide">
+        {open ? '▾' : '▸'} Change Display
+      </button>
+      <HelpTip topic="display" />
+    </span>
+  );
+  if (!open) return <div className="mt-2 flex min-w-0 flex-col">{toggle}</div>;
   return (
-    <div className="flex min-w-0 flex-col gap-2">
-      {/* The "?" is the toggle's sibling, never inside it: a button in a button
-          is invalid, and opening help must not expand the editor. */}
-      <span className="flex items-center gap-1 self-start" style={{ color: 'var(--muted)' }}>
-        <button type="button" onClick={() => setOpen((o) => !o)} aria-expanded={open}
-                data-testid={`display-toggle-${device.id}`}
-                className="text-[11px] font-semibold uppercase tracking-wide">
-          {open ? '▾' : '▸'} Display
-        </button>
-        <HelpTip topic="display" />
-      </span>
-      {open && (device.displayLayouts
-        ? <Editor device={device} />
+    <div className="flex min-w-0 flex-col gap-2 rounded-b-xl border-4 border-t-0 px-3 pb-3 pt-4 lg:border-[6px]"
+         data-testid={`display-drawer-${device.id}`}
+         style={{
+           borderColor: BEZEL_EDGE, background: '#e3e8ec',
+           boxShadow: 'inset 0 10px 10px -6px rgb(0 0 0 / 0.45), inset 0 0 0 1px #3a4048, 0 2px 0 rgb(0 0 0 / 0.25)',
+         }}>
+      {toggle}
+      {device.displayLayouts
+        ? <Editor device={device} onCancel={() => onOpenChange(false)} />
         : (
           <span className="text-[12px]" style={{ color: 'var(--amber-text)' }}
                 data-testid={`display-needs-fw-${device.id}`}>
             Needs firmware 1.7.1 or newer
           </span>
-        ))}
+        )}
     </div>
   );
 }
 
-function Editor({ device }: { device: DeviceListItem }) {
+function Editor({ device, onCancel }: { device: DeviceListItem; onCancel: () => void }) {
   const [wasm, setWasm] = useState<DisplayWasm | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   useEffect(() => {
@@ -119,10 +143,10 @@ function Editor({ device }: { device: DeviceListItem }) {
     return <span className="text-[12px]" style={{ color: 'var(--amber-text)' }}>Could not load the preview: {loadError}</span>;
   }
   if (!wasm) return <span className="text-[12px]" style={{ color: 'var(--muted)' }}>Loading the preview…</span>;
-  return <LoadedEditor device={device} wasm={wasm} />;
+  return <LoadedEditor device={device} wasm={wasm} onCancel={onCancel} />;
 }
 
-function LoadedEditor({ device, wasm }: { device: DeviceListItem; wasm: DisplayWasm }) {
+function LoadedEditor({ device, wasm, onCancel }: { device: DeviceListItem; wasm: DisplayWasm; onCancel: () => void }) {
   const id = device.id;
   const router = useRouter();
   const [refreshing, startRefresh] = useTransition();
@@ -197,13 +221,7 @@ function LoadedEditor({ device, wasm }: { device: DeviceListItem; wasm: DisplayW
       ctx.globalAlpha = fb ? 1 : 0.35;
       // Lit pixels as the glass shows them: white on black, in either theme.
       // This canvas is a picture of the hardware, not page chrome.
-      ctx.fillStyle = OLED_LIT;
-      // SSD1306 page layout: byte (page * 128 + x), bit (y % 8).
-      for (let y = 0; y < rows; y++) {
-        for (let x = 0; x < PANEL_W; x++) {
-          if (frame[(y >> 3) * PANEL_W + x] & (1 << (y & 7))) ctx.fillRect(x * ZOOM, y * ZOOM, ZOOM, ZOOM);
-        }
-      }
+      paintFramebuffer(ctx, frame, rows, ZOOM, OLED_LIT);
       ctx.globalAlpha = 1;
     }
     ctx.strokeStyle = amber;
@@ -440,6 +458,13 @@ function LoadedEditor({ device, wasm }: { device: DeviceListItem; wasm: DisplayW
           Reset to default
         </button>
         {dirty && <span style={{ color: 'var(--muted)' }}>Unsaved changes</span>}
+        {/* Throws the edits away and closes: no request (DisplayEditor's note). */}
+        <button type="button" onClick={onCancel} disabled={busy}
+                data-testid={`display-cancel-${id}`}
+                className="ml-auto rounded-lg border px-3 py-1.5 text-[12px] font-semibold disabled:opacity-50"
+                style={{ background: 'var(--danger-bg)', borderColor: 'var(--danger-fg)', color: 'var(--danger-fg)' }}>
+          Cancel
+        </button>
       </div>
       {saveError && (
         <span style={{ color: 'var(--amber-text)', overflowWrap: 'anywhere' }} data-testid={`display-save-error-${id}`}>

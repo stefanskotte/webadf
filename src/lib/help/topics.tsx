@@ -217,7 +217,7 @@ export const HELP_TOPICS = {
     ),
   },
 
-  // Sources: display-editor.tsx, display-editor-geometry.ts:172-178 (status texts), HANDOFF 3ax.
+  // Sources: display-editor.tsx, drive-bezel.tsx, live-display.ts, display-editor-geometry.ts:172-178 (status texts), HANDOFF 3ax.
   display: {
     title: "The board's display",
     short:
@@ -225,13 +225,19 @@ export const HELP_TOPICS = {
     body: (
       <>
         <p>
+          The screen on each board's card is drawn the same way, with the board's saved layout and the disk it last
+          reported. It does not show download progress or the track the drive is on, because the board does not send
+          those. Press <em>Change Display</em>, or the screen itself, to open the editor.
+        </p>
+        <p>
           Pick the <em>Panel</em> (128×32 or 128×64), then drag elements where you want them. Each element can be
           shown or hidden and drawn at 1× or 2×. <em>Preview as</em> shows the layout in different situations, such
           as downloading or with a long title.
         </p>
         <p>
           After <em>Save</em> the status reads <em>Waiting for the board</em>, then <em>Applied on the board</em> a
-          moment later. If the board refuses a layout, it says why.
+          moment later. If the board refuses a layout, it says why. <em>Cancel</em> throws away changes you have not
+          saved and closes the editor. <em>Reset to default</em> puts the board back to the standard layout.
         </p>
         <p>
           Your layout is used while the board is running: ready, downloading and with a disk mounted. The start-up,
