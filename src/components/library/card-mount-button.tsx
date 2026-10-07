@@ -4,7 +4,7 @@ import { useEffect, useId, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useRouter } from 'next/navigation';
 import { toast } from 'sonner';
-import { Eject, HardDriveDownload } from 'lucide-react';
+import { Eject, Play } from 'lucide-react';
 import { holdAction, holdLabel, type Hold } from '@/lib/drive-holds';
 
 /** A board the org has paired, as the page loaded it. */
@@ -169,7 +169,7 @@ export function CardMountButton({ gameId, title, diskCount, singleDiskId, drives
     >
       {ejecting
         ? <Eject size={14} strokeWidth={1.75} aria-hidden />
-        : <HardDriveDownload size={14} strokeWidth={1.75} aria-hidden />}
+        : <Play size={14} strokeWidth={1.75} aria-hidden />}
     </button>
   );
   if (!open) return trigger;
