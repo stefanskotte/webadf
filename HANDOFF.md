@@ -4662,6 +4662,14 @@ Run subagent-driven from the worktree `.claude/worktrees/df1`. The ledger is in 
 - **Phase 0 bench (operator, one step per turn):** 1. power-cycle the A500 without the external drive and expect
   "DF1 line: connected" and "none seen". 2. Serial before power-on: record the `pio claims:` line, and the lowest
   heap low-water after a mount plus one minute. 3. Optional: the external drive makes the card read "detected".
+- **PHASE 0 BENCH STEP 1 FAILED (2026-10-08 ~21:00):** after a cold A500 boot to Workbench on DF0, the board logged
+  no SEL1 edge at all (only the boot line `sel1: wired no`), and the card read "no signal yet". Code and pad init
+  were checked: GP3 is in main.c's input loop, the IRQ is enabled, and the flag is read every loop. **Likely
+  cause:** the A500's internal floppy connector does not carry SEL1 on pin 12; DF1's select goes only to the
+  external DB23 port. The 2026-09-15 "68 SEL1 edges" capture was taken on rev A2 with no pull-ups, so it was
+  probably crosstalk on a floating input; rev B's 1 kohm pull-up (R7) now holds pin 12 quiet. **Plan stopped**
+  pending the operator's continuity check (internal pin 12 to DB23 pin 21, all powered off) and a choice: a
+  DB23 flying lead (rev C pin), an Amiga mod, big-box only, or park DF1.
 - **Already known for Task 5:** the 1.7.4/1.7.5 boot log read `pio claims: pio0=7 pio1=3 pio2=1`. These look like
   SM bit masks, with the radio not counted. Task 5 must interpret them from the code before applying D1.
 
