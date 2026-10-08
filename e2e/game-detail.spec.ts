@@ -292,3 +292,45 @@ test("a disk row whose org_id diverges from its game's org_id is never shown (de
     await getDb().delete(blobs).where(eq(blobs.sha256, rogueSha));
   }
 });
+
+// --- Mount / Eject on the disk's own page (/disks/[id]/files), operator 2026-09-29 ---
+
+test('the disk page mounts and ejects the disk, and says where it is in words', async ({ page, request }) => {
+  const { orgId } = await signUpFresh(page);
+  const { deviceId } = await pairDevice(page, request, 'Disk Page Device');
+  await setDevice(deviceId, { name: 'Disk Page Device', lastSeenAt: new Date() });
+  const tag = runTag();
+  const { gameId, diskId } = await seedDisk(orgId, { title: `DiskPage-${tag}`, diskNo: 1, sha256: sha(tag) });
+
+  await page.goto(`/disks/${diskId}/files`);
+  await expect(page.getByTestId('disk-mount-bar')).toBeVisible();
+  await expect(page.getByTestId(`holder-${diskId}`)).toHaveText('Not in a drive');
+
+  await Promise.all([
+    page.waitForResponse((r) => r.url().includes(`/api/devices/${deviceId}/mount`) && r.request().method() === 'POST'),
+    page.getByTestId(`mount-${diskId}`).click(),
+  ]);
+  expect((await deviceRow(deviceId)).desiredDiskId).toBe(diskId);
+  await expect(page.getByTestId(`holder-${diskId}`)).toHaveText(/^Mounting to Disk Page Device/);
+
+  // The board reports it holds the disk: the line says so, and the button ejects.
+  await setDevice(deviceId, {
+    mountedGameId: gameId, mountedDiskId: diskId, mountedSha256: sha(tag), mountedDiskNo: 1, lastSeenAt: new Date(),
+  });
+  await page.reload();
+  await expect(page.getByTestId(`holder-${diskId}`)).toHaveText('In Disk Page Device');
+  await Promise.all([
+    page.waitForResponse((r) => r.url().includes(`/api/devices/${deviceId}/eject`) && r.request().method() === 'POST'),
+    page.getByTestId(`eject-${diskId}`).click(),
+  ]);
+  expect((await deviceRow(deviceId)).desiredDiskId).toBeNull();
+});
+
+test('with no devices paired, the disk page offers to pair one instead of a Mount button', async ({ page }) => {
+  const { orgId } = await signUpFresh(page);
+  const tag = runTag();
+  const { diskId } = await seedDisk(orgId, { title: `DiskPageNone-${tag}`, diskNo: 1, sha256: sha(tag) });
+  await page.goto(`/disks/${diskId}/files`);
+  await expect(page.getByTestId(`holder-${diskId}`)).toHaveText('Not in a drive');
+  await expect(page.getByTestId(`mount-${diskId}-none`)).toHaveText('Pair a device');
+});

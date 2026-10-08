@@ -11,6 +11,8 @@ import { requireOrg } from '@/lib/session';
 import { diskStore } from '@/lib/storage';
 import { readVolume, readUsage, DD_GEOMETRY, type AdfEntry } from '@/lib/adffs';
 import { listCollections } from '@/lib/collections';
+import { listDevices } from '@/lib/queries';
+import { mountChoices, holderText } from '@/lib/mount-choice';
 import { resolveFrom, libraryTrail, fromQuery } from '@/lib/trail';
 import { loadEntries } from '@/lib/disk-history/store';
 import { materialise } from '@/lib/disk-history/chain';
@@ -21,6 +23,7 @@ import { FileTree } from '@/components/disks/file-tree';
 import { DropStaging } from '@/components/disks/drop-staging';
 import { FileEditProvider, FileToolbar, type EditDisabled } from '@/components/disks/file-actions';
 import { HistoryPanel } from '@/components/disks/history-panel';
+import { MountAction } from '@/components/games/mount-action';
 
 export const dynamic = 'force-dynamic';
 
@@ -288,6 +291,12 @@ export default async function DiskFilesPage(props: PageProps<'/disks/[id]/files'
     historyUnavailable = true;
   }
 
+  // Mount / Eject from the disk's own page (operator, 2026-09-29): the same
+  // choices and holder line as the game page's disk row (mount-choice.ts), so
+  // the two can never offer different things for the same disk.
+  const choices = mountChoices(await listDevices(orgId), id, disk.sha256, Date.now());
+  const held = holderText(choices);
+
   return (
     <>
       <PageHeader
@@ -334,6 +343,20 @@ export default async function DiskFilesPage(props: PageProps<'/disks/[id]/files'
             </Link>
           </div>
         )}
+        {/*
+          Mount always acts on the disk's CURRENT bytes, also while an older
+          version is on screen -- the version banner above says which is shown.
+          Both values in words: "Not in a drive" rather than an absent line.
+        */}
+        <div className="glass-card flex flex-wrap items-center justify-between gap-3 p-4"
+             data-testid="disk-mount-bar">
+          <span className="text-[12.5px] font-semibold"
+                style={{ color: held?.stale ? 'var(--amber-text)' : 'var(--muted)' }}
+                data-testid={`holder-${id}`}>
+            {held ? held.text : 'Not in a drive'}
+          </span>
+          <MountAction diskId={id} choices={choices} />
+        </div>
         {volume === null ? (
           <div className="glass-card p-5 text-[13px]" style={{ color: 'var(--amber-text)' }}
                data-testid="blob-unavailable">
