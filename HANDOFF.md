@@ -1649,7 +1649,7 @@ separately.
   superseded by 3af's acceptance numbers against the real matcher and the live library —
   see there for the full account, the timing gate, and what stayed out of scope.
 
-- **Enrich demos and applications from a source that actually has them.** Measured 2026-09-11
+- **Enrich demos and applications from a source that actually has them.** **RULING 2026-10-08 (operator):** CLOSED for now. There are no good sources beyond TOSEC and Demozoo, and apparently none for applications. Measured 2026-09-11
   (see 3ad): of the TOSEC-identified blobs OpenRetro cannot enrich, essentially all are
   demoscene productions -- 9 Fingers, State of the Art, Global Trash, Wayfarer, Ray of Hope 2
   -- or applications, World Construction Set. OpenRetro is a games database and no amount of
@@ -2260,7 +2260,7 @@ separately.
 - ~~**Redesign the create-ADF menu**~~ DONE 2026-09-28 (`33d852c`): a "New disk" panel with Size (880 KB | 1.76 MB)
   and Filesystem (FFS | OFS) switches plus a Create button. Popover on desktop, bottom sheet under 640 px; both
   switches reset to 880 KB / FFS on every open. Full e2e 389/389 (one ECONNRESET flake in tosec-scan passed on rerun).
-- **Passthrough to a physical DF0 on the same cable** (operator, 2026-09-28): let a real floppy drive share the
+- **Passthrough to a physical DF0 on the same cable** **RULING 2026-10-08 (operator):** DEFERRED to the next PCB revision (rev C). (operator, 2026-09-28): let a real floppy drive share the
   ribbon with the board so the Amiga can use it too (the board answers only when its own disk is selected).
   Feasibility study 2026-09-28 (read-only, nothing measured): `docs/superpowers/research/2026-09-28-df0-passthrough.md`.
   In short: rev B can step aside in FIRMWARE ONLY (all six outputs are open-drain FETs; it never drives a host line),
@@ -2318,7 +2318,7 @@ separately.
       collections rail;
     - a set sits INSIDE a type and can be filed in collections like any title.
     Design this with mockups (visual companion) before any code.
-- **Multi-disk games while playing: a smart way to advance to the next disk.** Ideas 1 (Next disk) and 2 (preload) DONE 2026-09-28, see 3ap; ideas 3 (answer as DF0+DF1) and 4 (detect "insert disk 2") still open. Requested by the operator
+- **Multi-disk games while playing: a smart way to advance to the next disk.** **RULING 2026-10-08 (operator):** investigate ideas 3+4. A real external DF1 may be present, so the second drive must be a per-board SETTING. Research: `docs/superpowers/research/2026-10-08-df1-second-drive.md`. Ideas 1 (Next disk) and 2 (preload) DONE 2026-09-28, see 3ap; ideas 3 (answer as DF0+DF1) and 4 (detect "insert disk 2") still open. Requested by the operator
   2026-09-26. What the board already has to build on:
   - it knows the set: every mount carries diskNo/diskCount ("disk 1 of 2" on the OLED);
   - two PSRAM image slots (SLOT_COUNT 2), one idle while playing;
@@ -2417,7 +2417,7 @@ separately.
   emulator on a 500 kbit/s interface. Worth establishing which before promising a title
   list.
 
-- **Amiga networking over the floppy port (PaulaNET-style).** Raised by the operator
+- **Amiga networking over the floppy port (PaulaNET-style).** **RULING 2026-10-08 (operator):** WAITING: the operator has messaged RobSmithDev, and there is no reply yet. Raised by the operator
   2026-09-13 after finding RobSmithDev's PaulaNET. Genuinely attractive, and explicitly a
   SECOND PRODUCT on the same board rather than an increment to disk serving: it makes the
   Amiga itself reach the internet, and does nothing to make disks load better.
@@ -2462,7 +2462,7 @@ separately.
   to the stack over Exec device I/O, not by linking against it, so such a driver is not a
   derivative work of AmiTCP_NG and its GPL does not propagate into it. That also means the
   stack stays the user's choice -- Roadshow or AmiTCP_NG -- rather than something we bake in.
-- **Self-host on the local network: Docker containers, a local URL, local hardware.** Requested by
+- **Self-host on the local network: Docker containers, a local URL, local hardware.** **RULING 2026-10-08 (operator):** DEFERRED for later. Requested by
   the operator 2026-08-31 as a nice-to-have. Substantial but not exotic — the shape of the work is
   known, and most of it is swapping two managed services for local ones. What it actually touches:
 
@@ -2756,11 +2756,11 @@ separately.
   ADC pins, for rail sensing); GP14-17 unusable (antenna keepout). Firmware support for the buzzer comes later.
   Diff the netlist against rev A2's, don't eyeball it.
 
-- **Blob garbage collection** — reclaiming blobs whose last referencing disk is gone. Needs
+- **Blob garbage collection** **RULING 2026-10-08 (operator):** BUILD IT as a WEEKLY job. — reclaiming blobs whose last referencing disk is gone. Needs
   cross-org reference counting and deletion from Vercel Blob as well as Postgres. Deferred at
   the operator's direction during the super-admin design; the admin cascade delete deliberately
   never touches `blobs`, because they are shared across organizations.
-- **Proof of possession at ingest** (encoder spec / disk-change spec §6) — required
+- **Proof of possession at ingest** **RULING 2026-10-08 (operator):** DEFERRED for now. (encoder spec / disk-change spec §6) — required
   *before* opening registration beyond invite-only, not before shipping the device image
   endpoint as it stands today.
 
@@ -4672,6 +4672,8 @@ No migration, no firmware change.
   mount or eject is in flight or unconfirmed, because the screen still shows the old disk then. It stays in the
   accessibility tree (`sr-only`). Trap fixed on the way: `w-full` overrides `sr-only`'s 1px width, so the
   layout classes apply only while visible -- otherwise the mobile Devices grid scrolls sideways by 2px.
+- **RULING 2026-10-08 (operator):** a bezel CANCEL and track/progress on the card screen are REMOVED from the
+  backlog. Do not build them.
 - **Deliberately unlike the mockup:** the bezel button always says EJECT (a CANCEL for a pending mount needs the
   gallery button's revert-to-previous-disk logic); no track number or download progress on the card's screen
   (the board does not report them, so none are invented); folded cards keep their square shape (an existing
