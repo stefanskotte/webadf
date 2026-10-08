@@ -18,8 +18,6 @@ static PIO  id_pio;
 static uint id_off;
 static int  id_sm = -1;            // written under gate_lock, before the machine runs
 static bool id_hd;
-// floppy.pio's drive_id waits on GP2 literally: board_check() (board.c)
-// refuses any board whose SEL0 is not GP2, at boot, before this file runs.
 
 // The two loads name the ID: `mov osr, y` for HD (Y holds DRIVE_ID_HD from
 // init) or `mov osr, ~null` for DD's all-ones -- drive_id_load(), which

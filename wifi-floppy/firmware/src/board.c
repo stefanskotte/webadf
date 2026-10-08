@@ -25,8 +25,6 @@ bool board_check(const board_t *b, char *why, size_t n) {
     if (n) why[0] = '\0';
     if (b->sel1 != b->sel0 + 1 || b->mtr != b->sel0 + 2 || b->dir != b->sel0 + 3)
         return fail(why, n, "SEL0,SEL1,MTR,DIR must be consecutive (step_dir in pins, 4)");
-    if (b->sel0 != 2)
-        return fail(why, n, "SEL0 must be GP2 until P2 (drive_id waits on gpio 2)");
     if (b->i2c_index > 1)
         return fail(why, n, "I2C index must be 0 or 1");
 

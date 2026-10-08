@@ -39,8 +39,11 @@ static void test_each_invariant_is_enforced(void) {
     board_t b;
     b = broken(); b.sel1 = 7;            expect_fail(b, "consecutive", "SEL1 not SEL0+1");
     b = broken(); b.dir = 9;             expect_fail(b, "consecutive", "DIR not SEL0+3");
-    b = broken(); b.sel0 = 26; b.sel1 = 27; b.mtr = 28; b.dir = 29;
-                                         expect_fail(b, "GP2", "drive_id still needs SEL0 == GP2 in P1");
+    // (Not 26..29: DIR 29 would sit on the radio pin WL_CLOCK and fail for that reason.)
+    b = broken(); b.sel0 = 14; b.sel1 = 15; b.mtr = 16; b.dir = 17;
+    char why[96];
+    CHECK(board_check(&b, why, sizeof why) || strstr(why, "GP2") == NULL,
+          "drive_id waits on `pin 0` now: SEL0 may be any GPIO (P2 rule gone)");
     b = broken(); b.step = b.wdata;      expect_fail(b, "twice", "two roles on one pin");
     b = broken(); b.rdy = 20;            expect_fail(b, "window", "status pin outside the status_gate window");
     b = broken(); b.radio_pins[0] = b.step;
