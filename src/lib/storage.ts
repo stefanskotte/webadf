@@ -1,5 +1,5 @@
 import {
-  issueSignedToken, presignUrl, head, get, put, del, BlobNotFoundError,
+  issueSignedToken, presignUrl, head, get, put, del, list, BlobNotFoundError,
 } from '@vercel/blob';
 import { isBlobAlreadyExists } from '@/lib/blob-upload';
 
@@ -25,6 +25,12 @@ export interface DiskStore {
   read(sha256: string): Promise<Uint8Array>;
   /** Frees the key so a later, correct upload can claim it. */
   remove(sha256: string): Promise<void>;
+  /**
+   * Every object under adf/ whose name is a sha-256, with its upload time.
+   * Only the weekly blob GC (blob-gc-run.ts) lists the store: it is the one
+   * caller that has to see bytes no database row names any more.
+   */
+  listAll(): Promise<{ sha256: string; uploadedAt: Date }[]>;
   storageKey(sha256: string): string;
 }
 
@@ -144,6 +150,21 @@ export const diskStore: DiskStore = {
   async remove(sha256) {
     assertSha(sha256);
     await del(key(sha256));
+  },
+
+  async listAll() {
+    const out: { sha256: string; uploadedAt: Date }[] = [];
+    let cursor: string | undefined;
+    do {
+      const page = await list({ prefix: 'adf/', cursor, limit: 1000 });
+      for (const b of page.blobs) {
+        const sha256 = b.pathname.slice('adf/'.length);
+        // Anything not named by a digest is not ours to judge: skipped, never deleted.
+        if (SHA256_RE.test(sha256)) out.push({ sha256, uploadedAt: new Date(b.uploadedAt) });
+      }
+      cursor = page.hasMore ? page.cursor : undefined;
+    } while (cursor);
+    return out;
   },
 };
 

@@ -53,3 +53,80 @@ export function selectReleasableUploads(
   const rowed = new Set(registered);
   return selectUnreferencedBlobs(candidates.filter((s) => !rowed.has(s)), diskRefs, entRefs, historyRefs);
 }
+
+/**
+ * The weekly production sweep's decision (HANDOFF backlog "Blob garbage
+ * collection", operator ruling 2026-10-08: run it weekly). Pure, so every
+ * branch is tested; blob-gc-run.ts only gathers the inputs and acts.
+ *
+ * Two kinds of garbage, same rule as selectUnreferencedBlobs -- nothing
+ * anywhere names the bytes:
+ *   - a `blobs` ROW nothing references (its object goes too, bytes first);
+ *   - a store OBJECT under adf/ with no row and no reference: a delta whose
+ *     disk_versions rows went with a deleted disk, or the bytes of an upload
+ *     that never completed. These are invisible to a sweep that walks rows.
+ *
+ * Both only once older than `graceMs`. An upload PUTs its bytes before
+ * /api/ingest/complete writes the row, and a row can exist a moment before the
+ * disk or entitlement naming it; the grace makes every such in-flight write
+ * safe without having to know each flow's ordering.
+ *
+ * And brakes, which refuse the whole plan rather than trim it. The dangerous
+ * failure is not a lot of garbage -- the e2e suite leaks 40-170 edited-disk
+ * objects on a busy day (measured 2026-10-08: 1,229 of 1,385 objects had no
+ * row) -- but an input that makes LIVE bytes look orphaned. So:
+ *   - the listing must line up with the database: at least `minRowMatch` of
+ *     the rows must have their object in the listing, or the key parsing (or
+ *     the listing) is wrong and every object would look row-less;
+ *   - a run may drop at most `maxRowFraction` of the rows (beyond `floor`):
+ *     rows are reachable content, and a huge row plan means a reference list
+ *     came back short.
+ */
+export interface BlobGcInput {
+  rows: { sha256: string; createdAt: Date }[];
+  objects: { sha256: string; uploadedAt: Date }[];
+  /** Every sha anything in the database names: disks, entitlements, history, devices, write sessions. */
+  referenced: Iterable<string>;
+  now: Date;
+  graceMs: number;
+  minRowMatch?: number;
+  maxRowFraction?: number;
+  floor?: number;
+}
+
+export interface BlobGcPlan {
+  /** Rows to delete (their objects are removed first). */
+  rows: string[];
+  /** Objects with no row to remove. */
+  objects: string[];
+  /** Set when the brake tripped: nothing may be deleted. */
+  refused: string | null;
+}
+
+export function planBlobGc(input: BlobGcInput): BlobGcPlan {
+  const { now, graceMs, minRowMatch = 0.9, maxRowFraction = 0.25, floor = 20 } = input;
+  const cutoff = now.getTime() - graceMs;
+  const referenced = new Set(input.referenced);
+  const refuse = (why: string): BlobGcPlan => ({ rows: [], objects: [], refused: why });
+
+  const listed = new Set(input.objects.map((o) => o.sha256));
+  const matched = input.rows.filter((r) => listed.has(r.sha256)).length;
+  if (input.rows.length > 0 && matched < input.rows.length * minRowMatch) {
+    return refuse(`only ${matched} of ${input.rows.length} rows have their object in the store listing -- the listing does not line up with the database`);
+  }
+
+  const unrefRows = new Set(selectUnreferencedBlobs(input.rows.map((r) => r.sha256), [...referenced], []));
+  const rows = input.rows
+    .filter((r) => unrefRows.has(r.sha256) && r.createdAt.getTime() < cutoff)
+    .map((r) => r.sha256);
+  const rowLimit = Math.max(floor, Math.floor(input.rows.length * maxRowFraction));
+  if (rows.length > rowLimit) {
+    return refuse(`would delete ${rows.length} of ${input.rows.length} blob rows (limit ${rowLimit}) -- check the reference lists`);
+  }
+
+  const rowed = new Set(input.rows.map((r) => r.sha256));
+  const objects = input.objects
+    .filter((o) => !rowed.has(o.sha256) && !referenced.has(o.sha256) && o.uploadedAt.getTime() < cutoff)
+    .map((o) => o.sha256);
+  return { rows, objects, refused: null };
+}

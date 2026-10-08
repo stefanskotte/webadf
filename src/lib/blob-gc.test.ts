@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { selectUnreferencedBlobs, selectReleasableUploads } from './blob-gc';
+import { selectUnreferencedBlobs, selectReleasableUploads, planBlobGc } from './blob-gc';
 
 describe('selectUnreferencedBlobs', () => {
   it('keeps a blob that a disk still points at', () => {
@@ -75,5 +75,79 @@ describe('selectReleasableUploads', () => {
 
   it('handles no candidates', () => {
     expect(selectReleasableUploads([], ['a'], [], [], [])).toEqual([]);
+  });
+});
+
+describe('planBlobGc', () => {
+  const now = new Date('2026-10-08T12:00:00Z');
+  const old = new Date('2026-09-01T00:00:00Z');
+  const young = new Date('2026-10-08T11:00:00Z');
+  const grace = 7 * 24 * 3600 * 1000;
+  const base = { now, graceMs: grace };
+
+  it('deletes an old unreferenced row, and keeps referenced and young ones', () => {
+    const plan = planBlobGc({
+      ...base,
+      rows: [{ sha256: 'gone', createdAt: old }, { sha256: 'used', createdAt: old }, { sha256: 'new', createdAt: young }],
+      objects: [{ sha256: 'gone', uploadedAt: old }, { sha256: 'used', uploadedAt: old }, { sha256: 'new', uploadedAt: young }],
+      referenced: ['used'],
+    });
+    expect(plan).toEqual({ rows: ['gone'], objects: [], refused: null });
+  });
+
+  it('removes an old object with no row and no reference (an orphaned delta), never a referenced one', () => {
+    const plan = planBlobGc({
+      ...base, rows: [],
+      objects: [{ sha256: 'orphan', uploadedAt: old }, { sha256: 'delta', uploadedAt: old }],
+      referenced: ['delta'],
+    });
+    expect(plan).toEqual({ rows: [], objects: ['orphan'], refused: null });
+  });
+
+  it('keeps a young object with no row: an upload whose complete has not run yet', () => {
+    const plan = planBlobGc({ ...base, rows: [], objects: [{ sha256: 'inflight', uploadedAt: young }], referenced: [] });
+    expect(plan.objects).toEqual([]);
+  });
+
+  it('never removes the object of a row it keeps, even an unreferenced young row', () => {
+    const plan = planBlobGc({
+      ...base, rows: [{ sha256: 'r', createdAt: young }], objects: [{ sha256: 'r', uploadedAt: old }], referenced: [],
+    });
+    expect(plan).toEqual({ rows: [], objects: [], refused: null });
+  });
+
+  it('refuses when the listing does not line up with the rows (live bytes would look orphaned)', () => {
+    const rows = Array.from({ length: 10 }, (_, i) => ({ sha256: `r${i}`, createdAt: old }));
+    // A listing whose keys parse differently: none of the rows' objects is "there".
+    const objects = rows.map((r) => ({ sha256: `x-${r.sha256}`, uploadedAt: old }));
+    const plan = planBlobGc({ ...base, rows, objects, referenced: rows.map((r) => r.sha256) });
+    expect(plan.objects).toEqual([]);
+    expect(plan.refused).toMatch(/only 0 of 10 rows/);
+  });
+
+  it('refuses when an implausible share of the ROWS would go (a reference list came back short)', () => {
+    const rows = Array.from({ length: 400 }, (_, i) => ({ sha256: `s${i}`, createdAt: old }));
+    const objects = rows.map((r) => ({ sha256: r.sha256, uploadedAt: old }));
+    const plan = planBlobGc({ ...base, rows, objects, referenced: [] });
+    expect(plan.rows).toEqual([]);
+    expect(plan.refused).toMatch(/would delete 400 of 400 blob rows/);
+  });
+
+  it('does clear a large backlog of row-less, unreferenced objects when the rows line up', () => {
+    const rows = [{ sha256: 'live', createdAt: old }];
+    const objects = [{ sha256: 'live', uploadedAt: old },
+      ...Array.from({ length: 1000 }, (_, i) => ({ sha256: `leak${i}`, uploadedAt: old }))];
+    const plan = planBlobGc({ ...base, rows, objects, referenced: ['live'] });
+    expect(plan.refused).toBeNull();
+    expect(plan.objects).toHaveLength(1000);
+    expect(plan.objects).not.toContain('live');
+  });
+
+  it('allows a small plan on a small store (the floor)', () => {
+    const plan = planBlobGc({
+      ...base, rows: [], objects: [{ sha256: 'a', uploadedAt: old }, { sha256: 'b', uploadedAt: old }], referenced: [],
+    });
+    expect(plan.objects).toEqual(['a', 'b']);
+    expect(plan.refused).toBeNull();
   });
 });
