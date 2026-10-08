@@ -1573,7 +1573,13 @@ separately.
   menu), clicking a WiFi floppy's name should go to the device page, and the name should carry a small link arrow
   so it reads as a link. There is no per-board page today: `/devices` lists every board, so link to `/devices` with
   an anchor on that board's card (none exists yet) so the right one is in view.
-- **Mount/Eject button on the Browse disk pages** (operator, 2026-09-29). The disk pages under Browse should carry
+- **Quickstart on the GitHub page for a first install** (operator, 2026-10-08). The repo README / GitHub page
+  should carry step-by-step instructions for putting the firmware on a new board: hold BOOTSEL while plugging in,
+  copy the release `.uf2` onto the RPI-RP2 / RP2350 drive that appears, then pair from the web app. After that,
+  updates go over the air. Check the steps against `scripts/firmware-install-partitioned.sh` first: the board uses a
+  partition table (`pnpm firmware:install-partitioned`, HANDOFF 2b/OTA notes), so a plain UF2 drag may not be the
+  whole first-install story. Verify the steps on a real board before publishing them.
+- ~~**Mount/Eject button on the Browse disk pages**~~ **DONE 2026-10-08** (operator, 2026-09-29). The disk pages under Browse should carry
   the same Mount / Eject a title card and the drive chips already offer, so a disk can be mounted from where it is
   being looked at.
 - ~~**Make uploads faster by reusing the TLS connection**~~ **DONE 2026-09-21 — see 4k.** Keep-alive
@@ -4622,6 +4628,39 @@ Demozoo API (the bulk export makes per-lookup load on a non-profit unnecessary).
 - **Screenshot redirects:** screenshot fetches follow redirects, so the `media.demozoo.org` host
   allowlist checks only the first URL (the raster content-type allowlist and `nosniff` still apply).
 - **Cron drift:** the daily 01:30 cron against a 7-day gate can drift a refetch to 8 days.
+
+### 3ba. Backlog batch: drives-menu link, Mount on disk pages, help minors, weekly blob GC (2026-10-08)
+
+**SHIPPED to master** (bf9d3fc, a1bc2a3, 1666911, 269ca1a). Rulings on the rest of the backlog are recorded
+in place in §4 ("RULING 2026-10-08").
+- **Drives menu:** the board's name, with an arrow, is a menu link to `/devices#device-<id>`. The card carries
+  that id (and `scroll-mt-24`).
+- **Disk page** (`/disks/[id]/files`): a bar with the holder line ("Not in a drive" / "Mounting to X..." /
+  "In X") and the same `MountAction` as the game page's disk row (Pair a device / Mount / Eject / picker). It
+  mounts the CURRENT bytes, also while an older version is shown.
+- **Help minors:** the HFE "?" appears only on the first HFE row of a page. The nav pill estimate was re-measured
+  at 1280 px: 312 / 386 with Admin (it was 248 / 322 before the Help item). The display topic now says 1.7.1+,
+  covers SH1106, and says to unplug before swapping a panel. The "two stale comments" could not be identified; no
+  source names them.
+- **Weekly blob GC:** `/api/cron/blob-gc`, Sundays 04:00 UTC (`vercel.ts`). `planBlobGc` (pure, tested) plus
+  `runBlobGc`. It reclaims unreferenced `blobs` rows and row-less objects under `adf/`.
+  - References: disks, entitlements, disk_versions blob/image, devices mounted/desired/preload, write-session
+    base, `derived_from_sha256`.
+  - 7-day grace period.
+  - Brakes: at least 90% of rows must be found in the store listing, and at most 25% of rows (floor 20) per run.
+  - **It deletes only with `BLOB_GC_DELETE=1` set; until then every run is a dry run.**
+  - **Dry run against production, 2026-10-08:** 1,385 objects, 120 rows (all referenced), 1,265 row-less objects
+    (36 of them history deltas, kept). It would delete **1,068 objects, about 1 GB**, nearly all 880 KB ADFs.
+    They pile up at 40-170 a day on e2e days since 2026-09-18, so **the e2e suite leaks edited-disk objects**
+    that its teardown never finds. About 55 are from 08-30 to 09-14 and may be the operator's pre-wipe uploads;
+    nothing can reach them now.
+  - **Awaiting the operator's go-ahead** to set `BLOB_GC_DELETE=1` in Vercel.
+- **Verification:** vitest (blob-gc 21, help, drive-chips) green; tsc clean. Only the affected e2e specs were
+  run, at the operator's direction (no full suite): game-detail, drive-chips and devices-page 43/43;
+  disk-files-edit and disk-history 9/9.
+- **DF1 research (multi-disk ideas 3+4):** `docs/superpowers/research/2026-10-08-df1-second-drive.md`. Rev B can
+  serve DF1 in firmware only, behind a per-board setting that is off by default. The questions for the operator
+  are listed at its end.
 
 ### 3az. The 1.3" 128x64 panel is an SH1106 -- fw 1.7.4 (2026-10-08)
 
