@@ -4623,6 +4623,26 @@ Demozoo API (the bulk export makes per-lookup load on a non-profit unnecessary).
   allowlist checks only the first URL (the raster content-type allowlist and `nosniff` still apply).
 - **Cron drift:** the daily 01:30 cron against a 7-day gate can drift a refetch to 8 days.
 
+### 3az. The 1.3" 128x64 panel is an SH1106 -- fw 1.7.4 (2026-10-08)
+
+**SHIPPED:** master 7ca13f0, 1.7.4+g7ca13f0 (seq 43), self-installed on WifiFloppy1. Glass check owed (below).
+
+- **Symptom:** the operator fitted a 1.3" 128x64 module. Set to 128x32 in the DB, it drew only the upper half.
+  Switched to 128x64 (v13, default layout), it showed random RAM noise over the whole glass, with one dark strip.
+- **Cause:** an SH1106, not an SSD1306. It has no horizontal addressing (0x20) and no 0x21/0x22 windows. It also
+  reads those commands' operands as its own commands (0x7F = start line 63). So every blit landed in one page.
+- **Fix (`src/ssd1306.c`):** blits use PAGE addressing (0xB0|page plus column nibbles), which both controllers
+  implement. SSD1306 init now selects it (0x20 0x02). The SH1106 gets its own init (0xAD 0x8B DC-DC, no 0x8D or 0x20)
+  and a 2-column RAM offset. The controller is detected once in `ssd1306_init` from the status byte's low nibble
+  (0x08/0x00 = SH1106, 0x03-0x07 = SSD1306; Meshtastic's test). An unrecognised value falls back to SSD1306, and the
+  raw byte is logged (`oled: 0x3c status 0x.. -> ...`).
+- **Unverified:** the detection byte has not been seen on serial for either panel. The 128x32 SSD1306 has not
+  been re-checked on 1.7.4: the blit path changed for it too (page mode instead of horizontal mode).
+- **Layout:** the 128x32 custom layout (v11) was rejected on 128x64 ("panel mismatch", v12), so v13 is the 128x64
+  default. The old blob, for going back to the small panel:
+  `010008000201000000000000080178000000000003016e000000000001010e00000000000401000880020000060162180000000007016818000000000501001880000000`.
+- **Backlog:** the server still does not learn the controller or the panel geometry from the board.
+
 ### 3ay. Device card as a drive bezel: the board's own OLED, Change Display drawer, Cancel (2026-10-08)
 
 **SHIPPED:** master f8be49c (merge of `device-card-bezel`, feature commit 07aa84a); Vercel production build green.
