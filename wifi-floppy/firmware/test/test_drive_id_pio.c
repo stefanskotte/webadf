@@ -49,18 +49,18 @@
 // drive_id_program_instructions[], as pioasm emits it.
 static const uint16_t golden[DRIVE_ID_PROGRAM_LEN] = {
     0xa003, //  0: mov    pins, null              <- on_released
-    0x2702, //  1: wait   0 gpio, 2              [7]
+    0x2720, //  1: wait   0 pin, 0               [7]
     0x00c6, //  2: jmp    pin, 6
     0xa001, //  3: mov    pins, x                 (on_selected)
-    0x2082, //  4: wait   1 gpio, 2               <- on_selected_wait
+    0x20a0, //  4: wait   1 pin, 0                <- on_selected_wait
     0x0000, //  5: jmp    0
     0xa0e2, //  6: mov    osr, y                  <- reset_load
     0x6001, //  7: out    pins, 1                 (id_bit)
-    0x2082, //  8: wait   1 gpio, 2
+    0x20a0, //  8: wait   1 pin, 0
     0xa003, //  9: mov    pins, null
     0x00ec, // 10: jmp    !osre, 12
     0xa0e2, // 11: mov    osr, y                  <- repeat_load
-    0x2702, // 12: wait   0 gpio, 2              [7]   (off_wait)
+    0x2720, // 12: wait   0 pin, 0               [7]   (off_wait)
     0x00c7, // 13: jmp    pin, 7
     0x0003, // 14: jmp    3
 };
@@ -72,6 +72,7 @@ static const uint16_t golden[DRIVE_ID_PROGRAM_LEN] = {
 // The two words bus_out.c writes, named so a change is visible by name.
 #define DRIVE_ID_LOAD_HD  0xa0e2u   // mov osr, y      (Y holds DRIVE_ID_HD from init)
 #define DRIVE_ID_LOAD_DD  0xa0ebu   // mov osr, ~null  (all ones)
+#define DRIVE_ID_LOAD_NONE 0xa0e3u  // mov osr, null   (all zeros: "no drive")
 
 // The RP2040/RP2350 PIO MOV fields, from the datasheet's layout:
 //   [15:13] opcode (MOV = 101)   [12:8] delay/side-set
@@ -85,9 +86,12 @@ static unsigned mov_src(uint16_t w)    { return w & 7u; }
 static void the_load_words_are_mov_osr(void) {
     CHECK_EQ_INT(drive_id_load(true),  DRIVE_ID_LOAD_HD);
     CHECK_EQ_INT(drive_id_load(false), DRIVE_ID_LOAD_DD);
-    const bool kinds[] = { true, false };
-    for (unsigned k = 0; k < 2; k++) {
-        const uint16_t w = drive_id_load(kinds[k]);
+    CHECK_EQ_INT(drive_id_load_kind(DRIVE_ID_KIND_NONE), DRIVE_ID_LOAD_NONE);
+    CHECK_EQ_INT(drive_id_load_kind(DRIVE_ID_KIND_DD), drive_id_load(false));
+    CHECK_EQ_INT(drive_id_load_kind(DRIVE_ID_KIND_HD), drive_id_load(true));
+    const drive_id_kind_t kinds[] = { DRIVE_ID_KIND_HD, DRIVE_ID_KIND_DD, DRIVE_ID_KIND_NONE };
+    for (unsigned k = 0; k < 3; k++) {
+        const uint16_t w = drive_id_load_kind(kinds[k]);
         CHECK_EQ_INT(mov_opcode(w), 5u);       // MOV
         CHECK_EQ_INT(mov_dest(w), 7u);         // OSR -- NOT pindirs (3), the 1.4.0 bug
         CHECK_EQ_INT((w >> 8) & 0x1fu, 0u);    // no delay
@@ -96,6 +100,8 @@ static void the_load_words_are_mov_osr(void) {
     CHECK_EQ_INT(mov_src(drive_id_load(true)), 2u);    // Y
     CHECK_EQ_INT(mov_op(drive_id_load(false)), 1u);    // invert
     CHECK_EQ_INT(mov_src(drive_id_load(false)), 3u);   // NULL
+    CHECK_EQ_INT(mov_op(drive_id_load_kind(DRIVE_ID_KIND_NONE)), 0u);    // no invert
+    CHECK_EQ_INT(mov_src(drive_id_load_kind(DRIVE_ID_KIND_NONE)), 3u);   // NULL
     // The .pio source's own default at both loads is HD's word.
     CHECK_EQ_INT(golden[DRIVE_ID_OFFSET_RESET_LOAD], DRIVE_ID_LOAD_HD);
     CHECK_EQ_INT(golden[DRIVE_ID_OFFSET_REPEAT_LOAD], DRIVE_ID_LOAD_HD);
@@ -104,8 +110,21 @@ static void the_load_words_are_mov_osr(void) {
 static void the_program_fits_pio0(void) {
     // pio0 holds flux_out (7) + flux_in (7) + drive_id: 32 slots.
     CHECK(7 + 7 + DRIVE_ID_PROGRAM_LEN <= 32, "pio0 instruction memory");
-    // on_selected_wait is the `wait 1 gpio 2` bus_out.c checks the PC against.
-    CHECK_EQ_INT(golden[DRIVE_ID_OFFSET_ON_SELECTED_WAIT], 0x2082u);
+    // on_selected_wait is the `wait 1 pin 0` bus_out.c checks the PC against.
+    CHECK_EQ_INT(golden[DRIVE_ID_OFFSET_ON_SELECTED_WAIT], 0x20a0u);
+}
+
+// The select is a parameter (in_base), not GP2: no WAIT may name a GPIO by
+// number. WAIT = opcode 001; source [6:5]: 00 GPIO, 01 PIN, 10 IRQ, 11 JMPPIN.
+static void no_wait_names_a_gpio(void) {
+    unsigned waits = 0;
+    for (unsigned i = 0; i < DRIVE_ID_PROGRAM_LEN; i++) {
+        if ((golden[i] >> 13) != 1u) continue;
+        waits++;
+        CHECK_EQ_INT((golden[i] >> 5) & 3u, 1u);      // PIN, relative to in_base
+        CHECK_EQ_INT(golden[i] & 0x1fu, 0u);          // pin 0 = this drive's select
+    }
+    CHECK_EQ_INT(waits, 4u);
 }
 
 // Read build/floppy.pio.h as text and compare drive_id's words and offsets
@@ -152,6 +171,7 @@ static void the_generated_header_matches_the_golden_array_when_present(void) {
 int main(void) {
     RUN(the_load_words_are_mov_osr);
     RUN(the_program_fits_pio0);
+    RUN(no_wait_names_a_gpio);
     RUN(the_generated_header_matches_the_golden_array_when_present);
     return REPORT();
 }

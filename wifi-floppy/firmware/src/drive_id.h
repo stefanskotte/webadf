@@ -65,18 +65,26 @@ static inline uint32_t drive_id_for(bool hd_mounted) {
     return hd_mounted ? DRIVE_ID_HD : DRIVE_ID_DD;
 }
 
+// What a drive answers to Kickstart's drive-ID read (spec 2026-10-08 §2).
+// NONE answers 0x00000000 = "no drive": DF1 while off or parked.
+typedef enum { DRIVE_ID_KIND_NONE = 0, DRIVE_ID_KIND_DD, DRIVE_ID_KIND_HD } drive_id_kind_t;
+
 // The instruction bus_out.c writes at drive_id's reset_load and repeat_load:
-// `mov osr, y` for HD (Y holds DRIVE_ID_HD from init) or `mov osr, ~null`
-// for DD's all ones. Built from the MOV fields -- opcode 101 [15:13],
-// destination OSR 111 [7:5], op [4:3] (01 = invert), source [2:0] (Y 010,
-// NULL 011) -- and NEVER with pio_encode_mov(pio_osr, ...): in pico-sdk 2.3.0
-// release builds that returns `mov pindirs, ...` (pio_osr == pio_exec, remapped
-// twice), which turned RDY's output off on every HD reload (1.4.0, HANDOFF
-// §3an). Pinned by test_drive_id_pio.c.
-static inline uint16_t drive_id_load(bool hd) {
-    const unsigned op  = hd ? 0u : 1u;    // none / invert
-    const unsigned src = hd ? 2u : 3u;    // Y / NULL
+// `mov osr, y` for HD (Y holds DRIVE_ID_HD from init), `mov osr, ~null` for
+// DD's all ones, or `mov osr, null` for NONE's all zeros. Built from the MOV
+// fields -- opcode 101 [15:13], destination OSR 111 [7:5], op [4:3] (00 none,
+// 01 = invert), source [2:0] (Y 010, NULL 011) -- and NEVER with
+// pio_encode_mov(pio_osr, ...): in pico-sdk 2.3.0 release builds that returns
+// `mov pindirs, ...` (pio_osr == pio_exec, remapped twice), which turned RDY's
+// output off on every HD reload (1.4.0, HANDOFF §3an). Pinned by
+// test_drive_id_pio.c.
+static inline uint16_t drive_id_load_kind(drive_id_kind_t k) {
+    const unsigned op  = k == DRIVE_ID_KIND_DD ? 1u : 0u;      // invert for DD's all-ones
+    const unsigned src = k == DRIVE_ID_KIND_HD ? 2u : 3u;      // Y (HD word) / NULL
     return (uint16_t)((0x5u << 13) | (0x7u << 5) | (op << 3) | src);
+}
+static inline uint16_t drive_id_load(bool hd) {
+    return drive_id_load_kind(hd ? DRIVE_ID_KIND_HD : DRIVE_ID_KIND_DD);
 }
 
 #endif

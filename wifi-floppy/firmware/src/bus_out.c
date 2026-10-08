@@ -73,7 +73,7 @@ void __not_in_flash_func(bus_out_set)(unsigned pin, bool assert) {
         // on the way out. Within 3 PIO cycles of the rise, on_released's
         // `mov pins, null` still follows and clears it. Landing 3 or more
         // cycles after the rise (the machine then stalls on on_released's
-        // `wait 0 gpio 2`) leaves RDY ASSERTED WHILE DESELECTED until the
+        // `wait 0 pin 0`) leaves RDY ASSERTED WHILE DESELECTED until the
         // next SEL0 select -- breaking SEL0 gating, which a real DF1 on the
         // same bus depends on. Practically unreachable: the PC read -> exec
         // path is ~7 instructions with IRQs off under the spinlock (~50 ns at
@@ -93,7 +93,7 @@ void __not_in_flash_func(bus_out_set)(unsigned pin, bool assert) {
 void bus_out_drive_id_init(PIO pio) {
     uint off = (uint)pio_add_program(pio, &drive_id_program);
     uint sm  = (uint)pio_claim_unused_sm(pio, true);
-    drive_id_program_init(pio, sm, off, PIN_RDY, PIN_MTR, DRIVE_ID_HD);
+    drive_id_program_init(pio, sm, off, PIN_SEL0, PIN_RDY, PIN_MTR, DRIVE_ID_HD);
     uint32_t save = spin_lock_blocking(gate_lock);
     id_pio = pio;
     id_off = off;
