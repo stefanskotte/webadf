@@ -4662,20 +4662,19 @@ Run subagent-driven from the worktree `.claude/worktrees/df1`. The ledger is in 
 - **Phase 0 bench (operator, one step per turn):** 1. power-cycle the A500 without the external drive and expect
   "DF1 line: connected" and "none seen". 2. Serial before power-on: record the `pio claims:` line, and the lowest
   heap low-water after a mount plus one minute. 3. Optional: the external drive makes the card read "detected".
-- **PHASE 0 BENCH STEP 1 FAILED (2026-10-08 ~21:00):** after a cold A500 boot to Workbench on DF0, the board logged
-  no SEL1 edge at all (only the boot line `sel1: wired no`), and the card read "no signal yet". Code and pad init
-  were checked: GP3 is in main.c's input loop, the IRQ is enabled, and the flag is read every loop. **Likely
-  cause:** the A500's internal floppy connector does not carry SEL1 on pin 12; DF1's select goes only to the
-  external DB23 port. The 2026-09-15 "68 SEL1 edges" capture was taken on rev A2 with no pull-ups, so it was
-  probably crosstalk on a floating input; rev B's 1 kohm pull-up (R7) now holds pin 12 quiet. **Plan stopped**
-  pending the operator's continuity check (internal pin 12 to DB23 pin 21, all powered off) and a choice: a
-  DB23 flying lead (rev C pin), an Amiga mod, big-box only, or park DF1.
-- **ON HOLD (operator, 2026-10-08):** the operator will fit a flying lead inside the A500 from the external port's
-  SEL1 (DB23 pin 21, active low) to pin 12 of the motherboard's internal floppy connector. The ribbon then carries
-  it to the board's J1 pin 12, with no board change. Before soldering, check pin 12 is open to GND, +5 V and pins
-  10/14 (odd pins are ground). After the mod an external DF1 shares SEL1, so keep it off while testing.
-  **Resume:** re-run Phase 0 bench step 1 (expect "DF1 line: connected"), then steps 2-3, then Task 5. The
-  worktree `.claude/worktrees/df1` and branch `feat/df1-second-drive` stay.
+- **Phase 0 bench step 1 PASSED (2026-10-08, after a correction).** The card first stayed "no signal yet", and I
+  wrongly concluded the A500's internal connector lacks SEL1 and put DF1 on hold for a flying lead. The operator's
+  A500 rev 6 schematic (`docs/schematic/A500_R6.pdf` p.8; rev 8 is the same) shows **CN11 pin 12 = `_SEL1`** (pin
+  14 `_SEL2` is not connected), so no lead is needed and the hold is lifted. The real fault was a Task 2 defect:
+  a change in the SEL1 readings never made a status report owed, so the server kept the value from before the
+  Amiga's power-on. The serial log had also dropped 2,736 records over the boot. A forced status report (display
+  re-save, v16) delivered `sel1Wired: true`, `df1Seen: false`. The fix (Task 2, fix round 1) ships as **1.7.7**,
+  and Phase 1 becomes 1.7.8.
+  - **Lessons:** a stored reading can be stale, so check WHEN it was last reported before believing it. And a
+    serial log with "records dropped" cannot prove an absence.
+- **Phase 0 bench step 2, from the same boot (1.7.6):** `pio claims: pio0=7 pio1=3 pio2=1`. Heap low-water is
+  36864 B (last printed 15 s after boot; re-read once on a quieter log before D2 is final). D2 is provisionally
+  DD-only (36864 - 14336 = 22528 >= 20480).
 - **Already known for Task 5:** the 1.7.4/1.7.5 boot log read `pio claims: pio0=7 pio1=3 pio2=1`. These look like
   SM bit masks, with the radio not counted. Task 5 must interpret them from the code before applying D1.
 
