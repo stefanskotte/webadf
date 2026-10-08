@@ -4625,7 +4625,7 @@ Demozoo API (the bulk export makes per-lookup load on a non-profit unnecessary).
 
 ### 3az. The 1.3" 128x64 panel is an SH1106 -- fw 1.7.4 (2026-10-08)
 
-**SHIPPED:** master 7ca13f0, 1.7.4+g7ca13f0 (seq 43), self-installed on WifiFloppy1. Glass check owed (below).
+**SHIPPED:** master 7ca13f0, 1.7.4+g7ca13f0 (seq 43), self-installed on WifiFloppy1. **Glass check PASSED 2026-10-08** on the 1.3" SH1106: "READY", wifi icon and 2x "No disk" are clean, with no edge column (so the 2-column offset is right). The default layout fills only the top 32 rows, by design (3ax).
 
 - **Symptom:** the operator fitted a 1.3" 128x64 module. Set to 128x32 in the DB, it drew only the upper half.
   Switched to 128x64 (v13, default layout), it showed random RAM noise over the whole glass, with one dark strip.
@@ -4636,7 +4636,8 @@ Demozoo API (the bulk export makes per-lookup load on a non-profit unnecessary).
   and a 2-column RAM offset. The controller is detected once in `ssd1306_init` from the status byte's low nibble
   (0x08/0x00 = SH1106, 0x03-0x07 = SSD1306; Meshtastic's test). An unrecognised value falls back to SSD1306, and the
   raw byte is logged (`oled: 0x3c status 0x.. -> ...`).
-- **Unverified:** the detection byte has not been seen on serial for either panel. The 128x32 SSD1306 has not
+- **Unverified:** the detection byte has not been seen on serial for either panel (the SH1106 was evidently
+  detected, since it draws correctly). The 128x32 SSD1306 has not
   been re-checked on 1.7.4: the blit path changed for it too (page mode instead of horizontal mode).
 - **Layout:** the 128x32 custom layout (v11) was rejected on 128x64 ("panel mismatch", v12), so v13 is the 128x64
   default. The old blob, for going back to the small panel:
