@@ -3466,6 +3466,12 @@ sniffer 13 = **31 of 32 instructions** in a sniffer build. There is no room for 
 there. A boot line, `pio claims: pio0=.. pio1=.. pio2=..`, records the real assignment, **but it
 has not been read yet:** the capture attached 12 s late and missed it. Read it on the next boot.
 
+**PIO budget after DF1 Task 9 (supersedes the pio1 figure above):** `flux_in` and the sniffer moved to
+pio2 (sniffer on IRQ1; `step_dir` keeps IRQ0). pio0 = flux_out 7 + drive_id 15 = 22/32; pio1 = status_gate 6 +
+sel_mtr 12 = 18/32; pio2 = flux_in 7 + step_dir + radio 6 (+ sniffer 13 = 30/32 in a `WF_BUS_SNIFF` build).
+The `pio claims:` line now prints after the radio is up and should read `pio0=3 pio1=3 pio2=7` (`pio2=f` with
+the sniffer); a WARN line says so if the radio lands anywhere but pio2.
+
 **The sniffer changed** (`-DWF_BUS_SNIFF=ON`, not yet run): it is on pio1, samples GP0..13
 without WDATA/RDATA, and logs `a` as a plain GPIO mask. It also counts any status output
 asserted while SEL0 is released (`sniff: N sample(s) ...`, as an ERR). That is the direct

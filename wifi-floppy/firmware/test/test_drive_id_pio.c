@@ -112,8 +112,8 @@ static void the_load_words_are_mov_osr(void) {
 }
 
 static void the_program_fits_pio0(void) {
-    // pio0 holds flux_out (7) + flux_in (7) + drive_id: 32 slots.
-    CHECK(7 + 7 + DRIVE_ID_PROGRAM_LEN <= 32, "pio0 instruction memory");
+    // pio0 holds flux_out (7) + drive_id (flux_in moved to pio2).
+    CHECK(7 + DRIVE_ID_PROGRAM_LEN <= 32, "pio0 instruction memory");
     // on_selected_wait is the `wait 1 pin 0` bus_out.c checks the PC against.
     CHECK_EQ_INT(golden[DRIVE_ID_OFFSET_ON_SELECTED_WAIT], 0x20a0u);
 }

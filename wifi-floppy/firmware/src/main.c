@@ -648,10 +648,12 @@ static void __isr step_pio_isr(void) {
         step_pulse(pio_sm_get(step_pio, step_sm));
 }
 
-// pio1 carries the SEL0 gating: status_gate (bus_out.c), sel_mtr, and the
-// diagnostic sniffer. Nothing else claims it -- the CYW43 driver searches
-// pio2 FIRST (pio_claim_free_sm_and_add_program_for_gpio_range counts down),
-// so the radio sits beside step_dir, not here.
+// pio1 carries the SEL0 gating: status_gate (bus_out.c) and sel_mtr, and
+// nothing else (DF1's second SMs join them there). flux_in, step_dir and the
+// diagnostic sniffer sit on pio2 with the CYW43 radio, which claims its SM
+// there last, from net_radio_sta_enable() on core1 (the SDK's
+// pio_claim_free_sm_and_add_program_for_gpio_range searches pio2 first and
+// needs a free SM and 6 free instruction slots there).
 static PIO  bus_pio = pio1;
 static uint mtr_sm;
 
@@ -675,11 +677,11 @@ static volatile uint32_t sniff_records, sniff_gaps, sniff_violations;
 // (bit n = GPn; WDATA and RDATA never sampled).
 static void __isr sniff_isr(void) {
     const uint32_t stall = 1u << (PIO_FDEBUG_RXSTALL_LSB + sniff_sm);
-    while (!pio_sm_is_rx_fifo_empty(bus_pio, sniff_sm)) {
-        uint32_t a = bus_sniff_decode(pio_sm_get(bus_pio, sniff_sm));
+    while (!pio_sm_is_rx_fifo_empty(step_pio, sniff_sm)) {
+        uint32_t a = bus_sniff_decode(pio_sm_get(step_pio, sniff_sm));
         if (bus_sniff_violation(a)) sniff_violations++;
-        if (bus_pio->fdebug & stall) {
-            bus_pio->fdebug = stall;
+        if (step_pio->fdebug & stall) {
+            step_pio->fdebug = stall;
             sniff_gaps++;
             a |= 1u << 16;
         }
@@ -1340,6 +1342,15 @@ static bool swap_hold_check(void *up, bool decide) {
 }
 static bool swap_holds(void *up) { return swap_hold_check(up, true); }
 
+// The claimed state machines of each PIO as a bit mask per PIO.
+static void pio_claim_masks(unsigned m[3]) {
+    for (unsigned p = 0; p < 3; p++) {
+        m[p] = 0;
+        for (unsigned sm = 0; sm < 4; sm++)
+            if (pio_sm_is_claimed(pio_get_instance(p), sm)) m[p] |= 1u << sm;
+    }
+}
+
 static void core1_main(void) {
     // OLED layouts: core0 writes the display record to flash itself (see the
     // display layouts section at the top), so core0 must be able to park this
@@ -1355,18 +1366,30 @@ static void core1_main(void) {
         while (1) tight_loop_contents();
     }
     wf_logf(WF_INFO, "radio up (RM2)");
-    {
-        // Which state machines are claimed on each PIO once the radio has
-        // taken its own. Measured rather than assumed: the SDK's search order
-        // (pio2 first) is not what this file's comments said until 2026-09-18,
-        // and pio1 must stay free for the SEL0 gate (bus_pio).
-        unsigned m[3] = {0, 0, 0};
-        for (unsigned p = 0; p < 3; p++)
-            for (unsigned sm = 0; sm < 4; sm++)
-                if (pio_sm_is_claimed(pio_get_instance(p), sm)) m[p] |= 1u << sm;
-        wf_logf(WF_INFO, "pio claims: pio0=%x pio1=%x pio2=%x", m[0], m[1], m[2]);
-    }
+    // The radio takes its PIO state machine inside net_radio_sta_enable()
+    // (not in net_radio_init()), so the claim masks are read on both sides of
+    // it: the "pio claims" line below is only true once the radio has claimed.
+    unsigned before[3];
+    pio_claim_masks(before);
     net_radio_sta_enable();
+    {
+        // Masks are SM bit masks (hex). Expected after Phase 1:
+        //   pio0=3  flux_out, drive_id
+        //   pio1=3  status_gate, sel_mtr
+        //   pio2=7  flux_in, step_dir, radio      (f in a WF_BUS_SNIFF build:
+        //                                          flux_in, step_dir, sniff, radio)
+        unsigned m[3];
+        pio_claim_masks(m);
+        wf_logf(WF_INFO, "pio claims: pio0=%x pio1=%x pio2=%x", m[0], m[1], m[2]);
+        // The layout needs the radio on pio2: DF1's SMs fill pio0/pio1. A
+        // silent fallback elsewhere would break that, so say so.
+        if (m[2] == before[2] || m[0] != before[0] || m[1] != before[1])
+            wf_logf(WF_WARN, "pio claims: the radio did NOT land on pio2 "
+                             "(pio0 %x->%x pio1 %x->%x pio2 %x->%x)",
+                    before[0], m[0], before[1], m[1], before[2], m[2]);
+        else
+            wf_logf(WF_INFO, "pio claims: radio on pio2 (%x -> %x)", before[2], m[2]);
+    }
 
     // Plan 4b: decide whether to serve the captive portal or run plan 4a's
     // protocol loop against stored credentials. Touches no radio itself
@@ -2585,13 +2608,15 @@ int main(void) {
     flux_out_program_init(pio, sm_out, off_out, PIN_RDATA, PIN_SEL0);
     pio_sm_set_enabled(pio, sm_out, true);
 
-    uint off_in = pio_add_program(pio, &flux_in_program);
-    sm_in = pio_claim_unused_sm(pio, true);
-    flux_in_program_init(pio, sm_in, off_in, PIN_WDATA);
+    // flux_in lives on pio2 (step_pio), claimed before step_dir: the order
+    // there is flux_in, step_dir, then the radio (core1, launched below).
+    uint off_in = pio_add_program(step_pio, &flux_in_program);
+    sm_in = pio_claim_unused_sm(step_pio, true);
+    flux_in_program_init(step_pio, sm_in, off_in, PIN_WDATA);
     // Claims a DMA channel and points it at sm_in's RX FIFO. The state machine
     // stays DISABLED until WGATE says the Amiga is writing -- see
     // flux_capture_arm().
-    flux_capture_init(pio, sm_in);
+    flux_capture_init(step_pio, sm_in);
     // (enabled when WGATE asserts; write path TODO)
 
     dma_ch = dma_claim_unused_channel(true);
@@ -2599,9 +2624,9 @@ int main(void) {
     irq_set_enabled(DMA_IRQ_0, true);
 
     // STEP and DIR are not GPIO interrupts: see step_dir in floppy.pio. This
-    // shares pio2 with the CYW43 driver, which claims a state machine there
-    // when core1 brings the radio up -- its search starts at pio2 (see
-    // bus_pio above), and "pio claims" in the log says where it landed.
+    // shares pio2 with flux_in and the CYW43 driver, which claims a state
+    // machine there when core1 brings the radio up (see bus_pio above); the
+    // "pio claims" line in the log says where it landed.
     uint off_step = pio_add_program(step_pio, &step_dir_program);
     step_sm = pio_claim_unused_sm(step_pio, true);
     step_dir_program_init(step_pio, step_sm, off_step, PIN_STEP, PIN_SEL0);
@@ -2623,22 +2648,25 @@ int main(void) {
     pio_sm_set_enabled(bus_pio, mtr_sm, true);
 
 #if WF_DRIVE_ID
-    // The Amiga drive-ID answer on RDY (HD spec §5.4). pio0, beside flux_out
-    // and flux_in: 29 of its 32 instruction slots.
+    // The Amiga drive-ID answer on RDY (HD spec §5.4). pio0, beside flux_out:
+    // 7 + 15 = 22 of its 32 instruction slots.
     bus_out_drive_id_init(pio, 1);               // DF0 only (Phase 1)
     wf_logf(WF_INFO, "drive-id: answering DD 0x%08lx on DF0 motor-off selects",
             (unsigned long)DRIVE_ID_DD);
 #endif
 
 #if WF_BUS_SNIFF
-    uint off_sniff = pio_add_program(bus_pio, &bus_sniff_program);
-    sniff_sm = pio_claim_unused_sm(bus_pio, true);
-    bus_sniff_program_init(bus_pio, sniff_sm, off_sniff);
-    pio_set_irq1_source_enabled(bus_pio, pio_get_rx_fifo_not_empty_interrupt_source(sniff_sm),
+    // pio2, IRQ1 (step_dir keeps IRQ0, the radio uses none). Claimed before
+    // the radio, which needs the last free SM and 6 slots there: 4 SMs and
+    // 30 of 32 instructions in this build.
+    uint off_sniff = pio_add_program(step_pio, &bus_sniff_program);
+    sniff_sm = pio_claim_unused_sm(step_pio, true);
+    bus_sniff_program_init(step_pio, sniff_sm, off_sniff);
+    pio_set_irq1_source_enabled(step_pio, pio_get_rx_fifo_not_empty_interrupt_source(sniff_sm),
                                 true);
-    irq_set_exclusive_handler(pio_get_irq_num(bus_pio, 1), sniff_isr);
-    irq_set_enabled(pio_get_irq_num(bus_pio, 1), true);
-    pio_sm_set_enabled(bus_pio, sniff_sm, true);
+    irq_set_exclusive_handler(pio_get_irq_num(step_pio, 1), sniff_isr);
+    irq_set_enabled(pio_get_irq_num(step_pio, 1), true);
+    pio_sm_set_enabled(step_pio, sniff_sm, true);
     wf_logf(WF_WARN, "BUS SNIFF BUILD: every bus change is logged "
                      "(a = GPIO mask, GP0..13 without WDATA/RDATA; bit 16 = samples dropped before)");
 #endif
