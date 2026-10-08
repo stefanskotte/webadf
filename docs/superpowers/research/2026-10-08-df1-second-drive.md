@@ -15,6 +15,21 @@ my arithmetic.
 
 ---
 
+## Operator rulings, 2026-10-08 (these answer §7 and override the text below where it differs)
+
+- **Models:** the Amigas that matter are the A500, 600, 1200, 2000, 2500, 3000(T) and 4000(T). There is no "A5000":
+  earlier notes mislabelled the bench machine, which was always an **A500 rev 8a.1** (corrected throughout,
+  2026-10-08).
+  The operator tests DF1 on a plain **A500**. Big boxes are not a v1 test target, but the help must state their
+  caveat.
+- **v1 DF1 is read-only.** Accepted.
+- **DF1 holds only the next disk of the set.**
+- **When `df1Seen` is true:** refuse, with an override behind a second confirmation. Accepted as recommended.
+- **The bus sniffer** may move wherever it fits. Report any tradeoff that results.
+- **Idea 4 is deferred.** Few games support multiple drives (most are NDOS), and the operator is still finding
+  ones that do. The first bench tests use **Workbench disk sets** only, because AmigaDOS makes DF1 easy to query.
+- **Help:** add help items covering exactly these caveats.
+
 ## 0. Verdict in one paragraph
 
 **Idea 3 is feasible on rev B with firmware only, behind a per-board setting that defaults to off.**
@@ -110,7 +125,7 @@ matters for §3.
 
 - **The board sits on the internal 34-pin floppy cable**, in place of the internal DF0.
   - A500 bench, case off (HANDOFF.md:1487).
-  - A5000 rev 8a.1 (HANDOFF.md:5128).
+  - A500 rev 8a.1 (HANDOFF.md:5128).
   - On big-box machines it would sit on the internal cable inside the case (HANDOFF.md:1484).
 - **A real external DF1 worked beside the board** on an "A500-class machine" (HANDOFF.md:3414-3417, §4e):
   2,063 DF0 steps followed, 250 DF1 steps ignored. The machine is not named more precisely.
@@ -118,8 +133,8 @@ matters for §3.
   - A rev A2 sniff capture counted **68 SEL1 edges** in a no-disk boot (HANDOFF.md:3644).
   - 68 is exactly 2 x 34, and Kickstart reads DF1's ID with **34 selects** right after DF0's 33
     (HANDOFF.md:3481).
-  - So pin 12 carried a real SEL1, not noise. Which of the A500 and A5000 that was is **not recorded**.
-  - "SEL1 on pin 12 of the A500/A5000 cables" is still listed as an owed bench item (HANDOFF.md:2270).
+  - So pin 12 carried a real SEL1, not noise. Which of the A500 that was is **not recorded**.
+  - "SEL1 on pin 12 of the A500 cables" is still listed as an owed bench item (HANDOFF.md:2270).
 - **Kickstart reads every drive's ID at power-on.** For DF1-3:
   - **0x00000000 means "no drive"**: RDY is never asserted on the 32 motor-off selects.
   - **0xFFFFFFFF means DD; 0xAAAAAAAA means HD.**
@@ -372,7 +387,7 @@ for loaders that hard-code DF0. Build idea 3 first, then see what is left.
 0. **Measure SEL1 first (no feature, firmware telemetry only).**
    - Add a SEL1 select counter (a GPIO falling-edge IRQ on GP3 is enough to see "any") and the SEL1-steps count.
    - Report both in status.
-   - **Bench:** cold-boot each machine (A500, A5000, and a big box if available) with no DF1. Expect `sel1Wired`
+   - **Bench:** cold-boot each machine (A500, and a big box if available) with no DF1. Expect `sel1Wired`
      true and `df1Seen` false. Then add the real external DF1 and expect `df1Seen` true after a disk-change
      click.
    - This also settles the owed "SEL1 on pin 12" item (HANDOFF.md:2270) without a multimeter.
@@ -408,7 +423,7 @@ for loaders that hard-code DF0. Build idea 3 first, then see what is left.
 
 ## 7. Open questions for the operator
 
-1. **Which machines should DF1 support first?** A500 and A5000 on the internal connector are the expected case.
+1. **Which machines should DF1 support first?** A500 on the internal connector are the expected case.
    Is a big box (with or without a second internal drive) in scope?
 2. **Is DF1 read-only acceptable for v1?** Saves to disk 2 would fail as write-protected. DF0 writes keep working.
 3. **When `df1Seen` is true: refuse outright, or allow with a second confirmation?** I recommend refusing, with an
