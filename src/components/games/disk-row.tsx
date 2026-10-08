@@ -14,7 +14,7 @@ import { HdTag } from '@/components/disks/hd-tag';
 import { isHdAdf } from '@/lib/disk-format';
 import { DiskSetMenu, LoneDiskMenu, type DiskSetControls } from './disk-set-menu';
 
-export function DiskRow({ disk, choices, from, fobDevices = [], setControls, loneGameId, helpProtect, helpNfc }: {
+export function DiskRow({ disk, choices, from, fobDevices = [], setControls, loneGameId, helpProtect, helpNfc, helpHfe }: {
   disk: GameDetailDisk;
   /** Per-device verdict for THIS disk -- see lib/mount-choice.ts. */
   choices: MountChoice[];
@@ -30,6 +30,8 @@ export function DiskRow({ disk, choices, from, fobDevices = [], setControls, lon
   helpProtect?: boolean;
   /** Draw the NFC "?" on this row -- one row per page, chosen by the parent. */
   helpNfc?: boolean;
+  /** Draw the HFE "?" on this row -- the first HFE row per page, chosen by the parent. */
+  helpHfe?: boolean;
   /**
    * Present only when the row is one of a disk set (two or more disks):
    * draws the ⋯ menu with Move up / Move down / Move out of set.
@@ -145,7 +147,8 @@ export function DiskRow({ disk, choices, from, fobDevices = [], setControls, lon
           a real request so the browser streams the response to disk.
         */}
         {isHfe ? (
-          <ExtractAction diskId={disk.id} extractable={disk.extractable === true} reason={disk.extractReason} />
+          <ExtractAction diskId={disk.id} extractable={disk.extractable === true} reason={disk.extractReason}
+                         help={helpHfe === true} />
         ) : (
           <Link
             href={`/disks/${disk.id}/files${fromQuery(from)}`}

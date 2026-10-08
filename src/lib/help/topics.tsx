@@ -217,7 +217,8 @@ export const HELP_TOPICS = {
     ),
   },
 
-  // Sources: display-editor.tsx, drive-bezel.tsx, live-display.ts, display-editor-geometry.ts:172-178 (status texts), HANDOFF 3ax.
+  // Sources: display-editor.tsx, drive-bezel.tsx, live-display.ts, display-editor-geometry.ts:172-178 (status texts), HANDOFF 3ax;
+  // panel chips and the boot-time check: wifi-floppy/firmware/src/ssd1306.c (detect_sh1106, ssd1306_init), HANDOFF 3az.
   display: {
     title: "The board's display",
     short:
@@ -244,7 +245,11 @@ export const HELP_TOPICS = {
           setup, connecting and error screens always use the standard layout, so a board can still be set up and
           diagnosed whatever its layout.
         </p>
-        <GoodToKnow items={['Display layouts need board firmware 1.7 or newer.']} />
+        <GoodToKnow items={[
+          'Display layouts need board firmware 1.7.1 or newer.',
+          '0.91" (128×32) and 0.96" (128×64) panels use the SSD1306 chip. Most 1.3" (128×64) panels use the SH1106 chip, which needs firmware 1.7.4 or newer.',
+          'Unplug the board before changing its panel: it checks which chip the panel has only when it starts up.',
+        ]} />
       </>
     ),
   },

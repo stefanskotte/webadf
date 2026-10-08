@@ -11,8 +11,10 @@ import { HelpTip } from '@/components/help/help-tip';
  * Extract as ADF, or -- when the HFE is not a clean AmigaDOS disk -- the one
  * line saying why not (show-both-values: never a silently absent button).
  */
-export function ExtractAction({ diskId, extractable, reason }: {
+export function ExtractAction({ diskId, extractable, reason, help = true }: {
   diskId: string; extractable: boolean; reason: string | null;
+  /** Draw the HFE "?" -- one per page, chosen by the parent (DiskRow's helpHfe). */
+  help?: boolean;
 }) {
   const router = useRouter();
   const [busy, setBusy] = useState(false);
@@ -30,7 +32,7 @@ export function ExtractAction({ diskId, extractable, reason }: {
       <span className="flex min-w-0 max-w-full flex-col gap-0.5 sm:max-w-[240px]"
             title={reason ?? undefined} data-testid={`extract-reason-${diskId}`}>
         <span className="flex items-center gap-1 text-[11.5px]" style={{ color: 'var(--muted)' }}>
-          {NOT_EXTRACTABLE}<HelpTip topic="hd-hfe" />
+          {NOT_EXTRACTABLE}{help && <HelpTip topic="hd-hfe" />}
         </span>
         {reason && (
           <span className="break-words text-[10.5px]" style={{ color: 'var(--muted-2)' }}
@@ -75,7 +77,7 @@ export function ExtractAction({ diskId, extractable, reason }: {
                 style={{ background: 'var(--glass-strong)', color: 'var(--ink)' }}>
           Extract as ADF
         </button>
-        <HelpTip topic="hd-hfe" />
+        {help && <HelpTip topic="hd-hfe" />}
       </span>
       {/*
         Inline rather than a toast: it carries a link, and it is the answer to

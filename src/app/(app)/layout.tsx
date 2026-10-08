@@ -60,7 +60,7 @@ export default async function AppLayout({
               between the wordmark and the pill -- see HeaderStart for the
               geometry. The estimate is only the first paint's; the pill is
               measured on the client. */}
-          <HeaderStart pillEstimate={showAdmin ? 322 : 248}>
+          <HeaderStart pillEstimate={showAdmin ? 386 : 312}>
             {/* The wordmark is the way home. Every other shell in the app has an
                 explicit way back to the library; this one only had the nav pill,
                 and the mark is where people click first (operator, 2026-09-21).

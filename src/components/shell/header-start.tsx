@@ -24,8 +24,8 @@ import { useLayoutEffect, useRef, useState } from 'react';
  * every resize, so the chips would lag a frame behind the pill while a window
  * is dragged; its width changes only when its contents do.
  *
- * `pillEstimate` is the pill's width as measured on 2026-09-26 (248px, 322px
- * with Admin), used ONLY for the server-rendered first paint so the chips do
+ * `pillEstimate` is the pill's width as measured on 2026-10-08 at 1280px
+ * (312px, 386px with Admin; the Help item added 64px since 2026-09-26), used ONLY for the server-rendered first paint so the chips do
  * not jump sideways on hydration; the ResizeObserver replaces it with the
  * real width before the first client paint (layout effect), and again
  * whenever the pill changes size (web font swap, labels). Server and client

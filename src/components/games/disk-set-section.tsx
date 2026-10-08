@@ -214,6 +214,7 @@ export function DiskSetSection({ gameId, title, entries, from, fobDevices = [] }
               key={disk.id} disk={disk} from={from} fobDevices={fobDevices} choices={choices}
               helpNfc={i === 0}
               helpProtect={id === shown.find((sid) => byId.get(sid)!.disk.imageFormat !== 'hfe')}
+              helpHfe={id === shown.find((sid) => byId.get(sid)!.disk.imageFormat === 'hfe')}
               setControls={{
                 canUp: i > 0,
                 canDown: i < shown.length - 1,
