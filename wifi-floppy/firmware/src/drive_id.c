@@ -16,7 +16,7 @@ void drive_id_model_init(drive_id_model_t *m, uint32_t id) {
 }
 
 void drive_id_model_set_id(drive_id_model_t *m, uint32_t id) {
-    m->id = id;              // instr_mem[reset_load], instr_mem[repeat_load] rewritten
+    m->id = id;              // Y written (drive_id_y_sequence); both loads read it
 }
 
 void drive_id_model_select(drive_id_model_t *m, bool mtr_on) {

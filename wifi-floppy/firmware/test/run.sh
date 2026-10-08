@@ -109,6 +109,13 @@ if [ -n "$pio_mov_bad" ]; then
   fail=1
 fi
 
+# drive_id is shared by one state machine per drive (DF1, Task 8): a load
+# rewritten in instr_mem would change EVERY drive's answer. Each SM's ID lives
+# in its own Y (drive_id_y_sequence, drive_id.h).
+if grep -n 'instr_mem\[' ../src/bus_out.c; then
+  echo "FAIL: drive_id is shared by two SMs -- an ID lives in each SM's Y, never in instr_mem"; fail=1
+fi
+
 # M3 (spec 2026-09-22-firmware-update-device-design.md): once the board boots
 # from a partition, the boot ROM's address translation maps only the booted
 # slot at XIP_BASE. Reading anything else through XIP_BASE -- the config and

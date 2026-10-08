@@ -2469,7 +2469,12 @@ int main(void) {
     // WPROT after this (see its WPROT comment), but "asserted" is the only
     // safe value to boot with regardless: read-only until proven otherwise
     // beats writable by default.
-    bus_out_init(bus_pio, (1u << PIN_TRK0) | (1u << PIN_WPROT));
+    // One word per drive; PIN_* are board reads, so filled here, not static.
+    uint32_t boot_lines[WF_DRIVES] = {
+        (1u << PIN_TRK0) | (1u << PIN_WPROT),   // DF0, as before
+        0,                                      // DF1: unused until Phase 2
+    };
+    bus_out_init(bus_pio, 1, boot_lines);       // Phase 1: one drive, behaviour unchanged
 
     dskchg_init();
     track_cache_init();
@@ -2620,7 +2625,7 @@ int main(void) {
 #if WF_DRIVE_ID
     // The Amiga drive-ID answer on RDY (HD spec §5.4). pio0, beside flux_out
     // and flux_in: 29 of its 32 instruction slots.
-    bus_out_drive_id_init(pio);
+    bus_out_drive_id_init(pio, 1);               // DF0 only (Phase 1)
     wf_logf(WF_INFO, "drive-id: answering DD 0x%08lx on DF0 motor-off selects",
             (unsigned long)DRIVE_ID_DD);
 #endif
@@ -2826,7 +2831,8 @@ int main(void) {
                 // Before the insert is announced, so an ID read the change
                 // prompts sees the new disk's density. Taken at the next
                 // answer -- the first motor-off select after a motor-on one,
-                // or the 32-bit repeat -- never mid-answer (bus_out.c). Whether Kickstart re-reads the ID
+                // or the 32-bit repeat -- never mid-answer (bus_out.c, which
+                // writes drive_id's Y). Whether Kickstart re-reads the ID
                 // on a change at all is bench step 9. HD writes spec §4.5:
                 // WPROT no longer derives HD from the slot kind
                 // (write_back_wprot) -- this is now the only place that does.

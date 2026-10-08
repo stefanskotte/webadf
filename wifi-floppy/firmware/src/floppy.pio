@@ -230,11 +230,15 @@ changed:
 ; on the pad once per motor-on select (`mov pins, x`); bus_out.c also execs
 ; `set pins, 1` when RDY is asserted while the machine sits at
 ; on_selected_wait, so an assert shows at once and a release at the deselect.
-; Y = DRIVE_ID_HD, loaded once at init.
-; reset_load and repeat_load are REWRITTEN by bus_out_drive_id_set_hd() with
-; drive_id_load() (drive_id.h): `mov osr, y` (HD) or `mov osr, ~null` (DD,
-; all ones). A new word takes effect at the next load -- the first motor-off
-; select after a motor-on one, or the 32-bit repeat -- never mid-answer.
+; Y = this SM's ID word: DD 0xFFFFFFFF, HD 0xAAAAAAAA, NONE 0. The program is
+; shared by one SM per drive, so nothing rewrites instr_mem (test/run.sh fails
+; on an `instr_mem[` in bus_out.c): both loads are `mov osr, y`, and
+; bus_out_drive_id_set() changes Y by exec'd instructions that touch only Y
+; and the ISR (drive_id_y_sequence, drive_id.h), Y in one final instruction.
+; A new word takes effect at the next load -- the first motor-off select after
+; a motor-on one, or the 32-bit repeat -- never mid-answer.
+; ISR = bus_out.c's scratch for building HD's word: this program has no `in`,
+; no `push` and no `mov isr` (test_drive_id_pio.c pins it). IN shifts LEFT.
 ; OSR = the shifter (shift left, OSRE after 32).
 ; out/set pins = RDY (1), jmp_pin = MTR (high = motor off).
 ; in_base = this drive's select (`wait pin 0`); SEL0 is no longer pinned to
@@ -252,14 +256,14 @@ public on_selected_wait:      ; bus_out.c execs `set pins, 1` here on an assert
     wait 1 pin 0              ; SEL0 released
     jmp on_released
 public reset_load:            ; first motor-off select after motor-on
-    mov osr, y                ; load the ID (rewritten: y = HD, ~null = DD)
+    mov osr, y                ; load the ID (Y = this SM's ID word)
 id_bit:
     out pins, 1               ; this select's bit on RDY, MSB first
     wait 1 pin 0              ; SEL0 released
     mov pins, null
     jmp !osre, off_wait       ; bits left in this answer
 public repeat_load:
-    mov osr, y                ; all 32 sent: the pattern repeats (rewritten too)
+    mov osr, y                ; all 32 sent: the pattern repeats (Y, read again)
 off_wait:                     ; deselected; motor latched OFF
     wait 0 pin 0 [7]
     jmp pin, id_bit           ; still off: the next bit
@@ -337,21 +341,26 @@ static inline void flux_in_program_init(PIO pio, uint sm, uint offset, uint pin)
     pio_sm_init(pio, sm, offset, &c);
 }
 static inline void drive_id_program_init(PIO pio, uint sm, uint offset, uint sel_pin,
-                                         uint rdy_pin, uint mtr_pin, uint32_t hd_id) {
+                                         uint rdy_pin, uint mtr_pin, uint32_t id_word) {
     pio_sm_config c = drive_id_program_get_default_config(offset);
     sm_config_set_in_pins(&c, sel_pin);                  // `wait pin 0` = this drive's select
     sm_config_set_out_pins(&c, rdy_pin, 1);
     sm_config_set_set_pins(&c, rdy_pin, 1);              // bus_out.c's exec'd `set pins, 1`
     sm_config_set_jmp_pin(&c, mtr_pin);                  // high = motor off
     sm_config_set_out_shift(&c, false, false, 32);       // MSB first; OSRE after 32
+    // LEFT, no autopush: the ISR is bus_out.c's scratch for HD's Y word, which
+    // drive_id_y_sequence builds assuming a left shift (right gives 0x55555555).
+    sm_config_set_in_shift(&c, false, false, 32);
     sm_config_set_clkdiv(&c, 10.0f);                     // [7] = ~0.5 us for MTR to settle
     pio_sm_set_pins_with_mask(pio, sm, 0, 1u << rdy_pin);            // released
     pio_sm_set_pindirs_with_mask(pio, sm, 1u << rdy_pin, 1u << rdy_pin);
     pio_sm_init(pio, sm, offset + drive_id_offset_on_released, &c);
-    // Y = the HD word, for the loads that name it; X = 0 (released) until
-    // bus_out.c sets the real level. Both before the machine runs. (Dest Y
-    // and X are safe with pio_encode_mov/set; dest OSR is not -- drive_id.h.)
-    pio_sm_put(pio, sm, hd_id);
+    // Y = this drive's ID word, which both loads read; X = 0 (released) until
+    // bus_out.c sets the real level. Both before the machine runs, so the
+    // exec'd `pull` cannot tear an answer -- once running, Y is changed only
+    // through drive_id_y_sequence. (Dest Y and X are safe with
+    // pio_encode_mov/set; dest OSR is not -- drive_id.h.)
+    pio_sm_put(pio, sm, id_word);
     pio_sm_exec(pio, sm, pio_encode_pull(false, true));
     pio_sm_exec(pio, sm, pio_encode_mov(pio_y, pio_osr));
     pio_sm_exec(pio, sm, pio_encode_set(pio_x, 0));
