@@ -1478,6 +1478,8 @@ separately.
 
 ### 4. Backlog, not blocking anything
 
+- **Rev C: keyed I2C connectors** (2026-10-08): JST-SH / Qwiic for the OLED and NFC headers instead of 1x4 pin
+  headers, so a module cannot be wired reversed or half-seated (two modules died on the bench; see 3bb).
 - **REV C BOARD: own RP2350 design with an antenna port (operator, 2026-10-02: "this is the best solution").**
   Collected here so rev C is designed once, not retrofitted. Roles as for rev B: Shanshe does layout and placement
   files, the operator does BOM and LCSC sourcing.
@@ -1573,6 +1575,15 @@ separately.
   menu), clicking a WiFi floppy's name should go to the device page, and the name should carry a small link arrow
   so it reads as a link. There is no per-board page today: `/devices` lists every board, so link to `/devices` with
   an anchor on that board's card (none exists yet) so the right one is in view.
+- **Firmware CI fails on every push since 2026-10-05** (operator, 2026-10-08). The cause, from `gh run view
+  --log-failed` on run 37826061227: the GitHub runner builds the HOST TESTS with GCC on Linux, which warns more
+  than macOS clang, and `-Werror` turns those warnings into errors. `test_device_client.c` fails on
+  format-truncation at 1729/1734 and maybe-uninitialized `body` at 2375. `test_display_golden.c:48` fails on
+  format-truncation. The device image is fine. Fix the test code (sizes, or initialise `body`), and run test/run.sh
+  under GCC locally (e.g. a docker gcc image) before pushing, because macOS clang does not show these.
+- **Screenshots of the web app's pages for the GitHub page** (operator, 2026-10-08): library, game page, disk
+  page/file browser with history, Devices (bezel card and display editor), Help. Capture them with Playwright
+  from a seeded demo org, never from a real tenant's data.
 - **Quickstart on the GitHub page for a first install** (operator, 2026-10-08). The repo README / GitHub page
   should carry step-by-step instructions for putting the firmware on a new board: hold BOOTSEL while plugging in,
   copy the release `.uf2` onto the RPI-RP2 / RP2350 drive that appears, then pair from the web app. After that,
@@ -4628,6 +4639,32 @@ Demozoo API (the bulk export makes per-lookup load on a non-profit unnecessary).
 - **Screenshot redirects:** screenshot fetches follow redirects, so the `media.demozoo.org` host
   allowlist checks only the first URL (the raster content-type allowlist and `nosniff` still apply).
 - **Cron drift:** the daily 01:30 cron against a 7-day gate can drift a refetch to 8 days.
+
+### 3bb. NFC: the RF field runs only during polls -- fw 1.7.5 (2026-10-08)
+
+**SHIPPED:** master 9d919c0, 1.7.5+g9d919c0 (seq 44), self-installed and confirmed on WifiFloppy1.
+- **Why:** the replacement Si512 module died as well. The 2026-10-08 boot scan shows only the OLED at 0x3c and
+  `nfc: reader absent at 0x28`, the same as the first module on 2026-10-03. The board design is not to blame: on
+  rev B, J3 and J4 each carry GND, 3V3 (Pico pin 36), SCL and SDA, with no 5 V and no on-board pull-ups, and the
+  OLED shares both. What only the NFC module does is transmit, and the firmware kept the field on about 96% of
+  the time (it went off only for a 10 ms cooldown around each poll).
+- **Change (`nfc_reader.c`):** the field is off at rest. Each poll switches it on, waits 5 ms for the tag to power
+  up (ISO 14443), sends WUPA, and turns it off again on every path back to idle (`enter_idle`). ST_COOLDOWN is
+  gone, because the off time between polls already resets the tag. Duty with no tag is about 12%, bounded below
+  15% in `the_field_is_off_between_polls`. The fake chip now models tag power-up
+  (`SI512_FAKE_TAG_POWERUP_MS`), so a reader that talks before the tag has power finds nothing.
+- **Not yet proven on hardware: no working module is fitted.** With the next module, check that taps are detected
+  as before (including a fob lying on the reader and an armed write) and that the module stays cool to the touch
+  after 15 minutes.
+- **Other suspects, for the operator:** hot-plugging leads, and static from tapping tags. Bench rule: power off
+  before (un)plugging any module. Diagnose the dead module with VCC-GND resistance with power off: near 0 ohm
+  means shorted (overvoltage or ESD); a normal reading means the chip failed, which fits heat.
+- **Rev C:** use keyed connectors (JST-SH / Qwiic) for the OLED and NFC, so a lead cannot go on reversed or
+  half-seated (added to the rev C notes).
+- **Also verified on serial today:** the 0.91" SSD1306 answers `status 0x43 -> SSD1306`, which closes 3az's last
+  unverified item.
+- **DF1 plan versions shift by one:** the plan numbers phase 0 as 1.7.5. That version is taken, so phase 0 is
+  1.7.6, and the later phases move accordingly.
 
 ### 3ba. Backlog batch: drives-menu link, Mount on disk pages, help minors, weekly blob GC (2026-10-08)
 
