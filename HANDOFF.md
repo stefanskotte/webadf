@@ -4646,6 +4646,25 @@ Demozoo API (the bulk export makes per-lookup load on a non-profit unnecessary).
   allowlist checks only the first URL (the raster content-type allowlist and `nosniff` still apply).
 - **Cron drift:** the daily 01:30 cron against a 7-day gate can drift a refetch to 8 days.
 
+### 3bc. DF1 second drive -- in flight (plan `docs/superpowers/plans/2026-10-08-df1-second-drive.md`, branch `feat/df1-second-drive`)
+
+Run subagent-driven from the worktree `.claude/worktrees/df1`. The ledger is in the worktree at
+`.superpowers/sdd/2026-10-08-df1-second-drive/progress.md`; trust it and `git log` after a context reset.
+- **Phase 0 SHIPPED 2026-10-08:** master 4961c74, fw 1.7.6+gfeb9538 (seq 45), confirmed on WifiFloppy1, migration
+  0031 applied to the live DB. The board reports `sel1Wired` / `df1Seen`, and the card shows "DF1 line:
+  connected / no signal yet" and "Other DF1 drive: detected / none seen". The first reading after the OTA reboot
+  was false/false, which is expected: the Amiga had not restarted since the board booted.
+- **Controller rulings (ledger):** versions shift (Phase 0 = 1.7.6, Phase 1 = 1.7.7, then 1.8.0, 1.9.0). This
+  section is the plan's "3bb". Task 22 (help) runs before Task 21 (card setting). Phase 2 bench step 8 (games) is
+  deferred until the operator finds DF1-capable games.
+- **Deferred minor for the final review:** with the board kept powered over USB, three Amiga power-event bursts
+  could each add one DF1 step and latch `df1Seen`. On Amiga power alone the count resets at power-on.
+- **Phase 0 bench (operator, one step per turn):** 1. power-cycle the A500 without the external drive and expect
+  "DF1 line: connected" and "none seen". 2. Serial before power-on: record the `pio claims:` line, and the lowest
+  heap low-water after a mount plus one minute. 3. Optional: the external drive makes the card read "detected".
+- **Already known for Task 5:** the 1.7.4/1.7.5 boot log read `pio claims: pio0=7 pio1=3 pio2=1`. These look like
+  SM bit masks, with the radio not counted. Task 5 must interpret them from the code before applying D1.
+
 ### 3bb. NFC: the RF field runs only during polls -- fw 1.7.5 (2026-10-08)
 
 **SHIPPED:** master 9d919c0, 1.7.5+g9d919c0 (seq 44), self-installed and confirmed on WifiFloppy1.
