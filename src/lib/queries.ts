@@ -324,6 +324,12 @@ export interface DeviceListItem {
   // The disk the device says it holds, when it says it holds one.
   mountedGame: string | null; mountedDiskNo: number | null;
   /**
+   * What the board's OLED was told about the mounted disk, so the card can
+   * draw the same screen (live-display.ts): the disk row's label and how many
+   * disks its title has. Null / 0 when nothing is mounted.
+   */
+  mountedLabel: string | null; mountedDiskCount: number | null;
+  /**
    * The write-protect flag of the disk row `mountedDiskId` names -- not the
    * `disks` row's org, the DEVICE's, via an org-scoped join (see below). Null
    * whenever no disk is mounted, which the card renders as "--" rather than
@@ -395,6 +401,11 @@ export async function listDevices(orgId: string): Promise<DeviceListItem[]> {
       )`,
       mountedGame: mountedGame.title,
       mountedDiskNo: devices.mountedDiskNo,
+      mountedLabel: mountedDisk.label,
+      mountedDiskCount: sql<number | null>`(
+        select count(*)::int from disks dc
+        where dc.game_id = ${devices.mountedGameId} and dc.org_id = ${devices.orgId}
+      )`,
       mountedWriteProtected: mountedDisk.writeProtected,
       trackMaxBytes: devices.trackMaxBytes, playsHd: devices.playsHd,
       preloadSha256: devices.preloadSha256, preloadState: devices.preloadState,

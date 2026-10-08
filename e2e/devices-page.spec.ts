@@ -413,3 +413,52 @@ test('a pairing code is shown with a live expiry, and disappears when it expires
     await getDb().delete(pairingCodes).where(eq(pairingCodes.code, mintedCode));
   }
 });
+
+// --- the drive-bezel card (design A2) ---------------------------------------
+
+test('the bezel display names the mounted disk, so the card does not repeat it until a mount is in flight', async ({ page, request }) => {
+  const { orgId } = await signUpFresh(page);
+  const { deviceId: idConverged } = await pairDevice(page, request, 'Bezel Converged');
+  const { deviceId: idPending } = await pairDevice(page, request, 'Bezel Pending');
+  const tag = runTag();
+  const { gameId: gameA, diskId: diskA } = await seedDisk(orgId, { title: `BezelA-${tag}`, diskNo: 1, sha256: sha(`${tag}-a`) });
+  const { gameId: gameB, diskId: diskB } = await seedDisk(orgId, { title: `BezelB-${tag}`, diskNo: 1, sha256: sha(`${tag}-b`) });
+
+  await setDevice(idConverged, {
+    desiredGameId: gameA, desiredDiskId: diskA, desiredSha256: sha(`${tag}-a`), desiredDiskNo: 1,
+    mountedGameId: gameA, mountedDiskId: diskA, mountedSha256: sha(`${tag}-a`), mountedDiskNo: 1,
+    lastSeenAt: new Date(),
+  });
+  // Asked for B while still holding A: the board's screen still shows A.
+  await setDevice(idPending, {
+    desiredGameId: gameB, desiredDiskId: diskB, desiredSha256: sha(`${tag}-b`), desiredDiskNo: 1,
+    mountedGameId: gameA, mountedDiskId: diskA, mountedSha256: sha(`${tag}-a`), mountedDiskNo: 1,
+    lastSeenAt: new Date(),
+  });
+
+  await page.goto('/devices');
+  // What the glass shows, in words: a one-disk title gets the disk's label
+  // alone, cut at the firmware's DC_LABEL_MAX (24) as mount.ts sends it.
+  const shown = `BezelA-${tag} — ${`BezelA-${tag} (Disk 1)`.slice(0, 24)}`;
+  await expect(page.getByTestId(`device-oled-${idConverged}`)).toHaveAttribute('data-oled', shown);
+  await expect(page.getByTestId(`device-disk-${idConverged}`)).toHaveClass(/sr-only/);
+
+  await expect(page.getByTestId(`device-oled-${idPending}`)).toHaveAttribute('data-oled', shown);
+  const words = page.getByTestId(`device-disk-${idPending}`);
+  await expect(words).not.toHaveClass(/sr-only/);
+  await expect(words).toContainText('Mounting…');
+  await expect(words).toContainText(`BezelB-${tag}`);
+});
+
+test('pressing the bezel display opens the drawer, and the bezel behind it cannot be pressed', async ({ page, request }) => {
+  await signUpFresh(page);
+  const { deviceId } = await pairDevice(page, request);
+  await page.goto('/devices');
+
+  await expect(page.getByTestId(`display-drawer-${deviceId}`)).toHaveCount(0);
+  await page.getByTestId(`device-oled-${deviceId}`).click();
+  await expect(page.getByTestId(`display-drawer-${deviceId}`)).toBeVisible();
+  await expect(page.getByTestId(`display-toggle-${deviceId}`)).toHaveText('▾ Change Display');
+  // inert: the blurred face is out of the tab order and the click path.
+  await expect(page.getByTestId(`device-oled-${deviceId}`).locator('xpath=..')).toHaveAttribute('inert', '');
+});

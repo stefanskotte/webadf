@@ -4,7 +4,7 @@ import { toast } from 'sonner';
 
 /**
  * The two device-facing writes, with the error handling their buttons grew,
- * shared so that every control that asks for them -- EjectButton and
+ * shared so that every control that asks for them -- the card bezel's eject and
  * WriteProtectToggle, and the header's drive chips -- says the same thing
  * when it fails. Each returns whether the server accepted the request; the
  * caller decides how to refresh, because a button in a card and an item in a

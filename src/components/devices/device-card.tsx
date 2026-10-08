@@ -5,17 +5,22 @@ import type { DeviceListItem } from '@/lib/queries';
 import type { NextInfo } from '@/lib/next-disk';
 import { preloadText } from '@/lib/drive-chips';
 import { HelpTip } from '@/components/help/help-tip';
-import { EjectButton } from './eject-button';
 import { NextDiskButton } from './next-disk-button';
 import { DeviceAlias } from './device-alias';
-import { DisplayEditor } from './display-editor';
+import { DriveFront } from './drive-front';
 
 /**
- * Layout A from the approved redesign (.superpowers/brainstorm/79975-1790191889):
- * name + online badge at the TOP, the mounted disk as the big text in the
- * MIDDLE, write-protect/firmware/actions along the BOTTOM. A square-ish card
- * (device-list.tsx puts it in an aspect-square grid cell) rather than the old
- * full-width row.
+ * The drive-bezel card (design A2, 2026-10-07): name, online badge and MAC on
+ * TOP; then the front of the drive -- the board's own OLED, drawn by
+ * display.wasm, its LEDs and eject -- with the Display drawer under it; then
+ * write-protect, firmware and actions along the BOTTOM. A square-ish card
+ * (device-list.tsx puts it in an aspect-square grid cell).
+ *
+ * The disk is named in words only while the OLED cannot be trusted to name
+ * it: a mount or eject in flight, or a request the board has not confirmed.
+ * Once the board reports, its screen says which disk, and repeating it was
+ * the duplicate this design removed. The words stay in the DOM (sr-only) for
+ * screen readers either way.
  */
 export function DeviceCard(
   { device, now, firmware, selection, onCancelUpdate, next }: {
@@ -86,6 +91,11 @@ export function DeviceCard(
     // one piece of information that line alone still carries.
     : `disk ${device.desiredDiskNo ?? '?'}`;
 
+  // Words on screen only while the OLED shows something other than the disk
+  // asked for: the old disk (pending, stale). Converged and empty: the glass
+  // already says it.
+  const spelled = state === 'pending' || state === 'stale';
+
   // While a mount or eject is still in flight (state === 'pending'), the
   // MOUNTED disk is the OLD one -- bigText above is already showing the NEW
   // disk's title (what's being mounted) or, while ejecting, the disk on its
@@ -146,15 +156,17 @@ export function DeviceCard(
         </span>
       )}
 
-      {/* Spacers push the identity block up and the actions block down,
-          leaving the disk in the middle -- literally, per the approved
-          option A. Both collapse to nothing once the card's real content
-          already fills it, which is how it grows taller instead of clipping
-          when a long name or a long error needs the room (see the aspect-
-          square note on the grid in device-list.tsx). */}
-      <div className="flex-1" />
+      <DriveFront device={device} online={online} />
 
-      <div className="flex w-full min-w-0 flex-col items-start gap-0.5">
+      {/* The disk in words. Visible only while the OLED would name the wrong
+          disk (see the doc comment); converged and empty keep it for screen
+          readers, since the glass is a canvas. */}
+      {/* Layout classes only when shown: `w-full` would override sr-only's 1px
+          width and push the hidden block past the card (2px of page scroll at
+          390px, mobile.spec.ts). */}
+      <div className={spelled ? 'flex w-full min-w-0 flex-col items-start gap-0.5 rounded-lg border-2 border-dashed px-3 py-2' : 'sr-only'}
+           style={spelled ? { borderColor: 'var(--primary-action)' } : undefined}
+           data-testid={`device-disk-${device.id}`}>
         <span className="text-[11px] font-semibold uppercase tracking-wide"
               style={{ color: state === 'stale' ? 'var(--amber-text)' : 'var(--muted)' }}>
           {heading}
@@ -165,23 +177,27 @@ export function DeviceCard(
           instead of stretching the card (and the grid row) past its column.
         */}
         <span className="w-full text-[17px] font-bold leading-tight"
-              style={{ overflowWrap: 'anywhere', color: state === 'empty' ? 'var(--muted)' : 'var(--ink)' }}>
+              style={{ overflowWrap: 'anywhere', color: 'var(--ink)' }}>
           {bigText}
         </span>
         <span className="text-[12px]" style={{ color: 'var(--muted)' }}>{subText}</span>
-        {/* Gated like the Next button below: the line is about the disk
-            in the drive, which only a converged board has. */}
-        {next?.preload && state === 'converged' && (
-          <span className="flex items-center gap-1">
-            <span className="text-[11px]" style={{ color: 'var(--muted)' }} data-testid={`device-preload-${device.id}`}
-                  data-preload={next.preload}>
-              {preloadText(next.diskNo, next.preload)}
-            </span>
-            <HelpTip topic="next-disk" />
-          </span>
-        )}
       </div>
+      {/* Gated like the Next button below: the line is about the disk in the
+          drive, which only a converged board has. Not on the OLED, so it
+          stays visible. */}
+      {next?.preload && state === 'converged' && (
+        <span className="flex items-center gap-1">
+          <span className="text-[11px]" style={{ color: 'var(--muted)' }} data-testid={`device-preload-${device.id}`}
+                data-preload={next.preload}>
+            {preloadText(next.diskNo, next.preload)}
+          </span>
+          <HelpTip topic="next-disk" />
+        </span>
+      )}
 
+      {/* Pushes the actions to the bottom of the square; collapses once the
+          content fills it (a long error, the open drawer), which is how the
+          card grows taller instead of clipping. */}
       <div className="flex-1" />
 
       {/* BOTTOM: write protection, firmware, and every existing action. */}
@@ -243,15 +259,9 @@ export function DeviceCard(
           ) : <span />}
           <div className="flex items-center gap-2">
             {next && state === 'converged' && <NextDiskButton deviceId={device.id} next={next} />}
-            {(device.desiredSha256 || device.mountedSha256) && <EjectButton deviceId={device.id} />}
           </div>
         </div>
       </div>
-
-      {/* The OLED layout editor (OLED layouts spec §7), collapsed by default:
-          opened, it grows the card taller -- the same escape hatch the
-          aspect-square note above describes for long content. */}
-      <DisplayEditor device={device} />
 
       {device.lastError && (
         // overflowWrap: same reasoning as the firmware line above (fix round
