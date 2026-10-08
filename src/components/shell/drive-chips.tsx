@@ -2,7 +2,7 @@
 
 import { useTransition } from 'react';
 import { useRouter } from 'next/navigation';
-import { ChevronDownIcon } from 'lucide-react';
+import { ArrowUpRightIcon, ChevronDownIcon } from 'lucide-react';
 import { Menu as MenuPrimitive } from '@base-ui/react/menu';
 import {
   DropdownMenu,
@@ -265,21 +265,32 @@ function DriveEntry({ chip }: { chip: DriveChip }) {
 
   return (
     <DropdownMenuGroup data-testid={`drive-entry-${chip.id}`}>
-      <DropdownMenuLabel className="flex flex-col gap-0.5 px-2 pt-1.5 pb-1">
-        <span className="flex items-center justify-between gap-2">
+      {/* The board's name goes to its card on /devices (operator, 2026-10-01).
+          A menu LinkItem rather than a bare <a> in the label, so it is reachable
+          by keyboard and closes the menu like every other entry. */}
+      <MenuPrimitive.LinkItem
+        data-testid={`drive-entry-link-${chip.id}`}
+        closeOnClick
+        render={<Link href={`/devices#device-${chip.id}`} />}
+        className={`${ITEM_CLASS} justify-between gap-2 pt-1.5`}
+      >
+        <span className="flex min-w-0 items-center gap-1">
           <span className="min-w-0 truncate text-[13px] font-semibold" style={{ color: 'var(--ink)' }}>
             {chip.name}
           </span>
-          {/* Both values, in words -- same badge colours as the Devices card. */}
-          <span className="inline-flex shrink-0 items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide"
-                style={{
-                  background: chip.online ? 'var(--success-bg)' : 'var(--danger-bg)',
-                  color: chip.online ? 'var(--success-fg)' : 'var(--danger-fg)',
-                }}
-                data-testid={`drive-entry-status-${chip.id}`}>
-            {chip.online ? 'Online' : 'Offline'}
-          </span>
+          <ArrowUpRightIcon aria-hidden className="size-3.5 shrink-0" style={{ color: 'var(--muted)' }} />
         </span>
+        {/* Both values, in words -- same badge colours as the Devices card. */}
+        <span className="inline-flex shrink-0 items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide"
+              style={{
+                background: chip.online ? 'var(--success-bg)' : 'var(--danger-bg)',
+                color: chip.online ? 'var(--success-fg)' : 'var(--danger-fg)',
+              }}
+              data-testid={`drive-entry-status-${chip.id}`}>
+          {chip.online ? 'Online' : 'Offline'}
+        </span>
+      </MenuPrimitive.LinkItem>
+      <DropdownMenuLabel className="flex flex-col gap-0.5 px-2 pt-0 pb-1">
         <span className="truncate text-[12px]" style={{ color: 'var(--muted)' }}
               data-testid={`drive-entry-disk-${chip.id}`}>
           {heading}

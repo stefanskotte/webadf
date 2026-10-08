@@ -111,7 +111,8 @@ export function DeviceCard(
     : 'none';
 
   return (
-    <div className="glass-card flex flex-col gap-2 p-5" data-testid={`device-${device.id}`}
+    <div id={`device-${device.id}`} className="glass-card flex scroll-mt-24 flex-col gap-2 p-5"
+         data-testid={`device-${device.id}`}
          data-state={state}>
       {/*
         TOP: identity. Below `lg` this is a NARROW card (two per row on a

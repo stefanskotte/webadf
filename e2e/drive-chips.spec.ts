@@ -102,6 +102,23 @@ test('an empty board: the chip shows its name and "empty", and the menu is reach
     await expect(menu(page, deviceId)).toHaveCount(0);
   });
 
+test('the board\'s name in its menu links to its own card on /devices', async ({ page, request }) => {
+  await signUpFresh(page);
+  const { deviceId } = await onlineBoard(page, request, 'Linked');
+  await page.goto('/library');
+
+  await chip(page, deviceId).click();
+  const link = page.getByTestId(`drive-entry-link-${deviceId}`);
+  await expect(link).toContainText('Linked');
+  await expect(link).toHaveAttribute('href', `/devices#device-${deviceId}`);
+  await link.click();
+  await expect(page).toHaveURL(new RegExp(`/devices#device-${deviceId}$`));
+  await expect(menu(page, deviceId)).toHaveCount(0);
+  // The anchor exists, and it is the board's card.
+  await expect(page.locator(`#device-${deviceId}`)).toHaveAttribute('data-testid', `device-${deviceId}`);
+  await expect(page.locator(`#device-${deviceId}`)).toBeInViewport();
+});
+
 test('a mount shows as loading until the board reports it, then the chip names the disk and Go to disk navigates',
   async ({ page, request }) => {
     const { orgId } = await signUpFresh(page);
