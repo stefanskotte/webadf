@@ -4654,10 +4654,18 @@ in place in §4 ("RULING 2026-10-08").
     They pile up at 40-170 a day on e2e days since 2026-09-18, so **the e2e suite leaks edited-disk objects**
     that its teardown never finds. About 55 are from 08-30 to 09-14 and may be the operator's pre-wipe uploads;
     nothing can reach them now.
-  - **Awaiting the operator's go-ahead** to set `BLOB_GC_DELETE=1` in Vercel.
+  - **ENABLED 2026-10-08 (operator approved):** `BLOB_GC_DELETE=1` is set in Vercel production, and production was
+    redeployed. A one-off run the same evening deleted 1,068 objects with 0 failures; the store went from 1,387 to
+    319 objects. A dry run afterwards found nothing to delete and passed the row-match brake. From now on it runs on
+    the Sunday cron, which will keep reclaiming the e2e leak.
 - **Verification:** vitest (blob-gc 21, help, drive-chips) green; tsc clean. Only the affected e2e specs were
   run, at the operator's direction (no full suite): game-detail, drive-chips and devices-page 43/43;
   disk-files-edit and disk-history 9/9.
+- **DF1 rulings (operator, 2026-10-08):** go ahead. v1 is read-only and holds only the next disk of the set. When a
+  real DF1 is seen, refuse, with an override behind a second confirmation. The sniffer may move, but report any
+  tradeoff. Bench on a plain A500 with Workbench disk sets. Idea 4 is deferred until multi-drive games are found
+  (most are NDOS). Add help items for each caveat. Models are A500/600/1200/2000/2500/3000(T)/4000(T): **"A5000"
+  is not a model** (see the research doc's rulings). Plan: `docs/superpowers/plans/2026-10-08-df1-second-drive.md`.
 - **DF1 research (multi-disk ideas 3+4):** `docs/superpowers/research/2026-10-08-df1-second-drive.md`. Rev B can
   serve DF1 in firmware only, behind a per-board setting that is off by default. The questions for the operator
   are listed at its end.
