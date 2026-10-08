@@ -1354,6 +1354,7 @@ bool dc_report_status(device_client_t *c, int psram_free, int rssi, const char *
     // SEL1 (spec §6 step 0): both readings, both values, once main.c knows.
     // 34 bytes at most; DC_STATUS_BODY_BYTES had 63 to spare (header note).
     static char sel1_tail[48];
+    const bool sel1_wired_sent = c->_sel1_wired, df1_seen_sent = c->_df1_seen;
     if (c->_sel1_known) {
         snprintf(sel1_tail, sizeof sel1_tail, ",\"sel1Wired\":%s,\"df1Seen\":%s",
                  c->_sel1_wired ? "true" : "false", c->_df1_seen ? "true" : "false");
@@ -1387,7 +1388,14 @@ bool dc_report_status(device_client_t *c, int psram_free, int rssi, const char *
         c->state = DC_HALTED; // token is dead; 401 anywhere halts
         return false;
     }
-    return r.status >= 200 && r.status < 300;
+    const bool accepted = r.status >= 200 && r.status < 300;
+    if (accepted && c->_sel1_known) {
+        // The server has heard these readings (the body carried them).
+        c->_sel1_sent_valid = true;
+        c->_sel1_sent_wired = sel1_wired_sent;
+        c->_df1_sent_seen = df1_seen_sent;
+    }
+    return accepted;
 }
 
 #define DC_POST_HEAD_BYTES 512
@@ -1694,6 +1702,12 @@ void dc_set_sel1(device_client_t *c, bool wired, bool df1_seen) {
     c->_sel1_known = true;
     c->_sel1_wired = wired;
     c->_df1_seen = df1_seen;
+}
+
+bool dc_sel1_owed(const device_client_t *c) {
+    return c->_sel1_known &&
+           (!c->_sel1_sent_valid || c->_sel1_sent_wired != c->_sel1_wired ||
+            c->_df1_sent_seen != c->_df1_seen);
 }
 
 #define DC_TAP_PATH       "/api/device/tap"

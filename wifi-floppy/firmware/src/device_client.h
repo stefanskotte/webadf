@@ -344,6 +344,10 @@ typedef struct {
     bool     _sel1_known;
     bool     _sel1_wired;      // a SEL1 select was seen since boot
     bool     _df1_seen;        // bus_df1_seen(): a real DF1 stepped while ours was off
+    // What the server last ACCEPTED (2xx): a change in the readings owes a report.
+    bool     _sel1_sent_valid;
+    bool     _sel1_sent_wired;
+    bool     _df1_sent_seen;
 
     // --- multi-disk Next disk (spec 2026-09-28 §4.3-4.4) ---
     dc_preload_t preload;
@@ -602,6 +606,10 @@ void dc_set_plays_hd(device_client_t *c, bool on);
 
 // SEL1 telemetry (spec §3/§6 step 0). Both values are always sent once set.
 void dc_set_sel1(device_client_t *c, bool wired, bool df1_seen);
+// True when the readings differ from the last status report the server accepted
+// (or none was accepted yet): a status report is OWED. Cleared by a successful
+// dc_report_status, so repeating dc_set_sel1 with the same values owes nothing.
+bool dc_sel1_owed(const device_client_t *c);
 
 // GET /api/device/firmware/<version>. Body bytes go to `sink`. Returns the HTTP status of a
 // COMPLETE response, or -1 (transport, framing, incomplete). 401 halts, as everywhere.
