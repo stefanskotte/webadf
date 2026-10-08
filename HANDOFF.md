@@ -4623,6 +4623,33 @@ Demozoo API (the bulk export makes per-lookup load on a non-profit unnecessary).
   allowlist checks only the first URL (the raster content-type allowlist and `nosniff` still apply).
 - **Cron drift:** the daily 01:30 cron against a 7-day gate can drift a refetch to 8 days.
 
+### 3ay. Device card as a drive bezel: the board's own OLED, Change Display drawer, Cancel (2026-10-08)
+
+**SHIPPED:** master f8be49c (merge of `device-card-bezel`, feature commit 07aa84a); Vercel production build green.
+No migration, no firmware change.
+
+- **What it is:** each device card shows a drive front. The bezel's screen is the board's OLED drawn by
+  `display.wasm` with the board's saved layout and the disk it last reported (`src/lib/live-display.ts`, text
+  format copied from the firmware); ON and DISK LEDs and the Eject button sit beside it. Pressing the screen, or
+  "Change Display" below it, opens the Display editor as a drawer framed in the bezel's charcoal; the bezel dims
+  and blurs and cannot be pressed behind it. The drawer has a red **Cancel** (discards edits, sends nothing);
+  Reset still restores the built-in default. `eject-button.tsx` was folded into `drive-bezel.tsx`.
+- **The disk line under the bezel** is hidden once the board confirms the disk and comes back (dashed box) while a
+  mount or eject is in flight or unconfirmed, because the screen still shows the old disk then. It stays in the
+  accessibility tree (`sr-only`). Trap fixed on the way: `w-full` overrides `sr-only`'s 1px width, so the
+  layout classes apply only while visible -- otherwise the mobile Devices grid scrolls sideways by 2px.
+- **Deliberately unlike the mockup:** the bezel button always says EJECT (a CANCEL for a pending mount needs the
+  gallery button's revert-to-previous-disk logic); no track number or download progress on the card's screen
+  (the board does not report them, so none are invented); folded cards keep their square shape (an existing
+  test requires it), leaving a gap above the bottom row.
+- **Verification:** vitest 1690 green; device-page specs 61/61 incl. 3 new (screen names the disk; screen opens
+  the drawer and the bezel is inert behind it; Cancel sends nothing). Full e2e (now **451** tests, ~1.7 h): run 1
+  lost 94 to a dropped network connection (96 `fetch failed`; its teardown aborted, run 2's teardown swept the
+  leftovers: 794 users, 800 invite codes); run 2 445/451, the 6 failures (admin-scan coverage, create-adf rename,
+  delete-to-library, devices pairing code, live-state write-protect, mobile nav sign-up) all passed when rerun
+  alone, and 4 of them had passed in run 1. **Operator ruling 2026-10-08: merge on that evidence** rather than a
+  third full run.
+
 ### 3ax. OLED panel type and per-board layouts -- firmware 1.7.1 (2026-10-05)
 
 **SHIPPED:** master 7815ff6 (feature), f36b99b (1.7.1). 1.7.1+gf36b99b (seq 40) self-installed and confirmed on
