@@ -59,7 +59,7 @@ SHA-256; you browse them and press mount; a custom board emulates the floppy dri
 | **Write-back piece 2a (server)** | ✅ **done 2026-09-18, 5 tasks + final fix wave, merged to `master`.** Disk history tables, browser edits and renames recorded as versions, `POST /api/device/write` + `/close`, live write-protect; see 4g |
 | **HFE v1 disks** | ✅ **done 2026-09-24, merged and live; bench-proven 2026-09-25.** Upload keeps the `.hfe`, the board plays it read-only, "Extract as ADF" when every sector decodes. Long-track HFEs (fw 1.2.0, 14 KB tracks, per-board `trackMaxBytes`): **Turrican boots on the Amiga**; extract round trip passed byte-exact. Only the weak-bit bench item is owed (needs a weak-bit HFE). A cylinder-17 hang after a disk swap is parked; see 3al, 3al-a |
 | **NFC tap-to-mount** | ✅ **merged and live 2026-09-26 (master 0f6fbd1); firmware 1.3.0 (seq 10) confirmed on the board.** Tap a tag → the board mounts that disk from its own org's library (swap; same tag = no-op; 1 s rate limit). Claude writes tags: `pnpm nfc:write "<disk>"` arms the board through the poll, you tap a blank tag, the read-back is reported. HW-147C/Si512 reader on I2C1 (0x28). **Firmware 1.3.1 (seq 11, 2026-09-26): a tap needs 3 s of absence; a write never lands on a tag already on the reader.** Bench: write + tap-mount + same-tag proven; see §3am. **Fob button (2026-09-26, b6c4e7c):** an NFC icon on every library card and disk row writes that disk to a tag from the web (dialog picks disk and board, 2:00 countdown, read-back shown; withdraws on close/cancel/leave); shown only when a board reports a reader |
-| **HD floppies, read-only** | ✅ **merged; firmware 1.4.1 verified on hardware 2026-09-27** (A5000, Kickstart 3.1); see 3an |
+| **HD floppies, read-only** | ✅ **merged; firmware 1.4.1 verified on hardware 2026-09-27** (A500, Kickstart 3.1); see 3an |
 | **HD disks: writes, history, editing, blank disks** | ✅ **merged 2026-09-28; firmware 1.5.1 (seq 31) on the board.** Bench steps 4-7 and the rev B `short 0` retest owed; see 3ao |
 | **Multi-disk "Next disk" + Next-disk NFC card + preload** | ✅ **bench-proven 2026-09-29 (all 3ap steps).** ⚠️→✅ **Step 4 lost a file header on Locale (block 597): the swap did not wait for the Amiga to finish writing. Fixed in firmware 1.6.1 (swap waits for the drive light), bench-proven 2026-09-29; see 3ar. Open: a restore under a running Amiga (3ar).** 🟡→✅ **merged 2026-09-28 (`92ec133`), web live; firmware 1.6.0 (seq 32) published and targeted, installs when the Amiga is on and idle.** Bench acceptance owed; see 3ap |
 | **Disk sets** | ✅ **merged 2026-09-29 (`aa3520d`), live; migration 0028 applied.** A title with several disks, arranged by a person: upload suggestion, title-page Disk set section (add, reorder, move out, undo). See 3aq |
@@ -2273,7 +2273,7 @@ separately.
   but passthrough must also switch OFF write capture, or the physical drive's writes land in the mounted image as
   a new library version. It is one-way: a physical drive on SEL0 (even empty) spoils the board's DF0, so a true
   toggle needs an SPDT on the drive's pin 10 (second pole to GP26 so firmware follows it), or a rev C header.
-  Bench items owed: SEL1 on pin 12 of the A500/A5000 cables, VOL with two terminated devices, unflashed-board boot.
+  Bench items owed: SEL1 on pin 12 of the A500 cables, VOL with two terminated devices, unflashed-board boot.
   **DECISION (operator, 2026-09-28): deferred to rev C, as a second floppy connector on the PCB** (study §3c: J5
   "DRIVE" header, all conductors straight from J1 except pin 10, which the board drives). Why: people keep their
   existing single-drive cable instead of hunting for one with two drive connectors. The firmware passthrough mode
@@ -2736,8 +2736,8 @@ separately.
   - **PENDING TEST ON REV B (when the batch arrives):** rerun the large HD copy (HANDOFF 3ao step 3) and check that
     no capture's `write: backlog ... ns <min>-<max>` shows a minimum below ~3,500 ns -- and read the `short <N>`
     field the same log line now carries (fw 1.5.1): it must be 0. On the rev A2 bench board
-    with the A5000 (no floppy-line pull-ups on either side) one capture of 28 had a 1,640 ns spike and decoded to
-    nothing (3ao bench notes); rev B's WDATA pull-up should remove it. Also re-check the A5000 bus reads idle-high.
+    with the A500 (no floppy-line pull-ups on either side) one capture of 28 had a 1,640 ns spike and decoded to
+    nothing (3ao bench notes); rev B's WDATA pull-up should remove it. Also re-check the A500 bus reads idle-high.
   - **Buzzer change requested from Shanshe (2026-09-26):** BZ1 → magnetic passive 5 V S&S SEA-1295Y-0520-42Ω-38P6.5
     (LCSC C2687681; Ø12×9.6 mm, pins Ø0.6 mm at 6.5 mm) with a 22 Ω in series from +5 V (Gotek style). The TDK piezo
     would only click once: nothing discharges a piezo behind a low-side switch. See wifi-floppy/hardware/SOURCING.md.
@@ -4664,8 +4664,9 @@ in place in §4 ("RULING 2026-10-08").
 - **DF1 rulings (operator, 2026-10-08):** go ahead. v1 is read-only and holds only the next disk of the set. When a
   real DF1 is seen, refuse, with an override behind a second confirmation. The sniffer may move, but report any
   tradeoff. Bench on a plain A500 with Workbench disk sets. Idea 4 is deferred until multi-drive games are found
-  (most are NDOS). Add help items for each caveat. Models are A500/600/1200/2000/2500/3000(T)/4000(T): **"A5000"
-  is not a model** (see the research doc's rulings). Plan: `docs/superpowers/plans/2026-10-08-df1-second-drive.md`.
+  (most are NDOS). Add help items for each caveat. Models are A500/600/1200/2000/2500/3000(T)/4000(T). The
+  "A5000" in older notes was a mislabel for the bench **A500 rev 8a.1** (operator, 2026-10-08), corrected
+  throughout. Plan: `docs/superpowers/plans/2026-10-08-df1-second-drive.md`.
 - **DF1 research (multi-disk ideas 3+4):** `docs/superpowers/research/2026-10-08-df1-second-drive.md`. Rev B can
   serve DF1 in firmware only, behind a per-board setting that is off by default. The questions for the operator
   are listed at its end.
@@ -5112,7 +5113,7 @@ frequent.
 ### 3ao. HD disks: Amiga writes, full history, browser editing, blank HD disks -- 2026-09-27 (spec/plan 2026-09-27-hd-writes-and-editing)
 
 **STATUS 2026-09-28: MERGED (`6c15c10`) and deployed; firmware `1.5.0+g200c493` published (registry seq 30) and on
-the bench board. Bench on the A5000 (Kickstart 3.1, rev A2 board):**
+the bench board. Bench on the A500 (Kickstart 3.1, rev A2 board):**
 - **Step 1 PASSED** -- DD Workbench boots; a DD save (a file dragged to a writable DD scratch disk) was captured
   (11/11, decode 3.3 ms), uploaded, closed, and appears in the library's version.
 - **Step 2 PASSED** -- HD Workbench disk set writable; Icons -> Copy of Clock: 5 HD tracks captured 22/22, decode
@@ -5123,7 +5124,7 @@ the bench board. Bench on the A5000 (Kickstart 3.1, rev A2 board):**
   decode 38.5 ms). Every good capture's minimum interval is 3,600 ns; a 1,640 ns interval is a spurious WDATA edge.
   The board rejected it (correctly), the Amiga then re-read track 51 and rewrote it without the lost blocks, so
   `Copy_of_Utilities/Clock.info` and `MultiView.info` are zero-filled in the library. Cause (probable): the rev A2
-  bench board has no WDATA pull-up and the A5000 has none either (real drives carry their own termination). Rev B
+  bench board has no WDATA pull-up and the A500 has none either (real drives carry their own termination). Rev B
   has 1 kOhm on all eight host-driven lines -- see the PENDING TEST ON REV B note in the Rev B backlog entry.
   Follow-up (defence in depth): a firmware glitch filter that merges impossibly short intervals before decode.
 - Steps 4 (offline), 5 (heap during a large write), 6 (restore), 7 (Format/DiskCopy) not yet run.
@@ -5172,7 +5173,7 @@ What it does:
 3. The HD Workbench test disk from 3an (`HDBench.adf`, `scripts/hd-test-disk.sh`) is in the library. Set it
    writable in the web app. Have a DD Workbench 3.1 disk, set writable, for step 1.
 
-**Bench checklist (A5000 rev 8a.1, Kickstart 3.1; each step a visible pass or fail; one physical step per turn):**
+**Bench checklist (A500 rev 8a.1, Kickstart 3.1; each step a visible pass or fail; one physical step per turn):**
 1. DD regression: the DD Workbench disk boots, and `Echo >DF0:ddcheck hi` makes a new version in the library.
 2. HD save: boot the HD Workbench disk; `Echo >DF0:hello hi` and `Copy RAM:HDCheck.txt DF0:copy.txt` (copy
    HDCheck.txt to RAM: first). The log shows `sec 0x3fffff/22 ALL` per written track and no `rejected`; the new
@@ -5200,9 +5201,9 @@ What it does:
 ### 3an. HD floppies, read-only -- 2026-09-26 (spec/plan 2026-09-26-hd-floppies-read-only)
 
 **FIXED AND VERIFIED ON HARDWARE 2026-09-27: firmware `1.4.1+g615026d` (registry seq 29) is on the bench board and passed
-the bench rerun on an A5000 rev 8a.1 (Kickstart 3.1): DD Workbench boots and DF0 Info shows 880K; DD->HD swap while
+the bench rerun on an A500 rev 8a.1 (Kickstart 3.1): DD Workbench boots and DF0 Info shows 880K; DD->HD swap while
 running; the HD disk's 560000-byte HDCheck.txt copies exactly; `Echo >DF0:test hi` says write protected; cold power-on
-with the HD disk desired boots from it. Merged to master.** (On the A5000 the floppy ribbon was first fitted reversed:
+with the HD disk desired boots from it. Merged to master.** (On the A500 the floppy ribbon was first fitted reversed:
 every input read low with SIDE floating, the Amiga said "no disk", and a staged OTA never applied because the board read
 "selected, motor on". Check the ribbon before blaming firmware; a continuity test J1 pin 10 -> pin 9 beeps when reversed.
 The NFC reader has read "absent" since the move -- a loose bench lead, not firmware.) Root cause
