@@ -30,7 +30,12 @@ enum { MI_OK, MI_NOTAGERR, MI_ERR };
 // hand lifts the tag and brings it back, which takes longer than this.
 #define NFC_REARRIVAL_ABSENT_MS 3000
 #define GAP_REPORT_MS            500   // a held tag's dropout longer than this is logged
-#define FIELD_OFF_MS        10   // long enough for every tag to lose power and reset
+// The field (the reader's transmitter) is on only for a poll: on, this long
+// for a tag to power up (ISO 14443's 5 ms), then WUPA. Between polls it is off,
+// which is also every tag's power reset -- the next WUPA is a fresh detection.
+// It used to stay on non-stop, and two bench modules died after days of that
+// (2026-10-03, and the replacement by 2026-10-08; HANDOFF 3bb).
+#define FIELD_SETTLE_MS      5
 #define COM_TIMEOUT_MS      25   // the chip's own timer: TReload 1000 x 25 us
 #define CRC_TIMEOUT_MS      10
 #define RESET_TIMEOUT_MS    50
@@ -44,7 +49,7 @@ typedef enum {
     ST_ABSENT,     // one VersionReg read every 5 s
     ST_RESET,      // PcdReset: SoftReset, then wait for PowerDown to clear
     ST_INIT,       // PCD_SI512_TypeA_Init
-    ST_IDLE,       // field on, waiting for the next poll
+    ST_IDLE,       // field off until the next poll, then on and settle
     ST_REQ,        // PcdRequest(WUPA)
     ST_ANTICOLL,   // PcdAnticoll(level 1) and the debounce decision
     ST_SELECT,     // PcdSelect
@@ -53,7 +58,6 @@ typedef enum {
     ST_WRITE,      // PcdWrite x 3
     ST_READBACK,   // PcdRead x 3 after a write
     ST_REPORT,     // hand the finished event to the mailbox
-    ST_COOLDOWN,   // field off 10 ms, on again
     ST_COM,        // subroutine: PcdComMF522
     ST_CRC,        // subroutine: CalulateCRC
 } st_t;
@@ -143,7 +147,7 @@ static const op_t INIT_OPS[] = {
     // 0xFFFF, measured), so without this every CRC we compute is wrong.
     { OP_W,   ModeReg,       0x3D },
     { OP_W,   CommandReg,    PCD_IDLE },       // receiver analog part on
-    { OP_SET, TxControlReg,  0x03 },           // PcdAntennaOn
+    // No PcdAntennaOn here: the field stays off until a poll (st_idle).
 };
 
 // PcdRequest's preamble. Its BitFramingReg = 0x07 travels as tx_bits into
@@ -453,6 +457,8 @@ static bool st_reset(nfc_reader_t *r) {
     return false;
 }
 
+// Every path back to idle passes here, so every one of them switches the
+// field off: a poll with no tag, a finished tap, a collision.
 static void enter_idle(nfc_reader_t *r, bool poll_now) {
     go(r, ST_IDLE);
     r->t0 = r->now_ms() - (poll_now ? POLL_MS : 0);
@@ -465,11 +471,30 @@ static bool st_init(nfc_reader_t *r) {
 }
 
 static bool st_idle(nfc_reader_t *r) {
-    uint32_t now = r->now_ms();
-    if (now - r->t0 < POLL_MS) return false;
-    expire_hold(r, now);
-    go(r, ST_REQ);
-    return true;
+    switch (r->phase) {
+    case 0:                                    // field off
+        if (r->pc < SCRIPT_LEN(FIELD_OFF_OPS)) return script_op(r, FIELD_OFF_OPS);
+        r->phase = 1;
+        return true;
+    case 1: {                                  // wait for the poll
+        uint32_t now = r->now_ms();
+        if (now - r->t0 < POLL_MS) return false;
+        expire_hold(r, now);
+        r->phase = 2;
+        r->pc = 0;
+        r->tmp = -1;
+        return true;
+    }
+    case 2:                                    // field on
+        if (r->pc < SCRIPT_LEN(FIELD_ON_OPS)) return script_op(r, FIELD_ON_OPS);
+        r->t1 = r->now_ms();
+        r->phase = 3;
+        return true;
+    default:                                   // let a tag power up
+        if (r->now_ms() - r->t1 < FIELD_SETTLE_MS) return false;
+        go(r, ST_REQ);
+        return true;
+    }
 }
 
 static bool st_req(nfc_reader_t *r) {
@@ -517,7 +542,7 @@ static bool st_anticoll(nfc_reader_t *r) {
         return true;
     default:
         if (r->pc < SCRIPT_LEN(ANTICOLL_POST_OPS)) return script_op(r, ANTICOLL_POST_OPS);
-        if (r->phase == 3) { go(r, ST_COOLDOWN); return true; }   // collision or garbage
+        if (r->phase == 3) { enter_idle(r, false); return true; }   // collision or garbage
         break;
     }
     // A tag held on the reader is seen every ~quarter second, and only its
@@ -529,7 +554,7 @@ static bool st_anticoll(nfc_reader_t *r) {
         if (r->missed && now - r->last_detect > GAP_REPORT_MS) post_gap(r, now, false);
         r->last_seen = r->last_detect = now;
         r->missed = false;
-        go(r, ST_COOLDOWN);
+        enter_idle(r, false);
         return true;
     }
     // Read or write is decided here, once, from what was armed when the tag
@@ -703,30 +728,8 @@ static bool st_report(nfc_reader_t *r) {
         r->armed = false;            // only the request that ran; a newer one stays
     r->writing = false;
     emit(r, &r->built);
-    go(r, ST_COOLDOWN);
+    enter_idle(r, false);
     return false;
-}
-
-// Field off long enough for every tag in it to lose power: the next WUPA is
-// then a fresh detection, not a tag left in READY or ACTIVE by this round.
-static bool st_cooldown(nfc_reader_t *r) {
-    switch (r->phase) {
-    case 0:
-        if (r->pc < SCRIPT_LEN(FIELD_OFF_OPS)) return script_op(r, FIELD_OFF_OPS);
-        r->t0 = r->now_ms();
-        r->phase = 1;
-        r->pc = 0;
-        r->tmp = -1;
-        return true;
-    case 1:
-        if (r->now_ms() - r->t0 < FIELD_OFF_MS) return false;
-        r->phase = 2;
-        return true;
-    default:
-        if (r->pc < SCRIPT_LEN(FIELD_ON_OPS)) return script_op(r, FIELD_ON_OPS);
-        enter_idle(r, false);
-        return true;
-    }
 }
 
 // Three failed transfers in a row: the chip is gone. Whatever was half-built
@@ -756,7 +759,6 @@ static bool handle(nfc_reader_t *r) {
     case ST_READBACK: return st_read(r);
     case ST_WRITE:    return st_write(r);
     case ST_REPORT:   return st_report(r);
-    case ST_COOLDOWN: return st_cooldown(r);
     case ST_COM:      return st_com(r);
     case ST_CRC:      return st_crc(r);
     }

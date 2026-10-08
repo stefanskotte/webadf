@@ -653,7 +653,33 @@ static void arm_write_next_over_a_lying_tag_waits_for_it_to_return(void) {
     end_checks();
 }
 
+// The field is a transmitter, and the bench's Si512 modules died after days
+// of it running non-stop (2026-10-03 and again by 2026-10-08; HANDOFF 3bb).
+// It is on only for each poll now: on, the tag's power-up time, the WUPA and
+// its answer (or the chip's 25 ms timeout), then off until the next poll.
+static void the_field_is_off_between_polls(void) {
+    setup();
+    F.tag_present = false;
+    run(10000);
+    uint32_t on = si512_fake_field_on_ms(&F);
+    CHECK(on > 0, "the reader still polls");
+    CHECK(on < 1500, "field on under 15% of the time with no tag");
+    end_checks();
+}
+
+// A tag needs the field for a few ms before it can answer; a reader that
+// switched it on and sent WUPA at once would never see one (fake: 5 ms).
+static void a_tag_is_found_with_the_field_off_at_rest(void) {
+    setup();
+    put_id(ID);
+    run(1000);
+    CHECK_EQ_INT(count(NFC_EV_TAG_READ), 1);
+    end_checks();
+}
+
 int main(void) {
+    RUN(the_field_is_off_between_polls);
+    RUN(a_tag_is_found_with_the_field_off_at_rest);
     RUN(absent_chip_stays_absent_and_rechecks);
     RUN(present_chip_inits_and_emits_present);
     RUN(tag_read_reports_disk_id);

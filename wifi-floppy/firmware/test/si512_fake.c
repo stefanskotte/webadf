@@ -114,6 +114,8 @@ static void transceive(si512_fake_t *f, uint8_t tx_bits) {
     if (n >= 1 && fr[0] == 0x30 && f->first_read_at < 0) f->first_read_at = f->ops;
     if (!f->tag_present) f->tag_state = TAG_IDLE;     // it lost power
     if (!f->tag_present || !field_on(f)) { silence(f); return; }
+    // Not powered up yet: the field came on too recently for the tag to answer.
+    if (f->clock && *f->clock - f->field_on_at < SI512_FAKE_TAG_POWERUP_MS) { silence(f); return; }
 
     // The second half of a WRITE: 16 bytes + CRC_A.
     if (f->write_block >= 0) {
@@ -253,6 +255,11 @@ static bool fake_wr(void *ctx, uint8_t reg, uint8_t v) {
         break;
     case TxControlReg:
         if (f->txcontrol_at < 0) f->txcontrol_at = idx;
+        if (f->clock) {
+            bool was = (f->reg[reg] & 0x03) == 0x03, is = (v & 0x03) == 0x03;
+            if (!was && is) f->field_on_at = *f->clock;
+            if (was && !is) f->field_on_ms += *f->clock - f->field_on_at;
+        }
         f->reg[reg] = v;
         if ((v & 0x03) != 0x03) f->tag_state = TAG_IDLE;   // field off: the tag loses power
         break;
@@ -286,4 +293,9 @@ static int fake_rd(void *ctx, uint8_t reg) {
 nfc_bus_t si512_fake_bus(si512_fake_t *f) {
     nfc_bus_t b = { fake_wr, fake_rd, f };
     return b;
+}
+
+uint32_t si512_fake_field_on_ms(const si512_fake_t *f) {
+    uint32_t open = (f->clock && (f->reg[TxControlReg] & 0x03) == 0x03) ? *f->clock - f->field_on_at : 0;
+    return f->field_on_ms + open;
 }

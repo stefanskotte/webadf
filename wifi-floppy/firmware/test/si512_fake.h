@@ -12,12 +12,17 @@
 //     tag does, and what a wrong init would produce;
 //   - ComIrqReg/DivIrqReg writes follow the Set1/Set2 rule (bit 7 set = set
 //     the marked bits, clear = clear them);
+//   - a tag powers up from the field: it answers only once the field has
+//     been on for SI512_FAKE_TAG_POWERUP_MS (ISO 14443's 5 ms), so a reader
+//     that switches the field on and talks at once finds nothing;
 //   - replies land in the FIFO at once, but the IRQ bits that say so appear
 //     only `reply_ms` after the command started; no answer raises TimerIRq
 //     25 ms after it (TReload 1000 x 25 us), as the chip's timer would.
 #include <stdbool.h>
 #include <stdint.h>
 #include "../src/nfc_reader.h"
+
+#define SI512_FAKE_TAG_POWERUP_MS 5
 
 typedef struct {
     // --- the script ---
@@ -39,6 +44,8 @@ typedef struct {
     int first_read_at;         // op index of the first READ (0x30) sent, -1
     int trailer_writes;        // WRITEs aimed at block 7 (must stay 0)
     int reads;                 // READ commands the tag answered
+    uint32_t field_on_ms;      // total time the field has been on (closed intervals)
+    uint32_t field_on_at;      // when the field last came on (valid while it is on)
 
     // --- the chip (private) ---
     uint8_t reg[64];
@@ -57,6 +64,9 @@ typedef struct {
 void si512_fake_init(si512_fake_t *f, const uint32_t *clock);
 
 nfc_bus_t si512_fake_bus(si512_fake_t *f);
+
+// Total field-on time so far, including the interval still open. Needs a clock.
+uint32_t si512_fake_field_on_ms(const si512_fake_t *f);
 
 // CRC_A (ISO 14443-3): poly 0x8408 reflected, init 0x6363, no xorout.
 uint16_t si512_fake_crc_a(const uint8_t *b, int n);

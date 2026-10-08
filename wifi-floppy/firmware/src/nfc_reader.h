@@ -73,6 +73,7 @@ typedef struct nfc_reader {
     int max_ops;         // this step's cap: 1..NFC_MAX_OPS_PER_STEP (nfc_set_max_ops)
     int fails;           // consecutive failed transfers
     uint32_t t0;         // when the current wait began
+    uint32_t t1;         // when the field came on for this poll (st_idle)
     bool checked_once;   // ABSENT has made its first presence check
 
     // The PcdComMF522 / CalulateCRC subroutine: its arguments and results.
