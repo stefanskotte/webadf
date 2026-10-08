@@ -4625,6 +4625,10 @@ Demozoo API (the bulk export makes per-lookup load on a non-profit unnecessary).
 
 ### 3az. The 1.3" 128x64 panel is an SH1106 -- fw 1.7.4 (2026-10-08)
 
+**THE OLED WORK IS CLOSED (operator, 2026-10-08: "close off the OLED display business for now, functionality as I
+want it").** This covers 3ax and 3az. The 3ax re-pair step (5) and the "board reports its panel type" backlog item
+are DROPPED, not owed. Don't raise them again unless the operator reopens display work.
+
 **SHIPPED:** master 7ca13f0, 1.7.4+g7ca13f0 (seq 43), self-installed on WifiFloppy1. **Glass check PASSED 2026-10-08** on the 1.3" SH1106: "READY", wifi icon and 2x "No disk" are clean, with no edge column (so the 2-column offset is right). The default layout fills only the top 32 rows, by design (3ax).
   **0.96" 128x64 SSD1306 also PASSED 2026-10-08** on 1.7.4, swapped in with power off and working with no
   changes: "LOADED xsysinfo.. Disk 1 0/79" and icons are clean. This proves the new SSD1306 page-addressing path
