@@ -4647,6 +4647,10 @@ Demozoo API (the bulk export makes per-lookup load on a non-profit unnecessary).
 - **Layout:** the 128x32 custom layout (v11) was rejected on 128x64 ("panel mismatch", v12), so v13 is the 128x64
   default. The old blob, for going back to the small panel:
   `010008000201000000000000080178000000000003016e000000000001010e00000000000401000880020000060162180000000007016818000000000501001880000000`.
+- **Devices card (ea65056, same day):** at the operator's request the card is no longer square (the 2026-09-24
+  ruling is reversed). It is as tall as its content and grows and shrinks with the Change Display drawer. The grid
+  uses `items-start`, so a neighbour does not stretch. Only `e2e/devices-page.spec.ts` was run (19/19); the operator
+  said a full suite was not needed for this.
 - **Backlog:** the server still does not learn the controller or the panel geometry from the board.
 
 ### 3ay. Device card as a drive bezel: the board's own OLED, Change Display drawer, Cancel (2026-10-08)
