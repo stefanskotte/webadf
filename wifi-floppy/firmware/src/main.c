@@ -429,9 +429,15 @@ static PIO  pio = pio0;
 static uint sm_out, sm_in;
 static int  dma_ch;
 
-static volatile int  cur_cyl   = 0;
+// Per drive (bus_out.h WF_DRIVES; 0 = DF0, 1 = DF1). n_drives is how many the
+// board answers as -- set once at boot on core0, before the bus IRQs are
+// enabled; Phase 1: 1, so only [0] ever moves. cur_side is shared: SIDE is
+// one bus line for every drive.
+static volatile unsigned n_drives = 1;
+static volatile int  cur_cyl[WF_DRIVES];
 static volatile int  cur_side  = 0;
-static volatile int  want_track = -1;      // core0 -> core1 request
+static volatile int  want_track[WF_DRIVES] = { -1, -1 };   // core0 -> core1 request
+_Static_assert(WF_DRIVES == 2, "want_track's initializer names every drive");
 static volatile bool track_live = false;
 
 // Sized for the longest track track_cache_get() can return -- an encoded HD
@@ -575,29 +581,9 @@ static void __isr __not_in_flash_func(dma_irq)(void) {
 }
 
 // ---------------------------------------------------------------- bus ISRs
-// One STEP pulse, with SEL0 and DIR as latched by the PIO at its falling edge.
-static void step_pulse(uint32_t word) {
-    const bus_step_t st = bus_step_decode(word);
-    // Another drive's step. Checked before anything else: it must not move the
-    // head, clear CHNG, or count towards the too-fast filter, whose clock a
-    // DF1 seek would otherwise reset.
-    if (!st.selected) {
-        steps_other_drive++;
-        if (st.sel_mask & BUS_SEL_DF1) {
-            const absolute_time_t t = get_absolute_time();
-            // Same 1 ms rule as DF0's, with its own clock: the power-event
-            // burst must not count as a drive.
-            if (absolute_time_diff_us(g_df1_last_step, t) >= STEP_MIN_INTERVAL_US) g_df1_steps++;
-            g_df1_last_step = t;
-        }
-        return;
-    }
-    const bool outwards = st.outwards;
-
-    // DIR as read NOW, at interrupt time -- what the GPIO ISR used to act on.
-    // Compared against the latched value for steps_dir_late, never used.
-    const bool late = gpio_get(PIN_DIR);
-
+// One step drive d acts on: today's DF0 handling, indexed by d. `late` is DIR
+// as read at interrupt time, for steps_dir_late (DF0 only).
+static void step_drive(unsigned d, bool outwards, bool late) {
     /*
      * Reject pulses that arrive faster than a drive can step.
      *
@@ -618,27 +604,61 @@ static void step_pulse(uint32_t word) {
      * than a fix for anything yet observed -- but a corrupted cylinder counter
      * survives until recalibration, which makes one occurrence enough to matter.
      */
-    static absolute_time_t last_step;    // zero at boot: the first pulse always passes
+    // One clock per drive: zero at boot, so each drive's first pulse passes,
+    // and one drive's seek never resets another's filter.
+    static absolute_time_t last_step[WF_DRIVES];
     const absolute_time_t now_us = get_absolute_time();
-    if (absolute_time_diff_us(last_step, now_us) < STEP_MIN_INTERVAL_US) {
+    if (absolute_time_diff_us(last_step[d], now_us) < STEP_MIN_INTERVAL_US) {
         steps_rejected++;
         return;
     }
-    last_step = now_us;
+    last_step[d] = now_us;
 
     // DIRC high = towards 0
-    if (outwards) { if (cur_cyl > 0) cur_cyl--; }
-    else          { if (cur_cyl < NUM_CYL - 1) cur_cyl++; }
-    bus_out_set(PIN_TRK0, cur_cyl == 0);
-    dskchg_on_step();
-    want_track = cur_cyl * 2 + cur_side;
-    wf_trace(WF_EV_STEP, (uint32_t)cur_cyl, outwards ? 1u : 0u);
+    if (outwards) { if (cur_cyl[d] > 0) cur_cyl[d]--; }
+    else          { if (cur_cyl[d] < NUM_CYL - 1) cur_cyl[d]++; }
+    bus_out_set_drive(d, PIN_TRK0, cur_cyl[d] == 0);
+    dskchg_on_step_d(d);
+    want_track[d] = cur_cyl[d] * 2 + cur_side;
+    if (d != 0) return;            // the log, the counters and the LED are DF0's
+    wf_trace(WF_EV_STEP, (uint32_t)cur_cyl[0], outwards ? 1u : 0u);
     steps_seen++;
     if (late != outwards) {
         steps_dir_late++;
-        wf_trace(WF_EV_DIR_LATE, (uint32_t)cur_cyl, late ? 1u : 0u);
+        wf_trace(WF_EV_DIR_LATE, (uint32_t)cur_cyl[0], late ? 1u : 0u);
     }
     led_blip();
+}
+
+// One STEP pulse, with the selects and DIR as latched by the PIO at its
+// falling edge. Every configured drive whose select was low steps.
+static void step_pulse(uint32_t word) {
+    const bus_step_t st = bus_step_decode(word);
+    const unsigned nd = n_drives;
+    // Selects of drives this board answers as (bit d = drive d).
+    const uint8_t ours = st.sel_mask & (uint8_t)((1u << nd) - 1u);
+    // Another drive's step. Checked before anything else: it must not move the
+    // head, clear CHNG, or count towards the too-fast filter, whose clock a
+    // DF1 seek would otherwise reset. With one drive configured this is
+    // exactly "SEL0 released", as before.
+    if (ours == 0) {
+        steps_other_drive++;
+        if (st.sel_mask & BUS_SEL_DF1) {
+            const absolute_time_t t = get_absolute_time();
+            // Same 1 ms rule as DF0's, with its own clock: the power-event
+            // burst must not count as a drive.
+            if (absolute_time_diff_us(g_df1_last_step, t) >= STEP_MIN_INTERVAL_US) g_df1_steps++;
+            g_df1_last_step = t;
+        }
+        return;
+    }
+
+    // DIR as read NOW, at interrupt time -- what the GPIO ISR used to act on.
+    // Compared against the latched value for steps_dir_late, never used.
+    const bool late = gpio_get(PIN_DIR);
+
+    for (unsigned d = 0; d < nd; d++)
+        if (ours & (1u << d)) step_drive(d, st.outwards, late);
 }
 
 // RX-not-empty on the step_dir state machine: one word per pulse. Drains the
@@ -661,7 +681,7 @@ static uint mtr_sm;
 static void __isr mtr_pio_isr(void) {
     while (!pio_sm_is_rx_fifo_empty(bus_pio, mtr_sm)) {
         const bool running = (pio_sm_get(bus_pio, mtr_sm) & 1u) != 0;
-        dskchg_on_motor(running);
+        dskchg_on_motor_d(0, running);    // one sel_mtr SM (SEL0) in Phase 1
         wf_trace(WF_EV_MOTOR, running ? 1u : 0u, 0);
     }
 }
@@ -1087,17 +1107,18 @@ static void __isr gpio_isr(uint gpio, uint32_t events) {
             // The track under the head NOW. By the time the service loop logs
             // the decode the Amiga may have stepped, which produced a false
             // "track says 69, head is on 70" on 2026-09-15.
-            write_track = cur_cyl * 2 + cur_side;
+            write_track = cur_cyl[0] * 2 + cur_side;
             write_token = psram_active_token();
             flux_capture_arm();
         } else {
             flux_capture_disarm();
         }
-        wf_trace(WF_EV_WGATE, writing ? 1u : 0u, (uint32_t)(cur_cyl * 2 + cur_side));
+        wf_trace(WF_EV_WGATE, writing ? 1u : 0u, (uint32_t)(cur_cyl[0] * 2 + cur_side));
     } else if (gpio == PIN_SIDE) {
         cur_side = gpio_get(PIN_SIDE) ? 0 : 1;       // low = side 1
-        want_track = cur_cyl * 2 + cur_side;
-        if (!WF_BUS_SNIFF) wf_trace(WF_EV_SIDE, (uint32_t)cur_side, (uint32_t)want_track);
+        // SIDE is one line for every drive: each configured drive's request moves.
+        for (unsigned d = 0; d < n_drives; d++) want_track[d] = cur_cyl[d] * 2 + cur_side;
+        if (!WF_BUS_SNIFF) wf_trace(WF_EV_SIDE, (uint32_t)cur_side, (uint32_t)want_track[0]);
     }
 }
 
@@ -2497,9 +2518,10 @@ int main(void) {
         (1u << PIN_TRK0) | (1u << PIN_WPROT),   // DF0, as before
         0,                                      // DF1: unused until Phase 2
     };
-    bus_out_init(bus_pio, 1, boot_lines);       // Phase 1: one drive, behaviour unchanged
+    bus_out_init(bus_pio, n_drives, boot_lines);   // Phase 1: one drive, behaviour unchanged
 
     dskchg_init();
+    dskchg_set_drives(n_drives);
     track_cache_init();
 
     // Both are hand-wired bring-up aids on unrouted header pins and both are
@@ -2724,7 +2746,7 @@ int main(void) {
     // reason stated for it just had to stop naming the wrong first write.
     flash_safe_execute_core_init();
 
-    want_track = 0;
+    want_track[0] = 0;
 
     // Track service: psram_image.h/.c's own repeated documentation is
     // explicit that "core0 (track_cache.c's track_cache_get()) is the only
@@ -2905,7 +2927,7 @@ int main(void) {
          * in the ISR against a measured threshold, on a log verified to have
          * dropped nothing.
          */
-        int want = want_track;
+        int want = want_track[0];
         if (want >= 0 && want != loaded) {
             uint32_t bits;
             const uint64_t get_t0 = time_us_64();
@@ -3188,7 +3210,7 @@ int main(void) {
             const char *t = nfc_ui_title(ui.title, &nfc_armed);
             if (t != ui.title) snprintf(ui.title, sizeof ui.title, "%s", t);
             ui.show_track = disk_mounted;
-            ui.cyl        = cur_cyl;
+            ui.cyl        = cur_cyl[0];
             ui.max_cyl    = NUM_CYL - 1;
             // The lemming walks off core0's own clock, which is the point of
             // it: every other field on this panel is static between events, so
