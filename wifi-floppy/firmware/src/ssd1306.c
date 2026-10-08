@@ -54,10 +54,51 @@ static bool cmd(uint8_t addr, const uint8_t *bytes, size_t n) {
   return i2c_write_timeout_us(board_i2c(), addr, buf, n + 1, false, I2C_TIMEOUT_US) >= 0;
 }
 
+/*
+ * TWO CONTROLLERS behind the same address. 0.91"/0.96" modules are SSD1306;
+ * most 1.3" 128x64 modules are SH1106, which shares the basic command set but
+ * NOT the SSD1306's horizontal addressing (0x20) or its column/page windows
+ * (0x21/0x22). Found 2026-10-08 when the operator fitted a 1.3" panel: every
+ * blit's window commands were ignored, so all our bytes landed in one page
+ * and the rest of the glass showed power-on RAM noise. Worse, the SH1106
+ * reads the windows' OPERANDS as commands of its own (0x7F is "start line
+ * 63"). So blits now use PAGE addressing, which both controllers implement
+ * identically (0xB0|page, column low/high nibbles), and the SH1106's 132-
+ * column RAM is offset by 2 so column 0 is the glass's first.
+ */
+static bool s_sh1106;
+
+/*
+ * Which controller answers at `addr`. Both return a status byte on a read;
+ * its low nibble is an ID: 0x08 (or 0x00) on an SH1106, 0x03-0x07 on an
+ * SSD1306 -- the same test Meshtastic's I2C scan uses. Read until two agree
+ * (at most four tries). Anything unrecognised is treated as an SSD1306, which
+ * is what every earlier build assumed, and the raw byte is logged either way.
+ */
+static bool detect_sh1106(uint8_t addr) {
+  uint8_t r = 0xFF, prev;
+  for (int i = 0; i < 4; i++) {
+    prev = r;
+    const uint8_t ctrl = 0x00;
+    if (i2c_write_timeout_us(board_i2c(), addr, &ctrl, 1, true, I2C_TIMEOUT_US) < 0 ||
+        i2c_read_timeout_us(board_i2c(), addr, &r, 1, false, I2C_TIMEOUT_US) < 0) {
+      wf_logf(WF_WARN, "oled: 0x%02x status read failed -- assuming SSD1306", addr);
+      return false;
+    }
+    if (i > 0 && r == prev) break;
+  }
+  const uint8_t id = r & 0x0F;
+  const bool sh = (id == 0x08 || id == 0x00);
+  wf_logf(WF_INFO, "oled: 0x%02x status 0x%02x -> %s", addr, r,
+          sh ? "SH1106" : (id >= 0x03 && id <= 0x07) ? "SSD1306"
+                        : "unrecognised, assuming SSD1306");
+  return sh;
+}
+
 /* The controller configuration for `panel`, and nothing else: no clear. */
 static bool send_init_sequence(uint8_t addr, panel_t panel) {
   const int height = panel_height(panel);
-  const uint8_t init[] = {
+  const uint8_t ssd1306[] = {
     0xAE,              /* display off while it is reconfigured           */
     0xD5, 0x80,        /* clock divide / oscillator frequency            */
     0xA8, (uint8_t)(height - 1), /* multiplex ratio: rows - 1           */
@@ -65,7 +106,8 @@ static bool send_init_sequence(uint8_t addr, panel_t panel) {
     0x40,              /* start line 0                                   */
     0x8D, 0x14,        /* CHARGE PUMP ON -- without this a correctly     */
                        /* wired panel stays black and looks unwired      */
-    0x20, 0x00,        /* horizontal addressing: RAM auto-advances       */
+    0x20, 0x02,        /* PAGE addressing, the mode ssd1306_blit uses    */
+                       /* because the SH1106 has no other (see above)    */
     0xA1,              /* segment remap, so column 0 is on the left      */
     0xC8,              /* COM scan descending, so row 0 is at the top    */
     0xDA, (uint8_t)(panel == PANEL_128x64 ? 0x12 : 0x02),
@@ -80,12 +122,32 @@ static bool send_init_sequence(uint8_t addr, panel_t panel) {
     0xA6,              /* normal, not inverted                           */
     0xAF,              /* display on                                     */
   };
-  for (size_t i = 0; i < sizeof init; ) {
+  const uint8_t sh1106[] = {
+    0xAE,
+    0xD5, 0x80,
+    0xA8, (uint8_t)(height - 1),
+    0xD3, 0x00,
+    0x40,
+    0xAD, 0x8B,        /* DC-DC ON: the SH1106's charge pump command;    */
+                       /* it has no 0x8D and no 0x20 mode select         */
+    0xA1,
+    0xC8,
+    0xDA, (uint8_t)(panel == PANEL_128x64 ? 0x12 : 0x02),
+    0x81, 0xCF,
+    0xD9, 0x22,        /* precharge: the SH1106's reset default          */
+    0xDB, 0x35,        /* VCOM deselect: the SH1106's reset default      */
+    0xA4,
+    0xA6,
+    0xAF,
+  };
+  const uint8_t *init = s_sh1106 ? sh1106 : ssd1306;
+  const size_t len = s_sh1106 ? sizeof sh1106 : sizeof ssd1306;
+  for (size_t i = 0; i < len; ) {
     // Send one command plus its operands at a time; 0xD5/0xA8/0xD3/0x8D/0x20/
-    // 0xDA/0x81/0xD9/0xDB each take one, the rest take none.
+    // 0xAD/0xDA/0x81/0xD9/0xDB each take one, the rest take none.
     size_t n = 1;
     switch (init[i]) {
-      case 0xD5: case 0xA8: case 0xD3: case 0x8D:
+      case 0xD5: case 0xA8: case 0xD3: case 0x8D: case 0xAD:
       case 0x20: case 0xDA: case 0x81: case 0xD9: case 0xDB: n = 2; break;
       default: n = 1; break;
     }
@@ -96,6 +158,8 @@ static bool send_init_sequence(uint8_t addr, panel_t panel) {
 }
 
 bool ssd1306_init(uint8_t addr, panel_t panel) {
+  // At boot's 100 kHz, before anything is configured. reinit reuses the answer.
+  s_sh1106 = detect_sh1106(addr);
   if (!send_init_sequence(addr, panel)) return false;
 
   /*
@@ -133,16 +197,14 @@ bool ssd1306_reinit(uint8_t addr, panel_t panel) {
 bool ssd1306_blit(uint8_t addr, panel_t panel, int page, int col, const uint8_t *bytes, int n) {
   if (page < 0 || page >= panel_height(panel) / 8 || col < 0 || n <= 0 || col + n > WIDTH) return false;
 
-  // The column END is the last byte of THIS write, not the edge of the panel.
-  // With horizontal addressing the controller auto-advances and wraps at the
-  // window's end; a window left open to column 127 would let a short write
-  // leave the pointer parked mid-row, and the next blit's own window command
-  // is the only thing that would rescue it. Closing the window exactly makes
-  // each blit independent of whatever ran before it.
-  const uint8_t window[] = { 0x21, (uint8_t)col, (uint8_t)(col + n - 1),
-                             0x22, (uint8_t)page, (uint8_t)page };
-  if (!cmd(addr, &window[0], 3)) return false;
-  if (!cmd(addr, &window[3], 3)) return false;
+  // Page addressing: page, then the column's low and high nibbles, in one
+  // transfer. Each blit sets its own start, so it is independent of whatever
+  // ran before it; the column advances within the page and never wraps into
+  // the next one. The SH1106's visible columns are RAM 2..129 of 132.
+  const int c = col + (s_sh1106 ? 2 : 0);
+  const uint8_t addr_cmds[] = { (uint8_t)(0xB0 | page), (uint8_t)(0x00 | (c & 0x0F)),
+                                (uint8_t)(0x10 | (c >> 4)) };
+  if (!cmd(addr, addr_cmds, sizeof addr_cmds)) return false;
 
   uint8_t buf[1 + WIDTH];
   buf[0] = 0x40;                          /* "data follows" */
@@ -215,8 +277,8 @@ bool ssd1306_selftest(uint8_t addr, panel_t panel) {
   for (int page = 0; page < pages; page++)
     if (!ssd1306_blit(addr, panel, page, 0, fb[page], WIDTH)) return false;
 
-  wf_logf(WF_INFO, "oled: 0x%02x initialised as %dx%d, frame + X drawn — "
+  wf_logf(WF_INFO, "oled: 0x%02x initialised as %dx%d %s, frame + X drawn — "
                    "is the box closed on all four edges, strokes unbroken?",
-          addr, WIDTH, height);
+          addr, WIDTH, height, s_sh1106 ? "SH1106" : "SSD1306");
   return true;
 }

@@ -1,6 +1,6 @@
 #ifndef SSD1306_H
 #define SSD1306_H
-// The SSD1306 transport: init, a bounded per-page write, and the bring-up
+// The SSD1306 / SH1106 transport (the controller is detected at init): init, a bounded per-page write, and the bring-up
 // self-test that was here first. The LAYOUT lives in display.c, which is pure
 // and host-tested; this file is only how bytes reach the glass.
 #include <stdbool.h>
@@ -19,8 +19,8 @@ bool ssd1306_init(uint8_t addr, panel_t panel);
 bool ssd1306_reinit(uint8_t addr, panel_t panel);
 
 /** Write `n` bytes into one page starting at column `col`. Each call is a
- *  complete, independent transfer -- see the window comment in ssd1306.c.
- *  THE cost that matters: (n + 8) bytes at 400 kHz, ~9 bits each, which is
+ *  complete, independent transfer -- see the page-addressing comment in
+ *  ssd1306.c. THE cost that matters: (n + 5) bytes at 400 kHz, ~9 bits each, which is
  *  what bounds how long core0's 1 ms service loop is blocked per update. */
 bool ssd1306_blit(uint8_t addr, panel_t panel, int page, int col, const uint8_t *bytes, int n);
 
