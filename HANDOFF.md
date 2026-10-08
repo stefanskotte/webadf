@@ -1581,6 +1581,12 @@ separately.
   format-truncation at 1729/1734 and maybe-uninitialized `body` at 2375. `test_display_golden.c:48` fails on
   format-truncation. The device image is fine. Fix the test code (sizes, or initialise `body`), and run test/run.sh
   under GCC locally (e.g. a docker gcc image) before pushing, because macOS clang does not show these.
+- **NFC icon on the board's display** (operator, 2026-10-08): an NFC-reader icon as a layout element that works
+  like the other icons (wifi, lock, ...): show/hide, 1x/2x, free placement in the Display editor. It needs a new
+  element id in `display_layout.c`/`.h` and the validator, a glyph in `display.c`, `pnpm display:wasm`, the editor's
+  element list, and golden framebuffers. An old board must reject or ignore an unknown element safely, and the
+  editor must hide the element for firmware that lacks it, like other version-gated features. Decide what it shows
+  in each state: reader present, absent, write armed.
 - **Screenshots of the web app's pages for the GitHub page** (operator, 2026-10-08): library, game page, disk
   page/file browser with history, Devices (bezel card and display editor), Help. Capture them with Playwright
   from a seeded demo org, never from a real tenant's data.
