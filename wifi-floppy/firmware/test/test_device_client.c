@@ -459,6 +459,7 @@ static void test_status_body_fits_at_maximum(void) {
     dc_set_fw_report(&c, &fr);
     dc_set_nfc_reader(&c, "present");   // the longer of the two words
     dc_set_plays_hd(&c, true);
+    dc_set_sel1(&c, false, false);   // the longer spelling
     // Multi-disk: the longer of the two preload forms. Both carry a 64-hex
     // digest, and "loading" is 2 bytes longer than "ready" -- so a preload in
     // progress, which names next's digest.
@@ -485,8 +486,9 @@ static void test_status_body_fits_at_maximum(void) {
           "and so does the reader");
     CHECK(strstr(r, "\"state\":\"loading\"}") != NULL,
           "the preload record survives a maximal body");
-    CHECK(strstr(r, "\"playsHd\":true}") != NULL,
-          "playsHd survives a maximal body, the very last field");
+    CHECK(strstr(r, "\"playsHd\":true,") != NULL,
+          "playsHd survives a maximal body");
+    CHECK(strstr(r, "\"df1Seen\":false") != NULL, "the SEL1 readings survive a maximal body");
     CHECK(strstr(r, "\"displayVersion\":4294967295") != NULL, "the display ack survives");
     {
         // The whole reason, escaped, closing quote included: 47 x \" then ".
@@ -1700,6 +1702,24 @@ static void test_status_reports_plays_hd_only_when_set(void) {
     CHECK(strstr(fake_last_request(), "\"playsHd\":true") != NULL, "set: says so");
 }
 
+static void test_status_reports_both_sel1_readings_once_known(void) {
+    boot();
+    fake_push_response("HTTP/1.1 204 No Content\r\n\r\n");
+    CHECK(dc_report_status(&c, 0, -50, NULL, "1.7.6"), "sent");
+    CHECK(strstr(fake_last_request(), "sel1Wired") == NULL, "not known yet: no key");
+
+    dc_set_sel1(&c, false, false);
+    fake_push_response("HTTP/1.1 204 No Content\r\n\r\n");
+    CHECK(dc_report_status(&c, 0, -50, NULL, "1.7.6"), "sent");
+    CHECK(strstr(fake_last_request(), "\"sel1Wired\":false,\"df1Seen\":false") != NULL,
+          "both values, false too -- an absent key is not a reading");
+
+    dc_set_sel1(&c, true, true);
+    fake_push_response("HTTP/1.1 204 No Content\r\n\r\n");
+    CHECK(dc_report_status(&c, 0, -50, NULL, "1.7.6"), "sent");
+    CHECK(strstr(fake_last_request(), "\"sel1Wired\":true,\"df1Seen\":true") != NULL, "true values");
+}
+
 // --- Multi-disk "Next disk" (spec 2026-09-28 §4): next, preload, swap ------
 //
 // Real 64-hex digests throughout: dc_take_next refuses anything else, and a
@@ -2447,6 +2467,7 @@ int main(void) {
     RUN(test_status_reports_a_null_version_explicitly);
     RUN(test_status_body_fits_at_maximum);
     RUN(test_status_reports_plays_hd_only_when_set);
+    RUN(test_status_reports_both_sel1_readings_once_known);
     RUN(test_status_carries_the_firmware_fields);
     RUN(test_status_without_a_fw_report_omits_the_fields);
     RUN(test_unmounted_reports_null_not_omitted);

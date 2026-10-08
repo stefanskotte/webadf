@@ -354,6 +354,9 @@ export interface DeviceListItem {
   displayError: string | null;
   /** The capability; false also for a board that never said (null in the row). */
   displayLayouts: boolean;
+  /** DF1 second drive readings; null = firmware before 1.7.6 (or never reported). */
+  sel1Wired: boolean | null;
+  df1Seen: boolean | null;
   /** The stored layout blob, base64; null = the panel's default. */
   displayLayout: string | null;
 }
@@ -414,6 +417,8 @@ export async function listDevices(orgId: string): Promise<DeviceListItem[]> {
       displayAppliedVersion: devices.displayAppliedVersion,
       displayError: devices.displayError,
       displayLayouts: devices.displayLayouts,
+      sel1Wired: devices.sel1Wired,
+      df1Seen: devices.df1Seen,
       displayLayout: devices.displayLayout,
     })
     .from(devices)

@@ -146,6 +146,7 @@ typedef bool (*dc_hold_fn)(void *ctx);
 // whole request 1351 with the test's 3-byte token (~1396 with a real 48-byte
 // one). Both budgets still hold, so neither is raised -- but the body has 63
 // bytes left, and the next field will need a raise.
+// SEL1 telemetry (2026-10-08) adds 34; the body then has 29 left.
 #define DC_STATUS_BODY_BYTES  1280
 #define DC_STATUS_REQ_BYTES   1792
 // `err` is firmware-authored (a short static string or errno-derived text,
@@ -337,6 +338,12 @@ typedef struct {
     char     _nfc_reader[8];
     // dc_set_plays_hd: "playsHd":true in every status report.
     bool     _plays_hd;
+
+    // --- DF1 second drive (spec 2026-10-08) ---
+    // SEL1 telemetry: sent as both values once main.c has said anything.
+    bool     _sel1_known;
+    bool     _sel1_wired;      // a SEL1 select was seen since boot
+    bool     _df1_seen;        // bus_df1_seen(): a real DF1 stepped while ours was off
 
     // --- multi-disk Next disk (spec 2026-09-28 §4.3-4.4) ---
     dc_preload_t preload;
@@ -592,6 +599,9 @@ void dc_set_nfc_reader(device_client_t *c, const char *state);
 // Amiga read an HD disk as HD. False (dc_init's zero) omits the key -- the
 // shape older firmware sends, which the server reads as "cannot play HD".
 void dc_set_plays_hd(device_client_t *c, bool on);
+
+// SEL1 telemetry (spec §3/§6 step 0). Both values are always sent once set.
+void dc_set_sel1(device_client_t *c, bool wired, bool df1_seen);
 
 // GET /api/device/firmware/<version>. Body bytes go to `sink`. Returns the HTTP status of a
 // COMPLETE response, or -1 (transport, framing, incomplete). 401 halts, as everywhere.

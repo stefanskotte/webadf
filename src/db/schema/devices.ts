@@ -155,6 +155,12 @@ export const devices = pgTable('devices', {
   /** The capability, as the board reports; null = never said, false = firmware before 1.7.0. */
   displayLayouts: boolean('display_layouts'),
 
+  // --- DF1 second drive (spec 2026-10-08) ---
+  /** A SEL1 select reached the board since its last boot; null = firmware before 1.7.6. */
+  sel1Wired: boolean('sel1_wired'),
+  /** A real drive stepped as DF1 while the board's own DF1 was off; null = firmware before 1.7.6. */
+  df1Seen: boolean('df1_seen'),
+
   /**
    * 'queued' | 'downloading' | 'applying' | 'failed', as the device reports.
    * Null means nothing in flight. It is telemetry for the operator -- it no

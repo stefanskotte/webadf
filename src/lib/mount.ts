@@ -283,6 +283,10 @@ export async function recordStatus(
     displayVersion?: number;
     /** Why the board rejected the layout at displayVersion; null = applied. */
     displayError?: string | null;
+    /** A SEL1 select reached the board since boot (DF1 second drive, 1.7.6+). */
+    sel1Wired?: boolean;
+    /** A real drive stepped as DF1 while the board's own DF1 was off (1.7.6+). */
+    df1Seen?: boolean;
   },
 ): Promise<void> {
   const db = getDb();
@@ -339,6 +343,12 @@ export async function recordStatus(
   // "Applied on the board" compares with display_version.
   if (s.displayVersion !== undefined) patch.displayAppliedVersion = s.displayVersion;
   if (s.displayError !== undefined) patch.displayError = s.displayError;
+  // Build-bound, the playsHd rule: a report naming its firmware but silent on
+  // SEL1 comes from a build before 1.7.6 (or a reverted trial) -- no reading.
+  if (s.sel1Wired !== undefined) patch.sel1Wired = s.sel1Wired;
+  else if (s.firmwareVersion !== undefined) patch.sel1Wired = null;
+  if (s.df1Seen !== undefined) patch.df1Seen = s.df1Seen;
+  else if (s.firmwareVersion !== undefined) patch.df1Seen = null;
   // Plain absent-leaves-it-alone, unlike trackMaxBytes above: the reader's
   // presence is not tied to the firmware build, so there is no "drop to a
   // legacy default" case here -- a report that omits it simply has nothing

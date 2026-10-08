@@ -64,6 +64,9 @@ const statusBody = z.object({
   // Truncated, not dropped: dropping it while displayVersion is still stored
   // would make a rejected layout read as applied.
   displayError: z.string().transform((v) => v.slice(0, 80)).nullable().optional().catch(undefined),
+  // DF1 telemetry (fw 1.7.6+). Dropped, never rejected -- the telemetry rule above.
+  sel1Wired: z.boolean().optional().catch(undefined),
+  df1Seen: z.boolean().optional().catch(undefined),
   error: z.string().max(500).nullable().optional(),
   psramFree: z.number().int().nonnegative().nullable().optional(),
   // Real WiFi RSSI ranges roughly -100..0 dBm, but a marginal link can report
@@ -136,6 +139,8 @@ export async function POST(request: Request) {
     displayLayouts: parsed.data.displayLayouts,
     displayVersion: parsed.data.displayVersion,
     displayError: parsed.data.displayError,
+    sel1Wired: parsed.data.sel1Wired,
+    df1Seen: parsed.data.df1Seen,
   });
 
   return new Response(null, { status: 204, headers: { 'cache-control': 'no-store' } });

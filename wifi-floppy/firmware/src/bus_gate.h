@@ -30,12 +30,21 @@ uint32_t bus_gate_status_mask(void);
 // it unchanged.
 uint32_t bus_gate_apply(uint32_t shadow, unsigned pin, bool assert);
 
-// One step_dir word: GP2..GP5 (SEL0 SEL1 MTR DIR) as sampled when STEP fell.
+#define BUS_SEL_DF0 0x1u
+#define BUS_SEL_DF1 0x2u
+// One step_dir word: GP(SEL0)..GP(SEL0+3) (SEL0 SEL1 MTR DIR) as sampled when STEP fell.
 typedef struct {
-    bool selected;   // SEL0 asserted (low): the step is DF0's
-    bool outwards;   // DIR high: towards track 0
+    bool    selected;   // SEL0 asserted (low): the step is DF0's
+    bool    outwards;   // DIR high: towards track 0
+    uint8_t sel_mask;   // BUS_SEL_DF0 | BUS_SEL_DF1: every select that was low
 } bus_step_t;
 bus_step_t bus_step_decode(uint32_t word);
+
+// A real DF1 on the bus (spec §3): it steps; an absent DF1 never does. Counts
+// only steps that passed the 1 ms too-fast filter, taken while the board's own
+// DF1 is off.
+#define BUS_DF1_SEEN_STEPS 3u
+bool bus_df1_seen(uint32_t df1_steps);
 
 // bus_sniff's packed 12-bit sample -> a plain GPIO mask (bit n = GPn).
 // WDATA (GP7) and RDATA (GP11) are never sampled.

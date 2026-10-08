@@ -18,8 +18,12 @@ bus_step_t bus_step_decode(uint32_t word) {
     bus_step_t s;
     s.selected = (word & BIT(PIN_SEL0 - PIN_SEL0)) == 0;
     s.outwards = (word & BIT(PIN_DIR - PIN_SEL0)) != 0;
+    s.sel_mask = (uint8_t)((s.selected ? BUS_SEL_DF0 : 0u) |
+                           ((word & BIT(PIN_SEL1 - PIN_SEL0)) == 0 ? BUS_SEL_DF1 : 0u));
     return s;
 }
+
+bool bus_df1_seen(uint32_t df1_steps) { return df1_steps >= BUS_DF1_SEEN_STEPS; }
 
 uint32_t bus_sniff_decode(uint32_t packed) {
     // bus_sniff takes GP0..GP6 first, then GP8..GP10, then GP12..GP13, into a
