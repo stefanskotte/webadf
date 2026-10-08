@@ -4670,6 +4670,12 @@ Run subagent-driven from the worktree `.claude/worktrees/df1`. The ledger is in 
   probably crosstalk on a floating input; rev B's 1 kohm pull-up (R7) now holds pin 12 quiet. **Plan stopped**
   pending the operator's continuity check (internal pin 12 to DB23 pin 21, all powered off) and a choice: a
   DB23 flying lead (rev C pin), an Amiga mod, big-box only, or park DF1.
+- **ON HOLD (operator, 2026-10-08):** the operator will fit a flying lead inside the A500 from the external port's
+  SEL1 (DB23 pin 21, active low) to pin 12 of the motherboard's internal floppy connector. The ribbon then carries
+  it to the board's J1 pin 12, with no board change. Before soldering, check pin 12 is open to GND, +5 V and pins
+  10/14 (odd pins are ground). After the mod an external DF1 shares SEL1, so keep it off while testing.
+  **Resume:** re-run Phase 0 bench step 1 (expect "DF1 line: connected"), then steps 2-3, then Task 5. The
+  worktree `.claude/worktrees/df1` and branch `feat/df1-second-drive` stay.
 - **Already known for Task 5:** the 1.7.4/1.7.5 boot log read `pio claims: pio0=7 pio1=3 pio2=1`. These look like
   SM bit masks, with the radio not counted. Task 5 must interpret them from the code before applying D1.
 
