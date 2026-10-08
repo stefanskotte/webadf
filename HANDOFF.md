@@ -4628,7 +4628,9 @@ Demozoo API (the bulk export makes per-lookup load on a non-profit unnecessary).
 **SHIPPED:** master 7ca13f0, 1.7.4+g7ca13f0 (seq 43), self-installed on WifiFloppy1. **Glass check PASSED 2026-10-08** on the 1.3" SH1106: "READY", wifi icon and 2x "No disk" are clean, with no edge column (so the 2-column offset is right). The default layout fills only the top 32 rows, by design (3ax).
   **0.96" 128x64 SSD1306 also PASSED 2026-10-08** on 1.7.4, swapped in with power off and working with no
   changes: "LOADED xsysinfo.. Disk 1 0/79" and icons are clean. This proves the new SSD1306 page-addressing path
-  on 128x64 and closes 3ax bench step 2. Only the 0.91" 128x32 recheck on 1.7.4 is still owed.
+  on 128x64 and closes 3ax bench step 2. The 0.91" 128x32 SSD1306 also PASSED on 1.7.4 the same
+  day: the panel was set back to 128x32 with a custom layout (v14, acked, no error). **All three panels pass; 3az is
+  closed on hardware.**
 
 - **Symptom:** the operator fitted a 1.3" 128x64 module. Set to 128x32 in the DB, it drew only the upper half.
   Switched to 128x64 (v13, default layout), it showed random RAM noise over the whole glass, with one dark strip.
