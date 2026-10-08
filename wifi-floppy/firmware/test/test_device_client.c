@@ -1702,6 +1702,28 @@ static void test_status_reports_plays_hd_only_when_set(void) {
     CHECK(strstr(fake_last_request(), "\"playsHd\":true") != NULL, "set: says so");
 }
 
+static void test_sel1_change_owes_a_report_once(void) {
+    boot();
+    CHECK(!dc_sel1_owed(&c), "nothing known: nothing owed");
+    dc_set_sel1(&c, false, false);
+    CHECK(dc_sel1_owed(&c), "the first reading is owed");
+    fake_push_response("HTTP/1.1 204 No Content\r\n\r\n");
+    CHECK(dc_report_status(&c, 0, -50, NULL, "1.7.6"), "sent");
+    CHECK(!dc_sel1_owed(&c), "reported: not owed");
+    dc_set_sel1(&c, false, false);
+    CHECK(!dc_sel1_owed(&c), "same values again: no hot loop of reports");
+    dc_set_sel1(&c, true, false);
+    CHECK(dc_sel1_owed(&c), "wired false->true owes a report");
+    fake_push_response("HTTP/1.1 500 Internal Server Error\r\n\r\n");
+    CHECK(!dc_report_status(&c, 0, -50, NULL, "1.7.6"), "failed");
+    CHECK(dc_sel1_owed(&c), "a failed report leaves it owed");
+    fake_push_response("HTTP/1.1 204 No Content\r\n\r\n");
+    CHECK(dc_report_status(&c, 0, -50, NULL, "1.7.6"), "sent");
+    CHECK(!dc_sel1_owed(&c), "accepted: cleared");
+    dc_set_sel1(&c, true, true);
+    CHECK(dc_sel1_owed(&c), "df1Seen flipping owes one too");
+}
+
 static void test_status_reports_both_sel1_readings_once_known(void) {
     boot();
     fake_push_response("HTTP/1.1 204 No Content\r\n\r\n");
@@ -2468,6 +2490,7 @@ int main(void) {
     RUN(test_status_body_fits_at_maximum);
     RUN(test_status_reports_plays_hd_only_when_set);
     RUN(test_status_reports_both_sel1_readings_once_known);
+    RUN(test_sel1_change_owes_a_report_once);
     RUN(test_status_carries_the_firmware_fields);
     RUN(test_status_without_a_fw_report_omits_the_fields);
     RUN(test_unmounted_reports_null_not_omitted);
