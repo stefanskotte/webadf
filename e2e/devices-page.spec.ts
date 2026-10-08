@@ -279,9 +279,9 @@ test('a pending eject says "Ejecting", never "Mounting"', async ({ page, request
   expect(text).not.toContain('Mounting');
 });
 
-// --- the square-card redesign (option A -- "the disk in the middle") -----
+// --- the card grid (option A -- "the disk in the middle"; content height since 2026-10-08) --
 
-test('three paired devices share one row of the grid and are roughly square', async ({ page, request }) => {
+test('three paired devices share one row, each card as tall as its content, and a drawer grows only its own card', async ({ page, request }) => {
   await signUpFresh(page);
   const { deviceId: idA } = await pairDevice(page, request, 'Card A');
   const { deviceId: idB } = await pairDevice(page, request, 'Card B');
@@ -299,14 +299,24 @@ test('three paired devices share one row of the grid and are roughly square', as
   expect(Math.abs(a.y - b.y)).toBeLessThan(4);
   expect(Math.abs(a.y - c.y)).toBeLessThan(4);
 
-  // Roughly square -- these are freshly paired devices with nothing mounted,
-  // so there is no long title or error to grow a card past its aspect-ratio.
-  // A generous tolerance because "at least square, grows taller" (the spec)
-  // deliberately does not promise an EXACT ratio once real content is in it.
-  for (const box of [a, b, c]) {
-    expect(box.height / box.width).toBeGreaterThan(0.8);
-    expect(box.height / box.width).toBeLessThan(1.3);
-  }
+  // Content height, not square (changed 2026-10-08 at the operator's request:
+  // the square left an empty band under the bezel). Three identical fresh
+  // cards are the same height, and clearly shorter than they are wide.
+  expect(Math.abs(a.height - b.height)).toBeLessThan(2);
+  expect(Math.abs(a.height - c.height)).toBeLessThan(2);
+  for (const box of [a, b, c]) expect(box.height / box.width).toBeLessThan(0.8);
+
+  // Opening A's drawer grows A; B in the same row keeps its height (the grid
+  // does not stretch row neighbours). Closing it shrinks A back.
+  await page.getByTestId(`device-oled-${idA}`).click();
+  await expect(page.getByTestId(`display-drawer-${idA}`)).toBeVisible();
+  await expect.poll(async () => (await page.getByTestId(`device-${idA}`).boundingBox())!.height)
+    .toBeGreaterThan(a.height + 40);
+  expect(Math.abs((await page.getByTestId(`device-${idB}`).boundingBox())!.height - b.height)).toBeLessThan(2);
+  await page.getByTestId(`display-toggle-${idA}`).click();
+  await expect(page.getByTestId(`display-drawer-${idA}`)).toHaveCount(0);
+  await expect.poll(async () => Math.round((await page.getByTestId(`device-${idA}`).boundingBox())!.height))
+    .toBeLessThan(a.height + 2);
 });
 
 test('the Online/Offline badge renders both values, and only Offline gets a last-seen line', async ({ page, request }) => {

@@ -198,15 +198,17 @@ export function DeviceList({
       )}
 
       {/*
-        Square-ish cards in a grid rather than the old full-width stacked
+        Content-height cards in a grid rather than the old full-width stacked
         list (the approved redesign, option A -- "the disk in the middle").
         2 per row is the base (mobile-first, so this is what a 390px phone
         gets with no override needed), 3 per row from lg up: this card carries
         more prose than the library's thumbnails, so it needs tablet-width
         room that a switch at `sm` (library's own breakpoint, game-grid.tsx)
-        would not give it.
+        would not give it. `items-start`, not the grid's default stretch: each
+        card keeps its own height, so one open drawer does not stretch its row
+        neighbours into the empty band the square cards had.
       */}
-      <div className="grid grid-cols-2 gap-3 lg:grid-cols-3">
+      <div className="grid grid-cols-2 items-start gap-3 lg:grid-cols-3">
         {devices.map((d, i) => (
           <DeviceCard
             key={d.id} device={d} now={now} firmware={states[i]}

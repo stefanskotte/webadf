@@ -13,8 +13,10 @@ import { DriveFront } from './drive-front';
  * The drive-bezel card (design A2, 2026-10-07): name, online badge and MAC on
  * TOP; then the front of the drive -- the board's own OLED, drawn by
  * display.wasm, its LEDs and eject -- with the Display drawer under it; then
- * write-protect, firmware and actions along the BOTTOM. A square-ish card
- * (device-list.tsx puts it in an aspect-square grid cell).
+ * write-protect, firmware and actions along the BOTTOM. The card is exactly
+ * as tall as its content, growing when the drawer opens and shrinking when it
+ * closes: it was square until 2026-10-08, which left an empty band between
+ * the bezel and the bottom row (the operator asked for it to go).
  *
  * The disk is named in words only while the OLED cannot be trusted to name
  * it: a mount or eject in flight, or a request the board has not confirmed.
@@ -109,7 +111,7 @@ export function DeviceCard(
     : 'none';
 
   return (
-    <div className="glass-card flex aspect-square flex-col gap-2 p-5" data-testid={`device-${device.id}`}
+    <div className="glass-card flex flex-col gap-2 p-5" data-testid={`device-${device.id}`}
          data-state={state}>
       {/*
         TOP: identity. Below `lg` this is a NARROW card (two per row on a
@@ -194,11 +196,6 @@ export function DeviceCard(
           <HelpTip topic="next-disk" />
         </span>
       )}
-
-      {/* Pushes the actions to the bottom of the square; collapses once the
-          content fills it (a long error, the open drawer), which is how the
-          card grows taller instead of clipping. */}
-      <div className="flex-1" />
 
       {/* BOTTOM: write protection, firmware, and every existing action. */}
       <div className="flex flex-col gap-2">
