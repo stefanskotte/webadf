@@ -471,6 +471,15 @@ static volatile uint32_t steps_dir_late;
 // STEP pulses with SEL0 released: another drive's, not acted on (bus_gate.h).
 // Counted so the gate's effect is a number in the log, not an absence.
 static volatile uint32_t steps_other_drive;
+// SEL1 telemetry (spec 2026-10-08 §6 step 0). g_sel1_wired: any SEL1 fall
+// since boot -- Kickstart reads DF1's ID with 34 selects at every reset
+// (HANDOFF 4d), so a wired pin 12 shows within a second of power-on. The
+// GPIO interrupt switches itself off after the first edge: a real DF1 being
+// read would otherwise interrupt on every select. g_df1_steps: SEL1 steps that
+// passed the 1 ms filter while the board's own DF1 is off.
+static volatile bool     g_sel1_wired;
+static volatile uint32_t g_df1_steps;
+static absolute_time_t   g_df1_last_step;   // STEP ISR only
 
 static void start_streaming(const uint8_t *mfm, uint32_t bit_count) {
     uint32_t nwords = (bit_count + 31) / 32;
@@ -574,6 +583,13 @@ static void step_pulse(uint32_t word) {
     // DF1 seek would otherwise reset.
     if (!st.selected) {
         steps_other_drive++;
+        if (st.sel_mask & BUS_SEL_DF1) {
+            const absolute_time_t t = get_absolute_time();
+            // Same 1 ms rule as DF0's, with its own clock: the power-event
+            // burst must not count as a drive.
+            if (absolute_time_diff_us(g_df1_last_step, t) >= STEP_MIN_INTERVAL_US) g_df1_steps++;
+            g_df1_last_step = t;
+        }
         return;
     }
     const bool outwards = st.outwards;
@@ -1030,6 +1046,11 @@ static bool display_core1_fetch(device_client_t *c) {
 }
 
 static void __isr gpio_isr(uint gpio, uint32_t events) {
+    if (gpio == PIN_SEL1 && (events & GPIO_IRQ_EDGE_FALL)) {
+        g_sel1_wired = true;
+        gpio_set_irq_enabled(PIN_SEL1, GPIO_IRQ_EDGE_FALL, false);   // one edge is the reading
+        return;
+    }
     if (gpio == PIN_SEL0 && (events & GPIO_IRQ_EDGE_FALL)) {
         if (!WF_BUS_SNIFF) wf_trace(WF_EV_SEL, 1, 0);
     } else if (gpio == PIN_WGATE) {
@@ -1810,6 +1831,8 @@ static void core1_main(void) {
                     nfc_report_owed = true;
                 }
             }
+            // SEL1 telemetry rides every status report (cheap: three stores).
+            dc_set_sel1(&c, g_sel1_wired, bus_df1_seen(g_df1_steps));
 
             // Item 0 (fix round 1, Important): a status report is OWED
             // whenever the mounted disk's identity or version differs from
@@ -2617,6 +2640,7 @@ int main(void) {
 
     gpio_set_irq_enabled_with_callback(PIN_SEL0, GPIO_IRQ_EDGE_FALL, true, gpio_isr);
     gpio_set_irq_enabled(PIN_SIDE, GPIO_IRQ_EDGE_FALL | GPIO_IRQ_EDGE_RISE, true);
+    gpio_set_irq_enabled(PIN_SEL1, GPIO_IRQ_EDGE_FALL, true);
     // Both edges: the falling one starts a capture and the rising one ends it,
     // and an end that is missed would run the ring into the next write.
     gpio_set_irq_enabled(PIN_WGATE, GPIO_IRQ_EDGE_FALL | GPIO_IRQ_EDGE_RISE, true);
@@ -3197,6 +3221,16 @@ int main(void) {
                 wf_logf(WF_INFO, "sel0: ignored %lu step(s) and %lu write(s) "
                                  "for another drive",
                         (unsigned long)os, (unsigned long)ow);
+            }
+            {
+                // Only on change: both readings are stable once true.
+                static bool sel1_printed; static bool prev_wired; static uint32_t prev_steps;
+                const bool w = g_sel1_wired; const uint32_t ds = g_df1_steps;
+                if (!sel1_printed || w != prev_wired || ds != prev_steps) {
+                    sel1_printed = true; prev_wired = w; prev_steps = ds;
+                    wf_logf(WF_INFO, "sel1: wired %s, df1 steps %lu",
+                            w ? "yes" : "no", (unsigned long)ds);
+                }
             }
 #if WF_BUS_SNIFF
             static uint32_t reported_violations;

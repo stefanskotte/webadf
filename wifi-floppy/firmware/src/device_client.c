@@ -1351,16 +1351,27 @@ bool dc_report_status(device_client_t *c, int psram_free, int rssi, const char *
         display_tail[0] = '\0';
     }
 
+    // SEL1 (spec §6 step 0): both readings, both values, once main.c knows.
+    // 34 bytes at most; DC_STATUS_BODY_BYTES had 63 to spare (header note).
+    static char sel1_tail[48];
+    if (c->_sel1_known) {
+        snprintf(sel1_tail, sizeof sel1_tail, ",\"sel1Wired\":%s,\"df1Seen\":%s",
+                 c->_sel1_wired ? "true" : "false", c->_df1_seen ? "true" : "false");
+    } else {
+        sel1_tail[0] = '\0';
+    }
+
     static char body[DC_STATUS_BODY_BYTES];
     int body_len = snprintf(body, sizeof body,
         "{\"mountedSha256\":%s,\"mountedDiskId\":%s,\"version\":%lu,"
         "\"error\":%s,\"psramFree\":%d,\"firmwareVersion\":%s,\"rssi\":%d,"
-        "\"trackMaxBytes\":%u%s%s%s%s%s}",
+        "\"trackMaxBytes\":%u%s%s%s%s%s%s}",
         sha_field, disk_field, (unsigned long)c->mounted_version,
         err_field, psram_free, ver_field, rssi, (unsigned)TRACK_MAX_BYTES, fw_tail, nfc_tail,
         display_tail, preload_tail,
         // playsHd: only from a build with the drive-ID responder (HD spec §5.5).
-        c->_plays_hd ? ",\"playsHd\":true" : "");
+        c->_plays_hd ? ",\"playsHd\":true" : "",
+        sel1_tail);
     if (body_len < 0 || body_len >= (int)sizeof body) return false; // should never happen; give up quietly
 
     static char req[DC_STATUS_REQ_BYTES];
@@ -1677,6 +1688,12 @@ void dc_set_nfc_reader(device_client_t *c, const char *state) {
 
 void dc_set_plays_hd(device_client_t *c, bool on) {
     c->_plays_hd = on;
+}
+
+void dc_set_sel1(device_client_t *c, bool wired, bool df1_seen) {
+    c->_sel1_known = true;
+    c->_sel1_wired = wired;
+    c->_df1_seen = df1_seen;
 }
 
 #define DC_TAP_PATH       "/api/device/tap"
