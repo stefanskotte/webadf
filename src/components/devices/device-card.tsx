@@ -4,6 +4,7 @@ import { isDefaultDeviceName } from '@/lib/device-name';
 import type { DeviceListItem } from '@/lib/queries';
 import type { NextInfo } from '@/lib/next-disk';
 import { preloadText } from '@/lib/drive-chips';
+import { SecondDriveReadings } from './second-drive-readings';
 import { HelpTip } from '@/components/help/help-tip';
 import { NextDiskButton } from './next-disk-button';
 import { DeviceAlias } from './device-alias';
@@ -200,6 +201,7 @@ export function DeviceCard(
 
       {/* BOTTOM: write protection, firmware, and every existing action. */}
       <div className="flex flex-col gap-2">
+        <SecondDriveReadings device={device} />
         <span className="w-fit shrink-0 self-start rounded-md border px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide"
               style={{
                 borderColor: 'var(--hairline)',

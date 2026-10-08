@@ -218,6 +218,13 @@
       "when": 1791153993974,
       "tag": "0030_display_layouts",
       "breakpoints": true
+    },
+    {
+      "idx": 31,
+      "version": "7",
+      "when": 1791492158285,
+      "tag": "0031_sel1_telemetry",
+      "breakpoints": true
     }
   ]
 }

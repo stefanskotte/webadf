@@ -11,6 +11,7 @@ vi.mock('@/lib/device-auth', () => ({
 type RecordStatusArg = {
   preload?: { sha256: string; state: 'loading' | 'ready' } | null;
   displayLayouts?: boolean; displayVersion?: number; displayError?: string | null;
+  sel1Wired?: boolean; df1Seen?: boolean;
 };
 const recordStatus = vi.fn<(deviceId: string, s: RecordStatusArg) => Promise<void>>(
   async () => undefined,
@@ -96,5 +97,17 @@ describe('POST /api/device/status -- display', () => {
     const s = recordStatus.mock.calls[0]![1];
     expect(s.displayError).toBe('y'.repeat(80));
     expect(s.displayVersion).toBe(5);
+  });
+});
+
+describe('POST /api/device/status -- DF1 telemetry', () => {
+  it('passes sel1Wired and df1Seen through, and drops malformed values instead of rejecting', async () => {
+    const { POST } = await import('./route');
+    let res = await POST(post({ mountedSha256: null, sel1Wired: true, df1Seen: false }));
+    expect(res.status).toBe(204);
+    expect(recordStatus).toHaveBeenLastCalledWith('dev-1', expect.objectContaining({ sel1Wired: true, df1Seen: false }));
+    res = await POST(post({ mountedSha256: null, sel1Wired: 'yes', df1Seen: 3 }));
+    expect(res.status).toBe(204);
+    expect(recordStatus).toHaveBeenLastCalledWith('dev-1', expect.objectContaining({ sel1Wired: undefined, df1Seen: undefined }));
   });
 });
