@@ -130,6 +130,34 @@ static void sniff_violation_is_a_status_output_while_sel0_released(void) {
           "inputs alone are never a violation");
 }
 
+// SEL1 is bit 1 of the step word (GP3 when SEL0 is GP2). Both active low.
+static void step_word_names_every_select_that_was_low(void) {
+    // bits: 0 SEL0, 1 SEL1, 2 MTR, 3 DIR (1 = released / outwards)
+    bus_step_t a = bus_step_decode(0x2u);          // SEL0 low, SEL1 high
+    CHECK_EQ_INT(a.sel_mask, BUS_SEL_DF0);
+    CHECK(a.selected, "SEL0 low: DF0's step");
+    bus_step_t b = bus_step_decode(0x1u);          // SEL0 high, SEL1 low
+    CHECK_EQ_INT(b.sel_mask, BUS_SEL_DF1);
+    CHECK(!b.selected, "a DF1 step is not DF0's");
+    bus_step_t c = bus_step_decode(0x0u);          // both low: both drives step, as real ones would
+    CHECK_EQ_INT(c.sel_mask, BUS_SEL_DF0 | BUS_SEL_DF1);
+    bus_step_t d = bus_step_decode(0x3u | 0x8u);   // neither, DIR outwards
+    CHECK_EQ_INT(d.sel_mask, 0);
+    CHECK(d.outwards, "DIR still decoded");
+}
+
+// A real DF1 steps (disk-change clicks, recalibrates); an absent one never does:
+// all 1,838 STEP falls of a no-DF1 boot came with SEL0 (floppy.pio step_dir header).
+// Three, not one: the power-event burst (HANDOFF, main.c step filter comment) is
+// rejected by the 1 ms filter BEFORE counting, but one stray filtered pulse at a
+// power edge must still not read as a drive.
+static void df1_is_seen_only_after_several_steps(void) {
+    CHECK(!bus_df1_seen(0), "no steps: none seen");
+    CHECK(!bus_df1_seen(BUS_DF1_SEEN_STEPS - 1), "below the threshold: none seen");
+    CHECK(bus_df1_seen(BUS_DF1_SEEN_STEPS), "at the threshold: seen");
+    CHECK(bus_df1_seen(250), "the 4e bench count: seen");
+}
+
 int main(void) {
     RUN(status_pins_are_exactly_the_five_gated_outputs);
     RUN(apply_sets_and_clears_one_pin_without_touching_others);
@@ -138,6 +166,8 @@ int main(void) {
     RUN(step_word_selected_outward);
     RUN(step_word_for_the_other_drive);
     RUN(step_word_ignores_sel1_and_mtr);
+    RUN(step_word_names_every_select_that_was_low);
+    RUN(df1_is_seen_only_after_several_steps);
     RUN(sniff_decode_round_trips_every_sampled_pin);
     RUN(sniff_decode_never_reports_the_flux_pins);
     RUN(sniff_violation_is_a_status_output_while_sel0_released);
