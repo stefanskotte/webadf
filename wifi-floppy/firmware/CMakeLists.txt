@@ -61,7 +61,7 @@ add_executable(wifi_floppy
   src/transport_tls.c src/sntp_time.c
   ${WFMF_PSA_CRYPTO_RANDOM_SRC}
   src/wf_log.c
-  src/activity_led.c src/i2c_probe.c src/ssd1306.c src/display.c src/display_layout.c src/display_store.c src/nfc_tag.c
+  src/activity_led.c src/i2c_probe.c src/ssd1306.c src/display.c src/display_layout.c src/display_store.c src/drive_store.c src/nfc_tag.c
   src/nfc_reader.c src/nfc_bus_i2c.c src/nfc_handoff.c src/nfc_ui.c
   src/flux_capture.c src/flux_bits.c
   src/board.c src/bus_gate.c src/bus_out.c
@@ -169,6 +169,19 @@ else ()
   target_compile_definitions(wifi_floppy PRIVATE WF_DRIVE_ID=0)
   message(STATUS "WF_DRIVE_ID is OFF: no drive-ID answer; the server will refuse HD disks.")
 endif ()
+option(WF_DF1_DEFAULT "DF1 second drive ON when the board has no stored setting (bench TEST builds only)" OFF)
+target_compile_definitions(wifi_floppy PRIVATE WF_DF1_DEFAULT=$<IF:$<BOOL:${WF_DF1_DEFAULT}>,1,0>)
+if (WF_DF1_DEFAULT AND NOT WF_DRIVE_ID)
+  message(FATAL_ERROR "WF_DF1_DEFAULT needs WF_DRIVE_ID: DF1 answers its ID through the responder")
+endif ()
+# D2 (plan 2026-10-08 Task 5): DF1's DMA word buffer. OFF = DD-sized (+14,336 B);
+# an HD next disk then leaves DF1 empty. DF1 is served only in a WF_DRIVE_ID
+# build (its ID, NONE while off, comes from the responder), so the buffer is
+# only there too.
+option(WF_DF1_HD "DF1 can hold an HD disk (+25,344 B SRAM instead of +14,336)" OFF)
+target_compile_definitions(wifi_floppy PRIVATE WF_DF1_HD=$<IF:$<BOOL:${WF_DF1_HD}>,1,0>)
+# Step 8 (D4): the bus sniffer fits on pio2 beside flux_in, step_dir and the
+# radio, so a WF_BUS_SNIFF build keeps DF1 -- no guard needed.
 # Bench-only (fix round 3): a bare-bones "fwdbg-wdtest" USB-serial command
 # that deliberately reproduces the nested-flash_safe_execute wedge shape, to
 # prove the watchdog now resets the board instead of hanging forever. NEVER
@@ -197,7 +210,7 @@ endif ()
 # configure whenever this file changes. `-DFIRMWARE_SEMVER=` still overrides,
 # for a one-off build, because -D defines it before this point.
 if (NOT DEFINED FIRMWARE_SEMVER)
-  set(FIRMWARE_SEMVER "1.7.8")
+  set(FIRMWARE_SEMVER "1.8.0")
 endif ()
 
 set(WF_VERSION_HEADER "${CMAKE_CURRENT_BINARY_DIR}/generated/wifi_floppy_version.h")

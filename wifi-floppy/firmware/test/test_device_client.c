@@ -46,6 +46,11 @@ static void boot(void) {
     // want a mounted precondition call psram_publish_slot() themselves,
     // after boot().
     psram_publish_slot(SLOT_NONE);
+    // DF1 (Task 15): that publish ejects a DF1 an earlier test left inserted,
+    // under a fresh token core0 has not acknowledged -- and an unacknowledged
+    // DF1 word defers every slot write. There is no core0 here: stand in for
+    // it and say it let go, so each test starts quiescent.
+    psram_df1_reader_ack(psram_df1_token());
 }
 
 static void test_cold_boot_polls_since_zero(void) {
@@ -471,6 +476,15 @@ static void test_status_body_fits_at_maximum(void) {
     c.display_ack = 4294967295u;
     memset(c.display_error, '"', sizeof c.display_error - 1);
     c.display_error[sizeof c.display_error - 1] = '\0';
+    // DF1 (Task 15): a 64-hex record published to DF1 -- the longer df1Sha256
+    // form. The record also carries `loading` above; the two never coexist on
+    // the board (status is never sent mid-preload), but the bound must cover
+    // the longest of each tail at once.
+    psram_publish_slot(0);
+    c.preload.slot = 1;
+    memset(c.preload.sha256, 'e', 64); c.preload.sha256[64] = '\0';
+    CHECK(psram_publish_df1(1), "precondition: DF1 holds the record's slot");
+    dc_set_df1(&c, DF1_MODE_NEXT, true);
 
     fake_push_response("HTTP/1.1 204 No Content\r\n\r\n");
     CHECK(dc_report_status(&c, 2147483647, -200, long_err, long_ver),
@@ -498,6 +512,15 @@ static void test_status_body_fits_at_maximum(void) {
         want[k++] = '"'; want[k] = '\0';
         CHECK(strstr(r, want) != NULL, "and the whole escaped reason");
     }
+    {
+        static char want[96];
+        snprintf(want, sizeof want, "\"df1Sha256\":\"%s\"", c.preload.sha256);
+        CHECK(strstr(r, want) != NULL, "the DF1 digest survives, closing quote included");
+        const char *b = strstr(r, "\r\n\r\n");
+        printf("  status body at maximum: %zu bytes (budget %d), request %zu (budget %d)\n",
+               b ? strlen(b + 4) : 0, DC_STATUS_BODY_BYTES, strlen(r), DC_STATUS_REQ_BYTES);
+    }
+    c.preload.slot = SLOT_NONE; c.preload.sha256[0] = '\0'; c.preload.loading = false;
 }
 
 static void test_status_carries_the_firmware_fields(void) {
@@ -2447,6 +2470,165 @@ static void test_display_decide_branches(void) {
     CHECK_EQ_INT((int)vd.version, 8);
 }
 
+// --- DF1 second drive (Task 15): DF1 follows the verified preload ----------
+
+static bool quiesce_true(void *ctx) { (void)ctx; psram_df1_reader_ack(psram_df1_token()); return true; }
+static bool quiesce_false(void *ctx) { (void)ctx; return false; }
+
+static int df1_req_mark;
+static int fake_request_count_since_mark(void) { return fake_request_count() - df1_req_mark; }
+
+// A mounted in slot 0 by a real fetch, B preloaded and verified in slot 1,
+// with the request counter marked after.
+static void boot_mounted_with_preload_ready(void) {
+    mount_a_preload_b();
+    CHECK_EQ_INT(psram_active_slot(), 0);
+    CHECK_EQ_INT(c.preload.slot, 1);
+    CHECK_EQ_INT(psram_df1_slot(), SLOT_NONE);
+    df1_req_mark = fake_request_count();
+}
+
+// What dc_take_next stores when a poll names `sha` as next.
+static void set_next_sha(device_client_t *dc, const char *sha) {
+    dc->preload.known = true;
+    snprintf(dc->preload.next_sha256, sizeof dc->preload.next_sha256, "%s", sha);
+}
+
+// A 200 poll naming `desired` and `next`, delivered through dc_step.
+static uint32_t df1_poll_version = 100;
+static void deliver_poll_desiring(const char *desired, const char *next) {
+    push_poll_next(++df1_poll_version, desired, next, false);
+    CHECK_EQ_INT(dc_step(&c), DC_IDLE_POLL);
+}
+
+// The file's image-response helper; the digest names what the test means.
+static void fake_push_image_response(const char *sha) { (void)sha; push_image_response(); }
+
+static void df1_serves_the_verified_preload_while_on(void) {
+    boot_mounted_with_preload_ready();        // A in slot 0, preload B verified in slot 1
+    dc_set_df1(&c, DF1_MODE_NEXT, true);
+    dc_df1_reconcile(&c);
+    CHECK_EQ_INT(psram_df1_slot(), 1);
+    dc_set_df1(&c, DF1_MODE_OFF, true);
+    dc_df1_reconcile(&c);
+    CHECK_EQ_INT(psram_df1_slot(), SLOT_NONE);   // off: ejected
+}
+
+// Review Focus 5
+static void an_hd_next_disk_stays_off_a_dd_only_df1(void) {
+    boot_mounted_with_preload_ready();
+    psram_image_set_slot_kind(1, SLOT_KIND_ADF_HD);
+    dc_set_df1(&c, DF1_MODE_NEXT, /*hd_ok=*/false);
+    dc_df1_reconcile(&c);
+    CHECK_EQ_INT(psram_df1_slot(), SLOT_NONE);
+    fake_push_response("HTTP/1.1 204 No Content\r\n\r\n");
+    dc_report_status(&c, 0, -50, NULL, "1.8.0");
+    CHECK(strstr(fake_last_request(), "\"df1Sha256\":null") != NULL, "reported empty");
+    // An HD-capable DF1 takes the same disk.
+    dc_set_df1(&c, DF1_MODE_NEXT, /*hd_ok=*/true);
+    dc_df1_reconcile(&c);
+    CHECK_EQ_INT(psram_df1_slot(), 1);
+    psram_image_set_slot_kind(1, SLOT_KIND_MFM);
+}
+
+// Review Focus 1
+static void a_fetch_that_finds_df1_unacknowledged_writes_nothing(void) {
+    boot_mounted_with_preload_ready();
+    dc_set_df1(&c, DF1_MODE_NEXT, true);
+    dc_df1_reconcile(&c);
+    dc_set_df1_quiesce(&c, quiesce_false, NULL);
+    // the server now names a different next: the preload step would overwrite slot 1
+    set_next_sha(&c, SHA_C);                 // what dc_take_next would store
+    CHECK(!dc_preload_step(&c), "no work while core0 may still read slot 1");
+    CHECK(c.df1_deferred, "a deferred preload says so");
+    CHECK_EQ_INT(psram_df1_slot(), SLOT_NONE);  // DF1 was ejected first
+    CHECK_EQ_INT(fake_request_count_since_mark(), 0);  // no image request went out
+    dc_set_df1_quiesce(&c, quiesce_true, NULL);
+    fake_push_image_response(SHA_C);
+    CHECK(dc_preload_step(&c), "acknowledged: the preload proceeds");
+    CHECK(!c.df1_deferred, "...and is not deferred");
+    CHECK(strcmp(c.preload.sha256, SHA_C) == 0, "C verified in the idle slot");
+    CHECK_EQ_INT(psram_df1_slot(), 1);       // reconciled: DF1 = C
+}
+
+static void next_disk_ejects_df1_and_refills_it_with_the_following_disk(void) {
+    boot_mounted_with_preload_ready();      // A in 0, B ready in 1
+    dc_set_df1(&c, DF1_MODE_NEXT, true);
+    dc_set_df1_quiesce(&c, quiesce_true, NULL);
+    dc_df1_reconcile(&c);
+    deliver_poll_desiring(SHA_B, /*next=*/SHA_C);
+    CHECK_EQ_INT(psram_active_slot(), 1);           // instant swap
+    CHECK_EQ_INT(psram_df1_slot(), SLOT_NONE);      // DF1 empty during the fetch (~5 s)
+    fake_push_image_response(SHA_C);
+    CHECK(dc_preload_step(&c), "C into slot 0");
+    dc_df1_reconcile(&c);
+    CHECK_EQ_INT(psram_df1_slot(), 0);              // DF1 = C
+}
+
+// The regular fetch (desired is a disk that is neither mounted nor preloaded)
+// also writes the idle slot: same rule, and the deferred poll is redelivered.
+static void a_regular_fetch_waits_for_df1_to_let_go(void) {
+    boot_mounted_with_preload_ready();
+    dc_set_df1(&c, DF1_MODE_NEXT, true);
+    dc_df1_reconcile(&c);
+    CHECK_EQ_INT(psram_df1_slot(), 1);
+    dc_set_df1_quiesce(&c, quiesce_false, NULL);
+    uint32_t since0 = c.since;
+    push_poll_next(++df1_poll_version, SHA_C, SHA_B, false);
+    CHECK_EQ_INT(dc_step(&c), DC_IDLE_POLL);
+    CHECK_EQ_INT(fake_request_count_since_mark(), 1);  // the poll, and no image request
+    CHECK_EQ_INT(psram_df1_slot(), SLOT_NONE);         // ejected, and not re-inserted
+    CHECK_EQ_INT(c.since, since0);                     // redelivered at once
+    CHECK(c.df1_deferred, "the deferral is visible, so main.c can pace the redelivery");
+    CHECK(strcmp(c.mounted_sha256, SHA_A) == 0, "A still mounted");
+    // core0 lets go: the redelivered poll fetches C into slot 1 and swaps.
+    dc_set_df1_quiesce(&c, quiesce_true, NULL);
+    push_poll_next(df1_poll_version, SHA_C, SHA_B, false);
+    fake_push_image_response(SHA_C);
+    CHECK_EQ_INT(dc_step(&c), DC_IDLE_POLL);
+    CHECK(!c.df1_deferred, "a step that wrote is not deferred");
+    CHECK(strcmp(c.mounted_sha256, SHA_C) == 0, "C mounted");
+    CHECK_EQ_INT(psram_active_slot(), 1);
+    CHECK_EQ_INT(psram_df1_slot(), SLOT_NONE);         // no verified preload yet
+}
+
+// A failed write after DF1 was ejected: DF1 stays empty until a preload
+// verifies again, then reconcile puts it back.
+static void df1_returns_after_a_failed_preload_once_one_verifies(void) {
+    boot_mounted_with_preload_ready();
+    dc_set_df1(&c, DF1_MODE_NEXT, true);
+    dc_set_df1_quiesce(&c, quiesce_true, NULL);
+    dc_df1_reconcile(&c);
+    set_next_sha(&c, SHA_C);
+    fake_push_truncated("HTTP/1.1 200 OK\r\nContent-Length: 2027536\r\n\r\nWFMF", 40);
+    CHECK(dc_preload_step(&c), "a request went out and failed");
+    CHECK_EQ_INT(psram_df1_slot(), SLOT_NONE);
+    CHECK_EQ_INT(c.preload.slot, SLOT_NONE);
+    c.state = DC_IDLE_POLL;   // the backoff has elapsed
+    fake_push_image_response(SHA_C);
+    CHECK(dc_preload_step(&c), "the retry verifies");
+    CHECK_EQ_INT(psram_df1_slot(), 1);
+}
+
+static void status_names_df1_only_when_capable(void) {
+    boot_mounted_with_preload_ready();
+    fake_push_response("HTTP/1.1 204 No Content\r\n\r\n");
+    dc_report_status(&c, 0, -50, NULL, "1.8.0");
+    CHECK(strstr(fake_last_request(), "df1Sha256") == NULL, "not DF1-capable: no key");
+    dc_set_df1(&c, DF1_MODE_NEXT, true);
+    dc_df1_reconcile(&c);
+    fake_push_response("HTTP/1.1 204 No Content\r\n\r\n");
+    dc_report_status(&c, 0, -50, NULL, "1.8.0");
+    char want[96];
+    snprintf(want, sizeof want, ",\"df1Sha256\":\"%s\"", SHA_B);
+    CHECK(strstr(fake_last_request(), want) != NULL, "DF1 holds B");
+    dc_set_df1(&c, DF1_MODE_OFF, true);
+    dc_df1_reconcile(&c);
+    fake_push_response("HTTP/1.1 204 No Content\r\n\r\n");
+    dc_report_status(&c, 0, -50, NULL, "1.8.0");
+    CHECK(strstr(fake_last_request(), ",\"df1Sha256\":null") != NULL, "off: both values, null");
+}
+
 int main(void) {
     // Only test_successful_image_fetch_publishes_and_reflects_write_protected
     // needs real PSRAM backing (everything else in this file either never
@@ -2575,6 +2757,13 @@ int main(void) {
     RUN(preload_404_blocks_the_digest_and_leaves_no_record);
     RUN(an_uppercase_next_is_refused);
     RUN(an_eject_clears_next);
+    RUN(df1_serves_the_verified_preload_while_on);
+    RUN(an_hd_next_disk_stays_off_a_dd_only_df1);
+    RUN(a_fetch_that_finds_df1_unacknowledged_writes_nothing);
+    RUN(next_disk_ejects_df1_and_refills_it_with_the_following_disk);
+    RUN(a_regular_fetch_waits_for_df1_to_let_go);
+    RUN(df1_returns_after_a_failed_preload_once_one_verifies);
+    RUN(status_names_df1_only_when_capable);
     RUN(test_display_body_parses);
     RUN(test_rejected_layout_still_acks);
     RUN(test_poll_url_carries_display_ack);

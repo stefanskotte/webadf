@@ -18,6 +18,7 @@
 #include "bus_gate.h"
 #include "bus_out.h"
 #include "drive_id.h"
+#include "drive_store.h"
 #include "track_cache.h"
 #include "adf_mfm.h"
 #include "psram_image.h"
@@ -426,32 +427,82 @@ static void ui_observe(void *ctx, const dc_obs_t *o) {
 #endif
 
 static PIO  pio = pio0;
-static uint sm_out, sm_in;
-static int  dma_ch;
+static uint sm_in;
+
+// ---------------------------------------------------------------- DF1
+// The board's second drive (spec 2026-10-08). DF1 is served only by a build
+// with the drive-ID responder: its ID -- NONE while off, so Kickstart reads
+// "no drive" -- comes from a drive_id state machine on SEL1.
+#define DF1_CAPABLE WF_DRIVE_ID
+// What DF1 does, from the stored setting (drive_store.h) at boot. core0 reads
+// it in the STEP ISR and its loop; core1 hands it to device_client.
+static volatile df1_mode_t g_df1_mode = DF1_MODE_OFF;
+// R4: the stored setting's version at boot (0 = nothing stored). core1 seeds
+// its driveAck cursor from it (Phase 3); written once, before core1 launches.
+static volatile uint32_t g_drive_boot_ack;
 
 // Per drive (bus_out.h WF_DRIVES; 0 = DF0, 1 = DF1). n_drives is how many the
 // board answers as -- set once at boot on core0, before the bus IRQs are
-// enabled; Phase 1: 1, so only [0] ever moves. cur_side is shared: SIDE is
+// enabled: 2 in a DF1-capable build, whatever the setting (DF1 off answers as
+// an absent drive: ID NONE, every line released). cur_side is shared: SIDE is
 // one bus line for every drive.
 static volatile unsigned n_drives = 1;
 static volatile int  cur_cyl[WF_DRIVES];
 static volatile int  cur_side  = 0;
 static volatile int  want_track[WF_DRIVES] = { -1, -1 };   // core0 -> core1 request
 _Static_assert(WF_DRIVES == 2, "want_track's initializer names every drive");
-static volatile bool track_live = false;
 
 // Sized for the longest track track_cache_get() can return -- an encoded HD
 // track (TRACK_BUF_BYTES, track_cache.h) -- not the PSRAM stride.
 static uint32_t track_words[TRACK_BUF_BYTES / 4];
-static uint32_t track_word_count;
+
+// DF1's word buffer (D2). DD-sized by default: DF1 is handed only DD and HFE
+// tracks then (an HD next disk leaves DF1 empty -- device_client's
+// dc_df1_want and the mount below both check DF1_HOLDS_HD).
+#if WF_DF1_HD
+#define DF1_WORD_BUF_BYTES TRACK_BUF_BYTES
+#else
+#define DF1_WORD_BUF_BYTES TRACK_MAX_BYTES       // DD/HFE only (D2)
+#endif
+#define DF1_HOLDS_HD (DF1_WORD_BUF_BYTES >= ADF_MFM_HD_TRACK_BYTES)
+#if DF1_CAPABLE
+static uint32_t track_words1[DF1_WORD_BUF_BYTES / 4];
+#endif
 
 // ---------------------------------------------------------------- DMA feed
-// Revolutions of the current stream, the previous stream's total, and whether
-// this stream has already logged its INDEX. Touched from dma_irq (an ISR) and
-// from start_streaming on core0; volatile for the same reason track_live is.
-static volatile uint32_t rev_count;
-static volatile uint32_t prev_revs;
-static volatile bool     index_traced;
+// One flux stream per drive: its DMA channel, flux_out state machine and word
+// buffer, and -- touched from dma_irq (an ISR) and from start_streaming on
+// core0, hence volatile -- whether it is live, the revolutions of the current
+// stream, the previous stream's total, and whether this stream has already
+// logged its INDEX. Not const: dma_irq runs from RAM and reads this table, so
+// it stays in RAM too.
+typedef struct {
+    uint32_t         *words;
+    uint32_t          cap_bytes;      // sizeof the word buffer
+    uint32_t          count;          // words in the current track
+    int               dma;            // -1: this drive has no stream (not configured)
+    uint              sm;             // flux_out state machine on `pio`
+    volatile bool     live;
+    volatile uint32_t rev_count;
+    volatile uint32_t prev_revs;
+    volatile bool     index_traced;
+} stream_t;
+static stream_t g_stream[WF_DRIVES] = {
+    { .words = track_words, .cap_bytes = sizeof track_words, .dma = -1 },
+#if DF1_CAPABLE
+    { .words = track_words1, .cap_bytes = sizeof track_words1, .dma = -1 },
+#else
+    { .words = NULL, .cap_bytes = 0, .dma = -1 },
+#endif
+};
+
+// Stop drive d's stream at once: no re-arm at the next wrap, and the
+// transfer in flight aborted.
+static void stream_stop(unsigned d) {
+    stream_t *s = &g_stream[d];
+    s->live = false;
+    if (s->dma >= 0) dma_channel_abort((uint)s->dma);
+}
 
 // Faster than any drive can step; see the STEP ISR. Pulses closer together than
 // this are electrical, not mechanical.
@@ -487,49 +538,63 @@ static volatile bool     g_sel1_wired;
 static volatile uint32_t g_df1_steps;
 static absolute_time_t   g_df1_last_step;   // STEP ISR only
 
-static void start_streaming(const uint8_t *mfm, uint32_t bit_count) {
+// Streams `bit_count` bits of `mfm` on drive d, looping. Copies them into
+// drive d's word buffer at once, so `mfm` (a track_cache buffer, valid only
+// until the next track_cache_get* on either drive -- R14) is never kept.
+// False, with drive d's stream stopped, if d has no stream or the track does
+// not fit its buffer (DF1's is DD-sized unless WF_DF1_HD): never an overflow.
+static bool start_streaming(unsigned d, const uint8_t *mfm, uint32_t bit_count) {
+    stream_t *s = &g_stream[d];
     uint32_t nwords = (bit_count + 31) / 32;
+
+    // Review (final), Important 3: the abort MUST come before the repack
+    // loop, not after it. The word buffer is the DMA's read address; clearing
+    // `live` only stops dma_irq() re-arming at the next revolution wrap, it
+    // does not stop a transfer already in flight. Rewriting the buffer
+    // underneath a running channel hands the PIO a mixture of the outgoing
+    // and incoming track for the remainder of that revolution -- one torn
+    // revolution, which the Amiga reads as a bad sector on a drive that is
+    // otherwise fine. That was survivable while this only ran on a seek; it
+    // now also runs on every swap and on eject-then-remount, at times nobody
+    // chose. (stream_stop clears `live` and aborts, in that order.)
+    stream_stop(d);
+    if (s->dma < 0) return false;
+    if (bit_count > s->cap_bytes * 8u) {
+        wf_logf(WF_ERR, "df%u: a %lu-bit track does not fit the %lu-byte stream buffer -- not served",
+                d, (unsigned long)bit_count, (unsigned long)s->cap_bytes);
+        return false;
+    }
 
     // Carry the outgoing track's revolution count into the next INDEX record
     // and restart the counters. See dma_irq(): INDEX is traced ONCE per
     // stream, not once per revolution.
-    prev_revs = rev_count;
-    rev_count = 0;
-    index_traced = false;
-
-    // Review (final), Important 3: the abort MUST come before the repack
-    // loop, not after it. `track_words` is the DMA's read address; the
-    // caller clearing `track_live` only stops dma_irq() re-arming at the
-    // next revolution wrap, it does not stop a transfer already in flight.
-    // Rewriting the buffer underneath a running channel hands the PIO a
-    // mixture of the outgoing and incoming track for the remainder of that
-    // revolution -- one torn revolution, which the Amiga reads as a bad
-    // sector on a drive that is otherwise fine. That was survivable while
-    // this only ran on a seek; it now also runs on every swap and on
-    // eject-then-remount, at times nobody chose.
-    dma_channel_abort(dma_ch);
+    s->prev_revs = s->rev_count;
+    s->rev_count = 0;
+    s->index_traced = false;
 
     // repack bytes MSB-first into words for autopull
     for (uint32_t i = 0; i < nwords; i++) {
         uint32_t w = 0;
         for (int b = 0; b < 4; b++) w = (w << 8) | mfm[i * 4 + b];
-        track_words[i] = w;
+        s->words[i] = w;
     }
-    track_word_count = nwords;
-    dma_channel_config c = dma_channel_get_default_config(dma_ch);
+    s->count = nwords;
+    const uint ch = (uint)s->dma;
+    dma_channel_config c = dma_channel_get_default_config(ch);
     channel_config_set_transfer_data_size(&c, DMA_SIZE_32);
     channel_config_set_read_increment(&c, true);
     channel_config_set_write_increment(&c, false);
-    channel_config_set_dreq(&c, pio_get_dreq(pio, sm_out, true));
-    dma_channel_configure(dma_ch, &c, &pio->txf[sm_out],
-                          track_words, track_word_count, true);
-    dma_channel_set_irq0_enabled(dma_ch, true);
-    track_live = true;
+    channel_config_set_dreq(&c, pio_get_dreq(pio, s->sm, true));
+    dma_channel_configure(ch, &c, &pio->txf[s->sm], s->words, s->count, true);
+    dma_channel_set_irq0_enabled(ch, true);
+    s->live = true;
+    return true;
 }
 
-// index pulse + wrap: retrigger DMA each revolution
+// index pulse + wrap: retrigger DMA each revolution. `ud` is the drive.
 static int64_t index_off(alarm_id_t id, void *ud) {
-    bus_out_set(PIN_INDEX, false);
+    (void)id;
+    bus_out_set_drive((unsigned)(uintptr_t)ud, PIN_INDEX, false);
     return 0;
 }
 // Flash writes disable XIP. This handler re-arms the DMA each revolution and
@@ -549,34 +614,46 @@ static int64_t index_off(alarm_id_t id, void *ud) {
 // real argument. __not_in_flash_func is kept anyway as a second, cheap
 // layer, but it is not "either mitigation would suffice alone": only the
 // lockout actually covers this handler's full call graph.
+//
+// One handler for both drives' channels (both on DMA_IRQ_0): each one that
+// finished a revolution is acknowledged and re-armed on its own.
 static void __isr __not_in_flash_func(dma_irq)(void) {
-    dma_hw->ints0 = 1u << dma_ch;
-    if (!track_live) return;
-    dma_channel_set_read_addr(dma_ch, track_words, false);
-    dma_channel_set_trans_count(dma_ch, track_word_count, true);
-    bus_out_set(PIN_INDEX, true);                    // ~2 ms index at wrap
-    add_alarm_in_us(INDEX_PULSE_US, index_off, NULL, true);
-    rev_count++;
-    // ONCE PER STREAM, NOT ONCE PER REVOLUTION, and the difference is not
-    // cosmetic. At 300 RPM a per-revolution record is a permanent ~5 Hz
-    // producer, and wf_log's ring keeps OLDEST and drops NEWEST -- a policy
-    // written for bursts. Measured on a rev A2 board 2026-09-11: a board left
-    // mounted and unattended for 8.6 h reported "151362 record(s) dropped",
-    // which is INDEX alone (151362 / 4.93 Hz = 8.5 h). The ring saturates
-    // about thirteen seconds after a disk mounts and stays that way, so ANY
-    // later event -- a TRACK-MISS, an error, an eject -- is dropped before a
-    // terminal can ever be attached. The boot history survives, which is the
-    // policy working as designed; everything after it did not.
-    //
-    // Edge-triggered, this pairs with TRACK-SERVED: one line proving the DMA
-    // actually wrapped on the track just loaded. `b` carries how many
-    // revolutions the PREVIOUS track completed, which is the fact a
-    // per-revolution flood was standing in for -- and it costs one record per
-    // seek instead of five per second. A live "still spinning" indicator is
-    // what the activity LED in the backlog is for; it is not the log's job.
-    if (!index_traced) {
-        index_traced = true;
-        wf_trace(WF_EV_INDEX, (uint32_t)track_word_count, prev_revs);
+    const uint32_t pending = dma_hw->ints0;
+    for (unsigned d = 0; d < WF_DRIVES; d++) {
+        stream_t *s = &g_stream[d];
+        if (s->dma < 0) continue;
+        const uint32_t bit = 1u << (unsigned)s->dma;
+        if (!(pending & bit)) continue;
+        dma_hw->ints0 = bit;
+        if (!s->live) continue;
+        dma_channel_set_read_addr((uint)s->dma, s->words, false);
+        dma_channel_set_trans_count((uint)s->dma, s->count, true);
+        bus_out_set_drive(d, PIN_INDEX, true);           // ~2 ms index at wrap
+        add_alarm_in_us(INDEX_PULSE_US, index_off, (void *)(uintptr_t)d, true);
+        s->rev_count++;
+        // ONCE PER STREAM, NOT ONCE PER REVOLUTION, and the difference is not
+        // cosmetic. At 300 RPM a per-revolution record is a permanent ~5 Hz
+        // producer, and wf_log's ring keeps OLDEST and drops NEWEST -- a policy
+        // written for bursts. Measured on a rev A2 board 2026-09-11: a board left
+        // mounted and unattended for 8.6 h reported "151362 record(s) dropped",
+        // which is INDEX alone (151362 / 4.93 Hz = 8.5 h). The ring saturates
+        // about thirteen seconds after a disk mounts and stays that way, so ANY
+        // later event -- a TRACK-MISS, an error, an eject -- is dropped before a
+        // terminal can ever be attached. The boot history survives, which is the
+        // policy working as designed; everything after it did not.
+        //
+        // Edge-triggered, this pairs with TRACK-SERVED: one line proving the DMA
+        // actually wrapped on the track just loaded. `b` carries how many
+        // revolutions the PREVIOUS track completed, which is the fact a
+        // per-revolution flood was standing in for -- and it costs one record per
+        // seek instead of five per second. A live "still spinning" indicator is
+        // what the activity LED in the backlog is for; it is not the log's job.
+        // `a` is the word count, with the drive in bits 24+ (0 for DF0, so
+        // DF0's records read as before).
+        if (!s->index_traced) {
+            s->index_traced = true;
+            wf_trace(WF_EV_INDEX, s->count | ((uint32_t)d << 24), s->prev_revs);
+        }
     }
 }
 
@@ -631,16 +708,21 @@ static void step_drive(unsigned d, bool outwards, bool late) {
 }
 
 // One STEP pulse, with the selects and DIR as latched by the PIO at its
-// falling edge. Every configured drive whose select was low steps.
+// falling edge. Every drive this board is serving whose select was low steps.
 static void step_pulse(uint32_t word) {
     const bus_step_t st = bus_step_decode(word);
     const unsigned nd = n_drives;
-    // Selects of drives this board answers as (bit d = drive d).
-    const uint8_t ours = st.sel_mask & (uint8_t)((1u << nd) - 1u);
+    // Selects of drives this board is serving (bit d = drive d): DF0 always,
+    // DF1 only while it is on (g_df1_mode == NEXT). An OFF DF1 is configured
+    // (its lines are gated and released) but is not a drive: its head never
+    // moves, and its steps are the telemetry below -- the df1-seen heuristic
+    // counts only while our DF1 is off (spec §3).
+    const uint8_t serving = (uint8_t)(1u | (nd > 1 && g_df1_mode == DF1_MODE_NEXT ? 2u : 0u));
+    const uint8_t ours = st.sel_mask & serving;
     // Another drive's step. Checked before anything else: it must not move the
     // head, clear CHNG, or count towards the too-fast filter, whose clock a
-    // DF1 seek would otherwise reset. With one drive configured this is
-    // exactly "SEL0 released", as before.
+    // DF1 seek would otherwise reset. With DF1 off this is exactly "SEL0
+    // released", as before.
     if (ours == 0) {
         steps_other_drive++;
         if (st.sel_mask & BUS_SEL_DF1) {
@@ -675,14 +757,23 @@ static void __isr step_pio_isr(void) {
 // pio_claim_free_sm_and_add_program_for_gpio_range searches pio2 first and
 // needs a free SM and 6 free instruction slots there).
 static PIO  bus_pio = pio1;
-static uint mtr_sm;
+// One sel_mtr state machine per configured drive (in_base = its select); -1:
+// none. Written once at boot, before the interrupt is enabled.
+static int  mtr_sm[WF_DRIVES] = { -1, -1 };
 
-// sel_mtr pushes the MTR level latched on each SEL0 fall, only when it changes.
+// sel_mtr pushes the MTR level latched on each select fall, only when it
+// changes -- one machine for SEL0, one for SEL1 in a DF1-capable build.
 static void __isr mtr_pio_isr(void) {
-    while (!pio_sm_is_rx_fifo_empty(bus_pio, mtr_sm)) {
-        const bool running = (pio_sm_get(bus_pio, mtr_sm) & 1u) != 0;
-        dskchg_on_motor_d(0, running);    // one sel_mtr SM (SEL0) in Phase 1
-        wf_trace(WF_EV_MOTOR, running ? 1u : 0u, 0);
+    for (unsigned d = 0; d < WF_DRIVES; d++) {
+        if (mtr_sm[d] < 0) continue;
+        while (!pio_sm_is_rx_fifo_empty(bus_pio, (uint)mtr_sm[d])) {
+            const bool running = (pio_sm_get(bus_pio, (uint)mtr_sm[d]) & 1u) != 0;
+            // DF1 off: kept (dskchg's RDY needs an image too, so nothing is
+            // asserted), but not traced -- 1.7.8 logged no DF1 motor at all.
+            dskchg_on_motor_d(d, running);
+            if (d == 0 || g_df1_mode == DF1_MODE_NEXT)
+                wf_trace(WF_EV_MOTOR, running ? 1u : 0u, d);
+        }
     }
 }
 
@@ -1363,6 +1454,18 @@ static bool swap_hold_check(void *up, bool decide) {
 }
 static bool swap_holds(void *up) { return swap_hold_check(up, true); }
 
+#if DF1_CAPABLE
+// core1, dc_set_df1_quiesce's fn (R15): up to 50 ms for core0 (a ~1 ms loop)
+// to acknowledge DF1's new word -- stop DF1's stream, then psram_df1_reader_ack
+// -- before core1 writes the slot DF1 held. False: core0 has not let go yet;
+// device_client defers the write (c.df1_deferred) and core1_main paces it.
+static bool df1_quiesce_wait(void *ctx) {
+    (void)ctx;
+    for (int i = 0; i < 50; i++) { if (psram_df1_quiescent()) return true; sleep_ms(1); }
+    return psram_df1_quiescent();
+}
+#endif
+
 // The claimed state machines of each PIO as a bit mask per PIO.
 static void pio_claim_masks(unsigned m[3]) {
     for (unsigned p = 0; p < 3; p++) {
@@ -1394,11 +1497,13 @@ static void core1_main(void) {
     pio_claim_masks(before);
     net_radio_sta_enable();
     {
-        // Masks are SM bit masks (hex). Expected after Phase 1:
-        //   pio0=3  flux_out, drive_id
-        //   pio1=3  status_gate, sel_mtr
+        // Masks are SM bit masks (hex). Expected with DF1 (Task 16), in
+        // claim order -- the same whatever the DF1 setting:
+        //   pio0=f  flux_out DF0, flux_out DF1, drive_id DF0, drive_id DF1
+        //   pio1=f  status_gate DF0, status_gate DF1, sel_mtr DF0, sel_mtr DF1
         //   pio2=7  flux_in, step_dir, radio      (f in a WF_BUS_SNIFF build:
         //                                          flux_in, step_dir, sniff, radio)
+        // A WF_DRIVE_ID=OFF build serves no DF1: pio0=1 (flux_out), pio1=3.
         unsigned m[3];
         pio_claim_masks(m);
         wf_logf(WF_INFO, "pio claims: pio0=%x pio1=%x pio2=%x", m[0], m[1], m[2]);
@@ -1751,6 +1856,17 @@ static void core1_main(void) {
         preload_gate.up = &up;
         preload_gate.fwu = &fwu;
         dc_set_preload_gate(&c, preload_ok, &preload_gate);
+#if DF1_CAPABLE
+        // DF1 (spec 2026-10-08 §4): the mode core0 runs and what DF1's buffer
+        // takes, and -- R15, in every DF1-capable build, before the first
+        // dc_step -- the wait for core0 to let go of a slot before core1
+        // writes it. Set on every entry: dc_init above zeroes `c`. The
+        // reconcile then makes DF1 match (a re-entry finds no preload: DF1 is
+        // ejected).
+        dc_set_df1(&c, g_df1_mode, DF1_HOLDS_HD);
+        dc_set_df1_quiesce(&c, df1_quiesce_wait, NULL);
+        dc_df1_reconcile(&c);
+#endif
         if (fw_booted) {
             // Re-entry after a DC_HALTED re-pair: a new token and a new
             // device row, so an instruction the old one received no longer
@@ -1987,6 +2103,10 @@ static void core1_main(void) {
             // once. Pace it -- the Amiga going idle is seconds away, and a
             // release is then at most this much later.
             if (polled && c.held) sleep_ms(1000);
+            // Same for a fetch deferred because core0 had not yet let go of the
+            // slot DF1 held (R15): `since` did not advance either, and each
+            // redelivery already waited up to 50 ms in df1_quiesce_wait.
+            if (polled && c.df1_deferred) sleep_ms(1000);
             // Same for a display version whose fetch is waiting out a failure:
             // the server answers every poll at once while it is owed.
             if (polled && dc_display_owed(&c) && g_display_fetch_failing) sleep_ms(1000);
@@ -2445,6 +2565,74 @@ static void core1_main(void) {
     }
 }
 
+// ---------------------------------------------------------------- serving
+// core0's loop: put the track drive d's head is over on drive d's stream, from
+// the disk `token` names (DF0: psram_active_token(); DF1: the DF1 word core0
+// last acknowledged). `*loaded` is the track drive d streams (-1: none).
+//
+// R14: track_cache_get_token's buffer is consumed by start_streaming -- which
+// copies it -- before this returns, so no other get (the other drive's
+// included) can run in between.
+static void serve_drive(unsigned d, int32_t token, int *loaded) {
+    const int want = want_track[d];
+    if (want < 0 || want == *loaded) return;
+    uint32_t bits;
+    const uint64_t get_t0 = time_us_64();
+    const uint8_t *mfm = track_cache_get_token(token, want, &bits);
+    // Taken before start_streaming so it times only the get: for an
+    // HD track that is the encode (track_cache.c), or a double-buffer
+    // hit, which is only faster. The previous track keeps streaming
+    // for all of it (start_streaming only aborts it once the new
+    // track is in hand).
+    const uint32_t get_us = (uint32_t)(time_us_64() - get_t0);
+    // `a` carries the drive in bits 8+ (tracks are < 160): DF0's records read
+    // as before.
+    const uint32_t a = (uint32_t)want | ((uint32_t)d << 8);
+    if (mfm && start_streaming(d, mfm, bits)) {
+        *loaded = want;
+        wf_trace(WF_EV_TRACK_SERVED, a, bits);
+        led_blip();
+        // Logged AFTER start_streaming, so the logging cost is never
+        // on the path to the new stream: say so when an HD get takes
+        // longer than any before. The spike's worst was 4.9 ms
+        // against a ~15 ms settle budget.
+        static uint32_t hd_encode_max_us;
+        if (bits == ADF_MFM_HD_TRACK_BITS && get_us > hd_encode_max_us) {
+            hd_encode_max_us = get_us;
+            wf_logf(WF_INFO, "hd: track %d encoded in %lu us (new max)", want, (unsigned long)get_us);
+        }
+    } else {
+        // Not a cache miss to retry -- psram_image.h is explicit
+        // that a track absent from PSRAM is a fault. Worth a record
+        // every time it happens: on the Amiga this is a drive that
+        // reads some tracks and not others, which looks like bad
+        // media unless the log says otherwise. (start_streaming refusing
+        // a track too long for the drive's buffer lands here too, its
+        // stream stopped: never the previous track under a new head
+        // position.)
+        //
+        // `loaded` latches here for the same reason it does on the
+        // hit path, and NOT latching it was a real defect. The
+        // condition above is level-triggered, so a miss that left
+        // `loaded` alone re-entered this branch on the next 1 ms
+        // iteration and traced the same track again, forever.
+        // Measured on a rev A2 board 2026-09-10: a freshly booted
+        // board with no disk mounted -- want_track == 0 and nothing
+        // in PSRAM, which is the DEFAULT state of every board at
+        // power-on -- emitted 44,929 TRACK-MISS records in 48
+        // seconds (40 KB/s), burying every other event at several
+        // thousand to one and defeating the whole point of the log.
+        // Latching makes it one record per track change, which is
+        // what "every time it happens" was always meant to mean.
+        //
+        // Not retrying costs nothing: a mount or an eject resets
+        // `loaded` to -1 (track_cache_check_swap for DF0, the DF1 word
+        // for DF1), so a track that only arrives later is re-attempted then.
+        *loaded = want;
+        wf_trace(WF_EV_TRACK_MISS, a, 0);
+    }
+}
+
 // ---------------------------------------------------------------- main
 // Defined by the SDK (hardware_psram/psram.c) but not declared in any public
 // header; normally run before main() by runtime init, which this build skips
@@ -2513,12 +2701,34 @@ int main(void) {
     // WPROT after this (see its WPROT comment), but "asserted" is the only
     // safe value to boot with regardless: read-only until proven otherwise
     // beats writable by default.
+    // DF1 (spec 2026-10-08): the stored setting, before the first ID read --
+    // Kickstart reads every drive's ID at power-on, seconds before Wi-Fi.
+    {
+        static drive_record_t drv_rec;           // static: off core0's stack
+        const bool drv_loaded = drive_store_load(&drv_rec);
+        g_df1_mode = drive_boot_mode(drv_loaded, &drv_rec);
+        g_drive_boot_ack = drv_loaded ? drv_rec.version : 0;   // core1 seeds driveAck (Phase 3)
+#if !DF1_CAPABLE
+        if (g_df1_mode != DF1_MODE_OFF)
+            wf_logf(WF_WARN, "df1: stored ON, but this build has no drive-ID responder -- off");
+        g_df1_mode = DF1_MODE_OFF;
+#endif
+        wf_logf(WF_INFO, "df1: %s at boot (%s)",
+                g_df1_mode == DF1_MODE_NEXT ? "next disk of the set" : "off",
+                drv_loaded ? "stored" : "compiled default");
+    }
     // One word per drive; PIN_* are board reads, so filled here, not static.
-    uint32_t boot_lines[WF_DRIVES] = {
-        (1u << PIN_TRK0) | (1u << PIN_WPROT),   // DF0, as before
-        0,                                      // DF1: unused until Phase 2
-    };
-    bus_out_init(bus_pio, n_drives, boot_lines);   // Phase 1: one drive, behaviour unchanged
+    uint32_t boot_lines[WF_DRIVES];
+    boot_lines[0] = (1u << PIN_TRK0) | (1u << PIN_WPROT);   // DF0, as before
+    // DF1: an empty, write-protected drive at track 0 until a disk is
+    // inserted. WPROT stays asserted for good: DF1 is read-only, and core1's
+    // WPROT writer is DF0's alone (bus_out_set). The word is the same whatever
+    // the setting: an OFF DF1's machines are never started (bus_out_drive_enable
+    // below), and a disabled machine writes no pad -- off is no DF1 at all,
+    // even while SEL0 and SEL1 are low together.
+    boot_lines[1] = (1u << PIN_TRK0) | (1u << PIN_WPROT) | (1u << PIN_CHNG);
+    n_drives = DF1_CAPABLE ? 2u : 1u;
+    bus_out_init(bus_pio, n_drives, boot_lines);   // starts DF0's gate only
 
     dskchg_init();
     dskchg_set_drives(n_drives);
@@ -2626,9 +2836,20 @@ int main(void) {
 
     // PIO
     uint off_out = pio_add_program(pio, &flux_out_program);
-    sm_out = pio_claim_unused_sm(pio, true);
-    flux_out_program_init(pio, sm_out, off_out, PIN_RDATA, PIN_SEL0);
-    pio_sm_set_enabled(pio, sm_out, true);
+    g_stream[0].sm = pio_claim_unused_sm(pio, true);
+    flux_out_program_init(pio, g_stream[0].sm, off_out, PIN_RDATA, PIN_SEL0);
+    pio_sm_set_enabled(pio, g_stream[0].sm, true);
+#if DF1_CAPABLE
+    // DF1's flux, the same program copy, gated by SEL1. Both machines share
+    // RDATA: flux_out side-sets only on its own pulse, so an idle or
+    // deselected one writes nothing (floppy.pio). It runs whatever the DF1
+    // setting: while DF1 is off it is never fed (only a DF1 mount, which needs
+    // DF1 on, starts its stream) and stalls at `out` with no side-set -- it
+    // never writes RDATA. (DF1's sel_mtr, below, only reads pins.)
+    g_stream[1].sm = pio_claim_unused_sm(pio, true);
+    flux_out_program_init(pio, g_stream[1].sm, off_out, PIN_RDATA, PIN_SEL1);
+    pio_sm_set_enabled(pio, g_stream[1].sm, true);
+#endif
 
     // flux_in lives on pio2 (step_pio), claimed before step_dir: the order
     // there is flux_in, step_dir, then the radio (core1, launched below).
@@ -2641,7 +2862,10 @@ int main(void) {
     flux_capture_init(step_pio, sm_in);
     // (enabled when WGATE asserts; write path TODO)
 
-    dma_ch = dma_claim_unused_channel(true);
+    g_stream[0].dma = dma_claim_unused_channel(true);
+#if DF1_CAPABLE
+    g_stream[1].dma = dma_claim_unused_channel(true);
+#endif
     irq_set_exclusive_handler(DMA_IRQ_0, dma_irq);
     irq_set_enabled(DMA_IRQ_0, true);
 
@@ -2660,22 +2884,36 @@ int main(void) {
 
     // MTR is latched on SEL0's falling edge (sel_mtr), not followed edge by
     // edge: MTR is shared, and only the selected drive takes it.
+    // One machine per configured drive, the same program copy: DF1's latches
+    // MTR on SEL1's fall.
     uint off_mtr = pio_add_program(bus_pio, &sel_mtr_program);
-    mtr_sm = pio_claim_unused_sm(bus_pio, true);
-    sel_mtr_program_init(bus_pio, mtr_sm, off_mtr, PIN_SEL0, PIN_MTR);
-    pio_set_irq0_source_enabled(bus_pio, pio_get_rx_fifo_not_empty_interrupt_source(mtr_sm),
-                                true);
+    for (unsigned d = 0; d < n_drives; d++) {
+        const uint sm = pio_claim_unused_sm(bus_pio, true);
+        sel_mtr_program_init(bus_pio, sm, off_mtr, d == 0 ? PIN_SEL0 : PIN_SEL1, PIN_MTR);
+        pio_set_irq0_source_enabled(bus_pio, pio_get_rx_fifo_not_empty_interrupt_source(sm), true);
+        mtr_sm[d] = (int)sm;
+    }
     irq_set_exclusive_handler(pio_get_irq_num(bus_pio, 0), mtr_pio_isr);
     irq_set_enabled(pio_get_irq_num(bus_pio, 0), true);
-    pio_sm_set_enabled(bus_pio, mtr_sm, true);
+    for (unsigned d = 0; d < n_drives; d++) pio_sm_set_enabled(bus_pio, (uint)mtr_sm[d], true);
 
 #if WF_DRIVE_ID
     // The Amiga drive-ID answer on RDY (HD spec §5.4). pio0, beside flux_out:
-    // 7 + 15 = 22 of its 32 instruction slots.
-    bus_out_drive_id_init(pio, 1);               // DF0 only (Phase 1)
-    wf_logf(WF_INFO, "drive-id: answering DD 0x%08lx on DF0 motor-off selects",
-            (unsigned long)DRIVE_ID_DD);
+    // 7 + 15 = 22 of its 32 instruction slots, one copy of each program,
+    // shared by DF0's and DF1's machines.
+    bus_out_drive_id_init(pio, n_drives);         // starts DF0's only
+    // DF1: the kind first (written into its machine's Y while it is still
+    // disabled), then -- only while DF1 is on -- its status gate and drive_id
+    // machines start together, so its first answer is already DD. Off, they
+    // stay disabled: no ID answer, no line, nothing written on any pad -- an
+    // absent drive (Kickstart reads its ID as 0 from the bus pull-ups).
+    bus_out_drive_id_set(1, g_df1_mode == DF1_MODE_NEXT ? DRIVE_ID_KIND_DD : DRIVE_ID_KIND_NONE);
+    bus_out_drive_enable(1, g_df1_mode == DF1_MODE_NEXT);
+    wf_logf(WF_INFO, "drive-id: answering DD 0x%08lx on DF0, %s on DF1",
+            (unsigned long)DRIVE_ID_DD, g_df1_mode == DF1_MODE_NEXT ? "DD" : "nothing (DF1 off)");
 #endif
+    // DF1's acknowledge cursor: the boot word (0, nothing published) is seen.
+    psram_df1_reader_ack(psram_df1_token());
 
 #if WF_BUS_SNIFF
     // pio2, IRQ1 (step_dir keeps IRQ0, the radio uses none). Claimed before
@@ -2747,6 +2985,7 @@ int main(void) {
     flash_safe_execute_core_init();
 
     want_track[0] = 0;
+    want_track[1] = 0;   // DF1's head boots at cylinder 0 too (read only while DF1 holds a disk)
 
     // Track service: psram_image.h/.c's own repeated documentation is
     // explicit that "core0 (track_cache.c's track_cache_get()) is the only
@@ -2781,6 +3020,13 @@ int main(void) {
     // is plain and unsynchronized.
     int32_t last_active_token = 0;   // psram_image.c: 0 == the fresh-boot sentinel
     int loaded = -1;
+#if DF1_CAPABLE
+    // DF1: the word last acknowledged (0, the boot word, acked above), the
+    // track its stream holds, and whether that word is a disk DF1 serves.
+    int32_t df1_seen_tok = psram_df1_token();
+    int     loaded1 = -1;
+    bool    df1_mounted = false;
+#endif
     // Display bookkeeping. `disk_mounted` gates BOTH the track counter (a
     // cylinder number with no disk in the drive is a number about nothing)
     // and the pump's budget, because the real-time duty only exists while
@@ -2900,11 +3146,42 @@ int main(void) {
                             (unsigned long)DRIVE_ID_DD);
 #endif
                 dskchg_image_ejected();
-                track_live = false;
-                dma_channel_abort(dma_ch);
+                stream_stop(0);
                 wf_trace(WF_EV_EJECT, 0, 0);
             }
         }
+
+#if DF1_CAPABLE
+        // DF1: core1 published a new word (dc_df1_reconcile, or the eject
+        // psram_publish_slot makes when DF0 takes DF1's slot). Stop the old
+        // stream FIRST, then acknowledge -- the ack is core1's licence to
+        // overwrite the slot (df1_quiesce_wait). DF1's lines move only while
+        // DF1 is on: an off DF1 stays an absent drive whatever is published
+        // (core1 publishes nothing to it then -- dc_df1_want).
+        {
+            const int32_t t = psram_df1_token();
+            if (t != df1_seen_tok) {
+                df1_seen_tok = t;
+                stream_stop(1);
+                loaded1 = -1;
+                const int ds = psram_token_slot(t);
+                const bool hd = ds != SLOT_NONE && psram_image_slot_kind(ds) == SLOT_KIND_ADF_HD;
+                const bool was_mounted = df1_mounted;
+                df1_mounted = ds != SLOT_NONE && (!hd || DF1_HOLDS_HD) && g_df1_mode == DF1_MODE_NEXT;
+                if (df1_mounted) {
+                    // The ID before the insert is announced, as for DF0.
+                    bus_out_drive_id_set(1, hd ? DRIVE_ID_KIND_HD : DRIVE_ID_KIND_DD);
+                    dskchg_image_inserted_d(1);
+                    wf_trace(WF_EV_MOUNT, (uint32_t)t, 1);
+                } else if (g_df1_mode == DF1_MODE_NEXT) {
+                    bus_out_drive_id_set(1, DRIVE_ID_KIND_DD);   // an empty DD drive
+                    dskchg_image_ejected_d(1);
+                    if (was_mounted) wf_trace(WF_EV_EJECT, 0, 1);
+                }
+                psram_df1_reader_ack(t);
+            }
+        }
+#endif
 
         /*
          * REVERTED 2026-09-13, the same day it was written.
@@ -2927,60 +3204,12 @@ int main(void) {
          * in the ISR against a measured threshold, on a log verified to have
          * dropped nothing.
          */
-        int want = want_track[0];
-        if (want >= 0 && want != loaded) {
-            uint32_t bits;
-            const uint64_t get_t0 = time_us_64();
-            const uint8_t *mfm = track_cache_get(want, &bits);
-            // Taken before start_streaming so it times only the get: for an
-            // HD track that is the encode (track_cache.c), or a double-buffer
-            // hit, which is only faster. The previous track keeps streaming
-            // for all of it (start_streaming only aborts it once the new
-            // track is in hand).
-            const uint32_t get_us = (uint32_t)(time_us_64() - get_t0);
-            if (mfm) {
-                track_live = false;
-                start_streaming(mfm, bits);
-                loaded = want;
-                wf_trace(WF_EV_TRACK_SERVED, (uint32_t)want, bits);
-                led_blip();
-                // Logged AFTER start_streaming, so the logging cost is never
-                // on the path to the new stream: say so when an HD get takes
-                // longer than any before. The spike's worst was 4.9 ms
-                // against a ~15 ms settle budget.
-                static uint32_t hd_encode_max_us;
-                if (bits == ADF_MFM_HD_TRACK_BITS && get_us > hd_encode_max_us) {
-                    hd_encode_max_us = get_us;
-                    wf_logf(WF_INFO, "hd: track %d encoded in %lu us (new max)", want, (unsigned long)get_us);
-                }
-            } else {
-                // Not a cache miss to retry -- psram_image.h is explicit
-                // that a track absent from PSRAM is a fault. Worth a record
-                // every time it happens: on the Amiga this is a drive that
-                // reads some tracks and not others, which looks like bad
-                // media unless the log says otherwise.
-                //
-                // `loaded` latches here for the same reason it does on the
-                // hit path, and NOT latching it was a real defect. The
-                // condition above is level-triggered, so a miss that left
-                // `loaded` alone re-entered this branch on the next 1 ms
-                // iteration and traced the same track again, forever.
-                // Measured on a rev A2 board 2026-09-10: a freshly booted
-                // board with no disk mounted -- want_track == 0 and nothing
-                // in PSRAM, which is the DEFAULT state of every board at
-                // power-on -- emitted 44,929 TRACK-MISS records in 48
-                // seconds (40 KB/s), burying every other event at several
-                // thousand to one and defeating the whole point of the log.
-                // Latching makes it one record per track change, which is
-                // what "every time it happens" was always meant to mean.
-                //
-                // Not retrying costs nothing: track_cache_check_swap() above
-                // resets `loaded` to -1 on every mount and every eject, so a
-                // track that only arrives later is re-attempted then.
-                loaded = want;
-                wf_trace(WF_EV_TRACK_MISS, (uint32_t)want, 0);
-            }
-        }
+        serve_drive(0, psram_active_token(), &loaded);
+#if DF1_CAPABLE
+        // DF1 only while its word names a disk it holds: an empty DF1 streams
+        // nothing (its want_track still follows its head).
+        if (df1_mounted) serve_drive(1, df1_seen_tok, &loaded1);
+#endif
 
         // HD spec §7 step 10: the free-heap low-water mark, logged each time
         // it drops (sampled every 5 s, so a transient dip can be missed --

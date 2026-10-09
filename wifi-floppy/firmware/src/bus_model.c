@@ -8,6 +8,7 @@
 void bus_model_init(bus_model_t *m, unsigned n) { memset(m, 0, sizeof *m); m->n = n; }
 void bus_model_set_word(bus_model_t *m, unsigned d, uint32_t w) { m->word[d] = w; }
 void bus_model_select(bus_model_t *m, uint32_t s) { m->sel = s; }
+void bus_model_set_enabled(bus_model_t *m, unsigned d, bool on) { m->disabled[d] = !on; }
 uint32_t bus_model_pads(const bus_model_t *m) { return m->pads; }
 unsigned bus_model_released_writes(const bus_model_t *m, unsigned d) { return m->released_writes[d]; }
 bool bus_model_rdata(const bus_model_t *m) { return m->rdata; }
@@ -62,6 +63,7 @@ static bool flux_cycle(bus_model_t *m, unsigned d, bool *level) {
 void bus_model_run(bus_model_t *m, unsigned cycles) {
     for (unsigned c = 0; c < cycles; c++) {
         for (unsigned d = 0; d < m->n; d++) {          // ascending: the last (highest) wins
+            if (m->disabled[d]) continue;              // a disabled SM writes nothing
             bool w; uint32_t v = 0;
             gate_pass(m, d, &w, &v);
             if (w) m->pads = v;
@@ -75,7 +77,7 @@ unsigned bus_model_run_count_rdata_pulses(bus_model_t *m, unsigned cycles) {
         const bool before = m->rdata;
         for (unsigned d = 0; d < m->n; d++) {          // ascending: the last (highest) wins
             bool lvl = false;
-            if (flux_cycle(m, d, &lvl)) m->rdata = lvl;
+            if (!m->disabled[d] && flux_cycle(m, d, &lvl)) m->rdata = lvl;
         }
         if (!before && m->rdata) pulses++;
     }

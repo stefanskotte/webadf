@@ -15,6 +15,7 @@
 #include <stdbool.h>
 #include "transport.h"
 #include "display_layout.h"   // pure: layout_t, for dc_display_verdict_t
+#include "drive_store.h"      // pure: df1_mode_t
 
 typedef enum {
     DC_UNPROVISIONED, DC_IDLE_POLL, DC_FETCHING, DC_VERIFYING,
@@ -147,8 +148,15 @@ typedef bool (*dc_hold_fn)(void *ctx);
 // one). Both budgets still hold, so neither is raised -- but the body has 63
 // bytes left, and the next field will need a raise.
 // SEL1 telemetry (2026-10-08) adds 34; the body then has 29 left.
-#define DC_STATUS_BODY_BYTES  1280
-#define DC_STATUS_REQ_BYTES   1792
+// DF1 (2026-10-08 Task 15) adds ,"df1Sha256":"<64 hex>" -- 79 -- which no
+// longer fits, and Phase 3 owes 46 more: 1217 + 34 + 79 + 46 = 1376 at the
+// worst case of every tail at once (159 over 1217), so the body goes to 1408
+// (32 spare after Phase 3). The request is that plus the request line and
+// headers -- ~134 bytes with the test's 3-byte token, ~180 with a real one --
+// so ~1560 at most; 1920 keeps the same ~350 margin the old pair had.
+// test_status_body_fits_at_maximum prints the measured sizes.
+#define DC_STATUS_BODY_BYTES  1408
+#define DC_STATUS_REQ_BYTES   1920
 // `err` is firmware-authored (a short static string or errno-derived text,
 // never network input), but it still has to survive being embedded in a
 // JSON string unescaped -- truncated well short of DC_STATUS_BODY_BYTES so
@@ -260,6 +268,11 @@ typedef struct {
     // than spin TLS requests until the hold lifts.
     bool       held;
     bool       _was_held;   // `held` of the previous step: log a hold once
+    // True when THIS dc_step (or dc_preload_step) wanted to write the idle
+    // PSRAM slot and core0 had not yet let go of it for DF1 (dc_df1_release):
+    // nothing was written. A deferred dc_step's poll is redelivered at once
+    // (`since` did not advance), so the caller paces it (main.c), as for `held`.
+    bool       df1_deferred;
     bool       _refetch;
 
     // The in-flight disk's identity, so a progress observation can carry the
@@ -348,6 +361,12 @@ typedef struct {
     bool     _sel1_sent_valid;
     bool     _sel1_sent_wired;
     bool     _df1_sent_seen;
+    // DF1 serving (Task 15): what core1 lets DF1 hold -- see dc_df1_reconcile.
+    uint8_t  _df1_mode;            // df1_mode_t, as core0 runs it (main.c keeps it current)
+    bool     _df1_capable;         // dc_set_df1 was called: the build serves DF1
+    bool     _df1_hd_ok;           // D2: DF1's buffer holds an HD track
+    bool   (*_df1_quiesce)(void *ctx);
+    void    *_df1_quiesce_ctx;
 
     // --- multi-disk Next disk (spec 2026-09-28 §4.3-4.4) ---
     dc_preload_t preload;
@@ -610,6 +629,29 @@ void dc_set_sel1(device_client_t *c, bool wired, bool df1_seen);
 // (or none was accepted yet): a status report is OWED. Cleared by a successful
 // dc_report_status, so repeating dc_set_sel1 with the same values owes nothing.
 bool dc_sel1_owed(const device_client_t *c);
+
+// --- DF1 second drive (spec 2026-10-08 §4) --------------------------------
+//
+// DF1 serves exactly one thing: the verified preload record (the idle slot
+// holding the server's current `next`), read-only, while DF1 is on, DF0 holds
+// a disk, and the disk fits DF1's track buffer. core1 is the only writer of
+// what DF1 holds (psram_publish_df1); nothing writes into a PSRAM slot while
+// DF1 holds it or core0 has not acknowledged letting go of it.
+
+// The DF1 mode core0 runs and whether DF1's buffer takes an HD track. Calling
+// this at all marks the build DF1-capable: the status report then always
+// carries "df1Sha256" (null or the digest DF1 holds).
+void dc_set_df1(device_client_t *c, df1_mode_t mode, bool hd_ok);
+
+// `fn(ctx)` waits (up to its own timeout) for core0 to acknowledge the current
+// DF1 word, true when it has -- i.e. when no DF1 read of a slot can still be
+// in flight. NULL: no wait, only psram_df1_quiescent() as it stands.
+void dc_set_df1_quiesce(device_client_t *c, bool (*fn)(void *ctx), void *ctx);
+
+// Makes what DF1 holds match the policy above: inserts the preload's slot, or
+// ejects. A no-op when they already match. dc_step and dc_preload_step call it
+// on every return; main.c calls it after dc_set_df1.
+void dc_df1_reconcile(device_client_t *c);
 
 // GET /api/device/firmware/<version>. Body bytes go to `sink`. Returns the HTTP status of a
 // COMPLETE response, or -1 (transport, framing, incomplete). 401 halts, as everywhere.

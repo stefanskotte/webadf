@@ -140,6 +140,17 @@ void psram_publish_slot(int slot);      // the single volatile store core0 reads
 int32_t psram_active_token(void);
 int     psram_token_slot(int32_t token);   // decode a token; no barrier, no re-read
 
+// --- DF1 (second drive) ---------------------------------------------
+// DF1 serves only the idle slot holding the preloaded next disk. core1 writes
+// df1_word; core0 reads it and acknowledges what it has seen. Tokens come
+// from the same generation counter as DF0's, so (track, token) keys stay
+// unique across both drives.
+bool    psram_publish_df1(int slot);       // core1; false, nothing changed, if refused
+int32_t psram_df1_token(void);             // acquire barrier
+int     psram_df1_slot(void);
+void    psram_df1_reader_ack(int32_t token);   // core0 only
+bool    psram_df1_quiescent(void);         // core1: core0 acked the current DF1 word
+
 int  psram_active_slot(void);           // SLOT_NONE when ejected
 int  psram_inactive_slot(void);         // the fetch target; SLOT_NONE -> 0
 
