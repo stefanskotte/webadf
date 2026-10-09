@@ -153,15 +153,69 @@ static void test_successful_submit_is_not_the_form(void) {
     CHECK(strstr(out, "200 OK") != NULL, "still a 200");
 }
 
-// The submitted SSID is attacker-shaped free text; the confirmation page
-// must not reflect it (unescaped or otherwise), same standing rule the
-// password already had.
-static void test_accepted_page_echoes_nothing_submitted(void) {
+// The submitted SSID is attacker-shaped free text. The confirmation page
+// now names it (operator, 2026-10-09) -- but only escaped; the password and
+// the pairing code are still never reflected at all.
+static void test_accepted_page_escapes_the_ssid_and_echoes_no_secrets(void) {
     REQ("POST", "/save", "ssid=%3Cscript%3Ex&pass=hunter2xy&code=ZZTOP1", NULL);
     CHECK_EQ_INT(res.action, PORTAL_ACT_SUBMIT);
-    CHECK(strstr(out, "<script>") == NULL, "no reflected SSID");
+    CHECK(strstr(out, "<script>") == NULL, "no raw reflected SSID");
+    CHECK(strstr(out, "Joining &lt;script&gt;x") != NULL, "the SSID, escaped");
     CHECK(strstr(out, "hunter2xy") == NULL, "no reflected password");
     CHECK(strstr(out, "ZZTOP1") == NULL, "no reflected pairing code");
+}
+
+// The operator's wording, and the network actually being joined.
+static void test_accepted_page_says_what_happens_next(void) {
+    int n = REQ("POST", "/save", "ssid=Home+WiFi&pass=pw12345678&code=ABC123", NULL);
+    CHECK(n > 0, "rendered");
+    CHECK_EQ_INT(res.action, PORTAL_ACT_SUBMIT);
+    CHECK(strstr(out, "<h1>Joining Home WiFi\xe2\x80\xa6</h1>") != NULL, "names the network");
+    CHECK(strstr(out, "This network will now disappear.") != NULL, "says the AP goes away");
+    CHECK(strstr(out, "Watch the board's screen; when it is paired the device appears in "
+                      "the web app.") != NULL, "says where to look next");
+    CHECK(strstr(out, "If the board cannot join, this network comes back with the reason.")
+          != NULL, "says what failure looks like");
+    CHECK(strstr(out, "AB:CD:EF:01:02:03") != NULL, "still names the board");
+    CHECK(strstr(out, "http://") == NULL && strstr(out, "https://") == NULL &&
+          strstr(out, "src=") == NULL, "no external assets: the AP has no internet");
+}
+
+// portal_net.c renders into a fixed 2048-byte buffer; the worst-case SSID
+// (32 characters that each escape to the longest entity) must still fit.
+static void test_accepted_page_fits_with_the_worst_case_ssid(void) {
+    char body[256];
+    char *b = body;
+    b += sprintf(b, "ssid=");
+    for (int i = 0; i < 32; i++) b += sprintf(b, "%%22");   // '"' -> &quot;
+    sprintf(b, "&pass=pw12345678&code=ABC123");
+    char small[2048];
+    int n = portal_request("POST", "/save", body, "AB:CD:EF:01:02:03", NULL,
+                           small, sizeof small, &res);
+    CHECK_EQ_INT(res.action, PORTAL_ACT_SUBMIT);
+    CHECK(n > 0 && n < (int)sizeof small, "fits portal_net.c's TCP_RESP_CAP");
+    CHECK(strstr(small, "&quot;&quot;&quot;") != NULL, "escaped, not dropped");
+    printf("  (worst-case accepted page: %d bytes)\n", n);
+}
+
+static void test_html_escape(void) {
+    char o[64];
+    CHECK_EQ_INT(portal_html_escape("a&b<c>d\"e'f", o, sizeof o), 30);
+    CHECK(strcmp(o, "a&amp;b&lt;c&gt;d&quot;e&#39;f") == 0, "all five entities");
+    CHECK_EQ_INT(portal_html_escape("x\x01y\x7fz", o, sizeof o), 5);
+    CHECK(strcmp(o, "x?y?z") == 0, "control bytes become ?");
+    CHECK_EQ_INT(portal_html_escape("caf\xc3\xa9", o, sizeof o), 5);
+    CHECK(strcmp(o, "caf\xc3\xa9") == 0, "UTF-8 passes through");
+    CHECK_EQ_INT(portal_html_escape(NULL, o, sizeof o), 0);
+    CHECK(o[0] == '\0', "NULL reads as empty");
+    CHECK_EQ_INT(portal_html_escape("", o, sizeof o), 0);
+    // Exact fit: "&amp;" is 5 bytes + NUL = 6.
+    CHECK_EQ_INT(portal_html_escape("&", o, 6), 5);
+    CHECK(strcmp(o, "&amp;") == 0, "exact fit");
+    CHECK_EQ_INT(portal_html_escape("&", o, 5), -1);   // refused, not truncated
+    CHECK_EQ_INT(portal_html_escape("ab", o, 2), -1);
+    CHECK_EQ_INT(portal_html_escape("a", o, 0), -1);
+    CHECK_EQ_INT(portal_html_escape("a", NULL, 8), -1);
 }
 
 // The other half of the same route: a submit that did NOT decode still
@@ -216,7 +270,10 @@ int main(void) {
     RUN(test_post_save_with_null_body_is_not_a_submit);
     RUN(test_successful_submit_does_not_repeat_the_previous_error);
     RUN(test_successful_submit_is_not_the_form);
-    RUN(test_accepted_page_echoes_nothing_submitted);
+    RUN(test_accepted_page_escapes_the_ssid_and_echoes_no_secrets);
+    RUN(test_accepted_page_says_what_happens_next);
+    RUN(test_accepted_page_fits_with_the_worst_case_ssid);
+    RUN(test_html_escape);
     RUN(test_failed_submit_still_returns_the_form_with_an_error);
     RUN(test_password_field_is_required);
     return REPORT();

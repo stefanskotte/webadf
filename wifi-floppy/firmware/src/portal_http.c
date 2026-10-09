@@ -188,17 +188,15 @@ static const char *PAGE_FMT =
 // with render_form() and the caller's `err` still in place -- so the last
 // thing a user saw, at the exact moment the board had ACCEPTED their
 // credentials and was tearing the AP down, was the previous attempt's
-// "Wrong password" banner over an empty form. Retyping a password
-// correctly looked identical to getting it wrong again. There was also no
-// confirmation page at all, even though portal_net.c's publish-after-
-// tcp_output ordering is justified by one.
+// "Wrong password" banner over an empty form. So: one distinct body, and
+// `err` is deliberately not a parameter -- the previous attempt's failure
+// cannot be carried into the page about the current attempt.
 //
-// So: one distinct body, and `err` is deliberately not a parameter -- the
-// previous attempt's failure cannot be carried into the page that says the
-// current attempt worked. Nothing submitted is echoed either: not the
-// password (§6's standing rule) and not the SSID, which is attacker-shaped
-// free text that would otherwise be reflected unescaped into HTML. The MAC
-// is the board's own, so it stays.
+// Operator, 2026-10-09: the page names the network being joined and says
+// what happens next (wording is the operator's). The SSID is attacker-shaped
+// free text, so it goes in only through portal_html_escape(); the password
+// and the pairing code are still never echoed. portal_net.c holds the AP up
+// until the phone has ACKed this page (bounded), so it is actually seen.
 static const char *ACCEPTED_FMT =
     "HTTP/1.1 200 OK\r\n"
     "Content-Type: text/html; charset=utf-8\r\n"
@@ -209,24 +207,54 @@ static const char *ACCEPTED_FMT =
     "<title>WiFi Floppy Setup</title>"
     "<style>"
     "body{font-family:sans-serif;max-width:480px;margin:2em auto;padding:0 1em;}"
-    ".ok{background:#e3f7e3;border:1px solid #2a2;padding:.6em 1em;"
-    "margin-bottom:1em;color:#161;border-radius:4px;}"
     ".mac{color:#666;font-size:.9em;}"
     "</style>"
     "</head><body>"
-    "<h1>Connecting\xe2\x80\xa6</h1>"
+    "<h1>Joining %s\xe2\x80\xa6</h1>"
     "<p class=\"mac\">Board %s</p>"
-    "<div class=\"ok\">Credentials accepted.</div>"
-    "<p>This setup network is shutting down now, so it will disappear from "
-    "your phone in a few seconds. That is what success looks like \xe2\x80\x94 "
-    "you do not need to do anything else.</p>"
-    "<p>If the board cannot join the network you gave it, the setup network "
-    "comes back within about a minute with the reason. Rejoin it and try "
-    "again only if that happens.</p>"
+    "<p>This network will now disappear.</p>"
+    "<p>Watch the board's screen; when it is paired the device appears in "
+    "the web app.</p>"
+    "<p>If the board cannot join, this network comes back with the reason.</p>"
     "</body></html>";
 
-static int render_accepted(char *out, int cap, const char *mac_str) {
-    return emit(out, cap, ACCEPTED_FMT, mac_str ? mac_str : "");
+int portal_html_escape(const char *in, char *out, int cap) {
+    if (!out || cap <= 0) return -1;
+    int o = 0;
+    for (const char *p = in ? in : ""; *p; p++) {
+        unsigned char c = (unsigned char)*p;
+        const char *rep = NULL;
+        char one[2] = { (char)c, '\0' };
+        switch (c) {
+        case '&':  rep = "&amp;";  break;
+        case '<':  rep = "&lt;";   break;
+        case '>':  rep = "&gt;";   break;
+        case '"':  rep = "&quot;"; break;
+        case '\'': rep = "&#39;";  break;
+        default:
+            // Control bytes (an SSID may hold any octet) render as '?'
+            // rather than as raw bytes in the page. Bytes >= 0x80 pass
+            // through: a UTF-8 SSID should read as itself.
+            if (c < 0x20 || c == 0x7f) one[0] = '?';
+            rep = one;
+            break;
+        }
+        int n = (int)strlen(rep);
+        if (o + n > cap - 1) return -1;   // would not fit -- refuse, never truncate
+        memcpy(out + o, rep, (size_t)n);
+        o += n;
+    }
+    out[o] = '\0';
+    return o;
+}
+
+static int render_accepted(char *out, int cap, const char *mac_str, const char *ssid) {
+    // CONFIG_SSID_MAX octets, each at most 6 once escaped ("&quot;"), + NUL.
+    char ssid_html[CONFIG_SSID_MAX * 6 + 1];
+    if (portal_html_escape(ssid, ssid_html, (int)sizeof ssid_html) < 0) {
+        ssid_html[0] = '\0';   // cannot happen for a decoded SSID; degrade, don't fail
+    }
+    return emit(out, cap, ACCEPTED_FMT, ssid_html, mac_str ? mac_str : "");
 }
 
 static int render_form(char *out, int cap, const char *mac_str, const char *err) {
@@ -275,7 +303,7 @@ int portal_request(const char *method, const char *path, const char *body,
             // The submit worked: a distinct page, and `err` -- which
             // describes the attempt BEFORE this one -- is not passed on.
             // See ACCEPTED_FMT's comment.
-            return render_accepted(out, cap, mac_str);
+            return render_accepted(out, cap, mac_str, res->submitted.ssid);
         }
         // Not a submit: the form comes back. A caller-supplied `err` still
         // wins over the generic message, since it names an actual failure
