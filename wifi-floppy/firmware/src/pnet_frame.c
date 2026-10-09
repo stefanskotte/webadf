@@ -6,7 +6,7 @@
 const char *pnet_err_text(pnet_err_t e) {
     static const char *const t[PNET_E_COUNT] = {
         "ok", "short", "magic", "mode", "size", "checksum",
-        "frames", "frame size", "rle", "full", "no sync",
+        "frames", "frame size", "rle", "full", "no sync", "out of range",
     };
     return (unsigned)e < PNET_E_COUNT ? t[e] : "?";
 }

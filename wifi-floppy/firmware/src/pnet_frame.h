@@ -50,7 +50,9 @@ typedef enum { PNET_TO_BOARD, PNET_TO_AMIGA } pnet_dir_t;
 
 typedef enum {
     PNET_OK = 0, PNET_E_SHORT, PNET_E_MAGIC, PNET_E_MODE, PNET_E_SIZE, PNET_E_CHECKSUM,
-    PNET_E_FRAMES, PNET_E_FRAME_SIZE, PNET_E_RLE, PNET_E_FULL, PNET_E_NOSYNC, PNET_E_COUNT
+    PNET_E_FRAMES, PNET_E_FRAME_SIZE, PNET_E_RLE, PNET_E_FULL, PNET_E_NOSYNC,
+    PNET_E_RANGE,      /* board: the capture holds a gap over PNET_RX_MAX_CELLS (clamped cells) */
+    PNET_E_COUNT
 } pnet_err_t;
 const char *pnet_err_text(pnet_err_t e);
 
