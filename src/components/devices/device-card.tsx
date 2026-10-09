@@ -10,6 +10,7 @@ import { HelpTip } from '@/components/help/help-tip';
 import { NextDiskButton } from './next-disk-button';
 import { DeviceAlias } from './device-alias';
 import { DriveFront } from './drive-front';
+import { DeleteDeviceDialog } from './delete-device-dialog';
 
 /**
  * The drive-bezel card (design A2, 2026-10-07): name, online badge and MAC on
@@ -261,6 +262,7 @@ export function DeviceCard(
           ) : <span />}
           <div className="flex items-center gap-2">
             {next && state === 'converged' && <NextDiskButton deviceId={device.id} next={next} />}
+            <DeleteDeviceDialog deviceId={device.id} name={device.name} />
           </div>
         </div>
       </div>

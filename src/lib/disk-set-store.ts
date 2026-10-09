@@ -196,6 +196,7 @@ export async function addDisksToSet(
   const sources = await db.select({
     id: games.id, title: games.title, year: games.year, publisher: games.publisher,
     metadataSource: games.metadataSource, diskOrderSource: games.diskOrderSource, coverAssetId: games.coverAssetId, demozooProductionId: games.demozooProductionId,
+    coverOverrideSha256: games.coverOverrideSha256,
   }).from(games).where(and(inArray(games.id, sourceIds), eq(games.orgId, orgId)));
   // A disk whose title is not this org's (org_id drift) is refused, never moved:
   // this operation must not delete or strip another org's title.
@@ -221,7 +222,9 @@ export async function addDisksToSet(
       diskIds: plan.renumber.filter((r) => from.get(r.diskId) === gid).map((r) => r.diskId),
       title: g.title, year: g.year, publisher: g.publisher, metadataSource: g.metadataSource,
       diskOrderSource: g.diskOrderSource === 'human' ? 'human' : null,
-      hadExtras: g.coverAssetId !== null || g.demozooProductionId !== null || collected.has(gid),
+      // A person's own cover is an extra too: Undo recreates the title without it.
+      hadExtras: g.coverAssetId !== null || g.coverOverrideSha256 !== null || g.demozooProductionId !== null
+        || collected.has(gid),
     };
   });
 

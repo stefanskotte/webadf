@@ -26,7 +26,7 @@ ordering. The current bench board is rev A2.*
 
 ### Library
 
-- Upload `.adf`, `.adz`, `.dms` and `.hfe`; drop `.lha` and `.zip` archives onto a disk
+- Upload `.adf`, `.adz`, `.dms` and `.hfe`; drop `.lha`, `.lzh` and `.zip` archives onto a disk
   to pick files out of them.
 - HD (1.76 MB) ADFs are recognised and tagged HD, and are disks like any other: browsed
   and edited in the browser, with full history. Blank HD disks can be made from the
@@ -112,7 +112,7 @@ deltas.
 | | |
 |---|---|
 | Web app: library, collections, identification, search | live |
-| Upload `.adf` `.adz` `.dms` `.hfe`; `.lha`/`.zip` onto a disk | live |
+| Upload `.adf` `.adz` `.dms` `.hfe`; `.lha`/`.lzh`/`.zip` onto a disk | live |
 | File editing inside a disk, blank disks, drag and drop | live |
 | Disk history: browse and restore any version | live, restore verified on hardware |
 | Device: setup portal, WiFi, TLS, pairing | verified on hardware |
@@ -134,7 +134,7 @@ deltas.
 | `src/` | the Next.js app |
 | `src/lib/adfmfm/` | ADF ⇄ Amiga MFM encoder, verified against Greaseweazle |
 | `src/lib/adffs/` | AmigaDOS filesystem reader/writer (OFS/FFS) |
-| `src/lib/archive/` | `.lha`, `.zip` and `.dms` decoders, all browser-side |
+| `src/lib/archive/` | `.lha`/`.lzh`, `.zip` and `.dms` decoders, all browser-side |
 | `src/lib/hfe/` | HFE parsing, conversion for the board, ADF extraction |
 | `src/lib/disk-history/` | sector deltas and the version chain behind history and restore |
 | `src/lib/nfc/` | NFC tap and tag-writing rules and storage |

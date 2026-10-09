@@ -92,3 +92,22 @@ test('an .lha expands into staging, and only the kept members are written', asyn
   // the file must wear the AmigaDOS default rather than anything invented.
   expect(readme.protection).toBe('----rwed');
 });
+
+test('an .lzh expands exactly like an .lha (same container, -lh7- method)', async ({ page }) => {
+  const u = await signUpFresh(page);
+  await page.goto('/library');
+  await createAdf(page);
+  const disk = await authoredDisk(page, u.orgId);
+  await page.goto(`/disks/${disk.id}/files`);
+  await expect(page.getByTestId('drop-strip')).toBeVisible();
+
+  const lzh = [...new Uint8Array(readFileSync(
+    join(process.cwd(), 'src/lib/archive/fixtures/m7.lzh')))];
+  await synthDrop(page, [{ name: 'm7.lzh', kind: 'file', bytes: lzh }]);
+
+  const list = page.getByTestId('drop-staging-list');
+  await expect(list).toBeVisible();
+  await expect(list).toContainText('readme.txt');
+  await expect(list).toContainText('deep.txt');
+  await expect(list).not.toContainText('m7.lzh');
+});

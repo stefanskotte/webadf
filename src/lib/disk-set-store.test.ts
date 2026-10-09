@@ -65,7 +65,7 @@ beforeEach(() => {
 
 const game = (id: string, over: Record<string, unknown> = {}) => ({
   id, title: `T ${id}`, year: 1990, publisher: 'Psygnosis', metadataSource: 'tosec', diskOrderSource: null,
-  coverAssetId: null, demozooProductionId: null, ...over,
+  coverAssetId: null, coverOverrideSha256: null, demozooProductionId: null, ...over,
 });
 
 /** Target G with d1; picked: s2 of title S (S also holds s1, unpicked). */
@@ -253,6 +253,13 @@ describe('addDisksToSet', () => {
     byTable.set(games, [[{ id: 'G' }], [game('S', { diskOrderSource: 'human' })]]);
     const { undo } = await addDisksToSet('org-1', 'G', ['s2']);
     expect(undo[0].diskOrderSource).toBe('human');
+  });
+
+  it('hadExtras is true when the emptied title had its own cover image', async () => {
+    addScenario();
+    byTable.set(games, [[{ id: 'G' }], [game('S', { coverOverrideSha256: 'c'.repeat(64) })]]);
+    const { undo } = await addDisksToSet('org-1', 'G', ['s2']);
+    expect(undo[0].hadExtras).toBe(true);
   });
 
   it('hadExtras is false with no cover, no Demozoo link and no collection', async () => {

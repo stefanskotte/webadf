@@ -130,3 +130,66 @@ export function planBlobGc(input: BlobGcInput): BlobGcPlan {
     .map((o) => o.sha256);
   return { rows, objects, refused: null };
 }
+
+/**
+ * The cover pass: which cover/<sha256> objects (a title's own image,
+ * games.cover_override_sha256) may go. Same rule as the adf/ objects --
+ * nothing names them, and older than the grace period -- with no rows to
+ * reconcile: a cover has no table of its own, only the games rows naming it.
+ *
+ * A Revert or a replaced image leaves its object behind on purpose (another
+ * title, possibly in another org, may name the same bytes); this is what
+ * reclaims it. The grace covers the upload's own ordering: bytes are stored
+ * before the games row names them.
+ *
+ * Brakes, refusing the whole pass rather than trimming it:
+ *   - at least `minRefMatch` of the referenced digests must be in the listing,
+ *     or the listing (or its key parsing) is wrong and every object would
+ *     look unreferenced;
+ *   - at most `maxFraction` of the listed objects (beyond `floor`) may go in
+ *     one run: a reference list that came back short must not empty the store.
+ */
+export interface CoverGcInput {
+  objects: { sha256: string; uploadedAt: Date }[];
+  /** Every non-null games.cover_override_sha256, across ALL organizations. */
+  referenced: Iterable<string>;
+  now: Date;
+  graceMs: number;
+  minRefMatch?: number;
+  maxFraction?: number;
+  floor?: number;
+}
+
+export function planCoverGc(input: CoverGcInput): { objects: string[]; refused: string | null } {
+  const { now, graceMs, minRefMatch = 0.9, maxFraction = 0.25, floor = 20 } = input;
+  const cutoff = now.getTime() - graceMs;
+  const referenced = new Set(input.referenced);
+  const listed = new Set(input.objects.map((o) => o.sha256));
+
+  const matched = [...referenced].filter((s) => listed.has(s)).length;
+  if (referenced.size > 0 && matched < referenced.size * minRefMatch) {
+    return { objects: [], refused: `only ${matched} of ${referenced.size} referenced covers are in the store listing -- the listing does not line up with the database` };
+  }
+
+  const objects = [...new Set(input.objects
+    .filter((o) => !referenced.has(o.sha256) && o.uploadedAt.getTime() < cutoff)
+    .map((o) => o.sha256))];
+  if (referenced.size === 0 && objects.length > 0) {
+    return { objects: [], refused: `no title names a cover image, yet ${objects.length} would be deleted -- check the reference list` };
+  }
+  const limit = Math.max(floor, Math.floor(input.objects.length * maxFraction));
+  if (objects.length > limit) {
+    return { objects: [], refused: `would delete ${objects.length} of ${input.objects.length} cover images (limit ${limit}) -- check the reference list` };
+  }
+  return { objects, refused: null };
+}
+
+/**
+ * The last look before deleting covers: `planned` minus every digest a title
+ * names now. Closes the window between the reference read and the delete, in
+ * which a person may have re-chosen exactly these bytes.
+ */
+export function withoutReferenced(planned: readonly string[], referencedNow: Iterable<string>): string[] {
+  const named = new Set(referencedNow);
+  return planned.filter((s) => !named.has(s));
+}

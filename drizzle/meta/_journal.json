@@ -232,6 +232,13 @@
       "when": 1791540992335,
       "tag": "0032_second_drive",
       "breakpoints": true
+    },
+    {
+      "idx": 33,
+      "version": "7",
+      "when": 1791557942363,
+      "tag": "0033_cover_override",
+      "breakpoints": true
     }
   ]
 }
