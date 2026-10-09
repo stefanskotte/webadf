@@ -1646,6 +1646,11 @@ separately.
   tests only (its artifacts are for diagnosis). fw-1.8.1 was re-attached from the registry (sha256 87b4c4da...).
 - **The bench board's chip is RP2350 rev A4** (`picotool info -a`, 2026-10-09; `-d` does not show the revision). The
   RP2350-E10 workaround block in today's .uf2 (aimed at the token sector) only affects A2, so it is harmless here.
+- **Setup-network join failure on 2026-10-09 was the PHONE, not firmware.** After the bench wipe, the phone (which
+  had joined `wifi-floppy-XXXX` before; the SSID derives from the MAC, so it is unchanged by a wipe) silently used
+  its saved entry, and after "Forget" it rejected `wififloppy` once. A bisect (1.7.5, 1.7.8, 1.8.0, 1.8.1, registry
+  1.9.0 and the install image again) joined fine every time. **For the quickstart:** if the phone has joined this
+  board before, Forget the network first.
 - **REQUIREMENT (operator, 2026-10-09): a first install is ONE drag-and-drop.** Hold BOOTSEL, plug in, drop ONE
   .uf2 onto the drive that appears, and everything else just works. **Requiring picotool is a blocker for casual
   users.** Today's install (picotool: partition table, reboot to BOOTSEL, `load -p 0 -x`) does not meet it. Research
