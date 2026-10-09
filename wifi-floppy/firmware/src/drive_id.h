@@ -8,10 +8,12 @@
 // is host-tested; each model line names the instruction it stands for, and
 // the program is changed only together with this model.
 //
-//  * Only SEL0 is looked at: a select of another drive changes nothing, and
-//    RDY is released whenever SEL0 is (the SEL0 gating rule, HANDOFF 4e), so
-//    a real drive on DF1 is untouched.
-//  * MTR is latched on each SEL0 fall, as a real drive (and sel_mtr) does.
+//  * Only this drive's own select is looked at (the SM's in_base, `wait pin 0`:
+//    SEL0 for DF0, SEL1 for the board's DF1): a select of another drive
+//    changes nothing, and RDY is released whenever this select is (the gating
+//    rule, HANDOFF 4e), so a real drive on another select is untouched.
+//  * MTR is latched on each fall of this drive's select, as a real drive (and
+//    sel_mtr) does.
 //  * Motor latched ON: RDY is the CPU's level (dskchg: spun up + disk in).
 //  * Motor latched OFF: the FIRST such select after a motor-on one (or after
 //    power-up) loads the ID and answers bit 31 at once; every motor-off
