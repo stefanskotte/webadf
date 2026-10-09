@@ -55,15 +55,14 @@ void track_cache_init(void) {
 // psram_active_token() on every call, so a swap invalidates them without
 // help.
 
-const uint8_t *track_cache_get(int track, uint32_t *bit_count) {
+const uint8_t *track_cache_get_token(int32_t token, int track, uint32_t *bit_count) {
     if (track < 0 || track >= NUM_TRACKS) return 0;
 
-    // One read of the swap word for the whole call (with the acquire
-    // barrier psram_active_token() applies), so a publish landing mid-call
-    // can't mix a cache-hit check against one generation with a PSRAM read
-    // from another. See psram_publish_slot()'s comment in psram_image.c
-    // for why any single token names a whole disk (or no disk).
-    int32_t token = psram_active_token();
+    // The caller reads its token ONCE for the whole call (psram_active_token()
+    // for DF0, psram_df1_token() for DF1), so a publish landing mid-call can't
+    // mix a cache-hit check against one generation with a PSRAM read from
+    // another. See psram_publish_slot()'s comment in psram_image.c for why any
+    // single token names a whole disk (or no disk).
     int slot = psram_token_slot(token);
     if (slot == SLOT_NONE) return 0;       // nothing mounted
 
@@ -116,6 +115,10 @@ const uint8_t *track_cache_get(int track, uint32_t *bit_count) {
     }
 
     return 0;      // not in PSRAM: image incomplete, caller must not stream
+}
+
+const uint8_t *track_cache_get(int track, uint32_t *bit_count) {
+    return track_cache_get_token(psram_active_token(), track, bit_count);
 }
 
 void track_cache_invalidate(int track) {

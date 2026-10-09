@@ -146,6 +146,33 @@ static void test_check_swap_detects_publish_and_eject_with_no_seek(void) {
     CHECK(mounted, "publishing a real slot must report mounted");
 }
 
+// DF1 (second drive): the same track number under two published tokens must
+// read back each drive's own slot. DF0 reads its active token, DF1 reads its
+// own; an eject token gives nothing. The cache keys on the full token, so the
+// two drives' copies of track 3 must not be confused.
+static void test_two_drives_get_their_own_tracks_by_token(void) {
+    track_cache_init();
+    psram_image_reset_slot(0);
+    psram_image_reset_slot(1);
+    write_track(0, 3, 0xA5);   // DF0's disk: track 3 = 0xA5
+    write_track(1, 3, 0x5A);   // DF1's disk: track 3 = 0x5A
+    psram_publish_slot(0);
+    CHECK(psram_publish_df1(1), "slot 1 is the idle slot, DF1 may take it");
+
+    uint32_t b0 = 0, b1 = 0;
+    const uint8_t *p0 = track_cache_get_token(psram_active_token(), 3, &b0);
+    CHECK(p0 && p0[0] == 0xA5, "DF0 reads slot 0");
+    uint8_t first0 = p0 ? p0[0] : 0;
+    const uint8_t *p1 = track_cache_get_token(psram_df1_token(), 3, &b1);
+    CHECK(p1 && p1[0] == 0x5A, "DF1 reads slot 1, same track number");
+    const uint8_t *again0 = track_cache_get_token(psram_active_token(), 3, &b0);
+    CHECK(again0 && again0[0] == first0, "DF0's copy not confused with DF1's");
+
+    CHECK(psram_publish_df1(SLOT_NONE), "DF1 ejects");
+    CHECK(track_cache_get_token(psram_df1_token(), 3, &b1) == NULL,
+          "an eject token gives nothing");
+}
+
 int main(void) {
     size_t len = (size_t)TRACK_MAX_BYTES * NUM_TRACKS * SLOT_COUNT;
     void *mem = malloc(len);
@@ -153,6 +180,7 @@ int main(void) {
     RUN(test_eject_then_refetch_does_not_serve_stale_track);
     RUN(test_three_disks_no_eject_does_not_serve_stale_track);
     RUN(test_check_swap_detects_publish_and_eject_with_no_seek);
+    RUN(test_two_drives_get_their_own_tracks_by_token);
     free(mem);
     return REPORT();
 }

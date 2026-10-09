@@ -62,6 +62,12 @@ bool track_cache_check_swap(int32_t *last_token, bool *mounted_out);
 // anything.
 const uint8_t *track_cache_get(int track, uint32_t *bit_count);
 
+// The same, for any published token: DF0 passes psram_active_token(), DF1
+// psram_df1_token(). An eject token (a SLOT_NONE word) gives NULL. The cache
+// keys on the whole token, so two drives' copies of one track number never
+// collide. track_cache_get(t, b) is track_cache_get_token(psram_active_token(), t, b).
+const uint8_t *track_cache_get_token(int32_t token, int track, uint32_t *bit_count);
+
 // Drop any SRAM copy of `track`. Needed after a write rewrites that track in
 // PSRAM: track_cache_get() keys its copies on (track, token), and a write
 // changes neither, so without this the OLD bytes would keep being served.
