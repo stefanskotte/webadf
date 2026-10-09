@@ -111,3 +111,16 @@ describe('POST /api/device/status -- DF1 telemetry', () => {
     expect(recordStatus).toHaveBeenLastCalledWith('dev-1', expect.objectContaining({ sel1Wired: undefined, df1Seen: undefined }));
   });
 });
+
+describe('POST /api/device/status -- DF1 setting', () => {
+  it('passes secondDrive, driveVersion and df1Sha256 through, and drops malformed values', async () => {
+    const { POST } = await import('./route');
+    const sha = 'a'.repeat(64);
+    let res = await POST(post({ mountedSha256: null, secondDrive: 'df1', driveVersion: 3, df1Sha256: sha }));
+    expect(res.status).toBe(204);
+    expect(recordStatus).toHaveBeenLastCalledWith('dev-1', expect.objectContaining({ secondDrive: 'df1', driveVersion: 3, df1Sha256: sha }));
+    res = await POST(post({ mountedSha256: null, secondDrive: 'df2', driveVersion: -1, df1Sha256: 'zz' }));
+    expect(res.status).toBe(204);
+    expect(recordStatus).toHaveBeenLastCalledWith('dev-1', expect.objectContaining({ secondDrive: undefined, driveVersion: undefined, df1Sha256: undefined }));
+  });
+});

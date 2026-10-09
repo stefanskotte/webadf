@@ -7,6 +7,7 @@ import { firmwareReleases } from '@/db/schema/firmware';
 import { disks, games } from '@/db/schema/catalog';
 import { isHdAdf, isServable } from '@/lib/disk-format';
 import { LEGACY_BOARD_TRACK_MAX_BYTES } from '@/lib/adfmfm';
+import type { SecondDriveMode } from '@/lib/second-drive';
 
 export interface DesiredDisk {
   sha256: string;
@@ -142,6 +143,9 @@ export interface PollTick {
   nfcWriteSeq: number;
   /** The display-layout cursor (OLED layouts spec §7): compared against the board's ?displayAck=. */
   displayVersion: number;
+  /** The DF1 setting cursor and value: compared against the board's ?driveAck=. */
+  secondDriveVersion: number;
+  secondDrive: SecondDriveMode;
 }
 
 /**
@@ -160,11 +164,13 @@ export async function readPollTick(deviceId: string): Promise<PollTick | null> {
       instructionAck: devices.firmwareInstructionAck,
       nfcWriteSeq: devices.nfcWriteSeq,
       displayVersion: devices.displayVersion,
+      secondDriveVersion: devices.secondDriveVersion,
+      secondDrive: devices.secondDrive,
     })
     .from(devices)
     .where(eq(devices.id, deviceId))
     .limit(1);
-  return row ?? null;
+  return row ? { ...row, secondDrive: row.secondDrive === 'df1' ? 'df1' : 'off' } : null;
 }
 
 /**
@@ -287,6 +293,12 @@ export async function recordStatus(
     sel1Wired?: boolean;
     /** A real drive stepped as DF1 while the board's own DF1 was off (1.7.6+). */
     df1Seen?: boolean;
+    /** The DF1 mode the board runs (fw 1.9.0+). Absent from builds without DF1. */
+    secondDrive?: SecondDriveMode;
+    /** The board's driveAck: the highest DF1 setting version it has handled. */
+    driveVersion?: number;
+    /** What DF1 holds now (sha256), null = empty or off (fw 1.8.0+). */
+    df1Sha256?: string | null;
   },
 ): Promise<void> {
   const db = getDb();
@@ -349,6 +361,13 @@ export async function recordStatus(
   else if (s.firmwareVersion !== undefined) patch.sel1Wired = null;
   if (s.df1Seen !== undefined) patch.df1Seen = s.df1Seen;
   else if (s.firmwareVersion !== undefined) patch.df1Seen = null;
+  // Build-bound (the playsHd rule): silent on secondDrive with a firmwareVersion = a build without DF1.
+  if (s.secondDrive !== undefined) { patch.secondDriveCapable = true; patch.secondDriveReported = s.secondDrive; }
+  else if (s.firmwareVersion !== undefined) { patch.secondDriveCapable = false; patch.secondDriveReported = null; }
+  // Plain assignment: a re-paired board's ack can go down (the displayVersion rule).
+  if (s.driveVersion !== undefined) patch.secondDriveAppliedVersion = s.driveVersion;
+  if (s.df1Sha256 !== undefined) patch.df1Sha256 = s.df1Sha256;
+  else if (s.firmwareVersion !== undefined && s.secondDrive === undefined) patch.df1Sha256 = null;
   // Plain absent-leaves-it-alone, unlike trackMaxBytes above: the reader's
   // presence is not tied to the firmware build, so there is no "drop to a
   // legacy default" case here -- a report that omits it simply has nothing

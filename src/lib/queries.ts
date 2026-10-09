@@ -11,6 +11,7 @@ import { tosecEntries } from '@/db/schema/tosec';
 import { orgFilter } from '@/db/scope';
 import { getGameDemozoo, demozooCovers, type GameDemozoo } from '@/lib/demozoo/queries';
 import type { ImageFormat } from '@/lib/disk-format';
+import type { SecondDriveMode } from '@/lib/second-drive';
 import { isHdAdfSql } from '@/lib/disk-format-sql';
 
 export interface GameListItem {
@@ -357,6 +358,13 @@ export interface DeviceListItem {
   /** DF1 second drive readings; null = firmware before 1.7.6 (or never reported). */
   sel1Wired: boolean | null;
   df1Seen: boolean | null;
+  /** What the user chose, the cursor, and the board's ack / reported mode / capability / DF1 contents. */
+  secondDrive: SecondDriveMode;
+  secondDriveVersion: number;
+  secondDriveAppliedVersion: number | null;
+  secondDriveReported: SecondDriveMode | null;
+  secondDriveCapable: boolean;
+  df1Sha256: string | null;
   /** The stored layout blob, base64; null = the panel's default. */
   displayLayout: string | null;
 }
@@ -419,6 +427,12 @@ export async function listDevices(orgId: string): Promise<DeviceListItem[]> {
       displayLayouts: devices.displayLayouts,
       sel1Wired: devices.sel1Wired,
       df1Seen: devices.df1Seen,
+      secondDrive: devices.secondDrive,
+      secondDriveVersion: devices.secondDriveVersion,
+      secondDriveAppliedVersion: devices.secondDriveAppliedVersion,
+      secondDriveReported: devices.secondDriveReported,
+      secondDriveCapable: devices.secondDriveCapable,
+      df1Sha256: devices.df1Sha256,
       displayLayout: devices.displayLayout,
     })
     .from(devices)
@@ -437,6 +451,10 @@ export async function listDevices(orgId: string): Promise<DeviceListItem[]> {
     ...r,
     displayPanel: r.displayPanel === '128x64' ? '128x64' : '128x32',
     displayLayouts: r.displayLayouts === true,
+    secondDrive: r.secondDrive === 'df1' ? 'df1' as const : 'off' as const,
+    secondDriveReported: r.secondDriveReported === 'df1' ? 'df1' as const
+      : r.secondDriveReported === 'off' ? 'off' as const : null,
+    secondDriveCapable: r.secondDriveCapable === true,
     displayLayout: r.displayLayout && r.displayLayout.length > 0
       ? Buffer.from(r.displayLayout).toString('base64')
       : null,
