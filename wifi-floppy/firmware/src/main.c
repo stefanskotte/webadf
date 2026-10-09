@@ -54,6 +54,7 @@
 #include "write_back.h"
 #include "reinsert.h"
 #include "swap_gate.h"
+#include "bus_power.h"
 #include "uploader.h"
 #include "fw_rom.h"
 #include "fw_state.h"
@@ -789,6 +790,30 @@ static void __isr mtr_pio_isr(void) {
     }
 }
 
+// core0 loop, on bus_power's BUS_POWER_LOST: the Amiga is off, and the motor
+// latch keeps whatever the power-down's last select fall caught -- "on", on
+// the bench (2026-10-09), which held a staged update forever. Clears every
+// configured drive's motor flag and re-arms each sel_mtr so its next latch is
+// reported whatever it is (`mov y, ~null`, the program's own first
+// instruction): without that, an Amiga powering up with the motor on would
+// match the stale "on" in Y and never be pushed. With interrupts off, so a
+// push already in the FIFO (a select fall, i.e. a live bus) is applied after
+// this, not under it. Returns a mask of the drives whose flag was on.
+static unsigned mtr_force_off(void) {
+    unsigned was_on = 0;
+    const uint32_t irq = save_and_disable_interrupts();
+    for (unsigned d = 0; d < WF_DRIVES; d++) {
+        if (mtr_sm[d] < 0) continue;
+        if (dskchg_motor_on_d(d)) was_on |= 1u << d;
+        dskchg_on_motor_d(d, false);
+        // mov_not is encoded correctly in pico-sdk 2.3.0 (only pio_encode_mov
+        // to osr/exec is broken -- run.sh).
+        pio_sm_exec(bus_pio, (uint)mtr_sm[d], pio_encode_mov_not(pio_y, pio_null));
+    }
+    restore_interrupts(irq);
+    return was_on;
+}
+
 #if WF_BUS_SNIFF
 static uint sniff_sm;
 static volatile uint32_t sniff_records, sniff_gaps, sniff_violations;
@@ -838,6 +863,10 @@ static volatile uint32_t g_write_gen;
 // window (REINSERT_IDLE_MS, reinsert_may_announce) could pass immediately
 // after such a write -- exactly the case it exists to avoid.
 static volatile uint32_t g_wgate_last_ms;
+// core0 -> gpio_isr: the Amiga's side of the bus is unpowered (bus_power.h:
+// all seven inputs low for BUS_UNPOWERED_MS). Its WGATE "assertion" is then
+// not a write, and no capture is armed for it.
+static volatile bool g_bus_unpowered;
 // core1 -> core0: the write-protect flag changed on the SAME mounted disk, so
 // the Amiga must be told the way an insert is (reinsert.h). core0 acts on it
 // only while the Amiga is idle -- see REINSERT_IDLE_MS -- and drops it if the
@@ -1195,6 +1224,10 @@ static void __isr gpio_isr(uint gpio, uint32_t events) {
         // see g_wgate_last_ms's comment. ISR: a volatile store only, no log.
         g_wgate_last_ms = clock_ms();
         bool writing = !gpio_get(PIN_WGATE);
+        // An unpowered bus reads WGATE asserted: nobody is writing. (The
+        // power-down's own fall comes before core0 can know; the capture
+        // timeout and the interval floor below catch that one.)
+        if (writing && g_bus_unpowered) return;
         /*
          * Only DF0's writes. SEL0 is read here, at interrupt time, and that is
          * enough -- unlike STEP's DIR -- because the Amiga holds the drive
@@ -1454,6 +1487,34 @@ static volatile uint32_t g_motor_on_ms;
 // the store also needs SWAP_IDLE_MS of write silence and the motor off, and a
 // flash write never touches the unsent tracks, which live in PSRAM.
 static volatile bool g_up_holds;
+
+/** DIAGNOSTIC (OTA stall, HANDOFF 2026-10-09). The raw input pads, as the
+ *  74LVC541 buffer presents them: 1 = high = released, 0 = low = asserted
+ *  (every floppy input is active low). With the Amiga switched off, rev B's
+ *  1 kOhm pull-ups hang from its dead +5 V and every line reads 0 -- "all
+ *  low" in the line says so. Any core, plain loop context (gpio_get only). */
+static void bus_pads_str(char *buf, size_t cap) {
+    const int sel0 = gpio_get(PIN_SEL0), sel1 = gpio_get(PIN_SEL1), mtr = gpio_get(PIN_MTR),
+              wg = gpio_get(PIN_WGATE), step = gpio_get(PIN_STEP), dir = gpio_get(PIN_DIR),
+              side = gpio_get(PIN_SIDE);
+    const bool all_low = !(sel0 | sel1 | mtr | wg | step | dir | side);
+    snprintf(buf, cap, "pads SEL0=%d SEL1=%d MTR=%d WGATE=%d STEP=%d DIR=%d SIDE=%d%s",
+             sel0, sel1, mtr, wg, step, dir, side,
+             all_low ? " (ALL LOW: bus unpowered? Amiga off?)" : "");
+}
+
+/** core1, once per poll-loop pass after fwu_step: the updater's phase, its
+ *  retry timer and every idle-gate input, plus the pads (fw_update.h's
+ *  fwu_diag_due decides when: every 10 minutes, on a phase change, and on a
+ *  gate-input change while an update is in flight). Static buffers: core1's stack is measured tight. */
+static void fwu_diag_tick(const fwu_diag_in_t *in, uint32_t now_ms) {
+    static fwu_diag_t d;
+    static char line[192], pads[96];
+    if (!fwu_diag_due(&d, in, now_ms)) return;
+    fwu_diag_format(line, (int)sizeof line, in, now_ms);
+    bus_pads_str(pads, sizeof pads);
+    wf_logf(WF_INFO, "%s | %s", line, pads);
+}
 
 /** core1: dc_set_hold's fn -- may the mounted disk be released (swap, Next
  *  tap, eject)? Not while the server lacks a write the board captured
@@ -2333,15 +2394,33 @@ static void core1_main(void) {
                 // clears `loading` before it returns, so this reads false
                 // here today; it is the stated rule, kept so a preload that
                 // ever spans passes cannot start a flash write under it.
-                bool idle = c.mounted_sha256[0] == '\0' && psram_active_slot() == SLOT_NONE &&
-                            !up_has_work(&up) && !g_motor_on && !fw_report_owed &&
-                            !c.preload.loading;
+                // Each input read once, so the diagnostic line below prints
+                // exactly what the gate decided on (OTA stall, 2026-10-09).
+                const bool gate_mounted = c.mounted_sha256[0] != '\0';
+                const int  gate_slot    = psram_active_slot();
+                const bool gate_upw     = up_has_work(&up);
+                const bool gate_motor   = g_motor_on;
+                const bool gate_owed    = fw_report_owed;
+                const bool gate_preload = c.preload.loading;
+                bool idle = !gate_mounted && gate_slot == SLOT_NONE && !gate_upw && !gate_motor && !gate_owed &&
+                            !gate_preload;
                 if (fwu_step(&fwu, &fwu_ops, &fst, idle, clock_ms())) {
                     const char *st = fwu_state_text(&fwu);
                     const char *er = fwu_error_text(&fwu);
-                    wf_logf(er ? WF_WARN : WF_INFO, "fw: %s%s%s", st ? st : "idle",
+                    // STAGED reports "queued" to the server (fwu_state_text),
+                    // which made a finished download look like a retry in the
+                    // log. Say which it is; the server's word is unchanged.
+                    wf_logf(er ? WF_WARN : WF_INFO, "fw: %s%s%s%s", st ? st : "idle",
+                            fwu.phase == FWU_STAGED ? " (staged: downloaded and verified, waiting for idle)" : "",
                             er ? " -- " : "", er ? er : "");
                     fw_report_owed = true;
+                }
+                {
+                    const fwu_diag_in_t din = {
+                        fwu.phase, fwu.retry_at_ms, fwu.backoff_ms, gate_mounted, gate_slot, gate_upw,
+                        gate_motor, gate_owed, gate_preload, idle, (int)c.state,
+                    };
+                    fwu_diag_tick(&din, clock_ms());
                 }
                 fw_report.state = fwu_state_text(&fwu);
                 fw_report.error = fwu_error_text(&fwu);
@@ -3159,10 +3238,49 @@ int main(void) {
     bool     display_rerender = false;
     uint32_t display_save_retry_at = 0;
     bool     display_save_failed = false;
+    // Bus power (bus_power.h), sampled every BUS_POWER_SAMPLE_MS below. The
+    // input pads as a gpio_get_all() mask, built once: g_board is fixed.
+    bus_power_t bus_power;
+    bus_power_init(&bus_power);
+    uint32_t bus_power_at = clock_ms();
+    const uint32_t bus_inputs = (1u << PIN_SEL0) | (1u << PIN_SEL1) | (1u << PIN_MTR) |
+                                (1u << PIN_WGATE) | (1u << PIN_STEP) | (1u << PIN_DIR) |
+                                (1u << PIN_SIDE);
+    bool motor_off_unpowered = false;   // the next "motor: DF0 off" line's reason
     fw_rom_watchdog_start();
     while (true) {
         fw_rom_service();
         dskchg_poll();
+        // The Amiga switched off (bus_power.h): its pull-ups lose +5 V and
+        // every input reads asserted. sel_mtr latches MTR only on a SEL0 fall,
+        // so the power-down could leave "motor on" latched for good -- and the
+        // OTA idle gate, the DF1 store and the swap hold all trust that flag.
+        // All seven low for BUS_UNPOWERED_MS clears it; once power returns,
+        // the first SEL0 fall latches the real value again.
+        if (clock_ms() - bus_power_at >= BUS_POWER_SAMPLE_MS) {
+            bus_power_at = clock_ms();
+            switch (bus_power_step(&bus_power, gpio_get_all() & bus_inputs, bus_power_at)) {
+            case BUS_POWER_LOST: {
+                g_bus_unpowered = true;
+                const unsigned was_on = mtr_force_off();
+                motor_off_unpowered = (was_on & 1u) != 0;
+                wf_logf(WF_INFO, "bus: unpowered (all pads low for %u ms; Amiga off?) -- "
+                                 "motor latch cleared, DF0 was %s, DF1 was %s",
+                        (unsigned)BUS_UNPOWERED_MS, (was_on & 1u) ? "ON" : "off",
+                        (was_on & 2u) ? "ON" : "off");
+                break;
+            }
+            case BUS_POWER_RETURNED: {
+                g_bus_unpowered = false;
+                static char pads[96];
+                bus_pads_str(pads, sizeof pads);
+                wf_logf(WF_INFO, "bus: powered | %s", pads);
+                break;
+            }
+            default:
+                break;
+            }
+        }
         // The flag FIRST: dskchg_on_motor stores the time before the flag, so
         // a flag read first can never be newer than the time read after it --
         // never "on" with an old time, which the swap hold would force past.
@@ -3170,6 +3288,25 @@ int main(void) {
             const bool motor_on = dskchg_motor_on();
             g_motor_on_ms = dskchg_motor_on_ms();
             g_motor_on = motor_on;
+            // Say when the published motor flag changes, and from what
+            // (OTA stall, HANDOFF 2026-10-09). DF0's flag has TWO writers
+            // after boot: mtr_pio_isr, from sel_mtr, which latches MTR on a
+            // SEL0 FALL and holds it until a later SEL0 fall latches a
+            // different level; and mtr_force_off, when the bus loses power
+            // (above). The pads show the bus at the moment it is noticed.
+            static int motor_logged = -1;
+            if ((int)motor_on != motor_logged) {
+                static char pads[96];
+                bus_pads_str(pads, sizeof pads);
+                wf_logf(WF_INFO, "motor: DF0 %s (%s) | %s", motor_on ? "ON" : "off",
+                        motor_logged < 0 ? "boot value"
+                        : motor_on       ? "sel_mtr latched MTR low on a SEL0 fall"
+                        : motor_off_unpowered ? "bus unpowered: all pads low for 2 s"  // BUS_UNPOWERED_MS
+                                              : "sel_mtr latched MTR high on a SEL0 fall",
+                        pads);
+                motor_logged = (int)motor_on;
+                motor_off_unpowered = false;
+            }
         }
 
         // A write-protect flip on the same disk (g_reinsert_req's comment).

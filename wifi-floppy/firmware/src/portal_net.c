@@ -106,6 +106,7 @@
 #include "portal_http.h"
 
 #include "net_radio.h"
+#include "wf_log.h"          // the AP diagnostic below
 #include "pico.h"            // pico/platform.h refuses to be the first SDK include
 #include "pico/platform.h"   // tight_loop_contents(), see fatal_setup_failure()
 #include "pico/time.h"
@@ -695,6 +696,99 @@ static void setup_http(void) {
     net_radio_unlock();
 }
 
+
+// ------------------------------------------------- DIAGNOSTIC: who is on the AP
+//
+// Portal re-join (HANDOFF 2026-10-09): the first phone join after boot works,
+// a re-join after a Forget is "password rejected" until a reboot. Every few
+// seconds, from portal_run()'s foreground loop (never a callback: wf_logf is
+// not for interrupt context, and the lwIP callbacks run in one), log each
+// CHANGE, once:
+//   portal: sta <mac> ASSOCIATED / LEFT        -- the chip's association list
+//   portal: sta <mac> AUTHORIZED / unauthorized -- handshake done (autho_sta_list)
+//   portal: dhcp <mac> DISCOVER->OFFER|REQUEST->ACK .<ip> (#n) -- each answer
+// A station that is ASSOCIATED but never AUTHORIZED and never reaches DHCP
+// failed the WPA2 4-way handshake: that is the "password rejected".
+#define PORTAL_DIAG_MS   2000u
+#define PORTAL_DIAG_MAX  8
+
+static uint8_t  dg_assoc[PORTAL_DIAG_MAX][6], dg_auth[PORTAL_DIAG_MAX][6];
+static int      dg_n_assoc, dg_n_auth;
+static int      dg_assoc_err, dg_auth_err;          // last error logged (0 = none)
+static dhcp_lease_info_t dg_leases[DHCP_POOL_SIZE];
+static int      dg_n_leases;
+static uint32_t dg_last_ms;
+
+static void mac_str(const uint8_t m[6], char out[18]) {
+    snprintf(out, 18, "%02x:%02x:%02x:%02x:%02x:%02x", m[0], m[1], m[2], m[3], m[4], m[5]);
+}
+static bool mac_in(const uint8_t (*list)[6], int n, const uint8_t m[6]) {
+    for (int i = 0; i < n; i++) if (memcmp(list[i], m, 6) == 0) return true;
+    return false;
+}
+
+// One station list: log who appeared and who went, then keep the new list.
+static void diag_list(const char *what_in, const char *what_out, uint8_t (*prev)[6], int *n_prev,
+                      int *err_prev, int got, uint8_t (*now)[6], const char *name) {
+    char m[18];
+    if (got < 0) {
+        if (got != *err_prev) wf_logf(WF_WARN, "portal: %s query failed (%d)", name, got);
+        *err_prev = got;
+        return;
+    }
+    *err_prev = 0;
+    for (int i = 0; i < got; i++)
+        if (!mac_in((const uint8_t (*)[6])prev, *n_prev, now[i])) {
+            mac_str(now[i], m);
+            wf_logf(WF_INFO, "portal: sta %s %s (%s now %d)", m, what_in, name, got);
+        }
+    for (int i = 0; i < *n_prev; i++)
+        if (!mac_in((const uint8_t (*)[6])now, got, prev[i])) {
+            mac_str(prev[i], m);
+            wf_logf(WF_INFO, "portal: sta %s %s (%s now %d)", m, what_out, name, got);
+        }
+    memcpy(prev, now, (size_t)got * 6);
+    *n_prev = got;
+}
+
+static void portal_diag_reset(void) {
+    dg_n_assoc = dg_n_auth = dg_n_leases = 0;
+    dg_assoc_err = dg_auth_err = 0;
+    dg_last_ms = to_ms_since_boot(get_absolute_time());
+}
+
+static void portal_diag_tick(void) {
+    const uint32_t now = to_ms_since_boot(get_absolute_time());
+    if ((uint32_t)(now - dg_last_ms) < PORTAL_DIAG_MS) return;
+    dg_last_ms = now;
+
+    static uint8_t got_macs[PORTAL_DIAG_MAX][6];
+    int got = net_radio_ap_stas(got_macs, PORTAL_DIAG_MAX);
+    diag_list("ASSOCIATED", "LEFT", dg_assoc, &dg_n_assoc, &dg_assoc_err, got, got_macs, "assoc");
+    got = net_radio_ap_authorized(got_macs, PORTAL_DIAG_MAX);
+    diag_list("AUTHORIZED", "unauthorized", dg_auth, &dg_n_auth, &dg_auth_err, got, got_macs, "auth");
+
+    // The lease table, read under the network lock (dhcp_recv_cb writes it).
+    static dhcp_lease_info_t l[DHCP_POOL_SIZE];
+    net_radio_lock();
+    const int n = dhcp_leases(l, DHCP_POOL_SIZE);
+    net_radio_unlock();
+    for (int i = 0; i < n; i++) {
+        bool same = false;
+        for (int j = 0; j < dg_n_leases; j++)
+            if (memcmp(dg_leases[j].mac, l[i].mac, 6) == 0 && dg_leases[j].answered == l[i].answered)
+                same = true;
+        if (same) continue;
+        char m[18];
+        mac_str(l[i].mac, m);
+        wf_logf(WF_INFO, "portal: dhcp %s %s .%u (#%lu)", m,
+                l[i].last_type == 1 ? "DISCOVER->OFFER" : l[i].last_type == 3 ? "REQUEST->ACK" : "?",
+                (unsigned)l[i].ip_last, (unsigned long)l[i].answered);
+    }
+    memcpy(dg_leases, l, sizeof l);
+    dg_n_leases = n;
+}
+
 portal_run_result_t portal_run(device_config_t *out, const char *err,
                                uint32_t idle_timeout_ms) {
     // Review round 1 (Important 1): a second portal_run() call without an
@@ -738,12 +832,15 @@ portal_run_result_t portal_run(device_config_t *out, const char *err,
     setup_dhcp();
     setup_dns();
     setup_http();
+    wf_logf(WF_INFO, "portal: AP %s up (WPA2-AES PSK); station/DHCP changes are logged", ssid);
+    portal_diag_reset();
 
     while (!g_submitted) {
         sleep_ms(5); // plain, unlocked poll -- never wrap a wait loop in
                       // cyw43_arch_lwip_begin()/end(): doing so would
                       // block the very background context that has to
                       // run for g_submitted to ever become true.
+        portal_diag_tick();   // DIAGNOSTIC, rate-limited inside
 
         // Final-review Important 2: this wait used to be unbounded, which
         // made PROV_PORTAL a one-way door -- a board that lost a race with
