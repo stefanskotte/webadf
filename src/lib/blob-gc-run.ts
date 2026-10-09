@@ -4,7 +4,7 @@ import { blobs, disks, entitlements, games } from '@/db/schema/catalog';
 import { devices } from '@/db/schema/devices';
 import { diskVersions, diskWriteSessions } from '@/db/schema/disk-history';
 import { coverStore, diskStore } from '@/lib/storage';
-import { planBlobGc, planCoverGc } from '@/lib/blob-gc';
+import { planBlobGc, planCoverGc, withoutReferenced } from '@/lib/blob-gc';
 
 /** A week: the job runs weekly, so anything it deletes was garbage for at least one full cycle. */
 export const BLOB_GC_GRACE_MS = 7 * 24 * 60 * 60 * 1000;
@@ -72,8 +72,16 @@ export async function runBlobGc({ dryRun }: { dryRun: boolean }): Promise<BlobGc
   };
   if (dryRun) return result;
 
+  // Last look: a person may have re-chosen exactly these bytes since the
+  // reference read. Re-select the planned digests and spare any now named.
+  let coverDeletes = coverPlan.objects;
+  if (coverDeletes.length > 0) {
+    const named = await db.selectDistinct({ s: games.coverOverrideSha256 })
+      .from(games).where(inArray(games.coverOverrideSha256, coverDeletes));
+    coverDeletes = withoutReferenced(coverDeletes, named.flatMap((r) => (r.s ? [r.s] : [])));
+  }
   let coversRemoved = 0;
-  for (const sha256 of coverPlan.objects) {
+  for (const sha256 of coverDeletes) {
     try { await coverStore.remove(sha256); coversRemoved++; } catch { result.failed++; }
   }
   result.covers = coversRemoved;

@@ -180,3 +180,13 @@ export function planCoverGc(input: CoverGcInput): { objects: string[]; refused: 
   }
   return { objects, refused: null };
 }
+
+/**
+ * The last look before deleting covers: `planned` minus every digest a title
+ * names now. Closes the window between the reference read and the delete, in
+ * which a person may have re-chosen exactly these bytes.
+ */
+export function withoutReferenced(planned: readonly string[], referencedNow: Iterable<string>): string[] {
+  const named = new Set(referencedNow);
+  return planned.filter((s) => !named.has(s));
+}

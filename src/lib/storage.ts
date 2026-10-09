@@ -281,12 +281,10 @@ export const coverStore: CoverStore = {
   async put(sha256, bytes, contentType) {
     assertSha(sha256);
     const pathname = coverKey(sha256);
-    // allowOverwrite: TRUE, unlike adf/ and oagd/. Content-addressed, so an
-    // overwrite rewrites identical bytes -- and it refreshes the object's
-    // upload time. That is the point: re-choosing an image whose old object
-    // nothing named for a week would otherwise hand the GC an "old,
-    // unreferenced" object in the moment between its reference read and its
-    // delete. A fresh upload time puts it inside the grace period.
+    // allowOverwrite: TRUE, unlike adf/ and oagd/: two titles may choose the
+    // same bytes, so the object can already exist and a re-put must not fail.
+    // Nothing relies on an overwrite refreshing the upload time; the blob GC
+    // re-checks the references just before it deletes (blob-gc-run.ts).
     await put(pathname, Buffer.from(bytes), {
       access: 'private', contentType, addRandomSuffix: false, allowOverwrite: true,
     });

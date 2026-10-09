@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { selectUnreferencedBlobs, selectReleasableUploads, planBlobGc, planCoverGc } from './blob-gc';
+import { selectUnreferencedBlobs, selectReleasableUploads, planBlobGc, planCoverGc, withoutReferenced } from './blob-gc';
 
 describe('selectUnreferencedBlobs', () => {
   it('keeps a blob that a disk still points at', () => {
@@ -204,5 +204,14 @@ describe('planCoverGc (a title\'s own cover images, cover/<sha256>)', () => {
       ...base, objects: [{ sha256: 'a', uploadedAt: old }, { sha256: 'b', uploadedAt: old }], referenced: [],
     });
     expect(plan).toEqual({ objects: ['a', 'b'], refused: null });
+  });
+});
+
+describe('withoutReferenced (the last look before cover deletes)', () => {
+  it('drops planned digests a title names after all', () => {
+    expect(withoutReferenced(['a', 'b', 'c'], ['b'])).toEqual(['a', 'c']);
+  });
+  it('keeps the plan when nothing is named', () => {
+    expect(withoutReferenced(['a'], [])).toEqual(['a']);
   });
 });
