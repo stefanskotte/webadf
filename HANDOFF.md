@@ -1590,6 +1590,17 @@ separately.
     An HD-track write (Echo to HDBench) uploaded as version seq 7 with no reboot (uptime continuous).
   - **Still to observe:** an OTA after hours of uptime. If it stalls, the new `fw: dl ...` and `tls:` lines name
     the cause; then decide whether more heap work is needed.
+- **OTA stall, new evidence on 1.8.1 (2026-10-09 ~12:00-12:18):** 1.9.0 was offered and the board acked it
+  (instruction 55/55); the server shows "queued". The serial log is live (a display save logged at once at uptime
+  5348 s), yet two captures (12:04-12:09 and 12:12-12:18) show NO fw lines at all: no downloading, no failure. The
+  retry backoff (5 s doubling to 300 s) would have attempted around 12:05 and 12:15. So this stall is not the
+  2-second download failure seen on 1.7.8/1.8.0.
+  - **Hypothesis (unverified):** the idle gate (`!g_motor_on`). With the Amiga switched OFF, rev B's floppy-line
+    pull-ups (to the Amiga's +5 V) lose power and the lines float low; a falling SEL0 at power-down may latch the
+    motor ON with no later edge to clear it. Every stall today followed the operator switching the Amiga off;
+    every install that worked came right after a fresh board boot (nothing latched).
+  - **Next step:** a periodic log of fwu phase, retry_at and the idle inputs (motor, mounted, up_has_work,
+    fw_report_owed), and read MTR's pad level while the Amiga is off.
 - **OTA download fails after long board uptime** (found 2026-10-09, twice). With 1.7.8 (board up hours) and 1.8.0
   TEST (board up ~6800 s), the sequence was `fw: offered ... ok` -> `fw: downloading` -> `fw: queued` about 2 s
   later, retried with backoff for minutes. After a board power-cycle the same offer installed at once. 1.7.6/1.7.7
