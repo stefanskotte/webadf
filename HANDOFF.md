@@ -4790,12 +4790,13 @@ Demozoo API (the bulk export makes per-lookup load on a non-profit unnecessary).
   sockets without the flag (TLS client, DHCP client unaffected), +212 B code.
 - **Submit now answers a "Joining <SSID>..." page** (operator request) and waits up to 2 s for the phone's ACK before
   the AP goes down. iOS may still close its captive sheet when the AP disappears.
-- **Bench re-pair 2026-10-09:** WifiFloppy1 was deleted and re-paired; its device id is now 1615a94a-f312-4768-a138-
-  9e55d2f32aee (name restored, DF1 Off = default). A phone took 60 s from ASSOCIATED to AUTHORIZED once -- watch it.
-- **Bench owed (1.10.0):** portal up -> submit a used pairing code -> the portal must come back with the error and a
-  phone must re-join WITHIN ~30 s and get the captive page (after 120 s the old code would also work, proving
-  nothing); log must not show `portal: HTTP tcp_bind(80) failed`; then a fresh code pairs and the Joining page shows.
-  NFC icon: tick it in the editor on the 128x32 board and see the struck-through mark.
+- **Bench re-pair 2026-10-09:** WifiFloppy1 was deleted and re-paired; its device id was then 1615a94a-f312-4768-a138-
+  9e55d2f32aee (re-paired again for the 1.10.0 bench, see below). A phone took 60 s from ASSOCIATED to AUTHORIZED once -- watch it.
+- **Bench PASSED 2026-10-09 (1.10.0+ga0fda4c, seq 59):** submit with a used code -> `submit page delivered (5 ms)`
+  -> rejected -> portal re-raised 1.4 s after the submit and came UP (the exact 1.9.3 hang case) -> phone re-joined
+  14 s later, AUTHORIZED in 2 s, DHCP ACK; a fresh code then paired (`register: OK`) with the Joining page shown.
+  Device id is now 9da6634a-1cde-46f1-a86b-a3fab2b0156a (name restored). The 1.9.3 fix also held: 1.10.0 installed
+  with the Amiga off. **Still owed:** the NFC icon on glass (tick it in the editor; expect the struck-through mark).
 
 ### 3be. OTA stall at "queued" -- FOUND and FIXED, fw 1.9.3+g73836df (seq 58, GitHub fw-1.9.3) (2026-10-09)
 
