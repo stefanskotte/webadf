@@ -301,10 +301,11 @@ test('three paired devices share one row, each card as tall as its content, and 
 
   // Content height, not square (changed 2026-10-08 at the operator's request:
   // the square left an empty band under the bezel). Three identical fresh
-  // cards are the same height, and clearly shorter than they are wide.
+  // cards are the same height, and shorter than they are wide (< 1.0, was 0.8
+  // before the DF1 second-drive control added its rows to every card).
   expect(Math.abs(a.height - b.height)).toBeLessThan(2);
   expect(Math.abs(a.height - c.height)).toBeLessThan(2);
-  for (const box of [a, b, c]) expect(box.height / box.width).toBeLessThan(0.8);
+  for (const box of [a, b, c]) expect(box.height / box.width).toBeLessThan(1);
 
   // Opening A's drawer grows A; B in the same row keeps its height (the grid
   // does not stretch row neighbours). Closing it shrinks A back.

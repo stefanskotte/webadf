@@ -160,6 +160,18 @@ export const devices = pgTable('devices', {
   sel1Wired: boolean('sel1_wired'),
   /** A real drive stepped as DF1 while the board's own DF1 was off; null = firmware before 1.7.6. */
   df1Seen: boolean('df1_seen'),
+  /** 'off' | 'df1' -- what the user chose (spec §3). Default off for every board. */
+  secondDrive: text('second_drive').notNull().default('off'),
+  /** Cursor, bumped on every change; the board echoes ?driveAck=. */
+  secondDriveVersion: integer('second_drive_version').notNull().default(0),
+  /** The board's driveAck as last reported; null = never. */
+  secondDriveAppliedVersion: integer('second_drive_applied_version'),
+  /** 'off' | 'df1' as the board runs it; null = firmware without DF1. */
+  secondDriveReported: text('second_drive_reported'),
+  /** The capability; null = never said, false = firmware before 1.9.0. */
+  secondDriveCapable: boolean('second_drive_capable'),
+  /** What DF1 holds now (a sha256), null = empty or off. */
+  df1Sha256: text('df1_sha256'),
 
   /**
    * 'queued' | 'downloading' | 'applying' | 'failed', as the device reports.

@@ -96,6 +96,14 @@ export async function GET(request: Request) {
       ? Number(displayAckRaw)
       : 0;
 
+  // driveAck is the DF1 setting cursor (fw 1.9.0). Parsed like displayAck, for the same reasons.
+  const driveAckRaw = new URL(request.url).searchParams.get('driveAck');
+  const driveAck = driveAckRaw === null
+    ? null
+    : /^\d+$/.test(driveAckRaw) && Number.isSafeInteger(Number(driveAckRaw))
+      ? Number(driveAckRaw)
+      : 0;
+
   const deadline = Date.now() + HOLD_MS;
   for (;;) {
     // Cheap single-column read per tick. The three-table join runs only when
@@ -136,6 +144,8 @@ export async function GET(request: Request) {
     // the poll body only announces the number.
     const displayMoved = displayAck !== null && tick.displayVersion !== displayAck;
 
+    const driveMoved = driveAck !== null && tick.secondDriveVersion !== driveAck;
+
     const clampedFrom = Math.min(from, version);
     // A firmware instruction the device has not acknowledged releases the
     // hold. It is a CURSOR comparison, like every other wake on this route --
@@ -146,7 +156,7 @@ export async function GET(request: Request) {
     // device echoes it back as mountedVersion and the server reads that for an
     // upload's not_mounted/behind verdict (HANDOFF 4g), so bumping it could
     // strand an Amiga write that was mid-session. See spec 4.2.
-    if (version > clampedFrom || clampedFrom !== from || firmwareMoved || nfcMoved || displayMoved) {
+    if (version > clampedFrom || clampedFrom !== from || firmwareMoved || nfcMoved || displayMoved || driveMoved) {
       const state = await readDesired(device.deviceId);
       if (!state) return notFound();
       // Multi-disk spec §3.3 / plan R1: the disk the board should preload.
@@ -205,6 +215,9 @@ export async function GET(request: Request) {
           // number reaches it on whatever wakes it next. Absent for a board
           // that sent no displayAck (before 1.7.0).
           ...(displayAck !== null ? { displayVersion: tick.displayVersion } : {}),
+          // Inline: one byte of setting needs no fetch (spec §3). Every body for a board
+          // that sent driveAck, so a re-paired board's higher ack is reset at its first 200.
+          ...(driveAck !== null ? { secondDrive: { seq: tick.secondDriveVersion, mode: tick.secondDrive } } : {}),
           ...(nfc
             ? {
                 nfcWrite: {

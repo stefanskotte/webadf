@@ -67,6 +67,11 @@ const statusBody = z.object({
   // DF1 telemetry (fw 1.7.6+). Dropped, never rejected -- the telemetry rule above.
   sel1Wired: z.boolean().optional().catch(undefined),
   df1Seen: z.boolean().optional().catch(undefined),
+  // DF1 setting (fw 1.9.0+): the mode the board runs, its driveAck, and what DF1 holds.
+  // Dropped, never rejected -- the telemetry rule above.
+  secondDrive: z.enum(['off', 'df1']).optional().catch(undefined),
+  driveVersion: z.number().int().min(0).max(2_147_483_647).optional().catch(undefined),
+  df1Sha256: z.string().regex(SHA256_RE).nullable().optional().catch(undefined),
   error: z.string().max(500).nullable().optional(),
   psramFree: z.number().int().nonnegative().nullable().optional(),
   // Real WiFi RSSI ranges roughly -100..0 dBm, but a marginal link can report
@@ -141,6 +146,9 @@ export async function POST(request: Request) {
     displayError: parsed.data.displayError,
     sel1Wired: parsed.data.sel1Wired,
     df1Seen: parsed.data.df1Seen,
+    secondDrive: parsed.data.secondDrive,
+    driveVersion: parsed.data.driveVersion,
+    df1Sha256: parsed.data.df1Sha256,
   });
 
   return new Response(null, { status: 204, headers: { 'cache-control': 'no-store' } });

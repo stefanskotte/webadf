@@ -19,6 +19,7 @@
 #include "bus_out.h"
 #include "drive_id.h"
 #include "drive_store.h"
+#include "df1_live.h"
 #include "track_cache.h"
 #include "adf_mfm.h"
 #include "psram_image.h"
@@ -441,6 +442,15 @@ static volatile df1_mode_t g_df1_mode = DF1_MODE_OFF;
 // R4: the stored setting's version at boot (0 = nothing stored). core1 seeds
 // its driveAck cursor from it (Phase 3); written once, before core1 launches.
 static volatile uint32_t g_drive_boot_ack;
+// core1 -> core0: a new DF1 setting, applied live (D3, df1_live.h). core1
+// writes the mode and the version, then bumps the seq; core0 applies when the
+// seq differs from what it last applied, then publishes applied = that seq.
+// A cursor, not a flag: a second change before the first is applied is just
+// the next seq, and a re-sent one (core1 retrying) is applied again, which is
+// idempotent.
+static volatile uint8_t  g_df1_req_mode;
+static volatile uint32_t g_drive_req_version;   // what the store record will say
+static volatile uint32_t g_df1_req_seq, g_df1_applied_seq;
 
 // Per drive (bus_out.h WF_DRIVES; 0 = DF0, 1 = DF1). n_drives is how many the
 // board answers as -- set once at boot on core0, before the bus IRQs are
@@ -714,11 +724,12 @@ static void step_pulse(uint32_t word) {
     const bus_step_t st = bus_step_decode(word);
     const unsigned nd = n_drives;
     // Selects of drives this board is serving (bit d = drive d): DF0 always,
-    // DF1 only while it is on (g_df1_mode == NEXT). An OFF DF1 is configured
-    // (its lines are gated and released) but is not a drive: its head never
-    // moves, and its steps are the telemetry below -- the df1-seen heuristic
-    // counts only while our DF1 is off (spec §3).
-    const uint8_t serving = (uint8_t)(1u | (nd > 1 && g_df1_mode == DF1_MODE_NEXT ? 2u : 0u));
+    // DF1 while its machines run -- on, or PARKED (switched off live, still an
+    // empty drive to a running Amiga; df1_live.h). An OFF DF1 is configured
+    // but its machines are disabled: not a drive, its head never moves, and
+    // its steps are the telemetry below -- the df1-seen heuristic counts only
+    // while our DF1 answers as no drive at all (spec §3).
+    const uint8_t serving = df1_serving_mask(nd, bus_out_drive_enabled(1));
     const uint8_t ours = st.sel_mask & serving;
     // Another drive's step. Checked before anything else: it must not move the
     // head, clear CHNG, or count towards the too-fast filter, whose clock a
@@ -1437,6 +1448,12 @@ static volatile bool g_motor_on;
 // When the motor last came on (dskchg_motor_on_ms), published with g_motor_on:
 // swap_holds counts it as activity (swap_gate.h, review I1).
 static volatile uint32_t g_motor_on_ms;
+// Published by core1 at the top of every pass: up_holds(&up), captured writes
+// the server has not got. core0's DF1 store rule reads it (drive_store_idle,
+// R17). A stale false (core1 inside a long network call) costs only margin:
+// the store also needs SWAP_IDLE_MS of write silence and the motor off, and a
+// flash write never touches the unsent tracks, which live in PSRAM.
+static volatile bool g_up_holds;
 
 /** core1: dc_set_hold's fn -- may the mounted disk be released (swap, Next
  *  tap, eject)? Not while the server lacks a write the board captured
@@ -1837,6 +1854,17 @@ static void core1_main(void) {
             }
             display_seeded = true;
         }
+#if DF1_CAPABLE
+        // The DF1 setting's cursor (Phase 3): the stored record's version on
+        // the first entry after boot, so a setting already applied is not
+        // taken again. A re-entry is a re-pair -- a new device row, whose
+        // versions start over -- so 0, as for the display cursor above.
+        {
+            static bool drive_seeded = false;
+            c.drive_ack = drive_seeded ? 0u : g_drive_boot_ack;
+            drive_seeded = true;
+        }
+#endif
         // HANDOFF 4g rule 1: a token chosen per boot, so a rebooted board's seq 1
         // is never mistaken for the previous boot's seq 1.
         static char session[20];
@@ -2008,6 +2036,7 @@ static void core1_main(void) {
             }
             // SEL1 telemetry rides every status report (cheap: three stores).
             dc_set_sel1(&c, g_sel1_wired, bus_df1_seen(g_df1_steps));
+            g_up_holds = up_holds(&up);   // core0's DF1 store rule (R17)
 
             // Item 0 (fix round 1, Important): a status report is OWED
             // whenever the mounted disk's identity or version differs from
@@ -2125,6 +2154,58 @@ static void core1_main(void) {
             // Same for a display version whose fetch is waiting out a failure:
             // the server answers every poll at once while it is owed.
             if (polled && dc_display_owed(&c) && g_display_fetch_failing) sleep_ms(1000);
+
+#if DF1_CAPABLE
+            // The DF1 setting (Phase 3, D3): a new one from the poll is handed
+            // to core0, which applies it live (df1_live.h). Switching OFF:
+            // device_client first, so the reconcile ejects DF1 before core0
+            // parks it. Switching ON: device_client only AFTER core0 applied
+            // it -- a disk the reconcile published to a DF1 core0 still had
+            // off would be acknowledged by core0 and never mounted.
+            //
+            // The ack (driveAck, what makes the web app say "Set on the
+            // board") follows core0's apply, never just the handoff. core0
+            // turns in ~1 ms; 50 ms covers anything but a flash write (~45
+            // ms of lockout) plus a slow pass. Not applied by then: NOT
+            // acked -- the server re-sends the setting on the next poll (its
+            // seq is still above driveAck), the handoff is repeated (an
+            // idempotent re-apply), and that pass acks. A false "set" would
+            // be believed; a late one costs a poll.
+            {
+                uint32_t seq;
+                df1_mode_t mode;
+                if (dc_drive_take(&c, &seq, &mode)) {
+                    if (mode == DF1_MODE_OFF) {
+                        dc_set_df1(&c, DF1_MODE_OFF, DF1_HOLDS_HD);
+                        dc_df1_reconcile(&c);
+                    }
+                    g_drive_req_version = seq;
+                    g_df1_req_mode = (uint8_t)mode;
+                    __dmb();                 // mode and version before the seq names them
+                    const uint32_t want = g_df1_req_seq + 1u;
+                    g_df1_req_seq = want;
+                    for (int i = 0; i < 50 && g_df1_applied_seq != want; i++) sleep_ms(1);
+                    if (g_df1_applied_seq == want) {
+                        if (mode == DF1_MODE_NEXT) {
+                            dc_set_df1(&c, DF1_MODE_NEXT, DF1_HOLDS_HD);
+                            dc_df1_reconcile(&c);
+                        }
+                        dc_drive_handled(&c, seq);   // handled = applied live (the store may lag)
+                        wf_logf(WF_INFO, "df1: setting %lu -> %s (the Amiga sees the change at its next reset)",
+                                (unsigned long)seq, mode == DF1_MODE_NEXT ? "next disk" : "off, parked");
+                    } else {
+                        wf_logf(WF_WARN, "df1: setting %lu not applied by core0 within 50 ms -- not acked, retried on the next poll",
+                                (unsigned long)seq);
+                        // An OFF already told device_client "off" above. Put back
+                        // what core0 runs now, so the poll's mode compare
+                        // (dc_take_second_drive, I1) still owes the setting
+                        // when the seq alone would not (ack == seq after a re-pair).
+                        dc_set_df1(&c, g_df1_mode, DF1_HOLDS_HD);
+                        sleep_ms(1000);   // the server answers at once while it is owed
+                    }
+                }
+            }
+#endif
 
 #if WF_FW_DEBUG
             // Fix round 3, bench-only: a minimal USB-serial command that
@@ -2377,7 +2458,7 @@ static void core1_main(void) {
             // A preload report owed from an earlier pass (see the preload
             // below) rides here too -- but never ahead of a waiting tap.
             if (!report_retry && s != DC_HALTED && (disk_changed || version_changed || fw_report_owed ||
-                                    dc_sel1_owed(&c) || nfc_report_owed || display_report_owed ||
+                                    dc_sel1_owed(&c) || dc_drive_report_owed(&c) || nfc_report_owed || display_report_owed ||
                                     (preload_report_owed && !nfc_event_pending(NULL)) ||
                                     (now - last_status_ms) >= DC_STATUS_PERIOD_MS)) {
                 if (dc_report_status(&c, psram_free_estimate(), wifi_rssi(), NULL, WF_FIRMWARE_VERSION)) {
@@ -2738,9 +2819,10 @@ int main(void) {
     // DF1: an empty, write-protected drive at track 0 until a disk is
     // inserted. WPROT stays asserted for good: DF1 is read-only, and core1's
     // WPROT writer is DF0's alone (bus_out_set). The word is the same whatever
-    // the setting: an OFF DF1's machines are never started (bus_out_drive_enable
-    // below), and a disabled machine writes no pad -- off is no DF1 at all,
-    // even while SEL0 and SEL1 are low together.
+    // the setting: an OFF DF1's machines are not started (bus_out_drive_enable
+    // below; a live switch ON starts them later, df1_live.h), and a disabled
+    // machine writes no pad -- off is no DF1 at all, even while SEL0 and SEL1
+    // are low together.
     boot_lines[1] = (1u << PIN_TRK0) | (1u << PIN_WPROT) | (1u << PIN_CHNG);
     n_drives = DF1_CAPABLE ? 2u : 1u;
     bus_out_init(bus_pio, n_drives, boot_lines);   // starts DF0's gate only
@@ -3041,6 +3123,16 @@ int main(void) {
     int32_t df1_seen_tok = psram_df1_token();
     int     loaded1 = -1;
     bool    df1_mounted = false;
+    // Set by a live switch ON: look at DF1's published word again even though
+    // it did not change -- a disk core1 handed over is then inserted.
+    bool    df1_rescan = false;
+    // The DF1 setting's deferred flash record (D3, R17): written with both
+    // drives empty or the Amiga idle (the store block below); a failed save
+    // retries in 5 s.
+    static drive_record_t drive_store_rec;
+    bool     drive_store_pending = false;
+    uint32_t drive_save_retry_at = 0;
+    uint32_t drive_motor_seen_ms = 0;   // the last pass either motor was on (R17)
 #endif
     // Display bookkeeping. `disk_mounted` gates BOTH the track counter (a
     // cylinder number with no disk in the drive is a number about nothing)
@@ -3167,15 +3259,54 @@ int main(void) {
         }
 
 #if DF1_CAPABLE
-        // DF1: core1 published a new word (dc_df1_reconcile, or the eject
-        // psram_publish_slot makes when DF0 takes DF1's slot). Stop the old
-        // stream FIRST, then acknowledge -- the ack is core1's licence to
-        // overwrite the slot (df1_quiesce_wait). DF1's lines move only while
-        // DF1 is on: an off DF1 stays an absent drive whatever is published
-        // (core1 publishes nothing to it then -- dc_df1_want).
+        // DF1. The setting first (df1_live.h): a live switch from core1. Read the
+        // seq, then the values it names; publish applied = that seq last. A
+        // newer handoff landing meanwhile has a newer seq and is applied next
+        // pass, so a torn read is never the one acknowledged.
+        if (g_df1_req_seq != g_df1_applied_seq) {
+            const uint32_t s = g_df1_req_seq;
+            __dmb();
+            const df1_mode_t m = (df1_mode_t)g_df1_req_mode;
+            const uint32_t version = g_drive_req_version;
+            const df1_live_t p = df1_live_apply(m, bus_out_drive_enabled(1));
+            g_df1_mode = m;          // the STEP/MTR ISRs and the mount below read it
+            if (p.unmount) {
+                stream_stop(1);
+                loaded1 = -1;
+                df1_mounted = false;
+            }
+            if (p.set_id) bus_out_drive_id_set(1, p.id);
+            if (p.lines) {
+                bus_out_set_drive(1, PIN_WPROT, true);
+                bus_out_set_drive(1, PIN_TRK0, cur_cyl[1] == 0);
+            }
+            if (p.eject) dskchg_image_ejected_d(1);
+            // Last: the machines start with the ID, word and RDY level above
+            // already in them (bus_out_drive_enable). Never a live disable:
+            // parked keeps them running (df1_live.h).
+            if (p.enable) bus_out_drive_enable(1, true);
+            if (p.rescan) df1_rescan = true;
+            drive_store_rec.version = version;
+            drive_store_rec.mode = (uint8_t)m;
+            drive_store_pending = true;
+            drive_save_retry_at = clock_ms();   // a new record gets a fresh try
+            __dmb();
+            g_df1_applied_seq = s;
+            wf_logf(WF_INFO, "df1: setting %lu applied -- %s", (unsigned long)version,
+                    m == DF1_MODE_NEXT ? "on, an empty DD drive until the next disk is in"
+                    : p.parked ? "parked: ID none, an empty write-protected drive until the board reboots"
+                               : "off (already)");
+        }
+        // Then DF1's word: core1 published a new one (dc_df1_reconcile, or
+        // the eject psram_publish_slot makes when DF0 takes DF1's slot). Stop
+        // the old stream FIRST, then acknowledge -- the ack is core1's licence
+        // to overwrite the slot (df1_quiesce_wait). DF1's lines move only
+        // while DF1 is on: an off or parked DF1 stays as it is whatever is
+        // published (core1 publishes nothing to it then -- dc_df1_want).
         {
             const int32_t t = psram_df1_token();
-            if (t != df1_seen_tok) {
+            if (t != df1_seen_tok || df1_rescan) {
+                df1_rescan = false;
                 df1_seen_tok = t;
                 stream_stop(1);
                 loaded1 = -1;
@@ -3419,6 +3550,71 @@ int main(void) {
             if (verify_next == NUM_TRACKS) {
                 wf_logf(verify_bad ? WF_ERR : WF_INFO,
                         "verify: swept 160 tracks from PSRAM, %u bad", (unsigned)verify_bad);
+            }
+        }
+#endif
+
+#if DF1_CAPABLE
+        // The DF1 setting's flash record (R17, final review C1). Written when
+        // BOTH drives are empty (D3, the display record's rule) OR when the
+        // Amiga is idle with a disk mounted. Empty alone was not enough: a
+        // board powered by the Amiga holds a disk from its first poll, so a
+        // setting changed then never reached flash, and the next power-on
+        // answered with the old mode -- in the OFF direction, the very case a
+        // real external DF1 is plugged in for.
+        //
+        // Idle (drive_store_idle, host-tested): the swap gate's test
+        // (swap_gate.h) -- no write applied or attempted and no WGATE edge
+        // for SWAP_IDLE_MS, WGATE clear -- plus EITHER drive's motor off for
+        // SWAP_IDLE_MS (DF1's too, so DF1 is not mid-stream), and nothing
+        // captured but unsent (up_holds, published by core1 as g_up_holds).
+        //
+        // Why the ~45 ms flash_safe_execute lockout is acceptable then (core0's
+        // interrupts off, core1 parked):
+        //   - No read is under way: both motors are off, and the Amiga reads
+        //     only with the motor on. A new access first switches the motor on
+        //     and then waits for the drive to spin up (trackdisk waits for RDY,
+        //     hundreds of ms), far longer than the lockout. No steps are
+        //     expected while idle either.
+        //   - MTR and SEL are latched by PIO state machines (sel_mtr, the
+        //     status gate), not by core0: a motor-on during the lockout is held
+        //     in sel_mtr's FIFO and handled by mtr_pio_isr straight after, and
+        //     RDY/CHNG/WPROT/TRK0 keep being driven by the status gate.
+        //   - A step that does come (Kickstart's empty-drive click poll on an
+        //     empty DF1: a pulse or two every few seconds) is held in
+        //     step_dir's RX FIFO with its DIR and drained by step_pio_isr after.
+        //   - These are the same conditions the empty-drive store has always
+        //     run under (the display record), where the Amiga is equally free
+        //     to switch a motor on.
+        // A residual risk -- a motor-on edge inside the 45 ms followed by a
+        // read faster than the lockout -- shows on the bench as a read error
+        // (Task 24's store step), not as a corrupted disk: nothing is written.
+        //
+        // Here, in core0's loop, a slot core1 publishes after this check is not
+        // served until this pass is over (track_cache_check_swap, above), so a
+        // disk change cannot land under the write. A failed save waits 5 s, not
+        // one loop turn -- each try parks core1.
+        {
+            const bool motor_any = dskchg_motor_on_d(0) || dskchg_motor_on_d(1);
+            if (motor_any) drive_motor_seen_ms = clock_ms();
+        }
+        if (drive_store_should_write(drive_store_pending,
+                                     !disk_mounted && psram_active_slot() == SLOT_NONE && !df1_mounted,
+                                     drive_store_idle(clock_ms(),
+                                                      dskchg_motor_on_d(0) || dskchg_motor_on_d(1),
+                                                      !gpio_get(PIN_WGATE),
+                                                      // motor_on=true only folds the third time in
+                                                      swap_gate_last_activity(g_write_last_ms, g_wgate_last_ms,
+                                                                              true, drive_motor_seen_ms),
+                                                      g_up_holds)) &&
+            (int32_t)(clock_ms() - drive_save_retry_at) >= 0) {
+            if (drive_store_save(&drive_store_rec)) {
+                drive_store_pending = false;
+                wf_logf(WF_INFO, "df1: setting %lu stored", (unsigned long)drive_store_rec.version);
+            } else {
+                drive_save_retry_at = clock_ms() + 5000u;
+                wf_logf(WF_WARN, "df1: storing setting %lu failed -- retry in 5 s",
+                        (unsigned long)drive_store_rec.version);
             }
         }
 #endif

@@ -86,9 +86,10 @@ describe('the firmware bounds the server respects', () => {
     // was ASCII, but wrong now that nfcWrite's title is escaped multi-byte
     // sequences.
     //
-    // With next, nfcWrite, nfcWrite.kind and displayVersion included this
-    // comes to 1412 bytes against the 1536-byte buffer (124 to spare).
-    const worst = Buffer.byteLength(disk + next + display + update + nfcWrite + nfcKind, 'utf8');
+    // With next, nfcWrite, nfcWrite.kind, displayVersion and secondDrive included
+    // this comes to about 1462 bytes against the 1536-byte buffer.
+    const drive = ',"secondDrive":{"seq":4294967295,"mode":"df1"}';
+    const worst = Buffer.byteLength(disk + next + display + drive + update + nfcWrite + nfcKind, 'utf8');
     const budget = define('DC_POLL_BODY_BYTES');
     // Reported rather than just asserted, so a future reader sees the margin
     // instead of rediscovering it.

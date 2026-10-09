@@ -299,6 +299,16 @@ typedef struct {
     // nothing was written. A deferred dc_step's poll is redelivered at once
     // (`since` did not advance), so the caller paces it (main.c), as for `held`.
     bool       df1_deferred;
+    // The DF1 setting (Phase 3). drive_ack: the highest secondDrive seq HANDLED
+    // (seeded by main.c, echoed as &driveAck=, reported as driveVersion).
+    // drive_want_*: the poll's latest instruction; drive_owed until taken.
+    uint32_t   drive_ack;
+    uint32_t   drive_want_seq;
+    uint8_t    drive_want_mode;   // df1_mode_t
+    bool       drive_owed;
+    bool       _drive_sent_valid;  // a report carrying secondDrive was accepted
+    uint8_t    _drive_sent_mode;
+    uint32_t   _drive_sent_ack;
     bool       _refetch;
 
     // The in-flight disk's identity, so a progress observation can carry the
@@ -658,6 +668,15 @@ void dc_set_sel1(device_client_t *c, bool wired, bool df1_seen);
 // (or none was accepted yet): a status report is OWED. Cleared by a successful
 // dc_report_status, so repeating dc_set_sel1 with the same values owes nothing.
 bool dc_sel1_owed(const device_client_t *c);
+
+// DF1 setting (Phase 3). dc_drive_take: true once per owed secondDrive change
+// (the poll's seq and mode; unknown mode -> OFF). dc_drive_handled: record the
+// seq as handled (applied or refused) -- it is what the poll echoes.
+bool dc_drive_take(device_client_t *c, uint32_t *seq, df1_mode_t *mode);
+void dc_drive_handled(device_client_t *c, uint32_t seq);
+// True when the mode/ack differ from the last status report the server
+// accepted: a report is OWED, or the server never learns the board applied it.
+bool dc_drive_report_owed(const device_client_t *c);
 
 // --- DF1 second drive (spec 2026-10-08 §4) --------------------------------
 //

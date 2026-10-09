@@ -225,6 +225,13 @@
       "when": 1791492158285,
       "tag": "0031_sel1_telemetry",
       "breakpoints": true
+    },
+    {
+      "idx": 32,
+      "version": "7",
+      "when": 1791540992335,
+      "tag": "0032_second_drive",
+      "breakpoints": true
     }
   ]
 }

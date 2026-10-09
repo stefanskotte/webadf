@@ -48,7 +48,7 @@ vi.mock('@/lib/next-disk', () => ({
 const get = (qs = '') => new Request(`http://test/api/device/poll${qs}`);
 
 const baseTick = (over: Partial<PollTick> = {}): PollTick => ({
-  version: 1, instructionVersion: 0, instructionAck: 0, nfcWriteSeq: 0, displayVersion: 0, ...over,
+  version: 1, instructionVersion: 0, instructionAck: 0, nfcWriteSeq: 0, displayVersion: 0, secondDriveVersion: 0, secondDrive: 'off', ...over,
 });
 
 beforeEach(() => {
@@ -317,6 +317,34 @@ describe('GET /api/device/poll -- displayAck and displayVersion', () => {
       expect(settled).toBe(false);
       await vi.advanceTimersByTimeAsync(25_000);
       expect((await pending).status).toBe(204);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});
+
+describe('GET /api/device/poll -- driveAck and secondDrive', () => {
+  it('wakes on a driveAck mismatch and carries secondDrive inline', async () => {
+    readPollTick.mockResolvedValue(baseTick({ secondDriveVersion: 2, secondDrive: 'df1' }));
+    const { GET } = await import('./route');
+    const res = await GET(get('?since=1&driveAck=1'));
+    expect(res.status).toBe(200);
+    expect((await res.json()).secondDrive).toEqual({ seq: 2, mode: 'df1' });
+  });
+  it('never wakes or sends secondDrive to a board without driveAck', async () => {
+    readPollTick.mockResolvedValue(baseTick({ version: 2, secondDriveVersion: 5, secondDrive: 'df1' }));
+    const { GET } = await import('./route');
+    const body = await (await GET(get('?since=1'))).json();
+    expect(body.secondDrive).toBeUndefined();
+  });
+  it('does not wake when driveAck matches, and a lone since-caught-up poll holds (204)', async () => {
+    vi.useFakeTimers();
+    try {
+      readPollTick.mockResolvedValue(baseTick({ secondDriveVersion: 2, secondDrive: 'df1' }));
+      const { GET } = await import('./route');
+      const p = GET(get('?since=1&driveAck=2'));
+      await vi.advanceTimersByTimeAsync(26_000);
+      expect((await p).status).toBe(204);
     } finally {
       vi.useRealTimers();
     }

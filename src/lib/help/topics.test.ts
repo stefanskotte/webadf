@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { HELP_TOPICS, HELP_ORDER, type HelpTopicId } from './topics';
 
-const IDS: HelpTopicId[] = ['boards', 'nfc', 'next-disk', 'write-back', 'write-protect', 'disk-sets', 'hd-hfe', 'display'];
+const IDS: HelpTopicId[] = ['boards', 'nfc', 'next-disk', 'write-back', 'write-protect', 'disk-sets', 'hd-hfe', 'display', 'second-drive'];
 // Internal words a reader of the help should never meet (spec §5).
 const BANNED = /\b(PSRAM|TBYB|poll|sha256|cursor|WPROT)\b/i;
 
@@ -18,7 +18,7 @@ function bodyText(id: HelpTopicId): string {
 }
 
 describe('help topics', () => {
-  it('has exactly the eight spec topics', () => {
+  it('has exactly the spec topics', () => {
     expect(Object.keys(HELP_TOPICS).sort()).toEqual([...IDS].sort());
   });
 
@@ -68,4 +68,29 @@ describe('help topics say what the app really does', () => {
   it('hd-hfe says the board must be able to play HD', () => {
     expect(bodyText('hd-hfe')).toMatch(/boards? that can play HD/i);
   });
+});
+
+describe('second-drive states every caveat the operator asked for', () => {
+  const all = () => HELP_TOPICS['second-drive'].short + ' ' + bodyText('second-drive');
+  it('DF1 is read-only: saves fail as write-protected', () => expect(all()).toMatch(/write-protected/i));
+  it('takes effect at the next Amiga restart, cold or warm', () => {
+    expect(all()).toMatch(/restart/i);
+    expect(all()).toMatch(/Ctrl-Amiga-Amiga|warm/i);
+  });
+  it('only when no other drive is DF1, naming both kinds', () => {
+    expect(all()).toMatch(/external drive/i);
+    expect(all()).toMatch(/second internal drive/i);
+  });
+  it('big boxes: the external port is DF2 there', () => expect(all()).toMatch(/DF2/));
+  it('DF1 empties for about five seconds on Next disk', () => expect(all()).toMatch(/five seconds|5 seconds/i));
+  it('only the next disk of the set', () => expect(all()).toMatch(/next disk of the set/i));
+  it('the refusal and its override', () => {
+    expect(all()).toMatch(/refuse/i);
+    expect(all()).toMatch(/anyway/i);
+  });
+  it('names the firmware it needs', () => expect(all()).toMatch(/1\.9\.0/));
+  it('older firmware keeps the stored setting (final review I2)', () => {
+    expect(all()).toMatch(/older firmware keeps the DF1 setting/i);
+  });
+  it('an HD next disk leaves DF1 empty', () => expect(all()).toMatch(/HD disk, DF1 stays empty|HD[^.]*empty/i));
 });

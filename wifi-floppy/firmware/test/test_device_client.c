@@ -486,6 +486,7 @@ static void test_status_body_fits_at_maximum(void) {
     memset(c.preload.sha256, 'e', 64); c.preload.sha256[64] = '\0';
     CHECK(psram_publish_df1(1), "precondition: DF1 holds the record's slot");
     dc_set_df1(&c, DF1_MODE_NEXT, true);
+    c.drive_ack = 4294967295u;
 
     fake_push_response("HTTP/1.1 204 No Content\r\n\r\n");
     CHECK(dc_report_status(&c, 2147483647, -200, long_err, long_ver),
@@ -505,6 +506,7 @@ static void test_status_body_fits_at_maximum(void) {
           "playsHd survives a maximal body");
     CHECK(strstr(r, "\"df1Seen\":false") != NULL, "the SEL1 readings survive a maximal body");
     CHECK(strstr(r, "\"displayVersion\":4294967295") != NULL, "the display ack survives");
+    CHECK(strstr(r, "\"secondDrive\":\"df1\",\"driveVersion\":4294967295") != NULL, "the drive ack survives");
     {
         // The whole reason, escaped, closing quote included: 47 x \" then ".
         static char want[16 + 2 * sizeof c.display_error + 2];
@@ -2377,6 +2379,109 @@ static void test_poll_url_carries_display_ack(void) {
           "a maximal poll path is sent whole, not truncated");
 }
 
+static void test_poll_url_carries_drive_ack(void) {
+    boot(); dc_set_df1(&c, DF1_MODE_OFF, false);
+    c.drive_ack = 4294967295u; c.display_ack = 4294967295u; c.nfc_ack = 4294967295u; c.since = 4294967295u;
+    fake_push_response("HTTP/1.1 204 No Content\r\n\r\n");
+    dc_step(&c);
+    CHECK(strstr(fake_last_request(), "&driveAck=4294967295 ") != NULL, "worst-case path fits");
+    // An older build (no dc_set_df1) sends nothing.
+    boot(); c.drive_ack = 3;
+    fake_push_response("HTTP/1.1 204 No Content\r\n\r\n");
+    dc_step(&c);
+    CHECK(strstr(fake_last_request(), "driveAck") == NULL, "not DF1-capable: no driveAck");
+}
+
+// Review Focus 4
+static void a_second_drive_object_never_shadows_the_poll_version(void) {
+    boot(); dc_set_df1(&c, DF1_MODE_OFF, false);
+    push_ok_json("{\"secondDrive\":{\"seq\":9,\"mode\":\"df1\"},\"version\":3,\"desired\":null}");
+    dc_step(&c);
+    uint32_t seq; df1_mode_t mode;
+    CHECK(dc_drive_take(&c, &seq, &mode), "owed");
+    CHECK_EQ_INT(seq, 9); CHECK_EQ_INT(mode, DF1_MODE_NEXT);
+    CHECK_EQ_INT(c.since, 3);
+    CHECK(!dc_drive_take(&c, &seq, &mode), "taken once");
+}
+
+static void a_re_paired_board_with_a_higher_ack_takes_the_lower_seq(void) {
+    boot(); dc_set_df1(&c, DF1_MODE_NEXT, false); c.drive_ack = 12;
+    push_ok_json("{\"secondDrive\":{\"seq\":0,\"mode\":\"off\"},\"version\":1,\"desired\":null}");
+    dc_step(&c);
+    uint32_t seq; df1_mode_t mode;
+    CHECK(dc_drive_take(&c, &seq, &mode), "a mismatch either way is owed");
+    CHECK_EQ_INT(seq, 0); CHECK_EQ_INT(mode, DF1_MODE_OFF);
+}
+
+static void a_bad_mode_is_handled_as_off_and_still_acked(void) {
+    boot(); dc_set_df1(&c, DF1_MODE_NEXT, false);
+    push_ok_json("{\"secondDrive\":{\"seq\":4,\"mode\":\"df9\"},\"version\":1,\"desired\":null}");
+    dc_step(&c);
+    uint32_t seq; df1_mode_t mode;
+    CHECK(dc_drive_take(&c, &seq, &mode) && mode == DF1_MODE_OFF, "unknown -> off, never on");
+    CHECK_EQ_INT(seq, 4);
+}
+
+static void a_matching_second_drive_is_not_owed(void) {
+    boot(); dc_set_df1(&c, DF1_MODE_NEXT, false); c.drive_ack = 5;
+    push_ok_json("{\"secondDrive\":{\"seq\":5,\"mode\":\"df1\"},\"version\":1,\"desired\":null}");
+    dc_step(&c);
+    uint32_t seq; df1_mode_t mode;
+    CHECK(!dc_drive_take(&c, &seq, &mode), "already acked: nothing owed");
+}
+
+// Final review I1: a re-paired board (ack seeded 0) still running DF1 against a
+// new row at {seq 0, off} must take the OFF, though the seq equals the ack.
+static void an_acked_seq_with_a_different_mode_is_owed(void) {
+    boot(); dc_set_df1(&c, DF1_MODE_NEXT, false); c.drive_ack = 0;
+    push_ok_json("{\"secondDrive\":{\"seq\":0,\"mode\":\"off\"},\"version\":1,\"desired\":null}");
+    dc_step(&c);
+    uint32_t seq; df1_mode_t mode;
+    CHECK(dc_drive_take(&c, &seq, &mode), "ack == seq but the board runs another mode: owed");
+    CHECK_EQ_INT(seq, 0); CHECK_EQ_INT(mode, DF1_MODE_OFF);
+    // The other direction: board off (a parked DF1 reports off), row says df1 at the acked seq.
+    boot(); dc_set_df1(&c, DF1_MODE_OFF, false); c.drive_ack = 6;
+    push_ok_json("{\"secondDrive\":{\"seq\":6,\"mode\":\"df1\"},\"version\":1,\"desired\":null}");
+    dc_step(&c);
+    CHECK(dc_drive_take(&c, &seq, &mode) && mode == DF1_MODE_NEXT, "off board, df1 row, same seq: owed");
+    // Same mode and same seq: not owed (and an off board at {0, off} stays quiet).
+    boot(); dc_set_df1(&c, DF1_MODE_OFF, false); c.drive_ack = 0;
+    push_ok_json("{\"secondDrive\":{\"seq\":0,\"mode\":\"off\"},\"version\":1,\"desired\":null}");
+    dc_step(&c);
+    CHECK(!dc_drive_take(&c, &seq, &mode), "same mode, same seq: not owed");
+}
+
+static void test_status_reports_second_drive_and_its_ack(void) {
+    boot(); dc_set_df1(&c, DF1_MODE_NEXT, false); dc_drive_handled(&c, 7);
+    fake_push_response("HTTP/1.1 204 No Content\r\n\r\n");
+    dc_report_status(&c, 0, -50, NULL, "1.9.0");
+    CHECK(strstr(fake_last_request(), "\"secondDrive\":\"df1\",\"driveVersion\":7") != NULL, "both");
+    boot();
+    fake_push_response("HTTP/1.1 204 No Content\r\n\r\n");
+    dc_report_status(&c, 0, -50, NULL, "1.9.0");
+    CHECK(strstr(fake_last_request(), "secondDrive") == NULL, "older build: absent");
+}
+
+static void test_a_drive_change_owes_a_status_report(void) {
+    boot();
+    CHECK(!dc_drive_report_owed(&c), "not capable: nothing owed");
+    dc_set_df1(&c, DF1_MODE_OFF, false);
+    CHECK(dc_drive_report_owed(&c), "first report owed");
+    fake_push_response("HTTP/1.1 204 No Content\r\n\r\n");
+    CHECK(dc_report_status(&c, 0, -50, NULL, "1.9.0"), "sent");
+    CHECK(!dc_drive_report_owed(&c), "reported: not owed");
+    dc_set_df1(&c, DF1_MODE_NEXT, false);
+    CHECK(dc_drive_report_owed(&c), "mode change owes a report");
+    fake_push_response("HTTP/1.1 500 Internal Server Error\r\n\r\n");
+    CHECK(!dc_report_status(&c, 0, -50, NULL, "1.9.0"), "failed");
+    CHECK(dc_drive_report_owed(&c), "failed report leaves it owed");
+    fake_push_response("HTTP/1.1 204 No Content\r\n\r\n");
+    CHECK(dc_report_status(&c, 0, -50, NULL, "1.9.0"), "sent");
+    CHECK(!dc_drive_report_owed(&c), "accepted: cleared");
+    dc_drive_handled(&c, 3);
+    CHECK(dc_drive_report_owed(&c), "ack change owes a report");
+}
+
 static void test_poll_body_reads_display_version(void) {
     boot();
     c.display_ack = 2;
@@ -2865,6 +2970,14 @@ int main(void) {
     RUN(test_display_body_parses);
     RUN(test_rejected_layout_still_acks);
     RUN(test_poll_url_carries_display_ack);
+    RUN(test_poll_url_carries_drive_ack);
+    RUN(a_second_drive_object_never_shadows_the_poll_version);
+    RUN(a_re_paired_board_with_a_higher_ack_takes_the_lower_seq);
+    RUN(a_bad_mode_is_handled_as_off_and_still_acked);
+    RUN(a_matching_second_drive_is_not_owed);
+    RUN(an_acked_seq_with_a_different_mode_is_owed);
+    RUN(test_status_reports_second_drive_and_its_ack);
+    RUN(test_a_drive_change_owes_a_status_report);
     RUN(test_poll_body_reads_display_version);
     RUN(test_status_carries_display_fields);
     RUN(test_fetch_display_returns_the_body);
