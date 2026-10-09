@@ -1630,6 +1630,11 @@ separately.
   (and the other built-in screens: boot, connecting, error) is fully visible on the 1.3" SH1106 and 0.96" SSD1306
   128x64 panels. Built-in screens use the panel's default layout and sit at the top (3ax ruling); verify on glass
   that nothing is cut off and the SSID is readable.
+- **Delete a WiFi floppy device** (operator, 2026-10-09): a Delete action on the device card (with confirmation).
+  There is no device DELETE route today (only the admin user cascade removes devices). Decide what happens to the
+  board itself: its token stops working (401 halts the board), so it should show "re-pair needed" rather than retry
+  forever; clear pairing codes, NFC write requests and history rows that reference the device; keep disk history
+  (versions name the device only as a label).
 - **NFC icon on the board's display** (operator, 2026-10-08): an NFC-reader icon as a layout element that works
   like the other icons (wifi, lock, ...): show/hide, 1x/2x, free placement in the Display editor. It needs a new
   element id in `display_layout.c`/`.h` and the validator, a glyph in `display.c`, `pnpm display:wasm`, the editor's
