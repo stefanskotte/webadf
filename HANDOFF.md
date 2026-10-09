@@ -2519,7 +2519,7 @@ separately.
   emulator on a 500 kbit/s interface. Worth establishing which before promising a title
   list.
 
-- **Amiga networking over the floppy port (PaulaNET-style).** **UNBLOCKED 2026-10-09:** RobSmithDev replied that he has no issue with us implementing PaulaNET, as long as the licences are respected. Check PaulaNET's licence terms (code and protocol) before any design, and credit him as the licence requires. Not started. Raised by the operator
+- **Amiga networking over the floppy port (PaulaNET-style).** **Stack decided (operator, 2026-10-09):** the Amiga-side TCP/IP stack behind the PaulaNET device is AmiTCP_NG, https://github.com/MW0MWZ/AmiTCP_NG. Check its licence alongside PaulaNET's, and how its SANA-II driver interface meets PaulaNET's device. **UNBLOCKED 2026-10-09:** RobSmithDev replied that he has no issue with us implementing PaulaNET, as long as the licences are respected. Check PaulaNET's licence terms (code and protocol) before any design, and credit him as the licence requires. Not started. Raised by the operator
   2026-09-13 after finding RobSmithDev's PaulaNET. Genuinely attractive, and explicitly a
   SECOND PRODUCT on the same board rather than an increment to disk serving: it makes the
   Amiga itself reach the internet, and does nothing to make disks load better.
