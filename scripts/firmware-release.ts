@@ -20,7 +20,7 @@
  * Usage:  pnpm firmware:publish [--notes "..."] [--security] [--dry-run] [--no-github] [--github-only]
  *
  * After a release is recorded it is also published as the GitHub release fw-<semver>
- * with the SAME signed files (src/lib/firmware-github-release.ts); TEST builds never
+ * with the SAME signed wifi_floppy.bin and its manifest (src/lib/firmware-github-release.ts); TEST builds never
  * are. The release also carries wifi-floppy-install-<semver>.uf2, the single
  * drag-and-drop first-install file: the same commit built WITHOUT TBYB, so it is
  * USB-only and never goes to the registry (refuseRegistryArtifact). --github-only (re)attaches an already-published version's files, checked
@@ -39,7 +39,9 @@ import { user } from '@/db/schema/auth';
 import { firmwareStore } from '@/lib/storage';
 import { publishRelease, readExistingReleases } from '@/lib/firmware-releases';
 import { decidePublish, PublishRefused } from '@/lib/firmware-publish-rules';
-import { firmwareManifest, refuseReleaseImage, refuseRegistryArtifact, refuseInstallImage } from '@/lib/firmware-manifest';
+import {
+  firmwareManifest, refuseReleaseImage, refuseRegistryArtifact, refuseInstallImage, refuseInstallImageMismatch,
+} from '@/lib/firmware-manifest';
 import { isAllowed, parseAllowlist } from '@/lib/superadmin-allowlist';
 import { semverOf } from '@/lib/firmware-version';
 import { firmwareReleases } from '@/db/schema/firmware';
@@ -302,7 +304,7 @@ try {
   throw e;
 }
 
-// GitHub: the same signed files the web app serves (src/lib/firmware-github-release.ts).
+// GitHub: the same signed wifi_floppy.bin the web app serves, plus the USB files (src/lib/firmware-github-release.ts).
 function publishToGithub(r: GithubReleaseInput): void {
   const plan = githubReleasePlan(r);
   if (!plan.publish) { console.log(`GitHub release skipped: ${plan.reason}`); return; }
@@ -347,6 +349,10 @@ function installArtifactsRefusal(v: string): string | null {
   }
   const imageRefusal = refuseInstallImage(installInfo);
   if (imageRefusal) return imageRefusal;
+  // Review I1: byte for byte the release image, except the TBYB flag and the
+  // hash -- so a stale, debug or DF1-default install image cannot slip through.
+  const mismatch = refuseInstallImageMismatch(readFileSync(binPath), installBin);
+  if (mismatch) return mismatch;
   const uf2Refusal = checkInstallUf2(readFileSync(installUf2Path), v);
   if (uf2Refusal) return `${installUf2Path}: ${uf2Refusal}`;
   if (statSync(installUf2Path).mtimeMs < statSync(installBinPath).mtimeMs) {
