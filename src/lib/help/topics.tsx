@@ -21,6 +21,9 @@ function GoodToKnow({ items }: { items: ReactNode[] }) {
 export const HELP_TOPICS = {
   // Sources: pair-button.tsx, devices/page.tsx:58-68, device-state.ts:19 (60 s),
   // firmware-state.ts:107-148, HANDOFF trial/revert (5546-5577) and "waits for eject" (2064, 5148).
+  // Deleting a board: delete-device-dialog.tsx + api/devices/[id] DELETE; the board's side (401 -> token erased ->
+  // setup portal, same already-used code rejected, so a fresh code is asked for) is wifi-floppy/firmware/src/main.c
+  // DC_HALTED branch; disk history kept because disk_versions.device_id has no FK (db/schema/disk-history.ts).
   boards: {
     title: 'Boards',
     short:
@@ -40,6 +43,11 @@ export const HELP_TOPICS = {
           board, press <em>Update</em> and confirm with your password. Its card then shows <em>update queued</em>,{' '}
           <em>downloading</em> and <em>applying — do not power off</em>. A new version first runs on trial: if it doesn&apos;t start up and check in within 5 minutes, the
           board goes back to the version it had by itself, and the card says <em>update failed</em> with the reason.
+        </p>
+        <p>
+          <strong>Deleting a board.</strong> The trash icon on a board&apos;s card removes it from your account. The
+          board then offers its setup network again the next time it connects, and a new code pairs it again; your
+          disks and their history stay.
         </p>
         <GoodToKnow items={[
           'A board never updates while a disk is mounted — the update waits for the eject.',
