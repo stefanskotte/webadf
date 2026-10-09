@@ -4681,6 +4681,17 @@ Run subagent-driven from the worktree `.claude/worktrees/df1`. The ledger is in 
 - **Phase 0 bench step 2, from the same boot (1.7.6):** `pio claims: pio0=7 pio1=3 pio2=1`. Heap low-water is
   36864 B (last printed 15 s after boot; re-read once on a quieter log before D2 is final). D2 is provisionally
   DD-only (36864 - 14336 = 22528 >= 20480).
+- **Phase 1 SHIPPED 2026-10-09:** fw 1.7.8+g1dfbab3 (seq 47, published as a TEST build), behaviour unchanged.
+  PIO programs take their select as a parameter; the status gate releases only on the deselect edge; flux_out
+  side-sets only on the pulse; each drive's ID lives in its SM's Y (ruling R12: exec'd writes, with HD built in
+  the unused ISR); flux_in and the sniffer moved to pio2; drive state is per drive.
+  - **Bench passed:** `pio claims: pio0=3 pio1=3 pio2=7` with "radio on pio2"; Workbench boots on DF0 with
+    `info` showing DF0 only; the HD ID reads 1759 KB; an `Echo` to DF0 reached the history.
+  - **Owed:** step 5, a real external DF1 (the operator will do it later). The first install stalled because
+    downloads failed transiently and the board backed off; a re-offer after a board power-cycle went through.
+    The cause is unexplained.
+  - **Decisions D1/D2/D4 (Task 5):** flux_in and the sniffer go on pio2 (17/32, sniff build 30/32); DF1's buffer
+    is DD-only (heap floor 36864 - 14336 = 22528 >= 20480); the sniffer uses pio2 IRQ1.
 - **Already known for Task 5:** the 1.7.4/1.7.5 boot log read `pio claims: pio0=7 pio1=3 pio2=1`. These look like
   SM bit masks, with the radio not counted. Task 5 must interpret them from the code before applying D1.
 
