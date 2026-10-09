@@ -1,10 +1,13 @@
+/*
+ * PaulaNET protocol: Copyright (C) 2026 RobSmithDev, https://github.com/RobSmithDev/PaulaNET.
+ * Used with the author's permission (2026-10-09).
+ */
 #ifndef PNET_RX_H
 #define PNET_RX_H
 /*
  * Flux intervals -> PaulaNET's raw bitstream: what the Amiga wrote to DF1 cylinder 77, side 0.
  *
- * PaulaNET protocol: Copyright (C) 2026 RobSmithDev, https://github.com/RobSmithDev/PaulaNET.
- * Used with the author's permission (2026-10-09). Implemented from the description; no code of his.
+ * Implemented from the protocol's description; no code of his.
  *
  * flux_bits.c (DF0's writes) knows only MFM: 2, 3 or 4 cells per interval. A PaulaNET write is
  * RLE bytes sent as raw cells, so an interval is any whole number of 2 us cells -- 1 for two

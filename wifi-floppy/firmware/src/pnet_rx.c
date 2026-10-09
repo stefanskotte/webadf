@@ -1,4 +1,8 @@
-/* PaulaNET protocol (C) 2026 RobSmithDev, used with permission -- see pnet_rx.h. */
+/*
+ * PaulaNET protocol: Copyright (C) 2026 RobSmithDev, https://github.com/RobSmithDev/PaulaNET.
+ * Used with the author's permission (2026-10-09).
+ */
+/* Implemented from the protocol's description; no code of his (see pnet_rx.h). */
 #include "pnet_rx.h"
 #include <string.h>
 

@@ -1,10 +1,13 @@
+/*
+ * PaulaNET protocol: Copyright (C) 2026 RobSmithDev, https://github.com/RobSmithDev/PaulaNET.
+ * Used with the author's permission (2026-10-09).
+ */
 #include "harness.h"
 #include "../src/pnet_loop.h"
 #include <stdint.h>
 #include <string.h>
 
-/* The cylinder-77 loopback's decisions. PaulaNET protocol (C) 2026 RobSmithDev, used with
- * permission. */
+/* The cylinder-77 loopback's decisions. */
 
 static void df1_streams_disk_silence_or_echo(void) {
     CHECK_EQ_INT(pnet_df1_for_track(154), PNET_DF1_SILENT);

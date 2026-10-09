@@ -1,3 +1,7 @@
+/*
+ * PaulaNET protocol: Copyright (C) 2026 RobSmithDev, https://github.com/RobSmithDev/PaulaNET.
+ * Used with the author's permission (2026-10-09).
+ */
 #include "harness.h"
 #include "../src/pnet_rx.h"
 #include "../src/pnet_frame.h"
@@ -7,7 +11,7 @@
 /*
  * The raw-cell accumulator, fed what flux_in would report for a PaulaNET write: a lead word
  * (arm to first edge), then each gap between pulses, edge to edge MINUS the pulse's low time,
- * with a deterministic jitter. PaulaNET protocol (C) 2026 RobSmithDev, used with permission.
+ * with a deterministic jitter.
  */
 
 static uint8_t wire[16384], capbuf[32768], frames[12000], dec[16384];

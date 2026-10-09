@@ -1,10 +1,13 @@
+/*
+ * PaulaNET protocol: Copyright (C) 2026 RobSmithDev, https://github.com/RobSmithDev/PaulaNET.
+ * Used with the author's permission (2026-10-09).
+ */
 #ifndef PNET_MFM_H
 #define PNET_MFM_H
 /*
  * PaulaNET's three byte-level codecs: per-byte MFM, the XOR checksum and the RLE.
  *
- * PaulaNET protocol: Copyright (C) 2026 RobSmithDev, https://github.com/RobSmithDev/PaulaNET.
- * Used with the author's permission (2026-10-09; THIRD-PARTY-NOTICES.md). This file implements
+ * THIRD-PARTY-NOTICES.md has the notice. This file implements
  * the protocol from its description and contains none of his code. The GOLDEN vectors in
  * test/test_pnet_mfm.c are the output of his reference encoders.
  *

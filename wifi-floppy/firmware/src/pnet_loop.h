@@ -1,11 +1,14 @@
+/*
+ * PaulaNET protocol: Copyright (C) 2026 RobSmithDev, https://github.com/RobSmithDev/PaulaNET.
+ * Used with the author's permission (2026-10-09).
+ */
 #ifndef PNET_LOOP_H
 #define PNET_LOOP_H
 /*
  * The cylinder-77 loopback's decisions (WF_PNET_LOOP TEST builds): what DF1 streams for a track,
  * WPROT, whose write a capture is, and PaulaNET's counter/acknowledge rule. Pure; main.c acts.
  *
- * PaulaNET protocol: Copyright (C) 2026 RobSmithDev, https://github.com/RobSmithDev/PaulaNET.
- * Used with the author's permission (2026-10-09). Implemented from the description; no code of his.
+ * Implemented from the protocol's description; no code of his.
  *
  * Counters, as PaulaNET has them: each side bumps its own 8-bit counter per new batch and echoes
  * the other's. A batch whose amiga counter equals the last one taken is a resend: its frames are

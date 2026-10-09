@@ -1,11 +1,14 @@
+/*
+ * PaulaNET protocol: Copyright (C) 2026 RobSmithDev, https://github.com/RobSmithDev/PaulaNET.
+ * Used with the author's permission (2026-10-09).
+ */
 #include "harness.h"
 #include "../src/pnet_frame.h"
 #include "../src/pnet_mfm.h"
 #include <stdint.h>
 #include <string.h>
 
-/* PaulaNET's cylinder-77 wire format, both directions. PaulaNET protocol (C) 2026 RobSmithDev,
- * used with permission. */
+/* PaulaNET's cylinder-77 wire format, both directions. */
 
 static uint8_t payload[12000], out[20000], dec[16384];
 

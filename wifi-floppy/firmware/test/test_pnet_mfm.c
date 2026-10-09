@@ -1,3 +1,7 @@
+/*
+ * PaulaNET protocol: Copyright (C) 2026 RobSmithDev, https://github.com/RobSmithDev/PaulaNET.
+ * Used with the author's permission (2026-10-09).
+ */
 #include "harness.h"
 #include "../src/pnet_mfm.h"
 #include <stdint.h>
@@ -6,8 +10,7 @@
 /*
  * PaulaNET's byte codecs. Vectors marked GOLDEN are the OUTPUT of RobSmithDev's reference
  * encoders (PaulaNET 0afd5fa: Pico/PaulaNET/rleCompression.cpp and the Pico's mfmEncode), run on
- * a host on 2026-10-09. No code of his is here. PaulaNET protocol (C) 2026 RobSmithDev, used with
- * permission (THIRD-PARTY-NOTICES.md).
+ * a host on 2026-10-09. No code of his is here (THIRD-PARTY-NOTICES.md).
  */
 
 static void xorshift_fill(uint8_t *out, size_t len, uint32_t seed) {

@@ -1,11 +1,14 @@
+/*
+ * PaulaNET protocol: Copyright (C) 2026 RobSmithDev, https://github.com/RobSmithDev/PaulaNET.
+ * Used with the author's permission (2026-10-09).
+ */
 #ifndef PNET_FRAME_H
 #define PNET_FRAME_H
 /*
  * PaulaNET's wire format on cylinder 77, both directions.
  *
- * PaulaNET protocol: Copyright (C) 2026 RobSmithDev, https://github.com/RobSmithDev/PaulaNET.
- * Used with the author's permission (2026-10-09; THIRD-PARTY-NOTICES.md). Implemented from the
- * protocol's description; none of his code is in this file.
+ * THIRD-PARTY-NOTICES.md has the notice. Implemented from the protocol's description; none of his
+ * code is in this file.
  *
  * Amiga -> board (side 0, ETD_RAWWRITE; pnet_build_to_board):
  *   00 01 00 01      two pulses 16 cells apart: the board times the cell from them
