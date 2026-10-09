@@ -1597,6 +1597,9 @@ separately.
   connection that blocks the download (dc_fetch_firmware -> dc_exchange, retryable). **First step:** log WHY the
   download failed (the transport error / HTTP status / body_complete) in fwu_fetch, then reproduce after a long
   uptime.
+- **(Low) e2e firmware releases show to real boards during a run** (seen 2026-10-09): specs seed `0.0.0+e2e*`
+  releases with the highest sequences, so a real board reads "behind 0.0.0+e2eN" until the specs clean up. The
+  operator saw it and judged it no problem. A possible guard: ignore `+e2e` versions for non-test orgs.
 - **Upload from a URL** (requested 2026-10-09, via the operator): on the upload page, paste a URL and the web app
   fetches the ADF/HFE itself. Design notes: a server-side fetch is an SSRF surface, so allow http(s) only, refuse
   private, loopback and link-local addresses after DNS resolution (re-check on every redirect), cap redirects, size
