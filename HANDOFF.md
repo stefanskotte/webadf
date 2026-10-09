@@ -1630,6 +1630,8 @@ separately.
   and a signed manifest.json. TEST builds are never published there; `--no-github` skips the step; `--github-only`
   (re)attaches a published version, checked byte-for-byte against the registry. The firmware workflow builds and
   tests only (its artifacts are for diagnosis). fw-1.8.1 was re-attached from the registry (sha256 87b4c4da...).
+- **The bench board's chip is RP2350 rev A4** (`picotool info -a`, 2026-10-09; `-d` does not show the revision). The
+  RP2350-E10 workaround block in today's .uf2 (aimed at the token sector) only affects A2, so it is harmless here.
 - **REQUIREMENT (operator, 2026-10-09): a first install is ONE drag-and-drop.** Hold BOOTSEL, plug in, drop ONE
   .uf2 onto the drive that appears, and everything else just works. **Requiring picotool is a blocker for casual
   users.** Today's install (picotool: partition table, reboot to BOOTSEL, `load -p 0 -x`) does not meet it. Research
