@@ -38,7 +38,8 @@ async function readCapped(request: Request, max: number): Promise<Uint8Array | n
  *
  * The browser's Content-Type and the file's name are ignored: the type that is
  * stored and later served is the one the bytes' own header declares
- * (checkCoverImage). Stored as uploaded, not re-encoded -- there is no image
+ * (checkCoverImage). Metadata (Exif/GPS, XMP, text chunks) is stripped by
+ * stripImageMetadata, but the pixels are not re-encoded -- there is no image
  * library in this app, and a validated raster served with nosniff from a
  * private, org-checked route is not executable.
  */

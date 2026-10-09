@@ -74,11 +74,17 @@ export async function runBlobGc({ dryRun }: { dryRun: boolean }): Promise<BlobGc
 
   // Last look: a person may have re-chosen exactly these bytes since the
   // reference read. Re-select the planned digests and spare any now named.
+  // If that look fails, delete no cover, and let the disk pass run as before.
   let coverDeletes = coverPlan.objects;
   if (coverDeletes.length > 0) {
-    const named = await db.selectDistinct({ s: games.coverOverrideSha256 })
-      .from(games).where(inArray(games.coverOverrideSha256, coverDeletes));
-    coverDeletes = withoutReferenced(coverDeletes, named.flatMap((r) => (r.s ? [r.s] : [])));
+    try {
+      const named = await db.selectDistinct({ s: games.coverOverrideSha256 })
+        .from(games).where(inArray(games.coverOverrideSha256, coverDeletes));
+      coverDeletes = withoutReferenced(coverDeletes, named.flatMap((r) => (r.s ? [r.s] : [])));
+    } catch {
+      coverDeletes = [];
+      result.coversRefused = 'the last reference re-check failed -- no cover deleted';
+    }
   }
   let coversRemoved = 0;
   for (const sha256 of coverDeletes) {

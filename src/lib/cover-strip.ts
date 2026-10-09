@@ -58,9 +58,44 @@ function orientationSegment(value: number): Uint8Array {
 }
 
 /**
+ * The index just past the EOI that ends the scans starting at the SOS marker
+ * at `sos`, or -1 if the structure does not hold. Walks segments between
+ * scans (DHT, DQT, a progressive file's further SOS) and steps over the
+ * entropy-coded data, where 0xFF is only ever followed by 0x00 or RSTn.
+ * Whatever follows EOI -- phone trailers, a second appended JPEG with its own
+ * Exif -- is not part of this image.
+ */
+function jpegEoiEnd(b: Uint8Array, sos: number): number {
+  let i = sos;
+  for (;;) {
+    // i is at a 0xFF marker that has a length (SOS, or a segment between scans)
+    if (i + 3 >= b.length) return -1;
+    const len = be16(b, i + 2);
+    if (len < 2 || i + 2 + len > b.length) return -1;
+    const wasSos = b[i + 1] === 0xda;
+    i += 2 + len;
+    if (wasSos) {
+      for (;;) { // entropy-coded data
+        if (i + 1 >= b.length) return -1;
+        if (b[i] !== 0xff) { i++; continue; }
+        const n = b[i + 1];
+        if (n === 0x00 || (n >= 0xd0 && n <= 0xd7)) { i += 2; continue; }
+        if (n === 0xff) { i++; continue; } // fill byte before a marker
+        break;
+      }
+    }
+    while (i + 1 < b.length && b[i] === 0xff && b[i + 1] === 0xff) i++; // fill bytes
+    if (i + 1 >= b.length || b[i] !== 0xff) return -1;
+    const m = b[i + 1];
+    if (m === 0xd9) return i + 2;
+    if (m === 0x00 || m === 0x01 || (m >= 0xd0 && m <= 0xd7)) return -1; // no stray markers between scans
+  }
+}
+
+/**
  * JPEG: drop APP1 (Exif, XMP) and APP13 (Photoshop/IPTC); keep APP0, APP2
- * (ICC), APP14 (Adobe colour transform) and every other segment; everything
- * from the first SOS on is copied verbatim. A non-default Exif Orientation is
+ * (ICC), APP14 (Adobe colour transform) and every other segment; the scans
+ * are copied verbatim up to EOI, and anything after EOI is dropped. A non-default Exif Orientation is
  * written back as a minimal Exif segment so a sideways photo stays upright.
  */
 export function stripJpeg(b: Uint8Array): Uint8Array {
@@ -76,11 +111,13 @@ export function stripJpeg(b: Uint8Array): Uint8Array {
     while (m === 0xff && j + 2 < b.length) { j++; m = b[j + 1]; } // fill bytes
     if (m === 0xff) return b;
     const markerStart = j;
-    if (m === 0xda) { // SOS: the rest is entropy-coded data, verbatim
+    if (m === 0xda) { // SOS: scans copied verbatim, up to and including EOI
       if (orientation !== null && orientationAt < 0) orientationAt = head.length;
       const out = [...head];
       if (orientation !== null && orientation !== 1) out.splice(orientationAt, 0, orientationSegment(orientation));
-      out.push(b.subarray(markerStart));
+      const eoi = jpegEoiEnd(b, markerStart);
+      // No EOI found (a truncated or odd file): keep the scans as they were.
+      out.push(eoi < 0 ? b.subarray(markerStart) : b.subarray(markerStart, eoi));
       return concat(out);
     }
     if (m === 0xd9) return b; // EOI before any scan

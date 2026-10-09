@@ -92,6 +92,38 @@ describe('stripJpeg', () => {
     expect(sniffImage(out)).toEqual({ type: 'image/jpeg', width: 40, height: 50 });
   });
 
+  it('drops whatever follows EOI, such as a second JPEG with its own GPS', () => {
+    const tail = jpeg(seg(0xe1, exif(null)));
+    const b = Uint8Array.from([...jpeg(seg(0xe0, text('JFIF\0'))), ...tail]);
+    const out = stripJpeg(b);
+    expect(contains(b, 'GPSLATITUDE')).toBe(true);
+    expect(contains(out, 'GPSLATITUDE')).toBe(false);
+    expect(markers(out)).toEqual([0xe0, 0xc0, 0xda]);
+    expect(out.length).toBe(b.length - tail.length);
+  });
+
+  it('walks a progressive file: stuffed bytes, restarts and tables between scans', () => {
+    const sos = seg(0xda, [1, 1, 0, 0, 0x3f, 0]);
+    const b = Uint8Array.from([
+      0xff, 0xd8, ...seg(0xe1, exif(6)), ...seg(0xc2, [8, 0, 20, 0, 20, 1, 1, 0x11, 0]),
+      ...sos, 0x12, 0xff, 0x00, 0x34, 0xff, 0xd0, 0x56,
+      ...seg(0xc4, [0x00, 0xff, 0xd9]), // a table whose bytes look like EOI
+      ...sos, 0x78, 0xff, 0xff, 0xd9, 0xaa, 0xbb,
+    ]);
+    const out = stripJpeg(b);
+    expect(contains(out, 'GPSLATITUDE')).toBe(false);
+    expect([out[out.length - 2], out[out.length - 1]]).toEqual([0xff, 0xd9]);
+    expect(Buffer.from(out).includes(Buffer.from([0xaa, 0xbb]))).toBe(false);
+    expect(Buffer.from(out).includes(Buffer.from([0xff, 0xc4, 0x00, 0x05, 0x00, 0xff, 0xd9]))).toBe(true);
+  });
+
+  it('keeps the scans of a file with no EOI, still stripped', () => {
+    const b = jpeg(seg(0xe1, exif(null))).subarray(0, -2);
+    const out = stripJpeg(b);
+    expect(contains(out, 'GPSLATITUDE')).toBe(false);
+    expect([out[out.length - 2], out[out.length - 1]]).toEqual([0x12, 0x34]);
+  });
+
   it('returns malformed input unchanged, without crashing or looping', () => {
     const cases = [
       Uint8Array.of(0xff, 0xd8, 0xff, 0xe1, 0xff, 0xff, 0x00),          // length past the end
