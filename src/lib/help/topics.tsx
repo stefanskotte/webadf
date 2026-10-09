@@ -263,6 +263,12 @@ export const HELP_TOPICS = {
   // Next disk DF0 changes at once, DF1 empty ~4 s on the bench, 4.1 s measured); big boxes: spec
   // docs/superpowers/research/2026-10-08-df1-second-drive.md §2 (second internal drive is DF1, external port is DF2,
   // J1 has no SEL2) -- from the spec, not the bench. Kickstart 1.3 deliberately not mentioned (not bench-verified).
+  // "cold or warm": a warm restart re-reads the live setting; a cold one (the board is powered by the Amiga) reads
+  // the board's stored setting, which main.c's DF1 store block writes once both drives are empty OR the Amiga is idle
+  // with a disk in (drive_store_should_write/drive_store_idle: both motors off and no write activity for 3 s, no
+  // unsent saves; Ruling R17, final review C1) -- so seconds after the change, with the drive light off. Bench: Task
+  // 24's store step. Older firmware (I2): 1.8.x boots with the stored DF1 setting and reports the disk DF1 serves,
+  // but cannot take a change -- second-drive.ts DF1_ON_OLD_FIRMWARE, shown when df1Sha256 is non-null.
   // HD next disk: device_client.c dc_df1_want (returns SLOT_NONE for SLOT_KIND_ADF_HD unless _df1_hd_ok) and
   // wifi-floppy/firmware/CMakeLists.txt:181 WF_DF1_HD OFF (decision D2: DF1's buffer is DD-only) -> DF1 stays empty.
   'second-drive': {
@@ -290,7 +296,7 @@ export const HELP_TOPICS = {
         <GoodToKnow items={[
           'DF1 is read-only: saving to it fails as write-protected. Saves to DF0 follow that disk’s own write protection.',
           'DF1 only ever holds the next disk of the set. You cannot pick another disk for it.',
-          'Needs board firmware 1.9.0 or newer.',
+          'Needs board firmware 1.9.0 or newer. A board put back on older firmware keeps the DF1 setting it had, and the card says DF1 is on while it holds a disk; install 1.9.0 or newer to switch it off.',
         ]} />
       </>
     ),

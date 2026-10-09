@@ -15,7 +15,7 @@ describe('second-drive readings', () => {
 describe('secondDriveStatus', () => {
   const base = {
     secondDriveCapable: true, secondDriveVersion: 2, secondDriveAppliedVersion: 2,
-    secondDrive: 'df1' as const, secondDriveReported: 'df1' as const,
+    secondDrive: 'df1' as const, secondDriveReported: 'df1' as const, df1Sha256: null,
   };
   it('says what the board is doing with the setting', () => {
     expect(secondDriveStatus({ ...base, secondDriveCapable: false })).toBe('Needs firmware 1.9.0 or newer');
@@ -32,5 +32,11 @@ describe('secondDriveStatus', () => {
     expect(secondDriveStatus({
       ...base, secondDrive: 'off', secondDriveVersion: 0, secondDriveAppliedVersion: 0, secondDriveReported: 'off',
     })).toBe('Set on the board \u2014 takes effect when the Amiga restarts');
+  });
+  it('says DF1 is on when older firmware serves a DF1 disk (I2)', () => {
+    const old = { ...base, secondDriveCapable: false, secondDriveReported: null, secondDrive: 'off' as const };
+    expect(secondDriveStatus({ ...old, df1Sha256: 'a'.repeat(64) }))
+      .toBe('DF1 is on, set on the board \u2014 needs firmware 1.9.0 or newer to change');
+    expect(secondDriveStatus({ ...old, df1Sha256: null })).toBe('Needs firmware 1.9.0 or newer');
   });
 });

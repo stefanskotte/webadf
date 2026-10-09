@@ -169,3 +169,18 @@ describe('recordStatus display layouts', () => {
     expect(patches[0].displayError).toBeNull();
   });
 });
+
+// Final review I2: a board rolled back to 1.8.x reports the disk DF1 serves but no
+// secondDrive. The digest is what tells the card DF1 is on, so it must be stored.
+describe('recordStatus df1Sha256 from older firmware', () => {
+  const sha = 'b'.repeat(64);
+  it('stores a reported df1Sha256 even when secondDrive is absent (1.8.x)', async () => {
+    await recordStatus('dev-1', { ...base, firmwareVersion: '1.8.1+gabc', df1Sha256: sha });
+    expect(patches[0].df1Sha256).toBe(sha);
+    expect(patches[0].secondDriveCapable).toBe(false);
+  });
+  it('clears it only when a report names its firmware and is silent on both', async () => {
+    await recordStatus('dev-1', { ...base, firmwareVersion: '1.7.4' });
+    expect(patches[0].df1Sha256).toBeNull();
+  });
+});

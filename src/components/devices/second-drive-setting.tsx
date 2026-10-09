@@ -27,7 +27,7 @@ export function SecondDriveSetting({ device, next }: { device: DeviceListItem; n
       });
       if (res.status === 409) {
         const j = await res.json() as { error: string; reason: string };
-        setRefused(j.error === 'df1_seen' ? DF1_SEEN_REASON : j.reason);
+        if (j.error === 'df1_seen') setRefused(DF1_SEEN_REASON); else setFailed(j.reason);   // m1: only df1_seen offers the override
         return;
       }
       if (!res.ok) {
@@ -56,7 +56,7 @@ export function SecondDriveSetting({ device, next }: { device: DeviceListItem; n
         <HelpTip topic="second-drive" />
       </label>
       <span data-testid={`second-drive-status-${id}`}>{secondDriveStatus(device)}</span>
-      {device.secondDrive === 'df1' && device.secondDriveCapable && (
+      {device.secondDriveReported === 'df1' && device.secondDriveCapable && (   /* m2: what the board runs */
         <span data-testid={`device-df1-disk-${id}`}>
           {device.df1Sha256 === null ? 'DF1: empty'
             : next?.preload === 'ready' ? `DF1: disk ${next.diskNo}` : 'DF1: next disk ready'}
