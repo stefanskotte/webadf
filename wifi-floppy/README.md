@@ -101,8 +101,9 @@ updates in both directions, and a re-install over a paired board.
    reboot. If that happens, unplug the board, plug it back in, and join again. This is a
    known open issue (HANDOFF).
 
-The same file works on a blank board, a board running other firmware, and a board
-already running ours. Re-installing it keeps the board's WiFi settings and pairing: it
+The same file works on a blank board and on a board already running ours (both verified
+on an RP2350 A4, 2026-10-09). A board running other firmware (MicroPython, say) is
+expected to work too, but has not been tested. Re-installing it keeps the board's WiFi settings and pairing: it
 never writes the top five flash sectors where those live.
 
 What is in the file: the partition table, the firmware for partition A, and two blank
