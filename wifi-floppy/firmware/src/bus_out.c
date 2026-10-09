@@ -3,12 +3,17 @@
 #include "floppy_io.h"
 #include "floppy.pio.h"
 #include "hardware/sync.h"
+#include "hardware/gpio.h"
 
 static PIO          gate_pio;
 static spin_lock_t *gate_lock;
 static unsigned     n_drives;                 // configured: 1 (DF0) in Phase 1
 static uint         gate_sm[WF_DRIVES];
+static uint         gate_off;                 // status_gate's load offset (its `top`)
 static uint32_t     shadow[WF_DRIVES];
+// Drive d's machines are running (bus_out_drive_enable). Drive 0 from
+// bus_out_init on; the others start off. Written under gate_lock.
+static volatile bool drive_on[WF_DRIVES];
 
 // Drive d's select line: SEL0 for DF0, SEL1 for DF1. A function, not a table:
 // the pins are read from the board description at run time.
@@ -56,6 +61,7 @@ void bus_out_init(PIO pio, unsigned ndrives, const uint32_t initial[]) {
     gate_lock = spin_lock_instance((uint)spin_lock_claim_unused(true));
 
     uint off = (uint)pio_add_program(pio, &status_gate_program);   // one copy, shared
+    gate_off = off;
     for (unsigned d = 0; d < ndrives; d++) {
         shadow[d]  = initial[d] & bus_gate_status_mask();
         gate_sm[d] = (uint)pio_claim_unused_sm(pio, true);
@@ -69,7 +75,10 @@ void bus_out_init(PIO pio, unsigned ndrives, const uint32_t initial[]) {
         pio_sm_put(pio, gate_sm[d], shadow[d]);
     }
     n_drives = ndrives;
-    for (unsigned d = 0; d < ndrives; d++) pio_sm_set_enabled(pio, gate_sm[d], true);
+    // Drive 0 only. Any other drive's machine waits, disabled and writing no
+    // pad, for bus_out_drive_enable -- its initial word stays queued for it.
+    pio_sm_set_enabled(pio, gate_sm[0], true);
+    drive_on[0] = true;
 }
 
 // In RAM for the same reason dma_irq is: INDEX is set from that handler.
@@ -77,7 +86,13 @@ void __not_in_flash_func(bus_out_set_drive)(unsigned d, unsigned pin, bool asser
     if (d >= n_drives) return;
     uint32_t save = spin_lock_blocking(gate_lock);
     uint32_t next = bus_gate_apply(shadow[d], pin, assert);
-    if (next != shadow[d]) {
+    if (next != shadow[d] && !drive_on[d]) {
+        // Off: keep the word only. Nothing is queued (a disabled machine's
+        // 8-deep FIFO would overflow and drop the newest word) and nothing is
+        // exec'd on its drive_id (an exec'd `set pins` would write RDY);
+        // bus_out_drive_enable queues the shadow and sets X from it.
+        shadow[d] = next;
+    } else if (next != shadow[d]) {
 #if WF_DRIVE_ID
         const uint32_t was = shadow[d];
 #endif
@@ -130,7 +145,7 @@ void bus_out_drive_id_init(PIO pio, unsigned ndrives) {
         id_kind[d] = DRIVE_ID_KIND_DD;
         pio_sm_exec(pio, sm, pio_encode_set(pio_x, (shadow[d] >> PIN_RDY) & 1u));   // today's level first
         id_sm[d]   = (int)sm;
-        pio_sm_set_enabled(pio, sm, true);
+        if (drive_on[d]) pio_sm_set_enabled(pio, sm, true);   // else bus_out_drive_enable
         spin_unlock(gate_lock, save);
     }
     pio_gpio_init(pio, PIN_RDY);                        // the pad leaves pio1 last
@@ -147,3 +162,55 @@ bool bus_out_drive_id_set_hd(bool hd) {
     return bus_out_drive_id_set(0, hd ? DRIVE_ID_KIND_HD : DRIVE_ID_KIND_DD);
 }
 #endif
+
+bool bus_out_drive_enabled(unsigned d) { return d < n_drives && drive_on[d]; }
+
+void bus_out_drive_enable(unsigned d, bool on) {
+    if (d == 0 || d >= n_drives) return;              // DF0 always runs
+    uint32_t save = spin_lock_blocking(gate_lock);
+    if (on && !drive_on[d]) {
+        // Word and ID first, machines last. The gate restarts at `top` with
+        // Y = 0 ("released already"), so while its select is high it writes
+        // nothing, and its first pass with the select low takes the shadow
+        // queued here (the stale queue from before it was off is dropped).
+        const uint sm = gate_sm[d];
+        pio_sm_clear_fifos(gate_pio, sm);
+        pio_sm_exec(gate_pio, sm, pio_encode_set(pio_y, 0));
+        pio_sm_exec(gate_pio, sm, pio_encode_jmp(gate_off));
+        pio_sm_put(gate_pio, sm, shadow[d]);
+#if WF_DRIVE_ID
+        if (id_sm[d] >= 0) {
+            // Y already holds the ID (bus_out_drive_id_set writes it on a
+            // disabled machine too). X = today's RDY level; then the machine
+            // waits for its select at on_released_wait -- past on_released's
+            // `mov pins, null`, so enabling writes no pad -- and any answer
+            // in progress when it went off is abandoned: the next motor-off
+            // select starts a fresh one at bit 31.
+            const uint isd = (uint)id_sm[d];
+            pio_sm_exec(id_pio, isd, pio_encode_set(pio_x, (shadow[d] >> PIN_RDY) & 1u));
+            pio_sm_exec(id_pio, isd, pio_encode_jmp(id_off + drive_id_offset_on_released_wait));
+            pio_sm_set_enabled(id_pio, isd, true);
+        }
+#endif
+        pio_sm_set_enabled(gate_pio, sm, true);
+        drive_on[d] = true;
+    } else if (!on && drive_on[d]) {
+        pio_sm_set_enabled(gate_pio, gate_sm[d], false);
+#if WF_DRIVE_ID
+        if (id_sm[d] >= 0) pio_sm_set_enabled(id_pio, (uint)id_sm[d], false);
+#endif
+        drive_on[d] = false;
+        // Release what this drive may have left on the pads -- once, by the
+        // drive's own (now disabled) machines, which still run exec'd
+        // instructions. Only with SEL0 high: then no DF0 word is on the pads
+        // to overwrite. With SEL0 low, DF0's gate rewrites its word every few
+        // cycles and DF0's machines release the pads at its deselect.
+        if (gpio_get(PIN_SEL0)) {
+            pio_sm_exec(gate_pio, gate_sm[d], pio_encode_mov(pio_pins, pio_null));
+#if WF_DRIVE_ID
+            if (id_sm[d] >= 0) pio_sm_exec(id_pio, (uint)id_sm[d], pio_encode_set(pio_pins, 0));
+#endif
+        }
+    }
+    spin_unlock(gate_lock, save);
+}

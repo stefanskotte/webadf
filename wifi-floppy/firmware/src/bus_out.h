@@ -21,14 +21,38 @@
 // drive_id state machine; the PIO programs are loaded once and shared.
 #define WF_DRIVES 2
 
-// Hands the five status pads to `pio`, loads status_gate once, and starts one
-// state machine per drive (0 .. ndrives-1, ndrives <= WF_DRIVES), drive d with
-// initial[d] (a GPIO mask of asserted pins). Call once on core0, before
-// anything else sets an output.
+// Hands the five status pads to `pio`, loads status_gate once, and configures
+// one state machine per drive (0 .. ndrives-1, ndrives <= WF_DRIVES), drive d
+// with initial[d] (a GPIO mask of asserted pins). Starts drive 0's only; the
+// others wait for bus_out_drive_enable. Call once on core0, before anything
+// else sets an output.
 void bus_out_init(PIO pio, unsigned ndrives, const uint32_t initial[]);
 
+// Drive d (1 .. ndrives-1) on the bus or off it. bus_out_init and
+// bus_out_drive_id_init CONFIGURE every drive -- claimed, loaded, the pads
+// handed over -- but start only drive 0's machines; every other drive's
+// status_gate and drive_id state machines stay DISABLED until this enables
+// them. A disabled machine writes no pad, so a drive that is off is
+// pad-identical to no drive at all, even while both selects are low (many
+// trackloaders select every drive at once to stop the motors).
+//
+// While a drive is off, bus_out_set_drive and bus_out_drive_id_set still
+// keep its word and ID (the shadow and the machine's Y), so enabling it puts
+// exactly that on the bus:
+//   on:  the shadow is queued and the RDY level and the ID are in X/Y, the
+//        machines are moved to a point that writes nothing until their select
+//        next falls, THEN enabled.
+//   off: the machines are disabled, THEN the drive's pads are released once
+//        (status pads and RDY) -- only while SEL0 is high, so nothing of DF0's
+//        is overwritten; with SEL0 low, DF0's own machines own the pads and
+//        release them at its deselect.
+// Under the bus_out spinlock; core0. Drive 0 always runs: d == 0 is ignored.
+// No-op when already in that state.
+void bus_out_drive_enable(unsigned d, bool on);
+bool bus_out_drive_enabled(unsigned d);
+
 // Drive d's status word: `pin` asserted or released. A drive that was not
-// configured is ignored.
+// configured is ignored; one that is off keeps the word for when it is on.
 void bus_out_set_drive(unsigned d, unsigned pin, bool assert);
 // Drive 0 (DF0): every caller from before the second drive.
 void bus_out_set(unsigned pin, bool assert);
@@ -44,12 +68,15 @@ void bus_out_set(unsigned pin, bool assert);
 // Hands RDY to floppy.pio's drive_id program on `pio`, one state machine per
 // drive (0 .. ndrives-1), which answers the Amiga's drive-ID read on that
 // drive's motor-off selects (drive_id.h, HD spec §5.4). Each answers DD until
-// bus_out_drive_id_set. bus_out_set_drive(d, PIN_RDY, ...) keeps working: the
+// bus_out_drive_id_set. Drive 0's is started; any other drive's starts with
+// bus_out_drive_enable (which must then come after this call). bus_out_set_drive(d, PIN_RDY, ...) keeps working: the
 // level goes to drive d's drive_id. Call once on core0, after bus_out_init.
 void bus_out_drive_id_init(PIO pio, unsigned ndrives);
 // Drive d answers kind `k` from the next answer on -- the first motor-off
 // select after a motor-on one, or the 32-bit repeat, never mid-answer. Core0
-// only. True if it changed.
+// only. True if it changed. Works on a drive that is off too (Y is written by
+// exec'd instructions, which a disabled machine runs): set the kind BEFORE
+// bus_out_drive_enable and the drive's first answer is already that kind.
 bool bus_out_drive_id_set(unsigned d, drive_id_kind_t k);
 // Drive 0: HD (true) or DD (false). bus_out_drive_id_set(0, ...).
 bool bus_out_drive_id_set_hd(bool hd);

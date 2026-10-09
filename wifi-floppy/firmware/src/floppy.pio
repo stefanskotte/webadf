@@ -248,6 +248,7 @@ changed:
 .program drive_id
 public on_released:           ; deselected (or power-up)
     mov pins, null            ; RDY released
+public on_released_wait:      ; bus_out_drive_enable starts a drive here: no pad write
     wait 0 pin 0 [7]          ; SEL0 falls; MTR settles (~0.5 us)
     jmp pin, reset_load       ; motor off: a new answer starts here
 on_selected:                  ; selected, motor on: RDY is the CPU's level

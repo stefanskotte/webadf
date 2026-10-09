@@ -2720,24 +2720,18 @@ int main(void) {
     // One word per drive; PIN_* are board reads, so filled here, not static.
     uint32_t boot_lines[WF_DRIVES];
     boot_lines[0] = (1u << PIN_TRK0) | (1u << PIN_WPROT);   // DF0, as before
-    // DF1 on: an empty, write-protected drive at track 0 until a disk is
+    // DF1: an empty, write-protected drive at track 0 until a disk is
     // inserted. WPROT stays asserted for good: DF1 is read-only, and core1's
-    // WPROT writer is DF0's alone (bus_out_set). Off: nothing at all -- every
-    // line released while SEL1 is low, as with no DF1.
-    boot_lines[1] = g_df1_mode == DF1_MODE_NEXT
-        ? (1u << PIN_TRK0) | (1u << PIN_WPROT) | (1u << PIN_CHNG) : 0u;
+    // WPROT writer is DF0's alone (bus_out_set). The word is the same whatever
+    // the setting: an OFF DF1's machines are never started (bus_out_drive_enable
+    // below), and a disabled machine writes no pad -- off is no DF1 at all,
+    // even while SEL0 and SEL1 are low together.
+    boot_lines[1] = (1u << PIN_TRK0) | (1u << PIN_WPROT) | (1u << PIN_CHNG);
     n_drives = DF1_CAPABLE ? 2u : 1u;
-    bus_out_init(bus_pio, n_drives, boot_lines);
+    bus_out_init(bus_pio, n_drives, boot_lines);   // starts DF0's gate only
 
     dskchg_init();
     dskchg_set_drives(n_drives);
-    // dskchg_init asserts every drive's /CHNG (no disk). Right for DF0 and
-    // for an ON DF1 (its boot word has it already); an OFF DF1 must show
-    // nothing, so its CHNG goes back. Nothing asserts it again while off: the
-    // DF1 mount below is the only other caller for drive 1, and it touches
-    // DF1's lines only when on; steps of an off DF1 never reach dskchg; and
-    // dskchg's RDY needs an image in.
-    if (n_drives > 1 && g_df1_mode != DF1_MODE_NEXT) bus_out_set_drive(1, PIN_CHNG, false);
     track_cache_init();
 
     // Both are hand-wired bring-up aids on unrouted header pins and both are
@@ -2848,8 +2842,10 @@ int main(void) {
 #if DF1_CAPABLE
     // DF1's flux, the same program copy, gated by SEL1. Both machines share
     // RDATA: flux_out side-sets only on its own pulse, so an idle or
-    // deselected one writes nothing (floppy.pio). While DF1 is off this
-    // machine is never fed and stalls at `out` -- it never pulses.
+    // deselected one writes nothing (floppy.pio). It runs whatever the DF1
+    // setting: while DF1 is off it is never fed (only a DF1 mount, which needs
+    // DF1 on, starts its stream) and stalls at `out` with no side-set -- it
+    // never writes RDATA. (DF1's sel_mtr, below, only reads pins.)
     g_stream[1].sm = pio_claim_unused_sm(pio, true);
     flux_out_program_init(pio, g_stream[1].sm, off_out, PIN_RDATA, PIN_SEL1);
     pio_sm_set_enabled(pio, g_stream[1].sm, true);
@@ -2905,14 +2901,16 @@ int main(void) {
     // The Amiga drive-ID answer on RDY (HD spec §5.4). pio0, beside flux_out:
     // 7 + 15 = 22 of its 32 instruction slots, one copy of each program,
     // shared by DF0's and DF1's machines.
-    bus_out_drive_id_init(pio, n_drives);
-    // DF1: an empty DD drive while on; NONE (0x00000000, "no drive") while
-    // off -- what Kickstart reads from an absent DF1. Both machines start as
-    // DD (bus_out_drive_id_init); this lands about a microsecond after DF1's
-    // is enabled, at boot.
+    bus_out_drive_id_init(pio, n_drives);         // starts DF0's only
+    // DF1: the kind first (written into its machine's Y while it is still
+    // disabled), then -- only while DF1 is on -- its status gate and drive_id
+    // machines start together, so its first answer is already DD. Off, they
+    // stay disabled: no ID answer, no line, nothing written on any pad -- an
+    // absent drive (Kickstart reads its ID as 0 from the bus pull-ups).
     bus_out_drive_id_set(1, g_df1_mode == DF1_MODE_NEXT ? DRIVE_ID_KIND_DD : DRIVE_ID_KIND_NONE);
+    bus_out_drive_enable(1, g_df1_mode == DF1_MODE_NEXT);
     wf_logf(WF_INFO, "drive-id: answering DD 0x%08lx on DF0, %s on DF1",
-            (unsigned long)DRIVE_ID_DD, g_df1_mode == DF1_MODE_NEXT ? "DD" : "NONE (no drive)");
+            (unsigned long)DRIVE_ID_DD, g_df1_mode == DF1_MODE_NEXT ? "DD" : "nothing (DF1 off)");
 #endif
     // DF1's acknowledge cursor: the boot word (0, nothing published) is seen.
     psram_df1_reader_ack(psram_df1_token());
