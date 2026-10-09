@@ -271,7 +271,7 @@ export function DropStaging({
       // dataTransfer rule is untouched -- and they expand into exactly the
       // same DroppedItem shape a folder produces, which is what lets the
       // staging area, destination picker, collision handling and free-space
-      // estimate all apply to an .lha without knowing it is one.
+      // estimate all apply to an .lha/.lzh without knowing it is one.
       const out: DroppedItem[] = [];
       for (const item of items) {
         if (item.kind !== 'file' || !item.file || !isArchiveName(item.file.name)) {
@@ -286,7 +286,7 @@ export function DropStaging({
             result.error === 'too-large' ? 'Archive is too large' : 'Could not read that archive',
             { description: result.error === 'too-large'
                 ? `${item.file.name} is ${(result.sizeBytes / 1024 / 1024).toFixed(1)} MB; the limit is 25 MB.`
-                : `${item.file.name} is not an .lha or .zip this can open.` });
+                : `${item.file.name} is not an .lha, .lzh or .zip this can open.` });
           continue;
         }
 

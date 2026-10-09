@@ -1618,9 +1618,12 @@ separately.
   title/blob), size and type limits, and probably an "uploaded overrides enriched" precedence rule plus a way to
   revert. Remember the blob GC: any new column naming a stored object must join `runBlobGc`'s references, or
   extend it for the image store.
-- **LZH archives alongside LHA** (operator, 2026-10-09): accept `.lzh` wherever `.lha` is accepted (upload and
-  extraction). It is the same LHarc family, so it is most likely the extension list and MIME/magic checks plus the
-  same decoder; confirm the decoder handles the -lh0-/-lh5- methods LZH files from Amiga sites use.
+- **LZH archives alongside LHA -- SHIPPED on branch feat/device-delete-lzh (2026-10-09), not yet merged.**
+  `.lzh` was already routed by `isArchiveName` (`/\.(lha|lzh|zip)$/`) into `readLha`; the container is identical, so
+  the only code change is the drop error text. Decoder methods: -lh0-, -lz4- (stored), -lhd-, -lh5-, -lh6-, -lh7-;
+  -lh1-/-lh2-/-lh3-/-lzs-/-lz5- are skipped with a named reason (pre-1990 LHarc; rare on Amiga sites). Fixtures
+  `m5/m6/m7.lzh` were written by the real `lha` (-o5/-o6/-o7). The `.adf` upload page does not take archives at all
+  (unchanged); archives are a drop-onto-a-disk feature.
 - **Upload from a URL** (requested 2026-10-09, via the operator): on the upload page, paste a URL and the web app
   fetches the ADF/HFE itself. Design notes: a server-side fetch is an SSRF surface, so allow http(s) only, refuse
   private, loopback and link-local addresses after DNS resolution (re-check on every redirect), cap redirects, size
@@ -1630,11 +1633,15 @@ separately.
   (and the other built-in screens: boot, connecting, error) is fully visible on the 1.3" SH1106 and 0.96" SSD1306
   128x64 panels. Built-in screens use the panel's default layout and sit at the top (3ax ruling); verify on glass
   that nothing is cut off and the SSID is readable.
-- **Delete a WiFi floppy device** (operator, 2026-10-09): a Delete action on the device card (with confirmation).
-  There is no device DELETE route today (only the admin user cascade removes devices). Decide what happens to the
-  board itself: its token stops working (401 halts the board), so it should show "re-pair needed" rather than retry
-  forever; clear pairing codes, NFC write requests and history rows that reference the device; keep disk history
-  (versions name the device only as a label).
+- **Delete a WiFi floppy device -- SHIPPED on branch feat/device-delete-lzh (2026-10-09), not yet merged.** Trash
+  icon on the device card -> confirm dialog -> `DELETE /api/devices/[id]` (org-scoped, 404 for foreign/unknown).
+  One `DELETE FROM devices`: `disk_write_sessions` (+ tracks) cascade; NFC write request, firmware instruction and
+  display/second-drive state are columns of the row; `pairing_codes` hold no device id; `disk_versions.device_id` has
+  no FK and is kept (history then labels the version just "Amiga"). The board needs nothing new: its next request
+  401s, `DC_HALTED` ejects (un-uploaded dirty tracks are lost, and the dialog says so), erases the token, re-runs
+  registration with the old already-used code, gets `invalid_or_used_code` and opens the setup portal. TO RE-PAIR a
+  deleted board: press Pair a device, join its `wifi-floppy-...` network and enter the new code. Not verified on
+  hardware. No migration.
 - **NFC icon on the board's display** (operator, 2026-10-08): an NFC-reader icon as a layout element that works
   like the other icons (wifi, lock, ...): show/hide, 1x/2x, free placement in the Display editor. It needs a new
   element id in `display_layout.c`/`.h` and the validator, a glyph in `display.c`, `pnpm display:wasm`, the editor's
