@@ -229,6 +229,8 @@ bool flux_capture_take(flux_capture_result_t *out) {
 }
 
 #if WF_PNET_LOOP
+bool flux_capture_idle(void) { return !armed && !ended; }
+
 bool flux_capture_take_raw(flux_capture_raw_t *out) {
     if (!ended || !raw_mode) return false;
     while (cap_read != dma_head()) {          // the tail, as flux_capture_take does

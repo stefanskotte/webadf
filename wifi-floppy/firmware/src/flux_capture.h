@@ -105,6 +105,8 @@ typedef struct {
 
 /** True, once, after a RAW capture ends. */
 bool flux_capture_take_raw(flux_capture_raw_t *out);
+/** Nothing armed and nothing finished waiting to be taken: an arm now destroys no capture. */
+bool flux_capture_idle(void);
 #endif
 
 #endif

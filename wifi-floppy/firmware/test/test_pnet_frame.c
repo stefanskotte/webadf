@@ -187,6 +187,14 @@ static void shift_left_keeps_whole_bytes_only(void) {
     CHECK_EQ_INT(pnet_shift_left(c, 3, 24), 0);
 }
 
+static void every_error_has_its_own_text(void) {
+    for (int e = 0; e < PNET_E_COUNT; e++)
+        CHECK(pnet_err_text((pnet_err_t)e) != NULL && pnet_err_text((pnet_err_t)e)[0], "text");
+    CHECK(strcmp(pnet_err_text(PNET_E_NOSYNC), "no sync") == 0, "nosync text");
+    CHECK(strcmp(pnet_err_text(PNET_E_RANGE), "out of range") == 0, "range text");
+    CHECK(strcmp(pnet_err_text(PNET_E_COUNT), "?") == 0, "past the end");
+}
+
 int main(void) {
     RUN(to_board_header_is_raw_and_checks_out);
     RUN(to_board_frames_round_trip);
@@ -197,5 +205,6 @@ int main(void) {
     RUN(the_amiga_finds_the_sync_at_any_bit);
     RUN(what_does_not_fit_is_refused);
     RUN(shift_left_keeps_whole_bytes_only);
+    RUN(every_error_has_its_own_text);
     return REPORT();
 }

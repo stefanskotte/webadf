@@ -865,6 +865,9 @@ static volatile bool     pnet_write_ours;
 // away: DF0's arm re-initialises the shared capture buffer, so a batch still waiting is lost.
 static volatile bool     pnet_raw_pending;
 static volatile uint32_t g_pnet_lost;
+// Batches not captured at all because a DF0 capture was armed or still waiting to be taken:
+// arming over it would destroy DF0's write. The Amiga resends.
+static volatile uint32_t g_pnet_busy;
 #endif
 
 // Written by core0 when a write lands, read by core1's uploader. g_write_gen
@@ -1253,15 +1256,19 @@ static void __isr gpio_isr(uint gpio, uint32_t events) {
         // below, which would count it as another drive's write and drop it.
         if (writing && gpio_get(PIN_SEL0) &&
             pnet_capture_ours(g_pnet_df1_mounted, false, !gpio_get(PIN_SEL1), cur_cyl[1], cur_side)) {
-            pnet_write_ours = true;
-            pnet_raw_pending = true;
-            flux_capture_arm_raw();
+            pnet_write_ours = true;              // set either way: its release is ours too
+            if (flux_capture_idle()) {
+                flux_capture_arm_raw();
+                pnet_raw_pending = !flux_capture_idle();   // only if the arm really happened
+            } else {
+                g_pnet_busy++;
+            }
             wf_trace(WF_EV_WGATE, 1u, 0x100u | (uint32_t)PNET_TRACK_IN);
             return;
         }
         if (!writing && pnet_write_ours) {
             pnet_write_ours = false;
-            flux_capture_disarm();
+            if (pnet_raw_pending) flux_capture_disarm();   // never a DF0 capture we did not arm
             wf_trace(WF_EV_WGATE, 0u, 0x100u | (uint32_t)PNET_TRACK_IN);
             return;
         }
@@ -2886,26 +2893,27 @@ static void pnet_reject(pnet_err_t e, const flux_capture_raw_t *cap) {
 
 // A finished cylinder-77 write: parse it, and take its frames if the batch is new. Runs before
 // DF1 is served in the same pass, so a read of side 1 that follows at once gets this echo.
-static void pnet_take_capture(void) {
+// True when a batch was committed: the echo (or its counters) changed.
+static bool pnet_take_capture(void) {
     flux_capture_raw_t cap;
-    if (!flux_capture_take_raw(&cap)) return;
+    if (!flux_capture_take_raw(&cap)) return false;
     pnet_raw_pending = false;
     const uint64_t t0 = time_us_64();
     g_pnet.rx++;
     if (cap.max_backlog > g_pnet_backlog_max) g_pnet_backlog_max = cap.max_backlog;
-    if (!cap.sync_ok) { pnet_reject(PNET_E_NOSYNC, &cap); return; }
+    if (!cap.sync_ok) { pnet_reject(PNET_E_NOSYNC, &cap); return false; }
     // A gap over PNET_RX_MAX_CELLS was clamped: those cells are invented, so nothing is parsed.
-    if (cap.out_of_range) { pnet_reject(PNET_E_RANGE, &cap); return; }
+    if (cap.out_of_range) { pnet_reject(PNET_E_RANGE, &cap); return false; }
     pnet_hdr_t h;
     pnet_err_t e = pnet_parse_hdr_from_amiga(cap.bytes, cap.nbytes, &h);
-    if (e != PNET_OK) { pnet_reject(e, &cap); return; }
+    if (e != PNET_OK) { pnet_reject(e, &cap); return false; }
     if (pnet_loop_is_new(&g_pnet, &h)) {
         uint16_t lens[PNET_MAX_FRAMES];
         unsigned n = 0;
         e = pnet_parse_frames(cap.bytes + PNET_HDR_BYTES, h.compressed_size, PNET_TO_BOARD,
                               g_pnet_echo[g_pnet_half ^ 1u], PNET_ECHO_BYTES, lens,
                               PNET_MAX_FRAMES, &n);
-        if (e != PNET_OK) { pnet_reject(e, &cap); return; }
+        if (e != PNET_OK) { pnet_reject(e, &cap); return false; }
         g_pnet_half ^= 1u;
         pnet_loop_commit(&g_pnet, &h, n, lens);
     } else {
@@ -2917,6 +2925,7 @@ static void pnet_take_capture(void) {
     if (ready > g_pnet_ready_max) g_pnet_ready_max = ready;
     g_pnet_dec_sum += dec;
     g_pnet_decs++;
+    return true;
 }
 
 // serve_drive(1, ...) for this build: cylinder 77 is the loopback, every other track the disk.
@@ -2960,20 +2969,22 @@ static void pnet_serve_df1(int32_t tok, int *loaded) {
 
 // Every 5 s while there is traffic: counts, and the window's timings in microseconds.
 static void pnet_log_summary(void) {
-    static uint32_t last_ms, last_rx, last_lost;
+    static uint32_t last_ms, last_rx, last_lost, last_busy;
     const uint32_t now = clock_ms();
     if (now - last_ms < 5000u) return;
     last_ms = now;
     g_pnet_reject_logged = false;
-    const uint32_t lost = g_pnet_lost;
-    if (g_pnet.rx == last_rx && g_pnet_builds == 0 && lost == last_lost) return;
+    const uint32_t lost = g_pnet_lost, busy = g_pnet_busy;
+    if (g_pnet.rx == last_rx && g_pnet_builds == 0 && lost == last_lost && busy == last_busy) return;
     last_rx = g_pnet.rx;
+    last_busy = busy;
     const uint32_t *b = g_pnet.bad;
     uint32_t bad = 0;
     for (unsigned i = 0; i < PNET_E_COUNT; i++) bad += b[i];
-    wf_logf(WF_INFO, "pnet: rx %lu new %lu dup %lu bad %lu ctr %02x/%02x echo %u fr",
+    wf_logf(WF_INFO, "pnet: rx %lu new %lu dup %lu bad %lu ctr %02x/%02x echo %u fr busy %lu",
             (unsigned long)g_pnet.rx, (unsigned long)g_pnet.fresh, (unsigned long)g_pnet.dup,
-            (unsigned long)bad, g_pnet.last_amiga, g_pnet.pico, (unsigned)g_pnet.nframes);
+            (unsigned long)bad, g_pnet.last_amiga, g_pnet.pico, (unsigned)g_pnet.nframes,
+            (unsigned long)busy);
     wf_logf(WF_INFO, "pnet: us dec max %lu avg %lu ready max %lu build max %lu avg %lu bl %lu",
             (unsigned long)g_pnet_dec_max,
             (unsigned long)(g_pnet_decs ? g_pnet_dec_sum / g_pnet_decs : 0),
@@ -3624,6 +3635,10 @@ int main(void) {
             if (p.set_id) bus_out_drive_id_set(1, p.id);
             if (p.lines) {
                 bus_out_set_drive(1, PIN_WPROT, true);
+#if WF_PNET_LOOP
+                // A head already on cylinder 77 gets the loopback's WPROT now, not at its next step.
+                if (m == DF1_MODE_NEXT) bus_out_set_drive(1, PIN_WPROT, pnet_df1_wprot(cur_cyl[1]));
+#endif
                 bus_out_set_drive(1, PIN_TRK0, cur_cyl[1] == 0);
             }
             if (p.eject) dskchg_image_ejected_d(1);
@@ -3702,7 +3717,9 @@ int main(void) {
         // nothing (its want_track still follows its head).
 #if WF_PNET_LOOP
         g_pnet_df1_mounted = df1_mounted;
-        pnet_take_capture();                     // a finished batch first: its echo may be read next
+        // A finished batch first: its echo may be read next. A commit while the head is already
+        // on side 1 (SIDE flipped since the capture ended) rebuilds the echo there.
+        if (pnet_take_capture() && want_track[1] == PNET_TRACK_OUT) loaded1 = -1;
         if (df1_mounted) pnet_serve_df1(df1_seen_tok, &loaded1);
         pnet_log_summary();
 #else
@@ -3758,6 +3775,9 @@ int main(void) {
          */
         flux_capture_poll();
         if (flux_capture_timeout(clock_ms())) {
+#if WF_PNET_LOOP
+            pnet_raw_pending = false;            // an abandoned raw capture is not waiting
+#endif
             // Almost always the Amiga powering off: its outputs stop driving,
             // the buffer inputs float, and WGATE reads as asserted forever.
             wf_logf(WF_WARN, "write: WGATE asserted for over %u ms -- not a write, "
