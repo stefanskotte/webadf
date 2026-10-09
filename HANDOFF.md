@@ -4781,8 +4781,11 @@ Demozoo API (the bulk export makes per-lookup load on a non-profit unnecessary).
 - **LHA decoder allocates the header-claimed size** (up to 4 GB) -- LHA from a URL is refused until readLha gets a
   size guard like readZip's. Backlog.
 - **e2e `disk-drag-drop.spec.ts:345` ("a move by drag leaves the entry's block number unchanged") fails on master**
-  (seen 2026-10-09 on 44e1f23 and e7b058c; no move request is ever sent). Not caused by W2/W3. Being diagnosed on
-  fix/dnd-move-e2e.
+  (seen 2026-10-09 on 44e1f23 and e7b058c; no move request is ever sent). Not caused by W2/W3. FIXED (test bug): the
+  grip sat in dnd-kit's bottom auto-scroll zone (y~583 of 720), so the window scrolled the target away mid-drag and
+  the drop had `over = null`. `dragOnto()` now parks the target mid-viewport first; spec 6/6. A real user's drag
+  is fine (the pointer follows). `collections.spec.ts` has its own `dragOnto` with the same pattern -- it passes
+  today, but fix it the same way if it starts failing after a layout change.
 - **F1 firmware diagnostics -- TEST build 1.9.1+g722ff3d, seq 54 (branch fix/fw-diag 722ff3d, not merged).** Logs
   `fwdiag:` (fwu phase, retry_at, idle inputs, pad levels) every 60 s, `motor: DF0 ...` on every motor change, and
   `portal: sta ...` association/auth/DHCP changes. Code reading: a "queued" stall is most likely a STAGED update
