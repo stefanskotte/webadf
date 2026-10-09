@@ -35,6 +35,29 @@
 // gone -- see the commit that removed it).
 #define MBEDTLS_PLATFORM_MS_TIME_ALT
 
+// --- Allocator (2026-10-09) ------------------------------------------------
+// mbedtls_calloc/mbedtls_free go through src/tls_mem.c, which calls the
+// system calloc/free unchanged and counts: bytes held, peak, and every
+// allocation that FAILED with the size it asked for. OTA downloads stalled on
+// boards up for hours, and main.c's heap low-water line cannot show a failed
+// allocation (a refused sbrk leaves the break, and so that figure, where it
+// was). See tls_mem.h.
+//
+// BOTH macros, not MBEDTLS_PLATFORM_MEMORY alone: lwIP's
+// altcp_tls_mbedtls_mem.c sets ALTCP_MBEDTLS_PLATFORM_ALLOC -- and moves
+// every mbedTLS allocation into lwIP's 16 KB MEM_SIZE heap, where a ~16 KB
+// record buffer can never fit -- whenever PLATFORM_MEMORY is defined WITHOUT
+// both of these. With both, mbedtls/platform.h binds mbedtls_calloc to the
+// macro at compile time and that lwIP path stays off.
+#define MBEDTLS_PLATFORM_MEMORY
+#define MBEDTLS_PLATFORM_CALLOC_MACRO wf_tls_calloc
+#define MBEDTLS_PLATFORM_FREE_MACRO   wf_tls_free
+#ifndef __ASSEMBLER__
+#include <stddef.h>
+void *wf_tls_calloc(size_t n, size_t size);
+void  wf_tls_free(void *p);
+#endif
+
 // --- Entropy / RNG -----------------------------------------------------
 // pico_mbedtls.c (linked in by the pico_mbedtls CMake target) implements
 // mbedtls_hardware_poll() using the RP2350's hardware RNG (get_rand_64()).

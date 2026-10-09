@@ -235,6 +235,32 @@ typedef struct {
     bool     interrupted;
 } dc_preload_t;
 
+// How the most recent exchange ended, recorded by every attempt (and the
+// reused-connection retry) so a failure can be NAMED rather than merely
+// counted. Added 2026-10-09: OTA downloads on boards up for hours failed and
+// retried for minutes, and every one of them reached fw_update.c as a bare -1.
+typedef enum {
+    DC_XFER_DONE = 0,     // the response was read to its framed end, or the peer closed
+    DC_XFER_CONNECT,      // connect() failed: `rc` is the transport's code
+    DC_XFER_WRITE,        // a write() of the request failed: `rc`
+    DC_XFER_READ,         // a read() failed or timed out: `rc`
+    DC_XFER_FRAMING,      // the bytes did not parse as HTTP
+    DC_XFER_INTERRUPTED,  // the poll-interrupt said stop
+} dc_xfer_stage_t;
+
+typedef struct {
+    uint8_t  stage;          // dc_xfer_stage_t
+    int      rc;             // the transport's negative return at `stage`, else 0
+    bool     reused;         // this attempt ran on a kept (keep-alive) connection
+    bool     retried;        // a first attempt on a kept connection failed; this is the retry
+    int      status;         // HTTP status, 0 if no status line was parsed
+    long     body_got;       // body bytes framed so far
+    long     content_length; // -1 if the response named none
+    bool     body_complete;
+    long     bytes_read;     // raw bytes read off the transport on this attempt
+    uint32_t ms;             // how long the attempt took
+} dc_xfer_t;
+
 typedef struct {
     transport_t *t;
     clock_ms_fn  now;
@@ -395,6 +421,9 @@ typedef struct {
     // panel's default on under version 0. (A reset to a POSITIVE version
     // needs nothing extra: the fetch it owes replaces the layout.)
     bool     display_reset_to_default;
+
+    // How the most recent exchange (any request) ended -- see dc_xfer_t.
+    dc_xfer_t last_xfer;
 } device_client_t;
 
 void dc_init(device_client_t *c, transport_t *t, clock_ms_fn now,
@@ -655,8 +684,20 @@ void dc_df1_reconcile(device_client_t *c);
 
 // GET /api/device/firmware/<version>. Body bytes go to `sink`. Returns the HTTP status of a
 // COMPLETE response, or -1 (transport, framing, incomplete). 401 halts, as everywhere.
+// Anything but 200 logs, once per call, where it ended and how far it got
+// (dc_xfer_describe of last_xfer) -- the caller adds what only it knows (heap).
 int dc_fetch_firmware(device_client_t *c, const char *version,
                       void (*sink)(void *ctx, const uint8_t *b, int n), void *ctx);
+
+// A transport return code as words: "read timeout", "closed during handshake
+// or refused", ... -- "error" for any negative it does not know (the host
+// fake's -1), "" for 0.
+const char *dc_transport_rc_text(int rc);
+
+// `x` as two short log lines (wf_log keeps 87 characters a line): `how` says
+// where the exchange ended and why, `got` what had arrived by then. Both are
+// always NUL-terminated, truncated to their caps.
+void dc_xfer_describe(const dc_xfer_t *x, char *how, int how_cap, char *got, int got_cap);
 
 // --- OLED layouts (spec 2026-10-04 §6) -----------------------------------
 
