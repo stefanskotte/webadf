@@ -248,6 +248,83 @@ export const imageStore: ImageStore = {
   },
 };
 
+// ---------------------------------------------------------------- Title covers
+/**
+ * A cover image a PERSON chose for one of their titles (games.cover_override_sha256).
+ *
+ * Same Blob store as imageStore, its own namespace: cover/<sha256 of the
+ * bytes>. Not imageStore itself, because those keys are OpenRetro's sha-1 (or
+ * a Demozoo URL's), name third-party images every tenant may see, and are
+ * served unauthenticated by /api/images. These are tenant content: served
+ * only by /api/games/<id>/cover/<sha256> after an org check, and reclaimed by
+ * the weekly blob GC once no title names them (blob-gc-run.ts).
+ *
+ * Content-addressed, so two titles (in any orgs) choosing the same bytes share
+ * one object. That is safe because an object here is never changed, only
+ * written once and eventually deleted when NOTHING names it -- the rule the
+ * GC already applies to adf/.
+ */
+export interface CoverStore {
+  put(sha256: string, bytes: Uint8Array, contentType: string): Promise<{ key: string }>;
+  read(sha256: string): Promise<{ bytes: Uint8Array; contentType: string } | null>;
+  remove(sha256: string): Promise<void>;
+  /** Every object under cover/ named by a sha-256. Only the blob GC lists. */
+  listAll(): Promise<{ sha256: string; uploadedAt: Date }[]>;
+  storageKey(sha256: string): string;
+}
+
+const coverKey = (sha256: string) => `cover/${sha256}`;
+
+export const coverStore: CoverStore = {
+  storageKey: coverKey,
+
+  async put(sha256, bytes, contentType) {
+    assertSha(sha256);
+    const pathname = coverKey(sha256);
+    try {
+      await put(pathname, Buffer.from(bytes), {
+        access: 'private', contentType, addRandomSuffix: false, allowOverwrite: false,
+      });
+      return { key: pathname };
+    } catch (err) {
+      // Content-addressed: an object already there IS these bytes (another
+      // title chose the same image, or a retry after a crash).
+      const message = err instanceof Error ? err.message : String(err);
+      if (!isBlobAlreadyExists(400, message)) throw err;
+      return { key: pathname };
+    }
+  },
+
+  async read(sha256) {
+    if (!SHA256_RE.test(sha256)) return null;
+    const result = await get(coverKey(sha256), { access: 'private' });
+    if (!result || result.statusCode !== 200) return null;
+    return {
+      bytes: new Uint8Array(await new Response(result.stream).arrayBuffer()),
+      contentType: result.headers.get('content-type') ?? 'application/octet-stream',
+    };
+  },
+
+  async remove(sha256) {
+    assertSha(sha256);
+    await del(coverKey(sha256));
+  },
+
+  async listAll() {
+    const out: { sha256: string; uploadedAt: Date }[] = [];
+    let cursor: string | undefined;
+    do {
+      const page = await list({ prefix: 'cover/', cursor, limit: 1000 });
+      for (const b of page.blobs) {
+        const sha256 = b.pathname.slice('cover/'.length);
+        if (SHA256_RE.test(sha256)) out.push({ sha256, uploadedAt: new Date(b.uploadedAt) });
+      }
+      cursor = page.hasMore ? page.cursor : undefined;
+    } while (cursor);
+    return out;
+  },
+};
+
 // ---------------------------------------------------------------- Demozoo export
 /**
  * Our own copy of Demozoo's weekly export, and the Amiga extract made from it.
