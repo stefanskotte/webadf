@@ -2556,7 +2556,8 @@ separately.
   its own router lease, board demuxes by IP; DHCP client-id needed), PaulaNET's protocol on cylinder 77 only with
   Rob's written grant (draft email in the doc, section 7), and Phase -1 (AmiTCP_NG on the A500 with Kickstart 3.1,
   no code) then Phase 0 (track-77 loopback, measured on the A500) before anything else. **Operator, 2026-10-09:**
-  the bench A500 has **1 MB chip + 8 MB fast RAM**; **Rob granted permission to use all of PaulaNET (protocol, driver,
+  the bench A500 has **1 MB chip + 8 MB fast RAM and an IDE controller (on the 8 MB expansion)** -- Phase -1 installs
+  a basic Workbench 3.1 to the IDE drive, then AmiTCP_NG onto it (the realistic target: stack on HD, DF0/DF1 free); **Rob granted permission to use all of PaulaNET (protocol, driver,
   code) as long as the overall licence is respected** -- keep his notice and credit him; ask the operator for the
   written message to store under docs/ for provenance. Phase -1 is the operator's (AmiTCP_NG v4.1.8 ADF:
   https://github.com/MW0MWZ/AmiTCP_NG/releases/download/v4.1.8/AmiTCP_NG-v4.1.8.adf). **Stack decided (operator, 2026-10-09):** the Amiga-side TCP/IP stack behind the PaulaNET device is AmiTCP_NG, https://github.com/MW0MWZ/AmiTCP_NG. Check its licence alongside PaulaNET's, and how its SANA-II driver interface meets PaulaNET's device. **UNBLOCKED 2026-10-09:** RobSmithDev replied that he has no issue with us implementing PaulaNET, as long as the licences are respected. Check PaulaNET's licence terms (code and protocol) before any design, and credit him as the licence requires. Not started. Raised by the operator
