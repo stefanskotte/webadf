@@ -1626,6 +1626,10 @@ separately.
   private, loopback and link-local addresses after DNS resolution (re-check on every redirect), cap redirects, size
   and time, and stream into the same presign/complete ingest path so hashing, dedupe, TOSEC matching and
   entitlements stay one code path. Also consider zip/7z/gz archives from such sites.
+- **Initial setup screen on 128x64 panels** (operator, 2026-10-09): check that the "Setup needed" + SSID screen
+  (and the other built-in screens: boot, connecting, error) is fully visible on the 1.3" SH1106 and 0.96" SSD1306
+  128x64 panels. Built-in screens use the panel's default layout and sit at the top (3ax ruling); verify on glass
+  that nothing is cut off and the SSID is readable.
 - **NFC icon on the board's display** (operator, 2026-10-08): an NFC-reader icon as a layout element that works
   like the other icons (wifi, lock, ...): show/hide, 1x/2x, free placement in the Display editor. It needs a new
   element id in `display_layout.c`/`.h` and the validator, a glyph in `display.c`, `pnpm display:wasm`, the editor's
