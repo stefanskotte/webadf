@@ -1,0 +1,11 @@
+{ "panel": "128x32", "elements": [
+  { "id": "wifi", "visible": true, "scale": 1, "x": 0, "y": 0, "w": 0, "opt": 0 },
+  { "id": "lemming", "visible": true, "scale": 1, "x": 120, "y": 0, "w": 0, "opt": 0 },
+  { "id": "write", "visible": true, "scale": 1, "x": 110, "y": 0, "w": 0, "opt": 0 },
+  { "id": "status", "visible": true, "scale": 1, "x": 14, "y": 0, "w": 0, "opt": 0 },
+  { "id": "title", "visible": true, "scale": 1, "x": 0, "y": 8, "w": 128, "opt": 2 },
+  { "id": "track", "visible": true, "scale": 1, "x": 98, "y": 24, "w": 0, "opt": 0 },
+  { "id": "download", "visible": true, "scale": 1, "x": 104, "y": 24, "w": 0, "opt": 0 },
+  { "id": "detail", "visible": true, "scale": 1, "x": 0, "y": 24, "w": 128, "opt": 0 },
+  { "id": "nfc", "visible": true, "scale": 1, "x": 100, "y": 0, "w": 0, "opt": 0 }
+] }

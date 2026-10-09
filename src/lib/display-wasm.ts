@@ -7,6 +7,8 @@ export interface PreviewState {
   status: 'boot' | 'portal' | 'wifi' | 'ready' | 'download' | 'verify' | 'loaded' | 'error';
   bars: number; title: string; detail: string; showTrack: boolean; cyl: number; maxCyl: number;
   pct: number; tick: number; writable: boolean; sync: 'synced' | 'pending' | 'offline';
+  /** The tag reader, for the 'nfc' element (display.h disp_nfc_t). */
+  nfc: 'absent' | 'present' | 'armed';
 }
 export interface DisplayWasm {
   /** null when valid, else the C validator's reason. */
@@ -18,16 +20,17 @@ export interface DisplayWasm {
 
 const STATUS = ['boot', 'portal', 'wifi', 'ready', 'download', 'verify', 'loaded', 'error'] as const;
 const SYNC = ['synced', 'pending', 'offline'] as const;
+const NFC = ['absent', 'present', 'armed'] as const;
 
 // display_state_t on wasm32 (int/enum 4 bytes, bool 1): title[43], detail[22].
 // The C side reports its own offsets (state_off); the loader refuses to run if
 // they disagree with this table.
 const OFF = {
   status: 0, bars: 4, title: 8, detail: 51, showTrack: 73, cyl: 76, maxCyl: 80,
-  pct: 84, tick: 88, writable: 92, sync: 96,
+  pct: 84, tick: 88, writable: 92, sync: 96, nfc: 100,
 } as const;
-const FIELD_ORDER = ['status', 'bars', 'title', 'detail', 'showTrack', 'cyl', 'maxCyl', 'pct', 'tick', 'writable', 'sync'] as const;
-export const STATE_SIZE = 100;
+const FIELD_ORDER = ['status', 'bars', 'title', 'detail', 'showTrack', 'cyl', 'maxCyl', 'pct', 'tick', 'writable', 'sync', 'nfc'] as const;
+export const STATE_SIZE = 104;
 const TITLE_CAP = 43;
 const DETAIL_CAP = 22;
 const FB_SIZE = 1024;
@@ -117,6 +120,7 @@ async function instantiate(buf: ArrayBuffer): Promise<DisplayWasm> {
       dv.setInt32(base + OFF.tick, state.tick, true);
       dv.setUint8(base + OFF.writable, state.writable ? 1 : 0);
       dv.setInt32(base + OFF.sync, SYNC.indexOf(state.sync), true);
+      dv.setInt32(base + OFF.nfc, Math.max(0, NFC.indexOf(state.nfc)), true);
       if (blob && blob.length > 132) throw new Error('layout blob too long');
       const len = setBlob(blob);
       if (!x.render(panel, len)) {

@@ -61,7 +61,8 @@ static void each_rule_is_enforced(void) {
     n = enc(&l, b); b[1] = 7;                expect_reject(b, n, "panel");
     n = enc(&l, b); b[3] = 1;                expect_reject(b, n, "reserved");
     n = enc(&l, b);                          expect_reject(b, n - 1, "length");
-    n = enc(&l, b); b[4] = 9;                expect_reject(b, n, "element id");
+    n = enc(&l, b); b[4] = EL_LAST + 1;      expect_reject(b, n, "element id");
+    n = enc(&l, b); b[4] = 0;                expect_reject(b, n, "element id");
     n = enc(&l, b); b[4 + 8] = b[4];         expect_reject(b, n, "twice");
     n = enc(&l, b); b[4 + 1] = 0x04;         expect_reject(b, n, "flags");
     n = enc(&l, b); b[4 + 6] = 1;            expect_reject(b, n, "reserved");
@@ -77,6 +78,38 @@ static void each_rule_is_enforced(void) {
     n = enc(&m, b);                          expect_reject(b, n, "bar");
     m = l; for (int i = 0; i < m.n; i++) if (m.el[i].id == EL_WIFI) m.el[i].w = 3;
     n = enc(&m, b);                          expect_reject(b, n, "w must be 0");
+}
+
+// 1.10.0: the NFC element is an 8x8 icon like write and lemming -- placed
+// anywhere it fits, 1x or 2x, shown or hidden -- and in neither default, so a
+// board with no custom layout draws what 1.9.x drew.
+static void the_nfc_element(void) {
+    layout_el_t e = { EL_NFC, 1, 1, 0, 0, 0, 0 }; int w, h;
+    layout_el_size(&e, &w, &h); CHECK(w == 8 && h == 8, "nfc 8x8");
+    e.scale = 2; layout_el_size(&e, &w, &h); CHECK(w == 16 && h == 16, "nfc 2x 16x16");
+
+    for (int p = 0; p <= 1; p++) {
+        const layout_t *d = layout_default((panel_t)p);
+        for (int i = 0; i < d->n; i++) CHECK(d->el[i].id != EL_NFC, "no default lists the nfc element");
+    }
+
+    uint8_t b[LAYOUT_BLOB_MAX]; layout_t l = *layout_default(PANEL_128x32), out; char why[80] = "";
+    l.el[l.n++] = (layout_el_t){ EL_NFC, 1, 1, 100, 0, 0, 0 };
+    size_t n = enc(&l, b);
+    CHECK(layout_decode(b, n, &out, why, sizeof why), why);
+    CHECK(out.n == 9 && out.el[8].id == EL_NFC && out.el[8].x == 100 && out.el[8].visible, "nfc round-trips");
+
+    l.el[8].visible = 0; n = enc(&l, b);
+    CHECK(layout_decode(b, n, &out, why, sizeof why) && !out.el[8].visible, "a hidden nfc element is valid");
+
+    l.el[8] = (layout_el_t){ EL_NFC, 1, 2, 112, 16, 0, 0 }; n = enc(&l, b);   // 2x: 112..127 x 16..31
+    CHECK(layout_decode(b, n, &out, why, sizeof why) && out.el[8].scale == 2, "2x in the corner fits");
+    l.el[8].x = 114; n = enc(&l, b);                                         expect_reject(b, n, "outside");
+    l.el[8] = (layout_el_t){ EL_NFC, 1, 1, 121, 0, 0, 0 }; n = enc(&l, b);  expect_reject(b, n, "outside");
+    l.el[8] = (layout_el_t){ EL_NFC, 1, 1, 100, 0, 4, 0 }; n = enc(&l, b);  expect_reject(b, n, "w must be 0");
+    l.el[8] = (layout_el_t){ EL_NFC, 1, 1, 100, 0, 0, 1 }; n = enc(&l, b);  expect_reject(b, n, "opt must be 0");
+    l.el[8] = (layout_el_t){ EL_NFC, 1, 1, 100, 0, 0, 0 };
+    l.el[l.n++] = (layout_el_t){ EL_NFC, 0, 1, 0, 24, 0, 0 }; n = enc(&l, b); expect_reject(b, n, "twice");
 }
 
 static void garbage_never_decodes(void) {
@@ -100,9 +133,9 @@ static void why_is_always_terminated(void) {
 
 // Cross-language fixtures (Task 8 reads the same files from TypeScript).
 static void fixtures_decode_as_named(void) {
-    const char *ok[] = { "default32", "default64", "custom64" };
+    const char *ok[] = { "default32", "default64", "custom64", "custom32_nfc" };
     const char *bad[][2] = { { "bad_bounds", "outside" }, { "bad_dup", "twice" }, { "bad_reserved", "reserved" } };
-    for (int i = 0; i < 3; i++) {
+    for (int i = 0; i < 4; i++) {
         char p[96]; snprintf(p, sizeof p, "fixtures/layouts/%s.bin", ok[i]);
         FILE *f = fopen(p, "rb"); CHECK(f != NULL, p); if (!f) continue;
         uint8_t b[LAYOUT_BLOB_MAX + 1]; size_t n = fread(b, 1, sizeof b, f); fclose(f);
@@ -127,6 +160,7 @@ int main(void) {
     RUN(the_128x32_default_is_todays_layout);
     RUN(sizes_are_fixed_and_scale);
     RUN(each_rule_is_enforced);
+    RUN(the_nfc_element);
     RUN(garbage_never_decodes);
     RUN(why_is_always_terminated);
     RUN(fixtures_decode_as_named);

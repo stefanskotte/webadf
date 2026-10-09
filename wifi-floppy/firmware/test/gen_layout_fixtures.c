@@ -26,6 +26,11 @@ int main(void) {
     for (int i = 0; i < l.n; i++) if (l.el[i].id == EL_TITLE) { l.el[i].x = 0; l.el[i].y = 16; l.el[i].scale = 1; l.el[i].opt = 1; l.el[i].w = 128; }
     put_layout("custom64", &l);
 
+    // 1.10.0: the NFC icon shown at 1x on the status row of the 128x32 default.
+    l = *layout_default(PANEL_128x32);
+    l.el[l.n++] = (layout_el_t){ EL_NFC, 1, 1, 100, 0, 0, 0 };
+    put_layout("custom32_nfc", &l);
+
     l = *layout_default(PANEL_128x32);
     for (int i = 0; i < l.n; i++) if (l.el[i].id == EL_TITLE) l.el[i].y = 20;
     put_layout("bad_bounds", &l);

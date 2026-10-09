@@ -5,7 +5,7 @@ import { encodeLayout, decodeLayout, panelId, type LayoutJson } from './display-
 const FIX = 'wifi-floppy/firmware/test/fixtures/layouts';
 
 describe('display layout encoding', () => {
-  for (const name of ['default32', 'default64', 'custom64', 'bad_bounds', 'bad_dup', 'bad_reserved']) {
+  for (const name of ['default32', 'default64', 'custom64', 'custom32_nfc', 'bad_bounds', 'bad_dup', 'bad_reserved']) {
     it(`${name}.json encodes to exactly ${name}.bin, and back`, async () => {
       const json = JSON.parse(await readFile(`${FIX}/${name}.json`, 'utf8')) as LayoutJson;
       const bin = new Uint8Array(await readFile(`${FIX}/${name}.bin`));
@@ -14,6 +14,11 @@ describe('display layout encoding', () => {
       expect(decodeLayout(bin)).toEqual(json);
     });
   }
+
+  it('gives the nfc element id 9, after the eight 1.7.1 ids, which never move', () => {
+    const b = encodeLayout({ panel: '128x32', elements: [{ id: 'nfc', visible: true, scale: 2, x: 4, y: 6, w: 0, opt: 0 }] });
+    expect(Array.from(b)).toEqual([1, 0, 1, 0, 9, 3, 4, 6, 0, 0, 0, 0]);
+  });
 
   it('maps panels to their ids', () => {
     expect(panelId('128x32')).toBe(0);

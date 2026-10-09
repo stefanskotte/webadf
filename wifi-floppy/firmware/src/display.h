@@ -37,6 +37,10 @@ typedef enum {
 
 typedef enum { DISP_SYNC_SYNCED = 0, DISP_SYNC_PENDING, DISP_SYNC_OFFLINE } disp_sync_t;
 
+/** The tag reader, for the NFC element (1.10.0). ABSENT is zero so a state
+ *  nobody filled in claims no reader rather than one. */
+typedef enum { DISP_NFC_ABSENT = 0, DISP_NFC_PRESENT, DISP_NFC_ARMED } disp_nfc_t;
+
 typedef struct {
     disp_status_t status;
     // 0..3 arcs, or -1 for "no radio at all" which draws the bare dot. This
@@ -64,6 +68,12 @@ typedef struct {
      *  worse than no cloud. */
     bool writable;
     disp_sync_t sync;
+    /** Drawn only by a layout that lists EL_NFC (none of the defaults do).
+     *  PRESENT: the reader answers. ABSENT: it does not, or has not been
+     *  checked yet -- struck through, never blank, as the wifi glyph does
+     *  for "no radio". ARMED: a tag write waits for a tap (inverted). Last
+     *  in the struct so every earlier offset is unchanged for display.wasm. */
+    disp_nfc_t nfc;
 } display_state_t;
 
 /** Compose `s` into a framebuffer by drawing each visible element of `l`, in
@@ -75,8 +85,8 @@ void display_render(const display_state_t *s, const layout_t *l, uint8_t fb[DISP
 /** READY, DOWNLOAD, VERIFY and LOADED: the states a custom layout draws. */
 bool display_state_is_running(disp_status_t st);
 
-/** The layout to draw `s` with: `custom` in a running state, otherwise the
- *  built-in default for custom's panel -- boot, portal, connecting and error
+/** The layout to draw `s` with: `custom` in a running state, otherwise
+ *  layout_builtin(custom's panel) -- boot, portal, connecting and error
  *  screens never depend on a user's layout. */
 const layout_t *display_layout_for(const display_state_t *s, const layout_t *custom);
 
