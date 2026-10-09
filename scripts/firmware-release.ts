@@ -17,11 +17,17 @@
  * a manifest over the same bytes the board downloads and verifies (spec D4),
  * so the published blob and the signed bytes must be identical.
  *
- * Usage:  pnpm firmware:publish [--notes "..."] [--security] [--dry-run]
+ * Usage:  pnpm firmware:publish [--notes "..."] [--security] [--dry-run] [--no-github] [--github-only]
+ *
+ * After a release is recorded it is also published as the GitHub release fw-<semver>
+ * with the SAME signed files (src/lib/firmware-github-release.ts); TEST builds never
+ * are. --github-only (re)attaches an already-published version's files, checked
+ * byte-for-byte against the registry; --no-github skips the GitHub step.
  */
 import { execFileSync } from 'node:child_process';
 import { createHash, createPrivateKey, createPublicKey, sign as edSign } from 'node:crypto';
-import { readFileSync, existsSync, statSync } from 'node:fs';
+import { readFileSync, existsSync, statSync, writeFileSync, mkdtempSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { parseArgs } from 'node:util';
 import { eq } from 'drizzle-orm';
@@ -34,6 +40,8 @@ import { decidePublish, PublishRefused } from '@/lib/firmware-publish-rules';
 import { firmwareManifest, refuseReleaseImage } from '@/lib/firmware-manifest';
 import { isAllowed, parseAllowlist } from '@/lib/superadmin-allowlist';
 import { semverOf } from '@/lib/firmware-version';
+import { firmwareReleases } from '@/db/schema/firmware';
+import { githubReleasePlan, assertSameBytes, type GithubReleaseInput } from '@/lib/firmware-github-release';
 import { signingKeyId, PRIVATE_KEY_PATH } from './firmware-signing-key';
 
 const repoRoot = process.cwd();
@@ -56,15 +64,19 @@ try {
       notes: { type: 'string' },
       security: { type: 'boolean', default: false },
       'dry-run': { type: 'boolean', default: false },
+      'no-github': { type: 'boolean', default: false },
+      'github-only': { type: 'boolean', default: false },
     },
     strict: true,
   }));
 } catch (e) {
-  die(`${(e as Error).message}\n\nUsage: pnpm firmware:publish [--notes "..."] [--security] [--dry-run]`);
+  die(`${(e as Error).message}\n\nUsage: pnpm firmware:publish [--notes "..."] [--security] [--dry-run] [--no-github] [--github-only]`);
 }
 const dryRun = args['dry-run'] ?? false;
 const notes = args.notes ?? null;
 const security = args.security ?? false;
+const noGithub = args['no-github'] ?? false;
+const githubOnly = args['github-only'] ?? false;
 
 // 1. Read the version from the image's own header.
 //
@@ -119,6 +131,20 @@ if (statSync(binPath).mtimeMs < statSync(headerPath).mtimeMs) {
   die(`${binPath} is older than the generated header. Re-run pnpm firmware:build.`);
 }
 const sha256 = createHash('sha256').update(bytes).digest('hex');
+
+// --github-only: attach an ALREADY-published version's files to its GitHub
+// release. Nothing is signed or recorded; the registry row supplies the
+// signature, and the built .bin must be byte-identical to the published one.
+if (githubOnly) {
+  const [row] = await getDb().select().from(firmwareReleases).where(eq(firmwareReleases.version, version)).limit(1);
+  if (!row) die(`${version} is not in the registry; publish it first.`);
+  try { assertSameBytes(row.sha256, sha256); } catch (e) { die((e as Error).message); }
+  publishToGithub({
+    version, semver, sequence: row.sequence, sha256, signature: row.signature,
+    signingKeyId: row.signingKeyId, notes: row.notes,
+  });
+  process.exit(0);
+}
 
 // 3. Load the signing key. An absent key stops the publish here -- before
 //    anything else runs -- and it never falls back to publishing unsigned,
@@ -240,7 +266,43 @@ try {
     sequence,
   );
   console.log(`\nPublished ${version} as sequence ${published.sequence}.`);
+  if (noGithub) console.log('GitHub release skipped (--no-github).');
+  else {
+    // The registry is the source of truth; a GitHub failure is reported, not
+    // fatal -- `pnpm firmware:publish --github-only` repairs it afterwards.
+    try {
+      publishToGithub({ version, semver, sequence: published.sequence, sha256, signature, signingKeyId: keyId, notes });
+    } catch (e) {
+      console.error(`GitHub release NOT published: ${(e as Error).message}\nRepair with: pnpm firmware:publish --github-only`);
+    }
+  }
 } catch (e) {
   if (e instanceof PublishRefused) die(`\nPublish refused: ${e.detail ?? e.reason}`);
   throw e;
+}
+
+// GitHub: the same signed files the web app serves (src/lib/firmware-github-release.ts).
+function publishToGithub(r: GithubReleaseInput): void {
+  const plan = githubReleasePlan(r);
+  if (!plan.publish) { console.log(`GitHub release skipped: ${plan.reason}`); return; }
+  const dir = join(repoRoot, 'wifi-floppy/firmware/build');
+  const files = ['wifi_floppy.bin', 'wifi_floppy.uf2', 'wifi_floppy_pt.uf2'].map((f) => join(dir, f));
+  for (const f of files) if (!existsSync(f)) throw new Error(`missing ${f}`);
+  const tmp = mkdtempSync(join(tmpdir(), 'wf-gh-'));
+  const manifestPath = join(tmp, 'manifest.json');
+  writeFileSync(manifestPath, JSON.stringify(plan.manifest, null, 2) + '\n');
+  const assets = [...files, manifestPath];
+  // The release points at the build's own commit (the g<hash> in the version).
+  const short = /\+g([0-9a-f]+)$/.exec(r.version)?.[1];
+  const commit = short ? execFileSync('git', ['rev-parse', short], { encoding: 'utf8' }).trim() : 'master';
+  const gh = (a: string[]) => execFileSync('gh', a, { stdio: ['ignore', 'pipe', 'pipe'], encoding: 'utf8' });
+  let exists = true;
+  try { gh(['release', 'view', plan.tag]); } catch { exists = false; }
+  if (exists) {
+    gh(['release', 'edit', plan.tag, '--title', plan.title, '--notes', plan.body]);
+    gh(['release', 'upload', plan.tag, ...assets, '--clobber']);
+  } else {
+    gh(['release', 'create', plan.tag, ...assets, '--target', commit, '--title', plan.title, '--notes', plan.body]);
+  }
+  console.log(`GitHub release ${plan.tag} ${exists ? 'updated' : 'created'} with the published files.`);
 }
