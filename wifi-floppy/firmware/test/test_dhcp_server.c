@@ -197,7 +197,34 @@ static void test_lru_eviction_targets_the_actual_lru_slot_not_slot_zero(void) {
     CHECK_EQ_INT(out_c[19], out_b[19]);   // takes mac_b's address, not mac_a's
 }
 
+// Diagnostic lease table (portal re-join, HANDOFF 2026-10-09).
+static void test_lease_table_reports_each_answer(void) {
+    dhcp_reset_leases();
+    dhcp_lease_info_t l[DHCP_POOL_SIZE];
+    CHECK_EQ_INT(dhcp_leases(l, DHCP_POOL_SIZE), 0);
+    uint8_t mac[6] = {2,3,4,5,6,7}, other[6] = {9,9,9,9,9,9}, third[6] = {8,8,8,8,8,8};
+    uint8_t req[512], out[512];
+    int n = build_request(req, sizeof req, 1, mac);
+    dhcp_handle(req, n, out, sizeof out);
+    n = build_request(req, sizeof req, 3, mac);
+    dhcp_handle(req, n, out, sizeof out);
+    CHECK_EQ_INT(dhcp_leases(l, DHCP_POOL_SIZE), 1);
+    CHECK(memcmp(l[0].mac, mac, 6) == 0, "the MAC");
+    CHECK_EQ_INT(l[0].ip_last, out[19]);
+    CHECK_EQ_INT(l[0].last_type, 3);
+    CHECK_EQ_INT(l[0].answered, 2);
+    n = build_request(req, sizeof req, 1, other);
+    dhcp_handle(req, n, out, sizeof out);
+    n = build_request(req, sizeof req, 1, third);   // evicts the LRU: `mac`
+    dhcp_handle(req, n, out, sizeof out);
+    CHECK_EQ_INT(dhcp_leases(l, DHCP_POOL_SIZE), 2);
+    for (int i = 0; i < 2; i++)
+        if (memcmp(l[i].mac, third, 6) == 0) CHECK_EQ_INT(l[i].answered, 1);   // its own count
+    CHECK_EQ_INT(dhcp_leases(l, 1), 1);             // never past max
+}
+
 int main(void) {
+    RUN(test_lease_table_reports_each_answer);
     RUN(test_discover_gets_an_offer);
     RUN(test_request_gets_an_ack);
     RUN(test_the_same_mac_keeps_its_address);

@@ -36,4 +36,18 @@ int dhcp_handle(const uint8_t *req, int len, uint8_t *out, int cap);
 // leases don't linger.
 void dhcp_reset_leases(void);
 
+// DIAGNOSTIC (portal re-join, HANDOFF 2026-10-09): the lease table, for a
+// foreground loop to log what changed. One entry per slot in use: the MAC,
+// the address's last octet, the last message type answered (1 DISCOVER ->
+// OFFER, 3 REQUEST -> ACK) and how many messages that MAC has had answered.
+// Returns the entries written (<= max). The caller serialises against the
+// receive path (on the device: the network lock).
+typedef struct {
+    uint8_t  mac[6];
+    uint8_t  ip_last;
+    uint8_t  last_type;
+    uint32_t answered;
+} dhcp_lease_info_t;
+int dhcp_leases(dhcp_lease_info_t *out, int max);
+
 #endif

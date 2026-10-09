@@ -78,12 +78,31 @@ static uint8_t lease_mac[DHCP_POOL_SIZE][6];
 static uint8_t lease_used[DHCP_POOL_SIZE];
 static unsigned long lease_stamp[DHCP_POOL_SIZE];
 static unsigned long lease_clock;
+// Diagnostic only (dhcp_leases): the last message type answered per slot,
+// and how many were answered for the MAC holding it.
+static uint8_t  lease_last_type[DHCP_POOL_SIZE];
+static uint32_t lease_answered[DHCP_POOL_SIZE];
 
 void dhcp_reset_leases(void) {
     memset(lease_mac, 0, sizeof(lease_mac));
     memset(lease_used, 0, sizeof(lease_used));
     memset(lease_stamp, 0, sizeof(lease_stamp));
     lease_clock = 0;
+    memset(lease_last_type, 0, sizeof(lease_last_type));
+    memset(lease_answered, 0, sizeof(lease_answered));
+}
+
+int dhcp_leases(dhcp_lease_info_t *out, int max) {
+    int n = 0;
+    for (int i = 0; i < DHCP_POOL_SIZE && n < max; i++) {
+        if (!lease_used[i]) continue;
+        memcpy(out[n].mac, lease_mac[i], 6);
+        out[n].ip_last = (uint8_t)(16 + i);
+        out[n].last_type = lease_last_type[i];
+        out[n].answered = lease_answered[i];
+        n++;
+    }
+    return n;
 }
 
 // Find the pool slot already leased to `mac`, or -1.
@@ -124,12 +143,16 @@ static int lease_for(const uint8_t mac[6]) {
             lease_used[i] = 1;
             memcpy(lease_mac[i], mac, 6);
             lease_stamp[i] = lease_clock;
+            lease_answered[i] = 0;
+            lease_last_type[i] = 0;
             return i;
         }
     }
     int evict = lru_slot();
     memcpy(lease_mac[evict], mac, 6);
     lease_stamp[evict] = lease_clock;
+    lease_answered[evict] = 0;      // a new MAC starts its own count
+    lease_last_type[evict] = 0;
     return evict;
 }
 
@@ -213,6 +236,9 @@ int dhcp_handle(const uint8_t *req, int len, uint8_t *out, int cap) {
     if (!put_opt(out, cap, &pos, OPT_SERVER_ID, server_id, 4)) return 0;
     if (pos + 1 > cap) return 0;
     out[pos++] = OPT_END;
+
+    lease_last_type[slot] = msg_type;
+    lease_answered[slot]++;
 
     return pos;
 }

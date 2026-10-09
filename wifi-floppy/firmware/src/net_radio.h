@@ -19,6 +19,16 @@ int  net_radio_sta_connect(const char *ssid, const char *pass, uint32_t timeout_
 /** Start / stop the WPA2-PSK access point the setup portal serves on. */
 void net_radio_ap_start(const char *ssid, const char *pass);
 void net_radio_ap_stop(void);
+/** DIAGNOSTIC (portal re-join, HANDOFF 2026-10-09). The stations the AP
+ *  counts as ASSOCIATED (the chip's association list, which includes a
+ *  station still in, or failed at, the WPA2 4-way handshake), up to `max`
+ *  MACs into `macs`. Returns the count, or a negative driver error. Core1,
+ *  foreground only (it takes the driver lock itself). */
+int  net_radio_ap_stas(uint8_t (*macs)[6], int max);
+/** The stations the AP counts as AUTHORIZED (handshake complete), via the
+ *  chip's "autho_sta_list" iovar. Best effort: the 43439 firmware may not
+ *  support it -- then a negative error, every call. Same contract otherwise. */
+int  net_radio_ap_authorized(uint8_t (*macs)[6], int max);
 /** The station interface, to restore it as lwIP's default route after the AP. */
 struct netif *net_radio_sta_netif(void);
 /** The station MAC. */

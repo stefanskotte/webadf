@@ -1455,6 +1455,34 @@ static volatile uint32_t g_motor_on_ms;
 // flash write never touches the unsent tracks, which live in PSRAM.
 static volatile bool g_up_holds;
 
+/** DIAGNOSTIC (OTA stall, HANDOFF 2026-10-09). The raw input pads, as the
+ *  74LVC541 buffer presents them: 1 = high = released, 0 = low = asserted
+ *  (every floppy input is active low). With the Amiga switched off, rev B's
+ *  1 kOhm pull-ups hang from its dead +5 V and every line reads 0 -- "all
+ *  low" in the line says so. Any core, plain loop context (gpio_get only). */
+static void bus_pads_str(char *buf, size_t cap) {
+    const int sel0 = gpio_get(PIN_SEL0), sel1 = gpio_get(PIN_SEL1), mtr = gpio_get(PIN_MTR),
+              wg = gpio_get(PIN_WGATE), step = gpio_get(PIN_STEP), dir = gpio_get(PIN_DIR),
+              side = gpio_get(PIN_SIDE);
+    const bool all_low = !(sel0 | sel1 | mtr | wg | step | dir | side);
+    snprintf(buf, cap, "pads SEL0=%d SEL1=%d MTR=%d WGATE=%d STEP=%d DIR=%d SIDE=%d%s",
+             sel0, sel1, mtr, wg, step, dir, side,
+             all_low ? " (ALL LOW: bus unpowered? Amiga off?)" : "");
+}
+
+/** core1, once per poll-loop pass after fwu_step: the updater's phase, its
+ *  retry timer and every idle-gate input, plus the pads (fw_update.h's
+ *  fwu_diag_due decides when: once a minute, and on a change while an update
+ *  is in flight). Static buffers: core1's stack is measured tight. */
+static void fwu_diag_tick(const fwu_diag_in_t *in, uint32_t now_ms) {
+    static fwu_diag_t d;
+    static char line[192], pads[96];
+    if (!fwu_diag_due(&d, in, now_ms)) return;
+    fwu_diag_format(line, (int)sizeof line, in, now_ms);
+    bus_pads_str(pads, sizeof pads);
+    wf_logf(WF_INFO, "%s | %s", line, pads);
+}
+
 /** core1: dc_set_hold's fn -- may the mounted disk be released (swap, Next
  *  tap, eject)? Not while the server lacks a write the board captured
  *  (up_holds), and not while the Amiga has not finished with the disk
@@ -2333,15 +2361,33 @@ static void core1_main(void) {
                 // clears `loading` before it returns, so this reads false
                 // here today; it is the stated rule, kept so a preload that
                 // ever spans passes cannot start a flash write under it.
-                bool idle = c.mounted_sha256[0] == '\0' && psram_active_slot() == SLOT_NONE &&
-                            !up_has_work(&up) && !g_motor_on && !fw_report_owed &&
-                            !c.preload.loading;
+                // Each input read once, so the diagnostic line below prints
+                // exactly what the gate decided on (OTA stall, 2026-10-09).
+                const bool gate_mounted = c.mounted_sha256[0] != '\0';
+                const int  gate_slot    = psram_active_slot();
+                const bool gate_upw     = up_has_work(&up);
+                const bool gate_motor   = g_motor_on;
+                const bool gate_owed    = fw_report_owed;
+                const bool gate_preload = c.preload.loading;
+                bool idle = !gate_mounted && gate_slot == SLOT_NONE && !gate_upw && !gate_motor && !gate_owed &&
+                            !gate_preload;
                 if (fwu_step(&fwu, &fwu_ops, &fst, idle, clock_ms())) {
                     const char *st = fwu_state_text(&fwu);
                     const char *er = fwu_error_text(&fwu);
-                    wf_logf(er ? WF_WARN : WF_INFO, "fw: %s%s%s", st ? st : "idle",
+                    // STAGED reports "queued" to the server (fwu_state_text),
+                    // which made a finished download look like a retry in the
+                    // log. Say which it is; the server's word is unchanged.
+                    wf_logf(er ? WF_WARN : WF_INFO, "fw: %s%s%s%s", st ? st : "idle",
+                            fwu.phase == FWU_STAGED ? " (staged: downloaded and verified, waiting for idle)" : "",
                             er ? " -- " : "", er ? er : "");
                     fw_report_owed = true;
+                }
+                {
+                    const fwu_diag_in_t din = {
+                        fwu.phase, fwu.retry_at_ms, fwu.backoff_ms, gate_mounted, gate_slot, gate_upw,
+                        gate_motor, gate_owed, gate_preload, idle, (int)c.state,
+                    };
+                    fwu_diag_tick(&din, clock_ms());
                 }
                 fw_report.state = fwu_state_text(&fwu);
                 fw_report.error = fwu_error_text(&fwu);
@@ -3170,6 +3216,23 @@ int main(void) {
             const bool motor_on = dskchg_motor_on();
             g_motor_on_ms = dskchg_motor_on_ms();
             g_motor_on = motor_on;
+            // DIAGNOSTIC (OTA stall, HANDOFF 2026-10-09): say when the
+            // published motor flag changes, and from what. DF0's flag has ONE
+            // writer after boot: mtr_pio_isr, from sel_mtr, which latches MTR
+            // on a SEL0 FALL and holds it until a later SEL0 fall latches a
+            // different level (dskchg_init cleared it at boot). The pads show
+            // what the bus looks like at the moment it is noticed.
+            static int motor_logged = -1;
+            if ((int)motor_on != motor_logged) {
+                static char pads[96];
+                bus_pads_str(pads, sizeof pads);
+                wf_logf(WF_INFO, "motor: DF0 %s (%s) | %s", motor_on ? "ON" : "off",
+                        motor_logged < 0 ? "boot value"
+                                         : motor_on ? "sel_mtr latched MTR low on a SEL0 fall"
+                                                    : "sel_mtr latched MTR high on a SEL0 fall",
+                        pads);
+                motor_logged = (int)motor_on;
+            }
         }
 
         // A write-protect flip on the same disk (g_reinsert_req's comment).

@@ -100,3 +100,47 @@ const char *fwu_state_text(const fwu_t *u) {
     }
 }
 const char *fwu_error_text(const fwu_t *u) { return u->phase == FWU_FAILED ? u->error : NULL; }
+
+const char *fwu_phase_name(fwu_phase_t p) {
+    switch (p) {
+    case FWU_IDLE:        return "idle";
+    case FWU_QUEUED:      return "queued";
+    case FWU_DOWNLOADING: return "downloading";
+    case FWU_STAGED:      return "staged";
+    case FWU_APPLYING:    return "applying";
+    case FWU_REBOOTING:   return "rebooting";
+    case FWU_FAILED:      return "failed";
+    default:              return "?";
+    }
+}
+
+static uint32_t diag_sig(const fwu_diag_in_t *in) {
+    return (uint32_t)in->mounted | (uint32_t)in->upw << 1 | (uint32_t)in->motor << 2 |
+           (uint32_t)in->owed << 3 | (uint32_t)in->preload << 4 | (uint32_t)in->idle << 5 |
+           ((uint32_t)(in->slot + 1) & 0xffu) << 8 | ((uint32_t)in->dc_state & 0xffu) << 16 |
+           ((uint32_t)in->phase & 0xffu) << 24;
+}
+
+bool fwu_diag_due(fwu_diag_t *d, const fwu_diag_in_t *in, uint32_t now) {
+    const uint32_t sig = diag_sig(in);
+    bool due;
+    if (!d->have)                                   due = true;
+    else if (now - d->last_ms >= FWU_DIAG_PERIOD_MS) due = true;
+    else if (now - d->last_ms < FWU_DIAG_MIN_GAP_MS) due = false;
+    else if (in->phase != d->phase)                  due = true;
+    else due = in->phase != FWU_IDLE && sig != d->sig;
+    if (due) { d->have = true; d->sig = sig; d->phase = in->phase; d->last_ms = now; }
+    return due;
+}
+
+int fwu_diag_format(char *buf, int cap, const fwu_diag_in_t *in, uint32_t now) {
+    char retry[24];
+    if (in->retry_at_ms == 0) snprintf(retry, sizeof retry, "none");
+    else snprintf(retry, sizeof retry, "%ldms", (long)(int32_t)(in->retry_at_ms - now));
+    return snprintf(buf, (size_t)cap,
+                    "fwdiag: phase=%s retry_in=%s backoff=%lums idle=%s | mounted=%d slot=%d "
+                    "upw=%d motor=%d owed=%d preload=%d dc=%d",
+                    fwu_phase_name(in->phase), retry, (unsigned long)in->backoff_ms,
+                    in->idle ? "YES" : "no", in->mounted, in->slot, in->upw, in->motor,
+                    in->owed, in->preload, in->dc_state);
+}

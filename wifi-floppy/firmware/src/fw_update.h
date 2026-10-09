@@ -46,4 +46,46 @@ bool fwu_step(fwu_t *u, const fwu_ops_t *ops, fw_state_t *st, bool idle, uint32_
 const char *fwu_state_text(const fwu_t *u);   // NULL when there is nothing to report
 const char *fwu_error_text(const fwu_t *u);   // NULL unless FAILED
 
+// ---------------------------------------------------------------------------
+// DIAGNOSTIC (OTA stall, HANDOFF 2026-10-09): one line naming the updater's
+// phase, its retry timer and every input of main.c's idle gate (D6), so a
+// board that sits at "queued" says WHY. Pure: main.c reads the inputs and the
+// pads and does the logging.
+//
+// The phase by its own name -- fwu_state_text folds STAGED into "queued".
+const char *fwu_phase_name(fwu_phase_t p);
+
+typedef struct {
+    fwu_phase_t phase;
+    uint32_t    retry_at_ms, backoff_ms;
+    bool        mounted;     // c.mounted_sha256 non-empty
+    int         slot;        // psram_active_slot(), -1 = none
+    bool        upw;         // up_has_work
+    bool        motor;       // g_motor_on (core0's DF0 motor latch)
+    bool        owed;        // fw_report_owed
+    bool        preload;     // c.preload.loading
+    bool        idle;        // the gate's verdict from the above
+    int         dc_state;    // device_client state (dc_state_t)
+} fwu_diag_in_t;
+
+typedef struct {
+    bool        have;        // a line has been logged
+    uint32_t    sig;         // the inputs as last logged (no timers)
+    fwu_phase_t phase;       // the phase as last logged
+    uint32_t    last_ms;     // when it was logged
+} fwu_diag_t;
+
+#define FWU_DIAG_PERIOD_MS 60000u   // a line at least this often
+#define FWU_DIAG_MIN_GAP_MS 1000u   // on-change lines at most this often
+
+// True when a line is due: the first call; every FWU_DIAG_PERIOD_MS; a phase
+// change; and, while the updater is not IDLE, any change of a gate input
+// (at most one per FWU_DIAG_MIN_GAP_MS -- a change inside the gap is logged
+// once it has passed, since the comparison is with what was LOGGED). Records
+// the inputs as logged when it returns true.
+bool fwu_diag_due(fwu_diag_t *d, const fwu_diag_in_t *in, uint32_t now_ms);
+
+// The line, without the pads (main.c appends them). Returns snprintf's value.
+int fwu_diag_format(char *buf, int cap, const fwu_diag_in_t *in, uint32_t now_ms);
+
 #endif

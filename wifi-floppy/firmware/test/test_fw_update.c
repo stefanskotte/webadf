@@ -151,6 +151,53 @@ static void test_refuse_while_queued_fails_with_the_reason(void) {
           "the reason is reported");
 }
 
+// OTA stall diagnostics (HANDOFF 2026-10-09).
+static fwu_diag_in_t diag_in(fwu_phase_t ph) {
+    fwu_diag_in_t in; memset(&in, 0, sizeof in);
+    in.phase = ph; in.slot = -1; in.idle = true; in.dc_state = 2;
+    return in;
+}
+static void test_diag_first_period_and_phase_change(void) {
+    fwu_diag_t d; memset(&d, 0, sizeof d);
+    fwu_diag_in_t in = diag_in(FWU_IDLE);
+    CHECK(fwu_diag_due(&d, &in, 1000), "first call logs");
+    CHECK(!fwu_diag_due(&d, &in, 2000), "nothing changed: quiet");
+    in.motor = true; in.idle = false;
+    CHECK(!fwu_diag_due(&d, &in, 5000), "IDLE phase: an input change waits for the period");
+    CHECK(fwu_diag_due(&d, &in, 1000 + FWU_DIAG_PERIOD_MS), "the period logs");
+    in.phase = FWU_QUEUED;
+    CHECK(!fwu_diag_due(&d, &in, 1000 + FWU_DIAG_PERIOD_MS + 10), "inside the min gap: held");
+    CHECK(fwu_diag_due(&d, &in, 1000 + FWU_DIAG_PERIOD_MS + FWU_DIAG_MIN_GAP_MS), "phase change logs after the gap");
+}
+static void test_diag_input_change_while_staged(void) {
+    fwu_diag_t d; memset(&d, 0, sizeof d);
+    fwu_diag_in_t in = diag_in(FWU_STAGED);
+    CHECK(fwu_diag_due(&d, &in, 0), "first");
+    in.motor = true; in.idle = false;
+    CHECK(fwu_diag_due(&d, &in, 1500), "STAGED: a gate input change logs");
+    CHECK(!fwu_diag_due(&d, &in, 2000), "and only once");
+    in.motor = false; in.idle = true;
+    CHECK(!fwu_diag_due(&d, &in, 2200), "a change inside the gap is held...");
+    CHECK(fwu_diag_due(&d, &in, 2600), "...and logged once the gap has passed");
+}
+static void test_diag_format_names_staged_and_retry(void) {
+    char b[200];
+    fwu_diag_in_t in = diag_in(FWU_STAGED);
+    in.motor = true; in.idle = false;
+    fwu_diag_format(b, sizeof b, &in, 100);
+    CHECK(strstr(b, "phase=staged") != NULL, b);
+    CHECK(strstr(b, "retry_in=none") != NULL, b);
+    CHECK(strstr(b, "idle=no") != NULL, b);
+    CHECK(strstr(b, "motor=1") != NULL, b);
+    in = diag_in(FWU_QUEUED); in.retry_at_ms = 10000; in.backoff_ms = 5000;
+    fwu_diag_format(b, sizeof b, &in, 7000);
+    CHECK(strstr(b, "retry_in=3000ms backoff=5000ms") != NULL, b);
+    fwu_diag_format(b, sizeof b, &in, 12000);
+    CHECK(strstr(b, "retry_in=-2000ms") != NULL, b);
+    CHECK(strcmp(fwu_state_text(&(fwu_t){ .phase = FWU_STAGED }), "queued") == 0,
+          "the server still hears queued for staged");
+}
+
 int main(void) {
     RUN(test_fresh_updater_reports_nothing);
     RUN(test_happy_path_ends_in_a_reboot_with_pending_recorded);
@@ -164,5 +211,8 @@ int main(void) {
     RUN(test_flash_failure_is_reported_and_no_reboot);
     RUN(test_refuse_is_ignored_past_the_point_of_no_return);
     RUN(test_refuse_while_queued_fails_with_the_reason);
+    RUN(test_diag_first_period_and_phase_change);
+    RUN(test_diag_input_change_while_staged);
+    RUN(test_diag_format_names_staged_and_retry);
     return REPORT();
 }
