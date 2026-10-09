@@ -1663,6 +1663,20 @@ separately.
   its saved entry, and after "Forget" it rejected `wififloppy` once. A bisect (1.7.5, 1.7.8, 1.8.0, 1.8.1, registry
   1.9.0 and the install image again) joined fine every time. **For the quickstart:** if the phone has joined this
   board before, Forget the network first.
+- **SHIPPED 2026-10-09: the first install is one drag-and-drop UF2** (fw 1.9.1+g9bd2919, seq 53, GitHub release
+  fw-1.9.1 carries `wifi-floppy-install-1.9.1.uf2`).
+  - **Design** (`docs/superpowers/research/2026-10-09-uf2-drag-drop-first-install.md`): one absolute-family UF2 =
+    the partition table at 0, a blank page over the PT's second slot, a NON-TBYB build of the same commit
+    (`wifi_floppy_install`) at slot A, and a blank page at slot B; nothing in the top 5 settings sectors, and no E10
+    block. Built by `tools/make_install_uf2.py`.
+  - **Release guards:** the install .bin must equal the OTA .bin except the TBYB flag and the hash, located by
+    walking the picobin block loop. The install image can never reach the registry.
+  - **Bench passed on the A4 board:** a wipe, then one drop, booted slot A with no trial and raised the portal;
+    pairing worked; OTA A→B and B→A worked; a re-install over the paired board kept pairing with the settings
+    sectors byte-identical; the full backup was restored and verified by sha256.
+  - **Open:** an install over foreign firmware (MicroPython) is untested; `firmware-install-partitioned.sh` still uses
+    picotool; restore with `picotool load --ignore-partitions -v <file> -t bin -o 0x10000000` (order matters in
+    picotool 2.3.0); `picotool reboot -f -u` sometimes hangs when the board is already in BOOTSEL.
 - **REQUIREMENT (operator, 2026-10-09): a first install is ONE drag-and-drop.** Hold BOOTSEL, plug in, drop ONE
   .uf2 onto the drive that appears, and everything else just works. **Requiring picotool is a blocker for casual
   users.** Today's install (picotool: partition table, reboot to BOOTSEL, `load -p 0 -x`) does not meet it. Research
