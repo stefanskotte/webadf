@@ -94,6 +94,7 @@ typedef struct {
     const uint8_t *bytes;     /* from the first bit after the 00 01 00 01 sync */
     uint32_t nbytes;
     uint32_t words;           /* PIO words, the lead included */
+    uint32_t lead_ns;         /* word 0: arm to first edge -- a late arm shows here */
     uint32_t sync_ns;
     int32_t  pw_ns;
     bool     sync_ok;
@@ -105,8 +106,12 @@ typedef struct {
 
 /** True, once, after a RAW capture ends. */
 bool flux_capture_take_raw(flux_capture_raw_t *out);
-/** Nothing armed and nothing finished waiting to be taken: an arm now destroys no capture. */
+/** Nothing armed, nothing finished waiting to be taken, and no taken DF0 capture still being
+ *  decoded (flux_capture_done): an arm now destroys no capture. */
 bool flux_capture_idle(void);
+/** The caller of flux_capture_take() is done with out->mfm: call it once the decode is over, on
+ *  every path. Until then flux_capture_idle() is false. Harmless when nothing was taken. */
+void flux_capture_done(void);
 #endif
 
 #endif

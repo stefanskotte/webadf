@@ -41,7 +41,9 @@ typedef struct {
     uint8_t *buf;
     size_t   cap_bits;
     size_t   bit;           /* the next bit to write */
+    size_t   cleared;       /* buf[0..cleared) is zeroed: cleared lazily, as bits land */
     uint32_t words;         /* PIO words fed, the lead included */
+    uint32_t lead_ns;       /* word 0, arm to first edge: not an interval */
     uint32_t sync_ns;       /* word 1, as measured */
     int32_t  pw_ns;         /* 16 cells minus sync_ns */
     bool     sync_ok;       /* word 1 was a 16-cell interval; nothing is decoded otherwise */
@@ -49,7 +51,9 @@ typedef struct {
     uint32_t out_of_range;  /* intervals over PNET_RX_MAX_CELLS */
 } pnet_rx_t;
 
-/* `cap_bytes` of `buf` are cleared. */
+/* O(1): `buf` is NOT touched here. pnet_rx_feed zeroes each byte just before its first bit lands,
+ * so the first pnet_rx_bytes() bytes are always the capture's alone; nothing past them is defined.
+ * (It runs in the WGATE ISR before the PIO is enabled: a 32 KB memset there cost the first edges.) */
 void   pnet_rx_init(pnet_rx_t *r, uint8_t *buf, size_t cap_bytes);
 /* One PIO word, converted to ns (flux_counter_to_ns). */
 void   pnet_rx_feed(pnet_rx_t *r, uint32_t ns);

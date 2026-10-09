@@ -145,6 +145,33 @@ static void the_pulse_width_range_edges_are_accepted(void) {
     }
 }
 
+/* Final review Important 2: init is O(1) (it runs in the WGATE ISR before the PIO starts), so the
+ * buffer is cleared lazily. A buffer full of the last capture's bytes must still come back exact,
+ * init must not touch it, and word 0 is kept as lead_ns for the refusal log. */
+static void a_dirty_buffer_is_cleared_as_bits_land(void) {
+    pnet_frame_ref_t f[2] = {{frames, 700}, {frames + 700, 64}};
+    memset(frames + 700, 0, 64);                      /* zero runs: bytes with no bit of their own */
+    const size_t wn = pnet_build_to_board(wire, sizeof wire, 3, 0x81, f, 2);
+    memset(capbuf, 0xA5, sizeof capbuf);
+    pnet_rx_t r;
+    pnet_rx_init(&r, capbuf, sizeof capbuf);
+    CHECK(capbuf[0] == 0xA5 && capbuf[sizeof capbuf - 1] == 0xA5, "init leaves the buffer alone");
+    const size_t n = to_words(wire, wn, 900u, 200u, words);
+    words[0] = 27613u;                                /* the lead, as a bench capture logs it */
+    feed_all(&r, words, n);
+    CHECK_EQ_INT(r.lead_ns, 27613);
+    const size_t got = pnet_rx_bytes(&r);
+    CHECK(got > PNET_HDR_BYTES && got <= wn - 4, "bytes up to the last pulse");
+    CHECK(memcmp(capbuf, wire + 4, got) == 0, "every byte up to the last pulse, none of the old");
+    CHECK(capbuf[got] == 0xA5, "nothing past the last pulse's byte is touched");
+    pnet_hdr_t h;
+    CHECK_EQ_INT(pnet_parse_hdr_from_amiga(capbuf, got, &h), PNET_OK);
+    uint16_t lens[PNET_MAX_FRAMES]; unsigned m = 0;
+    CHECK_EQ_INT(pnet_parse_frames(capbuf + PNET_HDR_BYTES, h.compressed_size, PNET_TO_BOARD, dec,
+                                   sizeof dec, lens, PNET_MAX_FRAMES, &m), PNET_OK);
+    CHECK(m == 2 && memcmp(dec, frames, 764) == 0, "frames");
+}
+
 int main(void) {
     RUN(bytes_after_the_sync_come_back);
     RUN(jitter_does_not_move_a_bit);
@@ -155,5 +182,6 @@ int main(void) {
     RUN(a_late_capture_is_refused_whatever_the_pulse_width);
     RUN(a_wgate_blip_decodes_nothing);
     RUN(the_pulse_width_range_edges_are_accepted);
+    RUN(a_dirty_buffer_is_cleared_as_bits_land);
     return REPORT();
 }

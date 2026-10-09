@@ -867,11 +867,15 @@ static volatile bool     pnet_write_ours;
 // that clear can go uncounted -- harmless, since nothing decides a disarm from it.
 static volatile bool     pnet_raw_pending;
 static volatile uint32_t g_pnet_lost;
-// Batches not captured at all because a DF0 capture was armed or still waiting to be taken:
-// arming over it would destroy DF0's write. The Amiga resends.
+// WGATE asserts on DF1's cylinder 77 that did not arm: the capture was not idle
+// (flux_capture_idle). That is a DF0 capture armed, waiting to be taken or still being decoded --
+// arming over it would destroy DF0's write; the Amiga resends -- but also a WGATE glitch mid-write
+// re-entering the branch over this write's own arm, and a raw batch still waiting for the loop
+// (back-pressure). So a busy count is not only DF0 contention.
 static volatile uint32_t g_pnet_busy;
-// Whether THIS DF1 write armed the raw capture: set at its WGATE assert, read and cleared at its
-// release, and touched by nothing else -- the release disarms on this alone, never on
+// Whether THIS DF1 write armed the raw capture: set at its WGATE assert only when that assert
+// really armed one (a busy or glitch assert leaves it as it was), read and cleared at its release
+// and by the capture timeout when nothing is armed -- the release disarms on this alone, never on
 // pnet_raw_pending, which the loop also clears (a clear landing after a new arm would leave
 // that arm running).
 static volatile bool     pnet_armed_this_write;
@@ -2900,8 +2904,11 @@ static void pnet_reject(pnet_err_t e, const flux_capture_raw_t *cap) {
     g_pnet.bad[e]++;
     if (g_pnet_reject_logged) return;
     g_pnet_reject_logged = true;
-    wf_logf(WF_WARN, "pnet: refused %s: %luB sync %lu pw %ld w %lu oor %lu%s", pnet_err_text(e),
-            (unsigned long)cap->nbytes, (unsigned long)cap->sync_ns, (long)cap->pw_ns,
+    // lead (word 0, arm to first edge) before sync: a NOSYNC with a short lead and a data-sized
+    // sync is a late arm; a ~31 us sync just outside the window is the pulse width (Important 2).
+    wf_logf(WF_WARN, "pnet: refused %s: %luB lead %lu sync %lu pw %ld w %lu oor %lu%s",
+            pnet_err_text(e), (unsigned long)cap->nbytes, (unsigned long)cap->lead_ns,
+            (unsigned long)cap->sync_ns, (long)cap->pw_ns,
             (unsigned long)cap->words, (unsigned long)cap->out_of_range,
             cap->overflowed ? " OVERFLOW" : "");
 }
@@ -3792,6 +3799,17 @@ int main(void) {
         if (flux_capture_timeout(clock_ms())) {
 #if WF_PNET_LOOP
             pnet_raw_pending = false;            // an abandoned raw capture is not waiting
+            // A timed-out DF1 write must not leave the pnet branch owning the next WGATE release
+            // (final review M3) -- unless the ISR has armed a new capture since the timeout, whose
+            // flags these then are: checked with interrupts off so no arm lands in between.
+            {
+                const uint32_t irq = save_and_disable_interrupts();
+                if (flux_capture_idle()) {
+                    pnet_write_ours = false;
+                    pnet_armed_this_write = false;
+                }
+                restore_interrupts(irq);
+            }
 #endif
             // Almost always the Amiga powering off: its outputs stop driving,
             // the buffer inputs float, and WGATE reads as asserted forever.
@@ -3832,6 +3850,11 @@ int main(void) {
                 const uint64_t dec_t0 = time_us_64();
                 mfm_decode_track_n(cap.mfm, cap.mfm_bytes, decoded, &d, nsec);
                 const unsigned long dec_us = (unsigned long)(time_us_64() - dec_t0);
+#if WF_PNET_LOOP
+                // Nothing below reads cap.mfm (decoded[] is its own buffer): a DF1 batch may arm
+                // over mfm_buf again (flux_capture_idle; final review, Important 1).
+                flux_capture_done();
+#endif
                 wf_logf(WF_INFO,
                         "write: trk %d %u iv %u B sec 0x%06lx/%u%s bad %u foreign %u rng %u "
                         "dec %lu us%s",
@@ -3902,6 +3925,11 @@ int main(void) {
                     }
                 }
             }
+#if WF_PNET_LOOP
+            // Every other path, the short "WGATE pulse" one included: a take is never left held.
+            // (A no-op when nothing was taken or the decode above already released it.)
+            flux_capture_done();
+#endif
         }
 
 #if WF_VERIFY_TRACKS

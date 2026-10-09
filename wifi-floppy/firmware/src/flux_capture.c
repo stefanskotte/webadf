@@ -56,6 +56,14 @@ static uint32_t d_count, d_lead_ns, d_min_at;   // HANDOFF 3av (b)
 static volatile bool raw_mode;
 static pnet_rx_t raw_rx;
 static volatile uint64_t raw_ended_us;
+// A DF0 capture taken and still being decoded: flux_capture_take() hands out mfm_buf itself, and
+// the decode reads it for ~3-7 ms after the take. Set by the take, cleared by flux_capture_done()
+// (main.c, once the decode is over, on every path) -- and by flux_capture_timeout() once it has
+// stood for FLUX_CAPTURE_MAX_MS, so a missed done cannot shut the loopback out for good. While it
+// is set flux_capture_idle() is false: a DF1 raw arm then waits (counted busy, the Amiga resends)
+// instead of re-initialising the buffer under the decode (final review, Important 1).
+static volatile bool held;
+static volatile uint32_t held_at_ms;
 #endif
 
 static void consume(uint32_t word) {
@@ -119,6 +127,9 @@ static void arm(bool raw) {
 void flux_capture_arm(void) {
 #endif
     if (cap_dma < 0 || armed) return;
+#if WF_PNET_LOOP
+    if (!raw) held = false;          // a DF0 arm re-initialises the buffer anyway: nothing is held
+#endif
     // Everything stale goes first: a FIFO still holding intervals from the
     // last write would put another track's flux at the head of this one.
     pio_sm_set_enabled(cap_pio, cap_sm, false);
@@ -132,6 +143,9 @@ void flux_capture_arm(void) {
     cap_read = 0;
 #if WF_PNET_LOOP
     raw_mode = raw;
+    // O(1): pnet_rx clears the buffer lazily, from the loop, as its bits land (pnet_rx.h). A 32 KB
+    // memset here cost ~55-95 us in this ISR before the PIO below was enabled -- against a first
+    // sync pulse ~32 us after Paula starts the write (final review, Important 2).
     if (raw) pnet_rx_init(&raw_rx, mfm_buf, sizeof mfm_buf);
     else
 #endif
@@ -186,6 +200,10 @@ uint32_t flux_capture_poll(void) {
 }
 
 bool flux_capture_timeout(uint32_t now_ms) {
+#if WF_PNET_LOOP
+    // The safety clear for `held`: a decode is milliseconds, never FLUX_CAPTURE_MAX_MS.
+    if (held && (uint32_t)(now_ms - held_at_ms) > FLUX_CAPTURE_MAX_MS) held = false;
+#endif
     if (!armed) return false;
     if ((uint32_t)(now_ms - armed_at_ms) <= FLUX_CAPTURE_MAX_MS) return false;
 
@@ -211,6 +229,11 @@ bool flux_capture_take(flux_capture_result_t *out) {
         consume(ring[cap_read]);
         cap_read = (cap_read + 1u) & (RING_WORDS - 1u);
     }
+#if WF_PNET_LOOP
+    // Before `ended` clears, so flux_capture_idle() never sees a gap between the two.
+    held_at_ms = to_ms_since_boot(get_absolute_time());
+    held = true;
+#endif
     ended = false;
 
     out->complete     = true;
@@ -229,7 +252,9 @@ bool flux_capture_take(flux_capture_result_t *out) {
 }
 
 #if WF_PNET_LOOP
-bool flux_capture_idle(void) { return !armed && !ended; }
+bool flux_capture_idle(void) { return !armed && !ended && !held; }
+
+void flux_capture_done(void) { held = false; }
 
 bool flux_capture_take_raw(flux_capture_raw_t *out) {
     if (!ended || !raw_mode) return false;
@@ -241,6 +266,7 @@ bool flux_capture_take_raw(flux_capture_raw_t *out) {
     out->bytes        = mfm_buf;
     out->nbytes       = (uint32_t)pnet_rx_bytes(&raw_rx);
     out->words        = raw_rx.words;
+    out->lead_ns      = raw_rx.lead_ns;
     out->sync_ns      = raw_rx.sync_ns;
     out->pw_ns        = raw_rx.pw_ns;
     out->sync_ok      = raw_rx.sync_ok;
