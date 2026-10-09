@@ -61,4 +61,13 @@ describe('readZip options (upload from a URL)', () => {
     expect(entries.find((e) => e.path.endsWith('noise.bin'))).toBeUndefined();
     expect(skipped.filter((s) => s.reason === 'too large').length).toBeGreaterThanOrEqual(2);
   });
+
+  it('stops once the total of decompressed members passes maxTotalBytes', async () => {
+    const all = await readZip(buf);
+    const cap = all.entries[0].bytes.length;
+    const { entries, skipped } = await readZip(buf, { maxTotalBytes: cap });
+    expect(entries.reduce((n, e) => n + e.bytes.length, 0)).toBeLessThanOrEqual(cap);
+    expect(entries.length).toBeLessThan(all.entries.length);
+    expect(skipped.some((x) => x.reason === 'too large')).toBe(true);
+  });
 });

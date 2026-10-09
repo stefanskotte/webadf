@@ -1,5 +1,6 @@
 import { readLha } from './lha';
 import { readZip } from './zip';
+import { MAX_COMPRESSED_IMAGE_BYTES } from './disk-image';
 
 /**
  * "Is this dropped file an archive, and if so what is in it?"
@@ -40,6 +41,12 @@ export interface ArchiveResult {
  */
 export const MAX_ARCHIVE_BYTES = 25 * 1024 * 1024;
 
+/** What one zip member may inflate to: the same per-file bound the URL path and
+ *  the dropzone use for compressed images (an ADF is 880 KB, an HD one 1.8 MB). */
+export const MAX_ZIP_MEMBER_BYTES = MAX_COMPRESSED_IMAGE_BYTES;
+/** What a whole zip may inflate to: the URL path's worst case, 20 images of 4 MiB. */
+export const MAX_ZIP_TOTAL_BYTES = 20 * MAX_COMPRESSED_IMAGE_BYTES;
+
 export function isArchiveName(name: string): boolean {
   return /\.(lha|lzh|zip)$/i.test(name);
 }
@@ -66,7 +73,7 @@ export async function expandArchive(
   const zip = /\.zip$/i.test(fileName);
   try {
     if (zip) {
-      const { entries, skipped } = await readZip(bytes);
+      const { entries, skipped } = await readZip(bytes, { maxEntryBytes: MAX_ZIP_MEMBER_BYTES, maxTotalBytes: MAX_ZIP_TOTAL_BYTES });
       if (entries.length === 0 && skipped.length > 0 && skipped[0].reason === 'not a zip') {
         return { error: 'unreadable' };
       }

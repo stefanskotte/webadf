@@ -61,6 +61,9 @@ export interface ZipReadOptions {
   /** Largest decompressed member; a bigger one is skipped as 'too large'
    *  rather than inflated whole (a deflate bomb). Default: unbounded. */
   maxEntryBytes?: number;
+  /** Largest sum of decompressed members; once it would be passed, further
+   *  members are skipped as 'too large' (many small bombs). Default: unbounded. */
+  maxTotalBytes?: number;
 }
 
 /** Find the end-of-central-directory record, scanning back over any comment. */
@@ -78,6 +81,8 @@ function findEocd(buf: Uint8Array): number {
  */
 export async function readZip(buf: Uint8Array, opts: ZipReadOptions = {}): Promise<ZipReadResult> {
   const maxEntry = opts.maxEntryBytes ?? Number.MAX_SAFE_INTEGER;
+  const maxTotal = opts.maxTotalBytes ?? Number.MAX_SAFE_INTEGER;
+  let total = 0;
   const entries: ZipEntry[] = [];
   const skipped: { path: string; reason: string }[] = [];
 
@@ -122,12 +127,18 @@ export async function readZip(buf: Uint8Array, opts: ZipReadOptions = {}): Promi
 
     try {
       if (method === 0) {
-        if (raw.length > maxEntry) skipped.push({ path, reason: 'too large' });
-        else entries.push({ path, bytes: raw.slice(), protection: null, method: 'stored' });
+        if (raw.length > maxEntry || total + raw.length > maxTotal) skipped.push({ path, reason: 'too large' });
+        else {
+          total += raw.length;
+          entries.push({ path, bytes: raw.slice(), protection: null, method: 'stored' });
+        }
       } else if (method === 8) {
-        const out = await inflateRaw(raw, maxEntry);
-        if (out) entries.push({ path, bytes: out, protection: null, method: 'deflate' });
-        else skipped.push({ path, reason: 'too large' });
+        // The remaining total is the bound too, so one member cannot overshoot it.
+        const out = await inflateRaw(raw, Math.min(maxEntry, maxTotal - total));
+        if (out) {
+          total += out.length;
+          entries.push({ path, bytes: out, protection: null, method: 'deflate' });
+        } else skipped.push({ path, reason: 'too large' });
       } else {
         // bzip2, lzma, zstd and friends. Rare in this corner of the world and
         // named rather than silently dropped.
