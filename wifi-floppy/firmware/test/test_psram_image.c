@@ -87,6 +87,51 @@ static void set_dirty_and_discard(void) {
     CHECK_EQ_INT(psram_image_dirty_count(0), 0);
 }
 
+static void df1_never_shares_a_slot_with_df0(void) {
+    psram_publish_slot(0);
+    CHECK(!psram_publish_df1(0), "DF0's slot is refused");
+    CHECK(psram_publish_df1(1), "the idle slot is fine");
+    CHECK_EQ_INT(psram_df1_slot(), 1);
+    psram_publish_slot(1);   // "Next disk": DF0 takes the preloaded slot
+    CHECK_EQ_INT(psram_df1_slot(), SLOT_NONE);   // ejected in the same publish
+}
+
+static void df1_holds_a_disk_only_while_df0_does(void) {
+    psram_publish_slot(0);
+    psram_publish_df1(1);
+    psram_publish_slot(SLOT_NONE);
+    CHECK_EQ_INT(psram_df1_slot(), SLOT_NONE);
+    CHECK(!psram_publish_df1(1), "DF0 empty: DF1 may not be filled");
+}
+
+// Review Focus 1: core1 writes into a slot only once core0 has stopped reading it.
+static void the_writer_waits_for_core0_to_acknowledge_df1s_eject(void) {
+    psram_publish_slot(0);
+    psram_publish_df1(1);
+    psram_df1_reader_ack(psram_df1_token());
+    CHECK(psram_df1_quiescent(), "acked");
+    psram_publish_df1(SLOT_NONE);
+    CHECK(!psram_df1_quiescent(), "the eject is not yet seen by core0");
+    psram_df1_reader_ack(psram_df1_token());
+    CHECK(psram_df1_quiescent(), "now it is");
+}
+
+static void df1_tokens_never_repeat_a_df0_token(void) {
+    psram_publish_slot(0);
+    int32_t a = psram_active_token();
+    psram_publish_df1(1);
+    CHECK(psram_df1_token() != a, "one generation counter for both words");
+}
+
+static void an_empty_df1_is_untouched_by_df0_publishes(void) {
+    psram_publish_slot(0);
+    psram_publish_df1(SLOT_NONE);
+    int32_t w = psram_df1_token();
+    psram_publish_slot(1);
+    psram_publish_slot(SLOT_NONE);
+    CHECK(psram_df1_token() == w, "no DF1 word change when DF1 is empty");
+}
+
 int main(void) {
     size_t len = (size_t)TRACK_MAX_BYTES * NUM_TRACKS * SLOT_COUNT;
     void *mem = malloc(len);
@@ -96,6 +141,11 @@ int main(void) {
     RUN(test_publish_is_all_or_nothing);
     RUN(test_eject_publishes_slot_none);
     RUN(set_dirty_and_discard);
+    RUN(df1_never_shares_a_slot_with_df0);
+    RUN(df1_holds_a_disk_only_while_df0_does);
+    RUN(the_writer_waits_for_core0_to_acknowledge_df1s_eject);
+    RUN(df1_tokens_never_repeat_a_df0_token);
+    RUN(an_empty_df1_is_untouched_by_df0_publishes);
     free(mem);
     return REPORT();
 }

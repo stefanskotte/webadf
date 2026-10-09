@@ -68,6 +68,13 @@ static size_t   g_len;
 static uint32_t          g_gen;
 static volatile int32_t  active_word;
 
+// DF1's published word (same packing, same g_gen, so a token is unique across
+// both drives) and core0's acknowledge cursor. 0 is "no disk, never
+// published"; core0 acks 0 at boot. df1_word: core1 writes, core0 reads.
+// df1_reader_ack: core0 writes, core1 reads. Both aligned 32-bit (atomic).
+static volatile int32_t  df1_word;
+static volatile int32_t  df1_reader_ack;
+
 static inline int32_t pack_word(uint32_t gen, int slot) {
     int32_t mounted = (slot == SLOT_NONE) ? 0 : 1;
     int32_t bit0    = (slot == SLOT_NONE) ? 0 : (int32_t)(slot & 1);
@@ -91,6 +98,8 @@ bool psram_image_init(void) {
     memset(state, 0, sizeof state);
     memset(kind, 0, sizeof kind);    // SLOT_KIND_MFM
     g_gen = 0;
+    df1_word = 0;
+    df1_reader_ack = 0;
     active_word = 0;    // gen 0, unmounted -- see active_word's comment above
 
 #ifndef WFMF_HOST_TEST
@@ -284,6 +293,15 @@ const uint8_t *psram_image_track_data(int slot, int track) {
 // this two-slot design exists to close, even though the store itself would
 // still be perfectly atomic.
 void psram_publish_slot(int slot) {
+    // DF1 invariants (spec 2026-10-08 s4): never the same slot as DF0, and no
+    // disk at all while DF0 is empty. A no-op (g_gen untouched) if DF1 is empty.
+    {
+        const int d1 = slot_of_word(df1_word);
+        if (d1 != SLOT_NONE && (slot == SLOT_NONE || slot == d1)) {
+            g_gen++;
+            df1_word = pack_word(g_gen, SLOT_NONE);
+        }
+    }
     // RELEASE: every store this core made before this call (the target
     // slot's PSRAM track payloads, its bits[]/state[] metadata) must be
     // guaranteed visible before active_word's new value can be. On
@@ -324,6 +342,30 @@ void psram_publish_slot(int slot) {
     g_gen++;
     active_word = pack_word(g_gen, slot);
 }
+
+bool psram_publish_df1(int slot) {
+    const int a = slot_of_word(active_word);
+    if (slot != SLOT_NONE && (a == SLOT_NONE || slot == a || !slot_ok(slot))) return false;
+    wfmf_barrier();
+    g_gen++;
+    df1_word = pack_word(g_gen, slot);
+    return true;
+}
+
+int32_t psram_df1_token(void) {
+    int32_t w = df1_word;
+    wfmf_barrier();
+    return w;
+}
+
+int psram_df1_slot(void) { return slot_of_word(psram_df1_token()); }
+
+void psram_df1_reader_ack(int32_t token) {
+    wfmf_barrier();
+    df1_reader_ack = token;
+}
+
+bool psram_df1_quiescent(void) { return df1_reader_ack == df1_word; }
 
 int32_t psram_active_token(void) {
     int32_t w = active_word;
