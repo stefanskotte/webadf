@@ -1611,20 +1611,20 @@ separately.
 - **(Low) e2e firmware releases show to real boards during a run** (seen 2026-10-09): specs seed `0.0.0+e2e*`
   releases with the highest sequences, so a real board reads "behind 0.0.0+e2eN" until the specs clean up. The
   operator saw it and judged it no problem. A possible guard: ignore `+e2e` versions for non-test orgs.
-- **Override a title's main image** (operator, 2026-10-09): let a user set or replace the cover image of a title,
+- **Override a title's main image -- SHIPPED 2026-10-09 (3bd).** (operator, 2026-10-09): let a user set or replace the cover image of a title,
   especially utilities and programs that TOSEC, OpenRetro and Demozoo know nothing about. Start from where covers
   come from today (the `oagd/` imageStore, keyed by OpenRetro sha-1, served by `/api/images/<sha1>`). An uploaded
   image needs its own key, org scoping (one org's override must not change another org's view of a shared
   title/blob), size and type limits, and probably an "uploaded overrides enriched" precedence rule plus a way to
   revert. Remember the blob GC: any new column naming a stored object must join `runBlobGc`'s references, or
   extend it for the image store.
-- **LZH archives alongside LHA -- SHIPPED on branch feat/device-delete-lzh (2026-10-09), not yet merged.**
+- **LZH archives alongside LHA -- SHIPPED, merged 1fc980b (2026-10-09).**
   `.lzh` was already routed by `isArchiveName` (`/\.(lha|lzh|zip)$/`) into `readLha`; the container is identical, so
   the only code change is the drop error text. Decoder methods: -lh0-, -lz4- (stored), -lhd-, -lh5-, -lh6-, -lh7-;
   -lh1-/-lh2-/-lh3-/-lzs-/-lz5- are skipped with a named reason (pre-1990 LHarc; rare on Amiga sites). Fixtures
   `m5/m6/m7.lzh` were written by the real `lha` (-o5/-o6/-o7). The `.adf` upload page does not take archives at all
   (unchanged); archives are a drop-onto-a-disk feature.
-- **Upload from a URL** (requested 2026-10-09, via the operator): on the upload page, paste a URL and the web app
+- **Upload from a URL -- SHIPPED 2026-10-09 (3bd); LHA from a URL waits on a readLha size guard.** (requested 2026-10-09, via the operator): on the upload page, paste a URL and the web app
   fetches the ADF/HFE itself. Design notes: a server-side fetch is an SSRF surface, so allow http(s) only, refuse
   private, loopback and link-local addresses after DNS resolution (re-check on every redirect), cap redirects, size
   and time, and stream into the same presign/complete ingest path so hashing, dedupe, TOSEC matching and
@@ -1633,7 +1633,7 @@ separately.
   (and the other built-in screens: boot, connecting, error) is fully visible on the 1.3" SH1106 and 0.96" SSD1306
   128x64 panels. Built-in screens use the panel's default layout and sit at the top (3ax ruling); verify on glass
   that nothing is cut off and the SSID is readable.
-- **Delete a WiFi floppy device -- SHIPPED on branch feat/device-delete-lzh (2026-10-09), not yet merged.** Trash
+- **Delete a WiFi floppy device -- SHIPPED, merged 1fc980b (2026-10-09).** Trash
   icon on the device card -> confirm dialog -> `DELETE /api/devices/[id]` (org-scoped, 404 for foreign/unknown).
   One `DELETE FROM devices`: `disk_write_sessions` (+ tracks) cascade; NFC write request, firmware instruction and
   display/second-drive state are columns of the row; `pairing_codes` hold no device id; `disk_versions.device_id` has
@@ -4751,6 +4751,45 @@ Demozoo API (the bulk export makes per-lookup load on a non-profit unnecessary).
 - **Screenshot redirects:** screenshot fetches follow redirects, so the `media.demozoo.org` host
   allowlist checks only the first URL (the raster content-type allowlist and `nosniff` still apply).
 - **Cron drift:** the daily 01:30 cron against a 7-day gate can drift a refetch to 8 days.
+
+### 3bd. Cover override, upload from URL, device delete + .lzh; firmware diagnostics TEST build (2026-10-09)
+
+- **W1 device delete + .lzh -- merged 1fc980b** (see the backlog entries below, now shipped).
+- **W2 a title's own cover -- merged 44e1f23.** PUT/DELETE/GET `/api/games/[id]/cover`, org-scoped (foreign or
+  missing title: the same 404), 2 MB streamed cap, type from magic bytes, served with nosniff + sandbox CSP and only
+  when this org's title names that digest. Stored at `cover/<sha256>` (the digest of the STRIPPED bytes). Column
+  `games.cover_override_sha256` (migration 0033, applied to the live DB 2026-10-09 before the merge). Metadata is
+  stripped at upload (src/lib/cover-strip.ts): JPEG APP1/APP13 dropped, Orientation written back, everything after
+  EOI cut; PNG text/eXIf chunks; WebP EXIF/XMP. Weekly blob GC has a cover pass: 7-day grace, re-checks references
+  just before deleting, refuses when no title names a cover but some would go; a failed re-check deletes no cover.
+  Dry run 2026-10-09 after deploy: 1 stored cover, 0 to delete, 26 unreferenced disk objects (normal).
+  - Reviews: opus review merge (M1-M7), fix wave, re-review merge (N1 fixed by me; N2 parked).
+  - Parked: **N2** PNG/WebP lose an Orientation tag on strip (cameras rarely make these); **M4** GET serves the
+    stored content type rather than re-sniffing; **M5** no per-org cover quota; a malformed image is stored with
+    its metadata (walkers return input unchanged rather than guess) -- operator may prefer refusing.
+- **W3 upload from a URL -- merged e7b058c.** `POST /api/ingest/url` (src/lib/url-fetch.ts, url-ingest.ts,
+  ingest-complete.ts `registerUploads()` shared with /complete). http/https, ports 80/443, DNS resolved in-process,
+  every address must be public (any private record refuses the host), socket pinned to the vetted list (IPv6/IPv4
+  fallback via autoSelectFamily), every redirect re-vetted (max 3), 20 MiB, 25 s overall, coarse error codes,
+  `agent:false` (env proxies ignored). zip/gz unpacked with caps (20 images counted from the central directory
+  before inflating; 4 MiB per member; gzip output 2.5 MiB). Browser zip path now capped too, and a refused
+  member's inflate work counts toward the total (one bomb named 65,535 times no longer freezes a tab).
+  - Two opus security reviews + fix re-review: no bypass constructed. e2e happy path fetched
+    https://raw.githubusercontent.com/cnvogelg/amitools/main/test/disks/empty-dd-ofs.adf (E2E_URL_UPLOAD_FIXTURE).
+  - Parked: rate limit is per instance (move to a DB counter); https->http redirects allowed (still vetted);
+    `address_not_allowed` vs `unreachable` is a small DNS oracle (accepted).
+- **LHA decoder allocates the header-claimed size** (up to 4 GB) -- LHA from a URL is refused until readLha gets a
+  size guard like readZip's. Backlog.
+- **e2e `disk-drag-drop.spec.ts:345` ("a move by drag leaves the entry's block number unchanged") fails on master**
+  (seen 2026-10-09 on 44e1f23 and e7b058c; no move request is ever sent). Not caused by W2/W3. Being diagnosed on
+  fix/dnd-move-e2e.
+- **F1 firmware diagnostics -- TEST build 1.9.1+g722ff3d, seq 54 (branch fix/fw-diag 722ff3d, not merged).** Logs
+  `fwdiag:` (fwu phase, retry_at, idle inputs, pad levels) every 60 s, `motor: DF0 ...` on every motor change, and
+  `portal: sta ...` association/auth/DHCP changes. Code reading: a "queued" stall is most likely a STAGED update
+  waiting for idle; the motor latch (floppy.pio:148 records MTR only on a SEL edge; main.c:778) can stick ON when
+  the Amiga powers off with MTR falling before SEL, so the idle check (main.c:2372) never passes until a reboot.
+  The "download fails after long uptime" entry is probably the same stall (1.7.8/1.8.0 logged staged as "queued").
+  Bench script: .claude/worktrees/fw-diag/DIAG-REPORT.md section 4. Not yet installed on the board.
 
 ### 3bc. DF1 second drive -- SHIPPED 2026-10-09 (fw 1.9.0+gde4e92b, seq 51, master 0b853ca)
 
