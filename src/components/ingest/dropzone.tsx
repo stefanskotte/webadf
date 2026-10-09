@@ -13,6 +13,7 @@ import { adfDensity, isHfeFilename } from '@/lib/disk-format';
 import { HdTag } from '@/components/disks/hd-tag';
 import type { Suggestion } from '@/lib/disk-set-suggest';
 import { SetSuggestion } from './set-suggestion';
+import { UrlFetch, type FetchedRow } from './url-fetch';
 
 /** disk-sets spec §3 / the suggest route's own zod cap. */
 const MAX_SUGGEST_HASHES = 32;
@@ -373,43 +374,77 @@ export function Dropzone() {
       // drop just did, not something that should hold the UI up while it's
       // still uploading. finalState (not `rows` state -- see its own
       // comment) says which of this drop's own sha256s actually landed.
-      const settled = [...new Set(
-        dropShas.filter((sha) => {
-          const s = finalState.current.get(sha);
-          return s === 'done' || s === 'deduped';
-        }),
-      )];
-      if (settled.length >= 2) {
-        // Never more than 32 hashes (Task 6 controller ruling): the route's
-        // own zod cap 400s past that, and a larger drop gets no suggestion
-        // anyway (disk-sets spec §2).
-        const sha256s = settled.slice(0, MAX_SUGGEST_HASHES);
-        const paths: Record<string, string> = {};
-        for (const sha of sha256s) {
-          const p = dropPaths.get(sha);
-          if (p) paths[sha] = p;
+      await suggestFor(dropShas, dropPaths, since);
+    }
+  }
+
+  // A set suggestion for what one drop (or one URL fetch) just landed.
+  // Shared so a .zip fetched from a URL gets the same "these look like one
+  // set" panel a dropped folder does.
+  async function suggestFor(dropShas: string[], dropPaths: Map<string, string>, since: string) {
+    const settled = [...new Set(
+      dropShas.filter((sha) => {
+        const s = finalState.current.get(sha);
+        return s === 'done' || s === 'deduped';
+      }),
+    )];
+    if (settled.length >= 2) {
+      // Never more than 32 hashes (Task 6 controller ruling): the route's
+      // own zod cap 400s past that, and a larger drop gets no suggestion
+      // anyway (disk-sets spec §2).
+      const sha256s = settled.slice(0, MAX_SUGGEST_HASHES);
+      const paths: Record<string, string> = {};
+      for (const sha of sha256s) {
+        const p = dropPaths.get(sha);
+        if (p) paths[sha] = p;
+      }
+      try {
+        const res = await fetch('/api/disk-sets/suggest', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({
+            sha256s, since,
+            ...(Object.keys(paths).length > 0 ? { paths } : {}),
+          }),
+        });
+        // Any non-200, or a null suggestion, is treated identically: no
+        // panel. Never surfaced as an error -- the suggestion is a nicety,
+        // not part of the upload's own success/failure.
+        if (res.ok) {
+          const body = (await res.json()) as { suggestion: Suggestion };
+          setSuggestion(body.suggestion);
         }
-        try {
-          const res = await fetch('/api/disk-sets/suggest', {
-            method: 'POST',
-            headers: { 'content-type': 'application/json' },
-            body: JSON.stringify({
-              sha256s, since,
-              ...(Object.keys(paths).length > 0 ? { paths } : {}),
-            }),
-          });
-          // Any non-200, or a null suggestion, is treated identically: no
-          // panel. Never surfaced as an error -- the suggestion is a nicety,
-          // not part of the upload's own success/failure.
-          if (res.ok) {
-            const body = (await res.json()) as { suggestion: Suggestion };
-            setSuggestion(body.suggestion);
-          }
-        } catch {
-          // Network failure: same as "no suggestion".
-        }
+      } catch {
+        // Network failure: same as "no suggestion".
       }
     }
+  }
+
+  // Rows from /api/ingest/url, merged into this run's table exactly like a
+  // drop's: same states, same notes, same reset-in-place for a repeat sha.
+  async function addFetchedRows(fetched: FetchedRow[], since: string) {
+    const shas: string[] = [];
+    setRows((rs) => {
+      let next = rs;
+      for (const f of fetched) {
+        const row: Row = {
+          filename: f.filename, sizeBytes: f.sizeBytes,
+          sha256: f.sha256 ?? `bad:${f.filename}`, state: f.state, note: f.note,
+        };
+        next = next.some((r) => r.sha256 === row.sha256)
+          ? next.map((r) => (r.sha256 === row.sha256 ? row : r))
+          : [...next, row];
+      }
+      return next;
+    });
+    for (const f of fetched) {
+      if (!f.sha256) continue;
+      finalState.current.set(f.sha256, f.state);
+      shas.push(f.sha256);
+    }
+    router.refresh();
+    setSuggestion(null);
+    await suggestFor(shas, new Map(), since);
   }
 
   const scanned = rows.length;
@@ -456,6 +491,8 @@ export function Dropzone() {
           onChange={(e) => e.target.files && void handleFiles(e.target.files)}
         />
       </label>
+
+      <UrlFetch busy={busy} setBusy={setBusy} onRows={addFetchedRows} />
 
       {rows.length > 0 && (
         <>
