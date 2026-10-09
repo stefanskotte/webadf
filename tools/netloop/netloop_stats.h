@@ -3,8 +3,8 @@
 /*
  * NetLoop's pure helpers: the payload, the round's verdict and the arithmetic of its report.
  * Host-tested by test_netloop_stats.c (build.sh runs it before every Amiga build).
- * PaulaNET protocol (C) 2026 RobSmithDev, https://github.com/RobSmithDev/PaulaNET, used with
- * permission.
+ * PaulaNET protocol: Copyright (C) 2026 RobSmithDev, https://github.com/RobSmithDev/PaulaNET.
+ * Used with the author's permission (2026-10-09).
  */
 #include <stdint.h>
 #include <stdbool.h>

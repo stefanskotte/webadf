@@ -26,6 +26,7 @@
 #include <proto/timer.h>
 #include <stdio.h>
 #include <string.h>
+#include <stdlib.h>
 #include "pnet_mfm.h"
 #include "pnet_frame.h"
 #include "netloop_stats.h"
@@ -55,7 +56,7 @@ static ULONG hz = 709379;
 
 /* unsigned long, not ULONG: this NDK's ULONG is unsigned int, and printf's %lu wants long. */
 static unsigned long c_ioerr, c_nosync, c_badhdr, c_stale, c_rewrites, c_mismatch, c_failed;
-static uint64_t t_write, t_read, t_align;
+static uint64_t t_write, t_read, t_align, t_build;
 
 static uint64_t ticks(void) {
     struct EClockVal ev;
@@ -140,11 +141,12 @@ static int one_round(UBYTE *ctr, UBYTE *last_pico, ULONG n, ULONG reads, ULONG s
     ULONG off = 0;
     for (unsigned i = 0; i < nf; i++) { refs[i].data = payload + off; refs[i].len = lens[i]; off += lens[i]; }
     *ctr = (UBYTE)(*ctr + 1u);
+    const uint64_t t0 = ticks();   /* the window opens before the encode: it is part of a round */
     const size_t wlen = pnet_build_to_board(wbuf, CHIP_BYTES, *ctr, *last_pico, refs, nf);
+    t_build += ticks() - t0;
     if (!wlen) return 1;
     pnet_hdr_t h;
     memset(&h, 0, sizeof h);
-    const uint64_t t0 = ticks();
     int res = 1;
     for (int attempt = 0; attempt < 3 && res == 1; attempt++) {
         if (attempt) c_rewrites++;
@@ -161,7 +163,7 @@ static int one_round(UBYTE *ctr, UBYTE *last_pico, ULONG n, ULONG reads, ULONG s
 }
 
 /* Learn the board's counters, so a restarted NetLoop's first batch is new to it. */
-static void resync(UBYTE *ctr, UBYTE *last_pico) {
+static BOOL resync(UBYTE *ctr, UBYTE *last_pico) {
     pnet_hdr_t h;
     size_t valid;
     *ctr = 0xFFu;
@@ -170,7 +172,9 @@ static void resync(UBYTE *ctr, UBYTE *last_pico) {
     if (read_once(HDR_READ, &h, FALSE, &valid) == 0) {
         *ctr = nl_start_ctr(TRUE, h.amiga_ctr);
         *last_pico = h.pico_ctr;
+        return TRUE;
     }
+    return FALSE;
 }
 
 static int st_fail(const char *what) {
@@ -223,7 +227,11 @@ static int selftest(void) {
     return RETURN_OK;
 }
 
+static BOOL cleaned;
+
 static void cleanup(void) {
+    if (cleaned) return;
+    cleaned = TRUE;
     if (td_open) {
         td_io(TD_MOTOR, 0, NULL, 0, 0);      /* io_Length 0: motor off */
         CloseDevice((struct IORequest *)td);
@@ -254,6 +262,7 @@ int main(void) {
         return RETURN_ERROR;
     }
     int rc = RETURN_FAIL;
+    atexit(cleanup);   /* a libnix Ctrl-C exit still closes the devices and frees CHIP memory */
     port = CreateMsgPort();
     td = port ? (struct IOExtTD *)CreateIORequest(port, sizeof *td) : NULL;
     treq = port ? (struct timerequest *)CreateIORequest(port, sizeof *treq) : NULL;
@@ -279,10 +288,12 @@ int main(void) {
     }
     UBYTE ctr, last_pico;
     uint32_t took;
-    resync(&ctr, &last_pico);
-    one_round(&ctr, &last_pico, n, reads, 1, &took);     /* warm-up: motor, seek; not counted */
+    if (!resync(&ctr, &last_pico))
+        printf("resync: no header from the board, starting from 0xFF/0xFF\n");
+    if (one_round(&ctr, &last_pico, n, reads, 1, &took) != 0)    /* warm-up: motor, seek; not counted */
+        printf("warm-up round failed (not counted); the counted rounds follow\n");
     c_ioerr = c_nosync = c_badhdr = c_stale = c_rewrites = c_mismatch = c_failed = 0;
-    t_write = t_read = t_align = 0;
+    t_write = t_read = t_align = t_build = 0;
     printf("N=%lu ROUNDS=%lu READS=%lu\n", n, rounds, reads);
     unsigned long ok = 0, done = 0;
     uint64_t total = 0;
@@ -309,7 +320,9 @@ int main(void) {
     }
     if (done) {
         ms(t_write / done, &a, &b); ms(t_read / done, &c, &d); ms(t_align / done, &e, &f);
-        printf("mean ms per round: write %lu.%lu read %lu.%lu align+header %lu.%lu\n", a, b, c, d, e, f);
+        ms(t_build / done, &g, &k);
+        printf("mean ms per round: build(encode) %lu.%lu write %lu.%lu read %lu.%lu align+header %lu.%lu\n",
+               g, k, a, b, c, d, e, f);
     }
     const BOOL pass = ok == rounds && c_mismatch == 0 && c_failed == 0;
     printf("RESULT: %s\n", pass ? "PASS" : "FAIL");

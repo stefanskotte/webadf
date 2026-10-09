@@ -1,3 +1,7 @@
+/*
+ * PaulaNET protocol: Copyright (C) 2026 RobSmithDev, https://github.com/RobSmithDev/PaulaNET.
+ * Used with the author's permission (2026-10-09).
+ */
 /* NetLoop helpers -- see netloop_stats.h. */
 #include "netloop_stats.h"
 #include <stdlib.h>

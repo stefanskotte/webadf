@@ -7,8 +7,8 @@
 #   3. tools/netloop/build/NetLoop.adf with xdftool (amitools), to upload to the webadf library.
 # `build.sh test` stops after 1. The codec is the board's own: wifi-floppy/firmware/src/
 # pnet_mfm.c and pnet_frame.c, compiled unchanged for the 68000.
-# PaulaNET protocol (C) 2026 RobSmithDev, https://github.com/RobSmithDev/PaulaNET, used with
-# permission.
+# PaulaNET protocol: Copyright (C) 2026 RobSmithDev, https://github.com/RobSmithDev/PaulaNET.
+# Used with the author's permission (2026-10-09).
 set -euo pipefail
 here="$(cd "$(dirname "$0")" && pwd)"
 root="$(cd "$here/../.." && pwd)"
@@ -43,12 +43,17 @@ shasum -a 256 "$out/NetLoop" "$out/NetLoop.adf"
 # shim puts it back for this run only. vamos has no E-clock, so the times print as 0.0 here.
 if command -v vamos >/dev/null; then
   py="$(head -1 "$(command -v vamos)" | sed 's/^#!//')"
-  "$py" - "$out/NetLoop" 2>/dev/null <<'PY' | tail -2 | tee "$out/selftest.txt"
+  "$py" - "$out/NetLoop" 2>"$out/selftest.err" <<'PY' | tail -2 > "$out/selftest.txt" || true
 import sys, time
 time.clock = time.perf_counter
 from amitools.tools.vamos import main
 sys.argv = ['vamos', sys.argv[1], 'SELFTEST']
 sys.exit(main())
 PY
-  grep -q '^RESULT: PASS' "$out/selftest.txt" || { echo "FAIL: NetLoop SELFTEST under vamos"; exit 1; }
+  cat "$out/selftest.txt"
+  if ! grep -q '^RESULT: PASS' "$out/selftest.txt"; then
+    echo "FAIL: NetLoop SELFTEST under vamos"; cat "$out/selftest.err"; exit 1
+  fi
+else
+  echo "selftest skipped: vamos not found"
 fi
