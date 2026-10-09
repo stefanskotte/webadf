@@ -27,8 +27,14 @@
 
 #define PNET_CELL_NS         2000u
 #define PNET_SYNC_CELLS      16u
-#define PNET_RX_SYNC_MIN_NS  29500u   /* the sync interval as flux_in reports it: 32 us less */
-#define PNET_RX_SYNC_MAX_NS  32500u   /*   a pulse low time of -500..2500 ns */
+#define PNET_RX_PW_MIN_NS    150u     /* the pulse low times a real write can have */
+#define PNET_RX_PW_MAX_NS    1700u
+/* The sync interval as flux_in reports it: 32 us less the pulse low time. Accepting only a
+ * plausible pw keeps the window under one cell wide: for any pw in range a 15-cell gap measures
+ * <= 30000 ns and a 17-cell gap >= 32300 ns, so a capture armed late (first sync pulse missed,
+ * word 1 a data interval) is refused instead of decoded with a wrong pw. */
+#define PNET_RX_SYNC_MIN_NS  (PNET_SYNC_CELLS * PNET_CELL_NS - PNET_RX_PW_MAX_NS)   /* 30300 */
+#define PNET_RX_SYNC_MAX_NS  (PNET_SYNC_CELLS * PNET_CELL_NS - PNET_RX_PW_MIN_NS)   /* 31850 */
 #define PNET_RX_MAX_CELLS    64u      /* past any gap a legal batch holds: counted, then clamped */
 
 typedef struct {

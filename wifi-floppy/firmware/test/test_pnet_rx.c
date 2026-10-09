@@ -36,7 +36,7 @@ static void feed_all(pnet_rx_t *r, const uint32_t *w, size_t n) {
 static void bytes_after_the_sync_come_back(void) {
     const uint8_t w[] = {0x00, 0x01, 0x00, 0x01, 0x54, 0x50, 0x00, 0x00, 0xFF, 0x01, 0x80, 0x00,
                          0xAA, 0xAA};
-    const uint32_t pws[] = {300u, 700u, 1200u};
+    const uint32_t pws[] = {300u, 700u, 1200u};   /* 300 and 1200 per the fix ruling */
     for (unsigned i = 0; i < 3; i++) {
         pnet_rx_t r;
         pnet_rx_init(&r, capbuf, sizeof capbuf);
@@ -114,6 +114,37 @@ static void a_full_buffer_says_so(void) {
     CHECK_EQ_INT(r.bit, 16);
 }
 
+static void a_late_capture_is_refused_whatever_the_pulse_width(void) {
+    pnet_rx_t r;
+    pnet_rx_init(&r, capbuf, sizeof capbuf);          /* 15-cell gap, pw 300 */
+    pnet_rx_feed(&r, 30000u); pnet_rx_feed(&r, 15u * 2000u - 300u);
+    for (int i = 0; i < 20; i++) pnet_rx_feed(&r, 1700u);
+    CHECK(!r.sync_ok, "15 cells, pw 300"); CHECK_EQ_INT(pnet_rx_bytes(&r), 0);
+    pnet_rx_init(&r, capbuf, sizeof capbuf);          /* 17-cell gap, pw 1600 */
+    pnet_rx_feed(&r, 30000u); pnet_rx_feed(&r, 17u * 2000u - 1600u);
+    for (int i = 0; i < 20; i++) pnet_rx_feed(&r, 400u);
+    CHECK(!r.sync_ok, "17 cells, pw 1600"); CHECK_EQ_INT(pnet_rx_bytes(&r), 0);
+}
+
+static void a_wgate_blip_decodes_nothing(void) {
+    pnet_rx_t r;
+    pnet_rx_init(&r, capbuf, sizeof capbuf);
+    pnet_rx_feed(&r, 30000u);                         /* one pulse */
+    CHECK(!r.sync_ok && pnet_rx_bytes(&r) == 0, "one pulse");
+    pnet_rx_feed(&r, 900u);                           /* two pulses, short gap */
+    CHECK(!r.sync_ok && pnet_rx_bytes(&r) == 0, "two pulses");
+}
+
+static void the_pulse_width_range_edges_are_accepted(void) {
+    const unsigned pws[] = {150u, 1700u};
+    for (unsigned i = 0; i < 2; i++) {
+        pnet_rx_t r;
+        pnet_rx_init(&r, capbuf, sizeof capbuf);
+        pnet_rx_feed(&r, 30000u); pnet_rx_feed(&r, 16u * 2000u - pws[i]);
+        CHECK(r.sync_ok, "edge pw accepted");
+    }
+}
+
 int main(void) {
     RUN(bytes_after_the_sync_come_back);
     RUN(jitter_does_not_move_a_bit);
@@ -121,5 +152,8 @@ int main(void) {
     RUN(a_capture_that_missed_the_first_sync_pulse_is_refused);
     RUN(a_long_gap_is_counted_and_clamped);
     RUN(a_full_buffer_says_so);
+    RUN(a_late_capture_is_refused_whatever_the_pulse_width);
+    RUN(a_wgate_blip_decodes_nothing);
+    RUN(the_pulse_width_range_edges_are_accepted);
     return REPORT();
 }
