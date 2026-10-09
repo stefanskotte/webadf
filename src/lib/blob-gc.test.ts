@@ -163,6 +163,17 @@ describe('planCoverGc (a title\'s own cover images, cover/<sha256>)', () => {
     expect(plan).toEqual({ objects: [], refused: null });
   });
 
+  it('refuses when no title names any cover but the plan would delete some', () => {
+    const plan = planCoverGc({ ...base, objects: [{ sha256: 'a', uploadedAt: old }], referenced: [] });
+    expect(plan.objects).toEqual([]);
+    expect(plan.refused).toMatch(/no title names/);
+  });
+
+  it('with no references and nothing old enough to delete, there is nothing to refuse', () => {
+    const plan = planCoverGc({ ...base, objects: [{ sha256: 'a', uploadedAt: young }], referenced: [] });
+    expect(plan).toEqual({ objects: [], refused: null });
+  });
+
   it('reclaims an old cover nothing names (a Revert, or a replaced image)', () => {
     const plan = planCoverGc({
       ...base,
@@ -194,14 +205,16 @@ describe('planCoverGc (a title\'s own cover images, cover/<sha256>)', () => {
 
   it('refuses when an implausible share would go (the reference list came back short)', () => {
     const objects = Array.from({ length: 200 }, (_, i) => ({ sha256: `c${i}`, uploadedAt: old }));
-    const plan = planCoverGc({ ...base, objects, referenced: [] });
+    const plan = planCoverGc({ ...base, objects: [...objects, { sha256: 'used', uploadedAt: old }], referenced: ['used'] });
     expect(plan.objects).toEqual([]);
-    expect(plan.refused).toMatch(/would delete 200 of 200 cover images/);
+    expect(plan.refused).toMatch(/would delete 200 of 201 cover images/);
   });
 
   it('allows a small plan on a small store (the floor)', () => {
     const plan = planCoverGc({
-      ...base, objects: [{ sha256: 'a', uploadedAt: old }, { sha256: 'b', uploadedAt: old }], referenced: [],
+      ...base,
+      objects: [{ sha256: 'a', uploadedAt: old }, { sha256: 'b', uploadedAt: old }, { sha256: 'used', uploadedAt: old }],
+      referenced: ['used'],
     });
     expect(plan).toEqual({ objects: ['a', 'b'], refused: null });
   });

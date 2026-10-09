@@ -174,6 +174,9 @@ export function planCoverGc(input: CoverGcInput): { objects: string[]; refused: 
   const objects = [...new Set(input.objects
     .filter((o) => !referenced.has(o.sha256) && o.uploadedAt.getTime() < cutoff)
     .map((o) => o.sha256))];
+  if (referenced.size === 0 && objects.length > 0) {
+    return { objects: [], refused: `no title names a cover image, yet ${objects.length} would be deleted -- check the reference list` };
+  }
   const limit = Math.max(floor, Math.floor(input.objects.length * maxFraction));
   if (objects.length > limit) {
     return { objects: [], refused: `would delete ${objects.length} of ${input.objects.length} cover images (limit ${limit}) -- check the reference list` };
