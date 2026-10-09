@@ -1629,6 +1629,11 @@ separately.
   private, loopback and link-local addresses after DNS resolution (re-check on every redirect), cap redirects, size
   and time, and stream into the same presign/complete ingest path so hashing, dedupe, TOSEC matching and
   entitlements stay one code path. Also consider zip/7z/gz archives from such sites.
+- **Setup portal: feedback after Submit** (operator, 2026-10-09, during the re-join bench): after Submit the
+  form just stalls -- the board drops its AP to join the home network, so the phone's request never completes.
+  Answer the POST at once with a "Joining <SSID>... this network will disappear; watch the board's screen; the
+  device appears in the web app when paired" page (flush it before portal_stop()), then associate. On a failed
+  association the AP comes back with last_error, as today -- say so on that page too.
 - **Initial setup screen on 128x64 panels** (operator, 2026-10-09): check that the "Setup needed" + SSID screen
   (and the other built-in screens: boot, connecting, error) is fully visible on the 1.3" SH1106 and 0.96" SSD1306
   128x64 panels. Built-in screens use the panel's default layout and sit at the top (3ax ruling); verify on glass
