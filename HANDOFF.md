@@ -1629,7 +1629,7 @@ separately.
   private, loopback and link-local addresses after DNS resolution (re-check on every redirect), cap redirects, size
   and time, and stream into the same presign/complete ingest path so hashing, dedupe, TOSEC matching and
   entitlements stay one code path. Also consider zip/7z/gz archives from such sites.
-- **Setup portal: feedback after Submit** (operator, 2026-10-09, during the re-join bench): after Submit the
+- **Setup portal: feedback after Submit -- DONE in fw 1.10.0 (3bf).** (operator, 2026-10-09, during the re-join bench): after Submit the
   form just stalls -- the board drops its AP to join the home network, so the phone's request never completes.
   Answer the POST at once with a "Joining <SSID>... this network will disappear; watch the board's screen; the
   device appears in the web app when paired" page (flush it before portal_stop()), then associate. On a failed
@@ -4769,6 +4769,33 @@ Demozoo API (the bulk export makes per-lookup load on a non-profit unnecessary).
 - **Screenshot redirects:** screenshot fetches follow redirects, so the `media.demozoo.org` host
   allowlist checks only the first URL (the raster content-type allowlist and `nosniff` still apply).
 - **Cron drift:** the daily 01:30 cron against a 7-day gate can drift a refetch to 8 days.
+
+### 3bf. fw 1.10.0: NFC icon layout element; setup portal re-raise hang FIXED; Joining page (2026-10-09)
+
+- **NFC icon as a layout element (merged 903d993):** element id 9 (show/hide, 1x/2x, x/y), hidden by default, so
+  existing layouts are unchanged (the firmware never drew an NFC icon before). States: contactless mark (reader
+  present), struck through (absent), cut out of a lit square (tag write waiting). Editor offers it only to boards
+  reporting >= 1.10.0; the layout PATCH refuses it (409) for older ones. From 1.10.0 the decoder SKIPS element ids
+  above EL_LAST instead of refusing the layout (future elements will not blank a 1.10.x board). 128x64 boards: the
+  boot/setup/connecting screens now draw like 128x32, at the top (the 2x title cut "Setup needed"/"wifi-floppy").
+  The error screen is never shown on a board. Not yet seen on glass.
+- **Setup portal re-join bug -- the cause (bench 2026-10-09 on 1.9.3, then host repro on real lwIP):** the portal
+  closes its HTTP connections itself, so they sit in TIME_WAIT on port 80 for 120 s; without SO_REUSE, re-binding 80
+  failed (ERR_USE) and `fatal_setup_failure()` spun silently. Any re-raise within 120 s of a submit (wrong password,
+  used pairing code) hung core1: the chip still did WPA2, so the phone joined with "no internet" and no captive
+  page, until a reboot. **Fix (merged):** `SO_REUSE 1` in lwipopts.h, SOF_REUSEADDR on the HTTP listener only;
+  portal_stop() aborts connections it owns; a setup failure logs step + lwIP error and reboots via core0
+  (`fw_rom_request_reboot`). **Caveat:** a fresh USB install that has not paired is unconfirmed, so that fallback
+  reboot lands in BOOTSEL (same as the old hang + power-cycle). Review (opus): global SO_REUSE changes nothing for
+  sockets without the flag (TLS client, DHCP client unaffected), +212 B code.
+- **Submit now answers a "Joining <SSID>..." page** (operator request) and waits up to 2 s for the phone's ACK before
+  the AP goes down. iOS may still close its captive sheet when the AP disappears.
+- **Bench re-pair 2026-10-09:** WifiFloppy1 was deleted and re-paired; its device id is now 1615a94a-f312-4768-a138-
+  9e55d2f32aee (name restored, DF1 Off = default). A phone took 60 s from ASSOCIATED to AUTHORIZED once -- watch it.
+- **Bench owed (1.10.0):** portal up -> submit a used pairing code -> the portal must come back with the error and a
+  phone must re-join WITHIN ~30 s and get the captive page (after 120 s the old code would also work, proving
+  nothing); log must not show `portal: HTTP tcp_bind(80) failed`; then a fresh code pairs and the Joining page shows.
+  NFC icon: tick it in the editor on the 128x32 board and see the struck-through mark.
 
 ### 3be. OTA stall at "queued" -- FOUND and FIXED, fw 1.9.3+g73836df (seq 58, GitHub fw-1.9.3) (2026-10-09)
 
