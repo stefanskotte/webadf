@@ -14,10 +14,12 @@ export function SecondDriveSetting({ device, next }: { device: DeviceListItem; n
   const [refreshing, startRefresh] = useTransition();
   const [busy, setBusy] = useState(false);
   const [refused, setRefused] = useState<string | null>(null);
+  const [failed, setFailed] = useState<string | null>(null);
   const [step, setStep] = useState<0 | 1>(0);   // 1 = "are you sure" shown
 
   async function save(mode: 'off' | 'df1', override = false) {
     setBusy(true);
+    setFailed(null);
     try {
       const res = await fetch(`/api/devices/${id}/second-drive`, {
         method: 'PATCH', headers: { 'content-type': 'application/json' },
@@ -28,8 +30,15 @@ export function SecondDriveSetting({ device, next }: { device: DeviceListItem; n
         setRefused(j.error === 'df1_seen' ? DF1_SEEN_REASON : j.reason);
         return;
       }
+      if (!res.ok) {
+        const j = await res.json().catch(() => null) as { reason?: string } | null;
+        setFailed(j?.reason ?? `Could not save (HTTP ${res.status})`);
+        return;
+      }
       setRefused(null); setStep(0);
       startRefresh(() => router.refresh());
+    } catch {
+      setFailed('Could not reach the server');
     } finally { setBusy(false); }
   }
 
@@ -53,8 +62,12 @@ export function SecondDriveSetting({ device, next }: { device: DeviceListItem; n
             : next?.preload === 'ready' ? `DF1: disk ${next.diskNo}` : 'DF1: next disk ready'}
         </span>
       )}
+      {failed && (
+        <span role="alert" style={{ color: 'var(--amber-text)', overflowWrap: 'anywhere' }}
+              data-testid={`second-drive-error-${id}`}>{failed}</span>
+      )}
       {refused && (
-        <div className="flex flex-col gap-1 rounded-lg px-2 py-1" style={{ background: 'var(--input-bg)', color: 'var(--amber-text)' }}
+        <div role="alert" className="flex flex-col gap-1 rounded-lg px-2 py-1" style={{ background: 'var(--input-bg)', color: 'var(--amber-text)' }}
              data-testid={`second-drive-refused-${id}`}>
           <span>{refused}. Switching DF1 on would make both drives unreadable.</span>
           {step === 0 ? (
