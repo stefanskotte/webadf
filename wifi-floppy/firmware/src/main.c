@@ -1505,8 +1505,8 @@ static void bus_pads_str(char *buf, size_t cap) {
 
 /** core1, once per poll-loop pass after fwu_step: the updater's phase, its
  *  retry timer and every idle-gate input, plus the pads (fw_update.h's
- *  fwu_diag_due decides when: once a minute, and on a change while an update
- *  is in flight). Static buffers: core1's stack is measured tight. */
+ *  fwu_diag_due decides when: every 10 minutes, on a phase change, and on a
+ *  gate-input change while an update is in flight). Static buffers: core1's stack is measured tight. */
 static void fwu_diag_tick(const fwu_diag_in_t *in, uint32_t now_ms) {
     static fwu_diag_t d;
     static char line[192], pads[96];

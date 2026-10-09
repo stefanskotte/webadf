@@ -75,7 +75,8 @@ typedef struct {
     uint32_t    last_ms;     // when it was logged
 } fwu_diag_t;
 
-#define FWU_DIAG_PERIOD_MS 60000u   // a line at least this often
+#define FWU_DIAG_PERIOD_MS 600000u  // a line at least this often (10 min; was 1 min in the
+                                    // diagnostics build -- the changes are what matter)
 #define FWU_DIAG_MIN_GAP_MS 1000u   // on-change lines at most this often
 
 // True when a line is due: the first call; every FWU_DIAG_PERIOD_MS; a phase
