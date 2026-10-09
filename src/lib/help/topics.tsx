@@ -304,7 +304,7 @@ export const HELP_TOPICS = {
 
   // Sources: cover-image.ts (types, 2 MB, 16-4096 px, effectiveCoverUrl precedence), cover-control.tsx
   // (button texts), api/games/[id]/cover/route.ts (Revert keeps nothing else), cover-override.ts (per-org row),
-  // blob-gc-run.ts (unused images reclaimed after a week).
+  // blob-gc-run.ts (unused images reclaimed within two weeks).
   'cover-image': {
     title: 'Cover images',
     short:
@@ -326,7 +326,7 @@ export const HELP_TOPICS = {
         </p>
         <GoodToKnow items={[
           'The image belongs to your organization only: other people who have the same disk keep seeing their own cover.',
-          'An image no title uses any more is deleted from storage after about a week.',
+          'An image no title uses any more is deleted from storage within two weeks.',
         ]} />
       </>
     ),
