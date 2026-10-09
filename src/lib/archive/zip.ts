@@ -61,8 +61,10 @@ export interface ZipReadOptions {
   /** Largest decompressed member; a bigger one is skipped as 'too large'
    *  rather than inflated whole (a deflate bomb). Default: unbounded. */
   maxEntryBytes?: number;
-  /** Largest sum of decompressed members; once it would be passed, further
-   *  members are skipped as 'too large' (many small bombs). Default: unbounded. */
+  /** Largest sum of decompressed output, counting the output a refused member
+   *  produced before it was refused; once reached, further members are skipped
+   *  as 'archive limit reached' (many small bombs, or one bomb named many
+   *  times). Default: unbounded. */
   maxTotalBytes?: number;
 }
 
@@ -127,18 +129,26 @@ export async function readZip(buf: Uint8Array, opts: ZipReadOptions = {}): Promi
 
     try {
       if (method === 0) {
-        if (raw.length > maxEntry || total + raw.length > maxTotal) skipped.push({ path, reason: 'too large' });
+        if (raw.length > maxEntry) skipped.push({ path, reason: 'too large' });
+        else if (total + raw.length > maxTotal) skipped.push({ path, reason: 'archive limit reached' });
         else {
           total += raw.length;
           entries.push({ path, bytes: raw.slice(), protection: null, method: 'stored' });
         }
       } else if (method === 8) {
         // The remaining total is the bound too, so one member cannot overshoot it.
-        const out = await inflateRaw(raw, Math.min(maxEntry, maxTotal - total));
+        const bound = Math.min(maxEntry, maxTotal - total);
+        if (bound <= 0) { skipped.push({ path, reason: 'archive limit reached' }); continue; }
+        const out = await inflateRaw(raw, bound);
         if (out) {
           total += out.length;
           entries.push({ path, bytes: out, protection: null, method: 'deflate' });
-        } else skipped.push({ path, reason: 'too large' });
+        } else {
+          // The inflate ran to the bound before giving up: charge that work, or
+          // one bomb named by 65,535 entries is re-inflated 65,535 times.
+          total += bound;
+          skipped.push({ path, reason: bound < maxEntry ? 'archive limit reached' : 'too large' });
+        }
       } else {
         // bzip2, lzma, zstd and friends. Rare in this corner of the world and
         // named rather than silently dropped.

@@ -1,3 +1,4 @@
+import { deflateRawSync } from 'node:zlib';
 import { describe, expect, it } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -68,6 +69,29 @@ describe('readZip options (upload from a URL)', () => {
     const { entries, skipped } = await readZip(buf, { maxTotalBytes: cap });
     expect(entries.reduce((n, e) => n + e.bytes.length, 0)).toBeLessThanOrEqual(cap);
     expect(entries.length).toBeLessThan(all.entries.length);
-    expect(skipped.some((x) => x.reason === 'too large')).toBe(true);
+    expect(skipped.some((x) => x.reason === 'archive limit reached')).toBe(true);
+  });
+
+  it('charges a refused bomb\'s work to the total, so one bomb named many times stops early', async () => {
+    // One deflated member of 1000 zero bytes, named by 50 central-directory entries.
+    const data = new Uint8Array(deflateRawSync(Buffer.alloc(1000)));
+    const nm = Buffer.from('bomb.adf');
+    const local = Buffer.alloc(30); local.writeUInt32LE(0x04034b50, 0); local.writeUInt16LE(8, 8);
+    local.writeUInt32LE(data.length, 18); local.writeUInt32LE(1000, 22); local.writeUInt16LE(nm.length, 26);
+    const head = Buffer.concat([local, nm, data]);
+    const cens: Buffer[] = [];
+    for (let i = 0; i < 50; i++) {
+      const c = Buffer.alloc(46); c.writeUInt32LE(0x02014b50, 0); c.writeUInt16LE(8, 10);
+      c.writeUInt32LE(data.length, 20); c.writeUInt32LE(1000, 24); c.writeUInt16LE(nm.length, 28);
+      c.writeUInt32LE(0, 42); cens.push(c, nm);
+    }
+    const cd = Buffer.concat(cens);
+    const eocd = Buffer.alloc(22); eocd.writeUInt32LE(0x06054b50, 0); eocd.writeUInt16LE(50, 8);
+    eocd.writeUInt16LE(50, 10); eocd.writeUInt32LE(cd.length, 12); eocd.writeUInt32LE(head.length, 16);
+    const z = new Uint8Array(Buffer.concat([head, cd, eocd]));
+    const { entries, skipped } = await readZip(z, { maxEntryBytes: 100, maxTotalBytes: 1000 });
+    expect(entries).toEqual([]);
+    expect(skipped.filter((x) => x.reason === 'too large').length).toBe(10);
+    expect(skipped.filter((x) => x.reason === 'archive limit reached').length).toBe(40);
   });
 });
