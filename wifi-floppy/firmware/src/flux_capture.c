@@ -7,6 +7,9 @@
 #include "hardware/clocks.h"
 #include "pico/time.h"
 #include <string.h>
+#if WF_PNET_LOOP
+#include "pnet_rx.h"
+#endif
 
 /*
  * WHY A RING AND NOT AN INTERRUPT PER INTERVAL.
@@ -47,9 +50,19 @@ static volatile bool ended;         /* set by disarm, cleared by take */
 static uint32_t d_max_backlog, d_max_gap_ms, d_last_poll_ms;
 static uint32_t d_cells[3], d_ns_min, d_ns_max, d_glitches;
 static uint32_t d_count, d_lead_ns, d_min_at;   // HANDOFF 3av (b)
+#if WF_PNET_LOOP
+// The PaulaNET loopback's raw capture (flux_capture.h). raw_mode is set at arm and read by
+// consume() and both takes; a DF0 arm clears it.
+static volatile bool raw_mode;
+static pnet_rx_t raw_rx;
+static volatile uint64_t raw_ended_us;
+#endif
 
 static void consume(uint32_t word) {
     const uint32_t ns = flux_counter_to_ns(word, pio_hz);
+#if WF_PNET_LOOP
+    if (raw_mode) { pnet_rx_feed(&raw_rx, ns); return; }
+#endif
     // Word 0 is not a flux interval: arming only restarts flux_in, so it
     // counts from the arm (or carries the previous capture's count) to the
     // first edge. Measured 2026-10-04 (HANDOFF 3av): the sub-3000 ns minimum
@@ -97,7 +110,14 @@ static uint32_t dma_head(void) {
     return (uint32_t)(((w - (uintptr_t)ring) / 4u) & (RING_WORDS - 1u));
 }
 
+#if WF_PNET_LOOP
+static void arm(bool raw);
+void flux_capture_arm(void) { arm(false); }
+void flux_capture_arm_raw(void) { arm(true); }
+static void arm(bool raw) {
+#else
 void flux_capture_arm(void) {
+#endif
     if (cap_dma < 0 || armed) return;
     // Everything stale goes first: a FIFO still holding intervals from the
     // last write would put another track's flux at the head of this one.
@@ -110,6 +130,11 @@ void flux_capture_arm(void) {
     dma_channel_set_trans_count(cap_dma, 0xffffffffu, true);
 
     cap_read = 0;
+#if WF_PNET_LOOP
+    raw_mode = raw;
+    if (raw) pnet_rx_init(&raw_rx, mfm_buf, sizeof mfm_buf);
+    else
+#endif
     flux_bits_init(&bits, mfm_buf, sizeof mfm_buf);
     d_max_backlog = d_max_gap_ms = 0;
     d_cells[0] = d_cells[1] = d_cells[2] = 0;
@@ -127,6 +152,9 @@ void flux_capture_disarm(void) {
     if (!armed) return;
     pio_sm_set_enabled(cap_pio, cap_sm, false);
     armed = false;
+#if WF_PNET_LOOP
+    raw_ended_us = time_us_64();
+#endif
     // NOT decoded here: this runs in the WGATE ISR. The service loop drains
     // what is left and decides what to do with it.
     ended = true;
@@ -173,6 +201,9 @@ bool flux_capture_timeout(uint32_t now_ms) {
 }
 
 bool flux_capture_take(flux_capture_result_t *out) {
+#if WF_PNET_LOOP
+    if (raw_mode) return false;      // a loopback batch: flux_capture_take_raw's
+#endif
     if (!ended) return false;
     // Drain whatever the DMA landed between the last poll and WGATE going
     // away -- the tail of the track, which is where the last sector lives.
@@ -196,3 +227,25 @@ bool flux_capture_take(flux_capture_result_t *out) {
     out->glitches = d_glitches;
     return true;
 }
+
+#if WF_PNET_LOOP
+bool flux_capture_take_raw(flux_capture_raw_t *out) {
+    if (!ended || !raw_mode) return false;
+    while (cap_read != dma_head()) {          // the tail, as flux_capture_take does
+        consume(ring[cap_read]);
+        cap_read = (cap_read + 1u) & (RING_WORDS - 1u);
+    }
+    ended = false;
+    out->bytes        = mfm_buf;
+    out->nbytes       = (uint32_t)pnet_rx_bytes(&raw_rx);
+    out->words        = raw_rx.words;
+    out->sync_ns      = raw_rx.sync_ns;
+    out->pw_ns        = raw_rx.pw_ns;
+    out->sync_ok      = raw_rx.sync_ok;
+    out->overflowed   = raw_rx.overflowed;
+    out->out_of_range = raw_rx.out_of_range;
+    out->max_backlog  = d_max_backlog;
+    out->ended_us     = raw_ended_us;
+    return true;
+}
+#endif

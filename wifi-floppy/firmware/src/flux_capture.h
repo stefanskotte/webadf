@@ -81,4 +81,30 @@ typedef struct {
  *  Clears the flag, so a caller that takes it owns it. */
 bool flux_capture_take(flux_capture_result_t *out);
 
+#if WF_PNET_LOOP
+/*
+ * PaulaNET loopback TEST builds (plan 2026-10-09-paulanet-phase0-loopback): the same PIO, DMA,
+ * ring and buffer, but the intervals go to pnet_rx.c (raw 2 us cells, any count) instead of
+ * flux_bits.c (MFM, 2-4 cells). A raw capture is taken with flux_capture_take_raw() only;
+ * flux_capture_take() never returns one, so DF0's write-back cannot see a network batch.
+ */
+void flux_capture_arm_raw(void);
+
+typedef struct {
+    const uint8_t *bytes;     /* from the first bit after the 00 01 00 01 sync */
+    uint32_t nbytes;
+    uint32_t words;           /* PIO words, the lead included */
+    uint32_t sync_ns;
+    int32_t  pw_ns;
+    bool     sync_ok;
+    bool     overflowed;
+    uint32_t out_of_range;
+    uint32_t max_backlog;     /* most unread ring words seen at once */
+    uint64_t ended_us;        /* time_us_64() when WGATE released */
+} flux_capture_raw_t;
+
+/** True, once, after a RAW capture ends. */
+bool flux_capture_take_raw(flux_capture_raw_t *out);
+#endif
+
 #endif
