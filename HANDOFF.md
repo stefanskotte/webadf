@@ -2561,8 +2561,8 @@ separately.
   code) as long as the overall licence is respected** -- keep his notice and credit him; ask the operator for the
   written message to store under docs/ for provenance. Phase -1 is the operator's (AmiTCP_NG v4.1.8 ADF:
   https://github.com/MW0MWZ/AmiTCP_NG/releases/download/v4.1.8/AmiTCP_NG-v4.1.8.adf). **Phase -1 PASSED
-  2026-10-09:** AmiTCP_NG v4.1.8 installed on the A500's IDE Workbench (KS 3.1); `ping 127.0.0.1` replies (`avail`
-  numbers owed). **Phase 0 GO (operator, 2026-10-09):** Rob's framing only (his grant makes PaulaNET-compatible the
+  2026-10-09:** AmiTCP_NG v4.1.8 installed on the A500's IDE Workbench (KS 3.1); `ping 127.0.0.1` replies; `avail` with the
+  stack running: 446,544 B chip free, 7,713,448 B fast free (acceptance bar was >= 100 KB chip). **Phase 0 GO (operator, 2026-10-09):** Rob's framing only (his grant makes PaulaNET-compatible the
   choice; the MFM alternative is dropped), and the bar to continue to Phase 1 is >= 15 KB/s and a median round trip
   <= 250 ms on the A500. Plan: docs/superpowers/plans/2026-10-09-paulanet-phase0-loopback.md. **Stack decided (operator, 2026-10-09):** the Amiga-side TCP/IP stack behind the PaulaNET device is AmiTCP_NG, https://github.com/MW0MWZ/AmiTCP_NG. Check its licence alongside PaulaNET's, and how its SANA-II driver interface meets PaulaNET's device. **UNBLOCKED 2026-10-09:** RobSmithDev replied that he has no issue with us implementing PaulaNET, as long as the licences are respected. Check PaulaNET's licence terms (code and protocol) before any design, and credit him as the licence requires. Not started. Raised by the operator
   2026-09-13 after finding RobSmithDev's PaulaNET. Genuinely attractive, and explicitly a
