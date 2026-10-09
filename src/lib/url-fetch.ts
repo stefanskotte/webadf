@@ -70,6 +70,9 @@ export interface TransportRequest {
   /** The vetted address to connect to. The transport MUST NOT resolve the host itself. */
   address: string;
   family: 4 | 6;
+  /** Every vetted address for the host, in resolver order (`address` is the
+   *  first). A transport may fall back among these, and only these. */
+  addresses?: ResolvedAddress[];
   headers: Record<string, string>;
   signal: AbortSignal;
 }
@@ -235,12 +238,12 @@ function bareHost(url: URL): string {
 }
 
 /** Decide where to connect for one hop, or why not. */
-async function vetHost(url: URL, resolve: Resolver): Promise<{ ok: true; addr: ResolvedAddress } | { ok: false; code: UrlFetchCode }> {
+async function vetHost(url: URL, resolve: Resolver): Promise<{ ok: true; addr: ResolvedAddress; all: ResolvedAddress[] } | { ok: false; code: UrlFetchCode }> {
   const host = bareHost(url);
   const literal = isIP(host);
   if (literal) {
     return isPublicAddress(host)
-      ? { ok: true, addr: { address: host, family: literal as 4 | 6 } }
+      ? { ok: true, addr: { address: host, family: literal as 4 | 6 }, all: [{ address: host, family: literal as 4 | 6 }] }
       : { ok: false, code: 'address_not_allowed' };
   }
   // Would resolve to loopback anyway; refused without asking DNS.
@@ -257,7 +260,7 @@ async function vetHost(url: URL, resolve: Resolver): Promise<{ ok: true; addr: R
   // ALL of them, not just the one we would pick: a name with one public and
   // one private record is somebody arranging to reach the private one.
   if (!addrs.every((a) => isPublicAddress(a.address))) return { ok: false, code: 'address_not_allowed' };
-  return { ok: true, addr: addrs[0] };
+  return { ok: true, addr: addrs[0], all: addrs };
 }
 
 // ------------------------------------------------------------- the fetch
@@ -284,11 +287,14 @@ export const defaultResolver: Resolver = async (hostname) => {
 export const nodeTransport: Transport = (req) => new Promise((resolve, reject) => {
   const mod = req.url.protocol === 'https:' ? https : http;
   const host = bareHost(req.url);
+  // Every address on offer was vetted public; the socket may only ever be
+  // given these, so Node can fall back between IPv6 and IPv4.
+  const offered = req.addresses && req.addresses.length > 0 ? req.addresses : [{ address: req.address, family: req.family }];
   const pinned: LookupFunction = (_hostname, options, cb) => {
     if (options && (options as { all?: boolean }).all) {
-      (cb as unknown as (e: null, a: { address: string; family: number }[]) => void)(null, [{ address: req.address, family: req.family }]);
+      (cb as unknown as (e: null, a: { address: string; family: number }[]) => void)(null, offered.map((a) => ({ ...a })));
     } else {
-      cb(null, req.address, req.family);
+      cb(null, offered[0].address, offered[0].family);
     }
   };
   const r = mod.request({
@@ -358,7 +364,7 @@ export async function fetchUrlSafely(
 
       try {
         current = await race(deps.transport({
-          url, address: where.addr.address, family: where.addr.family,
+          url, address: where.addr.address, family: where.addr.family, addresses: where.all,
           headers: { ...REQUEST_HEADERS }, signal: controller.signal,
         }));
       } catch {

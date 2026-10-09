@@ -159,6 +159,16 @@ describe('fetchUrlSafely', () => {
     expect(t.seen[0].address).toBe(PUBLIC);
   });
 
+  it('hands the transport every vetted address, in resolver order', async () => {
+    const t = fakeTransport({ 'https://dual.example/a.adf': { status: 200, chunks: [new Uint8Array([9])] } });
+    const r = await fetchUrlSafely('https://dual.example/a.adf', {
+      resolve: async () => [{ address: '2606:4700::1111', family: 6 }, { address: PUBLIC, family: 4 }], transport: t.transport,
+    });
+    expect(r.ok).toBe(true);
+    expect(t.seen[0].addresses).toEqual([{ address: '2606:4700::1111', family: 6 }, { address: PUBLIC, family: 4 }]);
+    expect(t.seen[0].address).toBe('2606:4700::1111');
+  });
+
   it('follows a redirect to another public host, re-vetting it', async () => {
     const resolve = vi.fn(publicResolver);
     const t = fakeTransport({
@@ -253,6 +263,39 @@ describe('fetchUrlSafely', () => {
 });
 
 describe('nodeTransport', () => {
+  it('falls back to the next vetted address when the first is unreachable, and never leaves the list', async () => {
+    const server = http.createServer((_req, res) => { res.writeHead(200); res.end(Buffer.from([5, 6])); });
+    await new Promise<void>((r) => server.listen(0, '127.0.0.1', r));
+    const { port } = server.address() as AddressInfo;
+    try {
+      const url = new URL(`http://no-such-host.invalid:${port}/disk.adf`);
+      const res = await nodeTransport({
+        url, address: '::1', family: 6,
+        addresses: [{ address: '::1', family: 6 }, { address: '127.0.0.1', family: 4 }],
+        headers: {}, signal: new AbortController().signal,
+      });
+      const chunks: Uint8Array[] = [];
+      for await (const c of res.body) chunks.push(c);
+      expect(res.status).toBe(200);
+      expect(Buffer.concat(chunks)).toEqual(Buffer.from([5, 6]));
+    } finally {
+      server.close();
+    }
+  });
+
+  it('with no address list, still connects only to the single pinned address', async () => {
+    const server = http.createServer((_req, res) => { res.writeHead(200); res.end(); });
+    await new Promise<void>((r) => server.listen(0, '127.0.0.1', r));
+    const { port } = server.address() as AddressInfo;
+    try {
+      const url = new URL(`http://no-such-host.invalid:${port}/`);
+      const res = await nodeTransport({ url, address: '127.0.0.1', family: 4, headers: {}, signal: new AbortController().signal });
+      expect(res.status).toBe(200);
+    } finally {
+      server.close();
+    }
+  });
+
   it('connects to the pinned address, never resolving the hostname itself', async () => {
     // A name that does not exist anywhere. If the transport consulted DNS it
     // would fail; pinned to the local test server, it reaches it -- and the
