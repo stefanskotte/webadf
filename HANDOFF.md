@@ -1581,6 +1581,13 @@ separately.
   format-truncation at 1729/1734 and maybe-uninitialized `body` at 2375. `test_display_golden.c:48` fails on
   format-truncation. The device image is fine. Fix the test code (sizes, or initialise `body`), and run test/run.sh
   under GCC locally (e.g. a docker gcc image) before pushing, because macOS clang does not show these.
+- **OTA download fails after long board uptime** (found 2026-10-09, twice). With 1.7.8 (board up hours) and 1.8.0
+  TEST (board up ~6800 s), the sequence was `fw: offered ... ok` -> `fw: downloading` -> `fw: queued` about 2 s
+  later, retried with backoff for minutes. After a board power-cycle the same offer installed at once. 1.7.6/1.7.7
+  installed first time on a board up only minutes. Suspect heap fragmentation, or state left on the reused TLS
+  connection that blocks the download (dc_fetch_firmware -> dc_exchange, retryable). **First step:** log WHY the
+  download failed (the transport error / HTTP status / body_complete) in fwu_fetch, then reproduce after a long
+  uptime.
 - **NFC icon on the board's display** (operator, 2026-10-08): an NFC-reader icon as a layout element that works
   like the other icons (wifi, lock, ...): show/hide, 1x/2x, free placement in the Display editor. It needs a new
   element id in `display_layout.c`/`.h` and the validator, a glyph in `display.c`, `pnpm display:wasm`, the editor's
