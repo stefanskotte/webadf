@@ -6,6 +6,7 @@ import { devices } from '@/db/schema/devices';
 import { collectionGames } from '@/db/schema/collections';
 import { openretroEntries, openretroImages } from '@/db/schema/openretro';
 import { pickCover, type CoverCandidate } from '@/lib/cover-pick';
+import { effectiveCoverUrl } from '@/lib/cover-image';
 import { kindFromSetName, pickKind } from '@/lib/game-kind';
 import { tosecEntries } from '@/db/schema/tosec';
 import { orgFilter } from '@/db/scope';
@@ -219,7 +220,7 @@ export async function coverUrlsForGames(orgId: string, gameIds: string[]): Promi
   if (gameIds.length === 0) return out;
   const db = getDb();
 
-  const [images, dzCovers] = await Promise.all([
+  const [images, dzCovers, overrides] = await Promise.all([
     db.select({
       gameId: disks.gameId,
       sha1: openretroImages.sha1,
@@ -234,7 +235,14 @@ export async function coverUrlsForGames(orgId: string, gameIds: string[]): Promi
       .where(and(inArray(disks.gameId, gameIds), eq(disks.orgId, orgId))),
 
     demozooCovers(orgId, gameIds),
+
+    // A person's own cover beats every enriched one (effectiveCoverUrl). Read
+    // from this org's games rows only: the choice is per-org by construction.
+    db.select({ id: games.id, sha256: games.coverOverrideSha256 })
+      .from(games)
+      .where(orgFilter(games, orgId, inArray(games.id, gameIds))),
   ]);
+  const overrideOf = new Map(overrides.map((o) => [o.id, o.sha256]));
 
   const byGame = new Map<string, CoverCandidate[]>();
   for (const f of images) {
@@ -245,7 +253,8 @@ export async function coverUrlsForGames(orgId: string, gameIds: string[]): Promi
 
   for (const id of new Set(gameIds)) {
     const chosen = pickCover([...(byGame.get(id) ?? []), ...(dzCovers.get(id) ?? [])]);
-    if (chosen) out.set(id, `/api/images/${chosen.sha1}`);
+    const url = effectiveCoverUrl(id, overrideOf.get(id), chosen ? `/api/images/${chosen.sha1}` : null);
+    if (url) out.set(id, url);
   }
   return out;
 }
@@ -509,6 +518,8 @@ export interface GameDetail {
   demozoo: GameDemozoo;
   languages: string | null;
   front: GameImage | null; title_: GameImage | null; screenshots: GameImage[];
+  /** The cover this org chose for the title, or null (then `front`/`title_` apply). */
+  coverOverrideUrl: string | null;
   links: GameLinks | null;
   disks: GameDetailDisk[];
 }
@@ -530,13 +541,16 @@ export async function getGameDetail(orgId: string, gameId: string): Promise<Game
       factsSource: games.factsSource, proseSource: games.proseSource,
       metadataSource: games.metadataSource,
       demozooProductionId: games.demozooProductionId, demozooLinkSource: games.demozooLinkSource,
+      coverOverrideSha256: games.coverOverrideSha256,
     })
     .from(games)
     .where(orgFilter(games, orgId, eq(games.id, gameId)))
     .limit(1);
 
-  const game = gameRows[0];
-  if (!game) return null;
+  const row = gameRows[0];
+  if (!row) return null;
+  const { coverOverrideSha256, ...game } = row;
+  const coverOverrideUrl = effectiveCoverUrl(game.id, coverOverrideSha256, null);
 
   const diskRows = await db
     .select({
@@ -617,6 +631,6 @@ export async function getGameDetail(orgId: string, gameId: string): Promise<Game
   const demozoo = await getGameDemozoo(orgId, game, shas);
 
   return {
-    ...game, languages, front, title_: titleShot, screenshots, links, disks: diskRows, demozoo,
+    ...game, languages, front, title_: titleShot, screenshots, coverOverrideUrl, links, disks: diskRows, demozoo,
   };
 }

@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { HELP_TOPICS, HELP_ORDER, type HelpTopicId } from './topics';
 
-const IDS: HelpTopicId[] = ['boards', 'nfc', 'next-disk', 'write-back', 'write-protect', 'disk-sets', 'hd-hfe', 'display', 'second-drive'];
+const IDS: HelpTopicId[] = ['boards', 'nfc', 'next-disk', 'write-back', 'write-protect', 'disk-sets', 'hd-hfe', 'display', 'second-drive', 'cover-image'];
 // Internal words a reader of the help should never meet (spec §5).
 const BANNED = /\b(PSRAM|TBYB|poll|sha256|cursor|WPROT)\b/i;
 
@@ -93,4 +93,16 @@ describe('second-drive states every caveat the operator asked for', () => {
     expect(all()).toMatch(/older firmware keeps the DF1 setting/i);
   });
   it('an HD next disk leaves DF1 empty', () => expect(all()).toMatch(/HD disk, DF1 stays empty|HD[^.]*empty/i));
+});
+
+describe('cover-image says what the upload accepts and what Revert does', () => {
+  const all = () => HELP_TOPICS['cover-image'].short + ' ' + bodyText('cover-image');
+  it('names the four types and the 2 MB cap', () => {
+    expect(all()).toMatch(/PNG/); expect(all()).toMatch(/JPEG/); expect(all()).toMatch(/GIF/); expect(all()).toMatch(/WebP/);
+    expect(all()).toMatch(/2 MB/);
+  });
+  it('names both buttons as they read on the page', () => {
+    expect(all()).toMatch(/Change image/); expect(all()).toMatch(/Revert to default/);
+  });
+  it('says the choice is per organization', () => expect(all()).toMatch(/your organization only/i));
 });

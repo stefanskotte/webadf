@@ -25,7 +25,7 @@ test('a help button opens a short explanation that links to its /help section', 
 test('/help lists every topic', async ({ page }) => {
   await signUpFresh(page);
   await page.goto('/help');
-  for (const id of ['boards', 'nfc', 'next-disk', 'write-back', 'write-protect', 'disk-sets', 'hd-hfe', 'display', 'second-drive']) {
+  for (const id of ['boards', 'nfc', 'next-disk', 'write-back', 'write-protect', 'disk-sets', 'hd-hfe', 'display', 'second-drive', 'cover-image']) {
     await expect(page.getByTestId(`help-section-${id}`)).toBeVisible();
   }
 });
