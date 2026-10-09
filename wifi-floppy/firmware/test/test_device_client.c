@@ -2430,6 +2430,27 @@ static void a_matching_second_drive_is_not_owed(void) {
     CHECK(!dc_drive_take(&c, &seq, &mode), "already acked: nothing owed");
 }
 
+// Final review I1: a re-paired board (ack seeded 0) still running DF1 against a
+// new row at {seq 0, off} must take the OFF, though the seq equals the ack.
+static void an_acked_seq_with_a_different_mode_is_owed(void) {
+    boot(); dc_set_df1(&c, DF1_MODE_NEXT, false); c.drive_ack = 0;
+    push_ok_json("{\"secondDrive\":{\"seq\":0,\"mode\":\"off\"},\"version\":1,\"desired\":null}");
+    dc_step(&c);
+    uint32_t seq; df1_mode_t mode;
+    CHECK(dc_drive_take(&c, &seq, &mode), "ack == seq but the board runs another mode: owed");
+    CHECK_EQ_INT(seq, 0); CHECK_EQ_INT(mode, DF1_MODE_OFF);
+    // The other direction: board off (a parked DF1 reports off), row says df1 at the acked seq.
+    boot(); dc_set_df1(&c, DF1_MODE_OFF, false); c.drive_ack = 6;
+    push_ok_json("{\"secondDrive\":{\"seq\":6,\"mode\":\"df1\"},\"version\":1,\"desired\":null}");
+    dc_step(&c);
+    CHECK(dc_drive_take(&c, &seq, &mode) && mode == DF1_MODE_NEXT, "off board, df1 row, same seq: owed");
+    // Same mode and same seq: not owed (and an off board at {0, off} stays quiet).
+    boot(); dc_set_df1(&c, DF1_MODE_OFF, false); c.drive_ack = 0;
+    push_ok_json("{\"secondDrive\":{\"seq\":0,\"mode\":\"off\"},\"version\":1,\"desired\":null}");
+    dc_step(&c);
+    CHECK(!dc_drive_take(&c, &seq, &mode), "same mode, same seq: not owed");
+}
+
 static void test_status_reports_second_drive_and_its_ack(void) {
     boot(); dc_set_df1(&c, DF1_MODE_NEXT, false); dc_drive_handled(&c, 7);
     fake_push_response("HTTP/1.1 204 No Content\r\n\r\n");
@@ -2954,6 +2975,7 @@ int main(void) {
     RUN(a_re_paired_board_with_a_higher_ack_takes_the_lower_seq);
     RUN(a_bad_mode_is_handled_as_off_and_still_acked);
     RUN(a_matching_second_drive_is_not_owed);
+    RUN(an_acked_seq_with_a_different_mode_is_owed);
     RUN(test_status_reports_second_drive_and_its_ack);
     RUN(test_a_drive_change_owes_a_status_report);
     RUN(test_poll_body_reads_display_version);

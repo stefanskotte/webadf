@@ -2196,6 +2196,11 @@ static void core1_main(void) {
                     } else {
                         wf_logf(WF_WARN, "df1: setting %lu not applied by core0 within 50 ms -- not acked, retried on the next poll",
                                 (unsigned long)seq);
+                        // An OFF already told device_client "off" above. Put back
+                        // what core0 runs now, so the poll's mode compare
+                        // (dc_take_second_drive, I1) still owes the setting
+                        // when the seq alone would not (ack == seq after a re-pair).
+                        dc_set_df1(&c, g_df1_mode, DF1_HOLDS_HD);
                         sleep_ms(1000);   // the server answers at once while it is owed
                     }
                 }

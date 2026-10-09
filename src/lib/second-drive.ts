@@ -44,10 +44,17 @@ export async function saveSecondDrive(
   return 'df1_seen';
 }
 
+/**
+ * What the board is doing with the setting -- never a state it is not in (final review I1).
+ * - "Set on the board" only when the board has acked this version AND reports running the
+ *   chosen mode: a re-paired board acks 0 against a new row at 0 while still running DF1 (I1).
+ */
 export function secondDriveStatus(d: {
   secondDriveCapable: boolean; secondDriveVersion: number; secondDriveAppliedVersion: number | null;
+  secondDrive: SecondDriveMode; secondDriveReported: SecondDriveMode | null;
 }): string {
   if (!d.secondDriveCapable) return `Needs firmware ${SECOND_DRIVE_FW} or newer`;
   if (d.secondDriveAppliedVersion !== d.secondDriveVersion) return 'Waiting for the board';
+  if (d.secondDriveReported !== d.secondDrive) return 'Waiting for the board';
   return 'Set on the board \u2014 takes effect when the Amiga restarts';
 }

@@ -1047,9 +1047,16 @@ static void dc_take_second_drive(device_client_t *c, char *json) {
     if (!json_u32_strict(obj, "seq", &seq)) return;
     char mode[8] = "";
     json_str(obj, "mode", mode, sizeof mode);
-    if (seq == c->drive_ack && !c->drive_owed) return;   // nothing new
+    const uint8_t want = strcmp(mode, "df1") == 0 ? DF1_MODE_NEXT : DF1_MODE_OFF;
+    // Nothing new only when BOTH the seq is acked AND the board already runs
+    // that mode (final review I1). A re-paired board seeds ack 0 against a new
+    // row at {seq 0, off}: comparing the seq alone left it running DF1 while
+    // the server showed Off as applied. The same covers a DF1-default TEST
+    // build with nothing stored, and a handoff a re-pair interrupted (Task 19
+    // M1). _df1_mode is what core0 runs (main.c seeds it on every entry).
+    if (seq == c->drive_ack && !c->drive_owed && want == c->_df1_mode) return;
     c->drive_want_seq = seq;
-    c->drive_want_mode = strcmp(mode, "df1") == 0 ? DF1_MODE_NEXT : DF1_MODE_OFF;
+    c->drive_want_mode = want;
     c->drive_owed = true;
 }
 

@@ -13,10 +13,24 @@ describe('second-drive readings', () => {
 });
 
 describe('secondDriveStatus', () => {
+  const base = {
+    secondDriveCapable: true, secondDriveVersion: 2, secondDriveAppliedVersion: 2,
+    secondDrive: 'df1' as const, secondDriveReported: 'df1' as const,
+  };
   it('says what the board is doing with the setting', () => {
-    const base = { secondDriveCapable: true, secondDriveVersion: 2, secondDriveAppliedVersion: 2 };
     expect(secondDriveStatus({ ...base, secondDriveCapable: false })).toBe('Needs firmware 1.9.0 or newer');
     expect(secondDriveStatus({ ...base, secondDriveAppliedVersion: 1 })).toBe('Waiting for the board');
     expect(secondDriveStatus(base)).toBe('Set on the board \u2014 takes effect when the Amiga restarts');
+  });
+  it('waits until the board reports running the chosen mode, not just the version (I1)', () => {
+    // A re-paired board: ack 0 against the new row at Off/0, still running DF1.
+    expect(secondDriveStatus({
+      ...base, secondDrive: 'off', secondDriveVersion: 0, secondDriveAppliedVersion: 0, secondDriveReported: 'df1',
+    })).toBe('Waiting for the board');
+    expect(secondDriveStatus({ ...base, secondDriveReported: 'off' })).toBe('Waiting for the board');
+    expect(secondDriveStatus({ ...base, secondDriveReported: null })).toBe('Waiting for the board');
+    expect(secondDriveStatus({
+      ...base, secondDrive: 'off', secondDriveVersion: 0, secondDriveAppliedVersion: 0, secondDriveReported: 'off',
+    })).toBe('Set on the board \u2014 takes effect when the Amiga restarts');
   });
 });
