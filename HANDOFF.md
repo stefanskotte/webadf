@@ -2551,7 +2551,9 @@ separately.
   pushes files to over TCP and that writes them to RAM:, vs. driving an existing Amiga FTP/server tool. Questions:
   how the web app reaches an Amiga behind the user's router (via the board's existing server session, not inbound
   connections), size limits vs. free RAM, and file names/protection bits (the ADF file-operation code already maps
-  these).
+  these). **Operator, same day:** a small Amiga config program sets where drops land (default RAM:, e.g. a
+  directory on the IDE drive), stored Amiga-side (ENVARC:) so the receiver reads it; the web drop zone could show the
+  current target.
 - **Amiga networking over the floppy port (PaulaNET-style).** **Shape decided (operator, 2026-10-09):** the network
   is a third DF1 mode (Off / Disk / Network, the existing `secondDrive` setting), while DF0 keeps serving full
   80-cylinder disks -- no track-map conflict. Scope is **Workbench only**; games that take over the hardware are out
