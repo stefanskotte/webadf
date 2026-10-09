@@ -48,15 +48,15 @@ export function githubReleasePlan(r: GithubReleaseInput): GithubReleasePlan {
     `wifi-floppy firmware ${r.version} (sequence ${r.sequence}).`,
     '',
     ...(r.notes ? [r.notes, ''] : []),
-    // INSTALL_PENDING_MARKER: remove "(bench-verification pending)" once the
-    // operator's bench run of the drag-and-drop install has passed.
-    `First install (bench-verification pending): hold BOOTSEL, plug the board into USB, and drag ${installAsset}`,
+    `First install: hold BOOTSEL, plug the board into USB, and drag ${installAsset}`,
     'onto the drive that appears. The board writes everything it needs and restarts into this firmware by itself;',
     'then pair it from the web app. Later versions arrive over the air. No picotool is needed.',
     '',
     `${installAsset} is a USB-only build of the same commit without the try-before-you-buy flag; it is never offered over the air.`,
-    'wifi_floppy.bin, wifi_floppy.uf2 and wifi_floppy_pt.uf2 are the same signed files the web app installs over the air.',
-    'manifest.json carries the version, sequence, size, sha256 and the ed25519 signature of wifi_floppy.bin.',
+    'wifi_floppy.bin is the signed image the web app installs over the air; manifest.json carries its version,',
+    'sequence, size, sha256 and ed25519 signature. wifi_floppy.uf2 holds the same image for a USB upgrade of a board',
+    'that already has the partition table, and wifi_floppy_pt.uf2 is that partition table. Neither .uf2 is signed or',
+    'sent over the air.',
   ].join('\n');
   return {
     publish: true,

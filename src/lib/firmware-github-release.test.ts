@@ -44,9 +44,14 @@ describe('the GitHub release for a published firmware version', () => {
     const p = githubReleasePlan(base);
     if (!p.publish) throw new Error('expected a publish plan');
     expect(p.installAsset).toBe('wifi-floppy-install-1.8.1.uf2');
-    expect(p.body).toMatch(/First install \(bench-verification pending\): hold BOOTSEL/);
+    expect(p.body).toMatch(/First install: hold BOOTSEL/);
+    expect(p.body).not.toMatch(/pending/);
     expect(p.body).toContain('drag wifi-floppy-install-1.8.1.uf2');
     expect(p.body).toMatch(/never offered over the air/);
+    // Only wifi_floppy.bin is signed and sent over the air; the .uf2 files are not.
+    expect(p.body).toMatch(/wifi_floppy\.bin is the signed image the web app installs over the air/);
+    expect(p.body).toMatch(/Neither \.uf2 is signed or\s+sent over the air/);
+    expect(p.body).not.toMatch(/same signed files/);
     // The manifest still describes only the signed OTA image.
     expect(p.manifest).toMatchObject({ file: 'wifi_floppy.bin' });
   });
