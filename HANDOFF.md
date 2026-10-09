@@ -1618,9 +1618,12 @@ separately.
   title/blob), size and type limits, and probably an "uploaded overrides enriched" precedence rule plus a way to
   revert. Remember the blob GC: any new column naming a stored object must join `runBlobGc`'s references, or
   extend it for the image store.
-- **LZH archives alongside LHA** (operator, 2026-10-09): accept `.lzh` wherever `.lha` is accepted (upload and
-  extraction). It is the same LHarc family, so it is most likely the extension list and MIME/magic checks plus the
-  same decoder; confirm the decoder handles the -lh0-/-lh5- methods LZH files from Amiga sites use.
+- **LZH archives alongside LHA -- SHIPPED on branch feat/device-delete-lzh (2026-10-09), not yet merged.**
+  `.lzh` was already routed by `isArchiveName` (`/\.(lha|lzh|zip)$/`) into `readLha`; the container is identical, so
+  the only code change is the drop error text. Decoder methods: -lh0-, -lz4- (stored), -lhd-, -lh5-, -lh6-, -lh7-;
+  -lh1-/-lh2-/-lh3-/-lzs-/-lz5- are skipped with a named reason (pre-1990 LHarc; rare on Amiga sites). Fixtures
+  `m5/m6/m7.lzh` were written by the real `lha` (-o5/-o6/-o7). The `.adf` upload page does not take archives at all
+  (unchanged); archives are a drop-onto-a-disk feature.
 - **Upload from a URL** (requested 2026-10-09, via the operator): on the upload page, paste a URL and the web app
   fetches the ADF/HFE itself. Design notes: a server-side fetch is an SSRF surface, so allow http(s) only, refuse
   private, loopback and link-local addresses after DNS resolution (re-check on every redirect), cap redirects, size

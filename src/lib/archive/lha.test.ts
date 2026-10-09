@@ -76,6 +76,33 @@ describe.each(['h0.lha', 'h1.lha', 'h2.lha'])('%s', (file) => {
   });
 });
 
+// .lzh is the same container under another name (Amiga sites ship both; nothing
+// in the bytes differs). These three were written by the same `lha` with
+// `-o5/-o6/-o7`, i.e. the -lh5-/-lh6-/-lh7- methods, and named .lzh so the
+// extension the app dispatches on is the one a user would actually drop.
+describe.each([['m5.lzh', '-lh5-'], ['m6.lzh', '-lh6-'], ['m7.lzh', '-lh7-']])('%s', (file, method) => {
+  const { entries, skipped } = readLha(read(file));
+
+  it('reads every file and skips nothing', () => {
+    expect(skipped).toEqual([]);
+    expect(entries).toHaveLength(4);
+  });
+
+  it(`decompresses ${method} to the exact original bytes`, () => {
+    const readme = byName(entries, 'readme.txt');
+    expect(readme?.method).toBe(method);
+    expect(text(readme)).toBe(README);
+    expect(text(byName(entries, 'deep.txt'))).toBe(DEEP);
+  });
+
+  it('expands through the same entry point the drop target uses', async () => {
+    const { expandArchive } = await import('./index');
+    const r = await expandArchive(file, read(file));
+    expect(r && 'format' in r && r.format).toBe('lha');
+    expect(r && 'members' in r && r.members).toHaveLength(4);
+  });
+});
+
 describe('malformed input', () => {
   it('returns empty rather than throwing on random bytes', () => {
     // The caller is a drop target. An exception there is a dead UI with no
