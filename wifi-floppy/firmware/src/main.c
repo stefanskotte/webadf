@@ -1271,7 +1271,10 @@ static void __isr gpio_isr(uint gpio, uint32_t events) {
             } else {
                 g_pnet_busy++;
             }
-            pnet_armed_this_write = armed_now;
+            // Set, never cleared, here: a WGATE glitch mid-write re-enters this branch, finds the
+            // capture armed (busy, armed_now false), and must not erase this write's arm -- or its
+            // release would skip the disarm. Only the release clears it, with pnet_write_ours.
+            if (armed_now) pnet_armed_this_write = true;
             if (armed_now) pnet_raw_pending = true;        // for the `lost` count only
             wf_trace(WF_EV_WGATE, 1u, 0x100u | (uint32_t)PNET_TRACK_IN);
             return;
