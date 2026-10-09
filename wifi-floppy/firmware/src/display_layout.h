@@ -20,7 +20,14 @@
 
 typedef enum { PANEL_128x32 = 0, PANEL_128x64 = 1 } panel_t;
 typedef enum { EL_STATUS = 1, EL_WIFI = 2, EL_WRITE = 3, EL_TITLE = 4,
-               EL_DETAIL = 5, EL_TRACK = 6, EL_DOWNLOAD = 7, EL_LEMMING = 8 } element_id_t;
+               EL_DETAIL = 5, EL_TRACK = 6, EL_DOWNLOAD = 7, EL_LEMMING = 8,
+               // 1.10.0. Firmware before it refuses a layout that lists it at
+               // all ("element id: unknown"), so the web app sends it only to
+               // boards on 1.10.0 or newer. Absent from both defaults: a board
+               // with no custom layout, or a layout saved before it existed,
+               // draws exactly what it drew before.
+               EL_NFC = 9 } element_id_t;
+#define EL_LAST EL_NFC
 
 typedef struct { uint8_t id, visible, scale, x, y, w, opt; } layout_el_t;   // scale 1 or 2
 typedef struct { panel_t panel; uint8_t n; layout_el_t el[LAYOUT_MAX_ELEMENTS]; } layout_t;
@@ -30,5 +37,10 @@ void layout_el_size(const layout_el_t *e, int *w, int *h);  // fixed size per sp
 bool layout_decode(const uint8_t *buf, size_t len, layout_t *out, char *why, size_t why_len);
 int  layout_encode(const layout_t *l, uint8_t *buf, size_t cap);           // bytes or -1
 const layout_t *layout_default(panel_t p);
+/** The layout of the built-in screens (boot, setup, connecting, error) on
+ *  panel `p`: the 128x32 default's elements, at the top of either panel.
+ *  128x64's own default draws the title at 2x, ten characters a line, which
+ *  cut "Setup needed" and "wifi-floppy" short (1.10.0). */
+const layout_t *layout_builtin(panel_t p);
 
 #endif

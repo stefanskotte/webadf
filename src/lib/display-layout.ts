@@ -1,15 +1,22 @@
 // The editor's layout JSON <-> the board's layout blob (spec 2026-10-04-oled-layouts §5).
 //
 //   header, 4 bytes:  [0] format = 1  [1] panel (0 = 128x32, 1 = 128x64)  [2] n (0..16)  [3] 0
-//   record, 8 bytes:  [0] id (1..8)  [1] flags (bit0 visible, bit1 2x)  [2] x  [3] y  [4] w  [5] opt  [6] 0  [7] 0
+//   record, 8 bytes:  [0] id (1..9)  [1] flags (bit0 visible, bit1 2x)  [2] x  [3] y  [4] w  [5] opt  [6] 0  [7] 0
 //
 // This module ENCODES and never validates: the server runs the blob through the
 // board's own C validator (display-wasm.ts), so there is one rule set. The
 // encoder therefore lets through what the validator must refuse (a duplicate
 // id, an element past the panel edge).
 
-/** Element names; index = id - 1. Ids are fixed forever. */
-export const ELEMENT_NAMES = ['status', 'wifi', 'write', 'title', 'detail', 'track', 'download', 'lemming'] as const;
+/**
+ * Element names; index = id - 1. Ids are fixed forever. 'nfc' (id 9) is
+ * firmware 1.10.0's: older boards refuse a layout that lists it at all, so it
+ * is only ever sent to a board that has it (NFC_ELEMENT_FIRMWARE).
+ */
+export const ELEMENT_NAMES = ['status', 'wifi', 'write', 'title', 'detail', 'track', 'download', 'lemming', 'nfc'] as const;
+
+/** The first firmware whose layout validator knows the 'nfc' element. */
+export const NFC_ELEMENT_FIRMWARE = '1.10.0';
 export type ElementName = (typeof ELEMENT_NAMES)[number];
 
 export interface ElementJson {

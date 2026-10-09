@@ -19,7 +19,7 @@ __attribute__((export_name("out_ptr")))   uint8_t *out_ptr(void)   { return g_ou
 __attribute__((export_name("state_size"))) int state_size(void) { return (int)sizeof g_state; }
 
 /** Byte offset of display_state_t field `i` (0 status, 1 bars, 2 title, 3 detail,
- *  4 show_track, 5 cyl, 6 max_cyl, 7 pct, 8 tick, 9 writable, 10 sync); -1 unknown.
+ *  4 show_track, 5 cyl, 6 max_cyl, 7 pct, 8 tick, 9 writable, 10 sync, 11 nfc); -1 unknown.
  *  The loader checks its own table against these, so a layout drift fails loudly. */
 __attribute__((export_name("state_off"))) int state_off(int i) {
     switch (i) {
@@ -34,6 +34,7 @@ __attribute__((export_name("state_off"))) int state_off(int i) {
     case 8:  return (int)offsetof(display_state_t, tick);
     case 9:  return (int)offsetof(display_state_t, writable);
     case 10: return (int)offsetof(display_state_t, sync);
+    case 11: return (int)offsetof(display_state_t, nfc);
     default: return -1;
     }
 }

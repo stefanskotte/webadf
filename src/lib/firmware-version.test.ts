@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import {
-  firmwareVersionSchema, FIRMWARE_VERSION_MAX, semverOf, identifiesItsSource,
+  firmwareVersionSchema, FIRMWARE_VERSION_MAX, semverOf, identifiesItsSource, firmwareAtLeast,
 } from './firmware-version';
 
 describe('firmwareVersionSchema', () => {
@@ -61,5 +61,21 @@ describe('identifiesItsSource', () => {
   it('refuses a build whose source cannot be identified', () => {
     expect(identifiesItsSource('1.0.0+gd16a1da-dirty')).toBe(false);
     expect(identifiesItsSource('1.0.0+nogit')).toBe(false);
+  });
+});
+
+describe('firmwareAtLeast', () => {
+  it('compares numerically, not as strings (1.10.0 is newer than 1.9.3)', () => {
+    expect(firmwareAtLeast('1.10.0+gabc1234', '1.10.0')).toBe(true);
+    expect(firmwareAtLeast('1.10.1+gabc1234-dirty', '1.10.0')).toBe(true);
+    expect(firmwareAtLeast('2.0.0+gabc1234', '1.10.0')).toBe(true);
+    expect(firmwareAtLeast('1.9.3+g73836df', '1.10.0')).toBe(false);
+    expect(firmwareAtLeast('1.9.10+g73836df', '1.10.0')).toBe(false);
+  });
+
+  it('is false for a board whose version is missing or unreadable', () => {
+    expect(firmwareAtLeast(null, '1.10.0')).toBe(false);
+    expect(firmwareAtLeast('1.10.0', '1.10.0')).toBe(false);
+    expect(firmwareAtLeast('garbage', '1.10.0')).toBe(false);
   });
 });

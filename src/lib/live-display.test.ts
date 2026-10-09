@@ -3,7 +3,7 @@ import { liveDisplayState, liveDisplayText, rssiBars, type LiveDisplayFields } f
 
 const empty: LiveDisplayFields = {
   rssi: -55, mountedSha256: null, mountedGame: null, mountedDiskNo: null,
-  mountedLabel: null, mountedDiskCount: null, mountedWriteProtected: null,
+  mountedLabel: null, mountedDiskCount: null, mountedWriteProtected: null, nfcReader: null,
 };
 const mounted: LiveDisplayFields = {
   ...empty, mountedSha256: 'ab', mountedGame: 'Workbench 3.1', mountedDiskNo: 2,
@@ -33,6 +33,12 @@ describe('liveDisplayState', () => {
 
   it('write protection unknown is not shown as writable', () => {
     expect(liveDisplayState({ ...mounted, mountedWriteProtected: null }, true, 0).writable).toBe(false);
+  });
+
+  it('the NFC icon follows the reported reader; never-reported reads as absent, never as armed', () => {
+    expect(liveDisplayState({ ...mounted, nfcReader: 'present' }, true, 0).nfc).toBe('present');
+    expect(liveDisplayState({ ...mounted, nfcReader: 'absent' }, true, 0).nfc).toBe('absent');
+    expect(liveDisplayState(empty, true, 0).nfc).toBe('absent');
   });
 
   it('never invents a track position', () => {

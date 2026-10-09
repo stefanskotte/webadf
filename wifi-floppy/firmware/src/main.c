@@ -3817,6 +3817,12 @@ int main(void) {
             const char *t = nfc_ui_title(ui.title, &nfc_armed);
             if (t != ui.title) snprintf(ui.title, sizeof ui.title, "%s", t);
             ui.show_track = disk_mounted;
+            // The NFC element (1.10.0): an armed write first -- it is the one
+            // reader state that waits on a person -- then the reader's level
+            // as core0's own nfc_step last saw it (0 = not checked yet draws
+            // as absent).
+            ui.nfc = nfc_armed.armed ? DISP_NFC_ARMED
+                   : g_nfc_reader == 1 ? DISP_NFC_PRESENT : DISP_NFC_ABSENT;
             ui.cyl        = cur_cyl[0];
             ui.max_cyl    = NUM_CYL - 1;
             // The lemming walks off core0's own clock, which is the point of

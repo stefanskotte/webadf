@@ -44,6 +44,19 @@ describe('saveDisplay', () => {
     expect(w.params).toEqual(['dev-1', 'org-1', true]);
   });
 
+  it('with a minimum firmware (the nfc element), the same UPDATE also requires the reported version', async () => {
+    updated = [{ version: 5 }];
+    await saveDisplay('org-1', 'dev-1', '128x32', new Uint8Array([1, 0, 0, 0]), '1.10.0');
+    const w = render(wheres[0]);
+    expect(w.sql).toMatch(/"display_layouts" = \$3 and \(case when "devices"."firmware_version" ~ '\^\[0-9\]\+\[\.\]/);
+    expect(w.sql).toMatch(/string_to_array\(split_part\("devices"."firmware_version", '\+', 1\), '\.'\)::int\[\] end\)\s+>= array\[1,10,0\]::int\[\]/);
+    expect(w.params).toEqual(['dev-1', 'org-1', true]);
+  });
+
+  it('refuses a malformed minimum rather than building SQL from it', async () => {
+    await expect(saveDisplay('org-1', 'dev-1', '128x32', null, '1.10')).rejects.toThrow(/bad version/);
+  });
+
   it('a reset stores a null layout', async () => {
     updated = [{ version: 4 }];
     await saveDisplay('org-1', 'dev-1', '128x64', null);

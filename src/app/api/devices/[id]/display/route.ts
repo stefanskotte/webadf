@@ -2,7 +2,7 @@ import { z } from 'zod';
 import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 import { requireOrg } from '@/lib/session';
-import { encodeLayout } from '@/lib/display-layout';
+import { ELEMENT_NAMES, encodeLayout, NFC_ELEMENT_FIRMWARE } from '@/lib/display-layout';
 import { loadDisplayWasm, type DisplayWasm } from '@/lib/display-wasm';
 import { saveDisplay } from '@/lib/display-store';
 
@@ -17,7 +17,7 @@ const getWasm = () => (wasm ??= readFile(path.join(process.cwd(), 'public', 'dis
   .catch((e: unknown) => { wasm = null; throw e; }));
 
 const element = z.object({
-  id: z.enum(['status', 'wifi', 'write', 'title', 'detail', 'track', 'download', 'lemming']),
+  id: z.enum(ELEMENT_NAMES),
   visible: z.boolean(), scale: z.union([z.literal(1), z.literal(2)]),
   x: z.number().int().min(0).max(255), y: z.number().int().min(0).max(255),
   w: z.number().int().min(0).max(255), opt: z.number().int().min(0).max(255),
@@ -40,6 +40,11 @@ export async function PATCH(request: Request, ctx: { params: Promise<{ id: strin
   }
 
   let blob: Uint8Array | null = null;
+  // The 'nfc' element, shown OR hidden, makes firmware before 1.10.0 refuse
+  // the whole layout, so a layout that lists it is stored only for a board
+  // reporting 1.10.0 or newer. The editor never offers it to an older one;
+  // this is the server's half of that rule.
+  const wantsNfc = !('reset' in parsed.data) && parsed.data.elements.some((e) => e.id === 'nfc');
   if (!('reset' in parsed.data)) {
     blob = encodeLayout(parsed.data);
     const why = (await getWasm()).validate(blob);
@@ -47,10 +52,15 @@ export async function PATCH(request: Request, ctx: { params: Promise<{ id: strin
   }
   // not_found covers an unknown device and another org's -- deliberately
   // indistinguishable, like every org-scoped device route.
-  const r = await saveDisplay(orgId, id, parsed.data.panel, blob);
+  const r = wantsNfc
+    ? await saveDisplay(orgId, id, parsed.data.panel, blob, NFC_ELEMENT_FIRMWARE)
+    : await saveDisplay(orgId, id, parsed.data.panel, blob);
   if (r === 'not_found') return Response.json({ error: 'not_found' }, { status: 404 });
   if (r === 'firmware_too_old') {
-    return Response.json({ error: 'firmware_too_old', reason: 'Needs firmware 1.7.1 or newer' }, { status: 409 });
+    const reason = wantsNfc
+      ? `The NFC icon needs firmware ${NFC_ELEMENT_FIRMWARE} or newer`
+      : 'Needs firmware 1.7.1 or newer';
+    return Response.json({ error: 'firmware_too_old', reason }, { status: 409 });
   }
   return Response.json({ version: r.version });
 }

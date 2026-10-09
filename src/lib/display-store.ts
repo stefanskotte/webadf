@@ -16,16 +16,23 @@ export type SaveDisplayOutcome = { version: number } | 'not_found' | 'firmware_t
  * is org-scoped too, so another org's device is indistinguishable from none.
  *
  * The blob arrives already validated by the board's own C validator; this
- * module never looks inside it.
+ * module never looks inside it. The caller does, for one thing: a layout that
+ * lists an element older firmware does not know (the 'nfc' element, 1.10.0)
+ * passes `minFirmware`, and the board's REPORTED version must be at least
+ * that -- in the same WHERE, for the same reason as the capability.
  */
 export async function saveDisplay(
   orgId: string,
   deviceId: string,
   panel: '128x32' | '128x64',
   blob: Uint8Array | null,
+  minFirmware?: string,
 ): Promise<SaveDisplayOutcome> {
   const db = getDb();
   const scope = and(eq(devices.id, deviceId), eq(devices.orgId, orgId));
+  const gate = minFirmware
+    ? and(eq(devices.displayLayouts, true), firmwareAtLeastSql(minFirmware))
+    : eq(devices.displayLayouts, true);
   const [row] = await db.update(devices)
     .set({
       displayPanel: panel,
@@ -35,12 +42,25 @@ export async function saveDisplay(
       // would read as "The board rejected it" for a layout it has not seen.
       displayError: null,
     })
-    .where(and(scope, eq(devices.displayLayouts, true)))
+    .where(and(scope, gate))
     .returning({ version: devices.displayVersion });
   if (row) return { version: row.version };
 
   const [exists] = await db.select({ id: devices.id }).from(devices).where(scope).limit(1);
   return exists ? 'firmware_too_old' : 'not_found';
+}
+
+/**
+ * `firmware_version >= min` by its semver half, numerically (firmware-version.ts
+ * firmwareAtLeast in SQL). The CASE keeps the int[] cast away from a version
+ * without the `x.y.z+` shape -- which, like a NULL, compares as not new enough.
+ */
+export function firmwareAtLeastSql(min: string) {
+  const want = min.split('.').map((n) => Number.parseInt(n, 10));
+  if (want.length !== 3 || want.some((n) => !Number.isInteger(n) || n < 0)) throw new Error(`bad version ${min}`);
+  return sql`(case when ${devices.firmwareVersion} ~ '^[0-9]+[.][0-9]+[.][0-9]+[+]'
+    then string_to_array(split_part(${devices.firmwareVersion}, '+', 1), '.')::int[] end)
+    >= array[${sql.raw(want.join(','))}]::int[]`;
 }
 
 /**

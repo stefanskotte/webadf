@@ -4,7 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, useTransition } from
 import { useRouter } from 'next/navigation';
 import { loadDisplayWasm, type DisplayWasm, type PreviewState } from '@/lib/display-wasm';
 import {
-  decodeLayout, encodeLayout, panelId, type ElementJson, type ElementName, type LayoutJson,
+  decodeLayout, encodeLayout, NFC_ELEMENT_FIRMWARE, panelId, type ElementJson, type ElementName, type LayoutJson,
 } from '@/lib/display-layout';
 import {
   elementBox, hitTest, overlapping, panelHeight, placeElement, PANEL_W, statusLine,
@@ -34,13 +34,15 @@ const PREVIEWS = {
   writable: 'Mounted, writable',
   readonly: 'Mounted, read-only',
   long: 'Long title',
+  armed: 'Tag write armed',
 } as const;
 type PreviewKey = keyof typeof PREVIEWS;
 
-function previewState(key: PreviewKey, tick: number): PreviewState {
+/** `reader`: the NFC icon's state in every preview but 'armed' -- the board's own reported reader. */
+function previewState(key: PreviewKey, tick: number, reader: PreviewState['nfc']): PreviewState {
   const base: PreviewState = {
     status: 'ready', bars: 3, title: '', detail: '', showTrack: false, cyl: 0, maxCyl: 79,
-    pct: -1, tick, writable: true, sync: 'synced',
+    pct: -1, tick, writable: true, sync: 'synced', nfc: reader,
   };
   const mounted = { ...base, status: 'loaded' as const, title: 'Workbench 3.1 Install', detail: 'disk 1 of 6', showTrack: true, cyl: 42 };
   switch (key) {
@@ -49,7 +51,30 @@ function previewState(key: PreviewKey, tick: number): PreviewState {
     case 'writable': return mounted;
     case 'readonly': return { ...mounted, writable: false };
     case 'long': return { ...mounted, title: 'Gods v1.00 (1991-03-28)(Renegade)(Disk 1 of 2)', detail: 'disk 1 of 2' };
+    // What main.c shows while a tag write waits: the disk on the title line,
+    // nfc_ui.h NFC_UI_ARMED_DETAIL below it, and the icon inverted.
+    case 'armed': return { ...mounted, title: 'Turrican', detail: 'Tap tag to write', nfc: 'armed' };
   }
+}
+
+/**
+ * Where the NFC icon starts when a layout does not list it yet: on the status
+ * row between the status word (14..61) and the write glyph (110), on either
+ * panel. Hidden, so adding it to the list changes nothing on the glass.
+ */
+const NFC_START: ElementJson = { id: 'nfc', visible: false, scale: 1, x: 100, y: 0, w: 0, opt: 0 };
+
+/**
+ * The 'nfc' element is in the list exactly when the board's firmware knows it
+ * (1.10.0+): appended, hidden, to a layout saved before it existed (and to the
+ * built-in defaults, which never list it); removed for an older board, which
+ * would refuse the whole layout over it.
+ */
+function withNfc(l: LayoutJson, supported: boolean): LayoutJson {
+  const has = l.elements.some((e) => e.id === 'nfc');
+  if (supported && !has) return { ...l, elements: [...l.elements, NFC_START] };
+  if (!supported && has) return { ...l, elements: l.elements.filter((e) => e.id !== 'nfc') };
+  return l;
 }
 
 export function fromBase64(s: string): Uint8Array {
@@ -64,16 +89,18 @@ function normalise(l: LayoutJson): LayoutJson {
   return { ...l, elements: l.elements.map((e) => (e.id === 'title' && e.opt === 0 ? { ...e, opt: 1 } : e)) };
 }
 
-function defaultLayout(wasm: DisplayWasm, panel: LayoutJson['panel']): LayoutJson {
-  return normalise(decodeLayout(wasm.defaultBlob(panelId(panel))));
+function defaultLayout(wasm: DisplayWasm, panel: LayoutJson['panel'], nfc: boolean): LayoutJson {
+  return withNfc(normalise(decodeLayout(wasm.defaultBlob(panelId(panel)))), nfc);
 }
 
 /** What the board holds: its stored layout, or the built-in default for its panel when none is stored. */
 function boardLayout(device: DeviceListItem, wasm: DisplayWasm): LayoutJson {
   if (device.displayLayout) {
-    try { return normalise(decodeLayout(fromBase64(device.displayLayout))); } catch { /* unreadable: fall back to the default */ }
+    try {
+      return withNfc(normalise(decodeLayout(fromBase64(device.displayLayout))), device.displayNfcElement);
+    } catch { /* unreadable: fall back to the default */ }
   }
-  return defaultLayout(wasm, device.displayPanel);
+  return defaultLayout(wasm, device.displayPanel, device.displayNfcElement);
 }
 
 const message = (e: unknown) => (e instanceof Error ? e.message : String(e));
@@ -163,6 +190,8 @@ function LoadedEditor({ device, wasm, onCancel }: { device: DeviceListItem; wasm
   }
 
   const [preview, setPreview] = useState<PreviewKey>('writable');
+  const reader: PreviewState['nfc'] = device.nfcReader === 'present' ? 'present' : 'absent';
+  const nfcOk = device.displayNfcElement;
   const [tick, setTick] = useState(0);
   useEffect(() => {
     // The lemming walks on the tick, as on the board.
@@ -183,11 +212,11 @@ function LoadedEditor({ device, wasm, onCancel }: { device: DeviceListItem; wasm
   const rendered = useMemo((): { fb: Uint8Array | null; error: string | null } => {
     if (reason) return { fb: null, error: null };
     try {
-      return { fb: wasm.render(previewState(preview, tick), panelId(layout.panel), blob), error: null };
+      return { fb: wasm.render(previewState(preview, tick, reader), panelId(layout.panel), blob), error: null };
     } catch (e) {
       return { fb: null, error: `could not render: ${message(e)}` };
     }
-  }, [wasm, reason, preview, tick, layout.panel, blob]);
+  }, [wasm, reason, preview, tick, reader, layout.panel, blob]);
   const problem = reason ?? rendered.error;
   const overlaps = useMemo(() => overlapping(layout.elements), [layout]);
   const rows = panelHeight(layout.panel);
@@ -349,7 +378,7 @@ function LoadedEditor({ device, wasm, onCancel }: { device: DeviceListItem; wasm
     const sent = layout;
     return send({ reset: true, panel: sent.panel }, () => {
       if (layoutRef.current !== sent) return;
-      setLayout(defaultLayout(wasm, sent.panel));
+      setLayout(defaultLayout(wasm, sent.panel, nfcOk));
       setDirty(false);
     });
   };
@@ -371,7 +400,7 @@ function LoadedEditor({ device, wasm, onCancel }: { device: DeviceListItem; wasm
         <label className="flex min-w-0 max-w-full flex-wrap items-center gap-1" style={{ color: 'var(--muted)' }}>
           Panel
           <select value={layout.panel} className={field} style={inputStyle} data-testid={`display-panel-${id}`}
-                  onChange={(ev) => edit(defaultLayout(wasm, ev.target.value === '128x64' ? '128x64' : '128x32'))}>
+                  onChange={(ev) => edit(defaultLayout(wasm, ev.target.value === '128x64' ? '128x64' : '128x32', nfcOk))}>
             <option value="128x32">128×32</option>
             <option value="128x64">128×64</option>
           </select>
@@ -380,7 +409,9 @@ function LoadedEditor({ device, wasm, onCancel }: { device: DeviceListItem; wasm
           Preview as
           <select value={preview} className={field} style={inputStyle} data-testid={`display-preview-${id}`}
                   onChange={(ev) => setPreview(ev.target.value as PreviewKey)}>
-            {Object.entries(PREVIEWS).map(([k, label]) => <option key={k} value={k}>{label}</option>)}
+            {Object.entries(PREVIEWS)
+              .filter(([k]) => k !== 'armed' || nfcOk)
+              .map(([k, label]) => <option key={k} value={k}>{label}</option>)}
           </select>
         </label>
         <label className="flex items-center gap-1" style={{ color: 'var(--muted)' }}>
@@ -442,6 +473,14 @@ function LoadedEditor({ device, wasm, onCancel }: { device: DeviceListItem; wasm
             )}
           </li>
         ))}
+        {!nfcOk && (
+          // Both values of "can this board show the NFC icon": an element
+          // missing from the list would read as no such feature at all.
+          <li className="flex items-center gap-1" style={{ color: 'var(--muted)' }} data-testid={`display-nfc-needs-fw-${id}`}>
+            <input type="checkbox" disabled aria-label="nfc (needs newer firmware)" />
+            nfc — needs firmware {NFC_ELEMENT_FIRMWARE} or newer
+          </li>
+        )}
       </ul>
 
       <div className="flex flex-wrap items-center gap-2">

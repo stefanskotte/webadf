@@ -14,6 +14,8 @@ import { getGameDemozoo, demozooCovers, type GameDemozoo } from '@/lib/demozoo/q
 import type { ImageFormat } from '@/lib/disk-format';
 import type { SecondDriveMode } from '@/lib/second-drive';
 import { isHdAdfSql } from '@/lib/disk-format-sql';
+import { firmwareAtLeast } from '@/lib/firmware-version';
+import { NFC_ELEMENT_FIRMWARE } from '@/lib/display-layout';
 
 export interface GameListItem {
   id: string; title: string; year: number | null; publisher: string | null;
@@ -364,6 +366,13 @@ export interface DeviceListItem {
   displayError: string | null;
   /** The capability; false also for a board that never said (null in the row). */
   displayLayouts: boolean;
+  /**
+   * The board's layout validator knows the 'nfc' element (firmware 1.10.0+,
+   * by its reported version). Older firmware refuses any layout that lists it.
+   */
+  displayNfcElement: boolean;
+  /** The tag reader as the board last reported it; null = never said (or no NFC firmware). */
+  nfcReader: 'present' | 'absent' | null;
   /** DF1 second drive readings; null = firmware before 1.7.6 (or never reported). */
   sel1Wired: boolean | null;
   df1Seen: boolean | null;
@@ -434,6 +443,7 @@ export async function listDevices(orgId: string): Promise<DeviceListItem[]> {
       displayAppliedVersion: devices.displayAppliedVersion,
       displayError: devices.displayError,
       displayLayouts: devices.displayLayouts,
+      nfcReader: devices.nfcReader,
       sel1Wired: devices.sel1Wired,
       df1Seen: devices.df1Seen,
       secondDrive: devices.secondDrive,
@@ -460,6 +470,8 @@ export async function listDevices(orgId: string): Promise<DeviceListItem[]> {
     ...r,
     displayPanel: r.displayPanel === '128x64' ? '128x64' : '128x32',
     displayLayouts: r.displayLayouts === true,
+    displayNfcElement: r.displayLayouts === true && firmwareAtLeast(r.firmwareVersion, NFC_ELEMENT_FIRMWARE),
+    nfcReader: r.nfcReader === 'present' ? 'present' as const : r.nfcReader === 'absent' ? 'absent' as const : null,
     secondDrive: r.secondDrive === 'df1' ? 'df1' as const : 'off' as const,
     secondDriveReported: r.secondDriveReported === 'df1' ? 'df1' as const
       : r.secondDriveReported === 'off' ? 'off' as const : null,

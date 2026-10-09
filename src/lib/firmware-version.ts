@@ -42,3 +42,18 @@ export function semverOf(version: string): string | null {
 export function identifiesItsSource(version: string): boolean {
   return !version.endsWith('-dirty') && !version.endsWith('+nogit');
 }
+
+/**
+ * Whether a reported version is `min` (a plain x.y.z) or newer, by its semver
+ * half. False for null and for a string with no semver: a board whose version
+ * cannot be read is treated as one that lacks the feature, which only ever
+ * hides a control.
+ */
+export function firmwareAtLeast(version: string | null, min: string): boolean {
+  const have = version ? semverOf(version) : null;
+  if (!have) return false;
+  const a = have.split('.').map(Number);
+  const b = min.split('.').map(Number);
+  for (let i = 0; i < 3; i++) if (a[i] !== b[i]) return a[i] > b[i];
+  return true;
+}

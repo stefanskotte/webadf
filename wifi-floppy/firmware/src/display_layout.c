@@ -15,6 +15,7 @@ void layout_el_size(const layout_el_t *e, int *w, int *h) {
         case EL_WIFI:     bw = 11; break;
         case EL_WRITE:    bw = 8;  break;
         case EL_LEMMING:  bw = 8;  break;
+        case EL_NFC:      bw = 8;  break;
         case EL_TITLE:    bw = e->w; bh = LAYOUT_LINE_H * (e->opt ? e->opt : 1); break;
         case EL_DETAIL:   bw = e->w; break;
         case EL_TRACK:    bw = TRACK_MAX_CHARS * LAYOUT_ADVANCE; break;
@@ -40,12 +41,16 @@ bool layout_decode(const uint8_t *b, size_t len, layout_t *out, char *why, size_
     if (len != 4u + 8u * b[2])    return no(why, n, "length: does not match the element count");
 
     layout_t l; memset(&l, 0, sizeof l);
-    l.panel = (panel_t)b[1]; l.n = b[2];
+    l.panel = (panel_t)b[1]; l.n = 0;
     const int W = 128, H = panel_height(l.panel);
-    bool seen[9] = { false };
-    for (int i = 0; i < l.n; i++) {
+    bool seen[EL_LAST + 1] = { false };
+    for (int i = 0; i < b[2]; i++) {
         const uint8_t *r = b + 4 + 8 * i;
-        if (r[0] < EL_STATUS || r[0] > EL_LEMMING) return no(why, n, "element id: unknown");
+        if (r[0] < EL_STATUS)                       return no(why, n, "element id: unknown");
+        // An element a later firmware added: skipped, not refused, so a layout
+        // saved for a newer board still shows everything this one knows
+        // (from 1.10.0; earlier boards refuse the whole layout).
+        if (r[0] > EL_LAST)                         continue;
         if (seen[r[0]])                             return no(why, n, "element id: listed twice");
         seen[r[0]] = true;
         if (r[1] & ~0x03u)                          return no(why, n, "flags: unknown bits");
@@ -71,7 +76,7 @@ bool layout_decode(const uint8_t *b, size_t len, layout_t *out, char *why, size_
         }
         int ew, eh; layout_el_size(&e, &ew, &eh);
         if (e.x + ew > W || e.y + eh > H)  return no(why, n, "outside the panel");
-        l.el[i] = e;
+        l.el[l.n++] = e;
     }
     *out = l;
     return true;
@@ -124,3 +129,20 @@ static const layout_t DEFAULT_64 = {
 };
 
 const layout_t *layout_default(panel_t p) { return p == PANEL_128x64 ? &DEFAULT_64 : &DEFAULT_32; }
+
+// DEFAULT_32's elements on a 128x64 panel: the rows below 32 stay dark, as
+// they always have on these screens (the 3ax ruling: top, not centred).
+static const layout_t BUILTIN_64 = {
+    PANEL_128x64, 8, {
+        { EL_WIFI,     1, 1,   0,  0,   0, 0 },
+        { EL_LEMMING,  1, 1, 120,  0,   0, 0 },
+        { EL_WRITE,    1, 1, 110,  0,   0, 0 },
+        { EL_STATUS,   1, 1,  14,  0,   0, 0 },
+        { EL_TITLE,    1, 1,   0,  8, 128, 2 },
+        { EL_TRACK,    1, 1,  98, 24,   0, 0 },
+        { EL_DOWNLOAD, 1, 1, 104, 24,   0, 0 },
+        { EL_DETAIL,   1, 1,   0, 24, 128, 0 },
+    }
+};
+
+const layout_t *layout_builtin(panel_t p) { return p == PANEL_128x64 ? &BUILTIN_64 : &DEFAULT_32; }

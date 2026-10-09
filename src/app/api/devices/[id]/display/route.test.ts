@@ -11,9 +11,9 @@ vi.mock('@/lib/session', () => ({
   requireOrg: () => Promise.resolve({ orgId: 'org-1', userId: 'user-1', email: 'a@b.test' }),
 }));
 type Saved = { version: number } | 'not_found' | 'firmware_too_old';
-const saveDisplay = vi.fn<(orgId: string, id: string, panel: string, blob: Uint8Array | null) => Promise<Saved>>();
+const saveDisplay = vi.fn<(orgId: string, id: string, panel: string, blob: Uint8Array | null, minFirmware?: string) => Promise<Saved>>();
 vi.mock('@/lib/display-store', () => ({
-  saveDisplay: (o: string, i: string, p: string, b: Uint8Array | null) => saveDisplay(o, i, p, b),
+  saveDisplay: (...a: [string, string, string, Uint8Array | null, string?]) => saveDisplay(...a),
 }));
 
 const FIX = 'wifi-floppy/firmware/test/fixtures/layouts';
@@ -79,6 +79,32 @@ describe('PATCH /api/devices/[id]/display', () => {
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual({ version: 8 });
     expect(saveDisplay).toHaveBeenCalledWith('org-1', 'dev-1', '128x32', null);
+  });
+
+  it('a layout listing the nfc element is stored only for firmware 1.10.0+ (shown or hidden)', async () => {
+    const { PATCH } = await import('./route');
+    for (const visible of [true, false]) {
+      saveDisplay.mockClear();
+      const good = await fixture('custom32_nfc');
+      good.elements = good.elements.map((e) => (e.id === 'nfc' ? { ...e, visible } : e));
+      const res = await PATCH(patch(good), ctx());
+      expect(res.status).toBe(200);
+      expect(saveDisplay).toHaveBeenCalledWith('org-1', 'dev-1', '128x32', expect.any(Uint8Array), '1.10.0');
+    }
+  });
+
+  it('a layout without the nfc element carries no firmware minimum', async () => {
+    const { PATCH } = await import('./route');
+    await PATCH(patch(await fixture('custom64')), ctx());
+    expect(saveDisplay.mock.calls[0]).toHaveLength(4);
+  });
+
+  it('an older board refused over the nfc element is told so: 409 naming 1.10.0', async () => {
+    saveDisplay.mockResolvedValue('firmware_too_old');
+    const { PATCH } = await import('./route');
+    const res = await PATCH(patch(await fixture('custom32_nfc')), ctx());
+    expect(res.status).toBe(409);
+    expect(await res.json()).toEqual({ error: 'firmware_too_old', reason: 'The NFC icon needs firmware 1.10.0 or newer' });
   });
 
   it('refuses a malformed body with 400 invalid_body before anything is stored', async () => {

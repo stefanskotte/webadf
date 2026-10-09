@@ -149,6 +149,27 @@ static const uint8_t CLOUD[3][8] = {
     { 0x80, 0x58, 0x1C, 0x6E, 0xF7, 0xFB, 0x7C, 0x01 },   // DISP_SYNC_OFFLINE
 };
 
+// THE NFC READER (1.10.0), an element only a custom layout shows. The
+// contactless mark -- a dot and two arcs opening right -- in three states,
+// each a different picture and none of them a blank (the write glyph's rule):
+//
+//   present          absent (struck)     armed (inverted)
+//   ....#...         #...#...            ####.###
+//   ..#..#..         .##..#..            ##.##.##
+//   ...#..#.         ..##..#.            ###.##.#
+//   #..#..#.         #..#..#.            .##.##.#
+//   #..#..#.         #..##.#.            .##.##.#
+//   ...#..#.         ...#.##.            ###.##.#
+//   ..#..#..         ..#..##.            ##.##.##
+//   ....#...         ....#..#            ####.###
+//
+// The strike is the wifi glyph's "no radio" diagonal: the same symbol, the
+// same meaning. Armed is the whole 8x8 tile lit with the mark cut out, so a
+// waiting write reads from across the room and cannot be mistaken for either
+// reader state.
+#define NFC_W 8
+static const uint8_t NFC_MARK[8] = { 0x08, 0x24, 0x12, 0x92, 0x92, 0x12, 0x24, 0x08 };
+
 // ---------------------------------------------------------------- drawing
 // Every drawing primitive goes through px(); a scale of 2 makes each pixel a
 // 2x2 block, so glyphs, bitmaps and text all double without separate fonts.
@@ -213,6 +234,16 @@ static void draw_write_state(uint8_t *fb, int x, int y, bool writable, disp_sync
     for (int r = 0; r < 8; r++)
         for (int c = 0; c < PENCIL_W; c++)
             if (g[r] & (1u << (PENCIL_W - 1 - c))) px(fb, x + c, y + r);
+}
+
+static void draw_nfc(uint8_t *fb, int x, int y, disp_nfc_t st) {
+    for (int r = 0; r < 8; r++) {
+        uint8_t row = NFC_MARK[r];
+        if (st == DISP_NFC_ARMED) row = (uint8_t)~row;
+        else if (st != DISP_NFC_PRESENT) row |= (uint8_t)(0x80u >> r);   // the strike
+        for (int c = 0; c < NFC_W; c++)
+            if (row & (1u << (NFC_W - 1 - c))) px(fb, x + c, y + r);
+    }
 }
 
 static void draw_wifi(uint8_t *fb, int x, int y, int bars) {
@@ -300,7 +331,7 @@ const layout_t *display_layout_for(const display_state_t *s, const layout_t *cus
     // No layout at all (a display_t that was never display_init'ed) draws the
     // 128x32 default rather than dereferencing NULL.
     if (!custom) return layout_default(PANEL_128x32);
-    return display_state_is_running(s->status) ? custom : layout_default(custom->panel);
+    return display_state_is_running(s->status) ? custom : layout_builtin(custom->panel);
 }
 
 static const layout_el_t *find(const layout_t *l, int id) {
@@ -363,6 +394,7 @@ void display_render(const display_state_t *s, const layout_t *l, uint8_t fb[DISP
             case EL_WIFI:    draw_wifi(fb, x, y, s->bars); break;
             case EL_LEMMING: draw_lemming(fb, x, y, s->tick); break;
             case EL_WRITE:   draw_write_state(fb, x, y, s->writable, s->sync); break;
+            case EL_NFC:     draw_nfc(fb, x, y, s->nfc); break;
             case EL_STATUS:  draw_text(fb, x, y, status_word(s->status), x + bw / g_scale); break;
             case EL_TITLE: {
                 const int line = e->w / ADVANCE;            // characters per line, 1x units

@@ -25,6 +25,8 @@ export interface LiveDisplayFields {
   mountedLabel: string | null;
   mountedDiskCount: number | null;
   mountedWriteProtected: boolean | null;
+  /** The reader as last reported; only a layout listing the 'nfc' element draws it. */
+  nfcReader: 'present' | 'absent' | null;
 }
 
 /** RSSI to arcs, the thresholds of the firmware's rssi_bars. Null: not associated. */
@@ -42,6 +44,9 @@ export function liveDisplayState(d: LiveDisplayFields, online: boolean, tick: nu
     showTrack: false, cyl: 0, maxCyl: 79, pct: -1, tick, writable: false,
     // An unreachable board's uploads are not reaching the server either.
     sync: online ? 'synced' : 'offline',
+    // Present or absent as the board last said. Not 'armed': the server knows
+    // a write was ASKED for, not whether the board has armed it yet.
+    nfc: d.nfcReader === 'present' ? 'present' : 'absent',
   };
   if (d.mountedSha256 === null) return base;
   const diskNo = d.mountedDiskNo ?? 1;

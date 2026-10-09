@@ -30,6 +30,7 @@ export function elementSize(e: ElementJson): { w: number; h: number } {
     case 'wifi': w = 11; break;
     case 'write': w = 8; break;
     case 'lemming': w = 8; break;
+    case 'nfc': w = 8; break;
     case 'title': w = e.w; h = LINE_H * (e.opt ? e.opt : 1); break;
     case 'detail': w = e.w; break;
     case 'track': w = TRACK_MAX_CHARS * ADVANCE; break;
