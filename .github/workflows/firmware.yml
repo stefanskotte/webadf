@@ -35,6 +35,10 @@ env:
 jobs:
   build:
     runs-on: ubuntu-latest
+    # write only for the release step below (push to master); everything
+    # else in this job only reads.
+    permissions:
+      contents: write
     steps:
       - uses: actions/checkout@v7
         with:
@@ -158,3 +162,41 @@ jobs:
             build/wifi_floppy.elf
             build/manifest.json
           if-no-files-found: error
+
+      # A public download per firmware VERSION (operator, 2026-10-09): the
+      # Actions artifact above expires and needs a GitHub login. One release
+      # per semver, tagged fw-<semver>, created by the first master build that
+      # carries it; later pushes with the same semver add nothing, so the list
+      # reads as versions, not commits. These are for a first install over
+      # USB, which today is scripts/firmware-install-partitioned.sh (picotool:
+      # partition table, reboot to BOOTSEL, `load -p 0 -x`). A plain UF2 drag-
+      # and-drop is NOT verified for the partitioned TBYB image -- the
+      # quickstart backlog item owns that; do not claim it here until benched.
+      # Boards then update over the air from the web app, whose registry
+      # carries its own signed builds.
+      # Values reach the script through env only (see the Manifest note).
+      - name: GitHub release for a new firmware version
+        if: github.event_name == 'push' && github.ref == 'refs/heads/master'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          FW_VERSION: ${{ steps.builtver.outputs.value }}
+          FW_COMMIT: ${{ github.sha }}
+        run: |
+          semver="${FW_VERSION%%+*}"
+          case "$semver" in
+            [0-9]*.[0-9]*.[0-9]*) ;;
+            *) echo "unexpected version '$FW_VERSION'"; exit 1 ;;
+          esac
+          tag="fw-$semver"
+          if gh release view "$tag" >/dev/null 2>&1; then
+            echo "$tag already released; nothing to do"
+            exit 0
+          fi
+          notes=$(printf '%s\n\n%s\n%s\n%s\n' \
+            "wifi-floppy firmware $FW_VERSION (commit $FW_COMMIT)." \
+            "First install over USB: with picotool, as scripts/firmware-install-partitioned.sh does -- load wifi_floppy_pt.uf2, reboot to BOOTSEL, then picotool load -p 0 -x wifi_floppy.uf2 (the -x is required)." \
+            "After that the board updates itself over the air from the web app." \
+            "manifest.json carries the version, size and sha256 of wifi_floppy.bin.")
+          gh release create "$tag" \
+            build/wifi_floppy.uf2 build/wifi_floppy_pt.uf2 build/wifi_floppy.bin build/manifest.json \
+            --target "$FW_COMMIT" --title "Firmware $semver" --notes "$notes"
