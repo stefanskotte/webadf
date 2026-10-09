@@ -1096,8 +1096,17 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 **Interfaces:**
 - Consumes: Task 2's builder and parser, in the test only.
 - Produces, used by Task 6:
-  - Constants: `PNET_CELL_NS` (2000), `PNET_SYNC_CELLS` (16), `PNET_RX_SYNC_MIN_NS` (29500),
-    `PNET_RX_SYNC_MAX_NS` (32500), `PNET_RX_MAX_CELLS` (64).
+  - Constants: `PNET_CELL_NS` (2000), `PNET_SYNC_CELLS` (16), `PNET_RX_SYNC_MIN_NS` (30300),
+    `PNET_RX_SYNC_MAX_NS` (31850), `PNET_RX_MAX_CELLS` (64).
+  - **Task 3 ruling (supersedes the 29500/32500 window this plan first had):** the accepted pulse
+    low time is `PNET_RX_PW_MIN_NS` 150 .. `PNET_RX_PW_MAX_NS` 1700 ns, and the sync window is
+    derived from it: 16 x 2000 - 1700 = 30300 ns to 16 x 2000 - 150 = 31850 ns. That keeps the
+    window under one cell wide, so a capture armed late (word 1 a 15- or 17-cell data interval)
+    is refused instead of decoded with a wrong pw. The code (`pnet_rx.h`) is authoritative; the
+    header sketch in Step 3 below shows the original values and is kept only as the plan's record.
+  - Final-review fixes (2026-10-10): `pnet_rx_init` no longer clears the buffer (the feed clears
+    each byte lazily, so the raw arm in the WGATE ISR is O(1)), and `pnet_rx_t` gained `cleared`
+    and `lead_ns` (word 0, logged in the `pnet: refused` line).
   - Type: `pnet_rx_t {buf, cap_bits, bit, words, sync_ns, pw_ns, sync_ok, overflowed, out_of_range}`.
   - Functions: `void pnet_rx_init(pnet_rx_t *r, uint8_t *buf, size_t cap_bytes)`,
     `void pnet_rx_feed(pnet_rx_t *r, uint32_t ns)`, `size_t pnet_rx_bytes(const pnet_rx_t *r)`.
@@ -1271,8 +1280,8 @@ Expected: `COMPILE FAIL: test_pnet_rx.c`.
 
 #define PNET_CELL_NS         2000u
 #define PNET_SYNC_CELLS      16u
-#define PNET_RX_SYNC_MIN_NS  29500u   /* the sync interval as flux_in reports it: 32 us less */
-#define PNET_RX_SYNC_MAX_NS  32500u   /*   a pulse low time of -500..2500 ns */
+#define PNET_RX_SYNC_MIN_NS  29500u   /* SUPERSEDED by the Task 3 ruling: PNET_RX_PW 150..1700 ns, */
+#define PNET_RX_SYNC_MAX_NS  32500u   /*   sync 30300..31850 ns (see Interfaces above, pnet_rx.h) */
 #define PNET_RX_MAX_CELLS    64u      /* past any gap a legal batch holds: counted, then clamped */
 
 typedef struct {
