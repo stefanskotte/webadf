@@ -247,7 +247,7 @@ export const HELP_TOPICS = {
         </p>
         <p>
           The <em>nfc</em> icon, hidden until you tick it, shows the NFC reader: the contactless mark when it works,
-          struck through when none is found, a solid square while a tag write waits for a tap.
+          struck through when none is found, and cut out of a lit square while a tag write waits for a tap.
         </p>
         <p>
           After <em>Save</em> the status reads <em>Waiting for the board</em>, then <em>Applied on the board</em>, or
@@ -256,8 +256,8 @@ export const HELP_TOPICS = {
         </p>
         <p>
           Your layout is used while the board is running: ready, downloading and with a disk mounted. The start-up,
-          setup, connecting and error screens always use the standard 128×32 layout (at the top of a 128×64 panel), so
-          a board can be set up whatever its layout.
+          setup and connecting screens always use the standard 128×32 layout (on a 128×64 panel, at the top, from
+          firmware 1.10.0).
         </p>
         <GoodToKnow items={[
           'Display layouts need board firmware 1.7.1 or newer; the NFC icon needs 1.10.0.',

@@ -41,12 +41,16 @@ bool layout_decode(const uint8_t *b, size_t len, layout_t *out, char *why, size_
     if (len != 4u + 8u * b[2])    return no(why, n, "length: does not match the element count");
 
     layout_t l; memset(&l, 0, sizeof l);
-    l.panel = (panel_t)b[1]; l.n = b[2];
+    l.panel = (panel_t)b[1]; l.n = 0;
     const int W = 128, H = panel_height(l.panel);
     bool seen[EL_LAST + 1] = { false };
-    for (int i = 0; i < l.n; i++) {
+    for (int i = 0; i < b[2]; i++) {
         const uint8_t *r = b + 4 + 8 * i;
-        if (r[0] < EL_STATUS || r[0] > EL_LAST) return no(why, n, "element id: unknown");
+        if (r[0] < EL_STATUS)                       return no(why, n, "element id: unknown");
+        // An element a later firmware added: skipped, not refused, so a layout
+        // saved for a newer board still shows everything this one knows
+        // (from 1.10.0; earlier boards refuse the whole layout).
+        if (r[0] > EL_LAST)                         continue;
         if (seen[r[0]])                             return no(why, n, "element id: listed twice");
         seen[r[0]] = true;
         if (r[1] & ~0x03u)                          return no(why, n, "flags: unknown bits");
@@ -72,7 +76,7 @@ bool layout_decode(const uint8_t *b, size_t len, layout_t *out, char *why, size_
         }
         int ew, eh; layout_el_size(&e, &ew, &eh);
         if (e.x + ew > W || e.y + eh > H)  return no(why, n, "outside the panel");
-        l.el[i] = e;
+        l.el[l.n++] = e;
     }
     *out = l;
     return true;

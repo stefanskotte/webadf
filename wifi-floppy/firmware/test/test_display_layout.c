@@ -61,7 +61,17 @@ static void each_rule_is_enforced(void) {
     n = enc(&l, b); b[1] = 7;                expect_reject(b, n, "panel");
     n = enc(&l, b); b[3] = 1;                expect_reject(b, n, "reserved");
     n = enc(&l, b);                          expect_reject(b, n - 1, "length");
-    n = enc(&l, b); b[4] = EL_LAST + 1;      expect_reject(b, n, "element id");
+    {   // an element a later firmware added is skipped, the rest kept
+        char why[64]; layout_t got;
+        n = enc(&l, b); const uint8_t first = b[4]; b[4] = EL_LAST + 1; b[4 + 2] = 200; b[4 + 4] = 99;
+        CHECK(layout_decode(b, n, &got, why, sizeof why), why);
+        CHECK(got.n == l.n - 1, "the unknown element is dropped, every other one kept");
+        bool any = false;
+        for (int i = 0; i < got.n; i++) if (got.el[i].id == first) any = true;
+        CHECK(!any, "the record it replaced is not there either");
+        n = enc(&l, b); b[4] = EL_LAST + 1; b[4 + 8] = EL_LAST + 1;
+        CHECK(layout_decode(b, n, &got, why, sizeof why), "two unknown ids are not 'listed twice'");
+    }
     n = enc(&l, b); b[4] = 0;                expect_reject(b, n, "element id");
     n = enc(&l, b); b[4 + 8] = b[4];         expect_reject(b, n, "twice");
     n = enc(&l, b); b[4 + 1] = 0x04;         expect_reject(b, n, "flags");
