@@ -173,6 +173,11 @@ void bus_out_drive_enable(unsigned d, bool on) {
         // Y = 0 ("released already"), so while its select is high it writes
         // nothing, and its first pass with the select low takes the shadow
         // queued here (the stale queue from before it was off is dropped).
+        // With the select ALREADY low at this moment -- SEL1 alone, or SEL0
+        // and SEL1 together, which trackloaders do to stop every motor --
+        // both machines write their pads on their first pass, at once: the
+        // drive answers because it is selected. Acceptable (Task 16 review
+        // minor a, ruled): it is what a drive powered on mid-select does.
         const uint sm = gate_sm[d];
         pio_sm_clear_fifos(gate_pio, sm);
         pio_sm_exec(gate_pio, sm, pio_encode_set(pio_y, 0));
@@ -183,7 +188,9 @@ void bus_out_drive_enable(unsigned d, bool on) {
             // Y already holds the ID (bus_out_drive_id_set writes it on a
             // disabled machine too). X = today's RDY level; then the machine
             // waits for its select at on_released_wait -- past on_released's
-            // `mov pins, null`, so enabling writes no pad -- and any answer
+            // `mov pins, null`, so enabling writes no pad while the select is
+            // high (with it low, RDY gets X or the ID's first bit at once,
+            // see above) -- and any answer
             // in progress when it went off is abandoned: the next motor-off
             // select starts a fresh one at bit 31.
             const uint isd = (uint)id_sm[d];
@@ -195,6 +202,11 @@ void bus_out_drive_enable(unsigned d, bool on) {
         pio_sm_set_enabled(gate_pio, sm, true);
         drive_on[d] = true;
     } else if (!on && drive_on[d]) {
+        // Never reached live (Task 19): a DF1 switched off while running is
+        // PARKED with its machines still enabled (df1_live.h), and a boot
+        // with DF1 off never enabled them. Kept for completeness; were it
+        // reached with SEL0 and SEL1 low together, RDY could stay at DF1's
+        // level until SEL0 rose (Task 16 review minor b).
         pio_sm_set_enabled(gate_pio, gate_sm[d], false);
 #if WF_DRIVE_ID
         if (id_sm[d] >= 0) pio_sm_set_enabled(id_pio, (uint)id_sm[d], false);

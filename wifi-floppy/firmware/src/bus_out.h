@@ -40,9 +40,12 @@ void bus_out_init(PIO pio, unsigned ndrives, const uint32_t initial[]);
 // keep its word and ID (the shadow and the machine's Y), so enabling it puts
 // exactly that on the bus:
 //   on:  the shadow is queued and the RDY level and the ID are in X/Y, the
-//        machines are moved to a point that writes nothing until their select
-//        next falls, THEN enabled.
-//   off: the machines are disabled, THEN the drive's pads are released once
+//        machines are moved to a point that writes nothing while their select
+//        is high, THEN enabled. If the select is already low (both selects
+//        low together included), they write the pads on their first pass.
+//   off: (boot-time only since Task 19 -- a live switch-off parks DF1 with its
+//        machines running, df1_live.h)
+//        the machines are disabled, THEN the drive's pads are released once
 //        (status pads and RDY) -- only while SEL0 is high, so nothing of DF0's
 //        is overwritten; with SEL0 low, DF0's own machines own the pads and
 //        release them at its deselect.
