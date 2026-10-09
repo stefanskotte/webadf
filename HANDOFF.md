@@ -1646,6 +1646,13 @@ separately.
   tests only (its artifacts are for diagnosis). fw-1.8.1 was re-attached from the registry (sha256 87b4c4da...).
 - **The bench board's chip is RP2350 rev A4** (`picotool info -a`, 2026-10-09; `-d` does not show the revision). The
   RP2350-E10 workaround block in today's .uf2 (aimed at the token sector) only affects A2, so it is harmless here.
+- **CORRECTION, the same day: the join failure is intermittent and NOT only the phone.** On the install image, a
+  join that had just worked failed again ("password rejected") after a Forget. A board USB power-cycle made the
+  next join work at once. **Hypothesis:** the portal AP accepts the first association after boot but rejects later
+  ones (a stale CYW43 AP/PMK state after a client leaves?). Every successful join today came right after a fresh
+  boot. **To test:** boot, join (works), disconnect or forget, wait 10 s, rejoin (rejected?). If confirmed, look at
+  portal_run/net_radio_ap_start (CYW43_AUTH_WPA2_AES_PSK) and whether the AP needs a restart after a client
+  leaves. **Matters for first install:** a user who mistypes their Wi-Fi details must rejoin the setup network.
 - **Setup-network join failure on 2026-10-09 was the PHONE, not firmware.** After the bench wipe, the phone (which
   had joined `wifi-floppy-XXXX` before; the SSID derives from the MAC, so it is unchanged by a wipe) silently used
   its saved entry, and after "Forget" it rejected `wififloppy` once. A bisect (1.7.5, 1.7.8, 1.8.0, 1.8.1, registry
