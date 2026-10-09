@@ -34,3 +34,35 @@ export function refuseReleaseImage(picotoolInfo: string, sizeBytes: number, byte
   }
   return null;
 }
+
+/**
+ * The registry (and so the over-the-air channel) takes wifi_floppy.bin and
+ * nothing else. In particular never wifi_floppy_install.bin: it is the same
+ * firmware WITHOUT TBYB, made only to ride inside the drag-and-drop install
+ * UF2. refuseReleaseImage would refuse it too (no "tbyb: not bought" line);
+ * this makes the path itself a second, independent guard.
+ */
+export function refuseRegistryArtifact(path: string): string | null {
+  const name = path.split(/[\\/]/).pop() ?? '';
+  if (name !== 'wifi_floppy.bin') {
+    return `only wifi_floppy.bin is ever published to the registry, not ${name}`
+      + (/install/i.test(name) ? ' (the install image is USB-only and has no TBYB)' : '');
+  }
+  return null;
+}
+
+/**
+ * The image inside the first-install UF2 must be the opposite of a release
+ * image in one respect: NOT TBYB. An absolute UF2's post-download reboot never
+ * starts a TBYB image, so a TBYB image there leaves the board in BOOTSEL
+ * (research 2026-10-09 §1). It still needs the hash the boot ROM checks.
+ */
+export function refuseInstallImage(picotoolInfo: string): string | null {
+  if (/^\s*tbyb:/m.test(picotoolInfo)) {
+    return 'the install image is TBYB; it must be wifi_floppy_install.bin (PICO_CRT0_IMAGE_TYPE_TBYB off)';
+  }
+  if (!/^\s*hash:\s+verified\s*$/m.test(picotoolInfo)) {
+    return 'the install image carries no hash for the boot ROM to check';
+  }
+  return null;
+}

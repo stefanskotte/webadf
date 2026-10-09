@@ -21,7 +21,9 @@
  *
  * After a release is recorded it is also published as the GitHub release fw-<semver>
  * with the SAME signed files (src/lib/firmware-github-release.ts); TEST builds never
- * are. --github-only (re)attaches an already-published version's files, checked
+ * are. The release also carries wifi-floppy-install-<semver>.uf2, the single
+ * drag-and-drop first-install file: the same commit built WITHOUT TBYB, so it is
+ * USB-only and never goes to the registry (refuseRegistryArtifact). --github-only (re)attaches an already-published version's files, checked
  * byte-for-byte against the registry; --no-github skips the GitHub step.
  */
 import { execFileSync } from 'node:child_process';
@@ -37,16 +39,22 @@ import { user } from '@/db/schema/auth';
 import { firmwareStore } from '@/lib/storage';
 import { publishRelease, readExistingReleases } from '@/lib/firmware-releases';
 import { decidePublish, PublishRefused } from '@/lib/firmware-publish-rules';
-import { firmwareManifest, refuseReleaseImage } from '@/lib/firmware-manifest';
+import { firmwareManifest, refuseReleaseImage, refuseRegistryArtifact, refuseInstallImage } from '@/lib/firmware-manifest';
 import { isAllowed, parseAllowlist } from '@/lib/superadmin-allowlist';
 import { semverOf } from '@/lib/firmware-version';
 import { firmwareReleases } from '@/db/schema/firmware';
-import { githubReleasePlan, assertSameBytes, type GithubReleaseInput } from '@/lib/firmware-github-release';
+import {
+  githubReleasePlan, assertSameBytes, checkInstallUf2, INSTALL_UF2_BUILD_NAME, type GithubReleaseInput,
+} from '@/lib/firmware-github-release';
 import { signingKeyId, PRIVATE_KEY_PATH } from './firmware-signing-key';
 
 const repoRoot = process.cwd();
 const headerPath = join(repoRoot, 'wifi-floppy/firmware/build/generated/wifi_floppy_version.h');
-const binPath = join(repoRoot, 'wifi-floppy/firmware/build/wifi_floppy.bin');
+const buildDir = join(repoRoot, 'wifi-floppy/firmware/build');
+const binPath = join(buildDir, 'wifi_floppy.bin');
+// The first-install image (non-TBYB) and the UF2 that carries it: GitHub only.
+const installBinPath = join(buildDir, 'wifi_floppy_install.bin');
+const installUf2Path = join(buildDir, INSTALL_UF2_BUILD_NAME);
 
 function die(msg: string): never {
   console.error(msg);
@@ -131,6 +139,19 @@ if (statSync(binPath).mtimeMs < statSync(headerPath).mtimeMs) {
   die(`${binPath} is older than the generated header. Re-run pnpm firmware:build.`);
 }
 const sha256 = createHash('sha256').update(bytes).digest('hex');
+
+// The registry (and so every board's OTA) only ever takes wifi_floppy.bin --
+// never wifi_floppy_install.bin, which has no TBYB. refuseReleaseImage above
+// already refuses a non-TBYB image; this guards the path itself too.
+const registryRefusal = refuseRegistryArtifact(binPath);
+if (registryRefusal) die(`Publish refused: ${registryRefusal}`);
+
+// Checked up front (unless GitHub is skipped), so a missing or stale install
+// UF2 stops the run before anything is signed or recorded.
+if (!noGithub) {
+  const installRefusal = installArtifactsRefusal(version);
+  if (installRefusal) die(`Publish refused: ${installRefusal}\nRun pnpm firmware:build, or pass --no-github.`);
+}
 
 // --github-only: attach an ALREADY-published version's files to its GitHub
 // release. Nothing is signed or recorded; the registry row supplies the
@@ -285,13 +306,17 @@ try {
 function publishToGithub(r: GithubReleaseInput): void {
   const plan = githubReleasePlan(r);
   if (!plan.publish) { console.log(`GitHub release skipped: ${plan.reason}`); return; }
-  const dir = join(repoRoot, 'wifi-floppy/firmware/build');
-  const files = ['wifi_floppy.bin', 'wifi_floppy.uf2', 'wifi_floppy_pt.uf2'].map((f) => join(dir, f));
+  const files = ['wifi_floppy.bin', 'wifi_floppy.uf2', 'wifi_floppy_pt.uf2'].map((f) => join(buildDir, f));
   for (const f of files) if (!existsSync(f)) throw new Error(`missing ${f}`);
+  const installRefusal = installArtifactsRefusal(r.version);
+  if (installRefusal) throw new Error(installRefusal);
   const tmp = mkdtempSync(join(tmpdir(), 'wf-gh-'));
   const manifestPath = join(tmp, 'manifest.json');
   writeFileSync(manifestPath, JSON.stringify(plan.manifest, null, 2) + '\n');
-  const assets = [...files, manifestPath];
+  // The single drag-and-drop first-install file, named by semver.
+  const installAsset = join(tmp, plan.installAsset);
+  writeFileSync(installAsset, readFileSync(installUf2Path));
+  const assets = [...files, installAsset, manifestPath];
   // The release points at the build's own commit (the g<hash> in the version).
   const short = /\+g([0-9a-f]+)$/.exec(r.version)?.[1];
   const commit = short ? execFileSync('git', ['rev-parse', short], { encoding: 'utf8' }).trim() : 'master';
@@ -305,4 +330,27 @@ function publishToGithub(r: GithubReleaseInput): void {
     gh(['release', 'create', plan.tag, ...assets, '--target', commit, '--title', plan.title, '--notes', plan.body]);
   }
   console.log(`GitHub release ${plan.tag} ${exists ? 'updated' : 'created'} with the published files.`);
+}
+
+// The first-install UF2 must carry THIS version's non-TBYB image, all in the
+// absolute family and clear of the settings sectors. null when it does.
+function installArtifactsRefusal(v: string): string | null {
+  if (!existsSync(installBinPath)) return `missing ${installBinPath}`;
+  if (!existsSync(installUf2Path)) return `missing ${installUf2Path}`;
+  const installBin = readFileSync(installBinPath);
+  if (!installBin.includes(Buffer.from(v, 'ascii'))) return `${installBinPath} is not version ${v}`;
+  let installInfo: string;
+  try {
+    installInfo = execFileSync('picotool', ['info', '-a', installBinPath, '-t', 'bin'], { encoding: 'utf8' });
+  } catch (e) {
+    return `picotool failed on ${installBinPath}: ${(e as Error).message}`;
+  }
+  const imageRefusal = refuseInstallImage(installInfo);
+  if (imageRefusal) return imageRefusal;
+  const uf2Refusal = checkInstallUf2(readFileSync(installUf2Path), v);
+  if (uf2Refusal) return `${installUf2Path}: ${uf2Refusal}`;
+  if (statSync(installUf2Path).mtimeMs < statSync(installBinPath).mtimeMs) {
+    return `${installUf2Path} is older than ${installBinPath}; re-run pnpm firmware:build`;
+  }
+  return null;
 }

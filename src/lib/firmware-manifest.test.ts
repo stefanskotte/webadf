@@ -1,9 +1,13 @@
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { firmwareManifest, refuseReleaseImage, FIRMWARE_MAX_BYTES } from '@/lib/firmware-manifest';
+import {
+  firmwareManifest, refuseReleaseImage, refuseRegistryArtifact, refuseInstallImage, FIRMWARE_MAX_BYTES,
+} from '@/lib/firmware-manifest';
 
 const realInfo = readFileSync(join(__dirname, '__fixtures__', 'picotool-info-release.txt'), 'utf8');
+// picotool info -a of a real wifi_floppy_install.bin (1.9.0+gbd3a756): no tbyb line at all.
+const installInfo = readFileSync(join(__dirname, '__fixtures__', 'picotool-info-install.txt'), 'utf8');
 const bytes = Buffer.from('image');
 
 describe('firmwareManifest', () => {
@@ -37,5 +41,22 @@ describe('refuseReleaseImage', () => {
     expect(refuseReleaseImage(realInfo, 533624, df1)).toMatch(/DF1/);
     expect(refuseReleaseImage(realInfo, 533624, df1, 'a release')).toMatch(/DF1/);
     expect(refuseReleaseImage(realInfo, 533624, df1, 'TEST build: DF1 bench')).toBeNull();
+  });
+});
+
+describe('the first-install image never reaches the registry (OTA)', () => {
+  it('refuseReleaseImage refuses the real install image: it is not TBYB', () => {
+    expect(refuseReleaseImage(installInfo, 603312, bytes)).toMatch(/TBYB/);
+  });
+  it('only wifi_floppy.bin is a registry artifact', () => {
+    expect(refuseRegistryArtifact('/x/wifi-floppy/firmware/build/wifi_floppy.bin')).toBeNull();
+    expect(refuseRegistryArtifact('/x/build/wifi_floppy_install.bin')).toMatch(/USB-only/);
+    expect(refuseRegistryArtifact('/x/build/wifi-floppy-install.uf2')).toMatch(/only wifi_floppy.bin/);
+    expect(refuseRegistryArtifact('C:\\build\\wifi_floppy_install.bin')).toMatch(/only wifi_floppy.bin/);
+  });
+  it('refuseInstallImage wants the opposite of a release: hashed, NOT TBYB', () => {
+    expect(refuseInstallImage(installInfo)).toBeNull();
+    expect(refuseInstallImage(realInfo)).toMatch(/TBYB/);
+    expect(refuseInstallImage(installInfo.replace(/verified/g, 'incorrect'))).toMatch(/hash/);
   });
 });
