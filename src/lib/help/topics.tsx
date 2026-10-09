@@ -227,6 +227,9 @@ export const HELP_TOPICS = {
 
   // Sources: display-editor.tsx, drive-bezel.tsx, live-display.ts, display-editor-geometry.ts:172-178 (status texts), HANDOFF 3ax;
   // panel chips and the boot-time check: wifi-floppy/firmware/src/ssd1306.c (detect_sh1106, ssd1306_init), HANDOFF 3az.
+  // NFC icon: display.c draw_nfc (present / struck = absent / inverted = write armed), main.c ui.nfc (armed wins,
+  // then g_nfc_reader), display_layout.h EL_NFC (in no default), display-layout.ts NFC_ELEMENT_FIRMWARE 1.10.0,
+  // display-editor.tsx withNfc (hidden by default; not offered below 1.10.0), display-store.ts (server refuses it).
   display: {
     title: "The board's display",
     short:
@@ -234,27 +237,30 @@ export const HELP_TOPICS = {
     body: (
       <>
         <p>
-          The screen on each board's card is drawn the same way, with the board's saved layout and the disk it last
-          reported. It does not show download progress or the track the drive is on, because the board does not send
-          those. Press <em>Change Display</em>, or the screen itself, to open the editor.
+          The screen on each board&apos;s card is drawn the same way, from its saved layout and the disk it last
+          reported; the board does not send download progress or the track, so those are not shown. Press{' '}
+          <em>Change Display</em>, or the screen itself, to open the editor.
         </p>
         <p>
-          Pick the <em>Panel</em> (128×32 or 128×64), then drag elements where you want them. Each element can be
-          shown or hidden and drawn at 1× or 2×. <em>Preview as</em> shows the layout in different situations, such
-          as downloading or with a long title.
+          Pick the <em>Panel</em> (128×32 or 128×64) and drag elements into place; each can be shown or hidden, at 1×
+          or 2×. <em>Preview as</em> shows other situations, such as downloading or a long title.
         </p>
         <p>
-          After <em>Save</em> the status reads <em>Waiting for the board</em>, then <em>Applied on the board</em> a
-          moment later. If the board refuses a layout, it says why. <em>Cancel</em> throws away changes you have not
-          saved and closes the editor. <em>Reset to default</em> puts the board back to the standard layout.
+          The <em>nfc</em> icon, hidden until you tick it, shows the NFC reader: the contactless mark when it works,
+          struck through when none is found, a solid square while a tag write waits for a tap.
+        </p>
+        <p>
+          After <em>Save</em> the status reads <em>Waiting for the board</em>, then <em>Applied on the board</em>, or
+          why the board refused it. <em>Cancel</em> discards unsaved changes and closes the editor;{' '}
+          <em>Reset to default</em> restores the standard layout.
         </p>
         <p>
           Your layout is used while the board is running: ready, downloading and with a disk mounted. The start-up,
-          setup, connecting and error screens always use the standard layout, so a board can still be set up and
-          diagnosed whatever its layout.
+          setup, connecting and error screens always use the standard 128×32 layout (at the top of a 128×64 panel), so
+          a board can be set up whatever its layout.
         </p>
         <GoodToKnow items={[
-          'Display layouts need board firmware 1.7.1 or newer.',
+          'Display layouts need board firmware 1.7.1 or newer; the NFC icon needs 1.10.0.',
           '0.91" (128×32) and 0.96" (128×64) panels use the SSD1306 chip. Most 1.3" (128×64) panels use the SH1106 chip, which needs firmware 1.7.4 or newer.',
           'Unplug the board before changing its panel: it checks which chip the panel has only when it starts up.',
         ]} />

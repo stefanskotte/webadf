@@ -13,6 +13,8 @@ describe('elementSize mirrors layout_el_size', () => {
     expect(elementSize(el({ id: 'wifi' }))).toEqual({ w: 11, h: 8 });
     expect(elementSize(el({ id: 'write' }))).toEqual({ w: 8, h: 8 });
     expect(elementSize(el({ id: 'lemming' }))).toEqual({ w: 8, h: 8 });
+    expect(elementSize(el({ id: 'nfc' }))).toEqual({ w: 8, h: 8 });
+    expect(elementSize(el({ id: 'nfc', scale: 2 }))).toEqual({ w: 16, h: 16 });
     expect(elementSize(el({ id: 'track' }))).toEqual({ w: 30, h: 8 });
   });
   it('title is w by 8 per line, detail w by 8, download bar + 2 + four chars', () => {

@@ -170,3 +170,55 @@ test('Cancel throws away unsaved edits and closes the drawer without asking the 
   await page.getByTestId(`display-toggle-${deviceId}`).click();
   await expect(page.getByTestId('display-width-title')).toHaveValue(before);
 });
+
+// The NFC icon element (firmware 1.10.0). Older firmware refuses any layout
+// that lists it, so the editor offers it only to a board reporting 1.10.0+.
+test('a 1.10.0 board gets the NFC icon as a hidden element; ticked and saved, the board receives it', async ({ page, request }) => {
+  await signUpFresh(page);
+  const { deviceId, token } = await pairDevice(page, request);
+  await reportStatus(request, token, {
+    displayLayouts: true, displayVersion: 0, firmwareVersion: '1.10.0+ge2etest', nfcReader: 'absent',
+  });
+
+  await openEditor(page, deviceId);
+  await expect(page.getByTestId(`display-nfc-needs-fw-${deviceId}`)).toHaveCount(0);
+  const nfc = page.getByTestId('display-visible-nfc');
+  await expect(nfc).not.toBeChecked();
+  await expect(page.getByText('Unsaved changes')).toHaveCount(0);   // listing it hidden is not an edit
+  await nfc.check();
+  await page.getByTestId('display-scale-nfc').selectOption('2');
+  await expect(page.getByTestId(`display-save-${deviceId}`)).toBeEnabled();
+  await page.getByTestId(`display-save-${deviceId}`).click();
+  await expect(page.getByTestId(`display-status-${deviceId}`)).toHaveText('Waiting for the board');
+
+  const get = await request.get('/api/device/display', { headers: authHeader(token) });
+  expect(get.status()).toBe(200);
+  const body = Buffer.from(await get.body());
+  expect(body[5]).toBe(1);
+  const el = decodeLayout(new Uint8Array(body.subarray(6))).elements.find((e) => e.id === 'nfc');
+  // 2x at x 100 would run into the write glyph's column but fits the panel: kept at 100, y 0.
+  expect(el).toEqual({ id: 'nfc', visible: true, scale: 2, x: 100, y: 0, w: 0, opt: 0 });
+});
+
+test('a board before 1.10.0 is not offered the NFC icon, and the server refuses it', async ({ page, request }) => {
+  await signUpFresh(page);
+  const { deviceId, token } = await pairDevice(page, request);
+  await reportStatus(request, token, { displayLayouts: true, displayVersion: 0, firmwareVersion: '1.9.3+ge2etest' });
+
+  await openEditor(page, deviceId);
+  await expect(page.getByTestId(`display-nfc-needs-fw-${deviceId}`)).toHaveText('nfc — needs firmware 1.10.0 or newer');
+  await expect(page.getByTestId('display-visible-nfc')).toHaveCount(0);
+  // Saving the rest still works for it: the layout it is sent lists no nfc element.
+  await page.getByTestId('display-width-title').fill('100');
+  await page.getByTestId(`display-save-${deviceId}`).click();
+  await expect(page.getByTestId(`display-status-${deviceId}`)).toHaveText('Waiting for the board');
+  const stored = (await deviceRow(deviceId)).displayLayout!;
+  expect(decodeLayout(new Uint8Array(stored)).elements.some((e) => e.id === 'nfc')).toBe(false);
+
+  const withNfc = JSON.parse(readFileSync(
+    path.join(process.cwd(), 'wifi-floppy/firmware/test/fixtures/layouts/custom32_nfc.json'), 'utf8'));
+  const res = await page.request.patch(`/api/devices/${deviceId}/display`, { data: withNfc });
+  expect(res.status()).toBe(409);
+  expect(await res.json()).toEqual({ error: 'firmware_too_old', reason: 'The NFC icon needs firmware 1.10.0 or newer' });
+  expect((await deviceRow(deviceId)).displayVersion).toBe(1);
+});
