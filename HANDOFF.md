@@ -2545,7 +2545,13 @@ separately.
   emulator on a 500 kbit/s interface. Worth establishing which before promising a title
   list.
 
-- **Amiga networking over the floppy port (PaulaNET-style).** **Stack decided (operator, 2026-10-09):** the Amiga-side TCP/IP stack behind the PaulaNET device is AmiTCP_NG, https://github.com/MW0MWZ/AmiTCP_NG. Check its licence alongside PaulaNET's, and how its SANA-II driver interface meets PaulaNET's device. **UNBLOCKED 2026-10-09:** RobSmithDev replied that he has no issue with us implementing PaulaNET, as long as the licences are respected. Check PaulaNET's licence terms (code and protocol) before any design, and credit him as the licence requires. Not started. Raised by the operator
+- **Amiga networking over the floppy port (PaulaNET-style).** **Shape decided (operator, 2026-10-09):** the network
+  is a third DF1 mode (Off / Disk / Network, the existing `secondDrive` setting), while DF0 keeps serving full
+  80-cylinder disks -- no track-map conflict. Scope is **Workbench only**; games that take over the hardware are out
+  of scope. Paula has one disk DMA channel, so DF0 and network traffic interleave per track request (a DF0 copy
+  raises ping to several hundred ms and shares the ~43 KB/s; idle DF0 gives the network all of it). Next: a
+  research spike (PaulaNET's protocol and how it gets packets onto Wi-Fi -- NAT vs bridging; board headroom: core1
+  heap, lwIP pbufs, core time with DF1 serving generated tracks) before any code. **Stack decided (operator, 2026-10-09):** the Amiga-side TCP/IP stack behind the PaulaNET device is AmiTCP_NG, https://github.com/MW0MWZ/AmiTCP_NG. Check its licence alongside PaulaNET's, and how its SANA-II driver interface meets PaulaNET's device. **UNBLOCKED 2026-10-09:** RobSmithDev replied that he has no issue with us implementing PaulaNET, as long as the licences are respected. Check PaulaNET's licence terms (code and protocol) before any design, and credit him as the licence requires. Not started. Raised by the operator
   2026-09-13 after finding RobSmithDev's PaulaNET. Genuinely attractive, and explicitly a
   SECOND PRODUCT on the same board rather than an increment to disk serving: it makes the
   Amiga itself reach the internet, and does nothing to make disks load better.
