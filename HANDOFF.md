@@ -1581,6 +1581,15 @@ separately.
   format-truncation at 1729/1734 and maybe-uninitialized `body` at 2375. `test_display_golden.c:48` fails on
   format-truncation. The device image is fine. Fix the test code (sizes, or initialise `body`), and run test/run.sh
   under GCC locally (e.g. a docker gcc image) before pushing, because macOS clang does not show these.
+- **TLS heap relief + OTA failure logging SHIPPED 2026-10-09:** fw 1.8.1+g1f343d5 (seq 50), master 1f343d5.
+  - **Change:** MBEDTLS_SSL_OUT_CONTENT_LEN 16384 -> 4096 (IN stays 16384, since the server sizes incoming
+    records). tls_write caps each write at one record, because the SDK's altcp_mbedtls_write asserts (panics) on a
+    partial mbedtls_ssl_write. A counting mbedTLS allocator; a failed firmware download now logs its stage,
+    error, connection reuse, status, bytes and heap.
+  - **Bench passed:** heap low-water 36,864 B on 1.8.1 (was 20,480 on 1.8.0), with `tls held 42556 peak 50116`.
+    An HD-track write (Echo to HDBench) uploaded as version seq 7 with no reboot (uptime continuous).
+  - **Still to observe:** an OTA after hours of uptime. If it stalls, the new `fw: dl ...` and `tls:` lines name
+    the cause; then decide whether more heap work is needed.
 - **OTA download fails after long board uptime** (found 2026-10-09, twice). With 1.7.8 (board up hours) and 1.8.0
   TEST (board up ~6800 s), the sequence was `fw: offered ... ok` -> `fw: downloading` -> `fw: queued` about 2 s
   later, retried with backoff for minutes. After a board power-cycle the same offer installed at once. 1.7.6/1.7.7
