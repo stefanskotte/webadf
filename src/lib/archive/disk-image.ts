@@ -1,4 +1,6 @@
 import { readDms } from './dms';
+import { readBounded } from './bounded';
+import { MAX_DISK_BYTES } from '@/lib/blob-upload';
 
 /**
  * Turn whatever the user dropped into a plain ADF.
@@ -40,7 +42,12 @@ async function gunzip(bytes: Uint8Array): Promise<Uint8Array> {
   const src = bytes.slice();
   const stream = new Blob([src.buffer as ArrayBuffer]).stream()
     .pipeThrough(new DecompressionStream('gzip'));
-  return new Uint8Array(await new Response(stream).arrayBuffer());
+  // Bounded: a gzip bomb must not be inflated whole (this also runs on the
+  // server, for upload from a URL). Nothing larger than a disk image can be
+  // stored anyway.
+  const out = await readBounded(stream, MAX_DISK_BYTES);
+  if (!out) throw new Error('gzip output exceeds the disk image limit');
+  return out;
 }
 
 /** Replace a compressed extension with .adf, keeping the rest of the name --

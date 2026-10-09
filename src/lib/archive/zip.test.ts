@@ -46,3 +46,19 @@ describe('readZip', () => {
     await expect(readZip(new Uint8Array(0))).resolves.toBeTruthy();
   });
 });
+
+describe('readZip options (upload from a URL)', () => {
+  it('decompresses only the members `accept` selects', async () => {
+    const { entries, skipped } = await readZip(buf, { accept: (p) => p.endsWith('readme.txt') });
+    expect(entries.map((e) => e.path.split('/').pop())).toEqual(['readme.txt']);
+    expect(skipped.some((s) => s.reason === 'not selected')).toBe(true);
+  });
+
+  it('skips a member that inflates past maxEntryBytes instead of inflating it whole', async () => {
+    const { entries, skipped } = await readZip(buf, { maxEntryBytes: 100 });
+    // readme.txt is 135 bytes inflated, noise.bin is 600 bytes stored.
+    expect(entries.find((e) => e.path.endsWith('readme.txt'))).toBeUndefined();
+    expect(entries.find((e) => e.path.endsWith('noise.bin'))).toBeUndefined();
+    expect(skipped.filter((s) => s.reason === 'too large').length).toBeGreaterThanOrEqual(2);
+  });
+});

@@ -18,6 +18,8 @@
  * the same call made for LHA's Unix extension headers.
  */
 
+import { readBounded } from './bounded';
+
 export interface ZipEntry {
   path: string;
   bytes: Uint8Array;
@@ -46,10 +48,19 @@ function name(b: Uint8Array, utf8: boolean): string {
   return new TextDecoder(utf8 ? 'utf-8' : 'latin1').decode(b).replace(/\\/g, '/');
 }
 
-async function inflateRaw(data: Uint8Array): Promise<Uint8Array> {
+async function inflateRaw(data: Uint8Array, maxBytes: number): Promise<Uint8Array | null> {
   const ds = new DecompressionStream('deflate-raw');
   const stream = new Blob([data as unknown as BlobPart]).stream().pipeThrough(ds);
-  return new Uint8Array(await new Response(stream).arrayBuffer());
+  return readBounded(stream, maxBytes);
+}
+
+export interface ZipReadOptions {
+  /** Only members whose path this accepts are decompressed; the rest are
+   *  skipped with reason 'not selected'. Default: every member. */
+  accept?: (path: string) => boolean;
+  /** Largest decompressed member; a bigger one is skipped as 'too large'
+   *  rather than inflated whole (a deflate bomb). Default: unbounded. */
+  maxEntryBytes?: number;
 }
 
 /** Find the end-of-central-directory record, scanning back over any comment. */
@@ -65,7 +76,8 @@ function findEocd(buf: Uint8Array): number {
  * Read a zip. Never throws: like readLha, the caller is a drop target, where
  * an exception is a dead UI with no explanation.
  */
-export async function readZip(buf: Uint8Array): Promise<ZipReadResult> {
+export async function readZip(buf: Uint8Array, opts: ZipReadOptions = {}): Promise<ZipReadResult> {
+  const maxEntry = opts.maxEntryBytes ?? Number.MAX_SAFE_INTEGER;
   const entries: ZipEntry[] = [];
   const skipped: { path: string; reason: string }[] = [];
 
@@ -92,6 +104,11 @@ export async function readZip(buf: Uint8Array): Promise<ZipReadResult> {
     // staging area builds parents from the paths of real files.
     if (path.endsWith('/')) continue;
 
+    if (opts.accept && !opts.accept(path)) {
+      skipped.push({ path, reason: 'not selected' });
+      continue;
+    }
+
     if ((flags & 0x1) !== 0) {
       skipped.push({ path, reason: 'encrypted' });
       continue;
@@ -105,9 +122,12 @@ export async function readZip(buf: Uint8Array): Promise<ZipReadResult> {
 
     try {
       if (method === 0) {
-        entries.push({ path, bytes: raw.slice(), protection: null, method: 'stored' });
+        if (raw.length > maxEntry) skipped.push({ path, reason: 'too large' });
+        else entries.push({ path, bytes: raw.slice(), protection: null, method: 'stored' });
       } else if (method === 8) {
-        entries.push({ path, bytes: await inflateRaw(raw), protection: null, method: 'deflate' });
+        const out = await inflateRaw(raw, maxEntry);
+        if (out) entries.push({ path, bytes: out, protection: null, method: 'deflate' });
+        else skipped.push({ path, reason: 'too large' });
       } else {
         // bzip2, lzma, zstd and friends. Rare in this corner of the world and
         // named rather than silently dropped.
