@@ -32,4 +32,10 @@ describe('refuseReleaseImage', () => {
   it('refuses a build with the debug-only firmware command compiled in', () => {
     expect(refuseReleaseImage(realInfo, 533624, Buffer.from('xx fwdbg xx'))).toMatch(/debug/);
   });
+  it('refuses a build with DF1 on by default unless the notes say TEST build', () => {
+    const df1 = Buffer.from('xx wf-df1-default-on xx');
+    expect(refuseReleaseImage(realInfo, 533624, df1)).toMatch(/DF1/);
+    expect(refuseReleaseImage(realInfo, 533624, df1, 'a release')).toMatch(/DF1/);
+    expect(refuseReleaseImage(realInfo, 533624, df1, 'TEST build: DF1 bench')).toBeNull();
+  });
 });

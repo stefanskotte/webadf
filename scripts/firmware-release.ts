@@ -112,7 +112,7 @@ try {
 } catch (e) {
   die(`picotool not found or failed: ${(e as Error).message} — install picotool 2.x (brew install picotool)`);
 }
-const refusal = refuseReleaseImage(info, bytes.byteLength, bytes);
+const refusal = refuseReleaseImage(info, bytes.byteLength, bytes, notes);
 if (refusal) die(`Publish refused: ${refusal}`);
 
 if (statSync(binPath).mtimeMs < statSync(headerPath).mtimeMs) {

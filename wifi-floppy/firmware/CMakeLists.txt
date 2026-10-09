@@ -61,7 +61,7 @@ add_executable(wifi_floppy
   src/transport_tls.c src/sntp_time.c
   ${WFMF_PSA_CRYPTO_RANDOM_SRC}
   src/wf_log.c
-  src/activity_led.c src/i2c_probe.c src/ssd1306.c src/display.c src/display_layout.c src/display_store.c src/nfc_tag.c
+  src/activity_led.c src/i2c_probe.c src/ssd1306.c src/display.c src/display_layout.c src/display_store.c src/drive_store.c src/nfc_tag.c
   src/nfc_reader.c src/nfc_bus_i2c.c src/nfc_handoff.c src/nfc_ui.c
   src/flux_capture.c src/flux_bits.c
   src/board.c src/bus_gate.c src/bus_out.c
@@ -168,6 +168,11 @@ if (WF_DRIVE_ID)
 else ()
   target_compile_definitions(wifi_floppy PRIVATE WF_DRIVE_ID=0)
   message(STATUS "WF_DRIVE_ID is OFF: no drive-ID answer; the server will refuse HD disks.")
+endif ()
+option(WF_DF1_DEFAULT "DF1 second drive ON when the board has no stored setting (bench TEST builds only)" OFF)
+target_compile_definitions(wifi_floppy PRIVATE WF_DF1_DEFAULT=$<IF:$<BOOL:${WF_DF1_DEFAULT}>,1,0>)
+if (WF_DF1_DEFAULT AND NOT WF_DRIVE_ID)
+  message(FATAL_ERROR "WF_DF1_DEFAULT needs WF_DRIVE_ID: DF1 answers its ID through the responder")
 endif ()
 # Bench-only (fix round 3): a bare-bones "fwdbg-wdtest" USB-serial command
 # that deliberately reproduces the nested-flash_safe_execute wedge shape, to

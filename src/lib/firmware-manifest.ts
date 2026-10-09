@@ -14,7 +14,7 @@ export function firmwareManifest(m: { version: string; sequence: number; sha256:
  * without TBYB -- it boots unconditionally on update and can never revert. A
  * machine checks it, from picotool's own reading of the image.
  */
-export function refuseReleaseImage(picotoolInfo: string, sizeBytes: number, bytes: Buffer): string | null {
+export function refuseReleaseImage(picotoolInfo: string, sizeBytes: number, bytes: Buffer, notes: string | null = null): string | null {
   if (sizeBytes > FIRMWARE_MAX_BYTES) return `image is ${sizeBytes} bytes; the limit is 2 MB`;
   if (!/^\s*tbyb:\s+not bought\s*$/m.test(picotoolInfo)) {
     return 'image is not a TBYB (try-before-you-buy) image; build with PICO_CRT0_IMAGE_TYPE_TBYB=1';
@@ -27,5 +27,10 @@ export function refuseReleaseImage(picotoolInfo: string, sizeBytes: number, byte
     return 'image carries no hash for the boot ROM to check; build with pico_hash_binary';
   }
   if (bytes.includes(Buffer.from('fwdbg', 'ascii'))) return 'image contains the debug-only firmware command (WF_FW_DEBUG)';
+  // A build with DF1 on by default (WF_DF1_DEFAULT) carries this marker (drive_store.c).
+  // It is for bench TEST builds; the operator says so in the notes.
+  if (bytes.includes(Buffer.from('wf-df1-default-on', 'ascii')) && !(notes ?? '').startsWith('TEST build')) {
+    return 'image has DF1 on by default (WF_DF1_DEFAULT); publish it only as a bench build, with --notes starting "TEST build"';
+  }
   return null;
 }

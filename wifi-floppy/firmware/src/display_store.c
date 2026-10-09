@@ -79,8 +79,8 @@ bool display_store_should_write(bool pending, bool disk_mounted) {
 
 // Top-of-flash map (each one sector, counted down from the end):
 //   -1 token_store.c   -2 config_store.c   -3 fw_state.c (OTA state)
-//   -4 display_store.c (this one)
-// The A/B partitions (partitions.json) end at 8224K, far below all four.
+//   -4 display_store.c (this one)   -5 drive_store.c
+// The A/B partitions (partitions.json) end at 8224K, far below all five.
 #define DISPLAY_FLASH_OFFSET (PICO_FLASH_SIZE_BYTES - 4 * FLASH_SECTOR_SIZE)
 #define DISPLAY_STORE_CAP    FLASH_PAGE_SIZE   // one program page
 
