@@ -44,12 +44,12 @@ export function SecondDriveSetting({ device, next }: { device: DeviceListItem; n
 
   return (
     <div className="flex flex-col gap-1 text-[11px]" style={{ color: 'var(--muted)' }}>
-      <label className="flex items-center gap-2">
+      <label className="flex flex-wrap items-center gap-x-2 gap-y-1">
         Second drive (DF1)
         <select data-testid={`second-drive-${id}`} value={device.secondDrive}
                 disabled={!device.secondDriveCapable || busy || refreshing}
                 onChange={(e) => save(e.target.value as 'off' | 'df1')}
-                className="rounded border px-1 py-0.5" style={{ borderColor: 'var(--hairline)', color: 'var(--ink)' }}>
+                className="min-w-0 max-w-full rounded border px-1 py-0.5" style={{ borderColor: 'var(--hairline)', color: 'var(--ink)' }}>
           <option value="off">Off</option>
           <option value="df1">Next disk of the set</option>
         </select>
