@@ -5,6 +5,7 @@
 #include "../src/image_loader.h"
 #include "../src/token_store.h"
 #include "../src/display_layout.h"
+#include "../src/wf_log.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -1414,6 +1415,97 @@ static void test_fetch_firmware_401_halts(void) {
     CHECK_EQ_INT(c.state, DC_HALTED);
 }
 
+// --- why a firmware download failed (2026-10-09) ---------------------------
+// OTA downloads on long-running boards retried for minutes and every failure
+// reached fw_update.c as a bare -1. These pin down that the failure is now
+// recorded (last_xfer) and said (two "fw:" lines), per stage.
+static char fw_log[4096];
+static void fw_log_sink(const char *line) {
+    size_t n = strlen(fw_log);
+    snprintf(fw_log + n, sizeof fw_log - n, "%s\n", line);
+}
+static const char *fw_logs(void) { wf_log_drain(1000); return fw_log; }
+static void fw_log_reset(void) {
+    wf_log_test_reset(); wf_log_test_set_sink(fw_log_sink); fw_log[0] = '\0';
+}
+
+static void test_fetch_firmware_read_failure_mid_body_is_named(void) {
+    boot(); fw_got_n = 0; fw_log_reset();
+    // The server sends the head and five body bytes of fifty, then nothing:
+    // the read waits out its timeout, which is a read FAILURE, not a close.
+    fake_push_held("HTTP/1.1 200 OK\r\nContent-Length: 50\r\n\r\nHELLO");
+    CHECK_EQ_INT(dc_fetch_firmware(&c, "1.1.0+gx", fw_sink, NULL), -1);
+    CHECK_EQ_INT(c.last_xfer.stage, DC_XFER_READ);
+    CHECK(c.last_xfer.rc < 0, "the transport's code is kept");
+    CHECK_EQ_INT(c.last_xfer.status, 200);
+    CHECK_EQ_INT(c.last_xfer.body_got, 5);
+    CHECK_EQ_INT(c.last_xfer.content_length, 50);
+    CHECK(!c.last_xfer.body_complete, "incomplete");
+    CHECK(!c.last_xfer.reused && !c.last_xfer.retried, "fresh connection, no retry");
+    const char *l = fw_logs();
+    CHECK(strstr(l, "fw: dl -1: at read rc=-1 (error), new conn") != NULL, "where it ended is logged");
+    CHECK(strstr(l, "fw: status=200 body 5/50 complete=no read=") != NULL, "how far it got is logged");
+}
+
+static void test_fetch_firmware_peer_close_mid_body_is_named(void) {
+    boot(); fw_got_n = 0; fw_log_reset();
+    fake_push_truncated("HTTP/1.1 200 OK\r\nContent-Length: 50\r\n\r\nHELLO", 44);
+    CHECK_EQ_INT(dc_fetch_firmware(&c, "1.1.0+gx", fw_sink, NULL), -1);
+    CHECK_EQ_INT(c.last_xfer.stage, DC_XFER_DONE);
+    CHECK_EQ_INT(c.last_xfer.body_got, 5);
+    CHECK(strstr(fw_logs(), "at end (peer closed), new conn") != NULL, "a clean close mid-body says so");
+}
+
+static void test_fetch_firmware_connect_failure_is_named(void) {
+    boot(); fw_log_reset();
+    fake_push_connect_failure();
+    CHECK_EQ_INT(dc_fetch_firmware(&c, "1.1.0+gx", fw_sink, NULL), -1);
+    CHECK_EQ_INT(c.last_xfer.stage, DC_XFER_CONNECT);
+    CHECK(c.last_xfer.rc < 0, "connect's code is kept");
+    CHECK_EQ_INT(c.last_xfer.status, 0);
+    CHECK(strstr(fw_logs(), "fw: dl -1: at connect rc=") != NULL, "connect failure logged");
+}
+
+static void test_fetch_firmware_dead_kept_connection_retry_is_named(void) {
+    boot(); fw_got_n = 0; fw_log_reset();
+    // A kept connection the far end has dropped: the first attempt reads
+    // nothing, the retry runs on a fresh connection and is cut short too.
+    fake_set_reused(true);
+    fake_kill_kept_connection();
+    fake_push_truncated("HTTP/1.1 200 OK\r\nContent-Length: 50\r\n\r\nHELLO", 44);
+    CHECK_EQ_INT(dc_fetch_firmware(&c, "1.1.0+gx", fw_sink, NULL), -1);
+    CHECK(c.last_xfer.retried, "the record says this was the retry");
+    CHECK(!c.last_xfer.reused, "and that the retry ran on a fresh connection");
+    CHECK(strstr(fw_logs(), "new conn, retried") != NULL, "retry visible in the log");
+}
+
+static void test_fetch_firmware_5xx_is_logged_but_200_is_not(void) {
+    boot(); fw_got_n = 0; fw_log_reset();
+    fake_push_response("HTTP/1.1 503 Service Unavailable\r\nContent-Length: 0\r\n\r\n");
+    CHECK_EQ_INT(dc_fetch_firmware(&c, "1.1.0+gx", fw_sink, NULL), 503);
+    CHECK(strstr(fw_logs(), "fw: dl 503: at end (complete)") != NULL, "a 5xx is retried, so it is logged");
+    fw_log_reset();
+    fake_push_response("HTTP/1.1 200 OK\r\nContent-Length: 5\r\n\r\nHELLO");
+    CHECK_EQ_INT(dc_fetch_firmware(&c, "1.1.0+gx", fw_sink, NULL), 200);
+    CHECK(strstr(fw_logs(), "fw: dl") == NULL, "a good download logs nothing extra");
+}
+
+static void test_xfer_describe_names_tls_codes(void) {
+    dc_xfer_t x = {0};
+    x.stage = DC_XFER_READ; x.rc = TLS_ERR_READ_TIMEOUT; x.reused = true;
+    x.status = 200; x.body_got = 123456; x.content_length = 700000; x.bytes_read = 124000; x.ms = 30012;
+    char how[72], got[72];
+    dc_xfer_describe(&x, how, sizeof how, got, sizeof got);
+    CHECK(strcmp(how, "at read rc=-108 (read timeout), kept conn") == 0, how);
+    CHECK(strcmp(got, "status=200 body 123456/700000 complete=no read=124000 in 30012 ms") == 0, got);
+    CHECK(strcmp(dc_transport_rc_text(TLS_ERR_TLS_CONFIG), "TLS setup failed") == 0, "config");
+    CHECK(strcmp(dc_transport_rc_text(-1), "error") == 0, "unknown codes are just errors");
+    // Truncated, never overrun, and always terminated.
+    char tiny[8];
+    dc_xfer_describe(&x, tiny, sizeof tiny, NULL, 0);
+    CHECK(strlen(tiny) == sizeof tiny - 1, "truncated to the cap");
+}
+
 // --- NFC tap-to-mount (spec 2026-09-25 §4.2, §5.2-5.4) -------------------
 
 #define NFC_ID "0123abcd-4567-5890-a123-456789abcdef"
@@ -2721,6 +2813,12 @@ int main(void) {
     RUN(test_fetch_firmware_streams_the_body);
     RUN(test_fetch_firmware_incomplete_is_minus_one);
     RUN(test_fetch_firmware_401_halts);
+    RUN(test_fetch_firmware_read_failure_mid_body_is_named);
+    RUN(test_fetch_firmware_peer_close_mid_body_is_named);
+    RUN(test_fetch_firmware_connect_failure_is_named);
+    RUN(test_fetch_firmware_dead_kept_connection_retry_is_named);
+    RUN(test_fetch_firmware_5xx_is_logged_but_200_is_not);
+    RUN(test_xfer_describe_names_tls_codes);
     RUN(poll_carries_nfc_ack);
     RUN(poll_body_nfc_write_arms);
     RUN(nfc_write_cancel_disarms);
