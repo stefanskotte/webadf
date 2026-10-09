@@ -1767,7 +1767,7 @@ static void push_poll_next(uint32_t version, const char *desired_sha, const char
     snprintf(desired, sizeof desired,
              "\"desired\":{\"sha256\":\"%s\",\"diskId\":\"d1\",\"gameId\":\"g\",\"game\":\"G\","
              "\"diskNo\":1,\"diskCount\":3,\"writeProtected\":false}", desired_sha);
-    char body[512];
+    char body[1024];   // next[200] + desired[300] + framing: truncation impossible
     if (next_first) snprintf(body, sizeof body, "{\"version\":%lu,%s%s}", (unsigned long)version, next, desired);
     else {
         // Server order: desired, then next. Drop the trailing comma of `next`.
@@ -2412,7 +2412,7 @@ static void test_display_decide_branches(void) {
     device_client_t d; memset(&d, 0, sizeof d);
     d.display_ack = 4; d.display_want = 5;
     static dc_display_verdict_t vd;
-    uint8_t body[8 + LAYOUT_BLOB_MAX];
+    uint8_t body[8 + LAYOUT_BLOB_MAX] = {0};   // read-only for n < 0, but GCC cannot know that
 
     CHECK_EQ_INT(dc_display_decide(&d, body, -1, &vd), DC_DISP_RETRY);      // transport failure
 

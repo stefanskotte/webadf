@@ -12,6 +12,14 @@
 
 #define FB_BYTES 512   // 128 x 32 / 8: the golden set is 128x32 only
 
+// Truncation is the point of the long_title golden: fill `dst` from a string
+// known to be too long and assert that it was (snprintf's return is the length
+// it WOULD have written; using it also tells GCC the truncation is intended).
+static void put_truncated(char *dst, size_t cap, const char *src) {
+    int want = snprintf(dst, cap, "%s", src);
+    if (want < 0 || (size_t)want < cap) { fprintf(stderr, "put_truncated: source fits, test is wrong\n"); abort(); }
+}
+
 static display_state_t st(disp_status_t status) {
     display_state_t s;
     memset(&s, 0, sizeof s);
@@ -45,8 +53,8 @@ static int golden_set(golden_t *g) {
     s = st(DS_LOADED); strcpy(s.title, "A"); s.show_track = true; s.cyl = 5;
         s.writable = true; s.sync = DISP_SYNC_OFFLINE;            g[n++] = (golden_t){"mounted_offline", s};
     s = st(DS_LOADED);
-        snprintf(s.title, sizeof s.title, "%s", "Gods v1.00 (1991-03-28)(Renegade)(Disk 1 of 2)");
-        snprintf(s.detail, sizeof s.detail, "%s", "a detail that is far too long");
+        put_truncated(s.title, sizeof s.title, "Gods v1.00 (1991-03-28)(Renegade)(Disk 1 of 2)");
+        put_truncated(s.detail, sizeof s.detail, "a detail that is far too long");
         s.show_track = true; s.cyl = 42;                          g[n++] = (golden_t){"long_title", s};
     s = st(DS_LOADED); s.title[0] = '\0'; s.show_track = true; s.cyl = 1; g[n++] = (golden_t){"empty_title", s};
     s = st(DS_ERROR); strcpy(s.title, "no route"); s.bars = -1;   g[n++] = (golden_t){"error_noradio", s};
