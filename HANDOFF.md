@@ -1611,6 +1611,12 @@ separately.
 - **Screenshots of the web app's pages for the GitHub page** (operator, 2026-10-08): library, game page, disk
   page/file browser with history, Devices (bezel card and display editor), Help. Capture them with Playwright
   from a seeded demo org, never from a real tenant's data.
+- **REQUIREMENT (operator, 2026-10-09): a first install is ONE drag-and-drop.** Hold BOOTSEL, plug in, drop ONE
+  .uf2 onto the drive that appears, and everything else just works. **Requiring picotool is a blocker for casual
+  users.** Today's install (picotool: partition table, reboot to BOOTSEL, `load -p 0 -x`) does not meet it. Research
+  is in progress: `docs/superpowers/research/2026-10-09-uf2-drag-drop-first-install.md` (a single combined UF2, or
+  a partition table embedded in the image that the firmware writes on first boot). Bench-testing it needs a board
+  with its flash wiped, after a picotool backup.
 - **Quickstart on the GitHub page for a first install** (operator, 2026-10-08). The repo README / GitHub page
   should carry step-by-step instructions for putting the firmware on a new board: hold BOOTSEL while plugging in,
   copy the release `.uf2` onto the RPI-RP2 / RP2350 drive that appears, then pair from the web app. After that,
