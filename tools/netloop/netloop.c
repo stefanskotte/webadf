@@ -1,10 +1,12 @@
 /*
+ * PaulaNET protocol: Copyright (C) 2026 RobSmithDev, https://github.com/RobSmithDev/PaulaNET.
+ * Used with the author's permission (2026-10-09).
+ */
+/*
  * NetLoop -- the PaulaNET track-77 loopback probe for the A500 (PaulaNET-on-DF1, Phase 0).
  * Plan: docs/superpowers/plans/2026-10-09-paulanet-phase0-loopback.md in the webadf repository.
  *
- * PaulaNET protocol: Copyright (C) 2026 RobSmithDev, https://github.com/RobSmithDev/PaulaNET.
- * Used with the author's permission (2026-10-09). Implemented from the protocol's description;
- * none of his code is in this program.
+ * Implemented from the protocol's description; none of RobSmithDev's code is in this program.
  *
  * Each round writes a batch of N payload bytes to DF1 cylinder 77 side 0 (ETD_RAWWRITE), reads
  * the board's echo from side 1 (ETD_RAWREAD with IOTDF_INDEXSYNC, then software bit alignment),
@@ -144,7 +146,7 @@ static int one_round(UBYTE *ctr, UBYTE *last_pico, ULONG n, ULONG reads, ULONG s
     const uint64_t t0 = ticks();   /* the window opens before the encode: it is part of a round */
     const size_t wlen = pnet_build_to_board(wbuf, CHIP_BYTES, *ctr, *last_pico, refs, nf);
     t_build += ticks() - t0;
-    if (!wlen) return 1;
+    if (!wlen) { *took = 0; return 1; }
     pnet_hdr_t h;
     memset(&h, 0, sizeof h);
     int res = 1;

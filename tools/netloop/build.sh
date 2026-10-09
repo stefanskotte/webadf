@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# PaulaNET protocol: Copyright (C) 2026 RobSmithDev, https://github.com/RobSmithDev/PaulaNET.
+# Used with the author's permission (2026-10-09).
 # NetLoop: the PaulaNET loopback probe for the A500 (plan
 # docs/superpowers/plans/2026-10-09-paulanet-phase0-loopback.md). Builds, in order:
 #   1. the host test of the pure helpers (this machine's cc), and runs it;
@@ -7,8 +9,6 @@
 #   3. tools/netloop/build/NetLoop.adf with xdftool (amitools), to upload to the webadf library.
 # `build.sh test` stops after 1. The codec is the board's own: wifi-floppy/firmware/src/
 # pnet_mfm.c and pnet_frame.c, compiled unchanged for the 68000.
-# PaulaNET protocol: Copyright (C) 2026 RobSmithDev, https://github.com/RobSmithDev/PaulaNET.
-# Used with the author's permission (2026-10-09).
 set -euo pipefail
 here="$(cd "$(dirname "$0")" && pwd)"
 root="$(cd "$here/../.." && pwd)"

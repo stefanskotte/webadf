@@ -1,10 +1,12 @@
+/*
+ * PaulaNET protocol: Copyright (C) 2026 RobSmithDev, https://github.com/RobSmithDev/PaulaNET.
+ * Used with the author's permission (2026-10-09).
+ */
 #ifndef NETLOOP_STATS_H
 #define NETLOOP_STATS_H
 /*
  * NetLoop's pure helpers: the payload, the round's verdict and the arithmetic of its report.
  * Host-tested by test_netloop_stats.c (build.sh runs it before every Amiga build).
- * PaulaNET protocol: Copyright (C) 2026 RobSmithDev, https://github.com/RobSmithDev/PaulaNET.
- * Used with the author's permission (2026-10-09).
  */
 #include <stdint.h>
 #include <stdbool.h>
