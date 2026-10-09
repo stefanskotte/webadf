@@ -137,6 +137,7 @@ int fwu_diag_format(char *buf, int cap, const fwu_diag_in_t *in, uint32_t now) {
     char retry[24];
     if (in->retry_at_ms == 0) snprintf(retry, sizeof retry, "none");
     else snprintf(retry, sizeof retry, "%ldms", (long)(int32_t)(in->retry_at_ms - now));
+    /* Bench 2026-10-09: motor=1 with the pads ALL LOW is the latch the Amiga's power-off leaves behind. */
     return snprintf(buf, (size_t)cap,
                     "fwdiag: phase=%s retry_in=%s backoff=%lums idle=%s | mounted=%d slot=%d "
                     "upw=%d motor=%d owed=%d preload=%d dc=%d",
