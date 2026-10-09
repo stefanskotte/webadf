@@ -14,7 +14,7 @@ import { cleanupSeeded, seedDisk } from './device-helpers';
 
 test.afterAll(async () => { await cleanupSeeded(); });
 
-const PNG = join(__dirname, '../src/lib/__fixtures__/cover/cover.png');
+const PNG = join(process.cwd(), 'src/lib/__fixtures__/cover/cover.png');
 const freshSha = () => randomUUID().replace(/-/g, '').padEnd(64, '0');
 const overrideOf = async (id: string) =>
   (await getDb().select({ s: games.coverOverrideSha256 }).from(games).where(eq(games.id, id)))[0]?.s ?? null;
