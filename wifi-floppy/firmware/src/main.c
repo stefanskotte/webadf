@@ -2362,7 +2362,7 @@ static void core1_main(void) {
             // A preload report owed from an earlier pass (see the preload
             // below) rides here too -- but never ahead of a waiting tap.
             if (!report_retry && s != DC_HALTED && (disk_changed || version_changed || fw_report_owed ||
-                                    dc_sel1_owed(&c) || nfc_report_owed || display_report_owed ||
+                                    dc_sel1_owed(&c) || dc_drive_report_owed(&c) || nfc_report_owed || display_report_owed ||
                                     (preload_report_owed && !nfc_event_pending(NULL)) ||
                                     (now - last_status_ms) >= DC_STATUS_PERIOD_MS)) {
                 if (dc_report_status(&c, psram_free_estimate(), wifi_rssi(), NULL, WF_FIRMWARE_VERSION)) {

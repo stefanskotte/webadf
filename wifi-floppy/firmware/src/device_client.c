@@ -32,7 +32,9 @@
 // length the worst poll request is 290 -- already 268 before this change, so
 // 256 silently could not carry the longest token the store would hand it.
 // 320 covers it; the buffers using this are static, so the cost is .bss.
-#define DC_REQ_BUF_BYTES  320
+// &driveAck=4294967295 (DF1 setting, Phase 3) adds 20: 290 + 20 = 310 worst,
+// so 352.
+#define DC_REQ_BUF_BYTES  352
 // DC_POLL_BODY_BYTES moved to device_client.h so a test can name it -- see
 // the note there. A budget a test cannot name is a budget checked by hand.
 // 512 was never under load before the image fetch: every other response on
@@ -950,6 +952,40 @@ static bool dc_held(device_client_t *c) {
 }
 
 // Acts on a fully-received 200 poll body. `json` is NUL-terminated.
+// Lifts `secondDrive` ({"seq":N,"mode":"off"|"df1"}) out of a 200 poll body
+// and BLANKS it, before any flat lookup: its counter is `seq`, never
+// `version`, and blanking keeps its keys from shadowing the body's own.
+// Only a DF1-capable build reads it; an older one sends no &driveAck= and the
+// server never wakes it for this. Unknown mode -> off, never on.
+static void dc_take_second_drive(device_client_t *c, char *json) {
+    static char obj[128];   // {"seq":4294967295,"mode":"df1"} is 31; static: STACK note
+    if (!c->_df1_capable || !json_object(json, "secondDrive", obj, sizeof obj, true)) return;
+    uint32_t seq;
+    if (!json_u32_strict(obj, "seq", &seq)) return;
+    char mode[8] = "";
+    json_str(obj, "mode", mode, sizeof mode);
+    if (seq == c->drive_ack && !c->drive_owed) return;   // nothing new
+    c->drive_want_seq = seq;
+    c->drive_want_mode = strcmp(mode, "df1") == 0 ? DF1_MODE_NEXT : DF1_MODE_OFF;
+    c->drive_owed = true;
+}
+
+bool dc_drive_take(device_client_t *c, uint32_t *seq, df1_mode_t *mode) {
+    if (!c->drive_owed) return false;
+    c->drive_owed = false;
+    *seq = c->drive_want_seq;
+    *mode = (df1_mode_t)c->drive_want_mode;
+    return true;
+}
+
+void dc_drive_handled(device_client_t *c, uint32_t seq) { c->drive_ack = seq; }
+
+bool dc_drive_report_owed(const device_client_t *c) {
+    return c->_df1_capable &&
+           (!c->_drive_sent_valid || c->_drive_sent_mode != c->_df1_mode ||
+            c->_drive_sent_ack != c->drive_ack);
+}
+
 static dc_state_t dc_handle_poll_body(device_client_t *c, const char *json) {
     // OLED layouts (spec 2026-10-04 §6): the server's display version, read
     // before anything about the disk can return early. Absent (an older
@@ -1444,17 +1480,26 @@ bool dc_report_status(device_client_t *c, int psram_free, int rssi, const char *
         else snprintf(df1_tail, sizeof df1_tail, ",\"df1Sha256\":null");
     } else df1_tail[0] = '\0';
 
+    // Second drive (Phase 3): the setting as applied and its ack. 46 at most.
+    static char drive_tail[64];
+    const uint8_t drive_mode_sent = c->_df1_mode;
+    const uint32_t drive_ack_sent = c->drive_ack;
+    if (c->_df1_capable)
+        snprintf(drive_tail, sizeof drive_tail, ",\"secondDrive\":\"%s\",\"driveVersion\":%lu",
+                 c->_df1_mode == DF1_MODE_NEXT ? "df1" : "off", (unsigned long)c->drive_ack);
+    else drive_tail[0] = '\0';
+
     static char body[DC_STATUS_BODY_BYTES];
     int body_len = snprintf(body, sizeof body,
         "{\"mountedSha256\":%s,\"mountedDiskId\":%s,\"version\":%lu,"
         "\"error\":%s,\"psramFree\":%d,\"firmwareVersion\":%s,\"rssi\":%d,"
-        "\"trackMaxBytes\":%u%s%s%s%s%s%s%s}",
+        "\"trackMaxBytes\":%u%s%s%s%s%s%s%s%s}",
         sha_field, disk_field, (unsigned long)c->mounted_version,
         err_field, psram_free, ver_field, rssi, (unsigned)TRACK_MAX_BYTES, fw_tail, nfc_tail,
         display_tail, preload_tail,
         // playsHd: only from a build with the drive-ID responder (HD spec §5.5).
         c->_plays_hd ? ",\"playsHd\":true" : "",
-        sel1_tail, df1_tail);
+        sel1_tail, df1_tail, drive_tail);
     if (body_len < 0 || body_len >= (int)sizeof body) return false; // should never happen; give up quietly
 
     static char req[DC_STATUS_REQ_BYTES];
@@ -1476,6 +1521,11 @@ bool dc_report_status(device_client_t *c, int psram_free, int rssi, const char *
         c->_sel1_sent_valid = true;
         c->_sel1_sent_wired = sel1_wired_sent;
         c->_df1_sent_seen = df1_seen_sent;
+    }
+    if (accepted && c->_df1_capable) {
+        c->_drive_sent_valid = true;
+        c->_drive_sent_mode = drive_mode_sent;
+        c->_drive_sent_ack = drive_ack_sent;
     }
     return accepted;
 }
@@ -1644,10 +1694,13 @@ static dc_state_t dc_step_inner(device_client_t *c) {
     // static: see the STACK note above.
     // Worst case
     // "/api/device/poll?since=4294967295&nfcAck=4294967295&displayAck=4294967295"
-    // is 73 (51 before displayAck). test_poll_url_carries_display_ack sends it.
-    static char path[96];
-    snprintf(path, sizeof path, "/api/device/poll?since=%lu&nfcAck=%lu&displayAck=%lu",
+    // is 73 (51 before displayAck); &driveAck=4294967295 makes it 93.
+    // test_poll_url_carries_display_ack / _drive_ack send them.
+    static char path[128];
+    int plen = snprintf(path, sizeof path, "/api/device/poll?since=%lu&nfcAck=%lu&displayAck=%lu",
              (unsigned long)c->since, (unsigned long)c->nfc_ack, (unsigned long)c->display_ack);
+    if (c->_df1_capable && plen > 0 && plen < (int)sizeof path)
+        snprintf(path + plen, sizeof path - (size_t)plen, "&driveAck=%lu", (unsigned long)c->drive_ack);
 
     static char req[DC_REQ_BUF_BYTES];
     int req_len = http_build_request(req, sizeof req, "GET", path, c->host, c->token, NULL);
@@ -1759,6 +1812,7 @@ static dc_state_t dc_step_inner(device_client_t *c) {
             // takes -- rather than parsing whatever prefix arrived.
             return dc_enter_backoff(c);
         }
+        dc_take_second_drive(c, body.buf);   // lifted and BLANKED first: its keys must never shadow ours
         dc_take_fw_fields(c, body.buf);
         dc_take_nfc_write(c, body.buf);
         dc_take_next(c, body.buf);
