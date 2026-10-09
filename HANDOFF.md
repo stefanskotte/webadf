@@ -4698,7 +4698,29 @@ Demozoo API (the bulk export makes per-lookup load on a non-profit unnecessary).
   allowlist checks only the first URL (the raster content-type allowlist and `nosniff` still apply).
 - **Cron drift:** the daily 01:30 cron against a 7-day gate can drift a refetch to 8 days.
 
-### 3bc. DF1 second drive -- in flight (plan `docs/superpowers/plans/2026-10-08-df1-second-drive.md`, branch `feat/df1-second-drive`)
+### 3bc. DF1 second drive -- SHIPPED 2026-10-09 (fw 1.9.0+gde4e92b, seq 51, master 0b853ca)
+
+**Phase 3 bench passed on the A500 rev 8a.1 (2026-10-09):**
+1. 1.9.0 shows the control enabled, set to Off, "Set on the board".
+2. Switched on from the web with Workbench running: "Set on the board"; `info` shows DF0 only until a restart.
+3. After Ctrl-A-A, DF1 Storage3.1 is listed.
+4. **C1 fix proven:** with USB unplugged, an Amiga power-cycle (the board boots from the Amiga's power) gives DF0
+   and DF1 at the first cold boot; boot log `df1: next disk of the set at boot (stored)`.
+5. Switched off while running: DF1 is listed but empty (no phantom disk); after Ctrl-A-A, DF0 only.
+
+**Owed:**
+- step 6, the df1Seen refusal with the real external drive, plus Phase 1 step 5 (real external DF1 regression);
+- Phase 2 step 8 (real 2-disk games), when the operator finds DF1-capable games.
+
+The plan ledger (every ruling R1-R17 and every deferred minor) is in
+`docs/superpowers/plans/2026-10-08-df1-second-drive-ledger.md`, and the final review is beside it.
+- **Final review (before merge) found C1:** the setting was persisted only with DF0 empty, so it was lost at every
+  power-off. **I1:** after a re-pair the card said Off while the board ran DF1. **I2:** a 1.8.x rollback hid that
+  DF1 was on. All three were fixed and re-reviewed before release. The bench missed C1 because the board was
+  powered over USB.
+
+(Earlier in-flight notes follow.)
+ (plan `docs/superpowers/plans/2026-10-08-df1-second-drive.md`, branch `feat/df1-second-drive`)
 
 Run subagent-driven from the worktree `.claude/worktrees/df1`. The ledger is in the worktree at
 `.superpowers/sdd/2026-10-08-df1-second-drive/progress.md`; trust it and `git log` after a context reset.
