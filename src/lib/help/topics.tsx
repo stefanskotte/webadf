@@ -253,10 +253,50 @@ export const HELP_TOPICS = {
       </>
     ),
   },
+  // Sources: control texts and override buttons "Switch on anyway…" / "Yes, I have removed the other DF1 drive
+  // — switch DF1 on": plan docs/superpowers/plans/2026-10-08-df1-second-drive.md Task 21 (second-drive-setting.tsx
+  // runs after this task and must keep them identical); src/lib/second-drive.ts (SECOND_DRIVE_FW 1.9.0,
+  // DF1_SEEN_REASON, saveSecondDrive refuses unless override; off is never refused); firmware: DF1 always
+  // write-protected -> saves fail as "write-protected" (bench 2026-10-09 `echo >df1:x`); restart: Kickstart reads
+  // drive IDs at every reset (Task 19; bench: DF1 survives Ctrl-Amiga-Amiga; switching off while running leaves an
+  // empty, write-protected DF1 until the restart); device_client.c dc_df1_want (only the verified next disk; after
+  // Next disk DF0 changes at once, DF1 empty ~4 s on the bench, 4.1 s measured); big boxes: spec
+  // docs/superpowers/research/2026-10-08-df1-second-drive.md §2 (second internal drive is DF1, external port is DF2,
+  // J1 has no SEL2) -- from the spec, not the bench. Kickstart 1.3 deliberately not mentioned (not bench-verified).
+  'second-drive': {
+    title: 'Second drive (DF1)',
+    short:
+      'The board can also be your DF1, holding the next disk of the set, so games that read disk 2 from DF1 need no swapping. Off unless you switch it on.',
+    body: (
+      <>
+        <p>
+          Choose <em>Next disk of the set</em> under <em>Second drive (DF1)</em> on the board&apos;s card. DF1 then
+          holds the disk after the one in DF0. When you press <em>Next disk</em>, DF0 moves on at once and DF1 is
+          empty for about five seconds while the following disk is fetched.
+        </p>
+        <p>
+          The change takes effect when the Amiga restarts, cold or warm: switch the Amiga off and on, or press
+          Ctrl-Amiga-Amiga. Switching it off works the same way: until the Amiga restarts, DF1 stays there, empty and
+          write-protected.
+        </p>
+        <p>
+          Use it only when no other drive is DF1. On an A500, A600 or A1200 that means no external drive. On an
+          A2000, A3000 or A4000 it means no second internal drive; the external port there is DF2, which the board
+          does not affect. If the board has seen another drive answer as DF1, the setting refuses to switch on. After
+          removing that drive you can override it with <em>Switch on anyway…</em> and a second confirmation.
+        </p>
+        <GoodToKnow items={[
+          'DF1 is read-only: saving to it fails as write-protected. Saves to DF0 follow that disk’s own write protection.',
+          'DF1 only ever holds the next disk of the set. You cannot pick another disk for it.',
+          'Needs board firmware 1.9.0 or newer.',
+        ]} />
+      </>
+    ),
+  },
 } as const satisfies Record<string, HelpTopic>;
 
 export type HelpTopicId = keyof typeof HELP_TOPICS;
 
 export const HELP_ORDER: readonly HelpTopicId[] = [
-  'boards', 'nfc', 'next-disk', 'write-back', 'write-protect', 'disk-sets', 'hd-hfe', 'display',
+  'boards', 'nfc', 'next-disk', 'second-drive', 'write-back', 'write-protect', 'disk-sets', 'hd-hfe', 'display',
 ];
