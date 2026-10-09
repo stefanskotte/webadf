@@ -111,6 +111,12 @@ export const games = pgTable('games', {
   // the game; the global automatic link is blobs.demozoo_production_id.
   demozooProductionId: integer('demozoo_production_id'),
   demozooLinkSource: text('demozoo_link_source'),   // 'confirmed'
+  // The cover a person chose for THIS title: the sha-256 of bytes at
+  // cover/<sha256> in the image store (coverStore). NULL = show the enriched
+  // cover, if any. On the per-org games row, never on a global table, so one
+  // org's choice cannot change another org's view of the same disk. The blob
+  // GC reads this column as a reference (blob-gc-run.ts).
+  coverOverrideSha256: text('cover_override_sha256'),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
 }, (t) => [
   index('games_org_sort_idx').on(t.orgId, t.sortTitle),

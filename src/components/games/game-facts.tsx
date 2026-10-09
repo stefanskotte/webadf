@@ -41,15 +41,19 @@ export function GameFacts({ game }: { game: GameDetail }) {
   // recognised was the enrichment. Any non-null source is an author now;
   // those columns are only ever written BY an author.
   const authored = game.factsSource !== null || game.proseSource !== null;
-  const enriched = authored || game.front !== null || game.screenshots.length > 0;
+  // A cover a person chose counts too: it is the only image a title nothing
+  // has enriched (a utility, a disk of their own) can ever have.
+  const enriched = authored || game.coverOverrideUrl !== null || game.front !== null || game.screenshots.length > 0;
   // Distinct from `authored`: WHO wrote it, not whether anyone did.
   const fromOpenRetro = game.factsSource === 'openretro' || game.proseSource === 'openretro'
     || game.front !== null || game.title_ !== null || game.screenshots.length > 0;
-  const hasBody = facts.length > 0 || game.description || game.front
+  const hasBody = facts.length > 0 || game.description || game.front || game.coverOverrideUrl
     || game.screenshots.length > 0 || links.length > 0;
   if (!enriched || !hasBody) return null;
 
-  const cover = game.front ?? game.title_;
+  // The one precedence rule (cover-image.ts effectiveCoverUrl): the org's own
+  // choice, else OpenRetro's front cover, else its title screen.
+  const cover = game.coverOverrideUrl ? { url: game.coverOverrideUrl } : (game.front ?? game.title_);
 
   return (
     <div className="px-4 pb-3 sm:px-7" data-testid="game-facts">

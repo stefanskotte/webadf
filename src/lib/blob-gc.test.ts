@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { selectUnreferencedBlobs, selectReleasableUploads, planBlobGc } from './blob-gc';
+import { selectUnreferencedBlobs, selectReleasableUploads, planBlobGc, planCoverGc, withoutReferenced } from './blob-gc';
 
 describe('selectUnreferencedBlobs', () => {
   it('keeps a blob that a disk still points at', () => {
@@ -149,5 +149,82 @@ describe('planBlobGc', () => {
     });
     expect(plan.objects).toEqual(['a', 'b']);
     expect(plan.refused).toBeNull();
+  });
+});
+
+describe('planCoverGc (a title\'s own cover images, cover/<sha256>)', () => {
+  const now = new Date('2026-10-09T12:00:00Z');
+  const old = new Date('2026-09-01T00:00:00Z');
+  const young = new Date('2026-10-09T11:00:00Z');
+  const base = { now, graceMs: 7 * 24 * 3600 * 1000 };
+
+  it('never deletes a cover a title names, however old', () => {
+    const plan = planCoverGc({ ...base, objects: [{ sha256: 'used', uploadedAt: old }], referenced: ['used'] });
+    expect(plan).toEqual({ objects: [], refused: null });
+  });
+
+  it('refuses when no title names any cover but the plan would delete some', () => {
+    const plan = planCoverGc({ ...base, objects: [{ sha256: 'a', uploadedAt: old }], referenced: [] });
+    expect(plan.objects).toEqual([]);
+    expect(plan.refused).toMatch(/no title names/);
+  });
+
+  it('with no references and nothing old enough to delete, there is nothing to refuse', () => {
+    const plan = planCoverGc({ ...base, objects: [{ sha256: 'a', uploadedAt: young }], referenced: [] });
+    expect(plan).toEqual({ objects: [], refused: null });
+  });
+
+  it('reclaims an old cover nothing names (a Revert, or a replaced image)', () => {
+    const plan = planCoverGc({
+      ...base,
+      objects: [{ sha256: 'reverted', uploadedAt: old }, { sha256: 'used', uploadedAt: old }],
+      referenced: ['used'],
+    });
+    expect(plan).toEqual({ objects: ['reverted'], refused: null });
+  });
+
+  it('keeps a young unnamed cover: stored, but its games row not written yet', () => {
+    const plan = planCoverGc({ ...base, objects: [{ sha256: 'inflight', uploadedAt: young }], referenced: [] });
+    expect(plan.objects).toEqual([]);
+  });
+
+  it('a cover two orgs share stays while either still names it', () => {
+    // One digest, named by one org's title after the other org reverted:
+    // the reference list is across ALL orgs, so it is still referenced.
+    const plan = planCoverGc({ ...base, objects: [{ sha256: 'shared', uploadedAt: old }], referenced: ['shared'] });
+    expect(plan.objects).toEqual([]);
+  });
+
+  it('refuses when the named covers are missing from the listing (the listing is wrong)', () => {
+    const referenced = Array.from({ length: 10 }, (_, i) => `c${i}`);
+    const objects = referenced.map((s) => ({ sha256: `x-${s}`, uploadedAt: old }));
+    const plan = planCoverGc({ ...base, objects, referenced });
+    expect(plan.objects).toEqual([]);
+    expect(plan.refused).toMatch(/only 0 of 10 referenced covers/);
+  });
+
+  it('refuses when an implausible share would go (the reference list came back short)', () => {
+    const objects = Array.from({ length: 200 }, (_, i) => ({ sha256: `c${i}`, uploadedAt: old }));
+    const plan = planCoverGc({ ...base, objects: [...objects, { sha256: 'used', uploadedAt: old }], referenced: ['used'] });
+    expect(plan.objects).toEqual([]);
+    expect(plan.refused).toMatch(/would delete 200 of 201 cover images/);
+  });
+
+  it('allows a small plan on a small store (the floor)', () => {
+    const plan = planCoverGc({
+      ...base,
+      objects: [{ sha256: 'a', uploadedAt: old }, { sha256: 'b', uploadedAt: old }, { sha256: 'used', uploadedAt: old }],
+      referenced: ['used'],
+    });
+    expect(plan).toEqual({ objects: ['a', 'b'], refused: null });
+  });
+});
+
+describe('withoutReferenced (the last look before cover deletes)', () => {
+  it('drops planned digests a title names after all', () => {
+    expect(withoutReferenced(['a', 'b', 'c'], ['b'])).toEqual(['a', 'c']);
+  });
+  it('keeps the plan when nothing is named', () => {
+    expect(withoutReferenced(['a'], [])).toEqual(['a']);
   });
 });

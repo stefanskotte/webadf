@@ -309,10 +309,41 @@ export const HELP_TOPICS = {
       </>
     ),
   },
+
+  // Sources: cover-image.ts (types, 2 MB, 16-4096 px, effectiveCoverUrl precedence), cover-control.tsx
+  // (button texts), api/games/[id]/cover/route.ts (Revert keeps nothing else), cover-override.ts (per-org row),
+  // blob-gc-run.ts (unused images reclaimed within two weeks).
+  'cover-image': {
+    title: 'Cover images',
+    short:
+      'Give a title a picture of your own, such as a scan of the box for a utility nobody has catalogued. Revert to default puts back the cover found for it, if any.',
+    body: (
+      <>
+        <p>
+          <strong>Changing the image.</strong> On a title&apos;s page, press <em>Change image…</em> and pick a PNG,
+          JPEG, GIF or WebP file of at most 2 MB, between 16 and 4096 pixels on each side. It replaces the cover on the
+          title&apos;s page, on its library card and in the collection tiles it appears in.
+        </p>
+        <p>
+          <strong>Which picture shows.</strong> Your own image always wins. Without one, the title uses the cover the
+          automatic look-ups found for it, if any; with neither, the library card shows its plain placeholder.
+        </p>
+        <p>
+          <strong>Going back.</strong> <em>Revert to default</em> removes your image from the title and the automatic
+          cover returns. Nothing else about the title changes.
+        </p>
+        <GoodToKnow items={[
+          'The image belongs to your organization only: other people who have the same disk keep seeing their own cover.',
+          'An image no title uses any more is deleted from storage within two weeks.',
+        ]} />
+      </>
+    ),
+  },
 } as const satisfies Record<string, HelpTopic>;
 
 export type HelpTopicId = keyof typeof HELP_TOPICS;
 
 export const HELP_ORDER: readonly HelpTopicId[] = [
   'boards', 'nfc', 'next-disk', 'second-drive', 'write-back', 'write-protect', 'disk-sets', 'hd-hfe', 'display',
+  'cover-image',
 ];

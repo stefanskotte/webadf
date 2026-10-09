@@ -9,6 +9,7 @@ import { DiskRow } from '@/components/games/disk-row';
 import { DiskSetSection } from '@/components/games/disk-set-section';
 import { GameFacts } from '@/components/games/game-facts';
 import { EditDetails } from '@/components/games/edit-details';
+import { CoverControl } from '@/components/games/cover-control';
 import { DemozooPanel } from '@/components/games/demozoo-panel';
 import { listNfcReaders } from '@/lib/nfc/store';
 
@@ -55,6 +56,8 @@ export default async function GamePage(props: PageProps<'/games/[id]'>) {
           for a title nothing has enriched, which is exactly the title a
           person most wants to fill in by hand. */}
       <EditDetails game={game} />
+      {/* Same reason as EditDetails: reachable on titles nothing has enriched. */}
+      <CoverControl gameId={game.id} hasOverride={game.coverOverrideUrl !== null} />
       <DemozooPanel game={game} />
       <GameFacts game={game} />
       <div className="flex flex-col gap-3 px-4 pb-10 sm:px-7">
