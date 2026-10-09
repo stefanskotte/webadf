@@ -2617,6 +2617,13 @@ separately.
   device connects over TLS with mbedTLS: a local instance needs either a publicly-trusted
   certificate for its LAN name or its CA baked into the firmware image. Neither is hard; both
   need deciding before this is usable with real hardware rather than just in a browser.
+
+  **Operator note 2026-10-09:** when self-hosting, the server URL the boards talk to has to be
+  dynamic somehow -- a per-build reflash per site is not acceptable. Options to weigh against the
+  4b decision above: a server URL set at pairing time and stored with the token (the pairing code
+  already proves the user owns the server); a signed "server binding" the hosted service issues;
+  or set only over USB (picotool/serial), never from the open AP. Each still needs the TLS answer
+  (public cert for the LAN name, or a CA pinned per server at pairing).
 - ~~**Rename the "Ingest" nav item to "Upload".**~~ **Label DONE 2026-08-31** — the nav now reads
   "Upload"; nothing asserted on the old text, so no test changed. **The route rename is still
   open and is deliberately not done:** `/ingest` is referenced in `src/proxy.ts`'s matcher, the
