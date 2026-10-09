@@ -263,6 +263,8 @@ export const HELP_TOPICS = {
   // Next disk DF0 changes at once, DF1 empty ~4 s on the bench, 4.1 s measured); big boxes: spec
   // docs/superpowers/research/2026-10-08-df1-second-drive.md §2 (second internal drive is DF1, external port is DF2,
   // J1 has no SEL2) -- from the spec, not the bench. Kickstart 1.3 deliberately not mentioned (not bench-verified).
+  // HD next disk: device_client.c dc_df1_want (returns SLOT_NONE for SLOT_KIND_ADF_HD unless _df1_hd_ok) and
+  // wifi-floppy/firmware/CMakeLists.txt:181 WF_DF1_HD OFF (decision D2: DF1's buffer is DD-only) -> DF1 stays empty.
   'second-drive': {
     title: 'Second drive (DF1)',
     short:
@@ -271,7 +273,7 @@ export const HELP_TOPICS = {
       <>
         <p>
           Choose <em>Next disk of the set</em> under <em>Second drive (DF1)</em> on the board&apos;s card. DF1 then
-          holds the disk after the one in DF0. When you press <em>Next disk</em>, DF0 moves on at once and DF1 is
+          holds the disk after the one in DF0, if that is a standard (DD, 880K) disk; when it is an HD disk, DF1 stays empty. When you press <em>Next disk</em>, DF0 moves on at once and DF1 is
           empty for about five seconds while the following disk is fetched.
         </p>
         <p>

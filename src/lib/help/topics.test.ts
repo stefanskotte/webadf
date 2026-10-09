@@ -89,4 +89,5 @@ describe('second-drive states every caveat the operator asked for', () => {
     expect(all()).toMatch(/anyway/i);
   });
   it('names the firmware it needs', () => expect(all()).toMatch(/1\.9\.0/));
+  it('an HD next disk leaves DF1 empty', () => expect(all()).toMatch(/HD disk, DF1 stays empty|HD[^.]*empty/i));
 });
