@@ -172,6 +172,11 @@ The setup access point uses the password **`wififloppy`** by default. Set
 `PORTAL_AP_PASSWORD` at build time to change it. The pairing code from the web app is
 what authorises a board to join a library.
 
+Putting the firmware on a new board: hold BOOTSEL, plug it in over USB, and drag
+`wifi-floppy-install-<version>.uf2` from the GitHub release onto the drive that appears.
+This is pending bench verification. See [wifi-floppy/README.md](wifi-floppy/README.md#first-install).
+With picotool, `pnpm firmware:install-partitioned` still works.
+
 Every push that touches the firmware is built by
 [`.github/workflows/firmware.yml`](.github/workflows/firmware.yml), which runs the host
 tests and publishes a `.uf2` with a `manifest.json` (version, commit, size, SHA-256).
