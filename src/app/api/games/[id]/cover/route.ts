@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto';
 import { requireOrg } from '@/lib/session';
 import { coverStore } from '@/lib/storage';
 import { checkCoverImage, coverOverrideUrl, MAX_COVER_BYTES } from '@/lib/cover-image';
+import { stripImageMetadata } from '@/lib/cover-strip';
 import { getCoverOverride, setCoverOverride } from '@/lib/cover-override';
 
 /**
@@ -66,16 +67,23 @@ export async function PUT(request: Request, ctx: { params: Promise<{ id: string 
       { status: check.error === 'too_large' ? 413 : check.error === 'empty' ? 400 : 415 });
   }
 
-  const sha256 = createHash('sha256').update(bytes).digest('hex');
+  // Store (and name by digest) what is served: the image without its Exif/XMP
+  // metadata, which a phone photo fills with the place it was taken.
+  const stored = stripImageMetadata(bytes);
+  const image = checkCoverImage(stored);
+  if (!image.ok) {
+    return Response.json({ error: image.error, detail: image.detail }, { status: 415 });
+  }
+  const sha256 = createHash('sha256').update(stored).digest('hex');
   // Bytes first, then the row: a crash between the two leaves an object
   // nothing names, which the blob GC reclaims; the reverse order would leave
   // a title naming bytes that are not there.
-  await coverStore.put(sha256, bytes, check.image.type);
+  await coverStore.put(sha256, stored, image.image.type);
   if (!(await setCoverOverride(orgId, id, sha256))) {
     // Deleted between the check and now. The object is left for the GC.
     return Response.json({ error: 'not_found' }, { status: 404 });
   }
-  return Response.json({ url: coverOverrideUrl(id, sha256), ...check.image });
+  return Response.json({ url: coverOverrideUrl(id, sha256), ...image.image });
 }
 
 /** "Revert to default": forget the title's own cover. The stored object stays for the GC. */

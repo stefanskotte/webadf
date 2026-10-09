@@ -43,6 +43,21 @@ describe('PUT /api/games/[id]/cover', () => {
     expect(setCoverOverride).toHaveBeenCalledWith('org-1', 'G', PNG_SHA);
   });
 
+  it('strips Exif GPS before storing, and the digest is of the stored bytes', async () => {
+    getCoverOverride.mockResolvedValue({ sha256: null });
+    setCoverOverride.mockResolvedValue(true);
+    const gps = Buffer.from('Exif\0\0GPSLATITUDE');
+    const seg = Buffer.concat([Buffer.from([0xff, 0xe1, 0, gps.length + 2]), gps]);
+    const jpg = new Uint8Array(readFileSync(join(__dirname, '../../../../../lib/__fixtures__/cover/cover.jpg')));
+    const dirty = Buffer.concat([Buffer.from(jpg.subarray(0, 2)), seg, Buffer.from(jpg.subarray(2))]);
+    const res = await PUT(putReq(dirty), ctx);
+    expect(res.status).toBe(200);
+    const [sha, stored] = put.mock.calls[0] as unknown as [string, Uint8Array, string];
+    expect(Buffer.from(stored).includes(Buffer.from('GPSLATITUDE'))).toBe(false);
+    expect(sha).toBe(createHash('sha256').update(stored).digest('hex'));
+    expect(setCoverOverride).toHaveBeenCalledWith('org-1', 'G', sha);
+  });
+
   it('a title that is not this org\'s is 404, and nothing is stored', async () => {
     getCoverOverride.mockResolvedValue(undefined);
     const res = await PUT(putReq(PNG), ctx);
