@@ -3278,6 +3278,20 @@ int main(void) {
                 break;
             }
             default:
+                // Still unpowered: a select glitch since the last sample can
+                // have latched "on" again (the re-arm reports any next latch),
+                // and nothing else would clear it. Clear it on every sample.
+                if (g_bus_unpowered) {
+                    bool any_on = false;
+                    for (unsigned d = 0; d < WF_DRIVES; d++)
+                        if (mtr_sm[d] >= 0 && dskchg_motor_on_d(d)) any_on = true;
+                    if (any_on) {
+                        const unsigned was_on = mtr_force_off();
+                        wf_logf(WF_INFO, "bus: still unpowered -- a glitch latched the motor "
+                                         "(DF0 %s, DF1 %s), cleared again",
+                                (was_on & 1u) ? "ON" : "off", (was_on & 2u) ? "ON" : "off");
+                    }
+                }
                 break;
             }
         }
