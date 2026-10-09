@@ -101,7 +101,14 @@
 // setup step that can fail goes through fatal_setup_failure(), which logs
 // the step and lwIP's error code and asks core0 for a reboot. After the
 // reboot the board either has stored Wi-Fi (and retries it) or has none
-// (a rejected pairing code erased the config) and raises a fresh portal.
+// (a rejected pairing code erased the config) and raises a fresh portal --
+// EXCEPT a board fresh from the USB install that has not paired yet: its
+// image is unconfirmed until it pairs, so that reboot lands in BOOTSEL,
+// exactly as the old silent hang plus a power-cycle did (review 2026-10-09;
+// no worse, but not self-healing). The reboot also drops a disk core0 may
+// still be serving when stored Wi-Fi failed three times; with the port 80
+// cause gone this path needs an allocation failure, so a visible reboot
+// beats a board that looks alive and answers nothing.
 //
 // --- Re-raising the portal (bench 2026-10-09, fw 1.9.3) -----------------
 // Submit -> AP down -> STA joins -> pairing code rejected -> portal_run()
@@ -115,9 +122,10 @@
 // but never a captive page. Reproduced on the host with the real lwIP
 // sources: ERR_USE at +1.3 s, ERR_OK after 120 s, and ERR_OK at +1.3 s with
 // SO_REUSE=1 plus SOF_REUSEADDR on the listener. Hence: SO_REUSE in
-// lwipopts.h, SOF_REUSEADDR on all three portal pcbs (the UDP two cannot
-// linger the same way -- udp_remove() unlinks at once -- but it costs
-// nothing), and portal_stop() aborts rather than closes any connection it
+// lwipopts.h, SOF_REUSEADDR on the HTTP listener ONLY (the DHCP and DNS
+// pcbs cannot linger -- udp_remove() unlinks at once -- and the flag on
+// them would let a stray second bind of 67/53 succeed silently instead of
+// failing; review 2026-10-09), and portal_stop() aborts rather than closes any connection it
 // still owns, so those never enter TIME_WAIT at all.
 #include "portal_net.h"
 #include "dhcp_server.h"
@@ -747,7 +755,6 @@ static void setup_dhcp(void) {
     net_radio_lock();
     struct udp_pcb *pcb = udp_new_ip_type(IPADDR_TYPE_V4);
     if (!pcb) { net_radio_unlock(); fatal_setup_failure("DHCP udp_new", ERR_MEM); }
-    PORTAL_REUSEADDR(pcb);
     err_t e = udp_bind(pcb, IP_ADDR_ANY, DHCP_SERVER_PORT);
     if (e != ERR_OK) {
         udp_remove(pcb);
@@ -763,7 +770,6 @@ static void setup_dns(void) {
     net_radio_lock();
     struct udp_pcb *pcb = udp_new_ip_type(IPADDR_TYPE_V4);
     if (!pcb) { net_radio_unlock(); fatal_setup_failure("DNS udp_new", ERR_MEM); }
-    PORTAL_REUSEADDR(pcb);
     err_t e = udp_bind(pcb, IP_ADDR_ANY, DNS_SERVER_PORT);
     if (e != ERR_OK) {
         udp_remove(pcb);
@@ -903,10 +909,9 @@ portal_run_result_t portal_run(device_config_t *out, const char *err,
     // re-binding ports 67/53/80 while the previous pcbs were still bound
     // returned ERR_USE. Retrying after a wrong password (spec D-4b-3's
     // verify-then-commit) is the NORMAL path here, not a caller error, so
-    // this enforces the ordering itself. Still needed now that the portal
-    // pcbs carry SOF_REUSEADDR (2026-10-09): with REUSEADDR on both sides a
-    // second UDP bind would SUCCEED, leaving two pcbs on port 67 and only
-    // the first one's handler ever called -- a quieter failure, not a fix.
+    // this enforces the ordering itself. Still needed now that the HTTP
+    // listener carries SOF_REUSEADDR (2026-10-09): a second listener bound
+    // past the first would leave two on port 80, a quieter failure.
     if (g_dhcp_pcb) {
         portal_stop();
     }
