@@ -863,11 +863,18 @@ static volatile bool     g_pnet_df1_mounted;
 static volatile bool     pnet_write_ours;
 // A raw batch armed and not yet taken by pnet_take_capture(), and the batches a DF0 write threw
 // away: DF0's arm re-initialises the shared capture buffer, so a batch still waiting is lost.
+// Accounting only: the loop clears it after a take or a timeout, and an arm landing just before
+// that clear can go uncounted -- harmless, since nothing decides a disarm from it.
 static volatile bool     pnet_raw_pending;
 static volatile uint32_t g_pnet_lost;
 // Batches not captured at all because a DF0 capture was armed or still waiting to be taken:
 // arming over it would destroy DF0's write. The Amiga resends.
 static volatile uint32_t g_pnet_busy;
+// Whether THIS DF1 write armed the raw capture: set at its WGATE assert, read and cleared at its
+// release, and touched by nothing else -- the release disarms on this alone, never on
+// pnet_raw_pending, which the loop also clears (a clear landing after a new arm would leave
+// that arm running).
+static volatile bool     pnet_armed_this_write;
 #endif
 
 // Written by core0 when a write lands, read by core1's uploader. g_write_gen
@@ -1257,18 +1264,23 @@ static void __isr gpio_isr(uint gpio, uint32_t events) {
         if (writing && gpio_get(PIN_SEL0) &&
             pnet_capture_ours(g_pnet_df1_mounted, false, !gpio_get(PIN_SEL1), cur_cyl[1], cur_side)) {
             pnet_write_ours = true;              // set either way: its release is ours too
+            bool armed_now = false;
             if (flux_capture_idle()) {
                 flux_capture_arm_raw();
-                pnet_raw_pending = !flux_capture_idle();   // only if the arm really happened
+                armed_now = !flux_capture_idle();          // only if the arm really happened
             } else {
                 g_pnet_busy++;
             }
+            pnet_armed_this_write = armed_now;
+            if (armed_now) pnet_raw_pending = true;        // for the `lost` count only
             wf_trace(WF_EV_WGATE, 1u, 0x100u | (uint32_t)PNET_TRACK_IN);
             return;
         }
         if (!writing && pnet_write_ours) {
             pnet_write_ours = false;
-            if (pnet_raw_pending) flux_capture_disarm();   // never a DF0 capture we did not arm
+            const bool ours = pnet_armed_this_write;
+            pnet_armed_this_write = false;
+            if (ours) flux_capture_disarm();               // never a capture this write did not arm
             wf_trace(WF_EV_WGATE, 0u, 0x100u | (uint32_t)PNET_TRACK_IN);
             return;
         }
