@@ -1611,6 +1611,13 @@ separately.
 - **(Low) e2e firmware releases show to real boards during a run** (seen 2026-10-09): specs seed `0.0.0+e2e*`
   releases with the highest sequences, so a real board reads "behind 0.0.0+e2eN" until the specs clean up. The
   operator saw it and judged it no problem. A possible guard: ignore `+e2e` versions for non-test orgs.
+- **Override a title's main image** (operator, 2026-10-09): let a user set or replace the cover image of a title,
+  especially utilities and programs that TOSEC, OpenRetro and Demozoo know nothing about. Start from where covers
+  come from today (the `oagd/` imageStore, keyed by OpenRetro sha-1, served by `/api/images/<sha1>`). An uploaded
+  image needs its own key, org scoping (one org's override must not change another org's view of a shared
+  title/blob), size and type limits, and probably an "uploaded overrides enriched" precedence rule plus a way to
+  revert. Remember the blob GC: any new column naming a stored object must join `runBlobGc`'s references, or
+  extend it for the image store.
 - **Upload from a URL** (requested 2026-10-09, via the operator): on the upload page, paste a URL and the web app
   fetches the ADF/HFE itself. Design notes: a server-side fetch is an SSRF surface, so allow http(s) only, refuse
   private, loopback and link-local addresses after DNS resolution (re-check on every redirect), cap redirects, size
