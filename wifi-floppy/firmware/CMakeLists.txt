@@ -58,7 +58,7 @@ add_executable(wifi_floppy
   src/token_store.c src/config_store.c src/fw_state.c src/fw_trial.c src/fw_apply.c src/fw_update.c src/fw_rom.c src/provisioning.c
   src/mfm.c src/adf_mfm.c src/write_back.c src/reinsert.c src/swap_gate.c src/dns_server.c src/dhcp_server.c src/portal_http.c
   src/portal_net.c src/net_radio_cyw43.c
-  src/transport_tls.c src/sntp_time.c
+  src/transport_tls.c src/sntp_time.c src/tls_mem.c
   ${WFMF_PSA_CRYPTO_RANDOM_SRC}
   src/wf_log.c
   src/activity_led.c src/i2c_probe.c src/ssd1306.c src/display.c src/display_layout.c src/display_store.c src/drive_store.c src/df1_live.c src/nfc_tag.c
@@ -210,7 +210,7 @@ endif ()
 # configure whenever this file changes. `-DFIRMWARE_SEMVER=` still overrides,
 # for a one-off build, because -D defines it before this point.
 if (NOT DEFINED FIRMWARE_SEMVER)
-  set(FIRMWARE_SEMVER "1.8.0")
+  set(FIRMWARE_SEMVER "1.8.1")
 endif ()
 
 set(WF_VERSION_HEADER "${CMAKE_CURRENT_BINARY_DIR}/generated/wifi_floppy_version.h")

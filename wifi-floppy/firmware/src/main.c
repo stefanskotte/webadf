@@ -26,6 +26,7 @@
 #include "image_loader.h"
 #include "transport.h"
 #include "device_client.h"
+#include "tls_mem.h"           // mbedTLS allocation counters (fw/heap lines)
 #include "token_store.h"
 #include "sntp_time.h"
 #include "provisioning.h"
@@ -1411,7 +1412,21 @@ static volatile bool g_fw_stage_ok;
 // core1_main's poll loop -- fw_apply_image in particular takes seconds and
 // may never run on core0, which feeds the 8 s watchdog (fw_apply.h).
 static int fwu_fetch(void *ctx, const char *version, fw_stage_t *stage) {
-    return dc_fetch_firmware((device_client_t *)ctx, version, fw_stage_sink, stage);
+    const int status = dc_fetch_firmware((device_client_t *)ctx, version, fw_stage_sink, stage);
+    if (status != 200) {
+        // dc_fetch_firmware has said where the exchange ended; this adds the
+        // memory picture at that moment, which only this file can see. The
+        // suspicion being tested (2026-10-09): a TLS allocation -- a record
+        // buffer is one contiguous ~16 KB chunk -- fails on a heap that has
+        // been fragmenting for hours. `fail`/`last` answer that directly.
+        tls_mem_stats_t m;
+        tls_mem_stats(&m);
+        wf_logf(WF_WARN, "fw: heap free>=%lu tls held=%lu peak=%lu fail=%lu last=%lu",
+                (unsigned long)heap_free_bytes(), (unsigned long)m.held,
+                (unsigned long)m.peak, (unsigned long)m.fails,
+                (unsigned long)m.last_fail_bytes);
+    }
+    return status;
 }
 static fw_apply_result_t fwu_apply(void *ctx, const uint8_t *img, uint32_t len,
                                    const char *sha, uint32_t *slot_off) {
@@ -3336,9 +3351,25 @@ int main(void) {
             if (clock_ms() - heap_checked_ms >= 5000u) {
                 heap_checked_ms = clock_ms();
                 const uint32_t f = heap_free_bytes();
+                // tls held/peak alongside: what one connection really costs,
+                // measured (tls_mem.h), rather than computed from the config.
+                tls_mem_stats_t m;
+                tls_mem_stats(&m);
                 if (f < heap_low) {
                     heap_low = f;
-                    wf_logf(WF_INFO, "heap: free low-water %lu bytes", (unsigned long)f);
+                    wf_logf(WF_INFO, "heap: free low-water %lu bytes (tls held %lu peak %lu)",
+                            (unsigned long)f, (unsigned long)m.held, (unsigned long)m.peak);
+                }
+                // A failed mbedTLS allocation, wherever it happened (poll,
+                // upload, OTA). The low-water line above cannot show one: a
+                // refused sbrk leaves the break where it was. wf_tls_calloc
+                // runs in lwIP's IRQ too, so it only counts; saying so is here.
+                static uint32_t tls_fails_seen;
+                if (m.fails != tls_fails_seen) {
+                    tls_fails_seen = m.fails;
+                    wf_logf(WF_WARN, "tls: %lu alloc fail(s), last %lu B; held=%lu peak=%lu free>=%lu",
+                            (unsigned long)m.fails, (unsigned long)m.last_fail_bytes,
+                            (unsigned long)m.held, (unsigned long)m.peak, (unsigned long)f);
                 }
             }
         }

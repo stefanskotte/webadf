@@ -54,9 +54,28 @@ typedef struct transport {
 // read()'s "the interrupted() predicate said stop" -- distinct from every
 // other negative (an error or a timeout), because the caller must treat it
 // differently: not a network fault, so no backoff, and not a dead socket, so
-// no reused-connection retry. Kept clear of transport_tls.c's TLS_ERR_*
-// range (-100..-107) so a raw number in a log line names one thing only.
+// no reused-connection retry. Kept clear of the TLS_ERR_* range below
+// (-100..-112) so a raw number in a log line names one thing only.
 #define TRANSPORT_INTERRUPTED (-200)
+
+// The real transport's failure codes (transport_tls.c). They live here, not
+// in that device-only file, so the layer above can NAME a failure in a log
+// line (device_client.c's dc_transport_rc_text) -- an OTA download that kept
+// failing with nothing saying why is what made this worth sharing. Any other
+// negative (the fake's -1) is simply "error" to the caller, as before.
+#define TLS_ERR_TIME_UNSET          (-100) // no SNTP time: handshake refused
+#define TLS_ERR_DNS                 (-101)
+#define TLS_ERR_DNS_TIMEOUT         (-102)
+#define TLS_ERR_TLS_CONFIG          (-103) // config/pcb/SNI setup; usually out of heap
+#define TLS_ERR_CONNECT             (-104) // refused, or closed during the handshake
+#define TLS_ERR_HANDSHAKE_TIMEOUT   (-105)
+#define TLS_ERR_BAD_ARG             (-106) // read() called with cap <= 0
+#define TLS_ERR_HOST_TOO_LONG       (-107) // host does not fit tls_conn_t.host
+#define TLS_ERR_READ_TIMEOUT        (-108) // nothing arrived for the whole timeout
+#define TLS_ERR_CONN_LOST           (-109) // the connection reported an error while reading
+#define TLS_ERR_WRITE_CLOSED        (-110) // write on a connection already closed/failed
+#define TLS_ERR_WRITE_TIMEOUT       (-111) // no send buffer space for the whole timeout
+#define TLS_ERR_WRITE               (-112) // altcp_write refused the bytes
 
 // Injected clock: milliseconds since boot, monotonic.
 typedef uint32_t (*clock_ms_fn)(void);

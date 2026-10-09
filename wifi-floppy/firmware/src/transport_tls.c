@@ -51,20 +51,9 @@
 #include <string.h>
 
 // transport.h only promises "negative on failure". Distinct codes cost
-// nothing and let a future log line (task 10+) say *why* a fetch never
-// started without instrumenting every call site.
-#define TLS_ERR_TIME_UNSET          (-100) // sntp_time_valid() was false;
-                                            // no handshake was attempted at
-                                            // all -- see task-9-brief.md:
-                                            // staying diskless beats
-                                            // skipping expiry validation.
-#define TLS_ERR_DNS                 (-101)
-#define TLS_ERR_DNS_TIMEOUT         (-102)
-#define TLS_ERR_TLS_CONFIG          (-103)
-#define TLS_ERR_CONNECT             (-104)
-#define TLS_ERR_HANDSHAKE_TIMEOUT   (-105)
-#define TLS_ERR_BAD_ARG             (-106) // read() called with cap <= 0
-#define TLS_ERR_HOST_TOO_LONG       (-107) // host does not fit tls_conn_t.host
+// nothing and let a log line say *why* a fetch never started without
+// instrumenting every call site. The codes themselves (TLS_ERR_*) are in
+// transport.h, so device_client.c can name them too.
 
 #define DNS_TIMEOUT_MS       10000u
 #define CONNECT_TIMEOUT_MS   15000u
@@ -517,26 +506,48 @@ static int tls_connect(struct transport *t, const char *host, int port) {
 // returning 0 for transient backpressure.
 static int tls_write(struct transport *t, const uint8_t *b, int n) {
     tls_conn_t *c = (tls_conn_t *)t->impl;
-    if (!c->pcb || c->closed || n <= 0) return -1;
+    if (n <= 0) return TLS_ERR_BAD_ARG;
 
+    // Every failure below names itself (code + log line): a write that
+    // failed used to be a bare -1, so an upload or a request that died here
+    // looked exactly like one that died anywhere else.
     absolute_time_t deadline = make_timeout_time_ms(WRITE_TIMEOUT_MS);
     u16_t avail;
     for (;;) {
-        if (!c->pcb || c->closed) return -1;
+        if (!c->pcb || c->closed)
+            return tls_fail(TLS_ERR_WRITE_CLOSED, "write on a closed connection", (int)c->err);
         net_radio_lock();
         avail = altcp_sndbuf(c->pcb);
         net_radio_unlock();
         if (avail > 0) break;
-        if (absolute_time_diff_us(get_absolute_time(), deadline) <= 0) return -1;
+        if (absolute_time_diff_us(get_absolute_time(), deadline) <= 0)
+            return tls_fail(TLS_ERR_WRITE_TIMEOUT, "no send buffer space, write timed out",
+                            (int)WRITE_TIMEOUT_MS);
         sleep_ms(1);
     }
 
     int to_write = (avail < (u16_t)n) ? (int)avail : n;
     net_radio_lock();
+    // NEVER more than one TLS record's payload per altcp_write. mbedtls_ssl_write
+    // takes at most MBEDTLS_SSL_OUT_CONTENT_LEN and reports the rest as a short
+    // write (ssl_msg.c, ssl_write_real), but the SDK's altcp_mbedtls_write
+    // treats any short write as impossible -- LWIP_ASSERT("ret <= 0", 0), and
+    // LWIP asserts are live in this build (pico_lwip's cc.h: panic) -- after
+    // the record has already gone out. altcp_sndbuf() does not know the
+    // record limit, so with OUT_CONTENT_LEN below TCP_SND_BUF (mbedtls_config.h)
+    // a write-back POST of an 11 KB HD track would panic here. Capping makes
+    // every write a whole record; the short return is legal per transport.h
+    // and dc_attempt already loops on it.
+    {
+        mbedtls_ssl_context *ssl = (mbedtls_ssl_context *)altcp_tls_context(c->pcb);
+        const int rec_max = ssl ? mbedtls_ssl_get_max_out_record_payload(ssl)
+                                : MBEDTLS_SSL_OUT_CONTENT_LEN;
+        if (rec_max > 0 && to_write > rec_max) to_write = rec_max;
+    }
     err_t werr = altcp_write(c->pcb, b, (u16_t)to_write, TCP_WRITE_FLAG_COPY);
     if (werr == ERR_OK) altcp_output(c->pcb);
     net_radio_unlock();
-    if (werr != ERR_OK) return -1;
+    if (werr != ERR_OK) return tls_fail(TLS_ERR_WRITE, "altcp_write refused", (int)werr);
     return to_write;
 }
 
@@ -559,7 +570,10 @@ static int tls_read(struct transport *t, uint8_t *b, int cap, int timeout_ms) {
         if (c->rx_head) break; // plain poll, unlocked: see file-header
                                 // comment -- a stale "not yet" here just
                                 // costs one more 1ms loop iteration.
-        if (c->closed) return c->err ? -1 : 0;
+        if (c->closed) {
+            if (!c->err) return 0;   // clean close
+            return tls_fail(TLS_ERR_CONN_LOST, "connection error while reading", (int)c->err);
+        }
         // Asked only here, while nothing is buffered: data that has already
         // arrived is always handed over first. See transport.h -- this is
         // what lets a tapped tag cut short a held poll instead of waiting
@@ -602,7 +616,7 @@ static int tls_read(struct transport *t, uint8_t *b, int cap, int timeout_ms) {
                     wf_logf(WF_WARN, "tls: no inner tcp pcb to inspect");
                 }
             }
-            return -1;
+            return TLS_ERR_READ_TIMEOUT;
         }
         sleep_ms(1);
     }

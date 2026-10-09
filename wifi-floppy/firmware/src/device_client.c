@@ -277,6 +277,71 @@ static void dc_abandon(device_client_t *c) {
     else c->t->close(c->t);
 }
 
+// Records how an attempt ended in c->last_xfer (device_client.h). Called on
+// EVERY exit of dc_attempt, so the record always describes the latest one.
+static void dc_xfer_end(device_client_t *c, const http_resp_t *r, dc_xfer_stage_t stage,
+                        int rc, uint32_t t0, int read_bytes) {
+    dc_xfer_t *x = &c->last_xfer;
+    x->stage = (uint8_t)stage;
+    x->rc = rc;
+    x->status = r->status;
+    x->body_got = r->_body_got;
+    x->content_length = r->content_length;
+    x->body_complete = r->body_complete;
+    x->bytes_read = read_bytes;
+    x->ms = c->now() - t0;
+}
+
+const char *dc_transport_rc_text(int rc) {
+    switch (rc) {
+    case 0:                          return "";
+    case TLS_ERR_TIME_UNSET:         return "no clock";
+    case TLS_ERR_DNS:                return "DNS failed";
+    case TLS_ERR_DNS_TIMEOUT:        return "DNS timeout";
+    case TLS_ERR_TLS_CONFIG:         return "TLS setup failed";
+    case TLS_ERR_CONNECT:            return "refused/closed in handshake";
+    case TLS_ERR_HANDSHAKE_TIMEOUT:  return "handshake timeout";
+    case TLS_ERR_BAD_ARG:            return "bad argument";
+    case TLS_ERR_HOST_TOO_LONG:      return "host too long";
+    case TLS_ERR_READ_TIMEOUT:       return "read timeout";
+    case TLS_ERR_CONN_LOST:          return "connection lost";
+    case TLS_ERR_WRITE_CLOSED:       return "write on closed conn";
+    case TLS_ERR_WRITE_TIMEOUT:      return "write timeout";
+    case TLS_ERR_WRITE:              return "write refused";
+    case TRANSPORT_INTERRUPTED:      return "interrupted";
+    default:                         return "error";
+    }
+}
+
+void dc_xfer_describe(const dc_xfer_t *x, char *how, int how_cap, char *got, int got_cap) {
+    static const char *const stage_names[] = {
+        [DC_XFER_DONE] = "end", [DC_XFER_CONNECT] = "connect", [DC_XFER_WRITE] = "write",
+        [DC_XFER_READ] = "read", [DC_XFER_FRAMING] = "framing",
+        [DC_XFER_INTERRUPTED] = "interrupt",
+    };
+    const char *stage = x->stage < sizeof stage_names / sizeof stage_names[0]
+                        ? stage_names[x->stage] : "?";
+    // "at read rc=-108 (read timeout), kept conn, retried" -- or, for an
+    // exchange that ended on the wire's own terms, "at end (peer closed)" /
+    // "at end (complete)": the status line on `got` then says the rest.
+    if (how && how_cap > 0) {
+        if (x->stage == DC_XFER_DONE) {
+            snprintf(how, (size_t)how_cap, "at end (%s), %s conn%s",
+                     x->body_complete ? "complete" : "peer closed",
+                     x->reused ? "kept" : "new", x->retried ? ", retried" : "");
+        } else {
+            snprintf(how, (size_t)how_cap, "at %s rc=%d (%s), %s conn%s", stage, x->rc,
+                     dc_transport_rc_text(x->rc), x->reused ? "kept" : "new",
+                     x->retried ? ", retried" : "");
+        }
+    }
+    if (got && got_cap > 0) {
+        snprintf(got, (size_t)got_cap, "status=%d body %ld/%ld complete=%s read=%ld in %lu ms",
+                 x->status, x->body_got, x->content_length,
+                 x->body_complete ? "yes" : "no", x->bytes_read, (unsigned long)x->ms);
+    }
+}
+
 // Runs one full request/response exchange over `c->t`: writes the `req_len`
 // bytes of an already-built request at `req` -- looping on partial writes,
 // since transport_t.write may accept fewer bytes than offered exactly as a
@@ -318,17 +383,27 @@ static bool dc_attempt(device_client_t *c, const char *req, int req_len,
     http_resp_init(r);
     *read_bytes_out = 0;
     *interrupted_out = false;
-    if (c->t->connect(c->t, c->host, 443) < 0) {
+    const uint32_t t0 = c->now();
+    c->last_xfer.reused = false;
+    c->last_xfer.retried = false;
+    const int crc = c->t->connect(c->t, c->host, 443);
+    if (crc < 0) {
         *reused_out = false;
         dc_abandon(c);
+        dc_xfer_end(c, r, DC_XFER_CONNECT, crc, t0, 0);
         return false;
     }
     *reused_out = c->t->reused ? c->t->reused(c->t) : false;
+    c->last_xfer.reused = *reused_out;
 
     int sent = 0;
     while (sent < req_len) {
         int w = c->t->write(c->t, (const uint8_t *)req + sent, req_len - sent);
-        if (w <= 0) { dc_abandon(c); return false; }
+        if (w <= 0) {
+            dc_abandon(c);
+            dc_xfer_end(c, r, DC_XFER_WRITE, w, t0, 0);
+            return false;
+        }
         sent += w;
     }
 
@@ -355,15 +430,21 @@ static bool dc_attempt(device_client_t *c, const char *req, int req_len,
             // carry another request: abandoned exactly like a failure.
             *interrupted_out = true;
             dc_abandon(c);
+            dc_xfer_end(c, r, DC_XFER_INTERRUPTED, got, t0, *read_bytes_out);
             return false;
         }
-        if (got < 0) { dc_abandon(c); return false; } // error or timeout
+        if (got < 0) {                                // error or timeout
+            dc_abandon(c);
+            dc_xfer_end(c, r, DC_XFER_READ, got, t0, *read_bytes_out);
+            return false;
+        }
         if (got == 0) break;                          // clean close
         *read_bytes_out += got;
         bool fed = http_resp_feed(r, buf, got, sink, sink_ctx);
         g_ms_feed += c->now() - t_b;
         if (!fed) {
             dc_abandon(c);
+            dc_xfer_end(c, r, DC_XFER_FRAMING, 0, t0, *read_bytes_out);
             return false; // malformed response
         }
         if (r->body_complete) break;
@@ -395,6 +476,7 @@ static bool dc_attempt(device_client_t *c, const char *req, int req_len,
     } else {
         dc_abandon(c);
     }
+    dc_xfer_end(c, r, DC_XFER_DONE, 0, t0, *read_bytes_out);
     return true;
 }
 
@@ -455,6 +537,7 @@ static bool dc_exchange_i(device_client_t *c, const char *req, int req_len,
     bool again = false;
     int got_again = 0;
     const bool ok_again = dc_attempt(c, req, req_len, sink, sink_ctx, r, &again, &got_again, &intr);
+    c->last_xfer.retried = true;
     if (intr && interrupted_out) *interrupted_out = true;
     return ok_again;
 }
@@ -1568,9 +1651,18 @@ int dc_fetch_firmware(device_client_t *c, const char *version,
     if (req_len < 0) return -1;
     static http_resp_t r;
     bool ok = dc_exchange(c, req, req_len, sink, ctx, &r, /*retryable=*/true);
-    if (!ok || !r.body_complete) return -1;
-    if (r.status == 401) c->state = DC_HALTED;   // 401 anywhere halts
-    return r.status;
+    const int status = (!ok || !r.body_complete) ? -1 : r.status;
+    if (status == 401) c->state = DC_HALTED;   // 401 anywhere halts
+    if (status != 200) {
+        // Once per call, whatever failed. fw_update.c retries -1 and 5xx with
+        // backoff for minutes, and until this line nothing said which part of
+        // the exchange it was retrying. static: see the STACK note above.
+        static char how[72], got[72];
+        dc_xfer_describe(&c->last_xfer, how, sizeof how, got, sizeof got);
+        wf_logf(WF_WARN, "fw: dl %d: %s", status, how);
+        wf_logf(WF_WARN, "fw: %s", got);
+    }
+    return status;
 }
 
 // --- OLED layouts (spec 2026-10-04 §6) -------------------------------------
