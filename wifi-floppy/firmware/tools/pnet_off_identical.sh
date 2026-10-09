@@ -16,6 +16,10 @@ cmake -S "$fw" -B "$bd" -G Ninja -DPICO_SDK_PATH="$HOME/pico-sdk" \
   -DWF_PNET_LOOP=OFF -DWF_DF1_DEFAULT=OFF >/dev/null 2>&1 || { echo "FAIL: cmake configure"; exit 1; }
 # Generates floppy.pio.h and the version header the sources include.
 cmake --build "$bd" >/dev/null 2>&1 || { echo "FAIL: the OFF build itself"; exit 1; }
+# The base copies sit in src/ (below), where a careless `git add` would pick one up: they go on
+# ANY exit, a failed step under `set -e` included.
+cleanup() { rm -f "$fw"/src/.offcheck_base_*.c; }
+trap cleanup EXIT
 fail=0
 for f in main.c flux_capture.c; do
   tmp="$fw/src/.offcheck_base_$f"   # beside the original, so its #include "..." resolve the same
@@ -27,16 +31,19 @@ want = os.path.realpath(src)
 cmd = next(e for e in json.load(open(db))
            if os.path.realpath(os.path.join(e['directory'], e['file'])) == want
            and 'wifi_floppy.dir' in e['command'])
+# Dropped: the output and dependency-file options with their arguments, -c (it takes none; -E
+# replaces it), and the source file itself, matched by path -- each run names its own input.
 keep, skip = [], False
 for a in shlex.split(cmd['command']):
     if skip: skip = False; continue
-    if a in ('-o', '-c', '-MF', '-MT'): skip = True; continue
-    if a in ('-MD', '-MMD'): continue
+    if a in ('-o', '-MF', '-MT'): skip = True; continue
+    if a in ('-c', '-MD', '-MMD'): continue
+    if os.path.realpath(os.path.join(cmd['directory'], a)) == want: continue
     keep.append(a)
 for path, tag in ((src, 'new'), (base, 'base')):
     subprocess.run(keep + ['-E', '-P', path, '-o', f'{out}.{tag}.i'], cwd=cmd['directory'], check=True)
 EOPY
-  rm -f "$tmp"
+  rm -f "$tmp"                      # (and again by the trap, if anything above failed)
   if cmp -s "$bd/offcheck_$f.base.i" "$bd/offcheck_$f.new.i"; then
     echo "identical with WF_PNET_LOOP=0: src/$f"
   else
