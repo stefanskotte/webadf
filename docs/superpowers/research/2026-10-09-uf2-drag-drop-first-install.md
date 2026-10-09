@@ -318,7 +318,7 @@ Prep (no hardware): build, then dump the UF2 headers. Expect:
 | 7 | **Foreign firmware first**: drag a MicroPython RP2350 UF2, write a file from its REPL, then drag the install UF2 | our firmware boots; records read as empty (fresh pairing), no crash |
 | 8 | **Interrupted drop**: unplug at ~50 % of the copy | next BOOTSEL plug shows the drive; re-drag completes and boots |
 | 9 | (optional) Drag the regular `wifi_floppy.uf2` onto a partitioned board | it goes to the non-booting slot as a trial and buys after proof |
-| R | **Restore**: `picotool load --ignore-partitions -o 0x10000000 <backup>.bin` (it is a `.bin`, so the offset is needed), `picotool verify`, `picotool reboot` | board back to its pre-test token/config/slots |
+| R | **Restore**: `picotool load --ignore-partitions -v <backup>.bin -t bin -o 0x10000000` (it is a `.bin`, so the offset is needed; in picotool 2.3.0 `-t`/`-o` go after the file name), `picotool verify`, `picotool reboot` | board back to its pre-test token/config/slots |
 
 Steps 3 and 7 need the operator's hands (BOOTSEL, Finder). Run them as end-of-turn manual steps.
 

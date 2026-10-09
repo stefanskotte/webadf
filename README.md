@@ -174,7 +174,7 @@ what authorises a board to join a library.
 
 Putting the firmware on a new board: hold BOOTSEL, plug it in over USB, and drag
 `wifi-floppy-install-<version>.uf2` from the GitHub release onto the drive that appears.
-This is pending bench verification. See [wifi-floppy/README.md](wifi-floppy/README.md#first-install).
+See [wifi-floppy/README.md](wifi-floppy/README.md#first-install).
 With picotool, `pnpm firmware:install-partitioned` still works.
 
 Every push that touches the firmware is built by

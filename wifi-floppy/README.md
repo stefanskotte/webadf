@@ -83,8 +83,8 @@ Unlicense) and is credited in ../THIRD-PARTY-NOTICES.md.
 
 ## First install
 
-**Pending bench verification:** the drag-and-drop install below is built and
-host-tested, but has not yet been run on a board.
+Verified on a board (RP2350 A4) on 2026-10-09: a blank install, a replug, pairing, over-the-air
+updates in both directions, and a re-install over a paired board.
 
 1. Download `wifi-floppy-install-<version>.uf2` from the newest `fw-<version>` release on
    GitHub. It is the only file you need.
@@ -94,6 +94,12 @@ host-tested, but has not yet been run on a board.
    restarts by itself and starts the firmware. The drive disappears; this is expected.
 4. Pair the board from the web app (see "Provisioning a board" below). Later firmware
    versions arrive over the air from the web app.
+
+   If your phone has joined this board's setup network before, choose "Forget this
+   network" for it first. The network keeps the same name after a re-install. The setup
+   network has also been seen to reject the password when a phone re-joins it without a
+   reboot. If that happens, unplug the board, plug it back in, and join again. This is a
+   known open issue (HANDOFF).
 
 The same file works on a blank board, a board running other firmware, and a board
 already running ours. Re-installing it keeps the board's WiFi settings and pairing: it
