@@ -4759,6 +4759,29 @@ Demozoo API (the bulk export makes per-lookup load on a non-profit unnecessary).
   allowlist checks only the first URL (the raster content-type allowlist and `nosniff` still apply).
 - **Cron drift:** the daily 01:30 cron against a 7-day gate can drift a refetch to 8 days.
 
+### 3be. OTA stall at "queued" -- FOUND and FIXED, fw 1.9.3+g73836df (seq 58, GitHub fw-1.9.3) (2026-10-09)
+
+- **Cause (bench-proven with the 3bd diagnostics build):** switching the Amiga off drops the floppy-bus pull-ups,
+  every input reads low, and sel_mtr (which latches MTR only on a SEL0 fall) caught `motor: DF0 ON` from the
+  power-down. Nothing cleared it, so the OTA idle gate never passed: an offered update downloaded in ~2 s, logged
+  "queued" (it was STAGED, waiting for idle) and waited until the Amiga was powered again (bench: Amiga on ->
+  `motor: DF0 off` at the first select -> `fw: applying` 9 s later). The "OTA download fails after long uptime"
+  backlog entry was this same stall -- CLOSED.
+- **Fix:** src/bus_power.c (host-tested, 65 checks): all seven inputs low for 2 s = bus unpowered -> clear both
+  motor flags and re-arm each sel_mtr; while unpowered, no write capture starts and the latch is re-cleared on
+  every 100 ms sample (review I1, 1.9.3); `bus: powered` when any input goes high. `fwdiag:` now every 10 min plus
+  on change during an update. Merged 9af6dc4 (1.9.2) + 73836df (1.9.3).
+- **Bench:** 1.9.2 logged `bus: unpowered` 2 s after power-off; TEST 1.9.2+g538a5bd (seq 57) and then 1.9.3 were
+  each offered with the Amiga OFF and applied by themselves (staged idle=YES, applied ~26 s later = next poll).
+  **Owed:** Amiga on -> `bus: powered` + normal motor lines (does not by itself prove the re-arm; review M1).
+- **Review notes (opus, verdict bench it):** a running Amiga cannot hold all seven low for 2 s (reset releases
+  lines high; X-Copy dual-drive writes still flip SIDE/STEP). **M2 (pre-existing):** sel_mtr's 8-deep FIFO drops
+  pushes in the power-up burst; heals on the next motor change. **M3:** the DF1 store, previously blocked for as long
+  as a power-down latched "on", now stores after 20 s quiet with the Amiga off -- intended, not benched.
+  Rev A (no pull-ups) may float rather than read all low; untested.
+- **Portal re-join** diagnostics (`portal: sta ...`) ship in 1.9.2+ -- bench script in
+  .claude/worktrees/fw-diag/DIAG-REPORT.md section 4, bug 2; not run yet.
+
 ### 3bd. Cover override, upload from URL, device delete + .lzh; firmware diagnostics TEST build (2026-10-09)
 
 - **W1 device delete + .lzh -- merged 1fc980b** (see the backlog entries below, now shipped).
