@@ -15,6 +15,9 @@ node_modules/
 .vercel
 dist/
 build/
+# Firmware side builds: the DF1-default-on TEST image and the bus-sniffer image.
+build-df1/
+build-sniff/
 .DS_Store
 
 # next.js scaffold defaults

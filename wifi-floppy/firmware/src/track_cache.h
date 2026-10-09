@@ -66,6 +66,12 @@ const uint8_t *track_cache_get(int track, uint32_t *bit_count);
 // psram_df1_token(). An eject token (a SLOT_NONE word) gives NULL. The cache
 // keys on the whole token, so two drives' copies of one track number never
 // collide. track_cache_get(t, b) is track_cache_get_token(psram_active_token(), t, b).
+//
+// R14: the pointer either function returns is one of TWO SRAM buffers shared
+// by both drives, so it is valid only until the next track_cache_get* call on
+// EITHER drive. main.c consumes it with start_streaming(d, ...) -- which
+// copies it into that drive's DMA word buffer -- before any further get; it
+// is never held across one (serve_drive does the get and the copy together).
 const uint8_t *track_cache_get_token(int32_t token, int track, uint32_t *bit_count);
 
 // Drop any SRAM copy of `track`. Needed after a write rewrites that track in

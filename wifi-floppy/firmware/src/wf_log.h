@@ -49,16 +49,16 @@ typedef enum {
 typedef enum {
     WF_EV_BOOT = 0,
     WF_EV_SEL,            // a = asserted
-    WF_EV_MOTOR,          // a = running
+    WF_EV_MOTOR,          // a = running, b = drive (0 DF0, 1 DF1)
     WF_EV_STEP,           // a = cylinder after the step, b = 1 if outwards
     WF_EV_SIDE,           // a = side
-    WF_EV_INDEX,          // wrap of a revolution
+    WF_EV_INDEX,          // wrap of a revolution: a = words | drive << 24, b = previous stream's revolutions
     WF_EV_TRACK_WANT,     // a = track the head is now over
-    WF_EV_TRACK_SERVED,   // a = track, b = bit count streamed
-    WF_EV_TRACK_MISS,     // a = track that was not in PSRAM
+    WF_EV_TRACK_SERVED,   // a = track | drive << 8, b = bit count streamed
+    WF_EV_TRACK_MISS,     // a = track that was not in PSRAM | drive << 8
     WF_EV_WGATE,          // a = asserted
-    WF_EV_MOUNT,          // a = token
-    WF_EV_EJECT,
+    WF_EV_MOUNT,          // a = token, b = drive
+    WF_EV_EJECT,          // b = drive
     WF_EV_DIR_LATE,       // a = cylinder after the step, b = DIR read at interrupt time
     WF_EV_BUS,            // WF_BUS_SNIFF: a = GPIO mask GP0..13, no WDATA/RDATA (bit 16 = samples dropped before), b = time_us
     WF_EV__COUNT

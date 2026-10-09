@@ -663,6 +663,7 @@ static bool dc_df1_release(device_client_t *c, int target) {
     if (!c->_df1_quiesce) return psram_df1_quiescent();
     if (c->_df1_quiesce(c->_df1_quiesce_ctx)) return true;
     wf_logf(WF_WARN, "df1: core0 has not let go of slot %d -- write deferred", target);
+    c->df1_deferred = true;
     return false;
 }
 
@@ -1615,6 +1616,7 @@ static dc_state_t dc_step_inner(device_client_t *c);
 // (a swap, an eject, a fetch that dropped the record). A wrapper, so no return
 // path inside can skip it.
 dc_state_t dc_step(device_client_t *c) {
+    c->df1_deferred = false;          // describes THIS step only
     dc_state_t s = dc_step_inner(c);
     dc_df1_reconcile(c);
     return s;
@@ -1906,6 +1908,7 @@ static bool dc_preload_step_inner(device_client_t *c);
 // As dc_step: DF1 is reconciled on every return -- a verified preload is
 // inserted, a dropped one stays ejected.
 bool dc_preload_step(device_client_t *c) {
+    c->df1_deferred = false;          // describes THIS step only
     bool did = dc_preload_step_inner(c);
     dc_df1_reconcile(c);
     return did;

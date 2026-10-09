@@ -268,6 +268,11 @@ typedef struct {
     // than spin TLS requests until the hold lifts.
     bool       held;
     bool       _was_held;   // `held` of the previous step: log a hold once
+    // True when THIS dc_step (or dc_preload_step) wanted to write the idle
+    // PSRAM slot and core0 had not yet let go of it for DF1 (dc_df1_release):
+    // nothing was written. A deferred dc_step's poll is redelivered at once
+    // (`since` did not advance), so the caller paces it (main.c), as for `held`.
+    bool       df1_deferred;
     bool       _refetch;
 
     // The in-flight disk's identity, so a progress observation can carry the

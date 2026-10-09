@@ -174,6 +174,14 @@ target_compile_definitions(wifi_floppy PRIVATE WF_DF1_DEFAULT=$<IF:$<BOOL:${WF_D
 if (WF_DF1_DEFAULT AND NOT WF_DRIVE_ID)
   message(FATAL_ERROR "WF_DF1_DEFAULT needs WF_DRIVE_ID: DF1 answers its ID through the responder")
 endif ()
+# D2 (plan 2026-10-08 Task 5): DF1's DMA word buffer. OFF = DD-sized (+14,336 B);
+# an HD next disk then leaves DF1 empty. DF1 is served only in a WF_DRIVE_ID
+# build (its ID, NONE while off, comes from the responder), so the buffer is
+# only there too.
+option(WF_DF1_HD "DF1 can hold an HD disk (+25,344 B SRAM instead of +14,336)" OFF)
+target_compile_definitions(wifi_floppy PRIVATE WF_DF1_HD=$<IF:$<BOOL:${WF_DF1_HD}>,1,0>)
+# Step 8 (D4): the bus sniffer fits on pio2 beside flux_in, step_dir and the
+# radio, so a WF_BUS_SNIFF build keeps DF1 -- no guard needed.
 # Bench-only (fix round 3): a bare-bones "fwdbg-wdtest" USB-serial command
 # that deliberately reproduces the nested-flash_safe_execute wedge shape, to
 # prove the watchdog now resets the board instead of hanging forever. NEVER

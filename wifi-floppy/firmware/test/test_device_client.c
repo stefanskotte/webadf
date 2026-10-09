@@ -2540,11 +2540,13 @@ static void a_fetch_that_finds_df1_unacknowledged_writes_nothing(void) {
     // the server now names a different next: the preload step would overwrite slot 1
     set_next_sha(&c, SHA_C);                 // what dc_take_next would store
     CHECK(!dc_preload_step(&c), "no work while core0 may still read slot 1");
+    CHECK(c.df1_deferred, "a deferred preload says so");
     CHECK_EQ_INT(psram_df1_slot(), SLOT_NONE);  // DF1 was ejected first
     CHECK_EQ_INT(fake_request_count_since_mark(), 0);  // no image request went out
     dc_set_df1_quiesce(&c, quiesce_true, NULL);
     fake_push_image_response(SHA_C);
     CHECK(dc_preload_step(&c), "acknowledged: the preload proceeds");
+    CHECK(!c.df1_deferred, "...and is not deferred");
     CHECK(strcmp(c.preload.sha256, SHA_C) == 0, "C verified in the idle slot");
     CHECK_EQ_INT(psram_df1_slot(), 1);       // reconciled: DF1 = C
 }
@@ -2577,12 +2579,14 @@ static void a_regular_fetch_waits_for_df1_to_let_go(void) {
     CHECK_EQ_INT(fake_request_count_since_mark(), 1);  // the poll, and no image request
     CHECK_EQ_INT(psram_df1_slot(), SLOT_NONE);         // ejected, and not re-inserted
     CHECK_EQ_INT(c.since, since0);                     // redelivered at once
+    CHECK(c.df1_deferred, "the deferral is visible, so main.c can pace the redelivery");
     CHECK(strcmp(c.mounted_sha256, SHA_A) == 0, "A still mounted");
     // core0 lets go: the redelivered poll fetches C into slot 1 and swaps.
     dc_set_df1_quiesce(&c, quiesce_true, NULL);
     push_poll_next(df1_poll_version, SHA_C, SHA_B, false);
     fake_push_image_response(SHA_C);
     CHECK_EQ_INT(dc_step(&c), DC_IDLE_POLL);
+    CHECK(!c.df1_deferred, "a step that wrote is not deferred");
     CHECK(strcmp(c.mounted_sha256, SHA_C) == 0, "C mounted");
     CHECK_EQ_INT(psram_active_slot(), 1);
     CHECK_EQ_INT(psram_df1_slot(), SLOT_NONE);         // no verified preload yet
