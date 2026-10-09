@@ -1,6 +1,8 @@
 // Pins floppy.pio's drive_id PROGRAM (not just the model in drive_id.c) to
-// what bus_out.c assumes about it (HD spec §5.4, final-fix F5), and the two
-// load words bus_out.c writes into it (drive_id_load, drive_id.h).
+// what bus_out.c assumes about it (HD spec §5.4, final-fix F5), the load
+// encodings (drive_id_load, drive_id.h), and the exec'd sequences bus_out.c
+// writes each SM's Y with (drive_id_y_sequence) -- since the DF1 work the
+// program is shared by one SM per drive and instr_mem is never rewritten.
 //
 // drive_id.c/test_drive_id.c model the PROTOCOL: what the answer looks like,
 // select by select. Neither one looks at the actual PIO instruction words,
@@ -49,18 +51,18 @@
 // drive_id_program_instructions[], as pioasm emits it.
 static const uint16_t golden[DRIVE_ID_PROGRAM_LEN] = {
     0xa003, //  0: mov    pins, null              <- on_released
-    0x2702, //  1: wait   0 gpio, 2              [7]
+    0x2720, //  1: wait   0 pin, 0               [7]
     0x00c6, //  2: jmp    pin, 6
     0xa001, //  3: mov    pins, x                 (on_selected)
-    0x2082, //  4: wait   1 gpio, 2               <- on_selected_wait
+    0x20a0, //  4: wait   1 pin, 0                <- on_selected_wait
     0x0000, //  5: jmp    0
     0xa0e2, //  6: mov    osr, y                  <- reset_load
     0x6001, //  7: out    pins, 1                 (id_bit)
-    0x2082, //  8: wait   1 gpio, 2
+    0x20a0, //  8: wait   1 pin, 0
     0xa003, //  9: mov    pins, null
     0x00ec, // 10: jmp    !osre, 12
     0xa0e2, // 11: mov    osr, y                  <- repeat_load
-    0x2702, // 12: wait   0 gpio, 2              [7]   (off_wait)
+    0x2720, // 12: wait   0 pin, 0               [7]   (off_wait)
     0x00c7, // 13: jmp    pin, 7
     0x0003, // 14: jmp    3
 };
@@ -69,9 +71,12 @@ static const uint16_t golden[DRIVE_ID_PROGRAM_LEN] = {
 #define DRIVE_ID_OFFSET_RESET_LOAD       6
 #define DRIVE_ID_OFFSET_REPEAT_LOAD      11
 
-// The two words bus_out.c writes, named so a change is visible by name.
-#define DRIVE_ID_LOAD_HD  0xa0e2u   // mov osr, y      (Y holds DRIVE_ID_HD from init)
+// The load encodings, named so a change is visible by name. Both loads in the
+// program are DRIVE_ID_LOAD_HD's `mov osr, y`; the other two are what
+// bus_out.c wrote before the ID moved into Y.
+#define DRIVE_ID_LOAD_HD  0xa0e2u   // mov osr, y      (Y = the SM's ID word)
 #define DRIVE_ID_LOAD_DD  0xa0ebu   // mov osr, ~null  (all ones)
+#define DRIVE_ID_LOAD_NONE 0xa0e3u  // mov osr, null   (all zeros: "no drive")
 
 // The RP2040/RP2350 PIO MOV fields, from the datasheet's layout:
 //   [15:13] opcode (MOV = 101)   [12:8] delay/side-set
@@ -85,9 +90,12 @@ static unsigned mov_src(uint16_t w)    { return w & 7u; }
 static void the_load_words_are_mov_osr(void) {
     CHECK_EQ_INT(drive_id_load(true),  DRIVE_ID_LOAD_HD);
     CHECK_EQ_INT(drive_id_load(false), DRIVE_ID_LOAD_DD);
-    const bool kinds[] = { true, false };
-    for (unsigned k = 0; k < 2; k++) {
-        const uint16_t w = drive_id_load(kinds[k]);
+    CHECK_EQ_INT(drive_id_load_kind(DRIVE_ID_KIND_NONE), DRIVE_ID_LOAD_NONE);
+    CHECK_EQ_INT(drive_id_load_kind(DRIVE_ID_KIND_DD), drive_id_load(false));
+    CHECK_EQ_INT(drive_id_load_kind(DRIVE_ID_KIND_HD), drive_id_load(true));
+    const drive_id_kind_t kinds[] = { DRIVE_ID_KIND_HD, DRIVE_ID_KIND_DD, DRIVE_ID_KIND_NONE };
+    for (unsigned k = 0; k < 3; k++) {
+        const uint16_t w = drive_id_load_kind(kinds[k]);
         CHECK_EQ_INT(mov_opcode(w), 5u);       // MOV
         CHECK_EQ_INT(mov_dest(w), 7u);         // OSR -- NOT pindirs (3), the 1.4.0 bug
         CHECK_EQ_INT((w >> 8) & 0x1fu, 0u);    // no delay
@@ -96,16 +104,31 @@ static void the_load_words_are_mov_osr(void) {
     CHECK_EQ_INT(mov_src(drive_id_load(true)), 2u);    // Y
     CHECK_EQ_INT(mov_op(drive_id_load(false)), 1u);    // invert
     CHECK_EQ_INT(mov_src(drive_id_load(false)), 3u);   // NULL
-    // The .pio source's own default at both loads is HD's word.
+    CHECK_EQ_INT(mov_op(drive_id_load_kind(DRIVE_ID_KIND_NONE)), 0u);    // no invert
+    CHECK_EQ_INT(mov_src(drive_id_load_kind(DRIVE_ID_KIND_NONE)), 3u);   // NULL
+    // Both loads are `mov osr, y`: the ID is whatever the SM's Y holds.
     CHECK_EQ_INT(golden[DRIVE_ID_OFFSET_RESET_LOAD], DRIVE_ID_LOAD_HD);
     CHECK_EQ_INT(golden[DRIVE_ID_OFFSET_REPEAT_LOAD], DRIVE_ID_LOAD_HD);
 }
 
 static void the_program_fits_pio0(void) {
-    // pio0 holds flux_out (7) + flux_in (7) + drive_id: 32 slots.
-    CHECK(7 + 7 + DRIVE_ID_PROGRAM_LEN <= 32, "pio0 instruction memory");
-    // on_selected_wait is the `wait 1 gpio 2` bus_out.c checks the PC against.
-    CHECK_EQ_INT(golden[DRIVE_ID_OFFSET_ON_SELECTED_WAIT], 0x2082u);
+    // pio0 holds flux_out (7) + drive_id (flux_in moved to pio2).
+    CHECK(7 + DRIVE_ID_PROGRAM_LEN <= 32, "pio0 instruction memory");
+    // on_selected_wait is the `wait 1 pin 0` bus_out.c checks the PC against.
+    CHECK_EQ_INT(golden[DRIVE_ID_OFFSET_ON_SELECTED_WAIT], 0x20a0u);
+}
+
+// The select is a parameter (in_base), not GP2: no WAIT may name a GPIO by
+// number. WAIT = opcode 001; source [6:5]: 00 GPIO, 01 PIN, 10 IRQ, 11 JMPPIN.
+static void no_wait_names_a_gpio(void) {
+    unsigned waits = 0;
+    for (unsigned i = 0; i < DRIVE_ID_PROGRAM_LEN; i++) {
+        if ((golden[i] >> 13) != 1u) continue;
+        waits++;
+        CHECK_EQ_INT((golden[i] >> 5) & 3u, 1u);      // PIN, relative to in_base
+        CHECK_EQ_INT(golden[i] & 0x1fu, 0u);          // pin 0 = this drive's select
+    }
+    CHECK_EQ_INT(waits, 4u);
 }
 
 // Read build/floppy.pio.h as text and compare drive_id's words and offsets
@@ -149,9 +172,133 @@ static void the_generated_header_matches_the_golden_array_when_present(void) {
     for (int i = 0; i < got_count && i < DRIVE_ID_PROGRAM_LEN; i++) CHECK_EQ_INT(got[i], golden[i]);
 }
 
+// ---------------------------------------------------------------------------
+// Y, written on a running machine (drive_id_y_sequence, drive_id.h).
+//
+// A tiny executor for exactly the instructions the sequences may contain --
+// MOV to Y or ISR from NULL or ISR (op none/invert), IN from NULL -- decoded
+// from the WORDS, so a wrong field fails here, not just a wrong value. Any
+// other word is a failure: the sequence must touch nothing but Y and the ISR.
+typedef struct { uint32_t y, isr, osr, x; bool left; int y_writes; int bad; } y_sm_t;
+
+static void y_exec(y_sm_t *s, uint16_t w) {
+    const unsigned opc = (w >> 13) & 7u;
+    if (((w >> 8) & 0x1fu) != 0) { s->bad++; return; }          // no delay/side-set
+    if (opc == 5u) {                                             // MOV
+        const unsigned dest = (w >> 5) & 7u, op = (w >> 3) & 3u, src = w & 7u;
+        uint32_t v;
+        if (src == 3u) v = 0;                                    // NULL
+        else if (src == 6u) v = s->isr;                          // ISR
+        else { s->bad++; return; }
+        if (op == 1u) v = ~v; else if (op != 0u) { s->bad++; return; }
+        if (dest == 2u) { s->y = v; s->y_writes++; }             // Y
+        else if (dest == 6u) s->isr = v;                         // ISR
+        else s->bad++;
+        return;
+    }
+    if (opc == 2u) {                                             // IN
+        const unsigned src = (w >> 5) & 7u, n = (w & 0x1fu) ? (w & 0x1fu) : 32u;
+        if (src != 3u) { s->bad++; return; }                     // NULL only
+        if (n == 32u) s->isr = 0;
+        else s->isr = s->left ? (s->isr << n) : (s->isr >> n);   // zeros enter
+        return;
+    }
+    s->bad++;
+}
+
+static y_sm_t y_run(drive_id_kind_t k, uint32_t y0, bool left, unsigned *len) {
+    uint16_t seq[DRIVE_ID_Y_SEQ_MAX];
+    const unsigned n = drive_id_y_sequence(k, seq);
+    y_sm_t s = { .y = y0, .isr = 0x12345678u, .osr = 0xdeadbeefu, .x = 1, .left = left };
+    for (unsigned i = 0; i < n; i++) {
+        y_exec(&s, seq[i]);
+        // Y keeps its old word until the LAST exec: a load between any two
+        // execs takes the old ID, never a mix.
+        if (i + 1 < n) CHECK_EQ_INT(s.y, y0);
+    }
+    *len = n;
+    return s;
+}
+
+static void y_ends_as_exactly_the_id_word(void) {
+    const drive_id_kind_t kinds[] = { DRIVE_ID_KIND_DD, DRIVE_ID_KIND_HD, DRIVE_ID_KIND_NONE };
+    const uint32_t want[]  = { 0xFFFFFFFFu, 0xAAAAAAAAu, 0x00000000u };
+    const uint32_t froms[] = { 0x00000000u, 0xFFFFFFFFu, 0xAAAAAAAAu, 0x13572468u };
+    for (unsigned k = 0; k < 3; k++) {
+        CHECK_EQ_INT(drive_id_word(kinds[k]), want[k]);
+        for (unsigned f = 0; f < 4; f++) {
+            unsigned n;
+            y_sm_t s = y_run(kinds[k], froms[f], true, &n);
+            CHECK_EQ_INT(s.bad, 0);
+            CHECK_EQ_INT(s.y, want[k]);
+            CHECK_EQ_INT(s.y_writes, 1);                 // one atomic write of Y
+            CHECK_EQ_INT(s.osr, 0xdeadbeefu);            // the answer in progress: untouched
+            CHECK_EQ_INT(s.x, 1u);                       // the CPU's RDY level: untouched
+            CHECK(n >= 1 && n <= DRIVE_ID_Y_SEQ_MAX, "sequence fits its buffer");
+        }
+    }
+}
+
+static void hd_needs_the_left_shift(void) {
+    // drive_id_program_init sets IN to shift left. Right, the same words give
+    // HD's word shifted the wrong way -- the "HD reads as 0x55555555" bug a
+    // wrong shift direction would ship.
+    unsigned n;
+    y_sm_t s = y_run(DRIVE_ID_KIND_HD, 0xFFFFFFFFu, false, &n);
+    CHECK_EQ_INT(s.y, 0x55555555u);
+    CHECK_EQ_INT(n, 67u);
+}
+
+static void the_sequence_words_are_what_pioasm_assembles(void) {
+    // Checked against build/pioasm-install/pioasm/pioasm on 2026-10-08.
+    uint16_t seq[DRIVE_ID_Y_SEQ_MAX];
+    CHECK_EQ_INT(drive_id_y_sequence(DRIVE_ID_KIND_DD, seq), 1u);
+    CHECK_EQ_INT(seq[0], DRIVE_ID_MOV_Y_NOT_NULL);           // mov y, ~null  0xa04b
+    CHECK_EQ_INT(drive_id_y_sequence(DRIVE_ID_KIND_NONE, seq), 1u);
+    CHECK_EQ_INT(seq[0], DRIVE_ID_MOV_Y_NULL);               // mov y, null   0xa043
+    CHECK_EQ_INT(drive_id_y_sequence(DRIVE_ID_KIND_HD, seq), 67u);
+    CHECK_EQ_INT(seq[0], DRIVE_ID_MOV_ISR_NULL);             // mov isr, null 0xa0c3
+    for (unsigned i = 0; i < 32; i++) {
+        CHECK_EQ_INT(seq[1 + 2 * i], DRIVE_ID_IN_NULL_1);    // in null, 1    0x4061
+        CHECK_EQ_INT(seq[2 + 2 * i], DRIVE_ID_MOV_ISR_NOT_ISR); // mov isr, ~isr 0xa0ce
+    }
+    CHECK_EQ_INT(seq[65], DRIVE_ID_IN_NULL_1);
+    CHECK_EQ_INT(seq[66], DRIVE_ID_MOV_Y_ISR);               // mov y, isr    0xa046
+    CHECK_EQ_INT(DRIVE_ID_MOV_Y_NULL, 0xa043u);
+    CHECK_EQ_INT(DRIVE_ID_MOV_Y_NOT_NULL, 0xa04bu);
+    CHECK_EQ_INT(DRIVE_ID_MOV_ISR_NULL, 0xa0c3u);
+    CHECK_EQ_INT(DRIVE_ID_IN_NULL_1, 0x4061u);
+    CHECK_EQ_INT(DRIVE_ID_MOV_ISR_NOT_ISR, 0xa0ceu);
+    CHECK_EQ_INT(DRIVE_ID_MOV_Y_ISR, 0xa046u);
+}
+
+// The ISR is bus_out.c's scratch, and the TX FIFO is never read: no IN
+// (opcode 010), no PUSH or PULL (opcode 100), no MOV to or from the ISR, no
+// MOV from the TX/RX FIFO, no OUT that could autopull (autopull is off in
+// drive_id_program_init; OUT reads the OSR only). And Y is only READ.
+static void the_program_leaves_isr_and_fifo_alone(void) {
+    for (unsigned i = 0; i < DRIVE_ID_PROGRAM_LEN; i++) {
+        const uint16_t w = golden[i];
+        const unsigned opc = w >> 13;
+        CHECK(opc != 2u, "no IN");
+        CHECK(opc != 4u, "no PUSH/PULL (and no RP2350 FIFO mov)");
+        if (opc == 5u) {
+            CHECK(mov_dest(w) != 6u && mov_src(w) != 6u, "no MOV to/from ISR");
+            CHECK(mov_dest(w) != 2u, "Y is never written by the program");
+        }
+        if (opc == 3u) CHECK(((w >> 5) & 7u) != 2u, "no OUT to Y");
+        if (opc == 7u) CHECK(((w >> 5) & 7u) != 2u, "no SET to Y");
+    }
+}
+
 int main(void) {
     RUN(the_load_words_are_mov_osr);
     RUN(the_program_fits_pio0);
+    RUN(no_wait_names_a_gpio);
     RUN(the_generated_header_matches_the_golden_array_when_present);
+    RUN(y_ends_as_exactly_the_id_word);
+    RUN(hd_needs_the_left_shift);
+    RUN(the_sequence_words_are_what_pioasm_assembles);
+    RUN(the_program_leaves_isr_and_fifo_alone);
     return REPORT();
 }

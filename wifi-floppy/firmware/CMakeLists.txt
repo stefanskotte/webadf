@@ -147,7 +147,8 @@ if (WF_VERIFY_TRACKS)
   message(STATUS "WF_VERIFY_TRACKS is ON: every mount sweeps all 160 tracks.")
 endif ()
 # Diagnostic: a PIO logic analyser on the eight bus inputs, one log record per
-# change. See bus_sniff in floppy.pio. Off by default.
+# change. See bus_sniff in floppy.pio. Off by default. It runs on pio2 (IRQ1),
+# beside flux_in, step_dir and the radio; pio1 is the SEL0 gating's.
 option(WF_BUS_SNIFF "Log every change on the bus inputs, in exact order" OFF)
 if (WF_BUS_SNIFF)
   target_compile_definitions(wifi_floppy PRIVATE WF_BUS_SNIFF=1 WF_LOG_SLOTS=512)
@@ -196,7 +197,7 @@ endif ()
 # configure whenever this file changes. `-DFIRMWARE_SEMVER=` still overrides,
 # for a one-off build, because -D defines it before this point.
 if (NOT DEFINED FIRMWARE_SEMVER)
-  set(FIRMWARE_SEMVER "1.7.7")
+  set(FIRMWARE_SEMVER "1.7.8")
 endif ()
 
 set(WF_VERSION_HEADER "${CMAKE_CURRENT_BINARY_DIR}/generated/wifi_floppy_version.h")

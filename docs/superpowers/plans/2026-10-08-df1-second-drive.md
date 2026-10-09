@@ -2514,10 +2514,10 @@ test('the help tip opens and names the caveats', async ({ page, request }) => {
 
 | ID | Measured value | Decision | Date |
 |---|---|---|---|
-| D1 | `pio claims:` = … | … | |
-| D2 | heap low-water H = …; H − 14,336 = … | … | |
+| D1 | `pio claims: pio0=7 pio1=3 pio2=1` (bench, fw 1.7.6/1.7.7). The values are SM bit masks (main.c:1363-1367): pio0 = SMs 0-2 (flux_out, flux_in, drive_id; 29/32 instr), pio1 = SMs 0-1 (status_gate, sel_mtr; 18/32), pio2 = SM 0 (step_dir; 4/32). The radio is NOT in the line: `cyw43_arch_init()` does not touch the bus; `cyw43_spi_init()` runs from `cyw43_ensure_up()` on the first ioctl, i.e. inside `net_radio_sta_enable()` (main.c:1369), after the print. It then searches pio2 first (pio.c:467-470, `pio_num` counts down) and takes pio2 SM1 + 6 instr (10/32). Phase 1 pio2: flux_in 7 + step_dir 4 + radio 6 = 3 SMs, 17/32; sniff build + bus_sniff 13 = 4 SMs, 30/32 (radio claims last, 8 contiguous slots free at 0-7). Fits. | flux_in AND the sniffer move to pio2 as planned. Not a STOP (misread line, not a layout fault). Task 9: the bench line will read pio2=3 (pio2=7 sniff), not 7/f, unless the print is moved after `net_radio_sta_enable()` -- recommended, so the line shows the radio. | 2026-10-08 |
+| D2 | heap low-water H = 36,864 B (3 boots, 1.7.0/1.7.5/1.7.6). It is `__StackLimit` − sbrk break (main.c:751-772), a floor: free chunks below the break are not counted; full newlib malloc page-rounds the break (4 KB steps) and never trims (threshold 128 KB > the 105,168 B heap), so the break is a high-water mark the 5 s sampling cannot miss. H − 14,336 = **22,528** ≥ 20,480 (margin 2,048). `.bss` 402,736, `.data` 9,776, `.heap` 2,048 (`arm-none-eabi-size -A`). After DF1 the gauge will read 20,480 or 24,576 (4 KB rounding). | **DD-only**: `WF_DF1_HD=OFF`; an HD next disk leaves DF1 empty. HD-capable (+25,344 → 11,520) fails the floor. | 2026-10-08 |
 | D3 | ruled in Task 19 | parked on live-off | 2026-10-08 (plan) |
-| D4 | per D1 | … | |
+| D4 | per D1: radio on pio2 has no PIO IRQ (no `pio_set_irq*`/`PIO_IRQ`/`irq_set*` in cyw43_bus_pio_spi.c; it uses 2 DMA channels); step_dir holds pio2 IRQ0 | Sniffer moves to pio2 on IRQ1 alongside DF1; not made exclusive (no CMake `FATAL_ERROR` guard needed) | 2026-10-08 |
 
 ## Self-review (done while writing)
 

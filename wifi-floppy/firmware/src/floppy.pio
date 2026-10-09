@@ -4,31 +4,41 @@
 ; Bus RD pulse = FET on = side-set 1 for 3 cycles (~750 ns low on the bus).
 ; Bit = 1 -> flux transition (pulse); bit = 0 -> no pulse.
 ;
-; SEL0-gated (jmp_pin = SEL0): a 1 bit is only pulsed while DF0 is selected.
-; RDATA is shared with any second drive, and measured 2026-09-18 a DOS floppy
-; in a real DF1 came up as DF1:???? because this board's flux was on the line
-; while DF1 was being read. The bits are still consumed at the same rate
-; either way, so the "disk" keeps turning while deselected, as a real one does.
-; A pulse already under way when SEL0 releases runs out its 750 ns.
+; Select-gated (jmp_pin = this drive's select, SEL0 for DF0): a 1 bit is only
+; pulsed while the drive is selected. RDATA is shared with any second drive,
+; and measured 2026-09-18 a DOS floppy in a real DF1 came up as DF1:???? because
+; this board's flux was on the line while DF1 was being read. The bits are still
+; consumed at the same rate either way, so the "disk" keeps turning while
+; deselected, as a real one does. A pulse already under way when the select
+; releases runs out its 750 ns.
+;
+; Side-set ONLY on the pulse (`side 1`) and on the instruction that ends it
+; (`side 0`). A deselected SM, or one stalled at `out` on an empty FIFO, writes
+; nothing to RDATA: side-set takes effect on an instruction's first cycle even
+; if it stalls (RP2350 datasheet §11.2.5), and a pin no SM writes keeps its
+; level while the highest-numbered SM writing it wins (§11.2.6). That is what
+; lets two flux_out SMs, one per drive, share RDATA. The pin is released (low)
+; at init, before any SM runs. Model: bus_model.c; words pinned by
+; test/test_floppy_pio_golden.c -- change all three together.
 ;
 ; Every path is exactly 8 cycles -- the bit cell is the timing:
-;   1, selected   : 2 + 1 + 1 + 3 + 1
+;   1, selected   : 2 + 1 + 1 + 3 + 1    (out, jmp !x, jmp pin, pulse, jmp top)
 ;   1, deselected : 2 + 1 + 1 + 4        (via skip4)
-;   0             : 2 + 1 + 1 + 4        (via skip5)
+;   0             : 2 + 1 + 1 + 4        (jmp !x to skip5, then skip4)
 ; ---------------------------------------------------------------------------
 .program flux_out
 .side_set 1 opt
 .wrap_target
 top:
-    out x, 1            side 0 [1]   ; 2 cycles, idle (FET off, bus high)
-    jmp !x, skip5       side 0       ; 1
-    jmp pin, skip4      side 0       ; 1  SEL0 high: not our select
-    nop                 side 1 [2]   ; 3 cycles asserted  = 750 ns pulse
-    jmp top             side 0       ; 1
+    out x, 1                 [1]   ; 2 cycles; NO side-set: a stall here must hold nothing
+    jmp !x, skip5                  ; 1
+    jmp pin, skip4                 ; 1  our select high: not ours
+    nop                 side 1 [2] ; 3 cycles asserted = 750 ns pulse
+    jmp top             side 0     ; 1  the pulsing SM alone releases RDATA
 skip5:
-    nop                 side 0       ; 1
+    nop                            ; 1
 skip4:
-    nop                 side 0 [3]   ; 4
+    nop                        [3] ; 4
 .wrap
 
 ; ---------------------------------------------------------------------------
@@ -85,33 +95,43 @@ public wait_high:
     jmp wait_high
 
 ; ---------------------------------------------------------------------------
-; status_gate: the five status outputs, released unless DF0 is selected.
+; status_gate: the five status outputs, released unless this drive (SEL0 for
+; DF0) is selected -- and released on the deselect edge only, Y = was selected.
 ;
 ; INDEX, CHNG, WPROT, RDY and TRK0 are shared open-collector lines. A real
 ; drive gates them with its select line; this board drove them regardless,
 ; so with a second drive attached the Amiga read this board's TRK0/CHNG/RDY
 ; as DF1's. Selects last 5-100 us (HANDOFF 4d: median 56 us, 2,672 measured),
 ; and the Amiga reads the status lines inside them, so the gate has to follow
-; SEL0 in PIO time: this loop is 5 cycles, ~33 ns at clkdiv 1.
+; the select in PIO time: the selected loop is 6 cycles, 40 ns at clkdiv 1.
+;
+; Released, the gate writes the pads ONCE (`mov pins, null` on the deselect,
+; then Y = 0) and after that nothing: a second gate SM, one per drive, shares
+; these pads, and the highest-numbered SM writing a pin wins (RP2350 datasheet
+; §11.2.6) -- one that kept writing null would erase the other drive's word
+; every loop. Model: bus_model.c; words pinned by test_floppy_pio_golden.c.
 ;
 ; The CPU never writes these pads. bus_out.c keeps the desired levels as one
 ; GPIO mask and pushes it here; `pull noblock` takes the newest, or keeps the
 ; last (X) when nothing new has arrived.
 ;
-; jmp_pin = SEL0. OUT pins = GP0..GP13; only the five status pads are handed
-; to this PIO, so the rest of the window -- inputs, and RDATA, which pio0
-; owns -- reaches no pad.
+; jmp_pin = this drive's select. OUT pins = GP0..GP13; only the five status
+; pads are handed to this PIO, so the rest of the window -- inputs, and RDATA,
+; which pio0 owns -- reaches no pad. 9 instructions.
 ; ---------------------------------------------------------------------------
 .program status_gate
 .wrap_target
 top:
     pull noblock        ; OSR = newest mask, or X if none is waiting
     mov x, osr
-    jmp pin, released   ; SEL0 high: not our select
+    jmp pin, released   ; our select high
     mov pins, x
+    set y, 1            ; selected
     jmp top
 released:
+    jmp !y, top         ; already released: write NOTHING (a second SM shares these pads)
     mov pins, null
+    set y, 0
 .wrap
 
 ; ---------------------------------------------------------------------------
@@ -201,7 +221,7 @@ changed:
 ; That phase is the amiga-hddlw PAL's (github.com/schlae/amiga-hddlw,
 ; pal/amiga-hddlw.pld), verified on the bench 2026-09-27 (HANDOFF §3an).
 ;
-; clkdiv 10 (~67 ns a cycle at 150 MHz): `wait 0 gpio 2 [7]` gives MTR ~0.5 us
+; clkdiv 10 (~67 ns a cycle at 150 MHz): `wait 0 pin 0 [7]` gives MTR ~0.5 us
 ; to settle after SEL0 falls before `jmp pin` samples it (53 ns was marginal
 ; on the bench). The bit is on the pad ~0.6 us after SEL0 falls.
 ;
@@ -210,38 +230,42 @@ changed:
 ; on the pad once per motor-on select (`mov pins, x`); bus_out.c also execs
 ; `set pins, 1` when RDY is asserted while the machine sits at
 ; on_selected_wait, so an assert shows at once and a release at the deselect.
-; Y = DRIVE_ID_HD, loaded once at init.
-; reset_load and repeat_load are REWRITTEN by bus_out_drive_id_set_hd() with
-; drive_id_load() (drive_id.h): `mov osr, y` (HD) or `mov osr, ~null` (DD,
-; all ones). A new word takes effect at the next load -- the first motor-off
-; select after a motor-on one, or the 32-bit repeat -- never mid-answer.
+; Y = this SM's ID word: DD 0xFFFFFFFF, HD 0xAAAAAAAA, NONE 0. The program is
+; shared by one SM per drive, so nothing rewrites instr_mem (test/run.sh fails
+; on an `instr_mem[` in bus_out.c): both loads are `mov osr, y`, and
+; bus_out_drive_id_set() changes Y by exec'd instructions that touch only Y
+; and the ISR (drive_id_y_sequence, drive_id.h), Y in one final instruction.
+; A new word takes effect at the next load -- the first motor-off select after
+; a motor-on one, or the 32-bit repeat -- never mid-answer.
+; ISR = bus_out.c's scratch for building HD's word: this program has no `in`,
+; no `push` and no `mov isr` (test_drive_id_pio.c pins it). IN shifts LEFT.
 ; OSR = the shifter (shift left, OSRE after 32).
 ; out/set pins = RDY (1), jmp_pin = MTR (high = motor off).
-; SEL0 is GP2, literally: `wait gpio` takes a number, and bus_out.c asserts
-; PIN_SEL0 == 2. 15 instructions: pio0 then holds flux_out 7 + flux_in 7 +
-; this 15 = 29 of 32.
+; in_base = this drive's select (`wait pin 0`); SEL0 is no longer pinned to
+; GP2. "SEL0" below means DF0's select, which is what bus_out.c passes today.
+; 15 instructions: pio0 then holds flux_out 7 + flux_in 7 + this 15 = 29 of 32.
 ; ---------------------------------------------------------------------------
 .program drive_id
 public on_released:           ; deselected (or power-up)
     mov pins, null            ; RDY released
-    wait 0 gpio 2 [7]         ; SEL0 falls; MTR settles (~0.5 us)
+    wait 0 pin 0 [7]          ; SEL0 falls; MTR settles (~0.5 us)
     jmp pin, reset_load       ; motor off: a new answer starts here
 on_selected:                  ; selected, motor on: RDY is the CPU's level
     mov pins, x
 public on_selected_wait:      ; bus_out.c execs `set pins, 1` here on an assert
-    wait 1 gpio 2             ; SEL0 released
+    wait 1 pin 0              ; SEL0 released
     jmp on_released
 public reset_load:            ; first motor-off select after motor-on
-    mov osr, y                ; load the ID (rewritten: y = HD, ~null = DD)
+    mov osr, y                ; load the ID (Y = this SM's ID word)
 id_bit:
     out pins, 1               ; this select's bit on RDY, MSB first
-    wait 1 gpio 2             ; SEL0 released
+    wait 1 pin 0              ; SEL0 released
     mov pins, null
     jmp !osre, off_wait       ; bits left in this answer
 public repeat_load:
-    mov osr, y                ; all 32 sent: the pattern repeats (rewritten too)
+    mov osr, y                ; all 32 sent: the pattern repeats (Y, read again)
 off_wait:                     ; deselected; motor latched OFF
-    wait 0 gpio 2 [7]
+    wait 0 pin 0 [7]
     jmp pin, id_bit           ; still off: the next bit
     jmp on_selected           ; motor on: the answer is abandoned
 
@@ -268,11 +292,11 @@ static inline void step_dir_program_init(PIO pio, uint sm, uint offset,
     pio_sm_init(pio, sm, offset + step_dir_offset_wait_high, &c);
 }
 static inline void status_gate_program_init(PIO pio, uint sm, uint offset,
-                                            uint sel0_pin, uint out_count,
+                                            uint sel_pin, uint out_count,
                                             uint32_t pin_mask) {
     pio_sm_config c = status_gate_program_get_default_config(offset);
     sm_config_set_out_pins(&c, 0, out_count);
-    sm_config_set_jmp_pin(&c, sel0_pin);
+    sm_config_set_jmp_pin(&c, sel_pin);
     sm_config_set_fifo_join(&c, PIO_FIFO_JOIN_TX);
     sm_config_set_clkdiv(&c, 1.0f);
     // Level first, then direction, then hand the pads over: no glitch on the
@@ -293,14 +317,17 @@ static inline void sel_mtr_program_init(PIO pio, uint sm, uint offset,
     pio_sm_init(pio, sm, offset, &c);
 }
 static inline void flux_out_program_init(PIO pio, uint sm, uint offset, uint pin,
-                                         uint sel0_pin) {
+                                         uint sel_pin) {
     pio_sm_config c = flux_out_program_get_default_config(offset);
     sm_config_set_sideset_pins(&c, pin);
-    sm_config_set_jmp_pin(&c, sel0_pin);
+    sm_config_set_jmp_pin(&c, sel_pin);
     sm_config_set_out_shift(&c, false, true, 32);        // MSB first, autopull
     sm_config_set_fifo_join(&c, PIO_FIFO_JOIN_TX);
     float div = (float)clock_get_hz(clk_sys) * 2e-6f / 8.0f;
     sm_config_set_clkdiv(&c, div);
+    // Released first: the program no longer drives `side 0` while idle, so
+    // nothing but this sets the level before the first pulse ends.
+    pio_sm_set_pins_with_mask(pio, sm, 0, 1u << pin);
     pio_gpio_init(pio, pin);
     pio_sm_set_consecutive_pindirs(pio, sm, pin, 1, true);
     pio_sm_init(pio, sm, offset, &c);
@@ -313,21 +340,27 @@ static inline void flux_in_program_init(PIO pio, uint sm, uint offset, uint pin)
     sm_config_set_clkdiv(&c, 1.0f);                      // full speed timer
     pio_sm_init(pio, sm, offset, &c);
 }
-static inline void drive_id_program_init(PIO pio, uint sm, uint offset, uint rdy_pin,
-                                         uint mtr_pin, uint32_t hd_id) {
+static inline void drive_id_program_init(PIO pio, uint sm, uint offset, uint sel_pin,
+                                         uint rdy_pin, uint mtr_pin, uint32_t id_word) {
     pio_sm_config c = drive_id_program_get_default_config(offset);
+    sm_config_set_in_pins(&c, sel_pin);                  // `wait pin 0` = this drive's select
     sm_config_set_out_pins(&c, rdy_pin, 1);
     sm_config_set_set_pins(&c, rdy_pin, 1);              // bus_out.c's exec'd `set pins, 1`
     sm_config_set_jmp_pin(&c, mtr_pin);                  // high = motor off
     sm_config_set_out_shift(&c, false, false, 32);       // MSB first; OSRE after 32
+    // LEFT, no autopush: the ISR is bus_out.c's scratch for HD's Y word, which
+    // drive_id_y_sequence builds assuming a left shift (right gives 0x55555555).
+    sm_config_set_in_shift(&c, false, false, 32);
     sm_config_set_clkdiv(&c, 10.0f);                     // [7] = ~0.5 us for MTR to settle
     pio_sm_set_pins_with_mask(pio, sm, 0, 1u << rdy_pin);            // released
     pio_sm_set_pindirs_with_mask(pio, sm, 1u << rdy_pin, 1u << rdy_pin);
     pio_sm_init(pio, sm, offset + drive_id_offset_on_released, &c);
-    // Y = the HD word, for the loads that name it; X = 0 (released) until
-    // bus_out.c sets the real level. Both before the machine runs. (Dest Y
-    // and X are safe with pio_encode_mov/set; dest OSR is not -- drive_id.h.)
-    pio_sm_put(pio, sm, hd_id);
+    // Y = this drive's ID word, which both loads read; X = 0 (released) until
+    // bus_out.c sets the real level. Both before the machine runs, so the
+    // exec'd `pull` cannot tear an answer -- once running, Y is changed only
+    // through drive_id_y_sequence. (Dest Y and X are safe with
+    // pio_encode_mov/set; dest OSR is not -- drive_id.h.)
+    pio_sm_put(pio, sm, id_word);
     pio_sm_exec(pio, sm, pio_encode_pull(false, true));
     pio_sm_exec(pio, sm, pio_encode_mov(pio_y, pio_osr));
     pio_sm_exec(pio, sm, pio_encode_set(pio_x, 0));
