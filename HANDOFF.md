@@ -1611,6 +1611,11 @@ separately.
 - **Screenshots of the web app's pages for the GitHub page** (operator, 2026-10-08): library, game page, disk
   page/file browser with history, Devices (bezel card and display editor), Help. Capture them with Playwright
   from a seeded demo org, never from a real tenant's data.
+- **GitHub releases = the web app's signed releases (2026-10-09, 756c004).** `pnpm firmware:publish` also creates
+  or updates the GitHub release `fw-<semver>` with the SAME registry-signed .bin, plus its .uf2, the partition table
+  and a signed manifest.json. TEST builds are never published there; `--no-github` skips the step; `--github-only`
+  (re)attaches a published version, checked byte-for-byte against the registry. The firmware workflow builds and
+  tests only (its artifacts are for diagnosis). fw-1.8.1 was re-attached from the registry (sha256 87b4c4da...).
 - **REQUIREMENT (operator, 2026-10-09): a first install is ONE drag-and-drop.** Hold BOOTSEL, plug in, drop ONE
   .uf2 onto the drive that appears, and everything else just works. **Requiring picotool is a blocker for casual
   users.** Today's install (picotool: partition table, reboot to BOOTSEL, `load -p 0 -x`) does not meet it. Research
