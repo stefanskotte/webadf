@@ -172,6 +172,35 @@ void  wf_tls_free(void *p);
 #define MBEDTLS_KEY_EXCHANGE_ECDHE_RSA_ENABLED   // TLS 1.2, RSA leaf (this host)
 #define MBEDTLS_KEY_EXCHANGE_ECDHE_ECDSA_ENABLED // TLS 1.2, ECDSA leaf (other hosts)
 
+// --- Record buffers (2026-10-09) ---------------------------------------
+// Each connection mallocs two record buffers in mbedtls_ssl_setup()
+// (ssl_tls.c): IN and OUT, each CONTENT_LEN + 45 bytes (13 header + 16 IV +
+// 16 GCM tag; no CBC/MAC suites here), as ONE contiguous chunk apiece. At
+// the 16384 default that was 2 x 16,429 B of a 90 KB heap, and the heap's
+// free floor had fallen to the project's 20 KB once 1.8.0 added DF1's 14 KB
+// track buffer -- while OTA downloads on long-running boards failed.
+//
+// OUT only. Outgoing records are ours to size: a longer write is simply
+// split into several records, which the server reassembles -- TLS gives the
+// sender that freedom in every version. The largest single thing this
+// client sends is a write-back POST of one HD track (DC_POST_BODY_MAX,
+// 11,264 B + head); transport_tls.c's tls_write caps each altcp_write at one
+// record's payload, which is REQUIRED (not an optimisation): the SDK's
+// altcp_mbedtls_write panics on mbedtls_ssl_write's short return otherwise.
+// Handshake messages we send are a ClientHello (well under 1 KB: no client
+// certificate, no PSK) and Finished. 4096 OUT saves 12,288 B per connection
+// and turns the second 16 KB contiguous chunk into a 4 KB one.
+//
+// IN stays at 16384. The SERVER sizes incoming records, and a peer may send
+// up to 2^14 bytes of plaintext unless the client negotiated a smaller
+// max_fragment_length (RFC 6066) or record_size_limit (RFC 8449). Neither is
+// enabled here, and both depend on the server honouring them -- a record
+// larger than IN_CONTENT_LEN is a fatal error, not a slowdown. Do not shrink
+// IN without first proving the server negotiates one of those.
+// MBEDTLS_SSL_VARIABLE_BUFFER_LENGTH resizes only to a negotiated maximum
+// fragment length, so it buys nothing without one either.
+#define MBEDTLS_SSL_OUT_CONTENT_LEN 4096
+
 // Deliberately no #include "mbedtls/check_config.h" here: build_info.h (the
 // header that pulls in this file via MBEDTLS_CONFIG_FILE) already includes
 // it, after the config_adjust_*.h headers that derive PSA_WANT_*/

@@ -528,6 +528,22 @@ static int tls_write(struct transport *t, const uint8_t *b, int n) {
 
     int to_write = (avail < (u16_t)n) ? (int)avail : n;
     net_radio_lock();
+    // NEVER more than one TLS record's payload per altcp_write. mbedtls_ssl_write
+    // takes at most MBEDTLS_SSL_OUT_CONTENT_LEN and reports the rest as a short
+    // write (ssl_msg.c, ssl_write_real), but the SDK's altcp_mbedtls_write
+    // treats any short write as impossible -- LWIP_ASSERT("ret <= 0", 0), and
+    // LWIP asserts are live in this build (pico_lwip's cc.h: panic) -- after
+    // the record has already gone out. altcp_sndbuf() does not know the
+    // record limit, so with OUT_CONTENT_LEN below TCP_SND_BUF (mbedtls_config.h)
+    // a write-back POST of an 11 KB HD track would panic here. Capping makes
+    // every write a whole record; the short return is legal per transport.h
+    // and dc_attempt already loops on it.
+    {
+        mbedtls_ssl_context *ssl = (mbedtls_ssl_context *)altcp_tls_context(c->pcb);
+        const int rec_max = ssl ? mbedtls_ssl_get_max_out_record_payload(ssl)
+                                : MBEDTLS_SSL_OUT_CONTENT_LEN;
+        if (rec_max > 0 && to_write > rec_max) to_write = rec_max;
+    }
     err_t werr = altcp_write(c->pcb, b, (u16_t)to_write, TCP_WRITE_FLAG_COPY);
     if (werr == ERR_OK) altcp_output(c->pcb);
     net_radio_unlock();
