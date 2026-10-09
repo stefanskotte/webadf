@@ -167,14 +167,17 @@ export async function prepareImages(
       return r.images.length === 0 ? { code: 'not_a_disk_image' } : r;
     }
     case 'zip': {
+      // Members are taken by their own names, as a dropped folder would be.
+      const wanted = (p: string) => !p.startsWith('__MACOSX/') && DISK_IMAGE_PATTERN.test(p);
+      // First pass: count from the central directory, accepting nothing, so
+      // nothing is inflated before we know the archive is within the cap.
       let selected = 0;
+      await readZip(bytes, { accept: (p) => { if (wanted(p)) selected++; return false; } });
+      if (selected > MAX_IMAGES_PER_URL) return { code: 'too_many_images' };
       const { entries, skipped } = await readZip(bytes, {
-        // Members are taken by their own names, as a dropped folder would be.
-        // Counted here so members past the cap are never even decompressed.
-        accept: (p) => !p.startsWith('__MACOSX/') && DISK_IMAGE_PATTERN.test(p) && ++selected <= MAX_IMAGES_PER_URL,
+        accept: wanted,
         maxEntryBytes: MAX_COMPRESSED_IMAGE_BYTES,
       });
-      if (selected > MAX_IMAGES_PER_URL) return { code: 'too_many_images' };
       const out: Prepared = { images: [], refused: [] };
       for (const e of entries) {
         const r = await prepareOne(cleanName(e.path) || 'disk.adf', e.bytes);

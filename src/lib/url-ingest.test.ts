@@ -144,6 +144,17 @@ describe('prepareImages', () => {
     expect(await prepareImages(zip(members), 'x.zip')).toEqual({ code: 'too_many_images' });
   });
 
+  it('decides too_many_images from the central directory without inflating anything', async () => {
+    const members = Array.from({ length: MAX_IMAGES_PER_URL + 1 }, (_, i) => ({ name: `D${i}.adf`, bytes: ADF(i) }));
+    const spy = vi.spyOn(globalThis, 'DecompressionStream');
+    try {
+      expect(await prepareImages(zip(members), 'x.zip')).toEqual({ code: 'too_many_images' });
+      expect(spy).not.toHaveBeenCalled();
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
   it('refuses a deflate bomb member without inflating it whole', async () => {
     const r = await prepareImages(zip([{ name: 'Bomb.adf', bytes: new Uint8Array(64 * 1024 * 1024) }]), 'x.zip');
     expect('refused' in r && r.refused[0]).toMatchObject({ filename: 'Bomb.adf', note: 'too large' });
