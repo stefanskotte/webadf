@@ -1,10 +1,10 @@
-import { inArray } from 'drizzle-orm';
+import { inArray, isNotNull } from 'drizzle-orm';
 import { getDb } from '@/db';
-import { blobs, disks, entitlements } from '@/db/schema/catalog';
+import { blobs, disks, entitlements, games } from '@/db/schema/catalog';
 import { devices } from '@/db/schema/devices';
 import { diskVersions, diskWriteSessions } from '@/db/schema/disk-history';
-import { diskStore } from '@/lib/storage';
-import { planBlobGc } from '@/lib/blob-gc';
+import { coverStore, diskStore } from '@/lib/storage';
+import { planBlobGc, planCoverGc } from '@/lib/blob-gc';
 
 /** A week: the job runs weekly, so anything it deletes was garbage for at least one full cycle. */
 export const BLOB_GC_GRACE_MS = 7 * 24 * 60 * 60 * 1000;
@@ -17,6 +17,10 @@ export interface BlobGcResult {
   /** Object deletions that failed (the row, if any, is then kept for the next run). */
   failed: number;
   refused: string | null;
+  /** The cover/ pass (a title's own images): listed, deleted, and its own brake. */
+  storedCovers: number;
+  covers: number;
+  coversRefused: string | null;
 }
 
 /**
@@ -48,13 +52,32 @@ export async function runBlobGc({ dryRun }: { dryRun: boolean }): Promise<BlobGc
   }
   for (const d of devRefs) for (const s of [d.m, d.d, d.p]) if (s) referenced.add(s);
 
+  // Covers: a separate namespace (cover/), a separate reference (games), and a
+  // separate plan, so a brake on one pass never stops the other. Referenced
+  // digests are read before the listing, like the adf/ pass.
+  const coverRefs = await db.selectDistinct({ s: games.coverOverrideSha256 })
+    .from(games).where(isNotNull(games.coverOverrideSha256));
+
   const objects = await diskStore.listAll();
+  const coverObjects = await coverStore.listAll();
   const plan = planBlobGc({ rows, objects, referenced, now, graceMs: BLOB_GC_GRACE_MS });
+  const coverPlan = planCoverGc({
+    objects: coverObjects, referenced: coverRefs.flatMap((r) => (r.s ? [r.s] : [])),
+    now, graceMs: BLOB_GC_GRACE_MS,
+  });
   const result: BlobGcResult = {
     dryRun, storedObjects: objects.length, rows: plan.rows.length, objects: plan.objects.length,
     failed: 0, refused: plan.refused,
+    storedCovers: coverObjects.length, covers: coverPlan.objects.length, coversRefused: coverPlan.refused,
   };
-  if (dryRun || plan.refused) return result;
+  if (dryRun) return result;
+
+  let coversRemoved = 0;
+  for (const sha256 of coverPlan.objects) {
+    try { await coverStore.remove(sha256); coversRemoved++; } catch { result.failed++; }
+  }
+  result.covers = coversRemoved;
+  if (plan.refused) return result;
 
   const stored = new Set(objects.map((o) => o.sha256));
   const rowsRemoved: string[] = [];
