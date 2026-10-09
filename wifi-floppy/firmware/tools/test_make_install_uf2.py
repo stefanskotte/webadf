@@ -215,7 +215,8 @@ class SyntheticTests(unittest.TestCase, StructuralChecks):
 REAL = os.environ.get("WF_INSTALL_UF2") or os.path.join(FW, "build", "wifi-floppy-install.uf2")
 
 
-@unittest.skipUnless(os.path.exists(REAL), f"no build output at {REAL}")
+# Named explicitly (CI, after the build): it must exist. Defaulted: optional.
+@unittest.skipUnless(os.environ.get("WF_INSTALL_UF2") or os.path.exists(REAL), f"no build output at {REAL}")
 class RealBuildTests(unittest.TestCase, StructuralChecks):
     def test_real_install_uf2(self):
         with open(REAL, "rb") as f:

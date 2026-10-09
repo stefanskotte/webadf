@@ -1,8 +1,10 @@
 name: firmware
 
 # Builds the RP2350 firmware on every push that touches it, runs the host test
-# suite, and keeps the .bin, the .uf2, the partition table (wifi_floppy_pt.uf2)
-# and a manifest as a run artifact for diagnosis. It does NOT publish releases:
+# suite, and keeps the .bin, the .uf2, the partition table (wifi_floppy_pt.uf2),
+# the single drag-and-drop first-install UF2 (wifi-floppy-install.uf2, with the
+# non-TBYB wifi_floppy_install.bin inside it) and a manifest as a run artifact
+# for diagnosis. The firmware is compiled twice for that (TBYB and not). It does NOT publish releases:
 # the GitHub release for a version is created by `pnpm firmware:publish` with
 # the same SIGNED files the web app serves (operator, 2026-10-09), so the
 # download page and the over-the-air update are always the same bytes.
@@ -98,7 +100,17 @@ jobs:
             -DPICO_SDK_PATH="$PWD/pico-sdk" \
             -DPICO_BOARD="$PICO_BOARD"
           cmake --build build
-          ls -la build/wifi_floppy.bin build/wifi_floppy.uf2 build/wifi_floppy_pt.uf2 build/wifi_floppy.elf
+          ls -la build/wifi_floppy.bin build/wifi_floppy.uf2 build/wifi_floppy_pt.uf2 build/wifi_floppy.elf \
+                 build/wifi_floppy_install.bin build/wifi-floppy-install.uf2
+
+      # The host tests above ran the packer's unit tests on synthetic input;
+      # this runs them again against the REAL install UF2 just built (all
+      # blocks absolute, table at 0, image in slot A, nothing in the top five
+      # settings sectors, no E10 block, and the OTA image refused).
+      - name: Check the first-install UF2
+        env:
+          WF_INSTALL_UF2: build/wifi-floppy-install.uf2
+        run: python3 wifi-floppy/firmware/tools/test_make_install_uf2.py
 
       # The version the IMAGE carries, read out of the generated header, which
       # is the only string a board will ever report. `git describe` is kept
@@ -158,6 +170,8 @@ jobs:
             build/wifi_floppy.bin
             build/wifi_floppy.uf2
             build/wifi_floppy_pt.uf2
+            build/wifi-floppy-install.uf2
+            build/wifi_floppy_install.bin
             build/wifi_floppy.elf
             build/manifest.json
           if-no-files-found: error
