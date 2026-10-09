@@ -608,6 +608,64 @@ static dc_fetch_result_t dc_fetch_into(device_client_t *c, const char *sha256, i
     return DC_FETCH_OK;
 }
 
+// --- DF1 second drive (spec 2026-10-08 §4): core1's policy ---------------
+
+void dc_set_df1(device_client_t *c, df1_mode_t mode, bool hd_ok) {
+    c->_df1_capable = true;
+    c->_df1_mode = (uint8_t)mode;
+    c->_df1_hd_ok = hd_ok;
+}
+
+void dc_set_df1_quiesce(device_client_t *c, bool (*fn)(void *), void *ctx) {
+    c->_df1_quiesce = fn;
+    c->_df1_quiesce_ctx = ctx;
+}
+
+// The slot DF1 should hold right now (spec §4 "What DF1 serves"): the verified
+// preload, only while DF1 is on, DF0 holds a disk, the record still names the
+// idle slot AND still names the server's current next, and the disk fits DF1's
+// buffer.
+//
+// "Still the current next" is not in the spec's sentence but is what it means:
+// a record the server has moved past (a poll named a different next) is about
+// to be overwritten by dc_preload_step, which ejects DF1 first. Without this
+// condition the reconcile at the end of that same step would put the stale
+// disk straight back whenever the write had to wait for core0 -- an eject and
+// re-insert per pass, each one a disk change the Amiga sees.
+static int dc_df1_want(const device_client_t *c) {
+    const dc_preload_t *p = &c->preload;
+    if (c->_df1_mode != DF1_MODE_NEXT || p->slot == SLOT_NONE || p->loading) return SLOT_NONE;
+    if (psram_active_slot() == SLOT_NONE || p->slot != psram_inactive_slot()) return SLOT_NONE;
+    if (p->sha256[0] == '\0' || strcmp(p->sha256, p->next_sha256) != 0) return SLOT_NONE;
+    if (!c->_df1_hd_ok && psram_image_slot_kind(p->slot) == SLOT_KIND_ADF_HD) return SLOT_NONE;
+    return p->slot;
+}
+
+void dc_df1_reconcile(device_client_t *c) {
+    const int want = dc_df1_want(c);
+    if (psram_df1_slot() == want) return;
+    if (psram_publish_df1(want))
+        wf_logf(WF_INFO, "df1: %s", want == SLOT_NONE ? "ejected" : "inserted the next disk");
+}
+
+// Before ANY write into `target` (Review Focus 1): if DF1 holds it, eject DF1
+// and wait for core0 to say it stopped reading. False = do not write now.
+//
+// The two writers into a PSRAM slot on core1 are dc_fetch_image (a regular
+// fetch) and dc_preload_step, both through dc_fetch_into, both into
+// psram_inactive_slot(); both call this first. core0's own writes
+// (write_back_apply) go to DF0's active slot, which DF1 can never hold
+// (psram_publish_df1 refuses it), and the uploader only moves dirty flags of
+// the active slot.
+static bool dc_df1_release(device_client_t *c, int target) {
+    if (psram_df1_slot() != target && psram_df1_quiescent()) return true;
+    if (psram_df1_slot() == target) psram_publish_df1(SLOT_NONE);
+    if (!c->_df1_quiesce) return psram_df1_quiescent();
+    if (c->_df1_quiesce(c->_df1_quiesce_ctx)) return true;
+    wf_logf(WF_WARN, "df1: core0 has not let go of slot %d -- write deferred", target);
+    return false;
+}
+
 // Fetches `d->sha256` from the image endpoint. Only reached once the poll
 // has named a digest that is neither already mounted nor already known
 // bad. On any failure -- transport-level, or a dropped/incomplete body --
@@ -615,6 +673,18 @@ static dc_fetch_result_t dc_fetch_into(device_client_t *c, const char *sha256, i
 // replacement is fetched *and* verified) means an incomplete fetch is not
 // a partial success, it is simply not a swap.
 static dc_state_t dc_fetch_image(device_client_t *c, const dc_desired_t *d) {
+    // DF1 (Task 15): the idle slot may be what DF1 is serving. Eject it and
+    // wait for core0 before a byte is written. `since` is not advanced, so the
+    // next poll redelivers this instruction at once. The record is dropped on
+    // the way out as well: this fetch WILL overwrite the slot when it runs,
+    // and a kept record would have dc_df1_reconcile re-insert the disk this
+    // just ejected -- a disk change on DF1 for every deferred poll.
+    if (!dc_df1_release(c, psram_inactive_slot())) {
+        c->preload.slot = SLOT_NONE;
+        c->preload.sha256[0] = '\0';
+        c->state = DC_IDLE_POLL;
+        return c->state;
+    }
     // Multi-disk §4.3: this fetch is about to overwrite the idle slot, so
     // whatever a preload left there is no longer what the record says --
     // dropped FIRST, before a byte is written, and whatever the outcome.
@@ -1362,17 +1432,28 @@ bool dc_report_status(device_client_t *c, int psram_free, int rssi, const char *
         sel1_tail[0] = '\0';
     }
 
+    // DF1 (Task 15): the digest DF1 serves, null when it serves nothing --
+    // both values, from every DF1-capable build; no key at all from one that
+    // is not. 79 bytes at most (header note on DC_STATUS_BODY_BYTES).
+    static char df1_tail[96];
+    if (c->_df1_capable) {
+        const int s = psram_df1_slot();
+        if (s != SLOT_NONE && s == c->preload.slot && c->preload.sha256[0])
+            snprintf(df1_tail, sizeof df1_tail, ",\"df1Sha256\":\"%s\"", c->preload.sha256);
+        else snprintf(df1_tail, sizeof df1_tail, ",\"df1Sha256\":null");
+    } else df1_tail[0] = '\0';
+
     static char body[DC_STATUS_BODY_BYTES];
     int body_len = snprintf(body, sizeof body,
         "{\"mountedSha256\":%s,\"mountedDiskId\":%s,\"version\":%lu,"
         "\"error\":%s,\"psramFree\":%d,\"firmwareVersion\":%s,\"rssi\":%d,"
-        "\"trackMaxBytes\":%u%s%s%s%s%s%s}",
+        "\"trackMaxBytes\":%u%s%s%s%s%s%s%s}",
         sha_field, disk_field, (unsigned long)c->mounted_version,
         err_field, psram_free, ver_field, rssi, (unsigned)TRACK_MAX_BYTES, fw_tail, nfc_tail,
         display_tail, preload_tail,
         // playsHd: only from a build with the drive-ID responder (HD spec §5.5).
         c->_plays_hd ? ",\"playsHd\":true" : "",
-        sel1_tail);
+        sel1_tail, df1_tail);
     if (body_len < 0 || body_len >= (int)sizeof body) return false; // should never happen; give up quietly
 
     static char req[DC_STATUS_REQ_BYTES];
@@ -1528,7 +1609,18 @@ dc_display_action_t dc_display_decide(const device_client_t *c, const uint8_t *b
     return DC_DISP_APPLY;
 }
 
+static dc_state_t dc_step_inner(device_client_t *c);
+
+// DF1 follows the preload record after every step, whatever path it took
+// (a swap, an eject, a fetch that dropped the record). A wrapper, so no return
+// path inside can skip it.
 dc_state_t dc_step(device_client_t *c) {
+    dc_state_t s = dc_step_inner(c);
+    dc_df1_reconcile(c);
+    return s;
+}
+
+static dc_state_t dc_step_inner(device_client_t *c) {
     // Describes THIS step only: cleared before any return below.
     c->poll_interrupted = false;
     c->_was_held = c->held;
@@ -1809,7 +1901,17 @@ void dc_set_preload_gate(device_client_t *c, bool (*fn)(void *ctx), void *ctx) {
 // publish: rule 2 is untouched because the active slot is never referenced,
 // and rule 1 because nothing here changes what is mounted. The gate is asked
 // LAST, after every cheap check, and nothing is written before it says yes.
+static bool dc_preload_step_inner(device_client_t *c);
+
+// As dc_step: DF1 is reconciled on every return -- a verified preload is
+// inserted, a dropped one stays ejected.
 bool dc_preload_step(device_client_t *c) {
+    bool did = dc_preload_step_inner(c);
+    dc_df1_reconcile(c);
+    return did;
+}
+
+static bool dc_preload_step_inner(device_client_t *c) {
     dc_preload_t *p = &c->preload;
     // Describes THIS step only (dc_step's poll_interrupted rule).
     p->interrupted = false;
@@ -1823,6 +1925,11 @@ bool dc_preload_step(device_client_t *c) {
         strcmp(p->sha256, p->next_sha256) == 0) return false;   // already there
     if (dc_digest_is_blocked(c, p->next_sha256)) return false;
     if (!c->_preload_ok || !c->_preload_ok(c->_preload_ok_ctx)) return false;
+    // DF1 (Task 15): the idle slot may be what DF1 serves. Eject and wait for
+    // core0 before anything is dropped or written; false = nothing happened,
+    // try on a later pass. The record is kept: it is what the status report
+    // still truthfully says the slot holds.
+    if (!dc_df1_release(c, psram_inactive_slot())) return false;
 
     // From here the idle slot is being overwritten: no record survives it.
     if (p->slot != SLOT_NONE) p->changed = true;   // the server was told "ready"
