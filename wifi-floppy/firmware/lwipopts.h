@@ -34,6 +34,18 @@
 #define LWIP_DHCP                   1
 #define LWIP_DNS                    1
 #define LWIP_TCP                    1
+// Address reuse for the setup portal's listeners (portal_net.c sets
+// SOF_REUSEADDR on them; nothing else does, so every other pcb behaves
+// exactly as before). lwIP's name for this is SO_REUSE, not LWIP_SO_REUSE.
+//
+// Without it the portal could never come back up within two minutes of a
+// submit: every HTTP connection the portal closes first sits in TIME_WAIT
+// for 2*TCP_MSL = 120 s with local port 80, and tcp_bind(ANY, 80) scans
+// tcp_tw_pcbs and returns ERR_USE. On the bench (2026-10-09, fw 1.9.3) a
+// rejected pairing code re-raised the portal 1.3 s after the submit and the
+// board hung in setup_http(). Reproduced on the host against these exact
+// lwIP sources; portal_net.c's "Re-raising the portal" comment has the trace.
+#define SO_REUSE                    1
 // MUST EXCEED ONE MAXIMUM TLS RECORD, and 8*TCP_MSS (11,680) did not.
 // mbedtls cannot decrypt a partial record: it needs the whole thing before it
 // yields a single application byte. lwIP credits the receive window in two

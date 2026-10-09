@@ -90,16 +90,43 @@
 // disambiguates by chaddr, and any DHCP client tolerates receiving (and
 // ignoring) a broadcast reply that isn't its own transaction.
 //
-// --- Setup failure has no return path ----------------------------------
+// --- Setup failure: say so, then reboot --------------------------------
 // portal_run() has two defined outcomes (a submission arrived, or the
 // caller's inactivity window elapsed -- portal_net.h's
-// portal_run_result_t), and neither of them is "the very first
-// udp_new()/tcp_new() of this device's life failed"; there is nothing
-// meaningful to hand a caller back for that.
-// main.c already sets the precedent for treating that class of failure
-// as unrecoverable rather than inventing a signalling path for it:
-// `if (cyw43_arch_init()) while (1) tight_loop_contents();`. Every setup
-// step below that can fail follows the same rule via fatal_setup_failure().
+// portal_run_result_t), and neither of them is "a socket could not be
+// set up"; there is nothing meaningful to hand a caller back for that.
+// It used to spin silently (while (1) tight_loop_contents()), which is
+// what turned the TIME_WAIT bind failure below into a board that looked
+// alive but answered nothing until someone power-cycled it. Now every
+// setup step that can fail goes through fatal_setup_failure(), which logs
+// the step and lwIP's error code and asks core0 for a reboot. After the
+// reboot the board either has stored Wi-Fi (and retries it) or has none
+// (a rejected pairing code erased the config) and raises a fresh portal --
+// EXCEPT a board fresh from the USB install that has not paired yet: its
+// image is unconfirmed until it pairs, so that reboot lands in BOOTSEL,
+// exactly as the old silent hang plus a power-cycle did (review 2026-10-09;
+// no worse, but not self-healing). The reboot also drops a disk core0 may
+// still be serving when stored Wi-Fi failed three times; with the port 80
+// cause gone this path needs an allocation failure, so a visible reboot
+// beats a board that looks alive and answers nothing.
+//
+// --- Re-raising the portal (bench 2026-10-09, fw 1.9.3) -----------------
+// Submit -> AP down -> STA joins -> pairing code rejected -> portal_run()
+// again 1.3 s later -> hung before "portal: AP ... up". Cause: the portal
+// closes its HTTP connections first, so each one ends in TIME_WAIT for
+// 2*TCP_MSL = 120 s with local port 80; tcp_bind(ANY, 80) walks
+// tcp_tw_pcbs too and returns ERR_USE (lwip/core/tcp.c tcp_bind); and the
+// AP netif's removal only aborts tcp_active_pcbs/tcp_bound_pcbs, never the
+// TIME_WAIT list (tcp_netif_ip_addr_changed). DHCP and DNS were already
+// bound by then, which is why the phone got an address and "no internet"
+// but never a captive page. Reproduced on the host with the real lwIP
+// sources: ERR_USE at +1.3 s, ERR_OK after 120 s, and ERR_OK at +1.3 s with
+// SO_REUSE=1 plus SOF_REUSEADDR on the listener. Hence: SO_REUSE in
+// lwipopts.h, SOF_REUSEADDR on the HTTP listener ONLY (the DHCP and DNS
+// pcbs cannot linger -- udp_remove() unlinks at once -- and the flag on
+// them would let a stray second bind of 67/53 succeed silently instead of
+// failing; review 2026-10-09), and portal_stop() aborts rather than closes any connection it
+// still owns, so those never enter TIME_WAIT at all.
 #include "portal_net.h"
 #include "dhcp_server.h"
 #include "dns_server.h"
@@ -107,14 +134,22 @@
 
 #include "net_radio.h"
 #include "wf_log.h"          // the AP diagnostic below
+#include "fw_rom.h"          // fw_rom_request_reboot(), see fatal_setup_failure()
 #include "pico.h"            // pico/platform.h refuses to be the first SDK include
-#include "pico/platform.h"   // tight_loop_contents(), see fatal_setup_failure()
+#include "pico/platform.h"
 #include "pico/time.h"
 #include "lwip/udp.h"
 #include "lwip/tcp.h"
 #include "lwip/pbuf.h"
 #include "lwip/ip_addr.h"
 #include "lwip/netif.h"   // netif_set_default(), see portal_stop()'s CRITICAL fix
+
+// Without SO_REUSE, lwIP's tcp_bind() ignores SOF_REUSEADDR entirely: the
+// option below would still compile and set its bit, and the portal would
+// still hang on a re-raise. Fail the build instead of the bench.
+#if !SO_REUSE
+#error "portal_net.c needs SO_REUSE 1 in lwipopts.h -- see \"Re-raising the portal\""
+#endif
 
 #include <stdint.h>
 #include <string.h>
@@ -140,11 +175,21 @@
                                // against PAGE_FMT + a full MAC + a
                                // buffer-filling err block; its second
                                // template, the accepted-submit
-                               // confirmation page, is 938 B). This leaves
+                               // confirmation page, is 827 B with a
+                               // worst-case escaped SSID -- pinned by
+                               // test_portal_http.c). This leaves
                                // comfortable headroom without costing much
                                // RAM.
 
-#define HTTP_POLL_INTERVAL 6      // tcp_poll() units are ~500 ms each
+#define SUBMIT_FLUSH_MS 2000      // how long portal_run() waits, after a
+                                   // complete POST /save, for the phone to
+                                   // ACK the "Joining..." page before the
+                                   // caller tears the AP down. A phone on
+                                   // the board's own AP ACKs in
+                                   // milliseconds; this only bounds a phone
+                                   // that has wandered off.
+
+#define HTTP_POLL_INTERVAL 6     // tcp_poll() units are ~500 ms each
                                    // (lwIP's coarse timer) -- 6 is ~3 s.
 #define HTTP_IDLE_POLL_LIMIT 10    // ~30 s of a connection sitting open
                                    // with neither new data nor a response
@@ -162,6 +207,9 @@ static struct tcp_pcb *g_http_listen_pcb;
 // that makes this safe.
 static volatile bool   g_submitted;
 static device_config_t g_pending_cfg;
+// Set (background) once the phone has ACKed every byte of the submit's
+// confirmation page; portal_run() waits up to SUBMIT_FLUSH_MS for it.
+static volatile bool   g_submit_flushed;
 
 // Set once by portal_run() before any socket exists (so there is no
 // concurrent reader yet) and only read afterwards -- effectively
@@ -208,6 +256,12 @@ typedef struct {
                                    // review-round-1 fix: blocks a later
                                    // segment from re-entering
                                    // handle_complete_request()).
+    bool             is_submit;    // this connection carried the accepted
+                                   // POST /save: keep the slot (and its
+                                   // callbacks) until the page is ACKed --
+                                   // see try_send_more()/http_sent_cb().
+    bool             fin_queued;   // is_submit only: tcp_shutdown(tx) done
+    int              resp_acked;   // is_submit only: bytes the phone ACKed
 } http_conn_t;
 
 static http_conn_t g_http_conns[MAX_HTTP_CONNS];
@@ -215,12 +269,20 @@ static http_conn_t g_http_conns[MAX_HTTP_CONNS];
 static const char TOO_LARGE_RESPONSE[] =
     "HTTP/1.1 413 Payload Too Large\r\nConnection: close\r\n\r\n";
 
-// See the file header comment: matches main.c's own precedent for a
-// setup-time failure this early in the device's life (cyw43_arch_init()
-// failing) -- there is no recovery path worth inventing for it.
-static void fatal_setup_failure(void) {
-    while (1) tight_loop_contents();
+// See the file header comment. Called WITHOUT the network lock held (every
+// caller drops it first). Runs on core1: fw_rom_request_reboot() only sets a
+// flag that core0's fw_rom_service() acts on -- after draining the log, so
+// this line reaches the serial console -- which keeps the reboot itself on
+// the one core that owns the watchdog. This core just parks meanwhile.
+static void __attribute__((noreturn)) fatal_setup_failure(const char *step, int err) {
+    wf_logf(WF_ERR, "portal: %s failed (lwIP err %d) -- rebooting", step, err);
+    fw_rom_request_reboot(0);
+    for (;;) sleep_ms(1000);
 }
+
+// Sets SO_REUSEADDR on a portal pcb before its bind -- see the "Re-raising
+// the portal" comment at the top of this file.
+#define PORTAL_REUSEADDR(pcb) ip_set_option((pcb), SOF_REUSEADDR)
 
 static void format_mac_colon(char *out, size_t out_len) {
     uint8_t mac[6] = {0};
@@ -311,6 +373,24 @@ static err_t finish_conn(http_conn_t *c) {
     return ERR_ABRT;
 }
 
+// portal_stop()'s teardown of a connection the portal still owns: the AP is
+// about to vanish, so a FIN could never complete and a close would only
+// leave the pcb behind (FIN_WAIT, then TIME_WAIT on port 80 -- see the
+// "Re-raising the portal" comment). An abort sends a RST and frees it now.
+// Foreground only (never from a callback: nothing would be told ERR_ABRT).
+static void abort_conn(http_conn_t *c) {
+    struct tcp_pcb *pcb = c->pcb;
+    c->pcb = NULL;
+    c->in_use = false;
+    if (!pcb) return;
+    tcp_arg(pcb, NULL);
+    tcp_recv(pcb, NULL);
+    tcp_sent(pcb, NULL);
+    tcp_err(pcb, NULL);
+    tcp_poll(pcb, NULL, 0);
+    tcp_abort(pcb);
+}
+
 // Sends as much of c->resp[c->resp_sent .. c->resp_len) as tcp_sndbuf()
 // currently allows and finishes the connection once it has all gone out.
 // Not a blocking loop -- this runs inside lwIP callbacks (recv/sent/poll)
@@ -318,10 +398,26 @@ static err_t finish_conn(http_conn_t *c) {
 // tcp_write() can't take anything right now (ERR_MEM, or no window at
 // all), it simply returns ERR_OK and leaves resp_sent unchanged; the next
 // tcp_sent_fn (once the peer ACKs something) or the idle poll retries.
+//
+// The accepted POST /save is the one exception to "finish once written":
+// the caller tears the AP down right after it, so the page must actually
+// reach the phone first (operator, 2026-10-09: "after Submit the form just
+// stalls"). Its connection half-closes instead -- tcp_shutdown(tx) sends the
+// FIN at once, so the browser sees the end of the body without waiting --
+// and keeps its callbacks, so http_sent_cb() can tell when the phone has
+// ACKed every byte; that is what portal_run() waits for.
+static err_t write_done(http_conn_t *c) {
+    if (!c->is_submit) return finish_conn(c);
+    if (!c->fin_queued && tcp_shutdown(c->pcb, 0, 1) == ERR_OK) {
+        c->fin_queued = true;   // on failure finish_conn() closes it later
+    }
+    return ERR_OK;
+}
+
 static err_t try_send_more(http_conn_t *c) {
     if (!c->pcb) return ERR_OK;
     int remaining = c->resp_len - c->resp_sent;
-    if (remaining <= 0) return finish_conn(c);
+    if (remaining <= 0) return write_done(c);
 
     u16_t avail = tcp_sndbuf(c->pcb);
     int chunk = ((int)avail < remaining) ? (int)avail : remaining;
@@ -332,7 +428,7 @@ static err_t try_send_more(http_conn_t *c) {
     if (werr != ERR_OK) return ERR_OK; // retry later, see comment above
     c->resp_sent += chunk;
     tcp_output(c->pcb);
-    if (c->resp_sent >= c->resp_len) return finish_conn(c);
+    if (c->resp_sent >= c->resp_len) return write_done(c);
     return ERR_OK;
 }
 
@@ -459,6 +555,10 @@ static err_t handle_complete_request(http_conn_t *c) {
         return finish_conn(c);
     }
 
+    // Before start_response(): it may write the whole page at once, and
+    // try_send_more() decides there whether to close or to half-close and
+    // wait for the ACK (see write_done()).
+    c->is_submit = (res.action == PORTAL_ACT_SUBMIT);
     err_t rc = start_response(c, c->resp, n);
 
     // Review round 1 (Important 2): publish only now that the reply has
@@ -548,7 +648,7 @@ static err_t http_recv_cb(void *arg, struct tcp_pcb *tpcb, struct pbuf *p, err_t
 }
 
 static err_t http_sent_cb(void *arg, struct tcp_pcb *tpcb, u16_t len) {
-    (void)tpcb; (void)len;
+    (void)tpcb;
     http_conn_t *c = (http_conn_t *)arg;
     if (!c || !c->pcb) return ERR_OK;
     c->poll_ticks = 0; // the peer ACKed real bytes -- see http_poll_cb's
@@ -556,6 +656,13 @@ static err_t http_sent_cb(void *arg, struct tcp_pcb *tpcb, u16_t len) {
     note_client_activity();  // a reply still going out is activity too --
                               // the confirmation page must not be cut off
                               // mid-send by portal_run()'s timeout.
+    if (c->is_submit) {
+        c->resp_acked += len;   // may count our FIN too; >= covers that
+        if (c->resp_sent >= c->resp_len && c->resp_acked >= c->resp_len) {
+            g_submit_flushed = true;   // the phone has the whole page
+            return finish_conn(c);
+        }
+    }
     return try_send_more(c);
 }
 
@@ -647,11 +754,12 @@ static err_t http_accept_cb(void *arg, struct tcp_pcb *newpcb, err_t err) {
 static void setup_dhcp(void) {
     net_radio_lock();
     struct udp_pcb *pcb = udp_new_ip_type(IPADDR_TYPE_V4);
-    if (!pcb) { net_radio_unlock(); fatal_setup_failure(); }
-    if (udp_bind(pcb, IP_ADDR_ANY, DHCP_SERVER_PORT) != ERR_OK) {
+    if (!pcb) { net_radio_unlock(); fatal_setup_failure("DHCP udp_new", ERR_MEM); }
+    err_t e = udp_bind(pcb, IP_ADDR_ANY, DHCP_SERVER_PORT);
+    if (e != ERR_OK) {
         udp_remove(pcb);
         net_radio_unlock();
-        fatal_setup_failure();
+        fatal_setup_failure("DHCP udp_bind(67)", e);
     }
     udp_recv(pcb, dhcp_recv_cb, NULL);
     g_dhcp_pcb = pcb;
@@ -661,11 +769,12 @@ static void setup_dhcp(void) {
 static void setup_dns(void) {
     net_radio_lock();
     struct udp_pcb *pcb = udp_new_ip_type(IPADDR_TYPE_V4);
-    if (!pcb) { net_radio_unlock(); fatal_setup_failure(); }
-    if (udp_bind(pcb, IP_ADDR_ANY, DNS_SERVER_PORT) != ERR_OK) {
+    if (!pcb) { net_radio_unlock(); fatal_setup_failure("DNS udp_new", ERR_MEM); }
+    err_t e = udp_bind(pcb, IP_ADDR_ANY, DNS_SERVER_PORT);
+    if (e != ERR_OK) {
         udp_remove(pcb);
         net_radio_unlock();
-        fatal_setup_failure();
+        fatal_setup_failure("DNS udp_bind(53)", e);
     }
     udp_recv(pcb, dns_recv_cb, NULL);
     g_dns_pcb = pcb;
@@ -675,13 +784,17 @@ static void setup_dns(void) {
 static void setup_http(void) {
     net_radio_lock();
     struct tcp_pcb *pcb = tcp_new_ip_type(IPADDR_TYPE_V4);
-    if (!pcb) { net_radio_unlock(); fatal_setup_failure(); }
-    if (tcp_bind(pcb, IP_ADDR_ANY, HTTP_SERVER_PORT) != ERR_OK) {
+    if (!pcb) { net_radio_unlock(); fatal_setup_failure("HTTP tcp_new", ERR_MEM); }
+    // Inherited by every accepted connection (SOF_INHERITED), and it is what
+    // lets this bind skip the TIME_WAIT list -- see "Re-raising the portal".
+    PORTAL_REUSEADDR(pcb);
+    err_t e = tcp_bind(pcb, IP_ADDR_ANY, HTTP_SERVER_PORT);
+    if (e != ERR_OK) {
         tcp_close(pcb); // pcb is still CLOSED-state here (never listened,
                          // never connected); tcp_close() on that never
                          // needs the FIN dance tcp_abort() exists for.
         net_radio_unlock();
-        fatal_setup_failure();
+        fatal_setup_failure("HTTP tcp_bind(80)", e);
     }
     struct tcp_pcb *listen_pcb = tcp_listen_with_backlog(pcb, MAX_HTTP_CONNS);
     if (!listen_pcb) {
@@ -689,7 +802,7 @@ static void setup_http(void) {
         // on failure it is untouched and still ours to close.
         tcp_close(pcb);
         net_radio_unlock();
-        fatal_setup_failure();
+        fatal_setup_failure("HTTP tcp_listen", ERR_MEM);
     }
     g_http_listen_pcb = listen_pcb;
     tcp_accept(g_http_listen_pcb, http_accept_cb);
@@ -792,16 +905,13 @@ static void portal_diag_tick(void) {
 portal_run_result_t portal_run(device_config_t *out, const char *err,
                                uint32_t idle_timeout_ms) {
     // Review round 1 (Important 1): a second portal_run() call without an
-    // intervening portal_stop() used to hang the board silently --
-    // lwipopts.h does not set LWIP_SO_REUSE, so re-binding ports 67/53/80
-    // while the previous pcbs are still bound returns ERR_USE, and
-    // setup_dhcp()/setup_dns()/setup_http() treat any bind failure as the
-    // unrecoverable fatal_setup_failure() case (while(1)
-    // tight_loop_contents(), no watchdog, no LED, no UART). Retrying after
-    // a wrong password (spec D-4b-3's verify-then-commit) is the NORMAL
-    // path here, not a caller error, so this enforces the ordering
-    // itself instead of just documenting it as the caller's
-    // responsibility.
+    // intervening portal_stop() used to hang the board silently, because
+    // re-binding ports 67/53/80 while the previous pcbs were still bound
+    // returned ERR_USE. Retrying after a wrong password (spec D-4b-3's
+    // verify-then-commit) is the NORMAL path here, not a caller error, so
+    // this enforces the ordering itself. Still needed now that the HTTP
+    // listener carries SOF_REUSEADDR (2026-10-09): a second listener bound
+    // past the first would leave two on port 80, a quieter failure.
     if (g_dhcp_pcb) {
         portal_stop();
     }
@@ -824,6 +934,7 @@ portal_run_result_t portal_run(device_config_t *out, const char *err,
 
     g_current_err = err;
     g_submitted = false;
+    g_submit_flushed = false;
     note_client_activity();   // start the inactivity clock at "now", not at
                                // whenever the last portal session saw a
                                // packet -- otherwise a second call could
@@ -880,6 +991,21 @@ portal_run_result_t portal_run(device_config_t *out, const char *err,
         return PORTAL_RUN_IDLE_TIMEOUT;
     }
 
+    // The caller tears the AP down next. Give the "Joining..." page a short,
+    // bounded moment to reach the phone first -- see write_done(). Not
+    // waiting at all is what made Submit look like a stalled form.
+    const uint32_t flush_t0 = to_ms_since_boot(get_absolute_time());
+    uint32_t flush_ms = 0;
+    while (!g_submit_flushed && flush_ms < SUBMIT_FLUSH_MS) {
+        sleep_ms(5);   // unlocked, same rule as the wait loop above
+        flush_ms = to_ms_since_boot(get_absolute_time()) - flush_t0;
+    }
+    if (g_submit_flushed)
+        wf_logf(WF_INFO, "portal: submit page delivered (%lu ms)", (unsigned long)flush_ms);
+    else
+        wf_logf(WF_WARN, "portal: submit page not acknowledged within %u ms -- taking the AP down anyway",
+                (unsigned)SUBMIT_FLUSH_MS);
+
     net_radio_lock();
     *out = g_pending_cfg;
     net_radio_unlock();
@@ -889,12 +1015,13 @@ portal_run_result_t portal_run(device_config_t *out, const char *err,
 void portal_stop(void) {
     net_radio_lock();
 
+    // Abort, not close: see abort_conn(). A connection the portal already
+    // finished (closed) is lwIP's now, not ours to touch; the AP netif's
+    // removal below aborts it if it is still active, and if it has reached
+    // TIME_WAIT the next setup_http()'s SOF_REUSEADDR bind steps past it.
     for (int i = 0; i < MAX_HTTP_CONNS; i++) {
         if (g_http_conns[i].in_use) {
-            finish_conn(&g_http_conns[i]); // return value not needed here
-                                            // -- unlike inside a callback,
-                                            // nothing above this needs to
-                                            // be told ERR_ABRT.
+            abort_conn(&g_http_conns[i]);
         }
     }
     if (g_http_listen_pcb) {

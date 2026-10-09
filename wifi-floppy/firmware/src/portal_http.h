@@ -54,4 +54,11 @@ int portal_request(const char *method, const char *path, const char *body,
                    const char *mac_str, const char *err,
                    char *out, int cap, portal_result_t *res);
 
+// HTML-escapes `in` (NULL reads as "") into `out` (`cap` bytes including
+// the NUL): & < > " ' become entities, control bytes become '?', bytes
+// >= 0x80 pass through unchanged (UTF-8 SSIDs read as themselves). Returns
+// the escaped length, or -1 if it would not fit -- refused, never
+// truncated, the same contract as the form fields. Pure; host-tested.
+int portal_html_escape(const char *in, char *out, int cap);
+
 #endif
