@@ -106,6 +106,15 @@ async function apiUploadFile(
  * all.
  */
 async function dragOnto(page: Page, source: Locator, target: Locator) {
+  // dnd-kit auto-scrolls the window whenever the pointer is within ~20% of the
+  // viewport's top/bottom edge. If the pair sits low on the page (the header
+  // above the tree has grown), the drag scrolls the folder out from under the
+  // pointer and the drop lands on nothing. Park the pair mid-viewport first.
+  await target.evaluate((el) => {
+    const r = el.getBoundingClientRect();
+    window.scrollBy(0, r.top - window.innerHeight / 2);
+  });
+  await source.evaluate(() => new Promise<void>((done) => requestAnimationFrame(() => done())));
   const from = await source.boundingBox();
   const to = await target.boundingBox();
   if (!from || !to) throw new Error('drag: source or target is not visible');
