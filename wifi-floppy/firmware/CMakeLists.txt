@@ -52,7 +52,19 @@ option(WFMF_OMIT_AUTHMODE
 # pico_sdk_init() above.
 set(WFMF_PSA_CRYPTO_RANDOM_SRC ${PICO_MBEDTLS_PATH}/library/psa_crypto_random.c)
 
-add_executable(wifi_floppy
+# Two executables are built from these sources (2026-10-09, research
+# docs/superpowers/research/2026-10-09-uf2-drag-drop-first-install.md):
+#   wifi_floppy          the OTA / release image: TBYB, published and signed.
+#   wifi_floppy_install  the SAME firmware with only the TBYB flag off, packed
+#                        by tools/make_install_uf2.py into the single
+#                        drag-and-drop first-install UF2. Never published OTA.
+# Everything both share is applied by wf_firmware_target() below, so the two
+# cannot drift apart; the ONLY per-target difference is
+# PICO_CRT0_IMAGE_TYPE_TBYB (and the install target's outputs: no .uf2 of its
+# own, because an arm-s non-TBYB UF2 would land in a slot as a non-trial).
+set(WFMF_COMMON_DEFS)
+set(WFMF_COMMON_LINK_OPTIONS)
+set(WFMF_FIRMWARE_SOURCES
   src/main.c src/dskchg.c src/track_cache.c src/psram_image.c
   src/image_loader.c src/device_client.c src/http.c src/json_scan.c
   src/token_store.c src/config_store.c src/fw_state.c src/fw_trial.c src/fw_apply.c src/fw_update.c src/fw_rom.c src/provisioning.c
@@ -71,8 +83,6 @@ add_executable(wifi_floppy
   src/fw_offer.c src/fw_verify.c
   src/vendor/monocypher/monocypher.c src/vendor/monocypher/monocypher-ed25519.c
 )
-pico_generate_pio_header(wifi_floppy ${CMAKE_CURRENT_LIST_DIR}/src/floppy.pio)
-target_include_directories(wifi_floppy PRIVATE src ${CMAKE_CURRENT_LIST_DIR})
 # Stack frames (HANDOFF 3ax): 1.7.0 died because one 1232-byte frame took core0's
 # boot path past its stack (2 KB then, 4 KB since 1.7.1) -- a hard fault before
 # USB came up, invisible to every host test. Any frame of ours over 768 bytes now
@@ -80,8 +90,7 @@ target_include_directories(wifi_floppy PRIVATE src ${CMAKE_CURRENT_LIST_DIR})
 # code are not ours and are not held to it. portal_net.c's DNS/DHCP callbacks
 # keep ~1 KB datagram buffers on core1's 16 KB stack (portal mode only); making
 # them static would cost 2 KB of heap for nothing, so that file gets 1280.
-get_target_property(WFMF_SOURCES wifi_floppy SOURCES)
-foreach(src IN LISTS WFMF_SOURCES)
+foreach(src IN LISTS WFMF_FIRMWARE_SOURCES)
   if (src MATCHES "^src/" AND NOT src MATCHES "^src/vendor/")
     if (src STREQUAL "src/portal_net.c")
       set(WFMF_FRAME_LIMIT 1280)
@@ -95,7 +104,7 @@ endforeach()
 # Task 6 (spec D4/D5): Monocypher 4.0.2, vendored unmodified under
 # src/vendor/monocypher (see VENDORED.md). It is not our code and is not
 # held to this project's -Wall -Wextra -Werror.
-target_include_directories(wifi_floppy PRIVATE src/vendor/monocypher)
+# (Its include directory is added per target, in wf_firmware_target.)
 set_source_files_properties(
   src/vendor/monocypher/monocypher.c src/vendor/monocypher/monocypher-ed25519.c
   PROPERTIES COMPILE_OPTIONS "-w")
@@ -104,12 +113,7 @@ set_source_files_properties(
 # 192.168.4.1 specifically, matching dns_server.h/dhcp_server.c's PORTAL_IP_*
 # identity, rather than in code -- pico_cyw43_driver's own CMakeLists.txt
 # documents this exact macro/target-type/define-name/address-string shape.
-pico_configure_ip4_address(wifi_floppy PRIVATE CYW43_DEFAULT_IP_AP_ADDRESS 192.168.4.1)
-target_link_libraries(wifi_floppy
-  pico_stdlib pico_multicore hardware_pio hardware_dma hardware_irq
-  hardware_psram hardware_sync hardware_flash pico_flash hardware_i2c hardware_watchdog
-  pico_cyw43_arch_lwip_threadsafe_background
-  pico_lwip_mbedtls pico_mbedtls pico_lwip_sntp pico_rand)
+# (pico_configure_ip4_address and the link libraries: wf_firmware_target.)
 # Review (final), Critical 1: RP2350's Arm stack guard is the msplim
 # register (pico_runtime_init/runtime_init_stack_guard.c) -- one instruction
 # per core at init, no MPU region consumed -- but PICO_USE_STACK_GUARDS
@@ -122,7 +126,7 @@ target_link_libraries(wifi_floppy
 # analysis of the built ELF, and a static analysis can only bound the
 # direct-call graph -- the indirect calls through mbedTLS's and lwIP's
 # function pointers are exactly what it cannot see.
-target_compile_definitions(wifi_floppy PRIVATE PICO_USE_STACK_GUARDS=1)
+list(APPEND WFMF_COMMON_DEFS PICO_USE_STACK_GUARDS=1)
 # Core 0's stack: the WHOLE 4 KB SCRATCH_Y bank, not the SDK's 2 KB default.
 # The guard above is MSPLIM = __StackBottom = __StackTop - PICO_STACK_SIZE, so
 # with the default core 0 had exactly 2048 bytes, and fw 1.7.0 overran them at
@@ -136,14 +140,14 @@ target_compile_definitions(wifi_floppy PRIVATE PICO_USE_STACK_GUARDS=1)
 # ~1840 bytes -- it was already within ~200 bytes of the same fault.
 # SCRATCH_Y holds nothing else (.scratch_y is empty), so the 4 KB is free; the
 # heap (which ends at SCRATCH_X) is untouched.
-target_compile_definitions(wifi_floppy PRIVATE PICO_STACK_SIZE=0x1000)
+list(APPEND WFMF_COMMON_DEFS PICO_STACK_SIZE=0x1000)
 
 # Diagnostic: re-read and decode every track from PSRAM after a mount. See
 # main.c. Off by default -- it costs one track's decode per service-loop
 # iteration for 160 iterations after each mount.
 option(WF_VERIFY_TRACKS "Verify every track out of PSRAM after a mount" OFF)
 if (WF_VERIFY_TRACKS)
-  target_compile_definitions(wifi_floppy PRIVATE WF_VERIFY_TRACKS=1)
+  list(APPEND WFMF_COMMON_DEFS WF_VERIFY_TRACKS=1)
   message(STATUS "WF_VERIFY_TRACKS is ON: every mount sweeps all 160 tracks.")
 endif ()
 # Diagnostic: a PIO logic analyser on the eight bus inputs, one log record per
@@ -151,7 +155,7 @@ endif ()
 # beside flux_in, step_dir and the radio; pio1 is the SEL0 gating's.
 option(WF_BUS_SNIFF "Log every change on the bus inputs, in exact order" OFF)
 if (WF_BUS_SNIFF)
-  target_compile_definitions(wifi_floppy PRIVATE WF_BUS_SNIFF=1 WF_LOG_SLOTS=512)
+  list(APPEND WFMF_COMMON_DEFS WF_BUS_SNIFF=1 WF_LOG_SLOTS=512)
   message(STATUS "WF_BUS_SNIFF is ON: every bus input change is logged.")
 endif ()
 # The Amiga drive-ID answer on RDY (floppy.pio drive_id, drive_id.h): what
@@ -164,13 +168,13 @@ endif ()
 # drive_id.h.
 option(WF_DRIVE_ID "Answer the Amiga drive-ID read on RDY (needed for HD disks)" ON)
 if (WF_DRIVE_ID)
-  target_compile_definitions(wifi_floppy PRIVATE WF_DRIVE_ID=1)
+  list(APPEND WFMF_COMMON_DEFS WF_DRIVE_ID=1)
 else ()
-  target_compile_definitions(wifi_floppy PRIVATE WF_DRIVE_ID=0)
+  list(APPEND WFMF_COMMON_DEFS WF_DRIVE_ID=0)
   message(STATUS "WF_DRIVE_ID is OFF: no drive-ID answer; the server will refuse HD disks.")
 endif ()
 option(WF_DF1_DEFAULT "DF1 second drive ON when the board has no stored setting (bench TEST builds only)" OFF)
-target_compile_definitions(wifi_floppy PRIVATE WF_DF1_DEFAULT=$<IF:$<BOOL:${WF_DF1_DEFAULT}>,1,0>)
+list(APPEND WFMF_COMMON_DEFS WF_DF1_DEFAULT=$<IF:$<BOOL:${WF_DF1_DEFAULT}>,1,0>)
 if (WF_DF1_DEFAULT AND NOT WF_DRIVE_ID)
   message(FATAL_ERROR "WF_DF1_DEFAULT needs WF_DRIVE_ID: DF1 answers its ID through the responder")
 endif ()
@@ -179,7 +183,7 @@ endif ()
 # build (its ID, NONE while off, comes from the responder), so the buffer is
 # only there too.
 option(WF_DF1_HD "DF1 can hold an HD disk (+25,344 B SRAM instead of +14,336)" OFF)
-target_compile_definitions(wifi_floppy PRIVATE WF_DF1_HD=$<IF:$<BOOL:${WF_DF1_HD}>,1,0>)
+list(APPEND WFMF_COMMON_DEFS WF_DF1_HD=$<IF:$<BOOL:${WF_DF1_HD}>,1,0>)
 # Step 8 (D4): the bus sniffer fits on pio2 beside flux_in, step_dir and the
 # radio, so a WF_BUS_SNIFF build keeps DF1 -- no guard needed.
 # Bench-only (fix round 3): a bare-bones "fwdbg-wdtest" USB-serial command
@@ -189,7 +193,7 @@ target_compile_definitions(wifi_floppy PRIVATE WF_DF1_HD=$<IF:$<BOOL:${WF_DF1_HD
 # see fw_rom_debug_wedge's own comment for what it does.
 option(WF_FW_DEBUG "Bench-only: accept a crafted firmware offer over USB serial. NEVER in a release (the publish script refuses it)." OFF)
 if (WF_FW_DEBUG)
-  target_compile_definitions(wifi_floppy PRIVATE WF_FW_DEBUG=1)
+  list(APPEND WFMF_COMMON_DEFS WF_FW_DEBUG=1)
 endif ()
 
 # The hand-maintained half of the version. Bump this for a release; the git
@@ -222,10 +226,9 @@ add_custom_target(wf_version_header ALL
           -DOUT=${WF_VERSION_HEADER}
           -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/gen_version_header.cmake
   COMMENT "Resolving firmware version")
-add_dependencies(wifi_floppy wf_version_header)
-target_include_directories(wifi_floppy PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/generated")
+# (Each executable depends on wf_version_header and includes generated/: wf_firmware_target.)
 
-target_compile_definitions(wifi_floppy PRIVATE
+list(APPEND WFMF_COMMON_DEFS
   WEBADF_HOST=\"webadf.vercel.app\"
   # Task 7: WIFI_SSID, WIFI_PASS and WEBADF_PAIRING_CODE (plan 4a's
   # compile-time credentials) are gone -- core1_main now reads all three
@@ -240,7 +243,7 @@ target_compile_definitions(wifi_floppy PRIVATE
   # a version that survives a commit change is exactly the bug being removed.
   )
 if (NOT WFMF_OMIT_AUTHMODE)
-  target_compile_definitions(wifi_floppy PRIVATE
+  list(APPEND WFMF_COMMON_DEFS
     ALTCP_MBEDTLS_AUTHMODE=MBEDTLS_SSL_VERIFY_REQUIRED)
 endif ()
 
@@ -303,7 +306,7 @@ else ()
                  "AP password \"${PORTAL_AP_PASSWORD_DEFAULT}\".")
 endif ()
 
-target_compile_definitions(wifi_floppy PRIVATE
+list(APPEND WFMF_COMMON_DEFS
   PORTAL_AP_PASSWORD=\"${PORTAL_AP_PASSWORD}\")
 
 # Why these fifteen -Wl,-u entries stay, now that every one of them has a
@@ -340,7 +343,7 @@ target_compile_definitions(wifi_floppy PRIVATE
 # (tls_transport and sntp_sync_blocking predate 4b -- same story, same
 # reasoning; see task-9-report.md for that pair's nm/strings evidence and
 # task-1-report.md for config_store's.)
-target_link_options(wifi_floppy PRIVATE
+list(APPEND WFMF_COMMON_LINK_OPTIONS
   -Wl,-u,tls_transport -Wl,-u,sntp_sync_blocking
   -Wl,-u,config_store_load -Wl,-u,config_store_save -Wl,-u,config_store_erase
   -Wl,-u,prov_init -Wl,-u,prov_on_assoc_result
@@ -354,7 +357,7 @@ target_link_options(wifi_floppy PRIVATE
 # break, so core0 can read it without ever calling _sbrk itself -- the SDK's
 # _sbrk stores its heap_end back even for sbrk(0), and doing that outside
 # malloc's lock while core1 allocates would corrupt the heap.
-target_link_options(wifi_floppy PRIVATE -Wl,--wrap=_sbrk)
+list(APPEND WFMF_COMMON_LINK_OPTIONS -Wl,--wrap=_sbrk)
 
 # altcp_tls_mbedtls.c is the SDK's own file (patched for mbedtls 3.x
 # compatibility -- see pico_lwip's CMakeLists.txt) when the bundled mbedtls
@@ -387,18 +390,14 @@ set_source_files_properties(
 # Bounds what an unattended USB port costs core0's 1 ms service loop.
 # The SDK default is 500 ms per write, which would be catastrophic there:
 # wf_log_drain() is called from the same loop that services track changes.
-target_compile_definitions(wifi_floppy PRIVATE PICO_STDIO_USB_STDOUT_TIMEOUT_US=1000)
+list(APPEND WFMF_COMMON_DEFS PICO_STDIO_USB_STDOUT_TIMEOUT_US=1000)
 
 # UART stays OFF. GP0 and GP1 are INDEX and CHNG on this board -- enabling
 # UART stdio would drive the floppy bus. The log goes out over USB CDC only.
-pico_enable_stdio_uart(wifi_floppy 0)
-pico_enable_stdio_usb(wifi_floppy 1)
+# (pico_enable_stdio_uart 0 / pico_enable_stdio_usb 1: wf_firmware_target.)
 
-# 2b (spec D1/D10): every image is a try-before-you-buy image with a hash the
-# boot ROM checks. A TBYB image boots only through a flash-update reboot and
-# is reverted unless it confirms itself (rom_explicit_buy) -- measured, spec
-# M5-M8. The publish script refuses an image that lacks either.
-target_compile_definitions(wifi_floppy PRIVATE PICO_CRT0_IMAGE_TYPE_TBYB=1)
+# (PICO_CRT0_IMAGE_TYPE_TBYB=1 is set on wifi_floppy ONLY, below -- the one
+# difference between it and wifi_floppy_install.)
 # Fix round 5 (Task 4), MEASURED on the board: rom_explicit_buy hangs --
 # after erasing the image's trailing metadata sector, before rewriting it --
 # whenever PSRAM (QMI CS1) is configured, and an armed watchdog does not
@@ -407,8 +406,57 @@ target_compile_definitions(wifi_floppy PRIVATE PICO_CRT0_IMAGE_TYPE_TBYB=1)
 # proven trial) first, then runtime_init_setup_psram() itself, on every boot,
 # before anything touches PSRAM. Nothing initialised may live in PSRAM
 # (crt0 cannot copy into it before main now) -- only __uninitialized_psram.
-target_compile_definitions(wifi_floppy PRIVATE PICO_RUNTIME_SKIP_INIT_PSRAM=1)
-pico_hash_binary(wifi_floppy)
+list(APPEND WFMF_COMMON_DEFS PICO_RUNTIME_SKIP_INIT_PSRAM=1)
+# (pico_hash_binary: wf_firmware_target, so both images carry a hash.)
+
+# Every per-target setting both executables share. The accumulated
+# WFMF_COMMON_DEFS / WFMF_COMMON_LINK_OPTIONS above carry the definitions and
+# link options; the comments at each list(APPEND) say why each one exists.
+function(wf_firmware_target TGT)
+  add_executable(${TGT} ${WFMF_FIRMWARE_SOURCES})
+  if (TGT STREQUAL "wifi_floppy")
+    # build/floppy.pio.h is also what test/test_floppy_pio_golden.c compares.
+    pico_generate_pio_header(${TGT} ${CMAKE_CURRENT_LIST_DIR}/src/floppy.pio)
+  else ()
+    # Same pioasm, same .pio, its own output (two rules may not write one file).
+    pico_generate_pio_header(${TGT} ${CMAKE_CURRENT_LIST_DIR}/src/floppy.pio
+                             OUTPUT_DIR ${CMAKE_CURRENT_BINARY_DIR}/pio_${TGT})
+  endif ()
+  target_include_directories(${TGT} PRIVATE src ${CMAKE_CURRENT_LIST_DIR})
+  target_include_directories(${TGT} PRIVATE src/vendor/monocypher)
+  pico_configure_ip4_address(${TGT} PRIVATE CYW43_DEFAULT_IP_AP_ADDRESS 192.168.4.1)
+  target_link_libraries(${TGT}
+    pico_stdlib pico_multicore hardware_pio hardware_dma hardware_irq
+    hardware_psram hardware_sync hardware_flash pico_flash hardware_i2c hardware_watchdog
+    pico_cyw43_arch_lwip_threadsafe_background
+    pico_lwip_mbedtls pico_mbedtls pico_lwip_sntp pico_rand)
+  add_dependencies(${TGT} wf_version_header)
+  target_include_directories(${TGT} PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/generated")
+  target_compile_definitions(${TGT} PRIVATE ${WFMF_COMMON_DEFS})
+  target_link_options(${TGT} PRIVATE ${WFMF_COMMON_LINK_OPTIONS})
+  pico_enable_stdio_uart(${TGT} 0)
+  pico_enable_stdio_usb(${TGT} 1)
+  pico_hash_binary(${TGT})
+endfunction()
+
+wf_firmware_target(wifi_floppy)
+# 2b (spec D1/D10): every OTA image is a try-before-you-buy image with a hash
+# the boot ROM checks. A TBYB image boots only through a flash-update reboot
+# and is reverted unless it confirms itself (rom_explicit_buy) -- measured,
+# spec M5-M8. The publish script refuses an image that lacks either.
+target_compile_definitions(wifi_floppy PRIVATE PICO_CRT0_IMAGE_TYPE_TBYB=1)
+
+# The first-install image: identical, minus TBYB. An absolute-family UF2's
+# post-download reboot is a flash-update boot of 0x10000000 (slot 0 of the
+# partition table), never of partition A, and the ROM refuses to launch a TBYB
+# image outside a flash update of its own partition (research §1) -- so a TBYB
+# image dragged in with the table would leave the board in BOOTSEL. A non-TBYB
+# image boots on every power-up, exactly like a bought one, and the first OTA
+# afterwards is the ordinary TBYB path. PICO_TARGET_NAME (binary info's
+# program name) is pinned to "wifi_floppy" so the two .bin files differ only
+# in the TBYB bit and the hash that covers it.
+wf_firmware_target(wifi_floppy_install)
+target_compile_definitions(wifi_floppy_install PRIVATE PICO_TARGET_NAME="wifi_floppy")
 
 # The partition table, as a UF2 for first installs over USB (spec D11).
 #
@@ -450,3 +498,32 @@ if (WF_PICOTOOL_DEPENDS)
 endif ()
 
 pico_add_extra_outputs(wifi_floppy)
+
+# wifi_floppy_install's outputs: pico_add_extra_outputs minus the .uf2 (and
+# the .dis/.hex nobody reads). It is not called through pico_add_extra_outputs
+# because that would also define PICO_TARGET_NAME="wifi_floppy_install".
+picotool_postprocess_binary(wifi_floppy_install)
+pico_add_bin_output(wifi_floppy_install)
+pico_add_map_output(wifi_floppy_install)
+
+# The single drag-and-drop first-install UF2 (research §6): the partition
+# table at flash 0, a blank page over the table's second slot, the non-TBYB
+# image at partition A and a blank page at partition B -- every block in the
+# absolute family, nothing in the top-of-flash settings sectors. The release
+# step copies it out as wifi-floppy-install-<semver>.uf2.
+find_package(Python3 REQUIRED COMPONENTS Interpreter)
+set(WF_INSTALL_UF2 ${CMAKE_CURRENT_BINARY_DIR}/wifi-floppy-install.uf2)
+add_custom_command(
+  OUTPUT ${WF_INSTALL_UF2}
+  COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_LIST_DIR}/tools/make_install_uf2.py
+          --partitions ${CMAKE_CURRENT_LIST_DIR}/partitions.json
+          --pt-uf2 ${CMAKE_CURRENT_BINARY_DIR}/wifi_floppy_pt.uf2
+          --image ${CMAKE_CURRENT_BINARY_DIR}/wifi_floppy_install.bin
+          --out ${WF_INSTALL_UF2}
+  DEPENDS wifi_floppy_install wifi_floppy_pt
+          ${CMAKE_CURRENT_BINARY_DIR}/wifi_floppy_pt.uf2
+          ${CMAKE_CURRENT_LIST_DIR}/tools/make_install_uf2.py
+          ${CMAKE_CURRENT_LIST_DIR}/partitions.json
+  COMMENT "first-install UF2 -> wifi-floppy-install.uf2"
+  VERBATIM)
+add_custom_target(wifi_floppy_install_uf2 ALL DEPENDS ${WF_INSTALL_UF2})
