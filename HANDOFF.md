@@ -1618,6 +1618,9 @@ separately.
   title/blob), size and type limits, and probably an "uploaded overrides enriched" precedence rule plus a way to
   revert. Remember the blob GC: any new column naming a stored object must join `runBlobGc`'s references, or
   extend it for the image store.
+- **LZH archives alongside LHA** (operator, 2026-10-09): accept `.lzh` wherever `.lha` is accepted (upload and
+  extraction). It is the same LHarc family, so it is most likely the extension list and MIME/magic checks plus the
+  same decoder; confirm the decoder handles the -lh0-/-lh5- methods LZH files from Amiga sites use.
 - **Upload from a URL** (requested 2026-10-09, via the operator): on the upload page, paste a URL and the web app
   fetches the ADF/HFE itself. Design notes: a server-side fetch is an SSRF surface, so allow http(s) only, refuse
   private, loopback and link-local addresses after DNS resolution (re-check on every redirect), cap redirects, size
