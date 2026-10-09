@@ -32,6 +32,10 @@ export function refuseReleaseImage(picotoolInfo: string, sizeBytes: number, byte
   if (bytes.includes(Buffer.from('wf-df1-default-on', 'ascii')) && !(notes ?? '').startsWith('TEST build')) {
     return 'image has DF1 on by default (WF_DF1_DEFAULT); publish it only as a bench build, with --notes starting "TEST build"';
   }
+  // A PaulaNET loopback build (WF_PNET_LOOP) carries this marker (main.c). Bench only, like DF1-default.
+  if (bytes.includes(Buffer.from('wf-pnet-loop-test', 'ascii')) && !(notes ?? '').startsWith('TEST build')) {
+    return 'image is a PaulaNET loopback build (WF_PNET_LOOP); publish it only as a bench build, with --notes starting "TEST build"';
+  }
   return null;
 }
 

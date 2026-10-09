@@ -43,6 +43,12 @@ describe('refuseReleaseImage', () => {
     expect(refuseReleaseImage(realInfo, 533624, df1, 'a release')).toMatch(/DF1/);
     expect(refuseReleaseImage(realInfo, 533624, df1, 'TEST build: DF1 bench')).toBeNull();
   });
+  it('refuses a PaulaNET loopback build unless the notes say TEST build', () => {
+    const pnet = Buffer.from('xx wf-pnet-loop-test xx');
+    expect(refuseReleaseImage(realInfo, 533624, pnet)).toMatch(/PaulaNET/);
+    expect(refuseReleaseImage(realInfo, 533624, pnet, 'a release')).toMatch(/PaulaNET/);
+    expect(refuseReleaseImage(realInfo, 533624, pnet, 'TEST build: PaulaNET phase 0')).toBeNull();
+  });
 });
 
 describe('the first-install image never reaches the registry (OTA)', () => {
