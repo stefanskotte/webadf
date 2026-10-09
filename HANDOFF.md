@@ -2545,6 +2545,13 @@ separately.
   emulator on a 500 kbit/s interface. Worth establishing which before promising a title
   list.
 
+- **Drop files onto the Amiga's RAM: (operator, 2026-10-09; after PaulaNET works).** A drop zone in the web app that
+  copies the dropped files straight into the running Amiga's RAM disk. Needs PaulaNET online first. Shape to
+  decide then: a small Amiga-side receiver (started from the driver disk / WBStartup) that the board or the server
+  pushes files to over TCP and that writes them to RAM:, vs. driving an existing Amiga FTP/server tool. Questions:
+  how the web app reaches an Amiga behind the user's router (via the board's existing server session, not inbound
+  connections), size limits vs. free RAM, and file names/protection bits (the ADF file-operation code already maps
+  these).
 - **Amiga networking over the floppy port (PaulaNET-style).** **Shape decided (operator, 2026-10-09):** the network
   is a third DF1 mode (Off / Disk / Network, the existing `secondDrive` setting), while DF0 keeps serving full
   80-cylinder disks -- no track-map conflict. Scope is **Workbench only**; games that take over the hardware are out
