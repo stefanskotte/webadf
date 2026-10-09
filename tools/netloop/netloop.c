@@ -235,6 +235,11 @@ static void cleanup(void) {
     if (cleaned) return;
     cleaned = TRUE;
     if (td_open) {
+        /* Off cylinder 77 first (final review M2): there the board releases DF1's WPROT, and a
+         * head left on it lets the next disk DF1 receives read as writable before DOS's first
+         * seek. Every exit comes through here, Ctrl-C (atexit) included; a failed seek changes
+         * nothing the motor-off and CloseDevice below need. */
+        td_io(TD_SEEK, 0, NULL, 0, SEEK_TO(0));
         td_io(TD_MOTOR, 0, NULL, 0, 0);      /* io_Length 0: motor off */
         CloseDevice((struct IORequest *)td);
     }
