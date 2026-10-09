@@ -1588,6 +1588,11 @@ separately.
   connection that blocks the download (dc_fetch_firmware -> dc_exchange, retryable). **First step:** log WHY the
   download failed (the transport error / HTTP status / body_complete) in fwu_fetch, then reproduce after a long
   uptime.
+- **Upload from a URL** (requested 2026-10-09, via the operator): on the upload page, paste a URL and the web app
+  fetches the ADF/HFE itself. Design notes: a server-side fetch is an SSRF surface, so allow http(s) only, refuse
+  private, loopback and link-local addresses after DNS resolution (re-check on every redirect), cap redirects, size
+  and time, and stream into the same presign/complete ingest path so hashing, dedupe, TOSEC matching and
+  entitlements stay one code path. Also consider zip/7z/gz archives from such sites.
 - **NFC icon on the board's display** (operator, 2026-10-08): an NFC-reader icon as a layout element that works
   like the other icons (wifi, lock, ...): show/hide, 1x/2x, free placement in the Display editor. It needs a new
   element id in `display_layout.c`/`.h` and the validator, a glyph in `display.c`, `pnpm display:wasm`, the editor's
@@ -2447,7 +2452,7 @@ separately.
   emulator on a 500 kbit/s interface. Worth establishing which before promising a title
   list.
 
-- **Amiga networking over the floppy port (PaulaNET-style).** **RULING 2026-10-08 (operator):** WAITING: the operator has messaged RobSmithDev, and there is no reply yet. Raised by the operator
+- **Amiga networking over the floppy port (PaulaNET-style).** **UNBLOCKED 2026-10-09:** RobSmithDev replied that he has no issue with us implementing PaulaNET, as long as the licences are respected. Check PaulaNET's licence terms (code and protocol) before any design, and credit him as the licence requires. Not started. Raised by the operator
   2026-09-13 after finding RobSmithDev's PaulaNET. Genuinely attractive, and explicitly a
   SECOND PRODUCT on the same board rather than an increment to disk serving: it makes the
   Amiga itself reach the internet, and does nothing to make disks load better.
@@ -4699,6 +4704,19 @@ Run subagent-driven from the worktree `.claude/worktrees/df1`. The ledger is in 
     The cause is unexplained.
   - **Decisions D1/D2/D4 (Task 5):** flux_in and the sniffer go on pio2 (17/32, sniff build 30/32); DF1's buffer
     is DD-only (heap floor 36864 - 14336 = 22528 >= 20480); the sniffer uses pio2 IRQ1.
+- **Phase 2 SHIPPED 2026-10-09:** release 1.8.0+gba6de81 (seq 49; DF1 off unless set) and TEST build
+  1.8.0+gc80afb8 (seq 48, DF1 on by default, bench only). **Bench passed on the A500 with the Workbench 3.1 set:**
+  1. DF1 Storage3.1 listed at a cold boot.
+  2. `dir df1:` lists.
+  3. Copies from DF0 and DF1 at once ran with no errors.
+  4. A write to DF1 is refused as write-protected, and no history version appears.
+  5. Next disk: DF0 swaps instantly, DF1 empties and gets Extras after 4.1 s.
+  6. DF1 survives Ctrl-A-A.
+  7. The release build shows DF0 only.
+
+  Step 8 (real 2-disk games) is owed until the operator finds DF1-capable games. **Heap low-water is now 20,480 B
+  on both builds** (the DF1 buffer is .bss), exactly the R11 floor. The operator chose to look at shrinking the
+  TLS buffers and to log why OTA downloads fail (see the OTA backlog entry).
 - **Already known for Task 5:** the 1.7.4/1.7.5 boot log read `pio claims: pio0=7 pio1=3 pio2=1`. These look like
   SM bit masks, with the radio not counted. Task 5 must interpret them from the code before applying D1.
 
