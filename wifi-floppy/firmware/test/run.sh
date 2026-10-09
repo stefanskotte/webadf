@@ -131,6 +131,14 @@ fi
 # rather than linking anything.
 if ! ./test_version_header.sh; then fail=1; fi
 
+# Not C either: the single drag-and-drop first-install UF2 is packed by a
+# python3 (stdlib) tool, so its test is a python unittest. It also checks the
+# real build/wifi-floppy-install.uf2 when a build has produced one.
+if ! python3 ../tools/test_make_install_uf2.py; then
+  echo "FAIL: tools/test_make_install_uf2.py"
+  fail=1
+fi
+
 # Spec 2026-10-04 §8: the WiFi chip sits behind net_radio.h. Only
 # net_radio_cyw43.c may name it. Scope: ../src/*.c, ../src/*.h and
 # ../lwipopts.h. // and single-line /* */ comments are stripped first:

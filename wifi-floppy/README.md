@@ -81,6 +81,41 @@ Unlicense) and is credited in ../THIRD-PARTY-NOTICES.md.
   pnpm firmware:build
   ```
 
+## First install
+
+Verified on a board (RP2350 A4) on 2026-10-09: a blank install, a replug, pairing, over-the-air
+updates in both directions, and a re-install over a paired board.
+
+1. Download `wifi-floppy-install-<version>.uf2` from the newest `fw-<version>` release on
+   GitHub. It is the only file you need.
+2. Hold the **BOOTSEL** button and plug the board into your computer over USB. A drive
+   called `RP2350` appears.
+3. Drag `wifi-floppy-install-<version>.uf2` onto that drive. The board writes the file,
+   restarts by itself and starts the firmware. The drive disappears; this is expected.
+4. Pair the board from the web app (see "Provisioning a board" below). Later firmware
+   versions arrive over the air from the web app.
+
+   If your phone has joined this board's setup network before, choose "Forget this
+   network" for it first. The network keeps the same name after a re-install. The setup
+   network has also been seen to reject the password when a phone re-joins it without a
+   reboot. If that happens, unplug the board, plug it back in, and join again. This is a
+   known open issue (HANDOFF).
+
+The same file works on a blank board and on a board already running ours (both verified
+on an RP2350 A4, 2026-10-09). A board running other firmware (MicroPython, say) is
+expected to work too, but has not been tested. Re-installing it keeps the board's WiFi settings and pairing: it
+never writes the top five flash sectors where those live.
+
+What is in the file: the partition table, the firmware for partition A, and two blank
+pages that clear stale headers. Every block uses the UF2 `absolute` family. The firmware
+inside is built without the try-before-you-buy flag (`wifi_floppy_install`), because a
+TBYB image would not start after a UF2 download. Over-the-air updates still use the TBYB
+image. `tools/make_install_uf2.py` builds the file, and
+`docs/superpowers/research/2026-10-09-uf2-drag-drop-first-install.md` explains the design.
+
+With picotool you can still use `scripts/firmware-install-partitioned.sh`
+(`pnpm firmware:install-partitioned`). It saves a full flash backup first.
+
 ## Provisioning a board (plan 4b)
 
 **Steps 1-3 are verified on hardware as of 2026-09-10; steps 4-5 are not.** The AP
