@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { expandArchive, isArchiveName, MAX_ARCHIVE_BYTES } from './index';
+import { deflateRawSync } from 'node:zlib';
+import { expandArchive, isArchiveName, MAX_ARCHIVE_BYTES, MAX_ZIP_MEMBER_BYTES } from './index';
 
 const fx = (n: string) => new Uint8Array(readFileSync(join(__dirname, 'fixtures', n)));
 
@@ -54,5 +55,51 @@ describe('expandArchive', () => {
   it('carries protection through as null when the archive has none', async () => {
     const r = await expandArchive('h1.lha', fx('h1.lha'));
     expect(r && 'members' in r && r.members.every((m) => m.protection === null)).toBe(true);
+  });
+});
+
+/** A minimal deflate-only zip, built here so the test controls every byte. */
+function zipOf(members: { name: string; bytes: Uint8Array }[]): Uint8Array {
+  const parts: Buffer[] = [];
+  const cens: Buffer[] = [];
+  let off = 0;
+  for (const m of members) {
+    const data = deflateRawSync(m.bytes);
+    const nm = Buffer.from(m.name);
+    const lh = Buffer.alloc(30);
+    lh.writeUInt32LE(0x04034b50, 0); lh.writeUInt16LE(20, 4); lh.writeUInt16LE(8, 8);
+    lh.writeUInt32LE(data.length, 18); lh.writeUInt32LE(m.bytes.length, 22); lh.writeUInt16LE(nm.length, 26);
+    const ch = Buffer.alloc(46);
+    ch.writeUInt32LE(0x02014b50, 0); ch.writeUInt16LE(20, 4); ch.writeUInt16LE(20, 6); ch.writeUInt16LE(8, 10);
+    ch.writeUInt32LE(data.length, 20); ch.writeUInt32LE(m.bytes.length, 24); ch.writeUInt16LE(nm.length, 28);
+    ch.writeUInt32LE(off, 42);
+    parts.push(lh, nm, data);
+    cens.push(ch, nm);
+    off += 30 + nm.length + data.length;
+  }
+  const cd = Buffer.concat(cens);
+  const eocd = Buffer.alloc(22);
+  eocd.writeUInt32LE(0x06054b50, 0); eocd.writeUInt16LE(members.length, 8); eocd.writeUInt16LE(members.length, 10);
+  eocd.writeUInt32LE(cd.length, 12); eocd.writeUInt32LE(off, 16);
+  return new Uint8Array(Buffer.concat([...parts, cd, eocd]));
+}
+
+describe('expandArchive zip caps (browser path)', () => {
+  it('skips a deflate bomb member instead of inflating it whole', async () => {
+    const bomb = new Uint8Array(MAX_ZIP_MEMBER_BYTES + 1);
+    const r = await expandArchive('bomb.zip', zipOf([{ name: 'bomb.bin', bytes: bomb }]));
+    expect(r && 'skipped' in r && r.skipped).toEqual([{ path: 'bomb.bin', reason: 'too large' }]);
+    expect(r && 'members' in r && r.members).toHaveLength(0);
+  });
+
+  it('still expands DD and HD ADFs and a multi-disk archive', async () => {
+    const disks = [
+      { name: 'DD.adf', bytes: new Uint8Array(901_120).fill(1) },
+      { name: 'HD.adf', bytes: new Uint8Array(1_802_240).fill(2) },
+      ...Array.from({ length: 8 }, (_, i) => ({ name: `Disk${i}.adf`, bytes: new Uint8Array(901_120).fill(i + 3) })),
+    ];
+    const r = await expandArchive('set.zip', zipOf(disks));
+    expect(r && 'members' in r && r.members.map((m) => m.bytes.length)).toEqual(disks.map((d) => d.bytes.length));
+    expect(r && 'skipped' in r && r.skipped).toEqual([]);
   });
 });

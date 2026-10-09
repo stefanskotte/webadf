@@ -1,3 +1,4 @@
+import { deflateRawSync } from 'node:zlib';
 import { describe, expect, it } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -44,5 +45,53 @@ describe('readZip', () => {
 
   it('does not throw on an empty buffer', async () => {
     await expect(readZip(new Uint8Array(0))).resolves.toBeTruthy();
+  });
+});
+
+describe('readZip options (upload from a URL)', () => {
+  it('decompresses only the members `accept` selects', async () => {
+    const { entries, skipped } = await readZip(buf, { accept: (p) => p.endsWith('readme.txt') });
+    expect(entries.map((e) => e.path.split('/').pop())).toEqual(['readme.txt']);
+    expect(skipped.some((s) => s.reason === 'not selected')).toBe(true);
+  });
+
+  it('skips a member that inflates past maxEntryBytes instead of inflating it whole', async () => {
+    const { entries, skipped } = await readZip(buf, { maxEntryBytes: 100 });
+    // readme.txt is 135 bytes inflated, noise.bin is 600 bytes stored.
+    expect(entries.find((e) => e.path.endsWith('readme.txt'))).toBeUndefined();
+    expect(entries.find((e) => e.path.endsWith('noise.bin'))).toBeUndefined();
+    expect(skipped.filter((s) => s.reason === 'too large').length).toBeGreaterThanOrEqual(2);
+  });
+
+  it('stops once the total of decompressed members passes maxTotalBytes', async () => {
+    const all = await readZip(buf);
+    const cap = all.entries[0].bytes.length;
+    const { entries, skipped } = await readZip(buf, { maxTotalBytes: cap });
+    expect(entries.reduce((n, e) => n + e.bytes.length, 0)).toBeLessThanOrEqual(cap);
+    expect(entries.length).toBeLessThan(all.entries.length);
+    expect(skipped.some((x) => x.reason === 'archive limit reached')).toBe(true);
+  });
+
+  it('charges a refused bomb\'s work to the total, so one bomb named many times stops early', async () => {
+    // One deflated member of 1000 zero bytes, named by 50 central-directory entries.
+    const data = new Uint8Array(deflateRawSync(Buffer.alloc(1000)));
+    const nm = Buffer.from('bomb.adf');
+    const local = Buffer.alloc(30); local.writeUInt32LE(0x04034b50, 0); local.writeUInt16LE(8, 8);
+    local.writeUInt32LE(data.length, 18); local.writeUInt32LE(1000, 22); local.writeUInt16LE(nm.length, 26);
+    const head = Buffer.concat([local, nm, data]);
+    const cens: Buffer[] = [];
+    for (let i = 0; i < 50; i++) {
+      const c = Buffer.alloc(46); c.writeUInt32LE(0x02014b50, 0); c.writeUInt16LE(8, 10);
+      c.writeUInt32LE(data.length, 20); c.writeUInt32LE(1000, 24); c.writeUInt16LE(nm.length, 28);
+      c.writeUInt32LE(0, 42); cens.push(c, nm);
+    }
+    const cd = Buffer.concat(cens);
+    const eocd = Buffer.alloc(22); eocd.writeUInt32LE(0x06054b50, 0); eocd.writeUInt16LE(50, 8);
+    eocd.writeUInt16LE(50, 10); eocd.writeUInt32LE(cd.length, 12); eocd.writeUInt32LE(head.length, 16);
+    const z = new Uint8Array(Buffer.concat([head, cd, eocd]));
+    const { entries, skipped } = await readZip(z, { maxEntryBytes: 100, maxTotalBytes: 1000 });
+    expect(entries).toEqual([]);
+    expect(skipped.filter((x) => x.reason === 'too large').length).toBe(10);
+    expect(skipped.filter((x) => x.reason === 'archive limit reached').length).toBe(40);
   });
 });
