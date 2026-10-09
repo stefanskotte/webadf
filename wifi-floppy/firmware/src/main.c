@@ -1448,6 +1448,12 @@ static volatile bool g_motor_on;
 // When the motor last came on (dskchg_motor_on_ms), published with g_motor_on:
 // swap_holds counts it as activity (swap_gate.h, review I1).
 static volatile uint32_t g_motor_on_ms;
+// Published by core1 at the top of every pass: up_holds(&up), captured writes
+// the server has not got. core0's DF1 store rule reads it (drive_store_idle,
+// R17). A stale false (core1 inside a long network call) costs only margin:
+// the store also needs SWAP_IDLE_MS of write silence and the motor off, and a
+// flash write never touches the unsent tracks, which live in PSRAM.
+static volatile bool g_up_holds;
 
 /** core1: dc_set_hold's fn -- may the mounted disk be released (swap, Next
  *  tap, eject)? Not while the server lacks a write the board captured
@@ -2030,6 +2036,7 @@ static void core1_main(void) {
             }
             // SEL1 telemetry rides every status report (cheap: three stores).
             dc_set_sel1(&c, g_sel1_wired, bus_df1_seen(g_df1_steps));
+            g_up_holds = up_holds(&up);   // core0's DF1 store rule (R17)
 
             // Item 0 (fix round 1, Important): a status report is OWED
             // whenever the mounted disk's identity or version differs from
@@ -3114,11 +3121,13 @@ int main(void) {
     // Set by a live switch ON: look at DF1's published word again even though
     // it did not change -- a disk core1 handed over is then inserted.
     bool    df1_rescan = false;
-    // The DF1 setting's deferred flash record (D3): written only with both
-    // drives empty, like the display's below; a failed save retries in 5 s.
+    // The DF1 setting's deferred flash record (D3, R17): written with both
+    // drives empty or the Amiga idle (the store block below); a failed save
+    // retries in 5 s.
     static drive_record_t drive_store_rec;
     bool     drive_store_pending = false;
     uint32_t drive_save_retry_at = 0;
+    uint32_t drive_motor_seen_ms = 0;   // the last pass either motor was on (R17)
 #endif
     // Display bookkeeping. `disk_mounted` gates BOTH the track counter (a
     // cylinder number with no disk in the drive is a number about nothing)
@@ -3541,21 +3550,58 @@ int main(void) {
 #endif
 
 #if DF1_CAPABLE
-        // The DF1 setting's flash record, deferred to a moment BOTH drives are
-        // empty (D3) -- same rule, same place and same reasons as the
-        // display's record below: here, in core0's loop, a slot core1
-        // publishes after this check is not served (track_cache_check_swap,
-        // above; DF1's word likewise, in the DF1 block above) until this pass
-        // is over, so the write never runs under a disk the Amiga is reading.
-        // DF0 empty (core0's disk_mounted and the published slot, which
-        // drive_store_save checks again itself) implies DF1 empty -- DF1 only
-        // ever holds the idle slot while DF0 holds a disk (dc_df1_want) --
-        // and df1_mounted is checked too, belt and braces. The write is a
-        // flash_safe_execute: core1 is locked out for its ~45 ms (core1_main
-        // made itself a lockout victim). A failed save waits 5 s, not one
-        // loop turn -- each try parks core1.
+        // The DF1 setting's flash record (R17, final review C1). Written when
+        // BOTH drives are empty (D3, the display record's rule) OR when the
+        // Amiga is idle with a disk mounted. Empty alone was not enough: a
+        // board powered by the Amiga holds a disk from its first poll, so a
+        // setting changed then never reached flash, and the next power-on
+        // answered with the old mode -- in the OFF direction, the very case a
+        // real external DF1 is plugged in for.
+        //
+        // Idle (drive_store_idle, host-tested): the swap gate's test
+        // (swap_gate.h) -- no write applied or attempted and no WGATE edge
+        // for SWAP_IDLE_MS, WGATE clear -- plus EITHER drive's motor off for
+        // SWAP_IDLE_MS (DF1's too, so DF1 is not mid-stream), and nothing
+        // captured but unsent (up_holds, published by core1 as g_up_holds).
+        //
+        // Why the ~45 ms flash_safe_execute lockout is acceptable then (core0's
+        // interrupts off, core1 parked):
+        //   - No read is under way: both motors are off, and the Amiga reads
+        //     only with the motor on. A new access first switches the motor on
+        //     and then waits for the drive to spin up (trackdisk waits for RDY,
+        //     hundreds of ms), far longer than the lockout. No steps are
+        //     expected while idle either.
+        //   - MTR and SEL are latched by PIO state machines (sel_mtr, the
+        //     status gate), not by core0: a motor-on during the lockout is held
+        //     in sel_mtr's FIFO and handled by mtr_pio_isr straight after, and
+        //     RDY/CHNG/WPROT/TRK0 keep being driven by the status gate.
+        //   - A step that does come (Kickstart's empty-drive click poll on an
+        //     empty DF1: a pulse or two every few seconds) is held in
+        //     step_dir's RX FIFO with its DIR and drained by step_pio_isr after.
+        //   - These are the same conditions the empty-drive store has always
+        //     run under (the display record), where the Amiga is equally free
+        //     to switch a motor on.
+        // A residual risk -- a motor-on edge inside the 45 ms followed by a
+        // read faster than the lockout -- shows on the bench as a read error
+        // (Task 24's store step), not as a corrupted disk: nothing is written.
+        //
+        // Here, in core0's loop, a slot core1 publishes after this check is not
+        // served until this pass is over (track_cache_check_swap, above), so a
+        // disk change cannot land under the write. A failed save waits 5 s, not
+        // one loop turn -- each try parks core1.
+        {
+            const bool motor_any = dskchg_motor_on_d(0) || dskchg_motor_on_d(1);
+            if (motor_any) drive_motor_seen_ms = clock_ms();
+        }
         if (drive_store_should_write(drive_store_pending,
-                                     !disk_mounted && psram_active_slot() == SLOT_NONE && !df1_mounted) &&
+                                     !disk_mounted && psram_active_slot() == SLOT_NONE && !df1_mounted,
+                                     drive_store_idle(clock_ms(),
+                                                      dskchg_motor_on_d(0) || dskchg_motor_on_d(1),
+                                                      !gpio_get(PIN_WGATE),
+                                                      // motor_on=true only folds the third time in
+                                                      swap_gate_last_activity(g_write_last_ms, g_wgate_last_ms,
+                                                                              true, drive_motor_seen_ms),
+                                                      g_up_holds)) &&
             (int32_t)(clock_ms() - drive_save_retry_at) >= 0) {
             if (drive_store_save(&drive_store_rec)) {
                 drive_store_pending = false;

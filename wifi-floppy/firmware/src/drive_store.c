@@ -7,6 +7,7 @@
 // here at all").
 #include "drive_store.h"
 #include "psram_image.h"
+#include "swap_gate.h"
 #include <string.h>
 
 #define DRIVE_MAGIC 0x44525631u   // 'DRV1'
@@ -70,7 +71,18 @@ df1_mode_t drive_boot_mode(bool loaded, const drive_record_t *r) {
     return r->mode == DF1_MODE_NEXT ? DF1_MODE_NEXT : DF1_MODE_OFF;
 }
 
-bool drive_store_should_write(bool pending, bool drive_empty) { return pending && drive_empty; }
+bool drive_store_should_write(bool pending, bool drive_empty, bool idle) {
+    return pending && (drive_empty || idle);
+}
+
+bool drive_store_idle(uint32_t now, bool motor_on, bool wgate_asserted,
+                      uint32_t last_activity_ms, bool writes_unsent) {
+    if (writes_unsent || motor_on) return false;   // never forced past either
+    // motor_on is false here, so swap_gate's forced release (SWAP_FORCE_MS of
+    // silence) can only pass a WGATE that reads asserted -- a powered-off
+    // Amiga, which reads nothing.
+    return swap_gate_idle(now, false, wgate_asserted, last_activity_ms, NULL);
+}
 
 #ifndef WFMF_HOST_TEST
 #include "hardware/flash.h"
@@ -85,7 +97,8 @@ bool drive_store_should_write(bool pending, bool drive_empty) { return pending &
 #define DRIVE_STORE_CAP    FLASH_PAGE_SIZE   // one program page
 
 // DF1 holds a disk only while DF0 does (the slot invariant, Task 13), so "no
-// DF0 slot active" is sufficient to know both drives are empty.
+// DF0 slot active" is sufficient to know both drives are empty. Guards the
+// erase only: the save's timing is the caller's (drive_store_should_write).
 static bool disk_is_mounted(void) {
     return psram_active_slot() != SLOT_NONE;
 }
@@ -110,7 +123,6 @@ bool drive_store_load(drive_record_t *out) {
 }
 
 bool drive_store_save(const drive_record_t *r) {
-    if (disk_is_mounted()) return false;
     static uint8_t page[DRIVE_STORE_CAP];   // static: see config_store_save()
     if (!page_build(page, sizeof page, r)) return false;
     program_args_t args = { page, sizeof page };
@@ -137,8 +149,7 @@ bool drive_store_load(drive_record_t *out) {
 }
 
 bool drive_store_save(const drive_record_t *r) {
-    if (psram_active_slot() != SLOT_NONE) return false;   // same guard as the device backing
-    ensure_init();
+    ensure_init();   // no mounted-disk guard: the caller decides when (R17)
     return page_build(g_page, sizeof g_page, r);
 }
 
