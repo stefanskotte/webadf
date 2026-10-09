@@ -80,7 +80,7 @@ static void each_rule_is_enforced(void) {
 }
 
 static void garbage_never_decodes(void) {
-    uint8_t b[LAYOUT_BLOB_MAX + 8]; layout_t l; char why[80];
+    uint8_t b[LAYOUT_BLOB_MAX + 8] = {0}; layout_t l; char why[80];   // len 0/3 reads nothing; GCC cannot know
     CHECK(!layout_decode(b, 0, &l, why, sizeof why), "empty");
     CHECK(!layout_decode(b, 3, &l, why, sizeof why), "short header");
     memset(b, 0xFF, sizeof b);
