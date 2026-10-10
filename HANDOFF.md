@@ -1629,6 +1629,9 @@ separately.
   private, loopback and link-local addresses after DNS resolution (re-check on every redirect), cap redirects, size
   and time, and stream into the same presign/complete ingest path so hashing, dedupe, TOSEC matching and
   entitlements stay one code path. Also consider zip/7z/gz archives from such sites.
+- **(Low) DF1 card status does not update live** (seen 2026-10-10 on the PaulaNET bench): after setting DF1 the card
+  stayed on "Waiting for the board" although the DB already showed applied == requested and reported == desired; a
+  browser refresh showed "Set on the board". The live-state poll does not refresh the second-drive status line.
 - **Setup portal: feedback after Submit -- DONE in fw 1.10.0 (3bf).** (operator, 2026-10-09, during the re-join bench): after Submit the
   form just stalls -- the board drops its AP to join the home network, so the phone's request never completes.
   Answer the POST at once with a "Joining <SSID>... this network will disappear; watch the board's screen; the
