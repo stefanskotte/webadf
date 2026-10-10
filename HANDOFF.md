@@ -2590,7 +2590,7 @@ separately.
   2026-10-09:** AmiTCP_NG v4.1.8 installed on the A500's IDE Workbench (KS 3.1); `ping 127.0.0.1` replies; `avail` with the
   stack running: 446,544 B chip free, 7,713,448 B fast free (acceptance bar was >= 100 KB chip). **Phase 0 GO (operator, 2026-10-09):** Rob's framing only (his grant makes PaulaNET-compatible the
   choice; the MFM alternative is dropped), and the bar to continue to Phase 1 is >= 15 KB/s and a median round trip
-  <= 250 ms on the A500. Plan: docs/superpowers/plans/2026-10-09-paulanet-phase0-loopback.md. **Stack decided (operator, 2026-10-09):** the Amiga-side TCP/IP stack behind the PaulaNET device is AmiTCP_NG, https://github.com/MW0MWZ/AmiTCP_NG. Check its licence alongside PaulaNET's, and how its SANA-II driver interface meets PaulaNET's device. **UNBLOCKED 2026-10-09:** RobSmithDev replied that he has no issue with us implementing PaulaNET, as long as the licences are respected. Check PaulaNET's licence terms (code and protocol) before any design, and credit him as the licence requires. Not started. Raised by the operator
+  <= 250 ms on the A500. Plan: docs/superpowers/plans/2026-10-09-paulanet-phase0-loopback.md. **Phase 0 PASSED 2026-10-11 (3bg): 18.3 KB/s at N=8000, median 51 ms at N=64.** **Stack decided (operator, 2026-10-09):** the Amiga-side TCP/IP stack behind the PaulaNET device is AmiTCP_NG, https://github.com/MW0MWZ/AmiTCP_NG. Check its licence alongside PaulaNET's, and how its SANA-II driver interface meets PaulaNET's device. **UNBLOCKED 2026-10-09:** RobSmithDev replied that he has no issue with us implementing PaulaNET, as long as the licences are respected. Check PaulaNET's licence terms (code and protocol) before any design, and credit him as the licence requires. Not started. Raised by the operator
   2026-09-13 after finding RobSmithDev's PaulaNET. Genuinely attractive, and explicitly a
   SECOND PRODUCT on the same board rather than an increment to disk serving: it makes the
   Amiga itself reach the internet, and does nothing to make disks load better.
@@ -4808,6 +4808,47 @@ Demozoo API (the bulk export makes per-lookup load on a non-profit unnecessary).
 - **Screenshot redirects:** screenshot fetches follow redirects, so the `media.demozoo.org` host
   allowlist checks only the first URL (the raster content-type allowlist and `nosniff` still apply).
 - **Cron drift:** the daily 01:30 cron against a 7-day gate can drift a refetch to 8 days.
+
+### 3bg. PaulaNET Phase 0 (DF1 cylinder-77 loopback) PASSED on the A500 (2026-10-10/11)
+
+**Verdict: the Phase 1 bar is met.** >= 15 KB/s one way at N=8000 (measured 18.3, 19.3 with READS=1) and a median
+round trip <= 250 ms at N=64 (measured 51.2, 25.4 with READS=1). Bench: A500, KS 3.1, 1 MB chip + 8 MB fast,
+Workbench 3.1 + AmiTCP_NG on IDE; NetLoop 1.1 (68000 asm codec) from SYS:C; board TEST fw 1.10.0+g49974e0 (seq 67).
+
+| run (seq 67) | rounds | one-way | rtt median / p95 / max ms | retries |
+|---|---|---|---|---|
+| N=64 | 1000/1000 | 1.2 KB/s | 51.2 / 60.0 / 95.7 | 0 rewrites, 35 nosync, 3 short |
+| N=1500 | 1000/1000 | 11.6 KB/s | 117.8 / 183.3 / 366.9 | 1 rewrite, 149 nosync, 5 short |
+| N=8000 | 1000/1000 | 18.3 KB/s | 422.6 / 435.0 / 626.4 | 0 rewrites, 25 nosync, 7 short |
+| N=8000 READS=1 | 1000/1000 | 19.3 KB/s | 397.9 / 419.6 / 692.5 | 0 rewrites, 24 nosync, 17 short |
+| N=64 READS=1 | 1000/1000 | 2.3 KB/s | 25.4 / 38.4 / 68.9 | 0 rewrites, 44 nosync, 9 short |
+| N=64 ROUNDS=200 during `copy df0:#? ram:x/ ALL` | 200/200 | -- | 96.3 / 560.9 / 1191.1 | 1 rewrite |
+| N=64 ROUNDS=100 after Ctrl-A-A | 100/100 | -- | 51.0 / 55.2 / 90.8 | 0 |
+
+Zero mismatches in every run. Board side throughout: `bad 0`, `stray 0`, no refusals, no implied syncs, restart
+~35 us. **DF0 save with DF1 parked on cylinder 77:** `copy c:dir df0:pnettest` -- 8 DF0 track writes (69/70/80),
+every one `ALL bad 0`, applied and uploaded; no "lost to DF0 writes" warning (the pre-arm's `df0` counter is not
+printed in a window with no pnet traffic, so that count itself was not seen).
+
+**What it took (branch feat/paulanet-prearm on top of feat/paulanet-phase0, neither merged):**
+- pre-armed raw capture (f6f36cd) and a 200 us echo INDEX pulse (04d15c3): writes caught from their first edge;
+- NetLoop's codec in 68000 asm (b96c1b4..9196dcd): encode 735 -> 57.5 ms at N=8000;
+- **the echo built at the commit, not at the SIDE edge (0c89f65):** at N=8000 the build took ~3.7 ms after the
+  side change and the Amiga's reads found the sync 195-305 bytes in, past the ~184-byte margin -> 641/1000;
+- **a 200-byte echo lead-in (49974e0, board only; the Amiga's read sizes keep PaulaNET's 120):** with the fast
+  restart the sync was found 0-40 bytes in or missed (2,943 nosync, 876/1000).
+- **Measured, not explained:** both runs put the Amiga's read DMA at ~2.4-4.2 ms after the SIDE edge whatever the
+  board's INDEX did -- contradicting the earlier ROM reading that INDEXSYNC waits for a new edge. The 200-byte lead
+  covers it; about a quarter of reads now find the sync >= 128 bytes in (few short reads). If Phase 1 needs margin
+  back: start the stream at a fixed delay after the SIDE edge (ISR/alarm) and trim the lead.
+
+**Minor, owed:** `side-idx max us` saturates (9999999) when the restart precedes the SIDE ISR's stamp (negative
+latency) -- clamp it; deferred minors in the SDD ledger (pre-arm stray hold-off M1, plan text, comments).
+
+**Off switch / rollback:** the loopback exists only in WF_PNET_LOOP=ON TEST builds (publish refuses the marker
+without "TEST build" notes; OFF image proven identical to master by tools/pnet_off_identical.sh). To leave the
+bench state, target the board back at the 1.10.0 release; DF1 then serves cylinder 77 as disk data again.
+The bench board still runs TEST seq 67 as of this writing.
 
 ### 3bf. fw 1.10.0: NFC icon layout element; setup portal re-raise hang FIXED; Joining page (2026-10-09)
 
