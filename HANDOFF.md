@@ -4848,7 +4848,10 @@ latency) -- clamp it; deferred minors in the SDD ledger (pre-arm stray hold-off 
 **Off switch / rollback:** the loopback exists only in WF_PNET_LOOP=ON TEST builds (publish refuses the marker
 without "TEST build" notes; OFF image proven identical to master by tools/pnet_off_identical.sh). To leave the
 bench state, target the board back at the 1.10.0 release; DF1 then serves cylinder 77 as disk data again.
-The bench board still runs TEST seq 67 as of this writing.
+The bench board still runs TEST seq 67 as of this writing. **Merged to master 2026-10-11 (7a2aaab)** (operator: merge,
+roll back). Rollback REFUSED by the board (`would_roll_back`: 59 < 67), so leaving TEST needs a new release at a
+higher sequence (a GitHub release too) -- awaiting the operator's go. Phase 1 plan being drafted (operator chose
+"Plan Phase 1"): docs/superpowers/plans/2026-10-11-paulanet-phase1-l2-sharing.md.
 
 ### 3bf. fw 1.10.0: NFC icon layout element; setup portal re-raise hang FIXED; Joining page (2026-10-09)
 
