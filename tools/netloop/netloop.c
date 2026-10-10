@@ -14,7 +14,11 @@
  * header read, a seek back to side 0, then a read sized from the header. READS=1 reads once,
  * sized for the echo NetLoop expects. Times come from timer.device's E-clock.
  *
- *   NetLoop [N=<bytes>] [ROUNDS=<n>] [READS=1|2] [SELFTEST]
+ *   NetLoop [N=<bytes>] [ROUNDS=<n>] [READS=1|2] [SELFTEST] [BENCH]
+ *
+ * SELFTEST: no drive; the codec round trip, then the asm codec against the C reference on this
+ * CPU. BENCH: no drive; each codec stage, C and asm, timed with the E-clock (netloop_bench.h).
+ * The codec is pnet_asm.S unless build.sh built it with NETLOOP_CODEC=c.
  */
 #include <exec/types.h>
 #include <exec/memory.h>
@@ -32,9 +36,23 @@
 #include "pnet_mfm.h"
 #include "pnet_frame.h"
 #include "netloop_stats.h"
+#include "pnet_asm.h"
+#include "netloop_equiv.h"
+#include "netloop_bench.h"
+
+#ifndef NETLOOP_ASM
+#define NETLOOP_ASM 1
+#endif
+#if NETLOOP_ASM
+#define payload_equal(a, b, n) nl_memeq_asm((a), (b), (n))
+#define CODEC_NAME "asm"
+#else
+#define payload_equal(a, b, n) (memcmp((a), (b), (n)) == 0)
+#define CODEC_NAME "C"
+#endif
 
 static const char vers[] __attribute__((used)) =
-    "$VER: NetLoop 1.0 (09.10.2026) PaulaNET protocol by RobSmithDev, used with permission";
+    "$VER: NetLoop 1.1 (10.10.2026) PaulaNET protocol by RobSmithDev, used with permission";
 
 #define DF1_UNIT    1
 #define CHIP_BYTES  16896u    /* the largest write or read, rounded up */
@@ -107,7 +125,7 @@ static int check_echo(const pnet_hdr_t *h, const uint16_t *lens, unsigned nf, UL
                           el, PNET_MAX_FRAMES, &en) != PNET_OK) { c_mismatch++; return 2; }
     if (en != nf) { c_mismatch++; return 2; }
     for (unsigned i = 0; i < nf; i++) if (el[i] != lens[i]) { c_mismatch++; return 2; }
-    if (memcmp(echo, payload, n) != 0) { c_mismatch++; return 2; }
+    if (!payload_equal(echo, payload, n)) { c_mismatch++; return 2; }
     return 0;
 }
 
@@ -224,9 +242,80 @@ static int selftest(void) {
     unsigned long a, b, c, d;
     ms(t1 - t0, &a, &b);
     ms(t2 - t1, &c, &d);
-    printf("selftest: %lu B echo, align %lu.%lu ms, parse %lu.%lu ms\n", (unsigned long)r, a, b, c, d);
+    printf("selftest: %lu B echo, align %lu.%lu ms, parse %lu.%lu ms (codec %s)\n", (unsigned long)r,
+           a, b, c, d, CODEC_NAME);
+    printf("selftest: asm codec against the C reference on this CPU...\n");
+    const uint64_t t3 = ticks();
+    const unsigned long f = nl_equiv_run(4000u, 1u, 0x5EEDu);
+    ms(ticks() - t3, &a, &b);
+    printf("selftest: equivalence %s (%lu.%lu ms)\n", f ? "FAILED" : "ok", a, b);
+    if (f) return st_fail("asm differs from the C reference");
     printf("RESULT: PASS\n");
     return RETURN_OK;
+}
+
+static const char *mem_kind(const void *p) {
+    const ULONG t = TypeOfMem((APTR)p);
+    return (t & MEMF_CHIP) ? "CHIP" : (t & MEMF_FAST) ? "FAST" : t ? "other" : "unlisted";
+}
+
+/* Each codec stage, C then asm, mean ms per call over `reps` calls (E-clock). */
+static int bench(void) {
+    static nl_bench_t b;
+    static const uint32_t sizes[2] = { 1500u, 8000u };
+    static const unsigned reps_for[2] = { 8u, 3u };
+    const ULONG mfm_sz = 2u * 8000u, rle_sz = 8000u + 8000u / 127u + 8u, scr_sz = 2u * 8000u + 64u;
+    int rc = RETURN_OK, local = 0;
+    b.payload = payload; b.out = echo; b.wbuf = wbuf; b.track = rbuf;
+    b.aligned = AllocMem(CHIP_BYTES, MEMF_CHIP | MEMF_CLEAR);
+    b.mfm_in = AllocMem(mfm_sz, MEMF_ANY);
+    b.rle_in = AllocMem(rle_sz, MEMF_ANY);
+    b.scratch = AllocMem(scr_sz, MEMF_ANY);
+    if (!b.aligned || !b.mfm_in || !b.rle_in || !b.scratch) { printf("out of memory\n"); rc = RETURN_FAIL; goto out; }
+    printf("memory: code %s $%08lx  stack %s $%08lx  tables %s\n", mem_kind((const void *)bench),
+           (unsigned long)(ULONG)bench, mem_kind(&local), (unsigned long)(ULONG)&local, mem_kind(pnet_mfm_tab));
+    printf("memory: wbuf %s  rbuf %s  aligned %s  payload %s  echo %s  work %s\n", mem_kind(wbuf),
+           mem_kind(rbuf), mem_kind(b.aligned), mem_kind(payload), mem_kind(echo), mem_kind(b.scratch));
+    printf("codec in use: %s. Times: mean ms per call; x = C / asm on random.\n", CODEC_NAME);
+    for (unsigned z = 0; z < 2; z++) {
+        const uint32_t n = sizes[z];
+        const unsigned reps = reps_for[z];
+        unsigned long v[NL_BENCH_STAGES][NL_BENCH_INPUTS][2];
+        BOOL differ = FALSE;
+        for (unsigned k = 0; k < NL_BENCH_INPUTS; k++) {
+            if (!nl_bench_prep(&b, k, n)) { printf("bench: %s N=%lu did not prepare\n", nl_bench_input_name[k],
+                                                   (unsigned long)n); rc = RETURN_FAIL; goto out; }
+            for (unsigned s = 0; s < NL_BENCH_STAGES; s++) {
+                long res[2];
+                for (unsigned i = 0; i < 2; i++) {
+                    if (SetSignal(0, SIGBREAKF_CTRL_C) & SIGBREAKF_CTRL_C) { printf("*** Break\n"); rc = RETURN_WARN; goto out; }
+                    const uint64_t t0 = ticks();
+                    for (unsigned r = 0; r < reps; r++) res[i] = nl_bench_stage(&b, s, i);
+                    const uint64_t t = ticks() - t0;
+                    v[s][k][i] = nl_tenths(t * 10000u, (uint64_t)hz * reps);   /* 1/100 ms */
+                }
+                if (res[0] != res[1]) differ = TRUE;
+            }
+        }
+        printf("N=%lu, mean ms per call over %u calls\n", (unsigned long)n, reps);
+        printf("%-8s%8s%8s%8s%8s%8s%8s%7s\n", "stage", "rand C", "asm", "mixed C", "asm", "zero C", "asm", "x");
+        for (unsigned s = 0; s < NL_BENCH_STAGES; s++) {
+            printf("%-8s", nl_bench_stage_name[s]);
+            for (unsigned k = 0; k < NL_BENCH_INPUTS; k++)
+                for (unsigned i = 0; i < 2; i++)
+                    printf(" %4lu.%02lu", v[s][k][i] / 100u, v[s][k][i] % 100u);
+            const unsigned long x = v[s][0][1] ? nl_tenths(v[s][0][0], v[s][0][1]) : 0;
+            printf(" %4lu.%lu\n", x / 10u, x % 10u);
+        }
+        if (differ) { printf("bench: a stage's C and asm results differ\n"); rc = RETURN_FAIL; }
+    }
+out:
+    if (b.aligned) FreeMem(b.aligned, CHIP_BYTES);
+    if (b.mfm_in) FreeMem(b.mfm_in, mfm_sz);
+    if (b.rle_in) FreeMem(b.rle_in, rle_sz);
+    if (b.scratch) FreeMem(b.scratch, scr_sz);
+    printf("RESULT: %s\n", rc == RETURN_OK ? "PASS" : "FAIL");
+    return rc;
 }
 
 static BOOL cleaned;
@@ -255,15 +344,15 @@ static void cleanup(void) {
 }
 
 int main(void) {
-    LONG args[4] = {0, 0, 0, 0};
-    struct RDArgs *rd = ReadArgs((STRPTR)"N/K/N,ROUNDS/K/N,READS/K/N,SELFTEST/S", args, NULL);
+    LONG args[5] = {0, 0, 0, 0, 0};
+    struct RDArgs *rd = ReadArgs((STRPTR)"N/K/N,ROUNDS/K/N,READS/K/N,SELFTEST/S,BENCH/S", args, NULL);
     if (!rd) { PrintFault(IoErr(), (STRPTR)"NetLoop"); return RETURN_FAIL; }
     const unsigned long n = args[0] ? (unsigned long)*(LONG *)args[0] : 64u;
     const unsigned long rounds = args[1] ? (unsigned long)*(LONG *)args[1] : MAX_ROUNDS;
     const unsigned long reads = args[2] ? (unsigned long)*(LONG *)args[2] : 2u;
-    const BOOL self = args[3] != 0;
+    const BOOL self = args[3] != 0, bench_only = args[4] != 0;
     FreeArgs(rd);
-    printf("NetLoop 1.0 -- PaulaNET protocol by RobSmithDev, used with permission\n");
+    printf("NetLoop 1.1 -- PaulaNET protocol by RobSmithDev, used with permission\n");
     if (n < 1 || n > MAX_N || rounds < 1 || rounds > MAX_ROUNDS || (reads != 1 && reads != 2)) {
         printf("N=1..%lu ROUNDS=1..%lu READS=1|2\n", (unsigned long)MAX_N, (unsigned long)MAX_ROUNDS);
         return RETURN_ERROR;
@@ -285,6 +374,7 @@ int main(void) {
     timer_open = TRUE;
     TimerBase = treq->tr_node.io_Device;
     if (self) { rc = selftest(); goto out; }
+    if (bench_only) { rc = bench(); goto out; }
     if (OpenDevice((STRPTR)TD_NAME, DF1_UNIT, (struct IORequest *)td, 0)) {
         printf("no DF1 (trackdisk.device unit 1)\n"); goto out;
     }
