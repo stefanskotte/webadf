@@ -34,6 +34,18 @@
  *   up to the 17-cell window's max    keep hunting (an AA lead's last pulse to the sync's first)
  *   longer                            (18+ cells: a 0000 word, a dropout) refused for good
  *                                     (hunt_failed): sync_ok stays false, nothing decodes.
+ * THE IMPLIED SYNC (bench fix 3). The to-board write has NO lead-in at all: KS 3.1 trackdisk adds no
+ * gap and Paula starts NetLoop's buffer at 00 01 00 01, so sync pulse 1 is ~30 us after WGATE and
+ * pulse 2 ~62 us -- and the WGATE ISR arms ~20-30 us late, so most captures start BETWEEN them: the
+ * first edge is the sync's closing pulse, and the next intervals are the magic's 2,2,2,4,2... So if
+ * nothing is synced yet, the FIRST interval (word 1) is a 2-cell one (PNET_RX_TWO_*), and word 0
+ * (arm -> first edge) is at least PNET_RX_IMPLIED_LEAD_NS, the first edge is taken as the sync's
+ * closing pulse: sync_ok, implied, pw = 2 cells - word 1, bit 0 the cell after that edge (as for a
+ * measured sync), and word 1 is decoded as the first data interval. An arm closer than that to
+ * pulse 2 is not implied: it hunts like any other capture (and decodes nothing useful). A capture
+ * armed in the data can be implied too, when it lands in a long enough gap before a 2-cell
+ * interval: it decodes misaligned and the DataHeader's magic and checksum refuse it.
+ *
  * At most PNET_RX_HUNT_MAX intervals are hunted. sync_ns is the interval that ended the hunt,
  * taken or refused. A capture armed in the data hunts too, and may take a 16-cell data gap as the
  * sync: it then decodes misaligned, and the DataHeader's magic and checksum refuse it
@@ -60,6 +72,18 @@
 #define PNET_RX_SYNC_MAX_NS  (PNET_SYNC_CELLS * PNET_CELL_NS - PNET_RX_PW_MIN_NS + PNET_RX_JITTER_NS) /* 32130 */
 /* Before the sync, anything up to the 17-cell interval's max (+jitter) is hunted; past it, refused. */
 #define PNET_RX_GAP17_MAX_NS ((PNET_SYNC_CELLS + 1u) * PNET_CELL_NS - PNET_RX_PW_MIN_NS + PNET_RX_JITTER_NS) /* 34130 */
+/* A 2-cell interval, any pw, +-jitter: the implied sync's first data interval (the magic's 0x54). */
+#define PNET_RX_TWO_MIN_NS   (2u * PNET_CELL_NS - PNET_RX_PW_MAX_NS - PNET_RX_JITTER_NS)   /* 2020 */
+#define PNET_RX_TWO_MAX_NS   (2u * PNET_CELL_NS - PNET_RX_PW_MIN_NS + PNET_RX_JITTER_NS)   /* 4130 */
+/* Word 0 at or above this, with a 2-cell word 1, is an implied sync (above). Between the sync's
+ * pulses word 0 is at most 16 cells less pw (~31.5 us): the to-board data's longest gap (59 cells in
+ * an empty batch's header, ~35 in a framed header, ~30 in RLE) is longer, so no threshold can both
+ * catch those arms and shut out every data arm -- the header check is the guard. 4 cells is the
+ * longest gap of the MFM-coded parts and 1 in 16 of random raw bytes: below it an arm is about as
+ * likely to be in the data as before pulse 2, and only an arm in the last 8 us before pulse 2 --
+ * 54+ us of ISR latency -- is lost to it. Needs word 0 to be arm -> first edge: flux_capture.c resets
+ * flux_in's X on a raw arm (it used to carry the last capture's count). */
+#define PNET_RX_IMPLIED_LEAD_NS (4u * PNET_CELL_NS)                                       /* 8000 */
 /* 8192 intervals = 2,048 bytes of AA, ~33 ms: far past the ~5-pulse lead the bench measured, yet a
  * stuck pattern ends. */
 #define PNET_RX_HUNT_MAX     8192u
@@ -76,6 +100,7 @@ typedef struct {
     int32_t  pw_ns;         /* 16 cells minus sync_ns (set only when the sync is taken): -130..1980 */
     uint32_t hunt_n;        /* intervals hunted through before the sync (or the refusal) */
     bool     sync_ok;       /* a 16-cell sync was found; nothing is decoded otherwise */
+    bool     implied;       /* the sync was implied: armed between the sync's two pulses */
     bool     hunt_failed;   /* refused before any sync: an 18+ cell gap, or the hunt ran out */
     bool     overflowed;
     uint32_t out_of_range;  /* intervals over PNET_RX_MAX_CELLS */

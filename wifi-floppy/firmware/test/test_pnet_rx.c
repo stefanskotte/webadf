@@ -86,16 +86,18 @@ static void a_batch_survives_flux_and_parses(void) {
     CHECK(m == 3 && memcmp(dec, frames, 1571) == 0, "frames");
 }
 
-/* Review Focus 1: a capture armed late (the first sync pulse missed) is refused, not parsed. */
-static void a_capture_that_missed_the_first_sync_pulse_is_refused(void) {
+/* Was Review Focus 1's "a capture that missed the first sync pulse is refused". Bench fix 3 ruled
+ * the other way: armed between the sync's pulses, the sync is implied and the batch decodes. */
+static void a_capture_that_missed_the_first_sync_pulse_is_implied(void) {
     const uint8_t w[] = {0x00, 0x01, 0x00, 0x01, 0x54, 0x50, 0x12, 0x34, 0xAA, 0xAA};
     const size_t n = to_words(w, sizeof w, 600u, 0, words);
     pnet_rx_t r;
     pnet_rx_init(&r, capbuf, sizeof capbuf);
     pnet_rx_feed(&r, 30000u);                     /* lead (arm -> the SECOND sync pulse) */
-    feed_all(&r, words + 2, n - 2);               /* word 1 is then a data interval */
-    CHECK(!r.sync_ok, "not a 16-cell sync");
-    CHECK_EQ_INT(pnet_rx_bytes(&r), 0);
+    feed_all(&r, words + 2, n - 2);               /* word 1 is then the first data interval */
+    CHECK(r.sync_ok && r.implied, "implied");
+    CHECK_EQ_INT(r.pw_ns, 600);
+    CHECK(pnet_rx_bytes(&r) >= 4 && memcmp(capbuf, w + 4, 4) == 0, "the bytes after the sync");
 }
 
 static void a_long_gap_is_counted_and_clamped(void) {
@@ -217,7 +219,10 @@ static size_t armed_at(size_t np, size_t from, uint32_t pw, uint32_t jit, uint32
         edge_j[i] = jit ? (int32_t)((seed >> 16) % (2u * jit + 1u)) - (int32_t)jit : 0;
     }
     size_t k = 0;
-    out[k++] = 44000u;                                   /* arm -> the first edge seen */
+    /* arm -> the first edge seen: 3 us, under PNET_RX_IMPLIED_LEAD_NS, so these exercise the hunt.
+     * (Armed 8+ us before a 2-cell lead-in pulse, a capture would take an implied sync at the wrong
+     * place and the header would refuse it: bench fix 3 found the write has no lead-in at all.) */
+    out[k++] = 3000u;
     for (size_t i = from + 1u; i < np; i++)
         out[k++] = (uint32_t)((int32_t)((pulses[i] - pulses[i - 1u]) * PNET_CELL_NS) +
                               edge_j[i] - edge_j[i - 1u] - (int32_t)pw);
@@ -307,7 +312,7 @@ static void a_capture_armed_after_the_sync_never_parses(void) {
     const lead_t l = {"AAA8 then 17", aaa8_17, 6};
     const size_t np = lead_pulses(&l, &wn, &sync);
     unsigned parsed = 0, falsesync = 0, tried = 0;
-    for (size_t from = sync + 1u; from + 2u < np; from++) {
+    for (size_t from = sync + 2u; from + 2u < np; from++) {   /* sync + 1 is the implied sync */
         pnet_rx_t r;
         pnet_rx_init(&r, capbuf, sizeof capbuf);
         feed_all(&r, words, armed_at(np, from, 520u, 140u, 11u + from, words));
@@ -324,7 +329,7 @@ static void a_capture_armed_after_the_sync_never_parses(void) {
     unsigned forced = 0, fparsed = 0;
     for (size_t from = sync + 2u; from + 2u < np; from += 7u) {   /* sync + 1 IS the alignment */
         const size_t n = armed_at(np, from, 520u, 140u, 13u + from, words + 1);
-        words[0] = 44000u;
+        words[0] = 3000u;
         words[1] = 16u * 2000u - 520u;                   /* the false sync */
         pnet_rx_t r;
         pnet_rx_init(&r, capbuf, sizeof capbuf);
@@ -348,7 +353,7 @@ static void the_hunt_refuses_only_long_gaps_and_ends(void) {
     for (unsigned i = 0; i < sizeof pass / sizeof pass[0]; i++) {
         pnet_rx_t r;
         pnet_rx_init(&r, capbuf, sizeof capbuf);
-        pnet_rx_feed(&r, 44000u);
+        pnet_rx_feed(&r, 3000u);
         pnet_rx_feed(&r, 2u * 2000u - 520u);
         pnet_rx_feed(&r, pass[i]);
         CHECK(!r.hunt_failed && !r.sync_ok, "hunted through");
@@ -360,7 +365,7 @@ static void the_hunt_refuses_only_long_gaps_and_ends(void) {
     for (unsigned i = 0; i < sizeof bad / sizeof bad[0]; i++) {
         pnet_rx_t r;
         pnet_rx_init(&r, capbuf, sizeof capbuf);
-        pnet_rx_feed(&r, 44000u);
+        pnet_rx_feed(&r, 3000u);
         for (int k = 0; k < 5; k++) pnet_rx_feed(&r, 2u * 2000u - 520u);
         pnet_rx_feed(&r, bad[i]);
         CHECK(r.hunt_failed && !r.sync_ok, "refused past the 17-cell window");
@@ -372,7 +377,7 @@ static void the_hunt_refuses_only_long_gaps_and_ends(void) {
     }
     pnet_rx_t r;                                         /* the hunt is capped */
     pnet_rx_init(&r, capbuf, sizeof capbuf);
-    pnet_rx_feed(&r, 44000u);
+    pnet_rx_feed(&r, 3000u);
     for (uint32_t k = 0; k < PNET_RX_HUNT_MAX; k++) pnet_rx_feed(&r, 2u * 2000u - 520u);
     CHECK(!r.hunt_failed, "the cap itself is hunted");
     pnet_rx_feed(&r, 2u * 2000u - 520u);
@@ -381,11 +386,132 @@ static void the_hunt_refuses_only_long_gaps_and_ends(void) {
     CHECK(!r.sync_ok && pnet_rx_bytes(&r) == 0, "no sync after the cap");
 }
 
+/*
+ * BENCH FIX 3 (2026-10-10). The to-board write has no lead-in: Paula starts NetLoop's buffer at
+ * 00 01 00 01, and the arm lands ~20-30 us late -- mostly between the sync's two pulses. These place
+ * the arm in TIME: edge i is at pulse i's cell x 2000 ns + its jitter; word 0 is the arm to the
+ * first falling edge after it (0 when armed inside a pulse's low time, as flux_in pushes at once
+ * and then counts the next interval from the rising edge); later words are edge to edge less pw.
+ */
+static int64_t edge_ns[140000];
+
+static size_t armed_at_time(size_t np, int64_t t_arm, uint32_t pw, uint32_t jit, uint32_t seed,
+                            uint32_t *out) {
+    for (size_t i = 0; i < np; i++) {
+        seed = seed * 1103515245u + 12345u;
+        const int32_t j = jit ? (int32_t)((seed >> 16) % (2u * jit + 1u)) - (int32_t)jit : 0;
+        edge_ns[i] = (int64_t)pulses[i] * PNET_CELL_NS + j;
+    }
+    size_t k = 0, i = 0;
+    while (i < np && edge_ns[i] + (int64_t)pw <= t_arm) i++;    /* edges whose pulse is over */
+    if (i == np) return 0;
+    if (edge_ns[i] <= t_arm) out[k++] = 0u;                     /* armed in pulse i's low time */
+    else out[k++] = (uint32_t)(edge_ns[i] - t_arm);
+    for (i++; i < np; i++) out[k++] = (uint32_t)(edge_ns[i] - edge_ns[i - 1u] - (int64_t)pw);
+    return k;
+}
+
+static const lead_t no_lead = {"no lead-in", NULL, 0};
+
+/* (a) armed before the sync's first pulse: the measured sync, not implied. */
+static void armed_before_pulse_1_syncs_by_measure(void) {
+    size_t wn, sync;
+    const size_t np = lead_pulses(&no_lead, &wn, &sync);
+    const uint32_t pws[] = {300u, 520u, 1200u};
+    const int64_t before[] = {-30000, -12000, -8000, -3000, -500, -50};
+    for (unsigned pi = 0; pi < 3; pi++)
+        for (unsigned ai = 0; ai < sizeof before / sizeof before[0]; ai++) {
+            pnet_rx_t r;
+            pnet_rx_init(&r, capbuf, sizeof capbuf);
+            const size_t n = armed_at_time(np, before[ai] - 140, pws[pi], 140u, 5u + ai, words);
+            feed_all(&r, words, n);
+            CHECK(decodes_and_parses(&r, wn) && !r.implied && r.hunt_n == 0, "measured sync");
+        }
+}
+
+/* (b) armed between the two sync pulses, word 0 >= PNET_RX_IMPLIED_LEAD_NS: the implied sync, and
+ * the batch byte for byte. Also armed inside pulse 1's low time: word 1 is then the sync itself. */
+static void armed_between_the_sync_pulses_syncs_by_implication(void) {
+    size_t wn, sync;
+    const size_t np = lead_pulses(&no_lead, &wn, &sync);
+    const uint32_t pws[] = {300u, 520u, 1200u}, jits[] = {0u, 140u};
+    unsigned implied = 0, runs = 0, bad = 0;
+    for (unsigned pi = 0; pi < 3; pi++)
+        for (unsigned ji = 0; ji < 2; ji++)
+            /* the arm from just after pulse 1 ends to 8 us (+ jitter) before pulse 2 */
+            for (int64_t t = (int64_t)pws[pi] + 2 * jits[ji] + 1;
+                 t <= 32000 - (int64_t)PNET_RX_IMPLIED_LEAD_NS - 2 * (int64_t)jits[ji]; t += 997) {
+                pnet_rx_t r;
+                pnet_rx_init(&r, capbuf, sizeof capbuf);
+                feed_all(&r, words, armed_at_time(np, t, pws[pi], jits[ji], 9u + (uint32_t)t, words));
+                runs++;
+                implied += r.implied;
+                if (!decodes_and_parses(&r, wn) || !r.implied) {
+                    if (bad++ < 3) printf("    pw %u jit %u arm %lld: lead %u sync_ok %d imp %d\n",
+                                          (unsigned)pws[pi], (unsigned)jits[ji], (long long)t,
+                                          (unsigned)r.lead_ns, r.sync_ok, r.implied);
+                }
+                CHECK(r.pw_ns >= (int32_t)pws[pi] - 280 && r.pw_ns <= (int32_t)pws[pi] + 280,
+                      "pw from the first data interval");
+            }
+    printf("    %u arms between the sync pulses, %u implied\n", runs, implied);
+    CHECK(runs > 100u && bad == 0, "every arm between the pulses decodes, by implication");
+    for (unsigned pi = 0; pi < 3; pi++) {                /* inside pulse 1's low time */
+        pnet_rx_t r;
+        pnet_rx_init(&r, capbuf, sizeof capbuf);
+        feed_all(&r, words, armed_at_time(np, (int64_t)pws[pi] / 2, pws[pi], 0u, 1u, words));
+        CHECK(decodes_and_parses(&r, wn) && !r.implied, "armed in pulse 1: the measured sync");
+    }
+}
+
+/* (c) armed between the pulses but under PNET_RX_IMPLIED_LEAD_NS before pulse 2: not implied. It
+ * HUNTS (the magic's 2,2,2,4,2... are all short), and ends refused at an 18+ cell gap, or with no
+ * sync, or on a false 16-cell sync the header refuses: it never parses. */
+static void armed_too_close_to_pulse_2_hunts_and_never_parses(void) {
+    size_t wn, sync;
+    const size_t np = lead_pulses(&no_lead, &wn, &sync);
+    const uint32_t pws[] = {300u, 520u, 1200u};
+    unsigned runs = 0, parsed = 0, failed = 0;
+    for (unsigned pi = 0; pi < 3; pi++)
+        for (int64_t lead = 300; lead < (int64_t)PNET_RX_IMPLIED_LEAD_NS - 300; lead += 500) {
+            pnet_rx_t r;
+            pnet_rx_init(&r, capbuf, sizeof capbuf);
+            const size_t n = armed_at_time(np, 32000 - lead, pws[pi], 0u, 1u, words);
+            feed_all(&r, words, n);
+            runs++;
+            CHECK(!r.implied, "not implied under the threshold");
+            failed += r.hunt_failed;
+            pnet_hdr_t h;
+            parsed += r.sync_ok && pnet_parse_hdr_from_amiga(capbuf, pnet_rx_bytes(&r), &h) == PNET_OK;
+        }
+    printf("    %u arms too close to pulse 2: %u refused in the hunt, %u parsed\n", runs, failed, parsed);
+    CHECK(parsed == 0, "an arm too close to pulse 2 never parses");
+}
+
+/* (d) armed anywhere in the data, in time steps: may hunt or be implied, never parses. */
+static void armed_in_the_data_never_parses_implied_or_not(void) {
+    size_t wn, sync;
+    const size_t np = lead_pulses(&no_lead, &wn, &sync);
+    unsigned runs = 0, implied = 0, parsed = 0;
+    const int64_t end = (int64_t)pulses[np - 2u] * PNET_CELL_NS;
+    for (int64_t t = 32000 + 600; t < end; t += 1373) {
+        pnet_rx_t r;
+        pnet_rx_init(&r, capbuf, sizeof capbuf);
+        feed_all(&r, words, armed_at_time(np, t, 520u, 140u, 21u + (uint32_t)t, words));
+        runs++;
+        implied += r.implied;
+        pnet_hdr_t h;
+        parsed += r.sync_ok && pnet_parse_hdr_from_amiga(capbuf, pnet_rx_bytes(&r), &h) == PNET_OK;
+    }
+    printf("    %u data arms: %u implied, %u parsed\n", runs, implied, parsed);
+    CHECK(runs > 3000u && implied > 0u && parsed == 0, "no data arm parses, implied ones included");
+}
+
 int main(void) {
     RUN(bytes_after_the_sync_come_back);
     RUN(jitter_does_not_move_a_bit);
     RUN(a_batch_survives_flux_and_parses);
-    RUN(a_capture_that_missed_the_first_sync_pulse_is_refused);
+    RUN(a_capture_that_missed_the_first_sync_pulse_is_implied);
     RUN(a_long_gap_is_counted_and_clamped);
     RUN(a_full_buffer_says_so);
     RUN(a_late_capture_is_refused_whatever_the_pulse_width);
@@ -396,5 +522,9 @@ int main(void) {
     RUN(a_long_gap_before_the_sync_is_refused);
     RUN(a_capture_armed_after_the_sync_never_parses);
     RUN(the_hunt_refuses_only_long_gaps_and_ends);
+    RUN(armed_before_pulse_1_syncs_by_measure);
+    RUN(armed_between_the_sync_pulses_syncs_by_implication);
+    RUN(armed_too_close_to_pulse_2_hunts_and_never_parses);
+    RUN(armed_in_the_data_never_parses_implied_or_not);
     return REPORT();
 }

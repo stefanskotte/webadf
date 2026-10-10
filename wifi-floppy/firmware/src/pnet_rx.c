@@ -19,18 +19,25 @@ void pnet_rx_feed(pnet_rx_t *r, uint32_t ns) {
     if (w == 0) { r->lead_ns = ns; return; }          // arm -> first edge: not an interval
     if (r->hunt_failed) return;
     const bool sync = in(ns, PNET_RX_SYNC_MIN_NS, PNET_RX_SYNC_MAX_NS);
-    /* The hunt (pnet_rx.h). bit == 0 after the sync means nothing is decoded yet, so a second
-     * 16-cell interval there replaces the first (data opens with a 2-cell interval). */
-    if (!r->sync_ok || (r->bit == 0u && sync)) {
+    if (w == 1 && r->lead_ns >= PNET_RX_IMPLIED_LEAD_NS &&
+        in(ns, PNET_RX_TWO_MIN_NS, PNET_RX_TWO_MAX_NS)) {
+        /* The implied sync (pnet_rx.h): the first edge was the sync's closing pulse, and this
+         * interval is the first data interval -- decoded below, as 2 cells. */
+        r->sync_ok = r->implied = true;
+        r->sync_ns = ns;
+        r->pw_ns = (int32_t)(2u * PNET_CELL_NS) - (int32_t)ns;
+    } else if (!r->sync_ok || (r->bit == 0u && sync)) {
+        /* The hunt (pnet_rx.h). bit == 0 after the sync means nothing is decoded yet, so a second
+         * 16-cell interval there replaces the first (data opens with a 2-cell interval). */
         r->sync_ns = ns;
         if (sync) {
-            if (r->sync_ok) r->hunt_n++;               // the first "sync" was the lead's last gap
+            if (r->sync_ok) r->hunt_n++;                   // the first "sync" was the lead's last gap
             r->sync_ok = true;
             r->pw_ns = (int32_t)(PNET_SYNC_CELLS * PNET_CELL_NS) - (int32_t)ns;
             return;
         }
         if (++r->hunt_n > PNET_RX_HUNT_MAX || ns > PNET_RX_GAP17_MAX_NS)
-            r->hunt_failed = true;                     // refused for good; sync_ok stays false
+            r->hunt_failed = true;                         // refused for good; sync_ok stays false
         return;
     }
     if (r->overflowed) return;

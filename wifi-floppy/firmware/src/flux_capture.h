@@ -94,10 +94,11 @@ typedef struct {
     const uint8_t *bytes;     /* from the first bit after the 00 01 00 01 sync */
     uint32_t nbytes;
     uint32_t words;           /* PIO words, the lead included */
-    uint32_t lead_ns;         /* word 0: arm to first edge -- a late arm shows here */
+    uint32_t lead_ns;         /* word 0: arm to first edge (X is reset on a raw arm) */
     uint32_t sync_ns;         /* the interval that ended the sync hunt: taken or refused */
     int32_t  pw_ns;
     uint32_t hunt_n;          /* intervals hunted through before it (pnet_rx.h) */
+    bool     implied;         /* armed between the sync's pulses: the sync was implied (pnet_rx.h) */
     bool     sync_ok;
     bool     overflowed;
     uint32_t out_of_range;

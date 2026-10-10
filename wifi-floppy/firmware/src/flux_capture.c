@@ -146,8 +146,13 @@ void flux_capture_arm(void) {
     // O(1): pnet_rx clears the buffer lazily, from the loop, as its bits land (pnet_rx.h). A 32 KB
     // memset here cost ~55-95 us in this ISR before the PIO below was enabled -- against a first
     // sync pulse ~32 us after Paula starts the write (final review, Important 2).
-    if (raw) pnet_rx_init(&raw_rx, mfm_buf, sizeof mfm_buf);
-    else
+    if (raw) {
+        pnet_rx_init(&raw_rx, mfm_buf, sizeof mfm_buf);
+        // pio_sm_restart keeps X, so flux_in would count on from the last capture's stale count
+        // and word 0 would not be arm -> first edge. The implied sync reads word 0 (pnet_rx.h,
+        // bench fix 3), so a raw arm counts from 0. (The SM is disabled: exec runs it at once.)
+        pio_sm_exec(cap_pio, cap_sm, pio_encode_set(pio_x, 0));
+    } else
 #endif
     flux_bits_init(&bits, mfm_buf, sizeof mfm_buf);
     d_max_backlog = d_max_gap_ms = 0;
@@ -270,6 +275,7 @@ bool flux_capture_take_raw(flux_capture_raw_t *out) {
     out->sync_ns      = raw_rx.sync_ns;
     out->pw_ns        = raw_rx.pw_ns;
     out->hunt_n       = raw_rx.hunt_n;
+    out->implied      = raw_rx.implied;
     out->sync_ok      = raw_rx.sync_ok;
     out->overflowed   = raw_rx.overflowed;
     out->out_of_range = raw_rx.out_of_range;
