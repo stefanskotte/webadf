@@ -20,6 +20,10 @@
 #include "pnet_frame.h"
 
 #define PNET_ECHO_BYTES 16384u   /* one half of the PSRAM echo store (main.c) */
+/* DF1's INDEX pulse while it streams the echo: its restart and its wrap (main.c). Shorter than
+ * the echo's 1.92 ms lead-in (120 B): trackdisk arms INDEXSYNC ~1.5-2 ms after the side change and
+ * starts on the next edge, which under a 2 ms pulse was the pulse's END -- inside the sync. */
+#define PNET_INDEX_PULSE_US 200u
 
 typedef enum { PNET_DF1_DISK = 0, PNET_DF1_SILENT, PNET_DF1_ECHO } pnet_df1_t;
 

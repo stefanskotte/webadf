@@ -607,6 +607,14 @@ static bool start_streaming(unsigned d, const uint8_t *mfm, uint32_t bit_count) 
     return true;
 }
 
+#if WF_PNET_LOOP
+// The loopback's INDEX timing (TEST build). g_pnet_echo_live: DF1's stream is the cylinder-77
+// echo, so its wrap pulse is PNET_INDEX_PULSE_US wide. g_pnet_idx_end_us: when drive 1's latest
+// INDEX pulse ends (time_us_32), to tell a restart that cannot make a new edge. g_pnet_side_us:
+// the latest SIDE edge (gpio_isr), for the SIDE -> restart INDEX latency. Stores only in ISRs.
+static volatile bool     g_pnet_echo_live;
+static volatile uint32_t g_pnet_idx_end_us, g_pnet_side_us;
+#endif
 // index pulse + wrap: retrigger DMA each revolution. `ud` is the drive.
 static int64_t index_off(alarm_id_t id, void *ud) {
     (void)id;
@@ -645,7 +653,15 @@ static void __isr __not_in_flash_func(dma_irq)(void) {
         dma_channel_set_read_addr((uint)s->dma, s->words, false);
         dma_channel_set_trans_count((uint)s->dma, s->count, true);
         bus_out_set_drive(d, PIN_INDEX, true);           // ~2 ms index at wrap
+#if WF_PNET_LOOP
+        // DF1 streaming the echo: the short pulse, so a read armed just after a wrap does not
+        // wait out a pulse longer than the lead-in (see PNET_INDEX_PULSE_US). DF0 and disks: 2 ms.
+        const uint32_t idx_us = (d == 1 && g_pnet_echo_live) ? PNET_INDEX_PULSE_US : INDEX_PULSE_US;
+        if (d == 1) g_pnet_idx_end_us = time_us_32() + idx_us;
+        add_alarm_in_us(idx_us, index_off, (void *)(uintptr_t)d, true);
+#else
         add_alarm_in_us(INDEX_PULSE_US, index_off, (void *)(uintptr_t)d, true);
+#endif
         s->rev_count++;
         // ONCE PER STREAM, NOT ONCE PER REVOLUTION, and the difference is not
         // cosmetic. At 300 RPM a per-revolution record is a permanent ~5 Hz
@@ -1321,6 +1337,9 @@ static void __isr gpio_isr(uint gpio, uint32_t events) {
         wf_trace(WF_EV_WGATE, writing ? 1u : 0u, (uint32_t)(cur_cyl[0] * 2 + cur_side));
     } else if (gpio == PIN_SIDE) {
         cur_side = gpio_get(PIN_SIDE) ? 0 : 1;       // low = side 1
+#if WF_PNET_LOOP
+        g_pnet_side_us = time_us_32();               // a store only: the restart latency's start
+#endif
         // SIDE is one line for every drive: each configured drive's request moves.
         for (unsigned d = 0; d < n_drives; d++) want_track[d] = cur_cyl[d] * 2 + cur_side;
         if (!WF_BUS_SNIFF) wf_trace(WF_EV_SIDE, (uint32_t)cur_side, (uint32_t)want_track[0]);
@@ -2906,6 +2925,14 @@ static bool     g_pnet_reject_logged;            // one detailed refusal per win
 typedef struct { uint32_t min, max, n; uint64_t sum; } pnet_lead_t;
 static pnet_lead_t g_pnet_lead[2] = {{UINT32_MAX, 0, 0, 0}, {UINT32_MAX, 0, 0, 0}};
 static uint32_t    g_pnet_implied;
+// The echo's stream restarts over one 5 s window, by cause: the head came back to side 1 from
+// side 0 (side), a commit rebuilt it in place (commit), anything else (other: a step onto the
+// cylinder, a remount). noop: restarts whose INDEX was already asserted, so no new edge. And the
+// max us from the SIDE edge to the restart's INDEX, side returns only. g_pnet_rst_commit: the
+// loop's commit asked for this restart.
+enum { PNET_RST_SIDE, PNET_RST_COMMIT, PNET_RST_OTHER, PNET_RST_N };
+static uint32_t g_pnet_rst[PNET_RST_N], g_pnet_rst_noop, g_pnet_side_idx_max;
+static bool     g_pnet_rst_commit;
 
 static void pnet_lead_add(pnet_lead_t *l, uint32_t ns) {
     if (ns > PNET_LEAD_SAT) ns = PNET_LEAD_SAT;
@@ -2976,9 +3003,13 @@ static bool pnet_take_capture(void) {
 static void pnet_serve_df1(int32_t tok, int *loaded) {
     const int want = want_track[1];
     const pnet_df1_t act = pnet_df1_for_track(want);
-    if (act == PNET_DF1_DISK) { serve_drive(1, tok, loaded); return; }
+    if (act == PNET_DF1_DISK) { g_pnet_echo_live = false; serve_drive(1, tok, loaded); return; }
     if (want == *loaded) return;
+    const int was = *loaded;
+    const bool commit = g_pnet_rst_commit;
+    g_pnet_rst_commit = false;
     *loaded = want;
+    g_pnet_echo_live = false;                    // set again only once the echo streams
     stream_stop(1);                              // the DMA reads track_words1: stop it first
     if (act == PNET_DF1_SILENT) return;          // side 0: the Amiga writes, nothing to read
     const uint64_t t0 = time_us_64();
@@ -3001,10 +3032,24 @@ static void pnet_serve_df1(int32_t tok, int *loaded) {
         return;
     }
     if (!start_streaming(1, out, (uint32_t)bytes * 8u)) return;
+    g_pnet_echo_live = true;
     // INDEX now, as PaulaNET does at the start of every transmission: the Amiga's INDEXSYNC read
     // then starts at the lead-in instead of one whole buffer later (dma_irq's INDEX is at the wrap).
+    // Short (PNET_INDEX_PULSE_US): trackdisk arms INDEXSYNC ~1.5-2 ms after the side change and
+    // waits for a NEW edge; a 2 ms pulse outlasted the 1.92 ms lead-in, so that edge was the
+    // pulse's end and the DMA started inside the sync. Already asserted: no new edge (noop).
+    const uint32_t now32 = time_us_32();
+    if ((int32_t)(g_pnet_idx_end_us - now32) > 0) g_pnet_rst_noop++;
+    g_pnet_idx_end_us = now32 + PNET_INDEX_PULSE_US;
     bus_out_set_drive(1, PIN_INDEX, true);
-    add_alarm_in_us(INDEX_PULSE_US, index_off, (void *)(uintptr_t)1u, true);
+    add_alarm_in_us(PNET_INDEX_PULSE_US, index_off, (void *)(uintptr_t)1u, true);
+    const unsigned cause = commit ? PNET_RST_COMMIT
+                         : was == PNET_TRACK_IN ? PNET_RST_SIDE : PNET_RST_OTHER;
+    g_pnet_rst[cause]++;
+    if (cause == PNET_RST_SIDE) {
+        const uint32_t lat = now32 - g_pnet_side_us;
+        if (lat > g_pnet_side_idx_max) g_pnet_side_idx_max = lat;
+    }
     const uint32_t us = (uint32_t)(time_us_64() - t0);
     if (us > g_pnet_build_max) g_pnet_build_max = us;
     g_pnet_build_sum += us;
@@ -3052,6 +3097,14 @@ static void pnet_log_summary(void) {
                 (unsigned long)(b[PNET_E_FRAMES] + b[PNET_E_FRAME_SIZE]),
                 (unsigned long)b[PNET_E_RLE], (unsigned long)b[PNET_E_FULL],
                 (unsigned long)b[PNET_E_RANGE]);
+    // Restarts of the echo this window by cause, the no-op INDEX pulses among them, and the max
+    // SIDE edge -> restart INDEX latency (us). Saturated so the line fits WF_LOG_MSG.
+#define PNET_SAT(v, m) ((unsigned long)((v) > (m) ? (m) : (v)))
+    wf_logf(WF_INFO, "pnet: restart side %lu commit %lu other %lu noop %lu side-idx max us %lu",
+            PNET_SAT(g_pnet_rst[PNET_RST_SIDE], 99999u), PNET_SAT(g_pnet_rst[PNET_RST_COMMIT], 99999u),
+            PNET_SAT(g_pnet_rst[PNET_RST_OTHER], 99999u), PNET_SAT(g_pnet_rst_noop, 99999u),
+            PNET_SAT(g_pnet_side_idx_max, 9999999u));
+#undef PNET_SAT
     if (lost != last_lost)
         wf_logf(WF_WARN, "pnet: lost %lu batches to DF0 writes (%lu in all)",
                 (unsigned long)(lost - last_lost), (unsigned long)lost);
@@ -3059,6 +3112,8 @@ static void pnet_log_summary(void) {
     g_pnet_dec_max = g_pnet_dec_sum = g_pnet_decs = g_pnet_ready_max = 0;
     g_pnet_build_max = g_pnet_build_sum = g_pnet_builds = g_pnet_backlog_max = 0;
     g_pnet_implied = 0;
+    for (unsigned i = 0; i < PNET_RST_N; i++) g_pnet_rst[i] = 0;
+    g_pnet_rst_noop = g_pnet_side_idx_max = 0;
     for (unsigned i = 0; i < 2; i++) g_pnet_lead[i] = (pnet_lead_t){UINT32_MAX, 0, 0, 0};
 }
 #endif
@@ -3774,7 +3829,12 @@ int main(void) {
         g_pnet_df1_mounted = df1_mounted;
         // A finished batch first: its echo may be read next. A commit while the head is already
         // on side 1 (SIDE flipped since the capture ended) rebuilds the echo there.
-        if (pnet_take_capture() && want_track[1] == PNET_TRACK_OUT) loaded1 = -1;
+        // Only an echo already served needs the -1: any other loaded1 differs from 155 anyway,
+        // and keeping it lets pnet_serve_df1 see a side return as one (restart-by-cause count).
+        if (pnet_take_capture() && want_track[1] == PNET_TRACK_OUT && loaded1 == PNET_TRACK_OUT) {
+            loaded1 = -1;
+            g_pnet_rst_commit = true;
+        }
         if (df1_mounted) pnet_serve_df1(df1_seen_tok, &loaded1);
         pnet_log_summary();
 #else
