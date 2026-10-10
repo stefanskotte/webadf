@@ -3022,11 +3022,85 @@ static bool pnet_take_capture(void) {
     return true;
 }
 
+// track_words1 holds the latest commit's echo, packed as the DMA reads it (g_pnet_prepared_words
+// words). Cleared when anything else fills the buffer: a disk track (serve_drive).
+static bool     g_pnet_prepared;
+static uint32_t g_pnet_prepared_words;
+static uint32_t g_pnet_prep_max, g_pnet_prep_sum, g_pnet_preps;
+
+// Builds the echo for the latest commit into track_words1 and packs it into words, with DF1's
+// stream stopped (the DMA reads that buffer). Measured 2026-10-10 at N=8000: building at the
+// SIDE edge took ~3.7 ms, and the Amiga's payload reads found the sync 195-305 bytes in (the
+// read's margin is ~184), so the build moves here, to the commit, while the head is on side 0.
+static bool pnet_prepare_echo(void) {
+    const uint64_t t0 = time_us_64();
+    g_pnet_echo_live = false;
+    g_pnet_prepared = false;
+    stream_stop(1);
+    pnet_frame_ref_t f[PNET_MAX_FRAMES];
+    const uint8_t *p = g_pnet_echo[g_pnet_half];
+    for (unsigned i = 0; i < g_pnet.nframes; i++) {
+        f[i].data = p;
+        f[i].len = g_pnet.len[i];
+        p += g_pnet.len[i];
+    }
+    // Built as bytes straight into the word buffer, then repacked IN PLACE. That is safe: the
+    // loop reads bytes 4i..4i+3 and only then writes word i, and no later word reads a byte
+    // before 4(i+1). The builder pads to whole words.
+    uint8_t *out = (uint8_t *)track_words1;
+    const size_t bytes = pnet_build_to_amiga(out, sizeof track_words1, g_pnet.last_amiga,
+                                             g_pnet.pico, 0, f, g_pnet.nframes);
+    if (bytes == 0) {
+        wf_logf(WF_ERR, "pnet: an echo of %u frames does not fit DF1's %u B buffer -- not served",
+                (unsigned)g_pnet.nframes, (unsigned)sizeof track_words1);
+        return false;
+    }
+    const uint32_t nwords = ((uint32_t)bytes + 3u) / 4u;
+    for (uint32_t i = 0; i < nwords; i++) {
+        uint32_t w = 0;
+        for (int b = 0; b < 4; b++) w = (w << 8) | out[i * 4 + b];
+        track_words1[i] = w;
+    }
+    g_pnet_prepared_words = nwords;
+    g_pnet_prepared = true;
+    const uint32_t us = (uint32_t)(time_us_64() - t0);
+    if (us > g_pnet_prep_max) g_pnet_prep_max = us;
+    g_pnet_prep_sum += us;
+    g_pnet_preps++;
+    return true;
+}
+
+// start_streaming's DMA start for the prepared, already packed echo (no repack).
+static bool pnet_stream_prepared(void) {
+    stream_t *s = &g_stream[1];
+    stream_stop(1);
+    if (s->dma < 0 || s->words != track_words1) return false;
+    s->prev_revs = s->rev_count;
+    s->rev_count = 0;
+    s->index_traced = false;
+    s->count = g_pnet_prepared_words;
+    const uint ch = (uint)s->dma;
+    dma_channel_config c = dma_channel_get_default_config(ch);
+    channel_config_set_transfer_data_size(&c, DMA_SIZE_32);
+    channel_config_set_read_increment(&c, true);
+    channel_config_set_write_increment(&c, false);
+    channel_config_set_dreq(&c, pio_get_dreq(pio, s->sm, true));
+    dma_channel_configure(ch, &c, &pio->txf[s->sm], s->words, s->count, true);
+    dma_channel_set_irq0_enabled(ch, true);
+    s->live = true;
+    return true;
+}
+
 // serve_drive(1, ...) for this build: cylinder 77 is the loopback, every other track the disk.
 static void pnet_serve_df1(int32_t tok, int *loaded) {
     const int want = want_track[1];
     const pnet_df1_t act = pnet_df1_for_track(want);
-    if (act == PNET_DF1_DISK) { g_pnet_echo_live = false; serve_drive(1, tok, loaded); return; }
+    if (act == PNET_DF1_DISK) {
+        g_pnet_echo_live = false;
+        g_pnet_prepared = false;                 // serve_drive refills track_words1
+        serve_drive(1, tok, loaded);
+        return;
+    }
     if (want == *loaded) return;
     const int was = *loaded;
     const bool commit = g_pnet_rst_commit;
@@ -3036,25 +3110,10 @@ static void pnet_serve_df1(int32_t tok, int *loaded) {
     stream_stop(1);                              // the DMA reads track_words1: stop it first
     if (act == PNET_DF1_SILENT) return;          // side 0: the Amiga writes, nothing to read
     const uint64_t t0 = time_us_64();
-    pnet_frame_ref_t f[PNET_MAX_FRAMES];
-    const uint8_t *p = g_pnet_echo[g_pnet_half];
-    for (unsigned i = 0; i < g_pnet.nframes; i++) {
-        f[i].data = p;
-        f[i].len = g_pnet.len[i];
-        p += g_pnet.len[i];
-    }
-    // Built as bytes straight into the word buffer, then start_streaming repacks it IN PLACE.
-    // That is safe: its loop reads bytes 4i..4i+3 and only then writes word i, and no later
-    // word reads a byte before 4(i+1). The builder pads to whole words.
-    uint8_t *out = (uint8_t *)track_words1;
-    const size_t bytes = pnet_build_to_amiga(out, sizeof track_words1, g_pnet.last_amiga,
-                                             g_pnet.pico, 0, f, g_pnet.nframes);
-    if (bytes == 0) {
-        wf_logf(WF_ERR, "pnet: an echo of %u frames does not fit DF1's %u B buffer -- not served",
-                (unsigned)g_pnet.nframes, (unsigned)sizeof track_words1);
-        return;
-    }
-    if (!start_streaming(1, out, (uint32_t)bytes * 8u)) return;
+    // Normally the commit already built and packed this echo (pnet_prepare_echo): the restart
+    // only starts the DMA, so how long after the SIDE edge the echo starts does not grow with N.
+    if (!g_pnet_prepared && !pnet_prepare_echo()) return;
+    if (!pnet_stream_prepared()) return;
     g_pnet_echo_live = true;
     // INDEX now, as PaulaNET does at the start of every transmission: the Amiga's INDEXSYNC read
     // then starts at the lead-in instead of one whole buffer later (dma_irq's INDEX is at the wrap).
@@ -3168,6 +3227,10 @@ static void pnet_log_summary(void) {
             PNET_SAT(pre[0], 99999u), PNET_SAT(pre[1], 99999u), PNET_SAT(pre[2], 99999u),
             PNET_SAT(pre[3], 99999u), PNET_SAT(pre[4], 99999u), PNET_SAT(pre[5], 99999u));
 #undef PNET_SAT
+    // The echo's build at the commit (pnet_prepare_echo), off the SIDE -> INDEX path.
+    wf_logf(WF_INFO, "pnet: prep n %lu max us %lu avg %lu", (unsigned long)g_pnet_preps,
+            (unsigned long)g_pnet_prep_max,
+            (unsigned long)(g_pnet_preps ? g_pnet_prep_sum / g_pnet_preps : 0));
     if (lost != last_lost)
         wf_logf(WF_WARN, "pnet: lost %lu batches to DF0 writes (%lu in all)",
                 (unsigned long)(lost - last_lost), (unsigned long)lost);
@@ -3175,6 +3238,7 @@ static void pnet_log_summary(void) {
     g_pnet_dec_max = g_pnet_dec_sum = g_pnet_decs = g_pnet_ready_max = 0;
     g_pnet_build_max = g_pnet_build_sum = g_pnet_builds = g_pnet_backlog_max = 0;
     g_pnet_implied = 0;
+    g_pnet_prep_max = g_pnet_prep_sum = g_pnet_preps = 0;
     for (unsigned i = 0; i < PNET_RST_N; i++) g_pnet_rst[i] = 0;
     g_pnet_rst_noop = g_pnet_side_idx_max = 0;
     for (unsigned i = 0; i < 2; i++) g_pnet_lead[i] = (pnet_lead_t){UINT32_MAX, 0, 0, 0};
@@ -3894,9 +3958,15 @@ int main(void) {
         // on side 1 (SIDE flipped since the capture ended) rebuilds the echo there.
         // Only an echo already served needs the -1: any other loaded1 differs from 155 anyway,
         // and keeping it lets pnet_serve_df1 see a side return as one (restart-by-cause count).
-        if (pnet_take_capture() && want_track[1] == PNET_TRACK_OUT && loaded1 == PNET_TRACK_OUT) {
-            loaded1 = -1;
-            g_pnet_rst_commit = true;
+        if (pnet_take_capture()) {
+            if (want_track[1] == PNET_TRACK_OUT && loaded1 == PNET_TRACK_OUT) {
+                loaded1 = -1;
+                g_pnet_rst_commit = true;
+            }
+            // Build the echo now, not at the SIDE edge. Only with DF1 on cylinder 77 (154, 155,
+            // or a restart pending): stopping a disk track's stream would leave it stopped.
+            if (df1_mounted && (loaded1 == PNET_TRACK_IN || loaded1 == PNET_TRACK_OUT || loaded1 == -1))
+                pnet_prepare_echo();
         }
         if (df1_mounted) pnet_serve_df1(df1_seen_tok, &loaded1);
         pnet_prearm_step();                      // after the take: a taken batch frees the capture
