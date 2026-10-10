@@ -14,7 +14,13 @@
  * header read, a seek back to side 0, then a read sized from the header. READS=1 reads once,
  * sized for the echo NetLoop expects. Times come from timer.device's E-clock.
  *
- *   NetLoop [N=<bytes>] [ROUNDS=<n>] [READS=1|2] [SELFTEST] [BENCH]
+ *   NetLoop [N=<bytes>] [ROUNDS=<n>] [READS=1|2] [DIAG] [SELFTEST] [BENCH]
+ *
+ * The summary splits the no-sync and bad-header retries by read (the 1,024-byte header read, the
+ * payload read), gives a bad header's kind, and histograms the sync's byte offset per read. DIAG
+ * over-reads each payload read by one echo loop and scans all of it for the sync, so a read that
+ * starts past the sync still finds the next one and shows where it started; the default read
+ * pattern (PaulaNET's driver's) is unchanged without it.
  *
  * SELFTEST: no drive; the codec round trip, then the asm codec against the C reference on this
  * CPU. BENCH: no drive; each codec stage, C and asm, timed with the E-clock (netloop_bench.h).
@@ -76,6 +82,16 @@ static ULONG hz = 709379;
 
 /* unsigned long, not ULONG: this NDK's ULONG is unsigned int, and printf's %lu wants long. */
 static unsigned long c_ioerr, c_nosync, c_badhdr, c_stale, c_rewrites, c_mismatch, c_failed;
+/* Per read kind (0 the header read, 1 the payload read): no sync; bad header by kind (short,
+ * checksum, magic, other); the sync's byte offset in 8-byte bins, the last bin 128 and up. */
+#define RK_HDR 0
+#define RK_PAY 1
+#define BAD_KINDS 4
+#define OFF_BINS 17
+static unsigned long c_nosync_k[2], c_bad_k[2][BAD_KINDS], c_off_k[2][OFF_BINS];
+static BOOL diag;
+static unsigned long late_off[8];   /* DIAG: the first payload-read sync offsets past 127 bytes */
+static unsigned n_late;
 static uint64_t t_write, t_read, t_align, t_build;
 
 static uint64_t ticks(void) {
@@ -100,20 +116,29 @@ static BYTE td_io(UWORD cmd, UBYTE flags, APTR data, ULONG len, ULONG offset) {
     return DoIO((struct IORequest *)td);
 }
 
-/* One INDEXSYNC read of `len` bytes from side 1: aligned, header decoded. 0 = usable. */
-static int read_once(ULONG len, pnet_hdr_t *h, BOOL with_payload, size_t *valid) {
+/* One INDEXSYNC read of `len` bytes from side 1: aligned, header decoded. 0 = usable. The sync
+ * must start in the first SYNC_SCAN bytes, or anywhere with `scan_all` (DIAG payload reads). */
+static int read_once(ULONG len, pnet_hdr_t *h, BOOL with_payload, size_t *valid, BOOL scan_all) {
+    const int rk = with_payload ? RK_PAY : RK_HDR;
     const uint64_t t0 = ticks();
     if (td_io(ETD_RAWREAD, IOTDF_INDEXSYNC, rbuf, len, PNET_TRACK_OUT)) { c_ioerr++; return 1; }
     const uint64_t t1 = ticks();
     t_read += t1 - t0;
-    const long off = pnet_find_sync(rbuf, len, SYNC_SCAN);
-    if (off < 0) { c_nosync++; return 1; }
-    size_t span = with_payload ? len : (size_t)(off >> 3) + PNET_HDR_MFM_BYTES + 1u;
+    const long off = pnet_find_sync(rbuf, len, scan_all ? len : SYNC_SCAN);
+    if (off < 0) { c_nosync++; c_nosync_k[rk]++; return 1; }
+    const unsigned long ob = (unsigned long)off >> 3;
+    c_off_k[rk][ob >= 128u ? OFF_BINS - 1u : ob >> 3]++;
+    if (scan_all && ob >= 128u && n_late < 8u) late_off[n_late++] = ob;
+    size_t span = with_payload ? len : (size_t)ob + PNET_HDR_MFM_BYTES + 1u;
     if (span > len) span = len;
     *valid = pnet_shift_left(rbuf, span, (size_t)off);
-    const int bad = pnet_parse_hdr_to_amiga(rbuf, *valid, h, with_payload) != PNET_OK;
+    const pnet_err_t e = pnet_parse_hdr_to_amiga(rbuf, *valid, h, with_payload);
     t_align += ticks() - t1;
-    if (bad) { c_badhdr++; return 1; }
+    if (e != PNET_OK) {
+        c_badhdr++;
+        c_bad_k[rk][e == PNET_E_SHORT ? 0 : e == PNET_E_CHECKSUM ? 1 : e == PNET_E_MAGIC ? 2 : 3]++;
+        return 1;
+    }
     return 0;
 }
 
@@ -136,15 +161,19 @@ static int read_echo(UBYTE ctr, UBYTE last_pico, const uint16_t *lens, unsigned 
         size_t valid;
         ULONG len;
         if (reads == 2) {
-            if (read_once(HDR_READ, h, FALSE, &valid)) continue;
+            if (read_once(HDR_READ, h, FALSE, &valid, FALSE)) continue;
             if (!nl_echo_answers(h->amiga_ctr, h->pico_ctr, ctr, last_pico)) { c_stale++; continue; }
             td_io(TD_SEEK, 0, NULL, 0, SEEK_TO(PNET_TRACK_IN));   /* as PaulaNET's driver does */
             len = (PNET_LEAD_BYTES + 4u + PNET_HDR_MFM_BYTES + h->data_size + 64u + 1u) & ~1ul;
+            if (diag)   /* one more echo loop */
+                len += PNET_LEAD_BYTES + 4u + PNET_HDR_MFM_BYTES + h->data_size + PNET_TRAIL_BYTES;
         } else {
             len = ((ULONG)pnet_to_amiga_bound(lens, nf) - PNET_TRAIL_BYTES + 32u + 1u) & ~1ul;
+            if (diag) len += (ULONG)pnet_to_amiga_bound(lens, nf);
         }
+        len &= ~1ul;
         if (len > CHIP_BYTES) len = CHIP_BYTES;
-        if (read_once(len, h, TRUE, &valid)) continue;
+        if (read_once(len, h, TRUE, &valid, diag)) continue;
         if (!nl_echo_answers(h->amiga_ctr, h->pico_ctr, ctr, last_pico)) { c_stale++; continue; }
         return check_echo(h, lens, nf, n);
     }
@@ -189,7 +218,7 @@ static BOOL resync(UBYTE *ctr, UBYTE *last_pico) {
     *ctr = 0xFFu;
     *last_pico = 0xFFu;
     td_io(TD_SEEK, 0, NULL, 0, SEEK_TO(PNET_TRACK_IN));   /* onto cylinder 77: WPROT releases */
-    if (read_once(HDR_READ, &h, FALSE, &valid) == 0) {
+    if (read_once(HDR_READ, &h, FALSE, &valid, FALSE) == 0) {
         *ctr = nl_start_ctr(TRUE, h.amiga_ctr);
         *last_pico = h.pico_ctr;
         return TRUE;
@@ -344,13 +373,14 @@ static void cleanup(void) {
 }
 
 int main(void) {
-    LONG args[5] = {0, 0, 0, 0, 0};
-    struct RDArgs *rd = ReadArgs((STRPTR)"N/K/N,ROUNDS/K/N,READS/K/N,SELFTEST/S,BENCH/S", args, NULL);
+    LONG args[6] = {0, 0, 0, 0, 0, 0};
+    struct RDArgs *rd = ReadArgs((STRPTR)"N/K/N,ROUNDS/K/N,READS/K/N,SELFTEST/S,BENCH/S,DIAG/S", args, NULL);
     if (!rd) { PrintFault(IoErr(), (STRPTR)"NetLoop"); return RETURN_FAIL; }
     const unsigned long n = args[0] ? (unsigned long)*(LONG *)args[0] : 64u;
     const unsigned long rounds = args[1] ? (unsigned long)*(LONG *)args[1] : MAX_ROUNDS;
     const unsigned long reads = args[2] ? (unsigned long)*(LONG *)args[2] : 2u;
     const BOOL self = args[3] != 0, bench_only = args[4] != 0;
+    diag = args[5] != 0;
     FreeArgs(rd);
     printf("NetLoop 1.1 -- PaulaNET protocol by RobSmithDev, used with permission\n");
     if (n < 1 || n > MAX_N || rounds < 1 || rounds > MAX_ROUNDS || (reads != 1 && reads != 2)) {
@@ -390,8 +420,12 @@ int main(void) {
     if (one_round(&ctr, &last_pico, n, reads, 1, &took) != 0)    /* warm-up: motor, seek; not counted */
         printf("warm-up round failed (not counted); the counted rounds follow\n");
     c_ioerr = c_nosync = c_badhdr = c_stale = c_rewrites = c_mismatch = c_failed = 0;
+    memset(c_nosync_k, 0, sizeof c_nosync_k);
+    memset(c_bad_k, 0, sizeof c_bad_k);
+    memset(c_off_k, 0, sizeof c_off_k);
+    n_late = 0;
     t_write = t_read = t_align = t_build = 0;
-    printf("N=%lu ROUNDS=%lu READS=%lu\n", n, rounds, reads);
+    printf("N=%lu ROUNDS=%lu READS=%lu%s\n", n, rounds, reads, diag ? " DIAG" : "");
     unsigned long ok = 0, done = 0;
     uint64_t total = 0;
     for (ULONG i = 0; i < rounds; i++) {
@@ -406,6 +440,23 @@ int main(void) {
     printf("rounds %lu/%lu ok, mismatches %lu, failed %lu\n", ok, rounds, c_mismatch, c_failed);
     printf("retries: stale %lu rewrites %lu nosync %lu badhdr %lu ioerr %lu\n",
            c_stale, c_rewrites, c_nosync, c_badhdr, c_ioerr);
+    static const char *const rk_name[2] = { "hdr", "pay" };
+    for (int k = 0; k < 2; k++)
+        printf("%s read: nosync %lu  badhdr short %lu checksum %lu magic %lu other %lu\n", rk_name[k],
+               c_nosync_k[k], c_bad_k[k][0], c_bad_k[k][1], c_bad_k[k][2], c_bad_k[k][3]);
+    printf("sync byte offset, 8-byte bins:\noff ");
+    for (unsigned i = 0; i + 1u < OFF_BINS; i++) printf("%4u", i * 8u);
+    printf(" 128+\n");
+    for (int k = 0; k < 2; k++) {
+        printf("%s ", rk_name[k]);
+        for (unsigned i = 0; i < OFF_BINS; i++) printf(i + 1u < OFF_BINS ? "%4lu" : " %4lu", c_off_k[k][i]);
+        printf("\n");
+    }
+    if (diag && n_late) {
+        printf("DIAG late payload syncs (byte):");
+        for (unsigned i = 0; i < n_late; i++) printf(" %lu", late_off[i]);
+        printf("\n");
+    }
     const unsigned long kb = nl_tenths((uint64_t)n * ok * hz, total * 1024u);
     const unsigned long kb2 = nl_tenths((uint64_t)n * ok * 2u * hz, total * 1024u);
     printf("one-way %lu.%lu KB/s, both ways %lu.%lu KB/s (1 KB = 1024 B)\n", kb / 10u, kb % 10u,
