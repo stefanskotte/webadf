@@ -2557,8 +2557,11 @@ separately.
 
 - **Disk set "Add disks..." leaves disks in Uncategorized (operator, 2026-10-10).** Disks added to a set from
   inside the set (its "Add disks..." function; seen creating "Workbench 3.2") stay in the library's Uncategorized
-  section; they should move to where the set lives, as dragged-in disks already do. A side agent is on it
-  (worktree branch, not merged).
+  section; they should move to where the set lives, as dragged-in disks already do. **FIXED 2026-10-10 (0bc4f3b):**
+  the cause was not placement (both paths share addDisksToSet) but the dialog listing only the 20 newest titles with
+  no sign of more; all 35 disks of that upload share one created_at, so 13 were never offered. The dialog now says
+  "Showing N titles — there are more." with Show more. The operator's 13 disks (Storage, GlowIcons, HDSetup, ...)
+  still sit in Uncategorized: add them via Add disks… > Show more. No data was changed.
 - **Drop files onto the Amiga's RAM: (operator, 2026-10-09; after PaulaNET works).** A drop zone in the web app that
   copies the dropped files straight into the running Amiga's RAM disk. Needs PaulaNET online first. Shape to
   decide then: a small Amiga-side receiver (started from the driver disk / WBStartup) that the board or the server
