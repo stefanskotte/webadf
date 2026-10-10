@@ -19,7 +19,7 @@ void pnet_rx_feed(pnet_rx_t *r, uint32_t ns) {
     if (w == 0) { r->lead_ns = ns; return; }          // arm -> first edge: not an interval
     if (r->hunt_failed) return;
     const bool sync = in(ns, PNET_RX_SYNC_MIN_NS, PNET_RX_SYNC_MAX_NS);
-    if (w == 1 && r->lead_ns >= PNET_RX_IMPLIED_LEAD_NS &&
+    if (w == 1 && !r->prearmed && r->lead_ns >= PNET_RX_IMPLIED_LEAD_NS &&
         in(ns, PNET_RX_TWO_MIN_NS, PNET_RX_TWO_MAX_NS)) {
         /* The implied sync (pnet_rx.h): the first edge was the sync's closing pulse, and this
          * interval is the first data interval -- decoded below, as 2 cells. */

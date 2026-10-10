@@ -36,6 +36,38 @@ bool pnet_df1_wprot(int cyl);
  * DF1's head is on cylinder 77, side 0. sel0/sel1 are ASSERTED, not pin levels. */
 bool pnet_capture_ours(bool df1_serving, bool sel0, bool sel1, int cyl1, int side);
 
+/*
+ * THE PRE-ARM (2026-10-10). The Amiga's to-board write has no lead-in: sync pulse 1 is ~32 us after
+ * WGATE and pulse 2 ~64 us. Armed from the WGATE ISR the capture starts ~26 us late on average and,
+ * while core0 builds an 8 KB echo, >64 us late -- inside the data, refused. So the capture is armed
+ * AHEAD of the write, from core0's loop, whenever a DF1 batch is the next write the bus can carry:
+ * WDATA is idle while nobody writes, so a pre-armed capture records nothing until the first pulse,
+ * and its first edge is sync pulse 1. The WGATE ISR then CLAIMS it for a DF1 cylinder-77 write, and
+ * CANCELS it on every other assert (a DF0 write above all: DF0 then arms exactly as without it).
+ *
+ * pnet_prearm_decide is the loop's half, evaluated with interrupts off (main.c): nothing in it can
+ * change between the reading and the action.
+ */
+typedef enum {
+    PNET_PREARM_NONE = 0,   /* nothing to do */
+    PNET_PREARM_ARM,        /* arm the raw capture now, ahead of the write */
+    PNET_PREARM_CANCEL,     /* the conditions are gone: abandon the pre-arm */
+    PNET_PREARM_STRAY       /* edges arrived with no write: abandon it, they are not a batch */
+} pnet_prearm_t;
+
+typedef struct {
+    bool df1_serving;   /* DF1 holds a disk, so its cylinder 77 is the loopback */
+    bool sel0;          /* SEL0 asserted: DF0 is in use */
+    bool wgate;         /* WGATE asserted: a write is on the bus (its ISR decides, never the loop) */
+    bool unpowered;     /* the Amiga's side of the bus is unpowered (bus_power.h) */
+    int  cyl1, side;    /* DF1's head */
+    bool idle;          /* flux_capture_idle(): an arm now destroys no capture */
+    bool prearmed;      /* a pre-arm stands, claimed by no write */
+    bool edges;         /* the standing pre-arm has captured something */
+} pnet_prearm_in_t;
+
+pnet_prearm_t pnet_prearm_decide(const pnet_prearm_in_t *in);
+
 typedef struct {
     uint8_t  last_amiga;               /* 0xFF: nothing taken yet */
     uint8_t  pico;                     /* our batch counter, 0x7F at start (as PaulaNET's) */

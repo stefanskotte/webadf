@@ -50,6 +50,9 @@
  * armed in the data can be implied too, when it lands in a long enough gap before a 2-cell
  * interval: it decodes misaligned and the DataHeader's magic and checksum refuse it.
  *
+ * A PRE-ARMED capture (`prearmed`, 2026-10-10) never implies: it was armed before the write, so its
+ * first edge is the write's first pulse and a 2-cell word 1 is a lead-in, not the magic.
+ *
  * At most PNET_RX_HUNT_MAX intervals are hunted. sync_ns is the interval that ended the hunt,
  * taken or refused. A capture armed in the data hunts too, and may take a 16-cell data gap as the
  * sync: it then decodes misaligned, and the DataHeader's magic and checksum refuse it
@@ -108,6 +111,10 @@ typedef struct {
     bool     sync_ok;       /* synced -- by a measured 16-cell sync or by implication (`implied`);
                              * nothing is decoded otherwise */
     bool     implied;       /* the sync was implied: armed between the sync's two pulses */
+    bool     prearmed;      /* set by the caller after init: armed ahead of the write (the pre-arm,
+                             * pnet_loop.h), so every edge of it was seen and no sync is implied --
+                             * the hunt finds the measured one. Word 0 is then the idle time before
+                             * the first pulse (any value: flux_in's count wraps every ~57 s). */
     bool     hunt_failed;   /* refused before any sync: an 18+ cell gap, or the hunt ran out */
     bool     overflowed;
     uint32_t out_of_range;  /* intervals over PNET_RX_MAX_CELLS */

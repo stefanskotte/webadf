@@ -64,6 +64,13 @@ static volatile uint64_t raw_ended_us;
 // instead of re-initialising the buffer under the decode (final review, Important 1).
 static volatile bool held;
 static volatile uint32_t held_at_ms;
+// The PRE-ARM (pnet_loop.h): a raw capture armed by core0's loop ahead of a DF1 batch, claimed by
+// no write yet. While it stands the capture is armed (flux_capture_idle is false, so nothing else
+// arms over anything), the poll consumes nothing, and the timeout does not run -- it is not a
+// write. Every WGATE assert ends it: a DF1 batch claims it, anything else cancels it, and a DF0
+// arm cancels it itself (arm(), below) before it arms. flux_in's start PC, for the raw arms.
+static volatile bool prearmed;
+static uint     cap_pc0;
 #endif
 
 static void consume(uint32_t word) {
@@ -110,6 +117,9 @@ void flux_capture_init(PIO pio, uint sm) {
     dma_channel_configure(cap_dma, &c, ring, &pio->rxf[sm], 0xffffffffu, false);
 
     flux_bits_init(&bits, mfm_buf, sizeof mfm_buf);
+#if WF_PNET_LOOP
+    cap_pc0 = pio_sm_get_pc(pio, sm);    // flux_in_program_init left it at the program's start
+#endif
 }
 
 /** Where the DMA has written up to, as a ring index. */
@@ -125,6 +135,12 @@ void flux_capture_arm_raw(void) { arm(true); }
 static void arm(bool raw) {
 #else
 void flux_capture_arm(void) {
+#endif
+#if WF_PNET_LOOP
+    // A standing pre-arm is no capture of anyone's: any arm replaces it -- DF0's above all, which
+    // must arm exactly as it would without one (WDATA is shared; the `armed` test below would
+    // refuse DF0 otherwise).
+    flux_capture_prearm_cancel();
 #endif
     if (cap_dma < 0 || armed) return;
 #if WF_PNET_LOOP
@@ -152,6 +168,12 @@ void flux_capture_arm(void) {
         // and word 0 would not be arm -> first edge. The implied sync reads word 0 (pnet_rx.h,
         // bench fix 3), so a raw arm counts from 0. (The SM is disabled: exec runs it at once.)
         pio_sm_exec(cap_pio, cap_sm, pio_encode_set(pio_x, 0));
+        // And from the program's start: a disable can leave flux_in between `jmp pin` and `push`,
+        // which would push one stale word the moment it is enabled -- a stray edge, to a pre-arm.
+        pio_sm_exec(cap_pio, cap_sm, pio_encode_jmp(cap_pc0));
+        // The sentinel the pre-arm's edge test reads (flux_capture_prearm_edges): the DMA is
+        // reset above and the SM still disabled, so nothing lands before this store.
+        ring[0] = 0u;
     } else
 #endif
     flux_bits_init(&bits, mfm_buf, sizeof mfm_buf);
@@ -181,6 +203,11 @@ void flux_capture_disarm(void) {
 
 uint32_t flux_capture_poll(void) {
     if (cap_dma < 0) return 0;
+#if WF_PNET_LOOP
+    // A standing pre-arm: whatever is in the ring is no write's (WGATE has not claimed it). Left
+    // where it is, for flux_capture_prearm_edges to see, and never fed to the decoder.
+    if (prearmed) return 0;
+#endif
 
     const uint32_t head = dma_head();
     uint32_t n = 0;
@@ -208,6 +235,8 @@ bool flux_capture_timeout(uint32_t now_ms) {
 #if WF_PNET_LOOP
     // The safety clear for `held`: a decode is milliseconds, never FLUX_CAPTURE_MAX_MS.
     if (held && (uint32_t)(now_ms - held_at_ms) > FLUX_CAPTURE_MAX_MS) held = false;
+    // A pre-arm is not a write, however long it stands: its timeout starts at the claim.
+    if (prearmed) return false;
 #endif
     if (!armed) return false;
     if ((uint32_t)(now_ms - armed_at_ms) <= FLUX_CAPTURE_MAX_MS) return false;
@@ -259,6 +288,47 @@ bool flux_capture_take(flux_capture_result_t *out) {
 #if WF_PNET_LOOP
 bool flux_capture_idle(void) { return !armed && !ended && !held; }
 
+bool flux_capture_prearm_raw(void) {
+    if (!flux_capture_idle()) return false;
+    arm(true);
+    if (!armed) return false;
+    raw_rx.prearmed = true;          // every edge is seen: the measured sync, never implied
+    prearmed = true;
+    return true;
+}
+
+bool flux_capture_prearmed(void) { return prearmed; }
+
+bool flux_capture_prearm_edges(void) {
+    if (!prearmed) return false;
+    // Anything the DMA has written (ring[0] is the sentinel arm() zeroed; a pushed word is never 0
+    // short of a 2^32-iteration count), or still in the FIFO for it.
+    const volatile uint32_t *r0 = &ring[0];
+    return (uintptr_t)dma_hw->ch[cap_dma].write_addr != (uintptr_t)ring || *r0 != 0u ||
+           !pio_sm_is_rx_fifo_empty(cap_pio, cap_sm);
+}
+
+bool flux_capture_prearm_claim(void) {
+    if (!prearmed) return false;
+    prearmed = false;
+    // The write starts now: the timeout and the poll-gap statistic count from here.
+    const uint32_t now = to_ms_since_boot(get_absolute_time());
+    armed_at_ms = now;
+    d_last_poll_ms = now;
+    return true;
+}
+
+bool flux_capture_prearm_cancel(void) {
+    if (!prearmed) return false;
+    // As the timeout abandons a capture: stopped, and `ended` stays clear, so no take ever sees
+    // it. raw_mode stays set, which flux_capture_take() refuses anyway; the next arm resets all.
+    pio_sm_set_enabled(cap_pio, cap_sm, false);
+    prearmed = false;
+    armed = false;
+    ended = false;
+    return true;
+}
+
 void flux_capture_done(void) { held = false; }
 
 bool flux_capture_take_raw(flux_capture_raw_t *out) {
@@ -281,6 +351,7 @@ bool flux_capture_take_raw(flux_capture_raw_t *out) {
     out->out_of_range = raw_rx.out_of_range;
     out->max_backlog  = d_max_backlog;
     out->ended_us     = raw_ended_us;
+    out->prearmed     = raw_rx.prearmed;
     return true;
 }
 #endif

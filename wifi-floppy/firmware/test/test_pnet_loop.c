@@ -86,11 +86,122 @@ static void counters_wrap(void) {
     CHECK_EQ_INT(s.pico, (uint8_t)(0x7F + 300));
 }
 
+/* The pre-arm (pnet_loop.h): the loop arms the raw capture ahead of a DF1 batch, and lets go of it
+ * when the batch can no longer come. The WGATE ISR's claim and DF0 cancel are main.c's. */
+static pnet_prearm_in_t ready(void) {
+    pnet_prearm_in_t in;
+    memset(&in, 0, sizeof in);
+    in.df1_serving = true;
+    in.cyl1 = 77;
+    in.side = 0;
+    in.idle = true;
+    return in;
+}
+
+static void prearms_only_where_a_df1_batch_is_next(void) {
+    pnet_prearm_in_t in = ready();
+    CHECK_EQ_INT(pnet_prearm_decide(&in), PNET_PREARM_ARM);
+    in = ready(); in.df1_serving = false;
+    CHECK_EQ_INT(pnet_prearm_decide(&in), PNET_PREARM_NONE);     /* DF1 off or empty */
+    in = ready(); in.cyl1 = 76;
+    CHECK_EQ_INT(pnet_prearm_decide(&in), PNET_PREARM_NONE);
+    in = ready(); in.cyl1 = 78;
+    CHECK_EQ_INT(pnet_prearm_decide(&in), PNET_PREARM_NONE);
+    in = ready(); in.side = 1;
+    CHECK_EQ_INT(pnet_prearm_decide(&in), PNET_PREARM_NONE);     /* the Amiga reads the echo */
+    in = ready(); in.sel0 = true;
+    CHECK_EQ_INT(pnet_prearm_decide(&in), PNET_PREARM_NONE);     /* DF0 in use */
+    in = ready(); in.wgate = true;
+    CHECK_EQ_INT(pnet_prearm_decide(&in), PNET_PREARM_NONE);     /* a write is on: the ISR's */
+    in = ready(); in.unpowered = true;
+    CHECK_EQ_INT(pnet_prearm_decide(&in), PNET_PREARM_NONE);
+}
+
+/* Task 7's hazards: an arm over a DF0 capture that is armed, ended and untaken, or taken and still
+ * being decoded destroys a DF0 write-back. All three read as !idle, and none is ever armed over. */
+static void never_prearms_over_a_capture(void) {
+    pnet_prearm_in_t in = ready();
+    in.idle = false;
+    CHECK_EQ_INT(pnet_prearm_decide(&in), PNET_PREARM_NONE);
+}
+
+static void a_standing_prearm_goes_when_the_batch_cannot_come(void) {
+    pnet_prearm_in_t in = ready();
+    in.idle = false;                                     /* a pre-arm is an armed capture */
+    in.prearmed = true;
+    CHECK_EQ_INT(pnet_prearm_decide(&in), PNET_PREARM_NONE);     /* kept */
+    in.sel0 = true;
+    CHECK_EQ_INT(pnet_prearm_decide(&in), PNET_PREARM_NONE);     /* DF0 selected: its WGATE cancels */
+    in.sel0 = false;
+    in.side = 1;
+    CHECK_EQ_INT(pnet_prearm_decide(&in), PNET_PREARM_CANCEL);
+    in.side = 0; in.cyl1 = 76;
+    CHECK_EQ_INT(pnet_prearm_decide(&in), PNET_PREARM_CANCEL);
+    in.cyl1 = 77; in.df1_serving = false;
+    CHECK_EQ_INT(pnet_prearm_decide(&in), PNET_PREARM_CANCEL);   /* DF1 off or ejected */
+    in.df1_serving = true; in.unpowered = true;
+    CHECK_EQ_INT(pnet_prearm_decide(&in), PNET_PREARM_CANCEL);
+    in.wgate = true;                                     /* a floating WGATE reads asserted */
+    CHECK_EQ_INT(pnet_prearm_decide(&in), PNET_PREARM_CANCEL);
+}
+
+static void stray_edges_are_discarded_but_a_write_is_the_isrs(void) {
+    pnet_prearm_in_t in = ready();
+    in.idle = false;
+    in.prearmed = true;
+    in.edges = true;
+    CHECK_EQ_INT(pnet_prearm_decide(&in), PNET_PREARM_STRAY);
+    in.side = 1;
+    CHECK_EQ_INT(pnet_prearm_decide(&in), PNET_PREARM_STRAY);    /* counted as stray either way */
+    in.side = 0;
+    in.wgate = true;                                     /* the write's own edges: the ISR's */
+    CHECK_EQ_INT(pnet_prearm_decide(&in), PNET_PREARM_NONE);
+    in.side = 1; in.cyl1 = 3;
+    CHECK_EQ_INT(pnet_prearm_decide(&in), PNET_PREARM_NONE);     /* under WGATE, never the loop */
+}
+
+/* Every input: ARM only when the next WGATE on SEL1 would be a batch (pnet_capture_ours) and the
+ * capture is idle; CANCEL and STRAY only with a pre-arm standing; nothing at all under WGATE but
+ * an unpowered bus's cancel. */
+static void the_decision_holds_for_every_input(void) {
+    const int cyls[] = {0, 1, 76, 77, 78, 79};
+    unsigned n = 0, arms = 0;
+    for (unsigned bits = 0; bits < 128u; bits++)
+        for (unsigned c = 0; c < 6; c++)
+            for (int side = 0; side < 2; side++) {
+                pnet_prearm_in_t in;
+                memset(&in, 0, sizeof in);
+                in.df1_serving = bits & 1u; in.sel0 = bits & 2u; in.wgate = bits & 4u;
+                in.unpowered = bits & 8u; in.idle = bits & 16u; in.prearmed = bits & 32u;
+                in.edges = bits & 64u;
+                in.cyl1 = cyls[c]; in.side = side;
+                const pnet_prearm_t a = pnet_prearm_decide(&in);
+                n++;
+                if (a == PNET_PREARM_ARM) {
+                    arms++;
+                    CHECK(in.idle && !in.prearmed && !in.wgate && !in.sel0 && !in.unpowered &&
+                          pnet_capture_ours(in.df1_serving, false, true, in.cyl1, in.side),
+                          "ARM only ahead of a DF1 batch, over nothing");
+                }
+                if (a == PNET_PREARM_CANCEL || a == PNET_PREARM_STRAY)
+                    CHECK(in.prearmed, "only a standing pre-arm is let go");
+                if (in.wgate && a != PNET_PREARM_NONE)
+                    CHECK(in.unpowered && a == PNET_PREARM_CANCEL, "under WGATE: the ISR's");
+            }
+    CHECK_EQ_INT(n, 128 * 6 * 2);
+    CHECK_EQ_INT(arms, 2);                               /* edges set or not; nothing else */
+}
+
 int main(void) {
     RUN(df1_streams_disk_silence_or_echo);
     RUN(wprot_is_released_only_on_cylinder_77);
     RUN(only_df1_on_77_side_0_is_a_batch);
     RUN(counters_follow_paulanet);
     RUN(counters_wrap);
+    RUN(prearms_only_where_a_df1_batch_is_next);
+    RUN(never_prearms_over_a_capture);
+    RUN(a_standing_prearm_goes_when_the_batch_cannot_come);
+    RUN(stray_edges_are_discarded_but_a_write_is_the_isrs);
+    RUN(the_decision_holds_for_every_input);
     return REPORT();
 }

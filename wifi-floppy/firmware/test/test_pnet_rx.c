@@ -507,6 +507,58 @@ static void armed_in_the_data_never_parses_implied_or_not(void) {
     CHECK(runs > 3000u && implied > 0u && parsed == 0, "no data arm parses, implied ones included");
 }
 
+/*
+ * THE PRE-ARM (2026-10-10). Armed from core0's loop ahead of the write, the capture sees every edge:
+ * word 0 is however long WDATA sat idle (anything, flux_in's count wraps), and the first edge is the
+ * write's first pulse. It syncs by measure, never by implication -- a 2-cell lead-in pulse after a
+ * long idle must not be taken for the magic.
+ */
+static void a_prearmed_capture_syncs_by_measure_whatever_the_idle(void) {
+    size_t wn, sync;
+    const size_t np = lead_pulses(&no_lead, &wn, &sync);
+    const uint32_t pws[] = {300u, 520u, 1200u};
+    const int64_t idle[] = {-40000, -1000000, -4000000000LL};    /* 40 us, 1 ms, 4 s ahead */
+    for (unsigned pi = 0; pi < 3; pi++)
+        for (unsigned ii = 0; ii < 3; ii++) {
+            pnet_rx_t r;
+            pnet_rx_init(&r, capbuf, sizeof capbuf);
+            r.prearmed = true;
+            const size_t n = armed_at_time(np, idle[ii], pws[pi], 140u, 3u + ii, words);
+            feed_all(&r, words, n);
+            CHECK(decodes_and_parses(&r, wn) && !r.implied && r.hunt_n == 0, "measured sync");
+        }
+    /* A wrapped count: word 0 small or huge, the same decode. */
+    const uint32_t leads[] = {0u, 1u, 7999u, 8000u, 0xFFFFFFFFu};
+    for (unsigned li = 0; li < 5; li++) {
+        pnet_rx_t r;
+        pnet_rx_init(&r, capbuf, sizeof capbuf);
+        r.prearmed = true;
+        const size_t n = armed_at_time(np, -40000, 520u, 0u, 1u, words);
+        words[0] = leads[li];
+        feed_all(&r, words, n);
+        CHECK(decodes_and_parses(&r, wn) && !r.implied, "any word 0");
+    }
+}
+
+/* A lead-in of 2-cell pulses ahead of the sync (bench fix 2's AAA8): after a long idle, an ordinary
+ * capture would imply a sync at the first of them and decode misaligned; a pre-armed one hunts
+ * through them to the measured sync. */
+static void a_prearmed_capture_hunts_a_lead_in_instead_of_implying(void) {
+    const lead_t aaa8 = {"AAA8 then 17", aaa8_17, 6};
+    size_t wn, sync;
+    const size_t np = lead_pulses(&aaa8, &wn, &sync);
+    pnet_rx_t r;
+    pnet_rx_init(&r, capbuf, sizeof capbuf);
+    r.prearmed = true;
+    size_t n = armed_at_time(np, -1000000, 520u, 140u, 7u, words);
+    feed_all(&r, words, n);
+    CHECK(decodes_and_parses(&r, wn) && !r.implied && r.hunt_n == 6, "hunted to the sync");
+    pnet_rx_init(&r, capbuf, sizeof capbuf);             /* the same flux, not pre-armed */
+    n = armed_at_time(np, -1000000, 520u, 140u, 7u, words);
+    feed_all(&r, words, n);
+    CHECK(r.implied && !decodes_and_parses(&r, wn), "implied at the lead-in: never parses");
+}
+
 int main(void) {
     RUN(bytes_after_the_sync_come_back);
     RUN(jitter_does_not_move_a_bit);
@@ -526,5 +578,7 @@ int main(void) {
     RUN(armed_between_the_sync_pulses_syncs_by_implication);
     RUN(armed_too_close_to_pulse_2_hunts_and_never_parses);
     RUN(armed_in_the_data_never_parses_implied_or_not);
+    RUN(a_prearmed_capture_syncs_by_measure_whatever_the_idle);
+    RUN(a_prearmed_capture_hunts_a_lead_in_instead_of_implying);
     return REPORT();
 }

@@ -895,6 +895,12 @@ static volatile uint32_t g_pnet_busy;
 // pnet_raw_pending, which the loop also clears (a clear landing after a new arm would leave
 // that arm running).
 static volatile bool     pnet_armed_this_write;
+// The pre-arm (pnet_loop.h, flux_capture.h), cumulative; the 5 s line prints each window's share.
+// pre_used: DF1 batches whose WGATE claimed a standing pre-arm. pre_df0 / pre_other: pre-arms
+// cancelled by a DF0 write's WGATE / by any other assert (another drive, a powered-down bus).
+// Written in gpio_isr; the loop's own (arms, cancels, stray discards) are core0-loop only.
+static volatile uint32_t g_pnet_pre_used, g_pnet_pre_df0, g_pnet_pre_other;
+static uint32_t          g_pnet_pre_arms, g_pnet_pre_cancel, g_pnet_pre_stray;
 #endif
 
 // Written by core0 when a write lands, read by core1's uploader. g_write_gen
@@ -1276,6 +1282,10 @@ static void __isr gpio_isr(uint gpio, uint32_t events) {
         // An unpowered bus reads WGATE asserted: nobody is writing. (The
         // power-down's own fall comes before core0 can know; the capture
         // timeout and the interval floor below catch that one.)
+#if WF_PNET_LOOP
+        // Not a write, but WDATA floats with the rest: a standing pre-arm goes (pnet_loop.h).
+        if (writing && g_bus_unpowered && flux_capture_prearm_cancel()) g_pnet_pre_other++;
+#endif
         if (writing && g_bus_unpowered) return;
 #if WF_PNET_LOOP
         // Loopback (TEST build): DF1 writing cylinder 77, side 0, is a PaulaNET batch -- a raw
@@ -1285,7 +1295,12 @@ static void __isr gpio_isr(uint gpio, uint32_t events) {
             pnet_capture_ours(g_pnet_df1_mounted, false, !gpio_get(PIN_SEL1), cur_cyl[1], cur_side)) {
             pnet_write_ours = true;              // set either way: its release is ours too
             bool armed_now = false;
-            if (flux_capture_idle()) {
+            if (flux_capture_prearm_claim()) {
+                // Armed ahead of this write by the loop (pnet_prearm_step): it is this write's
+                // now, its first edge sync pulse 1 -- no arm latency at all.
+                armed_now = true;
+                g_pnet_pre_used++;
+            } else if (flux_capture_idle()) {
                 flux_capture_arm_raw();
                 armed_now = !flux_capture_idle();          // only if the arm really happened
             } else {
@@ -1306,6 +1321,12 @@ static void __isr gpio_isr(uint gpio, uint32_t events) {
             if (ours) flux_capture_disarm();               // never a capture this write did not arm
             wf_trace(WF_EV_WGATE, 0u, 0x100u | (uint32_t)PNET_TRACK_IN);
             return;
+        }
+        // Every other assert ends a standing pre-arm, which no write owns: DF0's write (SEL0) then
+        // arms below exactly as it would without one (arm() would cancel it too), and another
+        // drive's write would only put its flux in the ring.
+        if (writing && flux_capture_prearm_cancel()) {
+            if (!gpio_get(PIN_SEL0)) g_pnet_pre_df0++; else g_pnet_pre_other++;
         }
         // A DF0 write about to arm over a batch the loop has not taken yet: count it, as lost.
         if (writing && !gpio_get(PIN_SEL0) && pnet_raw_pending) {
@@ -2944,17 +2965,19 @@ static void pnet_lead_add(pnet_lead_t *l, uint32_t ns) {
 
 static void pnet_reject(pnet_err_t e, const flux_capture_raw_t *cap) {
     g_pnet.bad[e]++;
-    pnet_lead_add(&g_pnet_lead[1], cap->lead_ns);
+    // A pre-armed capture's word 0 is idle time, not arm latency: the lead stats are the ISR's.
+    if (!cap->prearmed) pnet_lead_add(&g_pnet_lead[1], cap->lead_ns);
     if (g_pnet_reject_logged) return;
     g_pnet_reject_logged = true;
     // Two lines, each inside WF_LOG_MSG at full field widths. +imp: the sync was implied; +ovf: the
     // buffer overflowed. Then lead (word 0, arm to first edge), hunt (intervals hunted through) and
     // sync (the interval that ended the hunt, or the implied sync's first data interval): a NOSYNC
     // with hunt w-1 never met a sync; a ~31 us sync just outside the window is the pulse width.
-    wf_logf(WF_WARN, "pnet: refused %s: %luB w %lu oor %lu%s%s",
+    // +pre: the capture was pre-armed, so its lead is idle time, not arm latency.
+    wf_logf(WF_WARN, "pnet: refused %s: %luB w %lu oor %lu%s%s%s",
             pnet_err_text(e), (unsigned long)cap->nbytes, (unsigned long)cap->words,
             (unsigned long)cap->out_of_range, cap->implied ? " +imp" : "",
-            cap->overflowed ? " +ovf" : "");
+            cap->prearmed ? " +pre" : "", cap->overflowed ? " +ovf" : "");
     wf_logf(WF_WARN, "pnet: refused at lead %lu hunt %lu sync %lu pw %ld",
             (unsigned long)cap->lead_ns, (unsigned long)cap->hunt_n,
             (unsigned long)cap->sync_ns, (long)cap->pw_ns);
@@ -2995,7 +3018,7 @@ static bool pnet_take_capture(void) {
     g_pnet_dec_sum += dec;
     g_pnet_decs++;
     if (cap.implied) g_pnet_implied++;
-    pnet_lead_add(&g_pnet_lead[0], cap.lead_ns);
+    if (!cap.prearmed) pnet_lead_add(&g_pnet_lead[0], cap.lead_ns);
     return true;
 }
 
@@ -3056,15 +3079,49 @@ static void pnet_serve_df1(int32_t tok, int *loaded) {
     g_pnet_builds++;
 }
 
+// The loop's half of the pre-arm (pnet_loop.h): once per pass, arm the raw capture ahead of a DF1
+// batch, or let a standing one go. Interrupts off from the reading to the action, so the WGATE ISR
+// cannot claim or cancel in between -- a few register writes at most (arm()).
+static void pnet_prearm_step(void) {
+    const uint32_t irq = save_and_disable_interrupts();
+    const pnet_prearm_in_t in = {
+        .df1_serving = g_pnet_df1_mounted,
+        .sel0 = !gpio_get(PIN_SEL0),                 // asserted = low, through the '541
+        .wgate = !gpio_get(PIN_WGATE),
+        .unpowered = g_bus_unpowered,
+        .cyl1 = cur_cyl[1],
+        .side = cur_side,
+        .idle = flux_capture_idle(),
+        .prearmed = flux_capture_prearmed(),
+        .edges = flux_capture_prearm_edges(),
+    };
+    switch (pnet_prearm_decide(&in)) {
+    case PNET_PREARM_ARM:    if (flux_capture_prearm_raw()) g_pnet_pre_arms++; break;
+    case PNET_PREARM_CANCEL: if (flux_capture_prearm_cancel()) g_pnet_pre_cancel++; break;
+    case PNET_PREARM_STRAY:  if (flux_capture_prearm_cancel()) g_pnet_pre_stray++; break;
+    case PNET_PREARM_NONE:   break;
+    }
+    restore_interrupts(irq);
+}
+
 // Every 5 s while there is traffic: counts, and the window's timings in microseconds.
 static void pnet_log_summary(void) {
     static uint32_t last_ms, last_rx, last_lost, last_busy;
+    // The pre-arm's counters at the last window's end (index order as in the line below).
+    static uint32_t last_pre[6];
     const uint32_t now = clock_ms();
     if (now - last_ms < 5000u) return;
     last_ms = now;
     g_pnet_reject_logged = false;
+    // This window's pre-arm counts, taken every window so none rolls into the next. Cancels by a
+    // write and stray discards print the window even with no loopback traffic: they are the bus.
+    const uint32_t pre_now[6] = {g_pnet_pre_arms, g_pnet_pre_used, g_pnet_pre_df0, g_pnet_pre_other,
+                                 g_pnet_pre_stray, g_pnet_pre_cancel};
+    uint32_t pre[6];
+    for (unsigned i = 0; i < 6; i++) { pre[i] = pre_now[i] - last_pre[i]; last_pre[i] = pre_now[i]; }
     const uint32_t lost = g_pnet_lost, busy = g_pnet_busy;
-    if (g_pnet.rx == last_rx && g_pnet_builds == 0 && lost == last_lost && busy == last_busy) return;
+    if (g_pnet.rx == last_rx && g_pnet_builds == 0 && lost == last_lost && busy == last_busy &&
+        (pre[2] | pre[3] | pre[4]) == 0) return;
     last_rx = g_pnet.rx;
     last_busy = busy;
     const uint32_t *b = g_pnet.bad;
@@ -3104,6 +3161,12 @@ static void pnet_log_summary(void) {
             PNET_SAT(g_pnet_rst[PNET_RST_SIDE], 99999u), PNET_SAT(g_pnet_rst[PNET_RST_COMMIT], 99999u),
             PNET_SAT(g_pnet_rst[PNET_RST_OTHER], 99999u), PNET_SAT(g_pnet_rst_noop, 99999u),
             PNET_SAT(g_pnet_side_idx_max, 9999999u));
+    // The pre-arm this window: arms made, used by a DF1 batch, cancelled by a DF0 write / by any
+    // other assert, discarded with stray edges, cancelled by the loop (head moved, DF1 off).
+    // used < rx: the rest were armed by the WGATE ISR (the lead line above is theirs alone).
+    wf_logf(WF_INFO, "pnet: prearm arm %lu used %lu df0 %lu other %lu stray %lu cancel %lu",
+            PNET_SAT(pre[0], 99999u), PNET_SAT(pre[1], 99999u), PNET_SAT(pre[2], 99999u),
+            PNET_SAT(pre[3], 99999u), PNET_SAT(pre[4], 99999u), PNET_SAT(pre[5], 99999u));
 #undef PNET_SAT
     if (lost != last_lost)
         wf_logf(WF_WARN, "pnet: lost %lu batches to DF0 writes (%lu in all)",
@@ -3836,6 +3899,7 @@ int main(void) {
             g_pnet_rst_commit = true;
         }
         if (df1_mounted) pnet_serve_df1(df1_seen_tok, &loaded1);
+        pnet_prearm_step();                      // after the take: a taken batch frees the capture
         pnet_log_summary();
 #else
         if (df1_mounted) serve_drive(1, df1_seen_tok, &loaded1);

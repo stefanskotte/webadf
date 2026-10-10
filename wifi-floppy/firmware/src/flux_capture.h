@@ -104,6 +104,7 @@ typedef struct {
     uint32_t out_of_range;
     uint32_t max_backlog;     /* most unread ring words seen at once */
     uint64_t ended_us;        /* time_us_64() when WGATE released */
+    bool     prearmed;        /* armed ahead of the write (the pre-arm): lead_ns is idle time */
 } flux_capture_raw_t;
 
 /** True, once, after a RAW capture ends. */
@@ -114,6 +115,23 @@ bool flux_capture_idle(void);
 /** The caller of flux_capture_take() is done with out->mfm: call it once the decode is over, on
  *  every path. Until then flux_capture_idle() is false. Harmless when nothing was taken. */
 void flux_capture_done(void);
+
+/*
+ * The PRE-ARM (pnet_loop.h, 2026-10-10): a raw capture armed ahead of a DF1 batch, from core0's
+ * loop, so the write's first pulse is not lost to the WGATE ISR's latency. While one stands the
+ * capture is armed, the poll leaves the ring alone, and the timeout does not run.
+ *   prearm_raw    loop, interrupts off: arm one if flux_capture_idle(); true if it did.
+ *   prearm_claim  WGATE ISR, a DF1 cylinder-77 assert: the standing pre-arm becomes this write's
+ *                 capture (its timeout starts now); false if none stands.
+ *   prearm_cancel any arm, any other WGATE assert, the loop: abandon it, as the timeout does
+ *                 (never taken); false if none stood.
+ *   prearm_edges  loop: the standing pre-arm has captured something.
+ */
+bool flux_capture_prearm_raw(void);
+bool flux_capture_prearm_claim(void);
+bool flux_capture_prearm_cancel(void);
+bool flux_capture_prearmed(void);
+bool flux_capture_prearm_edges(void);
 #endif
 
 #endif
