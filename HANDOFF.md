@@ -1629,6 +1629,13 @@ separately.
   private, loopback and link-local addresses after DNS resolution (re-check on every redirect), cap redirects, size
   and time, and stream into the same presign/complete ingest path so hashing, dedupe, TOSEC matching and
   entitlements stay one code path. Also consider zip/7z/gz archives from such sites.
+- **(Important, latent, on master) pio2 CTRL shared by flux_in and the radio driver without a lock** (found
+  2026-10-10 by the PaulaNET pre-arm review, scratchpad prearm-review.md I1): flux_in's SM enable/disable on core0 and
+  the cyw43 driver's PIO use on core1 both read-modify-write the same pio2 CTRL register unprotected. A stale write
+  from core1 can switch flux_in off mid DF0 write (write-back refused while the Amiga believes it wrote) or the other
+  way round hang the radio driver. Estimated ~1e-4 per enable/disable under network traffic (not measured). Fix:
+  use the atomic set/clear aliases (hw_set_bits/hw_clear_bits on CTRL) or move flux_in to a PIO block the radio does
+  not use; check every pio_sm_set_enabled on pio2.
 - **(Low) DF1 card status does not update live** (seen 2026-10-10 on the PaulaNET bench): after setting DF1 the card
   stayed on "Waiting for the board" although the DB already showed applied == requested and reported == desired; a
   browser refresh showed "Set on the board". The live-state poll does not refresh the second-drive status line.
