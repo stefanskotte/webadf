@@ -12,7 +12,8 @@
  * Every routine must give the same return value and write the same bytes, and nothing past them
  * (each output sits between guard bytes that are compared too). Prints a line per routine.
  * `max_n` caps the lengths (the large-length cases need it >= 70000 and 640 KB of memory);
- * `scale` multiplies the random case counts. Returns the number of failing cases.
+ * `scale` is the random case counts in 64ths of the full run (64; NetLoop SELFTEST uses 1, with
+ * coarser exhaustive sweeps). Returns the number of failing cases.
  */
 unsigned long nl_equiv_run(unsigned long max_n, unsigned long scale, unsigned long seed);
 /* Every routine (asm and C) with its input ending exactly at `top`, the end of the emulated RAM,

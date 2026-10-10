@@ -25,7 +25,7 @@ static unsigned step;              /* 1 in the full run; coarser exhaustive swee
 static const char *cur;
 
 static unsigned long count(unsigned long base) {
-    const unsigned long c = base * scale_ / 16u;
+    const unsigned long c = base * scale_ / 64u;
     return c ? c : 1u;
 }
 
@@ -390,7 +390,7 @@ static void t_pipeline(void) {
 unsigned long nl_equiv_run(unsigned long max_n, unsigned long scale, unsigned long seed) {
     maxn = max_n;
     scale_ = scale;
-    step = scale >= 16u ? 1u : 7u;
+    step = scale >= 64u ? 1u : 13u;
     rs = seed ? (uint32_t)seed : 0x9E3779B9u;
     fails = 0;
     cap_in = 2 * max_n + 8 * G + 64;

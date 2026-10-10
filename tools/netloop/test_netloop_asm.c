@@ -50,7 +50,7 @@ int main(int argc, char **argv) {
     }
     printf("test_netloop_asm: the 68000 asm codec against the C reference\n");
     const unsigned long seed = argc > 1 ? strtoul(argv[1], NULL, 0) : 1u;
-    unsigned long f = nl_equiv_run(70000u, 16u, seed);
+    unsigned long f = nl_equiv_run(70000u, 64u, seed);
     /* The largest free block ends at the top of vamos' RAM (build.sh gives it -m 8192): inputs
      * placed against its end fault on any read past them. */
     const ULONG room = AvailMem(MEMF_ANY | MEMF_LARGEST);

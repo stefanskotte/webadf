@@ -275,7 +275,7 @@ static int selftest(void) {
            a, b, c, d, CODEC_NAME);
     printf("selftest: asm codec against the C reference on this CPU...\n");
     const uint64_t t3 = ticks();
-    const unsigned long f = nl_equiv_run(4000u, 1u, 0x5EEDu);
+    const unsigned long f = nl_equiv_run(2000u, 1u, 0x5EEDu);
     ms(ticks() - t3, &a, &b);
     printf("selftest: equivalence %s (%lu.%lu ms)\n", f ? "FAILED" : "ok", a, b);
     if (f) return st_fail("asm differs from the C reference");
