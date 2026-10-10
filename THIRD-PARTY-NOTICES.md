@@ -30,6 +30,16 @@ They stand on the work below.
 - **Rev B PCB layout** by **Shanshe** (https://github.com/shanshe), who agreed to its release under CERN-OHL-P-2.0.
 - **HxC Floppy Emulator** by Jean-François Del Nero, author of the HFE disk-image format.
 
+## Protocols used with permission
+
+- **PaulaNET** by RobSmithDev (https://github.com/RobSmithDev/PaulaNET), Copyright (C) 2026 RobSmithDev: Amiga
+  networking over the floppy port -- the cylinder 75/76/77 track map, the side and write-protect signalling, the
+  DataHeader/PacketsHeader/CompressionHeader layouts, the counter-and-acknowledge scheme and the RLE format. Used with
+  the author's permission (2026-10-09), granted on the condition that the licences are respected and he is credited.
+  The firmware's `pnet_*` sources and `tools/netloop/` implement the protocol from its description; none of his code
+  is included. The golden test vectors in `wifi-floppy/firmware/test/test_pnet_mfm.c` are the output of his
+  reference encoders.
+
 ## Software included in this repository
 
 - **Monocypher 4.0.2** (`wifi-floppy/firmware/src/vendor/monocypher/`): © 2017-2023 Loup Vaillant, Michael Savage,

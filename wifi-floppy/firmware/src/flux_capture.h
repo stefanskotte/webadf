@@ -81,4 +81,57 @@ typedef struct {
  *  Clears the flag, so a caller that takes it owns it. */
 bool flux_capture_take(flux_capture_result_t *out);
 
+#if WF_PNET_LOOP
+/*
+ * PaulaNET loopback TEST builds (plan 2026-10-09-paulanet-phase0-loopback): the same PIO, DMA,
+ * ring and buffer, but the intervals go to pnet_rx.c (raw 2 us cells, any count) instead of
+ * flux_bits.c (MFM, 2-4 cells). A raw capture is taken with flux_capture_take_raw() only;
+ * flux_capture_take() never returns one, so DF0's write-back cannot see a network batch.
+ */
+void flux_capture_arm_raw(void);
+
+typedef struct {
+    const uint8_t *bytes;     /* from the first bit after the 00 01 00 01 sync */
+    uint32_t nbytes;
+    uint32_t words;           /* PIO words, the lead included */
+    uint32_t lead_ns;         /* word 0: arm to first edge (X is reset on a raw arm) */
+    uint32_t sync_ns;         /* the interval that ended the sync hunt: taken or refused */
+    int32_t  pw_ns;
+    uint32_t hunt_n;          /* intervals hunted through before it (pnet_rx.h) */
+    bool     implied;         /* armed between the sync's pulses: the sync was implied (pnet_rx.h) */
+    bool     sync_ok;
+    bool     overflowed;
+    uint32_t out_of_range;
+    uint32_t max_backlog;     /* most unread ring words seen at once */
+    uint64_t ended_us;        /* time_us_64() when WGATE released */
+    bool     prearmed;        /* armed ahead of the write (the pre-arm): lead_ns is idle time */
+} flux_capture_raw_t;
+
+/** True, once, after a RAW capture ends. */
+bool flux_capture_take_raw(flux_capture_raw_t *out);
+/** Nothing armed, nothing finished waiting to be taken, and no taken DF0 capture still being
+ *  decoded (flux_capture_done): an arm now destroys no capture. */
+bool flux_capture_idle(void);
+/** The caller of flux_capture_take() is done with out->mfm: call it once the decode is over, on
+ *  every path. Until then flux_capture_idle() is false. Harmless when nothing was taken. */
+void flux_capture_done(void);
+
+/*
+ * The PRE-ARM (pnet_loop.h, 2026-10-10): a raw capture armed ahead of a DF1 batch, from core0's
+ * loop, so the write's first pulse is not lost to the WGATE ISR's latency. While one stands the
+ * capture is armed, the poll leaves the ring alone, and the timeout does not run.
+ *   prearm_raw    loop, interrupts off: arm one if flux_capture_idle(); true if it did.
+ *   prearm_claim  WGATE ISR, a DF1 cylinder-77 assert: the standing pre-arm becomes this write's
+ *                 capture (its timeout starts now); false if none stands.
+ *   prearm_cancel any arm, any other WGATE assert, the loop: abandon it, as the timeout does
+ *                 (never taken); false if none stood.
+ *   prearm_edges  loop: the standing pre-arm has captured something.
+ */
+bool flux_capture_prearm_raw(void);
+bool flux_capture_prearm_claim(void);
+bool flux_capture_prearm_cancel(void);
+bool flux_capture_prearmed(void);
+bool flux_capture_prearm_edges(void);
+#endif
+
 #endif
