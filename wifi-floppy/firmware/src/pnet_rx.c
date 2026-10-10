@@ -12,16 +12,30 @@ void pnet_rx_init(pnet_rx_t *r, uint8_t *buf, size_t cap_bytes) {
     r->cap_bits = cap_bytes * 8u;
 }
 
+static bool in(uint32_t ns, uint32_t lo, uint32_t hi) { return ns >= lo && ns <= hi; }
+
 void pnet_rx_feed(pnet_rx_t *r, uint32_t ns) {
     const uint32_t w = r->words++;
     if (w == 0) { r->lead_ns = ns; return; }          // arm -> first edge: not an interval
-    if (w == 1) {
+    if (r->hunt_failed) return;
+    const bool sync = in(ns, PNET_RX_SYNC_MIN_NS, PNET_RX_SYNC_MAX_NS);
+    /* The hunt (pnet_rx.h). bit == 0 after the sync means nothing is decoded yet, so a second
+     * 16-cell interval there replaces the first (data opens with a 2-cell interval). */
+    if (!r->sync_ok || (r->bit == 0u && sync)) {
         r->sync_ns = ns;
-        r->sync_ok = ns >= PNET_RX_SYNC_MIN_NS && ns <= PNET_RX_SYNC_MAX_NS;
-        r->pw_ns = (int32_t)(PNET_SYNC_CELLS * PNET_CELL_NS) - (int32_t)ns;
+        if (sync) {
+            if (r->sync_ok) r->hunt_n++;               // the first "sync" was the lead's last gap
+            r->sync_ok = true;
+            r->pw_ns = (int32_t)(PNET_SYNC_CELLS * PNET_CELL_NS) - (int32_t)ns;
+            return;
+        }
+        if (++r->hunt_n > PNET_RX_HUNT_MAX ||
+            !(in(ns, PNET_RX_LEAD_MIN_NS, PNET_RX_LEAD_MAX_NS) ||
+              in(ns, PNET_RX_GAP17_MIN_NS, PNET_RX_GAP17_MAX_NS)))
+            r->hunt_failed = true;                     // refused for good; sync_ok stays false
         return;
     }
-    if (!r->sync_ok || r->overflowed) return;
+    if (r->overflowed) return;
     /* 32-bit throughout (no software 64-bit divide on the M33): anything past the max-cells
      * range is out_of_range anyway, so clamp first. */
     if (ns > (PNET_RX_MAX_CELLS + 2u) * PNET_CELL_NS) ns = (PNET_RX_MAX_CELLS + 2u) * PNET_CELL_NS;

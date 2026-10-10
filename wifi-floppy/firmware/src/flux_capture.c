@@ -269,6 +269,7 @@ bool flux_capture_take_raw(flux_capture_raw_t *out) {
     out->lead_ns      = raw_rx.lead_ns;
     out->sync_ns      = raw_rx.sync_ns;
     out->pw_ns        = raw_rx.pw_ns;
+    out->hunt_n       = raw_rx.hunt_n;
     out->sync_ok      = raw_rx.sync_ok;
     out->overflowed   = raw_rx.overflowed;
     out->out_of_range = raw_rx.out_of_range;

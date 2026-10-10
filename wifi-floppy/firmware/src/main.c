@@ -2904,11 +2904,13 @@ static void pnet_reject(pnet_err_t e, const flux_capture_raw_t *cap) {
     g_pnet.bad[e]++;
     if (g_pnet_reject_logged) return;
     g_pnet_reject_logged = true;
-    // lead (word 0, arm to first edge) before sync: a NOSYNC with a short lead and a data-sized
-    // sync is a late arm; a ~31 us sync just outside the window is the pulse width (Important 2).
-    wf_logf(WF_WARN, "pnet: refused %s: %luB lead %lu sync %lu pw %ld w %lu oor %lu%s",
+    // lead (word 0, arm to first edge), then hunt (the lead-in intervals skipped) and sync (the
+    // interval that ended the hunt): a NOSYNC whose sync is data-sized was armed in the data; a
+    // ~31 us one just outside the window is the pulse width (Important 2); hunt is the lead-in's
+    // length in pulses, the first measure of it (pnet_rx.h, bench fix 1).
+    wf_logf(WF_WARN, "pnet: refused %s: %luB lead %lu hunt %lu sync %lu pw %ld w %lu oor %lu%s",
             pnet_err_text(e), (unsigned long)cap->nbytes, (unsigned long)cap->lead_ns,
-            (unsigned long)cap->sync_ns, (long)cap->pw_ns,
+            (unsigned long)cap->hunt_n, (unsigned long)cap->sync_ns, (long)cap->pw_ns,
             (unsigned long)cap->words, (unsigned long)cap->out_of_range,
             cap->overflowed ? " OVERFLOW" : "");
 }

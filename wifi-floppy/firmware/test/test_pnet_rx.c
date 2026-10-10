@@ -176,6 +176,168 @@ static void a_dirty_buffer_is_cleared_as_bits_land(void) {
     CHECK(m == 2 && memcmp(dec, frames, 764) == 0, "frames");
 }
 
+/*
+ * BENCH FIX 1 (2026-10-10). On the A500 the write reaches the board as a run of 2-cell pulses
+ * and THEN the 00 01 00 01 sync, and the capture arms (at WGATE) anywhere in that run: the
+ * tests above all started at the sync, which no real capture did (68 of 1,000 rounds passed).
+ * These build the real batch with pnet_build_to_board, put a lead-in of `lead` bytes of `fill`
+ * (AA or 55: the two phases a 2-cell run can end in) below it, and start the interval stream at
+ * pulse `from` -- the arm. Word 0 is the arm-to-first-edge lead, as flux_in reports it.
+ */
+static uint8_t track[16384 + 4096];
+static size_t pulses[140000];
+
+static size_t to_pulses(const uint8_t *w, size_t n, size_t *out) {
+    size_t k = 0;
+    for (size_t bit = 0; bit < n * 8u; bit++)
+        if ((w[bit >> 3] >> (7u - (bit & 7u))) & 1u) out[k++] = bit;
+    return k;
+}
+
+/* Words for an arm just before pulse `from`, with pw and +-jit ns (seeded, deterministic). */
+static size_t armed_at(const size_t *p, size_t np, size_t from, uint32_t pw, uint32_t jit,
+                       uint32_t seed, uint32_t *out) {
+    size_t k = 0;
+    out[k++] = 17000u;                                   /* arm -> the first edge seen */
+    for (size_t i = from + 1u; i < np; i++) {
+        seed = seed * 1103515245u + 12345u;
+        const int32_t j = jit ? (int32_t)((seed >> 16) % (2u * jit + 1u)) - (int32_t)jit : 0;
+        out[k++] = (uint32_t)((int32_t)((p[i] - p[i - 1u]) * PNET_CELL_NS) - (int32_t)pw + j);
+    }
+    return k;
+}
+
+/* A two-frame batch below `lead` bytes of `fill`; returns the track length, *wn the batch's. */
+static size_t lead_track(uint8_t fill, size_t lead, size_t *wn) {
+    pnet_frame_ref_t f[2] = {{frames, 900}, {frames + 900, 40}};
+    uint32_t x = 99u;
+    for (size_t i = 0; i < 900; i++) { x ^= x << 13; x ^= x >> 17; x ^= x << 5; frames[i] = (uint8_t)x; }
+    memset(frames + 900, 0, 40);                         /* a zero run: long RLE gaps */
+    memset(track, fill, lead);
+    *wn = pnet_build_to_board(track + lead, sizeof track - lead, 0x21, 0x80, f, 2);
+    return lead + *wn;
+}
+
+/* The capture decodes to the batch byte for byte, and parses with both frames. */
+static void decodes_and_parses(const pnet_rx_t *r, const uint8_t *batch, size_t wn, uint32_t pw,
+                               const char *what) {
+    CHECK(r->sync_ok && !r->hunt_failed && !r->overflowed && r->out_of_range == 0, what);
+    CHECK(r->pw_ns >= (int32_t)pw - 150 && r->pw_ns <= (int32_t)pw + 150, what);
+    const size_t got = pnet_rx_bytes(r);
+    CHECK(got > PNET_HDR_BYTES && got <= wn - 4u && memcmp(capbuf, batch + 4, got) == 0, what);
+    pnet_hdr_t h;
+    CHECK_EQ_INT(pnet_parse_hdr_from_amiga(capbuf, got, &h), PNET_OK);
+    CHECK_EQ_INT(h.amiga_ctr, 0x21);
+    uint16_t lens[PNET_MAX_FRAMES]; unsigned m = 0;
+    CHECK_EQ_INT(pnet_parse_frames(capbuf + PNET_HDR_BYTES, h.compressed_size, PNET_TO_BOARD, dec,
+                                   sizeof dec, lens, PNET_MAX_FRAMES, &m), PNET_OK);
+    CHECK(m == 2 && lens[0] == 900 && lens[1] == 40 && memcmp(dec, frames, 940) == 0, what);
+}
+
+/* (a)-(c): armed at the first lead-in pulse, inside it, and at its last pulse -- AA and 55 leads,
+ * pw 300 / 520 / 1200, no jitter and +-150 ns. Every arm decodes to the same bytes. */
+static void a_capture_armed_in_the_lead_in_hunts_to_the_sync(void) {
+    const uint8_t fills[] = {0xAA, 0x55};
+    const uint32_t pws[] = {300u, 520u, 1200u}, jits[] = {0u, 150u};
+    for (unsigned fi = 0; fi < 2; fi++) {
+        size_t wn;
+        const size_t tn = lead_track(fills[fi], PNET_LEAD_BYTES, &wn);
+        const size_t np = to_pulses(track, tn, pulses);
+        const size_t lead_pulses = PNET_LEAD_BYTES * 4u;   /* AA and 55 each have 4 per byte */
+        const size_t froms[] = {0, 1, 7, 123, 240, 401, lead_pulses - 2u, lead_pulses - 1u};
+        for (unsigned pi = 0; pi < 3; pi++)
+            for (unsigned ji = 0; ji < 2; ji++)
+                for (unsigned ai = 0; ai < sizeof froms / sizeof froms[0]; ai++) {
+                    pnet_rx_t r;
+                    pnet_rx_init(&r, capbuf, sizeof capbuf);
+                    feed_all(&r, words, armed_at(pulses, np, froms[ai], pws[pi], jits[ji],
+                                                 7u + ai, words));
+                    decodes_and_parses(&r, track + PNET_LEAD_BYTES, wn, pws[pi], "armed in the lead-in");
+                    /* the lead-in pulses after the arm, the 55 lead's 16-cell last gap included */
+                    CHECK_EQ_INT(r.hunt_n, (uint32_t)(lead_pulses - 1u - froms[ai]) + 1u);
+                }
+    }
+}
+
+/* A lead-in of a few words, and the old case: armed after the lead-in, at the first sync pulse. */
+static void short_and_absent_lead_ins_still_sync(void) {
+    const size_t leads[] = {0, 2, 6};
+    for (unsigned li = 0; li < 3; li++) {
+        size_t wn;
+        const size_t tn = lead_track(0xAA, leads[li], &wn);
+        const size_t np = to_pulses(track, tn, pulses);
+        pnet_rx_t r;
+        pnet_rx_init(&r, capbuf, sizeof capbuf);
+        feed_all(&r, words, armed_at(pulses, np, 0, 520u, 150u, 3u, words));
+        decodes_and_parses(&r, track + leads[li], wn, 520u, "short lead-in");
+    }
+    size_t wn;                                           /* armed at the sync's first pulse */
+    const size_t tn = lead_track(0xAA, PNET_LEAD_BYTES, &wn);
+    const size_t np = to_pulses(track, tn, pulses);
+    pnet_rx_t r;
+    pnet_rx_init(&r, capbuf, sizeof capbuf);
+    feed_all(&r, words, armed_at(pulses, np, PNET_LEAD_BYTES * 4u, 520u, 150u, 5u, words));
+    decodes_and_parses(&r, track + PNET_LEAD_BYTES, wn, 520u, "armed at the sync");
+    CHECK_EQ_INT(r.hunt_n, 0);
+}
+
+/* (d) Review Focus 1 with a lead-in: armed at the sync's second pulse, or anywhere in the data,
+ * the capture is never decoded (refused in the hunt), or -- when the data happens to hold a
+ * 2-cell run and a 16-cell gap -- decodes to bytes the DataHeader check refuses. */
+static void a_capture_armed_after_the_sync_is_refused(void) {
+    size_t wn;
+    const size_t tn = lead_track(0xAA, PNET_LEAD_BYTES, &wn);
+    const size_t np = to_pulses(track, tn, pulses);
+    const size_t first = PNET_LEAD_BYTES * 4u + 1u;      /* the sync's second pulse */
+    unsigned hunted_out = 0;
+    for (size_t from = first; from + 8u < np; from += 37u) {
+        pnet_rx_t r;
+        pnet_rx_init(&r, capbuf, sizeof capbuf);
+        feed_all(&r, words, armed_at(pulses, np, from, 520u, 150u, 11u, words));
+        if (!r.sync_ok) {
+            CHECK(r.hunt_failed, "refused in the hunt");
+            CHECK_EQ_INT(pnet_rx_bytes(&r), 0);
+            hunted_out++;
+        } else {
+            pnet_hdr_t h;
+            CHECK(pnet_parse_hdr_from_amiga(capbuf, pnet_rx_bytes(&r), &h) != PNET_OK,
+                  "a false sync in the data does not parse");
+        }
+    }
+    CHECK(hunted_out > 0, "data-armed captures are refused in the hunt");
+    pnet_rx_t r;                                         /* exactly at the second sync pulse */
+    pnet_rx_init(&r, capbuf, sizeof capbuf);
+    feed_all(&r, words, armed_at(pulses, np, first, 520u, 0u, 1u, words));
+    CHECK(!r.sync_ok && r.hunt_failed && pnet_rx_bytes(&r) == 0, "armed at the second sync pulse");
+}
+
+/* (e) A lead-in that runs into a data-like interval instead of a sync, and one that never ends. */
+static void a_lead_in_without_a_sync_is_refused(void) {
+    const uint32_t bad[] = {2000u - 520u, 3u * 2000u - 520u, 4u * 2000u - 520u,
+                            15u * 2000u - 520u, 18u * 2000u - 520u, 200000u};
+    for (unsigned i = 0; i < sizeof bad / sizeof bad[0]; i++) {
+        pnet_rx_t r;
+        pnet_rx_init(&r, capbuf, sizeof capbuf);
+        pnet_rx_feed(&r, 17000u);
+        for (int k = 0; k < 50; k++) pnet_rx_feed(&r, 2u * 2000u - 520u);
+        pnet_rx_feed(&r, bad[i]);
+        CHECK(r.hunt_failed && !r.sync_ok, "refused at the first non-lead interval");
+        CHECK_EQ_INT(r.sync_ns, bad[i]);
+        pnet_rx_feed(&r, 16u * 2000u - 520u);            /* a sync after the refusal changes nothing */
+        for (int k = 0; k < 40; k++) pnet_rx_feed(&r, 2u * 2000u - 520u);
+        CHECK(!r.sync_ok && pnet_rx_bytes(&r) == 0, "nothing decoded after a refusal");
+    }
+    pnet_rx_t r;                                         /* the hunt is capped */
+    pnet_rx_init(&r, capbuf, sizeof capbuf);
+    pnet_rx_feed(&r, 17000u);
+    for (uint32_t k = 0; k < PNET_RX_HUNT_MAX; k++) pnet_rx_feed(&r, 2u * 2000u - 520u);
+    CHECK(!r.hunt_failed, "the cap itself is hunted");
+    pnet_rx_feed(&r, 2u * 2000u - 520u);
+    CHECK(r.hunt_failed && !r.sync_ok, "past the cap: refused");
+    pnet_rx_feed(&r, 16u * 2000u - 520u);
+    CHECK(!r.sync_ok && pnet_rx_bytes(&r) == 0, "no sync after the cap");
+}
+
 int main(void) {
     RUN(bytes_after_the_sync_come_back);
     RUN(jitter_does_not_move_a_bit);
@@ -187,5 +349,9 @@ int main(void) {
     RUN(a_wgate_blip_decodes_nothing);
     RUN(the_pulse_width_range_edges_are_accepted);
     RUN(a_dirty_buffer_is_cleared_as_bits_land);
+    RUN(a_capture_armed_in_the_lead_in_hunts_to_the_sync);
+    RUN(short_and_absent_lead_ins_still_sync);
+    RUN(a_capture_armed_after_the_sync_is_refused);
+    RUN(a_lead_in_without_a_sync_is_refused);
     return REPORT();
 }
