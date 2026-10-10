@@ -2899,24 +2899,38 @@ static __uninitialized_psram("pnetecho") uint8_t g_pnet_echo[2][PNET_ECHO_BYTES]
 static uint32_t g_pnet_dec_max, g_pnet_dec_sum, g_pnet_decs, g_pnet_ready_max;
 static uint32_t g_pnet_build_max, g_pnet_build_sum, g_pnet_builds, g_pnet_backlog_max;
 static bool     g_pnet_reject_logged;            // one detailed refusal per window
-// Accepted captures in the window: how many synced by implication, and word 0 (arm -> first
-// edge) -- the WGATE arm's latency, as seen from the write's first pulses (bench fix 3).
-static uint32_t g_pnet_implied, g_pnet_lead_min = UINT32_MAX, g_pnet_lead_max, g_pnet_leads;
-static uint64_t g_pnet_lead_sum;
+// Word 0 (arm -> first edge: the WGATE arm's latency, bench fix 3) over one 5 s window, for the
+// accepted [0] and the refused [1] captures, and how many accepted ones synced by implication.
+// Each lead saturates at 9,999,999 ns, so the line stays inside WF_LOG_MSG.
+#define PNET_LEAD_SAT 9999999u
+typedef struct { uint32_t min, max, n; uint64_t sum; } pnet_lead_t;
+static pnet_lead_t g_pnet_lead[2] = {{UINT32_MAX, 0, 0, 0}, {UINT32_MAX, 0, 0, 0}};
+static uint32_t    g_pnet_implied;
+
+static void pnet_lead_add(pnet_lead_t *l, uint32_t ns) {
+    if (ns > PNET_LEAD_SAT) ns = PNET_LEAD_SAT;
+    if (ns < l->min) l->min = ns;
+    if (ns > l->max) l->max = ns;
+    l->sum += ns;
+    l->n++;
+}
 
 static void pnet_reject(pnet_err_t e, const flux_capture_raw_t *cap) {
     g_pnet.bad[e]++;
+    pnet_lead_add(&g_pnet_lead[1], cap->lead_ns);
     if (g_pnet_reject_logged) return;
     g_pnet_reject_logged = true;
-    // lead (word 0, arm to first edge), then hunt (the lead-in intervals skipped) and sync (the
-    // interval that ended the hunt): a NOSYNC whose sync is data-sized was armed in the data; a
-    // ~31 us one just outside the window is the pulse width (Important 2); hunt is the lead-in's
-    // length in pulses, the first measure of it (pnet_rx.h, bench fix 1).
-    wf_logf(WF_WARN, "pnet: refused %s: %luB lead %lu hunt %lu sync %lu pw %ld w %lu oor %lu%s%s",
-            pnet_err_text(e), (unsigned long)cap->nbytes, (unsigned long)cap->lead_ns,
-            (unsigned long)cap->hunt_n, (unsigned long)cap->sync_ns, (long)cap->pw_ns,
-            (unsigned long)cap->words, (unsigned long)cap->out_of_range,
-            cap->implied ? " IMPLIED" : "", cap->overflowed ? " OVERFLOW" : "");
+    // Two lines, each inside WF_LOG_MSG at full field widths. +imp: the sync was implied; +ovf: the
+    // buffer overflowed. Then lead (word 0, arm to first edge), hunt (intervals hunted through) and
+    // sync (the interval that ended the hunt, or the implied sync's first data interval): a NOSYNC
+    // with hunt w-1 never met a sync; a ~31 us sync just outside the window is the pulse width.
+    wf_logf(WF_WARN, "pnet: refused %s: %luB w %lu oor %lu%s%s",
+            pnet_err_text(e), (unsigned long)cap->nbytes, (unsigned long)cap->words,
+            (unsigned long)cap->out_of_range, cap->implied ? " +imp" : "",
+            cap->overflowed ? " +ovf" : "");
+    wf_logf(WF_WARN, "pnet: refused at lead %lu hunt %lu sync %lu pw %ld",
+            (unsigned long)cap->lead_ns, (unsigned long)cap->hunt_n,
+            (unsigned long)cap->sync_ns, (long)cap->pw_ns);
 }
 
 // A finished cylinder-77 write: parse it, and take its frames if the batch is new. Runs before
@@ -2954,10 +2968,7 @@ static bool pnet_take_capture(void) {
     g_pnet_dec_sum += dec;
     g_pnet_decs++;
     if (cap.implied) g_pnet_implied++;
-    if (cap.lead_ns < g_pnet_lead_min) g_pnet_lead_min = cap.lead_ns;
-    if (cap.lead_ns > g_pnet_lead_max) g_pnet_lead_max = cap.lead_ns;
-    g_pnet_lead_sum += cap.lead_ns;
-    g_pnet_leads++;
+    pnet_lead_add(&g_pnet_lead[0], cap.lead_ns);
     return true;
 }
 
@@ -3014,22 +3025,25 @@ static void pnet_log_summary(void) {
     const uint32_t *b = g_pnet.bad;
     uint32_t bad = 0;
     for (unsigned i = 0; i < PNET_E_COUNT; i++) bad += b[i];
-    // imp: accepted captures in this window whose sync was implied (pnet_rx.h, bench fix 3).
-    wf_logf(WF_INFO, "pnet: rx %lu new %lu dup %lu bad %lu imp %lu ctr %02x/%02x echo %u fr busy %lu",
+    wf_logf(WF_INFO, "pnet: rx %lu new %lu dup %lu bad %lu ctr %02x/%02x echo %u fr busy %lu",
             (unsigned long)g_pnet.rx, (unsigned long)g_pnet.fresh, (unsigned long)g_pnet.dup,
-            (unsigned long)bad, (unsigned long)g_pnet_implied, g_pnet.last_amiga, g_pnet.pico,
-            (unsigned)g_pnet.nframes, (unsigned long)busy);
-    // lead: word 0 of this window's accepted captures, in ns (min/avg/max) -- the arm latency.
-    wf_logf(WF_INFO, "pnet: us dec max %lu avg %lu ready max %lu build max %lu avg %lu bl %lu "
-            "lead %lu/%lu/%lu",
+            (unsigned long)bad, g_pnet.last_amiga, g_pnet.pico, (unsigned)g_pnet.nframes,
+            (unsigned long)busy);
+    wf_logf(WF_INFO, "pnet: us dec max %lu avg %lu ready max %lu build max %lu avg %lu bl %lu",
             (unsigned long)g_pnet_dec_max,
             (unsigned long)(g_pnet_decs ? g_pnet_dec_sum / g_pnet_decs : 0),
             (unsigned long)g_pnet_ready_max, (unsigned long)g_pnet_build_max,
             (unsigned long)(g_pnet_builds ? g_pnet_build_sum / g_pnet_builds : 0),
-            (unsigned long)g_pnet_backlog_max,
-            (unsigned long)(g_pnet_leads ? g_pnet_lead_min : 0),
-            (unsigned long)(g_pnet_leads ? g_pnet_lead_sum / g_pnet_leads : 0),
-            (unsigned long)g_pnet_lead_max);
+            (unsigned long)g_pnet_backlog_max);
+    // This window's word 0 (arm -> first edge, ns) min/avg/max over the accepted (acc) and the
+    // refused (rej) captures -- the arm latency -- and imp, the accepted ones whose sync was
+    // implied (pnet_rx.h, bench fix 3). 0/0/0 when there were none.
+    const pnet_lead_t *la = &g_pnet_lead[0], *lr = &g_pnet_lead[1];
+    wf_logf(WF_INFO, "pnet: lead ns acc %lu/%lu/%lu rej %lu/%lu/%lu imp %lu",
+            (unsigned long)(la->n ? la->min : 0), (unsigned long)(la->n ? la->sum / la->n : 0),
+            (unsigned long)la->max, (unsigned long)(lr->n ? lr->min : 0),
+            (unsigned long)(lr->n ? lr->sum / lr->n : 0), (unsigned long)lr->max,
+            (unsigned long)g_pnet_implied);
     if (bad)
         wf_logf(WF_WARN, "pnet: bad nosync %lu magic %lu size %lu ck %lu frames %lu rle %lu full %lu oor %lu",
                 (unsigned long)b[PNET_E_NOSYNC], (unsigned long)b[PNET_E_MAGIC],
@@ -3044,9 +3058,8 @@ static void pnet_log_summary(void) {
     last_lost = lost;
     g_pnet_dec_max = g_pnet_dec_sum = g_pnet_decs = g_pnet_ready_max = 0;
     g_pnet_build_max = g_pnet_build_sum = g_pnet_builds = g_pnet_backlog_max = 0;
-    g_pnet_implied = g_pnet_lead_max = g_pnet_leads = 0;
-    g_pnet_lead_sum = 0;
-    g_pnet_lead_min = UINT32_MAX;
+    g_pnet_implied = 0;
+    for (unsigned i = 0; i < 2; i++) g_pnet_lead[i] = (pnet_lead_t){UINT32_MAX, 0, 0, 0};
 }
 #endif
 

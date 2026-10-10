@@ -36,8 +36,12 @@
  *                                     (hunt_failed): sync_ok stays false, nothing decodes.
  * THE IMPLIED SYNC (bench fix 3). The to-board write has NO lead-in at all: KS 3.1 trackdisk adds no
  * gap and Paula starts NetLoop's buffer at 00 01 00 01, so sync pulse 1 is ~30 us after WGATE and
- * pulse 2 ~62 us -- and the WGATE ISR arms ~20-30 us late, so most captures start BETWEEN them: the
- * first edge is the sync's closing pulse, and the next intervals are the magic's 2,2,2,4,2... So if
+ * pulse 2 ~62 us. Most captures arm AFTER pulse 1, between the two. The evidence is the hunt, not a
+ * latency figure (none is measured yet; the `lead` log line measures it): fix 1 refused with
+ * `hunt 4 sync 7853` -- three 2-cell intervals and then a 4-cell one, which is the magic 0x54 0x50
+ * read from the sync's closing pulse -- and fix 2 hunted every capture to its end, never meeting a
+ * 16-cell interval. So the first edge is the sync's closing pulse, and the next intervals are the
+ * magic's 2,2,2,4,2... So if
  * nothing is synced yet, the FIRST interval (word 1) is a 2-cell one (PNET_RX_TWO_*), and word 0
  * (arm -> first edge) is at least PNET_RX_IMPLIED_LEAD_NS, the first edge is taken as the sync's
  * closing pulse: sync_ok, implied, pw = 2 cells - word 1, bit 0 the cell after that edge (as for a
@@ -96,10 +100,13 @@ typedef struct {
     size_t   cleared;       /* buf[0..cleared) is zeroed: cleared lazily, as bits land */
     uint32_t words;         /* PIO words fed, the lead included */
     uint32_t lead_ns;       /* word 0, arm to first edge: not an interval */
-    uint32_t sync_ns;       /* the interval that ended the hunt: the sync, or the refused one */
-    int32_t  pw_ns;         /* 16 cells minus sync_ns (set only when the sync is taken): -130..1980 */
+    uint32_t sync_ns;       /* the interval that ended the hunt: the sync, the refused one, or for
+                             * an implied sync word 1 (the first data interval) */
+    int32_t  pw_ns;         /* set when the sync is taken: 16 cells minus sync_ns, or for an implied
+                             * sync 2 cells minus it (word 1); -130..1980 either way */
     uint32_t hunt_n;        /* intervals hunted through before the sync (or the refusal) */
-    bool     sync_ok;       /* a 16-cell sync was found; nothing is decoded otherwise */
+    bool     sync_ok;       /* synced -- by a measured 16-cell sync or by implication (`implied`);
+                             * nothing is decoded otherwise */
     bool     implied;       /* the sync was implied: armed between the sync's two pulses */
     bool     hunt_failed;   /* refused before any sync: an 18+ cell gap, or the hunt ran out */
     bool     overflowed;
