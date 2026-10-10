@@ -32,6 +32,10 @@ export type AddDisksMode =
   | { kind: 'target'; gameId: string; diskId: string };
 
 const DEBOUNCE_MS = 250;
+// One page of the list; "Show more" asks for another. The server's
+// CANDIDATE_PAGE (src/lib/disk-set-search.ts, not importable here: it is
+// server code) is the same number, and the server clamps whatever is sent.
+const PAGE = 20;
 
 // 44px below `sm` (touch), the house 30px pill from `sm` up.
 const PILL =
@@ -55,6 +59,11 @@ export function AddDisksDialog({ mode, onClose }: { mode: AddDisksMode; onClose:
   const titleId = useId();
   const [q, setQ] = useState('');
   const [results, setResults] = useState<CandidateTitle[] | null>(null);
+  // How many titles to ask for, and whether the server has more than that.
+  // A list cut at 20 with no sign of it looked complete (2026-10-10).
+  const [limit, setLimit] = useState(PAGE);
+  const [more, setMore] = useState(false);
+  const lastQ = useRef(q);
   const [searchFailed, setSearchFailed] = useState(false);
   // Picked titles by id, kept whole so a pick survives a search that no
   // longer lists it, and the count stays right.
@@ -67,16 +76,19 @@ export function AddDisksDialog({ mode, onClose }: { mode: AddDisksMode; onClose:
   // query goes at once: it is the "20 newest" list the dialog opens on.
   useEffect(() => {
     const ctrl = new AbortController();
-    const delay = first.current ? 0 : DEBOUNCE_MS;
+    // Typing is debounced; the first load and a "Show more" go at once.
+    const delay = first.current || lastQ.current === q ? 0 : DEBOUNCE_MS;
     first.current = false;
+    lastQ.current = q;
     const timer = window.setTimeout(async () => {
       try {
-        const params = new URLSearchParams({ q: q.trim(), exclude: mode.gameId });
+        const params = new URLSearchParams({ q: q.trim(), exclude: mode.gameId, limit: String(limit) });
         const res = await fetch(`/api/disk-sets/candidates?${params}`, { signal: ctrl.signal, cache: 'no-store' });
         if (!res.ok) throw new Error(String(res.status));
-        const body = (await res.json()) as { titles: CandidateTitle[] };
+        const body = (await res.json()) as { titles: CandidateTitle[]; more?: boolean };
         if (ctrl.signal.aborted) return;
         setResults(body.titles);
+        setMore(body.more === true);
         setSearchFailed(false);
       } catch {
         if (ctrl.signal.aborted) return;
@@ -84,7 +96,7 @@ export function AddDisksDialog({ mode, onClose }: { mode: AddDisksMode; onClose:
       }
     }, delay);
     return () => { window.clearTimeout(timer); ctrl.abort(); };
-  }, [q, mode.gameId]);
+  }, [q, mode.gameId, limit]);
 
   // Escape closes, also with focus left on the page behind (the overlay's own
   // onKeyDown covers focus inside the dialog).
@@ -188,7 +200,7 @@ export function AddDisksDialog({ mode, onClose }: { mode: AddDisksMode; onClose:
             type="search" autoFocus data-testid="add-disks-search"
             aria-label="Search titles, file names and TOSEC names"
             placeholder="Search titles or file names"
-            value={q} onChange={(e) => setQ(e.target.value)}
+            value={q} onChange={(e) => { setQ(e.target.value); setLimit(PAGE); }}
             className="min-w-0 flex-1 bg-transparent text-[13px] outline-none"
           />
         </label>
@@ -228,6 +240,17 @@ export function AddDisksDialog({ mode, onClose }: { mode: AddDisksMode; onClose:
               </label>
             );
           })}
+          {more && !searchFailed && results !== null && (
+            <div className="flex flex-wrap items-center justify-between gap-2 py-2">
+              <span className="text-[12px]" style={{ color: 'var(--muted)' }} data-testid="add-disks-more-note">
+                {`Showing ${results.length} titles — there are more.`}
+              </span>
+              <button type="button" data-testid="add-disks-more" onClick={() => setLimit((n) => n + PAGE)}
+                      className={PILL} style={{ borderColor: 'var(--hairline-strong)', color: 'var(--ink)' }}>
+                Show more
+              </button>
+            </div>
+          )}
         </div>
 
         <div className="flex items-center justify-end gap-2 pt-1">
