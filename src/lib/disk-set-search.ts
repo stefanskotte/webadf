@@ -107,10 +107,18 @@ export async function suggestFromUpload(
 export interface CandidateDisk { id: string; diskNo: number; sourceFilename: string | null; tosecName: string | null }
 export interface CandidateTitle { gameId: string; title: string; disks: CandidateDisk[] }
 
+/** How many titles one page of the "Add disks…" list shows, and its ceiling. */
+export const CANDIDATE_PAGE = 20;
+export const CANDIDATE_MAX = 200;
+
 /**
- * Up to 20 of the org's titles, excluding `exclude`, matching `q` against the
- * title, a disk's tosec_name, or the entitlement's source_filename -- or, for
- * an empty `q`, simply the 20 newest. Every returned title carries ALL of its
+ * Up to `limit` of the org's titles, excluding `exclude`, matching `q` against
+ * the title, a disk's tosec_name, or the entitlement's source_filename -- or,
+ * for an empty `q`, simply the newest. `more` says whether titles beyond
+ * `limit` exist: the dialog then offers "Show more". Without it a list cut at
+ * 20 looked complete -- the operator (2026-10-10) ticked all 20 titles of a
+ * 35-disk upload, and the other 13 silently stayed behind in Uncategorized.
+ * Every returned title carries ALL of its
  * disks, not only the ones that matched: the caller is picking a whole title
  * to fold in, same as addDisksToSet does.
  *
@@ -119,7 +127,10 @@ export interface CandidateTitle { gameId: string; title: string; disks: Candidat
  * wildcard; every value below is a bound parameter or a drizzle column/table
  * reference, never a spliced string.
  */
-export async function searchCandidates(orgId: string, q: string, exclude: string | null): Promise<CandidateTitle[]> {
+export async function searchCandidates(
+  orgId: string, q: string, exclude: string | null, limit: number = CANDIDATE_PAGE,
+): Promise<{ titles: CandidateTitle[]; more: boolean }> {
+  const max = Math.min(Math.max(Math.trunc(limit) || CANDIDATE_PAGE, 1), CANDIDATE_MAX);
   const db = getDb();
   const pattern = likePattern(q);
 
@@ -142,9 +153,12 @@ export async function searchCandidates(orgId: string, q: string, exclude: string
     .from(games)
     .where(orgFilter(games, orgId, and(exclude ? ne(games.id, exclude) : undefined, matches)))
     .orderBy(desc(games.createdAt), asc(games.id))
-    .limit(20);
+    // One extra row answers "is there more?" without a count(*).
+    .limit(max + 1);
 
-  if (titleRows.length === 0) return [];
+  const more = titleRows.length > max;
+  if (more) titleRows.length = max;
+  if (titleRows.length === 0) return { titles: [], more: false };
 
   const gameIds = titleRows.map((r) => r.id);
   const diskRows = await db.select({
@@ -162,5 +176,5 @@ export async function searchCandidates(orgId: string, q: string, exclude: string
     list.push({ id: d.id, diskNo: d.diskNo, sourceFilename: d.sourceFilename ?? null, tosecName: d.tosecName });
     byGame.set(d.gameId, list);
   }
-  return titleRows.map((t) => ({ gameId: t.id, title: t.title, disks: byGame.get(t.id) ?? [] }));
+  return { titles: titleRows.map((t) => ({ gameId: t.id, title: t.title, disks: byGame.get(t.id) ?? [] })), more };
 }

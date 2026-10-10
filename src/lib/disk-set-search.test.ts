@@ -189,7 +189,7 @@ describe('suggestFromUpload', () => {
 });
 
 describe('searchCandidates', () => {
-  it('org-scopes and excludes the given title, ordered newest first, limited to 20', async () => {
+  it('org-scopes and excludes the given title, ordered newest first, one page of 20 (+1 to see if there is more)', async () => {
     answer(games, []);
     await searchCandidates('org-1', '', 'G-self');
 
@@ -200,7 +200,7 @@ describe('searchCandidates', () => {
     expect(where.params).toEqual(expect.arrayContaining(['org-1', 'G-self']));
     // Empty q: no ILIKE/EXISTS predicate at all, not an unescaped '%%'.
     expect(where.sql).not.toMatch(/ilike/);
-    expect(titleSel.limit).toBe(20);
+    expect(titleSel.limit).toBe(21);
     const orderSql = titleSel.order.map(render).map((r) => r.sql).join(', ');
     expect(orderSql).toMatch(/"games"\."created_at" desc/);
   });
@@ -233,7 +233,7 @@ describe('searchCandidates', () => {
       ],
     );
 
-    const result = await searchCandidates('org-1', 'le', null);
+    const { titles: result } = await searchCandidates('org-1', 'le', null);
     expect(result).toEqual([
       {
         gameId: 'g1', title: 'Lemmings',
@@ -251,10 +251,39 @@ describe('searchCandidates', () => {
     expect(diskWhere.params).toContain('org-1');
   });
 
+  // The 2026-10-10 report: a 35-disk upload, all 35 titles sharing one
+  // created_at. The dialog listed 20, said nothing about the other 14, the
+  // operator ticked all 20 -- and 13 Workbench 3.2 disks stayed behind in
+  // Uncategorized, looking as if Add disks had not filed them.
+  it('says when titles exist beyond the page, and returns only the page', async () => {
+    const rows = Array.from({ length: 21 }, (_, i) => ({ id: `g${String(i).padStart(2, '0')}`, title: `T${i}` }));
+    answer(games, rows);
+    answer(disks, rows.map((r) => ({ gameId: r.id, id: `d-${r.id}`, diskNo: 1, tosecName: null, sourceFilename: null })));
+    const result = await searchCandidates('org-1', '', 'G-self');
+    expect(result.more).toBe(true);
+    expect(result.titles.map((t) => t.gameId)).toEqual(rows.slice(0, 20).map((r) => r.id));
+    // Only the page's titles have their disks read.
+    expect(render(selects.find((s) => s.table === disks)!.where!).params).not.toContain('g20');
+  });
+
+  it('a page that holds everything says there is no more', async () => {
+    answer(games, [{ id: 'g1', title: 'Lemmings' }]);
+    answer(disks, [{ gameId: 'g1', id: 'd1', diskNo: 1, tosecName: null, sourceFilename: null }]);
+    expect((await searchCandidates('org-1', '', null)).more).toBe(false);
+  });
+
+  it('a larger limit asks for that many (+1), clamped to 1..200', async () => {
+    answer(games, [], [], []);
+    await searchCandidates('org-1', '', null, 40);
+    await searchCandidates('org-1', '', null, 100000);
+    await searchCandidates('org-1', '', null, -5);
+    expect(selects.filter((s) => s.table === games).map((s) => s.limit)).toEqual([41, 201, 2]);
+  });
+
   it('returns nothing (and never queries disks) when no title matches', async () => {
     answer(games, []);
     const result = await searchCandidates('org-1', 'nope', null);
-    expect(result).toEqual([]);
+    expect(result).toEqual({ titles: [], more: false });
     expect(selects.some((s) => s.table === disks)).toBe(false);
   });
 });

@@ -277,6 +277,38 @@ test('Add disks… folds a lone title in as the last disk, and the old title is 
   await expect(page.getByTestId('game-card').filter({ hasText: `Lone ${tag}` })).toHaveCount(0);
 });
 
+// 2026-10-10: a 35-disk upload; Add disks… listed 20 titles with no sign of
+// more, all 20 were ticked, and the other 13 stayed in Uncategorized.
+test('Add disks… says when the list is cut, and Show more brings the rest so all of them can be added', async ({ page }) => {
+  test.setTimeout(120_000); // 23 seeded rows against the live database
+  const { orgId } = await signUpFresh(page);
+  const tag = runTag();
+  const set = await seedSet(orgId, `Set ${tag}`, 2);
+  const lone: { gameId: string; diskId: string }[] = [];
+  for (let i = 0; i < 21; i++) {
+    lone.push(await seedDisk(orgId, { title: `Many ${tag} ${String(i).padStart(2, '0')}`, diskNo: 1, sha256: sha(`${tag}-m${i}`) }));
+  }
+
+  await page.goto(`/games/${set.gameId}`);
+  await page.getByTestId('disk-set-add').click();
+  const dialog = page.getByTestId('add-disks-dialog');
+  const picks = dialog.locator('[data-testid^="add-disks-pick-"]');
+  await expect(picks).toHaveCount(20);
+  await expect(dialog.getByTestId('add-disks-more-note')).toBeVisible();
+  await dialog.getByTestId('add-disks-more').click();
+  await expect(picks).toHaveCount(21);
+  await expect(dialog.getByTestId('add-disks-more')).toHaveCount(0);
+
+  for (const l of lone) await dialog.getByTestId(`add-disks-pick-${l.gameId}`).check();
+  await dialog.getByTestId('add-disks-confirm').click();
+  await expect(dialog).toHaveCount(0);
+  await expect(page.getByText(`Moved to Set ${tag}`)).toBeVisible();
+
+  const nos = await diskNos(lone.map((l) => l.diskId));
+  for (const l of lone) expect(nos[l.diskId].gameId).toBe(set.gameId);
+  expect(await orgGames(orgId)).toHaveLength(1);
+});
+
 test('reorder: Move up renumbers, and in reorder mode a drag and the ▲▼ buttons move disks', async ({ page }) => {
   const { orgId } = await signUpFresh(page);
   const set = await seedSet(orgId, `Reorder ${runTag()}`, 3);
