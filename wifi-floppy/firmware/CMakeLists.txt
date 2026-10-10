@@ -93,6 +93,8 @@ option(WF_PNET_LOOP "Bench TEST build: DF1 cylinder 77 is a PaulaNET loopback" O
 list(APPEND WFMF_COMMON_DEFS WF_PNET_LOOP=$<IF:$<BOOL:${WF_PNET_LOOP}>,1,0>)
 if (WF_PNET_LOOP)
   list(APPEND WFMF_FIRMWARE_SOURCES src/pnet_mfm.c src/pnet_frame.c src/pnet_rx.c src/pnet_loop.c)
+  # The echo's lead-in: 200 x AA (3.2 ms) where the Amiga's reads assume 120 (pnet_frame.c).
+  list(APPEND WFMF_COMMON_DEFS PNET_TX_LEAD_BYTES=200)
   message(STATUS "WF_PNET_LOOP is ON: DF1 cylinder 77 is a PaulaNET loopback (TEST build only).")
 endif ()
 # Stack frames (HANDOFF 3ax): 1.7.0 died because one 1232-byte frame took core0's

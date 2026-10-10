@@ -99,13 +99,20 @@ size_t pnet_build_to_board(uint8_t *out, size_t cap, uint8_t amiga_ctr, uint8_t 
     return pos;
 }
 
+/* The lead-in this side SENDS. PNET_LEAD_BYTES (120) is what the Amiga's read sizes assume, and
+ * stays so; the board's loopback build sends more (CMake) -- measured 2026-10-10 on the A500, the
+ * read's DMA started up to ~2 ms past the INDEX, and a 120-byte lead had already gone by. */
+#ifndef PNET_TX_LEAD_BYTES
+#define PNET_TX_LEAD_BYTES PNET_LEAD_BYTES
+#endif
+
 size_t pnet_build_to_amiga(uint8_t *out, size_t cap, uint8_t amiga_ctr, uint8_t pico_ctr,
                            uint8_t flags, const pnet_frame_ref_t *f, unsigned n) {
     const size_t pb = refs_bound(f, n);
     if (pb == SIZE_MAX ||
-        PNET_LEAD_BYTES + 4u + PNET_HDR_MFM_BYTES + pb + PNET_TRAIL_BYTES + 3u > cap) return 0;
-    memset(out, 0xAA, PNET_LEAD_BYTES);
-    uint8_t *s = out + PNET_LEAD_BYTES;
+        PNET_TX_LEAD_BYTES + 4u + PNET_HDR_MFM_BYTES + pb + PNET_TRAIL_BYTES + 3u > cap) return 0;
+    memset(out, 0xAA, PNET_TX_LEAD_BYTES);
+    uint8_t *s = out + PNET_TX_LEAD_BYTES;
     s[0] = 0x44; s[1] = 0x89; s[2] = 0x44; s[3] = 0x89;
     uint8_t *pay = s + 4 + PNET_HDR_MFM_BYTES;
     const size_t plen = n ? put_payload(pay, PNET_TO_AMIGA, flags, f, n) : 0;
