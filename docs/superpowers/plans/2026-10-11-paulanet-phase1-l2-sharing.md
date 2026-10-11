@@ -2731,7 +2731,7 @@ static int run_arp(UBYTE *ctr, UBYTE *last_pico, uint32_t me, uint32_t router, U
 
 (c) In `main`, widen the arguments:
   - `LONG args[6] = {0, 0, 0, 0, 0, 0};` becomes `LONG args[12] = {0};`;
-  - the template becomes `"N/K/N,ROUNDS/K/N,READS/K/N,SELFTEST/S,BENCH/S,DIAG/S,ARP/S,DHCP/S,MAC/K,IP/K,ROUTER/K,WAIT/K/N"`.
+  - the template becomes `"N/K/N,ROUNDS/K/N,READS/K/N,SELFTEST/S,BENCH/S,DIAG/S,ARP/S,DHCP/S,MAC/K,IP/K,ROUTER/K"`. (The `WAIT/K/N` argument the first draft reserved was parsed and ignored; the final review removed it.)
 
   Copy the string arguments before `FreeArgs(rd)`, because ReadArgs owns them:
 
@@ -2743,8 +2743,7 @@ static int run_arp(UBYTE *ctr, UBYTE *last_pico, uint32_t me, uint32_t router, U
     if (args[10]) strncpy(router_s, (const char *)args[10], sizeof router_s - 1);
 ```
 
-  (`WAIT/K/N` is reserved for a later per-ask timeout. Read `args[11]` as `(void)args[11];`, so the template stays
-  stable.)
+  (No `WAIT` argument: the final review removed the parsed-and-ignored one; `args` has 11 entries.)
 
   The existing range check rejects `ROUNDS` only above `MAX_ROUNDS`. For ARP/DHCP the default `rounds` is 1, so
   replace `const unsigned long rounds = args[1] ? … : MAX_ROUNDS;` with:
@@ -2907,6 +2906,7 @@ Every operator step below is one turn. The operator types or photographs NetLoop
   cylinder 77 is the network.
 
 - [ ] **Step 3: Operator, one step: acceptance 2.** Run `NetLoop DHCP MAC=<the MAC from Task 8 Step 5>`.
+  - NetLoop first prints `drained N stale frame(s)` (the L2 drain after resync; N may be 0 or more).
   - PASS:
     - `OFFER from …: address <A>`, then `ACK: this Amiga is <A>`, then `RESULT: PASS`;
     - and, in the next `pnet: l2 amiga <A> board <B> distinct` log line, `<A>` differs from `<B>`.
@@ -2916,12 +2916,13 @@ Every operator step below is one turn. The operator types or photographs NetLoop
     spec §6 question 3 for this router.
 
 - [ ] **Step 4: Operator, one step: acceptance 1.** Run `NetLoop ARP` (it uses the saved lease). PASS:
-  `router <ip> is at <mac>`, `arp: 1/1 answered`, `RESULT: PASS`. If the router's admin page shows its MAC, the
+  `drained N stale frame(s)`, `router <ip> is at <mac>`, `arp: 1/1 answered`, `RESULT: PASS`. If the router's admin page shows its MAC, the
   operator compares the two.
 
 - [ ] **Step 5: Operator, one step: acceptance 3a, the board stays online under traffic.** Run
   `NetLoop ARP ROUNDS=1000`, and watch the board's Devices card for the whole run.
   - PASS: the card says online throughout; `arp: 1000/1000 answered`; `RESULT: PASS`.
+  - `early` in the `arp ms` line is not part of the pass test for 1000 rounds, but record it; it should be 0.
   - Record `arp ms: median / p95`: the first real round trip through Wi-Fi from the A500.
 
 - [ ] **Step 6: Operator, one step: acceptance 3b, DF0 write-back during traffic** (it also re-proves Task 1's
@@ -2941,7 +2942,10 @@ Every operator step below is one turn. The operator types or photographs NetLoop
 
 - [ ] **Step 8: Operator, one step: Review Focus 5 on hardware.** Press Ctrl-A-A. After Workbench is back, run
   `NetLoop ARP`. PASS: `RESULT: PASS`, so the resync worked against a board that kept its counters and any batch it
-  had out.
+  had out; and the single round's `arp ms` median is above the write+read floor (about 400 ms: two disk revolutions,
+  the floor NetLoop itself uses) with `early 0`. A reply that fast, or `early` above 0, means the round matched a
+  stale reply, not its own request: NetLoop then prints `RESULT: FAIL` for ROUNDS=1. Run it twice in a row without
+  Ctrl-A-A in between; the second run must also show `early 0` (the drain line shows what the first run left).
 
 - [ ] **Step 9: Read the serial log** (no operator step).
   - First run `grep -c 'records dropped' pnet1-bench.log`. A log that dropped records proves no absence.
@@ -2951,6 +2955,10 @@ Every operator step below is one turn. The operator types or photographs NetLoop
     - the `l2 in` counts, `drop`, and the `tx no` reasons. `mac` above 0 means a MAC typo in some run;
     - `err`, `full` and `clash`;
     - the `pnet: bad …` and `pnet: refused` lines, and the restart/prearm lines, against Phase 0's numbers;
+    - **the Task 1 DMA DREQ-credit risk:** compare the `pnet: refused` and `bad` NOSYNC counts and every
+      `pre … stray` against Phase 0's numbers (HANDOFF §3bg: bad 0, stray 0). A `lead` minimum of 0 in the word-0
+      line is the signature of the risk. Every release DF0 `write: trk … ALL bad 0` line must also hold. Any bad,
+      stray or a `lead` of 0 means stop and report;
     - whether `fw: update held` ever appeared (it should not: no update was offered).
 
 - [ ] **Step 10: Record in `HANDOFF.md`.** Add `### 3bh. PaulaNET Phase 1 (layer-2 sharing) -- TEST build <version>, seq <n>`
