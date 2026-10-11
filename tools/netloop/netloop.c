@@ -15,6 +15,11 @@
  * sized for the echo NetLoop expects. Times come from timer.device's E-clock.
  *
  *   NetLoop [N=<bytes>] [ROUNDS=<n>] [READS=1|2] [DIAG] [SELFTEST] [BENCH]
+ *   NetLoop DHCP MAC=<board mac>                         (Phase 1: a lease from the router)
+ *   NetLoop ARP MAC=<board mac> [IP=<a>] [ROUTER=<r>] [ROUNDS=<n>]   (Phase 1: the router's MAC)
+ * ARP/DHCP need the PaulaNET Phase 1 TEST firmware (the board's boot log prints its MAC). DHCP saves
+ * the lease as the global variables NetLoopIP and NetLoopRouter, which ARP uses when IP= and ROUTER=
+ * are not given.
  *
  * The summary splits the no-sync and bad-header retries by read (the 1,024-byte header read, the
  * payload read), gives a bad header's kind, and histograms the sync's byte offset per read. DIAG
@@ -45,6 +50,8 @@
 #include "pnet_asm.h"
 #include "netloop_equiv.h"
 #include "netloop_bench.h"
+#include "netloop_eth.h"
+#include <dos/var.h>
 
 #ifndef NETLOOP_ASM
 #define NETLOOP_ASM 1
@@ -58,7 +65,7 @@
 #endif
 
 static const char vers[] __attribute__((used)) =
-    "$VER: NetLoop 1.1 (10.10.2026) PaulaNET protocol by RobSmithDev, used with permission";
+    "$VER: NetLoop 1.2 (11.10.2026) PaulaNET protocol by RobSmithDev, used with permission";
 
 #define DF1_UNIT    1
 #define CHIP_BYTES  16896u    /* the largest write or read, rounded up */
@@ -212,7 +219,7 @@ static int one_round(UBYTE *ctr, UBYTE *last_pico, ULONG n, ULONG reads, ULONG s
 }
 
 /* Learn the board's counters, so a restarted NetLoop's first batch is new to it. */
-static BOOL resync(UBYTE *ctr, UBYTE *last_pico) {
+static BOOL resync(UBYTE *ctr, UBYTE *last_pico, BOOL l2) {
     pnet_hdr_t h;
     size_t valid;
     *ctr = 0xFFu;
@@ -220,10 +227,147 @@ static BOOL resync(UBYTE *ctr, UBYTE *last_pico) {
     td_io(TD_SEEK, 0, NULL, 0, SEEK_TO(PNET_TRACK_IN));   /* onto cylinder 77: WPROT releases */
     if (read_once(HDR_READ, &h, FALSE, &valid, FALSE) == 0) {
         *ctr = nl_start_ctr(TRUE, h.amiga_ctr);
-        *last_pico = h.pico_ctr;
+        /* The loopback modes acknowledge what they find. The L2 modes must not: a batch the board has
+         * out under pico P is freed when a write echoes P, and resync discarded its frames. Start one
+         * behind, so the first write acknowledges nothing and l2_exchange reads that batch as new. */
+        *last_pico = l2 ? nl_l2_start_ack(h.pico_ctr) : h.pico_ctr;
         return TRUE;
     }
     return FALSE;
+}
+
+/* ---- Phase 1: real frames (ARP, DHCP) ---------------------------------------------------- */
+static uint8_t l2_mac[6];
+static unsigned long c_l2_frames, c_l2_stale, c_l2_unacked;
+typedef int (*l2_fn)(const uint8_t *f, size_t len, void *ctx);   /* nonzero: the frame wanted */
+
+/* One exchange: our batch on side 0 (out, or none: a poll that also acknowledges), then side 1
+ * until the board's header acknowledges it; a new batch's frames go to fn (NULL: counted only).
+ * 0 = fn found its frame, 1 = acknowledged, nothing found, 2 = not acknowledged (send again). */
+static int l2_exchange(UBYTE *ctr, UBYTE *last_pico, const pnet_frame_ref_t *out, unsigned nout,
+                       l2_fn fn, void *ctx) {
+    *ctr = (UBYTE)(*ctr + 1u);                       /* every write is a new batch (ruling 14) */
+    const size_t wlen = pnet_build_to_board(wbuf, CHIP_BYTES, *ctr, *last_pico, out, nout);
+    if (!wlen) return 2;
+    if (td_io(ETD_RAWWRITE, 0, wbuf, wlen, PNET_TRACK_IN) &&
+        td_io(ETD_RAWWRITE, 0, wbuf, wlen, PNET_TRACK_IN)) { c_ioerr++; return 2; }
+    for (int r = 0; r < 3; r++) {
+        pnet_hdr_t h, p;
+        size_t valid;
+        if (read_once(HDR_READ, &h, FALSE, &valid, FALSE)) continue;
+        if (h.amiga_ctr != *ctr) { c_l2_stale++; continue; }
+        if (h.pico_ctr == *last_pico || h.data_size == 0) return 1;
+        td_io(TD_SEEK, 0, NULL, 0, SEEK_TO(PNET_TRACK_IN));            /* as PaulaNET's driver does */
+        ULONG len = (PNET_LEAD_BYTES + 4u + PNET_HDR_MFM_BYTES + h.data_size + 64u + 1u) & ~1ul;
+        if (len > CHIP_BYTES) len = CHIP_BYTES;
+        if (read_once(len, &p, TRUE, &valid, FALSE) || p.pico_ctr != h.pico_ctr) continue;
+        uint16_t lens[PNET_MAX_FRAMES];
+        unsigned n = 0;
+        if (pnet_parse_frames(rbuf + PNET_HDR_MFM_BYTES, p.data_size, PNET_TO_AMIGA, echo, ECHO_BYTES,
+                              lens, PNET_MAX_FRAMES, &n) != PNET_OK) { c_badhdr++; continue; }
+        *last_pico = p.pico_ctr;                                       /* our next write acknowledges it */
+        int found = 0;
+        const uint8_t *q = echo;
+        for (unsigned i = 0; i < n; i++) {
+            c_l2_frames++;
+            if (!found && fn && fn(q, lens[i], ctx)) found = 1;
+            q += lens[i];
+        }
+        return found ? 0 : 1;
+    }
+    c_l2_unacked++;
+    return 2;
+}
+
+/* Sends `frame` until the board takes it, then polls until fn finds its reply or wait_s pass.
+ * Frames in the batch read with the send itself were queued before it went out: never the reply.
+ * 0 = found (*took: E-clock ticks from the first write), 1 = not found. */
+static int l2_ask(UBYTE *ctr, UBYTE *last_pico, const uint8_t *frame, size_t flen, l2_fn fn,
+                  void *ctx, ULONG wait_s, uint32_t *took) {
+    const pnet_frame_ref_t ref = { frame, (uint16_t)flen };
+    const uint64_t t0 = ticks(), end = t0 + (uint64_t)wait_s * hz;
+    BOOL sent = FALSE;
+    while (ticks() < end) {
+        if (SetSignal(0, 0) & SIGBREAKF_CTRL_C) return 1;
+        const int r = l2_exchange(ctr, last_pico, sent ? NULL : &ref, sent ? 0u : 1u, sent ? fn : NULL, ctx);
+        if (r == 0) { *took = (uint32_t)(ticks() - t0); return 0; }
+        if (r != 2) sent = TRUE;
+    }
+    return 1;
+}
+
+typedef struct { uint32_t asked; uint8_t mac[6]; } arp_ctx_t;
+static int arp_fn(const uint8_t *f, size_t len, void *ctx) {
+    arp_ctx_t *a = ctx;
+    return nl_arp_reply_from(f, len, a->asked, a->mac);
+}
+
+typedef struct { uint32_t xid; uint8_t want; nl_dhcp_t d; } dhcp_ctx_t;
+static int dhcp_fn(const uint8_t *f, size_t len, void *ctx) {
+    dhcp_ctx_t *c = ctx;
+    nl_dhcp_t d;
+    if (!nl_dhcp_parse(f, len, c->xid, &d)) return 0;
+    if (d.type != c->want && !(c->want == 5u && d.type == 6u)) return 0;   /* an ACK, or its NAK */
+    c->d = d;
+    return 1;
+}
+
+static int run_dhcp(UBYTE *ctr, UBYTE *last_pico) {
+    const uint32_t xid = (uint32_t)ticks() * 2654435761u;
+    char a[16], b[16], c[16], d[16];
+    uint32_t took;
+    dhcp_ctx_t x = { xid, 2u, {0} };
+    size_t n = nl_dhcp_discover(payload, MAX_N, l2_mac, xid);
+    printf("DHCP: DISCOVER xid %08lx\n", (unsigned long)xid);
+    if (l2_ask(ctr, last_pico, payload, n, dhcp_fn, &x, 6, &took)) {
+        printf("no OFFER in 6 s (frames seen %lu)\nRESULT: FAIL\n", c_l2_frames);
+        return RETURN_WARN;
+    }
+    nl_ip_text(x.d.server, a); nl_ip_text(x.d.yiaddr, b); nl_ip_text(x.d.router, c); nl_ip_text(x.d.dns, d);
+    printf("OFFER from %s: address %s router %s dns %s lease %lu s\n", a, b, c, d, (unsigned long)x.d.lease);
+    const nl_dhcp_t offer = x.d;
+    x.want = 5u;
+    n = nl_dhcp_request(payload, MAX_N, l2_mac, xid, offer.yiaddr, offer.server);
+    if (l2_ask(ctr, last_pico, payload, n, dhcp_fn, &x, 6, &took)) {
+        printf("no ACK in 6 s -- the board refuses an ACK that names its own address: check its log for\n"
+               "'pnet: l2 ... clash'\nRESULT: FAIL\n");
+        return RETURN_WARN;
+    }
+    if (x.d.type == 6u) { printf("NAK from the server\nRESULT: FAIL\n"); return RETURN_WARN; }
+    nl_ip_text(x.d.yiaddr, b);
+    nl_ip_text(offer.router, c);
+    printf("ACK: this Amiga is %s (router %s); saved as NetLoopIP / NetLoopRouter\n", b, c);
+    SetVar((STRPTR)"NetLoopIP", (STRPTR)b, -1, GVF_GLOBAL_ONLY);
+    SetVar((STRPTR)"NetLoopRouter", (STRPTR)c, -1, GVF_GLOBAL_ONLY);
+    printf("RESULT: PASS\n");
+    return RETURN_OK;
+}
+
+static int run_arp(UBYTE *ctr, UBYTE *last_pico, uint32_t me, uint32_t router, ULONG rounds) {
+    arp_ctx_t a = { router, {0} };
+    const size_t n = nl_arp_request(payload, l2_mac, me, router);
+    char ip[16];
+    nl_ip_text(router, ip);
+    unsigned long ok = 0;
+    for (ULONG i = 0; i < rounds; i++) {
+        if (SetSignal(0, SIGBREAKF_CTRL_C) & SIGBREAKF_CTRL_C) { printf("*** Break\n"); break; }
+        uint32_t took;
+        if (l2_ask(ctr, last_pico, payload, n, arp_fn, &a, 5, &took) == 0) rtt[ok++] = took;
+    }
+    if (ok)
+        printf("router %s is at %02x:%02x:%02x:%02x:%02x:%02x\n", ip, a.mac[0], a.mac[1], a.mac[2],
+               a.mac[3], a.mac[4], a.mac[5]);
+    printf("arp: %lu/%lu answered; frames seen %lu, stale headers %lu, unacknowledged %lu\n",
+           ok, (unsigned long)rounds, c_l2_frames, c_l2_stale, c_l2_unacked);
+    if (ok) {
+        unsigned long w, t, w2, t2;
+        ms(nl_percentile(rtt, (unsigned)ok, 50), &w, &t);
+        ms(nl_percentile(rtt, (unsigned)ok, 95), &w2, &t2);
+        printf("arp ms: median %lu.%lu p95 %lu.%lu\n", w, t, w2, t2);
+    }
+    const BOOL pass = ok == rounds;
+    printf("RESULT: %s\n", pass ? "PASS" : "FAIL");
+    return pass ? RETURN_OK : RETURN_WARN;
 }
 
 static int st_fail(const char *what) {
@@ -279,6 +423,10 @@ static int selftest(void) {
     ms(ticks() - t3, &a, &b);
     printf("selftest: equivalence %s (%lu.%lu ms)\n", f ? "FAILED" : "ok", a, b);
     if (f) return st_fail("asm differs from the C reference");
+    {
+        const char *e = nl_eth_selftest();
+        if (e) return st_fail(e);
+    }
     printf("RESULT: PASS\n");
     return RETURN_OK;
 }
@@ -373,16 +521,22 @@ static void cleanup(void) {
 }
 
 int main(void) {
-    LONG args[6] = {0, 0, 0, 0, 0, 0};
-    struct RDArgs *rd = ReadArgs((STRPTR)"N/K/N,ROUNDS/K/N,READS/K/N,SELFTEST/S,BENCH/S,DIAG/S", args, NULL);
+    LONG args[12] = {0};
+    struct RDArgs *rd = ReadArgs((STRPTR)"N/K/N,ROUNDS/K/N,READS/K/N,SELFTEST/S,BENCH/S,DIAG/S,ARP/S,DHCP/S,MAC/K,IP/K,ROUTER/K,WAIT/K/N", args, NULL);
     if (!rd) { PrintFault(IoErr(), (STRPTR)"NetLoop"); return RETURN_FAIL; }
     const unsigned long n = args[0] ? (unsigned long)*(LONG *)args[0] : 64u;
-    const unsigned long rounds = args[1] ? (unsigned long)*(LONG *)args[1] : MAX_ROUNDS;
+    const BOOL do_arp = args[6] != 0, do_dhcp = args[7] != 0;
+    char mac_s[24] = "", ip_s[16] = "", router_s[16] = "";
+    if (args[8]) strncpy(mac_s, (const char *)args[8], sizeof mac_s - 1);
+    if (args[9]) strncpy(ip_s, (const char *)args[9], sizeof ip_s - 1);
+    if (args[10]) strncpy(router_s, (const char *)args[10], sizeof router_s - 1);
+    (void)args[11];   /* WAIT: reserved for a later per-ask timeout */
+    const unsigned long rounds = args[1] ? (unsigned long)*(LONG *)args[1] : (do_arp || do_dhcp) ? 1u : MAX_ROUNDS;
     const unsigned long reads = args[2] ? (unsigned long)*(LONG *)args[2] : 2u;
     const BOOL self = args[3] != 0, bench_only = args[4] != 0;
     diag = args[5] != 0;
     FreeArgs(rd);
-    printf("NetLoop 1.1 -- PaulaNET protocol by RobSmithDev, used with permission\n");
+    printf("NetLoop 1.2 -- PaulaNET protocol by RobSmithDev, used with permission\n");
     if (n < 1 || n > MAX_N || rounds < 1 || rounds > MAX_ROUNDS || (reads != 1 && reads != 2)) {
         printf("N=1..%lu ROUNDS=1..%lu READS=1|2\n", (unsigned long)MAX_N, (unsigned long)MAX_ROUNDS);
         return RETURN_ERROR;
@@ -405,6 +559,9 @@ int main(void) {
     TimerBase = treq->tr_node.io_Device;
     if (self) { rc = selftest(); goto out; }
     if (bench_only) { rc = bench(); goto out; }
+    if ((do_arp || do_dhcp) && !nl_parse_mac(mac_s, l2_mac)) {
+        printf("ARP and DHCP need MAC=<the board's MAC>, as its boot log prints it\n"); goto out;
+    }
     if (OpenDevice((STRPTR)TD_NAME, DF1_UNIT, (struct IORequest *)td, 0)) {
         printf("no DF1 (trackdisk.device unit 1)\n"); goto out;
     }
@@ -415,8 +572,20 @@ int main(void) {
     }
     UBYTE ctr, last_pico;
     uint32_t took;
-    if (!resync(&ctr, &last_pico))
+    if (!resync(&ctr, &last_pico, do_arp || do_dhcp))
         printf("resync: no header from the board, starting from 0xFF/0xFF\n");
+    if (do_dhcp) { rc = run_dhcp(&ctr, &last_pico); goto out; }
+    if (do_arp) {
+        uint32_t me = 0, router = 0;
+        char v[16];
+        if (!ip_s[0] && GetVar((STRPTR)"NetLoopIP", (STRPTR)v, sizeof v, GVF_GLOBAL_ONLY) > 0) strcpy(ip_s, v);
+        if (!router_s[0] && GetVar((STRPTR)"NetLoopRouter", (STRPTR)v, sizeof v, GVF_GLOBAL_ONLY) > 0) strcpy(router_s, v);
+        if (!nl_parse_ip(ip_s, &me) || !nl_parse_ip(router_s, &router)) {
+            printf("ARP needs IP= and ROUTER= (or a NetLoop DHCP lease first)\n"); goto out;
+        }
+        rc = run_arp(&ctr, &last_pico, me, router, rounds);
+        goto out;
+    }
     if (one_round(&ctr, &last_pico, n, reads, 1, &took) != 0)    /* warm-up: motor, seek; not counted */
         printf("warm-up round failed (not counted); the counted rounds follow\n");
     c_ioerr = c_nosync = c_badhdr = c_stale = c_rewrites = c_mismatch = c_failed = 0;

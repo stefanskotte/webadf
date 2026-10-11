@@ -23,6 +23,10 @@ mkdir -p "$out"
 cc -std=c11 -Wall -Wextra -Werror -O1 -I"$here" -o "$out/test_netloop_stats" \
    "$here/test_netloop_stats.c" "$here/netloop_stats.c"
 "$out/test_netloop_stats"
+fw="$root/wifi-floppy/firmware/src"
+cc -std=c11 -Wall -Wextra -Werror -O1 -I"$here" -I"$fw" -o "$out/test_netloop_eth" \
+   "$here/test_netloop_eth.c" "$here/netloop_eth.c" "$fw/pnet_sort.c"
+"$out/test_netloop_eth"
 [ "${1:-}" = test ] && exit 0
 
 # NETLOOP_CODEC=asm (default) or c: which codec the plain pnet_* names are (pnet_asm.S). Both
@@ -49,11 +53,11 @@ docker run --rm -v "$root":/work -w /work "$IMG" sh -euc '
     -c -o $o/pnet_frame.o $s/pnet_frame.c
   m68k-amigaos-gcc $F $C $A -c -o $o/pnet_frame_allc.o $s/pnet_frame.c
   m68k-amigaos-gcc $F -c -o $o/pnet_asm.o $t/pnet_asm.S
-  for f in pnet_asm_tables netloop_stats netloop_equiv netloop_bench netloop test_netloop_asm; do
+  for f in pnet_asm_tables netloop_stats netloop_eth netloop_equiv netloop_bench netloop test_netloop_asm; do
     m68k-amigaos-gcc $F -c -o $o/$f.o $t/$f.c
   done
   L="$o/pnet_mfm_c.o $o/pnet_frame.o $o/pnet_frame_allc.o $o/pnet_asm.o $o/pnet_asm_tables.o
-     $o/netloop_stats.o $o/netloop_equiv.o $o/netloop_bench.o"
+     $o/netloop_stats.o $o/netloop_eth.o $o/netloop_equiv.o $o/netloop_bench.o"
   m68k-amigaos-gcc -noixemul -m68000 -s -o $t/build/NetLoop $o/netloop.o $L
   m68k-amigaos-gcc -noixemul -m68000 -s -o $t/build/test_netloop_asm $o/test_netloop_asm.o $L
 ' sh "$asm"
