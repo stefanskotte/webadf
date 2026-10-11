@@ -4816,7 +4816,11 @@ Demozoo API (the bulk export makes per-lookup load on a non-profit unnecessary).
 board, and ARP to the router worked 1,000 times in a row, while the board stayed online and DF0 saved. Bench: A500
 (PAL), KS 3.1, Workbench 3.1 + AmiTCP_NG on IDE; NetLoop 1.2 from SYS:C (SELFTEST PASS: equivalence ok); DF0
 Workbench3.1, DF1 Storage3.1 (the operator's 3.1 set; the plan's "Locale" was another set's disk 2). Board MAC
-28:cd:c1:19:6a:38. Branch feat/paulanet-phase1, not merged yet.
+28:cd:c1:19:6a:38. **Merged to master 2026-10-11 (44aad9a); release fw 1.10.2 (seq 71, GitHub fw-1.10.2) carries the
+pio2 fix and nothing of WF_PNET_*.** **Phase 2 decided (operator, 2026-10-11): use Rob's PaulaNET.device as is, no
+copy of our own** (no technical debt keeping a 1:1 port) -- the board must then serve his status cylinder 76 and
+match his to-board header format (open question 7). Deferred minor: a BOOTREQUEST's IPv4 source is not learned
+(the ACK teaches the address anyway).
 
 | step | what | result |
 |---|---|---|
