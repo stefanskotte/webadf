@@ -18,8 +18,19 @@
  * falling edge, so every interval comes back short by the pulse's low time. MFM's wide classes
  * never cared; 1-cell intervals do. The batch opens with 00 01 00 01 -- two pulses exactly 16
  * cells apart -- which gives the missing low time: pw = 16 x 2000 ns - measured. Every later
- * interval is rounded to cells AFTER adding it back. Both ends are crystal clocks, so the nominal
- * 2000 ns cell is used as is. Word 0 is arm-to-first-edge, not an interval (lead_ns).
+ * interval is rounded to cells AFTER adding it back. Word 0 is arm-to-first-edge, not an interval
+ * (lead_ns).
+ *
+ * THE CELL IS NOT 2000 ns (bench, 2026-10-11). Paula times a cell from the colour clock, 7 ticks:
+ * 1973.6 ns on PAL, 1955.6 on NTSC. Rounding at the nominal cell holds for the short intervals of
+ * RLE and MFM (the pw taken from the sync absorbs part of the drift), but an empty batch's header --
+ * checksum, data_size and compressed_size all 0 -- is a 59-cell gap, read on the A500 as 58: every
+ * later bit moved and the board refused the poll as `mode`. So the decoder fits the Amiga's cell and
+ * low time, t = cells x cell - pw, by least squares over the sync and the first PNET_RX_CAL_MAX
+ * intervals of up to 16 cells (each counted at the nominal cell, where that is safe), and an interval
+ * of PNET_RX_CAL_CELLS or more at the nominal cell is counted with the fit instead. Below that the
+ * nominal rounding stays, as Phase 0 proved it. The fit is computed only when such a gap arrives
+ * (a 64-bit divide, once or twice per batch); a fit outside 1900..2100 ns is not used.
  *
  * THE HUNT (bench fixes 1 and 2, 2026-10-10). On the A500 the write does NOT start at the sync,
  * and the capture arms at WGATE, before it. NetLoop's buffer (pnet_build_to_board) starts at 00 01,
@@ -95,6 +106,10 @@
  * stuck pattern ends. */
 #define PNET_RX_HUNT_MAX     8192u
 #define PNET_RX_MAX_CELLS    64u      /* past any gap a legal batch holds: counted, then clamped */
+/* The cell fit (above): intervals it samples, and the nominal count from which it decides. 24: NTSC
+ * at the nominal cell is still right at 32 cells with ~300 ns to spare, PAL past 50. */
+#define PNET_RX_CAL_MAX      64u
+#define PNET_RX_CAL_CELLS    24u
 
 typedef struct {
     uint8_t *buf;
@@ -118,6 +133,11 @@ typedef struct {
     bool     hunt_failed;   /* refused before any sync: an 18+ cell gap, or the hunt ran out */
     bool     overflowed;
     uint32_t out_of_range;  /* intervals over PNET_RX_MAX_CELLS */
+    /* The cell fit: k samples (cells n, measured t), and its result in 1/16 ns, 0 = none yet or
+     * stale. k <= 64, n <= 16, t < 34200: every sum fits 32 bits. */
+    uint32_t cal_k, cal_sn, cal_snn, cal_st, cal_snt;
+    uint32_t cal_c16;
+    int32_t  cal_p16;
 } pnet_rx_t;
 
 /* O(1): `buf` is NOT touched here. pnet_rx_feed zeroes each byte just before its first bit lands,

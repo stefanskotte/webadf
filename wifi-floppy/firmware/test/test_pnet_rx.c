@@ -559,6 +559,91 @@ static void a_prearmed_capture_hunts_a_lead_in_instead_of_implying(void) {
     CHECK(r.implied && !decodes_and_parses(&r, wn), "implied at the lead-in: never parses");
 }
 
+/* Bench 2026-10-11 (Phase 1, Task 9 Step 3): the A500's cell is not 2000 ns. Paula times a bit cell
+ * from the colour clock -- 7 ticks: 1973.6 ns on PAL, 1955.6 on NTSC -- and an empty batch's header
+ * holds checksum, data_size and compressed_size all 0: a 59-cell gap, read at the nominal cell as
+ * 58, and every bit after it moved (the board refused it as `mode`). Intervals here are in tenths
+ * of a ns, edge to edge, less pw, with +-jit ns on every one; the bench's sync readings repeat to
+ * the 13 ns count (31386 twice), so +-40 is generous. */
+static size_t to_words_cell(const uint8_t *w, size_t n, uint32_t cell_x10, uint32_t pw,
+                            uint32_t jit, uint32_t seed, uint32_t *out) {
+    size_t k = 0, prev = SIZE_MAX;
+    out[k++] = 30000u;
+    for (size_t bit = 0; bit < n * 8u; bit++) {
+        if (!((w[bit >> 3] >> (7u - (bit & 7u))) & 1u)) continue;
+        if (prev != SIZE_MAX) {
+            seed = seed * 1103515245u + 12345u;
+            const int32_t j = jit ? (int32_t)((seed >> 16) % (2u * jit + 1u)) - (int32_t)jit : 0;
+            out[k++] = (uint32_t)((int32_t)(((bit - prev) * cell_x10 + 5u) / 10u) - (int32_t)pw + j);
+        }
+        prev = bit;
+    }
+    return k;
+}
+
+static const uint32_t amiga_cells[] = {20000u, 19736u, 19556u};   /* crystal, PAL, NTSC (x10 ns) */
+
+static void an_empty_batch_decodes_at_the_amigas_cell(void) {
+    const uint32_t pws[] = {192u, 600u, 1200u};    /* 192: the A500's, from its 31386 ns sync */
+    unsigned bad = 0;
+    for (unsigned c = 0; c < 3; c++)
+        for (unsigned p = 0; p < 3; p++)
+            for (uint32_t seed = 1; seed <= 50; seed++) {
+                const size_t wn = pnet_build_to_board(wire, sizeof wire, (uint8_t)(seed * 5u), 0x80, NULL, 0);
+                pnet_rx_t r;
+                pnet_rx_init(&r, capbuf, sizeof capbuf);
+                feed_all(&r, words, to_words_cell(wire, wn, amiga_cells[c], pws[p], 40u, seed, words));
+                pnet_hdr_t h;
+                if (pnet_parse_hdr_from_amiga(capbuf, pnet_rx_bytes(&r), &h) != PNET_OK ||
+                    h.mode != PNET_MODE_ETHERNET || h.amiga_ctr != (uint8_t)(seed * 5u) ||
+                    memcmp(capbuf, wire + 4, wn - 4) != 0 || r.out_of_range)
+                    bad++;
+            }
+    CHECK_EQ_INT(bad, 0);
+}
+
+/* The same, armed between the sync's pulses (the implied sync): no 16-cell interval to time, so the
+ * fit has only the magic's 2- and 4-cell intervals and is looser. Measured on 6,000 batches per
+ * jitter: clean to +-15 ns, 1.4% bad at +-25, 20% at +-40 (a measured sync: clean to +-80). +-15 is
+ * one flux_in count either way, what the bench shows; and the pre-arm, which never implies, takes
+ * the polls of a running exchange (bench 2026-10-11: prearm used 25 of 25). A refused poll is
+ * written again by the Amiga. */
+static void an_empty_batch_decodes_at_the_amigas_cell_when_implied(void) {
+    unsigned bad = 0;
+    for (unsigned c = 0; c < 3; c++)
+        for (uint32_t seed = 1; seed <= 50; seed++) {
+            const size_t wn = pnet_build_to_board(wire, sizeof wire, 0x21, 0x80, NULL, 0);
+            const size_t n = to_words_cell(wire, wn, amiga_cells[c], 192u, 15u, seed, words);
+            words[1] = 20000u;                          /* word 0 of the arm: past pulse 1 */
+            pnet_rx_t r;
+            pnet_rx_init(&r, capbuf, sizeof capbuf);
+            feed_all(&r, words + 1, n - 1);             /* from the sync's closing pulse */
+            pnet_hdr_t h;
+            if (!r.implied || pnet_parse_hdr_from_amiga(capbuf, pnet_rx_bytes(&r), &h) != PNET_OK ||
+                memcmp(capbuf, wire + 4, wn - 4) != 0)
+                bad++;
+        }
+    CHECK_EQ_INT(bad, 0);
+}
+
+/* Frames too, at each cell: the whole path, as a_batch_survives_flux_and_parses at 2000 ns. */
+static void a_framed_batch_decodes_at_the_amigas_cell(void) {
+    pnet_frame_ref_t f[3] = {{frames, 64}, {frames + 64, 1500}, {frames + 1564, 7}};
+    uint32_t x = 99u;
+    for (size_t i = 0; i < 1564; i++) { x ^= x << 13; x ^= x >> 17; x ^= x << 5; frames[i] = (uint8_t)x; }
+    memset(frames + 1564, 0, 7);
+    unsigned bad = 0;
+    for (unsigned c = 0; c < 3; c++)
+        for (uint32_t seed = 1; seed <= 20; seed++) {
+            const size_t wn = pnet_build_to_board(wire, sizeof wire, 0x10, 0x7F, f, 3);
+            pnet_rx_t r;
+            pnet_rx_init(&r, capbuf, sizeof capbuf);
+            feed_all(&r, words, to_words_cell(wire, wn, amiga_cells[c], 192u, 40u, seed, words));
+            if (memcmp(capbuf, wire + 4, wn - 4) != 0 || r.out_of_range) bad++;
+        }
+    CHECK_EQ_INT(bad, 0);
+}
+
 int main(void) {
     RUN(bytes_after_the_sync_come_back);
     RUN(jitter_does_not_move_a_bit);
@@ -580,5 +665,8 @@ int main(void) {
     RUN(armed_in_the_data_never_parses_implied_or_not);
     RUN(a_prearmed_capture_syncs_by_measure_whatever_the_idle);
     RUN(a_prearmed_capture_hunts_a_lead_in_instead_of_implying);
+    RUN(an_empty_batch_decodes_at_the_amigas_cell);
+    RUN(an_empty_batch_decodes_at_the_amigas_cell_when_implied);
+    RUN(a_framed_batch_decodes_at_the_amigas_cell);
     return REPORT();
 }
