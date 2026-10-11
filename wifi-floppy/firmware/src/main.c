@@ -68,6 +68,10 @@
 #if WF_PNET_LOOP
 #include "pnet_frame.h"      // PaulaNET loopback TEST build: the cylinder-77 wire format
 #include "pnet_loop.h"       //   and its decisions
+#if WF_PNET_L2
+#include "pnet_link.h"       // PaulaNET Phase 1: counters for real frames
+#include "pnet_bridge.h"     //   the rings and core1's radio side
+#endif
 #endif
 
 // transport_tls.c is device-only (no host test exercises it, unlike every
@@ -1590,6 +1594,11 @@ static volatile bool g_motor_on;
 // When the motor last came on (dskchg_motor_on_ms), published with g_motor_on:
 // swap_holds counts it as activity (swap_gate.h, review I1).
 static volatile uint32_t g_motor_on_ms;
+#if WF_PNET_L2
+// PaulaNET Phase 1: when cylinder 77 last carried a batch (a capture taken, or a batch streamed),
+// clock_ms; 0 = never. core0 writes it; core1's update gate reads it (pnet_ota_quiet).
+static volatile uint32_t g_pnet_last_ms;
+#endif
 // Published by core1 at the top of every pass: up_holds(&up), captured writes
 // the server has not got. core0's DF1 store rule reads it (drive_store_idle,
 // R17). A stale false (core1 inside a long network call) costs only margin:
@@ -1718,6 +1727,9 @@ static void core1_main(void) {
         else
             wf_logf(WF_INFO, "pio claims: radio on pio2 (%x -> %x)", before[2], m[2]);
     }
+#if WF_PNET_L2
+    pnet_bridge_start();          // the input hook and the send worker (plan 2026-10-11)
+#endif
 
     // Plan 4b: decide whether to serve the captive portal or run plan 4a's
     // protocol loop against stored credentials. Touches no radio itself
@@ -2191,6 +2203,9 @@ static void core1_main(void) {
             // either seen as work by those checks or cuts this pass's poll
             // short. Taken later -- just before dc_step -- a write landing
             // between a "no work" answer and the mark would wait out the poll.
+#if WF_PNET_L2
+            pnet_bridge_check();      // re-hooks if the radio side re-added its netif
+#endif
             const uint32_t pass_write_mark = g_write_last_ms;
             // Tap-to-mount, first: a tap that cut the last poll short goes out
             // now, ahead of anything else this pass sends. Between requests,
@@ -2513,6 +2528,23 @@ static void core1_main(void) {
                 const bool gate_preload = c.preload.loading;
                 bool idle = !gate_mounted && gate_slot == SLOT_NONE && !gate_upw && !gate_motor && !gate_owed &&
                             !gate_preload;
+#if WF_PNET_L2
+                {
+                    // Network mode's idle (plan 2026-10-11 ruling 12): cylinder 77 quiet for 10 s and
+                    // nothing queued for the radio, on top of everything above.
+                    const bool tx_pending = pnet_ring_count(&g_pnet_tx) != 0;
+                    const bool quiet = pnet_ota_quiet(clock_ms(), g_pnet_last_ms, tx_pending);
+                    static bool held_logged;
+                    if (!quiet && idle && fwu.phase == FWU_STAGED && !held_logged) {
+                        wf_logf(WF_INFO, "fw: update held: cylinder 77 busy (%lu ms ago, %s)",
+                                (unsigned long)(clock_ms() - g_pnet_last_ms),
+                                tx_pending ? "frames queued" : "none queued");
+                        held_logged = true;
+                    }
+                    if (quiet) held_logged = false;
+                    if (!quiet) idle = false;
+                }
+#endif
                 if (fwu_step(&fwu, &fwu_ops, &fst, idle, clock_ms())) {
                     const char *st = fwu_state_text(&fwu);
                     const char *er = fwu_error_text(&fwu);
@@ -2933,7 +2965,20 @@ static void serve_drive(unsigned d, int32_t token, int *loaded) {
 // a TEST build; the boot banner reads it, which keeps it in the image.
 const char wf_pnet_loop_marker[] = "wf-pnet-loop-test";
 static pnet_loop_t g_pnet;                       // core0 only
+#if WF_PNET_L2
+// Phase 1: the counters for real frames (pnet_link.h). g_pnet keeps the capture counts (rx, bad[]).
+static pnet_link_t g_link;
+// The heap low-water, sampled every loop pass (the 5 s heap: line can miss a dip; ruling 13).
+static uint32_t    g_pnet_heap_low = UINT32_MAX;
+// A batch's bytes on the wire within DF1's buffer, with the lead-in this build sends (pnet_frame.c).
+#define PNET_BATCH_CAP (sizeof track_words1 - (PNET_TX_LEAD_BYTES - PNET_LEAD_BYTES))
+#define PNET_CTR g_link
+#else
+#define PNET_CTR g_pnet
+#endif
+#if !WF_PNET_L2
 static uint8_t     g_pnet_half;                  // the half of g_pnet_echo the echo is in
+#endif
 static __uninitialized_psram("pnetecho") uint8_t g_pnet_echo[2][PNET_ECHO_BYTES];
 // One 5 s window of timings, for pnet_log_summary.
 static uint32_t g_pnet_dec_max, g_pnet_dec_sum, g_pnet_decs, g_pnet_ready_max;
@@ -2999,6 +3044,33 @@ static bool pnet_take_capture(void) {
     pnet_hdr_t h;
     pnet_err_t e = pnet_parse_hdr_from_amiga(cap.bytes, cap.nbytes, &h);
     if (e != PNET_OK) { pnet_reject(e, &cap); return false; }
+#if WF_PNET_L2
+    // Phase 1: the acknowledgement first (it may free our batch out), then the Amiga's frames into
+    // the TX ring -- all of them, or the batch is not taken and the Amiga resends it (ruling 10).
+    g_pnet_last_ms = clock_ms();
+    const unsigned acked = pnet_link_ack(&g_link, &h);
+    if (acked) pnet_ring_drop(&g_pnet_rx, acked);
+    if (pnet_link_is_new(&g_link, &h)) {
+        uint16_t lens[PNET_MAX_FRAMES];
+        unsigned n = 0;
+        uint8_t *const scratch = &g_pnet_echo[0][0];          // both halves: 32 KB holds 20 x 1518
+        e = pnet_parse_frames(cap.bytes + PNET_HDR_BYTES, h.compressed_size, PNET_TO_BOARD,
+                              scratch, sizeof g_pnet_echo, lens, PNET_MAX_FRAMES, &n);
+        if (e != PNET_OK) {
+            pnet_reject(e, &cap);
+            return true;                                      // the ack above may have changed our batch
+        }
+        if (pnet_link_take(&g_link, &h, n, pnet_ring_space(&g_pnet_tx)) == PNET_TAKE_NEW) {
+            const uint8_t *p = scratch;
+            for (unsigned i = 0; i < n; i++) {
+                pnet_ring_push(&g_pnet_tx, p, lens[i]);       // room checked by the take
+                p += lens[i];
+            }
+        }
+    } else {
+        pnet_link_take(&g_link, &h, 0, 0);                    // counts the resend
+    }
+#else
     if (pnet_loop_is_new(&g_pnet, &h)) {
         uint16_t lens[PNET_MAX_FRAMES];
         unsigned n = 0;
@@ -3011,6 +3083,7 @@ static bool pnet_take_capture(void) {
     } else {
         pnet_loop_commit(&g_pnet, &h, 0, NULL);  // a resend: only its acknowledgement counts
     }
+#endif
     const uint64_t now = time_us_64();
     const uint32_t dec = (uint32_t)(now - t0), ready = (uint32_t)(now - cap.ended_us);
     if (dec > g_pnet_dec_max) g_pnet_dec_max = dec;
@@ -3038,21 +3111,39 @@ static bool pnet_prepare_echo(void) {
     g_pnet_prepared = false;
     stream_stop(1);
     pnet_frame_ref_t f[PNET_MAX_FRAMES];
+#if WF_PNET_L2
+    // Phase 1: our batch out, or -- when none is out -- a new one from what is waiting. It stays out,
+    // rebuilt unchanged here, until the Amiga acknowledges it (ruling 10; pnet_link.h).
+    if (!g_link.backup) {
+        uint16_t lens[PNET_MAX_FRAMES];
+        unsigned avail = pnet_ring_count(&g_pnet_rx);
+        if (avail > PNET_MAX_FRAMES) avail = PNET_MAX_FRAMES;
+        for (unsigned i = 0; i < avail; i++) (void)pnet_ring_peek(&g_pnet_rx, i, &lens[i]);
+        pnet_link_start(&g_link, pnet_link_fit(lens, avail, PNET_BATCH_CAP));
+    }
+    for (unsigned i = 0; i < g_link.nframes; i++) f[i].data = pnet_ring_peek(&g_pnet_rx, i, &f[i].len);
+    const uint8_t flags = pnet_ring_count(&g_pnet_rx) > g_link.nframes ? PNET_CANRECEIVE : 0u;
+    const unsigned nf = g_link.nframes;
+    const uint8_t ack = g_link.last_amiga, pico = g_link.pico;
+#else
     const uint8_t *p = g_pnet_echo[g_pnet_half];
     for (unsigned i = 0; i < g_pnet.nframes; i++) {
         f[i].data = p;
         f[i].len = g_pnet.len[i];
         p += g_pnet.len[i];
     }
+    const uint8_t flags = 0;
+    const unsigned nf = g_pnet.nframes;
+    const uint8_t ack = g_pnet.last_amiga, pico = g_pnet.pico;
+#endif
     // Built as bytes straight into the word buffer, then repacked IN PLACE. That is safe: the
     // loop reads bytes 4i..4i+3 and only then writes word i, and no later word reads a byte
     // before 4(i+1). The builder pads to whole words.
     uint8_t *out = (uint8_t *)track_words1;
-    const size_t bytes = pnet_build_to_amiga(out, sizeof track_words1, g_pnet.last_amiga,
-                                             g_pnet.pico, 0, f, g_pnet.nframes);
+    const size_t bytes = pnet_build_to_amiga(out, sizeof track_words1, ack, pico, flags, f, nf);
     if (bytes == 0) {
         wf_logf(WF_ERR, "pnet: an echo of %u frames does not fit DF1's %u B buffer -- not served",
-                (unsigned)g_pnet.nframes, (unsigned)sizeof track_words1);
+                (unsigned)nf, (unsigned)sizeof track_words1);
         return false;
     }
     const uint32_t nwords = ((uint32_t)bytes + 3u) / 4u;
@@ -3115,6 +3206,9 @@ static void pnet_serve_df1(int32_t tok, int *loaded) {
     if (!g_pnet_prepared && !pnet_prepare_echo()) return;
     if (!pnet_stream_prepared()) return;
     g_pnet_echo_live = true;
+#if WF_PNET_L2
+    g_pnet_last_ms = clock_ms();                 // the Amiga is reading cylinder 77
+#endif
     // INDEX now, as PaulaNET does at the start of every transmission: the Amiga's INDEXSYNC read
     // then starts at the lead-in instead of one whole buffer later (dma_irq's INDEX is at the wrap).
     // Short (PNET_INDEX_PULSE_US): trackdisk arms INDEXSYNC ~1.5-2 ms after the side change and
@@ -3129,8 +3223,9 @@ static void pnet_serve_df1(int32_t tok, int *loaded) {
                          : was == PNET_TRACK_IN ? PNET_RST_SIDE : PNET_RST_OTHER;
     g_pnet_rst[cause]++;
     if (cause == PNET_RST_SIDE) {
-        const uint32_t lat = now32 - g_pnet_side_us;
-        if (lat > g_pnet_side_idx_max) g_pnet_side_idx_max = lat;
+        // The restart can precede the SIDE ISR's stamp (negative latency): that is 0, not 4,294 s.
+        const int32_t lat = (int32_t)(now32 - g_pnet_side_us);
+        if (lat > 0 && (uint32_t)lat > g_pnet_side_idx_max) g_pnet_side_idx_max = (uint32_t)lat;
     }
     const uint32_t us = (uint32_t)(time_us_64() - t0);
     if (us > g_pnet_build_max) g_pnet_build_max = us;
@@ -3163,6 +3258,37 @@ static void pnet_prearm_step(void) {
     restore_interrupts(irq);
 }
 
+#if WF_PNET_L2
+// Phase 1, every 5 s in which anything moved. Each line fits WF_LOG_MSG (88) at full widths.
+static void pnet_l2_log(void) {
+    static uint32_t last_ms, last_sum;
+    const uint32_t now = clock_ms();
+    if (now - last_ms < 5000u) return;
+    last_ms = now;
+    pnet_bridge_stats_t st;
+    pnet_bridge_stats(&st);
+    uint32_t no = 0;
+    for (unsigned i = 1; i < PNET_TX_N; i++) no += st.tx_no[i];
+    const uint32_t sum = st.in_amiga + st.in_both + st.rx_drops + st.tx_sent + st.tx_err + no +
+                         g_link.txfull + g_link.acked + st.clash + st.hooks;
+    if (sum == last_sum) return;
+    last_sum = sum;
+    char a[16], b[16];
+    pnet_ip_text(st.amiga_ip, a);
+    pnet_ip_text(st.board_ip, b);
+    wf_logf(WF_INFO, "pnet: l2 in a %lu b %lu drop %lu q %lu sent %lu err %lu",
+            (unsigned long)st.in_amiga, (unsigned long)st.in_both, (unsigned long)st.rx_drops,
+            (unsigned long)pnet_ring_count(&g_pnet_rx), (unsigned long)st.tx_sent, (unsigned long)st.tx_err);
+    wf_logf(no ? WF_WARN : WF_INFO, "pnet: l2 tx no len %lu mac %lu type %lu clash %lu full %lu ack %lu",
+            (unsigned long)st.tx_no[PNET_TX_LEN], (unsigned long)st.tx_no[PNET_TX_MAC],
+            (unsigned long)st.tx_no[PNET_TX_TYPE], (unsigned long)st.tx_no[PNET_TX_CLASH],
+            (unsigned long)g_link.txfull, (unsigned long)g_link.acked);
+    const bool same = st.amiga_ip != 0u && st.amiga_ip == st.board_ip;
+    wf_logf(st.clash || same ? WF_WARN : WF_INFO, "pnet: l2 amiga %s board %s %s clash %lu heap %lu",
+            a, b, same ? "SAME" : "distinct", (unsigned long)st.clash, (unsigned long)g_pnet_heap_low);
+}
+#endif
+
 // Every 5 s while there is traffic: counts, and the window's timings in microseconds.
 static void pnet_log_summary(void) {
     static uint32_t last_ms, last_rx, last_lost, last_busy;
@@ -3187,8 +3313,8 @@ static void pnet_log_summary(void) {
     uint32_t bad = 0;
     for (unsigned i = 0; i < PNET_E_COUNT; i++) bad += b[i];
     wf_logf(WF_INFO, "pnet: rx %lu new %lu dup %lu bad %lu ctr %02x/%02x echo %u fr busy %lu",
-            (unsigned long)g_pnet.rx, (unsigned long)g_pnet.fresh, (unsigned long)g_pnet.dup,
-            (unsigned long)bad, g_pnet.last_amiga, g_pnet.pico, (unsigned)g_pnet.nframes,
+            (unsigned long)g_pnet.rx, (unsigned long)PNET_CTR.fresh, (unsigned long)PNET_CTR.dup,
+            (unsigned long)bad, PNET_CTR.last_amiga, PNET_CTR.pico, (unsigned)PNET_CTR.nframes,
             (unsigned long)busy);
     wf_logf(WF_INFO, "pnet: us dec max %lu avg %lu ready max %lu build max %lu avg %lu bl %lu",
             (unsigned long)g_pnet_dec_max,
@@ -3331,7 +3457,13 @@ int main(void) {
     }
 #if WF_PNET_LOOP
     pnet_loop_init(&g_pnet);
+#if WF_PNET_L2
+    pnet_link_init(&g_link);
+#endif
     wf_logf(WF_WARN, "%s: DF1 cylinder 77 is a PaulaNET loopback (bench only)", wf_pnet_loop_marker);
+#if WF_PNET_L2
+    pnet_bridge_init();           // the PSRAM rings, before core1 (their other side) starts
+#endif
     if (!psram_check_address(&g_pnet_echo[1][PNET_ECHO_BYTES - 1]))
         wf_logf(WF_ERR, "pnet: the echo store is not backed by PSRAM -- the loopback will fail");
 #endif
@@ -3968,6 +4100,19 @@ int main(void) {
             if (df1_mounted && (loaded1 == PNET_TRACK_IN || loaded1 == PNET_TRACK_OUT || loaded1 == -1))
                 pnet_prepare_echo();
         }
+#if WF_PNET_L2
+        // Frames came while nothing is out and the head sits on side 0 (the Amiga between its write
+        // and its read, or idle there): build the batch now, before the Amiga turns to side 1 -- a
+        // build at the SIDE edge is late (Phase 0, 0c89f65). Never while side 1 streams: that would
+        // tear the read in progress.
+        if (df1_mounted && loaded1 == PNET_TRACK_IN && !g_link.backup && pnet_ring_count(&g_pnet_rx) != 0)
+            pnet_prepare_echo();
+        {
+            const uint32_t hf = heap_free_bytes();
+            if (hf < g_pnet_heap_low) g_pnet_heap_low = hf;
+        }
+        pnet_l2_log();
+#endif
         if (df1_mounted) pnet_serve_df1(df1_seen_tok, &loaded1);
         pnet_prearm_step();                      // after the take: a taken batch frees the capture
         pnet_log_summary();
