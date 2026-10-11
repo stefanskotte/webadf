@@ -20,6 +20,8 @@
 typedef struct { uint8_t type; uint32_t yiaddr, server, router, dns, mask, lease; } nl_dhcp_t;
 
 int    nl_parse_mac(const char *s, uint8_t mac[6]);      /* "aa:bb:cc:dd:ee:ff" (or '-'): 1 = ok */
+/* 1 when s (with its NUL) fits in cap bytes: arguments are rejected, never cut. */
+int    nl_arg_fits(const char *s, size_t cap);
 int    nl_parse_ip(const char *s, uint32_t *ip);         /* "a.b.c.d": 1 = ok */
 void   nl_ip_text(uint32_t ip, char out[16]);
 /* Broadcast "who has tpa, tell spa" from mac: NL_ETH_MIN bytes. */

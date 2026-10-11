@@ -29,6 +29,8 @@ int nl_parse_mac(const char *s, uint8_t mac[6]) {
     return *s == '\0';
 }
 
+int nl_arg_fits(const char *s, size_t cap) { return strlen(s) < cap; }
+
 int nl_parse_ip(const char *s, uint32_t *ip) {
     uint32_t v = 0;
     for (int i = 0; i < 4; i++) {
@@ -156,6 +158,7 @@ const char *nl_eth_selftest(void) {
     if (nl_parse_ip("192.168.1.256", &ip) || nl_parse_ip("192.168.1", &ip)) return "bad ip taken";
     nl_ip_text(0xC0A80139u, t);
     if (strcmp(t, "192.168.1.57") != 0) return "ip text";
+    if (!nl_arg_fits("192.168.100.100", 16) || nl_arg_fits("192.168.100.1000", 16)) return "arg length";
     if (nl_l2_start_ack(0x40) != 0x3F || nl_l2_start_ack(0) != 0xFF) return "l2 start ack";
     /* The request, turned into the router's reply. */
     if (nl_arp_request(f, mac, 0xC0A80139u, 0xC0A80101u) != NL_ETH_MIN) return "arp size";

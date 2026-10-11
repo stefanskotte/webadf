@@ -280,7 +280,9 @@ static int l2_exchange(UBYTE *ctr, UBYTE *last_pico, const pnet_frame_ref_t *out
 }
 
 /* Sends `frame` until the board takes it, then polls until fn finds its reply or wait_s pass.
- * Frames in the batch read with the send itself were queued before it went out: never the reply.
+ * The send exchange is matched too: the board builds a batch whenever frames arrive while nothing
+ * is out, and that includes the gap between our write and our side-1 read, so a fast reply can
+ * already be in the batch that read returns (and our next write would acknowledge it away).
  * 0 = found (*took: E-clock ticks from the first write), 1 = not found. */
 static int l2_ask(UBYTE *ctr, UBYTE *last_pico, const uint8_t *frame, size_t flen, l2_fn fn,
                   void *ctx, ULONG wait_s, uint32_t *took) {
@@ -289,7 +291,7 @@ static int l2_ask(UBYTE *ctr, UBYTE *last_pico, const uint8_t *frame, size_t fle
     BOOL sent = FALSE;
     while (ticks() < end) {
         if (SetSignal(0, 0) & SIGBREAKF_CTRL_C) return 1;
-        const int r = l2_exchange(ctr, last_pico, sent ? NULL : &ref, sent ? 0u : 1u, sent ? fn : NULL, ctx);
+        const int r = l2_exchange(ctr, last_pico, sent ? NULL : &ref, sent ? 0u : 1u, fn, ctx);
         if (r == 0) { *took = (uint32_t)(ticks() - t0); return 0; }
         if (r != 2) sent = TRUE;
     }
@@ -527,9 +529,10 @@ int main(void) {
     const unsigned long n = args[0] ? (unsigned long)*(LONG *)args[0] : 64u;
     const BOOL do_arp = args[6] != 0, do_dhcp = args[7] != 0;
     char mac_s[24] = "", ip_s[16] = "", router_s[16] = "";
-    if (args[8]) strncpy(mac_s, (const char *)args[8], sizeof mac_s - 1);
-    if (args[9]) strncpy(ip_s, (const char *)args[9], sizeof ip_s - 1);
-    if (args[10]) strncpy(router_s, (const char *)args[10], sizeof router_s - 1);
+    const char *too_long = NULL;   /* never truncate an argument: a cut-off address would be accepted */
+    if (args[8]) { if (nl_arg_fits((const char *)args[8], sizeof mac_s)) strcpy(mac_s, (const char *)args[8]); else too_long = "MAC"; }
+    if (args[9]) { if (nl_arg_fits((const char *)args[9], sizeof ip_s)) strcpy(ip_s, (const char *)args[9]); else too_long = "IP"; }
+    if (args[10]) { if (nl_arg_fits((const char *)args[10], sizeof router_s)) strcpy(router_s, (const char *)args[10]); else too_long = "ROUTER"; }
     (void)args[11];   /* WAIT: reserved for a later per-ask timeout */
     const unsigned long rounds = args[1] ? (unsigned long)*(LONG *)args[1] : (do_arp || do_dhcp) ? 1u : MAX_ROUNDS;
     const unsigned long reads = args[2] ? (unsigned long)*(LONG *)args[2] : 2u;
@@ -559,6 +562,7 @@ int main(void) {
     TimerBase = treq->tr_node.io_Device;
     if (self) { rc = selftest(); goto out; }
     if (bench_only) { rc = bench(); goto out; }
+    if (too_long) { printf("%s= is too long\nRESULT: FAIL\n", too_long); goto out; }
     if ((do_arp || do_dhcp) && !nl_parse_mac(mac_s, l2_mac)) {
         printf("ARP and DHCP need MAC=<the board's MAC>, as its boot log prints it\n"); goto out;
     }

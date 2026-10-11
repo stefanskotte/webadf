@@ -36,6 +36,7 @@ int main(void) {
     CHECK(pnet_sort_tx(&s, f, n, mac, board) == PNET_TX_MAC, "a typo is a MAC refusal");
     /* An L2 start never echoes the served counter, so the first write frees nothing. */
     for (unsigned p = 0; p < 256u; p++) CHECK(nl_l2_start_ack((uint8_t)p) != (uint8_t)p, "start ack differs");
+    CHECK(nl_arg_fits("192.168.100.100", 16) && !nl_arg_fits("192.168.100.1000", 16), "long IP is refused");
     /* Undersized buffers build nothing. */
     CHECK(nl_dhcp_discover(f, NL_DHCP_FRAME_BYTES - 1u, mac, 1u) == 0, "cap");
     printf("%s: %s\n", __FILE__, failed ? "FAIL" : "ok");
