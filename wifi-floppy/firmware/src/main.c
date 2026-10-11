@@ -3196,8 +3196,13 @@ static void pnet_serve_df1(int32_t tok, int *loaded) {
         return;
     }
 #if WF_PNET_L2
-    // Side 1 streaming our batch is a read in progress, re-reads without a side change included.
-    if (act == PNET_DF1_ECHO && want == *loaded && g_pnet_echo_live) g_pnet_last_ms = clock_ms() | 1u;
+    // Side 1 streaming our batch counts as a read -- re-reads without a side change included -- only
+    // while the Amiga really reads DF1: selected (SEL1 low) AND its motor on. The stream never stops
+    // on its own, so a head parked here would otherwise hold the OTA forever; select alone is not
+    // enough either (trackdisk polls a disk change selected, motor off). Review fix round 2.
+    if (act == PNET_DF1_ECHO && want == *loaded && g_pnet_echo_live && !gpio_get(PIN_SEL1) &&
+        dskchg_motor_on_d(1))
+        g_pnet_last_ms = clock_ms() | 1u;
 #endif
     if (want == *loaded) return;
     const int was = *loaded;
