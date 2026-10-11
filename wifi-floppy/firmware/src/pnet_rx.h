@@ -26,11 +26,12 @@
  * RLE and MFM (the pw taken from the sync absorbs part of the drift), but an empty batch's header --
  * checksum, data_size and compressed_size all 0 -- is a 59-cell gap, read on the A500 as 58: every
  * later bit moved and the board refused the poll as `mode`. So the decoder fits the Amiga's cell and
- * low time, t = cells x cell - pw, by least squares over the sync and the first PNET_RX_CAL_MAX
- * intervals of up to 16 cells (each counted at the nominal cell, where that is safe), and an interval
- * of PNET_RX_CAL_CELLS or more at the nominal cell is counted with the fit instead. Below that the
+ * low time, t = cells x cell - pw, by least squares over the first PNET_RX_CAL_MAX samples: the
+ * sync, then intervals of up to 16 cells (each counted at the nominal cell, where that is safe).
+ * An interval of PNET_RX_CAL_CELLS or more at the nominal cell is counted with the fit. Below that the
  * nominal rounding stays, as Phase 0 proved it. The fit is computed only when such a gap arrives
- * (a 64-bit divide, once or twice per batch); a fit outside 1900..2100 ns is not used.
+ * and new samples came in since the last one (two 64-bit divides; at most until the 64 samples are
+ * in); a fit outside 1900..2010 ns is not used, and the nominal rounding stays.
  *
  * THE HUNT (bench fixes 1 and 2, 2026-10-10). On the A500 the write does NOT start at the sync,
  * and the capture arms at WGATE, before it. NetLoop's buffer (pnet_build_to_board) starts at 00 01,

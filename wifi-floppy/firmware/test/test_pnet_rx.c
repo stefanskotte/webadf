@@ -626,7 +626,9 @@ static void an_empty_batch_decodes_at_the_amigas_cell_when_implied(void) {
     CHECK_EQ_INT(bad, 0);
 }
 
-/* Frames too, at each cell: the whole path, as a_batch_survives_flux_and_parses at 2000 ns. */
+/* Frames too, at each cell: the whole path, as a_batch_survives_flux_and_parses at 2000 ns. A regression
+ * guard, not the fix's pin: a framed batch's longest gap (~35 cells) is inside the nominal margin, so
+ * this passed before the fit too. */
 static void a_framed_batch_decodes_at_the_amigas_cell(void) {
     pnet_frame_ref_t f[3] = {{frames, 64}, {frames + 64, 1500}, {frames + 1564, 7}};
     uint32_t x = 99u;

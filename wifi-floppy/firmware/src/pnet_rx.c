@@ -37,7 +37,8 @@ static bool cal_fit(pnet_rx_t *r) {
     const int64_t den = k * (int64_t)r->cal_snn - sn * sn;
     if (k < 2 || den <= 0) return false;
     const int64_t c16 = 16 * (k * (int64_t)r->cal_snt - sn * (int64_t)r->cal_st) / den;
-    if (c16 < 16 * 1900 || c16 > 16 * 2100) return false;
+    /* 2010 at most: the clamp below is for a 2000 ns cell, and no Amiga writes a longer one. */
+    if (c16 < 16 * 1900 || c16 > 16 * 2010) return false;
     r->cal_c16 = (uint32_t)c16;
     r->cal_p16 = (int32_t)((c16 * sn - 16 * (int64_t)r->cal_st) / k);
     return true;
