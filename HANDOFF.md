@@ -1629,7 +1629,8 @@ separately.
   private, loopback and link-local addresses after DNS resolution (re-check on every redirect), cap redirects, size
   and time, and stream into the same presign/complete ingest path so hashing, dedupe, TOSEC matching and
   entitlements stay one code path. Also consider zip/7z/gz archives from such sites.
-- **(Important, latent, on master) pio2 CTRL shared by flux_in and the radio driver without a lock** (found
+- **FIXED on branch feat/paulanet-phase1 (plan 2026-10-11 Task 1), proven on the bench 2026-10-11; ships with the next
+  release.** **(Important, latent, on master) pio2 CTRL shared by flux_in and the radio driver without a lock** (found
   2026-10-10 by the PaulaNET pre-arm review, scratchpad prearm-review.md I1): flux_in's SM enable/disable on core0 and
   the cyw43 driver's PIO use on core1 both read-modify-write the same pio2 CTRL register unprotected. A stale write
   from core1 can switch flux_in off mid DF0 write (write-back refused while the Amiga believes it wrote) or the other
@@ -2590,7 +2591,7 @@ separately.
   2026-10-09:** AmiTCP_NG v4.1.8 installed on the A500's IDE Workbench (KS 3.1); `ping 127.0.0.1` replies; `avail` with the
   stack running: 446,544 B chip free, 7,713,448 B fast free (acceptance bar was >= 100 KB chip). **Phase 0 GO (operator, 2026-10-09):** Rob's framing only (his grant makes PaulaNET-compatible the
   choice; the MFM alternative is dropped), and the bar to continue to Phase 1 is >= 15 KB/s and a median round trip
-  <= 250 ms on the A500. Plan: docs/superpowers/plans/2026-10-09-paulanet-phase0-loopback.md. **Phase 0 PASSED 2026-10-11 (3bg): 18.3 KB/s at N=8000, median 51 ms at N=64.** **Stack decided (operator, 2026-10-09):** the Amiga-side TCP/IP stack behind the PaulaNET device is AmiTCP_NG, https://github.com/MW0MWZ/AmiTCP_NG. Check its licence alongside PaulaNET's, and how its SANA-II driver interface meets PaulaNET's device. **UNBLOCKED 2026-10-09:** RobSmithDev replied that he has no issue with us implementing PaulaNET, as long as the licences are respected. Check PaulaNET's licence terms (code and protocol) before any design, and credit him as the licence requires. Not started. Raised by the operator
+  <= 250 ms on the A500. Plan: docs/superpowers/plans/2026-10-09-paulanet-phase0-loopback.md. **Phase 0 PASSED 2026-10-11 (3bg): 18.3 KB/s at N=8000, median 51 ms at N=64.** **Phase 1 PASSED 2026-10-11 (3bh): the A500 leases its own address through the board; ARP 1000/1000, median 51 ms.** **Stack decided (operator, 2026-10-09):** the Amiga-side TCP/IP stack behind the PaulaNET device is AmiTCP_NG, https://github.com/MW0MWZ/AmiTCP_NG. Check its licence alongside PaulaNET's, and how its SANA-II driver interface meets PaulaNET's device. **UNBLOCKED 2026-10-09:** RobSmithDev replied that he has no issue with us implementing PaulaNET, as long as the licences are respected. Check PaulaNET's licence terms (code and protocol) before any design, and credit him as the licence requires. Not started. Raised by the operator
   2026-09-13 after finding RobSmithDev's PaulaNET. Genuinely attractive, and explicitly a
   SECOND PRODUCT on the same board rather than an increment to disk serving: it makes the
   Amiga itself reach the internet, and does nothing to make disks load better.
@@ -4808,6 +4809,96 @@ Demozoo API (the bulk export makes per-lookup load on a non-profit unnecessary).
 - **Screenshot redirects:** screenshot fetches follow redirects, so the `media.demozoo.org` host
   allowlist checks only the first URL (the raster content-type allowlist and `nosniff` still apply).
 - **Cron drift:** the daily 01:30 cron against a 7-day gate can drift a refetch to 8 days.
+
+### 3bh. PaulaNET Phase 1 (layer-2 sharing) -- TEST build 1.10.1+gcdf9711, seq 70: PASSED on the A500 (2026-10-11)
+
+**Verdict: every Phase 1 acceptance item passed.** The A500 got its own lease from the operator's router through the
+board, and ARP to the router worked 1,000 times in a row, while the board stayed online and DF0 saved. Bench: A500
+(PAL), KS 3.1, Workbench 3.1 + AmiTCP_NG on IDE; NetLoop 1.2 from SYS:C (SELFTEST PASS: equivalence ok); DF0
+Workbench3.1, DF1 Storage3.1 (the operator's 3.1 set; the plan's "Locale" was another set's disk 2). Board MAC
+28:cd:c1:19:6a:38. Branch feat/paulanet-phase1, not merged yet.
+
+| step | what | result |
+|---|---|---|
+| 2 | DF1 holds a disk | PASS (Storage3.1, read-only as DF1 v1 is) |
+| 3 | `NetLoop DHCP MAC=…` (acceptance 2) | **FAIL on seq 69, PASS on seq 70** (below): OFFER from 172.16.10.1, Amiga 172.16.10.231, board stays 172.16.10.229, `distinct`, clash 0 |
+| 4 | `NetLoop ARP` (acceptance 1) | PASS: router 172.16.10.1 is at 74:ac:b9:1c:81:d7; 1/1, 50.4 ms |
+| 5 | `ARP ROUNDS=1000`, card online (acceptance 3a) | PASS: 1000/1000, median 50.9 / p95 86.8 ms; 870 replies found on the send exchange (information) |
+| 6 | the same during `copy c:dir df0:pnettest` (3b) | PASS: copy without requester; 1000/1000, 50.9 / 88.3 ms, 1 batch resent; 8 DF0 track writes (69/70/80) all `ALL bad 0`, applied, uploaded; no batch lost to DF0 |
+| 7 | eject DF0, remount, `ARP` (3c) | PASS (eject cleared DF0+DF1, remount 12 s later, DF1's next disk 4 s after) |
+| 8 | Ctrl-A-A, then two `ARP ROUNDS=1` | PASS: drained 4 then 1 stale frames, each its own reply (186.2 and 86.2 ms, none on the send exchange). Needs `NetLoop DHCP` first: the lease lives in ENV:, which a reboot clears (the plan missed this) |
+
+**The step-3 failure and its fix (931ba9c, cdf9711; reviewed, 4 minors fixed).** On seq 69 the DISCOVER reached the
+radio but every following empty poll was refused as `mode` (14 B; bad 24/25, then 83/84), so the OFFER never got
+back. Paula's cell is 7 colour clocks -- **1973.6 ns PAL, 1955.6 NTSC, not 2000** -- and an empty batch's raw
+header (checksum, data_size, compressed_size all 0) is a 59-cell gap; the board read it as 58 and every later bit
+moved. Phase 0 never sent a gap that long. `pnet_rx.c` now fits cell and pulse low time by least squares over the
+sync and the first short intervals and counts any gap of 24+ nominal cells with the fit; shorter intervals keep
+Phase 0's rounding. Host: an empty batch at PAL/NTSC failed 300/300 before, 0 after; a measured sync is clean to
++-80 ns jitter, an **implied sync only to +-15 ns** (the fit then has only the magic's 2- and 4-cell intervals; the
+bench quantum is ~13 ns, every seq-70 capture was pre-armed, and a refused poll is rewritten). TEST-only code: the
+release image does not compile `pnet_rx.c`.
+
+**Serial log, seq 70 (75,344 lines, 0 `records dropped`):**
+- **acceptance 4, heap:** 32,768 B at idle (baseline) and the lowest in every `pnet: l2 amiga` line: 32,768 B
+  (floor 20,480);
+- l2: in a 4 / b 2012, drop 0, sent 2008, err 0; tx-no len 0 mac 0 type 0 clash 0, full 0; ack 2009;
+- captures: rx 2340, all new, **bad 0, refused 0**; pre-arm used 2340 of 6963 arms, df0 6, **stray 0**; restarts
+  4662 (side), side-idx max 5.5 ms; `ready max` median 1.8 ms, max 3.5 ms (the max during the DF0 write);
+- **pio2 / DMA DREQ-credit risk (Task 1):** no NOSYNC, no stray, no refusal, every DF0 `write:` line `ALL bad 0`. The
+  `lead` statistic was empty (0/0/0) because every capture was pre-armed and pre-armed captures are excluded, so the
+  lead-0 signature could not be read either way;
+- `fw: update held` never appeared (no update was offered while the network was in use).
+
+**Rulings 1-15 (plan 2026-10-11), one line each:**
+1. Phase 1 is TEST-only (`WF_PNET_L2` requires `WF_PNET_LOOP`); product integration is Phase 3.
+2. The pio2 CTRL race fix is in all builds: flux_in enabled once, captures gated by their DMA channel.
+3. The board changes little: only unicast to the Amiga's IP and DHCP replies to its xids go Amiga-only.
+4. The Amiga's identity is learned on core1 from its own frames (ARP, IPv4 source, ACK yiaddr).
+5. DHCP replies are sorted by xid, not chaddr.
+6. The board's client-id is 61,9,0,'w','f',MAC (L2 builds only); the router kept the board's address.
+7. Clashes are refused and counted; option B (MAC rewrite) not built.
+8. Fixed-slot SPSC rings in PSRAM (RX 64x1536, TX 32x1536), `__dmb` handoff.
+9. Frames reach the radio from a 2 ms async_context worker on core1 (8 per tick).
+10. Frames leave the RX ring only when the Amiga acknowledges their batch.
+11. NetLoop takes the board's MAC from `MAC=`.
+12. OTA installs only after 10 s of cylinder-77 quiet and an empty TX ring (host-tested, not benched).
+13. Heap low-water sampled every core0 pass.
+14. NetLoop increments its counter on every write, polls included.
+15. No web or server change, so no e2e.
+
+**Rulings made during execution** (SDD ledger `.superpowers/sdd/2026-10-11-paulanet-phase1-l2-sharing/progress.md`):
+no side-0 pre-build during an Amiga write; the OTA quiet timer counts side-1 re-reads only while DF1 is selected with
+its motor on; NetLoop drains the board's outstanding batch after a resync (fixed a deterministic stale ARP PASS);
+early replies are information only; over-long `MAC=`/`IP=`/`ROUTER=` are refused; the bench fix belongs in the
+board's decoder, not NetLoop (Rob's driver sends the same empty header). Deviations: a second final-review fix wave
+(72bac40) against the skill's one-wave rule; a controller ruling on lwIP RELEASE that was wrong and reverted; a
+Task 3 reviewer used a name-pattern `pkill` (said to have hit only its own process), reported to the operator.
+
+**Corrections to the spec 1-7, one line each:**
+1. The send cannot run from core1's loop (blocked in the long poll); it runs in the network context.
+2. "Broadcasts go to both" yields to the filter list.
+3. The netif input hook is confirmed (`cyw43_lwip.c:272-289`); core1 re-checks it every pass.
+4. `LWIP_HOOK_DHCP_APPEND_OPTIONS` is confirmed for every DHCP message, RELEASE included (`dhcp.c:1366`).
+5. The OTA gate reads DF0's motor only; ruling 12 adds the network rule.
+6. Frames are parsed into the PSRAM echo store first, then copied into fixed slots.
+7. pio2 has no lock and no free sibling block (ruling 2).
+
+**Open questions, with what the bench answered:**
+1. Router: **answered** -- separate leases (Amiga .231, board .229), OFFER and ACK sorted Amiga-only by xid.
+2. PSRAM visibility with `__dmb` only: no corrupt frame in 2,340 batches; not proven, not contradicted.
+3. When the pio2 fix ships: proven on the bench today (DF0 write-back under traffic, stray 0); ships with the next
+   release -- the operator decides when.
+4. Rob's written grant under docs/: still owed (Phase 2 redistributes his driver).
+5. AmiTCP_NG's own DHCP behaviour: untested (NetLoop hand-makes frames) -- Phase 2.
+6. Status cylinder 76: Phase 2.
+7. New: does Rob's driver send the to-board DataHeader raw (as ours does) or MFM (the research doc §1.2 says "The
+   MFM header")? The board's fit handles either gap, but Phase 2 must check the format against his driver.
+
+**Known limits:** a board reboot while NetLoop runs can, with probability ~1/256, meet a counter that matches (the
+resync reads the board's counters, so this needs the board to restart, not the Amiga). The implied-sync tolerance
+above. Off at runtime: set DF1 to Off on the card. Rollback: a release at a higher sequence (the merged branch built
+with both options OFF).
 
 ### 3bg. PaulaNET Phase 0 (DF1 cylinder-77 loopback) PASSED on the A500 (2026-10-10/11)
 
