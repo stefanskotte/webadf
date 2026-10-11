@@ -238,7 +238,7 @@ static BOOL resync(UBYTE *ctr, UBYTE *last_pico, BOOL l2) {
 
 /* ---- Phase 1: real frames (ARP, DHCP) ---------------------------------------------------- */
 static uint8_t l2_mac[6];
-static unsigned long c_l2_frames, c_l2_stale, c_l2_unacked;
+static unsigned long c_l2_frames, c_l2_stale, c_l2_unacked, c_l2_early;
 typedef int (*l2_fn)(const uint8_t *f, size_t len, void *ctx);   /* nonzero: the frame wanted */
 
 /* One exchange: our batch on side 0 (out, or none: a poll that also acknowledges), then side 1
@@ -289,13 +289,37 @@ static int l2_ask(UBYTE *ctr, UBYTE *last_pico, const uint8_t *frame, size_t fle
     const pnet_frame_ref_t ref = { frame, (uint16_t)flen };
     const uint64_t t0 = ticks(), end = t0 + (uint64_t)wait_s * hz;
     BOOL sent = FALSE;
+    unsigned tries = 0;   /* send exchanges so far: a second one means the first may have been taken */
     while (ticks() < end) {
         if (SetSignal(0, 0) & SIGBREAKF_CTRL_C) return 1;
-        const int r = l2_exchange(ctr, last_pico, sent ? NULL : &ref, sent ? 0u : 1u, fn, ctx);
-        if (r == 0) { *took = (uint32_t)(ticks() - t0); return 0; }
+        const BOOL send = !sent;
+        const int r = l2_exchange(ctr, last_pico, send ? &ref : NULL, send ? 1u : 0u, fn, ctx);
+        if (r == 0) {
+            *took = (uint32_t)(ticks() - t0);
+            /* A reply found on the send exchange itself is not proof of THIS request: count it if it came
+             * faster than a genuine one can, or after a re-send (the first send's reply may be the one). */
+            if (send && nl_early_match(*took, nl_early_floor(hz), tries)) c_l2_early++;
+            return 0;
+        }
         if (r != 2) sent = TRUE;
+        else if (send) tries++;
     }
     return 1;
+}
+
+/* After resync, before the first send: read what the board still has out (a previous run's last
+ * batch, left unacknowledged) without matching it, so our first send does not find it as new. */
+static void l2_drain(UBYTE *ctr, UBYTE *last_pico) {
+    const unsigned long f0 = c_l2_frames;
+    unsigned done = 0;
+    int r;
+    unsigned long before;
+    do {
+        before = c_l2_frames;
+        r = l2_exchange(ctr, last_pico, NULL, 0u, NULL, NULL);
+        done++;
+    } while (!nl_drain_done(r, (unsigned)(c_l2_frames - before), done, 8u));
+    printf("drained %lu stale frame(s)\n", c_l2_frames - f0);
 }
 
 typedef struct { uint32_t asked; uint8_t mac[6]; } arp_ctx_t;
@@ -365,9 +389,11 @@ static int run_arp(UBYTE *ctr, UBYTE *last_pico, uint32_t me, uint32_t router, U
         unsigned long w, t, w2, t2;
         ms(nl_percentile(rtt, (unsigned)ok, 50), &w, &t);
         ms(nl_percentile(rtt, (unsigned)ok, 95), &w2, &t2);
-        printf("arp ms: median %lu.%lu p95 %lu.%lu\n", w, t, w2, t2);
+        printf("arp ms: median %lu.%lu p95 %lu.%lu early %lu\n", w, t, w2, t2, c_l2_early);
     }
-    const BOOL pass = ok == rounds;
+    if (c_l2_early && rounds == 1)
+        printf("the reply came before a genuine one can (or after a re-send): not proof of this request; run again\n");
+    const BOOL pass = nl_arp_pass(ok, rounds, c_l2_early);
     printf("RESULT: %s\n", pass ? "PASS" : "FAIL");
     return pass ? RETURN_OK : RETURN_WARN;
 }
@@ -523,8 +549,8 @@ static void cleanup(void) {
 }
 
 int main(void) {
-    LONG args[12] = {0};
-    struct RDArgs *rd = ReadArgs((STRPTR)"N/K/N,ROUNDS/K/N,READS/K/N,SELFTEST/S,BENCH/S,DIAG/S,ARP/S,DHCP/S,MAC/K,IP/K,ROUTER/K,WAIT/K/N", args, NULL);
+    LONG args[11] = {0};
+    struct RDArgs *rd = ReadArgs((STRPTR)"N/K/N,ROUNDS/K/N,READS/K/N,SELFTEST/S,BENCH/S,DIAG/S,ARP/S,DHCP/S,MAC/K,IP/K,ROUTER/K", args, NULL);
     if (!rd) { PrintFault(IoErr(), (STRPTR)"NetLoop"); return RETURN_FAIL; }
     const unsigned long n = args[0] ? (unsigned long)*(LONG *)args[0] : 64u;
     const BOOL do_arp = args[6] != 0, do_dhcp = args[7] != 0;
@@ -533,7 +559,6 @@ int main(void) {
     if (args[8]) { if (nl_arg_fits((const char *)args[8], sizeof mac_s)) strcpy(mac_s, (const char *)args[8]); else too_long = "MAC"; }
     if (args[9]) { if (nl_arg_fits((const char *)args[9], sizeof ip_s)) strcpy(ip_s, (const char *)args[9]); else too_long = "IP"; }
     if (args[10]) { if (nl_arg_fits((const char *)args[10], sizeof router_s)) strcpy(router_s, (const char *)args[10]); else too_long = "ROUTER"; }
-    (void)args[11];   /* WAIT: reserved for a later per-ask timeout */
     const unsigned long rounds = args[1] ? (unsigned long)*(LONG *)args[1] : (do_arp || do_dhcp) ? 1u : MAX_ROUNDS;
     const unsigned long reads = args[2] ? (unsigned long)*(LONG *)args[2] : 2u;
     const BOOL self = args[3] != 0, bench_only = args[4] != 0;
@@ -578,6 +603,7 @@ int main(void) {
     uint32_t took;
     if (!resync(&ctr, &last_pico, do_arp || do_dhcp))
         printf("resync: no header from the board, starting from 0xFF/0xFF\n");
+    if (do_arp || do_dhcp) l2_drain(&ctr, &last_pico);
     if (do_dhcp) { rc = run_dhcp(&ctr, &last_pico); goto out; }
     if (do_arp) {
         uint32_t me = 0, router = 0;
