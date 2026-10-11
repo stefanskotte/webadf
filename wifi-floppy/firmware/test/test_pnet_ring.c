@@ -3,6 +3,7 @@
 #include <pthread.h>
 #include <stdint.h>
 #include <string.h>
+#include <time.h>
 
 static uint8_t mem[64 * PNET_RING_SLOT];
 
@@ -92,6 +93,12 @@ static void init_refuses_what_is_not_a_power_of_two(void) {
  * whose length or bytes are not yet (or no longer) the ones published. */
 #define T_FRAMES 200000u
 static pnet_ring_t tr;
+static volatile int stop_producer;   /* the consumer gave up: let the producer go */
+static double now_s(void) {
+    struct timespec ts;
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    return (double)ts.tv_sec + (double)ts.tv_nsec * 1e-9;
+}
 static uint16_t len_of(uint32_t i) { return (uint16_t)(1u + (i * 7u) % PNET_RING_MTU); }
 static void *producer(void *arg) {
     (void)arg;
@@ -100,24 +107,34 @@ static void *producer(void *arg) {
         const uint16_t n = len_of(i);
         memset(f, (int)(i & 0xFFu), n);
         if (pnet_ring_push(&tr, f, n)) i++;
+        else if (stop_producer) break;
     }
     return NULL;
 }
 static void the_ring_survives_two_threads(void) {
     pnet_ring_init(&tr, mem, 8);
     pthread_t t;
-    CHECK(pthread_create(&t, NULL, producer, NULL) == 0, "thread");
+    stop_producer = 0;
+    if (pthread_create(&t, NULL, producer, NULL) != 0) { CHECK(0, "pthread_create failed"); return; }
     uint32_t bad = 0;
+    const double deadline = now_s() + 30.0;   /* 200,000 frames take well under a second */
+    int timed_out = 0;
     for (uint32_t i = 0; i < T_FRAMES;) {
         uint16_t n;
         const uint8_t *p = pnet_ring_peek(&tr, 0, &n);
-        if (!p) continue;
+        if (!p) {
+            if (now_s() > deadline) { timed_out = 1; break; }   /* a frame was lost: fail, do not spin */
+            continue;
+        }
         const uint8_t v = (uint8_t)(i & 0xFFu);
         if (n != len_of(i) || p[0] != v || p[n - 1] != v || p[n / 2] != v) bad++;
         pnet_ring_drop(&tr, 1);
         i++;
     }
+    stop_producer = 1;
     pthread_join(t, NULL);
+    CHECK(!timed_out, "the consumer timed out waiting for a frame");
+    if (timed_out) return;
     CHECK_EQ_INT(bad, 0);
     CHECK_EQ_INT(pnet_ring_count(&tr), 0);
 }
