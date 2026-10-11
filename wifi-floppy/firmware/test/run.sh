@@ -37,6 +37,7 @@ fail=0
 #                       covers register writes and nothing else.
 #   fw_rom.c - boot ROM, flash, watchdog; every decision it acts on
 #                       lives in fw_trial.c / fw_apply.c / fw_update.c, which are tested
+#   pnet_bridge.c     - PaulaNET Phase 1's lwIP/radio glue; its decisions are pnet_sort.c and pnet_ring.c
 # image_loader.c used to be excluded here too: it called http_get_stream(),
 # which only existed in http_fetch.c/.h (device-only, lwIP-backed), so
 # including it would fail to link. Task 3 removed that dependency
@@ -58,6 +59,7 @@ fail=0
 cc -std=c11 -O1 -w -c ../src/vendor/monocypher/monocypher.c -o .build/monocypher.o
 cc -std=c11 -O1 -w -I../src/vendor/monocypher -c ../src/vendor/monocypher/monocypher-ed25519.c -o .build/monocypher-ed25519.o
 
+# -pthread: test_pnet_ring.c runs a real producer thread against its consumer (Linux needs the flag).
 for t in test_*.c; do
   out=".build/${t%.c}"
   # -D_DEFAULT_SOURCE: strnlen (config_store.c) is POSIX.1-2008, not C11, and
@@ -65,9 +67,9 @@ for t in test_*.c; do
   # anyway, so this build passed there for months and failed the first time it
   # ran on Linux in CI. The device build is unaffected -- newlib declares it --
   # which is exactly why nothing caught it until a second toolchain did.
-  cc -std=c11 -D_DEFAULT_SOURCE -g -O1 -Wall -Wextra -Werror -DWFMF_HOST_TEST=1 -DWF_DF1_DEFAULT=0 \
+  cc -std=c11 -D_DEFAULT_SOURCE -g -O1 -pthread -Wall -Wextra -Werror -DWFMF_HOST_TEST=1 -DWF_DF1_DEFAULT=0 \
      -o "$out" "$t" transport_fake.c si512_fake.c \
-     $(ls ../src/*.c | grep -vE 'net_radio_cyw43\.c|main\.c|transport_tls\.c|sntp_time\.c|portal_net\.c|dskchg\.c|activity_led\.c|i2c_probe\.c|nfc_bus_i2c\.c|ssd1306\.c|flux_capture\.c|bus_out\.c|fw_rom\.c') \
+     $(ls ../src/*.c | grep -vE 'net_radio_cyw43\.c|main\.c|transport_tls\.c|sntp_time\.c|portal_net\.c|dskchg\.c|activity_led\.c|i2c_probe\.c|nfc_bus_i2c\.c|ssd1306\.c|flux_capture\.c|bus_out\.c|pnet_bridge\.c|fw_rom\.c') \
      .build/monocypher.o .build/monocypher-ed25519.o -I../src/vendor/monocypher \
      || { echo "COMPILE FAIL: $t"; fail=1; continue; }
   if ! "$out"; then
@@ -164,6 +166,18 @@ want=$(bash ../../../scripts/display-wasm.sh --hash)
 have=$(cat ../../../src/lib/display-wasm.version 2>/dev/null || echo missing)
 if [ "$want" != "$have" ]; then
   echo "FAIL: public/display.wasm is stale -- run pnpm display:wasm"
+  fail=1
+fi
+
+# pio2's CTRL holds the enable bit of every state machine on the block, the radio's included, and
+# the radio's SDK driver read-modify-writes it from core1 with no lock (cyw43_bus_pio_spi.c). Any
+# enable or disable of ours racing one of those undoes the other (HANDOFF backlog, "pio2 CTRL";
+# plan 2026-10-11 Task 1). So flux_in is enabled ONCE, in flux_capture_init, before core1 starts,
+# and a capture is gated by its DMA channel. Comments are stripped first.
+pio2_toggles=$(sed -E -e 's#//.*##' -e 's#/\*.*\*/##g' ../src/flux_capture.c |
+  { grep -cE 'pio_sm_set_enabled|pio_set_sm_mask_enabled|pio_enable_sm_mask_in_sync|pio_enable_sm_multi_mask_in_sync' || true; })
+if [ "$pio2_toggles" != 1 ]; then
+  echo "FAIL: flux_capture.c writes flux_in's enable bit $pio2_toggles times (exactly 1, in flux_capture_init)"
   fail=1
 fi
 

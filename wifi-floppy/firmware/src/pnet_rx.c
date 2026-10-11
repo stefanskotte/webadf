@@ -14,6 +14,36 @@ void pnet_rx_init(pnet_rx_t *r, uint8_t *buf, size_t cap_bytes) {
 
 static bool in(uint32_t ns, uint32_t lo, uint32_t hi) { return ns >= lo && ns <= hi; }
 
+static void cal_reset(pnet_rx_t *r) {
+    r->cal_k = r->cal_sn = r->cal_snn = r->cal_st = r->cal_snt = r->cal_c16 = 0;
+    r->cal_p16 = 0;
+}
+
+static void cal_add(pnet_rx_t *r, uint32_t n, uint32_t t) {
+    if (r->cal_k >= PNET_RX_CAL_MAX || n > PNET_SYNC_CELLS) return;
+    r->cal_k++;
+    r->cal_sn += n;
+    r->cal_snn += n * n;
+    r->cal_st += t;
+    r->cal_snt += n * t;
+    r->cal_c16 = 0;                                   /* stale: refit on the next long gap */
+}
+
+/* The least-squares cell and low time, in 1/16 ns. False: too few or too alike samples, or a cell
+ * no Amiga writes -- the nominal rounding is used. */
+static bool cal_fit(pnet_rx_t *r) {
+    if (r->cal_c16) return true;
+    const int64_t k = r->cal_k, sn = r->cal_sn;
+    const int64_t den = k * (int64_t)r->cal_snn - sn * sn;
+    if (k < 2 || den <= 0) return false;
+    const int64_t c16 = 16 * (k * (int64_t)r->cal_snt - sn * (int64_t)r->cal_st) / den;
+    /* 2010 at most: the clamp below is for a 2000 ns cell, and no Amiga writes a longer one. */
+    if (c16 < 16 * 1900 || c16 > 16 * 2010) return false;
+    r->cal_c16 = (uint32_t)c16;
+    r->cal_p16 = (int32_t)((c16 * sn - 16 * (int64_t)r->cal_st) / k);
+    return true;
+}
+
 void pnet_rx_feed(pnet_rx_t *r, uint32_t ns) {
     const uint32_t w = r->words++;
     if (w == 0) { r->lead_ns = ns; return; }          // arm -> first edge: not an interval
@@ -34,6 +64,8 @@ void pnet_rx_feed(pnet_rx_t *r, uint32_t ns) {
             if (r->sync_ok) r->hunt_n++;                   // the first "sync" was the lead's last gap
             r->sync_ok = true;
             r->pw_ns = (int32_t)(PNET_SYNC_CELLS * PNET_CELL_NS) - (int32_t)ns;
+            cal_reset(r);                                  // a replaced sync's sample goes with it
+            cal_add(r, PNET_SYNC_CELLS, ns);
             return;
         }
         if (++r->hunt_n > PNET_RX_HUNT_MAX || ns > PNET_RX_GAP17_MAX_NS)
@@ -41,13 +73,16 @@ void pnet_rx_feed(pnet_rx_t *r, uint32_t ns) {
         return;
     }
     if (r->overflowed) return;
-    /* 32-bit throughout (no software 64-bit divide on the M33): anything past the max-cells
-     * range is out_of_range anyway, so clamp first. */
+    /* 32-bit per interval (no hardware 64-bit divide on the M33; only cal_fit divides 64-bit, and
+     * only on a long gap): anything past the max-cells range is out_of_range anyway, so clamp first. */
     if (ns > (PNET_RX_MAX_CELLS + 2u) * PNET_CELL_NS) ns = (PNET_RX_MAX_CELLS + 2u) * PNET_CELL_NS;
     /* ns <= 132000 and pw_ns is -130..1980 (the sync window), so t is positive and fits. */
     const int32_t t = (int32_t)ns + r->pw_ns + (int32_t)(PNET_CELL_NS / 2u);
     uint32_t cells = t > 0 ? (uint32_t)t / PNET_CELL_NS : 0u;
     if (cells < 1u) cells = 1u;
+    if (cells <= PNET_SYNC_CELLS) cal_add(r, cells, ns);
+    else if (cells >= PNET_RX_CAL_CELLS && cal_fit(r))
+        cells = (uint32_t)(((int32_t)ns * 16 + r->cal_p16 + (int32_t)(r->cal_c16 / 2u)) / (int32_t)r->cal_c16);
     if (cells > PNET_RX_MAX_CELLS) { r->out_of_range++; cells = PNET_RX_MAX_CELLS; }
     const size_t at = r->bit + (size_t)cells - 1u;   // the 1 after cells - 1 zeros
     if (at >= r->cap_bits) { r->overflowed = true; return; }

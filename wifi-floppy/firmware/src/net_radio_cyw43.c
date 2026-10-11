@@ -65,3 +65,25 @@ int net_radio_ap_authorized(uint8_t (*macs)[6], int max) {
     memcpy(macs, buf + 4, n * 6);
     return (int)n;
 }
+
+#if WF_PNET_L2
+// PaulaNET Phase 1 (plan 2026-10-11). The send copies the frame into the driver's own SPI buffer
+// (cyw43_ll_send_ethernet's memmove), so a PSRAM source is fine. The worker re-adds itself, the
+// pattern async_context documents for a periodic at-time worker.
+#include "pico/async_context.h"
+int net_radio_send_ethernet(const void *frame, size_t len) {
+    return cyw43_send_ethernet(&cyw43_state, CYW43_ITF_STA, len, frame, false);
+}
+static void (*s_every_fn)(void);
+static uint32_t s_every_ms;
+static void every_work(async_context_t *ctx, async_at_time_worker_t *w) {
+    s_every_fn();
+    async_context_add_at_time_worker_in_ms(ctx, w, s_every_ms);
+}
+static async_at_time_worker_t s_every = { .do_work = every_work };
+bool net_radio_every_ms(uint32_t ms, void (*fn)(void)) {
+    s_every_fn = fn;
+    s_every_ms = ms;
+    return async_context_add_at_time_worker_in_ms(cyw43_arch_async_context(), &s_every, ms);
+}
+#endif

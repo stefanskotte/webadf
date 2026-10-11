@@ -2596,7 +2596,7 @@ Expected: the existing stats test output, then `tools/netloop/test_netloop_eth.c
 ```c
 /* ---- Phase 1: real frames (ARP, DHCP) ---------------------------------------------------- */
 static uint8_t l2_mac[6];
-static unsigned long c_l2_frames, c_l2_stale, c_l2_unacked;
+static unsigned long c_l2_frames, c_l2_stale, c_l2_unacked, c_l2_on_send, c_l2_resend;
 typedef int (*l2_fn)(const uint8_t *f, size_t len, void *ctx);   /* nonzero: the frame wanted */
 
 /* One exchange: our batch on side 0 (out, or none: a poll that also acknowledges), then side 1
@@ -2638,20 +2638,46 @@ static int l2_exchange(UBYTE *ctr, UBYTE *last_pico, const pnet_frame_ref_t *out
 }
 
 /* Sends `frame` until the board takes it, then polls until fn finds its reply or wait_s pass.
- * Frames in the batch read with the send itself were queued before it went out: never the reply.
+ * The send exchange is matched too: the board builds a batch whenever frames arrive while nothing
+ * is out, and that includes the gap between our write and our side-1 read, so a fast reply can
+ * already be in the batch that read returns (and our next write would acknowledge it away).
  * 0 = found (*took: E-clock ticks from the first write), 1 = not found. */
 static int l2_ask(UBYTE *ctr, UBYTE *last_pico, const uint8_t *frame, size_t flen, l2_fn fn,
                   void *ctx, ULONG wait_s, uint32_t *took) {
     const pnet_frame_ref_t ref = { frame, (uint16_t)flen };
     const uint64_t t0 = ticks(), end = t0 + (uint64_t)wait_s * hz;
     BOOL sent = FALSE;
+    unsigned tries = 0;   /* send exchanges so far: a second one means the first may have been taken */
     while (ticks() < end) {
         if (SetSignal(0, 0) & SIGBREAKF_CTRL_C) return 1;
-        const int r = l2_exchange(ctr, last_pico, sent ? NULL : &ref, sent ? 0u : 1u, sent ? fn : NULL, ctx);
-        if (r == 0) { *took = (uint32_t)(ticks() - t0); return 0; }
+        const BOOL send = !sent;
+        const int r = l2_exchange(ctr, last_pico, send ? &ref : NULL, send ? 1u : 0u, fn, ctx);
+        if (r == 0) {
+            *took = (uint32_t)(ticks() - t0);
+            /* Information only: replies found on the send exchange itself (a fast reply is legitimate),
+             * and those found after a re-send (the first send's own reply may be the one found). */
+            if (send) { if (tries) c_l2_resend++; else c_l2_on_send++; }
+            return 0;
+        }
         if (r != 2) sent = TRUE;
+        else if (send) tries++;
     }
     return 1;
+}
+
+/* After resync, before the first send: read what the board still has out (a previous run's last
+ * batch, left unacknowledged) without matching it, so our first send does not find it as new. */
+static void l2_drain(UBYTE *ctr, UBYTE *last_pico) {
+    const unsigned long f0 = c_l2_frames;
+    unsigned done = 0;
+    int r;
+    unsigned long before;
+    do {
+        before = c_l2_frames;
+        r = l2_exchange(ctr, last_pico, NULL, 0u, NULL, NULL);
+        done++;
+    } while (!nl_drain_done(r, (unsigned)(c_l2_frames - before), done, 8u));
+    printf("drained %lu stale frame(s)\n", c_l2_frames - f0);
 }
 
 typedef struct { uint32_t asked; uint8_t mac[6]; } arp_ctx_t;
@@ -2721,17 +2747,18 @@ static int run_arp(UBYTE *ctr, UBYTE *last_pico, uint32_t me, uint32_t router, U
         unsigned long w, t, w2, t2;
         ms(nl_percentile(rtt, (unsigned)ok, 50), &w, &t);
         ms(nl_percentile(rtt, (unsigned)ok, 95), &w2, &t2);
-        printf("arp ms: median %lu.%lu p95 %lu.%lu\n", w, t, w2, t2);
+        printf("arp ms: median %lu.%lu p95 %lu.%lu (found on the send exchange %lu, after a re-send %lu)\n",
+               w, t, w2, t2, c_l2_on_send, c_l2_resend);
     }
-    const BOOL pass = ok == rounds;
+    const BOOL pass = nl_arp_pass(ok, rounds);
     printf("RESULT: %s\n", pass ? "PASS" : "FAIL");
     return pass ? RETURN_OK : RETURN_WARN;
 }
 ```
 
 (c) In `main`, widen the arguments:
-  - `LONG args[6] = {0, 0, 0, 0, 0, 0};` becomes `LONG args[12] = {0};`;
-  - the template becomes `"N/K/N,ROUNDS/K/N,READS/K/N,SELFTEST/S,BENCH/S,DIAG/S,ARP/S,DHCP/S,MAC/K,IP/K,ROUTER/K,WAIT/K/N"`.
+  - `LONG args[6] = {0, 0, 0, 0, 0, 0};` becomes `LONG args[11] = {0};`;
+  - the template becomes `"N/K/N,ROUNDS/K/N,READS/K/N,SELFTEST/S,BENCH/S,DIAG/S,ARP/S,DHCP/S,MAC/K,IP/K,ROUTER/K"`. (The `WAIT/K/N` argument the first draft reserved was parsed and ignored; the final review removed it.)
 
   Copy the string arguments before `FreeArgs(rd)`, because ReadArgs owns them:
 
@@ -2743,8 +2770,7 @@ static int run_arp(UBYTE *ctr, UBYTE *last_pico, uint32_t me, uint32_t router, U
     if (args[10]) strncpy(router_s, (const char *)args[10], sizeof router_s - 1);
 ```
 
-  (`WAIT/K/N` is reserved for a later per-ask timeout. Read `args[11]` as `(void)args[11];`, so the template stays
-  stable.)
+  (No `WAIT` argument: the final review removed the parsed-and-ignored one; `args` has 11 entries.)
 
   The existing range check rejects `ROUNDS` only above `MAX_ROUNDS`. For ARP/DHCP the default `rounds` is 1, so
   replace `const unsigned long rounds = args[1] ? … : MAX_ROUNDS;` with:
@@ -2907,6 +2933,7 @@ Every operator step below is one turn. The operator types or photographs NetLoop
   cylinder 77 is the network.
 
 - [ ] **Step 3: Operator, one step: acceptance 2.** Run `NetLoop DHCP MAC=<the MAC from Task 8 Step 5>`.
+  - NetLoop first prints `drained N stale frame(s)` (the L2 drain after resync; N may be 0 or more).
   - PASS:
     - `OFFER from …: address <A>`, then `ACK: this Amiga is <A>`, then `RESULT: PASS`;
     - and, in the next `pnet: l2 amiga <A> board <B> distinct` log line, `<A>` differs from `<B>`.
@@ -2916,12 +2943,13 @@ Every operator step below is one turn. The operator types or photographs NetLoop
     spec §6 question 3 for this router.
 
 - [ ] **Step 4: Operator, one step: acceptance 1.** Run `NetLoop ARP` (it uses the saved lease). PASS:
-  `router <ip> is at <mac>`, `arp: 1/1 answered`, `RESULT: PASS`. If the router's admin page shows its MAC, the
+  `drained N stale frame(s)`, `router <ip> is at <mac>`, `arp: 1/1 answered`, `RESULT: PASS`. If the router's admin page shows its MAC, the
   operator compares the two.
 
 - [ ] **Step 5: Operator, one step: acceptance 3a, the board stays online under traffic.** Run
   `NetLoop ARP ROUNDS=1000`, and watch the board's Devices card for the whole run.
   - PASS: the card says online throughout; `arp: 1000/1000 answered`; `RESULT: PASS`.
+  - The `arp ms` line also prints how many replies were found on the send exchange and after a re-send: record them (information only, never a gate).
   - Record `arp ms: median / p95`: the first real round trip through Wi-Fi from the A500.
 
 - [ ] **Step 6: Operator, one step: acceptance 3b, DF0 write-back during traffic** (it also re-proves Task 1's
@@ -2941,7 +2969,11 @@ Every operator step below is one turn. The operator types or photographs NetLoop
 
 - [ ] **Step 8: Operator, one step: Review Focus 5 on hardware.** Press Ctrl-A-A. After Workbench is back, run
   `NetLoop ARP`. PASS: `RESULT: PASS`, so the resync worked against a board that kept its counters and any batch it
-  had out.
+  had out. Two things decide it:
+  - the `drained N stale frame(s)` line is printed (N may be 0);
+  - run `NetLoop ARP ... ROUNDS=1` twice in a row; each run must print `RESULT: PASS` with its own reply. The drain makes
+    the second run unable to reuse the first run's reply. The found-on-the-send-exchange counts are recorded, not gated:
+    the exchange measured about 51 ms at the median (HANDOFF §3bg), so a fast genuine reply is normal.
 
 - [ ] **Step 9: Read the serial log** (no operator step).
   - First run `grep -c 'records dropped' pnet1-bench.log`. A log that dropped records proves no absence.
@@ -2951,6 +2983,10 @@ Every operator step below is one turn. The operator types or photographs NetLoop
     - the `l2 in` counts, `drop`, and the `tx no` reasons. `mac` above 0 means a MAC typo in some run;
     - `err`, `full` and `clash`;
     - the `pnet: bad …` and `pnet: refused` lines, and the restart/prearm lines, against Phase 0's numbers;
+    - **the Task 1 DMA DREQ-credit risk:** compare the `pnet: refused` and `bad` NOSYNC counts and every
+      `pre … stray` against Phase 0's numbers (HANDOFF §3bg: bad 0, stray 0). A `lead` minimum of 0 in the word-0
+      line is the signature of the risk. Every release DF0 `write: trk … ALL bad 0` line must also hold. Any bad,
+      stray or a `lead` of 0 means stop and report;
     - whether `fw: update held` ever appeared (it should not: no update was offered).
 
 - [ ] **Step 10: Record in `HANDOFF.md`.** Add `### 3bh. PaulaNET Phase 1 (layer-2 sharing) -- TEST build <version>, seq <n>`
