@@ -3035,6 +3035,10 @@ static bool pnet_take_capture(void) {
     flux_capture_raw_t cap;
     if (!flux_capture_take_raw(&cap)) return false;
     pnet_raw_pending = false;
+#if WF_PNET_L2
+    // Cylinder 77 is busy from the claim on, refused captures included (OTA rule; never 0 = never).
+    g_pnet_last_ms = clock_ms() | 1u;
+#endif
     const uint64_t t0 = time_us_64();
     g_pnet.rx++;
     if (cap.max_backlog > g_pnet_backlog_max) g_pnet_backlog_max = cap.max_backlog;
@@ -3047,7 +3051,6 @@ static bool pnet_take_capture(void) {
 #if WF_PNET_L2
     // Phase 1: the acknowledgement first (it may free our batch out), then the Amiga's frames into
     // the TX ring -- all of them, or the batch is not taken and the Amiga resends it (ruling 10).
-    g_pnet_last_ms = clock_ms();
     const unsigned acked = pnet_link_ack(&g_link, &h);
     if (acked) pnet_ring_drop(&g_pnet_rx, acked);
     if (pnet_link_is_new(&g_link, &h)) {
@@ -3192,6 +3195,10 @@ static void pnet_serve_df1(int32_t tok, int *loaded) {
         serve_drive(1, tok, loaded);
         return;
     }
+#if WF_PNET_L2
+    // Side 1 streaming our batch is a read in progress, re-reads without a side change included.
+    if (act == PNET_DF1_ECHO && want == *loaded && g_pnet_echo_live) g_pnet_last_ms = clock_ms() | 1u;
+#endif
     if (want == *loaded) return;
     const int was = *loaded;
     const bool commit = g_pnet_rst_commit;
@@ -3207,7 +3214,7 @@ static void pnet_serve_df1(int32_t tok, int *loaded) {
     if (!pnet_stream_prepared()) return;
     g_pnet_echo_live = true;
 #if WF_PNET_L2
-    g_pnet_last_ms = clock_ms();                 // the Amiga is reading cylinder 77
+    g_pnet_last_ms = clock_ms() | 1u;            // the Amiga is reading cylinder 77 (never 0)
 #endif
     // INDEX now, as PaulaNET does at the start of every transmission: the Amiga's INDEXSYNC read
     // then starts at the lead-in instead of one whole buffer later (dma_irq's INDEX is at the wrap).
@@ -4104,8 +4111,11 @@ int main(void) {
         // Frames came while nothing is out and the head sits on side 0 (the Amiga between its write
         // and its read, or idle there): build the batch now, before the Amiga turns to side 1 -- a
         // build at the SIDE edge is late (Phase 0, 0c89f65). Never while side 1 streams: that would
-        // tear the read in progress.
-        if (df1_mounted && loaded1 == PNET_TRACK_IN && !g_link.backup && pnet_ring_count(&g_pnet_rx) != 0)
+        // tear the read in progress. Nor during the Amiga's write (WGATE asserted, a DF1 write ours)
+        // or with its capture armed or not yet taken: the build would postpone that take by a whole
+        // build, and the commit would then rebuild the same batch (review fix 1).
+        if (df1_mounted && loaded1 == PNET_TRACK_IN && !g_link.backup && pnet_ring_count(&g_pnet_rx) != 0 &&
+            !pnet_raw_pending && !pnet_write_ours && gpio_get(PIN_WGATE))
             pnet_prepare_echo();
         {
             const uint32_t hf = heap_free_bytes();
