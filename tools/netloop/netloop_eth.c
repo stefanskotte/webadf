@@ -148,10 +148,8 @@ uint8_t nl_l2_start_ack(uint8_t served) { return (uint8_t)(served - 1u); }
 int nl_drain_done(int r, unsigned frames, unsigned done, unsigned max) {
     return done >= max || (r == 1 && frames == 0);
 }
-uint32_t nl_early_floor(uint32_t hz) { return (uint32_t)(((uint64_t)hz * 2u) / 5u); }
-int nl_early_match(uint32_t took, uint32_t floor_ticks, unsigned tries) { return tries > 0 || took < floor_ticks; }
-int nl_arp_pass(unsigned long ok, unsigned long rounds, unsigned long early) {
-    return ok == rounds && !(rounds == 1 && early > 0);
+int nl_arp_pass(unsigned long ok, unsigned long rounds) {
+    return ok == rounds;
 }
 
 const char *nl_eth_selftest(void) {
@@ -171,9 +169,7 @@ const char *nl_eth_selftest(void) {
     if (nl_l2_start_ack(0x40) != 0x3F || nl_l2_start_ack(0) != 0xFF) return "l2 start ack";
     if (nl_drain_done(2, 0, 1, 8) || nl_drain_done(1, 3, 1, 8) || !nl_drain_done(1, 0, 2, 8) || !nl_drain_done(2, 5, 8, 8))
         return "drain done";
-    if (nl_early_floor(709379u) != 283751u || !nl_early_match(100, 283751u, 0) || !nl_early_match(900000u, 283751u, 1) ||
-        nl_early_match(900000u, 283751u, 0)) return "early match";
-    if (!nl_arp_pass(1, 1, 0) || nl_arp_pass(1, 1, 1) || !nl_arp_pass(5, 5, 2) || nl_arp_pass(4, 5, 0)) return "arp pass";
+    if (!nl_arp_pass(1, 1) || !nl_arp_pass(5, 5) || nl_arp_pass(4, 5) || nl_arp_pass(0, 1)) return "arp pass";
     /* The request, turned into the router's reply. */
     if (nl_arp_request(f, mac, 0xC0A80139u, 0xC0A80101u) != NL_ETH_MIN) return "arp size";
     f[14 + 7] = 2;

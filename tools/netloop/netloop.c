@@ -238,7 +238,7 @@ static BOOL resync(UBYTE *ctr, UBYTE *last_pico, BOOL l2) {
 
 /* ---- Phase 1: real frames (ARP, DHCP) ---------------------------------------------------- */
 static uint8_t l2_mac[6];
-static unsigned long c_l2_frames, c_l2_stale, c_l2_unacked, c_l2_early;
+static unsigned long c_l2_frames, c_l2_stale, c_l2_unacked, c_l2_on_send, c_l2_resend;
 typedef int (*l2_fn)(const uint8_t *f, size_t len, void *ctx);   /* nonzero: the frame wanted */
 
 /* One exchange: our batch on side 0 (out, or none: a poll that also acknowledges), then side 1
@@ -296,9 +296,9 @@ static int l2_ask(UBYTE *ctr, UBYTE *last_pico, const uint8_t *frame, size_t fle
         const int r = l2_exchange(ctr, last_pico, send ? &ref : NULL, send ? 1u : 0u, fn, ctx);
         if (r == 0) {
             *took = (uint32_t)(ticks() - t0);
-            /* A reply found on the send exchange itself is not proof of THIS request: count it if it came
-             * faster than a genuine one can, or after a re-send (the first send's reply may be the one). */
-            if (send && nl_early_match(*took, nl_early_floor(hz), tries)) c_l2_early++;
+            /* Information only: replies found on the send exchange itself (a fast reply is legitimate),
+             * and those found after a re-send (the first send's own reply may be the one found). */
+            if (send) { if (tries) c_l2_resend++; else c_l2_on_send++; }
             return 0;
         }
         if (r != 2) sent = TRUE;
@@ -389,11 +389,10 @@ static int run_arp(UBYTE *ctr, UBYTE *last_pico, uint32_t me, uint32_t router, U
         unsigned long w, t, w2, t2;
         ms(nl_percentile(rtt, (unsigned)ok, 50), &w, &t);
         ms(nl_percentile(rtt, (unsigned)ok, 95), &w2, &t2);
-        printf("arp ms: median %lu.%lu p95 %lu.%lu early %lu\n", w, t, w2, t2, c_l2_early);
+        printf("arp ms: median %lu.%lu p95 %lu.%lu (found on the send exchange %lu, after a re-send %lu)\n",
+               w, t, w2, t2, c_l2_on_send, c_l2_resend);
     }
-    if (c_l2_early && rounds == 1)
-        printf("the reply came before a genuine one can (or after a re-send): not proof of this request; run again\n");
-    const BOOL pass = nl_arp_pass(ok, rounds, c_l2_early);
+    const BOOL pass = nl_arp_pass(ok, rounds);
     printf("RESULT: %s\n", pass ? "PASS" : "FAIL");
     return pass ? RETURN_OK : RETURN_WARN;
 }

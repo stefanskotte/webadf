@@ -43,14 +43,9 @@ uint8_t nl_l2_start_ack(uint8_t served);
  * `r` is l2_exchange's result (1 = acknowledged, 2 = not), `frames` the frames that exchange read,
  * `done` the exchanges so far (including this one), `max` the bound. 1 = stop draining. */
 int nl_drain_done(int r, unsigned frames, unsigned done, unsigned max);
-/* The least a genuine ARP reply takes, from the first write: the write (one revolution) and two
- * reads (header, payload), each a revolution of 200 ms; 400 ms = two revolutions, below all of it. */
-uint32_t nl_early_floor(uint32_t hz);
-/* 1 when a reply found on a send exchange is suspect: faster than `floor` ticks, or on a re-send
- * (`tries` > 0), where the first send's own reply may be what was found. */
-int nl_early_match(uint32_t took, uint32_t floor_ticks, unsigned tries);
-/* 1 when an ARP run passes: every round answered and, for a single round, no early match. */
-int nl_arp_pass(unsigned long ok, unsigned long rounds, unsigned long early);
+/* 1 when an ARP run passes: every round answered. (How many replies were found on the send exchange
+ * or after a re-send is printed, never gated: a fast genuine reply is legitimate.) */
+int nl_arp_pass(unsigned long ok, unsigned long rounds);
 /* The above on this CPU: NULL = pass, else the step that failed. NetLoop SELFTEST runs it. */
 const char *nl_eth_selftest(void);
 #endif

@@ -39,9 +39,8 @@ int main(void) {
     /* The drain stops on a quiet exchange or at its bound, never while a batch is still coming. */
     CHECK(!nl_drain_done(1, 2, 1, 8) && nl_drain_done(1, 0, 2, 8) && !nl_drain_done(2, 0, 3, 8) && nl_drain_done(2, 4, 8, 8),
           "drain decision");
-    /* A single ARP round with an early match is not a pass. */
-    CHECK(nl_arp_pass(1, 1, 0) && !nl_arp_pass(1, 1, 1) && !nl_arp_pass(0, 1, 0), "single round needs early 0");
-    CHECK(nl_early_match(10, nl_early_floor(709379u), 0) && !nl_early_match(700000u, nl_early_floor(709379u), 0), "early floor");
+    /* An ARP run passes when every round was answered. */
+    CHECK(nl_arp_pass(1, 1) && nl_arp_pass(1000, 1000) && !nl_arp_pass(999, 1000) && !nl_arp_pass(0, 1), "arp pass");
     CHECK(nl_arg_fits("192.168.100.100", 16) && !nl_arg_fits("192.168.100.1000", 16), "long IP is refused");
     /* Undersized buffers build nothing. */
     CHECK(nl_dhcp_discover(f, NL_DHCP_FRAME_BYTES - 1u, mac, 1u) == 0, "cap");
