@@ -3475,11 +3475,11 @@ int main(void) {
     uint off_in = pio_add_program(step_pio, &flux_in_program);
     sm_in = pio_claim_unused_sm(step_pio, true);
     flux_in_program_init(step_pio, sm_in, off_in, PIN_WDATA);
-    // Claims a DMA channel and points it at sm_in's RX FIFO. The state machine
-    // stays DISABLED until WGATE says the Amiga is writing -- see
-    // flux_capture_arm().
+    // Claims a DMA channel, points it at sm_in's RX FIFO, and ENABLES sm_in for good:
+    // nothing writes pio2's CTRL enable bits after this (core1, which shares the
+    // block through the radio, starts below). A capture is gated by the channel --
+    // see flux_capture_arm().
     flux_capture_init(step_pio, sm_in);
-    // (enabled when WGATE asserts; write path TODO)
 
     g_stream[0].dma = dma_claim_unused_channel(true);
 #if DF1_CAPABLE

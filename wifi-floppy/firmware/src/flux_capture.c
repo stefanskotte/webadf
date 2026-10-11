@@ -40,6 +40,11 @@ static uint     cap_sm;
 static int      cap_dma = -1;
 static uint32_t cap_read;           /* ring index we have consumed to */
 static uint32_t pio_hz;
+/* The capture channel's configuration, EN set: arm() re-applies it to start a capture. Between
+ * captures the channel is paused (cap_pause) and flux_in keeps running (flux_capture_init). */
+static dma_channel_config cap_cfg;
+/* flux_in's first instruction: an arm sends the machine there instead of disabling it. */
+static uint     cap_pc0;
 
 static flux_bits_t bits;
 static volatile bool armed;
@@ -70,7 +75,6 @@ static volatile uint32_t held_at_ms;
 // write. Every WGATE assert ends it: a DF1 batch claims it, anything else cancels it, and a DF0
 // arm cancels it itself (arm(), below) before it arms. flux_in's start PC, for the raw arms.
 static volatile bool prearmed;
-static uint     cap_pc0;
 #endif
 
 static void consume(uint32_t word) {
@@ -114,12 +118,24 @@ void flux_capture_init(PIO pio, uint sm) {
     // because the hardware wrap requires it.
     channel_config_set_ring(&c, true, RING_ORDER);
     channel_config_set_dreq(&c, pio_get_dreq(pio, sm, false));
+    cap_cfg = c;
     dma_channel_configure(cap_dma, &c, ring, &pio->rxf[sm], 0xffffffffu, false);
 
     flux_bits_init(&bits, mfm_buf, sizeof mfm_buf);
-#if WF_PNET_LOOP
     cap_pc0 = pio_sm_get_pc(pio, sm);    // flux_in_program_init left it at the program's start
-#endif
+    // flux_in runs from here on, and its enable bit is never written again. pio2's CTRL holds the
+    // enable bits of every machine on the block -- the radio's too -- and the radio's SDK driver
+    // read-modify-writes that register from core1 with no lock: an enable or disable here racing
+    // one of those would undo the other (HANDOFF backlog, "pio2 CTRL"). This runs on core0 before
+    // core1 starts. With no capture running, the channel is paused and flux_in's FIFO, which it
+    // pushes with `noblock`, fills and then drops: nothing reaches the ring.
+    pio_sm_set_enabled(pio, sm, true);
+}
+
+/* Stops the capture's channel through the atomic CLR alias of its non-triggering control
+ * register: no more words reach the ring. flux_in keeps running. */
+static void cap_pause(void) {
+    hw_clear_bits(&dma_hw->ch[cap_dma].al1_ctrl, DMA_CH0_CTRL_TRIG_EN_BITS);
 }
 
 /** Where the DMA has written up to, as a ring index. */
@@ -148,13 +164,15 @@ void flux_capture_arm(void) {
 #endif
     // Everything stale goes first: a FIFO still holding intervals from the
     // last write would put another track's flux at the head of this one.
-    pio_sm_set_enabled(cap_pio, cap_sm, false);
-    pio_sm_clear_fifos(cap_pio, cap_sm);
-    pio_sm_restart(cap_pio, cap_sm);
-
+    // flux_in is never disabled (flux_capture_init): the channel stops, the machine restarts at its
+    // first instruction (`start: set x, 0`, so word 0 is arm -> first edge), and only THEN is the
+    // FIFO emptied -- a word pushed from a stale count before the jump is cleared with the rest.
+    // pio_sm_restart writes CTRL's self-clearing SM_RESTART bit through the atomic SET alias.
+    cap_pause();
     dma_channel_abort(cap_dma);
-    dma_channel_set_write_addr(cap_dma, ring, false);
-    dma_channel_set_trans_count(cap_dma, 0xffffffffu, true);
+    pio_sm_restart(cap_pio, cap_sm);
+    pio_sm_exec(cap_pio, cap_sm, pio_encode_jmp(cap_pc0));
+    pio_sm_clear_fifos(cap_pio, cap_sm);
 
     cap_read = 0;
 #if WF_PNET_LOOP
@@ -164,15 +182,8 @@ void flux_capture_arm(void) {
     // sync pulse ~32 us after Paula starts the write (final review, Important 2).
     if (raw) {
         pnet_rx_init(&raw_rx, mfm_buf, sizeof mfm_buf);
-        // pio_sm_restart keeps X, so flux_in would count on from the last capture's stale count
-        // and word 0 would not be arm -> first edge. The implied sync reads word 0 (pnet_rx.h,
-        // bench fix 3), so a raw arm counts from 0. (The SM is disabled: exec runs it at once.)
-        pio_sm_exec(cap_pio, cap_sm, pio_encode_set(pio_x, 0));
-        // And from the program's start: a disable can leave flux_in between `jmp pin` and `push`,
-        // which would push one stale word the moment it is enabled -- a stray edge, to a pre-arm.
-        pio_sm_exec(cap_pio, cap_sm, pio_encode_jmp(cap_pc0));
         // The sentinel the pre-arm's edge test reads (flux_capture_prearm_edges): the DMA is
-        // reset above and the SM still disabled, so nothing lands before this store.
+        // aborted above and not yet re-triggered, so nothing lands before this store.
         ring[0] = 0u;
     } else
 #endif
@@ -186,12 +197,13 @@ void flux_capture_arm(void) {
     armed = true;
     armed_at_ms = to_ms_since_boot(get_absolute_time());
     ended = false;
-    pio_sm_set_enabled(cap_pio, cap_sm, true);
+    // Last: the channel runs again from the ring's start (cap_cfg has EN set, and this triggers it).
+    dma_channel_configure(cap_dma, &cap_cfg, ring, &cap_pio->rxf[cap_sm], 0xffffffffu, true);
 }
 
 void flux_capture_disarm(void) {
     if (!armed) return;
-    pio_sm_set_enabled(cap_pio, cap_sm, false);
+    cap_pause();
     armed = false;
 #if WF_PNET_LOOP
     raw_ended_us = time_us_64();
@@ -246,7 +258,7 @@ bool flux_capture_timeout(uint32_t now_ms) {
     // whatever a floating line produced, and handing that to mfm_decode_track
     // would at best waste the work and at worst report sectors that were never
     // written.
-    pio_sm_set_enabled(cap_pio, cap_sm, false);
+    cap_pause();
     armed = false;
     ended = false;
     return true;
@@ -322,7 +334,7 @@ bool flux_capture_prearm_cancel(void) {
     if (!prearmed) return false;
     // As the timeout abandons a capture: stopped, and `ended` stays clear, so no take ever sees
     // it. raw_mode stays set, which flux_capture_take() refuses anyway; the next arm resets all.
-    pio_sm_set_enabled(cap_pio, cap_sm, false);
+    cap_pause();
     prearmed = false;
     armed = false;
     ended = false;

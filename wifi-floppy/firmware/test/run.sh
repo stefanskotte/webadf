@@ -167,4 +167,16 @@ if [ "$want" != "$have" ]; then
   fail=1
 fi
 
+# pio2's CTRL holds the enable bit of every state machine on the block, the radio's included, and
+# the radio's SDK driver read-modify-writes it from core1 with no lock (cyw43_bus_pio_spi.c). Any
+# enable or disable of ours racing one of those undoes the other (HANDOFF backlog, "pio2 CTRL";
+# plan 2026-10-11 Task 1). So flux_in is enabled ONCE, in flux_capture_init, before core1 starts,
+# and a capture is gated by its DMA channel. Comments are stripped first.
+pio2_toggles=$(sed -E -e 's#//.*##' -e 's#/\*.*\*/##g' ../src/flux_capture.c |
+  { grep -cE 'pio_sm_set_enabled|pio_set_sm_mask_enabled|pio_enable_sm_mask_in_sync|pio_enable_sm_multi_mask_in_sync' || true; })
+if [ "$pio2_toggles" != 1 ]; then
+  echo "FAIL: flux_capture.c writes flux_in's enable bit $pio2_toggles times (exactly 1, in flux_capture_init)"
+  fail=1
+fi
+
 exit $fail
