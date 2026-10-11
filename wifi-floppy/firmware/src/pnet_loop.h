@@ -35,6 +35,12 @@ bool pnet_df1_wprot(int cyl);
 /* A WGATE assertion is a loopback batch: DF1 serves a disk, SEL1 (not SEL0) is asserted, and
  * DF1's head is on cylinder 77, side 0. sel0/sel1 are ASSERTED, not pin levels. */
 bool pnet_capture_ours(bool df1_serving, bool sel0, bool sel1, int cyl1, int side);
+/* Phase 2 (plan 2026-10-11-paulanet-phase2-rob-driver, Task 1): the microseconds a start of DF1's
+ * side-1 stream must still wait so it begins `delay_us` after the SIDE edge stamped at side_us, at
+ * now_us (time_us_32 values; wrap-safe). 0 once that moment has passed, however long ago the edge was:
+ * a stale stamp (no SIDE edge for 36 minutes) or one a hair ahead of now never schedules a start
+ * far in the future. */
+uint32_t pnet_go_wait_us(uint32_t side_us, uint32_t delay_us, uint32_t now_us);
 
 /*
  * THE PRE-ARM (2026-10-10). The Amiga's to-board write has no lead-in: sync pulse 1 is ~32 us after

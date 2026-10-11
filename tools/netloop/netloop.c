@@ -17,6 +17,7 @@
  *   NetLoop [N=<bytes>] [ROUNDS=<n>] [READS=1|2] [DIAG] [SELFTEST] [BENCH]
  *   NetLoop DHCP MAC=<board mac>                         (Phase 1: a lease from the router)
  *   NetLoop ARP MAC=<board mac> [IP=<a>] [ROUTER=<r>] [ROUNDS=<n>]   (Phase 1: the router's MAC)
+ *   NetLoop ... SCAN=<bytes>                     (Phase 2: read as PaulaNET's own driver reads)
  * ARP/DHCP need the PaulaNET Phase 1 TEST firmware (the board's boot log prints its MAC). DHCP saves
  * the lease as the global variables NetLoopIP and NetLoopRouter, which ARP uses when IP= and ROUTER=
  * are not given.
@@ -26,6 +27,10 @@
  * over-reads each payload read by one echo loop and scans all of it for the sync, so a read that
  * starts past the sync still finds the next one and shows where it started; the default read
  * pattern (PaulaNET's driver's) is unchanged without it.
+ *
+ * SCAN=<bytes> (Phase 2): the sync must START within a read's first <bytes> bytes, as in PaulaNET's
+ * own driver (NL_DRIVER_SCAN, 124), and payload reads are sized as his driver sizes them
+ * (nl_driver_read_len). A miss counts as nosync, so a run's nosync is what his driver would retry.
  *
  * SELFTEST: no drive; the codec round trip, then the asm codec against the C reference on this
  * CPU. BENCH: no drive; each codec stage, C and asm, timed with the E-clock (netloop_bench.h).
@@ -65,7 +70,7 @@
 #endif
 
 static const char vers[] __attribute__((used)) =
-    "$VER: NetLoop 1.2 (11.10.2026) PaulaNET protocol by RobSmithDev, used with permission";
+    "$VER: NetLoop 1.3 (11.10.2026) PaulaNET protocol by RobSmithDev, used with permission";
 
 #define DF1_UNIT    1
 #define CHIP_BYTES  16896u    /* the largest write or read, rounded up */
@@ -97,6 +102,12 @@ static unsigned long c_ioerr, c_nosync, c_badhdr, c_stale, c_rewrites, c_mismatc
 #define OFF_BINS 17
 static unsigned long c_nosync_k[2], c_bad_k[2][BAD_KINDS], c_off_k[2][OFF_BINS];
 static BOOL diag;
+/* SCAN= (Phase 2): every read's sync-scan limit, and whether payload reads are sized as PaulaNET's
+ * driver sizes them. The defaults are Phases 0-1's: a 512-byte scan and NetLoop's own sizes. */
+static ULONG sync_scan = SYNC_SCAN;
+static BOOL drv_reads;
+/* Per read kind: reads made, and the earliest and latest byte at which a found sync STARTS. */
+static unsigned long c_reads_k[2], off_lo[2] = { ~0ul, ~0ul }, off_hi[2];
 static unsigned long late_off[8];   /* DIAG: the first payload-read sync offsets past 127 bytes */
 static unsigned n_late;
 static uint64_t t_write, t_read, t_align, t_build;
@@ -127,14 +138,20 @@ static BYTE td_io(UWORD cmd, UBYTE flags, APTR data, ULONG len, ULONG offset) {
  * must start in the first SYNC_SCAN bytes, or anywhere with `scan_all` (DIAG payload reads). */
 static int read_once(ULONG len, pnet_hdr_t *h, BOOL with_payload, size_t *valid, BOOL scan_all) {
     const int rk = with_payload ? RK_PAY : RK_HDR;
+    c_reads_k[rk]++;
     const uint64_t t0 = ticks();
     if (td_io(ETD_RAWREAD, IOTDF_INDEXSYNC, rbuf, len, PNET_TRACK_OUT)) { c_ioerr++; return 1; }
     const uint64_t t1 = ticks();
     t_read += t1 - t0;
-    const long off = pnet_find_sync(rbuf, len, scan_all ? len : SYNC_SCAN);
+    const long off = pnet_find_sync(rbuf, len, scan_all ? len : sync_scan);
     if (off < 0) { c_nosync++; c_nosync_k[rk]++; return 1; }
     const unsigned long ob = (unsigned long)off >> 3;
     c_off_k[rk][ob >= 128u ? OFF_BINS - 1u : ob >> 3]++;
+    {
+        const unsigned long st = ((unsigned long)off - 32u) >> 3;   /* where the sync starts */
+        if (st < off_lo[rk]) off_lo[rk] = st;
+        if (st > off_hi[rk]) off_hi[rk] = st;
+    }
     if (scan_all && ob >= 128u && n_late < 8u) late_off[n_late++] = ob;
     size_t span = with_payload ? len : (size_t)ob + PNET_HDR_MFM_BYTES + 1u;
     if (span > len) span = len;
@@ -171,7 +188,8 @@ static int read_echo(UBYTE ctr, UBYTE last_pico, const uint16_t *lens, unsigned 
             if (read_once(HDR_READ, h, FALSE, &valid, FALSE)) continue;
             if (!nl_echo_answers(h->amiga_ctr, h->pico_ctr, ctr, last_pico)) { c_stale++; continue; }
             td_io(TD_SEEK, 0, NULL, 0, SEEK_TO(PNET_TRACK_IN));   /* as PaulaNET's driver does */
-            len = (PNET_LEAD_BYTES + 4u + PNET_HDR_MFM_BYTES + h->data_size + 64u + 1u) & ~1ul;
+            len = drv_reads ? nl_driver_read_len(h->data_size)
+                            : (PNET_LEAD_BYTES + 4u + PNET_HDR_MFM_BYTES + h->data_size + 64u + 1u) & ~1ul;
             if (diag)   /* one more echo loop */
                 len += PNET_LEAD_BYTES + 4u + PNET_HDR_MFM_BYTES + h->data_size + PNET_TRAIL_BYTES;
         } else {
@@ -258,7 +276,8 @@ static int l2_exchange(UBYTE *ctr, UBYTE *last_pico, const pnet_frame_ref_t *out
         if (h.amiga_ctr != *ctr) { c_l2_stale++; continue; }
         if (h.pico_ctr == *last_pico || h.data_size == 0) return 1;
         td_io(TD_SEEK, 0, NULL, 0, SEEK_TO(PNET_TRACK_IN));            /* as PaulaNET's driver does */
-        ULONG len = (PNET_LEAD_BYTES + 4u + PNET_HDR_MFM_BYTES + h.data_size + 64u + 1u) & ~1ul;
+        ULONG len = drv_reads ? nl_driver_read_len(h.data_size)
+                              : (PNET_LEAD_BYTES + 4u + PNET_HDR_MFM_BYTES + h.data_size + 64u + 1u) & ~1ul;
         if (len > CHIP_BYTES) len = CHIP_BYTES;
         if (read_once(len, &p, TRUE, &valid, FALSE) || p.pico_ctr != h.pico_ctr) continue;
         uint16_t lens[PNET_MAX_FRAMES];
@@ -548,8 +567,8 @@ static void cleanup(void) {
 }
 
 int main(void) {
-    LONG args[11] = {0};
-    struct RDArgs *rd = ReadArgs((STRPTR)"N/K/N,ROUNDS/K/N,READS/K/N,SELFTEST/S,BENCH/S,DIAG/S,ARP/S,DHCP/S,MAC/K,IP/K,ROUTER/K", args, NULL);
+    LONG args[12] = {0};
+    struct RDArgs *rd = ReadArgs((STRPTR)"N/K/N,ROUNDS/K/N,READS/K/N,SELFTEST/S,BENCH/S,DIAG/S,ARP/S,DHCP/S,MAC/K,IP/K,ROUTER/K,SCAN/K/N", args, NULL);
     if (!rd) { PrintFault(IoErr(), (STRPTR)"NetLoop"); return RETURN_FAIL; }
     const unsigned long n = args[0] ? (unsigned long)*(LONG *)args[0] : 64u;
     const BOOL do_arp = args[6] != 0, do_dhcp = args[7] != 0;
@@ -562,8 +581,14 @@ int main(void) {
     const unsigned long reads = args[2] ? (unsigned long)*(LONG *)args[2] : 2u;
     const BOOL self = args[3] != 0, bench_only = args[4] != 0;
     diag = args[5] != 0;
+    if (args[11]) {
+        const LONG v = *(LONG *)args[11];
+        if (v < 32 || v > 1024) { FreeArgs(rd); printf("SCAN=32..1024\n"); return RETURN_ERROR; }
+        sync_scan = (ULONG)v;
+        drv_reads = TRUE;
+    }
     FreeArgs(rd);
-    printf("NetLoop 1.2 -- PaulaNET protocol by RobSmithDev, used with permission\n");
+    printf("NetLoop 1.3 -- PaulaNET protocol by RobSmithDev, used with permission\n");
     if (n < 1 || n > MAX_N || rounds < 1 || rounds > MAX_ROUNDS || (reads != 1 && reads != 2)) {
         printf("N=1..%lu ROUNDS=1..%lu READS=1|2\n", (unsigned long)MAX_N, (unsigned long)MAX_ROUNDS);
         return RETURN_ERROR;
@@ -621,9 +646,15 @@ int main(void) {
     memset(c_nosync_k, 0, sizeof c_nosync_k);
     memset(c_bad_k, 0, sizeof c_bad_k);
     memset(c_off_k, 0, sizeof c_off_k);
+    memset(c_reads_k, 0, sizeof c_reads_k);
+    off_lo[0] = off_lo[1] = ~0ul;
+    off_hi[0] = off_hi[1] = 0;
     n_late = 0;
     t_write = t_read = t_align = t_build = 0;
     printf("N=%lu ROUNDS=%lu READS=%lu%s\n", n, rounds, reads, diag ? " DIAG" : "");
+    if (drv_reads)
+        printf("SCAN=%lu: the sync must start in a read's first %lu bytes; payload reads sized as PaulaNET's driver's\n",
+               (unsigned long)sync_scan, (unsigned long)sync_scan);
     unsigned long ok = 0, done = 0;
     uint64_t total = 0;
     for (ULONG i = 0; i < rounds; i++) {
@@ -640,8 +671,8 @@ int main(void) {
            c_stale, c_rewrites, c_nosync, c_badhdr, c_ioerr);
     static const char *const rk_name[2] = { "hdr", "pay" };
     for (int k = 0; k < 2; k++)
-        printf("%s read: nosync %lu  badhdr short %lu checksum %lu magic %lu other %lu\n", rk_name[k],
-               c_nosync_k[k], c_bad_k[k][0], c_bad_k[k][1], c_bad_k[k][2], c_bad_k[k][3]);
+        printf("%s read: %lu reads, nosync %lu  badhdr short %lu checksum %lu magic %lu other %lu\n", rk_name[k],
+               c_reads_k[k], c_nosync_k[k], c_bad_k[k][0], c_bad_k[k][1], c_bad_k[k][2], c_bad_k[k][3]);
     printf("sync byte offset, 8-byte bins:\noff ");
     for (unsigned i = 0; i + 1u < OFF_BINS; i++) printf("%4u", i * 8u);
     printf(" 128+\n");
@@ -650,6 +681,9 @@ int main(void) {
         for (unsigned i = 0; i < OFF_BINS; i++) printf(i + 1u < OFF_BINS ? "%4lu" : " %4lu", c_off_k[k][i]);
         printf("\n");
     }
+    for (int k = 0; k < 2; k++)
+        if (off_lo[k] != ~0ul)
+            printf("%s sync starts at byte: min %lu max %lu\n", rk_name[k], off_lo[k], off_hi[k]);
     if (diag && n_late) {
         printf("DIAG late payload syncs (byte):");
         for (unsigned i = 0; i < n_late; i++) printf(" %lu", late_off[i]);

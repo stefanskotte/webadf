@@ -70,6 +70,15 @@ static void tenths_round(void) {
     CHECK_EQ_INT(nl_tenths(8000ull * 100u * 709379u, 709379ull * 1024u), 7813);
 }
 
+/* SCAN= (Phase 2): payload reads sized as PaulaNET's driver sizes them (its receiveFromPaulaNet). */
+static void driver_read_sizes(void) {
+    CHECK(nl_driver_read_len(0) == 1024u, "a header read: the driver's 1,024-byte minimum");
+    CHECK(nl_driver_read_len(64) == 1024u, "a small payload: the minimum too");
+    CHECK(nl_driver_read_len(8000) == 8152u, "8,000 + 24 + 128");
+    CHECK(nl_driver_read_len(8001) == 8154u, "rounded up to even first");
+    CHECK(nl_driver_read_len(16600) == 16640u, "capped at 16,640");
+}
+
 int main(void) {
     RUN(sizes_split_into_ethernet_frames);
     RUN(the_payload_is_repeatable_and_never_stuck);
@@ -77,5 +86,6 @@ int main(void) {
     RUN(a_restart_resyncs_from_the_boards_counter);
     RUN(percentiles_are_nearest_rank);
     RUN(tenths_round);
+    RUN(driver_read_sizes);
     return REPORT();
 }

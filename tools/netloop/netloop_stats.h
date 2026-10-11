@@ -26,4 +26,10 @@ uint8_t nl_start_ctr(bool have_board_hdr, uint8_t board_last_amiga);
 uint32_t nl_percentile(uint32_t *v, unsigned n, unsigned pct);
 /* round(10 * num / den): one decimal place without floating point. 0 when den == 0. */
 uint32_t nl_tenths(uint64_t num, uint64_t den);
+/* PaulaNET's driver (Phase 2): it looks for the sync in about the first 128 bytes of a read, and its
+ * payload read has 128 bytes of slack, so a sync STARTING by byte 124 is the one that always works. */
+#define NL_DRIVER_SCAN 124u
+/* The length of his driver's read for a payload of data_size bytes: the payload rounded up to even,
+ * its 24-byte MFM header and 128 bytes of slack, at least 1,024 and at most 16,640. */
+unsigned long nl_driver_read_len(unsigned long data_size);
 #endif

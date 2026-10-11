@@ -50,3 +50,10 @@ uint32_t nl_tenths(uint64_t num, uint64_t den) {
     if (den == 0) return 0;
     return (uint32_t)((num * 10u + den / 2u) / den);
 }
+
+unsigned long nl_driver_read_len(unsigned long data_size) {
+    unsigned long n = ((data_size + 1u) & ~1ul) + 24u + 128u;
+    if (n < 1024u) n = 1024u;
+    if (n > 16640u) n = 16640u;
+    return n;
+}

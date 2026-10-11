@@ -192,6 +192,16 @@ static void the_decision_holds_for_every_input(void) {
     CHECK_EQ_INT(arms, 2);                               /* edges set or not; nothing else */
 }
 
+/* Phase 2 (§3.4): how long a side-1 start still waits for the SIDE edge + the delay. */
+static void a_side_one_start_waits_from_the_side_edge(void) {
+    CHECK_EQ_INT(pnet_go_wait_us(1000u, 2360u, 1035u), 2325);             /* the loop saw it at once */
+    CHECK_EQ_INT(pnet_go_wait_us(1000u, 2360u, 3360u), 0);                /* due now */
+    CHECK_EQ_INT(pnet_go_wait_us(1000u, 2360u, 4000u), 0);                /* the loop came late: at once */
+    CHECK_EQ_INT(pnet_go_wait_us(0xFFFFFF00u, 2360u, 0x10u), 2088);       /* across time_us_32's wrap */
+    CHECK_EQ_INT(pnet_go_wait_us(5000u, 2360u, 4990u), 0);                /* a stamp a hair ahead of now */
+    CHECK_EQ_INT(pnet_go_wait_us(0u, 2360u, 0x90000000u), 0);             /* a stale stamp: never far ahead */
+}
+
 int main(void) {
     RUN(df1_streams_disk_silence_or_echo);
     RUN(wprot_is_released_only_on_cylinder_77);
@@ -203,5 +213,6 @@ int main(void) {
     RUN(a_standing_prearm_goes_when_the_batch_cannot_come);
     RUN(stray_edges_are_discarded_but_a_write_is_the_isrs);
     RUN(the_decision_holds_for_every_input);
+    RUN(a_side_one_start_waits_from_the_side_edge);
     return REPORT();
 }
