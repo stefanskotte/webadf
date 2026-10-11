@@ -98,8 +98,10 @@ if (WF_PNET_LOOP)
   # then found the sync 128+ bytes in, past where PaulaNET's own driver looks (HANDOFF 3bg). Phase 2
   # (plan 2026-10-11-paulanet-phase2-rob-driver, Task 1) measures a fixed delay with PaulaNET's 120.
   # Plain variables, never cache entries: a value is a commit, so an image's version names its timing.
-  set(WF_PNET_TX_LEAD_BYTES 200)
-  set(WF_PNET_SIDE_DELAY_US 0)
+  # Spike B (Task 1 Step 26; plan ruling 6): the window that keeps the sync in bytes 0..123 of every
+  # read for a DMA start 2.4-4.2 ms after SIDE is 2,280-2,448 us at a 120-byte lead; 2,360 is its middle.
+  set(WF_PNET_TX_LEAD_BYTES 120)
+  set(WF_PNET_SIDE_DELAY_US 2360)
   list(APPEND WFMF_COMMON_DEFS PNET_TX_LEAD_BYTES=${WF_PNET_TX_LEAD_BYTES}
                                PNET_SIDE_DELAY_US=${WF_PNET_SIDE_DELAY_US})
   message(STATUS "WF_PNET_LOOP is ON: DF1 cylinder 77 is a PaulaNET loopback (TEST build only).")
