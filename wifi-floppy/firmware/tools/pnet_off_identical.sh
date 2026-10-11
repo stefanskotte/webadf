@@ -6,6 +6,8 @@
 # file from <base>; any difference fails. Both copies see THIS tree's headers, which differ from
 # <base> only inside #if WF_PNET_LOOP. (A __FILE__ in either file would differ by name alone and
 # fail this check; neither file uses one today.)
+# <base> is Task 1's commit of plan 2026-10-11 until that plan merges (its pio2 fix
+# changes flux_capture.c in every build).
 set -euo pipefail
 fw="$(cd "$(dirname "$0")/.." && pwd)"
 base="${1:-master}"
@@ -21,7 +23,7 @@ cmake --build "$bd" >/dev/null 2>&1 || { echo "FAIL: the OFF build itself"; exit
 cleanup() { rm -f "$fw"/src/.offcheck_base_*.c; }
 trap cleanup EXIT
 fail=0
-for f in main.c flux_capture.c; do
+for f in main.c flux_capture.c net_radio_cyw43.c; do
   tmp="$fw/src/.offcheck_base_$f"   # beside the original, so its #include "..." resolve the same
   git -C "$fw" show "$base:wifi-floppy/firmware/src/$f" > "$tmp"
   python3 - "$bd/compile_commands.json" "$fw/src/$f" "$tmp" "$bd/offcheck_$f" <<'EOPY'
@@ -45,9 +47,9 @@ for path, tag in ((src, 'new'), (base, 'base')):
 EOPY
   rm -f "$tmp"                      # (and again by the trap, if anything above failed)
   if cmp -s "$bd/offcheck_$f.base.i" "$bd/offcheck_$f.new.i"; then
-    echo "identical with WF_PNET_LOOP=0: src/$f"
+    echo "identical with WF_PNET_LOOP=0 WF_PNET_L2=0: src/$f"
   else
-    echo "DIFFERS with WF_PNET_LOOP=0: src/$f"
+    echo "DIFFERS with WF_PNET_LOOP=0 WF_PNET_L2=0: src/$f"
     diff "$bd/offcheck_$f.base.i" "$bd/offcheck_$f.new.i" | head -40 || true
     fail=1
   fi

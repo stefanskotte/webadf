@@ -38,4 +38,14 @@ int32_t net_radio_rssi(void);
 /** The lwIP lock. RECURSIVE (callers nest it). Never from an interrupt. */
 void net_radio_lock(void);
 void net_radio_unlock(void);
+#if WF_PNET_L2
+#include <stddef.h>
+/** PaulaNET Phase 1: one Ethernet frame out of the station interface, as is (the Amiga's, with
+ *  the board's own MAC as its source). 0 on success. From the network context (a worker added
+ *  with net_radio_every_ms), or core1 under net_radio_lock(). */
+int  net_radio_send_ethernet(const void *frame, size_t len);
+/** Runs fn every `ms` in the network context on core1, with the lwIP lock held -- the context the
+ *  driver's own receive and lwIP's timers run in. Core1 only; one such worker. False on failure. */
+bool net_radio_every_ms(uint32_t ms, void (*fn)(void));
+#endif
 #endif

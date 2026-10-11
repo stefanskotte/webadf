@@ -153,4 +153,8 @@
 #include <stdint.h>
 void sntp_time_apply(uint32_t unix_sec);
 #define SNTP_SET_SYSTEM_TIME(sec)   sntp_time_apply(sec)
+// PaulaNET Phase 1 (WF_PNET_L2 TEST builds): the board's own DHCP client-id. See the hook file.
+#if WF_PNET_L2
+#define LWIP_HOOK_FILENAME "pnet_lwip_hooks.h"
+#endif
 #endif

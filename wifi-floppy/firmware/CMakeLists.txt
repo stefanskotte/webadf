@@ -97,6 +97,21 @@ if (WF_PNET_LOOP)
   list(APPEND WFMF_COMMON_DEFS PNET_TX_LEAD_BYTES=200)
   message(STATUS "WF_PNET_LOOP is ON: DF1 cylinder 77 is a PaulaNET loopback (TEST build only).")
 endif ()
+# PaulaNET Phase 1 (plan docs/superpowers/plans/2026-10-11-paulanet-phase1-l2-sharing.md): on the
+# loopback's own transport, DF1 cylinder 77 carries real Ethernet frames, and the Amiga shares the
+# board's Wi-Fi at layer 2 (research 2026-10-09 §2.2, option A). A bench TEST build only. It needs
+# WF_PNET_LOOP, whose echo it replaces, so the image also carries that build's marker and the
+# publish script refuses it without "TEST build" notes. OFF compiles none of it: every hook is under
+# #if WF_PNET_L2 and these sources are not in the image.
+option(WF_PNET_L2 "Bench TEST build: DF1 cylinder 77 carries Ethernet frames (PaulaNET Phase 1)" OFF)
+list(APPEND WFMF_COMMON_DEFS WF_PNET_L2=$<IF:$<BOOL:${WF_PNET_L2}>,1,0>)
+if (WF_PNET_L2)
+  if (NOT WF_PNET_LOOP)
+    message(FATAL_ERROR "WF_PNET_L2 needs WF_PNET_LOOP: Phase 1 replaces the loopback's echo on its transport")
+  endif ()
+  list(APPEND WFMF_FIRMWARE_SOURCES src/pnet_sort.c src/pnet_ring.c src/pnet_link.c src/pnet_bridge.c)
+  message(STATUS "WF_PNET_L2 is ON: DF1 cylinder 77 carries Ethernet frames (TEST build only).")
+endif ()
 # Stack frames (HANDOFF 3ax): 1.7.0 died because one 1232-byte frame took core0's
 # boot path past its stack (2 KB then, 4 KB since 1.7.1) -- a hard fault before
 # USB came up, invisible to every host test. Any frame of ours over 768 bytes now
