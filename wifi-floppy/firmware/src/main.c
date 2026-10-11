@@ -3027,7 +3027,10 @@ static uint32_t      g_pnet_side_idx_min = UINT32_MAX;
 static volatile bool g_pnet_go_side;
 #if PNET_SIDE_DELAY_US
 // Side-1 starts this window: from the alarm on time / at once because the loop came after the due time.
-static uint32_t      g_pnet_go_delayed, g_pnet_go_late, g_pnet_go_short;
+static uint32_t      g_pnet_go_delayed, g_pnet_go_late, g_pnet_go_short, g_pnet_go_skipped;
+// Set by the start alarm when it skips (side 1 left the out-track); the loop turns it into loaded1 = -1 so a
+// side return that follows is served as a fresh start instead of seen as "already loaded" and left silent.
+static volatile bool g_pnet_go_rearm;
 #endif
 static bool     g_pnet_rst_commit;
 
@@ -3253,8 +3256,13 @@ static int64_t pnet_go_due(alarm_id_t id, void *ud) {
     (void)id;
     (void)ud;
     g_pnet_go_alarm = 0;              // first: pnet_go's own stream_stop(1) must not cancel this alarm
-    if (!pnet_go_still_wanted(want_track[1])) return 0;   // side 1 no longer wants the out-track
+    if (!pnet_go_still_wanted(want_track[1])) {   // side 1 no longer wants the out-track
+        g_pnet_go_skipped++;
+        g_pnet_go_rearm = true;
+        return 0;
+    }
     pnet_go();
+    g_pnet_go_delayed++;              // counted only when the alarm really started the stream
     return 0;                         // once
 }
 
@@ -3274,12 +3282,13 @@ static bool pnet_go_later(bool side_return) {
         if (id > 0) g_pnet_go_alarm = id;
         restore_interrupts(irq);
         if (id >= 0) {                   // 0: it was already due and ran at once
-            g_pnet_go_delayed++;
             return true;
         }
     }
-    if (kind == PNET_GO_SHORT) g_pnet_go_short++;   // "delayed", but due within PNET_GO_MIN_US: at once
-    else if (side_return) g_pnet_go_late++;         // the loop came after the due time (or no alarm slot was free)
+    if (side_return) {
+        if (kind == PNET_GO_SHORT) g_pnet_go_short++;   // due within PNET_GO_MIN_US: at once
+        else g_pnet_go_late++;                          // the loop came after the due time (or no alarm slot was free)
+    }
     return false;
 }
 #endif
@@ -3450,10 +3459,10 @@ static void pnet_log_summary(void) {
 #if PNET_SIDE_DELAY_US
     // Phase 2 Task 1: side-1 starts this window, from the alarm / at once because the loop came after
     // the due time, and the earliest SIDE edge -> start (the latest is side-idx max above).
-    wf_logf(WF_INFO, "pnet: go at %u us: delayed %lu late %lu short %lu side-idx min us %lu",
-            (unsigned)PNET_SIDE_DELAY_US, PNET_SAT(g_pnet_go_delayed, 99999u), PNET_SAT(g_pnet_go_late, 99999u),
-            PNET_SAT(g_pnet_go_short, 99999u),
-            g_pnet_side_idx_min == UINT32_MAX ? 0ul : PNET_SAT(g_pnet_side_idx_min, 9999999u));
+    wf_logf(WF_INFO, "pnet: go at %u us: delayed %lu late %lu short %lu skipped %lu side-idx min us %lu",
+            (unsigned)PNET_SIDE_DELAY_US, PNET_SAT(g_pnet_go_delayed, 999u), PNET_SAT(g_pnet_go_late, 9999u),
+            PNET_SAT(g_pnet_go_short, 999u), PNET_SAT(g_pnet_go_skipped, 9999u),
+            g_pnet_side_idx_min == UINT32_MAX ? 0ul : PNET_SAT(g_pnet_side_idx_min, 99999u));
 #endif
     // The pre-arm this window: arms made, used by a DF1 batch, cancelled by a DF0 write / by any
     // other assert, discarded with stray edges, cancelled by the loop (head moved, DF1 off).
@@ -3478,7 +3487,7 @@ static void pnet_log_summary(void) {
     g_pnet_rst_noop = g_pnet_side_idx_max = 0;
     g_pnet_side_idx_min = UINT32_MAX;
 #if PNET_SIDE_DELAY_US
-    g_pnet_go_delayed = g_pnet_go_late = g_pnet_go_short = 0;
+    g_pnet_go_delayed = g_pnet_go_late = g_pnet_go_short = g_pnet_go_skipped = 0;
 #endif
     for (unsigned i = 0; i < 2; i++) g_pnet_lead[i] = (pnet_lead_t){UINT32_MAX, 0, 0, 0};
 }
@@ -4205,6 +4214,9 @@ int main(void) {
         // on side 1 (SIDE flipped since the capture ended) rebuilds the echo there.
         // Only an echo already served needs the -1: any other loaded1 differs from 155 anyway,
         // and keeping it lets pnet_serve_df1 see a side return as one (restart-by-cause count).
+#if PNET_SIDE_DELAY_US
+        if (g_pnet_go_rearm) { g_pnet_go_rearm = false; loaded1 = -1; }   // a skipped delayed start: serve afresh
+#endif
         if (pnet_take_capture()) {
             if (want_track[1] == PNET_TRACK_OUT && loaded1 == PNET_TRACK_OUT) {
                 loaded1 = -1;
