@@ -3027,7 +3027,7 @@ static uint32_t      g_pnet_side_idx_min = UINT32_MAX;
 static volatile bool g_pnet_go_side;
 #if PNET_SIDE_DELAY_US
 // Side-1 starts this window: from the alarm on time / at once because the loop came after the due time.
-static uint32_t      g_pnet_go_delayed, g_pnet_go_late;
+static uint32_t      g_pnet_go_delayed, g_pnet_go_late, g_pnet_go_short;
 #endif
 static bool     g_pnet_rst_commit;
 
@@ -3141,6 +3141,7 @@ static uint32_t g_pnet_prep_max, g_pnet_prep_sum, g_pnet_preps;
 // read's margin is ~184), so the build moves here, to the commit, while the head is on side 0.
 static bool pnet_prepare_echo(void) {
     const uint64_t t0 = time_us_64();
+    pnet_go_cancel();                            // before echo_live drops: a pending start must not fire into this teardown
     g_pnet_echo_live = false;
     g_pnet_prepared = false;
     stream_stop(1);
@@ -3252,6 +3253,7 @@ static int64_t pnet_go_due(alarm_id_t id, void *ud) {
     (void)id;
     (void)ud;
     g_pnet_go_alarm = 0;              // first: pnet_go's own stream_stop(1) must not cancel this alarm
+    if (!pnet_go_still_wanted(want_track[1])) return 0;   // side 1 no longer wants the out-track
     pnet_go();
     return 0;                         // once
 }
@@ -3265,7 +3267,8 @@ static int64_t pnet_go_due(alarm_id_t id, void *ud) {
 // alarm starts it (or already has).
 static bool pnet_go_later(bool side_return) {
     const uint32_t wait = pnet_go_wait_us(g_pnet_side_us, PNET_SIDE_DELAY_US, time_us_32());
-    if (wait > PNET_GO_MIN_US) {
+    const pnet_go_kind_t kind = pnet_go_kind(wait, PNET_GO_MIN_US);
+    if (kind == PNET_GO_ALARM) {
         const uint32_t irq = save_and_disable_interrupts();
         const alarm_id_t id = add_alarm_in_us(wait, pnet_go_due, NULL, true);
         if (id > 0) g_pnet_go_alarm = id;
@@ -3275,7 +3278,8 @@ static bool pnet_go_later(bool side_return) {
             return true;
         }
     }
-    if (side_return) g_pnet_go_late++;   // the loop came after the due time (or no alarm slot was free)
+    if (kind == PNET_GO_SHORT) g_pnet_go_short++;   // "delayed", but due within PNET_GO_MIN_US: at once
+    else if (side_return) g_pnet_go_late++;         // the loop came after the due time (or no alarm slot was free)
     return false;
 }
 #endif
@@ -3307,6 +3311,7 @@ static void pnet_serve_df1(int32_t tok, int *loaded) {
     const bool commit = g_pnet_rst_commit;
     g_pnet_rst_commit = false;
     *loaded = want;
+    pnet_go_cancel();                            // before echo_live drops: a pending start must not fire into this teardown
     g_pnet_echo_live = false;                    // set again only once the echo streams
     stream_stop(1);                              // the DMA reads track_words1 (and a start may be pending): stop first
     if (act == PNET_DF1_SILENT) return;          // side 0: the Amiga writes, nothing to read
@@ -3445,8 +3450,9 @@ static void pnet_log_summary(void) {
 #if PNET_SIDE_DELAY_US
     // Phase 2 Task 1: side-1 starts this window, from the alarm / at once because the loop came after
     // the due time, and the earliest SIDE edge -> start (the latest is side-idx max above).
-    wf_logf(WF_INFO, "pnet: go at %u us: delayed %lu late %lu side-idx min us %lu",
+    wf_logf(WF_INFO, "pnet: go at %u us: delayed %lu late %lu short %lu side-idx min us %lu",
             (unsigned)PNET_SIDE_DELAY_US, PNET_SAT(g_pnet_go_delayed, 99999u), PNET_SAT(g_pnet_go_late, 99999u),
+            PNET_SAT(g_pnet_go_short, 99999u),
             g_pnet_side_idx_min == UINT32_MAX ? 0ul : PNET_SAT(g_pnet_side_idx_min, 9999999u));
 #endif
     // The pre-arm this window: arms made, used by a DF1 batch, cancelled by a DF0 write / by any
@@ -3472,7 +3478,7 @@ static void pnet_log_summary(void) {
     g_pnet_rst_noop = g_pnet_side_idx_max = 0;
     g_pnet_side_idx_min = UINT32_MAX;
 #if PNET_SIDE_DELAY_US
-    g_pnet_go_delayed = g_pnet_go_late = 0;
+    g_pnet_go_delayed = g_pnet_go_late = g_pnet_go_short = 0;
 #endif
     for (unsigned i = 0; i < 2; i++) g_pnet_lead[i] = (pnet_lead_t){UINT32_MAX, 0, 0, 0};
 }

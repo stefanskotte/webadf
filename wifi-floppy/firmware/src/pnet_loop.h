@@ -42,6 +42,15 @@ bool pnet_capture_ours(bool df1_serving, bool sel0, bool sel1, int cyl1, int sid
  * far in the future. */
 uint32_t pnet_go_wait_us(uint32_t side_us, uint32_t delay_us, uint32_t now_us);
 
+/* What a start does given its wait: ALARM (wait > min_us: a delayed start), LATE (the due time had
+ * passed: start at once), SHORT (due within min_us: at once, since an alarm costs about as much --
+ * the start was "delayed" but for under min_us). */
+typedef enum { PNET_GO_ALARM, PNET_GO_LATE, PNET_GO_SHORT } pnet_go_kind_t;
+pnet_go_kind_t pnet_go_kind(uint32_t wait_us, uint32_t min_us);
+
+/* A pending delayed start is due only while side 1 still wants the out-track (side 1 of cylinder 77). */
+bool pnet_go_still_wanted(int want_track1);
+
 /*
  * THE PRE-ARM (2026-10-10). The Amiga's to-board write has no lead-in: sync pulse 1 is ~32 us after
  * WGATE and pulse 2 ~64 us. Armed from the WGATE ISR the capture starts ~26 us late on average and,

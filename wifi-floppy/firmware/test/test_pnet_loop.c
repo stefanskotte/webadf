@@ -192,6 +192,17 @@ static void the_decision_holds_for_every_input(void) {
     CHECK_EQ_INT(arms, 2);                               /* edges set or not; nothing else */
 }
 
+static void a_start_is_classified_by_its_wait(void) {
+    CHECK_EQ_INT(pnet_go_kind(2325u, 20u), PNET_GO_ALARM);
+    CHECK_EQ_INT(pnet_go_kind(21u, 20u), PNET_GO_ALARM);
+    CHECK_EQ_INT(pnet_go_kind(20u, 20u), PNET_GO_SHORT);
+    CHECK_EQ_INT(pnet_go_kind(1u, 20u), PNET_GO_SHORT);
+    CHECK_EQ_INT(pnet_go_kind(0u, 20u), PNET_GO_LATE);
+    CHECK_EQ_INT(pnet_go_still_wanted(PNET_TRACK_OUT), 1);
+    CHECK_EQ_INT(pnet_go_still_wanted(PNET_TRACK_IN), 0);
+    CHECK_EQ_INT(pnet_go_still_wanted(0), 0);
+}
+
 /* Phase 2 (§3.4): how long a side-1 start still waits for the SIDE edge + the delay. */
 static void a_side_one_start_waits_from_the_side_edge(void) {
     CHECK_EQ_INT(pnet_go_wait_us(1000u, 2360u, 1035u), 2325);             /* the loop saw it at once */
@@ -214,5 +225,6 @@ int main(void) {
     RUN(stray_edges_are_discarded_but_a_write_is_the_isrs);
     RUN(the_decision_holds_for_every_input);
     RUN(a_side_one_start_waits_from_the_side_edge);
+    RUN(a_start_is_classified_by_its_wait);
     return REPORT();
 }
