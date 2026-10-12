@@ -98,12 +98,12 @@ if (WF_PNET_LOOP)
   # then found the sync 128+ bytes in, past where PaulaNET's own driver looks (HANDOFF 3bg). Phase 2
   # (plan 2026-10-11-paulanet-phase2-rob-driver, Task 1) measures a fixed delay with PaulaNET's 120.
   # Plain variables, never cache entries: a value is a commit, so an image's version names its timing.
-  # Spike D (measurement only, operator 2026-10-12): spike C showed the Amiga's read DMA starts at a
-  # time after SIDE, not at our INDEX edge. A long lead-in starting early (1,000 us after SIDE) puts the
-  # sync's byte offset in each read at (DMA start - DELAY)/16 us per byte, so the offset gives the DMA
-  # start: DMA_start_us ~= DELAY + (LEAD - offset) * 16. Never a release.
-  set(WF_PNET_TX_LEAD_BYTES 320)
-  set(WF_PNET_SIDE_DELAY_US 1000)
+  # Spike E (operator 2026-10-12): the Amiga's read DMA starts at a time after SIDE (spike C), spread
+  # 1.0-5.4 ms with the bulk at 1.6-3.1 ms (spike D: lead 320 at 1,000 us). PaulaNET's driver finds the
+  # sync only in a read's first 124 bytes, a 1.98 ms window: DMA at DELAY-48 .. DELAY+1,920 us with a
+  # 120-byte lead. 1,650 us covers ~1.6-3.6 ms; the rest are misses the driver retries (gate: <=~2%).
+  set(WF_PNET_TX_LEAD_BYTES 120)
+  set(WF_PNET_SIDE_DELAY_US 1650)
   list(APPEND WFMF_COMMON_DEFS PNET_TX_LEAD_BYTES=${WF_PNET_TX_LEAD_BYTES}
                                PNET_SIDE_DELAY_US=${WF_PNET_SIDE_DELAY_US})
   message(STATUS "WF_PNET_LOOP is ON: DF1 cylinder 77 is a PaulaNET loopback (TEST build only).")
