@@ -87,6 +87,8 @@ plan is written.
 - **New DF1 mode:** `df1_mode_t` gains `DF1_MODE_NET`.
   - The store, the boot mode and the poll's `secondDrive.mode` accept `"net"`.
   - An older board ignores an unknown mode and keeps its own. The server gates by firmware version (§5).
+    - **Corrected (plan 2026-10-12, correction 1):** the sentence above is false for 1.9.0-1.10.2, which map an
+      unknown mode to Off and ack it; only from 1.11.0 is an unknown mode ignored.
 - **Release builds include the L2 path:** `pnet_mfm/frame/rx/sort/ring/link/bridge/status` and the radio's L2 send.
   - Every hook that today checks `WF_PNET_L2` at compile time also requires `g_df1_mode == DF1_MODE_NET` at runtime.
   - In Off and Next modes the board behaves exactly as 1.10.2:
