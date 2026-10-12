@@ -266,6 +266,18 @@ static void the_gate_lets_a_prearm_go_and_never_arms_outside_network_mode(void) 
     }
 }
 
+// Task 5 review I1: DF1's WPROT under the gate. In Network mode it is released on cylinder 77 only; out of it
+// -- Off and Next included, the head still on 77 -- asserted, so leaving Network never leaves DF1 writable.
+static void wprot_is_asserted_everywhere_outside_network_mode(void) {
+    for (int cyl = 0; cyl < 80; cyl++) {
+        CHECK(pnet_df1_wprot_gated(false, cyl), "off the gate: write-protected on every cylinder");
+        CHECK(pnet_df1_wprot_gated(true, cyl) == pnet_df1_wprot(cyl), "on the gate: the loopback's rule");
+    }
+    CHECK(!pnet_df1_wprot_gated(pnet_mode_on(DF1_MODE_NET, false), 77), "Network on 77: writable");
+    CHECK(pnet_df1_wprot_gated(pnet_mode_on(DF1_MODE_OFF, false), 77), "left for Off on 77: protected");
+    CHECK(pnet_df1_wprot_gated(pnet_mode_on(DF1_MODE_NEXT, false), 77), "left for Next on 77: protected");
+}
+
 int main(void) {
     RUN(df1_streams_disk_silence_or_echo);
     RUN(wprot_is_released_only_on_cylinder_77);
@@ -282,5 +294,6 @@ int main(void) {
     RUN(the_network_path_runs_only_in_network_mode);
     RUN(leaving_network_mode_cancels_a_standing_prearm);
     RUN(the_gate_lets_a_prearm_go_and_never_arms_outside_network_mode);
+    RUN(wprot_is_asserted_everywhere_outside_network_mode);
     return REPORT();
 }

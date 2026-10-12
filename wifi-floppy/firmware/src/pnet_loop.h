@@ -38,6 +38,9 @@ bool pnet_df1_wprot(int cyl);
  * every build; in the loopback echo TEST build (WF_PNET_L2 off) Next disk as well, which is how that bench
  * build has always run. Off, and any mode this build does not know: never. */
 bool pnet_mode_on(uint8_t mode, bool echo_build);
+/* Task 5 review I1: DF1's WPROT for a head on `cyl` under the gate (`on` = pnet_mode_on). On: pnet_df1_wprot.
+ * Off: asserted everywhere, cylinder 77 included -- main.c re-asserts it with this when Network mode ends. */
+bool pnet_df1_wprot_gated(bool on, int cyl);
 /* A WGATE assertion is a loopback batch: DF1 serves a disk, SEL1 (not SEL0) is asserted, and
  * DF1's head is on cylinder 77, side 0. sel0/sel1 are ASSERTED, not pin levels. */
 bool pnet_capture_ours(bool df1_serving, bool sel0, bool sel1, int cyl1, int side);

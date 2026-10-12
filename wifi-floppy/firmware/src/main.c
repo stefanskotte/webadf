@@ -3600,7 +3600,11 @@ static void pnet_log_summary(void) {
 // otherwise be taken as new by a later Network mode's fresh link.
 static void pnet_set_mode(df1_mode_t m) {
     const bool was = g_pnet_on;
-    g_pnet_on = pnet_mode_on((uint8_t)m, PNET_ECHO_BUILD);
+    const bool now = pnet_mode_on((uint8_t)m, PNET_ECHO_BUILD);
+    // Leaving: DF1 stops counting as serving BEFORE the gate drops, so a WGATE landing in between can never
+    // arm a raw capture (review m1; the WGATE ISR reads g_pnet_df1_mounted).
+    if (was && !now) g_pnet_df1_mounted = false;
+    g_pnet_on = now;
 #if WF_PNET_L2
     pnet_bridge_set_on(g_pnet_on);
 #endif
@@ -3609,14 +3613,17 @@ static void pnet_set_mode(df1_mode_t m) {
         if (flux_capture_take_raw(&stale)) pnet_raw_pending = false;
     }
     if (!was || g_pnet_on) return;
+    // Review I1: a head left on cylinder 77 had WPROT released. Off does not set DF1's lines (df1_live.c) and
+    // the STEP ISR no longer moves WPROT outside Network, so re-assert it here: protected on every cylinder.
+    bus_out_set_drive(1, PIN_WPROT, pnet_df1_wprot_gated(g_pnet_on, cur_cyl[1]));
     pnet_go_cancel();
     g_pnet_echo_live = false;
     g_pnet_prepared = false;
-    g_pnet_df1_mounted = false;
 #if WF_PNET_L2
     pnet_ring_drop(&g_pnet_rx, pnet_ring_count(&g_pnet_rx));
     pnet_link_init(&g_link);
     g_pnet_status_last_ms = 0;
+    g_pnet_last_ms = 0;          // review m3: no network use any more, so a staged OTA is not held (pnet_ota_quiet)
     g_pnet_frames_from = g_pnet_frames_to = 0;
 #else
     pnet_loop_init(&g_pnet);

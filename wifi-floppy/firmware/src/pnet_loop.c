@@ -14,6 +14,8 @@ pnet_df1_t pnet_df1_for_track(int want) {
 
 bool pnet_df1_wprot(int cyl) { return cyl != PNET_CYL; }
 
+bool pnet_df1_wprot_gated(bool on, int cyl) { return !on || pnet_df1_wprot(cyl); }
+
 bool pnet_mode_on(uint8_t mode, bool echo_build) {
     return mode == DF1_MODE_NET || (echo_build && mode == DF1_MODE_NEXT);
 }
