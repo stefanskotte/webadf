@@ -2601,6 +2601,9 @@ separately.
     - **How the CPU would be known:** the driver reads `AttnFlags` from ExecBase. It reports the CPU to the board, or
       the board advertises what it supports in cylinder 76's `flags` and the driver picks.
     - Either way this needs Rob's driver to take part (see the constraint above).
+  - **Rob is on board (operator, 2026-10-12):** he agrees to LZ4 support in his driver, so route (a) is open. It is
+    GO, after Phase 3. The first step is still the host measurement above. The flag bit, the CPU gating and the frame
+    format are then agreed with Rob before either side implements anything.
 - **Drop files onto the Amiga's RAM: (operator, 2026-10-09; after PaulaNET works).** A drop zone in the web app that
   copies the dropped files straight into the running Amiga's RAM disk. Needs PaulaNET online first. Shape to
   decide then: a small Amiga-side receiver (started from the driver disk / WBStartup) that the board or the server
