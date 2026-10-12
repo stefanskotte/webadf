@@ -70,7 +70,7 @@
 #endif
 
 static const char vers[] __attribute__((used)) =
-    "$VER: NetLoop 1.3 (11.10.2026) PaulaNET protocol by RobSmithDev, used with permission";
+    "$VER: NetLoop 1.3.1 (12.10.2026) PaulaNET protocol by RobSmithDev, used with permission";
 
 #define DF1_UNIT    1
 #define CHIP_BYTES  16896u    /* the largest write or read, rounded up */
@@ -99,8 +99,9 @@ static unsigned long c_ioerr, c_nosync, c_badhdr, c_stale, c_rewrites, c_mismatc
 #define RK_HDR 0
 #define RK_PAY 1
 #define BAD_KINDS 4
-#define OFF_BINS 17
-static unsigned long c_nosync_k[2], c_bad_k[2][BAD_KINDS], c_off_k[2][OFF_BINS];
+#define OFF_BINS NL_OFF_BINS
+/* c_off_k: 8-byte bins; c_off32_k: 32-byte bins 0..511, the last 512 and up (1.3.1, Spike D). */
+static unsigned long c_nosync_k[2], c_bad_k[2][BAD_KINDS], c_off_k[2][OFF_BINS], c_off32_k[2][OFF_BINS];
 static BOOL diag;
 /* SCAN= (Phase 2): every read's sync-scan limit, and whether payload reads are sized as PaulaNET's
  * driver sizes them. The defaults are Phases 0-1's: a 512-byte scan and NetLoop's own sizes. */
@@ -146,7 +147,8 @@ static int read_once(ULONG len, pnet_hdr_t *h, BOOL with_payload, size_t *valid,
     const long off = pnet_find_sync(rbuf, len, scan_all ? len : sync_scan);
     if (off < 0) { c_nosync++; c_nosync_k[rk]++; return 1; }
     const unsigned long ob = (unsigned long)off >> 3;
-    c_off_k[rk][ob >= 128u ? OFF_BINS - 1u : ob >> 3]++;
+    c_off_k[rk][nl_off_bin8(ob)]++;
+    c_off32_k[rk][nl_off_bin32(ob)]++;
     {
         const unsigned long st = ((unsigned long)off - 32u) >> 3;   /* where the sync starts */
         if (st < off_lo[rk]) off_lo[rk] = st;
@@ -188,12 +190,15 @@ static int read_echo(UBYTE ctr, UBYTE last_pico, const uint16_t *lens, unsigned 
             if (read_once(HDR_READ, h, FALSE, &valid, FALSE)) continue;
             if (!nl_echo_answers(h->amiga_ctr, h->pico_ctr, ctr, last_pico)) { c_stale++; continue; }
             td_io(TD_SEEK, 0, NULL, 0, SEEK_TO(PNET_TRACK_IN));   /* as PaulaNET's driver does */
+            /* The full scan (no SCAN=, Spike D) allows a sync SYNC_SCAN bytes in: room for the whole
+             * frame after it, not just after a 120-byte lead-in. */
             len = drv_reads ? nl_driver_read_len(h->data_size)
-                            : (PNET_LEAD_BYTES + 4u + PNET_HDR_MFM_BYTES + h->data_size + 64u + 1u) & ~1ul;
+                            : (SYNC_SCAN + 4u + PNET_HDR_MFM_BYTES + h->data_size + 64u + 1u) & ~1ul;
             if (diag)   /* one more echo loop */
                 len += PNET_LEAD_BYTES + 4u + PNET_HDR_MFM_BYTES + h->data_size + PNET_TRAIL_BYTES;
         } else {
             len = ((ULONG)pnet_to_amiga_bound(lens, nf) - PNET_TRAIL_BYTES + 32u + 1u) & ~1ul;
+            if (!drv_reads) len += SYNC_SCAN - PNET_LEAD_BYTES;   /* sync up to SYNC_SCAN bytes in */
             if (diag) len += (ULONG)pnet_to_amiga_bound(lens, nf);
         }
         len &= ~1ul;
@@ -277,7 +282,7 @@ static int l2_exchange(UBYTE *ctr, UBYTE *last_pico, const pnet_frame_ref_t *out
         if (h.pico_ctr == *last_pico || h.data_size == 0) return 1;
         td_io(TD_SEEK, 0, NULL, 0, SEEK_TO(PNET_TRACK_IN));            /* as PaulaNET's driver does */
         ULONG len = drv_reads ? nl_driver_read_len(h.data_size)
-                              : (PNET_LEAD_BYTES + 4u + PNET_HDR_MFM_BYTES + h.data_size + 64u + 1u) & ~1ul;
+                              : (SYNC_SCAN + 4u + PNET_HDR_MFM_BYTES + h.data_size + 64u + 1u) & ~1ul;
         if (len > CHIP_BYTES) len = CHIP_BYTES;
         if (read_once(len, &p, TRUE, &valid, FALSE) || p.pico_ctr != h.pico_ctr) continue;
         uint16_t lens[PNET_MAX_FRAMES];
@@ -588,7 +593,7 @@ int main(void) {
         drv_reads = TRUE;
     }
     FreeArgs(rd);
-    printf("NetLoop 1.3 -- PaulaNET protocol by RobSmithDev, used with permission\n");
+    printf("NetLoop 1.3.1 -- PaulaNET protocol by RobSmithDev, used with permission\n");
     if (n < 1 || n > MAX_N || rounds < 1 || rounds > MAX_ROUNDS || (reads != 1 && reads != 2)) {
         printf("N=1..%lu ROUNDS=1..%lu READS=1|2\n", (unsigned long)MAX_N, (unsigned long)MAX_ROUNDS);
         return RETURN_ERROR;
@@ -646,6 +651,7 @@ int main(void) {
     memset(c_nosync_k, 0, sizeof c_nosync_k);
     memset(c_bad_k, 0, sizeof c_bad_k);
     memset(c_off_k, 0, sizeof c_off_k);
+    memset(c_off32_k, 0, sizeof c_off32_k);
     memset(c_reads_k, 0, sizeof c_reads_k);
     off_lo[0] = off_lo[1] = ~0ul;
     off_hi[0] = off_hi[1] = 0;
@@ -673,13 +679,26 @@ int main(void) {
     for (int k = 0; k < 2; k++)
         printf("%s read: %lu reads, nosync %lu  badhdr short %lu checksum %lu magic %lu other %lu\n", rk_name[k],
                c_reads_k[k], c_nosync_k[k], c_bad_k[k][0], c_bad_k[k][1], c_bad_k[k][2], c_bad_k[k][3]);
-    printf("sync byte offset, 8-byte bins:\noff ");
-    for (unsigned i = 0; i + 1u < OFF_BINS; i++) printf("%4u", i * 8u);
-    printf(" 128+\n");
+    char line[96];
+    printf("sync byte offset (the byte the sync ends at; it starts 4 earlier), 8-byte bins:\n");
+    nl_hist_head(line, sizeof line, 8);
+    fputs(line, stdout);
     for (int k = 0; k < 2; k++) {
-        printf("%s ", rk_name[k]);
-        for (unsigned i = 0; i < OFF_BINS; i++) printf(i + 1u < OFF_BINS ? "%4lu" : " %4lu", c_off_k[k][i]);
-        printf("\n");
+        char lab[8];
+        sprintf(lab, "%s ", rk_name[k]);
+        nl_hist_row(line, sizeof line, lab, c_off_k[k]);
+        fputs(line, stdout);
+    }
+    if (!drv_reads) {   /* the full scan: reads reach 512 bytes in, so the wide view is meaningful */
+        printf("sync byte offset, 32-byte bins:\n");
+        nl_hist_head(line, sizeof line, 32);
+        fputs(line, stdout);
+        for (int k = 0; k < 2; k++) {
+            char lab[8];
+            sprintf(lab, "%s ", rk_name[k]);
+            nl_hist_row(line, sizeof line, lab, c_off32_k[k]);
+            fputs(line, stdout);
+        }
     }
     for (int k = 0; k < 2; k++)
         if (off_lo[k] != ~0ul)

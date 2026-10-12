@@ -32,4 +32,16 @@ uint32_t nl_tenths(uint64_t num, uint64_t den);
 /* The length of his driver's read for a payload of data_size bytes: the payload rounded up to even,
  * its 24-byte MFM header and 128 bytes of slack, at least 1,024 and at most 16,640. */
 unsigned long nl_driver_read_len(unsigned long data_size);
+/* The sync's byte offset histograms (the offset is the byte the sync ENDS at, as the 8-byte one has
+ * always counted it; the sync starts 4 bytes earlier). 8-byte bins: 0..127, the last (16) is 128 and
+ * up. 32-byte bins: 0..511, the last (16) is 512 and up. Both have NL_OFF_BINS bins. */
+#define NL_OFF_BINS 17u
+unsigned nl_off_bin8(unsigned long ob);
+unsigned nl_off_bin32(unsigned long ob);
+/* One histogram row: `label` (4 characters, e.g. "pay "), then the bins, each width 4 and the last
+ * with a space before it: 4 + 16 * 4 + 5 = 73 columns, for the Shell window's ~78. Writes at most
+ * cap bytes, ends with a newline, and returns the length. */
+unsigned nl_hist_row(char *out, unsigned cap, const char *label, const unsigned long *bins);
+/* The matching header: "off " then the bin starts, `step` apart (8 or 32); the last as "<16*step>+". */
+unsigned nl_hist_head(char *out, unsigned cap, unsigned step);
 #endif
