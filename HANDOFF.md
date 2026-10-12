@@ -2563,6 +2563,15 @@ separately.
   no sign of more; all 35 disks of that upload share one created_at, so 13 were never offered. The dialog now says
   "Showing N titles — there are more." with Show more. The operator's 13 disks (Storage, GlowIcons, HDSetup, ...)
   still sit in Uncategorized: add them via Add disks… > Show more. No data was changed.
+- **Accept `.dmz` (gzipped DMS) uploads (operator, 2026-10-12).** `.dmz` is a DMS archive compressed with gzip, as
+  `.adz` is to `.adf`. Today the dropzone and `src/lib/archive/disk-image.ts` take `.adf/.dsk/.adz/.dms/.hfe`
+  (`DISK_IMAGE_PATTERN`, `accept=".adf,.dsk,.adz,.dms,.hfe"` in `src/components/ingest/dropzone.tsx`), so a `.dmz`
+  is refused. The shape is to gunzip it with the same bounded inflate as `.adz` (the gzip-bomb limit), then pass the
+  result to `readDms`, with `from: 'dms'` (or a new `'dmz'`) and `adfName` mapping `.dmz` to `.adf`. Also check:
+  - every place that lists the extensions (the URL ingest in `url-ingest.ts`, the CLI, the help text, the
+    default-name rule in HANDOFF 3as that keeps `.adf/.adz/.dms/.hfe/.ipf`);
+  - a test with a real `.dmz` fixture, including one that is gzipped but not DMS inside, which must be refused
+    cleanly.
 - **Drop files onto the Amiga's RAM: (operator, 2026-10-09; after PaulaNET works).** A drop zone in the web app that
   copies the dropped files straight into the running Amiga's RAM disk. Needs PaulaNET online first. Shape to
   decide then: a small Amiga-side receiver (started from the driver disk / WBStartup) that the board or the server
