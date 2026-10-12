@@ -6,8 +6,9 @@
 # file from <base>; any difference fails. Both copies see THIS tree's headers, which differ from
 # <base> only inside #if WF_PNET_LOOP. (A __FILE__ in either file would differ by name alone and
 # fail this check; neither file uses one today.)
-# <base> is Task 1's commit of plan 2026-10-11 until that plan merges (its pio2 fix
-# changes flux_capture.c in every build).
+# <base> is master. PaulaNET Phase 2 (plan 2026-10-11-paulanet-phase2-rob-driver) changes these files
+# only inside #if WF_PNET_LOOP / WF_PNET_L2. Its one every-build rule, the 16,128-byte batch cap
+# (Task 2), lives in pnet_frame.h and pnet_link.c, which no release image compiles.
 set -euo pipefail
 fw="$(cd "$(dirname "$0")/.." && pwd)"
 base="${1:-master}"

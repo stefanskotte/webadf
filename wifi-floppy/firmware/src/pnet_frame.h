@@ -48,6 +48,11 @@
 #define PNET_SYNC_WORDS      0x44894489u
 #define PNET_ETH_MTU         1518u
 #define PNET_MAX_FRAMES      20u
+/* The most payload one board -> Amiga batch carries (Phase 2, spec 2026-10-11 §3.3), in EVERY build
+ * that sends batches: PaulaNET's driver reads at most compressed_size + 24 + 128 bytes, capped at
+ * 16,640, so 16,128 (16 KB - 256, his own board's cap on a transfer) keeps the whole track inside it
+ * -- a WF_DF1_HD buffer (25,344 B) would otherwise allow a batch the driver cannot read whole. */
+#define PNET_TO_AMIGA_MAX_PAYLOAD 16128u
 
 typedef enum { PNET_TO_BOARD, PNET_TO_AMIGA } pnet_dir_t;
 

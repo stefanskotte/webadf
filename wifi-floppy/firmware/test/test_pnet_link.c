@@ -123,6 +123,29 @@ static void ota_waits_for_quiet(void) {
     CHECK(pnet_ota_quiet(10000u + 0x100u - 1u, 0xFFFFFF00u, false), "across the wrap: 10,255 ms");
 }
 
+/* Phase 2 (§3.3): whatever DF1's buffer, a batch to the Amiga carries at most 16,128 payload bytes, so
+ * its whole track sits inside PaulaNET's driver's largest read (16,640 bytes). */
+static void fit_caps_the_payload_at_16128_bytes(void) {
+    uint16_t lens[25];
+    for (unsigned i = 0; i < 25; i++) lens[i] = PNET_ETH_MTU;
+    const size_t hd = 25344u - 80u;                          /* a WF_DF1_HD-sized buffer, larger than the cap */
+    const unsigned n = pnet_link_fit(lens, 25, hd);
+    CHECK_EQ_INT(n, 10);                                     /* 4 + 10 x 1,539 = 15,394; 11 would be 16,933 */
+    CHECK(pnet_payload_bound(lens, n) <= PNET_TO_AMIGA_MAX_PAYLOAD, "n is inside the cap");
+    CHECK(pnet_payload_bound(lens, n + 1) > PNET_TO_AMIGA_MAX_PAYLOAD, "n + 1 is not");
+    CHECK(pnet_to_amiga_bound(lens, n + 1) <= hd, "and the cap, not the buffer, is what stops it");
+    static uint8_t frame[PNET_ETH_MTU], out[25344];
+    for (unsigned i = 0; i < sizeof frame; i++) frame[i] = (uint8_t)(i * 37u);
+    pnet_frame_ref_t f[PNET_MAX_FRAMES];
+    for (unsigned i = 0; i < n; i++) { f[i].data = frame; f[i].len = PNET_ETH_MTU; }
+    CHECK(pnet_build_to_amiga(out, hd, 0, 0, 0, f, n) != 0, "built");
+    pnet_hdr_t h;
+    CHECK_EQ_INT(pnet_parse_hdr_to_amiga(out + PNET_LEAD_BYTES + 4u, sizeof out - PNET_LEAD_BYTES - 4u, &h, true),
+                 PNET_OK);
+    CHECK(h.data_size <= PNET_TO_AMIGA_MAX_PAYLOAD, "the built batch is inside the cap");
+    CHECK(PNET_LEAD_BYTES + 4u + PNET_HDR_MFM_BYTES + h.data_size <= 16640u, "inside the driver's largest read");
+}
+
 int main(void) {
     RUN(counters_start_as_paulanets);
     RUN(a_new_batch_is_taken_once);
@@ -132,6 +155,7 @@ int main(void) {
     RUN(empty_batches_do_not_move_the_counter);
     RUN(counters_wrap);
     RUN(fit_respects_the_buffer_and_twenty_frames);
+    RUN(fit_caps_the_payload_at_16128_bytes);
     RUN(ota_waits_for_quiet);
     return REPORT();
 }

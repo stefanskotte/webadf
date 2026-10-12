@@ -41,8 +41,9 @@ bool pnet_link_is_new(const pnet_link_t *s, const pnet_hdr_t *h);
 /* A parsed Amiga batch of n frames: NEW (the caller queues the frames), DUP, or FULL (n > tx_space:
  * not taken). Counts each. */
 pnet_take_t pnet_link_take(pnet_link_t *s, const pnet_hdr_t *h, unsigned n, uint32_t tx_space);
-/* How many of the first `avail` waiting frames (lengths lens[]) one batch to the Amiga holds within
- * `cap` bytes on the wire (pnet_to_amiga_bound), at most PNET_MAX_FRAMES. */
+/* How many of the first `avail` waiting frames (lengths lens[]) one batch to the Amiga holds: within
+ * `cap` bytes on the wire (pnet_to_amiga_bound) and PNET_TO_AMIGA_MAX_PAYLOAD bytes of payload
+ * (pnet_payload_bound), at most PNET_MAX_FRAMES. The rest stay in the ring for the next batch. */
 unsigned pnet_link_fit(const uint16_t *lens, unsigned avail, size_t cap);
 /* A new batch of n frames goes out: pico moves on. No-op for n == 0 or while one is out. */
 void pnet_link_start(pnet_link_t *s, unsigned n);

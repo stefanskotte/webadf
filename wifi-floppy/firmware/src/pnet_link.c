@@ -34,7 +34,8 @@ pnet_take_t pnet_link_take(pnet_link_t *s, const pnet_hdr_t *h, unsigned n, uint
 unsigned pnet_link_fit(const uint16_t *lens, unsigned avail, size_t cap) {
     if (avail > PNET_MAX_FRAMES) avail = PNET_MAX_FRAMES;
     unsigned n = 0;
-    while (n < avail && pnet_to_amiga_bound(lens, n + 1u) <= cap) n++;
+    while (n < avail && pnet_to_amiga_bound(lens, n + 1u) <= cap &&
+           pnet_payload_bound(lens, n + 1u) <= PNET_TO_AMIGA_MAX_PAYLOAD) n++;
     return n;
 }
 
