@@ -3353,7 +3353,8 @@ static void pnet_prearm_step(void) {
 }
 
 #if WF_PNET_L2
-// Phase 1, every 5 s in which anything moved. Each line fits WF_LOG_MSG (88) at full widths.
+// Phase 1, every 5 s in which anything moved. Every counter is saturated at 9999999 (PNET_SAT), so each line
+// fits the 87 characters wf_logf prints (WF_LOG_MSG is 88, with the NUL).
 static void pnet_l2_log(void) {
     static uint32_t last_ms, last_sum;
     const uint32_t now = clock_ms();
@@ -3368,28 +3369,27 @@ static void pnet_l2_log(void) {
                          g_link.acked + st.clash + st.hooks;
     if (sum == last_sum) return;
     last_sum = sum;
+#define PNET_SAT(v, m) ((unsigned long)((v) > (m) ? (m) : (v)))
+#define S7(v) PNET_SAT((v), 9999999u)
     char a[16], b[16];
     pnet_ip_text(st.amiga_ip, a);
     pnet_ip_text(st.board_ip, b);
     wf_logf(WF_INFO, "pnet: l2 in a %lu b %lu drop %lu q %lu sent %lu err %lu",
-            (unsigned long)st.in_amiga, (unsigned long)st.in_both, (unsigned long)st.rx_drops,
-            (unsigned long)pnet_ring_count(&g_pnet_rx), (unsigned long)st.tx_sent, (unsigned long)st.tx_err);
+            S7(st.in_amiga), S7(st.in_both), S7(st.rx_drops),
+            S7(pnet_ring_count(&g_pnet_rx)), S7(st.tx_sent), S7(st.tx_err));
     wf_logf(no ? WF_WARN : WF_INFO, "pnet: l2 tx no len %lu mac %lu type %lu clash %lu ack %lu",
-            (unsigned long)st.tx_no[PNET_TX_LEN], (unsigned long)st.tx_no[PNET_TX_MAC],
-            (unsigned long)st.tx_no[PNET_TX_TYPE], (unsigned long)st.tx_no[PNET_TX_CLASH],
-            (unsigned long)g_link.acked);
+            S7(st.tx_no[PNET_TX_LEN]), S7(st.tx_no[PNET_TX_MAC]),
+            S7(st.tx_no[PNET_TX_TYPE]), S7(st.tx_no[PNET_TX_CLASH]), S7(g_link.acked));
     // Phase 2: the Amiga's batches -- taken, resent; their frames queued, dropped on a full ring, and
-    // dropped as malformed (spec §3.2: every drop counted). Saturated so the line fits WF_LOG_MSG (88).
-#define PNET_SAT(v, m) ((unsigned long)((v) > (m) ? (m) : (v)))
+    // dropped as malformed (spec §3.2: every drop counted).
     wf_logf(g_link.over || g_link.malformed ? WF_WARN : WF_INFO,
             "pnet: l2 from amiga new %lu dup %lu frames %lu over %lu bad %lu",
-            PNET_SAT(g_link.fresh, 99999999u), PNET_SAT(g_link.dup, 99999999u),
-            PNET_SAT(g_link.queued, 99999999u), PNET_SAT(g_link.over, 99999999u),
-            PNET_SAT(g_link.malformed, 99999999u));
-#undef PNET_SAT
+            S7(g_link.fresh), S7(g_link.dup), S7(g_link.queued), S7(g_link.over), S7(g_link.malformed));
     const bool same = st.amiga_ip != 0u && st.amiga_ip == st.board_ip;
     wf_logf(st.clash || same ? WF_WARN : WF_INFO, "pnet: l2 amiga %s board %s %s clash %lu heap %lu",
-            a, b, same ? "SAME" : "distinct", (unsigned long)st.clash, (unsigned long)g_pnet_heap_low);
+            a, b, same ? "SAME" : "distinct", PNET_SAT(st.clash, 999999u), PNET_SAT(g_pnet_heap_low, 999999u));
+#undef S7
+#undef PNET_SAT
 }
 #endif
 
