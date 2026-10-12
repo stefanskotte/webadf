@@ -9,7 +9,7 @@ EndIf
 Copy PaulaNET:PaulaNET.device DEVS:Networks/ CLONE QUIET
 If WARN
   Echo "Could not copy PaulaNET.device to DEVS:Networks."
-  Echo "Nothing else was changed."
+  Echo "The driver was not copied; eth0 was not touched."
   Skip DONE
 EndIf
 Echo "Copied PaulaNET.device to DEVS:Networks."
@@ -26,6 +26,11 @@ Else
   Echo >DEVS:NetInterfaces/eth0 "device=PaulaNET.device"
   Echo >>DEVS:NetInterfaces/eth0 "unit=0"
   Echo >>DEVS:NetInterfaces/eth0 "configure=dhcp"
+  If WARN
+    Delete DEVS:NetInterfaces/eth0 QUIET
+    Echo "Could not write DEVS:NetInterfaces/eth0; it was removed."
+    Skip DONE
+  EndIf
   Echo "Wrote DEVS:NetInterfaces/eth0."
 EndIf
 Echo ""

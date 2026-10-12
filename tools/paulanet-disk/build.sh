@@ -30,7 +30,8 @@ cmp -s "$tmp/driver" "$repo/third-party/paulanet/PaulaNET.device" \
 cp "$tmp/disk.adf" "$out"
 got="$(shasum -a 256 "$out" | cut -d' ' -f1)"
 echo "$got  $out"
-if [ -f "$here/paulanet-disk.sha256" ] && [ "$(cat "$here/paulanet-disk.sha256")" != "$got" ]; then
+[ -f "$here/paulanet-disk.sha256" ] || { echo "FAIL: $here/paulanet-disk.sha256 is missing -- the pin is mandatory"; exit 1; }
+if [ "$(cat "$here/paulanet-disk.sha256")" != "$got" ]; then
   echo "FAIL: not the pinned disk ($(cat "$here/paulanet-disk.sha256")) -- an input changed; the server's PAULANET_DISK_SHA256 must change with it"
   exit 1
 fi
