@@ -296,25 +296,23 @@ export const HELP_TOPICS = {
       <>
         <p>
           Choose <em>Next disk of the set</em> under <em>Second drive (DF1)</em> on the board&apos;s card. DF1 then
-          holds the disk after the one in DF0, if that is a standard (DD, 880K) disk; when it is an HD disk, DF1 stays empty. When you press <em>Next disk</em>, DF0 moves on at once and DF1 is
+          holds the disk after the one in DF0, if that is a standard disk; when it is an HD disk, DF1 stays empty. When you press <em>Next disk</em>, DF0 moves on at once and DF1 is
           empty for about five seconds while the following disk is fetched.
         </p>
         <p>
           The change takes effect when the Amiga restarts, cold or warm: switch the Amiga off and on, or press
-          Ctrl-Amiga-Amiga. Switching it off works the same way: until the Amiga restarts, DF1 stays there, empty and
-          write-protected.
+          Ctrl-Amiga-Amiga. Switching it off: until the Amiga restarts, DF1 stays, empty and write-protected.
         </p>
         <p>
           Use it only when no other drive is DF1. On an A500, A600 or A1200 that means no external drive. On an
-          A2000, A3000 or A4000 it means no second internal drive; the external port there is DF2, which the board
-          does not affect. If the board has seen another drive answer as DF1, the setting refuses to switch on. After
-          removing that drive you can override it with <em>Switch on anyway…</em> and a second confirmation.
+          A2000, A3000 or A4000 it means no second internal drive; the external port there is DF2. If the board has seen another drive answer as DF1, the setting refuses to switch on. After
+          removing that drive you can override it with <em>Switch on anyway…</em>.
         </p>
         <GoodToKnow items={[
-          'DF1 is read-only: saving to it fails as write-protected. Saves to DF0 follow that disk’s own write protection.',
-          <>The third choice, <em>Network (PaulaNET)</em>, uses DF1 for networking instead: see{' '}
+          'With Next disk, DF1 is read-only: saving to it fails as write-protected. Saves to DF0 follow that disk’s own write protection.',
+          <>The third choice, <em>Network (PaulaNET)</em>, uses DF1 for networking instead (it is then the PaulaNET disk, and only the driver writes to it): see{' '}
             <a className="underline" href="/help#network">Amiga networking</a>.</>,
-          'Needs board firmware 1.9.0 or newer. A board put back on older firmware keeps the DF1 setting it had, and the card says DF1 is on while it holds a disk; install 1.9.0 or newer to switch it off.',
+          'Next disk needs board firmware 1.9.0 or newer; Network needs 1.11.0. A board put back on older firmware keeps the DF1 setting it had, and the card says DF1 is on while it holds a disk; install 1.9.0 or newer to switch it off.',
         ]} />
       </>
     ),
@@ -336,7 +334,8 @@ export const HELP_TOPICS = {
         <p>
           Choose <em>Network (PaulaNET)</em> under <em>Second drive (DF1)</em> on the board&apos;s card, then restart
           the Amiga. DF1 then holds the PaulaNET driver disk, whatever is in DF0. You need a TCP/IP stack such as
-          AmiTCP_NG or Roadshow, and no other drive answering as DF1.
+          AmiTCP_NG or Roadshow, and no other drive answering as DF1. If the board has seen another drive answer as DF1, the
+          setting refuses to switch on; once you have removed that drive, override it with <em>Switch on anyway…</em>.
         </p>
         <p>
           <strong>Three steps.</strong> Open DF1 and double-click <em>Install</em>. Then, in a Shell, type{' '}
@@ -344,7 +343,7 @@ export const HELP_TOPICS = {
           card&apos;s checklist shows each part: the driver disk, the driver, and the Amiga&apos;s own address.
         </p>
         <GoodToKnow items={[
-          'Expect about 45 KB/s, about half that while DF0 is busy, and pings of about 250 ms.',
+          'Expect about 45 KB/s, about half that during a DF0 copy, and pings of about 250 ms.',
           'The mouse may feel slower while the driver runs.',
           'DF0 can be empty, for an Amiga that starts from a hard drive, and changing the disk in DF0 does not interrupt the network.',
           'Needs board firmware 1.11.0 or newer.',
