@@ -21,8 +21,8 @@
 
 #define PNET_ECHO_BYTES 16384u   /* one half of the PSRAM echo store (main.c) */
 /* DF1's INDEX pulse while it streams the echo: its restart and its wrap (main.c). Shorter than
- * the echo's 1.92 ms lead-in (120 B): trackdisk arms INDEXSYNC ~1.5-2 ms after the side change and
- * starts on the next edge, which under a 2 ms pulse was the pulse's END -- inside the sync. */
+ * the echo's 1.92 ms lead-in (120 B). Spike C showed moving our INDEX edge does not move the
+ * Amiga's read; its start is timed from SIDE (HANDOFF 3bi). */
 #define PNET_INDEX_PULSE_US 200u
 
 /* PNET_DF1_STATUS: Phase 2's cylinder 76, side 1 (pnet_df1_for_track_l2, L2 builds only). */

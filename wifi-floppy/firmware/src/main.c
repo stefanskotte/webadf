@@ -3252,11 +3252,9 @@ static bool pnet_stream_words(const uint32_t *src, uint32_t nwords) {
 
 static bool pnet_stream_prepared(void) { return pnet_stream_words(track_words1, g_pnet_prepared_words); }
 
-// INDEX now, as PaulaNET does at the start of every transmission: the Amiga's INDEXSYNC read then
-// starts at the lead-in instead of one whole buffer later (dma_irq's INDEX is at the wrap). Short
-// (PNET_INDEX_PULSE_US): trackdisk arms INDEXSYNC ~1.5-2 ms after the side change and waits for a
-// NEW edge; a 2 ms pulse outlasted the 1.92 ms lead-in, so that edge was the pulse's end and the DMA
-// started inside the sync. Already asserted: no new edge (noop).
+// INDEX now, as PaulaNET does at the start of every transmission (dma_irq's INDEX is at the wrap). Spike C
+// showed moving our INDEX edge does not move the Amiga's read: its start is timed from SIDE (HANDOFF 3bi).
+// The pulse is kept short (PNET_INDEX_PULSE_US) all the same. Already asserted: no new edge (noop).
 static void pnet_index_now(void) {
     const uint32_t now32 = time_us_32();
     if ((int32_t)(g_pnet_idx_end_us - now32) > 0) g_pnet_rst_noop++;
@@ -3300,9 +3298,8 @@ static int64_t pnet_go_due(alarm_id_t id, void *ud) {
 
 // Phase 2 (Task 1, spec §3.4). A side-1 start that comes within PNET_SIDE_DELAY_US of the latest SIDE
 // edge -- a side return, or a commit landing just after one -- waits until that edge + the delay, on a
-// core0 alarm. The Amiga's read DMA starts 2.4-4.2 ms after the edge (HANDOFF 3bg), so with a
-// PNET_TX_LEAD_BYTES (120) lead-in the sync starts in the first 124 bytes of the read, where PaulaNET's
-// driver looks for it. A later start (a step onto the cylinder, a commit long after the edge) goes at
+// core0 alarm. The Amiga's read DMA starts 1.0-5.4 ms after the edge (bulk 1.6-3.1, peak ~2.6 ms; spike D),
+// wider than the driver's 124-byte scan window, so ~4-5% of reads miss the sync and are retried (HANDOFF 3bi). A later start (a step onto the cylinder, a commit long after the edge) goes at
 // once. Armed with interrupts off, so the alarm cannot fire before its id is stored. True when the
 // alarm starts it (or already has).
 static bool pnet_go_later(bool side_return) {
@@ -3368,6 +3365,9 @@ static void pnet_serve_df1(int32_t tok, int *loaded) {
         // First: serve_drive can spend ~5 ms in an HD encode before its stream_stop, and a start
         // still pending must not fire on a disk cylinder and leave echo_live set.
         pnet_go_cancel();
+#if PNET_SIDE_DELAY_US
+        g_pnet_go_rearm = false;                 // a skipped start's rearm means nothing on a disk cylinder
+#endif
         g_pnet_echo_live = false;
         g_pnet_prepared = false;                 // serve_drive refills track_words1
         serve_drive(1, tok, loaded);
@@ -4308,8 +4308,19 @@ int main(void) {
             }
             // Build the echo now, not at the SIDE edge. Only with DF1 on cylinder 77 (154, 155,
             // or a restart pending): stopping a disk track's stream would leave it stopped.
-            if (df1_mounted && (loaded1 == PNET_TRACK_IN || loaded1 == PNET_TRACK_OUT || loaded1 == -1))
+            if (df1_mounted && (loaded1 == PNET_TRACK_IN || loaded1 == PNET_TRACK_OUT || loaded1 == -1
+#if WF_PNET_L2
+                                || loaded1 == PNET_TRACK_STATUS - 1     // 152: side 0 of cylinder 76, nothing streams
+#endif
+                                ))
                 pnet_prepare_echo();
+#if WF_PNET_L2
+            // 153: the status loop streams from g_pnet_status_words, but pnet_prepare_echo would stream_stop it
+            // and leave loaded1 == want (nothing restarts it). Drop the old batch instead: the move to 155
+            // builds a fresh one.
+            else if (df1_mounted && loaded1 == PNET_TRACK_STATUS)
+                g_pnet_prepared = false;
+#endif
         }
 #if WF_PNET_L2
         // Frames came while nothing is out and the head sits on side 0 (the Amiga between its write
