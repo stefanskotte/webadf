@@ -2052,6 +2052,11 @@ void dc_set_net(device_client_t *c, const dc_net_t *n) {
     else memset(&c->_net, 0, sizeof c->_net);
 }
 
+uint32_t dc_net_driver_age_s(uint32_t now, uint32_t seen) {
+    const int32_t d = (int32_t)(now - seen);
+    return d < 0 ? 0u : (uint32_t)d / 1000u;
+}
+
 bool dc_net_owed(const device_client_t *c) {
     if (!c->_net_sent_valid) return c->_net.on;
     return c->_net_sent_on != c->_net.on ||

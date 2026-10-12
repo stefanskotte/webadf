@@ -1914,6 +1914,14 @@ static void test_net_leaves_out_what_is_not_known_and_saturates(void) {
     CHECK(strstr(fake_last_request(), "\"driver\":999999,") != NULL, "driver saturates at 999,999 s");
 }
 
+static void test_driver_age_never_wraps(void) {
+    CHECK(dc_net_driver_age_s(10000u, 4000u) == 6, "6 s");
+    CHECK(dc_net_driver_age_s(5000u, 5001u) == 0, "seen 1 ms ahead of now (core0's |1): 0, not a wrap");
+    CHECK(dc_net_driver_age_s(5000u, 5000u) == 0, "equal: 0");
+    CHECK(dc_net_driver_age_s(100u, 0xFFFFFF00u) == 0, "far ahead: 0");
+    CHECK(dc_net_driver_age_s(0x00000100u, 0xFFFFFF00u) == 0, "a wrapped clock still reads as ahead/zero, never huge");
+}
+
 static void test_a_net_change_owes_a_report(void) {
     boot();
     CHECK(!dc_net_owed(&c), "never in Network mode: nothing owed");
@@ -3123,6 +3131,7 @@ int main(void) {
     RUN(test_status_reports_both_sel1_readings_once_known);
     RUN(test_status_carries_net_only_in_network_mode);
     RUN(test_net_leaves_out_what_is_not_known_and_saturates);
+    RUN(test_driver_age_never_wraps);
     RUN(test_a_net_change_owes_a_report);
     RUN(test_sel1_change_owes_a_report_once);
     RUN(test_status_carries_the_firmware_fields);

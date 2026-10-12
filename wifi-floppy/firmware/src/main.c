@@ -2287,7 +2287,7 @@ static void core1_main(void) {
                 pnet_bridge_stats(&st);
                 net.on = true;
                 net.driver_seen = seen != 0;
-                net.driver_s = seen ? (clock_ms() - seen) / 1000u : 0;
+                net.driver_s = seen ? dc_net_driver_age_s(clock_ms(), seen) : 0;
                 net.amiga_ip = st.amiga_ip;
                 net.frames_in = g_pnet_frames_from;
                 net.frames_out = g_pnet_frames_to;

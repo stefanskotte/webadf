@@ -702,6 +702,9 @@ bool dc_sel1_owed(const device_client_t *c);
 // since the last report the server accepted -- counters and ages ride the 60 s heartbeat.
 void dc_set_net(device_client_t *c, const dc_net_t *n);
 bool dc_net_owed(const device_client_t *c);
+// Whole seconds from `seen` to `now` (ms clocks). core0 stamps seen as clock_ms() | 1, which can be 1 ms ahead of
+// core1's now: a seen in the future is age 0, never a 32-bit wrap.
+uint32_t dc_net_driver_age_s(uint32_t now, uint32_t seen);
 
 // DF1 setting (Phase 3). dc_drive_take: true once per owed secondDrive change
 // (the poll's seq and mode; an unknown mode is acked and never taken). dc_drive_handled: record the
