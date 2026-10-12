@@ -4,6 +4,7 @@
  */
 /* Implemented from the protocol's description; no code of his (see pnet_link.h). */
 #include "pnet_link.h"
+#include "pnet_status.h"
 #include <string.h>
 
 void pnet_link_init(pnet_link_t *s) {
@@ -66,4 +67,10 @@ bool pnet_ota_quiet(uint32_t now_ms, uint32_t last_ms, bool tx_pending) {
     if (tx_pending) return false;
     if (last_ms == 0u) return true;
     return (uint32_t)(now_ms - last_ms) >= PNET_OTA_QUIET_MS;
+}
+
+pnet_df1_t pnet_df1_for_track_l2(int want) {
+    if (want == PNET_TRACK_STATUS) return PNET_DF1_STATUS;
+    if (want == PNET_TRACK_STATUS - 1) return PNET_DF1_SILENT;
+    return pnet_df1_for_track(want);
 }

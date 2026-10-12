@@ -25,7 +25,7 @@ cc -std=c11 -Wall -Wextra -Werror -O1 -I"$here" -o "$out/test_netloop_stats" \
 "$out/test_netloop_stats"
 fw="$root/wifi-floppy/firmware/src"
 cc -std=c11 -Wall -Wextra -Werror -O1 -I"$here" -I"$fw" -o "$out/test_netloop_eth" \
-   "$here/test_netloop_eth.c" "$here/netloop_eth.c" "$fw/pnet_sort.c"
+   "$here/test_netloop_eth.c" "$here/netloop_eth.c" "$fw/pnet_sort.c" "$fw/pnet_status.c" "$fw/pnet_frame.c" "$fw/pnet_mfm.c"
 "$out/test_netloop_eth"
 [ "${1:-}" = test ] && exit 0
 
@@ -47,6 +47,7 @@ docker run --rm -v "$root":/work -w /work "$IMG" sh -euc '
      -Dpnet_build_to_amiga=pnet_build_to_amiga_allc
      -Dpnet_parse_hdr_from_amiga=pnet_parse_hdr_from_amiga_allc
      -Dpnet_parse_hdr_to_amiga=pnet_parse_hdr_to_amiga_allc
+     -Dpnet_put_hdr_to_amiga=pnet_put_hdr_to_amiga_allc -Dpnet_parse_hdr_to_amiga_as=pnet_parse_hdr_to_amiga_as_allc
      -Dpnet_parse_frames=pnet_parse_frames_allc
      -Dpnet_frame_iter_init=pnet_frame_iter_init_allc -Dpnet_frame_iter_next=pnet_frame_iter_next_allc"
   m68k-amigaos-gcc $F $C -c -o $o/pnet_mfm_c.o $s/pnet_mfm.c

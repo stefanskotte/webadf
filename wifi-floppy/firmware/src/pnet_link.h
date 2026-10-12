@@ -25,6 +25,7 @@
 #include <stddef.h>
 #include "pnet_frame.h"
 #include "pnet_ring.h"
+#include "pnet_loop.h"
 
 #define PNET_CANRECEIVE   1u
 #define PNET_OTA_QUIET_MS 10000u
@@ -58,4 +59,8 @@ void pnet_link_start(pnet_link_t *s, unsigned n);
 /* The OTA rule for Network mode: cylinder 77 quiet for PNET_OTA_QUIET_MS (last_ms 0 = never
  * active) and nothing queued for the radio. */
 bool pnet_ota_quiet(uint32_t now_ms, uint32_t last_ms, bool tx_pending);
+/* What DF1 streams in an L2 build (Phase 2): cylinder 76 side 1 is the status track (pnet_status.h),
+ * side 0 nothing -- the driver never reads it, and a disk track there would overwrite the batch
+ * prepared in DF1's buffer every 5 s -- and every other track as pnet_df1_for_track. */
+pnet_df1_t pnet_df1_for_track_l2(int want);
 #endif

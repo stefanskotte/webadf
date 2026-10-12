@@ -25,7 +25,8 @@
  * starts on the next edge, which under a 2 ms pulse was the pulse's END -- inside the sync. */
 #define PNET_INDEX_PULSE_US 200u
 
-typedef enum { PNET_DF1_DISK = 0, PNET_DF1_SILENT, PNET_DF1_ECHO } pnet_df1_t;
+/* PNET_DF1_STATUS: Phase 2's cylinder 76, side 1 (pnet_df1_for_track_l2, L2 builds only). */
+typedef enum { PNET_DF1_DISK = 0, PNET_DF1_SILENT, PNET_DF1_ECHO, PNET_DF1_STATUS } pnet_df1_t;
 
 /* What DF1 streams for `want` (cyl * 2 + side): the disk, nothing (154: the Amiga writes), or
  * the echo (155). */

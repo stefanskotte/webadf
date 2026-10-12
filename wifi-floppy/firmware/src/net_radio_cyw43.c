@@ -86,4 +86,10 @@ bool net_radio_every_ms(uint32_t ms, void (*fn)(void)) {
     s_every_ms = ms;
     return async_context_add_at_time_worker_in_ms(cyw43_arch_async_context(), &s_every, ms);
 }
+
+// The join state is a field the driver updates from core1; core0 reads it for cylinder 76's status
+// track. CYW43_LINK_JOIN is the station associated (the SDK's name for it).
+bool net_radio_sta_joined(void) {
+    return cyw43_wifi_link_status(&cyw43_state, CYW43_ITF_STA) == CYW43_LINK_JOIN;
+}
 #endif

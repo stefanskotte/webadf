@@ -121,7 +121,7 @@ if (WF_PNET_L2)
   if (NOT WF_PNET_LOOP)
     message(FATAL_ERROR "WF_PNET_L2 needs WF_PNET_LOOP: Phase 1 replaces the loopback's echo on its transport")
   endif ()
-  list(APPEND WFMF_FIRMWARE_SOURCES src/pnet_sort.c src/pnet_ring.c src/pnet_link.c src/pnet_bridge.c)
+  list(APPEND WFMF_FIRMWARE_SOURCES src/pnet_sort.c src/pnet_ring.c src/pnet_link.c src/pnet_bridge.c src/pnet_status.c)
   message(STATUS "WF_PNET_L2 is ON: DF1 cylinder 77 carries Ethernet frames (TEST build only).")
 endif ()
 # Stack frames (HANDOFF 3ax): 1.7.0 died because one 1232-byte frame took core0's

@@ -238,6 +238,15 @@ static void fit_caps_the_payload_at_16128_bytes(void) {
     CHECK(hdr_at + PNET_HDR_MFM_BYTES + h.data_size <= PNET_DRIVER_MAX_READ, "inside the driver's largest read");
 }
 
+static void cylinder_76_is_the_status_track_in_l2(void) {
+    CHECK_EQ_INT(pnet_df1_for_track_l2(153), PNET_DF1_STATUS);
+    CHECK_EQ_INT(pnet_df1_for_track_l2(152), PNET_DF1_SILENT);
+    CHECK_EQ_INT(pnet_df1_for_track_l2(155), PNET_DF1_ECHO);
+    CHECK_EQ_INT(pnet_df1_for_track_l2(154), PNET_DF1_SILENT);
+    CHECK_EQ_INT(pnet_df1_for_track_l2(150), PNET_DF1_DISK);
+    CHECK_EQ_INT(pnet_df1_wprot(76), true);                  /* 76 stays write-protected (correction 3) */
+}
+
 int main(void) {
     RUN(counters_start_as_paulanets);
     RUN(a_new_batch_is_taken_once);
@@ -252,5 +261,6 @@ int main(void) {
     RUN(fit_respects_the_buffer_and_twenty_frames);
     RUN(fit_caps_the_payload_at_16128_bytes);
     RUN(ota_waits_for_quiet);
+    RUN(cylinder_76_is_the_status_track_in_l2);
     return REPORT();
 }

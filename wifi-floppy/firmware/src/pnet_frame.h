@@ -93,6 +93,14 @@ pnet_err_t pnet_parse_hdr_from_amiga(const uint8_t *b, size_t len, pnet_hdr_t *h
 /* Amiga side: `b` is aligned at the first bit after the 44 89 44 89 sync. With with_payload,
  * also checks that data_size payload bytes follow the 24 header bytes and their checksum. */
 pnet_err_t pnet_parse_hdr_to_amiga(const uint8_t *b, size_t len, pnet_hdr_t *h, bool with_payload);
+/* As pnet_parse_hdr_to_amiga, for the given mode (2: cylinder 76's status, PaulaNET Phase 2). With
+ * with_payload, the bytes checked are the bytes sent: compressed_size when h->compressed is set,
+ * else data_size -- PaulaNET's driver's own rule (cylinder 77's batches from the board are never
+ * compressed, so for them it is data_size, as before). */
+pnet_err_t pnet_parse_hdr_to_amiga_as(const uint8_t *b, size_t len, pnet_hdr_t *h, bool with_payload,
+                                      uint8_t mode);
+/* Board side: the sync 44 89 44 89 and h, MFM-encoded (the magic set here), at s. Returns 28. */
+size_t pnet_put_hdr_to_amiga(uint8_t *s, const pnet_hdr_t *h);
 
 /* One frame at a time (PaulaNET Phase 2): the board decodes the Amiga's frames straight into its TX
  * ring's slots, so no batch is ever refused for its decoded size -- an RLE batch inside the driver's

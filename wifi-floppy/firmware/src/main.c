@@ -71,6 +71,7 @@
 #if WF_PNET_L2
 #include "pnet_link.h"       // PaulaNET Phase 1: counters for real frames
 #include "pnet_bridge.h"     //   the rings and core1's radio side
+#include "pnet_status.h"     //   Phase 2: cylinder 76's status track
 #endif
 #endif
 
@@ -534,6 +535,13 @@ static void pnet_go_cancel(void) {
     if (id > 0) cancel_alarm(id);
     restore_interrupts(irq);
 }
+#if WF_PNET_L2
+// Phase 2 (Task 4): DF1 streams cylinder 76's status loop (pnet_serve_status) from its own buffer, so
+// DF1's word buffer keeps the batch the Amiga reads next on cylinder 77. dma_irq re-arms from it while
+// this is set; stream_stop(1) clears it, so every other start streams `words` again.
+static volatile bool g_pnet_status_live;
+static uint32_t      g_pnet_status_words[PNET_STATUS_LOOP_BYTES / 4u];
+#endif
 #endif
 // Stop drive d's stream at once: no re-arm at the next wrap, and the
 // transfer in flight aborted.
@@ -543,6 +551,9 @@ static void stream_stop(unsigned d) {
     if (d == 1) pnet_go_cancel();              // a start still pending would restart what this stops
 #endif
     s->live = false;
+#if WF_PNET_L2
+    if (d == 1) g_pnet_status_live = false;    // dma_irq re-arms from `words` again
+#endif
     if (s->dma >= 0) dma_channel_abort((uint)s->dma);
 }
 
@@ -676,7 +687,13 @@ static void __isr __not_in_flash_func(dma_irq)(void) {
         if (!(pending & bit)) continue;
         dma_hw->ints0 = bit;
         if (!s->live) continue;
+#if WF_PNET_L2
+        // DF1 on cylinder 76 loops the status records from their own buffer (pnet_serve_status).
+        dma_channel_set_read_addr((uint)s->dma, (d == 1 && g_pnet_status_live) ? g_pnet_status_words : s->words,
+                                  false);
+#else
         dma_channel_set_read_addr((uint)s->dma, s->words, false);
+#endif
         dma_channel_set_trans_count((uint)s->dma, s->count, true);
         bus_out_set_drive(d, PIN_INDEX, true);           // ~2 ms index at wrap
 #if WF_PNET_LOOP
@@ -1620,6 +1637,12 @@ static volatile uint32_t g_motor_on_ms;
 // PaulaNET Phase 1: when cylinder 77 last carried a batch (a capture taken, or a batch streamed),
 // clock_ms; 0 = never. core0 writes it; core1's update gate reads it (pnet_ota_quiet).
 static volatile uint32_t g_pnet_last_ms;
+// Phase 2: what core0 needs from core1 for cylinder 76's status track (pnet_serve_status). The MAC is
+// written once by core1 after the bridge starts, then g_pnet_mac_ok, with a barrier between. The RSSI
+// is core1's heartbeat sample, dBm (0 until the first).
+static uint8_t          g_pnet_mac[6];
+static volatile bool    g_pnet_mac_ok;
+static volatile int16_t g_pnet_rssi;
 #endif
 // Published by core1 at the top of every pass: up_holds(&up), captured writes
 // the server has not got. core0's DF1 store rule reads it (drive_store_idle,
@@ -1751,6 +1774,9 @@ static void core1_main(void) {
     }
 #if WF_PNET_L2
     pnet_bridge_start();          // the input hook and the send worker (plan 2026-10-11)
+    net_radio_mac(g_pnet_mac);    // Phase 2: for cylinder 76's status track, published once
+    __dmb();
+    g_pnet_mac_ok = true;
 #endif
 
     // Plan 4b: decide whether to serve the captive portal or run plan 4a's
@@ -2687,6 +2713,9 @@ static void core1_main(void) {
             // there is no reason to send it even the one time before this
             // loop reacts.
             g_ui_bars = rssi_bars(wifi_rssi());
+#if WF_PNET_L2
+            g_pnet_rssi = (int16_t)wifi_rssi();   // Phase 2: cylinder 76's RSSI, once a heartbeat
+#endif
 
             uint32_t now = clock_ms();
             bool disk_changed = strcmp(c.mounted_sha256, last_reported_sha) != 0;
@@ -2990,6 +3019,8 @@ static pnet_loop_t g_pnet;                       // core0 only
 #if WF_PNET_L2
 // Phase 1: the counters for real frames (pnet_link.h). g_pnet keeps the capture counts (rx, bad[]).
 static pnet_link_t g_link;
+// Phase 2: cylinder-76 status loops streamed, and reads of it before core1 had the MAC (ruling 10).
+static uint32_t g_pnet_status_serves, g_pnet_status_early;
 // The heap low-water, sampled every loop pass (the 5 s heap: line can miss a dip; ruling 13).
 static uint32_t    g_pnet_heap_low = UINT32_MAX;
 // The buffer limit: a batch's bytes on the wire within DF1's buffer (pnet_link_fit also holds its payload to
@@ -3122,6 +3153,20 @@ static bool     g_pnet_prepared;
 static uint32_t g_pnet_prepared_words;
 static uint32_t g_pnet_prep_max, g_pnet_prep_sum, g_pnet_preps;
 
+// Bytes built at w (the wire's order) repacked IN PLACE into the words the DMA reads: safe, since word
+// i is written only after bytes 4i..4i+3 are read, and no later word reads a byte before 4(i+1). The
+// builders pad to whole words. Returns the word count.
+static uint32_t pnet_pack_words(uint32_t *w, size_t bytes) {
+    const uint8_t *b = (const uint8_t *)w;
+    const uint32_t n = ((uint32_t)bytes + 3u) / 4u;
+    for (uint32_t i = 0; i < n; i++) {
+        uint32_t v = 0;
+        for (int k = 0; k < 4; k++) v = (v << 8) | b[i * 4u + (uint32_t)k];
+        w[i] = v;
+    }
+    return n;
+}
+
 // Builds the echo for the latest commit into track_words1 and packs it into words, with DF1's
 // stream stopped (the DMA reads that buffer). Measured 2026-10-10 at N=8000: building at the
 // SIDE edge took ~3.7 ms, and the Amiga's payload reads found the sync 195-305 bytes in (the
@@ -3158,9 +3203,7 @@ static bool pnet_prepare_echo(void) {
     const unsigned nf = g_pnet.nframes;
     const uint8_t ack = g_pnet.last_amiga, pico = g_pnet.pico;
 #endif
-    // Built as bytes straight into the word buffer, then repacked IN PLACE. That is safe: the
-    // loop reads bytes 4i..4i+3 and only then writes word i, and no later word reads a byte
-    // before 4(i+1). The builder pads to whole words.
+    // Built as bytes straight into the word buffer, then repacked in place (pnet_pack_words).
     uint8_t *out = (uint8_t *)track_words1;
     const size_t bytes = pnet_build_to_amiga(out, sizeof track_words1, ack, pico, flags, f, nf);
     if (bytes == 0) {
@@ -3168,12 +3211,7 @@ static bool pnet_prepare_echo(void) {
                 (unsigned)nf, (unsigned)sizeof track_words1);
         return false;
     }
-    const uint32_t nwords = ((uint32_t)bytes + 3u) / 4u;
-    for (uint32_t i = 0; i < nwords; i++) {
-        uint32_t w = 0;
-        for (int b = 0; b < 4; b++) w = (w << 8) | out[i * 4 + b];
-        track_words1[i] = w;
-    }
+    const uint32_t nwords = pnet_pack_words(track_words1, bytes);
     g_pnet_prepared_words = nwords;
     g_pnet_prepared = true;
     const uint32_t us = (uint32_t)(time_us_64() - t0);
@@ -3183,26 +3221,32 @@ static bool pnet_prepare_echo(void) {
     return true;
 }
 
-// start_streaming's DMA start for the prepared, already packed echo (no repack).
-static bool pnet_stream_prepared(void) {
+// start_streaming's DMA start for words already packed: DF1's prepared batch (track_words1), or, in L2
+// builds, cylinder 76's status loop (g_pnet_status_words, which dma_irq then re-arms from).
+static bool pnet_stream_words(const uint32_t *src, uint32_t nwords) {
     stream_t *s = &g_stream[1];
     stream_stop(1);
     if (s->dma < 0 || s->words != track_words1) return false;
     s->prev_revs = s->rev_count;
     s->rev_count = 0;
     s->index_traced = false;
-    s->count = g_pnet_prepared_words;
+    s->count = nwords;
+#if WF_PNET_L2
+    g_pnet_status_live = src != track_words1;
+#endif
     const uint ch = (uint)s->dma;
     dma_channel_config c = dma_channel_get_default_config(ch);
     channel_config_set_transfer_data_size(&c, DMA_SIZE_32);
     channel_config_set_read_increment(&c, true);
     channel_config_set_write_increment(&c, false);
     channel_config_set_dreq(&c, pio_get_dreq(pio, s->sm, true));
-    dma_channel_configure(ch, &c, &pio->txf[s->sm], s->words, s->count, true);
+    dma_channel_configure(ch, &c, &pio->txf[s->sm], src, s->count, true);
     dma_channel_set_irq0_enabled(ch, true);
     s->live = true;
     return true;
 }
+
+static bool pnet_stream_prepared(void) { return pnet_stream_words(track_words1, g_pnet_prepared_words); }
 
 // INDEX now, as PaulaNET does at the start of every transmission: the Amiga's INDEXSYNC read then
 // starts at the lead-in instead of one whole buffer later (dma_irq's INDEX is at the wrap). Short
@@ -3277,10 +3321,45 @@ static bool pnet_go_later(bool side_return) {
 }
 #endif
 
+#if WF_PNET_L2
+// Phase 2 (spec 2026-10-11 §3.1): DF1's head on cylinder 76 side 1 -- Rob's PaulaNET.device reading the
+// board's status when it opens and every 5 s after. Built fresh at every arrival, so the link state is
+// current, and streamed from its own buffer (g_pnet_status_live). The loop repeats one record every
+// 124 bytes, so a read that starts anywhere finds a sync inside the driver's scan: no start timing
+// applies here (plan ruling 7). Nothing streams before core1 has published the MAC -- the driver keeps
+// the MAC it reads at open -- so a too-early open fails, visibly, and is counted (ruling 10).
+static void pnet_serve_status(void) {
+    if (!g_pnet_mac_ok) { g_pnet_status_early++; return; }
+    __dmb();                                     // the MAC's bytes were written before the flag
+    pnet_status_t st;
+    memset(&st, 0, sizeof st);
+    memcpy(st.mac, g_pnet_mac, sizeof st.mac);
+    st.rssi = g_pnet_rssi;
+    st.link = net_radio_sta_joined() ? PNET_LINK_NOIP : PNET_LINK_DOWN;
+    pnet_version_bytes(WF_FIRMWARE_VERSION, &st.ver_major, &st.ver_minor);
+    if (pnet_build_status((uint8_t *)g_pnet_status_words, sizeof g_pnet_status_words,
+                          g_link.last_amiga, g_link.pico, &st) == 0) {
+        wf_logf(WF_ERR, "pnet: the status record does not fit its %u-byte period -- not served",
+                (unsigned)PNET_STATUS_PERIOD);
+        return;
+    }
+    const uint32_t n = pnet_pack_words(g_pnet_status_words, PNET_STATUS_LOOP_BYTES);
+    if (!pnet_stream_words(g_pnet_status_words, n)) return;
+    g_pnet_echo_live = true;                     // the short INDEX at each wrap, as on cylinder 77
+    g_pnet_last_ms = clock_ms() | 1u;            // cylinder 76 is network use too (the OTA rule)
+    g_pnet_status_serves++;
+    pnet_index_now();
+}
+#endif
+
 // serve_drive(1, ...) for this build: cylinder 77 is the loopback, every other track the disk.
 static void pnet_serve_df1(int32_t tok, int *loaded) {
     const int want = want_track[1];
+#if WF_PNET_L2
+    const pnet_df1_t act = pnet_df1_for_track_l2(want);   // Phase 2: cylinder 76 as well
+#else
     const pnet_df1_t act = pnet_df1_for_track(want);
+#endif
     if (act == PNET_DF1_DISK) {
         // First: serve_drive can spend ~5 ms in an HD encode before its stream_stop, and a start
         // still pending must not fire on a disk cylinder and leave echo_live set.
@@ -3295,7 +3374,7 @@ static void pnet_serve_df1(int32_t tok, int *loaded) {
     // while the Amiga really reads DF1: selected (SEL1 low) AND its motor on. The stream never stops
     // on its own, so a head parked here would otherwise hold the OTA forever; select alone is not
     // enough either (trackdisk polls a disk change selected, motor off). Review fix round 2.
-    if (act == PNET_DF1_ECHO && want == *loaded && g_pnet_echo_live && !gpio_get(PIN_SEL1) &&
+    if ((act == PNET_DF1_ECHO || act == PNET_DF1_STATUS) && want == *loaded && g_pnet_echo_live && !gpio_get(PIN_SEL1) &&
         dskchg_motor_on_d(1))
         g_pnet_last_ms = clock_ms() | 1u;
 #endif
@@ -3308,6 +3387,9 @@ static void pnet_serve_df1(int32_t tok, int *loaded) {
     g_pnet_echo_live = false;                    // set again only once the echo streams
     stream_stop(1);                              // the DMA reads track_words1 (and a start may be pending): stop first
     if (act == PNET_DF1_SILENT) return;          // side 0: the Amiga writes, nothing to read
+#if WF_PNET_L2
+    if (act == PNET_DF1_STATUS) { pnet_serve_status(); return; }
+#endif
     const uint64_t t0 = time_us_64();
     // Normally the commit already built and packed this echo (pnet_prepare_echo): the restart
     // only starts the DMA, so how long after the SIDE edge the echo starts does not grow with N.
@@ -3366,7 +3448,7 @@ static void pnet_l2_log(void) {
     for (unsigned i = 1; i < PNET_TX_N; i++) no += st.tx_no[i];
     const uint32_t sum = st.in_amiga + st.in_both + st.rx_drops + st.tx_sent + st.tx_err + no +
                          g_link.fresh + g_link.dup + g_link.queued + g_link.over + g_link.malformed +
-                         g_link.acked + st.clash + st.hooks;
+                         g_link.acked + st.clash + st.hooks + g_pnet_status_serves + g_pnet_status_early;
     if (sum == last_sum) return;
     last_sum = sum;
 #define PNET_SAT(v, m) ((unsigned long)((v) > (m) ? (m) : (v)))
@@ -3388,6 +3470,10 @@ static void pnet_l2_log(void) {
     const bool same = st.amiga_ip != 0u && st.amiga_ip == st.board_ip;
     wf_logf(st.clash || same ? WF_WARN : WF_INFO, "pnet: l2 amiga %s board %s %s clash %lu heap %lu",
             a, b, same ? "SAME" : "distinct", PNET_SAT(st.clash, 999999u), PNET_SAT(g_pnet_heap_low, 999999u));
+    // Phase 2: cylinder 76 -- loops streamed, reads before the MAC was known, and what it tells the driver.
+    wf_logf(WF_INFO, "pnet: l2 status %lu early %lu link %s rssi %d",
+            S7(g_pnet_status_serves), S7(g_pnet_status_early),
+            net_radio_sta_joined() ? "up" : "DOWN", (int)g_pnet_rssi);
 #undef S7
 #undef PNET_SAT
 }

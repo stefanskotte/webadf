@@ -48,4 +48,10 @@ int nl_drain_done(int r, unsigned frames, unsigned done, unsigned max);
 int nl_arp_pass(unsigned long ok, unsigned long rounds);
 /* The above on this CPU: NULL = pass, else the step that failed. NetLoop SELFTEST runs it. */
 const char *nl_eth_selftest(void);
+/* Phase 2: the board's status record (cylinder 76, its 156 decoded bytes). NULL when it is what
+ * PaulaNET's driver needs -- lengths 142 and 14, flags 3, a batch budget of 8,192, the board's `mac`,
+ * link up -- else what is wrong. */
+const char *nl_status_problem(const uint8_t *st, size_t n, const uint8_t mac[6]);
+/* A big-endian 16-bit word at p (the record's fields). */
+uint16_t nl_get16(const uint8_t *p);
 #endif

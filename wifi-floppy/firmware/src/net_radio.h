@@ -47,5 +47,8 @@ int  net_radio_send_ethernet(const void *frame, size_t len);
 /** Runs fn every `ms` in the network context on core1, with the lwIP lock held -- the context the
  *  driver's own receive and lwIP's timers run in. Core1 only; one such worker. False on failure. */
 bool net_radio_every_ms(uint32_t ms, void (*fn)(void));
+/** PaulaNET Phase 2: the station is associated. Any core: one word of the driver's join state, read
+ *  with no lock and no bus traffic -- a stale answer is at most one status read old. */
+bool net_radio_sta_joined(void);
 #endif
 #endif

@@ -4,6 +4,10 @@
  */
 #include "netloop_eth.h"
 #include "pnet_sort.h"
+#include "pnet_status.h"
+#include "pnet_mfm.h"
+#include "pnet_frame.h"
+#include "netloop_stats.h"
 #include <stdio.h>
 #include <string.h>
 
@@ -44,6 +48,25 @@ int main(void) {
     CHECK(nl_arg_fits("192.168.100.100", 16) && !nl_arg_fits("192.168.100.1000", 16), "long IP is refused");
     /* Undersized buffers build nothing. */
     CHECK(nl_dhcp_discover(f, NL_DHCP_FRAME_BYTES - 1u, mac, 1u) == 0, "cap");
+    {
+        static uint8_t loop[PNET_STATUS_LOOP_BYTES], rd[1024], st[PNET_STATUS_BYTES];
+        static const uint8_t bm[6] = {0x28, 0xcd, 0xc1, 0x19, 0x6a, 0x38};
+        pnet_status_t s76 = { {0x28, 0xcd, 0xc1, 0x19, 0x6a, 0x38}, -55, PNET_LINK_NOIP, 1, 10 };
+        CHECK(pnet_build_status(loop, sizeof loop, 1, 2, &s76) == PNET_STATUS_LOOP_BYTES, "status built");
+        for (size_t i = 0; i < sizeof rd; i++) rd[i] = loop[(i + 37u) % PNET_STATUS_LOOP_BYTES];
+        const long off = pnet_find_sync(rd, sizeof rd, NL_DRIVER_SCAN);
+        CHECK(off >= 0, "status sync");
+        const size_t valid = off >= 0 ? pnet_shift_left(rd, sizeof rd, (size_t)off) : 0;
+        pnet_hdr_t h;
+        CHECK(pnet_parse_hdr_to_amiga_as(rd, valid, &h, 1, PNET_MODE_CONFIG) == PNET_OK, "status header");
+        CHECK(pnet_rle_decode(rd + PNET_HDR_MFM_BYTES, h.compressed_size, st, sizeof st) == (long)PNET_STATUS_BYTES,
+              "status payload");
+        CHECK(nl_status_problem(st, sizeof st, bm) == NULL, "the board's status passes");
+        static const uint8_t other[6] = {0x28, 0xcd, 0xc1, 0x19, 0x6a, 0x39};
+        CHECK(nl_status_problem(st, sizeof st, other) != NULL, "a different MAC does not");
+        st[PNET_ST_LINK] = PNET_LINK_DOWN;
+        CHECK(nl_status_problem(st, sizeof st, bm) != NULL, "nor does a link that is down");
+    }
     printf("%s: %s\n", __FILE__, failed ? "FAIL" : "ok");
     return failed ? 1 : 0;
 }
