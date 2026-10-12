@@ -146,6 +146,11 @@ export interface PollTick {
   /** The DF1 setting cursor and value: compared against the board's ?driveAck=. */
   secondDriveVersion: number;
   secondDrive: SecondDriveMode;
+  /** What the board last reported running, and the setting version it had handled (pre-flight I2). */
+  secondDriveReported: SecondDriveMode | null;
+  secondDriveAppliedVersion: number | null;
+  /** The driver disk's one-shot cursor: the setting version a body last carried it as `next` at. */
+  netNextSentVersion: number | null;
 }
 
 /**
@@ -166,11 +171,20 @@ export async function readPollTick(deviceId: string): Promise<PollTick | null> {
       displayVersion: devices.displayVersion,
       secondDriveVersion: devices.secondDriveVersion,
       secondDrive: devices.secondDrive,
+      secondDriveReported: devices.secondDriveReported,
+      secondDriveAppliedVersion: devices.secondDriveAppliedVersion,
+      netNextSentVersion: devices.netNextSentVersion,
     })
     .from(devices)
     .where(eq(devices.id, deviceId))
     .limit(1);
-  return row ? { ...row, secondDrive: asSecondDriveMode(row.secondDrive) ?? 'off' } : null;
+  return row
+    ? {
+        ...row,
+        secondDrive: asSecondDriveMode(row.secondDrive) ?? 'off',
+        secondDriveReported: asSecondDriveMode(row.secondDriveReported),
+      }
+    : null;
 }
 
 /**
@@ -481,6 +495,16 @@ export async function recordStatus(
 export async function touchLastSeen(deviceId: string): Promise<void> {
   await getDb().update(devices)
     .set({ lastSeenAt: new Date() })
+    .where(eq(devices.id, deviceId));
+}
+
+/**
+ * Records that a poll body carried the driver disk as `next` at this setting version (pre-flight I2), so the
+ * hold stops waking for it. Single column, like touchLastSeen; written only on the delivery path.
+ */
+export async function markNetNextSent(deviceId: string, secondDriveVersion: number): Promise<void> {
+  await getDb().update(devices)
+    .set({ netNextSentVersion: secondDriveVersion })
     .where(eq(devices.id, deviceId));
 }
 

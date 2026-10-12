@@ -5,6 +5,7 @@ import { devices } from '@/db/schema/devices';
 import { diskVersions, diskWriteSessions } from '@/db/schema/disk-history';
 import { coverStore, diskStore } from '@/lib/storage';
 import { planBlobGc, planCoverGc, withoutReferenced } from '@/lib/blob-gc';
+import { ALWAYS_REFERENCED_BLOBS } from '@/lib/paulanet-disk';
 
 /** A week: the job runs weekly, so anything it deletes was garbage for at least one full cycle. */
 export const BLOB_GC_GRACE_MS = 7 * 24 * 60 * 60 * 1000;
@@ -51,6 +52,7 @@ export async function runBlobGc({ dryRun }: { dryRun: boolean }): Promise<BlobGc
     for (const r of list) if (r.s) referenced.add(r.s);
   }
   for (const d of devRefs) for (const s of [d.m, d.d, d.p]) if (s) referenced.add(s);
+  for (const s of ALWAYS_REFERENCED_BLOBS) referenced.add(s);   // fixed images no row names (PaulaNET disk)
 
   // Covers: a separate namespace (cover/), a separate reference (games), and a
   // separate plan, so a brake on one pass never stops the other. Referenced

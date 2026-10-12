@@ -181,6 +181,13 @@ export const devices = pgTable('devices', {
   /** Frames from the Amiga taken / frames the Amiga acknowledged, since Network mode began (saturated). */
   netFramesIn: integer('net_frames_in'),
   netFramesOut: integer('net_frames_out'),
+  /**
+   * The poll's cursor for the driver disk (pre-flight I2): the second_drive_version at which a poll body last
+   * carried the driver disk as `next`. The poll wakes once while Network is applied and this differs from
+   * second_drive_version -- a one-shot per setting, never a flag (a board that cannot load it is not woken again).
+   * Null = never sent.
+   */
+  netNextSentVersion: integer('net_next_sent_version'),
 
   /**
    * 'queued' | 'downloading' | 'applying' | 'failed', as the device reports.
