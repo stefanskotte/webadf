@@ -2572,6 +2572,22 @@ separately.
     default-name rule in HANDOFF 3as that keeps `.adf/.adz/.dms/.hfe/.ipf`);
   - a test with a real `.dmz` fixture, including one that is gzipped but not DMS inside, which must be refused
     cleanly.
+- **LZ4 as an alternative to RLE for PaulaNET payloads (operator, 2026-10-12).**
+  - **Today:** batches in both directions are RLE-compressed (`pnet_mfm.c` `pnet_rle_encode/decode`). Cylinder 76's
+    `flags` = 3 (`PNET_ST_FLAGS_RLE_BOTH`) tells Rob's driver to use RLE. RLE only shrinks runs, so ordinary IP traffic
+    (TCP payloads, already-compressed files) gains almost nothing. LZ4 typically saves far more on text and protocol
+    headers.
+  - **The constraint:** Rob's unmodified `PaulaNET.device` (Phase 2/3 decision: no copy of our own) understands only
+    RLE. LZ4 therefore needs one of:
+    - (a) Rob adding it upstream, signalled by a new `flags` bit on cylinder 76, so old drivers keep RLE;
+    - (b) a driver of our own, which the operator ruled out for now.
+  - **Board side:** the RP2350 can do LZ4 cheaply both ways. Keep RLE as the fallback, and pick per batch whichever is
+    smaller.
+  - **Amiga side:** LZ4 decompression on a 68000 is fast, since well-tuned 68k decoders exist. Compression (Amiga to
+    board) is the expensive direction on a 7 MHz CPU. A first step could be LZ4 board-to-Amiga only, with RLE kept
+    for Amiga-to-board.
+  - **Measure first:** capture real batches from the Phase 2/3 bench (ftp, http, DNS) and compare RLE against LZ4
+    sizes on the host before asking Rob or designing anything.
 - **Drop files onto the Amiga's RAM: (operator, 2026-10-09; after PaulaNET works).** A drop zone in the web app that
   copies the dropped files straight into the running Amiga's RAM disk. Needs PaulaNET online first. Shape to
   decide then: a small Amiga-side receiver (started from the driver disk / WBStartup) that the board or the server
