@@ -2588,6 +2588,19 @@ separately.
     for Amiga-to-board.
   - **Measure first:** capture real batches from the Phase 2/3 bench (ftp, http, DNS) and compare RLE against LZ4
     sizes on the host before asking Rob or designing anything.
+  - **Investigate both directions separately (operator, 2026-10-12):**
+    - **Download-only:** the board compresses with LZ4 and the Amiga decompresses; the upload stays RLE.
+    - **Both ways:** the Amiga also compresses.
+    - Weigh both against the CPU. On a 7 MHz 68000, time spent compressing can cost more than the floppy-link time it
+      saves, so measure on the A500 bench:
+      - decompress and compress cycles per KB;
+      - the KB/s the floppy link saves, against the throughput already measured (47.5 KB/s, Phase 2 §3bi);
+      - the effect on the driver's busy-poll and on Workbench responsiveness.
+    - **Possible outcome:** LZ4 is enabled per direction, depending on the Amiga's CPU. For example, download-only on a
+      68000, and both ways on a 68020/030 or faster.
+    - **How the CPU would be known:** the driver reads `AttnFlags` from ExecBase. It reports the CPU to the board, or
+      the board advertises what it supports in cylinder 76's `flags` and the driver picks.
+    - Either way this needs Rob's driver to take part (see the constraint above).
 - **Drop files onto the Amiga's RAM: (operator, 2026-10-09; after PaulaNET works).** A drop zone in the web app that
   copies the dropped files straight into the running Amiga's RAM disk. Needs PaulaNET online first. Shape to
   decide then: a small Amiga-side receiver (started from the driver disk / WBStartup) that the board or the server
