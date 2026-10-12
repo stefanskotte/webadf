@@ -68,7 +68,23 @@ df1_mode_t drive_boot_mode(bool loaded, const drive_record_t *r) {
     (void)keep[0];
 #endif
     if (!loaded || !r) return WF_DF1_DEFAULT ? DF1_MODE_NEXT : DF1_MODE_OFF;
-    return r->mode == DF1_MODE_NEXT ? DF1_MODE_NEXT : DF1_MODE_OFF;
+    if (r->mode == DF1_MODE_NEXT || r->mode == DF1_MODE_NET) return (df1_mode_t)r->mode;
+    return DF1_MODE_OFF;
+}
+
+const char *df1_mode_wire(df1_mode_t m) {
+    return m == DF1_MODE_NEXT ? "df1" : m == DF1_MODE_NET ? "net" : "off";
+}
+
+const char *df1_mode_name(df1_mode_t m) {
+    return m == DF1_MODE_NEXT ? "next disk of the set" : m == DF1_MODE_NET ? "network (PaulaNET)" : "off";
+}
+
+bool df1_mode_from_wire(const char *s, df1_mode_t *out) {
+    static const df1_mode_t all[] = { DF1_MODE_OFF, DF1_MODE_NEXT, DF1_MODE_NET };
+    for (unsigned i = 0; i < sizeof all / sizeof all[0]; i++)
+        if (strcmp(s, df1_mode_wire(all[i])) == 0) { *out = all[i]; return true; }
+    return false;
 }
 
 bool drive_store_should_write(bool pending, bool drive_empty, bool idle) {

@@ -15,7 +15,16 @@
 #define WF_DF1_DEFAULT 0   // release value: DF1 is off until the operator turns it on
 #endif
 
-typedef enum { DF1_MODE_OFF = 0, DF1_MODE_NEXT = 1 } df1_mode_t;
+// Phase 3 (spec 2026-10-12 §4): NET -- DF1 holds the PaulaNET driver disk and cylinders 76/77 carry the
+// network. Stored as 2; a 1.9.0-1.10.2 board reading it boots Off (drive_boot_mode there knows only 1).
+typedef enum { DF1_MODE_OFF = 0, DF1_MODE_NEXT = 1, DF1_MODE_NET = 2 } df1_mode_t;
+
+// The mode as the poll and the status report spell it: "off", "df1" (Next disk, 1.9.0's word), "net".
+const char *df1_mode_wire(df1_mode_t m);
+// The mode as the log says it.
+const char *df1_mode_name(df1_mode_t m);
+// The wire word back to a mode. False, *out untouched: not a mode this build knows (ruling 5: ignored).
+bool df1_mode_from_wire(const char *s, df1_mode_t *out);
 
 typedef struct {
     uint32_t version;   // the setting's version (the board's ack after a reboot)

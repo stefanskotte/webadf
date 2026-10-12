@@ -1039,7 +1039,7 @@ static bool dc_held(device_client_t *c) {
 // and BLANKS it, before any flat lookup: its counter is `seq`, never
 // `version`, and blanking keeps its keys from shadowing the body's own.
 // Only a DF1-capable build reads it; an older one sends no &driveAck= and the
-// server never wakes it for this. Unknown mode -> off, never on.
+// server never wakes it for this. Unknown mode: acked and ignored (Phase 3).
 static void dc_take_second_drive(device_client_t *c, char *json) {
     static char obj[128];   // {"seq":4294967295,"mode":"df1"} is 31; static: STACK note
     if (!c->_df1_capable || !json_object(json, "secondDrive", obj, sizeof obj, true)) return;
@@ -1047,7 +1047,18 @@ static void dc_take_second_drive(device_client_t *c, char *json) {
     if (!json_u32_strict(obj, "seq", &seq)) return;
     char mode[8] = "";
     json_str(obj, "mode", mode, sizeof mode);
-    const uint8_t want = strcmp(mode, "df1") == 0 ? DF1_MODE_NEXT : DF1_MODE_OFF;
+    df1_mode_t parsed;
+    if (!df1_mode_from_wire(mode, &parsed)) {
+        // Phase 3 (plan 2026-10-12 ruling 5): a mode this build does not know is acknowledged and otherwise
+        // ignored -- core0 keeps the mode it runs and nothing is stored. Acked so the server's wake
+        // (seq != driveAck) stops; the card then reads "Waiting for the board", since the reported mode differs.
+        if (seq != c->drive_ack)
+            wf_logf(WF_WARN, "df1: setting %lu names an unknown mode \"%s\" -- ignored", (unsigned long)seq, mode);
+        c->drive_ack = seq;
+        c->drive_owed = false;
+        return;
+    }
+    const uint8_t want = (uint8_t)parsed;
     // Nothing new only when BOTH the seq is acked AND the board already runs
     // that mode (final review I1). A re-paired board seeds ack 0 against a new
     // row at {seq 0, off}: comparing the seq alone left it running DF1 while
@@ -1576,7 +1587,7 @@ bool dc_report_status(device_client_t *c, int psram_free, int rssi, const char *
     const uint32_t drive_ack_sent = c->drive_ack;
     if (c->_df1_capable)
         snprintf(drive_tail, sizeof drive_tail, ",\"secondDrive\":\"%s\",\"driveVersion\":%lu",
-                 c->_df1_mode == DF1_MODE_NEXT ? "df1" : "off", (unsigned long)c->drive_ack);
+                 df1_mode_wire((df1_mode_t)c->_df1_mode), (unsigned long)c->drive_ack);
     else drive_tail[0] = '\0';
 
     static char body[DC_STATUS_BODY_BYTES];

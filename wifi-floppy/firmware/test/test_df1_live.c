@@ -58,10 +58,24 @@ static void the_step_isr_moves_df1_while_its_machines_run(void) {
     CHECK_EQ_INT(df1_serving_mask(1, false), 1);
 }
 
+// Phase 3: Network is DF1 switched on, exactly as Next disk is -- the network path is core0's runtime gate.
+// Fields are compared one by one, not memcmp'd: df1_live_t has a padding byte (preflight row 66).
+static bool same_plan(df1_live_t a, df1_live_t b) {
+    return a.id == b.id && a.set_id == b.set_id && a.lines == b.lines && a.eject == b.eject &&
+           a.unmount == b.unmount && a.enable == b.enable && a.rescan == b.rescan && a.parked == b.parked;
+}
+static void switching_to_network_answers_dd_like_next(void) {
+    CHECK(same_plan(df1_live_apply(DF1_MODE_NET, false), df1_live_apply(DF1_MODE_NEXT, false)), "the same plan as Next disk");
+    CHECK(same_plan(df1_live_apply(DF1_MODE_NET, true), df1_live_apply(DF1_MODE_NEXT, true)), "and from on");
+    const df1_live_t p = df1_live_apply(DF1_MODE_NET, true);
+    CHECK(p.enable && p.rescan && !p.parked && p.id == DRIVE_ID_KIND_DD, "from on or parked: back to an empty DD drive");
+}
+
 int main(void) {
     RUN(switching_on_answers_dd_with_an_empty_drive);
     RUN(switching_off_while_on_parks_and_never_disables);
     RUN(switching_on_from_parked_answers_dd_again);
+    RUN(switching_to_network_answers_dd_like_next);
     RUN(off_while_off_does_nothing);
     RUN(off_while_parked_stays_parked);
     RUN(the_step_isr_moves_df1_while_its_machines_run);

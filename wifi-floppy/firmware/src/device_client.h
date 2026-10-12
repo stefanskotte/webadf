@@ -670,7 +670,7 @@ void dc_set_sel1(device_client_t *c, bool wired, bool df1_seen);
 bool dc_sel1_owed(const device_client_t *c);
 
 // DF1 setting (Phase 3). dc_drive_take: true once per owed secondDrive change
-// (the poll's seq and mode; unknown mode -> OFF). dc_drive_handled: record the
+// (the poll's seq and mode; an unknown mode is acked and never taken). dc_drive_handled: record the
 // seq as handled (applied or refused) -- it is what the poll echoes.
 bool dc_drive_take(device_client_t *c, uint32_t *seq, df1_mode_t *mode);
 void dc_drive_handled(device_client_t *c, uint32_t seq);

@@ -2413,13 +2413,29 @@ static void a_re_paired_board_with_a_higher_ack_takes_the_lower_seq(void) {
     CHECK_EQ_INT(seq, 0); CHECK_EQ_INT(mode, DF1_MODE_OFF);
 }
 
-static void a_bad_mode_is_handled_as_off_and_still_acked(void) {
-    boot(); dc_set_df1(&c, DF1_MODE_NEXT, false);
+// Phase 3 (plan 2026-10-12 ruling 5): a mode this build does not know is acked and ignored.
+static void a_bad_mode_is_acked_and_ignored(void) {
+    boot(); dc_set_df1(&c, DF1_MODE_NEXT, false); c.drive_ack = 3;
     push_ok_json("{\"secondDrive\":{\"seq\":4,\"mode\":\"df9\"},\"version\":1,\"desired\":null}");
     dc_step(&c);
     uint32_t seq; df1_mode_t mode;
-    CHECK(dc_drive_take(&c, &seq, &mode) && mode == DF1_MODE_OFF, "unknown -> off, never on");
-    CHECK_EQ_INT(seq, 4);
+    CHECK(!dc_drive_take(&c, &seq, &mode), "nothing for core0: the running mode stays");
+    CHECK_EQ_INT(c.drive_ack, 4);
+    CHECK_EQ_INT(c._df1_mode, DF1_MODE_NEXT);
+    CHECK(dc_drive_report_owed(&c), "the new ack is reported, so the server stops re-sending");
+    // The same unknown seq again: nothing new.
+    push_ok_json("{\"secondDrive\":{\"seq\":4,\"mode\":\"df9\"},\"version\":1,\"desired\":null}");
+    dc_step(&c);
+    CHECK(!dc_drive_take(&c, &seq, &mode), "still nothing");
+}
+
+static void a_net_mode_is_taken(void) {
+    boot(); dc_set_df1(&c, DF1_MODE_OFF, false); c.drive_ack = 0;
+    push_ok_json("{\"secondDrive\":{\"seq\":2,\"mode\":\"net\"},\"version\":1,\"desired\":null}");
+    dc_step(&c);
+    uint32_t seq; df1_mode_t mode;
+    CHECK(dc_drive_take(&c, &seq, &mode), "owed");
+    CHECK_EQ_INT(seq, 2); CHECK_EQ_INT(mode, DF1_MODE_NET);
 }
 
 static void a_matching_second_drive_is_not_owed(void) {
@@ -2460,6 +2476,10 @@ static void test_status_reports_second_drive_and_its_ack(void) {
     fake_push_response("HTTP/1.1 204 No Content\r\n\r\n");
     dc_report_status(&c, 0, -50, NULL, "1.9.0");
     CHECK(strstr(fake_last_request(), "secondDrive") == NULL, "older build: absent");
+    boot(); dc_set_df1(&c, DF1_MODE_NET, false); dc_drive_handled(&c, 8);
+    fake_push_response("HTTP/1.1 204 No Content\r\n\r\n");
+    dc_report_status(&c, 0, -50, NULL, "1.11.0");
+    CHECK(strstr(fake_last_request(), "\"secondDrive\":\"net\",\"driveVersion\":8") != NULL, "net on the wire");
 }
 
 static void test_a_drive_change_owes_a_status_report(void) {
@@ -2973,7 +2993,8 @@ int main(void) {
     RUN(test_poll_url_carries_drive_ack);
     RUN(a_second_drive_object_never_shadows_the_poll_version);
     RUN(a_re_paired_board_with_a_higher_ack_takes_the_lower_seq);
-    RUN(a_bad_mode_is_handled_as_off_and_still_acked);
+    RUN(a_bad_mode_is_acked_and_ignored);
+    RUN(a_net_mode_is_taken);
     RUN(a_matching_second_drive_is_not_owed);
     RUN(an_acked_seq_with_a_different_mode_is_owed);
     RUN(test_status_reports_second_drive_and_its_ack);

@@ -17,7 +17,7 @@
 //           (stored OFF) leaves the machines disabled: every line released.
 //
 // Transitions (the setting arrives; `enabled` = DF1's machines run now):
-//   -> NEXT, any state     ID DD, WPROT, TRK0 from the head, CHNG (empty),
+//   -> NEXT or NET, any state     ID DD, WPROT, TRK0 from the head, CHNG (empty),
 //                          machines enabled (a no-op when parked), then the
 //                          published DF1 word is looked at again so a disk
 //                          core1 already handed over is inserted.

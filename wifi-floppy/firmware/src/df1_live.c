@@ -2,7 +2,7 @@
 
 df1_live_t df1_live_apply(df1_mode_t to, bool enabled) {
     df1_live_t p = { DRIVE_ID_KIND_NONE, false, false, false, false, false, false, false };
-    if (to == DF1_MODE_NEXT) {
+    if (to != DF1_MODE_OFF) {   // Next disk or Network: DF1 on
         p.id = DRIVE_ID_KIND_DD;
         p.set_id = true;
         p.lines = true;
