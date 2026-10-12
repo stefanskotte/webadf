@@ -282,6 +282,16 @@ describe('GET /api/device/poll -- next (multi-disk plan R1)', () => {
     expect(markNetNextSent).toHaveBeenCalledWith('dev-1', 3);
   });
 
+  it('after a status report re-armed the cursor (null): the next poll wakes and sends the driver disk again', async () => {
+    readPollTick.mockResolvedValue(baseTick({ ...applied, netNextSentVersion: null }));
+    readDesired.mockResolvedValue({ version: 1, desired: null });
+    const { GET } = await import('./route');
+    const res = await GET(get('?since=1&driveAck=3'));
+    expect(res.status).toBe(200);
+    expect((await res.json()).next).toEqual({ diskId: 'paulanet', sha256: PAULANET_DISK_SHA256, diskNo: 1 });
+    expect(markNetNextSent).toHaveBeenCalledWith('dev-1', 3);
+  });
+
   it('Network applied and already sent at this version: holds (a cursor, not a flag)', async () => {
     vi.useFakeTimers();
     try {

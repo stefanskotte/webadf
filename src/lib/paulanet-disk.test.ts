@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
 import {
-  PAULANET_DISK_SHA256, PAULANET_NEXT, ALWAYS_REFERENCED_BLOBS, servedWithoutEntitlement, netApplied,
+  PAULANET_DISK_SHA256, PAULANET_NEXT, ALWAYS_REFERENCED_BLOBS, servedWithoutEntitlement, netApplied, netNextRearm,
 } from './paulanet-disk';
 
 describe('the PaulaNET driver disk', () => {
@@ -30,5 +30,34 @@ describe('netApplied (pre-flight I2): the board reports Network for the current 
     expect(netApplied({ ...t, secondDriveAppliedVersion: 3 })).toBe(false);
     expect(netApplied({ ...t, secondDriveAppliedVersion: null })).toBe(false);
     expect(netApplied({ ...t, secondDrive: 'df1' })).toBe(false);   // the user has since left Network
+  });
+});
+
+describe('netNextRearm (Task 8 review I1): a lost wake response is retried, at most once per 5 minutes', () => {
+  const now = new Date('2026-10-13T12:00:00Z');
+  const row = { secondDrive: 'net', secondDriveVersion: 3, netNextSentVersion: 3, netNextRearmedAt: null as Date | null };
+  const report = { secondDrive: 'net', driveVersion: 3, df1Sha256: null as string | null };
+  it('re-arms when Network is applied at the current version, the cursor is set, and DF1 lacks the disk', () => {
+    expect(netNextRearm(row, report, now)).toBe(true);
+    expect(netNextRearm(row, { ...report, df1Sha256: 'b'.repeat(64) }, now)).toBe(true);
+  });
+  it('never while DF1 holds the driver disk', () => {
+    expect(netNextRearm(row, { ...report, df1Sha256: PAULANET_DISK_SHA256 }, now)).toBe(false);
+  });
+  it('not twice within 5 minutes; again after', () => {
+    expect(netNextRearm({ ...row, netNextRearmedAt: new Date(now.getTime() - 299_000) }, report, now)).toBe(false);
+    expect(netNextRearm({ ...row, netNextRearmedAt: new Date(now.getTime() - 300_000) }, report, now)).toBe(true);
+  });
+  it('not when the cursor is already clear, or Network is not applied for the current setting', () => {
+    expect(netNextRearm({ ...row, netNextSentVersion: null }, report, now)).toBe(false);
+    expect(netNextRearm(row, { ...report, driveVersion: 2 }, now)).toBe(false);
+    expect(netNextRearm(row, { ...report, secondDrive: 'df1' }, now)).toBe(false);
+    expect(netNextRearm({ ...row, secondDrive: 'df1' }, report, now)).toBe(false);
+    expect(netNextRearm(row, { ...report, df1Sha256: undefined }, now)).toBe(false);   // a report silent on DF1
+  });
+  it('Next disk and Off modes are untouched', () => {
+    for (const m of ['df1', 'off']) {
+      expect(netNextRearm({ ...row, secondDrive: m }, { ...report, secondDrive: m }, now)).toBe(false);
+    }
   });
 });

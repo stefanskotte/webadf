@@ -35,3 +35,33 @@ export function netApplied(t: {
   return t.secondDrive === 'net' && t.secondDriveReported === 'net'
     && t.secondDriveAppliedVersion === t.secondDriveVersion;
 }
+
+/** At most one re-arm of the driver-disk wake per device in this long (Task 8 review I1). */
+export const NET_REARM_MIN_MS = 5 * 60_000;
+
+/**
+ * Whether a status report should re-arm the poll's one-shot driver-disk wake (Task 8 review I1). The poll writes
+ * net_next_sent_version when it BUILDS the body; a body lost in transit leaves the board without `next` and the
+ * cursor saying it was sent. So: the board reports Network applied for the current setting (`row` is the devices
+ * row before this report), the cursor is set, and DF1 does not hold the driver disk -> clear the cursor, so the
+ * next poll wakes and sends it again. Rate-limited, so a board that cannot load it (no SLOT_NET, a held-off
+ * digest) is not woken in a loop. A report silent on df1Sha256 says nothing about DF1 and never re-arms.
+ */
+export function netNextRearm(
+  row: { secondDrive: string; secondDriveVersion: number; netNextSentVersion: number | null; netNextRearmedAt: Date | null },
+  report: { secondDrive?: string; driveVersion?: number; df1Sha256?: string | null },
+  now: Date,
+): boolean {
+  if (!netNextRearmCandidate(report)) return false;
+  return row.secondDrive === 'net' && report.driveVersion === row.secondDriveVersion
+    && row.netNextSentVersion !== null
+    && (row.netNextRearmedAt === null || now.getTime() - row.netNextRearmedAt.getTime() >= NET_REARM_MIN_MS);
+}
+
+/** The report-only half of netNextRearm: lets recordStatus skip the row read for every other report. */
+export function netNextRearmCandidate(
+  report: { secondDrive?: string; driveVersion?: number; df1Sha256?: string | null },
+): boolean {
+  return report.secondDrive === 'net' && report.driveVersion !== undefined
+    && report.df1Sha256 !== undefined && report.df1Sha256 !== PAULANET_DISK_SHA256;
+}

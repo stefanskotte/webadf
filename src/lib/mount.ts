@@ -8,6 +8,7 @@ import { disks, games } from '@/db/schema/catalog';
 import { isHdAdf, isServable } from '@/lib/disk-format';
 import { LEGACY_BOARD_TRACK_MAX_BYTES } from '@/lib/adfmfm';
 import { asSecondDriveMode, type SecondDriveMode } from '@/lib/second-drive';
+import { netNextRearm, netNextRearmCandidate } from '@/lib/paulanet-disk';
 
 export interface DesiredDisk {
   sha256: string;
@@ -481,6 +482,26 @@ export async function recordStatus(
     }
     patch.mountedGameId = mountedGameId;
     patch.mountedDiskNo = mountedDiskNo;
+  }
+
+  // Task 8 review I1: re-arm the poll's driver-disk wake after a lost response (netNextRearm says when). Read
+  // only for a Network report whose DF1 lacks the disk; written as a compare-and-set in this one UPDATE, so a
+  // cursor the poll moved since the read (it just sent the disk again) is left alone.
+  if (netNextRearmCandidate(s)) {
+    const [row] = await db
+      .select({
+        secondDrive: devices.secondDrive, secondDriveVersion: devices.secondDriveVersion,
+        netNextSentVersion: devices.netNextSentVersion, netNextRearmedAt: devices.netNextRearmedAt,
+      })
+      .from(devices)
+      .where(eq(devices.id, deviceId))
+      .limit(1);
+    const now = new Date();
+    if (row && row.netNextSentVersion !== null && netNextRearm(row, s, now)) {
+      const same = sql`${devices.netNextSentVersion} = ${row.netNextSentVersion} and ${devices.secondDriveVersion} = ${row.secondDriveVersion}`;
+      patch.netNextSentVersion = sql`case when ${same} then null else ${devices.netNextSentVersion} end`;
+      patch.netNextRearmedAt = sql`case when ${same} then ${now.toISOString()}::timestamptz else ${devices.netNextRearmedAt} end`;
+    }
   }
 
   await db.update(devices).set(patch).where(eq(devices.id, deviceId));

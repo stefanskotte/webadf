@@ -188,6 +188,12 @@ export const devices = pgTable('devices', {
    * Null = never sent.
    */
   netNextSentVersion: integer('net_next_sent_version'),
+  /**
+   * When a status report last re-armed that cursor (set it back to null) because DF1 still lacked the driver
+   * disk -- a lost wake response (Task 8 review I1). At most one re-arm per device per 5 minutes, so a board
+   * that cannot load the disk is not woken in a loop. Null = never.
+   */
+  netNextRearmedAt: timestamp('net_next_rearmed_at', { withTimezone: true }),
 
   /**
    * 'queued' | 'downloading' | 'applying' | 'failed', as the device reports.
