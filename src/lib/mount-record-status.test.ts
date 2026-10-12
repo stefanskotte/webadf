@@ -184,3 +184,36 @@ describe('recordStatus df1Sha256 from older firmware', () => {
     expect(patches[0].df1Sha256).toBeNull();
   });
 });
+
+describe('recordStatus net (Phase 3)', () => {
+  it('stores the net report: seen-at from the driver age, the address, both counters', async () => {
+    const before = Date.now();
+    await recordStatus('dev-1', { ...base, firmwareVersion: '1.11.0+gabc', secondDrive: 'net',
+      net: { driver: 4, amigaIp: '172.16.10.231', framesIn: 12, framesOut: 30 } });
+    const p = patches[0];
+    expect(p.secondDriveReported).toBe('net');
+    expect(p.secondDriveCapable).toBe(true);
+    const seen = (p.netDriverSeenAt as Date).getTime();
+    expect(seen).toBeGreaterThanOrEqual(before - 4000 - 50);
+    expect(seen).toBeLessThanOrEqual(Date.now() - 4000 + 50);
+    expect(p.netAmigaIp).toBe('172.16.10.231');
+    expect(p.netFramesIn).toBe(12);
+    expect(p.netFramesOut).toBe(30);
+  });
+  it('a net report without driver or address clears those two', async () => {
+    await recordStatus('dev-1', { ...base, firmwareVersion: '1.11.0+gabc', secondDrive: 'net', net: { framesIn: 0, framesOut: 0 } });
+    expect(patches[0].netDriverSeenAt).toBeNull();
+    expect(patches[0].netAmigaIp).toBeNull();
+  });
+  it('a report naming its firmware without net clears all four (left Network mode)', async () => {
+    await recordStatus('dev-1', { ...base, firmwareVersion: '1.11.0+gabc', secondDrive: 'off' });
+    expect(patches[0].netDriverSeenAt).toBeNull();
+    expect(patches[0].netAmigaIp).toBeNull();
+    expect(patches[0].netFramesIn).toBeNull();
+    expect(patches[0].netFramesOut).toBeNull();
+  });
+  it('a partial report (no firmwareVersion, no net) leaves them alone', async () => {
+    await recordStatus('dev-1', { mountedSha256: null });
+    expect(patches[0]).not.toHaveProperty('netAmigaIp');
+  });
+});

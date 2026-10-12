@@ -7,7 +7,7 @@ import { firmwareReleases } from '@/db/schema/firmware';
 import { disks, games } from '@/db/schema/catalog';
 import { isHdAdf, isServable } from '@/lib/disk-format';
 import { LEGACY_BOARD_TRACK_MAX_BYTES } from '@/lib/adfmfm';
-import type { SecondDriveMode } from '@/lib/second-drive';
+import { asSecondDriveMode, type SecondDriveMode } from '@/lib/second-drive';
 
 export interface DesiredDisk {
   sha256: string;
@@ -170,7 +170,7 @@ export async function readPollTick(deviceId: string): Promise<PollTick | null> {
     .from(devices)
     .where(eq(devices.id, deviceId))
     .limit(1);
-  return row ? { ...row, secondDrive: row.secondDrive === 'df1' ? 'df1' : 'off' } : null;
+  return row ? { ...row, secondDrive: asSecondDriveMode(row.secondDrive) ?? 'off' } : null;
 }
 
 /**
@@ -299,6 +299,8 @@ export async function recordStatus(
     driveVersion?: number;
     /** What DF1 holds now (sha256), null = empty or off (fw 1.8.0+). */
     df1Sha256?: string | null;
+    /** Network mode's readings (fw 1.11.0+), Network mode only (spec 2026-10-12 §4). */
+    net?: { driver?: number; amigaIp?: string; framesIn?: number; framesOut?: number };
   },
 ): Promise<void> {
   const db = getDb();
@@ -368,6 +370,19 @@ export async function recordStatus(
   if (s.driveVersion !== undefined) patch.secondDriveAppliedVersion = s.driveVersion;
   if (s.df1Sha256 !== undefined) patch.df1Sha256 = s.df1Sha256;
   else if (s.firmwareVersion !== undefined && s.secondDrive === undefined) patch.df1Sha256 = null;
+  // Build-bound (the playsHd rule): a report naming its firmware without `net` is a board not in Network
+  // mode (or older), and the checklist must not keep a Network reading (plan 2026-10-12 ruling 14).
+  if (s.net !== undefined) {
+    patch.netDriverSeenAt = s.net.driver !== undefined ? new Date(Date.now() - s.net.driver * 1000) : null;
+    patch.netAmigaIp = s.net.amigaIp ?? null;
+    patch.netFramesIn = s.net.framesIn ?? null;
+    patch.netFramesOut = s.net.framesOut ?? null;
+  } else if (s.firmwareVersion !== undefined) {
+    patch.netDriverSeenAt = null;
+    patch.netAmigaIp = null;
+    patch.netFramesIn = null;
+    patch.netFramesOut = null;
+  }
   // Plain absent-leaves-it-alone, unlike trackMaxBytes above: the reader's
   // presence is not tied to the firmware build, so there is no "drop to a
   // legacy default" case here -- a report that omits it simply has nothing

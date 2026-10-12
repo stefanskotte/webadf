@@ -13,7 +13,14 @@ export function df1SeenText(seen: boolean): string {
   return seen ? 'Other DF1 drive: detected' : 'Other DF1 drive: none seen';
 }
 
-export type SecondDriveMode = 'off' | 'df1';
+export type SecondDriveMode = 'off' | 'df1' | 'net';
+/** Network (PaulaNET), spec 2026-10-12 §5: the firmware that has it. */
+export const SECOND_DRIVE_NET_FW = '1.11.0';
+
+/** A stored or reported mode, or null for anything this server does not know. */
+export function asSecondDriveMode(v: string | null): SecondDriveMode | null {
+  return v === 'off' || v === 'df1' || v === 'net' ? v : null;
+}
 export type SaveSecondDriveOutcome = { version: number } | 'not_found' | 'firmware_too_old' | 'df1_seen';
 
 export const SECOND_DRIVE_FW = '1.9.0';

@@ -69,9 +69,17 @@ const statusBody = z.object({
   df1Seen: z.boolean().optional().catch(undefined),
   // DF1 setting (fw 1.9.0+): the mode the board runs, its driveAck, and what DF1 holds.
   // Dropped, never rejected -- the telemetry rule above.
-  secondDrive: z.enum(['off', 'df1']).optional().catch(undefined),
+  secondDrive: z.enum(['off', 'df1', 'net']).optional().catch(undefined),
   driveVersion: z.number().int().min(0).max(2_147_483_647).optional().catch(undefined),
   df1Sha256: z.string().regex(SHA256_RE).nullable().optional().catch(undefined),
+  // PaulaNET Network mode (fw 1.11.0, spec 2026-10-12 §4): only in Network mode. Each field dropped on its
+  // own when malformed, the object dropped when it is not one -- the telemetry rule above.
+  net: z.object({
+    driver: z.number().int().min(0).max(999_999).optional().catch(undefined),
+    amigaIp: z.string().regex(/^(25[0-5]|2[0-4]\d|1?\d?\d)(\.(25[0-5]|2[0-4]\d|1?\d?\d)){3}$/).optional().catch(undefined),
+    framesIn: z.number().int().min(0).max(999_999_999).optional().catch(undefined),
+    framesOut: z.number().int().min(0).max(999_999_999).optional().catch(undefined),
+  }).optional().catch(undefined),
   error: z.string().max(500).nullable().optional(),
   psramFree: z.number().int().nonnegative().nullable().optional(),
   // Real WiFi RSSI ranges roughly -100..0 dBm, but a marginal link can report
@@ -149,6 +157,7 @@ export async function POST(request: Request) {
     secondDrive: parsed.data.secondDrive,
     driveVersion: parsed.data.driveVersion,
     df1Sha256: parsed.data.df1Sha256,
+    net: parsed.data.net,
   });
 
   return new Response(null, { status: 204, headers: { 'cache-control': 'no-store' } });

@@ -124,3 +124,23 @@ describe('POST /api/device/status -- DF1 setting', () => {
     expect(recordStatus).toHaveBeenLastCalledWith('dev-1', expect.objectContaining({ secondDrive: undefined, driveVersion: undefined, df1Sha256: undefined }));
   });
 });
+
+describe('POST /api/device/status -- Network mode (Phase 3)', () => {
+  it('passes secondDrive net and the net tail through', async () => {
+    const { POST } = await import('./route');
+    const net = { driver: 4, amigaIp: '172.16.10.231', framesIn: 12, framesOut: 30 };
+    const res = await POST(post({ mountedSha256: null, secondDrive: 'net', driveVersion: 2, net }));
+    expect(res.status).toBe(204);
+    expect(recordStatus).toHaveBeenLastCalledWith('dev-1', expect.objectContaining({ secondDrive: 'net', net }));
+  });
+  it('drops a malformed net field by field, never the report', async () => {
+    const { POST } = await import('./route');
+    const res = await POST(post({ mountedSha256: null, secondDrive: 'net',
+      net: { driver: -1, amigaIp: '999.1.1.1x', framesIn: 1.5, framesOut: 7 } }));
+    expect(res.status).toBe(204);
+    expect(recordStatus).toHaveBeenLastCalledWith('dev-1', expect.objectContaining({
+      net: { driver: undefined, amigaIp: undefined, framesIn: undefined, framesOut: 7 } }));
+    await POST(post({ mountedSha256: null, net: 'garbage' }));
+    expect(recordStatus).toHaveBeenLastCalledWith('dev-1', expect.objectContaining({ net: undefined }));
+  });
+});

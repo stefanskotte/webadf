@@ -160,18 +160,27 @@ export const devices = pgTable('devices', {
   sel1Wired: boolean('sel1_wired'),
   /** A real drive stepped as DF1 while the board's own DF1 was off; null = firmware before 1.7.6. */
   df1Seen: boolean('df1_seen'),
-  /** 'off' | 'df1' -- what the user chose (spec §3). Default off for every board. */
+  /** 'off' | 'df1' | 'net' -- what the user chose (spec §3). Default off for every board. */
   secondDrive: text('second_drive').notNull().default('off'),
   /** Cursor, bumped on every change; the board echoes ?driveAck=. */
   secondDriveVersion: integer('second_drive_version').notNull().default(0),
   /** The board's driveAck as last reported; null = never. */
   secondDriveAppliedVersion: integer('second_drive_applied_version'),
-  /** 'off' | 'df1' as the board runs it; null = firmware without DF1. */
+  /** 'off' | 'df1' | 'net' as the board runs it; null = firmware without DF1. */
   secondDriveReported: text('second_drive_reported'),
   /** The capability; null = never said, false = firmware before 1.9.0. */
   secondDriveCapable: boolean('second_drive_capable'),
   /** What DF1 holds now (a sha256), null = empty or off. */
   df1Sha256: text('df1_sha256'),
+
+  // --- PaulaNET Network mode (spec 2026-10-12 §5): the board's `net` report, Network mode only ---
+  /** When the driver last read cylinder 76 (report time minus its age); null = not heard, or not Network. */
+  netDriverSeenAt: timestamp('net_driver_seen_at', { withTimezone: true }),
+  /** The Amiga's address as the board's sorter learned it; null = none yet, or not Network. */
+  netAmigaIp: text('net_amiga_ip'),
+  /** Frames from the Amiga taken / frames the Amiga acknowledged, since Network mode began (saturated). */
+  netFramesIn: integer('net_frames_in'),
+  netFramesOut: integer('net_frames_out'),
 
   /**
    * 'queued' | 'downloading' | 'applying' | 'failed', as the device reports.
