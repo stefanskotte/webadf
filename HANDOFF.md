@@ -2604,6 +2604,23 @@ separately.
   - **Rob is on board (operator, 2026-10-12):** he agrees to LZ4 support in his driver, so route (a) is open. It is
     GO, after Phase 3. The first step is still the host measurement above. The flag bit, the CPU gating and the frame
     format are then agreed with Rob before either side implements anything.
+  - **Research done (2026-10-13, branch `research/paulanet-lz4`, not merged).** See
+    `docs/superpowers/research/2026-10-13-paulanet-lz4.md` and `tools/lz4-measure/`.
+    - **Sizes (measured):** linked LZ4 cuts HTML to 41 % (RLE 97 %), C source to 57 % and text to 71 %. Random data
+      and single small frames do not shrink.
+    - **68000 decode (emulated):** 300-510 KB/s.
+    - **Our prototype compressor:** 29-87 KB/s, byte-exact against its C model.
+    - **Recommendation:**
+      - LZ4 board-to-Amiga on every CPU (an estimated +18-69 % download speed on the A500);
+      - uploads stay RLE below a 68030/40.
+    - **Draft protocol for Rob:** in the research document.
+    - **Rob's experimental LZ4 is not standard:** his match offset is big-endian. The draft proposes the standard.
+  - **Decision (operator, 2026-10-13): our own LZ4, both the decoder and the compressor, in 68000 assembly.**
+    - We use no third-party 68k code, even permissively licensed code such as Carré's MIT decoder.
+    - MIT-licensed, as a self-contained module Rob can embed in his driver.
+    - Verified bit-exact against the reference lz4 library on the host, as tools/netloop does for RLE.
+    - The decoder's target is at least the measured third-party figure: 300-510 KB/s on a 7 MHz 68000, with an
+      output-end bounds guard.
 - **Drop files onto the Amiga's RAM: (operator, 2026-10-09; after PaulaNET works).** A drop zone in the web app that
   copies the dropped files straight into the running Amiga's RAM disk. Needs PaulaNET online first. Shape to
   decide then: a small Amiga-side receiver (started from the driver disk / WBStartup) that the board or the server
