@@ -92,11 +92,14 @@ const uint8_t *track_cache_get_token(int32_t token, int track, uint32_t *bit_cou
     // from any other slot: an interrupted WFAD fetch can leave an
     // UNPUBLISHED slot marked ADF_HD. The slot's kind was written before
     // its publish, so the acquire in psram_active_token() above covers it.
-    if (psram_image_slot_kind(slot) == SLOT_KIND_ADF_HD) {
+    const slot_kind_t k = psram_image_slot_kind(slot);
+    if (k == SLOT_KIND_ADF_HD || k == SLOT_KIND_ADF_DD) {
+        // Sector data (an HD disk, or Phase 3's PaulaNET driver disk in SLOT_NET): encode on read.
+        const unsigned nsec = k == SLOT_KIND_ADF_HD ? ADF_MFM_HD_SECTORS : ADF_MFM_DD_SECTORS;
         const uint8_t *adf = psram_image_track_data(slot, track);
-        if (!adf || adf_mfm_encode_track(adf, ADF_MFM_HD_SECTORS, (unsigned)track, dst->data) == 0)
+        if (!adf || adf_mfm_encode_track(adf, nsec, (unsigned)track, dst->data) == 0)
             return 0;
-        dst->bit_count = ADF_MFM_HD_TRACK_BITS;
+        dst->bit_count = k == SLOT_KIND_ADF_HD ? ADF_MFM_HD_TRACK_BITS : ADF_MFM_DD_TRACK_BYTES * 8u;
         dst->track = track;
         dst->token = token;
         active ^= 1;

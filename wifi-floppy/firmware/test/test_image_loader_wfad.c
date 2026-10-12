@@ -99,6 +99,27 @@ static void a_wfmf_after_a_wfad_in_the_same_slot_is_mfm_again(void) {
     static uint8_t dst[TRACK_MAX_BYTES];
     uint32_t bits = 0;
     CHECK(psram_image_read(0, 3, dst, &bits) && bits == 128u && dst[0] == 3, "an MFM slot reads out as before");
+    // Phase 3: SLOT_NET holds sectors only -- the same valid WFMF is refused there, and leaves it empty.
+    CHECK(!image_parse_buffer(SLOT_NET, img, at), "a WFMF never goes into SLOT_NET");
+    CHECK_EQ_INT(psram_image_missing_count(SLOT_NET), NUM_TRACKS);
+}
+
+// Phase 3: the PaulaNET driver disk arrives as a DD WFAD (11 sectors), into SLOT_NET only.
+static void a_dd_wfad_loads_into_the_net_slot_only(void) {
+    const uint32_t tb = WFAD_SECTORS_DD * 512u, total = 16u + WFAD_TRACKS * tb;
+    uint8_t *dd = malloc(total);
+    put_u32(dd, WFAD_MAGIC); put_u32(dd + 4, WFAD_VERSION); put_u32(dd + 8, WFAD_TRACKS); put_u32(dd + 12, WFAD_SECTORS_DD);
+    for (uint32_t t = 0; t < WFAD_TRACKS; t++)
+        for (uint32_t i = 0; i < tb; i++) dd[16 + t * tb + i] = (uint8_t)(t + i);
+    CHECK(image_parse_buffer(SLOT_NET, dd, total), "a DD WFAD loads into SLOT_NET");
+    CHECK_EQ_INT(psram_image_slot_kind(SLOT_NET), SLOT_KIND_ADF_DD);
+    CHECK(memcmp(psram_image_track_data(SLOT_NET, 77 * 2 + 1), dd + 16 + 155u * tb, tb) == 0, "track 155 in place");
+    CHECK(!image_parse_buffer(0, dd, total), "a DD WFAD never goes into DF0's slots");
+    build();
+    CHECK(!image_parse_buffer(SLOT_NET, img, WFAD_TOTAL), "an HD WFAD never goes into SLOT_NET");
+    CHECK_EQ_INT(psram_image_slot_kind(SLOT_NET), SLOT_KIND_MFM);   // rejected: empty and MFM again
+    CHECK_EQ_INT(psram_image_missing_count(SLOT_NET), NUM_TRACKS);
+    free(dd);
 }
 
 int main(void) {
@@ -111,6 +132,7 @@ int main(void) {
     RUN(one_byte_at_a_time_is_the_same_and_a_trailing_byte_is_not);
     RUN(malformed_containers_are_rejected_whole);
     RUN(a_wfmf_after_a_wfad_in_the_same_slot_is_mfm_again);
+    RUN(a_dd_wfad_loads_into_the_net_slot_only);
     free(img);
     return REPORT();
 }

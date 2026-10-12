@@ -30,6 +30,8 @@ typedef struct {
                          // truncated one
     bool held;          // once deliver_limit is reached, read() WAITS rather
                          // than reporting a clean close (fake_push_held)
+    const uint8_t *ref; // fake_push_response_ref: the caller's bytes, read in
+                         // place of `data` (NULL: `data` holds the response)
 } fake_event_t;
 
 static fake_event_t g_queue[FAKE_MAX_QUEUE];
@@ -115,6 +117,17 @@ void fake_push_response_bytes(const uint8_t *raw, int len) {
     e->len = len;
     e->deliver_limit = len;
     e->held = false;
+    e->ref = NULL;
+}
+
+void fake_push_response_ref(const uint8_t *raw, int len) {
+    if (raw == NULL || len < 0) fake_fatal("fake_push_response_ref: no bytes");
+    fake_event_t *e = fake_push_slot();
+    e->type = FAKE_EV_RESPONSE;
+    e->ref = raw;
+    e->len = len;
+    e->deliver_limit = len;
+    e->held = false;
 }
 
 void fake_push_truncated(const char *raw, int n) {
@@ -131,6 +144,7 @@ void fake_push_truncated(const char *raw, int n) {
     e->len = (int)len;
     e->deliver_limit = n;
     e->held = false;
+    e->ref = NULL;
 }
 
 void fake_push_held(const char *prefix) {
@@ -144,6 +158,7 @@ void fake_push_connect_failure(void) {
     e->len = 0;
     e->deliver_limit = 0;
     e->held = false;
+    e->ref = NULL;
 }
 
 static int fake_connect(struct transport *t, const char *host, int port) {
@@ -247,7 +262,7 @@ static int fake_read(struct transport *t, uint8_t *b, int cap, int timeout_ms) {
     int avail = e->deliver_limit - g_cursor;
     int n = (avail < cap) ? avail : cap;
     if (n < 0) n = 0;
-    memcpy(b, e->data + g_cursor, (size_t)n);
+    memcpy(b, (e->ref ? e->ref : e->data) + g_cursor, (size_t)n);
     g_cursor += n;
     return n;
 }

@@ -1,6 +1,7 @@
 #include "harness.h"
 #include "../src/psram_image.h"
 #include <stdlib.h>
+#include <string.h>
 
 static void test_written_track_reads_back(void) {
     uint8_t src[64];
@@ -101,7 +102,7 @@ static void df1_holds_a_disk_only_while_df0_does(void) {
     psram_publish_df1(1);
     psram_publish_slot(SLOT_NONE);
     CHECK_EQ_INT(psram_df1_slot(), SLOT_NONE);
-    CHECK(!psram_publish_df1(1), "DF0 empty: DF1 may not be filled");
+    CHECK(!psram_publish_df1(1), "DF0 empty: DF1 may not hold an A/B slot (Next disk's rule)");
 }
 
 // Review Focus 1: core1 writes into a slot only once core0 has stopped reading it.
@@ -132,10 +133,53 @@ static void an_empty_df1_is_untouched_by_df0_publishes(void) {
     CHECK(psram_df1_token() == w, "no DF1 word change when DF1 is empty");
 }
 
+// Phase 3 (plan 2026-10-12 ruling 6): Network mode's DF1 slot needs no DF0 disk and no DF0 slot.
+static void the_net_slot_is_df1s_whatever_df0_holds(void) {
+    psram_publish_slot(SLOT_NONE);
+    CHECK(psram_publish_df1(SLOT_NET), "DF0 empty: DF1 may hold the driver disk");
+    CHECK_EQ_INT(psram_df1_slot(), SLOT_NET);
+    psram_publish_slot(0);
+    CHECK_EQ_INT(psram_df1_slot(), SLOT_NET);   // a DF0 mount leaves it
+    psram_publish_slot(1);
+    CHECK_EQ_INT(psram_df1_slot(), SLOT_NET);   // and a DF0 swap
+    psram_publish_slot(SLOT_NONE);
+    CHECK_EQ_INT(psram_df1_slot(), SLOT_NET);   // and a DF0 eject (pre-flight B1)
+    CHECK(psram_inactive_slot() == 0 || psram_inactive_slot() == 1, "DF0's fetch target is never SLOT_NET");
+    psram_publish_slot(SLOT_NET);
+    CHECK(psram_active_slot() != SLOT_NET, "DF0 can never publish SLOT_NET");
+    psram_publish_df1(SLOT_NONE);
+}
+
+static void tokens_name_all_three_slots_apart(void) {
+    psram_publish_slot(0);  const int32_t a = psram_active_token();
+    psram_publish_slot(1);  const int32_t b = psram_active_token();
+    psram_publish_df1(SLOT_NET); const int32_t n = psram_df1_token();
+    CHECK_EQ_INT(psram_token_slot(a), 0);
+    CHECK_EQ_INT(psram_token_slot(b), 1);
+    CHECK_EQ_INT(psram_token_slot(n), SLOT_NET);
+    CHECK(a != b && b != n && a != n, "distinct");
+    psram_publish_df1(SLOT_NONE);
+    CHECK_EQ_INT(psram_token_slot(psram_df1_token()), SLOT_NONE);
+}
+
+static void the_net_slot_holds_dd_sectors_only(void) {
+    psram_image_reset_slot(SLOT_NET);
+    psram_image_set_slot_kind(SLOT_NET, SLOT_KIND_ADF_DD);
+    static uint8_t sec[NET_TRACK_BYTES];
+    for (unsigned i = 0; i < sizeof sec; i++) sec[i] = (uint8_t)(i * 13u);
+    CHECK(psram_image_store_adf(SLOT_NET, 155, sec), "a DD track of sectors is stored");
+    CHECK(memcmp(psram_image_track_data(SLOT_NET, 155), sec, sizeof sec) == 0, "read back");
+    CHECK_EQ_INT(psram_image_bits(SLOT_NET, 155), NET_TRACK_BYTES * 8u);
+    static uint8_t mfm[16] = {0};
+    psram_image_mark_dirty(SLOT_NET, 3, mfm, 128);
+    CHECK(!psram_image_have(SLOT_NET, 3), "MFM never goes into a sector slot");
+}
+
 int main(void) {
     size_t len = (size_t)TRACK_MAX_BYTES * NUM_TRACKS * SLOT_COUNT;
     void *mem = malloc(len);
     psram_image_set_backing(mem, len);
+    psram_image_init();     // pre-flight I1: SLOT_NET's storage is set up here
     RUN(test_written_track_reads_back);
     RUN(test_fetch_targets_the_inactive_slot);
     RUN(test_publish_is_all_or_nothing);
@@ -146,6 +190,9 @@ int main(void) {
     RUN(the_writer_waits_for_core0_to_acknowledge_df1s_eject);
     RUN(df1_tokens_never_repeat_a_df0_token);
     RUN(an_empty_df1_is_untouched_by_df0_publishes);
+    RUN(the_net_slot_is_df1s_whatever_df0_holds);
+    RUN(tokens_name_all_three_slots_apart);
+    RUN(the_net_slot_holds_dd_sectors_only);
     free(mem);
     return REPORT();
 }

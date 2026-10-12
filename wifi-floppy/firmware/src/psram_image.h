@@ -20,6 +20,7 @@
 #include <stdbool.h>
 #include <stddef.h>
 #include "floppy_io.h"
+#include "adf_mfm.h"     // ADF_MFM_DD_SECTORS, ADF_MFM_SECTOR_BYTES: NET_TRACK_BYTES
 
 #define NUM_TRACKS       (NUM_CYL * NUM_SIDES)      // 160
 
@@ -44,16 +45,25 @@
 // With the 2 MiB firmware-update stage (g_fw_stage, main.c) behind them,
 // ~6.4 MiB of the 8 MB part is spoken for.
 
-#define SLOT_COUNT 2
+#define SLOT_COUNT 2                  /* DF0's rotation, A and B -- unchanged */
+// Phase 3 (plan 2026-10-12, rulings 6 and 24): a third slot, NOT in DF0's A/B rotation. It holds only the PaulaNET
+// driver disk, as DD sector data (encoded on read like an HD slot), and only DF1 publishes it -- so DF1 holds it
+// whatever DF0 holds, and no DF0 fetch, swap, preload or eject can touch it. psram_inactive_slot() never returns
+// it; psram_publish_slot() refuses it.
+#define SLOT_NET   2                  /* Phase 3: the PaulaNET driver disk, DF1 only (plan 2026-10-12 ruling 6) */
+#define SLOT_ALL   3                  /* every slot index, for the per-slot metadata */
+#define NET_TRACK_BYTES (ADF_MFM_DD_SECTORS * ADF_MFM_SECTOR_BYTES)   /* 5,632: one DD track of sectors */
 #define SLOT_NONE  (-1)
 
 // What a slot's tracks hold (HD spec §5.1). MFM: ready to stream -- WFMF,
 // DD and HFE alike. ADF_HD: each track is an HD ADF's 22 x 512 = 11,264
 // sector bytes, encoded to MFM by track_cache_get() when the head arrives.
+// ADF_DD (Phase 3): a DD ADF's 11 x 512 = 5,632 sector bytes, encoded the same
+// way -- SLOT_NET only (image_loader.c takes a DD WFAD nowhere else).
 // image_loader.c sets it before the first track lands; psram_image_reset_slot()
 // puts it back to MFM. core1 writes it before psram_publish_slot(), whose
 // release barrier makes it visible to core0 with the tracks.
-typedef enum { SLOT_KIND_MFM = 0, SLOT_KIND_ADF_HD } slot_kind_t;
+typedef enum { SLOT_KIND_MFM = 0, SLOT_KIND_ADF_HD, SLOT_KIND_ADF_DD } slot_kind_t;
 
 void        psram_image_set_slot_kind(int slot, slot_kind_t kind);
 slot_kind_t psram_image_slot_kind(int slot);      // MFM for SLOT_NONE or out of range
@@ -76,8 +86,8 @@ bool     psram_image_have(int slot, int track);
 uint32_t psram_image_bits(int slot, int track);
 
 // Copy a track out of PSRAM into an SRAM destination. False if not present,
-// and false for an ADF_HD slot: its bytes are ADF, not MFM, and must never
-// reach anything that would stream them.
+// and false for an ADF_HD or ADF_DD slot: its bytes are ADF, not MFM, and must
+// never reach anything that would stream them.
 bool psram_image_read(int slot, int track, uint8_t *dst, uint32_t *bit_count);
 
 // The track's bytes in place, NULL if absent. For track_cache.c's HD encode,
@@ -94,13 +104,14 @@ void psram_image_write_at(int slot, int track, uint32_t offset, const uint8_t *s
 void psram_image_commit(int slot, int track, uint32_t bit_count);
 
 // Host wrote this track: keep the data, mark for later flush to the server.
-// MFM only: does nothing on an ADF_HD slot, whose tracks hold ADF bytes and
-// are stored with psram_image_store_adf.
+// MFM only: does nothing on an ADF_HD or ADF_DD slot, whose tracks hold ADF
+// bytes and are stored with psram_image_store_adf.
 void psram_image_mark_dirty(int slot, int track, const uint8_t *src, uint32_t bit_count);
 
 // HD writes spec §4.3: a verified HD track's 11,264 ADF bytes
 // (MFM_HD_TRACK_DATA_BYTES), stored DIRTY in an ADF_HD slot -- the HD twin of
-// psram_image_mark_dirty. False, and nothing stored, for an MFM slot, an
+// psram_image_mark_dirty. An ADF_DD slot (SLOT_NET) takes NET_TRACK_BYTES the
+// same way. False, and nothing stored, for an MFM slot, an
 // unusable slot or track, or no PSRAM. The caller drops the track's SRAM copy
 // (track_cache_invalidate) so the next read re-encodes it.
 bool psram_image_store_adf(int slot, int track, const uint8_t *adf);
@@ -141,18 +152,21 @@ int32_t psram_active_token(void);
 int     psram_token_slot(int32_t token);   // decode a token; no barrier, no re-read
 
 // --- DF1 (second drive) ---------------------------------------------
-// DF1 serves only the idle slot holding the preloaded next disk. core1 writes
+// DF1 serves only the idle slot holding the preloaded next disk (Next disk),
+// or SLOT_NET (Network mode, Phase 3). core1 writes
 // df1_word; core0 reads it and acknowledges what it has seen. Tokens come
 // from the same generation counter as DF0's, so (track, token) keys stay
 // unique across both drives.
-bool    psram_publish_df1(int slot);       // core1; false, nothing changed, if refused
+// core1; false, nothing changed, if refused. SLOT_NET is always accepted (when
+// its storage is real); A/B only while DF0 holds the other one (Next disk's rule).
+bool    psram_publish_df1(int slot);
 int32_t psram_df1_token(void);             // acquire barrier
 int     psram_df1_slot(void);
 void    psram_df1_reader_ack(int32_t token);   // core0 only
 bool    psram_df1_quiescent(void);         // core1: core0 acked the current DF1 word
 
 int  psram_active_slot(void);           // SLOT_NONE when ejected
-int  psram_inactive_slot(void);         // the fetch target; SLOT_NONE -> 0
+int  psram_inactive_slot(void);         // the fetch target; SLOT_NONE -> 0; never SLOT_NET
 
 // Host tests only: point the image store at ordinary memory. On device the
 // SDK's PSRAM window is used and this is never called.

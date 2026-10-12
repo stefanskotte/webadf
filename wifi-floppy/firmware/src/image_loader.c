@@ -5,6 +5,7 @@
 
 _Static_assert(WFAD_TRACKS == NUM_TRACKS, "a WFAD names every track of the disk");
 _Static_assert(WFAD_TRACK_BYTES <= TRACK_MAX_BYTES, "an HD track's ADF bytes fit a PSRAM slot track");
+_Static_assert(WFAD_SECTORS_DD * 512u == NET_TRACK_BYTES, "a DD WFAD track is exactly a SLOT_NET track");
 
 // Incremental parser: bytes arrive in arbitrary chunks, so the header and
 // each track length are reassembled a byte at a time, and payload bytes go
@@ -39,18 +40,20 @@ static void sink(void *ctx, const uint8_t *d, int n) {
             l->hdr_got += take; d += take; n -= take;
             if (l->hdr_got < 16) return;
             if (le32(l->hdr) == WFAD_MAGIC) {
-                // HD (spec §5.1): the header must name exactly this geometry
-                // before a byte is stored.
+                const uint32_t sec = le32(l->hdr + 12);
+                const bool net = l->slot == SLOT_NET;
+                // HD (spec §5.1) into A/B, DD only into SLOT_NET (plan 2026-10-12 ruling 24): the header names
+                // exactly one of the two geometries, for the slot it is going into, before a byte is stored.
                 if (le32(l->hdr + 4) != WFAD_VERSION || le32(l->hdr + 8) != WFAD_TRACKS ||
-                    le32(l->hdr + 12) != WFAD_SECTORS) {
+                    sec != (net ? WFAD_SECTORS_DD : WFAD_SECTORS)) {
                     l->st = S_ERR; return;
                 }
-                psram_image_set_slot_kind(l->slot, SLOT_KIND_ADF_HD);
+                psram_image_set_slot_kind(l->slot, net ? SLOT_KIND_ADF_DD : SLOT_KIND_ADF_HD);
                 l->adf = true;
                 l->track_count = (int)WFAD_TRACKS;
                 l->track = 0;
-                l->bits = WFAD_TRACK_BYTES * 8u;
-                l->payload_bytes = WFAD_TRACK_BYTES;
+                l->bits = sec * 512u * 8u;
+                l->payload_bytes = sec * 512u;
                 l->payload_got = 0;
                 l->st = S_PAYLOAD;
                 break;
@@ -58,6 +61,7 @@ static void sink(void *ctx, const uint8_t *d, int n) {
             if (le32(l->hdr) != IMAGE_MAGIC || le32(l->hdr + 4) != IMAGE_VERSION) {
                 l->st = S_ERR; return;
             }
+            if (l->slot == SLOT_NET) { l->st = S_ERR; return; }   // SLOT_NET holds sectors only
             l->track_count = (int)le32(l->hdr + 8);
             if (l->track_count <= 0 || l->track_count > NUM_TRACKS) { l->st = S_ERR; return; }
             l->track = 0; l->st = S_LEN; l->len_got = 0;

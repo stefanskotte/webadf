@@ -42,10 +42,14 @@
 //   then 160 x 11,264 bytes, track-major (track = cylinder * 2 + head)
 // Validated whole: any other version or geometry, a short body, or ONE byte
 // too many rejects the image, and the slot is left empty and MFM.
+// Phase 3 (plan 2026-10-12 ruling 24): the PaulaNET driver disk arrives as a
+// DD WFAD -- the same header with 11 sectors, 160 x 5,632 bytes -- and only
+// into SLOT_NET; an HD WFAD and a WFMF are refused there, a DD WFAD everywhere else.
 #define WFAD_MAGIC        0x44414657u
 #define WFAD_VERSION      1u
 #define WFAD_TRACKS       160u
 #define WFAD_SECTORS      22u
+#define WFAD_SECTORS_DD 11u   // Phase 3: the PaulaNET driver disk, a DD ADF -- accepted only into SLOT_NET
 #define WFAD_TRACK_BYTES  (WFAD_SECTORS * 512u)              // 11,264
 #define WFAD_BODY_BYTES   (WFAD_TRACKS * WFAD_TRACK_BYTES)   // 1,802,240
 

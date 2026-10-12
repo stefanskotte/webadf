@@ -31,10 +31,20 @@ static inline void wfmf_barrier(void) { __dmb(); }
 static __uninitialized_psram("image") uint8_t device_image[SLOT_COUNT][NUM_TRACKS][TRACK_MAX_BYTES];
 #endif
 
+// Phase 3 (plan 2026-10-12, rulings 6 and 24): SLOT_NET's own storage, apart
+// from DF0's A/B pair -- 160 DD tracks of sector bytes, 901,120 B.
+#ifndef WFMF_HOST_TEST
+static __uninitialized_psram("netdisk") uint8_t net_image[NUM_TRACKS][NET_TRACK_BYTES];
+#else
+static uint8_t net_image[NUM_TRACKS][NET_TRACK_BYTES];   // host: always there, beside whatever A/B backing a test sets
+#endif
+static bool have_net;                                     // SLOT_NET's storage is real PSRAM (psram_image_init)
+
 // Metadata stays in SRAM: it is touched from ISR-adjacent code and is tiny.
-static uint32_t      bits[SLOT_COUNT][NUM_TRACKS];
-static track_state_t state[SLOT_COUNT][NUM_TRACKS];
-static slot_kind_t   kind[SLOT_COUNT];
+// SLOT_ALL: A, B and SLOT_NET.
+static uint32_t      bits[SLOT_ALL][NUM_TRACKS];
+static track_state_t state[SLOT_ALL][NUM_TRACKS];
+static slot_kind_t   kind[SLOT_ALL];
 static bool          have_psram;
 
 // g_base/g_len point at the backing store: the SDK's PSRAM window on device
@@ -51,11 +61,14 @@ static size_t   g_len;
 // an earlier disk could be served for a later disk that happened to land
 // back on the same slot, both via an intervening eject and via a third
 // fetch with no eject at all. Packed word layout:
-//   bit 0        the slot index (0 or 1) -- meaningful only if bit 1 is set
-//   bit 1        "mounted" flag; 0 means the word decodes to SLOT_NONE
-//   bits 2..31   a generation counter, incremented on EVERY publish call,
+//   bits 0..1    the slot index (0, 1, or SLOT_NET = 2) -- meaningful only if
+//                bit 2 is set
+//   bit 2        "mounted" flag; 0 means the word decodes to SLOT_NONE
+//   bits 3..31   a generation counter, incremented on EVERY publish call,
 //                including an eject -- so the word produced by any given
 //                publish is never produced by another one.
+// Phase 3 took a second slot bit for SLOT_NET, so g_gen has 28 bits before it
+// reaches the sign bit: at one publish a second, 8.5 years.
 // g_gen is core1-only (only psram_publish_slot() touches it, and only one
 // core ever calls that), so it needs no synchronization of its own; only
 // the packed result that lands in active_word has to be shared safely.
@@ -76,20 +89,29 @@ static volatile int32_t  df1_word;
 static volatile int32_t  df1_reader_ack;
 
 static inline int32_t pack_word(uint32_t gen, int slot) {
-    int32_t mounted = (slot == SLOT_NONE) ? 0 : 1;
-    int32_t bit0    = (slot == SLOT_NONE) ? 0 : (int32_t)(slot & 1);
-    return (int32_t)(gen << 2) | (mounted << 1) | bit0;
+    if (slot == SLOT_NONE) return (int32_t)(gen << 3);
+    return (int32_t)(gen << 3) | (1 << 2) | (int32_t)(slot & 3);
 }
 
 static inline int slot_of_word(int32_t w) {
-    return (w & 2) ? (int)(w & 1) : SLOT_NONE;
+    return (w & 4) ? (int)(w & 3) : SLOT_NONE;
 }
 
+// Any slot with storage behind it: A, B, and SLOT_NET once its PSRAM is real.
 static inline bool slot_ok(int slot) {
-    return slot >= 0 && slot < SLOT_COUNT;
+    return slot >= 0 && slot < SLOT_ALL && (slot != SLOT_NET || have_net);
+}
+
+// DF0's rotation only: what psram_publish_slot accepts.
+static inline bool slot_ab(int slot) { return slot >= 0 && slot < SLOT_COUNT; }
+
+// The most bytes a track of `slot` may hold: SLOT_NET's tracks are 5,632 B.
+static inline uint32_t slot_track_cap(int slot) {
+    return slot == SLOT_NET ? NET_TRACK_BYTES : TRACK_MAX_BYTES;
 }
 
 static inline uint8_t *track_ptr(int slot, int track) {
+    if (slot == SLOT_NET) return &net_image[track][0];
     return g_base + ((size_t)slot * NUM_TRACKS + (size_t)track) * TRACK_MAX_BYTES;
 }
 
@@ -115,10 +137,14 @@ bool psram_image_init(void) {
     // real PSRAM, which faults on access - check the last byte before use.
     if (have_psram && !psram_check_address((void *)(g_base + g_len - 1)))
         have_psram = false;
+    // SLOT_NET's array sits after the A/B pair in the PSRAM section: the same
+    // check, on its own last byte.
+    have_net = have_psram && psram_check_address((void *)&net_image[NUM_TRACKS - 1][NET_TRACK_BYTES - 1]);
 #else
     // Host tests call psram_image_set_backing() instead of relying on init()
     // to discover PSRAM; nothing to do here beyond the metadata reset above.
     have_psram = g_base != NULL && g_len >= (size_t)SLOT_COUNT * NUM_TRACKS * TRACK_MAX_BYTES;
+    have_net = true;     // net_image is an ordinary static array on the host
 #endif
 
     return have_psram;
@@ -149,7 +175,7 @@ uint32_t psram_image_bits(int slot, int track) {
 
 bool psram_image_read(int slot, int track, uint8_t *dst, uint32_t *bit_count) {
     if (!psram_image_have(slot, track)) return false;
-    if (kind[slot] == SLOT_KIND_ADF_HD) return false;   // ADF bytes, not MFM (header)
+    if (kind[slot] != SLOT_KIND_MFM) return false;      // ADF bytes, not MFM (header)
     uint32_t nbytes = (bits[slot][track] + 7) / 8;
     if (nbytes > TRACK_MAX_BYTES) return false;
     memcpy(dst, track_ptr(slot, track), nbytes);
@@ -160,24 +186,27 @@ bool psram_image_read(int slot, int track, uint8_t *dst, uint32_t *bit_count) {
 static void store(int slot, int track, const uint8_t *src, uint32_t bit_count,
                   track_state_t st) {
     if (!have_psram || !slot_ok(slot) || track < 0 || track >= NUM_TRACKS) return;
-    if (kind[slot] == SLOT_KIND_ADF_HD) return;         // MFM never goes into an ADF slot (psram_image_store_adf)
+    if (kind[slot] != SLOT_KIND_MFM) return;            // MFM never goes into an ADF slot (psram_image_store_adf)
     uint32_t nbytes = (bit_count + 7) / 8;
-    if (nbytes > TRACK_MAX_BYTES) return;          // oversized track, drop
+    if (nbytes > slot_track_cap(slot)) return;     // oversized track, drop
     memcpy(track_ptr(slot, track), src, nbytes);
     bits[slot][track]  = bit_count;
     wfmf_barrier();     // payload must be visible to core1 before the flag that tells it to read it
     state[slot][track] = st;
 }
 
+// The loader's writers. No kind refusal here: the loader streams an HD or DD
+// WFAD's sector bytes through these too (image_loader.c). Bounded per slot:
+// SLOT_NET's tracks are NET_TRACK_BYTES.
 void psram_image_write_at(int slot, int track, uint32_t offset, const uint8_t *src, int len) {
     if (!have_psram || !slot_ok(slot) || track < 0 || track >= NUM_TRACKS) return;
-    if (offset + (uint32_t)len > TRACK_MAX_BYTES) return;
+    if (len < 0 || offset + (uint32_t)len > slot_track_cap(slot)) return;
     memcpy(track_ptr(slot, track) + offset, src, len);
 }
 
 void psram_image_commit(int slot, int track, uint32_t bit_count) {
     if (!have_psram || !slot_ok(slot) || track < 0 || track >= NUM_TRACKS) return;
-    if ((bit_count + 7) / 8 > TRACK_MAX_BYTES) return;
+    if ((bit_count + 7) / 8 > slot_track_cap(slot)) return;
     bits[slot][track]  = bit_count;
     state[slot][track] = TRK_PRESENT;
 }
@@ -190,9 +219,11 @@ _Static_assert(MFM_HD_TRACK_DATA_BYTES <= TRACK_MAX_BYTES, "an HD track's ADF by
 
 bool psram_image_store_adf(int slot, int track, const uint8_t *adf) {
     if (!have_psram || !slot_ok(slot) || track < 0 || track >= NUM_TRACKS) return false;
-    if (kind[slot] != SLOT_KIND_ADF_HD) return false;
-    memcpy(track_ptr(slot, track), adf, MFM_HD_TRACK_DATA_BYTES);
-    bits[slot][track] = MFM_HD_TRACK_DATA_BYTES * 8u;
+    const uint32_t n = kind[slot] == SLOT_KIND_ADF_HD ? MFM_HD_TRACK_DATA_BYTES
+                     : kind[slot] == SLOT_KIND_ADF_DD ? NET_TRACK_BYTES : 0u;
+    if (n == 0) return false;
+    memcpy(track_ptr(slot, track), adf, n);
+    bits[slot][track] = n * 8u;
     wfmf_barrier();     // payload must be visible to core1 before the flag that tells it to read it
     state[slot][track] = TRK_DIRTY;
     return true;
@@ -293,11 +324,22 @@ const uint8_t *psram_image_track_data(int slot, int track) {
 // this two-slot design exists to close, even though the store itself would
 // still be perfectly atomic.
 void psram_publish_slot(int slot) {
+    // SLOT_NET is DF1's alone (Phase 3, ruling 6): DF0 publishing it would put
+    // the driver disk's sector bytes in DF0 and share a slot with DF1. Refused,
+    // nothing published, g_gen untouched. No caller passes it: device_client.c
+    // publishes only psram_inactive_slot() (0 or 1), a preload record that the
+    // swap check requires to be that slot, or SLOT_NONE.
+    if (slot != SLOT_NONE && !slot_ab(slot)) return;
     // DF1 invariants (spec 2026-10-08 s4): never the same slot as DF0, and no
     // disk at all while DF0 is empty. A no-op (g_gen untouched) if DF1 is empty.
+    // Both are Next disk's rules, for an A/B slot. SLOT_NET is exempt from both
+    // (Phase 3, ruling 6; pre-flight B1): DF0 can never publish it (refused
+    // above), and DF1 holds the driver disk whatever DF0 holds -- so neither a
+    // DF0 mount, a swap, nor an eject (dc_handle_poll_body's desired: null)
+    // takes it out of DF1.
     {
         const int d1 = slot_of_word(df1_word);
-        if (d1 != SLOT_NONE && (slot == SLOT_NONE || slot == d1)) {
+        if (d1 != SLOT_NONE && d1 != SLOT_NET && (slot == SLOT_NONE || slot == d1)) {
             g_gen++;
             df1_word = pack_word(g_gen, SLOT_NONE);
         }
@@ -345,7 +387,11 @@ void psram_publish_slot(int slot) {
 
 bool psram_publish_df1(int slot) {
     const int a = slot_of_word(active_word);
-    if (slot != SLOT_NONE && (a == SLOT_NONE || slot == a || !slot_ok(slot))) return false;
+    if (slot == SLOT_NET) {
+        if (!slot_ok(SLOT_NET)) return false;            // no storage: never publish it
+    } else if (slot != SLOT_NONE && (a == SLOT_NONE || slot == a || !slot_ab(slot))) {
+        return false;                                    // Next disk's rule, unchanged
+    }
     wfmf_barrier();
     g_gen++;
     df1_word = pack_word(g_gen, slot);

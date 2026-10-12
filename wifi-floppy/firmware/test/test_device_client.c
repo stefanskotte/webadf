@@ -635,6 +635,22 @@ static void push_image_response(void) {
     fake_push_response_bytes(full, hn + body_len);
 }
 
+// Phase 3: the server's DD WFAD for the PaulaNET driver disk -- 16-byte header
+// ('WFAD', 1, 160, 11) and 160 x 5,632 sector bytes, 901,136 B with the header.
+// Too big for the fake's copying queue, so it is pushed by reference
+// (fake_push_response_ref, pre-flight B4): the buffer is static and outlives
+// the exchange.
+static void push_dd_wfad_image_response(void) {
+    enum { DD_TB = 11 * 512, DD_BODY = 16 + 160 * DD_TB };
+    static uint8_t full[128 + DD_BODY];
+    int hn = snprintf((char *)full, 128, "HTTP/1.1 200 OK\r\nContent-Length: %d\r\n\r\n", DD_BODY);
+    if (hn < 0 || hn >= 128) abort();
+    uint8_t *b = full + hn;
+    put_u32_le(b, 0x44414657u); put_u32_le(b + 4, 1); put_u32_le(b + 8, 160); put_u32_le(b + 12, 11);
+    for (int i = 0; i < 160 * DD_TB; i++) b[16 + i] = (uint8_t)(i * 7);
+    fake_push_response_ref(full, hn + DD_BODY);
+}
+
 // A short, definitely-not-WFMF body with a Content-Length that matches it
 // exactly -- the body arrives whole (r.body_complete == true), but
 // image_parse_end() must still refuse it. Distinguishes "the bytes arrived"
@@ -2846,6 +2862,57 @@ static void status_names_df1_only_when_capable(void) {
     CHECK(strstr(fake_last_request(), ",\"df1Sha256\":null") != NULL, "off: both values, null");
 }
 
+// Phase 3 (ruling 6): in Network mode the server's next (the driver disk) is preloaded into SLOT_NET with DF0
+// empty, DF1 holds it, and DF0's own fetches never touch it.
+static void network_mode_holds_the_driver_disk_whatever_df0_does(void) {
+    boot(); init_shas();
+    dc_set_df1(&c, DF1_MODE_NET, true);
+    dc_set_df1_quiesce(&c, quiesce_true, NULL);
+    dc_set_preload_gate(&c, gate_yes, NULL);
+    CHECK_EQ_INT(psram_active_slot(), SLOT_NONE);              // DF0 empty: a hard-drive boot
+    set_next_sha(&c, SHA_B);                                    // the poll's next: the driver disk
+    push_dd_wfad_image_response();                              // the server's DD WFAD
+    CHECK(dc_preload_step(&c), "fetched with DF0 empty");
+    char want[128];
+    snprintf(want, sizeof want, "GET /api/device/image/net/%s ", SHA_B);
+    CHECK(strstr(fake_last_request(), want) != NULL, "from the driver disk's own route (pre-flight I3)");
+    CHECK_EQ_INT(c.preload.slot, SLOT_NET);
+    CHECK_EQ_INT(psram_df1_slot(), SLOT_NET);
+    // A DF0 mount and then a different disk: both fetched into A/B, DF1 and the record untouched throughout
+    // (pre-flight B2: a DF0 fetch drops the record only for the slot it writes).
+    int before = fake_request_count();
+    push_poll_next(++df1_poll_version, SHA_A, SHA_B, false);
+    push_image_response();
+    CHECK_EQ_INT(dc_step(&c), DC_IDLE_POLL);
+    CHECK(strcmp(c.mounted_sha256, SHA_A) == 0, "A mounted in DF0");
+    CHECK_EQ_INT(psram_df1_slot(), SLOT_NET);
+    CHECK_EQ_INT(c.preload.slot, SLOT_NET);
+    CHECK(psram_active_slot() == 0 || psram_active_slot() == 1, "DF0 on A/B");
+    push_poll_next(++df1_poll_version, SHA_C, SHA_B, false);
+    push_image_response();
+    CHECK_EQ_INT(dc_step(&c), DC_IDLE_POLL);
+    CHECK(strcmp(c.mounted_sha256, SHA_C) == 0, "C mounted in DF0");
+    CHECK_EQ_INT(psram_df1_slot(), SLOT_NET);
+    CHECK_EQ_INT(c.preload.slot, SLOT_NET);
+    CHECK(!dc_preload_step(&c), "the driver disk is already there: no refetch");
+    CHECK_EQ_INT(fake_request_count(), before + 4);             // two polls, two DF0 images, nothing else
+    // An eject of DF0 keeps next (the server sends it with desired:null in Network mode) and DF1 (pre-flight B1).
+    char body[256];
+    snprintf(body, sizeof body,
+             "{\"version\":999,\"desired\":null,\"next\":{\"diskId\":\"paulanet\",\"sha256\":\"%s\",\"diskNo\":1}}",
+             SHA_B);
+    push_ok_json(body);
+    dc_step(&c);
+    CHECK_EQ_INT(psram_active_slot(), SLOT_NONE);
+    CHECK(strcmp(c.preload.next_sha256, SHA_B) == 0, "next kept in Network mode");
+    CHECK_EQ_INT(psram_df1_slot(), SLOT_NET);
+    // Back to Next disk: DF1 leaves SLOT_NET (Next disk's rule needs the idle slot).
+    dc_set_df1(&c, DF1_MODE_NEXT, true);
+    dc_df1_reconcile(&c);
+    CHECK(psram_df1_slot() != SLOT_NET, "Next disk never serves SLOT_NET");
+    dc_set_df1(&c, DF1_MODE_OFF, true);
+}
+
 int main(void) {
     // Only test_successful_image_fetch_publishes_and_reflects_write_protected
     // needs real PSRAM backing (everything else in this file either never
@@ -2855,6 +2922,7 @@ int main(void) {
     size_t psram_len = (size_t)TRACK_MAX_BYTES * NUM_TRACKS * SLOT_COUNT;
     void *psram_mem = malloc(psram_len);
     psram_image_set_backing(psram_mem, psram_len);
+    psram_image_init();     // pre-flight I1: SLOT_NET's storage is set up here
 
     RUN(test_cold_boot_polls_since_zero);
     RUN(test_request_survives_single_byte_writes);
@@ -2987,6 +3055,7 @@ int main(void) {
     RUN(a_regular_fetch_waits_for_df1_to_let_go);
     RUN(df1_returns_after_a_failed_preload_once_one_verifies);
     RUN(status_names_df1_only_when_capable);
+    RUN(network_mode_holds_the_driver_disk_whatever_df0_does);
     RUN(test_display_body_parses);
     RUN(test_rejected_layout_still_acks);
     RUN(test_poll_url_carries_display_ack);
