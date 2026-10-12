@@ -47,7 +47,8 @@ docker run --rm -v "$root":/work -w /work "$IMG" sh -euc '
      -Dpnet_build_to_amiga=pnet_build_to_amiga_allc
      -Dpnet_parse_hdr_from_amiga=pnet_parse_hdr_from_amiga_allc
      -Dpnet_parse_hdr_to_amiga=pnet_parse_hdr_to_amiga_allc
-     -Dpnet_parse_frames=pnet_parse_frames_allc"
+     -Dpnet_parse_frames=pnet_parse_frames_allc
+     -Dpnet_frame_iter_init=pnet_frame_iter_init_allc -Dpnet_frame_iter_next=pnet_frame_iter_next_allc"
   m68k-amigaos-gcc $F $C -c -o $o/pnet_mfm_c.o $s/pnet_mfm.c
   m68k-amigaos-gcc $F -Dpnet_find_sync=pnet_find_sync_c -Dpnet_shift_left=pnet_shift_left_c \
     -c -o $o/pnet_frame.o $s/pnet_frame.c

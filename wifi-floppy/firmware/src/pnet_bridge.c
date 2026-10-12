@@ -29,7 +29,7 @@
 #define PNET_TX_TICK_MS  2u
 #define PNET_TX_PER_TICK 8u
 #define PNET_ETH_HDR     14u   // the shortest frame the Amiga's ring may carry
-_Static_assert(PNET_TX_SLOTS >= PNET_MAX_FRAMES, "one whole batch always fits an empty TX ring");
+_Static_assert(PNET_TX_SLOTS >= PNET_MAX_FRAMES, "a batch of PNET_MAX_FRAMES frames fits an empty TX ring; any frames that do not fit the ring are dropped and counted (pnet_link_take)");
 
 static __uninitialized_psram("pnetrx") uint8_t s_rx_mem[PNET_RX_SLOTS * PNET_RING_SLOT];
 static __uninitialized_psram("pnettx") uint8_t s_tx_mem[PNET_TX_SLOTS * PNET_RING_SLOT];

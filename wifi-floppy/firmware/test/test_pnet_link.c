@@ -4,6 +4,8 @@
  */
 #include "harness.h"
 #include "../src/pnet_link.h"
+#include "../src/pnet_mfm.h"
+#include <stdbool.h>
 #include <stdint.h>
 #include <string.h>
 
@@ -16,6 +18,31 @@ static pnet_hdr_t hdr(uint8_t amiga, uint8_t pico) {
     return h;
 }
 
+static uint8_t g_mem[256 * PNET_RING_SLOT];   /* the TX ring's slots */
+static uint8_t g_pay[32768];                  /* one batch's payload */
+
+/* A to-board payload of n frames of `len` bytes, packed as PaulaNET's driver packs them with RLE on:
+ * the PacketsHeader, then per frame its CompressionHeader (bit 15 set: RLE) and the RLE bytes. Built
+ * by hand, because pnet_build_to_board stops at 20 frames and his driver does not. Frame i's bytes
+ * are i + 7k (no runs), or all zeros, which RLE packs about 60 to 1. */
+static size_t payload_of(uint8_t *out, unsigned n, uint16_t len, bool zeros) {
+    static uint8_t f[PNET_ETH_MTU];
+    const uint8_t ph[2] = { (uint8_t)n, 0 };
+    uint16_t last = 0;
+    size_t pos = pnet_mfm_encode(ph, 2, out, &last);
+    for (unsigned i = 0; i < n; i++) {
+        for (unsigned k = 0; k < len; k++) f[k] = zeros ? 0u : (uint8_t)(i + 7u * k);
+        const size_t r = pnet_rle_encode(f, len, out + pos + 8);
+        const uint8_t ch[4] = { (uint8_t)(0x80u | (r >> 8)), (uint8_t)r, (uint8_t)(len >> 8), (uint8_t)len };
+        last = 0;
+        pnet_mfm_encode(ch, 4, out + pos, &last);
+        pos += 8u + r;
+    }
+    return pos;
+}
+
+static void tx_ring(pnet_ring_t *r, uint32_t slots) { CHECK(pnet_ring_init(r, g_mem, slots), "ring"); }
+
 static void counters_start_as_paulanets(void) {
     pnet_link_t s;
     pnet_link_init(&s);
@@ -25,30 +52,91 @@ static void counters_start_as_paulanets(void) {
 }
 
 static void a_new_batch_is_taken_once(void) {
-    pnet_link_t s;
+    pnet_link_t s; pnet_ring_t tx;
     pnet_link_init(&s);
+    tx_ring(&tx, 32);
     pnet_hdr_t h = hdr(0x00, 0x7F);
+    h.compressed_size = (uint16_t)payload_of(g_pay, 2, 60, false);
     CHECK(pnet_link_is_new(&s, &h), "new");
-    CHECK_EQ_INT(pnet_link_take(&s, &h, 2, 32), PNET_TAKE_NEW);
+    CHECK_EQ_INT(pnet_link_take(&s, &h, g_pay, &tx), PNET_TAKE_NEW);
     CHECK_EQ_INT(s.last_amiga, 0x00);
+    CHECK_EQ_INT(pnet_ring_count(&tx), 2);
     CHECK(!pnet_link_is_new(&s, &h), "now a resend");
-    CHECK_EQ_INT(pnet_link_take(&s, &h, 2, 32), PNET_TAKE_DUP);
+    CHECK_EQ_INT(pnet_link_take(&s, &h, g_pay, &tx), PNET_TAKE_DUP);
+    CHECK_EQ_INT(pnet_ring_count(&tx), 2);                   /* a resend queues nothing */
     CHECK_EQ_INT(s.fresh, 1);
     CHECK_EQ_INT(s.dup, 1);
-    h = hdr(0x01, 0x7F);
-    CHECK_EQ_INT(pnet_link_take(&s, &h, 0, 0), PNET_TAKE_NEW);   /* an empty batch fits anywhere */
+    CHECK_EQ_INT(s.queued, 2);
+    h = hdr(0x01, 0x7F);                                     /* an empty batch: compressed_size 0 */
+    CHECK_EQ_INT(pnet_link_take(&s, &h, g_pay, &tx), PNET_TAKE_NEW);
+    CHECK_EQ_INT(s.last_amiga, 0x01);
 }
 
-static void a_batch_that_does_not_fit_the_tx_ring_is_not_taken(void) {
-    pnet_link_t s;
+static void batches_of_21_to_255_frames_are_taken_whole(void) {
+    static const unsigned sizes[3] = { 21, 100, 255 };
+    for (unsigned k = 0; k < 3; k++) {
+        pnet_link_t s; pnet_ring_t tx;
+        pnet_link_init(&s);
+        tx_ring(&tx, 256);
+        const unsigned n = sizes[k];
+        pnet_hdr_t h = hdr(0x10, 0x7F);
+        h.compressed_size = (uint16_t)payload_of(g_pay, n, 60, false);
+        CHECK_EQ_INT(pnet_link_take(&s, &h, g_pay, &tx), PNET_TAKE_NEW);
+        CHECK_EQ_INT(pnet_ring_count(&tx), n);
+        CHECK_EQ_INT(s.over + s.malformed, 0);
+        uint16_t len = 0;
+        const uint8_t *f = pnet_ring_peek(&tx, n - 1u, &len);
+        CHECK(f && len == 60 && f[0] == (uint8_t)(n - 1u) && f[59] == (uint8_t)(n - 1u + 7u * 59u),
+              "the last frame, intact");
+    }
+}
+
+static void a_ring_overflow_is_taken_and_counted(void) {
+    pnet_link_t s; pnet_ring_t tx;
     pnet_link_init(&s);
+    tx_ring(&tx, 32);
+    static const uint8_t earlier[60];
+    for (unsigned i = 0; i < 3; i++) CHECK(pnet_ring_push(&tx, earlier, 60), "frames already waiting");
     pnet_hdr_t h = hdr(0x05, 0x7F);
-    CHECK_EQ_INT(pnet_link_take(&s, &h, 3, 2), PNET_TAKE_FULL);
-    CHECK_EQ_INT(s.last_amiga, 0xFF);                       /* unacknowledged: the Amiga resends */
-    CHECK_EQ_INT(s.txfull, 1);
-    CHECK(pnet_link_is_new(&s, &h), "still new when it comes again");
-    CHECK_EQ_INT(pnet_link_take(&s, &h, 3, 3), PNET_TAKE_NEW);
-    CHECK_EQ_INT(s.last_amiga, 0x05);
+    h.compressed_size = (uint16_t)payload_of(g_pay, 40, 60, false);
+    CHECK_EQ_INT(pnet_link_take(&s, &h, g_pay, &tx), PNET_TAKE_NEW);
+    CHECK_EQ_INT(s.last_amiga, 0x05);                        /* taken: acknowledged, never resent */
+    CHECK_EQ_INT(pnet_ring_count(&tx), 32);                  /* full, and nothing written past it */
+    CHECK_EQ_INT(s.queued, 29);
+    CHECK_EQ_INT(s.over, 11);
+    CHECK_EQ_INT(tx.drops, 0);                               /* the take never claims a slot it lacks */
+    uint16_t len = 0;
+    const uint8_t *f = pnet_ring_peek(&tx, 31, &len);
+    CHECK(f && f[0] == 28, "the batch's 29th frame is the last one in");
+}
+
+static void a_batch_that_decodes_past_32_kb_is_taken(void) {
+    pnet_link_t s; pnet_ring_t tx;
+    pnet_link_init(&s);
+    tx_ring(&tx, 128);
+    pnet_hdr_t h = hdr(0x06, 0x7F);
+    const size_t n = payload_of(g_pay, 100, 1514, true);
+    CHECK(n <= 8192u, "inside the driver's 8,192-byte budget");
+    h.compressed_size = (uint16_t)n;
+    CHECK_EQ_INT(pnet_link_take(&s, &h, g_pay, &tx), PNET_TAKE_NEW);
+    CHECK_EQ_INT(s.queued, 100);                             /* 151,400 bytes: Phase 1's 32 KB scratch refused it */
+    CHECK_EQ_INT(s.over, 0);
+}
+
+static void a_malformed_frame_ends_the_batch_but_not_the_link(void) {
+    pnet_link_t s; pnet_ring_t tx;
+    pnet_link_init(&s);
+    tx_ring(&tx, 32);
+    pnet_hdr_t h = hdr(0x07, 0x7F);
+    h.compressed_size = (uint16_t)payload_of(g_pay, 10, 60, false);
+    CHECK_EQ_INT(h.compressed_size, 4 + 10 * 70);            /* each frame: 8 + 62 (61 bytes of RLE, padded) */
+    const uint8_t bad[4] = { 0x80, 62, 0, 0 };               /* frame 6 (index 5): original size 0 */
+    uint16_t last = 0;
+    pnet_mfm_encode(bad, 4, g_pay + 4 + 5u * 70u, &last);
+    CHECK_EQ_INT(pnet_link_take(&s, &h, g_pay, &tx), PNET_TAKE_NEW);
+    CHECK_EQ_INT(s.last_amiga, 0x07);
+    CHECK_EQ_INT(s.queued, 5);
+    CHECK_EQ_INT(s.malformed, 5);                            /* frame 6 and the four after it */
 }
 
 static void an_ack_frees_the_batch_out(void) {
@@ -72,7 +160,9 @@ static void an_unacknowledged_batch_is_rebuilt_unchanged(void) {
     /* NetLoop restarted (or Ctrl-A-A): its first header echoes some other counter. */
     pnet_hdr_t h = hdr(0x42, 0x13);
     CHECK_EQ_INT(pnet_link_ack(&s, &h), 0);
-    CHECK_EQ_INT(pnet_link_take(&s, &h, 0, 32), PNET_TAKE_NEW);
+    pnet_ring_t tx;
+    tx_ring(&tx, 32);
+    CHECK_EQ_INT(pnet_link_take(&s, &h, g_pay, &tx), PNET_TAKE_NEW);   /* h: an empty batch */
     pnet_link_start(&s, 5);                                 /* a caller trying to start over it */
     CHECK(s.backup && s.nframes == 2 && s.pico == 0x80, "the same two frames, the same counter");
 }
@@ -151,7 +241,10 @@ static void fit_caps_the_payload_at_16128_bytes(void) {
 int main(void) {
     RUN(counters_start_as_paulanets);
     RUN(a_new_batch_is_taken_once);
-    RUN(a_batch_that_does_not_fit_the_tx_ring_is_not_taken);
+    RUN(batches_of_21_to_255_frames_are_taken_whole);
+    RUN(a_ring_overflow_is_taken_and_counted);
+    RUN(a_batch_that_decodes_past_32_kb_is_taken);
+    RUN(a_malformed_frame_ends_the_batch_but_not_the_link);
     RUN(an_ack_frees_the_batch_out);
     RUN(an_unacknowledged_batch_is_rebuilt_unchanged);
     RUN(empty_batches_do_not_move_the_counter);

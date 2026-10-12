@@ -155,39 +155,60 @@ pnet_err_t pnet_parse_hdr_to_amiga(const uint8_t *b, size_t len, pnet_hdr_t *h, 
     return PNET_OK;
 }
 
-pnet_err_t pnet_parse_frames(const uint8_t *p, size_t len, pnet_dir_t dir, uint8_t *out,
-                             size_t cap, uint16_t *lens, unsigned max, unsigned *n) {
-    *n = 0;
+pnet_err_t pnet_frame_iter_init(pnet_frame_iter_t *it, const uint8_t *p, size_t len, pnet_dir_t dir) {
+    it->p = p;
+    it->len = len;
+    it->pos = 4;
+    it->dir = dir;
+    it->count = 0;
+    it->i = 0;
     if (len == 0) return PNET_OK;
     if (len < 4) return PNET_E_FRAMES;
     uint8_t ph[2];
     pnet_mfm_decode(p, 2, ph);
-    const unsigned count = ph[0];
-    if (count > max) return PNET_E_FRAMES;
-    size_t pos = 4, used = 0;
-    for (unsigned i = 0; i < count; i++) {
-        if (8u > len - pos) return PNET_E_FRAMES;
-        uint8_t ch[4];
-        pnet_mfm_decode(p + pos, 4, ch);
-        pos += 8u;
-        const uint16_t field = get16(ch), os = get16(ch + 2);
-        const size_t size = field & 0x7FFFu;
-        const bool rle = dir == PNET_TO_BOARD ? (field & 0x8000u) != 0 : (field & 0x8000u) == 0;
-        if (size > len - pos) return PNET_E_FRAMES;
-        if (os == 0 || os > PNET_ETH_MTU) return PNET_E_FRAME_SIZE;
-        if (os > cap - used) return PNET_E_FULL;
-        if (rle) {
-            if (pnet_rle_decode(p + pos, size, out + used, os) != (long)os) return PNET_E_RLE;
-        } else {
-            if (size != 2u * os) return PNET_E_FRAME_SIZE;
-            pnet_mfm_decode(p + pos, os, out + used);
-        }
-        lens[i] = os;
-        used += os;
-        pos += size + (size & 1u);
-        if (pos > len) pos = len;
+    it->count = ph[0];
+    return PNET_OK;
+}
+
+pnet_err_t pnet_frame_iter_next(pnet_frame_iter_t *it, uint8_t *out, size_t cap, uint16_t *len) {
+    if (it->i >= it->count) return PNET_E_FRAMES;
+    if (8u > it->len - it->pos) return PNET_E_FRAMES;
+    uint8_t ch[4];
+    pnet_mfm_decode(it->p + it->pos, 4, ch);
+    const size_t at = it->pos + 8u;
+    const uint16_t field = get16(ch), os = get16(ch + 2);
+    const size_t size = field & 0x7FFFu;
+    const bool rle = it->dir == PNET_TO_BOARD ? (field & 0x8000u) != 0 : (field & 0x8000u) == 0;
+    if (size > it->len - at) return PNET_E_FRAMES;
+    if (os == 0 || os > PNET_ETH_MTU) return PNET_E_FRAME_SIZE;
+    if (os > cap) return PNET_E_FULL;
+    if (rle) {
+        if (pnet_rle_decode(it->p + at, size, out, os) != (long)os) return PNET_E_RLE;
+    } else {
+        if (size != 2u * os) return PNET_E_FRAME_SIZE;
+        pnet_mfm_decode(it->p + at, os, out);
     }
-    *n = count;
+    *len = os;
+    const size_t next = at + size + (size & 1u);
+    it->pos = next > it->len ? it->len : next;
+    it->i++;
+    return PNET_OK;
+}
+
+pnet_err_t pnet_parse_frames(const uint8_t *p, size_t len, pnet_dir_t dir, uint8_t *out,
+                             size_t cap, uint16_t *lens, unsigned max, unsigned *n) {
+    *n = 0;
+    pnet_frame_iter_t it;
+    pnet_err_t e = pnet_frame_iter_init(&it, p, len, dir);
+    if (e != PNET_OK) return e;
+    if (it.count > max) return PNET_E_FRAMES;
+    size_t used = 0;
+    for (unsigned k = 0; k < it.count; k++) {
+        e = pnet_frame_iter_next(&it, out + used, cap - used, &lens[k]);
+        if (e != PNET_OK) return e;
+        used += lens[k];
+    }
+    *n = it.count;
     return PNET_OK;
 }
 

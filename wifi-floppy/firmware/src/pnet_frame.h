@@ -94,6 +94,23 @@ pnet_err_t pnet_parse_hdr_from_amiga(const uint8_t *b, size_t len, pnet_hdr_t *h
  * also checks that data_size payload bytes follow the 24 header bytes and their checksum. */
 pnet_err_t pnet_parse_hdr_to_amiga(const uint8_t *b, size_t len, pnet_hdr_t *h, bool with_payload);
 
+/* One frame at a time (PaulaNET Phase 2): the board decodes the Amiga's frames straight into its TX
+ * ring's slots, so no batch is ever refused for its decoded size -- an RLE batch inside the driver's
+ * 8,192-byte budget can decode to over 140 KB (plan 2026-10-11-paulanet-phase2-rob-driver,
+ * correction 1). pnet_parse_frames is built on it. */
+typedef struct {
+    const uint8_t *p;
+    size_t     len, pos;
+    pnet_dir_t dir;
+    unsigned   count;   /* the batch's frame count (its PacketsHeader), 0..255 */
+    unsigned   i;       /* frames read so far */
+} pnet_frame_iter_t;
+/* PNET_OK (count 0 for an empty payload), or PNET_E_FRAMES for a payload of 1..3 bytes. */
+pnet_err_t pnet_frame_iter_init(pnet_frame_iter_t *it, const uint8_t *p, size_t len, pnet_dir_t dir);
+/* Frame it->i into out[0..cap), its length into *len, then on to the next. PNET_E_FRAMES when none
+ * is left. Any error leaves it->i where it was: that frame and the rest are unreadable. */
+pnet_err_t pnet_frame_iter_next(pnet_frame_iter_t *it, uint8_t *out, size_t cap, uint16_t *len);
+
 /* Decodes a payload's frames, back to back, into out[0..cap). lens[i] is frame i's length; *n
  * the count. PNET_E_FULL when they would not fit `cap`. */
 pnet_err_t pnet_parse_frames(const uint8_t *p, size_t len, pnet_dir_t dir, uint8_t *out,

@@ -3084,30 +3084,13 @@ static bool pnet_take_capture(void) {
     pnet_err_t e = pnet_parse_hdr_from_amiga(cap.bytes, cap.nbytes, &h);
     if (e != PNET_OK) { pnet_reject(e, &cap); return false; }
 #if WF_PNET_L2
-    // Phase 1: the acknowledgement first (it may free our batch out), then the Amiga's frames into
-    // the TX ring -- all of them, or the batch is not taken and the Amiga resends it (ruling 10).
+    // Phase 2 (spec 2026-10-11 §3.2): the acknowledgement first (it may free our batch out), then the
+    // Amiga's batch -- ALWAYS taken once its header checks out. Its frames are decoded straight into
+    // the TX ring's slots while the ring has room; the rest, and a malformed frame with those after it,
+    // are dropped and counted (pnet_link.h). No scratch: an RLE batch can decode past any fixed size.
     const unsigned acked = pnet_link_ack(&g_link, &h);
     if (acked) pnet_ring_drop(&g_pnet_rx, acked);
-    if (pnet_link_is_new(&g_link, &h)) {
-        uint16_t lens[PNET_MAX_FRAMES];
-        unsigned n = 0;
-        uint8_t *const scratch = &g_pnet_echo[0][0];          // both halves: 32 KB holds 20 x 1518
-        e = pnet_parse_frames(cap.bytes + PNET_HDR_BYTES, h.compressed_size, PNET_TO_BOARD,
-                              scratch, sizeof g_pnet_echo, lens, PNET_MAX_FRAMES, &n);
-        if (e != PNET_OK) {
-            pnet_reject(e, &cap);
-            return true;                                      // the ack above may have changed our batch
-        }
-        if (pnet_link_take(&g_link, &h, n, pnet_ring_space(&g_pnet_tx)) == PNET_TAKE_NEW) {
-            const uint8_t *p = scratch;
-            for (unsigned i = 0; i < n; i++) {
-                pnet_ring_push(&g_pnet_tx, p, lens[i]);       // room checked by the take
-                p += lens[i];
-            }
-        }
-    } else {
-        pnet_link_take(&g_link, &h, 0, 0);                    // counts the resend
-    }
+    pnet_link_take(&g_link, &h, cap.bytes + PNET_HDR_BYTES, &g_pnet_tx);
 #else
     if (pnet_loop_is_new(&g_pnet, &h)) {
         uint16_t lens[PNET_MAX_FRAMES];
@@ -3381,7 +3364,8 @@ static void pnet_l2_log(void) {
     uint32_t no = 0;
     for (unsigned i = 1; i < PNET_TX_N; i++) no += st.tx_no[i];
     const uint32_t sum = st.in_amiga + st.in_both + st.rx_drops + st.tx_sent + st.tx_err + no +
-                         g_link.txfull + g_link.acked + st.clash + st.hooks;
+                         g_link.fresh + g_link.dup + g_link.queued + g_link.over + g_link.malformed +
+                         g_link.acked + st.clash + st.hooks;
     if (sum == last_sum) return;
     last_sum = sum;
     char a[16], b[16];
@@ -3390,10 +3374,19 @@ static void pnet_l2_log(void) {
     wf_logf(WF_INFO, "pnet: l2 in a %lu b %lu drop %lu q %lu sent %lu err %lu",
             (unsigned long)st.in_amiga, (unsigned long)st.in_both, (unsigned long)st.rx_drops,
             (unsigned long)pnet_ring_count(&g_pnet_rx), (unsigned long)st.tx_sent, (unsigned long)st.tx_err);
-    wf_logf(no ? WF_WARN : WF_INFO, "pnet: l2 tx no len %lu mac %lu type %lu clash %lu full %lu ack %lu",
+    wf_logf(no ? WF_WARN : WF_INFO, "pnet: l2 tx no len %lu mac %lu type %lu clash %lu ack %lu",
             (unsigned long)st.tx_no[PNET_TX_LEN], (unsigned long)st.tx_no[PNET_TX_MAC],
             (unsigned long)st.tx_no[PNET_TX_TYPE], (unsigned long)st.tx_no[PNET_TX_CLASH],
-            (unsigned long)g_link.txfull, (unsigned long)g_link.acked);
+            (unsigned long)g_link.acked);
+    // Phase 2: the Amiga's batches -- taken, resent; their frames queued, dropped on a full ring, and
+    // dropped as malformed (spec §3.2: every drop counted). Saturated so the line fits WF_LOG_MSG (88).
+#define PNET_SAT(v, m) ((unsigned long)((v) > (m) ? (m) : (v)))
+    wf_logf(g_link.over || g_link.malformed ? WF_WARN : WF_INFO,
+            "pnet: l2 from amiga new %lu dup %lu frames %lu over %lu bad %lu",
+            PNET_SAT(g_link.fresh, 99999999u), PNET_SAT(g_link.dup, 99999999u),
+            PNET_SAT(g_link.queued, 99999999u), PNET_SAT(g_link.over, 99999999u),
+            PNET_SAT(g_link.malformed, 99999999u));
+#undef PNET_SAT
     const bool same = st.amiga_ip != 0u && st.amiga_ip == st.board_ip;
     wf_logf(st.clash || same ? WF_WARN : WF_INFO, "pnet: l2 amiga %s board %s %s clash %lu heap %lu",
             a, b, same ? "SAME" : "distinct", (unsigned long)st.clash, (unsigned long)g_pnet_heap_low);
