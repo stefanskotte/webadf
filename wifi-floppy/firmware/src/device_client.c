@@ -1644,17 +1644,36 @@ bool dc_report_status(device_client_t *c, int psram_free, int rssi, const char *
                  df1_mode_wire((df1_mode_t)c->_df1_mode), (unsigned long)c->drive_ack);
     else drive_tail[0] = '\0';
 
+    // Phase 3 (plan 2026-10-12 ruling 13): Network mode's readings, only in Network mode. "driver" and "amigaIp"
+    // only when known -- an absent key is "not yet", never a zero. 95 bytes at most (header note).
+    static char net_tail[128];
+    const dc_net_t net_sent = c->_net;
+    if (c->_net.on) {
+        char drv[32] = "", ip[40] = "";
+        if (c->_net.driver_seen)
+            snprintf(drv, sizeof drv, "\"driver\":%lu,",
+                     (unsigned long)(c->_net.driver_s > 999999u ? 999999u : c->_net.driver_s));
+        if (c->_net.amiga_ip) {
+            const uint32_t a = c->_net.amiga_ip;
+            snprintf(ip, sizeof ip, "\"amigaIp\":\"%u.%u.%u.%u\",", (unsigned)(a >> 24), (unsigned)(a >> 16 & 255u),
+                     (unsigned)(a >> 8 & 255u), (unsigned)(a & 255u));
+        }
+        snprintf(net_tail, sizeof net_tail, ",\"net\":{%s%s\"framesIn\":%lu,\"framesOut\":%lu}", drv, ip,
+                 (unsigned long)(c->_net.frames_in > 999999999u ? 999999999u : c->_net.frames_in),
+                 (unsigned long)(c->_net.frames_out > 999999999u ? 999999999u : c->_net.frames_out));
+    } else net_tail[0] = '\0';
+
     static char body[DC_STATUS_BODY_BYTES];
     int body_len = snprintf(body, sizeof body,
         "{\"mountedSha256\":%s,\"mountedDiskId\":%s,\"version\":%lu,"
         "\"error\":%s,\"psramFree\":%d,\"firmwareVersion\":%s,\"rssi\":%d,"
-        "\"trackMaxBytes\":%u%s%s%s%s%s%s%s%s}",
+        "\"trackMaxBytes\":%u%s%s%s%s%s%s%s%s%s}",
         sha_field, disk_field, (unsigned long)c->mounted_version,
         err_field, psram_free, ver_field, rssi, (unsigned)TRACK_MAX_BYTES, fw_tail, nfc_tail,
         display_tail, preload_tail,
         // playsHd: only from a build with the drive-ID responder (HD spec §5.5).
         c->_plays_hd ? ",\"playsHd\":true" : "",
-        sel1_tail, df1_tail, drive_tail);
+        sel1_tail, df1_tail, drive_tail, net_tail);
     if (body_len < 0 || body_len >= (int)sizeof body) return false; // should never happen; give up quietly
 
     static char req[DC_STATUS_REQ_BYTES];
@@ -1681,6 +1700,12 @@ bool dc_report_status(device_client_t *c, int psram_free, int rssi, const char *
         c->_drive_sent_valid = true;
         c->_drive_sent_mode = drive_mode_sent;
         c->_drive_sent_ack = drive_ack_sent;
+    }
+    if (accepted) {
+        c->_net_sent_valid = true;
+        c->_net_sent_on = net_sent.on;
+        c->_net_sent_seen = net_sent.driver_seen;
+        c->_net_sent_ip = net_sent.amiga_ip;
     }
     return accepted;
 }
@@ -2020,6 +2045,17 @@ bool dc_sel1_owed(const device_client_t *c) {
     return c->_sel1_known &&
            (!c->_sel1_sent_valid || c->_sel1_sent_wired != c->_sel1_wired ||
             c->_df1_sent_seen != c->_df1_seen);
+}
+
+void dc_set_net(device_client_t *c, const dc_net_t *n) {
+    if (n) c->_net = *n;
+    else memset(&c->_net, 0, sizeof c->_net);
+}
+
+bool dc_net_owed(const device_client_t *c) {
+    if (!c->_net_sent_valid) return c->_net.on;
+    return c->_net_sent_on != c->_net.on ||
+           (c->_net.on && (c->_net_sent_seen != c->_net.driver_seen || c->_net_sent_ip != c->_net.amiga_ip));
 }
 
 #define DC_TAP_PATH       "/api/device/tap"

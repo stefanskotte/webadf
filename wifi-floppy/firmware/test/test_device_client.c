@@ -488,6 +488,11 @@ static void test_status_body_fits_at_maximum(void) {
     dc_set_df1(&c, DF1_MODE_NEXT, true);
     c.drive_ack = 4294967295u;
 
+    // Phase 3: the longest `net` tail -- every key, each number at its saturation, the longest address.
+    dc_net_t worst_net = { .on = true, .driver_seen = true, .driver_s = 999999u, .amiga_ip = 0xFFFFFFFFu,
+                           .frames_in = 999999999u, .frames_out = 999999999u };
+    dc_set_net(&c, &worst_net);
+
     fake_push_response("HTTP/1.1 204 No Content\r\n\r\n");
     CHECK(dc_report_status(&c, 2147483647, -200, long_err, long_ver),
           "a maximal body must still be sent, not silently dropped");
@@ -507,6 +512,7 @@ static void test_status_body_fits_at_maximum(void) {
     CHECK(strstr(r, "\"df1Seen\":false") != NULL, "the SEL1 readings survive a maximal body");
     CHECK(strstr(r, "\"displayVersion\":4294967295") != NULL, "the display ack survives");
     CHECK(strstr(r, "\"secondDrive\":\"df1\",\"driveVersion\":4294967295") != NULL, "the drive ack survives");
+    CHECK(strstr(r, "\"framesOut\":999999999}") != NULL, "the net tail survives a maximal body");
     {
         // The whole reason, escaped, closing quote included: 47 x \" then ".
         static char want[16 + 2 * sizeof c.display_error + 2];
@@ -1875,6 +1881,65 @@ static void test_status_reports_both_sel1_readings_once_known(void) {
     CHECK(strstr(fake_last_request(), "\"sel1Wired\":true,\"df1Seen\":true") != NULL, "true values");
 }
 
+static void test_status_carries_net_only_in_network_mode(void) {
+    boot();
+    fake_push_response("HTTP/1.1 204 No Content\r\n\r\n");
+    dc_report_status(&c, 0, -50, NULL, "1.11.0");
+    CHECK(strstr(fake_last_request(), "\"net\"") == NULL, "never set: no key");
+    dc_net_t n = { .on = true, .driver_seen = true, .driver_s = 4, .amiga_ip = 0xAC100AE7u,
+                   .frames_in = 12, .frames_out = 30 };
+    dc_set_net(&c, &n);
+    fake_push_response("HTTP/1.1 204 No Content\r\n\r\n");
+    dc_report_status(&c, 0, -50, NULL, "1.11.0");
+    CHECK(strstr(fake_last_request(),
+          ",\"net\":{\"driver\":4,\"amigaIp\":\"172.16.10.231\",\"framesIn\":12,\"framesOut\":30}") != NULL, "all four");
+    dc_set_net(&c, NULL);
+    fake_push_response("HTTP/1.1 204 No Content\r\n\r\n");
+    dc_report_status(&c, 0, -50, NULL, "1.11.0");
+    CHECK(strstr(fake_last_request(), "\"net\"") == NULL, "left Network mode: no key");
+}
+
+static void test_net_leaves_out_what_is_not_known_and_saturates(void) {
+    boot();
+    dc_net_t n = { .on = true, .frames_in = 4000000000u, .frames_out = 0 };
+    dc_set_net(&c, &n);
+    fake_push_response("HTTP/1.1 204 No Content\r\n\r\n");
+    dc_report_status(&c, 0, -50, NULL, "1.11.0");
+    CHECK(strstr(fake_last_request(), ",\"net\":{\"framesIn\":999999999,\"framesOut\":0}") != NULL,
+          "no driver, no address: absent keys; frames saturate at 999,999,999");
+    n.driver_seen = true; n.driver_s = 5000000u;
+    dc_set_net(&c, &n);
+    fake_push_response("HTTP/1.1 204 No Content\r\n\r\n");
+    dc_report_status(&c, 0, -50, NULL, "1.11.0");
+    CHECK(strstr(fake_last_request(), "\"driver\":999999,") != NULL, "driver saturates at 999,999 s");
+}
+
+static void test_a_net_change_owes_a_report(void) {
+    boot();
+    CHECK(!dc_net_owed(&c), "never in Network mode: nothing owed");
+    dc_net_t n = { .on = true };
+    dc_set_net(&c, &n);
+    CHECK(dc_net_owed(&c), "Network mode began");
+    fake_push_response("HTTP/1.1 204 No Content\r\n\r\n");
+    CHECK(dc_report_status(&c, 0, -50, NULL, "1.11.0"), "sent");
+    CHECK(!dc_net_owed(&c), "accepted: nothing owed");
+    n.frames_in = 9; n.driver_s = 3;            // counters and ages alone owe nothing (the heartbeat carries them)
+    dc_set_net(&c, &n);
+    CHECK(!dc_net_owed(&c), "counters: not owed");
+    n.driver_seen = true;
+    dc_set_net(&c, &n);
+    CHECK(dc_net_owed(&c), "the driver was first heard");
+    fake_push_response("HTTP/1.1 204 No Content\r\n\r\n");
+    dc_report_status(&c, 0, -50, NULL, "1.11.0");
+    n.amiga_ip = 0x0A000002u;
+    dc_set_net(&c, &n);
+    CHECK(dc_net_owed(&c), "the Amiga's address changed");
+    fake_push_response("HTTP/1.1 204 No Content\r\n\r\n");
+    dc_report_status(&c, 0, -50, NULL, "1.11.0");
+    dc_set_net(&c, NULL);
+    CHECK(dc_net_owed(&c), "Network mode ended");
+}
+
 // --- Multi-disk "Next disk" (spec 2026-09-28 §4): next, preload, swap ------
 //
 // Real 64-hex digests throughout: dc_take_next refuses anything else, and a
@@ -3056,6 +3121,9 @@ int main(void) {
     RUN(test_status_body_fits_at_maximum);
     RUN(test_status_reports_plays_hd_only_when_set);
     RUN(test_status_reports_both_sel1_readings_once_known);
+    RUN(test_status_carries_net_only_in_network_mode);
+    RUN(test_net_leaves_out_what_is_not_known_and_saturates);
+    RUN(test_a_net_change_owes_a_report);
     RUN(test_sel1_change_owes_a_report_once);
     RUN(test_status_carries_the_firmware_fields);
     RUN(test_status_without_a_fw_report_omits_the_fields);

@@ -2278,6 +2278,24 @@ static void core1_main(void) {
             }
             // SEL1 telemetry rides every status report (cheap: three stores).
             dc_set_sel1(&c, g_sel1_wired, bus_df1_seen(g_df1_steps));
+#if WF_PNET_L2
+            // Phase 3: Network mode's readings ride the status report (plan 2026-10-12 ruling 13).
+            if (g_df1_mode == DF1_MODE_NET) {
+                static dc_net_t net;
+                static pnet_bridge_stats_t st;      // static: core1's stack is measured tight
+                const uint32_t seen = g_pnet_status_last_ms;
+                pnet_bridge_stats(&st);
+                net.on = true;
+                net.driver_seen = seen != 0;
+                net.driver_s = seen ? (clock_ms() - seen) / 1000u : 0;
+                net.amiga_ip = st.amiga_ip;
+                net.frames_in = g_pnet_frames_from;
+                net.frames_out = g_pnet_frames_to;
+                dc_set_net(&c, &net);
+            } else {
+                dc_set_net(&c, NULL);
+            }
+#endif
             g_up_holds = up_holds(&up);   // core0's DF1 store rule (R17)
 
             // Item 0 (fix round 1, Important): a status report is OWED
@@ -2742,7 +2760,7 @@ static void core1_main(void) {
             // A preload report owed from an earlier pass (see the preload
             // below) rides here too -- but never ahead of a waiting tap.
             if (!report_retry && s != DC_HALTED && (disk_changed || version_changed || fw_report_owed ||
-                                    dc_sel1_owed(&c) || dc_drive_report_owed(&c) || nfc_report_owed || display_report_owed ||
+                                    dc_sel1_owed(&c) || dc_drive_report_owed(&c) || dc_net_owed(&c) || nfc_report_owed || display_report_owed ||
                                     (preload_report_owed && !nfc_event_pending(NULL)) ||
                                     (now - last_status_ms) >= DC_STATUS_PERIOD_MS)) {
                 if (dc_report_status(&c, psram_free_estimate(), wifi_rssi(), NULL, WF_FIRMWARE_VERSION)) {
