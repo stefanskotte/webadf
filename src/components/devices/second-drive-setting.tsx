@@ -51,7 +51,7 @@ export function SecondDriveSetting({ device, next, now }: { device: DeviceListIt
         <select data-testid={`second-drive-${id}`} value={device.secondDrive}
                 disabled={!device.secondDriveCapable || busy || refreshing}
                 onChange={(e) => save(e.target.value as SecondDriveMode)}
-                className="min-w-0 max-w-full rounded border px-1 py-0.5" style={{ borderColor: 'var(--hairline)', color: 'var(--ink)' }}>
+                className="w-40 min-w-0 max-w-full rounded border px-1 py-0.5" style={{ borderColor: 'var(--hairline)', color: 'var(--ink)' }}>
           <option value="off">Off</option>
           <option value="df1">Next disk of the set</option>
           <option value="net" disabled={!device.secondDriveNetCapable}>
