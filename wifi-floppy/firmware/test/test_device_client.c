@@ -3080,6 +3080,67 @@ static void a_mode_change_clears_the_driver_disks_block(void) {
     dc_df1_reconcile(&c);
 }
 
+// Final review I1: leaving Network keeps the next disk the same poll delivered. core1 applies the mode change
+// (dc_drive_take -> dc_set_df1) AFTER dc_step's dc_take_next stored the body's `next`, and that body already names
+// the new mode's next. Wiping it left DF1 (Next) or DF0's preload (Off) empty until an unrelated event. Only the
+// driver disk's own record (SLOT_NET), and a `next` that still names it, go.
+static void push_poll_mode_next(uint32_t version, uint32_t seq, const char *mode, const char *desired,
+                                const char *next) {
+    char body[700];
+    snprintf(body, sizeof body,
+             "{\"secondDrive\":{\"seq\":%lu,\"mode\":\"%s\"},\"version\":%lu,"
+             "\"desired\":{\"sha256\":\"%s\",\"diskId\":\"d1\",\"gameId\":\"g\",\"game\":\"G\","
+             "\"diskNo\":1,\"diskCount\":3,\"writeProtected\":false},"
+             "\"next\":{\"diskId\":\"" NEXT_ID2 "\",\"sha256\":\"%s\",\"diskNo\":2}}",
+             (unsigned long)seq, mode, (unsigned long)version, desired, next);
+    push_ok_json(body);
+}
+
+static void leave_network_with_a_body(uint32_t seq, const char *mode_str, df1_mode_t want) {
+    boot_network_mode();                                        // next = B, the driver disk
+    c.drive_ack = 0;
+    push_dd_wfad_image_response();
+    CHECK(dc_preload_step(&c), "driver disk fetched");
+    CHECK_EQ_INT(c.preload.slot, SLOT_NET);
+    push_poll_next(++df1_poll_version, SHA_A, SHA_B, false);    // DF0 mounts A, next is still the driver disk
+    push_image_response();
+    CHECK_EQ_INT(dc_step(&c), DC_IDLE_POLL);
+    CHECK(strcmp(c.mounted_sha256, SHA_A) == 0, "A mounted in DF0");
+    // The body that leaves Network: the new mode and the set's next disk, C, together.
+    push_poll_mode_next(++df1_poll_version, seq, mode_str, SHA_A, SHA_C);
+    CHECK_EQ_INT(dc_step(&c), DC_IDLE_POLL);
+    CHECK(strcmp(c.preload.next_sha256, SHA_C) == 0, "the body's next is stored");
+    uint32_t got_seq; df1_mode_t got_mode;
+    CHECK(dc_drive_take(&c, &got_seq, &got_mode), "the mode change is owed");
+    CHECK_EQ_INT(got_mode, want);
+    // What core1 does with it (main.c): the mode change comes after the body.
+    c.preload.changed = false;
+    dc_set_df1(&c, got_mode, true);
+    dc_df1_reconcile(&c);
+    CHECK(strcmp(c.preload.next_sha256, SHA_C) == 0, "leaving Network keeps the body's next");
+    CHECK(strcmp(c.preload.next_disk_id, NEXT_ID2) == 0, "and its disk id");
+    CHECK_EQ_INT(c.preload.slot, SLOT_NONE);                   // the driver disk's record goes
+    CHECK(c.preload.changed, "the status report learns the record went");
+    CHECK(psram_df1_slot() != SLOT_NET, "DF1 no longer serves the driver disk");
+    // ...and the next disk is preloaded at once into DF0's idle slot, from the library route.
+    push_image_response();
+    CHECK(dc_preload_step(&c), "C preloaded without another wake");
+    char url[128];
+    snprintf(url, sizeof url, "GET /api/device/image/%s ", SHA_C);
+    CHECK(strstr(fake_last_request(), url) != NULL, "from the library route");
+    CHECK(c.preload.slot == 0 || c.preload.slot == 1, "into DF0's idle slot");
+    dc_set_df1(&c, DF1_MODE_OFF, true);
+    dc_df1_reconcile(&c);
+}
+
+static void network_to_next_keeps_the_next_disk_the_same_body_delivered(void) {
+    leave_network_with_a_body(1, "df1", DF1_MODE_NEXT);
+}
+
+static void network_to_off_keeps_the_next_disk_the_same_body_delivered(void) {
+    leave_network_with_a_body(1, "off", DF1_MODE_OFF);
+}
+
 // Review m2: a board without SLOT_NET's storage never targets it -- nothing is fetched, DF1 stays empty.
 static void network_mode_without_net_storage_preloads_nothing(void) {
     boot_network_mode();
@@ -3268,6 +3329,8 @@ int main(void) {
     RUN(a_failed_driver_disk_fetch_never_blocks_df0_and_retries_after_the_backoff);
     RUN(a_mode_change_clears_the_driver_disks_block);
     RUN(network_mode_without_net_storage_preloads_nothing);
+    RUN(network_to_next_keeps_the_next_disk_the_same_body_delivered);
+    RUN(network_to_off_keeps_the_next_disk_the_same_body_delivered);
     RUN(a_fetch_into_the_other_slot_keeps_the_next_disk_record);
     RUN(test_display_body_parses);
     RUN(test_rejected_layout_still_acks);

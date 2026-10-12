@@ -702,23 +702,43 @@ static dc_fetch_result_t dc_fetch_into(device_client_t *c, const char *sha256, i
 
 static void dc_preload_drop(device_client_t *c);   // below, with the preload record
 
+static void dc_forget_next(device_client_t *c) {
+    c->preload.next_sha256[0] = '\0';
+    c->preload.next_disk_id[0] = '\0';
+    c->preload.next_disk_no = 0;
+}
+
 void dc_set_df1(device_client_t *c, df1_mode_t mode, bool hd_ok) {
     if ((uint8_t)mode != c->_df1_mode) {
-        // Any mode change forgets the driver disk's block (Task 4b review I-1)...
+        // The driver disk, as far as this board knows it: the verified SLOT_NET record, else the digest its
+        // route refused (a driver disk that never arrived). Read before the block is cleared below.
+        char driver[65];
+        snprintf(driver, sizeof driver, "%s",
+                 c->preload.slot == SLOT_NET ? c->preload.sha256 : c->_net_blocked);
+        // Any mode change forgets the driver disk's block (Task 4b review I-1).
         c->_net_blocked[0] = '\0';
-        // ...and, into or out of Network, the previous mode's next disk and preload record (Task 8 review
-        // m1): there `next` means a different disk, from a different route, in a different slot. Kept,
-        // Next -> Network fetched /api/device/image/net/<library sha>, got a 404 and held the driver disk off
-        // for DC_NET_RETRY_MS. The server's next body names the new mode's disk. Off <-> Next keeps both:
-        // in either, `next` is DF0's next disk of the set in DF0's idle slot (the Next-disk card's preload).
         // `changed`: the status report says the record went.
-        if (mode == DF1_MODE_NET || c->_df1_mode == DF1_MODE_NET) {
+        if (mode == DF1_MODE_NET) {
+            // Into Network: the previous mode's next disk and preload record go (Task 8 review m1). There
+            // `next` means a different disk, from a different route, in a different slot. Kept, Next -> Network
+            // fetched /api/device/image/net/<library sha>, got a 404 and held the driver disk off for
+            // DC_NET_RETRY_MS. The server's next body names the driver disk.
             if (c->preload.slot != SLOT_NONE) c->preload.changed = true;
-            c->preload.next_sha256[0] = '\0';
-            c->preload.next_disk_id[0] = '\0';
-            c->preload.next_disk_no = 0;
+            dc_forget_next(c);
             dc_preload_drop(c);
+        } else if (c->_df1_mode == DF1_MODE_NET) {
+            // Out of Network (final review I1): only the driver disk goes -- its SLOT_NET record, and `next`
+            // only while it still names the driver disk. core1 applies the mode change AFTER dc_step's
+            // dc_take_next stored the same body's `next`, which already names the new mode's disk (DF0's next
+            // disk of the set); wiping it left DF1 (Next) or DF0's preload (Off) empty until an unrelated wake.
+            if (c->preload.slot == SLOT_NET) {
+                c->preload.changed = true;
+                dc_preload_drop(c);
+            }
+            if (driver[0] != '\0' && strcmp(c->preload.next_sha256, driver) == 0) dc_forget_next(c);
         }
+        // Off <-> Next keeps both: in either, `next` is DF0's next disk of the set in DF0's idle slot (the
+        // Next-disk card's preload).
     }
     c->_df1_capable = true;
     c->_df1_mode = (uint8_t)mode;
