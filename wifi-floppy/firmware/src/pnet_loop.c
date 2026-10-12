@@ -18,6 +18,18 @@ bool pnet_capture_ours(bool df1_serving, bool sel0, bool sel1, int cyl1, int sid
     return df1_serving && !sel0 && sel1 && cyl1 == PNET_CYL && side == 0;
 }
 
+uint32_t pnet_go_wait_us(uint32_t side_us, uint32_t delay_us, uint32_t now_us) {
+    const uint32_t since = now_us - side_us;
+    return since < delay_us ? delay_us - since : 0u;
+}
+
+pnet_go_kind_t pnet_go_kind(uint32_t wait_us, uint32_t min_us) {
+    if (wait_us > min_us) return PNET_GO_ALARM;
+    return wait_us == 0u ? PNET_GO_LATE : PNET_GO_SHORT;
+}
+
+bool pnet_go_still_wanted(int want_track1) { return want_track1 == PNET_TRACK_OUT; }
+
 pnet_prearm_t pnet_prearm_decide(const pnet_prearm_in_t *in) {
     /* Where the next write is a DF1 batch: DF1 on cylinder 77, side 0 (pnet_capture_ours less
      * WGATE and SEL1), and DF0 not selected -- SEL1 asserted, or no drive yet (about to be). */

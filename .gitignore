@@ -21,6 +21,7 @@ build-df1/
 build-sniff/
 build-pnet/
 build-pnet1/
+build-pnet2/
 build-offcheck/
 .DS_Store
 

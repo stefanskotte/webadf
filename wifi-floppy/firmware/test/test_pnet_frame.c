@@ -198,6 +198,54 @@ static void every_error_has_its_own_text(void) {
     CHECK(strcmp(pnet_err_text(PNET_E_COUNT), "?") == 0, "past the end");
 }
 
+/* Phase 2: one frame at a time, as the board now decodes the Amiga's batch into its TX ring. */
+static void frames_come_one_at_a_time(void) {
+    pnet_frame_ref_t f[3]; uint16_t lens[3];
+    const unsigned n = three_frames(f, lens);
+    const size_t w = pnet_build_to_board(out, sizeof out, 1, 2, f, n);
+    pnet_hdr_t h;
+    CHECK_EQ_INT(pnet_parse_hdr_from_amiga(out + 4, w - 4, &h), PNET_OK);
+    const uint8_t *pay = out + 4 + PNET_HDR_BYTES;
+    pnet_frame_iter_t it;
+    CHECK_EQ_INT(pnet_frame_iter_init(&it, pay, h.compressed_size, PNET_TO_BOARD), PNET_OK);
+    CHECK_EQ_INT(it.count, 3);
+    size_t at = 0;
+    for (unsigned i = 0; i < 3; i++) {
+        uint16_t len = 0;
+        CHECK_EQ_INT(pnet_frame_iter_next(&it, dec, PNET_ETH_MTU, &len), PNET_OK);
+        CHECK_EQ_INT(len, lens[i]);
+        CHECK(memcmp(dec, payload + at, len) == 0, "the frame's bytes");
+        at += len;
+    }
+    uint16_t len = 0;
+    CHECK_EQ_INT(pnet_frame_iter_next(&it, dec, PNET_ETH_MTU, &len), PNET_E_FRAMES);   /* none left */
+    CHECK_EQ_INT(pnet_frame_iter_init(&it, pay, 0, PNET_TO_BOARD), PNET_OK);
+    CHECK_EQ_INT(it.count, 0);                                                         /* an empty payload */
+    CHECK_EQ_INT(pnet_frame_iter_init(&it, pay, 3, PNET_TO_BOARD), PNET_E_FRAMES);     /* under 4 bytes */
+    CHECK_EQ_INT(pnet_frame_iter_init(&it, pay, h.compressed_size, PNET_TO_BOARD), PNET_OK);
+    CHECK_EQ_INT(pnet_frame_iter_next(&it, dec, 63, &len), PNET_E_FULL);               /* 64 bytes into 63 */
+    CHECK_EQ_INT(it.i, 0);                                                             /* an error stays put */
+}
+
+/* Phase 2: cylinder 76's header is mode 2 with an RLE payload; its checksum covers the bytes sent. */
+static void a_mode_2_rle_header_parses_as_mode_2_only(void) {
+    uint8_t rec[4 + PNET_HDR_MFM_BYTES + 32];
+    uint8_t pay[32];
+    for (unsigned i = 0; i < sizeof pay; i++) pay[i] = (uint8_t)(0x81u + i);
+    const pnet_hdr_t h = { .checksum = pnet_checksum(pay, sizeof pay), .data_size = 156, .compressed_size = 32,
+                           .mode = 2, .compressed = 1, .amiga_ctr = 0x37, .pico_ctr = 0x81 };
+    CHECK_EQ_INT(pnet_put_hdr_to_amiga(rec, &h), 4 + PNET_HDR_MFM_BYTES);
+    CHECK(rec[0] == 0x44 && rec[1] == 0x89 && rec[2] == 0x44 && rec[3] == 0x89, "the sync");
+    memcpy(rec + 4 + PNET_HDR_MFM_BYTES, pay, sizeof pay);
+    pnet_hdr_t g;
+    CHECK_EQ_INT(pnet_parse_hdr_to_amiga_as(rec + 4, sizeof rec - 4, &g, true, 2), PNET_OK);
+    CHECK(g.data_size == 156 && g.compressed_size == 32 && g.compressed == 1 && g.amiga_ctr == 0x37 &&
+          g.pico_ctr == 0x81, "the fields");
+    CHECK_EQ_INT(pnet_parse_hdr_to_amiga(rec + 4, sizeof rec - 4, &g, true), PNET_E_MODE);   /* not cylinder 77's */
+    rec[sizeof rec - 1] ^= 1u;
+    CHECK_EQ_INT(pnet_parse_hdr_to_amiga_as(rec + 4, sizeof rec - 4, &g, true, 2), PNET_E_CHECKSUM);
+}
+
 int main(void) {
     RUN(to_board_header_is_raw_and_checks_out);
     RUN(to_board_frames_round_trip);
@@ -209,5 +257,7 @@ int main(void) {
     RUN(what_does_not_fit_is_refused);
     RUN(shift_left_keeps_whole_bytes_only);
     RUN(every_error_has_its_own_text);
+    RUN(frames_come_one_at_a_time);
+    RUN(a_mode_2_rle_header_parses_as_mode_2_only);
     return REPORT();
 }

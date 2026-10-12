@@ -4,6 +4,7 @@
  */
 /* NetLoop's hand-made Ethernet (netloop_eth.h). */
 #include "netloop_eth.h"
+#include "pnet_status.h"
 #include <stdio.h>
 #include <string.h>
 
@@ -196,5 +197,18 @@ const char *nl_eth_selftest(void) {
         d.lease != 86400u) return "offer fields";
     if (nl_dhcp_parse(f, sizeof f, 0x12345679u, &d)) return "another xid";
     if (nl_dhcp_parse(f, 100, 0x12345678u, &d)) return "short frame";
+    return NULL;
+}
+
+uint16_t nl_get16(const uint8_t *p) { return get16(p); }
+
+const char *nl_status_problem(const uint8_t *st, size_t n, const uint8_t mac[6]) {
+    if (n < PNET_STATUS_BYTES) return "short";
+    if (get16(st + PNET_ST_LENGTH) != PNET_ST_SETTINGS_BYTES) return "settings length";
+    if (get16(st + PNET_ST_LIVE) != PNET_ST_LIVE_BYTES) return "status length";
+    if (get16(st + PNET_ST_FLAGS) != PNET_ST_FLAGS_RLE_BOTH) return "flags";
+    if (get16(st + PNET_ST_MAX_TX) != PNET_ST_MAX_TX_BYTES) return "batch budget";
+    if (memcmp(st + PNET_ST_MAC, mac, 6) != 0) return "MAC";
+    if (st[PNET_ST_LINK] != PNET_LINK_NOIP) return "link down";
     return NULL;
 }

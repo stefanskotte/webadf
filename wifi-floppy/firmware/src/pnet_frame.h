@@ -48,6 +48,13 @@
 #define PNET_SYNC_WORDS      0x44894489u
 #define PNET_ETH_MTU         1518u
 #define PNET_MAX_FRAMES      20u
+/* The most payload one board -> Amiga batch carries (Phase 2, spec 2026-10-11 §3.3), in EVERY build
+ * that sends batches: PaulaNET's driver reads at most compressed_size + 24 + 128 bytes, capped at
+ * 16,640, so 16,128 (16 KB - 256, his own board's cap on a transfer) keeps the whole track inside it
+ * -- a WF_DF1_HD buffer (25,344 B) would otherwise allow a batch the driver cannot read whole. */
+#define PNET_TO_AMIGA_MAX_PAYLOAD 16128u
+/* The most bytes PaulaNET's driver reads for one batch: compressedSize + 24 + 128, capped at this. */
+#define PNET_DRIVER_MAX_READ 16640u
 
 typedef enum { PNET_TO_BOARD, PNET_TO_AMIGA } pnet_dir_t;
 
@@ -86,6 +93,31 @@ pnet_err_t pnet_parse_hdr_from_amiga(const uint8_t *b, size_t len, pnet_hdr_t *h
 /* Amiga side: `b` is aligned at the first bit after the 44 89 44 89 sync. With with_payload,
  * also checks that data_size payload bytes follow the 24 header bytes and their checksum. */
 pnet_err_t pnet_parse_hdr_to_amiga(const uint8_t *b, size_t len, pnet_hdr_t *h, bool with_payload);
+/* As pnet_parse_hdr_to_amiga, for the given mode (2: cylinder 76's status, PaulaNET Phase 2). With
+ * with_payload, the bytes checked are the bytes sent: compressed_size when h->compressed is set,
+ * else data_size -- PaulaNET's driver's own rule (cylinder 77's batches from the board are never
+ * compressed, so for them it is data_size, as before). */
+pnet_err_t pnet_parse_hdr_to_amiga_as(const uint8_t *b, size_t len, pnet_hdr_t *h, bool with_payload,
+                                      uint8_t mode);
+/* Board side: the sync 44 89 44 89 and h, MFM-encoded (the magic set here), at s. Returns 28. */
+size_t pnet_put_hdr_to_amiga(uint8_t *s, const pnet_hdr_t *h);
+
+/* One frame at a time (PaulaNET Phase 2): the board decodes the Amiga's frames straight into its TX
+ * ring's slots, so no batch is ever refused for its decoded size -- an RLE batch inside the driver's
+ * 8,192-byte budget can decode to over 140 KB (plan 2026-10-11-paulanet-phase2-rob-driver,
+ * correction 1). pnet_parse_frames is built on it. */
+typedef struct {
+    const uint8_t *p;
+    size_t     len, pos;
+    pnet_dir_t dir;
+    unsigned   count;   /* the batch's frame count (its PacketsHeader), 0..255 */
+    unsigned   i;       /* frames read so far */
+} pnet_frame_iter_t;
+/* PNET_OK (count 0 for an empty payload), or PNET_E_FRAMES for a payload of 1..3 bytes. */
+pnet_err_t pnet_frame_iter_init(pnet_frame_iter_t *it, const uint8_t *p, size_t len, pnet_dir_t dir);
+/* Frame it->i into out[0..cap), its length into *len, then on to the next. PNET_E_FRAMES when none
+ * is left. Any error leaves it->i where it was: that frame and the rest are unreadable. */
+pnet_err_t pnet_frame_iter_next(pnet_frame_iter_t *it, uint8_t *out, size_t cap, uint16_t *len);
 
 /* Decodes a payload's frames, back to back, into out[0..cap). lens[i] is frame i's length; *n
  * the count. PNET_E_FULL when they would not fit `cap`. */

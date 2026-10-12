@@ -21,11 +21,12 @@
 
 #define PNET_ECHO_BYTES 16384u   /* one half of the PSRAM echo store (main.c) */
 /* DF1's INDEX pulse while it streams the echo: its restart and its wrap (main.c). Shorter than
- * the echo's 1.92 ms lead-in (120 B): trackdisk arms INDEXSYNC ~1.5-2 ms after the side change and
- * starts on the next edge, which under a 2 ms pulse was the pulse's END -- inside the sync. */
+ * the echo's 1.92 ms lead-in (120 B). Spike C showed moving our INDEX edge does not move the
+ * Amiga's read; its start is timed from SIDE (HANDOFF 3bi). */
 #define PNET_INDEX_PULSE_US 200u
 
-typedef enum { PNET_DF1_DISK = 0, PNET_DF1_SILENT, PNET_DF1_ECHO } pnet_df1_t;
+/* PNET_DF1_STATUS: Phase 2's cylinder 76, side 1 (pnet_df1_for_track_l2, L2 builds only). */
+typedef enum { PNET_DF1_DISK = 0, PNET_DF1_SILENT, PNET_DF1_ECHO, PNET_DF1_STATUS } pnet_df1_t;
 
 /* What DF1 streams for `want` (cyl * 2 + side): the disk, nothing (154: the Amiga writes), or
  * the echo (155). */
@@ -35,6 +36,21 @@ bool pnet_df1_wprot(int cyl);
 /* A WGATE assertion is a loopback batch: DF1 serves a disk, SEL1 (not SEL0) is asserted, and
  * DF1's head is on cylinder 77, side 0. sel0/sel1 are ASSERTED, not pin levels. */
 bool pnet_capture_ours(bool df1_serving, bool sel0, bool sel1, int cyl1, int side);
+/* Phase 2 (plan 2026-10-11-paulanet-phase2-rob-driver, Task 1): the microseconds a start of DF1's
+ * side-1 stream must still wait so it begins `delay_us` after the SIDE edge stamped at side_us, at
+ * now_us (time_us_32 values; wrap-safe). 0 once that moment has passed, however long ago the edge was:
+ * a stale stamp (no SIDE edge for 36 minutes) or one a hair ahead of now never schedules a start
+ * far in the future. */
+uint32_t pnet_go_wait_us(uint32_t side_us, uint32_t delay_us, uint32_t now_us);
+
+/* What a start does given its wait: ALARM (wait > min_us: a delayed start), LATE (the due time had
+ * passed: start at once), SHORT (due within min_us: at once, since an alarm costs about as much --
+ * the start was "delayed" but for under min_us). */
+typedef enum { PNET_GO_ALARM, PNET_GO_LATE, PNET_GO_SHORT } pnet_go_kind_t;
+pnet_go_kind_t pnet_go_kind(uint32_t wait_us, uint32_t min_us);
+
+/* A pending delayed start is due only while side 1 still wants the out-track (side 1 of cylinder 77). */
+bool pnet_go_still_wanted(int want_track1);
 
 /*
  * THE PRE-ARM (2026-10-10). The Amiga's to-board write has no lead-in: sync pulse 1 is ~32 us after

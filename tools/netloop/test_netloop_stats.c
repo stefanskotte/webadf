@@ -70,6 +70,48 @@ static void tenths_round(void) {
     CHECK_EQ_INT(nl_tenths(8000ull * 100u * 709379u, 709379ull * 1024u), 7813);
 }
 
+/* SCAN= (Phase 2): payload reads sized as PaulaNET's driver sizes them (its receiveFromPaulaNet). */
+static void driver_read_sizes(void) {
+    CHECK(nl_driver_read_len(0) == 1024u, "a header read: the driver's 1,024-byte minimum");
+    CHECK(nl_driver_read_len(64) == 1024u, "a small payload: the minimum too");
+    CHECK(nl_driver_read_len(8000) == 8152u, "8,000 + 24 + 128");
+    CHECK(nl_driver_read_len(8001) == 8154u, "rounded up to even first");
+    CHECK(nl_driver_read_len(16600) == 16640u, "capped at 16,640");
+}
+
+/* The sync-offset histograms: 8-byte bins (last 128+) and 32-byte bins (last 512+), and the rows. */
+static void sync_offset_histograms(void) {
+    CHECK_EQ_INT(nl_off_bin8(0), 0);
+    CHECK_EQ_INT(nl_off_bin8(7), 0);
+    CHECK_EQ_INT(nl_off_bin8(8), 1);
+    CHECK_EQ_INT(nl_off_bin8(127), 15);
+    CHECK_EQ_INT(nl_off_bin8(128), 16);
+    CHECK_EQ_INT(nl_off_bin8(5000), 16);
+    CHECK_EQ_INT(nl_off_bin32(0), 0);
+    CHECK_EQ_INT(nl_off_bin32(31), 0);
+    CHECK_EQ_INT(nl_off_bin32(32), 1);
+    CHECK_EQ_INT(nl_off_bin32(500), 15);
+    CHECK_EQ_INT(nl_off_bin32(511), 15);
+    CHECK_EQ_INT(nl_off_bin32(512), 16);
+    CHECK_EQ_INT(nl_off_bin32(16000), 16);
+    char buf[128];
+    unsigned long bins[NL_OFF_BINS] = { 0 };
+    bins[0] = 1; bins[3] = 1234; bins[15] = 9999; bins[16] = 7;
+    const unsigned n = nl_hist_row(buf, sizeof buf, "pay ", bins);
+    CHECK(n == 74 && buf[n - 1] == '\n' && buf[n] == 0 && n - 1 <= 78, "a 73-column row plus newline");
+    CHECK(strncmp(buf, "pay    1   0   01234   0", 20) == 0, "label, then width-4 numbers");
+    CHECK(strcmp(buf + 4 + 15 * 4, "9999    7\n") == 0, "last bin, spaced");
+    const unsigned h = nl_hist_head(buf, sizeof buf, 32);
+    CHECK(h == 74 && strcmp(buf, "off    0  32  64  96 128 160 192 224 256 288 320 352 384 416 448 480 512+\n") == 0,
+          "the 32-byte header");
+    nl_hist_head(buf, sizeof buf, 8);
+    CHECK(strcmp(buf, "off    0   8  16  24  32  40  48  56  64  72  80  88  96 104 112 120 128+\n") == 0,
+          "the 8-byte header");
+    char tiny[10];
+    nl_hist_row(tiny, sizeof tiny, "hdr ", bins);
+    CHECK(strlen(tiny) < sizeof tiny, "a short buffer is cut, not overrun");
+}
+
 int main(void) {
     RUN(sizes_split_into_ethernet_frames);
     RUN(the_payload_is_repeatable_and_never_stuck);
@@ -77,5 +119,7 @@ int main(void) {
     RUN(a_restart_resyncs_from_the_boards_counter);
     RUN(percentiles_are_nearest_rank);
     RUN(tenths_round);
+    RUN(driver_read_sizes);
+    RUN(sync_offset_histograms);
     return REPORT();
 }

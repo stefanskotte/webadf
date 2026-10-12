@@ -93,8 +93,20 @@ option(WF_PNET_LOOP "Bench TEST build: DF1 cylinder 77 is a PaulaNET loopback" O
 list(APPEND WFMF_COMMON_DEFS WF_PNET_LOOP=$<IF:$<BOOL:${WF_PNET_LOOP}>,1,0>)
 if (WF_PNET_LOOP)
   list(APPEND WFMF_FIRMWARE_SOURCES src/pnet_mfm.c src/pnet_frame.c src/pnet_rx.c src/pnet_loop.c)
-  # The echo's lead-in: 200 x AA (3.2 ms) where the Amiga's reads assume 120 (pnet_frame.c).
-  list(APPEND WFMF_COMMON_DEFS PNET_TX_LEAD_BYTES=200)
+  # The side-1 stream's lead-in (bytes of AA, 16 us each) and when a side return starts it (us after
+  # the SIDE edge; 0 = at once). Phases 0-1: 200 B at once -- about a quarter of the Amiga's reads
+  # then found the sync 128+ bytes in, past where PaulaNET's own driver looks (HANDOFF 3bg). Phase 2
+  # (plan 2026-10-11-paulanet-phase2-rob-driver, Task 1) measures a fixed delay with PaulaNET's 120.
+  # Plain variables, never cache entries: a value is a commit, so an image's version names its timing.
+  # Phase 2's timing (Task 1 spikes B-E, A500 bench 2026-10-11/12): the Amiga's read DMA starts a time
+  # after SIDE (not at our INDEX edge, spike C), peaking ~2.6 ms but with tails from 1.0 to ~5.4 ms
+  # (spike D) -- wider than PaulaNET's driver's 124-byte (1.98 ms) sync window, so some reads miss and
+  # the driver retries them. Measured misses with SCAN=124: 2,360 us 4.5%/3.1% (hdr/pay), 1,650 us
+  # 5.4%/5.0%; 0 mismatches throughout. 2,360 us kept (operator ruling 2026-10-12).
+  set(WF_PNET_TX_LEAD_BYTES 120)
+  set(WF_PNET_SIDE_DELAY_US 2360)
+  list(APPEND WFMF_COMMON_DEFS PNET_TX_LEAD_BYTES=${WF_PNET_TX_LEAD_BYTES}
+                               PNET_SIDE_DELAY_US=${WF_PNET_SIDE_DELAY_US})
   message(STATUS "WF_PNET_LOOP is ON: DF1 cylinder 77 is a PaulaNET loopback (TEST build only).")
 endif ()
 # PaulaNET Phase 1 (plan docs/superpowers/plans/2026-10-11-paulanet-phase1-l2-sharing.md): on the
@@ -109,7 +121,7 @@ if (WF_PNET_L2)
   if (NOT WF_PNET_LOOP)
     message(FATAL_ERROR "WF_PNET_L2 needs WF_PNET_LOOP: Phase 1 replaces the loopback's echo on its transport")
   endif ()
-  list(APPEND WFMF_FIRMWARE_SOURCES src/pnet_sort.c src/pnet_ring.c src/pnet_link.c src/pnet_bridge.c)
+  list(APPEND WFMF_FIRMWARE_SOURCES src/pnet_sort.c src/pnet_ring.c src/pnet_link.c src/pnet_bridge.c src/pnet_status.c)
   message(STATUS "WF_PNET_L2 is ON: DF1 cylinder 77 carries Ethernet frames (TEST build only).")
 endif ()
 # Stack frames (HANDOFF 3ax): 1.7.0 died because one 1232-byte frame took core0's

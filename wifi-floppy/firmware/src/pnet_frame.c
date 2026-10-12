@@ -99,6 +99,15 @@ size_t pnet_build_to_board(uint8_t *out, size_t cap, uint8_t amiga_ctr, uint8_t 
     return pos;
 }
 
+size_t pnet_put_hdr_to_amiga(uint8_t *s, const pnet_hdr_t *h) {
+    s[0] = 0x44; s[1] = 0x89; s[2] = 0x44; s[3] = 0x89;
+    uint8_t raw[PNET_HDR_BYTES];
+    hdr_pack(h, raw);
+    uint16_t last = 0;
+    pnet_mfm_encode(raw, PNET_HDR_BYTES, s + 4, &last);   // MFM in this direction
+    return 4u + PNET_HDR_MFM_BYTES;
+}
+
 /* The lead-in this side SENDS. PNET_LEAD_BYTES (120) is what the Amiga's read sizes assume, and
  * stays so; the board's loopback build sends more (CMake) -- measured 2026-10-10 on the A500, the
  * read's DMA started up to ~2 ms past the INDEX, and a 120-byte lead had already gone by. */
@@ -113,7 +122,6 @@ size_t pnet_build_to_amiga(uint8_t *out, size_t cap, uint8_t amiga_ctr, uint8_t 
         PNET_TX_LEAD_BYTES + 4u + PNET_HDR_MFM_BYTES + pb + PNET_TRAIL_BYTES + 3u > cap) return 0;
     memset(out, 0xAA, PNET_TX_LEAD_BYTES);
     uint8_t *s = out + PNET_TX_LEAD_BYTES;
-    s[0] = 0x44; s[1] = 0x89; s[2] = 0x44; s[3] = 0x89;
     uint8_t *pay = s + 4 + PNET_HDR_MFM_BYTES;
     const size_t plen = n ? put_payload(pay, PNET_TO_AMIGA, flags, f, n) : 0;
     const pnet_hdr_t h = {
@@ -121,10 +129,7 @@ size_t pnet_build_to_amiga(uint8_t *out, size_t cap, uint8_t amiga_ctr, uint8_t 
         .compressed_size = (uint16_t)plen, .mode = PNET_MODE_ETHERNET, .compressed = 0,
         .amiga_ctr = amiga_ctr, .pico_ctr = pico_ctr,
     };
-    uint8_t raw[PNET_HDR_BYTES];
-    hdr_pack(&h, raw);
-    uint16_t last = 0;
-    pnet_mfm_encode(raw, PNET_HDR_BYTES, s + 4, &last);   // MFM in this direction
+    pnet_put_hdr_to_amiga(s, &h);
     const size_t pos = (size_t)(pay - out) + plen;
     const size_t end = (pos + PNET_TRAIL_BYTES + 3u) & ~(size_t)3u;
     memset(out + pos, 0xAA, end - pos);
@@ -142,52 +147,79 @@ pnet_err_t pnet_parse_hdr_from_amiga(const uint8_t *b, size_t len, pnet_hdr_t *h
     return PNET_OK;
 }
 
-pnet_err_t pnet_parse_hdr_to_amiga(const uint8_t *b, size_t len, pnet_hdr_t *h, bool with_payload) {
+pnet_err_t pnet_parse_hdr_to_amiga_as(const uint8_t *b, size_t len, pnet_hdr_t *h, bool with_payload,
+                                      uint8_t mode) {
     if (len < PNET_HDR_MFM_BYTES) return PNET_E_SHORT;
     uint8_t raw[PNET_HDR_BYTES];
     pnet_mfm_decode(b, PNET_HDR_BYTES, raw);
     if (!hdr_unpack(raw, h)) return PNET_E_MAGIC;
-    if (h->mode != PNET_MODE_ETHERNET) return PNET_E_MODE;
+    if (h->mode != mode) return PNET_E_MODE;
     if (!with_payload) return PNET_OK;
-    if (h->data_size & 1u) return PNET_E_SIZE;
-    if (PNET_HDR_MFM_BYTES + (size_t)h->data_size > len) return PNET_E_SHORT;
-    if (pnet_checksum(b + PNET_HDR_MFM_BYTES, h->data_size) != h->checksum) return PNET_E_CHECKSUM;
+    const size_t sent = h->compressed ? h->compressed_size : h->data_size;
+    if (sent & 1u) return PNET_E_SIZE;
+    if (PNET_HDR_MFM_BYTES + sent > len) return PNET_E_SHORT;
+    if (pnet_checksum(b + PNET_HDR_MFM_BYTES, sent) != h->checksum) return PNET_E_CHECKSUM;
+    return PNET_OK;
+}
+
+pnet_err_t pnet_parse_hdr_to_amiga(const uint8_t *b, size_t len, pnet_hdr_t *h, bool with_payload) {
+    return pnet_parse_hdr_to_amiga_as(b, len, h, with_payload, PNET_MODE_ETHERNET);
+}
+
+pnet_err_t pnet_frame_iter_init(pnet_frame_iter_t *it, const uint8_t *p, size_t len, pnet_dir_t dir) {
+    it->p = p;
+    it->len = len;
+    it->pos = 4;
+    it->dir = dir;
+    it->count = 0;
+    it->i = 0;
+    if (len == 0) return PNET_OK;
+    if (len < 4) return PNET_E_FRAMES;
+    uint8_t ph[2];
+    pnet_mfm_decode(p, 2, ph);
+    it->count = ph[0];
+    return PNET_OK;
+}
+
+pnet_err_t pnet_frame_iter_next(pnet_frame_iter_t *it, uint8_t *out, size_t cap, uint16_t *len) {
+    if (it->i >= it->count) return PNET_E_FRAMES;
+    if (8u > it->len - it->pos) return PNET_E_FRAMES;
+    uint8_t ch[4];
+    pnet_mfm_decode(it->p + it->pos, 4, ch);
+    const size_t at = it->pos + 8u;
+    const uint16_t field = get16(ch), os = get16(ch + 2);
+    const size_t size = field & 0x7FFFu;
+    const bool rle = it->dir == PNET_TO_BOARD ? (field & 0x8000u) != 0 : (field & 0x8000u) == 0;
+    if (size > it->len - at) return PNET_E_FRAMES;
+    if (os == 0 || os > PNET_ETH_MTU) return PNET_E_FRAME_SIZE;
+    if (os > cap) return PNET_E_FULL;
+    if (rle) {
+        if (pnet_rle_decode(it->p + at, size, out, os) != (long)os) return PNET_E_RLE;
+    } else {
+        if (size != 2u * os) return PNET_E_FRAME_SIZE;
+        pnet_mfm_decode(it->p + at, os, out);
+    }
+    *len = os;
+    const size_t next = at + size + (size & 1u);
+    it->pos = next > it->len ? it->len : next;
+    it->i++;
     return PNET_OK;
 }
 
 pnet_err_t pnet_parse_frames(const uint8_t *p, size_t len, pnet_dir_t dir, uint8_t *out,
                              size_t cap, uint16_t *lens, unsigned max, unsigned *n) {
     *n = 0;
-    if (len == 0) return PNET_OK;
-    if (len < 4) return PNET_E_FRAMES;
-    uint8_t ph[2];
-    pnet_mfm_decode(p, 2, ph);
-    const unsigned count = ph[0];
-    if (count > max) return PNET_E_FRAMES;
-    size_t pos = 4, used = 0;
-    for (unsigned i = 0; i < count; i++) {
-        if (8u > len - pos) return PNET_E_FRAMES;
-        uint8_t ch[4];
-        pnet_mfm_decode(p + pos, 4, ch);
-        pos += 8u;
-        const uint16_t field = get16(ch), os = get16(ch + 2);
-        const size_t size = field & 0x7FFFu;
-        const bool rle = dir == PNET_TO_BOARD ? (field & 0x8000u) != 0 : (field & 0x8000u) == 0;
-        if (size > len - pos) return PNET_E_FRAMES;
-        if (os == 0 || os > PNET_ETH_MTU) return PNET_E_FRAME_SIZE;
-        if (os > cap - used) return PNET_E_FULL;
-        if (rle) {
-            if (pnet_rle_decode(p + pos, size, out + used, os) != (long)os) return PNET_E_RLE;
-        } else {
-            if (size != 2u * os) return PNET_E_FRAME_SIZE;
-            pnet_mfm_decode(p + pos, os, out + used);
-        }
-        lens[i] = os;
-        used += os;
-        pos += size + (size & 1u);
-        if (pos > len) pos = len;
+    pnet_frame_iter_t it;
+    pnet_err_t e = pnet_frame_iter_init(&it, p, len, dir);
+    if (e != PNET_OK) return e;
+    if (it.count > max) return PNET_E_FRAMES;
+    size_t used = 0;
+    for (unsigned k = 0; k < it.count; k++) {
+        e = pnet_frame_iter_next(&it, out + used, cap - used, &lens[k]);
+        if (e != PNET_OK) return e;
+        used += lens[k];
     }
-    *n = count;
+    *n = it.count;
     return PNET_OK;
 }
 
