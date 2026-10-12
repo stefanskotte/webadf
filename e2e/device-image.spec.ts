@@ -4,6 +4,7 @@ import { readFileSync, readdirSync } from 'node:fs';
 import { and, eq } from 'drizzle-orm';
 import { getDb } from '@/db';
 import { disks, entitlements, blobs, games } from '@/db/schema/catalog';
+import { PAULANET_DISK_SHA256 } from '@/lib/paulanet-disk';
 import { signUpFresh } from './helpers';
 import { pairDevice, authHeader, cleanupSeeded } from './device-helpers';
 
@@ -189,4 +190,20 @@ test('bad credentials are a 401', async ({ request }) => {
     const res = await request.get(`/api/device/image/${digest}`, { headers });
     expect(res.status(), label).toBe(401);
   }
+});
+
+test('a board fetches the PaulaNET driver disk from the net route without owning it; any other digest is 404; the library route is unchanged', async ({ page, request }) => {
+  await signUpFresh(page);
+  const { token } = await pairDevice(page, request);
+  const res = await request.get(`/api/device/image/net/${PAULANET_DISK_SHA256}`, { headers: authHeader(token) });
+  expect(res.status()).toBe(200);
+  expect(res.headers()['content-type']).toBe('application/octet-stream');
+  const body = await res.body();
+  expect(body.length).toBe(901_136);                                          // 16-byte DD WFAD header + 901,120 (ruling 24)
+  expect([...body.subarray(0, 4)]).toEqual([0x57, 0x46, 0x41, 0x44]);
+  const other = await request.get(`/api/device/image/net/${'0'.repeat(64)}`, { headers: authHeader(token) });
+  expect(other.status()).toBe(404);
+  // The library route still demands ownership: the driver disk's digest is not served there.
+  const lib = await request.get(`/api/device/image/${PAULANET_DISK_SHA256}`, { headers: authHeader(token) });
+  expect(lib.status()).toBe(404);
 });
