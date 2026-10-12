@@ -5,7 +5,7 @@ import type { getDb } from '@/db';
 import { devices } from '@/db/schema/devices';
 import { disks, games } from '@/db/schema/catalog';
 import { deviceState, isOnline, relative } from '@/lib/device-state';
-import { driverBucket, trafficText } from '@/lib/network-checklist';
+import { driverBucket } from '@/lib/network-checklist';
 import { readNextForDevices, nextInfo, type NextInfo } from '@/lib/next-disk';
 
 /**
@@ -141,7 +141,8 @@ export function liveFingerprint(
         r.next ? `${r.next.diskNo}/${r.next.diskCount}/${r.next.wraps ? 1 : 0}/${r.next.preload ?? ''}` : '',
         r.secondDrive, r.secondDriveVersion, r.secondDriveAppliedVersion ?? '', r.secondDriveReported ?? '',
         r.df1Sha256 ?? '', driverBucket(r.netDriverSeenAt, now), r.netAmigaIp ?? '',
-        trafficText(r.netFramesIn, r.netFramesOut) ?? '',
+        // Not the traffic counters (final review m5): they move on every heartbeat while frames flow, and
+        // ruling 18 moves the fingerprint on state transitions only. The card renders whatever it holds.
         isOnline(r.lastSeenAt, now) ? '1' : '0',
         // Every offline card, not just 'stale' -- see the doc comment above.
         isOnline(r.lastSeenAt, now) ? '' : relative(r.lastSeenAt, now),

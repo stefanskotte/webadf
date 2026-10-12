@@ -203,9 +203,10 @@ describe('the DF1 setting and Network readings', () => {
     // talking -> quiet does refresh it
     expect(fp([{ ...base, netDriverSeenAt: new Date(NOW - 65_000) }]))
       .not.toBe(fp([{ ...base, netDriverSeenAt: new Date(NOW - 300_000) }]));
-    // traffic text: changes when frames move, not while both are zero
-    expect(fp([{ ...base, netFramesIn: 5, netFramesOut: 1 }])).not.toBe(a);
-    expect(fp([{ ...base, netFramesIn: 5, netFramesOut: 1 }])).not.toBe(fp([{ ...base, netFramesIn: 6, netFramesOut: 1 }]));
+    // Final review m5: traffic counters are not a state transition. They move on every heartbeat while frames
+    // flow, so in the fingerprint they refreshed every open tab each time; the card renders whatever it holds.
+    expect(fp([{ ...base, netFramesIn: 5, netFramesOut: 1 }])).toBe(a);
+    expect(fp([{ ...base, netFramesIn: 5, netFramesOut: 1 }])).toBe(fp([{ ...base, netFramesIn: 6, netFramesOut: 1 }]));
     expect(fp([{ ...base, netFramesIn: 0, netFramesOut: 0 }])).toBe(a);
   });
 });
