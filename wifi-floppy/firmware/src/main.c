@@ -2992,7 +2992,8 @@ static pnet_loop_t g_pnet;                       // core0 only
 static pnet_link_t g_link;
 // The heap low-water, sampled every loop pass (the 5 s heap: line can miss a dip; ruling 13).
 static uint32_t    g_pnet_heap_low = UINT32_MAX;
-// A batch's bytes on the wire within DF1's buffer, with the lead-in this build sends (pnet_frame.c).
+// The buffer limit: a batch's bytes on the wire within DF1's buffer (pnet_link_fit also holds its payload to
+// PNET_TO_AMIGA_MAX_PAYLOAD), with the lead-in this build sends (pnet_frame.c).
 #define PNET_BATCH_CAP (sizeof track_words1 - (PNET_TX_LEAD_BYTES - PNET_LEAD_BYTES))
 #define PNET_CTR g_link
 #else

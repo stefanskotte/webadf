@@ -140,10 +140,12 @@ static void fit_caps_the_payload_at_16128_bytes(void) {
     for (unsigned i = 0; i < n; i++) { f[i].data = frame; f[i].len = PNET_ETH_MTU; }
     CHECK(pnet_build_to_amiga(out, hd, 0, 0, 0, f, n) != 0, "built");
     pnet_hdr_t h;
-    CHECK_EQ_INT(pnet_parse_hdr_to_amiga(out + PNET_LEAD_BYTES + 4u, sizeof out - PNET_LEAD_BYTES - 4u, &h, true),
-                 PNET_OK);
+    const long sync_bits = pnet_find_sync(out, sizeof out, sizeof out);   /* where the board's lead-in + sync end */
+    CHECK(sync_bits > 0 && sync_bits % 8 == 0, "sync found on a byte boundary");
+    const size_t hdr_at = (size_t)sync_bits / 8u;
+    CHECK_EQ_INT(pnet_parse_hdr_to_amiga(out + hdr_at, sizeof out - hdr_at, &h, true), PNET_OK);
     CHECK(h.data_size <= PNET_TO_AMIGA_MAX_PAYLOAD, "the built batch is inside the cap");
-    CHECK(PNET_LEAD_BYTES + 4u + PNET_HDR_MFM_BYTES + h.data_size <= 16640u, "inside the driver's largest read");
+    CHECK(hdr_at + PNET_HDR_MFM_BYTES + h.data_size <= PNET_DRIVER_MAX_READ, "inside the driver's largest read");
 }
 
 int main(void) {

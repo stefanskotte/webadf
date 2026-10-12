@@ -53,6 +53,8 @@
  * 16,640, so 16,128 (16 KB - 256, his own board's cap on a transfer) keeps the whole track inside it
  * -- a WF_DF1_HD buffer (25,344 B) would otherwise allow a batch the driver cannot read whole. */
 #define PNET_TO_AMIGA_MAX_PAYLOAD 16128u
+/* The most bytes PaulaNET's driver reads for one batch: compressedSize + 24 + 128, capped at this. */
+#define PNET_DRIVER_MAX_READ 16640u
 
 typedef enum { PNET_TO_BOARD, PNET_TO_AMIGA } pnet_dir_t;
 
