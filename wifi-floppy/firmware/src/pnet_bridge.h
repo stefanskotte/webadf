@@ -1,6 +1,6 @@
 #ifndef PNET_BRIDGE_H
 #define PNET_BRIDGE_H
-// PaulaNET Phase 1 (WF_PNET_L2 TEST builds): the radio side of layer-2 sharing, on core1.
+// PaulaNET Phase 1 (WF_PNET_L2 builds; idle unless DF1 is Network): the radio side of layer-2 sharing, on core1.
 // Plan docs/superpowers/plans/2026-10-11-paulanet-phase1-l2-sharing.md, rulings 3-9.
 #include <stdint.h>
 #include "pnet_ring.h"
@@ -22,6 +22,7 @@ typedef struct {
 
 void pnet_bridge_init(void);      // core0, before core1 launches: the rings over PSRAM
 void pnet_bridge_start(void);     // core1, after net_radio_sta_enable(): the hook and the send worker
+void pnet_bridge_set_on(bool on); // core0: DF1 is in Network mode (main.c pnet_set_mode); off = pass-through
 void pnet_bridge_check(void);     // core1, every loop pass: re-install the hook if the netif was re-added
 void pnet_bridge_stats(pnet_bridge_stats_t *out);
 #endif

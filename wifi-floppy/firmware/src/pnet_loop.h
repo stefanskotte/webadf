@@ -18,6 +18,7 @@
 #include <stdint.h>
 #include <stdbool.h>
 #include "pnet_frame.h"
+#include "drive_store.h"
 
 #define PNET_ECHO_BYTES 16384u   /* one half of the PSRAM echo store (main.c) */
 /* DF1's INDEX pulse while it streams the echo: its restart and its wrap (main.c). Shorter than
@@ -33,6 +34,10 @@ typedef enum { PNET_DF1_DISK = 0, PNET_DF1_SILENT, PNET_DF1_ECHO, PNET_DF1_STATU
 pnet_df1_t pnet_df1_for_track(int want);
 /* DF1's WPROT for a head on `cyl`: asserted everywhere but cylinder 77. */
 bool pnet_df1_wprot(int cyl);
+/* Phase 3 (plan 2026-10-12, ruling 2): whether DF1's PaulaNET path runs in DF1 mode `mode`. Network in
+ * every build; in the loopback echo TEST build (WF_PNET_L2 off) Next disk as well, which is how that bench
+ * build has always run. Off, and any mode this build does not know: never. */
+bool pnet_mode_on(uint8_t mode, bool echo_build);
 /* A WGATE assertion is a loopback batch: DF1 serves a disk, SEL1 (not SEL0) is asserted, and
  * DF1's head is on cylinder 77, side 0. sel0/sel1 are ASSERTED, not pin levels. */
 bool pnet_capture_ours(bool df1_serving, bool sel0, bool sel1, int cyl1, int side);
@@ -83,6 +88,11 @@ typedef struct {
 } pnet_prearm_in_t;
 
 pnet_prearm_t pnet_prearm_decide(const pnet_prearm_in_t *in);
+/* Phase 3 (plan 2026-10-12, Review Focus 4): the loop's pre-arm decision under the runtime gate. `on` is
+ * pnet_mode_on for the current DF1 mode (main.c's g_pnet_on). On: pnet_prearm_decide, unchanged. Off: DF1's
+ * cylinder 77 is disk data (or nothing), so DF1 counts as not serving -- a pre-arm left standing from
+ * Network mode is let go (the ISR's, while WGATE is asserted), and nothing is ever armed. */
+pnet_prearm_t pnet_prearm_gated(bool on, const pnet_prearm_in_t *in);
 
 typedef struct {
     uint8_t  last_amiga;               /* 0xFF: nothing taken yet */

@@ -83,13 +83,14 @@ set(WFMF_FIRMWARE_SOURCES
   src/fw_offer.c src/fw_verify.c
   src/vendor/monocypher/monocypher.c src/vendor/monocypher/monocypher-ed25519.c
 )
-# PaulaNET track-77 loopback (plan docs/superpowers/plans/2026-10-09-paulanet-phase0-loopback.md).
-# A bench TEST build only: DF1's cylinder 77 becomes a PaulaNET loopback for the Amiga tool
-# tools/netloop. OFF compiles none of it -- every hook in main.c and flux_capture.c is under
-# #if WF_PNET_LOOP and these sources are not even in the image -- and the publish script refuses
-# an image carrying the marker (main.c) unless the notes start "TEST build". Needs DF1, i.e.
-# WF_DRIVE_ID (checked below, beside WF_DF1_DEFAULT).
-option(WF_PNET_LOOP "Bench TEST build: DF1 cylinder 77 is a PaulaNET loopback" OFF)
+# PaulaNET (plans 2026-10-09 .. 2026-10-12): DF1's cylinders 76/77 carry Rob Smith's PaulaNET protocol. Since
+# Phase 3 (1.11.0) release builds include it, and the firmware runs it only while the DF1 setting is Network
+# (pnet_mode_on, main.c's g_pnet_on): in Off and Next disk modes every hook returns at once and DF1 is a plain
+# disk drive. WF_PNET_L2=OFF with this ON is the loopback echo TEST build (NetLoop's bench mode): only that
+# build carries the marker main.c defines, which the publish script refuses without "TEST build" notes. Needs
+# DF1, i.e. WF_DRIVE_ID (checked below, beside WF_DF1_DEFAULT): a -DWF_DRIVE_ID=OFF build passes
+# -DWF_PNET_LOOP=OFF -DWF_PNET_L2=OFF as well.
+option(WF_PNET_LOOP "PaulaNET transport on DF1 cylinders 76/77 (release builds; runs in Network mode only)" ON)
 list(APPEND WFMF_COMMON_DEFS WF_PNET_LOOP=$<IF:$<BOOL:${WF_PNET_LOOP}>,1,0>)
 if (WF_PNET_LOOP)
   list(APPEND WFMF_FIRMWARE_SOURCES src/pnet_mfm.c src/pnet_frame.c src/pnet_rx.c src/pnet_loop.c)
@@ -107,22 +108,19 @@ if (WF_PNET_LOOP)
   set(WF_PNET_SIDE_DELAY_US 2360)
   list(APPEND WFMF_COMMON_DEFS PNET_TX_LEAD_BYTES=${WF_PNET_TX_LEAD_BYTES}
                                PNET_SIDE_DELAY_US=${WF_PNET_SIDE_DELAY_US})
-  message(STATUS "WF_PNET_LOOP is ON: DF1 cylinder 77 is a PaulaNET loopback (TEST build only).")
+  message(STATUS "WF_PNET_LOOP is ON: the PaulaNET transport is built in (runs in DF1 Network mode only).")
 endif ()
-# PaulaNET Phase 1 (plan docs/superpowers/plans/2026-10-11-paulanet-phase1-l2-sharing.md): on the
-# loopback's own transport, DF1 cylinder 77 carries real Ethernet frames, and the Amiga shares the
-# board's Wi-Fi at layer 2 (research 2026-10-09 §2.2, option A). A bench TEST build only. It needs
-# WF_PNET_LOOP, whose echo it replaces, so the image also carries that build's marker and the
-# publish script refuses it without "TEST build" notes. OFF compiles none of it: every hook is under
-# #if WF_PNET_L2 and these sources are not in the image.
-option(WF_PNET_L2 "Bench TEST build: DF1 cylinder 77 carries Ethernet frames (PaulaNET Phase 1)" OFF)
+# PaulaNET Phase 1-2: on that transport, DF1 cylinder 77 carries real Ethernet frames and cylinder 76 the
+# driver's status track; the Amiga shares the board's Wi-Fi at layer 2. ON in release builds since 1.11.0
+# (Phase 3), gated at runtime like the transport. OFF (with WF_PNET_LOOP ON) builds the loopback echo instead.
+option(WF_PNET_L2 "PaulaNET Network mode: Ethernet frames on the transport (OFF: the loopback echo TEST build)" ON)
 list(APPEND WFMF_COMMON_DEFS WF_PNET_L2=$<IF:$<BOOL:${WF_PNET_L2}>,1,0>)
 if (WF_PNET_L2)
   if (NOT WF_PNET_LOOP)
-    message(FATAL_ERROR "WF_PNET_L2 needs WF_PNET_LOOP: Phase 1 replaces the loopback's echo on its transport")
+    message(FATAL_ERROR "WF_PNET_L2 needs WF_PNET_LOOP: Network mode runs on the PaulaNET transport")
   endif ()
   list(APPEND WFMF_FIRMWARE_SOURCES src/pnet_sort.c src/pnet_ring.c src/pnet_link.c src/pnet_bridge.c src/pnet_status.c)
-  message(STATUS "WF_PNET_L2 is ON: DF1 cylinder 77 carries Ethernet frames (TEST build only).")
+  message(STATUS "WF_PNET_L2 is ON: DF1 Network mode (layer-2 sharing) is built in.")
 endif ()
 # Stack frames (HANDOFF 3ax): 1.7.0 died because one 1232-byte frame took core0's
 # boot path past its stack (2 KB then, 4 KB since 1.7.1) -- a hard fault before
@@ -220,7 +218,7 @@ if (WF_DF1_DEFAULT AND NOT WF_DRIVE_ID)
   message(FATAL_ERROR "WF_DF1_DEFAULT needs WF_DRIVE_ID: DF1 answers its ID through the responder")
 endif ()
 if (WF_PNET_LOOP AND NOT WF_DRIVE_ID)
-  message(FATAL_ERROR "WF_PNET_LOOP needs WF_DRIVE_ID: the loopback is DF1's, and DF1 needs the responder")
+  message(FATAL_ERROR "WF_PNET_LOOP needs WF_DRIVE_ID (DF1 needs the responder): pass -DWF_PNET_LOOP=OFF -DWF_PNET_L2=OFF with -DWF_DRIVE_ID=OFF")
 endif ()
 # D2 (plan 2026-10-08 Task 5): DF1's DMA word buffer. OFF = DD-sized (+14,336 B);
 # an HD next disk then leaves DF1 empty. DF1 is served only in a WF_DRIVE_ID
