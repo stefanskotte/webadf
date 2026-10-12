@@ -2712,9 +2712,13 @@ static void core1_main(void) {
             // handling would just re-set the state it is already in, so
             // there is no reason to send it even the one time before this
             // loop reacts.
-            g_ui_bars = rssi_bars(wifi_rssi());
 #if WF_PNET_L2
-            g_pnet_rssi = (int16_t)wifi_rssi();   // Phase 2: cylinder 76's RSSI, once a heartbeat
+            // One sample serves the bars and Phase 2's cylinder-76 RSSI (one radio-bus query a heartbeat).
+            const int hb_rssi = wifi_rssi();
+            g_ui_bars = rssi_bars(hb_rssi);
+            g_pnet_rssi = (int16_t)hb_rssi;
+#else
+            g_ui_bars = rssi_bars(wifi_rssi());
 #endif
 
             uint32_t now = clock_ms();
