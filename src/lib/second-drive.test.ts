@@ -65,6 +65,10 @@ describe('why a save was refused', () => {
     expect(secondDriveRefusal('net', { capable: true, seen: true, firmwareVersion: '1.11.0+g1' })).toBe('df1_seen');
     expect(secondDriveRefusal('df1', { capable: true, seen: true, firmwareVersion: '1.10.2+g1' })).toBe('df1_seen');
   });
+  it('names the firmware for net when the version is unknown or below 1.11.0', () => {
+    expect(secondDriveRefusal('net', { capable: true, seen: true, firmwareVersion: null })).toBe('firmware_too_old');
+    expect(secondDriveRefusal('net', { capable: true, seen: false, firmwareVersion: '1.9.0+g1' })).toBe('firmware_too_old');
+  });
   it('names the right version for each mode', () => {
     expect(firmwareFor('df1')).toBe('1.9.0');
     expect(firmwareFor('net')).toBe('1.11.0');
