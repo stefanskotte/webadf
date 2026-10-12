@@ -191,7 +191,8 @@ export function DeviceCard(
       {/* Gated like the Next button below: the line is about the disk in the
           drive, which only a converged board has. Not on the OLED, so it
           stays visible. */}
-      {next?.preload && state === 'converged' && (
+      {/* Not in Network mode: the spare slot holds the driver disk then (plan 2026-10-12 ruling 19). */}
+      {next?.preload && state === 'converged' && device.secondDriveReported !== 'net' && (
         <span className="flex items-center gap-1">
           <span className="text-[11px]" style={{ color: 'var(--muted)' }} data-testid={`device-preload-${device.id}`}
                 data-preload={next.preload}>
@@ -204,7 +205,7 @@ export function DeviceCard(
       {/* BOTTOM: write protection, firmware, and every existing action. */}
       <div className="flex flex-col gap-2">
         <SecondDriveReadings device={device} />
-        <SecondDriveSetting device={device} next={next} />
+        <SecondDriveSetting device={device} next={next} now={now} />
         <span className="w-fit shrink-0 self-start rounded-md border px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide"
               style={{
                 borderColor: 'var(--hairline)',

@@ -25,6 +25,8 @@ const loaded: LiveStateRow = {
   macAddress: 'AA:BB:CC:DD:EE:FF',
   trackMaxBytes: null, playsHd: false, preloadSha256: null, preloadState: null, next: null,
   displayVersion: 0, displayAppliedVersion: null, displayError: null, displayLayouts: null, displayPanel: '128x32',
+  secondDrive: 'off', secondDriveVersion: 0, secondDriveAppliedVersion: null, secondDriveReported: null,
+  df1Sha256: null, netDriverSeenAt: null, netAmigaIp: null, netFramesIn: null, netFramesOut: null,
 };
 
 const empty: LiveStateRow = {

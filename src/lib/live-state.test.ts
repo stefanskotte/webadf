@@ -20,6 +20,8 @@ const base: LiveStateRow = {
   macAddress: 'AA:BB:CC:DD:EE:FF',
   trackMaxBytes: null, playsHd: false, preloadSha256: null, preloadState: null, next: null,
   displayVersion: 0, displayAppliedVersion: null, displayError: null, displayLayouts: null, displayPanel: '128x32',
+  secondDrive: 'off', secondDriveVersion: 0, secondDriveAppliedVersion: null, secondDriveReported: null,
+  df1Sha256: null, netDriverSeenAt: null, netAmigaIp: null, netFramesIn: null, netFramesOut: null,
 };
 const other: LiveStateRow = { ...base, id: 'dev-b', name: 'Second' };
 const fp = (rows: LiveStateRow[], now = NOW) => liveFingerprint(rows, now, 0);
@@ -185,5 +187,18 @@ describe('an update in flight', () => {
     const downloading: LiveStateRow = { ...pending, firmwareUpdateState: 'downloading' };
     expect(fp([base])).not.toBe(fp([pending]));
     expect(fp([pending])).not.toBe(fp([downloading]));
+  });
+});
+
+describe('the DF1 setting and Network readings', () => {
+  it('moves with the DF1 setting and the Network readings (plan 2026-10-12 ruling 18)', () => {
+    const a = fp([base]);
+    expect(fp([{ ...base, secondDriveAppliedVersion: 1 }])).not.toBe(a);
+    expect(fp([{ ...base, secondDriveReported: 'net' }])).not.toBe(a);
+    expect(fp([{ ...base, netAmigaIp: '172.16.10.231' }])).not.toBe(a);
+    expect(fp([{ ...base, netDriverSeenAt: new Date(NOW - 5_000) }])).not.toBe(a);
+    // ...but a heartbeat that only moves the seen-at within "talking" does not refresh the page.
+    expect(fp([{ ...base, netDriverSeenAt: new Date(NOW - 5_000) }]))
+      .toBe(fp([{ ...base, netDriverSeenAt: new Date(NOW - 65_000) }]));
   });
 });

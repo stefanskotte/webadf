@@ -2,22 +2,24 @@
 import { useState, useTransition } from 'react';
 import { useRouter } from 'next/navigation';
 import type { DeviceListItem } from '@/lib/queries';
-import { secondDriveStatus, DF1_SEEN_REASON } from '@/lib/second-drive';
+import { secondDriveStatus, DF1_SEEN_REASON, SECOND_DRIVE_NET_FW, type SecondDriveMode } from '@/lib/second-drive';
 import type { NextInfo } from '@/lib/next-disk';
 import { HelpTip } from '@/components/help/help-tip';
+import { NetworkChecklist } from '@/components/devices/network-checklist';
 
 /** Second drive (DF1): Off | Next disk of the set (spec §3). Refused while a real DF1 was seen,
  *  with an override behind a second confirmation (operator ruling 2026-10-08). */
-export function SecondDriveSetting({ device, next }: { device: DeviceListItem; next?: NextInfo | null }) {
+export function SecondDriveSetting({ device, next, now }: { device: DeviceListItem; next?: NextInfo | null; now: number }) {
   const id = device.id;
   const router = useRouter();
   const [refreshing, startRefresh] = useTransition();
   const [busy, setBusy] = useState(false);
   const [refused, setRefused] = useState<string | null>(null);
   const [failed, setFailed] = useState<string | null>(null);
+  const [pending, setPending] = useState<SecondDriveMode>('df1');   // the mode the override confirms (ruling 17)
   const [step, setStep] = useState<0 | 1>(0);   // 1 = "are you sure" shown
 
-  async function save(mode: 'off' | 'df1', override = false) {
+  async function save(mode: SecondDriveMode, override = false) {
     setBusy(true);
     setFailed(null);
     try {
@@ -27,7 +29,7 @@ export function SecondDriveSetting({ device, next }: { device: DeviceListItem; n
       });
       if (res.status === 409) {
         const j = await res.json() as { error: string; reason: string };
-        if (j.error === 'df1_seen') setRefused(DF1_SEEN_REASON); else setFailed(j.reason);   // m1: only df1_seen offers the override
+        if (j.error === 'df1_seen') { setPending(mode); setRefused(DF1_SEEN_REASON); } else setFailed(j.reason);   // m1: only df1_seen offers the override
         return;
       }
       if (!res.ok) {
@@ -48,10 +50,13 @@ export function SecondDriveSetting({ device, next }: { device: DeviceListItem; n
         Second drive (DF1)
         <select data-testid={`second-drive-${id}`} value={device.secondDrive}
                 disabled={!device.secondDriveCapable || busy || refreshing}
-                onChange={(e) => save(e.target.value as 'off' | 'df1')}
+                onChange={(e) => save(e.target.value as SecondDriveMode)}
                 className="min-w-0 max-w-full rounded border px-1 py-0.5" style={{ borderColor: 'var(--hairline)', color: 'var(--ink)' }}>
           <option value="off">Off</option>
           <option value="df1">Next disk of the set</option>
+          <option value="net" disabled={!device.secondDriveNetCapable}>
+            {device.secondDriveNetCapable ? 'Network (PaulaNET)' : `Network (PaulaNET) — needs firmware ${SECOND_DRIVE_NET_FW}`}
+          </option>
         </select>
         <HelpTip topic="second-drive" />
       </label>
@@ -60,6 +65,12 @@ export function SecondDriveSetting({ device, next }: { device: DeviceListItem; n
         <span data-testid={`device-df1-disk-${id}`}>
           {device.df1Sha256 === null ? 'DF1: empty'
             : next?.preload === 'ready' ? `DF1: disk ${next.diskNo}` : 'DF1: next disk ready'}
+        </span>
+      )}
+      {device.secondDriveReported === 'net' && device.secondDriveCapable && (
+        <span className="flex items-center gap-1">
+          <NetworkChecklist device={device} now={now} />
+          {/* Task 11 adds the network help tip here. */}
         </span>
       )}
       {failed && (
@@ -75,7 +86,7 @@ export function SecondDriveSetting({ device, next }: { device: DeviceListItem; n
                     data-testid={`second-drive-override-${id}`}>Switch on anyway…</button>
           ) : (
             <button type="button" className="self-start font-semibold underline" disabled={busy}
-                    onClick={() => save('df1', true)}
+                    onClick={() => save(pending, true)}
                     data-testid={`second-drive-override-confirm-${id}`}>
               Yes, I have removed the other DF1 drive — switch DF1 on
             </button>

@@ -5,6 +5,7 @@ import type { getDb } from '@/db';
 import { devices } from '@/db/schema/devices';
 import { disks, games } from '@/db/schema/catalog';
 import { deviceState, isOnline, relative } from '@/lib/device-state';
+import { driverBucket, trafficText } from '@/lib/network-checklist';
 import { readNextForDevices, nextInfo, type NextInfo } from '@/lib/next-disk';
 
 /**
@@ -77,6 +78,10 @@ export interface LiveStateRow {
   displayError: string | null;
   displayLayouts: boolean | null;
   displayPanel: string;
+  /** The DF1 setting and Network readings (plan 2026-10-12 ruling 18): all card inputs. */
+  secondDrive: string; secondDriveVersion: number; secondDriveAppliedVersion: number | null;
+  secondDriveReported: string | null; df1Sha256: string | null;
+  netDriverSeenAt: Date | null; netAmigaIp: string | null; netFramesIn: number | null; netFramesOut: number | null;
   /** The computed next-disk verdict for this device, or null (multi-disk plan R3). */
   next: NextInfo | null;
 }
@@ -134,6 +139,9 @@ export function liveFingerprint(
         r.displayVersion, r.displayAppliedVersion ?? '', r.displayError ?? '',
         r.displayLayouts === null ? '' : String(r.displayLayouts), r.displayPanel,
         r.next ? `${r.next.diskNo}/${r.next.diskCount}/${r.next.wraps ? 1 : 0}/${r.next.preload ?? ''}` : '',
+        r.secondDrive, r.secondDriveVersion, r.secondDriveAppliedVersion ?? '', r.secondDriveReported ?? '',
+        r.df1Sha256 ?? '', driverBucket(r.netDriverSeenAt, now), r.netAmigaIp ?? '',
+        trafficText(r.netFramesIn, r.netFramesOut) ?? '',
         isOnline(r.lastSeenAt, now) ? '1' : '0',
         // Every offline card, not just 'stale' -- see the doc comment above.
         isOnline(r.lastSeenAt, now) ? '' : relative(r.lastSeenAt, now),
@@ -197,6 +205,15 @@ export async function liveStateRows(db: ReturnType<typeof getDb>, orgId: string)
       displayError: devices.displayError,
       displayLayouts: devices.displayLayouts,
       displayPanel: devices.displayPanel,
+      secondDrive: devices.secondDrive,
+      secondDriveVersion: devices.secondDriveVersion,
+      secondDriveAppliedVersion: devices.secondDriveAppliedVersion,
+      secondDriveReported: devices.secondDriveReported,
+      df1Sha256: devices.df1Sha256,
+      netDriverSeenAt: devices.netDriverSeenAt,
+      netAmigaIp: devices.netAmigaIp,
+      netFramesIn: devices.netFramesIn,
+      netFramesOut: devices.netFramesOut,
     })
     .from(devices)
     // Org-scoped on both sides of both joins: without `disks.orgId`, a
