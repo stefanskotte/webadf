@@ -2591,7 +2591,7 @@ separately.
   2026-10-09:** AmiTCP_NG v4.1.8 installed on the A500's IDE Workbench (KS 3.1); `ping 127.0.0.1` replies; `avail` with the
   stack running: 446,544 B chip free, 7,713,448 B fast free (acceptance bar was >= 100 KB chip). **Phase 0 GO (operator, 2026-10-09):** Rob's framing only (his grant makes PaulaNET-compatible the
   choice; the MFM alternative is dropped), and the bar to continue to Phase 1 is >= 15 KB/s and a median round trip
-  <= 250 ms on the A500. Plan: docs/superpowers/plans/2026-10-09-paulanet-phase0-loopback.md. **Phase 0 PASSED 2026-10-11 (3bg): 18.3 KB/s at N=8000, median 51 ms at N=64.** **Phase 1 PASSED 2026-10-11 (3bh): the A500 leases its own address through the board; ARP 1000/1000, median 51 ms.** **Stack decided (operator, 2026-10-09):** the Amiga-side TCP/IP stack behind the PaulaNET device is AmiTCP_NG, https://github.com/MW0MWZ/AmiTCP_NG. Check its licence alongside PaulaNET's, and how its SANA-II driver interface meets PaulaNET's device. **UNBLOCKED 2026-10-09:** RobSmithDev replied that he has no issue with us implementing PaulaNET, as long as the licences are respected. Check PaulaNET's licence terms (code and protocol) before any design, and credit him as the licence requires. Not started. Raised by the operator
+  <= 250 ms on the A500. Plan: docs/superpowers/plans/2026-10-09-paulanet-phase0-loopback.md. **Phase 0 PASSED 2026-10-11 (3bg): 18.3 KB/s at N=8000, median 51 ms at N=64.** **Phase 1 PASSED 2026-10-11 (3bh): the A500 leases its own address through the board; ARP 1000/1000, median 51 ms.** **Phase 2 PASSED 2026-10-12 (3bi): AmiTCP_NG online through Rob's unmodified PaulaNET.device, 47.5 KB/s.** **Stack decided (operator, 2026-10-09):** the Amiga-side TCP/IP stack behind the PaulaNET device is AmiTCP_NG, https://github.com/MW0MWZ/AmiTCP_NG. Check its licence alongside PaulaNET's, and how its SANA-II driver interface meets PaulaNET's device. **UNBLOCKED 2026-10-09:** RobSmithDev replied that he has no issue with us implementing PaulaNET, as long as the licences are respected. Check PaulaNET's licence terms (code and protocol) before any design, and credit him as the licence requires. Not started. Raised by the operator
   2026-09-13 after finding RobSmithDev's PaulaNET. Genuinely attractive, and explicitly a
   SECOND PRODUCT on the same board rather than an increment to disk serving: it makes the
   Amiga itself reach the internet, and does nothing to make disks load better.
@@ -4809,6 +4809,150 @@ Demozoo API (the bulk export makes per-lookup load on a non-profit unnecessary).
 - **Screenshot redirects:** screenshot fetches follow redirects, so the `media.demozoo.org` host
   allowlist checks only the first URL (the raster content-type allowlist and `nosniff` still apply).
 - **Cron drift:** the daily 01:30 cron against a 7-day gate can drift a refetch to 8 days.
+
+### 3bi. PaulaNET Phase 2 (Rob's PaulaNET.device) -- TEST build 1.10.2+g1b2e27a, seq 77: PASSED on the A500 (2026-10-12)
+
+**Verdict: all seven Phase 2 acceptance items passed.** AmiTCP_NG v4.1.8 came online through Rob Smith's unmodified
+`PaulaNET.device` and the board: the A500 got its own lease from the router, pinged the router and 8.8.8.8, resolved
+a name, and fetched a 200 KB file at 47.5 KB/s (24.4 KB/s during a DF0 copy). **One deviation from the spec: the
+§3.4 gate "nosync 0" was unattainable and was changed by the operator (below); about 4-5% of the driver's reads are
+retried.** Bench: A500 (PAL), KS 3.1, Workbench 3.1 + AmiTCP_NG v4.1.8 on IDE; Rob's driver from commit `0afd5fa`
+(`DEVS:Networks/paulanet.device`, 13,872 B; `DEVS:NetInterfaces/eth0` = `device=PaulaNET.device`, `unit=0`,
+`configure=dhcp`); NetLoop 1.4 (SELFTEST PASS, with eth0 down and up); DF0 Workbench3.1, DF1 Storage3.1. Board MAC
+28:cd:c1:19:6a:38, board IP 172.16.10.234, Amiga lease 172.16.10.231, router and DNS 172.16.10.1. Branch
+`feat/paulanet-phase2`, not merged at the time of writing. Firmware sequences used: spike A 72, B 73, C 74, D 75, E 76,
+Phase 2 TEST 77 (all registry only).
+
+**The spike (Task 1), which went beyond the plan.** The spec's timing arithmetic (read DMA 2.4-4.2 ms after SIDE, so
+a start at 2,360 us with a 120-byte lead-in puts the sync in bytes 8-120) was tested in five builds. All used NetLoop's
+`SCAN=124`, the driver's scan length.
+
+| spike | build | timing | result |
+|---|---|---|---|
+| A | seq 72 | Phase 1's: lead 200, no delay | N=64 x1000: 998/1000 ok, 2 failed; header reads nosync 284 of 1676 (16.9%), payload 394 of 1392 (28.3%); sync start spread over all bins 0-124. N=8000 x300: 300/300 ok; header 21.2%, payload 21.1% nosync |
+| B | seq 73 | lead 120, start 2,360 us after SIDE | N=64 x1000: 1000/1000 ok, 0 mismatches; header 49 of 1081 (4.5%), payload 32 of 1032 (3.1%) nosync. A 200-round run first: header 0, payload 7 of 211 |
+| C | seq 74 | lead 120, start 3,200 us | 11/1000 ok; header 8714 of 8967 reads nosync (97%). **Disproved my hypothesis** that the read waits for our INDEX edge (INDEXSYNC): moving the edge later did not move the read |
+| D | seq 75 | measurement: lead 320, start 1,000 us, NetLoop 1.3.1 32-byte histogram | 1000/1000 ok. The Amiga's read DMA starts 1.0-5.4 ms after SIDE, bulk 1.6-3.1 ms, peak about 2.6 ms |
+| E | seq 76 | lead 120, start 1,650 us (centred on D's data) | 1000/1000 ok, 0 mismatches; header 5.4%, payload 5.0% nosync. Worse than B |
+
+Board side in B: the start was on time (side-idx 2,360-2,410 us, `late` 9 and `skipped` 5 over two runs); the
+misses are the Amiga's spread. **Open question 1 is answered: the read DMA is timed from the SIDE edge, not from
+INDEX, and its spread (1.0-5.4 ms) is wider than the driver's 124-byte, 1.98 ms window.** No single delay can give
+nosync 0, and the model fitted on D did not predict E (it said about 1.5%, E measured about 5%): the tails change from
+run to run.
+
+**Gate changed by the operator (2026-10-12), a DEVIATION from spec §3.4.** The spec's gate was "NetLoop's 124-byte
+scan never misses in 1,000 rounds". It became "1000/1000 rounds ok, 0 mismatches, misses <= ~2%", with the rule: if E
+does not beat B, keep B. **B met the first two conditions but not the 2% figure (4.5% / 3.1%), and E did not beat it,
+so the 2% bar was not met.** The constants kept are B's: **lead-in 120 B, start 2,360 us after a SIDE edge** (commit
+`7b4790b`). The cost: about 4-5% of the driver's reads miss the sync and are retried by the driver (about 3 ms each).
+It showed in the product path as `late` 189 per 48,749 delayed starts (3.9 per 1,000) in the Step 8 log. The 47.5 KB/s
+below is with that cost included.
+
+**Acceptance (spec §5):**
+
+| # | what | result |
+|---|---|---|
+| 1 | AmiTCP_NG online, lease distinct from the board's | PASS: `AddNetInterface eth0` -> up, 172.16.10.231 (DHCP), gateway and DNS 172.16.10.1; board 172.16.10.234; unit 0, MTU 1504, MSS 1464, link Up, 0 errors, 0 drops |
+| 2 | ping router and 8.8.8.8 | PASS: router 10/10, 0% loss, 203.6 / 279.3 / 545.3 ms (min/avg/max); 8.8.8.8 10/10, 0% loss, 215.3 / 253.9 / 313.8 ms |
+| 3 | `nslookup amiga.org` | PASS: 50.87.149.192, via 172.16.10.1 |
+| 4 | 200 KB transfer | PASS: ftp GET of 204,800 B from pyftpdlib 1.5.10 on the Mac (port 2121, firewall off): server log 4.208 s = **47.5 KB/s** |
+| 5 | same, during a DF0 copy | PASS: `copy c:dir df0:pnettest` (x3 and a delete) ran; 8.205 s = **24.4 KB/s**; 25 DF0 track writes, all `ALL bad 0`, all 25 applied; no `lost ... batches to DF0` line |
+| 6 | Ctrl-A-A, then online again | PASS: `AddNetInterface eth0` -> up 172.16.10.231 (DHCP); ping router 3/3, 163.0 / 200.6 / 272.5 ms |
+| 7 | board: heap >= 20,480 B, no lock-up, drops counted | PASS: heap low-water and `l2 amiga` lowest 32,768 B (floor 20,480); no gap over 10 s in the log; `records dropped` 0; every drop counted (below) |
+
+**`NetLoop STATUS` (Task 6 Step 5, `MAC=28:cd:c1:19:6a:38 ROUNDS=200`), cylinder 76 as the driver reads it:** MAC ok,
+link 2, RSSI -47 dBm, version 1.10, flags 3, budget 8,192 B; 200/200 read, nosync 0, bad 0; sync starts at bytes
+8-122 (scan 124); "cylinder 77 right after": 200/200 exchanges acknowledged (open question 2: measured, no problem);
+RESULT PASS.
+
+**Log counts (Step 8, from the seq 77 install to the end of the run):** `records dropped` 0; `pnet rx new` grew to 709;
+`l2 from amiga` new 40 -> 709 (frames 549), over 0, bad 0; `l2 in` drop 3 (RX ring full); tx-no len/mac/type/clash 0,
+err 0; `pnet: bad/refused` 0; cylinder 76: `l2 status` 730 requests, early 0, link up, RSSI -45; `distinct` on 512 lines,
+clash 0, never SAME; `fw: update held` 0. Timing in the product path: delayed 48,749, late 189, short 11, skipped 177;
+side-idx max per window 2,401-10,267 us (the high ones are DF0 activity).
+
+**SRAM (Task 4 Step 13, `build-pnet2`):** .bss 420,008 -> 421,020 (+1,012 B); .data 10,456 -> 10,496 (+40 B, the
+`dma_irq` RAM function grew from 0x170 to 0x198). Release image unchanged (`pnet_off_identical.sh master`: three
+identical).
+
+**Not measured:** **the busy-poll CPU share (spec §6, plan ruling 17) was not captured.** SELFTEST's timing lines scrolled
+off in Task 5 (eth0 down) and Task 7 (eth0 up), so there is no online-against-offline figure; the operator did not
+report Workbench or mouse feel. Phase 3 lacks this number; it can be measured later with the same SELFTEST.
+
+**Rulings 1-18 (plan 2026-10-11), one line each:**
+1. Phase 2 stays TEST-only (`WF_PNET_LOOP` / `WF_PNET_L2`); the release image does not change.
+2. The timing spike runs on loopback-only builds, measured by NetLoop's `N=` echo.
+3. Spike A and B are two commits; the timing is two plain CMake variables, not cache entries.
+4. The delayed start runs from a core0 hardware alarm armed by the loop; `stream_stop(1)` cancels it.
+5. The delay applies to a cylinder-77 side-1 start within the delay of the latest SIDE edge; later starts are at once.
+6. Delay 2,360 us with a 120-byte lead-in (the planned arithmetic; the bench kept these values, but not for that reason).
+7. Cylinder 76 side 1 streams eight identical status records, one per 124 bytes (992 B), from a buffer of its own.
+8. Cylinder 76 side 0 is silent, so the prepared cylinder-77 batch is never overwritten.
+9. Cylinder 76 stays write-protected, so his config tool's write fails visibly.
+10. No status record is streamed until core1 has published the MAC; an earlier open fails and is counted (`early`).
+11. Link 2 while the station is joined, else 0; RSSI is core1's heartbeat sample, 0 before the first.
+12. The Amiga's frames are decoded straight into the TX ring's slots; the 32 KB scratch is gone.
+13. A malformed frame in a batch with a good header still takes the batch; it and later frames are dropped and counted.
+14. Batches to the Amiga stay at most 20 frames; only parsing the Amiga's batches goes to 255.
+15. NetLoop 1.3 adds `SCAN=`, NetLoop 1.4 adds `STATUS` (his driver prints nothing on the Amiga).
+16. The transfer test is a 204,800-byte ftp fetch from pyftpdlib; KB/s comes from the server log.
+17. The driver's busy-poll cost is measured, never gated (not captured, above).
+18. No web or server change, so no e2e.
+
+**Corrections to the spec 1-7, one line each:**
+1. §3.2: the scratch can overflow under RLE (a 1,514-byte zero frame packs to about 32 B), so frames decode into the ring.
+2. §3.2: with no scratch, nothing is refused for size; frames past the ring's free space are dropped and counted `over`.
+3. §3.1: a write to 76 cannot be captured (`pnet_df1_wprot` refuses it before WGATE); 76 stays write-protected.
+4. §3.3: "every build" means every build that serves batches (L2); `pnet_off_identical.sh master` passes unchanged.
+5. §3.4: cylinder 76 needs no timing; its reads often follow a step, which has no measured timing.
+6. §3.1: offsets 138 and 140 are named both ways in his source; the spec's (Amiga) names are right, and 138 is the Amiga's batch budget.
+7. §2 row 4: the 124-byte bound comes from the payload read (`compressedSize + 24 + 128`), not from `findDataOffset`.
+
+**Rulings and deviations during execution** (SDD ledger `.superpowers/sdd/2026-10-11-paulanet-phase2-rob-driver/progress.md`):
+- Pre-flight: Task 1 Step 1 was stale (worktree and branch existed), so only the env setup was done; `pnet_go_cancel()`
+  goes first in the DISK branch of `pnet_serve_df1`; plan corrections 1-5 and ruling 8 override the spec text; spike B's
+  alarm start became product code (the spec said none kept); "never run NetLoop while eth0 is up" reads "no mode that
+  opens DF1" (SELFTEST exits before trackdisk opens); the ftp syntax was settled by reading AmiTCP_NG's `ftp.c`.
+- Task 1 review (code): Approved, 5 minors. Fixed M1 (cancel before clearing `g_pnet_echo_live`), M2 (`pnet_go_due`
+  only for the output track) and M4 (separate `short` from `late`) in the spike B commit.
+- Task 1 spike B review: Approved, 3 minors (a skipped alarm start left side 1 silent, `delayed` counted skipped starts,
+  `short`/`late` counted commit restarts); all fixed (079db75) before publishing. DEVIATION: counters saturate at 999 /
+  9,999 to fit the 88-byte log buffer; the 5 s window keeps them far below that.
+- Spike C: operator ruling to try 3,200 us after gate (a) failed; it disproved the INDEXSYNC hypothesis. Spike D:
+  operator ruling for a measurement (NetLoop 1.3.1, so the plan's "1.4" name stays free). Spike E and the gate change:
+  above.
+- Task 2 review: Approved; one Important (the non-L2 loopback echo is not capped) waived because the echo returns what
+  the Amiga wrote and no driver-facing build uses it; two minors fixed (`PNET_DRIVER_MAX_READ`, test finds the sync in
+  the built buffer).
+- Task 3 review: Changes requested; Important (the worst-case `l2 from amiga` line was 88 chars and truncated in
+  `char[88]`) fixed by saturating all `pnet_l2_log` lines (80f3f1c); minor comment fixed; minor 2-byte payload counted
+  malformed, accepted; minor (spec §3.2 scratch text stale) is amended in the spec.
+- Task 4 review: Approved; minor (second RSSI radio call per heartbeat) fixed (1b2e27a); the record built per arrival and
+  the config tool's failing write are recorded in the spec amendments; the many-start-point test covers one MAC only,
+  parked for Phase 3 (a false sync on an unusual MAC would be rejected by the checksum).
+- Task 4: NetLoop `nl_get16` exported rather than duplicated; log lines saturated to fit 87 characters.
+- Task 6: ADF staged as `~/Downloads/paulanet-0afd5fa.adf`; STATUS run before the file copies (order does not matter).
+  The first two copies failed because the ADF had not mounted yet.
+- Task 7: ftp syntax probe replaced by reading `ftp.c`; the busy-poll figure dropped (above); the ftp server (pids
+  65420, 65426) was stopped afterwards.
+- A500 was off for every install, as required.
+
+**Open questions, with what the bench answered:**
+1. Why the read DMA starts when it does: **answered by D**: 1.0-5.4 ms after SIDE, peak about 2.6 ms; not from INDEX
+   (spike C). Not read from the Kickstart ROM; the measurement was enough.
+2. Cylinder-77 reads right after a step from 76: **measured, 200/200 acknowledged** in `NetLoop STATUS`; their sync
+   timing was not recorded separately.
+3. AmiTCP_NG's own DHCP and ARP through the sorter: **answered**: it got a lease, pinged and resolved; no broadcast-flag
+   or link-local problem appeared.
+4. Rob's written grant under `docs/`: **still owed**; Phase 3's driver disk needs it first.
+5. The Mac's firewall for the ftp server: **it was turned off** for the run.
+6. RSSI staleness: RSSI read -47 then -45 dBm in the status record; the driver only logs it; no issue seen.
+
+**Off switch and rollback.** Off at runtime: on the Amiga, reboot without running `AddNetInterface eth0`; on the board,
+set DF1 to Off on the card (every Phase 2 path needs DF1 on with a disk). Rollback: the registry refuses a lower
+sequence, so leaving this TEST build needs a release at a higher one: master (with this branch merged or not) built
+with both options OFF, as 1.10.3. The release image is unchanged by Phase 2. The operator decides when.
 
 ### 3bh. PaulaNET Phase 1 (layer-2 sharing) -- TEST build 1.10.1+gcdf9711, seq 70: PASSED on the A500 (2026-10-11)
 

@@ -150,3 +150,22 @@ configure=dhcp
   - the release build stays source-identical outside the cap (`tools/pnet_off_identical.sh`, with the cap's change
     accounted for).
 - **Bench:** §3.4's spike, then §5.
+
+## Amendments after the bench (2026-10-12)
+
+The original text above is unchanged. The bench (HANDOFF 3bi) and the plan's corrections changed these points.
+
+- **§3.4, the gate and the result.** The gate "NetLoop's 124-byte scan never misses in 1,000 rounds" could not be met.
+  The Amiga's read DMA starts 1.0-5.4 ms after the SIDE edge (bulk 1.6-3.1 ms, peak about 2.6 ms), a spread wider than
+  the driver's 124-byte, 1.98 ms window, and it is timed from SIDE, not from INDEX. The operator changed the gate to
+  "1000/1000 rounds ok, 0 mismatches, misses <= ~2%". The constants kept are the planned ones: 120-byte lead-in and a
+  start 2,360 us after SIDE. Measured at N=64 x1000 with `SCAN=124`: 1000/1000 ok, 0 mismatches, header nosync 4.5%,
+  payload 3.1%. A second timing (1,650 us) was worse (5.4% / 5.0%). So the "never misses" gate and the 2% figure were
+  not met; the driver retries about 4-5% of its reads. The acceptance run still passed at 47.5 KB/s.
+- **§3.2, no scratch.** The 32 KB scratch is gone. Frames decode straight into the TX ring's slots (plan correction 1
+  and ruling 12), because `maxTxSize` does not bound the decoded size under RLE. Nothing is refused for size; frames
+  past the ring's free space are dropped and counted.
+- **§3.1, the record is built per arrival.** The status record is built once per arrival on cylinder 76,
+  not once per read.
+- **§3.1, writes to 76 fail.** Cylinder 76 stays write-protected, so a write from his config tool fails ("write
+  protected") instead of being captured and ignored (plan correction 3). The driver never writes 76.
