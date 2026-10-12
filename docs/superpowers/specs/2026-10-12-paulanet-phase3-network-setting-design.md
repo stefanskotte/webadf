@@ -186,3 +186,19 @@ plan is written.
 - About 4-5 % of reads miss the driver's sync window and are retried (Phase 2 §3.4 amendment).
 - The busy-poll cost on a 68000 is still unmeasured. The bench (§7.3) records the selftest ratio this time.
 - A board on firmware older than 1.11.0 cannot be set to Network. The card says why.
+
+## 9. Next: Phase 4, files dropped onto the Amiga (operator, 2026-10-12)
+
+The backlog's "Drop files onto the Amiga's RAM:" (2026-10-09) follows as Phase 4, with its own spec. It has three
+parts:
+- a small Amiga receiver on the PaulaNET disk, which `Install` sets up, with its target directory in ENVARC:;
+- a drop zone on the board's card;
+- files carried through the board's existing server session.
+
+Phase 3 leaves room for it in three ways:
+- the disk is a server-side image, so adding the receiver is a new sha;
+- `Install` is written so steps can be added;
+- the `net` report already carries the Amiga's address.
+
+Phase 4's first step is a spike: can the board and the Amiga reach each other locally through the L2 sharing bridge?
+**Phase 3 must not depend on it.**
