@@ -4835,7 +4835,7 @@ a start at 2,360 us with a 120-byte lead-in puts the sync in bytes 8-120) was te
 | D | seq 75 | measurement: lead 320, start 1,000 us, NetLoop 1.3.1 32-byte histogram | 1000/1000 ok. The Amiga's read DMA starts 1.0-5.4 ms after SIDE, bulk 1.6-3.1 ms, peak about 2.6 ms |
 | E | seq 76 | lead 120, start 1,650 us (centred on D's data) | 1000/1000 ok, 0 mismatches; header 5.4%, payload 5.0% nosync. Worse than B |
 
-Board side in B: the start was on time (side-idx 2,360-2,410 us, `late` 9 and `skipped` 5 over two runs); the
+Board side in B: the start was on time (Step 30 windows: side-idx max 2,410/2,722/2,406/2,391 us, min 2,378/2,269/2,240/1,154 us; `late` 9 and `skipped` 5 over Steps 30-31); the
 misses are the Amiga's spread. **Open question 1 is answered: the read DMA is timed from the SIDE edge, not from
 INDEX, and its spread (1.0-5.4 ms) is wider than the driver's 124-byte, 1.98 ms window.** No single delay can give
 nosync 0, and the model fitted on D did not predict E (it said about 1.5%, E measured about 5%): the tails change from
@@ -4846,7 +4846,7 @@ scan never misses in 1,000 rounds". It became "1000/1000 rounds ok, 0 mismatches
 does not beat B, keep B. **B met the first two conditions but not the 2% figure (4.5% / 3.1%), and E did not beat it,
 so the 2% bar was not met.** The constants kept are B's: **lead-in 120 B, start 2,360 us after a SIDE edge** (commit
 `7b4790b`). The cost: about 4-5% of the driver's reads miss the sync and are retried by the driver (about 3 ms each).
-It showed in the product path as `late` 189 per 48,749 delayed starts (3.9 per 1,000) in the Step 8 log. The 47.5 KB/s
+The driver's sync-miss rate in the product path was NOT measured (the driver prints nothing); the 4-5% figure comes from the NetLoop `SCAN=124` runs. (The Step 8 log's `late` 189 per 48,749 delayed starts is the board's own lateness, starts made after their due time, not the driver's misses.) The 47.5 KB/s
 below is with that cost included.
 
 **Acceptance (spec §5):**
@@ -4868,9 +4868,9 @@ RESULT PASS.
 
 **Log counts (Step 8, from the seq 77 install to the end of the run):** `records dropped` 0; `pnet rx new` grew to 709;
 `l2 from amiga` new 40 -> 709 (frames 549), over 0, bad 0; `l2 in` drop 3 (RX ring full); tx-no len/mac/type/clash 0,
-err 0; `pnet: bad/refused` 0; cylinder 76: `l2 status` 730 requests, early 0, link up, RSSI -45; `distinct` on 512 lines,
+err 0; `pnet: bad/refused` 0; cylinder 76: `l2 status` 730 status streams (one per arrival on cylinder 76), early 0, link up, RSSI -45; `distinct` on 512 lines,
 clash 0, never SAME; `fw: update held` 0. Timing in the product path: delayed 48,749, late 189, short 11, skipped 177;
-side-idx max per window 2,401-10,267 us (the high ones are DF0 activity).
+side-idx max per window 2,401..10,267 us, min 118..2,421 us (the cause of the high ones was not established).
 
 **SRAM (Task 4 Step 13, `build-pnet2`):** .bss 420,008 -> 421,020 (+1,012 B); .data 10,456 -> 10,496 (+40 B, the
 `dma_irq` RAM function grew from 0x170 to 0x198). Release image unchanged (`pnet_off_identical.sh master`: three
