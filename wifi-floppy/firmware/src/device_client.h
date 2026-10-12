@@ -84,6 +84,11 @@ typedef bool (*dc_hold_fn)(void *ctx);
 // so tests stay deterministic (see dc_enter_backoff in device_client.c).
 #define DC_BACKOFF_FLOOR_MS 1000u
 #define DC_BACKOFF_CAP_MS   60000u
+// Phase 3 (Task 4b review I-1): after a failed fetch on the driver disk's own
+// route (/api/device/image/net/<sha>), that digest is not asked for again on
+// that route for this long -- then it is, so a server fault heals without a
+// reboot. The DF0 route's block list is never touched by it.
+#define DC_NET_RETRY_MS     60000u
 
 // Sized from the poll body's actual shape, not guessed. readDesired()
 // (src/lib/mount.ts) emits, in this order: version, sha256 (64 hex),
@@ -323,6 +328,12 @@ typedef struct {
     char _blocked[DC_BLOCKED_MAX][65];
     int  _blocked_count;
     int  _blocked_next;
+    // Phase 3 (Task 4b review I-1): the driver disk's route keeps its own
+    // block, apart from the ring above, so a failure there never refuses a
+    // DF0 mount of the same digest. Expires after DC_NET_RETRY_MS (from
+    // _net_blocked_at) and on any DF1 mode change (dc_set_df1).
+    char     _net_blocked[65];
+    uint32_t _net_blocked_at;
 
     // --- firmware self-update (piece 2b); see dc_take_fw_fields ---
     // Set by dc_step when instructionVersion moved past fw_instruction_version.

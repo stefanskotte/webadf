@@ -165,10 +165,15 @@ int     psram_df1_slot(void);
 void    psram_df1_reader_ack(int32_t token);   // core0 only
 bool    psram_df1_quiescent(void);         // core1: core0 acked the current DF1 word
 
+bool psram_image_net_available(void);   // SLOT_NET has real storage (Phase 3)
 int  psram_active_slot(void);           // SLOT_NONE when ejected
 int  psram_inactive_slot(void);         // the fetch target; SLOT_NONE -> 0; never SLOT_NET
 
 // Host tests only: point the image store at ordinary memory. On device the
 // SDK's PSRAM window is used and this is never called.
 void psram_image_set_backing(void *base, size_t len);
+#ifdef WFMF_HOST_TEST
+// Host tests only: pretend SLOT_NET's storage is missing (false) or back (true).
+void psram_image_test_set_net(bool present);
+#endif
 #endif

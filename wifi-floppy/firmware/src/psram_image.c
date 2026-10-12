@@ -156,6 +156,12 @@ void psram_image_set_backing(void *base, size_t len) {
     have_psram = g_base != NULL && g_len >= (size_t)SLOT_COUNT * NUM_TRACKS * TRACK_MAX_BYTES;
 }
 
+#ifdef WFMF_HOST_TEST
+void psram_image_test_set_net(bool present) { have_net = present; }
+#endif
+
+bool psram_image_net_available(void) { return have_psram && slot_ok(SLOT_NET); }
+
 bool   psram_image_available(void) { return have_psram; }
 size_t psram_image_size(void)      { return have_psram ? g_len : 0; }
 
@@ -186,6 +192,7 @@ bool psram_image_read(int slot, int track, uint8_t *dst, uint32_t *bit_count) {
 static void store(int slot, int track, const uint8_t *src, uint32_t bit_count,
                   track_state_t st) {
     if (!have_psram || !slot_ok(slot) || track < 0 || track >= NUM_TRACKS) return;
+    if (slot == SLOT_NET) return;                       // written only by the WFAD loader (Task 4b review m1)
     if (kind[slot] != SLOT_KIND_MFM) return;            // MFM never goes into an ADF slot (psram_image_store_adf)
     uint32_t nbytes = (bit_count + 7) / 8;
     if (nbytes > slot_track_cap(slot)) return;     // oversized track, drop

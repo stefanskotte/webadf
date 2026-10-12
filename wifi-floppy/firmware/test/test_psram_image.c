@@ -175,6 +175,17 @@ static void the_net_slot_holds_dd_sectors_only(void) {
     CHECK(!psram_image_have(SLOT_NET, 3), "MFM never goes into a sector slot");
 }
 
+// Review m1: SLOT_NET is written only by the WFAD loader. The MFM writer refuses it even while its kind is MFM
+// (as it is after a reset, before a load).
+static void the_mfm_writer_never_touches_the_net_slot(void) {
+    psram_image_reset_slot(SLOT_NET);
+    CHECK_EQ_INT(psram_image_slot_kind(SLOT_NET), SLOT_KIND_MFM);
+    static uint8_t mfm[16] = {0};
+    psram_image_mark_dirty(SLOT_NET, 3, mfm, 128);
+    CHECK(!psram_image_have(SLOT_NET, 3), "mark_dirty never stores into SLOT_NET");
+    CHECK_EQ_INT(psram_image_dirty_count(SLOT_NET), 0);
+}
+
 int main(void) {
     size_t len = (size_t)TRACK_MAX_BYTES * NUM_TRACKS * SLOT_COUNT;
     void *mem = malloc(len);
@@ -193,6 +204,7 @@ int main(void) {
     RUN(the_net_slot_is_df1s_whatever_df0_holds);
     RUN(tokens_name_all_three_slots_apart);
     RUN(the_net_slot_holds_dd_sectors_only);
+    RUN(the_mfm_writer_never_touches_the_net_slot);
     free(mem);
     return REPORT();
 }
