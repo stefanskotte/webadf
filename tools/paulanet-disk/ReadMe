@@ -1,0 +1,27 @@
+PaulaNET driver disk
+====================
+
+This disk puts your Amiga on the network through the WiFi floppy
+board's Wi-Fi, using the board as drive DF1.
+
+PaulaNET and its driver, PaulaNET.device, are by Rob Smith
+(RobSmithDev): https://github.com/RobSmithDev/PaulaNET
+Copyright (c) 2026 RobSmithDev. All rights reserved.
+PaulaNET.device and PaulaNET Config are on this disk with his
+permission, under his terms. They are not covered by webadf's
+MIT licence.
+
+The Install script and this ReadMe are from webadf.
+
+You need a TCP/IP stack, such as AmiTCP_NG or Roadshow, and no
+other drive answering as DF1.
+
+1. Double-click Install (or type: Execute PaulaNET:Install).
+   It copies PaulaNET.device to DEVS:Networks and, unless one is
+   already there, writes DEVS:NetInterfaces/eth0.
+2. In a Shell, type:  AddNetInterface eth0
+3. To go online at every start, add that line to S:User-Startup.
+
+Keep this disk in DF1 while you are online: the driver checks for
+it when it starts. PaulaNET Config is not needed with the WiFi
+floppy board; its Wi-Fi is set on the board's web page.
