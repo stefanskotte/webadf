@@ -19,6 +19,12 @@ describe('the Network checklist names both values of every state', () => {
       .toEqual({ ok: false, text: 'Driver: not heard from for 2 min — run AddNetInterface eth0' });
     expect(driverLine(new Date(NOW + 3_000), NOW).text).toBe('Driver: talking (last seen 0 s ago)');   // clock skew
   });
+  it('the age keeps counting as the clock advances, and flips at the threshold', () => {
+    const seen = new Date(NOW);
+    expect(driverLine(seen, NOW + 5_000).text).toBe('Driver: talking (last seen 5 s ago)');
+    expect(driverLine(seen, NOW + 60_000).text).toBe('Driver: talking (last seen 60 s ago)');
+    expect(driverLine(seen, NOW + 180_000).text).toBe('Driver: not heard from for 3 min — run AddNetInterface eth0');
+  });
   it('Amiga address: the address, or none yet', () => {
     expect(amigaAddressLine('172.16.10.231')).toEqual({ ok: true, text: 'Amiga address: 172.16.10.231' });
     expect(amigaAddressLine(null)).toEqual({ ok: false, text: 'Amiga address: none yet' });

@@ -200,5 +200,12 @@ describe('the DF1 setting and Network readings', () => {
     // ...but a heartbeat that only moves the seen-at within "talking" does not refresh the page.
     expect(fp([{ ...base, netDriverSeenAt: new Date(NOW - 5_000) }]))
       .toBe(fp([{ ...base, netDriverSeenAt: new Date(NOW - 65_000) }]));
+    // talking -> quiet does refresh it
+    expect(fp([{ ...base, netDriverSeenAt: new Date(NOW - 65_000) }]))
+      .not.toBe(fp([{ ...base, netDriverSeenAt: new Date(NOW - 300_000) }]));
+    // traffic text: changes when frames move, not while both are zero
+    expect(fp([{ ...base, netFramesIn: 5, netFramesOut: 1 }])).not.toBe(a);
+    expect(fp([{ ...base, netFramesIn: 5, netFramesOut: 1 }])).not.toBe(fp([{ ...base, netFramesIn: 6, netFramesOut: 1 }]));
+    expect(fp([{ ...base, netFramesIn: 0, netFramesOut: 0 }])).toBe(a);
   });
 });
