@@ -2820,6 +2820,35 @@ static void df1_serves_the_verified_preload_while_on(void) {
     CHECK_EQ_INT(psram_df1_slot(), SLOT_NONE);   // off: ejected
 }
 
+// Task 8 review m1: a DF1 mode change forgets the previous mode's next disk and its preload record. Without
+// it, Next -> Network kept the library disk as next_sha256 and dc_preload_step fetched /net/<library sha>
+// (404) and held the route off for DC_NET_RETRY_MS before the driver disk could come. Off <-> Next keeps both:
+// there `next` is DF0's next disk of the set either way.
+static void a_df1_mode_change_forgets_the_previous_next_disk(void) {
+    boot_mounted_with_preload_ready();        // A in slot 0, preload B verified in slot 1, next = B
+    dc_set_df1(&c, DF1_MODE_OFF, true);
+    dc_set_df1(&c, DF1_MODE_NEXT, true);
+    CHECK(c.preload.next_sha256[0] != '\0', "Off -> Next keeps next");
+    CHECK_EQ_INT(c.preload.slot, 1);          // ...and the record
+    c.preload.changed = false;
+    dc_set_df1(&c, DF1_MODE_NET, true);
+    CHECK(c.preload.next_sha256[0] == '\0', "Network: the library next is forgotten");
+    CHECK_EQ_INT(c.preload.slot, SLOT_NONE);
+    CHECK(c.preload.sha256[0] == '\0', "the record is dropped");
+    CHECK(c.preload.changed, "the status report learns the record went");
+    CHECK(!dc_preload_step(&c), "nothing to preload until the server names the driver disk");
+    CHECK_EQ_INT(fake_request_count_since_mark(), 0);   // no /api/device/image/net/<library sha>
+    dc_df1_reconcile(&c);
+    CHECK_EQ_INT(psram_df1_slot(), SLOT_NONE);
+    // Back out of Network: the driver disk is not DF0's next either.
+    set_next_sha(&c, SHA_C);
+    c.preload.slot = SLOT_NET;
+    snprintf(c.preload.sha256, sizeof c.preload.sha256, "%s", SHA_C);
+    dc_set_df1(&c, DF1_MODE_NEXT, true);
+    CHECK(c.preload.next_sha256[0] == '\0', "Network -> Next forgets the driver disk as next");
+    CHECK_EQ_INT(c.preload.slot, SLOT_NONE);
+}
+
 // Review Focus 5
 static void an_hd_next_disk_stays_off_a_dd_only_df1(void) {
     boot_mounted_with_preload_ready();
@@ -3041,6 +3070,9 @@ static void a_mode_change_clears_the_driver_disks_block(void) {
     CHECK_EQ_INT(fake_request_count(), before);
     dc_set_df1(&c, DF1_MODE_NEXT, true);
     dc_set_df1(&c, DF1_MODE_NET, true);
+    // The mode change also forgot `next` (Task 8 review m1); the server's next body names the driver disk again.
+    CHECK(c.preload.next_sha256[0] == '\0', "next forgotten with the mode");
+    set_next_sha(&c, SHA_B);
     push_dd_wfad_image_response();
     CHECK(dc_preload_step(&c), "a mode change lets it retry at once");
     CHECK_EQ_INT(psram_df1_slot(), SLOT_NET);
@@ -3225,6 +3257,7 @@ int main(void) {
     RUN(an_uppercase_next_is_refused);
     RUN(an_eject_clears_next);
     RUN(df1_serves_the_verified_preload_while_on);
+    RUN(a_df1_mode_change_forgets_the_previous_next_disk);
     RUN(an_hd_next_disk_stays_off_a_dd_only_df1);
     RUN(a_fetch_that_finds_df1_unacknowledged_writes_nothing);
     RUN(next_disk_ejects_df1_and_refills_it_with_the_following_disk);

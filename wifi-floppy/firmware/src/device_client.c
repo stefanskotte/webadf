@@ -700,9 +700,26 @@ static dc_fetch_result_t dc_fetch_into(device_client_t *c, const char *sha256, i
 
 // --- DF1 second drive (spec 2026-10-08 §4): core1's policy ---------------
 
+static void dc_preload_drop(device_client_t *c);   // below, with the preload record
+
 void dc_set_df1(device_client_t *c, df1_mode_t mode, bool hd_ok) {
-    // Any mode change forgets the driver disk's block (Task 4b review I-1).
-    if ((uint8_t)mode != c->_df1_mode) c->_net_blocked[0] = '\0';
+    if ((uint8_t)mode != c->_df1_mode) {
+        // Any mode change forgets the driver disk's block (Task 4b review I-1)...
+        c->_net_blocked[0] = '\0';
+        // ...and, into or out of Network, the previous mode's next disk and preload record (Task 8 review
+        // m1): there `next` means a different disk, from a different route, in a different slot. Kept,
+        // Next -> Network fetched /api/device/image/net/<library sha>, got a 404 and held the driver disk off
+        // for DC_NET_RETRY_MS. The server's next body names the new mode's disk. Off <-> Next keeps both:
+        // in either, `next` is DF0's next disk of the set in DF0's idle slot (the Next-disk card's preload).
+        // `changed`: the status report says the record went.
+        if (mode == DF1_MODE_NET || c->_df1_mode == DF1_MODE_NET) {
+            if (c->preload.slot != SLOT_NONE) c->preload.changed = true;
+            c->preload.next_sha256[0] = '\0';
+            c->preload.next_disk_id[0] = '\0';
+            c->preload.next_disk_no = 0;
+            dc_preload_drop(c);
+        }
+    }
     c->_df1_capable = true;
     c->_df1_mode = (uint8_t)mode;
     c->_df1_hd_ok = hd_ok;
