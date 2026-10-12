@@ -2,6 +2,8 @@
 adf-archive/
 *.adf
 *.ADF
+# Rob Smith's own PaulaNET disk, pinned as the base of our driver disk (plan 2026-10-12, ruling 7).
+!third-party/paulanet/PaulaNET-0afd5fa.adf
 *.dsk
 *.DSK
 *.adz
