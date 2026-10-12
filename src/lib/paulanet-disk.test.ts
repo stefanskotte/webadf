@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
 import {
   PAULANET_DISK_SHA256, PAULANET_NEXT, ALWAYS_REFERENCED_BLOBS, servedWithoutEntitlement, netApplied, netNextRearm,
+  netKeepsDriverDisk,
 } from './paulanet-disk';
 
 describe('the PaulaNET driver disk', () => {
@@ -30,6 +31,18 @@ describe('netApplied (pre-flight I2): the board reports Network for the current 
     expect(netApplied({ ...t, secondDriveAppliedVersion: 3 })).toBe(false);
     expect(netApplied({ ...t, secondDriveAppliedVersion: null })).toBe(false);
     expect(netApplied({ ...t, secondDrive: 'df1' })).toBe(false);   // the user has since left Network
+  });
+});
+
+describe('netKeepsDriverDisk (final review m1): the board runs Network, whatever version it reported', () => {
+  const t = { secondDrive: 'net', secondDriveReported: 'net' };
+  it('holds when Network is chosen and the board reports Network, at any version', () => {
+    expect(netKeepsDriverDisk(t)).toBe(true);
+  });
+  it('does not hold when the board reports another mode or nothing, or the user left Network', () => {
+    expect(netKeepsDriverDisk({ ...t, secondDriveReported: 'df1' })).toBe(false);
+    expect(netKeepsDriverDisk({ ...t, secondDriveReported: null })).toBe(false);
+    expect(netKeepsDriverDisk({ ...t, secondDrive: 'off' })).toBe(false);
   });
 });
 

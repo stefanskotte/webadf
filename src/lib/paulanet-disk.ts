@@ -36,6 +36,16 @@ export function netApplied(t: {
     && t.secondDriveAppliedVersion === t.secondDriveVersion;
 }
 
+/**
+ * The board runs Network now, whatever setting version it last reported (final review m1): the user chose 'net'
+ * and the board reports 'net'. A second save of 'net' bumps the version; until the board reports the new one,
+ * netApplied is false, yet the board is in Network either way -- so the poll keeps sending the driver disk as
+ * `next` (a non-Network `next`, or next: null, would eject it). The one-shot wake stays keyed on netApplied.
+ */
+export function netKeepsDriverDisk(t: { secondDrive: string; secondDriveReported: string | null }): boolean {
+  return t.secondDrive === 'net' && t.secondDriveReported === 'net';
+}
+
 /** At most one re-arm of the driver-disk wake per device in this long (Task 8 review I1). */
 export const NET_REARM_MIN_MS = 5 * 60_000;
 

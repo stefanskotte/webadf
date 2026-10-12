@@ -6,7 +6,7 @@ import { readNfcWriteRow } from '@/lib/nfc/store';
 import { nfcWriteForPoll } from '@/lib/nfc/rules';
 import { readNextForPoll } from '@/lib/next-disk';
 import { DC_TITLE_MAX } from '@/lib/device-limits';
-import { PAULANET_NEXT, netApplied } from '@/lib/paulanet-disk';
+import { PAULANET_NEXT, netApplied, netKeepsDriverDisk } from '@/lib/paulanet-disk';
 
 // Holds up to 25 s. maxDuration covers the hold plus slack; the platform
 // default would cut the connection mid-hold.
@@ -175,8 +175,11 @@ export async function GET(request: Request) {
       // Computed on delivery only (never per tick), and only with a disk desired.
       // Network mode, once applied (above): DF1 holds the PaulaNET driver disk instead of the next disk of
       // the set -- on every body, with or without a disk desired: the board keeps it in a slot of its own,
-      // whatever DF0 holds (plan 2026-10-12 ruling 6). Until applied, and in Next disk / Off: as before.
-      const next = netNow ? { ...PAULANET_NEXT }
+      // whatever DF0 holds (plan 2026-10-12 ruling 6). Until applied, and in Next disk / Off: as before --
+      // except that a board already reporting Network keeps the driver disk across a re-save of 'net' that
+      // bumped the version (final review m1): it is in Network either way, and any other `next` ejects it.
+      const netNext = netNow || (driveAck !== null && netKeepsDriverDisk(tick));
+      const next = netNext ? { ...PAULANET_NEXT }
         : state.desired ? await readNextForPoll(device.deviceId, device.orgId)
         : undefined;
       if (netNow && tick.netNextSentVersion !== tick.secondDriveVersion) {

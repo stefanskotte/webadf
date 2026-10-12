@@ -263,12 +263,46 @@ describe('GET /api/device/poll -- next (multi-disk plan R1)', () => {
     expect(await (await GET(get('?since=1&driveAck=2'))).json()).not.toHaveProperty('next');
   });
 
-  it('reported Network at an OLDER setting version is not applied (the user changed it again)', async () => {
+  // Final review m1: a second save of 'net' while the board already runs Network bumps the version. Until the
+  // board reports the new one, the poll used the non-Network rule and sent next: null (or the set's next),
+  // ejecting the driver disk. The board is in Network either way, so the driver disk stays `next`; the wake
+  // cursor is still keyed on the applied version.
+  it('Network saved again while the board already reports Network at an older version: still the driver disk (m1)',
+    async () => {
+      readPollTick.mockResolvedValue(baseTick({ instructionVersion: 1, instructionAck: 0, ...applied,
+        secondDriveVersion: 4, secondDriveAppliedVersion: 3, netNextSentVersion: 3 }));
+      readDesired.mockResolvedValue({ version: 1, desired: desiredDisk });
+      readNextForPoll.mockResolvedValue({ diskId: 'd2', sha256: 'b'.repeat(64), diskNo: 2 });
+      const { GET } = await import('./route');
+      const body = await (await GET(get('?since=1&driveAck=3'))).json();
+      expect(body.secondDrive).toEqual({ seq: 4, mode: 'net' });
+      expect(body.next).toEqual({ diskId: 'paulanet', sha256: PAULANET_DISK_SHA256, diskNo: 1 });
+      expect(readNextForPoll).not.toHaveBeenCalled();
+      expect(markNetNextSent).not.toHaveBeenCalled();   // the cursor waits for the applied version
+    });
+
+  it('...and with nothing desired: the driver disk, never next: null (m1)', async () => {
     readPollTick.mockResolvedValue(baseTick({ instructionVersion: 1, instructionAck: 0, ...applied,
-      secondDriveAppliedVersion: 2 }));
+      secondDriveVersion: 4, secondDriveAppliedVersion: 3 }));
     readDesired.mockResolvedValue({ version: 1, desired: null });
     const { GET } = await import('./route');
-    expect(await (await GET(get('?since=1&driveAck=2'))).json()).not.toHaveProperty('next');
+    const body = await (await GET(get('?since=1&driveAck=3'))).json();
+    expect(body.next).toEqual({ diskId: 'paulanet', sha256: PAULANET_DISK_SHA256, diskNo: 1 });
+  });
+
+  it('Network saved again, board on the older version: no driver-disk wake of its own (holds)', async () => {
+    vi.useFakeTimers();
+    try {
+      readPollTick.mockResolvedValue(baseTick({ ...applied, secondDriveVersion: 4, secondDriveAppliedVersion: 3,
+        netNextSentVersion: 3 }));
+      const { GET } = await import('./route');
+      const p = GET(get('?since=1&driveAck=4'));
+      await vi.advanceTimersByTimeAsync(26_000);
+      expect((await p).status).toBe(204);
+      expect(markNetNextSent).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('Network applied and never sent: wakes on its own once, carries the driver disk, records the cursor', async () => {
