@@ -70,7 +70,7 @@ export function SecondDriveSetting({ device, next, now }: { device: DeviceListIt
       {device.secondDriveReported === 'net' && device.secondDriveCapable && (
         <span className="flex items-center gap-1">
           <NetworkChecklist device={device} now={now} />
-          {/* Task 11 adds the network help tip here. */}
+          <HelpTip topic="network" />
         </span>
       )}
       {failed && (

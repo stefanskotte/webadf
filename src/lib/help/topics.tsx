@@ -24,6 +24,7 @@ export const HELP_TOPICS = {
   // Deleting a board: delete-device-dialog.tsx + api/devices/[id] DELETE; the board's side (401 -> token erased ->
   // setup portal, same already-used code rejected, so a fresh code is asked for) is wifi-floppy/firmware/src/main.c
   // DC_HALTED branch; disk history kept because disk_versions.device_id has no FK (db/schema/disk-history.ts).
+  // Address note: plan 2026-10-12 ruling 4 -- 1.11.0 sends the board's own DHCP client-id.
   boards: {
     title: 'Boards',
     short:
@@ -52,6 +53,7 @@ export const HELP_TOPICS = {
         <GoodToKnow items={[
           'A board never updates while a disk is mounted — the update waits for the eject.',
           'Updates also wait until the Amiga is switched on and the drive is idle.',
+          'After updating to firmware 1.11.0, your router may give the board a new network address once; nothing needs changing.',
         ]} />
       </>
     ),
@@ -267,6 +269,7 @@ export const HELP_TOPICS = {
       </>
     ),
   },
+  // Network (PaulaNET): spec 2026-10-12 §1 (one setting, three values).
   // Sources: control texts and override buttons "Switch on anyway…" / "Yes, I have removed the other DF1 drive
   // — switch DF1 on": plan docs/superpowers/plans/2026-10-08-df1-second-drive.md Task 21 (second-drive-setting.tsx
   // runs after this task and must keep them identical); src/lib/second-drive.ts (SECOND_DRIVE_FW 1.9.0,
@@ -309,8 +312,44 @@ export const HELP_TOPICS = {
         </p>
         <GoodToKnow items={[
           'DF1 is read-only: saving to it fails as write-protected. Saves to DF0 follow that disk’s own write protection.',
-          'DF1 only ever holds the next disk of the set. You cannot pick another disk for it.',
+          <>The third choice, <em>Network (PaulaNET)</em>, uses DF1 for networking instead: see{' '}
+            <a className="underline" href="/help#network">Amiga networking</a>.</>,
           'Needs board firmware 1.9.0 or newer. A board put back on older firmware keeps the DF1 setting it had, and the card says DF1 is on while it holds a disk; install 1.9.0 or newer to switch it off.',
+        ]} />
+      </>
+    ),
+  },
+
+  // Sources: spec docs/superpowers/specs/2026-10-12-paulanet-phase3-network-setting-design.md §1-§5, §8; the
+  // setting and checklist texts in second-drive-setting.tsx / network-checklist.ts; DF0 empty or changing: plan
+  // 2026-10-12 ruling 6 (SLOT_NET, psram_image.h; the poll sends `next` in Network mode with or without a disk),
+  // bench Task 14 Steps 5 and 14b;
+  // numbers: HANDOFF 3bi (47.5 KB/s alone, 24.4 KB/s during a DF0 copy, router pings 204-545 ms, avg ~250);
+  // the steps: tools/paulanet-disk/Install and ReadMe; download: api/paulanet-disk/route.ts; Rob's permission:
+  // third-party/paulanet/PERMISSION.md. Mouse: the driver busy-polls at priority 1 (HANDOFF 3bi, not yet measured).
+  network: {
+    title: 'Amiga networking (PaulaNET)',
+    short:
+      'Put your Amiga on your network through the board’s Wi-Fi, with the board as drive DF1. It uses Rob Smith’s PaulaNET driver and a TCP/IP stack on the Amiga.',
+    body: (
+      <>
+        <p>
+          Choose <em>Network (PaulaNET)</em> under <em>Second drive (DF1)</em> on the board&apos;s card, then restart
+          the Amiga. DF1 then holds the PaulaNET driver disk, whatever is in DF0. You need a TCP/IP stack such as
+          AmiTCP_NG or Roadshow, and no other drive answering as DF1.
+        </p>
+        <p>
+          <strong>Three steps.</strong> Open DF1 and double-click <em>Install</em>. Then, in a Shell, type{' '}
+          <code>AddNetInterface eth0</code>. To go online at every start, add that line to S:User-Startup. The
+          card&apos;s checklist shows each part: the driver disk, the driver, and the Amiga&apos;s own address.
+        </p>
+        <GoodToKnow items={[
+          'Expect about 45 KB/s, about half that while DF0 is busy, and pings of about 250 ms.',
+          'The mouse may feel slower while the driver runs.',
+          'DF0 can be empty, for an Amiga that starts from a hard drive, and changing the disk in DF0 does not interrupt the network.',
+          'Needs board firmware 1.11.0 or newer.',
+          <>For a real floppy or an emulator, <a className="underline" href="/api/paulanet-disk">download the PaulaNET driver disk</a>.</>,
+          'PaulaNET is by Rob Smith (RobSmithDev), used with his permission.',
         ]} />
       </>
     ),
@@ -350,6 +389,6 @@ export const HELP_TOPICS = {
 export type HelpTopicId = keyof typeof HELP_TOPICS;
 
 export const HELP_ORDER: readonly HelpTopicId[] = [
-  'boards', 'nfc', 'next-disk', 'second-drive', 'write-back', 'write-protect', 'disk-sets', 'hd-hfe', 'display',
+  'boards', 'nfc', 'next-disk', 'second-drive', 'network', 'write-back', 'write-protect', 'disk-sets', 'hd-hfe', 'display',
   'cover-image',
 ];
