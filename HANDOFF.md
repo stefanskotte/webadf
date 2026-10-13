@@ -2690,7 +2690,7 @@ separately.
   2026-10-09:** AmiTCP_NG v4.1.8 installed on the A500's IDE Workbench (KS 3.1); `ping 127.0.0.1` replies; `avail` with the
   stack running: 446,544 B chip free, 7,713,448 B fast free (acceptance bar was >= 100 KB chip). **Phase 0 GO (operator, 2026-10-09):** Rob's framing only (his grant makes PaulaNET-compatible the
   choice; the MFM alternative is dropped), and the bar to continue to Phase 1 is >= 15 KB/s and a median round trip
-  <= 250 ms on the A500. Plan: docs/superpowers/plans/2026-10-09-paulanet-phase0-loopback.md. **Phase 0 PASSED 2026-10-11 (3bg): 18.3 KB/s at N=8000, median 51 ms at N=64.** **Phase 1 PASSED 2026-10-11 (3bh): the A500 leases its own address through the board; ARP 1000/1000, median 51 ms.** **Phase 2 PASSED 2026-10-12 (3bi): AmiTCP_NG online through Rob's unmodified PaulaNET.device, 47.5 KB/s.** **Stack decided (operator, 2026-10-09):** the Amiga-side TCP/IP stack behind the PaulaNET device is AmiTCP_NG, https://github.com/MW0MWZ/AmiTCP_NG. Check its licence alongside PaulaNET's, and how its SANA-II driver interface meets PaulaNET's device. **UNBLOCKED 2026-10-09:** RobSmithDev replied that he has no issue with us implementing PaulaNET, as long as the licences are respected. Check PaulaNET's licence terms (code and protocol) before any design, and credit him as the licence requires. Not started. Raised by the operator
+  <= 250 ms on the A500. Plan: docs/superpowers/plans/2026-10-09-paulanet-phase0-loopback.md. **Phase 0 PASSED 2026-10-11 (3bg): 18.3 KB/s at N=8000, median 51 ms at N=64.** **Phase 1 PASSED 2026-10-11 (3bh): the A500 leases its own address through the board; ARP 1000/1000, median 51 ms.** **Phase 2 PASSED 2026-10-12 (3bi): AmiTCP_NG online through Rob's unmodified PaulaNET.device, 47.5 KB/s.** **Phase 3 PASSED 2026-10-13 (3bj): Network (PaulaNET) is a DF1 setting in release 1.11.0, with the driver disk served as DF1 (DF0 empty or changing included) and Install on it. Phase 4 (drop files onto the Amiga) is next, spec 2026-10-12 §9; its first step is the spike on board-Amiga local reachability.** **Stack decided (operator, 2026-10-09):** the Amiga-side TCP/IP stack behind the PaulaNET device is AmiTCP_NG, https://github.com/MW0MWZ/AmiTCP_NG. Check its licence alongside PaulaNET's, and how its SANA-II driver interface meets PaulaNET's device. **UNBLOCKED 2026-10-09:** RobSmithDev replied that he has no issue with us implementing PaulaNET, as long as the licences are respected. Check PaulaNET's licence terms (code and protocol) before any design, and credit him as the licence requires. Not started. Raised by the operator
   2026-09-13 after finding RobSmithDev's PaulaNET. Genuinely attractive, and explicitly a
   SECOND PRODUCT on the same board rather than an increment to disk serving: it makes the
   Amiga itself reach the internet, and does nothing to make disks load better.
@@ -4909,7 +4909,7 @@ Demozoo API (the bulk export makes per-lookup load on a non-profit unnecessary).
   allowlist checks only the first URL (the raster content-type allowlist and `nosniff` still apply).
 - **Cron drift:** the daily 01:30 cron against a 7-day gate can drift a refetch to 8 days.
 
-### 3bj. PaulaNET Phase 3 (Network as a DF1 setting) -- TEST 1.11.0+g2671ef7 seq 78 PASSED on the A500 (2026-10-13); release 1.11.0 follows
+### 3bj. PaulaNET Phase 3 (Network as a DF1 setting) -- TEST 1.11.0+g2671ef7 seq 78 PASSED on the A500 (2026-10-13); release 1.11.0+g2671ef7 seq 78 installed and smoke-checked (2026-10-13)
 
 **Verdict.** Every Task 14 bench step passed on the A500 (KS 3.1, Workbench booted from the IDE drive) with the TEST
 build of the merge M = ed1490b. A regular user can choose *Network (PaulaNET)* for DF1, restart, run Install from
@@ -4963,6 +4963,24 @@ During execution (the SDD ledger):
 - The help topic could say the PaulaNET disk cannot be written to.
 - Not yet answered: icon overlap on the driver disk's window; how the mouse feels online.
 - Plan open questions: Rob's own message for PERMISSION.md; DF0's Next preload is lost in Network mode; TEST builds are offered by the registry.
+
+**Release (Task 15/16).** The release build of R = 5bf5afd is byte-identical to the benched TEST build: the version
+hashes `wifi-floppy/firmware/`'s last commit, which did not change after M (only `wifi-floppy/README.md` did), so it is
+again `1.11.0+g2671ef7`, sha256 `13b6e2b1…`, and the registry refused it as `duplicate_version`. **Ruling:** promote
+the benched entry instead of shipping a second binary: seq 78's notes changed from "TEST build…" to the release notes
+(notes are not signed; `isTestBuild` reads only the notes), then `pnpm firmware:publish --github-only` created
+`fw-1.11.0` (Latest) with the same signed files and the address sentence. No install was needed: the bench board
+already ran seq 78; the card shows `fw 1.11.0+g2671ef7 · up to date` with no TEST. The plan's "1.11.0+g<R>" assumed
+R moves the version; it does not.
+
+**Smoke check (driven by Claude through the PiKVM).** Network chosen on the card -> `setting 6 applied -- on
+(Network)`, driver disk preloaded and inserted. **Finding:** the FIRST Ctrl-A-A after Network -> Off -> Network
+(live, no board reboot) did not find DF1 -- no PaulaNET volume, `AddNetInterface` errno 6, the log shows no DF1 read
+at that boot; a SECOND reset found it. Off -> Next with one reset worked in Step 3, so the suspect is the parked state
+entered from Network (also behind the `Unreadable disk` note above). Then: `eth0` up 172.16.10.235 (DHCP), `ping -c 1
+172.16.10.1` 1/1 393.7 ms; the card: ✓ Driver disk in DF1, ✓ Driver talking, ✓ Amiga address 172.16.10.235, Traffic
+2/2. Minor: right after going online the card showed the address but "Driver: not heard from yet" until the next
+60 s status. Board address after the release: 172.16.10.234 (unchanged).
 
 **Off switch / rollback.** Choose Off on the card and restart the Amiga. Rollback is a 1.11.1 from master (the
 registry refuses a lower sequence); a board put back on 1.10.2 boots a stored Network setting as Off.
