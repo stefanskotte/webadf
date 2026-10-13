@@ -27,8 +27,8 @@ ordering. The current bench board is rev A2.*
 A first install is one file. You need the board, a USB cable, a phone and an account in the
 web app.
 
-1. Hold the **BOOT** button (the Raspberry Pi docs call it BOOTSEL) and plug the board into your computer over USB. A drive called
-   `RP2350` appears.
+1. Hold the **BOOT** button (the Raspberry Pi docs call it BOOTSEL) and plug the board into
+   your computer over USB. A drive called `RP2350` appears.
 2. Download `wifi-floppy-install-<version>.uf2` from the
    [latest release](https://github.com/stefanskotte/webadf/releases/latest) and drag it onto
    that drive. The board writes it and restarts by itself; the drive disappears.

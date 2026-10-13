@@ -1706,7 +1706,7 @@ separately.
   is in progress: `docs/superpowers/research/2026-10-09-uf2-drag-drop-first-install.md` (a single combined UF2, or
   a partition table embedded in the image that the firmware writes on first boot). Bench-testing it needs a board
   with its flash wiped, after a picotool backup.
-- ~~**Quickstart on the GitHub page for a first install**~~ **DONE 2026-10-13: README Quickstart, one UF2. Still stale: wifi-floppy/README.md "Provisioning a board" calls steps 4-5 unverified on hardware (they passed, 3bf).** (operator, 2026-10-08). The repo README / GitHub page
+- ~~**Quickstart on the GitHub page for a first install**~~ **DONE 2026-10-13: README Quickstart, one UF2; wifi-floppy/README.md steps 4-5 marked verified (7bc19e9). Button named **BOOT** (operator, 2026-10-13: the PIM726 is labelled BOOT, not BOOTSEL) in both READMEs, the release-notes template (src/lib/firmware-github-release.ts) and the published notes of fw-1.9.1 to fw-1.10.2 (edited on GitHub, assets untouched). BOOTSEL stays in technical notes as the RP2350's mode name.** (operator, 2026-10-08). The repo README / GitHub page
   should carry step-by-step instructions for putting the firmware on a new board: hold BOOTSEL while plugging in,
   copy the release `.uf2` onto the RPI-RP2 / RP2350 drive that appears, then pair from the web app. After that,
   updates go over the air. Check the steps against `scripts/firmware-install-partitioned.sh` first: the board uses a
