@@ -195,6 +195,43 @@ static void an_id_change_waits_for_the_next_answer(void) {
     CHECK_EQ_INT(amiga_reads_id(&m), DRIVE_ID_DD);                    // and back
 }
 
+// Kickstart 3.1's own read (disk.resource, ROM $FC0442): a motor-on select, a
+// motor-off select that is not sampled, then 32 sampled ones. As DF1 on the
+// A500's internal connector sees it: that connector carries MTR0D* (DF0's
+// motor, latched on the motherboard, HRM p.320), not the raw DSKMOTOR*, so
+// DF1's motor-on select arrives as motor-off.
+static uint32_t ks31_reads_df1(drive_id_model_t *m) {
+    drive_id_model_select(m, false); drive_id_model_deselect(m);    // the motor-on select, seen as off
+    drive_id_model_select(m, false); drive_id_model_deselect(m);    // the reset select, not sampled
+    return read_32(m);
+}
+
+static void df1_a_new_id_needs_a_restart_without_a_visible_motor(void) {
+    // Bench 2026-10-13 (fw 1.11.0): Off -> Next or Network live, then ONE warm
+    // reset: no DF1; a second reset finds it. Without a visible motor-on
+    // select nothing restarts the answer, so the first read runs on the old
+    // word's shifter.
+    drive_id_model_t m;
+    drive_id_model_init(&m, DRIVE_ID_DD);
+    drive_id_model_set_id(&m, 0u);                              // parked: ID NONE
+    CHECK_EQ_INT(ks31_reads_df1(&m), 0u);                       // the reset after Off: no DF1
+    drive_id_model_set_id(&m, DRIVE_ID_DD);                     // switched on live
+    CHECK(ks31_reads_df1(&m) != DRIVE_ID_DD, "no restart: the first reset reads the old answer");
+    CHECK_EQ_INT(ks31_reads_df1(&m), DRIVE_ID_DD);              // the second reset finds it
+
+    // The fix (bus_out_drive_id_set): an ID change on DF1 restarts the answer.
+    drive_id_model_init(&m, DRIVE_ID_DD);
+    drive_id_model_set_id(&m, 0u);
+    drive_id_model_restart(&m);
+    CHECK_EQ_INT(ks31_reads_df1(&m), 0u);
+    drive_id_model_set_id(&m, DRIVE_ID_DD);
+    drive_id_model_restart(&m);
+    CHECK_EQ_INT(ks31_reads_df1(&m), DRIVE_ID_DD);              // the first reset finds it
+    drive_id_model_set_id(&m, 0u);
+    drive_id_model_restart(&m);
+    CHECK_EQ_INT(ks31_reads_df1(&m), 0u);                       // and Off again
+}
+
 static void drive_id_for_maps_the_mounted_kind(void) {
     CHECK_EQ_INT(drive_id_for(true), DRIVE_ID_HD);
     CHECK_EQ_INT(drive_id_for(false), DRIVE_ID_DD);
@@ -211,6 +248,7 @@ int main(void) {
     RUN(motor_on_selected_is_the_cpu_level_and_released_otherwise);
     RUN(an_assert_mid_select_shows_at_once_a_release_waits);
     RUN(an_id_change_waits_for_the_next_answer);
+    RUN(df1_a_new_id_needs_a_restart_without_a_visible_motor);
     RUN(drive_id_for_maps_the_mounted_kind);
     return REPORT();
 }
