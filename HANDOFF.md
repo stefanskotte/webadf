@@ -2602,6 +2602,18 @@ separately.
   - a test with a real `.dmz` fixture, including one that is gzipped but not DMS inside, which must be refused
     cleanly.
 - **LZ4 as an alternative to RLE for PaulaNET payloads (operator, 2026-10-12).**
+  - **2026-10-13: research done and our own 68k module BUILT (branches pushed, not merged).**
+    - `research/paulanet-lz4`: measurements and a DRAFT protocol for Rob (`docs/superpowers/research/2026-10-13-paulanet-lz4.md`). Linked LZ4 takes HTML to 41 % and text to 71 %. The model gives +18-69 % download speed on compressible data even on a 68000. Uploads stay RLE below a 68030/40.
+    - `feat/lz4-68k`: `m68k/lz4/`, MIT, self-contained, with register-call and C entry points.
+      - **Decoder:** never writes outside [dst, dst_end). Measured 22.3 c/B on text (checked), against Carré's 20.0. An assemble-time `LZ4_68K_UNCHECKED_READS` drops the two match-source checks: 20.9 c/B, writes still safe.
+      - **Encoder:** 126-130 c/B on text, bit-exact with its C model; linked/prefix mode; table 256-16384.
+      - **`test.sh`:** liblz4 round trips, fuzz, >64K runs, memory-trace tail and odd-address checks, for both builds.
+      - **Review:** found a 64 KB overwrite (fixed), an encoder mismatch (fixed) and an overstated attribution (fixed: the fast path uses Carré's technique, no code copied). The re-review says READY TO SHARE.
+    - **Next:**
+      - the operator shares the module and the draft protocol with Rob;
+      - agree the protocol (open questions in research §7);
+      - board side (liblz4 BSD, state size vs SRAM);
+      - a bench measurement on the A500.
   - **Today:** batches in both directions are RLE-compressed (`pnet_mfm.c` `pnet_rle_encode/decode`). Cylinder 76's
     `flags` = 3 (`PNET_ST_FLAGS_RLE_BOTH`) tells Rob's driver to use RLE. RLE only shrinks runs, so ordinary IP traffic
     (TCP payloads, already-compressed files) gains almost nothing. LZ4 typically saves far more on text and protocol
