@@ -20,6 +20,7 @@ describe('the GitHub release for a published firmware version', () => {
 
   it('never publishes a TEST build', () => {
     expect(isTestBuild('TEST build: DF1 on by default')).toBe(true);
+    expect(isTestBuild('TEST build: PaulaNET Phase 3 bench')).toBe(true);
     expect(isTestBuild('a release')).toBe(false);
     expect(isTestBuild(null)).toBe(false);
     expect(githubReleasePlan({ ...base, notes: 'TEST build: bench only' }).publish).toBe(false);

@@ -49,6 +49,11 @@ describe('refuseReleaseImage', () => {
     expect(refuseReleaseImage(realInfo, 533624, pnet, 'a release')).toMatch(/PaulaNET/);
     expect(refuseReleaseImage(realInfo, 533624, pnet, 'TEST build: PaulaNET phase 0')).toBeNull();
   });
+  it('accepts TEST notes on an image with no marker (a TEST build of a release configuration, plan 2026-10-12)', () => {
+    const plain = Buffer.from('xx an ordinary 1.11.0 image xx');
+    expect(refuseReleaseImage(realInfo, 533624, plain, 'TEST build: PaulaNET Phase 3 bench')).toBeNull();
+    expect(refuseReleaseImage(realInfo, 533624, plain, 'Network (PaulaNET) ...')).toBeNull();
+  });
 });
 
 describe('the first-install image never reaches the registry (OTA)', () => {
