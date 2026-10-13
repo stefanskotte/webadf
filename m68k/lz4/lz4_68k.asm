@@ -266,30 +266,14 @@ DLL	macro
 	move.b	(a0)+,(a1)+
 .ftend:	jmp	(a5)
 
-; A long literal whose first length byte is 32..255.
-.llbig:	addq.b	#1,d3
-	beq.s	.llback			; 255: the checked way
-	moveq	#31,d4			; the run is 14 + d3 bytes: d3 beyond the slot
-	add.w	d3,d4
-	lsr.w	#5,d4
-	sub.w	d4,d7
-	bmi.s	.llback
-	add.w	#14,d3
-	bra.s	.fcopy
-; A long literal the budget cannot pay for: back to its token, the checked loop takes it.
-.llback:
-	subq.l	#2,a0
-	lea	.recount(pc),a5		; one checked sequence, then the fast path again
-	bra.w	.slow
-
 ; Literal nibble 15, (a5) = the match block to go on with.
 .llit:	moveq	#0,d3
 	move.b	(a0)+,d3		; the first length byte (inside the slot)
 	cmp.b	#31,d3
 	bhi.s	.llbig
-	subq.w	#1,d7			; 15..46 bytes: at most 32 beyond the slot, one slot more
-	bmi.s	.llback
-	add.w	#15,d3			; fall into .fcopy
+	add.w	#15,d3			; 15..46 bytes: at most 32 beyond the slot, one slot more
+	subq.w	#1,d7
+	bmi.s	.llchk			; (else fall into .fcopy)
 
 ; .fcopy: d3.w bytes (15..FMAX) from (a0)+ to (a1)+, then jmp (a5). Longs when a0 and a1 have
 ; the same parity. Clobbers d1, d3, d4.
@@ -310,6 +294,37 @@ DLL	macro
 	neg.w	d3
 	jmp	.flend(pc,d3.w)
 
+; A long literal whose first length byte is 32..255.
+.llbig:	addq.b	#1,d3
+	beq.s	.llback			; 255: the checked way
+	moveq	#31,d4			; the run is 14 + d3 bytes: d3 beyond the slot
+	add.w	d3,d4
+	lsr.w	#5,d4
+	add.w	#14,d3
+	sub.w	d4,d7
+	bpl.s	.fcopy
+	bra.s	.llchk
+; A first length byte of 255: back to the token, the checked loop takes the sequence.
+.llback:
+	subq.l	#2,a0
+	lea	.recount(pc),a5		; one checked sequence, then the fast path again
+	bra.w	.slow
+; A long literal the budget cannot pay for: check its room, copy it, and finish the
+; sequence the checked way.
+.llchk:	move.l	a4,d4
+	sub.l	a0,d4
+	cmp.l	d3,d4
+	bcs.w	.derr			; the literals pass the src end
+	move.l	a2,d4
+	sub.l	a1,d4
+	cmp.l	d3,d4
+	bcs.w	.derr			; or the dst end
+	lea	.llmid(pc),a5
+	bra.s	.fcopy
+.llmid:	lea	.recount(pc),a5
+	bra.w	.slend
+
+
 ; Block 15's first length byte was 32..255.
 .mxbig:	addq.b	#1,d3
 	beq.w	.mx255			; 255: more length bytes, the checked way
@@ -318,21 +333,34 @@ DLL	macro
 	add.w	d3,d4
 	lsr.w	#5,d4
 	sub.w	d4,d7
-	bpl.s	.mcopy
+	bpl.w	.mcopy
 ; Block 15's match, the budget could not pay: check the room, then copy and recount.
 .mxroom:
 	moveq	#0,d7			; so the copy's DBF falls through to .recount
 	move.l	a2,d4
 	sub.l	a1,d4
 	cmp.l	d3,d4
-	bcs.w	.derr			; (fall into .mcopy)
+	bcs.w	.derr
+	bra.w	.mcopy
 
 ; .mcopy: d3.w bytes (19..273) from (a6)+ to (a1)+, a6 = a1 - d2; then the next sequence.
-; Longs when the offset is even and at least 4. Clobbers d1, d3, d4.
-.mcopy:	cmp.w	#4,d2
-	bcs.s	.mcb			; offset 1..3: overlapping, bytes
-	btst	#0,d2
+; Longs when the offset is even and at least 4. Clobbers d1, d3, d4. (Its long run and tail
+; come first, so that its computed jump reaches them.)
+.mlg:	rept	FMAX/4
+	move.l	(a6)+,(a1)+
+	endr
+.mle:	add.w	d4,d4
+	neg.w	d4
+	jmp	.mte(pc,d4.w)
+	move.b	(a6)+,(a1)+
+	move.b	(a6)+,(a1)+
+	move.b	(a6)+,(a1)+
+.mte:	dbf	d7,.dfast
+	bra.w	.recount
+.mcopy:	btst	#0,d2
 	bne.s	.mcb			; odd: different parity, bytes
+	cmp.w	#4,d2
+	bcs.s	.mcb			; offset 2: overlapping, bytes
 	move.w	a1,d4
 	lsr.w	#1,d4
 	bcc.s	.mce
@@ -341,24 +369,9 @@ DLL	macro
 .mce:	moveq	#3,d4
 	and.w	d3,d4			; the tail bytes
 	lsr.w	#2,d3			; the longs
-	moveq	#15,d1
-	and.w	d3,d1
-	lsr.w	#4,d3
-	add.w	d1,d1
-	neg.w	d1
-	jmp	.mle(pc,d1.w)
-.mlg:	rept	16
-	move.l	(a6)+,(a1)+
-	endr
-.mle:	dbf	d3,.mlg
-	add.w	d4,d4
-	neg.w	d4
-	jmp	.mte(pc,d4.w)
-	move.b	(a6)+,(a1)+
-	move.b	(a6)+,(a1)+
-	move.b	(a6)+,(a1)+
-.mte:	dbf	d7,.dfast
-	bra.w	.recount
+	add.w	d3,d3
+	neg.w	d3
+	jmp	.mle(pc,d3.w)
 .mcb:	moveq	#31,d1
 	and.w	d3,d1
 	lsr.w	#5,d3
@@ -423,29 +436,30 @@ DLL	macro
 .cle:	move.l	d3,d4
 	lsr.l	#2,d4			; longs
 	and.w	#3,d3			; then 0..3 bytes
-	move.w	d4,d1
-	and.w	#7,d1
-	lsr.l	#3,d4
+	moveq	#15,d1
+	and.w	d4,d1
+	lsr.l	#4,d4
 	add.w	d1,d1
 	neg.w	d1
 	jmp	.cll(pc,d1.w)
-.clg:	rept	8
+.clg:	rept	16
 	move.l	(a0)+,(a1)+
 	endr
 .cll:	subq.l	#1,d4
 	bcc.s	.clg
-.clb:	move.w	d3,d1
-	and.w	#15,d1
-	lsr.l	#4,d3
+.clb:	moveq	#63,d1
+	and.w	d3,d1
+	lsr.l	#6,d3
 	add.w	d1,d1
 	neg.w	d1
-	jmp	.clc(pc,d1.w)
-.clh:	rept	16
+	bra.w	.clj
+.clh:	rept	64
 	move.b	(a0)+,(a1)+
 	endr
 .clc:	subq.l	#1,d3
-	bcc.s	.clh
+	bcc.w	.clh
 	rts
+.clj:	jmp	.clc(pc,d1.w)
 
 ; .copymatch: d3.l bytes from (a6)+ to (a1)+, a6 = a1 - d2 (d2 >= 1; the areas may overlap).
 ; Longs when the offset is at least 4 and even. Clobbers d3-d1.
@@ -507,13 +521,16 @@ DLL	macro
 	moveq	#0,d1
 	move.b	d0,d1
 	lsr.w	#4,d1			; L
-	addq.w	#3,d1			; token, literals, offset
+	cmp.w	#15,d1
+	beq.s	.tsl			; long literals: checked
+	addq.w	#1,d1
+	cmp.l	d1,d3
+	beq.s	.tfin			; token and literals are all that is left: the last one
+	addq.w	#2,d1			; token, literals, offset
 	cmp.w	#15,d4
 	beq.s	.tsl
-	cmp.w	#3+15,d1
-	beq.s	.tsl
 	cmp.l	d1,d3
-	bls.s	.tsl			; the last sequence, or too short: checked
+	bls.s	.tsl			; too short: checked (an error)
 	add.w	d4,d1
 	addq.w	#1,d1			; L + M + 4 out
 	move.l	a2,d3
@@ -522,6 +539,17 @@ DLL	macro
 	bcs.s	.tsl
 	moveq	#0,d7
 	bra.w	.dfast
+.tfin:	subq.w	#1,d1			; L (0..14)
+	move.l	a2,d3
+	sub.l	a1,d3
+	cmp.l	d1,d3
+	bcs.w	.derr			; passes the dst end
+	addq.l	#1,a0
+	subq.w	#1,d1
+	bmi.s	.ddone
+.tf1:	move.b	(a0)+,(a1)+
+	dbf	d1,.tf1
+	bra.s	.ddone
 .tsl:	lea	.tail(pc),a5
 .slow:	cmpa.l	a4,a0
 	bcc.w	.derr			; no token where one must be
@@ -541,8 +569,8 @@ DLL	macro
 	cmp.l	d3,d4
 	bcs.w	.derr
 	bsr.w	.copylit
-	cmpa.l	a4,a0
-	beq.s	.ddone
+.slend:	cmpa.l	a4,a0
+	beq.s	.ddone			; the last sequence ends here
 	move.l	a4,d4
 	sub.l	a0,d4
 	subq.l	#2,d4
