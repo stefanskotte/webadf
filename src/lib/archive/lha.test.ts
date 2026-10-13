@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { readLha, type LhaEntry } from './lha';
-import { decodeLzh, LzhWorkBudgetError } from './lzh-decode';
+import { decodeLzh, LzhWorkBudgetError, LzhCorruptError } from './lzh-decode';
 
 /**
  * Fixtures are produced by /opt/homebrew/bin/lha, not by anything in this
@@ -250,5 +250,50 @@ describe('accept() sees every member, decodable or not', () => {
     const buf = lha0('Old.adf', '-lh1-', new Uint8Array(4), 4);
     readLha(buf, { accept: (p) => { seen.push(p); return false; } });
     expect(seen).toEqual(['Old.adf']);
+  });
+});
+
+/**
+ * Review N1 (2026-10-13): a P-table code length of `depth`, written as the
+ * unary "7 then keep counting" field. One literal block, then a block of
+ * matches whose only position symbol has that length. Before the cap, a depth
+ * of 100,000 made Huffman.decode walk 100,000 lengths per symbol.
+ */
+function deepCodeStream(depth: number): Uint8Array {
+  const out: number[] = [];
+  let acc = 0, n = 0;
+  const put = (v: number, w: number) => {
+    for (let i = w - 1; i >= 0; i--) {
+      acc = (acc << 1) | ((v >> i) & 1);
+      if (++n === 8) { out.push(acc); acc = 0; n = 0; }
+    }
+  };
+  put(1, 16); put(0, 5); put(3, 5); put(0, 9); put(97, 9); put(0, 4); put(0, 4);   // one literal 'a'
+  put(65535, 16); put(0, 5); put(3, 5); put(0, 9); put(256, 9);                     // C: only match length 3
+  put(1, 4); put(7, 3);
+  for (let i = 0; i < depth - 7; i++) put(1, 1);
+  put(0, 1);
+  put(0, 8);
+  return new Uint8Array(out);
+}
+
+describe('code length cap (a CPU bomb made of one very deep code)', () => {
+  it('decodeLzh refuses a code length of 100,000 at once', () => {
+    const t = performance.now();
+    expect(() => decodeLzh(deepCodeStream(100_000), 30_000, 13)).toThrow(LzhCorruptError);
+    expect(performance.now() - t).toBeLessThan(200);
+  });
+
+  it('readLha turns it into a refusal of that member, not an exception', () => {
+    const buf = lha0('Deep.adf', '-lh5-', deepCodeStream(100_000), 30_000);
+    const r = readLha(buf, { maxEntryBytes: 4 * 1024 * 1024 });
+    expect(r.entries).toEqual([]);
+    expect(r.skipped).toEqual([{ path: 'Deep.adf', reason: 'corrupt (bad code length)' }]);
+  });
+
+  it('still accepts a length of exactly 16', () => {
+    // 16 is LHA's own maximum; the stream then runs out, which is a short
+    // result for the caller's length check -- not a refusal.
+    expect(() => decodeLzh(deepCodeStream(16), 4, 13)).not.toThrow();
   });
 });

@@ -1,4 +1,4 @@
-import { decodeLzh, LzhWorkBudgetError } from './lzh-decode';
+import { decodeLzh, LzhWorkBudgetError, LzhCorruptError } from './lzh-decode';
 
 /**
  * LHA/LZH container reading: headers at levels 0, 1 and 2, and the methods an
@@ -210,7 +210,11 @@ export function readLha(buf: Uint8Array, opts: LhaReadOptions = {}): LhaReadResu
       } catch (e) {
         // A CPU bomb (see LZH_BYTES_PER_BLOCK) is this member's refusal, not
         // the archive's, and never an exception out of a drop target or route.
-        skipped.push({ path, reason: e instanceof LzhWorkBudgetError ? 'corrupt (too many blocks)' : 'could not decompress' });
+        // The same for a code length past MAX_CODE_LEN (a CPU/memory bomb too).
+        const reason = e instanceof LzhWorkBudgetError ? 'corrupt (too many blocks)'
+          : e instanceof LzhCorruptError ? 'corrupt (bad code length)'
+          : 'could not decompress';
+        skipped.push({ path, reason });
       }
       if (outBytes === null) {
         // refused above

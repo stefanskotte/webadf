@@ -28,6 +28,20 @@ const CBIT = 9;
 const NT = 19;
 const TBIT = 5;
 
+/**
+ * The longest code length LHA can express: its decoder builds 16-bit tables,
+ * and its encoder limits every alphabet to 16. Anything longer is not an LHA
+ * stream -- and is dangerous: the unary "7 means keep counting" field would
+ * otherwise let 12.5 KB of 1-bits declare a length of 100,000, which Huffman
+ * allocates as counts[] and decode() walks for EVERY symbol, without consuming
+ * input once the stream has ended (review N1, 2026-10-13: ~150 s for one
+ * 4 MiB member).
+ */
+export const MAX_CODE_LEN = 16;
+
+/** Thrown for a stream that is not decodable LHA (a code length over 16). */
+export class LzhCorruptError extends Error {}
+
 export class BitReader {
   private pos = 0;
   private bit = 0;
@@ -66,6 +80,11 @@ class Huffman {
   constructor(lengths: number[], single: number | null = null) {
     this.single = single;
     if (single !== null) return;
+    // Defence in depth: readPtLen refuses these as it reads them, but no
+    // length from any source may size counts[] past MAX_CODE_LEN.
+    for (const l of lengths) {
+      if (l > MAX_CODE_LEN) throw new LzhCorruptError(`code length ${l} exceeds ${MAX_CODE_LEN}`);
+    }
 
     let max = 0;
     for (const l of lengths) if (l > max) max = l;
@@ -109,7 +128,13 @@ function readPtLen(br: BitReader, nn: number, nbit: number, iSpecial: number): H
     let c = br.bits(3);
     // 3 bits hold 0..6; 7 means "keep counting in unary", which is how a long
     // code length is expressed without widening the field.
-    if (c === 7) while (br.bit1()) c++;
+    // Bounded: past MAX_CODE_LEN the stream is refused, so neither this loop
+    // nor the table it feeds can be made arbitrarily long.
+    if (c === 7) {
+      while (br.bit1()) {
+        if (++c > MAX_CODE_LEN) throw new LzhCorruptError(`code length exceeds ${MAX_CODE_LEN}`);
+      }
+    }
     lengths[i++] = c;
     // Only the T alphabet has this: after the third length, two bits say how
     // many zero lengths follow. It exists because positions 3..5 are almost
@@ -178,7 +203,8 @@ export class LzhWorkBudgetError extends Error {
  * that differs between the three methods.
  *
  * Throws LzhWorkBudgetError for a stream that uses far more blocks than its
- * size justifies (see LZH_BYTES_PER_BLOCK); otherwise never throws.
+ * size justifies (see LZH_BYTES_PER_BLOCK), and LzhCorruptError for a code
+ * length over MAX_CODE_LEN; otherwise never throws.
  */
 export function decodeLzh(src: Uint8Array, outSize: number, dicBits: number): Uint8Array {
   const maxBlocks = Math.ceil(outSize / LZH_BYTES_PER_BLOCK) + 16;
