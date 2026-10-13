@@ -88,7 +88,7 @@ updates in both directions, and a re-install over a paired board.
 
 1. Download `wifi-floppy-install-<version>.uf2` from the newest `fw-<version>` release on
    GitHub. It is the only file you need.
-2. Hold the **BOOTSEL** button and plug the board into your computer over USB. A drive
+2. Hold the **BOOT** button (the Raspberry Pi docs call it BOOTSEL) and plug the board into your computer over USB. A drive
    called `RP2350` appears.
 3. Drag `wifi-floppy-install-<version>.uf2` onto that drive. The board writes the file,
    restarts by itself and starts the firmware. The drive disappears; this is expected.

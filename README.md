@@ -27,7 +27,7 @@ ordering. The current bench board is rev A2.*
 A first install is one file. You need the board, a USB cable, a phone and an account in the
 web app.
 
-1. Hold the **BOOTSEL** button and plug the board into your computer over USB. A drive called
+1. Hold the **BOOT** button (the Raspberry Pi docs call it BOOTSEL) and plug the board into your computer over USB. A drive called
    `RP2350` appears.
 2. Download `wifi-floppy-install-<version>.uf2` from the
    [latest release](https://github.com/stefanskotte/webadf/releases/latest) and drag it onto
@@ -230,7 +230,7 @@ what authorises a board to join a library.
 
 Putting the firmware on a new board is the [Quickstart](#quickstart) above: one
 `wifi-floppy-install-<version>.uf2` from the GitHub release, dragged onto the drive that
-appears in BOOTSEL mode. With picotool, `pnpm firmware:install-partitioned` still works.
+appears while BOOT is held at power-up. With picotool, `pnpm firmware:install-partitioned` still works.
 
 Every push that touches the firmware is built by
 [`.github/workflows/firmware.yml`](.github/workflows/firmware.yml), which runs the host
