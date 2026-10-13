@@ -8,7 +8,7 @@
 # and by the raw bytes one pass covers.
 # Usage: m68k/build.sh FRAMES_DIR [reps]   (FRAMES_DIR: lz4measure's dump, build/frames)
 # Toolchain: bebbo's m68k-amigaos-gcc 6.5 and vasm from the amigadev/crosstools image that
-# tools/netloop/build.sh pins (by digest there; by tag here, as already pulled on this Mac).
+# tools/netloop/build.sh pins by digest.
 set -euo pipefail
 here="$(cd "$(dirname "$0")" && pwd)"
 lm="$(cd "$here/.." && pwd)"
@@ -41,12 +41,16 @@ _lz4_$v:
 EOF
 done
 
-docker run --rm -v "$root":/work -w /work amigadev/crosstools:m68k-amigaos sh -euc '
+# The image tools/netloop/build.sh pins (by digest: a tag can move).
+IMG='amigadev/crosstools@sha256:bf5c0e37d2b60cf2aca93225558a7b6357e4598f8c82d04cdcb6a8268c9035d1'
+docker run --rm -v "$root":/work -w /work "$IMG" sh -euc '
   lm=tools/lz4-measure; o=$lm/build/m68k/obj; g=$lm/build/m68k/gen; e=$lm/build/ext
   s=wifi-floppy/firmware/src; t=tools/netloop
   F="-noixemul -m68000 -O2 -std=gnu11 -Wall -I $s -I $t -I $e/lz4"
   for v in fastest normal; do vasmm68k_mot -quiet -Faout -m68000 -I $g -o $o/glue_$v.o $g/glue_$v.s; done
   vasmm68k_mot -quiet -Faout -m68000 -o $o/lz4p_asm.o $lm/m68k/lz4p.asm
+  vasmm68k_mot -quiet -Faout -m68000 -o $o/lz4_68k.o m68k/lz4/lz4_68k.asm
+  m68k-amigaos-gcc $F -I m68k/lz4 -c -o $o/lz4_68k_c.o m68k/lz4/lz4_68k.c
   m68k-amigaos-gcc $F -I $lm -c -o $o/lz4p.o $lm/lz4p.c
   m68k-amigaos-gcc $F -DLZ4_MEMORY_USAGE=12 -c -o $o/lz4.o $e/lz4/lz4.c
   m68k-amigaos-gcc $F -Dpnet_mfm_encode=pnet_mfm_encode_c -Dpnet_mfm_decode=pnet_mfm_decode_c \
@@ -54,9 +58,9 @@ docker run --rm -v "$root":/work -w /work amigadev/crosstools:m68k-amigaos sh -e
     -c -o $o/pnet_mfm_c.o $s/pnet_mfm.c
   m68k-amigaos-gcc $F -DNETLOOP_ASM=1 -c -o $o/pnet_asm.o $t/pnet_asm.S
   m68k-amigaos-gcc $F -c -o $o/pnet_asm_tables.o $t/pnet_asm_tables.c
-  m68k-amigaos-gcc $F -I $lm -DLZ4_MEMORY_USAGE=12 -c -o $o/lz4bench.o $lm/m68k/lz4bench.c
+  m68k-amigaos-gcc $F -I $lm -I m68k/lz4 -DLZ4_MEMORY_USAGE=12 -c -o $o/lz4bench.o $lm/m68k/lz4bench.c
   m68k-amigaos-gcc -noixemul -m68000 -s -o $lm/build/m68k/lz4bench $o/lz4bench.o $o/lz4.o \
-    $o/glue_fastest.o $o/glue_normal.o $o/pnet_mfm_c.o $o/pnet_asm.o $o/pnet_asm_tables.o $o/lz4p_asm.o $o/lz4p.o
+    $o/glue_fastest.o $o/glue_normal.o $o/pnet_mfm_c.o $o/pnet_asm.o $o/pnet_asm_tables.o $o/lz4p_asm.o $o/lz4p.o $o/lz4_68k.o $o/lz4_68k_c.o
 '
 
 py="$(head -1 "$(command -v vamos)" | sed 's/^#!//')"
@@ -75,8 +79,18 @@ PY
 cyc() { vam "$@" | sed -n 's/.*total cycles: //p'; }
 
 types=(dl-ftp-text dl-ftp-source dl-http dl-ftp-adf dl-ftp-random ul-acks ul-ftp-text)
-fcodecs=(lzfast lznorm lzfastl lzc rledasm rledc lzenc rleeasm rleec lz4pasm lz4pc)
-bcodecs=(lzfast lznorm lzc lzenc lz4pasm)
+fcodecs=(lzfast lznorm lzfastl lzc rledasm rledc lzenc rleeasm rleec lz4pasm lz4pc ourdec ourdecl ourenc ourenc4k)
+bcodecs=(lzfast lznorm lzc lzenc lz4pasm ourdec ourenc ourenc4k)
+cpus=(68000 68020)
+# BENCH68K=1 (m68k/lz4/test.sh bench): only the rows of m68k/lz4's table, only the 68000.
+if [ -n "${BENCH68K:-}" ]; then
+  fcodecs=(ourdec lzfast ourdecl lzfastl ourenc ourenc4k lz4pasm rledasm rleeasm)
+  bcodecs=(ourdec lzfast ourenc ourenc4k lz4pasm)
+  cpus=(68000)
+  [ -n "${TYPES:-}" ] && read -r -a types <<< "$TYPES"
+  [ -n "${FCODECS:-}" ] && read -r -a fcodecs <<< "$FCODECS"
+  [ -n "${BCODECS:-}" ] && read -r -a bcodecs <<< "$BCODECS"
+fi
 fail=0
 for ty in "${types[@]}"; do
   for kind in F B; do
@@ -103,13 +117,14 @@ for ty in "${types[@]}"; do
     raw="$(vam 68000 in.bin $kind none 1 | sed -n 's/.*raw \([0-9]*\) reps.*/\1/p')"
     if [ $kind = F ]; then cs=("${fcodecs[@]}"); else cs=("${bcodecs[@]}"); fi
     b0="$(cyc 68000 in.bin $kind none "$reps")"
-    b2="$(cyc 68020 in.bin $kind none "$reps")"
+    if [ ${#cpus[@]} = 2 ]; then b2="$(cyc 68020 in.bin $kind none "$reps")"; fi
     for c in "${cs[@]}"; do
       c0="$(cyc 68000 in.bin $kind "$c" "$reps")"
-      c2="$(cyc 68020 in.bin $kind "$c" "$reps")"
+      if [ ${#cpus[@]} = 2 ]; then c2="$(cyc 68020 in.bin $kind "$c" "$reps")"; else c2=1; b2=0; fi
       awk -v ty="$ty" -v k="$kind" -v c="$c" -v a="$c0" -v b="$b0" -v x="$c2" -v y="$b2" -v r="$reps" -v n="$raw" 'BEGIN {
         p0 = (a - b) / r / n; p2 = (x - y) / r / n
-        printf "%-14s %-5s %-8s %9.1f %9.1f %10.1f %10.1f\n", ty, k, c, p0, p2, 7093790 / p0 / 1024, 14187580 / p2 / 1024 }'
+        if (x == 1 && y == 0) printf "%-14s %-5s %-8s %9.1f %9s %10.1f %10s\n", ty, k, c, p0, "-", 7093790 / p0 / 1024, "-"
+        else printf "%-14s %-5s %-8s %9.1f %9.1f %10.1f %10.1f\n", ty, k, c, p0, p2, 7093790 / p0 / 1024, 14187580 / p2 / 1024 }'
     done
   done
-done | tee "$out/cycles.txt"
+done | tee "$out/cycles${BENCH68K:+-68k}.txt"

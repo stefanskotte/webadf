@@ -24,6 +24,12 @@
  *   lz4pasm   our prototype compressor, 68000 asm (m68k/lz4p.asm), cap = the raw size; VERIFY
  *             also checks it byte for byte against the C model and decodes it with LZ4
  *   lz4pc     the C model (lz4p.c), gcc -m68000 -O2
+ *   ourdec    our decoder (m68k/lz4/lz4_68k.asm lz4_decode) on the hc9 block (F) or the batch
+ *             block (B), dst_end = dst + the raw size, window = dst
+ *   ourdecl   the same on the LZ4 (acceleration 1) block, F only
+ *   ourenc    our encoder (m68k/lz4 lz4_encode), 1,024-entry table, cap = the raw size; VERIFY
+ *             also checks it byte for byte against its C model and decodes it with LZ4
+ *   ourenc4k  the same with a 4,096-entry table
  * Prints the raw bytes one pass covers, so build.sh can turn vamos' cycle total into cycles/byte.
  */
 #include <stdio.h>
@@ -33,6 +39,7 @@
 #include "lz4.h"
 #include "pnet_asm.h"
 #include "lz4p.h"
+#include "lz4_68k.h"
 
 void lz4_fastest(const void *src, void *dst, unsigned long packed);
 void lz4_normal(const void *src, void *dst, unsigned long packed);
@@ -80,7 +87,9 @@ static int load(const char *path, int kind) {
 }
 
 static const char *const codecs[] = { "none", "lzfast", "lznorm", "lzfastl", "lzc", "rledasm",
-                                      "rledc", "lzenc", "rleeasm", "rleec", "lz4pasm", "lz4pc" };
+                                      "rledc", "lzenc", "rleeasm", "rleec", "lz4pasm", "lz4pc",
+                                      "ourdec", "ourdecl", "ourenc", "ourenc4k" };
+static uint16_t tab_o[16384], tab_oc[16384];
 static uint16_t tab_a[LZ4P_HASH], tab_c[LZ4P_HASH];
 static uint8_t encbuf2[20000];
 #define NCODEC (sizeof codecs / sizeof codecs[0])
@@ -126,6 +135,20 @@ static int pass(unsigned c, int check) {
             }
             cmp = NULL;
             break;
+        case 12: got = lz4_decode(r->hc, r->nhc, outbuf, outbuf + r->nraw, outbuf); break;
+        case 13: if (!r->lz) return 0; got = lz4_decode(r->lz, r->nlz, outbuf, outbuf + r->nraw, outbuf); break;
+        case 14: case 15: {
+            unsigned long e = c == 14 ? 1024 : 4096;
+            k = lz4_encode(r->raw, r->nraw, encbuf, r->nraw, tab_o, e);
+            if (check) {
+                size_t m = lz4_encode_ref(r->raw, r->nraw, encbuf2, r->nraw, tab_oc, e);
+                if (k != m || memcmp(encbuf, encbuf2, k)) return 0;
+                if (k && LZ4_decompress_safe((const char *)encbuf, (char *)outbuf, (int)k, sizeof outbuf)
+                         != (int)r->nraw) return 0;
+            }
+            cmp = NULL;
+            break;
+        }
         default: return 0;
         }
         if (check && cmp && (got != (long)r->nraw || memcmp(cmp, r->raw, r->nraw))) return 0;
