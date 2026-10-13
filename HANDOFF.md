@@ -1608,7 +1608,7 @@ separately.
   connection that blocks the download (dc_fetch_firmware -> dc_exchange, retryable). **First step:** log WHY the
   download failed (the transport error / HTTP status / body_complete) in fwu_fetch, then reproduce after a long
   uptime.
-- **(Low) e2e firmware releases show to real boards during a run** (seen 2026-10-09): specs seed `0.0.0+e2e*`
+- ~~**(Low) e2e firmware releases show to real boards during a run**~~ **FIXED 2026-10-13 (0b74591): `+e2e` releases are visible, offered and downloadable to test orgs only (`src/lib/test-org.ts`); /admin/firmware stays global. Parked minor: no unit test pins the download-route and instruction-join guards.** (seen 2026-10-09): specs seed `0.0.0+e2e*`
   releases with the highest sequences, so a real board reads "behind 0.0.0+e2eN" until the specs clean up. The
   operator saw it and judged it no problem. A possible guard: ignore `+e2e` versions for non-test orgs.
 - **Override a title's main image -- SHIPPED 2026-10-09 (3bd).** (operator, 2026-10-09): let a user set or replace the cover image of a title,
@@ -1637,7 +1637,7 @@ separately.
   way round hang the radio driver. Estimated ~1e-4 per enable/disable under network traffic (not measured). Fix:
   use the atomic set/clear aliases (hw_set_bits/hw_clear_bits on CTRL) or move flux_in to a PIO block the radio does
   not use; check every pio_sm_set_enabled on pio2.
-- **(Low) DF1 card status does not update live** (seen 2026-10-10 on the PaulaNET bench): after setting DF1 the card
+- ~~**(Low) DF1 card status does not update live**~~ **FIXED 2026-10-13 (1211a0b): capability, SEL1 and df1Seen joined the live fingerprint; the rest came with 61c6692.** (seen 2026-10-10 on the PaulaNET bench): after setting DF1 the card
   stayed on "Waiting for the board" although the DB already showed applied == requested and reported == desired; a
   browser refresh showed "Set on the board". The live-state poll does not refresh the second-drive status line.
 - **Setup portal: feedback after Submit -- DONE in fw 1.10.0 (3bf).** (operator, 2026-10-09, during the re-join bench): after Submit the
