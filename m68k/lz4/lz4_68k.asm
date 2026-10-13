@@ -610,9 +610,317 @@ DLL	macro
 	rts
 
 ;=============================================================================================
-; ENCODER (see below)
+; ENCODER
+;
+; The C model lz4_68k.c is the specification: same arguments, same table, same bytes. Greedy,
+; one hash probe per position: the 4 bytes at a position are read as X = b0:b2, Y = b1:b3 with
+; two MOVEPs (any address, byte accesses), the table offset is (2X + Y) & mask, the table
+; holds 16-bit positions XOR $8000 from the window start, never cleared (a candidate is
+; compared before use). Skip strength 6 (the step grows every 64 misses), forward extension
+; with CMPM.L while the offset is even, backward extension into the pending literals, exact
+; cap check.
+;
+; Registers: a0 ip, a1 op, a2 table, a3 window + $8000 (so 0(a3,d.w) with a biased position
+; is its address), a4 anchor, a5 dst + cap, a6 scratch; d0 ip's position XOR $8000, d5 the
+; table mask, d6 the step, d7 the miss count of this step, d1-d4 scratch.
+; Stack: 0 dst start, 4 the last position a match may start at (src end - 12), 8 src end,
+; 12 the window start.
 ;=============================================================================================
+
 lz4_encode:
+	movem.l	d1-d7/a0-a6,-(sp)
+	move.l	a0,a3			; the window is src itself
+	bra.s	lz4_enc
 lz4_encode_linked:
-	moveq	#0,d0
+	movem.l	d1-d7/a0-a6,-(sp)
+lz4_enc:
+	move.l	a3,-(sp)		; 12: the window start
+	lea	0(a0,d0.l),a6
+	move.l	a6,-(sp)		; 8: src end
+	lea	-12(a6),a6
+	move.l	a6,-(sp)		; 4: the last match start
+	move.l	a1,-(sp)		; 0: dst start
+	lea	0(a1,d1.l),a5		; the op limit
+	move.l	a0,a4			; anchor
+	adda.l	#$8000,a3
+	move.w	d2,d5
+	subq.w	#1,d5
+	add.w	d5,d5			; the mask (byte offsets into the table)
+	moveq	#13,d1
+	cmp.l	d1,d0
+	bcs.w	.elast			; under 13 bytes: literals only
+	move.w	a0,d0
+	sub.w	a3,d0			; ip's position XOR $8000
+
+; The search: blocks of up to 64 positions at one step.
+.esearch:
+	moveq	#1,d6
+.eblock:
+	move.l	4(sp),d7
+	sub.l	a0,d7			; bytes to the last match start
+	bmi.w	.elast
+	cmp.w	#1,d6
+	bne.s	.estep
+	moveq	#63,d1
+	cmp.l	d1,d7
+	bls.s	.elp
+	move.l	d1,d7
+	bra.s	.elp
+.estep:	moveq	#0,d1
+	move.w	d6,d1
+	lsl.l	#6,d1
+	cmp.l	d1,d7
+	bcs.s	.est1
+	moveq	#63,d7			; 64 positions fit
+	bra.s	.elp
+.est1:	divu	d6,d7			; positions left - 1 (quotient < 64)
+
+.elp:	movep.w	0(a0),d3		; X = b0:b2
+	movep.w	1(a0),d4		; Y = b1:b3
+	move.w	d3,d1
+	add.w	d1,d1
+	add.w	d4,d1
+	and.w	d5,d1			; (2X + Y) & mask
+	move.w	0(a2,d1.w),d2		; the candidate
+	move.w	d0,0(a2,d1.w)		; this position
+	cmp.w	d0,d2
+	bge.s	.emiss			; at or past this position: none
+	lea	0(a3,d2.w),a6
+	movep.w	0(a6),d1
+	cmp.w	d3,d1
+	bne.s	.emiss
+	movep.w	1(a6),d1
+	cmp.w	d4,d1
+	beq.s	.efound
+.emiss:	adda.w	d6,a0
+	add.w	d6,d0
+	dbf	d7,.elp
+	addq.w	#1,d6			; 64 misses at this step (or the end): one more
+	bra.s	.eblock
+
+; A match: a0 = its start, a6 = the earlier copy, 4 bytes equal.
+.efound:
+	move.l	a0,d1			; the match start
+	move.l	a0,d2
+	sub.l	a6,d2			; the offset
+	addq.l	#4,a0
+	addq.l	#4,a6
+	move.l	8(sp),d3
+	subq.l	#5,d3
+	sub.l	a0,d3			; bytes to compare, up to 5 before the end (>= 3)
+	btst	#0,d2
+	bne.s	.efb			; odd offset: bytes
+	move.w	a0,d4
+	lsr.w	#1,d4
+	bcc.s	.efl
+	cmpm.b	(a6)+,(a0)+
+	bne.s	.efm1
+	subq.w	#1,d3
+.efl:	move.w	d3,d4
+	lsr.w	#2,d4
+	beq.s	.efb			; under 4 left
+	subq.w	#1,d4
+.efl1:	cmpm.l	(a6)+,(a0)+
+	dbne	d4,.efl1
+	beq.s	.efl2
+	subq.l	#4,a0			; this long differs: find the byte
+	subq.l	#4,a6
+.efl3:	cmpm.b	(a6)+,(a0)+
+	beq.s	.efl3
+	bra.s	.efm1
+.efl2:	and.w	#3,d3
+.efb:	subq.w	#1,d3
+	bmi.s	.efdone
+.efb1:	cmpm.b	(a6)+,(a0)+
+	dbne	d3,.efb1
+	beq.s	.efdone
+.efm1:	subq.l	#1,a0			; back to the first differing byte
+.efdone:
+	; backwards: while start > anchor, start - offset > window, and the bytes before agree
+	move.l	d1,a6
+	move.l	12(sp),d4
+	add.l	d2,d4
+	cmp.l	a4,d4
+	bcc.s	.ebk0
+	move.l	a4,d4			; the bound: max(anchor, window + offset)
+.ebk0:	neg.l	d2
+.ebk:	cmpa.l	d4,a6
+	bls.s	.ebkd
+	move.b	-1(a6),d3
+	cmp.b	-1(a6,d2.l),d3
+	bne.s	.ebkd
+	subq.l	#1,a6
+	bra.s	.ebk
+.ebkd:	neg.l	d2			; the offset again; a6 = the match start
+	move.l	a6,d3
+	sub.l	a4,d3			; lit
+	move.l	a0,d4
+	sub.l	a6,d4
+	subq.l	#4,d4			; ml
+	; room: 5 + lit + lit/128 + ml/128 is never below the real need
+	move.l	d3,d1
+	lsr.l	#7,d1
+	add.l	d3,d1
+	move.l	d4,d6
+	lsr.l	#7,d6
+	add.l	d6,d1
+	addq.l	#5,d1
+	move.l	a5,d6
+	sub.l	a1,d6
+	cmp.l	d6,d1
+	bhi.w	.eexact
+.eemit:	moveq	#15,d1			; the token
+	cmp.l	d1,d3
+	bcc.s	.et1
+	move.w	d3,d1
+.et1:	lsl.b	#4,d1
+	moveq	#15,d6
+	cmp.l	d6,d4
+	bcc.s	.et2
+	move.w	d4,d6
+.et2:	or.b	d6,d1
+	move.b	d1,(a1)+
+	moveq	#15,d1
+	cmp.l	d1,d3
+	bcs.s	.et3
+	move.l	d3,d1
+	sub.l	#15,d1
+	bsr.w	.eputlen
+.et3:	bsr.w	.ecopy			; the literals, anchor -> op
+	move.b	d2,(a1)+		; the offset, little-endian
+	move.w	d2,-(sp)
+	move.b	(sp)+,(a1)+
+	moveq	#15,d1
+	cmp.l	d1,d4
+	bcs.s	.et4
+	move.l	d4,d1
+	sub.l	#15,d1
+	bsr.w	.eputlen
+.et4:	move.l	a0,a4			; anchor = the match end
+	move.w	a0,d0
+	sub.w	a3,d0
+	bra.w	.esearch
+
+; The cheap room estimate failed: the exact need, 3 + lit + ext(lit) + ext(ml).
+.eexact:
+	move.l	d3,d1
+	bsr.s	.eextlen
+	move.l	d1,-(sp)
+	move.l	d4,d1
+	bsr.s	.eextlen
+	add.l	(sp)+,d1
+	add.l	d3,d1
+	addq.l	#3,d1
+	cmp.l	d6,d1
+	bhi.s	.efail
+	bra.w	.eemit
+
+; .eextlen: d1 = the bytes after a nibble of 15 for a length d1: 0 below 15, else
+; (d1 - 15) / 255 + 1.
+.eextlen:
+	moveq	#15,d6
+	cmp.l	d6,d1
+	bcs.s	.eex0
+	sub.l	d6,d1
+	divu	#255,d1
+	and.l	#$ffff,d1
+	addq.l	#1,d1
+	move.l	a5,d6			; (d6 = the room again)
+	sub.l	a1,d6
 	rts
+.eex0:	moveq	#0,d1
+	move.l	a5,d6
+	sub.l	a1,d6
+	rts
+
+; The last literals, anchor .. src end.
+.elast:	move.l	8(sp),d3
+	sub.l	a4,d3			; lit
+	move.l	d3,d1
+	lsr.l	#7,d1
+	add.l	d3,d1
+	addq.l	#2,d1			; 2 + lit + lit/128 is never below 1 + lit + ext(lit)
+	move.l	a5,d6
+	sub.l	a1,d6
+	cmp.l	d6,d1
+	bls.s	.el1
+	move.l	d3,d1
+	bsr.s	.eextlen
+	add.l	d3,d1
+	addq.l	#1,d1
+	cmp.l	d6,d1
+	bhi.s	.efail
+.el1:	moveq	#15,d1
+	cmp.l	d1,d3
+	bcc.s	.el2
+	move.w	d3,d1
+.el2:	lsl.b	#4,d1
+	move.b	d1,(a1)+
+	moveq	#15,d1
+	cmp.l	d1,d3
+	bcs.s	.el3
+	move.l	d3,d1
+	sub.l	#15,d1
+	bsr.s	.eputlen
+.el3:	bsr.s	.ecopy
+	move.l	a1,d0
+	sub.l	(sp),d0			; the block's size
+	lea	16(sp),sp
+	movem.l	(sp)+,d1-d7/a0-a6
+	rts
+.efail:	moveq	#0,d0
+	lea	16(sp),sp
+	movem.l	(sp)+,d1-d7/a0-a6
+	rts
+
+; .eputlen: d1.l >= 0 as an LZ4 length run (255s, then the rest) at (a1)+. Clobbers d1.
+.eputlen:
+	cmp.l	#255,d1
+	bcs.s	.epl1
+	st	(a1)+
+	sub.l	#255,d1
+	bra.s	.eputlen
+.epl1:	move.b	d1,(a1)+
+	rts
+
+; .ecopy: d3.l bytes (may be 0) from (a4)+ to (a1)+. Longs when both have the same parity.
+; Clobbers d1, d3, d6.
+.ecopy:	cmp.l	#16,d3
+	bcs.s	.ecb
+	move.w	a4,d6
+	move.w	a1,d1
+	eor.w	d1,d6
+	lsr.w	#1,d6
+	bcs.s	.ecb			; different parity: bytes
+	move.w	a4,d6
+	lsr.w	#1,d6
+	bcc.s	.ece
+	move.b	(a4)+,(a1)+
+	subq.l	#1,d3
+.ece:	move.l	d3,d6
+	lsr.l	#2,d6			; longs
+	and.w	#3,d3			; then 0..3 bytes
+	moveq	#15,d1
+	and.w	d6,d1
+	lsr.l	#4,d6
+	add.w	d1,d1
+	neg.w	d1
+	jmp	.ecl(pc,d1.w)
+.ecg:	rept	16
+	move.l	(a4)+,(a1)+
+	endr
+.ecl:	subq.l	#1,d6
+	bcc.s	.ecg
+.ecb:	moveq	#63,d1
+	and.w	d3,d1
+	lsr.l	#6,d3
+	add.w	d1,d1
+	neg.w	d1
+	bra.w	.ecj
+.ech:	rept	64
+	move.b	(a4)+,(a1)+
+	endr
+.ecc:	subq.l	#1,d3
+	bcc.w	.ech
+	rts
+.ecj:	jmp	.ecc(pc,d1.w)
