@@ -4909,6 +4909,50 @@ Demozoo API (the bulk export makes per-lookup load on a non-profit unnecessary).
   allowlist checks only the first URL (the raster content-type allowlist and `nosniff` still apply).
 - **Cron drift:** the daily 01:30 cron against a 7-day gate can drift a refetch to 8 days.
 
+### 3bk. DF1 after a live switch: the first warm reset misses DF1 -- root cause MTR0D*, fix on fix/df1-id-restart (2026-10-14; bench owed)
+
+**Bug B (3bj smoke check), reproduced 2026-10-13 via the PiKVM, twice, with Next as the control:** DF1 Off (parked,
+ID NONE) -> Next or Network live -> ONE Ctrl-Amiga-Amiga: no DF1 (`info` has no DF1 line; the log shows no DF1 head
+movement at that boot). A second reset finds it. Not Network-specific. Step 3's "one reset worked" was a power cycle
+4.5 h later (the 16851 s burst), so a live Off -> on switch plus one warm reset had never been benched before.
+
+**Root cause.** The A500's internal 34-pin connector (CN11, where the board sits) carries **`MTR0D*`** on pin 16 --
+DF0's motor, latched on the motherboard by SEL0 (Hardware Reference Manual 3rd ed. p.320; `docs/schematic/A500_R6.pdf`)
+-- not the raw `DSKMOTOR*`/`MTRXD*` of the external port. The board taps SEL1 from CN11 pin 12, but no DF1 motor bit
+reaches it. Kickstart 3.1 reads every unit's ID at every reset (disk.resource, ROM `$FC0414`/`$FC0442`: unit 0
+first, then a motor-on select, a motor-off select, 32 sampled selects); `drive_id` (floppy.pio) restarts an answer only
+on a motor-on select, which DF1 never shows. So after an ID change, the first read ran on the old word's shifter
+(the model gives 0x0000000F/0x00000003 -- neither DRT_AMIGA nor DRT_EMPTY, so no unit). Evidence: the serial log has
+no DF1 motor-latch event at any warm reset or DF1 read since the 16851 s power-on, while DF0's pair shows at every reset.
+
+**Fix (branch `fix/df1-id-restart`, bae6de0 + 67a8645, pushed, NOT merged):** `bus_out_drive_id_set` execs
+`jmp on_released` on DF1 (d != 0, under gate_lock) after writing Y, so the next select loads the new word; DF0 keeps
+its bench-proven rule. Model `drive_id_model_restart` + test `df1_a_new_id_needs_a_restart_without_a_visible_motor`
+(fails without the restart, mutation-checked). Host 57 files / 20,226 checks green; gcc13 -Werror green; release
+config builds with 0 warnings. Opus review: **ready to ship for the default build** (DF1 answers only DD/NONE).
+
+**Bench owed (morning):** TEST build of the branch -> install (Amiga off) -> Off, reset, Next, ONE reset: DF1 present;
+Network likewise; Off + one reset: DF1 gone. Then merge and release 1.11.1.
+
+**Bug A (`DF1: Unreadable disk` after Network -> Off) did not reproduce:** Off while online gave `No disk present`.
+The original came straight after the cancelled write-error requester (3bj extra), most likely the Amiga's DF1 handler
+state, not the board. Not pursued.
+
+**Review findings, parked (consequences of "the board cannot see DF1's motor"):**
+- Medium, `WF_DF1_HD` builds only: DF1 cannot answer HD reliably -- a restart's phase and every DF1 select with
+  DF0's latch off consume ID bits. HD on DF1 behind CN11 needs another phase anchor. Default build unaffected.
+- Medium-low: the DF1-setting flash save (`main.c` ~4699, ~45 ms IRQs off) treats both motors off as idle;
+  `dskchg_motor_on_d(1)` follows DF0's latch, so it can land mid DF1 read (a retried read, no corruption).
+- Medium-low: PaulaNET's OTA hold refresh on a same-cylinder re-read (`main.c` ~3414) requires
+  `dskchg_motor_on_d(1)`; partly covered by the step/serve refreshes.
+- Low: DF1's RDY never shows a real spin-up (it shows ID bits); harmless for the OS, maybe not for a DF1 trackloader.
+
+**Side notes.** The diagnostic `WF_BUS_SNIFF` build (registry TEST seq 79, `1.11.1+g2671ef7`) ran the heap to 0
+with Network's buffers and was reverted by the 5-minute trial deadline -- safe, but the sniffer does not fit beside
+L2. Its instruction was withdrawn (cursor 20). OTA is never automatic, so seq 79 reaches no other board. The
+operator's PDFs (`docs/Amiga_Hardware_Reference_Manual_3rd_edition.pdf`, `docs/Amiga_Disk_Drives_Inside_and_Out_1989_Abacus.pdf`)
+are left untracked, like the ROMs.
+
 ### 3bj. PaulaNET Phase 3 (Network as a DF1 setting) -- TEST 1.11.0+g2671ef7 seq 78 PASSED on the A500 (2026-10-13); release 1.11.0+g2671ef7 seq 78 installed and smoke-checked (2026-10-13)
 
 **Verdict.** Every Task 14 bench step passed on the A500 (KS 3.1, Workbench booted from the IDE drive) with the TEST
