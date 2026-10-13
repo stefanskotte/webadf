@@ -1570,12 +1570,12 @@ separately.
   Scanner and emulator: `tools/protection/` (README there). **What would make such originals whole:** HFE v3 (bit-rate opcodes) plus firmware that
   changes the bitcell timing within a track. HFE v1 cannot hold it, and IPF is ruled out. Not scoped yet.
 
-- **A board's name in the drives fold-out menu links to its device page** (operator, 2026-10-01). In the header's
+- ~~**A board's name in the drives fold-out menu links to its device page**~~ **DONE 2026-10-08 -- see 3ba (bf9d3fc).** (operator, 2026-10-01). In the header's
   drive menus (`DriveList` in `src/components/shell/drive-chips.tsx`: the compact "Drives" menu and the "+k" overflow
   menu), clicking a WiFi floppy's name should go to the device page, and the name should carry a small link arrow
   so it reads as a link. There is no per-board page today: `/devices` lists every board, so link to `/devices` with
   an anchor on that board's card (none exists yet) so the right one is in view.
-- **Firmware CI fails on every push since 2026-10-05** (operator, 2026-10-08). The cause, from `gh run view
+- ~~**Firmware CI fails on every push since 2026-10-05**~~ **FIXED in 864f871; green on every push since (checked 2026-10-13).** (operator, 2026-10-08). The cause, from `gh run view
   --log-failed` on run 37826061227: the GitHub runner builds the HOST TESTS with GCC on Linux, which warns more
   than macOS clang, and `-Werror` turns those warnings into errors. `test_device_client.c` fails on
   format-truncation at 1729/1734 and maybe-uninitialized `body` at 2375. `test_display_golden.c:48` fails on
@@ -2002,7 +2002,7 @@ separately.
   A mounted/idle indicator would also cover the case 3z made obvious, where a fetch is
   silently retrying every ~35 s and nothing outward says so.
 
-- **The disk "mount" button should target a device explicitly.** Requested by the operator
+- ~~**The disk "mount" button should target a device explicitly.**~~ **DONE -- the library mount picker lists the org's devices by name (3ac); the disk page's Mount bar names the holder (3ba).** Requested by the operator
   2026-09-11, right after the first successful hardware mount. Today mounting is
   device-implicit; it should present the org's **list of devices** and show **mounted status
   per device**, so you pick which drive receives the disk and can see at a glance what each
@@ -2739,7 +2739,7 @@ separately.
   page, `game-grid.tsx`, several `src/lib` modules and their tests, and e2e URL assertions, and
   the `/api/ingest/*` namespace is baked into the CLI and the design docs. That is a much wider
   change and should be its own decision.
-- **Refuse web-UI writes to a disk that is currently MOUNTED on a device.** Requested by the
+- ~~**Refuse web-UI writes to a disk that is currently MOUNTED on a device.**~~ **DONE -- 409 `mounted`, see 4h.** Requested by the
   operator 2026-09-13, while an Amiga was reading a disk he could also have edited in the
   browser. Browsing a mounted disk is fine and should stay; editing it is not.
 
@@ -2761,7 +2761,7 @@ separately.
   it to edit" with an eject button, since the operator will usually be standing next to the
   Amiga. A refusal that does not say what to do is a dead end.
 
-- **Propagate a write-protect flip to a device that already has the disk mounted.** Requested by
+- ~~**Propagate a write-protect flip to a device that already has the disk mounted.**~~ **DONE -- see 4i/4j.** Requested by
   the operator 2026-08-31, and it is part of the design's intent rather than a new feature. It
   does not work today, and the reason is specific: `PATCH /api/disks/[id]` updates only
   `disks.write_protected` — it does **not** bump `devices.desired_version`. The long-poll is
