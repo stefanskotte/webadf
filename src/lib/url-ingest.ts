@@ -198,6 +198,10 @@ export async function prepareImages(
       }
       for (const s of skipped) {
         if (s.reason === 'not selected' || !DISK_IMAGE_PATTERN.test(s.path)) continue;
+        // Backstop: the count above already bounds the wanted members, but a
+        // reader that one day skips without asking accept() must not turn one
+        // download into hundreds of thousands of rows.
+        if (out.refused.length >= MAX_IMAGES_PER_URL) break;
         out.refused.push({ filename: cleanName(s.path), sizeBytes: 0, sha256: null, state: 'failed', note: s.reason });
       }
       if (out.images.length === 0 && out.refused.length === 0) return { code: 'no_disk_images' };

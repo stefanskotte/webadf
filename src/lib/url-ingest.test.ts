@@ -69,13 +69,13 @@ const lhaAdf = (n: number) => {
 
 /** Level-0 -lh5- headers with no data, each claiming `claimed` bytes: only the
  *  headers matter to a reader that counts before it decodes. */
-function lhaOf(names: string[], claimed: number): Uint8Array {
+function lhaOf(names: string[], claimed: number, method = '-lh5-'): Uint8Array {
   const parts: Buffer[] = [];
   for (const n of names) {
     const name = Buffer.from(n);
     const h = Buffer.alloc(24 + name.length);
     h[0] = 22 + name.length;
-    h.write('-lh5-', 2, 'latin1');
+    h.write(method, 2, 'latin1');
     h.writeUInt32LE(0, 7);
     h.writeUInt32LE(claimed, 11);
     h[20] = 0;
@@ -234,6 +234,18 @@ describe('prepareImages', () => {
     // this test would try to allocate 84 GB.
     const members = Array.from({ length: MAX_IMAGES_PER_URL + 1 }, (_, i) => `D${i}.adf`);
     expect(await prepareImages(lhaOf(members, 0xffff_ff00), 'x.lha')).toEqual({ code: 'too_many_images' });
+  });
+
+  it('counts unsupported LHA members too: a flood of -lh1- headers is too_many_images, not 700,000 rows', async () => {
+    const members = Array.from({ length: MAX_IMAGES_PER_URL + 1 }, (_, i) => `D${i}.adf`);
+    expect(await prepareImages(lhaOf(members, 901_120, '-lh1-'), 'x.lha')).toEqual({ code: 'too_many_images' });
+  });
+
+  it('reports unsupported LHA members by name, one row each', async () => {
+    const r = await prepareImages(lhaOf(['A.adf', 'B.adf'], 901_120, '-lh1-'), 'x.lha');
+    expect('refused' in r && r.refused.map((x) => [x.filename, x.note])).toEqual([
+      ['A.adf', 'unsupported method -lh1-'], ['B.adf', 'unsupported method -lh1-'],
+    ]);
   });
 
   it('inspects an HFE the way the dropzone does, refusals included', async () => {

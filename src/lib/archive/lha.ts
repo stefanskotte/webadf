@@ -1,4 +1,4 @@
-import { decodeLzh } from './lzh-decode';
+import { decodeLzh, LzhWorkBudgetError } from './lzh-decode';
 
 /**
  * LHA/LZH container reading: headers at levels 0, 1 and 2, and the methods an
@@ -186,7 +186,10 @@ export function readLha(buf: Uint8Array, opts: LhaReadOptions = {}): LhaReadResu
     if (method === '-lhd-') {
       // A directory entry. Carries no data, and the staging area creates
       // parents implicitly from entry paths, so there is nothing to emit.
-    } else if (decodable && opts.accept && !opts.accept(path)) {
+    } else if (opts.accept && !opts.accept(path)) {
+      // Asked of EVERY member, decodable or not, as readZip does: a caller
+      // counting members with accept() must see the ones it will be refused
+      // too, or an archive of 700,000 unsupported members counts as empty.
       skipped.push({ path, reason: 'not selected' });
     } else if (decodable && original > maxEntry) {
       // The header's claim is what decodeLzh allocates up front, so it is
@@ -201,8 +204,17 @@ export function readLha(buf: Uint8Array, opts: LhaReadOptions = {}): LhaReadResu
       // Charged whether or not the stream turns out complete: the work and the
       // allocation happen either way.
       total += original;
-      const outBytes = decodeLzh(data, original, DIC_BITS[method]);
-      if (outBytes.length !== original) {
+      let outBytes: Uint8Array | null = null;
+      try {
+        outBytes = decodeLzh(data, original, DIC_BITS[method]);
+      } catch (e) {
+        // A CPU bomb (see LZH_BYTES_PER_BLOCK) is this member's refusal, not
+        // the archive's, and never an exception out of a drop target or route.
+        skipped.push({ path, reason: e instanceof LzhWorkBudgetError ? 'corrupt (too many blocks)' : 'could not decompress' });
+      }
+      if (outBytes === null) {
+        // refused above
+      } else if (outBytes.length !== original) {
         skipped.push({ path, reason: `truncated (${outBytes.length}/${original} bytes)` });
       } else {
         entries.push({ path, bytes: outBytes, protection, method });
