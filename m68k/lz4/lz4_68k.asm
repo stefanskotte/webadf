@@ -664,29 +664,53 @@ lz4_enc:
 	move.l	d1,d7
 .e1:	movep.w	0(a0),d3		; X = b0:b2
 	movep.w	1(a0),d4		; Y = b1:b3
-; Step 1: the next position's X is this one's Y, so one MOVEP per position.
-.e1lp:	move.w	d3,d1
+; Step 1: the next position's X is this one's Y, so one MOVEP per position. Unrolled twice,
+; the two halves swapping the roles of d3 and d4; d7 = positions - 1, halved.
+	lsr.w	#1,d7
+	bcs.s	.eA			; an even number of positions: start with A
+	exg	d3,d4			; odd: start with B
+	bra.s	.eB
+.eA:	move.w	d3,d1			; X = d3, Y = d4
 	add.w	d1,d1
 	add.w	d4,d1
 	and.w	d5,d1			; (2X + Y) & mask
 	move.w	0(a2,d1.w),d2		; the candidate
 	move.w	d0,0(a2,d1.w)		; this position
 	cmp.w	d0,d2
-	bge.s	.e1mis			; at or past this position: none
+	bge.s	.eAm			; at or past this position: none
 	cmp.b	2(a3,d2.w),d3		; b2 first: most candidates fail here
-	bne.s	.e1mis
+	bne.s	.eAm
 	lea	0(a3,d2.w),a6
 	movep.w	0(a6),d1
 	cmp.w	d3,d1
-	bne.s	.e1mis
+	bne.s	.eAm
 	movep.w	1(a6),d1
 	cmp.w	d4,d1
 	beq.w	.efound
-.e1mis:	addq.l	#1,a0
+.eAm:	addq.l	#1,a0
 	addq.w	#1,d0
-	move.w	d4,d3
+	movep.w	1(a0),d3		; the next Y
+.eB:	move.w	d4,d1			; X = d4, Y = d3
+	add.w	d1,d1
+	add.w	d3,d1
+	and.w	d5,d1
+	move.w	0(a2,d1.w),d2
+	move.w	d0,0(a2,d1.w)
+	cmp.w	d0,d2
+	bge.s	.eBm
+	cmp.b	2(a3,d2.w),d4
+	bne.s	.eBm
+	lea	0(a3,d2.w),a6
+	movep.w	0(a6),d1
+	cmp.w	d4,d1
+	bne.s	.eBm
+	movep.w	1(a6),d1
+	cmp.w	d3,d1
+	beq.w	.efound
+.eBm:	addq.l	#1,a0
+	addq.w	#1,d0
 	movep.w	1(a0),d4
-	dbf	d7,.e1lp
+	dbf	d7,.eA
 	moveq	#2,d6			; 64 misses (or the end): step 2
 ; Steps of 2 and more.
 .eblock:
