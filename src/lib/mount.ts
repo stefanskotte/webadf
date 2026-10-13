@@ -7,7 +7,8 @@ import { firmwareReleases } from '@/db/schema/firmware';
 import { disks, games } from '@/db/schema/catalog';
 import { isHdAdf, isServable } from '@/lib/disk-format';
 import { LEGACY_BOARD_TRACK_MAX_BYTES } from '@/lib/adfmfm';
-import type { SecondDriveMode } from '@/lib/second-drive';
+import { asSecondDriveMode, type SecondDriveMode } from '@/lib/second-drive';
+import { netNextRearm, netNextRearmCandidate } from '@/lib/paulanet-disk';
 
 export interface DesiredDisk {
   sha256: string;
@@ -146,6 +147,11 @@ export interface PollTick {
   /** The DF1 setting cursor and value: compared against the board's ?driveAck=. */
   secondDriveVersion: number;
   secondDrive: SecondDriveMode;
+  /** What the board last reported running, and the setting version it had handled (pre-flight I2). */
+  secondDriveReported: SecondDriveMode | null;
+  secondDriveAppliedVersion: number | null;
+  /** The driver disk's one-shot cursor: the setting version a body last carried it as `next` at. */
+  netNextSentVersion: number | null;
 }
 
 /**
@@ -166,11 +172,20 @@ export async function readPollTick(deviceId: string): Promise<PollTick | null> {
       displayVersion: devices.displayVersion,
       secondDriveVersion: devices.secondDriveVersion,
       secondDrive: devices.secondDrive,
+      secondDriveReported: devices.secondDriveReported,
+      secondDriveAppliedVersion: devices.secondDriveAppliedVersion,
+      netNextSentVersion: devices.netNextSentVersion,
     })
     .from(devices)
     .where(eq(devices.id, deviceId))
     .limit(1);
-  return row ? { ...row, secondDrive: row.secondDrive === 'df1' ? 'df1' : 'off' } : null;
+  return row
+    ? {
+        ...row,
+        secondDrive: asSecondDriveMode(row.secondDrive) ?? 'off',
+        secondDriveReported: asSecondDriveMode(row.secondDriveReported),
+      }
+    : null;
 }
 
 /**
@@ -299,6 +314,8 @@ export async function recordStatus(
     driveVersion?: number;
     /** What DF1 holds now (sha256), null = empty or off (fw 1.8.0+). */
     df1Sha256?: string | null;
+    /** Network mode's readings (fw 1.11.0+), Network mode only (spec 2026-10-12 §4). */
+    net?: { driver?: number; amigaIp?: string; framesIn?: number; framesOut?: number };
   },
 ): Promise<void> {
   const db = getDb();
@@ -368,6 +385,19 @@ export async function recordStatus(
   if (s.driveVersion !== undefined) patch.secondDriveAppliedVersion = s.driveVersion;
   if (s.df1Sha256 !== undefined) patch.df1Sha256 = s.df1Sha256;
   else if (s.firmwareVersion !== undefined && s.secondDrive === undefined) patch.df1Sha256 = null;
+  // Build-bound (the playsHd rule): a report naming its firmware without `net` is a board not in Network
+  // mode (or older), and the checklist must not keep a Network reading (plan 2026-10-12 ruling 14).
+  if (s.net !== undefined) {
+    patch.netDriverSeenAt = s.net.driver !== undefined ? new Date(Date.now() - s.net.driver * 1000) : null;
+    patch.netAmigaIp = s.net.amigaIp ?? null;
+    patch.netFramesIn = s.net.framesIn ?? null;
+    patch.netFramesOut = s.net.framesOut ?? null;
+  } else if (s.firmwareVersion !== undefined) {
+    patch.netDriverSeenAt = null;
+    patch.netAmigaIp = null;
+    patch.netFramesIn = null;
+    patch.netFramesOut = null;
+  }
   // Plain absent-leaves-it-alone, unlike trackMaxBytes above: the reader's
   // presence is not tied to the firmware build, so there is no "drop to a
   // legacy default" case here -- a report that omits it simply has nothing
@@ -454,6 +484,26 @@ export async function recordStatus(
     patch.mountedDiskNo = mountedDiskNo;
   }
 
+  // Task 8 review I1: re-arm the poll's driver-disk wake after a lost response (netNextRearm says when). Read
+  // only for a Network report whose DF1 lacks the disk; written as a compare-and-set in this one UPDATE, so a
+  // cursor the poll moved since the read (it just sent the disk again) is left alone.
+  if (netNextRearmCandidate(s)) {
+    const [row] = await db
+      .select({
+        secondDrive: devices.secondDrive, secondDriveVersion: devices.secondDriveVersion,
+        netNextSentVersion: devices.netNextSentVersion, netNextRearmedAt: devices.netNextRearmedAt,
+      })
+      .from(devices)
+      .where(eq(devices.id, deviceId))
+      .limit(1);
+    const now = new Date();
+    if (row && row.netNextSentVersion !== null && netNextRearm(row, s, now)) {
+      const same = sql`${devices.netNextSentVersion} = ${row.netNextSentVersion} and ${devices.secondDriveVersion} = ${row.secondDriveVersion}`;
+      patch.netNextSentVersion = sql`case when ${same} then null else ${devices.netNextSentVersion} end`;
+      patch.netNextRearmedAt = sql`case when ${same} then ${now.toISOString()}::timestamptz else ${devices.netNextRearmedAt} end`;
+    }
+  }
+
   await db.update(devices).set(patch).where(eq(devices.id, deviceId));
 }
 
@@ -466,6 +516,16 @@ export async function recordStatus(
 export async function touchLastSeen(deviceId: string): Promise<void> {
   await getDb().update(devices)
     .set({ lastSeenAt: new Date() })
+    .where(eq(devices.id, deviceId));
+}
+
+/**
+ * Records that a poll body carried the driver disk as `next` at this setting version (pre-flight I2), so the
+ * hold stops waking for it. Single column, like touchLastSeen; written only on the delivery path.
+ */
+export async function markNetNextSent(deviceId: string, secondDriveVersion: number): Promise<void> {
+  await getDb().update(devices)
+    .set({ netNextSentVersion: secondDriveVersion })
     .where(eq(devices.id, deviceId));
 }
 

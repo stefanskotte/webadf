@@ -1,0 +1,41 @@
+; Install -- puts Rob Smith's PaulaNET.device in place for a TCP/IP stack.
+; From webadf (https://github.com/stefanskotte/webadf). Safe to run more
+; than once: the driver is copied again, and an existing eth0 is never
+; changed.
+FailAt 21
+If NOT EXISTS DEVS:Networks
+  MakeDir DEVS:Networks
+EndIf
+Copy PaulaNET:PaulaNET.device DEVS:Networks/ CLONE QUIET
+If WARN
+  Echo "Could not copy PaulaNET.device to DEVS:Networks."
+  Echo "The driver was not copied; eth0 was not touched."
+  Skip DONE
+EndIf
+Echo "Copied PaulaNET.device to DEVS:Networks."
+If EXISTS DEVS:NetInterfaces/eth0
+  Echo "DEVS:NetInterfaces/eth0 already exists: left as it is."
+  Echo "For PaulaNET it needs these three lines:"
+  Echo "  device=PaulaNET.device"
+  Echo "  unit=0"
+  Echo "  configure=dhcp"
+Else
+  If NOT EXISTS DEVS:NetInterfaces
+    MakeDir DEVS:NetInterfaces
+  EndIf
+  Echo >DEVS:NetInterfaces/eth0 "device=PaulaNET.device"
+  Echo >>DEVS:NetInterfaces/eth0 "unit=0"
+  Echo >>DEVS:NetInterfaces/eth0 "configure=dhcp"
+  If WARN
+    Delete DEVS:NetInterfaces/eth0 QUIET
+    Echo "Could not write DEVS:NetInterfaces/eth0; it was removed."
+    Skip DONE
+  EndIf
+  Echo "Wrote DEVS:NetInterfaces/eth0."
+EndIf
+Echo ""
+Echo "Next, in a Shell:  AddNetInterface eth0"
+Echo "To go online at every start, add that line to S:User-Startup."
+Lab DONE
+Echo ""
+Ask "Press Return to close this window."

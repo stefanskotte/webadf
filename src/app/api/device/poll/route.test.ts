@@ -11,6 +11,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import type { PollTick, DesiredState } from '@/lib/mount';
 import { DC_TITLE_MAX } from '@/lib/device-limits';
+import { PAULANET_DISK_SHA256 } from '@/lib/paulanet-disk';
 
 const requireDevice = vi.fn<(r: Request) => Promise<{ deviceId: string; orgId: string }>>(
   async () => ({ deviceId: 'dev-1', orgId: 'org-1' }),
@@ -21,6 +22,7 @@ const readDesired = vi.fn<() => Promise<DesiredState | null>>(
   async () => ({ version: 1, desired: null }),
 );
 const readFirmwareInstruction = vi.fn(async () => null);
+const markNetNextSent = vi.fn<(deviceId: string, v: number) => Promise<void>>(async () => undefined);
 
 vi.mock('@/lib/device-auth', () => ({
   requireDevice: (r: Request) => requireDevice(r),
@@ -31,6 +33,7 @@ vi.mock('@/lib/mount', () => ({
   readPollTick: () => readPollTick(),
   readDesired: () => readDesired(),
   readFirmwareInstruction: () => readFirmwareInstruction(),
+  markNetNextSent: (deviceId: string, v: number) => markNetNextSent(deviceId, v),
 }));
 
 type NfcRow = {
@@ -48,7 +51,8 @@ vi.mock('@/lib/next-disk', () => ({
 const get = (qs = '') => new Request(`http://test/api/device/poll${qs}`);
 
 const baseTick = (over: Partial<PollTick> = {}): PollTick => ({
-  version: 1, instructionVersion: 0, instructionAck: 0, nfcWriteSeq: 0, displayVersion: 0, secondDriveVersion: 0, secondDrive: 'off', ...over,
+  version: 1, instructionVersion: 0, instructionAck: 0, nfcWriteSeq: 0, displayVersion: 0, secondDriveVersion: 0, secondDrive: 'off',
+  secondDriveReported: null, secondDriveAppliedVersion: null, netNextSentVersion: null, ...over,
 });
 
 beforeEach(() => {
@@ -211,6 +215,150 @@ describe('GET /api/device/poll -- next (multi-disk plan R1)', () => {
     const body = await res.json();
     expect(body).not.toHaveProperty('next');
     expect(readNextForPoll).not.toHaveBeenCalled();
+  });
+
+  // Network mode (spec 2026-10-12 §2, pre-flight I2). `applied`: the board has reported running Network for
+  // the current setting version; `chosen`: the user picked Network, the board has not reported it yet.
+  const applied = { secondDrive: 'net' as const, secondDriveVersion: 3, secondDriveReported: 'net' as const,
+    secondDriveAppliedVersion: 3 };
+  const chosen = { secondDrive: 'net' as const, secondDriveVersion: 3, secondDriveReported: 'df1' as const,
+    secondDriveAppliedVersion: 2 };
+
+  it('Network mode, applied: next is the PaulaNET driver disk, not the next disk of the set', async () => {
+    readPollTick.mockResolvedValue(baseTick({ instructionVersion: 1, instructionAck: 0, ...applied,
+      netNextSentVersion: 3 }));
+    readDesired.mockResolvedValue({ version: 1, desired: desiredDisk });
+    readNextForPoll.mockResolvedValue({ diskId: 'd2', sha256: 'b'.repeat(64), diskNo: 2 });
+    const { GET } = await import('./route');
+    const body = await (await GET(get('?since=1&driveAck=3'))).json();
+    expect(body.next).toEqual({ diskId: 'paulanet', sha256: PAULANET_DISK_SHA256, diskNo: 1 });
+    expect(readNextForPoll).not.toHaveBeenCalled();
+    expect(markNetNextSent).not.toHaveBeenCalled();   // already sent at this version
+  });
+
+  it('Network mode, applied, with nothing desired: next is still the driver disk (ruling 6)', async () => {
+    readPollTick.mockResolvedValue(baseTick({ instructionVersion: 1, instructionAck: 0, ...applied }));
+    readDesired.mockResolvedValue({ version: 1, desired: null });
+    const { GET } = await import('./route');
+    const body = await (await GET(get('?since=1&driveAck=3'))).json();
+    expect(body.next).toEqual({ diskId: 'paulanet', sha256: PAULANET_DISK_SHA256, diskNo: 1 });
+    expect(readNextForPoll).not.toHaveBeenCalled();
+  });
+
+  it('Network mode chosen but not yet reported by the board: next is as in Next disk mode (I2)', async () => {
+    readPollTick.mockResolvedValue(baseTick({ instructionVersion: 1, instructionAck: 0, ...chosen }));
+    readDesired.mockResolvedValue({ version: 1, desired: desiredDisk });
+    readNextForPoll.mockResolvedValue({ diskId: 'd2', sha256: 'b'.repeat(64), diskNo: 2 });
+    const { GET } = await import('./route');
+    const body = await (await GET(get('?since=1&driveAck=2'))).json();
+    expect(body.next).toEqual({ diskId: 'd2', sha256: 'b'.repeat(64), diskNo: 2 });
+    expect(body.secondDrive).toEqual({ seq: 3, mode: 'net' });
+    expect(markNetNextSent).not.toHaveBeenCalled();
+  });
+
+  it('Network mode chosen but not yet reported, nothing desired: no next at all (I2)', async () => {
+    readPollTick.mockResolvedValue(baseTick({ instructionVersion: 1, instructionAck: 0, ...chosen }));
+    readDesired.mockResolvedValue({ version: 1, desired: null });
+    const { GET } = await import('./route');
+    expect(await (await GET(get('?since=1&driveAck=2'))).json()).not.toHaveProperty('next');
+  });
+
+  // Final review m1: a second save of 'net' while the board already runs Network bumps the version. Until the
+  // board reports the new one, the poll used the non-Network rule and sent next: null (or the set's next),
+  // ejecting the driver disk. The board is in Network either way, so the driver disk stays `next`; the wake
+  // cursor is still keyed on the applied version.
+  it('Network saved again while the board already reports Network at an older version: still the driver disk (m1)',
+    async () => {
+      readPollTick.mockResolvedValue(baseTick({ instructionVersion: 1, instructionAck: 0, ...applied,
+        secondDriveVersion: 4, secondDriveAppliedVersion: 3, netNextSentVersion: 3 }));
+      readDesired.mockResolvedValue({ version: 1, desired: desiredDisk });
+      readNextForPoll.mockResolvedValue({ diskId: 'd2', sha256: 'b'.repeat(64), diskNo: 2 });
+      const { GET } = await import('./route');
+      const body = await (await GET(get('?since=1&driveAck=3'))).json();
+      expect(body.secondDrive).toEqual({ seq: 4, mode: 'net' });
+      expect(body.next).toEqual({ diskId: 'paulanet', sha256: PAULANET_DISK_SHA256, diskNo: 1 });
+      expect(readNextForPoll).not.toHaveBeenCalled();
+      expect(markNetNextSent).not.toHaveBeenCalled();   // the cursor waits for the applied version
+    });
+
+  it('...and with nothing desired: the driver disk, never next: null (m1)', async () => {
+    readPollTick.mockResolvedValue(baseTick({ instructionVersion: 1, instructionAck: 0, ...applied,
+      secondDriveVersion: 4, secondDriveAppliedVersion: 3 }));
+    readDesired.mockResolvedValue({ version: 1, desired: null });
+    const { GET } = await import('./route');
+    const body = await (await GET(get('?since=1&driveAck=3'))).json();
+    expect(body.next).toEqual({ diskId: 'paulanet', sha256: PAULANET_DISK_SHA256, diskNo: 1 });
+  });
+
+  it('Network saved again, board on the older version: no driver-disk wake of its own (holds)', async () => {
+    vi.useFakeTimers();
+    try {
+      readPollTick.mockResolvedValue(baseTick({ ...applied, secondDriveVersion: 4, secondDriveAppliedVersion: 3,
+        netNextSentVersion: 3 }));
+      const { GET } = await import('./route');
+      const p = GET(get('?since=1&driveAck=4'));
+      await vi.advanceTimersByTimeAsync(26_000);
+      expect((await p).status).toBe(204);
+      expect(markNetNextSent).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('Network applied and never sent: wakes on its own once, carries the driver disk, records the cursor', async () => {
+    // since and driveAck are both caught up: only the driver disk's cursor can wake this poll.
+    readPollTick.mockResolvedValue(baseTick({ ...applied, netNextSentVersion: 2 }));
+    readDesired.mockResolvedValue({ version: 1, desired: null });
+    const { GET } = await import('./route');
+    const res = await GET(get('?since=1&driveAck=3'));
+    expect(res.status).toBe(200);
+    expect((await res.json()).next).toEqual({ diskId: 'paulanet', sha256: PAULANET_DISK_SHA256, diskNo: 1 });
+    expect(markNetNextSent).toHaveBeenCalledWith('dev-1', 3);
+  });
+
+  it('after a status report re-armed the cursor (null): the next poll wakes and sends the driver disk again', async () => {
+    readPollTick.mockResolvedValue(baseTick({ ...applied, netNextSentVersion: null }));
+    readDesired.mockResolvedValue({ version: 1, desired: null });
+    const { GET } = await import('./route');
+    const res = await GET(get('?since=1&driveAck=3'));
+    expect(res.status).toBe(200);
+    expect((await res.json()).next).toEqual({ diskId: 'paulanet', sha256: PAULANET_DISK_SHA256, diskNo: 1 });
+    expect(markNetNextSent).toHaveBeenCalledWith('dev-1', 3);
+  });
+
+  it('Network applied and already sent at this version: holds (a cursor, not a flag)', async () => {
+    vi.useFakeTimers();
+    try {
+      readPollTick.mockResolvedValue(baseTick({ ...applied, netNextSentVersion: 3 }));
+      const { GET } = await import('./route');
+      const p = GET(get('?since=1&driveAck=3'));
+      await vi.advanceTimersByTimeAsync(26_000);
+      expect((await p).status).toBe(204);
+      expect(markNetNextSent).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('Network chosen, not yet applied: no wake for the driver disk (holds)', async () => {
+    vi.useFakeTimers();
+    try {
+      readPollTick.mockResolvedValue(baseTick({ ...chosen, secondDriveAppliedVersion: 3 }));   // acked, still df1
+      const { GET } = await import('./route');
+      const p = GET(get('?since=1&driveAck=3'));
+      await vi.advanceTimersByTimeAsync(26_000);
+      expect((await p).status).toBe(204);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('Next disk mode with nothing desired: still no next (unchanged)', async () => {
+    readPollTick.mockResolvedValue(baseTick({ instructionVersion: 1, instructionAck: 0, secondDrive: 'df1',
+      secondDriveReported: 'df1', secondDriveAppliedVersion: 0 }));
+    readDesired.mockResolvedValue({ version: 1, desired: null });
+    const { GET } = await import('./route');
+    expect(await (await GET(get('?since=1&driveAck=0'))).json()).not.toHaveProperty('next');
   });
 
   it('places next after desired in the JSON body', async () => {

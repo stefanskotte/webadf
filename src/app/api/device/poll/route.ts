@@ -1,11 +1,12 @@
 import { requireDevice, deviceAuthResponse } from '@/lib/device-auth';
 import {
-  readDesired, readPollTick, readFirmwareInstruction, touchLastSeen,
+  readDesired, readPollTick, readFirmwareInstruction, touchLastSeen, markNetNextSent,
 } from '@/lib/mount';
 import { readNfcWriteRow } from '@/lib/nfc/store';
 import { nfcWriteForPoll } from '@/lib/nfc/rules';
 import { readNextForPoll } from '@/lib/next-disk';
 import { DC_TITLE_MAX } from '@/lib/device-limits';
+import { PAULANET_NEXT, netApplied, netKeepsDriverDisk } from '@/lib/paulanet-disk';
 
 // Holds up to 25 s. maxDuration covers the hold plus slack; the platform
 // default would cut the connection mid-hold.
@@ -146,6 +147,17 @@ export async function GET(request: Request) {
 
     const driveMoved = driveAck !== null && tick.secondDriveVersion !== driveAck;
 
+    // Network mode (spec 2026-10-12 §2, pre-flight I2): the driver disk goes out as `next` only once the
+    // board has REPORTED running Network for the current setting -- never on the choice alone, which would
+    // have the board preload it under its old mode, into DF0's idle slot, and block the digest. The body
+    // that delivers the setting therefore cannot carry it, and by the board's next poll its ack matches
+    // and nothing else moves: without a wake of its own the driver disk would wait for an unrelated one
+    // (a mount, a re-pair). So one wake, keyed on a CURSOR (net_next_sent_version, written below when a
+    // body carries it), never on "the board does not hold it yet": a board that cannot load it (no slot,
+    // a held-off digest) would otherwise be woken on every poll. Only a board that speaks driveAck.
+    const netNow = driveAck !== null && netApplied(tick);
+    const netNextMoved = netNow && tick.netNextSentVersion !== tick.secondDriveVersion;
+
     const clampedFrom = Math.min(from, version);
     // A firmware instruction the device has not acknowledged releases the
     // hold. It is a CURSOR comparison, like every other wake on this route --
@@ -156,12 +168,23 @@ export async function GET(request: Request) {
     // device echoes it back as mountedVersion and the server reads that for an
     // upload's not_mounted/behind verdict (HANDOFF 4g), so bumping it could
     // strand an Amiga write that was mid-session. See spec 4.2.
-    if (version > clampedFrom || clampedFrom !== from || firmwareMoved || nfcMoved || displayMoved || driveMoved) {
+    if (version > clampedFrom || clampedFrom !== from || firmwareMoved || nfcMoved || displayMoved || driveMoved || netNextMoved) {
       const state = await readDesired(device.deviceId);
       if (!state) return notFound();
       // Multi-disk spec §3.3 / plan R1: the disk the board should preload.
       // Computed on delivery only (never per tick), and only with a disk desired.
-      const next = state.desired ? await readNextForPoll(device.deviceId, device.orgId) : undefined;
+      // Network mode, once applied (above): DF1 holds the PaulaNET driver disk instead of the next disk of
+      // the set -- on every body, with or without a disk desired: the board keeps it in a slot of its own,
+      // whatever DF0 holds (plan 2026-10-12 ruling 6). Until applied, and in Next disk / Off: as before --
+      // except that a board already reporting Network keeps the driver disk across a re-save of 'net' that
+      // bumped the version (final review m1): it is in Network either way, and any other `next` ejects it.
+      const netNext = netNow || (driveAck !== null && netKeepsDriverDisk(tick));
+      const next = netNext ? { ...PAULANET_NEXT }
+        : state.desired ? await readNextForPoll(device.deviceId, device.orgId)
+        : undefined;
+      if (netNow && tick.netNextSentVersion !== tick.secondDriveVersion) {
+        await markNetNextSent(device.deviceId, tick.secondDriveVersion);
+      }
       // Resolved only here, and only when the device has not acknowledged it.
       // Sending it again to a board that already answered is what re-issued
       // an instruction to a board mid-flash and re-tried an update that had
@@ -206,6 +229,7 @@ export async function GET(request: Request) {
         {
           version: state.version,
           desired: state.desired,
+          // Absent with desired: null -- except in Network mode, once applied (the driver disk).
           ...(next !== undefined ? { next } : {}),
           instructionVersion: tick.instructionVersion,
           // On EVERY body answering a poll that sent displayAck, not only one

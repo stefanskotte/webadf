@@ -4,6 +4,7 @@
  */
 #include "harness.h"
 #include "../src/pnet_loop.h"
+#include "../src/drive_store.h"
 #include <stdint.h>
 #include <string.h>
 
@@ -213,6 +214,70 @@ static void a_side_one_start_waits_from_the_side_edge(void) {
     CHECK_EQ_INT(pnet_go_wait_us(0u, 2360u, 0x90000000u), 0);             /* a stale stamp: never far ahead */
 }
 
+// Phase 3 (plan 2026-10-12 ruling 2): one predicate decides whether the PaulaNET path runs.
+static void the_network_path_runs_only_in_network_mode(void) {
+    CHECK(!pnet_mode_on(DF1_MODE_OFF, false), "release, off: never");
+    CHECK(!pnet_mode_on(DF1_MODE_NEXT, false), "release, next disk: never -- cylinders 76/77 are disk data");
+    CHECK(pnet_mode_on(DF1_MODE_NET, false), "release, network: yes");
+    CHECK(!pnet_mode_on(DF1_MODE_OFF, true), "echo build, off: never");
+    CHECK(pnet_mode_on(DF1_MODE_NEXT, true), "echo build, next disk: yes, as its bench always ran it");
+    CHECK(pnet_mode_on(DF1_MODE_NET, true), "echo build, network: yes");
+    CHECK(!pnet_mode_on(7u, false) && !pnet_mode_on(7u, true), "an unknown mode: never");
+}
+
+// Review Focus 4: when Network mode ends, the loop's pre-arm step sees DF1 not serving and lets a
+// standing pre-arm go -- wherever the head is, cylinder 77 side 0 included.
+static void leaving_network_mode_cancels_a_standing_prearm(void) {
+    pnet_prearm_in_t in = { .df1_serving = false, .sel0 = false, .wgate = false, .unpowered = false,
+                            .cyl1 = 77, .side = 0, .idle = false, .prearmed = true, .edges = false };
+    CHECK_EQ_INT(pnet_prearm_decide(&in), PNET_PREARM_CANCEL);
+    in.prearmed = false; in.idle = true;
+    CHECK_EQ_INT(pnet_prearm_decide(&in), PNET_PREARM_NONE);   // and never arms again
+}
+
+// Review Focus 4 through the gate itself (pre-flight I11): main.c's loop runs pnet_prearm_gated with
+// pnet_mode_on's answer. DF1 still holds a disk -- Next disk, or Network's driver disk left mounted
+// after a switch -- with the head on cylinder 77 side 0, exactly where Network mode arms. Off the
+// gate, a standing pre-arm goes and nothing is armed; on it, the decision is pnet_prearm_decide's.
+static void the_gate_lets_a_prearm_go_and_never_arms_outside_network_mode(void) {
+    pnet_prearm_in_t in = { .df1_serving = true, .sel0 = false, .wgate = false, .unpowered = false,
+                            .cyl1 = 77, .side = 0, .idle = false, .prearmed = true, .edges = false };
+    const bool next_release = pnet_mode_on(DF1_MODE_NEXT, false);
+    const bool net_release = pnet_mode_on(DF1_MODE_NET, false);
+    CHECK_EQ_INT(pnet_prearm_gated(net_release, &in), PNET_PREARM_NONE);      // Network: it stands
+    CHECK_EQ_INT(pnet_prearm_gated(next_release, &in), PNET_PREARM_CANCEL);   // switched to Next: it goes
+    CHECK_EQ_INT(pnet_prearm_gated(pnet_mode_on(DF1_MODE_OFF, false), &in), PNET_PREARM_CANCEL);
+    in.prearmed = false; in.idle = true;
+    CHECK_EQ_INT(pnet_prearm_gated(net_release, &in), PNET_PREARM_ARM);       // Network arms here
+    CHECK_EQ_INT(pnet_prearm_gated(next_release, &in), PNET_PREARM_NONE);     // Next never does
+    CHECK_EQ_INT(pnet_prearm_gated(pnet_mode_on(DF1_MODE_OFF, false), &in), PNET_PREARM_NONE);
+    // The echo TEST build runs Next disk's bench as it always has.
+    CHECK_EQ_INT(pnet_prearm_gated(pnet_mode_on(DF1_MODE_NEXT, true), &in), PNET_PREARM_ARM);
+    // Off the gate, every other input: never ARM, and a standing pre-arm never survives.
+    for (unsigned bits = 0; bits < 256u; bits++) {
+        pnet_prearm_in_t x = { .df1_serving = bits & 1u, .sel0 = bits & 2u, .wgate = bits & 4u,
+                               .unpowered = bits & 8u, .cyl1 = (bits & 16u) ? 77 : 40, .side = (bits & 32u) ? 1 : 0,
+                               .idle = bits & 64u, .prearmed = bits & 128u, .edges = false };
+        const pnet_prearm_t r = pnet_prearm_gated(false, &x);
+        CHECK(r != PNET_PREARM_ARM, "off the gate: never armed");
+        if (x.prearmed && !x.wgate) CHECK(r == PNET_PREARM_CANCEL, "off the gate: a standing pre-arm goes");
+        if (!x.prearmed) CHECK(r == PNET_PREARM_NONE, "off the gate, nothing standing: nothing to do");
+        CHECK_EQ_INT(pnet_prearm_gated(true, &x), pnet_prearm_decide(&x));
+    }
+}
+
+// Task 5 review I1: DF1's WPROT under the gate. In Network mode it is released on cylinder 77 only; out of it
+// -- Off and Next included, the head still on 77 -- asserted, so leaving Network never leaves DF1 writable.
+static void wprot_is_asserted_everywhere_outside_network_mode(void) {
+    for (int cyl = 0; cyl < 80; cyl++) {
+        CHECK(pnet_df1_wprot_gated(false, cyl), "off the gate: write-protected on every cylinder");
+        CHECK(pnet_df1_wprot_gated(true, cyl) == pnet_df1_wprot(cyl), "on the gate: the loopback's rule");
+    }
+    CHECK(!pnet_df1_wprot_gated(pnet_mode_on(DF1_MODE_NET, false), 77), "Network on 77: writable");
+    CHECK(pnet_df1_wprot_gated(pnet_mode_on(DF1_MODE_OFF, false), 77), "left for Off on 77: protected");
+    CHECK(pnet_df1_wprot_gated(pnet_mode_on(DF1_MODE_NEXT, false), 77), "left for Next on 77: protected");
+}
+
 int main(void) {
     RUN(df1_streams_disk_silence_or_echo);
     RUN(wprot_is_released_only_on_cylinder_77);
@@ -226,5 +291,9 @@ int main(void) {
     RUN(the_decision_holds_for_every_input);
     RUN(a_side_one_start_waits_from_the_side_edge);
     RUN(a_start_is_classified_by_its_wait);
+    RUN(the_network_path_runs_only_in_network_mode);
+    RUN(leaving_network_mode_cancels_a_standing_prearm);
+    RUN(the_gate_lets_a_prearm_go_and_never_arms_outside_network_mode);
+    RUN(wprot_is_asserted_everywhere_outside_network_mode);
     return REPORT();
 }

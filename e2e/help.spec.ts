@@ -25,7 +25,7 @@ test('a help button opens a short explanation that links to its /help section', 
 test('/help lists every topic', async ({ page }) => {
   await signUpFresh(page);
   await page.goto('/help');
-  for (const id of ['boards', 'nfc', 'next-disk', 'write-back', 'write-protect', 'disk-sets', 'hd-hfe', 'display', 'second-drive', 'cover-image']) {
+  for (const id of ['boards', 'nfc', 'next-disk', 'write-back', 'write-protect', 'disk-sets', 'hd-hfe', 'display', 'second-drive', 'network', 'cover-image']) {
     await expect(page.getByTestId(`help-section-${id}`)).toBeVisible();
   }
 });
@@ -60,4 +60,14 @@ test('the help button does not trigger the control beside it', async ({ page, re
 test('signed out, /help goes to sign-in like every app page', async ({ page }) => {
   await page.goto('/help');
   await expect(page).toHaveURL(/\/sign-in/);
+});
+
+test('the network topic links a working driver disk download', async ({ page }) => {
+  await signUpFresh(page);
+  await page.goto('/help#network');
+  await expect(page.getByTestId('help-section-network')).toContainText('AddNetInterface eth0');
+  const res = await page.request.get('/api/paulanet-disk');
+  expect(res.status()).toBe(200);
+  expect(res.headers()['content-type']).toBe('application/x-amiga-disk-file');
+  expect((await res.body()).length).toBe(901120);
 });

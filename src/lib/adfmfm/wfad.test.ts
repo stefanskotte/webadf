@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { writeWfad, WfadFormatError } from './wfad';
+import { writeWfad, writeWfadDd, WfadFormatError } from './wfad';
 import { ADF_BYTES, ADF_HD_BYTES, WFAD_BYTES } from './constants';
 
 // The header, spelled out byte by byte from the spec's table (HD spec §4.4),
@@ -50,5 +50,19 @@ describe('writeWfad', () => {
     expect(() => writeWfad(new Uint8Array(ADF_HD_BYTES - 1))).toThrow(WfadFormatError);
     expect(() => writeWfad(new Uint8Array(ADF_HD_BYTES + 1))).toThrow(WfadFormatError);
     expect(() => writeWfad(new Uint8Array(0))).toThrow(WfadFormatError);
+  });
+});
+
+describe('writeWfadDd (PaulaNET driver disk, plan 2026-10-12 ruling 24)', () => {
+  it('the 16-byte header names 11 sectors, then the ADF unchanged', () => {
+    const adf = new Uint8Array(ADF_BYTES).map((_, i) => i & 0xff);
+    const out = writeWfadDd(adf);
+    expect(out.length).toBe(16 + 901120);
+    expect([...out.slice(0, 16)]).toEqual([0x57, 0x46, 0x41, 0x44, 1, 0, 0, 0, 0xa0, 0, 0, 0, 0x0b, 0, 0, 0]);
+    expect(out.slice(16)).toEqual(adf);
+  });
+  it('throws on anything that is not exactly one DD ADF', () => {
+    expect(() => writeWfadDd(new Uint8Array(ADF_HD_BYTES))).toThrow(WfadFormatError);
+    expect(() => writeWfadDd(new Uint8Array(ADF_BYTES - 1))).toThrow(WfadFormatError);
   });
 });

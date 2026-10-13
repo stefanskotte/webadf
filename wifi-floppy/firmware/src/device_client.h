@@ -84,6 +84,11 @@ typedef bool (*dc_hold_fn)(void *ctx);
 // so tests stay deterministic (see dc_enter_backoff in device_client.c).
 #define DC_BACKOFF_FLOOR_MS 1000u
 #define DC_BACKOFF_CAP_MS   60000u
+// Phase 3 (Task 4b review I-1): after a failed fetch on the driver disk's own
+// route (/api/device/image/net/<sha>), that digest is not asked for again on
+// that route for this long -- then it is, so a server fault heals without a
+// reboot. The DF0 route's block list is never touched by it.
+#define DC_NET_RETRY_MS     60000u
 
 // Sized from the poll body's actual shape, not guessed. readDesired()
 // (src/lib/mount.ts) emits, in this order: version, sha256 (64 hex),
@@ -154,9 +159,12 @@ typedef bool (*dc_hold_fn)(void *ctx);
 // (32 spare after Phase 3). The request is that plus the request line and
 // headers -- ~134 bytes with the test's 3-byte token, ~180 with a real one --
 // so ~1560 at most; 1920 keeps the same ~350 margin the old pair had.
+// Phase 3 (2026-10-12) adds the `net` tail,
+// ,"net":{"driver":999999,"amigaIp":"255.255.255.255","framesIn":999999999,"framesOut":999999999}: 95 bytes. The
+// worst body then is 1376 + 95 = 1471, so the body goes to 1536 (65 spare) and the request to 2048.
 // test_status_body_fits_at_maximum prints the measured sizes.
-#define DC_STATUS_BODY_BYTES  1408
-#define DC_STATUS_REQ_BYTES   1920
+#define DC_STATUS_BODY_BYTES  1536
+#define DC_STATUS_REQ_BYTES   2048
 // `err` is firmware-authored (a short static string or errno-derived text,
 // never network input), but it still has to survive being embedded in a
 // JSON string unescaped -- truncated well short of DC_STATUS_BODY_BYTES so
@@ -261,6 +269,16 @@ typedef struct {
     uint32_t ms;             // how long the attempt took
 } dc_xfer_t;
 
+// Phase 3: Network mode's readings for the status report (see dc_set_net).
+typedef struct {
+    bool     on;            /* Network mode: the report carries "net" */
+    bool     driver_seen;   /* the driver read cylinder 76 since Network mode began */
+    uint32_t driver_s;      /* seconds since that read */
+    uint32_t amiga_ip;      /* the Amiga's address as the sorter learned it, host order; 0 = not learned */
+    uint32_t frames_in;     /* the Amiga's frames taken */
+    uint32_t frames_out;    /* frames the Amiga acknowledged */
+} dc_net_t;
+
 typedef struct {
     transport_t *t;
     clock_ms_fn  now;
@@ -306,6 +324,10 @@ typedef struct {
     uint32_t   drive_want_seq;
     uint8_t    drive_want_mode;   // df1_mode_t
     bool       drive_owed;
+    // Phase 3: the `net` tail (dc_set_net) and what the server last accepted of it (dc_net_owed).
+    dc_net_t _net;
+    bool     _net_sent_valid, _net_sent_on, _net_sent_seen;
+    uint32_t _net_sent_ip;
     bool       _drive_sent_valid;  // a report carrying secondDrive was accepted
     uint8_t    _drive_sent_mode;
     uint32_t   _drive_sent_ack;
@@ -323,6 +345,12 @@ typedef struct {
     char _blocked[DC_BLOCKED_MAX][65];
     int  _blocked_count;
     int  _blocked_next;
+    // Phase 3 (Task 4b review I-1): the driver disk's route keeps its own
+    // block, apart from the ring above, so a failure there never refuses a
+    // DF0 mount of the same digest. Expires after DC_NET_RETRY_MS (from
+    // _net_blocked_at) and on any DF1 mode change (dc_set_df1).
+    char     _net_blocked[65];
+    uint32_t _net_blocked_at;
 
     // --- firmware self-update (piece 2b); see dc_take_fw_fields ---
     // Set by dc_step when instructionVersion moved past fw_instruction_version.
@@ -669,8 +697,17 @@ void dc_set_sel1(device_client_t *c, bool wired, bool df1_seen);
 // dc_report_status, so repeating dc_set_sel1 with the same values owes nothing.
 bool dc_sel1_owed(const device_client_t *c);
 
+// Phase 3 (plan 2026-10-12 ruling 13): Network mode's readings for the status report; NULL = not Network (no
+// key). dc_net_owed: Network mode began or ended, the driver was first heard, or the Amiga's address changed
+// since the last report the server accepted -- counters and ages ride the 60 s heartbeat.
+void dc_set_net(device_client_t *c, const dc_net_t *n);
+bool dc_net_owed(const device_client_t *c);
+// Whole seconds from `seen` to `now` (ms clocks). core0 stamps seen as clock_ms() | 1, which can be 1 ms ahead of
+// core1's now: a seen in the future is age 0, never a 32-bit wrap.
+uint32_t dc_net_driver_age_s(uint32_t now, uint32_t seen);
+
 // DF1 setting (Phase 3). dc_drive_take: true once per owed secondDrive change
-// (the poll's seq and mode; unknown mode -> OFF). dc_drive_handled: record the
+// (the poll's seq and mode; an unknown mode is acked and never taken). dc_drive_handled: record the
 // seq as handled (applied or refused) -- it is what the poll echoes.
 bool dc_drive_take(device_client_t *c, uint32_t *seq, df1_mode_t *mode);
 void dc_drive_handled(device_client_t *c, uint32_t seq);

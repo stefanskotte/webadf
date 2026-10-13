@@ -14,7 +14,7 @@ export { AdfmfmError } from './errors';
 export { AdfFormatError, assertAdf, adfTrack } from './adf';
 export { TrackDecodeError } from './track';
 export { WfmfFormatError } from './wfmf';
-export { WfadFormatError, writeWfad } from './wfad';
+export { WfadFormatError, writeWfad, writeWfadDd } from './wfad';
 export { MfmFormatError } from './mfm';
 export { encodeTrack, decodeTrack } from './track';
 export { writeWfmf, writeWfmfTracks, readWfmf } from './wfmf';

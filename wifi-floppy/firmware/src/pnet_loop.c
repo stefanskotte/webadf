@@ -14,6 +14,12 @@ pnet_df1_t pnet_df1_for_track(int want) {
 
 bool pnet_df1_wprot(int cyl) { return cyl != PNET_CYL; }
 
+bool pnet_df1_wprot_gated(bool on, int cyl) { return !on || pnet_df1_wprot(cyl); }
+
+bool pnet_mode_on(uint8_t mode, bool echo_build) {
+    return mode == DF1_MODE_NET || (echo_build && mode == DF1_MODE_NEXT);
+}
+
 bool pnet_capture_ours(bool df1_serving, bool sel0, bool sel1, int cyl1, int side) {
     return df1_serving && !sel0 && sel1 && cyl1 == PNET_CYL && side == 0;
 }
@@ -42,6 +48,14 @@ pnet_prearm_t pnet_prearm_decide(const pnet_prearm_in_t *in) {
     }
     if (in->idle && where && !in->sel0 && !in->wgate && !in->unpowered) return PNET_PREARM_ARM;
     return PNET_PREARM_NONE;
+}
+
+pnet_prearm_t pnet_prearm_gated(bool on, const pnet_prearm_in_t *in) {
+    if (on) return pnet_prearm_decide(in);
+    if (!in->prearmed) return PNET_PREARM_NONE;          /* nothing standing: nothing to arm or let go */
+    pnet_prearm_in_t off = *in;
+    off.df1_serving = false;                             /* DF1's cylinder 77 is not ours outside Network */
+    return pnet_prearm_decide(&off);
 }
 
 void pnet_loop_init(pnet_loop_t *s) {

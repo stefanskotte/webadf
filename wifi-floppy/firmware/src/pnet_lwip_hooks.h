@@ -1,7 +1,7 @@
 #ifndef PNET_LWIP_HOOKS_H
 #define PNET_LWIP_HOOKS_H
-// lwIP's hook file (LWIP_HOOK_FILENAME, lwipopts.h), WF_PNET_L2 builds only. Every lwIP source
-// includes it; only dhcp.c uses the hook.
+// lwIP's hook file (LWIP_HOOK_FILENAME, lwipopts.h), WF_PNET_L2 builds (every release since 1.11.0,
+// every DF1 mode: plan 2026-10-12 ruling 4). Every lwIP source includes it; only dhcp.c uses the hook.
 //
 // The board and the Amiga share one MAC (PaulaNET Phase 1), so both stacks put it in chaddr. The
 // Amiga's AmiTCP_NG sends client-id 01:<MAC>; lwIP sends none, and a router that matches a lease

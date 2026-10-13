@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { HELP_TOPICS, HELP_ORDER, type HelpTopicId } from './topics';
 
-const IDS: HelpTopicId[] = ['boards', 'nfc', 'next-disk', 'write-back', 'write-protect', 'disk-sets', 'hd-hfe', 'display', 'second-drive', 'cover-image'];
+const IDS: HelpTopicId[] = ['boards', 'nfc', 'next-disk', 'write-back', 'write-protect', 'disk-sets', 'hd-hfe', 'display', 'second-drive', 'network', 'cover-image'];
 // Internal words a reader of the help should never meet (spec §5).
 const BANNED = /\b(PSRAM|TBYB|poll|sha256|cursor|WPROT)\b/i;
 
@@ -70,6 +70,12 @@ describe('help topics say what the app really does', () => {
   });
 });
 
+describe('boards address note', () => {
+  it('boards says the address may change once after 1.11.0 (plan 2026-10-12 ruling 26)', () => {
+    expect(bodyText('boards')).toMatch(/1\.11\.0[^.]*new network address once/);
+  });
+});
+
 describe('second-drive states every caveat the operator asked for', () => {
   const all = () => HELP_TOPICS['second-drive'].short + ' ' + bodyText('second-drive');
   it('DF1 is read-only: saves fail as write-protected', () => expect(all()).toMatch(/write-protected/i));
@@ -93,6 +99,39 @@ describe('second-drive states every caveat the operator asked for', () => {
     expect(all()).toMatch(/older firmware keeps the DF1 setting/i);
   });
   it('an HD next disk leaves DF1 empty', () => expect(all()).toMatch(/HD disk, DF1 stays empty|HD[^.]*empty/i));
+});
+
+describe('network says what a regular user needs (spec 2026-10-12 §5)', () => {
+  const all = () => HELP_TOPICS.network.short + ' ' + bodyText('network');
+  it('names the setting and the restart', () => {
+    expect(all()).toMatch(/Network \(PaulaNET\)/);
+    expect(all()).toMatch(/restart/i);
+  });
+  it('what you need: a TCP/IP stack and no other DF1 -- and DF0 may be empty (ruling 6)', () => {
+    expect(all()).toMatch(/AmiTCP_NG/); expect(all()).toMatch(/Roadshow/);
+    expect(all()).toMatch(/no other drive/i);
+    expect(all()).toMatch(/DF0 can be empty/i);
+    expect(all()).not.toMatch(/keep a disk|waiting for a disk/i);
+  });
+  it('the three steps', () => {
+    expect(all()).toMatch(/Install/); expect(all()).toMatch(/AddNetInterface eth0/); expect(all()).toMatch(/User-Startup/);
+  });
+  it('honest numbers and the mouse', () => {
+    expect(all()).toMatch(/45 KB\/s/); expect(all()).toMatch(/half/i); expect(all()).toMatch(/250 ms/);
+    expect(all()).toMatch(/mouse/i);
+  });
+  it('the download and the credit', () => {
+    expect(renderToStaticMarkup(HELP_TOPICS.network.body as React.ReactElement)).toContain('href="/api/paulanet-disk"');
+    expect(all()).toMatch(/Rob Smith/);
+  });
+  it('names the firmware it needs', () => expect(all()).toMatch(/1\.11\.0/));
+});
+
+describe('second-drive names the third option (spec 2026-10-12 §5)', () => {
+  it('Network (PaulaNET), linked to its topic', () => {
+    expect(HELP_TOPICS['second-drive'].short + bodyText('second-drive')).toMatch(/Network \(PaulaNET\)/);
+    expect(renderToStaticMarkup(HELP_TOPICS['second-drive'].body as React.ReactElement)).toContain('href="/help#network"');
+  });
 });
 
 describe('cover-image says what the upload accepts and what Revert does', () => {

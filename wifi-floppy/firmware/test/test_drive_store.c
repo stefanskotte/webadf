@@ -77,6 +77,31 @@ static void the_save_itself_does_not_refuse_a_mounted_disk(void) {
     psram_publish_slot(SLOT_NONE);
 }
 
+static void network_mode_round_trips_and_boots(void) {
+    drive_store_erase();
+    drive_record_t a = { 11, DF1_MODE_NET }, b;
+    CHECK(drive_store_save(&a), "saved");
+    CHECK(drive_store_load(&b), "loaded");
+    CHECK_EQ_INT(drive_boot_mode(true, &b), DF1_MODE_NET);
+}
+
+static void the_wire_names_and_the_parser_agree(void) {
+    CHECK(strcmp(df1_mode_wire(DF1_MODE_OFF), "off") == 0, "off");
+    CHECK(strcmp(df1_mode_wire(DF1_MODE_NEXT), "df1") == 0, "next is df1 on the wire (1.9.0's word)");
+    CHECK(strcmp(df1_mode_wire(DF1_MODE_NET), "net") == 0, "net");
+    const df1_mode_t all[] = { DF1_MODE_OFF, DF1_MODE_NEXT, DF1_MODE_NET };
+    for (unsigned i = 0; i < 3; i++) {
+        df1_mode_t m = (df1_mode_t)99;
+        CHECK(df1_mode_from_wire(df1_mode_wire(all[i]), &m) && m == all[i], "round trip");
+    }
+    df1_mode_t m = DF1_MODE_NEXT;
+    CHECK(!df1_mode_from_wire("df9", &m), "unknown: refused");
+    CHECK(!df1_mode_from_wire("", &m), "empty: refused");
+    CHECK(!df1_mode_from_wire("NET", &m), "case matters");
+    CHECK_EQ_INT(m, DF1_MODE_NEXT);   // untouched on a refusal
+    CHECK(strcmp(df1_mode_name(DF1_MODE_NET), "network (PaulaNET)") == 0, "log name");
+}
+
 int main(void) {
     static uint8_t backing[2 * 160 * 14336];
     psram_image_set_backing(backing, sizeof backing);
@@ -84,6 +109,8 @@ int main(void) {
     RUN(nothing_stored_boots_with_the_compiled_default);
     RUN(a_stored_mode_round_trips_and_wins_over_the_default);
     RUN(an_out_of_range_mode_boots_off);
+    RUN(network_mode_round_trips_and_boots);
+    RUN(the_wire_names_and_the_parser_agree);
     RUN(a_corrupt_record_does_not_load);
     RUN(writes_wait_for_an_empty_drive);
     RUN(writes_while_idle_with_a_disk_mounted);

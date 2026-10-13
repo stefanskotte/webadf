@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { sel1Text, df1SeenText, secondDriveStatus } from './second-drive';
+import { sel1Text, df1SeenText, secondDriveStatus, asSecondDriveMode, SECOND_DRIVE_NET_FW, secondDriveRefusal, firmwareFor } from './second-drive';
 
 describe('second-drive readings', () => {
   it('names both values of the SEL1 line', () => {
@@ -38,5 +38,39 @@ describe('secondDriveStatus', () => {
     expect(secondDriveStatus({ ...old, df1Sha256: 'a'.repeat(64) }))
       .toBe('DF1 is on, set on the board \u2014 needs firmware 1.9.0 or newer to change');
     expect(secondDriveStatus({ ...old, df1Sha256: null })).toBe('Needs firmware 1.9.0 or newer');
+  });
+});
+
+describe('the third mode', () => {
+  it('reads every stored spelling and nothing else', () => {
+    expect(asSecondDriveMode('off')).toBe('off');
+    expect(asSecondDriveMode('df1')).toBe('df1');
+    expect(asSecondDriveMode('net')).toBe('net');
+    expect(asSecondDriveMode('NET')).toBeNull();
+    expect(asSecondDriveMode(null)).toBeNull();
+  });
+  it('names its firmware', () => expect(SECOND_DRIVE_NET_FW).toBe('1.11.0'));
+  it('says Set on the board for net as for df1', () => {
+    expect(secondDriveStatus({
+      secondDriveCapable: true, secondDriveVersion: 3, secondDriveAppliedVersion: 3,
+      secondDrive: 'net', secondDriveReported: 'net', df1Sha256: null,
+    })).toBe('Set on the board \u2014 takes effect when the Amiga restarts');
+  });
+});
+
+describe('why a save was refused', () => {
+  it('names the firmware first, then a seen DF1', () => {
+    expect(secondDriveRefusal('df1', { capable: false, seen: true, firmwareVersion: '1.8.1+g1' })).toBe('firmware_too_old');
+    expect(secondDriveRefusal('net', { capable: true, seen: false, firmwareVersion: '1.10.2+g1' })).toBe('firmware_too_old');
+    expect(secondDriveRefusal('net', { capable: true, seen: true, firmwareVersion: '1.11.0+g1' })).toBe('df1_seen');
+    expect(secondDriveRefusal('df1', { capable: true, seen: true, firmwareVersion: '1.10.2+g1' })).toBe('df1_seen');
+  });
+  it('names the firmware for net when the version is unknown or below 1.11.0', () => {
+    expect(secondDriveRefusal('net', { capable: true, seen: true, firmwareVersion: null })).toBe('firmware_too_old');
+    expect(secondDriveRefusal('net', { capable: true, seen: false, firmwareVersion: '1.9.0+g1' })).toBe('firmware_too_old');
+  });
+  it('names the right version for each mode', () => {
+    expect(firmwareFor('df1')).toBe('1.9.0');
+    expect(firmwareFor('net')).toBe('1.11.0');
   });
 });

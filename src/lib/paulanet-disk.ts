@@ -1,0 +1,77 @@
+/**
+ * The PaulaNET driver disk (spec docs/superpowers/specs/2026-10-12-paulanet-phase3-network-setting-design.md §2):
+ * Rob Smith's disk plus our Install and ReadMe, built by tools/paulanet-disk/build.sh. A fixed image the server
+ * knows by digest -- not a library disk, owned by no organization. Uploaded once to the disk store
+ * (scripts/paulanet-disk-upload.ts). Its PaulaNET.device and PaulaNET Config are Rob's, used by permission
+ * under his terms (third-party/paulanet/); they are not MIT.
+ */
+export const PAULANET_DISK_SHA256 = '05170a83c279157fc50a2a9a595f4caf1ec194253127d93232f6fd5bfc008c9e';
+export const PAULANET_DISK_BYTES = 901_120;
+
+/** What the poll carries as DF1's `next` in Network mode (plan 2026-10-12 ruling 12). */
+export const PAULANET_NEXT = { diskId: 'paulanet', sha256: PAULANET_DISK_SHA256, diskNo: 1 } as const;
+
+/** Digests the blob GC keeps although no row names them (blob-gc-run.ts). */
+export const ALWAYS_REFERENCED_BLOBS: readonly string[] = [PAULANET_DISK_SHA256];
+
+/**
+ * The one image a board may fetch without its organization owning it -- and only from its own route,
+ * /api/device/image/net/<sha256> (pre-flight I3), never from the library route /api/device/image/<sha256>.
+ */
+export function servedWithoutEntitlement(sha256: string): boolean {
+  return sha256 === PAULANET_DISK_SHA256;
+}
+
+/**
+ * The board runs Network mode for the setting the user chose now (pre-flight I2): the user chose 'net', and
+ * the board's last report says it runs 'net' having handled exactly that setting version. Before that, a `next`
+ * naming the driver disk would be preloaded under the OLD mode into DF0's idle slot, fail there, and block the
+ * digest -- so the poll's `next` behaves as in Next disk / Off until this holds.
+ */
+export function netApplied(t: {
+  secondDrive: string; secondDriveVersion: number;
+  secondDriveReported: string | null; secondDriveAppliedVersion: number | null;
+}): boolean {
+  return t.secondDrive === 'net' && t.secondDriveReported === 'net'
+    && t.secondDriveAppliedVersion === t.secondDriveVersion;
+}
+
+/**
+ * The board runs Network now, whatever setting version it last reported (final review m1): the user chose 'net'
+ * and the board reports 'net'. A second save of 'net' bumps the version; until the board reports the new one,
+ * netApplied is false, yet the board is in Network either way -- so the poll keeps sending the driver disk as
+ * `next` (a non-Network `next`, or next: null, would eject it). The one-shot wake stays keyed on netApplied.
+ */
+export function netKeepsDriverDisk(t: { secondDrive: string; secondDriveReported: string | null }): boolean {
+  return t.secondDrive === 'net' && t.secondDriveReported === 'net';
+}
+
+/** At most one re-arm of the driver-disk wake per device in this long (Task 8 review I1). */
+export const NET_REARM_MIN_MS = 5 * 60_000;
+
+/**
+ * Whether a status report should re-arm the poll's one-shot driver-disk wake (Task 8 review I1). The poll writes
+ * net_next_sent_version when it BUILDS the body; a body lost in transit leaves the board without `next` and the
+ * cursor saying it was sent. So: the board reports Network applied for the current setting (`row` is the devices
+ * row before this report), the cursor is set, and DF1 does not hold the driver disk -> clear the cursor, so the
+ * next poll wakes and sends it again. Rate-limited, so a board that cannot load it (no SLOT_NET, a held-off
+ * digest) is not woken in a loop. A report silent on df1Sha256 says nothing about DF1 and never re-arms.
+ */
+export function netNextRearm(
+  row: { secondDrive: string; secondDriveVersion: number; netNextSentVersion: number | null; netNextRearmedAt: Date | null },
+  report: { secondDrive?: string; driveVersion?: number; df1Sha256?: string | null },
+  now: Date,
+): boolean {
+  if (!netNextRearmCandidate(report)) return false;
+  return row.secondDrive === 'net' && report.driveVersion === row.secondDriveVersion
+    && row.netNextSentVersion !== null
+    && (row.netNextRearmedAt === null || now.getTime() - row.netNextRearmedAt.getTime() >= NET_REARM_MIN_MS);
+}
+
+/** The report-only half of netNextRearm: lets recordStatus skip the row read for every other report. */
+export function netNextRearmCandidate(
+  report: { secondDrive?: string; driveVersion?: number; df1Sha256?: string | null },
+): boolean {
+  return report.secondDrive === 'net' && report.driveVersion !== undefined
+    && report.df1Sha256 !== undefined && report.df1Sha256 !== PAULANET_DISK_SHA256;
+}

@@ -1,6 +1,7 @@
 #include "harness.h"
 #include "../src/track_cache.h"
 #include "../src/psram_image.h"
+#include "../src/adf_mfm.h"
 #include <stdlib.h>
 #include <string.h>
 
@@ -173,14 +174,34 @@ static void test_two_drives_get_their_own_tracks_by_token(void) {
           "an eject token gives nothing");
 }
 
+// Phase 3: DF1's token on SLOT_NET serves a DD track encoded from its sectors.
+static void the_net_slot_is_encoded_on_read(void) {
+    static uint8_t sec[NET_TRACK_BYTES];
+    memset(sec, 0x5A, sizeof sec);
+    psram_image_reset_slot(SLOT_NET);
+    psram_image_set_slot_kind(SLOT_NET, SLOT_KIND_ADF_DD);
+    for (int t = 0; t < NUM_TRACKS; t++) psram_image_store_adf(SLOT_NET, t, sec);
+    psram_publish_df1(SLOT_NET);
+    uint32_t bits = 0;
+    const uint8_t *m = track_cache_get_token(psram_df1_token(), 10, &bits);
+    CHECK(m != NULL, "served");
+    CHECK_EQ_INT(bits, ADF_MFM_DD_TRACK_BYTES * 8u);
+    static uint8_t want[ADF_MFM_DD_TRACK_BYTES];
+    CHECK(adf_mfm_encode_track(sec, ADF_MFM_DD_SECTORS, 10u, want) != 0, "reference encode");
+    CHECK(m && memcmp(m, want, ADF_MFM_DD_TRACK_BYTES) == 0, "the same bytes as adf_mfm's own encode");
+    psram_publish_df1(SLOT_NONE);
+}
+
 int main(void) {
     size_t len = (size_t)TRACK_MAX_BYTES * NUM_TRACKS * SLOT_COUNT;
     void *mem = malloc(len);
     psram_image_set_backing(mem, len);
+    psram_image_init();     // pre-flight I1: SLOT_NET's storage is set up here
     RUN(test_eject_then_refetch_does_not_serve_stale_track);
     RUN(test_three_disks_no_eject_does_not_serve_stale_track);
     RUN(test_check_swap_detects_publish_and_eject_with_no_seek);
     RUN(test_two_drives_get_their_own_tracks_by_token);
+    RUN(the_net_slot_is_encoded_on_read);
     free(mem);
     return REPORT();
 }

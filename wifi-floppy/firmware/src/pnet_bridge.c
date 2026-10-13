@@ -39,6 +39,10 @@ static pnet_sort_t s_sort;           // the network context only
 static netif_input_fn s_next;        // lwIP's own input, taken over by the hook
 static volatile uint32_t s_in_amiga, s_in_both, s_big, s_chained, s_hooks, s_tx_sent, s_tx_err;
 static volatile uint32_t s_tx_no[PNET_TX_N], s_board_ip;
+// Phase 3 (plan 2026-10-12, ruling 3): Network mode on. Written by core0, read here in the network context.
+// Off: the hook hands every frame to lwIP untouched and the worker sends nothing.
+static volatile bool s_on;
+void pnet_bridge_set_on(bool on) { s_on = on; }
 
 void pnet_bridge_init(void) {
     pnet_ring_init(&g_pnet_rx, s_rx_mem, PNET_RX_SLOTS);
@@ -51,6 +55,7 @@ void pnet_bridge_init(void) {
 static uint32_t board_ip_of(struct netif *nif) { return lwip_ntohl(ip4_addr_get_u32(netif_ip4_addr(nif))); }
 
 static err_t pnet_input(struct pbuf *p, struct netif *nif) {
+    if (!s_on) return s_next(p, nif);   // not Network: lwIP's own input, as before
     if (p->len != p->tot_len) s_chained++;            // sorted on the first pbuf's bytes
     const pnet_sort_to_t to = pnet_sort_rx(&s_sort, (const uint8_t *)p->payload, p->len, board_ip_of(nif));
     if (to & PNET_SORT_AMIGA) {
@@ -73,6 +78,13 @@ static err_t pnet_input(struct pbuf *p, struct netif *nif) {
 }
 
 static void pnet_tx_tick(void) {
+    if (!s_on) {
+        // Not Network: nothing may go out. Frames queued before the mode changed are dropped here (this worker
+        // is the TX ring's consumer), so a later Network mode never sends a stale one.
+        const uint32_t n = pnet_ring_count(&g_pnet_tx);
+        if (n) pnet_ring_drop(&g_pnet_tx, n);
+        return;
+    }
     struct netif *nif = net_radio_sta_netif();
     const uint32_t board_ip = board_ip_of(nif);
     s_board_ip = board_ip;
@@ -106,7 +118,7 @@ void pnet_bridge_start(void) {
         wf_logf(WF_ERR, "pnet: no send worker -- the Amiga's frames will not go out");
     uint8_t m[6];
     net_radio_mac(m);
-    wf_logf(WF_WARN, "pnet: L2 sharing on (TEST build), MAC %02x:%02x:%02x:%02x:%02x:%02x",
+    wf_logf(WF_INFO, "pnet: L2 sharing ready (runs in DF1 Network mode), MAC %02x:%02x:%02x:%02x:%02x:%02x",
             m[0], m[1], m[2], m[3], m[4], m[5]);
 }
 

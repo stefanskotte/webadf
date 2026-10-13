@@ -2,6 +2,8 @@
 adf-archive/
 *.adf
 *.ADF
+# Rob Smith's own PaulaNET disk, pinned as the base of our driver disk (plan 2026-10-12, ruling 7).
+!third-party/paulanet/PaulaNET-0afd5fa.adf
 *.dsk
 *.DSK
 *.adz
@@ -15,8 +17,8 @@ node_modules/
 .vercel
 dist/
 build/
-# Firmware side builds: the DF1-default-on TEST image, the bus-sniffer image, the
-# PaulaNET loopback side build, and tools/pnet_off_identical.sh's preprocessing build.
+# Firmware side builds: the DF1-default-on TEST image, the bus-sniffer image, and the
+# PaulaNET side builds (the echo TEST build, and earlier phases' build directories).
 build-df1/
 build-sniff/
 build-pnet/

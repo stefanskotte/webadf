@@ -41,12 +41,31 @@ describe('PATCH /api/devices/[id]/second-drive', () => {
     expect(res.status).toBe(409);
     expect(await res.json()).toEqual({ error: 'firmware_too_old', reason: 'Needs firmware 1.9.0 or newer' });
   });
+  it('takes net, and names 1.11.0 when the board is too old for it', async () => {
+    const { PATCH } = await import('./route');
+    saveSecondDrive.mockResolvedValue('firmware_too_old');
+    const res = await PATCH(req({ mode: 'net' }), ctx('dev-1'));
+    expect(res.status).toBe(409);
+    expect(await res.json()).toEqual({ error: 'firmware_too_old', reason: 'Needs firmware 1.11.0 or newer' });
+    expect(saveSecondDrive).toHaveBeenCalledWith('org-1', 'dev-1', 'net', false);
+  });
+  it('passes the override through for net', async () => {
+    const { PATCH } = await import('./route');
+    saveSecondDrive.mockResolvedValue({ version: 4 });
+    const res = await PATCH(req({ mode: 'net', override: true }), ctx('dev-1'));
+    expect(res.status).toBe(200);
+    expect(saveSecondDrive).toHaveBeenCalledWith('org-1', 'dev-1', 'net', true);
+  });
+  it('refuses a mode it does not know', async () => {
+    const { PATCH } = await import('./route');
+    expect((await PATCH(req({ mode: 'wifi' }), ctx('dev-1'))).status).toBe(400);
+  });
   it('404s an unknown device', async () => {
     const { PATCH } = await import('./route');
     saveSecondDrive.mockResolvedValue('not_found');
     expect((await PATCH(req({ mode: 'off' }), ctx('nope'))).status).toBe(404);
   });
-  it('rejects anything but off/df1', async () => {
+  it('rejects anything but off/df1/net', async () => {
     const { PATCH } = await import('./route');
     expect((await PATCH(req({ mode: 'df2' }), ctx('dev-1'))).status).toBe(400);
     expect(saveSecondDrive).not.toHaveBeenCalled();

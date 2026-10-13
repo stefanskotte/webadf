@@ -612,7 +612,8 @@ typedef enum {
 // for, and cutting it short would only mean fetching it again.
 //
 // Task 8: a fetch always targets the slot that is NOT the one core0 is
-// currently streaming from -- the caller passes psram_inactive_slot().
+// currently streaming from -- the caller passes psram_inactive_slot(), or
+// SLOT_NET for Network mode's driver-disk preload (Phase 3).
 // image_parse_begin() resets that slot up front (so stale data from an earlier
 // aborted fetch can never be mistaken for this one) and points the incremental
 // parser at it; dc_image_sink below feeds it body bytes straight off the wire
@@ -623,7 +624,11 @@ static dc_fetch_result_t dc_fetch_into(device_client_t *c, const char *sha256, i
     *status_out = 0;
     // static: see the STACK note above.
     static char path[DC_REQ_BUF_BYTES];
-    snprintf(path, sizeof path, "/api/device/image/%s", sha256);
+    // Phase 3 (pre-flight I3): the driver disk for SLOT_NET comes from its own
+    // route, which serves it as a DD WFAD; /api/device/image/<sha> keeps
+    // serving library disks to DF0 exactly as before.
+    snprintf(path, sizeof path, target == SLOT_NET ? "/api/device/image/net/%s" : "/api/device/image/%s",
+             sha256);
 
     static char req[DC_REQ_BUF_BYTES];
     int req_len = http_build_request(req, sizeof req, "GET", path, c->host, c->token, NULL);
@@ -695,7 +700,46 @@ static dc_fetch_result_t dc_fetch_into(device_client_t *c, const char *sha256, i
 
 // --- DF1 second drive (spec 2026-10-08 §4): core1's policy ---------------
 
+static void dc_preload_drop(device_client_t *c);   // below, with the preload record
+
+static void dc_forget_next(device_client_t *c) {
+    c->preload.next_sha256[0] = '\0';
+    c->preload.next_disk_id[0] = '\0';
+    c->preload.next_disk_no = 0;
+}
+
 void dc_set_df1(device_client_t *c, df1_mode_t mode, bool hd_ok) {
+    if ((uint8_t)mode != c->_df1_mode) {
+        // The driver disk, as far as this board knows it: the verified SLOT_NET record, else the digest its
+        // route refused (a driver disk that never arrived). Read before the block is cleared below.
+        char driver[65];
+        snprintf(driver, sizeof driver, "%s",
+                 c->preload.slot == SLOT_NET ? c->preload.sha256 : c->_net_blocked);
+        // Any mode change forgets the driver disk's block (Task 4b review I-1).
+        c->_net_blocked[0] = '\0';
+        // `changed`: the status report says the record went.
+        if (mode == DF1_MODE_NET) {
+            // Into Network: the previous mode's next disk and preload record go (Task 8 review m1). There
+            // `next` means a different disk, from a different route, in a different slot. Kept, Next -> Network
+            // fetched /api/device/image/net/<library sha>, got a 404 and held the driver disk off for
+            // DC_NET_RETRY_MS. The server's next body names the driver disk.
+            if (c->preload.slot != SLOT_NONE) c->preload.changed = true;
+            dc_forget_next(c);
+            dc_preload_drop(c);
+        } else if (c->_df1_mode == DF1_MODE_NET) {
+            // Out of Network (final review I1): only the driver disk goes -- its SLOT_NET record, and `next`
+            // only while it still names the driver disk. core1 applies the mode change AFTER dc_step's
+            // dc_take_next stored the same body's `next`, which already names the new mode's disk (DF0's next
+            // disk of the set); wiping it left DF1 (Next) or DF0's preload (Off) empty until an unrelated wake.
+            if (c->preload.slot == SLOT_NET) {
+                c->preload.changed = true;
+                dc_preload_drop(c);
+            }
+            if (driver[0] != '\0' && strcmp(c->preload.next_sha256, driver) == 0) dc_forget_next(c);
+        }
+        // Off <-> Next keeps both: in either, `next` is DF0's next disk of the set in DF0's idle slot (the
+        // Next-disk card's preload).
+    }
     c->_df1_capable = true;
     c->_df1_mode = (uint8_t)mode;
     c->_df1_hd_ok = hd_ok;
@@ -717,13 +761,48 @@ void dc_set_df1_quiesce(device_client_t *c, bool (*fn)(void *), void *ctx) {
 // condition the reconcile at the end of that same step would put the stale
 // disk straight back whenever the write had to wait for core0 -- an eject and
 // re-insert per pass, each one a disk change the Amiga sees.
+//
+// Phase 3 (plan 2026-10-12, ruling 6): in Network mode DF1 holds SLOT_NET, the
+// driver disk's own slot, whatever DF0 holds -- including nothing.
 static int dc_df1_want(const device_client_t *c) {
     const dc_preload_t *p = &c->preload;
-    if (c->_df1_mode != DF1_MODE_NEXT || p->slot == SLOT_NONE || p->loading) return SLOT_NONE;
-    if (psram_active_slot() == SLOT_NONE || p->slot != psram_inactive_slot()) return SLOT_NONE;
+    if (c->_df1_mode == DF1_MODE_OFF || p->slot == SLOT_NONE || p->loading) return SLOT_NONE;
     if (p->sha256[0] == '\0' || strcmp(p->sha256, p->next_sha256) != 0) return SLOT_NONE;
+    if (c->_df1_mode == DF1_MODE_NET)                       // whatever DF0 holds (ruling 6)
+        return p->slot == SLOT_NET && psram_image_slot_kind(SLOT_NET) == SLOT_KIND_ADF_DD ? SLOT_NET : SLOT_NONE;
+    if (psram_active_slot() == SLOT_NONE || p->slot != psram_inactive_slot()) return SLOT_NONE;   // Next disk's rule
     if (!c->_df1_hd_ok && psram_image_slot_kind(p->slot) == SLOT_KIND_ADF_HD) return SLOT_NONE;
     return p->slot;
+}
+
+// Phase 3 (plan 2026-10-12, ruling 6): where the server's `next` is preloaded. Network mode: SLOT_NET, the driver
+// disk's own slot, which no DF0 fetch, swap or eject touches. Otherwise DF0's idle slot, as before.
+//
+// A board without SLOT_NET's storage (psram_image_init found none) has no
+// target in Network mode: SLOT_NONE, nothing is preloaded, and DF1 stays empty
+// (Task 4b review m2). Said once.
+static int dc_preload_target(const device_client_t *c) {
+    if (c->_df1_mode != DF1_MODE_NET) return psram_inactive_slot();
+    if (psram_image_net_available()) return SLOT_NET;
+    static bool said;
+    if (!said) {
+        said = true;
+        wf_logf(WF_WARN, "df1: Network mode needs the driver disk's PSRAM slot, and this board has none");
+    }
+    return SLOT_NONE;
+}
+
+// The driver disk's route has its own block (Task 4b review I-1): set by a
+// failed fetch there, it holds that digest off that route only, and only for
+// DC_NET_RETRY_MS. The DF0 route's ring (dc_block_digest) never sees it.
+static void dc_net_block(device_client_t *c, const char *sha256) {
+    snprintf(c->_net_blocked, sizeof c->_net_blocked, "%s", sha256);
+    c->_net_blocked_at = c->now();
+}
+
+static bool dc_net_is_blocked(const device_client_t *c, const char *sha256) {
+    return c->_net_blocked[0] != '\0' && strcmp(c->_net_blocked, sha256) == 0 &&
+           (uint32_t)(c->now() - c->_net_blocked_at) < DC_NET_RETRY_MS;
 }
 
 void dc_df1_reconcile(device_client_t *c) {
@@ -737,8 +816,9 @@ void dc_df1_reconcile(device_client_t *c) {
 // and wait for core0 to say it stopped reading. False = do not write now.
 //
 // The two writers into a PSRAM slot on core1 are dc_fetch_image (a regular
-// fetch) and dc_preload_step, both through dc_fetch_into, both into
-// psram_inactive_slot(); both call this first. core0's own writes
+// fetch) and dc_preload_step, both through dc_fetch_into, into
+// psram_inactive_slot() (or, for a Network-mode preload, SLOT_NET); both call
+// this first. core0's own writes
 // (write_back_apply) go to DF0's active slot, which DF1 can never hold
 // (psram_publish_df1 refuses it), and the uploader only moves dirty flags of
 // the active slot.
@@ -751,6 +831,8 @@ static bool dc_df1_release(device_client_t *c, int target) {
     c->df1_deferred = true;
     return false;
 }
+
+static void dc_preload_drop(device_client_t *c);   // below, with the preload record
 
 // Fetches `d->sha256` from the image endpoint. Only reached once the poll
 // has named a digest that is neither already mounted nor already known
@@ -765,24 +847,27 @@ static dc_state_t dc_fetch_image(device_client_t *c, const dc_desired_t *d) {
     // the way out as well: this fetch WILL overwrite the slot when it runs,
     // and a kept record would have dc_df1_reconcile re-insert the disk this
     // just ejected -- a disk change on DF1 for every deferred poll.
-    if (!dc_df1_release(c, psram_inactive_slot())) {
-        c->preload.slot = SLOT_NONE;
-        c->preload.sha256[0] = '\0';
+    //
+    // Only a record FOR the slot being written is dropped (pre-flight B2): in
+    // Network mode the record names SLOT_NET, the driver disk DF1 holds, which
+    // this fetch never touches -- dropping it would eject DF1 and refetch the
+    // driver disk on every DF0 mount (ruling 6).
+    const int target = psram_inactive_slot();
+    if (!dc_df1_release(c, target)) {
+        if (c->preload.slot == target) dc_preload_drop(c);
         c->state = DC_IDLE_POLL;
         return c->state;
     }
     // Multi-disk §4.3: this fetch is about to overwrite the idle slot, so
     // whatever a preload left there is no longer what the record says --
     // dropped FIRST, before a byte is written, and whatever the outcome.
-    c->preload.slot = SLOT_NONE;
-    c->preload.sha256[0] = '\0';
+    if (c->preload.slot == target) dc_preload_drop(c);
 
     // Nothing below this line may touch the active slot except the single
     // psram_publish_slot() call in the 200 case, and only after the body is
     // known to have arrived whole AND parsed clean: that ordering is rule 2
     // (never release the current disk before the replacement is fetched
     // *and* verified) made concrete.
-    int target = psram_inactive_slot();
     int status = 0;
     switch (dc_fetch_into(c, d->sha256, target, /*observe=*/true, /*interruptible=*/false,
                           &status)) {
@@ -1039,7 +1124,7 @@ static bool dc_held(device_client_t *c) {
 // and BLANKS it, before any flat lookup: its counter is `seq`, never
 // `version`, and blanking keeps its keys from shadowing the body's own.
 // Only a DF1-capable build reads it; an older one sends no &driveAck= and the
-// server never wakes it for this. Unknown mode -> off, never on.
+// server never wakes it for this. Unknown mode: acked and ignored (Phase 3).
 static void dc_take_second_drive(device_client_t *c, char *json) {
     static char obj[128];   // {"seq":4294967295,"mode":"df1"} is 31; static: STACK note
     if (!c->_df1_capable || !json_object(json, "secondDrive", obj, sizeof obj, true)) return;
@@ -1047,7 +1132,18 @@ static void dc_take_second_drive(device_client_t *c, char *json) {
     if (!json_u32_strict(obj, "seq", &seq)) return;
     char mode[8] = "";
     json_str(obj, "mode", mode, sizeof mode);
-    const uint8_t want = strcmp(mode, "df1") == 0 ? DF1_MODE_NEXT : DF1_MODE_OFF;
+    df1_mode_t parsed;
+    if (!df1_mode_from_wire(mode, &parsed)) {
+        // Phase 3 (plan 2026-10-12 ruling 5): a mode this build does not know is acknowledged and otherwise
+        // ignored -- core0 keeps the mode it runs and nothing is stored. Acked so the server's wake
+        // (seq != driveAck) stops; the card then reads "Waiting for the board", since the reported mode differs.
+        if (seq != c->drive_ack)
+            wf_logf(WF_WARN, "df1: setting %lu names an unknown mode \"%s\" -- ignored", (unsigned long)seq, mode);
+        c->drive_ack = seq;
+        c->drive_owed = false;
+        return;
+    }
+    const uint8_t want = (uint8_t)parsed;
     // Nothing new only when BOTH the seq is acked AND the board already runs
     // that mode (final review I1). A re-paired board seeds ack 0 against a new
     // row at {seq 0, off}: comparing the seq alone left it running DF1 while
@@ -1120,9 +1216,13 @@ static dc_state_t dc_handle_poll_body(device_client_t *c, const char *json) {
         // `next` with desired: null, which dc_take_next reads as "nothing
         // said".) The verified record, if any, is left alone: it is only ever
         // published when a later desired names its exact digest.
-        c->preload.next_sha256[0] = '\0';
-        c->preload.next_disk_id[0] = '\0';
-        c->preload.next_disk_no = 0;
+        // Network mode: next is the driver disk, which DF1 holds whatever DF0 does -- the server sends it with
+        // desired: null too (ruling 6).
+        if (c->_df1_mode != DF1_MODE_NET) {
+            c->preload.next_sha256[0] = '\0';
+            c->preload.next_disk_id[0] = '\0';
+            c->preload.next_disk_no = 0;
+        }
         if (dc_held(c)) { c->state = DC_IDLE_POLL; return c->state; }
         // The one explicit, unambiguous eject instruction. No fetch is
         // needed -- the transition is "hold no disk", which is complete
@@ -1224,6 +1324,8 @@ static dc_state_t dc_handle_poll_body(device_client_t *c, const char *json) {
     // A forced refetch means the server's copy must be fetched afresh, so it
     // never takes this path. The hold was checked just above: a held swap
     // waits here exactly as a fetch would, and happens on a later poll.
+    // Phase 3: a preload in SLOT_NET is never psram_inactive_slot(), so the
+    // driver disk is never swapped into DF0 here.
     if (!c->_refetch && c->preload.slot != SLOT_NONE &&
         c->preload.slot == psram_inactive_slot() &&
         strcmp(c->preload.sha256, d.sha256) == 0) {
@@ -1576,20 +1678,39 @@ bool dc_report_status(device_client_t *c, int psram_free, int rssi, const char *
     const uint32_t drive_ack_sent = c->drive_ack;
     if (c->_df1_capable)
         snprintf(drive_tail, sizeof drive_tail, ",\"secondDrive\":\"%s\",\"driveVersion\":%lu",
-                 c->_df1_mode == DF1_MODE_NEXT ? "df1" : "off", (unsigned long)c->drive_ack);
+                 df1_mode_wire((df1_mode_t)c->_df1_mode), (unsigned long)c->drive_ack);
     else drive_tail[0] = '\0';
+
+    // Phase 3 (plan 2026-10-12 ruling 13): Network mode's readings, only in Network mode. "driver" and "amigaIp"
+    // only when known -- an absent key is "not yet", never a zero. 95 bytes at most (header note).
+    static char net_tail[128];
+    const dc_net_t net_sent = c->_net;
+    if (c->_net.on) {
+        char drv[32] = "", ip[40] = "";
+        if (c->_net.driver_seen)
+            snprintf(drv, sizeof drv, "\"driver\":%lu,",
+                     (unsigned long)(c->_net.driver_s > 999999u ? 999999u : c->_net.driver_s));
+        if (c->_net.amiga_ip) {
+            const uint32_t a = c->_net.amiga_ip;
+            snprintf(ip, sizeof ip, "\"amigaIp\":\"%u.%u.%u.%u\",", (unsigned)(a >> 24), (unsigned)(a >> 16 & 255u),
+                     (unsigned)(a >> 8 & 255u), (unsigned)(a & 255u));
+        }
+        snprintf(net_tail, sizeof net_tail, ",\"net\":{%s%s\"framesIn\":%lu,\"framesOut\":%lu}", drv, ip,
+                 (unsigned long)(c->_net.frames_in > 999999999u ? 999999999u : c->_net.frames_in),
+                 (unsigned long)(c->_net.frames_out > 999999999u ? 999999999u : c->_net.frames_out));
+    } else net_tail[0] = '\0';
 
     static char body[DC_STATUS_BODY_BYTES];
     int body_len = snprintf(body, sizeof body,
         "{\"mountedSha256\":%s,\"mountedDiskId\":%s,\"version\":%lu,"
         "\"error\":%s,\"psramFree\":%d,\"firmwareVersion\":%s,\"rssi\":%d,"
-        "\"trackMaxBytes\":%u%s%s%s%s%s%s%s%s}",
+        "\"trackMaxBytes\":%u%s%s%s%s%s%s%s%s%s}",
         sha_field, disk_field, (unsigned long)c->mounted_version,
         err_field, psram_free, ver_field, rssi, (unsigned)TRACK_MAX_BYTES, fw_tail, nfc_tail,
         display_tail, preload_tail,
         // playsHd: only from a build with the drive-ID responder (HD spec §5.5).
         c->_plays_hd ? ",\"playsHd\":true" : "",
-        sel1_tail, df1_tail, drive_tail);
+        sel1_tail, df1_tail, drive_tail, net_tail);
     if (body_len < 0 || body_len >= (int)sizeof body) return false; // should never happen; give up quietly
 
     static char req[DC_STATUS_REQ_BYTES];
@@ -1616,6 +1737,12 @@ bool dc_report_status(device_client_t *c, int psram_free, int rssi, const char *
         c->_drive_sent_valid = true;
         c->_drive_sent_mode = drive_mode_sent;
         c->_drive_sent_ack = drive_ack_sent;
+    }
+    if (accepted) {
+        c->_net_sent_valid = true;
+        c->_net_sent_on = net_sent.on;
+        c->_net_sent_seen = net_sent.driver_seen;
+        c->_net_sent_ip = net_sent.amiga_ip;
     }
     return accepted;
 }
@@ -1957,6 +2084,22 @@ bool dc_sel1_owed(const device_client_t *c) {
             c->_df1_sent_seen != c->_df1_seen);
 }
 
+void dc_set_net(device_client_t *c, const dc_net_t *n) {
+    if (n) c->_net = *n;
+    else memset(&c->_net, 0, sizeof c->_net);
+}
+
+uint32_t dc_net_driver_age_s(uint32_t now, uint32_t seen) {
+    const int32_t d = (int32_t)(now - seen);
+    return d < 0 ? 0u : (uint32_t)d / 1000u;
+}
+
+bool dc_net_owed(const device_client_t *c) {
+    if (!c->_net_sent_valid) return c->_net.on;
+    return c->_net_sent_on != c->_net.on ||
+           (c->_net.on && (c->_net_sent_seen != c->_net.driver_seen || c->_net_sent_ip != c->_net.amiga_ip));
+}
+
 #define DC_TAP_PATH       "/api/device/tap"
 #define DC_TAP_WRITE_PATH "/api/device/tap-write"
 #define DC_JSON           "application/json"
@@ -2076,22 +2219,28 @@ static bool dc_preload_step_inner(device_client_t *c) {
     // fetched afresh on the next poll; nothing is preloaded meanwhile.
     if (c->_refetch) return false;
     if (p->next_sha256[0] == '\0') return false;
-    if (strcmp(p->next_sha256, c->mounted_sha256) == 0) return false;
-    if (p->slot != SLOT_NONE && p->slot == psram_inactive_slot() &&
+    const int target = dc_preload_target(c);
+    if (target == SLOT_NONE) return false;            // Network mode on a board without SLOT_NET
+    // Network mode: next is the driver disk, for DF1, even if DF0 happens to hold the same digest.
+    if (c->_df1_mode != DF1_MODE_NET && strcmp(p->next_sha256, c->mounted_sha256) == 0) return false;
+    if (p->slot != SLOT_NONE && p->slot == target &&
         strcmp(p->sha256, p->next_sha256) == 0) return false;   // already there
-    if (dc_digest_is_blocked(c, p->next_sha256)) return false;
+    // Each route's own block: the driver disk's never refuses DF0, DF0's never refuses the driver disk.
+    if (target == SLOT_NET ? dc_net_is_blocked(c, p->next_sha256)
+                           : dc_digest_is_blocked(c, p->next_sha256)) return false;
     if (!c->_preload_ok || !c->_preload_ok(c->_preload_ok_ctx)) return false;
     // DF1 (Task 15): the idle slot may be what DF1 serves. Eject and wait for
     // core0 before anything is dropped or written; false = nothing happened,
     // try on a later pass. The record is kept: it is what the status report
     // still truthfully says the slot holds.
-    if (!dc_df1_release(c, psram_inactive_slot())) return false;
+    // In Network mode the target is SLOT_NET: DF1 is ejected only when it holds
+    // it, which is right when the driver disk itself is replaced (a new digest).
+    if (!dc_df1_release(c, target)) return false;
 
     // From here the idle slot is being overwritten: no record survives it.
     if (p->slot != SLOT_NONE) p->changed = true;   // the server was told "ready"
     dc_preload_drop(c);
     p->loading = true;
-    int target = psram_inactive_slot();
     // A copy: dc_fetch_into reads it for the whole transfer, and the log below
     // must name what was fetched even if something ever changes next_sha256.
     char sha[65];
@@ -2122,14 +2271,18 @@ static bool dc_preload_step_inner(device_client_t *c) {
         return true;
     case DC_FETCH_INVALID:
         wf_logf(WF_WARN, "preload: %.12s is not a valid WFMF or WFAD container -- digest blocked", sha);
-        dc_block_digest(c, sha);
+        if (target == SLOT_NET) dc_net_block(c, sha); else dc_block_digest(c, sha);
         dc_enter_backoff(c);
         return true;
     case DC_FETCH_STATUS:
         if (status == 401) { c->state = DC_HALTED; return true; }   // 401 anywhere halts
         if (status == 400 || status == 404 || status == 422) {
-            wf_logf(WF_WARN, "preload: server said %d -- digest blocked, not retried", status);
-            dc_block_digest(c, sha);
+            if (target == SLOT_NET)
+                wf_logf(WF_WARN, "preload: server said %d -- driver disk held off for %lu s", status,
+                        (unsigned long)(DC_NET_RETRY_MS / 1000u));
+            else
+                wf_logf(WF_WARN, "preload: server said %d -- digest blocked, not retried", status);
+            if (target == SLOT_NET) dc_net_block(c, sha); else dc_block_digest(c, sha);
         }
         dc_enter_backoff(c);
         return true;

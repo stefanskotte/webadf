@@ -518,6 +518,11 @@ static stream_t g_stream[WF_DRIVES] = {
 };
 
 #if WF_PNET_LOOP
+// Phase 3 (plan 2026-10-12, ruling 2): the PaulaNET path runs only while this is true -- DF1 in Network mode
+// (in the echo TEST build, Next disk too). core0 writes it (pnet_set_mode) at boot and on every live DF1
+// change; the STEP and WGATE ISRs and the loop read it. False: DF1 is a plain disk drive.
+#define PNET_ECHO_BUILD (!WF_PNET_L2)
+static volatile bool g_pnet_on;
 // PaulaNET Phase 2 (plan 2026-10-11-paulanet-phase2-rob-driver, Task 1): a start of DF1's side-1
 // stream that is due later than now runs from a core0 alarm (pnet_go_later). Its id while pending,
 // else 0. Core0 only: the loop stores it with interrupts off, the alarm's callback clears it first,
@@ -771,9 +776,9 @@ static void step_drive(unsigned d, bool outwards, bool late) {
     else          { if (cur_cyl[d] < NUM_CYL - 1) cur_cyl[d]++; }
     bus_out_set_drive(d, PIN_TRK0, cur_cyl[d] == 0);
 #if WF_PNET_LOOP
-    // Loopback: DF1 is writable on cylinder 77 only, set the moment the head gets there --
+    // PaulaNET (Network mode): DF1 is writable on cylinder 77 only, set the moment the head gets there --
     // trackdisk reads WPROT when a write starts, and PaulaNET's driver writes right after a seek.
-    if (d == 1 && g_df1_mode == DF1_MODE_NEXT) bus_out_set_drive(1, PIN_WPROT, pnet_df1_wprot(cur_cyl[1]));
+    if (d == 1 && g_pnet_on) bus_out_set_drive(1, PIN_WPROT, pnet_df1_wprot(cur_cyl[1]));
 #endif
     dskchg_on_step_d(d);
     want_track[d] = cur_cyl[d] * 2 + cur_side;
@@ -852,7 +857,7 @@ static void __isr mtr_pio_isr(void) {
             // DF1 off: kept (dskchg's RDY needs an image too, so nothing is
             // asserted), but not traced -- 1.7.8 logged no DF1 motor at all.
             dskchg_on_motor_d(d, running);
-            if (d == 0 || g_df1_mode == DF1_MODE_NEXT)
+            if (d == 0 || g_df1_mode != DF1_MODE_OFF)
                 wf_trace(WF_EV_MOTOR, running ? 1u : 0u, d);
         }
     }
@@ -1637,6 +1642,10 @@ static volatile uint32_t g_motor_on_ms;
 // PaulaNET Phase 1: when cylinder 77 last carried a batch (a capture taken, or a batch streamed),
 // clock_ms; 0 = never. core0 writes it; core1's update gate reads it (pnet_ota_quiet).
 static volatile uint32_t g_pnet_last_ms;
+// Phase 3 (the status report's `net`, plan 2026-10-12 ruling 13). core0 writes, core1 reads:
+// when cylinder 76 was last served (clock_ms | 1; 0 = not since Network mode began), and the frames the Amiga
+// sent that were taken / the frames it acknowledged (saturated where they are reported).
+static volatile uint32_t g_pnet_status_last_ms, g_pnet_frames_from, g_pnet_frames_to;
 // Phase 2: what core0 needs from core1 for cylinder 76's status track (pnet_serve_status). The MAC is
 // written once by core1 after the bridge starts, then g_pnet_mac_ok, with a barrier between. The RSSI
 // is core1's heartbeat sample, dBm (0 until the first).
@@ -2269,6 +2278,24 @@ static void core1_main(void) {
             }
             // SEL1 telemetry rides every status report (cheap: three stores).
             dc_set_sel1(&c, g_sel1_wired, bus_df1_seen(g_df1_steps));
+#if WF_PNET_L2
+            // Phase 3: Network mode's readings ride the status report (plan 2026-10-12 ruling 13).
+            if (g_df1_mode == DF1_MODE_NET) {
+                static dc_net_t net;
+                static pnet_bridge_stats_t st;      // static: core1's stack is measured tight
+                const uint32_t seen = g_pnet_status_last_ms;
+                pnet_bridge_stats(&st);
+                net.on = true;
+                net.driver_seen = seen != 0;
+                net.driver_s = seen ? dc_net_driver_age_s(clock_ms(), seen) : 0;
+                net.amiga_ip = st.amiga_ip;
+                net.frames_in = g_pnet_frames_from;
+                net.frames_out = g_pnet_frames_to;
+                dc_set_net(&c, &net);
+            } else {
+                dc_set_net(&c, NULL);
+            }
+#endif
             g_up_holds = up_holds(&up);   // core0's DF1 store rule (R17)
 
             // Item 0 (fix round 1, Important): a status report is OWED
@@ -2419,13 +2446,13 @@ static void core1_main(void) {
                     g_df1_req_seq = want;
                     for (int i = 0; i < 50 && g_df1_applied_seq != want; i++) sleep_ms(1);
                     if (g_df1_applied_seq == want) {
-                        if (mode == DF1_MODE_NEXT) {
-                            dc_set_df1(&c, DF1_MODE_NEXT, DF1_HOLDS_HD);
+                        if (mode != DF1_MODE_OFF) {
+                            dc_set_df1(&c, mode, DF1_HOLDS_HD);   // Next or Network: its own rules (B3)
                             dc_df1_reconcile(&c);
                         }
                         dc_drive_handled(&c, seq);   // handled = applied live (the store may lag)
                         wf_logf(WF_INFO, "df1: setting %lu -> %s (the Amiga sees the change at its next reset)",
-                                (unsigned long)seq, mode == DF1_MODE_NEXT ? "next disk" : "off, parked");
+                                (unsigned long)seq, mode == DF1_MODE_OFF ? "off, parked" : df1_mode_name(mode));
                     } else {
                         wf_logf(WF_WARN, "df1: setting %lu not applied by core0 within 50 ms -- not acked, retried on the next poll",
                                 (unsigned long)seq);
@@ -2733,7 +2760,7 @@ static void core1_main(void) {
             // A preload report owed from an earlier pass (see the preload
             // below) rides here too -- but never ahead of a waiting tap.
             if (!report_retry && s != DC_HALTED && (disk_changed || version_changed || fw_report_owed ||
-                                    dc_sel1_owed(&c) || dc_drive_report_owed(&c) || nfc_report_owed || display_report_owed ||
+                                    dc_sel1_owed(&c) || dc_drive_report_owed(&c) || dc_net_owed(&c) || nfc_report_owed || display_report_owed ||
                                     (preload_report_owed && !nfc_event_pending(NULL)) ||
                                     (now - last_status_ms) >= DC_STATUS_PERIOD_MS)) {
                 if (dc_report_status(&c, psram_free_estimate(), wifi_rssi(), NULL, WF_FIRMWARE_VERSION)) {
@@ -3009,7 +3036,8 @@ static void serve_drive(unsigned d, int32_t token, int *loaded) {
 // Plan docs/superpowers/plans/2026-10-09-paulanet-phase0-loopback.md. PaulaNET protocol:
 // Copyright (C) 2026 RobSmithDev, https://github.com/RobSmithDev/PaulaNET, used with permission.
 //
-// DF1's cylinder 77 is not disk data in this build. Side 0 takes the Amiga's batch (gpio_isr arms
+// DF1's cylinder 77 is not disk data while g_pnet_on (Network mode; in the echo TEST build Next disk too). The
+// marker exists only in the echo TEST build. Side 0 takes the Amiga's batch (gpio_isr arms
 // a raw capture on SEL1); side 1 streams the echo of its frames in PaulaNET's framing. All of it
 // runs on core0 -- the STEP and WGATE interrupts and this loop -- so nothing is shared with core1.
 // The decoded frames live in PSRAM, in two halves: a batch that fails to parse never touches the
@@ -3018,7 +3046,9 @@ static void serve_drive(unsigned d, int32_t token, int *loaded) {
 //
 // The marker tells scripts/firmware-release.ts (src/lib/firmware-manifest.ts) that this image is
 // a TEST build; the boot banner reads it, which keeps it in the image.
+#if PNET_ECHO_BUILD
 const char wf_pnet_loop_marker[] = "wf-pnet-loop-test";
+#endif
 static pnet_loop_t g_pnet;                       // core0 only
 #if WF_PNET_L2
 // Phase 1: the counters for real frames (pnet_link.h). g_pnet keeps the capture counts (rx, bad[]).
@@ -3124,8 +3154,10 @@ static bool pnet_take_capture(void) {
     // the TX ring's slots while the ring has room; the rest, and a malformed frame with those after it,
     // are dropped and counted (pnet_link.h). No scratch: an RLE batch can decode past any fixed size.
     const unsigned acked = pnet_link_ack(&g_link, &h);
-    if (acked) pnet_ring_drop(&g_pnet_rx, acked);
+    if (acked) { pnet_ring_drop(&g_pnet_rx, acked); g_pnet_frames_to += acked; }
+    const uint32_t queued0 = g_link.queued;
     pnet_link_take(&g_link, &h, cap.bytes + PNET_HDR_BYTES, &g_pnet_tx);
+    g_pnet_frames_from += g_link.queued - queued0;
 #else
     if (pnet_loop_is_new(&g_pnet, &h)) {
         uint16_t lens[PNET_MAX_FRAMES];
@@ -3349,6 +3381,7 @@ static void pnet_serve_status(void) {
     g_pnet_echo_live = true;                     // the short INDEX at each wrap, as on cylinder 77
     g_pnet_last_ms = clock_ms() | 1u;            // cylinder 76 is network use too (the OTA rule)
     g_pnet_status_serves++;
+    g_pnet_status_last_ms = clock_ms() | 1u;     // the driver read cylinder 76 (the report's "driver")
     pnet_index_now();
 }
 #endif
@@ -3429,7 +3462,7 @@ static void pnet_prearm_step(void) {
         .prearmed = flux_capture_prearmed(),
         .edges = flux_capture_prearm_edges(),
     };
-    switch (pnet_prearm_decide(&in)) {
+    switch (pnet_prearm_gated(g_pnet_on, &in)) {     // Phase 3: outside Network, only ever a CANCEL
     case PNET_PREARM_ARM:    if (flux_capture_prearm_raw()) g_pnet_pre_arms++; break;
     case PNET_PREARM_CANCEL: if (flux_capture_prearm_cancel()) g_pnet_pre_cancel++; break;
     case PNET_PREARM_STRAY:  if (flux_capture_prearm_cancel()) g_pnet_pre_stray++; break;
@@ -3575,6 +3608,46 @@ static void pnet_log_summary(void) {
 #endif
     for (unsigned i = 0; i < 2; i++) g_pnet_lead[i] = (pnet_lead_t){UINT32_MAX, 0, 0, 0};
 }
+
+// Phase 3 (plan 2026-10-12, rulings 2-3): the runtime gate. core0, at boot and on every live DF1 change,
+// before anything below reads g_pnet_on. Leaving the mode forgets the link: a pending start is cancelled, the
+// prepared batch dropped, the frames waiting for the Amiga dropped (core0 is the RX ring's consumer; the
+// bridge drops the TX side), the counters reset, and the driver counts as not heard from -- so a later
+// Network mode starts as at boot. DF1's stream itself is stopped by the caller's unmount (df1_live_apply).
+// A finished raw batch nobody took is discarded on every change, either way: one left from before would
+// otherwise be taken as new by a later Network mode's fresh link.
+static void pnet_set_mode(df1_mode_t m) {
+    const bool was = g_pnet_on;
+    const bool now = pnet_mode_on((uint8_t)m, PNET_ECHO_BUILD);
+    // Leaving: DF1 stops counting as serving BEFORE the gate drops, so a WGATE landing in between can never
+    // arm a raw capture (review m1; the WGATE ISR reads g_pnet_df1_mounted).
+    if (was && !now) g_pnet_df1_mounted = false;
+    g_pnet_on = now;
+#if WF_PNET_L2
+    pnet_bridge_set_on(g_pnet_on);
+#endif
+    if (was != g_pnet_on) {
+        flux_capture_raw_t stale;
+        if (flux_capture_take_raw(&stale)) pnet_raw_pending = false;
+    }
+    if (!was || g_pnet_on) return;
+    // Review I1: a head left on cylinder 77 had WPROT released. Off does not set DF1's lines (df1_live.c) and
+    // the STEP ISR no longer moves WPROT outside Network, so re-assert it here: protected on every cylinder.
+    bus_out_set_drive(1, PIN_WPROT, pnet_df1_wprot_gated(g_pnet_on, cur_cyl[1]));
+    pnet_go_cancel();
+    g_pnet_echo_live = false;
+    g_pnet_prepared = false;
+#if WF_PNET_L2
+    pnet_ring_drop(&g_pnet_rx, pnet_ring_count(&g_pnet_rx));
+    pnet_link_init(&g_link);
+    g_pnet_status_last_ms = 0;
+    g_pnet_last_ms = 0;          // review m3: no network use any more, so a staged OTA is not held (pnet_ota_quiet)
+    g_pnet_frames_from = g_pnet_frames_to = 0;
+#else
+    pnet_loop_init(&g_pnet);
+#endif
+    wf_logf(WF_INFO, "pnet: off -- DF1 is %s; the network link is forgotten", df1_mode_name(m));
+}
 #endif
 
 // ---------------------------------------------------------------- main
@@ -3658,7 +3731,7 @@ int main(void) {
         g_df1_mode = DF1_MODE_OFF;
 #endif
         wf_logf(WF_INFO, "df1: %s at boot (%s)",
-                g_df1_mode == DF1_MODE_NEXT ? "next disk of the set" : "off",
+                df1_mode_name(g_df1_mode),
                 drv_loaded ? "stored" : "compiled default");
     }
 #if WF_PNET_LOOP
@@ -3666,7 +3739,9 @@ int main(void) {
 #if WF_PNET_L2
     pnet_link_init(&g_link);
 #endif
+#if PNET_ECHO_BUILD
     wf_logf(WF_WARN, "%s: DF1 cylinder 77 is a PaulaNET loopback (bench only)", wf_pnet_loop_marker);
+#endif
     wf_logf(WF_INFO, "pnet: side-1 lead-in %u B, side-return start %u us after SIDE",
             (unsigned)PNET_TX_LEAD_BYTES, (unsigned)PNET_SIDE_DELAY_US);
 #if WF_PNET_L2
@@ -3674,6 +3749,8 @@ int main(void) {
 #endif
     if (!psram_check_address(&g_pnet_echo[1][PNET_ECHO_BYTES - 1]))
         wf_logf(WF_ERR, "pnet: the echo store is not backed by PSRAM -- the loopback will fail");
+    pnet_set_mode(g_df1_mode);    // Phase 3: the gate, before the bus IRQs are enabled
+    wf_logf(WF_INFO, "pnet: network path built in; %s", g_pnet_on ? "on (DF1 is Network)" : "off");
 #endif
     // One word per drive; PIN_* are board reads, so filled here, not static.
     uint32_t boot_lines[WF_DRIVES];
@@ -3866,10 +3943,10 @@ int main(void) {
     // machines start together, so its first answer is already DD. Off, they
     // stay disabled: no ID answer, no line, nothing written on any pad -- an
     // absent drive (Kickstart reads its ID as 0 from the bus pull-ups).
-    bus_out_drive_id_set(1, g_df1_mode == DF1_MODE_NEXT ? DRIVE_ID_KIND_DD : DRIVE_ID_KIND_NONE);
-    bus_out_drive_enable(1, g_df1_mode == DF1_MODE_NEXT);
+    bus_out_drive_id_set(1, g_df1_mode != DF1_MODE_OFF ? DRIVE_ID_KIND_DD : DRIVE_ID_KIND_NONE);
+    bus_out_drive_enable(1, g_df1_mode != DF1_MODE_OFF);
     wf_logf(WF_INFO, "drive-id: answering DD 0x%08lx on DF0, %s on DF1",
-            (unsigned long)DRIVE_ID_DD, g_df1_mode == DF1_MODE_NEXT ? "DD" : "nothing (DF1 off)");
+            (unsigned long)DRIVE_ID_DD, g_df1_mode != DF1_MODE_OFF ? "DD" : "nothing (DF1 off)");
 #endif
     // DF1's acknowledge cursor: the boot word (0, nothing published) is seen.
     psram_df1_reader_ack(psram_df1_token());
@@ -4204,6 +4281,9 @@ int main(void) {
             const uint32_t version = g_drive_req_version;
             const df1_live_t p = df1_live_apply(m, bus_out_drive_enabled(1));
             g_df1_mode = m;          // the STEP/MTR ISRs and the mount below read it
+#if WF_PNET_LOOP
+            pnet_set_mode(m);        // Phase 3: the gate, before the lines and the mount below read it
+#endif
             if (p.unmount) {
                 stream_stop(1);
                 loaded1 = -1;
@@ -4214,7 +4294,7 @@ int main(void) {
                 bus_out_set_drive(1, PIN_WPROT, true);
 #if WF_PNET_LOOP
                 // A head already on cylinder 77 gets the loopback's WPROT now, not at its next step.
-                if (m == DF1_MODE_NEXT) bus_out_set_drive(1, PIN_WPROT, pnet_df1_wprot(cur_cyl[1]));
+                if (g_pnet_on) bus_out_set_drive(1, PIN_WPROT, pnet_df1_wprot(cur_cyl[1]));
 #endif
                 bus_out_set_drive(1, PIN_TRK0, cur_cyl[1] == 0);
             }
@@ -4231,7 +4311,8 @@ int main(void) {
             __dmb();
             g_df1_applied_seq = s;
             wf_logf(WF_INFO, "df1: setting %lu applied -- %s", (unsigned long)version,
-                    m == DF1_MODE_NEXT ? "on, an empty DD drive until the next disk is in"
+                    m != DF1_MODE_OFF ? (m == DF1_MODE_NET ? "on (Network), an empty DD drive until the driver disk is in"
+                                                           : "on, an empty DD drive until the next disk is in")
                     : p.parked ? "parked: ID none, an empty write-protected drive until the board reboots"
                                : "off (already)");
         }
@@ -4251,13 +4332,13 @@ int main(void) {
                 const int ds = psram_token_slot(t);
                 const bool hd = ds != SLOT_NONE && psram_image_slot_kind(ds) == SLOT_KIND_ADF_HD;
                 const bool was_mounted = df1_mounted;
-                df1_mounted = ds != SLOT_NONE && (!hd || DF1_HOLDS_HD) && g_df1_mode == DF1_MODE_NEXT;
+                df1_mounted = ds != SLOT_NONE && (!hd || DF1_HOLDS_HD) && g_df1_mode != DF1_MODE_OFF;
                 if (df1_mounted) {
                     // The ID before the insert is announced, as for DF0.
                     bus_out_drive_id_set(1, hd ? DRIVE_ID_KIND_HD : DRIVE_ID_KIND_DD);
                     dskchg_image_inserted_d(1);
                     wf_trace(WF_EV_MOUNT, (uint32_t)t, 1);
-                } else if (g_df1_mode == DF1_MODE_NEXT) {
+                } else if (g_df1_mode != DF1_MODE_OFF) {
                     bus_out_drive_id_set(1, DRIVE_ID_KIND_DD);   // an empty DD drive
                     dskchg_image_ejected_d(1);
                     if (was_mounted) wf_trace(WF_EV_EJECT, 0, 1);
@@ -4293,54 +4374,61 @@ int main(void) {
         // DF1 only while its word names a disk it holds: an empty DF1 streams
         // nothing (its want_track still follows its head).
 #if WF_PNET_LOOP
-        g_pnet_df1_mounted = df1_mounted;
-        // A finished batch first: its echo may be read next. A commit while the head is already
-        // on side 1 (SIDE flipped since the capture ended) rebuilds the echo there.
-        // Only an echo already served needs the -1: any other loaded1 differs from 155 anyway,
-        // and keeping it lets pnet_serve_df1 see a side return as one (restart-by-cause count).
+        g_pnet_df1_mounted = df1_mounted && g_pnet_on;
+        if (g_pnet_on) {
+            // A finished batch first: its echo may be read next. A commit while the head is already
+            // on side 1 (SIDE flipped since the capture ended) rebuilds the echo there.
+            // Only an echo already served needs the -1: any other loaded1 differs from 155 anyway,
+            // and keeping it lets pnet_serve_df1 see a side return as one (restart-by-cause count).
 #if PNET_SIDE_DELAY_US
-        if (g_pnet_go_rearm) { g_pnet_go_rearm = false; loaded1 = -1; }   // a skipped delayed start: serve afresh
+            if (g_pnet_go_rearm) { g_pnet_go_rearm = false; loaded1 = -1; }   // a skipped delayed start: serve afresh
 #endif
-        if (pnet_take_capture()) {
-            if (want_track[1] == PNET_TRACK_OUT && loaded1 == PNET_TRACK_OUT) {
-                loaded1 = -1;
-                g_pnet_rst_commit = true;
+            if (pnet_take_capture()) {
+                if (want_track[1] == PNET_TRACK_OUT && loaded1 == PNET_TRACK_OUT) {
+                    loaded1 = -1;
+                    g_pnet_rst_commit = true;
+                }
+                // Build the echo now, not at the SIDE edge. Only with DF1 on cylinder 77 (154, 155,
+                // or a restart pending): stopping a disk track's stream would leave it stopped.
+                if (df1_mounted && (loaded1 == PNET_TRACK_IN || loaded1 == PNET_TRACK_OUT || loaded1 == -1
+#if WF_PNET_L2
+                                    || loaded1 == PNET_TRACK_STATUS - 1     // 152: side 0 of cylinder 76, nothing streams
+#endif
+                                    ))
+                    pnet_prepare_echo();
+#if WF_PNET_L2
+                // 153: the status loop streams from g_pnet_status_words, but pnet_prepare_echo would stream_stop it
+                // and leave loaded1 == want (nothing restarts it). Drop the old batch instead: the move to 155
+                // builds a fresh one.
+                else if (df1_mounted && loaded1 == PNET_TRACK_STATUS)
+                    g_pnet_prepared = false;
+#endif
             }
-            // Build the echo now, not at the SIDE edge. Only with DF1 on cylinder 77 (154, 155,
-            // or a restart pending): stopping a disk track's stream would leave it stopped.
-            if (df1_mounted && (loaded1 == PNET_TRACK_IN || loaded1 == PNET_TRACK_OUT || loaded1 == -1
 #if WF_PNET_L2
-                                || loaded1 == PNET_TRACK_STATUS - 1     // 152: side 0 of cylinder 76, nothing streams
-#endif
-                                ))
+            // Frames came while nothing is out and the head sits on side 0 (the Amiga between its write
+            // and its read, or idle there): build the batch now, before the Amiga turns to side 1 -- a
+            // build at the SIDE edge is late (Phase 0, 0c89f65). Never while side 1 streams: that would
+            // tear the read in progress. Nor during the Amiga's write (WGATE asserted, a DF1 write ours)
+            // or with its capture armed or not yet taken: the build would postpone that take by a whole
+            // build, and the commit would then rebuild the same batch (review fix 1).
+            if (df1_mounted && loaded1 == PNET_TRACK_IN && !g_link.backup && pnet_ring_count(&g_pnet_rx) != 0 &&
+                !pnet_raw_pending && !pnet_write_ours && gpio_get(PIN_WGATE))
                 pnet_prepare_echo();
-#if WF_PNET_L2
-            // 153: the status loop streams from g_pnet_status_words, but pnet_prepare_echo would stream_stop it
-            // and leave loaded1 == want (nothing restarts it). Drop the old batch instead: the move to 155
-            // builds a fresh one.
-            else if (df1_mounted && loaded1 == PNET_TRACK_STATUS)
-                g_pnet_prepared = false;
+            {
+                const uint32_t hf = heap_free_bytes();
+                if (hf < g_pnet_heap_low) g_pnet_heap_low = hf;
+            }
+            pnet_l2_log();
 #endif
         }
-#if WF_PNET_L2
-        // Frames came while nothing is out and the head sits on side 0 (the Amiga between its write
-        // and its read, or idle there): build the batch now, before the Amiga turns to side 1 -- a
-        // build at the SIDE edge is late (Phase 0, 0c89f65). Never while side 1 streams: that would
-        // tear the read in progress. Nor during the Amiga's write (WGATE asserted, a DF1 write ours)
-        // or with its capture armed or not yet taken: the build would postpone that take by a whole
-        // build, and the commit would then rebuild the same batch (review fix 1).
-        if (df1_mounted && loaded1 == PNET_TRACK_IN && !g_link.backup && pnet_ring_count(&g_pnet_rx) != 0 &&
-            !pnet_raw_pending && !pnet_write_ours && gpio_get(PIN_WGATE))
-            pnet_prepare_echo();
-        {
-            const uint32_t hf = heap_free_bytes();
-            if (hf < g_pnet_heap_low) g_pnet_heap_low = hf;
+        if (df1_mounted) {
+            if (g_pnet_on) pnet_serve_df1(df1_seen_tok, &loaded1);
+            else serve_drive(1, df1_seen_tok, &loaded1);
         }
-        pnet_l2_log();
-#endif
-        if (df1_mounted) pnet_serve_df1(df1_seen_tok, &loaded1);
-        pnet_prearm_step();                      // after the take: a taken batch frees the capture
-        pnet_log_summary();
+        // Off or Next: a pre-arm left from Network mode is still let go; nothing new is armed (Review Focus 4).
+        // After the take: a taken batch frees the capture.
+        if (g_pnet_on || flux_capture_prearmed()) pnet_prearm_step();
+        if (g_pnet_on) pnet_log_summary();
 #else
         if (df1_mounted) serve_drive(1, df1_seen_tok, &loaded1);
 #endif

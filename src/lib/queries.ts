@@ -12,7 +12,7 @@ import { tosecEntries } from '@/db/schema/tosec';
 import { orgFilter } from '@/db/scope';
 import { getGameDemozoo, demozooCovers, type GameDemozoo } from '@/lib/demozoo/queries';
 import type { ImageFormat } from '@/lib/disk-format';
-import type { SecondDriveMode } from '@/lib/second-drive';
+import { asSecondDriveMode, SECOND_DRIVE_NET_FW, type SecondDriveMode } from '@/lib/second-drive';
 import { isHdAdfSql } from '@/lib/disk-format-sql';
 import { firmwareAtLeast } from '@/lib/firmware-version';
 import { NFC_ELEMENT_FIRMWARE } from '@/lib/display-layout';
@@ -383,6 +383,12 @@ export interface DeviceListItem {
   secondDriveReported: SecondDriveMode | null;
   secondDriveCapable: boolean;
   df1Sha256: string | null;
+  /** Network mode (spec 2026-10-12 §5): the board can take it (firmware 1.11.0+), and its last net report. */
+  secondDriveNetCapable: boolean;
+  netDriverSeenAt: Date | null;
+  netAmigaIp: string | null;
+  netFramesIn: number | null;
+  netFramesOut: number | null;
   /** The stored layout blob, base64; null = the panel's default. */
   displayLayout: string | null;
 }
@@ -452,6 +458,10 @@ export async function listDevices(orgId: string): Promise<DeviceListItem[]> {
       secondDriveReported: devices.secondDriveReported,
       secondDriveCapable: devices.secondDriveCapable,
       df1Sha256: devices.df1Sha256,
+      netDriverSeenAt: devices.netDriverSeenAt,
+      netAmigaIp: devices.netAmigaIp,
+      netFramesIn: devices.netFramesIn,
+      netFramesOut: devices.netFramesOut,
       displayLayout: devices.displayLayout,
     })
     .from(devices)
@@ -472,9 +482,9 @@ export async function listDevices(orgId: string): Promise<DeviceListItem[]> {
     displayLayouts: r.displayLayouts === true,
     displayNfcElement: r.displayLayouts === true && firmwareAtLeast(r.firmwareVersion, NFC_ELEMENT_FIRMWARE),
     nfcReader: r.nfcReader === 'present' ? 'present' as const : r.nfcReader === 'absent' ? 'absent' as const : null,
-    secondDrive: r.secondDrive === 'df1' ? 'df1' as const : 'off' as const,
-    secondDriveReported: r.secondDriveReported === 'df1' ? 'df1' as const
-      : r.secondDriveReported === 'off' ? 'off' as const : null,
+    secondDrive: asSecondDriveMode(r.secondDrive) ?? 'off',
+    secondDriveReported: asSecondDriveMode(r.secondDriveReported),
+    secondDriveNetCapable: r.secondDriveCapable === true && firmwareAtLeast(r.firmwareVersion, SECOND_DRIVE_NET_FW),
     secondDriveCapable: r.secondDriveCapable === true,
     displayLayout: r.displayLayout && r.displayLayout.length > 0
       ? Buffer.from(r.displayLayout).toString('base64')

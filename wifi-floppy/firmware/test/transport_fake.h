@@ -22,6 +22,12 @@ void fake_push_response(const char *raw);
 // header alone) -- `len` is exact, not strlen()'d.
 void fake_push_response_bytes(const uint8_t *raw, int len);
 
+// Same as fake_push_response_bytes, but BORROWS `raw` instead of copying it,
+// so a response of any size can be scripted (a whole DD WFAD is 901,136 B,
+// far over the copying queue's per-event buffer). `raw` must stay valid and
+// unchanged until the exchange that consumes it is over: pass a static buffer.
+void fake_push_response_ref(const uint8_t *raw, int len);
+
 // Deliver only the first `n` bytes of `raw` for the next request, then
 // report a dropped connection: read() returns 0 (clean close) from then on,
 // exactly as a connection dying mid-body looks to the layer above. `n` must
