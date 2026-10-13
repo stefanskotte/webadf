@@ -48,7 +48,7 @@ export function githubReleasePlan(r: GithubReleaseInput): GithubReleasePlan {
     `wifi-floppy firmware ${r.version} (sequence ${r.sequence}).`,
     '',
     ...(r.notes ? [r.notes, ''] : []),
-    `First install: hold BOOTSEL, plug the board into USB, and drag ${installAsset}`,
+    `First install: hold BOOT, plug the board into USB, and drag ${installAsset}`,
     'onto the drive that appears. The board writes everything it needs and restarts into this firmware by itself;',
     'then pair it from the web app. Later versions arrive over the air. No picotool is needed.',
     '',

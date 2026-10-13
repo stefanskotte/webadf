@@ -45,7 +45,7 @@ describe('the GitHub release for a published firmware version', () => {
     const p = githubReleasePlan(base);
     if (!p.publish) throw new Error('expected a publish plan');
     expect(p.installAsset).toBe('wifi-floppy-install-1.8.1.uf2');
-    expect(p.body).toMatch(/First install: hold BOOTSEL/);
+    expect(p.body).toMatch(/First install: hold BOOT, plug/);
     expect(p.body).not.toMatch(/pending/);
     expect(p.body).toContain('drag wifi-floppy-install-1.8.1.uf2');
     expect(p.body).toMatch(/never offered over the air/);
