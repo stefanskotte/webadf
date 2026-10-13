@@ -1658,7 +1658,7 @@ separately.
   registration with the old already-used code, gets `invalid_or_used_code` and opens the setup portal. TO RE-PAIR a
   deleted board: press Pair a device, join its `wifi-floppy-...` network and enter the new code. Not verified on
   hardware. No migration.
-- **NFC icon on the board's display** (operator, 2026-10-08): an NFC-reader icon as a layout element that works
+- ~~**NFC icon on the board's display**~~ **DONE in fw 1.10.0 -- see 3bf (903d993); still owed: a look on glass.** (operator, 2026-10-08): an NFC-reader icon as a layout element that works
   like the other icons (wifi, lock, ...): show/hide, 1x/2x, free placement in the Display editor. It needs a new
   element id in `display_layout.c`/`.h` and the validator, a glyph in `display.c`, `pnpm display:wasm`, the editor's
   element list, and golden framebuffers. An old board must reject or ignore an unknown element safely, and the
