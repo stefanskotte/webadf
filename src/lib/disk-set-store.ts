@@ -252,7 +252,7 @@ export async function reorderSet(orgId: string, gameId: string, orderedIds: stri
 }
 
 // Only a disk image's own extension: "Game v1.2" (no extension) keeps its ".2".
-const stripExt = (name: string) => name.replace(/\.(adf|adz|dms|hfe|ipf)$/i, '').trim();
+const stripExt = (name: string) => name.replace(/\.(adf|adz|dms|dmz|hfe|ipf)$/i, '').trim();
 
 /**
  * The uploaded file's name without its extension, else the TOSEC name without

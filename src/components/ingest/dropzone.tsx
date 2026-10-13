@@ -308,7 +308,7 @@ export function Dropzone() {
           file = original;
           note = describeInspection(r);
         } else {
-          // .adz and .dms become a plain ADF here, BEFORE hashing -- so the
+          // .adz, .dms and .dmz become a plain ADF here, BEFORE hashing -- so the
           // stored blob, its sha256 and its TOSEC identity are identical to
           // those of the same disk uploaded as a .adf. Converting later would
           // give one disk two identities depending on how it arrived.
@@ -470,7 +470,7 @@ export function Dropzone() {
           <path d="M3 16v3a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-3" />
         </svg>
         <span className="text-[15px] font-semibold" style={{ color: 'var(--ink)' }}>
-          Drop ADF, ADZ, DMS, HFE
+          Drop ADF, ADZ, DMS, DMZ, HFE
         </span>
         <span className="font-mono text-[10.5px]" style={{ color: 'var(--muted-2)' }}>
           hashed in your browser before upload
@@ -484,7 +484,7 @@ export function Dropzone() {
         <input
           type="file"
           multiple
-          accept=".adf,.dsk,.adz,.dms,.hfe"
+          accept=".adf,.dsk,.adz,.dms,.dmz,.hfe"
           className="sr-only"
           data-testid="file-input"
           disabled={busy}

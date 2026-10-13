@@ -12,7 +12,7 @@ import {
   splitBatches, MAX_HFE_PER_BATCH, type UploadOutcome,
 } from '../../src/lib/blob-upload.ts';
 
-const DISK_EXT = new Set(['.adf', '.dsk', '.adz', '.dms', '.hfe']);
+const DISK_EXT = new Set(['.adf', '.dsk', '.adz', '.dms', '.dmz', '.hfe']);
 const BATCH = 500;
 const CONCURRENCY = 6;
 

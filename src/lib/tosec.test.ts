@@ -105,3 +105,12 @@ describe('parseTosecName', () => {
     expect(r.diskNo).toBe(2);
   });
 });
+
+describe('parseTosecName on compressed extensions', () => {
+  it('reads a .dmz the same as the .adf of the same name', () => {
+    const name = 'Lemmings (1991)(Psygnosis)(Disk 1 of 2)';
+    expect(parseTosecName(`${name}.dmz`)).toEqual(parseTosecName(`${name}.adf`));
+    expect(parseTosecName(`${name}.DMZ`)).toEqual(parseTosecName(`${name}.adf`));
+    expect(parseTosecName('Lemmings.dmz')).toEqual(parseTosecName('Lemmings.adf'));
+  });
+});
