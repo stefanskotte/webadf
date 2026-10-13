@@ -29,8 +29,8 @@
  *   out: d0.l = the decoded length, or -1 if the block is malformed, a match reaches below a3
  *        (or has offset 0), or the output would pass dst_end.
  *   Never writes outside [a1, a2), never reads src outside [a0, a0 + d0), never reads a match
- *   source outside [a3, the current output position). Uses 4 bytes of stack below the saved
- *   registers. src must not overlap [a3, a2).
+ *   source outside [a3, the current output position). src must not overlap [a3, a2).
+ *   Rejects an offset of 0 (the format says it is invalid; liblz4 does not check it).
  *   Accepts any block that is structurally valid (it does not enforce the encoder-side end
  *   rules "last 5 bytes literals / last match 12 bytes before the end"); an empty src (d0 = 0)
  *   is malformed (-1), the 1-byte block 0x00 decodes to 0 bytes.
@@ -53,7 +53,8 @@
  *   frames. A table carried over from encoding the earlier frames against the same window
  *   finds matches into them; that is how linking gains.
  *
- * Stack use: the decoder about 64 bytes, the encoder about 60 bytes.
+ * Stack use: the decoder 66 bytes, the encoder 78 bytes (both including the saved registers).
+ * Code: about 4.2 KB decoder, 1.0 KB encoder, 0.1 KB C entries (5.3 KB in all).
  *
  * ---- C entries (stack arguments; m68k-amigaos gcc, vbcc) ----
  * The same functions with the arguments below; the result in d0.
