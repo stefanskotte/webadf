@@ -30,7 +30,7 @@ export async function requestFirmwareUpdate(
 ): Promise<BatchResult> {
   const db = getDb();
 
-  const releases = await listReleases();
+  const releases = await listReleases(orgId);
   const target = releases.find((r) => r.version === version);
   if (!target) return { ok: false, kind: 'unknown_version' };
   const reg = buildRegistry(releases);

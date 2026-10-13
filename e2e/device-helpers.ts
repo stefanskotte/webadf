@@ -400,11 +400,12 @@ export async function publishTestRelease(
   const db = getDb();
   // max+1 across the WHOLE table, so a seeded release is always newest.
   //
-  // That is what makes the specs deterministic AND what makes them visible:
-  // while these rows exist, they are the newest release production compares
-  // every real board against. The window is bounded by cleanupTestReleases in
-  // each spec's afterAll -- not only by the global teardown, which runs once
-  // at the very end of a multi-minute suite.
+  // That is what makes the specs deterministic. Real orgs no longer see these
+  // rows (releaseVisibleToSql in src/lib/firmware-releases.ts hides `+e2e`
+  // versions from any org that is not a test org), but they are still global
+  // rows, so the window stays bounded by cleanupTestReleases in each spec's
+  // afterAll -- not only by the global teardown, which runs once at the very
+  // end of a multi-minute suite.
   const rows = await db.select({ sequence: firmwareReleases.sequence }).from(firmwareReleases);
   const sequence = rows.reduce((m, r) => (r.sequence > m ? r.sequence : m), 0) + 1;
   await db.insert(firmwareReleases).values({

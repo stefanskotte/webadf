@@ -1,7 +1,9 @@
 import { randomUUID } from 'node:crypto';
-import { desc, eq } from 'drizzle-orm';
+import { desc, sql, type SQL, type SQLWrapper } from 'drizzle-orm';
+import type { NeonHttpDatabase } from 'drizzle-orm/neon-http';
 import { getDb } from '@/db';
 import { firmwareReleases } from '@/db/schema/firmware';
+import { isTestOrgSql } from '@/lib/test-org';
 import type { ReleaseRef } from '@/lib/firmware-state';
 import { decidePublish, PublishRefused, type ExistingRelease } from '@/lib/firmware-publish-rules';
 
@@ -62,15 +64,23 @@ export async function publishRelease(
 }
 
 /**
- * Just enough for firmwareState(), newest first.
- *
- * `notes` is included so the Devices notice can say what a release changes.
- * Without it the notes were reachable only from /admin/firmware, which
- * redirects every non-admin -- making `--notes` write-only for exactly the
- * audience it exists for.
+ * The e2e suite's releases (`0.0.0+e2e*`, E2E_RELEASE_PREFIX in e2e/device-helpers.ts) are published with
+ * the HIGHEST sequences, so for the minutes before the teardown deletes them every real org read one as
+ * "newest" and every real board as behind it (HANDOFF backlog, seen 2026-10-09). The registry stays global
+ * (spec D5); what an org is SHOWN or OFFERED leaves them out unless the org is a test org (test-org.ts).
+ * Both spellings, the same pair cleanupTestReleases deletes.
  */
-export async function listReleases(): Promise<ReleaseRef[]> {
-  return getDb()
+export const TEST_RELEASE_PATTERNS = ['%+e2e%', '0.0.0-e2e%'] as const;
+
+/** Whether a release row is visible to `orgId` -- a bound org id or a column (correlated). */
+export function releaseVisibleToSql(orgId: SQLWrapper | string): SQL {
+  return sql`((${firmwareReleases.version} not like ${TEST_RELEASE_PATTERNS[0]}
+    and ${firmwareReleases.version} not like ${TEST_RELEASE_PATTERNS[1]}) or ${isTestOrgSql(orgId)})`;
+}
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+export function listReleasesQuery(db: NeonHttpDatabase<any>, orgId: string) {
+  return db
     .select({
       version: firmwareReleases.version,
       sequence: firmwareReleases.sequence,
@@ -80,7 +90,23 @@ export async function listReleases(): Promise<ReleaseRef[]> {
       signatureFormat: firmwareReleases.signatureFormat,
     })
     .from(firmwareReleases)
+    .where(releaseVisibleToSql(orgId))
     .orderBy(desc(firmwareReleases.sequence));
+}
+
+/**
+ * Just enough for firmwareState(), newest first -- the releases `orgId` may see.
+ *
+ * `orgId` is REQUIRED: a default would let a call site that forgot it compile and show the e2e releases
+ * again (the same lesson as liveFingerprint's latestReleaseSequence).
+ *
+ * `notes` is included so the Devices notice can say what a release changes.
+ * Without it the notes were reachable only from /admin/firmware, which
+ * redirects every non-admin -- making `--notes` write-only for exactly the
+ * audience it exists for.
+ */
+export async function listReleases(orgId: string): Promise<ReleaseRef[]> {
+  return listReleasesQuery(getDb(), orgId);
 }
 
 export interface FirmwareReleaseListItem {
@@ -125,17 +151,24 @@ export async function listReleasesFull(limit = 100): Promise<FirmwareReleaseList
     .limit(limit);
 }
 
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+export function latestReleaseQuery(db: NeonHttpDatabase<any>, orgId: string) {
+  return db
+    .select({ sequence: firmwareReleases.sequence })
+    .from(firmwareReleases)
+    .where(releaseVisibleToSql(orgId))
+    .orderBy(desc(firmwareReleases.sequence))
+    .limit(1);
+}
+
 /**
- * The newest release's sequence, or 0 when nothing is published.
+ * The newest sequence `orgId` may see (listReleases' rule), or 0 when nothing is published.
  *
  * One row via the sequence index, because the live-state poll runs every few
  * seconds per open browser and only needs to know whether the registry moved.
+ * Org-scoped like listReleases, so an e2e publish does not refresh a real org's open tabs either.
  */
-export async function latestReleaseSequence(): Promise<number> {
-  const rows = await getDb()
-    .select({ sequence: firmwareReleases.sequence })
-    .from(firmwareReleases)
-    .orderBy(desc(firmwareReleases.sequence))
-    .limit(1);
+export async function latestReleaseSequence(orgId: string): Promise<number> {
+  const rows = await latestReleaseQuery(getDb(), orgId);
   return rows[0]?.sequence ?? 0;
 }

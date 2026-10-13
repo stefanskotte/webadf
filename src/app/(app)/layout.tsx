@@ -32,7 +32,7 @@ export default async function AppLayout({
   // disagrees with the poll makes every idle tab refresh forever.
   const [liveRows, latestRelease] = await Promise.all([
     liveStateRows(getDb(), orgId),
-    latestReleaseSequence(),
+    latestReleaseSequence(orgId),
   ]);
   // ONE clock reading for both: the chips and the fingerprint must describe
   // the same instant, or a board crossing the online threshold between two

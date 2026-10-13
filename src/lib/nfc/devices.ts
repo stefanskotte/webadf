@@ -14,15 +14,13 @@
 import { sql } from 'drizzle-orm';
 import type { NeonHttpDatabase } from 'drizzle-orm/neon-http';
 import { devices } from '@/db/schema/devices';
-import { member, user } from '@/db/schema/auth';
+import { isTestOrgSql } from '@/lib/test-org';
 
-export const E2E_TEST_EMAIL = '%@example.test';
+export { E2E_TEST_EMAIL } from '@/lib/test-org';
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 export function selectableDevicesQuery(db: NeonHttpDatabase<any>) {
   return db.select({
     id: devices.id, orgId: devices.orgId, name: devices.name, nfcReader: devices.nfcReader,
-  }).from(devices).where(sql`not (exists (select 1 from ${member} where ${member.organizationId} = ${devices.orgId})
-    and not exists (select 1 from ${member} join ${user} on ${user.id} = ${member.userId}
-      where ${member.organizationId} = ${devices.orgId} and ${user.email} not like ${E2E_TEST_EMAIL}))`);
+  }).from(devices).where(sql`not ${isTestOrgSql(devices.orgId)}`);
 }
