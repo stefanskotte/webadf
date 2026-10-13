@@ -4,6 +4,7 @@ import { DC_TITLE_MAX, DC_LABEL_MAX } from '@/lib/device-limits';
 import { getDb } from '@/db';
 import { devices } from '@/db/schema/devices';
 import { firmwareReleases } from '@/db/schema/firmware';
+import { releaseVisibleToSql } from '@/lib/firmware-releases';
 import { disks, games } from '@/db/schema/catalog';
 import { isHdAdf, isServable } from '@/lib/disk-format';
 import { LEGACY_BOARD_TRACK_MAX_BYTES } from '@/lib/adfmfm';
@@ -565,7 +566,10 @@ export async function readFirmwareInstruction(
       signatureFormat: firmwareReleases.signatureFormat,
     })
     .from(devices)
-    .leftJoin(firmwareReleases, eq(firmwareReleases.version, devices.desiredFirmwareVersion))
+    // A `+e2e` release only joins for a board in a test org (releaseVisibleToSql): a real board is never
+    // offered one, even if a desired version somehow named it.
+    .leftJoin(firmwareReleases, and(
+      eq(firmwareReleases.version, devices.desiredFirmwareVersion), releaseVisibleToSql(devices.orgId)))
     .where(eq(devices.id, deviceId))
     .limit(1);
 

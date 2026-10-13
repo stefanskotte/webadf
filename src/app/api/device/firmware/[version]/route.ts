@@ -1,9 +1,10 @@
-import { eq } from 'drizzle-orm';
+import { and, eq } from 'drizzle-orm';
 import { getDb } from '@/db';
 import { firmwareReleases } from '@/db/schema/firmware';
 import { requireDevice, deviceAuthResponse } from '@/lib/device-auth';
 import { firmwareStore } from '@/lib/storage';
 import { firmwareVersionSchema, semverOf } from '@/lib/firmware-version';
+import { releaseVisibleToSql } from '@/lib/firmware-releases';
 
 // A .uf2 is ~1 MB. Well inside the default, but stated for the same reason
 // the image route states it.
@@ -15,12 +16,13 @@ export async function GET(
   request: Request,
   ctx: { params: Promise<{ version: string }> },
 ) {
+  let orgId: string;
   try {
     // Authentication IS the boundary here. Unlike the image route there is
     // deliberately NO per-org entitlement check: firmware is a product
     // artifact, global by design (the release registry's D5), and every
     // paired device is entitled to the firmware it has been told to run.
-    await requireDevice(request);
+    ({ orgId } = await requireDevice(request));
   } catch (e) {
     const res = deviceAuthResponse(e);
     if (res) {
@@ -44,7 +46,8 @@ export async function GET(
   const [rel] = await getDb()
     .select({ blobPath: firmwareReleases.blobPath, sizeBytes: firmwareReleases.sizeBytes })
     .from(firmwareReleases)
-    .where(eq(firmwareReleases.version, version))
+    // The e2e suite's `+e2e` releases exist only for test orgs' boards (releaseVisibleToSql).
+    .where(and(eq(firmwareReleases.version, version), releaseVisibleToSql(orgId)))
     .limit(1);
 
   // 404, not 403: a caller learns nothing about which versions exist.

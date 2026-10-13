@@ -17,7 +17,7 @@ export default async function DevicesPage() {
   const { orgId } = await requireOrg();
   // Independent reads, so they go together rather than in series.
   // Next-card writers, not every reader: a board before 1.6.0 cannot write one.
-  const [devices, releases, writers] = await Promise.all([listDevices(orgId), listReleases(), listNextCardWriters(orgId)]);
+  const [devices, releases, writers] = await Promise.all([listDevices(orgId), listReleases(orgId), listNextCardWriters(orgId)]);
 
   // One clock for the whole render, so two cards can never disagree about what
   // "now" is and flip each other across the staleness boundary.

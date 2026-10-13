@@ -14,6 +14,8 @@ async function report(request: APIRequestContext, token: string, extra: Record<s
   });
   expect(res.status()).toBe(204);
 }
+/** LiveRefresh polls every 3 s while the tab is in use; allow a few ticks plus the RSC refresh. */
+const LIVE = 15_000;
 const row = async (id: string) => (await getDb().select().from(devices).where(eq(devices.id, id)))[0];
 
 test('a board without DF1 support is told which firmware it needs', async ({ page, request }) => {
@@ -40,9 +42,12 @@ test('switching DF1 on reaches the board through the poll and reads applied once
   expect((await poll.json()).secondDrive).toEqual({ seq: 1, mode: 'df1' });
 
   await report(request, token, { secondDrive: 'df1', driveVersion: 1, sel1Wired: true, df1Seen: false });
-  await page.reload();
+  // No reload (HANDOFF backlog "DF1 card status does not update live"): the live-state poll brings it.
   await expect(page.getByTestId(`second-drive-status-${deviceId}`))
-    .toHaveText('Set on the board — takes effect when the Amiga restarts');
+    .toHaveText('Set on the board — takes effect when the Amiga restarts', { timeout: LIVE });
+  // A SEL1 reading the board changes reaches the open card the same way.
+  await report(request, token, { secondDrive: 'df1', driveVersion: 1, sel1Wired: true, df1Seen: true });
+  await expect(page.getByTestId(`device-df1seen-${deviceId}`)).toHaveAttribute('data-value', 'true', { timeout: LIVE });
 });
 
 test('a seen DF1 refuses the switch; the override needs a second confirmation', async ({ page, request }) => {
@@ -138,9 +143,8 @@ test('choosing Network reaches the board and reads applied once acked', async ({
   expect(b1.next ?? null).toBeNull();
   await report(request, token, { firmwareVersion: '1.11.0+gabc1234', secondDrive: 'net', driveVersion: 1,
     net: { framesIn: 0, framesOut: 0 } });
-  await page.reload();
   await expect(page.getByTestId(`second-drive-status-${deviceId}`))
-    .toHaveText('Set on the board — takes effect when the Amiga restarts');
+    .toHaveText('Set on the board — takes effect when the Amiga restarts', { timeout: LIVE });
   // Nothing in DF0 (a hard-drive boot): the poll still names the driver disk (Review Focus 2).
   // driveAck=0 against seq 1 wakes the poll at once (the hold would otherwise run 25 s).
   const poll2 = await request.get('/api/device/poll?since=0&driveAck=0', { headers: authHeader(token) });
@@ -166,16 +170,15 @@ test('the checklist reads the board\'s net report: all three good, and traffic',
   await report(request, token, { firmwareVersion: '1.11.0+gabc1234', mountedSha256: 'a'.repeat(64),
     secondDrive: 'net', driveVersion: 1, df1Sha256: PAULANET_DISK_SHA256,
     net: { driver: 4, amigaIp: '172.16.10.231', framesIn: 1234, framesOut: 56 } });
-  await page.reload();
-  await expect(page.getByTestId(`net-disk-${deviceId}`)).toContainText('Driver disk: in DF1');
+  // Live, no reload: the checklist's state transitions move the fingerprint.
+  await expect(page.getByTestId(`net-disk-${deviceId}`)).toContainText('Driver disk: in DF1', { timeout: LIVE });
   await expect(page.getByTestId(`net-driver-${deviceId}`)).toContainText(/Driver: talking \(last seen \d+ s ago\)/);
   await expect(page.getByTestId(`net-ip-${deviceId}`)).toContainText('Amiga address: 172.16.10.231');
   await expect(page.getByTestId(`net-traffic-${deviceId}`)).toHaveText('Traffic: 1,234 frames from the Amiga, 56 to it');
   for (const k of ['net-disk', 'net-driver', 'net-ip']) await expect(page.getByTestId(`${k}-${deviceId}`)).toHaveAttribute('data-ok', 'true');
   // Back to Off: the checklist goes.
   await report(request, token, { firmwareVersion: '1.11.0+gabc1234', secondDrive: 'off', driveVersion: 1 });
-  await page.reload();
-  await expect(page.getByTestId(`net-checklist-${deviceId}`)).toHaveCount(0);
+  await expect(page.getByTestId(`net-checklist-${deviceId}`)).toHaveCount(0, { timeout: LIVE });
 });
 
 test('a seen DF1 refuses Network; the override saves Network (Review Focus 5)', async ({ page, request }) => {

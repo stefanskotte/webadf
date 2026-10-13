@@ -82,6 +82,12 @@ export interface LiveStateRow {
   secondDrive: string; secondDriveVersion: number; secondDriveAppliedVersion: number | null;
   secondDriveReported: string | null; df1Sha256: string | null;
   netDriverSeenAt: Date | null; netAmigaIp: string | null; netFramesIn: number | null; netFramesOut: number | null;
+  /**
+   * Also DF1 card inputs, and missed the first time (HANDOFF backlog "DF1 card status does not update
+   * live"): the capability picks "Needs firmware ..." vs the real status and enables the select, and the two
+   * SEL1 readings are drawn under the setting (SecondDriveReadings). Null = never reported, as the card reads it.
+   */
+  secondDriveCapable: boolean | null; sel1Wired: boolean | null; df1Seen: boolean | null;
   /** The computed next-disk verdict for this device, or null (multi-disk plan R3). */
   next: NextInfo | null;
 }
@@ -141,6 +147,8 @@ export function liveFingerprint(
         r.next ? `${r.next.diskNo}/${r.next.diskCount}/${r.next.wraps ? 1 : 0}/${r.next.preload ?? ''}` : '',
         r.secondDrive, r.secondDriveVersion, r.secondDriveAppliedVersion ?? '', r.secondDriveReported ?? '',
         r.df1Sha256 ?? '', driverBucket(r.netDriverSeenAt, now), r.netAmigaIp ?? '',
+        r.secondDriveCapable === true ? '1' : '0',
+        r.sel1Wired === null ? '' : String(r.sel1Wired), r.df1Seen === null ? '' : String(r.df1Seen),
         // Not the traffic counters (final review m5): they move on every heartbeat while frames flow, and
         // ruling 18 moves the fingerprint on state transitions only. The card renders whatever it holds.
         isOnline(r.lastSeenAt, now) ? '1' : '0',
@@ -215,6 +223,9 @@ export async function liveStateRows(db: ReturnType<typeof getDb>, orgId: string)
       netAmigaIp: devices.netAmigaIp,
       netFramesIn: devices.netFramesIn,
       netFramesOut: devices.netFramesOut,
+      secondDriveCapable: devices.secondDriveCapable,
+      sel1Wired: devices.sel1Wired,
+      df1Seen: devices.df1Seen,
     })
     .from(devices)
     // Org-scoped on both sides of both joins: without `disks.orgId`, a

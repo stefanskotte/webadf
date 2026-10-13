@@ -35,7 +35,7 @@ export async function GET() {
 
   const [rows, latestRelease] = await Promise.all([
     liveStateRows(getDb(), orgId),
-    latestReleaseSequence(),
+    latestReleaseSequence(orgId),
   ]);
   const fingerprint = liveFingerprint(rows, Date.now(), latestRelease);
   return NextResponse.json({ fingerprint }, { headers: { 'Cache-Control': 'no-store' } });

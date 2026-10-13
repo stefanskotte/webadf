@@ -1,4 +1,10 @@
 import { test, expect, type APIRequestContext } from '@playwright/test';
+import { randomUUID } from 'node:crypto';
+import { eq } from 'drizzle-orm';
+import { getDb } from '@/db';
+import { devices } from '@/db/schema/devices';
+import { listReleases, latestReleaseSequence } from '@/lib/firmware-releases';
+import { requestFirmwareUpdate } from '@/lib/firmware-update';
 import { signUpFresh } from './helpers';
 import {
   pairDevice, authHeader, publishTestRelease, cleanupSeeded, cleanupTestReleases,
@@ -6,9 +12,9 @@ import {
 } from './device-helpers';
 
 // Both, and the releases FIRST. cleanupSeeded does not touch
-// firmware_releases, which is global: while a seeded release exists it is the
-// newest one production compares every real board against, so the window has
-// to close when this file finishes rather than when the whole suite does.
+// firmware_releases, which is global: real orgs no longer see a seeded release
+// (releaseVisibleToSql), but the rows are still there, so the window closes
+// when this file finishes rather than when the whole suite does.
 test.afterAll(async () => {
   try {
     await cleanupTestReleases();
@@ -44,6 +50,29 @@ test('a device behind the newest release is called out', async ({ page, request 
   await page.goto('/devices');
   await expect(page.getByTestId('firmware-notice')).toContainText('1 of 1');
   await expect(page.getByTestId(`device-firmware-${deviceId}`)).toContainText('1 release behind');
+});
+
+// HANDOFF backlog "e2e firmware releases show to real boards during a run": while a run's releases exist they
+// are the newest by sequence, and every REAL org read its boards as behind them. A real org cannot be made
+// here (every account the suite creates is @example.test, and the teardown's safety boundary is exactly that),
+// so the real side is an org id with no @example.test members -- one that does not exist, which the rule
+// treats the same as a real org (src/lib/test-org.ts).
+test('a +e2e release is shown and offered to test orgs only, never to a real org', async ({ page, request }) => {
+  await signUpFresh(page);
+  const { deviceId } = await pairDevice(page, request);
+  const [{ orgId }] = await getDb().select({ orgId: devices.orgId }).from(devices).where(eq(devices.id, deviceId));
+  await publishTestRelease('0.0.0+e2e90');
+
+  const mine = await listReleases(orgId);
+  expect(mine[0]?.version).toBe('0.0.0+e2e90');
+  expect(await latestReleaseSequence(orgId)).toBe(mine[0].sequence);
+
+  const realOrg = `real-org-${randomUUID()}`;
+  const theirs = await listReleases(realOrg);
+  expect(theirs.filter((r) => r.version.includes('+e2e'))).toEqual([]);
+  expect(await latestReleaseSequence(realOrg)).toBeLessThan(mine[0].sequence);
+  // Nor can a real org point a board at one.
+  expect(await requestFirmwareUpdate(realOrg, 'e2e', [], '0.0.0+e2e90')).toEqual({ ok: false, kind: 'unknown_version' });
 });
 
 test('a device on the newest release shows no callout', async ({ page, request }) => {
