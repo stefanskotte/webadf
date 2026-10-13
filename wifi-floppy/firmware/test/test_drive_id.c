@@ -195,14 +195,14 @@ static void an_id_change_waits_for_the_next_answer(void) {
     CHECK_EQ_INT(amiga_reads_id(&m), DRIVE_ID_DD);                    // and back
 }
 
-// Kickstart 3.1's own read (disk.resource, ROM $FC0442): a motor-on select, a
-// motor-off select that is not sampled, then 32 sampled ones. As DF1 on the
-// A500's internal connector sees it: that connector carries MTR0D* (DF0's
-// motor, latched on the motherboard, HRM p.320), not the raw DSKMOTOR*, so
-// DF1's motor-on select arrives as motor-off.
+// amiga_reads_id as DF1 sees it on the A500's internal connector: that
+// connector carries MTR0D* (DF0's motor, latched on the motherboard, HRM
+// p.320), not the raw DSKMOTOR*, so DF1's motor-on select arrives as
+// motor-off -- DF0's latch is off by then, Kickstart 3.1 reading unit 0 first
+// (disk.resource, ROM $FC0414). Same sampling convention as amiga_reads_id
+// (bench-checked, 3an), so the two helpers describe one Kickstart.
 static uint32_t ks31_reads_df1(drive_id_model_t *m) {
     drive_id_model_select(m, false); drive_id_model_deselect(m);    // the motor-on select, seen as off
-    drive_id_model_select(m, false); drive_id_model_deselect(m);    // the reset select, not sampled
     return read_32(m);
 }
 
