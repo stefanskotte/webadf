@@ -178,10 +178,10 @@ deltas.
 | Second drive (DF1) alongside the board | verified on hardware |
 | HFE, including long-track (Turrican) | verified on hardware; weak-bit titles not yet tested |
 | HD disks, read-only (Kickstart 3.0+) | verified on hardware (firmware 1.4.1, Kickstart 3.1) |
-| HD disks: Amiga saves, history, browser editing, blank HD disks | built and host-tested (firmware 1.5.0, not yet published); bench checklist owed (HANDOFF 3ao) |
-| Firmware updates from the web app | verified on hardware (current: 1.3.1; 1.4.0 built, not yet published) |
+| HD disks: Amiga saves, history, browser editing, blank HD disks | shipped in firmware 1.5.1; bench steps 4-7 owed (HANDOFF 3ao) |
+| Firmware updates from the web app | verified on hardware (current release: 1.10.2) |
 | NFC: tap to mount, write tags from the web | verified on hardware |
-| Rev B board | in design (Shanshe) |
+| Rev B board | built and running (Shanshe's design, `wifi-floppy/hardware/`) |
 
 ## Repository
 
