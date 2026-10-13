@@ -5,13 +5,18 @@
 #   m68k/lz4/test.sh [STEP...]     no STEP: all of them, in this order
 #     host    C model round trips with liblz4 (corpus, every length 1..1518, edge cases, linked)
 #             and writes the decoder vectors
-#     build   assembles lz4_68k.asm (-Faout and -Fhunk) and links test/vtest (bebbo gcc)
-#     dec     decoder: every liblz4 block of the corpus (fast, HC 9, linked fast, linked HC 9)
-#             at every src/dst parity, guards, short dst; the same with a window below $10000
-#     fuzz    decoder: random frames at every parity, truncated / corrupted / random blocks
+#     build   assembles lz4_68k.asm (-Faout and -Fhunk), checked and LZ4_68K_UNCHECKED_READS=1,
+#             and links test/vtest and test/vtest_u (bebbo gcc)
+#     dec     decoder, both builds: every liblz4 block of the corpus (fast, HC 9, linked fast,
+#             linked HC 9) at every src/dst parity, guards, short dst; again with a low window
+#     fuzz    decoder, both builds: random frames at every parity, truncated / corrupted /
+#             random blocks (also with a window below $10000); the unchecked build is held to
+#             write safety and the result's range only
+#     big     decoder, both builds: runs of 65,535..65,540 bytes, truncated; entry checks
 #     enc     encoder: asm == C model on the corpus (per frame and linked; 1K and 4K tables)
 #     encr    encoder: asm == C model on every length 1..1518 at every parity, caps
-#     tail    no read past the end of the input (memory trace of a guard region)
+#     encbig  encoder: asm == C model for n up to 65,535, windows reaching 65,536
+#     tail    both builds: no read past the end of the input (memory trace of a guard region)
 #     odd     no word or long access at an odd address (memory trace)
 #     bench   cycles per byte (tools/lz4-measure/m68k/build.sh BENCH68K=1); prints the table
 #
@@ -27,16 +32,16 @@ corpus="${CORPUS:-$lm/build/corpus.bin}"
 IMG='amigadev/crosstools@sha256:bf5c0e37d2b60cf2aca93225558a7b6357e4598f8c82d04cdcb6a8268c9035d1'
 mkdir -p "$out/vols"
 steps=("$@")
-[ ${#steps[@]} = 0 ] && steps=(host build dec fuzz enc encr tail odd bench)
+[ ${#steps[@]} = 0 ] && steps=(host build dec fuzz big enc encr encbig tail odd bench)
 
 ext="$lm/build/ext"
 "$lm/fetch.sh" "$ext"                      # the reference liblz4 v1.10.0 (BSD-2), pinned
 
 py="$(head -1 "$(command -v vamos)" | sed 's/^#!//')"
-vam() {   # [-t] args... : run test/vtest under vamos (8 MB, 64 KB stack)
+vam() {   # [-t] args... : run $VT (default vtest) under vamos (8 MB, 64 KB stack)
   local tr=()
   [ "${1:-}" = -t ] && { tr=(-t); shift; }
-  (cd "$out/vols" && "$py" - "$out/vols" "$out/vtest" "${tr[@]+"${tr[@]}"}" "$@" <<'PY'
+  (cd "$out/vols" && "$py" - "$out/vols" "$out/${VT:-vtest}" "${tr[@]+"${tr[@]}"}" "$@" <<'PY'
 import sys, time
 time.clock = time.perf_counter
 from amitools.tools.vamos import main
@@ -76,19 +81,37 @@ for s in "${steps[@]}"; do
       m68k-amigaos-gcc $F -c -o $o/lz4_68k_c.o $m/lz4_68k.c
       m68k-amigaos-gcc $F -c -o $o/vtest.o $m/test/vtest.c
       m68k-amigaos-gcc -noixemul -m68000 -s -o $m/build/vtest $o/vtest.o $o/lz4_68k.o $o/lz4_68k_c.o $o/lz4.o
+      # the LZ4_68K_UNCHECKED_READS=1 build, and vtest_u that knows it
+      vasmm68k_mot -quiet -m68000 -Fhunk -DLZ4_68K_UNCHECKED_READS=1 -o $o/lz4_68k_u.hunk $m/lz4_68k.asm
+      vasmm68k_mot -quiet -m68000 -Faout -DLZ4_68K_UNCHECKED_READS=1 -o $o/lz4_68k_u.o $m/lz4_68k.asm
+      m68k-amigaos-gcc $F -DUNCHECKED -c -o $o/vtest_u.o $m/test/vtest.c
+      m68k-amigaos-gcc -noixemul -m68000 -s -o $m/build/vtest_u $o/vtest_u.o $o/lz4_68k_u.o $o/lz4_68k_c.o $o/lz4.o
     '
-    echo "PASS: build (lz4_68k.asm: -Faout and -Fhunk; $(wc -c < "$out/obj/lz4_68k.hunk" | tr -d ' ') bytes of hunk object)"
+    echo "PASS: build (lz4_68k.asm, checked and LZ4_68K_UNCHECKED_READS=1, each -Faout and -Fhunk; $(wc -c < "$out/obj/lz4_68k.hunk" | tr -d ' ') bytes of hunk object)"
     ;;
   dec)
-    for v in fast hc9 linkf link9; do
-      vam DEC "dec-$v.vec" > "$out/dec-$v.txt" 2>&1 || true; pass "dec $v" "$out/dec-$v.txt"
+    for VT in vtest vtest_u; do
+      for v in fast hc9 linkf link9; do
+        vam DEC "dec-$v.vec" > "$out/$VT-dec-$v.txt" 2>&1 || true; pass "$VT dec $v" "$out/$VT-dec-$v.txt"
+      done
+      vam LOWWIN dec-linkf.vec > "$out/$VT-dec-lowwin.txt" 2>&1 || true; pass "$VT dec lowwin" "$out/$VT-dec-lowwin.txt"
     done
-    vam LOWWIN dec-linkf.vec > "$out/dec-lowwin.txt" 2>&1 || true; pass "dec lowwin" "$out/dec-lowwin.txt"
     ;;
   fuzz)
-    for seed in 1 2 3 4; do
-      vam FUZZ "$seed" 400 > "$out/fuzz-$seed.txt" 2>&1 || true; pass "fuzz seed $seed" "$out/fuzz-$seed.txt"
+    for VT in vtest vtest_u; do
+      for seed in 1 2 3 4; do
+        vam FUZZ "$seed" 400 > "$out/$VT-fuzz-$seed.txt" 2>&1 || true; pass "$VT fuzz seed $seed" "$out/$VT-fuzz-$seed.txt"
+      done
+      vam FUZZLOW 5 400 > "$out/$VT-fuzz-low.txt" 2>&1 || true; pass "$VT fuzz, window below \$10000" "$out/$VT-fuzz-low.txt"
     done
+    ;;
+  big)
+    for VT in vtest vtest_u; do
+      vam BIG > "$out/$VT-big.txt" 2>&1 || true; pass "$VT big (runs of 65535..65540, entry checks)" "$out/$VT-big.txt"
+    done
+    ;;
+  encbig)
+    vam ENCBIG > "$out/encbig.txt" 2>&1 || true; pass "encbig (n up to 65535)" "$out/encbig.txt"
     ;;
   enc)
     for e in 1024 4096; do
@@ -104,6 +127,7 @@ for s in "${steps[@]}"; do
     done
     ;;
   tail)
+   for VT in vtest vtest_u; do
     # The guard region's address comes from an untraced run (vamos loads the program at the same
     # addresses every time); the traced run's memory trace goes straight through a filter (it is
     # large), which reports every access inside the guard region after the input.
@@ -113,7 +137,8 @@ for s in "${steps[@]}"; do
     pass "tail run" "$out/tail.txt"
     grep -q "^GUARD $lo $hi" "$out/tail.txt" || { echo "FAIL: tail: the guard moved between runs"; exit 1; }
     if grep -q '^BAD' "$out/tail.err"; then echo "FAIL: a read past the end of the input"; head -5 "$out/tail.err"; exit 1; fi
-    echo "PASS: tail (no access in the guard region after the input; $(tail -1 "$out/tail.err"))"
+    echo "PASS: $VT tail (no access in the guard region after the input; $(tail -1 "$out/tail.err"))"
+   done
     ;;
   odd)
     vam -t ODD 2>&1 >"$out/odd.txt" | python3 "$here/test/tracecheck.py" odd > "$out/odd.err" || true

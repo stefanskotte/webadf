@@ -3,7 +3,7 @@
  *
  * Copyright (c) 2026 Stefan Skotte and contributors. MIT licence (LICENSE in this directory).
  * Written from the LZ4 block format description (github.com/lz4/lz4, doc/lz4_Block_format.md);
- * no third-party code.
+ * no code copied from any implementation.
  *
  * lz4_68k.asm's lz4_encode and lz4_encode_linked produce exactly the bytes these functions do,
  * from the same arguments and the same hash table contents (the tests check that under an
@@ -23,6 +23,7 @@
  *     literals (down to the window start); no table update inside a match.
  *   - The LZ4 end rules: a match starts at least 12 bytes before the end; the last 5 bytes are
  *     literals.
+ *   - n > 65535, a window after src, or (src - window) + n > 65536: the result is 0.
  *   - The cap is exact: the result is the block's size if it is <= cap, else 0, and nothing is
  *     ever written at or past dst + cap.
  */
@@ -41,6 +42,7 @@ unsigned long lz4_encode_linked_ref(const void *srcv, unsigned long n, void *dst
                                     uint16_t *tab, unsigned long entries, const void *basev) {
     const uint8_t *base = basev, *src = srcv;
     uint8_t *dst = dstv;
+    if (n > 65535 || base > src || (unsigned long)(src - base) + n > 65536) return 0;
     const size_t p0 = (size_t)(src - base), end = p0 + n;
     const unsigned mask = (unsigned)(entries - 1) << 1;
     size_t pos = p0, anchor = p0, o = 0;

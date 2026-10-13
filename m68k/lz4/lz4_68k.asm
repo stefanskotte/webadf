@@ -2,8 +2,15 @@
 ; lz4_68k.asm: an LZ4 block decoder and encoder for the plain 68000.
 ;
 ; Copyright (c) 2026 Stefan Skotte and contributors. MIT licence (LICENSE in this directory).
-; Written from the LZ4 block format description (github.com/lz4/lz4, doc/lz4_Block_format.md);
-; no third-party code.
+; Written from the LZ4 block format description (github.com/lz4/lz4, doc/lz4_Block_format.md).
+; The decoder's fast path uses the technique of Arnaud Carre's lz4_fastest (MIT,
+; github.com/arnaud-carre/lz4-68k): a token jump table into unrolled copy blocks. No code was
+; copied from it or from any other implementation.
+;
+; Assemble-time option: LZ4_68K_UNCHECKED_READS = 1 (e.g. vasm -DLZ4_68K_UNCHECKED_READS=1)
+; drops the decoder fast path's two match-source checks (the window and offset 0). Writes stay
+; inside [dst, dst_end) and src is never read past its end; only where a match copies FROM is
+; no longer checked, so a malformed block may read memory below the window. Default 0: checked.
 ;
 ; Motorola syntax for vasm (vasmm68k_mot -m68000; -Faout or -Fhunk) and Devpac-style
 ; assemblers. 68000 only: no 68010+ instructions, and no word or long access at an odd address
@@ -18,6 +25,10 @@
 ;   lz4_encode_linked   the same, plus a3 = the window start (matches may reach back to it)
 ; and C (stack) entries _lz4_decode, _lz4_encode, _lz4_encode_linked, see lz4_68k.h.
 ;---------------------------------------------------------------------------------------------
+
+	ifnd	LZ4_68K_UNCHECKED_READS
+LZ4_68K_UNCHECKED_READS	equ	0
+	endif
 
 	section	code,code
 
@@ -116,11 +127,15 @@ dhead	macro				; \1 = the match nibble
 	move.b	(a0)+,-(sp)
 	move.w	(sp)+,d2
 	move.b	d1,d2
+	if	LZ4_68K_UNCHECKED_READS=0
 	beq.s	.zt\1			; low byte 0: the offset may be 0
+	endif
 .zr\1:	move.l	a1,a6
 	sub.l	d2,a6
+	if	LZ4_68K_UNCHECKED_READS=0
 	cmpa.l	a3,a6
 	bcs.s	.et\1			; reaches below the window
+	endif
 	endm
 
 ; The block's far exits, in reach of its short branches.
@@ -146,6 +161,10 @@ dmatch	macro				; \1 = the match nibble (0..14)
 lz4_decode:
 	movem.l	d1-d7/a0-a6,-(sp)
 	move.l	a1,-(sp)		; the dst start, for the result
+	cmpa.l	a1,a2
+	bcs.w	.derr			; dst_end below dst
+	cmpa.l	a1,a3
+	bhi.w	.derr			; the window starts after dst
 	lea	0(a0,d0.l),a4
 	moveq	#0,d0
 	moveq	#0,d2
@@ -435,7 +454,7 @@ DLL	macro
 	subq.l	#1,d3
 .cle:	move.l	d3,d4
 	lsr.l	#2,d4			; longs
-	and.w	#3,d3			; then 0..3 bytes
+	and.l	#3,d3			; then 0..3 bytes
 	moveq	#15,d1
 	and.w	d4,d1
 	lsr.l	#4,d4
@@ -477,7 +496,7 @@ DLL	macro
 	subq.l	#1,d3
 .cme:	move.l	d3,d4
 	lsr.l	#2,d4
-	and.w	#3,d3
+	and.l	#3,d3
 	move.w	d4,d1
 	and.w	#7,d1
 	lsr.l	#3,d4
@@ -640,6 +659,14 @@ lz4_enc:
 	lea	-12(a6),a6
 	move.l	a6,-(sp)		; 4: the last match start
 	move.l	a1,-(sp)		; 0: dst start
+	cmp.l	#$ffff,d0
+	bhi.w	.efail			; n over 65535
+	cmpa.l	a0,a3
+	bhi.w	.efail			; the window starts after src
+	move.l	8(sp),d3
+	sub.l	a3,d3
+	cmp.l	#$10000,d3
+	bhi.w	.efail			; positions from the window would pass 65535
 	lea	0(a1,d1.l),a5		; the op limit
 	move.l	a0,a4			; anchor
 	adda.l	#$8000,a3
@@ -783,7 +810,7 @@ lz4_enc:
 	bra.s	.efm1
 .efl2:	and.w	#3,d3
 .efb:	subq.w	#1,d3
-	bmi.s	.efdone
+	bcs.s	.efdone
 .efb1:	cmpm.b	(a6)+,(a0)+
 	dbne	d3,.efb1
 	beq.s	.efdone
@@ -974,7 +1001,7 @@ lz4_enc:
 	subq.l	#1,d3
 .ece:	move.l	d3,d6
 	lsr.l	#2,d6			; longs
-	and.w	#3,d3			; then 0..3 bytes
+	and.l	#3,d3			; then 0..3 bytes
 	moveq	#15,d1
 	and.w	d6,d1
 	lsr.l	#4,d6

@@ -78,8 +78,20 @@ static long dec_check(const uint8_t *b, size_t k, unsigned sa, unsigned da, size
         memcpy(o2, dst, cap);
         guard(dst, cap);
         long q = ref_decode(s, k, dst, end, w, NULL);
+#ifdef UNCHECKED
+        /* LZ4_68K_UNCHECKED_READS: where a match copies from is not checked, so a block the
+         * oracle rejects may decode; only the writes (guards, above) and the result's range
+         * are asserted then. A block the oracle accepts must decode exactly the same. */
+        if (q >= 0)
+            CHECK(r == q && !memcmp(o2, dst, (size_t)r), "valid k=%lu sa=%u da=%u: %ld, ref %ld",
+                  (unsigned long)k, sa, da, r, q);
+        else
+            CHECK(r == -1 || (r >= 0 && (size_t)r <= cap), "malformed k=%lu: %ld outside -1, 0..%lu",
+                  (unsigned long)k, r, (unsigned long)cap);
+#else
         CHECK(r == q && (r < 0 || !memcmp(o2, dst, (size_t)r)), "malformed k=%lu sa=%u da=%u: %ld, ref %ld",
               (unsigned long)k, sa, da, r, q);
+#endif
     }
     return r;
 }
@@ -247,6 +259,24 @@ static void t_tail(void) {
             long r = lz4_decode(s, kl, dst, dst + n + 16, dst);
             if (v == 0) CHECK(r == (long)n && !memcmp(dst, raw, n), "tail decode");
         }
+        /* a linked block: the window is 400 earlier bytes before dst */
+        {
+            static LZ4_stream_t ls;
+            static uint8_t pr[400 + 1600];
+            gen(pr, 400, 2);
+            memcpy(pr + 400, raw, n);
+            if (it & 1) memcpy(pr + 400, pr + rnd() % 200, n < 150 ? n : 150);
+            LZ4_initStream(&ls, sizeof ls);
+            LZ4_loadDict(&ls, (const char *)pr, 400);
+            int kl = LZ4_compress_fast_continue(&ls, (const char *)pr + 400, (char *)blk, (int)n, sizeof blk, 1);
+            uint8_t *s = top - kl, *win = obuf + G + (it & 1), *dst = win + 400;
+            memcpy(s, blk, (size_t)kl);
+            memcpy(win, pr, 400);
+            long r = lz4_decode(s, (unsigned long)kl, dst, dst + n, win);
+            CHECK(r == (long)n && !memcmp(dst, pr + 400, n), "tail linked decode");
+            s[rnd() % (unsigned)kl] ^= 0x5A;
+            (void)lz4_decode(s, (unsigned long)kl, dst, dst + n, win);
+        }
         /* the encoder's input at the very end too */
         uint8_t *s = top - n;
         memcpy(s, raw, n);
@@ -282,12 +312,95 @@ static void t_odd(void) {
     lowwin = NULL;
 }
 
+/* BIG: runs of 65,535..65,540 bytes (a long match at offsets 1, 3, 4; a last literal run) at
+ * every parity, the dst exact and with room to spare, plus truncated copies; and the entry
+ * argument checks of both entry points. */
+static uint8_t bigexp[70000];
+static void put_ext(uint8_t *b, size_t *p, size_t v) {
+    while (v >= 255) { b[(*p)++] = 255; v -= 255; }
+    b[(*p)++] = (uint8_t)v;
+}
+static void big_one(size_t k, size_t room) {
+    long q = ref_decode(blk, k, bigexp, bigexp + room, bigexp, NULL);
+    for (unsigned a = 0; a < 4; a++) {
+        if (q >= 0) dec_check(blk, k, a & 1, a >> 1, 0, room, 0, bigexp, q);
+        else dec_check(blk, k, a & 1, a >> 1, 0, room, 0, NULL, 0);
+    }
+    for (unsigned t = 0; t < 6; t++) {                /* truncated */
+        size_t tl = t < 3 ? k - 1 - t : rnd() % k;
+        memcpy(blk2, blk, tl);
+        dec_check(blk2, tl, t & 1, (t >> 1) & 1, 0, room, 0, NULL, 0);
+    }
+}
+static void t_big(void) {
+    rng_s = 5;
+    static const unsigned offs[3] = { 4, 3, 1 };
+    for (size_t len = 65535; len <= 65540; len++) {
+        for (unsigned o = 0; o < 3; o++) {          /* a long match, then 5 literals */
+            size_t p = 0;
+            blk[p++] = 0x4F; memcpy(blk + p, "ABCD", 4); p += 4;
+            blk[p++] = (uint8_t)offs[o]; blk[p++] = 0;
+            put_ext(blk, &p, len - 19);
+            blk[p++] = 0x50; memcpy(blk + p, "12345", 5); p += 5;
+            size_t out = 4 + len + 5;
+            big_one(p, out);
+            big_one(p, out - 1);
+            big_one(p, out + 1000);
+        }
+        size_t p = 0;                               /* a last literal run */
+        blk[p++] = 0xF0;
+        put_ext(blk, &p, len - 15);
+        for (size_t i = 0; i < len; i++) blk[p++] = (uint8_t)(i * 7 + 3);
+        big_one(p, len);
+        big_one(p, len - 1);
+        big_one(p, len + 1000);
+    }
+    /* entry checks */
+    uint8_t *d = obuf + G;
+    blk[0] = 0x10; blk[1] = 'x';
+    CHECK(lz4_decode(blk, 2, d, d + 10, d) == 1, "a 2-byte block");
+    CHECK(lz4_decode(blk, 2, d, d - 1, d) == -1, "dst_end below dst accepted");
+    CHECK(lz4_decode(blk, 2, d, d + 10, d + 1) == -1, "window after dst accepted");
+    gen(sbuf, 65536, 1);
+    CHECK(lz4_encode(sbuf, 65536, blk, 69000, tab_a, 1024) == 0, "n = 65536 accepted");
+    CHECK(lz4_encode_linked_ref(sbuf, 65536, blk, 69000, tab_c, 1024, sbuf) == 0, "model: n = 65536");
+    CHECK(lz4_encode_linked(sbuf + 10, 100, blk, 69000, tab_a, 1024, sbuf + 11) == 0, "window after src");
+    CHECK(lz4_encode_linked(sbuf + 65437, 100, blk, 69000, tab_a, 1024, sbuf) == 0, "window 65537 back");
+    CHECK(lz4_encode_linked(sbuf + 65436, 100, blk, 69000, tab_a, 1024, sbuf) > 0, "window 65536 back");
+    printf("vtest BIG: runs of 65535..65540 at 4 parities, truncated; entry checks\n");
+}
+
+/* ENCBIG: the asm against the model above 16 KB: n = 32767, 32769, 40000, 65535, data with
+ * periods 2, 3, 5 and mixed, linked windows reaching 65536, tables of 256 and 16384. */
+static void t_encbig(void) {
+    static const unsigned ns[4] = { 32767, 32769, 40000, 65535 };
+    static uint8_t raw[66000];
+    rng_s = 77;
+    for (unsigned i = 0; i < 16384; i++) tab_a[i] = tab_c[i] = (uint16_t)rnd();
+    for (unsigned ni = 0; ni < 4; ni++)
+        for (unsigned kind = 0; kind < 5; kind++) {
+            unsigned n = ns[ni], per = kind == 0 ? 2 : kind == 1 ? 3 : 5;
+            if (kind < 3) for (unsigned i = 0; i < 65536; i++) raw[i] = (uint8_t)(i % per * 41 + 7);
+            else gen(raw, 65536, kind == 3 ? 2 : 1);
+            unsigned long e = (ni + kind) & 1 ? 16384 : 256;
+            unsigned a = (ni + kind) & 3;
+            enc_one(raw, 0, n, a & 1, a >> 1, e, kind == 0);
+            unsigned pre = 65536 - n;                     /* linked: the window reaches 65536 */
+            if (pre) enc_one(raw, pre, n, a & 1, (a >> 1) ^ 1, e ^ (16384 ^ 256), kind == 1);
+        }
+    printf("vtest ENCBIG: n up to 65535, periods 2/3/5, linked to 65536, tables 256 and 16384\n");
+}
+
 int main(int argc, char **argv) {
     if (argc < 2) { printf("vtest DEC|LOWWIN|FUZZ|ENC|ENCR|TAIL|ODD ...\n"); return 20; }
     const char *m = argv[1];
     if (!strcmp(m, "DEC") && argc > 2) t_dec(argv[2]);
     else if (!strcmp(m, "LOWWIN") && argc > 2) { lowwin = (const uint8_t *)0x400; t_dec(argv[2]); }
     else if (!strcmp(m, "FUZZ") && argc > 3) t_fuzz((unsigned)atol(argv[2]), (unsigned)atol(argv[3]));
+    else if (!strcmp(m, "FUZZLOW") && argc > 3) { lowwin = (const uint8_t *)0x400;
+                                                 t_fuzz((unsigned)atol(argv[2]), (unsigned)atol(argv[3])); }
+    else if (!strcmp(m, "BIG")) t_big();
+    else if (!strcmp(m, "ENCBIG")) t_encbig();
     else if (!strcmp(m, "ENC") && argc > 3) t_enc(argv[2], (unsigned long)atol(argv[3]));
     else if (!strcmp(m, "ENCR") && argc > 3) t_encr((unsigned)atol(argv[2]), (unsigned)atol(argv[3]));
     else if (!strcmp(m, "TAIL")) t_tail();

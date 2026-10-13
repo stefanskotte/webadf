@@ -50,6 +50,8 @@ docker run --rm -v "$root":/work -w /work "$IMG" sh -euc '
   for v in fastest normal; do vasmm68k_mot -quiet -Faout -m68000 -I $g -o $o/glue_$v.o $g/glue_$v.s; done
   vasmm68k_mot -quiet -Faout -m68000 -o $o/lz4p_asm.o $lm/m68k/lz4p.asm
   vasmm68k_mot -quiet -Faout -m68000 -o $o/lz4_68k.o m68k/lz4/lz4_68k.asm
+  sed -E "s/lz4_(decode|encode|enc)/lz4u_\1/g" m68k/lz4/lz4_68k.asm > $g/lz4_68k_u.asm
+  vasmm68k_mot -quiet -Faout -m68000 -DLZ4_68K_UNCHECKED_READS=1 -o $o/lz4_68k_u.o $g/lz4_68k_u.asm
   m68k-amigaos-gcc $F -I m68k/lz4 -c -o $o/lz4_68k_c.o m68k/lz4/lz4_68k.c
   m68k-amigaos-gcc $F -I $lm -c -o $o/lz4p.o $lm/lz4p.c
   m68k-amigaos-gcc $F -DLZ4_MEMORY_USAGE=12 -c -o $o/lz4.o $e/lz4/lz4.c
@@ -60,7 +62,7 @@ docker run --rm -v "$root":/work -w /work "$IMG" sh -euc '
   m68k-amigaos-gcc $F -c -o $o/pnet_asm_tables.o $t/pnet_asm_tables.c
   m68k-amigaos-gcc $F -I $lm -I m68k/lz4 -DLZ4_MEMORY_USAGE=12 -c -o $o/lz4bench.o $lm/m68k/lz4bench.c
   m68k-amigaos-gcc -noixemul -m68000 -s -o $lm/build/m68k/lz4bench $o/lz4bench.o $o/lz4.o \
-    $o/glue_fastest.o $o/glue_normal.o $o/pnet_mfm_c.o $o/pnet_asm.o $o/pnet_asm_tables.o $o/lz4p_asm.o $o/lz4p.o $o/lz4_68k.o $o/lz4_68k_c.o
+    $o/glue_fastest.o $o/glue_normal.o $o/pnet_mfm_c.o $o/pnet_asm.o $o/pnet_asm_tables.o $o/lz4p_asm.o $o/lz4p.o $o/lz4_68k.o $o/lz4_68k_u.o $o/lz4_68k_c.o
 '
 
 py="$(head -1 "$(command -v vamos)" | sed 's/^#!//')"
@@ -79,13 +81,13 @@ PY
 cyc() { vam "$@" | sed -n 's/.*total cycles: //p'; }
 
 types=(dl-ftp-text dl-ftp-source dl-http dl-ftp-adf dl-ftp-random ul-acks ul-ftp-text)
-fcodecs=(lzfast lznorm lzfastl lzc rledasm rledc lzenc rleeasm rleec lz4pasm lz4pc ourdec ourdecl ourenc ourenc4k)
-bcodecs=(lzfast lznorm lzc lzenc lz4pasm ourdec ourenc ourenc4k)
+fcodecs=(lzfast lznorm lzfastl lzc rledasm rledc lzenc rleeasm rleec lz4pasm lz4pc ourdec ourdecl ourenc ourenc4k ourdecu)
+bcodecs=(lzfast lznorm lzc lzenc lz4pasm ourdec ourenc ourenc4k ourdecu)
 cpus=(68000 68020)
 # BENCH68K=1 (m68k/lz4/test.sh bench): only the rows of m68k/lz4's table, only the 68000.
 if [ -n "${BENCH68K:-}" ]; then
-  fcodecs=(ourdec lzfast ourdecl lzfastl ourenc ourenc4k lz4pasm rledasm rleeasm)
-  bcodecs=(ourdec lzfast ourenc ourenc4k lz4pasm)
+  fcodecs=(ourdec ourdecu lzfast ourdecl lzfastl ourenc ourenc4k lz4pasm rledasm rleeasm)
+  bcodecs=(ourdec ourdecu lzfast ourenc ourenc4k lz4pasm)
   cpus=(68000)
   [ -n "${TYPES:-}" ] && read -r -a types <<< "$TYPES"
   [ -n "${FCODECS:-}" ] && read -r -a fcodecs <<< "$FCODECS"

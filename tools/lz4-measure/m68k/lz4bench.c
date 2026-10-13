@@ -30,6 +30,7 @@
  *   ourenc    our encoder (m68k/lz4 lz4_encode), 1,024-entry table, cap = the raw size; VERIFY
  *             also checks it byte for byte against its C model and decodes it with LZ4
  *   ourenc4k  the same with a 4,096-entry table
+ *   ourdecu   our decoder built with LZ4_68K_UNCHECKED_READS=1 (no window / offset-0 checks)
  * Prints the raw bytes one pass covers, so build.sh can turn vamos' cycle total into cycles/byte.
  */
 #include <stdio.h>
@@ -40,6 +41,7 @@
 #include "pnet_asm.h"
 #include "lz4p.h"
 #include "lz4_68k.h"
+long lz4u_decode(const void *src, unsigned long srclen, void *dst, void *dst_end, const void *window);
 
 void lz4_fastest(const void *src, void *dst, unsigned long packed);
 void lz4_normal(const void *src, void *dst, unsigned long packed);
@@ -88,7 +90,7 @@ static int load(const char *path, int kind) {
 
 static const char *const codecs[] = { "none", "lzfast", "lznorm", "lzfastl", "lzc", "rledasm",
                                       "rledc", "lzenc", "rleeasm", "rleec", "lz4pasm", "lz4pc",
-                                      "ourdec", "ourdecl", "ourenc", "ourenc4k" };
+                                      "ourdec", "ourdecl", "ourenc", "ourenc4k", "ourdecu" };
 static uint16_t tab_o[16384], tab_oc[16384];
 static uint16_t tab_a[LZ4P_HASH], tab_c[LZ4P_HASH];
 static uint8_t encbuf2[20000];
@@ -149,6 +151,7 @@ static int pass(unsigned c, int check) {
             cmp = NULL;
             break;
         }
+        case 16: got = lz4u_decode(r->hc, r->nhc, outbuf, outbuf + r->nraw, outbuf); break;
         default: return 0;
         }
         if (check && cmp && (got != (long)r->nraw || memcmp(cmp, r->raw, r->nraw))) return 0;

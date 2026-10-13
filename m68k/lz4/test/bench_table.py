@@ -3,7 +3,7 @@ Copyright (c) 2026 Stefan Skotte and contributors. MIT licence (../LICENSE).
 Rows: corpus type and kind (F = 64 single frames, B = 8 whole batches as one block);
 columns: 68000 cycles per raw byte (vamos)."""
 import sys
-cols = [('ourdec', 'our decode'), ('lzfast', 'Carré fastest'), ('ourenc', 'our encode 1K'),
+cols = [('ourdec', 'our decode'), ('ourdecu', 'our decode, unchecked reads'), ('lzfast', 'Carré fastest'), ('ourenc', 'our encode 1K'),
         ('ourenc4k', 'our encode 4K'), ('lz4pasm', 'lz4p encode'), ('rledasm', 'asm RLE decode'),
         ('rleeasm', 'asm RLE encode')]
 v = {}

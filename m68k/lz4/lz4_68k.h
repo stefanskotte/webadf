@@ -3,8 +3,10 @@
  * reference model of the encoder (lz4_68k.c).
  *
  * Copyright (c) 2026 Stefan Skotte and contributors. MIT licence (LICENSE in this directory).
- * Written from the LZ4 block format description (github.com/lz4/lz4, doc/lz4_Block_format.md);
- * no third-party code.
+ * Written from the LZ4 block format description (github.com/lz4/lz4, doc/lz4_Block_format.md).
+ * The decoder's fast path uses the technique of Arnaud Carre's lz4_fastest (MIT,
+ * github.com/arnaud-carre/lz4-68k): a token jump table into unrolled copy blocks. No code was
+ * copied from it or from any other implementation.
  *
  * Format: the standard LZ4 *block* (no frame header, no checksum): little-endian offsets, the
  * last 5 bytes literals, the last match starting at least 12 bytes before the end. Blocks from
@@ -31,6 +33,11 @@
  *   Never writes outside [a1, a2), never reads src outside [a0, a0 + d0), never reads a match
  *   source outside [a3, the current output position). src must not overlap [a3, a2).
  *   Rejects an offset of 0 (the format says it is invalid; liblz4 does not check it).
+ *   Returns -1 at once if a2 < a1 or a3 > a1. A window below $10000 sends the whole block
+ *   through the slow checked loop (so that no match source can wrap below address 0).
+ *   Built with LZ4_68K_UNCHECKED_READS = 1, the fast path does not check the window or offset
+ *   0: writes still stay inside [a1, a2) and src is never read past its end, but a malformed
+ *   block may make it copy from memory below a3 (and return a length, not -1).
  *   Accepts any block that is structurally valid (it does not enforce the encoder-side end
  *   rules "last 5 bytes literals / last match 12 bytes before the end"); an empty src (d0 = 0)
  *   is malformed (-1), the 1-byte block 0x00 decodes to 0 bytes.
@@ -40,7 +47,8 @@
  *        a1 = dst, d1.l = cap: the most bytes dst may take
  *        a2 = hash table: d2.l entries of 16 bits (word aligned, so at an even address)
  *        d2.l = table entries, a power of two from 256 to 16384 (1024 = 2 KB, 4096 = 8 KB)
- *   out: d0.l = the block's size (1 .. cap), or 0 if the block would be larger than cap.
+ *   out: d0.l = the block's size (1 .. cap), or 0 if the block would be larger than cap, or
+ *        if n > 65535.
  *        Nothing is written at or past dst + cap, in either case.
  *   The table needs no clearing, ever: any contents are valid (stale entries are verified
  *   before use), so keep it between calls. Its contents only change which matches are found,
@@ -48,12 +56,13 @@
  *
  * lz4_encode_linked
  *   the same as lz4_encode, plus a3 = window start (a3 <= a0): matches may copy from
- *   [a3, a0 + position). Requires (a0 - a3) + n <= 65536. Decode the block with the same
+ *   [a3, a0 + position). Requires (a0 - a3) + n <= 65536 and a3 <= a0, else returns 0. Decode the block with the same
  *   window: lz4_decode with a3 = the window, a1 = the frame's place right after the earlier
  *   frames. A table carried over from encoding the earlier frames against the same window
  *   finds matches into them; that is how linking gains.
  *
- * Stack use: the decoder 66 bytes, the encoder 78 bytes (both including the saved registers).
+ * Stack use (peak, below the caller's return address, saved registers included): the decoder
+ * 64 bytes, the encoder 80; the C entries add 12 (decode, encode) or 16 (encode_linked).
  * Code: about 4.2 KB decoder, 1.0 KB encoder, 0.1 KB C entries (5.3 KB in all).
  *
  * ---- C entries (stack arguments; m68k-amigaos gcc, vbcc) ----
@@ -72,7 +81,8 @@ extern "C" {
 #define LZ4_68K_TABLE_SMALL 1024u
 #define LZ4_68K_TABLE_LARGE 4096u
 
-#if defined(__mc68000__) || defined(__m68k__) || defined(LZ4_68K_ASM)
+#if defined(__mc68000__) || defined(__m68k__) || defined(__VBCC__) || defined(__amigaos__) || \
+    defined(LZ4_68K_ASM)
 /* lz4_68k.asm */
 long lz4_decode(const void *src, unsigned long srclen, void *dst, void *dst_end,
                 const void *window);
