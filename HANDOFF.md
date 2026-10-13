@@ -1664,7 +1664,7 @@ separately.
   element list, and golden framebuffers. An old board must reject or ignore an unknown element safely, and the
   editor must hide the element for firmware that lacks it, like other version-gated features. Decide what it shows
   in each state: reader present, absent, write armed.
-- **Screenshots of the web app's pages for the GitHub page** (operator, 2026-10-08): library, game page, disk
+- ~~**Screenshots of the web app's pages for the GitHub page**~~ **DONE 2026-10-13: README Screenshots section; re-run with `PORT=3100 pnpm screenshots` (e2e/screenshots.shots.ts, its own config, cleans up its own demo org only).** (operator, 2026-10-08): library, game page, disk
   page/file browser with history, Devices (bezel card and display editor), Help. Capture them with Playwright
   from a seeded demo org, never from a real tenant's data.
 - **GitHub releases = the web app's signed releases (2026-10-09, 756c004).** `pnpm firmware:publish` also creates
@@ -1706,7 +1706,7 @@ separately.
   is in progress: `docs/superpowers/research/2026-10-09-uf2-drag-drop-first-install.md` (a single combined UF2, or
   a partition table embedded in the image that the firmware writes on first boot). Bench-testing it needs a board
   with its flash wiped, after a picotool backup.
-- **Quickstart on the GitHub page for a first install** (operator, 2026-10-08). The repo README / GitHub page
+- ~~**Quickstart on the GitHub page for a first install**~~ **DONE 2026-10-13: README Quickstart, one UF2. Still stale: wifi-floppy/README.md "Provisioning a board" calls steps 4-5 unverified on hardware (they passed, 3bf).** (operator, 2026-10-08). The repo README / GitHub page
   should carry step-by-step instructions for putting the firmware on a new board: hold BOOTSEL while plugging in,
   copy the release `.uf2` onto the RPI-RP2 / RP2350 drive that appears, then pair from the web app. After that,
   updates go over the air. Check the steps against `scripts/firmware-install-partitioned.sh` first: the board uses a
