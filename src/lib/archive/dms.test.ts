@@ -170,6 +170,33 @@ describe('readDms', () => {
     expect(r.info.fileId).toBe('A demo disk');
   });
 
+  it('strips trailing NULs and whitespace from FILE_ID.DIZ, but not inner NULs', () => {
+    const tracks = wholeDisk(cylOf);
+    tracks.push({ number: 80, data: new Uint8Array([0x20, 0x41, 0x00, 0x42, 0x20, 0x0a, 0x00, 0x00]), cmode: 0 });
+    const r = readDms(buildDms(tracks));
+    expect(r.ok && r.info.fileId).toBe('A\0B');
+    const empty = wholeDisk(cylOf);
+    empty.push({ number: 80, data: new Uint8Array(16), cmode: 0 });
+    const e = readDms(buildDms(empty));
+    expect(e.ok && e.info.fileId).toBeUndefined();
+  });
+
+  it('reads a flood of FILE_ID.DIZ tracks in linear time', () => {
+    // Nothing limits how many track 80s an archive carries. Each here is 2 KB
+    // of NULs and one 'x': a /\0+$/ strip retries from every NUL, ~6 ms a
+    // track, and 4 MiB of them (the .dms/.dmz cap) took 12.2 s from a URL.
+    // 1 MiB of them took ~3 s before the fix; a linear scan takes a few ms.
+    const diz = new Uint8Array(2048);
+    diz[2047] = 0x78;
+    const tracks = wholeDisk(cylOf);
+    for (let i = 0; i < 500; i++) tracks.push({ number: 80, data: diz, cmode: 0 });
+    const src = buildDms(tracks);
+    const t = performance.now();
+    const r = readDms(src);
+    expect(performance.now() - t).toBeLessThan(500);
+    expect(r.ok && r.info.fileId).toBe('\0'.repeat(2047) + 'x');
+  });
+
   it('never throws, whatever it is handed', () => {
     // This runs in a browser on a file a person dropped in. A thrown
     // exception is a dead UI, so the contract is "always a result".

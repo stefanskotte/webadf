@@ -627,8 +627,13 @@ function decode(src: Uint8Array): DmsResult {
     const isDiskTrack = number < 80 && unpklen > 2048;
     if (!isDiskTrack) {
       if (number === 80 && cmode === 0 && unpklen <= 2048) {
-        fileId = new TextDecoder('latin1').decode(b1.subarray(0, Math.min(pklen1, unpklen)))
-          .replace(/\0+$/, '').trim() || undefined;
+        // Trailing NULs are stripped by a scan, NOT by /\0+$/. That regex
+        // retries from every NUL when the text does not end in one, so 2 KB
+        // of NULs and an 'x' cost 6 ms -- and nothing limits how many track
+        // 80s an archive repeats: 4 MiB of them held the server 12.2 s.
+        let end = Math.min(pklen1, unpklen);
+        while (end > 0 && b1[end - 1] === 0) end--;
+        fileId = new TextDecoder('latin1').decode(b1.subarray(0, end)).trim() || undefined;
       }
       if (!(flags & 1)) state.reset();
       continue;
