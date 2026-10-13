@@ -4931,7 +4931,7 @@ its bench-proven rule. Model `drive_id_model_restart` + test `df1_a_new_id_needs
 (fails without the restart, mutation-checked). Host 57 files / 20,226 checks green; gcc13 -Werror green; release
 config builds with 0 warnings. Opus review: **ready to ship for the default build** (DF1 answers only DD/NONE).
 
-**Bench owed (morning):** TEST build of the branch -> install (Amiga off) -> Off, reset, Next, ONE reset: DF1 present;
+**TEST build installed 2026-10-14 00:40 (Amiga off):** `1.11.1+g0a157eb` (branch head, FIRMWARE_SEMVER 1.11.1), registry seq 80 only, confirmed on the board (heap low-water 81,920). **Bench owed (morning, can be driven via the PiKVM once the Amiga is on):** Off, reset, Next, ONE reset: DF1 present;
 Network likewise; Off + one reset: DF1 gone. Then merge and release 1.11.1.
 
 **Bug A (`DF1: Unreadable disk` after Network -> Off) did not reproduce:** Off while online gave `No disk present`.
