@@ -17,10 +17,10 @@ export function describeUrlRefusal(code: string, status?: number, retryAfter?: n
         : `The server refused the download${status ? ` (HTTP ${status})` : ''}.`;
     case 'too_large': return 'The download is larger than 20 MB.';
     case 'timeout': return 'The download took too long.';
-    case 'not_a_disk_image': return 'That download is not an ADF, ADZ, DMS or HFE disk image (or a .zip of them).';
-    case 'no_disk_images': return 'The .zip has no disk images in it.';
-    case 'too_many_images': return 'The .zip holds more than 20 disk images; upload them from your computer instead.';
-    case 'unsupported_archive': return 'Only .zip archives can be unpacked here; LHA, 7z and RAR cannot yet.';
+    case 'not_a_disk_image': return 'That download is not an ADF, ADZ, DMS, DMZ or HFE disk image (or a .zip or .lha of them).';
+    case 'no_disk_images': return 'The archive has no disk images in it.';
+    case 'too_many_images': return 'The archive holds more than 20 disk images; upload them from your computer instead.';
+    case 'unsupported_archive': return 'Only .zip and .lha archives can be unpacked here; 7z and RAR cannot yet.';
     case 'rate_limited':
       return `Too many fetches in a row${retryAfter ? `; try again in ${retryAfter} s` : ''}.`;
     case 'store_busy': return 'Storage is busy right now; try again in a moment.';

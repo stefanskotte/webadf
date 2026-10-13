@@ -133,3 +133,50 @@ describe('malformed input', () => {
     expect(entries[0]?.path).not.toContain('\0');
   });
 });
+
+describe('size guard (a header states the original size; nothing checks it is honest)', () => {
+  // fixtures/disks.lha: Game/Disk1.adf and Game/Disk2.adf (-lh5-, 901,120
+  // bytes each) and Game/readme.txt (-lh0-), level 1, made by `lha ao51`.
+  const ADF = 901_120;
+  /** The first entry's "original size" field, at offset 11 of its header. */
+  const claimSize = (buf: Uint8Array, n: number) => {
+    buf[11] = n & 0xff; buf[12] = (n >>> 8) & 0xff; buf[13] = (n >>> 16) & 0xff; buf[14] = (n >>> 24) & 0xff;
+  };
+
+  it('reads every member when no limit is given', () => {
+    const { entries, skipped } = readLha(read('disks.lha'));
+    expect(skipped).toEqual([]);
+    expect(entries.map((e) => [e.path, e.bytes.length])).toEqual([
+      ['Game/Disk1.adf', ADF], ['Game/Disk2.adf', ADF], ['Game/readme.txt', 10],
+    ]);
+  });
+
+  it('skips a member that claims more than maxEntryBytes, without allocating it', () => {
+    const buf = read('disks.lha').slice();
+    claimSize(buf, 0xffff_ff00);   // ~4 GB: the allocation the guard exists to prevent
+    const { entries, skipped } = readLha(buf, { maxEntryBytes: 4 * 1024 * 1024 });
+    expect(skipped).toEqual([{ path: 'Game/Disk1.adf', reason: 'too large' }]);
+    // The walk carries on past it: the header's packed size is still right.
+    expect(entries.map((e) => e.path)).toEqual(['Game/Disk2.adf', 'Game/readme.txt']);
+  });
+
+  it('stops decoding once maxTotalBytes would be passed', () => {
+    const { entries, skipped } = readLha(read('disks.lha'), { maxTotalBytes: ADF + 100 });
+    expect(entries.map((e) => e.path)).toEqual(['Game/Disk1.adf', 'Game/readme.txt']);
+    expect(skipped).toEqual([{ path: 'Game/Disk2.adf', reason: 'archive limit reached' }]);
+  });
+
+  it('decodes only the members accept() takes, skipping the rest as not selected', () => {
+    const { entries, skipped } = readLha(read('disks.lha'), { accept: (p) => p.endsWith('.adf') });
+    expect(entries.map((e) => e.path)).toEqual(['Game/Disk1.adf', 'Game/Disk2.adf']);
+    expect(skipped).toEqual([{ path: 'Game/readme.txt', reason: 'not selected' }]);
+  });
+
+  it('applies the guard on the drop path too (expandArchive)', async () => {
+    const { expandArchive } = await import('./index');
+    const buf = read('disks.lha').slice();
+    claimSize(buf, 0xffff_ff00);
+    const r = await expandArchive('disks.lha', buf);
+    expect(r && 'skipped' in r && r.skipped).toEqual([{ path: 'Game/Disk1.adf', reason: 'too large' }]);
+  });
+});

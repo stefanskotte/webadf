@@ -41,10 +41,11 @@ export interface ArchiveResult {
  */
 export const MAX_ARCHIVE_BYTES = 25 * 1024 * 1024;
 
-/** What one zip member may inflate to: the same per-file bound the URL path and
- *  the dropzone use for compressed images (an ADF is 880 KB, an HD one 1.8 MB). */
+/** What one zip or LHA member may inflate to: the same per-file bound the URL
+ *  path and the dropzone use for compressed images (an ADF is 880 KB, an HD one
+ *  1.8 MB). */
 export const MAX_ZIP_MEMBER_BYTES = MAX_COMPRESSED_IMAGE_BYTES;
-/** What a whole zip may inflate to: the URL path's worst case, 20 images of 4 MiB. */
+/** What a whole zip or LHA may inflate to: the URL path's worst case, 20 images of 4 MiB. */
 export const MAX_ZIP_TOTAL_BYTES = 20 * MAX_COMPRESSED_IMAGE_BYTES;
 
 export function isArchiveName(name: string): boolean {
@@ -79,7 +80,10 @@ export async function expandArchive(
       }
       return { format: 'zip', members: entries, skipped };
     }
-    const { entries, skipped } = readLha(bytes);
+    // The same caps as a zip: an LHA header states each member's size and the
+    // decoder allocates what it says, so without them a crafted header asks
+    // the tab for 4 GB.
+    const { entries, skipped } = readLha(bytes, { maxEntryBytes: MAX_ZIP_MEMBER_BYTES, maxTotalBytes: MAX_ZIP_TOTAL_BYTES });
     // An .lha that yields nothing at all is a file that is not really an
     // archive, or one in a method from before 1990. Either way the honest
     // answer is "could not read it" rather than an empty list that looks like

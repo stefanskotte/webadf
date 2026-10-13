@@ -101,6 +101,19 @@ function readExtended(
   return { dir, name, protection, end: pos };
 }
 
+export interface LhaReadOptions {
+  /** Only members whose path this accepts are decoded; the rest are skipped
+   *  with reason 'not selected'. Default: every member. */
+  accept?: (path: string) => boolean;
+  /** Largest member to decode, judged by the size its header CLAIMS -- which
+   *  is what the decoder allocates, so a header saying 4 GB is refused here
+   *  ('too large') before any allocation. Default: unbounded. */
+  maxEntryBytes?: number;
+  /** Largest sum of decoded output; once a member would pass it, it is skipped
+   *  as 'archive limit reached'. Default: unbounded. */
+  maxTotalBytes?: number;
+}
+
 /** Methods this reader decodes, and the window size each one uses. */
 const DIC_BITS: Record<string, number> = { '-lh5-': 13, '-lh6-': 15, '-lh7-': 16 };
 
@@ -109,7 +122,10 @@ const DIC_BITS: Record<string, number> = { '-lh5-': 13, '-lh6-': 15, '-lh7-': 16
  * returns what it could read plus a `skipped` reason, because the caller is a
  * drop target and an exception there is a dead UI with no explanation.
  */
-export function readLha(buf: Uint8Array): LhaReadResult {
+export function readLha(buf: Uint8Array, opts: LhaReadOptions = {}): LhaReadResult {
+  const maxEntry = opts.maxEntryBytes ?? Number.MAX_SAFE_INTEGER;
+  const maxTotal = opts.maxTotalBytes ?? Number.MAX_SAFE_INTEGER;
+  let total = 0;
   const entries: LhaEntry[] = [];
   const skipped: { path: string; reason: string }[] = [];
   let off = 0;
@@ -165,12 +181,26 @@ export function readLha(buf: Uint8Array): LhaReadResult {
 
     const data = buf.subarray(dataStart, dataStart + Math.max(0, packed));
 
+    const decodable = method === '-lh0-' || method === '-lz4-' || DIC_BITS[method] !== undefined;
+
     if (method === '-lhd-') {
       // A directory entry. Carries no data, and the staging area creates
       // parents implicitly from entry paths, so there is nothing to emit.
+    } else if (decodable && opts.accept && !opts.accept(path)) {
+      skipped.push({ path, reason: 'not selected' });
+    } else if (decodable && original > maxEntry) {
+      // The header's claim is what decodeLzh allocates up front, so it is
+      // judged before decoding: an archive cannot make us allocate 4 GB.
+      skipped.push({ path, reason: 'too large' });
+    } else if (decodable && total + original > maxTotal) {
+      skipped.push({ path, reason: 'archive limit reached' });
     } else if (method === '-lh0-' || method === '-lz4-') {
+      total += original;
       entries.push({ path, bytes: data.slice(0, original), protection, method });
     } else if (DIC_BITS[method] !== undefined) {
+      // Charged whether or not the stream turns out complete: the work and the
+      // allocation happen either way.
+      total += original;
       const outBytes = decodeLzh(data, original, DIC_BITS[method]);
       if (outBytes.length !== original) {
         skipped.push({ path, reason: `truncated (${outBytes.length}/${original} bytes)` });
