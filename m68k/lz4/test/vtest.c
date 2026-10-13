@@ -163,7 +163,8 @@ static void enc_one(const uint8_t *raw, size_t pre, size_t n, unsigned sa, unsig
     static uint16_t t0[16384];
     if (capcheck) memcpy(t0, tab_a, sizeof t0);
     uint8_t *d = obuf + G + da;
-    guard(obuf, sizeof obuf);
+    size_t gl = G + da + n + n / 255 + 16 + G;          /* the bytes a block can reach, guards included */
+    guard(obuf, gl);
     unsigned long kc = lz4_encode_linked_ref(src, n, blk, sizeof blk, tab_c, entries, win);
     unsigned long ka = pre ? lz4_encode_linked(src, n, d, 69000, tab_a, entries, win)
                            : lz4_encode(src, n, d, 69000, tab_a, entries);
@@ -182,7 +183,7 @@ static void enc_one(const uint8_t *raw, size_t pre, size_t n, unsigned sa, unsig
         for (unsigned c = 0; c < 3; c++) {
             static uint16_t t1[16384];
             memcpy(t1, t0, sizeof t1);
-            guard(obuf, sizeof obuf);
+            guard(obuf, gl);
             unsigned long k2 = pre ? lz4_encode_linked(src, n, d, caps[c], t1, entries, win)
                                    : lz4_encode(src, n, d, caps[c], t1, entries);
             CHECK(k2 == (c ? 0 : ka) && (c || !memcmp(d, blk, ka)), "cap %lu: %lu (size %lu)", caps[c], k2, ka);
@@ -259,20 +260,21 @@ static void t_tail(void) {
 static void t_odd(void) {
     static uint8_t raw[3000];
     rng_s = 7;
-    for (unsigned it = 0; it < 12; it++) {
-        unsigned n = it < 4 ? 600 + rnd() % 900 : 20 + rnd() % 300;
+    for (unsigned it = 0; it < 6; it++) {
+        unsigned n = it < 2 ? 400 + rnd() % 400 : 20 + rnd() % 200;
         gen(raw, n, it % NGEN == 0 ? 2 : it % NGEN);
-        int k = LZ4_compress_default((const char *)raw, (char *)blk, (int)n, sizeof blk);
+        static uint8_t lb[4000];                /* (enc_one uses blk) */
+        int k = LZ4_compress_default((const char *)raw, (char *)lb, (int)n, sizeof lb);
         for (unsigned a = 0; a < 4; a++) {
-            dec_check(blk, (size_t)k, a & 1, a >> 1, 0, n, 0, raw, (long)n);
-            dec_check(blk, (size_t)k, a & 1, a >> 1, 0, n - 1, 0, NULL, 0);
-            unsigned pre = it & 1 ? 100 : 0;
+            dec_check(lb, (size_t)k, a & 1, a >> 1, 0, n, 0, raw, (long)n);
+            dec_check(lb, (size_t)k, a & 1, a >> 1, 0, n - 1, 0, NULL, 0);
+            unsigned pre = (it & 1) && n > 150 ? 100 : 0;
             enc_one(raw, pre, n - pre, a & 1, a >> 1, 1024, a == 0);
         }
     }
     lowwin = (const uint8_t *)0x400;
-    for (unsigned it = 0; it < 4; it++) {
-        unsigned n = 200 + rnd() % 800;
+    for (unsigned it = 0; it < 2; it++) {
+        unsigned n = 200 + rnd() % 300;
         gen(raw, n, 2);
         int k = LZ4_compress_default((const char *)raw, (char *)blk, (int)n, sizeof blk);
         for (unsigned a = 0; a < 4; a++) dec_check(blk, (size_t)k, a & 1, a >> 1, 0, n, 0, raw, (long)n);

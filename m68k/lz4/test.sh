@@ -104,34 +104,27 @@ for s in "${steps[@]}"; do
     done
     ;;
   tail)
-    vam -t TAIL > "$out/tail.txt" 2> "$out/tail.trace" || true
+    # The guard region's address comes from an untraced run (vamos loads the program at the same
+    # addresses every time); the traced run's memory trace goes straight through a filter (it is
+    # large), which reports every access inside the guard region after the input.
+    vam TAIL > "$out/tail0.txt" 2>&1 || true
+    read -r lo hi < <(sed -n 's/^GUARD \([0-9a-f]*\) \([0-9a-f]*\)/\1 \2/p' "$out/tail0.txt")
+    vam -t TAIL 2>&1 >"$out/tail.txt" | python3 "$here/test/tracecheck.py" guard "$lo" "$hi" > "$out/tail.err" || true
     pass "tail run" "$out/tail.txt"
-    read -r lo hi < <(sed -n 's/^GUARD \([0-9a-f]*\) \([0-9a-f]*\)/\1 \2/p' "$out/tail.txt")
-    # every access the program made inside the guard region (it never touches it itself)
-    python3 - "$lo" "$hi" "$out/tail.trace" > "$out/tail.err" <<'PY' || { echo "FAIL: a read past the end of the input"; head -5 "$out/tail.err"; exit 1; }
-import re, sys
-lo, hi = int(sys.argv[1], 16), int(sys.argv[2], 16)
-bad = 0
-for line in open(sys.argv[3], errors='replace'):
-    m = re.search(r' ([RW])\((\d)\): ([0-9a-f]+): ', line)
-    if m:
-        a = int(m.group(3), 16)
-        if a + int(m.group(2)) > lo and a < hi:
-            print(line.rstrip()); bad += 1
-sys.exit(1 if bad else 0)
-PY
-    echo "PASS: tail (no read in the guard region after the input; $(grep -c ' R(' "$out/tail.trace") reads traced)"
+    grep -q "^GUARD $lo $hi" "$out/tail.txt" || { echo "FAIL: tail: the guard moved between runs"; exit 1; }
+    if grep -q '^BAD' "$out/tail.err"; then echo "FAIL: a read past the end of the input"; head -5 "$out/tail.err"; exit 1; fi
+    echo "PASS: tail (no access in the guard region after the input; $(tail -1 "$out/tail.err"))"
     ;;
   odd)
-    vam -t ODD > "$out/odd.txt" 2> "$out/odd.trace" || true
+    vam -t ODD 2>&1 >"$out/odd.txt" | python3 "$here/test/tracecheck.py" odd > "$out/odd.err" || true
     pass "odd run" "$out/odd.txt"
-    if grep -E ' [RW]\((2|4)\): [0-9a-f]*[13579bdf]: ' "$out/odd.trace" > "$out/odd.err"; then
-      echo "FAIL: a word or long access at an odd address"; head -5 "$out/odd.err"; exit 1
-    fi
-    echo "PASS: odd (no word or long access at an odd address; $(grep -cE ' [RW]\(' "$out/odd.trace") accesses traced)"
+    if grep -q '^BAD' "$out/odd.err"; then echo "FAIL: a word or long access at an odd address"; head -5 "$out/odd.err"; exit 1; fi
+    echo "PASS: odd (no word or long access at an odd address; $(tail -1 "$out/odd.err"))"
     ;;
   bench)
+    [ -d "$lm/build/frames" ] || { echo "no frames dump: run tools/lz4-measure/build.sh"; exit 1; }
     BENCH68K=1 "$lm/m68k/build.sh" "$lm/build/frames" "${REPS:-2}"
+    python3 "$here/test/bench_table.py" "$lm/build/m68k/cycles-68k.txt" | tee "$out/bench-table.md"
     ;;
   *) echo "unknown step $s"; exit 2 ;;
   esac
