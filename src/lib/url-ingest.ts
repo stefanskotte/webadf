@@ -6,12 +6,12 @@
 // registerUploads() IS /complete's code (src/lib/ingest-complete.ts), so
 // verification, dedupe, HFE inspection, entitlements, grouping and the TOSEC
 // sweep are one code path whichever way the bytes arrived. The format
-// handling is the dropzone's too: toAdf() for .adf/.adz/.dms, inspectHfe()
+// handling is the dropzone's too: toAdf() for .adf/.adz/.dms/.dmz, inspectHfe()
 // for .hfe, isUploadableSize() for the size limit.
 //
 // What a URL adds, and the browser path does not need: the bytes are not
 // trusted to be what the URL or the server's Content-Type says. They are
-// sniffed (zip / gzip / DMS / HFE signatures, or exactly an ADF's size), and
+// sniffed (zip / LHA / gzip / DMS / HFE signatures, or exactly an ADF's size), and
 // anything else -- an HTML error page, most often -- is refused.
 
 import { inArray } from 'drizzle-orm';
@@ -20,8 +20,9 @@ import { blobs } from '@/db/schema/catalog';
 import { diskStore } from '@/lib/storage';
 import { contentHashes } from '@/lib/content-hashes';
 import { registerUploads } from '@/lib/ingest-complete';
-import { toAdf, DISK_IMAGE_PATTERN, MAX_COMPRESSED_IMAGE_BYTES } from '@/lib/archive/disk-image';
+import { toAdf, gzipHoldsDms, DISK_IMAGE_PATTERN, MAX_COMPRESSED_IMAGE_BYTES } from '@/lib/archive/disk-image';
 import { readZip } from '@/lib/archive/zip';
+import { readLha } from '@/lib/archive/lha';
 import { inspectHfe, describeInspection } from '@/lib/hfe/inspect';
 import { adfDensity, isHfeFilename } from '@/lib/disk-format';
 import { isUploadableSize, describeUnuploadableSize } from '@/lib/blob-upload';
@@ -89,7 +90,7 @@ export function nameFromResponse(finalUrl: URL, contentDisposition: string | nul
 function withExt(name: string, ext: string): string {
   const stem = name
     .replace(/\.gz$/i, '')
-    .replace(/\.(adf|dsk|adz|dms|hfe|zip|bin|img|php|cgi|aspx?|html?)$/i, '');
+    .replace(/\.(adf|dsk|adz|dms|dmz|hfe|zip|lha|lzh|bin|img|php|cgi|aspx?|html?)$/i, '');
   return `${stem || 'download'}.${ext}`;
 }
 
@@ -161,23 +162,35 @@ export async function prepareImages(
     case 'hfe': return single(withExt(offeredName, 'hfe'));
     case 'gzip': {
       if (bytes.length > MAX_COMPRESSED_IMAGE_BYTES) return { code: 'not_a_disk_image' };
-      // A gzipped ADF is an .adz. toAdf's gunzip is bounded at the disk limit,
-      // and prepareOne refuses anything that does not come out ADF-sized.
-      const r = await single(withExt(offeredName, 'adz'));
+      // A gzipped ADF is an .adz, a gzipped DMS a .dmz; the name a URL offers
+      // is not trusted to say which, so the first decompressed bytes do.
+      // toAdf's gunzip is bounded, and prepareOne refuses anything that does
+      // not come out ADF-sized.
+      const ext = (await gzipHoldsDms(bytes)) ? 'dmz' : 'adz';
+      const r = await single(withExt(offeredName, ext));
       return r.images.length === 0 ? { code: 'not_a_disk_image' } : r;
     }
-    case 'zip': {
+    case 'zip':
+    case 'lha': {
       // Members are taken by their own names, as a dropped folder would be.
       const wanted = (p: string) => !p.startsWith('__MACOSX/') && DISK_IMAGE_PATTERN.test(p);
-      // First pass: count from the central directory, accepting nothing, so
-      // nothing is inflated before we know the archive is within the cap.
+      // First pass: count, accepting nothing, so nothing is decompressed
+      // before we know the archive is within the cap. A zip counts from its
+      // central directory; an LHA walks its headers, skipping the data.
       let selected = 0;
-      await readZip(bytes, { accept: (p) => { if (wanted(p)) selected++; return false; } });
+      const count = (p: string) => { if (wanted(p)) selected++; return false; };
+      if (kind === 'zip') await readZip(bytes, { accept: count });
+      else readLha(bytes, { accept: count });
       if (selected > MAX_IMAGES_PER_URL) return { code: 'too_many_images' };
-      const { entries, skipped } = await readZip(bytes, {
+      // Each member is bounded by what one compressed image may be, judged
+      // for an LHA by the size its header claims (what its decoder would
+      // allocate), and the whole by MAX_IMAGES_PER_URL of those.
+      const limits = {
         accept: wanted,
         maxEntryBytes: MAX_COMPRESSED_IMAGE_BYTES,
-      });
+        maxTotalBytes: MAX_IMAGES_PER_URL * MAX_COMPRESSED_IMAGE_BYTES,
+      };
+      const { entries, skipped } = kind === 'zip' ? await readZip(bytes, limits) : readLha(bytes, limits);
       const out: Prepared = { images: [], refused: [] };
       for (const e of entries) {
         const r = await prepareOne(cleanName(e.path) || 'disk.adf', e.bytes);
@@ -185,12 +198,15 @@ export async function prepareImages(
       }
       for (const s of skipped) {
         if (s.reason === 'not selected' || !DISK_IMAGE_PATTERN.test(s.path)) continue;
+        // Backstop: the count above already bounds the wanted members, but a
+        // reader that one day skips without asking accept() must not turn one
+        // download into hundreds of thousands of rows.
+        if (out.refused.length >= MAX_IMAGES_PER_URL) break;
         out.refused.push({ filename: cleanName(s.path), sizeBytes: 0, sha256: null, state: 'failed', note: s.reason });
       }
       if (out.images.length === 0 && out.refused.length === 0) return { code: 'no_disk_images' };
       return out;
     }
-    case 'lha':
     case 'other-archive':
       return { code: 'unsupported_archive' };
     default:

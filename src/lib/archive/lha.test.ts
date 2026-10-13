@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { readLha, type LhaEntry } from './lha';
+import { decodeLzh, LzhWorkBudgetError, LzhCorruptError } from './lzh-decode';
 
 /**
  * Fixtures are produced by /opt/homebrew/bin/lha, not by anything in this
@@ -131,5 +132,168 @@ describe('malformed input', () => {
     buf[nameAt + 3] = 0;   // truncate the first entry's name early
     const { entries } = readLha(buf);
     expect(entries[0]?.path).not.toContain('\0');
+  });
+});
+
+describe('size guard (a header states the original size; nothing checks it is honest)', () => {
+  // fixtures/disks.lha: Game/Disk1.adf and Game/Disk2.adf (-lh5-, 901,120
+  // bytes each) and Game/readme.txt (-lh0-), level 1, made by `lha ao51`.
+  const ADF = 901_120;
+  /** The first entry's "original size" field, at offset 11 of its header. */
+  const claimSize = (buf: Uint8Array, n: number) => {
+    buf[11] = n & 0xff; buf[12] = (n >>> 8) & 0xff; buf[13] = (n >>> 16) & 0xff; buf[14] = (n >>> 24) & 0xff;
+  };
+
+  it('reads every member when no limit is given', () => {
+    const { entries, skipped } = readLha(read('disks.lha'));
+    expect(skipped).toEqual([]);
+    expect(entries.map((e) => [e.path, e.bytes.length])).toEqual([
+      ['Game/Disk1.adf', ADF], ['Game/Disk2.adf', ADF], ['Game/readme.txt', 10],
+    ]);
+  });
+
+  it('skips a member that claims more than maxEntryBytes, without allocating it', () => {
+    const buf = read('disks.lha').slice();
+    claimSize(buf, 0xffff_ff00);   // ~4 GB: the allocation the guard exists to prevent
+    const { entries, skipped } = readLha(buf, { maxEntryBytes: 4 * 1024 * 1024 });
+    expect(skipped).toEqual([{ path: 'Game/Disk1.adf', reason: 'too large' }]);
+    // The walk carries on past it: the header's packed size is still right.
+    expect(entries.map((e) => e.path)).toEqual(['Game/Disk2.adf', 'Game/readme.txt']);
+  });
+
+  it('stops decoding once maxTotalBytes would be passed', () => {
+    const { entries, skipped } = readLha(read('disks.lha'), { maxTotalBytes: ADF + 100 });
+    expect(entries.map((e) => e.path)).toEqual(['Game/Disk1.adf', 'Game/readme.txt']);
+    expect(skipped).toEqual([{ path: 'Game/Disk2.adf', reason: 'archive limit reached' }]);
+  });
+
+  it('decodes only the members accept() takes, skipping the rest as not selected', () => {
+    const { entries, skipped } = readLha(read('disks.lha'), { accept: (p) => p.endsWith('.adf') });
+    expect(entries.map((e) => e.path)).toEqual(['Game/Disk1.adf', 'Game/Disk2.adf']);
+    expect(skipped).toEqual([{ path: 'Game/readme.txt', reason: 'not selected' }]);
+  });
+
+  it('applies the guard on the drop path too (expandArchive)', async () => {
+    const { expandArchive } = await import('./index');
+    const buf = read('disks.lha').slice();
+    claimSize(buf, 0xffff_ff00);
+    const r = await expandArchive('disks.lha', buf);
+    expect(r && 'skipped' in r && r.skipped).toEqual([{ path: 'Game/Disk1.adf', reason: 'too large' }]);
+  });
+});
+
+/**
+ * An -lh5- stream of `blocks` one-literal blocks: each block has a one-symbol
+ * T table and a 510-entry C table that costs no bits, so it is ~44 bits of
+ * input per byte of output and a full table rebuild per byte. 20 MB of this
+ * kept decodeLzh busy for 20.8 s before the block budget (review 2026-10-13).
+ */
+function tinyBlockStream(blocks: number): Uint8Array {
+  const out: number[] = [];
+  let acc = 0, n = 0;
+  const put = (v: number, w: number) => {
+    for (let i = w - 1; i >= 0; i--) {
+      acc = (acc << 1) | ((v >> i) & 1);
+      if (++n === 8) { out.push(acc); acc = 0; n = 0; }
+    }
+  };
+  for (let b = 0; b < blocks; b++) {
+    put(1, 16);              // blockSize 1
+    put(0, 5); put(3, 5);    // T: a single symbol (3, i.e. length 1)
+    put(510, 9);             // C: 510 lengths, each costing 0 bits
+    put(0, 4); put(0, 4);    // P: a single symbol
+    put(0, 1);               // the one literal
+  }
+  put(0, 8);
+  return new Uint8Array(out);
+}
+
+/** A level-0 header (checksums unset: readLha does not verify them) around `data`. */
+function lha0(name: string, method: string, data: Uint8Array, original: number): Uint8Array {
+  const nm = Buffer.from(name);
+  const h = Buffer.alloc(24 + nm.length);
+  h[0] = 22 + nm.length;
+  h.write(method, 2, 'latin1');
+  h.writeUInt32LE(data.length, 7);
+  h.writeUInt32LE(original, 11);
+  h[21] = nm.length;
+  nm.copy(h, 22);
+  return new Uint8Array(Buffer.concat([h, Buffer.from(data), Buffer.alloc(1)]));
+}
+
+describe('work budget (a CPU bomb made of tiny blocks)', () => {
+  const BLOCKS = 40_000;
+
+  it('decodeLzh refuses a stream with far more blocks than its size justifies', () => {
+    const t = performance.now();
+    expect(() => decodeLzh(tinyBlockStream(BLOCKS), BLOCKS, 13)).toThrow(LzhWorkBudgetError);
+    // Budget: ceil(40000 / 256) + 16 = 173 blocks, then it stops.
+    expect(performance.now() - t).toBeLessThan(500);
+  });
+
+  it('still decodes a short stream within the budget', () => {
+    // 16 one-byte blocks for 16 bytes: the +16 allowance for tiny members.
+    expect(decodeLzh(tinyBlockStream(16), 16, 13)).toHaveLength(16);
+  });
+
+  it('readLha turns it into a refusal of that member, not an exception', () => {
+    const buf = lha0('Bomb.adf', '-lh5-', tinyBlockStream(BLOCKS), BLOCKS);
+    const r = readLha(buf, { maxEntryBytes: 4 * 1024 * 1024 });
+    expect(r.entries).toEqual([]);
+    expect(r.skipped).toEqual([{ path: 'Bomb.adf', reason: 'corrupt (too many blocks)' }]);
+  });
+});
+
+describe('accept() sees every member, decodable or not', () => {
+  it('asks about an unsupported -lh1- member too, so a count cannot miss it', () => {
+    const seen: string[] = [];
+    const buf = lha0('Old.adf', '-lh1-', new Uint8Array(4), 4);
+    readLha(buf, { accept: (p) => { seen.push(p); return false; } });
+    expect(seen).toEqual(['Old.adf']);
+  });
+});
+
+/**
+ * Review N1 (2026-10-13): a P-table code length of `depth`, written as the
+ * unary "7 then keep counting" field. One literal block, then a block of
+ * matches whose only position symbol has that length. Before the cap, a depth
+ * of 100,000 made Huffman.decode walk 100,000 lengths per symbol.
+ */
+function deepCodeStream(depth: number): Uint8Array {
+  const out: number[] = [];
+  let acc = 0, n = 0;
+  const put = (v: number, w: number) => {
+    for (let i = w - 1; i >= 0; i--) {
+      acc = (acc << 1) | ((v >> i) & 1);
+      if (++n === 8) { out.push(acc); acc = 0; n = 0; }
+    }
+  };
+  put(1, 16); put(0, 5); put(3, 5); put(0, 9); put(97, 9); put(0, 4); put(0, 4);   // one literal 'a'
+  put(65535, 16); put(0, 5); put(3, 5); put(0, 9); put(256, 9);                     // C: only match length 3
+  put(1, 4); put(7, 3);
+  for (let i = 0; i < depth - 7; i++) put(1, 1);
+  put(0, 1);
+  put(0, 8);
+  return new Uint8Array(out);
+}
+
+describe('code length cap (a CPU bomb made of one very deep code)', () => {
+  it('decodeLzh refuses a code length of 100,000 at once', () => {
+    const t = performance.now();
+    expect(() => decodeLzh(deepCodeStream(100_000), 30_000, 13)).toThrow(LzhCorruptError);
+    expect(performance.now() - t).toBeLessThan(200);
+  });
+
+  it('readLha turns it into a refusal of that member, not an exception', () => {
+    const buf = lha0('Deep.adf', '-lh5-', deepCodeStream(100_000), 30_000);
+    const r = readLha(buf, { maxEntryBytes: 4 * 1024 * 1024 });
+    expect(r.entries).toEqual([]);
+    expect(r.skipped).toEqual([{ path: 'Deep.adf', reason: 'corrupt (bad code length)' }]);
+  });
+
+  it('still accepts a length of exactly 16', () => {
+    // 16 is LHA's own maximum; the stream then runs out, which is a short
+    // result for the caller's length check -- not a refusal.
+    expect(() => decodeLzh(deepCodeStream(16), 4, 13)).not.toThrow();
   });
 });

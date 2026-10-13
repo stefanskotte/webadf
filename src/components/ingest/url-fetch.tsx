@@ -94,7 +94,7 @@ export function UrlFetch({
         </button>
       </div>
       <span id="ingest-url-hint" className="font-mono text-[10.5px]" style={{ color: 'var(--muted-2)' }}>
-        ADF, ADZ, DMS, HFE or a .zip of them, up to 20 MB, from a public http(s) address
+        ADF, ADZ, DMS, DMZ, HFE or a .zip or .lha of them, up to 20 MB, from a public http(s) address
       </span>
       <p
         id="ingest-url-status"

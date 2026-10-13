@@ -50,6 +50,43 @@ function zip(members: { name: string; bytes: Uint8Array; store?: boolean }[]): U
   return new Uint8Array(Buffer.concat([...locals, cen, eocd]));
 }
 
+const archiveFixture = (n: string) => new Uint8Array(readFileSync(join(__dirname, 'archive', 'fixtures', n)));
+
+/** The disk inside archive/fixtures/disk.dmz. */
+const dmzAdf = () => {
+  const b = new Uint8Array(901_120);
+  b.set([0x44, 0x4f, 0x53, 0]);
+  for (let i = 0; i < 4096; i++) b[1024 + i] = i & 0xff;
+  return b;
+};
+/** Game/Disk<n>.adf inside archive/fixtures/disks.lha. */
+const lhaAdf = (n: number) => {
+  const b = new Uint8Array(901_120);
+  b.set([0x44, 0x4f, 0x53, 0]);
+  for (let i = 0; i < 4096; i++) b[1024 + i] = (i * n) & 0xff;
+  return b;
+};
+
+/** Level-0 -lh5- headers with no data, each claiming `claimed` bytes: only the
+ *  headers matter to a reader that counts before it decodes. */
+function lhaOf(names: string[], claimed: number, method = '-lh5-'): Uint8Array {
+  const parts: Buffer[] = [];
+  for (const n of names) {
+    const name = Buffer.from(n);
+    const h = Buffer.alloc(24 + name.length);
+    h[0] = 22 + name.length;
+    h.write(method, 2, 'latin1');
+    h.writeUInt32LE(0, 7);
+    h.writeUInt32LE(claimed, 11);
+    h[20] = 0;
+    h[21] = name.length;
+    name.copy(h, 22);
+    parts.push(h);
+  }
+  parts.push(Buffer.alloc(1));
+  return new Uint8Array(Buffer.concat(parts));
+}
+
 const fetched = (bytes: Uint8Array, url = 'https://files.example/games/Turrican.adf', cd: string | null = null) =>
   async (): Promise<UrlFetchResult> => ({ ok: true, bytes, finalUrl: new URL(url), contentDisposition: cd });
 
@@ -111,11 +148,9 @@ describe('prepareImages', () => {
     expect(await prepareImages(new Uint8Array(gzipSync(Buffer.from('hello'))), 'x.gz')).toEqual({ code: 'not_a_disk_image' });
   });
 
-  it('refuses an HTML page, an odd-sized file, LHA and 7z', async () => {
+  it('refuses an HTML page, an odd-sized file and 7z', async () => {
     expect(await prepareImages(new TextEncoder().encode('<html>nope</html>'), 'x.adf')).toEqual({ code: 'not_a_disk_image' });
     expect(await prepareImages(new Uint8Array(1000), 'x.adf')).toEqual({ code: 'not_a_disk_image' });
-    expect(await prepareImages(new Uint8Array(readFileSync(join(__dirname, 'archive', 'fixtures', 'h1.lha'))), 'x.lha'))
-      .toEqual({ code: 'unsupported_archive' });
     expect(await prepareImages(new Uint8Array([0x37, 0x7a, 0xbc, 0xaf, 0x27, 0x1c, 0, 4]), 'x.7z')).toEqual({ code: 'unsupported_archive' });
   });
 
@@ -158,6 +193,59 @@ describe('prepareImages', () => {
   it('refuses a deflate bomb member without inflating it whole', async () => {
     const r = await prepareImages(zip([{ name: 'Bomb.adf', bytes: new Uint8Array(64 * 1024 * 1024) }]), 'x.zip');
     expect('refused' in r && r.refused[0]).toMatchObject({ filename: 'Bomb.adf', note: 'too large' });
+  });
+
+  it('turns a gzipped DMS (.dmz) into the ADF, whatever the URL called it', async () => {
+    const dmz = archiveFixture('disk.dmz');
+    for (const offered of ['Game.dmz', 'Game.dms.gz', 'Game.gz']) {
+      const r = await prepareImages(dmz, offered);
+      expect('images' in r && r.images.map((i) => [i.filename, i.note])).toEqual([['Game.adf', 'from Game.dmz (NOCOMP)']]);
+      expect('images' in r && sha(r.images[0].bytes)).toBe(sha(dmzAdf()));
+    }
+  });
+
+  it('takes a .dmz out of a zip by its own name', async () => {
+    const r = await prepareImages(zip([{ name: 'Disk1.dmz', bytes: archiveFixture('disk.dmz'), store: true }]), 'x.zip');
+    expect('images' in r && r.images.map((i) => i.filename)).toEqual(['Disk1.adf']);
+  });
+
+  it('takes the disk images out of an LHA and ignores everything else', async () => {
+    const r = await prepareImages(archiveFixture('disks.lha'), 'Game.lha');
+    expect('images' in r && r.images.map((i) => [i.filename, i.note])).toEqual([['Disk1.adf', undefined], ['Disk2.adf', undefined]]);
+    expect('images' in r && sha(r.images[0].bytes)).toBe(sha(lhaAdf(1)));
+    expect('images' in r && sha(r.images[1].bytes)).toBe(sha(lhaAdf(2)));
+    expect('images' in r && r.refused).toEqual([]);
+  });
+
+  it('says so when an LHA holds no disk images', async () => {
+    expect(await prepareImages(archiveFixture('h1.lha'), 'x.lha')).toEqual({ code: 'no_disk_images' });
+  });
+
+  it('refuses an LHA member whose header claims more than an image may be, without allocating it', async () => {
+    const buf = archiveFixture('disks.lha').slice();
+    buf.set([0x00, 0xff, 0xff, 0xff], 11);   // Disk1.adf's original size: ~4 GB
+    const r = await prepareImages(buf, 'x.lha');
+    expect('refused' in r && r.refused).toEqual([{ filename: 'Disk1.adf', sizeBytes: 0, sha256: null, state: 'failed', note: 'too large' }]);
+    expect('images' in r && r.images.map((i) => i.filename)).toEqual(['Disk2.adf']);
+  });
+
+  it(`refuses an LHA with more than ${MAX_IMAGES_PER_URL} disk images from the headers alone`, async () => {
+    // Every member claims ~4 GB of -lh5-: if the count were taken by decoding,
+    // this test would try to allocate 84 GB.
+    const members = Array.from({ length: MAX_IMAGES_PER_URL + 1 }, (_, i) => `D${i}.adf`);
+    expect(await prepareImages(lhaOf(members, 0xffff_ff00), 'x.lha')).toEqual({ code: 'too_many_images' });
+  });
+
+  it('counts unsupported LHA members too: a flood of -lh1- headers is too_many_images, not 700,000 rows', async () => {
+    const members = Array.from({ length: MAX_IMAGES_PER_URL + 1 }, (_, i) => `D${i}.adf`);
+    expect(await prepareImages(lhaOf(members, 901_120, '-lh1-'), 'x.lha')).toEqual({ code: 'too_many_images' });
+  });
+
+  it('reports unsupported LHA members by name, one row each', async () => {
+    const r = await prepareImages(lhaOf(['A.adf', 'B.adf'], 901_120, '-lh1-'), 'x.lha');
+    expect('refused' in r && r.refused.map((x) => [x.filename, x.note])).toEqual([
+      ['A.adf', 'unsupported method -lh1-'], ['B.adf', 'unsupported method -lh1-'],
+    ]);
   });
 
   it('inspects an HFE the way the dropzone does, refusals included', async () => {

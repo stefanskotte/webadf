@@ -28,6 +28,20 @@ const CBIT = 9;
 const NT = 19;
 const TBIT = 5;
 
+/**
+ * The longest code length LHA can express: its decoder builds 16-bit tables,
+ * and its encoder limits every alphabet to 16. Anything longer is not an LHA
+ * stream -- and is dangerous: the unary "7 means keep counting" field would
+ * otherwise let 12.5 KB of 1-bits declare a length of 100,000, which Huffman
+ * allocates as counts[] and decode() walks for EVERY symbol, without consuming
+ * input once the stream has ended (review N1, 2026-10-13: ~150 s for one
+ * 4 MiB member).
+ */
+export const MAX_CODE_LEN = 16;
+
+/** Thrown for a stream that is not decodable LHA (a code length over 16). */
+export class LzhCorruptError extends Error {}
+
 export class BitReader {
   private pos = 0;
   private bit = 0;
@@ -66,6 +80,11 @@ class Huffman {
   constructor(lengths: number[], single: number | null = null) {
     this.single = single;
     if (single !== null) return;
+    // Defence in depth: readPtLen refuses these as it reads them, but no
+    // length from any source may size counts[] past MAX_CODE_LEN.
+    for (const l of lengths) {
+      if (l > MAX_CODE_LEN) throw new LzhCorruptError(`code length ${l} exceeds ${MAX_CODE_LEN}`);
+    }
 
     let max = 0;
     for (const l of lengths) if (l > max) max = l;
@@ -109,7 +128,13 @@ function readPtLen(br: BitReader, nn: number, nbit: number, iSpecial: number): H
     let c = br.bits(3);
     // 3 bits hold 0..6; 7 means "keep counting in unary", which is how a long
     // code length is expressed without widening the field.
-    if (c === 7) while (br.bit1()) c++;
+    // Bounded: past MAX_CODE_LEN the stream is refused, so neither this loop
+    // nor the table it feeds can be made arbitrarily long.
+    if (c === 7) {
+      while (br.bit1()) {
+        if (++c > MAX_CODE_LEN) throw new LzhCorruptError(`code length exceeds ${MAX_CODE_LEN}`);
+      }
+    }
     lengths[i++] = c;
     // Only the T alphabet has this: after the third length, two bits say how
     // many zero lengths follow. It exists because positions 3..5 are almost
@@ -144,12 +169,46 @@ function readCLen(br: BitReader, t: Huffman): Huffman {
 }
 
 /**
+ * Output bytes each block must pay for, on average, before the decoder gives up.
+ *
+ * THE WORK IS PER BLOCK, NOT PER BYTE. Every block rebuilds three Huffman
+ * tables (up to 19 + 510 + 17 code lengths) before emitting anything, and a
+ * block may be as short as one symbol. A stream of one-literal blocks costs
+ * ~44 bits each, so 20 MB of input buys ~3.8M blocks and ~2 billion table
+ * entries for 3.8 MB of output: 20 s of CPU in a server function, from a URL.
+ * The output-size cap the caller applies does not see this at all.
+ *
+ * So the number of blocks is budgeted against the output: at most
+ * ceil(outSize / 256) + 16. Real encoders never come near it -- a block's own
+ * tables cost tens of bytes, so an encoder that made blocks this short would
+ * be inflating its output; LHA flushes a block when its 16-bit symbol counter
+ * or its buffer fills, i.e. after thousands of symbols. Measured 2026-10-13
+ * over 1,328 real archives (Aminet, WHDLoad packs; 28,482 -lh5-/6-/7- members,
+ * 1.33 GB): no member came near the budget, and the fewest output bytes per
+ * block in any multi-block member was 7,340 -- 28x above 256. The +16 covers
+ * the short final block of each member and tiny files. With the budget the worst case
+ * above stops after ~15K blocks, a few milliseconds.
+ */
+export const LZH_BYTES_PER_BLOCK = 256;
+
+/** Thrown when a stream spends more blocks than LZH_BYTES_PER_BLOCK allows. */
+export class LzhWorkBudgetError extends Error {
+  constructor() { super('too many blocks for the declared size'); }
+}
+
+/**
  * Decode `outSize` bytes of an -lh5-/-lh6-/-lh7- stream.
  *
  * `dicBits` is 13, 15 or 16 -- the sliding-window size, and the only thing
  * that differs between the three methods.
+ *
+ * Throws LzhWorkBudgetError for a stream that uses far more blocks than its
+ * size justifies (see LZH_BYTES_PER_BLOCK), and LzhCorruptError for a code
+ * length over MAX_CODE_LEN; otherwise never throws.
  */
 export function decodeLzh(src: Uint8Array, outSize: number, dicBits: number): Uint8Array {
+  const maxBlocks = Math.ceil(outSize / LZH_BYTES_PER_BLOCK) + 16;
+  let blocks = 0;
   const out = new Uint8Array(outSize);
   const br = new BitReader(src);
   const np = dicBits + 1;
@@ -165,6 +224,7 @@ export function decodeLzh(src: Uint8Array, outSize: number, dicBits: number): Ui
       // A zero-length block in a stream that still owes bytes means the data
       // ran out. Stop rather than spin: the caller checks the length it got.
       if (blockSize === 0) break;
+      if (++blocks > maxBlocks) throw new LzhWorkBudgetError();
       const t = readPtLen(br, NT, TBIT, 3);
       c = readCLen(br, t);
       p = readPtLen(br, np, pbit, -1);
