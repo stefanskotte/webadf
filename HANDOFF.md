@@ -2563,6 +2563,35 @@ separately.
   no sign of more; all 35 disks of that upload share one created_at, so 13 were never offered. The dialog now says
   "Showing N titles — there are more." with Show more. The operator's 13 disks (Storage, GlowIcons, HDSetup, ...)
   still sit in Uncategorized: add them via Add disks… > Show more. No data was changed.
+- **A new design for the web app (operator, 2026-10-13).** Based on the design canvas
+  https://claude.ai/artifact/66QQLv1VK4Ye2gBNaV4F6S#page-7942877721ad ("webfloppy retro"). **Areas the canvas does
+  not draw are to be inferred** from it (operator's words: "missing areas should be inferred").
+  - **The canvas has two pages.**
+    - **Retro**, "beige hardware UI": Devices, Library, Title, Upload, five Admin screens (Overview, Users,
+      Invites, Scan, Firmware) and the headers.
+    - **Modern**, the canvas's launch page: Devices, a Devices display modal, the header and its multi-drive menu,
+      Library (collections, grid and table), Title detail, Upload, Disk files (Workbench 3.1), plus components (a
+      disk icon with specimens, and the board display).
+    - The link's `#page-` anchor does not name either page id. **Confirm with the operator which page is the target
+      before designing; the launch page suggests Modern.**
+  - **Read the canvas on 2026-10-13** (`project/canvas.json`: 22 artboards). Not drawn on Modern, so to be inferred:
+    - Admin (drawn only on Retro);
+    - Help and its "?" popovers;
+    - collections and disk-set pages;
+    - the disk page's history, time machine and Mount bar;
+    - the device card's second-drive setting and Network checklist (PaulaNET Phase 3);
+    - the display editor, beyond the modal;
+    - sign-in, sign-up and account;
+    - search;
+    - empty, error and loading states;
+    - all phone layouts (the app must stay usable at 390 px, 3j).
+  - **Approach, when it is picked up:** this is architectural. It needs a brainstorm, a spec and a plan, then a
+    page-by-page reskin behind the existing test ids, so e2e keeps passing. Keep the rules already learned:
+    - `--amber-text` for amber text;
+    - the device-card bezel (3ay);
+    - show both values of a state;
+    - help text changes with behaviour.
+
 - **Accept `.dmz` (gzipped DMS) uploads (operator, 2026-10-12).** `.dmz` is a DMS archive compressed with gzip, as
   `.adz` is to `.adf`. Today the dropzone and `src/lib/archive/disk-image.ts` take `.adf/.dsk/.adz/.dms/.hfe`
   (`DISK_IMAGE_PATTERN`, `accept=".adf,.dsk,.adz,.dms,.hfe"` in `src/components/ingest/dropzone.tsx`), so a `.dmz`
