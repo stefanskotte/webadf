@@ -4909,6 +4909,64 @@ Demozoo API (the bulk export makes per-lookup load on a non-profit unnecessary).
   allowlist checks only the first URL (the raster content-type allowlist and `nosniff` still apply).
 - **Cron drift:** the daily 01:30 cron against a 7-day gate can drift a refetch to 8 days.
 
+### 3bj. PaulaNET Phase 3 (Network as a DF1 setting) -- TEST 1.11.0+g2671ef7 seq 78 PASSED on the A500 (2026-10-13); release 1.11.0 follows
+
+**Verdict.** Every Task 14 bench step passed on the A500 (KS 3.1, Workbench booted from the IDE drive) with the TEST
+build of the merge M = ed1490b. A regular user can choose *Network (PaulaNET)* for DF1, restart, run Install from
+the driver disk and go online with `AddNetInterface eth0`; the card shows each step.
+
+**Setup.** The same A500 and rev B board as 3bi; AmiTCP_NG; disks: Workbench 3.1 set, the two `P3 Check` disks
+(cylinders 76-77 hold `upper.bin`), the PaulaNET driver disk (sha256 `05170a83c279157f…c008c9e`, Blob `adf/<sha>`,
+built by `tools/paulanet-disk/`, Rob's files in `third-party/paulanet/`). The plan's `ca487c73…` was replaced by
+this digest during Task 3 (ruling below). Step 16 was run by Claude through the operator's PiKVM.
+
+| Step | What | Result |
+|---|---|---|
+| 2 | §7.1 Off: DF0 boots and writes, no DF1 | PASS (DF1 left after the first reset: the Amiga had booted in Next and Off was set live -- parked by design) |
+| 3 | §7.1 Next: DF1 = P3Check2, cylinders 76/77 read as disk data | PASS (DF1 tracks 408-411 served; 0 `pnet:` lines) |
+| 4 | clean Workbench, offline SELFTEST | PASS (eth0/driver already removed by the operator) |
+| 5 | Network, IDE boot with DF0 empty | PASS (DF1 PaulaNET; preload `05170a83c279` -> slot 2; no DF0 fetch) |
+| 6 | Install from Workbench | PASS (eth0 exactly 3 lines; driver 13,872 B; ReadMe opens in MultiView) |
+| 7 | Install twice | PASS (eth0 left as it is) |
+| 8 | online + checklist | PASS (DHCP 172.16.10.235, gateway/DNS 172.16.10.1; card shows address and status) |
+| 9 | online SELFTEST | measured (below) |
+| 10 | ping router / 8.8.8.8, nslookup | PASS (10/10 163.5/213.7/279.5 ms; 10/10 208.2/229.8/268.5 ms; amiga.org 50.87.149.192) |
+| 12 | 200 KB FTP | PASS, 53.4 KB/s (Phase 2: 47.5) |
+| 13 | 200 KB during a DF0 copy | PASS, 44.2 KB/s (Phase 2: 24.4); 8 DF0 writes ALL bad 0 + applied; no lost batches |
+| 14 | Ctrl-A-A, back online | PASS (same lease, 3/3 pings) |
+| 14b | DF0 mount/swap/eject while online | PASS (60/60 pings; DF1 PaulaNET throughout; no `df1: ejected`) |
+| 15 | serial log | PASS: 0 records dropped; heap 32,768 B throughout (>= 20,480; 81,920 before TLS); no gap > 10 s; l2 in 587/157 drop 10, from amiga 573 new 0 bad 0 over; `go` delayed 102 late 0; `l2 status` early 0; update held 0 |
+| 16 | back to Off | PASS after the reset: no DF1; `pnet: off … forgotten` once; net columns cleared |
+| extra | write to PaulaNET: | refused (Error 28, write-protected), requester for the bitmap block, link survives (3/3 pings). The volume shows Read/Write while the driver runs (its WPROT trick); operator: by design |
+
+**Busy-poll cost (first measurement; Phase 2's was lost).** NetLoop SELFTEST offline vs online-idle: align 15.1 ->
+94.6 ms (6.3x), parse 32.5 -> 81.8 ms (2.5x), equivalence 21,663 -> 60,597 ms (2.8x, the long run). The driver's
+priority-1 poll leaves about **36 %** of a 68000 to ordinary tasks while online. The mouse question is still open.
+
+**Board address.** 172.16.10.234 before and after the TEST install (ruling 4's change did not happen here).
+
+**Sizes (TEST build = the release configuration).** .text 344,640, .data 10,496, .bss 422,508, .psram_noload
+7,766,016, .bin 629,640. Against 1.10.2: .bss +2,536 and .bin +18,136 (Task 5); the driver-disk slot takes 901,120 B
+of PSRAM, 608 KB left.
+
+**Rulings.** The plan's rulings 1-26 and corrections 1-3 are in `docs/superpowers/plans/2026-10-12-paulanet-phase3-network-setting.md`.
+During execution (the SDD ledger):
+- B1-B4: a DF0 eject never ejects SLOT_NET; a preload record drops only for its own slot; the live switch passes the real mode; the test fake takes > 8 KB.
+- I1-I11: SLOT_NET tests init; `next` = the driver disk only after the board reports Network applied; a separate route `/api/device/image/net/<sha>`; THIRD-PARTY-NOTICES wording; HelpTip after the topic exists; gcc13 over all 7 C tests; the blob GC keeps the disk sha; the gate test fails before Task 5.
+- The driver-disk digest became `05170a83…` (Install fixes m1/m5 rebuilt it).
+- Migration 0035 `net_next_sent_version` accepted (a wake needs a cursor); the status route re-arms it at most once per 5 min when DF1 lacks the disk; `dc_set_df1` clears the preload on a mode change.
+- The final whole-branch review ran before the merge; I2 (heap with DF1 Off) became a bench check.
+
+**Open / parked.**
+- Network -> Off before the Amiga's reset showed `DF1: Unreadable disk` where Next -> Off showed `No disk present`; the log shows no DF1 access; cause unknown; cleared by the reset.
+- From a Shell, Install prints "Press Return to close this window." with no window.
+- The help topic could say the PaulaNET disk cannot be written to.
+- Not yet answered: icon overlap on the driver disk's window; how the mouse feels online.
+- Plan open questions: Rob's own message for PERMISSION.md; DF0's Next preload is lost in Network mode; TEST builds are offered by the registry.
+
+**Off switch / rollback.** Choose Off on the card and restart the Amiga. Rollback is a 1.11.1 from master (the
+registry refuses a lower sequence); a board put back on 1.10.2 boots a stored Network setting as Off.
+
 ### 3bi. PaulaNET Phase 2 (Rob's PaulaNET.device) -- TEST build 1.10.2+g1b2e27a, seq 77: PASSED on the A500 (2026-10-12)
 
 **Verdict: all seven Phase 2 acceptance items passed.** AmiTCP_NG v4.1.8 came online through Rob Smith's unmodified
