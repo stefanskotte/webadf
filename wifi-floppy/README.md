@@ -195,48 +195,23 @@ UART stdio stays off and must stay off: GP0 and GP1 are INDEX and CHNG on this b
 enabling it would drive the floppy bus.
 
 ## Honest caveats
-- **First run on real hardware: 2026-09-10.** A rev A2 board, partially populated
-  (J1, J2 and U1 only), flashed with `wifi_floppy.uf2` and powered over USB. What that
-  exercised, end to end, on real silicon:
-  - the RP2350 boots the image, reaches `main()`, and launches core1
-  - `cyw43_arch_init()` succeeds — the **RM2 radio works over SPI**, the single
-    largest never-before-run piece
-  - the AP comes up: `wifi-floppy-6A38`, WPA2-AES, SSID built from the chip's own MAC
-  - **DHCP hands the phone an address, the DNS responder answers, and the HTTP server
-    serves the form** at `192.168.4.1`
-  - **iOS's captive-portal probe raises the sign-in sheet on its own** ("Wi-Fi med
-    tilmelding"), which was explicitly on the unverified list
-  - the page's `28:cd:c1:19:6a:38` and the SSID's `6A38` agree, so `main.c`'s
-    `mac_address_string()` and `portal_net.c`'s SSID construction cross-check
-  - no re-enumeration of the USB CDC device over several minutes: no crash loop
-
-  **Still not run on hardware:** everything past pressing Save. AP teardown and the
-  transition back to station mode, association with a real network, the confirmation
-  page arriving before the AP drops, DHCP lease renewal after teardown, the 3-slot
-  lease pool under real phone behaviour, Android's captive-portal probe, TLS, SNTP,
-  device registration, and the whole floppy side — PIO cycle counts, DMA, PSRAM image
-  load, bus timing — which remain desk-checked only. See
-  `docs/decisions/2026-08-31-device-portal-rulings.md`'s hardware-only list for the
-  full set, which plan 5 owns closing.
-- **Console logging exists as of 2026-09-10 (`src/wf_log.c`), but has not itself run on
-  hardware.** Before it, the firmware wrote nothing at all: `stdio_init_all()` brought up
-  the CDC device so a port appeared and a terminal attached, but there was not one
-  `printf` in `src/`, and listening returned zero bytes. See "Watching the log" below for
-  how to use it. Host-tested (74 checks) and cross-built clean; every line it prints on a
-  real board is still unobserved.
-- It compiles (`pnpm firmware:build` produces `firmware/build/wifi_floppy.uf2`) and has
-  a green host suite (`pnpm firmware:test`, 506 checks across 13 binaries, plain C under
-  clang). Treat anything not covered by a host test or by the hardware run above as
-  unverified.
-- Write support is a skeleton: flux capture PIO exists, MFM decode and
-  POST are TODO. WPROT is asserted by default until that lands.
-- The board passes my generator's DRC-lite, but run real KiCad DRC and
-  sanity-check footprints (Pico row spacing 17.78 mm, SOIC-20W, SOT-23)
-  against your parts before ordering.
-- No mounting holes; outline is a plain 96×62 mm rectangle. Reshape to
-  3.5"-drive dimensions if you want it inside a Gotek/drive bay.
-- Board is 2-layer; several signals ride the B.Cu plane, which slices
-  the pour locally. Fine at 500 kHz MFM rates, but keep the pour filled.
+- **What has run on real hardware** (rev A2 from 2026-09-10, rev B from 2026-10-02; details and dates in the root
+  `HANDOFF.md`):
+  - the setup portal, station join, TLS, pairing and registration;
+  - reads and writes on a real A500 (Workbench 3.1 boots; saves reach the library, including after offline);
+  - over-the-air firmware updates;
+  - HD disks;
+  - HFE, including long-track;
+  - NFC tap to mount;
+  - the OLED;
+  - DF1 as a second drive;
+  - PaulaNET networking over DF1 (Phase 2).
+- **Still owed on the bench:** the open checklists recorded in `HANDOFF.md`, e.g. HD bench steps 4-7 (3ao), the
+  weak-bit HFE titles, and the NFC display icon on glass (3bf).
+- The host suites (`pnpm firmware:test`) and the CI build cover logic, not bus timing. Anything with a timing claim
+  is only as good as its last bench run.
+- The board files are a KiCad project; run `pnpm hw:verify` and real KiCad DRC, and check footprints against your
+  parts, before ordering.
 
 ## PSRAM revision (Pimoroni Pico Plus 2 W)
 
