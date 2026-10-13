@@ -123,8 +123,14 @@ for s in "${steps[@]}"; do
     ;;
   bench)
     [ -d "$lm/build/frames" ] || { echo "no frames dump: run tools/lz4-measure/build.sh"; exit 1; }
-    BENCH68K=1 "$lm/m68k/build.sh" "$lm/build/frames" "${REPS:-2}"
-    python3 "$here/test/bench_table.py" "$lm/build/m68k/cycles-68k.txt" | tee "$out/bench-table.md"
+    # One type per run (each a few minutes); BENCH_TYPES="..." picks some, BENCH_APPEND=1 adds
+    # to the earlier rows instead of starting over.
+    [ -n "${BENCH_APPEND:-}" ] || : > "$out/cycles-68k.txt"
+    for t in ${BENCH_TYPES:-dl-ftp-text dl-ftp-source dl-http dl-ftp-adf dl-ftp-random ul-acks ul-ftp-text}; do
+      BENCH68K=1 TYPES="$t" "$lm/m68k/build.sh" "$lm/build/frames" "${REPS:-2}" | grep -E '^(verify|VERIFY)'
+      grep -E "^$t " "$lm/build/m68k/cycles-68k.txt" >> "$out/cycles-68k.txt"
+    done
+    python3 "$here/test/bench_table.py" "$out/cycles-68k.txt" | tee "$out/bench-table.md"
     ;;
   *) echo "unknown step $s"; exit 2 ;;
   esac
