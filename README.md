@@ -22,6 +22,62 @@ display, buzzer, a 4-pin header (J4), and a Pimoroni Pico Plus 2 W.
 The KiCad project is in `wifi-floppy/hardware/`; check it with `pnpm hw:verify` before
 ordering. The current bench board is rev A2.*
 
+## Quickstart
+
+A first install is one file. You need the board, a USB cable, a phone and an account in the
+web app.
+
+1. Hold the **BOOTSEL** button and plug the board into your computer over USB. A drive called
+   `RP2350` appears.
+2. Download `wifi-floppy-install-<version>.uf2` from the
+   [latest release](https://github.com/stefanskotte/webadf/releases/latest) and drag it onto
+   that drive. The board writes it and restarts by itself; the drive disappears.
+3. In the web app, open **Devices** and press **Pair a device** to get a code (it lasts 10
+   minutes). On your phone, join the board's setup Wi-Fi, `wifi-floppy-XXXX` (password
+   `wififloppy`). The setup page opens by itself, or browse to `http://192.168.4.1/`. Enter
+   your Wi-Fi network, its password and the code.
+4. Done. The board joins your network and appears under Devices. Firmware updates now arrive
+   over the air from the web app.
+
+If your phone has joined this board's setup network before, forget that network first. More
+detail, and what to do when a join fails, is in
+[wifi-floppy/README.md](wifi-floppy/README.md#first-install).
+
+## Screenshots
+
+The pictures come from a demo account holding freely redistributable disks: scene demos and
+freeware tools. `PORT=3100 pnpm screenshots` takes them again (see
+`e2e/screenshots.shots.ts`).
+
+![The library: seven titles in a grid, with Demozoo covers for the demos](docs/screenshots/library.png)
+
+*The library. Titles are identified against TOSEC and Demozoo; the 9 Fingers card is
+highlighted because its disk is in a drive.*
+
+![A title page for 9 Fingers: Demozoo facts and screenshots, then its two disks with Download, Browse, Eject and Mount](docs/screenshots/game.png)
+
+*A title page: facts and screenshots from Demozoo, then each disk with its actions.*
+
+![The file browser for the SysInfo disk: volume details, the file tree, and a history panel with three versions](docs/screenshots/disk-files.png)
+
+*Inside a disk. Each edit made here is a new version in the history panel at the bottom.*
+
+![The Devices page: one board, A500, online, with a drive-front card whose display shows 9 Fingers loaded](docs/screenshots/devices.png)
+
+*A board on the Devices page. The card's display shows what the board's OLED shows.*
+
+![The display editor open on the A500 card: a 128x32 preview and a list of elements with size options](docs/screenshots/display-editor.png)
+
+*The display editor: choose the panel, then which elements the OLED draws and where.*
+
+![The Help page, open at Boards: pairing, online and offline, firmware updates](docs/screenshots/help.png)
+
+*Help explains the parts that are not obvious.*
+
+<img src="docs/screenshots/library-phone.png" width="300" alt="The library on a phone: one column of controls, two columns of covers, and the tab bar at the bottom">
+
+*The library at phone width.*
+
 ## Features
 
 ### Library
@@ -122,10 +178,10 @@ deltas.
 | Second drive (DF1) alongside the board | verified on hardware |
 | HFE, including long-track (Turrican) | verified on hardware; weak-bit titles not yet tested |
 | HD disks, read-only (Kickstart 3.0+) | verified on hardware (firmware 1.4.1, Kickstart 3.1) |
-| HD disks: Amiga saves, history, browser editing, blank HD disks | built and host-tested (firmware 1.5.0, not yet published); bench checklist owed (HANDOFF 3ao) |
-| Firmware updates from the web app | verified on hardware (current: 1.3.1; 1.4.0 built, not yet published) |
+| HD disks: Amiga saves, history, browser editing, blank HD disks | shipped in firmware 1.5.1; bench steps 4-7 owed (HANDOFF 3ao) |
+| Firmware updates from the web app | verified on hardware (current release: 1.10.2) |
 | NFC: tap to mount, write tags from the web | verified on hardware |
-| Rev B board | in design (Shanshe) |
+| Rev B board | built and running (Shanshe's design, `wifi-floppy/hardware/`) |
 
 ## Repository
 
@@ -172,10 +228,9 @@ The setup access point uses the password **`wififloppy`** by default. Set
 `PORTAL_AP_PASSWORD` at build time to change it. The pairing code from the web app is
 what authorises a board to join a library.
 
-Putting the firmware on a new board: hold BOOTSEL, plug it in over USB, and drag
-`wifi-floppy-install-<version>.uf2` from the GitHub release onto the drive that appears.
-See [wifi-floppy/README.md](wifi-floppy/README.md#first-install).
-With picotool, `pnpm firmware:install-partitioned` still works.
+Putting the firmware on a new board is the [Quickstart](#quickstart) above: one
+`wifi-floppy-install-<version>.uf2` from the GitHub release, dragged onto the drive that
+appears in BOOTSEL mode. With picotool, `pnpm firmware:install-partitioned` still works.
 
 Every push that touches the firmware is built by
 [`.github/workflows/firmware.yml`](.github/workflows/firmware.yml), which runs the host
