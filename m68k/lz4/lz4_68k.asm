@@ -652,20 +652,47 @@ lz4_enc:
 	move.w	a0,d0
 	sub.w	a3,d0			; ip's position XOR $8000
 
-; The search: blocks of up to 64 positions at one step.
+; The search: blocks of up to 64 positions at one step. After a match, or at the start:
 .esearch:
 	moveq	#1,d6
+	move.l	4(sp),d7
+	sub.l	a0,d7			; bytes to the last match start
+	bmi.w	.elast
+	moveq	#63,d1
+	cmp.l	d1,d7
+	bls.s	.e1
+	move.l	d1,d7
+.e1:	movep.w	0(a0),d3		; X = b0:b2
+	movep.w	1(a0),d4		; Y = b1:b3
+; Step 1: the next position's X is this one's Y, so one MOVEP per position.
+.e1lp:	move.w	d3,d1
+	add.w	d1,d1
+	add.w	d4,d1
+	and.w	d5,d1			; (2X + Y) & mask
+	move.w	0(a2,d1.w),d2		; the candidate
+	move.w	d0,0(a2,d1.w)		; this position
+	cmp.w	d0,d2
+	bge.s	.e1mis			; at or past this position: none
+	cmp.b	2(a3,d2.w),d3		; b2 first: most candidates fail here
+	bne.s	.e1mis
+	lea	0(a3,d2.w),a6
+	movep.w	0(a6),d1
+	cmp.w	d3,d1
+	bne.s	.e1mis
+	movep.w	1(a6),d1
+	cmp.w	d4,d1
+	beq.w	.efound
+.e1mis:	addq.l	#1,a0
+	addq.w	#1,d0
+	move.w	d4,d3
+	movep.w	1(a0),d4
+	dbf	d7,.e1lp
+	moveq	#2,d6			; 64 misses (or the end): step 2
+; Steps of 2 and more.
 .eblock:
 	move.l	4(sp),d7
 	sub.l	a0,d7			; bytes to the last match start
 	bmi.w	.elast
-	cmp.w	#1,d6
-	bne.s	.estep
-	moveq	#63,d1
-	cmp.l	d1,d7
-	bls.s	.elp
-	move.l	d1,d7
-	bra.s	.elp
 .estep:	moveq	#0,d1
 	move.w	d6,d1
 	lsl.l	#6,d1
@@ -685,6 +712,8 @@ lz4_enc:
 	move.w	d0,0(a2,d1.w)		; this position
 	cmp.w	d0,d2
 	bge.s	.emiss			; at or past this position: none
+	cmp.b	2(a3,d2.w),d3
+	bne.s	.emiss
 	lea	0(a3,d2.w),a6
 	movep.w	0(a6),d1
 	cmp.w	d3,d1
@@ -696,7 +725,7 @@ lz4_enc:
 	add.w	d6,d0
 	dbf	d7,.elp
 	addq.w	#1,d6			; 64 misses at this step (or the end): one more
-	bra.s	.eblock
+	bra.w	.eblock
 
 ; A match: a0 = its start, a6 = the earlier copy, 4 bytes equal.
 .efound:
@@ -738,6 +767,8 @@ lz4_enc:
 .efdone:
 	; backwards: while start > anchor, start - offset > window, and the bytes before agree
 	move.l	d1,a6
+	cmpa.l	a4,a6
+	bls.s	.ebkd0			; no literals pending: nothing to extend into
 	move.l	12(sp),d4
 	add.l	d2,d4
 	cmp.l	a4,d4
@@ -752,24 +783,44 @@ lz4_enc:
 	subq.l	#1,a6
 	bra.s	.ebk
 .ebkd:	neg.l	d2			; the offset again; a6 = the match start
-	move.l	a6,d3
+.ebkd0:	move.l	a6,d3
 	sub.l	a4,d3			; lit
 	move.l	a0,d4
 	sub.l	a6,d4
 	subq.l	#4,d4			; ml
-	; room: 5 + lit + lit/128 + ml/128 is never below the real need
+	; room: 5 + lit + (lit + ml) / 128 is never below the real need
 	move.l	d3,d1
+	add.l	d4,d1
 	lsr.l	#7,d1
 	add.l	d3,d1
-	move.l	d4,d6
-	lsr.l	#7,d6
-	add.l	d6,d1
 	addq.l	#5,d1
 	move.l	a5,d6
 	sub.l	a1,d6
 	cmp.l	d6,d1
 	bhi.w	.eexact
-.eemit:	moveq	#15,d1			; the token
+.eemit:	moveq	#15,d1
+	cmp.l	d1,d3
+	bcc.s	.elong
+	cmp.l	d1,d4
+	bcc.s	.elong
+	move.b	d3,d1			; both lengths below 15: the token, literals, offset
+	lsl.b	#4,d1
+	or.b	d4,d1
+	move.b	d1,(a1)+
+	add.w	d3,d3
+	neg.w	d3
+	jmp	.esl(pc,d3.w)
+	rept	14
+	move.b	(a4)+,(a1)+
+	endr
+.esl:	move.b	d2,(a1)+		; the offset, little-endian
+	move.w	d2,-(sp)
+	move.b	(sp)+,(a1)+
+	move.l	a0,a4			; anchor = the match end
+	move.w	a0,d0
+	sub.w	a3,d0
+	bra.w	.esearch
+.elong:	moveq	#15,d1			; the token
 	cmp.l	d1,d3
 	bcc.s	.et1
 	move.w	d3,d1
