@@ -118,11 +118,9 @@ With picotool you can still use `scripts/firmware-install-partitioned.sh`
 
 ## Provisioning a board (plan 4b)
 
-**Steps 1-3 are verified on hardware as of 2026-09-10; steps 4-5 are not.** The AP
-comes up, iOS raises the sign-in sheet on its own, and the form renders at
-192.168.4.1. Everything from pressing Save onwards — teardown, association,
-registration — has still only ever run against the host suite. See "Honest caveats"
-below.
+**All five steps are verified on hardware:** steps 1-3 on 2026-09-10, and the whole flow
+through Save, association and registration since. The re-join bench in `HANDOFF.md`
+3bf (2026-10-09) is the latest run.
 
 A board with no WiFi credentials stored in flash — or one that has just failed to associate
 three times in a row — raises its own WPA2 access point named `wifi-floppy-XXXX`, where
