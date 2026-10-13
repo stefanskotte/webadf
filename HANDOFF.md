@@ -1624,7 +1624,7 @@ separately.
   -lh1-/-lh2-/-lh3-/-lzs-/-lz5- are skipped with a named reason (pre-1990 LHarc; rare on Amiga sites). Fixtures
   `m5/m6/m7.lzh` were written by the real `lha` (-o5/-o6/-o7). The `.adf` upload page does not take archives at all
   (unchanged); archives are a drop-onto-a-disk feature.
-- **Upload from a URL -- SHIPPED 2026-10-09 (3bd); LHA from a URL waits on a readLha size guard.** (requested 2026-10-09, via the operator): on the upload page, paste a URL and the web app
+- **Upload from a URL -- SHIPPED 2026-10-09 (3bd); LHA/LZH from a URL SHIPPED 2026-10-13 (9856cca)** with readLha guards: declared sizes checked before decoding, a block budget (ceil(out/256)+16), code lengths capped at 16, every member counted toward the 20-image cap. Two CPU bombs and a row flood were found in review and closed; 1,328 real archives decode unchanged. (requested 2026-10-09, via the operator): on the upload page, paste a URL and the web app
   fetches the ADF/HFE itself. Design notes: a server-side fetch is an SSRF surface, so allow http(s) only, refuse
   private, loopback and link-local addresses after DNS resolution (re-check on every redirect), cap redirects, size
   and time, and stream into the same presign/complete ingest path so hashing, dedupe, TOSEC matching and
@@ -2592,7 +2592,7 @@ separately.
     - show both values of a state;
     - help text changes with behaviour.
 
-- **Accept `.dmz` (gzipped DMS) uploads (operator, 2026-10-12).** `.dmz` is a DMS archive compressed with gzip, as
+- ~~**Accept `.dmz` (gzipped DMS) uploads (operator, 2026-10-12).**~~ **DONE 2026-10-13 (merge 9856cca): gunzip capped at 4 MiB, then the DMS path; everywhere `.dms` is accepted except the CLI (it uploads raw). No real DMS packer here: the CI fixture is NOCOMP; an opt-in test gzips adf-archive/powerglove.dms.** `.dmz` is a DMS archive compressed with gzip, as
   `.adz` is to `.adf`. Today the dropzone and `src/lib/archive/disk-image.ts` take `.adf/.dsk/.adz/.dms/.hfe`
   (`DISK_IMAGE_PATTERN`, `accept=".adf,.dsk,.adz,.dms,.hfe"` in `src/components/ingest/dropzone.tsx`), so a `.dmz`
   is refused. The shape is to gunzip it with the same bounded inflate as `.adz` (the gzip-bomb limit), then pass the
