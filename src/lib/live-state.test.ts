@@ -22,6 +22,7 @@ const base: LiveStateRow = {
   displayVersion: 0, displayAppliedVersion: null, displayError: null, displayLayouts: null, displayPanel: '128x32',
   secondDrive: 'off', secondDriveVersion: 0, secondDriveAppliedVersion: null, secondDriveReported: null,
   df1Sha256: null, netDriverSeenAt: null, netAmigaIp: null, netFramesIn: null, netFramesOut: null,
+  secondDriveCapable: true, sel1Wired: true, df1Seen: false,
 };
 const other: LiveStateRow = { ...base, id: 'dev-b', name: 'Second' };
 const fp = (rows: LiveStateRow[], now = NOW) => liveFingerprint(rows, now, 0);
@@ -209,4 +210,29 @@ describe('the DF1 setting and Network readings', () => {
     expect(fp([{ ...base, netFramesIn: 5, netFramesOut: 1 }])).toBe(fp([{ ...base, netFramesIn: 6, netFramesOut: 1 }]));
     expect(fp([{ ...base, netFramesIn: 0, netFramesOut: 0 }])).toBe(a);
   });
+});
+
+describe('every DF1 card input (HANDOFF backlog: "DF1 card status does not update live")', () => {
+  // The bench saw the status line stay on "Waiting for the board" after the board acked: a card input
+  // missing from the fingerprint is a card that only changes on a reload. Each of these is rendered by
+  // SecondDriveSetting / SecondDriveReadings / NetworkChecklist, so each one must move the fingerprint.
+  const changes: [string, Partial<LiveStateRow>][] = [
+    ['secondDrive', { secondDrive: 'df1' }],
+    ['secondDriveVersion', { secondDriveVersion: 1 }],
+    ['secondDriveAppliedVersion', { secondDriveAppliedVersion: 0 }],
+    ['secondDriveReported', { secondDriveReported: 'off' }],
+    ['df1Sha256', { df1Sha256: 'b'.repeat(64) }],
+    // "Needs firmware 1.9.0 or newer" -> "Waiting for the board", and the select enables.
+    ['secondDriveCapable', { secondDriveCapable: false }],
+    // The two SEL1 readings under the setting, and the input the override refusal hangs on.
+    ['sel1Wired', { sel1Wired: false }],
+    ['sel1Wired null', { sel1Wired: null }],
+    ['df1Seen', { df1Seen: true }],
+    ['df1Seen null', { df1Seen: null }],
+  ];
+  for (const [name, patch] of changes) {
+    it(`moves when ${name} changes`, () => {
+      expect(fp([{ ...base, ...patch }])).not.toBe(fp([base]));
+    });
+  }
 });

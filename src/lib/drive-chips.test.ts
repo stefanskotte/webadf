@@ -27,6 +27,7 @@ const loaded: LiveStateRow = {
   displayVersion: 0, displayAppliedVersion: null, displayError: null, displayLayouts: null, displayPanel: '128x32',
   secondDrive: 'off', secondDriveVersion: 0, secondDriveAppliedVersion: null, secondDriveReported: null,
   df1Sha256: null, netDriverSeenAt: null, netAmigaIp: null, netFramesIn: null, netFramesOut: null,
+  secondDriveCapable: null, sel1Wired: null, df1Seen: null,
 };
 
 const empty: LiveStateRow = {
