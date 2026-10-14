@@ -288,31 +288,38 @@ export const HELP_TOPICS = {
   // but cannot take a change -- second-drive.ts DF1_ON_OLD_FIRMWARE, shown when df1Sha256 is non-null.
   // HD next disk: device_client.c dc_df1_want (returns SLOT_NONE for SLOT_KIND_ADF_HD unless _df1_hd_ok) and
   // wifi-floppy/firmware/CMakeLists.txt:181 WF_DF1_HD OFF (decision D2: DF1's buffer is DD-only) -> DF1 stays empty.
+  // DF1 any disk (spec 2026-10-14): the setting is "On" (stored 'df1'); Mount offers DF0/DF1 (mount-action.tsx,
+  // card-mount-button.tsx), standard DD only, Eject DF1 on the card (second-drive-setting.tsx), fw 1.12.0
+  // (df1-pick.ts DF1_PICK_FW); a pick works with DF0 empty and survives DF0 changes (device_client.c dc_df1_want).
   'second-drive': {
     title: 'Second drive (DF1)',
     short:
-      'The board can also be your DF1, holding the next disk of the set, so games that read disk 2 from DF1 need no swapping. Off unless you switch it on.',
+      'The board can also be your DF1: it holds the next disk of the set, or a disk you mount into DF1, so games that read a second disk from DF1 need no swapping. Off unless you switch it on.',
     body: (
       <>
         <p>
-          Choose <em>Next disk of the set</em> under <em>Second drive (DF1)</em> on the board&apos;s card. DF1 then
-          holds the disk after the one in DF0, if that is a standard disk; when it is an HD disk, DF1 stays empty. When you press <em>Next disk</em>, DF0 moves on at once and DF1 is
-          empty for about five seconds while the following disk is fetched.
+          Choose <em>On</em> under <em>Second drive (DF1)</em> on the board&apos;s card. DF1 then holds the next disk
+          of the set (empty when that is an HD disk); after <em>Next disk</em> it is empty for about five seconds while
+          the following disk is fetched.
         </p>
         <p>
-          The change takes effect when the Amiga restarts, cold or warm: switch the Amiga off and on, or press
-          Ctrl-Amiga-Amiga. Switching it off: until the Amiga restarts, DF1 stays, empty and write-protected.
+          Or mount a disk of your choice into DF1: press <em>DF1</em> beside <em>Mount</em>. DF1 keeps it whatever
+          DF0 does, even with DF0 empty, until <em>Eject DF1</em> on the card; then it follows the set again. DF1
+          takes standard DD disks only.
         </p>
         <p>
-          Use it only when no other drive is DF1. On an A500, A600 or A1200 that means no external drive. On an
-          A2000, A3000 or A4000 it means no second internal drive; the external port there is DF2. If the board has seen another drive answer as DF1, the setting refuses to switch on. After
-          removing that drive you can override it with <em>Switch on anyway…</em>.
+          It takes effect when the Amiga restarts, cold or warm: switch it off and on, or press Ctrl-Amiga-Amiga.
+        </p>
+        <p>
+          Use it only when no other drive is DF1: no external drive on an A500, A600 or A1200, no second internal
+          drive on an A2000, A3000 or A4000 (the external port there is DF2). If the board has seen another DF1, the
+          setting refuses to switch on; after removing that drive, use <em>Switch on anyway…</em>.
         </p>
         <GoodToKnow items={[
-          'With Next disk, DF1 is read-only: saving to it fails as write-protected. Saves to DF0 follow that disk’s own write protection.',
-          <>The third choice, <em>Network (PaulaNET)</em>, uses DF1 for networking instead (it is then the PaulaNET disk, and only the driver writes to it): see{' '}
+          'DF1 is read-only: saving to it fails as write-protected. Saves to DF0 follow that disk’s own write protection.',
+          <>The third choice, <em>Network (PaulaNET)</em>, uses DF1 for networking instead: see{' '}
             <a className="underline" href="/help#network">Amiga networking</a>.</>,
-          'Next disk needs board firmware 1.9.0 or newer; Network needs 1.11.0. A board put back on older firmware keeps the DF1 setting it had, and the card says DF1 is on while it holds a disk; install 1.9.0 or newer to switch it off.',
+          'On needs board firmware 1.9.0 or newer, and a disk of your choice in DF1 needs 1.12.0; Network needs 1.11.0. Older firmware keeps the DF1 setting it had, and the card says DF1 is on while it holds a disk; install 1.9.0 or newer to switch it off.',
         ]} />
       </>
     ),

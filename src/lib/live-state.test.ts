@@ -21,11 +21,25 @@ const base: LiveStateRow = {
   trackMaxBytes: null, playsHd: false, preloadSha256: null, preloadState: null, next: null,
   displayVersion: 0, displayAppliedVersion: null, displayError: null, displayLayouts: null, displayPanel: '128x32',
   secondDrive: 'off', secondDriveVersion: 0, secondDriveAppliedVersion: null, secondDriveReported: null,
+  df1DiskId: null, df1PickSha256: null, df1PickTitle: null, df1PickDiskNo: null,
   df1Sha256: null, netDriverSeenAt: null, netAmigaIp: null, netFramesIn: null, netFramesOut: null,
   secondDriveCapable: true, sel1Wired: true, df1Seen: false,
 };
 const other: LiveStateRow = { ...base, id: 'dev-b', name: 'Second' };
 const fp = (rows: LiveStateRow[], now = NOW) => liveFingerprint(rows, now, 0);
+
+describe('the DF1 pick', () => {
+  it('moves with the disk mounted into DF1 (spec 2026-10-14 §3.3)', () => {
+    const a = fp([base]);
+    expect(fp([{ ...base, df1DiskId: 'disk-x', df1PickTitle: 'Lotus', df1PickDiskNo: 1, df1PickSha256: 'e'.repeat(64) }])).not.toBe(a);
+    expect(fp([{ ...base, df1DiskId: 'disk-x', df1PickTitle: 'Lotus', df1PickDiskNo: 1 }]))
+      .not.toBe(fp([{ ...base, df1DiskId: 'disk-x', df1PickTitle: 'Lotus II', df1PickDiskNo: 1 }]));
+  });
+  it('moves when the picked disk\'s bytes change (ruling 1)', () => {
+    const r = { ...base, df1DiskId: 'disk-x', df1PickTitle: 'Lotus', df1PickDiskNo: 1 };
+    expect(fp([{ ...r, df1PickSha256: 'a'.repeat(64) }])).not.toBe(fp([{ ...r, df1PickSha256: 'b'.repeat(64) }]));
+  });
+});
 
 describe('the next-disk fields', () => {
   it('changes the fingerprint when the preload state changes', () => {

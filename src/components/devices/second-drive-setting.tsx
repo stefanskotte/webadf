@@ -5,9 +5,11 @@ import type { DeviceListItem } from '@/lib/queries';
 import { secondDriveStatus, DF1_SEEN_REASON, SECOND_DRIVE_NET_FW, type SecondDriveMode } from '@/lib/second-drive';
 import type { NextInfo } from '@/lib/next-disk';
 import { HelpTip } from '@/components/help/help-tip';
+import { df1LineText } from '@/lib/df1-pick';
+import { requestEjectDf1 } from '@/components/devices/device-actions';
 import { NetworkChecklist } from '@/components/devices/network-checklist';
 
-/** Second drive (DF1): Off | Next disk of the set (spec §3). Refused while a real DF1 was seen,
+/** Second drive (DF1): Off | On | Network (spec 2026-10-14 D4: "Next disk of the set" renamed On, stored 'df1'). Refused while a real DF1 was seen,
  *  with an override behind a second confirmation (operator ruling 2026-10-08). */
 export function SecondDriveSetting({ device, next, now }: { device: DeviceListItem; next?: NextInfo | null; now: number }) {
   const id = device.id;
@@ -53,7 +55,7 @@ export function SecondDriveSetting({ device, next, now }: { device: DeviceListIt
                 onChange={(e) => save(e.target.value as SecondDriveMode)}
                 className="w-40 min-w-0 max-w-full rounded border px-1 py-0.5" style={{ borderColor: 'var(--hairline)', color: 'var(--ink)' }}>
           <option value="off">Off</option>
-          <option value="df1">Next disk of the set</option>
+          <option value="df1">On</option>
           <option value="net" disabled={!device.secondDriveNetCapable}>
             {device.secondDriveNetCapable ? 'Network (PaulaNET)' : `Network (PaulaNET) — needs firmware ${SECOND_DRIVE_NET_FW}`}
           </option>
@@ -61,10 +63,26 @@ export function SecondDriveSetting({ device, next, now }: { device: DeviceListIt
         <HelpTip topic="second-drive" />
       </label>
       <span data-testid={`second-drive-status-${id}`}>{secondDriveStatus(device)}</span>
+      {device.secondDriveCapable && (
+        <span data-testid={`second-drive-help-${id}`}>
+          On: DF1 holds the next disk of the set, or a disk you mount into DF1.
+        </span>
+      )}
       {device.secondDriveReported === 'df1' && device.secondDriveCapable && (   /* m2: what the board runs */
-        <span data-testid={`device-df1-disk-${id}`}>
-          {device.df1Sha256 === null ? 'DF1: empty'
-            : next?.preload === 'ready' ? `DF1: disk ${next.diskNo}` : 'DF1: next disk ready'}
+        <span className="flex flex-wrap items-center gap-x-2 gap-y-1">
+          <span data-testid={`device-df1-disk-${id}`}>{df1LineText(device, next ?? null)}</span>
+          {device.df1DiskId !== null && (
+            <button type="button" data-testid={`eject-df1-${id}`} disabled={busy || refreshing}
+                    onClick={async () => {
+                      setBusy(true);
+                      try { if (await requestEjectDf1(id)) startRefresh(() => router.refresh()); }
+                      finally { setBusy(false); }
+                    }}
+                    className="rounded border px-1.5 py-0.5 font-semibold disabled:opacity-50"
+                    style={{ borderColor: 'var(--hairline)', color: 'var(--ink)' }}>
+              Eject DF1
+            </button>
+          )}
         </span>
       )}
       {device.secondDriveReported === 'net' && device.secondDriveCapable && (
