@@ -45,6 +45,11 @@ void drive_id_model_deselect(drive_id_model_t *m) {
     }
 }
 
+void drive_id_model_restart(drive_id_model_t *m) {
+    m->rdy = false;                       // on_released: mov pins, null
+    m->motor_on = true;                   // so the next motor-off select is a reset_load
+}
+
 void drive_id_model_level(drive_id_model_t *m, bool assert) {
     m->level = assert;                    // exec'd `set x, level` (bus_out.c)
     // An assert while selected with the motor on also execs `set pins, 1`

@@ -155,6 +155,21 @@ bool bus_out_drive_id_set(unsigned d, drive_id_kind_t k) {
     if (d >= WF_DRIVES || id_sm[d] < 0 || k == id_kind[d]) return false;
     id_kind[d] = k;
     id_write_y(d, k);
+    // DF1 (and any drive past DF0): restart the answer, so the next select
+    // loads the new word. The A500's internal connector carries MTR0D* --
+    // DF0's motor, latched on the motherboard by SEL0 (HRM p.320, A500 rev 6
+    // schematic CN11 pin 16) -- not the raw DSKMOTOR*. So the board never sees
+    // DF1's motor-on select, which is what restarts an answer
+    // (drive_id_model_restart, test_drive_id.c), and Kickstart's next read ran
+    // on the old word's shifter: Off -> Next or Network live, then one warm
+    // reset, found no DF1 (bench 2026-10-13, fw 1.11.0, HANDOFF 3bj). DF0
+    // keeps the old rule (a new word at the next load): its motor-on select
+    // is visible, and its HD/DD changes passed the bench that way (3an).
+    if (d != 0) {
+        uint32_t save = spin_lock_blocking(gate_lock);    // against bus_out_set_drive's PC check
+        pio_sm_exec(id_pio, (uint)id_sm[d], pio_encode_jmp(id_off + drive_id_offset_on_released));
+        spin_unlock(gate_lock, save);
+    }
     return true;
 }
 

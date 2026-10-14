@@ -56,6 +56,13 @@ void drive_id_model_set_id(drive_id_model_t *m, uint32_t id);
 // SEL0 falls with MTR as given (true = motor requested, bus line low).
 void drive_id_model_select(drive_id_model_t *m, bool mtr_on);
 void drive_id_model_deselect(drive_id_model_t *m);
+// bus_out.c execs `jmp on_released` (RDY released, then wait for a select):
+// the answer in progress is abandoned and the next motor-off select loads the
+// ID and carries bit 31, as at power-up. DF1 needs it on every ID change: on
+// the A500's internal connector its motor-on select is invisible (MTR0D*).
+// Modelled for a deselected drive: on the board, a restart landing inside a
+// select passes `wait 0 pin 0` at once and answers bit 31 in that select.
+void drive_id_model_restart(drive_id_model_t *m);
 void drive_id_model_level(drive_id_model_t *m, bool assert);
 // The level the program drives on GPIO 12: true = high = /RDY low on the bus.
 bool drive_id_model_rdy_gpio(const drive_id_model_t *m);
