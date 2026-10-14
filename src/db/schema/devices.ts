@@ -1,4 +1,5 @@
 import { pgTable, text, timestamp, index, integer, boolean, customType } from 'drizzle-orm/pg-core';
+import { disks } from './catalog';
 
 // bytea, used by devices.display_layout (a <=132-byte layout blob) and by
 // disk-history's staged track bytes. Kept here because disk-history already
@@ -172,6 +173,16 @@ export const devices = pgTable('devices', {
   secondDriveCapable: boolean('second_drive_capable'),
   /** What DF1 holds now (a sha256), null = empty or off. */
   df1Sha256: text('df1_sha256'),
+
+  // --- DF1 any disk (spec docs/superpowers/specs/2026-10-14-df1-any-disk-design.md §4.1) ---
+  /**
+   * The disk the user mounted into DF1 (a "pick"); null = DF1 follows the set. Text, like disks.id (plan ruling 1).
+   * ON DELETE SET NULL is the backstop only: deleteDisk/deleteGame clear it first through ejectDf1Holders, which also
+   * moves df1_version -- a bare SET NULL would clear the column and tell no board (plan ruling 2).
+   */
+  df1DiskId: text('df1_disk_id').references(() => disks.id, { onDelete: 'set null' }),
+  /** Cursor, bumped on every change of the pick (set, replace, clear); the board echoes ?df1Ack=. */
+  df1Version: integer('df1_version').notNull().default(0),
 
   // --- PaulaNET Network mode (spec 2026-10-12 §5): the board's `net` report, Network mode only ---
   /** When the driver last read cylinder 76 (report time minus its age); null = not heard, or not Network. */
