@@ -4909,6 +4909,78 @@ Demozoo API (the bulk export makes per-lookup load on a non-profit unnecessary).
   allowlist checks only the first URL (the raster content-type allowlist and `nosniff` still apply).
 - **Cron drift:** the daily 01:30 cron against a 7-day gate can drift a refetch to 8 days.
 
+### 3bl. DF1 takes any standard DD disk -- branch feat/df1-any-disk (fw 1.12.0): branch complete, TEST build + A500 bench owed, not merged
+
+**Status.** Branch complete (commits 82de9bd..d957605, every task reviewed, e2e 79/79 for the touched specs). The TEST
+build, its install and the A500 bench below are owed; nothing is merged, released or installed.
+
+**What.** With DF1 On (the setting formerly "Next disk of the set"; stored `df1` unchanged), every Mount offers
+DF0 or DF1. A disk mounted into DF1 lives in DF1's own PSRAM slot (`SLOT_NET`), read-only, whatever DF0 holds or
+does -- also with DF0 empty (a hard-drive boot). Eject DF1 on the card drops it and DF1 follows the set again.
+Spec `docs/superpowers/specs/2026-10-14-df1-any-disk-design.md`; plan `docs/superpowers/plans/2026-10-14-df1-any-disk.md`.
+
+**Server.** Migration 0037 (`devices.df1_disk_id` text FK -> disks ON DELETE SET NULL, `df1_version`), applied to
+the live DB 2026-10-14, before e2e. `mountToDf1` / `ejectDf1` / `ejectDf1Holders` / `readDf1ForPoll`
+(`src/lib/df1-store.ts`), the rules and words in `src/lib/df1-pick.ts`. Poll: `?df1Ack=` (inequality wake), body key
+`df1:{v,sha256|null}` on every body to a board that sends it. `/api/device/image/net/<sha>` also serves the board's
+own standard DD ADF as a DD WFAD (entitlement checked first, then the DD-ADF row).
+
+**Firmware 1.12.0.** `dc_take_df1` (acked on receipt), `dc_df1_pick_step` (net route -> SLOT_NET, DF1 ejected
+first, the preload gate, the net route's block), `dc_df1_want` (On + pick -> SLOT_NET once verified, empty until
+then; On without -> the set's rule), `df1Sha256` names the pick. `DC_POLL_BODY_BYTES` 1536 -> 1664 (the five new
+statics cost +640 B of poll buffer, not the +384 B the plan said). Sizes, release configuration: .text 345680,
+.data 10496, .bss 423560, .psram_noload 7766016.
+
+**Plan rulings 1-11** (one line each): text FK; SET NULL only a backstop (ejectDf1Holders moves the cursor); ack on
+receipt, not after the load; an unverified pick leaves DF1 empty; poll buffer 1664; DF0/DF1 control only with DF1
+On, plus "Waiting for the board"; DF1 in the drive menu, not on the chip; the pick uses the preload gate and goes
+first; the pick shares the net route's block; the library card's ring stays DF0's; mountChoice takes the disk.
+
+**Execution rulings and deviations.**
+- A pick whose fetch fails (e.g. the disk is no longer entitled) reads "loading" on the card; only deleting the disk
+  clears a pick server-side. Spec §8.5 ("the card says why DF1 is empty") is NOT delivered in 1.12.0.
+- A Next (web or NFC) that lands DF0 on the picked disk is a move and clears the pick (spec §3.1 rule 4, §3.2 row 4).
+- Editing the picked disk's bytes does not bump `df1_version`; the board gets the new digest on its next poll body
+  (the `df1` key is on every body). DF1 is read-only, so a stale copy until then is harmless.
+- The holder line reads "Mounting to <board> (DF1)..." until the board reports the pick's digest; an offline
+  board's pick reads "Requested on ... (DF1) -- not confirmed" (fix round after Task 6), and a confirmed DF1 outranks
+  another board's unconfirmed DF0.
+- The net route checks `entitlements` first, then the DD-ADF row: a second query per pick fetch.
+- `isStandardDd` uses `adfDensity` from disk-format.ts; the pick fetch's failure verdicts are shared with
+  `dc_preload_step` through `dc_bg_fetch_failed` (preload's warning text changed slightly).
+
+**Known gaps, not fixed here.**
+- A deferred background fetch (pick or preload) waits for the next long poll (~25 s): `dc_step` clears
+  `df1_deferred` before main.c's 1 s pacing reads it. Pre-existing for preload.
+- Rare race: a pick set between `deleteDisk`'s `ejectDf1Holders` and the delete is cleared by the FK SET NULL without
+  a cursor bump; a disk deleted between the select and the UPDATE gives an FK error (500).
+- OPEN: `drizzle.config.ts` has the schema glob `./src/db/schema/*.ts`, which picks up
+  `src/db/schema/devices-df1.test.ts`, so `pnpm db:generate` crashes. Move the test or exclude `*.test.ts`.
+- Pre-existing on master, not from this branch: three `react-hooks/purity` lint errors (games, disk files and
+  library pages) and one `react-hooks/set-state-in-effect` error (`pair-button.tsx`).
+- Minor, deferred: the collapsed multi-board trigger follows DF0 only; the DF0 eject label is unqualified beside
+  "Eject DF1"; `ejectDf1` bumps `df1_version` even with no pick; the e2e does not assert the "DF1 is off" /
+  "Waiting for the board" refusal texts; an INVALID pick logs "WFMF or WFAD" (should say DD WFAD); the pick and the
+  driver disk share `_net_blocked` (safe, `dc_set_df1` clears it on every mode change).
+
+**Bench (TEST build of the reviewed branch, registry only, notes "TEST build: DF1 any disk"; Amiga OFF before the
+install; then driven through the PiKVM where it can be).** Serial log running first (`pgrep -fl serstream.py`);
+`grep -c 'records dropped'` must be 0 before any absence is believed.
+
+| Step | What | Result |
+|---|---|---|
+| 0 | card shows `fw 1.12.0+g<hash>` and DF1 On "Set on the board"; Amiga powered, DF0 empty, booted TDH0 | owed |
+| 1 | mount a data disk into DF1 -> it appears in DF1; `info` says Read Only; card "DF1: <Title> disk N — read-only" | owed |
+| 2 | mount a set disk into DF0 -> DF1 does not blink (no `df1: ejected` in the log); DF0's next disk preloads ("Disk 2 ready") | owed |
+| 3 | a Next tap (or Next on the card) is instant and DF1 keeps its disk | owed |
+| 4 | Eject DF1 -> DF1 follows the set (card "DF1: next disk of the set — disk N"; the Amiga sees the change) | owed |
+| 5 | an HFE disk's DF1 choice is disabled with "DF1 takes standard DD disks only" | owed |
+| 6 | a write to DF1 (`echo >df1:x`) fails as write-protected | owed |
+| 7 | log: records dropped 0; heap low-water >= 20,480 B; no fault, reboot or revert | owed |
+
+**Off switch / rollback.** Choose Off on the card (the pick goes with it) and restart the Amiga. A board on 1.11.x
+is never sent a pick. Rollback is a 1.12.1 from master (the registry refuses a lower sequence).
+
 ### 3bk. DF1 after a live switch: the first warm reset misses DF1 -- root cause MTR0D*; fixed in 1.11.1 (2026-10-14; benched and released)
 
 **Bug B (3bj smoke check), reproduced 2026-10-13 via the PiKVM, twice, with Next as the control:** DF1 Off (parked,
