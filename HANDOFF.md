@@ -2774,6 +2774,15 @@ separately.
   already proves the user owns the server); a signed "server binding" the hosted service issues;
   or set only over USB (picotool/serial), never from the open AP. Each still needs the TLS answer
   (public cert for the LAN name, or a CA pinned per server at pairing).
+
+  **Operator note 2026-10-14 (backlog): an override config ON THE BOARD.** For hosting your own web app, the board
+  should accept an override file stored on the board itself, holding at least: the remote server URL; whether
+  HTTPS is required; whether the certificate must be valid (chain + name) -- "and such" (to decide in the spec:
+  e.g. a pinned CA or certificate fingerprint, port). No default changes: without the file the board talks to the
+  compiled-in `webadf.vercel.app` over verified TLS as today. Fits the "set only over USB, never from the open AP"
+  option above (physical access is the trust boundary); open points: how it is written (a file dropped on the
+  BOOT/USB drive, or serial), and that a weakened setting (plain HTTP, unverified cert) is shown on the OLED and the
+  card, never silent. Not started.
 - ~~**Rename the "Ingest" nav item to "Upload".**~~ **Label DONE 2026-08-31** — the nav now reads
   "Upload"; nothing asserted on the old text, so no test changed. **The route rename is still
   open and is deliberately not done:** `/ingest` is referenced in `src/proxy.ts`'s matcher, the
