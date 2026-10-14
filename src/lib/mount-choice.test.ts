@@ -311,6 +311,37 @@ describe('DF1 (spec 2026-10-14 §3.3)', () => {
     expect(holderText([held, loading])?.text).toBe('In A (DF1)');
   });
 
+  it('an offline board\'s unconfirmed pick is "Requested on … (DF1) — not confirmed", amber', () => {
+    const c = choose(on({ df1DiskId: THIS_DISK, df1PickSha256: THIS_SHA, df1Sha256: null, lastSeenAt: OLD }));
+    expect(c.df1Stale).toBe(true);
+    expect(holderText([c])).toEqual({ text: 'Requested on Bench (DF1) — not confirmed', stale: true });
+    // Never seen at all is offline too.
+    const never = choose(on({ df1DiskId: THIS_DISK, df1PickSha256: THIS_SHA, lastSeenAt: null }));
+    expect(holderText([never])?.stale).toBe(true);
+  });
+
+  it('a pick the board confirmed stays "In … (DF1)" even after the board goes offline', () => {
+    const c = choose(on({ df1DiskId: THIS_DISK, df1PickSha256: THIS_SHA, df1Sha256: THIS_SHA, lastSeenAt: OLD }));
+    expect(c.df1Stale).toBe(false);
+    expect(holderText([c])).toEqual({ text: 'In Bench (DF1)', stale: false });
+  });
+
+  it('a confirmed DF1 outranks another board\'s unconfirmed DF0 request', () => {
+    const df1 = choose(on({ id: 'b', name: 'B', df1DiskId: THIS_DISK, df1PickSha256: THIS_SHA, df1Sha256: THIS_SHA }));
+    const pendingDf0 = choose(row({ id: 'a', name: 'A', desiredDiskId: THIS_DISK, desiredSha256: THIS_SHA }));
+    const staleDf0 = choose(row({ id: 'a', name: 'A', desiredDiskId: THIS_DISK, desiredSha256: THIS_SHA, lastSeenAt: OLD }));
+    expect(pendingDf0.state).toBe('pending');
+    expect(staleDf0.state).toBe('stale');
+    expect(holderText([pendingDf0, df1])).toEqual({ text: 'In B (DF1)', stale: false });
+    expect(holderText([staleDf0, df1])).toEqual({ text: 'In B (DF1)', stale: false });
+  });
+
+  it('a loading DF1 pick on an online board outranks a stale DF0 request elsewhere', () => {
+    const loading = choose(on({ id: 'b', name: 'B', df1DiskId: THIS_DISK, df1PickSha256: THIS_SHA }));
+    const staleDf0 = choose(row({ id: 'a', name: 'A', desiredDiskId: THIS_DISK, desiredSha256: THIS_SHA, lastSeenAt: OLD }));
+    expect(holderText([staleDf0, loading])).toEqual({ text: 'Mounting to B (DF1)…', stale: false });
+  });
+
   it('DF0 holding the disk outranks DF1 in the holder line', () => {
     const c = choose(on({ desiredDiskId: THIS_DISK, mountedDiskId: THIS_DISK, desiredSha256: THIS_SHA, mountedSha256: THIS_SHA }));
     expect(holderText([c])?.text).toBe('In Bench');

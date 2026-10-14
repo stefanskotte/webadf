@@ -1,4 +1,4 @@
-import { deviceState, type DeviceState, type DeviceStateRow } from '@/lib/device-state';
+import { deviceState, isOnline, type DeviceState, type DeviceStateRow } from '@/lib/device-state';
 import { df1Option, type Df1Board, type Df1Option } from '@/lib/df1-pick';
 
 /**
@@ -62,6 +62,11 @@ export interface MountChoice {
    * while it is still loading (or not in DF1 at all): the holder line must not say "In" before the board does.
    */
   df1Held: boolean;
+  /**
+   * True when this disk is the DF1 pick, the board has not reported holding it, and the board is offline: asked
+   * and nobody is answering, DF1's equivalent of DF0's 'stale' (deviceState only knows DF0's mismatch).
+   */
+  df1Stale: boolean;
 }
 
 /** "Lemmings — disk 2", degrading rather than rendering "null — disk null". */
@@ -118,8 +123,9 @@ export function mountChoice(row: MountTargetRow, disk: MountDisk, now: number): 
 
   const df1 = df1Option(row, disk);
   const df1Held = df1?.isThisDisk === true && row.df1PickSha256 !== null && row.df1Sha256 === row.df1PickSha256;
+  const df1Stale = df1?.isThisDisk === true && !df1Held && !isOnline(row.lastSeenAt, now);
 
-  return { id: row.id, name: row.name, state, holding, isThisDisk, action, actionLabel, revertDiskId, df1, df1Held };
+  return { id: row.id, name: row.name, state, holding, isThisDisk, action, actionLabel, revertDiskId, df1, df1Held, df1Stale };
 }
 
 export function mountChoices(rows: MountTargetRow[], disk: MountDisk, now: number): MountChoice[] {
@@ -156,21 +162,23 @@ function names(list: MountChoice[]): string {
  * (desired state must not be presented as fact) made checkable.
  */
 export function holderText(choices: MountChoice[]): HolderLine | null {
+  // DF0 (the disk is what the board's DF0 holds or was asked for) and DF1 (spec 2026-10-14 §3.3: the disk is the
+  // board's DF1 pick). One ranking across both drives: confirmed, then in progress, then asked-and-unanswered;
+  // within a rank DF0 comes first. Confirmed DF1 outranks an unconfirmed DF0 request on another board.
   const held = choices.filter((c) => c.isThisDisk);
-  if (held.length === 0) {
-    // A disk in DF1 only (spec 2026-10-14 §3.3): said, with the drive named. DF0 outranks it when both hold.
-    // Same rule as DF0: "In" only once the board reports the pick's digest; until then it is still loading.
-    const inDf1 = choices.filter((c) => c.df1?.isThisDisk === true);
-    const df1Held = inDf1.filter((c) => c.df1Held);
-    if (df1Held.length > 0) return { text: `In ${names(df1Held)} (DF1)`, stale: false };
-    return inDf1.length > 0 ? { text: `Mounting to ${names(inDf1)} (DF1)…`, stale: false } : null;
-  }
+  const inDf1 = choices.filter((c) => c.df1?.isThisDisk === true);
 
   const converged = held.filter((c) => c.state === 'converged');
   if (converged.length > 0) return { text: `In ${names(converged)}`, stale: false };
+  const df1Held = inDf1.filter((c) => c.df1Held);
+  if (df1Held.length > 0) return { text: `In ${names(df1Held)} (DF1)`, stale: false };
 
   const pending = held.filter((c) => c.state === 'pending');
   if (pending.length > 0) return { text: `Mounting to ${names(pending)}…`, stale: false };
+  const df1Loading = inDf1.filter((c) => !c.df1Held && !c.df1Stale);
+  if (df1Loading.length > 0) return { text: `Mounting to ${names(df1Loading)} (DF1)…`, stale: false };
 
-  return { text: `Requested on ${names(held)} — not confirmed`, stale: true };
+  if (held.length > 0) return { text: `Requested on ${names(held)} — not confirmed`, stale: true };
+  if (inDf1.length > 0) return { text: `Requested on ${names(inDf1)} (DF1) — not confirmed`, stale: true };
+  return null;
 }
