@@ -4909,7 +4909,7 @@ Demozoo API (the bulk export makes per-lookup load on a non-profit unnecessary).
   allowlist checks only the first URL (the raster content-type allowlist and `nosniff` still apply).
 - **Cron drift:** the daily 01:30 cron against a 7-day gate can drift a refetch to 8 days.
 
-### 3bk. DF1 after a live switch: the first warm reset misses DF1 -- root cause MTR0D*, fix on fix/df1-id-restart (2026-10-14; bench owed)
+### 3bk. DF1 after a live switch: the first warm reset misses DF1 -- root cause MTR0D*; fixed in 1.11.1 (2026-10-14; benched and released)
 
 **Bug B (3bj smoke check), reproduced 2026-10-13 via the PiKVM, twice, with Next as the control:** DF1 Off (parked,
 ID NONE) -> Next or Network live -> ONE Ctrl-Amiga-Amiga: no DF1 (`info` has no DF1 line; the log shows no DF1 head
@@ -4952,6 +4952,26 @@ with Network's buffers and was reverted by the 5-minute trial deadline -- safe, 
 L2. Its instruction was withdrawn (cursor 20). OTA is never automatic, so seq 79 reaches no other board. The
 operator's PDFs (`docs/Amiga_Hardware_Reference_Manual_3rd_edition.pdf`, `docs/Amiga_Disk_Drives_Inside_and_Out_1989_Abacus.pdf`)
 are left untracked, like the ROMs.
+
+**Bench PASSED 2026-10-14 (TEST seq 80, `1.11.1+g0a157eb`), driven by Claude through the PiKVM.** Amiga powered on
+with DF1 = Next (DF0 empty, booted TDH0). Each step: the setting chosen on the card, the log's `df1: setting N
+stored`, ONE PiKVM Ctrl+Alt+Del, then `info` via Workbench's Execute Command (Right-Amiga+E, no pointer needed):
+baseline Next -> DF1 `No disk present`; (1) Off -> no DF1 line; (2) Next -> DF1 present (the case that needed two
+resets on 1.11.0); (3) Off -> gone; (4) Network -> DF1 = PaulaNET, 879K, Read Only, icon on Workbench; (5) Off ->
+gone. No fault, reboot or revert in the board log.
+
+**Release.** Merged as 5ea2779. The version hashes `wifi-floppy/firmware/`'s last commit, still 0a157eb after the
+merge, so (as for 1.11.0) seq 80 was promoted: its notes changed from "TEST build..." to the release notes, then
+`pnpm firmware:publish --github-only` created `fw-1.11.1` (Latest, target 0a157eb, same signed files). **Trap:** the
+main checkout's `wifi-floppy/firmware/build/` held the sniffer build (seq 79, sha b55105a4...), so `--github-only`
+there resolved seq 79 and correctly refused it as TEST; it was run from `.claude/worktrees/df1id`, whose build is
+seq 80 (sha f824ebc5..., matches the registry). The bench card shows `fw 1.11.1+g0a157eb · up to date`, no TEST.
+Rollback: a 1.11.2 from master.
+
+**Observed: another user installed the TEST build.** Device `28:cd:c1:19:49:12` in another user's org (created
+2026-10-13, DF1 = Network) reported `1.11.1+g0a157eb` on 2026-10-14 07:51 (instruction 2, chosen from its own card) --
+before the bench. TEST builds ARE offered to every org's card (the open question from 3bj). Harmless now that seq 80
+is the release; it stays an open item: hide TEST rows from other orgs' update offers (seq 79 is still listed).
 
 ### 3bj. PaulaNET Phase 3 (Network as a DF1 setting) -- TEST 1.11.0+g2671ef7 seq 78 PASSED on the A500 (2026-10-13); release 1.11.0+g2671ef7 seq 78 installed and smoke-checked (2026-10-13)
 
