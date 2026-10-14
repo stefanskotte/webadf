@@ -248,6 +248,22 @@ typedef struct {
     bool     interrupted;
 } dc_preload_t;
 
+// DF1 any disk (spec 2026-10-14 §5): the disk the user mounted into DF1 -- a "pick" -- and what SLOT_NET holds for
+// it. `want_sha256` is the server's word, taken from every poll body's `df1` (dc_take_df1); `sha256` is what
+// dc_df1_pick_step put in SLOT_NET and verified. Kept apart, like dc_preload_t's two halves: a re-pick of the disk
+// SLOT_NET already holds needs no fetch. Meaningful only in DF1_MODE_NEXT ("On"); dc_set_df1 drops both on leaving
+// it, because Network mode owns SLOT_NET for the driver disk.
+typedef struct {
+    char want_sha256[65];   // the server's pick ("" = none: DF1 follows the set)
+    char sha256[65];        // what SLOT_NET holds for the pick, verified ("" = nothing)
+    bool loading;           // a pick fetch is in progress
+    // What DF1 serves for the pick changed (a new pick, verified, cleared or dropped): the status report's
+    // df1Sha256 is stale until a report carries it. Cleared by the caller (main.c), as preload.changed is.
+    bool changed;
+    // The last dc_df1_pick_step was cut short by the poll-interrupt: no record, no backoff. Cleared on entry.
+    bool interrupted;
+} dc_df1_pick_t;
+
 // How the most recent exchange ended, recorded by every attempt (and the
 // reused-connection retry) so a failure can be NAMED rather than merely
 // counted. Added 2026-10-09: OTA downloads on boards up for hours failed and
@@ -441,6 +457,12 @@ typedef struct {
     dc_preload_t preload;
     bool (*_preload_ok)(void *ctx);   // dc_set_preload_gate
     void  *_preload_ok_ctx;
+
+    // --- DF1 any disk (spec 2026-10-14 §5) ---
+    // The pick cursor, echoed as &df1Ack= by every DF1-capable build: the `v` of the last `df1` TAKEN (plan ruling
+    // 3 -- taken, not loaded: the server repeats `df1` on every body). RAM only, 0 at dc_init.
+    uint32_t      df1_ack;
+    dc_df1_pick_t df1_pick;
 
     // --- OLED layouts (spec 2026-10-04 §6) ---
     // The display cursor, echoed as &displayAck= on every poll: the highest
@@ -674,6 +696,16 @@ void dc_set_preload_gate(device_client_t *c, bool (*fn)(void *ctx), void *ctx);
 // Call between dc_steps, never from inside one.
 bool dc_preload_step(device_client_t *c);
 
+// DF1 any disk (spec 2026-10-14 §5): fetches the pick (df1_pick.want_sha256) into SLOT_NET from
+// /api/device/image/net/<sha>, WITHOUT publishing it, when: DF1 is On (DF1_MODE_NEXT), the client is idle, no
+// forced refetch is pending, SLOT_NET has storage, SLOT_NET does not already hold the pick verified, the net route
+// has not refused it within DC_NET_RETRY_MS, and the preload gate allows (plan ruling 8). DF1 is ejected first if it
+// serves SLOT_NET (dc_df1_release); a deferred release sets df1_deferred. Returns true if a request went out
+// (answered or failed). 400/404/422 or an invalid container hold the digest off the net route only (dc_net_block,
+// plan ruling 9), never DF0's ring; 401 halts. Interruptible like dc_preload_step: `df1_pick.interrupted`, no
+// record, no backoff, false. DF1 is reconciled on return. Call between dc_steps, never from inside one.
+bool dc_df1_pick_step(device_client_t *c);
+
 // POST /api/device/tap-write {"seq":N,"ok":true|false,"uid":"..","reason":".."}
 // -- the read-back verdict of a tag write. `why` is sent only when !ok (and
 // may be NULL then); `uid_hex` and `why` are clipped to the server's bounds
@@ -722,11 +754,14 @@ bool dc_drive_report_owed(const device_client_t *c);
 
 // --- DF1 second drive (spec 2026-10-08 §4) --------------------------------
 //
-// DF1 serves exactly one thing: the verified preload record (the idle slot
-// holding the server's current `next`), read-only, while DF1 is on, DF0 holds
-// a disk, and the disk fits DF1's track buffer. core1 is the only writer of
-// what DF1 holds (psram_publish_df1); nothing writes into a PSRAM slot while
-// DF1 holds it or core0 has not acknowledged letting go of it.
+// DF1 serves exactly one thing, by mode, read-only:
+//   On (DF1_MODE_NEXT) with a pick: SLOT_NET once the pick is verified there, whatever DF0 holds -- including
+//     nothing -- and nothing until then (spec 2026-10-14 §5, plan ruling 4);
+//   On without a pick: the verified preload record (the idle slot holding the server's current `next`), while DF0
+//     holds a disk and the disk fits DF1's track buffer;
+//   Network: SLOT_NET with the driver disk; Off: nothing.
+// core1 is the only writer of what DF1 holds (psram_publish_df1); nothing writes into a PSRAM slot while DF1 holds
+// it or core0 has not acknowledged letting go of it.
 
 // The DF1 mode core0 runs and whether DF1's buffer takes an HD track. Calling
 // this at all marks the build DF1-capable: the status report then always
