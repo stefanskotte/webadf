@@ -5,7 +5,7 @@ import { getDb } from '@/db';
 import { devices } from '@/db/schema/devices';
 import { signUpFresh, runTag } from './helpers';
 import { signInAsSuperAdmin } from './admin-helpers';
-import { pairDevice, seedDisk, authHeader, cleanupSeeded } from './device-helpers';
+import { pairDevice, seedDisk, authHeader, cleanupSeeded, df1OnBoard } from './device-helpers';
 
 /**
  * The header's drive chips (HANDOFF §4 backlog; src/components/shell/drive-chips.tsx).
@@ -372,4 +372,21 @@ test('the admin plane never renders the chips', async ({ page, request }) => {
   await expect(page).toHaveURL(/\/admin/);
   await expect(page.locator('[data-testid^=drive-chip]')).toHaveCount(0);
   await expect(page.getByTestId('drives-compact')).toHaveCount(0);
+});
+
+test('a board running DF1 On shows its DF1 line in the drive menu, then the disk mounted into DF1', async ({ page, request }) => {
+  const { orgId } = await signUpFresh(page);
+  const { deviceId } = await df1OnBoard(page, request, '1.12.0+gabc1234', 'Bench');
+  await page.goto('/library');
+  await chip(page, deviceId).click();
+  await expect(menu(page, deviceId)).toBeVisible();
+  await expect(page.getByTestId(`drive-entry-df1-${deviceId}`)).toHaveText('DF1: next disk of the set — empty');
+  await page.keyboard.press('Escape');
+  const tag = runTag();
+  const { diskId } = await seedDisk(orgId, { title: `ChipDf1-${tag}`, diskNo: 1, sha256: sha(`chipdf1-${tag}`) });
+  expect((await page.request.post(`/api/devices/${deviceId}/mount`, { data: { diskId, drive: 'df1' } })).status()).toBe(200);
+  await page.reload();
+  await chip(page, deviceId).click();
+  await expect(page.getByTestId(`drive-entry-df1-${deviceId}`))
+    .toHaveText(`DF1: ChipDf1-${tag} disk 1 — read-only, loading`);
 });

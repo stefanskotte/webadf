@@ -207,3 +207,32 @@ test('a board fetches the PaulaNET driver disk from the net route without owning
   const lib = await request.get(`/api/device/image/${PAULANET_DISK_SHA256}`, { headers: authHeader(token) });
   expect(lib.status()).toBe(404);
 });
+
+test('the net route serves a standard DD ADF the board\'s org owns (a disk in DF1) as a DD WFAD; another org\'s board gets 404', async ({ page, request, browser }) => {
+  const { orgId } = await signUpFresh(page);
+  const { token } = await pairDevice(page, request);
+  const adf = anyRealAdf();
+  const { sha256, sizeBytes, createdBlob } = await uploadDisk(page, adf);
+  const complete = await page.request.post('/api/ingest/complete', {
+    data: { files: [{ sha256, sizeBytes, filename: `DF1 Net ${randomUUID()}.adf` }] },
+  });
+  expect(complete.status()).toBe(200);
+  ingestCleanup.orgShaPairs.push({ orgId, sha256 });
+  if (createdBlob) ingestCleanup.ownedBlobShas.push(sha256);
+
+  const res = await request.get(`/api/device/image/net/${sha256}`, { headers: authHeader(token) });
+  expect(res.status()).toBe(200);
+  const body = await res.body();
+  expect(body.length).toBe(901_136);                                             // 16-byte DD WFAD header + the ADF
+  expect([...body.subarray(0, 16)]).toEqual([0x57, 0x46, 0x41, 0x44, 1, 0, 0, 0, 0xa0, 0, 0, 0, 0x0b, 0, 0, 0]);
+
+  const ctx = await browser.newContext();
+  try {
+    const p2 = await ctx.newPage();
+    await signUpFresh(p2);
+    const other = await pairDevice(p2, request);
+    expect((await request.get(`/api/device/image/net/${sha256}`, { headers: authHeader(other.token) })).status()).toBe(404);
+  } finally {
+    await ctx.close();
+  }
+});

@@ -6,7 +6,7 @@ import { disks } from '@/db/schema/catalog';
 import { devices } from '@/db/schema/devices';
 import { stableId } from '@/lib/ingest';
 import { signUpFresh, runTag } from './helpers';
-import { cleanupSeeded, pairDevice, seedDisk, authHeader } from './device-helpers';
+import { cleanupSeeded, pairDevice, seedDisk, authHeader, df1OnBoard } from './device-helpers';
 
 test.afterAll(async () => { await cleanupSeeded(); });
 
@@ -129,3 +129,30 @@ test('Cancel on a swap keeps the disk the board holds, rather than emptying the 
   await expect(nextCard).not.toHaveAttribute('data-drive', /.+/);
 });
 
+test('with DF1 On, the card asks which drive; DF1 mounts into DF1, and an HD disk cannot go there', async ({ page, request }) => {
+  const u = await signUpFresh(page);
+  const run = runTag();
+  const title = `CardDf1 ${run}`;
+  const { gameId, diskId } = await seedDisk(u.orgId, { title, diskNo: 1, sha256: sha(`carddf1-${run}`) });
+  const hdTitle = `CardHd ${run}`;
+  const hd = await seedDisk(u.orgId, { title: hdTitle, diskNo: 1, sha256: sha(`cardhd-${run}`), sizeBytes: 1_802_240 });
+  const { deviceId } = await df1OnBoard(page, request);
+
+  await page.goto('/library');
+  await card(page, title).getByTestId(`card-mount-${gameId}`).click();
+  const dialog = page.getByTestId('card-mount-dialog');
+  await expect(dialog).toBeVisible();                     // one disk, one board, but DF1 On: it asks
+  await expect(dialog.getByTestId('card-mount-df1-note')).toHaveText('DF1 is read-only');
+  await dialog.getByTestId('card-mount-drive-df1').click();
+  await expect(dialog.getByTestId('card-mount-confirm')).toHaveText('Mount into DF1');
+  await dialog.getByTestId('card-mount-confirm').click();
+  await expect(page.getByText('Mount into DF1 requested')).toBeVisible();
+  await expect.poll(async () => (await deviceRow(deviceId)).df1DiskId).toBe(diskId);
+  expect((await deviceRow(deviceId)).desiredDiskId).toBeNull();
+
+  await page.reload();
+  await card(page, hdTitle).getByTestId(`card-mount-${hd.gameId}`).click();
+  await expect(dialog.getByTestId('card-mount-drive-df1')).toBeDisabled();
+  await expect(dialog.getByTestId('card-mount-df1-note')).toHaveText('DF1 takes standard DD disks only');
+  await expect(dialog.getByTestId('card-mount-confirm')).toHaveText('Mount');   // DF0 stays the choice
+});
