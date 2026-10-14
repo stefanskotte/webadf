@@ -121,6 +121,21 @@ describe('deleteDisk: a middle disk of a human-arranged set (m1)', () => {
   });
 });
 
+describe('deleteDisk: a disk in DF1', () => {
+  it('a deleted disk mounted into DF1 leaves it, with the cursor moved (spec 2026-10-14 §3.2, Review Focus 5)', async () => {
+    scenario(null);
+    await deleteDisk('org-1', 'b');
+    // drizzle renders a null SET either as a parameter or as a literal: both are accepted.
+    const df1 = executed.find((e) => /^update "devices" set "df1_disk_id" = (\$\d+|null), "df1_version" = /.test(e.sql));
+    expect(df1, executed.map((e) => e.sql).join('\n')).toBeDefined();
+    expect(df1!.sql).toMatch(/"df1_disk_id" in \(\$\d+\)/);
+    expect(df1!.params).toEqual(expect.arrayContaining(['org-1', 'b']));
+    // ...before the disk row goes (the FK's SET NULL would tell no board).
+    const del = executed.findIndex((e) => /^delete from "disks"/.test(e.sql));
+    expect(executed.indexOf(df1!)).toBeLessThan(del === -1 ? Infinity : del);
+  });
+});
+
 describe('deleteDisk: the last disk of a title', () => {
   it('deletes the title, guarded so a title still holding ANY disk survives', async () => {
     answer(disks, [{ id: 'a', sha256: 'sha-a', gameId: 'G' }], [], [], []);

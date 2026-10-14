@@ -58,7 +58,18 @@ export async function saveSecondDrive(
     ? sql`true`
     : or(isNull(devices.df1Seen), ne(devices.df1Seen, true));
   const [row] = await db.update(devices)
-    .set({ secondDrive: mode, secondDriveVersion: sql`${devices.secondDriveVersion} + 1` })
+    .set({
+      secondDrive: mode,
+      secondDriveVersion: sql`${devices.secondDriveVersion} + 1`,
+      // DF1 any disk (spec 2026-10-14 §3.2): leaving On drops the disk mounted into DF1, in this same write. The
+      // cursor moves only when there was one, so the board is woken only for a real change.
+      ...(mode !== 'df1'
+        ? {
+            df1DiskId: null,
+            df1Version: sql`case when ${devices.df1DiskId} is null then ${devices.df1Version} else ${devices.df1Version} + 1 end`,
+          }
+        : {}),
+    })
     .where(and(scope, eq(devices.secondDriveCapable, true),
       // Network needs 1.11.0 by the REPORTED version, in the same WHERE (the saveDisplay rule): a board
       // that reports an older build between a read and this write cannot take a mode it does not know.

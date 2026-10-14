@@ -99,6 +99,10 @@ export async function setDesired(
       desiredDiskId: disk.id,
       desiredSetAt: new Date(),
       desiredVersion: sql`${devices.desiredVersion} + 1`,
+      // DF1 any disk (spec 2026-10-14 §3.2): mounting into DF0 the disk picked for DF1 is a move -- the pick goes
+      // in this same UPDATE, and its cursor moves so the board ejects DF1. Any other DF0 mount leaves DF1 alone.
+      df1DiskId: sql`case when ${devices.df1DiskId} = ${disk.id} then null else ${devices.df1DiskId} end`,
+      df1Version: sql`case when ${devices.df1DiskId} = ${disk.id} then ${devices.df1Version} + 1 else ${devices.df1Version} end`,
     })
     .where(and(eq(devices.id, deviceId), eq(devices.orgId, orgId), fits, playsHd))
     .returning({ version: devices.desiredVersion });
