@@ -5,6 +5,7 @@ import {
 import { readNfcWriteRow } from '@/lib/nfc/store';
 import { nfcWriteForPoll } from '@/lib/nfc/rules';
 import { readNextForPoll } from '@/lib/next-disk';
+import { readDf1ForPoll } from '@/lib/df1-store';
 import { DC_TITLE_MAX } from '@/lib/device-limits';
 import { PAULANET_NEXT, netApplied, netKeepsDriverDisk } from '@/lib/paulanet-disk';
 
@@ -105,6 +106,15 @@ export async function GET(request: Request) {
       ? Number(driveAckRaw)
       : 0;
 
+  // df1Ack is the cursor of the disk mounted into DF1 (fw 1.12.0, spec 2026-10-14 §4.2). Parsed like driveAck, for
+  // the same reasons: ABSENT means a board that cannot hold a pick -- never woken for one, never sent `df1`.
+  const df1AckRaw = new URL(request.url).searchParams.get('df1Ack');
+  const df1Ack = df1AckRaw === null
+    ? null
+    : /^\d+$/.test(df1AckRaw) && Number.isSafeInteger(Number(df1AckRaw))
+      ? Number(df1AckRaw)
+      : 0;
+
   const deadline = Date.now() + HOLD_MS;
   for (;;) {
     // Cheap single-column read per tick. The three-table join runs only when
@@ -146,6 +156,8 @@ export async function GET(request: Request) {
     const displayMoved = displayAck !== null && tick.displayVersion !== displayAck;
 
     const driveMoved = driveAck !== null && tick.secondDriveVersion !== driveAck;
+    // INEQUALITY, the displayAck rule: a re-paired board carrying a higher ack is woken so it resets.
+    const df1Moved = df1Ack !== null && tick.df1Version !== df1Ack;
 
     // Network mode (spec 2026-10-12 §2, pre-flight I2): the driver disk goes out as `next` only once the
     // board has REPORTED running Network for the current setting -- never on the choice alone, which would
@@ -168,7 +180,7 @@ export async function GET(request: Request) {
     // device echoes it back as mountedVersion and the server reads that for an
     // upload's not_mounted/behind verdict (HANDOFF 4g), so bumping it could
     // strand an Amiga write that was mid-session. See spec 4.2.
-    if (version > clampedFrom || clampedFrom !== from || firmwareMoved || nfcMoved || displayMoved || driveMoved || netNextMoved) {
+    if (version > clampedFrom || clampedFrom !== from || firmwareMoved || nfcMoved || displayMoved || driveMoved || netNextMoved || df1Moved) {
       const state = await readDesired(device.deviceId);
       if (!state) return notFound();
       // Multi-disk spec §3.3 / plan R1: the disk the board should preload.
@@ -189,6 +201,9 @@ export async function GET(request: Request) {
       // Sending it again to a board that already answered is what re-issued
       // an instruction to a board mid-flash and re-tried an update that had
       // already failed -- both of which the spec forbids.
+      // On every body to a board that sent df1Ack, not only one woken by the pick: the board takes `df1` from
+      // whatever 200 reaches it, so a re-paired board's higher ack resets at its first one.
+      const df1 = df1Ack !== null ? await readDf1ForPoll(device.deviceId) : null;
       const update = firmwareMoved ? await readFirmwareInstruction(device.deviceId) : null;
       // Same pattern as `update`: resolved only when the cursor says the
       // board has not caught up, never on every tick. nfcWriteForPoll turns
@@ -242,6 +257,8 @@ export async function GET(request: Request) {
           // Inline: one byte of setting needs no fetch (spec §3). Every body for a board
           // that sent driveAck, so a re-paired board's higher ack is reset at its first 200.
           ...(driveAck !== null ? { secondDrive: { seq: tick.secondDriveVersion, mode: tick.secondDrive } } : {}),
+          // DF1 any disk (spec 2026-10-14 §4.2): {v, sha256}, sha256 null without a pick (DF1 follows the set).
+          ...(df1 !== null ? { df1 } : {}),
           ...(nfc
             ? {
                 nfcWrite: {

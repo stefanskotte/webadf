@@ -68,7 +68,7 @@ export default async function GamePage(props: PageProps<'/games/[id]'>) {
           <DiskSetSection
             gameId={game.id} title={game.title} from={from} fobDevices={readers}
             entries={game.disks.map((disk) => ({
-              disk, choices: mountChoices(devices, disk.id, disk.sha256, now),
+              disk, choices: mountChoices(devices, disk, now),
             }))}
           />
         ) : game.disks.map((disk, i) => (
@@ -85,7 +85,7 @@ export default async function GamePage(props: PageProps<'/games/[id]'>) {
                    helpNfc={i === 0}
                    helpProtect={disk.id === game.disks.find((d) => d.imageFormat !== 'hfe')?.id}
                    helpHfe={disk.id === game.disks.find((d) => d.imageFormat === 'hfe')?.id}
-                   choices={mountChoices(devices, disk.id, disk.sha256, now)}
+                   choices={mountChoices(devices, disk, now)}
                    // A lone disk: its ⋯ menu offers "Add to a disk set…".
                    loneGameId={game.id} />
         ))}

@@ -99,6 +99,10 @@ export async function setDesired(
       desiredDiskId: disk.id,
       desiredSetAt: new Date(),
       desiredVersion: sql`${devices.desiredVersion} + 1`,
+      // DF1 any disk (spec 2026-10-14 §3.2): mounting into DF0 the disk picked for DF1 is a move -- the pick goes
+      // in this same UPDATE, and its cursor moves so the board ejects DF1. Any other DF0 mount leaves DF1 alone.
+      df1DiskId: sql`case when ${devices.df1DiskId} = ${disk.id} then null else ${devices.df1DiskId} end`,
+      df1Version: sql`case when ${devices.df1DiskId} = ${disk.id} then ${devices.df1Version} + 1 else ${devices.df1Version} end`,
     })
     .where(and(eq(devices.id, deviceId), eq(devices.orgId, orgId), fits, playsHd))
     .returning({ version: devices.desiredVersion });
@@ -153,6 +157,8 @@ export interface PollTick {
   secondDriveAppliedVersion: number | null;
   /** The driver disk's one-shot cursor: the setting version a body last carried it as `next` at. */
   netNextSentVersion: number | null;
+  /** The DF1 pick's cursor (spec 2026-10-14 §4.2): compared against the board's ?df1Ack=. */
+  df1Version: number;
 }
 
 /**
@@ -176,6 +182,7 @@ export async function readPollTick(deviceId: string): Promise<PollTick | null> {
       secondDriveReported: devices.secondDriveReported,
       secondDriveAppliedVersion: devices.secondDriveAppliedVersion,
       netNextSentVersion: devices.netNextSentVersion,
+      df1Version: devices.df1Version,
     })
     .from(devices)
     .where(eq(devices.id, deviceId))

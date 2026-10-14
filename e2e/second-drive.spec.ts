@@ -1,10 +1,11 @@
 import { test, expect, type APIRequestContext } from '@playwright/test';
+import { createHash } from 'node:crypto';
 import { eq } from 'drizzle-orm';
 import { getDb } from '@/db';
 import { devices } from '@/db/schema/devices';
 import { PAULANET_DISK_SHA256 } from '@/lib/paulanet-disk';
-import { signUpFresh } from './helpers';
-import { pairDevice, authHeader, cleanupSeeded } from './device-helpers';
+import { signUpFresh, runTag } from './helpers';
+import { pairDevice, authHeader, cleanupSeeded, seedDisk, df1OnBoard } from './device-helpers';
 
 test.afterAll(cleanupSeeded);
 
@@ -192,4 +193,99 @@ test('a seen DF1 refuses Network; the override saves Network (Review Focus 5)', 
   await page.getByTestId(`second-drive-override-${deviceId}`).click();
   await page.getByTestId(`second-drive-override-confirm-${deviceId}`).click();
   await expect.poll(async () => (await row(deviceId)).secondDrive).toBe('net');
+});
+
+const sha = (s: string) => createHash('sha256').update(`df1-any-${s}`).digest('hex');
+const FW = '1.12.0+gabc1234';
+
+test('the setting reads Off / On / Network, with the help line under it (D4)', async ({ page, request }) => {
+  await signUpFresh(page);
+  const { deviceId } = await df1OnBoard(page, request);
+  await page.goto('/devices');
+  const select = page.getByTestId(`second-drive-${deviceId}`);
+  await expect(select).toHaveValue('df1');                              // the stored value is unchanged
+  await expect(select.locator('option[value="off"]')).toHaveText('Off');
+  await expect(select.locator('option[value="df1"]')).toHaveText('On');
+  await expect(select.locator('option[value="net"]')).toHaveText('Network (PaulaNET)');
+  await expect(page.getByTestId(`second-drive-help-${deviceId}`))
+    .toHaveText('On: DF1 holds the next disk of the set, or a disk you mount into DF1.');
+  await expect(page.getByTestId(`device-df1-disk-${deviceId}`)).toHaveText('DF1: next disk of the set — empty');
+});
+
+test('a disk mounted into DF1 reaches the board by its own cursor, shows on the card, and Eject DF1 drops it', async ({ page, request }) => {
+  const { orgId } = await signUpFresh(page);
+  const { deviceId, token } = await df1OnBoard(page, request);
+  const tag = runTag();
+  const pick = sha(`pick-${tag}`);
+  const { diskId } = await seedDisk(orgId, { title: `Pick-${tag}`, diskNo: 1, sha256: pick });
+  const m = await page.request.post(`/api/devices/${deviceId}/mount`, { data: { diskId, drive: 'df1' } });
+  expect(m.status()).toBe(200);
+  expect(await m.json()).toEqual({ version: 1 });
+  expect((await row(deviceId)).df1DiskId).toBe(diskId);
+  expect((await row(deviceId)).desiredDiskId).toBeNull();               // DF0 untouched
+
+  const poll = await request.get('/api/device/poll?since=0&driveAck=1&df1Ack=0', { headers: authHeader(token) });
+  expect(poll.status()).toBe(200);
+  expect((await poll.json()).df1).toEqual({ v: 1, sha256: pick });
+  // A 1.11 board sends no df1Ack and is never sent the key (Review Focus 4). since=5 > version 0 answers at once.
+  const old = await request.get('/api/device/poll?since=5&driveAck=1', { headers: authHeader(token) });
+  expect((await old.json()).df1).toBeUndefined();
+
+  await page.goto('/devices');
+  await expect(page.getByTestId(`device-df1-disk-${deviceId}`)).toHaveText(`DF1: Pick-${tag} disk 1 — read-only, loading`);
+  await report(request, token, { firmwareVersion: FW, secondDrive: 'df1', driveVersion: 1, df1Sha256: pick });
+  await expect(page.getByTestId(`device-df1-disk-${deviceId}`))
+    .toHaveText(`DF1: Pick-${tag} disk 1 — read-only`, { timeout: LIVE });
+
+  await page.getByTestId(`eject-df1-${deviceId}`).click();
+  await expect.poll(async () => (await row(deviceId)).df1DiskId).toBeNull();
+  expect((await row(deviceId)).df1Version).toBe(2);
+  const after = await request.get('/api/device/poll?since=0&driveAck=1&df1Ack=1', { headers: authHeader(token) });
+  expect((await after.json()).df1).toEqual({ v: 2, sha256: null });
+});
+
+test('mounting into DF0 the disk in DF1 moves it; switching DF1 Off drops a pick', async ({ page, request }) => {
+  const { orgId } = await signUpFresh(page);
+  const { deviceId } = await df1OnBoard(page, request);
+  const tag = runTag();
+  const { diskId } = await seedDisk(orgId, { title: `Move-${tag}`, diskNo: 1, sha256: sha(`move-${tag}`) });
+  expect((await page.request.post(`/api/devices/${deviceId}/mount`, { data: { diskId, drive: 'df1' } })).status()).toBe(200);
+  expect((await page.request.post(`/api/devices/${deviceId}/mount`, { data: { diskId } })).status()).toBe(200);
+  let r = await row(deviceId);
+  expect(r.desiredDiskId).toBe(diskId);
+  expect(r.df1DiskId).toBeNull();
+  expect(r.df1Version).toBe(2);
+  const other = await seedDisk(orgId, { title: `Off-${tag}`, diskNo: 1, sha256: sha(`off-${tag}`) });
+  expect((await page.request.post(`/api/devices/${deviceId}/mount`, { data: { diskId: other.diskId, drive: 'df1' } })).status()).toBe(200);
+  expect((await page.request.patch(`/api/devices/${deviceId}/second-drive`, { data: { mode: 'off' } })).status()).toBe(200);
+  r = await row(deviceId);
+  expect(r.secondDrive).toBe('off');
+  expect(r.df1DiskId).toBeNull();
+  expect(r.df1Version).toBe(4);
+});
+
+test('deleting the disk in DF1 drops the pick and tells the board (Review Focus 5)', async ({ page, request }) => {
+  const { orgId } = await signUpFresh(page);
+  const { deviceId, token } = await df1OnBoard(page, request);
+  const tag = runTag();
+  const { diskId } = await seedDisk(orgId, { title: `Gone-${tag}`, diskNo: 1, sha256: sha(`gone-${tag}`) });
+  expect((await page.request.post(`/api/devices/${deviceId}/mount`, { data: { diskId, drive: 'df1' } })).status()).toBe(200);
+  const del = await page.request.delete(`/api/disks/${diskId}`);
+  expect(del.status()).toBe(200);
+  const r = await row(deviceId);
+  expect(r.df1DiskId).toBeNull();
+  expect(r.df1Version).toBe(2);
+  const poll = await request.get('/api/device/poll?since=0&driveAck=1&df1Ack=1', { headers: authHeader(token) });
+  expect((await poll.json()).df1).toEqual({ v: 2, sha256: null });
+});
+
+test('the server refuses DF1 on a board before 1.12.0, in words', async ({ page, request }) => {
+  const { orgId } = await signUpFresh(page);
+  const { deviceId } = await df1OnBoard(page, request, '1.11.1+g0a157eb');
+  const tag = runTag();
+  const { diskId } = await seedDisk(orgId, { title: `Old-${tag}`, diskNo: 1, sha256: sha(`old-${tag}`) });
+  const res = await page.request.post(`/api/devices/${deviceId}/mount`, { data: { diskId, drive: 'df1' } });
+  expect(res.status()).toBe(409);
+  expect(await res.json()).toEqual({ error: 'firmware_too_old', reason: 'Needs firmware 1.12.0' });
+  expect((await row(deviceId)).df1Version).toBe(0);
 });

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { holderText, mountChoice, mountChoices, type MountTargetRow } from './mount-choice';
+import { holderText, mountChoice, mountChoices, type MountTargetRow, type MountDisk } from './mount-choice';
 import { STALE_AFTER_MS } from './device-state';
 
 const NOW = 1_700_000_000_000;
@@ -9,6 +9,7 @@ const OLD = new Date(NOW - STALE_AFTER_MS - 1_000);
 const THIS_DISK = 'disk-this';
 const THIS_SHA = 'a'.repeat(64);
 const OTHER_SHA = 'b'.repeat(64);
+const DISK: MountDisk = { id: THIS_DISK, sha256: THIS_SHA, imageFormat: 'adf', sizeBytes: 901_120 };
 
 function row(over: Partial<MountTargetRow> = {}): MountTargetRow {
   return {
@@ -18,11 +19,13 @@ function row(over: Partial<MountTargetRow> = {}): MountTargetRow {
     desiredGame: null, desiredDiskNo: null,
     mountedGame: null, mountedDiskNo: null,
     lastSeenAt: FRESH,
+    secondDrive: 'off', secondDriveReported: null, secondDriveVersion: 0, secondDriveAppliedVersion: null,
+    firmwareVersion: null, df1DiskId: null, df1Sha256: null, df1PickSha256: null,
     ...over,
   };
 }
 
-const choose = (r: MountTargetRow) => mountChoice(r, THIS_DISK, THIS_SHA, NOW);
+const choose = (r: MountTargetRow) => mountChoice(r, DISK, NOW);
 
 describe('an idle device', () => {
   it('offers a mount and says it is holding nothing', () => {
@@ -161,7 +164,7 @@ describe('mountChoices', () => {
   it('maps every device and keeps their order', () => {
     const out = mountChoices(
       [row({ id: 'a', name: 'A' }), row({ id: 'b', name: 'B' })],
-      THIS_DISK, THIS_SHA, NOW,
+      DISK, NOW,
     );
     expect(out.map((c) => c.id)).toEqual(['a', 'b']);
     expect(out.map((c) => c.name)).toEqual(['A', 'B']);
@@ -172,7 +175,7 @@ describe('mountChoices', () => {
       row({ id: 'a', name: 'A', desiredSha256: THIS_SHA, mountedSha256: THIS_SHA,
             desiredDiskId: THIS_DISK, mountedDiskId: THIS_DISK }),
       row({ id: 'b', name: 'B' }),
-    ], THIS_DISK, THIS_SHA, NOW);
+    ], DISK, NOW);
     expect(out.map((c) => c.action)).toEqual(['eject', 'mount']);
   });
 });
@@ -185,12 +188,12 @@ describe('holderText', () => {
   });
 
   it('says nothing when no device has this disk', () => {
-    expect(holderText(mountChoices([row(), row({ id: 'b' })], THIS_DISK, THIS_SHA, NOW)))
+    expect(holderText(mountChoices([row(), row({ id: 'b' })], DISK, NOW)))
       .toBeNull();
   });
 
   it('names the device holding it', () => {
-    const line = holderText(mountChoices([held({ name: 'Bench' })], THIS_DISK, THIS_SHA, NOW));
+    const line = holderText(mountChoices([held({ name: 'Bench' })], DISK, NOW));
     expect(line).toEqual({ text: 'In Bench', stale: false });
   });
 
@@ -198,21 +201,21 @@ describe('holderText', () => {
     // The old sha-keyed map kept one and dropped the rest silently.
     const line = holderText(mountChoices(
       [held({ id: 'a', name: 'A' }), held({ id: 'b', name: 'B' })],
-      THIS_DISK, THIS_SHA, NOW));
+      DISK, NOW));
     expect(line?.text).toBe('In A and B');
   });
 
   it('lists three with a comma and an "and"', () => {
     const line = holderText(mountChoices(
       [held({ id: 'a', name: 'A' }), held({ id: 'b', name: 'B' }), held({ id: 'c', name: 'C' })],
-      THIS_DISK, THIS_SHA, NOW));
+      DISK, NOW));
     expect(line?.text).toBe('In A, B and C');
   });
 
   it('reads as unconfirmed, and never as fact, when the device went quiet', () => {
     const line = holderText(mountChoices(
       [row({ name: 'Gone', desiredSha256: THIS_SHA, desiredDiskId: THIS_DISK, lastSeenAt: OLD })],
-      THIS_DISK, THIS_SHA, NOW));
+      DISK, NOW));
     expect(line?.text).toContain('not confirmed');
     expect(line?.text.startsWith('In ')).toBe(false);
     expect(line?.stale).toBe(true);
@@ -221,7 +224,7 @@ describe('holderText', () => {
   it('says a fetch is under way while it is under way', () => {
     const line = holderText(mountChoices(
       [row({ name: 'Bench', desiredSha256: THIS_SHA, desiredDiskId: THIS_DISK, lastSeenAt: FRESH })],
-      THIS_DISK, THIS_SHA, NOW));
+      DISK, NOW));
     expect(line?.text).toBe('Mounting to Bench…');
     expect(line?.stale).toBe(false);
   });
@@ -232,7 +235,7 @@ describe('holderText', () => {
     const line = holderText(mountChoices([
       held({ id: 'a', name: 'Has It' }),
       row({ id: 'b', name: 'Asked', desiredSha256: THIS_SHA, desiredDiskId: THIS_DISK, lastSeenAt: OLD }),
-    ], THIS_DISK, THIS_SHA, NOW));
+    ], DISK, NOW));
     expect(line).toEqual({ text: 'In Has It', stale: false });
   });
 });
@@ -259,5 +262,88 @@ describe('Cancel on a swap does not empty the drive', () => {
     }));
     expect(c.actionLabel).toBe('Eject');
     expect(c.revertDiskId).toBeNull();
+  });
+});
+
+describe('DF1 (spec 2026-10-14 §3.3)', () => {
+  const on = (over: Partial<MountTargetRow> = {}) => row({
+    secondDrive: 'df1', secondDriveReported: 'df1', secondDriveVersion: 1, secondDriveAppliedVersion: 1,
+    firmwareVersion: '1.12.0+gabc1234', ...over,
+  });
+
+  it('no DF1 choice unless the board runs On (D1: Off and Network mount to DF0 as today)', () => {
+    expect(choose(row()).df1).toBeNull();
+    expect(choose(row({ secondDrive: 'net' })).df1).toBeNull();
+  });
+
+  it('offers DF1 for a standard DD disk on 1.12.0', () => {
+    expect(choose(on()).df1).toEqual({ enabled: true, reason: null, isThisDisk: false });
+  });
+
+  it('disables it with the reason in words', () => {
+    expect(choose(on({ firmwareVersion: '1.11.1+g0a157eb' })).df1?.reason).toBe('Needs firmware 1.12.0');
+    expect(mountChoice(on(), { ...DISK, imageFormat: 'hfe' }, NOW).df1?.reason).toBe('DF1 takes standard DD disks only');
+    expect(choose(on({ desiredDiskId: THIS_DISK, desiredSha256: THIS_SHA })).df1?.reason).toBe('Already in DF0');
+    expect(choose(on({ secondDriveAppliedVersion: 0 })).df1?.reason).toBe('Waiting for the board');
+  });
+
+  it('the disk in DF1 is offered for ejecting, and the holder line says DF1 once the board holds it', () => {
+    const c = choose(on({ df1DiskId: THIS_DISK, df1PickSha256: THIS_SHA, df1Sha256: THIS_SHA }));
+    expect(c.df1).toEqual({ enabled: true, reason: null, isThisDisk: true });
+    expect(c.isThisDisk).toBe(false);                    // DF0 does not hold it
+    expect(holderText([c])).toEqual({ text: 'In Bench (DF1)', stale: false });
+  });
+
+  it('until the board reports the pick\'s digest, the holder line is "Mounting to", never "In"', () => {
+    // Not reported yet, and still reporting the previous DF1 disk: both unconfirmed.
+    for (const df1Sha256 of [null, OTHER_SHA]) {
+      const c = choose(on({ df1DiskId: THIS_DISK, df1PickSha256: THIS_SHA, df1Sha256 }));
+      expect(c.df1?.isThisDisk).toBe(true);              // still offered for ejecting
+      const line = holderText([c]);
+      expect(line).toEqual({ text: 'Mounting to Bench (DF1)…', stale: false });
+      expect(line?.text.startsWith('In')).toBe(false);
+    }
+  });
+
+  it('a confirmed DF1 board outranks one still loading', () => {
+    const held = choose(on({ id: 'a', name: 'A', df1DiskId: THIS_DISK, df1PickSha256: THIS_SHA, df1Sha256: THIS_SHA }));
+    const loading = choose(on({ id: 'b', name: 'B', df1DiskId: THIS_DISK, df1PickSha256: THIS_SHA }));
+    expect(holderText([held, loading])?.text).toBe('In A (DF1)');
+  });
+
+  it('an offline board\'s unconfirmed pick is "Requested on … (DF1) — not confirmed", amber', () => {
+    const c = choose(on({ df1DiskId: THIS_DISK, df1PickSha256: THIS_SHA, df1Sha256: null, lastSeenAt: OLD }));
+    expect(c.df1Stale).toBe(true);
+    expect(holderText([c])).toEqual({ text: 'Requested on Bench (DF1) — not confirmed', stale: true });
+    // Never seen at all is offline too.
+    const never = choose(on({ df1DiskId: THIS_DISK, df1PickSha256: THIS_SHA, lastSeenAt: null }));
+    expect(holderText([never])?.stale).toBe(true);
+  });
+
+  it('a pick the board confirmed stays "In … (DF1)" even after the board goes offline', () => {
+    const c = choose(on({ df1DiskId: THIS_DISK, df1PickSha256: THIS_SHA, df1Sha256: THIS_SHA, lastSeenAt: OLD }));
+    expect(c.df1Stale).toBe(false);
+    expect(holderText([c])).toEqual({ text: 'In Bench (DF1)', stale: false });
+  });
+
+  it('a confirmed DF1 outranks another board\'s unconfirmed DF0 request', () => {
+    const df1 = choose(on({ id: 'b', name: 'B', df1DiskId: THIS_DISK, df1PickSha256: THIS_SHA, df1Sha256: THIS_SHA }));
+    const pendingDf0 = choose(row({ id: 'a', name: 'A', desiredDiskId: THIS_DISK, desiredSha256: THIS_SHA }));
+    const staleDf0 = choose(row({ id: 'a', name: 'A', desiredDiskId: THIS_DISK, desiredSha256: THIS_SHA, lastSeenAt: OLD }));
+    expect(pendingDf0.state).toBe('pending');
+    expect(staleDf0.state).toBe('stale');
+    expect(holderText([pendingDf0, df1])).toEqual({ text: 'In B (DF1)', stale: false });
+    expect(holderText([staleDf0, df1])).toEqual({ text: 'In B (DF1)', stale: false });
+  });
+
+  it('a loading DF1 pick on an online board outranks a stale DF0 request elsewhere', () => {
+    const loading = choose(on({ id: 'b', name: 'B', df1DiskId: THIS_DISK, df1PickSha256: THIS_SHA }));
+    const staleDf0 = choose(row({ id: 'a', name: 'A', desiredDiskId: THIS_DISK, desiredSha256: THIS_SHA, lastSeenAt: OLD }));
+    expect(holderText([staleDf0, loading])).toEqual({ text: 'Mounting to B (DF1)…', stale: false });
+  });
+
+  it('DF0 holding the disk outranks DF1 in the holder line', () => {
+    const c = choose(on({ desiredDiskId: THIS_DISK, mountedDiskId: THIS_DISK, desiredSha256: THIS_SHA, mountedSha256: THIS_SHA }));
+    expect(holderText([c])?.text).toBe('In Bench');
   });
 });

@@ -26,6 +26,7 @@ const loaded: LiveStateRow = {
   trackMaxBytes: null, playsHd: false, preloadSha256: null, preloadState: null, next: null,
   displayVersion: 0, displayAppliedVersion: null, displayError: null, displayLayouts: null, displayPanel: '128x32',
   secondDrive: 'off', secondDriveVersion: 0, secondDriveAppliedVersion: null, secondDriveReported: null,
+  df1DiskId: null, df1PickSha256: null, df1PickTitle: null, df1PickDiskNo: null,
   df1Sha256: null, netDriverSeenAt: null, netAmigaIp: null, netFramesIn: null, netFramesOut: null,
   secondDriveCapable: null, sel1Wired: null, df1Seen: null,
 };
@@ -193,5 +194,20 @@ describe('preloadText', () => {
     expect(preloadText(2, 'ready')).toBe('Disk 2 ready (instant swap)');
     expect(preloadText(2, 'loading')).toBe('Disk 2 loading…');
     expect(preloadText(2, 'waiting')).toBe('Disk 2 not preloaded yet');
+  });
+});
+
+describe('the DF1 line in the drive menu (spec 2026-10-14 §3.3, plan ruling 7)', () => {
+  it('none unless the board runs On', () => {
+    expect(toDriveChip(loaded, NOW).df1).toBeNull();
+    expect(toDriveChip({ ...loaded, secondDriveReported: 'net' }, NOW).df1).toBeNull();
+  });
+  it('both states in words while On: the set, or the disk mounted into DF1', () => {
+    expect(toDriveChip({ ...loaded, secondDriveReported: 'df1' }, NOW).df1).toBe('DF1: next disk of the set — empty');
+    const P = 'e'.repeat(64);
+    expect(toDriveChip({
+      ...loaded, secondDriveReported: 'df1', df1DiskId: 'disk-x', df1PickTitle: 'Lotus', df1PickDiskNo: 2,
+      df1PickSha256: P, df1Sha256: P,
+    }, NOW).df1).toBe('DF1: Lotus disk 2 — read-only');
   });
 });

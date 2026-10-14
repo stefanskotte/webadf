@@ -540,3 +540,24 @@ export async function clearDesiredFirmware(deviceId: string): Promise<void> {
     })
     .where(eq(devices.id, deviceId));
 }
+
+/**
+ * A paired board whose DF1 setting is On and applied (spec 2026-10-14), reporting `firmwareVersion` -- through the
+ * real routes: a status report, the setting PATCH, then the report that acks it. Marked seen now, so a request to
+ * it reads as pending, not stale.
+ */
+export async function df1OnBoard(
+  page: Page, request: APIRequestContext, firmwareVersion = '1.12.0+gabc1234', name = 'Test Device',
+) {
+  const { deviceId, token } = await pairDevice(page, request, name);
+  const report = (extra: Record<string, unknown>) => request.post('/api/device/status', {
+    headers: authHeader(token),
+    data: { mountedSha256: null, firmwareVersion, sel1Wired: true, df1Seen: false, ...extra },
+  });
+  if ((await report({ secondDrive: 'off', driveVersion: 0 })).status() !== 204) throw new Error('status failed');
+  const set = await page.request.patch(`/api/devices/${deviceId}/second-drive`, { data: { mode: 'df1' } });
+  if (set.status() !== 200) throw new Error(`second-drive failed: ${set.status()}`);
+  if ((await report({ secondDrive: 'df1', driveVersion: 1 })).status() !== 204) throw new Error('status failed');
+  await getDb().update(devices).set({ lastSeenAt: new Date() }).where(eq(devices.id, deviceId));
+  return { deviceId, token };
+}

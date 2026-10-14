@@ -88,6 +88,8 @@ export interface LiveStateRow {
    * SEL1 readings are drawn under the setting (SecondDriveReadings). Null = never reported, as the card reads it.
    */
   secondDriveCapable: boolean | null; sel1Wired: boolean | null; df1Seen: boolean | null;
+  /** DF1 any disk (spec 2026-10-14 §3.3): the disk mounted into DF1, for the drive menu's DF1 line. Page inputs. */
+  df1DiskId: string | null; df1PickSha256: string | null; df1PickTitle: string | null; df1PickDiskNo: number | null;
   /** The computed next-disk verdict for this device, or null (multi-disk plan R3). */
   next: NextInfo | null;
 }
@@ -147,6 +149,8 @@ export function liveFingerprint(
         r.next ? `${r.next.diskNo}/${r.next.diskCount}/${r.next.wraps ? 1 : 0}/${r.next.preload ?? ''}` : '',
         r.secondDrive, r.secondDriveVersion, r.secondDriveAppliedVersion ?? '', r.secondDriveReported ?? '',
         r.df1Sha256 ?? '', driverBucket(r.netDriverSeenAt, now), r.netAmigaIp ?? '',
+        // The DF1 pick; the digest too (ruling 1): editing the picked disk's bytes must refresh the card.
+        r.df1DiskId ?? '', r.df1PickSha256 ?? '', r.df1PickTitle ?? '', r.df1PickDiskNo ?? '',
         r.secondDriveCapable === true ? '1' : '0',
         r.sel1Wired === null ? '' : String(r.sel1Wired), r.df1Seen === null ? '' : String(r.df1Seen),
         // Not the traffic counters (final review m5): they move on every heartbeat while frames flow, and
@@ -176,6 +180,7 @@ export async function liveStateRows(db: ReturnType<typeof getDb>, orgId: string)
   // the number and the write-protect all describing one and the same row.
   const mountedGame = alias(games, 'mounted_game');
   const desiredGame = alias(games, 'desired_game');
+  const df1Disk = alias(disks, 'df1_disk'); const df1Game = alias(games, 'df1_game');
 
   const rows = await db
     .select({
@@ -226,6 +231,10 @@ export async function liveStateRows(db: ReturnType<typeof getDb>, orgId: string)
       secondDriveCapable: devices.secondDriveCapable,
       sel1Wired: devices.sel1Wired,
       df1Seen: devices.df1Seen,
+      df1DiskId: devices.df1DiskId,
+      df1PickSha256: df1Disk.sha256,
+      df1PickTitle: df1Game.title,
+      df1PickDiskNo: df1Disk.diskNo,
     })
     .from(devices)
     // Org-scoped on both sides of both joins: without `disks.orgId`, a
@@ -237,6 +246,8 @@ export async function liveStateRows(db: ReturnType<typeof getDb>, orgId: string)
     .leftJoin(mountedDisk, and(eq(mountedDisk.id, devices.mountedDiskId), eq(mountedDisk.orgId, orgId)))
     .leftJoin(mountedGame, and(eq(mountedGame.id, mountedDisk.gameId), eq(mountedGame.orgId, orgId)))
     .leftJoin(desiredGame, and(eq(desiredGame.id, disks.gameId), eq(desiredGame.orgId, orgId)))
+    .leftJoin(df1Disk, and(eq(df1Disk.id, devices.df1DiskId), eq(df1Disk.orgId, orgId)))
+    .leftJoin(df1Game, and(eq(df1Game.id, df1Disk.gameId), eq(df1Game.orgId, orgId)))
     .where(eq(devices.orgId, orgId))
     .orderBy(asc(devices.id));
 

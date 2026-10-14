@@ -117,6 +117,7 @@ export default async function DiskFilesPage(props: PageProps<'/disks/[id]/files'
       // TOSEC identity to lose.
       matchState: blobs.matchState,
       imageFormat: disks.imageFormat,
+      sizeBytes: disks.sizeBytes,
     })
     .from(disks)
     .innerJoin(entitlements, and(
@@ -294,7 +295,8 @@ export default async function DiskFilesPage(props: PageProps<'/disks/[id]/files'
   // Mount / Eject from the disk's own page (operator, 2026-09-29): the same
   // choices and holder line as the game page's disk row (mount-choice.ts), so
   // the two can never offer different things for the same disk.
-  const choices = mountChoices(await listDevices(orgId), id, disk.sha256, Date.now());
+  const choices = mountChoices(await listDevices(orgId),
+    { id, sha256: disk.sha256, imageFormat: disk.imageFormat, sizeBytes: disk.sizeBytes }, Date.now());
   const held = holderText(choices);
 
   return (

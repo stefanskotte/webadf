@@ -2473,7 +2473,7 @@ static void test_poll_url_carries_drive_ack(void) {
     c.drive_ack = 4294967295u; c.display_ack = 4294967295u; c.nfc_ack = 4294967295u; c.since = 4294967295u;
     fake_push_response("HTTP/1.1 204 No Content\r\n\r\n");
     dc_step(&c);
-    CHECK(strstr(fake_last_request(), "&driveAck=4294967295 ") != NULL, "worst-case path fits");
+    CHECK(strstr(fake_last_request(), "&driveAck=4294967295&df1Ack=0 ") != NULL, "worst-case path fits");
     // An older build (no dc_set_df1) sends nothing.
     boot(); c.drive_ack = 3;
     fake_push_response("HTTP/1.1 204 No Content\r\n\r\n");
@@ -3178,6 +3178,352 @@ static void a_fetch_into_the_other_slot_keeps_the_next_disk_record(void) {
     CHECK(strcmp(c.mounted_sha256, SHA_B) == 0, "B mounted from the preloaded slot");
 }
 
+// --- DF1 any disk (spec 2026-10-14 §5, plan Task 5): a disk mounted into DF1 ----------------------------------
+//
+// The pick lives in SLOT_NET, DF1's own slot: no DF0 fetch, swap, preload or eject touches it, and DF0's next disk
+// keeps preloading in the idle slot. P and Q are picks; A, B, C are DF0's set (init_shas).
+
+static char SHA_P[65], SHA_Q[65];
+static void init_pick_shas(void) {
+    init_shas();
+    memset(SHA_P, 'e', 64); SHA_P[64] = '\0';
+    memset(SHA_Q, 'f', 64); SHA_Q[64] = '\0';
+}
+
+// A 200 poll: `desired_sha` (NULL = desired:null) and the pick {v, sha} (`pick_sha` NULL = sha256:null).
+// `df1_first` puts df1 BEFORE desired -- the order the flat scans are most exposed to.
+static void push_poll_df1(uint32_t version, const char *desired_sha, uint32_t v, const char *pick_sha,
+                          bool df1_first) {
+    char df1[128];
+    if (pick_sha) snprintf(df1, sizeof df1, "\"df1\":{\"v\":%lu,\"sha256\":\"%s\"}", (unsigned long)v, pick_sha);
+    else snprintf(df1, sizeof df1, "\"df1\":{\"v\":%lu,\"sha256\":null}", (unsigned long)v);
+    char desired[300];
+    if (desired_sha) snprintf(desired, sizeof desired,
+        "\"desired\":{\"sha256\":\"%s\",\"diskId\":\"d1\",\"gameId\":\"g\",\"game\":\"G\","
+        "\"diskNo\":1,\"diskCount\":3,\"writeProtected\":false}", desired_sha);
+    else snprintf(desired, sizeof desired, "\"desired\":null");
+    char body[512];
+    if (df1_first) snprintf(body, sizeof body, "{\"version\":%lu,%s,%s}", (unsigned long)version, df1, desired);
+    else snprintf(body, sizeof body, "{\"version\":%lu,%s,%s}", (unsigned long)version, desired, df1);
+    push_ok_json(body);
+}
+
+// On, with the preload gate open and core0 letting go at once.
+static void boot_df1_on(void) {
+    boot(); init_pick_shas();
+    dc_set_df1(&c, DF1_MODE_NEXT, false);
+    dc_set_df1_quiesce(&c, quiesce_true, NULL);
+    dc_set_preload_gate(&c, gate_yes, NULL);
+}
+
+static void leave_df1_off(void) {
+    dc_set_df1(&c, DF1_MODE_OFF, false);
+    dc_df1_reconcile(&c);
+    psram_df1_reader_ack(psram_df1_token());
+}
+
+static void poll_url_carries_df1_ack(void) {
+    boot(); dc_set_df1(&c, DF1_MODE_OFF, false);
+    c.df1_ack = 7;
+    fake_push_response("HTTP/1.1 204 No Content\r\n\r\n");
+    dc_step(&c);
+    CHECK(strstr(fake_last_request(), "&driveAck=0&df1Ack=7 ") != NULL, "the pick cursor rides every poll");
+    boot(); dc_set_df1(&c, DF1_MODE_OFF, false);
+    c.since = 4294967295u; c.nfc_ack = 4294967295u; c.display_ack = 4294967295u;
+    c.drive_ack = 4294967295u; c.df1_ack = 4294967295u;
+    fake_push_response("HTTP/1.1 204 No Content\r\n\r\n");
+    dc_step(&c);
+    CHECK(strstr(fake_last_request(), "GET /api/device/poll?since=4294967295&nfcAck=4294967295&displayAck=4294967295"
+                                      "&driveAck=4294967295&df1Ack=4294967295 ") != NULL,
+          "the worst-case path (111 bytes) is sent whole");
+    boot(); c.df1_ack = 3;
+    fake_push_response("HTTP/1.1 204 No Content\r\n\r\n");
+    dc_step(&c);
+    CHECK(strstr(fake_last_request(), "df1Ack") == NULL, "not DF1-capable: no df1Ack");
+}
+
+// Plan ruling 3: the cursor is acked when the record is TAKEN; a malformed `df1` is never half-read.
+static void the_df1_key_is_taken_and_acked_on_receipt(void) {
+    boot_df1_on();
+    push_poll_df1(2, NULL, 4, SHA_P, false);
+    dc_step(&c);
+    CHECK(strcmp(c.df1_pick.want_sha256, SHA_P) == 0, "the pick is recorded");
+    CHECK_EQ_INT(c.df1_ack, 4);
+    CHECK(c.df1_pick.changed, "a new pick owes a report");
+    // No `v`: the object is ignored whole (and still blanked).
+    c.df1_pick.changed = false;
+    push_ok_json("{\"version\":3,\"desired\":null,\"df1\":{\"sha256\":null}}");
+    dc_step(&c);
+    CHECK(strcmp(c.df1_pick.want_sha256, SHA_P) == 0, "a df1 without v changes nothing");
+    CHECK_EQ_INT(c.df1_ack, 4);
+    // An uppercase digest is not the server's shape: read as no pick (DF1 follows the set), and acked.
+    char up[65]; memset(up, 'E', 64); up[64] = '\0';
+    push_poll_df1(4, NULL, 5, up, false);
+    dc_step(&c);
+    CHECK(c.df1_pick.want_sha256[0] == '\0', "never a pick of a digest the net route would refuse");
+    CHECK_EQ_INT(c.df1_ack, 5);
+    // A re-paired board: its higher ack meets a new row's v 0 and takes it.
+    push_poll_df1(5, NULL, 0, NULL, false);
+    dc_step(&c);
+    CHECK_EQ_INT(c.df1_ack, 0);
+    leave_df1_off();
+}
+
+// Review Focus 1.
+static void a_df1_key_never_shadows_desired_and_df0_never_lands_in_slot_net(void) {
+    boot_df1_on();
+    push_poll_df1(5, SHA_A, 1, SHA_P, /*df1_first=*/true);
+    push_image_response();                                       // DF0's disk, from the library route
+    CHECK_EQ_INT(dc_step(&c), DC_IDLE_POLL);
+    char want[128];
+    snprintf(want, sizeof want, "GET /api/device/image/%s ", SHA_A);
+    CHECK(strstr(fake_last_request(), want) != NULL, "DF0 fetched desired's disk, A -- never the pick's");
+    CHECK(strcmp(c.mounted_sha256, SHA_A) == 0, "A mounted in DF0");
+    const int df0 = psram_active_slot();
+    CHECK(df0 == 0 || df0 == 1, "DF0 on A/B, never SLOT_NET");
+    CHECK(strcmp(c.df1_pick.want_sha256, SHA_P) == 0, "the pick is recorded");
+    CHECK_EQ_INT(psram_df1_slot(), SLOT_NONE);                   // not loaded yet: empty (plan ruling 4)
+    push_dd_wfad_image_response();
+    CHECK(dc_df1_pick_step(&c), "the pick is fetched");
+    snprintf(want, sizeof want, "GET /api/device/image/net/%s ", SHA_P);
+    CHECK(strstr(fake_last_request(), want) != NULL, "from the net route");
+    CHECK_EQ_INT(psram_df1_slot(), SLOT_NET);
+    CHECK(strcmp(c.df1_pick.sha256, SHA_P) == 0, "verified");
+    CHECK(c.df1_pick.changed, "the report owes the new DF1 disk");
+    CHECK_EQ_INT(psram_active_slot(), df0);                      // the pick never evicts DF0's active slot
+    CHECK(strcmp(c.mounted_sha256, SHA_A) == 0, "A still mounted");
+    leave_df1_off();
+}
+
+// The operator's case: a hard-drive boot, DF0 empty.
+static void a_pick_is_served_with_df0_empty(void) {
+    boot_df1_on();
+    CHECK_EQ_INT(psram_active_slot(), SLOT_NONE);
+    push_poll_df1(2, NULL, 1, SHA_P, false);
+    CHECK_EQ_INT(dc_step(&c), DC_IDLE_POLL);
+    push_dd_wfad_image_response();
+    CHECK(dc_df1_pick_step(&c), "fetched with DF0 empty");
+    CHECK_EQ_INT(psram_df1_slot(), SLOT_NET);
+    fake_push_response("HTTP/1.1 204 No Content\r\n\r\n");
+    dc_report_status(&c, 0, -50, NULL, "1.12.0");
+    char want[96];
+    snprintf(want, sizeof want, ",\"df1Sha256\":\"%s\"", SHA_P);
+    CHECK(strstr(fake_last_request(), want) != NULL, "the report names the pick");
+    int before = fake_request_count();
+    CHECK(!dc_df1_pick_step(&c), "already verified: no refetch");
+    CHECK_EQ_INT(fake_request_count(), before);
+    leave_df1_off();
+}
+
+// Spec §7: dc_df1_want for every (mode, pick, DF0) combination, through dc_df1_reconcile with the records set
+// directly: SLOT_NET verified for the pick P, DF0's idle slot 1 verified for the set's next disk B.
+static void df1_want_for_every_mode_pick_and_df0(void) {
+    for (int df0 = 0; df0 < 2; df0++) {             // 0: DF0 empty; 1: a disk in slot 0
+        for (int pick = 0; pick < 2; pick++) {      // 0: no pick; 1: P verified in SLOT_NET
+            for (int m = 0; m < 3; m++) {           // DF1_MODE_OFF, _NEXT (On), _NET
+                boot(); init_pick_shas();
+                dc_set_df1_quiesce(&c, quiesce_true, NULL);
+                psram_publish_slot(df0 ? 0 : SLOT_NONE);
+                psram_image_set_slot_kind(SLOT_NET, SLOT_KIND_ADF_DD);
+                dc_set_df1(&c, (df1_mode_t)m, false);
+                c.preload.slot = 1;
+                snprintf(c.preload.sha256, sizeof c.preload.sha256, "%s", SHA_B);
+                set_next_sha(&c, SHA_B);
+                if (pick) {
+                    snprintf(c.df1_pick.want_sha256, sizeof c.df1_pick.want_sha256, "%s", SHA_P);
+                    snprintf(c.df1_pick.sha256, sizeof c.df1_pick.sha256, "%s", SHA_P);
+                }
+                dc_df1_reconcile(&c);
+                int want;
+                if (m == DF1_MODE_OFF) want = SLOT_NONE;
+                else if (m == DF1_MODE_NET) want = SLOT_NONE;   // the record names slot 1, not the driver disk
+                else if (pick) want = SLOT_NET;                  // On with a pick: SLOT_NET, whatever DF0 holds
+                else want = df0 ? 1 : SLOT_NONE;                 // On without one: today's rule
+                char what[96];
+                snprintf(what, sizeof what, "mode %d, pick %d, DF0 %s", m, pick, df0 ? "holds" : "empty");
+                CHECK(psram_df1_slot() == want, what);
+                psram_publish_df1(SLOT_NONE);
+                psram_df1_reader_ack(psram_df1_token());
+                c.preload.slot = SLOT_NONE; c.preload.sha256[0] = '\0';
+            }
+        }
+    }
+    psram_publish_slot(SLOT_NONE);
+}
+
+// Spec §7: "the pick step's eject-before-write".
+static void a_new_pick_ejects_df1_before_writing_slot_net(void) {
+    boot_df1_on();
+    push_poll_df1(2, NULL, 1, SHA_P, false); dc_step(&c);
+    push_dd_wfad_image_response();
+    CHECK(dc_df1_pick_step(&c), "P loaded");
+    CHECK_EQ_INT(psram_df1_slot(), SLOT_NET);
+    push_poll_df1(3, NULL, 2, SHA_Q, false); dc_step(&c);       // the user mounts another disk into DF1
+    CHECK_EQ_INT(c.df1_ack, 2);
+    CHECK_EQ_INT(psram_df1_slot(), SLOT_NONE);                   // Q is not verified: DF1 ejected
+    dc_set_df1_quiesce(&c, quiesce_false, NULL);                 // core0 has not let go yet
+    int before = fake_request_count();
+    CHECK(!dc_df1_pick_step(&c), "no write while core0 may still read SLOT_NET");
+    CHECK(c.df1_deferred, "deferred, so main.c paces it");
+    CHECK_EQ_INT(fake_request_count(), before);
+    CHECK(strcmp(c.df1_pick.sha256, SHA_P) == 0, "the record still says what SLOT_NET holds");
+    dc_set_df1_quiesce(&c, quiesce_true, NULL);
+    push_dd_wfad_image_response();
+    CHECK(dc_df1_pick_step(&c), "acknowledged: Q is fetched");
+    CHECK(!c.df1_deferred, "and not deferred");
+    CHECK(strcmp(c.df1_pick.sha256, SHA_Q) == 0, "Q verified");
+    CHECK_EQ_INT(psram_df1_slot(), SLOT_NET);
+    leave_df1_off();
+}
+
+// Spec §7: "a DF0 fetch and a Next swap never touching SLOT_NET".
+static void df0_mounts_and_next_swaps_never_touch_slot_net(void) {
+    boot_df1_on();
+    push_poll_df1(2, NULL, 1, SHA_P, false); dc_step(&c);
+    push_dd_wfad_image_response();
+    CHECK(dc_df1_pick_step(&c), "P in DF1");
+    push_poll_next(++df1_poll_version, SHA_A, SHA_B, false);    // DF0 mounts A, next B (no df1 key: unchanged)
+    push_image_response();
+    CHECK_EQ_INT(dc_step(&c), DC_IDLE_POLL);
+    CHECK_EQ_INT(psram_df1_slot(), SLOT_NET);
+    push_image_response();
+    CHECK(dc_preload_step(&c), "B preloaded into DF0's idle slot");
+    CHECK(c.preload.slot == 0 || c.preload.slot == 1, "never SLOT_NET");
+    CHECK_EQ_INT(psram_df1_slot(), SLOT_NET);                    // the pick, not the set's next disk
+    int before = fake_request_count();
+    push_poll_next(++df1_poll_version, SHA_B, SHA_C, false);    // Next: DF0 -> B
+    CHECK_EQ_INT(dc_step(&c), DC_IDLE_POLL);
+    CHECK_EQ_INT(fake_request_count(), before + 1);              // the poll only: an instant swap
+    CHECK(strcmp(c.mounted_sha256, SHA_B) == 0, "B in DF0");
+    CHECK_EQ_INT(psram_df1_slot(), SLOT_NET);
+    CHECK(strcmp(c.df1_pick.sha256, SHA_P) == 0, "SLOT_NET still holds P");
+    push_ok_json("{\"version\":9999,\"desired\":null}");          // an eject of DF0
+    dc_step(&c);
+    CHECK_EQ_INT(psram_active_slot(), SLOT_NONE);
+    CHECK_EQ_INT(psram_df1_slot(), SLOT_NET);                    // DF1 keeps its disk
+    leave_df1_off();
+}
+
+// Spec §7: "pick cleared -> fallback".
+static void a_cleared_pick_falls_back_to_the_set(void) {
+    boot_df1_on();
+    push_poll_next(++df1_poll_version, SHA_A, SHA_B, false); push_image_response(); dc_step(&c);
+    push_image_response();
+    CHECK(dc_preload_step(&c), "B ready in the idle slot");
+    const int idle = c.preload.slot;
+    CHECK_EQ_INT(psram_df1_slot(), idle);                        // no pick: DF1 = the set's next disk
+    push_poll_df1(++df1_poll_version, SHA_A, 1, SHA_P, false); dc_step(&c);
+    CHECK_EQ_INT(psram_df1_slot(), SLOT_NONE);                   // picked, not loaded: empty, never B (ruling 4)
+    push_dd_wfad_image_response();
+    CHECK(dc_df1_pick_step(&c), "P loaded");
+    CHECK_EQ_INT(psram_df1_slot(), SLOT_NET);
+    c.df1_pick.changed = false;
+    push_poll_df1(++df1_poll_version, SHA_A, 2, NULL, false); dc_step(&c);   // Eject DF1 on the card
+    CHECK(c.df1_pick.want_sha256[0] == '\0', "the pick is gone");
+    CHECK(c.df1_pick.changed, "and the report owes it");
+    CHECK_EQ_INT(c.df1_ack, 2);
+    CHECK_EQ_INT(psram_df1_slot(), idle);                        // DF1 follows the set again
+    // Re-picking the disk SLOT_NET still holds is instant: no fetch.
+    int before = fake_request_count();
+    push_poll_df1(++df1_poll_version, SHA_A, 3, SHA_P, false); dc_step(&c);
+    CHECK(!dc_df1_pick_step(&c), "SLOT_NET already holds P, verified");
+    CHECK_EQ_INT(fake_request_count(), before + 1);              // the poll only
+    CHECK_EQ_INT(psram_df1_slot(), SLOT_NET);
+    leave_df1_off();
+}
+
+// Spec §7: "a failed pick fetch blocks only the pick route"; Review Focus 5 on the board.
+static void a_failed_pick_fetch_blocks_only_the_net_route(void) {
+    boot_df1_on();
+    fake_set_clock(1000);
+    push_poll_df1(2, NULL, 1, SHA_P, false); dc_step(&c);
+    net_route_404();
+    CHECK(dc_df1_pick_step(&c), "asked, and refused");
+    CHECK_EQ_INT(psram_df1_slot(), SLOT_NONE);
+    CHECK(c.df1_pick.sha256[0] == '\0', "nothing verified");
+    CHECK(!dc_digest_is_blocked(&c, SHA_P), "DF0's block list is untouched");
+    c.state = DC_IDLE_POLL;                                      // the backoff has elapsed
+    int before = fake_request_count();
+    CHECK(!dc_df1_pick_step(&c), "held off within the retry interval");
+    CHECK_EQ_INT(fake_request_count(), before);
+    push_poll_df1(3, SHA_P, 1, SHA_P, false);                    // DF0 can still mount the same digest
+    push_image_response();
+    CHECK_EQ_INT(dc_step(&c), DC_IDLE_POLL);
+    CHECK(strcmp(c.mounted_sha256, SHA_P) == 0, "from the library route");
+    fake_set_clock(1000 + DC_NET_RETRY_MS);
+    push_dd_wfad_image_response();
+    CHECK(dc_df1_pick_step(&c), "retried after the interval, without a reboot");
+    CHECK_EQ_INT(psram_df1_slot(), SLOT_NET);
+    leave_df1_off();
+}
+
+// Review Focus 2: the same image in DF0 (one disk row) and DF1 (another): two slots, two records.
+static void a_pick_with_df0s_digest_loads_its_own_copy(void) {
+    boot_df1_on();
+    push_poll_df1(2, SHA_A, 1, SHA_A, false);
+    push_image_response();
+    CHECK_EQ_INT(dc_step(&c), DC_IDLE_POLL);
+    const int df0 = psram_active_slot();
+    push_dd_wfad_image_response();
+    CHECK(dc_df1_pick_step(&c), "the same digest is fetched again, into SLOT_NET");
+    char want[128];
+    snprintf(want, sizeof want, "GET /api/device/image/net/%s ", SHA_A);
+    CHECK(strstr(fake_last_request(), want) != NULL, "from the net route");
+    CHECK_EQ_INT(psram_df1_slot(), SLOT_NET);
+    CHECK_EQ_INT(psram_active_slot(), df0);
+    CHECK(strcmp(c.mounted_sha256, SHA_A) == 0, "DF0's record unchanged");
+    leave_df1_off();
+}
+
+// Review Focus 3: leaving On (here: to Network) with a pick in and another pending.
+static void network_mode_drops_the_pick_and_the_driver_disk_wins(void) {
+    boot_df1_on();
+    push_poll_df1(2, NULL, 1, SHA_P, false); dc_step(&c);
+    push_dd_wfad_image_response();
+    CHECK(dc_df1_pick_step(&c), "P in DF1");
+    push_poll_df1(3, NULL, 2, SHA_Q, false); dc_step(&c);       // Q named, not loaded
+    c.df1_pick.changed = false;
+    dc_set_df1(&c, DF1_MODE_NET, false);
+    CHECK(c.df1_pick.want_sha256[0] == '\0' && c.df1_pick.sha256[0] == '\0', "leaving On drops the pick");
+    CHECK(c.df1_pick.changed, "and the report says so");
+    CHECK(!dc_df1_pick_step(&c), "no pick fetch in Network mode");
+    push_poll_df1(4, NULL, 2, SHA_Q, false); dc_step(&c);       // a late body still naming Q
+    CHECK(!dc_df1_pick_step(&c), "still none: picks are On's alone");
+    set_next_sha(&c, SHA_C);                                     // Network's next: the driver disk
+    push_dd_wfad_image_response();
+    CHECK(dc_preload_step(&c), "the driver disk is fetched into SLOT_NET");
+    CHECK_EQ_INT(psram_df1_slot(), SLOT_NET);
+    CHECK(strcmp(c.preload.sha256, SHA_C) == 0, "DF1 holds the driver disk, never a pick");
+    fake_push_response("HTTP/1.1 204 No Content\r\n\r\n");
+    dc_report_status(&c, 0, -50, NULL, "1.12.0");
+    char want[96];
+    snprintf(want, sizeof want, ",\"df1Sha256\":\"%s\"", SHA_C);
+    CHECK(strstr(fake_last_request(), want) != NULL, "reported as the driver disk");
+    leave_df1_off();
+}
+
+// As preload_interrupted_by_a_tap_leaves_no_record_and_no_backoff: a tap goes first.
+static void a_pick_fetch_cut_short_by_a_tap_leaves_no_record_and_no_backoff(void) {
+    boot_df1_on();
+    push_poll_df1(2, NULL, 1, SHA_P, false); dc_step(&c);
+    dc_set_poll_interrupt(&c, intr_yes, NULL);
+    const uint32_t backoff = c.backoff_ms;
+    fake_push_held("HTTP/1.1 200 OK\r\nContent-Length: 901136\r\n\r\nWFAD");
+    CHECK(!dc_df1_pick_step(&c), "interrupted: nothing for the caller to act on");
+    CHECK(c.df1_pick.interrupted, "and it says why");
+    CHECK(c.df1_pick.sha256[0] == '\0', "no record for a half-written slot");
+    CHECK(!c.df1_pick.loading, "no longer loading");
+    CHECK_EQ_INT(c.state, DC_IDLE_POLL);
+    CHECK_EQ_INT(c.backoff_ms, backoff);
+    CHECK_EQ_INT(psram_df1_slot(), SLOT_NONE);
+    dc_set_poll_interrupt(&c, intr_no, NULL);
+    push_dd_wfad_image_response();
+    CHECK(dc_df1_pick_step(&c), "a later pass loads it");
+    CHECK(!c.df1_pick.interrupted, "cleared on entry");
+    CHECK_EQ_INT(psram_df1_slot(), SLOT_NET);
+    leave_df1_off();
+}
+
 int main(void) {
     // Only test_successful_image_fetch_publishes_and_reflects_write_protected
     // needs real PSRAM backing (everything else in this file either never
@@ -3332,6 +3678,19 @@ int main(void) {
     RUN(network_to_next_keeps_the_next_disk_the_same_body_delivered);
     RUN(network_to_off_keeps_the_next_disk_the_same_body_delivered);
     RUN(a_fetch_into_the_other_slot_keeps_the_next_disk_record);
+    // DF1 any disk (spec 2026-10-14 §5).
+    RUN(poll_url_carries_df1_ack);
+    RUN(the_df1_key_is_taken_and_acked_on_receipt);
+    RUN(a_df1_key_never_shadows_desired_and_df0_never_lands_in_slot_net);
+    RUN(a_pick_is_served_with_df0_empty);
+    RUN(df1_want_for_every_mode_pick_and_df0);
+    RUN(a_new_pick_ejects_df1_before_writing_slot_net);
+    RUN(df0_mounts_and_next_swaps_never_touch_slot_net);
+    RUN(a_cleared_pick_falls_back_to_the_set);
+    RUN(a_failed_pick_fetch_blocks_only_the_net_route);
+    RUN(a_pick_with_df0s_digest_loads_its_own_copy);
+    RUN(network_mode_drops_the_pick_and_the_driver_disk_wins);
+    RUN(a_pick_fetch_cut_short_by_a_tap_leaves_no_record_and_no_backoff);
     RUN(test_display_body_parses);
     RUN(test_rejected_layout_still_acks);
     RUN(test_poll_url_carries_display_ack);

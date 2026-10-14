@@ -12,6 +12,7 @@ import { games, disks, entitlements } from '@/db/schema/catalog';
 import { devices } from '@/db/schema/devices';
 import { diskVersions } from '@/db/schema/disk-history';
 import { clearDesired } from '@/lib/mount';
+import { ejectDf1Holders } from '@/lib/df1-store';
 import { planReorder } from '@/lib/disk-set';
 import { applyPlan, orgDevices, run } from '@/lib/disk-set-store';
 
@@ -58,7 +59,10 @@ async function ejectHolders(orgId: string, diskIds: string[], shas: string[]): P
   for (const d of [...holders, ...byShaRows]) all.set(d.id, d.name);
 
   for (const id of all.keys()) await clearDesired(orgId, id);
-  return [...all.values()];
+  // DF1 any disk (spec 2026-10-14 §3.2, plan ruling 2): a board holding one of these disks in DF1 lets go of it,
+  // with its cursor moved. The FK's ON DELETE SET NULL would clear the column after the delete and tell no board.
+  const df1 = await ejectDf1Holders(orgId, diskIds);
+  return [...new Set([...all.values(), ...df1])];
 }
 
 /**

@@ -295,6 +295,12 @@ function DriveEntry({ chip }: { chip: DriveChip }) {
               data-testid={`drive-entry-disk-${chip.id}`}>
           {heading}
         </span>
+        {chip.df1 && (
+          <span className="truncate text-[11px]" style={{ color: 'var(--muted)' }}
+                data-testid={`drive-entry-df1-${chip.id}`}>
+            {chip.df1}
+          </span>
+        )}
         {!chip.online && chip.canEject && (
           <span className="text-[11px]" style={{ color: 'var(--amber-text)' }}>
             The board is offline — it will act when it is back.

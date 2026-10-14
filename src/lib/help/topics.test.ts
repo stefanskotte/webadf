@@ -89,7 +89,15 @@ describe('second-drive states every caveat the operator asked for', () => {
   });
   it('big boxes: the external port is DF2 there', () => expect(all()).toMatch(/DF2/));
   it('DF1 empties for about five seconds on Next disk', () => expect(all()).toMatch(/five seconds|5 seconds/i));
-  it('only the next disk of the set', () => expect(all()).toMatch(/next disk of the set/i));
+  it('the next disk of the set, or a disk you mount into DF1 (spec 2026-10-14)', () => {
+    expect(all()).toMatch(/next disk of the set/i);
+    expect(all()).toMatch(/mount[^.]*into DF1/i);
+    expect(all()).toMatch(/Eject DF1/);
+    expect(all()).toMatch(/standard DD disks only/i);
+    expect(all()).toMatch(/1\.12\.0/);
+    expect(all()).not.toMatch(/Choose <em>Next disk of the set|Choose Next disk of the set/);
+  });
+  it('names the setting On', () => expect(bodyText('second-drive')).toMatch(/Choose\s+On\s+under/));
   it('the refusal and its override', () => {
     expect(all()).toMatch(/refuse/i);
     expect(all()).toMatch(/anyway/i);

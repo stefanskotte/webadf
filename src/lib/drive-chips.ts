@@ -6,6 +6,7 @@ import { isDefaultDeviceName } from '@/lib/device-name';
 import type { LiveStateRow } from '@/lib/live-state';
 // Type-only, for the same reason: drive-chips.ts is handed to a client component.
 import type { NextInfo, PreloadLine } from '@/lib/next-disk';
+import { df1LineText } from '@/lib/df1-pick';
 
 /** The preload line's words (nextInfo's PreloadLine) -- one place, so the
  *  drive chip and the device card can never word a state differently. Here
@@ -85,6 +86,11 @@ export interface DriveChip {
    * layered on top of one already in flight.
    */
   next: NextInfo | null;
+  /**
+   * DF1 (spec 2026-10-14 §3.3, plan ruling 7): the card's DF1 line while the board runs On -- the next disk of the
+   * set, or the disk mounted into DF1, both in words. Null when DF1 is not On: there is no DF1 to describe.
+   */
+  df1: string | null;
 }
 
 export function toDriveChip(r: LiveStateRow, now: number): DriveChip {
@@ -132,6 +138,7 @@ export function toDriveChip(r: LiveStateRow, now: number): DriveChip {
     // desired-state write, so an offline board can still be asked.
     canEject: r.desiredSha256 !== null || r.mountedSha256 !== null,
     next: phase === 'loaded' ? r.next : null,
+    df1: r.secondDriveReported === 'df1' ? df1LineText(r, r.next) : null,
   };
 }
 

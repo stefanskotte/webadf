@@ -383,6 +383,11 @@ export interface DeviceListItem {
   secondDriveReported: SecondDriveMode | null;
   secondDriveCapable: boolean;
   df1Sha256: string | null;
+  /** DF1 any disk (spec 2026-10-14 §3.3): the disk mounted into DF1 -- its row, digest, title and number; null = none. */
+  df1DiskId: string | null;
+  df1PickSha256: string | null;
+  df1PickTitle: string | null;
+  df1PickDiskNo: number | null;
   /** Network mode (spec 2026-10-12 §5): the board can take it (firmware 1.11.0+), and its last net report. */
   secondDriveNetCapable: boolean;
   netDriverSeenAt: Date | null;
@@ -414,6 +419,9 @@ export async function listDevices(orgId: string): Promise<DeviceListItem[]> {
   // needs it and nothing above already carries it (mountedSha256 identifies
   // the bytes, not a specific disks row, and two rows can share one sha).
   const mountedDisk = alias(disks, 'mounted_disk');
+  // The disk mounted into DF1 and its title (spec 2026-10-14 §3.3), org-scoped like every join here.
+  const df1Disk = alias(disks, 'df1_disk');
+  const df1Game = alias(games, 'df1_game');
 
   const rows = await getDb()
     .select({
@@ -458,6 +466,10 @@ export async function listDevices(orgId: string): Promise<DeviceListItem[]> {
       secondDriveReported: devices.secondDriveReported,
       secondDriveCapable: devices.secondDriveCapable,
       df1Sha256: devices.df1Sha256,
+      df1DiskId: devices.df1DiskId,
+      df1PickSha256: df1Disk.sha256,
+      df1PickTitle: df1Game.title,
+      df1PickDiskNo: df1Disk.diskNo,
       netDriverSeenAt: devices.netDriverSeenAt,
       netAmigaIp: devices.netAmigaIp,
       netFramesIn: devices.netFramesIn,
@@ -472,6 +484,8 @@ export async function listDevices(orgId: string): Promise<DeviceListItem[]> {
     .leftJoin(desiredGame, and(eq(desiredGame.id, devices.desiredGameId), eq(desiredGame.orgId, orgId)))
     .leftJoin(mountedGame, and(eq(mountedGame.id, devices.mountedGameId), eq(mountedGame.orgId, orgId)))
     .leftJoin(mountedDisk, and(eq(mountedDisk.id, devices.mountedDiskId), eq(mountedDisk.orgId, orgId)))
+    .leftJoin(df1Disk, and(eq(df1Disk.id, devices.df1DiskId), eq(df1Disk.orgId, orgId)))
+    .leftJoin(df1Game, and(eq(df1Game.id, df1Disk.gameId), eq(df1Game.orgId, orgId)))
     .where(orgFilter(devices, orgId))
     .orderBy(devices.name);
   // The layout crosses to the client component as base64 (a Uint8Array does

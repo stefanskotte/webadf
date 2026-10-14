@@ -1,6 +1,7 @@
 import { requireOrg } from '@/lib/session';
 import { listGames, countAllGames, listDevices } from '@/lib/queries';
 import { holdsByGame } from '@/lib/drive-holds';
+import { df1BoardOf } from '@/lib/df1-pick';
 import type { DriveContext, DriveDisk } from '@/components/library/card-mount-button';
 import { listCollections, countUncategorized, collectionMosaics } from '@/lib/collections';
 import { countReviewQueue } from '@/lib/demozoo/queries';
@@ -79,7 +80,7 @@ export default async function LibraryPage(props: PageProps<'/library'>) {
 
   // "Which disk?" on a set: the mount picker and the fob picker both use it.
   const disksByGame: Record<string, DriveDisk[]> = {};
-  for (const d of pageDisks) (disksByGame[d.gameId] ??= []).push({ id: d.id, diskNo: d.diskNo });
+  for (const d of pageDisks) (disksByGame[d.gameId] ??= []).push({ id: d.id, diskNo: d.diskNo, imageFormat: d.imageFormat, sizeBytes: d.sizeBytes });
 
   // The card mount control and its ring (card-mount-button.tsx): every board
   // and what each holds, decided here with the page so a card's ring is right
@@ -89,7 +90,8 @@ export default async function LibraryPage(props: PageProps<'/library'>) {
     // One clock for the render, as devices/page.tsx does.
     const now = Date.now();
     drives = {
-      devices: boards.map((b) => ({ id: b.id, name: b.name })),
+      // DF1's rules need the board's setting, firmware and disks (spec 2026-10-14 §3.1) -- those fields only.
+      devices: boards.map((b) => ({ id: b.id, name: b.name, df1: b.secondDrive === 'df1' ? df1BoardOf(b) : null })),
       holds: holdsByGame(boards, pageDisks, now),
       disksByGame,
     };

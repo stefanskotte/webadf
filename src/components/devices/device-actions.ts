@@ -80,3 +80,24 @@ export async function requestWriteProtect(diskId: string, writeProtected: boolea
   }
   return true;
 }
+
+/** POST /api/devices/[id]/eject {"drive":"df1"} -- the card's "Eject DF1" (spec 2026-10-14 §3.2). DF0 is untouched. */
+export async function requestEjectDf1(deviceId: string): Promise<boolean> {
+  let res: Response;
+  try {
+    res = await fetch(`/api/devices/${deviceId}/eject`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ drive: 'df1' }),
+    });
+  } catch {
+    toast.error('Could not reach the server', { description: 'Check your connection and try again.' });
+    return false;
+  }
+  if (!res.ok) {
+    toast.error('Could not eject DF1', { description: `The server answered ${res.status}.` });
+    return false;
+  }
+  toast.success('Eject DF1 requested');
+  return true;
+}

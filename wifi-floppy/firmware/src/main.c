@@ -2809,11 +2809,16 @@ static void core1_main(void) {
                                         c.mounted_version == last_reported_version;
             if (polled && s == DC_IDLE_POLL && mount_reported && !c.nfc_write_new &&
                 !nfc_event_pending(NULL) && !g_nfc_report.owed) {
-                if (dc_preload_step(&c)) s = c.state;
-                if (c.preload.changed) {
-                    // Verified, or a "ready" record dropped: the server's
-                    // copy of `preload` is stale until a report carries it.
+                // DF1 any disk (spec 2026-10-14 §5, plan ruling 8): the disk mounted into DF1 first -- someone
+                // asked for it -- then DF0's next disk. At most one background fetch per pass; an interrupted pick
+                // rounds to the top like an interrupted preload (the tap goes first).
+                if (dc_df1_pick_step(&c)) s = c.state;
+                else if (!c.df1_pick.interrupted && dc_preload_step(&c)) s = c.state;
+                if (c.preload.changed || c.df1_pick.changed) {
+                    // Verified, or a record dropped: the server's copy of `preload` / `df1Sha256` is stale until a
+                    // report carries it.
                     c.preload.changed = false;
+                    c.df1_pick.changed = false;
                     preload_report_owed = true;
                 }
             }
