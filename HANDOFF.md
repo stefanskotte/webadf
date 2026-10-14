@@ -4918,10 +4918,14 @@ Demozoo API (the bulk export makes per-lookup load on a non-profit unnecessary).
   allowlist checks only the first URL (the raster content-type allowlist and `nosniff` still apply).
 - **Cron drift:** the daily 01:30 cron against a 7-day gate can drift a refetch to 8 days.
 
-### 3bl. DF1 takes any standard DD disk -- branch feat/df1-any-disk (fw 1.12.0): branch complete, TEST build + A500 bench owed, not merged
+### 3bl. DF1 takes any standard DD disk -- merged a2181e0 (fw 1.12.0): TEST seq 81 installed on the bench board, A500 bench owed
 
-**Status.** Branch complete (commits af29a07..516c7b7, every task reviewed, e2e 79/79 for the touched specs). The TEST
-build, its install and the A500 bench below are owed; nothing is merged, released or installed.
+**Status (2026-10-15 00:15).** Branch complete (commits af29a07..86f5087, every task reviewed, final whole-branch review
+fixed, 2224 vitest, e2e 79/79 for the touched specs), merged to master as **a2181e0** and deployed (production Ready
+00:03). TEST build `1.12.0+g1437d84` published registry-only as **seq 81** and installed with the Amiga off: confirmed
+("update to 1.12.0+g1437d84 confirmed (sequence 81)"), heap low-water 28,672 with TLS held (1.11.1: 32,768). DF1 set
+to On (setting 19 stored); the card reads "On", "DF1: next disk of the set -- empty". **Owed:** the A500 bench below,
+then promote seq 81 to the 1.12.0 release (`--github-only` from `.claude/worktrees/df1any`, whose build is seq 81).
 
 **What.** With DF1 On (the setting formerly "Next disk of the set"; stored `df1` unchanged), every Mount offers
 DF0 or DF1. A disk mounted into DF1 lives in DF1's own PSRAM slot (`SLOT_NET`), read-only, whatever DF0 holds or
