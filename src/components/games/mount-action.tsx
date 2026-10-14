@@ -12,6 +12,16 @@ import type { MountChoice } from '@/lib/mount-choice';
  */
 export type MountTarget = MountChoice;
 
+type Drive = 'df0' | 'df1';
+const JSON_HEADERS = { 'content-type': 'application/json' };
+
+const cls = 'rounded-lg px-3 py-1.5 text-[12px] font-semibold text-white disabled:opacity-50';
+const style = { background: 'var(--primary-action)' };
+// Eject is not destructive, but it IS the one action here that takes
+// something away, so it does not wear the primary colour.
+const ejectStyle = { borderColor: 'var(--hairline)', color: 'var(--ink)' };
+const ejectCls = 'rounded-lg border px-3 py-1.5 text-[12px] font-semibold disabled:opacity-50';
+
 export function MountAction({ diskId, choices }: { diskId: string; choices: MountChoice[] }) {
   const router = useRouter();
   const [busy, setBusy] = useState(false);
@@ -32,29 +42,30 @@ export function MountAction({ diskId, choices }: { diskId: string; choices: Moun
    * whatever the drive still has. mount-choice.ts is what decides which verb a
    * given device is offered, and words it accordingly ("Cancel", not "Eject",
    * when nothing has landed yet).
+   *
+   * DF1 (spec 2026-10-14 §3.3): the disk already in DF1 is taken out of DF1 ({"drive":"df1"} to /eject); any
+   * other disk goes into DF1 ({diskId, drive:"df1"} to /mount). DF0 is exactly as before.
    */
-  async function act(choice: MountChoice) {
+  async function act(choice: MountChoice, drive: Drive = 'df0') {
     setBusy(true);
     setExpanded(false);
-    const ejecting = choice.action === 'eject';
+    const df1Eject = drive === 'df1' && choice.df1?.isThisDisk === true;
+    const ejecting = drive === 'df1' ? df1Eject : choice.action === 'eject';
     // A Cancel on a board that still holds a confirmed disk asks for that disk
     // again (mount-choice.ts revertDiskId); only a real eject empties the drive.
-    const mountId = ejecting ? choice.revertDiskId : diskId;
+    const mountId = drive === 'df1' ? (df1Eject ? null : diskId) : ejecting ? choice.revertDiskId : diskId;
+    const init: RequestInit = mountId
+      ? { method: 'POST', headers: JSON_HEADERS,
+          body: JSON.stringify(drive === 'df1' ? { diskId: mountId, drive } : { diskId: mountId }) }
+      : drive === 'df1'
+        ? { method: 'POST', headers: JSON_HEADERS, body: JSON.stringify({ drive }) }
+        : { method: 'POST' };
     try {
-      const res = await fetch(
-        `/api/devices/${choice.id}/${mountId ? 'mount' : 'eject'}`,
-        mountId
-          ? {
-              method: 'POST',
-              headers: { 'content-type': 'application/json' },
-              body: JSON.stringify({ diskId: mountId }),
-            }
-          : { method: 'POST' },
-      );
+      const res = await fetch(`/api/devices/${choice.id}/${mountId ? 'mount' : 'eject'}`, init);
       if (!res.ok) {
         // A refusal the person can act on carries its own sentence (e.g. a
-        // long-track HFE on a board whose firmware is too old); anything
-        // else falls back to the status.
+        // long-track HFE on a board whose firmware is too old, or DF1's rules);
+        // anything else falls back to the status.
         const body = await res.json().catch(() => null) as { reason?: unknown } | null;
         const reason = typeof body?.reason === 'string' ? body.reason : `The server answered ${res.status}.`;
         toast.error(ejecting ? 'Could not eject' : 'Could not mount', { description: reason });
@@ -64,20 +75,35 @@ export function MountAction({ diskId, choices }: { diskId: string; choices: Moun
       // measured ~4 s on hardware, and either way the device only acts on its
       // next poll. The layout's live poller (src/components/shell/live-refresh.tsx)
       // is what turns this into fact once the board reports.
-      toast.success(!ejecting ? 'Mount requested' : choice.revertDiskId ? 'Mount cancelled' : 'Eject requested');
+      toast.success(drive === 'df1'
+        ? (df1Eject ? 'Eject DF1 requested' : 'Mount into DF1 requested')
+        : !ejecting ? 'Mount requested' : choice.revertDiskId ? 'Mount cancelled' : 'Eject requested');
       router.refresh();
     } finally {
       setBusy(false);
     }
   }
 
-  const cls = 'rounded-lg px-3 py-1.5 text-[12px] font-semibold text-white disabled:opacity-50';
-  const style = { background: 'var(--primary-action)' };
-  // Eject is not destructive, but it IS the one action here that takes
-  // something away, so it does not wear the primary colour.
-  const ejectStyle = { borderColor: 'var(--hairline)', color: 'var(--ink)' };
-  const ejectCls =
-    'rounded-lg border px-3 py-1.5 text-[12px] font-semibold disabled:opacity-50';
+  /** The DF1 button: "DF1", or "Eject DF1" for the disk in DF1; disabled with its reason (df1-pick.ts). */
+  function df1Button(c: MountChoice, testId: string) {
+    const opt = c.df1!;
+    return (
+      <button type="button" onClick={() => act(c, 'df1')} disabled={busy || !opt.enabled}
+              data-testid={testId} title={opt.enabled ? 'DF1 is read-only' : opt.reason ?? undefined}
+              className={`shrink-0 ${opt.isThisDisk ? ejectCls : cls}`} style={opt.isThisDisk ? ejectStyle : style}>
+        {opt.isThisDisk ? 'Eject DF1' : 'DF1'}
+      </button>
+    );
+  }
+
+  /** Under the two buttons, always in words (show both values): read-only when DF1 is open, else why not. */
+  function df1Note(c: MountChoice, testId: string) {
+    return (
+      <span className="text-[10.5px]" data-testid={testId} style={{ color: 'var(--muted)' }}>
+        {c.df1!.enabled ? 'DF1 is read-only' : c.df1!.reason}
+      </span>
+    );
+  }
 
   if (choices.length === 0) {
     return (
@@ -95,14 +121,25 @@ export function MountAction({ diskId, choices }: { diskId: string; choices: Moun
   if (choices.length === 1) {
     const only = choices[0];
     const ejecting = only.action === 'eject';
-    return (
+    const df0 = (
       <button type="button" onClick={() => act(only)} disabled={busy}
               data-testid={ejecting ? `eject-${diskId}` : `mount-${diskId}`}
               title={only.holding ? `${only.name}: ${only.holding}` : `${only.name}: empty`}
               className={ejecting ? ejectCls : cls}
               style={ejecting ? ejectStyle : style}>
-        {busy ? 'Working…' : ejecting ? only.actionLabel : 'Mount'}
+        {busy ? 'Working…' : ejecting ? only.actionLabel : only.df1 ? 'DF0' : 'Mount'}
       </button>
+    );
+    // DF1 off or Network: Mount is DF0's, exactly as before (spec D1).
+    if (!only.df1) return df0;
+    return (
+      <div className="flex flex-col items-end gap-1" data-testid={`mount-${diskId}-drives`}>
+        <div className="flex items-center gap-1.5" role="group" aria-label="Drive">
+          {df0}
+          {df1Button(only, only.df1.isThisDisk ? `eject-${diskId}-df1` : `mount-${diskId}-df1`)}
+        </div>
+        {df1Note(only, `mount-${diskId}-df1-note`)}
+      </div>
     );
   }
 
@@ -144,15 +181,19 @@ export function MountAction({ diskId, choices }: { diskId: string; choices: Moun
                       style={{ color: c.state === 'stale' ? 'var(--amber-text)' : 'var(--muted)' }}>
                   {c.holding ?? 'empty'}
                 </span>
+                {c.df1 && df1Note(c, `mount-status-df1-${diskId}-${c.id}`)}
               </span>
-              <button type="button" onClick={() => act(c)} disabled={busy}
-                      data-testid={ejecting
-                        ? `eject-${diskId}-from-${c.id}`
-                        : `mount-${diskId}-to-${c.id}`}
-                      className={`shrink-0 ${ejecting ? ejectCls : cls}`}
-                      style={ejecting ? ejectStyle : style}>
-                {c.actionLabel}
-              </button>
+              <span className="flex shrink-0 items-center gap-1.5">
+                <button type="button" onClick={() => act(c)} disabled={busy}
+                        data-testid={ejecting
+                          ? `eject-${diskId}-from-${c.id}`
+                          : `mount-${diskId}-to-${c.id}`}
+                        className={`shrink-0 ${ejecting ? ejectCls : cls}`}
+                        style={ejecting ? ejectStyle : style}>
+                  {!ejecting && c.df1 ? 'DF0' : c.actionLabel}
+                </button>
+                {c.df1 && df1Button(c, c.df1.isThisDisk ? `eject-${diskId}-df1-from-${c.id}` : `mount-${diskId}-df1-to-${c.id}`)}
+              </span>
             </div>
           );
         })}

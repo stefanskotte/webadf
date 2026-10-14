@@ -1,4 +1,5 @@
 import { deviceState, type DeviceState, type DeviceStateRow } from '@/lib/device-state';
+import { df1Option, type Df1Board, type Df1Option } from '@/lib/df1-pick';
 
 /**
  * What one device offers for one disk: what it is holding now, and whether the
@@ -10,7 +11,7 @@ import { deviceState, type DeviceState, type DeviceStateRow } from '@/lib/device
  * mount picker is the one place where getting it wrong sends a disk to the
  * wrong drive.
  */
-export interface MountTargetRow extends DeviceStateRow {
+export interface MountTargetRow extends DeviceStateRow, Df1Board {
   id: string;
   name: string;
   // Both ids, because which one is authoritative depends on the state: the
@@ -21,7 +22,16 @@ export interface MountTargetRow extends DeviceStateRow {
   desiredDiskNo: number | null;
   mountedGame: string | null;
   mountedDiskNo: number | null;
+  /**
+   * DF1 any disk: what the board reports DF1 holds, and the digest of the disk mounted into DF1. Until the two
+   * agree the pick is requested, not fact, and the holder line says "Mounting to" (the rule on holderText).
+   */
+  df1Sha256: string | null;
+  df1PickSha256: string | null;
 }
+
+/** The disk being acted on: what rule 3 of spec 2026-10-14 §3.1 (a standard DD ADF) needs besides its ids. */
+export interface MountDisk { id: string; sha256: string; imageFormat: string; sizeBytes: number }
 
 export interface MountChoice {
   id: string;
@@ -42,6 +52,16 @@ export interface MountChoice {
    * otherwise: an Eject, or a Cancel with nothing confirmed in the drive.
    */
   revertDiskId: string | null;
+  /**
+   * DF1 (spec 2026-10-14 §3.3): what the DF1 button offers, or null when the board's DF1 setting is not On --
+   * then there is no DF1 button and Mount is DF0's, as before (D1).
+   */
+  df1: Df1Option | null;
+  /**
+   * True when this disk is the one mounted into DF1 AND the board reports holding exactly its digest. False
+   * while it is still loading (or not in DF1 at all): the holder line must not say "In" before the board does.
+   */
+  df1Held: boolean;
 }
 
 /** "Lemmings — disk 2", degrading rather than rendering "null — disk null". */
@@ -54,9 +74,9 @@ function describe(game: string | null, diskNo: number | null): string {
   return 'a disk';
 }
 
-export function mountChoice(
-  row: MountTargetRow, diskId: string, diskSha256: string, now: number,
-): MountChoice {
+export function mountChoice(row: MountTargetRow, disk: MountDisk, now: number): MountChoice {
+  const diskId = disk.id;
+  const diskSha256 = disk.sha256;
   const state = deviceState(row, now);
 
   // Which half of the row is the live one. Converged means the device has
@@ -96,13 +116,14 @@ export function mountChoice(
   const revertDiskId = isThisDisk && !converged && row.mountedDiskId !== null && row.mountedDiskId !== activeDiskId
     ? row.mountedDiskId : null;
 
-  return { id: row.id, name: row.name, state, holding, isThisDisk, action, actionLabel, revertDiskId };
+  const df1 = df1Option(row, disk);
+  const df1Held = df1?.isThisDisk === true && row.df1PickSha256 !== null && row.df1Sha256 === row.df1PickSha256;
+
+  return { id: row.id, name: row.name, state, holding, isThisDisk, action, actionLabel, revertDiskId, df1, df1Held };
 }
 
-export function mountChoices(
-  rows: MountTargetRow[], diskId: string, diskSha256: string, now: number,
-): MountChoice[] {
-  return rows.map((r) => mountChoice(r, diskId, diskSha256, now));
+export function mountChoices(rows: MountTargetRow[], disk: MountDisk, now: number): MountChoice[] {
+  return rows.map((r) => mountChoice(r, disk, now));
 }
 
 export interface HolderLine {
@@ -136,7 +157,14 @@ function names(list: MountChoice[]): string {
  */
 export function holderText(choices: MountChoice[]): HolderLine | null {
   const held = choices.filter((c) => c.isThisDisk);
-  if (held.length === 0) return null;
+  if (held.length === 0) {
+    // A disk in DF1 only (spec 2026-10-14 §3.3): said, with the drive named. DF0 outranks it when both hold.
+    // Same rule as DF0: "In" only once the board reports the pick's digest; until then it is still loading.
+    const inDf1 = choices.filter((c) => c.df1?.isThisDisk === true);
+    const df1Held = inDf1.filter((c) => c.df1Held);
+    if (df1Held.length > 0) return { text: `In ${names(df1Held)} (DF1)`, stale: false };
+    return inDf1.length > 0 ? { text: `Mounting to ${names(inDf1)} (DF1)…`, stale: false } : null;
+  }
 
   const converged = held.filter((c) => c.state === 'converged');
   if (converged.length > 0) return { text: `In ${names(converged)}`, stale: false };

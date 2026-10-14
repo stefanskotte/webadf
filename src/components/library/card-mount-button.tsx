@@ -6,11 +6,12 @@ import { useRouter } from 'next/navigation';
 import { toast } from 'sonner';
 import { Eject, Play } from 'lucide-react';
 import { holdAction, holdLabel, type Hold } from '@/lib/drive-holds';
+import { df1Option, type Df1Board } from '@/lib/df1-pick';
 
-/** A board the org has paired, as the page loaded it. */
-export type DriveDevice = { id: string; name: string };
-/** One disk of a title, labelled as the title page labels it. */
-export type DriveDisk = { id: string; diskNo: number };
+/** A board the org has paired, as the page loaded it. `df1`: its DF1 rules' inputs, null unless DF1 is On. */
+export type DriveDevice = { id: string; name: string; df1: Df1Board | null };
+/** One disk of a title, labelled as the title page labels it; format and size for DF1's rule (spec 2026-10-14 §3.1). */
+export type DriveDisk = { id: string; diskNo: number; imageFormat: string; sizeBytes: number };
 /**
  * What the library grid needs for the mount control and the ring: the org's
  * boards, which titles are in a drive (drive-holds.ts), and every set's disks
@@ -61,13 +62,15 @@ export function CardMountButton({ gameId, title, diskCount, singleDiskId, drives
 }) {
   const router = useRouter();
   const holds = drives.holds[gameId] ?? [];
-  const disks: DriveDisk[] = diskCount === 1 && singleDiskId
-    ? [{ id: singleDiskId, diskNo: 1 }]
-    : drives.disksByGame[gameId] ?? [];
+  // disksByGame carries every title on the page (library/page.tsx), with what DF1's rule needs. The single-disk
+  // fallback is never reached from that page; without a format DF1 refuses rather than guesses.
+  const disks: DriveDisk[] = drives.disksByGame[gameId]
+    ?? (diskCount === 1 && singleDiskId ? [{ id: singleDiskId, diskNo: 1, imageFormat: 'unknown', sizeBytes: 0 }] : []);
   const [open, setOpen] = useState(false);
   const [busy, setBusy] = useState(false);
   const [diskId, setDiskId] = useState<string | null>(null);
   const [deviceId, setDeviceId] = useState<string | null>(null);
+  const [drive, setDrive] = useState<'df0' | 'df1'>('df0');
   const titleId = useId();
   const triggerRef = useRef<HTMLButtonElement>(null);
 
@@ -87,15 +90,16 @@ export function CardMountButton({ gameId, title, diskCount, singleDiskId, drives
   if (drives.devices.length === 0 || disks.length === 0) return null;
   const ejecting = holds.length > 0;
 
-  /** Mount `disk` on `device`, or empty the drive (`disk` null). `cancel`: this undoes a request. */
-  async function act(device: string, disk: string | null, cancel = false) {
+  /** Mount `disk` on `device`, or empty the drive (`disk` null). `cancel`: this undoes a request. `toDf1`: into DF1. */
+  async function act(device: string, disk: string | null, cancel = false, toDf1 = false) {
     setBusy(true);
     setOpen(false);
     try {
       let res: Response;
       try {
         res = await fetch(`/api/devices/${device}/${disk ? 'mount' : 'eject'}`, disk
-          ? { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ diskId: disk }) }
+          ? { method: 'POST', headers: { 'content-type': 'application/json' },
+              body: JSON.stringify(toDf1 ? { diskId: disk, drive: 'df1' } : { diskId: disk }) }
           : { method: 'POST' });
       } catch {
         toast.error('Could not reach the server');
@@ -110,7 +114,7 @@ export function CardMountButton({ gameId, title, diskCount, singleDiskId, drives
         });
         return;
       }
-      toast.success(cancel ? 'Mount cancelled' : disk ? 'Mount requested' : 'Eject requested');
+      toast.success(cancel ? 'Mount cancelled' : disk ? (toDf1 ? 'Mount into DF1 requested' : 'Mount requested') : 'Eject requested');
       router.refresh();
     } finally {
       setBusy(false);
@@ -139,9 +143,11 @@ export function CardMountButton({ gameId, title, diskCount, singleDiskId, drives
     }
     const onlyDisk = disks.length === 1 ? disks[0].id : null;
     const onlyDevice = drives.devices.length === 1 ? drives.devices[0].id : null;
-    if (onlyDisk && onlyDevice) { void act(onlyDevice, onlyDisk); return; }
+    // A board with DF1 On always asks which drive.
+    if (onlyDisk && onlyDevice && drives.devices[0].df1 === null) { void act(onlyDevice, onlyDisk); return; }
     setDiskId(onlyDisk);
     setDeviceId(onlyDevice);
+    setDrive('df0');
     setOpen(true);
   }
 
@@ -184,10 +190,19 @@ export function CardMountButton({ gameId, title, diskCount, singleDiskId, drives
   // Ejecting from several boards picks among the boards that hold it; mounting
   // picks among all of them.
   const boards: DriveDevice[] = ejecting
-    ? holds.map((h) => ({ id: h.deviceId, name: holdLabel(h, diskCount) }))
+    ? holds.map((h) => ({ id: h.deviceId, name: holdLabel(h, diskCount), df1: null }))
     : drives.devices;
   const ready = ejecting ? deviceId !== null : diskId !== null && deviceId !== null;
   const chosenHold = ejecting ? holds.find((h) => h.deviceId === deviceId) ?? null : null;
+  // DF1 (spec 2026-10-14 §3.3): offered when the chosen board runs On. The disk already in DF1 is ejected from
+  // the board's card (plan ruling 10), so here it reads as a refusal.
+  const chosenBoard = drives.devices.find((d) => d.id === deviceId) ?? null;
+  const chosenDisk = disks.find((d) => d.id === diskId) ?? null;
+  const df1 = !ejecting && chosenBoard?.df1 && chosenDisk ? df1Option(chosenBoard.df1, chosenDisk) : null;
+  const df1Usable = df1 !== null && df1.enabled && !df1.isThisDisk;
+  const df1Reason = df1 === null ? 'Choose a disk first' : df1.isThisDisk ? 'Already in DF1' : df1.reason;
+  const showDrive = !ejecting && chosenBoard !== null && chosenBoard.df1 !== null;
+  const useDf1 = showDrive && drive === 'df1' && df1Usable;
 
   return (
     <>
@@ -232,15 +247,34 @@ export function CardMountButton({ gameId, title, diskCount, singleDiskId, drives
                 </div>
               </div>
             )}
+            {showDrive && (
+              <div className="flex flex-col gap-1.5">
+                <span className="text-[12px]" style={{ color: 'var(--muted)' }}>Which drive?</span>
+                <div className="flex flex-wrap gap-2" role="group" aria-label="Drive">
+                  <button type="button" data-testid="card-mount-drive-df0" aria-pressed={!useDf1}
+                          onClick={() => setDrive('df0')} {...choice(!useDf1)}>
+                    DF0
+                  </button>
+                  <button type="button" data-testid="card-mount-drive-df1" aria-pressed={useDf1}
+                          disabled={!df1Usable} onClick={() => setDrive('df1')}
+                          className={`${choice(useDf1).className} disabled:opacity-50`} style={choice(useDf1).style}>
+                    DF1
+                  </button>
+                </div>
+                <span className="text-[11.5px]" style={{ color: 'var(--muted)' }} data-testid="card-mount-df1-note">
+                  {df1Usable ? 'DF1 is read-only' : df1Reason}
+                </span>
+              </div>
+            )}
             <div className="mt-2 flex items-center justify-end gap-2">
               <button type="button" onClick={close} autoFocus={!ready} className={pill} style={{ color: 'var(--muted)' }}>Close</button>
               <button type="button" data-testid="card-mount-confirm" autoFocus={ready} disabled={!ready}
                       onClick={() => {
                         if (chosenHold) void undo(chosenHold);
-                        else if (deviceId && diskId) void act(deviceId, diskId);
+                        else if (deviceId && diskId) void act(deviceId, diskId, false, useDf1);
                       }}
                       className={`${pill} text-white`} style={{ background: 'var(--primary-action)' }}>
-                {chosenHold ? holdAction(chosenHold) : ejecting ? 'Eject' : 'Mount'}
+                {chosenHold ? holdAction(chosenHold) : ejecting ? 'Eject' : useDf1 ? 'Mount into DF1' : 'Mount'}
               </button>
             </div>
           </div>
