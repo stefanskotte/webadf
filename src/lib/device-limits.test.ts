@@ -86,14 +86,19 @@ describe('the firmware bounds the server respects', () => {
     // was ASCII, but wrong now that nfcWrite's title is escaped multi-byte
     // sequences.
     //
-    // With next, nfcWrite, nfcWrite.kind, displayVersion and secondDrive included
-    // this comes to about 1462 bytes against the 1536-byte buffer.
+    // With next, nfcWrite, nfcWrite.kind, displayVersion and secondDrive this was 1,458 bytes.
     const drive = ',"secondDrive":{"seq":4294967295,"mode":"df1"}';
-    const worst = Buffer.byteLength(disk + next + display + drive + update + nfcWrite + nfcKind, 'utf8');
+    // DF1 any disk (spec 2026-10-14 §4.2): `df1` rides every body to a board that sends df1Ack (fw 1.12.0+); the
+    // worst case is a pick (a 64-hex digest). With it the body is 1,557 bytes, past the old 1,536-byte buffer, so
+    // 1.12.0 raised DC_POLL_BODY_BYTES (plan ruling 5).
+    const df1 = `,"df1":{"v":4294967295,"sha256":"${'a'.repeat(SHA)}"}`;
+    const worst = Buffer.byteLength(disk + next + display + drive + df1 + update + nfcWrite + nfcKind, 'utf8');
     const budget = define('DC_POLL_BODY_BYTES');
     // Reported rather than just asserted, so a future reader sees the margin
     // instead of rediscovering it.
     expect(worst, `worst-case body ${worst} bytes against a ${budget}-byte buffer`)
       .toBeLessThan(budget);
+    // A board before 1.12.0 sends no df1Ack and is never sent `df1`: its worst case must still fit ITS buffer.
+    expect(worst - Buffer.byteLength(df1, 'utf8'), 'a 1.11 board keeps its 1,536-byte buffer').toBeLessThan(1536);
   });
 });

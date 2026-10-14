@@ -47,12 +47,15 @@ const readNextForPoll = vi.fn<(deviceId: string, orgId: string) => Promise<{ dis
 vi.mock('@/lib/next-disk', () => ({
   readNextForPoll: (deviceId: string, orgId: string) => readNextForPoll(deviceId, orgId),
 }));
+const readDf1ForPoll = vi.fn<(deviceId: string) => Promise<{ v: number; sha256: string | null }>>();
+vi.mock('@/lib/df1-store', () => ({ readDf1ForPoll: (deviceId: string) => readDf1ForPoll(deviceId) }));
 
 const get = (qs = '') => new Request(`http://test/api/device/poll${qs}`);
 
 const baseTick = (over: Partial<PollTick> = {}): PollTick => ({
   version: 1, instructionVersion: 0, instructionAck: 0, nfcWriteSeq: 0, displayVersion: 0, secondDriveVersion: 0, secondDrive: 'off',
-  secondDriveReported: null, secondDriveAppliedVersion: null, netNextSentVersion: null, ...over,
+  secondDriveReported: null, secondDriveAppliedVersion: null, netNextSentVersion: null,
+  df1Version: 0, ...over,
 });
 
 beforeEach(() => {
@@ -61,6 +64,7 @@ beforeEach(() => {
   readDesired.mockResolvedValue({ version: 1, desired: null });
   readFirmwareInstruction.mockResolvedValue(null);
   readNextForPoll.mockResolvedValue(null);
+  readDf1ForPoll.mockResolvedValue({ v: 0, sha256: null });
 });
 
 describe('GET /api/device/poll -- nfcAck and nfcWrite', () => {
@@ -491,6 +495,75 @@ describe('GET /api/device/poll -- driveAck and secondDrive', () => {
       readPollTick.mockResolvedValue(baseTick({ secondDriveVersion: 2, secondDrive: 'df1' }));
       const { GET } = await import('./route');
       const p = GET(get('?since=1&driveAck=2'));
+      await vi.advanceTimersByTimeAsync(26_000);
+      expect((await p).status).toBe(204);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});
+
+describe('GET /api/device/poll -- df1Ack and df1 (spec 2026-10-14 §4.2)', () => {
+  const P = 'e'.repeat(64);
+
+  it('wakes on a df1Ack mismatch and carries the pick', async () => {
+    readPollTick.mockResolvedValue(baseTick({ df1Version: 3 }));
+    readDf1ForPoll.mockResolvedValue({ v: 3, sha256: P });
+    const { GET } = await import('./route');
+    const res = await GET(get('?since=1&driveAck=0&df1Ack=2'));
+    expect(res.status).toBe(200);
+    expect((await res.json()).df1).toEqual({ v: 3, sha256: P });
+    expect(readDf1ForPoll).toHaveBeenCalledWith('dev-1');
+  });
+
+  it('wakes when df1Ack is ABOVE the version (a re-paired board) and carries the lower one', async () => {
+    readPollTick.mockResolvedValue(baseTick({ df1Version: 0 }));
+    readDf1ForPoll.mockResolvedValue({ v: 0, sha256: null });
+    const { GET } = await import('./route');
+    const res = await GET(get('?since=1&driveAck=0&df1Ack=7'));
+    expect(res.status).toBe(200);
+    expect((await res.json()).df1).toEqual({ v: 0, sha256: null });
+  });
+
+  it('rides every body to a board that sends df1Ack, also one woken by something else', async () => {
+    readPollTick.mockResolvedValue(baseTick({ version: 2, df1Version: 4 }));
+    readDf1ForPoll.mockResolvedValue({ v: 4, sha256: null });
+    const { GET } = await import('./route');
+    const body = await (await GET(get('?since=1&driveAck=0&df1Ack=4'))).json();
+    expect(body.df1).toEqual({ v: 4, sha256: null });
+  });
+
+  it('a MISSING df1Ack (a board before 1.12.0) is never woken for a pick and never sent df1 (Review Focus 4)', async () => {
+    readPollTick.mockResolvedValue(baseTick({ version: 2, df1Version: 5 }));
+    const { GET } = await import('./route');
+    const body = await (await GET(get('?since=1&driveAck=0'))).json();
+    expect(body.df1).toBeUndefined();
+    expect(readDf1ForPoll).not.toHaveBeenCalled();
+  });
+
+  it('parses a garbled df1Ack as 0 (never "caught up"), so a positive version wakes', async () => {
+    readPollTick.mockResolvedValue(baseTick({ df1Version: 1 }));
+    readDf1ForPoll.mockResolvedValue({ v: 1, sha256: P });
+    const { GET } = await import('./route');
+    const res = await GET(get('?since=1&driveAck=0&df1Ack=1x'));
+    expect(res.status).toBe(200);
+    expect((await res.json()).df1).toEqual({ v: 1, sha256: P });
+  });
+
+  it('places df1 after secondDrive in the JSON body', async () => {
+    readPollTick.mockResolvedValue(baseTick({ df1Version: 1, secondDriveVersion: 1, secondDrive: 'df1' }));
+    readDf1ForPoll.mockResolvedValue({ v: 1, sha256: P });
+    const { GET } = await import('./route');
+    const text = await (await GET(get('?since=1&driveAck=0&df1Ack=0'))).text();
+    expect(text.indexOf('"df1":')).toBeGreaterThan(text.indexOf('"secondDrive":'));
+  });
+
+  it('does not wake when df1Ack matches, and a lone caught-up poll holds (204)', async () => {
+    vi.useFakeTimers();
+    try {
+      readPollTick.mockResolvedValue(baseTick({ df1Version: 2 }));
+      const { GET } = await import('./route');
+      const p = GET(get('?since=1&driveAck=0&df1Ack=2'));
       await vi.advanceTimersByTimeAsync(26_000);
       expect((await p).status).toBe(204);
     } finally {

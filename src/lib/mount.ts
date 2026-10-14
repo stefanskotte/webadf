@@ -157,6 +157,8 @@ export interface PollTick {
   secondDriveAppliedVersion: number | null;
   /** The driver disk's one-shot cursor: the setting version a body last carried it as `next` at. */
   netNextSentVersion: number | null;
+  /** The DF1 pick's cursor (spec 2026-10-14 §4.2): compared against the board's ?df1Ack=. */
+  df1Version: number;
 }
 
 /**
@@ -180,6 +182,7 @@ export async function readPollTick(deviceId: string): Promise<PollTick | null> {
       secondDriveReported: devices.secondDriveReported,
       secondDriveAppliedVersion: devices.secondDriveAppliedVersion,
       netNextSentVersion: devices.netNextSentVersion,
+      df1Version: devices.df1Version,
     })
     .from(devices)
     .where(eq(devices.id, deviceId))

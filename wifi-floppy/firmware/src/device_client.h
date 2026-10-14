@@ -112,7 +112,12 @@ typedef bool (*dc_hold_fn)(void *ctx);
 // refuses to act on a truncated body at all (see its DC_IDLE_POLL/backoff
 // path), which is the same "touch nothing" resolution every other
 // malformed-response case takes.
-#define DC_POLL_BODY_BYTES 1536
+// DF1 any disk (spec 2026-10-14 §4.2, plan ruling 5): the poll body gains `df1`,
+// ,"df1":{"v":4294967295,"sha256":"<64 hex>"} -- 99 bytes -- on every body to a
+// 1.12.0+ board. With it the worst case is 1,557 bytes (device-limits.test.ts),
+// past 1,536. Five statics use this size (the three dc_body_buf_t, and the two
+// lift copies in dc_take_next and dc_take_nfc_write): +640 B of .bss.
+#define DC_POLL_BODY_BYTES 1664
 //
 // Moved here from device_client.c so the server side can assert against it:
 // src/lib/device-limits.test.ts computes the worst-case body from the real
