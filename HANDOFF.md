@@ -4968,6 +4968,12 @@ there resolved seq 79 and correctly refused it as TEST; it was run from `.claude
 seq 80 (sha f824ebc5..., matches the registry). The bench card shows `fw 1.11.1+g0a157eb · up to date`, no TEST.
 Rollback: a 1.11.2 from master.
 
+**Smoke check on the release (2026-10-14, PiKVM, Shell via Execute Command `newshell`).** Network + one reset ->
+`AddNetInterface eth0` up 172.16.10.235 (DHCP); `ping -c 3 172.16.10.1` 3/3 (212-535 ms); `ping -c 3 aminet.net`
+resolved 49.13.59.190, 3/3 (208-282 ms). **Live Off while online:** `info` says `DF1: No disk present` (the 3bj
+`Unreadable disk` did not recur, second time not reproduced -- closed as not reproducible); ping 0/2, timeouts only,
+the Amiga stays responsive. **Live Network again, no reset:** the running driver recovers by itself, ping 3/3.
+
 **Observed: another user installed the TEST build.** Device `28:cd:c1:19:49:12` in another user's org (created
 2026-10-13, DF1 = Network) reported `1.11.1+g0a157eb` on 2026-10-14 07:51 (instruction 2, chosen from its own card) --
 before the bench. TEST builds ARE offered to every org's card (the open question from 3bj). Harmless now that seq 80
