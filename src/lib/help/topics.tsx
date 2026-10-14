@@ -303,7 +303,7 @@ export const HELP_TOPICS = {
           the following disk is fetched.
         </p>
         <p>
-          Or mount a disk of your choice into DF1: press <em>DF1</em> beside <em>Mount</em>. DF1 keeps it whatever
+          Or mount a disk of your choice into DF1: press <em>DF1</em> beside <em>DF0</em> where you mount a disk. DF1 keeps it whatever
           DF0 does, even with DF0 empty, until <em>Eject DF1</em> on the card; then it follows the set again. DF1
           takes standard DD disks only.
         </p>

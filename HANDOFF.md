@@ -4911,7 +4911,7 @@ Demozoo API (the bulk export makes per-lookup load on a non-profit unnecessary).
 
 ### 3bl. DF1 takes any standard DD disk -- branch feat/df1-any-disk (fw 1.12.0): branch complete, TEST build + A500 bench owed, not merged
 
-**Status.** Branch complete (commits 82de9bd..d957605, every task reviewed, e2e 79/79 for the touched specs). The TEST
+**Status.** Branch complete (commits af29a07..516c7b7, every task reviewed, e2e 79/79 for the touched specs). The TEST
 build, its install and the A500 bench below are owed; nothing is merged, released or installed.
 
 **What.** With DF1 On (the setting formerly "Next disk of the set"; stored `df1` unchanged), every Mount offers
@@ -4937,8 +4937,8 @@ On, plus "Waiting for the board"; DF1 in the drive menu, not on the chip; the pi
 first; the pick shares the net route's block; the library card's ring stays DF0's; mountChoice takes the disk.
 
 **Execution rulings and deviations.**
-- A pick whose fetch fails (e.g. the disk is no longer entitled) reads "loading" on the card; only deleting the disk
-  clears a pick server-side. Spec §8.5 ("the card says why DF1 is empty") is NOT delivered in 1.12.0.
+- A pick whose fetch fails (e.g. the disk is no longer entitled) reads "loading" on the card; a failed fetch never
+  clears the pick. Eject DF1, a move into DF0, a setting change away from On, and deleting the disk do. Spec §8.5 ("the card says why DF1 is empty") is NOT delivered in 1.12.0.
 - A Next (web or NFC) that lands DF0 on the picked disk is a move and clears the pick (spec §3.1 rule 4, §3.2 row 4).
 - Editing the picked disk's bytes does not bump `df1_version`; the board gets the new digest on its next poll body
   (the `df1` key is on every body). DF1 is read-only, so a stale copy until then is harmless.
@@ -4954,8 +4954,10 @@ first; the pick shares the net route's block; the library card's ring stays DF0'
   `df1_deferred` before main.c's 1 s pacing reads it. Pre-existing for preload.
 - Rare race: a pick set between `deleteDisk`'s `ejectDf1Holders` and the delete is cleared by the FK SET NULL without
   a cursor bump; a disk deleted between the select and the UPDATE gives an FK error (500).
-- OPEN: `drizzle.config.ts` has the schema glob `./src/db/schema/*.ts`, which picks up
-  `src/db/schema/devices-df1.test.ts`, so `pnpm db:generate` crashes. Move the test or exclude `*.test.ts`.
+- After Eject DF1 and before the board reports, the card and menu can read "DF1: next disk of the set -- disk N"
+  while the Amiga still sees the old disk (one poll if online, longer if offline).
+- Known limit: a board without PSRAM for SLOT_NET would show "loading" forever for a DF1 pick. Every deployed board
+  (Pimoroni Pico Plus 2 W, 8 MB PSRAM) has it, so the server does not refuse; revisit if such a board exists.
 - Pre-existing on master, not from this branch: three `react-hooks/purity` lint errors (games, disk files and
   library pages) and one `react-hooks/set-state-in-effect` error (`pair-button.tsx`).
 - Minor, deferred: the collapsed multi-board trigger follows DF0 only; the DF0 eject label is unqualified beside

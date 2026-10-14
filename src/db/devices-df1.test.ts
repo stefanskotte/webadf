@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { getTableConfig } from 'drizzle-orm/pg-core';
-import { devices } from './devices';
+import { devices } from './schema/devices';
 
 describe('devices: the disk mounted into DF1 (spec 2026-10-14 §4.1)', () => {
   it('df1_disk_id references disks.id and is set null when the disk goes', () => {
