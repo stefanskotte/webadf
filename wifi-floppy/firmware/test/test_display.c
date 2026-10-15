@@ -483,6 +483,14 @@ static void test_render_without_a_layout_draws_the_default(void) {
     CHECK(memcmp(d.fb, want, DISP_FB_MAX) == 0, "NULL layout renders the 128x32 default");
 }
 
+static void the_status_word_says_insecure_when_idle(void) {
+    CHECK(strcmp(disp_status_word(DS_READY, false), "READY") == 0, "ready");
+    CHECK(strcmp(disp_status_word(DS_READY, true), "INSECURE") == 0, "insecure replaces READY");
+    CHECK(strcmp(disp_status_word(DS_LOADED, true), "INSECURE") == 0, "and LOADED");
+    CHECK(strcmp(disp_status_word(DS_DOWNLOAD, true), "DOWNLOAD") == 0, "transient states unchanged");
+    CHECK(strcmp(disp_status_word(DS_ERROR, true), "ERROR") == 0, "an error is never hidden");
+}
+
 int main(int argc, char **argv) {
     if (argc > 1 && strcmp(argv[1], "--dump") == 0) { dump_all(); return 0; }
     RUN(test_the_track_counter_is_right_aligned_and_exact);
@@ -507,5 +515,6 @@ int main(int argc, char **argv) {
     RUN(test_render_without_a_layout_draws_the_default);
     RUN(test_set_layout_refuses_a_foreign_panel);
     RUN(test_the_pump_writes_within_one_page_per_call);
+    RUN(the_status_word_says_insecure_when_idle);
     return REPORT();
 }

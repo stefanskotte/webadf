@@ -30,7 +30,9 @@ const OFF = {
   pct: 84, tick: 88, writable: 92, sync: 96, nfc: 100,
 } as const;
 const FIELD_ORDER = ['status', 'bars', 'title', 'detail', 'showTrack', 'cyl', 'maxCyl', 'pct', 'tick', 'writable', 'sync', 'nfc'] as const;
-export const STATE_SIZE = 104;
+// 108: display_state_t gained `insecure` (1.13.0, after nfc; never written here,
+// so the preview draws the plain READY/LOADED words the default server shows).
+export const STATE_SIZE = 108;
 const TITLE_CAP = 43;
 const DETAIL_CAP = 22;
 const FB_SIZE = 1024;

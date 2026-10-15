@@ -31,6 +31,8 @@
 #include "sntp_time.h"
 #include "provisioning.h"
 #include "config_store.h"
+#include "override_store.h"    // the server override (1.13.0): where this boot talks to
+#include "serial_cmd.h"        //   and the "wf server" console that changes it
 #include "portal_net.h"
 #include "lwip/netif.h"   // default_route_str(): netif_default, see portal_stop()
 #include <stdio.h>
@@ -88,6 +90,9 @@ transport_t *tls_transport(void);
 // two waiting loops; see release_kept_connection() below for the other,
 // unconditional half.
 bool tls_release_if_unreusable(void);
+// Same file again. The server override's "tls noverify" (1.13.0): set once
+// at boot, below, before core1 opens any connection.
+void tls_set_noverify(bool on);
 
 // ---------------------------------------------------------------- display
 //
@@ -285,6 +290,14 @@ static char g_ui_tag[NFC_UI_LINE_BYTES];
 static uint32_t g_ui_tag_at;
 static uint32_t g_ui_tag_n;
 
+// The server override (1.13.0, spec §2). Filled ONCE on core0 in main(), before
+// core1 starts, and never changed after: a "wf server set/clear" stores the new
+// record and reboots rather than switching servers under a running client. So
+// core1 (dc_init, the poll log) and core0 (ui_snapshot, the console) read it
+// without a lock.
+static server_override_t g_server;           // the server this boot talks to (spec §2)
+static char g_server_hdr[OVERRIDE_HOST_MAX + 7];
+
 static void ui_publish(disp_status_t st, const char *title, const char *detail, int pct) {
     g_ui_seq++;                     // odd: writing
     __dmb();
@@ -320,6 +333,7 @@ static bool ui_snapshot(display_state_t *s, char tag[NFC_UI_LINE_BYTES], uint32_
     s->pct      = g_ui_pct;
     s->writable = g_ui_writable;
     s->sync     = (disp_sync_t)g_ui_sync;
+    s->insecure = g_server.tls == OVR_TLS_NOVERIFY;   // READY/LOADED read "INSECURE"
     // core1 recomputes g_ui_sync only between requests, and a long poll holds
     // it for up to 25 s. A write core0 applied meanwhile must not read as
     // "synced": that is the one question the cloud answers ("can I switch
@@ -1994,7 +2008,11 @@ static void core1_main(void) {
             // honest about that, and leaves `reg` in DC_UNPROVISIONED,
             // which is never used for anything but this loop.
             static device_client_t reg;
-            dc_init(&reg, tls_transport(), clock_ms, WEBADF_HOST, NULL);
+            dc_init(&reg, tls_transport(), clock_ms, g_server.host, NULL);
+            // The override's port and Host header (1.13.0): registration goes to
+            // the SAME server the poll client below does. After dc_init, which
+            // resets them to 443 and the host.
+            dc_set_server(&reg, g_server.port, g_server_hdr);
             dc_register_result_t rr;
             while ((rr = dc_register(&reg, prov.cfg.code, WF_FIRMWARE_VERSION, mac))
                    != DC_REG_OK) {
@@ -2065,8 +2083,11 @@ static void core1_main(void) {
         }
 
         static device_client_t c;
-        dc_init(&c, tls_transport(), clock_ms, WEBADF_HOST, token);
+        dc_init(&c, tls_transport(), clock_ms, g_server.host, token);
         // AFTER dc_init, which zeroes the struct (device_client.h).
+        // The override (1.13.0): port, Host header, and what status reports about it.
+        dc_set_server(&c, g_server.port, g_server_hdr);
+        dc_set_server_report(&c, server_is_custom(&g_server, WEBADF_HOST), g_server.tls == OVR_TLS_NOVERIFY);
         dc_set_observer(&c, ui_observe, NULL);
         // HD spec §5.5: this build can play HD only if the drive-ID responder
         // is in it. After dc_init, which zeroes the struct.
@@ -2120,7 +2141,7 @@ static void core1_main(void) {
         static reinsert_t reins;
         reinsert_init(&reins);
         wf_logf(WF_INFO, "write-back: session %s", session);
-        wf_logf(WF_INFO, "entering poll loop against %s", WEBADF_HOST);
+        wf_logf(WF_INFO, "entering poll loop against %s", g_server_hdr);
 
         // 2b: the update state, shared by the trial below and the updater in
         // the poll loop. Loaded, and on a non-trial boot reconciled, ONCE per
@@ -4003,6 +4024,22 @@ int main(void) {
                     ? "an OTA update (5-minute deadline armed)"
                     : "a USB install (no deadline: waiting for connectivity)");
     }
+    {
+        // The server override (1.13.0, spec §2): which server this boot talks
+        // to, settled BEFORE core1 starts -- core1's clients read g_server and
+        // never see it change (a console change reboots instead). A plain
+        // XIP read, like fw_state_load above.
+        server_override_t stored;
+        const bool have_override = override_store_load(&stored);
+        server_effective(have_override, &stored, WEBADF_HOST, &g_server);
+        server_host_header(&g_server, g_server_hdr, sizeof g_server_hdr);
+        tls_set_noverify(g_server.tls == OVR_TLS_NOVERIFY);
+        if (server_is_custom(&g_server, WEBADF_HOST))
+            wf_logf(g_server.tls == OVR_TLS_NOVERIFY ? WF_WARN : WF_INFO, "server: custom %s tls=%s%s", g_server_hdr,
+                    g_server.tls == OVR_TLS_NOVERIFY ? "noverify" : "verify",
+                    g_server.tls == OVR_TLS_NOVERIFY ? " -- INSECURE" : "");
+        else wf_logf(WF_INFO, "server: default %s", WEBADF_HOST);
+    }
     multicore_launch_core1_with_stack(core1_main, core1_stack, sizeof core1_stack);
     // Lets core1's (rare, one-time) token flash write -- token_store.c,
     // guarded to only ever run before any disk is mounted -- pause core0
@@ -4876,6 +4913,100 @@ int main(void) {
             }
 #endif
         }
+
+#if !WF_FW_DEBUG
+        // The "wf server" / "wf reboot" console (1.13.0, spec §3). Only when
+        // WF_FW_DEBUG is off: the debug build's fwdbg reader on core1 owns
+        // stdin, and two readers would each get half of every line. Here on
+        // core0 because the flash writes it makes must not run under a disk
+        // (refused below), the same judgement the store writes above make.
+        // Non-blocking: costs one empty getchar when nothing is typed.
+        {
+            static sc_state_t con;
+            static bool con_init;
+            if (!con_init) { sc_init(&con); con_init = true; }
+            int ch;
+            while ((ch = getchar_timeout_us(0)) != PICO_ERROR_TIMEOUT) {
+                sc_cmd_t cmd;
+                if (!sc_feed_char(&con, ch, &cmd)) continue;
+                const bool custom = server_is_custom(&g_server, WEBADF_HOST);
+#if DF1_CAPABLE
+                const bool df1_in = df1_mounted;
+#else
+                const bool df1_in = false;
+#endif
+                const bool a_disk_is_in = disk_mounted || psram_active_slot() != SLOT_NONE || df1_in;
+                server_override_t rec;
+                switch (cmd.kind) {
+                case SC_SHOW:
+                    wf_logf(WF_INFO, "server: %s %s tls=%s", custom ? "custom" : "default", g_server_hdr,
+                            g_server.tls == OVR_TLS_NOVERIFY ? "noverify" : "verify");
+                    break;
+                case SC_ASK:
+                    wf_logf(WF_INFO, "server: %s", cmd.text);
+                    break;
+                case SC_ERROR:
+                    wf_logf(WF_WARN, "server: %s", cmd.text);
+                    break;
+                case SC_SET: case SC_CLEAR: case SC_TLS:
+                    // A flash write stalls XIP, which the disk image's
+                    // neighbours run from; the store does not check (override_store.h).
+                    if (a_disk_is_in) {
+                        wf_logf(WF_WARN, "server: eject the disk first -- nothing changed");
+                        break;
+                    }
+                    if (cmd.kind == SC_TLS) {
+                        if (!override_store_load(&rec)) {
+                            wf_logf(WF_WARN, "server: set a server first (wf server set https://...)");
+                            break;
+                        }
+                        rec.tls = cmd.tls;
+                        if (!override_store_save(&rec)) {
+                            wf_logf(WF_WARN, "server: storing failed -- nothing changed");
+                            break;
+                        }
+                        wf_logf(WF_INFO, "server: tls=%s stored -- applies at the next boot (wf reboot)",
+                                cmd.tls == OVR_TLS_NOVERIFY ? "noverify" : "verify");
+                    } else if (cmd.kind == SC_SET) {
+                        if (strcmp(cmd.host, g_server.host) == 0 && cmd.port == g_server.port) {
+                            wf_logf(WF_INFO, "server: unchanged");
+                            break;
+                        }
+                        memset(&rec, 0, sizeof rec);
+                        snprintf(rec.host, sizeof rec.host, "%s", cmd.host);
+                        rec.port = cmd.port;
+                        rec.tls  = OVR_TLS_VERIFY;
+                        if (!override_store_save(&rec)) {
+                            wf_logf(WF_WARN, "server: storing failed -- nothing changed");
+                            break;
+                        }
+                        // A pairing belongs to the server that issued it.
+                        config_store_erase();
+                        char hdr[sizeof g_server_hdr];
+                        server_host_header(&rec, hdr, sizeof hdr);
+                        wf_logf(WF_WARN, "server: now %s -- pairing forgotten, rebooting into setup", hdr);
+                        fw_rom_request_reboot(0);
+                    } else {   // SC_CLEAR
+                        if (!override_store_load(&rec)) {
+                            wf_logf(WF_INFO, "server: already the default");
+                            break;
+                        }
+                        override_store_erase();
+                        config_store_erase();
+                        wf_logf(WF_WARN, "server: back to the default -- pairing forgotten, rebooting into setup");
+                        fw_rom_request_reboot(0);
+                    }
+                    break;
+                case SC_REBOOT:
+                    wf_logf(WF_INFO, "server: rebooting");
+                    fw_rom_request_reboot(0);
+                    break;
+                case SC_NONE:
+                    break;
+                }
+            }
+        }
+#endif
 
         // Bounded on purpose. Four lines per 1 ms iteration keeps up with a
         // seek across the whole disk, and caps what a host that has stopped

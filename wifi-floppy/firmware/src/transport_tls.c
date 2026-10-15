@@ -153,6 +153,20 @@ static dns_token_t g_dns_token;
 // that lifetime is the normal embedded trade here, not an actual leak.
 static struct altcp_tls_config *g_tls_config;
 
+// noverify (wf server tls noverify, spec D3): ANY certificate, self-signed included, and no host-name check. The
+// build's ALTCP_MBEDTLS_AUTHMODE stays REQUIRED (tls_guard.h); this clears the verification flags per connection.
+// (mbedtls_ssl_set_hs_authmode cannot do it: it is honoured only with MBEDTLS_SSL_SRV_C, which this client lacks.)
+// Set once at boot by main.c (tls_set_noverify) from the stored override, before core1 opens any connection.
+static bool s_noverify;
+
+void tls_set_noverify(bool on) { s_noverify = on; }
+
+static int accept_any(void *ctx, mbedtls_x509_crt *crt, int depth, uint32_t *flags) {
+    (void)ctx; (void)crt; (void)depth;
+    *flags = 0;
+    return 0;
+}
+
 static void dns_found_cb(const char *name, const ip_addr_t *ipaddr, void *arg) {
     (void)name;
     dns_token_t *tok = (dns_token_t *)arg;
@@ -460,6 +474,10 @@ static int tls_connect(struct transport *t, const char *host, int port) {
         net_radio_unlock();
         detach_and_close(pcb);
         return tls_fail(TLS_ERR_TLS_CONFIG, "mbedtls_ssl_set_hostname failed", 0);
+    }
+    if (s_noverify) {
+        mbedtls_ssl_set_verify(ssl, accept_any, NULL);
+        wf_logf(WF_WARN, "tls: certificate NOT checked for %s (wf server tls noverify)", host);
     }
 
     err_t cerr = altcp_connect(c->pcb, &c->remote_ip, (u16_t)port, on_connected);
