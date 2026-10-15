@@ -155,7 +155,7 @@ export interface PollTick {
   /** What the board last reported running, and the setting version it had handled (pre-flight I2). */
   secondDriveReported: SecondDriveMode | null;
   secondDriveAppliedVersion: number | null;
-  /** The driver disk's one-shot cursor: the setting version a body last carried it as `next` at. */
+  /** The driver disk's one-shot cursor: the setting version a body last carried it at (`next`, or `df1` for netPick). */
   netNextSentVersion: number | null;
   /** The DF1 pick's cursor (spec 2026-10-14 §4.2): compared against the board's ?df1Ack=. */
   df1Version: number;
@@ -528,8 +528,8 @@ export async function touchLastSeen(deviceId: string): Promise<void> {
 }
 
 /**
- * Records that a poll body carried the driver disk as `next` at this setting version (pre-flight I2), so the
- * hold stops waking for it. Single column, like touchLastSeen; written only on the delivery path.
+ * Records that a poll body carried the driver disk (as `next`, or as `df1` to a netPick board) at this setting
+ * version (pre-flight I2), so the hold stops waking for it. Single column, like touchLastSeen; written only on the delivery path.
  */
 export async function markNetNextSent(
   deviceId: string, secondDriveVersion: number, opts: { bumpDf1?: boolean } = {},

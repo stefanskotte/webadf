@@ -255,7 +255,8 @@ export async function GET(request: Request) {
         {
           version: state.version,
           desired: state.desired,
-          // Absent with desired: null -- except in Network mode, once applied (the driver disk).
+          // Absent with desired: null -- except in Network mode, once applied, for a board without netPick (the
+          // driver disk; a netPick board gets it in `df1`).
           ...(next !== undefined ? { next } : {}),
           instructionVersion: tick.instructionVersion,
           // On EVERY body answering a poll that sent displayAck, not only one
