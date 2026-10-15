@@ -11,3 +11,17 @@ it.each([
 ])('%j -> %s', (env, label) => {
   expect(selectBackend({ ...env, STORAGE_DIR: '/tmp/webadf-select-test' }).label).toBe(label);
 });
+
+// On Vercel a function's disk is ephemeral: no silent fallback there.
+it('VERCEL=1 without a token throws instead of falling back to local disk', () => {
+  expect(() => selectBackend({ VERCEL: '1' })).toThrow(/running on Vercel without BLOB_READ_WRITE_TOKEN/);
+  expect(() => selectBackend({ VERCEL: '1', BLOB_READ_WRITE_TOKEN: '  ' })).toThrow(/refusing to fall back/);
+});
+
+it('VERCEL=1 with a token -> Vercel Blob', () => {
+  expect(selectBackend({ VERCEL: '1', BLOB_READ_WRITE_TOKEN: 'vercel_blob_rw_x' }).label).toBe('Vercel Blob');
+});
+
+it('no VERCEL and no token -> Local disk (unchanged)', () => {
+  expect(selectBackend({ VERCEL: '', STORAGE_DIR: '/tmp/webadf-select-test' }).label).toBe('Local disk');
+});

@@ -5,11 +5,19 @@ import type { BlobBackend } from './backend';
 /**
  * P1 D7: Vercel Blob when a token is set, otherwise local disk under
  * STORAGE_DIR (default ./data/blobs). A self-hoster sets nothing.
+ *
+ * Except on Vercel itself (VERCEL is set there): a function's disk is
+ * ephemeral, so falling back to it would make every read miss and every write
+ * vanish while the database kept pointing at objects that are not there. The
+ * SDK can also authenticate by OIDC + BLOB_STORE_ID, so a missing token there
+ * is a real misconfiguration, and it must fail loudly instead.
  */
 export function selectBackend(env: Record<string, string | undefined> = process.env): BlobBackend {
-  return env.BLOB_READ_WRITE_TOKEN?.trim()
-    ? vercelBlobBackend()
-    : localBackend(env.STORAGE_DIR?.trim() || './data/blobs');
+  if (env.BLOB_READ_WRITE_TOKEN?.trim()) return vercelBlobBackend();
+  if (env.VERCEL?.trim()) {
+    throw new Error('storage: running on Vercel without BLOB_READ_WRITE_TOKEN -- refusing to fall back to local disk');
+  }
+  return localBackend(env.STORAGE_DIR?.trim() || './data/blobs');
 }
 
 let cached: BlobBackend | null = null;
