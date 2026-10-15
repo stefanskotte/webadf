@@ -22,7 +22,9 @@ const readDesired = vi.fn<() => Promise<DesiredState | null>>(
   async () => ({ version: 1, desired: null }),
 );
 const readFirmwareInstruction = vi.fn(async () => null);
-const markNetNextSent = vi.fn<(deviceId: string, v: number) => Promise<void>>(async () => undefined);
+const markNetNextSent = vi.fn<(deviceId: string, v: number, opts?: { bumpDf1?: boolean }) => Promise<void>>(
+  async () => undefined,
+);
 
 vi.mock('@/lib/device-auth', () => ({
   requireDevice: (r: Request) => requireDevice(r),
@@ -33,7 +35,8 @@ vi.mock('@/lib/mount', () => ({
   readPollTick: () => readPollTick(),
   readDesired: () => readDesired(),
   readFirmwareInstruction: () => readFirmwareInstruction(),
-  markNetNextSent: (deviceId: string, v: number) => markNetNextSent(deviceId, v),
+  markNetNextSent: (deviceId: string, v: number, opts?: { bumpDf1?: boolean }) =>
+    opts === undefined ? markNetNextSent(deviceId, v) : markNetNextSent(deviceId, v, opts),
 }));
 
 type NfcRow = {
@@ -569,5 +572,91 @@ describe('GET /api/device/poll -- df1Ack and df1 (spec 2026-10-14 §4.2)', () =>
     } finally {
       vi.useRealTimers();
     }
+  });
+});
+
+// fw 1.12.1 (&netPick=1): in Network mode the driver disk goes out as DF1's pick (`df1`), and `next` is DF0's next
+// disk of the set again -- so Next stays instant in Network mode. A board without netPick keeps the 1.11 rules above.
+describe('GET /api/device/poll -- netPick: the driver disk as DF1\'s pick (fw 1.12.1)', () => {
+  const desiredDisk = { diskId: 'd1', sha256: 'a'.repeat(64), title: 'T', diskNo: 1, diskCount: 2 } as unknown as DesiredState['desired'];
+  const applied = { secondDrive: 'net' as const, secondDriveVersion: 3, secondDriveReported: 'net' as const,
+    secondDriveAppliedVersion: 3 };
+  const chosen = { secondDrive: 'net' as const, secondDriveVersion: 3, secondDriveReported: 'df1' as const,
+    secondDriveAppliedVersion: 2 };
+  const NET = '?since=1&driveAck=3&df1Ack=5&netPick=1';
+
+  it('Network applied: df1 names the driver disk, next is DF0\'s next disk of the set', async () => {
+    readPollTick.mockResolvedValue(baseTick({ instructionVersion: 1, instructionAck: 0, ...applied,
+      netNextSentVersion: 3, df1Version: 5 }));
+    readDesired.mockResolvedValue({ version: 1, desired: desiredDisk });
+    readNextForPoll.mockResolvedValue({ diskId: 'd2', sha256: 'b'.repeat(64), diskNo: 2 });
+    readDf1ForPoll.mockResolvedValue({ v: 5, sha256: null });
+    const { GET } = await import('./route');
+    const body = await (await GET(get(NET))).json();
+    expect(body.df1).toEqual({ v: 5, sha256: PAULANET_DISK_SHA256 });
+    expect(body.next).toEqual({ diskId: 'd2', sha256: 'b'.repeat(64), diskNo: 2 });
+  });
+
+  it('Network applied, nothing desired: df1 names the driver disk, and there is no next', async () => {
+    readPollTick.mockResolvedValue(baseTick({ instructionVersion: 1, instructionAck: 0, ...applied,
+      netNextSentVersion: 3, df1Version: 5 }));
+    readDf1ForPoll.mockResolvedValue({ v: 5, sha256: null });
+    const { GET } = await import('./route');
+    const body = await (await GET(get(NET))).json();
+    expect(body.df1).toEqual({ v: 5, sha256: PAULANET_DISK_SHA256 });
+    expect(body).not.toHaveProperty('next');
+  });
+
+  it('Network applied, never sent: the one-shot wake moves the DF1 cursor too, before df1 is read', async () => {
+    readPollTick.mockResolvedValue(baseTick({ ...applied, netNextSentVersion: 2, df1Version: 5 }));
+    const order: string[] = [];
+    markNetNextSent.mockImplementation(async () => { order.push('mark'); });
+    readDf1ForPoll.mockImplementation(async () => { order.push('read'); return { v: 6, sha256: null }; });
+    const { GET } = await import('./route');
+    const res = await GET(get(NET));
+    expect(res.status).toBe(200);
+    expect(markNetNextSent).toHaveBeenCalledWith('dev-1', 3, { bumpDf1: true });
+    expect(order).toEqual(['mark', 'read']);
+    expect((await res.json()).df1).toEqual({ v: 6, sha256: PAULANET_DISK_SHA256 });
+  });
+
+  it('Network saved again while the board still reports Network: keeps the driver disk in df1 (m1)', async () => {
+    readPollTick.mockResolvedValue(baseTick({ instructionVersion: 1, instructionAck: 0, ...applied,
+      secondDriveVersion: 4, secondDriveAppliedVersion: 3, netNextSentVersion: 3, df1Version: 6 }));
+    readDf1ForPoll.mockResolvedValue({ v: 6, sha256: null });
+    const { GET } = await import('./route');
+    const body = await (await GET(get(NET))).json();
+    expect(body.df1).toEqual({ v: 6, sha256: PAULANET_DISK_SHA256 });
+    expect(markNetNextSent).not.toHaveBeenCalled();
+  });
+
+  it('Network chosen, not yet reported: df1 is the stored pick (none), next as in On (I2)', async () => {
+    readPollTick.mockResolvedValue(baseTick({ instructionVersion: 1, instructionAck: 0, ...chosen, df1Version: 5 }));
+    readDesired.mockResolvedValue({ version: 1, desired: desiredDisk });
+    readNextForPoll.mockResolvedValue({ diskId: 'd2', sha256: 'b'.repeat(64), diskNo: 2 });
+    readDf1ForPoll.mockResolvedValue({ v: 5, sha256: null });
+    const { GET } = await import('./route');
+    const body = await (await GET(get('?since=1&driveAck=2&df1Ack=5&netPick=1'))).json();
+    expect(body.df1).toEqual({ v: 5, sha256: null });
+    expect(body.next).toEqual({ diskId: 'd2', sha256: 'b'.repeat(64), diskNo: 2 });
+  });
+
+  it('netPick without df1Ack is ignored: the 1.11 rule (driver disk as next)', async () => {
+    readPollTick.mockResolvedValue(baseTick({ instructionVersion: 1, instructionAck: 0, ...applied,
+      netNextSentVersion: 3 }));
+    const { GET } = await import('./route');
+    const body = await (await GET(get('?since=1&driveAck=3&netPick=1'))).json();
+    expect(body.next).toEqual({ diskId: 'paulanet', sha256: PAULANET_DISK_SHA256, diskNo: 1 });
+    expect(body).not.toHaveProperty('df1');
+  });
+
+  it('a 1.12.0 board (df1Ack, no netPick) keeps the 1.11 rule: driver disk as next, df1 the stored pick', async () => {
+    readPollTick.mockResolvedValue(baseTick({ ...applied, netNextSentVersion: 2, df1Version: 5 }));
+    readDf1ForPoll.mockResolvedValue({ v: 5, sha256: null });
+    const { GET } = await import('./route');
+    const body = await (await GET(get('?since=1&driveAck=3&df1Ack=5'))).json();
+    expect(body.next).toEqual({ diskId: 'paulanet', sha256: PAULANET_DISK_SHA256, diskNo: 1 });
+    expect(body.df1).toEqual({ v: 5, sha256: null });
+    expect(markNetNextSent).toHaveBeenCalledWith('dev-1', 3);
   });
 });

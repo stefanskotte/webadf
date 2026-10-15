@@ -1,6 +1,8 @@
 import { deviceState, isOnline, relative } from '@/lib/device-state';
 import { firmwareLabel, updateLabel, type FirmwareState } from '@/lib/firmware-state';
 import { isDefaultDeviceName } from '@/lib/device-name';
+import { firmwareAtLeast } from '@/lib/firmware-version';
+import { NET_PICK_FW } from '@/lib/paulanet-disk';
 import type { DeviceListItem } from '@/lib/queries';
 import type { NextInfo } from '@/lib/next-disk';
 import { preloadText } from '@/lib/drive-chips';
@@ -191,8 +193,10 @@ export function DeviceCard(
       {/* Gated like the Next button below: the line is about the disk in the
           drive, which only a converged board has. Not on the OLED, so it
           stays visible. */}
-      {/* Not in Network mode: the spare slot holds the driver disk then (plan 2026-10-12 ruling 19). */}
-      {next?.preload && state === 'converged' && device.secondDriveReported !== 'net' && (
+      {/* Not in Network mode before fw 1.12.1: the spare slot held the driver disk then (plan 2026-10-12 ruling 19).
+          From 1.12.1 the driver disk has DF1's own slot and DF0's next disk preloads as in the other modes. */}
+      {next?.preload && state === 'converged'
+        && (device.secondDriveReported !== 'net' || firmwareAtLeast(device.firmwareVersion, NET_PICK_FW)) && (
         <span className="flex items-center gap-1">
           <span className="text-[11px]" style={{ color: 'var(--muted)' }} data-testid={`device-preload-${device.id}`}
                 data-preload={next.preload}>

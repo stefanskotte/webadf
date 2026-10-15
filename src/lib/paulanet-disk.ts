@@ -46,6 +46,12 @@ export function netKeepsDriverDisk(t: { secondDrive: string; secondDriveReported
   return t.secondDrive === 'net' && t.secondDriveReported === 'net';
 }
 
+/**
+ * From this firmware on (&netPick=1 on the poll), the board takes Network mode's driver disk as DF1's pick, into
+ * DF1's own slot, and DF0's next disk of the set preloads into the idle slot as in the other modes.
+ */
+export const NET_PICK_FW = '1.12.1';
+
 /** At most one re-arm of the driver-disk wake per device in this long (Task 8 review I1). */
 export const NET_REARM_MIN_MS = 5 * 60_000;
 

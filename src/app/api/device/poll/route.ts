@@ -7,7 +7,7 @@ import { nfcWriteForPoll } from '@/lib/nfc/rules';
 import { readNextForPoll } from '@/lib/next-disk';
 import { readDf1ForPoll } from '@/lib/df1-store';
 import { DC_TITLE_MAX } from '@/lib/device-limits';
-import { PAULANET_NEXT, netApplied, netKeepsDriverDisk } from '@/lib/paulanet-disk';
+import { PAULANET_DISK_SHA256, PAULANET_NEXT, netApplied, netKeepsDriverDisk } from '@/lib/paulanet-disk';
 
 // Holds up to 25 s. maxDuration covers the hold plus slack; the platform
 // default would cut the connection mid-hold.
@@ -115,6 +115,10 @@ export async function GET(request: Request) {
       ? Number(df1AckRaw)
       : 0;
 
+  // netPick=1 (fw 1.12.1): the board takes Network mode's driver disk as DF1's pick (`df1`), so `next` can be DF0's
+  // next disk of the set in Network mode too. Only with df1Ack: a board that cannot hold a pick cannot hold this one.
+  const netPick = df1Ack !== null && new URL(request.url).searchParams.get('netPick') === '1';
+
   const deadline = Date.now() + HOLD_MS;
   for (;;) {
     // Cheap single-column read per tick. The three-table join runs only when
@@ -190,12 +194,17 @@ export async function GET(request: Request) {
       // whatever DF0 holds (plan 2026-10-12 ruling 6). Until applied, and in Next disk / Off: as before --
       // except that a board already reporting Network keeps the driver disk across a re-save of 'net' that
       // bumped the version (final review m1): it is in Network either way, and any other `next` ejects it.
+      //
+      // A netPick board (fw 1.12.1) takes the driver disk as DF1's pick instead (below), and `next` is DF0's next
+      // disk of the set in every mode. The one-shot wake then also moves the DF1 cursor, BEFORE df1 is read, so the
+      // body that first names the driver disk carries a cursor the board has not acked.
       const netNext = netNow || (driveAck !== null && netKeepsDriverDisk(tick));
-      const next = netNext ? { ...PAULANET_NEXT }
+      const next = netNext && !netPick ? { ...PAULANET_NEXT }
         : state.desired ? await readNextForPoll(device.deviceId, device.orgId)
         : undefined;
       if (netNow && tick.netNextSentVersion !== tick.secondDriveVersion) {
-        await markNetNextSent(device.deviceId, tick.secondDriveVersion);
+        if (netPick) await markNetNextSent(device.deviceId, tick.secondDriveVersion, { bumpDf1: true });
+        else await markNetNextSent(device.deviceId, tick.secondDriveVersion);
       }
       // Resolved only here, and only when the device has not acknowledged it.
       // Sending it again to a board that already answered is what re-issued
@@ -203,7 +212,9 @@ export async function GET(request: Request) {
       // already failed -- both of which the spec forbids.
       // On every body to a board that sent df1Ack, not only one woken by the pick: the board takes `df1` from
       // whatever 200 reaches it, so a re-paired board's higher ack resets at its first one.
-      const df1 = df1Ack !== null ? await readDf1ForPoll(device.deviceId) : null;
+      // In Network mode a netPick board's pick is the driver disk (no disk row: the server's own image).
+      const df1Read = df1Ack !== null ? await readDf1ForPoll(device.deviceId) : null;
+      const df1 = df1Read && netPick && netNext ? { v: df1Read.v, sha256: PAULANET_DISK_SHA256 } : df1Read;
       const update = firmwareMoved ? await readFirmwareInstruction(device.deviceId) : null;
       // Same pattern as `update`: resolved only when the cursor says the
       // board has not caught up, never on every tick. nfcWriteForPoll turns

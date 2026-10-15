@@ -62,13 +62,18 @@ export async function saveSecondDrive(
       secondDrive: mode,
       secondDriveVersion: sql`${devices.secondDriveVersion} + 1`,
       // DF1 any disk (spec 2026-10-14 §3.2): leaving On drops the disk mounted into DF1, in this same write. The
-      // cursor moves only when there was one, so the board is woken only for a real change.
+      // cursor moves only when there was one, so the board is woken only for a real change -- and on any save made
+      // while the row says Network: a netPick board (fw 1.12.1) holds the driver disk as DF1's pick, and must hear
+      // it go (or, re-saving Network, it is re-sent and is a no-op). `secondDrive` here is the row's value before
+      // this write.
       ...(mode !== 'df1'
         ? {
             df1DiskId: null,
-            df1Version: sql`case when ${devices.df1DiskId} is null then ${devices.df1Version} else ${devices.df1Version} + 1 end`,
+            df1Version: sql`case when ${devices.df1DiskId} is null and ${devices.secondDrive} <> 'net' then ${devices.df1Version} else ${devices.df1Version} + 1 end`,
           }
-        : {}),
+        : {
+            df1Version: sql`case when ${devices.secondDrive} = 'net' then ${devices.df1Version} + 1 else ${devices.df1Version} end`,
+          }),
     })
     .where(and(scope, eq(devices.secondDriveCapable, true),
       // Network needs 1.11.0 by the REPORTED version, in the same WHERE (the saveDisplay rule): a board

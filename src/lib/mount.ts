@@ -531,9 +531,14 @@ export async function touchLastSeen(deviceId: string): Promise<void> {
  * Records that a poll body carried the driver disk as `next` at this setting version (pre-flight I2), so the
  * hold stops waking for it. Single column, like touchLastSeen; written only on the delivery path.
  */
-export async function markNetNextSent(deviceId: string, secondDriveVersion: number): Promise<void> {
+export async function markNetNextSent(
+  deviceId: string, secondDriveVersion: number, opts: { bumpDf1?: boolean } = {},
+): Promise<void> {
   await getDb().update(devices)
-    .set({ netNextSentVersion: secondDriveVersion })
+    // bumpDf1 (fw 1.12.1, netPick): the driver disk goes out as DF1's pick, so its first body moves df1_version in
+    // the same write -- the board's df1Ack then differs, and a body lost in transit is re-sent by the re-arm.
+    .set({ netNextSentVersion: secondDriveVersion,
+      ...(opts.bumpDf1 ? { df1Version: sql`${devices.df1Version} + 1` } : {}) })
     .where(eq(devices.id, deviceId));
 }
 
