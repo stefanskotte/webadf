@@ -34,7 +34,10 @@
 // 320 covers it; the buffers using this are static, so the cost is .bss.
 // &driveAck=4294967295 (DF1 setting, Phase 3) adds 20: 290 + 20 = 310 worst,
 // so 352. &df1Ack=4294967295 (DF1 any disk, 1.12.0) adds 18: 328, still inside; &netPick=1 (1.12.1) adds 10: 338.
-#define DC_REQ_BUF_BYTES  352
+// A 63-character override host and `:65535` add up to 52 over the default host: 338 + 52 = 390 (1.13.0), so 416.
+// The other users of this size, at a 69-byte Host value and a 127-char token: the image fetch
+// (/api/device/image/net/<64 hex>) is 355, the firmware fetch (a 64-char version) 354, the display fetch 288.
+#define DC_REQ_BUF_BYTES  416
 // DC_POLL_BODY_BYTES moved to device_client.h so a test can name it -- see
 // the note there. A budget a test cannot name is a budget checked by hand.
 // 512 was never under load before the image fetch: every other response on
@@ -53,6 +56,9 @@
 // size costs nothing and avoids a second round of hand-counted-length bugs.
 #define DC_REGISTER_PATH      "/api/device/register"
 #define DC_REGISTER_BODY_BYTES 384
+// The register request carries Host: but no Authorization. Worst body: 55 bytes of keys + 79 escaped pairing
+// code + 64 version + 31 MAC + 29 updateProtocol tail = 258; headers with a 69-byte Host value (63-char host +
+// ":65535", 52 over the default) = 36 + 77 + 21 + 24 + 2 = 160; 418 <= 512 (1.13.0), so it is not raised.
 #define DC_REGISTER_REQ_BYTES  512
 // The register response is a small, fixed-shape JSON object ({token,
 // deviceId, name}); reuses dc_body_buf_t/DC_POLL_BODY_BYTES below rather
@@ -386,7 +392,7 @@ static bool dc_attempt(device_client_t *c, const char *req, int req_len,
     const uint32_t t0 = c->now();
     c->last_xfer.reused = false;
     c->last_xfer.retried = false;
-    const int crc = c->t->connect(c->t, c->host, 443);
+    const int crc = c->t->connect(c->t, c->host, c->port);
     if (crc < 0) {
         *reused_out = false;
         dc_abandon(c);
@@ -632,7 +638,7 @@ static dc_fetch_result_t dc_fetch_into(device_client_t *c, const char *sha256, i
              sha256);
 
     static char req[DC_REQ_BUF_BYTES];
-    int req_len = http_build_request(req, sizeof req, "GET", path, c->host, c->token, NULL);
+    int req_len = http_build_request(req, sizeof req, "GET", path, c->host_header, c->token, NULL);
     if (req_len < 0) return DC_FETCH_NO_REQUEST;
 
     // Digests are not secret here -- /api/ingest/check is a deliberate global
@@ -1362,12 +1368,26 @@ void dc_init(device_client_t *c, transport_t *t, clock_ms_fn now,
     c->now = now;
     c->host = host;
     c->token = token;
+    c->port = 443;            // dc_set_server changes both
+    c->host_header = host;
     // since is always 0 at boot and lives only in RAM -- see device_client.h
     // and spec §4.1. Nothing here persists it.
     c->state = (token && token[0]) ? DC_IDLE_POLL : DC_UNPROVISIONED;
     c->preload.slot = SLOT_NONE;   // 0 is a real slot; memset's zero is not "none"
     // Every build from 1.7.0 can take a layout (spec 2026-10-04 §6).
     c->display_layouts = true;
+}
+
+// Server override (1.13.0; see device_client.h).
+void dc_set_server(device_client_t *c, int port, const char *host_header) {
+    c->port = port;
+    c->host_header = host_header;
+}
+
+void dc_set_server_report(device_client_t *c, bool custom, bool noverify) {
+    c->_server_report = true;
+    c->_server_custom = custom;
+    c->_server_noverify = noverify;
 }
 
 // Escapes `"` and `\` (the two bytes that would break out of a JSON string)
@@ -1462,7 +1482,7 @@ dc_register_result_t dc_register(device_client_t *c, const char *pairing_code,
 
     static char req[DC_REGISTER_REQ_BYTES];
     int req_len = http_build_request(req, sizeof req, "POST", DC_REGISTER_PATH,
-                                     c->host, NULL, body);
+                                     c->host_header, NULL, body);
     if (req_len < 0) {
         dc_enter_backoff(c);
         return DC_REG_RETRY;
@@ -1715,22 +1735,30 @@ bool dc_report_status(device_client_t *c, int psram_free, int rssi, const char *
                  (unsigned long)(c->_net.frames_out > 999999999u ? 999999999u : c->_net.frames_out));
     } else net_tail[0] = '\0';
 
+    // Server override (1.13.0): which server this board talks to, both values, once main.c says. 43 bytes at
+    // most (header note on DC_STATUS_BODY_BYTES).
+    static char server_tail[48];
+    if (c->_server_report)
+        snprintf(server_tail, sizeof server_tail, ",\"server\":{\"custom\":%s,\"tls\":\"%s\"}",
+                 c->_server_custom ? "true" : "false", c->_server_noverify ? "noverify" : "verify");
+    else server_tail[0] = '\0';
+
     static char body[DC_STATUS_BODY_BYTES];
     int body_len = snprintf(body, sizeof body,
         "{\"mountedSha256\":%s,\"mountedDiskId\":%s,\"version\":%lu,"
         "\"error\":%s,\"psramFree\":%d,\"firmwareVersion\":%s,\"rssi\":%d,"
-        "\"trackMaxBytes\":%u%s%s%s%s%s%s%s%s%s}",
+        "\"trackMaxBytes\":%u%s%s%s%s%s%s%s%s%s%s}",
         sha_field, disk_field, (unsigned long)c->mounted_version,
         err_field, psram_free, ver_field, rssi, (unsigned)TRACK_MAX_BYTES, fw_tail, nfc_tail,
         display_tail, preload_tail,
         // playsHd: only from a build with the drive-ID responder (HD spec §5.5).
         c->_plays_hd ? ",\"playsHd\":true" : "",
-        sel1_tail, df1_tail, drive_tail, net_tail);
+        sel1_tail, df1_tail, drive_tail, net_tail, server_tail);
     if (body_len < 0 || body_len >= (int)sizeof body) return false; // should never happen; give up quietly
 
     static char req[DC_STATUS_REQ_BYTES];
     int req_len = http_build_request(req, sizeof req, "POST", DC_STATUS_PATH,
-                                     c->host, c->token, body);
+                                     c->host_header, c->token, body);
     if (req_len < 0) return false;
 
     static http_resp_t r;   // static: see the STACK note above
@@ -1762,7 +1790,12 @@ bool dc_report_status(device_client_t *c, int psram_free, int rssi, const char *
     return accepted;
 }
 
-#define DC_POST_HEAD_BYTES 512
+// The write-back head at its worst: "POST " + a 255-byte path (uploader.c's path[256]) + " HTTP/1.1\r\n" = 271,
+// Host: with a 69-byte value (63-char host + ":65535", 52 over the default) = 77, a 127-char bearer = 151,
+// Content-Type: application/octet-stream = 40, Content-Length: 11264 = 23, keep-alive 24, blank line 2:
+// 588. 512 held only the default host and a real 48-char token (457); at a 127-char token it was already 536
+// with the default host. 640 covers 588 (1.13.0); the buffer is static, so the cost is 128 bytes of .bss.
+#define DC_POST_HEAD_BYTES 640
 
 // Write-back (piece 2b; see device_client.h). Shares dc_exchange like every
 // other request in this file, but builds the request with http_build_head
@@ -1775,7 +1808,7 @@ int dc_post(device_client_t *c, const char *path, const char *content_type,
     if (body_len < 0 || body_len > DC_POST_BODY_MAX) return -1;
     // static: see the STACK note above. One head + one HD track, ~11.8 KB.
     static char req[DC_POST_HEAD_BYTES + DC_POST_BODY_MAX];
-    int n = http_build_head(req, DC_POST_HEAD_BYTES, "POST", path, c->host, c->token,
+    int n = http_build_head(req, DC_POST_HEAD_BYTES, "POST", path, c->host_header, c->token,
                             content_type, body_len);
     if (n < 0) return -1;
     if (body_len) memcpy(req + n, body, (size_t)body_len);
@@ -1796,7 +1829,7 @@ int dc_fetch_firmware(device_client_t *c, const char *version,
     int pn = snprintf(path, sizeof path, "/api/device/firmware/%s", version);
     if (pn < 0 || pn >= (int)sizeof path) return -1;
     static char req[DC_REQ_BUF_BYTES];
-    int req_len = http_build_request(req, sizeof req, "GET", path, c->host, c->token, NULL);
+    int req_len = http_build_request(req, sizeof req, "GET", path, c->host_header, c->token, NULL);
     if (req_len < 0) return -1;
     static http_resp_t r;
     bool ok = dc_exchange(c, req, req_len, sink, ctx, &r, /*retryable=*/true);
@@ -1835,7 +1868,7 @@ int dc_fetch_display(device_client_t *c, uint8_t *buf, int cap) {
     if (!buf || cap <= 0) return -1;
     static char req[DC_REQ_BUF_BYTES];   // static: see the STACK note above
     int req_len = http_build_request(req, sizeof req, "GET", "/api/device/display",
-                                     c->host, c->token, NULL);
+                                     c->host_header, c->token, NULL);
     if (req_len < 0) return -1;
     dc_bytes_sink_t s = { buf, cap, 0 };
     static http_resp_t r;
@@ -1947,7 +1980,7 @@ static dc_state_t dc_step_inner(device_client_t *c) {
                  (unsigned long)c->drive_ack, (unsigned long)c->df1_ack);
 
     static char req[DC_REQ_BUF_BYTES];
-    int req_len = http_build_request(req, sizeof req, "GET", path, c->host, c->token, NULL);
+    int req_len = http_build_request(req, sizeof req, "GET", path, c->host_header, c->token, NULL);
     if (req_len < 0) return dc_enter_backoff(c); // unexpected: since is bounded, host is fixed
 
     static dc_body_buf_t body;

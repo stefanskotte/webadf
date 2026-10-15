@@ -39,6 +39,7 @@ static int g_queue_count;   // number of events pushed since fake_reset()
 static int g_queue_pos;     // number consumed by connect() so far
 
 static int g_connected;
+static int g_last_connect_port;   // the `port` argument of the most recent connect()
 static int g_active_slot;   // index into g_queue of the current connection's
                              // event, or -1 if none is active
 static int g_cursor;        // bytes already delivered by read() for it
@@ -76,6 +77,7 @@ void fake_reset(void) {
     g_queue_count = 0;
     g_queue_pos = 0;
     g_connected = 0;
+    g_last_connect_port = 0;
     g_active_slot = -1;
     g_cursor = 0;
     g_request_len = 0;
@@ -161,8 +163,11 @@ void fake_push_connect_failure(void) {
     e->ref = NULL;
 }
 
+int fake_last_connect_port(void) { return g_last_connect_port; }
+
 static int fake_connect(struct transport *t, const char *host, int port) {
-    (void)t; (void)host; (void)port;
+    (void)t; (void)host;
+    g_last_connect_port = port;
     g_cursor = 0;
     g_request_len = 0;
     g_request[0] = '\0';
