@@ -13,10 +13,14 @@ cd "$(dirname "$0")/.."
 PORT="${PORT:-3100}"
 # reuseExistingServer is on in playwright.config.ts: a server already on this
 # port (another run's, against production) would be silently reused. Refuse.
+command -v lsof >/dev/null || { echo "e2e-local: lsof is required for the port check" >&2; exit 1; }
 if lsof -nP -iTCP:"$PORT" -sTCP:LISTEN >/dev/null 2>&1; then
   echo "e2e-local: something already listens on :$PORT -- refusing to reuse it" >&2
   exit 1
 fi
+# Its OWN container and port: `reset` drops the database, and the dev container
+# (webadf-pg :55432, `pnpm db:dev start`) holds a developer's data.
+export WEBADF_PG_NAME=webadf-pg-e2e WEBADF_PG_PORT=55433
 URL=$(bash scripts/dev-db.sh start)
 bash scripts/dev-db.sh reset >/dev/null
 # mktemp with an explicit template: BSD (macOS) and GNU (Linux) agree on this form.

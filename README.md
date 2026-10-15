@@ -209,8 +209,9 @@ pnpm dev                  # needs .env.local: DATABASE_URL, BETTER_AUTH_SECRET,
                           # BETTER_AUTH_URL (BLOB_READ_WRITE_TOKEN is optional)
 pnpm test                 # vitest, pure logic
 pnpm e2e                  # playwright, against the database in .env.local
-bash scripts/e2e-local.sh # playwright with no Vercel or Neon: a fresh local
-                          # Postgres and local storage; arguments go to playwright
+bash scripts/e2e-local.sh # playwright with no Vercel or Neon: a fresh Postgres in
+                          # its own container (webadf-pg-e2e, :55433 -- never the
+                          # db:dev one) and local storage; arguments go to playwright
 ```
 
 Stored files (disk images, covers, firmware) go to local disk under `./data/blobs`

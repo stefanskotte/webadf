@@ -2,7 +2,9 @@
 # A throwaway Postgres 18 for tests and the local e2e run (self-hosting P1).
 # Only ever touches the container it names.
 set -euo pipefail
-NAME=webadf-pg PORT=55432
+# Overridable so a second, disposable database (the e2e run, scripts/e2e-local.sh)
+# never touches the developer's: the defaults are the dev container.
+NAME="${WEBADF_PG_NAME:-webadf-pg}" PORT="${WEBADF_PG_PORT:-55432}"
 URL="postgresql://postgres:webadf@127.0.0.1:${PORT}/webadf"
 case "${1:-}" in
   start)
