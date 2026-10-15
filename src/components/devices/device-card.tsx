@@ -246,6 +246,15 @@ export function DeviceCard(
           <HelpTip topic="boards" className="-mt-1" />
         </span>
 
+        {device.serverCustom === true && (
+          <span className="block min-w-0 text-[11px]"
+                style={{ overflowWrap: 'anywhere',
+                         color: device.serverTls === 'noverify' ? 'var(--amber-text)' : 'var(--muted)' }}
+                data-testid={`device-server-${device.id}`}>
+            {device.serverTls === 'noverify' ? 'Custom server · certificate not checked' : 'Custom server'}
+          </span>
+        )}
+
         {update && onCancelUpdate && (
           <button type="button" onClick={() => onCancelUpdate(device.id)}
                   data-testid={`device-cancel-update-${device.id}`}

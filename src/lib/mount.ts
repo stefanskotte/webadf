@@ -298,6 +298,8 @@ export async function recordStatus(
     error?: string | null;
     psramFree?: number | null;
     rssi?: number | null;
+    /** Board server override (fw 1.13.0+). Absent from older boards: the columns stay as they are. */
+    server?: { custom: boolean; tls: 'verify' | 'noverify' };
     /** TRACK_MAX_BYTES of the firmware the board runs. Absent from builds before 2026-09-24. */
     trackMaxBytes?: number;
     /** The drive-ID responder is built in (HD spec §5.5). Absent from builds before 1.4.0. */
@@ -338,6 +340,10 @@ export async function recordStatus(
   };
   if (s.psramFree !== undefined) patch.psramFree = s.psramFree;
   if (s.rssi !== undefined) patch.rssi = s.rssi;
+  if (s.server !== undefined) {
+    patch.serverCustom = s.server.custom;
+    patch.serverTls = s.server.tls;
+  }
   if (s.error !== undefined) {
     patch.lastError = s.error;
     patch.lastErrorAt = s.error ? new Date() : null;

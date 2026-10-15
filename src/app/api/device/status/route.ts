@@ -80,6 +80,8 @@ const statusBody = z.object({
     framesIn: z.number().int().min(0).max(999_999_999).optional().catch(undefined),
     framesOut: z.number().int().min(0).max(999_999_999).optional().catch(undefined),
   }).optional().catch(undefined),
+  // Board server override (fw 1.13.0): dropped when malformed -- the telemetry rule above.
+  server: z.object({ custom: z.boolean(), tls: z.enum(['verify', 'noverify']) }).optional().catch(undefined),
   error: z.string().max(500).nullable().optional(),
   psramFree: z.number().int().nonnegative().nullable().optional(),
   // Real WiFi RSSI ranges roughly -100..0 dBm, but a marginal link can report
@@ -158,6 +160,7 @@ export async function POST(request: Request) {
     driveVersion: parsed.data.driveVersion,
     df1Sha256: parsed.data.df1Sha256,
     net: parsed.data.net,
+    server: parsed.data.server,
   });
 
   return new Response(null, { status: 204, headers: { 'cache-control': 'no-store' } });

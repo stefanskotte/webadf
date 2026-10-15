@@ -4,7 +4,7 @@ import { eq } from 'drizzle-orm';
 import { getDb } from '@/db';
 import { devices, pairingCodes } from '@/db/schema/devices';
 import { signUpFresh, runTag } from './helpers';
-import { pairDevice, seedDisk, cleanupSeeded } from './device-helpers';
+import { pairDevice, seedDisk, cleanupSeeded, authHeader } from './device-helpers';
 
 test.afterAll(cleanupSeeded);
 
@@ -472,4 +472,29 @@ test('pressing the bezel display opens the drawer, and the bezel behind it canno
   await expect(page.getByTestId(`display-toggle-${deviceId}`)).toHaveText('▾ Change Display');
   // inert: the blurred face is out of the tab order and the click path.
   await expect(page.getByTestId(`device-oled-${deviceId}`).locator('xpath=..')).toHaveAttribute('inert', '');
+});
+
+test('a board on a custom server says so, and whether its certificate is checked', async ({ page, request }) => {
+  await signUpFresh(page);
+  const { deviceId, token } = await pairDevice(page, request);
+  const report = async (server: { custom: boolean; tls: 'verify' | 'noverify' }) => {
+    const res = await request.post('/api/device/status', {
+      headers: authHeader(token), data: { mountedSha256: null, firmwareVersion: '1.13.0+gabc1234', server },
+    });
+    expect(res.status()).toBe(204);
+  };
+  const line = page.getByTestId(`device-server-${deviceId}`);
+
+  await report({ custom: true, tls: 'noverify' });
+  await page.goto('/devices');
+  await expect(line).toHaveText('Custom server · certificate not checked');
+
+  await report({ custom: true, tls: 'verify' });
+  await page.reload();
+  await expect(line).toHaveText('Custom server');
+
+  await report({ custom: false, tls: 'verify' });
+  await page.reload();
+  await expect(page.getByTestId(`device-firmware-${deviceId}`)).toBeVisible();
+  await expect(line).toHaveCount(0);
 });
