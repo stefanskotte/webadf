@@ -64,10 +64,21 @@ static void the_effective_server(void) {
     CHECK(strcmp(hdr, "my.host") == 0, "...and not 443");
 }
 
+static void set_to_the_default_is_a_clear(void) {
+    CHECK(server_is_default_target("webadf.vercel.app", 443, "webadf.vercel.app"), "exact default");
+    CHECK(server_is_default_target("WEBADF.Vercel.App", 443, "webadf.vercel.app"), "host case is ignored");
+    CHECK(!server_is_default_target("webadf.vercel.app", 8443, "webadf.vercel.app"), "another port is custom");
+    CHECK(!server_is_default_target("webadf.vercel.ap", 443, "webadf.vercel.app"), "a prefix is custom");
+    CHECK(!server_is_default_target("webadf.vercel.app.evil", 443, "webadf.vercel.app"), "a longer host is custom");
+    CHECK(!server_is_default_target("my.host", 443, "webadf.vercel.app"), "another host is custom");
+    CHECK(!server_is_default_target("", 443, "webadf.vercel.app"), "empty host is not the default");
+}
+
 int main(void) {
     RUN(round_trip_and_erase);
     RUN(invalid_fields_are_refused);
     RUN(a_corrupt_record_reads_as_nothing);
     RUN(the_effective_server);
+    RUN(set_to_the_default_is_a_clear);
     return REPORT();
 }

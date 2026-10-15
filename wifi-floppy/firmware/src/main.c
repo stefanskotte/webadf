@@ -4926,8 +4926,13 @@ int main(void) {
             static sc_state_t con;
             static bool con_init;
             if (!con_init) { sc_init(&con); con_init = true; }
+            // Set once a reboot is requested: fw_rom_request_reboot() only
+            // flags it, so without this a pasted second line would still run
+            // (and against the stale g_server). The rest stays unread; the reboot
+            // happens at the top of the next main-loop iteration.
+            static bool con_reboot_pending;
             int ch;
-            while ((ch = getchar_timeout_us(0)) != PICO_ERROR_TIMEOUT) {
+            while (!con_reboot_pending && (ch = getchar_timeout_us(0)) != PICO_ERROR_TIMEOUT) {
                 sc_cmd_t cmd;
                 if (!sc_feed_char(&con, ch, &cmd)) continue;
                 const bool custom = server_is_custom(&g_server, WEBADF_HOST);
@@ -4969,39 +4974,75 @@ int main(void) {
                         }
                         wf_logf(WF_INFO, "server: tls=%s stored -- applies at the next boot (wf reboot)",
                                 cmd.tls == OVR_TLS_NOVERIFY ? "noverify" : "verify");
-                    } else if (cmd.kind == SC_SET) {
-                        if (strcmp(cmd.host, g_server.host) == 0 && cmd.port == g_server.port) {
-                            wf_logf(WF_INFO, "server: unchanged");
-                            break;
+                    } else {   // SC_SET or SC_CLEAR
+                        // `set` naming the default server is a `clear`: an
+                        // override equal to the default would only re-enable
+                        // `wf server tls` against it.
+                        const bool to_default = cmd.kind == SC_CLEAR ||
+                            server_is_default_target(cmd.host, cmd.port, WEBADF_HOST);
+                        if (to_default) {
+                            if (!override_store_load(&rec)) {
+                                wf_logf(WF_INFO, "server: already the default");
+                                break;
+                            }
+                        } else {
+                            if (strcmp(cmd.host, g_server.host) == 0 && cmd.port == g_server.port) {
+                                wf_logf(WF_INFO, "server: unchanged");
+                                break;
+                            }
+                            memset(&rec, 0, sizeof rec);
+                            snprintf(rec.host, sizeof rec.host, "%s", cmd.host);
+                            rec.port = cmd.port;
+                            rec.tls  = OVR_TLS_VERIFY;
                         }
-                        memset(&rec, 0, sizeof rec);
-                        snprintf(rec.host, sizeof rec.host, "%s", cmd.host);
-                        rec.port = cmd.port;
-                        rec.tls  = OVR_TLS_VERIFY;
-                        if (!override_store_save(&rec)) {
-                            wf_logf(WF_WARN, "server: storing failed -- nothing changed");
-                            break;
-                        }
-                        // A pairing belongs to the server that issued it.
+                        // A pairing belongs to the server that issued it, so
+                        // forget it FIRST and prove it is gone before the
+                        // server changes. config_store_erase() is void and
+                        // can silently do nothing (a slot core1 published
+                        // since the disk check above, a flash_safe_execute
+                        // timeout); saving the override first would then
+                        // reboot onto the new host still holding the old
+                        // server's bearer token. Static: core0's stack is small.
                         config_store_erase();
-                        char hdr[sizeof g_server_hdr];
-                        server_host_header(&rec, hdr, sizeof hdr);
-                        wf_logf(WF_WARN, "server: pairing forgotten, rebooting into setup -- now %s", hdr);
-                        fw_rom_request_reboot(0);
-                    } else {   // SC_CLEAR
-                        if (!override_store_load(&rec)) {
-                            wf_logf(WF_INFO, "server: already the default");
+                        static char left_token[TOKEN_STORE_MAX_LEN + 1];
+                        static device_config_t left_cfg;
+                        if (token_store_load(left_token, sizeof left_token) ||
+                            config_store_load(&left_cfg)) {
+                            memset(left_token, 0, sizeof left_token);
+                            memset(&left_cfg, 0, sizeof left_cfg);
+                            wf_logf(WF_ERR, "server: forgetting the pairing failed -- nothing changed");
                             break;
                         }
-                        override_store_erase();
-                        config_store_erase();
-                        wf_logf(WF_WARN, "server: back to the default -- pairing forgotten, rebooting into setup");
+                        // Now the server. If this fails the board is still
+                        // unpaired, which is safe whichever server is stored:
+                        // it reboots into setup and pairs with that one. So
+                        // say so and reboot anyway rather than sit unpaired.
+                        bool stored;
+                        if (to_default) {
+                            override_store_erase();
+                            server_override_t check;
+                            stored = !override_store_load(&check);
+                        } else {
+                            stored = override_store_save(&rec);
+                        }
+                        if (!stored) {
+                            wf_logf(WF_WARN, "server: storing failed -- the pairing is already "
+                                             "forgotten, rebooting into setup");
+                        } else if (to_default) {
+                            wf_logf(WF_WARN, "server: back to the default -- pairing forgotten, rebooting into setup");
+                        } else {
+                            char hdr[sizeof g_server_hdr];
+                            server_host_header(&rec, hdr, sizeof hdr);
+                            wf_logf(WF_WARN, "server: pairing forgotten, rebooting into setup -- now %s", hdr);
+                        }
                         fw_rom_request_reboot(0);
+                        con_reboot_pending = true;
                     }
                     break;
                 case SC_REBOOT:
                     wf_logf(WF_INFO, "server: rebooting");
                     fw_rom_request_reboot(0);
+                    con_reboot_pending = true;
                     break;
                 case SC_NONE:
                     break;

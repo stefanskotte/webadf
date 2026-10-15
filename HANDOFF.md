@@ -1690,7 +1690,7 @@ separately.
   fw-1.9.1 carries `wifi-floppy-install-1.9.1.uf2`).
   - **Design** (`docs/superpowers/research/2026-10-09-uf2-drag-drop-first-install.md`): one absolute-family UF2 =
     the partition table at 0, a blank page over the PT's second slot, a NON-TBYB build of the same commit
-    (`wifi_floppy_install`) at slot A, and a blank page at slot B; nothing in the top 5 settings sectors, and no E10
+    (`wifi_floppy_install`) at slot A, and a blank page at slot B; nothing in the top settings sectors (5 then, 6 since 1.13.0's override), and no E10
     block. Built by `tools/make_install_uf2.py`.
   - **Release guards:** the install .bin must equal the OTA .bin except the TBYB flag and the hash, located by
     walking the picobin block loop. The install image can never reach the registry.
@@ -4929,7 +4929,7 @@ the whole-branch review and the bench are still owed. Not merged, not released. 
 https://host[:port]` (http:// refused), `wf server tls noverify` (asks "type YES to confirm"), `wf server tls verify`,
 `wf server clear`, `wf reboot`. Not in WF_FW_DEBUG builds. Stored in its own flash sector. Every change refuses while a
 disk is in DF0 or DF1. `set` to a different server and `clear` run `config_store_erase` (pairing AND Wi-Fi) and reboot at
-once into the setup portal; `tls` applies at the next boot. `noverify` = no certificate check and no host-name check;
+once into the setup portal; `set` naming the default (WEBADF_HOST:443, case-insensitive) IS `clear`; `tls` applies at the next boot. `noverify` = no certificate check and no host-name check;
 OLED status shows INSECURE (not on a custom layout without the status element), logged at boot and every TLS connect;
 the card shows "Custom server" / "Custom server · certificate not checked" (fw 1.13.0+; default server shows nothing).
 Firmware updates still verify our signing key. Words: help `boards` topic, `wifi-floppy/README.md` "Pointing the board

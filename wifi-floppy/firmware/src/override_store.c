@@ -190,6 +190,18 @@ bool server_is_custom(const server_override_t *eff, const char *default_host) {
     return strcmp(eff->host, default_host) != 0 || eff->port != 443 || eff->tls != OVR_TLS_VERIFY;
 }
 
+bool server_is_default_target(const char *host, uint16_t port, const char *default_host) {
+    if (port != 443) return false;
+    size_t i = 0;
+    for (; host[i] != 0 && default_host[i] != 0; i++) {
+        char a = host[i], b = default_host[i];
+        if (a >= 'A' && a <= 'Z') a = (char)(a - 'A' + 'a');
+        if (b >= 'A' && b <= 'Z') b = (char)(b - 'A' + 'a');
+        if (a != b) return false;
+    }
+    return host[i] == default_host[i];
+}
+
 void server_host_header(const server_override_t *s, char *out, size_t cap) {
     if (s->port == 443) snprintf(out, cap, "%s", s->host);
     else snprintf(out, cap, "%s:%u", s->host, (unsigned)s->port);

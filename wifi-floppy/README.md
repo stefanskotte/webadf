@@ -104,7 +104,7 @@ updates in both directions, and a re-install over a paired board.
 The same file works on a blank board and on a board already running ours (both verified
 on an RP2350 A4, 2026-10-09). A board running other firmware (MicroPython, say) is
 expected to work too, but has not been tested. Re-installing it keeps the board's WiFi settings and pairing: it
-never writes the top five flash sectors where those live.
+never writes the top six flash sectors where those (and the server override) live.
 
 What is in the file: the partition table, the firmware for partition A, and two blank
 pages that clear stale headers. Every block uses the UF2 `absolute` family. The firmware
@@ -217,6 +217,8 @@ wf reboot
 - Every change is refused while a disk is in DF0 or DF1: "server: eject the disk first -- nothing changed".
 - `set` (to a different server) and `clear` erase the pairing **and** the Wi-Fi settings, then reboot at once into the
   setup network. Enter your Wi-Fi and a pairing code from the new server, as for a new board.
+- `set` naming webadf.vercel.app itself (port 443, any letter case) is the same as `clear`; with nothing stored it
+  answers "already the default".
 - `tls` changes apply at the next boot (`wf reboot`). They need a server set first, so for a self-signed server run
   `set`, then `tls noverify`, then `wf reboot`, then pair.
 - `noverify` also skips the host-name check. The OLED shows INSECURE in place of READY/LOADED (a custom OLED layout

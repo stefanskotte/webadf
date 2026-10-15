@@ -33,6 +33,11 @@ void override_store_erase(void);
 void server_effective(bool loaded, const server_override_t *o,
                       const char *default_host, server_override_t *out);
 bool server_is_custom(const server_override_t *eff, const char *default_host);
+// True when `wf server set` names the default server itself (default_host at
+// port 443, host compared case-insensitively, as DNS does). The console then
+// treats it as `wf server clear` rather than storing an override that equals
+// the default (which would re-enable `wf server tls`).
+bool server_is_default_target(const char *host, uint16_t port, const char *default_host);
 // "host" at port 443, else "host:port".
 void server_host_header(const server_override_t *s, char *out, size_t cap);
 
