@@ -1,6 +1,6 @@
-import { describe, it, expect, beforeAll, afterAll } from 'vitest';
+import { describe, it, expect, beforeAll, beforeEach, afterAll } from 'vitest';
 import { Client } from 'pg';
-import { mkdtempSync, readdirSync } from 'node:fs';
+import { mkdtempSync, readdirSync, cpSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -36,22 +36,69 @@ describe('runStartupMigrations', () => {
     expect(readdirSync(dir)).toEqual([]);
   });
 
-  it('backs up before applying when the database is behind', async () => {
-    await admin('delete from drizzle.__drizzle_migrations where id = (select max(id) from drizzle.__drizzle_migrations)', url);
-    const last = await admin('select max(created_at)::text as m from drizzle.__drizzle_migrations', url);
-    expect(last.rows[0].m).toBeTruthy();
-    // The deleted row's migration re-runs: it must be idempotent-safe for this test, so re-record instead of re-running:
-    // simulate "behind" with a stubbed migrate is not possible here, so assert the backup call only.
-    const dir = mkdtempSync(join(tmpdir(), 'bk-'));
-    const dumps: string[] = [];
-    await runStartupMigrations({ url, migrationsFolder: 'drizzle', backupDir: dir, dump: async (_u, f) => { dumps.push(f); }, log: () => {} }).catch(() => {});
-    expect(dumps).toHaveLength(1);
-    expect(dumps[0]).toMatch(/-before-0038_.+\.dump$/);
+  describe('with one extra migration', () => {
+    const DB2 = 'webadf_startup_migrate_test2';
+    const u2 = new URL(base); u2.pathname = `/${DB2}`;
+    const url2 = u2.toString();
+
+    function folderWith(sql: string) {
+      const folder = mkdtempSync(join(tmpdir(), 'mig-'));
+      cpSync('drizzle', folder, { recursive: true });
+      const jp = join(folder, 'meta/_journal.json');
+      const j = JSON.parse(readFileSync(jp, 'utf8'));
+      const last = j.entries.at(-1);
+      j.entries.push({ idx: last.idx + 1, version: last.version, when: last.when + 1000, tag: '0039_selfhost_test', breakpoints: last.breakpoints });
+      writeFileSync(jp, JSON.stringify(j, null, 2));
+      writeFileSync(join(folder, '0039_selfhost_test.sql'), sql);
+      return folder;
+    }
+    const count = async () => (await admin('select count(*)::int as n from drizzle.__drizzle_migrations', url2)).rows[0].n as number;
+    const probe = async () => (await admin(`select to_regclass('public.selfhost_probe') is not null as e`, url2)).rows[0].e as boolean;
+    const tmpBackups = () => mkdtempSync(join(tmpdir(), 'bk-'));
+
+    beforeEach(async () => {
+      await admin(`drop database if exists ${DB2} with (force)`); await admin(`create database ${DB2}`);
+      await runStartupMigrations({ url: url2, migrationsFolder: 'drizzle', backupDir: tmpBackups(), log: () => {} });
+    });
+    afterAll(async () => { await admin(`drop database if exists ${DB2} with (force)`); });
+
+    it('behind -> latest: backs up first, then applies', async () => {
+      const before = await count();
+      const dumps: string[] = [];
+      const r = await runStartupMigrations({
+        url: url2, migrationsFolder: folderWith('create table selfhost_probe (id int);'), backupDir: tmpBackups(),
+        dump: async (_u, f) => { dumps.push(f); }, log: () => {},
+      });
+      expect(r.applied).toEqual(['0039_selfhost_test']);
+      expect(dumps).toHaveLength(1);
+      expect(dumps[0]).toMatch(/-before-0039_selfhost_test\.dump$/);
+      expect(await probe()).toBe(true);
+      expect(await count()).toBe(before + 1);
+    });
+
+    it('a failing migration names the migration, the cause and the backup', async () => {
+      const before = await count();
+      await expect(runStartupMigrations({
+        url: url2, migrationsFolder: folderWith('select 1/0;'), backupDir: tmpBackups(),
+        dump: async () => {}, log: () => {},
+      })).rejects.toThrow(/migration failed in 0039_selfhost_test \(division by zero\); the schema is unchanged; backup: .*-before-0039_selfhost_test\.dump/);
+      expect(await count()).toBe(before);
+    });
+
+    it('a failing dump stops before migrating', async () => {
+      const before = await count();
+      await expect(runStartupMigrations({
+        url: url2, migrationsFolder: folderWith('create table selfhost_probe (id int);'), backupDir: tmpBackups(),
+        dump: async () => { throw new Error('boom'); }, log: () => {},
+      })).rejects.toThrow(/backup failed/);
+      expect(await count()).toBe(before);
+      expect(await probe()).toBe(false);
+    });
   });
 
   it('refuses a database newer than the image', async () => {
     await admin(`insert into drizzle.__drizzle_migrations (hash, created_at) values ('future', 99999999999999)`, url);
     await expect(runStartupMigrations({ url, migrationsFolder: 'drizzle', backupDir: mkdtempSync(join(tmpdir(), 'bk-')), log: () => {} }))
-      .rejects.toThrow(/newer than this image \(which knows up to 0038_/);
+      .rejects.toThrow(/newer than this image \(database at created_at 99999999999999, this image knows up to 0038_/);
   });
 });

@@ -1,10 +1,10 @@
-import { readFileSync, readdirSync, mkdirSync, unlinkSync } from 'node:fs';
+import { readFileSync, readdirSync, mkdirSync, unlinkSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
-import { Client } from 'pg';
+import { Client, Pool } from 'pg';
+import { drizzle } from 'drizzle-orm/node-postgres';
 import { migrate } from 'drizzle-orm/node-postgres/migrator';
-import { getDb } from '@/db';
 
 /** Self-hosting P2 (spec D9): backed-up, locked, refusing a downgrade. */
 export interface JournalEntry { when: number; tag: string }
@@ -34,8 +34,26 @@ export function prunable(names: string[], keep: number): string[] {
   return names.filter((n) => BACKUP_RE.test(n)).sort().reverse().slice(keep).reverse();
 }
 
+/** Connection parts for pg_dump by environment, so the password never reaches argv or a log. */
+export function pgEnv(url: string): Record<string, string> {
+  const u = new URL(url);
+  const env: Record<string, string> = {};
+  if (u.hostname) env.PGHOST = u.hostname;
+  if (u.port) env.PGPORT = u.port;
+  if (u.username) env.PGUSER = decodeURIComponent(u.username);
+  if (u.password) env.PGPASSWORD = decodeURIComponent(u.password);
+  const db = decodeURIComponent(u.pathname.replace(/^\//, ''));
+  if (db) env.PGDATABASE = db;
+  return env;
+}
+
 const pgDump = async (url: string, file: string) => {
-  await promisify(execFile)('pg_dump', ['--format=custom', `--file=${file}`, `--dbname=${url}`]);
+  try {
+    await promisify(execFile)('pg_dump', ['--format=custom', `--file=${file}`], { env: { ...process.env, ...pgEnv(url) } });
+  } catch (e) {
+    const err = e as { stderr?: string; message: string };
+    throw new Error((err.stderr ?? '').trim() || 'pg_dump failed');
+  }
 };
 
 export async function runStartupMigrations(opts: {
@@ -54,7 +72,7 @@ export async function runStartupMigrations(opts: {
       : null;
     const state = migrationState(journal.entries, latest === null || Number.isNaN(latest) ? null : latest);
     if (state.newer) {
-      throw new MigrationRefused(`the database has a migration newer than this image (which knows up to ${state.imageLatest}) -- use a newer image (WEBADF_IMAGE_TAG)`);
+      throw new MigrationRefused(`the database has a migration newer than this image (database at created_at ${latest}, this image knows up to ${state.imageLatest}) -- use a newer image (WEBADF_IMAGE_TAG)`);
     }
     if (state.pending.length === 0) { log('migrations: up to date'); return { applied: [], backup: null }; }
     let backup: string | null = null;
@@ -62,13 +80,24 @@ export async function runStartupMigrations(opts: {
       mkdirSync(opts.backupDir, { recursive: true });
       backup = join(opts.backupDir, backupName(new Date(), state.pending[0]));
       log(`migrations: backing up to ${backup} before ${state.pending.length} pending`);
-      await (opts.dump ?? pgDump)(opts.url, backup);
+      try {
+        await (opts.dump ?? pgDump)(opts.url, backup);
+      } catch (e) {
+        if (existsSync(backup)) unlinkSync(backup);
+        throw new MigrationRefused(`backup failed (${(e as Error).message.trim()}); nothing was migrated`);
+      }
       for (const old of prunable(readdirSync(opts.backupDir), KEEP)) unlinkSync(join(opts.backupDir, old));
     }
+    const pool = new Pool({ connectionString: opts.url });
     try {
-      await migrate(getDb(), { migrationsFolder: opts.migrationsFolder });
+      await migrate(drizzle(pool), { migrationsFolder: opts.migrationsFolder });
     } catch (e) {
-      throw new MigrationRefused(`migration failed (${(e as Error).message}); the schema is unchanged${backup ? `; backup: ${backup}` : ''}`);
+      const err = e as Error & { cause?: unknown };
+      const why = err.cause instanceof Error ? err.cause.message : err.message;
+      const range = state.pending.length > 1 ? `${state.pending[0]}..${state.pending.at(-1)}` : state.pending[0];
+      throw new MigrationRefused(`migration failed in ${range} (${why}); the schema is unchanged${backup ? `; backup: ${backup}` : ''}`);
+    } finally {
+      await pool.end();
     }
     log(`migrations: applied ${state.pending.join(', ')}`);
     return { applied: state.pending, backup };

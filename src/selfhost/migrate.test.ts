@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { migrationState, backupName, prunable } from './migrate';
+import { migrationState, backupName, prunable, pgEnv } from './migrate';
 
 const e = [{ when: 100, tag: '0000_a' }, { when: 200, tag: '0001_b' }, { when: 300, tag: '0002_c' }];
 
@@ -25,5 +25,17 @@ describe('backups', () => {
   it('keeps the newest N and ignores other files', () => {
     const names = ['20261001T000000Z-before-a.dump', '20261003T000000Z-before-c.dump', 'notes.txt', '20261002T000000Z-before-b.dump'];
     expect(prunable(names, 2)).toEqual(['20261001T000000Z-before-a.dump']);
+  });
+});
+
+describe('pgEnv', () => {
+  it('passes connection parts by environment, the password only as PGPASSWORD', () => {
+    const env = pgEnv('postgresql://us%40er:p%2Fw%3Ad@db.example:5433/my%20db');
+    expect(env).toEqual({ PGHOST: 'db.example', PGPORT: '5433', PGUSER: 'us@er', PGPASSWORD: 'p/w:d', PGDATABASE: 'my db' });
+    for (const v of Object.values(env)) expect(v).not.toContain('://');
+    expect(Object.entries(env).filter(([, v]) => v.includes('p/w:d')).map(([k]) => k)).toEqual(['PGPASSWORD']);
+  });
+  it('omits what the URL does not carry', () => {
+    expect(pgEnv('postgresql://h/d')).toEqual({ PGHOST: 'h', PGDATABASE: 'd' });
   });
 });
