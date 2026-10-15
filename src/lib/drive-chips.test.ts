@@ -29,6 +29,7 @@ const loaded: LiveStateRow = {
   df1DiskId: null, df1PickSha256: null, df1PickTitle: null, df1PickDiskNo: null,
   df1Sha256: null, netDriverSeenAt: null, netAmigaIp: null, netFramesIn: null, netFramesOut: null,
   secondDriveCapable: null, sel1Wired: null, df1Seen: null,
+  serverCustom: null, serverTls: null,
 };
 
 const empty: LiveStateRow = {

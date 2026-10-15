@@ -24,6 +24,7 @@ const base: LiveStateRow = {
   df1DiskId: null, df1PickSha256: null, df1PickTitle: null, df1PickDiskNo: null,
   df1Sha256: null, netDriverSeenAt: null, netAmigaIp: null, netFramesIn: null, netFramesOut: null,
   secondDriveCapable: true, sel1Wired: true, df1Seen: false,
+  serverCustom: null, serverTls: null,
 };
 const other: LiveStateRow = { ...base, id: 'dev-b', name: 'Second' };
 const fp = (rows: LiveStateRow[], now = NOW) => liveFingerprint(rows, now, 0);
@@ -38,6 +39,15 @@ describe('the DF1 pick', () => {
   it('moves when the picked disk\'s bytes change (ruling 1)', () => {
     const r = { ...base, df1DiskId: 'disk-x', df1PickTitle: 'Lotus', df1PickDiskNo: 1 };
     expect(fp([{ ...r, df1PickSha256: 'a'.repeat(64) }])).not.toBe(fp([{ ...r, df1PickSha256: 'b'.repeat(64) }]));
+  });
+});
+
+describe('the board server (fw 1.13.0)', () => {
+  it('moves when the board switches server or toggles verify/noverify', () => {
+    const verify = { ...base, serverCustom: true, serverTls: 'verify' };
+    expect(fp([verify])).not.toBe(fp([base]));
+    expect(fp([verify])).not.toBe(fp([{ ...verify, serverTls: 'noverify' }]));
+    expect(fp([{ ...base, serverCustom: false, serverTls: 'verify' }])).not.toBe(fp([verify]));
   });
 });
 

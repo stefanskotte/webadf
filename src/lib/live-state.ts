@@ -19,6 +19,8 @@ export interface LiveStateRow {
   desiredDiskId: string | null; desiredSha256: string | null; desiredVersion: number;
   mountedDiskId: string | null; mountedSha256: string | null; mountedVersion: number | null;
   lastSeenAt: Date | null;
+  // Board server override (fw 1.13.0): page inputs (the device-server line), so in the fingerprint.
+  serverCustom: boolean | null; serverTls: string | null;
   diskSha256: string | null; diskWriteProtected: boolean | null;
   // The MOUNTED disk's write-protect, distinct from `diskWriteProtected`
   // above (which is the DESIRED disk's -- what a board is about to be told to
@@ -144,6 +146,7 @@ export function liveFingerprint(
         r.mountedGameId ?? '', r.mountedGameTitle ?? '', r.mountedDiskNo ?? '',
         r.mountedDiskCount ?? '', r.mountedImageFormat ?? '', r.mountedSizeBytes ?? '', r.desiredGameTitle ?? '',
         r.macAddress ?? '',
+        r.serverCustom === null ? '' : String(r.serverCustom), r.serverTls ?? '',
         r.displayVersion, r.displayAppliedVersion ?? '', r.displayError ?? '',
         r.displayLayouts === null ? '' : String(r.displayLayouts), r.displayPanel,
         r.next ? `${r.next.diskNo}/${r.next.diskCount}/${r.next.wraps ? 1 : 0}/${r.next.preload ?? ''}` : '',
@@ -212,6 +215,7 @@ export async function liveStateRows(db: ReturnType<typeof getDb>, orgId: string)
       mountedSizeBytes: mountedDisk.sizeBytes,
       desiredGameTitle: desiredGame.title,
       macAddress: devices.macAddress,
+      serverCustom: devices.serverCustom, serverTls: devices.serverTls,
       trackMaxBytes: devices.trackMaxBytes, playsHd: devices.playsHd,
       preloadSha256: devices.preloadSha256, preloadState: devices.preloadState,
       displayVersion: devices.displayVersion,

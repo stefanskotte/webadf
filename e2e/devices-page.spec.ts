@@ -474,6 +474,9 @@ test('pressing the bezel display opens the drawer, and the bezel behind it canno
   await expect(page.getByTestId(`device-oled-${deviceId}`).locator('xpath=..')).toHaveAttribute('inert', '');
 });
 
+/** LiveRefresh polls every 3 s while the tab is in use; allow a few ticks plus the RSC refresh. */
+const LIVE = 15_000;
+
 test('a board on a custom server says so, and whether its certificate is checked', async ({ page, request }) => {
   await signUpFresh(page);
   const { deviceId, token } = await pairDevice(page, request);
@@ -487,14 +490,11 @@ test('a board on a custom server says so, and whether its certificate is checked
 
   await report({ custom: true, tls: 'noverify' });
   await page.goto('/devices');
-  await expect(line).toHaveText('Custom server · certificate not checked');
+  await expect(line).toHaveText('Custom server · certificate not checked', { timeout: LIVE });
 
   await report({ custom: true, tls: 'verify' });
-  await page.reload();
-  await expect(line).toHaveText('Custom server');
+  await expect(line).toHaveText('Custom server', { timeout: LIVE });
 
   await report({ custom: false, tls: 'verify' });
-  await page.reload();
-  await expect(page.getByTestId(`device-firmware-${deviceId}`)).toBeVisible();
-  await expect(line).toHaveCount(0);
+  await expect(line).toHaveCount(0, { timeout: LIVE });
 });
