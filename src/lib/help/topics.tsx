@@ -425,11 +425,37 @@ export const HELP_TOPICS = {
       </>
     ),
   },
+  // Sources: spec 2026-10-15-about-page-design.md; src/lib/about/*; src/app/(app)/about/page.tsx.
+  about: {
+    title: 'About this server',
+    short: 'What this copy of the site is: its build, where it runs, and how much your library stores.',
+    body: (
+      <>
+        <p>
+          <strong>Web app.</strong> The commit the site was built from, and when. On our own site the commit links to
+          the change that produced it.
+        </p>
+        <p>
+          <strong>Hosting.</strong> <em>Hosted</em> is this site, run by us. Anything else says <em>Self-hosted</em>:
+          a copy someone runs on their own server. Nothing has to be set for that; every copy except ours reads
+          self-hosted.
+        </p>
+        <p>
+          <strong>Board firmware.</strong> The newest firmware your boards can install, and how many of your boards
+          are behind it. The Devices page has the Update button.
+        </p>
+        <p>
+          <strong>Your library.</strong> Your titles, disks and saved versions, and the space their disk images take.
+          A disk image you hold twice is counted once. Other people&apos;s libraries are never included.
+        </p>
+      </>
+    ),
+  },
 } as const satisfies Record<string, HelpTopic>;
 
 export type HelpTopicId = keyof typeof HELP_TOPICS;
 
 export const HELP_ORDER: readonly HelpTopicId[] = [
   'boards', 'own-server', 'nfc', 'next-disk', 'second-drive', 'network', 'write-back', 'write-protect', 'disk-sets', 'hd-hfe', 'display',
-  'cover-image',
+  'cover-image', 'about',
 ];

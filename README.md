@@ -209,6 +209,10 @@ pnpm test                 # vitest, pure logic
 pnpm e2e                  # playwright, against a real database
 ```
 
+A self-hosted copy needs no extra setting: the About page (the (i) at the top right) reads
+**Self-hosted** unless `SELFHOSTED=false`, which only our own deployment sets. A Docker build
+without `.git` can pass `GIT_SHA` so the About page shows the commit.
+
 Firmware:
 
 ```bash
