@@ -8,7 +8,8 @@
 export const PAULANET_DISK_SHA256 = '05170a83c279157fc50a2a9a595f4caf1ec194253127d93232f6fd5bfc008c9e';
 export const PAULANET_DISK_BYTES = 901_120;
 
-/** What the poll carries as DF1's `next` in Network mode (plan 2026-10-12 ruling 12). */
+/** What the poll carries as DF1's `next` in Network mode to a board without netPick (plan 2026-10-12 ruling 12); a
+ * netPick board (fw 1.12.1) gets the same digest as its DF1 pick (`df1`) instead. */
 export const PAULANET_NEXT = { diskId: 'paulanet', sha256: PAULANET_DISK_SHA256, diskNo: 1 } as const;
 
 /** Digests the blob GC keeps although no row names them (blob-gc-run.ts). */
@@ -39,12 +40,19 @@ export function netApplied(t: {
 /**
  * The board runs Network now, whatever setting version it last reported (final review m1): the user chose 'net'
  * and the board reports 'net'. A second save of 'net' bumps the version; until the board reports the new one,
- * netApplied is false, yet the board is in Network either way -- so the poll keeps sending the driver disk as
- * `next` (a non-Network `next`, or next: null, would eject it). The one-shot wake stays keyed on netApplied.
+ * netApplied is false, yet the board is in Network either way -- so the poll keeps sending the driver disk (as
+ * `next`, or as `df1` to a netPick board; a different one would eject it). The one-shot wake stays keyed on
+ * netApplied.
  */
 export function netKeepsDriverDisk(t: { secondDrive: string; secondDriveReported: string | null }): boolean {
   return t.secondDrive === 'net' && t.secondDriveReported === 'net';
 }
+
+/**
+ * From this firmware on (&netPick=1 on the poll), the board takes Network mode's driver disk as DF1's pick, into
+ * DF1's own slot, and DF0's next disk of the set preloads into the idle slot as in the other modes.
+ */
+export const NET_PICK_FW = '1.12.1';
 
 /** At most one re-arm of the driver-disk wake per device in this long (Task 8 review I1). */
 export const NET_REARM_MIN_MS = 5 * 60_000;
@@ -56,6 +64,8 @@ export const NET_REARM_MIN_MS = 5 * 60_000;
  * row before this report), the cursor is set, and DF1 does not hold the driver disk -> clear the cursor, so the
  * next poll wakes and sends it again. Rate-limited, so a board that cannot load it (no SLOT_NET, a held-off
  * digest) is not woken in a loop. A report silent on df1Sha256 says nothing about DF1 and never re-arms.
+ * For a netPick board (fw 1.12.1) the df1Ack cursor already re-wakes a lost body; a re-arm there sends the same
+ * driver disk once more, which the board ignores (final review 2026-10-15, minor 4).
  */
 export function netNextRearm(
   row: { secondDrive: string; secondDriveVersion: number; netNextSentVersion: number | null; netNextRearmedAt: Date | null },

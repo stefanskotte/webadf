@@ -2473,7 +2473,7 @@ static void test_poll_url_carries_drive_ack(void) {
     c.drive_ack = 4294967295u; c.display_ack = 4294967295u; c.nfc_ack = 4294967295u; c.since = 4294967295u;
     fake_push_response("HTTP/1.1 204 No Content\r\n\r\n");
     dc_step(&c);
-    CHECK(strstr(fake_last_request(), "&driveAck=4294967295&df1Ack=0 ") != NULL, "worst-case path fits");
+    CHECK(strstr(fake_last_request(), "&driveAck=4294967295&df1Ack=0&netPick=1 ") != NULL, "worst-case path fits");
     // An older build (no dc_set_df1) sends nothing.
     boot(); c.drive_ack = 3;
     fake_push_response("HTTP/1.1 204 No Content\r\n\r\n");
@@ -2820,33 +2820,32 @@ static void df1_serves_the_verified_preload_while_on(void) {
     CHECK_EQ_INT(psram_df1_slot(), SLOT_NONE);   // off: ejected
 }
 
-// Task 8 review m1: a DF1 mode change forgets the previous mode's next disk and its preload record. Without
-// it, Next -> Network kept the library disk as next_sha256 and dc_preload_step fetched /net/<library sha>
-// (404) and held the route off for DC_NET_RETRY_MS before the driver disk could come. Off <-> Next keeps both:
-// there `next` is DF0's next disk of the set either way.
-static void a_df1_mode_change_forgets_the_previous_next_disk(void) {
+// Before 1.12.1 (Task 8 review m1) a mode change into or out of Network forgot `next`, because Network's `next` was
+// the driver disk. From 1.12.1 `next` is DF0's next disk of the set in every mode.
+static void a_df1_mode_change_keeps_the_next_disk(void) {
+    // fw 1.12.1: `next` is DF0's next disk of the set in every mode, so every mode change keeps it and its record.
     boot_mounted_with_preload_ready();        // A in slot 0, preload B verified in slot 1, next = B
     dc_set_df1(&c, DF1_MODE_OFF, true);
     dc_set_df1(&c, DF1_MODE_NEXT, true);
-    CHECK(c.preload.next_sha256[0] != '\0', "Off -> Next keeps next");
+    CHECK(c.preload.next_sha256[0] != '\0', "Off -> On keeps next");
     CHECK_EQ_INT(c.preload.slot, 1);          // ...and the record
-    c.preload.changed = false;
-    dc_set_df1(&c, DF1_MODE_NET, true);
-    CHECK(c.preload.next_sha256[0] == '\0', "Network: the library next is forgotten");
-    CHECK_EQ_INT(c.preload.slot, SLOT_NONE);
-    CHECK(c.preload.sha256[0] == '\0', "the record is dropped");
-    CHECK(c.preload.changed, "the status report learns the record went");
-    CHECK(!dc_preload_step(&c), "nothing to preload until the server names the driver disk");
-    CHECK_EQ_INT(fake_request_count_since_mark(), 0);   // no /api/device/image/net/<library sha>
     dc_df1_reconcile(&c);
-    CHECK_EQ_INT(psram_df1_slot(), SLOT_NONE);
-    // Back out of Network: the driver disk is not DF0's next either.
-    set_next_sha(&c, SHA_C);
-    c.preload.slot = SLOT_NET;
-    snprintf(c.preload.sha256, sizeof c.preload.sha256, "%s", SHA_C);
+    CHECK_EQ_INT(psram_df1_slot(), 1);        // On serves it
+    dc_set_df1(&c, DF1_MODE_NET, true);
+    CHECK(strcmp(c.preload.next_sha256, SHA_B) == 0, "On -> Network keeps next (DF0's next disk)");
+    CHECK_EQ_INT(c.preload.slot, 1);
+    dc_df1_reconcile(&c);
+    CHECK_EQ_INT(psram_df1_slot(), SLOT_NONE);   // Network never serves DF0's next disk
+    psram_df1_reader_ack(psram_df1_token());
+    int before = fake_request_count();
+    CHECK(!dc_preload_step(&c), "B is already preloaded: no refetch in Network mode");
+    CHECK_EQ_INT(fake_request_count(), before);
     dc_set_df1(&c, DF1_MODE_NEXT, true);
-    CHECK(c.preload.next_sha256[0] == '\0', "Network -> Next forgets the driver disk as next");
-    CHECK_EQ_INT(c.preload.slot, SLOT_NONE);
+    dc_df1_reconcile(&c);
+    CHECK_EQ_INT(c.preload.slot, 1);
+    CHECK_EQ_INT(psram_df1_slot(), 1);        // back in On: B in DF1 at once, no fetch
+    dc_set_df1(&c, DF1_MODE_OFF, true);
+    dc_df1_reconcile(&c);
 }
 
 // Review Focus 5
@@ -2964,225 +2963,7 @@ static void status_names_df1_only_when_capable(void) {
     CHECK(strstr(fake_last_request(), ",\"df1Sha256\":null") != NULL, "off: both values, null");
 }
 
-// Phase 3 (ruling 6): in Network mode the server's next (the driver disk) is preloaded into SLOT_NET with DF0
-// empty, DF1 holds it, and DF0's own fetches never touch it.
-static void network_mode_holds_the_driver_disk_whatever_df0_does(void) {
-    boot(); init_shas();
-    dc_set_df1(&c, DF1_MODE_NET, true);
-    dc_set_df1_quiesce(&c, quiesce_true, NULL);
-    dc_set_preload_gate(&c, gate_yes, NULL);
-    CHECK_EQ_INT(psram_active_slot(), SLOT_NONE);              // DF0 empty: a hard-drive boot
-    set_next_sha(&c, SHA_B);                                    // the poll's next: the driver disk
-    push_dd_wfad_image_response();                              // the server's DD WFAD
-    CHECK(dc_preload_step(&c), "fetched with DF0 empty");
-    char want[128];
-    snprintf(want, sizeof want, "GET /api/device/image/net/%s ", SHA_B);
-    CHECK(strstr(fake_last_request(), want) != NULL, "from the driver disk's own route (pre-flight I3)");
-    CHECK_EQ_INT(c.preload.slot, SLOT_NET);
-    CHECK_EQ_INT(psram_df1_slot(), SLOT_NET);
-    // A DF0 mount and then a different disk: both fetched into A/B, DF1 and the record untouched throughout
-    // (pre-flight B2: a DF0 fetch drops the record only for the slot it writes).
-    int before = fake_request_count();
-    push_poll_next(++df1_poll_version, SHA_A, SHA_B, false);
-    push_image_response();
-    CHECK_EQ_INT(dc_step(&c), DC_IDLE_POLL);
-    CHECK(strcmp(c.mounted_sha256, SHA_A) == 0, "A mounted in DF0");
-    CHECK_EQ_INT(psram_df1_slot(), SLOT_NET);
-    CHECK_EQ_INT(c.preload.slot, SLOT_NET);
-    CHECK(psram_active_slot() == 0 || psram_active_slot() == 1, "DF0 on A/B");
-    push_poll_next(++df1_poll_version, SHA_C, SHA_B, false);
-    push_image_response();
-    CHECK_EQ_INT(dc_step(&c), DC_IDLE_POLL);
-    CHECK(strcmp(c.mounted_sha256, SHA_C) == 0, "C mounted in DF0");
-    CHECK_EQ_INT(psram_df1_slot(), SLOT_NET);
-    CHECK_EQ_INT(c.preload.slot, SLOT_NET);
-    CHECK(!dc_preload_step(&c), "the driver disk is already there: no refetch");
-    CHECK_EQ_INT(fake_request_count(), before + 4);             // two polls, two DF0 images, nothing else
-    // An eject of DF0 keeps next (the server sends it with desired:null in Network mode) and DF1 (pre-flight B1).
-    char body[256];
-    snprintf(body, sizeof body,
-             "{\"version\":999,\"desired\":null,\"next\":{\"diskId\":\"paulanet\",\"sha256\":\"%s\",\"diskNo\":1}}",
-             SHA_B);
-    push_ok_json(body);
-    dc_step(&c);
-    CHECK_EQ_INT(psram_active_slot(), SLOT_NONE);
-    CHECK(strcmp(c.preload.next_sha256, SHA_B) == 0, "next kept in Network mode");
-    CHECK_EQ_INT(psram_df1_slot(), SLOT_NET);
-    // Back to Next disk: DF1 leaves SLOT_NET (Next disk's rule needs the idle slot).
-    dc_set_df1(&c, DF1_MODE_NEXT, true);
-    dc_df1_reconcile(&c);
-    CHECK(psram_df1_slot() != SLOT_NET, "Next disk never serves SLOT_NET");
-    dc_set_df1(&c, DF1_MODE_OFF, true);
-}
-
-// Review I-1: a failed fetch on the driver disk's route blocks only that route, and heals.
-static void net_route_404(void) { push_status_json("HTTP/1.1 404 Not Found", "{}"); }
-
-static void boot_network_mode(void) {
-    boot(); init_shas();
-    dc_set_df1(&c, DF1_MODE_NET, true);
-    dc_set_df1_quiesce(&c, quiesce_true, NULL);
-    dc_set_preload_gate(&c, gate_yes, NULL);
-    set_next_sha(&c, SHA_B);
-}
-
-static void a_failed_driver_disk_fetch_never_blocks_df0_and_retries_after_the_backoff(void) {
-    boot_network_mode();
-    fake_set_clock(1000);
-    net_route_404();
-    CHECK(dc_preload_step(&c), "the net route was asked and said 404");
-    CHECK_EQ_INT(c.preload.slot, SLOT_NONE);
-    CHECK_EQ_INT(psram_df1_slot(), SLOT_NONE);
-    CHECK(!dc_digest_is_blocked(&c, SHA_B), "the DF0 route's block list is untouched");
-    // (a) DF0 can still mount the same digest (a library copy) through the normal route.
-    c.state = DC_IDLE_POLL;   // the backoff has elapsed
-    push_poll_next(++df1_poll_version, SHA_B, SHA_B, false);
-    push_image_response();
-    CHECK_EQ_INT(dc_step(&c), DC_IDLE_POLL);
-    char want[128];
-    snprintf(want, sizeof want, "GET /api/device/image/%s ", SHA_B);
-    CHECK(strstr(fake_last_request(), want) != NULL, "DF0 fetched it from the library route");
-    CHECK(strcmp(c.mounted_sha256, SHA_B) == 0, "and mounted it");
-    // (c) Within the retry interval the driver disk is not asked for again...
-    int before = fake_request_count();
-    CHECK(!dc_preload_step(&c), "no retry yet");
-    CHECK_EQ_INT(fake_request_count(), before);
-    // ...and after it, it is, and heals without a reboot.
-    fake_set_clock(1000 + DC_NET_RETRY_MS);
-    push_dd_wfad_image_response();
-    CHECK(dc_preload_step(&c), "retried after the interval");
-    snprintf(want, sizeof want, "GET /api/device/image/net/%s ", SHA_B);
-    CHECK(strstr(fake_last_request(), want) != NULL, "on the driver disk's route");
-    CHECK_EQ_INT(psram_df1_slot(), SLOT_NET);
-    dc_set_df1(&c, DF1_MODE_OFF, true);
-    dc_df1_reconcile(&c);
-}
-
-// (b) Any DF1 mode change clears the driver disk's block.
-static void a_mode_change_clears_the_driver_disks_block(void) {
-    boot_network_mode();
-    fake_set_clock(1000);
-    net_route_404();
-    CHECK(dc_preload_step(&c), "404");
-    c.state = DC_IDLE_POLL;
-    int before = fake_request_count();
-    CHECK(!dc_preload_step(&c), "blocked");
-    CHECK_EQ_INT(fake_request_count(), before);
-    dc_set_df1(&c, DF1_MODE_NEXT, true);
-    dc_set_df1(&c, DF1_MODE_NET, true);
-    // The mode change also forgot `next` (Task 8 review m1); the server's next body names the driver disk again.
-    CHECK(c.preload.next_sha256[0] == '\0', "next forgotten with the mode");
-    set_next_sha(&c, SHA_B);
-    push_dd_wfad_image_response();
-    CHECK(dc_preload_step(&c), "a mode change lets it retry at once");
-    CHECK_EQ_INT(psram_df1_slot(), SLOT_NET);
-    dc_set_df1(&c, DF1_MODE_OFF, true);
-    dc_df1_reconcile(&c);
-}
-
-// Final review I1: leaving Network keeps the next disk the same poll delivered. core1 applies the mode change
-// (dc_drive_take -> dc_set_df1) AFTER dc_step's dc_take_next stored the body's `next`, and that body already names
-// the new mode's next. Wiping it left DF1 (Next) or DF0's preload (Off) empty until an unrelated event. Only the
-// driver disk's own record (SLOT_NET), and a `next` that still names it, go.
-static void push_poll_mode_next(uint32_t version, uint32_t seq, const char *mode, const char *desired,
-                                const char *next) {
-    char body[700];
-    snprintf(body, sizeof body,
-             "{\"secondDrive\":{\"seq\":%lu,\"mode\":\"%s\"},\"version\":%lu,"
-             "\"desired\":{\"sha256\":\"%s\",\"diskId\":\"d1\",\"gameId\":\"g\",\"game\":\"G\","
-             "\"diskNo\":1,\"diskCount\":3,\"writeProtected\":false},"
-             "\"next\":{\"diskId\":\"" NEXT_ID2 "\",\"sha256\":\"%s\",\"diskNo\":2}}",
-             (unsigned long)seq, mode, (unsigned long)version, desired, next);
-    push_ok_json(body);
-}
-
-static void leave_network_with_a_body(uint32_t seq, const char *mode_str, df1_mode_t want) {
-    boot_network_mode();                                        // next = B, the driver disk
-    c.drive_ack = 0;
-    push_dd_wfad_image_response();
-    CHECK(dc_preload_step(&c), "driver disk fetched");
-    CHECK_EQ_INT(c.preload.slot, SLOT_NET);
-    push_poll_next(++df1_poll_version, SHA_A, SHA_B, false);    // DF0 mounts A, next is still the driver disk
-    push_image_response();
-    CHECK_EQ_INT(dc_step(&c), DC_IDLE_POLL);
-    CHECK(strcmp(c.mounted_sha256, SHA_A) == 0, "A mounted in DF0");
-    // The body that leaves Network: the new mode and the set's next disk, C, together.
-    push_poll_mode_next(++df1_poll_version, seq, mode_str, SHA_A, SHA_C);
-    CHECK_EQ_INT(dc_step(&c), DC_IDLE_POLL);
-    CHECK(strcmp(c.preload.next_sha256, SHA_C) == 0, "the body's next is stored");
-    uint32_t got_seq; df1_mode_t got_mode;
-    CHECK(dc_drive_take(&c, &got_seq, &got_mode), "the mode change is owed");
-    CHECK_EQ_INT(got_mode, want);
-    // What core1 does with it (main.c): the mode change comes after the body.
-    c.preload.changed = false;
-    dc_set_df1(&c, got_mode, true);
-    dc_df1_reconcile(&c);
-    CHECK(strcmp(c.preload.next_sha256, SHA_C) == 0, "leaving Network keeps the body's next");
-    CHECK(strcmp(c.preload.next_disk_id, NEXT_ID2) == 0, "and its disk id");
-    CHECK_EQ_INT(c.preload.slot, SLOT_NONE);                   // the driver disk's record goes
-    CHECK(c.preload.changed, "the status report learns the record went");
-    CHECK(psram_df1_slot() != SLOT_NET, "DF1 no longer serves the driver disk");
-    // ...and the next disk is preloaded at once into DF0's idle slot, from the library route.
-    push_image_response();
-    CHECK(dc_preload_step(&c), "C preloaded without another wake");
-    char url[128];
-    snprintf(url, sizeof url, "GET /api/device/image/%s ", SHA_C);
-    CHECK(strstr(fake_last_request(), url) != NULL, "from the library route");
-    CHECK(c.preload.slot == 0 || c.preload.slot == 1, "into DF0's idle slot");
-    dc_set_df1(&c, DF1_MODE_OFF, true);
-    dc_df1_reconcile(&c);
-}
-
-static void network_to_next_keeps_the_next_disk_the_same_body_delivered(void) {
-    leave_network_with_a_body(1, "df1", DF1_MODE_NEXT);
-}
-
-static void network_to_off_keeps_the_next_disk_the_same_body_delivered(void) {
-    leave_network_with_a_body(1, "off", DF1_MODE_OFF);
-}
-
-// Review m2: a board without SLOT_NET's storage never targets it -- nothing is fetched, DF1 stays empty.
-static void network_mode_without_net_storage_preloads_nothing(void) {
-    boot_network_mode();
-    psram_image_test_set_net(false);
-    int before = fake_request_count();
-    CHECK(!dc_preload_step(&c), "no SLOT_NET: no preload");
-    CHECK_EQ_INT(fake_request_count(), before);
-    CHECK_EQ_INT(c.preload.slot, SLOT_NONE);
-    CHECK_EQ_INT(psram_df1_slot(), SLOT_NONE);
-    psram_image_test_set_net(true);
-    dc_set_df1(&c, DF1_MODE_OFF, true);
-}
-
-// Review m4: Next disk's per-slot record (B2). A in slot 0, B preloaded in slot 1; an eject, then C fetched into
-// slot 0 keeps the slot-1 record, and a later Next press (desired B) swaps it in with no fetch.
-static void a_fetch_into_the_other_slot_keeps_the_next_disk_record(void) {
-    boot_mounted_with_preload_ready();          // A in 0, B ready in 1
-    push_ok_json("{\"version\":200,\"desired\":null}");
-    dc_step(&c);
-    CHECK_EQ_INT(psram_active_slot(), SLOT_NONE);
-    CHECK_EQ_INT(psram_inactive_slot(), 0);
-    CHECK_EQ_INT(c.preload.slot, 1);
-    push_poll_next(201, SHA_C, SHA_B, false);
-    push_image_response();
-    CHECK_EQ_INT(dc_step(&c), DC_IDLE_POLL);
-    CHECK(strcmp(c.mounted_sha256, SHA_C) == 0, "C mounted");
-    CHECK_EQ_INT(psram_active_slot(), 0);
-    CHECK_EQ_INT(c.preload.slot, 1);
-    CHECK(strcmp(c.preload.sha256, SHA_B) == 0, "the slot-1 record still says B");
-    int before = fake_request_count();
-    push_poll_next(202, SHA_B, SHA_C, false);
-    CHECK_EQ_INT(dc_step(&c), DC_IDLE_POLL);
-    CHECK_EQ_INT(fake_request_count(), before + 1);   // the poll only: swapped, not fetched
-    CHECK_EQ_INT(psram_active_slot(), 1);
-    CHECK(strcmp(c.mounted_sha256, SHA_B) == 0, "B mounted from the preloaded slot");
-}
-
-// --- DF1 any disk (spec 2026-10-14 §5, plan Task 5): a disk mounted into DF1 ----------------------------------
-//
-// The pick lives in SLOT_NET, DF1's own slot: no DF0 fetch, swap, preload or eject touches it, and DF0's next disk
-// keeps preloading in the idle slot. P and Q are picks; A, B, C are DF0's set (init_shas).
-
+// DF1 pick helpers (spec 2026-10-14 §5), shared with Network mode's driver disk (fw 1.12.1).
 static char SHA_P[65], SHA_Q[65];
 static void init_pick_shas(void) {
     init_shas();
@@ -3222,20 +3003,238 @@ static void leave_df1_off(void) {
     psram_df1_reader_ack(psram_df1_token());
 }
 
+// Network (fw 1.12.1): the driver disk is DF1's pick, in SLOT_NET, with DF0 empty or not; DF0's own fetches and its
+// next disk's preload never touch SLOT_NET.
+static void network_mode_holds_the_driver_disk_whatever_df0_does(void) {
+    // fw 1.12.1: the driver disk is Network's DF1 pick (`df1`), in SLOT_NET; `next` is DF0's next disk.
+    boot(); init_pick_shas();
+    dc_set_df1(&c, DF1_MODE_NET, true);
+    dc_set_df1_quiesce(&c, quiesce_true, NULL);
+    dc_set_preload_gate(&c, gate_yes, NULL);
+    CHECK_EQ_INT(psram_active_slot(), SLOT_NONE);              // DF0 empty: a hard-drive boot
+    push_poll_df1(++df1_poll_version, NULL, 1, SHA_P, false);  // the driver disk, as DF1's pick
+    CHECK_EQ_INT(dc_step(&c), DC_IDLE_POLL);
+    push_dd_wfad_image_response();                              // the server's DD WFAD
+    CHECK(dc_df1_pick_step(&c), "fetched with DF0 empty");
+    char want[128];
+    snprintf(want, sizeof want, "GET /api/device/image/net/%s ", SHA_P);
+    CHECK(strstr(fake_last_request(), want) != NULL, "from the driver disk's own route");
+    CHECK_EQ_INT(psram_df1_slot(), SLOT_NET);
+    // DF0 mounts A with the set's next disk C: A into A/B, C preloaded into the other A/B slot, DF1 untouched.
+    push_poll_next(++df1_poll_version, SHA_A, SHA_C, false);
+    push_image_response();
+    CHECK_EQ_INT(dc_step(&c), DC_IDLE_POLL);
+    CHECK(strcmp(c.mounted_sha256, SHA_A) == 0, "A mounted in DF0");
+    CHECK_EQ_INT(psram_df1_slot(), SLOT_NET);
+    CHECK(psram_active_slot() == 0 || psram_active_slot() == 1, "DF0 on A/B");
+    push_image_response();
+    CHECK(dc_preload_step(&c), "DF0's next disk preloads in Network mode");
+    snprintf(want, sizeof want, "GET /api/device/image/%s ", SHA_C);
+    CHECK(strstr(fake_last_request(), want) != NULL, "from the library route");
+    CHECK(c.preload.slot == 0 || c.preload.slot == 1, "into DF0's idle slot");
+    CHECK(c.preload.slot != psram_active_slot(), "never DF0's own slot");
+    CHECK_EQ_INT(psram_df1_slot(), SLOT_NET);                  // DF1 keeps the driver disk
+    CHECK(!dc_df1_pick_step(&c), "the driver disk is already there: no refetch");
+    // The status report names the driver disk.
+    fake_push_response("HTTP/1.1 204 No Content\r\n\r\n");
+    dc_report_status(&c, 0, -50, NULL, "1.12.1");
+    char rep[96];
+    snprintf(rep, sizeof rep, ",\"df1Sha256\":\"%s\"", SHA_P);
+    CHECK(strstr(fake_last_request(), rep) != NULL, "reported as the driver disk");
+    // Back to On: the pick goes with the mode, DF1 leaves SLOT_NET for the set's next disk.
+    dc_set_df1(&c, DF1_MODE_NEXT, true);
+    dc_df1_reconcile(&c);
+    CHECK(c.df1_pick.want_sha256[0] == '\0', "leaving Network drops the driver disk pick");
+    CHECK(psram_df1_slot() != SLOT_NET, "On without a pick never serves SLOT_NET");
+    leave_df1_off();
+    psram_publish_slot(SLOT_NONE);
+}
+
+// Review I-1: a failed fetch on the driver disk's route blocks only that route, and heals.
+static void net_route_404(void) { push_status_json("HTTP/1.1 404 Not Found", "{}"); }
+
+// Network with the driver disk B named as DF1's pick (fw 1.12.1), not yet loaded.
+static void boot_network_mode(void) {
+    boot(); init_pick_shas();
+    dc_set_df1(&c, DF1_MODE_NET, true);
+    dc_set_df1_quiesce(&c, quiesce_true, NULL);
+    dc_set_preload_gate(&c, gate_yes, NULL);
+    snprintf(c.df1_pick.want_sha256, sizeof c.df1_pick.want_sha256, "%s", SHA_B);
+}
+
+static void a_failed_driver_disk_fetch_never_blocks_df0_and_retries_after_the_backoff(void) {
+    boot_network_mode();
+    fake_set_clock(1000);
+    net_route_404();
+    CHECK(dc_df1_pick_step(&c), "the net route was asked and said 404");
+    CHECK(c.df1_pick.sha256[0] == '\0', "no record");
+    CHECK_EQ_INT(psram_df1_slot(), SLOT_NONE);
+    CHECK(!dc_digest_is_blocked(&c, SHA_B), "the DF0 route's block list is untouched");
+    // (a) DF0 can still mount the same digest (a library copy) through the normal route.
+    c.state = DC_IDLE_POLL;   // the backoff has elapsed
+    push_poll_next(++df1_poll_version, SHA_B, SHA_C, false);
+    push_image_response();
+    CHECK_EQ_INT(dc_step(&c), DC_IDLE_POLL);
+    char want[128];
+    snprintf(want, sizeof want, "GET /api/device/image/%s ", SHA_B);
+    CHECK(strstr(fake_last_request(), want) != NULL, "DF0 fetched it from the library route");
+    CHECK(strcmp(c.mounted_sha256, SHA_B) == 0, "and mounted it");
+    // (c) Within the retry interval the driver disk is not asked for again...
+    int before = fake_request_count();
+    CHECK(!dc_df1_pick_step(&c), "no retry yet");
+    CHECK_EQ_INT(fake_request_count(), before);
+    // ...and after it, it is, and heals without a reboot.
+    fake_set_clock(1000 + DC_NET_RETRY_MS);
+    push_dd_wfad_image_response();
+    CHECK(dc_df1_pick_step(&c), "retried after the interval");
+    snprintf(want, sizeof want, "GET /api/device/image/net/%s ", SHA_B);
+    CHECK(strstr(fake_last_request(), want) != NULL, "on the driver disk's route");
+    CHECK_EQ_INT(psram_df1_slot(), SLOT_NET);
+    leave_df1_off();
+    psram_publish_slot(SLOT_NONE);
+}
+
+// (b) Any DF1 mode change clears the driver disk's block.
+static void a_mode_change_clears_the_driver_disks_block(void) {
+    boot_network_mode();
+    fake_set_clock(1000);
+    net_route_404();
+    CHECK(dc_df1_pick_step(&c), "404");
+    c.state = DC_IDLE_POLL;
+    int before = fake_request_count();
+    CHECK(!dc_df1_pick_step(&c), "blocked");
+    CHECK_EQ_INT(fake_request_count(), before);
+    dc_set_df1(&c, DF1_MODE_NEXT, true);
+    dc_set_df1(&c, DF1_MODE_NET, true);
+    // The mode change also dropped the pick; the server's next body names the driver disk again.
+    CHECK(c.df1_pick.want_sha256[0] == '\0', "the pick goes with the mode");
+    snprintf(c.df1_pick.want_sha256, sizeof c.df1_pick.want_sha256, "%s", SHA_B);
+    push_dd_wfad_image_response();
+    CHECK(dc_df1_pick_step(&c), "a mode change lets it retry at once");
+    CHECK_EQ_INT(psram_df1_slot(), SLOT_NET);
+    leave_df1_off();
+}
+
+// Final review I1: leaving Network keeps the next disk the same poll delivered. core1 applies the mode change
+// (dc_drive_take -> dc_set_df1) AFTER dc_step's dc_take_next stored the body's `next`, and that body already names
+// the new mode's next. Wiping it left DF1 (Next) or DF0's preload (Off) empty until an unrelated event. Only the
+// driver disk's own record (SLOT_NET), and a `next` that still names it, go.
+static void push_poll_mode_next(uint32_t version, uint32_t seq, const char *mode, const char *desired,
+                                const char *next) {
+    char body[700];
+    snprintf(body, sizeof body,
+             "{\"secondDrive\":{\"seq\":%lu,\"mode\":\"%s\"},\"version\":%lu,"
+             "\"desired\":{\"sha256\":\"%s\",\"diskId\":\"d1\",\"gameId\":\"g\",\"game\":\"G\","
+             "\"diskNo\":1,\"diskCount\":3,\"writeProtected\":false},"
+             "\"next\":{\"diskId\":\"" NEXT_ID2 "\",\"sha256\":\"%s\",\"diskNo\":2}}",
+             (unsigned long)seq, mode, (unsigned long)version, desired, next);
+    push_ok_json(body);
+}
+
+static void leave_network_with_a_body(uint32_t seq, const char *mode_str, df1_mode_t want) {
+    boot_network_mode();                                        // pick = B, the driver disk
+    c.drive_ack = 0;
+    push_dd_wfad_image_response();
+    CHECK(dc_df1_pick_step(&c), "driver disk fetched");
+    CHECK_EQ_INT(psram_df1_slot(), SLOT_NET);
+    push_poll_next(++df1_poll_version, SHA_A, SHA_C, false);    // DF0 mounts A; the set's next disk is C
+    push_image_response();
+    CHECK_EQ_INT(dc_step(&c), DC_IDLE_POLL);
+    CHECK(strcmp(c.mounted_sha256, SHA_A) == 0, "A mounted in DF0");
+    push_image_response();
+    CHECK(dc_preload_step(&c), "C preloaded in Network mode");
+    const int c_slot = c.preload.slot;
+    CHECK(c_slot == 0 || c_slot == 1, "into DF0's idle slot");
+    // The body that leaves Network: the new mode and the set's next disk, C, together.
+    push_poll_mode_next(++df1_poll_version, seq, mode_str, SHA_A, SHA_C);
+    CHECK_EQ_INT(dc_step(&c), DC_IDLE_POLL);
+    uint32_t got_seq; df1_mode_t got_mode;
+    CHECK(dc_drive_take(&c, &got_seq, &got_mode), "the mode change is owed");
+    CHECK_EQ_INT(got_mode, want);
+    // What core1 does with it (main.c): the mode change comes after the body.
+    c.df1_pick.changed = false;
+    dc_set_df1(&c, got_mode, true);
+    dc_df1_reconcile(&c);
+    psram_df1_reader_ack(psram_df1_token());
+    CHECK(strcmp(c.preload.next_sha256, SHA_C) == 0, "leaving Network keeps the next disk");
+    CHECK(strcmp(c.preload.next_disk_id, NEXT_ID2) == 0, "and its disk id");
+    CHECK_EQ_INT(c.preload.slot, c_slot);                      // ...and its preload: no refetch
+    CHECK(c.df1_pick.want_sha256[0] == '\0' && c.df1_pick.sha256[0] == '\0', "the driver disk pick goes");
+    CHECK(c.df1_pick.changed, "the status report learns it went");
+    CHECK(psram_df1_slot() != SLOT_NET, "DF1 no longer serves the driver disk");
+    if (want == DF1_MODE_NEXT) CHECK_EQ_INT(psram_df1_slot(), c_slot);   // On: C in DF1 at once
+    else CHECK_EQ_INT(psram_df1_slot(), SLOT_NONE);
+    int before = fake_request_count();
+    CHECK(!dc_preload_step(&c), "C already preloaded: nothing to fetch");
+    CHECK_EQ_INT(fake_request_count(), before);
+    leave_df1_off();
+    psram_publish_slot(SLOT_NONE);
+}
+
+static void network_to_next_keeps_the_next_disk_the_same_body_delivered(void) {
+    leave_network_with_a_body(1, "df1", DF1_MODE_NEXT);
+}
+
+static void network_to_off_keeps_the_next_disk_the_same_body_delivered(void) {
+    leave_network_with_a_body(1, "off", DF1_MODE_OFF);
+}
+
+// Review m2: a board without SLOT_NET's storage never targets it -- nothing is fetched, DF1 stays empty.
+static void network_mode_without_net_storage_preloads_nothing(void) {
+    boot_network_mode();
+    psram_image_test_set_net(false);
+    int before = fake_request_count();
+    CHECK(!dc_df1_pick_step(&c), "no SLOT_NET: the driver disk is not fetched");
+    CHECK_EQ_INT(fake_request_count(), before);
+    CHECK_EQ_INT(psram_df1_slot(), SLOT_NONE);
+    psram_image_test_set_net(true);
+    dc_set_df1(&c, DF1_MODE_OFF, true);
+}
+
+// Review m4: Next disk's per-slot record (B2). A in slot 0, B preloaded in slot 1; an eject, then C fetched into
+// slot 0 keeps the slot-1 record, and a later Next press (desired B) swaps it in with no fetch.
+static void a_fetch_into_the_other_slot_keeps_the_next_disk_record(void) {
+    boot_mounted_with_preload_ready();          // A in 0, B ready in 1
+    push_ok_json("{\"version\":200,\"desired\":null}");
+    dc_step(&c);
+    CHECK_EQ_INT(psram_active_slot(), SLOT_NONE);
+    CHECK_EQ_INT(psram_inactive_slot(), 0);
+    CHECK_EQ_INT(c.preload.slot, 1);
+    push_poll_next(201, SHA_C, SHA_B, false);
+    push_image_response();
+    CHECK_EQ_INT(dc_step(&c), DC_IDLE_POLL);
+    CHECK(strcmp(c.mounted_sha256, SHA_C) == 0, "C mounted");
+    CHECK_EQ_INT(psram_active_slot(), 0);
+    CHECK_EQ_INT(c.preload.slot, 1);
+    CHECK(strcmp(c.preload.sha256, SHA_B) == 0, "the slot-1 record still says B");
+    int before = fake_request_count();
+    push_poll_next(202, SHA_B, SHA_C, false);
+    CHECK_EQ_INT(dc_step(&c), DC_IDLE_POLL);
+    CHECK_EQ_INT(fake_request_count(), before + 1);   // the poll only: swapped, not fetched
+    CHECK_EQ_INT(psram_active_slot(), 1);
+    CHECK(strcmp(c.mounted_sha256, SHA_B) == 0, "B mounted from the preloaded slot");
+}
+
+// --- DF1 any disk (spec 2026-10-14 §5, plan Task 5): a disk mounted into DF1 ----------------------------------
+//
+// The pick lives in SLOT_NET, DF1's own slot: no DF0 fetch, swap, preload or eject touches it, and DF0's next disk
+// keeps preloading in the idle slot. P and Q are picks; A, B, C are DF0's set (init_shas).
+
+
 static void poll_url_carries_df1_ack(void) {
     boot(); dc_set_df1(&c, DF1_MODE_OFF, false);
     c.df1_ack = 7;
     fake_push_response("HTTP/1.1 204 No Content\r\n\r\n");
     dc_step(&c);
-    CHECK(strstr(fake_last_request(), "&driveAck=0&df1Ack=7 ") != NULL, "the pick cursor rides every poll");
+    CHECK(strstr(fake_last_request(), "&driveAck=0&df1Ack=7&netPick=1 ") != NULL, "the pick cursor rides every poll");
     boot(); dc_set_df1(&c, DF1_MODE_OFF, false);
     c.since = 4294967295u; c.nfc_ack = 4294967295u; c.display_ack = 4294967295u;
     c.drive_ack = 4294967295u; c.df1_ack = 4294967295u;
     fake_push_response("HTTP/1.1 204 No Content\r\n\r\n");
     dc_step(&c);
     CHECK(strstr(fake_last_request(), "GET /api/device/poll?since=4294967295&nfcAck=4294967295&displayAck=4294967295"
-                                      "&driveAck=4294967295&df1Ack=4294967295 ") != NULL,
-          "the worst-case path (111 bytes) is sent whole");
+                                      "&driveAck=4294967295&df1Ack=4294967295&netPick=1 ") != NULL,
+          "the worst-case path (121 bytes) is sent whole");
     boot(); c.df1_ack = 3;
     fake_push_response("HTTP/1.1 204 No Content\r\n\r\n");
     dc_step(&c);
@@ -3336,8 +3335,8 @@ static void df1_want_for_every_mode_pick_and_df0(void) {
                 dc_df1_reconcile(&c);
                 int want;
                 if (m == DF1_MODE_OFF) want = SLOT_NONE;
-                else if (m == DF1_MODE_NET) want = SLOT_NONE;   // the record names slot 1, not the driver disk
-                else if (pick) want = SLOT_NET;                  // On with a pick: SLOT_NET, whatever DF0 holds
+                else if (pick) want = SLOT_NET;                  // On or Network with a pick: SLOT_NET, whatever DF0 holds
+                else if (m == DF1_MODE_NET) want = SLOT_NONE;   // Network without one: empty, never DF0's next
                 else want = df0 ? 1 : SLOT_NONE;                 // On without one: today's rule
                 char what[96];
                 snprintf(what, sizeof what, "mode %d, pick %d, DF0 %s", m, pick, df0 ? "holds" : "empty");
@@ -3476,7 +3475,7 @@ static void a_pick_with_df0s_digest_loads_its_own_copy(void) {
 }
 
 // Review Focus 3: leaving On (here: to Network) with a pick in and another pending.
-static void network_mode_drops_the_pick_and_the_driver_disk_wins(void) {
+static void on_to_network_drops_the_pick_and_the_driver_disk_follows(void) {
     boot_df1_on();
     push_poll_df1(2, NULL, 1, SHA_P, false); dc_step(&c);
     push_dd_wfad_image_response();
@@ -3486,16 +3485,15 @@ static void network_mode_drops_the_pick_and_the_driver_disk_wins(void) {
     dc_set_df1(&c, DF1_MODE_NET, false);
     CHECK(c.df1_pick.want_sha256[0] == '\0' && c.df1_pick.sha256[0] == '\0', "leaving On drops the pick");
     CHECK(c.df1_pick.changed, "and the report says so");
-    CHECK(!dc_df1_pick_step(&c), "no pick fetch in Network mode");
-    push_poll_df1(4, NULL, 2, SHA_Q, false); dc_step(&c);       // a late body still naming Q
-    CHECK(!dc_df1_pick_step(&c), "still none: picks are On's alone");
-    set_next_sha(&c, SHA_C);                                     // Network's next: the driver disk
+    CHECK(!dc_df1_pick_step(&c), "nothing named yet: no fetch");
+    // The server's next body names the driver disk C as DF1's pick (fw 1.12.1).
+    push_poll_df1(4, NULL, 3, SHA_C, false); dc_step(&c);
     push_dd_wfad_image_response();
-    CHECK(dc_preload_step(&c), "the driver disk is fetched into SLOT_NET");
+    CHECK(dc_df1_pick_step(&c), "the driver disk is fetched into SLOT_NET");
     CHECK_EQ_INT(psram_df1_slot(), SLOT_NET);
-    CHECK(strcmp(c.preload.sha256, SHA_C) == 0, "DF1 holds the driver disk, never a pick");
+    CHECK(strcmp(c.df1_pick.sha256, SHA_C) == 0, "DF1 holds the driver disk");
     fake_push_response("HTTP/1.1 204 No Content\r\n\r\n");
-    dc_report_status(&c, 0, -50, NULL, "1.12.0");
+    dc_report_status(&c, 0, -50, NULL, "1.12.1");
     char want[96];
     snprintf(want, sizeof want, ",\"df1Sha256\":\"%s\"", SHA_C);
     CHECK(strstr(fake_last_request(), want) != NULL, "reported as the driver disk");
@@ -3664,7 +3662,7 @@ int main(void) {
     RUN(an_uppercase_next_is_refused);
     RUN(an_eject_clears_next);
     RUN(df1_serves_the_verified_preload_while_on);
-    RUN(a_df1_mode_change_forgets_the_previous_next_disk);
+    RUN(a_df1_mode_change_keeps_the_next_disk);
     RUN(an_hd_next_disk_stays_off_a_dd_only_df1);
     RUN(a_fetch_that_finds_df1_unacknowledged_writes_nothing);
     RUN(next_disk_ejects_df1_and_refills_it_with_the_following_disk);
@@ -3689,7 +3687,7 @@ int main(void) {
     RUN(a_cleared_pick_falls_back_to_the_set);
     RUN(a_failed_pick_fetch_blocks_only_the_net_route);
     RUN(a_pick_with_df0s_digest_loads_its_own_copy);
-    RUN(network_mode_drops_the_pick_and_the_driver_disk_wins);
+    RUN(on_to_network_drops_the_pick_and_the_driver_disk_follows);
     RUN(a_pick_fetch_cut_short_by_a_tap_leaves_no_record_and_no_backoff);
     RUN(test_display_body_parses);
     RUN(test_rejected_layout_still_acks);

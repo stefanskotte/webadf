@@ -77,7 +77,7 @@ const char *df1_mode_wire(df1_mode_t m) {
 }
 
 const char *df1_mode_name(df1_mode_t m) {
-    return m == DF1_MODE_NEXT ? "next disk of the set" : m == DF1_MODE_NET ? "network (PaulaNET)" : "off";
+    return m == DF1_MODE_NEXT ? "on" : m == DF1_MODE_NET ? "network (PaulaNET)" : "off";
 }
 
 bool df1_mode_from_wire(const char *s, df1_mode_t *out) {

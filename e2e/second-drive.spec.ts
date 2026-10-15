@@ -289,3 +289,34 @@ test('the server refuses DF1 on a board before 1.12.0, in words', async ({ page,
   expect(await res.json()).toEqual({ error: 'firmware_too_old', reason: 'Needs firmware 1.12.0' });
   expect((await row(deviceId)).df1Version).toBe(0);
 });
+
+test('fw 1.12.1 (netPick): the driver disk comes as DF1\'s pick, and leaving Network takes it away', async ({ page, request }) => {
+  await signUpFresh(page);
+  const { deviceId, token } = await pairDevice(page, request);
+  const fw = '1.12.1+gabc1234';
+  await report(request, token, { firmwareVersion: fw, secondDrive: 'off', driveVersion: 0, sel1Wired: true, df1Seen: false });
+  await page.goto('/devices');
+  await page.getByTestId(`second-drive-${deviceId}`).selectOption('net');
+  await expect(page.getByTestId(`second-drive-status-${deviceId}`)).toHaveText('Waiting for the board');
+  const q = (driveAck: number, df1Ack: number) =>
+    `/api/device/poll?since=0&driveAck=${driveAck}&df1Ack=${df1Ack}&netPick=1`;
+  const b1 = await (await request.get(q(0, 0), { headers: authHeader(token) })).json();
+  expect(b1.secondDrive).toEqual({ seq: 1, mode: 'net' });
+  expect(b1.df1).toEqual({ v: 0, sha256: null });   // not applied yet: nothing for DF1
+  await report(request, token, { firmwareVersion: fw, secondDrive: 'net', driveVersion: 1, df1Sha256: null,
+    net: { framesIn: 0, framesOut: 0 } });
+  // Applied: the one-shot wake moves the DF1 cursor and names the driver disk as DF1's pick, never as `next`.
+  const r2 = await request.get(q(1, 0), { headers: authHeader(token) });
+  expect(r2.status()).toBe(200);
+  const b2 = await r2.json();
+  expect(b2.df1).toEqual({ v: 1, sha256: PAULANET_DISK_SHA256 });
+  expect(b2).not.toHaveProperty('next');            // nothing in DF0, no set: no next at all
+  expect((await row(deviceId)).df1Version).toBe(1);
+  // Off: the setting write moves the cursor too, so the board hears the driver disk go.
+  await page.getByTestId(`second-drive-${deviceId}`).selectOption('off');
+  await expect.poll(async () => (await row(deviceId)).secondDrive).toBe('off');
+  expect((await row(deviceId)).df1Version).toBe(2);
+  const b3 = await (await request.get(q(1, 1), { headers: authHeader(token) })).json();
+  expect(b3.secondDrive).toEqual({ seq: 2, mode: 'off' });
+  expect(b3.df1).toEqual({ v: 2, sha256: null });
+});

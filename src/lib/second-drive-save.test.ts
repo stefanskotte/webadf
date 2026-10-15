@@ -28,13 +28,15 @@ describe('saveSecondDrive and the disk in DF1', () => {
       expect(await saveSecondDrive('org-1', 'dev-1', mode, false)).toEqual({ version: 4 });
       expect(sets[0].df1DiskId).toBeNull();
       expect(render(sets[0].df1Version))
-        .toContain('case when "devices"."df1_disk_id" is null then "devices"."df1_version" else "devices"."df1_version" + 1 end');
+        .toContain('case when "devices"."df1_disk_id" is null and "devices"."second_drive" <> \'net\' then "devices"."df1_version" else "devices"."df1_version" + 1 end');
     });
   }
-  it('saving On keeps the pick', async () => {
-    updates = [[{ version: 4 }]];
-    await saveSecondDrive('org-1', 'dev-1', 'df1', false);
-    expect('df1DiskId' in sets[0]).toBe(false);
-    expect('df1Version' in sets[0]).toBe(false);
-  });
+  it('saving On keeps the pick, and moves the cursor only out of Network (fw 1.12.1 holds the driver disk as a pick)',
+    async () => {
+      updates = [[{ version: 4 }]];
+      await saveSecondDrive('org-1', 'dev-1', 'df1', false);
+      expect('df1DiskId' in sets[0]).toBe(false);
+      expect(render(sets[0].df1Version))
+        .toContain('case when "devices"."second_drive" = \'net\' then "devices"."df1_version" + 1 else "devices"."df1_version" end');
+    });
 });
