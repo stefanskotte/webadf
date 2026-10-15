@@ -1,5 +1,5 @@
 import { test, expect } from '@playwright/test';
-import { mintInviteCode } from './helpers';
+import { mintInviteCode, paceSignUp } from './helpers';
 
 test('sign-up without an invite code is rejected', async ({ page }) => {
   await page.goto('/sign-up');
@@ -43,6 +43,9 @@ test('an invite code cannot be used twice', async ({ page, browser }) => {
 test('a leaked invite code can only create one account under concurrent sign-ups', async ({ request }) => {
   const inviteCode = await mintInviteCode();
   const attempts = 10;
+  // Against a production-mode server (the self-hosting stack) the sign-up rate limit is shared with the sign-ups
+  // before this one; start from an empty window. A no-op unless E2E_SIGNUP_GAP_MS is set.
+  await paceSignUp(Number(process.env.E2E_SIGNUP_GAP_MS ?? 0) * 3);
 
   const responses = await Promise.all(
     Array.from({ length: attempts }, (_, i) => request.post('/api/auth/sign-up/email', {
@@ -61,4 +64,20 @@ test('a leaked invite code can only create one account under concurrent sign-ups
 
   expect(successes).toBe(1);
   expect(failures).toBe(attempts - 1);
+});
+
+test('sign-up prefills the invite code from ?invite=', async ({ page }) => {
+  await page.goto('/sign-up?invite=ABCD2345');
+  await expect(page.getByLabel('Invite code')).toHaveValue('ABCD2345');
+});
+
+// A production build prerenders pages; a client page reading useSearchParams under a fallback-less Suspense
+// prerendered to nothing, so the HTML had no form until the JavaScript ran. The page reads searchParams on the
+// server now: the HTML itself carries the form and the invite code.
+test('the sign-up HTML carries the form with the invite code (no empty shell)', async ({ request }) => {
+  const res = await request.get('/sign-up?invite=ABCD2345');
+  expect(res.status()).toBe(200);
+  const html = await res.text();
+  expect(html).toContain('Create your library');
+  expect(html).toMatch(/<input[^>]*id="invite-code"[^>]*value="ABCD2345"|<input[^>]*value="ABCD2345"[^>]*id="invite-code"/);
 });

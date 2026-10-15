@@ -36,7 +36,13 @@ export default defineConfig({
   workers: 1,           // ...and one worker, for the reason above
   retries: 0,
   timeout: 30_000,
-  use: { baseURL: BASE_URL, trace: 'retain-on-failure' },
+  use: {
+    baseURL: BASE_URL,
+    trace: 'retain-on-failure',
+    // scripts/docker-e2e.sh runs the suite against the self-hosting stack, whose Caddy certificate comes from its
+    // own internal CA. Off unless that script asks for it.
+    ignoreHTTPSErrors: process.env.E2E_IGNORE_HTTPS === '1',
+  },
   // Two projects, because until now the suite proved nothing about the width
   // it was most likely to be broken at. Everything ran at Playwright's DEFAULT
   // 1280x720 -- no viewport was ever configured -- so the responsive work had
@@ -63,7 +69,9 @@ export default defineConfig({
       use: { viewport: { width: 390, height: 844 }, hasTouch: true, isMobile: true },
     },
   ],
-  webServer: {
+  // BASE_URL set = the tests target a server that already exists (scripts/docker-e2e.sh's compose stack), so no
+  // dev server is started: a failed probe must never fall through to `pnpm dev` with the local .env.local.
+  webServer: process.env.BASE_URL ? undefined : {
     command: `pnpm dev --port ${PORT}`,
     url: BASE_URL,
     // The dev server has to agree with the tests about what this origin is:

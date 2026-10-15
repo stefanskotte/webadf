@@ -1,5 +1,6 @@
 import { type Page, expect } from '@playwright/test';
-import { readFileSync } from 'node:fs';
+import { readFileSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { issueInvite } from '@/lib/invites';
 
@@ -76,7 +77,23 @@ export async function mintInviteCode(): Promise<string> {
  */
 export const signedUpOrgIds: string[] = [];
 
+// better-auth's production rate limit allows 3 sign-ups per 10 s per client. The dev server the suite normally
+// runs against is not in production mode and has no limit; the self-hosting stack (scripts/docker-e2e.sh) is, and
+// has. With E2E_SIGNUP_GAP_MS set, sign-ups are spaced at least that far apart ACROSS spec files (the last one is
+// kept in a file, because each spec file gets its own module instance), and a sign-up the limiter still refuses
+// is retried once the window has passed. Unset (0), nothing waits and nothing is retried.
+const SIGNUP_STAMP = join(tmpdir(), 'webadf-e2e-last-signup');
+export async function paceSignUp(gapMs = Number(process.env.E2E_SIGNUP_GAP_MS ?? 0)) {
+  if (!(gapMs > 0)) return;
+  let last = 0;
+  try { last = Number(readFileSync(SIGNUP_STAMP, 'utf8')) || 0; } catch { /* first sign-up of the run */ }
+  const wait = last + gapMs - Date.now();
+  if (wait > 0) await new Promise((r) => setTimeout(r, wait));
+  writeFileSync(SIGNUP_STAMP, String(Date.now()));
+}
+
 export async function signUpFresh(page: Page) {
+  await paceSignUp();
   const email = `t-${Date.now()}-${Math.floor(Math.random() * 1e6)}@example.test`;
   const password = 'correct-horse-battery-staple';
   const inviteCode = await mintInviteCode();
@@ -86,6 +103,13 @@ export async function signUpFresh(page: Page) {
   await page.getByLabel('Password').fill(password);
   await page.getByLabel('Invite code').fill(inviteCode);
   await page.getByRole('button', { name: 'Sign up' }).click();
+  if (Number(process.env.E2E_SIGNUP_GAP_MS ?? 0) > 0) {
+    const refused = page.getByText('Too many requests');
+    if (await refused.waitFor({ timeout: 4_000 }).then(() => true, () => false)) {
+      await paceSignUp(10_500);
+      await page.getByRole('button', { name: 'Sign up' }).click();
+    }
+  }
   await expect(page).toHaveURL(/\/library/, { timeout: 15_000 });
 
   const orgId = await page.getByTestId('active-org').textContent();

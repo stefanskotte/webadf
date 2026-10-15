@@ -19,6 +19,8 @@ const nextConfig: NextConfig = {
     WEBADF_BUILT_AT: new Date().toISOString(),
     WEBADF_NEXT_VERSION,
   },
+  // Self-hosting P2: the Docker build sets WEBADF_STANDALONE=1; Vercel's build never does.
+  ...(process.env.WEBADF_STANDALONE === '1' ? { output: 'standalone' as const } : {}),
   // PATCH /api/devices/[id]/display validates a layout with the board's own C
   // validator, public/display.wasm, read from disk at runtime. A server
   // function bundle does not carry public/ (that is served by the CDN), so

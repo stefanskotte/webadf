@@ -1,0 +1,6 @@
+# Test-only override for scripts/docker-e2e.sh: publishes the stack's database on loopback so the e2e helpers
+# (which write fixtures straight to the database) can reach it. Never use this on a real install.
+services:
+  db:
+    ports:
+      - "127.0.0.1:${WEBADF_E2E_DB_PORT:-55435}:5432"
