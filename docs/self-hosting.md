@@ -131,8 +131,17 @@ sudo cp -a data /somewhere/safe/webadf-data-$(date +%F)
 docker compose up -d
 ```
 
-Restore by stopping the stack and putting the folder back with `sudo cp -a` (same paths, same owners; do not
-`chown` it), then `docker compose up -d`.
+Restore (the stack must be stopped; `data` here is your data folder and `/path/to/webadf-data-DATE` the copy):
+
+```bash
+docker compose down
+sudo mv data data.broken-$(date +%F)          # keep it until the restore is confirmed, do not rm -rf
+sudo cp -a /path/to/webadf-data-DATE data     # data/ must not exist now, or cp copies INTO it
+docker compose up -d
+```
+
+`data/postgres` must sit directly under `data/`. Same paths and owners: do not `chown` it. Once the site works,
+delete `data.broken-*`.
 
 **A database dump** (the files in `backups/`, or one you take yourself). Take one:
 
