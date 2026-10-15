@@ -19,7 +19,7 @@ typedef struct {
     uint32_t clash;               // pnet_sort_t.clash
     uint32_t amiga_ip, board_ip;  // as last seen by core1 (host order; 0 = unknown)
     uint32_t a2b, b2a;            // Phase 4: frames handed across locally, Amiga -> board / board -> Amiga
-    uint32_t local_drops;         // ...lost on the way (no pbuf, lwIP refused it, the RX ring full)
+    uint32_t local_drops;         // ...lost on the way (over PNET_LOCAL_A2B_MAX or no heap; a full RX ring is rx_drops)
 } pnet_bridge_stats_t;
 
 void pnet_bridge_init(void);      // core0, before core1 launches: the rings over PSRAM

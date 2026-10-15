@@ -18,8 +18,9 @@
 // LOCAL (Phase 4). The board and the Amiga share one MAC, so a frame between them never comes back from the
 // radio. The worker hands a frame from the Amiga for the board's address (pnet_sort_a2b_local) to lwIP's own input
 // instead of the radio; a hook on the station netif's linkoutput puts a frame from the board for the Amiga's
-// address (pnet_sort_b2a_local) into the Amiga's RX ring instead of the radio. Both run in the network context,
-// the lwIP lock held, so the RX ring keeps one producer context. lwIP may call linkoutput from inside the input
+// address (pnet_sort_b2a_local) into the Amiga's RX ring instead of the radio. Both run on core1 with the lwIP lock
+// held -- the worker, and lwIP's own output from core1's code (the poll's TLS, timers) -- so the RX ring keeps one
+// producer context. lwIP may call linkoutput from inside the input
 // (an ARP or ICMP answer): pnet_input commits its own copy before calling lwIP, so the ring is never mid-write.
 #include "pnet_bridge.h"
 #include "pnet_frame.h"        // PNET_MAX_FRAMES
@@ -86,9 +87,14 @@ static err_t pnet_input(struct pbuf *p, struct netif *nif) {
     return ERR_OK;
 }
 
-// Phase 4: a frame from the Amiga for the board, into lwIP's own input as if the radio had received it.
+// Phase 4: a frame from the Amiga for the board, into lwIP's own input as if the radio had received it. From the
+// lwIP heap (PBUF_RAM), never PBUF_POOL: the pool is the long poll's TLS receive window (lwipopts.h), and IPv4
+// reassembly could pin pool buffers for seconds (review I1). Capped at PNET_LOCAL_A2B_MAX: ARP, a ping, TCP SYNs and
+// ACKs -- what the board needs from the Amiga today. Larger frames are dropped and counted; raise the cap when a
+// board-side service has to take bulk data from the Amiga.
+#define PNET_LOCAL_A2B_MAX 256u
 static void pnet_to_board(struct netif *nif, const uint8_t *f, uint16_t len) {
-    struct pbuf *p = s_next ? pbuf_alloc(PBUF_RAW, len, PBUF_POOL) : NULL;
+    struct pbuf *p = s_next && len <= PNET_LOCAL_A2B_MAX ? pbuf_alloc(PBUF_RAW, len, PBUF_RAM) : NULL;
     if (!p) { s_local_drops++; return; }
     pbuf_take(p, f, len);
     if (s_next(p, nif) != ERR_OK) { pbuf_free(p); s_local_drops++; return; }
@@ -102,8 +108,9 @@ static err_t pnet_linkoutput(struct netif *nif, struct pbuf *p) {
         uint8_t head[64];                                // ARP (42) and an IPv4 header (34+) fit
         const uint16_t n = pbuf_copy_partial(p, head, sizeof head, 0);
         if (pnet_sort_b2a_local(&s_sort, head, n, board_ip_of(nif))) {
-            uint8_t *d = p->tot_len <= PNET_RING_MTU ? pnet_ring_claim(&g_pnet_rx) : NULL;
-            if (!d) { s_local_drops++; return ERR_OK; }  // as a full radio queue: lost, counted
+            if (p->tot_len > PNET_RING_MTU) { s_local_drops++; return ERR_OK; }
+            uint8_t *d = pnet_ring_claim(&g_pnet_rx);
+            if (!d) return ERR_OK;                       // ring full: lost, counted by the ring (rx drops)
             pbuf_copy_partial(p, d, p->tot_len, 0);
             pnet_ring_commit(&g_pnet_rx, p->tot_len);
             s_b2a++;
