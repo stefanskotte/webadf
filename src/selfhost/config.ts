@@ -10,7 +10,11 @@ export function resolveConfig(env: Record<string, string | undefined>): Selfhost
     throw new ConfigError(`WEBADF_HTTPS_PORT must be a port number (1-65535), got "${portRaw}"`);
   }
   const httpsPort = Number(portRaw);
-  const domain = env.WEBADF_DOMAIN?.trim() || null;
+  const rawDomain = env.WEBADF_DOMAIN?.trim() ?? '';
+  const domain = rawDomain ? rawDomain.toLowerCase().replace(/\.$/, '') : null;
+  if (domain && !/^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$/.test(domain)) {
+    throw new ConfigError(`WEBADF_DOMAIN must be a bare DNS name like amiga.example.org (no https://, port or path), got "${rawDomain}"`);
+  }
   const rawUrl = env.WEBADF_URL?.trim() || (domain ? `https://${domain}` : '');
   if (!rawUrl) throw new ConfigError('Set WEBADF_URL in .env to the address you open webadf at, e.g. https://192.168.1.10 (or set WEBADF_DOMAIN to a public DNS name)');
   let u: URL;
@@ -22,6 +26,10 @@ export function resolveConfig(env: Record<string, string | undefined>): Selfhost
   if (domain) {
     if (u.origin !== `https://${domain}`) throw new ConfigError(`WEBADF_URL and WEBADF_DOMAIN disagree ("${u.origin}" vs "https://${domain}") -- set only WEBADF_DOMAIN`);
     if (httpsPort !== 443) throw new ConfigError('WEBADF_DOMAIN needs WEBADF_HTTPS_PORT=443: Let\'s Encrypt checks the domain on port 443');
+  }
+  const urlPort = Number(u.port || 443);
+  if (urlPort !== httpsPort) {
+    throw new ConfigError(`WEBADF_URL says port ${urlPort} but WEBADF_HTTPS_PORT is ${httpsPort} -- make them the same (the port people type is the port Caddy publishes)`);
   }
   const adminRaw = env.WEBADF_ADMIN_EMAIL?.trim();
   if (!adminRaw) throw new ConfigError('Set WEBADF_ADMIN_EMAIL in .env (it becomes the first admin)');

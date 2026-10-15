@@ -1,6 +1,6 @@
 import { randomBytes } from 'node:crypto';
 import { mkdirSync, writeFileSync, readFileSync, existsSync, chownSync } from 'node:fs';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 
 /** Self-hosting P2 (spec D4): generated once, never typed, never regenerated. */
 export const SECRET_NAMES = ['better_auth_secret', 'cron_secret', 'pg_password'] as const;
@@ -8,7 +8,8 @@ export type SecretName = typeof SECRET_NAMES[number];
 export class SecretError extends Error {}
 
 export function ensureSecrets(dir: string, owner?: { uid: number; gid: number }): SecretName[] {
-  mkdirSync(dir, { recursive: true, mode: 0o700 });
+  mkdirSync(dirname(dir), { recursive: true });
+  if (!existsSync(dir)) mkdirSync(dir, { mode: 0o700 });
   if (owner) chownSync(dir, owner.uid, owner.gid);
   const created: SecretName[] = [];
   for (const name of SECRET_NAMES) {

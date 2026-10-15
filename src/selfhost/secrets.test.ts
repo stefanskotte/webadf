@@ -40,3 +40,12 @@ describe('secrets', () => {
     expect(() => readSecrets(fresh())).toThrow(/secrets\/better_auth_secret is missing -- run docker compose up -d/);
   });
 });
+
+describe('secrets parent directories (fix round 1, I3)', () => {
+  it('creates missing parents with the default mode, and the secrets folder itself at 0700', () => {
+    const base = mkdtempSync(join(tmpdir(), 'p-'));
+    ensureSecrets(join(base, 'data', 'secrets'));
+    expect(statSync(join(base, 'data')).mode & 0o777).not.toBe(0o700);
+    expect(statSync(join(base, 'data', 'secrets')).mode & 0o777).toBe(0o700);
+  });
+});
