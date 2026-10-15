@@ -1,0 +1,15 @@
+.git
+**/node_modules
+.next
+**/*.tsbuildinfo
+.env*
+!.env.example
+data
+adf-archive
+docs
+wifi-floppy
+.superpowers
+.claude
+playwright-report
+test-results
+e2e

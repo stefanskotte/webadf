@@ -1,0 +1,66 @@
+# webadf, self-hosted. Copy this file and .env.example (as .env), set two values, `docker compose up -d`.
+# Upgrades: `docker compose pull && docker compose up -d`. Docs: docs/self-hosting.md
+name: webadf
+
+x-app: &app
+  image: ghcr.io/stefanskotte/webadf:${WEBADF_IMAGE_TAG:-latest}
+  env_file: .env
+  volumes:
+    - ${WEBADF_DATA_DIR:-./data}:/data
+  restart: unless-stopped
+
+services:
+  setup:
+    <<: *app
+    command: ["setup"]
+    user: "0:0"
+    restart: "no"
+
+  db:
+    image: postgres:18
+    environment:
+      POSTGRES_USER: webadf
+      POSTGRES_DB: webadf
+      POSTGRES_PASSWORD_FILE: /run/secrets-dir/pg_password
+    volumes:
+      - ${WEBADF_DATA_DIR:-./data}/postgres:/var/lib/postgresql
+      - ${WEBADF_DATA_DIR:-./data}/secrets:/run/secrets-dir:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U webadf -d webadf"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+    depends_on:
+      setup: { condition: service_completed_successfully }
+    restart: unless-stopped
+
+  app:
+    <<: *app
+    command: ["start"]
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000/api/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+      start_period: 60s
+    depends_on:
+      setup: { condition: service_completed_successfully }
+      db: { condition: service_healthy }
+
+  scheduler:
+    <<: *app
+    command: ["scheduler"]
+    depends_on:
+      app: { condition: service_healthy }
+
+  caddy:
+    image: caddy:2
+    command: ["caddy", "run", "--config", "/data/Caddyfile", "--adapter", "caddyfile"]
+    ports:
+      - "${WEBADF_HTTPS_PORT:-443}:443"
+    volumes:
+      - ${WEBADF_DATA_DIR:-./data}/caddy:/data
+    depends_on:
+      setup: { condition: service_completed_successfully }
+      app: { condition: service_healthy }
+    restart: unless-stopped

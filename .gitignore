@@ -16,8 +16,10 @@ node_modules/
 .env
 .env.local
 .env*
+!.env.example
 .vercel
 dist/
+/docker/dist/
 build/
 # Firmware side builds: the DF1-default-on TEST image, the bus-sniffer image, and the
 # PaulaNET side builds (the echo TEST build, and earlier phases' build directories).
