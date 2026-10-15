@@ -3,6 +3,7 @@ import type { FileHandle } from 'node:fs/promises';
 import { dirname, join, resolve, sep } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { assertKey, BlobExistsError, type BlobBackend } from './backend';
+import { signUpload } from './upload-sig';
 
 const CHUNK = 64 * 1024;
 
@@ -177,9 +178,9 @@ export function localBackend(dir: string): BlobBackend {
       }
     },
 
-    async uploadUrl(key) {
+    async uploadUrl(key, { maxBytes, ttlMs }) {
       assertKey(key);
-      throw new Error('local uploads arrive with the signed route (Task 5)');
+      return signUpload(key, maxBytes, ttlMs);
     },
   };
 }
