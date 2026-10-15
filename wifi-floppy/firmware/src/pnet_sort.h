@@ -51,6 +51,14 @@ pnet_tx_t pnet_sort_tx(pnet_sort_t *s, const uint8_t *f, size_t len, const uint8
  * not the radio. False whenever an address is unknown (0), or the Amiga's would be the board's. */
 bool pnet_sort_a2b_local(const uint8_t *f, size_t len, uint32_t board_ip);
 bool pnet_sort_b2a_local(const pnet_sort_t *s, const uint8_t *f, size_t len, uint32_t board_ip);
+/* The board's LOCAL MAC: the shared MAC with the locally-administered bit (0x02 of the first byte) flipped. A BSD
+ * stack (AmiTCP) ignores any ARP whose sender is its own MAC (bench 2026-10-15: the board's IP stayed "incomplete"),
+ * so on the local path the board shows the Amiga this MAC instead. to_amiga: a board frame for the Amiga -- its
+ * Ethernet source and ARP sender, when they are the shared MAC, become the local MAC. to_board: an Amiga frame for
+ * the board -- its Ethernet destination and ARP target, when they are the local MAC, become the shared MAC again. */
+void pnet_local_mac(const uint8_t mac[6], uint8_t out[6]);
+void pnet_local_to_amiga(uint8_t *f, size_t len, const uint8_t mac[6]);
+void pnet_local_to_board(uint8_t *f, size_t len, const uint8_t mac[6]);
 /* Appends the board's DHCP client-id (option 61, type 0, "wf" + MAC) at opts[used] if it fits in
  * cap; returns the new length, or `used` unchanged when it does not. */
 size_t pnet_dhcp_client_id(uint8_t *opts, size_t used, size_t cap, const uint8_t mac[6]);
