@@ -6,7 +6,7 @@ copy.
 
 ## 1. Requirements
 
-- Docker Engine with Compose v2.17 or newer (`docker compose version`). Docker Desktop works on macOS and Windows.
+- Docker Engine with a current Compose v2 (`docker compose version`; the old `docker-compose` v1 is not supported). Docker Desktop works on macOS and Windows.
 - A 64-bit Intel/AMD (amd64) or ARM (arm64) host.
 - At least 1 GB free on the disk that holds the data folder (the app refuses to start below that, and warns below 5 GB).
   A disk image is 880 KB; history and a big library want more.
@@ -121,28 +121,41 @@ webadf: migrations: applied 0038_device_server
 
 ## 6. Backup and restore
 
-**Whole install** (simplest, and it includes the secrets): stop the stack, copy the whole data folder, start it.
+**Whole install** (simplest, and it includes the secrets): stop the stack first, so the database files are consistent,
+then copy the whole data folder. Use `sudo`: on Linux `postgres/` belongs to the database user (mode 0700) and
+`secrets/` is mode 0600, so a normal user cannot read them.
 
 ```bash
 docker compose down
-cp -a data /somewhere/safe/webadf-data-$(date +%F)
+sudo cp -a data /somewhere/safe/webadf-data-$(date +%F)
 docker compose up -d
 ```
 
-Restore by putting the folder back (same paths, same owner) and running `docker compose up -d`.
+Restore by stopping the stack and putting the folder back with `sudo cp -a` (same paths, same owners; do not
+`chown` it), then `docker compose up -d`.
 
-**A database dump** (the files in `backups/`, or one you take yourself):
+**A database dump** (the files in `backups/`, or one you take yourself). Take one:
 
 ```bash
-docker compose exec -T db pg_dump -U webadf -d webadf --format=custom > webadf.dump   # take one
+docker compose exec -T db pg_dump -U webadf -d webadf --format=custom > webadf.dump
+```
+
+Restore one. Stop the writers first, restore, start again:
+
+```bash
 docker compose stop app scheduler
-docker compose exec -T db pg_restore -U webadf -d webadf --clean < data/backups/<file>.dump
+docker compose exec -T db pg_restore -U webadf -d webadf --clean --if-exists --single-transaction < webadf.dump
 docker compose up -d
 ```
 
-A dump holds the database only. Disk images live in `blobs/`, so copy that folder too. Blobs the database no
-longer references are deleted by the weekly clean-up (below); restoring an old dump next to a newer `blobs/` is safe,
-but restoring a new dump next to an old `blobs/` loses the files in between.
+The files in `data/backups/` are mode 0600 and owned by uid 1000, so from the host read them with sudo:
+`sudo cat data/backups/<file>.dump | docker compose exec -T db pg_restore -U webadf -d webadf --clean --if-exists --single-transaction`.
+
+A good restore prints nothing and exits 0. `--clean --if-exists` drops what is there and recreates it;
+`--single-transaction` means a failure changes nothing. A dump holds the database only; disk images live in
+`blobs/`, so copy that folder too. **Restoring an older dump next to a newer `blobs/`** is safe (extra files are
+cleaned up by the weekly clean-up), but **restoring a newer dump next to an older `blobs/`** leaves disks whose
+files are missing.
 
 **Weekly clean-up.** A scheduler container runs the jobs Vercel cron runs for our own deployment (library scan,
 Demozoo, blob clean-up). It only runs while the stack is up: a slot missed while the host was off runs at the next
@@ -154,11 +167,16 @@ references; set `BLOB_GC_DELETE=0` in `.env` to make it only report them.
 Never automatic. The stack runs Postgres 18. When a release moves to a newer major, `setup` refuses to start on the
 old data and says so (section 8). To move:
 
-1. With the **old** image still in place: `docker compose exec -T db pg_dump -U webadf -d webadf --format=custom > upgrade.dump`.
-2. `docker compose down`, then move the old cluster aside: `mv data/postgres data/postgres.old`.
-3. Pull the new release (`docker compose pull`) and `docker compose up -d db`: it starts an empty cluster (the
-   password is the one in `secrets/pg_password`).
-4. `docker compose exec -T db pg_restore -U webadf -d webadf < upgrade.dump`, then `docker compose up -d`.
+1. With the **old** stack still up and its `compose.yaml` in place, stop the writers and dump:
+   `docker compose stop app scheduler`, then
+   `docker compose exec -T db pg_dump -U webadf -d webadf --format=custom > upgrade.dump`.
+2. `docker compose down`, then move the old cluster aside: `sudo mv data/postgres data/postgres.old`.
+3. Download the new release's `compose.yaml` over the old one (the Postgres version is pinned in that file;
+   `docker compose pull` only refreshes the images the current file names), then
+   `docker compose pull && docker compose up -d db`. It starts an empty Postgres 18 and `setup` no longer refuses.
+   The password is still the one in `secrets/pg_password`.
+4. `docker compose exec -T db pg_restore -U webadf -d webadf --clean --if-exists --single-transaction < upgrade.dump`
+   (prints nothing, exits 0), then `docker compose up -d`.
 5. Keep `data/postgres.old` until you are satisfied.
 
 ## 8. Troubleshooting

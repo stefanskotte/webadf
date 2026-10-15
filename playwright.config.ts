@@ -69,7 +69,9 @@ export default defineConfig({
       use: { viewport: { width: 390, height: 844 }, hasTouch: true, isMobile: true },
     },
   ],
-  webServer: {
+  // BASE_URL set = the tests target a server that already exists (scripts/docker-e2e.sh's compose stack), so no
+  // dev server is started: a failed probe must never fall through to `pnpm dev` with the local .env.local.
+  webServer: process.env.BASE_URL ? undefined : {
     command: `pnpm dev --port ${PORT}`,
     url: BASE_URL,
     // The dev server has to agree with the tests about what this origin is:
@@ -79,8 +81,6 @@ export default defineConfig({
     // server this config spawns, and nothing outside the test run is affected.
     env: { PORT: String(PORT), BETTER_AUTH_URL: BASE_URL },
     reuseExistingServer: true,
-    // The readiness probe of the self-hosting run (scripts/docker-e2e.sh) meets the same internal-CA certificate.
-    ignoreHTTPSErrors: process.env.E2E_IGNORE_HTTPS === '1',
     // Raised from the brief's 120_000: Turbopack's first cold compile of the
     // auth/library routes plus the Neon connection warmup can exceed two
     // minutes on a cold cache. This does not loosen any assertion — it only
