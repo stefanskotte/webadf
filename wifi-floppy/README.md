@@ -221,8 +221,7 @@ wf reboot
   answers "already the default".
 - `tls` changes apply at the next boot (`wf reboot`). They need a server set first, so for a self-signed server run
   `set`, then `tls noverify`, then `wf reboot`, then pair.
-- `noverify` also skips the host-name check. The boot log and every new TLS connection log it, and the device
-  card shows "Custom server · certificate not checked"; with `verify` it shows "Custom server".
+- `noverify` also skips the host-name check. The board logs it at boot and on every new TLS connection.
 - Firmware updates are still checked against the signing key built into the board, so a custom server can only
   offer builds signed by us. Build your own firmware and flash it over USB if you need something else.
 

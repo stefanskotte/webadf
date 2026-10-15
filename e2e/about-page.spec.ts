@@ -1,4 +1,10 @@
 import { test, expect } from '@playwright/test';
+import { randomBytes, randomUUID } from 'node:crypto';
+import { eq } from 'drizzle-orm';
+import { getDb } from '@/db';
+import { disks } from '@/db/schema/catalog';
+import { diskVersions } from '@/db/schema/disk-history';
+import { libraryUsage } from '@/lib/about/library-usage';
 import { signUpFresh, createAdf } from './helpers';
 
 test('the (i) opens About: build, hosting, platform, firmware and an empty library', async ({ page }) => {
@@ -32,4 +38,36 @@ test('stored bytes are a sum over distinct disk images, not 0 or NaN', async ({ 
   const exact = Number(await page.getByTestId('about-library-bytes').getAttribute('data-bytes'));
   expect(exact).toBeGreaterThanOrEqual(901_120);
   expect(exact).toBeLessThanOrEqual(2 * 901_120);
+});
+
+test('stored bytes count each distinct image once, including the full image a history version keeps', async ({ page }) => {
+  const { orgId } = await signUpFresh(page);
+  await createAdf(page, 'FFS', 'dd');
+  await expect(page.getByTestId('game-card')).toHaveCount(1);
+  await createAdf(page, 'FFS', 'hd');
+  await expect(page.getByTestId('game-card')).toHaveCount(2);
+  const db = getDb();
+  const rows = await db.select().from(disks).where(eq(disks.orgId, orgId));
+  const dd = rows.find((r) => r.sizeBytes === 901_120)!;
+  const hd = rows.find((r) => r.sizeBytes === 1_802_240)!;
+
+  // A saved version whose FULL image is named only by image_sha256 (its own
+  // blob is a delta, which has no blobs row) -- as recordVersion writes an
+  // Amiga save. Then the HD disk goes, so that image is reachable ONLY
+  // through history: the weekly blob GC keeps it, and so must the count.
+  await db.insert(diskVersions).values({
+    id: randomUUID(), diskId: dd.id, orgId, seq: 999, kind: 'delta',
+    blobSha256: randomBytes(32).toString('hex'), imageSha256: hd.sha256,
+    source: 'amiga', sectorCount: 1,
+  });
+  await db.delete(disks).where(eq(disks.id, hd.id));
+  expect((await libraryUsage(orgId)).bytes).toBe(901_120 + 1_802_240);
+
+  // A second disk holding the very same image adds a disk, not bytes.
+  await db.insert(disks).values({
+    id: randomUUID(), gameId: dd.gameId, orgId, diskNo: 2, sha256: dd.sha256, sizeBytes: dd.sizeBytes,
+  });
+  const usage = await libraryUsage(orgId);
+  expect(usage.disks).toBe(2);
+  expect(usage.bytes).toBe(901_120 + 1_802_240);
 });
