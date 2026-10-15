@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { drizzle } from 'drizzle-orm/neon-http';
+import { drizzle } from 'drizzle-orm/node-postgres';
 import { selectableDevicesQuery, E2E_TEST_EMAIL } from './devices';
 
 // No database in unit tests: drizzle.mock() renders the SQL the script would

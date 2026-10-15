@@ -1,5 +1,5 @@
 import { afterEach, describe, it, expect } from 'vitest';
-import { drizzle } from 'drizzle-orm/neon-http';
+import { drizzle } from 'drizzle-orm/node-postgres';
 import { benchOrgIds, listReleasesQuery, latestReleaseQuery } from './firmware-releases';
 
 // HANDOFF backlog "e2e firmware releases show to real boards during a run": the specs seed `0.0.0+e2e*`
