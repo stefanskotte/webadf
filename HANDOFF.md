@@ -4918,7 +4918,7 @@ Demozoo API (the bulk export makes per-lookup load on a non-profit unnecessary).
   allowlist checks only the first URL (the raster content-type allowlist and `nosniff` still apply).
 - **Cron drift:** the daily 01:30 cron against a 7-day gate can drift a refetch to 8 days.
 
-### 3bm. fw 1.12.1: Network's driver disk as DF1's pick (Next stays instant in Network mode) + PaulaNET local path (Phase 4 step 1) -- server merged; firmware TEST build and A500 bench owed
+### 3bm. fw 1.12.1: Network's driver disk as DF1's pick (Next stays instant in Network mode) + PaulaNET local path (Phase 4 step 1) -- merged; TEST seq 82 installed on the bench board; A500 bench owed
 
 **Status (2026-10-15).** Operator asked (2026-10-15): hide TEST builds from other orgs (done, see the 3bk note,
 FIRMWARE_BENCH_ORGS), fix "DF0's Next preload is lost in Network mode" and the "inserted the next disk" log wording,
@@ -4939,12 +4939,20 @@ for a netPick board through Network and Off. Review (opus): no Critical/Importan
 measure PaulaNET throughput/ping during a preload. **Rollout:** server first (done); a server rollback below
 03e9c86 would leave 1.12.1 boards in Network without a driver disk.
 
-**Phase 4 step 1, the local path (branch feat/pnet-local, stacked on 1.12.1, review running).** Desk study
+**Phase 4 step 1, the local path (merged with feat/pnet-local; review: no Critical/Important).** Desk study
 (2026-10-15, scratchpad phase4-spike-desk.md, summarised): the board and the Amiga share one MAC, so a frame between
 them went out over the radio and never came back -- no local reachability either way. Fix: `pnet_sort_a2b_local`
 / `pnet_sort_b2a_local` (pure, host-tested) pick out ARP-for / IPv4-to the other side's address; the send worker hands
 an Amiga frame for the board to lwIP's input instead of the radio, and a linkoutput hook puts a board frame for the
-Amiga into its RX ring. Log: `pnet: l2 local a2b N b2a N drop N`.
+Amiga into its RX ring. Log: `pnet: l2 local a2b N b2a N drop N`. Review fixes: Amiga->board frames come from the
+lwIP heap (PBUF_RAM), never the TLS pool, and only up to 256 bytes (ARP, ping, TCP SYN/ACK; raise
+`PNET_LOCAL_A2B_MAX` for bulk Amiga->board data later); a full RX ring is counted once (rx drops). Open minors: the
+Amiga's ARP probe for the board's IP gets no local answer (target 0.0.0.0); the board's broadcasts never reach the
+Amiga; the sorter's Amiga IP survives Network Off/On.
+
+**TEST build:** `1.12.1+g8158103` = registry **seq 82** (`--no-github`), installed with the Amiga off and confirmed
+("update to 1.12.1+g8158103 confirmed (sequence 82)"); heap low-water 28,672 (as 1.12.0). After the bench: promote seq
+82 (edit its notes) and `pnpm firmware:publish --github-only` from `.claude/worktrees/pnetlocal` (its build is seq 82).
 
 **Bench owed (A500, one session, after a TEST 1.12.1 from feat/pnet-local is installed with the Amiga off):**
 1. Network, DF0 empty (TDH0 boot): DF1 = PaulaNET driver disk, read-only; AddNetInterface eth0 comes up.
