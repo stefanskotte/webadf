@@ -4937,11 +4937,11 @@ versions visible to any signed-in user (spec-approved).
 
 **Next (operator 2026-10-15):** docker-compose self-hosting -- persistent Postgres + blob, `pull && up` upgrades with
 automatic migrations, start-up prerequisite checks with fixable messages; test box openmediavault 172.16.10.11. Needs a
-local blob backend first (storage is Vercel Blob only). 8 MB flash: fits (image 636 KB) but needs its own build:
+local blob backend first (storage is Vercel Blob only). 8 MB flash (PARKED -- operator: it was just a question): fits (image 636 KB) but needs its own build:
 partitions.json (A+B 8224K > 8192K), PICO_FLASH_SIZE_BYTES-relative settings sectors, `FLASH_BYTES` in
 src/lib/firmware-github-release.ts and the install-UF2 guards; existing 16 MB boards must stay on their layout.
 
-### 3bn. fw 1.13.0: board server override for self-hosters -- merged d51b011; OLED marker dropped (TEST seq 85, 1.13.0+g290990b); A500 bench 9/9 passed 2026-10-15; not yet released
+### 3bn. fw 1.13.0: board server override for self-hosters -- RELEASED as fw 1.13.0 (seq 85, 1.13.0+g290990b, fw-1.13.0) 2026-10-15; A500 bench 9/9 passed; OLED marker dropped
 
 **Bench (2026-10-15, seq 84 then 85; Mac server `next dev --experimental-https` on :3200, self-signed cert from the
 override worktree).** 1 `wf server show` -> default, verify. 2 with DF1 holding the driver disk: "eject the disk first --
