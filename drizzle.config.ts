@@ -6,7 +6,7 @@ export default {
   dialect: 'postgresql',
   dbCredentials: { url: process.env.DATABASE_URL! },
   // drizzle-kit only introspects/diffs the `public` schema by default for
-  // `push`/`generate` — without this, tables defined via pgSchema('auth')
-  // (src/db/schema/auth.ts) are silently skipped by `db:push`.
+  // `generate` — without this, tables defined via pgSchema('auth')
+  // (src/db/schema/auth.ts) are silently skipped.
   schemaFilter: ['public', 'auth'],
 } satisfies Config;
