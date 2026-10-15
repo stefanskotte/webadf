@@ -258,8 +258,7 @@ static void draw_wifi(uint8_t *fb, int x, int y, int bars) {
         for (int i = 0; i < 8; i++) px(fb, x + 1 + i, y + i);
 }
 
-const char *disp_status_word(disp_status_t s, bool insecure) {
-    if (insecure && (s == DS_READY || s == DS_LOADED)) return "INSECURE";
+const char *disp_status_word(disp_status_t s) {
     switch (s) {
         case DS_BOOT:     return "BOOT";
         case DS_PORTAL:   return "SETUP";
@@ -396,7 +395,7 @@ void display_render(const display_state_t *s, const layout_t *l, uint8_t fb[DISP
             case EL_LEMMING: draw_lemming(fb, x, y, s->tick); break;
             case EL_WRITE:   draw_write_state(fb, x, y, s->writable, s->sync); break;
             case EL_NFC:     draw_nfc(fb, x, y, s->nfc); break;
-            case EL_STATUS:  draw_text(fb, x, y, disp_status_word(s->status, s->insecure), x + bw / g_scale); break;
+            case EL_STATUS:  draw_text(fb, x, y, disp_status_word(s->status), x + bw / g_scale); break;
             case EL_TITLE: {
                 const int line = e->w / ADVANCE;            // characters per line, 1x units
                 char a[64], b[64];

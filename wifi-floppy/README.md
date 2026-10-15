@@ -221,8 +221,7 @@ wf reboot
   answers "already the default".
 - `tls` changes apply at the next boot (`wf reboot`). They need a server set first, so for a self-signed server run
   `set`, then `tls noverify`, then `wf reboot`, then pair.
-- `noverify` also skips the host-name check. The OLED shows INSECURE in place of READY/LOADED (a custom OLED layout
-  without the status element will not show it), and the boot log and every new TLS connection log it. The device
+- `noverify` also skips the host-name check. The boot log and every new TLS connection log it, and the device
   card shows "Custom server · certificate not checked"; with `verify` it shows "Custom server".
 - Firmware updates are still checked against the signing key built into the board, so a custom server can only
   offer builds signed by us. Build your own firmware and flash it over USB if you need something else.

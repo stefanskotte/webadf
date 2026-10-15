@@ -74,11 +74,6 @@ typedef struct {
      *  for "no radio". ARMED: a tag write waits for a tap (inverted). Last
      *  in the struct so every earlier offset is unchanged for display.wasm. */
     disp_nfc_t nfc;
-    /** The board talks to its server WITHOUT checking the certificate (wf
-     *  server tls noverify, 1.13.0): READY and LOADED read "INSECURE" instead,
-     *  so nobody forgets it is on. Last, for the same display.wasm reason as
-     *  nfc; false (the zero a state nobody filled in has) draws as before. */
-    bool insecure;
 } display_state_t;
 
 /** Compose `s` into a framebuffer by drawing each visible element of `l`, in
@@ -90,9 +85,8 @@ void display_render(const display_state_t *s, const layout_t *l, uint8_t fb[DISP
 /** READY, DOWNLOAD, VERIFY and LOADED: the states a custom layout draws. */
 bool display_state_is_running(disp_status_t st);
 
-/** The status element's word. `insecure` replaces the idle words (READY,
- *  LOADED) with "INSECURE"; transient states and ERROR are never hidden. */
-const char *disp_status_word(disp_status_t s, bool insecure);
+/** The status element's word. */
+const char *disp_status_word(disp_status_t s);
 
 /** The layout to draw `s` with: `custom` in a running state, otherwise
  *  layout_builtin(custom's panel) -- boot, portal, connecting and error

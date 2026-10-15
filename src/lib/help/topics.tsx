@@ -397,7 +397,6 @@ export const HELP_TOPICS = {
   },
   // Sources: spec 2026-10-15-board-server-override-design.md; commands in
   // wifi-floppy/firmware/src/serial_cmd.c, behaviour in main.c; card line in devices/page.tsx (fw 1.13.0+);
-  // OLED INSECURE marker in the status element of the display layouts.
   'own-server': {
     title: 'Your own server',
     short:
@@ -417,8 +416,7 @@ export const HELP_TOPICS = {
         <p>
           <strong>Self-signed certificate.</strong> For a home server with a self-signed certificate, also type{' '}
           <code>wf server tls noverify</code> and confirm with YES; the board then accepts any certificate, so use it
-          only on a network you trust. The setting applies at the next boot. The board&apos;s display shows INSECURE
-          while the check is off (except on a custom display layout without the status element).
+          only on a network you trust. The setting applies at the next boot.
         </p>
         <p>
           <strong>On the card.</strong> The board&apos;s card then says <em>Custom server</em>, and{' '}

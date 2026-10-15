@@ -4918,7 +4918,27 @@ Demozoo API (the bulk export makes per-lookup load on a non-profit unnecessary).
   allowlist checks only the first URL (the raster content-type allowlist and `nosniff` still apply).
 - **Cron drift:** the daily 01:30 cron against a 7-day gate can drift a refetch to 8 days.
 
-### 3bn. fw 1.13.0: board server override for self-hosters -- merged d51b011 (final review + fix wave done); TEST seq 84 published; bench owed
+### 3bn. fw 1.13.0: board server override for self-hosters -- merged d51b011; OLED marker dropped (TEST seq 85, 1.13.0+g290990b); A500 bench 9/9 passed 2026-10-15; not yet released
+
+**Bench (2026-10-15, seq 84 then 85; Mac server `next dev --experimental-https` on :3200, self-signed cert from the
+override worktree).** 1 `wf server show` -> default, verify. 2 with DF1 holding the driver disk: "eject the disk first --
+nothing changed". 3 `set https://172.16.10.91:3200` forgot pairing + Wi-Fi and rebooted into setup; `tls noverify` + YES,
+`wf reboot`; console answered in the portal. 4 paired against the Mac server (new device row). 5 log INSECURE at boot and
+on connect; card "Custom server · certificate not checked"; OLED showed INSECURE -> **operator ruling: drop the OLED
+marker** (whoever sets noverify knows it is their local server; the display is for disk state) -> spec D5 revised,
+commit 290990b, TEST seq 85; OLED now reads READY. 6 xsysinfo-0.12.0 fetched from the Mac server (verified, 455 KB/s)
+and booted on the A500 (PiKVM). 9 seq 85 OTA came THROUGH the custom server, signature-checked, confirmed; the override
+survived the update. 7 `tls verify` + reboot: boot line drops INSECURE, every handshake to the self-signed server
+refused. 8 `wf server clear` -> default, setup portal; re-paired to production, the new card shows no server line.
+An earlier fetch that stopped at 311 KB of 2 MB was the Mac server being killed by another chat, not the firmware.
+
+**Follow-ups found on the bench (not done):** (a) a refused certificate logs only `tls: closed during handshake (code
+-104, detail -15)` -- name the cause (mbedtls verify flags) so a self-hoster can tell. (b) /devices: the FIRST click on
+"Pair a device" after a page load creates no code (seen twice; the second click works). (c) The board now has three
+device rows in the operator's org (WifiFloppy1 and two "Device 28:cd:c1:19:6a:38"), left for the operator. (d) The
+main tree's `wifi-floppy/firmware/build` had `FIRMWARE_SEMVER=1.11.1` cached from an old -D build, so a build there
+came out 1.11.1; reconfigure with `-UFIRMWARE_SEMVER` (done once, before seq 85).
+
 
 **Update (2026-10-15).** Whole-branch review (opus): ready after fixes; fix wave da45738 + 8835235 (forget and PROVE the pairing gone before storing the server; stop the console after a reboot request; install UF2 guards and the web release check cover 6 top sectors; `set` to the default host = `clear`); re-review: all addressed. Pre-merge full vitest caught the `boards` help topic at 399 words -> new `own-server` topic (9c38fe3). Merged as **d51b011**; TEST `1.13.0+g8835235` = **seq 84** (`--no-github`), not yet installed. **Parked (Minor):** a token core1 saves during registration between core0's erase-check and the reboot could reach the new host once (tens of ms; closure: a flag checked inside token/config save, or a server tag beside the token -- also fixes M4 "set during an unbought OTA trial reverts"). Also open: INSECURE only in READY/LOADED; console has no echo; an IPv4 host is sent as SNI; case-sensitive "unchanged". **Operator 2026-10-15:** self-hosting keeps every feature (spec D8); follow-ups spec §9 (`pnpm firmware:import-github`, our signed releases into a self-hosted registry) and §10 (parity audit).
 
