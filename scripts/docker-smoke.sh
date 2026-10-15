@@ -49,7 +49,8 @@ psql() { dc exec -T db psql -U webadf -d webadf -tAc "$1"; }
 secrets_sum() { docker run --rm -v "$W/data/secrets:/s:ro" alpine sh -c 'cd /s && sha256sum better_auth_secret cron_secret pg_password'; }
 before=$(secrets_sum)
 psql "insert into invites (code, org_id, created_by_user_id, expires_at) values ('SMOKEMRK', 'smoke', 'smoke', now() + interval '1 day')" >/dev/null
-echo '# stale' >> "$W/data/caddy/Caddyfile"
+# Through a container: setup (root) owns data/caddy, so a non-root host user cannot append to it on Linux.
+docker run --rm -v "$W/data/caddy:/c" alpine sh -c "echo '# stale' >> /c/Caddyfile"
 dc up -d --force-recreate --wait || fail "stack did not come back after a recreate"
 [ "$(secrets_sum)" = "$before" ] || fail "secrets changed across a recreate"
 [ "$(psql "select count(*) from invites where code = 'SMOKEMRK'")" = 1 ] || fail "a row written before the recreate is gone"
