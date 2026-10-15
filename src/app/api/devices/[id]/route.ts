@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import { requireOrg } from '@/lib/session';
-import { renameDevice } from '@/lib/device-name';
+import { renameDevice } from '@/lib/device-rename';
 import { deleteDevice } from '@/lib/device-delete';
 
 export const maxDuration = 60;

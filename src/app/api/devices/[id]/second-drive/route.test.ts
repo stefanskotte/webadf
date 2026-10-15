@@ -5,8 +5,7 @@ vi.mock('@/lib/session', () => ({
 }));
 type Saved = { version: number } | 'not_found' | 'firmware_too_old' | 'df1_seen';
 const saveSecondDrive = vi.fn<(o: string, i: string, m: string, ov: boolean) => Promise<Saved>>();
-vi.mock('@/lib/second-drive', async (orig) => ({
-  ...(await orig<typeof import('@/lib/second-drive')>()),
+vi.mock('@/lib/second-drive-store', () => ({
   saveSecondDrive: (o: string, i: string, m: string, ov: boolean) => saveSecondDrive(o, i, m, ov),
 }));
 

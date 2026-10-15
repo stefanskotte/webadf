@@ -16,7 +16,7 @@ function chain(result: unknown) {
 const fakeDb = { select: () => chain([]), update: () => chain(updates.shift() ?? []) };
 vi.mock('@/db', () => ({ getDb: () => fakeDb }));
 
-const { saveSecondDrive } = await import('./second-drive');
+const { saveSecondDrive } = await import('./second-drive-store');
 const render = (v: unknown) => new PgDialect().sqlToQuery(v as SQL).sql;
 
 beforeEach(() => { updates = []; sets.length = 0; });

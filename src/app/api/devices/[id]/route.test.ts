@@ -5,7 +5,7 @@ vi.mock('@/lib/session', () => ({
 }));
 const deleteDevice = vi.fn<(o: string, i: string) => Promise<boolean>>();
 vi.mock('@/lib/device-delete', () => ({ deleteDevice: (o: string, i: string) => deleteDevice(o, i) }));
-vi.mock('@/lib/device-name', () => ({ renameDevice: vi.fn() }));
+vi.mock('@/lib/device-rename', () => ({ renameDevice: vi.fn() }));
 
 const req = () => new Request('http://test/api/devices/dev-1', { method: 'DELETE' });
 const ctx = (id: string) => ({ params: Promise.resolve({ id }) });
