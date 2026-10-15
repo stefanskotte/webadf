@@ -18,10 +18,10 @@ board talks to the compiled-in `webadf.vercel.app` on port 443 over TLS, verifie
 | D1 | Set **only over the USB serial port** (the cable already used for logs). Physical access is the trust boundary. Never from the Wi-Fi setup portal, the server, or NFC. |
 | D2 | Stored in **its own flash sector** (magic + CRC, the `config_store.c` pattern), apart from Wi-Fi credentials and the device token. Survives OTA updates; erased only by `wf server clear`. |
 | D3 | Fields: **host**, **port** (default 443), **TLS mode** `verify` (default: the compiled-in roots and the host name) or `noverify` (any certificate, self-signed included, and no host-name check -- for a home server). **Always TLS: there is no plain-HTTP mode** (operator, 2026-10-15). |
-| D4 | **Changing the server forgets the pairing** (operator, 2026-10-15). The device token belongs to the old server, so a change clears the token (Wi-Fi is kept) and the board opens its setup portal for a pairing code from the new server. `wf server clear` does the same in reverse. |
-| D5 | **A weakened setting is never silent.** `noverify` shows a fixed marker on the OLED's status line ("INSECURE"), is logged at every boot and every connect, and the status report carries `server: {custom, tls}` so the card shows "Custom server" and, for `noverify`, "Certificate not checked". A custom server with `verify` shows "Custom server" only. |
+| D4 | **Changing the server forgets the pairing** (operator, 2026-10-15). The device token belongs to the old server, so a change erases the whole config sector (`config_store_erase`: the token **and** the Wi-Fi settings) and the board opens its setup portal, which asks for Wi-Fi and a pairing code from the new server again. `wf server clear` does the same in reverse. Every change is refused while a disk is in DF0 or DF1. |
+| D5 | **A weakened setting is never silent.** `noverify` shows a fixed marker on the OLED's status line ("INSECURE"), is logged at every boot and every connect, and the status report carries `server: {custom, tls}` so the card shows "Custom server" and, for `noverify`, "certificate not checked". A custom server with `verify` shows "Custom server" only. The OLED marker is part of the status element: a custom OLED layout without a status element does not show it (the boot and connect log lines and the card still do). |
 | D6 | **Firmware updates stay ours.** The board still checks every update's signature against its compiled-in key, so a custom server can only offer builds signed by us; a self-hoster who builds their own firmware flashes it over USB. |
-| D7 | Applied at the **next boot**; `wf reboot` is offered. One code path at boot reads the override (or the defaults) into the transport and `dc_init` -- no live switching mid-session. |
+| D7 | `set` (to a different server) and `clear` erase the config and **reboot at once** into the setup portal. `tls` changes apply at the **next boot**; `wf reboot` is offered. One code path at boot reads the override (or the defaults) into the transport and `dc_init` -- no live switching mid-session. |
 
 ## 3. Serial commands
 
@@ -65,7 +65,7 @@ setting the server from the setup portal; a server list or fallback; mutual TLS;
   URLs, `http://` refused), the authmode per mode, `Host:` with a port.
 - Server: vitest for the status key; e2e for the card line (touched specs only).
 - Bench: point the board at a local HTTPS server with a self-signed certificate (e.g. `pnpm dev --experimental-https`
-  on the Mac, `noverify`), see INSECURE on the OLED and "Certificate not checked" on that server's card, pair, mount
+  on the Mac, `noverify`), see INSECURE on the OLED and "certificate not checked" on that server's card, pair, mount
   a disk; then `wf server clear` and re-pair to production.
 
 ## 8. Answered (operator, 2026-10-15)
