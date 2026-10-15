@@ -70,3 +70,14 @@ test('sign-up prefills the invite code from ?invite=', async ({ page }) => {
   await page.goto('/sign-up?invite=ABCD2345');
   await expect(page.getByLabel('Invite code')).toHaveValue('ABCD2345');
 });
+
+// A production build prerenders pages; a client page reading useSearchParams under a fallback-less Suspense
+// prerendered to nothing, so the HTML had no form until the JavaScript ran. The page reads searchParams on the
+// server now: the HTML itself carries the form and the invite code.
+test('the sign-up HTML carries the form with the invite code (no empty shell)', async ({ request }) => {
+  const res = await request.get('/sign-up?invite=ABCD2345');
+  expect(res.status()).toBe(200);
+  const html = await res.text();
+  expect(html).toContain('Create your library');
+  expect(html).toMatch(/<input[^>]*id="invite-code"[^>]*value="ABCD2345"|<input[^>]*value="ABCD2345"[^>]*id="invite-code"/);
+});

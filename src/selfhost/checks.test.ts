@@ -31,15 +31,24 @@ describe('checkWritable', () => {
 
 describe('checkPgData', () => {
   it('is ok for an empty folder (first start) and for an 18 cluster', () => {
-    expect(checkPgData([], false).level).toBe('ok');
-    expect(checkPgData(['18'], false).level).toBe('ok');
+    expect(checkPgData([]).level).toBe('ok');
+    expect(checkPgData(['18']).level).toBe('ok');
+    expect(checkPgData(['18', '17']).level).toBe('ok'); // an old major left beside a live 18 is never refused
   });
-  it('fails for another major version directory', () => {
-    const r = checkPgData(['17'], false);
+  it('fails for another major version directory, naming it', () => {
+    const r = checkPgData(['17']);
     expect(r.level).toBe('fail');
-    expect(r.message).toMatch(/data\/postgres holds a Postgres 17 cluster but the image is Postgres 18 -- see docs\/self-hosting\.md, "Postgres major upgrade"/);
+    expect(r.message).toMatch(/^data\/postgres holds a Postgres 17 cluster this image cannot use \(the image is Postgres 18\) -- see docs\/self-hosting\.md, "Postgres major upgrade"/);
   });
-  it('fails for a pre-18 layout (PG_VERSION directly in data/postgres/data)', () => {
-    expect(checkPgData(['data'], true).level).toBe('fail');
+  it('fails for a pre-18 layout (PG_VERSION in data/postgres/data)', () => {
+    expect(checkPgData(['data']).level).toBe('fail');
+  });
+  it('fails for a cluster mounted at the old path (PG_VERSION directly in data/postgres): anything non-empty without 18/', () => {
+    const r = checkPgData(['PG_VERSION', 'base', 'global', 'pg_wal']);
+    expect(r.level).toBe('fail');
+    expect(r.message).toMatch(/^data\/postgres holds a Postgres cluster this image cannot use \(no 18\/ folder; the image is Postgres 18\) -- see docs\/self-hosting\.md, "Postgres major upgrade"/);
+  });
+  it('ignores dot files (a .DS_Store from browsing the folder is not a cluster)', () => {
+    expect(checkPgData(['.DS_Store']).level).toBe('ok');
   });
 });

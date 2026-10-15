@@ -38,6 +38,11 @@ logs=$(dc logs app 2>&1)
 has "Sign up as the first admin (use smoke@example.org): https://localhost:$PORT/sign-up?invite=" "$logs" || fail "no first-admin line"
 has "migrations: applied" "$logs" || fail "first start applied no migrations"
 curl -skf "https://localhost:$PORT/api/health" | grep -q ok || fail "/api/health through caddy"
+# Another name for this host (SNI and Host other.test) still reaches the app, which logs once that it is not WEBADF_URL.
+curl -skf --resolve "other.test:$PORT:127.0.0.1" "https://other.test:$PORT/api/health" | grep -q ok || fail "a host other than WEBADF_URL did not reach the app"
+curl -sk -o /dev/null --resolve "other.test:$PORT:127.0.0.1" "https://other.test:$PORT/api/auth/get-session" || fail "/api/auth by another host name"
+has "requests arrive as https://other.test:$PORT but WEBADF_URL is https://localhost:$PORT" "$(dc logs app 2>&1)" || fail "no origin warning for another host name"
+echo "smoke: other host name OK"
 
 # Recreate every container (what `pull && up -d` does to a new image): secrets, data and the Caddyfile must survive.
 psql() { dc exec -T db psql -U webadf -d webadf -tAc "$1"; }
@@ -51,7 +56,8 @@ dc up -d --force-recreate --wait || fail "stack did not come back after a recrea
 ! grep -q '# stale' "$W/data/caddy/Caddyfile" || fail "setup did not re-render the Caddyfile"
 has "migrations: up to date" "$(dc logs app 2>&1)" || fail "the recreate was not a no-op"
 [ -d "$W/data/backups" ] || fail "data/backups was not created"
-[ -z "$(ls -A "$W/data/backups")" ] || fail "a backup was taken with nothing pending"
+[ -z "$(ls "$W/data/backups")" ] || fail "a backup was taken with nothing pending"
+[ -e "$W/data/backups/.last-start" ] || fail "no start marker (backups/.last-start) after a successful start"
 echo "smoke: first start + recreate OK"
 
 # Change WEBADF_URL to an IP address: `up -d` alone must bring Caddy onto the new site (it is not recreated;

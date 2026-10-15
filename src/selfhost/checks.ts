@@ -25,12 +25,15 @@ export function checkWritable(dir: string, label: string): CheckResult {
   }
 }
 
-/** entries = names in data/postgres; hasLegacyPgVersion = data/postgres/data/PG_VERSION exists (pre-18 image layout). */
-export function checkPgData(entries: string[], hasLegacyPgVersion: boolean): CheckResult {
-  const majors = entries.filter((e) => /^\d+$/.test(e) && e !== '18');
-  const found = majors[0] ?? (hasLegacyPgVersion ? 'pre-18' : null);
-  if (found && !entries.includes('18')) {
-    return { level: 'fail', message: `data/postgres holds a Postgres ${found} cluster but the image is Postgres 18 -- see docs/self-hosting.md, "Postgres major upgrade" (it is never upgraded automatically)` };
-  }
-  return ok();
+/**
+ * entries = names in data/postgres. The Postgres 18 image keeps its cluster in data/postgres/18/; anything else
+ * there (another major's folder, a pre-18 data/ folder, or a cluster mounted straight at data/postgres) is a
+ * cluster this image would not see, and starting would put an empty one beside it.
+ */
+export function checkPgData(entries: string[]): CheckResult {
+  const names = entries.filter((e) => !e.startsWith('.'));
+  if (names.length === 0 || names.includes('18')) return ok();
+  const major = names.find((e) => /^\d+$/.test(e));
+  const what = major ? `a Postgres ${major} cluster this image cannot use (the image is Postgres 18)` : 'a Postgres cluster this image cannot use (no 18/ folder; the image is Postgres 18)';
+  return { level: 'fail', message: `data/postgres holds ${what} -- see docs/self-hosting.md, "Postgres major upgrade" (it is never upgraded automatically)` };
 }

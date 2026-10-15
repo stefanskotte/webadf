@@ -1,9 +1,10 @@
-import { statfsSync, readdirSync, existsSync, mkdirSync, chownSync, writeFileSync } from 'node:fs';
+import { statfsSync, readdirSync, mkdirSync, chownSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { resolveConfig, ConfigError } from '@/selfhost/config';
 import { checkFreeSpace, checkWritable, checkPgData, type CheckResult } from '@/selfhost/checks';
 import { renderCaddyfile } from '@/selfhost/caddyfile';
 import { ensureSecrets, readSecrets, SecretError } from '@/selfhost/secrets';
+import { applyAppEnv } from '@/selfhost/app-env';
 import { parseCron, nextRun, nextArm } from '@/selfhost/cron';
 import { config as vercelConfig } from '../vercel';
 
@@ -21,7 +22,7 @@ async function setup() {
   // secrets/ is left to ensureSecrets, which creates it 0700 (made here first it would keep the default mode).
   for (const d of ['postgres', 'blobs', 'caddy', 'backups']) mkdirSync(join(DATA, d), { recursive: true });
   for (const d of ['blobs', 'backups']) chownSync(join(DATA, d), OWNER.uid, OWNER.gid);
-  report(checkPgData(readdirSync(join(DATA, 'postgres')), existsSync(join(DATA, 'postgres/data/PG_VERSION'))));
+  report(checkPgData(readdirSync(join(DATA, 'postgres'))));
   report(checkFreeSpace(free(DATA), 'the data folder'));
   const created = ensureSecrets(join(DATA, 'secrets'), OWNER);
   if (created.length) say(`created secrets: ${created.join(', ')}`);
@@ -34,15 +35,7 @@ function env() {
   try { cfg = resolveConfig(process.env); } catch (e) { if (e instanceof ConfigError) die(e.message); throw e; }
   let s;
   try { s = readSecrets(join(DATA, 'secrets')); } catch (e) { if (e instanceof SecretError) die(e.message); throw e; }
-  process.env.DATABASE_URL = `postgresql://webadf:${encodeURIComponent(s.pg_password)}@db:5432/webadf`;
-  process.env.BETTER_AUTH_SECRET = s.better_auth_secret;
-  process.env.CRON_SECRET = s.cron_secret;
-  process.env.BETTER_AUTH_URL = cfg.url;
-  process.env.SUPERADMIN_EMAILS = cfg.superadmins;
-  process.env.STORAGE_DIR = join(DATA, 'blobs');
-  delete process.env.BLOB_READ_WRITE_TOKEN;
-  // The weekly blob GC deletes, as on our deployment (parity); BLOB_GC_DELETE=0 in .env makes it report only.
-  if (!process.env.BLOB_GC_DELETE?.trim()) process.env.BLOB_GC_DELETE = '1'; // unset or empty = the default
+  applyAppEnv(process.env, cfg, s);
   return cfg;
 }
 

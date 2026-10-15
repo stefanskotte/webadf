@@ -14,12 +14,15 @@ copy.
 
 ## 2. Install
 
-Make a folder and download two files into it:
+Make a folder and download two files into it, from the newest release. Releases are the `web-X.Y.Z` tags: look up
+the newest one at <https://github.com/stefanskotte/webadf/releases/latest> and put it in place of `web-X.Y.Z` below
+(take them from a release, not from master: master's `compose.yaml` may already expect an image that is not released).
 
 ```bash
 mkdir webadf && cd webadf
-curl -fsSLO https://raw.githubusercontent.com/stefanskotte/webadf/master/compose.yaml
-curl -fsSL https://raw.githubusercontent.com/stefanskotte/webadf/master/.env.example -o .env
+TAG=web-X.Y.Z   # the newest release tag, e.g. as shown on the releases page
+curl -fsSLO https://raw.githubusercontent.com/stefanskotte/webadf/$TAG/compose.yaml
+curl -fsSL https://raw.githubusercontent.com/stefanskotte/webadf/$TAG/.env.example -o .env
 ```
 
 Edit `.env` and set two values:
@@ -74,7 +77,11 @@ $WEBADF_DATA_DIR/caddy/caddy/pki/authorities/local/root.crt        (default: ./d
 - Linux (Debian/Ubuntu): `sudo cp root.crt /usr/local/share/ca-certificates/webadf.crt && sudo update-ca-certificates`
   (Firefox keeps its own store: import it in Settings, Certificates.)
 
-Opening the site by its IP address works too: the certificate is made for the host in `WEBADF_URL`.
+Opening the site by another name or address of the same host (its IP when `WEBADF_URL` names it, or the other way
+round) still reaches webadf: Caddy answers with the certificate made for the host in `WEBADF_URL`, so the browser also
+warns that the name does not match, and the app logs once per such address that sign-in and uploads need
+`WEBADF_URL` to be the address you open (section 8). With `WEBADF_DOMAIN` only that domain is served: other names
+and the bare IP fail the TLS handshake, because Caddy asks Let's Encrypt for no name it was not given.
 
 ## 4. Boards
 
@@ -104,6 +111,9 @@ Then pair the board from **Devices** in the web app as usual.
 docker compose pull && docker compose up -d
 ```
 
+When a release's notes say `compose.yaml` changed, first download that release's `compose.yaml` over yours (as in
+section 2, with the new tag), then run the two commands above.
+
 On start the app applies any pending database migration. **Only when one is pending** it first writes a dump to
 `$WEBADF_DATA_DIR/backups/<time>-before-<migration>.dump` (mode 0600):
 
@@ -114,7 +124,9 @@ webadf: migrations: applied 0038_device_server
 
 - The newest 5 backups are kept.
 - A backup for the same migration younger than 24 hours is reused instead of taking another, so a migration that
-  keeps failing and restarting does not push your older backups out.
+  keeps failing and restarting does not push your older backups out. Not once a start has succeeded since (going
+  back to the previous image, which then took writes): every successful start touches `backups/.last-start`, and
+  only a backup newer than that is reused.
 - A failed migration leaves the schema unchanged and names its backup: `migration failed in <tag> (...); the schema is unchanged; backup: <path>`.
   Go back to the previous image (`WEBADF_IMAGE_TAG`) while you report it.
 - With nothing pending the log says `migrations: up to date` and no backup is taken.
@@ -202,14 +214,14 @@ Start-up problems print one line starting `webadf:`; read them with `docker comp
 | `Set WEBADF_ADMIN_EMAIL in .env (it becomes the first admin)` | Fill it in `.env`. |
 | `only N GB free on the data folder: webadf needs at least 1 GB` | Free space, or set `WEBADF_DATA_DIR` on a bigger disk. |
 | `blobs is not writable by uid 1000: run sudo chown -R 1000:1000 "$WEBADF_DATA_DIR/blobs"` (same for `backups`) | Run the command. `setup` fixes ownership itself when it can; it cannot on, for example, an NFS share that squashes root. |
-| `data/postgres holds a Postgres N cluster but the image is Postgres 18` | Section 7. |
+| `data/postgres holds a Postgres N cluster this image cannot use (the image is Postgres 18)`, or `holds a Postgres cluster this image cannot use (no 18/ folder ...)` | `data/postgres` holds an older major's cluster, or a cluster mounted at the old path (`PG_VERSION` directly inside). Section 7. |
 | `the database refuses the password in secrets/pg_password` | `data/postgres` was created by another install. Restore that install's `secrets/` folder, or start with an empty `data/postgres`. |
 | `secrets/<name> is missing -- run docker compose up -d` | The `setup` service creates it; do not start `app` by hand. |
 | `secrets/<name> is empty -- restore it from a backup of the data folder` | A new secret would sign everybody out (or lock the database), so none is made for you. |
 | `the database has a migration newer than this image` | You are running an older image than the data: set `WEBADF_IMAGE_TAG` to the newer one. |
 | `migration failed in <tag> (...); the schema is unchanged; backup: <path>` | Section 5. |
 | `backup failed (...); nothing was migrated` | Usually a full disk. Free space; the migration is retried on the next start. |
-| `requests arrive as https://x but WEBADF_URL is https://y -- uploads and sign-in will fail; set WEBADF_URL to the address you open` | You opened the site by a different name or IP than `WEBADF_URL`. It still loads, but sign-in and uploads check the origin. Set `WEBADF_URL` to the address you use and run `docker compose up -d` (logged once per host). |
+| `requests arrive as https://x but WEBADF_URL is https://y -- uploads and sign-in will fail; set WEBADF_URL to the address you open` | You opened the site by a different name or IP than `WEBADF_URL`. It still loads (with a certificate warning for the other name), but sign-in and uploads check the origin. Set `WEBADF_URL` to the address you use and run `docker compose up -d` (logged once per host). |
 | `Too many requests. Please try again later.` at sign-up or sign-in | The sign-in endpoints allow 3 attempts per 10 seconds from one address. Wait ten seconds. |
 
 **Somebody else signed up first.** The first-admin invite is for `WEBADF_ADMIN_EMAIL`, but anybody holding the link can

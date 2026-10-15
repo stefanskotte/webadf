@@ -1,4 +1,4 @@
-import { readFileSync, readdirSync, mkdirSync, unlinkSync, existsSync, chmodSync, statSync, writeFileSync, renameSync } from 'node:fs';
+import { readFileSync, readdirSync, mkdirSync, unlinkSync, existsSync, chmodSync, statSync, writeFileSync, renameSync, utimesSync } from 'node:fs';
 import { join } from 'node:path';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
@@ -16,6 +16,15 @@ const KEEP = 5;
 const BACKUP_RE = /^\d{8}T\d{6}Z-before-.+\.dump$/;
 const PARTIAL_RE = /^\d{8}T\d{6}Z-before-.+\.dump\.partial$/;
 const REUSE_MS = 24 * 3600 * 1000;
+const MARKER = '.last-start'; // touched after every start that got past migrations
+
+/** Touch backups/.last-start: a dump older than this may predate writes made by the app that started then. */
+function markStart(dir: string) {
+  mkdirSync(dir, { recursive: true });
+  const f = join(dir, MARKER);
+  writeFileSync(f, '');
+  const now = new Date(); utimesSync(f, now, now); // writeFileSync of '' over an empty file may leave mtime alone
+}
 
 export function migrationState(entries: JournalEntry[], dbLatest: number | null): MigrationState {
   const imageLatest = entries.at(-1)!.tag;
@@ -76,19 +85,24 @@ export async function runStartupMigrations(opts: {
     if (state.newer) {
       throw new MigrationRefused(`the database has a migration newer than this image (database at created_at ${latest}, this image knows up to ${state.imageLatest}) -- use a newer image (WEBADF_IMAGE_TAG)`);
     }
-    if (state.pending.length === 0) { log('migrations: up to date'); return { applied: [], backup: null }; }
+    if (state.pending.length === 0) { markStart(opts.backupDir); log('migrations: up to date'); return { applied: [], backup: null }; }
     let backup: string | null = null;
     if (latest !== null) { // a fresh database has nothing to back up
       mkdirSync(opts.backupDir, { recursive: true });
       // A dump cut short (a crash, a full disk) is left as .partial: never reused, removed here.
       for (const n of readdirSync(opts.backupDir)) if (PARTIAL_RE.test(n)) unlinkSync(join(opts.backupDir, n));
       // A migration that keeps failing is retried on every restart (restart: unless-stopped). The schema is
-      // unchanged by a failed run, so a backup taken before an attempt in the last 24 hours still holds; reusing
-      // it keeps the retries from rotating the older backups out. An older one may predate later writes.
+      // unchanged by a failed run and nothing else writes while the app is down, so a backup taken before an
+      // attempt still holds; reusing it keeps the retries from rotating the older backups out. Not when a start
+      // succeeded since (a rollback to the old image, which then served writes), nor after 24 hours.
       const suffix = `-before-${state.pending[0]}.dump`;
+      const markerPath = join(opts.backupDir, MARKER);
+      const lastStart = existsSync(markerPath) ? statSync(markerPath).mtimeMs : -Infinity;
       const fresh = readdirSync(opts.backupDir)
         .filter((n) => BACKUP_RE.test(n) && n.endsWith(suffix))
-        .map((n) => ({ n, age: Date.now() - statSync(join(opts.backupDir, n)).mtimeMs }))
+        .map((n) => ({ n, mtime: statSync(join(opts.backupDir, n)).mtimeMs }))
+        .filter((x) => x.mtime > lastStart)
+        .map((x) => ({ n: x.n, age: Date.now() - x.mtime }))
         .filter((x) => x.age < REUSE_MS)
         .sort((a, b) => a.age - b.age)[0];
       if (fresh) {
@@ -124,6 +138,7 @@ export async function runStartupMigrations(opts: {
     } finally {
       await pool.end();
     }
+    markStart(opts.backupDir);
     log(`migrations: applied ${state.pending.join(', ')}`);
     return { applied: state.pending, backup };
   } finally {

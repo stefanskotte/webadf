@@ -16,6 +16,7 @@ async function admin(stmt: string, target = base) {
 }
 const { runStartupMigrations } = await import('./migrate');
 const { closeDb } = await import('@/db');
+const listed = (dir: string) => readdirSync(dir).filter((n) => !n.startsWith('.')); // .last-start is the start marker
 
 describe('runStartupMigrations', () => {
   beforeAll(async () => { await admin(`drop database if exists ${DB} with (force)`); await admin(`create database ${DB}`); });
@@ -33,7 +34,7 @@ describe('runStartupMigrations', () => {
     expect(dumps).toEqual([]);
     const rows = await admin('select count(*)::int as n from drizzle.__drizzle_migrations', url);
     expect(rows.rows[0].n).toBe(Math.max(a.applied.length, b.applied.length));
-    expect(readdirSync(dir)).toEqual([]);
+    expect(listed(dir)).toEqual([]);
   });
 
   describe('with one extra migration', () => {
@@ -82,7 +83,7 @@ describe('runStartupMigrations', () => {
         url: url2, migrationsFolder: folderWith('create table selfhost_probe (id int);'), backupDir: dir,
         dump: async (_u, f) => { writeFileSync(f, 'x', { mode: 0o644 }); }, log: () => {},
       });
-      const [name] = readdirSync(dir);
+      const [name] = listed(dir);
       expect(name).toMatch(/-before-0039_selfhost_test\.dump$/);
       expect(statSync(join(dir, name)).mode & 0o777).toBe(0o600);
     });
@@ -103,6 +104,36 @@ describe('runStartupMigrations', () => {
       expect(dumps).toHaveLength(1);
       expect(readdirSync(dir)).toEqual([name]);
       expect(lines.some((l) => l.startsWith(`migrations: backup before 0039_selfhost_test already taken (`) && l.endsWith(`): ${final}`))).toBe(true);
+    });
+
+    it('a backup is not reused across a successful start (a rollback to the old image may have written since)', async () => {
+      const dir = tmpBackups();
+      const failing = folderWith('select 1/0;');
+      const dumps: string[] = [];
+      const lines: string[] = [];
+      const run = (migrationsFolder: string) => runStartupMigrations({
+        url: url2, migrationsFolder, backupDir: dir,
+        dump: async (_u, f) => { dumps.push(f); writeFileSync(f, 'x'); }, log: (l) => lines.push(l),
+      });
+      await expect(run(failing)).rejects.toThrow(/migration failed/);
+      expect(dumps).toHaveLength(1);
+      // The old image (the real migrations folder) starts fine: "up to date", and the marker is newer than the dump.
+      await expect(run('drizzle')).resolves.toEqual({ applied: [], backup: null });
+      const [dump] = readdirSync(dir).filter((n) => n.endsWith('.dump'));
+      expect(statSync(join(dir, '.last-start')).mtimeMs).toBeGreaterThan(statSync(join(dir, dump)).mtimeMs);
+      lines.length = 0;
+      await expect(run(failing)).rejects.toThrow(/migration failed/);
+      expect(dumps).toHaveLength(2);
+      expect(lines.some((l) => l.includes('already taken'))).toBe(false);
+    });
+
+    it('a successful apply also writes the marker', async () => {
+      const dir = tmpBackups();
+      await runStartupMigrations({
+        url: url2, migrationsFolder: folderWith('create table selfhost_probe (id int);'), backupDir: dir,
+        dump: async (_u, f) => { writeFileSync(f, 'x'); }, log: () => {},
+      });
+      expect(existsSync(join(dir, '.last-start'))).toBe(true);
     });
 
     it('a backup older than 24 hours is not reused: a new one is taken', async () => {
@@ -147,7 +178,7 @@ describe('runStartupMigrations', () => {
       expect(seen[0].file).toMatch(/\.dump\.partial$/);
       expect(seen[0].mode).toBe(0o600); // exists, owner-only, before pg_dump writes a byte
       expect(existsSync(leftover)).toBe(false);
-      const names = readdirSync(dir);
+      const names = listed(dir);
       expect(names).toHaveLength(1);
       expect(names[0]).toMatch(/-before-0039_selfhost_test\.dump$/);
     });
