@@ -19,4 +19,17 @@ describe('originWarner', () => {
     originWarner(undefined, (l) => lines.push(l))(req('http://x/'));
     expect(lines).toEqual([]);
   });
+  it('caps the distinct hosts it remembers and says so once', () => {
+    const lines: string[] = [];
+    const w = originWarner('https://a.lan', (l) => lines.push(l));
+    for (let i = 0; i < 25; i++) w(req('http://app/', { host: `h${i}.lan`, 'x-forwarded-proto': 'https' }));
+    expect(lines).toHaveLength(21);
+    expect(lines[20]).toBe('further hosts that are not WEBADF_URL will not be logged');
+  });
+  it('uses the first element of comma-separated forwarded headers', () => {
+    const lines: string[] = [];
+    const w = originWarner('https://a.lan', (l) => lines.push(l));
+    w(req('http://app/', { host: 'x', 'x-forwarded-host': 'a.lan, proxy.lan', 'x-forwarded-proto': 'https, http' }));
+    expect(lines).toEqual([]);
+  });
 });
