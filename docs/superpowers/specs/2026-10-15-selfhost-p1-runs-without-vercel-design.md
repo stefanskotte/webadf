@@ -1,6 +1,6 @@
 # Self-hosting P1: the app runs without Vercel or Neon
 
-**Date:** 2026-10-15 · **Status:** design approved in chat, spec awaiting review
+**Date:** 2026-10-15 · **Status:** implemented; merged 8ff594b and live 2026-10-15 (HANDOFF 3bp)
 
 ## Where this sits
 

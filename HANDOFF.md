@@ -3093,7 +3093,8 @@ Learned the hard way; several cost real debugging time.
   `session.create.before` runs **first**, and its self-heal is what actually creates the
   organization on essentially every sign-up. Do not reorder or "simplify" those hooks.
 - **`drizzle.config.ts` must keep `schemaFilter: ['public','auth']`.** Without it,
-  `db:push` silently skips a schema while printing *"Changes applied."*
+  drizzle-kit silently skips a schema. (`db:push` itself was removed 2026-10-15, 3bp: use
+  `db:generate` + `db:migrate`.)
 - **`getDb()` must stay a plain lazy `let`, never a JS `Proxy`.** A Proxy breaks
   better-auth's adapter introspection and hangs with no error.
 - **Vitest cannot render async Server Components.** Pure logic → Vitest; pages and flows
@@ -4917,6 +4918,43 @@ Demozoo API (the bulk export makes per-lookup load on a non-profit unnecessary).
 - **Screenshot redirects:** screenshot fetches follow redirects, so the `media.demozoo.org` host
   allowlist checks only the first URL (the raster content-type allowlist and `nosniff` still apply).
 - **Cron drift:** the daily 01:30 cron against a 7-day gate can drift a refetch to 8 days.
+
+### 3bp. Self-hosting P1: runs without Vercel or Neon -- merged 8ff594b 2026-10-15; production now on node-postgres
+
+**What.** (spec `docs/superpowers/specs/2026-10-15-selfhost-p1-runs-without-vercel-design.md`, plan
+`docs/superpowers/plans/2026-10-15-selfhost-p1.md`, subagent-driven, 7 tasks.)
+- **One DB driver everywhere:** `pg` Pool (max 5, idle 10 s, `attachDatabasePool` on Vercel, an `'error'` listener so a
+  dropped idle client never crashes the instance) + `drizzle-orm/node-postgres`. `db.batch()` is gone: all 10 sites use
+  `atomic(tx => [...])` (`src/db/atomic.ts`). Client components must never import a module that reaches `@/db`
+  (`src/lib/client-bundle-boundary.test.ts`; the e2e caught three, fixed 64cfb60). `next build` is the real gate.
+- **Versioned migrations:** `pnpm db:migrate` (replaces `db:push`, which is REMOVED -- it dropped trigram indexes),
+  `db:baseline` (dry run unless `--apply`), `db:schema-diff`. drizzle/0000-0038 replay from zero to production's schema
+  exactly (diff 0 lines). **Production's journal was written 2026-10-15 with operator approval: 39 rows, last
+  created_at 1792058351926; `db:migrate` against production then said "up to date".** New schema changes:
+  `pnpm db:generate` then `pnpm db:migrate`.
+- **Pluggable blob storage** (`src/lib/storage/`): Vercel Blob when `BLOB_READ_WRITE_TOKEN` is non-empty, else local disk
+  under `STORAGE_DIR` (default `./data/blobs`); on Vercel without a token it throws (never silently local).
+  `firmware:publish` refuses local storage without `--allow-local-storage`. Local uploads go through
+  `/api/blob-upload/<key>?exp&max&sig` (HMAC, key HKDF'd from `BETTER_AUTH_SECRET`; 403/413/400 like Vercel Blob).
+- **Local dev/test DB:** `pnpm db:dev start|reset|stop` (container webadf-pg :55432); `pnpm test:db` needs
+  `TEST_DATABASE_URL`. **Fully local e2e:** `bash scripts/e2e-local.sh [specs]` (own container webadf-pg-e2e :55433,
+  temp storage, refuses a busy :3100).
+- **Env:** production/preview/development `DATABASE_URL` now `sslmode=verify-full` (operator-approved; pg warned that
+  `require` changes meaning).
+
+**Verified:** unit 2316/2316; e2e on Neon+Vercel Blob 497 pass/1 skip; fully local 495 pass/3 skip (2 PaulaNET
+driver-disk downloads, P3); local run proven not to touch production; preview smoke (sign-in, library, dropzone upload,
+files page, mount on the bench board -> IN THE DRIVE) with 0 runtime errors. The test disk **P1Smoke** is in the
+operator's library (mounted on the bench board) -- delete when convenient.
+
+**Rulings / deferred (full list in the P1 report to the operator):** pool max 5 has no `connectionTimeoutMillis`
+(contention queues; watch device-status/firmware latency); scripts that `getDb()` without `closeDb()` linger ~10 s;
+local backend sidecar/fsync ordering minors; upload URLs use `BETTER_AUTH_URL`'s origin (P2 must check it);
+missing `BETTER_AUTH_SECRET` -> 500 on the upload route; e2e teardown blob-GC abort seen once, cause unknown (now logged).
+**P3 items found:** the PaulaNET driver disk has no self-host path (503 on `/api/paulanet-disk`).
+
+**Next:** P2 (Dockerfile, compose with Postgres + app + Caddy, start-up checks, migrate on start, scheduler, first-admin
+bootstrap, GHCR multi-arch, test on OMV 172.16.10.11).
 
 ### 3bo. About page (the header's (i)) -- merged aad7cef, live 2026-10-15; the card's Custom server line removed
 
@@ -7460,7 +7498,7 @@ recognizing the next time a "this trigger is not transient" argument gets made.
 **Commands:** `pnpm dev` · `pnpm vitest run` · `pnpm e2e` · `pnpm build` ·
 `pnpm adfmfm:diff` (Greaseweazle differential gate, needs `adf-archive/` + pipx) ·
 `pnpm adfmfm:fixtures` (regenerate golden fixtures) ·
-`pnpm db:generate && pnpm db:push` · `npx webadf push <dir>` (CLI bulk import) ·
+`pnpm db:generate && pnpm db:migrate` (db:push removed, 3bp) · `pnpm db:dev start` · `bash scripts/e2e-local.sh` · `npx webadf push <dir>` (CLI bulk import) ·
 `pnpm firmware:build` (needs pico-sdk ≥ 2.3.0 on `PICO_SDK_PATH` and the official ARM GNU
 Toolchain on `PATH`, not homebrew's `arm-none-eabi-gcc`. `PORTAL_AP_PASSWORD` is **no longer
 required** — it has a documented default, `wififloppy`; it is fatal only if set-but-empty) ·
