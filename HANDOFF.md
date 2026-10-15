@@ -4918,6 +4918,45 @@ Demozoo API (the bulk export makes per-lookup load on a non-profit unnecessary).
   allowlist checks only the first URL (the raster content-type allowlist and `nosniff` still apply).
 - **Cron drift:** the daily 01:30 cron against a 7-day gate can drift a refetch to 8 days.
 
+### 3bm. fw 1.12.1: Network's driver disk as DF1's pick (Next stays instant in Network mode) + PaulaNET local path (Phase 4 step 1) -- server merged; firmware TEST build and A500 bench owed
+
+**Status (2026-10-15).** Operator asked (2026-10-15): hide TEST builds from other orgs (done, see the 3bk note,
+FIRMWARE_BENCH_ORGS), fix "DF0's Next preload is lost in Network mode" and the "inserted the next disk" log wording,
+do the Phase 4 spike, and spec the self-hosting override.
+
+**1.12.1, Network via the pick (merged 03e9c86, server deployed).** A board that sends `&netPick=1` (with df1Ack) gets
+the PaulaNET driver disk as its DF1 pick (`df1.sha256` = PAULANET_DISK_SHA256, whenever netNow or netKeepsDriverDisk),
+and `next` is DF0's next disk of the set in every mode. The one-shot driver-disk wake also moves `df1_version`
+(`markNetNextSent(.., {bumpDf1: true})`) before `df1` is read; saveSecondDrive moves `df1_version` on any save while
+the row says `net`, so leaving Network wakes the board to drop it. 1.11/1.12.0 boards (no netPick) are unchanged.
+Firmware: the pick step and `dc_df1_want` serve SLOT_NET in Network too; the preload target is always DF0's idle
+slot; every mode change keeps `next` and its preload; leaving On or Network drops the pick; `df1Sha256` reports the
+pick in Network; log "inserted the disk mounted into DF1" / "inserted the PaulaNET driver disk"; mode log name
+"on". Card: DF0's preload line shows in Network mode from fw 1.12.1 (`NET_PICK_FW`). Tests: vitest 2236, host
+20,340+, e2e second-drive + devices-page 35/35, next-disk + device-image + mount-to-device + help 27/27, a new e2e
+for a netPick board through Network and Off. Review (opus): no Critical/Important; minors fixed (comments);
+**minor 5 owed on the bench:** a DF0 preload in Network mode now shares Wi-Fi and PSRAM with PaulaNET traffic --
+measure PaulaNET throughput/ping during a preload. **Rollout:** server first (done); a server rollback below
+03e9c86 would leave 1.12.1 boards in Network without a driver disk.
+
+**Phase 4 step 1, the local path (branch feat/pnet-local, stacked on 1.12.1, review running).** Desk study
+(2026-10-15, scratchpad phase4-spike-desk.md, summarised): the board and the Amiga share one MAC, so a frame between
+them went out over the radio and never came back -- no local reachability either way. Fix: `pnet_sort_a2b_local`
+/ `pnet_sort_b2a_local` (pure, host-tested) pick out ARP-for / IPv4-to the other side's address; the send worker hands
+an Amiga frame for the board to lwIP's input instead of the radio, and a linkoutput hook puts a board frame for the
+Amiga into its RX ring. Log: `pnet: l2 local a2b N b2a N drop N`.
+
+**Bench owed (A500, one session, after a TEST 1.12.1 from feat/pnet-local is installed with the Amiga off):**
+1. Network, DF0 empty (TDH0 boot): DF1 = PaulaNET driver disk, read-only; AddNetInterface eth0 comes up.
+2. A two-disk set into DF0 in Network mode: the card shows "Disk 2 ready (instant swap)"; Next is instant; DF1 keeps
+   the driver disk; the network stays up.
+3. During a DF0 preload in Network mode: `ping` the router and note times against 3bk's (review minor 5).
+4. On the Amiga: `ping <board ip>` -> replies; the board logs `pnet: l2 local a2b` and `b2a` rising.
+5. Network -> On -> Network live: DF1 changes accordingly at the next reset (3bk's rule), no stuck driver disk.
+
+**Self-hosting override:** spec `docs/superpowers/specs/2026-10-15-board-server-override-design.md` (USB serial
+commands, operator's choice 2026-10-15) -- written, **awaiting the operator's review** (two questions in its §8).
+
 ### 3bl. DF1 takes any standard DD disk -- RELEASED as fw 1.12.0 (seq 81, fw-1.12.0); A500 bench 6/6 passed 2026-10-15
 
 **Status (2026-10-15 00:15).** Branch complete (commits af29a07..86f5087, every task reviewed, final whole-branch review
