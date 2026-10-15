@@ -14,6 +14,9 @@ ENV GIT_SHA=$GIT_SHA WEBADF_STANDALONE=1 NEXT_TELEMETRY_DISABLED=1
 RUN DATABASE_URL=postgresql://build:unused@127.0.0.1:1/unused pnpm exec next build && node docker/build-ctl.mjs
 
 FROM node:24-bookworm-slim
+LABEL org.opencontainers.image.source="https://github.com/stefanskotte/webadf" \
+      org.opencontainers.image.description="webadf self-hosted: Amiga ADF disk manager (web app, setup and scheduler)" \
+      org.opencontainers.image.licenses="MIT"
 RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates curl gnupg \
  && install -d /usr/share/postgresql-common/pgdg \
  && curl -fsSL -o /usr/share/postgresql-common/pgdg/apt.postgresql.org.asc https://www.postgresql.org/media/keys/ACCC4CF8.asc \
