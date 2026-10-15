@@ -4918,7 +4918,7 @@ Demozoo API (the bulk export makes per-lookup load on a non-profit unnecessary).
   allowlist checks only the first URL (the raster content-type allowlist and `nosniff` still apply).
 - **Cron drift:** the daily 01:30 cron against a 7-day gate can drift a refetch to 8 days.
 
-### 3bm. fw 1.12.1: Network's driver disk as DF1's pick (Next stays instant in Network mode) + PaulaNET local path (Phase 4 step 1) -- merged; TEST seq 82 installed on the bench board; A500 bench owed
+### 3bm. fw 1.12.1: Network's driver disk as DF1's pick (Next stays instant in Network mode) + PaulaNET local path (Phase 4 step 1) -- RELEASED as fw 1.12.1 (seq 83, fw-1.12.1); A500 bench 5/5 passed 2026-10-15
 
 **Status (2026-10-15).** Operator asked (2026-10-15): hide TEST builds from other orgs (done, see the 3bk note,
 FIRMWARE_BENCH_ORGS), fix "DF0's Next preload is lost in Network mode" and the "inserted the next disk" log wording,
@@ -4961,6 +4961,27 @@ Amiga; the sorter's Amiga IP survives Network Off/On.
 3. During a DF0 preload in Network mode: `ping` the router and note times against 3bk's (review minor 5).
 4. On the Amiga: `ping <board ip>` -> replies; the board logs `pnet: l2 local a2b` and `b2a` rising.
 5. Network -> On -> Network live: DF1 changes accordingly at the next reset (3bk's rule), no stuck driver disk.
+
+**Bench (2026-10-15, A500 via the PiKVM, TDH0 boot, DF0 empty).** On seq 82: (1) Network: DF1 `PaulaNET` Read Only,
+the driver disk arrived as DF1's pick ("disk 05170a83c279 mounted into DF1 (pick 3)", loaded into slot 2 in ~2 s,
+"inserted the PaulaNET driver disk"); `eth0` up 172.16.10.235. (2) P3 Check disk 1 into DF0 in Network mode: fetched
+into slot 0 (3.6 s), disk 2 preloaded into slot 1; the card read "Disk 2 ready (instant swap)" beside the network
+checklist; Next -> "swap: ... from preloaded slot 1" at once, DF1 untouched, `eth0` still answering. (3) `ping -c 25
+172.16.10.1` across the DF0 fetch and preload: 25/25, 150.6/224.6/354.8 ms (3bk: 204-545, ~250) -- review minor 5
+closed. (5) Network -> On: live, DF1 got the set's next disk; after a reset DF0 P3Check2, DF1 P3Check1; On ->
+Network: driver disk back as pick 5 in 2 s; after a reset DF1 PaulaNET, `eth0` up. **(4) FAILED on seq 82:**
+`ping 172.16.10.234` (the board) timed out 4/4 although `a2b`/`b2a` rose together -- the Amiga's ARP entry for the
+board stayed `(incomplete)`: AmiTCP (BSD) ignores ARP whose sender is its own MAC, and the two share one. **Fix**
+(4ac1366, `pnet_local_mac` / `pnet_local_to_amiga` / `pnet_local_to_board`, host-tested): on the local path the board
+shows the Amiga the shared MAC with the locally-administered bit flipped (Ethernet source + ARP sender), and maps
+it back on the way in. **Seq 83** (`1.12.1+g14bd767`, installed with the Amiga off): `ping -c 4 172.16.10.234` 4/4,
+160.0/253.8/427.0 ms, ttl 255; `arp 172.16.10.234` -> `2a:cd:c1:19:6a:38` (shared 28:...); router 3/3; log
+`pnet: l2 local a2b 5 b2a 5 drop 0`. Note: the log says "disk <sha> mounted into DF1 (pick N)" for the driver disk
+too (wording only).
+
+**Release.** Seq 83 promoted (notes edited), `pnpm firmware:publish --github-only` from `.claude/worktrees/pnetmac`
+(build sha 68e47209..., matches) -> `fw-1.12.1` Latest, target 14bd767. Seq 82 stays a TEST row. Phase 4's next step:
+a receiver on the Amiga side (the spec's §9 "drop files"), now that the board can reach the Amiga.
 
 **Self-hosting override:** spec `docs/superpowers/specs/2026-10-15-board-server-override-design.md` (USB serial
 commands, operator's choice 2026-10-15) -- written, **awaiting the operator's review** (two questions in its §8).
