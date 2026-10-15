@@ -4918,6 +4918,29 @@ Demozoo API (the bulk export makes per-lookup load on a non-profit unnecessary).
   allowlist checks only the first URL (the raster content-type allowlist and `nosniff` still apply).
 - **Cron drift:** the daily 01:30 cron against a 7-day gate can drift a refetch to 8 days.
 
+### 3bo. About page (the header's (i)) -- merged aad7cef, live 2026-10-15; the card's Custom server line removed
+
+**What.** `/about` for every signed-in user, scoped to their org: web-app commit + build time (fixed at build in
+`next.config.ts` `env`: `VERCEL_GIT_COMMIT_SHA` -> `GIT_SHA` build arg -> `git rev-parse` -> unknown), hosting
+(**`SELFHOSTED=false` = our deployment; anything else = Self-hosted** -- set in Vercel Production + Preview 2026-10-15),
+platform kinds (never hosts/tokens), newest installable firmware + boards behind (same registry as /devices), library
+titles/disks/versions/bytes (distinct images across disks.sha256 + disk_versions.blob_sha256 + image_sha256). Each
+section settles on its own ("unavailable"). Spec `docs/superpowers/specs/2026-10-15-about-page-design.md`, plan
+`docs/superpowers/plans/2026-10-15-about-page.md`. Operator ruling: the device card no longer says "Custom server"
+(on a self-hosted server every board would); boards still log noverify. Verified live: commit aad7cef, Hosted.
+
+**Review (opus, whole branch):** 3 Important fixed (history full images were not counted -- RED 901120 vs 2703360;
+one-count-per-image pinned by e2e; wifi-floppy README). **Deferred minors:** live-state fingerprint still includes
+serverCustom/serverTls; no `disk_versions.org_id` index; firmware line lacks a published date; commit links upstream on
+forks (help text says "on our own site"); hosting test's unset case reads the shell's SELFHOSTED; (i) is 32 px; Node/Next
+versions visible to any signed-in user (spec-approved).
+
+**Next (operator 2026-10-15):** docker-compose self-hosting -- persistent Postgres + blob, `pull && up` upgrades with
+automatic migrations, start-up prerequisite checks with fixable messages; test box openmediavault 172.16.10.11. Needs a
+local blob backend first (storage is Vercel Blob only). 8 MB flash: fits (image 636 KB) but needs its own build:
+partitions.json (A+B 8224K > 8192K), PICO_FLASH_SIZE_BYTES-relative settings sectors, `FLASH_BYTES` in
+src/lib/firmware-github-release.ts and the install-UF2 guards; existing 16 MB boards must stay on their layout.
+
 ### 3bn. fw 1.13.0: board server override for self-hosters -- merged d51b011; OLED marker dropped (TEST seq 85, 1.13.0+g290990b); A500 bench 9/9 passed 2026-10-15; not yet released
 
 **Bench (2026-10-15, seq 84 then 85; Mac server `next dev --experimental-https` on :3200, self-signed cert from the
