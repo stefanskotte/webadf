@@ -73,6 +73,9 @@ int fake_last_request_len(void);
 // a request across multiple writes must not inflate this count).
 int fake_request_count(void);
 
+// The `port` argument of the most recent connect() (0 after fake_reset()).
+int fake_last_connect_port(void);
+
 // Cap how many bytes a single write() call accepts, simulating a real
 // socket's short writes under backpressure. 0 or negative (the default,
 // set by fake_reset()) means unlimited: a write() accepts everything

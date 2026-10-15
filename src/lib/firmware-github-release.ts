@@ -97,8 +97,8 @@ const UF2_MAGIC_END = 0x0ab16f30;
 const UF2_FAMILY_ABSOLUTE = 0xe48bff57;
 const XIP_BASE = 0x10000000;
 const FLASH_BYTES = 16 * 1024 * 1024;
-/** The top five 4 KB sectors: token, config, fw_state, display, drive_store. */
-const RECORDS_START = XIP_BASE + FLASH_BYTES - 5 * 4096;
+/** The top six 4 KB sectors: token, config, fw_state, display, drive_store, server override. */
+const RECORDS_START = XIP_BASE + FLASH_BYTES - 6 * 4096;
 
 /**
  * A last look at the install UF2 before it goes on a release page, so a stale

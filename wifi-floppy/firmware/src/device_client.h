@@ -167,6 +167,9 @@ typedef bool (*dc_hold_fn)(void *ctx);
 // Phase 3 (2026-10-12) adds the `net` tail,
 // ,"net":{"driver":999999,"amigaIp":"255.255.255.255","framesIn":999999999,"framesOut":999999999}: 95 bytes. The
 // worst body then is 1376 + 95 = 1471, so the body goes to 1536 (65 spare) and the request to 2048.
+// Server override (1.13.0) adds ,"server":{"custom":false,"tls":"noverify"} -- 43 bytes at most (the
+// "true" form is 42): 1471 + 43 = 1514 <= 1536 (22 spare). The request: 1514 + request line, a 69-byte
+// Host value (63-char host + ":65535"), a 127-char token and the other headers = 1514 + 310 = 1824 <= 2048.
 // test_status_body_fits_at_maximum prints the measured sizes.
 #define DC_STATUS_BODY_BYTES  1536
 #define DC_STATUS_REQ_BYTES   2048
@@ -303,8 +306,18 @@ typedef struct {
 typedef struct {
     transport_t *t;
     clock_ms_fn  now;
-    const char  *host;
+    const char  *host;         // DNS, SNI and the certificate name (the transport's job)
     const char  *token;
+    // Server override (1.13.0): the TCP port and the Host: header every
+    // request carries. dc_init defaults them to 443 and `host`; dc_set_server
+    // changes both. `host_header` is borrowed, never copied.
+    int          port;
+    const char  *host_header;
+    // dc_set_server_report: every status report carries "server". False
+    // until it is called (a test client): the key is then omitted.
+    bool         _server_report;
+    bool         _server_custom;
+    bool         _server_noverify;
     uint32_t     since;        // RAM ONLY. Never persisted. Always 0 at boot.
     dc_state_t   state;
     uint32_t     backoff_ms;
@@ -493,6 +506,19 @@ typedef struct {
 
 void dc_init(device_client_t *c, transport_t *t, clock_ms_fn now,
              const char *host, const char *token);
+
+// Server override (1.13.0). Call after dc_init, which defaults `port` to 443
+// and `host_header` to `host`. Every request then connects to `port` on
+// `host` and sends `Host: <host_header>` (main.c passes "host:port" when the
+// port is not 443). `host_header` must outlive the client -- it is kept, not
+// copied (main.c passes a static buffer).
+void dc_set_server(device_client_t *c, int port, const char *host_header);
+
+// Server override (1.13.0). Call after dc_init: every status report from now
+// on carries ,"server":{"custom":<bool>,"tls":"verify"|"noverify"} -- both
+// values, so the default is said, not implied by an absent key. Before it is
+// called (a test client) the key is omitted.
+void dc_set_server_report(device_client_t *c, bool custom, bool noverify);
 
 /** Watch what this client does. Call AFTER dc_init, which zeroes the struct.
  *  `fn` may be NULL to stop observing. Called on the caller's thread, from

@@ -108,7 +108,8 @@ bool drive_store_idle(uint32_t now, bool motor_on, bool wgate_asserted,
 // Top-of-flash map (each one sector, counted down from the end):
 //   -1 token_store.c   -2 config_store.c   -3 fw_state.c (OTA state)
 //   -4 display_store.c   -5 drive_store.c (this one)
-// The A/B partitions (partitions.json) end at 8224K, far below all five.
+//   -6 override_store.c
+// The A/B partitions (partitions.json) end at 8224K, far below all six.
 #define DRIVE_FLASH_OFFSET (PICO_FLASH_SIZE_BYTES - 5 * FLASH_SECTOR_SIZE)
 #define DRIVE_STORE_CAP    FLASH_PAGE_SIZE   // one program page
 

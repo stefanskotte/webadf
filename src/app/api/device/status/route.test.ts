@@ -12,6 +12,8 @@ type RecordStatusArg = {
   preload?: { sha256: string; state: 'loading' | 'ready' } | null;
   displayLayouts?: boolean; displayVersion?: number; displayError?: string | null;
   sel1Wired?: boolean; df1Seen?: boolean;
+  server?: { custom: boolean; tls: 'verify' | 'noverify' };
+  mountedSha256?: string | null;
 };
 const recordStatus = vi.fn<(deviceId: string, s: RecordStatusArg) => Promise<void>>(
   async () => undefined,
@@ -142,5 +144,31 @@ describe('POST /api/device/status -- Network mode (Phase 3)', () => {
       net: { driver: undefined, amigaIp: undefined, framesIn: undefined, framesOut: 7 } }));
     await POST(post({ mountedSha256: null, net: 'garbage' }));
     expect(recordStatus).toHaveBeenLastCalledWith('dev-1', expect.objectContaining({ net: undefined }));
+  });
+});
+
+// Board server override (fw 1.13.0): telemetry, dropped when malformed, never a 400.
+describe('POST /api/device/status -- server', () => {
+  it('passes server {custom, tls} through to recordStatus', async () => {
+    const { POST } = await import('./route');
+    const res = await POST(post({ mountedSha256: null, server: { custom: true, tls: 'noverify' } }));
+    expect(res.status).toBe(204);
+    expect(recordStatus.mock.calls[0]![1].server).toEqual({ custom: true, tls: 'noverify' });
+  });
+
+  it('drops a malformed server but still records mountedSha256', async () => {
+    const { POST } = await import('./route');
+    const res = await POST(post({ mountedSha256: SHA, server: { custom: 'yes', tls: 'verify' } }));
+    expect(res.status).toBe(204);
+    const s = recordStatus.mock.calls[0]![1];
+    expect(s.server).toBeUndefined();
+    expect(s.mountedSha256).toBe(SHA);
+  });
+
+  it('drops a server whose tls is not verify/noverify', async () => {
+    const { POST } = await import('./route');
+    const res = await POST(post({ mountedSha256: null, server: { custom: true, tls: 'off' } }));
+    expect(res.status).toBe(204);
+    expect(recordStatus.mock.calls[0]![1].server).toBeUndefined();
   });
 });

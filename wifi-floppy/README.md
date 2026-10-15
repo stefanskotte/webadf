@@ -104,7 +104,7 @@ updates in both directions, and a re-install over a paired board.
 The same file works on a blank board and on a board already running ours (both verified
 on an RP2350 A4, 2026-10-09). A board running other firmware (MicroPython, say) is
 expected to work too, but has not been tested. Re-installing it keeps the board's WiFi settings and pairing: it
-never writes the top five flash sectors where those live.
+never writes the top six flash sectors where those (and the server override) live.
 
 What is in the file: the partition table, the firmware for partition A, and two blank
 pages that clear stale headers. Every block uses the UF2 `absolute` family. The firmware
@@ -191,6 +191,41 @@ stall that loop either.
 
 UART stdio stays off and must stay off: GP0 and GP1 are INDEX and CHNG on this board, so
 enabling it would drive the floppy bus.
+
+## Pointing the board at your own server
+
+For people who host their own copy of the web app. Needs firmware 1.13.0 or newer. Without an override the board
+talks to `webadf.vercel.app` over TLS, as before. Not available in `WF_FW_DEBUG` bench builds.
+
+Open the board's USB port in any serial terminal (it is USB CDC, so the speed does not matter):
+
+```bash
+screen /dev/cu.usbmodem*       # or: tio /dev/cu.usbmodem*
+```
+
+Commands, one line each:
+
+```
+wf server show                        show the server the board uses
+wf server set https://host[:port]     use this server (TLS only; http:// is refused)
+wf server tls noverify                accept any certificate, self-signed included; asks "type YES to confirm"
+wf server tls verify                  check the certificate and host name again (the default)
+wf server clear                       back to webadf.vercel.app
+wf reboot
+```
+
+- Every change is refused while a disk is in DF0 or DF1: "server: eject the disk first -- nothing changed".
+- `set` (to a different server) and `clear` erase the pairing **and** the Wi-Fi settings, then reboot at once into the
+  setup network. Enter your Wi-Fi and a pairing code from the new server, as for a new board.
+- `set` naming webadf.vercel.app itself (port 443, any letter case) is the same as `clear`; with nothing stored it
+  answers "already the default".
+- `tls` changes apply at the next boot (`wf reboot`). They need a server set first, so for a self-signed server run
+  `set`, then `tls noverify`, then `wf reboot`, then pair.
+- `noverify` also skips the host-name check. The OLED shows INSECURE in place of READY/LOADED (a custom OLED layout
+  without the status element will not show it), and the boot log and every new TLS connection log it. The device
+  card shows "Custom server · certificate not checked"; with `verify` it shows "Custom server".
+- Firmware updates are still checked against the signing key built into the board, so a custom server can only
+  offer builds signed by us. Build your own firmware and flash it over USB if you need something else.
 
 ## Honest caveats
 - **What has run on real hardware** (rev A2 from 2026-09-10, rev B from 2026-10-02; details and dates in the root

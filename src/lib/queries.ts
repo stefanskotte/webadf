@@ -325,6 +325,7 @@ export interface DeviceListItem {
   firmwareUpdateState: string | null;
   firmwareUpdateError: string | null;
   rssi: number | null; psramFree: number | null;
+  serverCustom: boolean | null; serverTls: string | null;
   lastSeenAt: Date | null; lastError: string | null; lastErrorAt: Date | null;
   desiredSha256: string | null; mountedSha256: string | null;
   // The exact disk ROWS, which the digests above cannot stand in for: two rows
@@ -432,6 +433,7 @@ export async function listDevices(orgId: string): Promise<DeviceListItem[]> {
       firmwareUpdateState: devices.firmwareUpdateState,
       firmwareUpdateError: devices.firmwareUpdateError,
       rssi: devices.rssi, psramFree: devices.psramFree,
+      serverCustom: devices.serverCustom, serverTls: devices.serverTls,
       lastSeenAt: devices.lastSeenAt,
       lastError: devices.lastError, lastErrorAt: devices.lastErrorAt,
       desiredSha256: devices.desiredSha256, mountedSha256: devices.mountedSha256,

@@ -33,6 +33,9 @@ export const devices = pgTable('devices', {
   macAddress: text('mac_address'),
   lastSeenAt: timestamp('last_seen_at', { withTimezone: true }),
   rssi: integer('rssi'),
+  // Board server override (fw 1.13.0): null until a 1.13.0+ board reports it.
+  serverCustom: boolean('server_custom'),
+  serverTls: text('server_tls'),
   psramFree: integer('psram_free'),
   mountedGameId: text('mounted_game_id'),
   mountedDiskNo: integer('mounted_disk_no'),

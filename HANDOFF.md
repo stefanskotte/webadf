@@ -1690,7 +1690,7 @@ separately.
   fw-1.9.1 carries `wifi-floppy-install-1.9.1.uf2`).
   - **Design** (`docs/superpowers/research/2026-10-09-uf2-drag-drop-first-install.md`): one absolute-family UF2 =
     the partition table at 0, a blank page over the PT's second slot, a NON-TBYB build of the same commit
-    (`wifi_floppy_install`) at slot A, and a blank page at slot B; nothing in the top 5 settings sectors, and no E10
+    (`wifi_floppy_install`) at slot A, and a blank page at slot B; nothing in the top settings sectors (5 then, 6 since 1.13.0's override), and no E10
     block. Built by `tools/make_install_uf2.py`.
   - **Release guards:** the install .bin must equal the OTA .bin except the TBYB flag and the hash, located by
     walking the picobin block loop. The install image can never reach the registry.
@@ -4917,6 +4917,41 @@ Demozoo API (the bulk export makes per-lookup load on a non-profit unnecessary).
 - **Screenshot redirects:** screenshot fetches follow redirects, so the `media.demozoo.org` host
   allowlist checks only the first URL (the raster content-type allowlist and `nosniff` still apply).
 - **Cron drift:** the daily 01:30 cron against a 7-day gate can drift a refetch to 8 days.
+
+### 3bn. fw 1.13.0: board server override for self-hosters -- built and reviewed task by task on feat/server-override; final review and bench owed
+
+**Status (2026-10-15).** Branch `feat/server-override` (worktree `.claude/worktrees/override`), six tasks, each reviewed;
+the whole-branch review and the bench are still owed. Not merged, not released. Spec
+`docs/superpowers/specs/2026-10-15-board-server-override-design.md` (D4 and D7 corrected to what shipped).
+**Migration 0038 (`devices.server_custom`, `server_tls`) was applied to the live DB 2026-10-15**; it is additive.
+
+**What it does.** USB serial console (any terminal on the board's USB port): `wf server show`, `wf server set
+https://host[:port]` (http:// refused), `wf server tls noverify` (asks "type YES to confirm"), `wf server tls verify`,
+`wf server clear`, `wf reboot`. Not in WF_FW_DEBUG builds. Stored in its own flash sector. Every change refuses while a
+disk is in DF0 or DF1. `set` to a different server and `clear` run `config_store_erase` (pairing AND Wi-Fi) and reboot at
+once into the setup portal; `set` naming the default (WEBADF_HOST:443, case-insensitive) IS `clear`; `tls` applies at the next boot. `noverify` = no certificate check and no host-name check;
+OLED status shows INSECURE (not on a custom layout without the status element), logged at boot and every TLS connect;
+the card shows "Custom server" / "Custom server · certificate not checked" (fw 1.13.0+; default server shows nothing).
+Firmware updates still verify our signing key. Words: help `own-server` topic, `wifi-floppy/README.md` "Pointing the board
+at your own server".
+
+**Commits:** f4c5fa0 override_store; c985c90 serial_cmd; 463a435 client port/Host + status report; bdaffd4 boot reads the
+override, console on core0, noverify TLS, INSECURE; 43acf01 log wording; ec7e109 device card; a33e5d2 live-state
+fingerprint; then the docs commit.
+
+**Bench owed (one session, board on USB plus the Amiga for the last step):**
+1. Release the build as TEST, install it (Amiga off). `wf server show` -> default, verify.
+2. With a disk mounted, `wf server set https://...` -> refused, "eject the disk first -- nothing changed".
+3. Eject. On the Mac run `pnpm dev --experimental-https` (self-signed). `wf server set https://<mac>:3000` (erases and
+   reboots into the setup portal), then `wf server tls noverify`, type YES, `wf reboot` (`tls` needs a server set
+   first: "set a server first"). Check the console works while the board sits in the portal.
+4. The board comes up in the setup network; enter Wi-Fi and a pairing code from the Mac server. It pairs.
+5. OLED shows INSECURE; the Mac server's card says "Custom server · certificate not checked"; the log shows the
+   INSECURE line at boot and on connect.
+6. Mount a disk from the Mac server; the Amiga reads it.
+7. `wf server tls verify`, `wf reboot`: the self-signed server is now refused (TLS fails), card would say "Custom server".
+8. `wf server clear`: reboots into setup; re-pair against production; card shows no server line.
+9. Update check against the custom server still accepts only a signed build (optional).
 
 ### 3bm. fw 1.12.1: Network's driver disk as DF1's pick (Next stays instant in Network mode) + PaulaNET local path (Phase 4 step 1) -- RELEASED as fw 1.12.1 (seq 83, fw-1.12.1); A500 bench 5/5 passed 2026-10-15
 

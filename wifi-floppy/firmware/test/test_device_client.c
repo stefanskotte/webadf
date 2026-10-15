@@ -35,9 +35,9 @@ static void push_ok_json(const char *body) {
 
 static char buf[128];
 static device_client_t c;
-static void boot(void) {
+static void boot_with_host(const char *host) {
     fake_reset(); fake_set_clock(0);
-    dc_init(&c, fake_transport(), fake_clock_ms, "webadf.vercel.app", "tok");
+    dc_init(&c, fake_transport(), fake_clock_ms, host, "tok");
     // psram_publish_slot() writes a process-wide static (psram_image.c),
     // so a test earlier in this binary that mounts a disk (directly, or by
     // driving dc_step through a real successful fetch) would otherwise
@@ -53,6 +53,7 @@ static void boot(void) {
     // it and say it let go, so each test starts quiescent.
     psram_df1_reader_ack(psram_df1_token());
 }
+static void boot(void) { boot_with_host("webadf.vercel.app"); }
 
 static void test_cold_boot_polls_since_zero(void) {
     boot();
@@ -492,6 +493,8 @@ static void test_status_body_fits_at_maximum(void) {
     dc_net_t worst_net = { .on = true, .driver_seen = true, .driver_s = 999999u, .amiga_ip = 0xFFFFFFFFu,
                            .frames_in = 999999999u, .frames_out = 999999999u };
     dc_set_net(&c, &worst_net);
+    // Server override (1.13.0): the longer form of the server key.
+    dc_set_server_report(&c, true, true);
 
     fake_push_response("HTTP/1.1 204 No Content\r\n\r\n");
     CHECK(dc_report_status(&c, 2147483647, -200, long_err, long_ver),
@@ -513,6 +516,8 @@ static void test_status_body_fits_at_maximum(void) {
     CHECK(strstr(r, "\"displayVersion\":4294967295") != NULL, "the display ack survives");
     CHECK(strstr(r, "\"secondDrive\":\"df1\",\"driveVersion\":4294967295") != NULL, "the drive ack survives");
     CHECK(strstr(r, "\"framesOut\":999999999}") != NULL, "the net tail survives a maximal body");
+    CHECK(strstr(r, ",\"server\":{\"custom\":true,\"tls\":\"noverify\"}}") != NULL,
+          "the server key survives a maximal body");
     {
         // The whole reason, escaped, closing quote included: 47 x \" then ".
         static char want[16 + 2 * sizeof c.display_error + 2];
@@ -3522,6 +3527,46 @@ static void a_pick_fetch_cut_short_by_a_tap_leaves_no_record_and_no_backoff(void
     leave_df1_off();
 }
 
+// Server override (1.13.0, Task 3): the port and Host header of the chosen server.
+static void a_custom_server_uses_its_port_and_host_header(void) {
+    boot();
+    dc_set_server(&c, 8443, "my.host:8443");
+    fake_push_response("HTTP/1.1 204 No Content\r\n\r\n");
+    dc_step(&c);
+    CHECK(strstr(fake_last_request(), "\r\nHost: my.host:8443\r\n") != NULL, "Host carries the port");
+    CHECK_EQ_INT(fake_last_connect_port(), 8443);
+}
+
+static void the_longest_host_and_port_fit_every_request(void) {
+    static char host[64], hdr[72];
+    memset(host, 'h', 63); host[63] = '\0';
+    snprintf(hdr, sizeof hdr, "%s:65535", host);
+    boot_with_host(host);                         // dc_init with this host, as boot() does with its own
+    dc_set_server(&c, 65535, hdr);
+    c.since = 4294967295u; c.nfc_ack = 4294967295u; c.display_ack = 4294967295u;
+    dc_set_df1(&c, DF1_MODE_OFF, false);
+    c.drive_ack = 4294967295u; c.df1_ack = 4294967295u;
+    fake_push_response("HTTP/1.1 204 No Content\r\n\r\n");
+    dc_step(&c);
+    CHECK(strstr(fake_last_request(), "&df1Ack=4294967295&netPick=1 HTTP/1.1\r\n") != NULL, "the poll path whole");
+    CHECK(strstr(fake_last_request(), hdr) != NULL, "and the Host header");
+    dc_set_server_report(&c, true, true);
+    fake_push_response("HTTP/1.1 204 No Content\r\n\r\n");
+    dc_report_status(&c, 0, -50, NULL, "1.13.0");
+    CHECK(strstr(fake_last_request(), ",\"server\":{\"custom\":true,\"tls\":\"noverify\"}") != NULL, "status server key");
+}
+
+static void status_names_the_server_both_ways(void) {
+    boot();
+    fake_push_response("HTTP/1.1 204 No Content\r\n\r\n");
+    dc_report_status(&c, 0, -50, NULL, "1.13.0");
+    CHECK(strstr(fake_last_request(), "\"server\"") == NULL, "not set up: no key");
+    dc_set_server_report(&c, false, false);
+    fake_push_response("HTTP/1.1 204 No Content\r\n\r\n");
+    dc_report_status(&c, 0, -50, NULL, "1.13.0");
+    CHECK(strstr(fake_last_request(), ",\"server\":{\"custom\":false,\"tls\":\"verify\"}") != NULL, "the default, said");
+}
+
 int main(void) {
     // Only test_successful_image_fetch_publishes_and_reflects_write_protected
     // needs real PSRAM backing (everything else in this file either never
@@ -3721,6 +3766,9 @@ int main(void) {
     RUN(test_a_stale_title_cannot_survive_into_a_different_disk);
     RUN(test_progress_is_reported_once_per_percent);
     RUN(test_an_absent_observer_changes_nothing);
+    RUN(a_custom_server_uses_its_port_and_host_header);
+    RUN(the_longest_host_and_port_fit_every_request);
+    RUN(status_names_the_server_both_ways);
 
     // Last, so nothing below can touch it. Anything added after this line and
     // reaching image_parse_feed() writes to freed memory.

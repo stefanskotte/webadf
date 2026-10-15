@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { HELP_TOPICS, HELP_ORDER, type HelpTopicId } from './topics';
 
-const IDS: HelpTopicId[] = ['boards', 'nfc', 'next-disk', 'write-back', 'write-protect', 'disk-sets', 'hd-hfe', 'display', 'second-drive', 'network', 'cover-image'];
+const IDS: HelpTopicId[] = ['boards', 'own-server', 'nfc', 'next-disk', 'write-back', 'write-protect', 'disk-sets', 'hd-hfe', 'display', 'second-drive', 'network', 'cover-image'];
 // Internal words a reader of the help should never meet (spec §5).
 const BANNED = /\b(PSRAM|TBYB|poll|sha256|cursor|WPROT)\b/i;
 
