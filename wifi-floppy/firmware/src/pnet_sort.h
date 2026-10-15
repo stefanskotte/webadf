@@ -20,6 +20,7 @@
  *
  * Addresses are host-order uint32_t (192.168.1.57 = 0xC0A80139); 0 is "unknown".
  */
+#include <stdbool.h>
 #include <stdint.h>
 #include <stddef.h>
 
@@ -43,6 +44,13 @@ void pnet_sort_init(pnet_sort_t *s);
 pnet_sort_to_t pnet_sort_rx(pnet_sort_t *s, const uint8_t *f, size_t len, uint32_t board_ip);
 /* A frame from the Amiga: PNET_TX_SEND, or why not. Learns from what it lets through. */
 pnet_tx_t pnet_sort_tx(pnet_sort_t *s, const uint8_t *f, size_t len, const uint8_t mac[6], uint32_t board_ip);
+/* Phase 4 (local reachability): the board and the Amiga share one MAC, so a frame between them never comes back
+ * from the radio, and must be handed across here. a2b: a frame from the Amiga (already PNET_TX_SEND) that is ARP
+ * whose target address is the board's, or IPv4 to the board's address -> the board's lwIP, not the radio. b2a: a
+ * frame from the board's lwIP that is ARP whose target is the Amiga's address, or IPv4 to it -> the Amiga's RX ring,
+ * not the radio. False whenever an address is unknown (0), or the Amiga's would be the board's. */
+bool pnet_sort_a2b_local(const uint8_t *f, size_t len, uint32_t board_ip);
+bool pnet_sort_b2a_local(const pnet_sort_t *s, const uint8_t *f, size_t len, uint32_t board_ip);
 /* Appends the board's DHCP client-id (option 61, type 0, "wf" + MAC) at opts[used] if it fits in
  * cap; returns the new length, or `used` unchanged when it does not. */
 size_t pnet_dhcp_client_id(uint8_t *opts, size_t used, size_t cap, const uint8_t mac[6]);
