@@ -4,7 +4,7 @@ import { resolveConfig, ConfigError } from '@/selfhost/config';
 import { checkFreeSpace, checkWritable, checkPgData, type CheckResult } from '@/selfhost/checks';
 import { renderCaddyfile } from '@/selfhost/caddyfile';
 import { ensureSecrets, readSecrets, SecretError } from '@/selfhost/secrets';
-import { parseCron, nextRun } from '@/selfhost/cron';
+import { parseCron, nextRun, nextArm } from '@/selfhost/cron';
 import { config as vercelConfig } from '../vercel';
 
 /** webadf-ctl: the container's entry (self-hosting P2). One line per failure, exit 1. */
@@ -42,7 +42,7 @@ function env() {
   process.env.STORAGE_DIR = join(DATA, 'blobs');
   delete process.env.BLOB_READ_WRITE_TOKEN;
   // The weekly blob GC deletes, as on our deployment (parity); BLOB_GC_DELETE=0 in .env makes it report only.
-  if (process.env.BLOB_GC_DELETE === undefined) process.env.BLOB_GC_DELETE = '1';
+  if (!process.env.BLOB_GC_DELETE?.trim()) process.env.BLOB_GC_DELETE = '1'; // unset or empty = the default
   return cfg;
 }
 
@@ -88,8 +88,7 @@ async function scheduler() {
   const jobs = (vercelConfig.crons ?? []).map((c) => ({ path: c.path, cron: parseCron(c.schedule) }));
   say(`scheduler: ${jobs.map((j) => j.path).join(', ')}`);
   for (const j of jobs) {
-    (function arm(from: Date) {
-      const at = nextRun(j.cron, from);
+    (function arm(at: Date) {
       setTimeout(async () => {
         const t0 = Date.now();
         say(`cron ${j.path}: start`);
@@ -100,12 +99,10 @@ async function scheduler() {
         } catch (e) {
           say(`cron ${j.path}: failed (${(e as Error).message}); next slot retries`);
         }
-        // From the slot just served, not from now: a timer that fires a little early cannot pick the same slot
-        // twice (nextRun is strictly after its argument's minute), and a run that overran the next slot starts
-        // again at once rather than skipping it.
-        arm(at);
+        // nextArm: never the same slot twice, and missed slots (suspend, overrun) collapse into this run.
+        arm(nextArm(j.cron, at, new Date()));
       }, Math.max(0, at.getTime() - Date.now()));
-    })(new Date());
+    })(nextRun(j.cron, new Date()));
   }
 }
 

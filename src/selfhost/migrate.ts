@@ -1,4 +1,4 @@
-import { readFileSync, readdirSync, mkdirSync, unlinkSync, existsSync, chmodSync } from 'node:fs';
+import { readFileSync, readdirSync, mkdirSync, unlinkSync, existsSync, chmodSync, statSync, writeFileSync, renameSync } from 'node:fs';
 import { join } from 'node:path';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
@@ -14,6 +14,8 @@ export class MigrationRefused extends Error {}
 const LOCK_KEY = 7_240_012; // arbitrary, constant: "webadf migrate"
 const KEEP = 5;
 const BACKUP_RE = /^\d{8}T\d{6}Z-before-.+\.dump$/;
+const PARTIAL_RE = /^\d{8}T\d{6}Z-before-.+\.dump\.partial$/;
+const REUSE_MS = 24 * 3600 * 1000;
 
 export function migrationState(entries: JournalEntry[], dbLatest: number | null): MigrationState {
   const imageLatest = entries.at(-1)!.tag;
@@ -78,22 +80,34 @@ export async function runStartupMigrations(opts: {
     let backup: string | null = null;
     if (latest !== null) { // a fresh database has nothing to back up
       mkdirSync(opts.backupDir, { recursive: true });
+      // A dump cut short (a crash, a full disk) is left as .partial: never reused, removed here.
+      for (const n of readdirSync(opts.backupDir)) if (PARTIAL_RE.test(n)) unlinkSync(join(opts.backupDir, n));
       // A migration that keeps failing is retried on every restart (restart: unless-stopped). The schema is
-      // unchanged by a failed run, so the backup taken before the first attempt still holds; reusing it keeps
-      // the retries from rotating the older backups out.
+      // unchanged by a failed run, so a backup taken before an attempt in the last 24 hours still holds; reusing
+      // it keeps the retries from rotating the older backups out. An older one may predate later writes.
       const suffix = `-before-${state.pending[0]}.dump`;
-      const taken = readdirSync(opts.backupDir).filter((n) => BACKUP_RE.test(n) && n.endsWith(suffix)).sort().at(-1);
-      if (taken) {
-        backup = join(opts.backupDir, taken);
-        log(`migrations: backup before ${state.pending[0]} already taken: ${backup}`);
+      const fresh = readdirSync(opts.backupDir)
+        .filter((n) => BACKUP_RE.test(n) && n.endsWith(suffix))
+        .map((n) => ({ n, age: Date.now() - statSync(join(opts.backupDir, n)).mtimeMs }))
+        .filter((x) => x.age < REUSE_MS)
+        .sort((a, b) => a.age - b.age)[0];
+      if (fresh) {
+        backup = join(opts.backupDir, fresh.n);
+        chmodSync(backup, 0o600);
+        log(`migrations: backup before ${state.pending[0]} already taken (${Math.round(fresh.age / 60_000)} min ago): ${backup}`);
       } else {
         backup = join(opts.backupDir, backupName(new Date(), state.pending[0]));
+        const partial = `${backup}.partial`;
         log(`migrations: backing up to ${backup} before ${state.pending.length} pending`);
         try {
-          await (opts.dump ?? pgDump)(opts.url, backup);
-          chmodSync(backup, 0o600); // password hashes and sessions
+          // Owner-only before pg_dump writes a byte (it opens an existing file without changing its mode).
+          writeFileSync(partial, '', { mode: 0o600 });
+          chmodSync(partial, 0o600);
+          await (opts.dump ?? pgDump)(opts.url, partial);
+          if (statSync(partial).size === 0) throw new Error('pg_dump wrote nothing');
+          renameSync(partial, backup);
         } catch (e) {
-          if (existsSync(backup)) unlinkSync(backup);
+          if (existsSync(partial)) unlinkSync(partial);
           throw new MigrationRefused(`backup failed (${(e as Error).message.trim()}); nothing was migrated`);
         }
         for (const old of prunable(readdirSync(opts.backupDir), KEEP)) unlinkSync(join(opts.backupDir, old));

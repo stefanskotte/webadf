@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeAll, beforeEach, afterAll } from 'vitest';
 import { Client } from 'pg';
-import { mkdtempSync, readdirSync, cpSync, readFileSync, writeFileSync, statSync } from 'node:fs';
+import { mkdtempSync, readdirSync, cpSync, readFileSync, writeFileSync, statSync, utimesSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -71,7 +71,7 @@ describe('runStartupMigrations', () => {
       });
       expect(r.applied).toEqual(['0039_selfhost_test']);
       expect(dumps).toHaveLength(1);
-      expect(dumps[0]).toMatch(/-before-0039_selfhost_test\.dump$/);
+      expect(dumps[0]).toMatch(/-before-0039_selfhost_test\.dump\.partial$/);
       expect(await probe()).toBe(true);
       expect(await count()).toBe(before + 1);
     });
@@ -97,10 +97,70 @@ describe('runStartupMigrations', () => {
         dump: async (_u, f) => { dumps.push(f); writeFileSync(f, 'x'); }, log: (l) => lines.push(l),
       });
       await expect(run()).rejects.toThrow(/migration failed in 0039_selfhost_test/);
-      await expect(run()).rejects.toThrow(new RegExp(`backup: ${dumps[0]?.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`));
+      const [name] = readdirSync(dir);
+      const final = join(dir, name);
+      await expect(run()).rejects.toThrow(`backup: ${final}`);
       expect(dumps).toHaveLength(1);
-      expect(readdirSync(dir)).toHaveLength(1);
-      expect(lines).toContain(`migrations: backup before 0039_selfhost_test already taken: ${dumps[0]}`);
+      expect(readdirSync(dir)).toEqual([name]);
+      expect(lines.some((l) => l.startsWith(`migrations: backup before 0039_selfhost_test already taken (`) && l.endsWith(`): ${final}`))).toBe(true);
+    });
+
+    it('a backup older than 24 hours is not reused: a new one is taken', async () => {
+      const dir = tmpBackups();
+      const old = join(dir, '20261001T000000Z-before-0039_selfhost_test.dump');
+      writeFileSync(old, 'old');
+      const t = (Date.now() - 25 * 3600 * 1000) / 1000; utimesSync(old, t, t);
+      const dumps: string[] = [];
+      await expect(runStartupMigrations({
+        url: url2, migrationsFolder: folderWith('select 1/0;'), backupDir: dir,
+        dump: async (_u, f) => { dumps.push(f); writeFileSync(f, 'x'); }, log: () => {},
+      })).rejects.toThrow(/migration failed/);
+      expect(dumps).toHaveLength(1);
+      expect(readdirSync(dir)).toHaveLength(2);
+    });
+
+    it('a fresh backup is reused, and made 0600 if it was not', async () => {
+      const dir = tmpBackups();
+      const fresh = join(dir, '20261015T000000Z-before-0039_selfhost_test.dump');
+      writeFileSync(fresh, 'fresh', { mode: 0o644 });
+      const dumps: string[] = [];
+      const lines: string[] = [];
+      await expect(runStartupMigrations({
+        url: url2, migrationsFolder: folderWith('select 1/0;'), backupDir: dir,
+        dump: async (_u, f) => { dumps.push(f); writeFileSync(f, 'x'); }, log: (l) => lines.push(l),
+      })).rejects.toThrow(`backup: ${fresh}`);
+      expect(dumps).toHaveLength(0);
+      expect(statSync(fresh).mode & 0o777).toBe(0o600);
+      expect(lines.some((l) => /already taken \(\d+ min ago\)/.test(l))).toBe(true);
+    });
+
+    it('dumps into a 0600 .partial, never reuses a leftover .partial, and renames only a non-empty dump', async () => {
+      const dir = tmpBackups();
+      const leftover = join(dir, '20261015T000000Z-before-0039_selfhost_test.dump.partial');
+      writeFileSync(leftover, 'trunc');
+      const seen: { file: string; mode: number }[] = [];
+      await runStartupMigrations({
+        url: url2, migrationsFolder: folderWith('create table selfhost_probe (id int);'), backupDir: dir,
+        dump: async (_u, f) => { seen.push({ file: f, mode: statSync(f).mode & 0o777 }); writeFileSync(f, 'x'); }, log: () => {},
+      });
+      expect(seen).toHaveLength(1);
+      expect(seen[0].file).toMatch(/\.dump\.partial$/);
+      expect(seen[0].mode).toBe(0o600); // exists, owner-only, before pg_dump writes a byte
+      expect(existsSync(leftover)).toBe(false);
+      const names = readdirSync(dir);
+      expect(names).toHaveLength(1);
+      expect(names[0]).toMatch(/-before-0039_selfhost_test\.dump$/);
+    });
+
+    it('an empty dump is a failed backup: nothing kept, nothing migrated', async () => {
+      const dir = tmpBackups();
+      const before = await count();
+      await expect(runStartupMigrations({
+        url: url2, migrationsFolder: folderWith('create table selfhost_probe (id int);'), backupDir: dir,
+        dump: async () => {}, log: () => {},
+      })).rejects.toThrow(/backup failed \(pg_dump wrote nothing\)/);
+      expect(readdirSync(dir)).toEqual([]);
+      expect(await count()).toBe(before);
     });
 
     it('a failing migration names the migration, the cause and the backup', async () => {

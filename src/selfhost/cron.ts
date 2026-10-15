@@ -33,3 +33,12 @@ export function nextRun(c: Cron, after: Date): Date {
   }
   throw new Error('no run within a year');
 }
+
+/**
+ * When the scheduler arms again after serving slot `served`, at time `now`. From the later of the two: a timer
+ * that fired a little early cannot pick the same slot twice, and after a long gap (a suspended host, an overrun)
+ * the missed slots collapse into the run just made instead of firing back to back.
+ */
+export function nextArm(c: Cron, served: Date, now: Date): Date {
+  return nextRun(c, new Date(Math.max(served.getTime(), now.getTime())));
+}

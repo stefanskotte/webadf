@@ -65,7 +65,7 @@ for _ in $(seq 1 20); do
   sleep 1
 done
 [ -n "$ok" ] || fail "https://127.0.0.1:$PORT/api/health did not answer after changing WEBADF_URL"
-[ "$(dc ps -q caddy)" = "$caddy_id" ] || echo "note: caddy was recreated (the reload was not what moved it)"
+[ "$(dc ps -q caddy)" = "$caddy_id" ] || fail "caddy was recreated: the new site came from the recreate, not from --watch reloading the Caddyfile"
 echo "smoke: IP address URL OK"
 
 # The image's pg_dump against the stack's db, connected the way migrate.ts connects (PG* env, no password in argv).
