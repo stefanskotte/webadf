@@ -396,7 +396,7 @@ export const HELP_TOPICS = {
     ),
   },
   // Sources: spec 2026-10-15-board-server-override-design.md; commands in
-  // wifi-floppy/firmware/src/serial_cmd.c, behaviour in main.c; card line in devices/page.tsx (fw 1.13.0+);
+  // wifi-floppy/firmware/src/serial_cmd.c, behaviour in main.c;
   'own-server': {
     title: 'Your own server',
     short:
@@ -419,9 +419,8 @@ export const HELP_TOPICS = {
           only on a network you trust. The setting applies at the next boot.
         </p>
         <p>
-          <strong>On the card.</strong> The board&apos;s card then says <em>Custom server</em>, and{' '}
-          <em>certificate not checked</em> if you turned the check off. Firmware updates are still checked against our
-          signing key. The full steps are in wifi-floppy/README.md.
+          <strong>Updates.</strong> Firmware updates are still checked against our signing key, so a board on your own
+          server only installs builds we signed. The full steps are in wifi-floppy/README.md.
         </p>
       </>
     ),
