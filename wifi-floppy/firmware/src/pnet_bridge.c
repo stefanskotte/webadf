@@ -97,6 +97,7 @@ static void pnet_to_board(struct netif *nif, const uint8_t *f, uint16_t len) {
     struct pbuf *p = s_next && len <= PNET_LOCAL_A2B_MAX ? pbuf_alloc(PBUF_RAW, len, PBUF_RAM) : NULL;
     if (!p) { s_local_drops++; return; }
     pbuf_take(p, f, len);
+    pnet_local_to_board((uint8_t *)p->payload, len, nif->hwaddr);   // PBUF_RAM: one contiguous buffer
     if (s_next(p, nif) != ERR_OK) { pbuf_free(p); s_local_drops++; return; }
     s_a2b++;
 }
@@ -112,6 +113,7 @@ static err_t pnet_linkoutput(struct netif *nif, struct pbuf *p) {
             uint8_t *d = pnet_ring_claim(&g_pnet_rx);
             if (!d) return ERR_OK;                       // ring full: lost, counted by the ring (rx drops)
             pbuf_copy_partial(p, d, p->tot_len, 0);
+            pnet_local_to_amiga(d, p->tot_len, nif->hwaddr);   // the Amiga ignores ARP from its own MAC
             pnet_ring_commit(&g_pnet_rx, p->tot_len);
             s_b2a++;
             return ERR_OK;
