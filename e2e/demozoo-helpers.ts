@@ -2,7 +2,8 @@ import { createHash, randomUUID } from 'node:crypto';
 import { eq, inArray } from 'drizzle-orm';
 import { getDb } from '@/db';
 import { blobs } from '@/db/schema/catalog';
-import { demozooProductions, demozooImages, demozooSuggestions } from '@/db/schema/demozoo';
+import { demozooProductions, demozooImages, demozooSuggestions, demozooImport } from '@/db/schema/demozoo';
+import { IMPORT_ROW_ID } from '@/lib/demozoo/import';
 import { imageStore } from '@/lib/storage';
 import { titleKey } from '@/lib/demozoo/title-key';
 import { TINY_PNG } from './openretro-helpers';
@@ -10,6 +11,20 @@ import { TINY_PNG } from './openretro-helpers';
 // Demozoo ids are well under 1,000,000 today; 2e9 keeps seeds clear of the live import.
 const seededIds: number[] = [];
 const storedImages: string[] = [];
+
+/**
+ * The sweep's Demozoo match phase does nothing until an export has been
+ * APPLIED once (demozooMatchPhase returns early with no demozoo_import cursor).
+ * Production has had one since the weekly fetch went live; a fresh database
+ * (the local run, scripts/e2e-local.sh) has none. Local runs only: in
+ * production the row is the real import's cursor and must never be touched.
+ */
+export async function ensureDemozooImportAppliedLocally() {
+  if (process.env.E2E_LOCAL !== '1') return;
+  await getDb().insert(demozooImport)
+    .values({ id: IMPORT_ROW_ID, step: 'applied', appliedAt: new Date() })
+    .onConflictDoNothing();
+}
 
 /**
  * A 100M-wide random id range makes a collision unlikely per call, not

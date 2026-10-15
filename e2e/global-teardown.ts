@@ -222,6 +222,10 @@ export default async function globalTeardown() {
     // Never fail the run on teardown: the tests already passed or failed on
     // their own merits, and reporting a cleanup problem as a suite failure
     // would hide that result.
-    console.warn('teardown: aborted —', (err as Error).message);
+    // Drizzle's "Failed query" message names the SQL but not why it failed;
+    // the driver's own error is the cause, and without it an abort is a guess.
+    const cause = (err as Error).cause as Error | undefined;
+    console.warn('teardown: aborted —', (err as Error).message,
+                 cause ? `— cause: ${cause.message}` : '');
   }
 }
