@@ -231,6 +231,45 @@ static void ip_text_is_a_dotted_quad(void) {
     CHECK(strcmp(t, "255.255.255.255") == 0, "15 characters and the NUL fit");
 }
 
+// Phase 4 spike (desk study 2026-10-15): the board and the Amiga share one MAC, so a frame between them never comes
+// back from the radio. pnet_sort_a2b_local / pnet_sort_b2a_local pick out the frames that must be handed across
+// locally instead.
+static void a2b_local_is_arp_or_ipv4_for_the_boards_address(void) {
+    size_t n = arp(BCAST, MAC, 1, AMIGA, BOARD);                 /* the Amiga asks for the board */
+    CHECK(pnet_sort_a2b_local(F, n, BOARD), "ARP request for the board: local");
+    n = arp(MAC, MAC, 2, AMIGA, BOARD);                          /* its reply to the board's request */
+    CHECK(pnet_sort_a2b_local(F, n, BOARD), "ARP reply to the board: local");
+    n = arp(BCAST, MAC, 1, AMIGA, ROUTER);
+    CHECK(!pnet_sort_a2b_local(F, n, BOARD), "ARP for the router: the radio");
+    n = ipv4(MAC, MAC, 1, AMIGA, BOARD, 64);                     /* ping the board */
+    CHECK(pnet_sort_a2b_local(F, n + 64, BOARD), "IPv4 to the board: local");
+    n = ipv4(RMAC, MAC, 6, AMIGA, IP(93, 184, 216, 34), 20);
+    CHECK(!pnet_sort_a2b_local(F, n + 20, BOARD), "IPv4 to the internet: the radio");
+    n = ipv4(MAC, MAC, 1, AMIGA, BOARD, 64);
+    CHECK(!pnet_sort_a2b_local(F, n + 64, 0), "the board has no address yet: the radio");
+    CHECK(!pnet_sort_a2b_local(F, 10, BOARD), "short: the radio");
+}
+
+static void b2a_local_is_arp_or_ipv4_for_the_amigas_address(void) {
+    pnet_sort_t s = fresh(AMIGA);
+    size_t n = arp(BCAST, MAC, 1, BOARD, AMIGA);                 /* the board asks for the Amiga */
+    CHECK(pnet_sort_b2a_local(&s, F, n, BOARD), "ARP request for the Amiga: local");
+    n = arp(MAC, MAC, 2, BOARD, AMIGA);                          /* the board answers the Amiga */
+    CHECK(pnet_sort_b2a_local(&s, F, n, BOARD), "ARP reply to the Amiga: local");
+    n = arp(BCAST, MAC, 1, BOARD, ROUTER);
+    CHECK(!pnet_sort_b2a_local(&s, F, n, BOARD), "ARP for the router: the radio");
+    n = ipv4(MAC, MAC, 6, BOARD, AMIGA, 20);                     /* a TCP SYN to the Amiga */
+    CHECK(pnet_sort_b2a_local(&s, F, n + 20, BOARD), "IPv4 to the Amiga: local");
+    n = ipv4(RMAC, MAC, 6, BOARD, IP(76, 76, 21, 21), 20);       /* the board's TLS to the server */
+    CHECK(!pnet_sort_b2a_local(&s, F, n + 20, BOARD), "IPv4 elsewhere: the radio");
+    pnet_sort_t none = fresh(0);
+    n = ipv4(MAC, MAC, 6, BOARD, AMIGA, 20);
+    CHECK(!pnet_sort_b2a_local(&none, F, n + 20, BOARD), "no Amiga known: the radio");
+    pnet_sort_t same = fresh(BOARD);                             /* a clash is never the Amiga's */
+    n = ipv4(MAC, MAC, 6, BOARD, BOARD, 20);
+    CHECK(!pnet_sort_b2a_local(&same, F, n + 20, BOARD), "the Amiga's address is never the board's");
+}
+
 int main(void) {
     RUN(arp_for_the_amiga_goes_to_both);
     RUN(ipv4_unicast_to_the_amiga_goes_to_the_amiga_only);
@@ -244,5 +283,7 @@ int main(void) {
     RUN(tx_learns_the_amigas_address_and_refuses_what_cannot_go);
     RUN(client_id_is_appended_only_when_it_fits);
     RUN(ip_text_is_a_dotted_quad);
+    RUN(a2b_local_is_arp_or_ipv4_for_the_boards_address);
+    RUN(b2a_local_is_arp_or_ipv4_for_the_amigas_address);
     return REPORT();
 }

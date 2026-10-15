@@ -14,6 +14,14 @@
 //
 // SEND. A 2 ms worker in the same context (net_radio_every_ms) hands up to PNET_TX_PER_TICK frames
 // from the TX ring to the radio. Not core1's loop: that blocks for seconds inside the long poll.
+//
+// LOCAL (Phase 4). The board and the Amiga share one MAC, so a frame between them never comes back from the
+// radio. The worker hands a frame from the Amiga for the board's address (pnet_sort_a2b_local) to lwIP's own input
+// instead of the radio; a hook on the station netif's linkoutput puts a frame from the board for the Amiga's
+// address (pnet_sort_b2a_local) into the Amiga's RX ring instead of the radio. Both run on core1 with the lwIP lock
+// held -- the worker, and lwIP's own output from core1's code (the poll's TLS, timers) -- so the RX ring keeps one
+// producer context. lwIP may call linkoutput from inside the input
+// (an ARP or ICMP answer): pnet_input commits its own copy before calling lwIP, so the ring is never mid-write.
 #include "pnet_bridge.h"
 #include "pnet_frame.h"        // PNET_MAX_FRAMES
 #include "net_radio.h"
@@ -37,6 +45,8 @@ pnet_ring_t g_pnet_rx, g_pnet_tx;
 
 static pnet_sort_t s_sort;           // the network context only
 static netif_input_fn s_next;        // lwIP's own input, taken over by the hook
+static netif_linkoutput_fn s_next_out;   // the radio driver's linkoutput, taken over by the local hook
+static volatile uint32_t s_a2b, s_b2a, s_local_drops;
 static volatile uint32_t s_in_amiga, s_in_both, s_big, s_chained, s_hooks, s_tx_sent, s_tx_err;
 static volatile uint32_t s_tx_no[PNET_TX_N], s_board_ip;
 // Phase 3 (plan 2026-10-12, ruling 3): Network mode on. Written by core0, read here in the network context.
@@ -77,6 +87,39 @@ static err_t pnet_input(struct pbuf *p, struct netif *nif) {
     return ERR_OK;
 }
 
+// Phase 4: a frame from the Amiga for the board, into lwIP's own input as if the radio had received it. From the
+// lwIP heap (PBUF_RAM), never PBUF_POOL: the pool is the long poll's TLS receive window (lwipopts.h), and IPv4
+// reassembly could pin pool buffers for seconds (review I1). Capped at PNET_LOCAL_A2B_MAX: ARP, a ping, TCP SYNs and
+// ACKs -- what the board needs from the Amiga today. Larger frames are dropped and counted; raise the cap when a
+// board-side service has to take bulk data from the Amiga.
+#define PNET_LOCAL_A2B_MAX 256u
+static void pnet_to_board(struct netif *nif, const uint8_t *f, uint16_t len) {
+    struct pbuf *p = s_next && len <= PNET_LOCAL_A2B_MAX ? pbuf_alloc(PBUF_RAW, len, PBUF_RAM) : NULL;
+    if (!p) { s_local_drops++; return; }
+    pbuf_take(p, f, len);
+    if (s_next(p, nif) != ERR_OK) { pbuf_free(p); s_local_drops++; return; }
+    s_a2b++;
+}
+
+// Phase 4: the board's own frames. One for the Amiga goes into its RX ring, not the radio; anything else is the
+// radio driver's, unchanged. lwIP keeps ownership of p either way.
+static err_t pnet_linkoutput(struct netif *nif, struct pbuf *p) {
+    if (s_on && p->tot_len >= PNET_ETH_HDR) {
+        uint8_t head[64];                                // ARP (42) and an IPv4 header (34+) fit
+        const uint16_t n = pbuf_copy_partial(p, head, sizeof head, 0);
+        if (pnet_sort_b2a_local(&s_sort, head, n, board_ip_of(nif))) {
+            if (p->tot_len > PNET_RING_MTU) { s_local_drops++; return ERR_OK; }
+            uint8_t *d = pnet_ring_claim(&g_pnet_rx);
+            if (!d) return ERR_OK;                       // ring full: lost, counted by the ring (rx drops)
+            pbuf_copy_partial(p, d, p->tot_len, 0);
+            pnet_ring_commit(&g_pnet_rx, p->tot_len);
+            s_b2a++;
+            return ERR_OK;
+        }
+    }
+    return s_next_out(nif, p);
+}
+
 static void pnet_tx_tick(void) {
     if (!s_on) {
         // Not Network: nothing may go out. Frames queued before the mode changed are dropped here (this worker
@@ -94,6 +137,7 @@ static void pnet_tx_tick(void) {
         if (!f) break;
         const pnet_tx_t v = pnet_sort_tx(&s_sort, f, len, nif->hwaddr, board_ip);
         if (v != PNET_TX_SEND) s_tx_no[v]++;
+        else if (pnet_sort_a2b_local(f, len, board_ip)) pnet_to_board(nif, f, len);
         else if (net_radio_send_ethernet(f, len) == 0) s_tx_sent++;
         else s_tx_err++;
         pnet_ring_drop(&g_pnet_tx, 1);
@@ -106,6 +150,11 @@ void pnet_bridge_check(void) {
     if (nif->input != NULL && nif->input != pnet_input) {
         s_next = nif->input;
         nif->input = pnet_input;
+        s_hooks++;
+    }
+    if (nif->linkoutput != NULL && nif->linkoutput != pnet_linkoutput) {
+        s_next_out = nif->linkoutput;
+        nif->linkoutput = pnet_linkoutput;
         s_hooks++;
     }
     net_radio_unlock();
@@ -134,4 +183,7 @@ void pnet_bridge_stats(pnet_bridge_stats_t *o) {
     o->clash = *(volatile uint32_t *)&s_sort.clash;    // written in the network context; a log reading
     o->amiga_ip = *(volatile uint32_t *)&s_sort.amiga_ip;
     o->board_ip = s_board_ip;
+    o->a2b = s_a2b;
+    o->b2a = s_b2a;
+    o->local_drops = s_local_drops;
 }

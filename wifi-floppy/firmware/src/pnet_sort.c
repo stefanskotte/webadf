@@ -118,6 +118,28 @@ pnet_tx_t pnet_sort_tx(pnet_sort_t *s, const uint8_t *f, size_t len, const uint8
     return PNET_TX_SEND;
 }
 
+/* ARP (Ethernet/IPv4) whose target protocol address is `tpa`, or IPv4 whose destination is `tpa`. */
+static bool addressed_to(const uint8_t *f, size_t len, uint32_t tpa) {
+    if (tpa == 0u || len < ETH_HDR) return false;
+    if (be16(f + 12) == 0x0806u) {
+        if (len < ETH_HDR + 28u) return false;
+        const uint8_t *a = f + ETH_HDR;
+        if (be16(a) != 1u || be16(a + 2) != 0x0800u || a[4] != 6u || a[5] != 4u) return false;
+        return be32(a + 24) == tpa;
+    }
+    ip4_t ip;
+    return ip4(f, len, &ip) && ip.dst == tpa;
+}
+
+bool pnet_sort_a2b_local(const uint8_t *f, size_t len, uint32_t board_ip) {
+    return addressed_to(f, len, board_ip);
+}
+
+bool pnet_sort_b2a_local(const pnet_sort_t *s, const uint8_t *f, size_t len, uint32_t board_ip) {
+    const uint32_t amiga = s->amiga_ip != board_ip ? s->amiga_ip : 0u;   /* never the board's */
+    return addressed_to(f, len, amiga);
+}
+
 size_t pnet_dhcp_client_id(uint8_t *opts, size_t used, size_t cap, const uint8_t mac[6]) {
     static const uint8_t pre[5] = {61u, 9u, 0x00u, 'w', 'f'};
     if (used > cap || cap - used < PNET_CLIENT_ID_BYTES) return used;

@@ -3490,7 +3490,8 @@ static void pnet_l2_log(void) {
     for (unsigned i = 1; i < PNET_TX_N; i++) no += st.tx_no[i];
     const uint32_t sum = st.in_amiga + st.in_both + st.rx_drops + st.tx_sent + st.tx_err + no +
                          g_link.fresh + g_link.dup + g_link.queued + g_link.over + g_link.malformed +
-                         g_link.acked + st.clash + st.hooks + g_pnet_status_serves + g_pnet_status_early;
+                         g_link.acked + st.clash + st.hooks + g_pnet_status_serves + g_pnet_status_early +
+                         st.a2b + st.b2a + st.local_drops;
     if (sum == last_sum) return;
     last_sum = sum;
 #define PNET_SAT(v, m) ((unsigned long)((v) > (m) ? (m) : (v)))
@@ -3501,6 +3502,9 @@ static void pnet_l2_log(void) {
     wf_logf(WF_INFO, "pnet: l2 in a %lu b %lu drop %lu q %lu sent %lu err %lu",
             S7(st.in_amiga), S7(st.in_both), S7(st.rx_drops),
             S7(pnet_ring_count(&g_pnet_rx)), S7(st.tx_sent), S7(st.tx_err));
+    // Phase 4: frames between the board and the Amiga, which never touch the radio.
+    wf_logf(st.local_drops ? WF_WARN : WF_INFO, "pnet: l2 local a2b %lu b2a %lu drop %lu",
+            S7(st.a2b), S7(st.b2a), S7(st.local_drops));
     wf_logf(no ? WF_WARN : WF_INFO, "pnet: l2 tx no len %lu mac %lu type %lu clash %lu ack %lu",
             S7(st.tx_no[PNET_TX_LEN]), S7(st.tx_no[PNET_TX_MAC]),
             S7(st.tx_no[PNET_TX_TYPE]), S7(st.tx_no[PNET_TX_CLASH]), S7(g_link.acked));
