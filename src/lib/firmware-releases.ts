@@ -72,10 +72,30 @@ export async function publishRelease(
  */
 export const TEST_RELEASE_PATTERNS = ['%+e2e%', '0.0.0-e2e%'] as const;
 
+/**
+ * A bench build's notes start "TEST build" (isTestBuild, firmware-github-release.ts). Every org's card offered
+ * them, and another org's board took one (HANDOFF 3bk), so a TEST build is visible only to the bench orgs named in
+ * FIRMWARE_BENCH_ORGS (comma-separated org ids). Unset, no org sees one: fail closed. Neither the publisher (the
+ * publish script's SUPERADMIN_EMAILS user, in no bench org) nor a super-admin names the bench org, so it is stated.
+ * Promoting a build (its notes edited to release notes) makes it visible to every org.
+ */
+export const TEST_BUILD_NOTES_PATTERN = 'TEST build%';
+
+/** FIRMWARE_BENCH_ORGS, read per call so a test can set it. */
+export function benchOrgIds(raw = process.env.FIRMWARE_BENCH_ORGS): string[] {
+  return (raw ?? '').split(',').map((s) => s.trim()).filter(Boolean);
+}
+
 /** Whether a release row is visible to `orgId` -- a bound org id or a column (correlated). */
 export function releaseVisibleToSql(orgId: SQLWrapper | string): SQL {
+  const bench = benchOrgIds();
+  const isBench = bench.length === 0
+    ? sql`false`
+    : sql`${orgId} in (${sql.join(bench.map((id) => sql`${id}`), sql`, `)})`;
   return sql`((${firmwareReleases.version} not like ${TEST_RELEASE_PATTERNS[0]}
-    and ${firmwareReleases.version} not like ${TEST_RELEASE_PATTERNS[1]}) or ${isTestOrgSql(orgId)})`;
+    and ${firmwareReleases.version} not like ${TEST_RELEASE_PATTERNS[1]}) or ${isTestOrgSql(orgId)})
+    and (${firmwareReleases.notes} is null or ${firmwareReleases.notes} not like ${TEST_BUILD_NOTES_PATTERN}
+      or ${isBench})`;
 }
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
