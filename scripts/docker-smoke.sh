@@ -38,11 +38,35 @@ logs=$(dc logs app 2>&1)
 has "Sign up as the first admin (use smoke@example.org): https://localhost:$PORT/sign-up?invite=" "$logs" || fail "no first-admin line"
 has "migrations: applied" "$logs" || fail "first start applied no migrations"
 curl -skf "https://localhost:$PORT/api/health" | grep -q ok || fail "/api/health through caddy"
-dc restart app && dc up -d --wait || fail "stack did not come back after a restart"
-[ "$(dc logs app 2>&1 | grep -c 'migrations: up to date')" -ge 1 ] || fail "restart was not a no-op"
+
+# Recreate every container (what `pull && up -d` does to a new image): secrets, data and the Caddyfile must survive.
+psql() { dc exec -T db psql -U webadf -d webadf -tAc "$1"; }
+secrets_sum() { docker run --rm -v "$W/data/secrets:/s:ro" alpine sh -c 'cd /s && sha256sum better_auth_secret cron_secret pg_password'; }
+before=$(secrets_sum)
+psql "insert into invites (code, org_id, created_by_user_id, expires_at) values ('SMOKEMRK', 'smoke', 'smoke', now() + interval '1 day')" >/dev/null
+echo '# stale' >> "$W/data/caddy/Caddyfile"
+dc up -d --force-recreate --wait || fail "stack did not come back after a recreate"
+[ "$(secrets_sum)" = "$before" ] || fail "secrets changed across a recreate"
+[ "$(psql "select count(*) from invites where code = 'SMOKEMRK'")" = 1 ] || fail "a row written before the recreate is gone"
+! grep -q '# stale' "$W/data/caddy/Caddyfile" || fail "setup did not re-render the Caddyfile"
+has "migrations: up to date" "$(dc logs app 2>&1)" || fail "the recreate was not a no-op"
 [ -d "$W/data/backups" ] || fail "data/backups was not created"
 [ -z "$(ls -A "$W/data/backups")" ] || fail "a backup was taken with nothing pending"
-echo "smoke: first start + restart OK"
+echo "smoke: first start + recreate OK"
+
+# Change WEBADF_URL to an IP address: `up -d` alone must bring Caddy onto the new site (it is not recreated;
+# it reloads the re-rendered Caddyfile), and a client that sends no SNI (curl to an IP) must get the certificate.
+caddy_id=$(dc ps -q caddy)
+sed -i.bak "s|^WEBADF_URL=.*|WEBADF_URL=https://127.0.0.1:$PORT|" "$W/.env" && rm -f "$W/.env.bak"
+dc up -d --wait || fail "stack did not come back after changing WEBADF_URL"
+ok=""
+for _ in $(seq 1 20); do
+  if curl -skf "https://127.0.0.1:$PORT/api/health" 2>/dev/null | grep -q ok; then ok=1; break; fi
+  sleep 1
+done
+[ -n "$ok" ] || fail "https://127.0.0.1:$PORT/api/health did not answer after changing WEBADF_URL"
+[ "$(dc ps -q caddy)" = "$caddy_id" ] || echo "note: caddy was recreated (the reload was not what moved it)"
+echo "smoke: IP address URL OK"
 
 # The image's pg_dump against the stack's db, connected the way migrate.ts connects (PG* env, no password in argv).
 v=$(dc exec -T app pg_dump --version)

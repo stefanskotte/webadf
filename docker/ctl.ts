@@ -41,6 +41,8 @@ function env() {
   process.env.SUPERADMIN_EMAILS = cfg.superadmins;
   process.env.STORAGE_DIR = join(DATA, 'blobs');
   delete process.env.BLOB_READ_WRITE_TOKEN;
+  // The weekly blob GC deletes, as on our deployment (parity); BLOB_GC_DELETE=0 in .env makes it report only.
+  if (process.env.BLOB_GC_DELETE === undefined) process.env.BLOB_GC_DELETE = '1';
   return cfg;
 }
 
@@ -81,6 +83,8 @@ async function start() {
 
 async function scheduler() {
   env();
+  // compose stop / up sends SIGTERM; nothing here needs flushing, so leave at once instead of waiting 10 s for SIGKILL.
+  for (const sig of ['SIGTERM', 'SIGINT'] as const) process.on(sig, () => process.exit(0));
   const jobs = (vercelConfig.crons ?? []).map((c) => ({ path: c.path, cron: parseCron(c.schedule) }));
   say(`scheduler: ${jobs.map((j) => j.path).join(', ')}`);
   for (const j of jobs) {
@@ -88,14 +92,19 @@ async function scheduler() {
       const at = nextRun(j.cron, from);
       setTimeout(async () => {
         const t0 = Date.now();
+        say(`cron ${j.path}: start`);
         try {
           const r = await fetch(`http://app:3000${j.path}`, { headers: { authorization: `Bearer ${process.env.CRON_SECRET}` } });
+          await r.arrayBuffer(); // drain, so the connection is released
           say(`cron ${j.path}: HTTP ${r.status} in ${Math.round((Date.now() - t0) / 1000)} s`);
         } catch (e) {
           say(`cron ${j.path}: failed (${(e as Error).message}); next slot retries`);
         }
-        arm(new Date());
-      }, at.getTime() - Date.now());
+        // From the slot just served, not from now: a timer that fires a little early cannot pick the same slot
+        // twice (nextRun is strictly after its argument's minute), and a run that overran the next slot starts
+        // again at once rather than skipping it.
+        arm(at);
+      }, Math.max(0, at.getTime() - Date.now()));
     })(new Date());
   }
 }

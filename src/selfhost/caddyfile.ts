@@ -8,6 +8,9 @@ export function renderCaddyfile(c: SelfhostConfig): string {
   return [
     '{',
     '\tskip_install_trust',
+    // A client opening an IP address sends no SNI; without this Caddy would look up a certificate for the
+    // connection's local address (the container's own IP behind Docker's port mapping) and find none.
+    `\tdefault_sni ${c.host}`,
     '}',
     `https://${c.host}:443 {`,
     '\ttls internal',

@@ -7,6 +7,8 @@ x-app: &app
   env_file: .env
   volumes:
     - ${WEBADF_DATA_DIR:-./data}:/data
+  # A tiny init as PID 1, so SIGTERM from `compose stop` / `up -d` stops node at once instead of after 10 s.
+  init: true
   restart: unless-stopped
 
 services:
@@ -38,7 +40,7 @@ services:
     <<: *app
     command: ["start"]
     healthcheck:
-      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000/api/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000/api/health',{redirect:'manual'}).then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
       interval: 10s
       timeout: 5s
       retries: 30
@@ -55,7 +57,9 @@ services:
 
   caddy:
     image: caddy:2
-    command: ["caddy", "run", "--config", "/data/Caddyfile", "--adapter", "caddyfile"]
+    # --watch: setup re-renders the Caddyfile when .env changes, and Compose does not recreate this service
+    # for that (its own config is unchanged); Caddy reloads the file itself.
+    command: ["caddy", "run", "--config", "/data/Caddyfile", "--adapter", "caddyfile", "--watch"]
     ports:
       - "${WEBADF_HTTPS_PORT:-443}:443"
     volumes:

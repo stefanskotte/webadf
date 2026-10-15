@@ -1,4 +1,4 @@
-import { readFileSync, readdirSync, mkdirSync, unlinkSync, existsSync } from 'node:fs';
+import { readFileSync, readdirSync, mkdirSync, unlinkSync, existsSync, chmodSync } from 'node:fs';
 import { join } from 'node:path';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
@@ -78,15 +78,26 @@ export async function runStartupMigrations(opts: {
     let backup: string | null = null;
     if (latest !== null) { // a fresh database has nothing to back up
       mkdirSync(opts.backupDir, { recursive: true });
-      backup = join(opts.backupDir, backupName(new Date(), state.pending[0]));
-      log(`migrations: backing up to ${backup} before ${state.pending.length} pending`);
-      try {
-        await (opts.dump ?? pgDump)(opts.url, backup);
-      } catch (e) {
-        if (existsSync(backup)) unlinkSync(backup);
-        throw new MigrationRefused(`backup failed (${(e as Error).message.trim()}); nothing was migrated`);
+      // A migration that keeps failing is retried on every restart (restart: unless-stopped). The schema is
+      // unchanged by a failed run, so the backup taken before the first attempt still holds; reusing it keeps
+      // the retries from rotating the older backups out.
+      const suffix = `-before-${state.pending[0]}.dump`;
+      const taken = readdirSync(opts.backupDir).filter((n) => BACKUP_RE.test(n) && n.endsWith(suffix)).sort().at(-1);
+      if (taken) {
+        backup = join(opts.backupDir, taken);
+        log(`migrations: backup before ${state.pending[0]} already taken: ${backup}`);
+      } else {
+        backup = join(opts.backupDir, backupName(new Date(), state.pending[0]));
+        log(`migrations: backing up to ${backup} before ${state.pending.length} pending`);
+        try {
+          await (opts.dump ?? pgDump)(opts.url, backup);
+          chmodSync(backup, 0o600); // password hashes and sessions
+        } catch (e) {
+          if (existsSync(backup)) unlinkSync(backup);
+          throw new MigrationRefused(`backup failed (${(e as Error).message.trim()}); nothing was migrated`);
+        }
+        for (const old of prunable(readdirSync(opts.backupDir), KEEP)) unlinkSync(join(opts.backupDir, old));
       }
-      for (const old of prunable(readdirSync(opts.backupDir), KEEP)) unlinkSync(join(opts.backupDir, old));
     }
     const pool = new Pool({ connectionString: opts.url });
     try {

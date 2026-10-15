@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeAll, beforeEach, afterAll } from 'vitest';
 import { Client } from 'pg';
-import { mkdtempSync, readdirSync, cpSync, readFileSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, readdirSync, cpSync, readFileSync, writeFileSync, statSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -67,7 +67,7 @@ describe('runStartupMigrations', () => {
       const dumps: string[] = [];
       const r = await runStartupMigrations({
         url: url2, migrationsFolder: folderWith('create table selfhost_probe (id int);'), backupDir: tmpBackups(),
-        dump: async (_u, f) => { dumps.push(f); }, log: () => {},
+        dump: async (_u, f) => { dumps.push(f); writeFileSync(f, 'x'); }, log: () => {},
       });
       expect(r.applied).toEqual(['0039_selfhost_test']);
       expect(dumps).toHaveLength(1);
@@ -76,11 +76,38 @@ describe('runStartupMigrations', () => {
       expect(await count()).toBe(before + 1);
     });
 
+    it('a backup is readable by its owner only (0600): it holds password hashes and sessions', async () => {
+      const dir = tmpBackups();
+      await runStartupMigrations({
+        url: url2, migrationsFolder: folderWith('create table selfhost_probe (id int);'), backupDir: dir,
+        dump: async (_u, f) => { writeFileSync(f, 'x', { mode: 0o644 }); }, log: () => {},
+      });
+      const [name] = readdirSync(dir);
+      expect(name).toMatch(/-before-0039_selfhost_test\.dump$/);
+      expect(statSync(join(dir, name)).mode & 0o777).toBe(0o600);
+    });
+
+    it('a migration that keeps failing reuses its backup instead of taking (and rotating) a new one per restart', async () => {
+      const dir = tmpBackups();
+      const folder = folderWith('select 1/0;');
+      const dumps: string[] = [];
+      const lines: string[] = [];
+      const run = () => runStartupMigrations({
+        url: url2, migrationsFolder: folder, backupDir: dir,
+        dump: async (_u, f) => { dumps.push(f); writeFileSync(f, 'x'); }, log: (l) => lines.push(l),
+      });
+      await expect(run()).rejects.toThrow(/migration failed in 0039_selfhost_test/);
+      await expect(run()).rejects.toThrow(new RegExp(`backup: ${dumps[0]?.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`));
+      expect(dumps).toHaveLength(1);
+      expect(readdirSync(dir)).toHaveLength(1);
+      expect(lines).toContain(`migrations: backup before 0039_selfhost_test already taken: ${dumps[0]}`);
+    });
+
     it('a failing migration names the migration, the cause and the backup', async () => {
       const before = await count();
       await expect(runStartupMigrations({
         url: url2, migrationsFolder: folderWith('select 1/0;'), backupDir: tmpBackups(),
-        dump: async () => {}, log: () => {},
+        dump: async (_u, f) => { writeFileSync(f, 'x'); }, log: () => {},
       })).rejects.toThrow(/migration failed in 0039_selfhost_test \(division by zero\); the schema is unchanged; backup: .*-before-0039_selfhost_test\.dump/);
       expect(await count()).toBe(before);
     });
