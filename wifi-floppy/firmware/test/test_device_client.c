@@ -2820,10 +2820,8 @@ static void df1_serves_the_verified_preload_while_on(void) {
     CHECK_EQ_INT(psram_df1_slot(), SLOT_NONE);   // off: ejected
 }
 
-// Task 8 review m1: a DF1 mode change forgets the previous mode's next disk and its preload record. Without
-// it, Next -> Network kept the library disk as next_sha256 and dc_preload_step fetched /net/<library sha>
-// (404) and held the route off for DC_NET_RETRY_MS before the driver disk could come. Off <-> Next keeps both:
-// there `next` is DF0's next disk of the set either way.
+// Before 1.12.1 (Task 8 review m1) a mode change into or out of Network forgot `next`, because Network's `next` was
+// the driver disk. From 1.12.1 `next` is DF0's next disk of the set in every mode.
 static void a_df1_mode_change_keeps_the_next_disk(void) {
     // fw 1.12.1: `next` is DF0's next disk of the set in every mode, so every mode change keeps it and its record.
     boot_mounted_with_preload_ready();        // A in slot 0, preload B verified in slot 1, next = B
@@ -2965,7 +2963,6 @@ static void status_names_df1_only_when_capable(void) {
     CHECK(strstr(fake_last_request(), ",\"df1Sha256\":null") != NULL, "off: both values, null");
 }
 
-// Phase 3 (ruling 6): in Network mode the server's next (the driver disk) is preloaded into SLOT_NET with DF0
 // DF1 pick helpers (spec 2026-10-14 §5), shared with Network mode's driver disk (fw 1.12.1).
 static char SHA_P[65], SHA_Q[65];
 static void init_pick_shas(void) {
@@ -3006,7 +3003,8 @@ static void leave_df1_off(void) {
     psram_df1_reader_ack(psram_df1_token());
 }
 
-// empty, DF1 holds it, and DF0's own fetches never touch it.
+// Network (fw 1.12.1): the driver disk is DF1's pick, in SLOT_NET, with DF0 empty or not; DF0's own fetches and its
+// next disk's preload never touch SLOT_NET.
 static void network_mode_holds_the_driver_disk_whatever_df0_does(void) {
     // fw 1.12.1: the driver disk is Network's DF1 pick (`df1`), in SLOT_NET; `next` is DF0's next disk.
     boot(); init_pick_shas();

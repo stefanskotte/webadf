@@ -327,7 +327,8 @@ export const HELP_TOPICS = {
 
   // Sources: spec docs/superpowers/specs/2026-10-12-paulanet-phase3-network-setting-design.md §1-§5, §8; the
   // setting and checklist texts in second-drive-setting.tsx / network-checklist.ts; DF0 empty or changing: plan
-  // 2026-10-12 ruling 6 (SLOT_NET, psram_image.h; the poll sends `next` in Network mode with or without a disk),
+  // 2026-10-12 ruling 6 (SLOT_NET, psram_image.h; the poll sends the driver disk in Network mode with or without a
+  // disk in DF0 -- as `next` before fw 1.12.1, as DF1's pick `df1` from 1.12.1, NET_PICK_FW),
   // bench Task 14 Steps 5 and 14b;
   // numbers: HANDOFF 3bi (47.5 KB/s alone, 24.4 KB/s during a DF0 copy, router pings 204-545 ms, avg ~250);
   // the steps: tools/paulanet-disk/Install and ReadMe; download: api/paulanet-disk/route.ts; Rob's permission:
