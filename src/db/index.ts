@@ -37,6 +37,10 @@ export function getDb(): Db {
     const url = process.env.DATABASE_URL;
     if (!url) throw new Error('DATABASE_URL is not set');
     _pool = new Pool({ connectionString: url, max: 5, idleTimeoutMillis: 10_000 });
+    // An idle client's error (Neon recycling it, a Postgres restart) comes back
+    // as the pool's 'error' event; unheard, Node throws it and the whole
+    // instance dies. The pool has already dropped that client.
+    _pool.on('error', (err) => console.error('db: idle client error', err));
     attachDatabasePool(_pool);
     _db = drizzle(_pool, { schema });
   }
