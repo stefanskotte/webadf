@@ -7,7 +7,7 @@
 // permutation of the current membership, nothing more and nothing less.
 //
 // Pure, so the rule is tested without a database -- everything the reorder
-// endpoints do is this function plus a db.batch().
+// endpoints do is this function plus an atomic().
 
 export type ReorderError =
   | { ok: false; reason: 'unknown-id'; id: string }

@@ -13,7 +13,7 @@
 import {
   and, eq, inArray, isNull, ne, sql,
 } from 'drizzle-orm';
-import type { BatchItem } from 'drizzle-orm/batch';
+import { atomic } from '@/db/atomic';
 import { getDb } from '@/db';
 import { games, disks } from '@/db/schema/catalog';
 import { devices } from '@/db/schema/devices';
@@ -64,10 +64,12 @@ export async function applyMatch(sha256: string, entryId: string): Promise<Apply
     .where(eq(disks.sha256, sha256));
   if (affected.length === 0) return { gamesUpdated: 0, disksUpdated: 0, gamesMerged: 0 };
 
-  const stmts: BatchItem<'pg'>[] = [];
   let disksUpdated = 0;
   let gamesUpdated = 0;
   let gamesMerged = 0;
+
+  await atomic((tx) => {
+  const stmts: PromiseLike<unknown>[] = [];
 
   for (const row of affected) {
     // A person arranged this game's disks into a set (disk-sets spec §2) --
@@ -81,7 +83,7 @@ export async function applyMatch(sha256: string, entryId: string): Promise<Apply
 
     // Disk level: the TOSEC rom name is always authoritative (identity).
     // The disk number is authoritative only when nothing human ordered it.
-    stmts.push(db.update(disks).set({
+    stmts.push(tx.update(disks).set({
       tosecName: entry.romName,
       ...(entry.diskNo === null || humanArranged ? {} : { diskNo: entry.diskNo }),
     }).where(eq(disks.id, row.diskId)));
@@ -101,7 +103,7 @@ export async function applyMatch(sha256: string, entryId: string): Promise<Apply
     // first edit UI can forget it. 'demozoo' is deliberately excluded from
     // this list (R5-revised, see TOSEC_RETITLABLE_SOURCES) even though it
     // is a MACHINE_SOURCES entry: a Demozoo title outranks TOSEC's.
-    stmts.push(db.update(games).set({
+    stmts.push(tx.update(games).set({
       title: entry.title, sortTitle: entry.sortTitle,
       year: entry.year, publisher: entry.publisher,
       metadataSource: 'tosec',
@@ -109,7 +111,8 @@ export async function applyMatch(sha256: string, entryId: string): Promise<Apply
     gamesUpdated++;
   }
 
-  await db.batch(stmts as [BatchItem<'pg'>, ...BatchItem<'pg'>[]]);
+  return stmts;
+  });
 
   // Merge pass, per affected organization. Done AFTER the renames above, so
   // rows that have just become duplicates are visible as such.
@@ -198,7 +201,8 @@ async function mergeDuplicates(orgId: string, sortTitle: string, year: number | 
 
   if (absorbed.length === 0) return 0;
 
-  const stmts: BatchItem<'pg'>[] = [];
+  await atomic((tx) => {
+  const stmts: PromiseLike<unknown>[] = [];
   for (const gone of absorbed) {
     // Deliberately NOT org-scoped, unlike the two devices updates below.
     // disks.orgId is an independent column, not guaranteed to match its
@@ -213,11 +217,11 @@ async function mergeDuplicates(orgId: string, sortTitle: string, year: number | 
     // disk regardless of its own orgId is strictly SAFER than that cascade,
     // not a cross-tenant risk -- there is no other tenant's disk to move,
     // because `gone` never belonged to one.
-    stmts.push(db.update(disks).set({ gameId: survivor })
+    stmts.push(tx.update(disks).set({ gameId: survivor })
       .where(eq(disks.gameId, gone)));
-    stmts.push(db.update(devices).set({ desiredGameId: survivor })
+    stmts.push(tx.update(devices).set({ desiredGameId: survivor })
       .where(and(eq(devices.orgId, orgId), eq(devices.desiredGameId, gone))));
-    stmts.push(db.update(devices).set({ mountedGameId: survivor })
+    stmts.push(tx.update(devices).set({ mountedGameId: survivor })
       .where(and(eq(devices.orgId, orgId), eq(devices.mountedGameId, gone))));
 
     // Collections are HUMAN-authored and cannot be recomputed, unlike every
@@ -228,20 +232,20 @@ async function mergeDuplicates(orgId: string, sortTitle: string, year: number | 
     // TWO statements, and the ORDER MATTERS. If a collection already holds
     // the survivor as well as `gone`, a bare repoint produces two rows with
     // the same (collection_id, game_id) and violates the primary key --
-    // which, because db.batch() is atomic, aborts the ENTIRE merge. The
+    // which, because atomic() is one transaction, aborts the ENTIRE merge. The
     // sweeper does not stamp a blob whose applyMatch threw, so it would retry
     // that merge on every pass forever. Deleting the would-be duplicates
     // first makes the repoint always legal.
-    stmts.push(db.delete(collectionGames).where(and(
+    stmts.push(tx.delete(collectionGames).where(and(
       eq(collectionGames.gameId, gone),
       inArray(
         collectionGames.collectionId,
-        db.select({ id: collectionGames.collectionId })
+        tx.select({ id: collectionGames.collectionId })
           .from(collectionGames)
           .where(eq(collectionGames.gameId, survivor)),
       ),
     )));
-    stmts.push(db.update(collectionGames)
+    stmts.push(tx.update(collectionGames)
       .set({ gameId: survivor })
       .where(eq(collectionGames.gameId, gone)));
 
@@ -250,16 +254,16 @@ async function mergeDuplicates(orgId: string, sortTitle: string, year: number | 
     // (game_id, production_id) means a repoint that lands on a production the
     // survivor already dismissed would collide. Delete-then-update, same
     // reason, same order, for the same atomicity consequence.
-    stmts.push(db.delete(demozooDismissals).where(and(
+    stmts.push(tx.delete(demozooDismissals).where(and(
       eq(demozooDismissals.gameId, gone),
       inArray(
         demozooDismissals.productionId,
-        db.select({ id: demozooDismissals.productionId })
+        tx.select({ id: demozooDismissals.productionId })
           .from(demozooDismissals)
           .where(eq(demozooDismissals.gameId, survivor)),
       ),
     )));
-    stmts.push(db.update(demozooDismissals)
+    stmts.push(tx.update(demozooDismissals)
       .set({ gameId: survivor })
       .where(eq(demozooDismissals.gameId, gone)));
 
@@ -279,7 +283,7 @@ async function mergeDuplicates(orgId: string, sortTitle: string, year: number | 
     // own (demozoo_link_source IS NULL) and `gone` has one; if both have
     // one, the survivor's stands, matching how a doubly human-edited pair
     // is left alone above.
-    stmts.push(db.update(games).set({
+    stmts.push(tx.update(games).set({
       demozooProductionId: sql`(SELECT demozoo_production_id FROM games WHERE id = ${gone})`,
       demozooLinkSource: sql`(SELECT demozoo_link_source FROM games WHERE id = ${gone})`,
     }).where(and(
@@ -288,9 +292,10 @@ async function mergeDuplicates(orgId: string, sortTitle: string, year: number | 
       sql`(SELECT demozoo_link_source FROM games WHERE id = ${gone}) IS NOT NULL`,
     )));
 
-    stmts.push(db.delete(games).where(and(eq(games.id, gone), ne(games.id, survivor))));
+    stmts.push(tx.delete(games).where(and(eq(games.id, gone), ne(games.id, survivor))));
   }
-  await db.batch(stmts as [BatchItem<'pg'>, ...BatchItem<'pg'>[]]);
+  return stmts;
+  });
   // Traceable in logs: a merge deletes `games` rows, and applyMatch's
   // caller (the sweep) can only report a count, not which games. Named here
   // because this is the one place that still has both ids in hand.

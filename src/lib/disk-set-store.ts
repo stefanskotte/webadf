@@ -1,6 +1,6 @@
 /**
  * Disk sets (spec 2026-09-28-disk-sets §2, §4): applies the pure plans from
- * disk-set.ts to the library, each operation as ONE db.batch (neon-http has no
+ * disk-set.ts to the library, each operation as ONE atomic() transaction (neon-http had no
  * interactive transactions; tosec-apply.ts's mergeDuplicates is the model).
  *
  * THE DANGER HERE IS THE CASCADE. disks.game_id references games.id with
@@ -27,7 +27,7 @@
  * so no board's wanted disk changes and nothing is ejected.
  */
 import { and, eq, inArray, ne, sql } from 'drizzle-orm';
-import type { BatchItem } from 'drizzle-orm/batch';
+import { atomic, type Tx } from '@/db/atomic';
 import { getDb } from '@/db';
 import { games, disks, entitlements } from '@/db/schema/catalog';
 import { devices } from '@/db/schema/devices';
@@ -56,7 +56,9 @@ export class NotFound extends Error {
 }
 
 type Db = ReturnType<typeof getDb>;
-type Stmt = BatchItem<'pg'>;
+type Stmt = PromiseLike<unknown>;
+/** What builds a statement: the transaction `run` hands its callback (never the plain db -- see atomic()). */
+export type Builder = Pick<Tx, 'insert' | 'update' | 'delete'>;
 
 const setDisk = { id: disks.id, gameId: disks.gameId, diskNo: disks.diskNo };
 
@@ -91,7 +93,7 @@ const diskIsAt = (diskId: string, gameId: string, diskNo: number) =>
  * so a disk another tab moved meanwhile stays where that tab put it.
  * Also used by disk-delete.ts to close the gap a deleted disk leaves.
  */
-export function applyPlan(db: Db, orgId: string, plan: Plan, devs: DeviceRef[]): Stmt[] {
+export function applyPlan(db: Builder, orgId: string, plan: Plan, devs: DeviceRef[]): Stmt[] {
   const out: Stmt[] = [];
   for (const r of plan.renumber) {
     out.push(db.update(disks).set({ gameId: r.gameId, diskNo: r.diskNo })
@@ -120,7 +122,7 @@ export function applyPlan(db: Db, orgId: string, plan: Plan, devs: DeviceRef[]):
 }
 
 /** Statements 4 and 5: memberships, then the titles -- both guarded. */
-function deleteEmptied(db: Db, orgId: string, emptied: string[]): Stmt[] {
+function deleteEmptied(db: Builder, orgId: string, emptied: string[]): Stmt[] {
   if (emptied.length === 0) return [];
   return [
     db.delete(collectionGames).where(and(
@@ -130,14 +132,14 @@ function deleteEmptied(db: Db, orgId: string, emptied: string[]): Stmt[] {
   ];
 }
 
-function markHuman(db: Db, orgId: string, gameId: string): Stmt {
+function markHuman(db: Builder, orgId: string, gameId: string): Stmt {
   return db.update(games).set({ diskOrderSource: 'human' })
     .where(and(eq(games.id, gameId), eq(games.orgId, orgId)));
 }
 
-export async function run(db: Db, stmts: Stmt[]): Promise<void> {
-  if (stmts.length === 0) return;
-  await db.batch(stmts as [Stmt, ...Stmt[]]);
+/** One transaction. `build` gets the tx and must build EVERY statement from it. */
+export async function run(build: (tx: Tx) => Stmt[]): Promise<void> {
+  await atomic(build);
 }
 
 /**
@@ -233,12 +235,14 @@ export async function addDisksToSet(
   // later corrections merely because the prefilled name was left alone.
   // It still numbers the set from 1 (compact, above) -- the set is new.
   const renamed = rename !== undefined && rename.trim() !== current.title ? rename.trim() : undefined;
-  const target = db.update(games).set(renamed === undefined
-    ? { diskOrderSource: 'human' }
-    : { diskOrderSource: 'human', title: renamed, sortTitle: makeSortTitle(renamed), metadataSource: 'human' })
-    .where(and(eq(games.id, gameId), eq(games.orgId, orgId)));
-
-  await run(db, [...applyPlan(db, orgId, plan, devs), target, ...deleteEmptied(db, orgId, plan.emptiedGameIds)]);
+  await run((tx) => [
+    ...applyPlan(tx, orgId, plan, devs),
+    tx.update(games).set(renamed === undefined
+      ? { diskOrderSource: 'human' }
+      : { diskOrderSource: 'human', title: renamed, sortTitle: makeSortTitle(renamed), metadataSource: 'human' })
+      .where(and(eq(games.id, gameId), eq(games.orgId, orgId))),
+    ...deleteEmptied(tx, orgId, plan.emptiedGameIds),
+  ]);
   return { undo };
 }
 
@@ -248,7 +252,7 @@ export async function reorderSet(orgId: string, gameId: string, orderedIds: stri
   const current = await disksOf(db, orgId, gameId);
   const devs = await orgDevices(db, orgId);
   const plan = planReorder({ gameId, disks: current }, orderedIds, devs);
-  await run(db, [...applyPlan(db, orgId, plan, devs), markHuman(db, orgId, gameId)]);
+  await run((tx) => [...applyPlan(tx, orgId, plan, devs), markHuman(tx, orgId, gameId)]);
 }
 
 // Only a disk image's own extension: "Game v1.2" (no extension) keeps its ".2".
@@ -287,11 +291,11 @@ export async function moveDiskOut(orgId: string, diskId: string): Promise<{ game
   const devs = await orgDevices(db, orgId);
   const plan = planMoveOut({ id: disk.id, gameId: disk.gameId, diskNo: disk.diskNo }, newId, remaining, devs);
 
-  await run(db, [
-    db.insert(games).values({ id: newId, orgId, title, sortTitle: makeSortTitle(title), metadataSource: 'human' }),
-    ...applyPlan(db, orgId, plan, devs),
-    markHuman(db, orgId, disk.gameId),
-    ...deleteEmptied(db, orgId, plan.emptiedGameIds),
+  await run((tx) => [
+    tx.insert(games).values({ id: newId, orgId, title, sortTitle: makeSortTitle(title), metadataSource: 'human' }),
+    ...applyPlan(tx, orgId, plan, devs),
+    markHuman(tx, orgId, disk.gameId),
+    ...deleteEmptied(tx, orgId, plan.emptiedGameIds),
   ]);
   return { gameId: newId };
 }
@@ -331,12 +335,12 @@ export async function undoMove(orgId: string, snap: UndoSnapshot): Promise<{ gam
     renumber: plans.flatMap((p) => p.renumber), emptiedGameIds: [], devices: plans.flatMap((p) => p.devices),
   };
 
-  await run(db, [
-    db.insert(games).values({
+  await run((tx) => [
+    tx.insert(games).values({
       id: newId, orgId, title: snap.title, sortTitle: makeSortTitle(snap.title), year: snap.year, publisher: snap.publisher,
       metadataSource: snap.metadataSource, diskOrderSource: snap.diskOrderSource,
     }),
-    ...applyPlan(db, orgId, merged, devs),
+    ...applyPlan(tx, orgId, merged, devs),
   ]);
   return { gameId: newId };
 }

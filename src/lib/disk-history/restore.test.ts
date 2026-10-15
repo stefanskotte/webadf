@@ -79,6 +79,16 @@ function project(row: Record<string, unknown>, cols: Record<string, unknown>) {
   return out;
 }
 
+// Awaiting a statement applies it, in the order atomic() awaits them -- the
+// fake transaction's whole behaviour.
+const applying = (fn: () => void) => ({
+  __apply: fn,
+  then: (res: (v: unknown) => unknown, rej: (e: unknown) => unknown) => {
+    fn();
+    return Promise.resolve([]).then(res, rej);
+  },
+});
+
 function fakeDb() {
   const select = (cols: Record<string, unknown>) => {
     let joined = false;
@@ -108,8 +118,7 @@ function fakeDb() {
   };
   const insert = (table: unknown) => ({
     values: (row: Record<string, unknown>) => {
-      const stmt = {
-        __apply: () => {
+      const stmt = applying(() => {
           if (table === blobs) insertedBlobs.push(row);
           if (table === diskVersions) {
             diskVersionRows.push({
@@ -119,16 +128,16 @@ function fakeDb() {
             });
           }
         },
-      };
+      );
       return { ...stmt, onConflictDoNothing: () => stmt };
     },
   });
-  const update = () => ({ set: () => ({ where: () => ({ __apply: () => {} }) }) });
-  const batch = (stmts: Array<{ __apply: () => void }>) => {
-    for (const s of stmts) s.__apply();
-    return Promise.resolve([]);
+  const update = () => ({ set: () => ({ where: () => applying(() => {}) }) });
+  const db = {
+    select, insert, update,
+    transaction: async (fn: (tx: unknown) => Promise<unknown>) => fn(db),
   };
-  return { select, insert, update, batch };
+  return db;
 }
 vi.mock('@/db', () => ({ getDb: () => fakeDb() }));
 
