@@ -333,7 +333,6 @@ static bool ui_snapshot(display_state_t *s, char tag[NFC_UI_LINE_BYTES], uint32_
     s->pct      = g_ui_pct;
     s->writable = g_ui_writable;
     s->sync     = (disp_sync_t)g_ui_sync;
-    s->insecure = g_server.tls == OVR_TLS_NOVERIFY;   // READY/LOADED read "INSECURE"
     // core1 recomputes g_ui_sync only between requests, and a long poll holds
     // it for up to 25 s. A write core0 applied meanwhile must not read as
     // "synced": that is the one question the cloud answers ("can I switch
