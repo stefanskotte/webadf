@@ -4918,7 +4918,7 @@ Demozoo API (the bulk export makes per-lookup load on a non-profit unnecessary).
   allowlist checks only the first URL (the raster content-type allowlist and `nosniff` still apply).
 - **Cron drift:** the daily 01:30 cron against a 7-day gate can drift a refetch to 8 days.
 
-### 3bl. DF1 takes any standard DD disk -- merged a2181e0 (fw 1.12.0): TEST seq 81 installed on the bench board, A500 bench owed
+### 3bl. DF1 takes any standard DD disk -- RELEASED as fw 1.12.0 (seq 81, fw-1.12.0); A500 bench 6/6 passed 2026-10-15
 
 **Status (2026-10-15 00:15).** Branch complete (commits af29a07..86f5087, every task reviewed, final whole-branch review
 fixed, 2224 vitest, e2e 79/79 for the touched specs), merged to master as **a2181e0** and deployed (production Ready
@@ -4926,6 +4926,24 @@ fixed, 2224 vitest, e2e 79/79 for the touched specs), merged to master as **a218
 ("update to 1.12.0+g1437d84 confirmed (sequence 81)"), heap low-water 28,672 with TLS held (1.11.1: 32,768). DF1 set
 to On (setting 19 stored); the card reads "On", "DF1: next disk of the set -- empty". **Owed:** the A500 bench below,
 then promote seq 81 to the 1.12.0 release (`--github-only` from `.claude/worktrees/df1any`, whose build is seq 81).
+
+**Bench (2026-10-15, A500 via the PiKVM, a Shell from Execute Command `newshell`, booted TDH0 with DF0 empty).** All six
+pass. (1) xsysinfo-0.12.0 mounted into DF1: board `df1: loading 25fe23ae7d52 -> slot 2`, fetched and verified in ~2 s,
+inserted; `info` -> DF0 `No disk present`, DF1 `xSysInfo-0.12.0` Read Only; card "DF1: xsysinfo-0.12.0 disk 1 --
+read-only" + Eject DF1. (6) `copy s:startup-sequence df1:wtest` -> requester "Volume xSysInfo-0.12.0 is write
+protected", then "Can't open df1:wtest for output - disk is write-protected". (2) P3 Check disk 1 into DF0 -> slot 0,
+disk 2 preloaded into slot 1, no DF1 eject or df1 line in the log; `info` DF0 P3Check1, DF1 still xSysInfo. (3) Next
+(web) -> `swap: ... from preloaded slot 1` instantly, disk 1 preloaded into slot 0; DF0 P3Check2, DF1 still xSysInfo.
+(4) Eject DF1 -> `pick 2 cleared -- DF1 follows the set`; DF1 became P3Check1 (the next disk); card "DF1: next disk
+of the set -- disk 1". (5) Turrican_ECS (hfe, 2,222,592 bytes): DF1 button `disabled`, "DF1 takes standard DD disks
+only". DF0 reading Read Only is the disk's default `write_protected = true`, not DF1's doing.
+**Notes:** the board logs "df1: inserted the next disk" also for a pick (wording only). Two clicks made right after
+a page navigation did nothing (before hydration); a repeat click worked -- not this feature.
+
+**Release.** As for 1.11.x, the version did not move at the merge, so seq 81 was promoted: its notes changed from
+"TEST build..." to the release notes, then `pnpm firmware:publish --github-only` from `.claude/worktrees/df1any`
+(build sha 52db8f4b..., matches seq 81) created `fw-1.12.0` (Latest, target 1437d84, same signed files). The bench
+card shows `fw 1.12.0+g1437d84 · up to date`, no TEST. Rollback: a 1.12.1 from master.
 
 **What.** With DF1 On (the setting formerly "Next disk of the set"; stored `df1` unchanged), every Mount offers
 DF0 or DF1. A disk mounted into DF1 lives in DF1's own PSRAM slot (`SLOT_NET`), read-only, whatever DF0 holds or
