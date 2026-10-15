@@ -1,6 +1,24 @@
+import { execSync } from "node:child_process";
+import { readFileSync } from "node:fs";
+import { createRequire } from "node:module";
 import type { NextConfig } from "next";
+import { resolveCommit } from "./src/lib/about/build-info";
+
+// The About page's build facts, fixed now so the running server reports its
+// own build (spec 2026-10-15-about-page D7: no Vercel-only source without a
+// fallback -- a Docker build passes GIT_SHA).
+const WEBADF_COMMIT = resolveCommit(process.env, () =>
+  execSync("git rev-parse HEAD", { stdio: ["ignore", "pipe", "ignore"] }).toString());
+const WEBADF_NEXT_VERSION = (JSON.parse(
+  readFileSync(createRequire(import.meta.url).resolve("next/package.json"), "utf8"),
+) as { version: string }).version;
 
 const nextConfig: NextConfig = {
+  env: {
+    WEBADF_COMMIT,
+    WEBADF_BUILT_AT: new Date().toISOString(),
+    WEBADF_NEXT_VERSION,
+  },
   // PATCH /api/devices/[id]/display validates a layout with the board's own C
   // validator, public/display.wasm, read from disk at runtime. A server
   // function bundle does not carry public/ (that is served by the CDN), so
