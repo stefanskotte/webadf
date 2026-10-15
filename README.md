@@ -203,11 +203,20 @@ deltas.
 
 ```bash
 pnpm install
-pnpm dev                  # needs .env.local: DATABASE_URL, BLOB_READ_WRITE_TOKEN,
-                          # BETTER_AUTH_SECRET, BETTER_AUTH_URL
+pnpm db:dev start         # a local Postgres 18 in Docker; prints its DATABASE_URL
+pnpm db:migrate           # apply drizzle/ to DATABASE_URL (there is no db:push)
+pnpm dev                  # needs .env.local: DATABASE_URL, BETTER_AUTH_SECRET,
+                          # BETTER_AUTH_URL (BLOB_READ_WRITE_TOKEN is optional)
 pnpm test                 # vitest, pure logic
-pnpm e2e                  # playwright, against a real database
+pnpm e2e                  # playwright, against the database in .env.local
+bash scripts/e2e-local.sh # playwright with no Vercel or Neon: a fresh Postgres in
+                          # its own container (webadf-pg-e2e, :55433 -- never the
+                          # db:dev one) and local storage; arguments go to playwright
 ```
+
+Stored files (disk images, covers, firmware) go to local disk under `./data/blobs`
+(`STORAGE_DIR` moves it) unless `BLOB_READ_WRITE_TOKEN` is set, in which case they go to
+Vercel Blob. On Vercel the token is required: the app refuses to fall back to local disk there.
 
 A self-hosted copy needs no extra setting: the About page (the (i) at the top right) reads
 **Self-hosted** unless `SELFHOSTED=false`, which only our own deployment sets. A Docker build

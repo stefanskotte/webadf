@@ -28,7 +28,14 @@ function fakeDb() {
     values: () => ({ onConflictDoNothing: () => ({}) }),
   });
   const update = () => ({ set: () => ({ where: () => ({}) }) });
-  return { select: () => chain, insert, update, batch };
+  // atomic() awaits every statement; the fake statements are plain objects, so
+  // awaiting them is a no-op, and the transaction itself is the vi.fn `batch`
+  // (named for what it stood in for) that each test makes succeed or throw.
+  const db = {
+    select: () => chain, insert, update,
+    transaction: async (fn: (tx: unknown) => Promise<unknown>) => { const r = await fn(db); return batch(r); },
+  };
+  return db;
 }
 vi.mock('@/db', () => ({ getDb: () => fakeDb() }));
 

@@ -10,7 +10,7 @@ import { unlinkDemozoo } from '@/lib/demozoo/apply';
 import { diskStore } from '@/lib/storage';
 import { signUpFresh } from './helpers';
 import { seedDisk, addDisk, cleanupSeeded } from './device-helpers';
-import { seedProduction, seedDemozooImage, seedSuggestion, linkAutomatic, cleanupDemozoo } from './demozoo-helpers';
+import { seedProduction, seedDemozooImage, seedSuggestion, linkAutomatic, cleanupDemozoo, ensureDemozooImportAppliedLocally } from './demozoo-helpers';
 import { seedTosecEntry, cleanupTosec } from './tosec-helpers';
 import { signInAsSuperAdmin } from './admin-helpers';
 
@@ -222,6 +222,7 @@ test('spec §10: "Not this" stays gone after a REAL re-sweep, not just a reload'
   // entitlements.sourceFilename is `${title}-${diskNo}.adf` (seedDisk), which
   // parseTosecName reads back as `title` -- the 'filename' suggestion source.
   const pid = await seedProduction({ title });
+  await ensureDemozooImportAppliedLocally();
 
   // A separate context signed in as super-admin: running the sweep on the
   // org user's own `page` would replace their session, and this test needs

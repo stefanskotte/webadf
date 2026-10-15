@@ -7,7 +7,7 @@ import { libraryUsage } from '@/lib/about/library-usage';
 import { firmwareSummary } from '@/lib/about/firmware-summary';
 import { settle } from '@/lib/about/settle';
 import { formatBytes } from '@/lib/about/format-bytes';
-import { STORAGE_BACKEND } from '@/lib/storage';
+import { storageLabel } from '@/lib/storage';
 
 function Section({ id, title, children }: { id: string; title: string; children: React.ReactNode }) {
   return (
@@ -62,7 +62,7 @@ export default async function AboutPage() {
           <Row label="Runtime">Node.js {process.versions.node}</Row>
           <Row label="Framework">Next.js {build.nextVersion}</Row>
           <Row label="Database">PostgreSQL</Row>
-          <Row label="File storage">{STORAGE_BACKEND}</Row>
+          <Row label="File storage">{storageLabel()}</Row>
         </Section>
 
         <Section id="firmware" title="Board firmware">

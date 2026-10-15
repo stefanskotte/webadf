@@ -11,7 +11,7 @@
 
 import { and, eq, inArray, isNull, or, type SQL } from 'drizzle-orm';
 import type { PgColumn } from 'drizzle-orm/pg-core';
-import type { BatchItem } from 'drizzle-orm/batch';
+import { atomic } from '@/db/atomic';
 import { getDb } from '@/db';
 import { games, disks } from '@/db/schema/catalog';
 import { openretroEntries } from '@/db/schema/openretro';
@@ -65,17 +65,17 @@ export async function applyEnrichment(sha256: string, entryUuid: string) {
   // game_name carries decorations like "[AGA]" that would fight the canonical
   // TOSEC title, and metadataSource is never claimed, because overwriting it
   // with 'openretro' would lock TOSEC out of correcting the title again.
-  const stmts: BatchItem<'pg'>[] = gameIds.flatMap((gameId) => [
+  await atomic((tx) => gameIds.flatMap((gameId) => [
     // publisher is IDENTITY, not facts, even though it arrives with the
     // facts: it is TOSEC's column first and a person correcting it means it.
     // Guarding it on metadataSource is what keeps a human's publisher from
     // being overwritten by an enrichment that is otherwise still welcome.
-    db.update(games).set({ publisher: e.publisher }).where(and(
+    tx.update(games).set({ publisher: e.publisher }).where(and(
       eq(games.id, gameId),
       inArray(games.metadataSource, MACHINE_SOURCES),
     )),
 
-    db.update(games).set({
+    tx.update(games).set({
       developer: e.developer, players: e.players,
       genre: e.tags, chipset: e.chipset, factsSource: 'openretro',
     }).where(and(
@@ -84,13 +84,11 @@ export async function applyEnrichment(sha256: string, entryUuid: string) {
     )),
 
     ...(prose === null ? [] : [
-      db.update(games).set({ description: prose, proseSource: 'openretro' }).where(and(
+      tx.update(games).set({ description: prose, proseSource: 'openretro' }).where(and(
         eq(games.id, gameId),
         machineOwned(games.proseSource),
       )),
     ]),
-  ]);
-
-  await db.batch(stmts as [BatchItem<'pg'>, ...BatchItem<'pg'>[]]);
+  ]));
   return { gamesUpdated: gameIds.length };
 }

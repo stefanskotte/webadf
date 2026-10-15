@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import { requireOrg } from '@/lib/session';
-import { saveSecondDrive, firmwareFor, DF1_SEEN_REASON } from '@/lib/second-drive';
+import { firmwareFor, DF1_SEEN_REASON } from '@/lib/second-drive';
+import { saveSecondDrive } from '@/lib/second-drive-store';
 
 const body = z.object({ mode: z.enum(['off', 'df1', 'net']), override: z.boolean().optional() });
 

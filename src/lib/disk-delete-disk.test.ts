@@ -33,11 +33,39 @@ const fakeDb = {
   update: proxy.update.bind(proxy),
   insert: proxy.insert.bind(proxy),
   delete: proxy.delete.bind(proxy),
-  batch: async (items: { toSQL: () => { sql: string; params: unknown[] } }[]) => {
-    batches.push(items.map((i) => i.toSQL()));
-    return [];
+  transaction: async (fn: (tx: unknown) => Promise<unknown>) => {
+    const sink: { sql: string; params: unknown[] }[] = [];
+    const out = await fn(recordingTx(sink));
+    batches.push(sink);
+    return out;
   },
 };
+
+// A transaction whose statements are RECORDED as SQL when awaited, in order --
+// what the old fake batch() captured. Any chain on the proxy builders is
+// wrapped, so whichever call ends the chain is the one that records.
+function recordingTx(sink: { sql: string; params: unknown[] }[]) {
+  type Chain = Record<string | symbol, unknown>;
+  const wrap = (b: Chain): Chain => new Proxy(b, {
+    get(t, k) {
+      if (k === 'then') {
+        return (res: (v: unknown) => unknown, rej: (e: unknown) => unknown) => {
+          sink.push((t.toSQL as () => { sql: string; params: unknown[] })());
+          return Promise.resolve([]).then(res, rej);
+        };
+      }
+      const v = t[k];
+      return typeof v === 'function' ? (...a: unknown[]) => wrap(v.apply(t, a) as Chain) : v;
+    },
+  });
+  return {
+    update: (...a: unknown[]) => wrap((proxy.update as unknown as (...x: unknown[]) => Chain)(...a)),
+    insert: (...a: unknown[]) => wrap((proxy.insert as unknown as (...x: unknown[]) => Chain)(...a)),
+    delete: (...a: unknown[]) => wrap((proxy.delete as unknown as (...x: unknown[]) => Chain)(...a)),
+    select: (...a: unknown[]) => (fakeDb.select as unknown as (...x: unknown[]) => unknown)(...a),
+  };
+}
+
 vi.mock('@/db', () => ({ getDb: () => fakeDb }));
 const clearDesired = vi.fn(async () => undefined);
 vi.mock('@/lib/mount', () => ({ clearDesired: (...a: unknown[]) => clearDesired(...(a as [])) }));

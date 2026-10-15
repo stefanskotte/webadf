@@ -1,5 +1,5 @@
 import { and, eq, ne, or, sql } from 'drizzle-orm';
-import type { BatchItem } from 'drizzle-orm/batch';
+import { atomic } from '@/db/atomic';
 import { getDb } from '@/db';
 import { disks, entitlements } from '@/db/schema/catalog';
 import { devices } from '@/db/schema/devices';
@@ -137,14 +137,14 @@ export async function stageTrack(
   // seq 1 under a NEW token, so its writes are never mistaken for repeats.
   if (q.seq <= session.lastSeq) return { status: 200, body: { duplicate: true } };
 
-  await db.batch([
-    db.insert(diskWriteTracks).values({
+  await atomic((tx) => [
+    tx.insert(diskWriteTracks).values({
       deviceId: device.deviceId, mount: q.mount, track: q.track, data,
     }).onConflictDoUpdate({
       target: [diskWriteTracks.deviceId, diskWriteTracks.mount, diskWriteTracks.track],
       set: { data },
     }),
-    db.update(diskWriteSessions).set({ lastSeq: q.seq })
+    tx.update(diskWriteSessions).set({ lastSeq: q.seq })
       .where(and(atMount, eq(diskWriteSessions.token, q.session))),
   ]);
   return { status: 200, body: { staged: q.track } };
@@ -217,20 +217,21 @@ export async function closeSession(
 
   const mismatch = sha256 !== q.sha256;
   const thisDevice = and(eq(devices.id, device.deviceId), eq(devices.orgId, device.orgId));
-  const stmts: BatchItem<'pg'>[] = [
+  await atomic((tx) => {
+  const stmts: PromiseLike<unknown>[] = [
     // In the SAME batch as the device updates: a crash between them must not
     // leave the session gone and the board's bump lost.
-    db.delete(diskWriteSessions).where(thisSession),
+    tx.delete(diskWriteSessions).where(thisSession),
     // This board already holds `sha256` -- unless the digests disagree, in
     // which case the server's image wins (below) and the error is recorded.
-    db.update(devices).set(mismatch ? {
+    tx.update(devices).set(mismatch ? {
       lastError: `write close mismatch: board ${q.sha256.slice(0, 12)} server ${sha256.slice(0, 12)}`,
       lastErrorAt: new Date(),
     } : { mountedSha256: sha256 }).where(thisDevice),
     // Only while this board still WANTS this disk. After a swap or eject the
     // browser has already pointed it elsewhere (setDesired), and repointing
     // it here would pair the other disk's identity with these bytes.
-    db.update(devices).set({
+    tx.update(devices).set({
       desiredSha256: sha256,
       ...(mismatch ? { desiredVersion: sql`${devices.desiredVersion} + 1` } : {}),
     }).where(and(thisDevice, eq(devices.desiredDiskId, q.diskId))),
@@ -241,12 +242,13 @@ export async function closeSession(
   // this batch is retried, records nothing the second time (the image is
   // already the head), and must still move those boards. A board already at
   // the head is left alone, so nothing changed means nothing bumped.
-  stmts.push(db.update(devices).set({
+  stmts.push(tx.update(devices).set({
     desiredSha256: sha256, desiredVersion: sql`${devices.desiredVersion} + 1`,
   }).where(and(
     eq(devices.orgId, device.orgId), eq(devices.desiredDiskId, q.diskId), ne(devices.id, device.deviceId),
     ne(devices.desiredSha256, sha256))));
-  await db.batch(stmts as [BatchItem<'pg'>, ...BatchItem<'pg'>[]]);
+  return stmts;
+  });
 
   if (mismatch) return { status: 409, body: { error: 'mismatch', sha256 } };
   return { status: 200, body: { sha256 } };

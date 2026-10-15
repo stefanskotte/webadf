@@ -10,6 +10,8 @@ adf-archive/
 *.dms
 
 node_modules/
+# Local blob storage (self-hosting, STORAGE_DIR default ./data/blobs).
+/data/
 .next/
 .env
 .env.local

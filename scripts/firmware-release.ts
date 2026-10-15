@@ -17,7 +17,13 @@
  * a manifest over the same bytes the board downloads and verifies (spec D4),
  * so the published blob and the signed bytes must be identical.
  *
- * Usage:  pnpm firmware:publish [--notes "..."] [--security] [--dry-run] [--no-github] [--github-only]
+ * Usage:  pnpm firmware:publish [--notes "..."] [--security] [--dry-run] [--no-github] [--github-only] [--allow-local-storage]
+ *
+ * --allow-local-storage: publish even though file storage resolves to local disk
+ * (no BLOB_READ_WRITE_TOKEN). Only a self-hoster publishing into their own
+ * instance wants this; without the flag the script refuses, because the row
+ * would land in DATABASE_URL's registry while the image landed in this
+ * machine's ./data/blobs -- a release no board could download.
  *
  * After a release is recorded it is also published as the GitHub release fw-<semver>
  * with the SAME signed wifi_floppy.bin and its manifest (src/lib/firmware-github-release.ts); TEST builds never
@@ -33,10 +39,9 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { parseArgs } from 'node:util';
 import { eq } from 'drizzle-orm';
-import { put, head } from '@vercel/blob';
 import { getDb } from '@/db';
 import { user } from '@/db/schema/auth';
-import { firmwareStore } from '@/lib/storage';
+import { firmwareStore, storageLabel } from '@/lib/storage';
 import { publishRelease, readExistingReleases } from '@/lib/firmware-releases';
 import { decidePublish, PublishRefused } from '@/lib/firmware-publish-rules';
 import {
@@ -76,17 +81,33 @@ try {
       'dry-run': { type: 'boolean', default: false },
       'no-github': { type: 'boolean', default: false },
       'github-only': { type: 'boolean', default: false },
+      'allow-local-storage': { type: 'boolean', default: false },
     },
     strict: true,
   }));
 } catch (e) {
-  die(`${(e as Error).message}\n\nUsage: pnpm firmware:publish [--notes "..."] [--security] [--dry-run] [--no-github] [--github-only]`);
+  die(`${(e as Error).message}\n\nUsage: pnpm firmware:publish [--notes "..."] [--security] [--dry-run] [--no-github] [--github-only] [--allow-local-storage]`);
 }
 const dryRun = args['dry-run'] ?? false;
 const notes = args.notes ?? null;
 const security = args.security ?? false;
 const noGithub = args['no-github'] ?? false;
 const githubOnly = args['github-only'] ?? false;
+const allowLocalStorage = args['allow-local-storage'] ?? false;
+
+// 0. Where the image would go -- checked before anything else, and before any
+//    database call. Before file storage became pluggable, a missing
+//    BLOB_READ_WRITE_TOKEN made the SDK throw; now it selects local disk, so
+//    the refusal has to be explicit here.
+const storage = storageLabel();
+console.log(`storage   ${storage}`);
+if (storage === 'Local disk' && !allowLocalStorage) {
+  die(
+    'File storage is Local disk (BLOB_READ_WRITE_TOKEN is not set): the image would be written to this\n'
+    + "machine's ./data/blobs while the release row goes to DATABASE_URL's registry. Set the token, or pass\n"
+    + '--allow-local-storage if you are publishing into your own self-hosted instance.',
+  );
+}
 
 // 1. Read the version from the image's own header.
 //
@@ -253,14 +274,9 @@ const userId = rows[0].id;
 //    date -- changed the bytes: the manifest signed above covers the new
 //    bytes, but the object a board would download is the old ones. A release
 //    no board could ever verify.
-const already = await head(blobPath).catch(() => null);
+const already = await firmwareStore.stat(blobPath).catch(() => null);
 if (!already) {
-  await put(blobPath, bytes, {
-    access: 'private',
-    contentType: 'application/octet-stream',
-    addRandomSuffix: false,
-    allowOverwrite: false,
-  });
+  await firmwareStore.put(blobPath, bytes, { overwrite: false });
 } else {
   // Read through the same store the download route serves from, rather than
   // trusting `head`'s size/etag -- the content itself is what has to match.

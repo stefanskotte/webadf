@@ -14,7 +14,7 @@
 // this function removes.
 
 import { eq, inArray, sql } from 'drizzle-orm';
-import type { BatchItem } from 'drizzle-orm/batch';
+import { atomic } from '@/db/atomic';
 import { getDb } from '@/db';
 import { entitlements, games, disks } from '@/db/schema/catalog';
 import { devices, pairingCodes, invites } from '@/db/schema/devices';
@@ -33,13 +33,10 @@ export interface DeleteUserResult {
 /**
  * Delete a user and everything their organization owns.
  *
- * ATOMICITY. The plan called for "one transaction", which this driver cannot
- * do: drizzle's neon-http session throws "No transactions support in neon-http
- * driver" from .transaction(). db.batch() is the atomic primitive that does
- * exist -- neon's HTTP client wraps a batch in a single server-side
- * transaction -- so every delete below is built up first and then submitted as
- * one batch. It is non-interactive, which is why the reads that decide the
- * shape of the batch all happen before it.
+ * ATOMICITY. Every delete below is built up first and then submitted
+ * through atomic(): one transaction, all or nothing, results in order. The
+ * reads that decide the shape of the statements all happen before it, outside
+ * the transaction, and every statement is built from the transaction handle.
  *
  * THE ORGANIZATION IS NOT CASCADED, contrary to the plan's text. auth.user has
  * cascading children (session, account, member, invitation), but
@@ -80,7 +77,6 @@ export async function deleteUserCascade(userId: string): Promise<DeleteUserResul
     for (const c of counts) if (Number(c.n) === 1) soleOrgIds.push(c.orgId);
   }
 
-  const stmts: BatchItem<'pg'>[] = [];
   // Indices are collected per organization and summed at the end. A single
   // variable would silently report only the last org's counts if a user ever
   // did hold two memberships -- the exact case the loop exists to handle.
@@ -88,20 +84,22 @@ export async function deleteUserCascade(userId: string): Promise<DeleteUserResul
   const disksIdx: number[] = [];
   const devicesIdx: number[] = [];
 
+  const results = await atomic((tx) => {
+  const stmts: PromiseLike<unknown>[] = [];
   for (const orgId of orgIds) {
     // entitlements first: they reference blobs, and clearing them is what
     // makes a blob reclaimable later by the backlog GC. Never blobs themselves.
-    stmts.push(db.delete(entitlements).where(eq(entitlements.orgId, orgId)));
+    stmts.push(tx.delete(entitlements).where(eq(entitlements.orgId, orgId)));
 
     // collection_games follows by cascade from collections.id. Placed before
     // the games delete below: both would work (the games cascade would also
     // clear membership), but deleting collections first removes the rows for
     // the reason they actually belong to this org, rather than incidentally.
-    stmts.push(db.delete(collections).where(eq(collections.orgId, orgId)));
+    stmts.push(tx.delete(collections).where(eq(collections.orgId, orgId)));
 
     // games cascades to disks via disks.game_id ON DELETE CASCADE...
     gamesIdx.push(stmts.push(
-      db.delete(games).where(eq(games.orgId, orgId)).returning({ id: games.id }),
+      tx.delete(games).where(eq(games.orgId, orgId)).returning({ id: games.id }),
     ) - 1);
     // ...but a disk carries its OWN org_id, which is not required to match its
     // game's. This second delete catches a disk left behind because its game
@@ -109,25 +107,26 @@ export async function deleteUserCascade(userId: string): Promise<DeleteUserResul
     // devices table already holds rows pointing at another org's game (see
     // HANDOFF's note on listDevices), so cross-org drift in this data is real.
     disksIdx.push(stmts.push(
-      db.delete(disks).where(eq(disks.orgId, orgId)).returning({ id: disks.id }),
+      tx.delete(disks).where(eq(disks.orgId, orgId)).returning({ id: disks.id }),
     ) - 1);
 
     devicesIdx.push(stmts.push(
-      db.delete(devices).where(eq(devices.orgId, orgId)).returning({ id: devices.id }),
+      tx.delete(devices).where(eq(devices.orgId, orgId)).returning({ id: devices.id }),
     ) - 1);
-    stmts.push(db.delete(pairingCodes).where(eq(pairingCodes.orgId, orgId)));
-    stmts.push(db.delete(invites).where(eq(invites.orgId, orgId)));
+    stmts.push(tx.delete(pairingCodes).where(eq(pairingCodes.orgId, orgId)));
+    stmts.push(tx.delete(invites).where(eq(invites.orgId, orgId)));
   }
 
   // The user last among the auth rows, so its cascade (session, account,
   // member, invitation) runs after everything scoped to the org is gone.
-  stmts.push(db.delete(user).where(eq(user.id, userId)));
+  stmts.push(tx.delete(user).where(eq(user.id, userId)));
 
   if (soleOrgIds.length > 0) {
-    stmts.push(db.delete(organization).where(inArray(organization.id, soleOrgIds)));
+    stmts.push(tx.delete(organization).where(inArray(organization.id, soleOrgIds)));
   }
 
-  const results = await db.batch(stmts as [BatchItem<'pg'>, ...BatchItem<'pg'>[]]);
+  return stmts;
+  });
 
   const total = (idx: number[]) =>
     idx.reduce((n, i) => n + (results[i] as unknown[]).length, 0);

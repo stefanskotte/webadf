@@ -14,7 +14,7 @@ import { diskVersions } from '@/db/schema/disk-history';
 import { clearDesired } from '@/lib/mount';
 import { ejectDf1Holders } from '@/lib/df1-store';
 import { planReorder } from '@/lib/disk-set';
-import { applyPlan, orgDevices, run } from '@/lib/disk-set-store';
+import { applyPlan, orgDevices, run, type Builder } from '@/lib/disk-set-store';
 
 export interface DeleteResult {
   /** Disk ids actually removed. */
@@ -135,7 +135,7 @@ export async function deleteDisk(orgId: string, diskId: string): Promise<DeleteR
     .where(and(eq(games.id, disk.gameId), eq(games.orgId, orgId))).limit(1);
 
   const ejected = await ejectHolders(orgId, [disk.id], [disk.sha256]);
-  const deleteIt = db.delete(disks).where(and(eq(disks.id, disk.id), eq(disks.orgId, orgId)));
+  const deleteIt = (c: Builder) => c.delete(disks).where(and(eq(disks.id, disk.id), eq(disks.orgId, orgId)));
 
   const ordered = [...siblings].sort((a, b) => a.diskNo - b.diskNo || (a.id < b.id ? -1 : 1));
   const gap = ordered.some((d, i) => d.diskNo !== i + 1);
@@ -144,9 +144,9 @@ export async function deleteDisk(orgId: string, diskId: string): Promise<DeleteR
     // longer counted as holding anything.
     const devs = await orgDevices(db, orgId);
     const plan = planReorder({ gameId: disk.gameId, disks: ordered }, ordered.map((d) => d.id), devs);
-    await run(db, [deleteIt, ...applyPlan(db, orgId, plan, devs)]);
+    await run((tx) => [deleteIt(tx), ...applyPlan(tx, orgId, plan, devs)]);
   } else {
-    await deleteIt;
+    await deleteIt(db);
   }
 
   // A title with no disks left is not a title. Checked AFTER the delete so

@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { and, asc, eq } from 'drizzle-orm';
-import type { BatchItem } from 'drizzle-orm/batch';
+import { atomic, type Tx } from '@/db/atomic';
 import { getDb } from '@/db';
 import { blobs, disks, entitlements } from '@/db/schema/catalog';
 import { diskVersions } from '@/db/schema/disk-history';
@@ -64,8 +64,8 @@ export class StaleHeadError extends Error {
 
 const SEQ_CONSTRAINT = 'disk_versions_disk_seq';
 
-/** A unique violation on (disk_id, seq). neon-http's batch throws the raw
- *  NeonDbError (code, constraint); a drizzle-wrapped one carries it as cause. */
+/** A unique violation on (disk_id, seq). node-postgres' error carries
+ *  code and constraint itself; a drizzle-wrapped one carries it as cause. */
 function isSeqCollision(err: unknown): boolean {
   for (const e of [err, (err as { cause?: unknown } | null)?.cause]) {
     if (e && typeof e === 'object'
@@ -92,12 +92,11 @@ export async function loadEntries(diskId: string): Promise<VersionEntry[]> {
  * Store `next` as the disk's new image and record it as the next version.
  * Null when `next` equals `head`: nothing is written at all.
  *
- * Blob bytes are PUT first, then every row in one db.batch. A PUT whose rows
+ * Blob bytes are PUT first, then every row in one atomic() transaction. A PUT whose rows
  * never land leaves an unreferenced object (reclaimable); rows whose bytes
  * never landed would name a disk nobody can read.
  */
 export async function recordVersion(input: RecordInput): Promise<Recorded | null> {
-  const db = getDb();
   const entries = await loadEntries(input.diskId);
   // The caller's head must be the version history ends at, or `next` was
   // computed from bytes that are no longer the disk. Checked before any PUT.
@@ -126,35 +125,39 @@ export async function recordVersion(input: RecordInput): Promise<Recorded | null
     ...(plan.deltaBlob ? [diskStore.put(blobSha256, plan.deltaBlob)] : []),
   ]);
 
-  const stmts: BatchItem<'pg'>[] = [];
-  stmts.push(db.insert(blobs).values({
+  const build = (tx: Tx): PromiseLike<unknown>[] => {
+  const stmts: PromiseLike<unknown>[] = [];
+  stmts.push(tx.insert(blobs).values({
     sha256, sizeBytes: input.next.length, storageKey: diskStore.storageKey(sha256),
     ...(input.identity ?? {}),
   }).onConflictDoNothing());
   // The entitlement is what lets this org read the new bytes at all, and what
   // keeps the e2e teardown's GC from reclaiming a snapshot history needs.
-  stmts.push(db.insert(entitlements).values({
+  stmts.push(tx.insert(entitlements).values({
     orgId: input.orgId, sha256, sourceFilename: input.sourceFilename,
   }).onConflictDoNothing());
   if (!entries.length) {
-    stmts.push(db.insert(diskVersions).values({
+    stmts.push(tx.insert(diskVersions).values({
       id: randomUUID(), diskId: input.diskId, orgId: input.orgId, seq: 0,
       kind: 'snapshot', blobSha256: input.headSha, imageSha256: input.headSha,
       source: 'original', sectorCount: 0,
     }));
   }
-  stmts.push(db.insert(diskVersions).values({
+  stmts.push(tx.insert(diskVersions).values({
     id: randomUUID(), diskId: input.diskId, orgId: input.orgId, seq,
     kind: plan.kind, blobSha256, imageSha256: sha256, source: input.source,
     deviceId: input.deviceId ?? null, userId: input.userId ?? null,
     rewindOf: input.rewindOf ?? null, sectorCount: plan.sectorCount,
   }));
   // disks.id is NEVER part of this SET -- only sha256 moves.
-  stmts.push(db.update(disks).set({ sha256 })
+  stmts.push(tx.update(disks).set({ sha256 })
     .where(and(eq(disks.id, input.diskId), eq(disks.orgId, input.orgId))));
 
+  return stmts;
+  };
+
   try {
-    await db.batch(stmts as [BatchItem<'pg'>, ...BatchItem<'pg'>[]]);
+    await atomic(build);
   } catch (err) {
     // Two writes that read the same history both claimed this seq; the batch
     // is atomic, so the loser recorded nothing.

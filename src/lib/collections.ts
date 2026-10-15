@@ -12,7 +12,7 @@
 
 import { randomUUID } from 'node:crypto';
 import { and, eq, inArray, sql } from 'drizzle-orm';
-import type { BatchItem } from 'drizzle-orm/batch';
+import { atomic } from '@/db/atomic';
 import { getDb } from '@/db';
 import { games } from '@/db/schema/catalog';
 import { collections, collectionGames } from '@/db/schema/collections';
@@ -217,11 +217,10 @@ export async function reorderCollections(orgId: string, ids: string[]): Promise<
   if (!plan.ok) return plan;
   if (plan.assignments.length === 0) return plan;
 
-  const stmts: BatchItem<'pg'>[] = plan.assignments.map((a) =>
-    db.update(collections).set({ sortKey: a.sortKey })
+  await atomic((tx) => plan.assignments.map((a) =>
+    tx.update(collections).set({ sortKey: a.sortKey })
       .where(orgFilter(collections, orgId, eq(collections.id, a.id))),
-  );
-  await db.batch(stmts as [BatchItem<'pg'>, ...BatchItem<'pg'>[]]);
+  ));
   return plan;
 }
 
@@ -247,10 +246,9 @@ export async function reorderCollectionGames(
   if (!plan.ok) return plan;
   if (plan.assignments.length === 0) return plan;
 
-  const stmts: BatchItem<'pg'>[] = plan.assignments.map((a) =>
-    db.update(collectionGames).set({ sortKey: a.sortKey })
+  await atomic((tx) => plan.assignments.map((a) =>
+    tx.update(collectionGames).set({ sortKey: a.sortKey })
       .where(and(eq(collectionGames.collectionId, id), eq(collectionGames.gameId, a.id))),
-  );
-  await db.batch(stmts as [BatchItem<'pg'>, ...BatchItem<'pg'>[]]);
+  ));
   return plan;
 }

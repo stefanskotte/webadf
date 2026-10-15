@@ -66,7 +66,7 @@ const fakeDb = {
       return { __fakeBatchItem: true };
     },
   }),
-  batch: async () => undefined,
+  transaction: async (fn: (tx: unknown) => Promise<unknown>) => fn(fakeDb),
 };
 
 vi.mock('@/db', () => ({ getDb: () => fakeDb }));

@@ -1,7 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { desc, sql, type SQL, type SQLWrapper } from 'drizzle-orm';
-import type { NeonHttpDatabase } from 'drizzle-orm/neon-http';
-import { getDb } from '@/db';
+import { getDb, type Db } from '@/db';
 import { firmwareReleases } from '@/db/schema/firmware';
 import { isTestOrgSql } from '@/lib/test-org';
 import type { ReleaseRef } from '@/lib/firmware-state';
@@ -98,8 +97,7 @@ export function releaseVisibleToSql(orgId: SQLWrapper | string): SQL {
       or ${isBench})`;
 }
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-export function listReleasesQuery(db: NeonHttpDatabase<any>, orgId: string) {
+export function listReleasesQuery(db: Db, orgId: string) {
   return db
     .select({
       version: firmwareReleases.version,
@@ -171,8 +169,7 @@ export async function listReleasesFull(limit = 100): Promise<FirmwareReleaseList
     .limit(limit);
 }
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-export function latestReleaseQuery(db: NeonHttpDatabase<any>, orgId: string) {
+export function latestReleaseQuery(db: Db, orgId: string) {
   return db
     .select({ sequence: firmwareReleases.sequence })
     .from(firmwareReleases)
