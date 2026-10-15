@@ -6,6 +6,14 @@ vi.mock('@vercel/blob', () => ({
   put, get, head: vi.fn(), del: vi.fn(), issueSignedToken: vi.fn(), presignUrl: vi.fn(),
   BlobNotFoundError: class extends Error {},
 }));
+// The stores pick their backend at runtime from BLOB_READ_WRITE_TOKEN; pin the
+// Vercel Blob one so these assertions keep checking exactly the SDK calls
+// production makes (the SDK itself is mocked above -- no network).
+vi.mock('@/lib/storage/select', async () => {
+  const { vercelBlobBackend } = await import('@/lib/storage/vercel-blob');
+  const b = vercelBlobBackend();
+  return { backend: () => b, storageLabel: () => b.label };
+});
 
 beforeEach(() => { put.mockClear(); get.mockReset(); });
 

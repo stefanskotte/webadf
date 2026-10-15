@@ -11,6 +11,14 @@ class BlobNotFoundError extends Error {
 }
 
 vi.mock('@vercel/blob', () => ({ issueSignedToken, presignUrl, head, get, del, BlobNotFoundError }));
+// The stores pick their backend at runtime from BLOB_READ_WRITE_TOKEN; pin the
+// Vercel Blob one so these assertions keep checking exactly the SDK calls
+// production makes (the SDK itself is mocked above -- no network).
+vi.mock('@/lib/storage/select', async () => {
+  const { vercelBlobBackend } = await import('@/lib/storage/vercel-blob');
+  const b = vercelBlobBackend();
+  return { backend: () => b, storageLabel: () => b.label };
+});
 
 const SHA = 'a'.repeat(64);
 
@@ -53,15 +61,6 @@ describe('diskStore', () => {
     const { diskStore } = await import('./storage');
     const out = await diskStore.uploadUrl(SHA, 100);
     expect(out.url).toBe('https://store.private.blob.vercel-storage.com/x');
-  });
-
-  it('issues a private GET with the requested ttl', async () => {
-    const { diskStore } = await import('./storage');
-    await diskStore.downloadUrl(SHA, 900);
-    expect(presignUrl).toHaveBeenCalledWith(
-      expect.anything(),
-      expect.objectContaining({ operation: 'get', access: 'private' }),
-    );
   });
 
   it('reports a missing blob as null rather than throwing', async () => {

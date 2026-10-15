@@ -8,7 +8,7 @@ import { diskVersions } from '@/db/schema/disk-history';
 import { firmwareReleases } from '@/db/schema/firmware';
 import { collections } from '@/db/schema/collections';
 import { organization, member, user } from '@/db/schema/auth';
-import { diskStore } from '@/lib/storage';
+import { diskStore, firmwareStore } from '@/lib/storage';
 import { stableId } from '@/lib/ingest';
 import { signedUpOrgIds } from './helpers';   // also a side effect: loads .env.local before @/db is used
 
@@ -443,16 +443,13 @@ export async function publishTestReleaseWithBlob(version: string): Promise<strin
   if (!version.startsWith(E2E_RELEASE_PREFIX)) {
     throw new Error(`e2e releases must start with ${E2E_RELEASE_PREFIX}, got ${version}`);
   }
-  const { put } = await import('@vercel/blob');
   const { createHash } = await import('node:crypto');
   const bytes = Buffer.from(`e2e firmware ${version}`);
   const blobPath = `firmware/${version}.bin`;
-  // allowOverwrite because a previous run's object may survive -- the same
-  // re-runnability reasoning that gave publishTestRelease its onConflictDoNothing.
-  await put(blobPath, bytes, {
-    access: 'private', contentType: 'application/octet-stream',
-    addRandomSuffix: false, allowOverwrite: true,
-  });
+  // Overwrites (firmwareStore.put's default) because a previous run's object
+  // may survive -- the same re-runnability reasoning that gave
+  // publishTestRelease its onConflictDoNothing.
+  await firmwareStore.put(blobPath, bytes);
   seededFirmwareBlobs.push(blobPath);
 
   const db = getDb();
@@ -482,9 +479,8 @@ export async function cleanupTestReleases(): Promise<number> {
   // is exactly the kind of leftover this teardown exists to prevent, and the
   // row is what remembers where it is.
   if (seededFirmwareBlobs.length > 0) {
-    const { del } = await import('@vercel/blob');
     for (const path of seededFirmwareBlobs.splice(0)) {
-      await del(path).catch(() => { /* never uploaded, or already gone */ });
+      await firmwareStore.remove(path).catch(() => { /* never uploaded, or already gone */ });
     }
   }
   const removed = await getDb()

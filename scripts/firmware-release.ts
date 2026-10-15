@@ -33,7 +33,6 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { parseArgs } from 'node:util';
 import { eq } from 'drizzle-orm';
-import { put, head } from '@vercel/blob';
 import { getDb } from '@/db';
 import { user } from '@/db/schema/auth';
 import { firmwareStore } from '@/lib/storage';
@@ -253,14 +252,9 @@ const userId = rows[0].id;
 //    date -- changed the bytes: the manifest signed above covers the new
 //    bytes, but the object a board would download is the old ones. A release
 //    no board could ever verify.
-const already = await head(blobPath).catch(() => null);
+const already = await firmwareStore.stat(blobPath).catch(() => null);
 if (!already) {
-  await put(blobPath, bytes, {
-    access: 'private',
-    contentType: 'application/octet-stream',
-    addRandomSuffix: false,
-    allowOverwrite: false,
-  });
+  await firmwareStore.put(blobPath, bytes, { overwrite: false });
 } else {
   // Read through the same store the download route serves from, rather than
   // trusting `head`'s size/etag -- the content itself is what has to match.
