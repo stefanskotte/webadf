@@ -4918,7 +4918,9 @@ Demozoo API (the bulk export makes per-lookup load on a non-profit unnecessary).
   allowlist checks only the first URL (the raster content-type allowlist and `nosniff` still apply).
 - **Cron drift:** the daily 01:30 cron against a 7-day gate can drift a refetch to 8 days.
 
-### 3bn. fw 1.13.0: board server override for self-hosters -- built and reviewed task by task on feat/server-override; final review and bench owed
+### 3bn. fw 1.13.0: board server override for self-hosters -- merged d51b011 (final review + fix wave done); TEST seq 84 published; bench owed
+
+**Update (2026-10-15).** Whole-branch review (opus): ready after fixes; fix wave da45738 + 8835235 (forget and PROVE the pairing gone before storing the server; stop the console after a reboot request; install UF2 guards and the web release check cover 6 top sectors; `set` to the default host = `clear`); re-review: all addressed. Pre-merge full vitest caught the `boards` help topic at 399 words -> new `own-server` topic (9c38fe3). Merged as **d51b011**; TEST `1.13.0+g8835235` = **seq 84** (`--no-github`), not yet installed. **Parked (Minor):** a token core1 saves during registration between core0's erase-check and the reboot could reach the new host once (tens of ms; closure: a flag checked inside token/config save, or a server tag beside the token -- also fixes M4 "set during an unbought OTA trial reverts"). Also open: INSECURE only in READY/LOADED; console has no echo; an IPv4 host is sent as SNI; case-sensitive "unchanged". **Operator 2026-10-15:** self-hosting keeps every feature (spec D8); follow-ups spec §9 (`pnpm firmware:import-github`, our signed releases into a self-hosted registry) and §10 (parity audit).
 
 **Status (2026-10-15).** Branch `feat/server-override` (worktree `.claude/worktrees/override`), six tasks, each reviewed;
 the whole-branch review and the bench are still owed. Not merged, not released. Spec
