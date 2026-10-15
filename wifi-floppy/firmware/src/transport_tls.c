@@ -477,7 +477,8 @@ static int tls_connect(struct transport *t, const char *host, int port) {
     }
     if (s_noverify) {
         mbedtls_ssl_set_verify(ssl, accept_any, NULL);
-        wf_logf(WF_WARN, "tls: certificate NOT checked for %s (wf server tls noverify)", host);
+        // Host last: a long host is what the 87-character log cut drops, never the warning.
+        wf_logf(WF_WARN, "tls: certificate NOT checked (noverify) for %s", host);
     }
 
     err_t cerr = altcp_connect(c->pcb, &c->remote_ip, (u16_t)port, on_connected);

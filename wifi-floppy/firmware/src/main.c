@@ -4035,9 +4035,10 @@ int main(void) {
         server_host_header(&g_server, g_server_hdr, sizeof g_server_hdr);
         tls_set_noverify(g_server.tls == OVR_TLS_NOVERIFY);
         if (server_is_custom(&g_server, WEBADF_HOST))
-            wf_logf(g_server.tls == OVR_TLS_NOVERIFY ? WF_WARN : WF_INFO, "server: custom %s tls=%s%s", g_server_hdr,
-                    g_server.tls == OVR_TLS_NOVERIFY ? "noverify" : "verify",
-                    g_server.tls == OVR_TLS_NOVERIFY ? " -- INSECURE" : "");
+            // Operative words first, host LAST (spec D5, never silent): a long
+            // host is what the 87-character log cut drops, never "INSECURE".
+            wf_logf(g_server.tls == OVR_TLS_NOVERIFY ? WF_WARN : WF_INFO, "server: custom, tls=%s: %s",
+                    g_server.tls == OVR_TLS_NOVERIFY ? "noverify -- INSECURE" : "verify", g_server_hdr);
         else wf_logf(WF_INFO, "server: default %s", WEBADF_HOST);
     }
     multicore_launch_core1_with_stack(core1_main, core1_stack, sizeof core1_stack);
@@ -4939,8 +4940,9 @@ int main(void) {
                 server_override_t rec;
                 switch (cmd.kind) {
                 case SC_SHOW:
-                    wf_logf(WF_INFO, "server: %s %s tls=%s", custom ? "custom" : "default", g_server_hdr,
-                            g_server.tls == OVR_TLS_NOVERIFY ? "noverify" : "verify");
+                    // Host last, as at boot: a long host is what gets cut, not the mode.
+                    wf_logf(WF_INFO, "server: %s tls=%s %s", custom ? "custom" : "default",
+                            g_server.tls == OVR_TLS_NOVERIFY ? "noverify" : "verify", g_server_hdr);
                     break;
                 case SC_ASK:
                     wf_logf(WF_INFO, "server: %s", cmd.text);
@@ -4984,7 +4986,7 @@ int main(void) {
                         config_store_erase();
                         char hdr[sizeof g_server_hdr];
                         server_host_header(&rec, hdr, sizeof hdr);
-                        wf_logf(WF_WARN, "server: now %s -- pairing forgotten, rebooting into setup", hdr);
+                        wf_logf(WF_WARN, "server: pairing forgotten, rebooting into setup -- now %s", hdr);
                         fw_rom_request_reboot(0);
                     } else {   // SC_CLEAR
                         if (!override_store_load(&rec)) {
