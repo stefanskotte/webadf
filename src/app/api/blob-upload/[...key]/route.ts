@@ -1,6 +1,7 @@
 import { backend } from '@/lib/storage/select';
 import { BlobExistsError, assertKey } from '@/lib/storage/backend';
 import { verifyUpload } from '@/lib/storage/upload-sig';
+import { warnOnOrigin } from '@/selfhost/origin-warn';
 
 /**
  * Where a browser or the CLI PUTs a disk image when storage is local (P1 D9).
@@ -9,6 +10,7 @@ import { verifyUpload } from '@/lib/storage/upload-sig';
  * (the dropzone re-presigns once), 400 "This blob already exists" = already stored.
  */
 export async function PUT(req: Request, ctx: { params: Promise<{ key: string[] }> }) {
+  warnOnOrigin(req);
   const b = backend();
   if (b.label !== 'Local disk') return new Response('not found', { status: 404 });
   const key = (await ctx.params).key.join('/');

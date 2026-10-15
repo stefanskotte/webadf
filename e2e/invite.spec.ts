@@ -62,3 +62,8 @@ test('a leaked invite code can only create one account under concurrent sign-ups
   expect(successes).toBe(1);
   expect(failures).toBe(attempts - 1);
 });
+
+test('sign-up prefills the invite code from ?invite=', async ({ page }) => {
+  await page.goto('/sign-up?invite=ABCD2345');
+  await expect(page.getByLabel('Invite code')).toHaveValue('ABCD2345');
+});
