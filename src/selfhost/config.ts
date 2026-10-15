@@ -10,10 +10,15 @@ export function resolveConfig(env: Record<string, string | undefined>): Selfhost
     throw new ConfigError(`WEBADF_HTTPS_PORT must be a port number (1-65535), got "${portRaw}"`);
   }
   const httpsPort = Number(portRaw);
-  const rawDomain = env.WEBADF_DOMAIN?.trim() ?? '';
-  const domain = rawDomain ? rawDomain.toLowerCase().replace(/\.$/, '') : null;
-  if (domain && !/^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$/.test(domain)) {
-    throw new ConfigError(`WEBADF_DOMAIN must be a bare DNS name like amiga.example.org (no https://, port or path), got "${rawDomain}"`);
+  // "Unset" is decided from the raw value; a non-empty raw value must normalise to a valid name.
+  const rawDomainEnv = env.WEBADF_DOMAIN ?? '';
+  let domain: string | null = null;
+  if (rawDomainEnv.trim()) {
+    const normalised = rawDomainEnv.trim().toLowerCase().replace(/\.$/, '');
+    if (!/^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$/.test(normalised)) {
+      throw new ConfigError(`WEBADF_DOMAIN must be a bare DNS name like amiga.example.org (no https://, port or path), got "${rawDomainEnv}"`);
+    }
+    domain = normalised;
   }
   const rawUrl = env.WEBADF_URL?.trim() || (domain ? `https://${domain}` : '');
   if (!rawUrl) throw new ConfigError('Set WEBADF_URL in .env to the address you open webadf at, e.g. https://192.168.1.10 (or set WEBADF_DOMAIN to a public DNS name)');

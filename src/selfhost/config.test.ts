@@ -63,3 +63,17 @@ describe('resolveConfig WEBADF_DOMAIN normalisation (fix round 1, I2)', () => {
       `WEBADF_DOMAIN must be a bare DNS name like amiga.example.org (no https://, port or path), got "${raw}"`);
   });
 });
+
+describe('resolveConfig WEBADF_DOMAIN that normalises to empty (fix round 2)', () => {
+  it.each(['.', '  .  '])('refuses %j with WEBADF_URL set', (raw) => {
+    expect(() => resolveConfig({ ...base, WEBADF_URL: 'https://x.lan', WEBADF_DOMAIN: raw })).toThrow(
+      `WEBADF_DOMAIN must be a bare DNS name like amiga.example.org (no https://, port or path), got "${raw}"`);
+  });
+  it.each(['.', '  .  '])('refuses %j without WEBADF_URL', (raw) => {
+    expect(() => resolveConfig({ ...base, WEBADF_DOMAIN: raw })).toThrow(
+      `WEBADF_DOMAIN must be a bare DNS name like amiga.example.org (no https://, port or path), got "${raw}"`);
+  });
+  it('treats a blank WEBADF_DOMAIN as unset', () => {
+    expect(resolveConfig({ ...base, WEBADF_URL: 'https://x.lan', WEBADF_DOMAIN: '   ' }).domain).toBeNull();
+  });
+});

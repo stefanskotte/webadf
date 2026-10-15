@@ -44,8 +44,10 @@ describe('secrets', () => {
 describe('secrets parent directories (fix round 1, I3)', () => {
   it('creates missing parents with the default mode, and the secrets folder itself at 0700', () => {
     const base = mkdtempSync(join(tmpdir(), 'p-'));
+    const umask = process.umask();
+    process.umask(umask); // read and restore
     ensureSecrets(join(base, 'data', 'secrets'));
-    expect(statSync(join(base, 'data')).mode & 0o777).not.toBe(0o700);
+    expect(statSync(join(base, 'data')).mode & 0o777).toBe(0o777 & ~umask);
     expect(statSync(join(base, 'data', 'secrets')).mode & 0o777).toBe(0o700);
   });
 });
