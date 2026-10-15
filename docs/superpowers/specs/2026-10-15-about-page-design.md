@@ -29,8 +29,8 @@ the top right.
 40 hex characters) and build time. Both are fixed at BUILD time in `next.config.ts` and exposed as
 server env (`WEBADF_COMMIT`, `WEBADF_BUILT_AT`), so a running server reports what it was built from:
 commit = `VERCEL_GIT_COMMIT_SHA` → `GIT_SHA` (a build argument, for a Docker build without `.git`)
-→ `git rev-parse HEAD` → `unknown`. Built at = the build's own clock, ISO 8601, shown in the viewer's
-locale.
+→ `git rev-parse HEAD` → `unknown`. Built at = the build's own clock, ISO 8601, shown in UTC (rendered on
+the server, so no time-zone guess).
 
 **Hosting.** "Hosted (webadf.vercel.app)" when `SELFHOSTED=false`, otherwise "Self-hosted". One
 function, `hostingMode(env)`, decides it; nothing else reads `SELFHOSTED`.
