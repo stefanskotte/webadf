@@ -477,24 +477,16 @@ test('pressing the bezel display opens the drawer, and the bezel behind it canno
 /** LiveRefresh polls every 3 s while the tab is in use; allow a few ticks plus the RSC refresh. */
 const LIVE = 15_000;
 
-test('a board on a custom server says so, and whether its certificate is checked', async ({ page, request }) => {
+test('a board on a custom server shows no server line on its card (the About page says how this server is hosted)', async ({ page, request }) => {
   await signUpFresh(page);
   const { deviceId, token } = await pairDevice(page, request);
-  const report = async (server: { custom: boolean; tls: 'verify' | 'noverify' }) => {
-    const res = await request.post('/api/device/status', {
-      headers: authHeader(token), data: { mountedSha256: null, firmwareVersion: '1.13.0+gabc1234', server },
-    });
-    expect(res.status()).toBe(204);
-  };
-  const line = page.getByTestId(`device-server-${deviceId}`);
-
-  await report({ custom: true, tls: 'noverify' });
+  const res = await request.post('/api/device/status', {
+    headers: authHeader(token),
+    data: { mountedSha256: null, firmwareVersion: '1.13.0+gabc1234', server: { custom: true, tls: 'noverify' } },
+  });
+  expect(res.status()).toBe(204);
   await page.goto('/devices');
-  await expect(line).toHaveText('Custom server · certificate not checked', { timeout: LIVE });
-
-  await report({ custom: true, tls: 'verify' });
-  await expect(line).toHaveText('Custom server', { timeout: LIVE });
-
-  await report({ custom: false, tls: 'verify' });
-  await expect(line).toHaveCount(0, { timeout: LIVE });
+  await expect(page.getByTestId(`device-firmware-${deviceId}`)).toContainText('1.13.0', { timeout: LIVE });
+  await expect(page.getByTestId(`device-server-${deviceId}`)).toHaveCount(0);
+  await expect(page.getByText(/Custom server|certificate not checked/)).toHaveCount(0);
 });

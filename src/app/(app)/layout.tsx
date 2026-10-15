@@ -6,6 +6,7 @@ import { latestReleaseSequence } from "@/lib/firmware-releases";
 import { TopNav } from "@/components/shell/top-nav";
 import { SearchBox } from "@/components/shell/search-box";
 import { SignOutButton } from "@/components/sign-out-button";
+import { AboutLink } from "@/components/shell/about-link";
 import { Logo } from "@/components/shell/logo";
 import { Link } from "@/components/shell/link";
 import { NavProgressProvider } from "@/components/shell/nav-progress";
@@ -136,6 +137,7 @@ export default async function AppLayout({
               has somewhere to grow into; ml-auto is inert at that width. */}
           <div className="ml-auto flex w-full items-center gap-4 sm:w-auto">
             <SearchBox />
+            <AboutLink />
             <SignOutButton />
           </div>
         </header>

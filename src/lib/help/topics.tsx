@@ -396,7 +396,7 @@ export const HELP_TOPICS = {
     ),
   },
   // Sources: spec 2026-10-15-board-server-override-design.md; commands in
-  // wifi-floppy/firmware/src/serial_cmd.c, behaviour in main.c; card line in devices/page.tsx (fw 1.13.0+);
+  // wifi-floppy/firmware/src/serial_cmd.c, behaviour in main.c;
   'own-server': {
     title: 'Your own server',
     short:
@@ -419,9 +419,34 @@ export const HELP_TOPICS = {
           only on a network you trust. The setting applies at the next boot.
         </p>
         <p>
-          <strong>On the card.</strong> The board&apos;s card then says <em>Custom server</em>, and{' '}
-          <em>certificate not checked</em> if you turned the check off. Firmware updates are still checked against our
-          signing key. The full steps are in wifi-floppy/README.md.
+          <strong>Updates.</strong> Firmware updates are still checked against our signing key, so a board on your own
+          server only installs builds we signed. The full steps are in wifi-floppy/README.md.
+        </p>
+      </>
+    ),
+  },
+  // Sources: spec 2026-10-15-about-page-design.md; src/lib/about/*; src/app/(app)/about/page.tsx.
+  about: {
+    title: 'About this server',
+    short: 'What this copy of the site is: its build, where it runs, and how much your library stores.',
+    body: (
+      <>
+        <p>
+          <strong>Web app.</strong> The commit the site was built from, and when. On our own site the commit links to
+          the change that produced it.
+        </p>
+        <p>
+          <strong>Hosting.</strong> <em>Hosted</em> is this site, run by us. Anything else says <em>Self-hosted</em>:
+          a copy someone runs on their own server. Nothing has to be set for that; every copy except ours reads
+          self-hosted.
+        </p>
+        <p>
+          <strong>Board firmware.</strong> The newest firmware your boards can install, and how many of your boards
+          are behind it. The Devices page has the Update button.
+        </p>
+        <p>
+          <strong>Your library.</strong> Your titles, disks and saved versions, and the space their disk images take.
+          A disk image you hold twice is counted once. Other people&apos;s libraries are never included.
         </p>
       </>
     ),
@@ -432,5 +457,5 @@ export type HelpTopicId = keyof typeof HELP_TOPICS;
 
 export const HELP_ORDER: readonly HelpTopicId[] = [
   'boards', 'own-server', 'nfc', 'next-disk', 'second-drive', 'network', 'write-back', 'write-protect', 'disk-sets', 'hd-hfe', 'display',
-  'cover-image',
+  'cover-image', 'about',
 ];

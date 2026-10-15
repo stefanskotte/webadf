@@ -3,6 +3,9 @@ import {
 } from '@vercel/blob';
 import { isBlobAlreadyExists } from '@/lib/blob-upload';
 
+/** What the About page names as file storage (spec D5: the kind, never the store's URL or token). */
+export const STORAGE_BACKEND = 'Vercel Blob';
+
 export interface BlobStat {
   /** The size the store actually holds, in bytes. Authoritative — never the client's claim. */
   sizeBytes: number;
