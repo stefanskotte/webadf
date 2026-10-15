@@ -1,0 +1,101 @@
+name: image
+
+# Builds the self-host image natively on amd64 and arm64, gates on the compose smoke test (amd64; arm64 was
+# proven on the Mac), and publishes a multi-arch manifest to GHCR: `edge` + `sha-<short>` per master push.
+# A `web-X.Y.Z` tag retags that commit's already-built manifest as `X.Y.Z` + `latest` (no rebuild).
+
+on:
+  push:
+    branches: [master]
+    tags: ['web-*']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write
+
+env:
+  IMAGE: ghcr.io/stefanskotte/webadf
+
+jobs:
+  build:
+    # master pushes, and manual runs from master; never a tag (the release job retags) or another branch.
+    if: github.ref == 'refs/heads/master'
+    strategy:
+      fail-fast: true
+      matrix:
+        include:
+          - { arch: amd64, runner: ubuntu-24.04 }
+          - { arch: arm64, runner: ubuntu-24.04-arm }
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - name: build
+        run: |
+          # The in-image `next build` downloads Google Fonts; one transient failure has been seen, so retry once.
+          # GIT_SHA is the full commit (the About page links it); the registry tag uses the 7-char short form.
+          for attempt in 1 2; do
+            docker build -f docker/Dockerfile --build-arg GIT_SHA="$GITHUB_SHA" -t webadf:smoke . && exit 0
+            echo "docker build failed (attempt $attempt)" >&2
+          done
+          exit 1
+      - name: smoke
+        if: matrix.arch == 'amd64'
+        run: WEBADF_SMOKE_IMAGE=webadf:smoke bash scripts/docker-smoke.sh
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: push arch image
+        env:
+          ARCH: ${{ matrix.arch }}
+        run: |
+          T="$IMAGE:sha-${GITHUB_SHA::7}-$ARCH"
+          docker tag webadf:smoke "$T"
+          docker push "$T"
+
+  manifest:
+    needs: build
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: multi-arch manifest
+        run: |
+          S="sha-${GITHUB_SHA::7}"
+          docker buildx imagetools create -t "$IMAGE:$S" -t "$IMAGE:edge" "$IMAGE:$S-amd64" "$IMAGE:$S-arm64"
+          docker buildx imagetools inspect "$IMAGE:edge"
+
+  release:
+    if: github.ref_type == 'tag'
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: retag the commit's image
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          V="${TAG#web-}"
+          if ! [[ "$V" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::tag $TAG is not web-X.Y.Z" >&2
+            exit 1
+          fi
+          S="sha-${GITHUB_SHA::7}"
+          if ! docker buildx imagetools inspect "$IMAGE:$S" >/dev/null 2>&1; then
+            echo "::error::no image $IMAGE:$S for the tagged commit $GITHUB_SHA -- build master first (push or dispatch the commit to master, wait for the image workflow, then re-tag)" >&2
+            exit 1
+          fi
+          docker buildx imagetools create -t "$IMAGE:$V" -t "$IMAGE:latest" "$IMAGE:$S"
+          docker buildx imagetools inspect "$IMAGE:$V"
