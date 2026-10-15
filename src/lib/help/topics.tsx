@@ -24,8 +24,6 @@ export const HELP_TOPICS = {
   // Deleting a board: delete-device-dialog.tsx + api/devices/[id] DELETE; the board's side (401 -> token erased ->
   // setup portal, same already-used code rejected, so a fresh code is asked for) is wifi-floppy/firmware/src/main.c
   // DC_HALTED branch; disk history kept because disk_versions.device_id has no FK (db/schema/disk-history.ts).
-  // Your own server: spec 2026-10-15-board-server-override-design.md; commands in
-  // wifi-floppy/firmware/src/serial_cmd.c, behaviour in main.c; card line in devices/page.tsx (fw 1.13.0+).
   // Address note: plan 2026-10-12 ruling 4 -- 1.11.0 sends the board's own DHCP client-id.
   boards: {
     title: 'Boards',
@@ -53,16 +51,8 @@ export const HELP_TOPICS = {
           disks and their history stay.
         </p>
         <p>
-          <strong>Your own server.</strong> If you run your own copy of this site, you can point a board at it
-          (firmware 1.13.0 or newer). Connect the board&apos;s USB port to a computer, open it in a serial terminal and
-          type <code>wf server set https://your.host</code>. For a home server with a self-signed certificate, also
-          type <code>wf server tls noverify</code> and confirm; the board then accepts any certificate, so use it
-          only on a network you trust. <code>wf server clear</code> goes back to this site. Changing the server
-          means setting the board up again: it forgets its pairing and Wi-Fi, reboots into its setup network, and
-          needs your Wi-Fi details and a new code from the new server. The board refuses to change the server while
-          a disk is mounted. Its card then says <em>Custom server</em>, and <em>certificate not checked</em> if you
-          turned the check off. Firmware updates are still checked against our signing key. The full steps are in
-          wifi-floppy/README.md.
+          <strong>Your own server.</strong> Running your own copy of this site? See{' '}
+          <a className="underline" href="/help#own-server">Your own server</a>.
         </p>
         <GoodToKnow items={[
           'A board never updates while a disk is mounted — the update waits for the eject.',
@@ -405,11 +395,44 @@ export const HELP_TOPICS = {
       </>
     ),
   },
+  // Sources: spec 2026-10-15-board-server-override-design.md; commands in
+  // wifi-floppy/firmware/src/serial_cmd.c, behaviour in main.c; card line in devices/page.tsx (fw 1.13.0+);
+  // OLED INSECURE marker in the status element of the display layouts.
+  'own-server': {
+    title: 'Your own server',
+    short:
+      'If you run your own copy of this site, you can point a board at it. This needs firmware 1.13.0 or newer.',
+    body: (
+      <>
+        <p>
+          <strong>Setting it.</strong> Connect the board&apos;s USB port to a computer, open it in a serial terminal
+          and type <code>wf server set https://your.host</code>. <code>wf server clear</code> goes back to this site.
+          Eject any disk first: the board refuses to change the server while a disk is mounted.
+        </p>
+        <p>
+          <strong>Setting up again.</strong> Changing the server means setting the board up again: it forgets its
+          pairing and Wi-Fi, reboots into its setup network, and needs your Wi-Fi details and a new code from the new
+          server.
+        </p>
+        <p>
+          <strong>Self-signed certificate.</strong> For a home server with a self-signed certificate, also type{' '}
+          <code>wf server tls noverify</code> and confirm with YES; the board then accepts any certificate, so use it
+          only on a network you trust. The setting applies at the next boot. The board&apos;s display shows INSECURE
+          while the check is off (except on a custom display layout without the status element).
+        </p>
+        <p>
+          <strong>On the card.</strong> The board&apos;s card then says <em>Custom server</em>, and{' '}
+          <em>certificate not checked</em> if you turned the check off. Firmware updates are still checked against our
+          signing key. The full steps are in wifi-floppy/README.md.
+        </p>
+      </>
+    ),
+  },
 } as const satisfies Record<string, HelpTopic>;
 
 export type HelpTopicId = keyof typeof HELP_TOPICS;
 
 export const HELP_ORDER: readonly HelpTopicId[] = [
-  'boards', 'nfc', 'next-disk', 'second-drive', 'network', 'write-back', 'write-protect', 'disk-sets', 'hd-hfe', 'display',
+  'boards', 'own-server', 'nfc', 'next-disk', 'second-drive', 'network', 'write-back', 'write-protect', 'disk-sets', 'hd-hfe', 'display',
   'cover-image',
 ];

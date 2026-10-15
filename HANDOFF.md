@@ -4932,7 +4932,7 @@ disk is in DF0 or DF1. `set` to a different server and `clear` run `config_store
 once into the setup portal; `set` naming the default (WEBADF_HOST:443, case-insensitive) IS `clear`; `tls` applies at the next boot. `noverify` = no certificate check and no host-name check;
 OLED status shows INSECURE (not on a custom layout without the status element), logged at boot and every TLS connect;
 the card shows "Custom server" / "Custom server · certificate not checked" (fw 1.13.0+; default server shows nothing).
-Firmware updates still verify our signing key. Words: help `boards` topic, `wifi-floppy/README.md` "Pointing the board
+Firmware updates still verify our signing key. Words: help `own-server` topic, `wifi-floppy/README.md` "Pointing the board
 at your own server".
 
 **Commits:** f4c5fa0 override_store; c985c90 serial_cmd; 463a435 client port/Host + status report; bdaffd4 boot reads the
