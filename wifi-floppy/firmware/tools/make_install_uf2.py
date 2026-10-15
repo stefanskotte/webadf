@@ -19,8 +19,8 @@ outside a flash update of its own partition -- a TBYB image here would leave
 the board in BOOTSEL (research §1). This script REFUSES a TBYB image.
 
 It also refuses (exit status 1) any page outside the 16 MB flash or inside its
-top five 4 KB sectors (device token, config, fw_state, display, drive_store --
-the records a re-install must keep), and it never carries the RP2350-E10
+top six 4 KB sectors (device token, config, fw_state, display, drive_store,
+server override -- the records a re-install must keep), and it never carries the RP2350-E10
 workaround block (0x10ffff00, inside the token sector) that picotool adds to
 the SDK's own UF2s. Addresses come from partitions.json, never hard-coded. The
 output is deterministic: same inputs, same bytes.
@@ -49,7 +49,7 @@ XIP_BASE = 0x10000000
 PAGE = 256
 SECTOR = 4096
 FLASH_SIZE = 16 * 1024 * 1024        # PIM726 (Pimoroni Pico Plus 2 W): 16 MB
-RECORD_SECTORS = 5                   # token, config, fw_state, display, drive_store
+RECORD_SECTORS = 6                   # token, config, fw_state, display, drive_store, override
 PT_SLOT1 = SECTOR                    # the boot ROM's second partition-table slot
 E10_ABS_BLOCK = XIP_BASE + FLASH_SIZE - PAGE   # 0x10ffff00, picotool --abs-block
 

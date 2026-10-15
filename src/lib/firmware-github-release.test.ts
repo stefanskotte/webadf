@@ -92,7 +92,9 @@ describe('checkInstallUf2', () => {
   it('refuses a block in the top-of-flash settings sectors (the E10 block, or worse)', () => {
     expect(checkInstallUf2(installUf2('1.8.1+g1', { lastAddr: 0x10ffff00 }), '1.8.1+g1')).toMatch(/settings sectors/);
     expect(checkInstallUf2(installUf2('1.8.1+g1', { lastAddr: 0x10ffb000 }), '1.8.1+g1')).toMatch(/settings sectors/);
-    expect(checkInstallUf2(installUf2('1.8.1+g1', { lastAddr: 0x10ffaf00 }), '1.8.1+g1')).toBeNull();
+    // Sector -6 is the server override (fw 1.13.0).
+    expect(checkInstallUf2(installUf2('1.8.1+g1', { lastAddr: 0x10ffa000 }), '1.8.1+g1')).toMatch(/settings sectors/);
+    expect(checkInstallUf2(installUf2('1.8.1+g1', { lastAddr: 0x10ff9f00 }), '1.8.1+g1')).toBeNull();
   });
   it('refuses something that is not a UF2', () => {
     expect(checkInstallUf2(Buffer.alloc(100), 'x')).toMatch(/not a UF2/);
