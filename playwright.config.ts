@@ -36,7 +36,13 @@ export default defineConfig({
   workers: 1,           // ...and one worker, for the reason above
   retries: 0,
   timeout: 30_000,
-  use: { baseURL: BASE_URL, trace: 'retain-on-failure' },
+  use: {
+    baseURL: BASE_URL,
+    trace: 'retain-on-failure',
+    // scripts/docker-e2e.sh runs the suite against the self-hosting stack, whose Caddy certificate comes from its
+    // own internal CA. Off unless that script asks for it.
+    ignoreHTTPSErrors: process.env.E2E_IGNORE_HTTPS === '1',
+  },
   // Two projects, because until now the suite proved nothing about the width
   // it was most likely to be broken at. Everything ran at Playwright's DEFAULT
   // 1280x720 -- no viewport was ever configured -- so the responsive work had
@@ -73,6 +79,8 @@ export default defineConfig({
     // server this config spawns, and nothing outside the test run is affected.
     env: { PORT: String(PORT), BETTER_AUTH_URL: BASE_URL },
     reuseExistingServer: true,
+    // The readiness probe of the self-hosting run (scripts/docker-e2e.sh) meets the same internal-CA certificate.
+    ignoreHTTPSErrors: process.env.E2E_IGNORE_HTTPS === '1',
     // Raised from the brief's 120_000: Turbopack's first cold compile of the
     // auth/library routes plus the Neon connection warmup can exceed two
     // minutes on a cold cache. This does not loosen any assertion — it only

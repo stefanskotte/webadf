@@ -218,6 +218,8 @@ Stored files (disk images, covers, firmware) go to local disk under `./data/blob
 (`STORAGE_DIR` moves it) unless `BLOB_READ_WRITE_TOKEN` is set, in which case they go to
 Vercel Blob. On Vercel the token is required: the app refuses to fall back to local disk there.
 
+Self-hosting with Docker: see [docs/self-hosting.md](docs/self-hosting.md).
+
 A self-hosted copy needs no extra setting: the About page (the (i) at the top right) reads
 **Self-hosted** unless `SELFHOSTED=false`, which only our own deployment sets. A Docker build
 without `.git` can pass `GIT_SHA` so the About page shows the commit.
