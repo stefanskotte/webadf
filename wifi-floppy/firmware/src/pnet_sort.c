@@ -140,6 +140,32 @@ bool pnet_sort_b2a_local(const pnet_sort_t *s, const uint8_t *f, size_t len, uin
     return addressed_to(f, len, amiga);
 }
 
+void pnet_local_mac(const uint8_t mac[6], uint8_t out[6]) {
+    memcpy(out, mac, 6);
+    out[0] ^= 0x02u;
+}
+
+/* Replaces `from` with `to` at the Ethernet address at `eth` (0 dest, 6 source) and, for ARP, at the ARP hardware
+ * address at `arp` (8 sender, 18 target) -- each only where it holds `from`. */
+static void swap_mac(uint8_t *f, size_t len, size_t eth, size_t arp, const uint8_t from[6], const uint8_t to[6]) {
+    if (len < ETH_HDR) return;
+    if (memcmp(f + eth, from, 6) == 0) memcpy(f + eth, to, 6);
+    if (be16(f + 12) == 0x0806u && len >= ETH_HDR + 28u && memcmp(f + ETH_HDR + arp, from, 6) == 0)
+        memcpy(f + ETH_HDR + arp, to, 6);
+}
+
+void pnet_local_to_amiga(uint8_t *f, size_t len, const uint8_t mac[6]) {
+    uint8_t l[6];
+    pnet_local_mac(mac, l);
+    swap_mac(f, len, 6u, 8u, mac, l);
+}
+
+void pnet_local_to_board(uint8_t *f, size_t len, const uint8_t mac[6]) {
+    uint8_t l[6];
+    pnet_local_mac(mac, l);
+    swap_mac(f, len, 0u, 18u, l, mac);
+}
+
 size_t pnet_dhcp_client_id(uint8_t *opts, size_t used, size_t cap, const uint8_t mac[6]) {
     static const uint8_t pre[5] = {61u, 9u, 0x00u, 'w', 'f'};
     if (used > cap || cap - used < PNET_CLIENT_ID_BYTES) return used;

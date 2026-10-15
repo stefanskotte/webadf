@@ -270,6 +270,35 @@ static void b2a_local_is_arp_or_ipv4_for_the_amigas_address(void) {
     CHECK(!pnet_sort_b2a_local(&same, F, n + 20, BOARD), "the Amiga's address is never the board's");
 }
 
+// Bench 2026-10-15: AmiTCP ignored the board's ARP replies (sender = its own MAC), so the board shows the Amiga a
+// local MAC on the local path, and turns it back into the shared one on the way in.
+static void the_local_path_disguises_the_boards_mac(void) {
+    uint8_t L[6];
+    pnet_local_mac(MAC, L);
+    CHECK(memcmp(L, MAC, 6) != 0 && (L[0] ^ MAC[0]) == 0x02 && memcmp(L + 1, MAC + 1, 5) == 0, "one bit apart");
+    size_t n = arp(MAC, MAC, 2, BOARD, AMIGA);                   /* the board's ARP reply to the Amiga */
+    pnet_local_to_amiga(F, n, MAC);
+    CHECK(memcmp(F + 6, L, 6) == 0, "Ethernet source -> local");
+    CHECK(memcmp(F + 14 + 8, L, 6) == 0, "ARP sender -> local");
+    CHECK(memcmp(F, MAC, 6) == 0, "the destination (the Amiga) untouched");
+    n = ipv4(MAC, MAC, 1, BOARD, AMIGA, 64);                     /* an echo reply */
+    pnet_local_to_amiga(F, n + 64, MAC);
+    CHECK(memcmp(F + 6, L, 6) == 0 && memcmp(F, MAC, 6) == 0, "IPv4: source only");
+    n = arp(L, MAC, 2, AMIGA, BOARD);                            /* the Amiga answers the board, to the local MAC */
+    memcpy(F + 14 + 18, L, 6);                                   /* ARP target hardware address */
+    pnet_local_to_board(F, n, MAC);
+    CHECK(memcmp(F, MAC, 6) == 0, "Ethernet destination -> shared");
+    CHECK(memcmp(F + 14 + 18, MAC, 6) == 0, "ARP target -> shared");
+    CHECK(memcmp(F + 6, MAC, 6) == 0, "the Amiga's source untouched");
+    n = ipv4(L, MAC, 1, AMIGA, BOARD, 64);                       /* an echo request to the local MAC */
+    pnet_local_to_board(F, n + 64, MAC);
+    CHECK(memcmp(F, MAC, 6) == 0, "IPv4: destination -> shared");
+    n = arp(BCAST, MAC, 1, AMIGA, BOARD);                        /* a broadcast request: nothing to change */
+    pnet_local_to_board(F, n, MAC);
+    CHECK(memcmp(F, BCAST, 6) == 0 && memcmp(F + 6, MAC, 6) == 0, "broadcast untouched");
+    pnet_local_to_amiga(F, 10, MAC);                             /* short: no read past the end (ASan-free run) */
+}
+
 int main(void) {
     RUN(arp_for_the_amiga_goes_to_both);
     RUN(ipv4_unicast_to_the_amiga_goes_to_the_amiga_only);
@@ -285,5 +314,6 @@ int main(void) {
     RUN(ip_text_is_a_dotted_quad);
     RUN(a2b_local_is_arp_or_ipv4_for_the_boards_address);
     RUN(b2a_local_is_arp_or_ipv4_for_the_amigas_address);
+    RUN(the_local_path_disguises_the_boards_mac);
     return REPORT();
 }
