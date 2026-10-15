@@ -5082,7 +5082,7 @@ the Amiga stays responsive. **Live Network again, no reset:** the running driver
 **Observed: another user installed the TEST build.** Device `28:cd:c1:19:49:12` in another user's org (created
 2026-10-13, DF1 = Network) reported `1.11.1+g0a157eb` on 2026-10-14 07:51 (instruction 2, chosen from its own card) --
 before the bench. TEST builds ARE offered to every org's card (the open question from 3bj). Harmless now that seq 80
-is the release; it stays an open item: hide TEST rows from other orgs' update offers (seq 79 is still listed).
+is the release; it stays an open item: hide TEST rows from other orgs' update offers (seq 79 is still listed). **DONE 2026-10-15 (6e14e9b):** `releaseVisibleToSql` (the one gate for the card's list, the live-state sequence, the poll's update join and the download route) shows a TEST build (notes `TEST build%`) only to the orgs in the env var `FIRMWARE_BENCH_ORGS` (comma-separated org ids; set in Vercel production and the main checkout's .env.local to WifiFloppy1's org). Unset = no org sees one. The publisher can't name the bench: every release is published as `admin@example.test` (SUPERADMIN_EMAILS), a member of no bench org. Measured on the live DB: the other org sees 57 releases and 0 TEST builds, the bench org 81 and 24. e2e: the five firmware specs, 29/29. **A new bench org must be added to FIRMWARE_BENCH_ORGS, or it cannot see or install TEST builds.**
 
 ### 3bj. PaulaNET Phase 3 (Network as a DF1 setting) -- TEST 1.11.0+g2671ef7 seq 78 PASSED on the A500 (2026-10-13); release 1.11.0+g2671ef7 seq 78 installed and smoke-checked (2026-10-13)
 
