@@ -49,10 +49,10 @@ length-prefixed so they may contain spaces. Version 1.
   follow. The receiver then answers `OK <id> <len>:<saved path>` or `ERR <id> <code> <text>`.
 - `PING` is sent every 30 s when idle. The receiver answers `PONG`. A missing `PONG` for 10 s closes the connection.
 
-**Error codes:** `space`, `crc`, `name`, `write`, `folder` (the folder is missing), `busy`.
+**Error codes:** `space`, `crc`, `name`, `write`, `folder` (the folder is missing), `busy`, `size` (a file over 4 MB; only a buggy or foreign sender sends one).
 
-**The receiver writes** to a temporary file `.rx<id>` in the target folder (a `<name>.part` could pass AmigaDOS's
-30-character limit). After the CRC matches, it renames the file to the final collision-free
+**The receiver writes** to a temporary file `.webadf-rx` in the target folder (one per folder: only one file is received at a
+time, and a crash leftover is overwritten by the next file; a `<name>.part` could pass AmigaDOS's 30-character limit). After the CRC matches, it renames the file to the final collision-free
 name, then sets the protection bits and the comment. On any failure, or if the connection drops, it deletes the
 temporary file.
 
