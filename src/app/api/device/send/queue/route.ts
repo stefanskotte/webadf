@@ -14,7 +14,10 @@ export async function GET(request: Request) {
     throw e;
   }
   const text = await sendQueueText(getDb(), device.deviceId);
-  return new Response(new Uint8Array(Buffer.from(text, 'latin1')), {
-    headers: { 'content-type': 'text/plain; charset=iso-8859-1', 'cache-control': 'no-store' },
+  const body = new Uint8Array(Buffer.from(text, 'latin1'));
+  return new Response(body, {   // content-length: the board can tell a cut body from a whole one
+    headers: {
+      'content-type': 'text/plain; charset=iso-8859-1', 'cache-control': 'no-store', 'content-length': String(body.byteLength),
+    },
   });
 }

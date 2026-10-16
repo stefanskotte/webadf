@@ -37,6 +37,8 @@ describe('GET /api/device/send/queue', () => {
     const b = await bytes(r);
     expect(b.includes(0xe9)).toBe(true);
     expect(b.length).toBe(Buffer.byteLength('NEXT -\nLIST 1\nab 3 8:Café.txt\n', 'latin1'));
+    // The board reads to content-length; production would otherwise stream it chunked.
+    expect(r.headers.get('content-length')).toBe(String(b.length));
     expect(sendQueueText).toHaveBeenCalledWith(expect.anything(), 'd1');
   });
 });
@@ -52,10 +54,14 @@ describe('GET /api/device/send/<id>', () => {
     const r = await get('offset=0&length=16384');
     expect(r.status).toBe(200);
     expect((await bytes(r)).length).toBe(16_384);
+    // The board takes a chunk only when content-length is exactly the length it asked for (1.14.0 bench: without
+    // it, production streamed the body chunked and every file failed "chunk -1").
+    expect(r.headers.get('content-length')).toBe('16384');
     expect(recordChunk).toHaveBeenCalledWith(expect.anything(), 'd1', 't1', 0);
   });
   it('clamps the last chunk to the file', async () => {
     const r = await get('offset=16384&length=16384');
+    expect(r.headers.get('content-length')).toBe(String(20_000 - 16_384));
     expect([...(await bytes(r))]).toEqual([...file.slice(16_384)]);
   });
   it('refuses bad ranges', async () => {

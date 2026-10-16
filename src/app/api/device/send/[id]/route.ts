@@ -28,7 +28,12 @@ export async function GET(request: Request, ctx: { params: Promise<{ id: string 
   const r = await recordChunk(getDb(), device.deviceId, id, offset);   // 400 for an offset past the end
   if (!r.ok) return new Response(null, { status: r.status });
   const bytes = await diskStore.readRange(r.sha256, offset, Math.min(length, r.sizeBytes - offset));
-  return new Response(new Uint8Array(bytes), {
-    headers: { 'content-type': 'application/octet-stream', 'cache-control': 'no-store' },
+  const body = new Uint8Array(bytes);
+  // content-length explicitly, as every binary route the board reads: it takes a chunk only when the length is
+  // exactly what it asked for, and without the header production streams the body chunked.
+  return new Response(body, {
+    headers: {
+      'content-type': 'application/octet-stream', 'cache-control': 'no-store', 'content-length': String(body.byteLength),
+    },
   });
 }
