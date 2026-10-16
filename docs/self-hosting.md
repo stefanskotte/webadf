@@ -255,7 +255,7 @@ carries what cannot be fetched:
   the manual DAT upload there still works.
 - **Demozoo.** Weekly, from Demozoo's public export.
 - **OpenRetro.** Not fetched: upload FS-UAE Launcher's `Amiga.sqlite` at `/admin/scan` (run the Launcher once; find
-  `Amiga.sqlite` in FS-UAE's data folder). Cover images are then fetched politely, a few at a time.
+  `Amiga.sqlite` in FS-UAE's data folder). Cover images are then fetched politely, one at a time.
 
 These requests name your install in their User-Agent (`webadf/1.0 (Amiga disk library; +<WEBADF_URL>)`). Everything
 else (library, uploads, history, devices, mounting) works as on our own deployment.

@@ -14,3 +14,12 @@ export async function ensurePaulanetDisk(opts: {
   opts.log?.('PaulaNET driver disk stored');
   return 'stored';
 }
+
+/** A side feature must not stop the app: a failure is logged loudly and the start goes on (the next start retries). */
+export async function storeBundledPaulanetDisk(
+  opts: Parameters<typeof ensurePaulanetDisk>[0], log: (l: string) => void,
+): Promise<void> {
+  try { await ensurePaulanetDisk({ ...opts, log }); } catch (e) {
+    log(`PaulaNET driver disk NOT stored: ${e instanceof Error ? e.message : String(e)} -- /api/paulanet-disk answers 503 until it is`);
+  }
+}

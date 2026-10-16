@@ -71,13 +71,13 @@ async function start() {
   const line = await ensureBootstrapInvite(cfg.url, cfg.adminEmail);
   if (line) say(line);
   // D5: the image carries the sha-pinned PaulaNET driver disk; store it once (a no-op when the store holds it).
-  const { ensurePaulanetDisk } = await import('@/selfhost/paulanet');
+  const { storeBundledPaulanetDisk } = await import('@/selfhost/paulanet');
   const { PAULANET_DISK_SHA256 } = await import('@/lib/paulanet-disk');
   const { diskStore } = await import('@/lib/storage');
-  await ensurePaulanetDisk({
+  await storeBundledPaulanetDisk({
     adfPath: '/app/assets/paulanet.adf', expectedSha256: PAULANET_DISK_SHA256,
-    has: async (s) => (await diskStore.stat(s)) !== null, put: async (s, b) => { await diskStore.put(s, new Uint8Array(b)); }, log: say,
-  });
+    has: async (s) => (await diskStore.stat(s)) !== null, put: async (s, b) => { await diskStore.put(s, new Uint8Array(b)); },
+  }, say);
   const { closeDb } = await import('@/db');
   await closeDb();
   process.env.HOSTNAME = '0.0.0.0';
