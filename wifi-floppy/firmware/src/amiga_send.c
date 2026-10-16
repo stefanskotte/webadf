@@ -113,11 +113,14 @@ static bool fetch_owed(const amiga_send_t *s) {
 }
 static bool file_moving(const amiga_send_t *s) { return s->phase >= AS_FILE_SENT && s->phase <= AS_AWAIT_OK; }
 
-void as_init(amiga_send_t *s, const as_ops_t *ops) {
+void as_init(amiga_send_t *s, const as_ops_t *ops, char *queue_buf, uint8_t *chunk_buf) {
     memset(s, 0, sizeof *s);
     s->ops = ops;
     s->rx = '-';
+    s->queue = queue_buf;
+    s->chunk = chunk_buf;
 }
+static bool usable(const amiga_send_t *s) { return s->queue && s->chunk; }
 
 void as_set_inputs(amiga_send_t *s, bool net_on, uint32_t amiga_ip, uint32_t queue_version) {
     s->net_on = net_on;
@@ -126,7 +129,7 @@ void as_set_inputs(amiga_send_t *s, bool net_on, uint32_t amiga_ip, uint32_t que
 }
 
 bool as_has_work(const amiga_send_t *s) {
-    if (!s->net_on || s->ip == 0) return false;
+    if (!usable(s) || !s->net_on || s->ip == 0) return false;
     // The handshake too: a 25 s long poll in the middle would time it out.
     return s->done_owed || file_moving(s) || s->phase == AS_CONNECTING || s->phase == AS_HELLO
         || (fetch_owed(s) && !file_moving(s));
@@ -137,6 +140,7 @@ uint32_t as_acked_version(const amiga_send_t *s) { return s->have_version; }
 
 // The shared engine: as_tick runs it without HTTPS, as_step with at most one request.
 static bool run(amiga_send_t *s, bool http) {
+    if (!usable(s)) return false;
     if (!s->net_on || s->ip == 0) {
         if (s->phase != AS_IDLE) drop(s, '-', "Network off");
         s->rx = '-';

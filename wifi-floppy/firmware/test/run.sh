@@ -38,6 +38,7 @@ fail=0
 #   fw_rom.c - boot ROM, flash, watchdog; every decision it acts on
 #                       lives in fw_trial.c / fw_apply.c / fw_update.c, which are tested
 #   pnet_bridge.c     - PaulaNET Phase 1's lwIP/radio glue; its decisions are pnet_sort.c and pnet_ring.c
+#   amiga_tcp.c       - PaulaNET Phase 4's lwIP TCP to Receive; its decisions are amiga_send.c
 # image_loader.c used to be excluded here too: it called http_get_stream(),
 # which only existed in http_fetch.c/.h (device-only, lwIP-backed), so
 # including it would fail to link. Task 3 removed that dependency
@@ -69,7 +70,7 @@ for t in test_*.c; do
   # which is exactly why nothing caught it until a second toolchain did.
   cc -std=c11 -D_DEFAULT_SOURCE -g -O1 -pthread -Wall -Wextra -Werror -DWFMF_HOST_TEST=1 -DWF_DF1_DEFAULT=0 \
      -o "$out" "$t" transport_fake.c si512_fake.c \
-     $(ls ../src/*.c | grep -vE 'net_radio_cyw43\.c|main\.c|transport_tls\.c|sntp_time\.c|portal_net\.c|dskchg\.c|activity_led\.c|i2c_probe\.c|nfc_bus_i2c\.c|ssd1306\.c|flux_capture\.c|bus_out\.c|pnet_bridge\.c|fw_rom\.c') \
+     $(ls ../src/*.c | grep -vE 'net_radio_cyw43\.c|main\.c|transport_tls\.c|sntp_time\.c|portal_net\.c|dskchg\.c|activity_led\.c|i2c_probe\.c|nfc_bus_i2c\.c|ssd1306\.c|flux_capture\.c|bus_out\.c|pnet_bridge\.c|fw_rom\.c|amiga_tcp\.c') \
      .build/monocypher.o .build/monocypher-ed25519.o -I../src/vendor/monocypher \
      || { echo "COMPILE FAIL: $t"; fail=1; continue; }
   if ! "$out"; then

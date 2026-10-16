@@ -74,7 +74,16 @@
 #include "pnet_link.h"       // PaulaNET Phase 1: counters for real frames
 #include "pnet_bridge.h"     //   the rings and core1's radio side
 #include "pnet_status.h"     //   Phase 2: cylinder 76's status track
+#include "amiga_send.h"      // Phase 4: files sent to Receive on the Amiga
+#include "amiga_tcp.h"       //   its lwIP and HTTPS ops
 #endif
+#endif
+
+#if WF_PNET_L2
+// PaulaNET Phase 4's queue text and chunk buffers (22 KB): in PSRAM, not SRAM, where they would come out of the heap
+// TLS allocates from (1.13.0's heap low-water was 28,672). Uninitialized: as_init and the fetches fill them.
+static __uninitialized_psram("sendq") char g_send_queue_buf[AS_QUEUE_BYTES + 1];
+static __uninitialized_psram("sendc") uint8_t g_send_chunk_buf[AS_CHUNK_BYTES];
 #endif
 
 // transport_tls.c is device-only (no host test exercises it, unlike every
@@ -2131,6 +2140,20 @@ static void core1_main(void) {
                  (unsigned long)get_rand_32(), (unsigned long)get_rand_32());
         static uploader_t up;
         up_init(&up, &c, session, wb_write_gen, wb_last_write_ms);
+#if WF_PNET_L2
+        // PaulaNET Phase 4: files queued for this board go to Receive on the Amiga, between polls (the one HTTPS
+        // connection is shared, like the uploader's). Static: the queue and chunk buffers are 22 KB.
+        static amiga_send_t g_send;
+        static as_ops_t g_send_ops;
+        amiga_tcp_ops(&g_send_ops, &c);
+        {
+            // Not backed by PSRAM (a board without it): sending stays off rather than writing into nothing.
+            const bool psram_ok = psram_check_address(&g_send_queue_buf[sizeof g_send_queue_buf - 1]) &&
+                                  psram_check_address(&g_send_chunk_buf[sizeof g_send_chunk_buf - 1]);
+            if (!psram_ok) wf_logf(WF_ERR, "send: buffers are not backed by PSRAM -- sending to the Amiga is off");
+            as_init(&g_send, &g_send_ops, psram_ok ? g_send_queue_buf : NULL, psram_ok ? g_send_chunk_buf : NULL);
+        }
+#endif
         dc_set_hold(&c, swap_holds, &up);
         // A waiting tap -- or a write landed since the poll began (HANDOFF
         // 3av) -- cuts a held poll short (spec §4.2 amendment). Set on
@@ -2312,9 +2335,14 @@ static void core1_main(void) {
                 net.frames_in = g_pnet_frames_from;
                 net.frames_out = g_pnet_frames_to;
                 dc_set_net(&c, &net);
+                as_set_inputs(&g_send, true, st.amiga_ip, c.send_version);
             } else {
                 dc_set_net(&c, NULL);
+                as_set_inputs(&g_send, false, 0, c.send_version);
             }
+            // Cheap, every pass (no HTTPS): connect retries, the handshake, pings, Receive's replies, pushing bytes.
+            as_tick(&g_send);
+            dc_set_send(&c, as_acked_version(&g_send), as_rx(&g_send));
 #endif
             g_up_holds = up_holds(&up);   // core0's DF1 store rule (R17)
 
@@ -2409,6 +2437,14 @@ static void core1_main(void) {
                 // mount a disk after the idle gate (D6) already passed --
                 // fwu_step's APPLYING does not look at `idle` again.
                 s = c.state;
+#if WF_PNET_L2
+            } else if (as_has_work(&g_send)) {
+                // A file is moving to the Amiga (Phase 4): one chunk or one queue fetch per pass, no long poll --
+                // the single HTTPS connection is needed for the chunks, as for the uploader and the updater above. Nothing moved
+                // (waiting on Receive's GO or OK): a short pause instead of spinning.
+                if (!as_step(&g_send)) sleep_ms(20);
+                s = c.state;
+#endif
             } else {
                 // This pass's write mark (taken at the top): a write applied
                 // since then cuts the poll short.

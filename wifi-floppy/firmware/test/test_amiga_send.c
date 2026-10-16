@@ -55,7 +55,9 @@ static const as_ops_t OPS = { NULL, f_connect, f_state, f_send, f_recv, f_close,
 
 static amiga_send_t S;
 static void reply(const char *l) { snprintf(F.in[F.in_tail], AS_LINE_MAX + 1, "%s", l); F.in_tail = (F.in_tail + 1) % 16; }
-static void fresh(void) { memset(&F, 0, sizeof F); F.now = 1000; as_init(&S, &OPS); }
+static char QBUF[AS_QUEUE_BYTES + 1];
+static uint8_t CBUF[AS_CHUNK_BYTES];
+static void fresh(void) { memset(&F, 0, sizeof F); F.now = 1000; as_init(&S, &OPS, QBUF, CBUF); }
 static void run(int n) { for (int i = 0; i < n; i++) { F.budget = F.accept_max; as_tick(&S); if (as_has_work(&S)) as_step(&S); } }
 static void clear_out(void) { F.out_n = 0; F.out[0] = 0; }
 static const char *ID = "11111111-2222-4333-8444-555555555555";
@@ -300,6 +302,13 @@ static void json_escapes_latin1(void) {
     CHECK_EQ_INT(as_json_escape(out, 4, "abcdef", 6), -1);
 }
 
+static void without_buffers_it_never_runs(void) {
+    memset(&F, 0, sizeof F); F.now = 1000; as_init(&S, &OPS, NULL, NULL);
+    snprintf(F.queue, sizeof F.queue, "NEXT -\nLIST 0\n");
+    as_set_inputs(&S, true, 0xAC100AEDu, 1); run(3);
+    CHECK(!as_has_work(&S), "no work"); CHECK_EQ_INT(F.connects, 0); CHECK_EQ_INT(F.queue_fetches, 0);
+}
+
 static void turning_network_off_closes(void) {
     ready_with("NEXT -\nLIST 0\n");
     as_set_inputs(&S, false, 0, 1); run(1);
@@ -326,5 +335,6 @@ int main(void) {
     RUN(new_queue_version_refetches_and_forwards_list);
     RUN(json_escapes_latin1);
     RUN(turning_network_off_closes);
+    RUN(without_buffers_it_never_runs);
     return REPORT();
 }

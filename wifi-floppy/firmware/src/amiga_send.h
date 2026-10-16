@@ -43,7 +43,8 @@ typedef struct as_ops {
 
 typedef enum { AS_IDLE, AS_CONNECTING, AS_HELLO, AS_READY, AS_FILE_SENT, AS_DATA, AS_AWAIT_OK } as_phase_t;
 
-// One instance (main.c keeps it static: the queue and chunk buffers are 22 KB). Fields are private to amiga_send.c.
+// One instance. Fields are private to amiga_send.c. The two big buffers (22 KB) are the caller's: on the board they
+// live in PSRAM (main.c), because 22 KB of SRAM would come straight out of the heap TLS allocates from.
 typedef struct amiga_send {
     const as_ops_t *ops;
     bool net_on;
@@ -54,7 +55,7 @@ typedef struct amiga_send {
     char rx;
     uint32_t t_phase, t_retry, t_ping;
     bool ping_out;
-    char queue[AS_QUEUE_BYTES + 1];
+    char *queue;                     // AS_QUEUE_BYTES + 1, the caller's
     int queue_len;
     bool list_owed;
     const uint8_t *out_p;            // bytes still to push (a line, the LIST block, a chunk)
@@ -62,14 +63,15 @@ typedef struct amiga_send {
     char out_line[AS_LINE_MAX + 8];
     char id[AS_ID_MAX + 1];
     uint32_t size, off, chunk_len;
-    uint8_t chunk[AS_CHUNK_BYTES];
+    uint8_t *chunk;                  // AS_CHUNK_BYTES, the caller's
     char done_id[AS_ID_MAX + 1];
     char done_json[480];
     bool done_owed;
     char line[AS_LINE_MAX + 1];
 } amiga_send_t;
 
-void as_init(amiga_send_t *s, const as_ops_t *ops);
+// queue_buf: AS_QUEUE_BYTES + 1 bytes; chunk_buf: AS_CHUNK_BYTES. Either NULL disables sending (no PSRAM).
+void as_init(amiga_send_t *s, const as_ops_t *ops, char *queue_buf, uint8_t *chunk_buf);
 // From core1 each pass: Network mode on, the Amiga's address (0 = none yet), the poll's xfer.v.
 void as_set_inputs(amiga_send_t *s, bool net_on, uint32_t amiga_ip, uint32_t queue_version);
 // Cheap, every pass, never an HTTPS request: connect retries, the handshake, pings, Receive's replies, pushing bytes.
