@@ -500,6 +500,16 @@ typedef struct {
     // needs nothing extra: the fetch it owes replaces the layout.)
     bool     display_reset_to_default;
 
+    // --- PaulaNET Phase 4 (spec 2026-10-16 §3): files sent to the Amiga ---
+    // The poll's xfer.v (the server's send-queue cursor), 0 until a body carries it; send_seen once one has.
+    uint32_t send_version;
+    bool     send_seen;
+    // What the next poll reports (dc_set_send): &xferAck= (the queue version last fetched) and &rx= (the receiver
+    // state). Absent from the poll until dc_set_send is first called, so a board that never sends polls as 1.13.
+    bool     _send_on;
+    uint32_t _send_ack;
+    char     _send_rx;
+
     // How the most recent exchange (any request) ended -- see dc_xfer_t.
     dc_xfer_t last_xfer;
 } device_client_t;
@@ -873,5 +883,16 @@ typedef struct {
 } dc_display_verdict_t;
 dc_display_action_t dc_display_decide(const device_client_t *c, const uint8_t *buf, int n,
                                       dc_display_verdict_t *out);
+
+// --- PaulaNET Phase 4: files sent to the Amiga (amiga_send.c drives these) ---
+// GET /api/device/send/queue: the queue as protocol text. Body length, or -1.
+int dc_fetch_send_queue(device_client_t *c, char *buf, int cap);
+// GET /api/device/send/<id>?offset=&length=: exactly `len` bytes into buf. Bytes, -status for a non-200, or -1
+// (transport failure, or a body of any other length -- refused, never overrun).
+int dc_fetch_send_chunk(device_client_t *c, const char *id, uint32_t off, uint32_t len, uint8_t *buf);
+// POST /api/device/send/<id>/done with a JSON body. HTTP status, or -1.
+int dc_post_send_done(device_client_t *c, const char *id, const char *json);
+// What the next poll reports: &xferAck=<acked>&rx=<rx>.
+void dc_set_send(device_client_t *c, uint32_t acked_version, char rx);
 
 #endif

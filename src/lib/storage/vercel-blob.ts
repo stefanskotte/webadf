@@ -63,6 +63,19 @@ export function vercelBlobBackend(): BlobBackend {
       };
     },
 
+    async getRange(key, start, endInclusive) {
+      assertKey(key);
+      const result = await get(key, { access: 'private', useCache: false, headers: { range: `bytes=${start}-${endInclusive}` } });
+      // The SDK reports statusCode 200 for EVERY successful answer, a 206 included (dist/index.js), so the status code
+      // says nothing about whether the range was honoured. The body does: a ranged answer is the requested length (or
+      // shorter, at the end), a store that ignored Range sent the whole object, which is longer -- slice that here.
+      if (!result || !result.stream || result.statusCode !== 200) return null;
+      const all = new Uint8Array(await new Response(result.stream).arrayBuffer());
+      const want = endInclusive - start + 1;
+      const ranged = result.headers?.get?.('content-range') !== null && result.headers?.get?.('content-range') !== undefined;
+      return ranged || all.length <= want ? all : all.subarray(start, Math.min(endInclusive + 1, all.length));
+    },
+
     async head(key) {
       assertKey(key);
       try {

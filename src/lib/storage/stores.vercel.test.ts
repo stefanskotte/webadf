@@ -30,6 +30,19 @@ const okGet = (body: string, headers: Record<string, string> = {}) => ({
 });
 
 describe('stores on Vercel Blob', () => {
+  // Review finding (Critical): the SDK reports statusCode 200 for EVERY successful answer, a 206 included, so the
+  // ranged read must judge by the body, never by the status code.
+  it('diskStore.readRange: a ranged answer (statusCode 200 from the SDK) is returned as it is', async () => {
+    get.mockResolvedValueOnce(okGet('MNOP', { 'content-range': 'bytes 16384-16387/20000' }));
+    const b = await diskStore.readRange(SHA256, 16384, 4);
+    expect(new TextDecoder().decode(b)).toBe('MNOP');
+    expect(get).toHaveBeenCalledWith(`adf/${SHA256}`, expect.objectContaining({ headers: { range: 'bytes=16384-16387' } }));
+  });
+  it('diskStore.readRange: a store that ignored Range sent the whole object -- sliced here', async () => {
+    get.mockResolvedValueOnce(okGet('ABCDEFGHIJ'));
+    expect(new TextDecoder().decode(await diskStore.readRange(SHA256, 3, 4))).toBe('DEFG');
+  });
+
   it('names itself for the About page', () => {
     expect(storageLabel()).toBe('Vercel Blob');
   });

@@ -136,6 +136,33 @@ export function localBackend(dir: string): BlobBackend {
       return { stream: fileStream(p), contentType: meta.contentType ?? null, sizeBytes: size };
     },
 
+    async getRange(key, start, endInclusive) {
+      const p = pathOf(key);
+      let fh: FileHandle;
+      try {
+        fh = await fs.open(p, 'r');
+      } catch (e) {
+        if (isEnoent(e)) return null;
+        throw e;
+      }
+      try {
+        const st = await fh.stat();
+        if (!st.isFile()) return null;
+        const end = Math.min(endInclusive, st.size - 1);
+        if (end < start) return new Uint8Array(0);
+        const buf = new Uint8Array(end - start + 1);
+        let got = 0;
+        while (got < buf.length) {
+          const { bytesRead } = await fh.read(buf, got, buf.length - got, start + got);
+          if (bytesRead === 0) break;
+          got += bytesRead;
+        }
+        return buf.subarray(0, got);
+      } finally {
+        await fh.close();
+      }
+    },
+
     async head(key) {
       try {
         const st = await fs.stat(pathOf(key));

@@ -90,9 +90,11 @@ static err_t pnet_input(struct pbuf *p, struct netif *nif) {
 // Phase 4: a frame from the Amiga for the board, into lwIP's own input as if the radio had received it. From the
 // lwIP heap (PBUF_RAM), never PBUF_POOL: the pool is the long poll's TLS receive window (lwipopts.h), and IPv4
 // reassembly could pin pool buffers for seconds (review I1). Capped at PNET_LOCAL_A2B_MAX: ARP, a ping, TCP SYNs and
-// ACKs -- what the board needs from the Amiga today. Larger frames are dropped and counted; raise the cap when a
-// board-side service has to take bulk data from the Amiga.
-#define PNET_LOCAL_A2B_MAX 256u
+// ACKs -- and Receive's replies (Phase 4): its longest OK line (a 36-char id and a 255-byte saved path) is ~310 bytes
+// of TCP payload, ~364 on the wire, and a frame dropped here is dropped on every retransmit too, so the board never
+// sees the OK and sends the file again (review C2). 768 covers a 640-byte line (Receive's RX_LINE_MAX) with headers.
+// Larger frames are dropped and counted; raise the cap when a board-side service takes bulk data from the Amiga.
+#define PNET_LOCAL_A2B_MAX 768u
 static void pnet_to_board(struct netif *nif, const uint8_t *f, uint16_t len) {
     struct pbuf *p = s_next && len <= PNET_LOCAL_A2B_MAX ? pbuf_alloc(PBUF_RAW, len, PBUF_RAM) : NULL;
     if (!p) { s_local_drops++; return; }

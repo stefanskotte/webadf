@@ -3567,7 +3567,75 @@ static void status_names_the_server_both_ways(void) {
     CHECK(strstr(fake_last_request(), ",\"server\":{\"custom\":false,\"tls\":\"verify\"}") != NULL, "the default, said");
 }
 
+
+// --- PaulaNET Phase 4 (spec 2026-10-16 §3): files sent to the Amiga -----------------------------------------------
+
+static void send_poll_params_only_once_set(void) {
+    boot();
+    fake_push_response("HTTP/1.1 204 No Content\r\n\r\n");
+    dc_step(&c);
+    CHECK(strstr(fake_last_request(), "xferAck") == NULL, "an untouched board polls exactly as 1.13 did");
+    boot(); dc_set_send(&c, 4, 'c');
+    fake_push_response("HTTP/1.1 204 No Content\r\n\r\n");
+    dc_step(&c);
+    CHECK(strstr(fake_last_request(), "&xferAck=4&rx=c ") != NULL, "xferAck and rx ride the poll");
+    // Worst case: every cursor at its maximum, DF1-capable, and xferAck at 10 digits.
+    boot(); dc_set_df1(&c, DF1_MODE_OFF, false);
+    c.since = 4294967295u; c.nfc_ack = 4294967295u; c.display_ack = 4294967295u;
+    c.drive_ack = 4294967295u; c.df1_ack = 4294967295u;
+    dc_set_send(&c, 4294967295u, 'u');
+    fake_push_response("HTTP/1.1 204 No Content\r\n\r\n");
+    dc_step(&c);
+    CHECK(strstr(fake_last_request(), "&df1Ack=4294967295&netPick=1&xferAck=4294967295&rx=u HTTP/1.1\r\n") != NULL,
+          "the worst-case path is sent whole");
+}
+
+static void send_version_is_read_from_the_poll(void) {
+    boot(); dc_set_send(&c, 0, '-');
+    push_ok_json("{\"version\":3,\"desired\":null,\"xfer\":{\"v\":7}}");
+    dc_step(&c);
+    CHECK_EQ_INT(c.send_version, 7);
+    CHECK(c.send_seen, "seen");
+    push_ok_json("{\"version\":4,\"desired\":null}");
+    dc_step(&c);
+    CHECK_EQ_INT(c.send_version, 7);
+}
+
+static void send_queue_fetch(void) {
+    boot();
+    fake_push_response("HTTP/1.1 200 OK\r\nContent-Length: 14\r\n\r\nNEXT -\nLIST 0\n");
+    char buf[64];
+    CHECK_EQ_INT(dc_fetch_send_queue(&c, buf, sizeof buf), 14);
+    CHECK(strstr(fake_last_request(), "GET /api/device/send/queue HTTP/1.1") != NULL, "path");
+    CHECK(memcmp(buf, "NEXT -\nLIST 0\n", 14) == 0, "body");
+    fake_push_response("HTTP/1.1 500 Internal Server Error\r\nContent-Length: 0\r\n\r\n");
+    CHECK(dc_fetch_send_queue(&c, buf, sizeof buf) < 0, "a 500 fails");
+}
+
+static void send_chunk_fetch(void) {
+    boot();
+    static uint8_t buf[16];
+    fake_push_response("HTTP/1.1 200 OK\r\nContent-Length: 4\r\n\r\nabcd");
+    CHECK_EQ_INT(dc_fetch_send_chunk(&c, "abc", 16384, 4, buf), 4);
+    CHECK(strstr(fake_last_request(), "GET /api/device/send/abc?offset=16384&length=4 HTTP/1.1") != NULL, "path");
+    CHECK(memcmp(buf, "abcd", 4) == 0, "bytes");
+    fake_push_response("HTTP/1.1 409 Conflict\r\nContent-Length: 0\r\n\r\n");
+    CHECK_EQ_INT(dc_fetch_send_chunk(&c, "abc", 0, 4, buf), -409);
+    fake_push_response("HTTP/1.1 200 OK\r\nContent-Length: 6\r\n\r\nabcdef");
+    CHECK_EQ_INT(dc_fetch_send_chunk(&c, "abc", 0, 4, buf), -1);   // longer than asked: refused, never overrun
+}
+
+static void send_done_post(void) {
+    boot();
+    fake_push_response("HTTP/1.1 204 No Content\r\n\r\n");
+    CHECK_EQ_INT(dc_post_send_done(&c, "abc", "{\"ok\":true,\"savedAs\":\"x\"}"), 204);
+    CHECK(strstr(fake_last_request(), "POST /api/device/send/abc/done HTTP/1.1") != NULL, "path");
+    CHECK(strstr(fake_last_request(), "{\"ok\":true,\"savedAs\":\"x\"}") != NULL, "body");
+}
+
 int main(void) {
+    RUN(send_poll_params_only_once_set); RUN(send_version_is_read_from_the_poll); RUN(send_queue_fetch);
+    RUN(send_chunk_fetch); RUN(send_done_post);
     // Only test_successful_image_fetch_publishes_and_reflects_write_protected
     // needs real PSRAM backing (everything else in this file either never
     // reaches image_parse_feed, or only pokes psram_publish_slot()'s

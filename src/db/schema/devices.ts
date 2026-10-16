@@ -209,6 +209,13 @@ export const devices = pgTable('devices', {
    */
   netNextRearmedAt: timestamp('net_next_rearmed_at', { withTimezone: true }),
 
+  // --- PaulaNET Phase 4 (spec 2026-10-16 §3): files sent to the Amiga ---
+  /** Cursor, bumped on every change of this board's send queue; the poll's `xfer.v`, echoed as ?xferAck=. */
+  sendVersion: integer('send_version').notNull().default(0),
+  /** The receiver state the board last reported (?rx=): c connected, r refused, u unreachable, - unknown/off. */
+  sendRx: text('send_rx'),
+  sendRxAt: timestamp('send_rx_at', { withTimezone: true }),
+
   /**
    * 'queued' | 'downloading' | 'applying' | 'failed', as the device reports.
    * Null means nothing in flight. It is telemetry for the operator -- it no

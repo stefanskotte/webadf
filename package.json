@@ -36,7 +36,8 @@
     "hfe:fixtures": "rm -rf /tmp/hfe-fix && tsx scripts/hfe-write-sources.ts /tmp/hfe-fix && gw convert --format amiga.amigados /tmp/hfe-fix/sparse.adf /tmp/hfe-fix/clean.hfe >/dev/null && gw convert --format amiga.amigados /tmp/hfe-fix/sparse.adf '/tmp/hfe-fix/v3.hfe::version=3' >/dev/null && gw convert --format ibm.720 /tmp/hfe-fix/pc.img /tmp/hfe-fix/pc.hfe >/dev/null && for f in clean v3 pc; do gzip -9 -n -c /tmp/hfe-fix/$f.hfe > src/lib/hfe/__fixtures__/$f.hfe.gz; done",
     "receive:test": "tools/receive/test/run.sh",
     "receive:build": "tools/receive/build.sh",
-    "receive:uae": "tools/receive/uae/uae-test.sh"
+    "receive:uae": "tools/receive/uae/uae-test.sh",
+    "send:queue": "dotenv -e .env.local -- tsx scripts/send-to-amiga.ts"
   },
   "dependencies": {
     "@base-ui/react": "^1.7.0",

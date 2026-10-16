@@ -120,6 +120,8 @@ if (WF_PNET_L2)
     message(FATAL_ERROR "WF_PNET_L2 needs WF_PNET_LOOP: Network mode runs on the PaulaNET transport")
   endif ()
   list(APPEND WFMF_FIRMWARE_SOURCES src/pnet_sort.c src/pnet_ring.c src/pnet_link.c src/pnet_bridge.c src/pnet_status.c)
+  # PaulaNET Phase 4 (fw 1.14.0): files sent to Receive on the Amiga.
+  list(APPEND WFMF_FIRMWARE_SOURCES src/amiga_send.c src/amiga_tcp.c)
   message(STATUS "WF_PNET_L2 is ON: DF1 Network mode (layer-2 sharing) is built in.")
 endif ()
 # Stack frames (HANDOFF 3ax): 1.7.0 died because one 1232-byte frame took core0's
@@ -256,7 +258,7 @@ endif ()
 # configure whenever this file changes. `-DFIRMWARE_SEMVER=` still overrides,
 # for a one-off build, because -D defines it before this point.
 if (NOT DEFINED FIRMWARE_SEMVER)
-  set(FIRMWARE_SEMVER "1.13.0")
+  set(FIRMWARE_SEMVER "1.14.0")
 endif ()
 
 set(WF_VERSION_HEADER "${CMAKE_CURRENT_BINARY_DIR}/generated/wifi_floppy_version.h")

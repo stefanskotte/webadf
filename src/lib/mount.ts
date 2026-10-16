@@ -159,6 +159,8 @@ export interface PollTick {
   netNextSentVersion: number | null;
   /** The DF1 pick's cursor (spec 2026-10-14 §4.2): compared against the board's ?df1Ack=. */
   df1Version: number;
+  /** The send queue's cursor (PaulaNET Phase 4): compared against the board's ?xferAck=. */
+  sendVersion: number;
 }
 
 /**
@@ -183,6 +185,7 @@ export async function readPollTick(deviceId: string): Promise<PollTick | null> {
       secondDriveAppliedVersion: devices.secondDriveAppliedVersion,
       netNextSentVersion: devices.netNextSentVersion,
       df1Version: devices.df1Version,
+      sendVersion: devices.sendVersion,
     })
     .from(devices)
     .where(eq(devices.id, deviceId))

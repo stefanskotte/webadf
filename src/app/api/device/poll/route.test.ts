@@ -53,12 +53,16 @@ vi.mock('@/lib/next-disk', () => ({
 const readDf1ForPoll = vi.fn<(deviceId: string) => Promise<{ v: number; sha256: string | null }>>();
 vi.mock('@/lib/df1-store', () => ({ readDf1ForPoll: (deviceId: string) => readDf1ForPoll(deviceId) }));
 
+const recordSendRx = vi.fn(async () => undefined);
+vi.mock('@/lib/transfers', () => ({ recordSendRx: (...a: unknown[]) => recordSendRx(...(a as [])) }));
+vi.mock('@/db', () => ({ getDb: () => ({}) }));
+
 const get = (qs = '') => new Request(`http://test/api/device/poll${qs}`);
 
 const baseTick = (over: Partial<PollTick> = {}): PollTick => ({
   version: 1, instructionVersion: 0, instructionAck: 0, nfcWriteSeq: 0, displayVersion: 0, secondDriveVersion: 0, secondDrive: 'off',
   secondDriveReported: null, secondDriveAppliedVersion: null, netNextSentVersion: null,
-  df1Version: 0, ...over,
+  df1Version: 0, sendVersion: 0, ...over,
 });
 
 beforeEach(() => {
@@ -658,5 +662,39 @@ describe('GET /api/device/poll -- netPick: the driver disk as DF1\'s pick (fw 1.
     expect(body.next).toEqual({ diskId: 'paulanet', sha256: PAULANET_DISK_SHA256, diskNo: 1 });
     expect(body.df1).toEqual({ v: 5, sha256: null });
     expect(markNetNextSent).toHaveBeenCalledWith('dev-1', 3);
+  });
+});
+
+describe('GET /api/device/poll -- xfer (PaulaNET Phase 4: files sent to the Amiga)', () => {
+  it('leaves a board that sends no xferAck exactly as before: no xfer key, no rx write', async () => {
+    readPollTick.mockResolvedValue(baseTick({ instructionVersion: 1, instructionAck: 0, sendVersion: 5 }));
+    const { GET } = await import('./route');
+    const res = await GET(get('?since=1&rx=c'));
+    const body = await res.json();
+    expect(body).not.toHaveProperty('xfer');
+    expect(recordSendRx).not.toHaveBeenCalled();
+  });
+  it('wakes on a queue change and carries xfer.v', async () => {
+    readPollTick.mockResolvedValue(baseTick({ sendVersion: 3 }));
+    const { GET } = await import('./route');
+    const res = await GET(get('?since=1&xferAck=0'));
+    expect(res.status).toBe(200);
+    expect(await res.json()).toMatchObject({ xfer: { v: 3 } });
+  });
+  it('carries xfer.v on a body woken by something else', async () => {
+    readPollTick.mockResolvedValue(baseTick({ sendVersion: 3, instructionVersion: 1, instructionAck: 0 }));
+    const { GET } = await import('./route');
+    const res = await GET(get('?since=1&xferAck=3'));
+    expect(await res.json()).toMatchObject({ xfer: { v: 3 } });
+  });
+  it('records a valid rx once, and ignores a garbled one', async () => {
+    readPollTick.mockResolvedValue(baseTick({ sendVersion: 1 }));
+    const { GET } = await import('./route');
+    await GET(get('?since=1&xferAck=0&rx=c'));
+    expect(recordSendRx).toHaveBeenCalledTimes(1);
+    expect(recordSendRx).toHaveBeenCalledWith(expect.anything(), 'dev-1', 'c');
+    recordSendRx.mockClear();
+    await GET(get('?since=1&xferAck=0&rx=zz'));
+    expect(recordSendRx).not.toHaveBeenCalled();
   });
 });
