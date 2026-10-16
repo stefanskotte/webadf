@@ -29,6 +29,8 @@ export interface DiskStore {
   stat(sha256: string): Promise<BlobStat | null>;
   /** Full contents. Only ever called for a blob whose digest still has to be verified. */
   read(sha256: string): Promise<Uint8Array>;
+  /** Bytes offset..offset+length-1 (clamped at the end); throws when absent. For the board's file chunks. */
+  readRange(sha256: string, offset: number, length: number): Promise<Uint8Array>;
   /** Frees the key so a later, correct upload can claim it. */
   remove(sha256: string): Promise<void>;
   /**
@@ -85,6 +87,13 @@ export const diskStore: DiskStore = {
     // client claimed — the claim is never trusted on its own. null when absent.
     const meta = await backend().head(key(sha256));
     return meta ? { sizeBytes: meta.sizeBytes } : null;
+  },
+
+  async readRange(sha256, offset, length) {
+    assertSha(sha256);
+    const b = await backend().getRange(key(sha256), offset, offset + length - 1);
+    if (!b) throw new Error(`storage: ${key(sha256)} is missing`);
+    return b;
   },
 
   async read(sha256) {

@@ -25,6 +25,13 @@ export function backendContract(name: string, make: () => Promise<BlobBackend>) 
       expect(await b.head('adf/aa')).toBeNull();
       await b.del('adf/aa'); // idempotent
     });
+    it('reads a byte range, clamped at the end; null when absent', async () => {
+      const b = await make();
+      await b.put('adf/rr', new Uint8Array([0, 1, 2, 3, 4, 5, 6, 7, 8, 9]), { contentType: 'application/octet-stream', overwrite: false });
+      expect([...(await b.getRange('adf/rr', 3, 6))!]).toEqual([3, 4, 5, 6]);
+      expect([...(await b.getRange('adf/rr', 8, 20))!]).toEqual([8, 9]);
+      expect(await b.getRange('adf/none', 0, 1)).toBeNull();
+    });
     it('refuses a second put without overwrite, and keeps the first bytes', async () => {
       const b = await make();
       await b.put('adf/bb', bytes('one'), { contentType: 'x/y', overwrite: false });

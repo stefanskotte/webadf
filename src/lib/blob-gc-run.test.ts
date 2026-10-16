@@ -2,13 +2,16 @@
 // object no row names -- no blobs row, no disk, no entitlement -- so only ALWAYS_REFERENCED_BLOBS keeps it.
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { PAULANET_DISK_SHA256 } from '@/lib/paulanet-disk';
+import { transfers } from '@/db/schema/transfers';
 
 const OLD = new Date('2026-01-01T00:00:00Z');   // far past the week's grace
 const ORPHAN = 'e'.repeat(64);
+const QUEUED = 'f'.repeat(64);   // a file waiting to be sent to an Amiga (PaulaNET Phase 4): only transfers names it
 
 // Every select resolves to no rows: `.from()` is awaitable and also offers `.where()` (the cover pass).
-const rows = () => {
-  const p = Promise.resolve([] as unknown[]);
+const rows = (table?: unknown) => {
+  const found = table === transfers ? [{ s: QUEUED }] : [];
+  const p = Promise.resolve(found as unknown[]);
   return Object.assign(p, { where: () => Promise.resolve([] as unknown[]) });
 };
 const db = {
@@ -30,6 +33,7 @@ beforeEach(() => {
   listAll.mockResolvedValue([
     { sha256: PAULANET_DISK_SHA256, uploadedAt: OLD },
     { sha256: ORPHAN, uploadedAt: OLD },
+    { sha256: QUEUED, uploadedAt: OLD },
   ]);
 });
 
@@ -41,5 +45,10 @@ describe('runBlobGc keeps the PaulaNET driver disk', () => {
     expect(remove).toHaveBeenCalledWith(ORPHAN);              // the GC really ran and deleted something
     expect(remove).not.toHaveBeenCalledWith(PAULANET_DISK_SHA256);
     expect(result.objects).toBe(1);
+  });
+  it('keeps a file a transfers row names (queued for an Amiga), however old', async () => {
+    const { runBlobGc } = await import('./blob-gc-run');
+    await runBlobGc({ dryRun: false });
+    expect(remove).not.toHaveBeenCalledWith(QUEUED);
   });
 });

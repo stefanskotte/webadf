@@ -30,6 +30,12 @@ export function memoryBackend(): BlobBackend {
       return { stream: new Response(o.bytes.slice()).body!, contentType: o.contentType, sizeBytes: o.bytes.byteLength };
     },
 
+    async getRange(key, start, endInclusive) {
+      assertKey(key);
+      const o = objects.get(key);
+      return o ? o.bytes.slice(start, Math.min(endInclusive + 1, o.bytes.byteLength)) : null;
+    },
+
     async head(key) {
       assertKey(key);
       const o = objects.get(key);

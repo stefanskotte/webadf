@@ -63,6 +63,17 @@ export function vercelBlobBackend(): BlobBackend {
       };
     },
 
+    async getRange(key, start, endInclusive) {
+      assertKey(key);
+      const result = await get(key, { access: 'private', useCache: false, headers: { range: `bytes=${start}-${endInclusive}` } });
+      // The SDK types statusCode as 200 | 304, but a ranged read is answered 206 (verified only against the API's
+      // documented HTTP behaviour; a 200 means the whole object came back and is sliced here).
+      const status = (result as { statusCode: number } | null)?.statusCode;
+      if (!result || !result.stream || (status !== 200 && status !== 206)) return null;
+      const all = new Uint8Array(await new Response(result.stream).arrayBuffer());
+      return status === 206 ? all : all.subarray(start, Math.min(endInclusive + 1, all.length));
+    },
+
     async head(key) {
       assertKey(key);
       try {

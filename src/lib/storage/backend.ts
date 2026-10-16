@@ -42,6 +42,11 @@ export interface BlobBackend {
   put(key: string, body: Uint8Array | ReadableStream<Uint8Array>, opts: PutOptions): Promise<void>;
   /** null when absent. Uncached unless opts.cached. */
   get(key: string, opts?: GetOptions): Promise<StoredObject | null>;
+  /**
+   * Bytes start..endInclusive, clamped to the object's end; null when absent. Uncached. For the board's file chunks
+   * (PaulaNET Phase 4): reading a whole 4 MB object for each 16 KB chunk would read it 256 times.
+   */
+  getRange(key: string, start: number, endInclusive: number): Promise<Uint8Array | null>;
   head(key: string): Promise<{ sizeBytes: number; uploadedAt: Date } | null>;
   /** Idempotent: deleting an absent key is not an error. */
   del(key: string): Promise<void>;

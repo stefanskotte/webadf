@@ -3,6 +3,7 @@ import { getDb } from '@/db';
 import { blobs, disks, entitlements, games } from '@/db/schema/catalog';
 import { devices } from '@/db/schema/devices';
 import { diskVersions, diskWriteSessions } from '@/db/schema/disk-history';
+import { transfers } from '@/db/schema/transfers';
 import { coverStore, diskStore } from '@/lib/storage';
 import { planBlobGc, planCoverGc, withoutReferenced } from '@/lib/blob-gc';
 import { ALWAYS_REFERENCED_BLOBS } from '@/lib/paulanet-disk';
@@ -37,7 +38,7 @@ export interface BlobGcResult {
 export async function runBlobGc({ dryRun }: { dryRun: boolean }): Promise<BlobGcResult> {
   const db = getDb();
   const now = new Date();
-  const [rows, diskRefs, entRefs, histBlob, histImage, devRefs, sessionRefs, derived] = await Promise.all([
+  const [rows, diskRefs, entRefs, histBlob, histImage, devRefs, sessionRefs, derived, sendRefs] = await Promise.all([
     db.select({ sha256: blobs.sha256, createdAt: blobs.createdAt }).from(blobs),
     db.selectDistinct({ s: disks.sha256 }).from(disks),
     db.selectDistinct({ s: entitlements.sha256 }).from(entitlements),
@@ -46,9 +47,12 @@ export async function runBlobGc({ dryRun }: { dryRun: boolean }): Promise<BlobGc
     db.select({ m: devices.mountedSha256, d: devices.desiredSha256, p: devices.preloadSha256 }).from(devices),
     db.selectDistinct({ s: diskWriteSessions.baseSha256 }).from(diskWriteSessions),
     db.selectDistinct({ s: blobs.derivedFromSha256 }).from(blobs),
+    // Files queued for an Amiga (PaulaNET Phase 4): kept while a transfers row names them; the daily transfers cron
+    // deletes finished rows after 7 days, and the next GC after that collects the bytes.
+    db.selectDistinct({ s: transfers.blobSha256 }).from(transfers),
   ]);
   const referenced = new Set<string>();
-  for (const list of [diskRefs, entRefs, histBlob, histImage, sessionRefs, derived]) {
+  for (const list of [diskRefs, entRefs, histBlob, histImage, sessionRefs, derived, sendRefs]) {
     for (const r of list) if (r.s) referenced.add(r.s);
   }
   for (const d of devRefs) for (const s of [d.m, d.d, d.p]) if (s) referenced.add(s);
