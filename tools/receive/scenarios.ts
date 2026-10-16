@@ -9,7 +9,7 @@ function bytes(n: number, seed: number): Buffer {
   for (let i = 0; i < n; i++) { x = (x * 1664525 + 1013904223) >>> 0; b[i] = x >>> 24; }
   return b;
 }
-export interface Scenario { name: string; uaeOnly?: boolean; posixOnly?: boolean; run: (port: number, dir: string, host: string) => Promise<string | null> }
+export interface Scenario { name: string; uaeOnly?: boolean; posixOnly?: boolean; explicit?: boolean /* runs only when named in --only */; run: (port: number, dir: string, host: string) => Promise<string | null> }
 
 // Latin-1 on the wire, UTF-8 on the host (both front ends convert).
 const hostName = (amigaName: string) => amigaName;
@@ -46,8 +46,9 @@ export const SCENARIOS: Scenario[] = [
   { name: 'empty', run: async (p, d, h) => expectOk(await one(p, h, { id: 's8', path: 'Empty', data: Buffer.alloc(0) }), 'Empty')
       ?? (same(d, 'Empty', Buffer.alloc(0)) ? null : 'no empty file') },
   { name: 'meta', run: async (p, _d, h) => expectOk(await one(p, h, { id: 's9', path: 'Script', data: Buffer.from('echo hi\n'), protection: 0x40, comment: 'a comment' }), 'Script') },
-  { name: 'big', run: async (p, d, h) => { const big = bytes(4194304, 11);
-      return expectOk(await one(p, h, { id: 's10', path: 'Big.bin', data: big }), 'Big.bin') ?? (same(d, 'Big.bin', big) ? null : 'content differs'); } },
+  { name: 'big', run: async (p, d, h) => { const big = bytes(4194304, 11); const t0 = Date.now();
+      try { return expectOk(await one(p, h, { id: 's10', path: 'Big.bin', data: big }), 'Big.bin') ?? (same(d, 'Big.bin', big) ? null : 'content differs'); }
+      finally { console.log(`  big: 4 MB in ${((Date.now() - t0) / 1000).toFixed(1)} s`); } } },
   { name: 'drop', run: async (p, d, h) => {
       const o = await one(p, h, { id: 's11', path: 'Dropped.bin', data: bytes(20000, 5), dropAfter: 1000 });
       if (o.ok || o.code !== 'dropped') return `got ${JSON.stringify(o)}`;
@@ -65,6 +66,8 @@ export const SCENARIOS: Scenario[] = [
       const f = { id: 's14', path: 'First.txt', data: hello };
       first.list([f]); const o = await first.send(f); await first.close();
       return reply.startsWith('ERR - busy') ? expectOk(o, 'First.txt') : `second connection got ${JSON.stringify(reply)}`; } },
+  // A receiver whose folder is on a nearly full volume (uae-test.sh space: an empty 880 KB floppy).
+  { name: 'space', explicit: true, run: async (p, _d, h) => expectErr(await one(p, h, { id: 'sp1', path: 'TooBig.bin', data: bytes(1000000, 13) }), 'space') },
   { name: 'list', run: async (p, _d, h) => {
       const b = await connect(p, h);
       b.list([{ id: 'l1', path: 'a', data: hello }, { id: 'l2', path: 'b/c', data: hello }]);
@@ -74,7 +77,7 @@ export const SCENARIOS: Scenario[] = [
 export async function runScenarios(port: number, dir: string, opts: { host?: string; only?: string[]; uae?: boolean } = {}) {
   const out: { name: string; ok: boolean; detail: string }[] = [];
   for (const s of SCENARIOS) {
-    if (opts.only && !opts.only.includes(s.name)) continue;
+    if (opts.only ? !opts.only.includes(s.name) : s.explicit) continue;
     if (s.uaeOnly && !opts.uae) continue;
     if (s.posixOnly && opts.uae) continue;
     try { const err = await s.run(port, dir, opts.host ?? '127.0.0.1'); out.push({ name: s.name, ok: err === null, detail: err ?? '' }); }

@@ -80,7 +80,9 @@ export async function connect(port: number, host = '127.0.0.1'): Promise<Board> 
         sock.destroy();
         return { id: f.id, ok: false, code: 'dropped', text: '' };
       }
-      const r = await next(60000);
+      // The receiver answers after the last byte is written: allow 60 s plus 4 KB/s (an emulated or real A500
+      // writes a 4 MB file in minutes, not seconds).
+      const r = await next(60000 + Math.ceil(f.data.length / 4));
       if (r === null) throw new Error('closed before OK');
       if (r.startsWith('ERR ')) return parseErr(r);
       const m = /^OK (\S+) (\d+):(.*)$/.exec(r);
