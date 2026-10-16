@@ -4,10 +4,10 @@
 // That is enforced by the caller's last_attempt_at gate (import.ts); this file
 // guarantees ONE request per call, conditional, identifying us.
 
+import { webadfUserAgent } from '@/lib/user-agent';
 import { demozooExportStore, type DemozooExportStore } from '@/lib/storage';
 
 export const EXPORT_URL = 'https://data.demozoo.org/demozoo-export.sql.gz';
-export const DEMOZOO_USER_AGENT = 'webadf/1.0 (Amiga disk library; +https://webadf.vercel.app)';
 /**
  * The request AND streaming its body into our store must finish inside the
  * cron route's 300 s maxDuration; aborting also errors the body stream.
@@ -22,7 +22,7 @@ export async function fetchExport(
   prev: { etag: string | null; lastModified: string | null } | null,
   deps: { fetch: typeof fetch; store: DemozooExportStore } = { fetch: globalThis.fetch, store: demozooExportStore },
 ): Promise<FetchOutcome> {
-  const headers: Record<string, string> = { 'user-agent': DEMOZOO_USER_AGENT };
+  const headers: Record<string, string> = { 'user-agent': webadfUserAgent() };
   if (prev?.etag) headers['if-none-match'] = prev.etag;
   if (prev?.lastModified) headers['if-modified-since'] = prev.lastModified;
 

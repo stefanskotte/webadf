@@ -1,5 +1,6 @@
 import { describe, it, expect, vi } from 'vitest';
-import { fetchExport, EXPORT_URL, DEMOZOO_USER_AGENT } from './fetch-export';
+import { fetchExport, EXPORT_URL } from './fetch-export';
+import { webadfUserAgent } from '@/lib/user-agent';
 import type { DemozooExportStore } from '@/lib/storage';
 
 function fakeStore() {
@@ -15,7 +16,7 @@ describe('fetchExport — the only request to data.demozoo.org', () => {
     expect(fetch).toHaveBeenCalledTimes(1);
     expect(fetch).toHaveBeenCalledWith(EXPORT_URL, {
       headers: {
-        'user-agent': DEMOZOO_USER_AGENT,
+        'user-agent': webadfUserAgent(),
         'if-none-match': '"abc"',
         'if-modified-since': 'Mon, 14 Sep 2026 02:38:00 GMT',
       },

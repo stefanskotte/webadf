@@ -3,7 +3,7 @@ import { githubReleasePlan, isTestBuild, assertSameBytes, installAssetName, chec
 
 const base = {
   version: '1.8.1+g1f343d5', semver: '1.8.1', sequence: 50, sha256: 'a'.repeat(64),
-  signature: 'c2ln', signingKeyId: 'wf-123', notes: 'TLS heap relief',
+  signature: 'c2ln', signingKeyId: 'wf-123', notes: 'TLS heap relief', security: false,
 };
 
 describe('the GitHub release for a published firmware version', () => {
@@ -16,6 +16,9 @@ describe('the GitHub release for a published firmware version', () => {
     expect(p.body).toContain('1.8.1+g1f343d5');
     expect(p.body).toContain('TLS heap relief');
     expect(p.manifest).toMatchObject({ sha256: base.sha256, signature: 'c2ln', sequence: 50, signingKeyId: 'wf-123' });
+    expect(p.manifest).toMatchObject({ notes: 'TLS heap relief', security: false });
+    const sec = githubReleasePlan({ ...base, security: true, notes: null });
+    expect(sec.publish && sec.manifest).toMatchObject({ notes: null, security: true });
   });
 
   it('never publishes a TEST build', () => {

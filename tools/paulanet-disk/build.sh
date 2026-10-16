@@ -7,9 +7,11 @@ set -euo pipefail
 here="$(cd "$(dirname "$0")" && pwd)"
 repo="$(cd "$here/../.." && pwd)"
 out="$1"
+# Debian has no shasum without perl; macOS has no sha256sum.
+sha256() { if command -v sha256sum >/dev/null; then sha256sum "$1"; else shasum -a 256 "$1"; fi | cut -d' ' -f1; }
 base="$repo/third-party/paulanet/PaulaNET-0afd5fa.adf"
 base_sha=d55d605c020e9204bec3fba07ea1519b1e04c2d85d8e56daf547d1cc23c537d0
-[ "$(shasum -a 256 "$base" | cut -d' ' -f1)" = "$base_sha" ] || { echo "FAIL: $base is not the pinned image"; exit 1; }
+[ "$(sha256 "$base")" = "$base_sha" ] || { echo "FAIL: $base is not the pinned image"; exit 1; }
 # amitools' own interpreter (xdftool's shebang), so xdf_fixed.py imports the same amitools.
 py="$(head -1 "$(command -v xdftool)" | sed 's/^#!//')"
 xdf() { TZ=UTC "$py" -I "$here/xdf_fixed.py" "$@" </dev/null; }
@@ -28,7 +30,7 @@ xdftool "$tmp/disk.adf" read PaulaNET.device "$tmp/driver"
 cmp -s "$tmp/driver" "$repo/third-party/paulanet/PaulaNET.device" \
   && echo "PASS PaulaNET.device is the pinned binary" || { echo "FAIL: PaulaNET.device differs from third-party/paulanet/"; exit 1; }
 cp "$tmp/disk.adf" "$out"
-got="$(shasum -a 256 "$out" | cut -d' ' -f1)"
+got="$(sha256 "$out")"
 echo "$got  $out"
 [ -f "$here/paulanet-disk.sha256" ] || { echo "FAIL: $here/paulanet-disk.sha256 is missing -- the pin is mandatory"; exit 1; }
 if [ "$(cat "$here/paulanet-disk.sha256")" != "$got" ]; then

@@ -9,7 +9,7 @@ import { blobs, games } from '@/db/schema/catalog';
 import { demozooImages, demozooScreenshots, demozooSuggestions } from '@/db/schema/demozoo';
 import { imageStore } from '@/lib/storage';
 import type { SweepResult } from '@/lib/tosec-sweep';
-import { DEMOZOO_USER_AGENT } from './fetch-export';
+import { webadfUserAgent } from '@/lib/user-agent';
 import { MAX_SCREENSHOTS } from './extract';
 
 export const DEMOZOO_IMAGES_PER_ROLLING_HOUR = 60;
@@ -67,7 +67,7 @@ export async function ensureDemozooImage(
   try {
     // A timeout rejects here or in arrayBuffer() below; both record a failure.
     res = await deps.fetch(s.standardUrl, {
-      headers: { 'user-agent': DEMOZOO_USER_AGENT }, signal: AbortSignal.timeout(SCREENSHOT_TIMEOUT_MS),
+      headers: { 'user-agent': webadfUserAgent() }, signal: AbortSignal.timeout(SCREENSHOT_TIMEOUT_MS),
     });
   } catch (err) {
     console.error(`demozoo: screenshot fetch failed for ${s.standardUrl}`, err);

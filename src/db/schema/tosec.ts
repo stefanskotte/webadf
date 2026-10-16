@@ -32,3 +32,12 @@ export const tosecEntries = pgTable('tosec_entries', {
   index('tosec_md5_idx').on(t.md5),
   index('tosec_crc_size_idx').on(t.crc32, t.sizeBytes),
 ]);
+
+/** One row, id 'tosec': the monthly tosecdev.org fetch's state (self-hosting P3 D6-D7). */
+export const tosecFetch = pgTable('tosec_fetch', {
+  id: text('id').primaryKey(),                 // always 'tosec'
+  release: text('release'),                    // date of the release fully imported, e.g. '2025-03-13'
+  importedAt: timestamp('imported_at', { withTimezone: true }),
+  lastAttemptAt: timestamp('last_attempt_at', { withTimezone: true }),
+  lastResult: text('last_result'),             // 'imported 2025-03-13 (7 DATs, 55932 entries)' | 'up to date' | 'TOSEC fetch failed: <reason>'
+});

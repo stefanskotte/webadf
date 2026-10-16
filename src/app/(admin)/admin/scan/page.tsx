@@ -3,6 +3,7 @@ import { PageHeader } from '@/components/shell/page-header';
 import { DatUpload } from '@/components/admin/dat-upload';
 import { RunScanButton } from '@/components/admin/run-scan-button';
 import { OpenRetroUpload } from '@/components/admin/openretro-upload';
+import { readTosecFetchState } from '@/lib/tosec-fetch';
 
 export const dynamic = 'force-dynamic';
 
@@ -27,6 +28,8 @@ const ENRICH_TILES = [
 
 export default async function AdminScanPage() {
   const s = await scanStatus();
+  // The table may not exist yet (deploy before migration): the page must not 500 over a status line.
+  const fetchState = await readTosecFetchState().catch(() => null);
 
   // A blob whose bytes could not be read is stamped hashed (so the sweeper
   // does not spin on it forever) with null hashes, and phase 2's short
@@ -139,10 +142,28 @@ export default async function AdminScanPage() {
 
         <div className="glass-card mb-3 p-5">
           <DatUpload />
+          <div className="mt-3 text-[12.5px]" style={{ color: 'var(--muted)' }} data-testid="tosec-fetch-status">
+            {fetchState?.release ? (
+              <div>
+                TOSEC: release {fetchState.release}
+                {fetchState.importedAt ? ` imported ${fetchState.importedAt.toISOString().slice(0, 10)}` : ''}
+              </div>
+            ) : (
+              <div>TOSEC: not fetched yet -- the monthly fetch runs on the 2nd</div>
+            )}
+            {(fetchState?.lastResult?.startsWith('TOSEC fetch failed:') || fetchState?.lastResult?.startsWith('failed:')) && (
+              <div>
+                Last automatic fetch ({fetchState.lastAttemptAt?.toISOString().slice(0, 10)}): {fetchState.lastResult}
+              </div>
+            )}
+          </div>
         </div>
 
         <div className="glass-card mb-3 p-5">
           <OpenRetroUpload />
+          <p className="mt-2 text-[12px]" style={{ color: 'var(--muted)' }} data-testid="openretro-hint">
+            Run FS-UAE Launcher once to produce <strong>Amiga.sqlite</strong>; find it in FS-UAE&apos;s data folder and upload it here.
+          </p>
         </div>
 
         <div className="glass-card overflow-x-auto">
