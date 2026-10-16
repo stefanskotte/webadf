@@ -94,13 +94,18 @@ export async function sendQueueText(db: Db, deviceId: string, now = new Date()):
 }
 
 export async function recordChunk(db: Db, deviceId: string, id: string, offset: number):
-  Promise<{ ok: true; sha256: string; sizeBytes: number } | { ok: false; status: 404 | 409 }> {
-  const [r] = await db.select({ status: transfers.status, sha: transfers.blobSha256, size: transfers.sizeBytes })
-    .from(transfers).where(and(eq(transfers.id, id), eq(transfers.deviceId, deviceId)));
+  Promise<{ ok: true; sha256: string; sizeBytes: number } | { ok: false; status: 400 | 404 | 409 }> {
+  // One conditional update, never a read then a write: a cancel that lands between the two must not be turned back
+  // into 'sending' (review finding). The offset is checked in the same statement, before the row is marked.
+  const [u] = await db.update(transfers).set({ status: 'sending', bytesSent: offset })
+    .where(and(eq(transfers.id, id), eq(transfers.deviceId, deviceId), inArray(transfers.status, ACTIVE),
+      gt(transfers.sizeBytes, offset)))
+    .returning({ sha: transfers.blobSha256, size: transfers.sizeBytes });
+  if (u) return { ok: true, sha256: u.sha, sizeBytes: u.size };
+  const [r] = await db.select({ status: transfers.status }).from(transfers)
+    .where(and(eq(transfers.id, id), eq(transfers.deviceId, deviceId)));
   if (!r) return { ok: false, status: 404 };
-  if (!ACTIVE.includes(r.status as TransferStatus)) return { ok: false, status: 409 };
-  await db.update(transfers).set({ status: 'sending', bytesSent: offset }).where(eq(transfers.id, id));
-  return { ok: true, sha256: r.sha, sizeBytes: r.size };
+  return { ok: false, status: ACTIVE.includes(r.status as TransferStatus) ? 400 : 409 };
 }
 
 export type SendOutcome = { ok: true; savedAs: string } | { ok: false; code: string; text: string };
@@ -131,8 +136,10 @@ export async function cancelTransfer(db: Db, orgId: string, id: string): Promise
 
 export async function expireTransfers(db: Db, now = new Date()): Promise<{ expired: number; deleted: number }> {
   return db.transaction(async (tx) => {
+    // queued AND sending: a row whose board vanished mid-file would otherwise stay 'sending' for ever, hidden from the
+    // queue yet counted against the board's limits and keeping its blob (review finding).
     const ex = await tx.update(transfers).set({ status: 'expired', finishedAt: now })
-      .where(and(eq(transfers.status, 'queued'), lt(transfers.expiresAt, now)))
+      .where(and(inArray(transfers.status, ACTIVE), lt(transfers.expiresAt, now)))
       .returning({ deviceId: transfers.deviceId });
     const devs = [...new Set(ex.map((e) => e.deviceId))];
     if (devs.length) await tx.update(devices).set({ sendVersion: sql`${devices.sendVersion} + 1` }).where(inArray(devices.id, devs));

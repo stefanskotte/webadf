@@ -25,9 +25,8 @@ export async function GET(request: Request, ctx: { params: Promise<{ id: string 
   if (offset === null || length === null || length === 0 || length > SEND_CHUNK_MAX) {
     return new Response('bad range', { status: 400 });
   }
-  const r = await recordChunk(getDb(), device.deviceId, id, offset);
+  const r = await recordChunk(getDb(), device.deviceId, id, offset);   // 400 for an offset past the end
   if (!r.ok) return new Response(null, { status: r.status });
-  if (offset >= r.sizeBytes) return new Response('bad range', { status: 400 });
   const bytes = await diskStore.readRange(r.sha256, offset, Math.min(length, r.sizeBytes - offset));
   return new Response(new Uint8Array(bytes), {
     headers: { 'content-type': 'application/octet-stream', 'cache-control': 'no-store' },

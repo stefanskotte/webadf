@@ -143,6 +143,25 @@ describe('transfers', () => {
     expect(await row(a)).toBeUndefined();
   });
 
+  it('expires a row stuck in sending (the board vanished mid-file), so it stops counting against the limits', async () => {
+    const d = await device(); const t0 = new Date('2026-10-02T00:00:00Z');
+    const a = (await q(d, await blob(new Uint8Array([70])), { now: t0 }) as { id: string }).id;
+    await T.recordChunk(getDb(), d, a, 0);
+    await T.expireTransfers(getDb(), new Date(t0.getTime() + 25 * 3600_000));
+    expect((await row(a)).status).toBe('expired');
+  });
+
+  it('never turns a cancelled row back into sending, and refuses an offset past the end before marking', async () => {
+    const d = await device();
+    const a = (await q(d, await blob(new Uint8Array([71, 72, 73]))) as { id: string }).id;
+    await T.cancelTransfer(getDb(), 'org-a', a);
+    expect(await T.recordChunk(getDb(), d, a, 0)).toEqual({ ok: false, status: 409 });
+    expect((await row(a)).status).toBe('cancelled');
+    const b = (await q(d, await blob(new Uint8Array([74, 75]))) as { id: string }).id;
+    expect(await T.recordChunk(getDb(), d, b, 2)).toEqual({ ok: false, status: 400 });
+    expect((await row(b)).status).toBe('queued');
+  });
+
   it('writes the receiver state only on a change or after 30 s', async () => {
     const d = await device(); const t0 = new Date('2026-10-16T12:00:00Z');
     const at = async () => (await getDb().select({ rx: devices.sendRx, at: devices.sendRxAt }).from(devices).where(eq(devices.id, d)))[0];

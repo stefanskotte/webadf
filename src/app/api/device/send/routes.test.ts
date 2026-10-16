@@ -59,8 +59,10 @@ describe('GET /api/device/send/<id>', () => {
     expect([...(await bytes(r))]).toEqual([...file.slice(16_384)]);
   });
   it('refuses bad ranges', async () => {
-    for (const qs of ['offset=0&length=16385', 'offset=-1&length=10', 'offset=0&length=0', 'length=10', 'offset=20000&length=10'])
+    for (const qs of ['offset=0&length=16385', 'offset=-1&length=10', 'offset=0&length=0', 'length=10'])
       expect((await get(qs)).status, qs).toBe(400);
+    recordChunk.mockResolvedValueOnce({ ok: false, status: 400 });   // an offset past the end, judged by recordChunk
+    expect((await get('offset=20000&length=10')).status).toBe(400);
   });
   it('answers 409 for a row no longer active and 404 for another board', async () => {
     recordChunk.mockResolvedValueOnce({ ok: false, status: 409 });
