@@ -48,7 +48,7 @@ static int f_chunk(void *c, const char *id, uint32_t off, uint32_t len, uint8_t 
 }
 static int f_post(void *c, const char *id, const char *json) {
     (void)c; F.posts++; snprintf(F.posted_id, sizeof F.posted_id, "%s", id); snprintf(F.posted, sizeof F.posted, "%s", json);
-    return F.post_status ? F.post_status : 204;
+    return F.post_status ? F.post_status : 204;   // -1: a transport failure
 }
 static uint32_t f_now(void *c) { (void)c; return F.now; }
 static const as_ops_t OPS = { NULL, f_connect, f_state, f_send, f_recv, f_close, f_queue, f_chunk, f_post, f_now };
@@ -253,8 +253,9 @@ static void failed_post_is_retried_and_409_counts_as_landed(void) {
     F.post_status = 503;
     run(3);
     CHECK(F.posts >= 1, "tried");
-    CHECK(as_has_work(&S), "still owed");
+    CHECK(!as_has_work(&S), "backing off: the board long-polls meanwhile");
     F.post_status = 409; int before = F.posts;
+    F.now += AS_BACKOFF_MIN_MS + 1;
     snprintf(F.queue, sizeof F.queue, "NEXT -\nLIST 0\n");   // the server's queue once the outcome landed
     run(3);
     CHECK(F.posts == before + 1, "posted again once");
@@ -299,7 +300,10 @@ static void json_escapes_latin1(void) {
     char out[40];
     CHECK_EQ_INT(as_json_escape(out, sizeof out, "a\"b\\c", 5), 7);
     CHECK(strcmp(out, "a\\\"b\\\\c") == 0, "quote and backslash");
-    CHECK_EQ_INT(as_json_escape(out, 4, "abcdef", 6), -1);
+    CHECK_EQ_INT(as_json_escape(out, 4, "abcdef", 6), 3);              // cut to fit, never refused
+    CHECK(strcmp(out, "abc") == 0, "cut");
+    CHECK_EQ_INT(as_json_escape(out, 8, "ab\xe9\xe9", 4), 2);          // never half an escape
+    CHECK(strcmp(out, "ab") == 0, "whole escapes only");
 }
 
 static void without_buffers_it_never_runs(void) {
@@ -313,6 +317,75 @@ static void turning_network_off_closes(void) {
     ready_with("NEXT -\nLIST 0\n");
     as_set_inputs(&S, false, 0, 1); run(1);
     CHECK(F.sock == AS_SOCK_CLOSED, "closed"); CHECK(as_rx(&S) == '-', "off");
+}
+
+
+// Review I3: Receive takes lines of 640; the longest legal FILE line (36-char id, 4 MB, ffffffff, a 255-byte path,
+// a 79-char comment) is 398 bytes and must go out whole.
+static void longest_legal_next_line_goes_out_whole(void) {
+    char path[256], comment[80], q[1200];
+    memset(path, 'p', 255); path[255] = 0; for (int i = 30; i < 255; i += 31) path[i] = '/';
+    memset(comment, 'c', 79); comment[79] = 0;
+    snprintf(q, sizeof q, "NEXT %s 4194304 ffffffff ffffffff 255:%s 79:%s\nLIST 1\n%s 4194304 255:%s\n", ID, path, comment, ID, path);
+    ready_with(q);
+    char want[700]; snprintf(want, sizeof want, "FILE %s 4194304 ffffffff ffffffff 255:%s 79:%s\n", ID, path, comment);
+    CHECK(strstr(F.out, want) != NULL, "the whole FILE line");
+}
+
+// Review I3: a NEXT line the board cannot read is reported as a failure, never refetched in a loop.
+static void unreadable_next_is_failed_not_looped(void) {
+    char q[600];
+    snprintf(q, sizeof q, "NEXT %s notanumber\nLIST 1\n%s 1 1:x\n", ID, ID);
+    ready_with(q);
+    run(5);
+    CHECK(F.posts >= 1, "posted");
+    CHECK(strstr(F.posted, "\"ok\":false") != NULL && strstr(F.posted, "\"code\":\"name\"") != NULL, "as a name failure");
+    CHECK(F.queue_fetches <= 3, "no fetch loop");
+}
+
+// Review I4: failed HTTPS calls back off (1 s doubling to 30 s), and meanwhile there is no work: the board long-polls.
+static void failed_fetch_backs_off(void) {
+    fresh(); F.queue_status = -1;
+    as_set_inputs(&S, true, 0xAC100AEDu, 1);
+    run(20);
+    CHECK_EQ_INT(F.queue_fetches, 1);
+    CHECK(!as_has_work(&S), "no work during the backoff");
+    F.now += 1001; run(1); CHECK_EQ_INT(F.queue_fetches, 2);
+    F.now += 1001; run(1); CHECK_EQ_INT(F.queue_fetches, 2);     // now 2 s
+    F.now += 1001; run(1); CHECK_EQ_INT(F.queue_fetches, 3);
+    F.queue_status = 0; snprintf(F.queue, sizeof F.queue, "NEXT -\nLIST 0\n");
+    F.now += 5000; run(2);
+    CHECK_EQ_INT(as_acked_version(&S), 1);
+}
+
+static void failed_post_backs_off_and_400_is_final(void) {
+    char q[600];
+    snprintf(q, sizeof q, "NEXT %s 0 0 0 1:x 0:\nLIST 1\n%s 0 1:x\n", ID, ID);
+    ready_with(q);
+    char go[80]; snprintf(go, sizeof go, "GO %s", ID); reply(go);
+    char ok[120]; snprintf(ok, sizeof ok, "OK %s 1:x", ID); reply(ok);
+    F.post_status = -1;
+    run(20);
+    CHECK_EQ_INT(F.posts, 1);                                    // one try, then the backoff
+    F.post_status = 400; F.now += 1001;
+    snprintf(F.queue, sizeof F.queue, "NEXT -\nLIST 0\n");
+    run(3);
+    CHECK_EQ_INT(F.posts, 2);
+    run(5);
+    CHECK_EQ_INT(F.posts, 2);                                    // a 400 is final: not posted again
+    CHECK(!as_has_work(&S), "done");
+}
+
+static void long_latin1_saved_name_is_cut_not_emptied(void) {
+    char name[256], q[900], ok[400];
+    memset(name, 0xe9, 200); name[200] = 0;
+    snprintf(q, sizeof q, "NEXT %s 0 0 0 200:%s 0:\nLIST 1\n%s 0 200:%s\n", ID, name, ID, name);
+    ready_with(q);
+    char go[80]; snprintf(go, sizeof go, "GO %s", ID); reply(go);
+    snprintf(ok, sizeof ok, "OK %s 200:%s", ID, name); reply(ok);
+    run(4);
+    CHECK(strncmp(F.posted, "{\"ok\":true,\"savedAs\":\"\\u00e9", 28) == 0, "a non-empty, valid savedAs");
+    CHECK(F.posted[strlen(F.posted) - 1] == '}', "closed JSON");
 }
 
 int main(void) {
@@ -336,5 +409,10 @@ int main(void) {
     RUN(json_escapes_latin1);
     RUN(turning_network_off_closes);
     RUN(without_buffers_it_never_runs);
+    RUN(longest_legal_next_line_goes_out_whole);
+    RUN(unreadable_next_is_failed_not_looped);
+    RUN(failed_fetch_backs_off);
+    RUN(failed_post_backs_off_and_400_is_final);
+    RUN(long_latin1_saved_name_is_cut_not_emptied);
     return REPORT();
 }

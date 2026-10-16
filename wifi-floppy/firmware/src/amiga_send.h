@@ -16,7 +16,7 @@
 #define AS_PORT 6800
 #define AS_QUEUE_BYTES 6144          // = the server's SEND_QUEUE_BYTES
 #define AS_CHUNK_BYTES 16384         // = the server's SEND_CHUNK_MAX
-#define AS_LINE_MAX 320
+#define AS_LINE_MAX 640              // = Receive's RX_LINE_MAX: the longest legal FILE line is 398
 #define AS_ID_MAX 40
 #define AS_RETRY_WAITING_MS 5000u    // reconnect cadence while a file waits
 #define AS_RETRY_IDLE_MS 30000u      // ... and while nothing does (so the card can say whether Receive runs)
@@ -25,6 +25,8 @@
 #define AS_GO_MS 30000u
 #define AS_PING_MS 30000u
 #define AS_PONG_MS 10000u
+#define AS_BACKOFF_MIN_MS 1000u      // a failed HTTPS call waits this long, doubling
+#define AS_BACKOFF_MAX_MS 30000u     //   to this; the board long-polls meanwhile
 
 enum { AS_SOCK_CLOSED, AS_SOCK_CONNECTING, AS_SOCK_OPEN, AS_SOCK_REFUSED };
 
@@ -67,6 +69,7 @@ typedef struct amiga_send {
     char done_id[AS_ID_MAX + 1];
     char done_json[480];
     bool done_owed;
+    uint32_t backoff_ms, t_backoff;  // after a failed HTTPS call: no work until t_backoff
     char line[AS_LINE_MAX + 1];
 } amiga_send_t;
 
@@ -82,7 +85,8 @@ bool as_has_work(const amiga_send_t *s);
 bool as_step(amiga_send_t *s);
 char as_rx(const amiga_send_t *s);               // 'c' connected, 'r' refused, 'u' unreachable, '-' unknown/off
 uint32_t as_acked_version(const amiga_send_t *s);// the queue version last fetched: the poll's xferAck
-// JSON string body: '"' and '\\' escaped, control and non-ASCII bytes as \u00XX. Returns length, or -1 if it won't fit.
+// JSON string body: '"' and '\\' escaped, control and non-ASCII bytes as \u00XX. Cut to fit (whole escapes only):
+// returns the length written.
 int as_json_escape(char *dst, int cap, const char *src, int n);
 
 #endif

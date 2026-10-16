@@ -96,7 +96,12 @@ static int t_send(void *ctx, const uint8_t *b, int n) {
     (void)ctx;
     net_radio_lock();
     if (!T.pcb || T.state != AS_SOCK_OPEN) { net_radio_unlock(); return -1; }
-    int room = (int)tcp_sndbuf(T.pcb);
+    // At most 4 MSS queued at once (review I7): the Amiga drains slowly over the floppy path, and every queued byte
+    // is a copied segment in lwIP's 16 KB heap, which TLS's sends and the Amiga's ACKs (pnet_bridge.c) share.
+    int queued = (int)(TCP_SND_BUF - tcp_sndbuf(T.pcb));
+    int room = 4 * TCP_MSS - queued;
+    if (room > (int)tcp_sndbuf(T.pcb)) room = (int)tcp_sndbuf(T.pcb);
+    if (room < 0) room = 0;
     int k = n < room ? n : room;
     if (k > 0) {
         err_t e = tcp_write(T.pcb, b, (u16_t)k, TCP_WRITE_FLAG_COPY);

@@ -5,6 +5,7 @@
 #include <string.h>
 
 static uint32_t now(const amiga_send_t *s) { return s->ops->now_ms(s->ops->ctx); }
+static void http_failed(amiga_send_t *s, const char *what, int st);
 
 // The queue text's first line is "NEXT -" or "NEXT <id> <size> <crc> <prot> <len>:<path> <len>:<comment>".
 static bool next_present(const amiga_send_t *s) {
@@ -54,7 +55,7 @@ int as_json_escape(char *dst, int cap, const char *src, int n) {
         if (c == '"' || c == '\\') { tmp[0] = '\\'; tmp[1] = (char)c; k = 2; }
         else if (c < 0x20 || c >= 0x7f) k = snprintf(tmp, sizeof tmp, "\\u%04x", c);
         else { tmp[0] = (char)c; k = 1; }
-        if (o + k >= cap) return -1;
+        if (o + k >= cap) break;           // cut to fit, never half an escape
         memcpy(dst + o, tmp, (size_t)k);
         o += k;
     }
@@ -65,8 +66,8 @@ int as_json_escape(char *dst, int cap, const char *src, int n) {
 // Receive's "ERR <id> <code> <text>" or the board's own reason, as the outcome to post.
 static void set_failure(amiga_send_t *s, const char *code, const char *text) {
     char c[40], t[300];
-    if (as_json_escape(c, sizeof c, code, (int)strnlen(code, 16)) < 0) snprintf(c, sizeof c, "write");
-    if (as_json_escape(t, sizeof t, text, (int)strnlen(text, 120)) < 0) t[0] = 0;
+    if (as_json_escape(c, sizeof c, code, (int)strnlen(code, 16)) == 0) snprintf(c, sizeof c, "write");
+    as_json_escape(t, sizeof t, text, (int)strnlen(text, 120));
     snprintf(s->done_json, sizeof s->done_json, "{\"ok\":false,\"code\":\"%s\",\"text\":\"%s\"}", c, t);
     snprintf(s->done_id, sizeof s->done_id, "%s", s->id);
     s->done_owed = true;
@@ -92,13 +93,17 @@ static void take_err(amiga_send_t *s, const char *line) {
 static void start_file(amiga_send_t *s) {
     const char *nl = memchr(s->queue, '\n', (size_t)s->queue_len);
     int len = nl ? (int)(nl - s->queue) : s->queue_len;
-    if (len - 5 > AS_LINE_MAX) { s->force_fetch = true; return; }
     const char *rest = s->queue + 5;
     int idn = 0;
     while (idn < len - 5 && rest[idn] != ' ' && idn < AS_ID_MAX) { s->id[idn] = rest[idn]; idn++; }
     s->id[idn] = 0;
     unsigned long size = 0;
-    if (sscanf(rest + idn, " %lu", &size) != 1) { s->force_fetch = true; return; }
+    if (len - 5 > AS_LINE_MAX || sscanf(rest + idn, " %lu", &size) != 1) {
+        // An entry the board cannot read is reported as failed, so the server ends it -- never refetched in a loop.
+        if (idn > 0) set_failure(s, "name", "the board could not read this file's entry");
+        else http_failed(s, "queue entry", -1);
+        return;
+    }
     s->size = (uint32_t)size;
     s->off = 0;
     s->chunk_len = 0;
@@ -106,6 +111,14 @@ static void start_file(amiga_send_t *s) {
     push(s, (const uint8_t *)s->out_line, n);
     s->phase = AS_FILE_SENT;
     s->t_phase = now(s);
+}
+
+static bool in_backoff(const amiga_send_t *s) { return s->backoff_ms && (int32_t)(now(s) - s->t_backoff) < 0; }
+static void http_failed(amiga_send_t *s, const char *what, int st) {
+    s->backoff_ms = s->backoff_ms ? (s->backoff_ms * 2 > AS_BACKOFF_MAX_MS ? AS_BACKOFF_MAX_MS : s->backoff_ms * 2)
+                                  : AS_BACKOFF_MIN_MS;
+    s->t_backoff = now(s) + s->backoff_ms;
+    wf_logf(WF_WARN, "send: %s failed (%d), next try in %lus", what, st, (unsigned long)(s->backoff_ms / 1000));
 }
 
 static bool fetch_owed(const amiga_send_t *s) {
@@ -129,7 +142,7 @@ void as_set_inputs(amiga_send_t *s, bool net_on, uint32_t amiga_ip, uint32_t que
 }
 
 bool as_has_work(const amiga_send_t *s) {
-    if (!usable(s) || !s->net_on || s->ip == 0) return false;
+    if (!usable(s) || !s->net_on || s->ip == 0 || in_backoff(s)) return false;
     // The handshake too: a 25 s long poll in the middle would time it out.
     return s->done_owed || file_moving(s) || s->phase == AS_CONNECTING || s->phase == AS_HELLO
         || (fetch_owed(s) && !file_moving(s));
@@ -152,18 +165,30 @@ static bool run(amiga_send_t *s, bool http) {
     // The outcome first: nothing else happens until the server has it.
     if (s->done_owed) {
         if (!http) return false;
+        if (in_backoff(s)) return false;
         int st = s->ops->post_done(s->ops->ctx, s->done_id, s->done_json);
         if ((st >= 200 && st < 300) || st == 409) {
             s->done_owed = false;
             s->force_fetch = true;
+            s->backoff_ms = 0;
             if (strncmp(s->done_json, "{\"ok\":true", 10) == 0) wf_logf(WF_INFO, "send: %.8s delivered", s->done_id);
             else wf_logf(WF_INFO, "send: %.8s ERR %s", s->done_id, s->done_json);
+        } else if (st >= 400 && st < 500 && st != 401 && st != 429) {
+            // The server refused the outcome itself: posting it again would be refused again. Let it go; the row
+            // stays as the server has it (and expires), the queue is refetched.
+            wf_logf(WF_WARN, "send: %.8s outcome refused (%d), dropped", s->done_id, st);
+            s->done_owed = false;
+            s->force_fetch = true;
+            s->backoff_ms = 0;
+        } else {
+            http_failed(s, "outcome", st);
         }
         return true;
     }
-    if (http && fetch_owed(s) && !file_moving(s)) {
+    if (http && fetch_owed(s) && !file_moving(s) && !in_backoff(s)) {
         int n = s->ops->fetch_queue(s->ops->ctx, s->queue, AS_QUEUE_BYTES);
-        if (n < 0) return false;
+        if (n < 0) { http_failed(s, "queue", n); return true; }
+        s->backoff_ms = 0;
         s->queue_len = n;
         s->queue[n] = 0;
         s->have_version = s->want_version;
