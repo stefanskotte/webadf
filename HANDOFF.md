@@ -4919,6 +4919,29 @@ Demozoo API (the bulk export makes per-lookup load on a non-profit unnecessary).
   allowlist checks only the first URL (the raster content-type allowlist and `nosniff` still apply).
 - **Cron drift:** the daily 01:30 cron against a 7-day gate can drift a refetch to 8 days.
 
+### 3bs. Self-hosting 1.1.0 accepted: OMV install end to end, full e2e against a container -- 2026-10-16
+
+**OMV acceptance (web-1.1.0, image `latest` = sha-9be42dc).** Fresh install from `docs/self-hosting.md` on the OMV box
+(172.16.10.11, folder `/srv/dev-disk-by-uuid-8c71e731-.../webadf`, WEBADF_URL=https://172.16.10.11): clean first start,
+PaulaNET disk stored; TOSEC fetch on Linux 7 DATs / 55,932 entries in 20 s; firmware import 13 releases (seq 50-85),
+board card "fw 1.13.0 · up to date"; the board paired to it, P1Smoke mounted on DF0 and the PaulaNET disk on DF1
+(Network) both appeared on the A500's Workbench. Then DF1 Off, `wf server clear`, board re-paired to production (online).
+**The OMV install is KEPT running** for the deferred test: an OTA update offered by a self-host, at the next real
+firmware release (operator's choice).
+
+**Full e2e against the container stack (Mac, project webadf-e2efull, own DB on :55445 -- production never touched).**
+500 tests: first pass 490/7/3 (pass/fail/skip) in 11 chunks; after one harness fix and reruns 495/2/3. **No product bug
+in self-hosted mode.** Remaining 2: `tosec-scan:284` (the upload's title sweep finishes before the test sees the
+"before" state -- outcome correct) and `mobile:706` (fails 5/6: the drag library swallows clicks within 50 ms of a drop
+and the production build opens the dialog that fast; spec needs a ~100 ms wait before tapping Cancel). Flaky, pass
+alone: `disk-sets:312`, `live-state:196`. Harness (branch `test/e2e-docker`, fe5f66e, unmerged, unpushed):
+`scripts/docker-e2e.sh up|run|down`, SUPERADMIN_EMAILS gets admin@example.test, the test process shares the stack's blob
+folder and auth secret, every other `.env.local` production variable exported empty; `e2e/admin-helpers.ts` paces
+admin sign-ins (production-mode auth rate limit gave 429s).
+**Follow-ups:** the two PaulaNET driver-disk specs still skip "not in a fresh store" though the image ships the disk
+(both pass unskipped); title sweeps log a full stack per row whose disk file is missing (213 lines, fixtures) -- one
+line each would do; every sign-up waits a fixed 4 s for a rate-limit message (~20 min per full run).
+
 ### 3br. Self-hosting P3: parity -- merged 9ea7c85 2026-10-16; first production runs verified
 
 **What.** (spec `docs/superpowers/specs/2026-10-16-selfhost-p3-parity-design.md`, plan `docs/superpowers/plans/2026-10-16-selfhost-p3.md`.)
