@@ -37,7 +37,8 @@
 // A 63-character override host and `:65535` add up to 52 over the default host: 338 + 52 = 390 (1.13.0), so 416.
 // The other users of this size, at a 69-byte Host value and a 127-char token: the image fetch
 // (/api/device/image/net/<64 hex>) is 355, the firmware fetch (a 64-char version) 354, the display fetch 288.
-#define DC_REQ_BUF_BYTES  416
+// &xferAck=4294967295&rx=u (fw 1.14.0, PaulaNET Phase 4) adds 25: 415, so 448.
+#define DC_REQ_BUF_BYTES  448
 // DC_POLL_BODY_BYTES moved to device_client.h so a test can name it -- see
 // the note there. A budget a test cannot name is a budget checked by hand.
 // 512 was never under load before the image fetch: every other response on
@@ -1174,6 +1175,23 @@ static void dc_take_df1(device_client_t *c, char *json) {
     c->df1_ack = v;
 }
 
+// PaulaNET Phase 4: lifts `xfer` ({"v":N}) out of a 200 poll body and BLANKS it before any flat lookup (its `v` must
+// never be read as anything else's). The server sends it on every body to a board that sends xferAck.
+static void dc_take_xfer(device_client_t *c, char *json) {
+    static char obj[48];   // {"v":4294967295} is 16; static: see the STACK note
+    if (!json_object(json, "xfer", obj, sizeof obj, true)) return;
+    uint32_t v;
+    if (!json_u32_strict(obj, "v", &v)) return;
+    c->send_version = v;
+    c->send_seen = true;
+}
+
+void dc_set_send(device_client_t *c, uint32_t acked_version, char rx) {
+    c->_send_on = true;
+    c->_send_ack = acked_version;
+    c->_send_rx = (rx == 'c' || rx == 'r' || rx == 'u') ? rx : '-';
+}
+
 bool dc_drive_take(device_client_t *c, uint32_t *seq, df1_mode_t *mode) {
     if (!c->drive_owed) return false;
     c->drive_owed = false;
@@ -1879,6 +1897,55 @@ int dc_fetch_display(device_client_t *c, uint8_t *buf, int cap) {
     return s.len;
 }
 
+// --- PaulaNET Phase 4: files sent to the Amiga ---------------------------------------------------------------------
+
+int dc_fetch_send_queue(device_client_t *c, char *buf, int cap) {
+    if (!buf || cap <= 0) return -1;
+    static char req[DC_REQ_BUF_BYTES];   // static: see the STACK note above
+    int req_len = http_build_request(req, sizeof req, "GET", "/api/device/send/queue", c->host_header, c->token, NULL);
+    if (req_len < 0) return -1;
+    dc_bytes_sink_t s = { (uint8_t *)buf, cap, 0 };
+    static http_resp_t r;
+    bool ok = dc_exchange(c, req, req_len, dc_bytes_sink, &s, &r, /*retryable=*/true);
+    if (!ok || !r.body_complete) return -1;
+    if (r.status == 401) { c->state = DC_HALTED; return -1; }   // 401 anywhere halts
+    if (r.status != 200 || (r.content_length >= 0 && r.content_length > cap)) return -1;
+    return s.len;
+}
+
+int dc_fetch_send_chunk(device_client_t *c, const char *id, uint32_t off, uint32_t len, uint8_t *buf) {
+    if (!buf || len == 0) return -1;
+    static char path[DC_REQ_BUF_BYTES];   // static: see the STACK note above
+    int pn = snprintf(path, sizeof path, "/api/device/send/%s?offset=%lu&length=%lu", id, (unsigned long)off, (unsigned long)len);
+    if (pn < 0 || pn >= (int)sizeof path) return -1;
+    static char req[DC_REQ_BUF_BYTES];
+    int req_len = http_build_request(req, sizeof req, "GET", path, c->host_header, c->token, NULL);
+    if (req_len < 0) return -1;
+    dc_bytes_sink_t s = { buf, (int)len, 0 };
+    static http_resp_t r;
+    bool ok = dc_exchange(c, req, req_len, dc_bytes_sink, &s, &r, /*retryable=*/true);
+    if (!ok || !r.body_complete) return -1;
+    if (r.status == 401) { c->state = DC_HALTED; return -1; }
+    if (r.status != 200) return -r.status;
+    // Exactly what was asked: the sink keeps the first `len` bytes, so a longer body is refused here, never written.
+    if (r.content_length != (long)len || s.len != (int)len) return -1;
+    return s.len;
+}
+
+int dc_post_send_done(device_client_t *c, const char *id, const char *json) {
+    static char path[DC_REQ_BUF_BYTES];   // static: see the STACK note above
+    int pn = snprintf(path, sizeof path, "/api/device/send/%s/done", id);
+    if (pn < 0 || pn >= (int)sizeof path) return -1;
+    static char req[DC_REQ_BUF_BYTES + 512];   // + the outcome JSON (amiga_send's done_json is 480)
+    int req_len = http_build_request(req, sizeof req, "POST", path, c->host_header, c->token, json);
+    if (req_len < 0) return -1;
+    static http_resp_t r;
+    bool ok = dc_exchange(c, req, req_len, NULL, NULL, &r, /*retryable=*/false);
+    if (!ok || !r.body_complete) return -1;
+    if (r.status == 401) c->state = DC_HALTED;
+    return r.status;
+}
+
 bool dc_display_owed(const device_client_t *c) {
     return c->display_want > c->display_ack;
 }
@@ -1971,13 +2038,18 @@ static dc_state_t dc_step_inner(device_client_t *c) {
     // is 73 (51 before displayAck); &driveAck=4294967295 makes it 93, and
     // &df1Ack=4294967295 (DF1 any disk, 1.12.0) 111, and &netPick=1 (fw 1.12.1: Network's driver disk comes as
     // DF1's pick, `next` stays DF0's next disk) 121.
-    // test_poll_url_carries_display_ack / _drive_ack / poll_url_carries_df1_ack send them.
-    static char path[128];
+    // &xferAck=4294967295&rx=u (fw 1.14.0, files sent to the Amiga) makes it 146.
+    // test_poll_url_carries_display_ack / _drive_ack / poll_url_carries_df1_ack / send_poll_params_only_once_set send them.
+    static char path[176];
     int plen = snprintf(path, sizeof path, "/api/device/poll?since=%lu&nfcAck=%lu&displayAck=%lu",
              (unsigned long)c->since, (unsigned long)c->nfc_ack, (unsigned long)c->display_ack);
     if (c->_df1_capable && plen > 0 && plen < (int)sizeof path)
         snprintf(path + plen, sizeof path - (size_t)plen, "&driveAck=%lu&df1Ack=%lu&netPick=1",
                  (unsigned long)c->drive_ack, (unsigned long)c->df1_ack);
+    plen = (int)strnlen(path, sizeof path);
+    if (c->_send_on && plen > 0 && plen < (int)sizeof path)
+        snprintf(path + plen, sizeof path - (size_t)plen, "&xferAck=%lu&rx=%c",
+                 (unsigned long)c->_send_ack, c->_send_rx);
 
     static char req[DC_REQ_BUF_BYTES];
     int req_len = http_build_request(req, sizeof req, "GET", path, c->host_header, c->token, NULL);
@@ -2089,6 +2161,7 @@ static dc_state_t dc_step_inner(device_client_t *c) {
             // takes -- rather than parsing whatever prefix arrived.
             return dc_enter_backoff(c);
         }
+        dc_take_xfer(c, body.buf);           // PaulaNET Phase 4: lifted and blanked first, like the objects below
         dc_take_second_drive(c, body.buf);   // lifted and BLANKED first: its keys must never shadow ours
         dc_take_df1(c, body.buf);            // lifted and BLANKED too: its sha256 must never be read as desired's
         dc_take_fw_fields(c, body.buf);
