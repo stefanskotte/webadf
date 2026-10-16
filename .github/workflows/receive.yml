@@ -1,0 +1,21 @@
+name: receive
+on:
+  push:
+    paths: ['tools/receive/**', '.github/workflows/receive.yml']
+  pull_request:
+    paths: ['tools/receive/**', '.github/workflows/receive.yml']
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 24, cache: pnpm }
+      - run: pnpm install --frozen-lockfile
+      - name: Host tests (core)
+        run: tools/receive/test/run.sh
+      - name: POSIX integration against the fake board
+        run: pnpm vitest run tools/receive/receive.int.test.ts
+      - name: Cross-build matches the pin
+        run: tools/receive/build.sh "$RUNNER_TEMP/Receive"

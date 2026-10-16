@@ -4919,6 +4919,35 @@ Demozoo API (the bulk export makes per-lookup load on a non-profit unnecessary).
   allowlist checks only the first URL (the raster content-type allowlist and `nosniff` still apply).
 - **Cron drift:** the daily 01:30 cron against a 7-day gate can drift a refetch to 8 days.
 
+### 3bt. PaulaNET Phase 4 increment 1: Receive (the Amiga side) -- branch feat/receive, 2026-10-16
+
+**What.** (spec `docs/superpowers/specs/2026-10-16-paulanet-phase4-send-to-amiga-design.md`, plan
+`docs/superpowers/plans/2026-10-16-paulanet-phase4-receive.md`, `tools/receive/README.md`.) Phase 4 = send files from
+the web app to the Amiga: the board connects to the Amiga's TCP 6800 and streams files from a server queue (spec §1-2).
+Increment 1 is the Amiga program **Receive**: a portable C core (CRC-32, name rules, protocol), a POSIX host build, the
+Amiga Shell form (`TO/K,SAVE/S,GUI/S`) and a gadtools window (folder + Choose…/Save to `ENVARC:webadf/ReceiveDir`,
+status, receiving queue). Kickstart 2.04+, 68000, intuition/gadtools/asl/dos/bsdsocket only. Binary 22,972 bytes,
+sha256 in `tools/receive/receive.sha256`, built deterministically by `tools/receive/build.sh` (amiga-gcc 6.5.0b image
+pinned by digest).
+
+**Verified.** Core host tests 86 checks. POSIX build x fake board: 14 shared scenarios (collision, Latin-1, bad CRC,
+`..`, empty, protection + comment, 4 MB, dropped connection, junk on the port, a second connection gets busy, LIST)
+plus no-space and vanished-folder. **FS-UAE (bsdsocket emulation) on Kickstart 2.04 (A500+), 3.1 (A1200 ROM 40.68,
+68020) and 3.2 (A500, 68000): 16/16 each** -- incl. case-insensitive collision (`HELLO.TXT` -> `HELLO_3.TXT`), the
+`s` bit and comment (`.uaem`), ENVARC: SAVE; 4 MB in 73 s emulated A500, 18 s A1200. 2.04 full floppy -> `ERR space`.
+Window screenshots on 2.04 and 3.1 (queue: receiving NN %, waiting, done). **Not exercised:** the window's
+**Choose…** (asl) and **Save** -- no input into FS-UAE from here; on the bench list. No A500 3.1 ROM on this machine:
+3.1 on a 68000 is the real A500's job.
+
+**Rulings:** temp file `.webadf-rx` per folder (not `.rx<id>`: 30-char limit); error code `size` added; the PaulaNET
+disk is NOT changed in increment 1 (its sha switch needs a rollout plan -- increment 3); the fake board's OK timeout
+scales with size (an emulated A500 needs >60 s for 4 MB); both front ends read the open connection before accepting
+(a fast reconnect otherwise got `busy`); FS-UAE targets 204/31/32 (no A500 3.1 ROM).
+
+**Owed:** increment 2 (firmware 1.14.0: the board connects to the Amiga and streams from the server queue; the
+transfers table, routes, GC), increment 3 (web: drop zone, Browse -> Send, Send .adf, card queue, help; Receive onto
+the driver disk + Install, and the disk-sha rollout), then the A500 bench (spec §7).
+
 ### 3bs. Self-hosting 1.1.0 accepted: OMV install end to end, full e2e against a container -- 2026-10-16
 
 **OMV acceptance (web-1.1.0, image `latest` = sha-9be42dc).** Fresh install from `docs/self-hosting.md` on the OMV box
