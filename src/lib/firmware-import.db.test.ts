@@ -51,13 +51,14 @@ function release(semver: string, build: string, sequence: number, opts: { notes?
   return { tag: plan.tag, bin, manifest, body: plan.body };
 }
 
-function fakeGithub(rels: Rel[], listStatus = 200) {
+function fakeGithub(rels: Rel[], listStatus = 200, listBody?: unknown) {
   const calls: string[] = [];
   const impl = (async (input: RequestInfo | URL) => {
     const u = String(input);
     calls.push(u);
     if (u === 'https://api.github.com/repos/test/repo/releases?per_page=100') {
       if (listStatus === 403) return new Response('{}', { status: 403, headers: { 'x-ratelimit-remaining': '0' } });
+      if (listBody !== undefined) return Response.json(listBody);
       return Response.json(rels.map((r) => ({
         tag_name: r.tag, body: r.body, draft: false, prerelease: false,
         assets: [
@@ -184,5 +185,29 @@ describe('runFirmwareImport', () => {
     const bad = { ...release('0.8.2', 'kkk', 82), manifestStatus: 502 };
     const res = await run(fakeGithub([bad]).impl);
     expect(res.skipped).toEqual([{ tag: 'fw-0.8.2', reason: 'manifest.json download answered 502' }]);
+  });
+
+  it('treats a 200 whose body is not a list as an API error, not a throw', async () => {
+    const res = await run(fakeGithub([], 200, { message: 'Not Found' }).impl);
+    expect(res.error).toMatch(/not a list|unexpected/i);
+    expect(res.imported).toEqual([]);
+  });
+
+  it('imports a re-published semver (same tag, new build) as a second row, and downloads nothing for versions it knows', async () => {
+    const first = release('2.0.0', 'aaa', 20);
+    expect((await run(fakeGithub([first]).impl)).imported).toEqual(['2.0.0+gaaa']);
+    // the publisher re-ran the release script: same tag fw-2.0.0, new manifest, higher sequence
+    const again = release('2.0.0', 'bbb', 22);
+    expect(again.tag).toBe(first.tag);
+    const gh = fakeGithub([again]);
+    expect((await run(gh.impl)).imported).toEqual(['2.0.0+gbbb']);
+    const got = (await rows()).filter((x) => x.semver === '2.0.0').sort((a, b) => a.sequence - b.sequence);
+    expect(got.map((x) => [x.version, x.sequence])).toEqual([['2.0.0+gaaa', 20], ['2.0.0+gbbb', 22]]);
+    // now every version is known: the release list is the only request
+    const quiet = fakeGithub([again]);
+    const res = await run(quiet.impl);
+    expect(res.imported).toEqual([]);
+    expect(res.skipped).toEqual([]);
+    expect(quiet.calls).toEqual(['https://api.github.com/repos/test/repo/releases?per_page=100']);
   });
 });

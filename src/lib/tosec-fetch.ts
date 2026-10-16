@@ -42,7 +42,7 @@ export async function runTosecFetch(opts: { fetchImpl?: typeof fetch; tmpDir?: s
   const log = opts.log ?? ((l) => console.log(l));
   const headers = { 'user-agent': webadfUserAgent() };
   const fail = async (reason: string): Promise<TosecFetchResult> => {
-    await record({ lastResult: `failed: ${reason}` });
+    await record({ lastResult: `TOSEC fetch failed: ${reason}` });
     log(`tosec-fetch: failed: ${reason}`);
     return { status: 'failed', reason };
   };

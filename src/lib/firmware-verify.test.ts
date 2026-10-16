@@ -94,3 +94,18 @@ describe('parseReleaseManifest', () => {
     expect(typeof m !== 'string' && m.notes === 'n' && m.security === true).toBe(true);
   });
 });
+
+describe('verifyRelease refuses bench-only images regardless of notes', () => {
+  function signed(image: Buffer) {
+    const s = createHash('sha256').update(image).digest('hex');
+    const m = { version: '9.9.9+gabc', semver: '9.9.9', sequence: 90, file: 'wifi_floppy.bin', sha256: s, signingKeyId: testId, signatureFormat: 2, signature: '' };
+    const msg = firmwareManifest({ version: m.version, sequence: m.sequence, sha256: s, sizeBytes: image.length });
+    return { ...m, signature: sign(null, Buffer.from(msg, 'ascii'), privateKey).toString('base64'), notes: 'TEST build' } as ReleaseManifest;
+  }
+  for (const [marker, re] of [['wf-df1-default-on', /DF1/], ['wf-pnet-loop-test', /PaulaNET loopback/], ['fwdbg', /WF_FW_DEBUG/]] as const) {
+    it(`refuses an image carrying ${marker}, even with TEST build notes`, () => {
+      const image = Buffer.concat([bin, Buffer.from(marker, 'ascii')]);
+      expect(verifyRelease(signed(image), image, keys)).toMatch(re);
+    });
+  }
+});

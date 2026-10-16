@@ -39,5 +39,5 @@ export const tosecFetch = pgTable('tosec_fetch', {
   release: text('release'),                    // date of the release fully imported, e.g. '2025-03-13'
   importedAt: timestamp('imported_at', { withTimezone: true }),
   lastAttemptAt: timestamp('last_attempt_at', { withTimezone: true }),
-  lastResult: text('last_result'),             // 'imported 2025-03-13 (7 DATs, 55932 entries)' | 'up to date' | 'failed: <reason>'
+  lastResult: text('last_result'),             // 'imported 2025-03-13 (7 DATs, 55932 entries)' | 'up to date' | 'TOSEC fetch failed: <reason>'
 });

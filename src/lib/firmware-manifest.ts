@@ -10,6 +10,26 @@ export function firmwareManifest(m: { version: string; sequence: number; sha256:
 }
 
 /**
+ * The refusals that need only the image bytes (no picotool): debug command, DF1-default and PaulaNET-loopback
+ * markers. The latter two pass when the operator's notes say "TEST build"; pass notes null to refuse them always
+ * (a verifier that cannot trust unsigned notes).
+ */
+export function refuseImageMarkers(bytes: Buffer, notes: string | null = null): string | null {
+  if (bytes.includes(Buffer.from('fwdbg', 'ascii'))) return 'image contains the debug-only firmware command (WF_FW_DEBUG)';
+  // A build with DF1 on by default (WF_DF1_DEFAULT) carries this marker (drive_store.c).
+  // It is for bench TEST builds; the operator says so in the notes.
+  if (bytes.includes(Buffer.from('wf-df1-default-on', 'ascii')) && !(notes ?? '').startsWith('TEST build')) {
+    return 'image has DF1 on by default (WF_DF1_DEFAULT); publish it only as a bench build, with --notes starting "TEST build"';
+  }
+  // Only the PaulaNET echo TEST build (WF_PNET_LOOP=ON with WF_PNET_L2=OFF, PNET_ECHO_BUILD in main.c) carries
+  // this marker; the release (WF_PNET_LOOP=ON, WF_PNET_L2=ON) does not. Bench only, like DF1-default.
+  if (bytes.includes(Buffer.from('wf-pnet-loop-test', 'ascii')) && !(notes ?? '').startsWith('TEST build')) {
+    return 'image is a PaulaNET loopback build (WF_PNET_LOOP); publish it only as a bench build, with --notes starting "TEST build"';
+  }
+  return null;
+}
+
+/**
  * Spec D10: the one packaging mistake that removes the safety net is a release
  * without TBYB -- it boots unconditionally on update and can never revert. A
  * machine checks it, from picotool's own reading of the image.
@@ -26,18 +46,7 @@ export function refuseReleaseImage(picotoolInfo: string, sizeBytes: number, byte
   if (!/^\s*hash:\s+verified\s*$/m.test(picotoolInfo)) {
     return 'image carries no hash for the boot ROM to check; build with pico_hash_binary';
   }
-  if (bytes.includes(Buffer.from('fwdbg', 'ascii'))) return 'image contains the debug-only firmware command (WF_FW_DEBUG)';
-  // A build with DF1 on by default (WF_DF1_DEFAULT) carries this marker (drive_store.c).
-  // It is for bench TEST builds; the operator says so in the notes.
-  if (bytes.includes(Buffer.from('wf-df1-default-on', 'ascii')) && !(notes ?? '').startsWith('TEST build')) {
-    return 'image has DF1 on by default (WF_DF1_DEFAULT); publish it only as a bench build, with --notes starting "TEST build"';
-  }
-  // Only the PaulaNET echo TEST build (WF_PNET_LOOP=ON with WF_PNET_L2=OFF, PNET_ECHO_BUILD in main.c) carries
-  // this marker; the release (WF_PNET_LOOP=ON, WF_PNET_L2=ON) does not. Bench only, like DF1-default.
-  if (bytes.includes(Buffer.from('wf-pnet-loop-test', 'ascii')) && !(notes ?? '').startsWith('TEST build')) {
-    return 'image is a PaulaNET loopback build (WF_PNET_LOOP); publish it only as a bench build, with --notes starting "TEST build"';
-  }
-  return null;
+  return refuseImageMarkers(bytes, notes);
 }
 
 /**

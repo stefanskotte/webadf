@@ -248,7 +248,9 @@ carries what cannot be fetched:
 - **Firmware releases.** Daily, from the GitHub releases of the firmware repository, each verified with the boards'
   signing key before it is accepted. Boards are offered updates as on webadf.vercel.app. A release's notes and its
   "security" and "TEST build" marks are not signed, so whoever can edit those GitHub releases could mark a release
-  "TEST build" (hidden from everyone on a self-host) or "security".
+  "TEST build" (hidden from everyone on a self-host) or "security". The import waits until a super-admin has
+  signed up (it publishes as the oldest one), and `WEBADF_FIRMWARE_REPO=<owner>/<repo>` in `.env` points it at a
+  fork's releases instead.
 - **The PaulaNET driver disk.** Included in the image and stored on first start; the download and the Network mode
   of a board's DF1 work. Its licence is in `THIRD-PARTY-NOTICES.md`.
 - **TOSEC.** Monthly, the newest release's Amiga ADF DATs from tosecdev.org. The result shows on `/admin/scan`, and

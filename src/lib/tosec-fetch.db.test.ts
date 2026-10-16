@@ -107,7 +107,7 @@ describe('runTosecFetch', () => {
     const r = await runTosecFetch({ fetchImpl: g, log });
     expect(r.status).toBe('failed');
     const st = await readTosecFetchState();
-    expect(st?.lastResult).toMatch(/^failed: no "DAT Pack - Complete" link/);
+    expect(st?.lastResult).toMatch(/^TOSEC fetch failed: no "DAT Pack - Complete" link/);
     expect(st?.release).toBe('2025-03-13');
   });
 
@@ -120,14 +120,14 @@ describe('runTosecFetch', () => {
     expect(await entryCount()).toBe(0);
     const st = await readTosecFetchState();
     expect(st?.release).toBeNull();
-    expect(st?.lastResult).toBe('failed: the pack holds no Commodore Amiga [ADF] DAT');
+    expect(st?.lastResult).toBe('TOSEC fetch failed: the pack holds no Commodore Amiga [ADF] DAT');
   });
 
   it('fails when the downloads page has no dated release', async () => {
     const f = fake({ downloads: '<html>no releases</html>' });
     const r = await runTosecFetch({ fetchImpl: f.impl, log });
     expect(r).toMatchObject({ status: 'failed', reason: `no dated release on ${TOSEC_DOWNLOADS}` });
-    expect((await readTosecFetchState())?.lastResult).toBe(`failed: no dated release on ${TOSEC_DOWNLOADS}`);
+    expect((await readTosecFetchState())?.lastResult).toBe(`TOSEC fetch failed: no dated release on ${TOSEC_DOWNLOADS}`);
   });
 
   it('skips DATs whose set and version are already loaded, leaving blob verdicts alone, and still records the release', async () => {
@@ -157,7 +157,7 @@ describe('runTosecFetch', () => {
     expect(r.status).toBe('failed');
     const st = await readTosecFetchState();
     expect(st?.release).toBe('2024-01-01');
-    expect(st?.lastResult).toMatch(/^failed:/);
+    expect(st?.lastResult).toMatch(/^TOSEC fetch failed:/);
   });
 
   it('re-imports a DAT that is only partly loaded at its version', async () => {

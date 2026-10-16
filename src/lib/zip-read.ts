@@ -1,6 +1,9 @@
 import { open } from 'node:fs/promises';
 import { inflateRawSync } from 'node:zlib';
 
+/** A deflate bomb is cut off here; the biggest real DAT is a few MB. */
+const MAX_INFLATED_BYTES = 512 * 1024 * 1024;
+
 /** Just enough zip for the TOSEC pack: central directory, stored (0) and deflate (8), no zip64. */
 export interface ZipEntry { name: string; method: number; compressedSize: number; size: number; localOffset: number }
 
@@ -36,14 +39,18 @@ export async function listZip(path: string): Promise<ZipEntry[]> {
 export async function readZipEntry(path: string, e: ZipEntry): Promise<Buffer> {
   const fh = await open(path, 'r');
   try {
+    const { size: fileSize } = await fh.stat();
+    const pastEnd = () => new Error(`${e.name}: the zip's central directory puts this entry past the end of the zip (corrupt or truncated)`);
+    if (e.localOffset + 30 > fileSize) throw pastEnd();
     const lh = Buffer.alloc(30);
     await fh.read(lh, 0, 30, e.localOffset);
     if (lh.readUInt32LE(0) !== 0x04034b50) throw new Error(`corrupt zip local header for ${e.name}`);
     const start = e.localOffset + 30 + lh.readUInt16LE(26) + lh.readUInt16LE(28);
+    if (start + e.compressedSize > fileSize) throw pastEnd();
     const body = Buffer.alloc(e.compressedSize);
     await fh.read(body, 0, e.compressedSize, start);
     if (e.method === 0) return body;
-    if (e.method === 8) return inflateRawSync(body);
+    if (e.method === 8) return inflateRawSync(body, { maxOutputLength: MAX_INFLATED_BYTES });
     throw new Error(`${e.name}: unsupported zip compression method ${e.method}`);
   } finally { await fh.close(); }
 }

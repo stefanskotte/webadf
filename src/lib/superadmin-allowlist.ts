@@ -9,8 +9,10 @@
  * This module reads no environment variables itself -- SUPERADMIN_EMAILS is
  * passed in as `raw`. Keep it that way.
  *
- * Exactly one file in the SERVER reads SUPERADMIN_EMAILS: superadmin.ts. The
- * one other reader is scripts/firmware-release.ts, which runs on the
+ * Two files in the SERVER read SUPERADMIN_EMAILS: superadmin.ts, and
+ * firmware-import.ts (the cron job that picks the oldest super-admin as the
+ * publisher of imported releases; it has no request, so no session to ask).
+ * The one other reader is scripts/firmware-release.ts, which runs on the
  * operator's own machine and cannot import superadmin.ts at all -- that module
  * statically pulls in `@/lib/auth`, which calls getDb() at module scope, so a
  * plain node script would crash on the import before printing any of its own

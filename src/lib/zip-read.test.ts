@@ -25,4 +25,21 @@ describe('zip-read', () => {
     const p = join(mkdtempSync(join(tmpdir(), 'z-')), 'c.zip'); writeFileSync(p, 'not a zip');
     await expect(listZip(p)).rejects.toThrow(/not a zip/);
   });
+  it('refuses an entry whose compressed size runs past the end of the file', async () => {
+    const p = join(mkdtempSync(join(tmpdir(), 'z-')), 'd.zip');
+    const z = makeZip([{ name: 'a.dat', data: Buffer.from('hello') }]);
+    const cd = z.length - 22 - (46 + 5); // the central header of the only entry
+    z.writeUInt32LE(0x7fffffff, cd + 20);
+    writeFileSync(p, z);
+    const [e] = await listZip(p);
+    await expect(readZipEntry(p, e)).rejects.toThrow(/a\.dat.*past the end of the zip/);
+  });
+  it('refuses an entry whose local offset is past the end of the file', async () => {
+    const p = join(mkdtempSync(join(tmpdir(), 'z-')), 'e.zip');
+    const z = makeZip([{ name: 'a.dat', data: Buffer.from('hello') }]);
+    z.writeUInt32LE(z.length + 1000, z.length - 22 - (46 + 5) + 42);
+    writeFileSync(p, z);
+    const [e] = await listZip(p);
+    await expect(readZipEntry(p, e)).rejects.toThrow(/past the end of the zip/);
+  });
 });

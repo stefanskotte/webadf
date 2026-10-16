@@ -151,7 +151,7 @@ export default async function AdminScanPage() {
             ) : (
               <div>TOSEC: not fetched yet -- the monthly fetch runs on the 2nd</div>
             )}
-            {fetchState?.lastResult?.startsWith('failed:') && (
+            {(fetchState?.lastResult?.startsWith('TOSEC fetch failed:') || fetchState?.lastResult?.startsWith('failed:')) && (
               <div>
                 Last automatic fetch ({fetchState.lastAttemptAt?.toISOString().slice(0, 10)}): {fetchState.lastResult}
               </div>

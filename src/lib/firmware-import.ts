@@ -14,6 +14,7 @@ export interface FirmwareImportResult { imported: string[]; skipped: { tag: stri
 const TAG = /^fw-(\d+\.\d+\.\d+)$/;
 // githubReleasePlan's body: "wifi-floppy firmware <v> (sequence N)." / notes / "First install: ..." / boilerplate.
 const HEADER = /^wifi-floppy firmware [^\n]*\(sequence \d+\)\.[ \t]*(\r?\n|$)/;
+const HEADER_VERSION = /^wifi-floppy firmware (\S+) \(sequence \d+\)\./;
 const AFTER_NOTES = /^(First install:|These are the same signed files|wifi_floppy\.bin is the signed image)/m;
 
 /** The notes the publisher wrote, without the header line and boilerplate githubReleasePlan wraps around them. */
@@ -52,16 +53,22 @@ export async function runFirmwareImport(opts: {
       const limited = r.status === 403 && r.headers.get('x-ratelimit-remaining') === '0';
       throw new Error(limited ? 'GitHub API rate limit reached' : `GitHub API answered ${r.status}`);
     }
-    releases = await r.json() as GhRelease[];
+    const body: unknown = await r.json();
+    if (!Array.isArray(body)) throw new Error('GitHub API answered something that is not a list of releases');
+    releases = body as GhRelease[];
   } catch (e) {
     result.error = (e as Error).message; log(`firmware import: ${result.error}; retrying at the next run`); return result;
   }
 
-  const known = new Set((await db.select({ semver: firmwareReleases.semver }).from(firmwareReleases)).map((r) => r.semver));
+  // Keyed on VERSION, not semver: the publisher may re-publish a tag with a new build (new version, higher sequence).
+  const known = new Set((await db.select({ version: firmwareReleases.version }).from(firmwareReleases)).map((r) => r.version));
   const candidates: { tag: string; m: ReleaseManifest; bin: Buffer; body: string | null }[] = [];
   for (const rel of releases) {
     const t = TAG.exec(rel.tag_name);
-    if (!t || rel.draft || rel.prerelease || known.has(t[1])) continue;
+    if (!t || rel.draft || rel.prerelease) continue;
+    // The body's header names the version: a known one needs no download at all.
+    const headed = rel.body ? HEADER_VERSION.exec(rel.body)?.[1] : undefined;
+    if (headed && known.has(headed)) continue;
     const skip = (reason: string) => { result.skipped.push({ tag: rel.tag_name, reason }); log(`firmware import: ${rel.tag_name}: ${reason}`); };
     const asset = (name: string) => rel.assets.find((a) => a.name === name)?.browser_download_url;
     const mUrl = asset('manifest.json');
@@ -71,6 +78,7 @@ export async function runFirmwareImport(opts: {
       if (!mRes.ok) { skip(`manifest.json download answered ${mRes.status}`); continue; }
       const m = parseReleaseManifest(await mRes.json());
       if (typeof m === 'string') { skip(m); continue; }
+      if (known.has(m.version)) continue;
       const binUrl = asset(m.file);
       if (!binUrl) { skip(`no ${m.file} asset`); continue; }
       const res = await get(binUrl, { 'user-agent': ua });

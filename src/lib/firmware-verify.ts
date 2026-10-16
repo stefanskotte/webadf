@@ -1,5 +1,5 @@
 import { createHash, verify } from 'node:crypto';
-import { firmwareManifest, FIRMWARE_MAX_BYTES } from './firmware-manifest';
+import { firmwareManifest, refuseImageMarkers, FIRMWARE_MAX_BYTES } from './firmware-manifest';
 import { firmwareVersionSchema, semverOf } from './firmware-version';
 import { publicKeyFor, FIRMWARE_PUBLIC_KEYS } from './firmware-keys';
 
@@ -49,6 +49,9 @@ export function verifyRelease(m: ReleaseManifest, bin: Buffer, keys = FIRMWARE_P
   if (bin.length > FIRMWARE_MAX_BYTES) return `image is ${bin.length} bytes; the limit is 2 MB`;
   const sha = createHash('sha256').update(bin).digest('hex');
   if (sha !== m.sha256) return `wifi_floppy.bin sha256 ${sha} is not the manifest's ${m.sha256}`;
+  // Imported notes are unsigned, so a bench build's "TEST build" excuse cannot be believed: refuse it outright.
+  const marked = refuseImageMarkers(bin, null);
+  if (marked) return marked;
   const key = publicKeyFor(m.signingKeyId, keys);
   if (!key) return `unknown signing key ${m.signingKeyId}`;
   const msg = firmwareManifest({ version: m.version, sequence: m.sequence, sha256: m.sha256, sizeBytes: bin.length });

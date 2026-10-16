@@ -16,6 +16,8 @@ async function admin(stmt: string, target = base) {
 }
 const { runStartupMigrations } = await import('./migrate');
 const { closeDb } = await import('@/db');
+// The newest migration the image really carries, from the journal, so a new migration never breaks this file.
+const NEWEST_TAG = JSON.parse(readFileSync('drizzle/meta/_journal.json', 'utf8')).entries.at(-1).tag as string;
 const listed = (dir: string) => readdirSync(dir).filter((n) => !n.startsWith('.')); // .last-start is the start marker
 
 describe('runStartupMigrations', () => {
@@ -48,9 +50,9 @@ describe('runStartupMigrations', () => {
       const jp = join(folder, 'meta/_journal.json');
       const j = JSON.parse(readFileSync(jp, 'utf8'));
       const last = j.entries.at(-1);
-      j.entries.push({ idx: last.idx + 1, version: last.version, when: last.when + 1000, tag: '0039_selfhost_test', breakpoints: last.breakpoints });
+      j.entries.push({ idx: last.idx + 1, version: last.version, when: last.when + 1000, tag: '9999_selfhost_test', breakpoints: last.breakpoints });
       writeFileSync(jp, JSON.stringify(j, null, 2));
-      writeFileSync(join(folder, '0039_selfhost_test.sql'), sql);
+      writeFileSync(join(folder, '9999_selfhost_test.sql'), sql);
       return folder;
     }
     const count = async () => (await admin('select count(*)::int as n from drizzle.__drizzle_migrations', url2)).rows[0].n as number;
@@ -70,9 +72,9 @@ describe('runStartupMigrations', () => {
         url: url2, migrationsFolder: folderWith('create table selfhost_probe (id int);'), backupDir: tmpBackups(),
         dump: async (_u, f) => { dumps.push(f); writeFileSync(f, 'x'); }, log: () => {},
       });
-      expect(r.applied).toEqual(['0039_selfhost_test']);
+      expect(r.applied).toEqual(['9999_selfhost_test']);
       expect(dumps).toHaveLength(1);
-      expect(dumps[0]).toMatch(/-before-0039_selfhost_test\.dump\.partial$/);
+      expect(dumps[0]).toMatch(/-before-9999_selfhost_test\.dump\.partial$/);
       expect(await probe()).toBe(true);
       expect(await count()).toBe(before + 1);
     });
@@ -84,7 +86,7 @@ describe('runStartupMigrations', () => {
         dump: async (_u, f) => { writeFileSync(f, 'x', { mode: 0o644 }); }, log: () => {},
       });
       const [name] = listed(dir);
-      expect(name).toMatch(/-before-0039_selfhost_test\.dump$/);
+      expect(name).toMatch(/-before-9999_selfhost_test\.dump$/);
       expect(statSync(join(dir, name)).mode & 0o777).toBe(0o600);
     });
 
@@ -97,13 +99,13 @@ describe('runStartupMigrations', () => {
         url: url2, migrationsFolder: folder, backupDir: dir,
         dump: async (_u, f) => { dumps.push(f); writeFileSync(f, 'x'); }, log: (l) => lines.push(l),
       });
-      await expect(run()).rejects.toThrow(/migration failed in 0039_selfhost_test/);
+      await expect(run()).rejects.toThrow(/migration failed in 9999_selfhost_test/);
       const [name] = readdirSync(dir);
       const final = join(dir, name);
       await expect(run()).rejects.toThrow(`backup: ${final}`);
       expect(dumps).toHaveLength(1);
       expect(readdirSync(dir)).toEqual([name]);
-      expect(lines.some((l) => l.startsWith(`migrations: backup before 0039_selfhost_test already taken (`) && l.endsWith(`): ${final}`))).toBe(true);
+      expect(lines.some((l) => l.startsWith(`migrations: backup before 9999_selfhost_test already taken (`) && l.endsWith(`): ${final}`))).toBe(true);
     });
 
     it('a backup is not reused across a successful start (a rollback to the old image may have written since)', async () => {
@@ -138,7 +140,7 @@ describe('runStartupMigrations', () => {
 
     it('a backup older than 24 hours is not reused: a new one is taken', async () => {
       const dir = tmpBackups();
-      const old = join(dir, '20261001T000000Z-before-0039_selfhost_test.dump');
+      const old = join(dir, '20261001T000000Z-before-9999_selfhost_test.dump');
       writeFileSync(old, 'old');
       const t = (Date.now() - 25 * 3600 * 1000) / 1000; utimesSync(old, t, t);
       const dumps: string[] = [];
@@ -152,7 +154,7 @@ describe('runStartupMigrations', () => {
 
     it('a fresh backup is reused, and made 0600 if it was not', async () => {
       const dir = tmpBackups();
-      const fresh = join(dir, '20261015T000000Z-before-0039_selfhost_test.dump');
+      const fresh = join(dir, '20261015T000000Z-before-9999_selfhost_test.dump');
       writeFileSync(fresh, 'fresh', { mode: 0o644 });
       const dumps: string[] = [];
       const lines: string[] = [];
@@ -167,7 +169,7 @@ describe('runStartupMigrations', () => {
 
     it('dumps into a 0600 .partial, never reuses a leftover .partial, and renames only a non-empty dump', async () => {
       const dir = tmpBackups();
-      const leftover = join(dir, '20261015T000000Z-before-0039_selfhost_test.dump.partial');
+      const leftover = join(dir, '20261015T000000Z-before-9999_selfhost_test.dump.partial');
       writeFileSync(leftover, 'trunc');
       const seen: { file: string; mode: number }[] = [];
       await runStartupMigrations({
@@ -180,7 +182,7 @@ describe('runStartupMigrations', () => {
       expect(existsSync(leftover)).toBe(false);
       const names = listed(dir);
       expect(names).toHaveLength(1);
-      expect(names[0]).toMatch(/-before-0039_selfhost_test\.dump$/);
+      expect(names[0]).toMatch(/-before-9999_selfhost_test\.dump$/);
     });
 
     it('an empty dump is a failed backup: nothing kept, nothing migrated', async () => {
@@ -199,7 +201,7 @@ describe('runStartupMigrations', () => {
       await expect(runStartupMigrations({
         url: url2, migrationsFolder: folderWith('select 1/0;'), backupDir: tmpBackups(),
         dump: async (_u, f) => { writeFileSync(f, 'x'); }, log: () => {},
-      })).rejects.toThrow(/migration failed in 0039_selfhost_test \(division by zero\); the schema is unchanged; backup: .*-before-0039_selfhost_test\.dump/);
+      })).rejects.toThrow(/migration failed in 9999_selfhost_test \(division by zero\); the schema is unchanged; backup: .*-before-9999_selfhost_test\.dump/);
       expect(await count()).toBe(before);
     });
 
@@ -217,6 +219,6 @@ describe('runStartupMigrations', () => {
   it('refuses a database newer than the image', async () => {
     await admin(`insert into drizzle.__drizzle_migrations (hash, created_at) values ('future', 99999999999999)`, url);
     await expect(runStartupMigrations({ url, migrationsFolder: 'drizzle', backupDir: mkdtempSync(join(tmpdir(), 'bk-')), log: () => {} }))
-      .rejects.toThrow(/newer than this image \(database at created_at 99999999999999, this image knows up to 0039_/);
+      .rejects.toThrow(new RegExp(`newer than this image \\(database at created_at 99999999999999, this image knows up to ${NEWEST_TAG}`));
   });
 });
