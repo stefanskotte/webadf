@@ -68,6 +68,8 @@ export const SCENARIOS: Scenario[] = [
       return reply.startsWith('ERR - busy') ? expectOk(o, 'First.txt') : `second connection got ${JSON.stringify(reply)}`; } },
   // A receiver whose folder is on a nearly full volume (uae-test.sh space: an empty 880 KB floppy).
   { name: 'space', explicit: true, run: async (p, _d, h) => expectErr(await one(p, h, { id: 'sp1', path: 'TooBig.bin', data: bytes(1000000, 13) }), 'space') },
+  // The folder is RAM: (the default): its handler reports the volume as full, yet files must arrive (review finding 1).
+  { name: 'ramdisk', explicit: true, run: async (p, _d, h) => expectOk(await one(p, h, { id: 'rm1', path: 'InRam.txt', data: hello }), 'InRam.txt') },
   { name: 'list', run: async (p, _d, h) => {
       const b = await connect(p, h);
       b.list([{ id: 'l1', path: 'a', data: hello }, { id: 'l2', path: 'b/c', data: hello }]);

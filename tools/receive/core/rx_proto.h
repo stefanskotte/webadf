@@ -10,6 +10,7 @@
 #define RX_FILE_MAX 4194304UL
 #define RX_COMMENT_MAX 79
 #define RX_TMP_NAME ".webadf-rx"
+#define RX_IDLE_SECS 75   /* a connection silent this long is dropped: the board pings every 30 s */
 
 typedef struct rx_fs {
     void *ctx;

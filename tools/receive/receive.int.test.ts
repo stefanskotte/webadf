@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { runScenarios } from './scenarios';
-import { connect } from './fake-board';
+import { connect, rawConnect } from './fake-board';
 
 const here = path.dirname(new URL(import.meta.url).pathname);
 let bin: string; let tmp: string;
@@ -53,6 +53,21 @@ describe('Receive (POSIX build) against the fake board', () => {
       expect(fs.readdirSync(dir)).toEqual([]);
     } finally { proc.kill(); }
   });
+
+  it('drops a client that goes silent, so the board is not refused as busy for ever', async () => {
+    // A browser or scanner sends "GET /" and waits; a board that rebooted never sends FIN (review finding 2).
+    const dir = fs.mkdtempSync(path.join(tmp, 'idle-'));
+    const { proc, port } = await start(dir, { RX_IDLE_SECS: '2' });
+    try {
+      const idle = await rawConnect(port);
+      idle.write('GET / HTTP/1.0\r\n');
+      await new Promise((r) => setTimeout(r, 3500));
+      const b = await connect(port);
+      const o = await b.send({ id: 'i1', path: 'AfterIdle.txt', data: Buffer.from('x') }); await b.close();
+      idle.destroy();
+      expect(o).toEqual({ id: 'i1', ok: true, savedAs: 'AfterIdle.txt' });
+    } finally { proc.kill(); }
+  }, 15000);
 
   it('answers ERR folder when the folder vanished', async () => {
     const dir = fs.mkdtempSync(path.join(tmp, 'gone-'));

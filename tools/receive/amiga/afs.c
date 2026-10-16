@@ -1,6 +1,7 @@
 /* rx_fs over dos.library (V37). Paths are the folder joined with the core's '/'-separated relative path. */
 #include <string.h>
 #include <exec/memory.h>
+#include <dos/dosextens.h>
 #include <proto/exec.h>
 #include <proto/dos.h>
 #include "afs.h"
@@ -29,6 +30,13 @@ static unsigned long a_free(void *x) {
     struct InfoData *id;
     unsigned long r = 0xFFFFFFFFUL;
     if (!l) return 0;
+    /* The RAM disk always reports itself full (it grows into free memory), so for RAM: the limit is free RAM,
+       less 64 KB left for the system. */
+    if (((struct FileLock *)BADDR(l))->fl_Task == DeviceProc((STRPTR)"RAM:")) {
+        ULONG mem = AvailMem(MEMF_ANY);
+        UnLock(l);
+        return mem > 65536UL ? mem - 65536UL : 0;
+    }
     id = AllocVec(sizeof *id, MEMF_PUBLIC | MEMF_CLEAR);
     if (id && Info(l, id)) {
         unsigned long blocks = (unsigned long)(id->id_NumBlocks - id->id_NumBlocksUsed);

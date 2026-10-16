@@ -120,10 +120,14 @@ static void choose(gui *G) {
     FreeAslRequest(fr);
 }
 static void save(gui *G) {
+    int saved;
     strncpy(G->pending, dir_text(G), sizeof G->pending - 1);
-    if (cfg_save(G->pending) != 0) { set_status(G, "Could not save to ENVARC:"); return; }
+    /* Applied for this session even when ENVARC: is read-only (a write-protected boot floppy). */
     if (G->s && rx_busy(G->s)) G->has_pending = 1; else afs_set_root(G->ctx, G->pending);
-    set_status(G, G->fs->folder_ok(G->ctx) || G->has_pending ? "Saved. Listening on port 6800" : "Folder not found");
+    saved = cfg_save(G->pending) == 0;
+    if (G->has_pending) set_status(G, saved ? "Saved; used after this file" : "Not saved (ENVARC:); used after this file");
+    else if (!G->fs->folder_ok(G->ctx)) set_status(G, "Folder not found");
+    else set_status(G, saved ? "Saved. Listening on port 6800" : "Not saved (ENVARC:). Listening on port 6800");
 }
 static int on_signal(void *u, ULONG sigs) {
     gui *G = u; struct IntuiMessage *m;
@@ -208,7 +212,14 @@ int gui_main(const char *dir) {
         net_ui ui;
         ui.u = &G; ui.on_event = on_event; ui.on_status = on_status;
         ui.extra_sigs = 1UL << G.win->UserPort->mp_SigBit; ui.on_signal = on_signal;
-        if (net_run(&ui, &ctx, &fs, &s) != 0) set_status(&G, "Could not listen on port 6800");
+        if (net_run(&ui, &ctx, &fs, &s) != 0) {
+            /* e.g. Receive is already running: say so and wait for the close gadget, as without a stack. */
+            set_status(&G, "Could not listen on port 6800");
+            while (!G.quit) {
+                if (Wait(1UL << G.win->UserPort->mp_SigBit | SIGBREAKF_CTRL_C) & SIGBREAKF_CTRL_C) break;
+                on_signal(&G, 0);
+            }
+        }
         net_close();
     }
     rc = RETURN_OK;

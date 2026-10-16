@@ -11,6 +11,7 @@
 #include <sys/socket.h>
 #include <sys/stat.h>
 #include <sys/statvfs.h>
+#include <time.h>
 #include <unistd.h>
 #include "rx_proto.h"
 
@@ -76,6 +77,8 @@ int main(int argc, char **argv) {
     struct sockaddr_in a;
     socklen_t al = sizeof a;
     int one = 1, ls, cl = -1;
+    time_t last = 0;
+    long idle = getenv("RX_IDLE_SECS") ? atol(getenv("RX_IDLE_SECS")) : RX_IDLE_SECS;
     if (argc != 3) { fprintf(stderr, "usage: rx_posix <folder> <port>\n"); return 2; }
     setvbuf(stdout, NULL, _IOLBF, 0);
     ctx.root = argv[1];
@@ -91,11 +94,15 @@ int main(int argc, char **argv) {
         int maxfd = ls;
         FD_ZERO(&r); FD_SET(ls, &r);
         if (cl >= 0) { FD_SET(cl, &r); if (cl > maxfd) maxfd = cl; }
-        if (select(maxfd + 1, &r, NULL, NULL, NULL) < 0) { if (errno == EINTR) continue; return 1; }
+        struct timeval tv = { 1, 0 };
+        if (select(maxfd + 1, &r, NULL, NULL, &tv) < 0) { if (errno == EINTR) continue; return 1; }
+        /* A peer that went silent (a rebooted board sends no FIN; a scanner just waits) must not hold the slot. */
+        if (cl >= 0 && !FD_ISSET(cl, &r) && time(NULL) - last > idle) { rx_disconnected(&S); close(cl); cl = -1; continue; }
         /* The connection first: a board's close (EOF) is handled before its reconnect is accepted. */
         if (cl >= 0 && FD_ISSET(cl, &r)) {
             ssize_t n = recv(cl, buf, sizeof buf, 0);
             int bad = n <= 0 || rx_feed(&S, buf, (unsigned long)n) != 0;
+            last = time(NULL);
             char o[RX_OUT_MAX];
             unsigned k;
             while ((k = rx_take_output(&S, o, sizeof o)) > 0) if (send_all(cl, o, k) != 0) bad = 1;
@@ -105,7 +112,7 @@ int main(int argc, char **argv) {
             int ns = accept(ls, NULL, NULL);
             if (ns >= 0) {
                 if (cl >= 0) { send_all(ns, "ERR - busy receiver busy\n", 25); close(ns); }
-                else { cl = ns; rx_init(&S, &fs, on_event, &S); }
+                else { cl = ns; last = time(NULL); rx_init(&S, &fs, on_event, &S); }
             }
         }
     }
