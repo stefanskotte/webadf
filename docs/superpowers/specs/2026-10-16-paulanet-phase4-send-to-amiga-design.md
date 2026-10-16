@@ -99,20 +99,28 @@ temporary file.
 - **Expiry:** a new daily cron, `GET /api/cron/transfers` (CRON_SECRET, in `vercel.ts`, so the self-host scheduler
   runs it too), marks `queued` rows past `expires_at` as `expired` and deletes rows finished more than 7 days ago. The
   poll also skips expired rows, so a missed run never delivers a stale file.
-- **Sources:**
-  - **The drop zone on the board's card:** the browser uploads each file (≤ 4 MB) to `POST /api/transfers`, and the
-    server stores it, computes its CRC and queues it.
-  - **The disk Browse page:** "Send to Amiga" on the selected files or folders. The server reads the disk's current
-    version with `src/lib/adffs`. Each file becomes one row with its relative path, protection bits and comment.
-  - **The disk row:** "Send .adf to Amiga" for disks that have an ADF; the name is `<disk name>.adf`.
-- **Target board:**
-  - the org's boards on fw ≥ `XFER_FW`, with a picker when there are several;
-  - a board not in Network mode still takes files, and the card says they wait for Network and `Receive`.
-- **The card:**
-  - the queue: waiting, sending NN %, delivered (saved as …), failed (reason, with Retry) and cancelled, with Cancel
-    on waiting files;
-  - receiver status: "Receive is running on the Amiga" (contact within 60 s), or "Start Receive on the Amiga" while
-    files wait.
+- **The Upload page (`/ingest`) is split in two columns** (operator, 2026-10-16), stacked on narrow screens:
+  - **Left, "Add to library": today's upload, unchanged,** at half width: the ADF/ADZ/DMS/DMZ/HFE drop zone,
+    Browse…, fetch from a URL, the counters and the "This run" table with sizes and checksums.
+  - **Right, "Send to Amiga":**
+    - a **WiFiFloppy selector**: the org's boards on fw ≥ `XFER_FW`, by name, online first with their state ("online",
+      "offline 7 h"), boards long offline behind "Show offline", the last choice remembered in the browser, nothing to
+      pick with one board;
+    - the selected board's **receiver status**: "Receive is running on the Amiga" (contact within 60 s), or "Start
+      Receive on the Amiga" while files wait, or that the board is not in Network mode (files still queue);
+    - a **drop zone for any file** (≤ 4 MB): the browser uploads each to `POST /api/transfers` for the selected
+      board, and the server stores it, computes its CRC and queues it;
+    - the selected board's **queue**: waiting, sending NN %, delivered (saved as …), failed (reason, with Retry) and
+      cancelled, with Cancel on waiting files. It shows every transfer for that board, however it was sent.
+- **Shortcuts on the disk pages** send to the board selected on the Upload page (a small menu changes it) and confirm
+  "Queued for <board> · see queue", linking to the Upload page:
+  - **the disk Browse page:** "Send to Amiga" on the selected files or folders. The server reads the disk's current
+    version with `src/lib/adffs`. Each file becomes one row with its relative path, protection bits and comment;
+  - **the disk row:** "Send .adf to Amiga" for disks that have an ADF; the name is `<disk name>.adf`.
+- **The board's card** gets one line when anything is queued or recent ("3 files waiting · Receive running"), linking
+  to the Upload page with that board selected. It has no drop zone and no queue of its own.
+- **Board names:** boards that all read `Device <mac>` make every picker ambiguous. Pairing asks for a name (the
+  card's Name already exists), and the selector hides rows long offline, such as the stale bench rows.
 - **Help topic** for sending files, written in `src/lib/help/topics.tsx` with the code it describes.
 
 ## 5. `Receive` on the Amiga
