@@ -4955,6 +4955,17 @@ ledger summary below.
   volume"; OFS free space ~5% high; the asl requester pauses receiving; receive.yml path filter misses harness.h,
   package.json, vitest.config.mts.
 
+**A500 bench (2026-10-16, real hardware, Kickstart 3.1, 68000, via the PiKVM; the Mac played the board over the
+LAN to the Amiga's PaulaNET address 172.16.10.237).** Test disk ReceiveTest (Receive + a tool icon) uploaded to the
+operator's library and mounted in DF0; DF1 Network (the card's "Other DF1 drive: detected" was a false positive --
+operator confirmed no second drive; confirmed through the card's switch-on-anyway). Shell `Receive TO RAM:`: Hello.txt,
+mods/axelf.mod (58 KB), Hello_2.txt (collision), Café.txt (é intact), Script (`-s--rwed`, comment "sent by webadf"),
+Bad.bin refused `checksum mismatch`, no temp file left -- **RAM: fix proven on hardware**. **Workbench start** (double-
+click the icon) opened the window on RAM:; **Choose…** opened the asl drawers-only requester (V40 honours it), picked
+RAM:mods; **Save** -> "Saved. Listening on port 6800". Queue shown live (receiving 73 %, waiting, done); 200 KB +
+40 KB + 3 B + an 880 KB ADF all `done`, 13-14 KB/s (Mac Wi-Fi -> board radio -> PaulaNET; increment 2's board sends
+locally). Bench items "Choose/Save" and "3.1 on a 68000" are closed.
+
 **Owed:** increment 2 (firmware 1.14.0: the board connects to the Amiga and streams from the server queue; the
 transfers table, routes, GC), increment 3 (web: drop zone, Browse -> Send, Send .adf, card queue, help; Receive onto
 the driver disk + Install, and the disk-sha rollout), then the A500 bench (spec §7).
