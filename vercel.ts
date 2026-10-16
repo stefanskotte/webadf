@@ -14,5 +14,8 @@ export const config: VercelConfig = {
     // store objects nothing references any more (src/lib/blob-gc.ts). After the
     // nightly scan, so a run never races it for the same rows.
     { path: '/api/cron/blob-gc', schedule: '0 4 * * 0' },
+    // Daily 02:15 UTC (self-hosting P3 D1-D3): imports firmware releases from GitHub, verified as a board
+    // verifies them. On our own deployment it finds every release already present and does nothing.
+    { path: '/api/cron/firmware-import', schedule: '15 2 * * *' },
   ],
 };

@@ -189,3 +189,19 @@ export async function latestReleaseSequence(orgId: string): Promise<number> {
   const rows = await latestReleaseQuery(getDb(), orgId);
   return rows[0]?.sequence ?? 0;
 }
+
+/**
+ * Self-hosting P3 D3: a release imported from GitHub keeps the sequence its signature covers -- never
+ * decidePublish's next number (TEST builds take sequences that never reach GitHub). The unique version
+ * and sequence constraints make a second import of the same release a no-op.
+ */
+export async function importRelease(
+  row: Omit<typeof firmwareReleases.$inferInsert, 'id' | 'publishedByUserId' | 'publishedAt'>,
+  userId: string,
+): Promise<boolean> {
+  const inserted = await getDb().insert(firmwareReleases)
+    .values({ ...row, id: randomUUID(), publishedByUserId: userId })
+    .onConflictDoNothing()
+    .returning({ id: firmwareReleases.id });
+  return inserted.length === 1;
+}
