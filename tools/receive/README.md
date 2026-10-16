@@ -47,9 +47,11 @@ pnpm receive:uae 204|31|32 [shell|gui|space]     # FS-UAE on Kickstart 2.04 / 3.
   - FS-UAE in `/Applications`;
   - the Kickstarts in `~/Documents/FS-UAE/Kickstarts/` (2.04: `amiga-os-204.rom`; 3.2:
     `kickCDTVa1000a500a2000a600.rom`) and `docs/kickstart3.1.rom` in the main checkout;
-  - the Workbench disks in `~/Downloads/WB204/` and the main checkout's `adf-archive/`.
+  - the Workbench disks in `~/Downloads/WB204/`, the main checkout's `adf-archive/` (3.1), and
+    `~/Downloads/workbench-3.2-adf/` (`Workbench3.2.adf`, plus `ModulesA500_3.2.adf` for icon.library: the
+    Workbench must match the Kickstart).
 
-  `WEBADF_KS204`, `WEBADF_KS31`, `WEBADF_KS32`, `WEBADF_WB204`, `WEBADF_WB31` and `WEBADF_FSUAE` override them. ROMs and
+  `WEBADF_KS204`, `WEBADF_KS31`, `WEBADF_KS32`, `WEBADF_WB204`, `WEBADF_WB31`, `WEBADF_WB32`, `WEBADF_MOD32` and `WEBADF_FSUAE` override them. ROMs and
   Workbench disks are never committed.
 - **FS-UAE's bsdsocket emulation** uses the Mac's network stack, so the Amiga's port 6800 is the Mac's port 6800.
   macOS may ask once whether FS-UAE may accept incoming connections.

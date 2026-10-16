@@ -4926,7 +4926,7 @@ Demozoo API (the bulk export makes per-lookup load on a non-profit unnecessary).
 the web app to the Amiga: the board connects to the Amiga's TCP 6800 and streams files from a server queue (spec §1-2).
 Increment 1 is the Amiga program **Receive**: a portable C core (CRC-32, name rules, protocol), a POSIX host build, the
 Amiga Shell form (`TO/K,SAVE/S,GUI/S`) and a gadtools window (folder + Choose…/Save to `ENVARC:webadf/ReceiveDir`,
-status, receiving queue). Kickstart 2.04+, 68000, intuition/gadtools/asl/dos/bsdsocket only. Binary 22,972 bytes,
+status, receiving queue). Kickstart 2.04+, 68000, intuition/gadtools/asl/dos/bsdsocket only. Binary 23,840 bytes,
 sha256 in `tools/receive/receive.sha256`, built deterministically by `tools/receive/build.sh` (amiga-gcc 6.5.0b image
 pinned by digest).
 
@@ -4943,6 +4943,17 @@ Window screenshots on 2.04 and 3.1 (queue: receiving NN %, waiting, done). **Not
 disk is NOT changed in increment 1 (its sha switch needs a rollout plan -- increment 3); the fake board's OK timeout
 scales with size (an emulated A500 needs >60 s for 4 MB); both front ends read the open connection before accepting
 (a fast reconnect otherwise got `busy`); FS-UAE targets 204/31/32 (no A500 3.1 ROM).
+
+**Final review (opus) and fixes:** RAM: (the default folder) refused every file -- its handler reports itself full;
+now free RAM is the limit (FS-UAE RED->GREEN). A silent peer (a rebooted board, a scanner) held the slot for ever;
+dropped after 75 s. Temp-path overflow corrupted a comment; refusals now reach the window/Shell; 32-bit sizes only;
+32 KB stack via StackSwap; the window stays open to say it cannot listen; Save applies even if ENVARC: is read-only.
+FS-UAE 3.2 must boot the 3.2 Workbench (icon/workbench.library from ModulesA500_3.2 into Work:Libs) -- the operator
+spotted the mismatch. Regression after fixes: 204/31/32 16/16, RAM: and full-floppy pass. Deferred minors in the
+ledger summary below.
+- Deferred minors: put() drops reply parts if its 1 KB buffer fills; an ejected floppy folder shows "Please insert
+  volume"; OFS free space ~5% high; the asl requester pauses receiving; receive.yml path filter misses harness.h,
+  package.json, vitest.config.mts.
 
 **Owed:** increment 2 (firmware 1.14.0: the board connects to the Amiga and streams from the server queue; the
 transfers table, routes, GC), increment 3 (web: drop zone, Browse -> Send, Send .adf, card queue, help; Receive onto
