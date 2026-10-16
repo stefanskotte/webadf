@@ -24,6 +24,11 @@ static void reply_err(rx_session *s, const char *id, const char *code, const cha
     puts_(s, "ERR "); puts_(s, id[0] ? id : "-"); puts_(s, " "); puts_(s, code); puts_(s, " ");
     puts_(s, text); puts_(s, "\n");
 }
+/* A FILE refused before GO: the board gets the ERR, and the Amiga's window or Shell shows why. */
+static void refuse(rx_session *s, const char *id, const char *path, const char *code, const char *text) {
+    reply_err(s, id, code, text);
+    emit(s, RX_EV_FAILED, id[0] ? id : "-", path, 0, 0, text);
+}
 
 void rx_init(rx_session *s, const rx_fs *fs, rx_event_fn on_event, void *uctx) {
     memset(s, 0, sizeof *s);
@@ -62,9 +67,10 @@ static int num(const char *t, unsigned n, int base, unsigned long *v) {
         else if (base == 16 && ch >= 'a' && ch <= 'f') d = ch - 'a' + 10;
         else if (base == 16 && ch >= 'A' && ch <= 'F') d = ch - 'A' + 10;
         else return 0;
+        if (x > (0xFFFFFFFFUL - (unsigned long)d) / (unsigned long)base) return 0;   /* over 32 bits: refused */
         x = x * (unsigned long)base + (unsigned long)d;
     }
-    *v = x & 0xFFFFFFFFUL;
+    *v = x;
     return 1;
 }
 /* "<len>:<bytes>" into dst (cap includes the NUL); cut to cap-1 when cut != 0, else refused when longer. */
@@ -143,25 +149,25 @@ static void on_file(rx_session *s, cur *c) {
     unsigned long size, crc, prot;
     char id[RX_ID_MAX + 1];
     id[0] = 0;
-    if (!tok(c, &t, &n) || !id_ok(t, n)) { reply_err(s, "", "name", "bad request"); return; }
+    if (!tok(c, &t, &n) || !id_ok(t, n)) { refuse(s, "", "", "name", "bad request"); return; }
     memcpy(id, t, n); id[n] = 0;
-    if (!tok(c, &t, &n) || !num(t, n, 10, &size)) { reply_err(s, id, "name", "bad request"); return; }
-    if (size > RX_FILE_MAX) { reply_err(s, id, "size", "file too large"); return; }
-    if (!tok(c, &t, &n) || !num(t, n, 16, &crc)) { reply_err(s, id, "name", "bad request"); return; }
-    if (!tok(c, &t, &n) || !num(t, n, 16, &prot)) { reply_err(s, id, "name", "bad request"); return; }
+    if (!tok(c, &t, &n) || !num(t, n, 10, &size)) { refuse(s, id, "", "name", "bad request"); return; }
+    if (size > RX_FILE_MAX) { refuse(s, id, "", "size", "file too large"); return; }
+    if (!tok(c, &t, &n) || !num(t, n, 16, &crc)) { refuse(s, id, "", "name", "bad request"); return; }
+    if (!tok(c, &t, &n) || !num(t, n, 16, &prot)) { refuse(s, id, "", "name", "bad request"); return; }
     if (!lenstr(c, s->cur_path, sizeof s->cur_path, 0) || !lenstr(c, s->cur_comment, sizeof s->cur_comment, 1)) {
-        reply_err(s, id, "name", "bad request"); return;
+        refuse(s, id, "", "name", "bad request"); return;
     }
-    if (!rx_path_ok(s->cur_path)) { reply_err(s, id, "name", "bad name"); return; }
-    if (!s->fs->folder_ok(s->fs->ctx)) { reply_err(s, id, "folder", "folder not found"); return; }
+    if (!rx_path_ok(s->cur_path)) { refuse(s, id, s->cur_path, "name", "bad name"); return; }
+    if (!s->fs->folder_ok(s->fs->ctx)) { refuse(s, id, s->cur_path, "folder", "folder not found"); return; }
     {
         unsigned long fr = s->fs->free_bytes(s->fs->ctx);
-        if (fr < 8192UL || fr - 8192UL < size) { reply_err(s, id, "space", "not enough space"); return; }
+        if (fr < 8192UL || fr - 8192UL < size) { refuse(s, id, s->cur_path, "space", "not enough space"); return; }
     }
-    if (make_parents(s, s->cur_path) != 0) { reply_err(s, id, "write", "cannot create folder"); return; }
+    if (make_parents(s, s->cur_path) != 0) { refuse(s, id, s->cur_path, "write", "cannot create folder"); return; }
     parent_of(s->cur_path, s->cur_tmp);
     strcat(s->cur_tmp, RX_TMP_NAME);
-    if (s->fs->open_w(s->fs->ctx, s->cur_tmp) != 0) { reply_err(s, id, "write", "cannot write"); return; }
+    if (s->fs->open_w(s->fs->ctx, s->cur_tmp) != 0) { refuse(s, id, s->cur_path, "write", "cannot write"); return; }
     strcpy(s->cur_id, id);
     s->cur_size = s->cur_left = size; s->cur_crc_want = crc; s->cur_crc = 0; s->cur_prot = prot;
     s->cur_mark = 0; s->cur_open = 1; s->cur_write_failed = 0; s->in_data = 1;

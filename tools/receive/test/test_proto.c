@@ -147,10 +147,40 @@ static void progress_every_16k(void) {
     CHECK_EQ_INT(prog, 2);
     CHECK(strstr(out(), "OK p1 1:P\n") != NULL, "ok");
 }
+
+static void long_path_keeps_comment(void) {
+    /* A 248-byte parent folder + ".webadf-rx" did not fit cur_tmp and overwrote the comment (review finding 3). */
+    char path[260], l[700]; int k = 0;
+    for (int part = 0; part < 8; part++) { memset(path + k, 'a' + part, 30); k += 30; path[k++] = '/'; }
+    path[k++] = 'x'; path[k] = 0;                               /* 8 * 31 + 1 = 249 bytes */
+    setup();
+    file_line(l, "t1", "x", 1, 0, path, "keep me", 0); feed(l); feed("x");
+    const char *o = out();
+    CHECK(strstr(o, "OK t1 ") != NULL, "saved");
+    int i = ff_find(&F, path);
+    CHECK(i >= 0 && strcmp(F.e[i].comment, "keep me") == 0, "comment intact");
+}
+static void refusals_are_events(void) {
+    /* The person at the Amiga must see why a file did not arrive (review finding 4). */
+    char l[600];
+    setup(); F.folder_present = 0; file_line(l, "r1", "x", 1, 0, "Pic.iff", "", 0); feed(l);
+    CHECK_EQ_INT(n_ev, 1);
+    CHECK_EQ_INT(last_ev[0].kind, RX_EV_FAILED);
+    CHECK(last_ev[0].text && strcmp(last_ev[0].text, "folder not found") == 0, "reason");
+    CHECK(strcmp(ev_text[0], "Pic.iff") == 0, "path");
+    setup(); F.free = 100; file_line(l, "r2", "x", 1, 0, "Big", "", 0); feed(l);
+    CHECK_EQ_INT(n_ev, 1); CHECK(last_ev[0].text && strcmp(last_ev[0].text, "not enough space") == 0, "space reason");
+}
+static void huge_decimal_refused(void) {
+    /* 4294967296 wrapped to 0 and the next bytes were read as commands (review minor). */
+    setup(); feed("FILE w1 4294967296 0 0 1:x 0:\n");
+    CHECK(strncmp(out(), "ERR w1 ", 7) == 0, "refused");
+}
 int main(void) {
     RUN(hello_and_ping); RUN(list_items); RUN(list_split_across_feeds_and_bad_line_skipped); RUN(one_file);
     RUN(line_and_data_in_one_feed_then_next_line); RUN(collision); RUN(subfolder_made); RUN(bad_crc);
     RUN(refusals); RUN(write_failure_consumes_data); RUN(zero_length); RUN(meta_and_comment);
     RUN(disconnect_mid_file); RUN(garbage_ignored_overflow_closes); RUN(progress_every_16k);
+    RUN(long_path_keeps_comment); RUN(refusals_are_events); RUN(huge_decimal_refused);
     return REPORT();
 }

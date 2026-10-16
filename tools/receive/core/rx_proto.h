@@ -43,7 +43,8 @@ typedef struct rx_session { /* fields private to rx_proto.c except list/list_n *
     int in_data;
     char line[RX_LINE_MAX + 1]; unsigned line_n;
     rx_item list[RX_LIST_MAX]; unsigned list_n, list_expect, list_seen;
-    char cur_id[RX_ID_MAX + 1], cur_path[RX_PATH_MAX + 1], cur_tmp[RX_PATH_MAX + 1], cur_comment[RX_COMMENT_MAX + 1];
+    char cur_id[RX_ID_MAX + 1], cur_path[RX_PATH_MAX + 1], cur_comment[RX_COMMENT_MAX + 1];
+    char cur_tmp[RX_PATH_MAX + sizeof RX_TMP_NAME];   /* the path's folder (< 255 bytes) + the temp name */
     unsigned long cur_size, cur_left, cur_crc_want, cur_crc, cur_prot, cur_mark;
     int cur_open, cur_write_failed;
     char out[RX_OUT_MAX]; unsigned out_n;

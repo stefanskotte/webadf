@@ -3,7 +3,7 @@
 #include "rx_proto.h"
 
 #define FF_MAX 32
-typedef struct { char name[RX_PATH_MAX + 1]; int is_dir; unsigned char data[65536]; unsigned long len;
+typedef struct { char name[RX_PATH_MAX + sizeof RX_TMP_NAME]; int is_dir; unsigned char data[65536]; unsigned long len;
                  unsigned long prot; char comment[RX_COMMENT_MAX + 1]; } ff_entry;
 typedef struct {
     ff_entry e[FF_MAX]; int n;
