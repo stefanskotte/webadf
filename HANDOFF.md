@@ -4919,6 +4919,43 @@ Demozoo API (the bulk export makes per-lookup load on a non-profit unnecessary).
   allowlist checks only the first URL (the raster content-type allowlist and `nosniff` still apply).
 - **Cron drift:** the daily 01:30 cron against a 7-day gate can drift a refetch to 8 days.
 
+### 3bq. Self-hosting P2: the container -- merged bdc84e7 2026-10-16; image on GHCR (multi-arch); OMV acceptance passed
+
+**What.** (spec `docs/superpowers/specs/2026-10-15-selfhost-p2-container-design.md`, plan
+`docs/superpowers/plans/2026-10-15-selfhost-p2.md`, subagent-driven, 9 tasks; user docs `docs/self-hosting.md`.)
+`compose.yaml` + `.env.example` at the repo root: `setup` (one-shot, root: checks, secrets, Caddyfile, folder modes),
+`db` (postgres:18), `app` (`docker/ctl.ts start`: checks -> wait for db -> locked migrations with a pg_dump backup
+first when something is pending -> first-admin invite line -> Next standalone server), `scheduler` (same image,
+crons read from `vercel.ts`), `caddy` (`--watch`; internal TLS for the WEBADF_URL host with default_sni/fallback_sni
+and a catch-all :443 site, or Let's Encrypt for WEBADF_DOMAIN; only 443 published). Required `.env`: `WEBADF_URL`
+(or `WEBADF_DOMAIN`) + `WEBADF_ADMIN_EMAIL`; no secrets in `.env` (generated into `data/secrets/`). One data folder
+(`postgres blobs caddy secrets backups`). `BLOB_GC_DELETE` defaults to 1 in the container (parity).
+Pure logic in `src/selfhost/*` with unit + db tests; `scripts/docker-smoke.sh` (first start, recreate, IP URL,
+other host, pg_dump, refusals) and `scripts/docker-e2e.sh` (specs against a stack).
+**CI** `.github/workflows/image.yml`: native amd64 + arm64, amd64 smoke gates the push, `edge` + `sha-<7>` per master
+push (edge only if still master's head), `web-X.Y.Z` tag retags that commit's image as `X.Y.Z` + `latest`.
+App changes that reach Vercel: `/api/health`, sign-up prefills `?invite=` (server searchParams), origin warn-once
+(inert without WEBADF_URL), auth route wrapper.
+
+**Verified.** Mac (arm64): smoke, docker-e2e 22 pass, operator browser check. CI amd64 smoke on real Linux (first run
+failed in the smoke script itself: host write into root-owned data/caddy; fixed b968b26). **OMV acceptance
+2026-10-16** (172.16.10.11, data on a /srv share): first start FAILED -- the share's default ACL (`other::rw-`, no x)
+made data/postgres and 18/ untraversable for postgres (uid 999), restart loop "mkdir: cannot create directory
+'/var/lib/postgresql'"; fixed in setup (7448ce9: `preparePgDir`/`ensureTraversable`) and proven by `pull && up -d`
+restoring broken modes. Then: first admin via the logged link, upload, About = Self-hosted, **bench board** paired to
+https://172.16.10.11 (`wf server set`, `tls noverify`, `wf reboot`, portal) and mounted P1Smoke (IN THE DRIVE), Postgres
+restart, wrong-owner blobs refusal + recovery by `up -d`. Board returned to webadf.vercel.app (`wf server clear` +
+portal + pairing). OMV test stack removed. OMV has no curl: docs show wget.
+
+**Rulings** (operator saw them): scheduler imports vercel.ts crons (no shared module); in-image `next build` uses a
+never-connected dummy DATABASE_URL; checkWritable only as uid 1000; BLOB_GC_DELETE=1 default; dumps 0600; health
+route unauthenticated `select 1` accepted; BASE_URL disables Playwright's webServer; no deferred minor blocks merge.
+**Deferred minors** (selection): secrets crash window; cron dom AND dow; pgEnv drops sslmode/IPv6 brackets; no lock
+timeout/log; bootstrap invite 365 d and a stranger's first sign-up spends it (documented recovery via
+SUPERADMIN_EMAILS); superseded CI runs get no sha- manifest (tag -> "build master first"); sign-up 3/10 s rate limit
+in production mode (docs); the board now has one more stale device row in production (3bn follow-up).
+**P3 next:** firmware releases import, PaulaNET driver disk (503 on self-hosts), TOSEC/Demozoo/OpenRetro data.
+
 ### 3bp. Self-hosting P1: runs without Vercel or Neon -- merged 8ff594b 2026-10-15; production now on node-postgres
 
 **What.** (spec `docs/superpowers/specs/2026-10-15-selfhost-p1-runs-without-vercel-design.md`, plan
@@ -7498,7 +7535,7 @@ recognizing the next time a "this trigger is not transient" argument gets made.
 **Commands:** `pnpm dev` · `pnpm vitest run` · `pnpm e2e` · `pnpm build` ·
 `pnpm adfmfm:diff` (Greaseweazle differential gate, needs `adf-archive/` + pipx) ·
 `pnpm adfmfm:fixtures` (regenerate golden fixtures) ·
-`pnpm db:generate && pnpm db:migrate` (db:push removed, 3bp) · `pnpm db:dev start` · `bash scripts/e2e-local.sh` · `npx webadf push <dir>` (CLI bulk import) ·
+`pnpm db:generate && pnpm db:migrate` (db:push removed, 3bp) · `pnpm db:dev start` · `bash scripts/e2e-local.sh` · `pnpm docker:smoke` · `bash scripts/docker-e2e.sh` (3bq) · `npx webadf push <dir>` (CLI bulk import) ·
 `pnpm firmware:build` (needs pico-sdk ≥ 2.3.0 on `PICO_SDK_PATH` and the official ARM GNU
 Toolchain on `PATH`, not homebrew's `arm-none-eabi-gcc`. `PORTAL_AP_PASSWORD` is **no longer
 required** — it has a documented default, `wififloppy`; it is fatal only if set-but-empty) ·

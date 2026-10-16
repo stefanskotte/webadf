@@ -1,6 +1,6 @@
 # Self-hosting P2: the container
 
-**Date:** 2026-10-15 · **Status:** design approved in chat (three sections), spec awaiting review
+**Date:** 2026-10-15 · **Status:** implemented; merged bdc84e7 2026-10-16, OMV acceptance passed (HANDOFF 3bq)
 
 ## Where this sits
 
