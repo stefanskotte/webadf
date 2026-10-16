@@ -28,7 +28,8 @@ const ENRICH_TILES = [
 
 export default async function AdminScanPage() {
   const s = await scanStatus();
-  const fetchState = await readTosecFetchState();
+  // The table may not exist yet (deploy before migration): the page must not 500 over a status line.
+  const fetchState = await readTosecFetchState().catch(() => null);
 
   // A blob whose bytes could not be read is stamped hashed (so the sweeper
   // does not spin on it forever) with null hashes, and phase 2's short

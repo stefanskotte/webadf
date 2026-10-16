@@ -44,16 +44,18 @@ const zipNoAdf = makeZip([
 
 function fake(opts: { downloads?: string; release?: string; pack?: Buffer } = {}) {
   const calls: string[] = [];
-  const impl = (async (input: string | URL | Request) => {
+  const signals: (AbortSignal | null | undefined)[] = [];
+  const impl = (async (input: string | URL | Request, init?: RequestInit) => {
     const u = String(input);
     calls.push(u);
+    signals.push(init?.signal);
     const html = (b: string) => new Response(b, { status: 200 });
     if (u === TOSEC_DOWNLOADS) return html(opts.downloads ?? DOWNLOADS);
     if (u === RELEASE_URL) return html(opts.release ?? RELEASE_PAGE);
     if (u === PACK_URL) return new Response(new Uint8Array(opts.pack ?? zip), { status: 200 });
     return new Response('not found', { status: 404 });
   }) as typeof fetch;
-  return { impl, calls };
+  return { impl, calls, signals };
 }
 const log = () => {};
 
@@ -76,7 +78,9 @@ describe('runTosecFetch', () => {
   it('imports the newest release\'s Amiga [ADF] DATs only', async () => {
     const f = fake();
     const r = await runTosecFetch({ fetchImpl: f.impl, log });
-    expect(r).toMatchObject({ status: 'imported', release: '2025-03-13', dats: 2, entries: 3 });
+    expect(r).toMatchObject({ status: 'imported', release: '2025-03-13', dats: 2, skipped: 0, entries: 3 });
+    expect(f.signals).toHaveLength(3);
+    expect(f.signals.every((x) => x instanceof AbortSignal)).toBe(true);
     expect(await entryCount()).toBe(3);
     const st = await readTosecFetchState();
     expect(st?.release).toBe('2025-03-13');
@@ -124,5 +128,35 @@ describe('runTosecFetch', () => {
     const r = await runTosecFetch({ fetchImpl: f.impl, log });
     expect(r).toMatchObject({ status: 'failed', reason: `no dated release on ${TOSEC_DOWNLOADS}` });
     expect((await readTosecFetchState())?.lastResult).toBe(`failed: no dated release on ${TOSEC_DOWNLOADS}`);
+  });
+
+  it('skips DATs whose set and version are already loaded, leaving blob verdicts alone, and still records the release', async () => {
+    await getDb().execute(sql`update tosec_fetch set release = null`);
+    await runTosecFetch({ fetchImpl: fake().impl, log }); // loads the two sets
+    await getDb().execute(sql`update tosec_fetch set release = null`);
+    await getDb().execute(sql`insert into blobs (sha256, size_bytes, storage_key, match_checked_at, match_state) values ('seedblob', 1, 'k', now(), 'none') on conflict do nothing`);
+    const r = await runTosecFetch({ fetchImpl: fake().impl, log });
+    expect(r).toMatchObject({ status: 'imported', release: '2025-03-13', dats: 0, skipped: 2 });
+    const { rows } = await getDb().execute(sql`select match_checked_at, match_state from blobs where sha256 = 'seedblob'`);
+    expect((rows[0] as { match_checked_at: unknown }).match_checked_at).not.toBeNull();
+    expect((rows[0] as { match_state: string }).match_state).toBe('none');
+    const st = await readTosecFetchState();
+    expect(st?.release).toBe('2025-03-13');
+    expect(st?.lastResult).toBe('imported 2025-03-13 (0 new DATs, 2 already present)');
+  });
+
+  it('keeps the previous release when a later DAT fails to import', async () => {
+    await getDb().execute(sql`delete from tosec_entries`);
+    await getDb().execute(sql`update tosec_fetch set release = '2024-01-01'`);
+    const bad = dat('Commodore Amiga - Demos - [ADF]', ['Huge (1991)(Z)']).replace('size 901120', 'size 99999999999');
+    const z = makeZip([
+      { name: 'TOSEC/Commodore Amiga - Games - [ADF] (TOSEC-v2025-03-13).dat', data: Buffer.from(dat('Commodore Amiga - Games - [ADF]', ['Fine (1992)(A)'])) },
+      { name: 'TOSEC/Commodore Amiga - Demos - [ADF] (TOSEC-v2025-03-13).dat', data: Buffer.from(bad) },
+    ]);
+    const r = await runTosecFetch({ fetchImpl: fake({ pack: z }).impl, log });
+    expect(r.status).toBe('failed');
+    const st = await readTosecFetchState();
+    expect(st?.release).toBe('2024-01-01');
+    expect(st?.lastResult).toMatch(/^failed:/);
   });
 });
