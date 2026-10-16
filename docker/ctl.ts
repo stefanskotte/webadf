@@ -2,6 +2,7 @@ import { statfsSync, readdirSync, mkdirSync, chownSync, writeFileSync } from 'no
 import { join } from 'node:path';
 import { resolveConfig, ConfigError } from '@/selfhost/config';
 import { checkFreeSpace, checkWritable, checkPgData, type CheckResult } from '@/selfhost/checks';
+import { preparePgDir, ensureTraversable } from '@/selfhost/pgdir';
 import { renderCaddyfile } from '@/selfhost/caddyfile';
 import { ensureSecrets, readSecrets, SecretError } from '@/selfhost/secrets';
 import { applyAppEnv } from '@/selfhost/app-env';
@@ -23,6 +24,10 @@ async function setup() {
   for (const d of ['postgres', 'blobs', 'caddy', 'backups']) mkdirSync(join(DATA, d), { recursive: true });
   for (const d of ['blobs', 'backups']) chownSync(join(DATA, d), OWNER.uid, OWNER.gid);
   report(checkPgData(readdirSync(join(DATA, 'postgres'))));
+  // After the check (creating 18/ first would hide an old-major folder). Shared folders with a default ACL give new
+  // directories no execute bit for other, and postgres (uid 999) must traverse the mount and 18/.
+  ensureTraversable(DATA);
+  preparePgDir(join(DATA, 'postgres'));
   report(checkFreeSpace(free(DATA), 'the data folder'));
   const created = ensureSecrets(join(DATA, 'secrets'), OWNER);
   if (created.length) say(`created secrets: ${created.join(', ')}`);

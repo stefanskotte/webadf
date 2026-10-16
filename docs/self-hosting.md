@@ -25,6 +25,13 @@ curl -fsSLO https://raw.githubusercontent.com/stefanskotte/webadf/$TAG/compose.y
 curl -fsSL https://raw.githubusercontent.com/stefanskotte/webadf/$TAG/.env.example -o .env
 ```
 
+If `curl` is not installed (openmediavault and other minimal hosts), use `wget` instead:
+
+```bash
+wget -O compose.yaml https://raw.githubusercontent.com/stefanskotte/webadf/$TAG/compose.yaml
+wget -O .env https://raw.githubusercontent.com/stefanskotte/webadf/$TAG/.env.example
+```
+
 Edit `.env` and set two values:
 
 - `WEBADF_URL`: the https address you will open webadf at, for example `https://192.168.1.10` or `https://nas.lan`.
@@ -215,6 +222,7 @@ Start-up problems print one line starting `webadf:`; read them with `docker comp
 | `only N GB free on the data folder: webadf needs at least 1 GB` | Free space, or set `WEBADF_DATA_DIR` on a bigger disk. |
 | `blobs is not writable by uid 1000: run sudo chown -R 1000:1000 "$WEBADF_DATA_DIR/blobs"` (same for `backups`) | Run the command. `setup` fixes ownership itself when it can; it cannot on, for example, an NFS share that squashes root. |
 | `data/postgres holds a Postgres N cluster this image cannot use (the image is Postgres 18)`, or `holds a Postgres cluster this image cannot use (no 18/ folder ...)` | `data/postgres` holds an older major's cluster, or a cluster mounted at the old path (`PG_VERSION` directly inside). Section 7. |
+| `db` restarts in a loop; its log says `mkdir: cannot create directory '/var/lib/postgresql': Permission denied` | The data folder's permissions or ACL give new directories no execute bit for other (default on openmediavault shared folders), so Postgres (uid 999) cannot enter it. `setup` now fixes `data/postgres` itself; if it persists, run `sudo chmod 755 <data>/postgres <data>/postgres/18`. |
 | `the database refuses the password in secrets/pg_password` | `data/postgres` was created by another install. Restore that install's `secrets/` folder, or start with an empty `data/postgres`. |
 | `secrets/<name> is missing -- run docker compose up -d` | The `setup` service creates it; do not start `app` by hand. |
 | `secrets/<name> is empty -- restore it from a backup of the data folder` | A new secret would sign everybody out (or lock the database), so none is made for you. |
