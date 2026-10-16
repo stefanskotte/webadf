@@ -240,12 +240,22 @@ use it. Once any account exists, no new bootstrap invite is made. Recover with:
 - If nobody is super-admin: set `SUPERADMIN_EMAILS=<email of an account that exists>` in `.env` (it overrides the
   default of `WEBADF_ADMIN_EMAIL`), run `docker compose up -d`, sign in with that account, and invite from `/admin`.
 
-## 9. What self-hosting lacks today
+## 9. What a new install fetches by itself
 
-Planned for the next phase:
+A fresh install is not empty. The scheduler container runs the same jobs as our own deployment, and the image
+carries what cannot be fetched:
 
-- **Firmware releases.** There is no release registry on your copy, so it offers no firmware updates to boards.
-- **The PaulaNET driver disk.** Its download answers 503.
-- **Catalogue data.** TOSEC, Demozoo and OpenRetro identification data is not bundled, so those matches are empty.
+- **Firmware releases.** Daily, from the GitHub releases of the firmware repository, each verified with the boards'
+  signing key before it is accepted. Boards are offered updates as on webadf.vercel.app. A release's notes and its
+  "security" and "TEST build" marks are not signed, so whoever can edit those GitHub releases could mark a release
+  "TEST build" (hidden from everyone on a self-host) or "security".
+- **The PaulaNET driver disk.** Included in the image and stored on first start; the download and the Network mode
+  of a board's DF1 work. Its licence is in `THIRD-PARTY-NOTICES.md`.
+- **TOSEC.** Monthly, the newest release's Amiga ADF DATs from tosecdev.org. The result shows on `/admin/scan`, and
+  the manual DAT upload there still works.
+- **Demozoo.** Weekly, from Demozoo's public export.
+- **OpenRetro.** Not fetched: upload FS-UAE Launcher's `Amiga.sqlite` at `/admin/scan` (run the Launcher once; find
+  `Amiga.sqlite` in FS-UAE's data folder). Cover images are then fetched politely, a few at a time.
 
-Everything else (library, uploads, history, devices, mounting) works as on our own deployment.
+These requests name your install in their User-Agent (`webadf/1.0 (Amiga disk library; +<WEBADF_URL>)`). Everything
+else (library, uploads, history, devices, mounting) works as on our own deployment.

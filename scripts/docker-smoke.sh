@@ -61,6 +61,14 @@ has "migrations: up to date" "$(dc logs app 2>&1)" || fail "the recreate was not
 [ -e "$W/data/backups/.last-start" ] || fail "no start marker (backups/.last-start) after a successful start"
 echo "smoke: first start + recreate OK"
 
+# D5: first start stored the image's sha-pinned PaulaNET disk (the local backend keeps it at blobs/adf/<sha>).
+# The download route needs a session, so look at the store; size and digest must be the pinned ones.
+pn_sha=$(sed -n "s/.*PAULANET_DISK_SHA256 = '\([0-9a-f]\{64\}\)'.*/\1/p" src/lib/paulanet-disk.ts)
+[ -n "$pn_sha" ] || fail "could not read PAULANET_DISK_SHA256 from src/lib/paulanet-disk.ts"
+got=$(docker run --rm -v "$W/data/blobs:/b:ro" alpine sh -c "sha256sum /b/adf/$pn_sha | cut -d' ' -f1" 2>&1) || true
+[ "$got" = "$pn_sha" ] || fail "the PaulaNET disk is not stored under its sha in blobs/adf (got: $got)"
+echo "smoke: PaulaNET disk OK"
+
 # Change WEBADF_URL to an IP address: `up -d` alone must bring Caddy onto the new site (it is not recreated;
 # it reloads the re-rendered Caddyfile), and a client that sends no SNI (curl to an IP) must get the certificate.
 caddy_id=$(dc ps -q caddy)

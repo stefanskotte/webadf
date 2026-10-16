@@ -13,10 +13,21 @@ ENV GIT_SHA=$GIT_SHA WEBADF_STANDALONE=1 NEXT_TELEMETRY_DISABLED=1
 # closed port: the pool is lazy and never connects; a page that queried at build time would fail loudly here.
 RUN DATABASE_URL=postgresql://build:unused@127.0.0.1:1/unused pnpm exec next build && node docker/build-ctl.mjs
 
+# The PaulaNET driver disk, built from the pinned inputs; build.sh fails unless the ADF's sha-256 equals
+# tools/paulanet-disk/paulanet-disk.sha256, so a changed input fails the image build.
+# python:3.9: amitools 0.4.0 builds a pre-generated Cython extension that needs Python <= 3.9 (3.10-3.12 fail to compile it);
+# 3.9 is also the interpreter the pinned disk was built with.
+FROM python:3.9-bookworm AS paulanet
+RUN pip install --no-cache-dir amitools==0.4.0
+WORKDIR /src
+COPY third-party/paulanet third-party/paulanet
+COPY tools/paulanet-disk tools/paulanet-disk
+RUN mkdir /out && bash tools/paulanet-disk/build.sh /out/paulanet.adf
+
 FROM node:24-bookworm-slim
 LABEL org.opencontainers.image.source="https://github.com/stefanskotte/webadf" \
       org.opencontainers.image.description="webadf self-hosted: Amiga ADF disk manager (web app, setup and scheduler)" \
-      org.opencontainers.image.licenses="MIT"
+      org.opencontainers.image.licenses="MIT AND LicenseRef-PaulaNET"
 RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates curl gnupg \
  && install -d /usr/share/postgresql-common/pgdg \
  && curl -fsSL -o /usr/share/postgresql-common/pgdg/apt.postgresql.org.asc https://www.postgresql.org/media/keys/ACCC4CF8.asc \
@@ -30,6 +41,7 @@ COPY --from=build /src/.next/static ./.next/static
 COPY --from=build /src/public ./public
 COPY --from=build /src/drizzle ./drizzle
 COPY --from=build /src/docker/dist/ctl.mjs ./ctl.mjs
+COPY --from=paulanet /out/paulanet.adf /app/assets/paulanet.adf
 USER 1000:1000
 EXPOSE 3000
 ENTRYPOINT ["node", "/app/ctl.mjs"]

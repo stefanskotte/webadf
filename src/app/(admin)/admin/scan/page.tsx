@@ -161,6 +161,9 @@ export default async function AdminScanPage() {
 
         <div className="glass-card mb-3 p-5">
           <OpenRetroUpload />
+          <p className="mt-2 text-[12px]" style={{ color: 'var(--muted)' }} data-testid="openretro-hint">
+            Run FS-UAE Launcher once to produce <strong>Amiga.sqlite</strong>; find it in FS-UAE&apos;s data folder and upload it here.
+          </p>
         </div>
 
         <div className="glass-card overflow-x-auto">

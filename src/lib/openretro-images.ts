@@ -10,6 +10,7 @@
 import { eq } from 'drizzle-orm';
 import { getDb } from '@/db';
 import { imageStore } from '@/lib/storage';
+import { webadfUserAgent } from '@/lib/user-agent';
 import { openretroImages } from '@/db/schema/openretro';
 
 /**
@@ -20,7 +21,6 @@ import { openretroImages } from '@/db/schema/openretro';
  */
 const IMAGE_SIZE = 400;
 const DELAY_MS = 500;
-const UA = 'webadf/1.0 (Amiga disk library; +https://webadf.vercel.app)';
 
 const wait = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
@@ -39,7 +39,7 @@ export async function ensureImage(
 
   const url = imageUrl(sha1);
   await wait(DELAY_MS);
-  const res = await fetch(url, { headers: { 'user-agent': UA } });
+  const res = await fetch(url, { headers: { 'user-agent': webadfUserAgent() } });
   if (!res.ok) throw new Error(`openretro image ${sha1}: ${res.status}`);
   const bytes = new Uint8Array(await res.arrayBuffer());
 
