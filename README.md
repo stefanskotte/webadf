@@ -11,6 +11,11 @@ Two halves that work together:
   behaves like a DD or HD floppy drive, and plays whichever disk you pick in the web app.
   When the Amiga saves, the changes go back to the library.
 
+Run the web app two ways: use our hosted copy at <https://webadf.vercel.app> (on Vercel), or
+host your own with Docker on any amd64 or arm64 machine, a NAS included. A self-hosted copy has every
+feature the hosted one has. Firmware updates, the PaulaNET driver disk and the TOSEC catalogue
+arrive by themselves; see [docs/self-hosting.md](docs/self-hosting.md).
+
 Pick a disk in the browser, or tap its NFC tag on the drive, and the Amiga reads it.
 Workbench 3.1 boots from the board, games load, and saves made on the Amiga show up
 in the web app as new versions of the disk.
@@ -24,8 +29,13 @@ ordering. The current bench board is rev A2.*
 
 ## Quickstart
 
-A first install is one file. You need the board, a USB cable, a phone and an account in the
-web app.
+Choose where the web app runs. The board's first install is the same either way; only a
+self-hosted copy needs one extra step, pointing the board at your server.
+
+### Path A: the hosted web app (Vercel)
+
+You need the board, a USB cable, a phone and an account on <https://webadf.vercel.app>
+(registration is by invitation). The board talks to this server out of the box.
 
 1. Hold the **BOOT** button (the Raspberry Pi docs call it BOOTSEL) and plug the board into
    your computer over USB. A drive called `RP2350` appears.
@@ -39,9 +49,37 @@ web app.
 4. Done. The board joins your network and appears under Devices. Firmware updates now arrive
    over the air from the web app.
 
+### Path B: your own server (self-hosted, Docker)
+
+You need a host with Docker and Compose v2, the board, a USB cable and a phone.
+
+1. Install the stack, as [docs/self-hosting.md](docs/self-hosting.md#2-install) describes: download
+   `compose.yaml` and `.env.example` (as `.env`) from the newest `web-X.Y.Z` tag, set `WEBADF_URL`
+   (for example `https://192.168.1.10`) and `WEBADF_ADMIN_EMAIL` in `.env`, then run
+   `docker compose up -d`. Sign up with the link from `docker compose logs app | grep 'first admin'`.
+2. Install the firmware as in steps 1-2 of Path A.
+3. **Override the server.** The firmware points at the hosted app by default. Open the board's
+   USB serial console (any serial terminal, firmware 1.13.0 or newer) and type:
+
+   ```
+   wf server set https://192.168.1.10
+   wf server tls noverify
+   YES
+   wf reboot
+   ```
+
+   Use your own `WEBADF_URL`. `tls noverify` is needed because a board cannot trust the
+   certificate Caddy makes for an IP address or a LAN name; with a public `WEBADF_DOMAIN` and a
+   Let's Encrypt certificate, leave it out. `wf server show` prints the setting and
+   `wf server clear` goes back to the hosted app. Changing the server forgets the board's
+   Wi-Fi and pairing, and it refuses while a disk is mounted.
+4. Pair it as in step 3 of Path A, from **Devices** on your own server. Firmware updates come
+   from your server too: it imports every signed release from GitHub daily.
+
 If your phone has joined this board's setup network before, forget that network first. More
 detail, and what to do when a join fails, is in
-[wifi-floppy/README.md](wifi-floppy/README.md#first-install).
+[wifi-floppy/README.md](wifi-floppy/README.md#first-install) and, for a self-hosted copy,
+[docs/self-hosting.md](docs/self-hosting.md#4-boards).
 
 ## Screenshots
 
@@ -179,7 +217,8 @@ deltas.
 | HFE, including long-track (Turrican) | verified on hardware; weak-bit titles not yet tested |
 | HD disks, read-only (Kickstart 3.0+) | verified on hardware (firmware 1.4.1, Kickstart 3.1) |
 | HD disks: Amiga saves, history, browser editing, blank HD disks | shipped in firmware 1.5.1; bench steps 4-7 owed (HANDOFF 3ao) |
-| Firmware updates from the web app | verified on hardware (current release: 1.10.2) |
+| Firmware updates from the web app | verified on hardware (current release: 1.13.0) |
+| Self-hosting with Docker (compose stack, GHCR image, amd64 + arm64) | live (web-1.1.0); verified with a board and an A500 on an openmediavault NAS |
 | NFC: tap to mount, write tags from the web | verified on hardware |
 | Rev B board | built and running (Shanshe's design, `wifi-floppy/hardware/`) |
 
@@ -218,7 +257,8 @@ Stored files (disk images, covers, firmware) go to local disk under `./data/blob
 (`STORAGE_DIR` moves it) unless `BLOB_READ_WRITE_TOKEN` is set, in which case they go to
 Vercel Blob. On Vercel the token is required: the app refuses to fall back to local disk there.
 
-Self-hosting with Docker: see [docs/self-hosting.md](docs/self-hosting.md).
+To run your own copy, use the Docker stack in [docs/self-hosting.md](docs/self-hosting.md)
+(Quickstart, [Path B](#path-b-your-own-server-self-hosted-docker)); the commands above are for development.
 
 A self-hosted copy needs no extra setting: the About page (the (i) at the top right) reads
 **Self-hosted** unless `SELFHOSTED=false`, which only our own deployment sets. A Docker build
