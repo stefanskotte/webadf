@@ -13,6 +13,7 @@ export interface GithubReleaseInput {
   signature: string;      // base64 ed25519 over the registry manifest
   signingKeyId: string;
   notes: string | null;   // the registry notes
+  security: boolean;      // the registry's security flag (imported by self-hosters)
 }
 
 export type GithubReleasePlan =
@@ -73,6 +74,8 @@ export function githubReleasePlan(r: GithubReleaseInput): GithubReleasePlan {
       signature: r.signature,
       signingKeyId: r.signingKeyId,
       signatureFormat: 2,
+      notes: r.notes,
+      security: r.security,
     },
   };
 }

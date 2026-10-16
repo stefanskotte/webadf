@@ -1,0 +1,10 @@
+{
+  "version": "1.13.0+g290990b",
+  "semver": "1.13.0",
+  "sequence": 85,
+  "file": "wifi_floppy.bin",
+  "sha256": "5241bf5a05e7906f6c47e2ceea7b855d0187bca9f0645cebf572f7fbe0425ee4",
+  "signature": "Wmk73+oV8Ms05RQNBS96L+ogMMTAR3hjjq+B2TF418j+TeQKXveSOnt7y6xazYWeCk3yX1eIX7xewBlhEKb7Dg==",
+  "signingKeyId": "wf-1138f25902223da4",
+  "signatureFormat": 2
+}

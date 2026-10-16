@@ -185,7 +185,7 @@ if (githubOnly) {
   try { assertSameBytes(row.sha256, sha256); } catch (e) { die((e as Error).message); }
   publishToGithub({
     version, semver, sequence: row.sequence, sha256, signature: row.signature,
-    signingKeyId: row.signingKeyId, notes: row.notes,
+    signingKeyId: row.signingKeyId, notes: row.notes, security: row.security,
   });
   process.exit(0);
 }
@@ -310,7 +310,7 @@ try {
     // The registry is the source of truth; a GitHub failure is reported, not
     // fatal -- `pnpm firmware:publish --github-only` repairs it afterwards.
     try {
-      publishToGithub({ version, semver, sequence: published.sequence, sha256, signature, signingKeyId: keyId, notes });
+      publishToGithub({ version, semver, sequence: published.sequence, sha256, signature, signingKeyId: keyId, notes, security });
     } catch (e) {
       console.error(`GitHub release NOT published: ${(e as Error).message}\nRepair with: pnpm firmware:publish --github-only`);
     }
