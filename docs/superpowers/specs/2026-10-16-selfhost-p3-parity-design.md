@@ -1,6 +1,6 @@
 # Self-hosting P3: parity on a fresh install
 
-**Date:** 2026-10-16 · **Status:** design approved in chat (three sections), spec awaiting review
+**Date:** 2026-10-16 · **Status:** implemented; merged 9ea7c85 2026-10-16, first production runs verified (HANDOFF 3br)
 
 ## Where this sits
 

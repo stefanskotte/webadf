@@ -4919,6 +4919,35 @@ Demozoo API (the bulk export makes per-lookup load on a non-profit unnecessary).
   allowlist checks only the first URL (the raster content-type allowlist and `nosniff` still apply).
 - **Cron drift:** the daily 01:30 cron against a 7-day gate can drift a refetch to 8 days.
 
+### 3br. Self-hosting P3: parity -- merged 9ea7c85 2026-10-16; first production runs verified
+
+**What.** (spec `docs/superpowers/specs/2026-10-16-selfhost-p3-parity-design.md`, plan `docs/superpowers/plans/2026-10-16-selfhost-p3.md`.)
+- **Firmware import** `GET /api/cron/firmware-import` (daily 02:15 UTC, both deployments): lists `fw-*` releases of
+  `WEBADF_FIRMWARE_REPO` (default stefanskotte/webadf, anonymous GitHub API), keyed on the exact **version** (a republished
+  semver is imported), verifies like a board (`src/lib/firmware-verify.ts`: sha256, signatureFormat 2, known key from
+  `src/lib/firmware-keys.ts` pinned to `fw_pubkey.h` by a test, ed25519 over `firmwareManifest`, board-identical field
+  rules, bench-build markers refused regardless of notes), keeps the manifest's own sequence (`importRelease`), waits until
+  a super-admin exists. `firmware:publish` now writes `notes` and `security` into manifest.json (unsigned -- documented).
+- **TOSEC fetch** `GET /api/cron/tosec-fetch` (monthly, 2nd 05:00 UTC): newest tosecdev.org release -> Complete pack
+  (96 MB, streamed to /tmp) -> only the 7 `TOSEC/Commodore Amiga - * - [ADF]` DATs -> `importDat`, skipping a DAT already
+  complete at that version (row count == distinct rom names), state in `tosec_fetch` (migration 0039), shown on
+  /admin/scan. A failure records `TOSEC fetch failed: ...`; manual DAT upload remains.
+- **PaulaNET disk bundled**: Docker stage `python:3.9-bookworm` + amitools 0.4.0 runs `tools/paulanet-disk/build.sh`
+  (fails unless the sha matches the pin); ctl stores it on start (never fatal).
+- **OpenRetro** stays an admin upload (its sync API is unpublished); docs say so. User agents name the install's origin.
+
+**Verified.** Mac stack: 13 releases imported (sequences = manifests), TOSEC counts = production's per set, PaulaNET
+served with the pinned sha. **Production (operator-approved): migration 0039 applied; first runs pressed in Vercel:
+firmware-import `{"imported":[],"skipped":[]}`; tosec-fetch "imported 2025-03-13 (0 new DATs, 7 already present)";
+blob match state unchanged (179 checked / 55 TOSEC before and after).** CI built and smoked the image (edge).
+
+**Rulings:** pre-flight none; I4-style root checkWritable n/a; `python:3.9` build-only stage accepted (pin by digest
+later); bundled-disk store failure is logged, not fatal; per-OS FS-UAE paths not documented (not recorded anywhere);
+TOSEC stays monthly; migration before deploy. **Deferred minors:** zip CRC/bounds (fail closed), completePackLink first
+match, first 100 releases only, orphan blob on a sequence conflict, a manual publish racing an import, DAT parsed twice,
+abort test asserts a signal only, has() stat-only. CRON_SECRET is not in `.env.local` (sensitive on Vercel): run crons
+from Vercel -> Settings -> Cron Jobs -> Run.
+
 ### 3bq. Self-hosting P2: the container -- merged bdc84e7 2026-10-16; image on GHCR (multi-arch); OMV acceptance passed
 
 **What.** (spec `docs/superpowers/specs/2026-10-15-selfhost-p2-container-design.md`, plan
