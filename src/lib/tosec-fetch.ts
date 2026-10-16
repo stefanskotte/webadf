@@ -28,12 +28,12 @@ async function record(fields: Partial<typeof tosecFetch.$inferInsert>) {
 const PAGE_TIMEOUT_MS = 30_000;
 const PACK_TIMEOUT_MS = 180_000;
 
-/** True when tosec_entries already holds this exact set and version (importDat resets every blob verdict, so never redo one). */
-async function alreadyLoaded(setName: string, setVersion: string | null): Promise<boolean> {
+/** True when tosec_entries holds this exact set and version COMPLETELY (importDat resets every blob verdict, so never redo a finished one; a half-loaded one must be redone). */
+async function alreadyLoaded(setName: string, setVersion: string | null, expected: number): Promise<boolean> {
   if (setVersion === null) return false;
-  const [row] = await getDb().select({ one: sql<number>`1` }).from(tosecEntries)
-    .where(and(eq(tosecEntries.setName, setName), eq(tosecEntries.setVersion, setVersion))).limit(1);
-  return !!row;
+  const [row] = await getDb().select({ n: sql<number>`count(*)::int` }).from(tosecEntries)
+    .where(and(eq(tosecEntries.setName, setName), eq(tosecEntries.setVersion, setVersion)));
+  return (row?.n ?? 0) >= expected && expected > 0;
 }
 
 /** Monthly (vercel.ts): TOSEC's newest DAT pack, only the Amiga [ADF] DATs, via importDat (spec P3 D6-D7). */
@@ -72,7 +72,9 @@ export async function runTosecFetch(opts: { fetchImpl?: typeof fetch; tmpDir?: s
       for (const e of dats) {
         const text = (await readZipEntry(zipPath, e)).toString('utf8');
         const head = parseDat(text);
-        if (await alreadyLoaded(head.setName, head.setVersion)) { skipped++; continue; }
+        // importDat dedupes by (setName, romName); count the same way.
+        const expected = new Set(head.entries.map((x) => x.romName)).size;
+        if (await alreadyLoaded(head.setName, head.setVersion, expected)) { skipped++; continue; }
         entries += (await importDat(text)).imported;
         fresh++;
       }

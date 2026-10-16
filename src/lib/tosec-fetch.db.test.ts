@@ -159,4 +159,16 @@ describe('runTosecFetch', () => {
     expect(st?.release).toBe('2024-01-01');
     expect(st?.lastResult).toMatch(/^failed:/);
   });
+
+  it('re-imports a DAT that is only partly loaded at its version', async () => {
+    await getDb().execute(sql`delete from tosec_entries`);
+    await runTosecFetch({ fetchImpl: fake().impl, log });
+    await getDb().execute(sql`delete from tosec_entries where rom_name like 'Turrican%'`);
+    expect(await entryCount()).toBe(2);
+    await getDb().execute(sql`update tosec_fetch set release = null`);
+    const r = await runTosecFetch({ fetchImpl: fake().impl, log });
+    expect(r).toMatchObject({ status: 'imported', dats: 1, skipped: 1 });
+    expect(await entryCount()).toBe(3);
+    expect((await readTosecFetchState())?.release).toBe('2025-03-13');
+  });
 });
