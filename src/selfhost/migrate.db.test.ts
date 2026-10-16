@@ -217,6 +217,6 @@ describe('runStartupMigrations', () => {
   it('refuses a database newer than the image', async () => {
     await admin(`insert into drizzle.__drizzle_migrations (hash, created_at) values ('future', 99999999999999)`, url);
     await expect(runStartupMigrations({ url, migrationsFolder: 'drizzle', backupDir: mkdtempSync(join(tmpdir(), 'bk-')), log: () => {} }))
-      .rejects.toThrow(/newer than this image \(database at created_at 99999999999999, this image knows up to 0038_/);
+      .rejects.toThrow(/newer than this image \(database at created_at 99999999999999, this image knows up to 0039_/);
   });
 });

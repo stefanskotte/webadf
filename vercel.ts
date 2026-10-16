@@ -17,5 +17,8 @@ export const config: VercelConfig = {
     // Daily 02:15 UTC (self-hosting P3 D1-D3): imports firmware releases from GitHub, verified as a board
     // verifies them. On our own deployment it finds every release already present and does nothing.
     { path: '/api/cron/firmware-import', schedule: '15 2 * * *' },
+    // Monthly, the 2nd at 05:00 UTC (self-hosting P3 D6-D7): imports the newest TOSEC release's Amiga [ADF] DATs from
+    // tosecdev.org. After the nightly scan, so the next night's scan matches against the new data.
+    { path: '/api/cron/tosec-fetch', schedule: '0 5 2 * *' },
   ],
 };
