@@ -1,0 +1,50 @@
+#include "harness.h"
+#include "rx_names.h"
+
+static void ok_paths(void) {
+    CHECK(rx_path_ok("Hello.txt"), "plain");
+    CHECK(rx_path_ok("mods/axelf.mod"), "subfolder");
+    CHECK(rx_path_ok("Caf\xe9.txt"), "latin-1");
+    CHECK(rx_path_ok("123456789012345678901234567890"), "30 bytes");
+    CHECK(rx_path_ok(".info"), "leading dot is a name");
+    CHECK(rx_path_ok("a b/c d"), "spaces");
+}
+static void bad_paths(void) {
+    CHECK(!rx_path_ok(""), "empty");
+    CHECK(!rx_path_ok("../x"), "dotdot");
+    CHECK(!rx_path_ok("a/../x"), "inner dotdot");
+    CHECK(!rx_path_ok("./x"), "dot");
+    CHECK(!rx_path_ok("/x"), "absolute");
+    CHECK(!rx_path_ok("x/"), "trailing slash");
+    CHECK(!rx_path_ok("a//b"), "double slash");
+    CHECK(!rx_path_ok("DH0:x"), "device");
+    CHECK(!rx_path_ok("a\nb"), "control byte");
+    CHECK(!rx_path_ok("a\x7f"), "DEL");
+    CHECK(!rx_path_ok("1234567890123456789012345678901"), "31 bytes");
+    char longp[300]; memset(longp, 'a', 299); longp[299] = 0;
+    for (int i = 20; i < 299; i += 21) longp[i] = '/';
+    CHECK(!rx_path_ok(longp), "over 255 bytes");
+}
+static void candidates(void) {
+    char out[RX_PATH_MAX + 1];
+    CHECK_EQ_INT(rx_candidate("Hello.txt", 1, out), 0); CHECK(strcmp(out, "Hello.txt") == 0, "n=1 is the path");
+    rx_candidate("Hello.txt", 2, out); CHECK(strcmp(out, "Hello_2.txt") == 0, "Hello_2.txt");
+    rx_candidate("dir/Foo", 3, out); CHECK(strcmp(out, "dir/Foo_3") == 0, "no extension");
+    rx_candidate(".info", 2, out); CHECK(strcmp(out, ".info_2") == 0, "leading dot is not an extension");
+    rx_candidate("a.b.lha", 2, out); CHECK(strcmp(out, "a.b_2.lha") == 0, "last dot");
+    /* 26 + 4 = 30 bytes: the stem is cut to make room for "_2" and then "_10". */
+    rx_candidate("AAAAAAAAAAAAAAAAAAAAAAAAAA.lha", 2, out);
+    CHECK(strcmp(out, "AAAAAAAAAAAAAAAAAAAAAAAA_2.lha") == 0, "stem truncated, 30 bytes");
+    CHECK_EQ_INT(strlen(out), 30);
+    rx_candidate("AAAAAAAAAAAAAAAAAAAAAAAAAA.lha", 10, out);
+    CHECK(strcmp(out, "AAAAAAAAAAAAAAAAAAAAAAA_10.lha") == 0, "_10");
+    /* An extension so long that no stem byte is left: refused. */
+    CHECK_EQ_INT(rx_candidate("a.12345678901234567890123456789", 2, out), -1);
+}
+static void utoa(void) {
+    char b[12];
+    CHECK_EQ_INT(rx_utoa(0, b), 1); CHECK(strcmp(b, "0") == 0, "0");
+    CHECK_EQ_INT(rx_utoa(4194304UL, b), 7); CHECK(strcmp(b, "4194304") == 0, "4194304");
+    CHECK_EQ_INT(rx_utoa(4294967295UL, b), 10); CHECK(strcmp(b, "4294967295") == 0, "max");
+}
+int main(void) { RUN(ok_paths); RUN(bad_paths); RUN(candidates); RUN(utoa); return REPORT(); }
