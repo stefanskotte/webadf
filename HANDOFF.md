@@ -4970,6 +4970,13 @@ locally). Bench items "Choose/Save" and "3.1 on a 68000" are closed.
 transfers table, routes, GC), increment 3 (web: drop zone, Browse -> Send, Send .adf, card queue, help; Receive onto
 the driver disk + Install, and the disk-sha rollout), then the A500 bench (spec §7).
 
+**Parked (operator, 2026-10-16): server settings from a file in BOOTSEL mode**, a shorter path than `wf server set` for
+less experienced self-hosters. A plain key=value text file can't work: the RP2350 boot ROM's drive only takes UF2s.
+The idea is a settings UF2 in the ABSOLUTE family (as the install UF2 already is; partitions.json lets the bootloader write
+unpartitioned flash) carrying key=value text (`server=`, `tls=`) into a reserved sector. The firmware applies it at
+boot like `wf server set` and then erases it. A self-host's Devices page would offer it pre-filled, ideally merged with
+the install UF2 into one file. Unknown: whether the ROM reboots after a data-only UF2. A spike on the bench board answers it.
+
 ### 3bs. Self-hosting 1.1.0 accepted: OMV install end to end, full e2e against a container -- 2026-10-16
 
 **OMV acceptance (web-1.1.0, image `latest` = sha-9be42dc).** Fresh install from `docs/self-hosting.md` on the OMV box
