@@ -85,6 +85,8 @@ case "$mode" in
            && echo "PASS Script kept its s bit and comment" || { echo "FAIL Script metadata: $(cat "$work/hd/Out/Script.uaem" 2>/dev/null)"; rc=1; }
          sleep 2; echo "--- receive.log"; cat "$work/hd/receive.log" 2>/dev/null || true;;
   space) pnpm exec tsx "$repo/tools/receive/run-scenarios.ts" --port 6800 --dir "$work/hd/Out" --only space || rc=1;;
-  gui) echo "GUI is up: run uae/screenshot steps (Task 5)"; read -r -t 600 -p "Press Return to stop FS-UAE " _ || true;;
+  gui) echo "GUI is up; touch $work/stop to end (10 minutes at most)"
+       for _ in $(seq 1 600); do [ -e "$work/stop" ] && break; sleep 1; done
+       echo "--- ENVARC: $(cat "$work/hd/EnvArc/webadf/ReceiveDir" 2>/dev/null)";;
 esac
 exit $rc
