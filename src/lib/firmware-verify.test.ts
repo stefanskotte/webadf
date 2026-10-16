@@ -31,6 +31,50 @@ describe('verifyRelease', () => {
   it('refuses another file', () => { expect(verifyRelease(make({ file: 'wifi_floppy_install.bin' }), bin, keys)).toMatch(/wifi_floppy.bin/); });
 });
 
+describe('verifyRelease refuses what a board refuses', () => {
+  const sigOf = () => make().signature;
+  it('refuses a signature with trailing characters', () => {
+    expect(verifyRelease(make({ signature: sigOf() + 'AAAA' }), bin, keys)).toMatch(/signature/);
+    expect(verifyRelease(make({ signature: sigOf() + 'junk!!' }), bin, keys)).toMatch(/signature/);
+  });
+  it('refuses a signature with embedded whitespace', () => {
+    const g = sigOf();
+    expect(verifyRelease(make({ signature: g.slice(0, 10) + '\n' + g.slice(10) }), bin, keys)).toMatch(/signature/);
+    expect(verifyRelease(make({ signature: g + '\n' }), bin, keys)).toMatch(/signature/);
+  });
+  it('refuses a version that could escape a path', () => {
+    expect(verifyRelease(make({ version: '../x+g1', semver: '1.0.0' }), bin, keys)).toMatch(/version/);
+    expect(verifyRelease(make({ version: '.1.0.0+g1', semver: '1.0.0' }), bin, keys)).toMatch(/version/);
+    expect(verifyRelease(make({ version: '1.0.0+g1/x', semver: '1.0.0' }), bin, keys)).toMatch(/version/);
+  });
+  it('refuses a version over 64 characters', () => {
+    const v = '1.0.0+g' + 'a'.repeat(60);
+    expect(verifyRelease(make({ version: v, semver: '1.0.0' }), bin, keys)).toMatch(/version/);
+  });
+  it('refuses a version with no semver half, or a semver that is not its half', () => {
+    expect(verifyRelease(make({ version: 'abc', semver: 'abc' }), bin, keys)).toMatch(/version/);
+    expect(verifyRelease(make({ semver: '9.9.8' }), bin, keys)).toMatch(/semver/);
+  });
+  it('refuses sequence 0, negative, fractional, too large and unsafe', () => {
+    for (const q of [0, -1, 1.5, 0x100000000, 1e21]) {
+      expect(verifyRelease(make({ sequence: q }), bin, keys), String(q)).toMatch(/sequence/);
+    }
+  });
+  it('accepts the largest sequence', () => {
+    expect(verifyRelease(make({ sequence: 0xffffffff }), bin, keys)).toBeNull();
+  });
+  it('refuses an uppercase sha256 (boards accept lowercase only)', () => {
+    expect(verifyRelease(make({ sha256: sha.toUpperCase() }), bin, keys)).toMatch(/sha256/);
+  });
+  it('does not lowercase a sha256 when parsing', () => {
+    const m = parseReleaseManifest({ ...make(), sha256: sha.toUpperCase() });
+    expect(typeof m === 'string' || m.sha256 === sha.toUpperCase()).toBe(true);
+  });
+  it('refuses an empty image', () => {
+    expect(verifyRelease(make({ sha256: createHash('sha256').update('').digest('hex') }), Buffer.alloc(0), keys)).toMatch(/empty/);
+  });
+});
+
 describe('the real fw-1.13.0 release', () => {
   const REAL_SIZE = 636624; // byte size of the fw-1.13.0 release's wifi_floppy.bin asset
   it('verifies with the boards\' key (signature over version, sequence, sha256, size)', async () => {
