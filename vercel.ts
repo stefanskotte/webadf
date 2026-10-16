@@ -20,5 +20,7 @@ export const config: VercelConfig = {
     // Monthly, the 2nd at 05:00 UTC (self-hosting P3 D6-D7): imports the newest TOSEC release's Amiga [ADF] DATs from
     // tosecdev.org. After the nightly scan, so the next night's scan matches against the new data.
     { path: '/api/cron/tosec-fetch', schedule: '0 5 2 * *' },
+    // Daily at 03:45 UTC (PaulaNET Phase 4): files waiting for an Amiga over 24 h expire; finished rows go after 7 days.
+    { path: '/api/cron/transfers', schedule: '45 3 * * *' },
   ],
 };

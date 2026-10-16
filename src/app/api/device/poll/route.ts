@@ -7,6 +7,8 @@ import { nfcWriteForPoll } from '@/lib/nfc/rules';
 import { readNextForPoll } from '@/lib/next-disk';
 import { readDf1ForPoll } from '@/lib/df1-store';
 import { DC_TITLE_MAX } from '@/lib/device-limits';
+import { getDb } from '@/db';
+import { recordSendRx } from '@/lib/transfers';
 import { PAULANET_DISK_SHA256, PAULANET_NEXT, netApplied, netKeepsDriverDisk } from '@/lib/paulanet-disk';
 
 // Holds up to 25 s. maxDuration covers the hold plus slack; the platform
@@ -119,6 +121,19 @@ export async function GET(request: Request) {
   // next disk of the set in Network mode too. Only with df1Ack: a board that cannot hold a pick cannot hold this one.
   const netPick = df1Ack !== null && new URL(request.url).searchParams.get('netPick') === '1';
 
+  // xferAck (fw 1.14.0, PaulaNET Phase 4): the send queue's cursor the board last fetched. ABSENT means a board that
+  // cannot send files to its Amiga -- never woken for the queue, never sent `xfer`. rx is its receiver state.
+  const xferAckRaw = new URL(request.url).searchParams.get('xferAck');
+  const xferAck = xferAckRaw === null
+    ? null
+    : /^\d+$/.test(xferAckRaw) && Number.isSafeInteger(Number(xferAckRaw))
+      ? Number(xferAckRaw)
+      : 0;
+  const rx = new URL(request.url).searchParams.get('rx');
+  if (xferAck !== null && rx !== null && /^[cru-]$/.test(rx)) {
+    await recordSendRx(getDb(), device.deviceId, rx as 'c' | 'r' | 'u' | '-');
+  }
+
   const deadline = Date.now() + HOLD_MS;
   for (;;) {
     // Cheap single-column read per tick. The three-table join runs only when
@@ -162,6 +177,8 @@ export async function GET(request: Request) {
     const driveMoved = driveAck !== null && tick.secondDriveVersion !== driveAck;
     // INEQUALITY, the displayAck rule: a re-paired board carrying a higher ack is woken so it resets.
     const df1Moved = df1Ack !== null && tick.df1Version !== df1Ack;
+    // INEQUALITY again: a re-paired board's higher ack is reset by the body that carries xfer.v.
+    const xferMoved = xferAck !== null && tick.sendVersion !== xferAck;
 
     // Network mode (spec 2026-10-12 §2, pre-flight I2): the driver disk goes out as `next` only once the
     // board has REPORTED running Network for the current setting -- never on the choice alone, which would
@@ -184,7 +201,7 @@ export async function GET(request: Request) {
     // device echoes it back as mountedVersion and the server reads that for an
     // upload's not_mounted/behind verdict (HANDOFF 4g), so bumping it could
     // strand an Amiga write that was mid-session. See spec 4.2.
-    if (version > clampedFrom || clampedFrom !== from || firmwareMoved || nfcMoved || displayMoved || driveMoved || netNextMoved || df1Moved) {
+    if (version > clampedFrom || clampedFrom !== from || firmwareMoved || nfcMoved || displayMoved || driveMoved || netNextMoved || df1Moved || xferMoved) {
       const state = await readDesired(device.deviceId);
       if (!state) return notFound();
       // Multi-disk spec §3.3 / plan R1: the disk the board should preload.
@@ -271,6 +288,8 @@ export async function GET(request: Request) {
           ...(driveAck !== null ? { secondDrive: { seq: tick.secondDriveVersion, mode: tick.secondDrive } } : {}),
           // DF1 any disk (spec 2026-10-14 §4.2): {v, sha256}, sha256 null without a pick (DF1 follows the set).
           ...(df1 !== null ? { df1 } : {}),
+          // The send queue's cursor (PaulaNET Phase 4): the board fetches GET /api/device/send/queue when it moves.
+          ...(xferAck !== null ? { xfer: { v: tick.sendVersion } } : {}),
           ...(nfc
             ? {
                 nfcWrite: {
