@@ -51,9 +51,10 @@ length-prefixed so they may contain spaces. Version 1.
 
 **Error codes:** `space`, `crc`, `name`, `write`, `folder` (the folder is missing), `busy`.
 
-**The receiver writes** to `<folder>/<path>.part`. After the CRC matches, it renames the file to the final collision-free
-name, then sets the protection bits and the comment. On any failure, or if the connection drops, it deletes the `.part`
-file.
+**The receiver writes** to a temporary file `.rx<id>` in the target folder (a `<name>.part` could pass AmigaDOS's
+30-character limit). After the CRC matches, it renames the file to the final collision-free
+name, then sets the protection bits and the comment. On any failure, or if the connection drops, it deletes the
+temporary file.
 
 **Paths:**
 - `/` separates path parts. Each part is at most 30 characters, with no `:` and not `.` or `..`.
@@ -158,13 +159,14 @@ One plan in three increments, each testable on its own:
   - collision names;
   - confinement (`..`, `:`, absolute paths, 31-character parts);
   - CRC32 against known vectors;
-  - `.part` cleanup on a dropped connection;
+  - temporary-file cleanup on a dropped connection;
   - a no-space refusal.
 - **FS-UAE** (bsdsocket emulation, Kickstart 3.1 and 3.2, against the fake board):
   - small and 4 MB files, a folder, a collision, a CRC error, a full volume;
   - closing the window mid-file, then the Shell form;
   - a screenshot of the window at 640×200.
-  - **Kickstart 2.04 is built for but not tested:** there is no 2.04 ROM on this machine.
+  - **Kickstart 2.04 too:** FS-UAE's Kickstarts folder holds the A500 2.04 ROM (37.175, md5
+    dc10d7bdd1b6f450773dfb558477c230) and `~/Downloads/WB204/` the Workbench 2.04 disks (found 2026-10-16).
 - **Firmware (host):** the line framing, the state machine (connect, list, file, go/err, ok/err, ping) and the chunk
   loop against a fake socket. The TEST build is installed with the Amiga off.
 - **Server:**
