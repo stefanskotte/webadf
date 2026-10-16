@@ -2662,6 +2662,14 @@ separately.
     - Verified bit-exact against the reference lz4 library on the host, as tools/netloop does for RLE.
     - The decoder's target is at least the measured third-party figure: 300-510 KB/s on a 7 MHz 68000, with an
       output-end bounds guard.
+- **Upload from the Amiga to the web app (operator, 2026-10-16).** The reverse of Phase 4: a file on the Amiga goes
+  into the web app, as a library disk if it is an ADF, otherwise as a plain file. Constraints known today:
+  - The board's local path caps frames from the Amiga to the board at 256 bytes (`PNET_LOCAL_A2B_MAX`, 3bm). That cap
+    was fine for Phase 4's acks, but bulk data from the Amiga needs it raised, or the frames sent out by radio.
+  - The firmware's upload to the server reuses the board's session, as write-back does.
+  - Amiga side: a `Send` beside `Receive` (same tools/receive core and protocol style), or a mode of Receive.
+  - Where the files land in the web app follows from the Upload page split (Phase 4 increment 3).
+  Not started.
 - **Drop files onto the Amiga's RAM: (operator, 2026-10-09; after PaulaNET works).** A drop zone in the web app that
   copies the dropped files straight into the running Amiga's RAM disk. Needs PaulaNET online first. Shape to
   decide then: a small Amiga-side receiver (started from the driver disk / WBStartup) that the board or the server
