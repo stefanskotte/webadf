@@ -17,3 +17,17 @@ describe('notesFromBody', () => {
     expect(notesFromBody(null)).toBeNull();
   });
 });
+
+describe('notesFromBody, the older body format (fw-1.8.1, verbatim from GitHub)', () => {
+  const body = [
+    'wifi-floppy firmware 1.8.1+g1f343d5 (sequence 50).',
+    '',
+    'TLS: outgoing record buffer 16 KB -> 4 KB (about 12 KB more free heap per connection); failed firmware downloads now log their cause',
+    '',
+    'These are the same signed files the web app installs over the air.',
+    'manifest.json carries the version, sequence, size, sha256 and the ed25519 signature of wifi_floppy.bin.',
+  ].join('\n');
+  it('cuts at the "same signed files" paragraph', () => {
+    expect(notesFromBody(body)).toBe('TLS: outgoing record buffer 16 KB -> 4 KB (about 12 KB more free heap per connection); failed firmware downloads now log their cause');
+  });
+});

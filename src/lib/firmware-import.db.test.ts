@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { Client } from 'pg';
 import { createHash, generateKeyPairSync, sign } from 'node:crypto';
-import { mkdtempSync, readFileSync, existsSync, rmSync } from 'node:fs';
+import { mkdtempSync, readFileSync, existsSync, rmSync, mkdirSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { eq } from 'drizzle-orm';
@@ -36,7 +36,7 @@ const { publicKey, privateKey } = generateKeyPairSync('ed25519');
 const keyId = signingKeyId(publicKey);
 const keys = { [keyId]: Buffer.from(publicKey.export({ format: 'jwk' }).x!, 'base64url').toString('hex') };
 
-interface Rel { tag: string; bin: Buffer; manifest: Record<string, unknown>; body: string; tamper?: boolean; draft?: boolean }
+interface Rel { tag: string; bin: Buffer; manifest: Record<string, unknown>; body: string; tamper?: boolean; draft?: boolean; binHeaderLength?: number; bigBin?: Buffer; manifestStatus?: number }
 function release(semver: string, build: string, sequence: number, opts: { notes?: string | null; manifestNotes?: boolean; security?: boolean } = {}): Rel {
   const version = `${semver}+g${build}`;
   const bin = Buffer.from(`firmware image ${version}`);
@@ -69,9 +69,9 @@ function fakeGithub(rels: Rel[], listStatus = 200) {
     const m = /^https:\/\/dl\.test\/([^/]+)\/(.+)$/.exec(u);
     const r = m && rels.find((x) => x.tag === m[1]);
     if (!r) return new Response('nope', { status: 404 });
-    if (m![2] === 'manifest.json') return Response.json(r.manifest);
-    const bytes = r.tamper ? Buffer.concat([r.bin, Buffer.from('!')]) : r.bin;
-    return new Response(new Uint8Array(bytes));
+    if (m![2] === 'manifest.json') return r.manifestStatus ? new Response('x', { status: r.manifestStatus }) : Response.json(r.manifest);
+    const bytes = r.bigBin ?? (r.tamper ? Buffer.concat([r.bin, Buffer.from('!')]) : r.bin);
+    return new Response(new Uint8Array(bytes), r.binHeaderLength ? { headers: { 'content-length': String(r.binHeaderLength) } } : undefined);
   }) as typeof fetch;
   return { impl, calls };
 }
@@ -147,5 +147,42 @@ describe('runFirmwareImport', () => {
     const res = await run(fakeGithub([r100, r120, old]).impl);
     expect(res.imported).toEqual(['0.9.0+geee']);
     expect((await rows()).map((x) => x.sequence).sort((a, b) => a - b)).toEqual([9, 10, 12]);
+  });
+
+  it('keeps importing newer releases when one release cannot be written', async () => {
+    const blocked = release('0.5.0', 'fff', 5);
+    const fine = release('0.6.0', 'ggg', 6);
+    mkdirSync(join(storageDir, 'firmware', '0.5.0+gfff.bin'), { recursive: true }); // the store cannot put over a directory
+    const res = await run(fakeGithub([blocked, fine]).impl);
+    expect(res.imported).toEqual(['0.6.0+gggg']);
+    expect(res.skipped.map((x) => x.tag)).toEqual(['fw-0.5.0']);
+    expect(res.skipped[0].reason.length).toBeGreaterThan(0);
+  });
+
+  it('replaces an existing blob holding different bytes with the verified bytes', async () => {
+    const rel = release('0.7.0', 'hhh', 7);
+    mkdirSync(join(storageDir, 'firmware'), { recursive: true });
+    writeFileSync(join(storageDir, 'firmware/0.7.0+ghhh.bin'), 'poisoned');
+    const res = await run(fakeGithub([rel]).impl);
+    expect(res.imported).toEqual(['0.7.0+ghhh']);
+    const [row] = await getDb().select().from(firmwareReleases).where(eq(firmwareReleases.semver, '0.7.0'));
+    const held = readFileSync(join(storageDir, row.blobPath));
+    expect(held.equals(rel.bin)).toBe(true);
+    expect(createHash('sha256').update(held).digest('hex')).toBe(row.sha256);
+  });
+
+  it('refuses an image over 2 MB, by content-length and by actual length, before verifying', async () => {
+    const byHeader = { ...release('0.8.0', 'iii', 8), binHeaderLength: 3 * 1024 * 1024 };
+    const byBytes = { ...release('0.8.1', 'jjj', 81), bigBin: Buffer.alloc(2 * 1024 * 1024 + 1) };
+    const res = await run(fakeGithub([byHeader, byBytes]).impl);
+    expect(res.imported).toEqual([]);
+    expect(res.skipped).toHaveLength(2);
+    for (const s of res.skipped) expect(s.reason).toMatch(/2 MB|too large|limit/);
+  });
+
+  it('skips a release whose manifest download fails', async () => {
+    const bad = { ...release('0.8.2', 'kkk', 82), manifestStatus: 502 };
+    const res = await run(fakeGithub([bad]).impl);
+    expect(res.skipped).toEqual([{ tag: 'fw-0.8.2', reason: 'manifest.json download answered 502' }]);
   });
 });

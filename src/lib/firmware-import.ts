@@ -7,13 +7,14 @@ import { parseAllowlist } from '@/lib/superadmin-allowlist';
 import { importRelease } from '@/lib/firmware-releases';
 import { parseReleaseManifest, verifyRelease, type ReleaseManifest } from '@/lib/firmware-verify';
 import { FIRMWARE_PUBLIC_KEYS } from '@/lib/firmware-keys';
+import { FIRMWARE_MAX_BYTES } from '@/lib/firmware-manifest';
 import { webadfUserAgent } from '@/lib/user-agent';
 
 export interface FirmwareImportResult { imported: string[]; skipped: { tag: string; reason: string }[]; waiting?: string; error?: string }
 const TAG = /^fw-(\d+\.\d+\.\d+)$/;
 // githubReleasePlan's body: "wifi-floppy firmware <v> (sequence N)." / notes / "First install: ..." / boilerplate.
 const HEADER = /^wifi-floppy firmware [^\n]*\(sequence \d+\)\.[ \t]*(\r?\n|$)/;
-const AFTER_NOTES = /^(First install:|wifi_floppy\.bin is the signed image)/m;
+const AFTER_NOTES = /^(First install:|These are the same signed files|wifi_floppy\.bin is the signed image)/m;
 
 /** The notes the publisher wrote, without the header line and boilerplate githubReleasePlan wraps around them. */
 export function notesFromBody(body: string | null): string | null {
@@ -34,6 +35,7 @@ export async function runFirmwareImport(opts: {
   const log = opts.log ?? ((l) => console.log(l));
   const ua = webadfUserAgent();
   const headers = { accept: 'application/vnd.github+json', 'user-agent': ua };
+  const get = (u: string, h: Record<string, string>) => f(u, { headers: h, signal: AbortSignal.timeout(60_000) });
   const result: FirmwareImportResult = { imported: [], skipped: [] };
   const db = getDb();
 
@@ -45,7 +47,7 @@ export async function runFirmwareImport(opts: {
 
   let releases: GhRelease[];
   try {
-    const r = await f(`https://api.github.com/repos/${repo}/releases?per_page=100`, { headers });
+    const r = await get(`https://api.github.com/repos/${repo}/releases?per_page=100`, headers);
     if (!r.ok) {
       const limited = r.status === 403 && r.headers.get('x-ratelimit-remaining') === '0';
       throw new Error(limited ? 'GitHub API rate limit reached' : `GitHub API answered ${r.status}`);
@@ -65,13 +67,18 @@ export async function runFirmwareImport(opts: {
     const mUrl = asset('manifest.json');
     if (!mUrl) { skip('no manifest.json'); continue; }
     try {
-      const m = parseReleaseManifest(await (await f(mUrl, { headers: { 'user-agent': ua } })).json());
+      const mRes = await get(mUrl, { 'user-agent': ua });
+      if (!mRes.ok) { skip(`manifest.json download answered ${mRes.status}`); continue; }
+      const m = parseReleaseManifest(await mRes.json());
       if (typeof m === 'string') { skip(m); continue; }
       const binUrl = asset(m.file);
       if (!binUrl) { skip(`no ${m.file} asset`); continue; }
-      const res = await f(binUrl, { headers: { 'user-agent': ua } });
+      const res = await get(binUrl, { 'user-agent': ua });
       if (!res.ok) { skip(`${m.file} download answered ${res.status}`); continue; }
+      const declared = Number(res.headers.get('content-length'));
+      if (declared > FIRMWARE_MAX_BYTES) { skip(`${m.file} is ${declared} bytes; the limit is 2 MB`); continue; }
       const bin = Buffer.from(await res.arrayBuffer());
+      if (bin.length > FIRMWARE_MAX_BYTES) { skip(`${m.file} is ${bin.length} bytes; the limit is 2 MB`); continue; }
       const bad = verifyRelease(m, bin, opts.keys ?? FIRMWARE_PUBLIC_KEYS);
       if (bad) { skip(bad); continue; }
       if (m.semver !== t[1]) { skip(`tag ${rel.tag_name} but manifest semver ${m.semver}`); continue; }
@@ -80,15 +87,21 @@ export async function runFirmwareImport(opts: {
   }
 
   for (const c of candidates.sort((a, b) => a.m.sequence - b.m.sequence)) {
-    const blobPath = `firmware/${c.m.version}.bin`;
-    if (!(await firmwareStore.stat(blobPath))) await firmwareStore.put(blobPath, c.bin);
-    const ok = await importRelease({
-      version: c.m.version, semver: c.m.semver, sequence: c.m.sequence, sha256: c.m.sha256, sizeBytes: c.bin.length,
-      blobPath, signature: c.m.signature, signingKeyId: c.m.signingKeyId, signatureFormat: c.m.signatureFormat,
-      notes: c.m.notes !== undefined ? c.m.notes : notesFromBody(c.body), security: c.m.security ?? false,
-    }, publisher.id);
-    if (ok) { result.imported.push(c.m.version); log(`firmware import: ${c.tag} imported as ${c.m.version} (sequence ${c.m.sequence})`); }
-    else result.skipped.push({ tag: c.tag, reason: 'version or sequence already present' });
+    try {
+      const blobPath = `firmware/${c.m.version}.bin`;
+      // Always the verified bytes: whatever already sits at this path is not trusted (put overwrites by default).
+      await firmwareStore.put(blobPath, c.bin);
+      const ok = await importRelease({
+        version: c.m.version, semver: c.m.semver, sequence: c.m.sequence, sha256: c.m.sha256, sizeBytes: c.bin.length,
+        blobPath, signature: c.m.signature, signingKeyId: c.m.signingKeyId, signatureFormat: c.m.signatureFormat,
+        notes: c.m.notes !== undefined ? c.m.notes : notesFromBody(c.body), security: c.m.security ?? false,
+      }, publisher.id);
+      if (ok) { result.imported.push(c.m.version); log(`firmware import: ${c.tag} imported as ${c.m.version} (sequence ${c.m.sequence})`); }
+      else result.skipped.push({ tag: c.tag, reason: 'version or sequence already present' });
+    } catch (e) {
+      result.skipped.push({ tag: c.tag, reason: (e as Error).message });
+      log(`firmware import: ${c.tag}: ${(e as Error).message}`);
+    }
   }
   return result;
 }
