@@ -15,7 +15,8 @@ copy.
 ## 2. Install
 
 Make a folder and download two files into it, from the newest release. Releases are the `web-X.Y.Z` tags: look up
-the newest one at <https://github.com/stefanskotte/webadf/releases/latest> and put it in place of `web-X.Y.Z` below
+the newest one at <https://github.com/stefanskotte/webadf/tags> (only the `web-*` tags; the `fw-*` ones are board
+firmware, and so is GitHub's "latest release") and put it in place of `web-X.Y.Z` below
 (take them from a release, not from master: master's `compose.yaml` may already expect an image that is not released).
 
 ```bash
