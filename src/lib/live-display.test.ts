@@ -6,7 +6,7 @@ import {
 const empty: LiveDisplayFields = {
   rssi: -55, mountedSha256: null, mountedGame: null, mountedDiskNo: null,
   mountedLabel: null, mountedSourceFilename: null, mountedDiskCount: null, mountedWriteProtected: null, nfcReader: null,
-  firmwareVersion: '1.14.0+g5f5a1b3',
+  firmwareVersion: '1.15.0+g5f5a1b3',
 };
 const mounted: LiveDisplayFields = {
   ...empty, mountedSha256: 'ab', mountedGame: 'Workbench 3.1', mountedDiskNo: 2,
@@ -78,9 +78,10 @@ describe('liveDisplayState', () => {
 });
 
 describe('liveDisplayState on firmware before NO_DISK_WORD_FW: the board still prints "Disk n/c label"', () => {
-  it('the boundary is 1.14.0, the version that drops the word', () => {
-    expect(NO_DISK_WORD_FW).toBe('1.14.0');
-    expect(liveDisplayState({ ...mounted, firmwareVersion: '1.14.0+gabcdef0' }, true, 0).detail).toBe('2/6 Extras');
+  it('the boundary is 1.15.0, the first release that drops the word (1.14.0 TEST builds still print it)', () => {
+    expect(NO_DISK_WORD_FW).toBe('1.15.0');
+    expect(liveDisplayState({ ...mounted, firmwareVersion: '1.15.0+gabcdef0' }, true, 0).detail).toBe('2/6 Extras');
+    expect(liveDisplayState({ ...mounted, firmwareVersion: '1.14.0+gd334f6c' }, true, 0).detail).toBe('Disk 2/6 Extras');
     expect(liveDisplayState({ ...mounted, firmwareVersion: '1.15.2+gabcdef0' }, true, 0).detail).toBe('2/6 Extras');
   });
 

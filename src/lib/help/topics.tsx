@@ -201,7 +201,7 @@ export const HELP_TOPICS = {
         <p>
           <strong>On the board&apos;s screen.</strong> A mounted disk of a set shows as <em>2/13</em> followed by its
           name, such as <em>2/13 Locale</em>: the disk&apos;s Amiga volume name, else the name of the file you
-          uploaded, without its extension. The screen has room for about 16 characters of it. Firmware before 1.14.0
+          uploaded, without its extension. The screen has room for about 16 characters of it. Firmware before 1.15.0
           shows <em>Disk 2/13</em> instead.
         </p>
       </>
