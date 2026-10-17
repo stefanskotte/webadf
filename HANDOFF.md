@@ -1478,6 +1478,19 @@ separately.
 
 ### 4. Backlog, not blocking anything
 
+- **NFC: tags detected only rarely -- a regression** (operator, 2026-10-17): "not being detected - only rarely. Was
+  working in previous firmwares." Operator: it started "a bit after we switched to the new pcb" (rev B, ~2026-10-02),
+  so NOT today's 1.15.0. Known history: "NFC on J4 flaky" was noted 2026-10-03; both Si512 modules died
+  (10-03, replacement by 10-08); fw 1.7.5 duty-cycles the RF field (3bb) and was never proven on a new module. So
+  suspect rev B's J4 wiring/pull-ups/power to the module and the 1.7.5 duty cycle (poll window too short for a
+  tag to answer) before any firmware since. Measure first: serial log of poll/field timing and I2C errors, the
+  same module on rev A2 vs rev B, and a build with the duty cycle off.
+
+- **Browse: accept .lzh dropped onto a disk** (operator, 2026-10-17): dropping an `.lzh` archive onto a disk's Browse
+  (file operations, HANDOFF "ADF file operations shipped") should unpack it into the folder it was dropped on, the
+  way the library upload already understands .lzh (3bd); show what will be written before it is, and refuse what
+  does not fit.
+
 - **OLED: rotate the display** (operator, 2026-10-17): a rotation setting (at least 180°, so a board mounted upside
   down reads right) in the web app's display configuration, stored with the board's display settings and applied by
   the firmware (SSD1306/SH1106 segment remap + COM scan direction for 180°); the web preview must rotate with it.
