@@ -82,6 +82,12 @@ typedef struct {
  *  layout, same 1024 bytes. */
 void display_render(const display_state_t *s, const layout_t *l, uint8_t fb[DISP_FB_MAX]);
 
+/** The status icon's blink (1.15.0): WIFI and ERROR change picture every
+ *  DISP_BLINK_TICKS ticks of display_state_t.tick -- main.c advances it every
+ *  120 ms (LEMMING_STEP_MS), so 480 ms a phase, about 1 Hz. A function of the
+ *  state, never of a clock, so a given frame is reproducible. */
+#define DISP_BLINK_TICKS 4
+
 /** READY, DOWNLOAD, VERIFY and LOADED: the states a custom layout draws. */
 bool display_state_is_running(disp_status_t st);
 
@@ -90,7 +96,9 @@ const char *disp_status_word(disp_status_t s);
 
 /** The layout to draw `s` with: `custom` in a running state, otherwise
  *  layout_builtin(custom's panel) -- boot, portal, connecting and error
- *  screens never depend on a user's layout. */
+ *  screens never depend on a user's layout, with one exception: when
+ *  `custom`'s status element (shown or hidden) is the icon, they draw
+ *  layout_builtin_icon instead, so the icon choice reaches all eight states. */
 const layout_t *display_layout_for(const display_state_t *s, const layout_t *custom);
 
 /**

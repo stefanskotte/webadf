@@ -11,7 +11,7 @@ int panel_height(panel_t p) { return p == PANEL_128x64 ? 64 : 32; }
 void layout_el_size(const layout_el_t *e, int *w, int *h) {
     int bw = 0, bh = LAYOUT_LINE_H;
     switch (e->id) {
-        case EL_STATUS:   bw = STATUS_MAX_CHARS * LAYOUT_ADVANCE; break;
+        case EL_STATUS:   bw = e->opt == STATUS_OPT_ICON ? STATUS_ICON_W : STATUS_MAX_CHARS * LAYOUT_ADVANCE; break;
         case EL_WIFI:     bw = 11; break;
         case EL_WRITE:    bw = 8;  break;
         case EL_LEMMING:  bw = 8;  break;
@@ -68,6 +68,13 @@ bool layout_decode(const uint8_t *b, size_t len, layout_t *out, char *why, size_
             case EL_DOWNLOAD:
                 if (e.w != 0 && e.w < 8)     return no(why, n, "download: bar must be 0 or at least 8 wide");
                 if (e.opt != 0)              return no(why, n, "download: opt must be 0");
+                break;
+            case EL_STATUS:
+                // opt: STATUS_OPT_WORD or STATUS_OPT_ICON (1.15.0). Any other
+                // value is a later firmware's and draws the word -- accepted,
+                // not refused, for the same reason an unknown element is
+                // skipped above.
+                if (e.w != 0)                return no(why, n, "w must be 0 for this element");
                 break;
             default:
                 if (e.w != 0)                return no(why, n, "w must be 0 for this element");
@@ -132,17 +139,21 @@ const layout_t *layout_default(panel_t p) { return p == PANEL_128x64 ? &DEFAULT_
 
 // DEFAULT_32's elements on a 128x64 panel: the rows below 32 stay dark, as
 // they always have on these screens (the 3ax ruling: top, not centred).
-static const layout_t BUILTIN_64 = {
-    PANEL_128x64, 8, {
-        { EL_WIFI,     1, 1,   0,  0,   0, 0 },
-        { EL_LEMMING,  1, 1, 120,  0,   0, 0 },
-        { EL_WRITE,    1, 1, 110,  0,   0, 0 },
-        { EL_STATUS,   1, 1,  14,  0,   0, 0 },
-        { EL_TITLE,    1, 1,   0,  8, 128, 2 },
-        { EL_TRACK,    1, 1,  98, 24,   0, 0 },
-        { EL_DOWNLOAD, 1, 1, 104, 24,   0, 0 },
-        { EL_DETAIL,   1, 1,   0, 24, 128, 0 },
+// `status_opt` is the status element's option: the word, or (1.15.0) the icon
+// for a board whose custom layout chose it.
+#define BUILTIN_ELEMENTS(status_opt) {                    \
+        { EL_WIFI,     1, 1,   0,  0,   0, 0 },           \
+        { EL_LEMMING,  1, 1, 120,  0,   0, 0 },           \
+        { EL_WRITE,    1, 1, 110,  0,   0, 0 },           \
+        { EL_STATUS,   1, 1,  14,  0,   0, (status_opt) },\
+        { EL_TITLE,    1, 1,   0,  8, 128, 2 },           \
+        { EL_TRACK,    1, 1,  98, 24,   0, 0 },           \
+        { EL_DOWNLOAD, 1, 1, 104, 24,   0, 0 },           \
+        { EL_DETAIL,   1, 1,   0, 24, 128, 0 },           \
     }
-};
+static const layout_t BUILTIN_64      = { PANEL_128x64, 8, BUILTIN_ELEMENTS(STATUS_OPT_WORD) };
+static const layout_t BUILTIN_32_ICON = { PANEL_128x32, 8, BUILTIN_ELEMENTS(STATUS_OPT_ICON) };
+static const layout_t BUILTIN_64_ICON = { PANEL_128x64, 8, BUILTIN_ELEMENTS(STATUS_OPT_ICON) };
 
 const layout_t *layout_builtin(panel_t p) { return p == PANEL_128x64 ? &BUILTIN_64 : &DEFAULT_32; }
+const layout_t *layout_builtin_icon(panel_t p) { return p == PANEL_128x64 ? &BUILTIN_64_ICON : &BUILTIN_32_ICON; }
