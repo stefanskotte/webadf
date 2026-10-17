@@ -11,7 +11,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import type { PollTick, DesiredState } from '@/lib/mount';
 import { DC_TITLE_MAX } from '@/lib/device-limits';
-import { PAULANET_DISK_SHA256 } from '@/lib/paulanet-disk';
+import { PAULANET_DISK_PREVIOUS, PAULANET_DISK_SHA256 } from '@/lib/paulanet-disk';
 
 const requireDevice = vi.fn<(r: Request) => Promise<{ deviceId: string; orgId: string }>>(
   async () => ({ deviceId: 'dev-1', orgId: 'org-1' }),
@@ -62,7 +62,7 @@ const get = (qs = '') => new Request(`http://test/api/device/poll${qs}`);
 const baseTick = (over: Partial<PollTick> = {}): PollTick => ({
   version: 1, instructionVersion: 0, instructionAck: 0, nfcWriteSeq: 0, displayVersion: 0, secondDriveVersion: 0, secondDrive: 'off',
   secondDriveReported: null, secondDriveAppliedVersion: null, netNextSentVersion: null,
-  df1Version: 0, sendVersion: 0, ...over,
+  df1Version: 0, sendVersion: 0, df1Sha256: null, netDriverSeenAt: null, ...over,
 });
 
 beforeEach(() => {
@@ -662,6 +662,23 @@ describe('GET /api/device/poll -- netPick: the driver disk as DF1\'s pick (fw 1.
     expect(body.next).toEqual({ diskId: 'paulanet', sha256: PAULANET_DISK_SHA256, diskNo: 1 });
     expect(body.df1).toEqual({ v: 5, sha256: null });
     expect(markNetNextSent).toHaveBeenCalledWith('dev-1', 3);
+  });
+
+  it('a netPick board holding the older driver disk keeps it while its driver talks, and gets the new one after (R16)', async () => {
+    const { GET } = await import('./route');
+    readDf1ForPoll.mockResolvedValue({ v: 6, sha256: null });
+    readPollTick.mockResolvedValue(baseTick({ instructionVersion: 1, instructionAck: 0, ...applied, netNextSentVersion: 3,
+      df1Version: 6, df1Sha256: PAULANET_DISK_PREVIOUS, netDriverSeenAt: new Date(Date.now() - 10_000) }));
+    expect((await (await GET(get('?since=1&driveAck=3&df1Ack=6&netPick=1'))).json()).df1).toEqual({ v: 6, sha256: PAULANET_DISK_PREVIOUS });
+    readPollTick.mockResolvedValue(baseTick({ instructionVersion: 1, instructionAck: 0, ...applied, netNextSentVersion: 3,
+      df1Version: 6, df1Sha256: PAULANET_DISK_PREVIOUS, netDriverSeenAt: new Date(Date.now() - 600_000) }));
+    expect((await (await GET(get('?since=1&driveAck=3&df1Ack=6&netPick=1'))).json()).df1).toEqual({ v: 6, sha256: PAULANET_DISK_SHA256 });
+  });
+  it('a board without netPick gets the same choice in next', async () => {
+    const { GET } = await import('./route');
+    readPollTick.mockResolvedValue(baseTick({ instructionVersion: 1, instructionAck: 0, ...applied, netNextSentVersion: 3,
+      df1Sha256: PAULANET_DISK_PREVIOUS, netDriverSeenAt: new Date(Date.now() - 10_000) }));
+    expect((await (await GET(get('?since=1&driveAck=3'))).json()).next).toEqual({ diskId: 'paulanet', sha256: PAULANET_DISK_PREVIOUS, diskNo: 1 });
   });
 });
 

@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
 import {
   PAULANET_DISK_SHA256, PAULANET_NEXT, ALWAYS_REFERENCED_BLOBS, servedWithoutEntitlement, netApplied, netNextRearm,
-  netKeepsDriverDisk,
+  netKeepsDriverDisk, PAULANET_DISK_PREVIOUS, driverDiskFor, isDriverDisk, netNextRearmCandidate,
 } from './paulanet-disk';
 
 describe('the PaulaNET driver disk', () => {
@@ -72,5 +72,28 @@ describe('netNextRearm (Task 8 review I1): a lost wake response is retried, at m
     for (const m of ['df1', 'off']) {
       expect(netNextRearm({ ...row, secondDrive: m }, { ...report, secondDrive: m }, now)).toBe(false);
     }
+  });
+});
+
+describe('the driver disk rollout (plan 2026-10-17 R16)', () => {
+  const NOW = 1_800_000_000_000;
+  it('keeps the older disk while the Amiga\'s driver talks, never swapping DF1 under it', () => {
+    expect(driverDiskFor({ df1Sha256: PAULANET_DISK_PREVIOUS, netDriverSeenAt: new Date(NOW - 10_000) }, NOW)).toBe(PAULANET_DISK_PREVIOUS);
+  });
+  it('names the new disk once the driver is quiet, or to a board that holds neither', () => {
+    expect(driverDiskFor({ df1Sha256: PAULANET_DISK_PREVIOUS, netDriverSeenAt: new Date(NOW - 200_000) }, NOW)).toBe(PAULANET_DISK_SHA256);
+    expect(driverDiskFor({ df1Sha256: PAULANET_DISK_PREVIOUS, netDriverSeenAt: null }, NOW)).toBe(PAULANET_DISK_SHA256);
+    expect(driverDiskFor({ df1Sha256: null, netDriverSeenAt: new Date(NOW) }, NOW)).toBe(PAULANET_DISK_SHA256);
+    expect(driverDiskFor({ df1Sha256: PAULANET_DISK_SHA256, netDriverSeenAt: new Date(NOW) }, NOW)).toBe(PAULANET_DISK_SHA256);
+  });
+  it('serves and keeps both digests, and nothing else', () => {
+    expect(isDriverDisk(PAULANET_DISK_PREVIOUS) && isDriverDisk(PAULANET_DISK_SHA256)).toBe(true);
+    expect(isDriverDisk('a'.repeat(64)) || isDriverDisk(null)).toBe(false);
+    expect(servedWithoutEntitlement(PAULANET_DISK_PREVIOUS)).toBe(true);
+    expect([...ALWAYS_REFERENCED_BLOBS].sort()).toEqual([PAULANET_DISK_PREVIOUS, PAULANET_DISK_SHA256].sort());
+  });
+  it('a board holding the older disk stays a re-arm candidate, so the new one goes in once the Amiga is off', () => {
+    expect(netNextRearmCandidate({ secondDrive: 'net', driveVersion: 1, df1Sha256: PAULANET_DISK_PREVIOUS })).toBe(true);
+    expect(netNextRearmCandidate({ secondDrive: 'net', driveVersion: 1, df1Sha256: PAULANET_DISK_SHA256 })).toBe(false);
   });
 });

@@ -162,6 +162,9 @@ export interface PollTick {
   df1Version: number;
   /** The send queue's cursor (PaulaNET Phase 4): compared against the board's ?xferAck=. */
   sendVersion: number;
+  /** What DF1 holds and when the Amiga's driver last read: driverDiskFor's inputs (plan 2026-10-17 R16). */
+  df1Sha256: string | null;
+  netDriverSeenAt: Date | null;
 }
 
 /**
@@ -187,6 +190,8 @@ export async function readPollTick(deviceId: string): Promise<PollTick | null> {
       netNextSentVersion: devices.netNextSentVersion,
       df1Version: devices.df1Version,
       sendVersion: devices.sendVersion,
+      df1Sha256: devices.df1Sha256,
+      netDriverSeenAt: devices.netDriverSeenAt,
     })
     .from(devices)
     .where(eq(devices.id, deviceId))

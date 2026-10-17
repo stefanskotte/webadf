@@ -9,7 +9,7 @@ import { readDf1ForPoll } from '@/lib/df1-store';
 import { DC_TITLE_MAX } from '@/lib/device-limits';
 import { getDb } from '@/db';
 import { recordSendRx } from '@/lib/transfers';
-import { PAULANET_DISK_SHA256, PAULANET_NEXT, netApplied, netKeepsDriverDisk } from '@/lib/paulanet-disk';
+import { PAULANET_NEXT, driverDiskFor, netApplied, netKeepsDriverDisk } from '@/lib/paulanet-disk';
 
 // Holds up to 25 s. maxDuration covers the hold plus slack; the platform
 // default would cut the connection mid-hold.
@@ -216,7 +216,9 @@ export async function GET(request: Request) {
       // disk of the set in every mode. The one-shot wake then also moves the DF1 cursor, BEFORE df1 is read, so the
       // body that first names the driver disk carries a cursor the board has not acked.
       const netNext = netNow || (driveAck !== null && netKeepsDriverDisk(tick));
-      const next = netNext && !netPick ? { ...PAULANET_NEXT }
+      // Which driver disk (R16): the older one stays while the Amiga's driver talks, never swapped under it.
+      const driverSha = driverDiskFor(tick, Date.now());
+      const next = netNext && !netPick ? { ...PAULANET_NEXT, sha256: driverSha }
         : state.desired ? await readNextForPoll(device.deviceId, device.orgId)
         : undefined;
       if (netNow && tick.netNextSentVersion !== tick.secondDriveVersion) {
@@ -231,7 +233,7 @@ export async function GET(request: Request) {
       // whatever 200 reaches it, so a re-paired board's higher ack resets at its first one.
       // In Network mode a netPick board's pick is the driver disk (no disk row: the server's own image).
       const df1Read = df1Ack !== null ? await readDf1ForPoll(device.deviceId) : null;
-      const df1 = df1Read && netPick && netNext ? { v: df1Read.v, sha256: PAULANET_DISK_SHA256 } : df1Read;
+      const df1 = df1Read && netPick && netNext ? { v: df1Read.v, sha256: driverSha } : df1Read;
       const update = firmwareMoved ? await readFirmwareInstruction(device.deviceId) : null;
       // Same pattern as `update`: resolved only when the cursor says the
       // board has not caught up, never on every tick. nfcWriteForPoll turns

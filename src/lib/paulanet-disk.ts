@@ -9,23 +9,43 @@ export const PAULANET_DISK_SHA256 = 'fb363d45c3b6c26592ada627c1cddc68b32c93c003a
 export const PAULANET_DISK_BYTES = 901_120;
 /**
  * The driver disk before Receive (Phase 3, until plan 2026-10-17). Still valid: a board whose Amiga is online keeps it
- * until the Amiga is off (driverDiskFor, R16), so it is served, kept by the blob GC and named on the card.
+ * until the Amiga is off (driverDiskFor, R16), so it is served (isDriverDisk: the board's net route and the person's
+ * /api/paulanet-disk?sha256=), kept by the blob GC (ALWAYS_REFERENCED_BLOBS) and named on the card (driverDiskLine).
  */
 export const PAULANET_DISK_PREVIOUS = '05170a83c279157fc50a2a9a595f4caf1ec194253127d93232f6fd5bfc008c9e';
 
 /** What the poll carries as DF1's `next` in Network mode to a board without netPick (plan 2026-10-12 ruling 12); a
- * netPick board (fw 1.12.1) gets the same digest as its DF1 pick (`df1`) instead. */
+ * netPick board (fw 1.12.1) gets the same digest as its DF1 pick (`df1`) instead. The poll replaces `sha256` with
+ * driverDiskFor's choice (R16), so this digest is the default, not always the one sent. */
 export const PAULANET_NEXT = { diskId: 'paulanet', sha256: PAULANET_DISK_SHA256, diskNo: 1 } as const;
 
-/** Digests the blob GC keeps although no row names them (blob-gc-run.ts). */
-export const ALWAYS_REFERENCED_BLOBS: readonly string[] = [PAULANET_DISK_SHA256];
+/** Two heartbeats (60 s each, DC_STATUS_PERIOD_MS): within this the Amiga's driver is "talking" (moved here from
+ *  network-checklist.ts so driverDiskFor can use it without an import cycle). */
+export const DRIVER_TALKING_MS = 120_000;
+
+/** Digests the blob GC keeps although no row names them (blob-gc-run.ts): both driver disks (R16). */
+export const ALWAYS_REFERENCED_BLOBS: readonly string[] = [PAULANET_DISK_SHA256, PAULANET_DISK_PREVIOUS];
+
+export const isDriverDisk = (sha: string | null): boolean => sha === PAULANET_DISK_SHA256 || sha === PAULANET_DISK_PREVIOUS;
 
 /**
- * The one image a board may fetch without its organization owning it -- and only from its own route,
- * /api/device/image/net/<sha256> (pre-flight I3), never from the library route /api/device/image/<sha256>.
+ * Which driver disk the poll names for DF1 in Network mode (R16). A board holding the older disk keeps it while
+ * the Amiga's driver talks, so DF1 is never swapped (shown empty for 1 s, then changed) under a running network;
+ * otherwise the new one. The 5-minute re-arm (netNextRearm) keeps waking such a board, so the new disk goes in
+ * within minutes of the Amiga being switched off.
+ */
+export function driverDiskFor(t: { df1Sha256: string | null; netDriverSeenAt: Date | null }, now: number): string {
+  const talking = t.netDriverSeenAt !== null && now - t.netDriverSeenAt.getTime() <= DRIVER_TALKING_MS;
+  return t.df1Sha256 === PAULANET_DISK_PREVIOUS && talking ? PAULANET_DISK_PREVIOUS : PAULANET_DISK_SHA256;
+}
+
+/**
+ * The driver disks (current and previous, R16): the only images a board may fetch without its organization owning
+ * them -- and only from its own route, /api/device/image/net/<sha256> (pre-flight I3), never from the library route
+ * /api/device/image/<sha256>.
  */
 export function servedWithoutEntitlement(sha256: string): boolean {
-  return sha256 === PAULANET_DISK_SHA256;
+  return isDriverDisk(sha256);
 }
 
 /**
@@ -83,7 +103,9 @@ export function netNextRearm(
     && (row.netNextRearmedAt === null || now.getTime() - row.netNextRearmedAt.getTime() >= NET_REARM_MIN_MS);
 }
 
-/** The report-only half of netNextRearm: lets recordStatus skip the row read for every other report. */
+/** The report-only half of netNextRearm: lets recordStatus skip the row read for every other report.
+ * A board holding PAULANET_DISK_PREVIOUS is a candidate on purpose: the re-arm is what delivers the new disk once the
+ * driver goes quiet (R16). */
 export function netNextRearmCandidate(
   report: { secondDrive?: string; driveVersion?: number; df1Sha256?: string | null },
 ): boolean {
