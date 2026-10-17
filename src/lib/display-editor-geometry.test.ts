@@ -10,6 +10,9 @@ const el = (p: Partial<ElementJson> & Pick<ElementJson, 'id'>): ElementJson =>
 describe('elementSize mirrors layout_el_size', () => {
   it('fixed sizes at 1x', () => {
     expect(elementSize(el({ id: 'status' }))).toEqual({ w: 48, h: 8 });
+    expect(elementSize(el({ id: 'status', opt: 1 }))).toEqual({ w: 8, h: 8 });     // the icon (1.15.0)
+    expect(elementSize(el({ id: 'status', opt: 1, scale: 2 }))).toEqual({ w: 16, h: 16 });
+    expect(elementSize(el({ id: 'status', opt: 7 }))).toEqual({ w: 48, h: 8 });    // unknown: the word
     expect(elementSize(el({ id: 'wifi' }))).toEqual({ w: 11, h: 8 });
     expect(elementSize(el({ id: 'write' }))).toEqual({ w: 8, h: 8 });
     expect(elementSize(el({ id: 'lemming' }))).toEqual({ w: 8, h: 8 });

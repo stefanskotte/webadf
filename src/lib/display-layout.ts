@@ -19,6 +19,27 @@ export const ELEMENT_NAMES = ['status', 'wifi', 'write', 'title', 'detail', 'tra
 export const NFC_ELEMENT_FIRMWARE = '1.10.0';
 export type ElementName = (typeof ELEMENT_NAMES)[number];
 
+/**
+ * The status element's opt (display_layout.h STATUS_OPT_*): the word, or an
+ * 8x8 icon in its place. Firmware before STATUS_ICON_FIRMWARE refuses a
+ * status opt other than 0 -- the whole layout, shown or hidden -- so the icon
+ * is only ever sent to a board that draws it. From 1.15.0 an opt the board
+ * does not know draws the word.
+ */
+export const STATUS_OPT = { word: 0, icon: 1 } as const;
+export const STATUS_ICON_FIRMWARE = '1.15.0';
+
+/**
+ * The oldest firmware that accepts `j`, beyond display layouts themselves
+ * (1.7.1): null when any board with layouts does. The status icon's minimum
+ * is the newer of the two, so it is checked first.
+ */
+export function layoutMinFirmware(j: LayoutJson): string | null {
+  if (j.elements.some((e) => e.id === 'status' && e.opt !== STATUS_OPT.word)) return STATUS_ICON_FIRMWARE;
+  if (j.elements.some((e) => e.id === 'nfc')) return NFC_ELEMENT_FIRMWARE;
+  return null;
+}
+
 export interface ElementJson {
   id: ElementName;
   visible: boolean;

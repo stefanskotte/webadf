@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import { readFile } from 'node:fs/promises';
-import { loadDisplayWasm, STATE_SIZE } from './display-wasm';
+import { loadDisplayWasm, STATE_SIZE, type DisplayWasm as DisplayWasmT } from './display-wasm';
 import { decodeLayout, encodeLayout } from './display-layout';
 
 const wasmBytes = () => readFile('public/display.wasm').then((b) => b.buffer.slice(b.byteOffset, b.byteOffset + b.byteLength) as ArrayBuffer);
@@ -66,6 +66,39 @@ describe('display wasm', () => {
       expect(golden.length).toBe(rows);
       expect(Buffer.from(fb.subarray(0, rows)).equals(golden)).toBe(true);
     });
+  }
+
+  // The status icon (firmware 1.15.0): the same pixels as test_display_icons.c's
+  // goldens, from the panel's default with status switched to the icon by the
+  // web encoder -- running states with that layout, built-in screens through
+  // display_layout_for, both blink phases.
+  const ICON_STATES: [string, Partial<Parameters<DisplayWasmT['render']>[0]>][] = [
+    ['icon_boot', { status: 'boot', title: 'wifi-floppy', detail: 'starting' }],
+    ['icon_portal', { status: 'portal', title: 'Setup needed', detail: 'wifi-floppy-6A38' }],
+    ['icon_wifi', { status: 'wifi', title: 'Connecting', detail: 'HomeNet', bars: 1 }],
+    ['icon_wifi_blink', { status: 'wifi', title: 'Connecting', detail: 'HomeNet', bars: 1, tick: 4 }],
+    ['icon_ready', { status: 'ready', title: 'no disk' }],
+    ['icon_download', { status: 'download', title: 'Workbench 3.1 Install', pct: 64 }],
+    ['icon_verify', { status: 'verify', title: 'Turrican' }],
+    ['icon_loaded', { status: 'loaded', title: 'Workbench 3.1 Install', detail: 'disk 1 of 6', showTrack: true, cyl: 42, writable: true }],
+    ['icon_error', { status: 'error', title: 'no route', bars: -1 }],
+    ['icon_error_blink', { status: 'error', title: 'no route', bars: -1, tick: 4 }],
+  ];
+  for (const panel of [0, 1] as const) {
+    for (const [name, over] of ICON_STATES) {
+      it(`renders ${name} on ${panel ? '128x64' : '128x32'} byte-identically to the firmware golden`, async () => {
+        const w = await loadDisplayWasm(await wasmBytes());
+        const base = decodeLayout(w.defaultBlob(panel));
+        const blob = encodeLayout({ ...base, elements: base.elements.map((e) => (e.id === 'status' ? { ...e, opt: 1 } : e)) });
+        expect(w.validate(blob)).toBeNull();
+        const fb = w.render({ status: 'ready', bars: 3, title: '', detail: '', showTrack: false, cyl: 0, maxCyl: 79,
+          pct: -1, tick: 0, writable: false, sync: 'synced', nfc: 'absent', ...over }, panel, blob);
+        const golden = await readFile(`wifi-floppy/firmware/test/fixtures/display_golden/${name}_${panel ? '64' : '32'}.fb`);
+        const rows = panel === 1 ? 1024 : 512;
+        expect(golden.length).toBe(rows);
+        expect(Buffer.from(fb.subarray(0, rows)).equals(golden)).toBe(true);
+      });
+    }
   }
 
   it('the defaults never draw the NFC icon, whatever the reader state', async () => {

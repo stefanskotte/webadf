@@ -4,7 +4,8 @@ import { useCallback, useEffect, useMemo, useRef, useState, useTransition } from
 import { useRouter } from 'next/navigation';
 import { loadDisplayWasm, type DisplayWasm, type PreviewState } from '@/lib/display-wasm';
 import {
-  decodeLayout, encodeLayout, NFC_ELEMENT_FIRMWARE, panelId, type ElementJson, type ElementName, type LayoutJson,
+  decodeLayout, encodeLayout, NFC_ELEMENT_FIRMWARE, panelId, STATUS_ICON_FIRMWARE, STATUS_OPT,
+  type ElementJson, type ElementName, type LayoutJson,
 } from '@/lib/display-layout';
 import {
   elementBox, hitTest, overlapping, panelHeight, placeElement, PANEL_W, statusLine,
@@ -35,6 +36,10 @@ const PREVIEWS = {
   readonly: 'Mounted, read-only',
   long: 'Long title',
   armed: 'Tag write armed',
+  // The start-up screens use the built-in layout, but show the status icon
+  // when this layout's status element chose it (display.c display_layout_for).
+  connecting: 'Connecting',
+  error: 'Error',
 } as const;
 type PreviewKey = keyof typeof PREVIEWS;
 
@@ -54,6 +59,9 @@ function previewState(key: PreviewKey, tick: number, reader: PreviewState['nfc']
     // What main.c shows while a tag write waits: the disk on the title line,
     // nfc_ui.h NFC_UI_ARMED_DETAIL below it, and the icon inverted.
     case 'armed': return { ...mounted, title: 'Turrican', detail: 'Tap tag to write', nfc: 'armed' };
+    // main.c's own strings for these screens.
+    case 'connecting': return { ...base, status: 'wifi', bars: 1, title: 'Connecting', detail: 'HomeNet' };
+    case 'error': return { ...base, status: 'error', bars: -1, title: 'no route' };
   }
 }
 
@@ -77,6 +85,24 @@ function withNfc(l: LayoutJson, supported: boolean): LayoutJson {
   return l;
 }
 
+/**
+ * The status element as the board will draw it: for a board that has the icon
+ * (1.15.0+) the word or the icon, and any other opt (a later firmware's) as the
+ * word it draws; for an older board, which refuses any opt but the word, the word.
+ */
+function withStatusStyle(l: LayoutJson, iconOk: boolean): LayoutJson {
+  return {
+    ...l,
+    elements: l.elements.map((e) => (e.id === 'status' && e.opt !== STATUS_OPT.word && !(iconOk && e.opt === STATUS_OPT.icon)
+      ? { ...e, opt: STATUS_OPT.word } : e)),
+  };
+}
+
+/** What a board can be sent: the nfc element and the status icon only where its firmware has them. */
+function forBoard(l: LayoutJson, device: Pick<DeviceListItem, 'displayNfcElement' | 'displayStatusIcon'>): LayoutJson {
+  return withStatusStyle(withNfc(l, device.displayNfcElement), device.displayStatusIcon);
+}
+
 export function fromBase64(s: string): Uint8Array {
   return Uint8Array.from(atob(s), (c) => c.charCodeAt(0));
 }
@@ -89,18 +115,18 @@ function normalise(l: LayoutJson): LayoutJson {
   return { ...l, elements: l.elements.map((e) => (e.id === 'title' && e.opt === 0 ? { ...e, opt: 1 } : e)) };
 }
 
-function defaultLayout(wasm: DisplayWasm, panel: LayoutJson['panel'], nfc: boolean): LayoutJson {
-  return withNfc(normalise(decodeLayout(wasm.defaultBlob(panelId(panel)))), nfc);
+function defaultLayout(wasm: DisplayWasm, panel: LayoutJson['panel'], device: DeviceListItem): LayoutJson {
+  return forBoard(normalise(decodeLayout(wasm.defaultBlob(panelId(panel)))), device);
 }
 
 /** What the board holds: its stored layout, or the built-in default for its panel when none is stored. */
 function boardLayout(device: DeviceListItem, wasm: DisplayWasm): LayoutJson {
   if (device.displayLayout) {
     try {
-      return withNfc(normalise(decodeLayout(fromBase64(device.displayLayout))), device.displayNfcElement);
+      return forBoard(normalise(decodeLayout(fromBase64(device.displayLayout))), device);
     } catch { /* unreadable: fall back to the default */ }
   }
-  return defaultLayout(wasm, device.displayPanel, device.displayNfcElement);
+  return defaultLayout(wasm, device.displayPanel, device);
 }
 
 const message = (e: unknown) => (e instanceof Error ? e.message : String(e));
@@ -192,10 +218,12 @@ function LoadedEditor({ device, wasm, onCancel }: { device: DeviceListItem; wasm
   const [preview, setPreview] = useState<PreviewKey>('writable');
   const reader: PreviewState['nfc'] = device.nfcReader === 'present' ? 'present' : 'absent';
   const nfcOk = device.displayNfcElement;
+  const iconOk = device.displayStatusIcon;
   const [tick, setTick] = useState(0);
   useEffect(() => {
-    // The lemming walks on the tick, as on the board.
-    const t = setInterval(() => setTick((n) => n + 1), 500);
+    // The lemming walks and the status icon blinks on the tick, at the
+    // board's own rate (main.c LEMMING_STEP_MS, 120 ms).
+    const t = setInterval(() => setTick((n) => n + 1), 120);
     return () => clearInterval(t);
   }, []);
   const [snap, setSnap] = useState(false);
@@ -378,7 +406,7 @@ function LoadedEditor({ device, wasm, onCancel }: { device: DeviceListItem; wasm
     const sent = layout;
     return send({ reset: true, panel: sent.panel }, () => {
       if (layoutRef.current !== sent) return;
-      setLayout(defaultLayout(wasm, sent.panel, nfcOk));
+      setLayout(defaultLayout(wasm, sent.panel, device));
       setDirty(false);
     });
   };
@@ -400,7 +428,7 @@ function LoadedEditor({ device, wasm, onCancel }: { device: DeviceListItem; wasm
         <label className="flex min-w-0 max-w-full flex-wrap items-center gap-1" style={{ color: 'var(--muted)' }}>
           Panel
           <select value={layout.panel} className={field} style={inputStyle} data-testid={`display-panel-${id}`}
-                  onChange={(ev) => edit(defaultLayout(wasm, ev.target.value === '128x64' ? '128x64' : '128x32', nfcOk))}>
+                  onChange={(ev) => edit(defaultLayout(wasm, ev.target.value === '128x64' ? '128x64' : '128x32', device))}>
             <option value="128x32">128×32</option>
             <option value="128x64">128×64</option>
           </select>
@@ -461,6 +489,24 @@ function LoadedEditor({ device, wasm, onCancel }: { device: DeviceListItem; wasm
                        onChange={(ev) => setEl(e.id, { w: num(ev.target.value) })} />
               </label>
             )}
+            {e.id === 'status' && (iconOk
+              ? (
+                <label className="flex items-center gap-1" style={{ color: 'var(--muted)' }}>
+                  as
+                  <select value={e.opt} className={field} style={inputStyle} data-testid="display-style-status"
+                          onChange={(ev) => setEl(e.id, { opt: ev.target.value === '1' ? STATUS_OPT.icon : STATUS_OPT.word })}>
+                    <option value={STATUS_OPT.word}>word</option>
+                    <option value={STATUS_OPT.icon}>icon</option>
+                  </select>
+                </label>
+              )
+              : (
+                // Both values of "can this board show the icon": a missing
+                // select would read as no such choice at all.
+                <span style={{ color: 'var(--muted)' }} data-testid={`display-status-icon-needs-fw-${id}`}>
+                  icon needs firmware {STATUS_ICON_FIRMWARE} or newer
+                </span>
+              ))}
             {e.id === 'title' && (
               <label className="flex items-center gap-1" style={{ color: 'var(--muted)' }}>
                 lines
