@@ -6,12 +6,13 @@
 // idea of where a box is -- the validator in the WebAssembly module is still
 // the one rule set that decides whether a layout fits.
 
-import type { ElementJson, LayoutJson } from './display-layout';
+import { STATUS_OPT, type ElementJson, type LayoutJson } from './display-layout';
 
 export const PANEL_W = 128;
 const ADVANCE = 6;          // LAYOUT_ADVANCE: glyph 5 + 1 column
 const LINE_H = 8;           // LAYOUT_LINE_H
 const STATUS_MAX_CHARS = 8; // "DOWNLOAD"
+const STATUS_ICON_W = 8;    // STATUS_ICON_W: the icon in place of the word (opt 1)
 const TRACK_MAX_CHARS = 5;  // "99/99"
 const PCT_MAX_CHARS = 4;    // "100%"
 
@@ -26,7 +27,7 @@ export function elementSize(e: ElementJson): { w: number; h: number } {
   let w = 0;
   let h = LINE_H;
   switch (e.id) {
-    case 'status': w = STATUS_MAX_CHARS * ADVANCE; break;
+    case 'status': w = e.opt === STATUS_OPT.icon ? STATUS_ICON_W : STATUS_MAX_CHARS * ADVANCE; break;
     case 'wifi': w = 11; break;
     case 'write': w = 8; break;
     case 'lemming': w = 8; break;

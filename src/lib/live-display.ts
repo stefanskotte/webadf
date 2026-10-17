@@ -6,10 +6,11 @@ import { firmwareAtLeast } from '@/lib/firmware-version';
 /**
  * The first firmware whose mounted line has no word "Disk": "3/13 Locale"
  * (nfc_ui_disk_line). Older firmware prints "Disk 3/13 Locale", and "Disk
- * 3/13 " -- its own trailing space -- with no name. A TEST build of 1.14.0
- * made before the change also says 1.14.0; it is drawn the new way.
+ * 3/13 " -- its own trailing space -- with no name. 1.15.0, the release that
+ * carries it: bench TEST builds of 1.14.0 exist both with and without it, and
+ * are drawn the old way.
  */
-export const NO_DISK_WORD_FW = '1.14.0';
+export const NO_DISK_WORD_FW = '1.15.0';
 
 /**
  * What a board's OLED is showing, as far as the server knows, in the shape

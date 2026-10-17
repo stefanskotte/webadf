@@ -107,6 +107,34 @@ describe('PATCH /api/devices/[id]/display', () => {
     expect(await res.json()).toEqual({ error: 'firmware_too_old', reason: 'The NFC icon needs firmware 1.10.0 or newer' });
   });
 
+  it('a status element drawn as the icon is stored only for firmware 1.15.0+ (shown or hidden)', async () => {
+    const { PATCH } = await import('./route');
+    for (const visible of [true, false]) {
+      saveDisplay.mockClear();
+      const good = await fixture('custom32_status_icon');
+      good.elements = good.elements.map((e) => (e.id === 'status' ? { ...e, visible } : e));
+      const res = await PATCH(patch(good), ctx());
+      expect(res.status).toBe(200);
+      expect(saveDisplay).toHaveBeenCalledWith('org-1', 'dev-1', '128x32', expect.any(Uint8Array), '1.15.0');
+    }
+  });
+
+  it('the icon and the nfc element together need the newer firmware of the two', async () => {
+    const { PATCH } = await import('./route');
+    const l = await fixture('custom32_status_icon');
+    const nfc = (await fixture('custom32_nfc')).elements.find((e) => e.id === 'nfc')!;
+    await PATCH(patch({ ...l, elements: [...l.elements, nfc] }), ctx());
+    expect(saveDisplay.mock.calls[0]![4]).toBe('1.15.0');
+  });
+
+  it('an older board refused over the status icon is told so: 409 naming 1.15.0', async () => {
+    saveDisplay.mockResolvedValue('firmware_too_old');
+    const { PATCH } = await import('./route');
+    const res = await PATCH(patch(await fixture('custom32_status_icon')), ctx());
+    expect(res.status).toBe(409);
+    expect(await res.json()).toEqual({ error: 'firmware_too_old', reason: 'The status icon needs firmware 1.15.0 or newer' });
+  });
+
   it('refuses a malformed body with 400 invalid_body before anything is stored', async () => {
     const { PATCH } = await import('./route');
     const res = await PATCH(patch({ panel: '128x48', elements: [] }), ctx());

@@ -31,6 +31,11 @@ int main(void) {
     l.el[l.n++] = (layout_el_t){ EL_NFC, 1, 1, 100, 0, 0, 0 };
     put_layout("custom32_nfc", &l);
 
+    // 1.15.0: the 128x32 default with its status element drawn as the icon.
+    l = *layout_default(PANEL_128x32);
+    for (int i = 0; i < l.n; i++) if (l.el[i].id == EL_STATUS) l.el[i].opt = STATUS_OPT_ICON;
+    put_layout("custom32_status_icon", &l);
+
     l = *layout_default(PANEL_128x32);
     for (int i = 0; i < l.n; i++) if (l.el[i].id == EL_TITLE) l.el[i].y = 20;
     put_layout("bad_bounds", &l);

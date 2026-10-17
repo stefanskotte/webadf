@@ -222,3 +222,45 @@ test('a board before 1.10.0 is not offered the NFC icon, and the server refuses 
   expect(await res.json()).toEqual({ error: 'firmware_too_old', reason: 'The NFC icon needs firmware 1.10.0 or newer' });
   expect((await deviceRow(deviceId)).displayVersion).toBe(1);
 });
+
+// The status icon (firmware 1.15.0): the status element drawn as an 8x8 icon
+// instead of the word. Older firmware refuses a status opt other than 0, so
+// the editor offers the choice only to a board reporting 1.15.0+.
+test('a 1.15.0 board can show the status as an icon; saved, the board receives opt 1', async ({ page, request }) => {
+  await signUpFresh(page);
+  const { deviceId, token } = await pairDevice(page, request);
+  await reportStatus(request, token, { displayLayouts: true, displayVersion: 0, firmwareVersion: '1.15.0+ge2etest' });
+
+  await openEditor(page, deviceId);
+  await expect(page.getByTestId(`display-status-icon-needs-fw-${deviceId}`)).toHaveCount(0);
+  const style = page.getByTestId('display-style-status');
+  await expect(style).toHaveValue('0');   // the word, as every default
+  await style.selectOption('1');
+  await expect(page.getByText('Unsaved changes')).toBeVisible();
+  await page.getByTestId(`display-save-${deviceId}`).click();
+  await expect(page.getByTestId(`display-status-${deviceId}`)).toHaveText('Waiting for the board');
+
+  const get = await request.get('/api/device/display', { headers: authHeader(token) });
+  expect(get.status()).toBe(200);
+  const body = Buffer.from(await get.body());
+  const el = decodeLayout(new Uint8Array(body.subarray(6))).elements.find((e) => e.id === 'status');
+  expect(el).toEqual({ id: 'status', visible: true, scale: 1, x: 14, y: 0, w: 0, opt: 1 });
+});
+
+test('a board before 1.15.0 is not offered the status icon, and the server refuses it', async ({ page, request }) => {
+  await signUpFresh(page);
+  const { deviceId, token } = await pairDevice(page, request);
+  await reportStatus(request, token, { displayLayouts: true, displayVersion: 0, firmwareVersion: '1.14.0+ge2etest' });
+
+  await openEditor(page, deviceId);
+  await expect(page.getByTestId(`display-status-icon-needs-fw-${deviceId}`))
+    .toHaveText('icon needs firmware 1.15.0 or newer');
+  await expect(page.getByTestId('display-style-status')).toHaveCount(0);
+
+  const withIcon = JSON.parse(readFileSync(
+    path.join(process.cwd(), 'wifi-floppy/firmware/test/fixtures/layouts/custom32_status_icon.json'), 'utf8'));
+  const res = await page.request.patch(`/api/devices/${deviceId}/display`, { data: withIcon });
+  expect(res.status()).toBe(409);
+  expect(await res.json()).toEqual({ error: 'firmware_too_old', reason: 'The status icon needs firmware 1.15.0 or newer' });
+  expect((await deviceRow(deviceId)).displayVersion).toBe(0);
+});

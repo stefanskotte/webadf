@@ -17,8 +17,8 @@ export type SaveDisplayOutcome = { version: number } | 'not_found' | 'firmware_t
  *
  * The blob arrives already validated by the board's own C validator; this
  * module never looks inside it. The caller does, for one thing: a layout that
- * lists an element older firmware does not know (the 'nfc' element, 1.10.0)
- * passes `minFirmware`, and the board's REPORTED version must be at least
+ * uses something older firmware does not know (the 'nfc' element, 1.10.0;
+ * the status icon, 1.15.0: display-layout.ts layoutMinFirmware) passes `minFirmware`, and the board's REPORTED version must be at least
  * that -- in the same WHERE, for the same reason as the capability.
  */
 export async function saveDisplay(

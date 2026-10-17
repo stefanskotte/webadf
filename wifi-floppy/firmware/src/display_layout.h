@@ -13,6 +13,14 @@
 #define LAYOUT_MAX_ELEMENTS  16
 #define LAYOUT_BLOB_MAX      (4 + 8 * LAYOUT_MAX_ELEMENTS)   // 132
 #define STATUS_MAX_CHARS     8     // "DOWNLOAD"
+// The status element's opt (1.15.0): the word, or an 8x8 icon in its place.
+// Any other value is a later firmware's option and draws the word, sized as
+// the word, so a layout saved for a newer board still shows here. Firmware
+// before 1.15.0 refuses a status opt other than 0 ("opt must be 0 for this
+// element"), so the web app stores the icon only for boards on 1.15.0+.
+#define STATUS_OPT_WORD      0
+#define STATUS_OPT_ICON      1
+#define STATUS_ICON_W        8
 #define TRACK_MAX_CHARS      5     // "99/99"; the renderer clamps both numbers to 0..99
 #define PCT_MAX_CHARS        4     // "100%"
 #define LAYOUT_ADVANCE       6     // glyph 5 + 1 column
@@ -42,5 +50,8 @@ const layout_t *layout_default(panel_t p);
  *  128x64's own default draws the title at 2x, ten characters a line, which
  *  cut "Setup needed" and "wifi-floppy" short (1.10.0). */
 const layout_t *layout_builtin(panel_t p);
+/** layout_builtin(p) with its status element drawn as the icon: the built-in
+ *  screens of a board whose custom layout chose the icon (1.15.0). */
+const layout_t *layout_builtin_icon(panel_t p);
 
 #endif

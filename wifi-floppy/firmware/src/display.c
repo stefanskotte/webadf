@@ -170,6 +170,54 @@ static const uint8_t CLOUD[3][8] = {
 #define NFC_W 8
 static const uint8_t NFC_MARK[8] = { 0x08, 0x24, 0x12, 0x92, 0x92, 0x12, 0x24, 0x08 };
 
+// THE STATUS ICON (1.15.0): the status element's 8x8 alternative to the
+// word, chosen per layout (STATUS_OPT_ICON). One picture per state, drawn
+// from the pictures below; the two states that want attention blink, and
+// neither blinks to a blank (the write glyph's rule: a state worth showing is
+// shown in both phases).
+//
+//   BOOT         SETUP        WIFI         WIFI, blink  READY
+//   ########     .#....#.     .######.     ........     #######.
+//   .#....#.     #..##..#     #......#     ........     #.#..#.#
+//   ..#..#..     #..##..#     ..####..     ........     #.#..#.#
+//   ...##...     .#.##.#.     .#....#.     ........     #.####.#
+//   ...##...     ...##...     ...##...     ........     #......#
+//   ..####..     ...##...     ..#..#..     ........     #......#
+//   .######.     ..####..     ........     ........     #......#
+//   ########     .######.     ...##...     ...##...     ########
+//   hourglass    a mast,      the arcs     the dot      an empty floppy:
+//                broadcasting              stays        outline and shutter
+//
+//   DOWNLOAD     VERIFY       LOADED       ERROR        ERROR, blink
+//   ...##...     .####...     #######.     ...##...     ...##...
+//   ...##...     #....#..     ##.##.##     ..#..#..     ..####..
+//   ...##...     #....#..     ##.##.##     .#.##.#.     .##..##.
+//   .######.     #....#..     ########     .#.##.#.     .##..##.
+//   ..####..     #....#..     ########     #..##..#     ###..###
+//   ...##...     .#####..     ##....##     #......#     ########
+//   ........     .....##.     ##....##     #..##..#     ###..###
+//   ########     ......##     ########     ########     ########
+//   down to      a magnifying the floppy   ! in a       the same,
+//   the line     glass        filled in    triangle     inverted
+//
+// DOWNLOAD's percent stays the download element's: the icon replaces the word
+// and nothing else. LOADED says nothing about writing -- the write element's
+// cloud/padlock already does.
+#define STATUS_ICON_N 10
+enum { ICON_WIFI_BLINK = 8, ICON_ERROR_BLINK = 9 };
+static const uint8_t STATUS_ICON[STATUS_ICON_N][8] = {
+    { 0xFF, 0x42, 0x24, 0x18, 0x18, 0x3C, 0x7E, 0xFF },   // DS_BOOT
+    { 0x42, 0x99, 0x99, 0x5A, 0x18, 0x18, 0x3C, 0x7E },   // DS_PORTAL
+    { 0x7E, 0x81, 0x3C, 0x42, 0x18, 0x24, 0x00, 0x18 },   // DS_WIFI
+    { 0xFE, 0xA5, 0xA5, 0xBD, 0x81, 0x81, 0x81, 0xFF },   // DS_READY
+    { 0x18, 0x18, 0x18, 0x7E, 0x3C, 0x18, 0x00, 0xFF },   // DS_DOWNLOAD
+    { 0x78, 0x84, 0x84, 0x84, 0x84, 0x7C, 0x06, 0x03 },   // DS_VERIFY
+    { 0xFE, 0xDB, 0xDB, 0xFF, 0xFF, 0xC3, 0xC3, 0xFF },   // DS_LOADED
+    { 0x18, 0x24, 0x5A, 0x5A, 0x99, 0x81, 0x99, 0xFF },   // DS_ERROR
+    { 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x18 },   // DS_WIFI, second phase
+    { 0x18, 0x3C, 0x66, 0x66, 0xE7, 0xFF, 0xE7, 0xFF },   // DS_ERROR, second phase
+};
+
 // ---------------------------------------------------------------- drawing
 // Every drawing primitive goes through px(); a scale of 2 makes each pixel a
 // 2x2 block, so glyphs, bitmaps and text all double without separate fonts.
@@ -244,6 +292,18 @@ static void draw_nfc(uint8_t *fb, int x, int y, disp_nfc_t st) {
         for (int c = 0; c < NFC_W; c++)
             if (row & (1u << (NFC_W - 1 - c))) px(fb, x + c, y + r);
     }
+}
+
+static void draw_status_icon(uint8_t *fb, int x, int y, disp_status_t st, int tick) {
+    int i = (int)st;
+    if (i < 0 || i > (int)DS_ERROR) return;
+    // Unsigned, so a tick that has wrapped negative still picks a phase.
+    const bool second = ((unsigned)tick / DISP_BLINK_TICKS) % 2u == 1u;
+    if (second && st == DS_WIFI)  i = ICON_WIFI_BLINK;
+    if (second && st == DS_ERROR) i = ICON_ERROR_BLINK;
+    for (int r = 0; r < 8; r++)
+        for (int c = 0; c < STATUS_ICON_W; c++)
+            if (STATUS_ICON[i][r] & (1u << (STATUS_ICON_W - 1 - c))) px(fb, x + c, y + r);
 }
 
 static void draw_wifi(uint8_t *fb, int x, int y, int bars) {
@@ -331,7 +391,11 @@ const layout_t *display_layout_for(const display_state_t *s, const layout_t *cus
     // No layout at all (a display_t that was never display_init'ed) draws the
     // 128x32 default rather than dereferencing NULL.
     if (!custom) return layout_default(PANEL_128x32);
-    return display_state_is_running(s->status) ? custom : layout_builtin(custom->panel);
+    if (display_state_is_running(s->status)) return custom;
+    for (int i = 0; i < custom->n; i++)
+        if (custom->el[i].id == EL_STATUS && custom->el[i].opt == STATUS_OPT_ICON)
+            return layout_builtin_icon(custom->panel);
+    return layout_builtin(custom->panel);
 }
 
 static const layout_el_t *find(const layout_t *l, int id) {
@@ -395,7 +459,10 @@ void display_render(const display_state_t *s, const layout_t *l, uint8_t fb[DISP
             case EL_LEMMING: draw_lemming(fb, x, y, s->tick); break;
             case EL_WRITE:   draw_write_state(fb, x, y, s->writable, s->sync); break;
             case EL_NFC:     draw_nfc(fb, x, y, s->nfc); break;
-            case EL_STATUS:  draw_text(fb, x, y, disp_status_word(s->status), x + bw / g_scale); break;
+            case EL_STATUS:
+                if (e->opt == STATUS_OPT_ICON) draw_status_icon(fb, x, y, s->status, s->tick);
+                else draw_text(fb, x, y, disp_status_word(s->status), x + bw / g_scale);
+                break;
             case EL_TITLE: {
                 const int line = e->w / ADVANCE;            // characters per line, 1x units
                 char a[64], b[64];

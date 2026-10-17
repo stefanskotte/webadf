@@ -15,7 +15,7 @@ import type { ImageFormat } from '@/lib/disk-format';
 import { asSecondDriveMode, SECOND_DRIVE_NET_FW, type SecondDriveMode } from '@/lib/second-drive';
 import { isHdAdfSql } from '@/lib/disk-format-sql';
 import { firmwareAtLeast } from '@/lib/firmware-version';
-import { NFC_ELEMENT_FIRMWARE } from '@/lib/display-layout';
+import { NFC_ELEMENT_FIRMWARE, STATUS_ICON_FIRMWARE } from '@/lib/display-layout';
 
 export interface GameListItem {
   id: string; title: string; year: number | null; publisher: string | null;
@@ -374,6 +374,11 @@ export interface DeviceListItem {
    * by its reported version). Older firmware refuses any layout that lists it.
    */
   displayNfcElement: boolean;
+  /**
+   * The board can draw the status element as an icon (firmware 1.15.0+, by its
+   * reported version). Older firmware refuses a layout whose status opt is not 0.
+   */
+  displayStatusIcon: boolean;
   /** The tag reader as the board last reported it; null = never said (or no NFC firmware). */
   nfcReader: 'present' | 'absent' | null;
   /** DF1 second drive readings; null = firmware before 1.7.6 (or never reported). */
@@ -503,6 +508,7 @@ export async function listDevices(orgId: string): Promise<DeviceListItem[]> {
     displayPanel: r.displayPanel === '128x64' ? '128x64' : '128x32',
     displayLayouts: r.displayLayouts === true,
     displayNfcElement: r.displayLayouts === true && firmwareAtLeast(r.firmwareVersion, NFC_ELEMENT_FIRMWARE),
+    displayStatusIcon: r.displayLayouts === true && firmwareAtLeast(r.firmwareVersion, STATUS_ICON_FIRMWARE),
     nfcReader: r.nfcReader === 'present' ? 'present' as const : r.nfcReader === 'absent' ? 'absent' as const : null,
     secondDrive: asSecondDriveMode(r.secondDrive) ?? 'off',
     secondDriveReported: asSecondDriveMode(r.secondDriveReported),
