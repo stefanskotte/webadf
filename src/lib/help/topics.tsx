@@ -93,6 +93,8 @@ export const HELP_TOPICS = {
 
   // Sources: drive-chips.ts:14-18 (preload texts), next-disk-button.tsx, drive-chips.tsx:332,
   // HANDOFF next disk (4960-4991) and the swap gate (4811-4880: 3 s idle, 20 s forced, OLED text).
+  // The empty second: wifi-floppy/firmware/src/swap_phase.h (SWAP_EMPTY_MS 1000, DF0 and DF1, every disk-over-disk
+  // change; fw 1.15.0); trackdisk then reports the insertion at its next change check, up to ~2.5 s later.
   'next-disk': {
     title: 'Next disk and preloading',
     short:
@@ -113,6 +115,11 @@ export const HELP_TOPICS = {
           the disk away then would damage it, just like ejecting a real floppy with the drive light on. So the board
           swaps only when the drive light is off and nothing has been written for 3 seconds. When you tap a Next-disk
           card during that wait, its display shows <em>Saving, then 2/3</em> (the next disk, of how many) for a moment.
+        </p>
+        <p>
+          <strong>The empty second.</strong> When one disk replaces another, the board shows the Amiga an empty drive
+          for about a second first, as a real swap would. A <em>Please insert volume</em> request then closes by
+          itself. Before firmware 1.15.0 you may have to click <em>Retry</em>.
         </p>
         <GoodToKnow items={[
           'If the drive stays busy without writing (some games keep the motor running), the board swaps anyway after 20 seconds of quiet.',
