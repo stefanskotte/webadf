@@ -26,9 +26,11 @@
  *   2 "MFM" | 0x40 "from driver"; 0 from the board), amiga counter, pico counter.
  * Payload (empty when there are no frames): PacketsHeader {count, flags}, MFM (4 bytes); then per
  *   frame a CompressionHeader {size, original size}, MFM (8 bytes, each chunk encoded from a
- *   clean start), then `size` bytes of RLE (or of MFM), padded to even. Bit 15 of `size` means
- *   RLE toward the board, but MFM toward the Amiga -- the two directions disagree, so the
- *   direction is a parameter (pnet_dir_t), never a guess.
+ *   clean start), then `size` bytes, padded to even. Bit 15 of `size` means RLE toward the board,
+ *   but MFM toward the Amiga -- the two directions disagree, so the direction is a parameter
+ *   (pnet_dir_t), never a guess. Toward the Amiga this board always sends MFM: RLE bytes sent
+ *   raw carry zero-bit runs no floppy track has, and the Amiga misreads them (pnet_frame.c,
+ *   frame_bound).
  */
 #include <stdint.h>
 #include <stddef.h>

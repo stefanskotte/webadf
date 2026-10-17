@@ -114,6 +114,49 @@ static void the_rle_flag_depends_on_the_direction(void) {
                             PNET_MAX_FRAMES, &m) != PNET_OK, "read the wrong way, it must fail");
 }
 
+/* Bench 2026-10-17: RLE bytes sent raw carried zero-bit runs of up to 30 cells; the Amiga's full-length reads of
+ * them failed their checksum (PNStats: 640 badcsum, 0 ok) and the link stalled. Toward the Amiga every frame is
+ * MFM-encoded (bit 15 of its size, PaulaNET's driver decodes it), so no run on side 1 is longer than MFM allows. */
+static void to_amiga_frames_are_mfm(void) {
+    pnet_frame_ref_t f[3]; uint16_t lens[3];
+    const unsigned n = three_frames(f, lens);
+    const size_t w = pnet_build_to_amiga(out, sizeof out, 1, 2, 0, f, n);
+    CHECK(w > 0, "built");
+    pnet_hdr_t h;
+    CHECK_EQ_INT(pnet_parse_hdr_to_amiga(out + 124, w - 124, &h, true), PNET_OK);
+    size_t at = 4;                                     /* past the MFM {count, flags} */
+    for (unsigned i = 0; i < n; i++) {
+        uint8_t ch[4];
+        pnet_mfm_decode(out + 148 + at, 4, ch);
+        const unsigned size = ((unsigned)ch[0] << 8) | ch[1], len = ((unsigned)ch[2] << 8) | ch[3];
+        CHECK(size & 0x8000u, "bit 15: MFM");
+        CHECK_EQ_INT(size & 0x7FFFu, 2u * lens[i]);
+        CHECK_EQ_INT(len, lens[i]);
+        at += 8u + 2u * lens[i];
+    }
+    CHECK_EQ_INT(at, h.data_size);
+}
+
+static unsigned longest_zero_run(const uint8_t *b, size_t bytes) {
+    unsigned best = 0, run = 0;
+    for (size_t i = 0; i < bytes * 8u; i++) {
+        if ((b[i >> 3] >> (7 - (i & 7))) & 1u) run = 0;
+        else if (++run > best) best = run;
+    }
+    return best;
+}
+
+static void side_one_never_runs_more_than_three_zero_bits(void) {
+    static uint8_t zeros[1500];
+    memset(zeros, 0, sizeof zeros);
+    pnet_frame_ref_t f[4]; uint16_t lens[4];
+    three_frames(f, lens);
+    f[3].data = zeros; f[3].len = sizeof zeros;
+    const size_t w = pnet_build_to_amiga(out, sizeof out, 1, 2, 1u /* can-receive flag */, f, 4);
+    CHECK(w > 0, "built");
+    CHECK_EQ_INT(longest_zero_run(out, w), 3);
+}
+
 static void an_empty_batch_is_a_bare_header(void) {
     const size_t w = pnet_build_to_amiga(out, sizeof out, 0xFF, 0x7F, 0, NULL, 0);
     CHECK_EQ_INT(w, (120 + 4 + 24 + 120 + 3) & ~3);
@@ -169,15 +212,16 @@ static void what_does_not_fit_is_refused(void) {
                                    2, &m), PNET_E_FRAMES);
     pnet_frame_ref_t big = {payload, PNET_ETH_MTU + 1};
     CHECK_EQ_INT(pnet_build_to_board(out, sizeof out, 1, 2, &big, 1), 0);
-    /* 12,000 bytes in 8 frames, the largest NetLoop sends, fits DF1's 14,336-byte buffer */
-    pnet_frame_ref_t g[8]; uint16_t gl[8];
-    xorshift_fill(payload, 12000, 3u);
-    for (unsigned i = 0; i < 8; i++) {
+    /* MFM takes 2 bytes per byte: 4 full frames (12 KB on the wire) fit DF1's 14,336-byte buffer, a fifth does not */
+    pnet_frame_ref_t g[5]; uint16_t gl[5];
+    xorshift_fill(payload, 7500, 3u);
+    for (unsigned i = 0; i < 5; i++) {
         gl[i] = 1500;
         g[i].data = payload + 1500u * i; g[i].len = gl[i];
     }
-    CHECK(pnet_to_amiga_bound(gl, 8) <= 14336u, "12,000 B echo fits DF1's stream buffer");
-    CHECK(pnet_build_to_amiga(out, 14336, 1, 2, 0, g, 8) > 0, "and builds into it");
+    CHECK(pnet_to_amiga_bound(gl, 4) <= 14336u, "4 x 1,500 B fit DF1's stream buffer");
+    CHECK(pnet_build_to_amiga(out, 14336, 1, 2, 0, g, 4) > 0, "and build into it");
+    CHECK(pnet_to_amiga_bound(gl, 5) > 14336u, "5 do not");
 }
 
 static void shift_left_keeps_whole_bytes_only(void) {
@@ -252,6 +296,8 @@ int main(void) {
     RUN(a_damaged_batch_is_refused);
     RUN(to_amiga_track_has_lead_in_sync_and_words);
     RUN(the_rle_flag_depends_on_the_direction);
+    RUN(to_amiga_frames_are_mfm);
+    RUN(side_one_never_runs_more_than_three_zero_bits);
     RUN(an_empty_batch_is_a_bare_header);
     RUN(the_amiga_finds_the_sync_at_any_bit);
     RUN(what_does_not_fit_is_refused);
