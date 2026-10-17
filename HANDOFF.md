@@ -1478,6 +1478,10 @@ separately.
 
 ### 4. Backlog, not blocking anything
 
+- **OLED: rotate the display** (operator, 2026-10-17): a rotation setting (at least 180°, so a board mounted upside
+  down reads right) in the web app's display configuration, stored with the board's display settings and applied by
+  the firmware (SSD1306/SH1106 segment remap + COM scan direction for 180°); the web preview must rotate with it.
+
 - **OLED: show the side with the track** (operator, 2026-10-17): as current FlashFloppy does, show the head
   position as `cylinder.side`, e.g. 78.0 -> 78.1 -> 79.0 -> 79.1 while the Amiga reads cylinders 78-79, both sides
   along the way. Fits every layout (128x32 and 128x64, both drives).
