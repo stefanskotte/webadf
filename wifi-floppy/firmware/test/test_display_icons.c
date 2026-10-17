@@ -92,12 +92,12 @@ typedef struct { disp_status_t s; const char *rows[8]; } picture_t;
 
 // What each state draws, row by row ('#' lit). The blinking two (WIFI, ERROR)
 // are listed in their first phase here and their second in BLINK_OFF.
+// DOWNLOAD is not here: its picture depends on the percent (DOWNLOAD_FILL).
 static const picture_t PICTURES[] = {
     { DS_BOOT,     { "########", ".#....#.", "..#..#..", "...##...", "...##...", "..####..", ".######.", "########" } },
     { DS_PORTAL,   { ".#....#.", "#..##..#", "#..##..#", ".#.##.#.", "...##...", "...##...", "..####..", ".######." } },
     { DS_WIFI,     { ".######.", "#......#", "..####..", ".#....#.", "...##...", "..#..#..", "........", "...##..." } },
     { DS_READY,    { "#######.", "#.#..#.#", "#.#..#.#", "#.####.#", "#......#", "#......#", "#......#", "########" } },
-    { DS_DOWNLOAD, { "...##...", "...##...", "...##...", ".######.", "..####..", "...##...", "........", "########" } },
     { DS_VERIFY,   { ".####...", "#....#..", "#....#..", "#....#..", "#....#..", ".#####..", ".....##.", "......##" } },
     { DS_LOADED,   { "#######.", "##.##.##", "##.##.##", "########", "########", "##....##", "##....##", "########" } },
     { DS_ERROR,    { "...##...", "..#..#..", ".#.##.#.", ".#.##.#.", "#..##..#", "#......#", "#..##..#", "########" } },
@@ -109,9 +109,9 @@ static const picture_t BLINK_OFF[] = {
     { DS_ERROR,    { "...##...", "..####..", ".##..##.", ".##..##.", "###..###", "########", "###..###", "########" } },
 };
 
-static void check_picture(const picture_t *p, int tick) {
+static void check_picture_pct(const picture_t *p, int tick, int pct) {
     layout_t l = { PANEL_128x32, 1, { { EL_STATUS, 1, 1, 40, 8, 0, STATUS_OPT_ICON } } };
-    display_state_t s = st(p->s); s.tick = tick;
+    display_state_t s = st(p->s); s.tick = tick; s.pct = pct;
     uint8_t fb[DISP_FB_MAX]; display_render(&s, &l, fb);
     for (int r = 0; r < 8; r++) for (int c = 0; c < 8; c++)
         CHECK(on(fb, 40 + c, 8 + r) == (p->rows[r][c] == '#'), disp_status_word(p->s));
@@ -122,6 +122,8 @@ static void check_picture(const picture_t *p, int tick) {
     for (int r = 0; r < 16; r++) for (int c = 0; c < 16; c++)
         CHECK(on(big, 40 + c, 8 + r) == (p->rows[r / 2][c / 2] == '#'), "2x block");
 }
+
+static void check_picture(const picture_t *p, int tick) { check_picture_pct(p, tick, -1); }
 
 static void every_state_draws_its_picture(void) {
     for (size_t i = 0; i < sizeof PICTURES / sizeof PICTURES[0]; i++) check_picture(&PICTURES[i], 0);
@@ -212,6 +214,75 @@ static void built_in_screens_follow_the_choice(void) {
 }
 
 // ---------------------------------------------------------------- download
+// DOWNLOAD is the floppy filling up: READY's outline at 0 %, LOADED's filled
+// floppy at 100 %, and between them the six interior rows (1..6) taken from
+// LOADED bottom-up, one row per sixth of the percent, rounded down -- so the
+// floppy is whole only when the download is. Rows 0 and 7 are the same in
+// both pictures.
+static const picture_t DOWNLOAD_FILL[7] = {
+    { DS_DOWNLOAD, { "#######.", "#.#..#.#", "#.#..#.#", "#.####.#", "#......#", "#......#", "#......#", "########" } },
+    { DS_DOWNLOAD, { "#######.", "#.#..#.#", "#.#..#.#", "#.####.#", "#......#", "#......#", "##....##", "########" } },
+    { DS_DOWNLOAD, { "#######.", "#.#..#.#", "#.#..#.#", "#.####.#", "#......#", "##....##", "##....##", "########" } },
+    { DS_DOWNLOAD, { "#######.", "#.#..#.#", "#.#..#.#", "#.####.#", "########", "##....##", "##....##", "########" } },
+    { DS_DOWNLOAD, { "#######.", "#.#..#.#", "#.#..#.#", "########", "########", "##....##", "##....##", "########" } },
+    { DS_DOWNLOAD, { "#######.", "#.#..#.#", "##.##.##", "########", "########", "##....##", "##....##", "########" } },
+    { DS_DOWNLOAD, { "#######.", "##.##.##", "##.##.##", "########", "########", "##....##", "##....##", "########" } },
+};
+
+static const picture_t *picture_of(disp_status_t st) {
+    for (size_t i = 0; i < sizeof PICTURES / sizeof PICTURES[0]; i++) if (PICTURES[i].s == st) return &PICTURES[i];
+    return NULL;
+}
+
+static bool same_rows(const picture_t *a, const picture_t *b) {
+    for (int r = 0; r < 8; r++) if (strcmp(a->rows[r], b->rows[r]) != 0) return false;
+    return true;
+}
+
+static void download_fills_the_floppy(void) {
+    // The ends are the two floppies the user already knows.
+    CHECK(same_rows(&DOWNLOAD_FILL[0], picture_of(DS_READY)), "0 % is READY's outline");
+    CHECK(same_rows(&DOWNLOAD_FILL[6], picture_of(DS_LOADED)), "100 % is LOADED's floppy");
+    // pct -> filled rows: pct * 6 / 100, clamped; an unknown percent (-1) is
+    // the empty outline, a past-the-end one the full floppy.
+    for (int pct = -5; pct <= 110; pct++) {
+        const int c = pct < 0 ? 0 : pct > 100 ? 100 : pct;
+        check_picture_pct(&DOWNLOAD_FILL[c * 6 / 100], 0, pct);
+    }
+    // The steps it lands on.
+    const int at[][2] = { {0,0}, {16,0}, {17,1}, {25,1}, {33,1}, {34,2}, {49,2}, {50,3}, {66,3},
+                          {67,4}, {75,4}, {83,4}, {84,5}, {99,5}, {100,6} };
+    for (size_t i = 0; i < sizeof at / sizeof at[0]; i++) check_picture_pct(&DOWNLOAD_FILL[at[i][1]], 0, at[i][0]);
+    // Monotonic: the step drawn never goes down as the percent goes up.
+    layout_t l = { PANEL_128x32, 1, { { EL_STATUS, 1, 1, 0, 0, 0, STATUS_OPT_ICON } } };
+    int last = -1;
+    for (int pct = 0; pct <= 100; pct++) {
+        display_state_t s = st(DS_DOWNLOAD); s.pct = pct;
+        uint8_t fb[DISP_FB_MAX]; display_render(&s, &l, fb);
+        int filled = -1;
+        for (int k = 0; k <= 6; k++) {
+            bool match = true;
+            for (int r = 0; r < 8; r++) for (int c = 0; c < 8; c++)
+                if (on(fb, c, r) != (DOWNLOAD_FILL[k].rows[r][c] == '#')) match = false;
+            if (match) filled = k;
+        }
+        CHECK(filled >= 0, "one of the seven steps");
+        CHECK(filled >= last, "the fill never goes down as the percent goes up");
+        last = filled;
+    }
+    CHECK_EQ_INT(last, 6);
+    // Steady: a given percent is one picture whatever the tick.
+    for (int pct = 0; pct <= 100; pct += 10) {
+        display_state_t s = st(DS_DOWNLOAD); s.pct = pct;
+        uint8_t a[DISP_FB_MAX], b[DISP_FB_MAX];
+        s.tick = 0; display_render(&s, &l, a);
+        for (int t = 1; t < 4 * DISP_BLINK_TICKS; t++) {
+            s.tick = t; display_render(&s, &l, b);
+            CHECK(memcmp(a, b, sizeof a) == 0, "no blink while downloading");
+        }
+    }
+}
+
 // The percent is the download element's, as it always was: the icon replaces
 // the word and nothing else.
 static void download_keeps_its_percent(void) {
@@ -223,7 +294,8 @@ static void download_keeps_its_percent(void) {
         display_render(&s, layout_default((panel_t)p), b);
         CHECK(memcmp(a + DISP_W, b + DISP_W, DISP_FB_MAX - DISP_W) == 0, "percent and bar unchanged");
         CHECK_EQ_INT(lit(a, 22, 0, 62, 8), 0);
-        CHECK(lit(a, 14, 0, 22, 8) > 0, "the arrow");
+        for (int r = 0; r < 8; r++) for (int c = 0; c < 8; c++)
+            CHECK(on(a, 14 + c, r) == (DOWNLOAD_FILL[3].rows[r][c] == '#'), "64 % fills three rows");
     }
 }
 
@@ -231,7 +303,9 @@ static void download_keeps_its_percent(void) {
 // Every state on both panels, with the panel's default layout switched to the
 // icon, plus the second phase of the two that blink. The files were written
 // from this renderer (DISPLAY_GOLDEN_WRITE=1) after the pictures above passed,
-// and checked by eye with test_display_icons --dump.
+// and checked by eye with test_display_icons --dump. The download goldens
+// (64 %, and 0/50/100 %) were rewritten when DOWNLOAD became the filling
+// floppy; every other file stayed byte-identical.
 typedef struct { const char *name; display_state_t s; } golden_t;
 
 static int golden_set(golden_t *g) {
@@ -242,6 +316,9 @@ static int golden_set(golden_t *g) {
     s.tick = DISP_BLINK_TICKS;                                                                g[n++] = (golden_t){"icon_wifi_blink", s};
     s = st(DS_READY);   strcpy(s.title, "no disk");                                           g[n++] = (golden_t){"icon_ready", s};
     s = st(DS_DOWNLOAD); strcpy(s.title, "Workbench 3.1 Install"); s.pct = 64;                g[n++] = (golden_t){"icon_download", s};
+    s.pct = 0;                                                                                g[n++] = (golden_t){"icon_download_0", s};
+    s.pct = 50;                                                                               g[n++] = (golden_t){"icon_download_50", s};
+    s.pct = 100;                                                                              g[n++] = (golden_t){"icon_download_100", s};
     s = st(DS_VERIFY);  strcpy(s.title, "Turrican");                                          g[n++] = (golden_t){"icon_verify", s};
     s = st(DS_LOADED);  strcpy(s.title, "Workbench 3.1 Install"); strcpy(s.detail, "disk 1 of 6");
         s.show_track = true; s.cyl = 42; s.writable = true;                                   g[n++] = (golden_t){"icon_loaded", s};
@@ -298,6 +375,7 @@ int main(int argc, char **argv) {
     RUN(blink_follows_the_tick);
     RUN(the_word_does_not_blink);
     RUN(built_in_screens_follow_the_choice);
+    RUN(download_fills_the_floppy);
     RUN(download_keeps_its_percent);
     RUN(icon_goldens_match);
     return REPORT();

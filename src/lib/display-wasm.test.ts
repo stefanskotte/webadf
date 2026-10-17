@@ -79,6 +79,10 @@ describe('display wasm', () => {
     ['icon_wifi_blink', { status: 'wifi', title: 'Connecting', detail: 'HomeNet', bars: 1, tick: 4 }],
     ['icon_ready', { status: 'ready', title: 'no disk' }],
     ['icon_download', { status: 'download', title: 'Workbench 3.1 Install', pct: 64 }],
+    // The floppy filling up: READY's outline at 0 %, half full, LOADED's floppy at 100 %.
+    ['icon_download_0', { status: 'download', title: 'Workbench 3.1 Install', pct: 0 }],
+    ['icon_download_50', { status: 'download', title: 'Workbench 3.1 Install', pct: 50 }],
+    ['icon_download_100', { status: 'download', title: 'Workbench 3.1 Install', pct: 100 }],
     ['icon_verify', { status: 'verify', title: 'Turrican' }],
     ['icon_loaded', { status: 'loaded', title: 'Workbench 3.1 Install', detail: 'disk 1 of 6', showTrack: true, cyl: 42, writable: true }],
     ['icon_error', { status: 'error', title: 'no route', bars: -1 }],

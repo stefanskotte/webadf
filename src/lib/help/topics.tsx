@@ -249,8 +249,9 @@ export const HELP_TOPICS = {
   // NFC icon: display.c draw_nfc (present / struck = absent / inverted = write armed), main.c ui.nfc (armed wins,
   // then g_nfc_reader), display_layout.h EL_NFC (in no default), display-layout.ts NFC_ELEMENT_FIRMWARE 1.10.0,
   // display-editor.tsx withNfc (hidden by default; not offered below 1.10.0), display-store.ts (server refuses it).
-  // Status icon: display.c STATUS_ICON (hourglass, mast, wifi arcs blinking, empty floppy, arrow, magnifier, filled
-  // floppy, triangle blinking), display_layout.h STATUS_OPT_ICON (opt 1; the word in every default),
+  // Status icon: display.c STATUS_ICON (hourglass, mast, wifi arcs blinking, empty floppy, magnifier, filled
+  // floppy, triangle blinking; downloading = draw_status_icon filling the empty floppy bottom-up with the percent,
+  // full only at 100 %), display_layout.h STATUS_OPT_ICON (opt 1; the word in every default),
   // display_layout_for (built-in screens take the icon), display-layout.ts STATUS_ICON_FIRMWARE 1.15.0.
   display: {
     title: "The board's display",
@@ -273,8 +274,8 @@ export const HELP_TOPICS = {
         </p>
         <p>
           The <em>status</em> shows <em>as</em> a word or a small icon: hourglass (starting), mast (setup), blinking
-          arcs (connecting), empty or filled floppy, arrow (downloading), magnifier (checking), blinking triangle
-          (error).
+          arcs (connecting), empty or filled floppy, filling floppy (downloading), magnifier (checking), blinking
+          triangle (error).
         </p>
         <p>
           After <em>Save</em> the status reads <em>Waiting for the board</em>, then <em>Applied on the board</em>, or
