@@ -29,23 +29,21 @@ export function PairButton() {
 
   useEffect(() => { if (naming) input.current?.focus(); }, [naming]);
 
-  // Ticks the countdown once a second while a code is live (as before).
+  // Ticks the countdown once a second while a code is live. A code that has hit zero is removed rather than left
+  // greyed out. (mint() sets the first remainingMs, so nothing is set synchronously here.)
   useEffect(() => {
     if (expiresAt === null) return;
-    const tick = () => setRemainingMs(Math.max(0, expiresAt - Date.now()));
-    tick();
-    const id = setInterval(tick, 1000);
+    const id = setInterval(() => {
+      const left = Math.max(0, expiresAt - Date.now());
+      setRemainingMs(left);
+      if (left === 0) {
+        setCode(null);
+        setExpiresAt(null);
+        setExpired(true);
+      }
+    }, 1000);
     return () => clearInterval(id);
   }, [expiresAt]);
-
-  // A code that has hit zero is removed rather than left greyed out (as before).
-  useEffect(() => {
-    if (code !== null && remainingMs === 0) {
-      setCode(null);
-      setExpiresAt(null);
-      setExpired(true);
-    }
-  }, [code, remainingMs]);
 
   async function mint() {
     setBusy(true);
