@@ -220,7 +220,7 @@ static void fit_caps_the_payload_at_16128_bytes(void) {
     for (unsigned i = 0; i < 25; i++) lens[i] = PNET_ETH_MTU;
     const size_t hd = 25344u - 80u;                          /* a WF_DF1_HD-sized buffer, larger than the cap */
     const unsigned n = pnet_link_fit(lens, 25, hd);
-    CHECK_EQ_INT(n, 10);                                     /* 4 + 10 x 1,539 = 15,394; 11 would be 16,933 */
+    CHECK_EQ_INT(n, 5);                                      /* MFM: 4 + 5 x 3,044 = 15,224; 6 would be 18,268 */
     CHECK(pnet_payload_bound(lens, n) <= PNET_TO_AMIGA_MAX_PAYLOAD, "n is inside the cap");
     CHECK(pnet_payload_bound(lens, n + 1) > PNET_TO_AMIGA_MAX_PAYLOAD, "n + 1 is not");
     CHECK(pnet_to_amiga_bound(lens, n + 1) <= hd, "and the cap, not the buffer, is what stops it");

@@ -36,10 +36,19 @@ static bool hdr_unpack(const uint8_t *b, pnet_hdr_t *h) {
     return get16(b) == PNET_MAGIC;
 }
 
+/* One frame's encoded size. Toward the board, RLE (pnet_rle_bound). Toward the Amiga, MFM: 2 bytes per byte. RLE
+ * bytes go out as they are, and their zero-bit runs (up to ~30 cells, where MFM has at most 3) are misread by the
+ * Amiga -- bench 2026-10-17: every full-length read of such a batch failed its checksum, 640 of 640, and the link
+ * stalled; MFM-encoded, 78 of 79 read first time and none failed. PaulaNET's driver decodes either: bit 15 of a
+ * frame's size marks MFM in this direction. */
+static size_t frame_bound(pnet_dir_t dir, size_t len) {
+    return dir == PNET_TO_AMIGA ? 2u * len : pnet_rle_bound(len);
+}
+
 size_t pnet_payload_bound(const uint16_t *lens, unsigned n) {
     if (n == 0) return 0;
     size_t b = 4;
-    for (unsigned i = 0; i < n; i++) b += 8u + pnet_rle_bound(lens[i]);
+    for (unsigned i = 0; i < n; i++) b += 8u + frame_bound(PNET_TO_AMIGA, lens[i]);
     return b;
 }
 
@@ -49,13 +58,13 @@ size_t pnet_to_amiga_bound(const uint16_t *lens, unsigned n) {
 }
 
 /* The payload bound for frame refs; SIZE_MAX if any is unsendable. */
-static size_t refs_bound(const pnet_frame_ref_t *f, unsigned n) {
+static size_t refs_bound(pnet_dir_t dir, const pnet_frame_ref_t *f, unsigned n) {
     if (n > PNET_MAX_FRAMES) return SIZE_MAX;
     if (n == 0) return 0;
     size_t b = 4;
     for (unsigned i = 0; i < n; i++) {
         if (f[i].len == 0 || f[i].len > PNET_ETH_MTU) return SIZE_MAX;
-        b += 8u + pnet_rle_bound(f[i].len);
+        b += 8u + frame_bound(dir, f[i].len);
     }
     return b;
 }
@@ -66,14 +75,17 @@ static size_t put_payload(uint8_t *p, pnet_dir_t dir, uint8_t flags,
     uint16_t last = 0;
     size_t pos = pnet_mfm_encode(ph, 2, p, &last);
     for (unsigned i = 0; i < n; i++) {
-        const size_t r = pnet_rle_encode(f[i].data, f[i].len, p + pos + 8);   // even: padded
+        const bool mfm = dir == PNET_TO_AMIGA;        // frame_bound: never raw bytes on side 1
+        const size_t r = mfm ? 2u * f[i].len
+                             : pnet_rle_encode(f[i].data, f[i].len, p + pos + 8);   // even: padded
         uint16_t size = (uint16_t)r;
-        if (dir == PNET_TO_BOARD) size |= 0x8000u;    // toward the board, bit 15 means RLE
+        size |= 0x8000u;                              // toward the board bit 15 means RLE, toward the Amiga MFM
         uint8_t ch[4];
         put16(ch, size);
         put16(ch + 2, f[i].len);
         last = 0;                                     // each header from a clean start
         pnet_mfm_encode(ch, 4, p + pos, &last);
+        if (mfm) pnet_mfm_encode(f[i].data, f[i].len, p + pos + 8, &last);   // continues the header's last bit
         pos += 8u + r;
     }
     return pos;
@@ -81,7 +93,7 @@ static size_t put_payload(uint8_t *p, pnet_dir_t dir, uint8_t flags,
 
 size_t pnet_build_to_board(uint8_t *out, size_t cap, uint8_t amiga_ctr, uint8_t pico_ctr,
                            const pnet_frame_ref_t *f, unsigned n) {
-    const size_t pb = refs_bound(f, n);
+    const size_t pb = refs_bound(PNET_TO_BOARD, f, n);
     if (pb == SIZE_MAX || 4u + PNET_HDR_BYTES + pb + 2u > cap) return 0;
     out[0] = 0x00; out[1] = 0x01; out[2] = 0x00; out[3] = 0x01;
     uint8_t *pay = out + 4 + PNET_HDR_BYTES;
@@ -117,7 +129,7 @@ size_t pnet_put_hdr_to_amiga(uint8_t *s, const pnet_hdr_t *h) {
 
 size_t pnet_build_to_amiga(uint8_t *out, size_t cap, uint8_t amiga_ctr, uint8_t pico_ctr,
                            uint8_t flags, const pnet_frame_ref_t *f, unsigned n) {
-    const size_t pb = refs_bound(f, n);
+    const size_t pb = refs_bound(PNET_TO_AMIGA, f, n);
     if (pb == SIZE_MAX ||
         PNET_TX_LEAD_BYTES + 4u + PNET_HDR_MFM_BYTES + pb + PNET_TRAIL_BYTES + 3u > cap) return 0;
     memset(out, 0xAA, PNET_TX_LEAD_BYTES);
