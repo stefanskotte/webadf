@@ -177,7 +177,7 @@ export const HELP_TOPICS = {
   },
 
   // Sources: disk-set-section.tsx:166-175 (header texts), add-disks-dialog.tsx, disk-set-menu.tsx:58-100,
-  // ingest/set-suggestion.tsx, card-mount-button.tsx:211, HANDOFF disk sets (4902-4941).
+  // ingest/set-suggestion.tsx, card-mount-button.tsx:211, HANDOFF disk sets (4902-4941), disk-label.ts (the OLED name).
   'disk-sets': {
     title: 'Disk sets',
     short:
@@ -197,6 +197,11 @@ export const HELP_TOPICS = {
         <p>
           <strong>Mounting.</strong> The mount button on a set&apos;s library card asks which disk, and which board if
           you have more than one.
+        </p>
+        <p>
+          <strong>On the board&apos;s screen.</strong> A mounted disk of a set shows as <em>Disk 2/13</em> followed by
+          its name: the disk&apos;s Amiga volume name, else the name of the file you uploaded, without its extension.
+          The screen has room for about 11 characters of it.
         </p>
       </>
     ),

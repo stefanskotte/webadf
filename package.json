@@ -37,7 +37,8 @@
     "receive:test": "tools/receive/test/run.sh",
     "receive:build": "tools/receive/build.sh",
     "receive:uae": "tools/receive/uae/uae-test.sh",
-    "send:queue": "dotenv -e .env.local -- tsx scripts/send-to-amiga.ts"
+    "send:queue": "dotenv -e .env.local -- tsx scripts/send-to-amiga.ts",
+    "labels:backfill": "dotenv -e .env.local -- tsx scripts/backfill-disk-labels.ts"
   },
   "dependencies": {
     "@base-ui/react": "^1.7.0",
