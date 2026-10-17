@@ -272,12 +272,9 @@ export async function readDesired(deviceId: string): Promise<DesiredState | null
       // catches; Math.max is explicit about the floor being 1, not "anything
       // falsy".
       diskCount: Math.max(r.diskCount ?? 1, 1),
-      // Bounded to DC_LABEL_MAX inside boardDiskLabel. Never "Disk n" on a
-      // disk of a set: the firmware prints its own "Disk n/c" first.
-      label: boardDiskLabel({
-        label: r.label, sourceFilename: r.sourceFilename,
-        diskNo: r.diskNo, diskCount: Math.max(r.diskCount ?? 1, 1),
-      }),
+      // Bounded to DC_LABEL_MAX inside boardDiskLabel. Never "Disk n": the
+      // firmware prints its own counter on a set, and empty is the fallback.
+      label: boardDiskLabel({ label: r.label, sourceFilename: r.sourceFilename }),
       // A disk row that has gone missing is not a licence to allow writes.
       // HD follows the row like DD (HD writes spec §5.3); a board on 1.4.1
       // still holds WPROT for HD itself until it updates (§5.4).

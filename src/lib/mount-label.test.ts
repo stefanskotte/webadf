@@ -33,7 +33,7 @@ const labelOf = async (over: Partial<typeof row>) => {
 
 beforeEach(() => { selects = []; joins.length = 0; });
 
-describe('readDesired: the label the board prints after "Disk n/c"', () => {
+describe('readDesired: the label the board prints after its "n/c" counter', () => {
   it("sends the disk's label (the stored volume name) when it has one", async () => {
     expect(await labelOf({ label: 'Install3.2', sourceFilename: 'wb32_install.adf' })).toBe('Install3.2');
   });
@@ -46,8 +46,8 @@ describe('readDesired: the label the board prints after "Disk n/c"', () => {
     expect(await labelOf({})).toBe('');
   });
 
-  it('still sends "Disk n" for a one-disk title with no name at all', async () => {
-    expect(await labelOf({ diskCount: 1 })).toBe('Disk 1');
+  it('sends an empty label for a one-disk title with no name at all -- never "Disk n"', async () => {
+    expect(await labelOf({ diskCount: 1 })).toBe('');
   });
 
   it("joins the file name on the disk's bytes AND the device's org (no other tenant's file name)", async () => {

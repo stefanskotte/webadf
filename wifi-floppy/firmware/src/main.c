@@ -406,13 +406,9 @@ static void ui_observe(void *ctx, const dc_obs_t *o) {
         ui_publish(DS_VERIFY, NULL, "checking image", -1);
         break;
     case DC_OBS_MOUNTED:
-        // "Disk 1/2" only when there is more than one -- on a single-disk
-        // game it is noise, and the line is 21 characters wide.
-        if (o->disk_count > 1)
-            snprintf(detail, sizeof detail, "Disk %lu/%lu %s",
-                     (unsigned long)o->disk_no, (unsigned long)o->disk_count, o->label);
-        else
-            snprintf(detail, sizeof detail, "%s", o->label);
+        // "3/13 Locale" on a set, the label alone on a one-disk game; no
+        // word "Disk" (nfc_ui_disk_line, host-tested). The line is 21 wide.
+        nfc_ui_disk_line(o->disk_no, o->disk_count, o->label, detail, sizeof detail);
         ui_publish(DS_LOADED, o->title[0] ? o->title : "Disk mounted", detail, -1);
         break;
     case DC_OBS_EJECTED:

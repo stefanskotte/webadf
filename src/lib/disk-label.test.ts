@@ -3,9 +3,9 @@ import { syntheticVolume } from '@/lib/adffs/synthetic';
 import { DC_LABEL_MAX } from '@/lib/device-limits';
 import { boardDiskLabel, volumeNameOf } from './disk-label';
 
-const base = { label: null, sourceFilename: null, diskNo: 3, diskCount: 13 };
+const base = { label: null, sourceFilename: null };
 
-describe('boardDiskLabel: the per-disk name the board prints after "Disk n/c"', () => {
+describe('boardDiskLabel: the per-disk name the board prints after its "n/c" counter', () => {
   it("the disk's own label wins (a user's, extract's, or the stored volume name)", () => {
     expect(boardDiskLabel({ ...base, label: 'Extras3.2', sourceFilename: 'wb32_extras.adf' })).toBe('Extras3.2');
   });
@@ -24,14 +24,12 @@ describe('boardDiskLabel: the per-disk name the board prints after "Disk n/c"', 
     expect(boardDiskLabel({ ...base, sourceFilename: 'Game v1.2' })).toBe('Game v1.2');
   });
 
-  it('with no name at all, a multi-disk title gets an empty label -- never a second "Disk n"', () => {
-    // The firmware already prints "Disk 3/13 " itself; "Disk 3/13 Disk 3" was the field report.
+  it('with no name at all, the label is empty -- never "Disk n", on a set or a one-disk title', () => {
+    // "Disk 3/13 Disk 3" was the field report; the operator then dropped "Disk"
+    // from the board altogether (2026-10-17). The rule no longer looks at the
+    // disk's number or count: there is no fallback left that would.
     expect(boardDiskLabel(base)).toBe('');
     expect(boardDiskLabel({ ...base, label: '  ', sourceFilename: '.adf' })).toBe('');
-  });
-
-  it('with no name at all, a one-disk title still says "Disk n" (the firmware prints the label alone)', () => {
-    expect(boardDiskLabel({ ...base, diskNo: 1, diskCount: 1 })).toBe('Disk 1');
   });
 
   it("is bounded to the firmware's DC_LABEL_MAX", () => {

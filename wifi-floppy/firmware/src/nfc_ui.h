@@ -44,8 +44,16 @@
 // Never NULL: every verdict, the server's 1 s rate limit included, has words.
 const char *nfc_ui_tap_line(dc_tap_outcome_t o, const char *title, char *buf, int cap);
 
+// The detail line for a mounted disk (ui_observe's DC_OBS_MOUNTED): on a set,
+// the counter then the disk's own name, "3/13 Locale" -- or "3/13" alone when
+// the name is empty, no trailing space; on a one-disk title (count 0 or 1) the
+// label alone. No word "Disk" (operator 2026-10-17: it is implied); the web's
+// copy of the screen (src/lib/live-display.ts) mirrors this from fw 1.14.0.
+// Clipped to `cap`. Never NULL.
+const char *nfc_ui_disk_line(uint32_t disk_no, uint32_t disk_count, const char *label, char *buf, int cap);
+
 // The detail line for dc_tap_next's verdict (multi-disk spec): the target disk
-// "N of M", or "Saving, then disk N" when the swap will wait for unsent
+// "Next: N/M", or "Saving, then N/M" when the swap will wait for unsent
 // writes; SINGLE / NO_DISK have their own words; every other verdict reads as
 // nfc_ui_tap_line's. Never NULL.
 const char *nfc_ui_next_line(dc_tap_outcome_t o, uint32_t disk_no, uint32_t disk_count, bool saving,

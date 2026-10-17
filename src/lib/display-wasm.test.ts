@@ -59,7 +59,7 @@ describe('display wasm', () => {
       const base = decodeLayout(w.defaultBlob(panel));
       const blob = encodeLayout({ ...base, elements: [...base.elements, { id: 'nfc', visible: true, scale, x, y, w: 0, opt: 0 }] });
       expect(w.validate(blob)).toBeNull();
-      const fb = w.render({ status: 'loaded', bars: 3, title: 'Turrican', detail: 'Disk 1/2', showTrack: true,
+      const fb = w.render({ status: 'loaded', bars: 3, title: 'Turrican', detail: '1/2', showTrack: true,
         cyl: 12, maxCyl: 79, pct: -1, tick: 0, writable: true, sync: 'synced', nfc }, panel, blob);
       const golden = await readFile(`wifi-floppy/firmware/test/fixtures/display_golden/${name}.fb`);
       const rows = panel === 1 ? 1024 : 512;
