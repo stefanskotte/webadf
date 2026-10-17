@@ -2612,8 +2612,8 @@ separately.
     - **Modern**, the canvas's launch page: Devices, a Devices display modal, the header and its multi-drive menu,
       Library (collections, grid and table), Title detail, Upload, Disk files (Workbench 3.1), plus components (a
       disk icon with specimens, and the board display).
-    - The link's `#page-` anchor does not name either page id. **Confirm with the operator which page is the target
-      before designing; the launch page suggests Modern.**
+    - **Target: Modern** (operator, 2026-10-18: "the redesign should use "modern" as its a proper mix of old and
+      new in one"). Retro is reference only, e.g. for Admin, which only Retro draws.
   - **Read the canvas on 2026-10-13** (`project/canvas.json`: 22 artboards). Not drawn on Modern, so to be inferred:
     - Admin (drawn only on Retro);
     - Help and its "?" popovers;
