@@ -67,6 +67,12 @@ describe('help topics say what the app really does', () => {
     expect(sentence).toMatch(/Next-disk card/);
     expect(sentence).not.toMatch(/Saving, then disk/);   // firmware 1.15.0 dropped the word
   });
+  it('next-disk says a disk change shows an empty drive first, so the insert request closes by itself', () => {
+    const b = bodyText('next-disk');
+    expect(b).toMatch(/empty drive\s+for about a second/);
+    expect(b).toMatch(/Please insert volume/);
+    expect(b).toMatch(/Before firmware 1\.15\.0/);
+  });
   it('disk-sets describes the board line without the word Disk, as firmware 1.15.0 prints it', () => {
     const b = bodyText('disk-sets');
     expect(b).toMatch(/2\/13 Locale/);

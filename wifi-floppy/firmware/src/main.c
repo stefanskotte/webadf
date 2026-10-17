@@ -57,6 +57,7 @@
 #include "reinsert.h"
 #include "led_activity.h"
 #include "swap_gate.h"
+#include "swap_phase.h"
 #include "bus_power.h"
 #include "uploader.h"
 #include "fw_rom.h"
@@ -3713,6 +3714,45 @@ static void pnet_set_mode(df1_mode_t m) {
 }
 #endif
 
+// ---------------------------------------------------------------- DF0 present / absent
+// core0 only (dskchg.c's state is single-threaded: see main()'s note above
+// last_active_token). An eject, and the empty phase of a disk-over-disk swap
+// (swap_phase.h), both go through df0_absent; a mount into an empty drive, and
+// the end of that empty phase, both go through df0_present.
+
+/** DF0 has no disk: /CHNG asserted with no image (a STEP cannot clear it),
+ *  RDY off, nothing streams, the ID answers an empty DD drive. */
+static void df0_absent(void) {
+#if WF_DRIVE_ID
+    if (bus_out_drive_id_set_hd(false))
+        wf_logf(WF_INFO, "drive-id: now answering DD 0x%08lx (no disk)",
+                (unsigned long)DRIVE_ID_DD);
+#endif
+    dskchg_image_ejected();
+    stream_stop(0);
+}
+
+/** DF0 has the disk in `slot`: the ID first, then the insert. */
+static void df0_present(int slot, int32_t token) {
+    (void)slot;
+#if WF_DRIVE_ID
+    // Before the insert is announced, so an ID read the change
+    // prompts sees the new disk's density. Taken at the next
+    // answer -- the first motor-off select after a motor-on one,
+    // or the 32-bit repeat -- never mid-answer (bus_out.c, which
+    // writes drive_id's Y). Whether Kickstart re-reads the ID
+    // on a change at all is bench step 9. HD writes spec §4.5:
+    // WPROT no longer derives HD from the slot kind
+    // (write_back_wprot) -- this is now the only place that does.
+    const bool hd = psram_image_slot_kind(slot) == SLOT_KIND_ADF_HD;
+    if (bus_out_drive_id_set_hd(hd))
+        wf_logf(WF_INFO, "drive-id: now answering %s 0x%08lx",
+                hd ? "HD" : "DD", (unsigned long)drive_id_for(hd));
+#endif
+    dskchg_image_inserted();
+    wf_trace(WF_EV_MOUNT, (uint32_t)token, 0);
+}
+
 // ---------------------------------------------------------------- main
 // Defined by the SDK (hardware_psram/psram.c) but not declared in any public
 // header; normally run before main() by runtime init, which this build skips
@@ -4158,6 +4198,16 @@ int main(void) {
     // and the pump's budget, because the real-time duty only exists while
     // the Amiga has something to read.
     bool disk_mounted = false;
+    // A disk-over-disk swap shows the drive empty first (swap_phase.h). While
+    // it does, disk_mounted / df1_mounted still say a disk is assigned (the
+    // glass keeps its title and the track counter), but nothing streams and
+    // dskchg says no image.
+    swap_phase_t df0_phase;
+    swap_phase_init(&df0_phase);
+#if DF1_CAPABLE
+    swap_phase_t df1_phase;
+    swap_phase_init(&df1_phase);
+#endif
 #if WF_VERIFY_TRACKS
     int verify_next = NUM_TRACKS;      // nothing to sweep until a disk mounts
     unsigned verify_bad = 0;
@@ -4300,7 +4350,9 @@ int main(void) {
         // since before REINSERT_FORCE_MS, in which case it is forced through
         // rather than left to starve. Only the volatile reads and the
         // dskchg call live here.
-        if (g_reinsert_req && disk_mounted) {
+        // Not during a swap's empty phase: an insert there would end it early.
+        // The request waits, and the phase's own insert announces the disk.
+        if (g_reinsert_req && disk_mounted && !swap_phase_empty(&df0_phase)) {
             uint32_t last_activity_ms = g_write_last_ms;
             if ((int32_t)(g_wgate_last_ms - last_activity_ms) > 0) {
                 last_activity_ms = g_wgate_last_ms;
@@ -4330,6 +4382,7 @@ int main(void) {
         if (track_cache_check_swap(&last_active_token, &now_mounted)) {
             g_reinsert_req = false;   // the mount/eject below announces this
             loaded = -1;
+            const bool was_mounted = disk_mounted;
             disk_mounted = now_mounted;
             // One slot, computed once, for both HD decisions below: the
             // WF_VERIFY_TRACKS skip and the drive-ID choice used to read
@@ -4349,33 +4402,36 @@ int main(void) {
                 ? 0 : NUM_TRACKS;
             verify_bad = 0;
 #endif
-            if (now_mounted) {
-#if WF_DRIVE_ID
-                // Before the insert is announced, so an ID read the change
-                // prompts sees the new disk's density. Taken at the next
-                // answer -- the first motor-off select after a motor-on one,
-                // or the 32-bit repeat -- never mid-answer (bus_out.c, which
-                // writes drive_id's Y). Whether Kickstart re-reads the ID
-                // on a change at all is bench step 9. HD writes spec §4.5:
-                // WPROT no longer derives HD from the slot kind
-                // (write_back_wprot) -- this is now the only place that does.
-                const bool hd = psram_image_slot_kind(slot) == SLOT_KIND_ADF_HD;
-                if (bus_out_drive_id_set_hd(hd))
-                    wf_logf(WF_INFO, "drive-id: now answering %s 0x%08lx",
-                            hd ? "HD" : "DD", (unsigned long)drive_id_for(hd));
-#endif
-                dskchg_image_inserted();
-                wf_trace(WF_EV_MOUNT, (uint32_t)last_active_token, 0);
-            } else {
-#if WF_DRIVE_ID
-                if (bus_out_drive_id_set_hd(false))
-                    wf_logf(WF_INFO, "drive-id: now answering DD 0x%08lx (no disk)",
-                            (unsigned long)DRIVE_ID_DD);
-#endif
-                dskchg_image_ejected();
-                stream_stop(0);
+            // A disk over a disk (web mount, Next, NFC tap) is shown EMPTY
+            // for SWAP_EMPTY_MS first, so trackdisk's change poll sees a
+            // removal and, on a later poll, an insertion -- never both in one
+            // poll, which swallowed the insertion and left "Please insert
+            // volume" up until Retry (swap_phase.h). The swap gate already
+            // ran on core1 before this slot was published. `was_mounted`
+            // includes a disk still waiting out an empty phase: a second swap
+            // restarts the timer, and the newest disk goes in.
+            switch (swap_phase_on_change(&df0_phase, clock_ms(), was_mounted, now_mounted)) {
+            case SWAP_PHASE_INSERT_NOW:
+                df0_present(slot, last_active_token);
+                break;
+            case SWAP_PHASE_GO_EMPTY:
+                df0_absent();
                 wf_trace(WF_EV_EJECT, 0, 0);
+                wf_logf(WF_INFO, "swap: DF0 shown empty for %u ms before the new disk",
+                        (unsigned)SWAP_EMPTY_MS);
+                break;
+            case SWAP_PHASE_EJECT:
+                df0_absent();
+                wf_trace(WF_EV_EJECT, 0, 0);
+                break;
             }
+        }
+        // The end of DF0's empty phase: the newest published disk goes in.
+        // Read afresh -- a newer token would have restarted the phase above.
+        if (swap_phase_insert_due(&df0_phase, clock_ms())) {
+            loaded = -1;
+            df0_present(psram_active_slot(), last_active_token);
+            wf_logf(WF_INFO, "swap: DF0 new disk inserted (/CHNG until the next step)");
         }
 
 #if DF1_CAPABLE
@@ -4397,6 +4453,7 @@ int main(void) {
                 stream_stop(1);
                 loaded1 = -1;
                 df1_mounted = false;
+                swap_phase_cancel(&df1_phase);   // no insert after the drive went away
             }
             if (p.set_id) bus_out_drive_id_set(1, p.id);
             if (p.lines) {
@@ -4442,11 +4499,20 @@ int main(void) {
                 const bool hd = ds != SLOT_NONE && psram_image_slot_kind(ds) == SLOT_KIND_ADF_HD;
                 const bool was_mounted = df1_mounted;
                 df1_mounted = ds != SLOT_NONE && (!hd || DF1_HOLDS_HD) && g_df1_mode != DF1_MODE_OFF;
-                if (df1_mounted) {
+                // A disk over a disk: DF1 empty first, as for DF0 (swap_phase.h).
+                const swap_phase_action_t act =
+                    swap_phase_on_change(&df1_phase, clock_ms(), was_mounted, df1_mounted);
+                if (act == SWAP_PHASE_INSERT_NOW) {
                     // The ID before the insert is announced, as for DF0.
                     bus_out_drive_id_set(1, hd ? DRIVE_ID_KIND_HD : DRIVE_ID_KIND_DD);
                     dskchg_image_inserted_d(1);
                     wf_trace(WF_EV_MOUNT, (uint32_t)t, 1);
+                } else if (act == SWAP_PHASE_GO_EMPTY) {
+                    bus_out_drive_id_set(1, DRIVE_ID_KIND_DD);   // an empty DD drive
+                    dskchg_image_ejected_d(1);
+                    wf_trace(WF_EV_EJECT, 0, 1);
+                    wf_logf(WF_INFO, "swap: DF1 shown empty for %u ms before the new disk",
+                            (unsigned)SWAP_EMPTY_MS);
                 } else if (g_df1_mode != DF1_MODE_OFF) {
                     bus_out_drive_id_set(1, DRIVE_ID_KIND_DD);   // an empty DD drive
                     dskchg_image_ejected_d(1);
@@ -4454,6 +4520,17 @@ int main(void) {
                 }
                 psram_df1_reader_ack(t);
             }
+        }
+        // The end of DF1's empty phase: the disk its word names now goes in
+        // (a newer word restarted the phase above; a switch off cancelled it).
+        if (swap_phase_insert_due(&df1_phase, clock_ms()) && df1_mounted) {
+            const int ds = psram_token_slot(df1_seen_tok);
+            const bool hd = ds != SLOT_NONE && psram_image_slot_kind(ds) == SLOT_KIND_ADF_HD;
+            loaded1 = -1;
+            bus_out_drive_id_set(1, hd ? DRIVE_ID_KIND_HD : DRIVE_ID_KIND_DD);
+            dskchg_image_inserted_d(1);
+            wf_trace(WF_EV_MOUNT, (uint32_t)df1_seen_tok, 1);
+            wf_logf(WF_INFO, "swap: DF1 new disk inserted (/CHNG until the next step)");
         }
 #endif
 
@@ -4478,12 +4555,13 @@ int main(void) {
          * in the ISR against a measured threshold, on a log verified to have
          * dropped nothing.
          */
-        serve_drive(0, psram_active_token(), &loaded);
+        // Nothing streams from DF0 while a swap shows it empty (swap_phase.h).
+        if (!swap_phase_empty(&df0_phase)) serve_drive(0, psram_active_token(), &loaded);
 #if DF1_CAPABLE
         // DF1 only while its word names a disk it holds: an empty DF1 streams
         // nothing (its want_track still follows its head).
 #if WF_PNET_LOOP
-        g_pnet_df1_mounted = df1_mounted && g_pnet_on;
+        g_pnet_df1_mounted = df1_mounted && !swap_phase_empty(&df1_phase) && g_pnet_on;
         if (g_pnet_on) {
             // A finished batch first: its echo may be read next. A commit while the head is already
             // on side 1 (SIDE flipped since the capture ended) rebuilds the echo there.
@@ -4530,7 +4608,7 @@ int main(void) {
             pnet_l2_log();
 #endif
         }
-        if (df1_mounted) {
+        if (df1_mounted && !swap_phase_empty(&df1_phase)) {   // nothing streams while a swap shows DF1 empty
             if (g_pnet_on) pnet_serve_df1(df1_seen_tok, &loaded1);
             else serve_drive(1, df1_seen_tok, &loaded1);
         }
@@ -4539,7 +4617,7 @@ int main(void) {
         if (g_pnet_on || flux_capture_prearmed()) pnet_prearm_step();
         if (g_pnet_on) pnet_log_summary();
 #else
-        if (df1_mounted) serve_drive(1, df1_seen_tok, &loaded1);
+        if (df1_mounted && !swap_phase_empty(&df1_phase)) serve_drive(1, df1_seen_tok, &loaded1);
 #endif
 #endif
 
