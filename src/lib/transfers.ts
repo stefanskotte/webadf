@@ -1,9 +1,10 @@
 import { crc32 } from 'node:zlib';
-import { and, asc, eq, gt, inArray, lt, sql } from 'drizzle-orm';
+import { and, asc, desc, eq, gt, inArray, lt, or, sql } from 'drizzle-orm';
 import { devices } from '@/db/schema/devices';
 import { transfers } from '@/db/schema/transfers';
 import { diskStore } from '@/lib/storage';
 import type { Db } from '@/db';
+import type { SendSummary } from '@/lib/send-ui';
 import { XFER_FW, SEND_FILE_MAX, SEND_QUEUE_MAX_FILES, SEND_QUEUE_MAX_BYTES } from '@/lib/send-limits';
 
 export { XFER_FW, SEND_FILE_MAX, SEND_QUEUE_MAX_FILES, SEND_QUEUE_MAX_BYTES };
@@ -56,7 +57,7 @@ export function formatQueue(next: QueueRow | null, rows: QueueRow[]): string {
 export type QueueResult = { ok: true; id: string } | { ok: false; reason: 'bad_name' | 'too_large' | 'queue_full' | 'no_device' | 'no_blob' };
 
 export async function queueTransferFromBlob(db: Db, a: { orgId: string; deviceId: string; userId: string; path: string;
-  sha256: string; protection?: number; comment?: string; now?: Date }): Promise<QueueResult> {
+  sha256: string; protection?: number; comment?: string; bytes?: Uint8Array; now?: Date }): Promise<QueueResult> {
   const path = cleanAmigaPath(a.path);
   if (!path) return { ok: false, reason: 'bad_name' };
   const [dev] = await db.select({ id: devices.id }).from(devices).where(and(eq(devices.id, a.deviceId), eq(devices.orgId, a.orgId)));
@@ -64,7 +65,8 @@ export async function queueTransferFromBlob(db: Db, a: { orgId: string; deviceId
   const st = await diskStore.stat(a.sha256);
   if (!st) return { ok: false, reason: 'no_blob' };
   if (st.sizeBytes > SEND_FILE_MAX) return { ok: false, reason: 'too_large' };
-  const bytes = await diskStore.read(a.sha256);
+  // The upload route already holds the bytes; reading 4 MB back from the store would only cost time.
+  const bytes = a.bytes && a.bytes.byteLength === st.sizeBytes ? a.bytes : await diskStore.read(a.sha256);
   const crc = crc32(bytes) >>> 0;
   const now = a.now ?? new Date();
   const comment = (a.comment ?? '').replace(/[^\x20-\x7e\xa0-\xff]/g, '').slice(0, 79);
@@ -150,4 +152,59 @@ export async function expireTransfers(db: Db, now = new Date()): Promise<{ expir
 export async function recordSendRx(db: Db, deviceId: string, rx: 'c' | 'r' | 'u' | '-', now = new Date()): Promise<void> {
   await db.update(devices).set({ sendRx: rx, sendRxAt: now }).where(and(eq(devices.id, deviceId),
     sql`(${devices.sendRx} is distinct from ${rx} or ${devices.sendRxAt} is null or ${devices.sendRxAt} < ${new Date(now.getTime() - 30_000)})`));
+}
+
+export async function queueLoad(db: Db, deviceId: string): Promise<{ files: number; bytes: number }> {
+  const [l] = await db.select({ n: sql<number>`count(*)::int`, b: sql<string>`coalesce(sum(${transfers.sizeBytes}),0)::bigint` })
+    .from(transfers).where(and(eq(transfers.deviceId, deviceId), inArray(transfers.status, ACTIVE)));
+  return { files: l.n, bytes: Number(l.b) };
+}
+
+export type TransferRow = typeof transfers.$inferSelect;
+
+/** The board's rows for the Upload page's queue: this org's only, newest first (finished rows live 7 days). */
+export async function listTransfers(db: Db, orgId: string, deviceId: string, limit = 100): Promise<TransferRow[]> {
+  return db.select().from(transfers)
+    .where(and(eq(transfers.orgId, orgId), eq(transfers.deviceId, deviceId)))
+    .orderBy(desc(transfers.createdAt), desc(transfers.id)).limit(limit);
+}
+
+/** Retry (R10): the same file, path, protection and comment, queued again as a new row; the old row stays. */
+export async function retryTransfer(db: Db, a: { orgId: string; userId: string; id: string; now?: Date }):
+  Promise<QueueResult | { ok: false; reason: 'not_found' | 'not_finished' }> {
+  const now = a.now ?? new Date();
+  const [r] = await db.select().from(transfers).where(and(eq(transfers.id, a.id), eq(transfers.orgId, a.orgId)));
+  if (!r) return { ok: false, reason: 'not_found' };
+  // F4: a row still 'queued' past its expiry reads as expired to the page (which offers Retry) until the daily cron
+  // marks it; mark it here, as expireTransfers does, so the retry the page offers does not answer 409.
+  const lapsed = r.status === 'queued' && r.expiresAt <= now;
+  if (r.status !== 'failed' && r.status !== 'expired' && !lapsed) return { ok: false, reason: 'not_finished' };   // F3: not 'cancelled'
+  if (lapsed) {
+    await db.transaction(async (tx) => {
+      const ex = await tx.update(transfers).set({ status: 'expired', finishedAt: now })
+        .where(and(eq(transfers.id, r.id), eq(transfers.status, 'queued'))).returning({ id: transfers.id });
+      if (ex.length) await tx.update(devices).set({ sendVersion: sql`${devices.sendVersion} + 1` }).where(eq(devices.id, r.deviceId));
+    });
+  }
+  return queueTransferFromBlob(db, { orgId: a.orgId, deviceId: r.deviceId, userId: a.userId, path: r.path,
+    sha256: r.blobSha256, protection: r.protection, comment: r.comment, now });
+}
+
+/** Per board, for the card's line (spec §4; R11): what waits or moves, and what finished in the last 24 h. */
+export async function sendSummaries(db: Db, orgId: string, now = new Date()): Promise<Record<string, SendSummary>> {
+  const since = new Date(now.getTime() - 24 * 3600_000);
+  const rows = await db.select({ deviceId: transfers.deviceId, status: transfers.status, n: sql<number>`count(*)::int` })
+    .from(transfers)
+    .where(and(eq(transfers.orgId, orgId),
+      or(and(inArray(transfers.status, ACTIVE), gt(transfers.expiresAt, now)), gt(transfers.finishedAt, since))))
+    .groupBy(transfers.deviceId, transfers.status);
+  const out: Record<string, SendSummary> = {};
+  for (const r of rows) {
+    const s = (out[r.deviceId] ??= { waiting: 0, sending: 0, delivered: 0, failed: 0 });
+    if (r.status === 'queued') s.waiting += r.n;
+    else if (r.status === 'sending') s.sending += r.n;
+    else if (r.status === 'delivered') s.delivered += r.n;
+    else if (r.status === 'failed' || r.status === 'expired') s.failed += r.n;
+  }
+  return out;
 }

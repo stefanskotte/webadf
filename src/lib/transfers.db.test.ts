@@ -171,4 +171,71 @@ describe('transfers', () => {
     await T.recordSendRx(getDb(), d, 'r', new Date(t0.getTime() + 11_000));
     expect(await at()).toMatchObject({ rx: 'r' });
   });
+  it('takes the bytes it is given instead of reading the blob again', async () => {
+    const d = await device(); const b = new TextEncoder().encode('given');
+    const r = await T.queueTransferFromBlob(getDb(), { orgId: 'org-a', deviceId: d, userId: 'u1', path: 'G', sha256: await blob(b), bytes: b });
+    expect((await row((r as { id: string }).id)).crc32).toBe(crc32(b) >>> 0);
+  });
+
+  it('queueLoad counts what waits or moves, not what finished', async () => {
+    const d = await device();
+    const a = await q(d, await blob(new Uint8Array(100)));
+    await q(d, await blob(new Uint8Array(200)));
+    await T.finishTransfer(getDb(), d, (a as { id: string }).id, { ok: true, savedAs: 'File.bin' });
+    expect(await T.queueLoad(getDb(), d)).toEqual({ files: 1, bytes: 200 });
+  });
+
+  it('listTransfers is this org\'s rows for the board, newest first', async () => {
+    const d = await device();
+    await q(d, await blob(new Uint8Array([1])), { path: 'first' });
+    await q(d, await blob(new Uint8Array([2])), { path: 'second' });
+    expect((await T.listTransfers(getDb(), 'org-a', d)).map((r) => r.path)).toEqual(['second', 'first']);
+    expect(await T.listTransfers(getDb(), 'org-b', d)).toEqual([]);
+  });
+
+  it('retryTransfer queues a failed or expired row again as a new row, and refuses the rest', async () => {
+    const d = await device();
+    const r = await q(d, await blob(new TextEncoder().encode('again')), { path: 'Again.txt', protection: 0x40, comment: 'c' });
+    const id = (r as { id: string }).id;
+    expect(await T.retryTransfer(getDb(), { orgId: 'org-a', userId: 'u2', id })).toEqual({ ok: false, reason: 'not_finished' });
+    await T.finishTransfer(getDb(), d, id, { ok: false, code: 'space', text: 'full' });
+    const again = await T.retryTransfer(getDb(), { orgId: 'org-a', userId: 'u2', id });
+    expect(again.ok).toBe(true);
+    const n = await row((again as { id: string }).id);
+    expect(n).toMatchObject({ path: 'Again.txt', protection: 0x40, comment: 'c', status: 'queued', createdByUserId: 'u2' });
+    expect(await T.retryTransfer(getDb(), { orgId: 'org-b', userId: 'u2', id })).toEqual({ ok: false, reason: 'not_found' });
+  });
+
+  it('retryTransfer refuses a cancelled row (F3: the UI offers Retry on failed and expired only)', async () => {
+    const d = await device();
+    const r = await q(d, await blob(new TextEncoder().encode('cancel me')));
+    const id = (r as { id: string }).id;
+    await T.cancelTransfer(getDb(), 'org-a', id);
+    expect(await T.retryTransfer(getDb(), { orgId: 'org-a', userId: 'u2', id })).toEqual({ ok: false, reason: 'not_finished' });
+  });
+
+  it('retryTransfer treats a queued row past its expiry as expired (F4): marks it, then queues a new row', async () => {
+    const d = await device();
+    const t0 = new Date(Date.now() - 2 * 24 * 3600_000);
+    const r = await q(d, await blob(new TextEncoder().encode('stale')), { path: 'Stale.txt', now: t0 });
+    const id = (r as { id: string }).id;
+    const v = await version(d);
+    const again = await T.retryTransfer(getDb(), { orgId: 'org-a', userId: 'u2', id });
+    expect(again.ok).toBe(true);
+    expect((await row(id)).status).toBe('expired');
+    expect((await row(id)).finishedAt).not.toBeNull();
+    expect(await row((again as { id: string }).id)).toMatchObject({ path: 'Stale.txt', status: 'queued' });
+    expect(await version(d)).toBe(v + 2);
+  });
+
+  it('sendSummaries counts per board: waiting, sending, and what finished in the last 24 h', async () => {
+    const d = await device('org-s');
+    const mk = async (p: string) => (await T.queueTransferFromBlob(getDb(), { orgId: 'org-s', deviceId: d, userId: 'u',
+      path: p, sha256: await blob(new TextEncoder().encode(p)) }) as { id: string }).id;
+    const a = await mk('a'); const b = await mk('b'); await mk('c'); const old = await mk('old');
+    await T.recordChunk(getDb(), d, a, 0);
+    await T.finishTransfer(getDb(), d, b, { ok: true, savedAs: 'b' });
+    await T.finishTransfer(getDb(), d, old, { ok: false, code: 'crc', text: 'x' }, new Date(Date.now() - 25 * 3600_000));
+    expect((await T.sendSummaries(getDb(), 'org-s'))[d]).toEqual({ waiting: 1, sending: 1, delivered: 1, failed: 0 });
+  });
 });
