@@ -4,7 +4,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { PgDialect } from 'drizzle-orm/pg-core';
 import type { SQL } from 'drizzle-orm';
-import { PAULANET_DISK_SHA256 } from '@/lib/paulanet-disk';
+import { PAULANET_DISK_PREVIOUS, PAULANET_DISK_SHA256 } from '@/lib/paulanet-disk';
 import { ADF_BYTES } from '@/lib/adfmfm';
 
 class FakeAuthError extends Error {}
@@ -53,6 +53,14 @@ describe('GET /api/device/image/net/<sha256>', () => {
     expect(body.slice(16)).toEqual(adf);
     expect(read).toHaveBeenCalledWith(PAULANET_DISK_SHA256);
     expect(select).not.toHaveBeenCalled();   // the driver disk needs no entitlement
+  });
+
+  it('serves the older driver disk too, with no entitlement: a board whose Amiga is online keeps it (R16)', async () => {
+    read.mockResolvedValue(new Uint8Array(ADF_BYTES));
+    const res = await call(PAULANET_DISK_PREVIOUS);
+    expect(res.status).toBe(200);
+    expect(read).toHaveBeenCalledWith(PAULANET_DISK_PREVIOUS);
+    expect(select).not.toHaveBeenCalled();
   });
 
   it('serves a standard DD ADF of the board\'s own organization as a DD WFAD (a disk mounted into DF1)', async () => {

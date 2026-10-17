@@ -6,6 +6,7 @@ import { devices } from '@/db/schema/devices';
 import { disks, games } from '@/db/schema/catalog';
 import { deviceState, isOnline, relative } from '@/lib/device-state';
 import { driverBucket } from '@/lib/network-checklist';
+import { receiverRunning, type Rx } from '@/lib/send-ui';
 import { readNextForDevices, nextInfo, type NextInfo } from '@/lib/next-disk';
 
 /**
@@ -92,6 +93,9 @@ export interface LiveStateRow {
   secondDriveCapable: boolean | null; sel1Wired: boolean | null; df1Seen: boolean | null;
   /** DF1 any disk (spec 2026-10-14 §3.3): the disk mounted into DF1, for the drive menu's DF1 line. Page inputs. */
   df1DiskId: string | null; df1PickSha256: string | null; df1PickTitle: string | null; df1PickDiskNo: number | null;
+  /** Send to Amiga (Task 8): the card's line reads the queue (sendVersion moves on every queue change) and the
+   *  receiver state. Only whether a connected reading is fresh is tracked, not every rx refresh (R6). */
+  sendVersion: number; sendRx: string | null; sendRxAt: Date | null;
   /** The computed next-disk verdict for this device, or null (multi-disk plan R3). */
   next: NextInfo | null;
 }
@@ -158,6 +162,8 @@ export function liveFingerprint(
         r.sel1Wired === null ? '' : String(r.sel1Wired), r.df1Seen === null ? '' : String(r.df1Seen),
         // Not the traffic counters (final review m5): they move on every heartbeat while frames flow, and
         // ruling 18 moves the fingerprint on state transitions only. The card renders whatever it holds.
+        r.sendVersion, r.sendRx ?? '',
+        receiverRunning({ rx: r.sendRx as Rx | null, rxAt: r.sendRxAt?.getTime() ?? null }, false, now) ? 'fresh' : 'stale',
         isOnline(r.lastSeenAt, now) ? '1' : '0',
         // Every offline card, not just 'stale' -- see the doc comment above.
         isOnline(r.lastSeenAt, now) ? '' : relative(r.lastSeenAt, now),
@@ -239,6 +245,7 @@ export async function liveStateRows(db: ReturnType<typeof getDb>, orgId: string)
       df1PickSha256: df1Disk.sha256,
       df1PickTitle: df1Game.title,
       df1PickDiskNo: df1Disk.diskNo,
+      sendVersion: devices.sendVersion, sendRx: devices.sendRx, sendRxAt: devices.sendRxAt,
     })
     .from(devices)
     // Org-scoped on both sides of both joins: without `disks.orgId`, a

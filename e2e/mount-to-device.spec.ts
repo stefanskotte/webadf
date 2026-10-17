@@ -123,13 +123,9 @@ test('with several devices, only the one holding the disk offers Eject', async (
   // The trigger answers "where is this disk?" before it is even opened.
   //
   // Asserted against the name the row ACTUALLY carries rather than the one
-  // passed to pairDevice: /api/devices/pair accepts a name and discards it
-  // (pairing_codes has no column for it), so every device is called
-  // "Device <MAC>". That is a real gap this feature makes visible -- a picker
-  // of several identically-shaped MACs is hard to choose from -- but it needs
-  // a migration, so it is recorded rather than fixed here. Reading the name
-  // back keeps this test honest either way: it passes today and still passes
-  // the day devices can be named.
+  // passed to pairDevice. Since plan 2026-10-17 R8 a name given at pairing is
+  // kept (one omitted leaves "Device <MAC>"); reading it back keeps this test
+  // honest either way.
   const holderName = (await deviceRow(holderId)).name;
   const trigger = page.getByTestId(`mount-${diskId}`);
   await expect(trigger).toHaveText(`In ${holderName} ▾`);

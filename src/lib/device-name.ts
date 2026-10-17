@@ -23,3 +23,18 @@ export function defaultDeviceName(macAddress: string | null): string {
 export function isDefaultDeviceName(name: string, macAddress: string | null): boolean {
   return name === defaultDeviceName(macAddress);
 }
+
+/** The longest name a board may carry: the rename route's limit, shared with pairing (plan 2026-10-17 R8). */
+export const DEVICE_NAME_MAX = 80;
+
+/** A name typed when pairing, as stored on the code: trimmed, no control characters; empty means none. The caller
+ *  has already refused one over DEVICE_NAME_MAX. */
+export function pairingName(input: string | null | undefined): string | null {
+  const s = (input ?? '').replace(/[\u0000-\u001f\u007f]/g, '').trim();
+  return s === '' ? null : s;
+}
+
+/** What register names a new board: the name given at pairing, else the MAC label it has always worn. */
+export function nameForNewBoard(pairName: string | null, macAddress: string | null): string {
+  return pairName ?? defaultDeviceName(macAddress);
+}

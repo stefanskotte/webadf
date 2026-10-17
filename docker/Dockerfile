@@ -22,6 +22,9 @@ RUN pip install --no-cache-dir amitools==0.4.0
 WORKDIR /src
 COPY third-party/paulanet third-party/paulanet
 COPY tools/paulanet-disk tools/paulanet-disk
+# Receive (plan 2026-10-17 R14): the committed pinned build; build.sh checks it against receive.sha256.
+COPY tools/receive/dist/Receive tools/receive/dist/Receive
+COPY tools/receive/receive.sha256 tools/receive/receive.sha256
 RUN mkdir /out && bash tools/paulanet-disk/build.sh /out/paulanet.adf
 
 FROM node:24-bookworm-slim

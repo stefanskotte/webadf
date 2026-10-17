@@ -1,0 +1,1 @@
+ALTER TABLE "devices" ADD COLUMN "net_amiga_ip_last" text;

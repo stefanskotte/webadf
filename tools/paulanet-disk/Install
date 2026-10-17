@@ -1,7 +1,8 @@
-; Install -- puts Rob Smith's PaulaNET.device in place for a TCP/IP stack.
+; Install -- puts Rob Smith's PaulaNET.device in place for a TCP/IP stack,
+; and webadf's Receive in SYS:Tools (with its icon) and C:.
 ; From webadf (https://github.com/stefanskotte/webadf). Safe to run more
-; than once: the driver is copied again, and an existing eth0 is never
-; changed.
+; than once: the driver and Receive are copied again, and an existing eth0
+; is never changed.
 FailAt 21
 If NOT EXISTS DEVS:Networks
   MakeDir DEVS:Networks
@@ -13,6 +14,27 @@ If WARN
   Skip DONE
 EndIf
 Echo "Copied PaulaNET.device to DEVS:Networks."
+If NOT EXISTS SYS:Tools
+  MakeDir SYS:Tools
+EndIf
+Copy PaulaNET:Receive SYS:Tools/ CLONE QUIET
+If WARN
+  Skip NORECEIVE
+EndIf
+Copy PaulaNET:Receive.info SYS:Tools/ CLONE QUIET
+If WARN
+  Skip NORECEIVE
+EndIf
+Copy PaulaNET:Receive C: CLONE QUIET
+If WARN
+  Skip NORECEIVE
+EndIf
+Echo "Copied Receive to SYS:Tools and C:."
+Skip ETH
+Lab NORECEIVE
+Echo "Could not copy Receive to SYS:Tools and C:."
+Echo "The driver is in place; Receive also runs from this disk."
+Lab ETH
 If EXISTS DEVS:NetInterfaces/eth0
   Echo "DEVS:NetInterfaces/eth0 already exists: left as it is."
   Echo "For PaulaNET it needs these three lines:"

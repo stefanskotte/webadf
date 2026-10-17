@@ -19,7 +19,7 @@ import { DeviceCard } from './device-card';
  * the server would refuse.
  */
 export function DeviceList({
-  devices, now, states, selectableIds, latest, nextById,
+  devices, now, states, selectableIds, latest, nextById, sendLineById,
 }: {
   devices: DeviceListItem[];
   now: number;
@@ -27,6 +27,7 @@ export function DeviceList({
   selectableIds: string[];
   latest: ReleaseRef | null;
   nextById: Record<string, NextInfo | null>;
+  sendLineById: Record<string, string | null>;
 }) {
   const router = useRouter();
   const [picked, setPicked] = useState<Set<string>>(new Set());
@@ -217,6 +218,7 @@ export function DeviceList({
               : undefined}
             onCancelUpdate={d.desiredFirmwareVersion ? cancel : undefined}
             next={nextById[d.id] ?? null}
+            sendLine={sendLineById[d.id] ?? null}
           />
         ))}
       </div>

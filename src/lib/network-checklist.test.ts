@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { driverDiskLine, driverLine, amigaAddressLine, trafficText, driverBucket } from './network-checklist';
-import { PAULANET_DISK_SHA256 } from './paulanet-disk';
+import { PAULANET_DISK_PREVIOUS, PAULANET_DISK_SHA256 } from './paulanet-disk';
 
 const NOW = 1_800_000_000_000;
 
@@ -9,6 +9,10 @@ describe('the Network checklist names both values of every state', () => {
     expect(driverDiskLine({ df1Sha256: PAULANET_DISK_SHA256 })).toEqual({ ok: true, text: 'Driver disk: in DF1' });
     expect(driverDiskLine({ df1Sha256: null })).toEqual({ ok: false, text: 'Driver disk: loading' });
     expect(driverDiskLine({ df1Sha256: 'b'.repeat(64) })).toEqual({ ok: false, text: 'Driver disk: loading' });
+  });
+  it('names the older driver disk as in DF1, and says when the new one goes in (R16)', () => {
+    expect(driverDiskLine({ df1Sha256: PAULANET_DISK_PREVIOUS }))
+      .toEqual({ ok: true, text: 'Driver disk: in DF1 (the older one, without Receive; the new one goes in once the Amiga is off)' });
   });
   it('driver: talking, never heard, and quiet', () => {
     expect(driverLine(new Date(NOW - 4_000), NOW)).toEqual({ ok: true, text: 'Driver: talking (last seen 4 s ago)' });

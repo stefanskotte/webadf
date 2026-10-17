@@ -34,6 +34,7 @@ import type { GameDetailDisk } from '@/lib/queries';
 import type { MountChoice } from '@/lib/mount-choice';
 import type { FobDevice } from '@/components/nfc/fob-button';
 import { DiskRow } from './disk-row';
+import type { SendContext } from '@/lib/send-ui';
 import { AddDisksDialog } from './add-disks-dialog';
 import { HelpTip } from '@/components/help/help-tip';
 
@@ -54,7 +55,7 @@ function diskName(d: GameDetailDisk): string {
   return d.tosecName ?? d.sourceFilename ?? `Disk ${d.diskNo}`;
 }
 
-export function DiskSetSection({ gameId, title, entries, from, fobDevices = [] }: {
+export function DiskSetSection({ gameId, title, entries, from, fobDevices = [], send = null }: {
   gameId: string;
   /** The title's name, for the Add disks… heading and its "Moved to" toast. */
   title: string;
@@ -63,6 +64,8 @@ export function DiskSetSection({ gameId, title, entries, from, fobDevices = [] }
   /** Carried through to each DiskRow (see disk-row.tsx). */
   from?: string;
   fobDevices?: FobDevice[];
+  /** Boards that can take files; null = no Send buttons. Carried to each DiskRow. */
+  send?: SendContext | null;
 }) {
   const router = useRouter();
   const [reordering, setReordering] = useState(false);
@@ -211,7 +214,7 @@ export function DiskSetSection({ gameId, title, entries, from, fobDevices = [] }
           const { disk, choices } = byId.get(id)!;
           return (
             <DiskRow
-              key={disk.id} disk={disk} from={from} fobDevices={fobDevices} choices={choices}
+              key={disk.id} disk={disk} from={from} fobDevices={fobDevices} send={send} choices={choices}
               helpNfc={i === 0}
               helpProtect={id === shown.find((sid) => byId.get(sid)!.disk.imageFormat !== 'hfe')}
               helpHfe={id === shown.find((sid) => byId.get(sid)!.disk.imageFormat === 'hfe')}

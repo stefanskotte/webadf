@@ -3,6 +3,8 @@ import type { GameDetailDisk } from '@/lib/queries';
 import { WriteProtectToggle } from './write-protect-toggle';
 import { HelpTip } from '@/components/help/help-tip';
 import { MountAction } from './mount-action';
+import type { SendContext } from '@/lib/send-ui';
+import { SendAdfButton } from '@/components/send/send-button';
 import { ExtractAction } from './extract-action';
 import { WEAK_BIT_NOTICE } from '@/lib/hfe/messages';
 import { holderText, type MountChoice } from '@/lib/mount-choice';
@@ -14,7 +16,7 @@ import { HdTag } from '@/components/disks/hd-tag';
 import { isHdAdf } from '@/lib/disk-format';
 import { DiskSetMenu, LoneDiskMenu, type DiskSetControls } from './disk-set-menu';
 
-export function DiskRow({ disk, choices, from, fobDevices = [], setControls, loneGameId, helpProtect, helpNfc, helpHfe }: {
+export function DiskRow({ disk, choices, from, fobDevices = [], send = null, setControls, loneGameId, helpProtect, helpNfc, helpHfe }: {
   disk: GameDetailDisk;
   /** Per-device verdict for THIS disk -- see lib/mount-choice.ts. */
   choices: MountChoice[];
@@ -43,6 +45,8 @@ export function DiskRow({ disk, choices, from, fobDevices = [], setControls, lon
    * callback, because the server page renders this row directly.
    */
   loneGameId?: string;
+  /** Boards that can take files; null = no Send button (spec §4 "the disk row"). */
+  send?: SendContext | null;
 }) {
   // Derived from the SAME choices the mount picker uses. It used to come from
   // a separate sha256-keyed map in the page, which could name a different
@@ -172,6 +176,7 @@ export function DiskRow({ disk, choices, from, fobDevices = [], setControls, lon
           </>
         )}
         <MountAction diskId={disk.id} choices={choices} />
+        {send && !isHfe && <SendAdfButton ctx={send} diskId={disk.id} />}
         {/* Write this disk onto an NFC tag, so tapping it mounts this disk.
             Before Delete, which stays last. */}
         {fobDevices.length > 0 && (

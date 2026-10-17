@@ -18,6 +18,8 @@ import {
 import { CSS } from '@dnd-kit/utilities';
 import { GripVertical } from 'lucide-react';
 import type { AdfEntry } from '@/lib/adffs';
+import type { SendContext } from '@/lib/send-ui';
+import { useSendAction } from '@/components/send/send-button';
 import { useFileEdit, MAX_NAME_LENGTH, type EditDisabled } from './file-actions';
 
 /**
@@ -189,9 +191,10 @@ export function collectDirectories(entries: AdfEntry[], parentPath = ''): Direct
 /** Reserved on the left of every row for the drag handle, so the handle can be absolutely positioned in that gutter without disturbing any of the existing `pl-[22px]` alignment the metadata/action lines below the name already depend on. */
 const GRIP_GUTTER = 22;
 
-export function FileTree({ entries, diskId }: { entries: AdfEntry[]; diskId: string }) {
+export function FileTree({ entries, diskId, send = null }: { entries: AdfEntry[]; diskId: string; send?: SendContext | null }) {
   const [openBlocks, setOpenBlocks] = useState<ReadonlySet<number>>(() => new Set());
   const { disabled, busy, runEdit, rootBlock } = useFileEdit();
+  const sender = useSendAction(send);
 
   // Which single row, if any, has its rename or delete form expanded. Kept
   // here rather than per-row, and mutually exclusive with each other: at
@@ -452,6 +455,9 @@ export function FileTree({ entries, diskId }: { entries: AdfEntry[]; diskId: str
             currentParent={parentBlocks.get(entry.block) ?? rootBlock}
             forbiddenBlocks={forbiddenBlocks}
             diskId={diskId}
+            canSend={sender !== null}
+            sendBusy={sender?.busy ?? false}
+            onSend={(e) => void sender?.send({ diskId, blocks: [e.block] }, e.kind === 'dir' ? `${e.name}/` : e.name)}
             toggle={toggle}
             startRename={startRename}
             cancelRename={cancelRename}
@@ -492,6 +498,10 @@ interface FileRowProps {
   /** Blocks this row must refuse as a drop target for the CURRENT drag -- see `subtreeBlocks` on FileTree. Only ever non-empty while a directory is being dragged. */
   forbiddenBlocks: ReadonlySet<number>;
   diskId: string;
+  /** A board can take files (useSendAction): draw Send on this row (spec §4; R3). */
+  canSend: boolean;
+  sendBusy: boolean;
+  onSend: (entry: AdfEntry) => void;
   toggle: (block: number) => void;
   startRename: (entry: AdfEntry) => void;
   cancelRename: () => void;
@@ -509,7 +519,7 @@ interface FileRowProps {
 function FileRow({
   entry, depth, open, striped, editDisabled, busy,
   renameBlock, renameValue, deleteBlock, moveBlock, moveTarget, directoryOptions, currentParent,
-  forbiddenBlocks, diskId,
+  forbiddenBlocks, diskId, canSend, sendBusy, onSend,
   toggle, startRename, cancelRename, submitRename, setRenameValue,
   startDelete, cancelDelete, submitDelete,
   startMove, cancelMove, submitMove, setMoveTarget,
@@ -724,6 +734,19 @@ function FileRow({
           // two-line layout there is no column to align to, and 68px of
           // nothing would just widen line two.
           <span className="hidden w-[68px] shrink-0 sm:block" />
+        )}
+        {/* Send to the Amiga (spec §4, R3): a file, or a folder with everything in it. Withdrawn while browsing an
+            older version for the same reason as Download: the route reads the CURRENT head. */}
+        {canSend && (
+          <button type="button" onClick={() => onSend(entry)}
+                  disabled={sendBusy || editDisabled?.reason === 'historical'}
+                  title={editDisabled?.reason === 'historical' ? editDisabled.message : undefined}
+                  aria-label={`Send ${entry.name} to the Amiga`}
+                  data-testid={`fs-send-${entry.block}`}
+                  className="shrink-0 rounded px-2 py-0.5 text-[11px] font-semibold disabled:opacity-50"
+                  style={{ background: 'var(--glass-strong)', color: 'var(--ink)' }}>
+            Send
+          </button>
         )}
       </div>
 

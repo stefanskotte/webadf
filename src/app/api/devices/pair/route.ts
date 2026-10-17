@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { getDb } from '@/db';
 import { pairingCodes } from '@/db/schema/devices';
 import { requireOrg } from '@/lib/session';
+import { DEVICE_NAME_MAX, pairingName } from '@/lib/device-name';
 import { ALPHABET as CODE_ALPHABET } from '@/lib/invites';
 
 // Human plane: a signed-in user mints a code to hand to a device. Nothing
@@ -17,14 +18,11 @@ const TTL_MS = 10 * 60 * 1000;
 // fails for this reason" for a cost of one extra query in the worst case.
 const MAX_ATTEMPTS = 5;
 
-// The body carries a human-chosen label for the device the user is about to
-// pair. There is nowhere to persist it yet (pairing_codes has no name
-// column -- see Task 2's schema), so it is validated and otherwise ignored
-// by this endpoint; a later task can thread it through to the device once
-// there is a place to put it. Validating it now still rejects a malformed
-// body with 400 instead of silently accepting garbage.
+// The board's name, typed before the code is shown (plan 2026-10-17 R8). Kept on the code; register names the board
+// with it. Optional: none (or only spaces) means the board wears its MAC, as it always has. Over the rename limit is a
+// 400, never a silent cut.
 const pairBody = z.object({
-  name: z.string().min(1).max(100).optional(),
+  name: z.string().trim().max(DEVICE_NAME_MAX).optional(),
 });
 
 async function readJsonBody(request: Request): Promise<unknown> {
@@ -46,7 +44,7 @@ export async function POST(request: Request) {
 
   const parsed = pairBody.safeParse(await readJsonBody(request));
   if (!parsed.success) {
-    return Response.json({ error: z.flattenError(parsed.error) }, { status: 400 });
+    return Response.json({ error: 'invalid_body', detail: z.flattenError(parsed.error) }, { status: 400 });
   }
 
   const db = getDb();
@@ -55,7 +53,7 @@ export async function POST(request: Request) {
   for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
     const code = generateCode();
     const inserted = await db.insert(pairingCodes)
-      .values({ code, orgId, createdByUserId: userId, expiresAt })
+      .values({ code, orgId, createdByUserId: userId, expiresAt, name: pairingName(parsed.data.name) })
       .onConflictDoNothing()
       .returning({ code: pairingCodes.code });
 

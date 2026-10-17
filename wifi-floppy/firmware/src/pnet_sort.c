@@ -118,6 +118,12 @@ pnet_tx_t pnet_sort_tx(pnet_sort_t *s, const uint8_t *f, size_t len, const uint8
     return PNET_TX_SEND;
 }
 
+bool pnet_sort_seed(pnet_sort_t *s, uint32_t ip, uint32_t board_ip) {
+    if (s->amiga_ip != 0u || ip == 0u || ip == board_ip) return false;
+    s->amiga_ip = ip;
+    return true;
+}
+
 /* ARP (Ethernet/IPv4) whose target protocol address is `tpa`, or IPv4 whose destination is `tpa`. */
 static bool addressed_to(const uint8_t *f, size_t len, uint32_t tpa) {
     if (tpa == 0u || len < ETH_HDR) return false;

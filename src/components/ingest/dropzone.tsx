@@ -454,7 +454,7 @@ export function Dropzone() {
   const failed = rows.filter((r) => r.state === 'failed').length;
 
   return (
-    <div className="mx-4 flex flex-col gap-4 sm:mx-7">
+    <div className="mx-4 flex flex-col gap-4 sm:mx-7 lg:mr-3.5">
       <label
         data-testid="dropzone"
         onDragOver={(e) => e.preventDefault()}

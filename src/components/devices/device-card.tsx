@@ -6,6 +6,7 @@ import { NET_PICK_FW } from '@/lib/paulanet-disk';
 import type { DeviceListItem } from '@/lib/queries';
 import type { NextInfo } from '@/lib/next-disk';
 import { preloadText } from '@/lib/drive-chips';
+import { Link } from '@/components/shell/link';
 import { SecondDriveReadings } from './second-drive-readings';
 import { SecondDriveSetting } from './second-drive-setting';
 import { HelpTip } from '@/components/help/help-tip';
@@ -30,7 +31,7 @@ import { DeleteDeviceDialog } from './delete-device-dialog';
  * screen readers either way.
  */
 export function DeviceCard(
-  { device, now, firmware, selection, onCancelUpdate, next }: {
+  { device, now, firmware, selection, onCancelUpdate, next, sendLine }: {
     device: DeviceListItem; now: number; firmware: FirmwareState;
     /** Absent when this board cannot be updated -- no checkbox is drawn at all. */
     selection?: { selected: boolean; onToggle: (id: string) => void };
@@ -38,6 +39,8 @@ export function DeviceCard(
     onCancelUpdate?: (id: string) => void;
     /** The next-disk verdict (multi-disk plan R3), or null/absent when there is none. */
     next?: NextInfo | null;
+    /** Send to Amiga's one line (spec §4), or null when nothing waits or happened lately. */
+    sendLine?: string | null;
   },
 ) {
   const state = deviceState(device, now);
@@ -206,6 +209,12 @@ export function DeviceCard(
         </span>
       )}
 
+      {sendLine && (
+        <Link href={`/ingest?board=${encodeURIComponent(device.id)}`} data-testid={`device-send-${device.id}`}
+              className="w-fit text-[11px] font-semibold underline underline-offset-2" style={{ color: 'var(--ink)', overflowWrap: 'anywhere' }}>
+          {sendLine}
+        </Link>
+      )}
       {/* BOTTOM: write protection, firmware, and every existing action. */}
       <div className="flex flex-col gap-2">
         <SecondDriveReadings device={device} />

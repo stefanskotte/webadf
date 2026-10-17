@@ -821,3 +821,25 @@ test('in a collection at 390px: a finger walked slowly into a card\'s centre lea
   const left = await getDb().select({ id: games.id }).from(games).where(eq(games.orgId, u.orgId));
   expect(left).toHaveLength(2);
 });
+
+test('the Upload page stacks its two columns at 390px, and a 200-byte saved path wraps', async ({ page, request }) => {
+  await signUpFresh(page);
+  const { token } = await pairDevice(page, request, 'A board with a rather long name for a phone screen');
+  await request.post('/api/device/status', { headers: authHeader(token),
+    data: { mountedSha256: null, firmwareVersion: '1.15.0+gabc1234', secondDrive: 'net', driveVersion: 0 } });
+  await request.get('/api/device/poll?since=999999&xferAck=0&rx=c', { headers: authHeader(token) });
+  await page.goto('/ingest');
+  await page.getByTestId('send-file-input').setInputFiles({ name: 'p.txt', mimeType: 'text/plain', buffer: Buffer.from('x') });
+  await expect(page.locator('[data-testid^="send-row-"]')).toHaveCount(1, { timeout: 15_000 });
+  const q = Buffer.from(await (await request.get('/api/device/send/queue', { headers: authHeader(token) })).body()).toString('latin1');
+  const id = /^NEXT (\S+) /.exec(q)![1];
+  await request.get(`/api/device/send/${id}?offset=0&length=1`, { headers: authHeader(token) });
+  const long = Array.from({ length: 7 }, (_, i) => `Folder${i}${'x'.repeat(21)}`).join('/') + '/p.txt';
+  expect(long.length).toBeGreaterThanOrEqual(200);
+  await request.post(`/api/device/send/${id}/done`, { headers: authHeader(token), data: { ok: true, savedAs: long } });
+  await expect(page.getByTestId(`send-state-${id}`)).toContainText('Delivered', { timeout: 15_000 });
+  const add = await page.getByTestId('dropzone').boundingBox();
+  const send = await page.getByTestId('send-dropzone').boundingBox();
+  expect(send!.y).toBeGreaterThan(add!.y + add!.height);              // stacked, not side by side
+  expect(await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth)).toBeLessThanOrEqual(0);
+});

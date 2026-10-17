@@ -29,8 +29,8 @@ const seeded = {
 };
 
 /** Pair a device against the signed-in page's org and return its bearer token. */
-export async function pairDevice(page: Page, request: APIRequestContext, name = 'Test Device') {
-  const pair = await page.request.post('/api/devices/pair', { data: { name } });
+export async function pairDevice(page: Page, request: APIRequestContext, name?: string) {
+  const pair = await page.request.post('/api/devices/pair', { data: name === undefined ? {} : { name } });
   if (pair.status() !== 200) throw new Error(`pair failed: ${pair.status()}`);
   const { code } = await pair.json();
   seeded.pairingCodes.push(code);
@@ -543,7 +543,7 @@ export async function clearDesiredFirmware(deviceId: string): Promise<void> {
  * it reads as pending, not stale.
  */
 export async function df1OnBoard(
-  page: Page, request: APIRequestContext, firmwareVersion = '1.12.0+gabc1234', name = 'Test Device',
+  page: Page, request: APIRequestContext, firmwareVersion = '1.12.0+gabc1234', name?: string,
 ) {
   const { deviceId, token } = await pairDevice(page, request, name);
   const report = (extra: Record<string, unknown>) => request.post('/api/device/status', {

@@ -3601,6 +3601,31 @@ static void send_version_is_read_from_the_poll(void) {
     CHECK_EQ_INT(c.send_version, 7);
 }
 
+static void send_ip_hint_is_read_from_xfer(void) {
+    boot(); dc_set_send(&c, 0, '-');
+    CHECK_EQ_INT(c.send_ip_hint, 0);
+    push_ok_json("{\"version\":3,\"desired\":null,\"xfer\":{\"v\":7,\"ip\":\"172.16.10.237\"}}");
+    dc_step(&c);
+    CHECK_EQ_INT(c.send_version, 7);
+    CHECK_EQ_INT(c.send_ip_hint, 0xAC100AEDu);
+    push_ok_json("{\"version\":4,\"desired\":null,\"xfer\":{\"v\":8,\"ip\":\"172.16.10.2370000000000\"}}");
+    dc_step(&c);
+    CHECK_EQ_INT(c.send_version, 8);                   // a bad ip never costs the cursor
+    CHECK_EQ_INT(c.send_ip_hint, 0xAC100AEDu);         // and leaves the last good hint
+}
+
+static void parse_ipv4_is_strict(void) {
+    uint32_t v = 1;
+    CHECK(dc_parse_ipv4("192.168.1.57", &v) && v == 0xC0A80139u, "a dotted quad");
+    CHECK(!dc_parse_ipv4("192.168.1", &v), "three parts");
+    CHECK(!dc_parse_ipv4("192.168.1.256", &v), "over 255");
+    CHECK(!dc_parse_ipv4("192.168.1.5x", &v), "trailing junk");
+    CHECK(!dc_parse_ipv4("1.2.3.4567", &v), "four digits");
+    CHECK(!dc_parse_ipv4("", &v), "empty");
+    CHECK(!dc_parse_ipv4("0.0.0.0", &v), "zero is no address");
+    CHECK(v == 0xC0A80139u, "a refusal leaves *out alone");
+}
+
 static void send_queue_fetch(void) {
     boot();
     fake_push_response("HTTP/1.1 200 OK\r\nContent-Length: 14\r\n\r\nNEXT -\nLIST 0\n");
@@ -3634,7 +3659,7 @@ static void send_done_post(void) {
 }
 
 int main(void) {
-    RUN(send_poll_params_only_once_set); RUN(send_version_is_read_from_the_poll); RUN(send_queue_fetch);
+    RUN(send_poll_params_only_once_set); RUN(send_version_is_read_from_the_poll); RUN(send_ip_hint_is_read_from_xfer); RUN(parse_ipv4_is_strict); RUN(send_queue_fetch);
     RUN(send_chunk_fetch); RUN(send_done_post);
     // Only test_successful_image_fetch_publishes_and_reflects_write_protected
     // needs real PSRAM backing (everything else in this file either never

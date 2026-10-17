@@ -1,0 +1,1 @@
+ALTER TABLE "pairing_codes" ADD COLUMN "name" text;

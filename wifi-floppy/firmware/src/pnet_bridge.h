@@ -26,5 +26,6 @@ void pnet_bridge_init(void);      // core0, before core1 launches: the rings ove
 void pnet_bridge_start(void);     // core1, after net_radio_sta_enable(): the hook and the send worker
 void pnet_bridge_set_on(bool on); // core0: DF1 is in Network mode (main.c pnet_set_mode); off = pass-through
 void pnet_bridge_check(void);     // core1, every loop pass: re-install the hook if the netif was re-added
+void pnet_bridge_seed_amiga_ip(uint32_t ip); // core1: the server's last-known Amiga address when the sorter has none (1.16.0)
 void pnet_bridge_stats(pnet_bridge_stats_t *out);
 #endif

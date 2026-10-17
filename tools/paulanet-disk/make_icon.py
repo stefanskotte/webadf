@@ -1,5 +1,6 @@
-"""A Workbench project icon from a tool icon: the same picture, do_Type WBPROJECT,
-and a default tool. Usage: make_icon.py <tool.info> <default tool> <out.info>
+"""A Workbench icon from a tool icon. Usage:
+  make_icon.py <tool.info> <default tool> <out.info>   a project icon with that default tool
+  make_icon.py <tool.info> --tool <out.info>          a tool icon (Receive.info): the same picture, placed by Workbench
 
 The input must be a plain OS 2+ tool icon with no default tool, no tool types and
 no drawer data (Rob's "PaulaNET Config.info" is one); anything else is refused.
@@ -15,9 +16,10 @@ deftool, tooltypes = struct.unpack('>II', d[50:58])
 drawer = struct.unpack('>I', d[66:70])[0]
 if (magic, ver, do_type, deftool, tooltypes, drawer) != (0xE310, 1, 3, 0, 0, 0) or b'FORM' in d:
     sys.exit('make_icon: %s is not a plain tool icon' % src)
-d[48] = 4                                  # WBPROJECT
-struct.pack_into('>I', d, 50, 0x00000001)  # do_DefaultTool: non-zero = present
 struct.pack_into('>II', d, 58, 0x80000000, 0x80000000)  # NO_ICON_POSITION: Workbench places it
-s = tool.encode('ascii') + b'\x00'
-d += struct.pack('>I', len(s)) + s
+if tool != '--tool':
+    d[48] = 4                                  # WBPROJECT
+    struct.pack_into('>I', d, 50, 0x00000001)  # do_DefaultTool: non-zero = present
+    s = tool.encode('ascii') + b'\x00'
+    d += struct.pack('>I', len(s)) + s
 open(out, 'wb').write(bytes(d))
