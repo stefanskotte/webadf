@@ -1,5 +1,6 @@
 import type { PreviewState } from '@/lib/display-wasm';
-import { DC_LABEL_MAX, DC_TITLE_MAX } from '@/lib/device-limits';
+import { DC_TITLE_MAX } from '@/lib/device-limits';
+import { boardDiskLabel } from '@/lib/disk-label';
 
 /**
  * What a board's OLED is showing, as far as the server knows, in the shape
@@ -11,7 +12,8 @@ import { DC_LABEL_MAX, DC_TITLE_MAX } from '@/lib/device-limits';
  * the card says "Mounting…" in words for exactly that case. The strings follow
  * the firmware's ui_observe (wifi-floppy/firmware/src/main.c): the game title,
  * then "Disk n/c label" -- or the label alone on a one-disk title -- and the
- * label is the one mount.ts sends (the disk row's, else "Disk n").
+ * label is the one mount.ts sends (disk-label.ts: the disk row's label, else
+ * the uploaded file name, else nothing on a set and "Disk n" on a lone disk).
  *
  * Not drawn, because the server never hears them: download progress, the
  * track the head is on, an NFC tap's line. The track is left off rather than
@@ -23,6 +25,8 @@ export interface LiveDisplayFields {
   mountedGame: string | null;
   mountedDiskNo: number | null;
   mountedLabel: string | null;
+  /** The org's uploaded file name for the mounted bytes: the label's fallback. */
+  mountedSourceFilename: string | null;
   mountedDiskCount: number | null;
   mountedWriteProtected: boolean | null;
   /** The reader as last reported; only a layout listing the 'nfc' element draws it. */
@@ -50,8 +54,10 @@ export function liveDisplayState(d: LiveDisplayFields, online: boolean, tick: nu
   };
   if (d.mountedSha256 === null) return base;
   const diskNo = d.mountedDiskNo ?? 1;
-  const label = (d.mountedLabel ?? `Disk ${diskNo}`).slice(0, DC_LABEL_MAX);
   const count = d.mountedDiskCount ?? 1;
+  const label = boardDiskLabel({
+    label: d.mountedLabel, sourceFilename: d.mountedSourceFilename, diskNo, diskCount: count,
+  });
   return {
     ...base,
     status: 'loaded',

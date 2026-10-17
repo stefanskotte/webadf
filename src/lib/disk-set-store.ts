@@ -26,7 +26,7 @@
  * mounted_disk_id and desired_version are never touched: disks keep their ids,
  * so no board's wanted disk changes and nothing is ejected.
  */
-import { and, eq, inArray, ne, sql } from 'drizzle-orm';
+import { and, eq, inArray, isNull, ne, or, sql } from 'drizzle-orm';
 import { atomic, type Tx } from '@/db/atomic';
 import { getDb } from '@/db';
 import { games, disks, entitlements } from '@/db/schema/catalog';
@@ -38,6 +38,9 @@ import {
 } from '@/lib/disk-set';
 import { stableId } from '@/lib/ingest';
 import { makeSortTitle } from '@/lib/tosec';
+import { diskStore } from '@/lib/storage';
+import { mapLimit } from '@/lib/pool';
+import { stripImageExt, volumeNameOf } from '@/lib/disk-label';
 
 /**
  * What Undo needs to recreate an emptied title. No sortTitle: the server
@@ -135,6 +138,40 @@ function deleteEmptied(db: Builder, orgId: string, emptied: string[]): Stmt[] {
 function markHuman(db: Builder, orgId: string, gameId: string): Stmt {
   return db.update(games).set({ diskOrderSource: 'human' })
     .where(and(eq(games.id, gameId), eq(games.orgId, orgId)));
+}
+
+/** A label that is null or only whitespace: the only kind a volume name may fill. */
+const labelIsEmpty = () => or(isNull(disks.label), sql`btrim(${disks.label}) = ${''}`);
+
+/** ADF reads in flight at once while naming a set's disks (each ~880 KB). */
+const LABEL_READ_CONCURRENCY = 4;
+
+/**
+ * The AmigaDOS volume name of each of these disks that has no label yet, read
+ * from its bytes (field report 2026-10-17: a set of 13 Workbench 3.2 disks
+ * showed "Disk 1/13 Disk 1" on the board). Read once here, when the set is
+ * made or extended, and stored -- the poll never reads disk bytes. A disk
+ * with no DOS filesystem, a blank name or bytes the store cannot return is
+ * simply left out: naming is best effort and never blocks the set itself.
+ */
+async function volumeLabels(db: Db, orgId: string, diskIds: string[]): Promise<{ id: string; label: string }[]> {
+  if (diskIds.length === 0) return [];
+  const unlabelled = await db.select({ id: disks.id, sha256: disks.sha256 }).from(disks)
+    .where(and(inArray(disks.id, diskIds), eq(disks.orgId, orgId), labelIsEmpty()));
+  const names = await mapLimit(unlabelled, LABEL_READ_CONCURRENCY, async (d) => {
+    try {
+      return volumeNameOf(await diskStore.read(d.sha256));
+    } catch {
+      return null;
+    }
+  });
+  return unlabelled.flatMap((d, i) => (names[i] ? [{ id: d.id, label: names[i] }] : []));
+}
+
+/** The label writes, each guarded so a label set since the read (a person's, extract's) is never overwritten. */
+function writeLabels(db: Builder, orgId: string, labels: { id: string; label: string }[]): Stmt[] {
+  return labels.map((l) => db.update(disks).set({ label: l.label })
+    .where(and(eq(disks.id, l.id), eq(disks.orgId, orgId), labelIsEmpty())));
 }
 
 /** One transaction. `build` gets the tx and must build EVERY statement from it. */
@@ -235,6 +272,8 @@ export async function addDisksToSet(
   // later corrections merely because the prefilled name was left alone.
   // It still numbers the set from 1 (compact, above) -- the set is new.
   const renamed = rename !== undefined && rename.trim() !== current.title ? rename.trim() : undefined;
+  // Every disk the set will hold: the target's own and all of each source's.
+  const labels = await volumeLabels(db, orgId, [...new Set([...targetDisks, ...allOfSources].map((d) => d.id))]);
   await run((tx) => [
     ...applyPlan(tx, orgId, plan, devs),
     tx.update(games).set(renamed === undefined
@@ -242,6 +281,7 @@ export async function addDisksToSet(
       : { diskOrderSource: 'human', title: renamed, sortTitle: makeSortTitle(renamed), metadataSource: 'human' })
       .where(and(eq(games.id, gameId), eq(games.orgId, orgId))),
     ...deleteEmptied(tx, orgId, plan.emptiedGameIds),
+    ...writeLabels(tx, orgId, labels),
   ]);
   return { undo };
 }
@@ -255,8 +295,6 @@ export async function reorderSet(orgId: string, gameId: string, orderedIds: stri
   await run((tx) => [...applyPlan(tx, orgId, plan, devs), markHuman(tx, orgId, gameId)]);
 }
 
-// Only a disk image's own extension: "Game v1.2" (no extension) keeps its ".2".
-const stripExt = (name: string) => name.replace(/\.(adf|adz|dms|dmz|hfe|ipf)$/i, '').trim();
 
 /**
  * The uploaded file's name without its extension, else the TOSEC name without
@@ -267,8 +305,8 @@ const stripExt = (name: string) => name.replace(/\.(adf|adz|dms|dmz|hfe|ipf)$/i,
 async function nameFor(db: Db, orgId: string, disk: { sha256: string; tosecName: string | null }): Promise<string> {
   const ent = await db.select({ sourceFilename: entitlements.sourceFilename }).from(entitlements)
     .where(and(eq(entitlements.orgId, orgId), eq(entitlements.sha256, disk.sha256))).limit(1);
-  const fromFile = ent[0] ? stripExt(ent[0].sourceFilename) : '';
-  const fromTosec = disk.tosecName ? stripExt(disk.tosecName) : '';
+  const fromFile = ent[0] ? stripImageExt(ent[0].sourceFilename) : '';
+  const fromTosec = disk.tosecName ? stripImageExt(disk.tosecName) : '';
   return fromFile || fromTosec || 'Disk';
 }
 
