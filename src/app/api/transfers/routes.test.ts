@@ -25,7 +25,9 @@ vi.mock('@/lib/transfers', () => ({
   queueTransferFromBlob: (...a: unknown[]) => queueTransferFromBlob(...a), cancelTransfer: (...a: unknown[]) => cancelTransfer(...a),
   retryTransfer: (...a: unknown[]) => retryTransfer(...a), queueLoad: (...a: unknown[]) => queueLoad(...a),
   listTransfers: (...a: unknown[]) => listTransfers(...a),
+  cleanAmigaPath: (p: string) => realCleanAmigaPath(p),
 }));
+const { cleanAmigaPath: realCleanAmigaPath } = await vi.importActual<typeof import('@/lib/transfers')>('@/lib/transfers');
 
 const TARGET = { id: 'dev-1', name: 'Bench', macAddress: null, defaultName: false, online: true, lastSeenAt: 1, network: true, rx: 'c', rxAt: 1 };
 const ctx = (id: string) => ({ params: Promise.resolve({ id }) });
@@ -177,6 +179,29 @@ describe('POST /api/transfers/from-disk', () => {
     const res = await POST(post({ deviceId: 'dev-1', diskId: 'k1', blocks: vol.root.map((e) => e.block) }));
     expect(res.status).toBe(409);
     expect(await res.json()).toEqual({ error: 'queue_full' });
+    expect(queueTransferFromBlob).not.toHaveBeenCalled();
+  });
+  it('refuses the lot when one picked path is too long for the Amiga, and queues nothing (final review m1)', async () => {
+    let { sha } = disk();
+    let adf = store.get(sha)!;
+    let parent = 880;
+    for (let i = 0; i < 9; i++) {
+      const mk = makeDirectory(adf, parent, `Folder${i}`.padEnd(30, 'x')); if (!mk.ok) throw new Error(mk.reason); adf = mk.adf;
+      const v = readVolume(adf); if (!v.ok) throw new Error('no volume');
+      let dir = v.root;
+      let found = 0;
+      for (let j = 0; j <= i; j++) { const e = dir.find((x) => x.name === `Folder${j}`.padEnd(30, 'x'))!; found = e.block; dir = e.children ?? []; }
+      parent = found;
+    }
+    const f = addFile(adf, parent, 'deep.txt', new TextEncoder().encode('deep')); if (!f.ok) throw new Error(f.reason); adf = f.adf;
+    sha = createHash('sha256').update(adf).digest('hex');
+    store.set(sha, adf);
+    loadSendDisk.mockResolvedValue({ sha256: sha, imageFormat: 'adf', tosecName: null, sourceFilename: 'SendTest.dms', diskNo: 1 });
+    const vol = readVolume(adf); if (!vol.ok) throw new Error('x');
+    const { POST } = await import('./from-disk/route');
+    const res = await POST(post({ deviceId: 'dev-1', diskId: 'k1', blocks: vol.root.map((e) => e.block) }));
+    expect(res.status).toBe(400);
+    expect(await res.json()).toMatchObject({ error: 'bad_name' });
     expect(queueTransferFromBlob).not.toHaveBeenCalled();
   });
   it('refuses an HFE sent whole, an unknown disk, and a block that is not on the disk', async () => {

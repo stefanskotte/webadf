@@ -72,7 +72,7 @@ export async function queueTransferFromBlob(db: Db, a: { orgId: string; deviceId
   const comment = (a.comment ?? '').replace(/[^\x20-\x7e\xa0-\xff]/g, '').slice(0, 79);
   return db.transaction(async (tx) => {
     const [load] = await tx.select({ n: sql<number>`count(*)::int`, b: sql<number>`coalesce(sum(${transfers.sizeBytes}),0)::bigint` })
-      .from(transfers).where(and(eq(transfers.deviceId, a.deviceId), inArray(transfers.status, ACTIVE)));
+      .from(transfers).where(and(eq(transfers.deviceId, a.deviceId), inArray(transfers.status, ACTIVE), gt(transfers.expiresAt, now)));
     if (load.n + 1 > SEND_QUEUE_MAX_FILES || Number(load.b) + st.sizeBytes > SEND_QUEUE_MAX_BYTES)
       return { ok: false as const, reason: 'queue_full' as const };
     const id = crypto.randomUUID();
@@ -154,9 +154,10 @@ export async function recordSendRx(db: Db, deviceId: string, rx: 'c' | 'r' | 'u'
     sql`(${devices.sendRx} is distinct from ${rx} or ${devices.sendRxAt} is null or ${devices.sendRxAt} < ${new Date(now.getTime() - 30_000)})`));
 }
 
-export async function queueLoad(db: Db, deviceId: string): Promise<{ files: number; bytes: number }> {
+/** What still counts against the board's limits: active rows not past their expiry (a lapsed row never moves again). */
+export async function queueLoad(db: Db, deviceId: string, now = new Date()): Promise<{ files: number; bytes: number }> {
   const [l] = await db.select({ n: sql<number>`count(*)::int`, b: sql<string>`coalesce(sum(${transfers.sizeBytes}),0)::bigint` })
-    .from(transfers).where(and(eq(transfers.deviceId, deviceId), inArray(transfers.status, ACTIVE)));
+    .from(transfers).where(and(eq(transfers.deviceId, deviceId), inArray(transfers.status, ACTIVE), gt(transfers.expiresAt, now)));
   return { files: l.n, bytes: Number(l.b) };
 }
 

@@ -6,7 +6,7 @@ import { getDb } from '@/db';
 import { requireOrg } from '@/lib/session';
 import { diskStore } from '@/lib/storage';
 import { readFile, readVolume } from '@/lib/adffs';
-import { queueLoad, queueTransferFromBlob } from '@/lib/transfers';
+import { cleanAmigaPath, queueLoad, queueTransferFromBlob } from '@/lib/transfers';
 import { findSendTarget, loadSendDisk } from '@/lib/send-targets';
 import { pickFiles } from '@/lib/send-from-disk';
 import { SEND_FILE_MAX, SEND_QUEUE_MAX_BYTES, SEND_QUEUE_MAX_FILES } from '@/lib/send-limits';
@@ -50,6 +50,8 @@ export async function POST(request: Request) {
     const content = readFile(adf, f.block);
     if (!content || !content.complete) return Response.json({ error: 'unreadable', path: f.path }, { status: 422 });
     if (content.bytes.byteLength > SEND_FILE_MAX) return Response.json({ error: 'too_large', path: f.path }, { status: 413 });
+    // A path the Amiga cannot take (over 255 bytes deep down a folder) refuses the lot here, before anything is queued.
+    if (!cleanAmigaPath(f.path)) return Response.json({ error: 'bad_name', path: f.path }, { status: 400 });
     files.push({ path: f.path, protection: f.protection, comment: f.comment, bytes: content.bytes });
   }
   const load = await queueLoad(db, deviceId);

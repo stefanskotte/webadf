@@ -82,6 +82,14 @@ describe('transfers', () => {
     expect(await q(d2, await blob(new Uint8Array(T.SEND_FILE_MAX).fill(9)))).toEqual({ ok: false, reason: 'queue_full' });
   });
 
+  it('does not count rows past their expiry against the limits, before the cron marks them (final review I1)', async () => {
+    const d = await device(); const t0 = new Date('2026-10-16T10:00:00Z');
+    for (let i = 0; i < 32; i++) expect((await q(d, await blob(new Uint8Array([12, i])), { now: t0 })).ok).toBe(true);
+    const later = new Date(t0.getTime() + T.SEND_EXPIRE_MS + 1000);
+    expect(await T.queueLoad(getDb(), d, later)).toEqual({ files: 0, bytes: 0 });
+    expect((await q(d, await blob(new Uint8Array([13])), { now: later })).ok).toBe(true);
+  });
+
   it('puts the oldest queued or sending row first and leaves expired rows out', async () => {
     const d = await device(); const t0 = new Date('2026-10-16T10:00:00Z');
     const a = await q(d, await blob(new Uint8Array([20])), { path: 'A', now: t0 });
