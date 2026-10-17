@@ -67,6 +67,22 @@ describe('POST /api/transfers (a file from the computer)', () => {
     expect(store.size).toBe(0);
     expect(queueTransferFromBlob).not.toHaveBeenCalled();
   });
+  it('stops reading a streamed body with no content-length once it passes 4 MB, and stores nothing', async () => {
+    const { POST } = await import('./route');
+    let pulled = 0;
+    const body = new ReadableStream<Uint8Array>({
+      pull(c) { if (pulled >= 64) { c.close(); return; } pulled++; c.enqueue(new Uint8Array(1_048_576)); },
+    });
+    const req = new Request('http://test/api/transfers?deviceId=dev-1&name=a', {
+      method: 'POST', body, duplex: 'half' } as RequestInit & { duplex: 'half' });
+    expect(req.headers.get('content-length')).toBeNull();
+    const res = await POST(req);
+    expect(res.status).toBe(413);
+    expect(await res.json()).toEqual({ error: 'too_large' });
+    expect(pulled).toBeLessThan(10);
+    expect(store.size).toBe(0);
+    expect(queueTransferFromBlob).not.toHaveBeenCalled();
+  });
   it('passes a full queue and a bad name through as their own answers', async () => {
     const { POST } = await import('./route');
     queueTransferFromBlob.mockResolvedValueOnce({ ok: false, reason: 'queue_full' });

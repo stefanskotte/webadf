@@ -10,6 +10,25 @@ import { queueResponse, storeSendBytes, toView } from '@/lib/send-http';
 
 export const maxDuration = 60;
 
+/** The request body, or null as soon as it passes `max` bytes (the rest is cancelled unread). */
+async function readCapped(request: Request, max: number): Promise<Uint8Array | null> {
+  if (!request.body) return new Uint8Array(0);
+  const reader = request.body.getReader();
+  const parts: Uint8Array[] = [];
+  let seen = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    seen += value.byteLength;
+    if (seen > max) { await reader.cancel().catch(() => {}); return null; }
+    parts.push(value);
+  }
+  const out = new Uint8Array(seen);
+  let at = 0;
+  for (const p of parts) { out.set(p, at); at += p.byteLength; }
+  return out;
+}
+
 export async function GET(request: Request) {
   const { orgId } = await requireOrg();
   const deviceId = new URL(request.url).searchParams.get('deviceId');
@@ -28,15 +47,16 @@ export async function POST(request: Request) {
   const deviceId = q.get('deviceId');
   const name = q.get('name');
   if (!deviceId || !name) return Response.json({ error: 'invalid_query' }, { status: 400 });
-  // Refused before a byte is read: a 40 MB drop must not be buffered to learn it is too big.
+  // Fast path: a declared length over the cap is refused before a byte is read. A body with no declared length
+  // (chunked) is counted as it is read, below, and abandoned at the cap, so no route buffers more than 4 MB.
   if (Number(request.headers.get('content-length') ?? 0) > SEND_FILE_MAX) {
     return Response.json({ error: 'too_large' }, { status: 413 });
   }
   const db = getDb();
   if (!(await findSendTarget(db, orgId, deviceId))) return Response.json({ error: 'no_device' }, { status: 404 });
-  const bytes = new Uint8Array(await request.arrayBuffer());
+  const bytes = await readCapped(request, SEND_FILE_MAX);
+  if (!bytes) return Response.json({ error: 'too_large' }, { status: 413 });
   if (bytes.byteLength === 0) return Response.json({ error: 'empty' }, { status: 400 });
-  if (bytes.byteLength > SEND_FILE_MAX) return Response.json({ error: 'too_large' }, { status: 413 });
   const sha256 = await storeSendBytes(bytes);
   return queueResponse(await queueTransferFromBlob(db, { orgId, deviceId, userId, path: name, sha256, bytes }));
 }
