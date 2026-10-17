@@ -1478,8 +1478,20 @@ separately.
 
 ### 4. Backlog, not blocking anything
 
+- **OLED: show the side with the track** (operator, 2026-10-17): as current FlashFloppy does, show the head
+  position as `cylinder.side`, e.g. 78.0 -> 78.1 -> 79.0 -> 79.1 while the Amiga reads cylinders 78-79, both sides
+  along the way. Fits every layout (128x32 and 128x64, both drives).
+
+- **Hardware button: move to the next disk** (operator, 2026-10-17): a physical button on the board that does what
+  Next disk does from the web and the Next-disk NFC card (3ap) -- advance the drive to the next disk of the mounted
+  title, with the same swap rules (wait for the drive light, 1.6.1). Rev C candidate (a free GPIO plus the button);
+  on rev B, check for a spare pin first.
+
 - **Rev C: keyed I2C connectors** (2026-10-08): JST-SH / Qwiic for the OLED and NFC headers instead of 1x4 pin
   headers, so a module cannot be wired reversed or half-seated (two modules died on the bench; see 3bb).
+  Operator, 2026-10-17: an **FFC connector for the display**, and a **clip (latching) connector for both I2C
+  headers** (OLED and NFC). Possibly as shared footprints on the 2.54 mm grid, so one board takes either the new
+  connector or a plain pin header.
 - **REV C BOARD: own RP2350 design with an antenna port (operator, 2026-10-02: "this is the best solution").**
   Collected here so rev C is designed once, not retrofitted. Roles as for rev B: Shanshe does layout and placement
   files, the operator does BOM and LCSC sourcing.
@@ -4926,6 +4938,37 @@ Demozoo API (the bulk export makes per-lookup load on a non-profit unnecessary).
 - **Screenshot redirects:** screenshot fetches follow redirects, so the `media.demozoo.org` host
   allowlist checks only the first URL (the raster content-type allowlist and `nosniff` still apply).
 - **Cron drift:** the daily 01:30 cron against a 7-day gate can drift a refetch to 8 days.
+
+### 3bu. fw 1.15.0 RELEASED (seq 96, fw-1.15.0, master 9fa2cff) -- send-stall root cause fixed, 2026-10-17
+
+**Increment 2 (send to Receive) bench, and the stall.** After a delivery the board->Amiga link froze. A day of
+board-side instrumentation (debug builds seq 87-94, branch since deleted, last commit 5a1b2d7) ruled out start
+timing, INDEX, frame count and the board's ack path. A debug build of Rob's driver (per-outcome counters behind a
+"PaulaNET.debug" semaphore + a PNStats tool; source in the session scratchpad robfw/PaulaNET-debug, built with the
+pinned stefanreinauer/amiga-gcc image -- `vc` on this Mac is the Vercel CLI, not vbcc) showed every full-length read
+of a stuck batch failing its CHECKSUM (640/640; sync found at 96-111 B, so timing was fine). Cause: frames toward the
+Amiga were RLE sent RAW -- zero-bit runs up to ~30 cells (MFM: 3), which the Amiga misreads. **Fix (c49bccc):** frames
+toward the Amiga are always MFM-encoded (size bit 15; Rob's driver decodes it); a batch holds at most 5 MTU frames.
+Bench with Rob's unmodified driver: 8/8 + 4/4 back-to-back sends at 28-35 s, post-delivery included. Rob's own Pico
+firmware sends raw RLE too: operator wants TWO PRs on RobSmithDev/PaulaNET (the RLE->MFM fix; LZ4 with a per-CPU
+direction table), Rob decides (memory: paulanet-lz4-own-driver-decision).
+
+**Also in 1.15.0** (all merged + pushed today): disk-set OLED names (server, e0be082: volume name, else file name;
+backfill applied, 74 labels), the OLED disk line without "Disk" ("3/13 Locale", b7efa38; live-display boundary 1.15.0),
+optional status icons per layout incl. a filling-floppy download icon (5bcfecb, Discord suggestion), the activity LED
+as a drive light (0527884), and an in-place disk swap shows the drive EMPTY for 1 s so "Please insert volume"
+requesters close by themselves (1678987; A500 verified: requester closed with no input, log "swap: DF0 shown empty
+for 1000 ms" then "new disk inserted").
+
+**Incident (mine):** firmware rows seq 86-95 were published with notes not starting "TEST build", so every org saw
+them; another org's board ("WebADF 1", chris.appleton's library) installed debug 1.14.0+gaad30b5. Notes fixed in the
+DB; that board is offered 1.15.0. Rule: bench notes MUST start "TEST build" (releaseVisibleToSql) -- verify after
+publishing.
+
+**Product gap found (open):** after a board reboot the board forgets the Amiga's IP until the Amiga transmits, so a
+send to an idle Amiga waits. Bench workaround: `run >NIL: ping -i 10 <board ip>` on the Amiga. **Next:** increment 3
+(web send UI + Receive disk) -- the operator tests Receive end to end only once the web app can send. Ledger:
+.claude/worktrees/send/.superpowers/sdd/2026-10-16-paulanet-phase4-board-and-queue/progress.md.
 
 ### 3bt. PaulaNET Phase 4 increment 1: Receive (the Amiga side) -- branch feat/receive, 2026-10-16
 
