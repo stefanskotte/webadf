@@ -186,10 +186,9 @@ test('clicking eject nulls the desired disk and bumps the version', async ({ pag
 
 test("org B's device never appears on org A's page", async ({ page, request, browser }) => {
   await signUpFresh(page);
-  // register/route.ts names every device "Device <mac>" -- the `name` given
-  // to pairDevice() is accepted by /api/devices/pair but never persisted
-  // (see that route's comment), so it cannot be used as the identifying
-  // label here. The device's own id is the reliable handle.
+  // The `name` given to pairDevice() is now kept (plan 2026-10-17 R8), but the
+  // device's own id is still the reliable handle here, so the assertions below
+  // never depend on the label.
   const { deviceId: deviceIdA } = await pairDevice(page, request, 'OrgA Device');
 
   const ctxB = await browser.newContext();
@@ -400,7 +399,7 @@ test('a pairing code is shown with a live expiry, and disappears when it expires
 
   const [pairResponse] = await Promise.all([
     page.waitForResponse((r) => r.url().includes('/api/devices/pair') && r.request().method() === 'POST'),
-    page.getByTestId('pair-device').click(),
+    (async () => { await page.getByTestId('pair-device').click(); await page.getByTestId('pair-submit').click(); })(),
   ]);
   const { code: mintedCode } = await pairResponse.json();
 
@@ -423,6 +422,36 @@ test('a pairing code is shown with a live expiry, and disappears when it expires
     // it never entered device-helpers' own cleanup registry. Delete it here.
     await getDb().delete(pairingCodes).where(eq(pairingCodes.code, mintedCode));
   }
+});
+
+test('pairing asks for a name, shows it with the code, and the paired board wears it', async ({ page, request }) => {
+  await signUpFresh(page);
+  await page.goto('/devices');
+  await page.getByTestId('pair-device').click();
+  await expect(page.getByTestId('pair-name')).toBeFocused();
+  await page.getByTestId('pair-name').fill('A500 in the study');
+  const [res] = await Promise.all([
+    page.waitForResponse((r) => r.url().includes('/api/devices/pair') && r.request().method() === 'POST'),
+    page.getByTestId('pair-submit').click(),
+  ]);
+  const { code } = await res.json();
+  await expect(page.getByTestId('pairing-for')).toHaveText('for A500 in the study');
+  const reg = await request.post('/api/device/register', {
+    data: { pairingCode: code, firmwareVersion: '1.15.0', macAddress: 'AA:BB:CC:DD:EE:02' },
+  });
+  const { deviceId } = await reg.json();
+  await page.goto('/devices');
+  await expect(page.getByTestId(`device-name-${deviceId}`)).toHaveText('A500 in the study');
+  await getDb().delete(devices).where(eq(devices.id, deviceId));
+});
+
+test('Cancel closes the pairing form without minting a code', async ({ page }) => {
+  await signUpFresh(page);
+  await page.goto('/devices');
+  await page.getByTestId('pair-device').click();
+  await page.getByTestId('pair-cancel').click();
+  await expect(page.getByTestId('pair-name')).toHaveCount(0);
+  await expect(page.getByTestId('pair-device')).toBeVisible();
 });
 
 // --- the drive-bezel card (design A2) ---------------------------------------

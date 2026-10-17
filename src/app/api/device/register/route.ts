@@ -6,7 +6,7 @@ import { and, eq, gt, isNull } from 'drizzle-orm';
 import { getDb } from '@/db';
 import { devices, pairingCodes } from '@/db/schema/devices';
 import { mintDeviceToken } from '@/lib/device-token';
-import { defaultDeviceName } from '@/lib/device-name';
+import { nameForNewBoard } from '@/lib/device-name';
 
 // Device plane: deliberately unauthenticated. The device has no bearer token
 // yet -- the pairing code it presents here IS the credential for this one
@@ -68,23 +68,18 @@ export async function POST(request: Request) {
       isNull(pairingCodes.consumedAt),
       gt(pairingCodes.expiresAt, new Date()),
     ))
-    .returning({ orgId: pairingCodes.orgId });
+    .returning({ orgId: pairingCodes.orgId, name: pairingCodes.name });
 
   if (claimed.length === 0) {
     return Response.json({ error: 'invalid_or_used_code' }, { status: 400 });
   }
 
-  const { orgId } = claimed[0];
+  const { orgId, name: pairName } = claimed[0];
   const { plaintext, hash } = mintDeviceToken();
   const deviceId = randomUUID();
-  // No name is collected at register time (the pairing body's optional name
-  // isn't persisted anywhere -- see the pair route), so a device starts life
-  // labelled by the one identifying detail it supplies about itself.
-  //
-  // Shared with the rename flow rather than inlined here: clearing an alias
-  // RESETS to this exact string, so if the two ever diverged a "reset" would
-  // produce a label the device never had.
-  const name = defaultDeviceName(parsed.data.macAddress);
+  // The name typed when the code was minted (plan 2026-10-17 R8), else the one identifying detail the board supplies
+  // about itself. nameForNewBoard falls back to defaultDeviceName -- the label an alias reset restores.
+  const name = nameForNewBoard(pairName, parsed.data.macAddress);
 
   // Only the hash is ever written. `plaintext` is returned once, below, and
   // never logged or stored.

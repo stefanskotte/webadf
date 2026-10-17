@@ -56,6 +56,7 @@ describe('help topics say what the app really does', () => {
     expect(b).toMatch(/wififloppy/);
     expect(b).toMatch(/Update/);
     expect(b).toMatch(/password/);
+    expect(b).toMatch(/give the board a name/);
   });
   it('write-protect makes no unconfirmed claim about prompts to click through', () => {
     expect(bodyText('write-protect')).not.toMatch(/click through|put the volume back/i);

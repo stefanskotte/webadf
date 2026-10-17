@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { defaultDeviceName, isDefaultDeviceName } from './device-name';
+import { defaultDeviceName, isDefaultDeviceName, pairingName, nameForNewBoard, DEVICE_NAME_MAX } from './device-name';
 
 const MAC = '28:cd:c1:19:6a:38';
 
@@ -35,5 +35,22 @@ describe('isDefaultDeviceName', () => {
   it('treats a MAC-less device consistently with defaultDeviceName', () => {
     expect(isDefaultDeviceName('Device', null)).toBe(true);
     expect(isDefaultDeviceName('Bench drive', null)).toBe(false);
+  });
+});
+
+describe('a name given at pairing (plan 2026-10-17 Task 1, R8)', () => {
+  it('is trimmed and loses control characters; empty means none', () => {
+    expect(pairingName('  A500 study  ')).toBe('A500 study');
+    expect(pairingName('A\u0000B\nC')).toBe('ABC');
+    expect(pairingName('   ')).toBeNull();
+    expect(pairingName(undefined)).toBeNull();
+    expect(pairingName(null)).toBeNull();
+  });
+  it('names the new board, or it wears its MAC as before', () => {
+    expect(nameForNewBoard('A500 study', MAC)).toBe('A500 study');
+    expect(nameForNewBoard(null, MAC)).toBe(`Device ${MAC}`);
+  });
+  it('shares the rename limit', () => {
+    expect(DEVICE_NAME_MAX).toBe(80);
   });
 });

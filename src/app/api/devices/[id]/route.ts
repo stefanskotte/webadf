@@ -2,6 +2,7 @@ import { z } from 'zod';
 import { requireOrg } from '@/lib/session';
 import { renameDevice } from '@/lib/device-rename';
 import { deleteDevice } from '@/lib/device-delete';
+import { DEVICE_NAME_MAX } from '@/lib/device-name';
 
 export const maxDuration = 60;
 
@@ -10,7 +11,7 @@ export const maxDuration = 60;
 // this is the only thing standing between a paste and a card that cannot be
 // read. Trimmed before length is judged, so 80 spaces is an empty alias rather
 // than a maximum-length one.
-const renameBody = z.object({ alias: z.string().trim().max(80) });
+const renameBody = z.object({ alias: z.string().trim().max(DEVICE_NAME_MAX) });
 
 export async function PATCH(request: Request, ctx: { params: Promise<{ id: string }> }) {
   const { orgId } = await requireOrg();

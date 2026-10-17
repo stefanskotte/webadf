@@ -252,6 +252,8 @@ export const pairingCodes = pgTable('pairing_codes', {
   code: text('code').primaryKey(),
   orgId: text('org_id').notNull(),
   createdByUserId: text('created_by_user_id').notNull(),
+  /** The board's name as typed when the code was minted (plan 2026-10-17 R8); null = none given. register uses it. */
+  name: text('name'),
   expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
   consumedAt: timestamp('consumed_at', { withTimezone: true }),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),

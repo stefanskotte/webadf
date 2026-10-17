@@ -25,6 +25,7 @@ export const HELP_TOPICS = {
   // setup portal, same already-used code rejected, so a fresh code is asked for) is wifi-floppy/firmware/src/main.c
   // DC_HALTED branch; disk history kept because disk_versions.device_id has no FK (db/schema/disk-history.ts).
   // Address note: plan 2026-10-12 ruling 4 -- 1.11.0 sends the board's own DHCP client-id.
+  // Naming at pairing: pair-button.tsx, api/devices/pair + device/register (plan 2026-10-17 R8).
   boards: {
     title: 'Boards',
     short:
@@ -32,12 +33,13 @@ export const HELP_TOPICS = {
     body: (
       <>
         <p>
-          <strong>Pairing.</strong> Press <em>Pair a device</em> to get a short code. A new board starts its own Wi-Fi
+          <strong>Pairing.</strong> Press <em>Pair a device</em>, give the board a name
+          (or leave it empty to use its MAC address), and press <em>Get a code</em>. A new board starts its own Wi-Fi
           network named <em>wifi-floppy-…</em> (password <em>wififloppy</em>); join it, and in the page that opens
-          enter your home Wi-Fi details and the code. If the code runs out first, mint a new one.
+          enter your home Wi-Fi details and the code. If it runs out first, mint a new one.
         </p>
         <p>
-          <strong>Online / Offline.</strong> A board counts as online while it has been heard from in the last minute.
+          <strong>Online / Offline.</strong> A board is online if it was heard from in the last minute.
         </p>
         <p>
           <strong>Firmware updates.</strong> When a newer version is published, tick <em>Select for update</em> on the
@@ -47,8 +49,7 @@ export const HELP_TOPICS = {
         </p>
         <p>
           <strong>Deleting a board.</strong> The trash icon on a board&apos;s card removes it from your account. The
-          board then offers its setup network again the next time it connects, and a new code pairs it again; your
-          disks and their history stay.
+          board then offers its setup network again, and a new code pairs it; your disks and their history stay.
         </p>
         <p>
           <strong>Your own server.</strong> Running your own copy of this site? See{' '}

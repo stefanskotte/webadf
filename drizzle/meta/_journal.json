@@ -288,6 +288,13 @@
       "when": 1792164939717,
       "tag": "0040_transfers",
       "breakpoints": true
+    },
+    {
+      "idx": 41,
+      "version": "7",
+      "when": 1792267262422,
+      "tag": "0041_pairing_name",
+      "breakpoints": true
     }
   ]
 }
