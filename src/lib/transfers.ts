@@ -175,14 +175,14 @@ export async function retryTransfer(db: Db, a: { orgId: string; userId: string; 
   const now = a.now ?? new Date();
   const [r] = await db.select().from(transfers).where(and(eq(transfers.id, a.id), eq(transfers.orgId, a.orgId)));
   if (!r) return { ok: false, reason: 'not_found' };
-  // F4: a row still 'queued' past its expiry reads as expired to the page (which offers Retry) until the daily cron
+  // F4: a row still 'queued' or 'sending' past its expiry reads as expired to the page (which offers Retry) until the daily cron
   // marks it; mark it here, as expireTransfers does, so the retry the page offers does not answer 409.
-  const lapsed = r.status === 'queued' && r.expiresAt <= now;
+  const lapsed = (r.status === 'queued' || r.status === 'sending') && r.expiresAt <= now;
   if (r.status !== 'failed' && r.status !== 'expired' && !lapsed) return { ok: false, reason: 'not_finished' };   // F3: not 'cancelled'
   if (lapsed) {
     await db.transaction(async (tx) => {
       const ex = await tx.update(transfers).set({ status: 'expired', finishedAt: now })
-        .where(and(eq(transfers.id, r.id), eq(transfers.status, 'queued'))).returning({ id: transfers.id });
+        .where(and(eq(transfers.id, r.id), eq(transfers.status, r.status as 'queued' | 'sending'))).returning({ id: transfers.id });
       if (ex.length) await tx.update(devices).set({ sendVersion: sql`${devices.sendVersion} + 1` }).where(eq(devices.id, r.deviceId));
     });
   }

@@ -228,6 +228,22 @@ describe('transfers', () => {
     expect(await version(d)).toBe(v + 2);
   });
 
+  it('retryTransfer treats a sending row past its expiry as expired too: marks it, bumps the version, queues a new row', async () => {
+    const d = await device();
+    const t0 = new Date(Date.now() - 2 * 24 * 3600_000);
+    const r = await q(d, await blob(new TextEncoder().encode('stuck')), { path: 'Stuck.txt', now: t0 });
+    const id = (r as { id: string }).id;
+    await T.recordChunk(getDb(), d, id, 0);
+    expect((await row(id)).status).toBe('sending');
+    const v = await version(d);
+    const again = await T.retryTransfer(getDb(), { orgId: 'org-a', userId: 'u2', id });
+    expect(again.ok).toBe(true);
+    expect((await row(id)).status).toBe('expired');
+    expect((await row(id)).finishedAt).not.toBeNull();
+    expect(await row((again as { id: string }).id)).toMatchObject({ path: 'Stuck.txt', status: 'queued' });
+    expect(await version(d)).toBe(v + 2);
+  });
+
   it('sendSummaries counts per board: waiting, sending, and what finished in the last 24 h', async () => {
     const d = await device('org-s');
     const mk = async (p: string) => (await T.queueTransferFromBlob(getDb(), { orgId: 'org-s', deviceId: d, userId: 'u',

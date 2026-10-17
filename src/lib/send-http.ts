@@ -8,6 +8,9 @@ export function refusalCode(reason: Extract<QueueResult, { ok: false }>['reason'
   return reason === 'no_blob' ? 'gone' : reason;
 }
 
+/** Wire contract beyond the brief's list: POST /api/transfers and from-disk may also answer 413 too_large (per file,
+ *  from-disk adds `path`), 400 invalid_query / invalid_body / invalid_json (client-malformed; sendErrorText lets them
+ *  fall through), and from-disk can answer 409 {error, ids} when a race refuses mid-folder: `ids` were queued. */
 /** One queued file as the user routes answer it: 201 {ids}, or the refusal as its own status and code. */
 export function queueResponse(r: QueueResult): Response {
   if (r.ok) return Response.json({ ids: [r.id] }, { status: 201 });
