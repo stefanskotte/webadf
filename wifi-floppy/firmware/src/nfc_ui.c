@@ -21,13 +21,23 @@ const char *nfc_ui_tap_line(dc_tap_outcome_t o, const char *title, char *buf, in
     return buf;
 }
 
+const char *nfc_ui_disk_line(uint32_t disk_no, uint32_t disk_count, const char *label, char *buf, int cap) {
+    const char *l = label ? label : "";
+    if (disk_count > 1 && l[0])
+        snprintf(buf, (size_t)cap, "%lu/%lu %s", (unsigned long)disk_no, (unsigned long)disk_count, l);
+    else if (disk_count > 1)
+        snprintf(buf, (size_t)cap, "%lu/%lu", (unsigned long)disk_no, (unsigned long)disk_count);
+    else
+        snprintf(buf, (size_t)cap, "%s", l);
+    return buf;
+}
+
 const char *nfc_ui_next_line(dc_tap_outcome_t o, uint32_t disk_no, uint32_t disk_count, bool saving,
                              char *buf, int cap) {
     switch (o) {
     case DC_TAP_MOUNTING:
-        if (saving) snprintf(buf, (size_t)cap, "Saving, then disk %lu", (unsigned long)disk_no);
-        else snprintf(buf, (size_t)cap, "Next: disk %lu of %lu", (unsigned long)disk_no,
-                      (unsigned long)disk_count);
+        snprintf(buf, (size_t)cap, saving ? "Saving, then %lu/%lu" : "Next: %lu/%lu",
+                 (unsigned long)disk_no, (unsigned long)disk_count);
         return buf;
     case DC_TAP_SINGLE:  snprintf(buf, (size_t)cap, "Next: single disk"); return buf;
     case DC_TAP_NO_DISK: snprintf(buf, (size_t)cap, "Next: no disk");     return buf;

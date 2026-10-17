@@ -89,7 +89,7 @@ static void test_the_counter_wins_a_collision_with_the_detail(void) {
     // detail is what gets clipped -- assert it, because the opposite ordering
     // also "works" right up until a long label meets a 3-digit track.
     display_state_t s = base_state();
-    strcpy(s.detail, "Disk 10/12 Language D");   // exactly fills the 21-char line
+    strcpy(s.detail, "10/12 Language Disk D");   // exactly fills the 21-char line
     s.cyl = 159; s.max_cyl = 159; s.show_track = true;
     uint8_t fb[DISP_FB_MAX];
     display_render(&s, layout_default(PANEL_128x32), fb);
@@ -123,7 +123,7 @@ static void test_the_lemming_stays_in_its_corner(void) {
     // touched the title or the counter, every step of the walk would cost a
     // redraw of them too, on the core that is servicing the floppy bus.
     display_state_t a = base_state(), b = base_state();
-    strcpy(a.title, "Sensible Soccer"); strcpy(a.detail, "Disk 1/2");
+    strcpy(a.title, "Sensible Soccer"); strcpy(a.detail, "1/2");
     a.show_track = true; a.cyl = 12;
     b = a;
     a.tick = 0; b.tick = 2;
@@ -163,7 +163,7 @@ static void test_the_write_glyph_disturbs_nothing_else(void) {
        title or the counter, every toggle would cost a frame on the core that
        services the floppy bus. */
     display_state_t ro = base_state(), rw;
-    strcpy(ro.title, "Sensible Soccer"); strcpy(ro.detail, "Disk 1/2");
+    strcpy(ro.title, "Sensible Soccer"); strcpy(ro.detail, "1/2");
     ro.show_track = true; ro.cyl = 12;
     rw = ro; rw.writable = true;
     uint8_t a[DISP_FB_MAX], b[DISP_FB_MAX];
@@ -241,7 +241,7 @@ static void test_no_radio_is_distinguishable_from_a_weak_one(void) {
 
 static void test_rendering_is_pure(void) {
     display_state_t s = base_state();
-    strcpy(s.title, "Lemmings"); strcpy(s.detail, "Disk 1/2");
+    strcpy(s.title, "Lemmings"); strcpy(s.detail, "1/2");
     s.cyl = 40; s.show_track = true;
     uint8_t a[DISP_FB_MAX], b[DISP_FB_MAX];
     display_render(&s, layout_default(PANEL_128x32), a);
@@ -270,7 +270,7 @@ static void test_the_pump_never_exceeds_its_budget(void) {
     display_t d; display_init(&d, fake_blit, NULL);
     display_state_t s = base_state();
     strcpy(s.title, "Sensible Soccer International");
-    strcpy(s.detail, "Disk 1/2 boot");
+    strcpy(s.detail, "1/2 Boot");
     s.cyl = 12; s.show_track = true;
     display_set(&d, &s);
 
@@ -342,7 +342,7 @@ static void test_the_pump_writes_within_one_page_per_call(void) {
     display_t d; display_init(&d, fake_blit, NULL);
     display_state_t s = base_state();
     strcpy(s.title, "Sensible Soccer International");
-    strcpy(s.detail, "Disk 1/2");
+    strcpy(s.detail, "1/2");
     s.show_track = true; s.cyl = 7;
     display_set(&d, &s);
     while (!display_in_sync(&d)) display_pump(&d, 16);
@@ -406,7 +406,7 @@ static void dump_all(void) {
 
     display_state_t s = base_state();
     s.status = DS_LOADED; s.bars = 3; s.cyl = 12; s.show_track = true;
-    strcpy(s.title, "Sensible Soccer"); strcpy(s.detail, "Disk 1/2  WP");
+    strcpy(s.title, "Sensible Soccer"); strcpy(s.detail, "1/2  WP");
     dump("LOADED, mid-seek", &s);
 
     display_state_t d = base_state();

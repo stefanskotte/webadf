@@ -112,7 +112,7 @@ export const HELP_TOPICS = {
           <strong>Why a swap sometimes waits.</strong> After a save, the Amiga goes on writing for a moment. Taking
           the disk away then would damage it, just like ejecting a real floppy with the drive light on. So the board
           swaps only when the drive light is off and nothing has been written for 3 seconds. When you tap a Next-disk
-          card during that wait, its display shows <em>Saving, then disk N</em> for a moment.
+          card during that wait, its display shows <em>Saving, then 2/3</em> (the next disk, of how many) for a moment.
         </p>
         <GoodToKnow items={[
           'If the drive stays busy without writing (some games keep the motor running), the board swaps anyway after 20 seconds of quiet.',
@@ -199,9 +199,10 @@ export const HELP_TOPICS = {
           you have more than one.
         </p>
         <p>
-          <strong>On the board&apos;s screen.</strong> A mounted disk of a set shows as <em>Disk 2/13</em> followed by
-          its name: the disk&apos;s Amiga volume name, else the name of the file you uploaded, without its extension.
-          The screen has room for about 11 characters of it.
+          <strong>On the board&apos;s screen.</strong> A mounted disk of a set shows as <em>2/13</em> followed by its
+          name, such as <em>2/13 Locale</em>: the disk&apos;s Amiga volume name, else the name of the file you
+          uploaded, without its extension. The screen has room for about 16 characters of it. Firmware before 1.14.0
+          shows <em>Disk 2/13</em> instead.
         </p>
       </>
     ),

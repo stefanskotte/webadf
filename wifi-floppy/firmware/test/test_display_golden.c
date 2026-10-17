@@ -160,7 +160,7 @@ static void render_nfc(const nfc_golden_t *g, uint8_t fb[DISP_FB_MAX]) {
     layout_t l = *layout_default(g->panel);
     l.el[l.n++] = (layout_el_t){ EL_NFC, 1, (uint8_t)g->scale, (uint8_t)g->x, (uint8_t)g->y, 0, 0 };
     display_state_t s = st(DS_LOADED);
-    strcpy(s.title, "Turrican"); strcpy(s.detail, "Disk 1/2");
+    strcpy(s.title, "Turrican"); strcpy(s.detail, "1/2");
     s.show_track = true; s.cyl = 12; s.writable = true; s.nfc = g->nfc;
     display_render(&s, &l, fb);
 }
