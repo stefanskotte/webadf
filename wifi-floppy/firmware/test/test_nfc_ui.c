@@ -140,9 +140,9 @@ static void the_tag_line_holds_for_three_seconds(void) {
     CHECK(!nfc_tag_clock_live(&c, 1, 1000, 4000), "gone at 3 s");
     CHECK(nfc_tag_clock_live(&c, 2, 9000, 9001), "a NEW line is live again");
     nfc_armed_t a; nfc_armed_init(&a);
-    CHECK(strcmp(nfc_ui_detail("Disk 1/2", "Tag: offline", true, &a), "Tag: offline") == 0,
+    CHECK(strcmp(nfc_ui_detail("1/2", "Tag: offline", true, &a), "Tag: offline") == 0,
           "a live tag line shows");
-    CHECK(strcmp(nfc_ui_detail("Disk 1/2", "Tag: offline", false, &a), "Disk 1/2") == 0,
+    CHECK(strcmp(nfc_ui_detail("1/2", "Tag: offline", false, &a), "1/2") == 0,
           "an expired one does not");
 }
 
@@ -286,9 +286,9 @@ static void only_its_own_write_done_ends_a_request(void) {
 
 static void next_lines(void) {
     char b[NFC_UI_LINE_BYTES];
-    CHECK(strcmp(nfc_ui_next_line(DC_TAP_MOUNTING, 2, 3, false, b, sizeof b), "Next: disk 2 of 3") == 0,
-          "a next tap names the disk and the set");
-    CHECK(strcmp(nfc_ui_next_line(DC_TAP_MOUNTING, 2, 3, true,  b, sizeof b), "Saving, then disk 2") == 0,
+    CHECK(strcmp(nfc_ui_next_line(DC_TAP_MOUNTING, 2, 3, false, b, sizeof b), "Next: 2/3") == 0,
+          "a next tap names the disk and the set, without the word Disk");
+    CHECK(strcmp(nfc_ui_next_line(DC_TAP_MOUNTING, 2, 3, true,  b, sizeof b), "Saving, then 2/3") == 0,
           "a held swap says it is saving first");
     CHECK(strcmp(nfc_ui_next_line(DC_TAP_SINGLE,   0, 0, false, b, sizeof b), "Next: single disk") == 0,
           "a disk with no set");
@@ -318,7 +318,30 @@ static void every_next_line_fits_the_detail_line(void) {
           "tap_line names NO_DISK explicitly");
 }
 
+// ---- the mounted disk's line (operator 2026-10-17: "Disk" is implied) ---------
+
+static void mounted_disk_lines(void) {
+    char b[NFC_UI_LINE_BYTES];
+    CHECK(strcmp(nfc_ui_disk_line(3, 13, "Locale", b, sizeof b), "3/13 Locale") == 0,
+          "a set's disk: the counter then its own name, no word Disk");
+    CHECK(strcmp(nfc_ui_disk_line(3, 13, "", b, sizeof b), "3/13") == 0,
+          "a set's disk with no name: the counter alone, no trailing space");
+    CHECK(strcmp(nfc_ui_disk_line(3, 13, NULL, b, sizeof b), "3/13") == 0,
+          "a NULL label reads as empty");
+    CHECK(strcmp(nfc_ui_disk_line(1, 1, "Lemmings", b, sizeof b), "Lemmings") == 0,
+          "a one-disk title: the label alone");
+    CHECK(strcmp(nfc_ui_disk_line(1, 1, "", b, sizeof b), "") == 0,
+          "a one-disk title with no label: an empty line");
+    CHECK(strcmp(nfc_ui_disk_line(1, 0, "Lemmings", b, sizeof b), "Lemmings") == 0,
+          "an unknown count is a one-disk title");
+    CHECK(strcmp(nfc_ui_disk_line(10, 12, "Language Disk D", b, sizeof b), "10/12 Language Disk D") == 0,
+          "21 characters exactly fill the line");
+    CHECK(strcmp(nfc_ui_disk_line(10, 12, "Language Disk Dutch", b, sizeof b), "10/12 Language Disk D") == 0,
+          "a longer one is clipped to the line");
+}
+
 int main(void) {
+    RUN(mounted_disk_lines);
     RUN(next_lines);
     RUN(every_next_line_fits_the_detail_line);
     RUN(tap_lines_are_the_spec_table);
