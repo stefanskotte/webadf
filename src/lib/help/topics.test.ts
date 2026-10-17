@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { HELP_TOPICS, HELP_ORDER, type HelpTopicId } from './topics';
 
-const IDS: HelpTopicId[] = ['boards', 'own-server', 'nfc', 'next-disk', 'write-back', 'write-protect', 'disk-sets', 'hd-hfe', 'display', 'second-drive', 'network', 'cover-image', 'about'];
+const IDS: HelpTopicId[] = ['boards', 'own-server', 'nfc', 'next-disk', 'write-back', 'write-protect', 'disk-sets', 'hd-hfe', 'display', 'second-drive', 'network', 'send', 'cover-image', 'about'];
 // Internal words a reader of the help should never meet (spec §5).
 const BANNED = /\b(PSRAM|TBYB|poll|sha256|cursor|WPROT)\b/i;
 
@@ -147,6 +147,17 @@ describe('network says what a regular user needs (spec 2026-10-12 §5)', () => {
     expect(all()).toMatch(/Rob Smith/);
   });
   it('names the firmware it needs', () => expect(all()).toMatch(/1\.11\.0/));
+});
+
+describe('send names the limits, Receive, the expiry and the accepted risk', () => {
+  it('send names the limits, Receive, the expiry and the accepted risk', () => {
+    const s = HELP_TOPICS.send.short + bodyText('send');
+    expect(s).toMatch(/Receive/);
+    expect(s).toMatch(/4 MB/);
+    expect(s).toMatch(/24 hours/);
+    expect(s).toMatch(/1\.15\.0/);
+    expect(s).toMatch(/any computer on your network/);
+  });
 });
 
 describe('second-drive names the third option (spec 2026-10-12 §5)', () => {

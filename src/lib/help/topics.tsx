@@ -389,6 +389,38 @@ export const HELP_TOPICS = {
     ),
   },
 
+  // Sources: spec docs/superpowers/specs/2026-10-16-paulanet-phase4-send-to-amiga-design.md §1 (D4 limits, D8 never
+  // overwrite, D9 accepted risk), §4 (the Upload page column, Browse Send, Send .adf), §5 (Receive, Install);
+  // src/lib/send-limits.ts (XFER_FW, limits), src/lib/send-ui.ts (the words), tools/paulanet-disk/Install;
+  // plan 2026-10-17 rulings R1 (1.15.0), R9 (Cancel while sending), R10 (Retry).
+  send: {
+    title: 'Sending files to the Amiga',
+    short:
+      'Send files from your computer, or from a disk in your library, to a folder on your Amiga. The Amiga saves them with Receive, from the PaulaNET driver disk.',
+    body: (
+      <>
+        <p>
+          Your board must be in <em>Network (PaulaNET)</em> mode, on firmware 1.15.0 or newer. On the Amiga, run{' '}
+          <em>Install</em> from the driver disk once: it copies <em>Receive</em> to SYS:Tools and C:. Start Receive by
+          hand, choose a folder and press Save. The default folder is RAM:.
+        </p>
+        <p>
+          <strong>Three ways to send.</strong> On the Upload page, drop any file under <em>Send to Amiga</em>. On a
+          disk&apos;s Browse page, press <em>Send</em> on a file or a folder. On a title&apos;s page, press{' '}
+          <em>Send .adf to Amiga</em> to send a whole disk as one file. The Upload page shows each file waiting, on its
+          way, delivered with the name it was saved as, or failed with the reason.
+        </p>
+        <GoodToKnow items={[
+          'Up to 4 MB a file, and up to 32 files or 16 MB waiting for one board.',
+          'A file sent while Receive is closed waits up to 24 hours, then expires.',
+          'Nothing is overwritten: a second Foo.lha arrives as Foo_2.lha.',
+          'Cancel stops a file that is waiting or on its way. Retry sends a failed one again from the start.',
+          'While Receive runs, any computer on your network can drop a file into its folder. It cannot overwrite anything or leave the folder, and nothing is run.',
+        ]} />
+      </>
+    ),
+  },
+
   // Sources: cover-image.ts (types, 2 MB, 16-4096 px, effectiveCoverUrl precedence), cover-control.tsx
   // (button texts), api/games/[id]/cover/route.ts (Revert keeps nothing else), cover-override.ts (per-org row),
   // blob-gc-run.ts (unused images reclaimed within two weeks).
@@ -479,6 +511,6 @@ export const HELP_TOPICS = {
 export type HelpTopicId = keyof typeof HELP_TOPICS;
 
 export const HELP_ORDER: readonly HelpTopicId[] = [
-  'boards', 'own-server', 'nfc', 'next-disk', 'second-drive', 'network', 'write-back', 'write-protect', 'disk-sets', 'hd-hfe', 'display',
+  'boards', 'own-server', 'nfc', 'next-disk', 'second-drive', 'network', 'send', 'write-back', 'write-protect', 'disk-sets', 'hd-hfe', 'display',
   'cover-image', 'about',
 ];
