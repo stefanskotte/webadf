@@ -4,11 +4,9 @@ import { devices } from '@/db/schema/devices';
 import { transfers } from '@/db/schema/transfers';
 import { diskStore } from '@/lib/storage';
 import type { Db } from '@/db';
+import { XFER_FW, SEND_FILE_MAX, SEND_QUEUE_MAX_FILES, SEND_QUEUE_MAX_BYTES } from '@/lib/send-limits';
 
-export const XFER_FW = '1.14.0';
-export const SEND_FILE_MAX = 4_194_304;
-export const SEND_QUEUE_MAX_FILES = 32;
-export const SEND_QUEUE_MAX_BYTES = 16 * 1024 * 1024;
+export { XFER_FW, SEND_FILE_MAX, SEND_QUEUE_MAX_FILES, SEND_QUEUE_MAX_BYTES };
 export const SEND_QUEUE_BYTES = 6144;
 export const SEND_CHUNK_MAX = 16_384;
 export const SEND_EXPIRE_MS = 24 * 3600_000;
