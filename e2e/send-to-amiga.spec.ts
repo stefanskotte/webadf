@@ -153,3 +153,18 @@ test('a title page: Send .adf to Amiga queues the whole disk as <name>.adf', asy
   const q = Buffer.from(await (await request.get('/api/device/send/queue', { headers: authHeader(token) })).body()).toString('latin1');
   expect(q).toContain(` 901120 ${`${title}-1.adf`.length}:${title}-1.adf\n`);
 });
+
+test('the board\'s card says what waits and whether Receive runs, and links to the queue', async ({ page, request }) => {
+  await signUpFresh(page);
+  const { deviceId, token } = await pairDevice(page, request, 'Bench');   // Task 1: the name is kept
+  await boardSays(request, token, 'r');
+  expect((await page.request.post(`/api/transfers?deviceId=${deviceId}&name=a.txt`, { data: Buffer.from('a'),
+    headers: { 'content-type': 'application/octet-stream' } })).status()).toBe(201);
+  await page.goto('/devices');
+  await expect(page.getByTestId(`device-send-${deviceId}`)).toHaveText('1 file waiting · Receive not running');
+  await boardSays(request, token, 'c');
+  await expect(page.getByTestId(`device-send-${deviceId}`)).toHaveText('1 file waiting · Receive running', { timeout: LIVE });
+  await page.getByTestId(`device-send-${deviceId}`).click();
+  await expect(page).toHaveURL(new RegExp(`/ingest\\?board=${deviceId}$`));
+  await expect(page.getByTestId('send-board')).toContainText('Bench');
+});

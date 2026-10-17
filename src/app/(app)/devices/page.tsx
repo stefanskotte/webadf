@@ -1,3 +1,7 @@
+import { getDb } from '@/db';
+import { sendSummaries } from '@/lib/transfers';
+import { listSendTargets } from '@/lib/send-targets';
+import { cardSendLine, receiverRunning } from '@/lib/send-ui';
 import { requireOrg } from '@/lib/session';
 import { listDevices } from '@/lib/queries';
 import { listReleases } from '@/lib/firmware-releases';
@@ -15,13 +19,12 @@ import { FobButton } from '@/components/nfc/fob-button';
 
 export default async function DevicesPage() {
   const { orgId } = await requireOrg();
-  // Independent reads, so they go together rather than in series.
-  // Next-card writers, not every reader: a board before 1.6.0 cannot write one.
-  const [devices, releases, writers] = await Promise.all([listDevices(orgId), listReleases(orgId), listNextCardWriters(orgId)]);
-
   // One clock for the whole render, so two cards can never disagree about what
   // "now" is and flip each other across the staleness boundary.
   const now = Date.now();
+  // Independent reads, so they go together rather than in series.
+  // Next-card writers, not every reader: a board before 1.6.0 cannot write one.
+  const [devices, releases, writers] = await Promise.all([listDevices(orgId), listReleases(orgId), listNextCardWriters(orgId)]);
 
   const online = devices.filter((d) => isOnline(d.lastSeenAt, now)).length;
 
@@ -31,6 +34,13 @@ export default async function DevicesPage() {
   const nextById = Object.fromEntries(
     devices.map((d) => [d.id, nextInfo(nexts.get(d.id), d.preloadSha256, d.preloadState)]),
   );
+
+  // The card's send line (spec §4): what waits or happened lately, and whether Receive runs, per sending board.
+  const [sendTargets, summaries] = await Promise.all([listSendTargets(getDb(), orgId, now), sendSummaries(getDb(), orgId, new Date(now))]);
+  const sendLineById = Object.fromEntries(sendTargets.map((t) => {
+    const s = summaries[t.id];
+    return [t.id, cardSendLine(s, receiverRunning(t, (s?.sending ?? 0) > 0, now))];
+  }));
 
   // The registry is indexed ONCE and shared, so "which release is newest" is
   // computed in exactly one place -- the notice and the cards cannot disagree
@@ -71,7 +81,7 @@ export default async function DevicesPage() {
           </div>
         ) : (
           <DeviceList devices={devices} now={now} states={states}
-                      selectableIds={selectableIds} latest={registry.latest} nextById={nextById} />
+                      selectableIds={selectableIds} latest={registry.latest} nextById={nextById} sendLineById={sendLineById} />
         )}
       </div>
     </>

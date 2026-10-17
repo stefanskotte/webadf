@@ -5,7 +5,7 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { crc32 } from 'node:zlib';
-import { eq } from 'drizzle-orm';
+import { eq, inArray } from 'drizzle-orm';
 
 // A database of its own (the shared one is the live one): the queue writes devices and transfers rows.
 const base = process.env.TEST_DATABASE_URL!;
@@ -253,5 +253,15 @@ describe('transfers', () => {
     await T.finishTransfer(getDb(), d, b, { ok: true, savedAs: 'b' });
     await T.finishTransfer(getDb(), d, old, { ok: false, code: 'crc', text: 'x' }, new Date(Date.now() - 25 * 3600_000));
     expect((await T.sendSummaries(getDb(), 'org-s'))[d]).toEqual({ waiting: 1, sending: 1, delivered: 1, failed: 0 });
+  });
+
+  it('sendSummaries counts a queued or sending row past its expiry as failed, though the cron has not marked it', async () => {
+    const d = await device('org-lapse');
+    const mk = async (p: string) => (await T.queueTransferFromBlob(getDb(), { orgId: 'org-lapse', deviceId: d, userId: 'u',
+      path: p, sha256: await blob(new TextEncoder().encode(p)) }) as { id: string }).id;
+    const q = await mk('q'); const s = await mk('s'); await mk('live');
+    await T.recordChunk(getDb(), d, s, 0);
+    await getDb().update(transfers).set({ expiresAt: new Date(Date.now() - 60_000) }).where(inArray(transfers.id, [q, s]));
+    expect((await T.sendSummaries(getDb(), 'org-lapse'))[d]).toEqual({ waiting: 1, sending: 0, delivered: 0, failed: 2 });
   });
 });

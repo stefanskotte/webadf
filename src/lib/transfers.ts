@@ -1,5 +1,5 @@
 import { crc32 } from 'node:zlib';
-import { and, asc, desc, eq, gt, inArray, lt, or, sql } from 'drizzle-orm';
+import { and, asc, desc, eq, gt, inArray, lt, lte, or, sql } from 'drizzle-orm';
 import { devices } from '@/db/schema/devices';
 import { transfers } from '@/db/schema/transfers';
 import { diskStore } from '@/lib/storage';
@@ -193,15 +193,19 @@ export async function retryTransfer(db: Db, a: { orgId: string; userId: string; 
 /** Per board, for the card's line (spec §4; R11): what waits or moves, and what finished in the last 24 h. */
 export async function sendSummaries(db: Db, orgId: string, now = new Date()): Promise<Record<string, SendSummary>> {
   const since = new Date(now.getTime() - 24 * 3600_000);
-  const rows = await db.select({ deviceId: transfers.deviceId, status: transfers.status, n: sql<number>`count(*)::int` })
+  // A queued or sending row past expires_at is "expired" on the queue page before the daily cron marks it; count it
+  // as failed here too (only within the last 24 h, like the finished rows) so the card agrees with the page.
+  const lapsed = and(inArray(transfers.status, ACTIVE), lte(transfers.expiresAt, now), gt(transfers.expiresAt, since));
+  const rows = await db.select({ deviceId: transfers.deviceId, status: transfers.status, lapsed: sql<boolean>`${lapsed}`, n: sql<number>`count(*)::int` })
     .from(transfers)
     .where(and(eq(transfers.orgId, orgId),
-      or(and(inArray(transfers.status, ACTIVE), gt(transfers.expiresAt, now)), gt(transfers.finishedAt, since))))
-    .groupBy(transfers.deviceId, transfers.status);
+      or(and(inArray(transfers.status, ACTIVE), gt(transfers.expiresAt, now)), lapsed, gt(transfers.finishedAt, since))))
+    .groupBy(sql`1, 2, 3`);   // by position: the lapsed flag's bind parameters differ between select and group by
   const out: Record<string, SendSummary> = {};
   for (const r of rows) {
     const s = (out[r.deviceId] ??= { waiting: 0, sending: 0, delivered: 0, failed: 0 });
-    if (r.status === 'queued') s.waiting += r.n;
+    if (r.lapsed) s.failed += r.n;
+    else if (r.status === 'queued') s.waiting += r.n;
     else if (r.status === 'sending') s.sending += r.n;
     else if (r.status === 'delivered') s.delivered += r.n;
     else if (r.status === 'failed' || r.status === 'expired') s.failed += r.n;

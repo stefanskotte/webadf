@@ -22,6 +22,7 @@ const base: LiveStateRow = {
   displayVersion: 0, displayAppliedVersion: null, displayError: null, displayLayouts: null, displayPanel: '128x32',
   secondDrive: 'off', secondDriveVersion: 0, secondDriveAppliedVersion: null, secondDriveReported: null,
   df1DiskId: null, df1PickSha256: null, df1PickTitle: null, df1PickDiskNo: null,
+  sendVersion: 0, sendRx: null, sendRxAt: null,
   df1Sha256: null, netDriverSeenAt: null, netAmigaIp: null, netFramesIn: null, netFramesOut: null,
   secondDriveCapable: true, sel1Wired: true, df1Seen: false,
   serverCustom: null, serverTls: null,
@@ -259,4 +260,16 @@ describe('every DF1 card input (HANDOFF backlog: "DF1 card status does not updat
       expect(fp([{ ...base, ...patch }])).not.toBe(fp([base]));
     });
   }
+});
+
+describe('sending to the Amiga (plan 2026-10-17 Task 8)', () => {
+  it('moves with the send queue and the receiver state, not with every rx refresh', () => {
+    const a = fp([base]);
+    expect(fp([{ ...base, sendVersion: 1 }])).not.toBe(a);
+    expect(fp([{ ...base, sendRx: 'c', sendRxAt: new Date(NOW - 5_000) }])).not.toBe(a);
+    expect(fp([{ ...base, sendRx: 'c', sendRxAt: new Date(NOW - 5_000) }]))
+      .toBe(fp([{ ...base, sendRx: 'c', sendRxAt: new Date(NOW - 50_000) }]));
+    expect(fp([{ ...base, sendRx: 'c', sendRxAt: new Date(NOW - 5_000) }]))
+      .not.toBe(fp([{ ...base, sendRx: 'c', sendRxAt: new Date(NOW - 200_000) }]));
+  });
 });
