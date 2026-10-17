@@ -17,6 +17,7 @@ import { completeBody, stableId } from '@/lib/ingest';
 import { groupDisks } from '@/lib/grouping';
 import { parseTosecName } from '@/lib/tosec';
 import { contentHashes } from '@/lib/content-hashes';
+import { volumeNameOf } from '@/lib/disk-label';
 import { mapLimit } from '@/lib/pool';
 import { chunk } from '@/lib/chunk';
 import { inspectHfe, type HfeInspection } from '@/lib/hfe/inspect';
@@ -39,7 +40,12 @@ type Verdict =
       // The bytes verify() read, kept only when the caller asked (an HFE,
       // which is inspected next): holding every read of a 500-file batch
       // would be ~440 MB.
-      bytes?: Uint8Array }
+      bytes?: Uint8Array;
+      // The AmigaDOS volume name, read on the first-registration path only
+      // (the bytes are in memory anyway): the disk row's label, which the
+      // board prints after "Disk n/c" (src/lib/disk-label.ts). Null for a
+      // non-DOS disk or a blank name; absent on a dedupe hit.
+      volumeName?: string | null }
   | { ok: false; reason: 'not-stored' | 'size-mismatch' | 'digest-mismatch' | 'hfe-refused' };
 
 /**
@@ -99,6 +105,7 @@ async function verify(
     sizeBytes: bytes.byteLength,
     gzipSizeBytes: gzipSync(bytes).byteLength,
     hashes: { crc32: h.crc32, md5: h.md5, sha1: h.sha1 },
+    volumeName: volumeNameOf(bytes),
     ...(keepBytes ? { bytes } : {}),
   };
 }
@@ -405,9 +412,12 @@ export async function registerUploads(orgId: string, files: CompleteFile[]): Pro
         // which keeps only the FIRST filename seen per diskId), and a
         // filename check would silently drop the HFE stamping in that case.
         const hfe = hfeInfo.get(d.sha256);
+        const volumeName = (verdictFor.get(d.sha256) as Extract<Verdict, { ok: true }>).volumeName;
         diskRows.set(diskId, {
           id: diskId, gameId, orgId, diskNo, sha256: d.sha256,
           tosecName: d.filename, isBoot: d.isBoot, sizeBytes: d.sizeBytes,
+          // Insert-only (onConflictDoNothing for an ADF): an existing row's label is never touched.
+          ...(volumeName ? { label: volumeName } : {}),
           ...(hfe ? {
             imageFormat: 'hfe' as const, writeProtected: true,
             extractable: hfe.extractable, extractReason: hfe.extractReason,

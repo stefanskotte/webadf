@@ -22,6 +22,7 @@ import { blobs, disks, entitlements, games } from '@/db/schema/catalog';
 import { diskVersions } from '@/db/schema/disk-history';
 import { fixture } from '@/lib/hfe/__fixtures__/load';
 import { stableId } from '@/lib/ingest';
+import { syntheticVolume } from '@/lib/adffs/synthetic';
 
 vi.mock('@/lib/session', () => ({
   requireOrg: () => Promise.resolve({ orgId: 'org-1', userId: 'user-1', email: 'a@b.test' }),
@@ -247,5 +248,36 @@ describe('POST /api/ingest/complete: an upload whose title is a human-arranged s
     })]);
     // No disk lookup is spent when no human set is involved.
     expect(wheres.filter((w) => w.table === disks)).toHaveLength(0);
+  });
+});
+
+describe('POST /api/ingest/complete: a new ADF keeps its AmigaDOS volume name as its label', () => {
+  // The board prints "Disk n/c <label>"; the volume name is read here because
+  // a first registration already holds the bytes (field report 2026-10-17).
+  const ADF = syntheticVolume({ volumeName: 'Locale3.2' });
+  const ADF_SHA = createHash('sha256').update(ADF).digest('hex');
+  const upload = async () => {
+    const { POST } = await import('./route');
+    return POST(new Request('http://test/api/ingest/complete', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ files: [{ sha256: ADF_SHA, sizeBytes: ADF.length, filename: 'Workbench 3.2 (Disk 5 of 13).adf' }] }),
+    }));
+  };
+  const diskRows = () => inserts.filter((i) => i.table === disks).flatMap((i) => i.rows);
+
+  it('stores the volume name on the disk row it creates', async () => {
+    stat.mockResolvedValueOnce({ sizeBytes: ADF.length });
+    read.mockResolvedValueOnce(ADF);
+    expect((await upload()).status).toBe(200);
+    expect(diskRows()).toEqual([expect.objectContaining({ label: 'Locale3.2', diskNo: 5 })]);
+  });
+
+  it('a dedupe hit is not read back just for a name: no label, the board falls back to the file name', async () => {
+    byTable.set(blobs, [[{ sha256: ADF_SHA }]]);
+    stat.mockResolvedValueOnce({ sizeBytes: ADF.length });
+    expect((await upload()).status).toBe(200);
+    expect(read).not.toHaveBeenCalled();
+    expect(diskRows()[0].label).toBeUndefined();
   });
 });

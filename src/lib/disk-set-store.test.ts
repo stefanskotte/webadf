@@ -76,6 +76,17 @@ function recordingTx(sink: { sql: string; params: unknown[] }[]) {
 
 vi.mock('@/db', () => ({ getDb: () => fakeDb }));
 
+// The ADF bytes a disk's volume name is read from, by sha256 (the set's
+// per-disk label, field report 2026-10-17). A missing sha is a store failure.
+const stored = new Map<string, Uint8Array>();
+const storeRead = vi.fn(async (sha: string) => {
+  const b = stored.get(sha);
+  if (!b) throw new Error('not stored');
+  return b;
+});
+vi.mock('@/lib/storage', () => ({ diskStore: { read: (s: string) => storeRead(s) } }));
+const { syntheticVolume } = await import('@/lib/adffs/synthetic');
+
 
 const { addDisksToSet, reorderSet, moveDiskOut, undoMove, NotFound } = await import('./disk-set-store');
 const { PlanError } = await import('./disk-set');
@@ -88,7 +99,7 @@ const only = () => { expect(batches).toHaveLength(1); return batches[0]; };
 const idx = (b: { sql: string }[], re: RegExp) => b.findIndex((s) => re.test(s.sql));
 
 beforeEach(() => {
-  byTable = new Map(); selects = []; batches = [];
+  byTable = new Map(); selects = []; batches = []; stored.clear(); storeRead.mockClear();
 });
 
 const game = (id: string, over: Record<string, unknown> = {}) => ({
@@ -331,6 +342,53 @@ describe('addDisksToSet', () => {
     answer(disks, [{ id: 'd1', gameId: 'G', diskNo: 1 }], [{ id: 'd1', gameId: 'G', diskNo: 1 }]);
     await expect(addDisksToSet('org-1', 'G', ['d1'])).rejects.toMatchObject({ code: 'same_title' });
     expect(batches).toHaveLength(0);
+  });
+});
+
+describe('addDisksToSet stores each disk\'s volume name as its label (the board\'s "Disk n/c <name>")', () => {
+  /** addScenario, plus the label read: the set's disks that have no label yet. */
+  function labelScenario(unlabelled: { id: string; sha256: string }[]) {
+    addScenario();
+    byTable.get(disks)!.push(unlabelled);
+  }
+  const labelWrites = () => only().filter((s) => /^update "disks" set "label"/.test(s.sql));
+
+  it('writes the AmigaDOS volume name into an empty label, in the same transaction', async () => {
+    stored.set('sha-d1', syntheticVolume({ volumeName: 'Install3.2' }));
+    stored.set('sha-s1', syntheticVolume({ volumeName: 'Workbench3.2' }));
+    labelScenario([{ id: 'd1', sha256: 'sha-d1' }, { id: 's1', sha256: 'sha-s1' }]);
+    await addDisksToSet('org-1', 'G', ['s2'], 'Workbench 3.2');
+    expect(labelWrites().map((w) => w.params)).toEqual([
+      ['Install3.2', 'd1', 'org-1', ''],
+      ['Workbench3.2', 's1', 'org-1', ''],
+    ]);
+  });
+
+  it('asks only for disks of the new set that have no label, org-scoped', async () => {
+    labelScenario([]);
+    await addDisksToSet('org-1', 'G', ['s2']);
+    const read = selects.filter((q) => q.table === disks).at(-1)!;
+    const { sql: where, params } = render(read.where!);
+    expect(where).toMatch(/"disks"\."org_id" = \$\d+/);
+    expect(where).toMatch(/"disks"\."label" is null or btrim\("disks"\."label"\) = \$\d+/);
+    expect(params).toEqual(expect.arrayContaining(['d1', 's1', 's2', 'org-1']));
+  });
+
+  it('never overwrites a label set meanwhile: the UPDATE itself requires it to be empty', async () => {
+    stored.set('sha-d1', syntheticVolume({ volumeName: 'Install3.2' }));
+    labelScenario([{ id: 'd1', sha256: 'sha-d1' }]);
+    await addDisksToSet('org-1', 'G', ['s2']);
+    const [w] = labelWrites();
+    expect(w.sql).toMatch(/where \("disks"\."id" = \$\d+ and "disks"\."org_id" = \$\d+ and \("disks"\."label" is null or btrim\("disks"\."label"\) = \$\d+\)\)/);
+  });
+
+  it('a disk with no filesystem, a blank volume name or unreadable bytes is left alone; the set is still made', async () => {
+    stored.set('sha-a', syntheticVolume({ noSignature: true }));
+    stored.set('sha-b', syntheticVolume({ volumeName: ' ' }));
+    labelScenario([{ id: 'd1', sha256: 'sha-a' }, { id: 's1', sha256: 'sha-b' }, { id: 's2', sha256: 'sha-missing' }]);
+    await addDisksToSet('org-1', 'G', ['s2']);
+    expect(labelWrites()).toEqual([]);
+    expect(only().filter((s) => /^update "disks" set "game_id"/.test(s.sql))).toHaveLength(2);
   });
 });
 

@@ -12,7 +12,7 @@ import { getDb } from '@/db';
 import { games, disks, entitlements } from '@/db/schema/catalog';
 import { orgFilter } from '@/db/scope';
 import { likePattern } from '@/lib/search-query';
-import { readVolume } from '@/lib/adffs';
+import { volumeNameOf } from '@/lib/disk-label';
 import { diskStore } from '@/lib/storage';
 import { suggestSet, type SuggestInput, type Suggestion } from '@/lib/disk-set-suggest';
 
@@ -24,10 +24,7 @@ import { suggestSet, type SuggestInput, type Suggestion } from '@/lib/disk-set-s
  */
 async function readVolumeName(sha256: string): Promise<string | null> {
   try {
-    const v = readVolume(await diskStore.read(sha256));
-    if (!v.ok) return null;
-    const name = v.volume.name.trim();
-    return name === '' ? null : name;
+    return volumeNameOf(await diskStore.read(sha256));
   } catch {
     return null;
   }
