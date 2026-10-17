@@ -188,21 +188,27 @@ static const uint8_t NFC_MARK[8] = { 0x08, 0x24, 0x12, 0x92, 0x92, 0x12, 0x24, 0
 //   hourglass    a mast,      the arcs     the dot      an empty floppy:
 //                broadcasting              stays        outline and shutter
 //
-//   DOWNLOAD     VERIFY       LOADED       ERROR        ERROR, blink
-//   ...##...     .####...     #######.     ...##...     ...##...
-//   ...##...     #....#..     ##.##.##     ..#..#..     ..####..
-//   ...##...     #....#..     ##.##.##     .#.##.#.     .##..##.
-//   .######.     #....#..     ########     .#.##.#.     .##..##.
-//   ..####..     #....#..     ########     #..##..#     ###..###
-//   ...##...     .#####..     ##....##     #......#     ########
-//   ........     .....##.     ##....##     #..##..#     ###..###
+//   DOWNLOAD 50% VERIFY       LOADED       ERROR        ERROR, blink
+//   #######.     .####...     #######.     ...##...     ...##...
+//   #.#..#.#     #....#..     ##.##.##     ..#..#..     ..####..
+//   #.#..#.#     #....#..     ##.##.##     .#.##.#.     .##..##.
+//   #.####.#     #....#..     ########     .#.##.#.     .##..##.
+//   ########     #....#..     ########     #..##..#     ###..###
+//   ##....##     .#####..     ##....##     #......#     ########
+//   ##....##     .....##.     ##....##     #..##..#     ###..###
 //   ########     ......##     ########     ########     ########
-//   down to      a magnifying the floppy   ! in a       the same,
-//   the line     glass        filled in    triangle     inverted
+//   the floppy   a magnifying the floppy   ! in a       the same,
+//   filling up   glass        filled in    triangle     inverted
 //
-// DOWNLOAD's percent stays the download element's: the icon replaces the word
-// and nothing else. LOADED says nothing about writing -- the write element's
-// cloud/padlock already does.
+// DOWNLOAD is the floppy filling up as the download goes: READY's outline at
+// 0 %, LOADED's floppy at 100 %, and between them rows 1..6 taken from LOADED
+// bottom-up, one row per sixth -- filled rows = pct * 6 / 100, rounded down,
+// so the floppy is whole only when the download is (rows 0 and 7 are the same
+// in both pictures). Six steps at either scale: a 2x icon is the 1x one
+// doubled, never half-rows. Steady, never blinking; an unknown percent is the
+// empty outline. The percent itself stays the download element's: the icon
+// replaces the word and nothing else. LOADED says nothing about writing --
+// the write element's cloud/padlock already does.
 #define STATUS_ICON_N 10
 enum { ICON_WIFI_BLINK = 8, ICON_ERROR_BLINK = 9 };
 static const uint8_t STATUS_ICON[STATUS_ICON_N][8] = {
@@ -210,7 +216,7 @@ static const uint8_t STATUS_ICON[STATUS_ICON_N][8] = {
     { 0x42, 0x99, 0x99, 0x5A, 0x18, 0x18, 0x3C, 0x7E },   // DS_PORTAL
     { 0x7E, 0x81, 0x3C, 0x42, 0x18, 0x24, 0x00, 0x18 },   // DS_WIFI
     { 0xFE, 0xA5, 0xA5, 0xBD, 0x81, 0x81, 0x81, 0xFF },   // DS_READY
-    { 0x18, 0x18, 0x18, 0x7E, 0x3C, 0x18, 0x00, 0xFF },   // DS_DOWNLOAD
+    { 0xFE, 0xA5, 0xA5, 0xBD, 0x81, 0x81, 0x81, 0xFF },   // DS_DOWNLOAD at 0 % (draw_status_icon fills it)
     { 0x78, 0x84, 0x84, 0x84, 0x84, 0x7C, 0x06, 0x03 },   // DS_VERIFY
     { 0xFE, 0xDB, 0xDB, 0xFF, 0xFF, 0xC3, 0xC3, 0xFF },   // DS_LOADED
     { 0x18, 0x24, 0x5A, 0x5A, 0x99, 0x81, 0x99, 0xFF },   // DS_ERROR
@@ -294,16 +300,28 @@ static void draw_nfc(uint8_t *fb, int x, int y, disp_nfc_t st) {
     }
 }
 
-static void draw_status_icon(uint8_t *fb, int x, int y, disp_status_t st, int tick) {
+#define DOWNLOAD_FILL_ROWS 6   // the floppy's interior, rows 1..6
+
+static void draw_status_icon(uint8_t *fb, int x, int y, disp_status_t st, int tick, int pct) {
     int i = (int)st;
     if (i < 0 || i > (int)DS_ERROR) return;
     // Unsigned, so a tick that has wrapped negative still picks a phase.
     const bool second = ((unsigned)tick / DISP_BLINK_TICKS) % 2u == 1u;
     if (second && st == DS_WIFI)  i = ICON_WIFI_BLINK;
     if (second && st == DS_ERROR) i = ICON_ERROR_BLINK;
-    for (int r = 0; r < 8; r++)
+    // DOWNLOAD: the bottom `filled` rows are LOADED's, the rest READY's.
+    int filled = 0;
+    if (st == DS_DOWNLOAD) {
+        const int c = pct < 0 ? 0 : pct > 100 ? 100 : pct;
+        filled = c * DOWNLOAD_FILL_ROWS / 100;
+    }
+    for (int r = 0; r < 8; r++) {
+        const uint8_t row = st != DS_DOWNLOAD ? STATUS_ICON[i][r]
+                          : r >= 7 - filled   ? STATUS_ICON[DS_LOADED][r]
+                          :                     STATUS_ICON[DS_READY][r];
         for (int c = 0; c < STATUS_ICON_W; c++)
-            if (STATUS_ICON[i][r] & (1u << (STATUS_ICON_W - 1 - c))) px(fb, x + c, y + r);
+            if (row & (1u << (STATUS_ICON_W - 1 - c))) px(fb, x + c, y + r);
+    }
 }
 
 static void draw_wifi(uint8_t *fb, int x, int y, int bars) {
@@ -460,7 +478,7 @@ void display_render(const display_state_t *s, const layout_t *l, uint8_t fb[DISP
             case EL_WRITE:   draw_write_state(fb, x, y, s->writable, s->sync); break;
             case EL_NFC:     draw_nfc(fb, x, y, s->nfc); break;
             case EL_STATUS:
-                if (e->opt == STATUS_OPT_ICON) draw_status_icon(fb, x, y, s->status, s->tick);
+                if (e->opt == STATUS_OPT_ICON) draw_status_icon(fb, x, y, s->status, s->tick, s->pct);
                 else draw_text(fb, x, y, disp_status_word(s->status), x + bw / g_scale);
                 break;
             case EL_TITLE: {
