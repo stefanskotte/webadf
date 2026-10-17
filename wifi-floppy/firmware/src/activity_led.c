@@ -13,6 +13,14 @@
 
 static bool     armed;          // led_init() has run; guards a stray blip
 static volatile int selftest_left;
+// Two sources share the pin: the drive-activity level core0's loop sets
+// (led_set_activity; led_activity.h decides it) and the one-shot flashes
+// (led_blip: an NFC tap; the boot self-test). The pin shows either. A flash
+// ending puts back the activity level rather than driving the pin dark, and
+// the loop rewrites the pin every pass, so a race between the two heals
+// within a millisecond.
+static volatile bool act_lit;
+static volatile bool blip_lit;
 
 // Returning 0 means "do not reschedule". The pin is driven low rather than
 // toggled: overlapping blips are expected (a seek delivers a STEP every ~3 ms)
@@ -20,12 +28,14 @@ static volatile int selftest_left;
 // precisely the burst it is meant to show.
 static int64_t led_off_cb(alarm_id_t id, void *arg) {
     (void)id; (void)arg;
-    gpio_put(PIN_ACT_LED, 0);
+    blip_lit = false;
+    gpio_put(PIN_ACT_LED, act_lit);
     return 0;
 }
 
 static int64_t led_selftest_cb(alarm_id_t id, void *arg) {
     (void)id; (void)arg;
+    blip_lit = true;
     gpio_put(PIN_ACT_LED, 1);
     add_alarm_in_us(LED_BLIP_MS * 1000, led_off_cb, NULL, true);
     if (--selftest_left > 0) {
@@ -51,9 +61,9 @@ void led_init(void) {
     // fix -- the fix is a resistor, and rev B is unfabricated, which is the
     // cheap moment to add the footprint.
     //
-    // Duty cycle is what has kept this benign so far: a blip is 40 ms and
-    // events are sparse. It does NOT stay benign during a seek, where a STEP
-    // every ~3 ms makes overlapping blips into a continuously lit LED.
+    // Duty cycle no longer helps: the LED is now a level, lit for the whole of
+    // every disk access (led_activity.h), the way a real drive's light is --
+    // seconds at a time while the Amiga loads. A resistor matters more, not less.
     gpio_set_drive_strength(PIN_ACT_LED, GPIO_DRIVE_STRENGTH_2MA);
     // Dark, not lit. A LED that comes up lit and stays lit would be
     // indistinguishable from a shorted pin.
@@ -72,9 +82,16 @@ void led_selftest(int blinks) {
 
 void led_blip(void) {
     if (!armed) return;
+    blip_lit = true;
     gpio_put(PIN_ACT_LED, 1);
     // add_alarm_in_us from an interrupt: dma_irq() already does exactly this
     // for the INDEX pulse, under the same multicore-lockout argument its
     // comment sets out. If that ever stops being true, this call goes with it.
     add_alarm_in_us(LED_BLIP_MS * 1000, led_off_cb, NULL, true);
+}
+
+void led_set_activity(bool lit) {
+    if (!armed) return;
+    act_lit = lit;
+    gpio_put(PIN_ACT_LED, lit || blip_lit);
 }
