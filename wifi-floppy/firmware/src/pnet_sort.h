@@ -44,6 +44,10 @@ void pnet_sort_init(pnet_sort_t *s);
 pnet_sort_to_t pnet_sort_rx(pnet_sort_t *s, const uint8_t *f, size_t len, uint32_t board_ip);
 /* A frame from the Amiga: PNET_TX_SEND, or why not. Learns from what it lets through. */
 pnet_tx_t pnet_sort_tx(pnet_sort_t *s, const uint8_t *f, size_t len, const uint8_t mac[6], uint32_t board_ip);
+
+/* Plan 2026-10-17 R17 (fw 1.16.0): the server's last-known Amiga address, for a board that rebooted and has heard
+ * nothing from the Amiga since. Fills amiga_ip only when it is 0; never 0, never the board's own. True = seeded. */
+bool pnet_sort_seed(pnet_sort_t *s, uint32_t ip, uint32_t board_ip);
 /* Phase 4 (local reachability): the board and the Amiga share one MAC, so a frame between them never comes back
  * from the radio, and must be handed across here. a2b: a frame from the Amiga (already PNET_TX_SEND) that is ARP
  * whose target address is the board's, or IPv4 to the board's address -> the board's lwIP, not the radio. b2a: a

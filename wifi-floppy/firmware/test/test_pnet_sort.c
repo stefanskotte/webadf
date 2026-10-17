@@ -299,6 +299,32 @@ static void the_local_path_disguises_the_boards_mac(void) {
     pnet_local_to_amiga(F, 10, MAC);                             /* short: no read past the end (ASan-free run) */
 }
 
+/* Plan 2026-10-17 R17: after a reboot the sorter knows no Amiga until it transmits; the server's last-known address
+ * seeds it. A seed never replaces an address learned from the Amiga, and is never the board's own. */
+static void a_seed_fills_only_an_unknown_address(void) {
+    pnet_sort_t s = fresh(0);
+    CHECK(pnet_sort_seed(&s, AMIGA, BOARD), "an unknown address takes the seed");
+    CHECK_EQ_INT(s.amiga_ip, AMIGA);
+    CHECK(!pnet_sort_seed(&s, IP(192, 168, 1, 99), BOARD), "a known address is never replaced by a seed");
+    CHECK_EQ_INT(s.amiga_ip, AMIGA);
+    pnet_sort_t t = fresh(0);
+    CHECK(!pnet_sort_seed(&t, BOARD, BOARD), "never the board's own address");
+    CHECK(!pnet_sort_seed(&t, 0, BOARD), "0 is not an address");
+    CHECK_EQ_INT(t.amiga_ip, 0);
+}
+
+/* The board's own connect attempt is the probe: lwIP's ARP for the seeded address goes to the Amiga locally; an
+ * Amiga that moved teaches its new address with its first frame. */
+static void a_seeded_address_takes_the_boards_arp_and_relearns(void) {
+    pnet_sort_t s = fresh(0);
+    CHECK(pnet_sort_seed(&s, AMIGA, BOARD), "seeded");
+    size_t n = arp(BCAST, MAC, 1, BOARD, AMIGA);
+    CHECK(pnet_sort_b2a_local(&s, F, n, BOARD), "the board's ARP for the seeded address goes to the Amiga");
+    n = arp(BCAST, MAC, 1, IP(192, 168, 1, 58), ROUTER);
+    CHECK_EQ_INT(pnet_sort_tx(&s, F, n, MAC, BOARD), PNET_TX_SEND);
+    CHECK_EQ_INT(s.amiga_ip, IP(192, 168, 1, 58));
+}
+
 int main(void) {
     RUN(arp_for_the_amiga_goes_to_both);
     RUN(ipv4_unicast_to_the_amiga_goes_to_the_amiga_only);
@@ -315,5 +341,6 @@ int main(void) {
     RUN(a2b_local_is_arp_or_ipv4_for_the_boards_address);
     RUN(b2a_local_is_arp_or_ipv4_for_the_amigas_address);
     RUN(the_local_path_disguises_the_boards_mac);
+    RUN(a_seed_fills_only_an_unknown_address); RUN(a_seeded_address_takes_the_boards_arp_and_relearns);
     return REPORT();
 }

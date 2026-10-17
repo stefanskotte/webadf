@@ -1178,12 +1178,36 @@ static void dc_take_df1(device_client_t *c, char *json) {
 // PaulaNET Phase 4: lifts `xfer` ({"v":N}) out of a 200 poll body and BLANKS it before any flat lookup (its `v` must
 // never be read as anything else's). The server sends it on every body to a board that sends xferAck.
 static void dc_take_xfer(device_client_t *c, char *json) {
-    static char obj[48];   // {"v":4294967295} is 16; static: see the STACK note
+    static char obj[48];   // {"v":4294967295,"ip":"255.255.255.255"} is 39; 1.14.0/1.15.0 have the same 48 (device-limits test); static: see the STACK note
     if (!json_object(json, "xfer", obj, sizeof obj, true)) return;
     uint32_t v;
     if (!json_u32_strict(obj, "v", &v)) return;
     c->send_version = v;
     c->send_seen = true;
+    // json_str truncates silently: 20 bytes, so a cut value is at least 19 characters and never parses (a quad is <= 15).
+    char ip[20];
+    uint32_t hint;
+    if (json_str(obj, "ip", ip, sizeof ip) && dc_parse_ipv4(ip, &hint)) c->send_ip_hint = hint;
+}
+
+bool dc_parse_ipv4(const char *s, uint32_t *out) {
+    uint32_t v = 0;
+    for (int part = 0; part < 4; part++) {
+        if (part > 0) { if (*s != '.') return false; s++; }
+        if (*s < '0' || *s > '9') return false;
+        unsigned n = 0;
+        int digits = 0;
+        while (*s >= '0' && *s <= '9') {
+            if (++digits > 3) return false;
+            n = n * 10u + (unsigned)(*s - '0');
+            s++;
+        }
+        if (n > 255u) return false;
+        v = v << 8 | n;
+    }
+    if (*s != '\0' || v == 0u) return false;
+    *out = v;
+    return true;
 }
 
 void dc_set_send(device_client_t *c, uint32_t acked_version, char rx) {

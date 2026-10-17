@@ -191,3 +191,16 @@ void pnet_bridge_stats(pnet_bridge_stats_t *o) {
     o->b2a = s_b2a;
     o->local_drops = s_local_drops;
 }
+
+// Plan 2026-10-17 R17: s_sort lives in the network context, so the seed is taken under the lwIP lock. Seeded once:
+// the next frame from the Amiga, or the board's own connect (ARP over the local path), confirms or replaces it.
+void pnet_bridge_seed_amiga_ip(uint32_t ip) {
+    net_radio_lock();
+    const bool seeded = pnet_sort_seed(&s_sort, ip, s_board_ip);
+    net_radio_unlock();
+    if (seeded) {
+        char a[16];
+        pnet_ip_text(ip, a);
+        wf_logf(WF_INFO, "pnet: Amiga address %s from the server (not seen since boot)", a);
+    }
+}

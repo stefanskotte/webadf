@@ -2326,6 +2326,12 @@ static void core1_main(void) {
                 static pnet_bridge_stats_t st;      // static: core1's stack is measured tight
                 const uint32_t seen = g_pnet_status_last_ms;
                 pnet_bridge_stats(&st);
+                // HANDOFF 3bu product gap: after a reboot the sorter knows no Amiga until it transmits, so a file for
+                // an idle Amiga waited. The server remembers the last address (xfer.ip, plan 2026-10-17 R17).
+                if (st.amiga_ip == 0u && c.send_ip_hint != 0u) {
+                    pnet_bridge_seed_amiga_ip(c.send_ip_hint);
+                    pnet_bridge_stats(&st);
+                }
                 net.on = true;
                 net.driver_seen = seen != 0;
                 net.driver_s = seen ? dc_net_driver_age_s(clock_ms(), seen) : 0;

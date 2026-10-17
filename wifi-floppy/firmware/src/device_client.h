@@ -504,6 +504,9 @@ typedef struct {
     // The poll's xfer.v (the server's send-queue cursor), 0 until a body carries it; send_seen once one has.
     uint32_t send_version;
     bool     send_seen;
+    // The server's last-known Amiga address (xfer.ip, fw 1.16.0, host order; 0 = none): main.c seeds the PaulaNET
+    // sorter with it when the sorter knows none (plan 2026-10-17 R17).
+    uint32_t send_ip_hint;
     // What the next poll reports (dc_set_send): &xferAck= (the queue version last fetched) and &rx= (the receiver
     // state). Absent from the poll until dc_set_send is first called, so a board that never sends polls as 1.13.
     bool     _send_on;
@@ -894,5 +897,7 @@ int dc_fetch_send_chunk(device_client_t *c, const char *id, uint32_t off, uint32
 int dc_post_send_done(device_client_t *c, const char *id, const char *json);
 // What the next poll reports: &xferAck=<acked>&rx=<rx>.
 void dc_set_send(device_client_t *c, uint32_t acked_version, char rx);
+// A strict dotted quad ("192.168.1.57" -> 0xC0A80139). False for anything else, and for 0.0.0.0; *out untouched then.
+bool dc_parse_ipv4(const char *s, uint32_t *out);
 
 #endif
