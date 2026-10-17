@@ -342,6 +342,8 @@ export interface DeviceListItem {
    * disks its title has. Null / 0 when nothing is mounted.
    */
   mountedLabel: string | null; mountedDiskCount: number | null;
+  /** The org's uploaded file name for the mounted bytes: the label's fallback (disk-label.ts). */
+  mountedSourceFilename: string | null;
   /**
    * The write-protect flag of the disk row `mountedDiskId` names -- not the
    * `disks` row's org, the DEVICE's, via an org-scoped join (see below). Null
@@ -420,6 +422,7 @@ export async function listDevices(orgId: string): Promise<DeviceListItem[]> {
   // needs it and nothing above already carries it (mountedSha256 identifies
   // the bytes, not a specific disks row, and two rows can share one sha).
   const mountedDisk = alias(disks, 'mounted_disk');
+  const mountedEnt = alias(entitlements, 'mounted_ent');
   // The disk mounted into DF1 and its title (spec 2026-10-14 §3.3), org-scoped like every join here.
   const df1Disk = alias(disks, 'df1_disk');
   const df1Game = alias(games, 'df1_game');
@@ -447,6 +450,7 @@ export async function listDevices(orgId: string): Promise<DeviceListItem[]> {
       mountedGame: mountedGame.title,
       mountedDiskNo: devices.mountedDiskNo,
       mountedLabel: mountedDisk.label,
+      mountedSourceFilename: mountedEnt.sourceFilename,
       mountedDiskCount: sql<number | null>`(
         select count(*)::int from disks dc
         where dc.game_id = ${devices.mountedGameId} and dc.org_id = ${devices.orgId}
@@ -486,6 +490,8 @@ export async function listDevices(orgId: string): Promise<DeviceListItem[]> {
     .leftJoin(desiredGame, and(eq(desiredGame.id, devices.desiredGameId), eq(desiredGame.orgId, orgId)))
     .leftJoin(mountedGame, and(eq(mountedGame.id, devices.mountedGameId), eq(mountedGame.orgId, orgId)))
     .leftJoin(mountedDisk, and(eq(mountedDisk.id, devices.mountedDiskId), eq(mountedDisk.orgId, orgId)))
+    // This org's file name for the mounted bytes, on the entitlement's whole key (never another tenant's).
+    .leftJoin(mountedEnt, and(eq(mountedEnt.sha256, mountedDisk.sha256), eq(mountedEnt.orgId, orgId)))
     .leftJoin(df1Disk, and(eq(df1Disk.id, devices.df1DiskId), eq(df1Disk.orgId, orgId)))
     .leftJoin(df1Game, and(eq(df1Game.id, df1Disk.gameId), eq(df1Game.orgId, orgId)))
     .where(orgFilter(devices, orgId))

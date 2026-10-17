@@ -3,7 +3,7 @@ import { liveDisplayState, liveDisplayText, rssiBars, type LiveDisplayFields } f
 
 const empty: LiveDisplayFields = {
   rssi: -55, mountedSha256: null, mountedGame: null, mountedDiskNo: null,
-  mountedLabel: null, mountedDiskCount: null, mountedWriteProtected: null, nfcReader: null,
+  mountedLabel: null, mountedSourceFilename: null, mountedDiskCount: null, mountedWriteProtected: null, nfcReader: null,
 };
 const mounted: LiveDisplayFields = {
   ...empty, mountedSha256: 'ab', mountedGame: 'Workbench 3.1', mountedDiskNo: 2,
@@ -26,9 +26,25 @@ describe('liveDisplayState', () => {
     expect(s.writable).toBe(true);
   });
 
-  it('a one-disk title shows the label alone, and a missing label is "Disk n"', () => {
+  it('a one-disk title shows the label alone, and a missing label with no file name is "Disk n"', () => {
     const s = liveDisplayState({ ...mounted, mountedDiskCount: 1, mountedLabel: null }, true, 0);
     expect(s.detail).toBe('Disk 2');
+  });
+
+  it('a disk with no label shows its uploaded file name without the extension, as mount.ts sends', () => {
+    const s = liveDisplayState({ ...mounted, mountedLabel: null, mountedSourceFilename: 'Locale.adf' }, true, 0);
+    expect(s.detail).toBe('Disk 2/6 Locale');
+  });
+
+  it('the label (the stored volume name) wins over the file name', () => {
+    const s = liveDisplayState({ ...mounted, mountedSourceFilename: 'wb31_extras.adf' }, true, 0);
+    expect(s.detail).toBe('Disk 2/6 Extras');
+  });
+
+  it('a multi-disk title with no name at all never repeats the counter ("Disk 2/6 Disk 2")', () => {
+    const s = liveDisplayState({ ...mounted, mountedLabel: null }, true, 0);
+    expect(s.detail).toBe('Disk 2/6 ');
+    expect(s.detail).not.toContain('Disk 2/6 Disk 2');
   });
 
   it('write protection unknown is not shown as writable', () => {

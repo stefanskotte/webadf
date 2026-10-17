@@ -1,11 +1,12 @@
 import { and, eq, sql } from 'drizzle-orm';
 import type { PgUpdateSetSource } from 'drizzle-orm/pg-core';
-import { DC_TITLE_MAX, DC_LABEL_MAX } from '@/lib/device-limits';
+import { DC_TITLE_MAX } from '@/lib/device-limits';
 import { getDb } from '@/db';
 import { devices } from '@/db/schema/devices';
 import { firmwareReleases } from '@/db/schema/firmware';
 import { releaseVisibleToSql } from '@/lib/firmware-releases';
-import { disks, games } from '@/db/schema/catalog';
+import { disks, entitlements, games } from '@/db/schema/catalog';
+import { boardDiskLabel } from '@/lib/disk-label';
 import { isHdAdf, isServable } from '@/lib/disk-format';
 import { LEGACY_BOARD_TRACK_MAX_BYTES } from '@/lib/adfmfm';
 import { asSecondDriveMode, type SecondDriveMode } from '@/lib/second-drive';
@@ -213,6 +214,8 @@ export async function readDesired(deviceId: string): Promise<DesiredState | null
       diskNo: devices.desiredDiskNo,
       title: games.title,
       label: disks.label,
+      // The org's own name for these bytes: the label's fallback (disk-label.ts).
+      sourceFilename: entitlements.sourceFilename,
       writeProtected: disks.writeProtected,
       // Derived, not stored — games has no disk_count column. Matches how
       // src/lib/queries.ts:17 counts it for the library grid.
@@ -229,6 +232,14 @@ export async function readDesired(deviceId: string): Promise<DesiredState | null
     // pick the wrong row and report the wrong writeProtected for hardware
     // that is about to honor it.
     .leftJoin(disks, eq(disks.id, devices.desiredDiskId))
+    // On BOTH columns of the entitlement's key: on sha256 alone another
+    // tenant's file name for shared bytes would reach this board's screen.
+    // A primary-key lookup, and readDesired runs on delivery only (the poll
+    // route calls it when something moved), never once a tick.
+    .leftJoin(entitlements, and(
+      eq(entitlements.sha256, disks.sha256),
+      eq(entitlements.orgId, devices.orgId),
+    ))
     .where(eq(devices.id, deviceId))
     .limit(1);
 
@@ -261,7 +272,12 @@ export async function readDesired(deviceId: string): Promise<DesiredState | null
       // catches; Math.max is explicit about the floor being 1, not "anything
       // falsy".
       diskCount: Math.max(r.diskCount ?? 1, 1),
-      label: (r.label ?? `Disk ${r.diskNo}`).slice(0, DC_LABEL_MAX),
+      // Bounded to DC_LABEL_MAX inside boardDiskLabel. Never "Disk n" on a
+      // disk of a set: the firmware prints its own "Disk n/c" first.
+      label: boardDiskLabel({
+        label: r.label, sourceFilename: r.sourceFilename,
+        diskNo: r.diskNo, diskCount: Math.max(r.diskCount ?? 1, 1),
+      }),
       // A disk row that has gone missing is not a licence to allow writes.
       // HD follows the row like DD (HD writes spec §5.3); a board on 1.4.1
       // still holds WPROT for HD itself until it updates (§5.4).
