@@ -4967,6 +4967,94 @@ Demozoo API (the bulk export makes per-lookup load on a non-profit unnecessary).
   allowlist checks only the first URL (the raster content-type allowlist and `nosniff` still apply).
 - **Cron drift:** the daily 01:30 cron against a 7-day gate can drift a refetch to 8 days.
 
+### 3bv. PaulaNET Phase 4 increment 3: the web sends; Receive on the driver disk; pairing names; IP fix on master for 1.16.0 -- 2026-10-18
+
+**Merged b6e4960, pushed, live.** Plan `docs/superpowers/plans/2026-10-17-paulanet-phase4-increment3-web-send.md`
+(spec `docs/superpowers/specs/2026-10-16-paulanet-phase4-send-to-amiga-design.md`), subagent-driven, 13 tasks.
+- **Shipped:**
+  - Pairing asks for a board name: migration 0041, `pairing_codes.name`.
+  - `/api/transfers` routes: upload a file, list, cancel, retry, and `from-disk`.
+  - A "Send to Amiga" column on the Upload page.
+  - A Send button on each Browse row (a file, or a folder with everything in it) and "Send .adf to Amiga" on the title page.
+  - A card line ("N delivered · Receive not running"), and help text.
+  - The server keeps the Amiga's last IP (migration 0042, `devices.net_amiga_ip_last`) and sends it as `xfer.ip`.
+  - Firmware 1.16.0 seeds its Amiga address from it after a reboot.
+- **New driver disk:** `fb363d45…aa287`, with Receive; it builds reproducibly with `tools/paulanet-disk/build.sh`.
+  Uploaded to the production store 2026-10-18.
+  - **Rollout (R16):** DF1 keeps the old disk (`05170a83…`, still served and GC-safe) while the driver was heard
+    within 10 min, so a disk never changes under a running driver.
+  - **Self-host (F19):** the image bundles only the new disk. An existing install still has the old one in its
+    store; a fresh install never needs it.
+- **Final review (opus):** 1 Important plus 9 minors.
+  - I1 fixed, plus m1 re-graded to Important and fixed (c5bf643):
+    - **I1:** expired rows no longer count against the 32-file / 16 MB limits.
+    - **m1:** a folder with a path longer than 255 bytes is refused whole, so nothing is queued half-way.
+  - **Deferred minors:**
+    - m2: a folder over the limits on its own is told "wait for some to arrive";
+    - m3: a seeded address is reported as heard and refreshes `net_amiga_ip_last`;
+    - m4: `?board=` from the card link is not shared with the disk pages;
+    - m5: the picker and the buttons can disagree when storage throws;
+    - m6: the Upload panel can stick at "Reading the queue…" on a 404;
+    - m7: folders dropped on the Send zone get a misleading message;
+    - m8: concurrent uploads can pass the limit check together;
+    - m9: `listTransfers`' limit of 100 can hide a waiting row.
+  - **Task 12 minors:** the own-IP check runs against `s_board_ip`, which is 0 early on; the parse accepts
+    broadcast, loopback and multicast addresses; a refused hint takes the lwIP lock on every pass.
+- **Rulings:**
+  - Task 4: retry also recovers a lapsed `sending` row.
+  - Task 6: the 7th react-hooks/purity lint error (`Date.now()` in a server page) stands; master already had 6.
+    **`pnpm lint` is red on master: 7 errors, a repo-wide decision for the operator.**
+  - Task 10: a 10-min quiet window instead of the brief's 120 s.
+  - Final: m1 re-graded.
+  - R1-R18 are in the plan.
+- **Verification:**
+  - vitest 2605/2605, tsc clean, build OK, test:db 24/24.
+  - e2e on :3100: 3a 18/1 skipped, 3b 24 + 2 that passed alone, 3c 47 + 36, 3d 50 + 13, 3e (mobile) 18. The 3b
+    flake is `disk-drag-drop.spec.ts:354`, which passed alone at 29.4 s of its 30 s timeout: raise that timeout.
+  - docker-smoke PASS, including "PaulaNET disk OK" with the new digest.
+  - Migrations 0041 and 0042 are on production (columns verified).
+- **Production check, 2026-10-18 ~01:30, with the Amiga off:**
+  - The Upload page shows "To Device 28:cd:c1:19:6a:38 · online" and "The Amiga does not answer".
+  - The card reads "✓ Driver disk: in DF1" (driver quiet 141 min, so the new disk is served).
+- **The bench board's name is the default "Device 28:cd:c1:19:6a:38"**, re-paired 2026-10-16 (self-host work).
+  `.fw-target.mts` (untracked) now selects it by MAC address.
+- **TEST build: `1.16.0+g45a940f` = seq 97, notes "TEST build -- …" (read back).**
+  - Installed with the Amiga off and confirmed in about 80 s.
+  - Serial log at +95 s and +140 s: `pnet: l2 amiga 172.16.10.237 … from amiga frames 0`. **The seed works:** the
+    board has the Amiga's address with the Amiga off.
+  - `heap 20480`: the known R11 floor (the DF1 buffer is in .bss). 1.12.x read 28,672. Watch it during the bench.
+    Not promoted; 1.16.0 releases with the LZ4 driver work.
+
+**Bench owed (A500; the operator is fine with long on-time, 2026-10-18).** Board on 1.16.0 TEST:
+1. **Reinstall:** open DF1, double-click Install.
+   - `SYS:Tools/Receive`, its icon and `C:Receive` exist, and Install says "Copied Receive to SYS:Tools and C:.".
+   - Run Install a second time: same result, eth0 untouched.
+2. **Start Receive** from its icon and choose `DH0:Downloads`. Within 75 s the Upload page says "✓ Receive is
+   running on the Amiga".
+3. **Send three ways:**
+   - an LHA archive from the computer;
+   - a folder from Browse;
+   - a whole disk from the title page.
+
+   Each reads "Delivered · saved as …"; check the sub-paths, and the protection bits and comment with `list`.
+4. **Queue while Receive is closed:** the page says "Start Receive", the card says "1 file waiting · Receive not
+   running", and the file arrives once Receive starts.
+5. **Cancel a waiting file:** send two 880 KB ADFs and cancel the second while the first moves.
+6. **Cancel mid-file at about 30 %:** the row reads Cancelled, no `.webadf-rx` is left, and the next file still
+   arrives.
+7. **A 200-byte path:** `pnpm send:queue`. This writes production, so ask first.
+8. **The Shell form:** `Receive TO RAM:` and Ctrl-C.
+9. **Ping the router during an ADF transfer:** note the times and the transfer's duration.
+10. **A phone:** send a file from the Upload page.
+11. **The IP gap:**
+    - With Receive running and no `ping`, run `wf reboot` and don't touch the Amiga.
+    - A send must arrive, with `pnet: Amiga address <ip> from the server` and `xfer: receiver connected` in the
+      log.
+    - Afterwards DF0 mount, Next and the card work as before.
+
+**Open:** the two Rob PRs (RLE fix; LZ4 with the per-CPU table), the LZ4 driver variant and 1.16.0, Workbench
+`do_StackSize` for Receive, and lint.
+
 ### 3bu. fw 1.15.0 RELEASED (seq 96, fw-1.15.0, master 9fa2cff) -- send-stall root cause fixed, 2026-10-17
 
 **Increment 2 (send to Receive) bench, and the stall.** After a delivery the board->Amiga link froze. A day of
