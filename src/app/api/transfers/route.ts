@@ -1,0 +1,42 @@
+// Send to Amiga from the web (PaulaNET Phase 4 increment 3, spec 2026-10-16 §4). GET: the board's queue and its
+// receiver state, for the Upload page. POST: one file from the computer, as a raw body (R13), stored by sha-256 in
+// the disk store (R2) and queued for the board.
+import { getDb } from '@/db';
+import { requireOrg } from '@/lib/session';
+import { listTransfers, queueTransferFromBlob } from '@/lib/transfers';
+import { findSendTarget } from '@/lib/send-targets';
+import { SEND_FILE_MAX } from '@/lib/send-limits';
+import { queueResponse, storeSendBytes, toView } from '@/lib/send-http';
+
+export const maxDuration = 60;
+
+export async function GET(request: Request) {
+  const { orgId } = await requireOrg();
+  const deviceId = new URL(request.url).searchParams.get('deviceId');
+  if (!deviceId) return Response.json({ error: 'invalid_query' }, { status: 400 });
+  const db = getDb();
+  const now = Date.now();
+  const target = await findSendTarget(db, orgId, deviceId, now);
+  if (!target) return Response.json({ error: 'no_device' }, { status: 404 });
+  const rows = await listTransfers(db, orgId, deviceId);
+  return Response.json({ target, transfers: rows.map((r) => toView(r, now)), now }, { headers: { 'cache-control': 'no-store' } });
+}
+
+export async function POST(request: Request) {
+  const { orgId, userId } = await requireOrg();
+  const q = new URL(request.url).searchParams;
+  const deviceId = q.get('deviceId');
+  const name = q.get('name');
+  if (!deviceId || !name) return Response.json({ error: 'invalid_query' }, { status: 400 });
+  // Refused before a byte is read: a 40 MB drop must not be buffered to learn it is too big.
+  if (Number(request.headers.get('content-length') ?? 0) > SEND_FILE_MAX) {
+    return Response.json({ error: 'too_large' }, { status: 413 });
+  }
+  const db = getDb();
+  if (!(await findSendTarget(db, orgId, deviceId))) return Response.json({ error: 'no_device' }, { status: 404 });
+  const bytes = new Uint8Array(await request.arrayBuffer());
+  if (bytes.byteLength === 0) return Response.json({ error: 'empty' }, { status: 400 });
+  if (bytes.byteLength > SEND_FILE_MAX) return Response.json({ error: 'too_large' }, { status: 413 });
+  const sha256 = await storeSendBytes(bytes);
+  return queueResponse(await queueTransferFromBlob(db, { orgId, deviceId, userId, path: name, sha256, bytes }));
+}
