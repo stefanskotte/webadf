@@ -60,10 +60,17 @@ describe('help topics say what the app really does', () => {
   it('write-protect makes no unconfirmed claim about prompts to click through', () => {
     expect(bodyText('write-protect')).not.toMatch(/click through|put the volume back/i);
   });
-  it('next-disk ties "Saving, then disk N" to the Next-disk card, the only case that shows it', () => {
+  it('next-disk ties "Saving, then N/M" to the Next-disk card, the only case that shows it', () => {
     const b = bodyText('next-disk');
-    const sentence = b.split(/(?<=[.!?])\s+/).find((s) => s.includes('Saving, then disk'));
-    if (sentence) expect(sentence).toMatch(/Next-disk card/);
+    const sentence = b.split(/(?<=[.!?])\s+/).find((s) => s.includes('Saving, then'));
+    expect(sentence).toBeDefined();
+    expect(sentence).toMatch(/Next-disk card/);
+    expect(sentence).not.toMatch(/Saving, then disk/);   // firmware 1.14.0 dropped the word
+  });
+  it('disk-sets describes the board line without the word Disk, as firmware 1.14.0 prints it', () => {
+    const b = bodyText('disk-sets');
+    expect(b).toMatch(/2\/13 Locale/);
+    expect(b).toMatch(/before 1\.14\.0/);
   });
   it('hd-hfe says the board must be able to play HD', () => {
     expect(bodyText('hd-hfe')).toMatch(/boards? that can play HD/i);
