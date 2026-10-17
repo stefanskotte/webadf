@@ -1478,6 +1478,17 @@ separately.
 
 ### 4. Backlog, not blocking anything
 
+- **Per-user web app settings** (operator, 2026-10-18): settings that belong to the user, not the org or the board --
+  start page, sort orders (library, Browse, sets, collections), and similar view preferences. Stored server-side per
+  user (so they follow the user across browsers), with today's behaviour as the default; a Settings page section to
+  edit them. Self-host parity applies.
+
+- **Library table view on par with the grid, plus folder browsing** (operator, 2026-10-18): the table listing should
+  do everything the grid view does (actions, selection, drag and drop, badges/status, sorting, filters), and could
+  add a folder tree so categories are browsed like folders. Start by listing what the grid does that the table does
+  not; decide with the operator what a "category" folder maps to (collections, sets, identified groups) before
+  building it.
+
 - **NFC: tags detected only rarely -- a regression** (operator, 2026-10-17): "not being detected - only rarely. Was
   working in previous firmwares." Operator: it started "a bit after we switched to the new pcb" (rev B, ~2026-10-02),
   so NOT today's 1.15.0. Known history: "NFC on J4 flaky" was noted 2026-10-03; both Si512 modules died
