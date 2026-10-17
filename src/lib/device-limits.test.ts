@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { DC_TITLE_MAX, DC_LABEL_MAX } from './device-limits';
 import { FIRMWARE_VERSION_MAX } from './firmware-version';
+import { buildXfer } from './xfer-wire';
 
 const header = readFileSync('wifi-floppy/firmware/src/device_client.h', 'utf8');
 const define = (name: string): number => {
@@ -94,7 +95,7 @@ describe('the firmware bounds the server respects', () => {
     const df1 = `,"df1":{"v":4294967295,"sha256":"${'a'.repeat(SHA)}"}`;
     // PaulaNET Phase 4 (fw 1.14.0): `xfer` rides every body to a board that sends xferAck -- the queue itself travels
     // in its own response (GET /api/device/send/queue), so the poll carries only the cursor.
-    const xfer = ',"xfer":{"v":4294967295}';
+    const xfer = `,"xfer":${JSON.stringify(buildXfer(4294967295, '255.255.255.255'))}`;
     const worst = Buffer.byteLength(disk + next + display + drive + df1 + xfer + update + nfcWrite + nfcKind, 'utf8');
     const budget = define('DC_POLL_BODY_BYTES');
     // Reported rather than just asserted, so a future reader sees the margin
@@ -103,5 +104,15 @@ describe('the firmware bounds the server respects', () => {
       .toBeLessThan(budget);
     // A board before 1.12.0 sends no df1Ack and is never sent `df1`: its worst case must still fit ITS buffer.
     expect(worst - Buffer.byteLength(df1 + xfer, 'utf8'), 'a 1.11 board keeps its 1,536-byte buffer').toBeLessThan(1536);
+  });
+
+  // Review Focus 4: 1.14.0 and 1.15.0 copy `xfer` into a 48-byte buffer (dc_take_xfer's `static char obj[48]`), and
+  // json_object refuses an object that does not fit -- those boards would then drop xfer whole and never send again.
+  // Measured on the product helper's output, not a typed string (pre-flight F8).
+  it('keeps the worst xfer object inside the 48-byte buffer every sending board has', () => {
+    const obj = JSON.stringify(buildXfer(4294967295, '255.255.255.255'));
+    expect(Buffer.byteLength(obj, 'utf8') + 1).toBeLessThanOrEqual(48);
+    expect(JSON.parse(obj)).toEqual({ v: 4294967295, ip: '255.255.255.255' });
+    expect(buildXfer(3, null)).toEqual({ v: 3 });
   });
 });

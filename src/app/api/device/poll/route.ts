@@ -1,4 +1,5 @@
 import { requireDevice, deviceAuthResponse } from '@/lib/device-auth';
+import { buildXfer } from '@/lib/xfer-wire';
 import {
   readDesired, readPollTick, readFirmwareInstruction, touchLastSeen, markNetNextSent,
 } from '@/lib/mount';
@@ -291,7 +292,9 @@ export async function GET(request: Request) {
           // DF1 any disk (spec 2026-10-14 §4.2): {v, sha256}, sha256 null without a pick (DF1 follows the set).
           ...(df1 !== null ? { df1 } : {}),
           // The send queue's cursor (PaulaNET Phase 4): the board fetches GET /api/device/send/queue when it moves.
-          ...(xferAck !== null ? { xfer: { v: tick.sendVersion } } : {}),
+          // Plus the Amiga's last address (R17): 1.16.0 seeds its sorter with it after a reboot. Older senders ignore
+          // `ip`; the object stays under their 48-byte buffer (buildXfer, measured in device-limits.test.ts).
+          ...(xferAck !== null ? { xfer: buildXfer(tick.sendVersion, tick.netAmigaIpLast) } : {}),
           ...(nfc
             ? {
                 nfcWrite: {

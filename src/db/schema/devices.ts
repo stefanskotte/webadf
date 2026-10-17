@@ -192,6 +192,9 @@ export const devices = pgTable('devices', {
   netDriverSeenAt: timestamp('net_driver_seen_at', { withTimezone: true }),
   /** The Amiga's address as the board's sorter learned it; null = none yet, or not Network. */
   netAmigaIp: text('net_amiga_ip'),
+  /** The last Amiga address any report carried, never cleared by a report without one (plan 2026-10-17 R17). The
+   *  poll sends it as xfer.ip, so a board that rebooted can reach an Amiga that has not transmitted since. */
+  netAmigaIpLast: text('net_amiga_ip_last'),
   /** Frames from the Amiga taken / frames the Amiga acknowledged, since Network mode began (saturated). */
   netFramesIn: integer('net_frames_in'),
   netFramesOut: integer('net_frames_out'),

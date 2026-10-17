@@ -162,6 +162,8 @@ export interface PollTick {
   df1Version: number;
   /** The send queue's cursor (PaulaNET Phase 4): compared against the board's ?xferAck=. */
   sendVersion: number;
+  /** The Amiga's last address (R17): sent as xfer.ip. */
+  netAmigaIpLast: string | null;
   /** What DF1 holds and when the Amiga's driver last read: driverDiskFor's inputs (plan 2026-10-17 R16). */
   df1Sha256: string | null;
   netDriverSeenAt: Date | null;
@@ -190,6 +192,7 @@ export async function readPollTick(deviceId: string): Promise<PollTick | null> {
       netNextSentVersion: devices.netNextSentVersion,
       df1Version: devices.df1Version,
       sendVersion: devices.sendVersion,
+      netAmigaIpLast: devices.netAmigaIpLast,
       df1Sha256: devices.df1Sha256,
       netDriverSeenAt: devices.netDriverSeenAt,
     })
@@ -429,6 +432,8 @@ export async function recordStatus(
   if (s.net !== undefined) {
     if (s.net.driver !== undefined) patch.netDriverSeenAt = new Date(Date.now() - s.net.driver * 1000);
     patch.netAmigaIp = s.net.amigaIp ?? null;
+    // R17: kept across reports that lack it (a rebooted board knows none until the Amiga transmits).
+    if (s.net.amigaIp && /^\d{1,3}(\.\d{1,3}){3}$/.test(s.net.amigaIp)) patch.netAmigaIpLast = s.net.amigaIp;
     patch.netFramesIn = s.net.framesIn ?? null;
     patch.netFramesOut = s.net.framesOut ?? null;
   } else if (s.firmwareVersion !== undefined) {

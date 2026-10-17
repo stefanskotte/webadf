@@ -62,7 +62,7 @@ const get = (qs = '') => new Request(`http://test/api/device/poll${qs}`);
 const baseTick = (over: Partial<PollTick> = {}): PollTick => ({
   version: 1, instructionVersion: 0, instructionAck: 0, nfcWriteSeq: 0, displayVersion: 0, secondDriveVersion: 0, secondDrive: 'off',
   secondDriveReported: null, secondDriveAppliedVersion: null, netNextSentVersion: null,
-  df1Version: 0, sendVersion: 0, df1Sha256: null, netDriverSeenAt: null, ...over,
+  df1Version: 0, sendVersion: 0, df1Sha256: null, netDriverSeenAt: null, netAmigaIpLast: null, ...over,
 });
 
 beforeEach(() => {
@@ -710,6 +710,18 @@ describe('GET /api/device/poll -- xfer (PaulaNET Phase 4: files sent to the Amig
     const res = await GET(get('?since=1&xferAck=0'));
     expect(res.status).toBe(200);
     expect(await res.json()).toMatchObject({ xfer: { v: 3 } });
+  });
+  it('carries the Amiga\'s last address in xfer.ip, so a rebooted board can reach an idle Amiga (R17)', async () => {
+    readPollTick.mockResolvedValue(baseTick({ sendVersion: 3, netAmigaIpLast: '172.16.10.237' }));
+    const { GET } = await import('./route');
+    expect((await (await GET(get('?since=1&xferAck=0'))).json()).xfer).toEqual({ v: 3, ip: '172.16.10.237' });
+  });
+  it('sends no ip when none was ever heard, and never to a board without xferAck', async () => {
+    const { GET } = await import('./route');
+    readPollTick.mockResolvedValue(baseTick({ sendVersion: 3 }));
+    expect((await (await GET(get('?since=1&xferAck=0'))).json()).xfer).toEqual({ v: 3 });
+    readPollTick.mockResolvedValue(baseTick({ instructionVersion: 1, instructionAck: 0, netAmigaIpLast: '172.16.10.237' }));
+    expect(await (await GET(get('?since=1'))).json()).not.toHaveProperty('xfer');
   });
   it('carries xfer.v on a body woken by something else', async () => {
     readPollTick.mockResolvedValue(baseTick({ sendVersion: 3, instructionVersion: 1, instructionAck: 0 }));
