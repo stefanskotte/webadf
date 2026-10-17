@@ -31,13 +31,23 @@ void led_init(void);
 void led_selftest(int blinks);
 
 /**
- * One visible flash. Safe from an interrupt.
+ * One visible flash (~LED_BLIP_MS) on top of the activity level. Safe from an
+ * interrupt. Used for an event that is not drive activity: an NFC tap.
  *
- * Stretched to LED_BLIP_MS because the events worth showing are microseconds
- * long -- a raw toggle on a track read would never be seen. Overlapping blips
- * simply hold it lit, which is what makes a seek (one STEP every ~3 ms) read
- * as a solid glow rather than a stutter, the way a real drive does.
+ * Track starts and STEP pulses used to blip too, and that made the LED
+ * useless: SIDE is one shared bus line, so every SIDE flip re-streams every
+ * drive's track, and in Network mode (PaulaNET flipping SIDE ~20 times a
+ * second) DF0 alone blipped ~24 times a second -- practically always lit,
+ * whether or not the Amiga was reading DF0. Drive activity is now a level:
+ * led_set_activity, below.
  */
 void led_blip(void);
+
+/**
+ * The drive-activity level, as led_activity.h decides it: lit while the Amiga
+ * is using a drive, the way a real drive's light is. core0's loop calls it
+ * every pass. A flash in progress stays visible until it ends.
+ */
+void led_set_activity(bool lit);
 
 #endif

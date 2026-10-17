@@ -55,6 +55,7 @@
 #include "mfm.h"
 #include "write_back.h"
 #include "reinsert.h"
+#include "led_activity.h"
 #include "swap_gate.h"
 #include "bus_power.h"
 #include "uploader.h"
@@ -800,14 +801,14 @@ static void step_drive(unsigned d, bool outwards, bool late) {
 #endif
     dskchg_on_step_d(d);
     want_track[d] = cur_cyl[d] * 2 + cur_side;
-    if (d != 0) return;            // the log, the counters and the LED are DF0's
+    if (d != 0) return;            // the log and the counters are DF0's
     wf_trace(WF_EV_STEP, (uint32_t)cur_cyl[0], outwards ? 1u : 0u);
     steps_seen++;
     if (late != outwards) {
         steps_dir_late++;
         wf_trace(WF_EV_DIR_LATE, (uint32_t)cur_cyl[0], late ? 1u : 0u);
     }
-    led_blip();
+    // No LED here: the activity LED is a level core0's loop sets (led_activity.h).
 }
 
 // One STEP pulse, with the selects and DIR as latched by the PIO at its
@@ -3046,7 +3047,8 @@ static void serve_drive(unsigned d, int32_t token, int *loaded) {
     if (mfm && start_streaming(d, mfm, bits)) {
         *loaded = want;
         wf_trace(WF_EV_TRACK_SERVED, a, bits);
-        led_blip();
+        // No LED blip: a SIDE flip re-serves every drive's track, selected or
+        // not (activity_led.h). The LED is set by the loop (led_activity.h).
         // Logged AFTER start_streaming, so the logging cost is never
         // on the path to the new stream: say so when an HD get takes
         // longer than any before. The spike's worst was 4.9 ms
@@ -4259,6 +4261,35 @@ int main(void) {
                 motor_logged = (int)motor_on;
                 motor_off_unpowered = false;
             }
+        }
+
+        // The activity LED, the way a real drive's light is: lit while the
+        // Amiga uses a drive this board serves -- selected and its motor on --
+        // never for PaulaNET's cylinders in Network mode (led_activity.h has
+        // the rule and the hold). Sampled here, once a pass: two pad reads and
+        // a GPIO write, nothing in an ISR, nothing on the serving path. An
+        // unpowered bus reads every select asserted; its motor latches are
+        // cleared above, and it is never activity anyway.
+        {
+            static led_activity_t led_act;
+            static bool led_act_init;
+            if (!led_act_init) { led_activity_init(&led_act); led_act_init = true; }
+            const uint8_t serving = df1_serving_mask(n_drives, bus_out_drive_enabled(1));
+            bool busy = false;
+            if (!g_bus_unpowered) {
+                busy = led_drive_busy(!gpio_get(PIN_SEL0), dskchg_motor_on_d(0), false);
+#if DF1_CAPABLE
+#if WF_PNET_LOOP
+                const bool df1_pnet = led_pnet_track(g_pnet_on, cur_cyl[1]);
+#else
+                const bool df1_pnet = false;
+#endif
+                if (serving & BUS_SEL_DF1)
+                    busy = busy || led_drive_busy(!gpio_get(PIN_SEL1), dskchg_motor_on_d(1), df1_pnet);
+#endif
+            }
+            (void)serving;
+            led_set_activity(led_activity_step(&led_act, clock_ms(), busy));
         }
 
         // A write-protect flip on the same disk (g_reinsert_req's comment).
