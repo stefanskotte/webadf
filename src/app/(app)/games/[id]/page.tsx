@@ -12,6 +12,9 @@ import { EditDetails } from '@/components/games/edit-details';
 import { CoverControl } from '@/components/games/cover-control';
 import { DemozooPanel } from '@/components/games/demozoo-panel';
 import { listNfcReaders } from '@/lib/nfc/store';
+import { getDb } from '@/db';
+import { listSendTargets } from '@/lib/send-targets';
+import { SendBoardPicker } from '@/components/send/send-button';
 
 export default async function GamePage(props: PageProps<'/games/[id]'>) {
   const { orgId } = await requireOrg();
@@ -23,16 +26,19 @@ export default async function GamePage(props: PageProps<'/games/[id]'>) {
   const sp = await props.searchParams;
   const from = typeof sp.from === 'string' ? sp.from : undefined;
 
-  const [game, devices, collections, readers] = await Promise.all([
+  const [game, devices, collections, readers, sendTargets] = await Promise.all([
     getGameDetail(orgId, id), listDevices(orgId), listCollections(orgId),
     // The fob button's boards: empty means the button is not drawn.
     listNfcReaders(orgId),
+    // Send .adf to Amiga: the boards that can take files; none = no button.
+    listSendTargets(getDb(), orgId),
   ]);
   // Null covers "does not exist" and "belongs to another organization"
   // indistinguishably, so an id from another tenant reveals nothing.
   if (!game) notFound();
 
   const now = Date.now();
+  const send = sendTargets.length > 0 ? { targets: sendTargets, now } : null;
 
   return (
     <>
@@ -61,12 +67,13 @@ export default async function GamePage(props: PageProps<'/games/[id]'>) {
       <DemozooPanel game={game} />
       <GameFacts game={game} />
       <div className="flex flex-col gap-3 px-4 pb-10 sm:px-7">
+        <SendBoardPicker ctx={send} />
         {game.disks.length >= 2 ? (
           // A disk set: the same rows, under a heading with Add disks… and
           // Reorder, each row gaining a ⋯ menu. A client component, so the
           // mount choices are computed here and handed over as data.
           <DiskSetSection
-            gameId={game.id} title={game.title} from={from} fobDevices={readers}
+            gameId={game.id} title={game.title} from={from} fobDevices={readers} send={send}
             entries={game.disks.map((disk) => ({
               disk, choices: mountChoices(devices, disk, now),
             }))}
@@ -78,7 +85,7 @@ export default async function GamePage(props: PageProps<'/games/[id]'>) {
             shared list of targets cannot express it. devices x disks is a
             handful of rows either way.
           */
-          <DiskRow key={disk.id} disk={disk} from={from} fobDevices={readers}
+          <DiskRow key={disk.id} disk={disk} from={from} fobDevices={readers} send={send}
                    // One "?" per feature per page: NFC on the first row, write
                    // protection on the first row that has the toggle (not HFE),
                    // HFE on the first HFE row.

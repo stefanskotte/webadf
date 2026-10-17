@@ -2,7 +2,12 @@
 // simulated through its own routes (status, poll, queue, chunk, done), as e2e/device-send.spec.ts does.
 import { test, expect, type APIRequestContext, type Page } from '@playwright/test';
 import { signUpFresh } from './helpers';
-import { pairDevice, authHeader, cleanupSeeded } from './device-helpers';
+import { createHash } from 'node:crypto';
+import { diskStore } from '@/lib/storage';
+import { formatVolume } from '@/lib/adffs/format';
+import { addFile, makeDirectory, readVolume } from '@/lib/adffs';
+import { pairDevice, authHeader, cleanupSeeded, seedDisk } from './device-helpers';
+import { runTag } from './helpers';
 
 test.afterAll(async () => { await cleanupSeeded(); });
 const LIVE = 15_000;
@@ -108,4 +113,43 @@ test('a file over 4 MB is refused in the browser, and a board below 1.15.0 is ne
   await boardSays(request, token, 'c', '1.13.0+gdef5678');
   await page.goto('/ingest');
   await expect(page.getByTestId('send-no-board')).toContainText('1.15.0');
+});
+
+async function seedSendDisk(orgId: string, title: string) {
+  let adf = formatVolume({ filesystem: 'FFS', volumeName: 'SendTest' });
+  const mk = makeDirectory(adf, 880, 'mods'); if (!mk.ok) throw new Error(mk.reason); adf = mk.adf;
+  const v = readVolume(adf); if (!v.ok) throw new Error('no volume');
+  const mods = v.root.find((e) => e.name === 'mods')!.block;
+  const a = addFile(adf, mods, 'a.txt', new TextEncoder().encode('hello'), 0x40); if (!a.ok) throw new Error(a.reason); adf = a.adf;
+  const sha = createHash('sha256').update(adf).digest('hex');
+  if (!(await diskStore.stat(sha))) await diskStore.put(sha, adf);
+  return { ...(await seedDisk(orgId, { title, diskNo: 1, sha256: sha })), mods };
+}
+
+test('Browse: Send on a folder queues its files with their paths and protection', async ({ page, request }) => {
+  const { orgId } = await signUpFresh(page);
+  const { token } = await pairDevice(page, request, 'Bench');
+  await boardSays(request, token, 'c');
+  const { diskId, mods } = await seedSendDisk(orgId, `S${runTag().slice(0, 6)}`);
+  await page.goto(`/disks/${diskId}/files`);
+  await page.getByTestId(`fs-send-${mods}`).click();
+  await expect(page.getByText('Queued for Bench')).toBeVisible();
+  const q = Buffer.from(await (await request.get('/api/device/send/queue', { headers: authHeader(token) })).body()).toString('latin1');
+  expect(q).toMatch(/^NEXT \S+ 5 [0-9a-f]+ 40 10:mods\/a\.txt 0:\n/);
+  await page.getByRole('button', { name: 'See queue' }).click();
+  await expect(page).toHaveURL(/\/ingest\?board=/);
+  await expect(page.locator('[data-testid^="send-row-"][data-status="queued"]')).toContainText('mods/a.txt');
+});
+
+test('a title page: Send .adf to Amiga queues the whole disk as <name>.adf', async ({ page, request }) => {
+  const { orgId } = await signUpFresh(page);
+  const { token } = await pairDevice(page, request, 'Bench');
+  await boardSays(request, token, 'c');
+  const title = `S${runTag().slice(0, 6)}`;
+  const { gameId, diskId } = await seedSendDisk(orgId, title);
+  await page.goto(`/games/${gameId}`);
+  await page.getByTestId(`send-adf-${diskId}`).click();
+  await expect(page.getByText('Queued for Bench')).toBeVisible();
+  const q = Buffer.from(await (await request.get('/api/device/send/queue', { headers: authHeader(token) })).body()).toString('latin1');
+  expect(q).toContain(` 901120 ${`${title}-1.adf`.length}:${title}-1.adf\n`);
 });

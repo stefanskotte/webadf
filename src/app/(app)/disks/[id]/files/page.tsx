@@ -24,6 +24,8 @@ import { DropStaging } from '@/components/disks/drop-staging';
 import { FileEditProvider, FileToolbar, type EditDisabled } from '@/components/disks/file-actions';
 import { HistoryPanel } from '@/components/disks/history-panel';
 import { MountAction } from '@/components/games/mount-action';
+import { listSendTargets } from '@/lib/send-targets';
+import { SendBoardPicker } from '@/components/send/send-button';
 
 export const dynamic = 'force-dynamic';
 
@@ -295,9 +297,13 @@ export default async function DiskFilesPage(props: PageProps<'/disks/[id]/files'
   // Mount / Eject from the disk's own page (operator, 2026-09-29): the same
   // choices and holder line as the game page's disk row (mount-choice.ts), so
   // the two can never offer different things for the same disk.
+  const now = Date.now();
   const choices = mountChoices(await listDevices(orgId),
-    { id, sha256: disk.sha256, imageFormat: disk.imageFormat, sizeBytes: disk.sizeBytes }, Date.now());
+    { id, sha256: disk.sha256, imageFormat: disk.imageFormat, sizeBytes: disk.sizeBytes }, now);
   const held = holderText(choices);
+  // Send to Amiga from this disk (spec §4): the boards that can take files; none = no Send buttons at all.
+  const sendTargets = await listSendTargets(getDb(), orgId);
+  const send = sendTargets.length > 0 ? { targets: sendTargets, now } : null;
 
   return (
     <>
@@ -357,7 +363,10 @@ export default async function DiskFilesPage(props: PageProps<'/disks/[id]/files'
                 data-testid={`holder-${id}`}>
             {held ? held.text : 'Not in a drive'}
           </span>
-          <MountAction diskId={id} choices={choices} />
+          <div className="flex flex-wrap items-center gap-3">
+            <SendBoardPicker ctx={send} />
+            <MountAction diskId={id} choices={choices} />
+          </div>
         </div>
         {volume === null ? (
           <div className="glass-card p-5 text-[13px]" style={{ color: 'var(--amber-text)' }}
@@ -373,7 +382,7 @@ export default async function DiskFilesPage(props: PageProps<'/disks/[id]/files'
               with that reason, rather than the controls simply not existing.
             */}
             <FileToolbar />
-            {volume.ok && <FileTree entries={volume.root} diskId={id} />}
+            {volume.ok && <FileTree entries={volume.root} diskId={id} send={send} />}
             {/*
               Below the tree, always rendered -- even with no filesystem to
               browse, matching FileToolbar's own always-shown-but-disabled
