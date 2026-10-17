@@ -671,8 +671,21 @@ describe('GET /api/device/poll -- netPick: the driver disk as DF1\'s pick (fw 1.
       df1Version: 6, df1Sha256: PAULANET_DISK_PREVIOUS, netDriverSeenAt: new Date(Date.now() - 10_000) }));
     expect((await (await GET(get('?since=1&driveAck=3&df1Ack=6&netPick=1'))).json()).df1).toEqual({ v: 6, sha256: PAULANET_DISK_PREVIOUS });
     readPollTick.mockResolvedValue(baseTick({ instructionVersion: 1, instructionAck: 0, ...applied, netNextSentVersion: 3,
-      df1Version: 6, df1Sha256: PAULANET_DISK_PREVIOUS, netDriverSeenAt: new Date(Date.now() - 600_000) }));
+      df1Version: 6, df1Sha256: PAULANET_DISK_PREVIOUS, netDriverSeenAt: new Date(Date.now() - 5 * 60_000) }));
+    expect((await (await GET(get('?since=1&driveAck=3&df1Ack=6&netPick=1'))).json()).df1).toEqual({ v: 6, sha256: PAULANET_DISK_PREVIOUS });
+    readPollTick.mockResolvedValue(baseTick({ instructionVersion: 1, instructionAck: 0, ...applied, netNextSentVersion: 3,
+      df1Version: 6, df1Sha256: PAULANET_DISK_PREVIOUS, netDriverSeenAt: new Date(Date.now() - 11 * 60_000) }));
     expect((await (await GET(get('?since=1&driveAck=3&df1Ack=6&netPick=1'))).json()).df1).toEqual({ v: 6, sha256: PAULANET_DISK_SHA256 });
+  });
+  it('delivery after the Amiga is off: the re-arm cleared the cursor, so the wake moves df1 and names the new disk (R16)', async () => {
+    readPollTick.mockResolvedValue(baseTick({ ...applied, netNextSentVersion: null, df1Version: 6,
+      df1Sha256: PAULANET_DISK_PREVIOUS, netDriverSeenAt: new Date(Date.now() - 11 * 60_000) }));
+    readDf1ForPoll.mockResolvedValue({ v: 7, sha256: null });
+    const { GET } = await import('./route');
+    const res = await GET(get('?since=1&driveAck=3&df1Ack=6&netPick=1'));
+    expect(res.status).toBe(200);
+    expect(markNetNextSent).toHaveBeenCalledWith('dev-1', 3, { bumpDf1: true });
+    expect((await res.json()).df1).toEqual({ v: 7, sha256: PAULANET_DISK_SHA256 });
   });
   it('a board without netPick gets the same choice in next', async () => {
     const { GET } = await import('./route');

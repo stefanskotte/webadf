@@ -19,8 +19,8 @@ export const PAULANET_DISK_PREVIOUS = '05170a83c279157fc50a2a9a595f4caf1ec194253
  * driverDiskFor's choice (R16), so this digest is the default, not always the one sent. */
 export const PAULANET_NEXT = { diskId: 'paulanet', sha256: PAULANET_DISK_SHA256, diskNo: 1 } as const;
 
-/** Two heartbeats (60 s each, DC_STATUS_PERIOD_MS): within this the Amiga's driver is "talking" (moved here from
- *  network-checklist.ts so driverDiskFor can use it without an import cycle). */
+/** Two heartbeats (60 s each, DC_STATUS_PERIOD_MS): within this the card calls the Amiga's driver "talking"
+ *  (network-checklist.ts re-exports it). The rollout does NOT use it: driverDiskFor waits ROLLOUT_QUIET_MS. */
 export const DRIVER_TALKING_MS = 120_000;
 
 /** Digests the blob GC keeps although no row names them (blob-gc-run.ts): both driver disks (R16). */
@@ -30,13 +30,14 @@ export const isDriverDisk = (sha: string | null): boolean => sha === PAULANET_DI
 
 /**
  * Which driver disk the poll names for DF1 in Network mode (R16). A board holding the older disk keeps it while
- * the Amiga's driver talks, so DF1 is never swapped (shown empty for 1 s, then changed) under a running network;
- * otherwise the new one. The 5-minute re-arm (netNextRearm) keeps waking such a board, so the new disk goes in
- * within minutes of the Amiga being switched off.
+ * the Amiga's driver was heard within ROLLOUT_QUIET_MS, so DF1 is never swapped (shown empty for 1 s, then changed)
+ * under a running network; otherwise the new one. The 5-minute re-arm (netNextRearm) keeps waking such a board, so
+ * the new disk goes in within minutes of the Amiga's quiet passing ROLLOUT_QUIET_MS. netDriverSeenAt null means never
+ * heard in Network mode: recordStatus keeps the last reading across a board restart (fix round 1 ruling).
  */
 export function driverDiskFor(t: { df1Sha256: string | null; netDriverSeenAt: Date | null }, now: number): string {
-  const talking = t.netDriverSeenAt !== null && now - t.netDriverSeenAt.getTime() <= DRIVER_TALKING_MS;
-  return t.df1Sha256 === PAULANET_DISK_PREVIOUS && talking ? PAULANET_DISK_PREVIOUS : PAULANET_DISK_SHA256;
+  const recent = t.netDriverSeenAt !== null && now - t.netDriverSeenAt.getTime() <= ROLLOUT_QUIET_MS;
+  return t.df1Sha256 === PAULANET_DISK_PREVIOUS && recent ? PAULANET_DISK_PREVIOUS : PAULANET_DISK_SHA256;
 }
 
 /**
@@ -81,6 +82,13 @@ export const NET_PICK_FW = '1.12.1';
 
 /** At most one re-arm of the driver-disk wake per device in this long (Task 8 review I1). */
 export const NET_REARM_MIN_MS = 5 * 60_000;
+
+/**
+ * How long the Amiga's driver must be quiet before a board holding the older driver disk gets the new one (R16, fix
+ * round 1 ruling): two re-arm periods. Wider than DRIVER_TALKING_MS (the card's "talking", two heartbeats) on purpose:
+ * the spec's "DF1 never changes under a running driver" outranks a missed heartbeat or two.
+ */
+export const ROLLOUT_QUIET_MS = 2 * NET_REARM_MIN_MS;
 
 /**
  * Whether a status report should re-arm the poll's one-shot driver-disk wake (Task 8 review I1). The poll writes

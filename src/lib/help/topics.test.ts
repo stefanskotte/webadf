@@ -157,6 +157,7 @@ describe('send names the limits, Receive, the expiry and the accepted risk', () 
     expect(s).toMatch(/24 hours/);
     expect(s).toMatch(/1\.15\.0/);
     expect(s).toMatch(/any computer on your network/);
+    expect(s).toMatch(/keeps the older driver disk, without Receive, until the Amiga has been off/);
   });
 });
 

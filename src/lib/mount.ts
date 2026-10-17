@@ -422,13 +422,17 @@ export async function recordStatus(
   else if (s.firmwareVersion !== undefined && s.secondDrive === undefined) patch.df1Sha256 = null;
   // Build-bound (the playsHd rule): a report naming its firmware without `net` is a board not in Network
   // mode (or older), and the checklist must not keep a Network reading (plan 2026-10-12 ruling 14).
+  // netDriverSeenAt is the exception while the board is in Network mode (plan 2026-10-17 R16, fix round 1): a report
+  // without `driver` (the driver not heard since this boot -- an OTA trial boot, say, under a running Amiga) leaves
+  // the last reading, so driverDiskFor does not swap DF1 under a driver that is still running. Only an explicit age
+  // moves it; leaving Network mode still clears it.
   if (s.net !== undefined) {
-    patch.netDriverSeenAt = s.net.driver !== undefined ? new Date(Date.now() - s.net.driver * 1000) : null;
+    if (s.net.driver !== undefined) patch.netDriverSeenAt = new Date(Date.now() - s.net.driver * 1000);
     patch.netAmigaIp = s.net.amigaIp ?? null;
     patch.netFramesIn = s.net.framesIn ?? null;
     patch.netFramesOut = s.net.framesOut ?? null;
   } else if (s.firmwareVersion !== undefined) {
-    patch.netDriverSeenAt = null;
+    if (s.secondDrive !== 'net') patch.netDriverSeenAt = null;
     patch.netAmigaIp = null;
     patch.netFramesIn = null;
     patch.netFramesOut = null;

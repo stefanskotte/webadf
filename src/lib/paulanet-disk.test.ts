@@ -2,7 +2,8 @@ import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
 import {
   PAULANET_DISK_SHA256, PAULANET_NEXT, ALWAYS_REFERENCED_BLOBS, servedWithoutEntitlement, netApplied, netNextRearm,
-  netKeepsDriverDisk, PAULANET_DISK_PREVIOUS, driverDiskFor, isDriverDisk, netNextRearmCandidate,
+  netKeepsDriverDisk, PAULANET_DISK_PREVIOUS, driverDiskFor, isDriverDisk, netNextRearmCandidate, ROLLOUT_QUIET_MS,
+  NET_REARM_MIN_MS,
 } from './paulanet-disk';
 
 describe('the PaulaNET driver disk', () => {
@@ -77,11 +78,20 @@ describe('netNextRearm (Task 8 review I1): a lost wake response is retried, at m
 
 describe('the driver disk rollout (plan 2026-10-17 R16)', () => {
   const NOW = 1_800_000_000_000;
-  it('keeps the older disk while the Amiga\'s driver talks, never swapping DF1 under it', () => {
-    expect(driverDiskFor({ df1Sha256: PAULANET_DISK_PREVIOUS, netDriverSeenAt: new Date(NOW - 10_000) }, NOW)).toBe(PAULANET_DISK_PREVIOUS);
+  // Fix round 1 ruling: the spec's "DF1 never changes under a running driver" outranks the card's 120 s "talking";
+  // the rollout waits for a quiet of its own, two re-arm periods (10 min).
+  it('waits two re-arm periods of quiet, wider than the card\'s 120 s "talking"', () => {
+    expect(ROLLOUT_QUIET_MS).toBe(2 * NET_REARM_MIN_MS);
+    expect(ROLLOUT_QUIET_MS).toBe(600_000);
   });
-  it('names the new disk once the driver is quiet, or to a board that holds neither', () => {
-    expect(driverDiskFor({ df1Sha256: PAULANET_DISK_PREVIOUS, netDriverSeenAt: new Date(NOW - 200_000) }, NOW)).toBe(PAULANET_DISK_SHA256);
+  it('keeps the older disk while the Amiga\'s driver was heard within 10 min, never swapping DF1 under it', () => {
+    for (const ago of [10_000, 200_000, 600_000]) {
+      expect(driverDiskFor({ df1Sha256: PAULANET_DISK_PREVIOUS, netDriverSeenAt: new Date(NOW - ago) }, NOW)).toBe(PAULANET_DISK_PREVIOUS);
+    }
+  });
+  it('names the new disk once the driver has been quiet 10 min, or was never heard, or to a board that holds neither', () => {
+    expect(driverDiskFor({ df1Sha256: PAULANET_DISK_PREVIOUS, netDriverSeenAt: new Date(NOW - 600_001) }, NOW)).toBe(PAULANET_DISK_SHA256);
+    // null = never heard while in Network mode (a board restart no longer clears it: recordStatus keeps the last reading).
     expect(driverDiskFor({ df1Sha256: PAULANET_DISK_PREVIOUS, netDriverSeenAt: null }, NOW)).toBe(PAULANET_DISK_SHA256);
     expect(driverDiskFor({ df1Sha256: null, netDriverSeenAt: new Date(NOW) }, NOW)).toBe(PAULANET_DISK_SHA256);
     expect(driverDiskFor({ df1Sha256: PAULANET_DISK_SHA256, netDriverSeenAt: new Date(NOW) }, NOW)).toBe(PAULANET_DISK_SHA256);

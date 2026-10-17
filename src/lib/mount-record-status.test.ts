@@ -200,9 +200,17 @@ describe('recordStatus net (Phase 3)', () => {
     expect(p.netFramesIn).toBe(12);
     expect(p.netFramesOut).toBe(30);
   });
-  it('a net report without driver or address clears those two', async () => {
+  // Fix round 1 ruling (R16): a board restarted (an OTA trial boot, say) while the Amiga runs reports `net` without
+  // `driver` until the driver reads again; that is "not heard since this boot", not "quiet", so the last reading
+  // stays and driverDiskFor still keeps the older disk.
+  it('a net report without driver leaves the driver reading alone, and clears the address', async () => {
     await recordStatus('dev-1', { ...base, firmwareVersion: '1.11.0+gabc', secondDrive: 'net', net: { framesIn: 0, framesOut: 0 } });
-    expect(patches[0].netDriverSeenAt).toBeNull();
+    expect(patches[0]).not.toHaveProperty('netDriverSeenAt');
+    expect(patches[0].netAmigaIp).toBeNull();
+  });
+  it('a Network-mode report without net at all leaves the driver reading alone too', async () => {
+    await recordStatus('dev-1', { ...base, firmwareVersion: '1.11.0+gabc', secondDrive: 'net' });
+    expect(patches[0]).not.toHaveProperty('netDriverSeenAt');
     expect(patches[0].netAmigaIp).toBeNull();
   });
   it('a report naming its firmware without net clears all four (left Network mode)', async () => {
