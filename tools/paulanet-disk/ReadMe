@@ -25,3 +25,25 @@ other drive answering as DF1.
 Keep this disk in DF1 while you are online: the driver checks for
 it when it starts. PaulaNET Config is not needed with the WiFi
 floppy board; its Wi-Fi is set on the board's web page.
+
+Receive
+=======
+
+Receive saves files you send from the webadf web app into a
+folder you choose: from the Upload page (Send to Amiga), from a
+disk's Browse page, or a whole disk as an .adf file. Install
+copies it to SYS:Tools, with its icon, and to C:.
+
+Start it by hand: double-click its icon, or type Receive in a
+Shell. In the window, choose the folder and press Save. The
+default folder is RAM:. Close the window to stop. Files sent
+while Receive is not running wait on the server for 24 hours.
+
+In a Shell:  Receive [TO <folder>] [SAVE] [GUI]
+TO uses a folder for this run, SAVE also stores it, GUI opens
+the window. Ctrl-C stops it.
+
+Nothing is overwritten: a second Foo.lha arrives as Foo_2.lha,
+and nothing is written outside the folder. While Receive runs,
+it listens on TCP port 6800, and any computer on your network
+can drop a file into the folder.

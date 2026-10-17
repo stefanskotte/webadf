@@ -1,12 +1,17 @@
 /**
  * The PaulaNET driver disk (spec docs/superpowers/specs/2026-10-12-paulanet-phase3-network-setting-design.md §2):
- * Rob Smith's disk plus our Install and ReadMe, built by tools/paulanet-disk/build.sh. A fixed image the server
+ * Rob Smith's disk plus our Install, ReadMe and Receive, built by tools/paulanet-disk/build.sh. A fixed image the server
  * knows by digest -- not a library disk, owned by no organization. Uploaded once to the disk store
  * (scripts/paulanet-disk-upload.ts). Its PaulaNET.device and PaulaNET Config are Rob's, used by permission
  * under his terms (third-party/paulanet/); they are not MIT.
  */
-export const PAULANET_DISK_SHA256 = '05170a83c279157fc50a2a9a595f4caf1ec194253127d93232f6fd5bfc008c9e';
+export const PAULANET_DISK_SHA256 = 'fb363d45c3b6c26592ada627c1cddc68b32c93c003a82328617a487dce5aa287';
 export const PAULANET_DISK_BYTES = 901_120;
+/**
+ * The driver disk before Receive (Phase 3, until plan 2026-10-17). Still valid: a board whose Amiga is online keeps it
+ * until the Amiga is off (driverDiskFor, R16), so it is served, kept by the blob GC and named on the card.
+ */
+export const PAULANET_DISK_PREVIOUS = '05170a83c279157fc50a2a9a595f4caf1ec194253127d93232f6fd5bfc008c9e';
 
 /** What the poll carries as DF1's `next` in Network mode to a board without netPick (plan 2026-10-12 ruling 12); a
  * netPick board (fw 1.12.1) gets the same digest as its DF1 pick (`df1`) instead. */

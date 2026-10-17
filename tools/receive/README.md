@@ -55,5 +55,6 @@ pnpm receive:uae 204|31|32 [shell|gui|space]     # FS-UAE on Kickstart 2.04 / 3.
   Workbench disks are never committed.
 - **FS-UAE's bsdsocket emulation** uses the Mac's network stack, so the Amiga's port 6800 is the Mac's port 6800.
   macOS may ask once whether FS-UAE may accept incoming connections.
-- **The binary goes onto the PaulaNET driver disk in increment 3,** with `Install` copying it to `SYS:Tools/` and
-  `C:`.
+- **The binary goes onto the PaulaNET driver disk** from `dist/Receive`, the committed copy of the pinned build
+  (CI checks they are identical). After changing the sources: `build.sh dist/Receive --pin`, commit both, then
+  rebuild the driver disk (its pin changes too). `Install` copies it to `SYS:Tools/` and `C:`.

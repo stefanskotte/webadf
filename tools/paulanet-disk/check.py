@@ -5,7 +5,7 @@ ever land on the network cylinders. Usage: check.py <disk.adf> <listing.txt>
 import struct, sys
 
 WANT = {'PaulaNET.device': 13872, 'PaulaNET Config': 55536, 'Install': None, 'Install.info': None,
-        'ReadMe': None, 'ReadMe.info': None, 'disk.info': 364}
+        'ReadMe': None, 'ReadMe.info': None, 'Receive': None, 'Receive.info': None, 'disk.info': 364}
 
 disk = open(sys.argv[1], 'rb').read()
 listing = open(sys.argv[2]).read().splitlines()
