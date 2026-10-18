@@ -1,0 +1,3 @@
+# Rob's tree ships NetDevice/.vscode/settings.json; the root .gitignore ignores .vscode/.
+!NetDevice/.vscode/
+!NetDevice/.vscode/settings.json
