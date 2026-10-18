@@ -40,8 +40,9 @@ typedef struct { uint8_t *win; size_t pos; uint8_t *scratch; } pnet_lz4_win_t;
 #define PNET_LZ4_BROKEN SIZE_MAX
 /* As pnet_frame_iter_next, linked through w: the frame is decoded into the window and copied to out[0..cap). An LZ4
  * frame (size bit 14) decodes against the window -- raw or MFM-wrapped toward the board, MFM-wrapped only toward the
- * Amiga; *was_lz4 says it was one. PNET_E_LZ4: an LZ4 frame that does not decode to its original size, is over
- * PNET_LZ4_BLOCK_MAX, or does not fit the window. Any error leaves it->i where it was. */
+ * Amiga; *was_lz4 says its size word marked it LZ4, on an error too (the caller counts that as LZ4 damage).
+ * PNET_E_LZ4: an LZ4 frame that does not decode to its original size, is over PNET_LZ4_BLOCK_MAX, or does not fit the
+ * window. Any error leaves it->i where it was. */
 pnet_err_t pnet_lz4_iter_next(pnet_frame_iter_t *it, pnet_lz4_win_t *w, uint8_t *out, size_t cap, uint16_t *len,
                               bool *was_lz4);
 #endif

@@ -41,7 +41,7 @@ typedef struct {
     uint32_t over;        /* ...dropped: the ring was full */
     uint32_t malformed;   /* ...dropped: a malformed frame, and every frame after it in its batch */
     uint32_t lz4_in;      /* LZ4 (spec 2026-10-18): the Amiga's frames that came LZ4 */
-    uint32_t lz4_bad;     /* ...refused (PNET_E_LZ4), counted in malformed too */
+    uint32_t lz4_bad;     /* ...refused, a bad size word included, counted in malformed too */
     bool     amiga_lz4;   /* the latest checked header from the Amiga carried PNET_DRIVER_LZ4 (a resend's counts) */
 } pnet_link_t;
 

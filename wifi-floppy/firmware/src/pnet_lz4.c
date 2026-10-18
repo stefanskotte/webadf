@@ -126,6 +126,7 @@ pnet_err_t pnet_lz4_iter_next(pnet_frame_iter_t *it, pnet_lz4_win_t *w, uint8_t 
         w->pos += *len;
         return PNET_OK;
     }
+    *was_lz4 = true;                                    /* from here an error is LZ4 damage (pnet_lz4.h) */
     const bool wrapped = (field & 0x8000u) != 0;
     if (it->dir == PNET_TO_AMIGA && !wrapped) return PNET_E_LZ4;   /* never raw toward the Amiga (HANDOFF 3bu) */
     const size_t at = it->pos + 8u, blk = field & 0x3FFFu, wire = wrapped ? 2u * blk : blk;
@@ -143,7 +144,6 @@ pnet_err_t pnet_lz4_iter_next(pnet_frame_iter_t *it, pnet_lz4_win_t *w, uint8_t 
     memcpy(out, dst, os);
     w->pos += os;
     *len = os;
-    *was_lz4 = true;
     const size_t next = at + wire + (wire & 1u);
     it->pos = next > it->len ? it->len : next;
     it->i++;

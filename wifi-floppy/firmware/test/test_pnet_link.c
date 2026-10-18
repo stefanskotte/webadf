@@ -599,6 +599,50 @@ static void the_longest_real_wrapped_block_decodes(void) {
     free(scr);
 }
 
+/* Task 3 review M4: an LZ4 frame refused for its size word -- original size 0 or over the MTU, or a block that runs
+ * past the payload -- is LZ4 damage too, counted in lz4_bad as well as malformed, so the log line does not under-report
+ * it. A 900-byte text frame, MFM-wrapped, with its CompressionHeader rewritten. */
+static void an_lz4_frame_with_a_bad_size_word_is_lz4_damage(void) {
+    static const uint16_t lens[1] = { 900 };
+    lc_frame(g_lf[0], 900, LC_TEXT, 11);
+    for (unsigned k = 0; k < 3; k++) {
+        pnet_link_t s; pnet_ring_t tx;
+        pnet_link_init(&s);
+        tx_ring(&tx, 8);
+        pnet_hdr_t h = lz4_hdr(0x00, true);
+        size_t n = lz4_payload(g_pay, g_lf, lens, "w", 1);
+        uint8_t ch[4];
+        pnet_mfm_decode(g_pay + 4, 4, ch);
+        if (k == 0) { ch[2] = 0; ch[3] = 0; }                                  /* original size 0 */
+        if (k == 1) { ch[2] = (PNET_ETH_MTU + 1u) >> 8; ch[3] = (PNET_ETH_MTU + 1u) & 0xFFu; }  /* over the MTU */
+        uint16_t last = 0;
+        pnet_mfm_encode(ch, 4, g_pay + 4, &last);
+        if (k == 2) n -= 40u;                                                  /* the block runs past the payload */
+        h.compressed_size = (uint16_t)n;
+        pnet_link_take_lz4(&s, &h, g_pay, &tx, g_win, g_scr);
+        CHECK_EQ_INT(pnet_ring_count(&tx), 0);
+        CHECK_EQ_INT(s.malformed, 1);
+        CHECK_EQ_INT(s.lz4_bad, 1);
+        CHECK_EQ_INT(s.lz4_in, 0);
+    }
+    /* ...and a bad plain (MFM) frame in an LZ4 batch is not LZ4 damage. */
+    pnet_link_t s; pnet_ring_t tx;
+    pnet_link_init(&s);
+    tx_ring(&tx, 8);
+    pnet_hdr_t h = lz4_hdr(0x00, true);
+    const uint8_t ph[2] = { 1, 0 };
+    uint16_t last = 0;
+    size_t pos = pnet_mfm_encode(ph, 2, g_pay, &last);
+    const uint8_t ch[4] = { 0x80, 0x10, 0, 0 };                                /* MFM, 16 bytes, original size 0 */
+    last = 0;
+    pnet_mfm_encode(ch, 4, g_pay + pos, &last);
+    memset(g_pay + pos + 8, 0xAA, 16);
+    h.compressed_size = (uint16_t)(pos + 8u + 16u);
+    pnet_link_take_lz4(&s, &h, g_pay, &tx, g_win, g_scr);
+    CHECK_EQ_INT(s.malformed, 1);
+    CHECK_EQ_INT(s.lz4_bad, 0);
+}
+
 int main(void) {
     RUN(counters_start_as_paulanets);
     RUN(a_new_batch_is_taken_once);
@@ -625,5 +669,6 @@ int main(void) {
     RUN(shrink_only_lowers_the_batch_out);
     RUN(a_wrapped_block_over_the_scratch_is_refused);
     RUN(the_longest_real_wrapped_block_decodes);
+    RUN(an_lz4_frame_with_a_bad_size_word_is_lz4_damage);
     return REPORT();
 }

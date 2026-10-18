@@ -50,7 +50,7 @@ pnet_take_t pnet_link_take_lz4(pnet_link_t *s, const pnet_hdr_t *h, const uint8_
         const pnet_err_t e = linked ? pnet_lz4_iter_next(&it, &w, slot, PNET_RING_MTU, &len, &z)
                                     : pnet_frame_iter_next(&it, slot, PNET_RING_MTU, &len);
         if (e != PNET_OK) {
-            if (e == PNET_E_LZ4) s->lz4_bad++;
+            if (e == PNET_E_LZ4 || z) s->lz4_bad++;    /* an LZ4 frame's bad size word is LZ4 damage too (M4) */
             s->malformed += it.count - it.i;            /* this frame and the rest: unreadable */
             break;
         }
