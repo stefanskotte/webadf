@@ -74,6 +74,11 @@ for t in "${tests[@]}"; do
       { echo "COMPILE FAIL: $t needs liblz4 (macOS: brew install lz4; Debian/Ubuntu: apt install liblz4-dev pkg-config)"; fail=1; continue; }
     extra="$extra -fsanitize=address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer"
   fi
+  # test_pnet_link.c too (no liblz4): the board decodes the Amiga's LZ4 frames into its window and scratch there,
+  # and its tests put both on the heap at exactly their sizes, so a write past either is an ASan report.
+  if [ "$t" = test_pnet_link.c ]; then
+    extra="-fsanitize=address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer"
+  fi
   # -D_DEFAULT_SOURCE: strnlen (config_store.c) is POSIX.1-2008, not C11, and
   # glibc declares it only when a feature-test macro asks. macOS declares it
   # anyway, so this build passed there for months and failed the first time it

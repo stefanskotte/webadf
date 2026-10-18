@@ -7,6 +7,7 @@
 #include "../src/pnet_mfm.h"
 #include <stdbool.h>
 #include <stdint.h>
+#include <stdlib.h>
 #include <string.h>
 #include "lz4_corpus.h"
 #include "../src/pnet_lz4.h"
@@ -516,6 +517,88 @@ static void shrink_only_lowers_the_batch_out(void) {
     CHECK_EQ_INT(pnet_link_ack(&s, &h), 5);             /* the ack frees what went out */
 }
 
+/* Fix round 1 (review I1): an MFM-wrapped (0xC000) block is MFM-decoded into the scratch before LZ4 sees it, so the
+ * block-size check is all that keeps it inside PNET_LZ4_BLOCK_MAX bytes. One frame, original size 1,518, block bytes
+ * i & 0x7F with the last one 0x5A, MFM-wrapped. */
+static size_t wrapped_block_payload(uint8_t *out, size_t blk) {
+    static uint8_t raw[PNET_LZ4_BLOCK_MAX + 256];
+    for (size_t i = 0; i < blk; i++) raw[i] = (uint8_t)(i & 0x7Fu);
+    raw[blk - 1u] = 0x5A;
+    const uint8_t ph[2] = { 1, 0 };
+    uint16_t last = 0;
+    size_t pos = pnet_mfm_encode(ph, 2, out, &last);
+    const uint16_t field = (uint16_t)(0x8000u | PNET_SIZE_LZ4 | blk);
+    const uint8_t ch[4] = { (uint8_t)(field >> 8), (uint8_t)field, PNET_ETH_MTU >> 8, PNET_ETH_MTU & 0xFF };
+    last = 0;
+    pnet_mfm_encode(ch, 4, out + pos, &last);
+    last = 0;
+    pnet_mfm_encode(raw, blk, out + pos + 8, &last);
+    return pos + 8u + 2u * blk;
+}
+
+static void a_wrapped_block_over_the_scratch_is_refused(void) {
+    static struct {
+        uint8_t win[PNET_LZ4_WINDOW]; uint8_t g1[256];
+        uint8_t scr[PNET_LZ4_BLOCK_MAX]; uint8_t g2[256];
+    } m;
+    static const size_t blks[4] = { PNET_LZ4_BLOCK_MAX - 1u, PNET_LZ4_BLOCK_MAX, PNET_LZ4_BLOCK_MAX + 1u,
+                                    PNET_LZ4_BLOCK_MAX + 256u };
+    for (unsigned k = 0; k < 4; k++) {
+        memset(&m, 0xA5, sizeof m);
+        pnet_link_t s; pnet_ring_t tx;
+        pnet_link_init(&s);
+        tx_ring(&tx, 8);
+        pnet_hdr_t h = lz4_hdr((uint8_t)k, true);
+        h.compressed_size = (uint16_t)wrapped_block_payload(g_pay, blks[k]);
+        CHECK_EQ_INT(pnet_link_take_lz4(&s, &h, g_pay, &tx, m.win, m.scr), PNET_TAKE_NEW);
+        CHECK_EQ_INT(pnet_ring_count(&tx), 0);          /* not a valid block either way: nothing queued */
+        CHECK_EQ_INT(s.lz4_bad, 1);                     /* ...refused as LZ4, and counted */
+        CHECK_EQ_INT(s.malformed, 1);
+        unsigned touched = 0;
+        for (unsigned i = 0; i < 256; i++) touched += (m.g1[i] != 0xA5) + (m.g2[i] != 0xA5);
+        CHECK_EQ_INT(touched, 0);                       /* nothing past the window or the scratch */
+        if (blks[k] <= PNET_LZ4_BLOCK_MAX)              /* up to the limit it reached the scratch, to its last byte */
+            CHECK_EQ_INT(m.scr[blks[k] - 1u], 0x5A);
+        else                                            /* past it: refused before a byte was decoded */
+            CHECK_EQ_INT(m.scr[0], 0xA5);
+    }
+    /* The same under ASan: window and scratch on the heap at exactly their sizes, so any write past them is a report. */
+    uint8_t *win = malloc(PNET_LZ4_WINDOW), *scr = malloc(PNET_LZ4_BLOCK_MAX);
+    CHECK(win != NULL && scr != NULL, "heap");
+    for (unsigned k = 0; k < 4 && win && scr; k++) {
+        pnet_link_t s; pnet_ring_t tx;
+        pnet_link_init(&s);
+        tx_ring(&tx, 8);
+        pnet_hdr_t h = lz4_hdr((uint8_t)k, true);
+        h.compressed_size = (uint16_t)wrapped_block_payload(g_pay, blks[k]);
+        pnet_link_take_lz4(&s, &h, g_pay, &tx, win, scr);
+        CHECK_EQ_INT(s.lz4_bad, 1);
+    }
+    free(win);
+    free(scr);
+}
+
+/* ...and the longest real block, 1,518 random bytes as literals (1,525 bytes), MFM-wrapped, still decodes. */
+static void the_longest_real_wrapped_block_decodes(void) {
+    static const uint16_t lens[1] = { PNET_ETH_MTU };
+    lc_frame(g_lf[0], PNET_ETH_MTU, LC_RANDOM, 3);
+    uint8_t *win = malloc(PNET_LZ4_WINDOW), *scr = malloc(PNET_LZ4_BLOCK_MAX);
+    CHECK(win != NULL && scr != NULL, "heap");
+    if (!win || !scr) { free(win); free(scr); return; }
+    pnet_link_t s; pnet_ring_t tx;
+    pnet_link_init(&s);
+    tx_ring(&tx, 8);
+    pnet_hdr_t h = lz4_hdr(0x00, true);
+    h.compressed_size = (uint16_t)lz4_payload(g_pay, g_lf, lens, "w", 1);
+    pnet_link_take_lz4(&s, &h, g_pay, &tx, win, scr);
+    uint16_t len = 0;
+    const uint8_t *f = pnet_ring_peek(&tx, 0, &len);
+    CHECK(f != NULL && len == PNET_ETH_MTU && memcmp(f, g_lf[0], len) == 0, "the frame, whole");
+    CHECK_EQ_INT(s.lz4_in, 1);
+    free(win);
+    free(scr);
+}
+
 int main(void) {
     RUN(counters_start_as_paulanets);
     RUN(a_new_batch_is_taken_once);
@@ -540,5 +623,7 @@ int main(void) {
     RUN(an_lz4_frame_one_byte_past_the_window_is_refused);
     RUN(raw_lz4_toward_the_amiga_is_refused);
     RUN(shrink_only_lowers_the_batch_out);
+    RUN(a_wrapped_block_over_the_scratch_is_refused);
+    RUN(the_longest_real_wrapped_block_decodes);
     return REPORT();
 }
