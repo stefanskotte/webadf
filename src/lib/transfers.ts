@@ -170,6 +170,21 @@ export async function listTransfers(db: Db, orgId: string, deviceId: string, lim
     .orderBy(desc(transfers.createdAt), desc(transfers.id)).limit(limit);
 }
 
+/**
+ * "Clear finished" on the Upload page: deletes this org's finished rows for the board (delivered, failed, cancelled,
+ * expired) and the queued or sending rows past their expiry, which the page already shows as expired (toView's
+ * "lapsed"). A live waiting or sending row is never touched. No cursor bump: sendQueueText lists only active rows not
+ * past their expiry, so the board's queue text is the same before and after.
+ */
+export async function clearFinishedTransfers(db: Db, orgId: string, deviceId: string, now = new Date()): Promise<number> {
+  const del = await db.delete(transfers)
+    .where(and(eq(transfers.orgId, orgId), eq(transfers.deviceId, deviceId),
+      or(inArray(transfers.status, ['delivered', 'failed', 'cancelled', 'expired']),
+        and(inArray(transfers.status, ACTIVE), lte(transfers.expiresAt, now)))))
+    .returning({ id: transfers.id });
+  return del.length;
+}
+
 /** Retry (R10): the same file, path, protection and comment, queued again as a new row; the old row stays. */
 export async function retryTransfer(db: Db, a: { orgId: string; userId: string; id: string; now?: Date }):
   Promise<QueueResult | { ok: false; reason: 'not_found' | 'not_finished' }> {

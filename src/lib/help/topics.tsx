@@ -415,6 +415,7 @@ export const HELP_TOPICS = {
           'A file sent while Receive is closed waits up to 24 hours, then expires.',
           'Nothing is overwritten: a second Foo.lha arrives as Foo_2.lha.',
           'Cancel stops a file that is waiting or on its way. Retry sends a failed one again from the start.',
+          'Clear finished drops every delivered, failed, cancelled or expired file from the list.',
           'A board whose Amiga was running when the new driver disk came out keeps the older driver disk, without Receive, until the Amiga has been off a while; then it gets the new one.',
           'While Receive runs, any computer on your network can drop a file into its folder. It cannot overwrite anything or leave the folder, and nothing is run.',
         ]} />

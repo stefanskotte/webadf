@@ -21,10 +21,11 @@ const cancelTransfer = vi.fn();
 const retryTransfer = vi.fn();
 const queueLoad = vi.fn();
 const listTransfers = vi.fn();
+const clearFinishedTransfers = vi.fn();
 vi.mock('@/lib/transfers', () => ({
   queueTransferFromBlob: (...a: unknown[]) => queueTransferFromBlob(...a), cancelTransfer: (...a: unknown[]) => cancelTransfer(...a),
   retryTransfer: (...a: unknown[]) => retryTransfer(...a), queueLoad: (...a: unknown[]) => queueLoad(...a),
-  listTransfers: (...a: unknown[]) => listTransfers(...a),
+  listTransfers: (...a: unknown[]) => listTransfers(...a), clearFinishedTransfers: (...a: unknown[]) => clearFinishedTransfers(...a),
   cleanAmigaPath: (p: string) => realCleanAmigaPath(p),
 }));
 const { cleanAmigaPath: realCleanAmigaPath } = await vi.importActual<typeof import('@/lib/transfers')>('@/lib/transfers');
@@ -109,6 +110,33 @@ describe('GET /api/transfers', () => {
   it('404s a board that is not a target', async () => {
     const { GET } = await import('./route');
     expect((await GET(new Request('http://test/api/transfers?deviceId=nope'))).status).toBe(404);
+  });
+});
+
+describe('DELETE /api/transfers (Clear finished)', () => {
+  const del = (qs: string) => new Request(`http://test/api/transfers${qs}`, { method: 'DELETE' });
+  it('deletes the board\'s finished rows under the session org and says how many', async () => {
+    clearFinishedTransfers.mockResolvedValue(49);
+    const { DELETE } = await import('./route');
+    const res = await DELETE(del('?deviceId=dev-1'));
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ deleted: 49 });
+    expect(findSendTarget).toHaveBeenCalledWith(expect.anything(), 'org-1', 'dev-1', expect.any(Number));
+    expect(clearFinishedTransfers).toHaveBeenCalledWith(expect.anything(), 'org-1', 'dev-1', expect.any(Date));
+  });
+  it('400s without a deviceId', async () => {
+    const { DELETE } = await import('./route');
+    const res = await DELETE(del(''));
+    expect(res.status).toBe(400);
+    expect(await res.json()).toEqual({ error: 'invalid_query' });
+    expect(clearFinishedTransfers).not.toHaveBeenCalled();
+  });
+  it('404s an unknown board or another org\'s, and deletes nothing', async () => {
+    const { DELETE } = await import('./route');
+    const res = await DELETE(del('?deviceId=other-org-board'));
+    expect(res.status).toBe(404);
+    expect(await res.json()).toEqual({ error: 'no_device' });
+    expect(clearFinishedTransfers).not.toHaveBeenCalled();
   });
 });
 

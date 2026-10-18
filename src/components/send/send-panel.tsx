@@ -4,7 +4,7 @@ import { toast } from 'sonner';
 import { Link } from '@/components/shell/link';
 import { SEND_FILE_MAX, XFER_FW } from '@/lib/send-limits';
 import {
-  canCancel, canRetry, formatSize, longOffline, orderTargets, receiverLine, sendErrorText, targetState, transferState,
+  canCancel, canRetry, clearableCount, formatSize, orderQueue, longOffline, orderTargets, receiverLine, sendErrorText, targetState, transferState,
   type SendTarget, type TransferView,
 } from '@/lib/send-ui';
 import { useSendBoard } from './use-send-board';
@@ -27,6 +27,7 @@ export function SendPanel({ targets, initialBoard, serverNow }: { targets: SendT
   const [showOffline, setShowOffline] = useState(false);
   const [snap, setSnap] = useState<Snapshot | null>(null);
   const [uploads, setUploads] = useState<Upload[]>([]);
+  const [clearing, setClearing] = useState(false);
   const seq = useRef(0);
   const active = useRef(false);
 
@@ -73,6 +74,7 @@ export function SendPanel({ targets, initialBoard, serverNow }: { targets: SendT
   const waiting = view?.transfers.filter((t) => t.status === 'queued').length ?? 0;
   const sending = view?.transfers.some((t) => t.status === 'sending') ?? false;
   const line = current ? receiverLine(current, { waiting, sending }, now) : null;
+  const finished = view ? clearableCount(view.transfers) : 0;
 
   async function handleFiles(list: FileList) {
     const to = board;
@@ -112,6 +114,20 @@ export function SendPanel({ targets, initialBoard, serverNow }: { targets: SendT
       toast.error('Could not retry', { description: sendErrorText(b?.error, res.status) });
     }
     await refresh();
+  }
+
+  async function clearFinished() {
+    const to = board;
+    if (!to) return;
+    setClearing(true);
+    try {
+      const res = await fetch(`/api/transfers?deviceId=${encodeURIComponent(to)}`, { method: 'DELETE' }).catch(() => null);
+      if (!res) toast.error('Could not clear', { description: 'Check the connection and try again.' });
+      else if (!res.ok) toast.error('Could not clear', { description: `The server answered ${res.status}.` });
+      await refresh();
+    } finally {
+      setClearing(false);
+    }
   }
 
   return (
@@ -160,7 +176,15 @@ export function SendPanel({ targets, initialBoard, serverNow }: { targets: SendT
                onChange={(e) => { const f = e.target.files; if (f) void handleFiles(f); e.target.value = ''; }} />
       </label>
 
-      <ul aria-label="Files for this board" className="glass-card flex flex-col overflow-hidden" data-testid="send-queue">
+      {finished > 0 && (
+        <button type="button" data-testid="send-clear-finished" disabled={clearing} onClick={() => void clearFinished()}
+                className={`${btn} self-end`} style={{ background: 'var(--glass-strong)', color: 'var(--ink)' }}>
+          Clear finished ({finished})
+        </button>
+      )}
+      {/* About 10 rows on a wide screen, fewer on a phone; it scrolls inside, with waiting and sending rows on top. */}
+      <ul aria-label="Files for this board" data-testid="send-queue" tabIndex={0}
+          className="glass-card flex max-h-[26rem] flex-col overflow-y-auto overscroll-contain sm:max-h-[35rem]">
         {uploads.map((u) => (
           <li key={u.key} data-testid="send-upload" data-state={u.state} className="flex flex-wrap items-center gap-x-3 gap-y-1 border-b px-4 py-2"
               style={{ borderColor: 'var(--hairline)' }}>
@@ -174,7 +198,7 @@ export function SendPanel({ targets, initialBoard, serverNow }: { targets: SendT
             )}
           </li>
         ))}
-        {view?.transfers.map((t) => {
+        {view && orderQueue(view.transfers).map((t) => {
           const s = transferState(t);
           return (
             <li key={t.id} data-testid={`send-row-${t.id}`} data-status={t.status}

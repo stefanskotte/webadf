@@ -252,6 +252,35 @@ describe('transfers', () => {
     expect(await version(d)).toBe(v + 2);
   });
 
+  it('clearFinishedTransfers deletes this board\'s finished and lapsed rows only, and leaves the board\'s queue and cursor alone', async () => {
+    const d = await device(); const other = await device();
+    const mk = async (dev: string, p: string) => (await q(dev, await blob(new TextEncoder().encode(`clear-${dev}-${p}`)), { path: p }) as { id: string }).id;
+    const delivered = await mk(d, 'delivered'); const failed = await mk(d, 'failed'); const cancelled = await mk(d, 'cancelled');
+    const expired = await mk(d, 'expired'); const lapsedQ = await mk(d, 'lapsedQ'); const lapsedS = await mk(d, 'lapsedS');
+    const waiting = await mk(d, 'waiting'); const sending = await mk(d, 'sending');
+    const otherBoard = await mk(other, 'otherBoard'); const otherOrg = await mk(d, 'otherOrg');
+    await T.finishTransfer(getDb(), d, delivered, { ok: true, savedAs: 'delivered' });
+    await T.finishTransfer(getDb(), d, failed, { ok: false, code: 'crc', text: 'x' });
+    await T.cancelTransfer(getDb(), 'org-a', cancelled);
+    await T.finishTransfer(getDb(), other, otherBoard, { ok: true, savedAs: 'otherBoard' });
+    await getDb().update(transfers).set({ status: 'expired', finishedAt: new Date() }).where(eq(transfers.id, expired));
+    await T.recordChunk(getDb(), d, lapsedS, 0);
+    await T.recordChunk(getDb(), d, sending, 0);
+    await getDb().update(transfers).set({ expiresAt: new Date(Date.now() - 60_000) }).where(inArray(transfers.id, [lapsedQ, lapsedS]));
+    await getDb().update(transfers).set({ orgId: 'org-b', status: 'delivered', finishedAt: new Date() }).where(eq(transfers.id, otherOrg));
+    const textBefore = await T.sendQueueText(getDb(), d); const v = await version(d);
+
+    expect(await T.clearFinishedTransfers(getDb(), 'org-b', other)).toBe(0);
+    expect(await T.clearFinishedTransfers(getDb(), 'org-a', d)).toBe(6);
+
+    const left = await getDb().select({ id: transfers.id }).from(transfers)
+      .where(inArray(transfers.id, [delivered, failed, cancelled, expired, lapsedQ, lapsedS, waiting, sending, otherBoard, otherOrg]));
+    expect(left.map((r) => r.id).sort()).toEqual([waiting, sending, otherBoard, otherOrg].sort());
+    expect(await T.sendQueueText(getDb(), d)).toBe(textBefore);
+    expect(await version(d)).toBe(v);
+    expect(await T.clearFinishedTransfers(getDb(), 'org-a', d)).toBe(0);
+  });
+
   it('sendSummaries counts per board: waiting, sending, and what finished in the last 24 h', async () => {
     const d = await device('org-s');
     const mk = async (p: string) => (await T.queueTransferFromBlob(getDb(), { orgId: 'org-s', deviceId: d, userId: 'u',
