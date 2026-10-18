@@ -437,6 +437,15 @@ static void track_text(const display_state_t *s, char out[8]) {
     snprintf(out, 8, "%d/%d", c, m);
 }
 
+// The head element's "cc.s" (1.17.0): the cylinder in two digits, clamped to
+// 0..99 as the counter's are, so the box HEAD_MAX_CHARS sizes always holds
+// it and the text never shifts as the head crosses cylinder 10; any nonzero
+// side is side 1.
+static void head_text(const display_state_t *s, char out[8]) {
+    const int c = s->cyl < 0 ? 0 : s->cyl > 99 ? 99 : s->cyl;
+    snprintf(out, 8, "%02d.%d", c, s->side ? 1 : 0);
+}
+
 // Clamped, not merely assumed. `pct` is an int and a caller can hand this
 // anything; "%d%%" of INT_MAX is 12 bytes into 8. GCC says so and clang does
 // not, which is why it took a second toolchain to notice. Clamping beats
@@ -455,6 +464,7 @@ void display_render(const display_state_t *s, const layout_t *l, uint8_t fb[DISP
     // The track counter only while a disk is mounted; the percent only while
     // downloading with a known percent.
     const layout_el_t *track = s->show_track ? find(l, EL_TRACK) : NULL;
+    const layout_el_t *head  = s->show_track ? find(l, EL_HEAD) : NULL;   // the same rule (1.17.0)
     const layout_el_t *dl = (s->status == DS_DOWNLOAD && s->pct >= 0) ? find(l, EL_DOWNLOAD) : NULL;
     // Review Focus 1: where both would be drawn on top of each other, the
     // counter wins -- a half-drawn "12/79" is a lie about which track is
@@ -500,6 +510,13 @@ void display_render(const display_state_t *s, const layout_t *l, uint8_t fb[DISP
                     draw_text(fb, AT(right_text(e, t)), y, t, AT(e->x + bw));
                 }
                 break;
+            case EL_HEAD:
+                // Left-aligned: four characters always, so the box is full.
+                if (head == e) {
+                    char t[8]; head_text(s, t);
+                    draw_text(fb, x, y, t, x + bw / g_scale);
+                }
+                break;
             case EL_DOWNLOAD:
                 if (dl == e) {
                     char t[8]; pct_text(s, t);
@@ -512,16 +529,18 @@ void display_render(const display_state_t *s, const layout_t *l, uint8_t fb[DISP
                 // right, exactly as 1.6.5: the limit is that text's first pixel
                 // minus one ADVANCE. The number is never the one clipped -- a
                 // clipped label is only shorter.
+                // The head (1.17.0) likewise, from its own left edge.
                 int limit = e->x + bw;
-                const layout_el_t *rt[2] = { track, dl };
-                for (int k = 0; k < 2; k++) {
+                const layout_el_t *rt[3] = { track, dl, head };
+                for (int k = 0; k < 3; k++) {
                     const layout_el_t *o = rt[k];
                     if (!o) continue;
                     int ow, oh; layout_el_size(o, &ow, &oh);
                     if (o->y >= e->y + bh || e->y >= o->y + oh) continue;   // different rows
                     char t[8];
                     if (o->id == EL_TRACK) track_text(s, t); else pct_text(s, t);
-                    const int left = right_text(o, t) - ADVANCE * g_scale;
+                    const int first = o->id == EL_HEAD ? o->x : right_text(o, t);
+                    const int left = first - ADVANCE * g_scale;
                     if (left > e->x && left < limit) limit = left;
                 }
                 draw_text(fb, x, y, s->detail, AT(limit));
@@ -565,6 +584,22 @@ void display_set_panel(display_t *d, panel_t p) {
     // stale glass after the controller's re-init.
     d->resend_page = 0;
     d->resend_col  = 0;
+}
+
+void display_resend_all(display_t *d) {
+    d->resend_page = 0;
+    d->resend_col  = 0;
+}
+
+void display_rotate180(uint8_t fb[DISP_FB_MAX], panel_t p) {
+    const int rows = panel_height(p), bytes = rows / 8 * DISP_W;
+    // Byte i of a page-layout framebuffer holds column i % 128, rows 8 * (i / 128) + 0..7;
+    // turned, it is byte (bytes - 1 - i) with its bits reversed.
+    for (int i = 0, j = bytes - 1; i <= j; i++, j--) {
+        uint8_t a = fb[i], b = fb[j], ra = 0, rb = 0;
+        for (int k = 0; k < 8; k++) { ra |= (uint8_t)(((a >> k) & 1u) << (7 - k)); rb |= (uint8_t)(((b >> k) & 1u) << (7 - k)); }
+        fb[i] = rb; fb[j] = ra;
+    }
 }
 
 bool display_in_sync(const display_t *d) {

@@ -4,11 +4,12 @@ import { useCallback, useEffect, useMemo, useRef, useState, useTransition } from
 import { useRouter } from 'next/navigation';
 import { loadDisplayWasm, type DisplayWasm, type PreviewState } from '@/lib/display-wasm';
 import {
-  decodeLayout, encodeLayout, NFC_ELEMENT_FIRMWARE, panelId, STATUS_ICON_FIRMWARE, STATUS_OPT,
-  type ElementJson, type ElementName, type LayoutJson,
+  decodeLayout, encodeLayout, HEAD_ELEMENT_FIRMWARE, NFC_ELEMENT_FIRMWARE, panelId, ROTATION_FIRMWARE,
+  STATUS_ICON_FIRMWARE, STATUS_OPT, type ElementJson, type ElementName, type LayoutJson,
 } from '@/lib/display-layout';
 import {
-  elementBox, hitTest, overlapping, panelHeight, placeElement, PANEL_W, statusLine,
+  elementBox, hitTest, overlapping, panelHeight, placeElement, PANEL_W, screenBox, statusLine, toLayoutDelta,
+  toLayoutPoint,
 } from '@/lib/display-editor-geometry';
 import type { DeviceListItem } from '@/lib/queries';
 import { HelpTip } from '@/components/help/help-tip';
@@ -46,10 +47,11 @@ type PreviewKey = keyof typeof PREVIEWS;
 /** `reader`: the NFC icon's state in every preview but 'armed' -- the board's own reported reader. */
 function previewState(key: PreviewKey, tick: number, reader: PreviewState['nfc']): PreviewState {
   const base: PreviewState = {
-    status: 'ready', bars: 3, title: '', detail: '', showTrack: false, cyl: 0, maxCyl: 79,
+    status: 'ready', bars: 3, title: '', detail: '', showTrack: false, side: 0, cyl: 0, maxCyl: 79,
     pct: -1, tick, writable: true, sync: 'synced', nfc: reader,
   };
-  const mounted = { ...base, status: 'loaded' as const, title: 'Workbench 3.1 Install', detail: 'disk 1 of 6', showTrack: true, cyl: 42 };
+  // Cylinder 42, side 1: the head element reads "42.1", the counter "42/79".
+  const mounted = { ...base, status: 'loaded' as const, title: 'Workbench 3.1 Install', detail: 'disk 1 of 6', showTrack: true, side: 1 as const, cyl: 42 };
   switch (key) {
     case 'ready': return { ...base, title: 'no disk' };
     case 'download': return { ...base, status: 'download', pct: 64, title: 'Workbench 3.1 Install', detail: 'disk 1 of 6' };
@@ -86,6 +88,26 @@ function withNfc(l: LayoutJson, supported: boolean): LayoutJson {
 }
 
 /**
+ * Where the head element (cylinder.side, 1.17.0) starts when a layout does not
+ * list it yet: the bottom-right corner on either panel, where the track
+ * counter sits on 128x32. Hidden, so adding it changes nothing on the glass.
+ */
+const HEAD_START: ElementJson = { id: 'head', visible: false, scale: 1, x: 104, y: 24, w: 0, opt: 0 };
+
+/** The 'head' element is in the list exactly when the board's firmware draws it (withNfc's rule). */
+function withHead(l: LayoutJson, supported: boolean): LayoutJson {
+  const has = l.elements.some((e) => e.id === 'head');
+  if (supported && !has) return { ...l, elements: [...l.elements, HEAD_START] };
+  if (!supported && has) return { ...l, elements: l.elements.filter((e) => e.id !== 'head') };
+  return l;
+}
+
+/** A turn only for a board that can make it; an older one is sent the upright layout. */
+function withRotation(l: LayoutJson, supported: boolean): LayoutJson {
+  return supported ? l : turned(l, 0);
+}
+
+/**
  * The status element as the board will draw it: for a board that has the icon
  * (1.15.0+) the word or the icon, and any other opt (a later firmware's) as the
  * word it draws; for an older board, which refuses any opt but the word, the word.
@@ -98,9 +120,14 @@ function withStatusStyle(l: LayoutJson, iconOk: boolean): LayoutJson {
   };
 }
 
-/** What a board can be sent: the nfc element and the status icon only where its firmware has them. */
-function forBoard(l: LayoutJson, device: Pick<DeviceListItem, 'displayNfcElement' | 'displayStatusIcon'>): LayoutJson {
-  return withStatusStyle(withNfc(l, device.displayNfcElement), device.displayStatusIcon);
+type BoardCaps = Pick<DeviceListItem, 'displayNfcElement' | 'displayStatusIcon' | 'displayHeadElement' | 'displayRotation'>;
+
+/** What a board can be sent: the nfc and head elements, the status icon and a turn only where its firmware has them. */
+function forBoard(l: LayoutJson, device: BoardCaps): LayoutJson {
+  return withRotation(
+    withHead(withStatusStyle(withNfc(l, device.displayNfcElement), device.displayStatusIcon), device.displayHeadElement),
+    device.displayRotation,
+  );
 }
 
 export function fromBase64(s: string): Uint8Array {
@@ -127,6 +154,13 @@ function boardLayout(device: DeviceListItem, wasm: DisplayWasm): LayoutJson {
     } catch { /* unreadable: fall back to the default */ }
   }
   return defaultLayout(wasm, device.displayPanel, device);
+}
+
+/** `l` turned `rotation` (0 or absent: upright, with no rotation key, the shape older layouts have). */
+function turned(l: LayoutJson, rotation: LayoutJson['rotation']): LayoutJson {
+  const upright = { ...l };
+  delete upright.rotation;
+  return rotation === 180 ? { ...upright, rotation: 180 } : upright;
 }
 
 const message = (e: unknown) => (e instanceof Error ? e.message : String(e));
@@ -219,6 +253,9 @@ function LoadedEditor({ device, wasm, onCancel }: { device: DeviceListItem; wasm
   const reader: PreviewState['nfc'] = device.nfcReader === 'present' ? 'present' : 'absent';
   const nfcOk = device.displayNfcElement;
   const iconOk = device.displayStatusIcon;
+  const headOk = device.displayHeadElement;
+  const rotateOk = device.displayRotation;
+  const rotation = layout.rotation === 180 ? 180 : 0;
   const [tick, setTick] = useState(0);
   useEffect(() => {
     // The lemming walks and the status icon blinks on the tick, at the
@@ -285,7 +322,8 @@ function LoadedEditor({ device, wasm, onCancel }: { device: DeviceListItem; wasm
     ctx.lineWidth = 1;
     layout.elements.forEach((e, i) => {
       if (!e.visible || (fb && !overlaps.has(i))) return;
-      const b = elementBox(e);
+      // Where it is DRAWN: a turned panel shows it at the opposite corner.
+      const b = screenBox(elementBox(e), rows, layout.rotation);
       ctx.strokeRect(b.x * ZOOM + 0.5, b.y * ZOOM + 0.5, b.w * ZOOM - 1, b.h * ZOOM - 1);
     });
   }, [layout, rendered, overlaps, rows]);
@@ -293,6 +331,8 @@ function LoadedEditor({ device, wasm, onCancel }: { device: DeviceListItem; wasm
   // ----- drag -----
   // Panel coordinates from a pointer: the canvas is drawn at 4x but CSS
   // scales it to the card's width, so go through its on-screen rectangle.
+  // These are SCREEN coordinates; on a turned panel (1.17.0) the layout's are
+  // the reflection (toLayoutPoint), and a drag moves the other way.
   const toPanel = (clientX: number, clientY: number) => {
     const r = canvasRef.current!.getBoundingClientRect();
     return {
@@ -302,9 +342,13 @@ function LoadedEditor({ device, wasm, onCancel }: { device: DeviceListItem; wasm
   };
   const drag = useRef<{ i: number; pointer: number; cx: number; cy: number; x: number; y: number } | null>(null);
 
+  const hitAt = (cx: number, cy: number) => {
+    const p = toLayoutPoint(cx / ZOOM, cy / ZOOM, rows, layout.rotation);
+    return hitTest(layout.elements, p.x, p.y);
+  };
   const onPointerDown = (ev: React.PointerEvent<HTMLCanvasElement>) => {
     const { cx, cy } = toPanel(ev.clientX, ev.clientY);
-    const i = hitTest(layout.elements, cx / ZOOM, cy / ZOOM);
+    const i = hitAt(cx, cy);
     if (i < 0) return;
     ev.currentTarget.setPointerCapture(ev.pointerId);
     const e = layout.elements[i];
@@ -314,11 +358,12 @@ function LoadedEditor({ device, wasm, onCancel }: { device: DeviceListItem; wasm
     const { cx, cy } = toPanel(ev.clientX, ev.clientY);
     const d = drag.current;
     if (!d || d.pointer !== ev.pointerId) {
-      ev.currentTarget.style.cursor = hitTest(layout.elements, cx / ZOOM, cy / ZOOM) >= 0 ? 'grab' : 'default';
+      ev.currentTarget.style.cursor = hitAt(cx, cy) >= 0 ? 'grab' : 'default';
       return;
     }
     const e = layout.elements[d.i];
-    const p = placeElement(e, d.x + Math.round((cx - d.cx) / ZOOM), d.y + Math.round((cy - d.cy) / ZOOM), layout.panel, snap);
+    const m = toLayoutDelta(Math.round((cx - d.cx) / ZOOM), Math.round((cy - d.cy) / ZOOM), layout.rotation);
+    const p = placeElement(e, d.x + m.dx, d.y + m.dy, layout.panel, snap);
     if (p.x === e.x && p.y === e.y) return;
     edit({ ...layout, elements: layout.elements.map((el, k) => (k === d.i ? { ...el, ...p } : el)) });
   };
@@ -339,9 +384,10 @@ function LoadedEditor({ device, wasm, onCancel }: { device: DeviceListItem; wasm
     const onTouchStart = (ev: TouchEvent) => {
       const t = ev.touches[0];
       const r = c.getBoundingClientRect();
-      const px = ((t.clientX - r.left) * PANEL_W) / r.width;
-      const py = ((t.clientY - r.top) * (c.height / ZOOM)) / r.height;
-      if (hitTest(layoutRef.current.elements, px, py) >= 0) ev.preventDefault();
+      const rowsNow = c.height / ZOOM;
+      const p = toLayoutPoint(((t.clientX - r.left) * PANEL_W) / r.width, ((t.clientY - r.top) * rowsNow) / r.height,
+        rowsNow, layoutRef.current.rotation);
+      if (hitTest(layoutRef.current.elements, p.x, p.y) >= 0) ev.preventDefault();
     };
     c.addEventListener('touchstart', onTouchStart, { passive: false });
     return () => c.removeEventListener('touchstart', onTouchStart);
@@ -398,15 +444,17 @@ function LoadedEditor({ device, wasm, onCancel }: { device: DeviceListItem; wasm
   // a reset), so the refresh that follows cannot overwrite the newer edit.
   const save = () => {
     const sent = layout;
-    return send({ panel: sent.panel, elements: sent.elements }, () => {
+    return send({ panel: sent.panel, rotation: sent.rotation, elements: sent.elements }, () => {
       if (layoutRef.current === sent) setDirty(false);
     });
   };
+  // Reset puts the ELEMENTS back to the built-in default; a turn is how the
+  // board is mounted, not part of the layout's look, so it is kept.
   const reset = () => {
     const sent = layout;
-    return send({ reset: true, panel: sent.panel }, () => {
+    return send({ reset: true, panel: sent.panel, rotation: sent.rotation }, () => {
       if (layoutRef.current !== sent) return;
-      setLayout(defaultLayout(wasm, sent.panel, device));
+      setLayout(turned(defaultLayout(wasm, sent.panel, device), sent.rotation));
       setDirty(false);
     });
   };
@@ -428,11 +476,28 @@ function LoadedEditor({ device, wasm, onCancel }: { device: DeviceListItem; wasm
         <label className="flex min-w-0 max-w-full flex-wrap items-center gap-1" style={{ color: 'var(--muted)' }}>
           Panel
           <select value={layout.panel} className={field} style={inputStyle} data-testid={`display-panel-${id}`}
-                  onChange={(ev) => edit(defaultLayout(wasm, ev.target.value === '128x64' ? '128x64' : '128x32', device))}>
+                  onChange={(ev) => edit(turned(defaultLayout(wasm, ev.target.value === '128x64' ? '128x64' : '128x32', device), layout.rotation))}>
             <option value="128x32">128×32</option>
             <option value="128x64">128×64</option>
           </select>
         </label>
+        {rotateOk
+          ? (
+            <label className="flex min-w-0 max-w-full flex-wrap items-center gap-1" style={{ color: 'var(--muted)' }}>
+              Rotation
+              <select value={rotation} className={field} style={inputStyle} data-testid={`display-rotation-${id}`}
+                      onChange={(ev) => edit(turned(layout, ev.target.value === '180' ? 180 : 0))}>
+                <option value={0}>0°</option>
+                <option value={180}>180° (mounted upside down)</option>
+              </select>
+            </label>
+          )
+          : (
+            // Both values of "can this board turn": a missing select would read as no such choice.
+            <span style={{ color: 'var(--muted)' }} data-testid={`display-rotation-needs-fw-${id}`}>
+              Rotation needs firmware {ROTATION_FIRMWARE} or newer
+            </span>
+          )}
         <label className="flex min-w-0 max-w-full flex-wrap items-center gap-1" style={{ color: 'var(--muted)' }}>
           Preview as
           <select value={preview} className={field} style={inputStyle} data-testid={`display-preview-${id}`}
@@ -519,6 +584,12 @@ function LoadedEditor({ device, wasm, onCancel }: { device: DeviceListItem; wasm
             )}
           </li>
         ))}
+        {!headOk && (
+          <li className="flex items-center gap-1" style={{ color: 'var(--muted)' }} data-testid={`display-head-needs-fw-${id}`}>
+            <input type="checkbox" disabled aria-label="head (needs newer firmware)" />
+            head — needs firmware {HEAD_ELEMENT_FIRMWARE} or newer
+          </li>
+        )}
         {!nfcOk && (
           // Both values of "can this board show the NFC icon": an element
           // missing from the list would read as no such feature at all.

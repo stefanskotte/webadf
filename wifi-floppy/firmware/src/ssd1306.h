@@ -18,6 +18,14 @@ bool ssd1306_init(uint8_t addr, panel_t panel);
  *  ssd1306_init. */
 bool ssd1306_reinit(uint8_t addr, panel_t panel);
 
+/** Turn the panel LAYOUT_ROT_0 or LAYOUT_ROT_180 (anything else: upright),
+ *  in the controller, and keep it for later re-inits. The caller then resends
+ *  every byte (display_resend_all): the SSD1306 remaps only new writes. */
+bool ssd1306_set_rotation(uint8_t addr, uint8_t rot);
+
+/** The rotation last set (LAYOUT_ROT_0 until ssd1306_set_rotation). */
+uint8_t ssd1306_rotation(void);
+
 /** Write `n` bytes into one page starting at column `col`. Each call is a
  *  complete, independent transfer -- see the page-addressing comment in
  *  ssd1306.c. THE cost that matters: (n + 5) bytes at 400 kHz, ~9 bits each, which is

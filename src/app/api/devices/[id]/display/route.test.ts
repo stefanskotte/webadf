@@ -135,6 +135,70 @@ describe('PATCH /api/devices/[id]/display', () => {
     expect(await res.json()).toEqual({ error: 'firmware_too_old', reason: 'The status icon needs firmware 1.15.0 or newer' });
   });
 
+  // ---- firmware 1.17.0: the head element and the panel turned 180 degrees.
+  it('a layout turned 180 degrees with the head element is stored, as the fixture bytes, only for 1.17.0+', async () => {
+    const { PATCH } = await import('./route');
+    const res = await PATCH(patch(await fixture('custom32_head_rot180')), ctx());
+    expect(res.status).toBe(200);
+    const [, , panel, blob, min] = saveDisplay.mock.calls[0]!;
+    expect(panel).toBe('128x32');
+    expect(min).toBe('1.17.0');
+    const bin = new Uint8Array(await readFile(`${FIX}/custom32_head_rot180.bin`));
+    expect(Buffer.from(blob!).equals(Buffer.from(bin))).toBe(true);
+  });
+
+  it('the head element alone (shown or hidden), or the rotation alone, needs 1.17.0', async () => {
+    const { PATCH } = await import('./route');
+    const l = await fixture('custom32_head_rot180');
+    for (const body of [
+      { ...l, rotation: 0 },
+      { ...l, rotation: 0, elements: l.elements.map((e) => ({ ...e, visible: false })) },
+      { ...(await fixture('default32')), rotation: 180 },
+    ]) {
+      saveDisplay.mockClear();
+      expect((await PATCH(patch(body), ctx())).status).toBe(200);
+      expect(saveDisplay.mock.calls[0]![4]).toBe('1.17.0');
+    }
+  });
+
+  it('an older board is told which 1.17.0 feature it lacks: 409', async () => {
+    saveDisplay.mockResolvedValue('firmware_too_old');
+    const { PATCH } = await import('./route');
+    const l = await fixture('custom32_head_rot180');
+    let res = await PATCH(patch(l), ctx());
+    expect(res.status).toBe(409);
+    expect(await res.json()).toEqual({ error: 'firmware_too_old', reason: 'Turning the display needs firmware 1.17.0 or newer' });
+    res = await PATCH(patch({ ...l, rotation: 0 }), ctx());
+    expect(await res.json()).toEqual({ error: 'firmware_too_old', reason: 'The head position needs firmware 1.17.0 or newer' });
+  });
+
+  it('{ reset: true, rotation: 180 } keeps the turn: the panel\'s default elements plus the rotation record', async () => {
+    const { PATCH } = await import('./route');
+    const res = await PATCH(patch({ reset: true, panel: '128x64', rotation: 180 }), ctx());
+    expect(res.status).toBe(200);
+    const [, , panel, blob, min] = saveDisplay.mock.calls[0]!;
+    expect(panel).toBe('128x64');
+    expect(min).toBe('1.17.0');
+    const def = new Uint8Array(await readFile(`${FIX}/default64.bin`));
+    const want = encodeLayout({ ...(await fixture('default64')), rotation: 180 });
+    expect(Buffer.from(blob!).equals(Buffer.from(want))).toBe(true);
+    expect(Buffer.from(blob!.subarray(4, def.length)).equals(Buffer.from(def.subarray(4)))).toBe(true);
+  });
+
+  it('{ reset: true, rotation: 0 } is the plain reset (null)', async () => {
+    const { PATCH } = await import('./route');
+    await PATCH(patch({ reset: true, panel: '128x32', rotation: 0 }), ctx());
+    expect(saveDisplay).toHaveBeenCalledWith('org-1', 'dev-1', '128x32', null);
+  });
+
+  it('refuses a rotation other than 0 or 180 as invalid_body', async () => {
+    const { PATCH } = await import('./route');
+    const res = await PATCH(patch({ ...(await fixture('default32')), rotation: 90 }), ctx());
+    expect(res.status).toBe(400);
+    expect((await res.json()).error).toBe('invalid_body');
+    expect(saveDisplay).not.toHaveBeenCalled();
+  });
+
   it('refuses a malformed body with 400 invalid_body before anything is stored', async () => {
     const { PATCH } = await import('./route');
     const res = await PATCH(patch({ panel: '128x48', elements: [] }), ctx());

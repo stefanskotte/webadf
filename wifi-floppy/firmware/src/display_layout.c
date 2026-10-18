@@ -16,6 +16,7 @@ void layout_el_size(const layout_el_t *e, int *w, int *h) {
         case EL_WRITE:    bw = 8;  break;
         case EL_LEMMING:  bw = 8;  break;
         case EL_NFC:      bw = 8;  break;
+        case EL_HEAD:     bw = HEAD_MAX_CHARS * LAYOUT_ADVANCE; break;
         case EL_TITLE:    bw = e->w; bh = LAYOUT_LINE_H * (e->opt ? e->opt : 1); break;
         case EL_DETAIL:   bw = e->w; break;
         case EL_TRACK:    bw = TRACK_MAX_CHARS * LAYOUT_ADVANCE; break;
@@ -44,9 +45,19 @@ bool layout_decode(const uint8_t *b, size_t len, layout_t *out, char *why, size_
     l.panel = (panel_t)b[1]; l.n = 0;
     const int W = 128, H = panel_height(l.panel);
     bool seen[EL_LAST + 1] = { false };
+    bool seen_rot = false;
     for (int i = 0; i < b[2]; i++) {
         const uint8_t *r = b + 4 + 8 * i;
         if (r[0] < EL_STATUS)                       return no(why, n, "element id: unknown");
+        if (r[0] == REC_ROTATION) {                 // a setting, not an element (1.17.0)
+            if (seen_rot)                           return no(why, n, "rotation: listed twice");
+            seen_rot = true;
+            if (r[6] != 0 || r[7] != 0)             return no(why, n, "reserved: record bytes 6-7 must be 0");
+            if (r[1] || r[2] || r[3] || r[4])       return no(why, n, "rotation: flags, x, y and w must be 0");
+            if (r[5] != LAYOUT_ROT_0 && r[5] != LAYOUT_ROT_180)
+                                                    return no(why, n, "rotation: 0 or 180 degrees only");
+            continue;
+        }
         // An element a later firmware added: skipped, not refused, so a layout
         // saved for a newer board still shows everything this one knows
         // (from 1.10.0; earlier boards refuse the whole layout).
@@ -90,9 +101,16 @@ bool layout_decode(const uint8_t *b, size_t len, layout_t *out, char *why, size_
 }
 
 int layout_encode(const layout_t *l, uint8_t *b, size_t cap) {
-    const size_t need = 4u + 8u * l->n;
-    if (l->n > LAYOUT_MAX_ELEMENTS || need > cap) return -1;
-    b[0] = LAYOUT_FORMAT; b[1] = (uint8_t)l->panel; b[2] = l->n; b[3] = 0;
+    return layout_encode_rotated(l, LAYOUT_ROT_0, b, cap);
+}
+
+int layout_encode_rotated(const layout_t *l, uint8_t rot, uint8_t *b, size_t cap) {
+    // The rotation record only when rotated: an unrotated layout encodes to
+    // exactly the bytes 1.16 wrote.
+    const int recs = l->n + (rot ? 1 : 0);
+    const size_t need = 4u + 8u * (size_t)recs;
+    if (recs > LAYOUT_MAX_ELEMENTS || need > cap) return -1;
+    b[0] = LAYOUT_FORMAT; b[1] = (uint8_t)l->panel; b[2] = (uint8_t)recs; b[3] = 0;
     for (int i = 0; i < l->n; i++) {
         const layout_el_t *e = &l->el[i];
         uint8_t *r = b + 4 + 8 * i;
@@ -100,7 +118,21 @@ int layout_encode(const layout_t *l, uint8_t *b, size_t cap) {
         r[1] = (uint8_t)((e->visible ? 1u : 0u) | (e->scale == 2 ? 2u : 0u));
         r[2] = e->x; r[3] = e->y; r[4] = e->w; r[5] = e->opt; r[6] = 0; r[7] = 0;
     }
+    if (rot) {
+        uint8_t *r = b + 4 + 8 * l->n;
+        memset(r, 0, 8);
+        r[0] = REC_ROTATION; r[5] = rot;
+    }
     return (int)need;
+}
+
+uint8_t layout_rotation(const uint8_t *b, size_t len) {
+    if (len < 4 || len != 4u + 8u * b[2]) return LAYOUT_ROT_0;
+    for (int i = 0; i < b[2]; i++) {
+        const uint8_t *r = b + 4 + 8 * i;
+        if (r[0] == REC_ROTATION) return r[5] == LAYOUT_ROT_180 ? LAYOUT_ROT_180 : LAYOUT_ROT_0;
+    }
+    return LAYOUT_ROT_0;
 }
 
 // Drawing order matters (spec §4: list order). Track and download come BEFORE

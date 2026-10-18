@@ -53,6 +53,12 @@ typedef struct {
     // mounted `cyl` is whatever the head was last stepped to, which is a
     // number about no disk and worse than a blank.
     bool show_track;
+    /** The head's side, 0 or 1 (1.17.0), for the head element's "40.1":
+     *  the SIDE line as the floppy bus last set it, shown under the same
+     *  show_track rule as the cylinder. A byte in what was padding after
+     *  show_track, so every other offset -- and display.wasm's table, and
+     *  the struct's size -- stays as it was. */
+    uint8_t side;
     int  cyl;        // 0..max_cyl
     int  max_cyl;    // 79 for a standard Amiga DD disk
     int  pct;        // download percent, or -1 to omit
@@ -145,6 +151,18 @@ void display_set_panel(display_t *d, panel_t p);
  * Returns bytes sent; 0 means the panel is already in sync.
  */
 int display_pump(display_t *d, int budget);
+
+/** Resend every byte of every page from the next pump on, as a panel switch
+ *  does, but keep fb, layout and panel: for a panel whose controller was
+ *  re-configured under the same picture (a rotation, 1.17.0). */
+void display_resend_all(display_t *d);
+
+/** Turn `fb` 180 degrees within panel `p`'s rows (pixel (x, y) moves to
+ *  (127 - x, rows - 1 - y)); rows below the panel stay zero. The board turns
+ *  its glass in the controller instead (ssd1306_set_rotation); this is the
+ *  same picture for the web preview, and test_oled_rotation.c holds the two
+ *  to each other. */
+void display_rotate180(uint8_t fb[DISP_FB_MAX], panel_t p);
 
 /** True when the panel matches the framebuffer. Test/diagnostic use. */
 bool display_in_sync(const display_t *d);
