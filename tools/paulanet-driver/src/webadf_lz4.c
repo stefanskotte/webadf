@@ -14,8 +14,10 @@ static void wl_copy(UBYTE *d, const UBYTE *s, ULONG n) { while (n--) *d++ = *s++
  * the payload as UWORD *pkt from a word-aligned buffer, every header is 8 bytes and every frame's wire is even
  * (drvtest checks it). Big-endian words, high byte first, as on the wire. */
 static void wl_mfm_decode(const UBYTE *src, ULONG n, UBYTE *dst) {
-    const UWORD *w = (const UWORD *)src;
-    while (n--) {
+    const UWORD *w = (const UWORD *)src, *end = w + n;
+    /* An end pointer, not a count: vbcc (the shipped build) turns `while (n--)` into four instructions of loop
+     * overhead, 78 cycles a word on a 68000 against 70 for Rob's mfmDecode; `w != end` is cmpa + bne, 68 (Task 6). */
+    while (w != end) {
         UWORD d = (UWORD)(*w++ & 0x5555);
         *dst++ = (UBYTE)((d >> 7) | d);
     }

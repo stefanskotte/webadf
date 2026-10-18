@@ -69,6 +69,19 @@ static void gate(void) {
     CHECK(!tx.on, "a 68000 never uploads LZ4");
     CHECK(wl_wire_bytes(0xC000 | 700) == 1400 && wl_wire_bytes(0x8000 | 2400) == 2400 && wl_wire_bytes(0x0123) == 0x123,
           "wire bytes");
+    /* Task 6 carry (a): paulaNetReceivePackets' bounds check takes its length from wl_wire_bytes. Every size word with
+     * bits 15 and 14 both set (LZ4 toward the Amiga) is 2n bytes; every other one keeps Rob's `size & 0x7FFF`
+     * exactly, bit 14 alone included. All 65,536 of them. */
+    {
+        ULONG f, bad = 0;
+        for (f = 0; f <= 0xFFFF; f++) {
+            UWORD want = (f & 0xC000) == 0xC000 ? (UWORD)(2 * (f & 0x3FFF)) : (UWORD)(f & 0x7FFF);
+            if (wl_wire_bytes((UWORD)f) != want) bad++;
+        }
+        CHECK(bad == 0, "wire bytes: 2n for 0xC000|n, Rob's size & 0x7FFF for every other size word");
+        CHECK(wl_wire_bytes(0xC000 | 1540) == 3080 && (UWORD)((0xC000 | 1540) & 0x7FFF) >= 16384,
+              "the longest LZ4 block: 3,080 B on the wire, where Rob's rule would read 16,384+ and drop the batch");
+    }
 }
 
 /* Review Focus, sizes at the edges: a block as long as the RLE goes as the RLE. */
