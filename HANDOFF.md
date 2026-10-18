@@ -1478,6 +1478,29 @@ separately.
 
 ### 4. Backlog, not blocking anything
 
+- **Shared / remote libraries** (operator, 2026-10-18), "much like you can on plex.tv (self hosted)":
+  - **Sharing:** a library owner invites people with **one-time links** (no email). The owner can add and revoke
+    members per library.
+  - **Access:** ADFs **stream from the owner's origin server** (another webadf instance, self-hosted or ours), only
+    once the owner has set up and authorized the connection.
+  - **Access model:** one **library API key per allowed user**, issued when they accept the invite. Revoking that key
+    removes their access at once.
+  - **Boards:** a member's WiFiFloppy uses that key to fetch ADFs from the other library, so the board never holds
+    the owner's own credentials.
+  - **UI:** a new **"Remote libraries"** menu item: the libraries you can see, invites you have sent and received,
+    members per library.
+  - **Security to design:**
+    - keys are scoped to read-only library + disk streaming, never write or admin;
+    - keys are stored hashed on the origin;
+    - one-time links expire and are single-use;
+    - rate limits on the origin;
+    - streaming goes through the member's own server (a proxy, so the board talks only to its home server) rather
+      than the board calling foreign hosts directly, to be decided with TLS and pinning in mind;
+    - audit of who fetched what;
+    - what a member may cache (time machine / write-back must stay local; remote disks read-only).
+  - **Self-host parity:** must work between two self-hosted instances and between self-hosted and ours.
+  - **Shape:** architectural; brainstorm, spec, plan.
+
 - **Documentation for file transfer** (operator, 2026-10-18): describe the new Send to Amiga feature end to end in
   the user-facing docs: the README and the docs the GitHub page links to, plus a check of the in-app help. Cover:
   - Receive on the PaulaNET driver disk (Install, Workbench icon, Shell form `Receive TO`, the saved folder);
