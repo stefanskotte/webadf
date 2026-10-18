@@ -1,7 +1,7 @@
 # Upload from the Amiga to the web app (design draft, 2026-10-18)
 
-**Status:** draft for the operator's review. Nothing here is approved yet. The decisions in §1 are recommendations;
-the open questions in §12 are the operator's to rule on before a plan is written.
+**Status:** draft for the operator's review. U6 is an operator decision (2026-10-18). The other decisions in §1 are
+recommendations, and the open questions in §12 are the operator's to rule on before a plan is written.
 
 **Goal:** a file on the Amiga goes into the web app, through the board, over PaulaNET. It is the reverse of Phase 4
 (HANDOFF backlog "Upload from the Amiga to the web app", operator 2026-10-16).
@@ -24,9 +24,10 @@ the open questions in §12 are the operator's to rule on before a plan is writte
 ## 1. User story, success criteria, decisions
 
 **User story:** "I have a file on my Amiga: a program I wrote, a saved game, an ADF I downloaded, or an LHA archive.
-I drop it on the Receive window, or I type `Receive SEND DH0:foo.lha`. A moment later it appears on the web app's
-Upload page under my board, in *From the Amiga*. From there I can download it to my computer, add it to the library
-if it is a disk image, or send it on to another Amiga."
+I drop it on the Receive window, or I type `Receive SEND DH0:foo.lha`. A moment later it appears in the web app's
+*From the Amiga* area, which holds what all my boards uploaded, marked with the board it came from. From there I can
+download it to my computer, add it to the library if it is a disk image, send it on to another Amiga, or delete it.
+When I am done, I clear the lot."
 
 **Success criteria:**
 - On the A500 (68000, RLE uploads), an LHA, a text file and an 880 KB ADF arrive whole. The server checks the CRC
@@ -44,8 +45,8 @@ if it is a disk image, or send it on to another Amiga."
 | U2 | **Three ways to start an upload, all in the one binary:** drop icons on the Receive window (an AppWindow); **Send…** in the window (an asl requester); and the Shell, `Receive SEND <files>`. An AppIcon on the Workbench desktop is left out of v1 (Q2). |
 | U3 | **The board relays, and stages nothing in flash.** Amiga → board: credited TCP stream into two 16 KB PSRAM buffers. Board → server: 16 KB HTTPS POSTs, one per `as_step()`. Server: chunks staged in Postgres, as write-back stages tracks. |
 | U4 | **Resumable per file.** The server keeps a partial upload for 24 h. A file sent again, with the same board, path, size and date, continues at the stored offset. |
-| U5 | **Limits:** 4 MB per file (= `SEND_FILE_MAX`). One upload in flight per board. Per board, the inbox holds at most 200 files or 64 MB. Inbox files are kept 30 days (Q4). |
-| U6 | **Where files land:** a *From the Amiga* list per board on the Upload page, in the Amiga card under the send queue. It offers Download, Add to library (ADF/ADZ/DMS/DMZ/HFE only, never automatic), Send to an Amiga, and Delete. |
+| U5 | **Limits:** 4 MB per file (= `SEND_FILE_MAX`). One upload in flight per board. The destination area holds at most 500 files or 256 MB per org. Files are kept 30 days (Q4). |
+| U6 | **Operator decision (2026-10-18): one destination area for the whole org.** "A 'destination area' on the web app side, where all uploads from wififloppies go -- there should be an option to delete individual files or clear all." One list, *From the Amiga*, collects the uploads from **all** of the org's boards, newest first. Each row shows the board it came from (the board's name, kept even after the board is unpaired). The operator's actions are **Download**, **Delete** (one file) and **Clear all** (with a confirm that gives the count). Recommended additions: **Add to library** (ADF/ADZ/DMS/DMZ/HFE only, never automatic), **Send to an Amiga**, and a filter by board when the org has more than one. |
 | U7 | **Receive uploads only to its own board (trust on first use).** The board sends a per-board key in its hello. Receive saves the first key it sees and refuses to upload to a peer with a different one (§6). |
 | U8 | **Gates:** firmware **1.17.0** (`UPLOAD_FW`) and Receive protocol **2**. Each side falls back to Phase 4's protocol 1 (download only) when the other is older. |
 | U9 | **The local path cap rises to a full frame** (1,514 = `PNET_RING_MTU`). The frame's pbuf is freed in the receive callback before the next frame is input, so lwIP heap use stays at about one frame. This is measured first (§10, step 0). |
@@ -132,9 +133,9 @@ stated. Every protocol 1 line stays valid.
 ## 4. The server
 
 **Tables** (migration 0043):
-- `amiga_uploads`:
-  - who and where: `id`, `org_id`, `device_id` (`on delete set null`), `device_name` (a copy, so files survive
-    unpairing);
+- `amiga_uploads`, one table for the org's destination area (U6), indexed on `(org_id, created_at)`:
+  - who and where: `id`, `org_id`, `device_id` (`on delete set null`), `device_name` (a copy, so a row still names
+    its board after the board is unpaired or renamed);
   - the file: `path` (UTF-8, decoded from Latin-1 and cleaned by `cleanAmigaPath`), `size_bytes`, `crc32`,
     `protection`, `comment`, `amiga_date` (text);
   - progress: `status` (`receiving | stored | failed | deleted`), `received_bytes`, `error_code`, `blob_sha256`;
@@ -147,7 +148,7 @@ stated. Every protocol 1 line stays valid.
 **Device routes** (`requireDevice`; the org is always the device's, never taken from a body):
 - `POST /api/device/upload` with JSON `{size, date, protection, path, comment}` returns `{id, offset}`, or 4xx
   `{code}`.
-  - It checks the per-file and per-board limits. Expired rows do not count, per the 3bv I1 lesson. The count and
+  - It checks the per-file limit and the org's area limits (U5). Expired rows do not count, per the 3bv I1 lesson. The count and
     the insert happen in one transaction, so two concurrent opens cannot both pass the limit (3bv m8).
   - It reuses a `receiving` row with the same device, path, size and date that has not expired, and returns its
     `received_bytes` as the offset.
@@ -165,7 +166,8 @@ stated. Every protocol 1 line stays valid.
   - A 4 MB close reads 256 rows; this is timed against `maxDuration` 60 in the plan.
 
 **User routes** (session org):
-- `GET /api/uploads?board=` lists a board's inbox.
+- `GET /api/uploads` lists the org's destination area, newest first, with each row's board. An optional `?board=`
+  filters it.
 - `GET /api/uploads/<id>/file` streams the file with `content-disposition: attachment; filename*=UTF-8''…`,
   `x-content-type-options: nosniff` and `content-type: application/octet-stream`. It is never rendered inline: an
   uploaded `.html` must not become stored XSS.
@@ -176,7 +178,12 @@ stated. Every protocol 1 line stays valid.
     `library_disk_id`.
 - `POST /api/uploads/<id>/send` queues the file to a board through `queueTransferFromBlob`, so a file can go from one
   Amiga to another.
-- `DELETE /api/uploads/<id>` removes the file.
+- `DELETE /api/uploads/<id>` deletes one file.
+- `POST /api/uploads/clear` with `{before}` (the newest `created_at` the user saw) deletes every stored or failed
+  row of the org up to that time. A file that arrives while the confirm is open is not cleared unseen. A row still
+  `receiving` is left alone. The answer gives the count deleted.
+- Deleting marks a row `deleted` and drops its chunks at once. The blob goes at the next weekly GC once nothing else
+  refers to it, because a library disk or a queued transfer may share it.
 
 **Housekeeping:**
 - The existing daily `GET /api/cron/transfers` also:
@@ -187,8 +194,8 @@ stated. Every protocol 1 line stays valid.
 
 **Status and card:**
 - The board reports nothing new: progress follows from the chunk offsets, as in Phase 4.
-- The board's card line adds "2 files from the Amiga" (stored within 24 h) and links to the Upload page with that
-  board selected.
+- The board's card line adds "2 files from the Amiga" (stored within 24 h). It links to the destination area,
+  filtered to that board.
 - Help: one topic in `src/lib/help/topics.tsx`, written with the code it describes.
 
 ## 5. Firmware 1.17.0
@@ -236,14 +243,14 @@ stated. Every protocol 1 line stays valid.
 
 - **Server side:**
   - Device routes authenticate the device token. The org and the board come from the token.
-  - The inbox is visible only to members of that org. There is no cross-org lookup by id: every query filters on
+  - The destination area is visible only to members of that org. There is no cross-org lookup by id: every query filters on
     `org_id`.
 - **Names:**
   - Cleaned twice, by Receive and by the server (`cleanAmigaPath`).
   - Stored as data and never used as a storage key: blobs are content-addressed.
   - Served only as an attachment with `nosniff`.
 - **Caps:** the size is announced in PUT and enforced on the server three times: at open, on every chunk (the total
-  can never pass the announced size) and at close. The per-board count and byte caps are checked in the open's
+  can never pass the announced size) and at close. The org's count and byte caps are checked in the open's
   transaction. There is one open upload per board.
 - **The Amiga side, which is new:** an upload is the user's file leaving the Amiga.
   - Today any LAN host can connect to 6800 while Receive runs (Phase 4 D9). An impostor that got there first could
@@ -332,8 +339,9 @@ One plan, four increments, each testable on its own:
      expiry, GC references and org scoping.
    - The board is then proven against FS-UAE and the real A500 with uploads started from the Shell.
 3. **Web.**
-   - The *From the Amiga* list, Download, Add to library, Send to an Amiga, Delete, the card line, the key digits and
-     help.
+   - The *From the Amiga* destination area: all of the org's boards, the board on each row, the board filter,
+     Download, Delete, Clear all (with its confirm and the `before` guard), Add to library and Send to an Amiga. Also
+     the card line, the key digits and help.
    - e2e for the touched areas only, on PORT 3100, against a simulated board.
    - The driver disk is rebuilt and re-pinned, under the rollout rule: never swapped under a running driver.
 
@@ -341,7 +349,8 @@ One plan, four increments, each testable on its own:
 1. Reinstall Receive from the new driver disk. Start it: "Trusted board AB12" matches the Upload page.
 2. Drop an LHA, a text file and an 880 KB ADF on the window. All three read "to web: done". The sha256 on the web
    matches `sha256` (or the CRC from Receive's log) on the Amiga. Record the time of each.
-3. Add the ADF to the library and mount it in DF0.
+3. Add the ADF to the library and mount it in DF0. Delete the text file, then Clear all: the area is empty, and the
+   ADF is still in the library.
 4. `Receive SEND RAM:x.txt` from a Shell, with Receive's window open (a handoff) and with it closed (a run of its
    own).
 5. Reset the Amiga at about 40 % of the ADF, then send it again. The log shows `at <offset>` and the file is whole.
@@ -371,16 +380,19 @@ One plan, four increments, each testable on its own:
 3. **Trust on first use for the board key (U7).** Is it worth the extra UI, or is the home-LAN risk accepted as in
    Phase 4 D9? *Recommend: keep TOFU.* An upload sends the user's file away, which is a worse outcome than a file
    dropped in, and the key is free to keep secret because it never goes out by radio.
-4. **Inbox retention and quota.** *Recommend: 30 days, 200 files / 64 MB per board,* with nothing kept forever. A
-   file worth keeping goes to the library or is downloaded.
+4. **Retention and quota of the destination area.** *Recommend: 30 days, and 500 files / 256 MB per org.* Clear all
+   (U6) is the user's own way to empty it; the expiry covers files nobody cleans up. A file worth keeping goes to the
+   library or is downloaded.
 5. **Per-file cap.** *Recommend: 4 MB, the same as sending.* The chunking would allow more, but Postgres staging and
    the 60 s close bound it, and 4 MB covers ADF, HD ADF, DMS and typical LHA archives. Raise it later if a use case
    appears.
 6. **Should ADFs be added to the library automatically?** *Recommend: no, a button.* The operator's wording was
    "optionally offered", and an automatic add would put unwanted disks in the library and run its sweeps.
 7. **Drawers.** Walk a dropped drawer and upload its files with their sub-paths (up to 64), or files only?
-   *Recommend: walk drawers.* It matches Browse → Send of a folder in Phase 4, and the inbox shows the paths.
-8. **Where the inbox sits.** Inside the Amiga card under the send queue, or a third card? *Recommend: inside the
-   Amiga card.* It shares the board selector, and the Upload page stays two matching cards (cdc6bed).
+   *Recommend: walk drawers.* It matches Browse → Send of a folder in Phase 4, and the destination area shows the paths.
+8. **Where the destination area sits.** U6 settles that it is one area for the whole org, so it no longer belongs
+   under one board's send queue. Should it be its own page or a full-width card on the Upload page? *Recommend: a
+   full-width card on the Upload page,* below the two matching cards (cdc6bed). Uploads in both directions then live
+   on one page, and the card links to it directly (`/ingest#from-amiga`).
 9. **Measure before building (increment 0).** *Recommend: yes.* The A2B bulk rate and the lwIP heap with
    1,514-byte frames are both unmeasured. The heap is at its floor, so a wrong guess here costs the most.
