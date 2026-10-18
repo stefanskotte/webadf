@@ -1694,7 +1694,7 @@ separately.
 - **LZH archives alongside LHA -- SHIPPED, merged 1fc980b (2026-10-09).**
   `.lzh` was already routed by `isArchiveName` (`/\.(lha|lzh|zip)$/`) into `readLha`; the container is identical, so
   the only code change is the drop error text. Decoder methods: -lh0-, -lz4- (stored), -lhd-, -lh5-, -lh6-, -lh7-;
-  -lh1-/-lh2-/-lh3-/-lzs-/-lz5- are skipped with a named reason (pre-1990 LHarc; rare on Amiga sites). Fixtures
+  -lh2-/-lh3-/-lzs-/-lz5- are skipped with a named reason (-lh1- decodes since 3by) (pre-1990 LHarc; rare on Amiga sites). Fixtures
   `m5/m6/m7.lzh` were written by the real `lha` (-o5/-o6/-o7). The `.adf` upload page does not take archives at all
   (unchanged); archives are a drop-onto-a-disk feature.
 - **Upload from a URL -- SHIPPED 2026-10-09 (3bd); LHA/LZH from a URL SHIPPED 2026-10-13 (9856cca)** with readLha guards: declared sizes checked before decoding, a block budget (ceil(out/256)+16), code lengths capped at 16, every member counted toward the 20-image cap. Two CPU bombs and a row flood were found in review and closed; 1,328 real archives decode unchanged. (requested 2026-10-09, via the operator): on the upload page, paste a URL and the web app
@@ -5010,6 +5010,26 @@ Demozoo API (the bulk export makes per-lookup load on a non-profit unnecessary).
 - **Screenshot redirects:** screenshot fetches follow redirects, so the `media.demozoo.org` host
   allowlist checks only the first URL (the raster content-type allowlist and `nosniff` still apply).
 - **Cron drift:** the daily 01:30 cron against a 7-day gate can drift a refetch to 8 days.
+
+### 3by. Backlog batch merged (master 21ac3d7) + fw 1.17.0 TEST (seq 103) on the bench -- 2026-10-18
+
+- Per-user settings (c178f93, migration 0043 user_prefs APPLIED): /settings, start page, remembered library/Browse sorts.
+  getUserPrefs falls back to defaults on a failed read; sort saves are serialised (one PATCH in flight, newest pending wins).
+- I2C scan report (4d0b86d, migration 0044 devices.i2c_addrs APPLIED): fw 1.17.0 status carries "i2c":[..]; the card names
+  what answered. Bench board reports [0x28, 0x3c].
+- OLED rotation 180 + head element "40.1" (6b7ab0a, fw 1.17.0). Operator 2026-10-18: "rotation is good" on the bench panel.
+  Head element on glass not yet confirmed.
+- -lh1- decoder (lh1.ts, ported from LHa for UNIX 1.14i dhuf/shuf; window prefilled with spaces). -lh2-/-lh3- still refused.
+- Per-user firmware.skipPassword (21ac3d7): ON only via POST /api/me/prefs/firmware-skip-password (password + shared
+  step-up throttle, src/lib/step-up-gate.ts); generic PATCH refuses true. Off/failed read => password required.
+- fw 1.17.0+gccb453a published TEST (seq 103), installed on the bench board. NOT released. On release: message Pillock and
+  Vincent Price to update so the I2C scan shows (operator asked, keep it brief).
+- Deferred minors: no CRC-16 check for any LHA method (corrupt same-length member accepted); device-list treats any 400 on a
+  password-less update as "setting turned off"; -lh5- treats a match before byte 0 as corrupt (reference fills spaces).
+- Pillock retest of "Receive is running" during long sends: confirmed good 2026-10-18 (1.97 MB delivered, rx stayed 'c').
+  An earlier send queued before his Amiga booted sat at "start receive" until he re-queued; cause not established.
+- Lesson: the e2e wait loop can race another agent onto PORT 3100; a run against someone else's dev server fails tests for
+  features it doesn't have. Rerun alone before calling it a regression.
 
 ### 3bx. fw 1.16.1 RELEASED (seq 102, fw-1.16.1, master 7250f5e) -- the NFC "rarely detected" regression was the 3 s re-tap rule, 2026-10-18
 
