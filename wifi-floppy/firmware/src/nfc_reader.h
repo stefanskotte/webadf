@@ -1,23 +1,33 @@
 #ifndef NFC_READER_H
 #define NFC_READER_H
-// The Si512 (HW-147C) tag reader as a step-wise state machine.
+// The tag reader as a step-wise state machine: an Si512 (HW-147C, MFRC522-
+// style registers) at 0x28, or an NXP PN532 (frame protocol) at 0x24.
 //
 // WHY a state machine and not the vendor's blocking functions: the reader
 // shares I2C1 with the OLED, and the bus belongs to core0 -- the real-time
 // floppy core. core0 cannot sit in a 25 ms wait for a tag to answer, so
-// every chip wait here is a state that re-reads one register per call, with
-// a deadline taken from now_ms(). One nfc_step() does at most
-// NFC_MAX_OPS_PER_STEP register operations and returns; the caller fits it
-// into the display pump's per-pass budget (spec §4.1).
+// every chip wait here is a state that re-reads one register (or one PN532
+// status byte) per call, with a deadline taken from now_ms(). One nfc_step()
+// does at most NFC_MAX_OPS_PER_STEP operations and returns; the caller fits
+// it into the display pump's per-pass budget (spec §4.1).
 //
-// The protocol is the vendor's SI512_App.c (PCD_SI512_TypeA_Init,
-// PcdComMF522, PcdRequest, PcdAnticoll, PcdSelect, CalulateCRC,
-// PcdAuthState, PcdRead, PcdWrite, PcdReset) ported state by state; the
-// register names are the vendor's.
+// The files: nfc_reader.c is the SESSION -- chip detection, the poll clock,
+// the hold windows, the Next card, arming, write + read-back verify, the
+// event mailbox and the gaps -- and the one copy of all of it. Its two chip
+// backends (nfc_reader_priv.h) only move tags' bytes:
+//   - nfc_si512.c: the vendor's SI512_App.c (PCD_SI512_TypeA_Init,
+//     PcdComMF522, PcdRequest, PcdAnticoll, PcdSelect, CalulateCRC,
+//     PcdAuthState, PcdRead, PcdWrite, PcdReset) ported state by state; the
+//     register names are the vendor's.
+//   - nfc_pn532.c: NXP UM0701-02 (PN532 User Manual, Rev. 02) frames over
+//     I2C -- SAMConfiguration, RFConfiguration, InListPassiveTarget and
+//     InDataExchange (MIFARE auth / read / write).
+// Which one runs is decided at every presence check: the Si512 first, then
+// the PN532 (nfc_attach_pn532), else absent.
 //
-// RULE: this file and nfc_reader.c may include only C standard headers plus
-// nfc_tag.h. The bus is reached only through nfc_bus_t, so the whole reader
-// runs on the host against test/si512_fake.c.
+// RULE: these files may include only C standard headers plus nfc_tag.h.
+// The bus is reached only through nfc_bus_t / nfc_frame_bus_t, so the whole
+// reader runs on the host against test/si512_fake.c and test/pn532_fake.c.
 #include <stdint.h>
 #include <stdbool.h>
 #include "nfc_tag.h"
@@ -29,6 +39,18 @@ typedef struct {
     int  (*rd)(void *ctx, uint8_t reg);               // <0 = transfer failed
     void *ctx;
 } nfc_bus_t;
+
+// The PN532's bus: whole I2C transfers, not registers (UM0701-02 §6.2.4).
+// A write is one complete frame; a read is the status byte and whatever
+// follows it, in ONE transfer (a STOP before the frame's end loses the
+// rest, §6.2.4). Each costs a whole nfc_step (see NFC_MAX_OPS_PER_STEP).
+typedef struct {
+    bool (*wr)(void *ctx, const uint8_t *buf, int n);   // false = transfer failed (NACK, timeout)
+    bool (*rd)(void *ctx, uint8_t *buf, int n);         // false = transfer failed
+    void *ctx;
+} nfc_frame_bus_t;
+
+typedef enum { NFC_CHIP_NONE, NFC_CHIP_SI512, NFC_CHIP_PN532 } nfc_chip_t;
 
 typedef enum { NFC_EV_NONE, NFC_EV_TAG_READ, NFC_EV_NOT_OURS, NFC_EV_UNREADABLE,
                NFC_EV_WRITE_DONE, NFC_EV_PRESENT, NFC_EV_ABSENT,
@@ -53,7 +75,17 @@ typedef struct {
     bool     new_arrival;
 } nfc_gap_t;
 
+// The cap is in Si512 register operations (~3 bytes on the bus each). A
+// PN532 step is ONE of: a status-byte read (1 op, 2 bytes on the bus), or one
+// whole frame transfer, which uses up the rest of the step and is the only
+// transfer in it -- at most 28 bytes written (InDataExchange WRITE) or 27 read
+// (a READ's answer): ~0.7 ms at 400 kHz, ~2.6 ms at 100 kHz.
 #define NFC_MAX_OPS_PER_STEP 4
+
+// The PN532 frame buffer: the largest frame either way here is 28 bytes; a
+// longer answer (an ISO 14443-4 card's ATS, a 10-byte UID) is re-read whole
+// up to this size and refused past it, never written past it.
+#define NFC_PN532_BUF 64
 
 // The vendor's MAXRLEN: the largest frame either way (16 data bytes + CRC_A).
 #define NFC_FRAME_MAX 18
@@ -63,6 +95,9 @@ typedef struct {
 typedef struct nfc_reader {
     nfc_bus_t bus;
     uint32_t (*now_ms)(void);
+    nfc_frame_bus_t fbus;  // the PN532's, if attached (has_fbus)
+    bool has_fbus;
+    int  chip;             // nfc_chip_t: the chip this session talks to
 
     int state;           // the protocol state (nfc_reader.c's st_t)
     int phase;           // where inside that state
@@ -123,10 +158,28 @@ typedef struct nfc_reader {
     // The one-slot mailbox.
     bool        has_ev;
     nfc_event_t ev;
+
+    // The PN532 backend (nfc_pn532.c).
+    bool     pn_probe_due;   // the Si512 just did not answer: try the PN532 next step
+    bool     probing;        // the PN532 is being tried, not yet found (not "present")
+    uint32_t t_probe;        // when that presence check began
+    uint8_t  pn_cmd;         // the command in flight (its answer is pn_cmd + 1)
+    int      pn_rd_len;      // bytes to read for its answer, status byte included
+    uint32_t pn_wait_ms;     // how long its answer may take
+    int      pn_bad;         // consecutive failed commands: LOSS_FAILS = the chip is gone
+    int      pn_nacks;       // NACKs sent for the current answer
+    bool     pn_field;       // the PN532's field may be on
+    uint8_t  sak;            // the tag's SEL_RES, from InListPassiveTarget
+    int      pn_at;          // where the answer's payload starts in pn_buf
+    uint8_t  pn_buf[NFC_PN532_BUF];
 } nfc_reader_t;
 
 // Starts in ABSENT; the first nfc_step() makes the boot-time presence check.
 void nfc_init(nfc_reader_t *r, const nfc_bus_t *bus, uint32_t (*now_ms)(void));
+
+// Gives the reader a PN532 to look for when the Si512 does not answer.
+// Without it (the host tests of the Si512 alone) only the Si512 is tried.
+void nfc_attach_pn532(nfc_reader_t *r, const nfc_frame_bus_t *fbus);
 
 // One slice of work. Returns the register operations used, never more than
 // NFC_MAX_OPS_PER_STEP. At most one event is produced per step, and while an
@@ -167,7 +220,11 @@ void nfc_arm_write_next(nfc_reader_t *r, uint32_t seq);
 // Withdraws the armed write. A write already under way finishes and reports.
 void nfc_disarm(nfc_reader_t *r);
 
-// The chip answers (any state but ABSENT).
+// The chip answers (any state but ABSENT, and not while a PN532 is only
+// being tried).
 bool nfc_present(const nfc_reader_t *r);
+
+// Which chip is present: NFC_CHIP_NONE while absent.
+nfc_chip_t nfc_chip(const nfc_reader_t *r);
 
 #endif
