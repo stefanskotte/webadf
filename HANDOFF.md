@@ -5011,6 +5011,25 @@ Demozoo API (the bulk export makes per-lookup load on a non-profit unnecessary).
   allowlist checks only the first URL (the raster content-type allowlist and `nosniff` still apply).
 - **Cron drift:** the daily 01:30 cron against a 7-day gate can drift a refetch to 8 days.
 
+### 3bz. fw 1.18.0 TEST (seq 104, master 02bfe14): PN532 NFC readers + track side arrow; head element removed -- 2026-10-19
+
+- PN532 (0x24) support: nfc_reader.c is now the shared session (hold windows, Next card, arm/write/verify, events);
+  nfc_si512.c is the old chip code moved unchanged; nfc_pn532.c is new (UM0701-02, cited in comments). Chip choice:
+  Si512 at 0x28 first; PN532 only if the BOOT I2C scan saw 0x24 (a PN532 plugged in later needs a restart); while on
+  the PN532 the Si512 is re-asked every 5 s and wins. i2c1 goes to 400 kHz once a PN532 answers (worst step 1.46 ms).
+  Host-tested against test/pn532_fake.c ONLY -- no real PN532 has run it. Tester: Pillock (his board reports 0x24);
+  his org was added to production FIRMWARE_BENCH_ORGS 2026-10-18; test steps posted in Discord 2026-10-19.
+- Track counter: "42/79" -> "42↑79" (side 1) / "42↓79" (side 0); slash when the side is unknown. Arrows are private
+  marker bytes only the counter draws; titles still draw '?' for bytes outside 0x20-0x7E. main.c always passes 79 as
+  the last cylinder (extended images still show 79 -- deferred).
+- Head element (id 10) removed: editor never offers it; the server strips it from layouts sent to boards and from saves;
+  firmware 1.18.0 skips a stored id-10 record. Stored layouts are NOT rewritten (no migration).
+- Display preview stays upright at Rotation 180 with a note (71d04ed).
+- Bench board on 1.18.0+gf6141bd: confirmed boot, Si512 present at 0x28, heap low-water unchanged at 20480.
+  Not yet seen on glass: the arrows. Not yet done on the bench: an Si512 tap after the refactor.
+- Deferred minors: Si512 probe accepts any ACK at 0x28 (no VersionReg check); card says 0x28 when both chips fitted;
+  SAK 0x28/0x38 Classic-emulating cards may read "locked" on a PN532; device-list 400 message; LHA CRC-16.
+
 ### 3by. Backlog batch merged (master 21ac3d7) + fw 1.17.0 RELEASED (seq 103, fw-1.17.0) -- 2026-10-18
 
 - Per-user settings (c178f93, migration 0043 user_prefs APPLIED): /settings, start page, remembered library/Browse sorts.
