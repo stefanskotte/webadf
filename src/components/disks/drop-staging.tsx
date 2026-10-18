@@ -97,6 +97,8 @@ export function DropStaging({
   /** Archive members that will NOT be written (unreadable, unsafe path, too deep, duplicate) -- kept on screen with the batch rather than only in a toast, because "what will be written" includes what will not. */
   const [archiveSkipped, setArchiveSkipped] = useState<ArchiveNotice[]>([]);
   const cardRef = useRef<HTMLDivElement>(null);
+  /** Why the last drop on a Browse folder was refused (it aimed at a folder other than the staged batch's), or null. */
+  const [refusedDrop, setRefusedDrop] = useState<string | null>(null);
 
   const existingMap = useMemo(
     () => new Map(Object.entries(existingNamesByDir)),
@@ -115,6 +117,19 @@ export function DropStaging({
     [entries, rootBlock],
   );
   const [destinationBlock, setDestinationBlock] = useState<number>(rootBlock);
+  /**
+   * The ONLY way the destination changes. Every skip/replace and typed rename
+   * was decided against the folder chosen at the time -- a "replace" for
+   * /A/X is not a decision about /B/X -- so they all go when it changes, and
+   * the live collision check asks again for the new folder.
+   */
+  function changeDestination(block: number) {
+    if (block === destinationBlock) return;
+    setDestinationBlock(block);
+    setResolutions(new Map());
+    setNameOverrides(new Map());
+    setRefusedDrop(null);
+  }
   // `collectDirectories`' labels are slash-prefixed ("/Docs", "/Docs/Sub")
   // for display; the internal convention every path in this component (and
   // `existingNamesByDir`'s own keys) uses is un-prefixed, '' for the root
@@ -256,6 +271,7 @@ export function DropStaging({
     setResolutions(new Map());
     setExcluded(new Set());
     setArchiveSkipped([]);
+    setRefusedDrop(null);
   }
 
   /**
@@ -265,6 +281,18 @@ export function DropStaging({
    * the strip.
    */
   function ingest(items: DataTransferItemList, destination: number | null) {
+    // A staged batch has ONE destination. A drop aimed at a different folder
+    // does not move it (that would retarget rows already reviewed for the
+    // first folder) and is not quietly staged for the wrong one either: it is
+    // refused, and nothing from it is read. Same folder, or the strip (which
+    // means "the batch's destination"), adds as before.
+    if (destination !== null && dropped.length > 0 && destination !== destinationBlock) {
+      const label = directoryOptions.find((d) => d.block === destinationBlock)?.label ?? '/';
+      const message = `This batch goes to ${label}. Write or clear it first, or change the destination above.`;
+      setRefusedDrop(message);
+      toast.error('Not added to this batch', { description: message });
+      return;
+    }
     // CROSS-TASK REQUIREMENT (owed by Task 7, honoured here): this call
     // MUST be the first thing that happens after the native drop event --
     // no `await` anywhere above it. webkitGetAsEntry(), which
@@ -281,14 +309,10 @@ export function DropStaging({
       for (const r of refused) {
         toast.error('Could not read that archive', { description: r.message });
       }
-      if (destination !== null && out.length > 0) {
-        if (dropped.length > 0 && destination !== destinationBlock) {
-          const label = directoryOptions.find((d) => d.block === destination)?.label ?? '/';
-          toast.info(`The whole batch now goes to ${label}`);
-        }
-        setDestinationBlock(destination);
-      }
+      // Only reached with an empty batch or the batch's own folder (above).
+      if (destination !== null && out.length > 0) changeDestination(destination);
       if (out.length > 0) {
+        setRefusedDrop(null);
         setDropped((prev) => [...prev, ...out]);
         // A drop on a tree row lands above this card; bring the review into view.
         if (destination !== null) cardRef.current?.scrollIntoView?.({ block: 'nearest', behavior: 'smooth' });
@@ -446,7 +470,7 @@ export function DropStaging({
               <select
                 data-testid="drop-destination-select"
                 value={destinationBlock}
-                onChange={(e) => setDestinationBlock(Number(e.target.value))}
+                onChange={(e) => changeDestination(Number(e.target.value))}
                 className="rounded border bg-transparent px-1.5 py-0.5 text-[11px]"
                 style={{ borderColor: 'var(--hairline)', color: 'var(--ink)' }}
               >
@@ -466,6 +490,13 @@ export function DropStaging({
             {summary.files} file{summary.files === 1 ? '' : 's'} and {summary.folders} folder{summary.folders === 1 ? '' : 's'}
             {' · '}{summary.bytes.toLocaleString()} byte{summary.bytes === 1 ? '' : 's'}
           </p>
+
+          {refusedDrop && (
+            <p className="text-[12px] font-semibold" style={{ color: 'var(--danger-fg)' }}
+               data-testid="drop-destination-refused">
+              {refusedDrop}
+            </p>
+          )}
 
           {archiveSkipped.length > 0 && (
             <div className="text-[11.5px]" style={{ color: 'var(--amber-text)' }} data-testid="drop-archive-skipped">

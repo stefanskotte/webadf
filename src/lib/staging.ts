@@ -27,6 +27,17 @@ import { sameName } from './adffs/write';
 import { MAX_DEPTH } from './adffs/constants';
 
 /**
+ * True when a name holds a character AmigaDOS cannot address: ':' (it ends a
+ * device/volume prefix), a control character, or DEL. Shared by the archive
+ * mapping (refuses the member) and the batch route (400), so a crafted
+ * manifest cannot write a name no Amiga path can reach. A plain dropped name
+ * never gets here with one: stageDrop substitutes them (forbidUnwritable).
+ */
+export function unaddressableName(name: string): boolean {
+  return /[:\x00-\x1f\x7f]/.test(name);
+}
+
+/**
  * True when a '/'-joined path is nested deeper than `readVolume` will walk
  * (`MAX_DEPTH`). Writing one would produce a disk whose deepest entries this
  * app itself could not list again. Shared by the staging area and the batch
@@ -134,7 +145,7 @@ function forbidUnwritable(name: string): string {
   let out = '';
   for (let i = 0; i < name.length; i++) {
     const c = name.charCodeAt(i);
-    out += (c === 0x2f || c === 0x3a || c < 0x20) ? FORBIDDEN_SUBSTITUTE : name[i];
+    out += (c === 0x2f || c === 0x3a || c < 0x20 || c === 0x7f) ? FORBIDDEN_SUBSTITUTE : name[i];
   }
   return out;
 }

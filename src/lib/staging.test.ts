@@ -217,3 +217,11 @@ describe('joinDestination / existingCollisionAt (DropStaging\'s destination sele
     expect(existingCollisionAt('unique.txt', '', 'Sub', existingNamesByDir, false)).toBeNull();
   });
 });
+
+describe('DEL (0x7f) is unwritable too', () => {
+  it('is substituted in a dropped name, as a control character is, so the batch route never refuses it', () => {
+    const [s] = stageDrop([{ path: 'a\u007fb', kind: 'file', sizeBytes: 0 }], new Map(), false);
+    expect(s.name).toBe('a_b');
+    expect(s.shortened).toBe(true);
+  });
+});

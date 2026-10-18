@@ -150,3 +150,57 @@ test('a plain file dropped on a folder row is staged into that folder, as a file
   if (!after.ok) throw new Error('disk unreadable after the write');
   expect(child(child(after.root, 'Docs')!.children, 'notes.txt')).toBeTruthy();
 });
+
+test('a staged batch keeps its folder: a drop on another folder is refused, and changing the destination drops earlier decisions', async ({ page }) => {
+  test.setTimeout(60_000);
+  const u = await signUpFresh(page);
+  await page.goto('/library');
+  await createAdf(page);
+  const disk = await authoredDisk(page, u.orgId);
+  for (const name of ['A', 'B']) {
+    const res = await page.request.post(`/api/disks/${disk.id}/files`, { multipart: { parentBlock: String(ROOT_BLOCK), name } });
+    expect(res.ok()).toBe(true);
+  }
+  const vol = readVolume(await fetchAdf(page, disk.id));
+  if (!vol.ok) throw new Error('fresh disk unreadable');
+  const a = child(vol.root, 'A')!; const b = child(vol.root, 'B')!;
+  // X.TXT exists in BOTH folders, holding different bytes.
+  for (const [dir, text] of [[a, 'old A'], [b, 'old B']] as const) {
+    const res = await page.request.post(`/api/disks/${disk.id}/files`, {
+      multipart: { parentBlock: String(dir.block), name: 'X.TXT',
+                   file: { name: 'X.TXT', mimeType: 'application/octet-stream', buffer: Buffer.from(text) } },
+    });
+    expect(res.ok()).toBe(true);
+  }
+
+  await page.goto(`/disks/${disk.id}/files`);
+  await synthDrop(page, [{ name: 'X.TXT', kind: 'file', content: 'new' }], `[data-testid="fs-drop-${a.block}"]`);
+  await expect(page.getByTestId('drop-destination-select')).toHaveValue(String(a.block));
+  await page.getByTestId('stage-replace-0').click();
+  await expect(page.getByTestId('stage-resolution-0')).toHaveText('Will replace existing');
+
+  // A second drop aimed at B: refused, nothing from it staged, batch still /A.
+  await synthDrop(page, [{ name: 'other.txt', kind: 'file', content: 'zzz' }], `[data-testid="fs-drop-${b.block}"]`);
+  await expect(page.getByTestId('drop-destination-refused')).toContainText('This batch goes to /A');
+  await expect(page.getByTestId('drop-destination-select')).toHaveValue(String(a.block));
+  await expect(page.locator('[data-testid^="stage-row-"]')).toHaveCount(1);
+  await expect(page.getByTestId('stage-resolution-0')).toHaveText('Will replace existing');
+
+  // Retargeting by hand to B: the "replace" was decided for /A/X.TXT, so it
+  // must not carry over to /B/X.TXT unreviewed.
+  await page.getByTestId('drop-destination-select').selectOption(String(b.block));
+  await expect(page.getByTestId('stage-resolution-0')).toHaveCount(0);
+  await expect(page.getByTestId('stage-conflict-0')).toBeVisible();
+  await expect(page.getByTestId('drop-commit')).toBeDisabled();
+  await expect(page.getByTestId('drop-destination-refused')).toHaveCount(0);
+
+  // Nothing was written anywhere.
+  const now = readVolume(await fetchAdf(page, disk.id));
+  if (!now.ok) throw new Error('unreadable');
+  const adf = await fetchAdf(page, disk.id);
+  for (const [name, text] of [['A', 'old A'], ['B', 'old B']] as const) {
+    const x = child(child(now.root, name)!.children, 'X.TXT')!;
+    expect(new TextDecoder().decode(readFile(adf, x.block)!.bytes)).toBe(text);
+    expect(child(child(now.root, name)!.children, 'other.txt')).toBeUndefined();
+  }
+});

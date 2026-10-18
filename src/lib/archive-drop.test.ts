@@ -60,6 +60,18 @@ describe('archiveToDroppedItems', () => {
     expect(skipped.every((s) => s.reason === 'unsafe path')).toBe(true);
   });
 
+  it('refuses a member whose name AmigaDOS cannot address (colon, control, DEL), per item', () => {
+    const { items, skipped } = archiveToDroppedItems('a.lha', lha([
+      member('Work:x.txt'), member('d/bad\u0001.txt'), member('del\u007f'), member('ok.txt'),
+    ]));
+    expect(items.map((i) => i.path)).toEqual(['ok.txt']);
+    expect(skipped).toEqual([
+      { archive: 'a.lha', path: 'Work:x.txt', reason: 'name AmigaDOS cannot hold' },
+      { archive: 'a.lha', path: 'd/bad\u0001.txt', reason: 'name AmigaDOS cannot hold' },
+      { archive: 'a.lha', path: 'del\u007f', reason: 'name AmigaDOS cannot hold' },
+    ]);
+  });
+
   it('collapses doubled separators instead of creating an empty-named folder', () => {
     const { items } = archiveToDroppedItems('a.lha', lha([member('a//b.txt')]));
     expect(items.map((i) => i.path)).toEqual(['a', 'a/b.txt']);
@@ -142,11 +154,12 @@ describe('expandArchivesInDrop', () => {
   });
 
   it('refuses a truncated real archive rather than staging a short file', async () => {
-    const full = fx('h1.lha');
-    const out = await expandArchivesInDrop([fileItem('cut.lha', full.subarray(0, 60))]);
-    // Whatever survived must be whole; the damage is named, not silently dropped.
-    expect(out.items.filter((i) => i.kind === 'file').length + out.refused.length).toBeGreaterThanOrEqual(1);
-    expect(out.skipped.length + out.refused.length).toBeGreaterThan(0);
+    // Cut inside the first member's data: src/noise.bin (600 bytes stored)
+    // holds 5. Nothing is staged, and the archive is refused by name.
+    const out = await expandArchivesInDrop([fileItem('cut.lha', fx('h1.lha').subarray(0, 120))]);
+    expect(out.items).toEqual([]);
+    expect(out.refused).toEqual([{ name: 'cut.lha', message: 'Nothing in cut.lha could be read.' }]);
+    expect(out.skipped).toEqual([{ archive: 'cut.lha', path: 'src/noise.bin', reason: 'truncated (5/600 bytes)' }]);
   });
 });
 

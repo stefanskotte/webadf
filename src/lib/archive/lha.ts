@@ -179,6 +179,13 @@ export function readLha(buf: Uint8Array, opts: LhaReadOptions = {}): LhaReadResu
       break;
     }
 
+    // A header that runs past the end of the file is a cut archive: its
+    // path and sizes cannot be trusted, and nothing after it exists.
+    if (dataStart > buf.length) {
+      skipped.push({ path: path || '(cut header)', reason: 'truncated header' });
+      break;
+    }
+
     const data = buf.subarray(dataStart, dataStart + Math.max(0, packed));
 
     const decodable = method === '-lh0-' || method === '-lz4-' || DIC_BITS[method] !== undefined;
@@ -199,7 +206,13 @@ export function readLha(buf: Uint8Array, opts: LhaReadOptions = {}): LhaReadResu
       skipped.push({ path, reason: 'archive limit reached' });
     } else if (method === '-lh0-' || method === '-lz4-') {
       total += original;
-      entries.push({ path, bytes: data.slice(0, original), protection, method });
+      // Stored, so the data IS the file: fewer bytes than the header claims
+      // means the archive was cut, and a short file must never pass as whole.
+      if (data.length < original) {
+        skipped.push({ path, reason: `truncated (${data.length}/${original} bytes)` });
+      } else {
+        entries.push({ path, bytes: data.slice(0, original), protection, method });
+      }
     } else if (DIC_BITS[method] !== undefined) {
       // Charged whether or not the stream turns out complete: the work and the
       // allocation happen either way.

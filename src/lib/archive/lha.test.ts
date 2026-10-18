@@ -297,3 +297,28 @@ describe('code length cap (a CPU bomb made of one very deep code)', () => {
     expect(() => decodeLzh(deepCodeStream(16), 4, 13)).not.toThrow();
   });
 });
+
+describe('a truncated archive never yields a short member', () => {
+  const full = new Uint8Array(readFileSync(join(__dirname, 'fixtures', 'h1.lha')));
+
+  it('a stored (-lh0-) member cut mid-data is skipped as truncated, not returned short', () => {
+    // h1.lha's first member, src/noise.bin, is 600 bytes stored; cut at 120
+    // the file holds only 5 of them.
+    const r = readLha(full.subarray(0, 120));
+    expect(r.entries).toEqual([]);
+    expect(r.skipped).toEqual([{ path: 'src/noise.bin', reason: 'truncated (5/600 bytes)' }]);
+  });
+
+  it('cut 30 bytes short, the members before the cut survive whole and the last is named', () => {
+    const r = readLha(full.subarray(0, full.length - 30));
+    expect(r.entries.map((e) => [e.path, e.bytes.length])).toEqual([
+      ['src/noise.bin', 600], ['src/readme.txt', 135], ['src/sub/deep.txt', 44],
+    ]);
+    // The cut lands in the last member's header, which loses its directory
+    // extension -- the path is read as far as it goes; the verdict is what
+    // matters: none of its 3 bytes are there, so it is not written.
+    expect(r.skipped).toHaveLength(1);
+    expect(r.skipped[0].path.endsWith('tiny.txt')).toBe(true);
+    expect(r.skipped[0].reason).toBe('truncated (0/3 bytes)');
+  });
+});

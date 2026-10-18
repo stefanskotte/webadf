@@ -1,6 +1,6 @@
 import { expandArchive, isArchiveName, MAX_ARCHIVE_BYTES, type ArchiveResult } from './archive';
 import type { DroppedItem } from './drop-reader';
-import { pathTooDeep } from './staging';
+import { pathTooDeep, unaddressableName } from './staging';
 
 export { pathTooDeep };
 
@@ -37,6 +37,10 @@ export function archiveToDroppedItems(
     const parts = m.path.split('/').filter((p) => p.length > 0);
     if (parts.length === 0 || parts.some((p) => p === '.' || p === '..')) {
       skipped.push({ archive: archiveName, path: m.path, reason: 'unsafe path' });
+      continue;
+    }
+    if (parts.some(unaddressableName)) {
+      skipped.push({ archive: archiveName, path: m.path, reason: 'name AmigaDOS cannot hold' });
       continue;
     }
     const path = parts.join('/');
