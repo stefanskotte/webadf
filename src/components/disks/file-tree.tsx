@@ -21,6 +21,20 @@ import type { AdfEntry } from '@/lib/adffs';
 import type { SendContext } from '@/lib/send-ui';
 import { useSendAction } from '@/components/send/send-button';
 import { useFileEdit, MAX_NAME_LENGTH, type EditDisabled } from './file-actions';
+import { useNativeDrop, isFileDrag } from './native-drop';
+
+/**
+ * The handlers that make an element take an OS file drop for `block`
+ * (native-drop.tsx). Only a FILE drag is claimed, so dnd-kit's own moves --
+ * pointer events, never a native `drop` -- and dragged text are untouched.
+ * stopPropagation keeps the tree's root handler from claiming a drop a
+ * folder row already took.
+ */
+export interface NativeDropProps {
+  onDragOver: (e: React.DragEvent<HTMLElement>) => void;
+  onDragLeave: (e: React.DragEvent<HTMLElement>) => void;
+  onDrop: (e: React.DragEvent<HTMLElement>) => void;
+}
 
 /**
  * Directories first, then case-insensitive name order.
@@ -195,6 +209,37 @@ export function FileTree({ entries, diskId, send = null }: { entries: AdfEntry[]
   const [openBlocks, setOpenBlocks] = useState<ReadonlySet<number>>(() => new Set());
   const { disabled, busy, runEdit, rootBlock } = useFileEdit();
   const sender = useSendAction(send);
+
+  // OS file drops onto a folder row (or the tree itself, meaning the root)
+  // go to the staging area with that folder as the destination. Even when
+  // editing is disabled the drop is CLAIMED -- an unclaimed file drop makes
+  // the browser open the file -- and the staging receiver says why nothing
+  // was staged.
+  const nativeDrop = useNativeDrop();
+  const [nativeOver, setNativeOver] = useState<number | null>(null);
+  function nativeDropProps(block: number): NativeDropProps | undefined {
+    if (!nativeDrop) return undefined;
+    return {
+      onDragOver: (e) => {
+        if (!isFileDrag(e)) return;
+        e.preventDefault();
+        e.stopPropagation();
+        try { e.dataTransfer.dropEffect = disabled ? 'none' : 'copy'; } catch { /* read-only in some engines */ }
+        if (nativeOver !== block) setNativeOver(block);
+      },
+      onDragLeave: (e) => {
+        if (e.currentTarget.contains(e.relatedTarget as Node | null)) return;
+        setNativeOver((prev) => (prev === block ? null : prev));
+      },
+      onDrop: (e) => {
+        if (!isFileDrag(e)) return;
+        e.preventDefault();
+        e.stopPropagation();
+        setNativeOver(null);
+        nativeDrop.receive(e.dataTransfer.items, block);
+      },
+    };
+  }
 
   // Which single row, if any, has its rename or delete form expanded. Kept
   // here rather than per-row, and mutually exclusive with each other: at
@@ -402,9 +447,11 @@ export function FileTree({ entries, diskId, send = null }: { entries: AdfEntry[]
         <div
           ref={setRootDropRef}
           className="glass-card p-5 text-[13px]"
-          style={{ color: 'var(--muted)' }}
+          style={{ color: 'var(--muted)',
+                   boxShadow: nativeOver === rootBlock ? 'inset 0 0 0 2px var(--accent-amber)' : undefined }}
           data-testid="file-tree"
-          data-drop-target={rootIsOver ? 'true' : undefined}
+          data-drop-target={rootIsOver || nativeOver === rootBlock ? 'true' : undefined}
+          {...nativeDropProps(rootBlock)}
         >
           This disk&apos;s root directory is empty.
         </div>
@@ -434,8 +481,10 @@ export function FileTree({ entries, diskId, send = null }: { entries: AdfEntry[]
       <div
         ref={setRootDropRef}
         className="glass-card overflow-hidden p-3"
+        style={{ boxShadow: nativeOver === rootBlock ? 'inset 0 0 0 2px var(--accent-amber)' : undefined }}
         data-testid="file-tree"
-        data-drop-target={rootIsOver ? 'true' : undefined}
+        data-drop-target={rootIsOver || nativeOver === rootBlock ? 'true' : undefined}
+        {...nativeDropProps(rootBlock)}
       >
         {rows.map(({ entry, depth, open }, i) => (
           <FileRow
@@ -470,6 +519,10 @@ export function FileTree({ entries, diskId, send = null }: { entries: AdfEntry[]
             cancelMove={cancelMove}
             submitMove={submitMove}
             setMoveTarget={setMoveTarget}
+            // A folder takes a drop into itself; a file row means "next to
+            // this file", i.e. into the folder it is in.
+            nativeDrop={nativeDropProps(entry.kind === 'dir' ? entry.block : (parentBlocks.get(entry.block) ?? rootBlock))}
+            nativeOver={nativeOver === entry.block}
           />
         ))}
       </div>
@@ -514,6 +567,10 @@ interface FileRowProps {
   cancelMove: () => void;
   submitMove: (block: number) => void;
   setMoveTarget: (value: number | '') => void;
+  /** OS file-drop handlers for this row (see FileTree's nativeDropProps). */
+  nativeDrop?: NativeDropProps;
+  /** An OS file drag is over this folder right now. */
+  nativeOver: boolean;
 }
 
 function FileRow({
@@ -522,7 +579,7 @@ function FileRow({
   forbiddenBlocks, diskId, canSend, sendBusy, onSend,
   toggle, startRename, cancelRename, submitRename, setRenameValue,
   startDelete, cancelDelete, submitDelete,
-  startMove, cancelMove, submitMove, setMoveTarget,
+  startMove, cancelMove, submitMove, setMoveTarget, nativeDrop, nativeOver,
 }: FileRowProps) {
   const isDir = entry.kind === 'dir';
 
@@ -594,6 +651,7 @@ function FileRow({
       }}
       data-testid="fs-entry"
       data-name={entry.name}
+      {...(isDir ? {} : nativeDrop)}
     >
       {/*
         Absolutely positioned in the gutter `GRIP_GUTTER` reserves on the
@@ -940,14 +998,15 @@ function FileRow({
     <div
       ref={setDropRef}
       data-testid={`fs-drop-${entry.block}`}
-      data-drop-target={isOver ? 'true' : undefined}
+      data-drop-target={isOver || nativeOver ? 'true' : undefined}
+      {...nativeDrop}
       style={{
         borderRadius: '6px',
         // Geometry never changes -- no padding or size shift -- because
         // moving a drop target out from under the cursor mid-drag is how you
         // make a drop land somewhere the person did not aim (same rule
         // collection-rail.tsx's own drop highlight follows).
-        boxShadow: isOver ? 'inset 0 0 0 2px var(--accent-amber)' : undefined,
+        boxShadow: isOver || nativeOver ? 'inset 0 0 0 2px var(--accent-amber)' : undefined,
       }}
     >
       {row}

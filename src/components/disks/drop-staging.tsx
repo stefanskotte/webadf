@@ -1,12 +1,13 @@
 'use client';
 
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { readDroppedItems, type DroppedItem } from '@/lib/drop-reader';
-import { expandArchive, isArchiveName } from '@/lib/archive';
+import { expandArchivesInDrop, stagingSummary, type ArchiveNotice } from '@/lib/archive-drop';
 import { toast } from 'sonner';
 import {
-  stageDrop, joinDestination, existingCollisionAt, type StagedEntry, type ExistingEntry,
+  stageDrop, joinDestination, existingCollisionAt, pathTooDeep, rowNameProblem, type StagedEntry, type ExistingEntry,
 } from '@/lib/staging';
+import { useNativeDrop } from './native-drop';
 import { blocksForPlan, type AdfEntry, type Filesystem } from '@/lib/adffs';
 // The identical fold `stageDrop` itself uses (see staging.ts's own comment):
 // reused here, not reinvented, so a live re-check of a typed rename can
@@ -93,6 +94,11 @@ export function DropStaging({
   const [nameOverrides, setNameOverrides] = useState<ReadonlyMap<string, string>>(new Map());
   const [resolutions, setResolutions] = useState<ReadonlyMap<string, Resolution>>(new Map());
   const [dragOver, setDragOver] = useState(false);
+  /** Archive members that will NOT be written (unreadable, unsafe path, too deep, duplicate) -- kept on screen with the batch rather than only in a toast, because "what will be written" includes what will not. */
+  const [archiveSkipped, setArchiveSkipped] = useState<ArchiveNotice[]>([]);
+  const cardRef = useRef<HTMLDivElement>(null);
+  /** Why the last drop on a Browse folder was refused (it aimed at a folder other than the staged batch's), or null. */
+  const [refusedDrop, setRefusedDrop] = useState<string | null>(null);
 
   const existingMap = useMemo(
     () => new Map(Object.entries(existingNamesByDir)),
@@ -111,6 +117,19 @@ export function DropStaging({
     [entries, rootBlock],
   );
   const [destinationBlock, setDestinationBlock] = useState<number>(rootBlock);
+  /**
+   * The ONLY way the destination changes. Every skip/replace and typed rename
+   * was decided against the folder chosen at the time -- a "replace" for
+   * /A/X is not a decision about /B/X -- so they all go when it changes, and
+   * the live collision check asks again for the new folder.
+   */
+  function changeDestination(block: number) {
+    if (block === destinationBlock) return;
+    setDestinationBlock(block);
+    setResolutions(new Map());
+    setNameOverrides(new Map());
+    setRefusedDrop(null);
+  }
   // `collectDirectories`' labels are slash-prefixed ("/Docs", "/Docs/Sub")
   // for display; the internal convention every path in this component (and
   // `existingNamesByDir`'s own keys) uses is un-prefixed, '' for the root
@@ -250,77 +269,77 @@ export function DropStaging({
     setDropped([]);
     setNameOverrides(new Map());
     setResolutions(new Map());
+    setExcluded(new Set());
+    setArchiveSkipped([]);
+    setRefusedDrop(null);
+  }
+
+  /**
+   * Read a native drop and stage it. MUST be called synchronously from the
+   * drop handler itself -- see the comment inside. `destinationBlock` is the
+   * Browse folder the drop landed on, when it landed on one rather than on
+   * the strip.
+   */
+  function ingest(items: DataTransferItemList, destination: number | null) {
+    // A staged batch has ONE destination. A drop aimed at a different folder
+    // does not move it (that would retarget rows already reviewed for the
+    // first folder) and is not quietly staged for the wrong one either: it is
+    // refused, and nothing from it is read. Same folder, or the strip (which
+    // means "the batch's destination"), adds as before.
+    if (destination !== null && dropped.length > 0 && destination !== destinationBlock) {
+      const label = directoryOptions.find((d) => d.block === destinationBlock)?.label ?? '/';
+      const message = `This batch goes to ${label}. Write or clear it first, or change the destination above.`;
+      setRefusedDrop(message);
+      toast.error('Not added to this batch', { description: message });
+      return;
+    }
+    // CROSS-TASK REQUIREMENT (owed by Task 7, honoured here): this call
+    // MUST be the first thing that happens after the native drop event --
+    // no `await` anywhere above it. webkitGetAsEntry(), which
+    // readDroppedItems calls synchronously before it ever yields, only works
+    // inside the live drop handler; the browser neuters `dataTransfer` the
+    // instant the handler returns control. Get this wrong and a dropped
+    // folder arrives as nothing, silently: no vitest suite can catch it.
+    readDroppedItems(items).then(async (read) => {
+      // Archives expand HERE, after the synchronous read above, into exactly
+      // the DroppedItem shape a folder produces (archive-drop.ts) -- which is
+      // what lets staging, the destination, collision handling and the
+      // free-space estimate apply to an .lha/.lzh without knowing it is one.
+      const { items: out, refused, skipped } = await expandArchivesInDrop(read);
+      for (const r of refused) {
+        toast.error('Could not read that archive', { description: r.message });
+      }
+      // Only reached with an empty batch or the batch's own folder (above).
+      if (destination !== null && out.length > 0) changeDestination(destination);
+      if (out.length > 0) {
+        setRefusedDrop(null);
+        setDropped((prev) => [...prev, ...out]);
+        // A drop on a tree row lands above this card; bring the review into view.
+        if (destination !== null) cardRef.current?.scrollIntoView?.({ block: 'nearest', behavior: 'smooth' });
+      }
+      if (skipped.length > 0) setArchiveSkipped((prev) => [...prev, ...skipped]);
+    });
   }
 
   function handleDrop(e: React.DragEvent<HTMLDivElement>) {
     e.preventDefault();
     setDragOver(false);
     if (disabled) return;
-    // CROSS-TASK REQUIREMENT (owed by Task 7, honoured here): this call
-    // MUST be the first thing that happens after the native drop event --
-    // no `await` anywhere above it in this function. webkitGetAsEntry(),
-    // which readDroppedItems calls synchronously before it ever yields,
-    // only works inside the live drop handler; the browser neuters
-    // `event.dataTransfer` the instant this function returns control (i.e.
-    // the moment it would hit its own first `await`). Reading `.items` here
-    // -- as a plain function call, not behind an `await` of anything else
-    // first -- is what keeps this correct. Get this wrong and a dropped
-    // folder arrives as nothing, silently: no vitest suite can catch it.
-    readDroppedItems(e.dataTransfer.items).then(async (items) => {
-      // Archives expand HERE, after the synchronous read above, so the
-      // dataTransfer rule is untouched -- and they expand into exactly the
-      // same DroppedItem shape a folder produces, which is what lets the
-      // staging area, destination picker, collision handling and free-space
-      // estimate all apply to an .lha/.lzh without knowing it is one.
-      const out: DroppedItem[] = [];
-      for (const item of items) {
-        if (item.kind !== 'file' || !item.file || !isArchiveName(item.file.name)) {
-          out.push(item);
-          continue;
-        }
-        const bytes = new Uint8Array(await item.file.arrayBuffer());
-        const result = await expandArchive(item.file.name, bytes);
-        if (result === null) { out.push(item); continue; }
-        if ('error' in result) {
-          toast.error(
-            result.error === 'too-large' ? 'Archive is too large' : 'Could not read that archive',
-            { description: result.error === 'too-large'
-                ? `${item.file.name} is ${(result.sizeBytes / 1024 / 1024).toFixed(1)} MB; the limit is 25 MB.`
-                : `${item.file.name} is not an .lha, .lzh or .zip this can open.` });
-          continue;
-        }
-
-        // Parent directories, synthesised from the member paths. A dropped
-        // FOLDER arrives with its directories already present as entries and
-        // the commit turns those into mkdir ops; an archive carries its
-        // structure only in the paths, so without this a nested member would
-        // be written into a directory that was never created.
-        const dirs = new Set<string>();
-        for (const m of result.members) {
-          const parts = m.path.split('/').slice(0, -1);
-          for (let i = 1; i <= parts.length; i++) dirs.add(parts.slice(0, i).join('/'));
-        }
-        for (const d of [...dirs].sort()) {
-          out.push({ path: d, kind: 'dir', sizeBytes: 0 });
-        }
-        for (const m of result.members) {
-          out.push({
-            path: m.path,
-            kind: 'file',
-            sizeBytes: m.bytes.length,
-            file: new File([m.bytes as unknown as BlobPart], m.path.split('/').pop() ?? 'file'),
-            protection: m.protection,
-          });
-        }
-        if (result.skipped.length > 0) {
-          toast.warning(`${result.skipped.length} item${result.skipped.length === 1 ? '' : 's'} in ${item.file.name} could not be read`, {
-            description: result.skipped.slice(0, 3).map((k) => `${k.path}: ${k.reason}`).join('; '),
-          });
-        }
-      }
-      setDropped((prev) => [...prev, ...out]);
-    });
+    ingest(e.dataTransfer.items, null);
   }
+
+  // The Browse tree forwards drops on its rows here (native-drop.tsx). The
+  // receiver is re-registered every render so it never closes over stale
+  // state; it is a ref write, not a re-render.
+  const nativeDrop = useNativeDrop();
+  useEffect(() => {
+    if (!nativeDrop) return;
+    nativeDrop.register((items, block) => {
+      if (disabled) { toast.error(disabled.message); return; }
+      ingest(items, block);
+    });
+    return () => nativeDrop.register(null);
+  });
 
   const nonSkipped = rows.filter((r) => r.resolution !== 'skip' && !excluded.has(r.entry.path));
   const totalBlocks = useMemo(
@@ -328,13 +347,19 @@ export function DropStaging({
     [nonSkipped, filesystem],
   );
   const overCapacity = totalBlocks > freeBlocks;
+  const summary = stagingSummary(nonSkipped.map((r) => r.entry));
+  // Deeper than readVolume walks once joined onto the destination -- the batch
+  // route refuses the same paths (pathTooDeep is shared), this says so first.
+  const tooDeep = nonSkipped.filter((r) => pathTooDeep(diskPathFor(r.entry.path)));
+  // A typed rename is the one name nothing has sanitised (rowNameProblem).
+  const badName = nonSkipped.some((r) => rowNameProblem(r.name) !== null);
   // A 'replace' resolution deliberately KEEPS collidesWith === 'existing'
   // (see the rows computation above) -- it is the chosen outcome, not an
   // unresolved one, so only a collision with no resolution yet blocks the
   // commit (D-DD-4).
   const hasOutstandingCollision = rows.some((r) => r.collidesWith !== null && r.resolution === null);
   const commitDisabled = !!disabled || busy || rows.length === 0
-    || nonSkipped.length === 0 || hasOutstandingCollision || overCapacity;
+    || nonSkipped.length === 0 || hasOutstandingCollision || overCapacity || tooDeep.length > 0 || badName;
 
   /** The path this dropped item would sit at from the drop's OWN root -- recurses through renamed ancestors, but knows nothing of the destination selector; see `diskPathFor` below for the path actually written. */
   function relativePathFor(path: string): string {
@@ -394,7 +419,7 @@ export function DropStaging({
   }
 
   return (
-    <div className="glass-card flex flex-col gap-3 p-4" data-testid="drop-staging">
+    <div ref={cardRef} className="glass-card flex flex-col gap-3 p-4" data-testid="drop-staging">
       {disabled && (
         <p className="text-[12.5px] font-semibold" style={{ color: 'var(--amber-text)' }}
            data-testid="drop-disabled">
@@ -423,7 +448,7 @@ export function DropStaging({
         }}
       >
         {rows.length === 0
-          ? 'Drag files or a folder here to add them to this disk.'
+          ? 'Drag files, a folder or an .lha/.lzh/.zip here (or onto a folder above) to add them to this disk.'
           : `${rows.length} item${rows.length === 1 ? '' : 's'} staged below — drop more to add to the same batch.`}
       </div>
 
@@ -447,7 +472,7 @@ export function DropStaging({
               <select
                 data-testid="drop-destination-select"
                 value={destinationBlock}
-                onChange={(e) => setDestinationBlock(Number(e.target.value))}
+                onChange={(e) => changeDestination(Number(e.target.value))}
                 className="rounded border bg-transparent px-1.5 py-0.5 text-[11px]"
                 style={{ borderColor: 'var(--hairline)', color: 'var(--ink)' }}
               >
@@ -462,6 +487,40 @@ export function DropStaging({
               <span data-testid="drop-free-blocks">{freeBlocks.toLocaleString()}</span> free
             </span>
           </div>
+
+          <p className="text-[12px]" style={{ color: 'var(--ink)' }} data-testid="drop-summary">
+            {summary.files} file{summary.files === 1 ? '' : 's'} and {summary.folders} folder{summary.folders === 1 ? '' : 's'}
+            {' · '}{summary.bytes.toLocaleString()} byte{summary.bytes === 1 ? '' : 's'}
+          </p>
+
+          {refusedDrop && (
+            <p className="text-[12px] font-semibold" style={{ color: 'var(--danger-fg)' }}
+               data-testid="drop-destination-refused">
+              {refusedDrop}
+            </p>
+          )}
+
+          {archiveSkipped.length > 0 && (
+            <div className="text-[11.5px]" style={{ color: 'var(--amber-text)' }} data-testid="drop-archive-skipped">
+              <p className="font-semibold">
+                {archiveSkipped.length} item{archiveSkipped.length === 1 ? '' : 's'} from the archive will not be written:
+              </p>
+              <ul className="list-disc pl-5">
+                {archiveSkipped.slice(0, 20).map((k, i) => (
+                  <li key={i}>{k.archive}: {k.path} ({k.reason})</li>
+                ))}
+                {archiveSkipped.length > 20 && <li>and {archiveSkipped.length - 20} more</li>}
+              </ul>
+            </div>
+          )}
+
+          {tooDeep.length > 0 && (
+            <p className="text-[12px] font-semibold" style={{ color: 'var(--danger-fg)' }}
+               data-testid="drop-depth-warning">
+              {tooDeep.length} item{tooDeep.length === 1 ? ' is' : 's are'} nested deeper than an Amiga folder
+              tree this browser can read back — leave {tooDeep.length === 1 ? 'it' : 'them'} out or pick a shallower destination.
+            </p>
+          )}
 
           {overCapacity && (
             <p className="text-[12px] font-semibold" style={{ color: 'var(--danger-fg)' }}
@@ -527,6 +586,13 @@ export function DropStaging({
                   ) : (
                     <span data-testid={`stage-name-${i}`} style={{ color: 'var(--ink)' }}>
                       {row.name}
+                    </span>
+                  )}
+
+                  {!isExcluded && row.resolution !== 'skip' && rowNameProblem(row.name) && (
+                    <span data-testid={`stage-name-error-${i}`} className="font-semibold"
+                          style={{ color: 'var(--danger-fg)' }}>
+                      {rowNameProblem(row.name)}
                     </span>
                   )}
 

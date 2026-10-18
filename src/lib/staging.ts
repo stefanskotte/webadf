@@ -24,6 +24,40 @@
 // rename.
 
 import { sameName } from './adffs/write';
+import { MAX_DEPTH } from './adffs/constants';
+
+/**
+ * True when a name holds a character AmigaDOS cannot address: ':' (it ends a
+ * device/volume prefix), a control character, or DEL. Shared by the archive
+ * mapping (refuses the member) and the batch route (400), so a crafted
+ * manifest cannot write a name no Amiga path can reach. A plain dropped name
+ * never gets here with one: stageDrop substitutes them (forbidUnwritable).
+ */
+export function unaddressableName(name: string): boolean {
+  return /[:\x00-\x1f\x7f]/.test(name);
+}
+
+/**
+ * What is wrong with a name typed into a staging row, or null. A typed name
+ * never passes through forbidUnwritable, so it is checked here instead: a
+ * colon, control character or DEL (unaddressableName), a '/' (which would turn
+ * the name into a nested path), or nothing at all. Each of those makes the
+ * batch route 400 the WHOLE batch; caught per row, it blocks only Add.
+ */
+export function rowNameProblem(name: string): string | null {
+  return name.length === 0 || name.includes('/') || unaddressableName(name)
+    ? 'name AmigaDOS cannot hold' : null;
+}
+
+/**
+ * True when a '/'-joined path is nested deeper than `readVolume` will walk
+ * (`MAX_DEPTH`). Writing one would produce a disk whose deepest entries this
+ * app itself could not list again. Shared by the staging area and the batch
+ * route, so the two refuse the same paths.
+ */
+export function pathTooDeep(path: string): boolean {
+  return path.split('/').length > MAX_DEPTH;
+}
 
 const MAX_NAME_LENGTH = 30;
 
@@ -123,7 +157,7 @@ function forbidUnwritable(name: string): string {
   let out = '';
   for (let i = 0; i < name.length; i++) {
     const c = name.charCodeAt(i);
-    out += (c === 0x2f || c === 0x3a || c < 0x20) ? FORBIDDEN_SUBSTITUTE : name[i];
+    out += (c === 0x2f || c === 0x3a || c < 0x20 || c === 0x7f) ? FORBIDDEN_SUBSTITUTE : name[i];
   }
   return out;
 }

@@ -300,4 +300,31 @@ describe('POST /api/disks/[id]/files/batch', () => {
     expect(whereConditions).toHaveLength(0);
     expect(diskStoreRead).not.toHaveBeenCalled();
   });
+
+  it.each([
+    ['a colon', 'Work:Docs'],
+    ['a control character', 'bad\u0001name'],
+    ['DEL (0x7f)', 'bad\u007fname'],
+  ])('refuses a name with %s, which AmigaDOS cannot address, before touching the disk', async (_label, name) => {
+    selectResults = [];
+    const { POST } = await import('./route');
+    const response = await POST(makeRequest([{ op: 'mkdir', path: `Dir/${name}` }]), { params: Promise.resolve({ id: DISK_ID }) });
+
+    expect(response.status).toBe(400);
+    expect(await response.json()).toEqual({ error: 'invalid_body', detail: `bad name: Dir/${name}` });
+    expect(diskStoreRead).not.toHaveBeenCalled();
+  });
+
+  it('refuses a path nested deeper than readVolume walks (MAX_DEPTH), before touching the disk', async () => {
+    // An archive's member paths are untrusted; a disk whose deepest entries
+    // this app could not list again is not one to write.
+    selectResults = [];
+    const { POST } = await import('./route');
+    const deep = Array.from({ length: 33 }, (_, i) => `d${i}`).join('/');
+    const response = await POST(makeRequest([{ op: 'mkdir', path: deep }]), { params: Promise.resolve({ id: DISK_ID }) });
+
+    expect(response.status).toBe(400);
+    expect(await response.json()).toEqual({ error: 'invalid_body', detail: `path too deep: ${deep}` });
+    expect(diskStoreRead).not.toHaveBeenCalled();
+  });
 });
