@@ -236,15 +236,17 @@ describe('prepareImages', () => {
     expect(await prepareImages(lhaOf(members, 0xffff_ff00), 'x.lha')).toEqual({ code: 'too_many_images' });
   });
 
-  it('counts unsupported LHA members too: a flood of -lh1- headers is too_many_images, not 700,000 rows', async () => {
+  // -lh2- (LHarc's dynamic-position variant) is still unsupported; -lh1-
+  // played this role until it became decodable (2026-10-18).
+  it('counts unsupported LHA members too: a flood of -lh2- headers is too_many_images, not 700,000 rows', async () => {
     const members = Array.from({ length: MAX_IMAGES_PER_URL + 1 }, (_, i) => `D${i}.adf`);
-    expect(await prepareImages(lhaOf(members, 901_120, '-lh1-'), 'x.lha')).toEqual({ code: 'too_many_images' });
+    expect(await prepareImages(lhaOf(members, 901_120, '-lh2-'), 'x.lha')).toEqual({ code: 'too_many_images' });
   });
 
   it('reports unsupported LHA members by name, one row each', async () => {
-    const r = await prepareImages(lhaOf(['A.adf', 'B.adf'], 901_120, '-lh1-'), 'x.lha');
+    const r = await prepareImages(lhaOf(['A.adf', 'B.adf'], 901_120, '-lh2-'), 'x.lha');
     expect('refused' in r && r.refused.map((x) => [x.filename, x.note])).toEqual([
-      ['A.adf', 'unsupported method -lh1-'], ['B.adf', 'unsupported method -lh1-'],
+      ['A.adf', 'unsupported method -lh2-'], ['B.adf', 'unsupported method -lh2-'],
     ]);
   });
 

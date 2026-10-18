@@ -96,6 +96,48 @@ test('an .lha dropped on a folder row unpacks into THAT folder, after showing wh
   expect(child(child(src!.children, 'sub')!.children, 'deep.txt')).toBeTruthy();
 });
 
+test('an -lh1- (LHarc 1.x) .lzh dropped on a folder unpacks byte-exact, not "unsupported method -lh1-"', async ({ page }) => {
+  // The operator's real .lzh was refused this way (2026-10-18). lh1.lzh was
+  // made by `lha -ao1`; the hashes are of what `lha -x` extracts from it.
+  test.setTimeout(60_000);
+  const u = await signUpFresh(page);
+  await page.goto('/library');
+  await createAdf(page);
+  const disk = await authoredDisk(page, u.orgId);
+  const mk = await page.request.post(`/api/disks/${disk.id}/files`, {
+    multipart: { parentBlock: String(ROOT_BLOCK), name: 'Old' },
+  });
+  expect(mk.ok()).toBe(true);
+  const vol = readVolume(await fetchAdf(page, disk.id));
+  if (!vol.ok) throw new Error('fresh disk unreadable');
+  const old = child(vol.root, 'Old')!;
+
+  await page.goto(`/disks/${disk.id}/files`);
+  await expect(page.getByTestId(`fs-drop-${old.block}`)).toBeVisible();
+  await synthDrop(page, [{ name: 'lh1.lzh', kind: 'file', bytes: fixture('lh1.lzh') }],
+    `[data-testid="fs-drop-${old.block}"]`);
+
+  await expect(page.getByTestId('drop-staging-list')).toBeVisible();
+  await expect(page.getByTestId('drop-archive-skipped')).toHaveCount(0);
+  await expect(page.getByTestId('drop-summary')).toContainText('5 files');
+  await page.getByTestId('drop-commit').click();
+  await expect(page.getByTestId('drop-staging-list')).toHaveCount(0, { timeout: 30_000 });
+
+  const adf = await fetchAdf(page, disk.id);
+  const after = readVolume(adf);
+  if (!after.ok) throw new Error('disk unreadable after the write');
+  const dir = child(after.root, 'Old')!.children;
+  const { createHash } = await import('node:crypto');
+  const sha = (name: string) => {
+    const e = child(dir, name);
+    expect(e, `${name} was written into Old`).toBeTruthy();
+    return createHash('sha256').update(readFile(adf, e!.block)!.bytes).digest('hex');
+  };
+  expect(sha('window.txt')).toBe('badfef05be618145887b45b0187bcc65b23ef3657f4295bec85e1ede76bf4362');
+  expect(sha('binary.bin')).toBe('a7c35abd0bd59226acda8532ac9e8187f6c9b7658cff7f4bcce859462858e1c7');
+  expect(sha('repeat.bin')).toBe('c4b7a5d1f967cc1a7ad546417e15647e9563f56d0434a1fa84ce680b5825bb59');
+});
+
 test('an archive that does not fit, or is not an archive, is refused and writes nothing', async ({ page }) => {
   const u = await signUpFresh(page);
   await page.goto('/library');

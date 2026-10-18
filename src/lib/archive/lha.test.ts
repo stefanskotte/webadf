@@ -245,9 +245,9 @@ describe('work budget (a CPU bomb made of tiny blocks)', () => {
 });
 
 describe('accept() sees every member, decodable or not', () => {
-  it('asks about an unsupported -lh1- member too, so a count cannot miss it', () => {
+  it('asks about an unsupported -lh2- member too, so a count cannot miss it', () => {
     const seen: string[] = [];
-    const buf = lha0('Old.adf', '-lh1-', new Uint8Array(4), 4);
+    const buf = lha0('Old.adf', '-lh2-', new Uint8Array(4), 4);
     readLha(buf, { accept: (p) => { seen.push(p); return false; } });
     expect(seen).toEqual(['Old.adf']);
   });

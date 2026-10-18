@@ -1,6 +1,8 @@
 /**
  * The -lh5-/-lh6-/-lh7- decompressor: LZSS over a sliding window, with the
  * literal/length and position alphabets themselves Huffman-coded per block.
+ * And, at the end of this file, -lh1- (LHarc 1.x), which shares only the bit
+ * reader and the canonical Huffman decoder.
  *
  * This exists because Aminet is an LHA archive and nothing in the browser can
  * read one. Zip needs no code at all -- DecompressionStream('deflate-raw') is
@@ -45,12 +47,14 @@ export class LzhCorruptError extends Error {}
 export class BitReader {
   private pos = 0;
   private bit = 0;
+  /** Set once any bit has been read past the end of the input. */
+  overrun = false;
   constructor(private readonly src: Uint8Array) {}
 
   /** Past the end reads as zero bits: a truncated archive should decode to
    *  garbage and be caught by the size/CRC check, not throw out of a loop. */
   private one(): number {
-    if (this.pos >= this.src.length) return 0;
+    if (this.pos >= this.src.length) { this.overrun = true; return 0; }
     const b = (this.src[this.pos] >> (7 - this.bit)) & 1;
     if (++this.bit === 8) { this.bit = 0; this.pos++; }
     return b;
@@ -246,6 +250,257 @@ export function decodeLzh(src: Uint8Array, outSize: number, dicBits: number): Ui
     if (from < 0) break; // corrupt: would read before the window
     for (let k = 0; k < len && written < outSize; k++) {
       out[written++] = out[from++];
+    }
+  }
+
+  return written === outSize ? out : out.subarray(0, written);
+}
+
+/* ------------------------------------------------------------------------ *
+ * -lh1- (LHarc 1.x)
+ *
+ * PORTED FROM LHa for UNIX 1.14i-ac (github.com/jca02266/lha), not written
+ * from memory: decode_start_fix / ready_made / decode_p_st0 (shuf.c),
+ * start_c_dyn / reconst / swap_inc / update_c / decode_c_dyn (dhuf.c) and
+ * decode() (slide.c). The fixtures were made and extracted by that tool.
+ *
+ * - LZSS over a 4 KB window, matches of THRESHOLD..60 bytes.
+ * - Literals and lengths share one 314-symbol ADAPTIVE Huffman tree (the
+ *   Vitter/FGK-style sibling-list tree of LZHUF.C): it starts with every
+ *   symbol at frequency 1 and is updated after every symbol, so encoder and
+ *   decoder stay in step without any table in the stream. When the root's
+ *   frequency reaches 0x8000 every frequency is halved and the tree rebuilt.
+ * - A position is (code << 6) | 6 raw bits, where `code` is 0..63 under a
+ *   FIXED Huffman table (LHarc's "old compatible" lengths 3..8). That table is
+ *   canonical -- lengths never decrease with the symbol -- so the canonical
+ *   Huffman class above decodes it exactly as ready_made() assigns it.
+ * - The window starts FULL OF SPACES (slide.c: memset(dtext, ' ', dicsiz)).
+ *   LHarc's own encoder (from Okumura's LZHUF.C) inserts that prefill into its
+ *   dictionary and can match against it, so a reference before the first
+ *   byte is legitimate here and yields 0x20 -- not "corrupt".
+ * ------------------------------------------------------------------------ */
+
+const LH1_THRESHOLD = 3;
+const LH1_MAXMATCH = 60;
+const LH1_DICSIZ = 1 << 12;
+/** 256 literals + lengths 3..60 (lha_macro.h: 256 + 60 - THRESHOLD + 1). */
+const LH1_N_CHAR = 256 + LH1_MAXMATCH - LH1_THRESHOLD + 1;
+const LH1_TREESIZE_C = LH1_N_CHAR * 2;
+const LH1_ROOT_C = 0;
+
+/** shuf.c fixed[0], "old compatible": start length, then the symbol at which
+ *  each next-longer length begins. */
+const LH1_FIXED = [3, 0x01, 0x04, 0x0c, 0x18, 0x30, 0];
+
+function lh1PositionTable(): Huffman {
+  // ready_made(0) with np = 1 << (12 - 6) = 64: the lengths it assigns.
+  const np = LH1_DICSIZ >> 6;
+  const lengths: number[] = [];
+  let j = LH1_FIXED[0];
+  let t = 1;
+  for (let i = 0; i < np; i++) {
+    while (LH1_FIXED[t] === i) { j++; t++; }
+    lengths.push(j);
+  }
+  return new Huffman(lengths);
+}
+
+/** The adaptive literal/length tree of dhuf.c, for n_max = 314. */
+class Lh1Tree {
+  private readonly nMax = LH1_N_CHAR;
+  // dhuf.c's arrays are sized TREESIZE; only the C half is used for -lh1-.
+  private readonly child = new Int32Array(LH1_TREESIZE_C + 1);
+  private readonly parent = new Int32Array(LH1_TREESIZE_C + 1);
+  private readonly block = new Int32Array(LH1_TREESIZE_C + 1);
+  private readonly edge = new Int32Array(LH1_TREESIZE_C + 1);
+  private readonly stock = new Int32Array(LH1_TREESIZE_C + 1);
+  private readonly sNode = new Int32Array(LH1_N_CHAR + 1);
+  private readonly freq = new Uint16Array(LH1_TREESIZE_C + 1);
+  private avail = 0;
+
+  constructor() {
+    // start_c_dyn()
+    const { child, parent, block, edge, stock, sNode, freq, nMax } = this;
+    let i: number, j: number;
+    for (i = 0; i < LH1_TREESIZE_C; i++) { stock[i] = i; block[i] = 0; }
+    for (i = 0, j = nMax * 2 - 2; i < nMax; i++, j--) {
+      freq[j] = 1;
+      child[j] = ~i;
+      sNode[i] = j;
+      block[j] = 1;
+    }
+    this.avail = 2;
+    edge[1] = nMax - 1;
+    i = nMax * 2 - 2;
+    while (j >= 0) {
+      const f = freq[j] = freq[i] + freq[i - 1];
+      child[j] = i;
+      parent[i] = parent[i - 1] = j;
+      if (f === freq[j + 1]) {
+        edge[block[j] = block[j + 1]] = j;
+      } else {
+        edge[block[j] = stock[this.avail++]] = j;
+      }
+      i -= 2;
+      j--;
+    }
+  }
+
+  /** dhuf.c reconst(start, end): halve every leaf frequency and rebuild. */
+  private reconst(start: number, end: number): void {
+    const { child, parent, block, edge, stock, sNode, freq } = this;
+    let i: number, j: number, k: number, l: number, b = 0;
+    let f: number, g: number;
+    for (i = j = start; i < end; i++) {
+      if ((k = child[i]) < 0) {
+        freq[j] = (freq[i] + 1) >>> 1;
+        child[j] = k;
+        j++;
+      }
+      if (edge[b = block[i]] === i) stock[--this.avail] = b;
+    }
+    j--;
+    i = end - 1;
+    l = end - 2;
+    while (i >= start) {
+      while (i >= l) {
+        freq[i] = freq[j];
+        child[i] = child[j];
+        i--; j--;
+      }
+      f = freq[l] + freq[l + 1];
+      for (k = start; f < freq[k]; k++);
+      while (j >= k) {
+        freq[i] = freq[j];
+        child[i] = child[j];
+        i--; j--;
+      }
+      freq[i] = f;
+      child[i] = l + 1;
+      i--;
+      l -= 2;
+    }
+    f = 0;
+    for (i = start; i < end; i++) {
+      if ((j = child[i]) < 0) sNode[~j] = i;
+      else parent[j] = parent[j - 1] = i;
+      if ((g = freq[i]) === f) {
+        block[i] = b;
+      } else {
+        edge[b = block[i] = stock[this.avail++]] = i;
+        f = g;
+      }
+    }
+  }
+
+  /** dhuf.c swap_inc(p) */
+  private swapInc(p: number): number {
+    const { child, parent, block, edge, stock, sNode, freq } = this;
+    const b = block[p];
+    const q = edge[b];
+    let adjust = false;
+    if (q !== p) {
+      // swap for leader
+      const r = child[p];
+      const s = child[q];
+      child[p] = s;
+      child[q] = r;
+      if (r >= 0) parent[r] = parent[r - 1] = q;
+      else sNode[~r] = q;
+      if (s >= 0) parent[s] = parent[s - 1] = p;
+      else sNode[~s] = p;
+      p = q;
+      adjust = true;
+    } else if (b === block[p + 1]) {
+      adjust = true;
+    }
+    if (adjust) {
+      edge[b]++;
+      if (++freq[p] === freq[p - 1]) {
+        block[p] = block[p - 1];
+      } else {
+        edge[block[p] = stock[this.avail++]] = p; // create block
+      }
+    } else if (++freq[p] === freq[p - 1]) {
+      stock[--this.avail] = b; // delete block
+      block[p] = block[p - 1];
+    }
+    return parent[p];
+  }
+
+  /** dhuf.c update_c(p) */
+  private update(p: number): void {
+    if (this.freq[LH1_ROOT_C] === 0x8000) this.reconst(0, this.nMax * 2 - 1);
+    this.freq[LH1_ROOT_C]++;
+    let q = this.sNode[p];
+    // Bounded: each step moves to a parent, and no tree path is longer than
+    // the node count. The guard is defence in depth against a bug, not input.
+    let steps = 0;
+    do {
+      q = this.swapInc(q);
+      if (++steps > LH1_TREESIZE_C) throw new LzhCorruptError('adaptive tree is not a tree');
+    } while (q !== LH1_ROOT_C);
+  }
+
+  /** dhuf.c decode_c_dyn(), for n1 = 512 (never reached: no 8-bit tail). */
+  decode(br: BitReader): number {
+    const { child } = this;
+    let c = child[LH1_ROOT_C];
+    let steps = 0;
+    do {
+      // decode_c_dyn: c = child[c - (buf < 0)], i.e. a 1 bit takes c - 1.
+      c = child[c - br.bit1()];
+      if (++steps > LH1_TREESIZE_C) throw new LzhCorruptError('adaptive tree is not a tree');
+    } while (c > 0);
+    c = ~c;
+    this.update(c);
+    return c;
+  }
+}
+
+/**
+ * Decode `outSize` bytes of an -lh1- stream.
+ *
+ * Never writes past `outSize`. Returns SHORT -- which readLha reports as
+ * truncated -- when the stream needs bits beyond the end of `src`: LHA's
+ * encoder flushes its last code into the data (encode_end_dyn pads 7 zero
+ * bits), so a whole stream never reads past its end, and stopping there is
+ * what keeps a 64-byte member claiming 16 MB from decoding 16M symbols of
+ * zeros.
+ *
+ * THE WORK BUDGET IS STRUCTURAL: every symbol consumes at least one input bit
+ * and emits at least one output byte, so the loop runs at most
+ * min(outSize, 8 * src.length) times; each symbol walks and updates a tree of
+ * fixed size (both guarded), and the halving rebuild runs once per 0x8000
+ * symbols. No block structure exists to be abused the way -lh5-'s is.
+ *
+ * Throws only LzhCorruptError, and only if the tree invariant were broken.
+ */
+export function decodeLh1(src: Uint8Array, outSize: number): Uint8Array {
+  const out = new Uint8Array(outSize);
+  if (outSize === 0) return out;
+  const br = new BitReader(src);
+  const tree = new Lh1Tree();
+  const pos = lh1PositionTable();
+  // slide.c: adjust = 256 - THRESHOLD, so length = c - 253.
+  const adjust = 256 - LH1_THRESHOLD;
+  let written = 0;
+
+  while (written < outSize) {
+    const c = tree.decode(br);
+    if (c < 256) {
+      if (br.overrun) break;
+      out[written++] = c;
+      continue;
+    }
+    const len = c - adjust;
+    const off = ((pos.decode(br) << 6) | br.bits(6)) + 1;
+    if (br.overrun) break;
+    // off is 1..LH1_DICSIZ (the window), so `written - off` is exactly the
+    // ring position LHA reads; below zero it is the space-filled prefill.
+    let from = written - off;
+    for (let k = 0; k < len && written < outSize; k++, from++) {
+      out[written++] = from < 0 ? 0x20 : out[from];
     }
   }
 

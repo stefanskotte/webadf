@@ -1,4 +1,4 @@
-import { decodeLzh, LzhWorkBudgetError, LzhCorruptError } from './lzh-decode';
+import { decodeLzh, decodeLh1, LzhWorkBudgetError, LzhCorruptError } from './lzh-decode';
 
 /**
  * LHA/LZH container reading: headers at levels 0, 1 and 2, and the methods an
@@ -117,6 +117,15 @@ export interface LhaReadOptions {
 /** Methods this reader decodes, and the window size each one uses. */
 const DIC_BITS: Record<string, number> = { '-lh5-': 13, '-lh6-': 15, '-lh7-': 16 };
 
+/** Every compressed method this reader decodes, each to `original` bytes. */
+const DECODERS: Record<string, (data: Uint8Array, original: number) => Uint8Array> = {
+  ...Object.fromEntries(Object.entries(DIC_BITS).map(([m, bits]) =>
+    [m, (data: Uint8Array, original: number) => decodeLzh(data, original, bits)])),
+  // LHarc 1.x: 4 KB window, adaptive Huffman. Older than Aminet, but real
+  // .lzh files from the period use it (the operator dropped one, 2026-10-18).
+  '-lh1-': decodeLh1,
+};
+
 /**
  * Read an LHA archive. Never throws on malformed input -- a bad archive
  * returns what it could read plus a `skipped` reason, because the caller is a
@@ -188,7 +197,7 @@ export function readLha(buf: Uint8Array, opts: LhaReadOptions = {}): LhaReadResu
 
     const data = buf.subarray(dataStart, dataStart + Math.max(0, packed));
 
-    const decodable = method === '-lh0-' || method === '-lz4-' || DIC_BITS[method] !== undefined;
+    const decodable = method === '-lh0-' || method === '-lz4-' || DECODERS[method] !== undefined;
 
     if (method === '-lhd-') {
       // A directory entry. Carries no data, and the staging area creates
@@ -213,13 +222,13 @@ export function readLha(buf: Uint8Array, opts: LhaReadOptions = {}): LhaReadResu
       } else {
         entries.push({ path, bytes: data.slice(0, original), protection, method });
       }
-    } else if (DIC_BITS[method] !== undefined) {
+    } else if (DECODERS[method] !== undefined) {
       // Charged whether or not the stream turns out complete: the work and the
       // allocation happen either way.
       total += original;
       let outBytes: Uint8Array | null = null;
       try {
-        outBytes = decodeLzh(data, original, DIC_BITS[method]);
+        outBytes = DECODERS[method](data, original);
       } catch (e) {
         // A CPU bomb (see LZH_BYTES_PER_BLOCK) is this member's refusal, not
         // the archive's, and never an exception out of a drop target or route.
@@ -237,8 +246,9 @@ export function readLha(buf: Uint8Array, opts: LhaReadOptions = {}): LhaReadResu
         entries.push({ path, bytes: outBytes, protection, method });
       }
     } else {
-      // -lh1-, -lh2-, -lh3- and the -lz- family are pre-1990 and essentially
-      // absent from Aminet. Named rather than silently dropped.
+      // -lh2-, -lh3-, -lzs-, -lz5- and the other pre-1990 methods are
+      // essentially absent from Aminet (-lh1- is decoded: see DECODERS). Named
+      // rather than silently dropped.
       skipped.push({ path, reason: `unsupported method ${method}` });
     }
 
