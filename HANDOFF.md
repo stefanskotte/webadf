@@ -5082,13 +5082,14 @@ Demozoo API (the bulk export makes per-lookup load on a non-profit unnecessary).
      - Web: Cancelled. Receive: "failed: connection".
      - No `.webadf-rx` and no partial file were left.
      - The next ADF arrived in full (884,736 B sent; 140 s while pinging).
-  7. 200-byte path: **not run** (it writes production; waiting for a yes).
+  7. 208-byte path: PASS (operator said yes). `pnpm send:queue` put it in seven nested folders, delivered in seconds;
+     the Upload page shows the saved path whole; `list ... all` shows `p.txt` 29 B under Folder6.
   8. Shell form: PASS. `Receive TO RAM:` printed "Board connected", then `shell-form.txt  29 bytes  OK`;
      Ctrl-C printed "Stopped.".
   9. Ping to the router during an ADF transfer:
      - During: 874-1,617 ms (avg 1,005).
      - Idle: 164-252 ms (avg 206), 0 % loss.
-  10. Phone: **owed** (the operator's phone).
+  10. Phone: PASS (operator's phone, 09:03): a 3,492 B file was delivered 3 s after it was queued.
   11. The IP gap: PASS.
       - After `wf reboot` (Amiga untouched) the log read `pnet: Amiga address 172.16.10.237 from the server (not
         seen since boot)` at 15.9 s and `send: receiver connected` at 20.2 s.
