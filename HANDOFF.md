@@ -4978,6 +4978,20 @@ Demozoo API (the bulk export makes per-lookup load on a non-profit unnecessary).
   allowlist checks only the first URL (the raster content-type allowlist and `nosniff` still apply).
 - **Cron drift:** the daily 01:30 cron against a 7-day gate can drift a refetch to 8 days.
 
+### 3bx. fw 1.16.1 RELEASED (seq 102, fw-1.16.1, master 7250f5e) -- the NFC "rarely detected" regression was the 3 s re-tap rule, 2026-10-18
+
+- **Root cause (bench capture, not hardware):** reader present at 0x28, no I2C dropouts; every Next-card tap was read,
+  but `NFC_REARRIVAL_ABSENT_MS` 3000 (bac4918, 2026-09-26 -- the rev B days, hence "a bit after the new PCB") made each
+  re-tap 1.4-1.7 s later "still the same tap" (`nfc: held tag 734A0F29 unseen 1709 ms (still the same tap)`): 8-9 taps,
+  1 step. The operator steps sets by repeated Next taps (confirmed).
+- **Fix (5a18fe4):** `hold_window()` in nfc_reader.c: a Next-disk card is a new tap after 1000 ms unseen; disk tags,
+  unknown tags and any tag while a write is armed keep 3000 ms. `held_next` set in `st_report`. .bss unchanged.
+  Bench: 6 taps -> Next 2/6..6/6..1/6, one step each. Polls ~0.37 s apart: lifts < ~0.47 s stay the same tap, > ~0.75 s
+  count. Accepted risk: a Next card parked at the antenna edge with >0.75 s dropouts steps the set.
+- **Deferred minor:** no test proves `held_next` is cleared (a `|=` mutant passes); add a Next->disk rewrite + 1500 ms
+  re-tap test. An unreadable Next read gets 3 s.
+- Announced in the WifiFloppy thread (@Pillock), with the wiring warning (J4 = GND, 3.3V, SCL, SDA; I2C mode; 3.3 V).
+
 ### 3bw. PaulaNET LZ4: fw 1.16.0 RELEASED (seq 101, fw-1.16.0), the LZ4 driver on the disk (master 2f96980) -- 2026-10-18
 
 **Merged 2f96980, pushed, live.** Spec `docs/superpowers/specs/2026-10-18-paulanet-lz4-design.md`, plan
