@@ -47,8 +47,8 @@ describe('archiveToDroppedItems', () => {
   });
 
   it('reports what the reader skipped, against the archive it came from', () => {
-    const { skipped } = archiveToDroppedItems('a.lha', lha([member('ok')], [{ path: 'old', reason: 'unsupported method -lh1-' }]));
-    expect(skipped).toEqual([{ archive: 'a.lha', path: 'old', reason: 'unsupported method -lh1-' }]);
+    const { skipped } = archiveToDroppedItems('a.lha', lha([member('ok')], [{ path: 'old', reason: 'unsupported method -lh2-' }]));
+    expect(skipped).toEqual([{ archive: 'a.lha', path: 'old', reason: 'unsupported method -lh2-' }]);
   });
 
   it('refuses a member path that tries to climb out, rather than writing it', () => {
