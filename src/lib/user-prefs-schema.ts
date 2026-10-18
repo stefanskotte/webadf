@@ -57,6 +57,19 @@ export type UserPrefs = {
   startPage: StartPage;
   library: { sort: LibrarySort };
   browse: { sort: BrowseSort };
+  /**
+   * `skipPassword`: the Update button on Devices does not ask for this user's
+   * password (step-up, src/lib/step-up.ts). Per USER, never per org: another
+   * member keeps the prompt until they turn it on themselves.
+   *
+   * Turning it ON needs the password: PATCH /api/me/prefs refuses `true`
+   * (`password_required`) and only POST /api/me/prefs/firmware-skip-password,
+   * which checks the password through the same throttle as the firmware
+   * route, may set it. Otherwise a stolen session cookie -- the one thing
+   * step-up defends against -- could flip it and walk past the prompt.
+   * Turning it OFF is free. A failed read is the default, false: fail safe.
+   */
+  firmware: { skipPassword: boolean };
 };
 
 /** Fresh objects every call: a caller may mutate what it gets back. */
@@ -65,6 +78,7 @@ function defaults(): UserPrefs {
     startPage: 'library',
     library: { sort: { key: 'added', dir: 'desc' } },
     browse: { sort: { key: 'name', dir: 'asc' } },
+    firmware: { skipPassword: false },
   };
 }
 
@@ -86,6 +100,10 @@ const prefsSchema = z.object({
   browse: z.object({
     sort: browseSortSchema.catch(() => defaults().browse.sort),
   }).catch(() => defaults().browse),
+  // Only a real boolean `true` reads as true; anything else is the prompt.
+  firmware: z.object({
+    skipPassword: z.boolean().catch(false),
+  }).catch(() => defaults().firmware),
 });
 
 export function parsePrefs(raw: unknown): UserPrefs {
@@ -102,6 +120,9 @@ const prefsPatchSchema = z.strictObject({
   startPage: z.enum(START_PAGES).optional(),
   library: z.strictObject({ sort: librarySortSchema.strict().optional() }).optional(),
   browse: z.strictObject({ sort: browseSortSchema.strict().optional() }).optional(),
+  // Valid here either way; PATCH /api/me/prefs refuses `true` itself (see
+  // UserPrefs.firmware), so the password-checked endpoint can share setUserPrefs.
+  firmware: z.strictObject({ skipPassword: z.boolean().optional() }).optional(),
 });
 
 export type PrefsPatch = z.infer<typeof prefsPatchSchema>;
@@ -117,6 +138,7 @@ export function applyPrefsPatch(cur: UserPrefs, patch: PrefsPatch): UserPrefs {
     startPage: patch.startPage ?? cur.startPage,
     library: { ...cur.library, ...patch.library, sort: { ...(patch.library?.sort ?? cur.library.sort) } },
     browse: { ...cur.browse, ...patch.browse, sort: { ...(patch.browse?.sort ?? cur.browse.sort) } },
+    firmware: { skipPassword: patch.firmware?.skipPassword ?? cur.firmware.skipPassword },
   };
 }
 
@@ -133,6 +155,8 @@ export function prefsDiff(from: UserPrefs, to: UserPrefs): PrefsPatch {
   if (from.startPage !== to.startPage) patch.startPage = to.startPage;
   if (!sameSort(from.library.sort, to.library.sort)) patch.library = { sort: { ...to.library.sort } };
   if (!sameSort(from.browse.sort, to.browse.sort)) patch.browse = { sort: { ...to.browse.sort } };
+  // `firmware` deliberately never: it has its own controls on Settings
+  // (firmware-password-setting.tsx), and turning it on needs the password.
   return patch;
 }
 

@@ -39,4 +39,21 @@ describe('/api/me/prefs', () => {
     }
     expect(setUserPrefs).not.toHaveBeenCalled();
   });
+
+  it('PATCH refuses to turn skipPassword ON (that needs the password) and stores nothing', async () => {
+    const { PATCH } = await import('./route');
+    for (const body of [{ firmware: { skipPassword: true } }, { startPage: 'devices', firmware: { skipPassword: true } }]) {
+      const res = await PATCH(patch(JSON.stringify(body)));
+      expect(res.status).toBe(403);
+      expect(await res.json()).toEqual({ error: 'password_required' });
+    }
+    expect(setUserPrefs).not.toHaveBeenCalled();
+  });
+
+  it('PATCH may turn skipPassword OFF with no password', async () => {
+    const { PATCH } = await import('./route');
+    const res = await PATCH(patch(JSON.stringify({ firmware: { skipPassword: false } })));
+    expect(res.status).toBe(200);
+    expect(setUserPrefs).toHaveBeenCalledWith('user-1', { firmware: { skipPassword: false } });
+  });
 });

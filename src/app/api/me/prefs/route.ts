@@ -11,6 +11,8 @@ import { parsePrefsPatch } from '@/lib/user-prefs-schema';
  *   PATCH -> a partial patch ({ library: { sort: { key, dir } } }, ...);
  *            returns the full preferences after it. An unknown setting or a
  *            bad value is a 400 and nothing is stored.
+ *            `firmware.skipPassword: true` is a 403 `password_required`
+ *            (see firmware-skip-password/route.ts); `false` is fine.
  */
 export async function GET() {
   const { userId } = await requireOrg();
@@ -26,6 +28,12 @@ export async function PATCH(request: Request) {
   }
   const parsed = parsePrefsPatch(body);
   if (!parsed.ok) return Response.json({ error: 'invalid_body', detail: parsed.error }, { status: 400 });
+  // Turning off the firmware password prompt needs the password itself, or a
+  // stolen session cookie could flip it and defeat step-up (src/lib/step-up.ts).
+  // That is POST /api/me/prefs/firmware-skip-password; turning it OFF is free.
+  if (parsed.patch.firmware?.skipPassword === true) {
+    return Response.json({ error: 'password_required' }, { status: 403 });
+  }
 
   return Response.json(await setUserPrefs(userId, parsed.patch));
 }

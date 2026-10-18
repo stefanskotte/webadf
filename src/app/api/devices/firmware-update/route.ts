@@ -1,9 +1,9 @@
 import { z } from 'zod';
 import { requireOrg } from '@/lib/session';
-import { verifyPassword } from '@/lib/step-up';
+import { stepUpGate } from '@/lib/step-up-gate';
+import { getUserPrefs } from '@/lib/user-prefs';
 import { requestFirmwareUpdate, cancelFirmwareUpdate } from '@/lib/firmware-update';
 import { firmwareVersionSchema } from '@/lib/firmware-version';
-import { lockoutRemaining, recordFailure, clearFailures } from '@/lib/step-up-throttle';
 import { MAX_UPDATE_BATCH } from '@/lib/firmware-update-rules';
 
 // The cap is shared with the update bar, which disables Update past it and
@@ -14,7 +14,9 @@ const deviceIdList = z.array(z.string().min(1).max(64)).min(1).max(MAX_UPDATE_BA
 const body = z.object({
   deviceIds: deviceIdList,
   version: firmwareVersionSchema,
-  password: z.string().min(1).max(200),
+  // Optional ONLY for a user whose skipPassword preference is on; POST
+  // refuses its absence otherwise, with the same 400 a bad body gets.
+  password: z.string().min(1).max(200).optional(),
 });
 
 // The password check plus two DB round trips. Every sibling route under
@@ -29,31 +31,19 @@ export async function POST(request: Request) {
   const parsed = body.safeParse(raw);
   if (!parsed.success) return Response.json({ error: 'invalid_body' }, { status: 400 });
 
-  // Throttled BEFORE the password is even checked. Without this the endpoint
-  // is an unlimited oracle for the account's real password, aimed at exactly
-  // the attacker step-up exists to stop -- one who already holds the session
-  // cookie. better-auth's own limiter lives in its HTTP router and is
-  // bypassed by direct auth.api calls.
-  const locked = await lockoutRemaining(userId);
-  if (locked > 0) {
-    return Response.json(
-      { error: 'too_many_attempts', retryAfterMs: locked },
-      { status: 429, headers: { 'retry-after': String(Math.ceil(locked / 1000)) } },
-    );
+  // The step-up password, unless THIS user has turned the prompt off
+  // (UserPrefs.firmware.skipPassword, which itself took the password to turn
+  // on: api/me/prefs/firmware-skip-password). Per user, not per org. With it
+  // off -- the default, and also what a failed preference read gives --
+  // everything below is exactly as it always was: a missing password is the
+  // same 400, a wrong one the same counted 401/429 (src/lib/step-up-gate.ts).
+  // With it on, a password sent anyway is not checked.
+  const skip = await getUserPrefs(userId).then((p) => p.firmware.skipPassword === true, () => false);
+  if (!skip) {
+    if (parsed.data.password === undefined) return Response.json({ error: 'invalid_body' }, { status: 400 });
+    const refused = await stepUpGate(userId, parsed.data.password);
+    if (refused) return refused;
   }
-
-  // A wrong password must leave no trace beyond the failure count, and reveal
-  // nothing about which devices or versions exist.
-  if (!(await verifyPassword(parsed.data.password))) {
-    const lockedFor = await recordFailure(userId);
-    return Response.json(
-      lockedFor > 0
-        ? { error: 'too_many_attempts', retryAfterMs: lockedFor }
-        : { error: 'bad_password' },
-      { status: lockedFor > 0 ? 429 : 401 },
-    );
-  }
-  await clearFailures(userId);
 
   const result = await requestFirmwareUpdate(
     orgId, userId, parsed.data.deviceIds, parsed.data.version,
