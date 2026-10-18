@@ -6,6 +6,7 @@ import { NET_PICK_FW } from '@/lib/paulanet-disk';
 import type { DeviceListItem } from '@/lib/queries';
 import type { NextInfo } from '@/lib/next-disk';
 import { preloadText } from '@/lib/drive-chips';
+import { describeI2cScan } from '@/lib/i2c-scan';
 import { Link } from '@/components/shell/link';
 import { SecondDriveReadings } from './second-drive-readings';
 import { SecondDriveSetting } from './second-drive-setting';
@@ -45,6 +46,8 @@ export function DeviceCard(
 ) {
   const state = deviceState(device, now);
   const online = isOnline(device.lastSeenAt, now);
+  // The boot I2C scan in words (fw 1.17.0+); null from older firmware, which keeps the card as it was.
+  const i2c = describeI2cScan(device.nfcReader, device.i2cAddrs);
 
   // An update in flight REPLACES the firmware line: there is no value in
   // telling someone watching a download that they are two releases behind.
@@ -219,6 +222,15 @@ export function DeviceCard(
       <div className="flex flex-col gap-2">
         <SecondDriveReadings device={device} />
         <SecondDriveSetting device={device} next={next} now={now} />
+        {i2c && (
+          <span className="flex min-w-0 items-start gap-1" data-testid={`device-nfc-${device.id}`} data-ok={i2c.ok}>
+            <span className="flex min-w-0 flex-col text-[11px]" style={{ overflowWrap: 'anywhere' }}>
+              <span style={{ color: 'var(--ink)' }}>{i2c.line}</span>
+              {i2c.seen && <span style={{ color: 'var(--muted)' }} data-testid={`device-i2c-${device.id}`}>{i2c.seen}</span>}
+            </span>
+            <HelpTip topic="nfc" className="-mt-1" />
+          </span>
+        )}
         <span className="w-fit shrink-0 self-start rounded-md border px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide"
               style={{
                 borderColor: 'var(--hairline)',

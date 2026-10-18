@@ -519,3 +519,25 @@ test('a board on a custom server shows no server line on its card (the About pag
   await expect(page.getByTestId(`device-server-${deviceId}`)).toHaveCount(0);
   await expect(page.getByText(/Custom server|certificate not checked/)).toHaveCount(0);
 });
+
+// The boot I2C scan (fw 1.17.0) on the card: the reader line in plain words, and nothing new for older firmware.
+test('the card says what the board found on its I2C bus', async ({ page, request }) => {
+  await signUpFresh(page);
+  const { deviceId: noReader, token: t1 } = await pairDevice(page, request, 'No Reader');
+  const { deviceId: withReader, token: t2 } = await pairDevice(page, request, 'With Reader');
+  const { deviceId: older, token: t3 } = await pairDevice(page, request, 'Older Board');
+  const report = (token: string, data: object) =>
+    request.post('/api/device/status', { headers: authHeader(token), data: { mountedSha256: null, ...data } });
+  expect((await report(t1, { firmwareVersion: '1.17.0+ge2e', nfcReader: 'absent', i2c: [0x3c] })).status()).toBe(204);
+  expect((await report(t2, { firmwareVersion: '1.17.0+ge2e', nfcReader: 'present', i2c: [0x28, 0x3c] })).status()).toBe(204);
+  expect((await report(t3, { firmwareVersion: '1.16.0+ge2e', nfcReader: 'absent' })).status()).toBe(204);
+
+  await page.goto('/devices');
+  const absent = page.getByTestId(`device-nfc-${noReader}`);
+  await expect(absent).toContainText('No NFC reader found — nothing at 0x28');
+  await expect(page.getByTestId(`device-i2c-${noReader}`)).toHaveText('I2C devices seen: 0x3c (display)');
+  await expect(page.getByTestId(`device-nfc-${withReader}`)).toContainText('NFC reader at 0x28');
+  await expect(page.getByTestId(`device-i2c-${withReader}`)).toHaveCount(0);
+  await expect(page.getByTestId(`device-${older}`)).toBeVisible();
+  await expect(page.getByTestId(`device-nfc-${older}`)).toHaveCount(0);
+});
