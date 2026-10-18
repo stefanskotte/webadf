@@ -7,9 +7,13 @@ board's Wi-Fi, using the board as drive DF1.
 PaulaNET and its driver, PaulaNET.device, are by Rob Smith
 (RobSmithDev): https://github.com/RobSmithDev/PaulaNET
 Copyright (c) 2026 RobSmithDev. All rights reserved.
-PaulaNET.device and PaulaNET Config are on this disk with his
-permission, under his terms. They are not covered by webadf's
-MIT licence.
+The PaulaNET.device on this disk is webadf's build of his
+driver (his source, commit 0afd5fa) with LZ4 compression
+added: with board firmware 1.16.0, data the Amiga receives
+travels compressed on every Amiga, and data it sends on a
+68020 or faster. PaulaNET Config is his, unmodified. Both
+are on this disk with his permission, under his terms; they
+are not covered by webadf's MIT licence.
 
 The Install script and this ReadMe are from webadf.
 

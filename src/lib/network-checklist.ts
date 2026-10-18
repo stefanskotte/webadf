@@ -1,4 +1,4 @@
-import { DRIVER_TALKING_MS, PAULANET_DISK_PREVIOUS, PAULANET_DISK_SHA256 } from '@/lib/paulanet-disk';
+import { DRIVER_TALKING_MS, PAULANET_DISK_OLDER, PAULANET_DISK_SHA256 } from '@/lib/paulanet-disk';
 
 // The card's Network checklist (spec 2026-10-12 §5): every line names its good and its bad state in words.
 
@@ -7,12 +7,12 @@ export { DRIVER_TALKING_MS };
 
 export type Line = { ok: boolean; text: string };
 
-/** DF1 holds the driver disk in a slot of its own, whatever DF0 holds (plan 2026-10-12 ruling 6); the older disk
+/** DF1 holds the driver disk in a slot of its own, whatever DF0 holds (plan 2026-10-12 ruling 6); an older disk
  *  counts as in DF1 too, until the Amiga is off (R16, driverDiskFor). */
 export function driverDiskLine(d: { df1Sha256: string | null }): Line {
   if (d.df1Sha256 === PAULANET_DISK_SHA256) return { ok: true, text: 'Driver disk: in DF1' };
-  if (d.df1Sha256 === PAULANET_DISK_PREVIOUS) {
-    return { ok: true, text: 'Driver disk: in DF1 (the older one, without Receive; the new one goes in once the Amiga is off)' };
+  if (d.df1Sha256 !== null && PAULANET_DISK_OLDER.includes(d.df1Sha256)) {
+    return { ok: true, text: 'Driver disk: in DF1 (an older one; the new one goes in once the Amiga is off)' };
   }
   return { ok: false, text: 'Driver disk: loading' };
 }

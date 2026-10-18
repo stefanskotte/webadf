@@ -37,10 +37,13 @@ They stand on the work below.
   DataHeader/PacketsHeader/CompressionHeader layouts, the counter-and-acknowledge scheme and the RLE format. Used with
   the author's permission (2026-10-09), granted on the condition that the licences are respected and he is credited.
   The firmware's `pnet_*` sources and `tools/netloop/` implement the protocol from its description. The golden test
-  vectors in `wifi-floppy/firmware/test/test_pnet_mfm.c` are the output of his reference encoders. His driver binary,
-  `PaulaNET.device` (from his commit 0afd5fa), and `PaulaNET Config` are redistributed unmodified on the PaulaNET driver
-  disk that the board serves in Network mode, by his permission (2026-10-12) and under his own terms ("Copyright © 2026
-  RobSmithDev. All rights reserved."); they are not covered by webadf's MIT licence. See `third-party/paulanet/`.
+  vectors in `wifi-floppy/firmware/test/test_pnet_mfm.c` are the output of his reference encoders. His driver's source
+  (`NetDevice/` at commit 0afd5fa, `third-party/paulanet/src/`, unchanged) is built with a webadf patch adding LZ4
+  (`tools/paulanet-driver/`) into the `PaulaNET.device` on the PaulaNET driver disk that the board serves in Network
+  mode; his `PaulaNET Config` is on that disk unmodified. Both by his permission (2026-10-12; his permission covers
+  modified builds, operator confirmation 2026-10-18) and under his own terms ("Copyright © 2026 RobSmithDev. All
+  rights reserved."); they are not covered by webadf's MIT licence. The patch's own files
+  (`tools/paulanet-driver/src/`) and `m68k/lz4/` are webadf's, MIT. See `third-party/paulanet/`.
 
 ## Software included in this repository
 

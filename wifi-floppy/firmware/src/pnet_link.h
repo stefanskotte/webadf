@@ -40,6 +40,9 @@ typedef struct {
     uint32_t queued;      /* the Amiga's frames into the TX ring */
     uint32_t over;        /* ...dropped: the ring was full */
     uint32_t malformed;   /* ...dropped: a malformed frame, and every frame after it in its batch */
+    uint32_t lz4_in;      /* LZ4 (spec 2026-10-18): the Amiga's frames that came LZ4 */
+    uint32_t lz4_bad;     /* ...refused, a bad size word included, counted in malformed too */
+    bool     amiga_lz4;   /* the latest checked header from the Amiga carried PNET_DRIVER_LZ4 (a resend's counts) */
 } pnet_link_t;
 
 void pnet_link_init(pnet_link_t *s);
@@ -48,11 +51,22 @@ unsigned pnet_link_ack(pnet_link_t *s, const pnet_hdr_t *h);
 bool pnet_link_is_new(const pnet_link_t *s, const pnet_hdr_t *h);
 /* The Amiga's batch, its header already checked (pnet_parse_hdr_from_amiga); `payload` is its
  * h->compressed_size bytes. DUP (counted, nothing queued) when its counter is the last taken;
- * otherwise NEW, always -- see above. Never claims a slot the ring does not have. */
+ * otherwise NEW, always -- see above. Never claims a slot the ring does not have. Every header, a resend's too,
+ * sets amiga_lz4 from its PNET_DRIVER_LZ4 bit (spec 2026-10-18 §3). pnet_link_take is pnet_link_take_lz4 with no
+ * window: LZ4 frames are then unreadable. */
 pnet_take_t pnet_link_take(pnet_link_t *s, const pnet_hdr_t *h, const uint8_t *payload, pnet_ring_t *tx);
+/* As pnet_link_take, LZ4-aware: a batch carrying PNET_DRIVER_LZ4 is decoded frame by frame into win
+ * (PNET_LZ4_WINDOW bytes) at even offsets (pnet_lz4.h), its LZ4 frames linked to the earlier ones, and each frame copied into its
+ * slot; scratch (PNET_LZ4_BLOCK_MAX bytes) takes an MFM-wrapped block. A batch without the bit decodes as before. */
+pnet_take_t pnet_link_take_lz4(pnet_link_t *s, const pnet_hdr_t *h, const uint8_t *payload, pnet_ring_t *tx,
+                               uint8_t *win, uint8_t *scratch);
+/* The batch out holds n frames from now on, n below nframes only (never more, never 0): its rebuild without LZ4
+ * (the driver stopped asking) fits fewer; the rest stay in the ring for the next batch. */
+void pnet_link_shrink(pnet_link_t *s, unsigned n);
 /* How many of the first `avail` waiting frames (lengths lens[]) one batch to the Amiga holds: within
  * `cap` bytes on the wire (pnet_to_amiga_bound) and PNET_TO_AMIGA_MAX_PAYLOAD bytes of payload
- * (pnet_payload_bound), at most PNET_MAX_FRAMES. The rest stay in the ring for the next batch. */
+ * (pnet_payload_bound), at most PNET_MAX_FRAMES. The rest stay in the ring for the next batch.
+ * main.c packs with pnet_pack (LZ4, 1.16.0); without LZ4 that picks the same count (test_pnet_pack.c). */
 unsigned pnet_link_fit(const uint16_t *lens, unsigned avail, size_t cap);
 /* A new batch of n frames goes out: pico moves on. No-op for n == 0 or while one is out. */
 void pnet_link_start(pnet_link_t *s, unsigned n);

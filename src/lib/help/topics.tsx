@@ -360,6 +360,7 @@ export const HELP_TOPICS = {
   // numbers: HANDOFF 3bi (47.5 KB/s alone, 24.4 KB/s during a DF0 copy, router pings 204-545 ms, avg ~250);
   // the steps: tools/paulanet-disk/Install and ReadMe; download: api/paulanet-disk/route.ts; Rob's permission:
   // third-party/paulanet/PERMISSION.md. Mouse: the driver busy-polls at priority 1 (HANDOFF 3bi, not yet measured).
+  // LZ4: spec 2026-10-18 (fw 1.16.0, the variant on the driver disk).
   network: {
     title: 'Amiga networking (PaulaNET)',
     short:
@@ -383,7 +384,8 @@ export const HELP_TOPICS = {
           'DF0 can be empty, for an Amiga that starts from a hard drive, and changing the disk in DF0 does not interrupt the network.',
           'Needs board firmware 1.11.0 or newer.',
           <>For a real floppy or an emulator, <a className="underline" href="/api/paulanet-disk">download the PaulaNET driver disk</a>.</>,
-          'PaulaNET is by Rob Smith (RobSmithDev), used with his permission.',
+          'With board firmware 1.16.0, the driver compresses with LZ4: what the Amiga receives on every Amiga, and what it sends on a 68020 or faster. Already-compressed files travel as before. If you installed PaulaNET before, run Install again from the driver disk in DF1 to get it.',
+          'PaulaNET is by Rob Smith (RobSmithDev), used with his permission. The driver disk carries webadf’s LZ4 build of his driver.',
         ]} />
       </>
     ),
@@ -416,7 +418,7 @@ export const HELP_TOPICS = {
           'Nothing is overwritten: a second Foo.lha arrives as Foo_2.lha.',
           'Cancel stops a file that is waiting or on its way. Retry sends a failed one again from the start.',
           'Clear finished drops every delivered, failed, cancelled or expired file from the list.',
-          'A board whose Amiga was running when the new driver disk came out keeps the older driver disk, without Receive, until the Amiga has been off a while; then it gets the new one.',
+          'A board whose Amiga was running when a new driver disk came out keeps its older driver disk until the Amiga has been off a while; then it gets the new one.',
           'While Receive runs, any computer on your network can drop a file into its folder. It cannot overwrite anything or leave the folder, and nothing is run.',
         ]} />
       </>

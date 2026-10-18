@@ -10,7 +10,7 @@
 
 /* Cylinder 76's status track, as PaulaNET's driver reads it (spec 2026-10-11 §3.1). */
 
-static const pnet_status_t BENCH = { {0x28, 0xcd, 0xc1, 0x19, 0x6a, 0x38}, -55, 2, 1, 10 };
+static const pnet_status_t BENCH = { {0x28, 0xcd, 0xc1, 0x19, 0x6a, 0x38}, -55, 2, 1, 10, 0 };
 
 /* The spec's table, byte for byte, written from the table and not from pnet_status.h. */
 static void expected(uint8_t e[156]) {
@@ -76,10 +76,10 @@ static void every_start_finds_a_record_within_124_bytes(void) {
 
 static void the_lead_in_never_runs_short(void) {
     static const pnet_status_t odd[4] = {
-        { {0xff, 0xfe, 0xfd, 0xfc, 0xfb, 0xfa}, -1, 2, 255, 255 },
-        { {0x00, 0x00, 0x00, 0x00, 0x00, 0x00}, 0, 0, 0, 0 },
-        { {0x01, 0x23, 0x45, 0x67, 0x89, 0xab}, 32767, 2, 1, 10 },
-        { {0xaa, 0x55, 0xaa, 0x55, 0xaa, 0x55}, -32768, 0, 9, 99 },
+        { {0xff, 0xfe, 0xfd, 0xfc, 0xfb, 0xfa}, -1, 2, 255, 255, 0 },
+        { {0x00, 0x00, 0x00, 0x00, 0x00, 0x00}, 0, 0, 0, 0, 0 },
+        { {0x01, 0x23, 0x45, 0x67, 0x89, 0xab}, 32767, 2, 1, 10, 0 },
+        { {0xaa, 0x55, 0xaa, 0x55, 0xaa, 0x55}, -32768, 0, 9, 99, 0 },
     };
     static uint8_t loop[PNET_STATUS_LOOP_BYTES];
     for (unsigned i = 0; i < 4; i++) {
@@ -106,10 +106,25 @@ static void version_bytes_come_from_the_version_string(void) {
     CHECK(a == 0 && b == 0, "empty: 0.0");
 }
 
+/* Spec 2026-10-18 §3: LiveStatus.reserved (byte 155) tells the driver the board speaks LZ4. */
+static void byte_155_says_the_board_speaks_lz4(void) {
+    pnet_status_t st = BENCH;
+    uint8_t p[PNET_STATUS_BYTES];
+    pnet_status_payload(&st, p);
+    CHECK_EQ_INT(p[155], 0);                            /* 1.15.0's byte when nothing is set */
+    st.lz4 = PNET_ST_LZ4_TO_AMIGA | PNET_ST_LZ4_FROM_AMIGA;
+    pnet_status_payload(&st, p);
+    CHECK_EQ_INT(p[PNET_ST_RESERVED], 3);
+    CHECK_EQ_INT(PNET_ST_RESERVED, 155);
+    static uint8_t loop[PNET_STATUS_LOOP_BYTES];
+    CHECK_EQ_INT(pnet_build_status(loop, sizeof loop, 0, 0, &st), PNET_STATUS_LOOP_BYTES);   /* still fits its period */
+}
+
 int main(void) {
     RUN(the_record_is_robs_layout_byte_for_byte);
     RUN(every_start_finds_a_record_within_124_bytes);
     RUN(the_lead_in_never_runs_short);
     RUN(version_bytes_come_from_the_version_string);
+    RUN(byte_155_says_the_board_speaks_lz4);
     return REPORT();
 }

@@ -51,7 +51,7 @@ int main(void) {
     {
         static uint8_t loop[PNET_STATUS_LOOP_BYTES], rd[1024], st[PNET_STATUS_BYTES];
         static const uint8_t bm[6] = {0x28, 0xcd, 0xc1, 0x19, 0x6a, 0x38};
-        pnet_status_t s76 = { {0x28, 0xcd, 0xc1, 0x19, 0x6a, 0x38}, -55, PNET_LINK_NOIP, 1, 10 };
+        pnet_status_t s76 = { {0x28, 0xcd, 0xc1, 0x19, 0x6a, 0x38}, -55, PNET_LINK_NOIP, 1, 10, 0 };
         CHECK(pnet_build_status(loop, sizeof loop, 1, 2, &s76) == PNET_STATUS_LOOP_BYTES, "status built");
         for (size_t i = 0; i < sizeof rd; i++) rd[i] = loop[(i + 37u) % PNET_STATUS_LOOP_BYTES];
         const long off = pnet_find_sync(rd, sizeof rd, NL_DRIVER_SCAN);

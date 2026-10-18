@@ -23,6 +23,12 @@ dist/
 !tools/receive/dist/
 tools/receive/dist/*
 !tools/receive/dist/Receive
+# The pinned PaulaNET.device variant is committed (plan 2026-10-18 Task 6); its NDK download and work copies are not.
+!tools/paulanet-driver/dist/
+tools/paulanet-driver/dist/*
+!tools/paulanet-driver/dist/PaulaNET.device
+tools/paulanet-driver/.cache/
+tools/paulanet-driver/work/
 /docker/dist/
 build/
 # Firmware side builds: the DF1-default-on TEST image, the bus-sniffer image, and the

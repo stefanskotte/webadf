@@ -14,9 +14,10 @@ const CACHE_CONTROL = 'private, no-cache';
 /**
  * The PaulaNET driver disk for a person (spec 2026-10-12 §2 "Also downloadable"), for a real floppy or an
  * emulator. Signed-in users only, like every download here. Streamed, never a presigned redirect (the rule in
- * ../disks/[id]/adf/route.ts). Rob's files on it are his, by permission (third-party/paulanet/).
+ * ../disks/[id]/adf/route.ts). Rob's files on it (his PaulaNET Config; our LZ4 build of his
+ * PaulaNET.device) are by his permission (third-party/paulanet/).
  *
- * The current disk by default; `?sha256=` names either driver disk (R16: the older one, without Receive, is still
+ * The current disk by default; `?sha256=` names any driver disk (R16: an older one is still
  * what a board whose Amiga is online holds), and any other digest is 404.
  */
 export async function GET(request: Request) {

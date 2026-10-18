@@ -1196,7 +1196,7 @@ Claude-Session: https://claude.ai/code/session_01DQ9az2GKKN2vwaP5M3jctk"
   - `unsigned pnet_pack(pnet_pack_t *pk, const pnet_pack_mem_t *m, bool lz4, const pnet_frame_ref_t *in, unsigned avail, size_t cap);`
   - `size_t pnet_out_payload_bytes(const pnet_out_t *f, unsigned n);`
   - `size_t pnet_build_to_amiga_out(uint8_t *out, size_t cap, uint8_t amiga_ctr, uint8_t pico_ctr, uint8_t flags, const pnet_out_t *f, unsigned n);`
-  - serial lines `pnet: l2 lz4 out lz4 N mfm N wire N saved N` and `pnet: l2 lz4 in lz4 N bad N driver lz4|stock us max N avg N`.
+  - serial lines `pnet: l2 lz4 out lz4 N mfm N wire N saved N us max N avg N budget N unenc N` and `pnet: l2 lz4 in lz4 N bad N driver lz4|stock` (final-review fix: the pack time moved to the out line, M4; `budget`/`unenc` count batches that spent `PNET_PACK_LZ4_BUDGET_US` and their frames sent MFM unencoded, I1).
 
 - [ ] **Step 1: Write the failing tests.** Create `wifi-floppy/firmware/test/test_pnet_pack.c`:
 
@@ -2706,7 +2706,7 @@ the log reads `driver lz4`.
 Expected per file: `"status":"delivered"` (Receive checks each file's CRC-32 before it answers OK, so delivered
 means intact; Task 9's upload round trip compares sha256 as well); `out lz4` rising for the text and HTML (most frames LZ4, `saved` large); the ADF faster
 than its Step 3 time; the LHA's time within a few percent of Step 3 (its frames go MFM: `out mfm` rises, `out lz4`
-barely); `lz4 in lz4 0` (a 68000 uploads RLE); `us max` noted. Record the table: file, bytes, seconds stock, seconds
+barely); `lz4 in lz4 0` (a 68000 uploads RLE); `us max`, `budget` and `unenc` (the `lz4 out` line) noted. Record the table: file, bytes, seconds stock, seconds
 LZ4, wire stock, wire LZ4.
 
 - [ ] **Step 6: Decide on the hash table's home.** If `us max` stays above 3,000 us during the text and HTML runs,

@@ -144,6 +144,8 @@ describe('network says what a regular user needs (spec 2026-10-12 §5)', () => {
   });
   it('the download and the credit', () => {
     expect(renderToStaticMarkup(HELP_TOPICS.network.body as React.ReactElement)).toContain('href="/api/paulanet-disk"');
+    expect(bodyText('network')).toMatch(/LZ4/);
+    expect(bodyText('network')).toMatch(/installed PaulaNET before, run Install again from the driver disk in DF1/i);
     expect(all()).toMatch(/Rob Smith/);
   });
   it('names the firmware it needs', () => expect(all()).toMatch(/1\.11\.0/));
@@ -157,7 +159,7 @@ describe('send names the limits, Receive, the expiry and the accepted risk', () 
     expect(s).toMatch(/24 hours/);
     expect(s).toMatch(/1\.15\.0/);
     expect(s).toMatch(/any computer on your network/);
-    expect(s).toMatch(/keeps the older driver disk, without Receive, until the Amiga has been off/);
+    expect(s).toMatch(/keeps its older driver disk until the Amiga has been off/);
   });
 });
 
