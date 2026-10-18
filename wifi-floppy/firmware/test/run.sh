@@ -76,7 +76,8 @@ for t in "${tests[@]}"; do
   fi
   # test_pnet_link.c too (no liblz4): the board decodes the Amiga's LZ4 frames into its window and scratch there,
   # and its tests put both on the heap at exactly their sizes, so a write past either is an ASan report.
-  if [ "$t" = test_pnet_link.c ]; then
+  # test_pnet_pack.c too: the board encodes its batch's blocks into PSRAM buffers of exactly PNET_LZ4_WINDOW bytes.
+  if [ "$t" = test_pnet_link.c ] || [ "$t" = test_pnet_pack.c ]; then
     extra="-fsanitize=address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer"
   fi
   # -D_DEFAULT_SOURCE: strnlen (config_store.c) is POSIX.1-2008, not C11, and

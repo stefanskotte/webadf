@@ -76,6 +76,8 @@
 #include "pnet_link.h"       // PaulaNET Phase 1: counters for real frames
 #include "pnet_bridge.h"     //   the rings and core1's radio side
 #include "pnet_status.h"     //   Phase 2: cylinder 76's status track
+#include "pnet_lz4.h"        //   1.16.0: LZ4 both ways (spec 2026-10-18)
+#include "pnet_pack.h"       //   ...board -> Amiga packing
 #include "amiga_send.h"      // Phase 4: files sent to Receive on the Amiga
 #include "amiga_tcp.h"       //   its lwIP and HTTPS ops
 #endif
@@ -3123,6 +3125,30 @@ static pnet_link_t g_link;
 static uint32_t g_pnet_status_serves, g_pnet_status_early;
 // The heap low-water, sampled every loop pass (the 5 s heap: line can miss a dip; ruling 13).
 static uint32_t    g_pnet_heap_low = UINT32_MAX;
+// PaulaNET LZ4 (spec 2026-10-18 §5). All of it is PSRAM: SRAM has no room left (the heap low-water already sits at
+// its 20,480 B floor, HANDOFF 3bv; ruling F2: .bss may not grow), so g_lz4 is zeroed at boot after its PSRAM check,
+// never by crt0. Its own statics, so the RX window and scratch never overlap the capture they decode from
+// (flux_capture.c's mfm_buf, SRAM) -- pnet_lz4_decode's src must not overlap its window.
+static __uninitialized_psram("lz4txw") uint8_t  g_lz4_tx_win[PNET_LZ4_WINDOW];         // the batch out, back to back
+static __uninitialized_psram("lz4txb") uint8_t  g_lz4_tx_blk[PNET_LZ4_WINDOW];         // ...its LZ4 blocks
+static __uninitialized_psram("lz4tab") uint16_t g_lz4_table[PNET_LZ4_TABLE_ENTRIES];   // the 8 KB hash table
+static __uninitialized_psram("lz4rxw") uint8_t  g_lz4_rx_win[PNET_LZ4_WINDOW];         // the Amiga's batch, decoded
+static __uninitialized_psram("lz4rxs") uint8_t  g_lz4_rx_scratch[PNET_LZ4_BLOCK_MAX];  // an MFM-wrapped block
+typedef struct {
+    pnet_pack_t pack;                        // the batch out: its frames, and how each goes
+    bool        pack_lz4;                    // ...packed with LZ4 on
+    bool        ok;                          // every buffer above is backed by PSRAM (boot); else LZ4 is off both ways
+    uint32_t    out_lz4, out_mfm, wire, saved; // new batches: frames by encoding, payload bytes, bytes LZ4 saved
+    uint32_t    us_max, us_sum, us_n;          // pnet_pack per new batch, this 5 s window
+    uint32_t    dus_max, dus_sum, dus_n;       // the take of a new LZ4-asking batch from the Amiga, this 5 s window
+} pnet_lz4_state_t;
+static __uninitialized_psram("lz4st") pnet_lz4_state_t g_lz4;
+static const pnet_pack_mem_t g_lz4_mem = { g_lz4_tx_win, g_lz4_tx_blk, g_lz4_table, PNET_LZ4_TABLE_ENTRIES };
+// g_lz4 is backed by PSRAM: asked every time rather than kept in a flag, since a flag would be SRAM (ruling F2), and
+// an unbacked PSRAM address bus-faults. When it is not, nothing reads g_lz4.ok (ruling F9): LZ4 is off and byte 155
+// is 0 -- though L2 is broken anyway then, its rings being PSRAM too (pnet_bridge_init logs that).
+static bool pnet_lz4_backed(void) { return psram_check_address((uint8_t *)&g_lz4 + sizeof g_lz4 - 1u); }
+static bool pnet_lz4_on(void) { return pnet_lz4_backed() && g_lz4.ok; }
 // The buffer limit: a batch's bytes on the wire within DF1's buffer (pnet_link_fit also holds its payload to
 // PNET_TO_AMIGA_MAX_PAYLOAD), with the lead-in this build sends (pnet_frame.c).
 #define PNET_BATCH_CAP (sizeof track_words1 - (PNET_TX_LEAD_BYTES - PNET_LEAD_BYTES))
@@ -3222,7 +3248,19 @@ static bool pnet_take_capture(void) {
     const unsigned acked = pnet_link_ack(&g_link, &h);
     if (acked) { pnet_ring_drop(&g_pnet_rx, acked); g_pnet_frames_to += acked; }
     const uint32_t queued0 = g_link.queued;
-    pnet_link_take(&g_link, &h, cap.bytes + PNET_HDR_BYTES, &g_pnet_tx);
+    // LZ4 (spec 2026-10-18 §5): a batch from our driver (0x10) is decoded through the RX window, linked. The take
+    // also sets g_link.amiga_lz4, which pnet_prepare_echo reads -- after this ack and this take, so a re-pack it
+    // makes (pnet_link_shrink) always follows the ack and the take of the same header.
+    const bool lz4 = pnet_lz4_on();
+    const uint64_t z0 = time_us_64();
+    const pnet_take_t took = pnet_link_take_lz4(&g_link, &h, cap.bytes + PNET_HDR_BYTES, &g_pnet_tx,
+                                                lz4 ? g_lz4_rx_win : NULL, g_lz4_rx_scratch);
+    if (lz4 && took == PNET_TAKE_NEW && (h.compressed & PNET_DRIVER_LZ4)) {
+        const uint32_t dus = (uint32_t)(time_us_64() - z0);   // the bench's PSRAM cost, decoding (Task 3 carry)
+        if (dus > g_lz4.dus_max) g_lz4.dus_max = dus;
+        g_lz4.dus_sum += dus;
+        g_lz4.dus_n++;
+    }
     g_pnet_frames_from += g_link.queued - queued0;
 #else
     if (pnet_loop_is_new(&g_pnet, &h)) {
@@ -3279,22 +3317,47 @@ static bool pnet_prepare_echo(void) {
     g_pnet_echo_live = false;
     g_pnet_prepared = false;
     stream_stop(1);
-    pnet_frame_ref_t f[PNET_MAX_FRAMES];
 #if WF_PNET_L2
-    // Phase 1: our batch out, or -- when none is out -- a new one from what is waiting. It stays out,
-    // rebuilt unchanged here, until the Amiga acknowledges it (ruling 10; pnet_link.h).
-    if (!g_link.backup) {
-        uint16_t lens[PNET_MAX_FRAMES];
-        unsigned avail = pnet_ring_count(&g_pnet_rx);
+    // Phase 1: our batch out, or -- when none is out -- a new one from what is waiting. It stays out, rebuilt
+    // unchanged here, until the Amiga acknowledges it (ruling 10; pnet_link.h). LZ4 (spec 2026-10-18 §3, §5): packed
+    // by the frames' real sizes, LZ4 only while the Amiga's latest batch asked for it (0x10). The batch out is
+    // re-packed only when that changed: without LZ4 it may hold fewer frames (pnet_link_shrink); the rest stay
+    // waiting. That happens after the ack and the take of the header that changed it (pnet_take_capture). A swap to
+    // Rob's stock driver can lose ONE LZ4 batch (ruling F5): his driver reads before it writes, so the LZ4 batch out
+    // may already have been read and acknowledged; the next batch is MFM.
+    const bool lz4 = pnet_lz4_on() && g_link.amiga_lz4;
+    if (!g_link.backup || g_lz4.pack.n != g_link.nframes || g_lz4.pack_lz4 != lz4) {
+        pnet_frame_ref_t in[PNET_MAX_FRAMES];
+        unsigned avail = g_link.backup ? g_link.nframes : pnet_ring_count(&g_pnet_rx);
         if (avail > PNET_MAX_FRAMES) avail = PNET_MAX_FRAMES;
-        for (unsigned i = 0; i < avail; i++) (void)pnet_ring_peek(&g_pnet_rx, i, &lens[i]);
-        pnet_link_start(&g_link, pnet_link_fit(lens, avail, PNET_BATCH_CAP));
+        for (unsigned i = 0; i < avail; i++) in[i].data = pnet_ring_peek(&g_pnet_rx, i, &in[i].len);
+        const uint64_t p0 = time_us_64();
+        pnet_pack(&g_lz4.pack, &g_lz4_mem, lz4, in, avail, PNET_BATCH_CAP);
+        const uint32_t pus = (uint32_t)(time_us_64() - p0);
+        g_lz4.pack_lz4 = lz4;
+        if (g_link.backup) {
+            pnet_link_shrink(&g_link, g_lz4.pack.n);
+        } else {
+            pnet_link_start(&g_link, g_lz4.pack.n);
+            if (g_lz4.pack.n) {
+                g_lz4.out_lz4 += g_lz4.pack.lz4;
+                g_lz4.out_mfm += g_lz4.pack.n - g_lz4.pack.lz4;
+                g_lz4.wire += g_lz4.pack.wire;
+                g_lz4.saved += g_lz4.pack.saved;
+                if (pus > g_lz4.us_max) g_lz4.us_max = pus;   // the bench's PSRAM cost, encoding (Task 3 carry)
+                g_lz4.us_sum += pus;
+                g_lz4.us_n++;
+            }
+        }
     }
-    for (unsigned i = 0; i < g_link.nframes; i++) f[i].data = pnet_ring_peek(&g_pnet_rx, i, &f[i].len);
     const uint8_t flags = pnet_ring_count(&g_pnet_rx) > g_link.nframes ? PNET_CANRECEIVE : 0u;
     const unsigned nf = g_link.nframes;
     const uint8_t ack = g_link.last_amiga, pico = g_link.pico;
+    // Built as bytes straight into the word buffer, then repacked in place (pnet_pack_words).
+    uint8_t *out = (uint8_t *)track_words1;
+    const size_t bytes = pnet_build_to_amiga_out(out, sizeof track_words1, ack, pico, flags, g_lz4.pack.f, nf);
 #else
+    pnet_frame_ref_t f[PNET_MAX_FRAMES];
     const uint8_t *p = g_pnet_echo[g_pnet_half];
     for (unsigned i = 0; i < g_pnet.nframes; i++) {
         f[i].data = p;
@@ -3304,10 +3367,10 @@ static bool pnet_prepare_echo(void) {
     const uint8_t flags = 0;
     const unsigned nf = g_pnet.nframes;
     const uint8_t ack = g_pnet.last_amiga, pico = g_pnet.pico;
-#endif
     // Built as bytes straight into the word buffer, then repacked in place (pnet_pack_words).
     uint8_t *out = (uint8_t *)track_words1;
     const size_t bytes = pnet_build_to_amiga(out, sizeof track_words1, ack, pico, flags, f, nf);
+#endif
     if (bytes == 0) {
         wf_logf(WF_ERR, "pnet: an echo of %u frames does not fit DF1's %u B buffer -- not served",
                 (unsigned)nf, (unsigned)sizeof track_words1);
@@ -3436,6 +3499,7 @@ static void pnet_serve_status(void) {
     st.rssi = g_pnet_rssi;
     st.link = net_radio_sta_joined() ? PNET_LINK_NOIP : PNET_LINK_DOWN;
     pnet_version_bytes(WF_FIRMWARE_VERSION, &st.ver_major, &st.ver_minor);
+    st.lz4 = pnet_lz4_on() ? (uint8_t)(PNET_ST_LZ4_TO_AMIGA | PNET_ST_LZ4_FROM_AMIGA) : 0u;   // spec 2026-10-18 §3
     if (pnet_build_status((uint8_t *)g_pnet_status_words, sizeof g_pnet_status_words,
                           g_link.last_amiga, g_link.pico, &st) == 0) {
         wf_logf(WF_ERR, "pnet: the status record does not fit its %u-byte period -- not served",
@@ -3549,10 +3613,12 @@ static void pnet_l2_log(void) {
     pnet_bridge_stats(&st);
     uint32_t no = 0;
     for (unsigned i = 1; i < PNET_TX_N; i++) no += st.tx_no[i];
+    const bool lz4b = pnet_lz4_backed();          // g_lz4 is read only when PSRAM backs it (ruling F9)
     const uint32_t sum = st.in_amiga + st.in_both + st.rx_drops + st.tx_sent + st.tx_err + no +
                          g_link.fresh + g_link.dup + g_link.queued + g_link.over + g_link.malformed +
                          g_link.acked + st.clash + st.hooks + g_pnet_status_serves + g_pnet_status_early +
-                         st.a2b + st.b2a + st.local_drops;
+                         st.a2b + st.b2a + st.local_drops + g_link.lz4_in + g_link.lz4_bad +
+                         (lz4b ? g_lz4.out_lz4 + g_lz4.out_mfm : 0u);
     if (sum == last_sum) return;
     last_sum = sum;
 #define PNET_SAT(v, m) ((unsigned long)((v) > (m) ? (m) : (v)))
@@ -3574,6 +3640,21 @@ static void pnet_l2_log(void) {
     wf_logf(g_link.over || g_link.malformed ? WF_WARN : WF_INFO,
             "pnet: l2 from amiga new %lu dup %lu frames %lu over %lu bad %lu",
             S7(g_link.fresh), S7(g_link.dup), S7(g_link.queued), S7(g_link.over), S7(g_link.malformed));
+    // LZ4 (spec 2026-10-18 §5): new batches to the Amiga -- frames by encoding, payload bytes on the wire, bytes LZ4
+    // saved against MFM; frames from the Amiga in LZ4 and refused LZ4 (a bad size word included); what the driver
+    // last asked for; pnet_pack's time per new batch this window (us). Then the take's time for the Amiga's new
+    // LZ4-asking batches this window (us): with the pack's, what PSRAM costs on the bench.
+    if (lz4b) {
+        wf_logf(WF_INFO, "pnet: l2 lz4 out lz4 %lu mfm %lu wire %lu saved %lu",
+                S7(g_lz4.out_lz4), S7(g_lz4.out_mfm), S7(g_lz4.wire), S7(g_lz4.saved));
+        wf_logf(g_link.lz4_bad ? WF_WARN : WF_INFO, "pnet: l2 lz4 in lz4 %lu bad %lu driver %s us max %lu avg %lu",
+                S7(g_link.lz4_in), S7(g_link.lz4_bad), g_link.amiga_lz4 ? "lz4" : "stock", S7(g_lz4.us_max),
+                S7(g_lz4.us_n ? g_lz4.us_sum / g_lz4.us_n : 0u));
+        wf_logf(WF_INFO, "pnet: l2 lz4 dec us max %lu avg %lu n %lu",
+                S7(g_lz4.dus_max), S7(g_lz4.dus_n ? g_lz4.dus_sum / g_lz4.dus_n : 0u), S7(g_lz4.dus_n));
+        g_lz4.us_max = g_lz4.us_sum = g_lz4.us_n = 0;
+        g_lz4.dus_max = g_lz4.dus_sum = g_lz4.dus_n = 0;
+    }
     const bool same = st.amiga_ip != 0u && st.amiga_ip == st.board_ip;
     wf_logf(st.clash || same ? WF_WARN : WF_INFO, "pnet: l2 amiga %s board %s %s clash %lu heap %lu",
             a, b, same ? "SAME" : "distinct", PNET_SAT(st.clash, 999999u), PNET_SAT(g_pnet_heap_low, 999999u));
@@ -3855,6 +3936,25 @@ int main(void) {
             (unsigned)PNET_TX_LEAD_BYTES, (unsigned)PNET_SIDE_DELAY_US);
 #if WF_PNET_L2
     pnet_bridge_init();           // the PSRAM rings, before core1 (their other side) starts
+    // LZ4 (spec 2026-10-18 §5): its state and buffers, PSRAM like the rings; off both ways unless all are backed.
+    // The result is kept here for the log: g_lz4 itself is touched only when its own check passed (ruling F9).
+    {
+        const bool st_ok = pnet_lz4_backed();
+        bool ok = false;
+        if (st_ok) {
+            memset(&g_lz4, 0, sizeof g_lz4);
+            ok = psram_check_address(&g_lz4_tx_win[PNET_LZ4_WINDOW - 1u]) &&
+                 psram_check_address(&g_lz4_tx_blk[PNET_LZ4_WINDOW - 1u]) &&
+                 psram_check_address(&g_lz4_table[PNET_LZ4_TABLE_ENTRIES - 1u]) &&
+                 psram_check_address(&g_lz4_rx_win[PNET_LZ4_WINDOW - 1u]) &&
+                 psram_check_address(&g_lz4_rx_scratch[PNET_LZ4_BLOCK_MAX - 1u]);
+            g_lz4.ok = ok;
+        }
+        wf_logf(ok ? WF_INFO : WF_ERR, "pnet: lz4 %s",
+                ok ? "on (table 4096, 57 KB of PSRAM)"
+                   : st_ok ? "OFF -- its buffers are not backed by PSRAM"
+                           : "OFF -- its state is not backed by PSRAM (L2 will fail too)");
+    }
 #endif
     if (!psram_check_address(&g_pnet_echo[1][PNET_ECHO_BYTES - 1]))
         wf_logf(WF_ERR, "pnet: the echo store is not backed by PSRAM -- the loopback will fail");
