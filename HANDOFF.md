@@ -1478,6 +1478,16 @@ separately.
 
 ### 4. Backlog, not blocking anything
 
+- **Documentation for file transfer** (operator, 2026-10-18): describe the new Send to Amiga feature end to end in
+  the user-facing docs: the README and the docs the GitHub page links to, plus a check of the in-app help. Cover:
+  - Receive on the PaulaNET driver disk (Install, Workbench icon, Shell form `Receive TO`, the saved folder);
+  - the Upload page's Send to Amiga card, the queue, Clear finished, and the Browse/title-page Send buttons;
+  - limits (4 MB per file, 32 files / 16 MB queued, 24 h wait);
+  - LZ4 (fw 1.16.0+, re-run Install, the per-CPU table);
+  - troubleshooting ("The Amiga does not answer", "Start Receive on the Amiga", AddNetInterface eth0).
+
+  Screenshots like the Discord post's (no private file names).
+
 - **Per-user web app settings** (operator, 2026-10-18): settings that belong to the user, not the org or the board --
   start page, sort orders (library, Browse, sets, collections), and similar view preferences. Stored server-side per
   user (so they follow the user across browsers), with today's behaviour as the default; a Settings page section to
