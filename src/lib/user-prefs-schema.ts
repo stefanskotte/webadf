@@ -38,10 +38,11 @@ export const SORT_DIRS = ['asc', 'desc'] as const;
 export type SortDir = (typeof SORT_DIRS)[number];
 
 /**
- * The library's sort keys -- the grid's today, and the table view's columns
- * (the table view reuses this setting: a column header click is just a
- * `setUserPrefs(userId, { library: { sort: { key, dir } } })`).
- * `added` (newest first) is the order the library has always had.
+ * The library's sort keys. The grid and the table both show listGames' order,
+ * so this one setting orders both; a future sortable table header would save
+ * the same `{ library: { sort: { key, dir } } }` patch (savePrefs in the
+ * browser, setUserPrefs on the server). `added` (newest first) is the order
+ * the library has always had.
  */
 export const LIBRARY_SORT_KEYS = ['added', 'title', 'year', 'publisher', 'size', 'disks'] as const;
 export type LibrarySortKey = (typeof LIBRARY_SORT_KEYS)[number];
@@ -117,6 +118,22 @@ export function applyPrefsPatch(cur: UserPrefs, patch: PrefsPatch): UserPrefs {
     library: { ...cur.library, ...patch.library, sort: { ...(patch.library?.sort ?? cur.library.sort) } },
     browse: { ...cur.browse, ...patch.browse, sort: { ...(patch.browse?.sort ?? cur.browse.sort) } },
   };
+}
+
+const sameSort = (a: { key: string; dir: string }, b: { key: string; dir: string }) =>
+  a.key === b.key && a.dir === b.dir;
+
+/**
+ * The patch that turns `from` into `to`, naming only what differs. The
+ * Preferences form saves this rather than everything it shows, so a sort
+ * changed in another tab since the form loaded is not put back.
+ */
+export function prefsDiff(from: UserPrefs, to: UserPrefs): PrefsPatch {
+  const patch: PrefsPatch = {};
+  if (from.startPage !== to.startPage) patch.startPage = to.startPage;
+  if (!sameSort(from.library.sort, to.library.sort)) patch.library = { sort: { ...to.library.sort } };
+  if (!sameSort(from.browse.sort, to.browse.sort)) patch.browse = { sort: { ...to.browse.sort } };
+  return patch;
 }
 
 // --- The sort pickers' choices -------------------------------------------

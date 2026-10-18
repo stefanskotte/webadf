@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest';
 import {
   DEFAULT_PREFS, parsePrefs, parsePrefsPatch, applyPrefsPatch, startPagePath,
   LIBRARY_SORT_OPTIONS, BROWSE_SORT_OPTIONS, sortOptionId, sortFromOptionId,
-  type SortOption, type SortDir,
+  type SortOption, type SortDir, prefsDiff,
 } from './user-prefs-schema';
 
 describe('user prefs defaults', () => {
@@ -88,5 +88,17 @@ describe('sort options', () => {
     expect(LIBRARY_SORT_OPTIONS.map((o) => o.sort)).toContainEqual(DEFAULT_PREFS.library.sort);
     expect(BROWSE_SORT_OPTIONS.map((o) => o.sort)).toContainEqual(DEFAULT_PREFS.browse.sort);
     expect(sortFromOptionId(LIBRARY_SORT_OPTIONS, 'bogus')).toBeNull();
+  });
+});
+
+describe('prefsDiff', () => {
+  it('names only what changed, so a save cannot overwrite a setting changed elsewhere', () => {
+    const saved = parsePrefs({});
+    expect(prefsDiff(saved, saved)).toEqual({});
+    expect(prefsDiff(saved, { ...saved, startPage: 'devices' })).toEqual({ startPage: 'devices' });
+    expect(prefsDiff(saved, { ...saved, browse: { sort: { key: 'size', dir: 'desc' } } }))
+      .toEqual({ browse: { sort: { key: 'size', dir: 'desc' } } });
+    expect(prefsDiff(saved, { ...saved, library: { sort: { key: 'title', dir: 'asc' } } }))
+      .toEqual({ library: { sort: { key: 'title', dir: 'asc' } } });
   });
 });

@@ -61,10 +61,10 @@ export interface GameListItem {
 
 /**
  * `opts.collectionId`, when set, filters to one collection's members and
- * orders by their position in it instead of recency. The unfiltered path
- * below is left byte-identical to before this option existed -- a library
- * with no collections must behave exactly as it did before -- which is why
- * the two branches are written out separately rather than sharing a partial
+ * orders by their position in it, ignoring `opts.sort`. The unfiltered and
+ * uncategorized paths order by `opts.sort` (libraryOrderBy), whose default --
+ * newest added first, ties by id -- is the order a library has always had.
+ * The branches are written out separately rather than sharing a partial
  * query builder chain.
  *
  * The collection id is NOT trusted from the caller here: every route reaches

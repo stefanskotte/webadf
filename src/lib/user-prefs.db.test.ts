@@ -83,6 +83,21 @@ describe('user prefs storage', () => {
     });
   });
 
+  it('concurrent patches to an EXISTING row are all kept (the row lock, not the insert, serialises them)', async () => {
+    const u = await newUser();
+    await setUserPrefs(u, { startPage: 'upload' });
+    await Promise.all([
+      setUserPrefs(u, { startPage: 'devices' }),
+      setUserPrefs(u, { library: { sort: { key: 'year', dir: 'asc' } } }),
+      setUserPrefs(u, { browse: { sort: { key: 'size', dir: 'asc' } } }),
+    ]);
+    expect(await getUserPrefs(u)).toEqual({
+      startPage: 'devices',
+      library: { sort: { key: 'year', dir: 'asc' } },
+      browse: { sort: { key: 'size', dir: 'asc' } },
+    });
+  });
+
   it('a stored value that no longer validates reads as defaults for that field only', async () => {
     const u = await newUser();
     await getDb().insert(userPrefs).values({

@@ -9,7 +9,7 @@ import { sortOptionId, sortFromOptionId, type SortDir, type SortOption } from '@
  * the caller's (LibrarySortPicker, the Browse list, the Preferences form).
  */
 export function SortSelect<S extends { key: string; dir: SortDir }>({
-  label = 'Sort', options, value, onChange, disabled = false, testId,
+  label = 'Sort', options, value, onChange, disabled = false, testId, describedBy,
 }: {
   label?: string;
   options: readonly SortOption<S>[];
@@ -17,6 +17,8 @@ export function SortSelect<S extends { key: string; dir: SortDir }>({
   onChange: (next: S) => void;
   disabled?: boolean;
   testId?: string;
+  /** The id of a hint that explains this picker (aria-describedby). */
+  describedBy?: string;
 }) {
   const id = useId();
   return (
@@ -25,6 +27,7 @@ export function SortSelect<S extends { key: string; dir: SortDir }>({
       <select
         id={id}
         data-testid={testId}
+        aria-describedby={describedBy}
         value={sortOptionId(value)}
         disabled={disabled}
         onChange={(e) => {

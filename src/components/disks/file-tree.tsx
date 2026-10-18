@@ -36,8 +36,8 @@ export interface NativeDropProps {
   onDrop: (e: React.DragEvent<HTMLElement>) => void;
 }
 import { sortEntries } from '@/lib/browse-sort';
-import { savePrefs } from '@/lib/user-prefs-client';
-import { BROWSE_SORT_OPTIONS, DEFAULT_PREFS, type BrowseSort } from '@/lib/user-prefs-schema';
+import { latestSaver } from '@/lib/user-prefs-client';
+import { BROWSE_SORT_OPTIONS, DEFAULT_PREFS, sortOptionId, type BrowseSort } from '@/lib/user-prefs-schema';
 import { SortSelect } from '@/components/prefs/sort-select';
 import { toast } from 'sonner';
 
@@ -207,11 +207,19 @@ export function FileTree({ entries, diskId, send = null, sort: initialSort = DEF
   const [openBlocks, setOpenBlocks] = useState<ReadonlySet<number>>(() => new Set());
   // Sorted here in the browser (the whole tree is already on the page), so a
   // change shows at once; the save behind it only has to succeed for the NEXT
-  // visit, and says so if it does not.
+  // visit, and says so if it does not. Only the latest choice is saved
+  // (latestSaver: arrow keys on the select fire a change per press), and a
+  // refresh that brings a different server value is followed.
+  const [saver] = useState(latestSaver);
   const [sort, setSort] = useState<BrowseSort>(initialSort);
+  const [serverSort, setServerSort] = useState<BrowseSort>(initialSort);
+  if (sortOptionId(initialSort) !== sortOptionId(serverSort)) {
+    setServerSort(initialSort);
+    setSort(initialSort);
+  }
   function changeSort(next: BrowseSort) {
     setSort(next);
-    savePrefs({ browse: { sort: next } }).catch(() => {
+    saver.save({ browse: { sort: next } }).catch(() => {
       toast.error("Couldn't remember this sort order for next time.");
     });
   }

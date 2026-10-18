@@ -6,7 +6,7 @@ import { toast } from 'sonner';
 import { SortSelect } from '@/components/prefs/sort-select';
 import { savePrefs } from '@/lib/user-prefs-client';
 import {
-  BROWSE_SORT_OPTIONS, LIBRARY_SORT_OPTIONS, START_PAGES, type StartPage, type UserPrefs,
+  BROWSE_SORT_OPTIONS, LIBRARY_SORT_OPTIONS, START_PAGES, prefsDiff, type StartPage, type UserPrefs,
 } from '@/lib/user-prefs-schema';
 
 const START_PAGE_LABELS: Record<StartPage, string> = { library: 'Library', devices: 'Devices', upload: 'Upload' };
@@ -19,6 +19,8 @@ const START_PAGE_LABELS: Record<StartPage, string> = { library: 'Library', devic
 export function PreferencesForm({ prefs }: { prefs: UserPrefs }) {
   const router = useRouter();
   const startId = useId();
+  const startHint = useId();
+  const libraryHint = useId();
   const [saved, setSaved] = useState(prefs);
   const [draft, setDraft] = useState(prefs);
   const [busy, setBusy] = useState(false);
@@ -27,11 +29,9 @@ export function PreferencesForm({ prefs }: { prefs: UserPrefs }) {
   async function save() {
     setBusy(true);
     try {
-      const next = await savePrefs({
-        startPage: draft.startPage,
-        library: { sort: draft.library.sort },
-        browse: { sort: draft.browse.sort },
-      });
+      // Only what was changed here: a sort changed in another tab since this
+      // page loaded must not be put back by a Save that never touched it.
+      const next = await savePrefs(prefsDiff(saved, draft));
       setSaved(next);
       setDraft(next);
       toast.success('Preferences saved');
@@ -55,22 +55,22 @@ export function PreferencesForm({ prefs }: { prefs: UserPrefs }) {
         <div className="flex flex-col gap-1">
           <span className="inline-flex items-center gap-2 text-[12px]">
             <label htmlFor={startId} className="font-semibold" style={{ color: 'var(--muted)' }}>Start page</label>
-            <select id={startId} data-testid="pref-start-page" value={draft.startPage}
+            <select id={startId} aria-describedby={startHint} data-testid="pref-start-page" value={draft.startPage}
                     onChange={(e) => setDraft({ ...draft, startPage: e.target.value as StartPage })}
                     className="h-8 rounded-lg border px-2 text-[12px]"
                     style={{ borderColor: 'var(--hairline)', background: 'var(--input-bg)', color: 'var(--ink)' }}>
               {START_PAGES.map((p) => <option key={p} value={p}>{START_PAGE_LABELS[p]}</option>)}
             </select>
           </span>
-          <span className="text-[12px]" style={{ color: 'var(--muted)' }}>
+          <span id={startHint} className="text-[12px]" style={{ color: 'var(--muted)' }}>
             Where you land after signing in, and when you open the site&apos;s address.
           </span>
         </div>
         <div className="flex flex-col gap-1">
           <SortSelect label="Library order" options={LIBRARY_SORT_OPTIONS} value={draft.library.sort}
                       onChange={(sort) => setDraft({ ...draft, library: { ...draft.library, sort } })}
-                      testId="pref-library-sort" />
-          <span className="text-[12px]" style={{ color: 'var(--muted)' }}>
+                      testId="pref-library-sort" describedBy={libraryHint} />
+          <span id={libraryHint} className="text-[12px]" style={{ color: 'var(--muted)' }}>
             The library and Uncategorized. A collection keeps its own order.
           </span>
         </div>
@@ -84,7 +84,8 @@ export function PreferencesForm({ prefs }: { prefs: UserPrefs }) {
                 style={{ background: 'var(--primary-action)' }}>
           {busy ? 'Saving…' : 'Save'}
         </button>
-        <span className="text-[12px]" style={{ color: 'var(--muted)' }} data-testid="prefs-state">
+        <span className="text-[12px]" style={{ color: 'var(--muted)' }} data-testid="prefs-state"
+              role="status" aria-live="polite">
           {dirty ? 'Unsaved changes' : 'All changes saved'}
         </span>
       </div>

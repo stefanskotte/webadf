@@ -15,11 +15,29 @@ import { applyPrefsPatch, parsePrefs, type PrefsPatch, type UserPrefs } from '@/
  * is org-scoped, because preferences belong to the person.
  */
 
-/** This user's preferences, every field filled. A user with no row reads the defaults; nothing is written. */
+let readFailureLogged = false;
+
+/**
+ * This user's preferences, every field filled. A user with no row reads the
+ * defaults; nothing is written.
+ *
+ * A failed read (the table not migrated yet, a dropped connection) also reads
+ * the defaults -- today's behaviour -- rather than failing the page: "/" and
+ * sign-in, the library, Browse and Settings all call this, and a preference is
+ * never worth an error page. Logged once per process, not on every request.
+ */
 export async function getUserPrefs(userId: string): Promise<UserPrefs> {
-  const rows = await getDb().select({ prefs: userPrefs.prefs }).from(userPrefs)
-    .where(eq(userPrefs.userId, userId)).limit(1);
-  return parsePrefs(rows[0]?.prefs);
+  try {
+    const rows = await getDb().select({ prefs: userPrefs.prefs }).from(userPrefs)
+      .where(eq(userPrefs.userId, userId)).limit(1);
+    return parsePrefs(rows[0]?.prefs);
+  } catch (err) {
+    if (!readFailureLogged) {
+      readFailureLogged = true;
+      console.error('user prefs: read failed, using defaults', err);
+    }
+    return parsePrefs(undefined);
+  }
 }
 
 /**

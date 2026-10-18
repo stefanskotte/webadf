@@ -61,6 +61,20 @@ test('the chosen start page is where the root URL and sign-in land', async ({ pa
   await expect(page).toHaveURL(/\/ingest/);
 });
 
+test('saving Preferences does not put back a sort changed elsewhere since the page loaded', async ({ page }) => {
+  await signUpFresh(page);
+  await page.goto('/settings');
+  // Another tab changes the library sort after this form loaded.
+  const res = await page.request.patch('/api/me/prefs', { data: { library: { sort: { key: 'year', dir: 'asc' } } } });
+  expect(res.status()).toBe(200);
+  await page.getByTestId('pref-start-page').selectOption('devices');
+  await page.getByTestId('prefs-save').click();
+  await expect(page.getByTestId('prefs-state')).toHaveText('All changes saved');
+  const prefs = await (await page.request.get('/api/me/prefs')).json();
+  expect(prefs.startPage).toBe('devices');
+  expect(prefs.library.sort).toEqual({ key: 'year', dir: 'asc' });
+});
+
 test('a changed library sort survives a reload and a new browser for the same user', async ({ page, browser }) => {
   const { email, password } = await signUpFresh(page);
   const run = runTag();
@@ -96,4 +110,14 @@ test('a changed library sort survives a reload and a new browser for the same us
   await p2.goto('/settings');
   await expect(p2.getByTestId('pref-library-sort')).toHaveValue('title-asc');
   await other.close();
+
+  // Several changes in quick succession (arrow keys on the select do this):
+  // the picker never locks, and the LAST choice is the one remembered.
+  await page.getByTestId('library-sort').selectOption('title-desc');
+  await page.getByTestId('library-sort').selectOption('added-asc');
+  await page.getByTestId('library-sort').selectOption('title-desc');
+  await expect(titles(page).first()).toContainText(second);
+  await page.reload();
+  await expect(page.getByTestId('library-sort')).toHaveValue('title-desc');
+  await expect(titles(page).first()).toContainText(second);
 });
