@@ -168,3 +168,41 @@ test('the board\'s card says what waits and whether Receive runs, and links to t
   await expect(page).toHaveURL(new RegExp(`/ingest\\?board=${deviceId}$`));
   await expect(page.getByTestId('send-board')).toContainText('Bench');
 });
+
+test('a long queue scrolls inside a bounded list, and Clear finished removes the finished rows while a waiting file stays', async ({ page, request }) => {
+  test.setTimeout(120_000);   // 14 rows made through the routes, each a request or several
+  await signUpFresh(page);
+  const { deviceId, token } = await pairDevice(page, request, 'Bench');
+  await boardSays(request, token, 'c');
+  const post = async (name: string) => {
+    const res = await page.request.post(`/api/transfers?deviceId=${deviceId}&name=${name}`, { data: Buffer.from(name),
+      headers: { 'content-type': 'application/octet-stream' } });
+    expect(res.status()).toBe(201);
+    return ((await res.json()) as { ids: string[] }).ids[0];
+  };
+  // One delivered and one failed through the board's own routes, eleven cancelled, then one left waiting: 14 rows.
+  await post('Delivered.bin'); await boardTakesNext(request, token, { ok: true, savedAs: 'Delivered.bin' });
+  await post('Failed.bin'); await boardTakesNext(request, token, { ok: false, code: 'space', text: 'disk full' });
+  for (let i = 0; i < 11; i++) expect((await page.request.delete(`/api/transfers/${await post(`C${i}.bin`)}`)).status()).toBe(200);
+  const waiting = await post('Waiting.bin');
+
+  await page.goto('/ingest');
+  const list = page.getByTestId('send-queue');
+  await expect(page.locator('[data-testid^="send-row-"]')).toHaveCount(14, { timeout: LIVE });
+  // The waiting row is first although it is the newest of many finished ones, and the list scrolls inside itself.
+  await expect(page.locator('[data-testid^="send-row-"]').first()).toHaveAttribute('data-testid', `send-row-${waiting}`);
+  const box = await list.evaluate((el) => ({ client: el.clientHeight, scroll: el.scrollHeight,
+    max: getComputedStyle(el).maxHeight, overflowY: getComputedStyle(el).overflowY }));
+  expect(box.max).not.toBe('none');
+  expect(box.overflowY).toBe('auto');
+  expect(box.client).toBeLessThan(box.scroll);
+
+  const clear = page.getByTestId('send-clear-finished');
+  await expect(clear).toHaveText('Clear finished (13)');
+  await clear.click();
+  await expect(page.locator('[data-testid^="send-row-"]')).toHaveCount(1, { timeout: LIVE });
+  await expect(page.getByTestId(`send-row-${waiting}`)).toHaveAttribute('data-status', 'queued');
+  await expect(clear).toHaveCount(0);
+  const q = Buffer.from(await (await request.get('/api/device/send/queue', { headers: authHeader(token) })).body()).toString('latin1');
+  expect(q).toMatch(new RegExp(`^NEXT ${waiting} `));
+});

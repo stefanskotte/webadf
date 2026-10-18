@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import {
-  adfSendName, canCancel, canRetry, cardSendLine, failureText, formatSize, longOffline, offlineFor, orderTargets,
+  adfSendName, canCancel, canRetry, cardSendLine, clearableCount, orderQueue, failureText, formatSize, longOffline, offlineFor, orderTargets,
   pickTarget, receiverLine, receiverRunning, sendErrorText, targetState, transferState,
   type SendTarget, type TransferView,
 } from './send-ui';
@@ -108,5 +108,18 @@ describe('the card line and names', () => {
     expect(formatSize(44)).toBe('44 B');
     expect(formatSize(901_120)).toBe('880 KB');
     expect(formatSize(4_194_304)).toBe('4.0 MB');
+  });
+});
+
+describe('the queue list', () => {
+  it('orderQueue puts waiting and sending rows first and keeps the order inside each group', () => {
+    const rows = [row({ id: 'd1', status: 'delivered' }), row({ id: 'q1' }), row({ id: 'f1', status: 'failed' }),
+      row({ id: 's1', status: 'sending' }), row({ id: 'e1', status: 'expired' }), row({ id: 'q2' })];
+    expect(orderQueue(rows).map((r) => r.id)).toEqual(['q1', 's1', 'q2', 'd1', 'f1', 'e1']);
+  });
+  it('clearableCount counts what Clear finished removes: every row that is not waiting or sending', () => {
+    const rows = (['queued', 'sending', 'delivered', 'failed', 'cancelled', 'expired'] as const).map((status, i) => row({ id: `r${i}`, status }));
+    expect(clearableCount(rows)).toBe(4);
+    expect(clearableCount([row(), row({ status: 'sending' })])).toBe(0);
   });
 });

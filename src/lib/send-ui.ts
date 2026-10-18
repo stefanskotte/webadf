@@ -57,6 +57,12 @@ export function transferState(t: TransferView): { text: string; tone: Tone } {
 export const canCancel = (s: TransferStatus): boolean => s === 'queued' || s === 'sending';   // R9
 export const canRetry = (s: TransferStatus): boolean => s === 'failed' || s === 'expired';   // R10
 
+/** The Upload page's list: what waits or moves first, then what finished; each group keeps its order (newest first). */
+export const orderQueue = (rows: TransferView[]): TransferView[] =>
+  [...rows.filter((r) => canCancel(r.status)), ...rows.filter((r) => !canCancel(r.status))];
+/** What "Clear finished" removes: a view's status already reads a lapsed waiting row as expired, as the server does. */
+export const clearableCount = (rows: TransferView[]): number => rows.filter((r) => !canCancel(r.status)).length;
+
 export function receiverRunning(t: Pick<SendTarget, 'rx' | 'rxAt'>, sending: boolean, now: number): boolean {
   return t.rx === 'c' && (sending || (t.rxAt !== null && now - t.rxAt <= RX_FRESH_MS));
 }
