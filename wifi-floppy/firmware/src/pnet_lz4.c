@@ -113,7 +113,7 @@ pnet_err_t pnet_lz4_iter_next(pnet_frame_iter_t *it, pnet_lz4_win_t *w, uint8_t 
     uint8_t ch[4];
     pnet_mfm_decode(it->p + it->pos, 4, ch);
     const uint16_t field = (uint16_t)(ch[0] << 8 | ch[1]), os = (uint16_t)(ch[2] << 8 | ch[3]);
-    const bool fits = w->pos <= PNET_LZ4_WINDOW && os <= PNET_LZ4_WINDOW - w->pos;
+    const bool fits = w->pos <= PNET_LZ4_WINDOW && PNET_LZ4_WIN_BYTES(os) <= PNET_LZ4_WINDOW - w->pos;   /* pad counted */
     if (!(field & PNET_SIZE_LZ4)) {                     /* RLE or MFM: the plain iterator, into the window */
         if (!fits || os > cap) {
             w->pos = PNET_LZ4_BROKEN;                   /* outside the window: nothing later may link to it */
@@ -123,7 +123,7 @@ pnet_err_t pnet_lz4_iter_next(pnet_frame_iter_t *it, pnet_lz4_win_t *w, uint8_t 
         const pnet_err_t e = pnet_frame_iter_next(it, at, PNET_LZ4_WINDOW - w->pos, len);
         if (e != PNET_OK) return e;
         memcpy(out, at, *len);
-        w->pos += *len;
+        w->pos = pnet_lz4_win_advance(w->win, w->pos, *len);
         return PNET_OK;
     }
     *was_lz4 = true;                                    /* from here an error is LZ4 damage (pnet_lz4.h) */
@@ -142,7 +142,7 @@ pnet_err_t pnet_lz4_iter_next(pnet_frame_iter_t *it, pnet_lz4_win_t *w, uint8_t 
     uint8_t *dst = w->win + w->pos;
     if (pnet_lz4_decode(src, blk, dst, dst + os, w->win) != (long)os) return PNET_E_LZ4;
     memcpy(out, dst, os);
-    w->pos += os;
+    w->pos = pnet_lz4_win_advance(w->win, w->pos, os);
     *len = os;
     const size_t next = at + wire + (wire & 1u);
     it->pos = next > it->len ? it->len : next;

@@ -7,6 +7,16 @@
 
 static void wl_copy(UBYTE *d, const UBYTE *s, ULONG n) { while (n--) *d++ = *s++; }
 
+/* Every frame starts at an even offset in its batch's window, on both sides (spec §2; the board's pnet_lz4_win_advance):
+ * after an odd-length frame one 0x00 pad byte, never sent, counted toward WL_WINDOW. Written every batch, as 0: the
+ * window is not cleared and an LZ4 match may cover the pad. pos is even and pos + len <= WL_WINDOW (even), so the pad
+ * slot of an odd frame is inside the window. Returns the next frame's offset. */
+static ULONG wl_advance(UBYTE *win, ULONG pos, ULONG len) {
+    pos += len;
+    if (len & 1) win[pos++] = 0;
+    return pos;
+}
+
 /* n bytes from 2n MFM bytes: the data bits at the 0x5555 positions, PaulaNET's order (the board's pnet_mfm_decode).
  * The one exception to byte access only (pre-flight F6): the wire is read a UWORD at a time, as Rob's mfmDecode
  * (paulanetio.c) reads it, so plain MFM frames cost what they cost in his driver -- reading it two bytes at a time
@@ -62,7 +72,7 @@ const UBYTE *wl_rx_frame(struct WlRx *rx, UWORD field, const UBYTE *wire, UWORD 
     UBYTE *dst;
     BOOL fits;
     if (orig == 0 || orig > WL_MTU) { rx->pos = WL_BROKEN; return (const UBYTE *)0; }
-    fits = rx->pos <= WL_WINDOW && orig <= WL_WINDOW - rx->pos;
+    fits = rx->pos <= WL_WINDOW && (ULONG)orig + (orig & 1) <= WL_WINDOW - rx->pos;   /* its pad counted */
     if ((field & 0xC000) == 0xC000) {                     /* LZ4, MFM-encoded, linked to the batch's earlier frames */
         ULONG z = field & 0x3FFF;
         if (z == 0 || z > WL_BLOCK_MAX || !fits) { rx->pos = WL_BROKEN; return (const UBYTE *)0; }
@@ -72,7 +82,7 @@ const UBYTE *wl_rx_frame(struct WlRx *rx, UWORD field, const UBYTE *wire, UWORD 
             rx->pos = WL_BROKEN;
             return (const UBYTE *)0;
         }
-        rx->pos += orig;
+        rx->pos = wl_advance(rx->win, rx->pos, orig);
         return dst;
     }
     if ((ULONG)(field & 0x7FFF) < 2UL * orig) { rx->pos = WL_BROKEN; return (const UBYTE *)0; }  /* MFM: 2 per byte */
@@ -83,7 +93,7 @@ const UBYTE *wl_rx_frame(struct WlRx *rx, UWORD field, const UBYTE *wire, UWORD 
     }
     dst = rx->win + rx->pos;
     wl_mfm_decode(wire, orig, dst);
-    rx->pos += orig;
+    rx->pos = wl_advance(rx->win, rx->pos, orig);
     return dst;
 }
 
@@ -105,10 +115,11 @@ UWORD wl_tx_frame(struct WlTx *tx, const UBYTE *data, UWORD len, UBYTE *body, UW
     UBYTE *at;
     ULONG z, cap;
     if (!tx->on || tx->pos > WL_WINDOW) return 0;
-    if (len > WL_WINDOW - tx->pos) { tx->pos = WL_BROKEN; return 0; }   /* past the window: RLE to the batch's end */
+    if ((ULONG)len + (len & 1) > WL_WINDOW - tx->pos) { tx->pos = WL_BROKEN; return 0; }   /* pad counted; past the
+                                                                                    * window: RLE to the end */
     at = tx->win + tx->pos;
     wl_copy(at, data, len);                                /* every frame joins the window, RLE ones too */
-    tx->pos += len;
+    tx->pos = wl_advance(tx->win, tx->pos, len);
     if (rleLen < 2) return 0;
     cap = (ULONG)rleLen - 1;                               /* shorter than the RLE, and room in out for the pad */
     if (cap > WL_BLOCK_MAX - 1) cap = WL_BLOCK_MAX - 1;

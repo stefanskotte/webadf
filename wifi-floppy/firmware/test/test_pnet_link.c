@@ -251,12 +251,14 @@ static void cylinder_76_is_the_status_track_in_l2(void) {
 }
 
 /* An Amiga -> board payload as webadf's driver variant writes it (spec 2026-10-18 §2): per frame RLE ('r', 0x8000|n),
- * raw LZ4 ('z', 0x4000|n, padded to even) or MFM-wrapped LZ4 ('w', 0xC000|n), every frame laid back to back in the
- * encoder's window so that the LZ4 ones link to the earlier frames. */
+ * raw LZ4 ('z', 0x4000|n, padded to even) or MFM-wrapped LZ4 ('w', 0xC000|n), every frame laid at an even offset of
+ * the encoder's window (a 0x00 pad after an odd one; fix round 1) so that the LZ4 ones link to the earlier frames. The
+ * window starts stale (0xAA), as the driver's is. */
 static size_t lz4_payload(uint8_t *out, uint8_t (*f)[PNET_ETH_MTU], const uint16_t *lens, const char *how, unsigned n) {
     static uint8_t win[65536], blk[2048];
     static uint16_t table[PNET_LZ4_TABLE_ENTRIES];
     memset(table, 0, sizeof table);
+    memset(win, 0xAA, sizeof win);
     const uint8_t ph[2] = { (uint8_t)n, 0 };
     uint16_t last = 0;
     size_t pos = pnet_mfm_encode(ph, 2, out, &last), at = 0;
@@ -285,7 +287,7 @@ static size_t lz4_payload(uint8_t *out, uint8_t (*f)[PNET_ETH_MTU], const uint16
         last = 0;
         pnet_mfm_encode(ch, 4, out + pos, &last);
         pos += 8u + wire;
-        at += lens[i];
+        at = pnet_lz4_win_advance(win, at, lens[i]);
     }
     return pos;
 }
@@ -643,6 +645,84 @@ static void an_lz4_frame_with_a_bad_size_word_is_lz4_damage(void) {
     CHECK_EQ_INT(s.lz4_bad, 0);
 }
 
+/* Fix round 1 (controller's ruling, spec §2): the take lays every frame at an even window offset, RLE and LZ4 alike,
+ * over a stale window, and gets every one back. */
+static void the_take_lays_frames_at_even_offsets(void) {
+    static const uint16_t lens[5] = { 901, 1101, 333, 1301, 501 };
+    for (unsigned i = 0; i < 5; i++) lc_frame(g_lf[i], lens[i], i % 2u ? LC_HTML : LC_TEXT, 40u + i);
+    const size_t n = lz4_payload(g_pay, g_lf, lens, "zwrzw", 5);
+    pnet_frame_iter_t it;
+    CHECK_EQ_INT(pnet_frame_iter_init(&it, g_pay, n, PNET_TO_BOARD), PNET_OK);
+    memset(g_win, 0xAA, sizeof g_win);
+    pnet_lz4_win_t w = { g_win, 0, g_scr };
+    unsigned odd = 0, back = 0, lz = 0;
+    for (unsigned i = 0; i < 5; i++) {
+        static uint8_t out[PNET_ETH_MTU];
+        uint16_t len = 0;
+        bool z = false;
+        const size_t at = w.pos;
+        odd += (unsigned)(at & 1u);
+        if (pnet_lz4_iter_next(&it, &w, out, sizeof out, &len, &z) != PNET_OK) break;
+        back += len == lens[i] && memcmp(out, g_lf[i], len) == 0 && memcmp(g_win + at, g_lf[i], len) == 0;
+        lz += z;
+    }
+    CHECK_EQ_INT(odd, 0);
+    CHECK_EQ_INT(back, 5);
+    CHECK_EQ_INT(lz, 4);
+    pnet_link_t s; pnet_ring_t tx;
+    pnet_link_init(&s);
+    tx_ring(&tx, 32);
+    pnet_hdr_t h = lz4_hdr(0x00, true);
+    h.compressed_size = (uint16_t)n;
+    memset(g_win, 0xAA, sizeof g_win);
+    CHECK_EQ_INT(pnet_link_take_lz4(&s, &h, g_pay, &tx, g_win, g_scr), PNET_TAKE_NEW);
+    CHECK_EQ_INT(pnet_ring_count(&tx), 5);
+    CHECK_EQ_INT(s.lz4_in, 4);
+}
+
+/* Fix round 1: B = A, 0x00, A[0..200) right after A's pad: one match over A and the pad, raw and wrapped. Both windows
+ * were stale; the encoder's 0 and the take's 0 agree. */
+static void a_match_over_the_pad_is_taken_whole(void) {
+    static const uint16_t lens[2] = { 501, 702 };
+    lc_frame(g_lf[0], 501, LC_RANDOM, 31);
+    memcpy(g_lf[1], g_lf[0], 501);
+    g_lf[1][501] = 0;
+    memcpy(g_lf[1] + 502, g_lf[0], 200);
+    for (unsigned k = 0; k < 2; k++) {
+        pnet_link_t s; pnet_ring_t tx;
+        pnet_link_init(&s);
+        tx_ring(&tx, 32);
+        pnet_hdr_t h = lz4_hdr(0x00, true);
+        h.compressed_size = (uint16_t)lz4_payload(g_pay, g_lf, lens, k ? "ww" : "zz", 2);
+        memset(g_win, 0xAA, sizeof g_win);
+        CHECK_EQ_INT(pnet_link_take_lz4(&s, &h, g_pay, &tx, g_win, g_scr), PNET_TAKE_NEW);
+        CHECK_EQ_INT(s.lz4_in, 2);
+        uint16_t len = 0;
+        const uint8_t *f = pnet_ring_peek(&tx, 1, &len);
+        CHECK(f != NULL && len == 702 && memcmp(f, g_lf[1], 702) == 0, "B, whole");
+        CHECK(h.compressed_size < 4u + 8u + 2u * 501u + 8u + 2u * 40u, "B's block is a few bytes");
+    }
+}
+
+/* Fix round 1: the 16,128 edge with the pads counted. 10 x 1,517 B (RLE) take 15,180 B: an LZ4 frame of 948 more fits
+ * to the byte; one of 949 does not -- back to back (15,170) both would have. */
+static void the_take_window_edge_counts_the_pads(void) {
+    uint16_t lens[11];
+    for (unsigned i = 0; i < 11; i++) { lens[i] = 1517; lc_frame(g_lf[i], 1517, LC_ZEROS, 0); }
+    for (unsigned last = 948; last <= 949; last++) {
+        lens[10] = (uint16_t)last;
+        pnet_link_t s; pnet_ring_t tx;
+        pnet_link_init(&s);
+        tx_ring(&tx, 32);
+        pnet_hdr_t h = lz4_hdr(0x00, true);
+        h.compressed_size = (uint16_t)lz4_payload(g_pay, g_lf, lens, "rrrrrrrrrrz", 11);
+        pnet_link_take_lz4(&s, &h, g_pay, &tx, g_win, g_scr);
+        CHECK_EQ_INT(pnet_ring_count(&tx), last == 948 ? 11 : 10);
+        CHECK_EQ_INT(s.lz4_in, last == 948 ? 1 : 0);
+        CHECK_EQ_INT(s.lz4_bad, last == 948 ? 0 : 1);
+    }
+}
+
 int main(void) {
     RUN(counters_start_as_paulanets);
     RUN(a_new_batch_is_taken_once);
@@ -670,5 +750,8 @@ int main(void) {
     RUN(a_wrapped_block_over_the_scratch_is_refused);
     RUN(the_longest_real_wrapped_block_decodes);
     RUN(an_lz4_frame_with_a_bad_size_word_is_lz4_damage);
+    RUN(the_take_lays_frames_at_even_offsets);
+    RUN(a_match_over_the_pad_is_taken_whole);
+    RUN(the_take_window_edge_counts_the_pads);
     return REPORT();
 }

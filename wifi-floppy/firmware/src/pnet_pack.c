@@ -29,7 +29,7 @@ unsigned pnet_pack(pnet_pack_t *pk, const pnet_pack_mem_t *m, bool lz4, const pn
     size_t dec = 0, blk = 0, payload = 4;
     for (unsigned i = 0; i < avail; i++) {
         const uint16_t len = in[i].len;
-        if (len == 0 || len > PNET_ETH_MTU || len > PNET_LZ4_WINDOW - dec) break;
+        if (len == 0 || len > PNET_ETH_MTU || PNET_LZ4_WIN_BYTES(len) > PNET_LZ4_WINDOW - dec) break;   /* pad counted */
         const uint8_t *data = in[i].data;
         size_t z = 0;
         if (lz4) {
@@ -45,7 +45,10 @@ unsigned pnet_pack(pnet_pack_t *pk, const pnet_pack_mem_t *m, bool lz4, const pn
         pk->f[i].lz4 = z ? m->blk + blk : NULL;
         pk->f[i].lz4_len = (uint16_t)z;
         if (z) { pk->lz4++; pk->saved += 2u * (uint32_t)(len - z); }
-        dec += len;
+        /* The next frame at an even window offset (pnet_lz4.h): the pad is written as 0 with LZ4, the decoder's twin;
+         * without LZ4 m->win is not touched and the count only (the MFM payload limit binds first anyway). */
+        if (lz4) dec = pnet_lz4_win_advance(m->win, dec, len);
+        else dec += PNET_LZ4_WIN_BYTES(len);
         blk += z;
         payload += 8u + wire;
         pk->n++;

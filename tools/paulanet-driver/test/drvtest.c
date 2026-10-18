@@ -40,6 +40,7 @@ static UBYTE *mem_for(UWORD attn) {
     g_memb = wl_mem_bytes(attn);
     memset(g_arena, 0xA5, GUARD);
     memset(g_arena + GUARD + g_memb, 0xA5, GUARD);
+    memset(g_arena + GUARD, 0xAA, g_memb);   /* Fix round 1: not MEMF_CLEAR -- stale bytes where the pads go */
     return g_arena + GUARD;
 }
 static int guards_ok(void) {
@@ -156,10 +157,11 @@ static void down_batch(struct WlRx *rx, int lz4, const int *kinds, const UWORD *
     size_t pos = 4;
     unsigned i;
     for (i = 0; i < n; i++) {
-        lc_frame(g_frames[i], lens[i], kinds[i], seed + i);
+        if (kinds) lc_frame(g_frames[i], lens[i], kinds[i], seed + i);   /* NULL: g_frames holds them already */
         in[i].data = g_frames[i];
         in[i].len = lens[i];
     }
+    memset(g_win, 0xAA, sizeof g_win);       /* Fix round 1: the board's window is not cleared either */
     pnet_pack(&g_pk, &m, lz4 != 0, in, n, sizeof g_track_l);
     CHECK(g_pk.n == n, "the whole set is one batch");
     CHECK(pnet_build_to_amiga_out(g_track, sizeof g_track_l, 1, 2, 0, g_pk.f, g_pk.n) != 0, "built");
@@ -181,6 +183,8 @@ static void down_batch(struct WlRx *rx, int lz4, const int *kinds, const UWORD *
         if ((field & 0xC000) == 0xC000) (*nlz4)++;
         got = wl_rx_frame(rx, field, pay + pos + 8, orig);
         CHECK(got != 0 && orig == in[i].len && memcmp(got, in[i].data, orig) == 0, "the frame back on the Amiga");
+        CHECK((((ULONG)got) & 1) == 0, "handed to the stack at an even address (fix round 1)");
+        CHECK(rx->pos == WL_BROKEN || (rx->pos & 1) == 0, "the next frame starts at an even window offset");
         pos += 8u + wire + (wire & 1u);
     }
 }
@@ -300,6 +304,7 @@ static unsigned up_batch(struct WlTx *tx, const UWORD *lens, unsigned n, UWORD *
         UBYTE ch[4];
         rle = (UWORD)pnet_rle_encode(g_frames[i], lens[i], body);
         z = wl_tx_frame(tx, g_frames[i], lens[i], body, rle);
+        CHECK(tx->pos == WL_BROKEN || (tx->pos & 1) == 0, "the next frame starts at an even window offset (driver)");
         field = z ? (UWORD)(WL_SIZE_LZ4 | z) : (UWORD)(0x8000 | rle);
         wire = z ? z : rle;
         if (wire & 1) body[wire++] = 0;                   /* the word pad (wl_tx_frame wrote it already for a block) */
@@ -313,12 +318,14 @@ static unsigned up_batch(struct WlTx *tx, const UWORD *lens, unsigned n, UWORD *
             CHECK(wl_zero_run(body, wire) <= WL_ZERO_RUN_MAX, "a raw block on the wire, pad included, within the run");
         }
     }
+    memset(g_win, 0xAA, sizeof g_win);       /* Fix round 1: the board's window is not cleared */
     w.win = g_win; w.pos = 0; w.scratch = g_scr;
     CHECK(pnet_frame_iter_init(&it, g_track, pos, PNET_TO_BOARD) == PNET_OK, "the board reads the batch");
     for (i = 0; i < n; i++) {
         static UBYTE out[WL_MTU];
         uint16_t l = 0;
         bool was = false;
+        CHECK(w.pos == PNET_LZ4_BROKEN || (w.pos & 1) == 0, "the frame starts at an even window offset (board)");
         CHECK(pnet_lz4_iter_next(&it, &w, out, sizeof out, &l, &was) == PNET_OK, "a frame");
         CHECK(l == lens[i] && memcmp(out, g_frames[i], l) == 0, "the frame back on the board");
     }
@@ -387,6 +394,62 @@ static void upfull(void) {
     CHECK(guards_ok(), "a batch past the window: nothing written outside the allocation");
 }
 
+/* Fix round 1, the controller's ruling: every frame starts at an even offset in its batch's window, on both sides;
+ * after an odd-length frame one 0x00 pad byte, never sent, counted toward the 16,128. */
+#define PAD(n) ((n) + ((n) & 1u))
+static void evenpad(void) {
+    static const int k5[5] = { LC_TEXT, LC_HTML, LC_RANDOM, LC_TEXT, LC_ZEROS };
+    static const UWORD l5[5] = { 901, 1101, 333, 1301, 501 };
+    static const UWORD lab[2] = { 501, 702 };
+    struct WlRx rx; struct WlTx tx;
+    UWORD zs[PNET_MAX_FRAMES];
+    UWORD l11[11];
+    unsigned i, nz;
+    const UWORD attn = SysBase->AttnFlags;
+    /* (i) odd lengths, both directions: every frame at an even address (down_batch / up_batch check each one) */
+    wl_init(&rx, &tx, mem_for(attn), attn);
+    down_batch(&rx, 1, k5, l5, 5, 500, &nz);
+    CHECK(nz >= 3, "odd lengths down: LZ4 frames among them");
+    wl_init(&rx, &tx, mem_for(UP_ATTN), UP_ATTN);
+    for (i = 0; i < 5; i++) lc_frame(g_frames[i], l5[i], k5[i], 600u + i);
+    CHECK(up_batch(&tx, l5, 5, zs) >= 3, "odd lengths up: LZ4 frames among them");
+    /* (ii) a match over the pad: B = A, 0x00, A[0..200) sits right after A's pad, so its block is one long match
+     * across A and the pad. The windows hold 0xAA (stale) where the pad goes: only an explicit 0 decodes it. */
+    lc_frame(g_frames[0], 501, LC_RANDOM, 31);
+    memcpy(g_frames[1], g_frames[0], 501);
+    g_frames[1][501] = 0;
+    memcpy(g_frames[1] + 502, g_frames[0], 200);
+    wl_init(&rx, &tx, mem_for(attn), attn);
+    down_batch(&rx, 1, NULL, lab, 2, 0, &nz);
+    CHECK(g_pk.f[1].lz4_len != 0 && g_pk.f[1].lz4_len < 40, "down: B is one match over A and its pad");
+    wl_init(&rx, &tx, mem_for(UP_ATTN), UP_ATTN);
+    up_batch(&tx, lab, 2, zs);
+    CHECK(zs[1] != 0 && zs[1] < 40, "up: B is one match over A and its pad");
+    /* (iii) the 16,128 edge with the pads counted: 10 x 1,517 B take 15,180 B, so 948 more fit to the byte and 949 do
+     * not -- where back to back (15,170) both would. */
+    for (i = 0; i < 10; i++) l11[i] = 1517;
+    for (i = 0; i < 11; i++) lc_frame(g_frames[i], 1518, LC_ZEROS, 0);   /* down: small on the wire, all fit */
+    wl_init(&rx, &tx, mem_for(attn), attn);
+    l11[10] = 948;
+    down_batch(&rx, 1, NULL, l11, 11, 0, &nz);
+    CHECK(rx.pos == WL_WINDOW && nz == 11, "down: 10 x 1,517 + pads + 948 = 16,128, every frame LZ4 in the window");
+    wl_rx_begin(&rx);                                     /* the driver alone: MFM frames, then the edge */
+    mfm_wire(g_frames[0], 1517);
+    for (i = 0; i < 10; i++) CHECK(wl_rx_frame(&rx, (UWORD)(0x8000 | 3034), g_wire, 1517) != 0, "MFM, 1,517");
+    CHECK(rx.pos == 10UL * PAD(1517), "ten odd frames: 15,180 with their pads");
+    { ULONG z = lz4_wire(g_frames[1], 949);
+      CHECK(wl_rx_frame(&rx, (UWORD)(0xC000 | z), g_wire, 949) == 0 && rx.pos == WL_BROKEN,
+            "an LZ4 frame of 949 B after them: past the window, refused"); }
+    for (i = 0; i < 11; i++) lc_frame(g_frames[i], 1518, (i & 1) ? LC_HTML : LC_TEXT, 700u + i);   /* up: text */
+    wl_init(&rx, &tx, mem_for(UP_ATTN), UP_ATTN);
+    for (l11[10] = 948; l11[10] <= 949; l11[10]++) {
+        up_batch(&tx, l11, 11, zs);
+        if (l11[10] == 948) CHECK(zs[10] != 0 && tx.pos == WL_WINDOW, "up: 948 B more fit to the byte, LZ4");
+        else CHECK(zs[10] == 0 && tx.pos == WL_BROKEN, "up: 949 B more do not: RLE, and the window broke");
+    }
+    CHECK(guards_ok(), "even pads: nothing written outside the allocation");
+}
+
 int main(void) {
     const UWORD attn = SysBase->AttnFlags;
     const ULONG entries = wl_table_entries(attn);
@@ -405,6 +468,7 @@ int main(void) {
     uplink();
     up2();
     upfull();
+    evenpad();
     down(1, mixed, mixed_len, 6, &nz);
     printf("drvtest: down %u of 6 frames LZ4\n", nz);
     CHECK(nz == 4, "text, HTML and zeros go LZ4; random bytes MFM (Review Focus: a mixed batch)");

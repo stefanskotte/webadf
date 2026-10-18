@@ -229,6 +229,22 @@ static void a_match_below_the_window_or_at_offset_0_is_refused(void) {
     CHECK_EQ_INT(pnet_lz4_decode(below, sizeof below, out + 8, out + 12, out + 7), -1);   /* past dst_end */
 }
 
+/* Fix round 1 (controller's ruling, spec §2): every frame at an even window offset; after an odd-length frame one 0x00
+ * pad byte, written over whatever the window held. */
+static void the_window_pads_an_odd_frame_with_a_zero(void) {
+    uint8_t w[16];
+    memset(w, 0xAA, sizeof w);
+    CHECK_EQ_INT(pnet_lz4_win_advance(w, 0, 5), 6);
+    CHECK_EQ_INT(w[5], 0);
+    CHECK_EQ_INT(w[6], 0xAA);
+    CHECK_EQ_INT(pnet_lz4_win_advance(w, 6, 4), 10);
+    CHECK_EQ_INT(w[10], 0xAA);                            /* an even frame: no pad, nothing written */
+    CHECK_EQ_INT(pnet_lz4_win_advance(w, 10, 5), 16);     /* the pad of a frame ending at the window's last byte - 1 */
+    CHECK_EQ_INT(w[15], 0);
+    CHECK_EQ_INT(PNET_LZ4_WIN_BYTES(1517), 1518);
+    CHECK_EQ_INT(PNET_LZ4_WIN_BYTES(1518), 1518);
+}
+
 int main(void) {
     RUN(decodes_liblz4_blocks);
     RUN(decodes_liblz4_linked_blocks);
@@ -240,5 +256,6 @@ int main(void) {
     RUN(incompressible_frames_never_shrink);
     RUN(malformed_blocks_never_write_out_of_bounds);
     RUN(a_match_below_the_window_or_at_offset_0_is_refused);
+    RUN(the_window_pads_an_odd_frame_with_a_zero);
     return REPORT();
 }

@@ -33,8 +33,22 @@ size_t pnet_lz4_encode_linked(const uint8_t *src, size_t n, uint8_t *dst, size_t
  * reads a match from outside [window, the output so far). src must not overlap [window, dst_end). The 1-byte block
  * 0x00 decodes to 0 bytes; an empty block is malformed. */
 long pnet_lz4_decode(const uint8_t *src, size_t n, uint8_t *dst, uint8_t *dst_end, const uint8_t *window);
-/* The window of one batch, either direction: every frame is decoded into win + pos, back to back, whatever its
- * encoding, so the LZ4 frames may link to the earlier ones. pos past PNET_LZ4_WINDOW (PNET_LZ4_BROKEN) once a frame did
+/* Every frame starts at an even offset in its batch's window, in both directions and on both sides (spec §2; the
+ * driver's wl_advance): after an odd-length frame one 0x00 pad byte follows it in the window. The pad is never sent,
+ * counts toward PNET_LZ4_WINDOW and every fit check, and is written as 0 every batch: the window is not cleared, and an
+ * LZ4 match may cover the pad, so a stale byte there would make the two sides decode differently without an error.
+ * pos is even and pos + len <= PNET_LZ4_WINDOW (even), so an odd frame's pad slot is inside the window. Returns the
+ * next frame's offset. */
+static inline size_t pnet_lz4_win_advance(uint8_t *win, size_t pos, size_t len) {
+    pos += len;
+    if (len & 1u) win[pos++] = 0;
+    return pos;
+}
+/* A frame's bytes in the window, its pad counted. */
+#define PNET_LZ4_WIN_BYTES(len) ((size_t)(len) + ((size_t)(len) & 1u))
+
+/* The window of one batch, either direction: every frame is decoded into win + pos, at even offsets (above), whatever
+ * its encoding, so the LZ4 frames may link to the earlier ones. pos past PNET_LZ4_WINDOW (PNET_LZ4_BROKEN) once a frame did
  * not fit: no later LZ4 frame of the batch can be decoded. scratch: PNET_LZ4_BLOCK_MAX bytes, an MFM-wrapped block. */
 typedef struct { uint8_t *win; size_t pos; uint8_t *scratch; } pnet_lz4_win_t;
 #define PNET_LZ4_BROKEN SIZE_MAX

@@ -45,11 +45,13 @@ static unsigned read_back(const uint8_t *track, size_t bytes, const pnet_frame_r
     if (pnet_parse_hdr_to_amiga(track + at, bytes - at, &h, true) != PNET_OK) return 0;
     pnet_frame_iter_t it;
     if (pnet_frame_iter_init(&it, track + at + PNET_HDR_MFM_BYTES, h.data_size, PNET_TO_AMIGA) != PNET_OK) return 0;
+    memset(g_dec, 0xAA, sizeof g_dec);                   /* fix round 1: the window is never cleared on the board */
     pnet_lz4_win_t w = { g_dec, 0, g_scr };
     unsigned k = 0;
     while (it.i < it.count) {
         uint16_t len = 0;
         bool z = false;
+        if (w.pos != PNET_LZ4_BROKEN && (w.pos & 1u)) break;   /* every frame at an even window offset */
         if (pnet_lz4_iter_next(&it, &w, out, sizeof out, &len, &z) != PNET_OK) break;
         if (len != in[k].len || memcmp(out, in[k].data, len) != 0) break;
         if (z) (*lz4)++;
@@ -198,7 +200,7 @@ static void a_batch_never_exceeds_the_release_buffer(void) {
             pnet_pack_t more;
             const unsigned m = pnet_pack(&more, &MEM, lz4, in, n + 1u, CAP);   /* the same frames, HD room */
             unsigned dec = 0;
-            for (unsigned i = 0; i < m; i++) dec += more.f[i].len;
+            for (unsigned i = 0; i < m; i++) dec += (unsigned)PNET_LZ4_WIN_BYTES(more.f[i].len);   /* pads count */
             const size_t need = PNET_LEAD_BYTES + 4u + PNET_HDR_MFM_BYTES + more.wire + PNET_TRAIL_BYTES + 3u;
             if (m == n + 1u && need <= CAP_DD && more.wire <= PNET_TO_AMIGA_MAX_PAYLOAD && dec <= PNET_LZ4_WINDOW)
                 short_++;
@@ -253,6 +255,68 @@ static void packing_stops_at_16128_decoded_bytes(void) {
     unsigned z = 0;
     CHECK_EQ_INT(read_back(g_track, bytes, in, &z), 11);
     CHECK_EQ_INT(pnet_pack(&g_pk, &MEM, false, in, 12, CAP), 5);   /* MFM: the payload limit, as before */
+}
+
+/* Fix round 1 (controller's ruling, spec §2): every frame at an even offset of the encoder's window, a 0x00 pad after
+ * an odd one -- written over stale bytes (the window is never cleared) -- and the variant's reader, its window stale
+ * too, gets every frame back. */
+static void odd_frames_sit_at_even_offsets(void) {
+    static const int kinds[5] = { LC_TEXT, LC_HTML, LC_RANDOM, LC_TEXT, LC_ZEROS };
+    static const uint16_t lens[5] = { 901, 1101, 333, 1301, 501 };
+    pnet_frame_ref_t in[5];
+    frames(in, 5, kinds, lens);
+    memset(g_win, 0xAA, sizeof g_win);
+    CHECK_EQ_INT(pnet_pack(&g_pk, &MEM, true, in, 5, CAP_DD), 5);
+    unsigned odd = 0, pads = 0;
+    for (unsigned i = 0; i < 5; i++) {
+        const size_t off = (size_t)(g_pk.f[i].data - g_win);
+        odd += (unsigned)(off & 1u);
+        pads += (unsigned)(g_win[off + lens[i]] == 0);
+    }
+    CHECK_EQ_INT(odd, 0);
+    CHECK_EQ_INT(pads, 5);                                /* every frame here is odd: each has its 0 */
+    CHECK(g_pk.lz4 >= 3, "LZ4 frames among them");
+    const size_t bytes = pnet_build_to_amiga_out(g_track, CAP_DD, 1, 2, 0, g_pk.f, g_pk.n);
+    unsigned z = 0;
+    CHECK_EQ_INT(read_back(g_track, bytes, in, &z), 5);
+    CHECK_EQ_INT(z, g_pk.lz4);
+}
+
+/* Fix round 1: B = A, 0x00, A[0..200) lies right after A's pad, so its block is one match across A and the pad. Both
+ * windows held 0xAA where the pad goes; the encoder's 0 and the reader's 0 agree, so B decodes. */
+static void a_match_over_the_pad_decodes_the_same(void) {
+    pnet_frame_ref_t in[2];
+    lc_frame(g_f[0], 501, LC_RANDOM, 31);
+    memcpy(g_f[1], g_f[0], 501);
+    g_f[1][501] = 0;
+    memcpy(g_f[1] + 502, g_f[0], 200);
+    in[0].data = g_f[0]; in[0].len = 501;
+    in[1].data = g_f[1]; in[1].len = 702;
+    memset(g_win, 0xAA, sizeof g_win);
+    CHECK_EQ_INT(pnet_pack(&g_pk, &MEM, true, in, 2, CAP_DD), 2);
+    CHECK(g_pk.f[1].lz4_len != 0 && g_pk.f[1].lz4_len < 40, "B: one match over A and its pad");
+    const size_t bytes = pnet_build_to_amiga_out(g_track, CAP_DD, 1, 2, 0, g_pk.f, g_pk.n);
+    unsigned z = 0;
+    CHECK_EQ_INT(read_back(g_track, bytes, in, &z), 2);
+}
+
+/* Fix round 1: the 16,128 edge with the pads counted. 10 x 1,517 B take 15,180 B of window: 948 more fit to the byte
+ * (and a 1-byte frame after them does not); 949 do not -- back to back (15,170) both would have. */
+static void the_window_edge_counts_the_pads(void) {
+    pnet_frame_ref_t in[12];
+    int kinds[12];
+    uint16_t lens[12];
+    for (unsigned i = 0; i < 12; i++) { kinds[i] = LC_ZEROS; lens[i] = 1517; }
+    lens[10] = 948;
+    lens[11] = 1;
+    frames(in, 12, kinds, lens);
+    CHECK_EQ_INT(pnet_pack(&g_pk, &MEM, true, in, 12, CAP), 11);
+    const size_t bytes = pnet_build_to_amiga_out(g_track, sizeof g_track, 0, 0, 0, g_pk.f, 11);
+    unsigned z = 0;
+    CHECK_EQ_INT(read_back(g_track, bytes, in, &z), 11);
+    lens[10] = 949;
+    frames(in, 11, kinds, lens);
+    CHECK_EQ_INT(pnet_pack(&g_pk, &MEM, true, in, 11, CAP), 10);
 }
 
 /* The batch out is rebuilt unchanged until acknowledged (pnet_link.h): the same frames give the same bytes. */
@@ -346,6 +410,9 @@ int main(void) {
     RUN(a_batch_never_exceeds_the_release_buffer);
     RUN(a_batch_holds_at_most_twenty_frames);
     RUN(packing_stops_at_16128_decoded_bytes);
+    RUN(odd_frames_sit_at_even_offsets);
+    RUN(a_match_over_the_pad_decodes_the_same);
+    RUN(the_window_edge_counts_the_pads);
     RUN(rebuilds_are_byte_identical);
     RUN(the_table_is_cleared_only_for_frames);
     RUN(the_driver_stops_asking_mid_session);

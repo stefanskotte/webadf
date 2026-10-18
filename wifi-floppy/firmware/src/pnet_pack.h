@@ -6,7 +6,8 @@
  *
  * Without LZ4 (Rob's driver, or ours before its first batch) every frame goes MFM, 0x8000 | 2 len, and the batch is
  * 1.15.0's to the byte (test_pnet_pack.c). With it, a frame goes 0xC000 | lz4_len -- its block MFM-encoded -- when the
- * block is shorter than the frame, its matches linked to the batch's earlier frames laid back to back in m->win.
+ * block is shorter than the frame, its matches linked to the batch's earlier frames laid in m->win at even offsets (pnet_lz4.h: a 0x00 pad after an odd
+ * frame, never sent).
  *
  * A batch out re-packed under the same counter (the driver started or stopped asking for LZ4) keeps the same frames,
  * or fewer (pnet_link_shrink), but not necessarily the same bytes: "rebuilt unchanged" means unchanged frames then.
@@ -28,7 +29,7 @@ typedef struct {
 } pnet_out_t;
 
 typedef struct {
-    uint8_t  *win;           /* PNET_LZ4_WINDOW bytes: the batch's frames back to back (the blocks' window) */
+    uint8_t  *win;           /* PNET_LZ4_WINDOW bytes: the batch's frames at even offsets (the blocks' window) */
     uint8_t  *blk;           /* PNET_LZ4_WINDOW bytes: the blocks back to back */
     uint16_t *table;         /* entries x 16 bits, cleared at every LZ4 pack with frames: a rebuild is byte-identical */
     unsigned  entries;

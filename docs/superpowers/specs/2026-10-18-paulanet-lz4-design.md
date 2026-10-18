@@ -37,7 +37,9 @@ New, only between parties that both advertised LZ4 (section 3):
 - Standard LZ4 block format (lz4 1.9 `LZ4_compress_default` compatible, little-endian offsets). No LZ4 frame
   header, no content checksum: the batch checksum already covers the bytes.
 - **Linked within a batch:** a frame's LZ4 matches may reach back into earlier frames *of the same batch* (decoded
-  output laid out back to back). Never across batches, so a lost batch never poisons the next one.
+  output laid out in one window, every frame at an even offset: after an odd-length frame both sides lay one zero
+  pad byte, which is never transmitted, counts toward the 16,128-byte window and its fit checks, and is written as 0
+  every batch, since a match may cover it). Never across batches, so a lost batch never poisons the next one.
 - **Choice per frame:** the encoder uses LZ4 only when the LZ4 block is smaller than the frame's current encoding
   (board -> Amiga: the raw length, both then MFM-doubled; Amiga -> board: the RLE length). Otherwise the frame goes
   out exactly as today. Incompressible data is never larger or slower than today.

@@ -56,7 +56,7 @@ bool pnet_link_is_new(const pnet_link_t *s, const pnet_hdr_t *h);
  * window: LZ4 frames are then unreadable. */
 pnet_take_t pnet_link_take(pnet_link_t *s, const pnet_hdr_t *h, const uint8_t *payload, pnet_ring_t *tx);
 /* As pnet_link_take, LZ4-aware: a batch carrying PNET_DRIVER_LZ4 is decoded frame by frame into win
- * (PNET_LZ4_WINDOW bytes), back to back, its LZ4 frames linked to the earlier ones, and each frame copied into its
+ * (PNET_LZ4_WINDOW bytes) at even offsets (pnet_lz4.h), its LZ4 frames linked to the earlier ones, and each frame copied into its
  * slot; scratch (PNET_LZ4_BLOCK_MAX bytes) takes an MFM-wrapped block. A batch without the bit decodes as before. */
 pnet_take_t pnet_link_take_lz4(pnet_link_t *s, const pnet_hdr_t *h, const uint8_t *payload, pnet_ring_t *tx,
                                uint8_t *win, uint8_t *scratch);

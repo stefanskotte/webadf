@@ -11,7 +11,8 @@
  *   size word 0xC000 | n   an n-byte LZ4 block, MFM-encoded (2n bytes): toward the Amiga
  *   size word 0x4000 | n   an n-byte LZ4 block, raw, padded to even: toward the board
  * Every frame of a batch is laid back to back in a window; an LZ4 frame's matches reach into the earlier frames of the
- * same batch, never further. Per CPU, from AttnFlags at open:
+ * same batch, never further. Every frame starts at an even window offset: after an odd-length frame both sides lay one
+ * 0x00 pad byte, never sent, counted toward WL_WINDOW (spec §2). Per CPU, from AttnFlags at open:
  *                                    board -> Amiga   Amiga -> board
  *   68000 / 68010                    LZ4              RLE
  *   68020 / 68030 (table 1,024)      LZ4              LZ4
@@ -42,7 +43,9 @@ struct WlTx { UBYTE *win; ULONG pos; UBYTE *out; UWORD *table; ULONG entries; BO
 /* The upload hash table for this CPU: 0 (68000/68010: no LZ4 upload), 1,024 (68020/68030), 4,096 (68040 and up). */
 ULONG wl_table_entries(UWORD attnFlags);
 /* One allocation for both halves on this CPU (any memory, long aligned). Not in the lowest 64 KB: lz4_68k.h sends every
- * block whose window lies below $10000 through the decoder's slow checked loop (an A500's chip RAM starts there). */
+ * block whose window lies below $10000 through the decoder's slow checked loop (an A500's chip RAM starts there); the
+ * patch allocates it MEMF_PUBLIC | MEMF_REVERSE on exec V39+ (the top of the memory list), and opens as Rob's stock
+ * driver (no 0x10, no LZ4) when it cannot get it. */
 ULONG wl_mem_bytes(UWORD attnFlags);
 /* The upload hash table needs no clearing, at open or per batch: the encoder verifies every entry before it uses one,
  * so clearing 8 KB on a 68040 every batch would only cost time. */
