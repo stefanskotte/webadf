@@ -1,3 +1,4 @@
+import { nowMs } from '@/lib/clock';
 import { requireOrg } from "@/lib/session";
 import { isSuperAdminEmail } from "@/lib/superadmin";
 import { getDb } from "@/db";
@@ -38,7 +39,7 @@ export default async function AppLayout({
   // ONE clock reading for both: the chips and the fingerprint must describe
   // the same instant, or a board crossing the online threshold between two
   // Date.now() calls would render one way and fingerprint as the other.
-  const now = Date.now();
+  const now = nowMs();
   const fingerprint = liveFingerprint(liveRows, now, latestRelease);
   // The header's drive chips, from the SAME rows -- no query of their own on
   // every page, and every field they show is in the fingerprint above, so

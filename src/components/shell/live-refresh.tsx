@@ -65,7 +65,7 @@ export function LiveRefresh({ initial }: { initial: string }) {
   const last = useRef(initial);
   const owed = useRef(false);        // a change seen while the user was typing
   const inFlight = useRef(false);
-  const lastInputAt = useRef(performance.now());
+  const lastInputAt = useRef(0);
 
   // A fresh `initial` means a new server render landed (our own
   // router.refresh() below, or a full navigation) and already reflects
@@ -78,6 +78,7 @@ export function LiveRefresh({ initial }: { initial: string }) {
   }, [initial]);
 
   useEffect(() => {
+    lastInputAt.current = performance.now();
     let timer: ReturnType<typeof setTimeout> | null = null;
     let stopped = false;
 
