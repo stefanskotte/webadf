@@ -195,6 +195,33 @@ test('a capable board behind the newest release can be selected and updated', as
     .toContainText('update requested');
 });
 
+test('with the password prompt turned off in Settings, Update asks only to confirm', async ({ page, request }) => {
+  const { password } = await signUpFresh(page);
+  const on = await page.request.post('/api/me/prefs/firmware-skip-password', { data: { password } });
+  expect(on.status()).toBe(200);
+  const { deviceId, token } = await pairDevice(page, request);
+  await publishTestRelease('0.0.0+e2e95');
+  await publishTestRelease('0.0.0+e2e96');
+  await request.post('/api/device/status', {
+    headers: authHeader(token),
+    data: { mountedSha256: null, firmwareVersion: '0.0.0+e2e95', updateProtocol: 1 },
+  });
+
+  await page.goto('/devices');
+  await page.getByTestId(`device-select-${deviceId}`).check();
+  await page.getByTestId('update-start').click();
+  // Still a confirm -- never one stray click -- but no password field.
+  const dialog = page.getByTestId('update-dialog');
+  await expect(dialog).toContainText('0.0.0+e2e96');
+  await expect(dialog).toContainText('without your password');
+  await expect(page.getByTestId('update-password')).toHaveCount(0);
+  await expect(page.getByTestId('update-confirm')).toBeFocused();
+  await page.getByTestId('update-confirm').click();
+
+  await expect(page.getByTestId(`device-firmware-${deviceId}`))
+    .toContainText('update requested');
+});
+
 test('a wrong password in the dialog changes nothing', async ({ page, request }) => {
   await signUpFresh(page);
   const { deviceId, token } = await pairDevice(page, request);

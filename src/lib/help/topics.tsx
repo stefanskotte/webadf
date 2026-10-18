@@ -43,16 +43,16 @@ export const HELP_TOPICS = {
         </p>
         <p>
           <strong>Firmware updates.</strong> When a newer version is published, tick <em>Select for update</em> on the
-          board, press <em>Update</em> and confirm with your password. Its card then shows <em>update queued</em>,{' '}
-          <em>downloading</em> and <em>applying — do not power off</em>. A new version first runs on trial: if it doesn&apos;t start up and check in within 5 minutes, the
-          board goes back to the version it had by itself, and the card says <em>update failed</em> with the reason.
+          board, press <em>Update</em> and confirm with your password (unless you turned that off in Settings). Its card then shows <em>update queued</em>,{' '}
+          <em>downloading</em> and <em>applying — do not power off</em>. A new version first runs on trial: if it doesn&apos;t check in within 5 minutes, the
+          board goes back to its old version by itself, and the card says <em>update failed</em> with the reason.
         </p>
         <p>
           <strong>Deleting a board.</strong> The trash icon on a board&apos;s card removes it from your account. The
           board then offers its setup network again, and a new code pairs it; your disks and their history stay.
         </p>
         <p>
-          <strong>Your own server.</strong> Running your own copy of this site? See{' '}
+          <strong>Your own server.</strong> Running your own copy? See{' '}
           <a className="underline" href="/help#own-server">Your own server</a>.
         </p>
         <GoodToKnow items={[
@@ -521,7 +521,8 @@ export const HELP_TOPICS = {
   },
   // Sources: src/lib/user-prefs-schema.ts (choices, defaults), src/app/page.tsx + sign-in/page.tsx (start page),
   // library/page.tsx (sort skipped in a collection), file-tree.tsx + browse-sort.ts (folders first),
-  // components/prefs/preferences-form.tsx (Save), db/schema/user-prefs.ts (per user, not per org).
+  // components/prefs/preferences-form.tsx (Save), db/schema/user-prefs.ts (per user, not per org),
+  // components/prefs/firmware-password-setting.tsx + api/me/prefs/firmware-skip-password (firmware password).
   preferences: {
     title: 'Preferences',
     short: 'Your own start page and sort orders. They are kept with your account, so they follow you to every browser.',
@@ -541,6 +542,12 @@ export const HELP_TOPICS = {
         <p>
           <strong>Changing them.</strong> Settings (the gear at the top) lists every preference in one place; press
           Save to keep your changes there.
+        </p>
+        <p>
+          <strong>Firmware updates.</strong> Settings can stop <em>Update</em> on Devices asking for your password.
+          Turning that on takes your password; turning it off does not. Settings says which applies:{' '}
+          <em>Password asked</em> or <em>Password not asked</em>. While it is on, anyone using your signed-in browser
+          can update your boards&apos; firmware.
         </p>
         <GoodToKnow items={[
           'Preferences are yours alone: others in your organization keep their own, and they follow you to every browser you sign in from.',

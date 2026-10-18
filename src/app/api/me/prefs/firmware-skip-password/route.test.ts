@@ -5,11 +5,11 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 vi.mock('@/lib/session', () => ({ requireOrg: () => Promise.resolve({ orgId: 'org-1', userId: 'user-1', email: 'a@b.test' }) }));
-const verifyPassword = vi.fn(async (_p: string) => false);
+const verifyPassword = vi.fn<(p: string) => Promise<boolean>>(async () => false);
 vi.mock('@/lib/step-up', () => ({ verifyPassword: (p: string) => verifyPassword(p) }));
-const lockoutRemaining = vi.fn(async (_u: string) => 0);
-const recordFailure = vi.fn(async (_u: string) => 0);
-const clearFailures = vi.fn(async (_u: string) => undefined);
+const lockoutRemaining = vi.fn<(u: string) => Promise<number>>(async () => 0);
+const recordFailure = vi.fn<(u: string) => Promise<number>>(async () => 0);
+const clearFailures = vi.fn<(u: string) => Promise<void>>(async () => undefined);
 vi.mock('@/lib/step-up-throttle', () => ({
   lockoutRemaining: (u: string) => lockoutRemaining(u),
   recordFailure: (u: string) => recordFailure(u),

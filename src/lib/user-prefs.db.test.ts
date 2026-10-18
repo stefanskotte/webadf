@@ -56,6 +56,7 @@ describe('user prefs storage', () => {
       startPage: 'devices',
       library: { sort: { key: 'title', dir: 'asc' } },
       browse: { sort: { key: 'size', dir: 'desc' } },
+      firmware: { skipPassword: false },
     });
   });
 
@@ -80,6 +81,7 @@ describe('user prefs storage', () => {
       startPage: 'devices',
       library: { sort: { key: 'publisher', dir: 'asc' } },
       browse: { sort: { key: 'date', dir: 'desc' } },
+      firmware: { skipPassword: false },
     });
   });
 
@@ -95,7 +97,17 @@ describe('user prefs storage', () => {
       startPage: 'devices',
       library: { sort: { key: 'year', dir: 'asc' } },
       browse: { sort: { key: 'size', dir: 'asc' } },
+      firmware: { skipPassword: false },
     });
+  });
+
+  it('firmware.skipPassword is stored, survives other patches, and turns back off', async () => {
+    const u = await newUser();
+    await setUserPrefs(u, { firmware: { skipPassword: true } });
+    await setUserPrefs(u, { startPage: 'devices' });
+    expect((await getUserPrefs(u)).firmware).toEqual({ skipPassword: true });
+    await setUserPrefs(u, { firmware: { skipPassword: false } });
+    expect((await getUserPrefs(u)).firmware).toEqual({ skipPassword: false });
   });
 
   it('a stored value that no longer validates reads as defaults for that field only', async () => {

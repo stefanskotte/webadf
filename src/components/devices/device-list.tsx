@@ -19,7 +19,7 @@ import { DeviceCard } from './device-card';
  * the server would refuse.
  */
 export function DeviceList({
-  devices, now, states, selectableIds, latest, nextById, sendLineById,
+  devices, now, states, selectableIds, latest, nextById, sendLineById, skipPassword = false,
 }: {
   devices: DeviceListItem[];
   now: number;
@@ -28,6 +28,13 @@ export function DeviceList({
   latest: ReleaseRef | null;
   nextById: Record<string, NextInfo | null>;
   sendLineById: Record<string, string | null>;
+  /**
+   * The signed-in user's "don't ask for my password" preference (Settings).
+   * The dialog then still confirms -- never one stray click -- but asks no
+   * password. The route reads the same preference itself; this only shapes
+   * the dialog.
+   */
+  skipPassword?: boolean;
 }) {
   const router = useRouter();
   const [picked, setPicked] = useState<Set<string>>(new Set());
@@ -109,7 +116,7 @@ export function DeviceList({
   }
 
   async function confirm() {
-    if (!latest || chosen.length === 0 || untick > 0 || busy || password.length === 0) return;
+    if (!latest || chosen.length === 0 || untick > 0 || busy || (!skipPassword && password.length === 0)) return;
     setBusy(true);
     setRefusals([]);
     try {
@@ -117,7 +124,8 @@ export function DeviceList({
         method: 'POST',
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({
-          deviceIds: chosen.map((d) => d.id), version: latest.version, password,
+          deviceIds: chosen.map((d) => d.id), version: latest.version,
+          ...(skipPassword ? {} : { password }),
         }),
       });
       // An expired session makes requireOrg() redirect; fetch FOLLOWS the
@@ -136,6 +144,14 @@ export function DeviceList({
         return;
       }
       if (res.status === 401) { toast.error('That password was not right.'); return; }
+      // The preference was turned back off (another tab) since this page
+      // loaded: the route wants the password again. Refresh, so the dialog
+      // grows its password field.
+      if (res.status === 400 && skipPassword) {
+        toast.error('Your password is needed again: the setting was changed.');
+        router.refresh();
+        return;
+      }
       if (res.status === 409) { setRefusals((await res.json()).refusals ?? []); return; }
       // The update bar keeps a selection inside the cap, so a 400 from this
       // page is a batch that grew past it under a live refresh, or a version
@@ -262,6 +278,11 @@ export function DeviceList({
             <p className="text-[12px]" style={{ color: 'var(--muted)' }}>
               A board holding a disk will wait until it is ejected before applying this.
             </p>
+            {skipPassword ? (
+              <p className="text-[12px]" style={{ color: 'var(--muted)' }} data-testid="update-no-password">
+                Your settings let this go ahead without your password.
+              </p>
+            ) : (
             <label className="flex flex-col gap-1 text-[12px]" style={{ color: 'var(--muted)' }}>
               Confirm with your password
               {/* autoFocus: the password is the one thing this dialog needs
@@ -272,6 +293,7 @@ export function DeviceList({
                      className="rounded-lg px-3 py-2 text-[13px]"
                      style={{ background: 'var(--input-bg)', color: 'var(--ink)' }} />
             </label>
+            )}
             {refusals.length > 0 && (
               <ul className="flex flex-col gap-1 text-[12px]" style={{ color: 'var(--amber-text)' }}>
                 {/* Keyed by deviceId: device names have no unique constraint
@@ -285,8 +307,9 @@ export function DeviceList({
             <div className="flex justify-end gap-2">
               <button type="button" onClick={close} disabled={busy} className="text-[13px] disabled:opacity-50"
                       style={{ color: 'var(--muted)' }}>Cancel</button>
-              <button type="submit" data-testid="update-confirm"
-                      disabled={busy || password.length === 0}
+              {/* With no password to type, the caret starts on Update instead. */}
+              <button type="submit" data-testid="update-confirm" autoFocus={skipPassword}
+                      disabled={busy || (!skipPassword && password.length === 0)}
                       className="rounded-full px-4 py-1.5 text-[13px] font-semibold disabled:opacity-50"
                       style={{ background: 'var(--amber-text)', color: '#16273a' }}>
                 {busy ? 'Requesting…' : 'Update'}

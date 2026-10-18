@@ -12,19 +12,19 @@ vi.mock('@/lib/session', () => ({
 }));
 const verifyPassword = vi.fn(async () => false);
 vi.mock('@/lib/step-up', () => ({ verifyPassword }));
-const recordFailure = vi.fn(async (_u: string) => 0);
+const recordFailure = vi.fn<(u: string) => Promise<number>>(async () => 0);
 vi.mock('@/lib/step-up-throttle', () => ({
   lockoutRemaining: async () => 0, recordFailure: (u: string) => recordFailure(u), clearFailures: async () => undefined,
 }));
 const cancelFirmwareUpdate = vi.fn(async (_org: string, ids: string[]) => ids.length);
-const requestFirmwareUpdate = vi.fn(async (_o: string, _u: string, ids: string[], _v: string) => ({ ok: true as const, count: ids.length }));
+const requestFirmwareUpdate = vi.fn<(o: string, u: string, ids: string[], v: string) => Promise<unknown>>(async (_o, _u, ids) => ({ ok: true as const, count: ids.length }));
 vi.mock('@/lib/firmware-update', () => ({
   requestFirmwareUpdate: (o: string, u: string, ids: string[], v: string) => requestFirmwareUpdate(o, u, ids, v),
   cancelFirmwareUpdate,
 }));
 // The user's own "don't ask for my password" preference. Off unless a test says otherwise.
 let skipPassword = false;
-const getUserPrefs = vi.fn(async (_u: string) => ({ ...DEFAULT_PREFS, firmware: { skipPassword } }));
+const getUserPrefs = vi.fn<(u: string) => Promise<unknown>>(async () => ({ ...DEFAULT_PREFS, firmware: { skipPassword } }));
 vi.mock('@/lib/user-prefs', () => ({ getUserPrefs: (u: string) => getUserPrefs(u), setUserPrefs: vi.fn() }));
 const { DEFAULT_PREFS } = await import('@/lib/user-prefs-schema');
 
