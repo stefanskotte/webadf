@@ -1112,7 +1112,9 @@ static bool poll_wake_pending(void *ctx) {
  *  runs one budgeted step, and forwards what it produced to core1.
  *  `short_pass`: a disk is mounted AND no panel answered, so the bus is still
  *  at the probe's 100 kHz -- one register op there is ~0.5 ms of a pass the
- *  Amiga is waiting on, so the reader gets 1 op instead of 4. */
+ *  Amiga is waiting on, so the reader gets 1 op instead of 4. (A PN532 raises
+ *  the bus to 400 kHz once found; a step is then one frame, <= 1.46 ms, or
+ *  one status byte -- nfc_pn532.c "The bus clock".) */
 static void nfc_core0_step(nfc_armed_t *armed, bool short_pass) {
     static uint32_t wreq_last;
     const uint32_t now = clock_ms();
@@ -1141,10 +1143,21 @@ static void nfc_core0_step(nfc_armed_t *armed, bool short_pass) {
     nfc_set_max_ops(&g_nfc, short_pass ? 1 : NFC_MAX_OPS_PER_STEP);
     nfc_step(&g_nfc);
     const int level = nfc_present(&g_nfc) ? 1 : 2;
-    if (level != g_nfc_reader) {
+    // The chip too: with both fitted the session can move from the PN532
+    // back to the Si512 without ever being absent (nfc_si512_back).
+    static nfc_chip_t chip_logged;
+    const nfc_chip_t chip = nfc_chip(&g_nfc);
+    if (level != g_nfc_reader || chip != chip_logged) {
         g_nfc_reader = level;
-        wf_logf(WF_INFO, "nfc: reader %s at 0x%02x", level == 1 ? "present" : "absent",
-                NFC_I2C_ADDR);
+        chip_logged = chip;
+        // Which chip, and where: a PN532 module is told apart from the Si512
+        // here and in the boot I2C scan's address list, nowhere else.
+        if (level == 1 && nfc_chip(&g_nfc) == NFC_CHIP_PN532)
+            wf_logf(WF_INFO, "nfc: reader present (PN532) at 0x%02x", PN532_I2C_ADDR);
+        else if (level == 1)
+            wf_logf(WF_INFO, "nfc: reader present (Si512) at 0x%02x", NFC_I2C_ADDR);
+        else
+            wf_logf(WF_INFO, "nfc: reader absent (0x%02x, 0x%02x)", NFC_I2C_ADDR, PN532_I2C_ADDR);
     }
     // The dropout measurement (nfc_reader.h nfc_gap_t): the 3 s re-arrival
     // window is a guess from three bench sightings, and these lines are how
@@ -4091,9 +4104,20 @@ int main(void) {
         // if a panel answered, else still the probe's 100 kHz, left as is.
         // Nothing touches the chip here -- the first nfc_step() is the
         // boot-time presence check, in the service loop's display slot.
+        // Two chips are looked for, the Si512 at 0x28 first, then a PN532 at
+        // 0x24 (nfc_reader.h); the same i2c1, the same rules. The PN532 only
+        // if the boot scan saw 0x24: another device there (an MCP23017, a
+        // PCF8574) must never be sent frames. The price: a PN532 plugged in
+        // after boot is found at the next restart, not the next 5 s check.
+        // Once one answers, the reader raises i2c1 to 400 kHz (nfc_pn532.c).
         nfc_bus_t nfc_bus;
         nfc_bus_i2c(&nfc_bus);
         nfc_init(&g_nfc, &nfc_bus, clock_ms);
+        if (i2c_scan_has(&g_i2c_scan, PN532_I2C_ADDR)) {
+            nfc_frame_bus_t nfc_fbus;
+            nfc_frame_bus_i2c(&nfc_fbus);
+            nfc_attach_pn532(&g_nfc, &nfc_fbus);
+        }
     }
     // psram_image_init() runs inside track_cache_init() and its bool result is
     // discarded there. Say it out loud, because PSRAM is the one part of this

@@ -9,6 +9,13 @@ void i2c_scan_add(i2c_scan_t *s, uint8_t addr) {
 
 void i2c_scan_done(i2c_scan_t *s) { s->done = true; }
 
+bool i2c_scan_has(const i2c_scan_t *s, uint8_t addr) {
+    if (!s || !s->done) return false;
+    for (uint8_t i = 0; i < s->n && i < I2C_SCAN_MAX; i++)
+        if (s->addr[i] == addr) return true;
+    return false;
+}
+
 int i2c_scan_json(const i2c_scan_t *s, char *out, size_t cap) {
     if (cap == 0) return 0;
     out[0] = '\0';

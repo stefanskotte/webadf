@@ -30,6 +30,9 @@ typedef struct i2c_scan {
 void i2c_scan_add(i2c_scan_t *s, uint8_t addr);
 // The scan finished; from now on the record is reported, even when empty.
 void i2c_scan_done(i2c_scan_t *s);
+// Whether the finished scan saw `addr` (false before i2c_scan_done, and for a
+// NULL record). fw 1.18.0 looks for a PN532 at 0x24 only if this says so.
+bool i2c_scan_has(const i2c_scan_t *s, uint8_t addr);
 // Writes ,"i2c":[40,60] (decimal JSON numbers, scan order) into out, or ""
 // before i2c_scan_done or when out cannot hold the whole key. Returns the
 // length written (0 for "").

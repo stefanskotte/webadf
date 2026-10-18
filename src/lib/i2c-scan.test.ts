@@ -25,7 +25,7 @@ describe('nameI2cAddr', () => {
     expect(nameI2cAddr(0x3c)).toBe('0x3c (display)');
     expect(nameI2cAddr(0x3d)).toBe('0x3d (display)');
     expect(nameI2cAddr(0x28)).toBe('0x28 (NFC reader, Si512)');
-    expect(nameI2cAddr(0x24)).toBe('0x24 (a PN532 module, not supported)');
+    expect(nameI2cAddr(0x24)).toBe('0x24 (NFC reader, PN532)');
     expect(nameI2cAddr(0x50)).toBe('0x50');
     expect(nameI2cAddr(0x08)).toBe('0x08');
   });
@@ -50,11 +50,47 @@ describe('describeI2cScan', () => {
       ok: false, line: 'No NFC reader found — nothing at 0x28', seen: 'Nothing on the I2C bus',
     });
   });
-  it('a PN532 instead of the Si512 is named as such', () => {
-    expect(describeI2cScan('absent', [0x24, 0x3c])).toEqual({
-      ok: false, line: 'No NFC reader found — nothing at 0x28',
-      seen: 'I2C devices seen: 0x24 (a PN532 module, not supported), 0x3c (display)',
+  it('a PN532 on firmware before 1.18.0 (or a version not known): it needs the update', () => {
+    const want = {
+      ok: false, line: 'No NFC reader found — the PN532 at 0x24 needs firmware 1.18.0 or newer',
+      seen: 'I2C devices seen: 0x24 (NFC reader, PN532), 0x3c (display)',
+    };
+    expect(describeI2cScan('absent', [0x24, 0x3c], '1.17.0+gabc1234')).toEqual(want);
+    expect(describeI2cScan('absent', [0x24, 0x3c])).toEqual(want);
+    expect(describeI2cScan('absent', [0x24, 0x3c], null)).toEqual(want);
+  });
+});
+
+// fw 1.18.0: the board drives a PN532 at 0x24 as well as the Si512 at 0x28 (nfc_reader.h), the Si512 first.
+describe('describeI2cScan, firmware 1.18.0 and newer', () => {
+  const FW = '1.18.0+gabc1234';
+  it('a working PN532: where it is', () => {
+    expect(describeI2cScan('present', [0x24, 0x3c], FW)).toEqual({ ok: true, line: 'NFC reader at 0x24', seen: null });
+    expect(describeI2cScan('present', [0x24], '1.19.2+gdeadbee')).toEqual({ ok: true, line: 'NFC reader at 0x24', seen: null });
+  });
+  it('both answered: the board uses the Si512, and says so', () => {
+    expect(describeI2cScan('present', [0x24, 0x28, 0x3c], FW)).toEqual({ ok: true, line: 'NFC reader at 0x28', seen: null });
+  });
+  it('a PN532 answered at boot but is not working is not called "no NFC reader"', () => {
+    const d = describeI2cScan('absent', [0x24, 0x3c], FW);
+    expect(d).toEqual({
+      ok: false, line: 'No working NFC reader — a device answered at 0x24 at boot, but the reader is not responding',
+      seen: 'I2C devices seen: 0x24 (NFC reader, PN532), 0x3c (display)',
     });
+    expect(d?.line).not.toMatch(/^No NFC reader/);
+  });
+  it('the Si512 address wins the not-responding line when both answered', () => {
+    expect(describeI2cScan('absent', [0x24, 0x28], FW)?.line)
+      .toBe('No working NFC reader — a device answered at 0x28 at boot, but the reader is not responding');
+  });
+  it('nothing at either address: both are named', () => {
+    expect(describeI2cScan('absent', [0x3c], FW)).toEqual({
+      ok: false, line: 'No NFC reader found — nothing at 0x28 or 0x24', seen: 'I2C devices seen: 0x3c (display)',
+    });
+    expect(describeI2cScan('absent', [], FW)?.line).toBe('No NFC reader found — nothing at 0x28 or 0x24');
+  });
+  it('older boards keep the old line for an empty 0x24', () => {
+    expect(describeI2cScan('absent', [0x3c], '1.17.0+gabc1234')?.line).toBe('No NFC reader found — nothing at 0x28');
   });
   it('something answered at 0x28 at boot, but the reader is not responding', () => {
     expect(describeI2cScan('absent', [0x28])).toEqual({

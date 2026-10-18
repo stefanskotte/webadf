@@ -541,3 +541,21 @@ test('the card says what the board found on its I2C bus', async ({ page, request
   await expect(page.getByTestId(`device-${older}`)).toBeVisible();
   await expect(page.getByTestId(`device-nfc-${older}`)).toHaveCount(0);
 });
+
+// fw 1.18.0 drives a PN532 at 0x24 too (nfc_reader.h): a working one is a reader, and on older firmware the card
+// says it needs the update instead of "nothing at 0x28".
+test('the card names a PN532 reader at 0x24, and the firmware it needs', async ({ page, request }) => {
+  await signUpFresh(page);
+  const { deviceId: pn, token: t1 } = await pairDevice(page, request, 'PN532 Board');
+  const { deviceId: oldPn, token: t2 } = await pairDevice(page, request, 'Old PN532 Board');
+  const report = (token: string, data: object) =>
+    request.post('/api/device/status', { headers: authHeader(token), data: { mountedSha256: null, ...data } });
+  expect((await report(t1, { firmwareVersion: '1.18.0+ge2e', nfcReader: 'present', i2c: [0x24, 0x3c] })).status()).toBe(204);
+  expect((await report(t2, { firmwareVersion: '1.17.0+ge2e', nfcReader: 'absent', i2c: [0x24, 0x3c] })).status()).toBe(204);
+
+  await page.goto('/devices');
+  await expect(page.getByTestId(`device-nfc-${pn}`)).toContainText('NFC reader at 0x24');
+  await expect(page.getByTestId(`device-nfc-${pn}`)).toHaveAttribute('data-ok', 'true');
+  await expect(page.getByTestId(`device-nfc-${oldPn}`)).toContainText('the PN532 at 0x24 needs firmware 1.18.0 or newer');
+  await expect(page.getByTestId(`device-i2c-${oldPn}`)).toHaveText('I2C devices seen: 0x24 (NFC reader, PN532), 0x3c (display)');
+});

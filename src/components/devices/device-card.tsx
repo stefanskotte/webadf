@@ -46,8 +46,9 @@ export function DeviceCard(
 ) {
   const state = deviceState(device, now);
   const online = isOnline(device.lastSeenAt, now);
-  // The boot I2C scan in words (fw 1.17.0+); null from older firmware, which keeps the card as it was.
-  const i2c = describeI2cScan(device.nfcReader, device.i2cAddrs);
+  // The boot I2C scan in words (fw 1.17.0+); null from older firmware, which keeps the card as it was. The version
+  // decides whether a PN532 at 0x24 is a reader (1.18.0+) or a module that needs the update.
+  const i2c = describeI2cScan(device.nfcReader, device.i2cAddrs, device.firmwareVersion);
 
   // An update in flight REPLACES the firmware line: there is no value in
   // telling someone watching a download that they are two releases behind.
