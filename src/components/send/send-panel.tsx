@@ -120,11 +120,14 @@ export function SendPanel({ targets, initialBoard, serverNow }: { targets: SendT
     const to = board;
     if (!to) return;
     setClearing(true);
-    const res = await fetch(`/api/transfers?deviceId=${encodeURIComponent(to)}`, { method: 'DELETE' }).catch(() => null);
-    if (!res) toast.error('Could not clear', { description: 'Check the connection and try again.' });
-    else if (!res.ok) toast.error('Could not clear', { description: `The server answered ${res.status}.` });
-    await refresh();
-    setClearing(false);
+    try {
+      const res = await fetch(`/api/transfers?deviceId=${encodeURIComponent(to)}`, { method: 'DELETE' }).catch(() => null);
+      if (!res) toast.error('Could not clear', { description: 'Check the connection and try again.' });
+      else if (!res.ok) toast.error('Could not clear', { description: `The server answered ${res.status}.` });
+      await refresh();
+    } finally {
+      setClearing(false);
+    }
   }
 
   return (
@@ -180,7 +183,7 @@ export function SendPanel({ targets, initialBoard, serverNow }: { targets: SendT
         </button>
       )}
       {/* About 10 rows on a wide screen, fewer on a phone; it scrolls inside, with waiting and sending rows on top. */}
-      <ul aria-label="Files for this board" data-testid="send-queue"
+      <ul aria-label="Files for this board" data-testid="send-queue" tabIndex={0}
           className="glass-card flex max-h-[26rem] flex-col overflow-y-auto overscroll-contain sm:max-h-[35rem]">
         {uploads.map((u) => (
           <li key={u.key} data-testid="send-upload" data-state={u.state} className="flex flex-wrap items-center gap-x-3 gap-y-1 border-b px-4 py-2"
