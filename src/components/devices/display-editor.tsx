@@ -4,7 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, useTransition } from
 import { useRouter } from 'next/navigation';
 import { loadDisplayWasm, type DisplayWasm, type PreviewState } from '@/lib/display-wasm';
 import {
-  decodeLayout, encodeLayout, HEAD_ELEMENT_FIRMWARE, NFC_ELEMENT_FIRMWARE, panelId, ROTATION_FIRMWARE,
+  decodeLayout, encodeLayout, NFC_ELEMENT_FIRMWARE, panelId, ROTATION_FIRMWARE,
   STATUS_ICON_FIRMWARE, STATUS_OPT, type ElementJson, type ElementName, type LayoutJson,
 } from '@/lib/display-layout';
 import {
@@ -49,7 +49,7 @@ function previewState(key: PreviewKey, tick: number, reader: PreviewState['nfc']
     status: 'ready', bars: 3, title: '', detail: '', showTrack: false, side: 0, cyl: 0, maxCyl: 79,
     pct: -1, tick, writable: true, sync: 'synced', nfc: reader,
   };
-  // Cylinder 42, side 1: the head element reads "42.1", the counter "42/79".
+  // Cylinder 42, side 1: the counter reads "42" + the up arrow + "79" (side 0 is the down arrow).
   const mounted = { ...base, status: 'loaded' as const, title: 'Workbench 3.1 Install', detail: 'disk 1 of 6', showTrack: true, side: 1 as const, cyl: 42 };
   switch (key) {
     case 'ready': return { ...base, title: 'no disk' };
@@ -86,21 +86,6 @@ function withNfc(l: LayoutJson, supported: boolean): LayoutJson {
   return l;
 }
 
-/**
- * Where the head element (cylinder.side, 1.17.0) starts when a layout does not
- * list it yet: the bottom-right corner on either panel, where the track
- * counter sits on 128x32. Hidden, so adding it changes nothing on the glass.
- */
-const HEAD_START: ElementJson = { id: 'head', visible: false, scale: 1, x: 104, y: 24, w: 0, opt: 0 };
-
-/** The 'head' element is in the list exactly when the board's firmware draws it (withNfc's rule). */
-function withHead(l: LayoutJson, supported: boolean): LayoutJson {
-  const has = l.elements.some((e) => e.id === 'head');
-  if (supported && !has) return { ...l, elements: [...l.elements, HEAD_START] };
-  if (!supported && has) return { ...l, elements: l.elements.filter((e) => e.id !== 'head') };
-  return l;
-}
-
 /** A turn only for a board that can make it; an older one is sent the upright layout. */
 function withRotation(l: LayoutJson, supported: boolean): LayoutJson {
   return supported ? l : turned(l, 0);
@@ -119,12 +104,12 @@ function withStatusStyle(l: LayoutJson, iconOk: boolean): LayoutJson {
   };
 }
 
-type BoardCaps = Pick<DeviceListItem, 'displayNfcElement' | 'displayStatusIcon' | 'displayHeadElement' | 'displayRotation'>;
+type BoardCaps = Pick<DeviceListItem, 'displayNfcElement' | 'displayStatusIcon' | 'displayRotation'>;
 
-/** What a board can be sent: the nfc and head elements, the status icon and a turn only where its firmware has them. */
+/** What a board can be sent: the nfc element, the status icon and a turn only where its firmware has them. */
 function forBoard(l: LayoutJson, device: BoardCaps): LayoutJson {
   return withRotation(
-    withHead(withStatusStyle(withNfc(l, device.displayNfcElement), device.displayStatusIcon), device.displayHeadElement),
+    withStatusStyle(withNfc(l, device.displayNfcElement), device.displayStatusIcon),
     device.displayRotation,
   );
 }
@@ -252,7 +237,6 @@ function LoadedEditor({ device, wasm, onCancel }: { device: DeviceListItem; wasm
   const reader: PreviewState['nfc'] = device.nfcReader === 'present' ? 'present' : 'absent';
   const nfcOk = device.displayNfcElement;
   const iconOk = device.displayStatusIcon;
-  const headOk = device.displayHeadElement;
   const rotateOk = device.displayRotation;
   const rotation = layout.rotation === 180 ? 180 : 0;
   const [tick, setTick] = useState(0);
@@ -588,12 +572,6 @@ function LoadedEditor({ device, wasm, onCancel }: { device: DeviceListItem; wasm
             )}
           </li>
         ))}
-        {!headOk && (
-          <li className="flex items-center gap-1" style={{ color: 'var(--muted)' }} data-testid={`display-head-needs-fw-${id}`}>
-            <input type="checkbox" disabled aria-label="head (needs newer firmware)" />
-            head — needs firmware {HEAD_ELEMENT_FIRMWARE} or newer
-          </li>
-        )}
         {!nfcOk && (
           // Both values of "can this board show the NFC icon": an element
           // missing from the list would read as no such feature at all.

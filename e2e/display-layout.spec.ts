@@ -266,8 +266,9 @@ test('a board before 1.15.0 is not offered the status icon, and the server refus
 });
 
 // Firmware 1.17.0: the panel turned 180 degrees (a board mounted upside down)
-// and the head element, cylinder.side. Both ride in the layout blob, so they
-// are stored with the board's display settings and fetched with them.
+// rides in the layout blob, so it is stored with the board's display settings
+// and fetched with them. (1.17.0 also had a head element, withdrawn in 1.18.0:
+// layouts that still name it lose it silently.)
 /** The preview canvas as lit (true) / dark pixels, one per panel pixel. */
 async function canvasPixels(page: Page, deviceId: string): Promise<{ w: number; h: number; on: boolean[] }> {
   return page.getByTestId(`display-canvas-${deviceId}`).evaluate((c: HTMLCanvasElement) => {
@@ -283,18 +284,16 @@ async function canvasPixels(page: Page, deviceId: string): Promise<{ w: number; 
   });
 }
 
-test('a 1.17.0 board can be turned 180 degrees and shown the head; the preview stays upright and notes the turn, the board receives both, and the turn persists', async ({ page, request }) => {
+test('a 1.17.0 board can be turned 180 degrees; the preview stays upright and notes the turn, the board receives it, and the turn persists', async ({ page, request }) => {
   await signUpFresh(page);
   const { deviceId, token } = await pairDevice(page, request);
   await reportStatus(request, token, { displayLayouts: true, displayVersion: 0, firmwareVersion: '1.17.0+ge2etest' });
 
   await openEditor(page, deviceId);
   await expect(page.getByTestId(`display-rotation-needs-fw-${deviceId}`)).toHaveCount(0);
-  await expect(page.getByTestId(`display-head-needs-fw-${deviceId}`)).toHaveCount(0);
   const rotation = page.getByTestId(`display-rotation-${deviceId}`);
   await expect(rotation).toHaveValue('0');
-  const head = page.getByTestId('display-visible-head');
-  await expect(head).not.toBeChecked();
+  await expect(page.getByTestId('display-visible-head')).toHaveCount(0);   // the head element is no longer offered
   await expect(page.getByText('Unsaved changes')).toHaveCount(0);   // listing it hidden is not an edit
 
   // The preview stays upright: the layout as it reads on a correctly mounted
@@ -324,7 +323,6 @@ test('a 1.17.0 board can be turned 180 degrees and shown the head; the preview s
   await page.mouse.up();
   await expect.poll(async () => (await canvasPixels(page, deviceId)).on.join() !== up.on.join()).toBe(true);   // it moved
 
-  await head.check();
   await page.getByTestId(`display-save-${deviceId}`).click();
   await expect(page.getByTestId(`display-status-${deviceId}`)).toHaveText('Waiting for the board');
 
@@ -336,17 +334,15 @@ test('a 1.17.0 board can be turned 180 degrees and shown the head; the preview s
   const sent = decodeLayout(blob);
   expect(sent.rotation).toBe(180);
   expect(Array.from(blob.subarray(blob.length - 8))).toEqual([0x80, 0, 0, 0, 0, 2, 0, 0]);   // the rotation record, last
-  expect(sent.elements.find((e) => e.id === 'head')).toEqual({ id: 'head', visible: true, scale: 1, x: 104, y: 24, w: 0, opt: 0 });
   expect(sent.elements.find((e) => e.id === 'title')!.y).toBe(8);
   expect(sent.elements.find((e) => e.id === 'write')!.y).toBe(0);   // dragged sideways only
   const draggedX = sent.elements.find((e) => e.id === 'write')!.x;
 
-  // Persists: a fresh page opens on 180 degrees with the head shown.
+  // Persists: a fresh page opens on 180 degrees.
   await reportStatus(request, token, { displayLayouts: true, displayVersion: 1, firmwareVersion: '1.17.0+ge2etest' });
   await openEditor(page, deviceId);
   await expect(page.getByTestId(`display-status-${deviceId}`)).toHaveText('Applied on the board');
   await expect(page.getByTestId(`display-rotation-${deviceId}`)).toHaveValue('180');
-  await expect(page.getByTestId('display-visible-head')).toBeChecked();
 
   // Reset to default restores the elements and keeps the turn.
   await page.getByTestId(`display-reset-${deviceId}`).click();
@@ -356,10 +352,33 @@ test('a 1.17.0 board can be turned 180 degrees and shown the head; the preview s
   expect(after.rotation).toBe(180);
   expect(after.elements.find((e) => e.id === 'title')!.y).toBe(8);
   expect(draggedX).toBeGreaterThan(after.elements.find((e) => e.id === 'write')!.x);   // right on screen is right in the layout
-  expect(after.elements.some((e) => e.id === 'head')).toBe(false);
 });
 
-test('a board before 1.17.0 is offered neither the turn nor the head, and the server refuses both', async ({ page, request }) => {
+// A layout stored while 1.17.0's head element existed (no migration rewrites
+// it): the editor loads it without the element, and the board is never sent it.
+test('a stored layout that still names the withdrawn head element loads without it, and the board is not sent it', async ({ page, request }) => {
+  await signUpFresh(page);
+  const { deviceId, token } = await pairDevice(page, request);
+  await reportStatus(request, token, { displayLayouts: true, displayVersion: 0, firmwareVersion: '1.17.0+ge2etest' });
+  const legacy = readFileSync(path.join(process.cwd(), 'wifi-floppy/firmware/test/fixtures/layouts/custom32_head_rot180.bin'));
+  expect(legacy.includes(Buffer.from([10, 1, 104, 24, 0, 0, 0, 0]))).toBe(true);   // the 1.17.0 head record
+  await getDb().update(devices).set({ displayLayout: new Uint8Array(legacy), displayPanel: '128x32', displayVersion: 1 }).where(eq(devices.id, deviceId));
+
+  await openEditor(page, deviceId);
+  await expect(page.getByTestId(`display-rotation-${deviceId}`)).toHaveValue('180');   // the rest of the layout loaded
+  await expect(page.getByTestId('display-visible-track')).toBeChecked();
+  await expect(page.getByTestId('display-visible-head')).toHaveCount(0);
+  await expect(page.getByText('Unsaved changes')).toHaveCount(0);
+
+  const get = await request.get('/api/device/display', { headers: authHeader(token) });
+  const body = Buffer.from(await get.body());
+  const blob = new Uint8Array(body.subarray(6));
+  expect(blob[2]).toBe(legacy[2] - 1);
+  for (let i = 0; i < blob[2]; i++) expect(blob[4 + 8 * i]).not.toBe(10);
+  expect(Array.from(blob.subarray(blob.length - 8))).toEqual([0x80, 0, 0, 0, 0, 2, 0, 0]);
+});
+
+test('a board before 1.17.0 is not offered the turn, and the server refuses it', async ({ page, request }) => {
   await signUpFresh(page);
   const { deviceId, token } = await pairDevice(page, request);
   await reportStatus(request, token, { displayLayouts: true, displayVersion: 0, firmwareVersion: '1.16.1+ge2etest' });
@@ -367,7 +386,6 @@ test('a board before 1.17.0 is offered neither the turn nor the head, and the se
   await openEditor(page, deviceId);
   await expect(page.getByTestId(`display-rotation-needs-fw-${deviceId}`)).toHaveText('Rotation needs firmware 1.17.0 or newer');
   await expect(page.getByTestId(`display-rotation-${deviceId}`)).toHaveCount(0);
-  await expect(page.getByTestId(`display-head-needs-fw-${deviceId}`)).toHaveText('head — needs firmware 1.17.0 or newer');
   await expect(page.getByTestId('display-visible-head')).toHaveCount(0);
 
   const turned = JSON.parse(readFileSync(
@@ -375,7 +393,10 @@ test('a board before 1.17.0 is offered neither the turn nor the head, and the se
   let res = await page.request.patch(`/api/devices/${deviceId}/display`, { data: turned });
   expect(res.status()).toBe(409);
   expect(await res.json()).toEqual({ error: 'firmware_too_old', reason: 'Turning the display needs firmware 1.17.0 or newer' });
+  // An old client's head element is accepted and dropped: nothing needs a newer board.
   res = await page.request.patch(`/api/devices/${deviceId}/display`, { data: { ...turned, rotation: 0 } });
-  expect(await res.json()).toEqual({ error: 'firmware_too_old', reason: 'The head position needs firmware 1.17.0 or newer' });
-  expect((await deviceRow(deviceId)).displayVersion).toBe(0);
+  expect(res.status()).toBe(200);
+  const stored = decodeLayout(new Uint8Array((await deviceRow(deviceId)).displayLayout!));
+  expect(stored.elements.map((e) => e.id as string)).not.toContain('head');
+  expect((await deviceRow(deviceId)).displayVersion).toBe(1);
 });

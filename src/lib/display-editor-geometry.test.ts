@@ -21,8 +21,6 @@ describe('elementSize mirrors layout_el_size', () => {
     expect(elementSize(el({ id: 'nfc' }))).toEqual({ w: 8, h: 8 });
     expect(elementSize(el({ id: 'nfc', scale: 2 }))).toEqual({ w: 16, h: 16 });
     expect(elementSize(el({ id: 'track' }))).toEqual({ w: 30, h: 8 });
-    expect(elementSize(el({ id: 'head' }))).toEqual({ w: 24, h: 8 });               // "40.1" (1.17.0)
-    expect(elementSize(el({ id: 'head', scale: 2 }))).toEqual({ w: 48, h: 16 });
   });
   it('title is w by 8 per line, detail w by 8, download bar + 2 + four chars', () => {
     expect(elementSize(el({ id: 'title', w: 100, opt: 2 }))).toEqual({ w: 100, h: 16 });
@@ -128,18 +126,6 @@ describe('overlapping (Ruling L: only what the renderer does not resolve)', () =
   });
 });
 
-describe('the head element beside the detail (1.17.0)', () => {
-  it('detail left of the head on its row is resolved: detail is clipped before it', () => {
-    expect(overlapping([el({ id: 'detail', y: 24, w: 128 }), el({ id: 'head', x: 104, y: 24 })]).size).toBe(0);
-  });
-  it('the head over the track counter or the title is a real overlap', () => {
-    expect(overlapping([el({ id: 'track', x: 98, y: 24 }), el({ id: 'head', x: 104, y: 24 })])).toEqual(new Set([0, 1]));
-    expect(overlapping([el({ id: 'title', y: 8, w: 128, opt: 2 }), el({ id: 'head', x: 0, y: 16 })])).toEqual(new Set([0, 1]));
-  });
-  it('a detail starting right of the head is flagged (the clip does not apply)', () => {
-    expect(overlapping([el({ id: 'detail', x: 110, y: 24, w: 18 }), el({ id: 'head', x: 104, y: 24 })]).size).toBe(2);
-  });
-});
 
 describe('a panel turned 180 degrees (1.17.0): screen <-> layout coordinates', () => {
   it('an upright panel maps one to one', () => {

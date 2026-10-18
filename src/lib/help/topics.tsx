@@ -261,9 +261,10 @@ export const HELP_TOPICS = {
   // floppy, triangle blinking; downloading = draw_status_icon filling the empty floppy bottom-up with the percent,
   // full only at 100 %), display_layout.h STATUS_OPT_ICON (opt 1; the word in every default),
   // display_layout_for (built-in screens take the icon), display-layout.ts STATUS_ICON_FIRMWARE 1.15.0.
-  // Rotation + head (1.17.0): oled_cmds.c (A0/C0 in the controller, every screen turns), display_layout.h
-  // REC_ROTATION / EL_HEAD, display.c head_text ("%02d.%d", only with a disk in, as the track counter),
-  // display-editor.tsx (Rotation select, HEAD_START hidden, reset keeps the turn), route.ts tooOldReason.
+  // Rotation (1.17.0): oled_cmds.c (A0/C0 in the controller, every screen turns), display_layout.h
+  // REC_ROTATION, display-editor.tsx (Rotation select, reset keeps the turn), route.ts tooOldReason.
+  // Track counter side arrow (1.18.0): display.c track_text ("42" arrow "79", down = side 0, up = side 1).
+  // The 1.17.0 head element (id 10) was withdrawn; stored layouts that name it lose it silently.
   display: {
     title: "The board's display",
     short:
@@ -271,8 +272,7 @@ export const HELP_TOPICS = {
     body: (
       <>
         <p>
-          Each board&apos;s card shows its screen, drawn from its layout and last reported disk (no download
-          progress or track). Press <em>Change Display</em>, or the screen, to edit it.
+          Each board&apos;s card shows its screen, drawn from its layout and last reported disk. Press <em>Change Display</em>, or the screen, to edit it.
         </p>
         <p>
           Pick the <em>Panel</em> (128×32 or 128×64) and drag elements into place, shown or hidden, at 1× or 2×.{' '}
@@ -280,9 +280,9 @@ export const HELP_TOPICS = {
           upside down; the preview stays upright.
         </p>
         <p>
-          Hidden until you tick them: <em>head</em> shows where the drive head is, cylinder and side, as{' '}
-          <em>40.1</em> while a disk is in; <em>nfc</em> shows the NFC reader (struck through when none is found,
-          inverted while a tag write waits).
+          The <em>track</em> counter reads cylinder, a side arrow, then the last cylinder, as{' '}
+          <em>42↑79</em> or <em>42↓79</em>: up is side 1, down is side 0. The <em>nfc</em> element, hidden until you tick it, shows
+          the NFC reader (struck through when none is found, inverted while a tag write waits).
         </p>
         <p>
           The <em>status</em> shows <em>as</em> a word or a small icon: an empty or filled floppy, filling while
@@ -294,11 +294,11 @@ export const HELP_TOPICS = {
           <em>Reset to default</em> restores the standard layout and keeps the rotation.
         </p>
         <p>
-          Your layout is used while the board runs; start-up, setup, connecting and error screens use the standard
-          128×32 layout, at the top of a 128×64 panel, with your status choice.
+          Your layout is used while the board runs; other screens use the standard
+          128×32 layout, with your status choice.
         </p>
         <GoodToKnow items={[
-          'Display layouts need board firmware 1.7.1 or newer; the NFC icon 1.10.0; the status icon 1.15.0; rotation and head 1.17.0.',
+          'Display layouts need board firmware 1.7.1 or newer; the NFC icon 1.10.0; the status icon 1.15.0; rotation 1.17.0; the side arrow 1.18.0.',
           '0.91" (128×32) and 0.96" (128×64) panels use the SSD1306 chip; most 1.3" (128×64) panels the SH1106, which needs firmware 1.7.4 or newer.',
           'Unplug the board before changing its panel: it detects the chip only at start-up.',
         ]} />

@@ -1,7 +1,7 @@
 // The editor's layout JSON <-> the board's layout blob (spec 2026-10-04-oled-layouts §5).
 //
 //   header, 4 bytes:  [0] format = 1  [1] panel (0 = 128x32, 1 = 128x64)  [2] n (0..16)  [3] 0
-//   record, 8 bytes:  [0] id (1..10)  [1] flags (bit0 visible, bit1 2x)  [2] x  [3] y  [4] w  [5] opt  [6] 0  [7] 0
+//   record, 8 bytes:  [0] id (1..9; 10 was the head element, withdrawn in 1.18.0)  [1] flags (bit0 visible, bit1 2x)  [2] x  [3] y  [4] w  [5] opt  [6] 0  [7] 0
 //   rotation record (firmware 1.17.0), after the elements, only when turned:
 //                     [0] 0x80  [1..4] 0  [5] quarter turns (2 = 180 degrees)  [6] 0  [7] 0
 //
@@ -15,18 +15,38 @@
  * firmware 1.10.0's: older boards refuse a layout that lists it at all, so it
  * is only ever sent to a board that has it (NFC_ELEMENT_FIRMWARE).
  */
-export const ELEMENT_NAMES = ['status', 'wifi', 'write', 'title', 'detail', 'track', 'download', 'lemming', 'nfc', 'head'] as const;
+export const ELEMENT_NAMES = ['status', 'wifi', 'write', 'title', 'detail', 'track', 'download', 'lemming', 'nfc'] as const;
 
 /** The first firmware whose layout validator knows the 'nfc' element. */
 export const NFC_ELEMENT_FIRMWARE = '1.10.0';
 
 /**
- * 'head' (id 10): the head position as cylinder.side, "40.1" (FlashFloppy's
- * reading). Boards on 1.10.0-1.16.x skip an id they do not know, but would
- * show nothing for it; 1.7.1-1.9.x refuse the layout -- so it is offered and
- * sent only to boards on this version or newer.
+ * Id 10 was firmware 1.17.0's 'head' element (cylinder.side, "40.1"). 1.18.0
+ * withdrew it -- the track counter shows the side -- and boards skip the id.
+ * 1.17.0 boards, editors and servers stored layouts that name it, and NO
+ * migration rewrites them: it is dropped when a stored layout is read (the
+ * editor's decode, stripHeadRecords on the way to a board) and refused from
+ * nowhere (the PATCH route accepts it from an older client and drops it).
  */
-export const HEAD_ELEMENT_FIRMWARE = '1.17.0';
+export const LEGACY_HEAD_ID = 10;
+export const LEGACY_HEAD_NAME = 'head';
+
+/**
+ * `b` without any withdrawn head record: the count fixed, every other record
+ * (rotation included) in its place. A blob that is not a layout, or has no
+ * head record, is returned as it is (the same array).
+ */
+export function stripHeadRecords(b: Uint8Array): Uint8Array {
+  if (b.length < HEADER || b[0] !== FORMAT || b.length !== HEADER + RECORD * b[2]) return b;
+  const keep: number[] = [];
+  for (let i = 0; i < b[2]; i++) if (b[HEADER + RECORD * i] !== LEGACY_HEAD_ID) keep.push(i);
+  if (keep.length === b[2]) return b;
+  const out = new Uint8Array(HEADER + RECORD * keep.length);
+  out.set(b.subarray(0, HEADER));
+  out[2] = keep.length;
+  keep.forEach((src, dst) => out.set(b.subarray(HEADER + RECORD * src, HEADER + RECORD * (src + 1)), HEADER + RECORD * dst));
+  return out;
+}
 
 /**
  * The panel turned 180 degrees, for a board mounted upside down: a setting
@@ -56,7 +76,6 @@ export const STATUS_ICON_FIRMWARE = '1.15.0';
  */
 export function layoutMinFirmware(j: LayoutJson): string | null {
   if (j.rotation === 180) return ROTATION_FIRMWARE;
-  if (j.elements.some((e) => e.id === 'head')) return HEAD_ELEMENT_FIRMWARE;
   if (j.elements.some((e) => e.id === 'status' && e.opt !== STATUS_OPT.word)) return STATUS_ICON_FIRMWARE;
   if (j.elements.some((e) => e.id === 'nfc')) return NFC_ELEMENT_FIRMWARE;
   return null;
@@ -120,6 +139,7 @@ export function decodeLayout(b: Uint8Array): LayoutJson {
       if (b[r + 5] === 2) rotation = 180;
       continue;
     }
+    if (b[r] === LEGACY_HEAD_ID) continue;   // withdrawn in 1.18.0: dropped silently
     const id = ELEMENT_NAMES[b[r] - 1];
     if (!id) throw new Error(`unknown element id ${b[r]}`);
     elements.push({

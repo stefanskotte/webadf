@@ -1,14 +1,15 @@
 import { describe, it, expect } from 'vitest';
 import { readFile } from 'node:fs/promises';
 import {
-  encodeLayout, decodeLayout, layoutMinFirmware, panelId, NFC_ELEMENT_FIRMWARE, STATUS_ICON_FIRMWARE, STATUS_OPT,
-  HEAD_ELEMENT_FIRMWARE, ROTATION_FIRMWARE, ROTATION_RECORD, type LayoutJson,
+  encodeLayout, decodeLayout, layoutMinFirmware, ELEMENT_NAMES, panelId, NFC_ELEMENT_FIRMWARE, STATUS_ICON_FIRMWARE, STATUS_OPT,
+  stripHeadRecords, ROTATION_FIRMWARE, ROTATION_RECORD, type LayoutJson,
 } from './display-layout';
 
 const FIX = 'wifi-floppy/firmware/test/fixtures/layouts';
+const base = async (name: string) => JSON.parse(await readFile(`${FIX}/${name}.json`, 'utf8')) as LayoutJson;
 
 describe('display layout encoding', () => {
-  for (const name of ['default32', 'default64', 'custom64', 'custom32_nfc', 'custom32_status_icon', 'custom32_head_rot180', 'bad_bounds', 'bad_dup', 'bad_reserved']) {
+  for (const name of ['default32', 'default64', 'custom64', 'custom32_nfc', 'custom32_status_icon', 'bad_bounds', 'bad_dup', 'bad_reserved']) {
     it(`${name}.json encodes to exactly ${name}.bin, and back`, async () => {
       const json = JSON.parse(await readFile(`${FIX}/${name}.json`, 'utf8')) as LayoutJson;
       const bin = new Uint8Array(await readFile(`${FIX}/${name}.bin`));
@@ -23,9 +24,32 @@ describe('display layout encoding', () => {
     expect(Array.from(b)).toEqual([1, 0, 1, 0, 9, 3, 4, 6, 0, 0, 0, 0]);
   });
 
-  it('gives the head element id 10, after nfc', () => {
-    const b = encodeLayout({ panel: '128x64', elements: [{ id: 'head', visible: true, scale: 1, x: 104, y: 24, w: 0, opt: 0 }] });
-    expect(Array.from(b)).toEqual([1, 1, 1, 0, 10, 1, 104, 24, 0, 0, 0, 0]);
+  // Fw 1.17.0's head element (id 10) was withdrawn in 1.18.0. Stored blobs and
+  // old clients still carry it; no migration rewrites them -- it is dropped
+  // when a layout is read for the editor or sent to a board.
+  describe('the withdrawn head element (id 10)', () => {
+    it('is not an element name any more, and an encoder refuses it', () => {
+      expect((ELEMENT_NAMES as readonly string[]).includes('head')).toBe(false);
+      expect(() => encodeLayout({ panel: '128x32', elements: [{ id: 'head' as never, visible: true, scale: 1, x: 0, y: 0, w: 0, opt: 0 }] })).toThrow();
+    });
+    it('decodes without it, rotation kept', async () => {
+      const bin = new Uint8Array(await readFile(`${FIX}/custom32_head_rot180.bin`));
+      const l = decodeLayout(bin);
+      expect(l.rotation).toBe(180);
+      expect(l.elements.map((e) => e.id)).toEqual((await base('default32')).elements.map((e) => e.id));
+    });
+    it('stripHeadRecords removes the record and fixes the count; other blobs come back unchanged', async () => {
+      const bin = new Uint8Array(await readFile(`${FIX}/custom32_head_rot180.bin`));
+      const out = stripHeadRecords(bin);
+      expect(out.length).toBe(bin.length - 8);
+      expect(out[2]).toBe(bin[2] - 1);
+      expect(Array.from(out.subarray(4, 4 + 8 * 8))).toEqual(Array.from(bin.subarray(4, 4 + 8 * 8)));   // the eight elements, untouched
+      expect(decodeLayout(out)).toEqual(decodeLayout(bin));
+      expect(Array.from(out.subarray(-8))).toEqual(Array.from(bin.subarray(-8)));   // the rotation record stays last
+      const plain = new Uint8Array(await readFile(`${FIX}/default32.bin`));
+      expect(stripHeadRecords(plain)).toBe(plain);
+      expect(stripHeadRecords(new Uint8Array([9, 9]))).toEqual(new Uint8Array([9, 9]));   // not a layout: untouched
+    });
   });
 
   describe('rotation (firmware 1.17.0): a setting record after the elements', () => {
@@ -57,7 +81,6 @@ describe('display layout encoding', () => {
   });
 
   describe('layoutMinFirmware: the oldest firmware that accepts a layout', () => {
-    const base = async (name: string) => JSON.parse(await readFile(`${FIX}/${name}.json`, 'utf8')) as LayoutJson;
     it('nothing beyond 1.7.1 for the defaults and a plain custom layout', async () => {
       for (const n of ['default32', 'default64', 'custom64']) expect(layoutMinFirmware(await base(n))).toBeNull();
     });
@@ -75,13 +98,8 @@ describe('display layout encoding', () => {
       expect(layoutMinFirmware({ ...l, elements: l.elements.map((e) => (e.id === 'status' ? { ...e, opt: 7 } : e)) }))
         .toBe(STATUS_ICON_FIRMWARE);
     });
-    it('the head element (shown or hidden) or a 180 rotation: 1.17.0, the newest', async () => {
-      expect(HEAD_ELEMENT_FIRMWARE).toBe('1.17.0');
+    it('a 180 rotation: 1.17.0, the newest', async () => {
       expect(ROTATION_FIRMWARE).toBe('1.17.0');
-      const l = await base('custom32_head_rot180');
-      expect(layoutMinFirmware(l)).toBe('1.17.0');
-      expect(layoutMinFirmware({ ...l, rotation: 0 })).toBe(HEAD_ELEMENT_FIRMWARE);
-      expect(layoutMinFirmware({ ...l, elements: l.elements.map((e) => ({ ...e, visible: false })) })).toBe('1.17.0');
       const plain = await base('default32');
       expect(layoutMinFirmware({ ...plain, rotation: 180 })).toBe(ROTATION_FIRMWARE);
       expect(layoutMinFirmware({ ...plain, rotation: 0 })).toBeNull();

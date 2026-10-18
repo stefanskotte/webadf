@@ -40,6 +40,15 @@ describe('GET /api/device/display', () => {
     expect(Array.from(await bytes(await GET(get())))).toEqual([0, 0, 0, 5, 0, 0]);
   });
 
+  it('never sends the withdrawn head element (id 10): a stored blob with it is stripped, the count fixed', async () => {
+    // header (n = 2): a wifi element, a 1.17.0 head record, no rotation
+    const wifi = [2, 1, 0, 0, 0, 0, 0, 0];
+    const head = [10, 1, 104, 24, 0, 0, 0, 0];
+    readDisplay.mockResolvedValue({ version: 7, panel: '128x32', layout: new Uint8Array([1, 0, 2, 0, ...wifi, ...head]) });
+    const { GET } = await import('./route');
+    expect(Array.from(await bytes(await GET(get())))).toEqual([0, 0, 0, 7, 0, 1, 1, 0, 1, 0, ...wifi]);
+  });
+
   it('401 without a valid device token, uncacheable', async () => {
     requireDevice.mockRejectedValue(new DeviceAuthError());
     const { GET } = await import('./route');
