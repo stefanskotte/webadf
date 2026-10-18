@@ -69,11 +69,18 @@ describe('help topics say what the app really does', () => {
   it('nfc names the tag type that works (MIFARE Classic; NTAG stickers are refused)', () => {
     expect(HELP_TOPICS.nfc.short + bodyText('nfc')).toMatch(/MIFARE Classic/);
   });
-  it('nfc explains the reader line on the board card (fw 1.17.0 boot scan: 0x28, PN532 not supported)', () => {
+  it('nfc explains the reader line on the board card (fw 1.17.0 boot scan: 0x28, and 0x24 for a PN532)', () => {
     const b = bodyText('nfc');
     expect(b).toMatch(/0x28/);
-    expect(b).toMatch(/PN532/);
+    expect(b).toMatch(/0x24/);
     expect(b).toMatch(/1\.17\.0/);
+  });
+  it('nfc says both reader chips work, the PN532 from firmware 1.18.0 (nfc_reader.h)', () => {
+    const b = HELP_TOPICS.nfc.short + bodyText('nfc');
+    expect(b).toMatch(/Si512/);
+    expect(b).toMatch(/PN532/);
+    expect(b).toMatch(/1\.18\.0/);
+    expect(b).not.toMatch(/not supported/);
   });
   it('boards gives the setup network password and the Update + password step', () => {
     const b = bodyText('boards');

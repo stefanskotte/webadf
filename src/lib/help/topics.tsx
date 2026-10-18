@@ -67,7 +67,8 @@ export const HELP_TOPICS = {
   // Sources: nfc/fob-button.tsx (flow, 120 s wait, texts), devices/page.tsx:19,59 (Next-disk card, fw 1.6.0+),
   // HANDOFF tap-to-mount (5248-5296) and Next-disk card (4968-4971).
   // Reader line: lib/i2c-scan.ts describeI2cScan (wording, 0x28 / 0x24 PN532 / 0x3c-0x3d display), device-card.tsx;
-  // firmware i2c_scan.h (boot scan only, fw 1.17.0).
+  // firmware i2c_scan.h (boot scan only, fw 1.17.0). Two reader chips: firmware nfc_reader.h (Si512 at 0x28 first,
+  // then a PN532 at 0x24, fw 1.18.0).
   nfc: {
     title: 'NFC cards',
     short:
@@ -90,11 +91,19 @@ export const HELP_TOPICS = {
           it moves a multi-disk game on to its next disk.
         </p>
         <p>
-          <strong>No reader found?</strong> Each board card says whether the board found its reader at address
-          0x28 when it started, and what else answered: the display, or nothing at all. A PN532 module, at 0x24,
-          is not supported. Check the reader&apos;s wires, then restart the board.
+          <strong>Readers.</strong> Both kinds of red reader module work: the Si512, at address 0x28, and the PN532,
+          at 0x24. If both are fitted, the board uses the Si512.
         </p>
-        <GoodToKnow items={['Next-disk cards need board firmware 1.6.0 or newer.', 'The reader line on the card needs firmware 1.17.0 or newer.']} />
+        <p>
+          <strong>No reader found?</strong> Each board card says whether the board found its reader when it
+          started, and what else answered: the display, or nothing at all. Check the reader&apos;s wires, then
+          restart the board.
+        </p>
+        <GoodToKnow items={[
+          'Next-disk cards need board firmware 1.6.0 or newer.',
+          'The reader line on the card needs firmware 1.17.0 or newer.',
+          'A PN532 reader needs firmware 1.18.0 or newer.',
+        ]} />
       </>
     ),
   },
