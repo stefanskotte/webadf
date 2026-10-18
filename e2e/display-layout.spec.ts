@@ -283,7 +283,7 @@ async function canvasPixels(page: Page, deviceId: string): Promise<{ w: number; 
   });
 }
 
-test('a 1.17.0 board can be turned 180 degrees and shown the head; the preview turns, the board receives both, and the turn persists', async ({ page, request }) => {
+test('a 1.17.0 board can be turned 180 degrees and shown the head; the preview stays upright and notes the turn, the board receives both, and the turn persists', async ({ page, request }) => {
   await signUpFresh(page);
   const { deviceId, token } = await pairDevice(page, request);
   await reportStatus(request, token, { displayLayouts: true, displayVersion: 0, firmwareVersion: '1.17.0+ge2etest' });
@@ -297,28 +297,32 @@ test('a 1.17.0 board can be turned 180 degrees and shown the head; the preview t
   await expect(head).not.toBeChecked();
   await expect(page.getByText('Unsaved changes')).toHaveCount(0);   // listing it hidden is not an edit
 
-  // The preview turns with the setting: every lit pixel moves to the opposite corner.
+  // The preview stays upright: the layout as it reads on a correctly mounted
+  // panel. The turn is only noted, and the note shows only at 180.
+  const note = page.getByTestId(`display-rotation-note-${deviceId}`);
+  await expect(note).toHaveCount(0);
   const up = await canvasPixels(page, deviceId);
   expect(up.on.some(Boolean)).toBe(true);
   await rotation.selectOption('180');
   await expect(page.getByText('Unsaved changes')).toBeVisible();
-  await expect.poll(async () => {
-    const t = await canvasPixels(page, deviceId);
-    return t.on.every((v, i) => v === up.on[up.on.length - 1 - i]);
-  }).toBe(true);
+  await expect(note).toBeVisible();
+  await expect(note).toContainText('upright');
+  await expect(note).toContainText('180');
+  const same = await canvasPixels(page, deviceId);
+  expect(same.on).toEqual(up.on);
 
-  // Dragging on the turned preview moves the element the way it LOOKS: the
-  // default title (layout y 8, drawn at screen y 8..24) dragged 4 px down on
-  // screen is 4 px UP in the layout.
+  // Dragging on the preview moves the element the way it LOOKS: the write
+  // indicator (x 110) dragged 4 px right on screen is 4 px right in the layout (checked below).
   const canvas = page.getByTestId(`display-canvas-${deviceId}`);
   const box = (await canvas.boundingBox())!;
   const px = (v: number) => (v * box.width) / 128;
   const py = (v: number) => (v * box.height) / 32;
-  await page.mouse.move(box.x + px(60), box.y + py(14));
+  await page.mouse.move(box.x + px(112), box.y + py(3));
   await page.mouse.down();
-  await page.mouse.move(box.x + px(60), box.y + py(16), { steps: 4 });
-  await page.mouse.move(box.x + px(60), box.y + py(18), { steps: 4 });
+  await page.mouse.move(box.x + px(114), box.y + py(3), { steps: 4 });
+  await page.mouse.move(box.x + px(116), box.y + py(3), { steps: 4 });
   await page.mouse.up();
+  await expect.poll(async () => (await canvasPixels(page, deviceId)).on.join() !== up.on.join()).toBe(true);   // it moved
 
   await head.check();
   await page.getByTestId(`display-save-${deviceId}`).click();
@@ -333,7 +337,9 @@ test('a 1.17.0 board can be turned 180 degrees and shown the head; the preview t
   expect(sent.rotation).toBe(180);
   expect(Array.from(blob.subarray(blob.length - 8))).toEqual([0x80, 0, 0, 0, 0, 2, 0, 0]);   // the rotation record, last
   expect(sent.elements.find((e) => e.id === 'head')).toEqual({ id: 'head', visible: true, scale: 1, x: 104, y: 24, w: 0, opt: 0 });
-  expect(sent.elements.find((e) => e.id === 'title')!.y).toBe(4);
+  expect(sent.elements.find((e) => e.id === 'title')!.y).toBe(8);
+  expect(sent.elements.find((e) => e.id === 'write')!.y).toBe(0);   // dragged sideways only
+  const draggedX = sent.elements.find((e) => e.id === 'write')!.x;
 
   // Persists: a fresh page opens on 180 degrees with the head shown.
   await reportStatus(request, token, { displayLayouts: true, displayVersion: 1, firmwareVersion: '1.17.0+ge2etest' });
@@ -349,6 +355,7 @@ test('a 1.17.0 board can be turned 180 degrees and shown the head; the preview t
   const after = decodeLayout(new Uint8Array((await deviceRow(deviceId)).displayLayout!));
   expect(after.rotation).toBe(180);
   expect(after.elements.find((e) => e.id === 'title')!.y).toBe(8);
+  expect(draggedX).toBeGreaterThan(after.elements.find((e) => e.id === 'write')!.x);   // right on screen is right in the layout
   expect(after.elements.some((e) => e.id === 'head')).toBe(false);
 });
 

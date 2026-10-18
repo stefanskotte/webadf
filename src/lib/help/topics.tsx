@@ -277,7 +277,7 @@ export const HELP_TOPICS = {
         <p>
           Pick the <em>Panel</em> (128×32 or 128×64) and drag elements into place, shown or hidden, at 1× or 2×.{' '}
           <em>Preview as</em> shows other situations. <em>Rotation</em> 180° turns every screen for a board mounted
-          upside down; the preview turns with it.
+          upside down; the preview stays upright.
         </p>
         <p>
           Hidden until you tick them: <em>head</em> shows where the drive head is, cylinder and side, as{' '}
