@@ -5011,19 +5011,19 @@ Demozoo API (the bulk export makes per-lookup load on a non-profit unnecessary).
   allowlist checks only the first URL (the raster content-type allowlist and `nosniff` still apply).
 - **Cron drift:** the daily 01:30 cron against a 7-day gate can drift a refetch to 8 days.
 
-### 3by. Backlog batch merged (master 21ac3d7) + fw 1.17.0 TEST (seq 103) on the bench -- 2026-10-18
+### 3by. Backlog batch merged (master 21ac3d7) + fw 1.17.0 RELEASED (seq 103, fw-1.17.0) -- 2026-10-18
 
 - Per-user settings (c178f93, migration 0043 user_prefs APPLIED): /settings, start page, remembered library/Browse sorts.
   getUserPrefs falls back to defaults on a failed read; sort saves are serialised (one PATCH in flight, newest pending wins).
 - I2C scan report (4d0b86d, migration 0044 devices.i2c_addrs APPLIED): fw 1.17.0 status carries "i2c":[..]; the card names
   what answered. Bench board reports [0x28, 0x3c].
 - OLED rotation 180 + head element "40.1" (6b7ab0a, fw 1.17.0). Operator 2026-10-18: "rotation is good" on the bench panel.
-  Head element on glass not yet confirmed.
+  Operator: "cylinder / side works as well". Preview-stays-upright follow-up requested (web only, in progress).
 - -lh1- decoder (lh1.ts, ported from LHa for UNIX 1.14i dhuf/shuf; window prefilled with spaces). -lh2-/-lh3- still refused.
 - Per-user firmware.skipPassword (21ac3d7): ON only via POST /api/me/prefs/firmware-skip-password (password + shared
   step-up throttle, src/lib/step-up-gate.ts); generic PATCH refuses true. Off/failed read => password required.
-- fw 1.17.0+gccb453a published TEST (seq 103), installed on the bench board. NOT released. On release: message Pillock and
-  Vincent Price to update so the I2C scan shows (operator asked, keep it brief).
+- fw 1.17.0+gccb453a RELEASED 2026-10-18 (seq 103, notes promoted, GitHub fw-1.17.0); Pillock and Vincent Price asked in
+  Discord to update so their I2C scan shows.
 - Deferred minors: no CRC-16 check for any LHA method (corrupt same-length member accepted); device-list treats any 400 on a
   password-less update as "setting turned off"; -lh5- treats a match before byte 0 as corrupt (reference fills spaces).
 - Pillock retest of "Receive is running" during long sends: confirmed good 2026-10-18 (1.97 MB delivered, rx stayed 'c').
