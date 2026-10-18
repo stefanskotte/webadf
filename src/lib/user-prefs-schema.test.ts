@@ -11,6 +11,7 @@ describe('user prefs defaults', () => {
       startPage: 'library',
       library: { sort: { key: 'added', dir: 'desc' } },
       browse: { sort: { key: 'name', dir: 'asc' } },
+      firmware: { skipPassword: false },
     });
   });
 
@@ -32,6 +33,7 @@ describe('user prefs defaults', () => {
       startPage: 'devices',
       library: { sort: { key: 'added', dir: 'desc' } },
       browse: { sort: { key: 'size', dir: 'desc' } },
+      firmware: { skipPassword: false },
     });
     expect(parsePrefs({ startPage: 'nowhere' }).startPage).toBe('library');
   });
@@ -41,6 +43,36 @@ describe('user prefs defaults', () => {
     a.library.sort.key = 'title';
     expect(DEFAULT_PREFS.library.sort.key).toBe('added');
     expect(parsePrefs({}).library.sort.key).toBe('added');
+  });
+});
+
+describe('firmware.skipPassword', () => {
+  it('defaults to false (the password is asked) and reads only a real true as true', () => {
+    expect(DEFAULT_PREFS.firmware.skipPassword).toBe(false);
+    expect(parsePrefs({ firmware: { skipPassword: true } }).firmware.skipPassword).toBe(true);
+    for (const bad of [{ firmware: { skipPassword: 'yes' } }, { firmware: { skipPassword: 1 } }, { firmware: null }, { firmware: 'x' }]) {
+      expect(parsePrefs(bad).firmware.skipPassword).toBe(false);
+    }
+  });
+
+  it('a patch may name it as a boolean, nothing else', () => {
+    expect(parsePrefsPatch({ firmware: { skipPassword: false } })).toEqual({ ok: true, patch: { firmware: { skipPassword: false } } });
+    expect(parsePrefsPatch({ firmware: { skipPassword: true } }).ok).toBe(true);
+    expect(parsePrefsPatch({ firmware: { skipPassword: 'true' } }).ok).toBe(false);
+    expect(parsePrefsPatch({ firmware: { other: 1 } }).ok).toBe(false);
+  });
+
+  it('a patch merges over the stored value and leaves it when not named', () => {
+    const on = applyPrefsPatch(parsePrefs({}), { firmware: { skipPassword: true } });
+    expect(on.firmware.skipPassword).toBe(true);
+    expect(applyPrefsPatch(on, { startPage: 'devices' }).firmware.skipPassword).toBe(true);
+    expect(applyPrefsPatch(on, { firmware: {} }).firmware.skipPassword).toBe(true);
+    expect(applyPrefsPatch(on, { firmware: { skipPassword: false } }).firmware.skipPassword).toBe(false);
+  });
+
+  it('prefsDiff never carries it: it has its own controls, and turning it on needs the password', () => {
+    const saved = parsePrefs({});
+    expect(prefsDiff(saved, { ...saved, firmware: { skipPassword: true } })).toEqual({});
   });
 });
 
@@ -63,6 +95,7 @@ describe('user prefs patch', () => {
       startPage: 'devices',
       library: { sort: { key: 'year', dir: 'asc' } },
       browse: { sort: { key: 'size', dir: 'desc' } },
+      firmware: { skipPassword: false },
     });
     // The input is untouched.
     expect(cur.library.sort).toEqual({ key: 'added', dir: 'desc' });

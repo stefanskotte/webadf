@@ -121,3 +121,47 @@ test('a changed library sort survives a reload and a new browser for the same us
   await expect(page.getByTestId('library-sort')).toHaveValue('title-desc');
   await expect(titles(page).first()).toContainText(second);
 });
+
+// Firmware updates: "Don't ask for my password". Turning it on takes the
+// password (a stolen session must not be able to switch the prompt off);
+// turning it off does not.
+test('turning off the firmware password prompt takes the password; turning it back on does not', async ({ page }) => {
+  const { password } = await signUpFresh(page);
+  await page.goto('/settings');
+  const state = page.getByTestId('fw-password-state');
+  const box = page.getByTestId('fw-skip-password');
+  await expect(state).toHaveText('Password asked');
+  await expect(box).not.toBeChecked();
+
+  // The generic save refuses it outright.
+  const sneak = await page.request.patch('/api/me/prefs', { data: { firmware: { skipPassword: true } } });
+  expect(sneak.status()).toBe(403);
+  expect((await sneak.json()).error).toBe('password_required');
+
+  // Ticking opens the password field in place; a wrong password changes nothing.
+  await box.check();
+  await page.getByTestId('fw-skip-password-input').fill('not-the-password');
+  await page.getByTestId('fw-skip-password-confirm').click();
+  await expect(page.getByTestId('fw-skip-password-error')).toContainText('not right');
+  await page.reload();
+  await expect(state).toHaveText('Password asked');
+
+  await box.check();
+  await page.getByTestId('fw-skip-password-input').fill(password);
+  await page.getByTestId('fw-skip-password-confirm').click();
+  await expect(state).toHaveText('Password not asked');
+  await expect(page.getByTestId('fw-skip-password-input')).toHaveCount(0);
+  await page.reload();
+  await expect(state).toHaveText('Password not asked');
+  await expect(box).toBeChecked();
+  expect((await (await page.request.get('/api/me/prefs')).json()).firmware).toEqual({ skipPassword: true });
+
+  // Off again: immediate, no password.
+  const saved = page.waitForResponse((r) => r.url().endsWith('/api/me/prefs') && r.request().method() === 'PATCH');
+  await box.uncheck();
+  await expect(state).toHaveText('Password asked');
+  expect((await saved).status()).toBe(200);
+  await page.reload();
+  await expect(state).toHaveText('Password asked');
+  await expect(box).not.toBeChecked();
+});

@@ -4,6 +4,7 @@ import { sendSummaries } from '@/lib/transfers';
 import { listSendTargets } from '@/lib/send-targets';
 import { cardSendLine, receiverRunning } from '@/lib/send-ui';
 import { requireOrg } from '@/lib/session';
+import { getUserPrefs } from '@/lib/user-prefs';
 import { listDevices } from '@/lib/queries';
 import { listReleases } from '@/lib/firmware-releases';
 import { firmwareState, countBehind, buildRegistry } from '@/lib/firmware-state';
@@ -19,13 +20,16 @@ import { FirmwareNotice } from '@/components/devices/firmware-notice';
 import { FobButton } from '@/components/nfc/fob-button';
 
 export default async function DevicesPage() {
-  const { orgId } = await requireOrg();
+  const { orgId, userId } = await requireOrg();
   // One clock for the whole render, so two cards can never disagree about what
   // "now" is and flip each other across the staleness boundary.
   const now = nowMs();
   // Independent reads, so they go together rather than in series.
   // Next-card writers, not every reader: a board before 1.6.0 cannot write one.
-  const [devices, releases, writers] = await Promise.all([listDevices(orgId), listReleases(orgId), listNextCardWriters(orgId)]);
+  // The user's own skip-password preference decides whether Update asks for
+  // the password; the route checks the same preference again, so this only
+  // shapes the dialog.
+  const [devices, releases, writers, prefs] = await Promise.all([listDevices(orgId), listReleases(orgId), listNextCardWriters(orgId), getUserPrefs(userId)]);
 
   const online = devices.filter((d) => isOnline(d.lastSeenAt, now)).length;
 
@@ -82,7 +86,8 @@ export default async function DevicesPage() {
           </div>
         ) : (
           <DeviceList devices={devices} now={now} states={states}
-                      selectableIds={selectableIds} latest={registry.latest} nextById={nextById} sendLineById={sendLineById} />
+                      selectableIds={selectableIds} latest={registry.latest} nextById={nextById} sendLineById={sendLineById}
+                      skipPassword={prefs.firmware.skipPassword} />
         )}
       </div>
     </>

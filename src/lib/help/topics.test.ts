@@ -80,6 +80,13 @@ describe('help topics say what the app really does', () => {
     expect(b).toMatch(/password/);
     expect(b).toMatch(/give the board a name/);
   });
+  it('boards and preferences say the firmware password can be turned off in Settings, and what that costs', () => {
+    expect(bodyText('boards')).toMatch(/unless you turned that off in Settings/);
+    const p = bodyText('preferences');
+    expect(p).toMatch(/Firmware updates/);
+    expect(p).toMatch(/takes your password/);
+    expect(p).toMatch(/signed-in browser/);
+  });
   it('write-protect makes no unconfirmed claim about prompts to click through', () => {
     expect(bodyText('write-protect')).not.toMatch(/click through|put the volume back/i);
   });

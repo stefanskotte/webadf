@@ -180,3 +180,33 @@ test('a good batch sets the update and the device sees it', async ({ page, reque
   expect(poll.status()).toBe(200);
   expect((await poll.json()).update.version).toBe('0.0.0+e2e38');
 });
+
+/**
+ * The per-user "don't ask for my password" preference: off, a missing
+ * password is refused as it always was; on (which itself took the password),
+ * the same request goes through.
+ */
+test('no password is refused, until the user turns the prompt off with their password', async ({ page, request }) => {
+  const { password } = await signUpFresh(page);
+  const { deviceId, token } = await pairDevice(page, request);
+  await publishTestRelease('0.0.0+e2e97');
+  await publishTestRelease('0.0.0+e2e98');
+  await announceCapable(request, token, '0.0.0+e2e97');
+  const update = () => page.request.post('/api/devices/firmware-update', {
+    data: { deviceIds: [deviceId], version: '0.0.0+e2e98' },
+  });
+
+  expect((await update()).status()).toBe(400);
+  expect(await desiredFirmwareOf(deviceId)).toBeNull();
+
+  const wrong = await page.request.post('/api/me/prefs/firmware-skip-password', { data: { password: 'nope' } });
+  expect(wrong.status()).toBe(401);
+  expect((await update()).status()).toBe(400);
+
+  const on = await page.request.post('/api/me/prefs/firmware-skip-password', { data: { password } });
+  expect(on.status()).toBe(200);
+  const res = await update();
+  expect(res.status()).toBe(200);
+  expect((await res.json()).count).toBe(1);
+  expect(await desiredFirmwareOf(deviceId)).toBe('0.0.0+e2e98');
+});
