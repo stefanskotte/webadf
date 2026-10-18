@@ -5052,8 +5052,59 @@ Demozoo API (the bulk export makes per-lookup load on a non-profit unnecessary).
       log.
     - Afterwards DF0 mount, Next and the card work as before.
 
-**Open:** the two Rob PRs (RLE fix; LZ4 with the per-CPU table), the LZ4 driver variant and 1.16.0, Workbench
-`do_StackSize` for Receive, and lint.
+**Bench results, 2026-10-18 morning (A500 via the PiKVM; operator: long on-time is fine).**
+- **Bug found and fixed: about 28 s per file.**
+  - A 20-file folder (`Monitors/`) took 9 min on seq 97. After each delivery, `as_has_work()` ignored a
+    READY engine with a LIST to forward and a NEXT to offer, so core1 started a 25 s long poll before the
+    next file.
+  - Fixed with a test (`next_file_follows_without_a_long_poll`, RED→GREEN) in a54fda5, merged as c860f2f.
+  - That fix is TEST `1.16.0+ga54fda5` = **seq 98**; notes start "TEST build" (read back). Installed via
+    Ctrl+Alt+Del and confirmed in 60 s.
+  - On seq 98, `Keymaps/` (26 files) arrived **about 2.8-3.3 s apart**.
+  - Heap low-water stayed at 20,480 throughout, with no fault or revert.
+- **The A500 here has no DH0:** its hard disk volume is `Workbench` (SYS:), so the folder used is
+  `SYS:Downloads`.
+- **Results, by step:**
+  1. Install: PASS, run twice. Receive went into `SYS:Tools` (with its icon) and `C:`; eth0 was left as it was.
+  2. Receive from its Workbench icon: PASS.
+     - The window opens; the stack is fine.
+     - The old saved folder showed "Folder not found" until Save, then "Saved. Listening on port 6800".
+     - Within the next 3 s the page read "✓ Receive is running on the Amiga".
+     - The folder is saved in ENVARC: and survived a reset.
+  3. Sending three ways: PASS.
+     - `SnoopDos.lha` (137,323 B) from the computer.
+     - `Monitors/` (20 files) from Browse; the sub-path was kept.
+     - `amiga-wb31_storage.adf` (901,120 B) from the title page, in about 130 s (≈6.8 KB/s, RLE).
+  4. Queued while Receive was closed: PASS. The page said "Start Receive on the Amiga", the card "1 file
+     waiting · Receive not running", and the file arrived once Receive started.
+  5. Cancel a waiting file: PASS. The row reads Cancelled on the web and it left Receive's list.
+  6. Cancel mid-file at 29 %: PASS.
+     - Web: Cancelled. Receive: "failed: connection".
+     - No `.webadf-rx` and no partial file were left.
+     - The next ADF arrived in full (884,736 B sent; 140 s while pinging).
+  7. 200-byte path: **not run** (it writes production; waiting for a yes).
+  8. Shell form: PASS. `Receive TO RAM:` printed "Board connected", then `shell-form.txt  29 bytes  OK`;
+     Ctrl-C printed "Stopped.".
+  9. Ping to the router during an ADF transfer:
+     - During: 874-1,617 ms (avg 1,005).
+     - Idle: 164-252 ms (avg 206), 0 % loss.
+  10. Phone: **owed** (the operator's phone).
+  11. The IP gap: PASS.
+      - After `wf reboot` (Amiga untouched) the log read `pnet: Amiga address 172.16.10.237 from the server (not
+        seen since boot)` at 15.9 s and `send: receiver connected` at 20.2 s.
+      - A file was delivered at once.
+      - Afterwards DF0 mount (Storage3.1), Next (to Extras3.1) and the card ("101 delivered · Receive running",
+        "Driver: talking") all behaved as before.
+- **Seen in passing:**
+  - The board's OTA reboot during an Amiga boot gave the requester "PaulaNET has a read error on disk block
+    996"; Retry cleared it.
+  - Receive's window cuts long names ("queued-while-closed.tx"); the file on disk is whole.
+  - Re-opening /devices by client navigation once showed a stale card (old fw, old disk); a reload was correct.
+- **Owed with LZ4 (operator, 2026-10-18):** check that LZ4 does its job on both binaries and text. Send an
+  ADF, an LHA and plain text files with the LZ4 driver and compare bytes on the wire and time against today's
+  RLE baseline (an 880 KB ADF in about 130 s).
+
+**Open:** the two Rob PRs (RLE fix; LZ4 with the per-CPU table), the LZ4 driver variant and 1.16.0, and lint.
 
 ### 3bu. fw 1.15.0 RELEASED (seq 96, fw-1.15.0, master 9fa2cff) -- send-stall root cause fixed, 2026-10-17
 
