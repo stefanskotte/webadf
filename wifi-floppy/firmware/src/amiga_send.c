@@ -144,8 +144,11 @@ void as_set_inputs(amiga_send_t *s, bool net_on, uint32_t amiga_ip, uint32_t que
 bool as_has_work(const amiga_send_t *s) {
     if (!usable(s) || !s->net_on || s->ip == 0 || in_backoff(s)) return false;
     // The handshake too: a 25 s long poll in the middle would time it out.
+    // And a ready receiver with a LIST to forward or the next file to offer: otherwise the loop starts a long poll
+    // between two files, and each file of a folder waits it out (bench 2026-10-18: ~28 s apiece).
     return s->done_owed || file_moving(s) || s->phase == AS_CONNECTING || s->phase == AS_HELLO
-        || (fetch_owed(s) && !file_moving(s));
+        || (fetch_owed(s) && !file_moving(s))
+        || (s->phase == AS_READY && (s->list_owed || s->out_n > 0 || next_present(s)));
 }
 
 char as_rx(const amiga_send_t *s) { return s->rx; }

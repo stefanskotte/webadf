@@ -147,6 +147,30 @@ static void one_file_end_to_end(void) {
     CHECK(F.queue_fetches >= 2, "refetched after the outcome");
 }
 
+// main.c's core1 loop: a pass with no send work starts a 25 s long poll instead (bench 2026-10-18: each file of a
+// 20-file folder waited one long poll, ~28 s apiece). From one file's OK to the next file's FILE line, every pass
+// must be send work.
+static void next_file_follows_without_a_long_poll(void) {
+    static const char *ID2 = "66666666-7777-4888-9999-aaaaaaaaaaaa";
+    char q[600];
+    snprintf(q, sizeof q, "NEXT %s 5 3610a686 0 1:A 0:\nLIST 2\n%s 5 1:A\n%s 5 1:B\n", ID, ID, ID2);
+    ready_with(q);
+    memcpy(F.file, "hello", 5); F.file_len = 5;
+    char go[80]; snprintf(go, sizeof go, "GO %s", ID); reply(go);
+    run(3);
+    char ok[120]; snprintf(ok, sizeof ok, "OK %s 1:A", ID); reply(ok);
+    snprintf(F.queue, sizeof F.queue, "NEXT %s 5 3610a686 0 1:B 0:\nLIST 1\n%s 5 1:B\n", ID2, ID2);
+    clear_out();
+    char want[200]; snprintf(want, sizeof want, "FILE %s 5", ID2);
+    int polls = 0;
+    for (int i = 0; i < 12 && !strstr(F.out, want); i++) {
+        F.budget = F.accept_max; as_tick(&S);
+        if (as_has_work(&S)) as_step(&S); else polls++;
+    }
+    CHECK(strstr(F.out, want) != NULL, "the second file is offered");
+    CHECK_EQ_INT(polls, 0);
+}
+
 static void err_before_go_is_posted(void) {
     char q[600];
     snprintf(q, sizeof q, "NEXT %s 5 0 0 3:Big 0:\nLIST 1\n%s 5 3:Big\n", ID, ID);
@@ -396,6 +420,7 @@ int main(void) {
     RUN(connect_timeout_is_unreachable);
     RUN(no_ready_is_unreachable);
     RUN(one_file_end_to_end);
+    RUN(next_file_follows_without_a_long_poll);
     RUN(err_before_go_is_posted);
     RUN(big_file_in_chunks);
     RUN(partial_send_finishes_chunk_before_next_fetch);
