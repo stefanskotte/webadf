@@ -1,9 +1,9 @@
 // Send to Amiga from the web (PaulaNET Phase 4 increment 3, spec 2026-10-16 §4). GET: the board's queue and its
 // receiver state, for the Upload page. POST: one file from the computer, as a raw body (R13), stored by sha-256 in
-// the disk store (R2) and queued for the board.
+// the disk store (R2) and queued for the board. DELETE: "Clear finished", the board's finished and lapsed rows.
 import { getDb } from '@/db';
 import { requireOrg } from '@/lib/session';
-import { listTransfers, queueTransferFromBlob } from '@/lib/transfers';
+import { clearFinishedTransfers, listTransfers, queueTransferFromBlob } from '@/lib/transfers';
 import { findSendTarget } from '@/lib/send-targets';
 import { SEND_FILE_MAX } from '@/lib/send-limits';
 import { queueResponse, storeSendBytes, toView } from '@/lib/send-http';
@@ -39,6 +39,18 @@ export async function GET(request: Request) {
   if (!target) return Response.json({ error: 'no_device' }, { status: 404 });
   const rows = await listTransfers(db, orgId, deviceId);
   return Response.json({ target, transfers: rows.map((r) => toView(r, now)), now }, { headers: { 'cache-control': 'no-store' } });
+}
+
+/** Clear finished: scoped like GET (a board of another org is 404); the rows the page shows as finished go. */
+export async function DELETE(request: Request) {
+  const { orgId } = await requireOrg();
+  const deviceId = new URL(request.url).searchParams.get('deviceId');
+  if (!deviceId) return Response.json({ error: 'invalid_query' }, { status: 400 });
+  const db = getDb();
+  const now = Date.now();
+  if (!(await findSendTarget(db, orgId, deviceId, now))) return Response.json({ error: 'no_device' }, { status: 404 });
+  const deleted = await clearFinishedTransfers(db, orgId, deviceId, new Date(now));
+  return Response.json({ deleted }, { headers: { 'cache-control': 'no-store' } });
 }
 
 export async function POST(request: Request) {
