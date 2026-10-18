@@ -1,3 +1,4 @@
+import { nowMs } from '@/lib/clock';
 import { requireOrg } from '@/lib/session';
 import { listGames, countAllGames, listDevices } from '@/lib/queries';
 import { holdsByGame } from '@/lib/drive-holds';
@@ -88,7 +89,7 @@ export default async function LibraryPage(props: PageProps<'/library'>) {
   let drives: DriveContext = null;
   if (cards && boards.length > 0) {
     // One clock for the render, as devices/page.tsx does.
-    const now = Date.now();
+    const now = nowMs();
     drives = {
       // DF1's rules need the board's setting, firmware and disks (spec 2026-10-14 §3.1) -- those fields only.
       devices: boards.map((b) => ({ id: b.id, name: b.name, df1: b.secondDrive === 'df1' ? df1BoardOf(b) : null })),

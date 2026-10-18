@@ -1,3 +1,4 @@
+import { nowMs } from '@/lib/clock';
 import { notFound, redirect } from 'next/navigation';
 import Link from 'next/link';
 import { and, eq } from 'drizzle-orm';
@@ -297,7 +298,7 @@ export default async function DiskFilesPage(props: PageProps<'/disks/[id]/files'
   // Mount / Eject from the disk's own page (operator, 2026-09-29): the same
   // choices and holder line as the game page's disk row (mount-choice.ts), so
   // the two can never offer different things for the same disk.
-  const now = Date.now();
+  const now = nowMs();
   const choices = mountChoices(await listDevices(orgId),
     { id, sha256: disk.sha256, imageFormat: disk.imageFormat, sizeBytes: disk.sizeBytes }, now);
   const held = holderText(choices);

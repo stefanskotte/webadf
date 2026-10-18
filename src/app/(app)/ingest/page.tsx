@@ -1,3 +1,4 @@
+import { nowMs } from '@/lib/clock';
 import { requireOrg } from '@/lib/session';
 import { getDb } from '@/db';
 import { PageHeader } from '@/components/shell/page-header';
@@ -11,7 +12,7 @@ export default async function IngestPage(props: PageProps<'/ingest'>) {
   const sp = await props.searchParams;
   // ?board= comes from the card's line and the disk pages' "See queue"; an id that is not a target is ignored.
   const board = typeof sp.board === 'string' ? sp.board : null;
-  const now = Date.now();
+  const now = nowMs();
   const targets = await listSendTargets(getDb(), orgId, now);
   return (
     <>

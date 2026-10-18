@@ -1,3 +1,4 @@
+import { nowMs } from '@/lib/clock';
 import { notFound } from 'next/navigation';
 import { requireOrg } from '@/lib/session';
 import { getGameDetail, listDevices } from '@/lib/queries';
@@ -37,7 +38,7 @@ export default async function GamePage(props: PageProps<'/games/[id]'>) {
   // indistinguishably, so an id from another tenant reveals nothing.
   if (!game) notFound();
 
-  const now = Date.now();
+  const now = nowMs();
   const send = sendTargets.length > 0 ? { targets: sendTargets, now } : null;
 
   return (
