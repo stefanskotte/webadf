@@ -15,7 +15,6 @@ const STATUS_MAX_CHARS = 8; // "DOWNLOAD"
 const STATUS_ICON_W = 8;    // STATUS_ICON_W: the icon in place of the word (opt 1)
 const TRACK_MAX_CHARS = 5;  // "99/99"
 const PCT_MAX_CHARS = 4;    // "100%"
-const HEAD_MAX_CHARS = 4;   // "79.1": the head element, cylinder.side (1.17.0)
 
 export interface Box { x: number; y: number; w: number; h: number }
 
@@ -33,7 +32,6 @@ export function elementSize(e: ElementJson): { w: number; h: number } {
     case 'write': w = 8; break;
     case 'lemming': w = 8; break;
     case 'nfc': w = 8; break;
-    case 'head': w = HEAD_MAX_CHARS * ADVANCE; break;
     case 'title': w = e.w; h = LINE_H * (e.opt ? e.opt : 1); break;
     case 'detail': w = e.w; break;
     case 'track': w = TRACK_MAX_CHARS * ADVANCE; break;
@@ -96,7 +94,6 @@ function intersects(a: Box, b: Box): boolean {
  * bar for download. display.c right_text() with the widest string.
  */
 function textMinLeft(o: ElementJson): number {
-  if (o.id === 'head') return o.x;   // left-aligned, always four characters
   const s = o.scale === 2 ? 2 : 1;
   return o.id === 'download' && o.w ? o.x + (o.w + 2) * s : o.x;
 }
@@ -130,7 +127,7 @@ function detailClipped(detail: ElementJson, o: ElementJson): boolean {
 function resolvedByRenderer(a: ElementJson, b: ElementJson): boolean {
   const ids = new Set([a.id, b.id]);
   if (ids.has('track') && ids.has('download')) return true;
-  if (ids.has('detail') && (ids.has('track') || ids.has('download') || ids.has('head'))) {
+  if (ids.has('detail') && (ids.has('track') || ids.has('download'))) {
     return a.id === 'detail' ? detailClipped(a, b) : detailClipped(b, a);
   }
   return false;

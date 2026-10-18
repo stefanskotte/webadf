@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import { readFile } from 'node:fs/promises';
 import { loadDisplayWasm, STATE_SIZE, type DisplayWasm as DisplayWasmT } from './display-wasm';
-import { decodeLayout, encodeLayout } from './display-layout';
+import { decodeLayout, encodeLayout, stripHeadRecords } from './display-layout';
 
 const wasmBytes = () => readFile('public/display.wasm').then((b) => b.buffer.slice(b.byteOffset, b.byteOffset + b.byteLength) as ArrayBuffer);
 
@@ -9,7 +9,7 @@ describe('display wasm', () => {
   it('renders today’s 128x32 default byte-identically to the firmware golden', async () => {
     const w = await loadDisplayWasm(await wasmBytes());
     const fb = w.render({ status: 'loaded', bars: 3, title: 'Workbench 3.1 Install', detail: 'disk 1 of 6',
-      showTrack: true, side: 1, cyl: 0, maxCyl: 79, pct: -1, tick: 0, writable: true, sync: 'synced', nfc: 'armed' }, 0, null);
+      showTrack: true, side: 0, cyl: 0, maxCyl: 79, pct: -1, tick: 0, writable: true, sync: 'synced', nfc: 'armed' }, 0, null);   // side 0: the down arrow
     const golden = await readFile('wifi-floppy/firmware/test/fixtures/display_golden/mounted_w_t0.fb');
     expect(fb.length).toBe(1024);
     expect(Buffer.from(fb.subarray(0, 512)).equals(golden)).toBe(true);
@@ -105,29 +105,29 @@ describe('display wasm', () => {
     }
   }
 
-  // The head element (firmware 1.17.0), "cylinder.side": test_display_golden.c's
-  // HEAD_GOLDENS, from the default with track hidden and head added by the web encoder.
-  for (const [name, panel, x, y, scale, cyl, side] of [
-    ['head_40_1_32', 0, 104, 24, 1, 40, 1],
-    ['head_05_0_32', 0, 104, 24, 1, 5, 0],
-    ['head_79_1_2x_64', 1, 80, 46, 2, 79, 1],
-  ] as const) {
-    it(`renders ${name} byte-identically to the firmware golden`, async () => {
-      const w = await loadDisplayWasm(await wasmBytes());
-      const base = decodeLayout(w.defaultBlob(panel));
-      const blob = encodeLayout({ ...base, elements: [
-        ...base.elements.map((e) => (e.id === 'track' ? { ...e, visible: false } : e)),
-        { id: 'head', visible: true, scale, x, y, w: 0, opt: 0 },
-      ] });
-      expect(w.validate(blob)).toBeNull();
-      const fb = w.render({ status: 'loaded', bars: 3, title: 'Workbench 3.1 Install', detail: 'disk 1 of 6', showTrack: true,
-        side, cyl, maxCyl: 79, pct: -1, tick: 0, writable: true, sync: 'synced', nfc: 'absent' }, panel, blob);
-      const golden = await readFile(`wifi-floppy/firmware/test/fixtures/display_golden/${name}.fb`);
-      const rows = panel === 1 ? 1024 : 512;
-      expect(golden.length).toBe(rows);
-      expect(Buffer.from(fb.subarray(0, rows)).equals(golden)).toBe(true);
-    });
-  }
+  // The track counter shows the side (firmware 1.18.0): "42" + arrow + "79".
+  // The preview is the firmware's renderer, so the two sides must differ.
+  it('draws the side in the counter: the preview of side 0 differs from side 1', async () => {
+    const w = await loadDisplayWasm(await wasmBytes());
+    const blob = w.defaultBlob(0);
+    const st = { status: 'loaded' as const, bars: 3, title: 'Workbench 3.1 Install', detail: 'disk 1 of 6', showTrack: true,
+      cyl: 42, maxCyl: 79, pct: -1, tick: 0, writable: true, sync: 'synced' as const, nfc: 'absent' as const };
+    const down = w.render({ ...st, side: 0 }, 0, blob);
+    const up = w.render({ ...st, side: 1 }, 0, blob);
+    expect(Buffer.from(down).equals(Buffer.from(up))).toBe(false);
+  });
+
+  // The withdrawn head element (1.17.0, id 10): a stored layout that still names
+  // it previews exactly as the same layout without it (the board skips the record).
+  it('previews a stored layout with the withdrawn head element as without it', async () => {
+    const w = await loadDisplayWasm(await wasmBytes());
+    const withHead = new Uint8Array(await readFile('wifi-floppy/firmware/test/fixtures/layouts/custom32_head_rot180.bin'));
+    expect(w.validate(withHead)).toBeNull();
+    const without = stripHeadRecords(withHead);
+    const st = { status: 'loaded' as const, bars: 3, title: 'Workbench 3.1 Install', detail: 'disk 1 of 6', showTrack: true,
+      side: 1 as const, cyl: 42, maxCyl: 79, pct: -1, tick: 0, writable: true, sync: 'synced' as const, nfc: 'absent' as const };
+    expect(Buffer.from(w.render(st, 0, withHead)).equals(Buffer.from(w.render(st, 0, without)))).toBe(true);
+  });
 
   // Rotation (firmware 1.17.0): the board turns its glass in the controller;
   // the preview comes back turned, equal to test_oled_rotation.c's model of

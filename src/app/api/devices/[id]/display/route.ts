@@ -3,7 +3,7 @@ import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 import { requireOrg } from '@/lib/session';
 import {
-  decodeLayout, ELEMENT_NAMES, encodeLayout, HEAD_ELEMENT_FIRMWARE, layoutMinFirmware, NFC_ELEMENT_FIRMWARE,
+  decodeLayout, ELEMENT_NAMES, encodeLayout, LEGACY_HEAD_NAME, layoutMinFirmware, NFC_ELEMENT_FIRMWARE,
   ROTATION_FIRMWARE, STATUS_ICON_FIRMWARE, type LayoutJson,
 } from '@/lib/display-layout';
 import { loadDisplayWasm, type DisplayWasm } from '@/lib/display-wasm';
@@ -20,7 +20,8 @@ const getWasm = () => (wasm ??= readFile(path.join(process.cwd(), 'public', 'dis
   .catch((e: unknown) => { wasm = null; throw e; }));
 
 const element = z.object({
-  id: z.enum(ELEMENT_NAMES),
+  // 'head' is accepted from a client still on 1.17.0's editor and dropped below.
+  id: z.enum([...ELEMENT_NAMES, LEGACY_HEAD_NAME]),
   visible: z.boolean(), scale: z.union([z.literal(1), z.literal(2)]),
   x: z.number().int().min(0).max(255), y: z.number().int().min(0).max(255),
   w: z.number().int().min(0).max(255), opt: z.number().int().min(0).max(255),
@@ -35,7 +36,6 @@ const body = z.union([
 /** Why a 1.17.0+ layout was refused for an older board: the feature it uses, by name. */
 function tooOldReason(l: LayoutJson | null, min: string | null): string {
   if (l?.rotation === 180) return `Turning the display needs firmware ${ROTATION_FIRMWARE} or newer`;
-  if (l?.elements.some((e) => e.id === 'head')) return `The head position needs firmware ${HEAD_ELEMENT_FIRMWARE} or newer`;
   if (min === STATUS_ICON_FIRMWARE) return `The status icon needs firmware ${STATUS_ICON_FIRMWARE} or newer`;
   if (min === NFC_ELEMENT_FIRMWARE) return `The NFC icon needs firmware ${NFC_ELEMENT_FIRMWARE} or newer`;
   return 'Needs firmware 1.7.1 or newer';
@@ -58,13 +58,15 @@ export async function PATCH(request: Request, ctx: { params: Promise<{ id: strin
   // the blob (a rotation record), so the default's elements are stored with it.
   let layout: LayoutJson | null = null;
   if (!('reset' in parsed.data)) {
-    layout = parsed.data;
+    // The withdrawn head element (id 10) never reaches the store or a board.
+    // Stored layouts that already have it are NOT migrated: they are stripped
+    // when read (display-layout.ts stripHeadRecords).
+    layout = { ...parsed.data, elements: parsed.data.elements.filter((e) => e.id !== LEGACY_HEAD_NAME) as LayoutJson['elements'] };
   } else if (parsed.data.rotation === 180) {
     const panel = parsed.data.panel;
     layout = { ...decodeLayout((await getWasm()).defaultBlob(panel === '128x64' ? 1 : 0)), rotation: 180 };
   }
-  // The 'nfc' element (1.10.0), the status icon (1.15.0), the 'head' element
-  // and a rotation (1.17.0), shown OR hidden, make older firmware refuse the
+  // The 'nfc' element (1.10.0), the status icon (1.15.0), a rotation (1.17.0), shown OR hidden, make older firmware refuse the
   // whole layout (or, from 1.10.0, ignore what it does not know), so a layout
   // that uses one is stored only for a board reporting that version or newer.
   // The editor never offers them to an older board; this is the server's half

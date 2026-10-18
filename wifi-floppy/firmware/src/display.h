@@ -16,6 +16,7 @@
 #include "display_layout.h"
 #define DISP_W       128
 #define DISP_H_MAX   64
+#define DISP_SIDE_UNKNOWN 2
 #define DISP_FB_MAX  (DISP_W * DISP_H_MAX / 8)    // 1024: room for a 128x64 panel
 
 // Long enough for two rendered lines of 21 characters. Titles longer than
@@ -53,9 +54,10 @@ typedef struct {
     // mounted `cyl` is whatever the head was last stepped to, which is a
     // number about no disk and worse than a blank.
     bool show_track;
-    /** The head's side, 0 or 1 (1.17.0), for the head element's "40.1":
-     *  the SIDE line as the floppy bus last set it, shown under the same
-     *  show_track rule as the cylinder. A byte in what was padding after
+    /** The head's side, 0 (lower head) or 1 (upper), drawn as the arrow in the
+     *  track counter ("42<up>79"; 1.18.0, kept from 1.17.0's field): the SIDE
+     *  line as the floppy bus last set it, shown under the same show_track
+     *  rule as the cylinder. Anything else is DISP_SIDE_UNKNOWN: the slash. A byte in what was padding after
      *  show_track, so every other offset -- and display.wasm's table, and
      *  the struct's size -- stays as it was. */
     uint8_t side;

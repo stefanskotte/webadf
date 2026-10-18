@@ -1,5 +1,6 @@
 import { requireDevice, deviceAuthResponse } from '@/lib/device-auth';
 import { readDisplay } from '@/lib/display-store';
+import { stripHeadRecords } from '@/lib/display-layout';
 
 // The board's display layout, binary (plan Global Constraints; no base64 or
 // JSON on the board):
@@ -30,7 +31,9 @@ export async function GET(request: Request) {
   // Deleted between auth and read: 404, never a body the board could act on.
   if (!row) return Response.json({ error: 'device_not_found' }, { status: 404, headers: NO_STORE });
 
-  const layout = row.layout && row.layout.length > 0 ? row.layout : null;
+  // Layouts stored while 1.17.0's head element existed are not migrated; the
+  // record is stripped here so a board never receives it again.
+  const layout = row.layout && row.layout.length > 0 ? stripHeadRecords(row.layout) : null;
   const out = new Uint8Array(6 + (layout?.length ?? 0));
   new DataView(out.buffer).setUint32(0, row.version, false);
   out[4] = row.panel === '128x64' ? 1 : 0;

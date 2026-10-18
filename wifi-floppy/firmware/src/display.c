@@ -64,6 +64,18 @@ static const uint8_t FONT[FONT_LAST - FONT_FIRST + 1][GLYPH_W] = {
   {0x08,0x08,0x2A,0x1C,0x08},                             // ~
 };
 
+// 1.18.0: the side arrows of the track counter, 5x7 like the rest. Up has its
+// tip on the top row, down on the bottom row; both a 7-pixel shaft. They are
+// NOT in FONT: titles and details arrive as raw UTF-8, whose bytes (0x7F, 0x80,
+// the middle of an en dash) must keep drawing '?'. Only the counter asks for
+// them, with the markers below, which no text path accepts.
+static const uint8_t ARROW[2][GLYPH_W] = {
+  {0x04,0x02,0x7F,0x02,0x04},   // up   (side 1)
+  {0x10,0x20,0x7F,0x20,0x10},   // down (side 0)
+};
+#define MARK_UP    '\x01'
+#define MARK_DOWN  '\x02'
+
 // The wifi glyph, 11x8, as one nested arc per strength step plus a dot that
 // is always drawn. Row-major bits, MSB = leftmost column, so the literal
 // below reads as the picture it draws.
@@ -245,10 +257,15 @@ static void px(uint8_t *fb, int x, int y) {
 // validator checked.
 #define AT(v) ((v) / g_scale)
 
-static void draw_glyph(uint8_t *fb, int x, int y, char c) {
+static void draw_glyph(uint8_t *fb, int x, int y, char c, bool arrows) {
     unsigned char u = (unsigned char)c;
-    if (u < FONT_FIRST || u > FONT_LAST) u = '?';
-    const uint8_t *g = FONT[u - FONT_FIRST];
+    const uint8_t *g;
+    if (arrows && (u == MARK_UP || u == MARK_DOWN)) {
+        g = ARROW[u == MARK_UP ? 0 : 1];
+    } else {
+        if (u < FONT_FIRST || u > FONT_LAST) u = '?';
+        g = FONT[u - FONT_FIRST];
+    }
     for (int col = 0; col < GLYPH_W; col++)
         for (int row = 0; row < 7; row++)
             if (g[col] & (1u << row)) px(fb, x + col, y + row);
@@ -256,13 +273,16 @@ static void draw_glyph(uint8_t *fb, int x, int y, char c) {
 
 /** Draw until the string ends or the next glyph would pass `x_limit`.
  *  Returns the x just past what was drawn. */
-static int draw_text(uint8_t *fb, int x, int y, const char *s, int x_limit) {
+static int draw_text_ex(uint8_t *fb, int x, int y, const char *s, int x_limit, bool arrows) {
     for (; *s; s++) {
         if (x + GLYPH_W > x_limit) break;
-        draw_glyph(fb, x, y, *s);
+        draw_glyph(fb, x, y, *s, arrows);
         x += ADVANCE;
     }
     return x;
+}
+static int draw_text(uint8_t *fb, int x, int y, const char *s, int x_limit) {
+    return draw_text_ex(fb, x, y, s, x_limit, false);
 }
 
 static int text_px(const char *s) {
@@ -431,19 +451,16 @@ static int right_text(const layout_el_t *e, const char *t) {
 // Both numbers clamped to 0..99, which is what TRACK_MAX_CHARS (5, "99/99")
 // sizes the element for. 1.6.5 printed them raw; no real disk has 100
 // cylinders, and a box that fits every state is the layout model's rule.
+// 1.18.0: the separator is the side, "42<up>79": down for side 0 (Amiga side 0
+// is the lower head), up for side 1, one glyph for the slash's one so the box
+// is unchanged. A side that is neither (DISP_SIDE_UNKNOWN) keeps the slash.
+// The last cylinder is whatever the state carries (the mounted image's); a
+// state that does not know it (0 or less) says 79, a standard disk's.
 static void track_text(const display_state_t *s, char out[8]) {
     const int c = s->cyl < 0 ? 0 : s->cyl > 99 ? 99 : s->cyl;
-    const int m = s->max_cyl < 0 ? 0 : s->max_cyl > 99 ? 99 : s->max_cyl;
-    snprintf(out, 8, "%d/%d", c, m);
-}
-
-// The head element's "cc.s" (1.17.0): the cylinder in two digits, clamped to
-// 0..99 as the counter's are, so the box HEAD_MAX_CHARS sizes always holds
-// it and the text never shifts as the head crosses cylinder 10; any nonzero
-// side is side 1.
-static void head_text(const display_state_t *s, char out[8]) {
-    const int c = s->cyl < 0 ? 0 : s->cyl > 99 ? 99 : s->cyl;
-    snprintf(out, 8, "%02d.%d", c, s->side ? 1 : 0);
+    const int m = s->max_cyl <= 0 ? 79 : s->max_cyl > 99 ? 99 : s->max_cyl;
+    const char sep = s->side == 0 ? MARK_DOWN : s->side == 1 ? MARK_UP : '/';
+    snprintf(out, 8, "%d%c%d", c, sep, m);
 }
 
 // Clamped, not merely assumed. `pct` is an int and a caller can hand this
@@ -464,7 +481,6 @@ void display_render(const display_state_t *s, const layout_t *l, uint8_t fb[DISP
     // The track counter only while a disk is mounted; the percent only while
     // downloading with a known percent.
     const layout_el_t *track = s->show_track ? find(l, EL_TRACK) : NULL;
-    const layout_el_t *head  = s->show_track ? find(l, EL_HEAD) : NULL;   // the same rule (1.17.0)
     const layout_el_t *dl = (s->status == DS_DOWNLOAD && s->pct >= 0) ? find(l, EL_DOWNLOAD) : NULL;
     // Review Focus 1: where both would be drawn on top of each other, the
     // counter wins -- a half-drawn "12/79" is a lie about which track is
@@ -507,14 +523,7 @@ void display_render(const display_state_t *s, const layout_t *l, uint8_t fb[DISP
             case EL_TRACK:
                 if (track == e) {
                     char t[8]; track_text(s, t);
-                    draw_text(fb, AT(right_text(e, t)), y, t, AT(e->x + bw));
-                }
-                break;
-            case EL_HEAD:
-                // Left-aligned: four characters always, so the box is full.
-                if (head == e) {
-                    char t[8]; head_text(s, t);
-                    draw_text(fb, x, y, t, x + bw / g_scale);
+                    draw_text_ex(fb, AT(right_text(e, t)), y, t, AT(e->x + bw), true);
                 }
                 break;
             case EL_DOWNLOAD:
@@ -529,17 +538,16 @@ void display_render(const display_state_t *s, const layout_t *l, uint8_t fb[DISP
                 // right, exactly as 1.6.5: the limit is that text's first pixel
                 // minus one ADVANCE. The number is never the one clipped -- a
                 // clipped label is only shorter.
-                // The head (1.17.0) likewise, from its own left edge.
                 int limit = e->x + bw;
-                const layout_el_t *rt[3] = { track, dl, head };
-                for (int k = 0; k < 3; k++) {
+                const layout_el_t *rt[2] = { track, dl };
+                for (int k = 0; k < 2; k++) {
                     const layout_el_t *o = rt[k];
                     if (!o) continue;
                     int ow, oh; layout_el_size(o, &ow, &oh);
                     if (o->y >= e->y + bh || e->y >= o->y + oh) continue;   // different rows
                     char t[8];
                     if (o->id == EL_TRACK) track_text(s, t); else pct_text(s, t);
-                    const int first = o->id == EL_HEAD ? o->x : right_text(o, t);
+                    const int first = right_text(o, t);
                     const int left = first - ADVANCE * g_scale;
                     if (left > e->x && left < limit) limit = left;
                 }

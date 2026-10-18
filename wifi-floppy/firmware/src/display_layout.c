@@ -16,7 +16,6 @@ void layout_el_size(const layout_el_t *e, int *w, int *h) {
         case EL_WRITE:    bw = 8;  break;
         case EL_LEMMING:  bw = 8;  break;
         case EL_NFC:      bw = 8;  break;
-        case EL_HEAD:     bw = HEAD_MAX_CHARS * LAYOUT_ADVANCE; break;
         case EL_TITLE:    bw = e->w; bh = LAYOUT_LINE_H * (e->opt ? e->opt : 1); break;
         case EL_DETAIL:   bw = e->w; break;
         case EL_TRACK:    bw = TRACK_MAX_CHARS * LAYOUT_ADVANCE; break;

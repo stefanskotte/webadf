@@ -23,7 +23,6 @@
 #define STATUS_ICON_W        8
 #define TRACK_MAX_CHARS      5     // "99/99"; the renderer clamps both numbers to 0..99
 #define PCT_MAX_CHARS        4     // "100%"
-#define HEAD_MAX_CHARS       4     // "79.1": cylinder (two digits, clamped 0..99), '.', side
 #define LAYOUT_ADVANCE       6     // glyph 5 + 1 column
 #define LAYOUT_LINE_H        8
 
@@ -35,13 +34,11 @@ typedef enum { EL_STATUS = 1, EL_WIFI = 2, EL_WRITE = 3, EL_TITLE = 4,
                // boards on 1.10.0 or newer. Absent from both defaults: a board
                // with no custom layout, or a layout saved before it existed,
                // draws exactly what it drew before.
-               EL_NFC = 9,
-               // 1.17.0: the head position as cylinder.side ("40.1"), as
-               // FlashFloppy shows it. In neither default. 1.10.0-1.16.x skip
-               // it (an id above EL_NFC); 1.7.1-1.9.x refuse the layout, so
-               // the web app sends it only to boards on 1.17.0 or newer.
-               EL_HEAD = 10 } element_id_t;
-#define EL_LAST EL_HEAD
+               EL_NFC = 9 } element_id_t;
+// Id 10 was 1.17.0's head position, withdrawn in 1.18.0 (the track counter
+// shows the side). Layouts naming it still exist: it is an id above EL_LAST, so
+// the decoder skips the record like any element a later firmware adds.
+#define EL_LAST EL_NFC
 
 // A SETTING record, not an element (1.17.0): the panel's rotation, in quarter
 // turns (only 0 and 2 -- 180 degrees -- are valid), in the record's opt byte;

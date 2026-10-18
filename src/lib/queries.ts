@@ -16,7 +16,7 @@ import { asSecondDriveMode, SECOND_DRIVE_NET_FW, type SecondDriveMode } from '@/
 import { isHdAdfSql } from '@/lib/disk-format-sql';
 import { firmwareAtLeast } from '@/lib/firmware-version';
 import {
-  HEAD_ELEMENT_FIRMWARE, NFC_ELEMENT_FIRMWARE, ROTATION_FIRMWARE, STATUS_ICON_FIRMWARE,
+  NFC_ELEMENT_FIRMWARE, ROTATION_FIRMWARE, STATUS_ICON_FIRMWARE, stripHeadRecords,
 } from '@/lib/display-layout';
 import { DEFAULT_PREFS, type LibrarySort } from '@/lib/user-prefs-schema';
 
@@ -414,11 +414,6 @@ export interface DeviceListItem {
    */
   displayStatusIcon: boolean;
   /**
-   * The board draws the 'head' element, cylinder.side (firmware 1.17.0+, by its
-   * reported version). 1.10.0-1.16.x would skip it, older firmware refuses it.
-   */
-  displayHeadElement: boolean;
-  /**
    * The board can turn its panel 180 degrees (firmware 1.17.0+). 1.10.0-1.16.x
    * would ignore the setting and stay upright, older firmware refuses it.
    */
@@ -556,7 +551,6 @@ export async function listDevices(orgId: string): Promise<DeviceListItem[]> {
     displayLayouts: r.displayLayouts === true,
     displayNfcElement: r.displayLayouts === true && firmwareAtLeast(r.firmwareVersion, NFC_ELEMENT_FIRMWARE),
     displayStatusIcon: r.displayLayouts === true && firmwareAtLeast(r.firmwareVersion, STATUS_ICON_FIRMWARE),
-    displayHeadElement: r.displayLayouts === true && firmwareAtLeast(r.firmwareVersion, HEAD_ELEMENT_FIRMWARE),
     displayRotation: r.displayLayouts === true && firmwareAtLeast(r.firmwareVersion, ROTATION_FIRMWARE),
     nfcReader: r.nfcReader === 'present' ? 'present' as const : r.nfcReader === 'absent' ? 'absent' as const : null,
     secondDrive: asSecondDriveMode(r.secondDrive) ?? 'off',
@@ -564,7 +558,7 @@ export async function listDevices(orgId: string): Promise<DeviceListItem[]> {
     secondDriveNetCapable: r.secondDriveCapable === true && firmwareAtLeast(r.firmwareVersion, SECOND_DRIVE_NET_FW),
     secondDriveCapable: r.secondDriveCapable === true,
     displayLayout: r.displayLayout && r.displayLayout.length > 0
-      ? Buffer.from(r.displayLayout).toString('base64')
+      ? Buffer.from(stripHeadRecords(r.displayLayout)).toString('base64')   // 1.17.0's head element is withdrawn; stored blobs are not migrated
       : null,
   }));
 }

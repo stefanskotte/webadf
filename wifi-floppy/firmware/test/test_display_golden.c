@@ -258,108 +258,129 @@ static void builtin_screens_on_128x64_are_the_128x32_ones(void) {
     }
 }
 
-// ---- the head element (1.17.0): cylinder.side, "40.1", FlashFloppy's
-// reading. Own goldens on CUSTOM layouts (no default lists it), as the NFC
-// element's: the default goldens above staying byte-identical is the proof a
-// board without it draws what 1.16 drew.
-typedef struct { const char *name; panel_t panel; int x, y, scale, cyl, side; } head_golden_t;
-static const head_golden_t HEAD_GOLDENS[] = {
-    { "head_40_1_32",    PANEL_128x32, 104, 24, 1, 40, 1 },
-    { "head_05_0_32",    PANEL_128x32, 104, 24, 1,  5, 0 },
-    { "head_79_1_2x_64", PANEL_128x64,  80, 46, 2, 79, 1 },
-};
-
-// The default with the track counter hidden and the head in its corner.
-static layout_t head_layout(panel_t p, int x, int y, int scale) {
-    layout_t l = *layout_default(p);
-    for (int i = 0; i < l.n; i++) if (l.el[i].id == EL_TRACK) l.el[i].visible = 0;
-    l.el[l.n++] = (layout_el_t){ EL_HEAD, 1, (uint8_t)scale, (uint8_t)x, (uint8_t)y, 0, 0 };
-    return l;
+// The track counter (1.18.0): "cyl", an arrow for the side, "last cyl" --
+// "42<up>79" -- in place of "42/79". Down = side 0 (the lower head), up =
+// side 1. Only the counter draws the arrows: compared with the same counter
+// drawn with an unknown side (the slash), every pixel outside the middle
+// glyph is identical, at 1x and 2x, and the middle glyph is an arrow of its
+// own (differing from the slash, from the other arrow, and from '?').
+static const int TRACK_X = 98;    // the box is 30 wide: 5 characters
+static void render_counter(display_state_t s, int scale, uint8_t fb[DISP_FB_MAX]) {
+    layout_t h = { PANEL_128x64, 1, { { EL_TRACK, 1, (uint8_t)scale, (uint8_t)(TRACK_X - (scale - 1) * 30), 20, 0, 0 } } };
+    display_render(&s, &h, fb);
 }
-
-static void render_head(const head_golden_t *g, uint8_t fb[DISP_FB_MAX]) {
-    layout_t l = head_layout(g->panel, g->x, g->y, g->scale);
-    display_state_t s = st(DS_LOADED);
-    strcpy(s.title, "Workbench 3.1 Install"); strcpy(s.detail, "disk 1 of 6");
-    s.show_track = true; s.cyl = g->cyl; s.side = (uint8_t)g->side; s.writable = true;
-    display_render(&s, &l, fb);
+// First column and glyph width of the counter's separator, whose text is
+// `pre` + sep + `post` flush right in the box.
+static void sep_cols(const char *pre, const char *post, int scale, int *x0, int *x1) {
+    const int n = (int)(strlen(pre) + 1 + strlen(post));
+    const int box_x = TRACK_X - (scale - 1) * 30;
+    *x0 = box_x + (30 - (n * 6 - 1)) * scale + (int)strlen(pre) * 6 * scale;
+    *x1 = *x0 + 5 * scale;
 }
-
-static void head_goldens_match(void) {
-    const bool write = getenv("DISPLAY_GOLDEN_WRITE") != NULL;
-    for (size_t i = 0; i < sizeof HEAD_GOLDENS / sizeof HEAD_GOLDENS[0]; i++) {
-        const head_golden_t *g = &HEAD_GOLDENS[i];
-        const size_t bytes = (size_t)panel_height(g->panel) * DISP_W / 8;
-        uint8_t fb[DISP_FB_MAX]; render_head(g, fb);
-        char path[128]; path_for(path, sizeof path, g->name);
-        if (write) {
-            FILE *f = fopen(path, "wb"); CHECK(f != NULL, path);
-            if (f) { fwrite(fb, 1, bytes, f); fclose(f); }
-            continue;
-        }
-        uint8_t want[DISP_FB_MAX]; FILE *f = fopen(path, "rb"); CHECK(f != NULL, path);
-        if (!f) continue;
-        size_t got = fread(want, 1, sizeof want, f); fclose(f);
-        CHECK(got == bytes, path);
-        CHECK(memcmp(fb, want, bytes) == 0, g->name);
-    }
-}
-
-// The SHAPE: the head draws exactly the font's "40.1" -- the same pixels a
-// detail line holding that text draws in the same place -- at 1x and 2x.
-static void head_text_is_the_picture(void) {
-    static const struct { int cyl, side; const char *text; } T[] = {
-        { 40, 1, "40.1" }, { 5, 0, "05.0" }, { 0, 0, "00.0" }, { 79, 1, "79.1" },
-        { 123, 1, "99.1" },   // clamped, as the track counter's numbers are: the box holds 4 characters
-        { -4, 0, "00.0" },
-        { 12, 9, "12.1" },    // any nonzero side is side 1
+static void track_text_is_the_picture(void) {
+    static const struct { int cyl, side, max; const char *pre, *post; } T[] = {
+        { 42, 1, 79, "42", "79" }, { 42, 0, 79, "42", "79" }, { 0, 0, 79, "0", "79" },
+        { 79, 1, 79, "79", "79" }, { 82, 1, 82, "82", "82" },   // an 83-cylinder image
+        { 7, 0, 82, "7", "82" },   { 40, 1, 0, "40", "79" },    // last cylinder unknown: 79
+        { 40, 1, -3, "40", "79" }, { 123, 1, 150, "99", "99" }, // clamped as ever
     };
     for (int scale = 1; scale <= 2; scale++)
         for (size_t k = 0; k < sizeof T / sizeof T[0]; k++) {
-            layout_t h = { PANEL_128x64, 1, { { EL_HEAD, 1, (uint8_t)scale, 10, 20, 0, 0 } } };
-            layout_t d = { PANEL_128x64, 1, { { EL_DETAIL, 1, (uint8_t)scale, 10, 20, 24, 0 } } };
             display_state_t s; memset(&s, 0, sizeof s); s.status = DS_LOADED; s.show_track = true;
-            s.cyl = T[k].cyl; s.side = (uint8_t)T[k].side; s.max_cyl = 79;
-            display_state_t t = s; strcpy(t.detail, T[k].text);
-            uint8_t a[DISP_FB_MAX], b[DISP_FB_MAX];
-            display_render(&s, &h, a); display_render(&t, &d, b);
-            CHECK(memcmp(a, b, sizeof a) == 0, T[k].text);
-            CHECK(lit(a, 0, 0, 128, 64) > 0, "something drawn");
-            CHECK_EQ_INT(lit(a, 0, 0, 128, 64), lit(a, 10, 20, 10 + 24 * scale, 20 + 8 * scale));   // inside its box
+            s.cyl = T[k].cyl; s.max_cyl = T[k].max;
+            uint8_t up[DISP_FB_MAX], dn[DISP_FB_MAX], sl[DISP_FB_MAX];
+            s.side = 1; render_counter(s, scale, up);
+            s.side = 0; render_counter(s, scale, dn);
+            s.side = DISP_SIDE_UNKNOWN; render_counter(s, scale, sl);
+            int x0, x1; sep_cols(T[k].pre, T[k].post, scale, &x0, &x1);
+            for (int i = 0; i < DISP_FB_MAX; i++) {
+                const int col = i % DISP_W;
+                if (col >= x0 && col < x1) continue;
+                CHECK(up[i] == sl[i] && dn[i] == sl[i], "everything but the separator is the slash's counter");
+            }
+            CHECK(lit(up, x0, 20, x1, 20 + 8 * scale) > 0 && lit(dn, x0, 20, x1, 20 + 8 * scale) > 0, "an arrow is drawn");
+            CHECK(memcmp(up, dn, sizeof up) != 0, "up differs from down");
+            CHECK(memcmp(up, sl, sizeof up) != 0 && memcmp(dn, sl, sizeof dn) != 0, "and from the slash");
         }
 }
 
-static void head_only_while_a_disk_is_mounted(void) {
-    layout_t l = { PANEL_128x32, 1, { { EL_HEAD, 1, 1, 0, 0, 0, 0 } } };
-    display_state_t s; memset(&s, 0, sizeof s); s.status = DS_READY; s.cyl = 40; s.side = 1;
-    uint8_t fb[DISP_FB_MAX]; display_render(&s, &l, fb);
-    CHECK_EQ_INT(lit(fb, 0, 0, 128, 32), 0);          // nothing mounted: no number about no disk
-    s.show_track = true; s.status = DS_LOADED; l.el[0].visible = 0;
-    display_render(&s, &l, fb);
-    CHECK_EQ_INT(lit(fb, 0, 0, 128, 32), 0);          // hidden: nothing
-    // The defaults ignore the side entirely.
+// The arrows' shapes, read off the counter at 1x: up has its tip on the top
+// row and barbs two rows down; down has its tip on the bottom row.
+static void the_arrows_are_glyphs(void) {
+    display_state_t s; memset(&s, 0, sizeof s); s.status = DS_LOADED; s.show_track = true; s.cyl = 1; s.max_cyl = 79;
+    uint8_t up[DISP_FB_MAX], dn[DISP_FB_MAX];
+    s.side = 1; render_counter(s, 1, up);
+    s.side = 0; render_counter(s, 1, dn);
+    int x0, x1; sep_cols("1", "79", 1, &x0, &x1);
+    CHECK(lit(up, x0, 20, x1, 28) == 11 && lit(dn, x0, 20, x1, 28) == 11, "a 7-pixel shaft and two barbs a side");
+    CHECK(lit(up, x0 + 2, 20, x0 + 3, 21) == 1 && lit(up, x0 + 2, 26, x0 + 3, 27) == 1, "up: tip on the top row");
+    CHECK(lit(up, x0, 22, x0 + 1, 23) == 1, "up: barbs high");
+    CHECK(lit(dn, x0 + 2, 26, x0 + 3, 27) == 1 && lit(dn, x0, 24, x0 + 1, 25) == 1, "down: tip low, barbs low");
+    CHECK(lit(dn, x0, 22, x0 + 1, 23) == 0, "down: nothing high at the edge");
+}
+
+// Titles and details reach the board as raw UTF-8, so bytes outside printable
+// ASCII (0x7F, 0x80, an en dash E2 80 93, "A grave" C3 80) must draw '?', as
+// before 1.18.0 -- never the counter's arrow glyphs.
+static void only_the_counter_draws_arrows(void) {
+    layout_t d = { PANEL_128x32, 1, { { EL_TITLE, 1, 1, 0, 0, 120, 1 }, { EL_DETAIL, 1, 1, 0, 8, 120, 0 } } };
+    layout_t q = d;
+    display_state_t s; memset(&s, 0, sizeof s); s.status = DS_LOADED;
+    strcpy(s.title, "a\x7f\x80" "b\xe2\x80\x93" "c\xc3\x80");
+    strcpy(s.detail, "\x7f\x80\xe2\x80\x93");
+    display_state_t w = s;
+    strcpy(w.title, "a??b???c??"); strcpy(w.detail, "?????");
+    uint8_t a[DISP_FB_MAX], b[DISP_FB_MAX];
+    display_render(&s, &d, a); display_render(&w, &q, b);
+    CHECK(memcmp(a, b, sizeof a) == 0, "every byte outside 0x20-0x7E draws '?'");
+    CHECK(lit(a, 0, 0, 128, 16) > 0, "something drawn");
+}
+
+// The counter shows the side and nothing else does: the two sides differ on
+// the default, only inside the counter's box, and a counter hidden or no disk
+// draws no arrow.
+static void the_counter_carries_the_side(void) {
     for (int p = 0; p <= 1; p++) {
-        uint8_t a[DISP_FB_MAX], b[DISP_FB_MAX];
-        display_state_t m = st(DS_LOADED); m.show_track = true; m.cyl = 40;
+        uint8_t a[DISP_FB_MAX], b[DISP_FB_MAX], none[DISP_FB_MAX];
+        display_state_t m = st(DS_LOADED); m.show_track = true; m.cyl = 40; m.max_cyl = 79;
         m.side = 0; display_render(&m, layout_default((panel_t)p), a);
         m.side = 1; display_render(&m, layout_default((panel_t)p), b);
-        CHECK(memcmp(a, b, sizeof a) == 0, "a default does not draw the side");
+        CHECK(memcmp(a, b, sizeof a) != 0, "the side changes the counter");
+        // The slash it replaced sat in the middle glyph of "40/79" (x 111..115,
+        // page 3).
+        for (int i = 0; p == 0 && i < DISP_FB_MAX; i++) {   // (the 128x64 default draws it 2x, lower)
+            const int page = i / DISP_W, col = i % DISP_W;
+            if (page == 3 && col >= 99 + 12 && col <= 99 + 16) continue;
+            if (a[i] != b[i]) { CHECK(0, "only the arrow's glyph differs"); break; }
+        }
+        m.show_track = false; display_render(&m, layout_default((panel_t)p), none);
+        m.side = 1; display_render(&m, layout_default((panel_t)p), b);
+        CHECK(memcmp(none, b, sizeof b) == 0, "no disk: no counter, no arrow");
     }
 }
 
-// The detail line stops short of the head on its row, as it does of the
-// track counter: a long label is shortened, the number never is.
-static void detail_is_clipped_before_the_head(void) {
-    layout_t l = head_layout(PANEL_128x32, 104, 24, 1);
-    display_state_t s = st(DS_LOADED); strcpy(s.title, "A");
-    put_truncated(s.detail, sizeof s.detail, "a detail that is far too long");
-    s.show_track = true; s.cyl = 40; s.side = 1;
-    uint8_t fb[DISP_FB_MAX]; display_render(&s, &l, fb);
-    CHECK(lit(fb, 104, 24, 128, 32) > 0, "the head is drawn");
-    // Clipped one ADVANCE before the head's first column (104 - 6 = 98): the
-    // last glyph that fits starts at 90 and ends at 94, so 95..103 stay dark.
-    CHECK_EQ_INT(lit(fb, 95, 24, 104, 32), 0);
-    CHECK(lit(fb, 90, 24, 95, 32) > 0, "the detail is drawn up to it");
+// Fw 1.17.0 had an element 10 (the head position). It is gone, but layouts
+// that name it still exist on boards and servers: the record is skipped, as
+// any element a later firmware adds is, and everything else draws.
+static void a_stored_head_element_is_skipped(void) {
+    for (int p = 0; p <= 1; p++) {
+        const layout_t *d = layout_default((panel_t)p);
+        uint8_t b[LAYOUT_BLOB_MAX + 8]; int n = layout_encode(d, b, sizeof b); CHECK(n > 0, "encode");
+        uint8_t *rec = b + n;
+        memset(rec, 0, 8); rec[0] = 10; rec[1] = 1; rec[2] = 98; rec[3] = 24;   // the 1.17.0 record
+        b[2]++;
+        layout_t l; char why[80] = "";
+        CHECK(layout_decode(b, (size_t)n + 8, &l, why, sizeof why), why);
+        CHECK_EQ_INT(l.n, d->n);
+        display_state_t m = st(DS_LOADED); m.show_track = true; m.cyl = 40; m.max_cyl = 79; m.side = 1;
+        strcpy(m.title, "Workbench"); strcpy(m.detail, "disk 1");
+        uint8_t a[DISP_FB_MAX], c[DISP_FB_MAX];
+        display_render(&m, d, a); display_render(&m, &l, c);
+        CHECK(memcmp(a, c, sizeof a) == 0, "drawn exactly as without the record");
+        // Even a malformed or out-of-bounds one is skipped, not refused.
+        rec[2] = 250; rec[3] = 250; rec[6] = 9;
+        CHECK(layout_decode(b, (size_t)n + 8, &l, why, sizeof why), why);
+    }
 }
 
 int main(void) {
@@ -368,10 +389,11 @@ int main(void) {
     RUN(nfc_goldens_match);
     RUN(nfc_glyph_is_the_picture);
     RUN(nfc_hidden_or_absent_from_the_layout_draws_nothing);
-    RUN(head_goldens_match);
-    RUN(head_text_is_the_picture);
-    RUN(head_only_while_a_disk_is_mounted);
-    RUN(detail_is_clipped_before_the_head);
+    RUN(track_text_is_the_picture);
+    RUN(the_arrows_are_glyphs);
+    RUN(only_the_counter_draws_arrows);
+    RUN(the_counter_carries_the_side);
+    RUN(a_stored_head_element_is_skipped);
     RUN(test_track_wins_overlap_with_download);
     RUN(test_2x_doubles_pixels);
     RUN(test_built_in_states_ignore_a_custom_layout);
