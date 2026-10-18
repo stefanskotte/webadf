@@ -8,10 +8,15 @@
 #include "../src/pnet_pack.h"
 #include "../src/pnet_link.h"
 #include "../src/pnet_mfm.h"
+#include "../src/psram_image.h"
 #include <stdint.h>
 #include <string.h>
 
 #define CAP (25344u - 80u)       /* a WF_DF1_HD buffer less the extra lead-in, as test_pnet_link.c */
+/* Fix round 1 (review I1): the release buffer. Release builds have WF_DF1_HD off, so DF1's buffer is TRACK_MAX_BYTES
+ * (main.c DF1_WORD_BUF_BYTES) and, with the 120-byte lead-in (PNET_TX_LEAD_BYTES == PNET_LEAD_BYTES), PNET_BATCH_CAP is
+ * all of it. There the buffer binds before the 16,128-byte payload limit -- at CAP it never does. */
+#define CAP_DD ((size_t)TRACK_MAX_BYTES)
 static uint8_t g_win[PNET_LZ4_WINDOW], g_blk[PNET_LZ4_WINDOW], g_track[25344], g_old[25344];
 static uint8_t g_dec[PNET_LZ4_WINDOW], g_scr[PNET_LZ4_BLOCK_MAX];
 static uint16_t g_tab[PNET_LZ4_TABLE_ENTRIES];
@@ -53,11 +58,13 @@ static unsigned read_back(const uint8_t *track, size_t bytes, const pnet_frame_r
     return k;
 }
 
-/* Rob's stock driver against 1.16.0 sees 1.15.0's bytes (spec §1): same count as pnet_link_fit, same track. */
+/* Rob's stock driver against 1.16.0 sees 1.15.0's bytes (spec §1): same count as pnet_link_fit, same track -- in the
+ * release buffer (CAP_DD, where the buffer binds) and the HD one (CAP, where the payload limit binds). */
 static void without_lz4_a_batch_is_1_15_0s_byte_for_byte(void) {
     uint32_t s = 4242;
     unsigned bad = 0;
-    for (unsigned t = 0; t < 200; t++) {
+    for (unsigned t = 0; t < 400; t++) {
+        const size_t cap = t & 1u ? CAP : CAP_DD;
         pnet_frame_ref_t in[25];
         uint16_t lens[25];
         int kinds[25];
@@ -67,8 +74,8 @@ static void without_lz4_a_batch_is_1_15_0s_byte_for_byte(void) {
             kinds[i] = (int)(lc_next(&s) % 5u);
         }
         frames(in, avail, kinds, lens);
-        const unsigned n0 = pnet_link_fit(lens, avail, CAP);
-        const unsigned n = pnet_pack(&g_pk, &MEM, false, in, avail, CAP);
+        const unsigned n0 = pnet_link_fit(lens, avail, cap);
+        const unsigned n = pnet_pack(&g_pk, &MEM, false, in, avail, cap);
         const size_t a = pnet_build_to_amiga_out(g_track, sizeof g_track, 3, 4, 1, g_pk.f, n);
         const size_t b = pnet_build_to_amiga(g_old, sizeof g_old, 3, 4, 1, in, n0);
         if (n != n0 || g_pk.lz4 != 0 || a == 0 || a != b || memcmp(g_track, g_old, a) != 0) bad++;
@@ -156,6 +163,76 @@ static void five_incompressible_mtu_frames_are_1_15_0s(void) {
     const size_t b = pnet_build_to_amiga(g_old, sizeof g_old, 7, 8, 1, in, 5);
     CHECK(a != 0 && a == b && memcmp(g_track, g_old, a) == 0, "the same track");
     CHECK(g_pk.wire <= PNET_TO_AMIGA_MAX_PAYLOAD, "inside the driver's read");
+    /* The release buffer binds first: 4 frames (4 x 3,044 + 4 + 271 = 12,451; a fifth is 15,495 > 14,336). */
+    CHECK_EQ_INT(pnet_link_fit(lens, 25, CAP_DD), 4);
+    CHECK_EQ_INT(pnet_pack(&g_pk, &MEM, true, in, 25, CAP_DD), 4);
+    CHECK_EQ_INT(g_pk.lz4, 0);
+    const size_t c = pnet_build_to_amiga_out(g_track, CAP_DD, 7, 8, 1, g_pk.f, 4);
+    const size_t d = pnet_build_to_amiga(g_old, CAP_DD, 7, 8, 1, in, 4);
+    CHECK(c != 0 && c == d && c <= CAP_DD && memcmp(g_track, g_old, c) == 0, "the same track, release buffer");
+}
+
+/* Fix round 1 (review I1): in the release buffer a batch never exceeds it on the wire, LZ4 or not, and it is as full
+ * as packing by real size allows: the next frame on offer would not have fit. Mixed kinds and lengths. */
+static void a_batch_never_exceeds_the_release_buffer(void) {
+    uint32_t s = 9001;
+    unsigned over = 0, short_ = 0, packed = 0;
+    for (unsigned t = 0; t < 400; t++) {
+        pnet_frame_ref_t in[25];
+        uint16_t lens[25];
+        int kinds[25];
+        const unsigned avail = 1u + lc_next(&s) % 25u;
+        for (unsigned i = 0; i < avail; i++) {
+            lens[i] = (uint16_t)(1u + lc_next(&s) % PNET_ETH_MTU);
+            kinds[i] = (int)(lc_next(&s) % 5u);
+        }
+        frames(in, avail, kinds, lens);
+        const bool lz4 = (t & 1u) != 0;
+        const unsigned n = pnet_pack(&g_pk, &MEM, lz4, in, avail, CAP_DD);
+        packed += n;
+        /* Built into a buffer of exactly CAP_DD bytes: the builder refuses (0) anything that might not fit it. */
+        const size_t bytes = pnet_build_to_amiga_out(g_track, CAP_DD, 1, 2, 0, g_pk.f, n);
+        if (bytes == 0 || bytes > CAP_DD) over++;
+        /* Full: with one more frame (as it would go, MFM or LZ4) the track would pass the buffer or a limit. */
+        if (n < avail && n < PNET_MAX_FRAMES) {
+            pnet_pack_t more;
+            const unsigned m = pnet_pack(&more, &MEM, lz4, in, n + 1u, CAP);   /* the same frames, HD room */
+            unsigned dec = 0;
+            for (unsigned i = 0; i < m; i++) dec += more.f[i].len;
+            const size_t need = PNET_LEAD_BYTES + 4u + PNET_HDR_MFM_BYTES + more.wire + PNET_TRAIL_BYTES + 3u;
+            if (m == n + 1u && need <= CAP_DD && more.wire <= PNET_TO_AMIGA_MAX_PAYLOAD && dec <= PNET_LZ4_WINDOW)
+                short_++;
+        }
+    }
+    CHECK_EQ_INT(over, 0);
+    CHECK_EQ_INT(short_, 0);
+    CHECK(packed > 400, "batches were packed");
+}
+
+/* Fix round 1 (review I2): at most PNET_MAX_FRAMES (20) frames, with LZ4 and without, however many fit: 25 small
+ * frames on offer give 20, and nothing past pk->f[] -- its counts, and what follows the struct -- is written past. */
+static void a_batch_holds_at_most_twenty_frames(void) {
+    static struct { pnet_pack_t pk; uint8_t guard[256]; } g;
+    pnet_frame_ref_t in[25];
+    int kinds[25];
+    uint16_t lens[25];
+    for (unsigned i = 0; i < 25; i++) { kinds[i] = (int)(i % 2u ? LC_TEXT : LC_RANDOM); lens[i] = 60; }
+    frames(in, 25, kinds, lens);
+    for (unsigned k = 0; k < 2; k++) {
+        memset(&g, 0xA5, sizeof g);
+        CHECK_EQ_INT(pnet_pack(&g.pk, &MEM, k != 0, in, 25, CAP_DD), PNET_MAX_FRAMES);
+        CHECK_EQ_INT(g.pk.n, PNET_MAX_FRAMES);
+        CHECK_EQ_INT(g.pk.wire, pnet_out_payload_bytes(g.pk.f, PNET_MAX_FRAMES));
+        unsigned touched = 0;
+        for (unsigned i = 0; i < sizeof g.guard; i++) touched += g.guard[i] != 0xA5u;
+        CHECK_EQ_INT(touched, 0);
+        unsigned whole = 0;
+        for (unsigned i = 0; i < PNET_MAX_FRAMES; i++) whole += g.pk.f[i].data != NULL && g.pk.f[i].len == 60;
+        CHECK_EQ_INT(whole, PNET_MAX_FRAMES);
+        const size_t bytes = pnet_build_to_amiga_out(g_track, CAP_DD, 0, 0, 0, g.pk.f, g.pk.n);
+        unsigned z = 0;
+        CHECK_EQ_INT(read_back(g_track, bytes, in, &z), PNET_MAX_FRAMES);
+    }
 }
 
 /* Review Focus, sizes at the edges: exactly 16,128 decoded bytes link; one more byte stops the batch. */
@@ -266,6 +343,8 @@ int main(void) {
     RUN(a_batch_mixes_lz4_and_mfm);
     RUN(the_choice_never_grows_a_frame);
     RUN(five_incompressible_mtu_frames_are_1_15_0s);
+    RUN(a_batch_never_exceeds_the_release_buffer);
+    RUN(a_batch_holds_at_most_twenty_frames);
     RUN(packing_stops_at_16128_decoded_bytes);
     RUN(rebuilds_are_byte_identical);
     RUN(the_table_is_cleared_only_for_frames);

@@ -8,6 +8,9 @@
  * 1.15.0's to the byte (test_pnet_pack.c). With it, a frame goes 0xC000 | lz4_len -- its block MFM-encoded -- when the
  * block is shorter than the frame, its matches linked to the batch's earlier frames laid back to back in m->win.
  *
+ * A batch out re-packed under the same counter (the driver started or stopped asking for LZ4) keeps the same frames,
+ * or fewer (pnet_link_shrink), but not necessarily the same bytes: "rebuilt unchanged" means unchanged frames then.
+ *
  * Its own file, not pnet_frame.c: tools/netloop compiles pnet_frame.c twice into one 68k program (renamed copies),
  * and new names there would collide.
  */
