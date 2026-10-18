@@ -24,6 +24,17 @@
 // rename.
 
 import { sameName } from './adffs/write';
+import { MAX_DEPTH } from './adffs/constants';
+
+/**
+ * True when a '/'-joined path is nested deeper than `readVolume` will walk
+ * (`MAX_DEPTH`). Writing one would produce a disk whose deepest entries this
+ * app itself could not list again. Shared by the staging area and the batch
+ * route, so the two refuse the same paths.
+ */
+export function pathTooDeep(path: string): boolean {
+  return path.split('/').length > MAX_DEPTH;
+}
 
 const MAX_NAME_LENGTH = 30;
 

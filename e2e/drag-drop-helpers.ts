@@ -24,7 +24,8 @@ export interface DropNode {
 }
 
 /**
- * Synthesizes an OS-style file drop onto `[data-testid="drop-strip"]`.
+ * Synthesizes an OS-style file drop onto `target` -- the staging area's
+ * `[data-testid="drop-strip"]` by default, or a Browse row / the tree itself.
  *
  * WHY THIS EXISTS: Playwright cannot perform a real HTML5 file drop from
  * the operating system -- there is no API, in any browser, for test
@@ -67,8 +68,10 @@ export interface DropNode {
  * `DataTransferItemList` for a genuine external drop, would not be caught
  * by any test built on this helper.
  */
-export async function synthDrop(page: Page, tree: DropNode[]): Promise<void> {
-  await page.evaluate((treeArg: DropNode[]) => {
+export async function synthDrop(
+  page: Page, tree: DropNode[], target = '[data-testid="drop-strip"]',
+): Promise<void> {
+  await page.evaluate(({ treeArg, targetArg }: { treeArg: DropNode[]; targetArg: string }) => {
     function makeEntry(node: DropNode): unknown {
       if (node.kind === 'dir') {
         const children = (node.children ?? []).map(makeEntry);
@@ -105,13 +108,19 @@ export async function synthDrop(page: Page, tree: DropNode[]): Promise<void> {
       webkitGetAsEntry: () => makeEntry(node),
     }));
 
-    const dropZone = document.querySelector('[data-testid="drop-strip"]');
-    if (!dropZone) throw new Error('synthDrop: [data-testid="drop-strip"] not found on the page');
+    const dropZone = document.querySelector(targetArg);
+    if (!dropZone) throw new Error(`synthDrop: ${targetArg} not found on the page`);
 
+    // `types` says "Files" exactly as a real OS drag does, which is how a
+    // Browse row tells a file drop from anything else being dragged.
+    const dataTransfer = { items, files: [], types: ['Files'] };
+    const over = new Event('dragover', { bubbles: true, cancelable: true });
+    (over as unknown as { dataTransfer: unknown }).dataTransfer = dataTransfer;
+    dropZone.dispatchEvent(over);
     const evt = new Event('drop', { bubbles: true, cancelable: true });
-    (evt as unknown as { dataTransfer: unknown }).dataTransfer = { items, files: [] };
+    (evt as unknown as { dataTransfer: unknown }).dataTransfer = dataTransfer;
     dropZone.dispatchEvent(evt);
-  }, tree);
+  }, { treeArg: tree, targetArg: target });
 }
 
 /** A directory holding `count` zero-byte files -- the shape that makes a byte total lie about block cost (design §3.1): each costs a header block plus one data block regardless of how tiny it is, so `count` files costs `2 * count` blocks for zero bytes of actual content. Also, at `count` > 100, a folder `readDroppedItems` can only see correctly if it pages through `readEntries` rather than trusting a single call. */

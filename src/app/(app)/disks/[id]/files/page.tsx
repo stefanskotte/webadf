@@ -21,6 +21,7 @@ import { PageHeader } from '@/components/shell/page-header';
 import { VolumeHeader } from '@/components/disks/volume-header';
 import { FileTree } from '@/components/disks/file-tree';
 import { DropStaging } from '@/components/disks/drop-staging';
+import { NativeDropProvider } from '@/components/disks/native-drop';
 import { FileEditProvider, FileToolbar, type EditDisabled } from '@/components/disks/file-actions';
 import { HistoryPanel } from '@/components/disks/history-panel';
 import { MountAction } from '@/components/games/mount-action';
@@ -382,6 +383,8 @@ export default async function DiskFilesPage(props: PageProps<'/disks/[id]/files'
               with that reason, rather than the controls simply not existing.
             */}
             <FileToolbar />
+            {/* Lets a file dropped on a folder row land in the staging area below, aimed at that folder. */}
+            <NativeDropProvider>
             {volume.ok && <FileTree entries={volume.root} diskId={id} send={send} />}
             {/*
               Below the tree, always rendered -- even with no filesystem to
@@ -396,6 +399,7 @@ export default async function DiskFilesPage(props: PageProps<'/disks/[id]/files'
               freeBlocks={usage?.freeBlocks ?? 0}
               entries={volume.ok ? volume.root : []}
             />
+            </NativeDropProvider>
           </FileEditProvider>
         )}
         {/*

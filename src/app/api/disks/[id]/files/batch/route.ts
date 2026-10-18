@@ -9,6 +9,7 @@ import {
   type CostItem, type BatchOp,
 } from '@/lib/adffs';
 import { applyDiskEdit } from '@/lib/disk-write';
+import { pathTooDeep } from '@/lib/staging';
 
 export const maxDuration = 60;
 
@@ -98,6 +99,11 @@ export async function POST(request: Request, ctx: { params: Promise<{ id: string
   for (const entry of parsed.data) {
     if (!isPathSafe(entry.path)) {
       return Response.json({ error: 'invalid_body', detail: `bad path: ${entry.path}` }, { status: 400 });
+    }
+    // Deeper than readVolume walks (MAX_DEPTH): the write would succeed and
+    // produce a disk whose deepest entries this app could not list again.
+    if (pathTooDeep(entry.path)) {
+      return Response.json({ error: 'invalid_body', detail: `path too deep: ${entry.path}` }, { status: 400 });
     }
   }
 
