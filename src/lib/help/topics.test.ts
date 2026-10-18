@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { HELP_TOPICS, HELP_ORDER, type HelpTopicId } from './topics';
 
-const IDS: HelpTopicId[] = ['boards', 'own-server', 'nfc', 'next-disk', 'write-back', 'write-protect', 'disk-sets', 'hd-hfe', 'display', 'second-drive', 'network', 'send', 'cover-image', 'about'];
+const IDS: HelpTopicId[] = ['boards', 'own-server', 'nfc', 'next-disk', 'write-back', 'write-protect', 'disk-sets', 'hd-hfe', 'display', 'second-drive', 'network', 'send', 'cover-image', 'about', 'preferences'];
 // Internal words a reader of the help should never meet (spec §5).
 const BANNED = /\b(PSRAM|TBYB|poll|sha256|cursor|WPROT)\b/i;
 
@@ -48,6 +48,12 @@ describe('help topics', () => {
 
 // Final review fixes (2026-10-05): claims that were wrong, incomplete or unverifiable.
 describe('help topics say what the app really does', () => {
+  it('preferences names the three start pages, says they follow the person, and that a collection keeps its order', () => {
+    const b = bodyText('preferences');
+    for (const w of ['Library', 'Devices', 'Upload']) expect(b).toContain(w);
+    expect(b).toMatch(/every browser/);
+    expect(b).toMatch(/collection keeps its own order/);
+  });
   it('nfc names the tag type that works (MIFARE Classic; NTAG stickers are refused)', () => {
     expect(HELP_TOPICS.nfc.short + bodyText('nfc')).toMatch(/MIFARE Classic/);
   });

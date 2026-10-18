@@ -28,6 +28,7 @@ import { HistoryPanel } from '@/components/disks/history-panel';
 import { MountAction } from '@/components/games/mount-action';
 import { listSendTargets } from '@/lib/send-targets';
 import { SendBoardPicker } from '@/components/send/send-button';
+import { getUserPrefs } from '@/lib/user-prefs';
 
 export const dynamic = 'force-dynamic';
 
@@ -71,7 +72,7 @@ function existingNamesByDir(
 }
 
 export default async function DiskFilesPage(props: PageProps<'/disks/[id]/files'>) {
-  const { orgId } = await requireOrg();
+  const { orgId, userId } = await requireOrg();
   const { id } = await props.params;
   // Same untrusted-input rule as the game page: resolved against this org's
   // own collections before its name is rendered.
@@ -304,7 +305,7 @@ export default async function DiskFilesPage(props: PageProps<'/disks/[id]/files'
     { id, sha256: disk.sha256, imageFormat: disk.imageFormat, sizeBytes: disk.sizeBytes }, now);
   const held = holderText(choices);
   // Send to Amiga from this disk (spec §4): the boards that can take files; none = no Send buttons at all.
-  const sendTargets = await listSendTargets(getDb(), orgId);
+  const [sendTargets, prefs] = await Promise.all([listSendTargets(getDb(), orgId), getUserPrefs(userId)]);
   const send = sendTargets.length > 0 ? { targets: sendTargets, now } : null;
 
   return (
@@ -386,7 +387,7 @@ export default async function DiskFilesPage(props: PageProps<'/disks/[id]/files'
             <FileToolbar />
             {/* Lets a file dropped on a folder row land in the staging area below, aimed at that folder. */}
             <NativeDropProvider>
-            {volume.ok && <FileTree entries={volume.root} diskId={id} send={send} />}
+            {volume.ok && <FileTree entries={volume.root} diskId={id} send={send} sort={prefs.browse.sort} />}
             {/*
               Below the tree, always rendered -- even with no filesystem to
               browse, matching FileToolbar's own always-shown-but-disabled

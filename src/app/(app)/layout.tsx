@@ -8,6 +8,7 @@ import { TopNav } from "@/components/shell/top-nav";
 import { SearchBox } from "@/components/shell/search-box";
 import { SignOutButton } from "@/components/sign-out-button";
 import { AboutLink } from "@/components/shell/about-link";
+import { SettingsLink } from "@/components/shell/settings-link";
 import { Logo } from "@/components/shell/logo";
 import { Link } from "@/components/shell/link";
 import { NavProgressProvider } from "@/components/shell/nav-progress";
@@ -139,6 +140,7 @@ export default async function AppLayout({
           <div className="ml-auto flex w-full items-center gap-4 sm:w-auto">
             <SearchBox />
             <AboutLink />
+            <SettingsLink />
             <SignOutButton />
           </div>
         </header>

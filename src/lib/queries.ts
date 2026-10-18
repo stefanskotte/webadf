@@ -1,4 +1,4 @@
-import { sql, desc, eq, and, or, inArray } from 'drizzle-orm';
+import { sql, desc, asc, eq, and, or, inArray, type SQL } from 'drizzle-orm';
 import { alias } from 'drizzle-orm/pg-core';
 import { getDb } from '@/db';
 import { games, disks, blobs, entitlements } from '@/db/schema/catalog';
@@ -16,6 +16,7 @@ import { asSecondDriveMode, SECOND_DRIVE_NET_FW, type SecondDriveMode } from '@/
 import { isHdAdfSql } from '@/lib/disk-format-sql';
 import { firmwareAtLeast } from '@/lib/firmware-version';
 import { NFC_ELEMENT_FIRMWARE, STATUS_ICON_FIRMWARE } from '@/lib/display-layout';
+import { DEFAULT_PREFS, type LibrarySort } from '@/lib/user-prefs-schema';
 
 export interface GameListItem {
   id: string; title: string; year: number | null; publisher: string | null;
@@ -75,9 +76,13 @@ export interface GameListItem {
  * upstream of this function.
  */
 export async function listGames(
-  orgId: string, opts: { limit?: number; collectionId?: string; uncategorized?: boolean } = {},
+  orgId: string,
+  opts: { limit?: number; collectionId?: string; uncategorized?: boolean; sort?: LibrarySort } = {},
 ): Promise<GameListItem[]> {
   const db = getDb();
+  // The whole library and the inbox take the person's chosen sort (user
+  // prefs, library.sort); a collection keeps its own hand-made order below.
+  const order = libraryOrderBy(opts.sort ?? DEFAULT_PREFS.library.sort);
 
   if (opts.uncategorized) {
     // Titles in no collection at all -- the library's inbox. NOT EXISTS
@@ -105,7 +110,7 @@ export async function listGames(
         where cg.game_id = ${games.id} and co.org_id = ${orgId}
       )`))
       .groupBy(games.id)
-      .orderBy(desc(games.createdAt))
+      .orderBy(...order)
       .limit(opts.limit ?? 200);
 
     return withDerived(orgId, rows);
@@ -161,10 +166,37 @@ export async function listGames(
     .leftJoin(disks, and(eq(disks.gameId, games.id), eq(disks.orgId, orgId)))
     .where(orgFilter(games, orgId))
     .groupBy(games.id)
-    .orderBy(desc(games.createdAt))     // recently added first (spec §10, D9)
+    .orderBy(...order)     // default: recently added first (spec §10, D9)
     .limit(opts.limit ?? 200);
 
   return withDerived(orgId, rows);
+}
+
+/**
+ * ORDER BY for the library's sort (user-prefs-schema.ts LIBRARY_SORT_KEYS),
+ * in SQL rather than on the fetched rows: listGames caps at 200, and sorting
+ * the capped page would show "A to Z of the newest 200", not the first 200 of
+ * A to Z.
+ *
+ * Only for the GROUP BY games.id queries above: size and disks order by the
+ * same aggregates the select computes. Title uses sort_title (lower case, a
+ * leading article moved to the end -- makeSortTitle). An unknown year or
+ * publisher goes last in BOTH directions; it is "not identified", not a value
+ * that sorts before 1985. Ties fall back to newest added, then id, so the
+ * order is stable from one load to the next.
+ */
+export function libraryOrderBy(sort: LibrarySort): SQL[] {
+  const dir = sort.dir === 'asc' ? asc : desc;
+  const nullsLast = (e: SQL) => sql`${e} ${sql.raw(sort.dir === 'asc' ? 'asc' : 'desc')} nulls last`;
+  const tie = [desc(games.createdAt), asc(games.id)];
+  switch (sort.key) {
+    case 'added': return [dir(games.createdAt), asc(games.id)];
+    case 'title': return [dir(games.sortTitle), ...tie];
+    case 'year': return [nullsLast(sql`${games.year}`), ...tie];
+    case 'publisher': return [nullsLast(sql`lower(${games.publisher})`), ...tie];
+    case 'size': return [dir(sql`coalesce(sum(${disks.sizeBytes}), 0)`), ...tie];
+    case 'disks': return [dir(sql`count(${disks.id})`), ...tie];
+  }
 }
 
 /**

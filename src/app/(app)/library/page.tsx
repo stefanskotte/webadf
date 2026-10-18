@@ -18,13 +18,15 @@ import { CollectionsProvider } from '@/components/collections/collection-provide
 import { CollectionRail } from '@/components/collections/collection-rail';
 import { listNfcReaders, listDisksForNfc } from '@/lib/nfc/store';
 import type { FobContext, FobDisk } from '@/components/nfc/fob-button';
+import { getUserPrefs } from '@/lib/user-prefs';
+import { LibrarySortPicker } from '@/components/library/library-sort-picker';
 
 export default async function LibraryPage(props: PageProps<'/library'>) {
-  const { orgId } = await requireOrg();
+  const { orgId, userId } = await requireOrg();
   const sp = await props.searchParams;
   const viewMode = sp.view === 'table' ? 'table' : 'grid';
 
-  const collections = await listCollections(orgId);
+  const [collections, prefs] = await Promise.all([listCollections(orgId), getUserPrefs(userId)]);
 
   /*
    * sp.collection is untrusted input straight off the query string, and it is
@@ -40,11 +42,16 @@ export default async function LibraryPage(props: PageProps<'/library'>) {
   const view = resolveLibraryView(sp.collection, collections.map((c) => c.id));
   const filteredCollectionId = view.kind === 'collection' ? view.id : null;
 
+  // The person's remembered sort (user prefs) orders the whole library and the
+  // inbox. A collection keeps its own hand-made order: that order is shared
+  // with everyone in the org and is what dragging a card reorders, so a
+  // per-person sort laid over it would make the drag look broken.
+  const sort = prefs.library.sort;
   const games = await listGames(orgId, view.kind === 'collection'
     ? { collectionId: view.id }
     : view.kind === 'uncategorized'
-      ? { uncategorized: true }
-      : {});
+      ? { uncategorized: true, sort }
+      : { sort });
   const diskTotal = games.reduce((n, g) => n + g.diskCount, 0);
 
   // The inbox emptying is the ordinary end state of a tidy library, not an
@@ -119,6 +126,7 @@ export default async function LibraryPage(props: PageProps<'/library'>) {
           <div className="flex flex-wrap items-center gap-3">
             <DemozooBadge count={reviewQueueCount} />
             <CreateAdf />
+            {view.kind !== 'collection' && !showOverview && <LibrarySortPicker sort={sort} />}
             <ViewToggle view={viewMode} />
           </div>
         }
