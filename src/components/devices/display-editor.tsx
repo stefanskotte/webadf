@@ -8,8 +8,7 @@ import {
   STATUS_ICON_FIRMWARE, STATUS_OPT, type ElementJson, type ElementName, type LayoutJson,
 } from '@/lib/display-layout';
 import {
-  elementBox, hitTest, overlapping, panelHeight, placeElement, PANEL_W, screenBox, statusLine, toLayoutDelta,
-  toLayoutPoint,
+  elementBox, hitTest, overlapping, panelHeight, placeElement, PANEL_W, statusLine,
 } from '@/lib/display-editor-geometry';
 import type { DeviceListItem } from '@/lib/queries';
 import { HelpTip } from '@/components/help/help-tip';
@@ -268,6 +267,9 @@ function LoadedEditor({ device, wasm, onCancel }: { device: DeviceListItem; wasm
   const [saveError, setSaveError] = useState<string | null>(null);
 
   const blob = useMemo(() => encodeLayout(layout), [layout]);
+  // The preview is always upright (the layout as read on a correctly mounted
+  // panel); only the blob that is validated and sent carries the rotation.
+  const previewBlob = useMemo(() => encodeLayout(turned(layout, 0)), [layout]);
   // Neither call is expected to throw, but a throw here would take the whole
   // device list down with it; it becomes a reason instead (Save disabled,
   // the last good frame shown).
@@ -277,11 +279,11 @@ function LoadedEditor({ device, wasm, onCancel }: { device: DeviceListItem; wasm
   const rendered = useMemo((): { fb: Uint8Array | null; error: string | null } => {
     if (reason) return { fb: null, error: null };
     try {
-      return { fb: wasm.render(previewState(preview, tick, reader), panelId(layout.panel), blob), error: null };
+      return { fb: wasm.render(previewState(preview, tick, reader), panelId(layout.panel), previewBlob), error: null };
     } catch (e) {
       return { fb: null, error: `could not render: ${message(e)}` };
     }
-  }, [wasm, reason, preview, tick, reader, layout.panel, blob]);
+  }, [wasm, reason, preview, tick, reader, layout.panel, previewBlob]);
   const problem = reason ?? rendered.error;
   const overlaps = useMemo(() => overlapping(layout.elements), [layout]);
   const rows = panelHeight(layout.panel);
@@ -322,8 +324,7 @@ function LoadedEditor({ device, wasm, onCancel }: { device: DeviceListItem; wasm
     ctx.lineWidth = 1;
     layout.elements.forEach((e, i) => {
       if (!e.visible || (fb && !overlaps.has(i))) return;
-      // Where it is DRAWN: a turned panel shows it at the opposite corner.
-      const b = screenBox(elementBox(e), rows, layout.rotation);
+      const b = elementBox(e);   // the preview is upright, so the box is where it is drawn
       ctx.strokeRect(b.x * ZOOM + 0.5, b.y * ZOOM + 0.5, b.w * ZOOM - 1, b.h * ZOOM - 1);
     });
   }, [layout, rendered, overlaps, rows]);
@@ -331,8 +332,7 @@ function LoadedEditor({ device, wasm, onCancel }: { device: DeviceListItem; wasm
   // ----- drag -----
   // Panel coordinates from a pointer: the canvas is drawn at 4x but CSS
   // scales it to the card's width, so go through its on-screen rectangle.
-  // These are SCREEN coordinates; on a turned panel (1.17.0) the layout's are
-  // the reflection (toLayoutPoint), and a drag moves the other way.
+  // The preview is upright at any rotation, so these are layout coordinates.
   const toPanel = (clientX: number, clientY: number) => {
     const r = canvasRef.current!.getBoundingClientRect();
     return {
@@ -343,8 +343,7 @@ function LoadedEditor({ device, wasm, onCancel }: { device: DeviceListItem; wasm
   const drag = useRef<{ i: number; pointer: number; cx: number; cy: number; x: number; y: number } | null>(null);
 
   const hitAt = (cx: number, cy: number) => {
-    const p = toLayoutPoint(cx / ZOOM, cy / ZOOM, rows, layout.rotation);
-    return hitTest(layout.elements, p.x, p.y);
+    return hitTest(layout.elements, cx / ZOOM, cy / ZOOM);
   };
   const onPointerDown = (ev: React.PointerEvent<HTMLCanvasElement>) => {
     const { cx, cy } = toPanel(ev.clientX, ev.clientY);
@@ -362,8 +361,7 @@ function LoadedEditor({ device, wasm, onCancel }: { device: DeviceListItem; wasm
       return;
     }
     const e = layout.elements[d.i];
-    const m = toLayoutDelta(Math.round((cx - d.cx) / ZOOM), Math.round((cy - d.cy) / ZOOM), layout.rotation);
-    const p = placeElement(e, d.x + m.dx, d.y + m.dy, layout.panel, snap);
+    const p = placeElement(e, d.x + Math.round((cx - d.cx) / ZOOM), d.y + Math.round((cy - d.cy) / ZOOM), layout.panel, snap);
     if (p.x === e.x && p.y === e.y) return;
     edit({ ...layout, elements: layout.elements.map((el, k) => (k === d.i ? { ...el, ...p } : el)) });
   };
@@ -385,9 +383,8 @@ function LoadedEditor({ device, wasm, onCancel }: { device: DeviceListItem; wasm
       const t = ev.touches[0];
       const r = c.getBoundingClientRect();
       const rowsNow = c.height / ZOOM;
-      const p = toLayoutPoint(((t.clientX - r.left) * PANEL_W) / r.width, ((t.clientY - r.top) * rowsNow) / r.height,
-        rowsNow, layoutRef.current.rotation);
-      if (hitTest(layoutRef.current.elements, p.x, p.y) >= 0) ev.preventDefault();
+      const px = ((t.clientX - r.left) * PANEL_W) / r.width, py = ((t.clientY - r.top) * rowsNow) / r.height;
+      if (hitTest(layoutRef.current.elements, px, py) >= 0) ev.preventDefault();
     };
     c.addEventListener('touchstart', onTouchStart, { passive: false });
     return () => c.removeEventListener('touchstart', onTouchStart);
@@ -483,6 +480,7 @@ function LoadedEditor({ device, wasm, onCancel }: { device: DeviceListItem; wasm
         </label>
         {rotateOk
           ? (
+            <>
             <label className="flex min-w-0 max-w-full flex-wrap items-center gap-1" style={{ color: 'var(--muted)' }}>
               Rotation
               <select value={rotation} className={field} style={inputStyle} data-testid={`display-rotation-${id}`}
@@ -491,6 +489,12 @@ function LoadedEditor({ device, wasm, onCancel }: { device: DeviceListItem; wasm
                 <option value={180}>180° (mounted upside down)</option>
               </select>
             </label>
+            {rotation === 180 && (
+              <span style={{ color: 'var(--muted)' }} data-testid={`display-rotation-note-${id}`}>
+                Shown upright here — the board turns it 180°
+              </span>
+            )}
+            </>
           )
           : (
             // Both values of "can this board turn": a missing select would read as no such choice.
