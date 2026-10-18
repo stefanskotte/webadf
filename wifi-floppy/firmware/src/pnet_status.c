@@ -25,6 +25,7 @@ void pnet_status_payload(const pnet_status_t *st, uint8_t out[PNET_STATUS_BYTES]
     memcpy(out + PNET_ST_MAC, st->mac, 6);
     put16(out + PNET_ST_RSSI, (uint16_t)st->rssi);
     out[PNET_ST_LINK] = st->link;
+    out[PNET_ST_RESERVED] = st->lz4;
 }
 
 size_t pnet_build_status(uint8_t *out, size_t cap, uint8_t amiga_ctr, uint8_t pico_ctr,

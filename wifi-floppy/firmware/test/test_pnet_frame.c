@@ -239,6 +239,7 @@ static void every_error_has_its_own_text(void) {
         CHECK(pnet_err_text((pnet_err_t)e) != NULL && pnet_err_text((pnet_err_t)e)[0], "text");
     CHECK(strcmp(pnet_err_text(PNET_E_NOSYNC), "no sync") == 0, "nosync text");
     CHECK(strcmp(pnet_err_text(PNET_E_RANGE), "out of range") == 0, "range text");
+    CHECK(strcmp(pnet_err_text(PNET_E_LZ4), "lz4") == 0, "lz4 text");
     CHECK(strcmp(pnet_err_text(PNET_E_COUNT), "?") == 0, "past the end");
 }
 

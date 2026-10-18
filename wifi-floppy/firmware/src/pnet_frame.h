@@ -43,6 +43,9 @@
 #define PNET_MODE_ETHERNET   3u
 #define PNET_FROM_DRIVER     0x40u
 #define PNET_COMPRESSED_MFM  2u
+#define PNET_DRIVER_LZ4      0x10u   /* DataHeader.compressed from webadf's driver: "I decode LZ4" (spec 2026-10-18 §3) */
+#define PNET_SIZE_LZ4        0x4000u /* a frame's size word: an LZ4 block of (size & 0x3FFF) bytes (spec §2); with bit
+                                      * 15 its bytes are MFM-encoded (always toward the Amiga), without it raw */
 #define PNET_HDR_BYTES       12u
 #define PNET_HDR_MFM_BYTES   24u
 #define PNET_LEAD_BYTES      120u
@@ -64,6 +67,7 @@ typedef enum {
     PNET_OK = 0, PNET_E_SHORT, PNET_E_MAGIC, PNET_E_MODE, PNET_E_SIZE, PNET_E_CHECKSUM,
     PNET_E_FRAMES, PNET_E_FRAME_SIZE, PNET_E_RLE, PNET_E_FULL, PNET_E_NOSYNC,
     PNET_E_RANGE,      /* board: the capture holds a gap over PNET_RX_MAX_CELLS (clamped cells) */
+    PNET_E_LZ4,        /* an LZ4 frame that does not decode, or that the batch may not carry (pnet_lz4_iter_next) */
     PNET_E_COUNT
 } pnet_err_t;
 const char *pnet_err_text(pnet_err_t e);

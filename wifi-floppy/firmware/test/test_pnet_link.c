@@ -8,6 +8,8 @@
 #include <stdbool.h>
 #include <stdint.h>
 #include <string.h>
+#include "lz4_corpus.h"
+#include "../src/pnet_lz4.h"
 
 static pnet_hdr_t hdr(uint8_t amiga, uint8_t pico) {
     pnet_hdr_t h;
@@ -247,6 +249,273 @@ static void cylinder_76_is_the_status_track_in_l2(void) {
     CHECK_EQ_INT(pnet_df1_wprot(76), true);                  /* 76 stays write-protected (correction 3) */
 }
 
+/* An Amiga -> board payload as webadf's driver variant writes it (spec 2026-10-18 §2): per frame RLE ('r', 0x8000|n),
+ * raw LZ4 ('z', 0x4000|n, padded to even) or MFM-wrapped LZ4 ('w', 0xC000|n), every frame laid back to back in the
+ * encoder's window so that the LZ4 ones link to the earlier frames. */
+static size_t lz4_payload(uint8_t *out, uint8_t (*f)[PNET_ETH_MTU], const uint16_t *lens, const char *how, unsigned n) {
+    static uint8_t win[65536], blk[2048];
+    static uint16_t table[PNET_LZ4_TABLE_ENTRIES];
+    memset(table, 0, sizeof table);
+    const uint8_t ph[2] = { (uint8_t)n, 0 };
+    uint16_t last = 0;
+    size_t pos = pnet_mfm_encode(ph, 2, out, &last), at = 0;
+    for (unsigned i = 0; i < n; i++) {
+        memcpy(win + at, f[i], lens[i]);
+        uint16_t field;
+        size_t wire;
+        if (how[i] == 'r') {
+            wire = pnet_rle_encode(f[i], lens[i], out + pos + 8);
+            field = (uint16_t)(0x8000u | wire);
+        } else {
+            const size_t z = pnet_lz4_encode_linked(win + at, lens[i], blk, sizeof blk, table, PNET_LZ4_TABLE_ENTRIES, win);
+            if (how[i] == 'z') {
+                memcpy(out + pos + 8, blk, z);
+                if (z & 1u) out[pos + 8 + z] = 0;
+                wire = z + (z & 1u);
+                field = (uint16_t)(PNET_SIZE_LZ4 | z);
+            } else {
+                uint16_t l2 = 0;
+                pnet_mfm_encode(blk, z, out + pos + 8, &l2);
+                wire = 2u * z;
+                field = (uint16_t)(0x8000u | PNET_SIZE_LZ4 | z);
+            }
+        }
+        const uint8_t ch[4] = { (uint8_t)(field >> 8), (uint8_t)field, (uint8_t)(lens[i] >> 8), (uint8_t)lens[i] };
+        last = 0;
+        pnet_mfm_encode(ch, 4, out + pos, &last);
+        pos += 8u + wire;
+        at += lens[i];
+    }
+    return pos;
+}
+
+static uint8_t g_lf[16][PNET_ETH_MTU];
+static uint8_t g_win[PNET_LZ4_WINDOW], g_scr[PNET_LZ4_BLOCK_MAX];
+
+static pnet_hdr_t lz4_hdr(uint8_t amiga, bool word) {
+    pnet_hdr_t h = hdr(amiga, 0x7F);
+    h.compressed = (uint8_t)(PNET_COMPRESSED_MFM | PNET_FROM_DRIVER | (word ? PNET_DRIVER_LZ4 : 0u));
+    return h;
+}
+
+/* Review Focus, mixed batches: RLE frames sit in the window too, so the LZ4 frames after them decode exactly. */
+static void an_lz4_batch_is_decoded_linked_into_the_ring(void) {
+    static const int kinds[5] = { LC_TEXT, LC_TEXT, LC_RANDOM, LC_HTML, LC_TEXT };
+    static const uint16_t lens[5] = { 900, 1100, 700, 1300, 500 };
+    pnet_link_t s; pnet_ring_t tx;
+    pnet_link_init(&s);
+    tx_ring(&tx, 32);
+    for (unsigned i = 0; i < 5; i++) lc_frame(g_lf[i], lens[i], kinds[i], 40u + i);
+    pnet_hdr_t h = lz4_hdr(0x00, true);
+    h.compressed_size = (uint16_t)lz4_payload(g_pay, g_lf, lens, "rzrwz", 5);
+    CHECK_EQ_INT(pnet_link_take_lz4(&s, &h, g_pay, &tx, g_win, g_scr), PNET_TAKE_NEW);
+    CHECK_EQ_INT(pnet_ring_count(&tx), 5);
+    for (unsigned i = 0; i < 5; i++) {
+        uint16_t len = 0;
+        const uint8_t *f = pnet_ring_peek(&tx, i, &len);
+        CHECK(f != NULL && len == lens[i] && memcmp(f, g_lf[i], len) == 0, "the frame, whole");
+    }
+    CHECK_EQ_INT(s.lz4_in, 3);
+    CHECK_EQ_INT(s.lz4_bad, 0);
+    CHECK_EQ_INT(s.malformed, 0);
+    CHECK(s.amiga_lz4, "the driver asked for LZ4");
+}
+
+static void lz4_frames_need_the_drivers_word_and_the_window(void) {
+    static const uint16_t lens[3] = { 900, 1100, 700 };
+    for (unsigned i = 0; i < 3; i++) lc_frame(g_lf[i], lens[i], LC_TEXT, 60u + i);
+    for (unsigned k = 0; k < 2; k++) {
+        pnet_link_t s; pnet_ring_t tx;
+        pnet_link_init(&s);
+        tx_ring(&tx, 32);
+        pnet_hdr_t h = lz4_hdr(0x00, k == 1);           /* k 0: no 0x10; k 1: 0x10 but no window (pnet_link_take) */
+        h.compressed_size = (uint16_t)lz4_payload(g_pay, g_lf, lens, "rzz", 3);
+        if (k == 0) CHECK_EQ_INT(pnet_link_take_lz4(&s, &h, g_pay, &tx, g_win, g_scr), PNET_TAKE_NEW);
+        else CHECK_EQ_INT(pnet_link_take(&s, &h, g_pay, &tx), PNET_TAKE_NEW);
+        CHECK_EQ_INT(pnet_ring_count(&tx), 1);          /* the RLE frame; the LZ4 ones are unreadable */
+        CHECK_EQ_INT(s.malformed, 2);
+        CHECK_EQ_INT(s.lz4_in, 0);
+    }
+}
+
+/* Review Focus, the driver swap: the word follows the latest header, a resend's included. */
+static void the_drivers_word_follows_the_latest_header(void) {
+    pnet_link_t s; pnet_ring_t tx;
+    pnet_link_init(&s);
+    tx_ring(&tx, 32);
+    CHECK(!s.amiga_lz4, "nothing heard yet: no LZ4");
+    pnet_hdr_t h = lz4_hdr(0x00, true);
+    CHECK_EQ_INT(pnet_link_take_lz4(&s, &h, g_pay, &tx, g_win, g_scr), PNET_TAKE_NEW);
+    CHECK(s.amiga_lz4, "our driver");
+    h = lz4_hdr(0x00, false);                           /* the same counter: a resend, from Rob's driver now */
+    CHECK_EQ_INT(pnet_link_take_lz4(&s, &h, g_pay, &tx, g_win, g_scr), PNET_TAKE_DUP);
+    CHECK(!s.amiga_lz4, "Rob's driver: MFM from now on");
+    h = lz4_hdr(0x01, true);
+    CHECK_EQ_INT(pnet_link_take_lz4(&s, &h, g_pay, &tx, g_win, g_scr), PNET_TAKE_NEW);
+    CHECK(s.amiga_lz4, "ours again");
+}
+
+/* Review Focus, sizes at the edges: frames fill the window to exactly 16,128 bytes and an LZ4 frame still links; one
+ * frame past it is decoded straight into its slot, and an LZ4 frame after it is refused (and counted). */
+static void the_window_ends_at_16128_bytes(void) {
+    uint16_t lens[12];
+    for (unsigned i = 0; i < 11; i++) { lens[i] = PNET_ETH_MTU; lc_frame(g_lf[i], PNET_ETH_MTU, LC_ZEROS, 0); }
+    lens[10] = 948;                                     /* 10 x 1,518 + 948 = 16,128 */
+    lc_frame(g_lf[10], 948, LC_ZEROS, 0);
+    {
+        pnet_link_t s; pnet_ring_t tx;
+        pnet_link_init(&s);
+        tx_ring(&tx, 32);
+        pnet_hdr_t h = lz4_hdr(0x00, true);
+        h.compressed_size = (uint16_t)lz4_payload(g_pay, g_lf, lens, "rrrrrrrrrrz", 11);
+        pnet_link_take_lz4(&s, &h, g_pay, &tx, g_win, g_scr);
+        CHECK_EQ_INT(pnet_ring_count(&tx), 11);
+        CHECK_EQ_INT(s.lz4_in, 1);
+        CHECK_EQ_INT(s.malformed, 0);
+    }
+    lens[10] = PNET_ETH_MTU;                            /* 11 x 1,518 = 16,698: the 11th does not fit */
+    lc_frame(g_lf[10], PNET_ETH_MTU, LC_ZEROS, 0);
+    lens[11] = 600;
+    lc_frame(g_lf[11], 600, LC_TEXT, 5);
+    {
+        pnet_link_t s; pnet_ring_t tx;
+        pnet_link_init(&s);
+        tx_ring(&tx, 32);
+        pnet_hdr_t h = lz4_hdr(0x00, true);
+        h.compressed_size = (uint16_t)lz4_payload(g_pay, g_lf, lens, "rrrrrrrrrrrz", 12);
+        pnet_link_take_lz4(&s, &h, g_pay, &tx, g_win, g_scr);
+        CHECK_EQ_INT(pnet_ring_count(&tx), 11);
+        CHECK_EQ_INT(s.lz4_bad, 1);
+        CHECK_EQ_INT(s.malformed, 1);
+    }
+}
+
+/* Review Focus, malformed LZ4: damaged batches (blocks and size words alike) never write past the window, the scratch
+ * or a ring slot; every refusal is counted. */
+static void malformed_lz4_never_overruns_the_board(void) {
+    static struct {
+        uint8_t win[PNET_LZ4_WINDOW]; uint8_t g1[256];
+        uint8_t scr[PNET_LZ4_BLOCK_MAX]; uint8_t g2[256];
+        uint8_t ring[8 * PNET_RING_SLOT]; uint8_t g3[256];
+    } m;
+    static const uint16_t lens[5] = { 900, 1100, 700, 1300, 500 };
+    static const char *const hows[3] = { "zwzwz", "rzwrz", "wwwww" };
+    memset(&m, 0xA5, sizeof m);
+    pnet_link_t s; pnet_ring_t tx;
+    pnet_link_init(&s);
+    CHECK(pnet_ring_init(&tx, m.ring, 8), "ring");
+    uint32_t r = 777;
+    for (unsigned t = 0; t < 3000; t++) {
+        for (unsigned i = 0; i < 5; i++) lc_frame(g_lf[i], lens[i], (int)(t + i) % 2 ? LC_HTML : LC_TEXT, t * 5u + i);
+        pnet_hdr_t h = lz4_hdr((uint8_t)t, true);
+        const size_t len = lz4_payload(g_pay, g_lf, lens, hows[t % 3u], 5);
+        h.compressed_size = (uint16_t)len;
+        const unsigned hits = 1u + lc_next(&r) % 4u;
+        for (unsigned k = 0; k < hits; k++) g_pay[4u + lc_next(&r) % (len - 4u)] = (uint8_t)lc_next(&r);
+        pnet_link_take_lz4(&s, &h, g_pay, &tx, m.win, m.scr);
+        for (uint32_t i = 0; i < pnet_ring_count(&tx); i++) {
+            uint16_t l = 0;
+            (void)pnet_ring_peek(&tx, i, &l);
+            CHECK(l >= 1 && l <= PNET_RING_MTU, "a committed frame is 1..MTU bytes");
+        }
+        pnet_ring_drop(&tx, pnet_ring_count(&tx));
+    }
+    unsigned touched = 0;
+    for (unsigned i = 0; i < 256; i++) touched += (m.g1[i] != 0xA5) + (m.g2[i] != 0xA5) + (m.g3[i] != 0xA5);
+    CHECK_EQ_INT(touched, 0);
+    CHECK(s.lz4_bad + s.malformed > 0, "the damage was seen and counted");
+    CHECK(s.queued > 0, "and undamaged frames still went through");
+}
+
+/* Not in the brief's list: the window is reset per batch -- a batch that broke its window does not stop the next one's
+ * LZ4 frames from decoding. */
+static void the_window_starts_empty_every_batch(void) {
+    uint16_t lens[12];
+    for (unsigned i = 0; i < 11; i++) { lens[i] = PNET_ETH_MTU; lc_frame(g_lf[i], PNET_ETH_MTU, LC_ZEROS, 0); }
+    lens[11] = 600;
+    lc_frame(g_lf[11], 600, LC_TEXT, 5);
+    pnet_link_t s; pnet_ring_t tx;
+    pnet_link_init(&s);
+    tx_ring(&tx, 64);
+    pnet_hdr_t h = lz4_hdr(0x00, true);
+    h.compressed_size = (uint16_t)lz4_payload(g_pay, g_lf, lens, "rrrrrrrrrrrz", 12);
+    pnet_link_take_lz4(&s, &h, g_pay, &tx, g_win, g_scr);
+    CHECK_EQ_INT(s.lz4_bad, 1);                         /* the first batch's window broke */
+    static const uint16_t l2[3] = { 900, 1100, 700 };
+    for (unsigned i = 0; i < 3; i++) lc_frame(g_lf[i], l2[i], LC_TEXT, 90u + i);
+    h = lz4_hdr(0x01, true);
+    h.compressed_size = (uint16_t)lz4_payload(g_pay, g_lf, l2, "zwz", 3);
+    CHECK_EQ_INT(pnet_link_take_lz4(&s, &h, g_pay, &tx, g_win, g_scr), PNET_TAKE_NEW);
+    CHECK_EQ_INT(s.lz4_in, 3);                          /* the next batch decodes from an empty window */
+    CHECK_EQ_INT(s.lz4_bad, 1);
+    CHECK_EQ_INT(pnet_ring_count(&tx), 14);
+    for (unsigned i = 0; i < 3; i++) {
+        uint16_t len = 0;
+        const uint8_t *f = pnet_ring_peek(&tx, 11u + i, &len);
+        CHECK(f != NULL && len == l2[i] && memcmp(f, g_lf[i], len) == 0, "the frame, whole");
+    }
+}
+
+/* Not in the brief's list: the edge to the byte -- an LZ4 frame ending at 16,129 is refused. */
+static void an_lz4_frame_one_byte_past_the_window_is_refused(void) {
+    uint16_t lens[11];
+    for (unsigned i = 0; i < 10; i++) { lens[i] = PNET_ETH_MTU; lc_frame(g_lf[i], PNET_ETH_MTU, LC_ZEROS, 0); }
+    lens[10] = 949;                                     /* 10 x 1,518 + 949 = 16,129 */
+    lc_frame(g_lf[10], 949, LC_ZEROS, 0);
+    pnet_link_t s; pnet_ring_t tx;
+    pnet_link_init(&s);
+    tx_ring(&tx, 32);
+    pnet_hdr_t h = lz4_hdr(0x00, true);
+    h.compressed_size = (uint16_t)lz4_payload(g_pay, g_lf, lens, "rrrrrrrrrrz", 11);
+    pnet_link_take_lz4(&s, &h, g_pay, &tx, g_win, g_scr);
+    CHECK_EQ_INT(pnet_ring_count(&tx), 10);
+    CHECK_EQ_INT(s.lz4_in, 0);
+    CHECK_EQ_INT(s.lz4_bad, 1);
+    CHECK_EQ_INT(s.malformed, 1);
+}
+
+/* Not in the brief's list: toward the Amiga an LZ4 block is always MFM-wrapped; a raw one is refused (HANDOFF 3bu). */
+static void raw_lz4_toward_the_amiga_is_refused(void) {
+    static const uint16_t lens[2] = { 900, 900 };
+    for (unsigned i = 0; i < 2; i++) lc_frame(g_lf[i], lens[i], LC_TEXT, 70u + i);
+    for (unsigned k = 0; k < 2; k++) {
+        const size_t n = lz4_payload(g_pay, g_lf, lens, k ? "ww" : "zz", 2);
+        pnet_frame_iter_t it;
+        CHECK_EQ_INT(pnet_frame_iter_init(&it, g_pay, n, PNET_TO_AMIGA), PNET_OK);
+        pnet_lz4_win_t w = { g_win, 0, g_scr };
+        static uint8_t out[PNET_ETH_MTU];
+        uint16_t len = 0;
+        bool z = false;
+        const pnet_err_t e = pnet_lz4_iter_next(&it, &w, out, sizeof out, &len, &z);
+        if (k == 0) {
+            CHECK_EQ_INT(e, PNET_E_LZ4);
+            CHECK_EQ_INT(it.i, 0);
+        } else {
+            CHECK_EQ_INT(e, PNET_OK);
+            CHECK(z && len == 900 && memcmp(out, g_lf[0], 900) == 0, "wrapped: decoded");
+        }
+    }
+}
+
+/* pnet_link_shrink: only while a batch is out, only downward, never to 0. */
+static void shrink_only_lowers_the_batch_out(void) {
+    pnet_link_t s;
+    pnet_link_init(&s);
+    pnet_link_shrink(&s, 3);
+    CHECK_EQ_INT(s.nframes, 0);                         /* nothing out: nothing to shrink */
+    pnet_link_start(&s, 8);
+    pnet_link_shrink(&s, 9);
+    CHECK_EQ_INT(s.nframes, 8);
+    pnet_link_shrink(&s, 8);
+    CHECK_EQ_INT(s.nframes, 8);
+    pnet_link_shrink(&s, 0);
+    CHECK_EQ_INT(s.nframes, 8);
+    pnet_link_shrink(&s, 5);
+    CHECK_EQ_INT(s.nframes, 5);
+    pnet_hdr_t h = hdr(0x00, s.pico);
+    CHECK_EQ_INT(pnet_link_ack(&s, &h), 5);             /* the ack frees what went out */
+}
+
 int main(void) {
     RUN(counters_start_as_paulanets);
     RUN(a_new_batch_is_taken_once);
@@ -262,5 +531,14 @@ int main(void) {
     RUN(fit_caps_the_payload_at_16128_bytes);
     RUN(ota_waits_for_quiet);
     RUN(cylinder_76_is_the_status_track_in_l2);
+    RUN(an_lz4_batch_is_decoded_linked_into_the_ring);
+    RUN(lz4_frames_need_the_drivers_word_and_the_window);
+    RUN(the_drivers_word_follows_the_latest_header);
+    RUN(the_window_ends_at_16128_bytes);
+    RUN(malformed_lz4_never_overruns_the_board);
+    RUN(the_window_starts_empty_every_batch);
+    RUN(an_lz4_frame_one_byte_past_the_window_is_refused);
+    RUN(raw_lz4_toward_the_amiga_is_refused);
+    RUN(shrink_only_lowers_the_batch_out);
     return REPORT();
 }

@@ -15,7 +15,7 @@
  * LiveStatus (14), big-endian:
  *     0 length 142 | 2 SSID[34] 0 | 36 password[66] 0 | 102 hostname[34] 0 | 136 flags 3
  *   138 maxTxSize 8192 (the Amiga's batch budget) | 140 maxRxSize 16128
- *   142 length 14 | 144 version major, minor | 146 MAC[6] | 152 RSSI (int16) | 154 link | 155 0
+ *   142 length 14 | 144 version major, minor | 146 MAC[6] | 152 RSSI (int16) | 154 link | 155 LZ4 bits (fw 1.16.0; 0 before)
  * The track repeats the record every PNET_STATUS_PERIOD bytes, so a read that starts at any bit finds
  * a sync STARTING within its first 124 bytes, inside the driver's scan, with no start timing at all.
  */
@@ -44,6 +44,9 @@
 #define PNET_ST_MAC             146u
 #define PNET_ST_RSSI            152u
 #define PNET_ST_LINK            154u
+#define PNET_ST_RESERVED        155u     /* LiveStatus.reserved: Rob's driver ignores it (spec 2026-10-18 §3) */
+#define PNET_ST_LZ4_TO_AMIGA    1u       /* ...bit 0: the board sends LZ4 to a driver that asks (0x10) */
+#define PNET_ST_LZ4_FROM_AMIGA  2u       /* ...bit 1: the board accepts LZ4 frames from the Amiga */
 #define PNET_ST_SETTINGS_BYTES  142u
 #define PNET_ST_LIVE_BYTES      14u
 #define PNET_ST_FLAGS_RLE_BOTH  3u       /* bit 1: the Amiga sends RLE; bit 0: so does the board */
@@ -56,6 +59,7 @@ typedef struct {
     int16_t rssi;                        /* dBm; 0 = not known */
     uint8_t link;                        /* PNET_LINK_* */
     uint8_t ver_major, ver_minor;
+    uint8_t lz4;                         /* PNET_ST_LZ4_* bits for byte 155; 0 = 1.15.0's byte */
 } pnet_status_t;
 
 /* The 156-byte payload. SSID, password and hostname are always zeros. */

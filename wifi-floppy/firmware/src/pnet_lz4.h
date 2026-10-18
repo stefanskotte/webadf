@@ -33,4 +33,15 @@ size_t pnet_lz4_encode_linked(const uint8_t *src, size_t n, uint8_t *dst, size_t
  * reads a match from outside [window, the output so far). src must not overlap [window, dst_end). The 1-byte block
  * 0x00 decodes to 0 bytes; an empty block is malformed. */
 long pnet_lz4_decode(const uint8_t *src, size_t n, uint8_t *dst, uint8_t *dst_end, const uint8_t *window);
+/* The window of one batch, either direction: every frame is decoded into win + pos, back to back, whatever its
+ * encoding, so the LZ4 frames may link to the earlier ones. pos past PNET_LZ4_WINDOW (PNET_LZ4_BROKEN) once a frame did
+ * not fit: no later LZ4 frame of the batch can be decoded. scratch: PNET_LZ4_BLOCK_MAX bytes, an MFM-wrapped block. */
+typedef struct { uint8_t *win; size_t pos; uint8_t *scratch; } pnet_lz4_win_t;
+#define PNET_LZ4_BROKEN SIZE_MAX
+/* As pnet_frame_iter_next, linked through w: the frame is decoded into the window and copied to out[0..cap). An LZ4
+ * frame (size bit 14) decodes against the window -- raw or MFM-wrapped toward the board, MFM-wrapped only toward the
+ * Amiga; *was_lz4 says it was one. PNET_E_LZ4: an LZ4 frame that does not decode to its original size, is over
+ * PNET_LZ4_BLOCK_MAX, or does not fit the window. Any error leaves it->i where it was. */
+pnet_err_t pnet_lz4_iter_next(pnet_frame_iter_t *it, pnet_lz4_win_t *w, uint8_t *out, size_t cap, uint16_t *len,
+                              bool *was_lz4);
 #endif

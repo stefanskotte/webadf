@@ -119,7 +119,8 @@ if (WF_PNET_L2)
   if (NOT WF_PNET_LOOP)
     message(FATAL_ERROR "WF_PNET_L2 needs WF_PNET_LOOP: Network mode runs on the PaulaNET transport")
   endif ()
-  list(APPEND WFMF_FIRMWARE_SOURCES src/pnet_sort.c src/pnet_ring.c src/pnet_link.c src/pnet_bridge.c src/pnet_status.c)
+  list(APPEND WFMF_FIRMWARE_SOURCES src/pnet_sort.c src/pnet_ring.c src/pnet_link.c src/pnet_bridge.c src/pnet_status.c
+              src/pnet_lz4.c)
   # PaulaNET Phase 4 (fw 1.14.0): files sent to Receive on the Amiga.
   list(APPEND WFMF_FIRMWARE_SOURCES src/amiga_send.c src/amiga_tcp.c)
   message(STATUS "WF_PNET_L2 is ON: DF1 Network mode (layer-2 sharing) is built in.")

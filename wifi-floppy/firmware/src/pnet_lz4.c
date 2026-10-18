@@ -8,6 +8,7 @@
  *     into the pending literals; the LZ4 end rules (a match starts 12+ bytes before the end, the last 5 are literals).
  */
 #include "pnet_lz4.h"
+#include "pnet_mfm.h"
 #include <string.h>
 
 static size_t extlen(size_t x) { return x < 15u ? 0u : (x - 15u) / 255u + 1u; }
@@ -103,4 +104,48 @@ long pnet_lz4_decode(const uint8_t *src, size_t n, uint8_t *dst, uint8_t *dst_en
         while (ml--) *op++ = *m++;                         /* may overlap its own output: byte by byte */
         if (ip == iend) return -1;                         /* a block never ends on a match */
     }
+}
+
+pnet_err_t pnet_lz4_iter_next(pnet_frame_iter_t *it, pnet_lz4_win_t *w, uint8_t *out, size_t cap, uint16_t *len,
+                              bool *was_lz4) {
+    *was_lz4 = false;
+    if (it->i >= it->count || 8u > it->len - it->pos) return PNET_E_FRAMES;
+    uint8_t ch[4];
+    pnet_mfm_decode(it->p + it->pos, 4, ch);
+    const uint16_t field = (uint16_t)(ch[0] << 8 | ch[1]), os = (uint16_t)(ch[2] << 8 | ch[3]);
+    const bool fits = w->pos <= PNET_LZ4_WINDOW && os <= PNET_LZ4_WINDOW - w->pos;
+    if (!(field & PNET_SIZE_LZ4)) {                     /* RLE or MFM: the plain iterator, into the window */
+        if (!fits || os > cap) {
+            w->pos = PNET_LZ4_BROKEN;                   /* outside the window: nothing later may link to it */
+            return pnet_frame_iter_next(it, out, cap, len);
+        }
+        uint8_t *at = w->win + w->pos;
+        const pnet_err_t e = pnet_frame_iter_next(it, at, PNET_LZ4_WINDOW - w->pos, len);
+        if (e != PNET_OK) return e;
+        memcpy(out, at, *len);
+        w->pos += *len;
+        return PNET_OK;
+    }
+    const bool wrapped = (field & 0x8000u) != 0;
+    if (it->dir == PNET_TO_AMIGA && !wrapped) return PNET_E_LZ4;   /* never raw toward the Amiga (HANDOFF 3bu) */
+    const size_t at = it->pos + 8u, blk = field & 0x3FFFu, wire = wrapped ? 2u * blk : blk;
+    if (wire > it->len - at) return PNET_E_FRAMES;
+    if (os == 0 || os > PNET_ETH_MTU) return PNET_E_FRAME_SIZE;
+    if (os > cap) return PNET_E_FULL;
+    if (blk == 0 || blk > PNET_LZ4_BLOCK_MAX || !fits) return PNET_E_LZ4;
+    const uint8_t *src = it->p + at;
+    if (wrapped) {
+        pnet_mfm_decode(src, blk, w->scratch);
+        src = w->scratch;
+    }
+    uint8_t *dst = w->win + w->pos;
+    if (pnet_lz4_decode(src, blk, dst, dst + os, w->win) != (long)os) return PNET_E_LZ4;
+    memcpy(out, dst, os);
+    w->pos += os;
+    *len = os;
+    *was_lz4 = true;
+    const size_t next = at + wire + (wire & 1u);
+    it->pos = next > it->len ? it->len : next;
+    it->i++;
+    return PNET_OK;
 }
