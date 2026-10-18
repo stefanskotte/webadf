@@ -18,11 +18,13 @@ on:
   push:
     paths:
       - 'wifi-floppy/firmware/**'
+      - 'm68k/lz4/**'                      # test_pnet_lz4.c checks the encoder against its C model
       - 'src/lib/adfmfm/fixtures/**'      # the host tests decode these
       - '.github/workflows/firmware.yml'
   pull_request:
     paths:
       - 'wifi-floppy/firmware/**'
+      - 'm68k/lz4/**'                      # test_pnet_lz4.c checks the encoder against its C model
       - '.github/workflows/firmware.yml'
   workflow_dispatch:
 
@@ -48,7 +50,7 @@ jobs:
       - name: Install the ARM toolchain
         run: |
           sudo apt-get update
-          sudo apt-get install -y gcc-arm-none-eabi ninja-build cmake
+          sudo apt-get install -y gcc-arm-none-eabi ninja-build cmake liblz4-dev pkg-config
           arm-none-eabi-gcc --version | head -1
 
       # Cached because the SDK plus its submodules (tinyusb, cyw43-driver,

@@ -61,8 +61,16 @@ cc -std=c11 -O1 -w -c ../src/vendor/monocypher/monocypher.c -o .build/monocypher
 cc -std=c11 -O1 -w -I../src/vendor/monocypher -c ../src/vendor/monocypher/monocypher-ed25519.c -o .build/monocypher-ed25519.o
 
 # -pthread: test_pnet_ring.c runs a real producer thread against its consumer (Linux needs the flag).
-for t in test_*.c; do
+# run.sh [test_x.c ...]: only those C tests (the source checks below always run); no arguments: all of them.
+if [ $# -gt 0 ]; then tests=("$@"); else tests=(test_*.c); fi
+for t in "${tests[@]}"; do
   out=".build/${t%.c}"
+  # liblz4 (BSD-2) referees the board's LZ4 codec (spec 2026-10-18 §6); only test_pnet_lz4.c links it.
+  extra=""
+  if [ "$t" = test_pnet_lz4.c ]; then
+    extra="$(pkg-config --cflags --libs liblz4)" ||
+      { echo "COMPILE FAIL: $t needs liblz4 (macOS: brew install lz4; Debian/Ubuntu: apt install liblz4-dev pkg-config)"; fail=1; continue; }
+  fi
   # -D_DEFAULT_SOURCE: strnlen (config_store.c) is POSIX.1-2008, not C11, and
   # glibc declares it only when a feature-test macro asks. macOS declares it
   # anyway, so this build passed there for months and failed the first time it
@@ -71,7 +79,7 @@ for t in test_*.c; do
   cc -std=c11 -D_DEFAULT_SOURCE -g -O1 -pthread -Wall -Wextra -Werror -DWFMF_HOST_TEST=1 -DWF_DF1_DEFAULT=0 \
      -o "$out" "$t" transport_fake.c si512_fake.c \
      $(ls ../src/*.c | grep -vE 'net_radio_cyw43\.c|main\.c|transport_tls\.c|sntp_time\.c|portal_net\.c|dskchg\.c|activity_led\.c|i2c_probe\.c|nfc_bus_i2c\.c|ssd1306\.c|flux_capture\.c|bus_out\.c|pnet_bridge\.c|fw_rom\.c|amiga_tcp\.c') \
-     .build/monocypher.o .build/monocypher-ed25519.o -I../src/vendor/monocypher \
+     .build/monocypher.o .build/monocypher-ed25519.o -I../src/vendor/monocypher $extra \
      || { echo "COMPILE FAIL: $t"; fail=1; continue; }
   if ! "$out"; then
     rc=$?
