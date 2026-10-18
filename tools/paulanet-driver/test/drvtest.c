@@ -151,7 +151,7 @@ static void padtail(void) {
 static void down_batch(struct WlRx *rx, int lz4, const int *kinds, const UWORD *lens, unsigned n, unsigned seed,
                        unsigned *nlz4) {
     pnet_frame_ref_t in[PNET_MAX_FRAMES];
-    const pnet_pack_mem_t m = { g_win, g_blk, g_tab, PNET_LZ4_TABLE_ENTRIES };
+    const pnet_pack_mem_t m = { g_win, g_blk, g_tab, PNET_LZ4_TABLE_ENTRIES, NULL };   /* no budget */
     const UBYTE *pay;
     UBYTE ph[2];
     size_t pos = 4;
@@ -425,6 +425,20 @@ static void evenpad(void) {
     wl_init(&rx, &tx, mem_for(UP_ATTN), UP_ATTN);
     up_batch(&tx, lab, 2, zs);
     CHECK(zs[1] != 0 && zs[1] < 40, "up: B is one match over A and its pad");
+    /* (ii') the pad write itself (final review: a driver encoder that stepped over the pad without writing it passed
+     * (ii), where B holds 0x00 at the pad's place and so never matches a stale pad). The driver's window holds 0xAA
+     * (mem_for); B now holds 0xAA where A's pad goes. A pad left stale would let the encoder match over it, and the
+     * board, whose pad is 0, would decode B wrong (up_batch). Written: B[501] is a literal, the board decodes it. */
+    wl_init(&rx, &tx, mem_for(UP_ATTN), UP_ATTN);
+    CHECK(tx.win[501] == 0xAA, "the driver's window starts stale where A's pad goes");
+    g_frames[1][501] = 0xAA;
+    up_batch(&tx, lab, 2, zs);
+    CHECK(tx.win[501] == 0, "the driver wrote A's pad as 0 over the stale 0xAA");
+    CHECK(zs[1] != 0 && zs[1] < 40, "up: B is LZ4, two matches around the pad");
+    wl_init(&rx, &tx, mem_for(attn), attn);               /* and the driver's read side writes its pad too */
+    g_frames[1][501] = 0;
+    down_batch(&rx, 1, NULL, lab, 2, 0, &nz);
+    CHECK(rx.win[501] == 0, "down: the driver wrote A's pad as 0 over the stale 0xAA");
     /* (iii) the 16,128 edge with the pads counted: 10 x 1,517 B take 15,180 B, so 948 more fit to the byte and 949 do
      * not -- where back to back (15,170) both would. */
     for (i = 0; i < 10; i++) l11[i] = 1517;
