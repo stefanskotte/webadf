@@ -3,6 +3,7 @@ import { requireDevice, deviceAuthResponse } from '@/lib/device-auth';
 import { recordStatus } from '@/lib/mount';
 import { firmwareVersionSchema } from '@/lib/firmware-version';
 import { updateStateSchema, updateProtocolSchema } from '@/lib/firmware-update-state';
+import { i2cAddrsSchema } from '@/lib/i2c-scan';
 
 export const maxDuration = 60;
 
@@ -51,6 +52,9 @@ const statusBody = z.object({
   // here -- rather than a board that predates this field reading as either
   // state.
   nfcReader: z.enum(['present', 'absent']).optional().catch(undefined),
+  // The boot I2C scan (fw 1.17.0): integers 0x08-0x77, at most eight. Anything else is dropped whole -- the
+  // telemetry rule above -- and recordStatus then treats the report as one without a scan.
+  i2c: i2cAddrsSchema.optional().catch(undefined),
   // Multi-disk spec §3.5: what the idle slot holds. Telemetry -- dropped, never rejected.
   preload: z.object({ sha256: z.string().regex(SHA256_RE), state: z.enum(['loading', 'ready']) })
     .nullable().optional().catch(undefined),
@@ -150,6 +154,7 @@ export async function POST(request: Request) {
     trackMaxBytes: parsed.data.trackMaxBytes,
     playsHd: parsed.data.playsHd,
     nfcReader: parsed.data.nfcReader,
+    i2c: parsed.data.i2c,
     preload: parsed.data.preload,
     displayLayouts: parsed.data.displayLayouts,
     displayVersion: parsed.data.displayVersion,

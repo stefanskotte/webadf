@@ -413,6 +413,8 @@ export interface DeviceListItem {
   displayStatusIcon: boolean;
   /** The tag reader as the board last reported it; null = never said (or no NFC firmware). */
   nfcReader: 'present' | 'absent' | null;
+  /** The boot I2C scan (fw 1.17.0+): addresses that answered, [] for none; null = the board sends none. */
+  i2cAddrs: number[] | null;
   /** DF1 second drive readings; null = firmware before 1.7.6 (or never reported). */
   sel1Wired: boolean | null;
   df1Seen: boolean | null;
@@ -501,6 +503,7 @@ export async function listDevices(orgId: string): Promise<DeviceListItem[]> {
       displayError: devices.displayError,
       displayLayouts: devices.displayLayouts,
       nfcReader: devices.nfcReader,
+      i2cAddrs: devices.i2cAddrs,
       sel1Wired: devices.sel1Wired,
       df1Seen: devices.df1Seen,
       secondDrive: devices.secondDrive,

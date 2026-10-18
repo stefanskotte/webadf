@@ -14,6 +14,7 @@ type RecordStatusArg = {
   sel1Wired?: boolean; df1Seen?: boolean;
   server?: { custom: boolean; tls: 'verify' | 'noverify' };
   mountedSha256?: string | null;
+  i2c?: number[];
 };
 const recordStatus = vi.fn<(deviceId: string, s: RecordStatusArg) => Promise<void>>(
   async () => undefined,
@@ -170,5 +171,32 @@ describe('POST /api/device/status -- server', () => {
     const res = await POST(post({ mountedSha256: null, server: { custom: true, tls: 'off' } }));
     expect(res.status).toBe(204);
     expect(recordStatus.mock.calls[0]![1].server).toBeUndefined();
+  });
+});
+
+// The boot I2C scan (fw 1.17.0): telemetry, validated strictly and dropped -- never a 400 -- when malformed.
+describe('POST /api/device/status -- i2c', () => {
+  it('passes the scan through, the empty list included', async () => {
+    const { POST } = await import('./route');
+    expect((await POST(post({ mountedSha256: null, i2c: [40, 60] }))).status).toBe(204);
+    expect(recordStatus.mock.calls[0]![1].i2c).toEqual([40, 60]);
+    await POST(post({ mountedSha256: null, i2c: [] }));
+    expect(recordStatus.mock.calls[1]![1].i2c).toEqual([]);
+  });
+  it('is undefined when absent (older firmware)', async () => {
+    const { POST } = await import('./route');
+    await POST(post({ mountedSha256: null }));
+    expect(recordStatus.mock.calls[0]![1].i2c).toBeUndefined();
+  });
+  it('drops a malformed scan whole but still records mountedSha256', async () => {
+    const { POST } = await import('./route');
+    for (const bad of [[7], [0x78], [40.5], ['40'], [8, 9, 10, 11, 12, 13, 14, 15, 16], '40,60', null, { a: 1 }]) {
+      recordStatus.mockClear();
+      const res = await POST(post({ mountedSha256: SHA, i2c: bad }));
+      expect(res.status).toBe(204);
+      const s = recordStatus.mock.calls[0]![1];
+      expect(s.i2c).toBeUndefined();
+      expect(s.mountedSha256).toBe(SHA);
+    }
   });
 });

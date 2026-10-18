@@ -234,3 +234,20 @@ describe('recordStatus net (Phase 3)', () => {
     expect(patches[0]).not.toHaveProperty('netAmigaIp');
   });
 });
+
+describe('recordStatus i2c (boot scan, fw 1.17.0)', () => {
+  it('stores the scan, the empty list as an empty list', async () => {
+    await recordStatus('dev-1', { ...base, firmwareVersion: '1.17.0+gabc', i2c: [40, 60] });
+    expect(patches[0].i2cAddrs).toEqual([40, 60]);
+    await recordStatus('dev-1', { ...base, firmwareVersion: '1.17.0+gabc', i2c: [] });
+    expect(patches[1].i2cAddrs).toEqual([]);
+  });
+  it('is build-bound: a report naming its firmware without a scan clears it (older build, reverted trial)', async () => {
+    await recordStatus('dev-1', { ...base, firmwareVersion: '1.16.0+gabc' });
+    expect(patches[0].i2cAddrs).toBeNull();
+  });
+  it('a report without firmwareVersion and without a scan leaves it alone', async () => {
+    await recordStatus('dev-1', { mountedSha256: null });
+    expect(patches[0]).not.toHaveProperty('i2cAddrs');
+  });
+});
