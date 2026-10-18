@@ -33,7 +33,13 @@ typedef struct {
     uint8_t  *blk;           /* PNET_LZ4_WINDOW bytes: the blocks back to back */
     uint16_t *table;         /* entries x 16 bits, cleared at every LZ4 pack with frames: a rebuild is byte-identical */
     unsigned  entries;
+    uint32_t (*now_us)(void);  /* the microsecond clock for the LZ4 budget (the board: time_us_32); NULL: no budget */
 } pnet_pack_mem_t;
+
+/* Review I1 (controller's ruling): the LZ4 work one batch may take on core0's read path, the 8 KB table clear
+ * included. Once it is spent, every remaining frame of the batch goes MFM without an encode attempt -- still copied
+ * into m->win at its even offset, so the window the reader rebuilds is the same. */
+#define PNET_PACK_LZ4_BUDGET_US 500u
 
 typedef struct {
     pnet_out_t f[PNET_MAX_FRAMES];
@@ -41,13 +47,16 @@ typedef struct {
     unsigned   lz4;          /* ...of them sent LZ4 */
     uint32_t   wire;         /* the payload's bytes on the wire: pnet_out_payload_bytes(f, n) */
     uint32_t   saved;        /* bytes LZ4 saved on the wire against MFM: the sum of 2 x (len - lz4_len) */
+    unsigned   encodes;      /* LZ4 encode attempts */
+    unsigned   unencoded;    /* frames sent MFM without an attempt: the budget was spent */
+    bool       budget;       /* the budget was spent in this pack */
 } pnet_pack_t;
 
 /* Packs the first of `avail` frames (in[]) into one batch: at most PNET_MAX_FRAMES, their bytes within
  * PNET_LZ4_WINDOW, the payload within PNET_TO_AMIGA_MAX_PAYLOAD and the track within `cap` (counted as
  * pnet_to_amiga_bound counts it) -- by the frames' real encoded sizes. With lz4, each frame is copied into m->win and
- * goes LZ4 when its block is shorter than the frame (cap len - 1); without, m is not touched and f[].data points into
- * in[]. Returns pk->n. */
+ * goes LZ4 when its block is shorter than the frame (cap len - 1) -- until PNET_PACK_LZ4_BUDGET_US is spent (m->now_us),
+ * after which the rest go MFM unencoded; without, m is not touched and f[].data points into in[]. Returns pk->n. */
 unsigned pnet_pack(pnet_pack_t *pk, const pnet_pack_mem_t *m, bool lz4, const pnet_frame_ref_t *in, unsigned avail,
                    size_t cap);
 /* The payload's bytes for these frames (0 for none). */

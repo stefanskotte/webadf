@@ -3140,10 +3140,14 @@ typedef struct {
     bool        ok;                          // every buffer above is backed by PSRAM (boot); else LZ4 is off both ways
     uint32_t    out_lz4, out_mfm, wire, saved; // new batches: frames by encoding, payload bytes, bytes LZ4 saved
     uint32_t    us_max, us_sum, us_n;          // pnet_pack per new batch, this 5 s window
+    uint32_t    budget, unencoded;             // new batches that spent PNET_PACK_LZ4_BUDGET_US; their frames sent
+                                               // MFM unencoded (review I1)
     uint32_t    dus_max, dus_sum, dus_n;       // the take of a new LZ4-asking batch from the Amiga, this 5 s window
 } pnet_lz4_state_t;
 static __uninitialized_psram("lz4st") pnet_lz4_state_t g_lz4;
-static const pnet_pack_mem_t g_lz4_mem = { g_lz4_tx_win, g_lz4_tx_blk, g_lz4_table, PNET_LZ4_TABLE_ENTRIES };
+// time_us_32: the LZ4 budget's clock (review I1; pnet_pack.h), as the prep and build timings below.
+static const pnet_pack_mem_t g_lz4_mem = { g_lz4_tx_win, g_lz4_tx_blk, g_lz4_table, PNET_LZ4_TABLE_ENTRIES,
+                                           time_us_32 };
 // g_lz4 is backed by PSRAM: asked every time rather than kept in a flag, since a flag would be SRAM (ruling F2), and
 // an unbacked PSRAM address bus-faults. When it is not, nothing reads g_lz4.ok (ruling F9): LZ4 is off and byte 155
 // is 0 -- though L2 is broken anyway then, its rings being PSRAM too (pnet_bridge_init logs that).
@@ -3344,6 +3348,8 @@ static bool pnet_prepare_echo(void) {
                 g_lz4.out_mfm += g_lz4.pack.n - g_lz4.pack.lz4;
                 g_lz4.wire += g_lz4.pack.wire;
                 g_lz4.saved += g_lz4.pack.saved;
+                g_lz4.budget += g_lz4.pack.budget;
+                g_lz4.unencoded += g_lz4.pack.unencoded;
                 if (pus > g_lz4.us_max) g_lz4.us_max = pus;   // the bench's PSRAM cost, encoding (Task 3 carry)
                 g_lz4.us_sum += pus;
                 g_lz4.us_n++;
@@ -3642,14 +3648,16 @@ static void pnet_l2_log(void) {
             S7(g_link.fresh), S7(g_link.dup), S7(g_link.queued), S7(g_link.over), S7(g_link.malformed));
     // LZ4 (spec 2026-10-18 §5): new batches to the Amiga -- frames by encoding, payload bytes on the wire, bytes LZ4
     // saved against MFM; frames from the Amiga in LZ4 and refused LZ4 (a bad size word included); what the driver
-    // last asked for; pnet_pack's time per new batch this window (us). Then the take's time for the Amiga's new
-    // LZ4-asking batches this window (us): with the pack's, what PSRAM costs on the bench.
+    // last asked for. On the out line (review M4: where the bench reads it): pnet_pack's time per new batch this
+    // window (us), and the batches that spent PNET_PACK_LZ4_BUDGET_US with their frames sent MFM unencoded (review
+    // I1). Then the take's time for the Amiga's new LZ4-asking batches this window (us): with the pack's, what PSRAM
+    // costs on the bench.
     if (lz4b) {
-        wf_logf(WF_INFO, "pnet: l2 lz4 out lz4 %lu mfm %lu wire %lu saved %lu",
-                S7(g_lz4.out_lz4), S7(g_lz4.out_mfm), S7(g_lz4.wire), S7(g_lz4.saved));
-        wf_logf(g_link.lz4_bad ? WF_WARN : WF_INFO, "pnet: l2 lz4 in lz4 %lu bad %lu driver %s us max %lu avg %lu",
-                S7(g_link.lz4_in), S7(g_link.lz4_bad), g_link.amiga_lz4 ? "lz4" : "stock", S7(g_lz4.us_max),
-                S7(g_lz4.us_n ? g_lz4.us_sum / g_lz4.us_n : 0u));
+        wf_logf(WF_INFO, "pnet: l2 lz4 out lz4 %lu mfm %lu wire %lu saved %lu us max %lu avg %lu budget %lu unenc %lu",
+                S7(g_lz4.out_lz4), S7(g_lz4.out_mfm), S7(g_lz4.wire), S7(g_lz4.saved), S7(g_lz4.us_max),
+                S7(g_lz4.us_n ? g_lz4.us_sum / g_lz4.us_n : 0u), S7(g_lz4.budget), S7(g_lz4.unencoded));
+        wf_logf(g_link.lz4_bad ? WF_WARN : WF_INFO, "pnet: l2 lz4 in lz4 %lu bad %lu driver %s",
+                S7(g_link.lz4_in), S7(g_link.lz4_bad), g_link.amiga_lz4 ? "lz4" : "stock");
         wf_logf(WF_INFO, "pnet: l2 lz4 dec us max %lu avg %lu n %lu",
                 S7(g_lz4.dus_max), S7(g_lz4.dus_n ? g_lz4.dus_sum / g_lz4.dus_n : 0u), S7(g_lz4.dus_n));
         g_lz4.us_max = g_lz4.us_sum = g_lz4.us_n = 0;

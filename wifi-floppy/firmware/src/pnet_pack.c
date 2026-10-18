@@ -24,6 +24,8 @@ unsigned pnet_pack(pnet_pack_t *pk, const pnet_pack_mem_t *m, bool lz4, const pn
     memset(pk, 0, sizeof *pk);
     /* Ruling F18: cleared only when there are frames to encode -- pnet_prepare_echo also calls this with nothing
      * waiting, and 8 KB of PSRAM cleared for nothing is time on the loop. */
+    /* Review I1: the budget's clock starts before the clear, which counts toward it. */
+    const uint32_t t0 = lz4 && avail && m->now_us ? m->now_us() : 0u;
     if (lz4 && avail) memset(m->table, 0, (size_t)m->entries * sizeof m->table[0]);
     if (avail > PNET_MAX_FRAMES) avail = PNET_MAX_FRAMES;
     size_t dec = 0, blk = 0, payload = 4;
@@ -35,7 +37,12 @@ unsigned pnet_pack(pnet_pack_t *pk, const pnet_pack_mem_t *m, bool lz4, const pn
         if (lz4) {
             memcpy(m->win + dec, data, len);
             data = m->win + dec;
-            z = pnet_lz4_encode_linked(data, len, m->blk + blk, (size_t)len - 1u, m->table, m->entries, m->win);
+            if (!pk->budget && m->now_us && (uint32_t)(m->now_us() - t0) >= PNET_PACK_LZ4_BUDGET_US)
+                pk->budget = true;                       /* spent: the rest of the batch goes MFM, unencoded */
+            if (!pk->budget) {
+                pk->encodes++;
+                z = pnet_lz4_encode_linked(data, len, m->blk + blk, (size_t)len - 1u, m->table, m->entries, m->win);
+            }
         }
         const size_t wire = 2u * (z ? z : len);
         if (payload + 8u + wire > PNET_TO_AMIGA_MAX_PAYLOAD ||
@@ -45,6 +52,7 @@ unsigned pnet_pack(pnet_pack_t *pk, const pnet_pack_mem_t *m, bool lz4, const pn
         pk->f[i].lz4 = z ? m->blk + blk : NULL;
         pk->f[i].lz4_len = (uint16_t)z;
         if (z) { pk->lz4++; pk->saved += 2u * (uint32_t)(len - z); }
+        if (lz4 && pk->budget) pk->unencoded++;
         /* The next frame at an even window offset (pnet_lz4.h): the pad is written as 0 with LZ4, the decoder's twin;
          * without LZ4 m->win is not touched and the count only (the MFM payload limit binds first anyway). */
         if (lz4) dec = pnet_lz4_win_advance(m->win, dec, len);
