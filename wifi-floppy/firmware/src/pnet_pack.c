@@ -22,11 +22,13 @@ size_t pnet_out_payload_bytes(const pnet_out_t *f, unsigned n) {
 unsigned pnet_pack(pnet_pack_t *pk, const pnet_pack_mem_t *m, bool lz4, const pnet_frame_ref_t *in, unsigned avail,
                    size_t cap) {
     memset(pk, 0, sizeof *pk);
-    /* Ruling F18: cleared only when there are frames to encode -- pnet_prepare_echo also calls this with nothing
-     * waiting, and 8 KB of PSRAM cleared for nothing is time on the loop. */
-    /* Review I1: the budget's clock starts before the clear, which counts toward it. */
-    const uint32_t t0 = lz4 && avail && m->now_us ? m->now_us() : 0u;
-    if (lz4 && avail) memset(m->table, 0, (size_t)m->entries * sizeof m->table[0]);
+    /* Bench fix (seq 100, controller's ruling): the table is never cleared here. Its 8 KB PSRAM clear took 584 us on the
+     * board -- the whole budget, before the first encode. The encoder never trusts an entry (pnet_lz4.c: one at or past
+     * the position is ignored, any other is byte-verified), so an entry left by an earlier batch costs compression at
+     * most, never correctness; main.c zeroes the table once at boot. The price: a re-pack of the same frames need not
+     * be byte-identical -- main.c re-packs only when the LZ4 setting changes, and then the frames, not the bytes, are
+     * what must hold (pnet_pack.h). */
+    const uint32_t t0 = lz4 && avail && m->now_us ? m->now_us() : 0u;   /* review I1: the budget's start */
     if (avail > PNET_MAX_FRAMES) avail = PNET_MAX_FRAMES;
     size_t dec = 0, blk = 0, payload = 4;
     for (unsigned i = 0; i < avail; i++) {

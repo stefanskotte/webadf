@@ -190,6 +190,7 @@ static void a_batch_never_exceeds_the_release_buffer(void) {
         }
         frames(in, avail, kinds, lens);
         const bool lz4 = (t & 1u) != 0;
+        memset(g_tab, 0, sizeof g_tab);                   /* the same table for both packs (it is never cleared) */
         const unsigned n = pnet_pack(&g_pk, &MEM, lz4, in, avail, CAP_DD);
         packed += n;
         /* Built into a buffer of exactly CAP_DD bytes: the builder refuses (0) anything that might not fit it. */
@@ -198,6 +199,7 @@ static void a_batch_never_exceeds_the_release_buffer(void) {
         /* Full: with one more frame (as it would go, MFM or LZ4) the track would pass the buffer or a limit. */
         if (n < avail && n < PNET_MAX_FRAMES) {
             pnet_pack_t more;
+            memset(g_tab, 0, sizeof g_tab);
             const unsigned m = pnet_pack(&more, &MEM, lz4, in, n + 1u, CAP);   /* the same frames, HD room */
             unsigned dec = 0;
             for (unsigned i = 0; i < m; i++) dec += (unsigned)PNET_LZ4_WIN_BYTES(more.f[i].len);   /* pads count */
@@ -319,54 +321,79 @@ static void the_window_edge_counts_the_pads(void) {
     CHECK_EQ_INT(pnet_pack(&g_pk, &MEM, true, in, 11, CAP), 10);
 }
 
-/* The batch out is rebuilt unchanged until acknowledged (pnet_link.h): the same frames give the same bytes. */
-static void rebuilds_are_byte_identical(void) {
-    pnet_frame_ref_t in[12];
-    int kinds[12];
-    uint16_t lens[12];
-    for (unsigned i = 0; i < 12; i++) { kinds[i] = i % 3u ? LC_TEXT : LC_HTML; lens[i] = (uint16_t)(700u + 61u * i); }
-    frames(in, 12, kinds, lens);
-    const unsigned n = pnet_pack(&g_pk, &MEM, true, in, 12, CAP);
-    const size_t a = pnet_build_to_amiga_out(g_old, sizeof g_old, 1, 2, 0, g_pk.f, n);
-    /* The table now holds the first pack's positions. For the same frames that cannot change the bytes (the encoder
-     * checks every candidate's bytes and would have found these itself); the_table_is_cleared_only_for_frames shows
-     * the clear that matters, after a different batch. */
-    CHECK_EQ_INT(pnet_pack(&g_pk, &MEM, true, in, 12, CAP), n);
-    const size_t b = pnet_build_to_amiga_out(g_track, sizeof g_track, 1, 2, 0, g_pk.f, n);
-    CHECK(a != 0 && a == b && memcmp(g_old, g_track, a) == 0, "byte-identical");
-}
-
-/* Ruling F18: the table is cleared when an LZ4 pack has frames to encode -- a batch packed after another batch is the
- * bytes it is alone -- and not on a call with nothing waiting (pnet_prepare_echo with an empty ring), which would
- * clear 8 KB of PSRAM for nothing. */
-static void the_table_is_cleared_only_for_frames(void) {
-    pnet_frame_ref_t in[6];
-    int kinds[6];
-    uint16_t lens[6];
-    for (unsigned i = 0; i < 6; i++) { kinds[i] = LC_TEXT; lens[i] = 1000; }
-    frames(in, 6, kinds, lens);
-    memset(g_tab, 0, sizeof g_tab);
-    const unsigned n = pnet_pack(&g_pk, &MEM, true, in, 6, CAP);
-    const size_t a = pnet_build_to_amiga_out(g_old, sizeof g_old, 1, 2, 0, g_pk.f, n);
-    /* Another batch leaves real positions in the table: the same frames but the first, which is random bytes. Its
-     * positions inside the frames both batches share hold the same bytes, so a table left uncleared would hand the
-     * encoder matches it would not have found on its own (probed: the same frames, rotated, or wholly different
-     * frames, do not show a missing clear -- the encoder checks every candidate's bytes). */
-    static uint8_t first[1000];
-    lc_frame(first, 1000, LC_RANDOM, 42);
-    pnet_frame_ref_t other[6];
-    for (unsigned i = 0; i < 6; i++) other[i] = in[i];
-    other[0].data = first;
-    pnet_pack(&g_pk, &MEM, true, other, 6, CAP);
-    CHECK_EQ_INT(pnet_pack(&g_pk, &MEM, true, in, 6, CAP), n);
-    const size_t b = pnet_build_to_amiga_out(g_track, sizeof g_track, 1, 2, 0, g_pk.f, n);
-    CHECK(a != 0 && a == b && memcmp(g_old, g_track, a) == 0, "after another batch: the same bytes");
+/* Bench fix (controller's ruling, 2026-10-18): the table is never cleared per pack -- its 8 KB PSRAM clear spent the
+ * whole LZ4 budget on the A500 (seq 100: budget 812 of ~2,950 batches). The encoder never trusts an entry (pnet_lz4.c:
+ * one at or past the position is ignored, any other is byte-verified), so stale entries cost compression at most,
+ * never correctness. pnet_pack leaves the table as it finds it but for the entries its encodes write. */
+static void the_pack_never_clears_the_table(void) {
+    static const uint8_t small[12] = { 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12 };   /* < 13 bytes: no entry written */
+    pnet_frame_ref_t one = { small, 12 };
     memset(g_tab, 0x5A, sizeof g_tab);
-    CHECK_EQ_INT(pnet_pack(&g_pk, &MEM, true, in, 0, CAP), 0);
-    CHECK_EQ_INT(g_pk.wire, 0);
+    CHECK_EQ_INT(pnet_pack(&g_pk, &MEM, true, &one, 1, CAP), 1);
     unsigned kept = 0;
     for (unsigned i = 0; i < PNET_LZ4_TABLE_ENTRIES; i++) kept += g_tab[i] == 0x5A5Au;
-    CHECK_EQ_INT(kept, PNET_LZ4_TABLE_ENTRIES);           /* nothing to encode: the table is not touched */
+    CHECK_EQ_INT(kept, PNET_LZ4_TABLE_ENTRIES);
+}
+
+/* (a) A table full of stale entries -- a different batch's, then plain garbage, which points anywhere below the
+ * position too -- still gives a batch the variant's reader decodes whole, with LZ4 frames among it. */
+static void a_stale_table_still_decodes(void) {
+    pnet_frame_ref_t in[10];
+    int kinds[10];
+    uint16_t lens[10];
+    for (unsigned i = 0; i < 10; i++) { kinds[i] = (int)(i % 2u ? LC_TEXT : LC_HTML); lens[i] = (uint16_t)(801u + 61u * i); }
+    for (unsigned t = 0; t < 2; t++) {
+        if (t == 0) {                                     /* a different batch first: its positions, other bytes */
+            pnet_frame_ref_t other[10];
+            static uint8_t o[10][PNET_ETH_MTU];
+            for (unsigned i = 0; i < 10; i++) {
+                lc_frame(o[i], 1400, (int)(i % 3u ? LC_TEXT : LC_RANDOM), 900u + i);
+                other[i].data = o[i];
+                other[i].len = 1400;
+            }
+            memset(g_tab, 0, sizeof g_tab);
+            CHECK(pnet_pack(&g_pk, &MEM, true, other, 10, CAP) > 0, "the other batch");
+        } else {
+            uint32_t r = 77;
+            for (unsigned i = 0; i < PNET_LZ4_TABLE_ENTRIES; i++) g_tab[i] = (uint16_t)lc_next(&r);
+        }
+        frames(in, 10, kinds, lens);
+        memset(g_win, 0xAA, sizeof g_win);
+        const unsigned n = pnet_pack(&g_pk, &MEM, true, in, 10, CAP);
+        CHECK(n == 10, "the whole batch");
+        CHECK(g_pk.lz4 >= 8, "text and HTML still go LZ4");
+        const size_t bytes = pnet_build_to_amiga_out(g_track, sizeof g_track, 1, 2, 0, g_pk.f, n);
+        unsigned z = 0;
+        CHECK_EQ_INT(read_back(g_track, bytes, in, &z), n);
+        CHECK_EQ_INT(z, g_pk.lz4);
+    }
+}
+
+/* (b) Different batches back to back, never a clear between them: every one reads back whole. */
+static void batches_back_to_back_without_a_clear_decode(void) {
+    uint32_t s = 31337;
+    unsigned bad = 0, lz4s = 0, packed = 0;
+    memset(g_tab, 0, sizeof g_tab);                       /* the boot state (main.c), once */
+    for (unsigned t = 0; t < 300; t++) {
+        pnet_frame_ref_t in[25];
+        uint16_t lens[25];
+        int kinds[25];
+        const unsigned avail = 1u + lc_next(&s) % 25u;
+        for (unsigned i = 0; i < avail; i++) {
+            lens[i] = (uint16_t)(1u + lc_next(&s) % PNET_ETH_MTU);
+            kinds[i] = (int)(lc_next(&s) % 5u);
+        }
+        frames(in, avail, kinds, lens);
+        const size_t cap = t & 1u ? CAP : CAP_DD;
+        const unsigned n = pnet_pack(&g_pk, &MEM, true, in, avail, cap);
+        const size_t bytes = pnet_build_to_amiga_out(g_track, sizeof g_track, 1, 2, 0, g_pk.f, n);
+        unsigned z = 0;
+        if (n == 0 || bytes == 0 || bytes > cap || read_back(g_track, bytes, in, &z) != n || z != g_pk.lz4) bad++;
+        lz4s += g_pk.lz4;
+        packed += n;
+    }
+    CHECK_EQ_INT(bad, 0);
+    CHECK(lz4s > packed / 3u, "LZ4 frames among them");
 }
 
 /* Review Focus, the driver swap (ruling F5): an LZ4 batch is out, then Rob's stock driver writes (no 0x10). His driver
@@ -401,21 +428,30 @@ static void the_driver_stops_asking_mid_session(void) {
     CHECK_EQ_INT(pnet_link_ack(&s, &h), 6);
 }
 
-/* Review I1 + controller's ruling: a time budget. The fake clock: g_clk_mode picks it. CLK_STILL never moves (but
+/* Review I1 + controller's ruling: a time budget. The fake clock: g_clk_mode picks it. CLK_PER_BYTE models the bench:
+ * 0.02 us per window byte packed so far (g_clk_in, g_pk.n), plus 584 us -- the A500's measured cost of the old 8 KB PSRAM
+ * table clear -- once the table shows a clear (an entry of 0: pos ^ 0x8000 never is one). CLK_STILL never moves (but
  * starts just before a 32-bit wrap); CLK_AFTER_K reads PNET_PACK_LZ4_BUDGET_US past its first read (the start) once
- * g_pk.encodes has reached g_clk_k, one microsecond short before -- the budget is spent exactly then; CLK_AT_CLEAR reads the budget
- * spent from its second read on: the table clear used it all. */
-enum { CLK_STILL, CLK_AFTER_K, CLK_AT_CLEAR };
+ * g_pk.encodes has reached g_clk_k, one microsecond short before -- the budget is spent exactly then; CLK_AT_CLEAR reads
+ * the budget spent from its second read on, before any encode. */
+enum { CLK_STILL, CLK_AFTER_K, CLK_AT_CLEAR, CLK_PER_BYTE };
 static int g_clk_mode;
 static unsigned g_clk_k, g_clk_reads;
-static uint16_t g_clk_tab0;                                /* g_tab[0] at the first read: the clear not yet done */
+static const pnet_frame_ref_t *g_clk_in;
 static uint32_t fake_now(void) {
     const uint32_t t0 = 0xFFFFFF00u;                       /* elapsed time is taken modulo 2^32 */
-    if (++g_clk_reads == 1u) g_clk_tab0 = g_tab[0];
+    g_clk_reads++;
     switch (g_clk_mode) {
     case CLK_AFTER_K:  if (g_clk_reads == 1u) return t0;  /* the start */
                        return t0 + (g_pk.encodes >= g_clk_k ? PNET_PACK_LZ4_BUDGET_US : PNET_PACK_LZ4_BUDGET_US - 1u);
     case CLK_AT_CLEAR: return g_clk_reads == 1u ? t0 : t0 + PNET_PACK_LZ4_BUDGET_US;
+    case CLK_PER_BYTE: {
+        size_t bytes = 0;
+        for (unsigned i = 0; i < g_pk.n; i++) bytes += PNET_LZ4_WIN_BYTES(g_clk_in[i].len);
+        unsigned zeros = 0;
+        for (unsigned i = 0; i < PNET_LZ4_TABLE_ENTRIES; i++) zeros += g_tab[i] == 0u;
+        return t0 + (uint32_t)(bytes / 50u) + (zeros > PNET_LZ4_TABLE_ENTRIES / 2u ? 584u : 0u);
+    }
     default:           return t0;
     }
 }
@@ -436,11 +472,13 @@ static void a_budget_never_reached_changes_nothing(void) {
         }
         frames(in, avail, kinds, lens);
         const size_t cap = t & 1u ? CAP : CAP_DD;
+        memset(g_tab, 0x5A, sizeof g_tab);                /* the same (stale) table for both packs */
         const unsigned n0 = pnet_pack(&g_pk, &MEM, true, in, avail, cap);
         const pnet_pack_t p0 = g_pk;
         const size_t a = pnet_build_to_amiga_out(g_old, sizeof g_old, 1, 2, 0, g_pk.f, n0);
         g_clk_mode = CLK_STILL;
         g_clk_reads = 0;
+        memset(g_tab, 0x5A, sizeof g_tab);
         const unsigned n = pnet_pack(&g_pk, &MEM_CLK, true, in, avail, cap);
         const size_t b = pnet_build_to_amiga_out(g_track, sizeof g_track, 1, 2, 0, g_pk.f, n);
         if (n != n0 || g_pk.lz4 != p0.lz4 || g_pk.wire != p0.wire || g_pk.saved != p0.saved || g_pk.budget ||
@@ -463,9 +501,11 @@ static void a_budget_spent_after_frame_k_sends_the_rest_mfm(void) {
     frames(in, 12, kinds, lens);
     /* The table as encoding only the first 3 leaves it: no encode after the budget may touch it. */
     static uint16_t tab3[PNET_LZ4_TABLE_ENTRIES];
+    memset(g_tab, 0x5A, sizeof g_tab);                    /* both packs start from the same table */
     CHECK_EQ_INT(pnet_pack(&g_pk, &MEM, true, in, 3, CAP), 3);
     CHECK_EQ_INT(g_pk.lz4, 3);
     memcpy(tab3, g_tab, sizeof tab3);
+    memset(g_tab, 0x5A, sizeof g_tab);
     memset(g_win, 0xAA, sizeof g_win);
     g_clk_mode = CLK_AFTER_K;
     g_clk_k = 3;
@@ -495,8 +535,9 @@ static void a_budget_spent_after_frame_k_sends_the_rest_mfm(void) {
     CHECK_EQ_INT(z, 3);
 }
 
-/* (c) The budget spent in the table clear: no frame is encoded, and the batch is the MFM-only builder's to the byte. */
-static void a_budget_spent_in_the_table_clear_sends_all_mfm(void) {
+/* (c) The budget spent before the first encode: no frame is encoded, and the batch is the MFM-only builder's to the
+ * byte. */
+static void a_budget_spent_before_the_first_encode_sends_all_mfm(void) {
     pnet_frame_ref_t in[12];
     int kinds[12];
     uint16_t lens[12];
@@ -506,9 +547,7 @@ static void a_budget_spent_in_the_table_clear_sends_all_mfm(void) {
         const size_t cap = k ? CAP_DD : CAP;
         g_clk_mode = CLK_AT_CLEAR;
         g_clk_reads = 0;
-        memset(g_tab, 0x5A, sizeof g_tab);
         const unsigned n = pnet_pack(&g_pk, &MEM_CLK, true, in, 12, cap);
-        CHECK_EQ_INT(g_clk_tab0, 0x5A5A);                  /* the clock started before the clear: it counts */
         CHECK_EQ_INT(g_pk.encodes, 0);
         CHECK_EQ_INT(g_pk.lz4, 0);
         CHECK(g_pk.budget, "the batch hit the budget");
@@ -519,6 +558,28 @@ static void a_budget_spent_in_the_table_clear_sends_all_mfm(void) {
         CHECK(a != 0 && a == b && memcmp(g_track, g_old, a) == 0, "the MFM-only track");
         CHECK(g_pk.f[0].data == g_win, "still laid in the window");
     }
+}
+
+/* Bench fix (c'): an ordinary compressible batch -- 12 x 1,300 B of text and HTML, 15,600 B of window -- at the bench's
+ * cost per byte (CLK_PER_BYTE: 312 us for all of it) stays inside the budget: every frame encoded, none unencoded. On
+ * seq 100 the table clear alone (584 us) spent it before the first encode. */
+static void an_ordinary_batch_stays_inside_the_budget(void) {
+    pnet_frame_ref_t in[12];
+    int kinds[12];
+    uint16_t lens[12];
+    for (unsigned i = 0; i < 12; i++) { kinds[i] = (int)(i % 2u ? LC_TEXT : LC_HTML); lens[i] = 1300; }
+    frames(in, 12, kinds, lens);
+    g_clk_mode = CLK_PER_BYTE;
+    g_clk_in = in;
+    g_clk_reads = 0;
+    memset(g_tab, 0x5A, sizeof g_tab);                    /* stale, as after any earlier batch */
+    const unsigned n = pnet_pack(&g_pk, &MEM_CLK, true, in, 12, CAP);
+    CHECK_EQ_INT(n, 12);
+    CHECK(!g_pk.budget, "the budget is not hit");
+    CHECK_EQ_INT(g_pk.unencoded, 0);
+    CHECK_EQ_INT(g_pk.encodes, 12);
+    CHECK(g_pk.lz4 >= 10, "text and HTML go LZ4");
+    CHECK(g_clk_reads > 12, "the clock was read at every frame");
 }
 
 int main(void) {
@@ -533,11 +594,13 @@ int main(void) {
     RUN(odd_frames_sit_at_even_offsets);
     RUN(a_match_over_the_pad_decodes_the_same);
     RUN(the_window_edge_counts_the_pads);
-    RUN(rebuilds_are_byte_identical);
-    RUN(the_table_is_cleared_only_for_frames);
+    RUN(the_pack_never_clears_the_table);
+    RUN(a_stale_table_still_decodes);
+    RUN(batches_back_to_back_without_a_clear_decode);
     RUN(the_driver_stops_asking_mid_session);
     RUN(a_budget_never_reached_changes_nothing);
     RUN(a_budget_spent_after_frame_k_sends_the_rest_mfm);
-    RUN(a_budget_spent_in_the_table_clear_sends_all_mfm);
+    RUN(a_budget_spent_before_the_first_encode_sends_all_mfm);
+    RUN(an_ordinary_batch_stays_inside_the_budget);
     return REPORT();
 }

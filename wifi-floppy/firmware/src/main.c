@@ -3131,7 +3131,7 @@ static uint32_t    g_pnet_heap_low = UINT32_MAX;
 // (flux_capture.c's mfm_buf, SRAM) -- pnet_lz4_decode's src must not overlap its window.
 static __uninitialized_psram("lz4txw") uint8_t  g_lz4_tx_win[PNET_LZ4_WINDOW];         // the batch out, back to back
 static __uninitialized_psram("lz4txb") uint8_t  g_lz4_tx_blk[PNET_LZ4_WINDOW];         // ...its LZ4 blocks
-static __uninitialized_psram("lz4tab") uint16_t g_lz4_table[PNET_LZ4_TABLE_ENTRIES];   // the 8 KB hash table
+static __uninitialized_psram("lz4tab") uint16_t g_lz4_table[PNET_LZ4_TABLE_ENTRIES];   // the 8 KB hash table (zeroed at boot)
 static __uninitialized_psram("lz4rxw") uint8_t  g_lz4_rx_win[PNET_LZ4_WINDOW];         // the Amiga's batch, decoded
 static __uninitialized_psram("lz4rxs") uint8_t  g_lz4_rx_scratch[PNET_LZ4_BLOCK_MAX];  // an MFM-wrapped block
 typedef struct {
@@ -3957,6 +3957,10 @@ int main(void) {
                  psram_check_address(&g_lz4_rx_win[PNET_LZ4_WINDOW - 1u]) &&
                  psram_check_address(&g_lz4_rx_scratch[PNET_LZ4_BLOCK_MAX - 1u]);
             g_lz4.ok = ok;
+            // The hash table is zeroed here, once (bench fix, seq 100: pnet_pack no longer clears it per batch).
+            // Any contents would be correct -- the encoder byte-verifies every candidate -- but 0 is position 0x8000
+            // once un-XORed (pnet_lz4.c), past any 16,128-byte window, so a zero entry is never even a candidate.
+            if (ok) memset(g_lz4_table, 0, sizeof g_lz4_table);
         }
         wf_logf(ok ? WF_INFO : WF_ERR, "pnet: lz4 %s",
                 ok ? "on (table 4096, 57 KB of PSRAM)"

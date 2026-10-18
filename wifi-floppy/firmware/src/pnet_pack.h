@@ -31,13 +31,12 @@ typedef struct {
 typedef struct {
     uint8_t  *win;           /* PNET_LZ4_WINDOW bytes: the batch's frames at even offsets (the blocks' window) */
     uint8_t  *blk;           /* PNET_LZ4_WINDOW bytes: the blocks back to back */
-    uint16_t *table;         /* entries x 16 bits, cleared at every LZ4 pack with frames: a rebuild is byte-identical */
+    uint16_t *table;         /* entries x 16 bits, never cleared by pnet_pack (any contents are valid: pnet_lz4.h) */
     unsigned  entries;
     uint32_t (*now_us)(void);  /* the microsecond clock for the LZ4 budget (the board: time_us_32); NULL: no budget */
 } pnet_pack_mem_t;
 
-/* Review I1 (controller's ruling): the LZ4 work one batch may take on core0's read path, the 8 KB table clear
- * included. Once it is spent, every remaining frame of the batch goes MFM without an encode attempt -- still copied
+/* Review I1 (controller's ruling): the LZ4 work one batch may take on core0's read path. Once it is spent, every remaining frame of the batch goes MFM without an encode attempt -- still copied
  * into m->win at its even offset, so the window the reader rebuilds is the same. */
 #define PNET_PACK_LZ4_BUDGET_US 500u
 
