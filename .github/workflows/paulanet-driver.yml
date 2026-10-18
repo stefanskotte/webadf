@@ -1,0 +1,26 @@
+name: paulanet-driver
+
+# webadf's PaulaNET.device variant (spec docs/superpowers/specs/2026-10-18-paulanet-lz4-design.md §4): the pinned
+# toolchain first rebuilds Rob's stock driver to its known bytes, then the variant to its pin, which must be the
+# committed binary the driver disk and the self-host image use. The vamos tests (test.sh) run on the Mac.
+on:
+  push:
+    paths: ['tools/paulanet-driver/**', 'third-party/paulanet/src/**', 'm68k/lz4/**', '.github/workflows/paulanet-driver.yml']
+  pull_request:
+    paths: ['tools/paulanet-driver/**', 'third-party/paulanet/src/**', 'm68k/lz4/**', '.github/workflows/paulanet-driver.yml']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: The toolchain rebuilds Rob's stock driver byte for byte
+        run: STOCK=1 tools/paulanet-driver/build.sh "$RUNNER_TEMP/stock.device"
+      - name: The variant builds to its pin
+        run: tools/paulanet-driver/build.sh "$RUNNER_TEMP/PaulaNET.device"
+      - name: The committed binary is that build
+        run: cmp "$RUNNER_TEMP/PaulaNET.device" tools/paulanet-driver/dist/PaulaNET.device
