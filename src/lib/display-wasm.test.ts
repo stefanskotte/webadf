@@ -9,7 +9,7 @@ describe('display wasm', () => {
   it('renders today’s 128x32 default byte-identically to the firmware golden', async () => {
     const w = await loadDisplayWasm(await wasmBytes());
     const fb = w.render({ status: 'loaded', bars: 3, title: 'Workbench 3.1 Install', detail: 'disk 1 of 6',
-      showTrack: true, cyl: 0, maxCyl: 79, pct: -1, tick: 0, writable: true, sync: 'synced', nfc: 'armed' }, 0, null);
+      showTrack: true, side: 1, cyl: 0, maxCyl: 79, pct: -1, tick: 0, writable: true, sync: 'synced', nfc: 'armed' }, 0, null);
     const golden = await readFile('wifi-floppy/firmware/test/fixtures/display_golden/mounted_w_t0.fb');
     expect(fb.length).toBe(1024);
     expect(Buffer.from(fb.subarray(0, 512)).equals(golden)).toBe(true);
@@ -34,7 +34,7 @@ describe('display wasm', () => {
   it('renders a custom 128x64 fixture and a fresh blob from defaultBlob', async () => {
     const w = await loadDisplayWasm(await wasmBytes());
     const st = { status: 'ready' as const, bars: 2, title: 'x'.repeat(60), detail: 'y'.repeat(40),
-      showTrack: false, cyl: 0, maxCyl: 79, pct: -1, tick: 0, writable: false, sync: 'offline' as const, nfc: 'absent' as const };
+      showTrack: false, side: 0 as const, cyl: 0, maxCyl: 79, pct: -1, tick: 0, writable: false, sync: 'offline' as const, nfc: 'absent' as const };
     const a = w.render(st, 1, null);
     const b = w.render(st, 1, w.defaultBlob(1));
     expect(Buffer.from(a).equals(Buffer.from(b))).toBe(true);
@@ -59,7 +59,7 @@ describe('display wasm', () => {
       const base = decodeLayout(w.defaultBlob(panel));
       const blob = encodeLayout({ ...base, elements: [...base.elements, { id: 'nfc', visible: true, scale, x, y, w: 0, opt: 0 }] });
       expect(w.validate(blob)).toBeNull();
-      const fb = w.render({ status: 'loaded', bars: 3, title: 'Turrican', detail: '1/2', showTrack: true,
+      const fb = w.render({ status: 'loaded', bars: 3, title: 'Turrican', detail: '1/2', showTrack: true, side: 0,
         cyl: 12, maxCyl: 79, pct: -1, tick: 0, writable: true, sync: 'synced', nfc }, panel, blob);
       const golden = await readFile(`wifi-floppy/firmware/test/fixtures/display_golden/${name}.fb`);
       const rows = panel === 1 ? 1024 : 512;
@@ -95,7 +95,7 @@ describe('display wasm', () => {
         const base = decodeLayout(w.defaultBlob(panel));
         const blob = encodeLayout({ ...base, elements: base.elements.map((e) => (e.id === 'status' ? { ...e, opt: 1 } : e)) });
         expect(w.validate(blob)).toBeNull();
-        const fb = w.render({ status: 'ready', bars: 3, title: '', detail: '', showTrack: false, cyl: 0, maxCyl: 79,
+        const fb = w.render({ status: 'ready', bars: 3, title: '', detail: '', showTrack: false, side: 0, cyl: 0, maxCyl: 79,
           pct: -1, tick: 0, writable: false, sync: 'synced', nfc: 'absent', ...over }, panel, blob);
         const golden = await readFile(`wifi-floppy/firmware/test/fixtures/display_golden/${name}_${panel ? '64' : '32'}.fb`);
         const rows = panel === 1 ? 1024 : 512;
@@ -105,9 +105,61 @@ describe('display wasm', () => {
     }
   }
 
+  // The head element (firmware 1.17.0), "cylinder.side": test_display_golden.c's
+  // HEAD_GOLDENS, from the default with track hidden and head added by the web encoder.
+  for (const [name, panel, x, y, scale, cyl, side] of [
+    ['head_40_1_32', 0, 104, 24, 1, 40, 1],
+    ['head_05_0_32', 0, 104, 24, 1, 5, 0],
+    ['head_79_1_2x_64', 1, 80, 46, 2, 79, 1],
+  ] as const) {
+    it(`renders ${name} byte-identically to the firmware golden`, async () => {
+      const w = await loadDisplayWasm(await wasmBytes());
+      const base = decodeLayout(w.defaultBlob(panel));
+      const blob = encodeLayout({ ...base, elements: [
+        ...base.elements.map((e) => (e.id === 'track' ? { ...e, visible: false } : e)),
+        { id: 'head', visible: true, scale, x, y, w: 0, opt: 0 },
+      ] });
+      expect(w.validate(blob)).toBeNull();
+      const fb = w.render({ status: 'loaded', bars: 3, title: 'Workbench 3.1 Install', detail: 'disk 1 of 6', showTrack: true,
+        side, cyl, maxCyl: 79, pct: -1, tick: 0, writable: true, sync: 'synced', nfc: 'absent' }, panel, blob);
+      const golden = await readFile(`wifi-floppy/firmware/test/fixtures/display_golden/${name}.fb`);
+      const rows = panel === 1 ? 1024 : 512;
+      expect(golden.length).toBe(rows);
+      expect(Buffer.from(fb.subarray(0, rows)).equals(golden)).toBe(true);
+    });
+  }
+
+  // Rotation (firmware 1.17.0): the board turns its glass in the controller;
+  // the preview comes back turned, equal to test_oled_rotation.c's model of
+  // that glass on both panels.
+  for (const [name, panel] of [['rot180_32', 0], ['rot180_64', 1]] as const) {
+    it(`renders a 180-degree layout as the turned glass, ${name}`, async () => {
+      const w = await loadDisplayWasm(await wasmBytes());
+      const st = { status: 'loaded' as const, bars: 3, title: 'Workbench 3.1 Install', detail: 'disk 1 of 6', showTrack: true,
+        side: 0 as const, cyl: 40, maxCyl: 79, pct: -1, tick: 0, writable: true, sync: 'synced' as const, nfc: 'absent' as const };
+      const blob = encodeLayout({ ...decodeLayout(w.defaultBlob(panel)), rotation: 180 });
+      expect(w.validate(blob)).toBeNull();
+      const fb = w.render(st, panel, blob);
+      const golden = await readFile(`wifi-floppy/firmware/test/fixtures/display_golden/${name}.fb`);
+      const rows = panel === 1 ? 1024 : 512;
+      expect(Buffer.from(fb.subarray(0, rows)).equals(golden)).toBe(true);
+      // ...and unrotated it is the plain default, so only the record turned it.
+      const up = w.render(st, panel, w.defaultBlob(panel));
+      expect(Buffer.from(up).equals(Buffer.from(fb))).toBe(false);
+      expect(Buffer.from(w.render(st, panel, null)).equals(Buffer.from(up))).toBe(true);
+    });
+  }
+
+  it('refuses a rotation other than 0 or 180 with the C reason', async () => {
+    const w = await loadDisplayWasm(await wasmBytes());
+    const b = encodeLayout({ ...decodeLayout(w.defaultBlob(0)), rotation: 180 });
+    b[b.length - 3] = 1;   // 90 degrees
+    expect(w.validate(b)).toMatch(/rotation/);
+  });
+
   it('the defaults never draw the NFC icon, whatever the reader state', async () => {
     const w = await loadDisplayWasm(await wasmBytes());
-    const st = { status: 'loaded' as const, bars: 3, title: 'A', detail: '', showTrack: true, cyl: 1, maxCyl: 79,
+    const st = { status: 'loaded' as const, bars: 3, title: 'A', detail: '', showTrack: true, side: 0 as const, cyl: 1, maxCyl: 79,
       pct: -1, tick: 0, writable: true, sync: 'synced' as const };
     for (const panel of [0, 1] as const) {
       const a = w.render({ ...st, nfc: 'absent' }, panel, null);

@@ -15,6 +15,7 @@ const STATUS_MAX_CHARS = 8; // "DOWNLOAD"
 const STATUS_ICON_W = 8;    // STATUS_ICON_W: the icon in place of the word (opt 1)
 const TRACK_MAX_CHARS = 5;  // "99/99"
 const PCT_MAX_CHARS = 4;    // "100%"
+const HEAD_MAX_CHARS = 4;   // "79.1": the head element, cylinder.side (1.17.0)
 
 export interface Box { x: number; y: number; w: number; h: number }
 
@@ -32,6 +33,7 @@ export function elementSize(e: ElementJson): { w: number; h: number } {
     case 'write': w = 8; break;
     case 'lemming': w = 8; break;
     case 'nfc': w = 8; break;
+    case 'head': w = HEAD_MAX_CHARS * ADVANCE; break;
     case 'title': w = e.w; h = LINE_H * (e.opt ? e.opt : 1); break;
     case 'detail': w = e.w; break;
     case 'track': w = TRACK_MAX_CHARS * ADVANCE; break;
@@ -94,6 +96,7 @@ function intersects(a: Box, b: Box): boolean {
  * bar for download. display.c right_text() with the widest string.
  */
 function textMinLeft(o: ElementJson): number {
+  if (o.id === 'head') return o.x;   // left-aligned, always four characters
   const s = o.scale === 2 ? 2 : 1;
   return o.id === 'download' && o.w ? o.x + (o.w + 2) * s : o.x;
 }
@@ -127,7 +130,7 @@ function detailClipped(detail: ElementJson, o: ElementJson): boolean {
 function resolvedByRenderer(a: ElementJson, b: ElementJson): boolean {
   const ids = new Set([a.id, b.id]);
   if (ids.has('track') && ids.has('download')) return true;
-  if (ids.has('detail') && (ids.has('track') || ids.has('download'))) {
+  if (ids.has('detail') && (ids.has('track') || ids.has('download') || ids.has('head'))) {
     return a.id === 'detail' ? detailClipped(a, b) : detailClipped(b, a);
   }
   return false;
@@ -147,6 +150,27 @@ export function overlapping(elements: readonly ElementJson[]): Set<number> {
     }
   }
   return out;
+}
+
+/**
+ * A panel turned 180 degrees (firmware 1.17.0) shows the layout point-
+ * reflected: what sits at layout (x, y) is drawn at screen (128 - x, rows - y),
+ * corner for corner. The preview canvas is the screen; these convert between
+ * the two so outlines, hit-tests and drags follow what is drawn.
+ */
+export function screenBox(b: Box, rows: number, rotation: 0 | 180 | undefined): Box {
+  if (rotation !== 180) return b;
+  return { x: PANEL_W - b.x - b.w, y: rows - b.y - b.h, w: b.w, h: b.h };
+}
+
+/** A screen point (panel pixels, fractional) as a layout point. */
+export function toLayoutPoint(x: number, y: number, rows: number, rotation: 0 | 180 | undefined): { x: number; y: number } {
+  return rotation === 180 ? { x: PANEL_W - x, y: rows - y } : { x, y };
+}
+
+/** A drag on the screen as a move in the layout: reversed when turned. */
+export function toLayoutDelta(dx: number, dy: number, rotation: 0 | 180 | undefined): { dx: number; dy: number } {
+  return rotation === 180 ? { dx: -dx, dy: -dy } : { dx, dy };
 }
 
 /** The device fields statusLine reads (a structural slice of DeviceListItem). */

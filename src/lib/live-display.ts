@@ -27,8 +27,10 @@ export const NO_DISK_WORD_FW = '1.15.0';
  * else the uploaded file name, else nothing).
  *
  * Not drawn, because the server never hears them: download progress, the
- * track the head is on, an NFC tap's line. The track is left off rather than
- * shown as a made-up cylinder.
+ * track the head is on (the counter and the 'head' element's cylinder.side),
+ * an NFC tap's line. The track is left off rather than shown as a made-up
+ * cylinder. A layout turned 180 degrees IS drawn turned: display.wasm reads
+ * the rotation from the saved blob, as the board does.
  */
 export interface LiveDisplayFields {
   rssi: number | null;
@@ -65,7 +67,7 @@ export function rssiBars(rssi: number | null): number {
 export function liveDisplayState(d: LiveDisplayFields, online: boolean, tick: number): PreviewState {
   const base: PreviewState = {
     status: 'ready', bars: online ? rssiBars(d.rssi) : -1, title: 'No disk', detail: '',
-    showTrack: false, cyl: 0, maxCyl: 79, pct: -1, tick, writable: false,
+    showTrack: false, side: 0, cyl: 0, maxCyl: 79, pct: -1, tick, writable: false,
     // An unreachable board's uploads are not reaching the server either.
     sync: online ? 'synced' : 'offline',
     // Present or absent as the board last said. Not 'armed': the server knows

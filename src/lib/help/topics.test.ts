@@ -54,6 +54,16 @@ describe('help topics say what the app really does', () => {
     expect(b).toMatch(/every browser/);
     expect(b).toMatch(/collection keeps its own order/);
   });
+  it('display names the turn, the head position and the firmware both need (1.17.0)', () => {
+    const t = bodyText('display');
+    expect(t).toMatch(/Rotation/);
+    expect(t).toMatch(/180°/);
+    expect(t).toMatch(/upside down/);
+    expect(t).toMatch(/\bhead\b/);
+    expect(t).toMatch(/40\.1/);
+    expect(t).toMatch(/cylinder/);
+    expect(t).toMatch(/1\.17\.0/);
+  });
   it('nfc names the tag type that works (MIFARE Classic; NTAG stickers are refused)', () => {
     expect(HELP_TOPICS.nfc.short + bodyText('nfc')).toMatch(/MIFARE Classic/);
   });

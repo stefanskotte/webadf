@@ -5,7 +5,10 @@
 export type PanelId = 0 | 1;
 export interface PreviewState {
   status: 'boot' | 'portal' | 'wifi' | 'ready' | 'download' | 'verify' | 'loaded' | 'error';
-  bars: number; title: string; detail: string; showTrack: boolean; cyl: number; maxCyl: number;
+  bars: number; title: string; detail: string; showTrack: boolean;
+  /** The head's side, for the 'head' element's "40.1" (display.h display_state_t.side, 1.17.0). */
+  side: 0 | 1;
+  cyl: number; maxCyl: number;
   pct: number; tick: number; writable: boolean; sync: 'synced' | 'pending' | 'offline';
   /** The tag reader, for the 'nfc' element (display.h disp_nfc_t). */
   nfc: 'absent' | 'present' | 'armed';
@@ -13,7 +16,8 @@ export interface PreviewState {
 export interface DisplayWasm {
   /** null when valid, else the C validator's reason. */
   validate(blob: Uint8Array): string | null;
-  /** 1024-byte framebuffer (SSD1306 page layout) for `blob` (null = the panel's default). */
+  /** 1024-byte framebuffer (SSD1306 page layout) for `blob` (null = the panel's default).
+   *  A blob turned 180 degrees (its rotation record) comes back turned, as the glass shows it. */
   render(state: PreviewState, panel: PanelId, blob: Uint8Array | null): Uint8Array;
   defaultBlob(panel: PanelId): Uint8Array;
 }
@@ -25,11 +29,12 @@ const NFC = ['absent', 'present', 'armed'] as const;
 // display_state_t on wasm32 (int/enum 4 bytes, bool 1): title[43], detail[22].
 // The C side reports its own offsets (state_off); the loader refuses to run if
 // they disagree with this table.
+// `side` (1.17.0) is a byte in what was padding after show_track: no other offset moved.
 const OFF = {
   status: 0, bars: 4, title: 8, detail: 51, showTrack: 73, cyl: 76, maxCyl: 80,
-  pct: 84, tick: 88, writable: 92, sync: 96, nfc: 100,
+  pct: 84, tick: 88, writable: 92, sync: 96, nfc: 100, side: 74,
 } as const;
-const FIELD_ORDER = ['status', 'bars', 'title', 'detail', 'showTrack', 'cyl', 'maxCyl', 'pct', 'tick', 'writable', 'sync', 'nfc'] as const;
+const FIELD_ORDER = ['status', 'bars', 'title', 'detail', 'showTrack', 'cyl', 'maxCyl', 'pct', 'tick', 'writable', 'sync', 'nfc', 'side'] as const;
 export const STATE_SIZE = 104;
 const TITLE_CAP = 43;
 const DETAIL_CAP = 22;
@@ -114,6 +119,7 @@ async function instantiate(buf: ArrayBuffer): Promise<DisplayWasm> {
       putStr(base + OFF.title, TITLE_CAP, state.title);
       putStr(base + OFF.detail, DETAIL_CAP, state.detail);
       dv.setUint8(base + OFF.showTrack, state.showTrack ? 1 : 0);
+      dv.setUint8(base + OFF.side, state.side ? 1 : 0);
       dv.setInt32(base + OFF.cyl, state.cyl, true);
       dv.setInt32(base + OFF.maxCyl, state.maxCyl, true);
       dv.setInt32(base + OFF.pct, state.pct, true);

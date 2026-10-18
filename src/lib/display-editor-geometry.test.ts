@@ -1,6 +1,8 @@
 import { describe, it, expect } from 'vitest';
 import { readFile } from 'node:fs/promises';
-import { elementSize, hitTest, placeElement, overlapping, statusLine } from './display-editor-geometry';
+import {
+  elementSize, hitTest, placeElement, overlapping, statusLine, screenBox, toLayoutPoint, toLayoutDelta,
+} from './display-editor-geometry';
 import { decodeLayout, type ElementJson } from './display-layout';
 import { loadDisplayWasm } from './display-wasm';
 
@@ -19,6 +21,8 @@ describe('elementSize mirrors layout_el_size', () => {
     expect(elementSize(el({ id: 'nfc' }))).toEqual({ w: 8, h: 8 });
     expect(elementSize(el({ id: 'nfc', scale: 2 }))).toEqual({ w: 16, h: 16 });
     expect(elementSize(el({ id: 'track' }))).toEqual({ w: 30, h: 8 });
+    expect(elementSize(el({ id: 'head' }))).toEqual({ w: 24, h: 8 });               // "40.1" (1.17.0)
+    expect(elementSize(el({ id: 'head', scale: 2 }))).toEqual({ w: 48, h: 16 });
   });
   it('title is w by 8 per line, detail w by 8, download bar + 2 + four chars', () => {
     expect(elementSize(el({ id: 'title', w: 100, opt: 2 }))).toEqual({ w: 100, h: 16 });
@@ -121,6 +125,41 @@ describe('overlapping (Ruling L: only what the renderer does not resolve)', () =
       el({ id: 'lemming', x: 2, y: 2, visible: false }),
     ];
     expect(overlapping(els).size).toBe(0);
+  });
+});
+
+describe('the head element beside the detail (1.17.0)', () => {
+  it('detail left of the head on its row is resolved: detail is clipped before it', () => {
+    expect(overlapping([el({ id: 'detail', y: 24, w: 128 }), el({ id: 'head', x: 104, y: 24 })]).size).toBe(0);
+  });
+  it('the head over the track counter or the title is a real overlap', () => {
+    expect(overlapping([el({ id: 'track', x: 98, y: 24 }), el({ id: 'head', x: 104, y: 24 })])).toEqual(new Set([0, 1]));
+    expect(overlapping([el({ id: 'title', y: 8, w: 128, opt: 2 }), el({ id: 'head', x: 0, y: 16 })])).toEqual(new Set([0, 1]));
+  });
+  it('a detail starting right of the head is flagged (the clip does not apply)', () => {
+    expect(overlapping([el({ id: 'detail', x: 110, y: 24, w: 18 }), el({ id: 'head', x: 104, y: 24 })]).size).toBe(2);
+  });
+});
+
+describe('a panel turned 180 degrees (1.17.0): screen <-> layout coordinates', () => {
+  it('an upright panel maps one to one', () => {
+    expect(screenBox({ x: 10, y: 2, w: 30, h: 8 }, 32, 0)).toEqual({ x: 10, y: 2, w: 30, h: 8 });
+    expect(toLayoutPoint(12.5, 3, 32, 0)).toEqual({ x: 12.5, y: 3 });
+    expect(toLayoutDelta(4, -2, 0)).toEqual({ dx: 4, dy: -2 });
+  });
+  it('turned, a box lands at the opposite corner, the same size', () => {
+    expect(screenBox({ x: 0, y: 0, w: 11, h: 8 }, 32, 180)).toEqual({ x: 117, y: 24, w: 11, h: 8 });
+    expect(screenBox({ x: 98, y: 24, w: 30, h: 8 }, 64, 180)).toEqual({ x: 0, y: 32, w: 30, h: 8 });
+  });
+  it('turned, a point on the screen is the reflected point in the layout, and hits what is drawn there', () => {
+    const wifi = el({ id: 'wifi' });                       // drawn at screen 117..127 x 24..31 when turned
+    const p = toLayoutPoint(120, 26, 32, 180);
+    expect(p).toEqual({ x: 8, y: 6 });
+    expect(hitTest([wifi], p.x, p.y)).toBe(0);
+    expect(hitTest([wifi], toLayoutPoint(2, 2, 32, 180).x, toLayoutPoint(2, 2, 32, 180).y)).toBe(-1);
+  });
+  it('turned, dragging right moves the element left in the layout', () => {
+    expect(toLayoutDelta(4, -2, 180)).toEqual({ dx: -4, dy: 2 });
   });
 });
 
