@@ -41,8 +41,11 @@ struct WlTx { UBYTE *win; ULONG pos; UBYTE *out; UWORD *table; ULONG entries; BO
 
 /* The upload hash table for this CPU: 0 (68000/68010: no LZ4 upload), 1,024 (68020/68030), 4,096 (68040 and up). */
 ULONG wl_table_entries(UWORD attnFlags);
-/* One allocation for both halves on this CPU (any memory, long aligned). */
+/* One allocation for both halves on this CPU (any memory, long aligned). Not in the lowest 64 KB: lz4_68k.h sends every
+ * block whose window lies below $10000 through the decoder's slow checked loop (an A500's chip RAM starts there). */
 ULONG wl_mem_bytes(UWORD attnFlags);
+/* The upload hash table needs no clearing, at open or per batch: the encoder verifies every entry before it uses one,
+ * so clearing 8 KB on a 68040 every batch would only cost time. */
 void  wl_init(struct WlRx *rx, struct WlTx *tx, UBYTE *mem, UWORD attnFlags);
 /* A frame's bytes on the wire from its size word: 2n for 0xC000|n, else size & 0x7FFF (Rob's rule). */
 UWORD wl_wire_bytes(UWORD field);
@@ -50,11 +53,15 @@ void  wl_rx_begin(struct WlRx *rx);   /* a new batch from the board: the window 
 void  wl_rx_break(struct WlRx *rx);   /* a frame decoded outside the window (Rob's raw RLE): no LINK past it */
 /* One frame of a board -> Amiga batch whose size word has bit 15 set: MFM, or (0xC000) an MFM-encoded LZ4 block.
  * `wire` must be word aligned (it is: Rob's receive walks the payload as UWORD *pkt, and every frame's wire length is
- * even). Decoded into the window; returns the frame's orig bytes, or 0 (drop it) when it does not decode. */
+ * even). Decoded into the window; returns the frame's orig bytes, or 0 (drop it) when it does not decode. Stricter than
+ * Rob's receive on plain MFM frames too: orig 0, orig over 1,518 or a size word under 2 x orig is dropped (he would
+ * hand the callback a clamped or partly stale frame); a correct board never sends one. */
 const UBYTE *wl_rx_frame(struct WlRx *rx, UWORD field, const UBYTE *wire, UWORD orig);
 /* A new batch toward the board: LZ4 on when this CPU has a table and status byte 155 has WL_ST_LZ4_IN. */
 void  wl_tx_begin(struct WlTx *tx, UBYTE statusReserved);
-/* After Rob's RLE of one frame (rleLen bytes at body): the frame joins the window; returns the length of an LZ4 block
+/* Call it only after Rob's space and packet-count checks have taken the frame into this batch: once a frame joins the
+ * window it must go in this batch, or the board's window and this one no longer agree.
+ * After Rob's RLE of one frame (rleLen bytes at body): the frame joins the window; returns the length of an LZ4 block
  * now at body (shorter than rleLen, padded to even with a 0, no zero run over WL_ZERO_RUN_MAX pad included), or 0:
  * keep the RLE. */
 UWORD wl_tx_frame(struct WlTx *tx, const UBYTE *data, UWORD len, UBYTE *body, UWORD rleLen);

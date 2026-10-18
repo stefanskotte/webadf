@@ -48,6 +48,7 @@ for cpu in 68000 68020 68040; do
     echo "FAIL: $cpu (want RESULT: PASS and upload table $table)"; tail -25 "$out/drvtest-$cpu.txt"; fail=1
   fi
 done
+[ -n "${NO_TRACE:-}" ] && exit $fail                     # NO_TRACE=1: the three runs only (mutation runs)
 # The memory trace: the 68000 run (the download half, the board's packer and encoder) and the 68020 run (the upload
 # half too, and the board's LZ4 decoder with its libnix memcpy literal copies at any address) -- one binary, so an odd
 # access the 68020 forgives would be an address error on a 68000.
