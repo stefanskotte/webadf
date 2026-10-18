@@ -1,5 +1,6 @@
-; Install -- puts Rob Smith's PaulaNET.device in place for a TCP/IP stack,
-; and webadf's Receive in SYS:Tools (with its icon) and C:.
+; Install -- puts PaulaNET.device (webadf's LZ4 build of Rob Smith's
+; driver) in place for a TCP/IP stack, and webadf's Receive in SYS:Tools
+; (with its icon) and C:.
 ; From webadf (https://github.com/stefanskotte/webadf). Safe to run more
 ; than once: the driver and Receive are copied again, and an existing eth0
 ; is never changed.

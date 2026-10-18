@@ -4,7 +4,7 @@ ever land on the network cylinders. Usage: check.py <disk.adf> <listing.txt>
 (listing = `xdftool <disk> list` output). Prints PASS lines; exits 1 on a failure."""
 import struct, sys
 
-WANT = {'PaulaNET.device': 13872, 'PaulaNET Config': 55536, 'Install': None, 'Install.info': None,
+WANT = {'PaulaNET.device': None, 'PaulaNET Config': 55536, 'Install': None, 'Install.info': None,
         'ReadMe': None, 'ReadMe.info': None, 'Receive': None, 'Receive.info': None, 'disk.info': 364}
 
 disk = open(sys.argv[1], 'rb').read()
