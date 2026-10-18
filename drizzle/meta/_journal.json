@@ -309,6 +309,13 @@
       "when": 1792351764539,
       "tag": "0043_user_prefs",
       "breakpoints": true
+    },
+    {
+      "idx": 44,
+      "version": "7",
+      "when": 1792357035964,
+      "tag": "0044_i2c_addrs",
+      "breakpoints": true
     }
   ]
 }

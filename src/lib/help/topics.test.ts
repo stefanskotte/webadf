@@ -57,6 +57,12 @@ describe('help topics say what the app really does', () => {
   it('nfc names the tag type that works (MIFARE Classic; NTAG stickers are refused)', () => {
     expect(HELP_TOPICS.nfc.short + bodyText('nfc')).toMatch(/MIFARE Classic/);
   });
+  it('nfc explains the reader line on the board card (fw 1.17.0 boot scan: 0x28, PN532 not supported)', () => {
+    const b = bodyText('nfc');
+    expect(b).toMatch(/0x28/);
+    expect(b).toMatch(/PN532/);
+    expect(b).toMatch(/1\.17\.0/);
+  });
   it('boards gives the setup network password and the Update + password step', () => {
     const b = bodyText('boards');
     expect(b).toMatch(/wififloppy/);

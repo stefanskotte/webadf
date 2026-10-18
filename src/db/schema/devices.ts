@@ -121,6 +121,9 @@ export const devices = pgTable('devices', {
   // 'present' | 'absent' as the board last reported; NULL = a board that has
   // never said (older firmware).
   nfcReader: text('nfc_reader'),
+  // The boot I2C scan (fw 1.17.0, migration 0044): the addresses that answered on i2c1, at most eight, [] for
+  // none. NULL = a board that sends no scan (older firmware, or a reverted trial boot). src/lib/i2c-scan.ts.
+  i2cAddrs: integer('i2c_addrs').array(),
   // The write request (spec §5.3): a cursor the board echoes as ?nfcAck=,
   // never a flag -- a cancel and a retry are both just the next seq.
   nfcWriteSeq: integer('nfc_write_seq').notNull().default(0),

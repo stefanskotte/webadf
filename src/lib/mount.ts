@@ -330,6 +330,8 @@ export async function recordStatus(
     playsHd?: boolean;
     /** Whether the Si512 reader answered its init on the board's last check (spec §5). */
     nfcReader?: 'present' | 'absent';
+    /** The boot I2C scan (fw 1.17.0+): the addresses that answered on i2c1, [] for none. */
+    i2c?: number[];
     /** What the board's idle slot holds (multi-disk spec §3.5). */
     preload?: { sha256: string; state: 'loading' | 'ready' } | null;
     /** The build renders per-board layouts (OLED layouts, 1.7.0+). */
@@ -447,6 +449,10 @@ export async function recordStatus(
   // legacy default" case here -- a report that omits it simply has nothing
   // new to say about the reader.
   if (s.nfcReader !== undefined) patch.nfcReader = s.nfcReader;
+  // Build-bound (the playsHd rule): a report naming its firmware without a scan is a build that does not send
+  // one (older, or a reverted trial boot), and the card must not keep a newer build's list.
+  if (s.i2c !== undefined) patch.i2cAddrs = s.i2c;
+  else if (s.firmwareVersion !== undefined) patch.i2cAddrs = null;
   if (s.updateProtocol !== undefined) patch.updateProtocol = s.updateProtocol;
   if (s.firmwareUpdateState !== undefined) patch.firmwareUpdateState = s.firmwareUpdateState;
   if (s.firmwareUpdateError !== undefined) patch.firmwareUpdateError = s.firmwareUpdateError;

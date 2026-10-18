@@ -340,3 +340,20 @@ test('reporting a DIFFERENT version leaves the update pending', async ({ page, r
   const row = await deviceRow(deviceId);
   expect(row.desiredFirmwareVersion).toBe('9.9.9+gfeedface');
 });
+
+// The boot I2C scan (fw 1.17.0): stored as sent, dropped -- never a 400 -- when malformed, and cleared by a
+// report from a build that sends none.
+test('the boot I2C scan is stored, a malformed one dropped, and an older build clears it', async ({ page, request }) => {
+  await signUpFresh(page);
+  const { deviceId, token } = await pairDevice(page, request);
+  const post = (data: object) => request.post('/api/device/status', { headers: authHeader(token), data });
+
+  expect((await post({ mountedSha256: null, firmwareVersion: '1.17.0+ge2e', nfcReader: 'absent', i2c: [0x3c] })).status()).toBe(204);
+  expect((await deviceRow(deviceId)).i2cAddrs).toEqual([60]);
+
+  expect((await post({ mountedSha256: null, i2c: [0x78, 40] })).status()).toBe(204);
+  expect((await deviceRow(deviceId)).i2cAddrs).toEqual([60]);
+
+  expect((await post({ mountedSha256: null, firmwareVersion: '1.16.0+ge2e' })).status()).toBe(204);
+  expect((await deviceRow(deviceId)).i2cAddrs).toBeNull();
+});

@@ -1,0 +1,1 @@
+ALTER TABLE "devices" ADD COLUMN "i2c_addrs" integer[];

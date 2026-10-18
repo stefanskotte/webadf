@@ -1071,6 +1071,10 @@ static nfc_report_t    g_nfc_report;   // core1 only: the write report owed the 
 // and a PRESENT overwritten by a tap before core1 looked would leave the
 // server believing "absent" (or nothing) for as long as the chip stayed.
 static volatile int   g_nfc_reader;
+// The boot I2C scan's record (i2c_scan.h): written once by core0's init, before
+// core1 is launched, and only read after -- by the status report (dc_set_i2c_scan).
+// Never rescanned: the OLED and the tag reader share i2c1.
+static i2c_scan_t     g_i2c_scan;
 
 /** core1, from inside tls_read's wait while a poll is held: cut the poll
  *  short, a tap is waiting (device_client.h). One load. */
@@ -2101,6 +2105,7 @@ static void core1_main(void) {
         // HD spec §5.5: this build can play HD only if the drive-ID responder
         // is in it. After dc_init, which zeroes the struct.
         dc_set_plays_hd(&c, WF_DRIVE_ID != 0);
+        dc_set_i2c_scan(&c, &g_i2c_scan);   // what answered on i2c1 at boot ("i2c" in every status report)
         // OLED layouts: the display cursor. dc_init zeroes it; the first entry
         // after boot resumes from the stored record's version, so a layout
         // already on the glass is not fetched again. A re-entry is a re-pair:
@@ -4045,7 +4050,7 @@ int main(void) {
         // what touches the bus, and it stays gated on g_panel_addr.
         display_init(&g_disp, panel_blit, NULL);
         uint8_t panel = 0;
-        i2c_probe_bus(&panel);
+        i2c_probe_bus(&panel, &g_i2c_scan);
         // Only when a panel actually answered: a missing display must cost
         // nothing, and must certainly not put bounded-but-real bus writes in
         // front of a board that is trying to boot.

@@ -26,7 +26,7 @@ static const char *known(uint8_t addr) {
     return "";
 }
 
-int i2c_probe_bus(uint8_t *panel_addr) {
+int i2c_probe_bus(uint8_t *panel_addr, i2c_scan_t *scan) {
     uint8_t panel = 0;
     i2c_init(board_i2c(), PROBE_HZ);
     gpio_set_function(PIN_I2C_SDA, GPIO_FUNC_I2C);
@@ -46,6 +46,7 @@ int i2c_probe_bus(uint8_t *panel_addr) {
         if (i2c_read_timeout_us(board_i2c(), a, &discard, 1, false, PROBE_TIMEOUT_US) >= 0) {
             wf_logf(WF_INFO, "i2c1: device at 0x%02x%s", a, known(a));
             if (panel == 0 && (a == 0x3c || a == 0x3d)) panel = a;
+            if (scan) i2c_scan_add(scan, a);
             found++;
         }
     }
@@ -58,6 +59,7 @@ int i2c_probe_bus(uint8_t *panel_addr) {
                 "check SDA/SCL, 3V3 on pin 36, GND on pin 23",
                 PIN_I2C_SDA, PIN_I2C_SCL);
     }
+    if (scan) i2c_scan_done(scan);
     if (panel_addr) *panel_addr = panel;
     return found;
 }
