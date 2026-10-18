@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   adfSendName, canCancel, canRetry, cardSendLine, clearableCount, orderQueue, failureText, formatSize, longOffline, offlineFor, orderTargets,
-  pickTarget, receiverLine, receiverRunning, sendErrorText, targetState, transferState,
+  pickTarget, receiverLine, receiverRunning, sendErrorText, stateChip, targetState, transferState,
   type SendTarget, type TransferView,
 } from './send-ui';
 
@@ -13,6 +13,25 @@ const t = (over: Partial<SendTarget> = {}): SendTarget => ({
 const row = (over: Partial<TransferView> = {}): TransferView => ({
   id: 'x', path: 'Café.lha', sizeBytes: 1000, status: 'queued', bytesSent: 0, savedAs: null, errorCode: null,
   errorText: null, createdAt: NOW, finishedAt: null, ...over,
+});
+
+describe('the state chip', () => {
+  const rows = [
+    row(), row({ status: 'sending', bytesSent: 500 }), row({ status: 'delivered', savedAs: 'Café_2.lha' }), row({ status: 'delivered' }),
+    row({ status: 'failed', errorCode: 'space' }), row({ status: 'cancelled' }), row({ status: 'expired' }),
+  ];
+  it('reads back as exactly the state\'s words, so the page text does not change', () => {
+    for (const r of rows) {
+      const c = stateChip(r);
+      const rest = [c.note, c.path].filter(Boolean).join(' ');
+      expect(rest ? `${c.label} · ${rest}` : c.label).toBe(transferState(r).text);
+    }
+  });
+  it('gives waiting, sending, delivered and failed their own colour', () => {
+    expect(rows.map((r) => stateChip(r).kind)).toEqual(['amber', 'blue', 'green', 'green', 'red', 'neutral', 'red']);
+    expect(stateChip(rows[2]).path).toBe('Café_2.lha');
+    expect(stateChip(rows[3]).path).toBe('Café.lha');
+  });
 });
 
 describe('transfer states, each in words', () => {
