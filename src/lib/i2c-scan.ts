@@ -35,7 +35,7 @@ export function describeI2cScan(nfcReader: 'present' | 'absent' | null, addrs: n
   const at = addrs.includes(NFC_READER_ADDR);
   if (nfcReader === 'present') return { ok: true, line: at ? `NFC reader at ${hex(NFC_READER_ADDR)}` : 'NFC reader found', seen: null };
   const line = at
-    ? `No working NFC reader — a device answers at ${hex(NFC_READER_ADDR)} but did not start`
+    ? `No working NFC reader — a device answered at ${hex(NFC_READER_ADDR)} at boot, but the reader is not responding`
     : `No NFC reader found — nothing at ${hex(NFC_READER_ADDR)}`;
   const seen = addrs.length === 0 ? 'Nothing on the I2C bus' : `I2C devices seen: ${addrs.map(nameI2cAddr).join(', ')}`;
   return { ok: false, line, seen };

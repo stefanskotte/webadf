@@ -56,9 +56,9 @@ describe('describeI2cScan', () => {
       seen: 'I2C devices seen: 0x24 (a PN532 module, not supported), 0x3c (display)',
     });
   });
-  it('something answers at 0x28 but did not start as a reader', () => {
+  it('something answered at 0x28 at boot, but the reader is not responding', () => {
     expect(describeI2cScan('absent', [0x28])).toEqual({
-      ok: false, line: 'No working NFC reader — a device answers at 0x28 but did not start',
+      ok: false, line: 'No working NFC reader — a device answered at 0x28 at boot, but the reader is not responding',
       seen: 'I2C devices seen: 0x28 (NFC reader, Si512)',
     });
   });
