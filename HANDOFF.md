@@ -4978,6 +4978,117 @@ Demozoo API (the bulk export makes per-lookup load on a non-profit unnecessary).
   allowlist checks only the first URL (the raster content-type allowlist and `nosniff` still apply).
 - **Cron drift:** the daily 01:30 cron against a 7-day gate can drift a refetch to 8 days.
 
+### 3bw. PaulaNET LZ4: fw 1.16.0 RELEASED (seq 101, fw-1.16.0), the LZ4 driver on the disk (master 2f96980) -- 2026-10-18
+
+**Merged 2f96980, pushed, live.** Spec `docs/superpowers/specs/2026-10-18-paulanet-lz4-design.md`, plan
+`docs/superpowers/plans/2026-10-18-paulanet-lz4.md`, ledger `.superpowers/sdd/2026-10-18-paulanet-lz4/progress.md`.
+Subagent-driven, 11 tasks. Task 9 (the A4000D bench) was skipped by the operator.
+- **Shipped:**
+  - **Firmware 1.16.0 = seq 101** (`1.16.0+gd308ab7`, registry sha `e05e83b8…`, which matches the lz4-worktree
+    build). It was promoted by setting the release notes; GitHub release `fw-1.16.0` (`--github-only`).
+    - LZ4 in both directions: `pnet_lz4.c` (a C codec, linked within a batch) and `pnet_pack.c` (encoding chosen per
+      frame, a 500 us encode budget per batch).
+    - The 8 KB hash table and all 58,496 B of new state live in PSRAM; SRAM `.bss` is 431,584 (+16, the budget is
+      FULLY spent).
+    - Status byte 155 = 3. The board sends LZ4 only while the last batch from the Amiga carried `0x10`.
+  - **The driver variant** `PaulaNET.device 1.1-webadf-lz4`: Rob's 0afd5fa, plus `tools/paulanet-driver/webadf-lz4.patch`,
+    `src/webadf_lz4.c/.h` and `m68k/lz4` (MIT).
+    - Built by `tools/paulanet-driver/build.sh` (vbcc in the pinned amiga-gcc image, NDK 3.2 R4 from Aminet).
+    - Pin `cbe2d797…`, 19,716 B, reproducible. Stock self-check (`STOCK=1`): `7d14d9d1…`, 12,808 B.
+    - Per CPU: 68000/010 LZ4 down, RLE up; 68020+ LZ4 both ways (upload table 1,024; 4,096 on 68040+).
+  - **Driver disk `1ca4f4cb…`** (reproducible on Mac and Linux), in the production store and pinned.
+    - `PAULANET_DISK_OLDER` = [`fb363d45…` (Receive), `05170a83…` (Phase 3)]. All are still served and GC-safe, and
+      the rollout rule is unchanged: never swapped under a running driver.
+    - Help tells users to re-run Install from DF1 to get the LZ4 driver. PERMISSION.md and THIRD-PARTY-NOTICES now
+      say modified builds are permitted (operator, 2026-10-18).
+- **A500 bench** (68000, Rob's Receive GUI, the same files each time):
+
+  | file | stock driver, seq 100 | LZ4 driver, seq 100 | LZ4 driver, seq 101 | seq 101 vs stock |
+  |---|---|---|---|---|
+  | 880 KB ADF | 140.4 s | 144.7 s | 112.6 s | -20% |
+  | LHA (already compressed) | 65.5 s | 59.5 s | 62.5 s | not slower |
+  | text | 97.9 s | 86.0 s | 84.6 s | -14% |
+  | HTML | 10.0 s | 9.5 s | 8.2 s | -18% |
+
+  - Wire on seq 100 with the LZ4 driver: lz4 38 / mfm 2,916 frames, `budget` counter 812, `us max` 584 avg 584,
+    prep max 4,052 us. **The per-batch 8 KB PSRAM table clear used up the 500 us budget.** Fixed in d308ab7 (zero
+    the table once at boot) = seq 101.
+  - Wire on seq 101: lz4 687 / mfm 766 frames, 428,778 B saved on the wire, `budget` 36. Pack `us max`
+    peaked at 3,537 us (a budget overshoot), prep max ~3,965 us. Late 0, dup 0, records dropped 0, every file
+    delivered (CRC ok). 68000 uploads stayed RLE (lz4 in 0), as designed.
+  - Stock driver on seq 100: lz4 0 / mfm 1,473, "driver stock". The early bench on seq 99 matched seq 98 (ADF
+    142 s vs 140 s, build max 39 us, prep max 161 us), so the stock path did not regress.
+  - The gains are below the research model (text x1.14 against x1.4): on a 68000, TCP and Receive's disk writes
+    become the limit once the link is faster.
+  - The variant is left installed in DEVS:Networks on the A500.
+- **Rulings** (from the ledger, with the cost if wrong):
+  - Pre-flight: apply F1-F18 as written. Cost: a task re-does a detail.
+  - Task 6: every frame starts at an EVEN window offset on both sides (a zero pad byte, never sent, after an
+    odd-length frame), so the TCP stack never gets odd addresses on a 68000. The bounce-copy alternative was
+    rejected. Cost: one cross-task fix round.
+  - Task 6: M1 (the open fails when allocation fails, so it now falls back to the stock driver) and M2 (buffers below
+    $10000 decode slowly; MEMF_REVERSE on V39+) folded into the alignment round. Cost: a little extra work.
+  - Task 6 (implementer, carry c): with Rob's compression flag off there are no LZ4 uploads (LZ4 replaces only RLE).
+  - Task 7: I1 (unbounded LZ4 build on the DF1 read path) gets a 500 us encode budget; the remaining frames go MFM.
+    Cost: less compression on big batches; retune the constant.
+  - Task 7: Task 8 Step 6 (move the table to SRAM) is obsolete, because SRAM is full and the budget is the fallback.
+  - Task 8: no per-pack hash-table clear (the encoder ignores entries >= pos and byte-verifies the rest). Cost: a
+    re-pack under the same counter could differ in bytes (same frames), which was already accepted.
+  - Operator: modified builds of Rob's driver are permitted; "push it all live"; LZ4 uploads ship ("Both directions
+    now") without an A4000D bench.
+- **Deviations from the plan:**
+  - The vamos proof replaces the UAE harness.
+  - vbcc instead of gcc for the driver.
+  - The zero-run guard: no raw upload block carries more than 5 zero bytes, so every gap is ≤ 55 cells (the board's
+    limit is 64).
+  - `PAULANET_DISK_OLDER` (a list) instead of a single previous disk.
+  - Rob's driver tree is only imported (`third-party/paulanet/src`, unchanged), and `device.c` is unpatched.
+  - Task 5 used the m68k/lz4 crosstools image.
+  - Task 11 put the Rob drafts in the session scratchpad, not in `tools/paulanet-driver/pr/` (controller).
+- **Deferred minors** (ledger "minor (deferred)" and the final review):
+  - T1: `diff -r` cannot see ignored files; `src/.gitignore` holds only our un-ignore lines.
+  - T2 M1-M6: a test wraps when the encoder returns 0; no test puts the window after dst; entries are not validated;
+    the decoder is laxer than liblz4 at block end; an unused include; the bit-exact test compares C with itself.
+    Also: ASan in CI on ubuntu is unverified on the runner kernel.
+  - T3 M1-M5: the fuzz never nears the window end and never asserts an LZ4 frame; no test puts a plain MFM frame in a
+    `0x10` batch; `pnet_lz4.h` still says it builds alone.
+  - T4: m1 (main.c re-pack/shrink has no host test), m3 (`saved` only checked > 0), m5 (prepare bus-faults if `g_lz4`
+    were not PSRAM-backed).
+  - T5 M2: the byte-access trace covers the gcc build, not vbcc; the A500 ran the vbcc binary cleanly.
+  - T6: M3 (CI fetches the NDK from Aminet on every run); M5 (a board losing LZ4 mid-session drops 68020+ uploads for
+    up to 5 s, and TCP resends); M6 (Rob's odd-length RLE pad bug, below).
+  - T10: M2 (the generic card no longer says an older disk lacks Receive); N2 (route tests exercise only `fb363d45`);
+    N3 (Rob's binary is unused in third-party, kept as a reference). Network help is at 257/260 words.
+  - Final review M3: the driver<->board agreement tests (`tools/paulanet-driver/test.sh`, `m68k/lz4/test.sh`) run only
+    on the Mac, not in CI. M5: the LZ4 block is allocated before Rob's chip `packetBackup`, so on a tight 512 KB
+    machine it can fail an open that would have succeeded.
+- **Known limit (F5):** after a swap to Rob's stock driver while the board is running, his first read can get one LZ4
+  batch. He acks it and drops its frames, and IP resends them.
+- **Rob's odd-length RLE pad bug (in his stock uploads too):** `paulaNetAddPacket` writes the pad 8 bytes early and
+  advances 2 bytes too far, so the board drops the rest of the batch after an odd RLE frame. Following the brief, it
+  is not in PR 1's code; PR 1's description reports it and offers it as a second commit.
+- **The two Rob PRs: drafts, NOT opened, NOT pushed.** They are in a fresh clone of RobSmithDev/PaulaNET
+  (origin/main still 0afd5fa) at
+  `/private/tmp/claude-501/-Users-sfs-Devel-webadf/675c185f-947c-4752-b904-7630c037fa06/scratchpad/robpr/` (the
+  scratchpad: copy it out before it is cleaned). Commits carry no attribution trailers (F17, intended).
+  - PR 1, branch `webadf/rle-to-mfm` (4ce67b2): always MFM toward the Amiga. Built with his CMake (pico2_w,
+    pico-sdk 2.3.0 against his 2.2.0), with no new warnings; not run on hardware. Files: `0001-rle-to-mfm.patch`,
+    `1-rle-to-mfm.md`.
+  - PR 2, branch `webadf/lz4` (1615d14): LZ4 in NetDevice, plus `LZ4.md` and `LICENSE-lz4`. Built with his Makefile,
+    19,704 B (his `version.h`). Files: `0002-lz4.patch`, `2-lz4.md`.
+  - Both patches `git apply --check` cleanly on 0afd5fa. The operator decides whether to open them (spec §1).
+- **Owed:**
+  - **The A4000D bench (Task 9):** 68020+ LZ4 uploads ship proven only under vamos (68020 and 68040; vamos has no
+    68030). Downloads, uploads and a sha256 round trip are owed, plus whether raw `0x4000` uploads misread; if they
+    do, switch to `0xC000`, which the board already accepts.
+  - The variant against fw 1.15.0 (byte 155 = 0) on hardware: Task 8 Step 7 was skipped because the board refused
+    the downgrade (`would_roll_back`). Code review covers it.
+  - M1's low-memory open, MEMF_REVERSE on real V39/V40, and an open on KS1.3/2.0.
+  - CI's live Aminet NDK download: cache it, keyed on `ndk_sha` with `PAULANET_NDK_CACHE`, when it first flakes.
+  - The Rob PRs (above).
+  - Clean-up: the `.claude/worktrees/lz4-bench` and `lz4` worktrees (the `lz4` one holds the only local NDK cache,
+    `tools/paulanet-driver/.cache`).
+
 ### 3bv. PaulaNET Phase 4 increment 3: the web sends; Receive on the driver disk; pairing names; IP fix on master for 1.16.0 -- 2026-10-18
 
 **Merged b6e4960, pushed, live.** Plan `docs/superpowers/plans/2026-10-17-paulanet-phase4-increment3-web-send.md`
