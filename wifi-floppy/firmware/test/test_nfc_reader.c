@@ -653,6 +653,125 @@ static void arm_write_next_over_a_lying_tag_waits_for_it_to_return(void) {
     end_checks();
 }
 
+// ---- Re-taps of the Next-disk card (bench 2026-10-18) ------------------------
+//
+// The serial capture: the operator re-taps the Next card about every 4 s, the
+// card away 1.4-1.7 s each time, and every re-tap logged "held tag ... unseen
+// 1709 ms (still the same tap)" and did nothing. A Next card is a new tap after
+// 1 s unseen; a disk tag keeps the 3 s window that stops a tag lying at the
+// antenna's edge from re-mounting its disk.
+
+// `taps` taps: on the reader `on_ms`, away `off_ms` between them. The first
+// stay is `phase` ms longer, so the lifts land at a different point of the
+// ~255 ms poll cycle: the reader sees an absence only at its polls, so how
+// long it counts a lift as unseen is the lift plus up to one poll period.
+static void tap_pattern(int taps, int on_ms, int off_ms, int phase) {
+    for (int k = 0; k < taps; k++) {
+        if (k > 0) {
+            F.tag_present = false;
+            run(off_ms);
+            F.tag_present = true;
+        }
+        run(on_ms + (k == 0 ? phase : 0));
+    }
+}
+
+// Every check below holds at every phase of the poll cycle.
+#define EACH_PHASE for (int phase = 0; phase < 260; phase += 10)
+
+static void a_next_card_retapped_after_1500ms_is_five_taps(void) {
+    EACH_PHASE {
+        setup();
+        put_next();
+        tap_pattern(5, 2500, 1500, phase);
+        CHECK_EQ_INT(count(NFC_EV_TAG_NEXT), 5);
+        CHECK_EQ_INT(nev, 6);                // PRESENT and the five NEXTs
+        end_checks();
+    }
+}
+
+static void a_disk_tag_retapped_after_1500ms_is_one_tap(void) {
+    EACH_PHASE {
+        setup();
+        put_id(ID);
+        tap_pattern(5, 2500, 1500, phase);
+        CHECK_EQ_INT(count(NFC_EV_TAG_READ), 1);
+        CHECK_EQ_INT(nev, 2);                // PRESENT and the one read
+        end_checks();
+    }
+}
+
+// The window is in the reader's terms: unseen from the last poll that found
+// the card to the first poll that finds it again. With no tag a poll cycle is
+// ~367 ms here (250 ms wait, the field's settle, WUPA's 25 ms timeout, at
+// four ops a step), so a lift is counted as up to one cycle longer than it
+// was. A 900 ms lift is always counted 1102 ms -- a new tap at a 1 s window;
+// the brief's "away 900 ms" case cannot hold at 1000 ms. What 1 s guarantees
+// at every phase is this: a lift the reader counts under 1 s -- here, one of
+// up to ~470 ms -- is the same tap, and the gap it logs says so.
+static void a_next_card_unseen_under_1s_is_still_the_same_tap(void) {
+    EACH_PHASE {
+        setup();
+        put_next();
+        tap_pattern(2, 2500, 450, phase);
+        CHECK_EQ_INT(count(NFC_EV_TAG_NEXT), 1);
+        CHECK_EQ_INT(nev, 2);
+        for (int g = 0; g < ngap; g++) {
+            CHECK(!gaps[g].new_arrival, "logged as still the same tap");
+            CHECK(gaps[g].ms < 1000, "counted under the window");
+        }
+        end_checks();
+    }
+}
+
+// And the 900 ms lift, pinned: counted as 1102 ms unseen, a new tap. If the
+// poll cycle ever changes, this says so before the bench does.
+static void a_next_card_away_900ms_is_counted_1102ms_and_is_a_new_tap(void) {
+    setup();
+    put_next();
+    tap_pattern(2, 2500, 900, 0);
+    CHECK_EQ_INT(count(NFC_EV_TAG_NEXT), 2);
+    CHECK_EQ_INT(ngap, 1);
+    if (ngap == 1) {
+        CHECK_EQ_INT(gaps[0].ms, 1102);
+        CHECK(gaps[0].new_arrival, "new arrival");
+    }
+    end_checks();
+}
+
+static void a_disk_tag_away_3100ms_is_a_new_arrival(void) {
+    EACH_PHASE {
+        setup();
+        put_id(ID);
+        tap_pattern(2, 2500, 3100, phase);
+        CHECK_EQ_INT(count(NFC_EV_TAG_READ), 2);
+        CHECK_EQ_INT(nev, 3);
+        end_checks();
+    }
+}
+
+// The short window is for TAPS of a Next card. Armed, a Next card lying on the
+// reader is a tag the write must not land on, and it keeps the full 3 s.
+static void write_armed_over_a_lying_next_card_skips_a_1500ms_dropout(void) {
+    setup();
+    put_next();
+    run(2000);
+    CHECK_EQ_INT(count(NFC_EV_TAG_NEXT), 1);
+    nfc_arm_write(&R, 17, ID);
+    run(1000);
+    F.tag_present = false;
+    run(1500);
+    F.tag_present = true;
+    run(3000);
+    CHECK_EQ_INT(count(NFC_EV_WRITE_DONE), 0);
+    CHECK_EQ_INT(count(NFC_EV_TAG_NEXT), 1);
+    uint8_t want[NFC_TAG_BYTES];
+    nfc_tag_encode_next(want);
+    CHECK(memcmp(F.sector1, want, NFC_TAG_BYTES) == 0, "the lying Next card is untouched");
+    CHECK(R.armed, "still armed for a real arrival");
+    end_checks();
+}
+
 // The field is a transmitter, and the bench's Si512 modules died after days
 // of it running non-stop (2026-10-03 and again by 2026-10-08; HANDOFF 3bb).
 // It is on only for each poll now: on, the tag's power-up time, the WUPA and
@@ -713,5 +832,11 @@ int main(void) {
     RUN(next_tag_reports_tag_next_once);
     RUN(arm_write_next_writes_the_next_card);
     RUN(arm_write_next_over_a_lying_tag_waits_for_it_to_return);
+    RUN(a_next_card_retapped_after_1500ms_is_five_taps);
+    RUN(a_disk_tag_retapped_after_1500ms_is_one_tap);
+    RUN(a_next_card_unseen_under_1s_is_still_the_same_tap);
+    RUN(a_next_card_away_900ms_is_counted_1102ms_and_is_a_new_tap);
+    RUN(a_disk_tag_away_3100ms_is_a_new_arrival);
+    RUN(write_armed_over_a_lying_next_card_skips_a_1500ms_dropout);
     return REPORT();
 }

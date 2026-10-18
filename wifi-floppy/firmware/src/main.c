@@ -1132,7 +1132,8 @@ static void nfc_core0_step(nfc_armed_t *armed, bool short_pass) {
     }
     // The dropout measurement (nfc_reader.h nfc_gap_t): the 3 s re-arrival
     // window is a guess from three bench sightings, and these lines are how
-    // the board says how long a lying tag's dropouts really are.
+    // the board says how long a lying tag's dropouts really are. (A Next-disk
+    // card's window is 1 s: its re-taps came back after 1.4-1.7 s, 2026-10-18.)
     nfc_gap_t gap;
     if (nfc_take_gap(&g_nfc, &gap))
         wf_logf(WF_INFO, "nfc: held tag %02X%02X%02X%02X unseen %lu ms %s",
