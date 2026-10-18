@@ -2603,7 +2603,18 @@ separately.
   no sign of more; all 35 disks of that upload share one created_at, so 13 were never offered. The dialog now says
   "Showing N titles — there are more." with Show more. The operator's 13 disks (Storage, GlowIcons, HDSetup, ...)
   still sit in Uncategorized: add them via Add disks… > Show more. No data was changed.
-- **A new design for the web app (operator, 2026-10-13).** Based on the design canvas
+- **A new design for the web app (operator, 2026-10-13).**
+  - **The product is renamed webfloppy, hosted at https://webfloppy.io** (operator, 2026-10-18: "for the redesign,
+    the product name changes to webfloppy - so all hosting will be on https://webfloppy.io").
+  - **The rename touches more than the UI:**
+    - visible names: the UI, help text, emails, the README and the board's OLED/portal strings;
+    - the default server host the firmware ships with, plus a path for boards already paired to webadf.vercel.app
+      (keep the old host answering, or redirect it, until every board has moved);
+    - Vercel domains and DNS, auth callback URLs and cookie domain, the Resend sender domain;
+    - GitHub repo/release names, if those change too;
+    - the self-host image name.
+  - **Plan it with the redesign. Never break a paired board's server host.**
+  - Based on the design canvas
   https://claude.ai/artifact/66QQLv1VK4Ye2gBNaV4F6S#page-7942877721ad ("webfloppy retro"). **Areas the canvas does
   not draw are to be inferred** from it (operator's words: "missing areas should be inferred").
   - **The canvas has two pages.**
