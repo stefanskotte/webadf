@@ -76,7 +76,23 @@ static void a_short_buffer_writes_nothing(void) {
     CHECK(strcmp(out, "") == 0, "never a cut-off key: invalid JSON would lose the whole report");
 }
 
+// fw 1.18.0: the PN532 at 0x24 is looked for only if the boot scan saw it
+// (nfc_reader.h nfc_attach_pn532) -- never a frame written to whatever else
+// lives at 0x24 (an MCP23017 or PCF8574 expander).
+static void has_answers_only_for_a_finished_scan_that_saw_the_address(void) {
+    i2c_scan_t s = {0};
+    i2c_scan_add(&s, 0x24);
+    CHECK(!i2c_scan_has(&s, 0x24), "not before the scan is done");
+    i2c_scan_add(&s, 0x3c);
+    i2c_scan_done(&s);
+    CHECK(i2c_scan_has(&s, 0x24), "0x24 seen");
+    CHECK(i2c_scan_has(&s, 0x3c), "0x3c seen");
+    CHECK(!i2c_scan_has(&s, 0x28), "0x28 not seen");
+    CHECK(!i2c_scan_has(NULL, 0x24), "no record");
+}
+
 int main(void) {
+    RUN(has_answers_only_for_a_finished_scan_that_saw_the_address);
     RUN(a_fresh_record_says_nothing);
     RUN(an_empty_bus_is_an_empty_list);
     RUN(addresses_are_kept_in_order_as_decimal);

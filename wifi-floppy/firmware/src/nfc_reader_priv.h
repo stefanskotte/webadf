@@ -42,6 +42,7 @@ typedef enum {
 } st_t;
 
 #define POLL_MS     250   // spec §4.1: tag detection about every 250 ms
+#define ABSENT_RECHECK_MS 5000   // spec §4.3
 #define LOSS_FAILS    3   // consecutive failures = the chip is gone
 
 // Sector 1 is blocks 4..7; 7 is the trailer and is never written.
@@ -85,6 +86,10 @@ void nfc_finish(nfc_reader_t *r, nfc_ev_kind_t kind, const char *why);
 void nfc_moved(nfc_reader_t *r);
 // The chip is gone: ABSENT, and whatever was half-built goes with it.
 void nfc_lose_chip(nfc_reader_t *r);
+// While a PN532 runs (idle only): every ABSENT_RECHECK_MS one Si512 register
+// read. true = the Si512 answered and the session is now the Si512's
+// (ST_RESET); the caller returns.
+bool nfc_si512_back(nfc_reader_t *r);
 
 // ---- The backends -------------------------------------------------------------
 

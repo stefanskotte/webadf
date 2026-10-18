@@ -58,7 +58,30 @@
 #define RD_PLAIN  10                    // D5 xx: SAMConfiguration, RFConfiguration
 #define RD_STATUS 11                    // D5 41 status: auth, WRITE
 #define RD_READ   27                    // D5 41 status data[16]
-#define RD_LIST   20                    // D5 4B NbTg Tg SENS(2) SEL len uid[4]; longer is re-read
+// D5 4B NbTg Tg SENS(2) SEL len uid[7]: a 7-byte UID (an NTAG, the commonest
+// sticker) is 23 bytes, read whole the first time; only longer (a 10-byte UID,
+// an ATS) takes the NACK re-read.
+#define RD_LIST   24
+
+// ---- The bus clock -------------------------------------------------------------------
+//
+// The boot probe (i2c_probe.c) puts i2c1 at 100 kHz, and only a display that
+// answers raises it (ssd1306_selftest). At 100 kHz a PN532 frame is ~2.6 ms
+// of core0 and the 64-byte re-read ~5.8 ms -- inside PaulaNET's SIDE-edge
+// window (the Amiga reads 1.0-5.4 ms after the edge). The PN532 supports
+// 400 kHz ("fast mode (up to 400 KHz CLK)", UM0701-02 §6.2.4), so once one has
+// answered SAMConfiguration the reader asks for it (nfc_frame_bus_t set_hz),
+// as ssd1306_selftest does once a panel has answered. Nothing sets i2c1
+// slower after boot: i2c_init is called only by i2c_probe_bus, at boot.
+//
+// The worst step then, (bytes + the address byte) x 9 bits / 400 kHz:
+//   - the 64-byte re-read (a 10-byte UID or an ATS card): 1.46 ms;
+//   - an ordinary frame, 28 bytes written or 27 read: ~0.65 ms;
+//   - a status poll: 45 us.
+// Until the first answer -- the SAMConfiguration probe, its ACK and its
+// answer, 10, 7 and 10 bytes -- frames run at the bus's 100 kHz, ~1 ms each
+// (test_nfc_pn532.c pins both: at most three slow frames, no step over 1.5 ms).
+#define PN_BUS_HZ 400000
 
 // ---- The codec ------------------------------------------------------------------
 
@@ -267,7 +290,10 @@ static bool st_init(nfc_reader_t *r) {
     case 1:
         if (r->status != MI_OK) { give_up(r); return false; }
         // It answered SAMConfiguration: a PN532, awake and in normal mode.
+        // From here every frame runs at 400 kHz ("The bus clock" above).
         r->probing = false;
+        if (r->fbus.set_hz) r->fbus.set_hz(r->fbus.ctx, PN_BUS_HZ);
+        r->t_si512 = r->now_ms();
         nfc_chip_found(r);
         r->phase = 2;
         pn_call(r, RETRIES, 5, RD_PLAIN);
@@ -296,6 +322,7 @@ static bool st_idle(nfc_reader_t *r) {
         r->phase = 2;
         return true;
     default:                                     // wait for the poll
+        if (nfc_si512_back(r)) return false;     // the preferred chip answered again
         if (!nfc_poll_due(r)) return false;
         nfc_go(r, ST_PN_POLL);
         return true;

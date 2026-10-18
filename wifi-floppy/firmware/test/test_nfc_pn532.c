@@ -35,6 +35,7 @@ static void setup(void) { setup_both(false, true); }
 
 static void run(int ms) {
     for (int k = 0; k < ms; k++) {
+        pn532_fake_step_begin(&P);
         nfc_step(&R);
         nfc_event_t e;
         if (nfc_take_event(&R, &e) && nev < 64) evs[nev++] = e;
@@ -255,6 +256,7 @@ static void a_seven_byte_uid_is_not_ours(void) {
     static const uint8_t cl1[4] = { 0x88, 0x04, 0x11, 0x22 };
     if (e) CHECK(memcmp(e->uid, cl1, 4) == 0, "88 04 11 22");
     CHECK_EQ_INT(P.cmds[0x40], 0);                       // no auth tried
+    CHECK_EQ_INT(P.host_nacks, 0);                       // 23 bytes: read whole the first time
 }
 
 static void an_iso14443_4_card_with_a_long_ats_is_not_ours(void) {
@@ -271,6 +273,52 @@ static void an_iso14443_4_card_with_a_long_ats_is_not_ours(void) {
     CHECK_EQ_INT(count(NFC_EV_TAG_READ), 0);
     CHECK_EQ_INT(count(NFC_EV_ABSENT), 0);               // the chip is fine
     CHECK(P.max_xfer <= NFC_PN532_BUF, "never read past the buffer");
+}
+
+// ---- the bus clock (core0's time) ------------------------------------------------------
+//
+// A frame at the boot probe's 100 kHz is ~2.6 ms of core0 (the 64-byte re-read
+// ~5.8 ms) -- inside PaulaNET's SIDE-edge window (1.0-5.4 ms). The PN532 runs
+// at 400 kHz (UM0701-02 §6.2.4), so once one has answered the reader asks for it.
+
+static void a_found_pn532_puts_the_bus_at_400khz_and_keeps_it(void) {
+    setup();
+    nfc_tag_encode(ID, P.sector1);
+    run(1000);
+    CHECK_EQ_INT(count(NFC_EV_TAG_READ), 1);
+    CHECK_EQ_INT(P.bus_hz, 400000);
+    CHECK(P.slow_frames <= 3, "only the probe's SAMConfiguration, its ACK and its answer at 100 kHz");
+    // Lost and found again: never asked for less.
+    P.chip_present = false;
+    run(2000);
+    P.chip_present = true;
+    run(6000);
+    CHECK_EQ_INT(count(NFC_EV_PRESENT), 2);
+    CHECK_EQ_INT(P.lowest_hz_asked, 400000);
+    CHECK(P.slow_frames <= 3, "no slow frames after the first answer");
+}
+
+// The worst step once at 400 kHz, the 64-byte re-read included (an ATS card):
+// (64 + 1) x 9 bits / 400 kHz = 1.46 ms. The documented bound is 1.5 ms.
+static void every_step_at_400khz_is_under_1500us(void) {
+    setup();
+    P.tag_present = false;
+    run(100);                                            // found: 400 kHz from here
+    CHECK_EQ_INT(P.bus_hz, 400000);
+    P.max_step_us = 0;
+    nfc_arm_write(&R, 1, ID);
+    P.tag_present = true;
+    run(2000);                                           // a write, its verify, and polls
+    P.tag_present = false;
+    run(3500);
+    P.sak = 0x20;
+    P.ats_len = 44;                                      // LEN 56: 64 bytes to read, the longest re-read
+    P.tag_present = true;
+    run(1000);
+    CHECK_EQ_INT(count(NFC_EV_WRITE_DONE), 1);
+    CHECK(P.host_nacks >= 1, "the long answer was re-read");
+    CHECK(P.max_step_us <= 1500, "no step over 1.5 ms of bus");
+    printf("  worst step at 400 kHz: %u us\n", (unsigned)P.max_step_us);
 }
 
 // ---- the choice of chip -------------------------------------------------------------
@@ -344,6 +392,56 @@ static void a_lost_pn532_swapped_for_a_si512_is_the_si512(void) {
     CHECK_EQ_INT(count(NFC_EV_PRESENT), 2);
 }
 
+// The boot scan did not see 0x24 (main.c attaches the PN532 only if it did):
+// nothing is ever written there, whatever lives at 0x24 later.
+static void without_0x24_in_the_boot_scan_nothing_is_written_there(void) {
+    now = 0;
+    nev = 0;
+    si512_fake_init(&S, &now);
+    pn532_fake_init(&P, &now);
+    S.vanish_after_ops = 0;                              // no Si512 either
+    nfc_bus_t bus = si512_fake_bus(&S);
+    nfc_init(&R, &bus, clk);                             // no nfc_attach_pn532
+    run(20000);
+    CHECK_EQ_INT(P.xfers, 0);
+    CHECK(!nfc_present(&R), "absent");
+}
+
+// Both fitted, and the Si512 misses the recheck after an outage: the PN532
+// takes over -- but only until the Si512 answers again, at the next 5 s check.
+static void both_fitted_a_missed_si512_recheck_does_not_lose_it_for_good(void) {
+    setup_both(true, true);
+    S.tag_present = false;
+    P.tag_present = false;
+    run(1000);
+    CHECK_EQ_INT(nfc_chip(&R), NFC_CHIP_SI512);
+    S.vanish_after_ops = S.ops;                          // the Si512 drops out ...
+    run(6000);                                           // ... through the next recheck
+    CHECK_EQ_INT(nfc_chip(&R), NFC_CHIP_PN532);
+    S.vanish_after_ops = -1;                             // and is back
+    run(6000);
+    CHECK_EQ_INT(nfc_chip(&R), NFC_CHIP_SI512);
+    CHECK(nfc_present(&R), "present throughout the switch back");
+    // And it reads tags again.
+    nfc_tag_encode(ID, S.sector1);
+    S.tag_present = true;
+    run(1000);
+    CHECK_EQ_INT(count(NFC_EV_TAG_READ), 1);
+}
+
+static void a_si512_that_answers_its_recheck_is_kept(void) {
+    setup_both(true, true);
+    S.tag_present = false;
+    run(1000);
+    S.vanish_after_ops = S.ops;                          // a glitch: three failed transfers
+    run(400);                                            // (the next poll finds it gone)
+    CHECK_EQ_INT(count(NFC_EV_ABSENT), 1);
+    S.vanish_after_ops = -1;                             // over by the recheck
+    run(6000);
+    CHECK_EQ_INT(nfc_chip(&R), NFC_CHIP_SI512);
+    CHECK_EQ_INT(P.xfers, 0);
+}
+
 int main(void) {
     RUN(frame_is_the_manuals_normal_information_frame);
     RUN(parse_takes_a_good_frame_and_the_ack);
@@ -358,6 +456,11 @@ int main(void) {
     RUN(one_lost_answer_is_not_a_lost_chip);
     RUN(a_seven_byte_uid_is_not_ours);
     RUN(an_iso14443_4_card_with_a_long_ats_is_not_ours);
+    RUN(a_found_pn532_puts_the_bus_at_400khz_and_keeps_it);
+    RUN(every_step_at_400khz_is_under_1500us);
+    RUN(without_0x24_in_the_boot_scan_nothing_is_written_there);
+    RUN(both_fitted_a_missed_si512_recheck_does_not_lose_it_for_good);
+    RUN(a_si512_that_answers_its_recheck_is_kept);
     RUN(only_0x28_is_the_si512);
     RUN(only_0x24_is_the_pn532);
     RUN(both_is_the_si512_and_the_pn532_is_never_touched);

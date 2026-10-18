@@ -63,6 +63,12 @@ typedef struct {
     int  trailer_writes;       // WRITEs aimed at block 7 (must stay 0)
     int  ilpt_found;           // InListPassiveTarget answers with a tag
     uint32_t field_on_ms;      // total time the field has been on (closed intervals)
+    uint32_t bus_hz;           // the I2C clock: 100 kHz (the boot probe's) until the reader asks for more
+    int  hz_requests;          // set_hz calls
+    uint32_t lowest_hz_asked;  // the slowest clock ever asked for (0 = never asked)
+    int  slow_frames;          // frame transfers made below 400 kHz
+    uint32_t step_us;          // bus time of the current step (pn532_fake_step_begin resets it)
+    uint32_t max_step_us;      // the longest step on the bus since max_step_us was last zeroed
 
     // --- the chip (private) ---
     bool     field;
@@ -92,7 +98,9 @@ nfc_frame_bus_t pn532_fake_bus(pn532_fake_t *f);
 uint32_t pn532_fake_field_on_ms(const pn532_fake_t *f);
 
 // Call before each nfc_step: max_step_frames records the most frame
-// transfers (anything but a 1-byte status read) any one step made.
+// transfers (anything but a 1-byte status read) any one step made, and
+// max_step_us the most bus time: (bytes + the address byte) x 9 bits at
+// bus_hz, per transfer.
 void pn532_fake_step_begin(pn532_fake_t *f);
 
 #endif

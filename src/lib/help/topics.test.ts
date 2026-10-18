@@ -75,12 +75,17 @@ describe('help topics say what the app really does', () => {
     expect(b).toMatch(/0x24/);
     expect(b).toMatch(/1\.17\.0/);
   });
-  it('nfc says both reader chips work, the PN532 from firmware 1.18.0 (nfc_reader.h)', () => {
+  it('nfc: the Si512 works; PN532 support is new in 1.18.0 and still being tested (no PN532 has run on hardware)', () => {
     const b = HELP_TOPICS.nfc.short + bodyText('nfc');
     expect(b).toMatch(/Si512/);
     expect(b).toMatch(/PN532/);
     expect(b).toMatch(/1\.18\.0/);
+    expect(b).toMatch(/being tested/);
+    expect(b).not.toMatch(/Both kinds of red reader module work/);
     expect(b).not.toMatch(/not supported/);
+  });
+  it('nfc: a PN532 is looked for only at start-up (fw 1.18.0 needs the boot scan to see 0x24)', () => {
+    expect(bodyText('nfc')).toMatch(/restart the board after connecting/);
   });
   it('boards gives the setup network password and the Update + password step', () => {
     const b = bodyText('boards');

@@ -47,6 +47,9 @@ typedef struct {
 typedef struct {
     bool (*wr)(void *ctx, const uint8_t *buf, int n);   // false = transfer failed (NACK, timeout)
     bool (*rd)(void *ctx, uint8_t *buf, int n);         // false = transfer failed
+    // Sets the bus clock (Hz); NULL = leave it. Asked once a PN532 has
+    // answered: see nfc_pn532.c, "the bus clock".
+    void (*set_hz)(void *ctx, uint32_t hz);
     void *ctx;
 } nfc_frame_bus_t;
 
@@ -164,6 +167,7 @@ typedef struct nfc_reader {
     bool     probing;        // the PN532 is being tried, not yet found (not "present")
     uint32_t t_probe;        // when that presence check began
     uint32_t pn_t;           // when the current command's wait began
+    uint32_t t_si512;        // while on a PN532: when the Si512 was last asked
     uint8_t  pn_cmd;         // the command in flight (its answer is pn_cmd + 1)
     int      pn_rd_len;      // bytes to read for its answer, status byte included
     uint32_t pn_wait_ms;     // how long its answer may take

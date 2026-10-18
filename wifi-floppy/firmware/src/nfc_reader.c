@@ -6,7 +6,6 @@
 
 // ---- Timing ---------------------------------------------------------------
 
-#define ABSENT_RECHECK_MS 5000   // spec §4.3
 // The same UID is a new arrival only after this long continuously unseen.
 // 1 s was not enough: a fob lying untouched at the edge of the antenna's
 // range dropped out for over a second three times in 4.5 minutes on the
@@ -233,8 +232,30 @@ void nfc_chip_found(nfc_reader_t *r) {
 
 // One presence check every 5 s: the Si512 at 0x28 first (one register read),
 // and only if it is silent the PN532 at 0x24, on the next step -- so a board
-// with both talks to the Si512, as every board did before 1.18.0. A chip
-// plugged in late is found at the next check.
+// with both talks to the Si512, as every board did before 1.18.0. A Si512
+// plugged in late is found at the next check. The PN532 is tried only when
+// it was attached, which main.c does only if the boot I2C scan saw 0x24: a
+// board with another device there (an MCP23017, a PCF8574) never has a frame
+// written to it -- and so a PN532 plugged in after boot needs a restart.
+// The Si512 is the preferred chip whenever it answers -- the one every board
+// before 1.18.0 used. Without this a board with both fitted would move to the
+// PN532 for good after one missed Si512 recheck (a loose lead, a brown-out):
+// the PN532 then answers every poll and is never lost. So while the PN532
+// runs, the Si512 is still asked every 5 s, and it takes the session back the
+// moment it answers. The held tag carries over: both chips report the same UID.
+bool nfc_si512_back(nfc_reader_t *r) {
+    uint32_t now = r->now_ms();
+    if (now - r->t_si512 < ABSENT_RECHECK_MS) return false;
+    r->t_si512 = now;
+    int v = si512_probe(r);
+    r->fails = 0;                    // a missing Si512 is no fault of the PN532's
+    if (v < 0) return false;
+    r->chip = NFC_CHIP_SI512;
+    r->pn_field = false;
+    nfc_go(r, ST_RESET);
+    return true;
+}
+
 static bool st_absent(nfc_reader_t *r) {
     if (r->pn_probe_due) {
         r->pn_probe_due = false;

@@ -91,8 +91,8 @@ export const HELP_TOPICS = {
           it moves a multi-disk game on to its next disk.
         </p>
         <p>
-          <strong>Readers.</strong> Both kinds of red reader module work: the Si512, at address 0x28, and the PN532,
-          at 0x24. If both are fitted, the board uses the Si512.
+          <strong>Readers.</strong> Modules with an Si512 chip (address 0x28) work. PN532 modules (0x24) are new
+          and still being tested; restart the board after connecting one. With both fitted, the Si512 is used.
         </p>
         <p>
           <strong>No reader found?</strong> Each board card says whether the board found its reader when it

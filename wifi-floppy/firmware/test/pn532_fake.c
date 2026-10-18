@@ -23,6 +23,7 @@ void pn532_fake_init(pn532_fake_t *f, const uint32_t *clock) {
     f->vanish_after_xfers = -1;
     f->retries_passive = 0xFF;
     f->clock = clock;
+    f->bus_hz = 100000;
 }
 
 static void set_field(pn532_fake_t *f, bool on) {
@@ -36,7 +37,7 @@ uint32_t pn532_fake_field_on_ms(const pn532_fake_t *f) {
     return f->field_on_ms + (f->field ? now(f) - f->field_on_at : 0);
 }
 
-void pn532_fake_step_begin(pn532_fake_t *f) { f->step_frames = 0; }
+void pn532_fake_step_begin(pn532_fake_t *f) { f->step_frames = 0; f->step_us = 0; }
 
 // An answer frame PN532 -> host: 00 00 FF LEN LCS D5 cmd+1 data DCS 00.
 static int build(uint8_t *out, uint8_t code, const uint8_t *d, int n) {
@@ -200,6 +201,9 @@ static bool transfer(pn532_fake_t *f, int n) {
     int idx = f->xfers++;
     if (n > f->max_xfer) f->max_xfer = n;
     if (n != 1 && ++f->step_frames > f->max_step_frames) f->max_step_frames = f->step_frames;
+    if (n != 1 && f->bus_hz < 400000) f->slow_frames++;
+    f->step_us += (uint32_t)(((uint64_t)(n + 1) * 9u * 1000000u) / f->bus_hz);
+    if (f->step_us > f->max_step_us) f->max_step_us = f->step_us;
     if (!f->chip_present) return false;
     return !(f->vanish_after_xfers >= 0 && idx >= f->vanish_after_xfers);
 }
@@ -263,7 +267,16 @@ static bool fake_rd(void *ctx, uint8_t *b, int n) {
     return true;
 }
 
+// The bus clock the reader asks for (nfc_frame_bus_t set_hz). It is the
+// whole i2c1's clock on the board, so it is recorded, not judged here.
+static void fake_set_hz(void *ctx, uint32_t hz) {
+    pn532_fake_t *f = ctx;
+    f->hz_requests++;
+    if (f->lowest_hz_asked == 0 || hz < f->lowest_hz_asked) f->lowest_hz_asked = hz;
+    f->bus_hz = hz;
+}
+
 nfc_frame_bus_t pn532_fake_bus(pn532_fake_t *f) {
-    nfc_frame_bus_t b = { fake_wr, fake_rd, f };
+    nfc_frame_bus_t b = { fake_wr, fake_rd, fake_set_hz, f };
     return b;
 }
