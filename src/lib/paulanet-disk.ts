@@ -93,7 +93,7 @@ export const NET_PICK_FW = '1.12.1';
 export const NET_REARM_MIN_MS = 5 * 60_000;
 
 /**
- * How long the Amiga's driver must be quiet before a board holding the older driver disk gets the new one (R16, fix
+ * How long the Amiga's driver must be quiet before a board holding an older driver disk gets the new one (R16, fix
  * round 1 ruling): two re-arm periods. Wider than DRIVER_TALKING_MS (the card's "talking", two heartbeats) on purpose:
  * the spec's "DF1 never changes under a running driver" outranks a missed heartbeat or two.
  */

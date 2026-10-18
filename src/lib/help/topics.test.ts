@@ -145,6 +145,7 @@ describe('network says what a regular user needs (spec 2026-10-12 §5)', () => {
   it('the download and the credit', () => {
     expect(renderToStaticMarkup(HELP_TOPICS.network.body as React.ReactElement)).toContain('href="/api/paulanet-disk"');
     expect(bodyText('network')).toMatch(/LZ4/);
+    expect(bodyText('network')).toMatch(/installed PaulaNET before, run Install again from the driver disk in DF1/i);
     expect(all()).toMatch(/Rob Smith/);
   });
   it('names the firmware it needs', () => expect(all()).toMatch(/1\.11\.0/));

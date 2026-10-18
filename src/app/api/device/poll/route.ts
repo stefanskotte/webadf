@@ -217,7 +217,7 @@ export async function GET(request: Request) {
       // disk of the set in every mode. The one-shot wake then also moves the DF1 cursor, BEFORE df1 is read, so the
       // body that first names the driver disk carries a cursor the board has not acked.
       const netNext = netNow || (driveAck !== null && netKeepsDriverDisk(tick));
-      // Which driver disk (R16): the older one stays while the Amiga's driver talks, never swapped under it.
+      // Which driver disk (R16): an older one stays while the Amiga's driver talks, never swapped under it.
       const driverSha = driverDiskFor(tick, Date.now());
       const next = netNext && !netPick ? { ...PAULANET_NEXT, sha256: driverSha }
         : state.desired ? await readNextForPoll(device.deviceId, device.orgId)
