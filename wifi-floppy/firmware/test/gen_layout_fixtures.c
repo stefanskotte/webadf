@@ -40,7 +40,9 @@ int main(void) {
     // ("40.1") shown in the track counter's corner and the counter hidden.
     l = *layout_default(PANEL_128x32);
     for (int i = 0; i < l.n; i++) if (l.el[i].id == EL_TRACK) l.el[i].visible = 0;
-    l.el[l.n++] = (layout_el_t){ EL_HEAD, 1, 1, 104, 24, 0, 0 };
+    // EL_HEAD no longer exists (1.18.0 dropped it); the record is what 1.17.0
+    // wrote, kept as a fixture so a stored head layout stays decodable.
+    l.el[l.n++] = (layout_el_t){ 10, 1, 1, 104, 24, 0, 0 };
     { uint8_t b[LAYOUT_BLOB_MAX]; put("custom32_head_rot180", b, layout_encode_rotated(&l, LAYOUT_ROT_180, b, sizeof b)); }
 
     l = *layout_default(PANEL_128x32);

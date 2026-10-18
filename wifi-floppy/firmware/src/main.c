@@ -5104,7 +5104,7 @@ int main(void) {
             ui.nfc = nfc_armed.armed ? DISP_NFC_ARMED
                    : g_nfc_reader == 1 ? DISP_NFC_PRESENT : DISP_NFC_ABSENT;
             ui.cyl        = cur_cyl[0];
-            // The head element's side (1.17.0): SIDE is one bus line for every
+            // The track counter side arrow (1.18.0): SIDE is one bus line for every
             // drive, so this is the side DF0's head reads too.
             ui.side       = (uint8_t)(cur_side ? 1 : 0);
             ui.max_cyl    = NUM_CYL - 1;

@@ -122,26 +122,16 @@ static void the_nfc_element(void) {
     l.el[l.n++] = (layout_el_t){ EL_NFC, 0, 1, 0, 24, 0, 0 }; n = enc(&l, b); expect_reject(b, n, "twice");
 }
 
-// 1.17.0: the head position, "cylinder.side" (FlashFloppy's "40.1") -- a
-// fixed four-character box like the track counter's, placed like any other
-// element, in neither default.
-static void the_head_element(void) {
-    CHECK(EL_HEAD > EL_NFC, "a new id, after every id 1.16 knows: 1.10-1.16 skip it");
-    layout_el_t e = { EL_HEAD, 1, 1, 0, 0, 0, 0 }; int w, h;
-    layout_el_size(&e, &w, &h); CHECK(w == 24 && h == 8, "head 24x8 (\"99.1\")");
-    e.scale = 2; layout_el_size(&e, &w, &h); CHECK(w == 48 && h == 16, "head 2x 48x16");
-    for (int p = 0; p <= 1; p++) {
-        const layout_t *d = layout_default((panel_t)p);
-        for (int i = 0; i < d->n; i++) CHECK(d->el[i].id != EL_HEAD, "no default lists the head element");
-    }
+// Fw 1.17.0's element 10 (the head position) is gone: its id is now one this
+// firmware does not know, which every decoder since 1.10.0 skips.
+static void the_head_element_is_gone(void) {
+    CHECK(EL_LAST == EL_NFC, "nfc is the last element this firmware knows");
     uint8_t b[LAYOUT_BLOB_MAX]; layout_t l = *layout_default(PANEL_128x32), out; char why[80] = "";
-    l.el[l.n++] = (layout_el_t){ EL_HEAD, 1, 1, 104, 24, 0, 0 };
     size_t n = enc(&l, b);
-    CHECK(layout_decode(b, n, &out, why, sizeof why), why);
-    CHECK(out.n == 9 && out.el[8].id == EL_HEAD && out.el[8].x == 104 && out.el[8].y == 24, "head round-trips");
-    l.el[8].x = 105; n = enc(&l, b);                                          expect_reject(b, n, "outside");
-    l.el[8] = (layout_el_t){ EL_HEAD, 1, 1, 0, 0, 3, 0 }; n = enc(&l, b);    expect_reject(b, n, "w must be 0");
-    l.el[8] = (layout_el_t){ EL_HEAD, 1, 1, 0, 0, 0, 1 }; n = enc(&l, b);    expect_reject(b, n, "opt must be 0");
+    memset(b + n, 0, 8); b[n] = 10; b[n + 1] = 1; b[n + 2] = 104; b[n + 3] = 24; b[2]++;
+    CHECK(layout_decode(b, n + 8, &out, why, sizeof why), why);
+    CHECK_EQ_INT(out.n, l.n);
+    for (int i = 0; i < out.n; i++) CHECK(out.el[i].id != 10, "not kept");
 }
 
 // 1.17.0: the panel's rotation rides in the layout blob as a SETTING record
@@ -199,9 +189,9 @@ static void head_and_rotation_fixture(void) {
     layout_t l; char why[80] = "";
     CHECK(layout_decode(b, n, &l, why, sizeof why), why);
     CHECK_EQ_INT(layout_rotation(b, n), LAYOUT_ROT_180);
-    bool head = false;
-    for (int i = 0; i < l.n; i++) if (l.el[i].id == EL_HEAD && l.el[i].visible) head = true;
-    CHECK(head, "head shown");
+    // The record is a 1.17.0 head element at 104,24: skipped now, the rest kept.
+    CHECK_EQ_INT(l.n, layout_default(PANEL_128x32)->n);
+    for (int i = 0; i < l.n; i++) CHECK(l.el[i].id != 10, "head skipped");
 }
 
 static void garbage_never_decodes(void) {
@@ -253,7 +243,7 @@ int main(void) {
     RUN(sizes_are_fixed_and_scale);
     RUN(each_rule_is_enforced);
     RUN(the_nfc_element);
-    RUN(the_head_element);
+    RUN(the_head_element_is_gone);
     RUN(the_rotation_record);
     RUN(head_and_rotation_fixture);
     RUN(garbage_never_decodes);
