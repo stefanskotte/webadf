@@ -163,6 +163,7 @@ typedef struct nfc_reader {
     bool     pn_probe_due;   // the Si512 just did not answer: try the PN532 next step
     bool     probing;        // the PN532 is being tried, not yet found (not "present")
     uint32_t t_probe;        // when that presence check began
+    uint32_t pn_t;           // when the current command's wait began
     uint8_t  pn_cmd;         // the command in flight (its answer is pn_cmd + 1)
     int      pn_rd_len;      // bytes to read for its answer, status byte included
     uint32_t pn_wait_ms;     // how long its answer may take

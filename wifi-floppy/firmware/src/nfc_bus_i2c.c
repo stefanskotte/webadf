@@ -25,3 +25,24 @@ void nfc_bus_i2c(nfc_bus_t *bus) {
     bus->rd = bus_rd;
     bus->ctx = NULL;
 }
+
+// The PN532's two transfers (UM0701-02 §6.2.4): a whole frame written, and a
+// read that is the status byte plus whatever follows it, both ended by a STOP
+// -- a STOP after a not-ready status byte is what the manual asks for.
+static bool fbus_wr(void *ctx, const uint8_t *buf, int n) {
+    (void)ctx;
+    return i2c_write_timeout_us(board_i2c(), PN532_I2C_ADDR, buf, (size_t)n, false,
+                                PN532_I2C_TIMEOUT_US) == n;
+}
+
+static bool fbus_rd(void *ctx, uint8_t *buf, int n) {
+    (void)ctx;
+    return i2c_read_timeout_us(board_i2c(), PN532_I2C_ADDR, buf, (size_t)n, false,
+                               PN532_I2C_TIMEOUT_US) == n;
+}
+
+void nfc_frame_bus_i2c(nfc_frame_bus_t *bus) {
+    bus->wr = fbus_wr;
+    bus->rd = fbus_rd;
+    bus->ctx = NULL;
+}

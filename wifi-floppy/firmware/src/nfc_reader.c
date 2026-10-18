@@ -355,14 +355,14 @@ bool nfc_take_gap(nfc_reader_t *r, nfc_gap_t *out) {
 // right now was on the reader before the write existed, so the arm counts
 // as a sighting of it, and it is written only after a full window away that
 // began after the arm -- even if it was already part-way through a dropout.
-// A different tag is still written at once. While the chip is ABSENT the
-// hold cannot expire (see st_absent): the chip's return decides it, not
+// A different tag is still written at once. While the chip is ABSENT (or a
+// PN532 is only being tried) the hold cannot expire (see st_absent): the chip's return decides it, not
 // this call. nfc_arm_write and nfc_arm_write_next must never drift apart
 // here -- this is the one gate that stops a write landing on a tag already
 // on the reader.
 static void arm_gate(nfc_reader_t *r, uint32_t seq) {
     uint32_t now = r->now_ms();
-    if (r->state != ST_ABSENT) expire_hold(r, now);
+    if (nfc_present(r)) expire_hold(r, now);
     if (r->held) r->last_seen = now;
     r->arm_seq = seq;
 }

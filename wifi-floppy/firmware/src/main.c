@@ -1143,8 +1143,14 @@ static void nfc_core0_step(nfc_armed_t *armed, bool short_pass) {
     const int level = nfc_present(&g_nfc) ? 1 : 2;
     if (level != g_nfc_reader) {
         g_nfc_reader = level;
-        wf_logf(WF_INFO, "nfc: reader %s at 0x%02x", level == 1 ? "present" : "absent",
-                NFC_I2C_ADDR);
+        // Which chip, and where: a PN532 module is told apart from the Si512
+        // here and in the boot I2C scan's address list, nowhere else.
+        if (level == 1 && nfc_chip(&g_nfc) == NFC_CHIP_PN532)
+            wf_logf(WF_INFO, "nfc: reader present (PN532) at 0x%02x", PN532_I2C_ADDR);
+        else if (level == 1)
+            wf_logf(WF_INFO, "nfc: reader present (Si512) at 0x%02x", NFC_I2C_ADDR);
+        else
+            wf_logf(WF_INFO, "nfc: reader absent (0x%02x, 0x%02x)", NFC_I2C_ADDR, PN532_I2C_ADDR);
     }
     // The dropout measurement (nfc_reader.h nfc_gap_t): the 3 s re-arrival
     // window is a guess from three bench sightings, and these lines are how
@@ -4091,9 +4097,14 @@ int main(void) {
         // if a panel answered, else still the probe's 100 kHz, left as is.
         // Nothing touches the chip here -- the first nfc_step() is the
         // boot-time presence check, in the service loop's display slot.
+        // Two chips are looked for, the Si512 at 0x28 first, then a PN532 at
+        // 0x24 (nfc_reader.h); the same i2c1, the same rules.
         nfc_bus_t nfc_bus;
         nfc_bus_i2c(&nfc_bus);
         nfc_init(&g_nfc, &nfc_bus, clock_ms);
+        nfc_frame_bus_t nfc_fbus;
+        nfc_frame_bus_i2c(&nfc_fbus);
+        nfc_attach_pn532(&g_nfc, &nfc_fbus);
     }
     // psram_image_init() runs inside track_cache_init() and its bool result is
     // discarded there. Say it out loud, because PSRAM is the one part of this

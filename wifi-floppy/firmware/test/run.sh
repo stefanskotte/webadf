@@ -22,9 +22,12 @@ fail=0
 #                       test could judge -- what they assert is about wiring,
 #                       which only a board can answer.
 #   nfc_bus_i2c.c     - the Si512's two i2c1 transfers (a register write, and
-#                       an address-then-read). Device-only for the same reason
-#                       as i2c_probe.c; the reader that drives them,
-#                       nfc_reader.c, IS tested, against si512_fake.c.
+#                       an address-then-read) and the PN532's two (a whole
+#                       frame written, a status byte + frame read). Device-only
+#                       for the same reason as i2c_probe.c; the reader that
+#                       drives them, nfc_reader.c with nfc_si512.c and
+#                       nfc_pn532.c, IS tested, against si512_fake.c and
+#                       pn532_fake.c.
 #   bus_out.c         - the status gate's PIO state machine and the spinlock
 #                       around its word. What that word MEANS -- which pins,
 #                       which bits, what a step or sniffer sample decodes to --
@@ -54,6 +57,7 @@ fail=0
 # compiled into every test binary alongside src/*.c, not excluded from it.
 # si512_fake.c is the same kind of thing for nfc_reader.c: a register model
 # of the Si512 with a scripted tag, linked into every test binary likewise.
+# pn532_fake.c is its PN532 counterpart: a frame-level model (UM0701-02).
 # Vendored Monocypher 4.0.2 (src/vendor/monocypher/VENDORED.md): compiled once,
 # warnings off -- it is not our code and is not edited -- and linked into every
 # test binary. It lives under src/vendor/, so the ../src/*.c glob never sees it.
@@ -77,7 +81,9 @@ for t in "${tests[@]}"; do
   # test_pnet_link.c too (no liblz4): the board decodes the Amiga's LZ4 frames into its window and scratch there,
   # and its tests put both on the heap at exactly their sizes, so a write past either is an ASan report.
   # test_pnet_pack.c too: the board encodes its batch's blocks into PSRAM buffers of exactly PNET_LZ4_WINDOW bytes.
-  if [ "$t" = test_pnet_link.c ] || [ "$t" = test_pnet_pack.c ]; then
+  # test_nfc_pn532.c too: the PN532 frame parser is fed every prefix of a frame, and noise, in heap blocks of
+  # exactly their length, so a read past the I2C read's end is an ASan report.
+  if [ "$t" = test_pnet_link.c ] || [ "$t" = test_pnet_pack.c ] || [ "$t" = test_nfc_pn532.c ]; then
     extra="-fsanitize=address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer"
   fi
   # -D_DEFAULT_SOURCE: strnlen (config_store.c) is POSIX.1-2008, not C11, and
@@ -86,7 +92,7 @@ for t in "${tests[@]}"; do
   # ran on Linux in CI. The device build is unaffected -- newlib declares it --
   # which is exactly why nothing caught it until a second toolchain did.
   cc -std=c11 -D_DEFAULT_SOURCE -g -O1 -pthread -Wall -Wextra -Werror -DWFMF_HOST_TEST=1 -DWF_DF1_DEFAULT=0 \
-     -o "$out" "$t" transport_fake.c si512_fake.c \
+     -o "$out" "$t" transport_fake.c si512_fake.c pn532_fake.c \
      $(ls ../src/*.c | grep -vE 'net_radio_cyw43\.c|main\.c|transport_tls\.c|sntp_time\.c|portal_net\.c|dskchg\.c|activity_led\.c|i2c_probe\.c|nfc_bus_i2c\.c|ssd1306\.c|flux_capture\.c|bus_out\.c|pnet_bridge\.c|fw_rom\.c|amiga_tcp\.c') \
      .build/monocypher.o .build/monocypher-ed25519.o -I../src/vendor/monocypher $extra \
      || { echo "COMPILE FAIL: $t"; fail=1; continue; }
