@@ -66,10 +66,13 @@ if [ $# -gt 0 ]; then tests=("$@"); else tests=(test_*.c); fi
 for t in "${tests[@]}"; do
   out=".build/${t%.c}"
   # liblz4 (BSD-2) referees the board's LZ4 codec (spec 2026-10-18 §6); only test_pnet_lz4.c links it.
+  # It also runs under ASan + UBSan: the decoder fuzz reads each block from a heap copy of exactly its length,
+  # so a read past the block's end is an ASan report (an exit != 0), not a silent read of the next bytes.
   extra=""
   if [ "$t" = test_pnet_lz4.c ]; then
     extra="$(pkg-config --cflags --libs liblz4)" ||
       { echo "COMPILE FAIL: $t needs liblz4 (macOS: brew install lz4; Debian/Ubuntu: apt install liblz4-dev pkg-config)"; fail=1; continue; }
+    extra="$extra -fsanitize=address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer"
   fi
   # -D_DEFAULT_SOURCE: strnlen (config_store.c) is POSIX.1-2008, not C11, and
   # glibc declares it only when a feature-test macro asks. macOS declares it

@@ -7,6 +7,7 @@
 #include "../src/pnet_lz4.h"
 #include <lz4.h>
 #include <stdint.h>
+#include <stdlib.h>
 #include <string.h>
 #include "../../../m68k/lz4/lz4_68k.c"
 
@@ -118,6 +119,38 @@ static void the_cap_is_exact(void) {
     CHECK_EQ_INT(bad, 0);
 }
 
+/* Every cap from 0 to one past the block's size, for inputs long enough to hold many sequences, so the cap also
+ * falls inside a sequence that ends in a match and not only in the final literals: the result is the block exactly
+ * when it fits and 0 otherwise, nothing is written at or past dst + cap, and a block decodes back to its input. */
+static void every_cap_is_honoured(void) {
+    static const size_t SIZES[] = { 13, 20, 64, 200, 777, PNET_ETH_MTU };
+    static uint8_t blk[PNET_LZ4_BLOCK_MAX + 2 + 64];
+    unsigned bad = 0, overrun = 0, caps = 0;
+    for (unsigned k = 0; k <= NKINDS; k++)
+        for (unsigned z = 0; z < sizeof SIZES / sizeof SIZES[0]; z++) {
+            const uint8_t *in = g_src;
+            size_t n = SIZES[z];
+            if (k == NKINDS) { if (z) break; in = SAME_SIZE; n = sizeof SAME_SIZE; }
+            else lc_frame(g_src, n, KINDS[k], (uint32_t)(z * 31u + k));
+            memset(g_tab, 0, sizeof g_tab);
+            const size_t s = pnet_lz4_encode_linked(in, n, g_blk, sizeof g_blk, g_tab, 4096, in);
+            if (s == 0 || s > PNET_LZ4_BLOCK_MAX) { bad++; continue; }
+            for (size_t cap = 0; cap <= s + 1u; cap++) {
+                memset(blk, 0xEE, sizeof blk);
+                memset(g_tab, 0, sizeof g_tab);
+                const size_t got = pnet_lz4_encode_linked(in, n, blk, cap, g_tab, 4096, in);
+                for (size_t i = cap; i < cap + 64u; i++) if (blk[i] != 0xEE) overrun++;
+                if (got != (cap >= s ? s : 0u)) bad++;
+                if (got && (LZ4_decompress_safe((const char *)blk, (char *)g_out, (int)got, (int)sizeof g_out) !=
+                                (int)n || memcmp(g_out, in, n) != 0)) bad++;
+                caps++;
+            }
+        }
+    CHECK(caps > 5000, "caps");
+    CHECK_EQ_INT(overrun, 0);
+    CHECK_EQ_INT(bad, 0);
+}
+
 /* Review Focus, sizes at the edges: the board encodes with cap = len - 1, so a block as long as its frame is not used. */
 static void a_block_as_long_as_its_frame_is_not_used(void) {
     memset(g_tab, 0, sizeof g_tab);
@@ -136,7 +169,8 @@ static void incompressible_frames_never_shrink(void) {
 }
 
 /* Review Focus, malformed LZ4: random and damaged blocks never write outside dst..dst_end (nor into the window
- * before it), and whatever both decoders accept decodes the same. */
+ * before it), and whatever both decoders accept decodes the same. Each block is decoded from a heap copy of exactly
+ * its length, so a read past its end is outside any object: run.sh builds this test with ASan, which reports it. */
 static void malformed_blocks_never_write_out_of_bounds(void) {
     static uint8_t buf[2048 + PNET_ETH_MTU + 64], ref[2048 + PNET_ETH_MTU + 64];
     uint32_t s = 12345;
@@ -159,7 +193,11 @@ static void malformed_blocks_never_write_out_of_bounds(void) {
         }
         memset(buf, 0x55, sizeof buf);
         uint8_t *dst = buf + 2048;
-        const long got = pnet_lz4_decode(g_blk, n, dst, dst + cap, dst - 1024);
+        uint8_t *const exact = malloc(n ? n : 1u);
+        if (!exact) { outside++; break; }
+        memcpy(exact, g_blk, n);
+        const long got = pnet_lz4_decode(exact, n, dst, dst + cap, dst - 1024);
+        free(exact);
         for (size_t i = 0; i < 2048; i++) if (buf[i] != 0x55) outside++;            /* the window is read only */
         for (size_t i = 2048 + cap; i < sizeof buf; i++) if (buf[i] != 0x55) outside++;
         if (got > (long)cap || got < -1) outside++;
@@ -197,6 +235,7 @@ int main(void) {
     RUN(its_blocks_decode_with_liblz4);
     RUN(the_encoder_is_the_68k_model_byte_for_byte);
     RUN(the_cap_is_exact);
+    RUN(every_cap_is_honoured);
     RUN(a_block_as_long_as_its_frame_is_not_used);
     RUN(incompressible_frames_never_shrink);
     RUN(malformed_blocks_never_write_out_of_bounds);
