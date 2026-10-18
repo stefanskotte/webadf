@@ -179,6 +179,23 @@ describe('transfers', () => {
     await T.recordSendRx(getDb(), d, 'r', new Date(t0.getTime() + 11_000));
     expect(await at()).toMatchObject({ rx: 'r' });
   });
+  it('a served chunk proves Receive is running: it refreshes send_rx, a refused one does not', async () => {
+    const d = await device(), other = await device();
+    const stale = new Date(Date.now() - 5 * 60_000);
+    for (const x of [d, other]) await getDb().update(devices).set({ sendRx: 'c', sendRxAt: stale }).where(eq(devices.id, x));
+    const at = async (x: string) => (await getDb().select({ rx: devices.sendRx, at: devices.sendRxAt }).from(devices).where(eq(devices.id, x)))[0];
+    const id = ((await q(d, await blob(new Uint8Array([40, 1, 2])))) as { id: string }).id;
+    expect(await T.recordChunk(getDb(), other, id, 0)).toEqual({ ok: false, status: 404 });
+    expect((await at(other)).at!.getTime()).toBe(stale.getTime());
+    expect((await at(d)).at!.getTime()).toBe(stale.getTime());
+    expect(await T.recordChunk(getDb(), d, id, 0)).toMatchObject({ ok: true });
+    expect(Date.now() - (await at(d)).at!.getTime()).toBeLessThan(5_000);
+    expect((await at(d)).rx).toBe('c');
+    await T.cancelTransfer(getDb(), 'org-a', id);
+    await getDb().update(devices).set({ sendRxAt: stale }).where(eq(devices.id, d));
+    expect(await T.recordChunk(getDb(), d, id, 0)).toEqual({ ok: false, status: 409 });
+    expect((await at(d)).at!.getTime()).toBe(stale.getTime());
+  });
   it('takes the bytes it is given instead of reading the blob again', async () => {
     const d = await device(); const b = new TextEncoder().encode('given');
     const r = await T.queueTransferFromBlob(getDb(), { orgId: 'org-a', deviceId: d, userId: 'u1', path: 'G', sha256: await blob(b), bytes: b });

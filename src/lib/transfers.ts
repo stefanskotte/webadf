@@ -101,7 +101,13 @@ export async function recordChunk(db: Db, deviceId: string, id: string, offset: 
     .where(and(eq(transfers.id, id), eq(transfers.deviceId, deviceId), inArray(transfers.status, ACTIVE),
       gt(transfers.sizeBytes, offset)))
     .returning({ sha: transfers.blobSha256, size: transfers.sizeBytes });
-  if (u) return { ok: true, sha256: u.sha, sizeBytes: u.size };
+  if (u) {
+    // A board fetching a chunk is provably talking to Receive, and while a file moves it skips its server polls (one HTTPS
+    // connection, used for chunks), so the poll's rx report goes stale mid-file and the page reads "Receive is not running".
+    // Refresh it here, throttled like the poll (recordSendRx writes on a change or after 30 s, not once per chunk).
+    await recordSendRx(db, deviceId, 'c');
+    return { ok: true, sha256: u.sha, sizeBytes: u.size };
+  }
   const [r] = await db.select({ status: transfers.status }).from(transfers)
     .where(and(eq(transfers.id, id), eq(transfers.deviceId, deviceId)));
   if (!r) return { ok: false, status: 404 };
