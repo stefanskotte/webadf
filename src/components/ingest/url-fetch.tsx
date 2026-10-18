@@ -63,7 +63,8 @@ export function UrlFetch({
   const color = status?.tone === 'danger' ? 'var(--danger-fg)' : status?.tone === 'ok' ? 'var(--success-fg)' : 'var(--muted-2)';
 
   return (
-    <form onSubmit={submit} className="glass-card flex flex-col gap-2 p-4" data-testid="url-fetch-form" noValidate>
+    <form onSubmit={submit} className="flex flex-col gap-2 rounded-xl p-3.5" data-testid="url-fetch-form" noValidate
+          style={{ border: '1px solid var(--hairline-strong)', background: 'var(--glass-subtle)' }}>
       <label htmlFor="ingest-url" className="text-[13.5px] font-semibold" style={{ color: 'var(--ink)' }}>
         Or fetch from a URL
       </label>
@@ -80,8 +81,8 @@ export function UrlFetch({
           onChange={(e) => setUrl(e.target.value)}
           disabled={busy}
           aria-describedby="ingest-url-hint ingest-url-status"
-          className="h-11 min-w-0 flex-1 rounded-[10px] border px-3 text-[13px] outline-none focus-visible:ring-2 sm:h-[34px]"
-          style={{ borderColor: 'var(--hairline-strong)', background: 'var(--glass)', color: 'var(--ink)' }}
+          className="h-11 w-full min-w-0 rounded-[10px] sm:w-auto sm:flex-1 border px-3 text-[13px] outline-none focus-visible:ring-2 sm:h-[34px]"
+          style={{ borderColor: 'var(--hairline-strong)', background: 'var(--input-bg)', color: 'var(--ink)' }}
         />
         <button
           type="submit"
@@ -93,7 +94,7 @@ export function UrlFetch({
           {busy ? 'Working…' : 'Fetch'}
         </button>
       </div>
-      <span id="ingest-url-hint" className="font-mono text-[10.5px]" style={{ color: 'var(--muted-2)' }}>
+      <span id="ingest-url-hint" className="text-[12px]" style={{ color: 'var(--muted)' }}>
         ADF, ADZ, DMS, DMZ, HFE or a .zip or .lha of them, up to 20 MB, from a public http(s) address
       </span>
       <p

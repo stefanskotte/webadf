@@ -14,6 +14,10 @@ import { HdTag } from '@/components/disks/hd-tag';
 import type { Suggestion } from '@/lib/disk-set-suggest';
 import { SetSuggestion } from './set-suggestion';
 import { UrlFetch, type FetchedRow } from './url-fetch';
+import { DropArea } from './drop-area';
+import { ListFrame } from './upload-card';
+import { StatusChip } from '@/components/ui/status-chip';
+import type { ChipKind } from '@/lib/send-ui';
 
 /** disk-sets spec §3 / the suggest route's own zod cap. */
 const MAX_SUGGEST_HASHES = 32;
@@ -32,15 +36,14 @@ type Row = {
   note?: string;
 };
 
-const STATE_COLOR: Record<RowState, string> = {
-  failed: 'var(--danger-fg)',
-  deduped: 'var(--accent-blue)',
-  done: 'var(--success-fg)',
-  // 'hashing' and 'uploading' are the in-flight states. --accent-amber is a
-  // FILL-only colour (fails WCAG AA as text) -- amber text must always use
-  // --amber-text instead.
-  hashing: 'var(--amber-text)',
-  uploading: 'var(--amber-text)',
+// The row's state as a chip, in the same colours as the tiles above it: amber while
+// in flight, blue for already-stored, green for uploaded, red for failed.
+const STATE_CHIP: Record<RowState, ChipKind> = {
+  failed: 'red',
+  deduped: 'blue',
+  done: 'green',
+  hashing: 'amber',
+  uploading: 'amber',
 };
 
 // The check/presign/complete endpoints cap a batch at 500 items (see
@@ -454,108 +457,76 @@ export function Dropzone() {
   const failed = rows.filter((r) => r.state === 'failed').length;
 
   return (
-    <div className="mx-4 flex flex-col gap-4 sm:mx-7 lg:mr-3.5">
-      <label
-        data-testid="dropzone"
-        onDragOver={(e) => e.preventDefault()}
-        onDrop={(e) => {
-          e.preventDefault();
-          void handleFiles(e.dataTransfer.files);
-        }}
-        className="glass-card flex h-48 cursor-pointer flex-col items-center justify-center gap-3"
-        style={{ borderStyle: 'dashed', borderColor: 'rgb(245 130 46 / 0.55)' }}
-      >
-        <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="var(--accent-amber)" strokeWidth="1.4">
-          <path d="M12 16V4m0 0L8 8m4-4 4 4" />
-          <path d="M3 16v3a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-3" />
-        </svg>
-        <span className="text-[15px] font-semibold" style={{ color: 'var(--ink)' }}>
-          Drop ADF, ADZ, DMS, DMZ, HFE
-        </span>
-        <span className="font-mono text-[10.5px]" style={{ color: 'var(--muted-2)' }}>
-          hashed in your browser before upload
-        </span>
-        <span
-          className="flex h-[34px] items-center rounded-lg px-4 text-[13px] font-medium"
-          style={{ background: '#fff', border: '1px solid var(--hairline-strong)', boxShadow: 'var(--shadow-card)' }}
-        >
-          Browse…
-        </span>
-        <input
-          type="file"
-          multiple
-          accept=".adf,.dsk,.adz,.dms,.dmz,.hfe"
-          className="sr-only"
-          data-testid="file-input"
-          disabled={busy}
-          onChange={(e) => e.target.files && void handleFiles(e.target.files)}
-        />
-      </label>
+    // The Add-to-library card's body (src/app/(app)/ingest/page.tsx): drop zone, URL fetch, then this run's
+    // list, which fills the card to the Send card's height on a wide screen.
+    <div className="flex min-h-0 flex-1 flex-col gap-4">
+      <DropArea
+        testId="dropzone"
+        inputTestId="file-input"
+        title="Drop ADF, ADZ, DMS, DMZ, HFE"
+        hint="Hashed in your browser before upload."
+        accept=".adf,.dsk,.adz,.dms,.dmz,.hfe"
+        disabled={busy}
+        onFiles={(f) => void handleFiles(f)}
+      />
 
       <UrlFetch busy={busy} setBusy={setBusy} onRows={addFetchedRows} />
 
       {rows.length > 0 && (
-        <>
-          {/* Five tiles across is ~70px each at 390px -- narrower than
-              some of the labels in them. Two, then three, then the five this
-              has always been. */}
-          <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
-            {(
-              [
-                { k: 'scanned', v: scanned, col: 'var(--ink)', border: 'var(--ink)' },
-                { k: 'deduped', v: deduped, col: 'var(--accent-blue)', border: 'var(--accent-blue)' },
-                { k: 'uploaded', v: uploaded, col: 'var(--success-fg)', border: 'var(--success-fg)' },
-                // Border is a fill, not text, so it can use the brighter
-                // --accent-amber (matching design/Ingest.dc.html's tile);
-                // the number itself stays on --amber-text for AA contrast.
-                { k: 'in flight', v: inFlight, col: 'var(--amber-text)', border: 'var(--accent-amber)' },
-                { k: 'failed', v: failed, col: 'var(--danger-fg)', border: 'var(--danger-fg)' },
-              ] as const
-            ).map((t) => (
-              <div
-                key={t.k}
-                className="flex flex-col gap-1 rounded-xl p-3.5"
-                style={{
-                  background: 'var(--glass-panel)',
-                  border: '1px solid var(--glass-border)',
-                  borderTop: `3px solid ${t.border}`,
-                  backdropFilter: 'blur(12px)',
-                  boxShadow: 'var(--shadow-card)',
-                }}
-              >
-                <span
-                  className="font-mono text-[9.5px] uppercase tracking-wide"
-                  style={{ color: 'var(--muted-2)' }}
-                >
-                  {t.k}
-                </span>
-                <span className="text-2xl font-bold leading-tight" style={{ color: t.col }}>
-                  {t.v}
-                </span>
-              </div>
-            ))}
-          </div>
-
-          <div className="glass-card overflow-hidden">
+        // Five tiles across is ~70px each at 390px -- narrower than some of
+        // the labels in them. Two, then three, then five.
+        <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
+          {(
+            [
+              { k: 'scanned', v: scanned, col: 'var(--ink)', border: 'var(--ink)' },
+              { k: 'deduped', v: deduped, col: 'var(--accent-blue)', border: 'var(--accent-blue)' },
+              { k: 'uploaded', v: uploaded, col: 'var(--success-fg)', border: 'var(--success-fg)' },
+              // Border is a fill, not text, so it can use the brighter
+              // --accent-amber; the number stays on --amber-text for AA.
+              { k: 'in flight', v: inFlight, col: 'var(--amber-text)', border: 'var(--accent-amber)' },
+              { k: 'failed', v: failed, col: 'var(--danger-fg)', border: 'var(--danger-fg)' },
+            ] as const
+          ).map((t) => (
             <div
-              className="flex items-center gap-3 px-4 py-2.5 font-mono text-[11px]"
-              style={{ borderBottom: '1px solid var(--hairline)', color: 'var(--muted-2)' }}
+              key={t.k}
+              className="flex flex-col gap-1 rounded-xl p-3"
+              style={{
+                background: 'var(--glass-strong)',
+                border: '1px solid var(--hairline-strong)',
+                borderTop: `3px solid ${t.border}`,
+              }}
             >
-              <span className="text-[13.5px] font-semibold" style={{ color: 'var(--ink)', fontFamily: 'inherit' }}>
-                This run
+              <span className="text-[10.5px] font-semibold uppercase tracking-wide" style={{ color: 'var(--muted)' }}>
+                {t.k}
               </span>
-              <span>
-                {scanned} file{scanned === 1 ? '' : 's'} · {inFlight} in flight
+              <span className="text-2xl font-bold leading-tight" style={{ color: t.col }}>
+                {t.v}
               </span>
             </div>
+          ))}
+        </div>
+      )}
 
+      {suggestion && (
+        <SetSuggestion suggestion={suggestion} onDone={() => setSuggestion(null)} />
+      )}
+
+      <ListFrame
+        title="This run"
+        counts={rows.length > 0 ? `${scanned} file${scanned === 1 ? '' : 's'} · ${inFlight} in flight` : undefined}
+      >
+        {rows.length === 0 ? (
+          <p className="px-4 py-3 text-[12.5px]" style={{ color: 'var(--muted)' }}>
+            Files you drop or fetch appear here, with what happened to each.
+          </p>
+        ) : (
+          <>
             {/* Hidden below `sm`: the rows underneath stack there, so a
                 header of column names would be naming columns that no longer
-                exist -- and its own 400px of fixed tracks would be clipped by
-                the card's overflow-hidden regardless. */}
+                exist. */}
             <div
-              className="hidden grid-cols-[1fr_90px_100px_90px] items-center px-4 py-1.5 font-mono text-[10px] uppercase tracking-wide sm:grid"
-              style={{ background: 'rgb(255 255 255 / 0.5)', borderBottom: '1px solid var(--hairline)', color: 'var(--muted-2)' }}
+              className="hidden grid-cols-[1fr_80px_90px_84px] items-center px-4 py-1.5 text-[10.5px] font-semibold uppercase tracking-wide sm:grid"
+              style={{ borderBottom: '1px solid var(--hairline)', color: 'var(--muted)' }}
             >
               <span>File</span>
               <span className="text-right">Size</span>
@@ -568,56 +539,42 @@ export function Dropzone() {
                 <div
                   key={r.sha256}
                   data-testid="ingest-row"
-                  // 1fr plus 400px of fixed tracks, in a card that does not
-                  // scroll sideways: at 390px the filename track computes to
-                  // nothing and the state -- the one thing anyone actually
-                  // watches during an ingest -- is clipped off the end. Below
-                  // `sm` the row becomes a card of its own: filename on the
-                  // first line, the rest wrapped beneath it. The grid returns
-                  // at `sm` untouched.
-                  className="flex flex-wrap items-center gap-x-3 gap-y-1 px-4 py-2 font-mono text-[11px] sm:grid sm:grid-cols-[1fr_90px_100px_90px] sm:gap-x-0 sm:gap-y-0"
+                  // Below `sm` the row is a card of its own: filename on the
+                  // first line, the rest wrapped beneath it, so the state is
+                  // never clipped off the end at 390px.
+                  className="flex flex-wrap items-center gap-x-3 gap-y-1 px-4 py-2 text-[12px] sm:grid sm:grid-cols-[1fr_80px_90px_84px] sm:gap-x-0 sm:gap-y-0"
                   style={{ borderBottom: '1px solid var(--hairline)' }}
                 >
-                  <span className="w-full truncate pr-3 sm:w-auto" style={{ color: 'var(--foreground)' }}>
-                    {r.filename}
+                  <span className="w-full min-w-0 truncate pr-3 sm:w-auto">
+                    <span className="font-mono text-[12px]" style={{ color: 'var(--ink)' }}>{r.filename}</span>
                     {r.note && (
-                      // Not a tooltip: the two things this carries -- "why
-                      // your .dms was rejected" and "this .adf came out of a
-                      // .dms" -- are both things you need to see without
-                      // hunting for them.
+                      // Not a tooltip: "why your .dms was rejected" and "this
+                      // .adf came out of a .dms" both need to be seen.
                       <span
-                        className="ml-2 text-[10px] font-normal"
+                        className="ml-2 text-[11.5px]"
                         data-testid="ingest-note"
-                        style={{ color: r.state === 'failed' ? 'var(--danger-fg)' : 'var(--muted-2)' }}
+                        style={{ color: r.state === 'failed' ? 'var(--danger-fg)' : 'var(--muted)' }}
                       >
                         {r.note}
                       </span>
                     )}
                   </span>
-                  <span className="flex items-center justify-end gap-1 text-right" style={{ color: 'var(--muted-2)' }}>
+                  <span className="flex items-center justify-end gap-1 text-right font-mono text-[11.5px]" style={{ color: 'var(--muted)' }}>
                     {Math.round(r.sizeBytes / 1024)} KB
                     {!isHfeFilename(r.filename) && adfDensity(r.sizeBytes) === 'hd' && <HdTag testId="ingest-hd-tag" />}
                   </span>
-                  <span className="text-right text-[10px]" style={{ color: 'var(--faint)' }}>
+                  <span className="text-right font-mono text-[11px]" style={{ color: 'var(--muted)' }}>
                     {r.sha256.slice(0, 8)}…
                   </span>
-                  <span
-                    className="text-right text-[10px] font-semibold uppercase"
-                    data-state={r.state}
-                    style={{ color: STATE_COLOR[r.state] }}
-                  >
-                    {r.state}
+                  <span className="flex justify-end" data-state={r.state}>
+                    <StatusChip kind={STATE_CHIP[r.state]}>{r.state}</StatusChip>
                   </span>
                 </div>
               ))}
             </div>
-          </div>
-        </>
-      )}
-
-      {suggestion && (
-        <SetSuggestion suggestion={suggestion} onDone={() => setSuggestion(null)} />
-      )}
+          </>
+        )}
+      </ListFrame>
     </div>
   );
 }

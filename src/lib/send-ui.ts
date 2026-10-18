@@ -54,6 +54,25 @@ export function transferState(t: TransferView): { text: string; tone: Tone } {
   }
 }
 
+/** A queue row's state as the Upload page draws it: a coloured chip, then the detail as secondary text. */
+export type ChipKind = 'amber' | 'blue' | 'green' | 'red' | 'neutral';
+export type StateChip = { kind: ChipKind; label: string; note: string | null; path: string | null };
+
+/**
+ * transferState split for the chip: `label · note path` reads back as exactly transferState's text, so the words
+ * stay in one place. `path` is the saved name, kept apart so it can be drawn in monospace.
+ */
+export function stateChip(t: TransferView): StateChip {
+  switch (t.status) {
+    case 'queued': return { kind: 'amber', label: 'Waiting', note: null, path: null };
+    case 'sending': return { kind: 'blue', label: transferState(t).text, note: null, path: null };
+    case 'delivered': return { kind: 'green', label: 'Delivered', note: 'saved as', path: t.savedAs ?? t.path };
+    case 'failed': return { kind: 'red', label: 'Failed', note: failureText(t.errorCode, t.errorText), path: null };
+    case 'cancelled': return { kind: 'neutral', label: 'Cancelled', note: null, path: null };
+    case 'expired': return { kind: 'red', label: 'Expired', note: 'the Amiga did not take it within 24 h', path: null };
+  }
+}
+
 export const canCancel = (s: TransferStatus): boolean => s === 'queued' || s === 'sending';   // R9
 export const canRetry = (s: TransferStatus): boolean => s === 'failed' || s === 'expired';   // R10
 
