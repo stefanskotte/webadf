@@ -366,7 +366,7 @@ test('a stored layout that still names the withdrawn head element loads without 
 
   await openEditor(page, deviceId);
   await expect(page.getByTestId(`display-rotation-${deviceId}`)).toHaveValue('180');   // the rest of the layout loaded
-  await expect(page.getByTestId('display-visible-track')).toBeChecked();
+  await expect(page.getByTestId('display-visible-status')).toBeChecked();
   await expect(page.getByTestId('display-visible-head')).toHaveCount(0);
   await expect(page.getByText('Unsaved changes')).toHaveCount(0);
 
