@@ -258,12 +258,120 @@ static void builtin_screens_on_128x64_are_the_128x32_ones(void) {
     }
 }
 
+// ---- the head element (1.17.0): cylinder.side, "40.1", FlashFloppy's
+// reading. Own goldens on CUSTOM layouts (no default lists it), as the NFC
+// element's: the default goldens above staying byte-identical is the proof a
+// board without it draws what 1.16 drew.
+typedef struct { const char *name; panel_t panel; int x, y, scale, cyl, side; } head_golden_t;
+static const head_golden_t HEAD_GOLDENS[] = {
+    { "head_40_1_32",    PANEL_128x32, 104, 24, 1, 40, 1 },
+    { "head_05_0_32",    PANEL_128x32, 104, 24, 1,  5, 0 },
+    { "head_79_1_2x_64", PANEL_128x64,  80, 46, 2, 79, 1 },
+};
+
+// The default with the track counter hidden and the head in its corner.
+static layout_t head_layout(panel_t p, int x, int y, int scale) {
+    layout_t l = *layout_default(p);
+    for (int i = 0; i < l.n; i++) if (l.el[i].id == EL_TRACK) l.el[i].visible = 0;
+    l.el[l.n++] = (layout_el_t){ EL_HEAD, 1, (uint8_t)scale, (uint8_t)x, (uint8_t)y, 0, 0 };
+    return l;
+}
+
+static void render_head(const head_golden_t *g, uint8_t fb[DISP_FB_MAX]) {
+    layout_t l = head_layout(g->panel, g->x, g->y, g->scale);
+    display_state_t s = st(DS_LOADED);
+    strcpy(s.title, "Workbench 3.1 Install"); strcpy(s.detail, "disk 1 of 6");
+    s.show_track = true; s.cyl = g->cyl; s.side = (uint8_t)g->side; s.writable = true;
+    display_render(&s, &l, fb);
+}
+
+static void head_goldens_match(void) {
+    const bool write = getenv("DISPLAY_GOLDEN_WRITE") != NULL;
+    for (size_t i = 0; i < sizeof HEAD_GOLDENS / sizeof HEAD_GOLDENS[0]; i++) {
+        const head_golden_t *g = &HEAD_GOLDENS[i];
+        const size_t bytes = (size_t)panel_height(g->panel) * DISP_W / 8;
+        uint8_t fb[DISP_FB_MAX]; render_head(g, fb);
+        char path[128]; path_for(path, sizeof path, g->name);
+        if (write) {
+            FILE *f = fopen(path, "wb"); CHECK(f != NULL, path);
+            if (f) { fwrite(fb, 1, bytes, f); fclose(f); }
+            continue;
+        }
+        uint8_t want[DISP_FB_MAX]; FILE *f = fopen(path, "rb"); CHECK(f != NULL, path);
+        if (!f) continue;
+        size_t got = fread(want, 1, sizeof want, f); fclose(f);
+        CHECK(got == bytes, path);
+        CHECK(memcmp(fb, want, bytes) == 0, g->name);
+    }
+}
+
+// The SHAPE: the head draws exactly the font's "40.1" -- the same pixels a
+// detail line holding that text draws in the same place -- at 1x and 2x.
+static void head_text_is_the_picture(void) {
+    static const struct { int cyl, side; const char *text; } T[] = {
+        { 40, 1, "40.1" }, { 5, 0, "05.0" }, { 0, 0, "00.0" }, { 79, 1, "79.1" },
+        { 123, 1, "99.1" },   // clamped, as the track counter's numbers are: the box holds 4 characters
+        { -4, 0, "00.0" },
+        { 12, 9, "12.1" },    // any nonzero side is side 1
+    };
+    for (int scale = 1; scale <= 2; scale++)
+        for (size_t k = 0; k < sizeof T / sizeof T[0]; k++) {
+            layout_t h = { PANEL_128x64, 1, { { EL_HEAD, 1, (uint8_t)scale, 10, 20, 0, 0 } } };
+            layout_t d = { PANEL_128x64, 1, { { EL_DETAIL, 1, (uint8_t)scale, 10, 20, 24, 0 } } };
+            display_state_t s; memset(&s, 0, sizeof s); s.status = DS_LOADED; s.show_track = true;
+            s.cyl = T[k].cyl; s.side = (uint8_t)T[k].side; s.max_cyl = 79;
+            display_state_t t = s; strcpy(t.detail, T[k].text);
+            uint8_t a[DISP_FB_MAX], b[DISP_FB_MAX];
+            display_render(&s, &h, a); display_render(&t, &d, b);
+            CHECK(memcmp(a, b, sizeof a) == 0, T[k].text);
+            CHECK(lit(a, 0, 0, 128, 64) > 0, "something drawn");
+            CHECK_EQ_INT(lit(a, 0, 0, 128, 64), lit(a, 10, 20, 10 + 24 * scale, 20 + 8 * scale));   // inside its box
+        }
+}
+
+static void head_only_while_a_disk_is_mounted(void) {
+    layout_t l = { PANEL_128x32, 1, { { EL_HEAD, 1, 1, 0, 0, 0, 0 } } };
+    display_state_t s; memset(&s, 0, sizeof s); s.status = DS_READY; s.cyl = 40; s.side = 1;
+    uint8_t fb[DISP_FB_MAX]; display_render(&s, &l, fb);
+    CHECK_EQ_INT(lit(fb, 0, 0, 128, 32), 0);          // nothing mounted: no number about no disk
+    s.show_track = true; s.status = DS_LOADED; l.el[0].visible = 0;
+    display_render(&s, &l, fb);
+    CHECK_EQ_INT(lit(fb, 0, 0, 128, 32), 0);          // hidden: nothing
+    // The defaults ignore the side entirely.
+    for (int p = 0; p <= 1; p++) {
+        uint8_t a[DISP_FB_MAX], b[DISP_FB_MAX];
+        display_state_t m = st(DS_LOADED); m.show_track = true; m.cyl = 40;
+        m.side = 0; display_render(&m, layout_default((panel_t)p), a);
+        m.side = 1; display_render(&m, layout_default((panel_t)p), b);
+        CHECK(memcmp(a, b, sizeof a) == 0, "a default does not draw the side");
+    }
+}
+
+// The detail line stops short of the head on its row, as it does of the
+// track counter: a long label is shortened, the number never is.
+static void detail_is_clipped_before_the_head(void) {
+    layout_t l = head_layout(PANEL_128x32, 104, 24, 1);
+    display_state_t s = st(DS_LOADED); strcpy(s.title, "A");
+    put_truncated(s.detail, sizeof s.detail, "a detail that is far too long");
+    s.show_track = true; s.cyl = 40; s.side = 1;
+    uint8_t fb[DISP_FB_MAX]; display_render(&s, &l, fb);
+    CHECK(lit(fb, 104, 24, 128, 32) > 0, "the head is drawn");
+    // Clipped one ADVANCE before the head's first column (104 - 6 = 98): the
+    // last glyph that fits starts at 90 and ends at 94, so 95..103 stay dark.
+    CHECK_EQ_INT(lit(fb, 95, 24, 104, 32), 0);
+    CHECK(lit(fb, 90, 24, 95, 32) > 0, "the detail is drawn up to it");
+}
+
 int main(void) {
     RUN(every_golden_state_matches);
     RUN(builtin_screens_on_128x64_are_the_128x32_ones);
     RUN(nfc_goldens_match);
     RUN(nfc_glyph_is_the_picture);
     RUN(nfc_hidden_or_absent_from_the_layout_draws_nothing);
+    RUN(head_goldens_match);
+    RUN(head_text_is_the_picture);
+    RUN(head_only_while_a_disk_is_mounted);
+    RUN(detail_is_clipped_before_the_head);
     RUN(test_track_wins_overlap_with_download);
     RUN(test_2x_doubles_pixels);
     RUN(test_built_in_states_ignore_a_custom_layout);

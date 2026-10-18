@@ -461,6 +461,35 @@ static void test_panel_change_resends_every_page(void) {
     CHECK(total == 4 * DISP_W, "every byte of the 4 pages resent under a small budget");
 }
 
+// 1.17.0: a rotation re-configures the controller under the same picture,
+// and the SSD1306 remaps only bytes written after it -- so every byte is sent
+// again, budgeted, while the framebuffer, layout and panel stay as they were.
+static void test_resend_all_keeps_the_picture_and_sends_every_byte(void) {
+    begin();
+    display_t d; display_init(&d, fake_blit, NULL);
+    layout_t custom = *layout_default(PANEL_128x32);
+    CHECK(display_set_layout(&d, &custom), "custom layout");
+    display_state_t s = base_state(); strcpy(s.title, "Turrican"); s.show_track = true; s.cyl = 7;
+    display_set(&d, &s);
+    while (display_pump(&d, 4096) > 0) {}
+    CHECK(display_in_sync(&d), "settled");
+    uint8_t before[DISP_FB_MAX]; memcpy(before, d.fb, sizeof before);
+
+    display_resend_all(&d);
+    CHECK(!display_in_sync(&d), "out of sync until resent");
+    CHECK(memcmp(d.fb, before, sizeof before) == 0, "the picture is kept");
+    CHECK(d.layout == &custom && d.panel == PANEL_128x32, "layout and panel are kept");
+    memset(panel, 0, sizeof panel);          // the glass "forgot" (a re-configured controller)
+    n_blits = 0; int total = 0;
+    while (display_pump(&d, DISP_W / 4) > 0) {
+        for (int i = 0; i < n_blits && i < MAX_BLITS; i++) { CHECK(blits[i].n <= DISP_W / 4, "within budget"); total += blits[i].n; }
+        n_blits = 0;
+    }
+    CHECK_EQ_INT(total, 4 * DISP_W);
+    CHECK(memcmp(panel, before, 4 * DISP_W) == 0, "the glass holds the picture again");
+    CHECK(display_in_sync(&d), "in sync after");
+}
+
 static void test_set_layout_refuses_a_foreign_panel(void) {
     begin();
     display_t d; display_init(&d, fake_blit, NULL);
@@ -511,6 +540,7 @@ int main(int argc, char **argv) {
     RUN(test_a_track_step_sends_a_small_span_not_a_frame);
     RUN(test_a_failed_transfer_is_retried_not_lost);
     RUN(test_panel_change_resends_every_page);
+    RUN(test_resend_all_keeps_the_picture_and_sends_every_byte);
     RUN(test_render_without_a_layout_draws_the_default);
     RUN(test_set_layout_refuses_a_foreign_panel);
     RUN(test_the_pump_writes_within_one_page_per_call);

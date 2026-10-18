@@ -122,6 +122,88 @@ static void the_nfc_element(void) {
     l.el[l.n++] = (layout_el_t){ EL_NFC, 0, 1, 0, 24, 0, 0 }; n = enc(&l, b); expect_reject(b, n, "twice");
 }
 
+// 1.17.0: the head position, "cylinder.side" (FlashFloppy's "40.1") -- a
+// fixed four-character box like the track counter's, placed like any other
+// element, in neither default.
+static void the_head_element(void) {
+    CHECK(EL_HEAD > EL_NFC, "a new id, after every id 1.16 knows: 1.10-1.16 skip it");
+    layout_el_t e = { EL_HEAD, 1, 1, 0, 0, 0, 0 }; int w, h;
+    layout_el_size(&e, &w, &h); CHECK(w == 24 && h == 8, "head 24x8 (\"99.1\")");
+    e.scale = 2; layout_el_size(&e, &w, &h); CHECK(w == 48 && h == 16, "head 2x 48x16");
+    for (int p = 0; p <= 1; p++) {
+        const layout_t *d = layout_default((panel_t)p);
+        for (int i = 0; i < d->n; i++) CHECK(d->el[i].id != EL_HEAD, "no default lists the head element");
+    }
+    uint8_t b[LAYOUT_BLOB_MAX]; layout_t l = *layout_default(PANEL_128x32), out; char why[80] = "";
+    l.el[l.n++] = (layout_el_t){ EL_HEAD, 1, 1, 104, 24, 0, 0 };
+    size_t n = enc(&l, b);
+    CHECK(layout_decode(b, n, &out, why, sizeof why), why);
+    CHECK(out.n == 9 && out.el[8].id == EL_HEAD && out.el[8].x == 104 && out.el[8].y == 24, "head round-trips");
+    l.el[8].x = 105; n = enc(&l, b);                                          expect_reject(b, n, "outside");
+    l.el[8] = (layout_el_t){ EL_HEAD, 1, 1, 0, 0, 3, 0 }; n = enc(&l, b);    expect_reject(b, n, "w must be 0");
+    l.el[8] = (layout_el_t){ EL_HEAD, 1, 1, 0, 0, 0, 1 }; n = enc(&l, b);    expect_reject(b, n, "opt must be 0");
+}
+
+// 1.17.0: the panel's rotation rides in the layout blob as a SETTING record
+// (id REC_ROTATION, not an element): [id][0][0][0][0][quarter turns][0][0].
+// Boards on 1.10.0-1.16.x skip any id above EL_NFC, so an older board shows
+// the layout unrotated instead of refusing it; 1.7.1-1.9.x refuse any unknown
+// id, which is why the web app sends rotation only to 1.17.0+.
+static void the_rotation_record(void) {
+    CHECK(REC_ROTATION > EL_LAST, "not an element id; 1.10-1.16 skip it");
+    CHECK(REC_ROTATION != EL_LAST + 1, "and not the next element's id either");
+    uint8_t b[LAYOUT_BLOB_MAX]; layout_t l = *layout_default(PANEL_128x64), out; char why[80] = "";
+    uint8_t d[LAYOUT_BLOB_MAX]; size_t dn = enc(layout_default(PANEL_128x64), d);
+    CHECK_EQ_INT(layout_rotation(d, dn), LAYOUT_ROT_0);  // the defaults are not rotated
+    size_t n = (size_t)layout_encode_rotated(&l, LAYOUT_ROT_180, b, sizeof b);
+    CHECK_EQ_INT(n, 4 + 8 * (l.n + 1));
+    CHECK_EQ_INT(b[2], l.n + 1);                        // the header counts every record
+    const uint8_t *r = b + 4 + 8 * l.n;                 // appended after the elements
+    CHECK(r[0] == REC_ROTATION && r[1] == 0 && r[2] == 0 && r[3] == 0 && r[4] == 0 &&
+          r[5] == LAYOUT_ROT_180 && r[6] == 0 && r[7] == 0, "the record's bytes");
+    CHECK(layout_decode(b, n, &out, why, sizeof why), why);
+    CHECK_EQ_INT(layout_rotation(b, n), LAYOUT_ROT_180);
+    CHECK_EQ_INT(out.n, l.n);                           // not an element: not drawn, not counted
+    for (int i = 0; i < out.n; i++) CHECK(out.el[i].id != REC_ROTATION, "never in el[]");
+
+    n = (size_t)layout_encode_rotated(&l, LAYOUT_ROT_0, b, sizeof b);
+    CHECK_EQ_INT(n, 4 + 8 * l.n);                       // unrotated: no record, the 1.16 bytes exactly
+    CHECK(n == dn && memcmp(b, d, n) == 0, "== layout_encode");
+    CHECK(layout_decode(b, n, &out, why, sizeof why) && layout_rotation(b, n) == LAYOUT_ROT_0, "no record = 0");
+
+    // A rotation-only layout (no elements) is valid; anywhere in the list.
+    uint8_t only[12] = { 1, 0, 1, 0, REC_ROTATION, 0, 0, 0, 0, LAYOUT_ROT_180, 0, 0 };
+    CHECK(layout_decode(only, sizeof only, &out, why, sizeof why) && out.n == 0, why);
+    CHECK_EQ_INT(layout_rotation(only, sizeof only), LAYOUT_ROT_180);
+
+    n = (size_t)layout_encode_rotated(&l, LAYOUT_ROT_180, b, sizeof b); r = b + 4 + 8 * l.n;
+    uint8_t c[LAYOUT_BLOB_MAX];
+    memcpy(c, b, n); c[4 + 8 * l.n + 5] = 0;            CHECK(layout_decode(c, n, &out, why, sizeof why) && layout_rotation(c, n) == 0, "an explicit 0 is fine");
+    memcpy(c, b, n); c[4 + 8 * l.n + 5] = 1;            expect_reject(c, n, "rotation");
+    memcpy(c, b, n); c[4 + 8 * l.n + 5] = 3;            expect_reject(c, n, "rotation");
+    memcpy(c, b, n); c[4 + 8 * l.n + 1] = 1;            expect_reject(c, n, "rotation");
+    memcpy(c, b, n); c[4 + 8 * l.n + 2] = 4;            expect_reject(c, n, "rotation");
+    memcpy(c, b, n); c[4 + 8 * l.n + 6] = 1;            expect_reject(c, n, "reserved");
+    {   // listed twice
+        uint8_t two[20] = { 1, 0, 2, 0, REC_ROTATION, 0, 0, 0, 0, 2, 0, 0, REC_ROTATION, 0, 0, 0, 0, 2, 0, 0 };
+        expect_reject(two, sizeof two, "twice");
+    }
+    (void)r;
+}
+
+// The fixture the web app's encoder must reproduce byte for byte: the 128x32
+// default, rotated, with the head element shown in the track's place (track hidden).
+static void head_and_rotation_fixture(void) {
+    FILE *f = fopen("fixtures/layouts/custom32_head_rot180.bin", "rb"); CHECK(f != NULL, "fixture"); if (!f) return;
+    uint8_t b[LAYOUT_BLOB_MAX + 1]; size_t n = fread(b, 1, sizeof b, f); fclose(f);
+    layout_t l; char why[80] = "";
+    CHECK(layout_decode(b, n, &l, why, sizeof why), why);
+    CHECK_EQ_INT(layout_rotation(b, n), LAYOUT_ROT_180);
+    bool head = false;
+    for (int i = 0; i < l.n; i++) if (l.el[i].id == EL_HEAD && l.el[i].visible) head = true;
+    CHECK(head, "head shown");
+}
+
 static void garbage_never_decodes(void) {
     uint8_t b[LAYOUT_BLOB_MAX + 8] = {0}; layout_t l; char why[80];   // len 0/3 reads nothing; GCC cannot know
     CHECK(!layout_decode(b, 0, &l, why, sizeof why), "empty");
@@ -171,6 +253,9 @@ int main(void) {
     RUN(sizes_are_fixed_and_scale);
     RUN(each_rule_is_enforced);
     RUN(the_nfc_element);
+    RUN(the_head_element);
+    RUN(the_rotation_record);
+    RUN(head_and_rotation_fixture);
     RUN(garbage_never_decodes);
     RUN(why_is_always_terminated);
     RUN(fixtures_decode_as_named);

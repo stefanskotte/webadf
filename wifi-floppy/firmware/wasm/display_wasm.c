@@ -19,7 +19,7 @@ __attribute__((export_name("out_ptr")))   uint8_t *out_ptr(void)   { return g_ou
 __attribute__((export_name("state_size"))) int state_size(void) { return (int)sizeof g_state; }
 
 /** Byte offset of display_state_t field `i` (0 status, 1 bars, 2 title, 3 detail,
- *  4 show_track, 5 cyl, 6 max_cyl, 7 pct, 8 tick, 9 writable, 10 sync, 11 nfc); -1 unknown.
+ *  4 show_track, 5 cyl, 6 max_cyl, 7 pct, 8 tick, 9 writable, 10 sync, 11 nfc, 12 side); -1 unknown.
  *  The loader checks its own table against these, so a layout drift fails loudly. */
 __attribute__((export_name("state_off"))) int state_off(int i) {
     switch (i) {
@@ -35,6 +35,7 @@ __attribute__((export_name("state_off"))) int state_off(int i) {
     case 9:  return (int)offsetof(display_state_t, writable);
     case 10: return (int)offsetof(display_state_t, sync);
     case 11: return (int)offsetof(display_state_t, nfc);
+    case 12: return (int)offsetof(display_state_t, side);
     default: return -1;
     }
 }
@@ -44,12 +45,15 @@ __attribute__((export_name("validate"))) int validate(int len) {
     layout_t l; return layout_decode(g_blob, (size_t)len, &l, g_why, sizeof g_why) ? 1 : 0;
 }
 
-/** Render g_state with the blob (len 0 = the panel's default) into g_fb. 1 ok, 0 invalid blob. */
+/** Render g_state with the blob (len 0 = the panel's default) into g_fb. 1 ok, 0 invalid blob.
+ *  A blob that turns the panel 180 degrees (1.17.0) comes back turned: the glass as the board's
+ *  controller shows it (test_oled_rotation.c holds display_rotate180 to that). */
 __attribute__((export_name("render"))) int render(int panel, int len) {
     layout_t l;
     const layout_t *use = layout_default((panel_t)panel);
     if (len > 0) { if (!layout_decode(g_blob, (size_t)len, &l, g_why, sizeof g_why)) return 0; use = &l; }
     display_render(&g_state, display_layout_for(&g_state, use), g_fb);
+    if (len > 0 && layout_rotation(g_blob, (size_t)len) == LAYOUT_ROT_180) display_rotate180(g_fb, use->panel);
     return 1;
 }
 

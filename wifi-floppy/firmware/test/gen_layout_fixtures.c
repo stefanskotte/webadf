@@ -36,6 +36,13 @@ int main(void) {
     for (int i = 0; i < l.n; i++) if (l.el[i].id == EL_STATUS) l.el[i].opt = STATUS_OPT_ICON;
     put_layout("custom32_status_icon", &l);
 
+    // 1.17.0: the 128x32 default turned 180 degrees, the head position
+    // ("40.1") shown in the track counter's corner and the counter hidden.
+    l = *layout_default(PANEL_128x32);
+    for (int i = 0; i < l.n; i++) if (l.el[i].id == EL_TRACK) l.el[i].visible = 0;
+    l.el[l.n++] = (layout_el_t){ EL_HEAD, 1, 1, 104, 24, 0, 0 };
+    { uint8_t b[LAYOUT_BLOB_MAX]; put("custom32_head_rot180", b, layout_encode_rotated(&l, LAYOUT_ROT_180, b, sizeof b)); }
+
     l = *layout_default(PANEL_128x32);
     for (int i = 0; i < l.n; i++) if (l.el[i].id == EL_TITLE) l.el[i].y = 20;
     put_layout("bad_bounds", &l);

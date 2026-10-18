@@ -252,12 +252,23 @@ static bool display_handoff_take(uint32_t *last, display_slot_t *out) {
  *  every byte anyway, through the budgeted pump. */
 static void display_apply(const display_slot_t *in) {
     const panel_t p = (panel_t)in->rec.panel;
+    // The panel's rotation rides in the layout blob (1.17.0, REC_ROTATION);
+    // no layout = the default = upright. Already validated by layout_decode.
+    const uint8_t rot = in->rec.has_layout ? layout_rotation(in->rec.blob, in->rec.blob_len) : LAYOUT_ROT_0;
     if (g_panel_addr != 0) {
+        const bool turned = rot != ssd1306_rotation();
+        // Before a re-init, which sends the rotation it holds.
+        if (turned && !ssd1306_set_rotation(g_panel_addr, rot))
+            wf_logf(WF_WARN, "display: rotation %d failed", rot == LAYOUT_ROT_180 ? 180 : 0);
         if (p != g_disp.panel) {
             if (!ssd1306_reinit(g_panel_addr, p))
                 wf_logf(WF_WARN, "display: panel re-init for %s failed",
                         p == PANEL_128x64 ? "128x64" : "128x32");
             display_set_panel(&g_disp, p);
+        } else if (turned) {
+            // The SSD1306 remaps only bytes written after the command: send
+            // the whole picture again, through the budgeted pump.
+            display_resend_all(&g_disp);
         }
         if (in->rec.has_layout) {
             g_layout_applied = in->layout;
@@ -268,9 +279,10 @@ static void display_apply(const display_slot_t *in) {
     }
     g_display_rec = in->rec;
     g_display_store_pending = true;
-    wf_logf(WF_INFO, "display: version %lu applied (%s, %s)%s",
+    wf_logf(WF_INFO, "display: version %lu applied (%s, %s%s)%s",
             (unsigned long)in->rec.version, p == PANEL_128x64 ? "128x64" : "128x32",
             in->rec.has_layout ? "custom layout" : "default layout",
+            rot == LAYOUT_ROT_180 ? ", turned 180" : "",
             g_panel_addr ? "" : " -- no panel attached, stored only");
 }
 
@@ -4014,6 +4026,7 @@ int main(void) {
         // stored panel and version but draws that panel's default.
         panel_t boot_panel = PANEL_128x32;
         const layout_t *boot_layout = NULL;          // NULL = the panel's default
+        uint8_t boot_rot = LAYOUT_ROT_0;             // from the stored layout's blob (1.17.0)
         {
             static display_record_t rec;             // static: ~140 bytes, read once
             if (display_store_load(&rec)) {
@@ -4031,15 +4044,17 @@ int main(void) {
                         if (layout_decode(rec.blob, rec.blob_len, &g_layout_applied, why, sizeof why) &&
                             g_layout_applied.panel == boot_panel) {
                             boot_layout = &g_layout_applied;
+                            boot_rot = layout_rotation(rec.blob, rec.blob_len);
                         } else {
                             wf_logf(WF_WARN, "display: stored layout refused (%s) -- the panel's default",
                                     why[0] ? why : "panel mismatch");
                         }
                     }
-                    wf_logf(WF_INFO, "display: stored version %lu, %s, %s layout",
+                    wf_logf(WF_INFO, "display: stored version %lu, %s, %s layout%s",
                             (unsigned long)rec.version,
                             boot_panel == PANEL_128x64 ? "128x64" : "128x32",
-                            boot_layout ? "custom" : "default");
+                            boot_layout ? "custom" : "default",
+                            boot_rot == LAYOUT_ROT_180 ? ", turned 180" : "");
                 }
             }
         }
@@ -4066,6 +4081,10 @@ int main(void) {
             // panel is already initialised for it by the self-test above).
             if (boot_panel != g_disp.panel) display_set_panel(&g_disp, boot_panel);
             if (boot_layout) display_set_layout(&g_disp, boot_layout);
+            // A stored rotation (1.17.0): the glass is all zero after the
+            // clear, so turning it now needs no resend.
+            if (boot_rot != LAYOUT_ROT_0 && !ssd1306_set_rotation(panel, boot_rot))
+                wf_logf(WF_WARN, "display: stored rotation failed");
             ui_publish(DS_BOOT, "wifi-floppy", "starting", -1);
         }
         // The tag reader, on the bus i2c_probe_bus just initialised: 400 kHz
@@ -5085,6 +5104,9 @@ int main(void) {
             ui.nfc = nfc_armed.armed ? DISP_NFC_ARMED
                    : g_nfc_reader == 1 ? DISP_NFC_PRESENT : DISP_NFC_ABSENT;
             ui.cyl        = cur_cyl[0];
+            // The head element's side (1.17.0): SIDE is one bus line for every
+            // drive, so this is the side DF0's head reads too.
+            ui.side       = (uint8_t)(cur_side ? 1 : 0);
             ui.max_cyl    = NUM_CYL - 1;
             // The lemming walks off core0's own clock, which is the point of
             // it: every other field on this panel is static between events, so

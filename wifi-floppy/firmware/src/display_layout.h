@@ -23,6 +23,7 @@
 #define STATUS_ICON_W        8
 #define TRACK_MAX_CHARS      5     // "99/99"; the renderer clamps both numbers to 0..99
 #define PCT_MAX_CHARS        4     // "100%"
+#define HEAD_MAX_CHARS       4     // "79.1": cylinder (two digits, clamped 0..99), '.', side
 #define LAYOUT_ADVANCE       6     // glyph 5 + 1 column
 #define LAYOUT_LINE_H        8
 
@@ -34,8 +35,23 @@ typedef enum { EL_STATUS = 1, EL_WIFI = 2, EL_WRITE = 3, EL_TITLE = 4,
                // boards on 1.10.0 or newer. Absent from both defaults: a board
                // with no custom layout, or a layout saved before it existed,
                // draws exactly what it drew before.
-               EL_NFC = 9 } element_id_t;
-#define EL_LAST EL_NFC
+               EL_NFC = 9,
+               // 1.17.0: the head position as cylinder.side ("40.1"), as
+               // FlashFloppy shows it. In neither default. 1.10.0-1.16.x skip
+               // it (an id above EL_NFC); 1.7.1-1.9.x refuse the layout, so
+               // the web app sends it only to boards on 1.17.0 or newer.
+               EL_HEAD = 10 } element_id_t;
+#define EL_LAST EL_HEAD
+
+// A SETTING record, not an element (1.17.0): the panel's rotation, in quarter
+// turns (only 0 and 2 -- 180 degrees -- are valid), in the record's opt byte;
+// every other byte 0. Kept out of el[] and out of the element-id range on
+// purpose: 1.10.0-1.16.x skip any id above EL_NFC, so an older board shows
+// the layout unrotated rather than refusing it, and the next element can
+// still take id EL_LAST + 1. Read back with layout_rotation().
+#define REC_ROTATION   0x80
+#define LAYOUT_ROT_0   0
+#define LAYOUT_ROT_180 2
 
 typedef struct { uint8_t id, visible, scale, x, y, w, opt; } layout_el_t;   // scale 1 or 2
 typedef struct { panel_t panel; uint8_t n; layout_el_t el[LAYOUT_MAX_ELEMENTS]; } layout_t;
@@ -44,6 +60,15 @@ int  panel_height(panel_t p);                       // 32 or 64
 void layout_el_size(const layout_el_t *e, int *w, int *h);  // fixed size per spec, scaled
 bool layout_decode(const uint8_t *buf, size_t len, layout_t *out, char *why, size_t why_len);
 int  layout_encode(const layout_t *l, uint8_t *buf, size_t cap);           // bytes or -1
+/** layout_encode plus, when `rot` is not LAYOUT_ROT_0, a REC_ROTATION record
+ *  after the elements (1.17.0). Bytes or -1. */
+int  layout_encode_rotated(const layout_t *l, uint8_t rot, uint8_t *buf, size_t cap);
+/** The rotation a blob carries: its REC_ROTATION record's quarter turns, or
+ *  LAYOUT_ROT_0 when it has none. Meaningful only for a blob layout_decode
+ *  accepted (which validated the record); anything else reads as 0. Kept
+ *  outside layout_t on purpose: it is the panel's setting, not a drawing
+ *  instruction, and layout_t's every positional initializer stays as it is. */
+uint8_t layout_rotation(const uint8_t *buf, size_t len);
 const layout_t *layout_default(panel_t p);
 /** The layout of the built-in screens (boot, setup, connecting, error) on
  *  panel `p`: the 128x32 default's elements, at the top of either panel.

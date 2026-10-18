@@ -4,6 +4,7 @@
 #include "pico/stdlib.h"
 #include "hardware/i2c.h"
 #include "board_hw.h"
+#include "oled_cmds.h"
 
 /**
  * A SELF-TEST for an SSD1306 panel, not a display driver.
@@ -95,63 +96,23 @@ static bool detect_sh1106(uint8_t addr) {
   return sh;
 }
 
+/*
+ * The panel's rotation (1.17.0): LAYOUT_ROT_0 or LAYOUT_ROT_180, done in the
+ * controller -- segment remap + COM scan direction (oled_cmds.c) -- so the
+ * framebuffer, the pump and every byte count stay what they were. Kept here so
+ * a re-init (a panel-type switch) keeps it.
+ */
+static uint8_t s_rot = LAYOUT_ROT_0;
+
 /* The controller configuration for `panel`, and nothing else: no clear. */
 static bool send_init_sequence(uint8_t addr, panel_t panel) {
-  const int height = panel_height(panel);
-  const uint8_t ssd1306[] = {
-    0xAE,              /* display off while it is reconfigured           */
-    0xD5, 0x80,        /* clock divide / oscillator frequency            */
-    0xA8, (uint8_t)(height - 1), /* multiplex ratio: rows - 1           */
-    0xD3, 0x00,        /* no vertical offset                             */
-    0x40,              /* start line 0                                   */
-    0x8D, 0x14,        /* CHARGE PUMP ON -- without this a correctly     */
-                       /* wired panel stays black and looks unwired      */
-    0x20, 0x02,        /* PAGE addressing, the mode ssd1306_blit uses    */
-                       /* because the SH1106 has no other (see above)    */
-    0xA1,              /* segment remap, so column 0 is on the left      */
-    0xC8,              /* COM scan descending, so row 0 is at the top    */
-    0xDA, (uint8_t)(panel == PANEL_128x64 ? 0x12 : 0x02),
-                       /* COM pins: 0x02 SEQUENTIAL for 128x32, 0x12     */
-                       /* ALTERNATING for 128x64. A mismatch is the half */
-                       /* of the 32/64 bug that survives fixing 0xA8     */
-    0x81, 0xCF,        /* contrast                                       */
-    0xD9, 0xF1, 0xDB, 0x40,
-    0xA4,              /* show RAM, not an all-on test pattern -- an
-                          all-on display would "pass" this test without
-                          a single byte of ours reaching the panel      */
-    0xA6,              /* normal, not inverted                           */
-    0xAF,              /* display on                                     */
-  };
-  const uint8_t sh1106[] = {
-    0xAE,
-    0xD5, 0x80,
-    0xA8, (uint8_t)(height - 1),
-    0xD3, 0x00,
-    0x40,
-    0xAD, 0x8B,        /* DC-DC ON: the SH1106's charge pump command;    */
-                       /* it has no 0x8D and no 0x20 mode select         */
-    0xA1,
-    0xC8,
-    0xDA, (uint8_t)(panel == PANEL_128x64 ? 0x12 : 0x02),
-    0x81, 0xCF,
-    0xD9, 0x22,        /* precharge: the SH1106's reset default          */
-    0xDB, 0x35,        /* VCOM deselect: the SH1106's reset default      */
-    0xA4,
-    0xA6,
-    0xAF,
-  };
-  const uint8_t *init = s_sh1106 ? sh1106 : ssd1306;
-  const size_t len = s_sh1106 ? sizeof sh1106 : sizeof ssd1306;
-  for (size_t i = 0; i < len; ) {
-    // Send one command plus its operands at a time; 0xD5/0xA8/0xD3/0x8D/0x20/
-    // 0xAD/0xDA/0x81/0xD9/0xDB each take one, the rest take none.
-    size_t n = 1;
-    switch (init[i]) {
-      case 0xD5: case 0xA8: case 0xD3: case 0x8D: case 0xAD:
-      case 0x20: case 0xDA: case 0x81: case 0xD9: case 0xDB: n = 2; break;
-      default: n = 1; break;
-    }
-    if (!cmd(addr, &init[i], n)) return false;
+  uint8_t init[OLED_INIT_MAX];
+  const int len = oled_init_cmds(s_sh1106, panel, s_rot, init, sizeof init);
+  if (len < 0) return false;
+  for (int i = 0; i < len; ) {
+    // One command plus its operands at a time (oled_cmd_len).
+    const int n = oled_cmd_len(init[i]);
+    if (!cmd(addr, &init[i], (size_t)n)) return false;
     i += n;
   }
   return true;
@@ -192,6 +153,22 @@ bool ssd1306_init(uint8_t addr, panel_t panel) {
 bool ssd1306_reinit(uint8_t addr, panel_t panel) {
   return send_init_sequence(addr, panel);
 }
+
+/*
+ * Turn the glass (1.17.0): two commands, ~0.2 ms. The SSD1306 applies a new
+ * segment remap only to data written AFTER it (its datasheet: "only affects
+ * subsequent data input"), while the COM scan flips at once, so the caller
+ * resends every byte (display_resend_all) -- until the pump has, the glass
+ * shows the old picture half-turned, which is cosmetic and gone within one
+ * resend.
+ */
+bool ssd1306_set_rotation(uint8_t addr, uint8_t rot) {
+  s_rot = rot == LAYOUT_ROT_180 ? LAYOUT_ROT_180 : LAYOUT_ROT_0;
+  uint8_t c[2]; oled_rotation_cmds(s_rot, c);
+  return cmd(addr, c, sizeof c);
+}
+
+uint8_t ssd1306_rotation(void) { return s_rot; }
 
 /** Address one page and stream `n` bytes into it. */
 bool ssd1306_blit(uint8_t addr, panel_t panel, int page, int col, const uint8_t *bytes, int n) {
