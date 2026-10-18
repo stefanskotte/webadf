@@ -5,7 +5,7 @@ import { readDroppedItems, type DroppedItem } from '@/lib/drop-reader';
 import { expandArchivesInDrop, stagingSummary, type ArchiveNotice } from '@/lib/archive-drop';
 import { toast } from 'sonner';
 import {
-  stageDrop, joinDestination, existingCollisionAt, pathTooDeep, type StagedEntry, type ExistingEntry,
+  stageDrop, joinDestination, existingCollisionAt, pathTooDeep, rowNameProblem, type StagedEntry, type ExistingEntry,
 } from '@/lib/staging';
 import { useNativeDrop } from './native-drop';
 import { blocksForPlan, type AdfEntry, type Filesystem } from '@/lib/adffs';
@@ -351,13 +351,15 @@ export function DropStaging({
   // Deeper than readVolume walks once joined onto the destination -- the batch
   // route refuses the same paths (pathTooDeep is shared), this says so first.
   const tooDeep = nonSkipped.filter((r) => pathTooDeep(diskPathFor(r.entry.path)));
+  // A typed rename is the one name nothing has sanitised (rowNameProblem).
+  const badName = nonSkipped.some((r) => rowNameProblem(r.name) !== null);
   // A 'replace' resolution deliberately KEEPS collidesWith === 'existing'
   // (see the rows computation above) -- it is the chosen outcome, not an
   // unresolved one, so only a collision with no resolution yet blocks the
   // commit (D-DD-4).
   const hasOutstandingCollision = rows.some((r) => r.collidesWith !== null && r.resolution === null);
   const commitDisabled = !!disabled || busy || rows.length === 0
-    || nonSkipped.length === 0 || hasOutstandingCollision || overCapacity || tooDeep.length > 0;
+    || nonSkipped.length === 0 || hasOutstandingCollision || overCapacity || tooDeep.length > 0 || badName;
 
   /** The path this dropped item would sit at from the drop's OWN root -- recurses through renamed ancestors, but knows nothing of the destination selector; see `diskPathFor` below for the path actually written. */
   function relativePathFor(path: string): string {
@@ -584,6 +586,13 @@ export function DropStaging({
                   ) : (
                     <span data-testid={`stage-name-${i}`} style={{ color: 'var(--ink)' }}>
                       {row.name}
+                    </span>
+                  )}
+
+                  {!isExcluded && row.resolution !== 'skip' && rowNameProblem(row.name) && (
+                    <span data-testid={`stage-name-error-${i}`} className="font-semibold"
+                          style={{ color: 'var(--danger-fg)' }}>
+                      {rowNameProblem(row.name)}
                     </span>
                   )}
 

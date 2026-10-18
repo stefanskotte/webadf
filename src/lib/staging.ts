@@ -38,6 +38,18 @@ export function unaddressableName(name: string): boolean {
 }
 
 /**
+ * What is wrong with a name typed into a staging row, or null. A typed name
+ * never passes through forbidUnwritable, so it is checked here instead: a
+ * colon, control character or DEL (unaddressableName), a '/' (which would turn
+ * the name into a nested path), or nothing at all. Each of those makes the
+ * batch route 400 the WHOLE batch; caught per row, it blocks only Add.
+ */
+export function rowNameProblem(name: string): string | null {
+  return name.length === 0 || name.includes('/') || unaddressableName(name)
+    ? 'name AmigaDOS cannot hold' : null;
+}
+
+/**
  * True when a '/'-joined path is nested deeper than `readVolume` will walk
  * (`MAX_DEPTH`). Writing one would produce a disk whose deepest entries this
  * app itself could not list again. Shared by the staging area and the batch

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
-  shortenName, stageDrop, joinDestination, existingCollisionAt, type ExistingEntry,
+  shortenName, stageDrop, joinDestination, existingCollisionAt, rowNameProblem, type ExistingEntry,
 } from './staging';
 
 describe('shortenName', () => {
@@ -224,4 +224,14 @@ describe('DEL (0x7f) is unwritable too', () => {
     expect(s.name).toBe('a_b');
     expect(s.shortened).toBe(true);
   });
+});
+
+describe('rowNameProblem (a name typed into a staging row)', () => {
+  it('accepts an ordinary name', () => {
+    expect(rowNameProblem('Startup-Sequence')).toBeNull();
+  });
+  it.each([['Work:Docs'], ['bad\u0001'], ['del\u007f'], ['a/b'], ['']])(
+    'refuses %j, which the batch route would 400 for the WHOLE batch', (name) => {
+      expect(rowNameProblem(name)).toBe('name AmigaDOS cannot hold');
+    });
 });

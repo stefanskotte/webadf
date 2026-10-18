@@ -204,3 +204,21 @@ test('a staged batch keeps its folder: a drop on another folder is refused, and 
     expect(child(child(now.root, name)!.children, 'other.txt')).toBeUndefined();
   }
 });
+
+test('a typed rename AmigaDOS cannot hold is flagged on its row and blocks Add', async ({ page }) => {
+  const u = await signUpFresh(page);
+  await page.goto('/library');
+  await createAdf(page);
+  await authoredDisk(page, u.orgId).then((d) => page.goto(`/disks/${d.id}/files`));
+  // Over 30 characters, so the row's name is editable.
+  await synthDrop(page, [{ name: `${'n'.repeat(36)}.txt`, kind: 'file', content: 'x' }], '[data-testid="file-tree"]');
+  await expect(page.getByTestId('drop-commit')).toBeEnabled();
+
+  await page.getByTestId('stage-name-0').fill('Work:Bad');
+  await expect(page.getByTestId('stage-name-error-0')).toHaveText('name AmigaDOS cannot hold');
+  await expect(page.getByTestId('drop-commit')).toBeDisabled();
+
+  await page.getByTestId('stage-name-0').fill('Fine.txt');
+  await expect(page.getByTestId('stage-name-error-0')).toHaveCount(0);
+  await expect(page.getByTestId('drop-commit')).toBeEnabled();
+});
