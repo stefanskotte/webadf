@@ -19,7 +19,8 @@ export default function SignInPage() {
     const { error } = await signIn.email({ email, password });
     setBusy(false);
     if (error) { setError(error.message ?? 'Sign in failed'); return; }
-    router.push('/library');
+    // "/" sends the person to their chosen start page (src/app/page.tsx).
+    router.push('/');
   }
 
   return (

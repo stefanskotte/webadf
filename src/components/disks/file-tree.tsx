@@ -35,20 +35,14 @@ export interface NativeDropProps {
   onDragLeave: (e: React.DragEvent<HTMLElement>) => void;
   onDrop: (e: React.DragEvent<HTMLElement>) => void;
 }
+import { sortEntries } from '@/lib/browse-sort';
+import { latestSaver } from '@/lib/user-prefs-client';
+import { BROWSE_SORT_OPTIONS, DEFAULT_PREFS, sortOptionId, type BrowseSort } from '@/lib/user-prefs-schema';
+import { SortSelect } from '@/components/prefs/sort-select';
+import { toast } from 'sonner';
 
-/**
- * Directories first, then case-insensitive name order.
- *
- * AmigaDOS stores entries by hash chain, not alphabetically -- a raw listing
- * looks shuffled -- so every level of the tree is re-sorted before it is
- * rendered, not just the root.
- */
-function sortEntries(entries: AdfEntry[]): AdfEntry[] {
-  return [...entries].sort((a, b) => {
-    if (a.kind !== b.kind) return a.kind === 'dir' ? -1 : 1;
-    return a.name.localeCompare(b.name, undefined, { sensitivity: 'base' });
-  });
-}
+// Each level's order: sortEntries (src/lib/browse-sort.ts), folders first,
+// then the person's remembered Browse sort (user prefs browse.sort).
 
 interface VisibleRow {
   entry: AdfEntry;
@@ -78,13 +72,13 @@ interface VisibleRow {
  * droppable wrapping the whole list" both true at once without either one
  * fighting the other for the pointer.
  */
-function flatten(entries: AdfEntry[], openBlocks: Set<number>, depth = 0): VisibleRow[] {
+function flatten(entries: AdfEntry[], openBlocks: Set<number>, sort: BrowseSort, depth = 0): VisibleRow[] {
   const rows: VisibleRow[] = [];
-  for (const entry of sortEntries(entries)) {
+  for (const entry of sortEntries(entries, sort)) {
     const open = entry.kind === 'dir' && openBlocks.has(entry.block);
     rows.push({ entry, depth, open });
     if (open && entry.kind === 'dir') {
-      rows.push(...flatten(entry.children, openBlocks, depth + 1));
+      rows.push(...flatten(entry.children, openBlocks, sort, depth + 1));
     }
   }
   return rows;
@@ -205,8 +199,30 @@ export function collectDirectories(entries: AdfEntry[], parentPath = ''): Direct
 /** Reserved on the left of every row for the drag handle, so the handle can be absolutely positioned in that gutter without disturbing any of the existing `pl-[22px]` alignment the metadata/action lines below the name already depend on. */
 const GRIP_GUTTER = 22;
 
-export function FileTree({ entries, diskId, send = null }: { entries: AdfEntry[]; diskId: string; send?: SendContext | null }) {
+export function FileTree({ entries, diskId, send = null, sort: initialSort = DEFAULT_PREFS.browse.sort }: {
+  entries: AdfEntry[]; diskId: string; send?: SendContext | null;
+  /** The person's remembered Browse sort (user prefs browse.sort), read by the page. */
+  sort?: BrowseSort;
+}) {
   const [openBlocks, setOpenBlocks] = useState<ReadonlySet<number>>(() => new Set());
+  // Sorted here in the browser (the whole tree is already on the page), so a
+  // change shows at once; the save behind it only has to succeed for the NEXT
+  // visit, and says so if it does not. Only the latest choice is saved
+  // (latestSaver: arrow keys on the select fire a change per press), and a
+  // refresh that brings a different server value is followed.
+  const [saver] = useState(latestSaver);
+  const [sort, setSort] = useState<BrowseSort>(initialSort);
+  const [serverSort, setServerSort] = useState<BrowseSort>(initialSort);
+  if (sortOptionId(initialSort) !== sortOptionId(serverSort)) {
+    setServerSort(initialSort);
+    setSort(initialSort);
+  }
+  function changeSort(next: BrowseSort) {
+    setSort(next);
+    saver.save({ browse: { sort: next } }).catch(() => {
+      toast.error("Couldn't remember this sort order for next time.");
+    });
+  }
   const { disabled, busy, runEdit, rootBlock } = useFileEdit();
   const sender = useSendAction(send);
 
@@ -459,7 +475,7 @@ export function FileTree({ entries, diskId, send = null }: { entries: AdfEntry[]
     );
   }
 
-  const rows = flatten(entries, openBlocks as Set<number>);
+  const rows = flatten(entries, openBlocks as Set<number>, sort);
 
   return (
     // `id` is not decoration. dnd-kit derives the hidden drag description's
@@ -486,6 +502,9 @@ export function FileTree({ entries, diskId, send = null }: { entries: AdfEntry[]
         data-drop-target={rootIsOver || nativeOver === rootBlock ? 'true' : undefined}
         {...nativeDropProps(rootBlock)}
       >
+        <div className="flex justify-end px-1 pb-2">
+          <SortSelect options={BROWSE_SORT_OPTIONS} value={sort} onChange={changeSort} testId="browse-sort" />
+        </div>
         {rows.map(({ entry, depth, open }, i) => (
           <FileRow
             key={entry.block}

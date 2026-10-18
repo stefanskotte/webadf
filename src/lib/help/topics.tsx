@@ -510,11 +510,40 @@ export const HELP_TOPICS = {
       </>
     ),
   },
+  // Sources: src/lib/user-prefs-schema.ts (choices, defaults), src/app/page.tsx + sign-in/page.tsx (start page),
+  // library/page.tsx (sort skipped in a collection), file-tree.tsx + browse-sort.ts (folders first),
+  // components/prefs/preferences-form.tsx (Save), db/schema/user-prefs.ts (per user, not per org).
+  preferences: {
+    title: 'Preferences',
+    short: 'Your own start page and sort orders. They are kept with your account, so they follow you to every browser.',
+    body: (
+      <>
+        <p>
+          <strong>Start page.</strong> Where you land after signing in, and when you open the site&apos;s address:
+          Library, Devices or Upload. Library unless you change it.
+        </p>
+        <p>
+          <strong>Sort orders.</strong> The library&apos;s sort picker and the one above a disk&apos;s file list
+          remember your choice as soon as you change it. The library starts with the newest added first; a
+          disk&apos;s files start in name order, always with folders first. Inside a collection the sort picker is
+          not shown: a collection keeps its own order, the one you set by dragging, and that order is shared with
+          everyone in your organization.
+        </p>
+        <p>
+          <strong>Changing them.</strong> Settings (the gear at the top) lists every preference in one place; press
+          Save to keep your changes there.
+        </p>
+        <GoodToKnow items={[
+          'Preferences are yours alone: others in your organization keep their own, and they follow you to every browser you sign in from.',
+        ]} />
+      </>
+    ),
+  },
 } as const satisfies Record<string, HelpTopic>;
 
 export type HelpTopicId = keyof typeof HELP_TOPICS;
 
 export const HELP_ORDER: readonly HelpTopicId[] = [
   'boards', 'own-server', 'nfc', 'next-disk', 'second-drive', 'network', 'send', 'write-back', 'write-protect', 'disk-sets', 'hd-hfe', 'display',
-  'cover-image', 'about',
+  'cover-image', 'about', 'preferences',
 ];

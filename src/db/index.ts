@@ -12,6 +12,7 @@ import * as diskHistory from './schema/disk-history';
 import * as firmware from './schema/firmware';
 import * as stepUp from './schema/step-up';
 import * as transfers from './schema/transfers';
+import * as userPrefs from './schema/user-prefs';
 
 // `authSchema` (the `pgSchema('auth')` object itself) isn't a table — drop it
 // so drizzle's schema map only contains the actual tables/relations.
@@ -19,7 +20,7 @@ const { authSchema: _authPgSchema, ...authTables } = authModule;
 void _authPgSchema;
 
 const schema = {
-  ...catalog, ...authTables, ...devices, ...tosec, ...openretro, ...collections, ...demozoo, ...diskHistory, ...firmware, ...stepUp, ...transfers,
+  ...catalog, ...authTables, ...devices, ...tosec, ...openretro, ...collections, ...demozoo, ...diskHistory, ...firmware, ...stepUp, ...transfers, ...userPrefs,
 };
 export type Db = NodePgDatabase<typeof schema>;
 
