@@ -8,7 +8,7 @@
 // 5x7, one byte per column, bit 0 = top row. ASCII 0x20..0x7E; anything
 // outside that range renders as '?' rather than reading past the table.
 #define FONT_FIRST 0x20
-#define FONT_LAST  0x80
+#define FONT_LAST  0x7E
 #define GLYPH_W    5
 #define ADVANCE    (GLYPH_W + 1)   // one blank column between characters
 #define LINE_H     8               // 7 rows of glyph + 1 of leading
@@ -62,10 +62,19 @@ static const uint8_t FONT[FONT_LAST - FONT_FIRST + 1][GLYPH_W] = {
   {0x44,0x64,0x54,0x4C,0x44}, {0x00,0x08,0x36,0x41,0x00}, // z {
   {0x00,0x00,0x7F,0x00,0x00}, {0x00,0x41,0x36,0x08,0x00}, // | }
   {0x08,0x08,0x2A,0x1C,0x08},                             // ~
-  // 1.18.0: the side arrows of the track counter, 5x7 like the rest. Up has
-  // its tip on the top row, down on the bottom row; both a 7-pixel shaft.
-  {0x04,0x02,0x7F,0x02,0x04}, {0x10,0x20,0x7F,0x20,0x10}, // up down
 };
+
+// 1.18.0: the side arrows of the track counter, 5x7 like the rest. Up has its
+// tip on the top row, down on the bottom row; both a 7-pixel shaft. They are
+// NOT in FONT: titles and details arrive as raw UTF-8, whose bytes (0x7F, 0x80,
+// the middle of an en dash) must keep drawing '?'. Only the counter asks for
+// them, with the markers below, which no text path accepts.
+static const uint8_t ARROW[2][GLYPH_W] = {
+  {0x04,0x02,0x7F,0x02,0x04},   // up   (side 1)
+  {0x10,0x20,0x7F,0x20,0x10},   // down (side 0)
+};
+#define MARK_UP    '\x01'
+#define MARK_DOWN  '\x02'
 
 // The wifi glyph, 11x8, as one nested arc per strength step plus a dot that
 // is always drawn. Row-major bits, MSB = leftmost column, so the literal
@@ -248,10 +257,15 @@ static void px(uint8_t *fb, int x, int y) {
 // validator checked.
 #define AT(v) ((v) / g_scale)
 
-static void draw_glyph(uint8_t *fb, int x, int y, char c) {
+static void draw_glyph(uint8_t *fb, int x, int y, char c, bool arrows) {
     unsigned char u = (unsigned char)c;
-    if (u < FONT_FIRST || u > FONT_LAST) u = '?';
-    const uint8_t *g = FONT[u - FONT_FIRST];
+    const uint8_t *g;
+    if (arrows && (u == MARK_UP || u == MARK_DOWN)) {
+        g = ARROW[u == MARK_UP ? 0 : 1];
+    } else {
+        if (u < FONT_FIRST || u > FONT_LAST) u = '?';
+        g = FONT[u - FONT_FIRST];
+    }
     for (int col = 0; col < GLYPH_W; col++)
         for (int row = 0; row < 7; row++)
             if (g[col] & (1u << row)) px(fb, x + col, y + row);
@@ -259,13 +273,16 @@ static void draw_glyph(uint8_t *fb, int x, int y, char c) {
 
 /** Draw until the string ends or the next glyph would pass `x_limit`.
  *  Returns the x just past what was drawn. */
-static int draw_text(uint8_t *fb, int x, int y, const char *s, int x_limit) {
+static int draw_text_ex(uint8_t *fb, int x, int y, const char *s, int x_limit, bool arrows) {
     for (; *s; s++) {
         if (x + GLYPH_W > x_limit) break;
-        draw_glyph(fb, x, y, *s);
+        draw_glyph(fb, x, y, *s, arrows);
         x += ADVANCE;
     }
     return x;
+}
+static int draw_text(uint8_t *fb, int x, int y, const char *s, int x_limit) {
+    return draw_text_ex(fb, x, y, s, x_limit, false);
 }
 
 static int text_px(const char *s) {
@@ -442,7 +459,7 @@ static int right_text(const layout_el_t *e, const char *t) {
 static void track_text(const display_state_t *s, char out[8]) {
     const int c = s->cyl < 0 ? 0 : s->cyl > 99 ? 99 : s->cyl;
     const int m = s->max_cyl <= 0 ? 79 : s->max_cyl > 99 ? 99 : s->max_cyl;
-    const char sep = s->side == 0 ? (char)DISP_GLYPH_DOWN : s->side == 1 ? (char)DISP_GLYPH_UP : '/';
+    const char sep = s->side == 0 ? MARK_DOWN : s->side == 1 ? MARK_UP : '/';
     snprintf(out, 8, "%d%c%d", c, sep, m);
 }
 
@@ -506,7 +523,7 @@ void display_render(const display_state_t *s, const layout_t *l, uint8_t fb[DISP
             case EL_TRACK:
                 if (track == e) {
                     char t[8]; track_text(s, t);
-                    draw_text(fb, AT(right_text(e, t)), y, t, AT(e->x + bw));
+                    draw_text_ex(fb, AT(right_text(e, t)), y, t, AT(e->x + bw), true);
                 }
                 break;
             case EL_DOWNLOAD:

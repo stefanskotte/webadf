@@ -260,53 +260,80 @@ static void builtin_screens_on_128x64_are_the_128x32_ones(void) {
 
 // The track counter (1.18.0): "cyl", an arrow for the side, "last cyl" --
 // "42<up>79" -- in place of "42/79". Down = side 0 (the lower head), up =
-// side 1; the glyphs are the font's two extra code points DISP_GLYPH_DOWN /
-// DISP_GLYPH_UP. Same pixels as a detail line holding that text, flush right
-// in the same 5-character box, at 1x and 2x.
+// side 1. Only the counter draws the arrows: compared with the same counter
+// drawn with an unknown side (the slash), every pixel outside the middle
+// glyph is identical, at 1x and 2x, and the middle glyph is an arrow of its
+// own (differing from the slash, from the other arrow, and from '?').
+static const int TRACK_X = 98;    // the box is 30 wide: 5 characters
+static void render_counter(display_state_t s, int scale, uint8_t fb[DISP_FB_MAX]) {
+    layout_t h = { PANEL_128x64, 1, { { EL_TRACK, 1, (uint8_t)scale, (uint8_t)(TRACK_X - (scale - 1) * 30), 20, 0, 0 } } };
+    display_render(&s, &h, fb);
+}
+// First column and glyph width of the counter's separator, whose text is
+// `pre` + sep + `post` flush right in the box.
+static void sep_cols(const char *pre, const char *post, int scale, int *x0, int *x1) {
+    const int n = (int)(strlen(pre) + 1 + strlen(post));
+    const int box_x = TRACK_X - (scale - 1) * 30;
+    *x0 = box_x + (30 - (n * 6 - 1)) * scale + (int)strlen(pre) * 6 * scale;
+    *x1 = *x0 + 5 * scale;
+}
 static void track_text_is_the_picture(void) {
-    static const struct { int cyl, side, max; const char *pre; char mid; const char *post; } T[] = {
-        { 42, 1, 79, "42", DISP_GLYPH_UP,   "79" },
-        { 42, 0, 79, "42", DISP_GLYPH_DOWN, "79" },
-        { 0,  0, 79, "0",  DISP_GLYPH_DOWN, "79" },
-        { 79, 1, 79, "79", DISP_GLYPH_UP,   "79" },
-        { 82, 1, 82, "82", DISP_GLYPH_UP,   "82" },    // an 83-cylinder image
-        { 7,  0, 82, "7",  DISP_GLYPH_DOWN, "82" },
-        { 123, 1, 150, "99", DISP_GLYPH_UP, "99" },    // clamped as ever
-        { 5,  9, 79, "5",  '/',             "79" },    // side unknown: the slash
+    static const struct { int cyl, side, max; const char *pre, *post; } T[] = {
+        { 42, 1, 79, "42", "79" }, { 42, 0, 79, "42", "79" }, { 0, 0, 79, "0", "79" },
+        { 79, 1, 79, "79", "79" }, { 82, 1, 82, "82", "82" },   // an 83-cylinder image
+        { 7, 0, 82, "7", "82" },   { 40, 1, 0, "40", "79" },    // last cylinder unknown: 79
+        { 40, 1, -3, "40", "79" }, { 123, 1, 150, "99", "99" }, // clamped as ever
     };
     for (int scale = 1; scale <= 2; scale++)
         for (size_t k = 0; k < sizeof T / sizeof T[0]; k++) {
-            layout_t h = { PANEL_128x64, 1, { { EL_TRACK, 1, (uint8_t)scale, 98 - (scale - 1) * 30, 20, 0, 0 } } };
             display_state_t s; memset(&s, 0, sizeof s); s.status = DS_LOADED; s.show_track = true;
-            s.cyl = T[k].cyl; s.side = (uint8_t)T[k].side; s.max_cyl = T[k].max;
-            char txt[8]; snprintf(txt, sizeof txt, "%s%c%s", T[k].pre, T[k].mid, T[k].post);
-            const int tw = (int)strlen(txt) * 6 - 1;
-            const int x = h.el[0].x + (30 - tw) * scale;     // flush right in the 30-wide box
-            layout_t d = { PANEL_128x64, 1, { { EL_DETAIL, 1, (uint8_t)scale, (uint8_t)x, 20, 40, 0 } } };
-            display_state_t t = s; t.show_track = false; snprintf(t.detail, sizeof t.detail, "%s", txt);
-            uint8_t a[DISP_FB_MAX], b[DISP_FB_MAX];
-            display_render(&s, &h, a); display_render(&t, &d, b);
-            CHECK(memcmp(a, b, sizeof a) == 0, txt);
-            CHECK(lit(a, 0, 0, 128, 64) > 0, "something drawn");
+            s.cyl = T[k].cyl; s.max_cyl = T[k].max;
+            uint8_t up[DISP_FB_MAX], dn[DISP_FB_MAX], sl[DISP_FB_MAX];
+            s.side = 1; render_counter(s, scale, up);
+            s.side = 0; render_counter(s, scale, dn);
+            s.side = DISP_SIDE_UNKNOWN; render_counter(s, scale, sl);
+            int x0, x1; sep_cols(T[k].pre, T[k].post, scale, &x0, &x1);
+            for (int i = 0; i < DISP_FB_MAX; i++) {
+                const int col = i % DISP_W;
+                if (col >= x0 && col < x1) continue;
+                CHECK(up[i] == sl[i] && dn[i] == sl[i], "everything but the separator is the slash's counter");
+            }
+            CHECK(lit(up, x0, 20, x1, 20 + 8 * scale) > 0 && lit(dn, x0, 20, x1, 20 + 8 * scale) > 0, "an arrow is drawn");
+            CHECK(memcmp(up, dn, sizeof up) != 0, "up differs from down");
+            CHECK(memcmp(up, sl, sizeof up) != 0 && memcmp(dn, sl, sizeof dn) != 0, "and from the slash");
         }
 }
 
-// The arrows are glyphs of their own: unlike each other, unlike '?', and a
-// tip plus a shaft each.
+// The arrows' shapes, read off the counter at 1x: up has its tip on the top
+// row and barbs two rows down; down has its tip on the bottom row.
 static void the_arrows_are_glyphs(void) {
-    uint8_t up[DISP_FB_MAX], dn[DISP_FB_MAX], q[DISP_FB_MAX];
-    layout_t d = { PANEL_128x32, 1, { { EL_DETAIL, 1, 1, 0, 0, 12, 0 } } };
+    display_state_t s; memset(&s, 0, sizeof s); s.status = DS_LOADED; s.show_track = true; s.cyl = 1; s.max_cyl = 79;
+    uint8_t up[DISP_FB_MAX], dn[DISP_FB_MAX];
+    s.side = 1; render_counter(s, 1, up);
+    s.side = 0; render_counter(s, 1, dn);
+    int x0, x1; sep_cols("1", "79", 1, &x0, &x1);
+    CHECK(lit(up, x0, 20, x1, 28) == 11 && lit(dn, x0, 20, x1, 28) == 11, "a 7-pixel shaft and two barbs a side");
+    CHECK(lit(up, x0 + 2, 20, x0 + 3, 21) == 1 && lit(up, x0 + 2, 26, x0 + 3, 27) == 1, "up: tip on the top row");
+    CHECK(lit(up, x0, 22, x0 + 1, 23) == 1, "up: barbs high");
+    CHECK(lit(dn, x0 + 2, 26, x0 + 3, 27) == 1 && lit(dn, x0, 24, x0 + 1, 25) == 1, "down: tip low, barbs low");
+    CHECK(lit(dn, x0, 22, x0 + 1, 23) == 0, "down: nothing high at the edge");
+}
+
+// Titles and details reach the board as raw UTF-8, so bytes outside printable
+// ASCII (0x7F, 0x80, an en dash E2 80 93, "A grave" C3 80) must draw '?', as
+// before 1.18.0 -- never the counter's arrow glyphs.
+static void only_the_counter_draws_arrows(void) {
+    layout_t d = { PANEL_128x32, 1, { { EL_TITLE, 1, 1, 0, 0, 120, 1 }, { EL_DETAIL, 1, 1, 0, 8, 120, 0 } } };
+    layout_t q = d;
     display_state_t s; memset(&s, 0, sizeof s); s.status = DS_LOADED;
-    snprintf(s.detail, sizeof s.detail, "%c", DISP_GLYPH_UP);   display_render(&s, &d, up);
-    snprintf(s.detail, sizeof s.detail, "%c", DISP_GLYPH_DOWN); display_render(&s, &d, dn);
-    strcpy(s.detail, "?");                                      display_render(&s, &d, q);
-    CHECK(memcmp(up, dn, sizeof up) != 0, "up differs from down");
-    CHECK(memcmp(up, q, sizeof up) != 0, "up is not '?'");
-    CHECK(memcmp(dn, q, sizeof dn) != 0, "down is not '?'");
-    CHECK(lit(up, 0, 0, 5, 8) == 11 && lit(dn, 0, 0, 5, 8) == 11, "7-pixel shaft plus two on each side");
-    CHECK(lit(up, 2, 0, 3, 1) == 1 && lit(up, 2, 6, 3, 7) == 1, "up: the tip is on the top row");
-    CHECK(lit(dn, 2, 0, 3, 1) == 1 && lit(dn, 2, 6, 3, 7) == 1 && lit(dn, 0, 4, 1, 5) == 1, "down: barbs low");
-    CHECK(lit(up, 0, 2, 1, 3) == 1, "up: barbs high");
+    strcpy(s.title, "a\x7f\x80" "b\xe2\x80\x93" "c\xc3\x80");
+    strcpy(s.detail, "\x7f\x80\xe2\x80\x93");
+    display_state_t w = s;
+    strcpy(w.title, "a??b???c??"); strcpy(w.detail, "?????");
+    uint8_t a[DISP_FB_MAX], b[DISP_FB_MAX];
+    display_render(&s, &d, a); display_render(&w, &q, b);
+    CHECK(memcmp(a, b, sizeof a) == 0, "every byte outside 0x20-0x7E draws '?'");
+    CHECK(lit(a, 0, 0, 128, 16) > 0, "something drawn");
 }
 
 // The counter shows the side and nothing else does: the two sides differ on
@@ -364,6 +391,7 @@ int main(void) {
     RUN(nfc_hidden_or_absent_from_the_layout_draws_nothing);
     RUN(track_text_is_the_picture);
     RUN(the_arrows_are_glyphs);
+    RUN(only_the_counter_draws_arrows);
     RUN(the_counter_carries_the_side);
     RUN(a_stored_head_element_is_skipped);
     RUN(test_track_wins_overlap_with_download);
