@@ -14,6 +14,7 @@
 // its own home and its own argument about where it runs. See HANDOFF's
 // backlog entry.
 #include <stdint.h>
+#include "i2c_scan.h"
 
 /** Scan 0x08..0x77 and log each responder. Returns how many answered.
  *  Bounded: ~112 addresses, each NAKing immediately or timing out in 2 ms.
@@ -21,6 +22,8 @@
 /** `panel_addr` (optional) receives the address of an SSD1306/SH1106 if one
  *  answered, or 0. Reported separately from the count because the panel is the
  *  one device this board has any business talking to. */
-int i2c_probe_bus(uint8_t *panel_addr);
+/** `scan` (optional) records every responder (i2c_scan.h: the first eight)
+ *  and is marked done at the end, so the status report can carry the list. */
+int i2c_probe_bus(uint8_t *panel_addr, i2c_scan_t *scan);
 
 #endif

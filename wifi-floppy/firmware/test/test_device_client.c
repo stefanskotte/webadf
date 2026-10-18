@@ -6,6 +6,7 @@
 #include "../src/token_store.h"
 #include "../src/display_layout.h"
 #include "../src/wf_log.h"
+#include "../src/i2c_scan.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -465,6 +466,12 @@ static void test_status_body_fits_at_maximum(void) {
     dc_fw_report_t fr = { DC_UPDATE_PROTOCOL, "downloading", long_fw_err, 4294967295u };
     dc_set_fw_report(&c, &fr);
     dc_set_nfc_reader(&c, "present");   // the longer of the two words
+    // The boot I2C scan: eight three-digit addresses, the longest list.
+    static i2c_scan_t worst_scan;
+    memset(&worst_scan, 0, sizeof worst_scan);
+    for (uint8_t a = 0x70; a <= 0x77; a++) i2c_scan_add(&worst_scan, a);
+    i2c_scan_done(&worst_scan);
+    dc_set_i2c_scan(&c, &worst_scan);
     dc_set_plays_hd(&c, true);
     dc_set_sel1(&c, false, false);   // the longer spelling
     // Multi-disk: the longer of the two preload forms. Both carry a 64-hex
@@ -516,8 +523,10 @@ static void test_status_body_fits_at_maximum(void) {
     CHECK(strstr(r, "\"displayVersion\":4294967295") != NULL, "the display ack survives");
     CHECK(strstr(r, "\"secondDrive\":\"df1\",\"driveVersion\":4294967295") != NULL, "the drive ack survives");
     CHECK(strstr(r, "\"framesOut\":999999999}") != NULL, "the net tail survives a maximal body");
-    CHECK(strstr(r, ",\"server\":{\"custom\":true,\"tls\":\"noverify\"}}") != NULL,
+    CHECK(strstr(r, ",\"server\":{\"custom\":true,\"tls\":\"noverify\"}") != NULL,
           "the server key survives a maximal body");
+    CHECK(strstr(r, ",\"i2c\":[112,113,114,115,116,117,118,119]}") != NULL,
+          "the whole I2C list survives a maximal body, and the body still closes");
     {
         // The whole reason, escaped, closing quote included: 47 x \" then ".
         static char want[16 + 2 * sizeof c.display_error + 2];
@@ -1800,6 +1809,39 @@ static void tap_write_report_body(void) {
     push_ok_json("{\"stored\":false}");
     CHECK(dc_tap_write_report(&c, 9, false, "04", NULL), "a NULL reason is sent as none");
     CHECK(strcmp(body_of_last_request(), "{\"seq\":9,\"ok\":false,\"uid\":\"04\"}") == 0, "no reason key");
+}
+
+static void status_includes_the_i2c_scan(void) {
+    boot();
+    fake_push_response("HTTP/1.1 204 No Content\r\n\r\n");
+    dc_report_status(&c, 0, -50, NULL, "1.17.0+gt");
+    CHECK(strstr(fake_last_request(), "\"i2c\"") == NULL,
+          "never set: no key, the server keeps null (older firmware's shape)");
+
+    static i2c_scan_t s;
+    memset(&s, 0, sizeof s);
+    dc_set_i2c_scan(&c, &s);
+    fake_push_response("HTTP/1.1 204 No Content\r\n\r\n");
+    dc_report_status(&c, 0, -50, NULL, "1.17.0+gt");
+    CHECK(strstr(fake_last_request(), "\"i2c\"") == NULL, "a scan that has not finished says nothing");
+
+    i2c_scan_done(&s);
+    fake_push_response("HTTP/1.1 204 No Content\r\n\r\n");
+    dc_report_status(&c, 0, -50, NULL, "1.17.0+gt");
+    CHECK(strstr(fake_last_request(), ",\"i2c\":[]}") != NULL, "an empty bus is said out loud");
+
+    i2c_scan_add(&s, 0x28);
+    i2c_scan_add(&s, 0x3c);
+    fake_push_response("HTTP/1.1 204 No Content\r\n\r\n");
+    dc_report_status(&c, 0, -50, NULL, "1.17.0+gt");
+    CHECK(strstr(fake_last_request(), ",\"i2c\":[40,60]}") != NULL, "the reader and the panel");
+    const char *b = strstr(fake_last_request(), "\r\n\r\n");
+    CHECK(b && b[4] == '{' && b[strlen(b) - 1] == '}', "still one JSON object");
+
+    dc_set_i2c_scan(&c, NULL);
+    fake_push_response("HTTP/1.1 204 No Content\r\n\r\n");
+    dc_report_status(&c, 0, -50, NULL, "1.17.0+gt");
+    CHECK(strstr(fake_last_request(), "\"i2c\"") == NULL, "NULL withdraws it");
 }
 
 static void status_includes_nfc_reader(void) {
@@ -3777,6 +3819,7 @@ int main(void) {
     RUN(tap_maps_outcomes);
     RUN(tap_write_report_body);
     RUN(status_includes_nfc_reader);
+    RUN(status_includes_the_i2c_scan);
 
     // Multi-disk Next disk. Before the free below: these drive real fetches.
     RUN(next_is_lifted_before_desired_is_read);

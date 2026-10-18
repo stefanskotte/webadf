@@ -19,6 +19,7 @@
 #include "token_store.h"
 #include "nfc_tag.h"
 #include "display_layout.h"   // pure: LAYOUT_BLOB_MAX, panel_t
+#include "i2c_scan.h"
 #include <string.h>
 #include <stdio.h>
 
@@ -1690,7 +1691,7 @@ bool dc_report_status(device_client_t *c, int psram_free, int rssi, const char *
     // preload (multi-disk §4.3): always sent, null when the idle slot holds
     // nothing -- "show both values of a state". Loading names the digest being
     // fetched (next's); ready names the digest verified in the slot.
-    static char preload_tail[128];   // 106 at most: 22 + 64 hex + 20
+    static char preload_tail[112];   // 106 at most: 22 + 64 hex + 20 (+ NUL)
     if (c->preload.loading || c->preload.slot != SLOT_NONE) {
         snprintf(preload_tail, sizeof preload_tail,
                  ",\"preload\":{\"sha256\":\"%s\",\"state\":\"%s\"}",
@@ -1709,7 +1710,7 @@ bool dc_report_status(device_client_t *c, int psram_free, int rssi, const char *
     // 162 at most: 22 (displayLayouts) + 28 (displayVersion) + 16 (key) + 96
     // (94 escaped bytes and the two quotes). test_status_body_fits_at_maximum
     // checks the whole all-quotes reason arrives, closing quote included.
-    static char display_tail[192];
+    static char display_tail[168];   // 162 + NUL; trimmed from 192 for the I2C list (header note)
     if (c->display_layouts) {
         static char de_field[2 * sizeof c->display_error + 2];
         if (c->display_error[0]) {
@@ -1789,7 +1790,7 @@ bool dc_report_status(device_client_t *c, int psram_free, int rssi, const char *
     int body_len = snprintf(body, sizeof body,
         "{\"mountedSha256\":%s,\"mountedDiskId\":%s,\"version\":%lu,"
         "\"error\":%s,\"psramFree\":%d,\"firmwareVersion\":%s,\"rssi\":%d,"
-        "\"trackMaxBytes\":%u%s%s%s%s%s%s%s%s%s%s}",
+        "\"trackMaxBytes\":%u%s%s%s%s%s%s%s%s%s%s",
         sha_field, disk_field, (unsigned long)c->mounted_version,
         err_field, psram_free, ver_field, rssi, (unsigned)TRACK_MAX_BYTES, fw_tail, nfc_tail,
         display_tail, preload_tail,
@@ -1797,6 +1798,12 @@ bool dc_report_status(device_client_t *c, int psram_free, int rssi, const char *
         c->_plays_hd ? ",\"playsHd\":true" : "",
         sel1_tail, df1_tail, drive_tail, net_tail, server_tail);
     if (body_len < 0 || body_len >= (int)sizeof body) return false; // should never happen; give up quietly
+    // The boot I2C scan, written straight into the body (no tail buffer of its own: .bss), then the
+    // closing brace. "" until the scan is done, or from a client never given one.
+    body_len += i2c_scan_json(c->_i2c, body + body_len, sizeof body - (size_t)body_len);
+    if (body_len + 1 >= (int)sizeof body) return false;
+    body[body_len++] = '}';
+    body[body_len] = '\0';
 
     static char req[DC_STATUS_REQ_BYTES];
     int req_len = http_build_request(req, sizeof req, "POST", DC_STATUS_PATH,
@@ -2215,6 +2222,10 @@ void dc_set_nfc_reader(device_client_t *c, const char *state) {
     } else {
         c->_nfc_reader[0] = '\0';
     }
+}
+
+void dc_set_i2c_scan(device_client_t *c, const i2c_scan_t *scan) {
+    c->_i2c = scan;
 }
 
 void dc_set_plays_hd(device_client_t *c, bool on) {

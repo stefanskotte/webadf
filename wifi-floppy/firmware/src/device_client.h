@@ -16,6 +16,7 @@
 #include "transport.h"
 #include "display_layout.h"   // pure: layout_t, for dc_display_verdict_t
 #include "drive_store.h"      // pure: df1_mode_t
+struct i2c_scan;              // i2c_scan.h; dc_set_i2c_scan keeps a pointer
 
 typedef enum {
     DC_UNPROVISIONED, DC_IDLE_POLL, DC_FETCHING, DC_VERIFYING,
@@ -170,8 +171,11 @@ typedef bool (*dc_hold_fn)(void *ctx);
 // Server override (1.13.0) adds ,"server":{"custom":false,"tls":"noverify"} -- 43 bytes at most (the
 // "true" form is 42): 1471 + 43 = 1514 <= 1536 (22 spare). The request: 1514 + request line, a 69-byte
 // Host value (63-char host + ":65535"), a 127-char token and the other headers = 1514 + 310 = 1824 <= 2048.
+// The boot I2C scan (1.17.0) adds ,"i2c":[<eight 3-digit addresses>] -- 40 bytes at most (I2C_SCAN_JSON_MAX):
+// 1514 + 40 = 1554 (measured 1553), so the body goes to 1560 (6 spare), paid for by trimming preload_tail and display_tail to
+// their measured maxima (device_client.c) -- .bss does not grow. The request: 1824 + 40 = 1864 <= 2048.
 // test_status_body_fits_at_maximum prints the measured sizes.
-#define DC_STATUS_BODY_BYTES  1536
+#define DC_STATUS_BODY_BYTES  1560
 #define DC_STATUS_REQ_BYTES   2048
 // `err` is firmware-authored (a short static string or errno-derived text,
 // never network input), but it still has to survive being embedded in a
@@ -447,6 +451,9 @@ typedef struct {
     void    *_poll_intr_ctx;
     // "present" / "absent" / "" (= omit the key); see dc_set_nfc_reader.
     char     _nfc_reader[8];
+    // dc_set_i2c_scan: the boot I2C scan, appended as "i2c" once it is done.
+    // A pointer (main.c owns the record) -- four bytes, not ten, in each client.
+    const struct i2c_scan *_i2c;
     // dc_set_plays_hd: "playsHd":true in every status report.
     bool     _plays_hd;
 
@@ -759,6 +766,13 @@ bool dc_tap_write_report(device_client_t *c, uint32_t seq, bool ok, const char *
 // column alone). Anything else is also treated as NULL: the server accepts
 // only those two words, and a third would be dropped there anyway.
 void dc_set_nfc_reader(device_client_t *c, const char *state);
+
+// What dc_report_status says about the boot I2C scan (i2c_scan.h): "i2c":[..]
+// once the record is done -- the addresses that answered, [] for none -- and
+// no key at all before then, or for NULL (older firmware's shape: the server
+// keeps null). Kept as a pointer: the record must outlive the client (main.c
+// holds it in a static, written once on core0 before core1 starts).
+void dc_set_i2c_scan(device_client_t *c, const struct i2c_scan *scan);
 
 // Whether dc_report_status says "playsHd":true (HD spec §4.3, §5.5). main.c
 // sets it once from WF_DRIVE_ID: the drive-ID responder is what lets the
