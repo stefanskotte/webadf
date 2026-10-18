@@ -44,9 +44,9 @@ typedef struct {
 } nfc_event_t;
 
 // A detection gap on a held tag: `ms` unseen, reported when it is seen again
-// (new_arrival false: still the same tap) or as the gap crosses the 3 s
-// re-arrival window (new_arrival true). Measurement only -- it decides
-// nothing. This file may not log (the RULE above), so the caller does.
+// (new_arrival false: still the same tap) or as the gap crosses the
+// re-arrival window -- 3 s, or 1 s for a Next-disk card -- (new_arrival
+// true). Measurement only -- it decides nothing. This file may not log (the RULE above), so the caller does.
 typedef struct {
     uint8_t  uid[4];
     uint32_t ms;
@@ -99,10 +99,12 @@ typedef struct nfc_reader {
     nfc_event_t built;
 
     // The held tag: the last one reported, until it has been unseen for the
-    // re-arrival window (3 s). last_seen is the anchor that window runs from:
-    // the report, every later sighting, an arm while it is held, and the
+    // re-arrival window (3 s; 1 s for a Next-disk card while nothing is armed
+    // -- nfc_reader.c hold_window). last_seen is the anchor that window runs
+    // from: the report, every later sighting, an arm while it is held, and the
     // chip's return after an outage (which says nothing about the tag).
     bool     held;
+    bool     held_next;    // the held tag was reported as NFC_EV_TAG_NEXT
     uint8_t  last_uid[4];
     uint32_t last_seen;
     uint32_t last_detect;  // the last time it truly answered (arming is no sighting)
@@ -149,9 +151,10 @@ bool nfc_take_gap(nfc_reader_t *r, nfc_gap_t *out);
 
 // While armed, the next tag ARRIVAL is written with `disk_id` instead of
 // read, whatever it holds, and reports WRITE_DONE with `seq`. An arrival is
-// a different UID, or the same UID after 3 s continuously unseen (as for
-// reads). A write never goes to a tag that was already on the reader when it
-// was armed: if a tag is held at this call, that UID is written only after
+// a different UID, or the same UID after 3 s continuously unseen (as for a
+// disk tag's read; a held Next-disk card's 1 s does not apply while armed).
+// A write never goes to a tag that was already on the reader when it was
+// armed: if a tag is held at this call, that UID is written only after
 // it has been unseen for 3 s counted from no earlier than this call, and has
 // arrived again; a different tag arriving is written at once. Re-arming
 // replaces the request. An id without the disk-id shape is

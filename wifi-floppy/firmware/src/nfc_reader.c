@@ -29,6 +29,18 @@ enum { MI_OK, MI_NOTAGERR, MI_ERR };
 // it, and it re-mounted its disk after a web eject. A tap is deliberate: a
 // hand lifts the tag and brings it back, which takes longer than this.
 #define NFC_REARRIVAL_ABSENT_MS 3000
+// The Next-disk card's window. Its taps are the operator stepping through a
+// set, one after another: on the bench (2026-10-18) the re-taps came about
+// every 4 s with the card away 1.4-1.7 s, and under the 3 s window every one
+// of them was "still the same tap" and did nothing. 1 s is under those gaps.
+// It is counted as the reader sees it, poll to poll (~367 ms apart with no
+// tag on the host model), so a lift counts up to one poll longer than it was:
+// a lift of ~0.5-0.75 s or more is a new tap, one under ~0.47 s never is
+// (test_nfc_reader.c pins both). The disk-tag reason for 3 s does
+// not carry over: a Next card lying at the edge that re-triggers steps one
+// disk on, it does not re-mount an ejected one -- and while a write is armed
+// it gets the full 3 s anyway (hold_window).
+#define NFC_REARRIVAL_ABSENT_NEXT_MS 1000
 #define GAP_REPORT_MS            500   // a held tag's dropout longer than this is logged
 // The field (the reader's transmitter) is on only for a poll: on, this long
 // for a tag to power up (ISO 14443's 5 ms), then WUPA. Between polls it is off,
@@ -406,11 +418,22 @@ static void post_gap(nfc_reader_t *r, uint32_t now, bool new_arrival) {
     r->has_gap = true;
 }
 
+// How long the held tag must be unseen before the same UID is a new arrival.
+// Decided here and only here: 1 s for a Next-disk card that was reported as
+// a Next tap (held_next, set in st_report from the event it produced), 3 s
+// for everything else -- a disk tag, a blank or foreign tag, an unreadable
+// one, a tag just written. While a write is armed every held tag gets the 3 s:
+// the arm gate (arm_gate) promises a tag lying on the reader is not written
+// until a full window away, and a Next card is no exception.
+static uint32_t hold_window(const nfc_reader_t *r) {
+    return r->held_next && !r->armed ? NFC_REARRIVAL_ABSENT_NEXT_MS : NFC_REARRIVAL_ABSENT_MS;
+}
+
 // The held tag has been unseen for the whole re-arrival window: it has left,
 // and the same UID seen from now on is a new arrival. Decided here and only
 // here, so a poll and the anticoll after it cannot disagree about it.
 static void expire_hold(nfc_reader_t *r, uint32_t now) {
-    if (!r->held || now - r->last_seen < NFC_REARRIVAL_ABSENT_MS) return;
+    if (!r->held || now - r->last_seen < hold_window(r)) return;
     r->held = false;
     post_gap(r, now, true);          // the gap's one line: it ended the tap
 }
@@ -661,8 +684,9 @@ static bool st_read(nfc_reader_t *r) {
         memcpy(r->built.disk_id, id, sizeof id);
     } else if (res == NFC_TAG_NEXT) {
         // No disk id to carry -- finish() already zeroed built.disk_id, so
-        // it comes out empty. Same presence/3 s-absence gating as TAG_READ:
-        // this is decided in the same place, after the same debounce.
+        // it comes out empty. Same presence gating as TAG_READ, decided in
+        // the same place, but held it re-arrives after 1 s, not 3 s
+        // (hold_window).
         finish(r, NFC_EV_TAG_NEXT, NULL);
     } else if (res == NFC_TAG_NOT_OURS) {
         finish(r, NFC_EV_NOT_OURS, NULL);
@@ -721,6 +745,7 @@ static bool st_report(nfc_reader_t *r) {
     // over a second from anticoll to here, and an anchor that old would eat
     // into the re-arrival window before the tag had been polled even once.
     r->held = true;
+    r->held_next = r->built.kind == NFC_EV_TAG_NEXT;   // its window: hold_window
     memcpy(r->last_uid, r->uid, 4);
     r->last_seen = r->last_detect = r->now_ms();
     r->missed = false;
