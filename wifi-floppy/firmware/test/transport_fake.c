@@ -17,7 +17,7 @@
 // one of those in full, per the task brief.
 #define FAKE_MAX_QUEUE 8
 #define FAKE_MAX_RESPONSE_BYTES 8192
-#define FAKE_MAX_REQUEST_BYTES 16384
+#define FAKE_MAX_REQUEST_BYTES 20480
 
 typedef enum { FAKE_EV_RESPONSE, FAKE_EV_CONNECT_FAIL } fake_event_type_t;
 

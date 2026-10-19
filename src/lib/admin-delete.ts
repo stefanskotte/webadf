@@ -20,6 +20,7 @@ import { entitlements, games, disks } from '@/db/schema/catalog';
 import { devices, pairingCodes, invites } from '@/db/schema/devices';
 import { user, member, organization } from '@/db/schema/auth';
 import { collections } from '@/db/schema/collections';
+import { amigaUploads } from '@/db/schema/amiga-uploads';
 
 export interface DeleteUserResult {
   orgId: string | null;
@@ -109,6 +110,10 @@ export async function deleteUserCascade(userId: string): Promise<DeleteUserResul
     disksIdx.push(stmts.push(
       tx.delete(disks).where(eq(disks.orgId, orgId)).returning({ id: disks.id }),
     ) - 1);
+
+    // The org's From the Amiga area (spec 2026-10-18): its device_id is set null when a board goes, so the org's
+    // own delete is what removes it (chunks follow by cascade). Blobs are left to the weekly GC, as everywhere here.
+    stmts.push(tx.delete(amigaUploads).where(eq(amigaUploads.orgId, orgId)));
 
     devicesIdx.push(stmts.push(
       tx.delete(devices).where(eq(devices.orgId, orgId)).returning({ id: devices.id }),

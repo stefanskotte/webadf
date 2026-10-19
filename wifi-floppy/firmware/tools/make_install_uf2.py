@@ -49,7 +49,7 @@ XIP_BASE = 0x10000000
 PAGE = 256
 SECTOR = 4096
 FLASH_SIZE = 16 * 1024 * 1024        # PIM726 (Pimoroni Pico Plus 2 W): 16 MB
-RECORD_SECTORS = 6                   # token, config, fw_state, display, drive_store, override
+RECORD_SECTORS = 8                   # token, config, fw_state, display, drive_store, override, update trail, board key
 PT_SLOT1 = SECTOR                    # the boot ROM's second partition-table slot
 E10_ABS_BLOCK = XIP_BASE + FLASH_SIZE - PAGE   # 0x10ffff00, picotool --abs-block
 
@@ -210,7 +210,7 @@ def build(partitions_path, pt_uf2_bytes, image):
             raise Refused(f"page at {addr:#010x} is outside the 16 MB flash")
         if addr + PAGE > limit:
             raise Refused(f"page at {addr:#010x} is inside the top {RECORD_SECTORS} settings sectors "
-                          f"(from {limit:#010x}): token, config, fw_state, display, drive_store")
+                          f"(from {limit:#010x}): the stores, the update trail and the board key")
 
     order = sorted(pages)
     out = bytearray()

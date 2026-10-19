@@ -82,14 +82,28 @@
 #include "pnet_pack.h"       //   ...board -> Amiga packing
 #include "amiga_send.h"      // Phase 4: files sent to Receive on the Amiga
 #include "amiga_tcp.h"       //   its lwIP and HTTPS ops
+#include "key_store.h"       // the board key (fw 1.19.0)
+#if WF_A2B_DISCARD
+#include "a2b_discard.h"     // increment 0 of plan 2026-10-19: TEST builds only
+#endif
 #endif
 #endif
 
 #if WF_PNET_L2
-// PaulaNET Phase 4's queue text and chunk buffers (22 KB): in PSRAM, not SRAM, where they would come out of the heap
+// PaulaNET Phase 4's queue text and chunk buffers: in PSRAM, not SRAM, where they would come out of the heap
 // TLS allocates from (1.13.0's heap low-water was 28,672). Uninitialized: as_init and the fetches fill them.
 static __uninitialized_psram("sendq") char g_send_queue_buf[AS_QUEUE_BYTES + 1];
-static __uninitialized_psram("sendc") uint8_t g_send_chunk_buf[AS_CHUNK_BYTES];
+// Sends use the first 16 KB; an upload from the Amiga uses all of it as its ring (fw 1.19.0, spec 2026-10-18 §5).
+static __uninitialized_psram("sendc") uint8_t g_send_chunk_buf[AS_UP_RING_BYTES];
+// The upload's state, its PUT line and JSON (plan 2026-10-19 ruling P1): PSRAM, SRAM .bss +0.
+static __uninitialized_psram("sendup") as_up_t g_send_up;
+// The board key (spec 2026-10-18 §5-6): core0 loads or makes it at boot, before core1 starts; core1 only reads it.
+static __uninitialized_psram("bkey") struct { uint8_t raw[KEY_STORE_BYTES]; char hex[2 * KEY_STORE_BYTES + 1]; bool ok, unsaved; } g_board_key;
+// The key is stored by core0's deferred-write rule, which needs DF1's bookkeeping; CMake already refuses WF_PNET_L2
+// without WF_DRIVE_ID (WF_PNET_LOOP needs it), so every build with a key has that rule (plan ruling PF10).
+#if !WF_DRIVE_ID
+#error "WF_PNET_L2 needs DF1_CAPABLE (WF_DRIVE_ID): the board key's store uses the DF1 record's rule"
+#endif
 #endif
 
 // transport_tls.c is device-only (no host test exercises it, unlike every
@@ -1845,6 +1859,9 @@ static void core1_main(void) {
     }
 #if WF_PNET_L2
     pnet_bridge_start();          // the input hook and the send worker (plan 2026-10-11)
+#if WF_A2B_DISCARD
+    a2b_discard_start();          // increment 0 (plan 2026-10-19 Task 1): the bench copies to <board>:6801
+#endif
     net_radio_mac(g_pnet_mac);    // Phase 2: for cylinder 76's status track, published once
     __dmb();
     g_pnet_mac_ok = true;
@@ -2199,16 +2216,22 @@ static void core1_main(void) {
         up_init(&up, &c, session, wb_write_gen, wb_last_write_ms);
 #if WF_PNET_L2
         // PaulaNET Phase 4: files queued for this board go to Receive on the Amiga, between polls (the one HTTPS
-        // connection is shared, like the uploader's). Static: the queue and chunk buffers are 22 KB.
+        // connection is shared, like the uploader's). Static: off core1's stack (its buffers are in PSRAM, above).
+        // Uploads from the Amiga (1.19.0) use the same engine.
         static amiga_send_t g_send;
         static as_ops_t g_send_ops;
         amiga_tcp_ops(&g_send_ops, &c);
         {
             // Not backed by PSRAM (a board without it): sending stays off rather than writing into nothing.
             const bool psram_ok = psram_check_address(&g_send_queue_buf[sizeof g_send_queue_buf - 1]) &&
-                                  psram_check_address(&g_send_chunk_buf[sizeof g_send_chunk_buf - 1]);
+                                  psram_check_address(&g_send_chunk_buf[sizeof g_send_chunk_buf - 1]) &&
+                                  psram_check_address((uint8_t *)&g_send_up + sizeof g_send_up - 1) &&
+                                  psram_check_address((uint8_t *)&g_board_key + sizeof g_board_key - 1);
             if (!psram_ok) wf_logf(WF_ERR, "send: buffers are not backed by PSRAM -- sending to the Amiga is off");
-            as_init(&g_send, &g_send_ops, psram_ok ? g_send_queue_buf : NULL, psram_ok ? g_send_chunk_buf : NULL);
+            as_init(&g_send, &g_send_ops, psram_ok ? g_send_queue_buf : NULL, psram_ok ? g_send_chunk_buf : NULL,
+                    psram_ok ? &g_send_up : NULL);
+            // Protocol 2 (fw 1.19.0): the key in the hello, and its 4 digits in the status report (spec §6).
+            if (psram_ok && g_board_key.ok) { as_set_key(&g_send, g_board_key.hex); dc_set_up_key(&c, g_board_key.hex); }
         }
 #endif
         dc_set_hold(&c, swap_holds, &up);
@@ -2421,6 +2444,26 @@ static void core1_main(void) {
             // Cheap, every pass (no HTTPS): connect retries, the handshake, pings, Receive's replies, pushing bytes.
             as_tick(&g_send);
             dc_set_send(&c, as_acked_version(&g_send), as_rx(&g_send));
+#if WF_A2B_DISCARD
+            {   // Increment 0: one line every 2 s while a copy runs, and the totals once it ends.
+                static uint32_t a2b_log_ms, a2b_logged;
+                if (clock_ms() - a2b_log_ms >= 2000u) {
+                    a2b_log_ms = clock_ms();
+                    a2b_stats_t a;
+                    a2b_discard_stats(&a);
+                    if (a.bytes != a2b_logged || a.open) {
+                        a2b_logged = a.bytes;
+                        wf_logf(WF_INFO, "a2b: %lu B in %lu ms = %lu B/s chunk max %lu ooseq max %lu B %lu pbufs "
+                                "mem max %lu err %lu conns %lu%s",
+                                (unsigned long)a.bytes, (unsigned long)a.ms,
+                                (unsigned long)(a.ms ? (uint32_t)((uint64_t)a.bytes * 1000u / a.ms) : 0u),
+                                (unsigned long)a.chunk_max, (unsigned long)a.ooseq_max, (unsigned long)a.ooseq_pbufs_max,
+                                (unsigned long)a.mem_max, (unsigned long)a.mem_err,
+                                (unsigned long)a.conns, a.open ? "" : " (closed)");
+                    }
+                }
+            }
+#endif
 #endif
             g_up_holds = up_holds(&up);   // core0's DF1 store rule (R17)
 
@@ -4017,6 +4060,19 @@ int main(void) {
                 df1_mode_name(g_df1_mode),
                 drv_loaded ? "stored" : "compiled default");
     }
+#if WF_PNET_L2
+    // The board key (spec 2026-10-18 §5-6, plan ruling P2): loaded, or made now from pico_rand (TRNG-seeded) and
+    // stored by the deferred-write rule below, the drive record's. Usable at once: a reboot before it is stored would
+    // make another, and Receive would need TRUST once.
+    const bool board_key_backed = psram_check_address((uint8_t *)&g_board_key + sizeof g_board_key - 1);
+    if (board_key_backed) {
+        g_board_key.ok = true;
+        g_board_key.unsaved = !key_store_load(g_board_key.raw);
+        if (g_board_key.unsaved) { rng_128_t r; get_rand_128(&r); memcpy(g_board_key.raw, &r, KEY_STORE_BYTES); }
+        key_store_hex(g_board_key.raw, g_board_key.hex);
+        wf_logf(WF_INFO, "up: board key %.4s%s", g_board_key.hex, g_board_key.unsaved ? " (new, not stored yet)" : "");
+    }
+#endif
 #if WF_PNET_LOOP
     pnet_loop_init(&g_pnet);
 #if WF_PNET_L2
@@ -4422,6 +4478,7 @@ int main(void) {
     static drive_record_t drive_store_rec;
     bool     drive_store_pending = false;
     uint32_t drive_save_retry_at = 0;
+    uint32_t key_save_retry_at = 0;   // the board key's store (fw 1.19.0)
     uint32_t drive_motor_seen_ms = 0;   // the last pass either motor was on (R17)
 #endif
     // Display bookkeeping. `disk_mounted` gates BOTH the track counter (a
@@ -5124,16 +5181,15 @@ int main(void) {
             const bool motor_any = dskchg_motor_on_d(0) || dskchg_motor_on_d(1);
             if (motor_any) drive_motor_seen_ms = clock_ms();
         }
-        if (drive_store_should_write(drive_store_pending,
-                                     !disk_mounted && psram_active_slot() == SLOT_NONE && !df1_mounted,
-                                     drive_store_idle(clock_ms(),
-                                                      dskchg_motor_on_d(0) || dskchg_motor_on_d(1),
-                                                      !gpio_get(PIN_WGATE),
-                                                      // motor_on=true only folds the third time in
-                                                      swap_gate_last_activity(g_write_last_ms, g_wgate_last_ms,
-                                                                              true, drive_motor_seen_ms),
-                                                      g_up_holds)) &&
+        const bool store_empty = !disk_mounted && psram_active_slot() == SLOT_NONE && !df1_mounted;
+        const bool store_idle = drive_store_idle(clock_ms(), dskchg_motor_on_d(0) || dskchg_motor_on_d(1), !gpio_get(PIN_WGATE),
+                                                 // motor_on=true only folds the third time in
+                                                 swap_gate_last_activity(g_write_last_ms, g_wgate_last_ms, true, drive_motor_seen_ms),
+                                                 g_up_holds);
+        bool drive_record_this_pass = false;   // one flash write per pass: the board key waits for the next
+        if (drive_store_should_write(drive_store_pending, store_empty, store_idle) &&
             (int32_t)(clock_ms() - drive_save_retry_at) >= 0) {
+            drive_record_this_pass = true;
             if (drive_store_save(&drive_store_rec)) {
                 drive_store_pending = false;
                 wf_logf(WF_INFO, "df1: setting %lu stored", (unsigned long)drive_store_rec.version);
@@ -5142,6 +5198,15 @@ int main(void) {
                 wf_logf(WF_WARN, "df1: storing setting %lu failed -- retry in 5 s",
                         (unsigned long)drive_store_rec.version);
             }
+        }
+#endif
+#if WF_PNET_L2
+        // The board key made at this boot (plan ruling PF10): stored by the same rule whatever the DF1 setting, never
+        // in the same pass as the DF1 record (key_store_should_write, host-tested). A failed save retries in 5 s.
+        if (board_key_backed && key_store_should_write(g_board_key.unsaved, drive_record_this_pass, store_empty, store_idle) &&
+            (int32_t)(clock_ms() - key_save_retry_at) >= 0) {
+            if (key_store_save(g_board_key.raw)) { g_board_key.unsaved = false; wf_logf(WF_INFO, "up: board key stored"); }
+            else { key_save_retry_at = clock_ms() + 5000u; wf_logf(WF_WARN, "up: storing the board key failed -- retry in 5 s"); }
         }
 #endif
 

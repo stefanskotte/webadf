@@ -380,6 +380,7 @@ void dc_xfer_describe(const dc_xfer_t *x, char *how, int how_cap, char *got, int
 // whether anything at all arrived on this attempt, which is the only honest
 // basis for deciding a request is safe to repeat (see dc_exchange).
 static bool dc_attempt(device_client_t *c, const char *req, int req_len,
+                       const uint8_t *body, int body_len,
                        void (*sink)(void *ctx, const uint8_t *b, int n),
                        void *sink_ctx, http_resp_t *r, bool *reused_out,
                        int *read_bytes_out, bool *interrupted_out) {
@@ -404,15 +405,21 @@ static bool dc_attempt(device_client_t *c, const char *req, int req_len,
     *reused_out = c->t->reused ? c->t->reused(c->t) : false;
     c->last_xfer.reused = *reused_out;
 
-    int sent = 0;
-    while (sent < req_len) {
-        int w = c->t->write(c->t, (const uint8_t *)req + sent, req_len - sent);
-        if (w <= 0) {
-            dc_abandon(c);
-            dc_xfer_end(c, r, DC_XFER_WRITE, w, t0, 0);
-            return false;
+    // The request in up to two parts: the head (with any C-string body) from `req`, then a binary `body` straight from
+    // the caller's memory (dc_post; plan 2026-10-19 ruling P3: an upload chunk in the PSRAM ring is never copied).
+    const uint8_t *part[2] = { (const uint8_t *)req, body };
+    const int part_len[2] = { req_len, body ? body_len : 0 };
+    for (int k = 0; k < 2; k++) {
+        int sent = 0;
+        while (sent < part_len[k]) {
+            int w = c->t->write(c->t, part[k] + sent, part_len[k] - sent);
+            if (w <= 0) {
+                dc_abandon(c);
+                dc_xfer_end(c, r, DC_XFER_WRITE, w, t0, 0);
+                return false;
+            }
+            sent += w;
         }
-        sent += w;
     }
 
     g_ms_read = 0;
@@ -520,6 +527,7 @@ static bool dc_attempt(device_client_t *c, const char *req, int req_len,
 // yet -- exactly the shape of a dead socket -- so the retry would otherwise
 // re-send the poll the caller just asked to stop, and wait the full hold again.
 static bool dc_exchange_i(device_client_t *c, const char *req, int req_len,
+                          const uint8_t *body, int body_len,
                           void (*sink)(void *ctx, const uint8_t *b, int n),
                           void *sink_ctx, http_resp_t *r, bool retryable,
                           bool *interrupted_out) {
@@ -527,7 +535,7 @@ static bool dc_exchange_i(device_client_t *c, const char *req, int req_len,
     int got = 0;
     bool intr = false;
     if (interrupted_out) *interrupted_out = false;
-    const bool ok = dc_attempt(c, req, req_len, sink, sink_ctx, r, &reused, &got, &intr);
+    const bool ok = dc_attempt(c, req, req_len, body, body_len, sink, sink_ctx, r, &reused, &got, &intr);
     if (intr) {
         if (interrupted_out) *interrupted_out = true;
         return false;
@@ -544,7 +552,7 @@ static bool dc_exchange_i(device_client_t *c, const char *req, int req_len,
     dc_abandon(c);
     bool again = false;
     int got_again = 0;
-    const bool ok_again = dc_attempt(c, req, req_len, sink, sink_ctx, r, &again, &got_again, &intr);
+    const bool ok_again = dc_attempt(c, req, req_len, body, body_len, sink, sink_ctx, r, &again, &got_again, &intr);
     c->last_xfer.retried = true;
     if (intr && interrupted_out) *interrupted_out = true;
     return ok_again;
@@ -555,7 +563,13 @@ static bool dc_exchange_i(device_client_t *c, const char *req, int req_len,
 static bool dc_exchange(device_client_t *c, const char *req, int req_len,
                         void (*sink)(void *ctx, const uint8_t *b, int n),
                         void *sink_ctx, http_resp_t *r, bool retryable) {
-    return dc_exchange_i(c, req, req_len, sink, sink_ctx, r, retryable, NULL);
+    return dc_exchange_i(c, req, req_len, NULL, 0, sink, sink_ctx, r, retryable, NULL);
+}
+
+// dc_post's exchange: a head, then a binary body from the caller's memory.
+static bool dc_exchange_body(device_client_t *c, const char *head, int head_len, const uint8_t *body, int body_len,
+                             void (*sink)(void *ctx, const uint8_t *b, int n), void *sink_ctx, http_resp_t *r) {
+    return dc_exchange_i(c, head, head_len, body, body_len, sink, sink_ctx, r, /*retryable=*/true, NULL);
 }
 
 bool dc_digest_is_blocked(const device_client_t *c, const char *sha256) {
@@ -665,7 +679,7 @@ static dc_fetch_result_t dc_fetch_into(device_client_t *c, const char *sha256, i
         c->t->interrupt_ctx = c->_poll_intr_ctx;
     }
     bool interrupted = false;
-    bool ok = dc_exchange_i(c, req, req_len, dc_image_sink, c, &r, /*retryable=*/true,
+    bool ok = dc_exchange_i(c, req, req_len, NULL, 0, dc_image_sink, c, &r, /*retryable=*/true,
                             &interrupted);
     c->t->interrupted = NULL;
     c->t->interrupt_ctx = NULL;
@@ -1828,6 +1842,13 @@ bool dc_report_status(device_client_t *c, int psram_free, int rssi, const char *
         if (k > 0 && body_len + k + 1 < (int)sizeof body) { body_len += k; fail_sent = true; }
         else body[body_len] = '\0';
     }
+    // The board key's first 4 digits (1.19.0), likewise straight into the body, until heard (ruling P13).
+    bool key_sent = false;
+    if (c->_up_key_owed) {
+        int k = snprintf(body + body_len, sizeof body - (size_t)body_len, ",\"upKey\":\"%.4s\"", c->_up_key);
+        if (k > 0 && body_len + k + 1 < (int)sizeof body) { body_len += k; key_sent = true; }
+        else body[body_len] = '\0';
+    }
     if (body_len + 1 >= (int)sizeof body) return false;
     body[body_len++] = '}';
     body[body_len] = '\0';
@@ -1859,6 +1880,7 @@ bool dc_report_status(device_client_t *c, int psram_free, int rssi, const char *
     }
     if (accepted && boot_sent) c->_last_boot_owed = false;
     if (accepted && fail_sent) c->_nfc_fail_owed = false;   // core1 only: nothing set a newer one meanwhile
+    if (accepted && key_sent) c->_up_key_owed = false;
     if (accepted) {
         c->_net_sent_valid = true;
         c->_net_sent_on = net_sent.on;
@@ -1877,24 +1899,21 @@ bool dc_report_status(device_client_t *c, int psram_free, int rssi, const char *
 
 // Write-back (piece 2b; see device_client.h). Shares dc_exchange like every
 // other request in this file, but builds the request with http_build_head
-// (Task 2) plus a raw memcpy of `body` rather than http_build_request's
-// C-string body, since a disk track is full of NUL bytes. Called from
+// (Task 2) plus the body sent as a second write from the caller's memory (no copy)
+// rather than http_build_request's C-string body, since a disk track is full of NUL bytes. Called from
 // up_step (uploader.c, a later task), never from inside dc_step -- see the
 // STACK note's call graph above.
 int dc_post(device_client_t *c, const char *path, const char *content_type,
             const uint8_t *body, int body_len, char *resp, int resp_cap) {
-    if (body_len < 0 || body_len > DC_POST_BODY_MAX) return -1;
-    // static: see the STACK note above. One head + one HD track, ~11.8 KB.
-    static char req[DC_POST_HEAD_BYTES + DC_POST_BODY_MAX];
-    int n = http_build_head(req, DC_POST_HEAD_BYTES, "POST", path, c->host_header, c->token,
-                            content_type, body_len);
+    if (body_len < 0 || body_len > DC_POST_BODY_MAX || (body_len > 0 && !body)) return -1;
+    // static: see the STACK note above. The head only: the body is sent from the caller's memory.
+    static char head[DC_POST_HEAD_BYTES];
+    int n = http_build_head(head, sizeof head, "POST", path, c->host_header, c->token, content_type, body_len);
     if (n < 0) return -1;
-    if (body_len) memcpy(req + n, body, (size_t)body_len);
-
     static dc_body_buf_t out;
     out.len = 0; out.truncated = false; out.buf[0] = '\0';
     static http_resp_t r;
-    bool ok = dc_exchange(c, req, n + body_len, dc_body_sink, &out, &r, /*retryable=*/true);
+    bool ok = dc_exchange_body(c, head, n, body_len ? body : NULL, body_len, dc_body_sink, &out, &r);
     if (resp && resp_cap > 0) snprintf(resp, (size_t)resp_cap, "%s", out.buf);
     if (!ok || !r.body_complete) return -1;
     if (r.status == 401) c->state = DC_HALTED;    // 401 anywhere halts
@@ -2004,6 +2023,25 @@ int dc_post_send_done(device_client_t *c, const char *id, const char *json) {
     if (!ok || !r.body_complete) return -1;
     if (r.status == 401) c->state = DC_HALTED;
     return r.status;
+}
+
+// --- Uploads from the Amiga (spec 2026-10-18 §4) --------------------------------------------------------------------
+// One path buffer for the three: they never nest (amiga_send.c makes one request per as_step). static: see the STACK
+// note. The longest is "/api/device/upload/<40-char id>?offset=4294967295" = 77.
+static char s_up_path[96];
+
+int dc_upload_open(device_client_t *c, const char *json, char *resp, int resp_cap) {
+    return dc_post(c, "/api/device/upload", "application/json", (const uint8_t *)json, (int)strlen(json), resp, resp_cap);
+}
+int dc_upload_chunk(device_client_t *c, const char *id, uint32_t offset, const uint8_t *b, int n, char *resp, int resp_cap) {
+    int pn = snprintf(s_up_path, sizeof s_up_path, "/api/device/upload/%s?offset=%lu", id, (unsigned long)offset);
+    if (pn < 0 || pn >= (int)sizeof s_up_path || n <= 0) return -1;
+    return dc_post(c, s_up_path, "application/octet-stream", b, n, resp, resp_cap);
+}
+int dc_upload_close(device_client_t *c, const char *id, const char *json, char *resp, int resp_cap) {
+    int pn = snprintf(s_up_path, sizeof s_up_path, "/api/device/upload/%s/close", id);
+    if (pn < 0 || pn >= (int)sizeof s_up_path) return -1;
+    return dc_post(c, s_up_path, "application/json", (const uint8_t *)json, (int)strlen(json), resp, resp_cap);
 }
 
 bool dc_display_owed(const device_client_t *c) {
@@ -2132,7 +2170,7 @@ static dc_state_t dc_step_inner(device_client_t *c) {
     c->t->interrupted = c->_poll_intr;
     c->t->interrupt_ctx = c->_poll_intr_ctx;
     bool interrupted = false;
-    bool ok = dc_exchange_i(c, req, req_len, dc_body_sink, &body, &r, /*retryable=*/true,
+    bool ok = dc_exchange_i(c, req, req_len, NULL, 0, dc_body_sink, &body, &r, /*retryable=*/true,
                             &interrupted);
     c->t->interrupted = NULL;
     c->t->interrupt_ctx = NULL;
@@ -2270,6 +2308,12 @@ void dc_set_last_boot(device_client_t *c, const char *json_object) {
 }
 
 bool dc_last_boot_owed(const device_client_t *c) { return c->_last_boot_owed; }
+
+void dc_set_up_key(device_client_t *c, const char *key_hex) {
+    c->_up_key = key_hex;
+    c->_up_key_owed = key_hex != NULL && strlen(key_hex) >= 4;
+}
+bool dc_up_key_owed(const device_client_t *c) { return c->_up_key_owed; }
 
 void dc_set_nfc_fail(device_client_t *c, const char *reason) {
     if (!reason || !reason[0]) return;

@@ -330,6 +330,13 @@
       "when": 1792415079580,
       "tag": "0046_last_boot",
       "breakpoints": true
+    },
+    {
+      "idx": 47,
+      "version": "7",
+      "when": 1792447909876,
+      "tag": "0047_amiga_uploads",
+      "breakpoints": true
     }
   ]
 }

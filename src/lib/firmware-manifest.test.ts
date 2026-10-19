@@ -49,6 +49,12 @@ describe('refuseReleaseImage', () => {
     expect(refuseReleaseImage(realInfo, 533624, pnet, 'a release')).toMatch(/PaulaNET/);
     expect(refuseReleaseImage(realInfo, 533624, pnet, 'TEST build: PaulaNET phase 0')).toBeNull();
   });
+  it('refuses the increment 0 discard build unless the notes say TEST build (plan 2026-10-19 Task 1)', () => {
+    const a2b = Buffer.from('xx wf-a2b-discard-test xx');
+    expect(refuseReleaseImage(realInfo, 533624, a2b)).toMatch(/discard/);
+    expect(refuseReleaseImage(realInfo, 533624, a2b, 'a release')).toMatch(/discard/);
+    expect(refuseReleaseImage(realInfo, 533624, a2b, 'TEST build -- A2B measurement')).toBeNull();
+  });
   it('accepts TEST notes on an image with no marker (a TEST build of a release configuration, plan 2026-10-12)', () => {
     const plain = Buffer.from('xx an ordinary 1.11.0 image xx');
     expect(refuseReleaseImage(realInfo, 533624, plain, 'TEST build: PaulaNET Phase 3 bench')).toBeNull();

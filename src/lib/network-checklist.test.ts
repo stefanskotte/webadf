@@ -14,6 +14,7 @@ describe('the Network checklist names both values of every state', () => {
     expect(driverDiskLine({ df1Sha256: PAULANET_DISK_PREVIOUS }))
       .toEqual({ ok: true, text: 'Driver disk: in DF1 (an older one; the new one goes in once the Amiga is off)' });
     expect(driverDiskLine({ df1Sha256: '05170a83c279157fc50a2a9a595f4caf1ec194253127d93232f6fd5bfc008c9e' }).ok).toBe(true);
+    expect(driverDiskLine({ df1Sha256: 'fb363d45c3b6c26592ada627c1cddc68b32c93c003a82328617a487dce5aa287' }).ok).toBe(true);
   });
   it('driver: talking, never heard, and quiet', () => {
     expect(driverLine(new Date(NOW - 4_000), NOW)).toEqual({ ok: true, text: 'Driver: talking (last seen 4 s ago)' });

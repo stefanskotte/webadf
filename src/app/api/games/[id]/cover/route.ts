@@ -3,33 +3,8 @@ import { requireOrg } from '@/lib/session';
 import { coverStore } from '@/lib/storage';
 import { checkCoverImage, coverOverrideUrl, MAX_COVER_BYTES } from '@/lib/cover-image';
 import { stripImageMetadata } from '@/lib/cover-strip';
+import { readCapped } from '@/lib/read-capped';
 import { getCoverOverride, setCoverOverride } from '@/lib/cover-override';
-
-/**
- * Read at most `max` bytes of the request body. Returns null as soon as the
- * body goes past the cap, so a client that lies about (or omits)
- * Content-Length still cannot make the function buffer more than the cap.
- */
-async function readCapped(request: Request, max: number): Promise<Uint8Array | null> {
-  if (!request.body) return new Uint8Array();
-  const reader = request.body.getReader();
-  const chunks: Uint8Array[] = [];
-  let total = 0;
-  for (;;) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    total += value.byteLength;
-    if (total > max) {
-      await reader.cancel().catch(() => {});
-      return null;
-    }
-    chunks.push(value);
-  }
-  const out = new Uint8Array(total);
-  let at = 0;
-  for (const c of chunks) { out.set(c, at); at += c.byteLength; }
-  return out;
-}
 
 /**
  * Set title [id]'s own cover. The body is the raw image file (what

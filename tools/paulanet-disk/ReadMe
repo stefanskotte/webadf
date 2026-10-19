@@ -43,11 +43,22 @@ Shell. In the window, choose the folder and press Save. The
 default folder is RAM:. Close the window to stop. Files sent
 while Receive is not running wait on the server for 24 hours.
 
-In a Shell:  Receive [TO <folder>] [SAVE] [GUI]
+In a Shell:  Receive [TO <folder>] [SAVE] [GUI] [SEND <files>] [TRUST]
 TO uses a folder for this run, SAVE also stores it, GUI opens
 the window. Ctrl-C stops it.
+
+Receive also sends files from the Amiga to the web app (board
+firmware 1.19.0 or newer): drop icons or drawers on its window,
+press Send..., or type  Receive SEND DH0:file  in a Shell. They
+appear under From the Amiga on the web app's Upload page.
+Receive sends only to the board it trusts: the first one it
+meets ("Trusted board AB12"; the web app shows the same four
+digits). If another one connects, press Trust this board (or
+use TRUST) to accept it. A file cut off part way continues when
+you send it again within 24 hours.
 
 Nothing is overwritten: a second Foo.lha arrives as Foo_2.lha,
 and nothing is written outside the folder. While Receive runs,
 it listens on TCP port 6800, and any computer on your network
-can drop a file into the folder.
+can drop a file into the folder -- but files go out only to
+the trusted board.

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Boots FS-UAE with Receive and runs the shared scenarios against it through bsdsocket emulation (the Amiga's
-# listen on 6800 is the Mac's port 6800). Usage: uae-test.sh 204|31|32 [shell|gui|space|ram]
+# listen on 6800 is the Mac's port 6800). Usage: uae-test.sh 204|31|32 [shell|gui|space|ram|send]
 # Never pattern-kills: stops only the FS-UAE PID it started.
 set -euo pipefail
 here="$(cd "$(dirname "$0")" && pwd)"; repo="$(cd "$here/../../.." && pwd)"
@@ -17,7 +17,7 @@ case "$ks" in
        # its Modules disk (copied into Work:Libs below), and a 3.1 Workbench has none.
        wb="${WEBADF_WB32:-$HOME/Downloads/workbench-3.2-adf/Workbench3.2.adf}"
        modules="${WEBADF_MOD32:-$HOME/Downloads/workbench-3.2-adf/ModulesA500_3.2.adf}";;
-  *) echo "usage: uae-test.sh 204|31|32 [shell|gui|space|ram]"; exit 2;;
+  *) echo "usage: uae-test.sh 204|31|32 [shell|gui|space|ram|send]"; exit 2;;
 esac
 [ -f "$rom" ] || { echo "FAIL: no Kickstart ROM at $rom"; exit 1; }
 [ -f "$wb" ] || { echo "FAIL: no Workbench disk at $wb"; exit 1; }
@@ -45,11 +45,42 @@ if [ "$mode" = ram ]; then target='RAM:'; fi
 if [ "$mode" = space ]; then
   xdftool "$work/small.adf" create + format Small ofs >/dev/null; df0="$work/small.adf"; target='DF0:'
 fi
+if [ "$mode" = send ]; then
+  # Uploads (spec 2026-10-18 §10 increment 1): files on Work:Up for thirteen `Receive SEND` runs, played by send-scenarios.ts.
+  mkdir -p "$work/hd/Up/Mods/sub"
+  printf 'hello from the Amiga\n' > "$work/hd/Up/Hello.txt"
+  head -c 4194304 /dev/urandom > "$work/hd/Up/Big.bin"
+  printf 'a' > "$work/hd/Up/Mods/a.mod"; printf 'i' > "$work/hd/Up/Mods/a.mod.info"; printf 'b' > "$work/hd/Up/Mods/sub/b.mod"
+  head -c 100000 /dev/urandom > "$work/hd/Up/Resume.bin"
+  head -c 20000 /dev/urandom > "$work/hd/Up/Crc.bin"
+  printf 'x' > "$work/hd/Up/Refused.bin"
+  printf 'e' > "$work/hd/Up/Café.txt"
+fi
+if [ "$mode" = gui ]; then
+  mkdir -p "$work/hd/Up"; head -c 901120 /dev/zero > "$work/hd/Up/Lemmings.adf"; printf 'notes\n' > "$work/hd/Up/Notes.txt"
+fi
 case "$mode" in
   shell|space|ram) run_line="Work:Receive TO $target SAVE >Work:receive.log";;
   gui) run_line="DF1:C/Assign >NIL: SYS: DF1:
 DF1:C/LoadWB
-Run >NIL: Work:Receive TO $target GUI";;
+Run >NIL: Work:Receive TO $target GUI SEND Work:Up/Lemmings.adf Work:Up/Notes.txt";;
+  send) e9=$(printf '\351')   # é in Latin-1: the Amiga reads the script byte by byte
+        run_line=""
+        # <log>:<file>; s03b is the drawer again with the slash Shell TAB completion adds.
+        for step in s01:Hello.txt s02:Big.bin s03:Mods s03b:Mods/ s04:Resume.bin s05:Resume.bin s06:Crc.bin \
+                    s07:Refused.bin "s08:Caf${e9}.txt" s09:Hello.txt s10:Hello.txt; do
+          log=${step%%:*}; f=${step#*:}
+          run_line="${run_line}Work:Receive SEND Work:Up/$f >Work:$log.log
+Echo >>Work:$log.log "'"rc=$RC"'"
+"
+        done
+        run_line="${run_line}Work:Receive SEND TRUST Work:Up/Hello.txt >Work:s11.log
+Echo >>Work:s11.log "'"rc=$RC"'"
+Run >NIL: Work:Receive TO Work:Out
+Wait 3
+Work:Receive SEND Work:Up/Hello.txt >Work:s12.log
+Echo >>Work:s12.log "'"rc=$RC"'"
+Echo >Work:done done";;
 esac
 cat > "$work/hd/S/startup-sequence" <<EOF
 FailAt 21
@@ -98,5 +129,6 @@ case "$mode" in
   gui) echo "GUI is up; touch $work/stop to end (10 minutes at most)"
        for _ in $(seq 1 600); do [ -e "$work/stop" ] && break; sleep 1; done
        echo "--- ENVARC: $(cat "$work/hd/EnvArc/webadf/ReceiveDir" 2>/dev/null)";;
+  send) pnpm exec tsx "$repo/tools/receive/uae/send-scenarios.ts" --hd "$work/hd" || rc=1;;
 esac
 exit $rc

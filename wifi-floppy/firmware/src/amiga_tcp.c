@@ -8,19 +8,21 @@
 // PCBs: MEMP_NUM_TCP_PCB is lwIP's default (5); TLS uses one, this connection one, the portal none in STA mode.
 #include "amiga_tcp.h"
 #include "net_radio.h"
+#include "pnet_lwip_hooks.h"   // amiga_tcp_ooseq_limit's declaration (lwIP's TCP_OOSEQ_BYTES_LIMIT hook)
 #include "wf_log.h"
 #include "pico/time.h"
 #include "lwip/tcp.h"
 #include "lwip/ip_addr.h"
 #include <string.h>
 
-#define RING 1024   // Receive's replies are short lines; the board never reads bulk data from the Amiga
+#define RING 1024   // Receive's lines (replies, PUT, END); an upload's raw bytes go to the PSRAM ring instead
 
 static struct {
     struct tcp_pcb *pcb;
     volatile int state;          // AS_SOCK_*
     uint8_t ring[RING];
     volatile int head, tail;     // bytes [tail, head) are unread
+    as_raw_t *volatile raw;      // an upload's raw section (fw 1.19.0): its bytes go to the PSRAM ring first
 } T;
 
 static device_client_t *g_dc;
@@ -30,9 +32,19 @@ static int ring_used(void) { return (T.head - T.tail + RING) % RING; }
 static err_t on_recv(void *arg, struct tcp_pcb *pcb, struct pbuf *p, err_t err) {
     (void)arg; (void)err;
     if (!p) { T.state = AS_SOCK_CLOSED; return ERR_OK; }   // the Amiga closed (Receive quit)
+    // T.raw is read once per pbuf, here in lwIP's context; t_raw_arm and t_close change it only under
+    // net_radio_lock(), which this callback runs inside, so a disarm on core1 never lands mid-feed.
     for (struct pbuf *q = p; q; q = q->next) {
         const uint8_t *b = q->payload;
-        for (u16_t i = 0; i < q->len; i++) {
+        u16_t i = 0;
+        as_raw_t *w = T.raw;
+        if (w) {   // spec 2026-10-18 §5: into PSRAM, and the pbuf is freed below before the next frame is input
+            const int k = as_raw_feed(w, b, q->len);
+            if (k < 0) { T.state = AS_SOCK_CLOSED; break; }   // past the credit: amiga_send drops the connection
+            i = (u16_t)k;
+            if (w->got == w->total) T.raw = NULL;              // the raw section is over: lines again
+        }
+        for (; i < q->len; i++) {
             if (ring_used() == RING - 1) { T.state = AS_SOCK_CLOSED; break; }   // a peer that floods: give up
             T.ring[T.head] = b[i];
             T.head = (T.head + 1) % RING;
@@ -67,6 +79,7 @@ static void t_close(void *ctx) {
         T.pcb = NULL;
     }
     T.head = T.tail = 0;
+    T.raw = NULL;
     T.state = AS_SOCK_CLOSED;
     net_radio_unlock();
 }
@@ -136,6 +149,24 @@ static int t_recv_line(void *ctx, char *out, int cap) {
     return r;
 }
 
+// Arm or disarm the raw section (amiga_send.c: before the TAKE, and NULL on every end -- up_reset, drop). Under the
+// lwIP lock: on_recv runs with that lock held, so once this returns no callback is still feeding the old section, and
+// the engine may reset its fields at once (plan 2026-10-19 Task 10 concern).
+static void t_raw_arm(void *ctx, as_raw_t *w) {
+    (void)ctx;
+    net_radio_lock();
+    T.raw = (w && w->got < w->total) ? w : NULL;   // an empty section (a resume at the end) is never armed
+    net_radio_unlock();
+}
+// lwIP's TCP_OOSEQ_BYTES_LIMIT hook (pnet_lwip_hooks.h), in lwIP's context: the Amiga's connection may queue
+// AS_UP_OOSEQ_BYTES of out-of-order data in the 16 KB heap; every other pcb (TLS) keeps lwIP's default, no limit.
+uint32_t amiga_tcp_ooseq_limit(const struct tcp_pcb *pcb) { return pcb == T.pcb ? AS_UP_OOSEQ_BYTES : 0xFFFFFFFFu; }
+static int h_up_open(void *ctx, const char *json, char *resp, int cap) { (void)ctx; return dc_upload_open(g_dc, json, resp, cap); }
+static int h_up_chunk(void *ctx, const char *id, uint32_t off, const uint8_t *b, uint32_t n, char *resp, int cap) {
+    (void)ctx; return dc_upload_chunk(g_dc, id, off, b, (int)n, resp, cap);
+}
+static int h_up_close(void *ctx, const char *id, const char *json, char *resp, int cap) { (void)ctx; return dc_upload_close(g_dc, id, json, resp, cap); }
+
 static int h_queue(void *ctx, char *buf, int cap) { (void)ctx; return dc_fetch_send_queue(g_dc, buf, cap); }
 static int h_chunk(void *ctx, const char *id, uint32_t off, uint32_t len, uint8_t *buf) {
     (void)ctx; return dc_fetch_send_chunk(g_dc, id, off, len, buf);
@@ -156,4 +187,5 @@ void amiga_tcp_ops(as_ops_t *ops, device_client_t *c) {
     ops->fetch_chunk = h_chunk;
     ops->post_done = h_done;
     ops->now_ms = h_now;
+    ops->upload_open = h_up_open; ops->upload_chunk = h_up_chunk; ops->upload_close = h_up_close; ops->raw_arm = t_raw_arm;
 }

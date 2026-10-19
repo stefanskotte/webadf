@@ -6,28 +6,10 @@ import { requireOrg } from '@/lib/session';
 import { clearFinishedTransfers, listTransfers, queueTransferFromBlob } from '@/lib/transfers';
 import { findSendTarget } from '@/lib/send-targets';
 import { SEND_FILE_MAX } from '@/lib/send-limits';
+import { readCapped } from '@/lib/read-capped';
 import { queueResponse, storeSendBytes, toView } from '@/lib/send-http';
 
 export const maxDuration = 60;
-
-/** The request body, or null as soon as it passes `max` bytes (the rest is cancelled unread). */
-async function readCapped(request: Request, max: number): Promise<Uint8Array | null> {
-  if (!request.body) return new Uint8Array(0);
-  const reader = request.body.getReader();
-  const parts: Uint8Array[] = [];
-  let seen = 0;
-  for (;;) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    seen += value.byteLength;
-    if (seen > max) { await reader.cancel().catch(() => {}); return null; }
-    parts.push(value);
-  }
-  const out = new Uint8Array(seen);
-  let at = 0;
-  for (const p of parts) { out.set(p, at); at += p.byteLength; }
-  return out;
-}
 
 export async function GET(request: Request) {
   const { orgId } = await requireOrg();

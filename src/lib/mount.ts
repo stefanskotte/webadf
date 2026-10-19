@@ -340,6 +340,8 @@ export async function recordStatus(
     lastBoot?: LastBoot;
     /** The newest failed tag event's reason (fw 1.18.2), until a report carrying it is heard. */
     nfcFail?: string;
+    /** The board key's first 4 hex digits (fw 1.19.0), until a report carrying them is heard. */
+    upKey?: string;
     /** What the board's idle slot holds (multi-disk spec §3.5). */
     preload?: { sha256: string; state: 'loading' | 'ready' } | null;
     /** The build renders per-board layouts (OLED layouts, 1.7.0+). */
@@ -471,6 +473,8 @@ export async function recordStatus(
     patch.nfcLastFailAt = new Date();
     console.info(`[device ${deviceId}] tag failure: ${s.nfcFail}`);
   }
+  // fw 1.19.0 (spec 2026-10-18 §6): stored when sent, never cleared by a report without it (it rides until heard).
+  if (s.upKey !== undefined && /^[0-9a-f]{4}$/.test(s.upKey)) patch.upKey = s.upKey;
   if (s.i2c !== undefined) patch.i2cAddrs = s.i2c;
   else if (s.firmwareVersion !== undefined) patch.i2cAddrs = null;
   if (s.updateProtocol !== undefined) patch.updateProtocol = s.updateProtocol;

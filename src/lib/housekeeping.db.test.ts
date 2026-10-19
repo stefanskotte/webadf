@@ -1,0 +1,97 @@
+// Task 14 of the Amiga->web upload plan, against a real database (plan ruling PF5): the refused-bytes release never
+// deletes bytes a live upload or a transfer names, and deleting a user's org deletes its amiga_uploads.
+import { describe, it, expect, beforeAll, afterAll } from 'vitest';
+import { Client } from 'pg';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { createHash } from 'node:crypto';
+import { eq } from 'drizzle-orm';
+
+// A database of its own (the shared one is the live one).
+const base = process.env.TEST_DATABASE_URL!;
+const DB = 'webadf_housekeeping_test';
+const url = new URL(base);
+url.pathname = `/${DB}`;
+process.env.DATABASE_URL = url.toString();
+const storageDir = mkdtempSync(join(tmpdir(), 'webadf-housekeeping-'));
+process.env.STORAGE_DIR = storageDir;
+process.env.BLOB_READ_WRITE_TOKEN = '';
+
+async function admin(stmt: string) {
+  const c = new Client({ connectionString: base });
+  await c.connect();
+  try { await c.query(stmt); } finally { await c.end(); }
+}
+
+const { getDb, closeDb } = await import('@/db');
+const { migrate } = await import('drizzle-orm/node-postgres/migrator');
+const { devices } = await import('@/db/schema/devices');
+const { transfers } = await import('@/db/schema/transfers');
+const { user, member, organization } = await import('@/db/schema/auth');
+const { amigaUploads, amigaUploadChunks } = await import('@/db/schema/amiga-uploads');
+const { diskStore } = await import('@/lib/storage');
+const { releaseRefused } = await import('@/lib/ingest-complete');
+const { deleteUserCascade } = await import('@/lib/admin-delete');
+
+const db = () => getDb();
+const put = async (text: string) => {
+  const b = new TextEncoder().encode(text);
+  const sha = createHash('sha256').update(b).digest('hex');
+  await diskStore.put(sha, b);
+  return sha;
+};
+const later = () => new Date(Date.now() + 3600_000);
+
+describe('housekeeping', () => {
+  beforeAll(async () => {
+    await admin(`drop database if exists ${DB} with (force)`);
+    await admin(`create database ${DB}`);
+    await migrate(getDb(), { migrationsFolder: 'drizzle' });
+  });
+  afterAll(async () => {
+    await closeDb();
+    await admin(`drop database if exists ${DB} with (force)`);
+    rmSync(storageDir, { recursive: true, force: true });
+  });
+
+  it('a refused ADF/HFE release keeps bytes a live upload or any transfer names, and frees the rest', async () => {
+    await db().insert(devices).values({ id: 'dev-r', orgId: 'org-r', name: 'B', tokenHash: 'h-r' });
+    const [upl, deleted, xfer, nobody] = await Promise.all([put('upload'), put('deleted-upload'), put('transfer'), put('nobody')]);
+    await db().insert(amigaUploads).values([
+      { id: 'u1', orgId: 'org-r', deviceId: 'dev-r', deviceName: 'B', path: 'a', sizeBytes: 6, amigaDate: '1.1.1', status: 'stored', blobSha256: upl, expiresAt: later() },
+      { id: 'u2', orgId: 'org-r', deviceId: 'dev-r', deviceName: 'B', path: 'b', sizeBytes: 6, amigaDate: '1.1.1', status: 'deleted', blobSha256: deleted, expiresAt: later() },
+    ]);
+    await db().insert(transfers).values({
+      id: 't1', orgId: 'org-r', deviceId: 'dev-r', createdByUserId: 'x', path: 'c', sizeBytes: 8, crc32: 0, blobSha256: xfer, expiresAt: later(),
+    });
+
+    await releaseRefused([upl, deleted, xfer, nobody]);
+
+    expect(await diskStore.stat(upl)).not.toBeNull();       // a live upload names it
+    expect(await diskStore.stat(xfer)).not.toBeNull();      // a transfer names it
+    expect(await diskStore.stat(deleted)).toBeNull();       // a deleted row names nothing
+    expect(await diskStore.stat(nobody)).toBeNull();        // nothing names it: released
+  });
+
+  it('deleting a user (and their sole org) deletes the org amiga_uploads and their chunks, and no one else\'s', async () => {
+    const now = new Date();
+    await db().insert(user).values({ id: 'usr-d', name: 'D', email: 'd@example.test' });
+    await db().insert(organization).values({ id: 'org-d', name: 'D', slug: 'org-d', createdAt: now });
+    await db().insert(member).values({ id: 'mem-d', organizationId: 'org-d', userId: 'usr-d', createdAt: now });
+    await db().insert(devices).values({ id: 'dev-d', orgId: 'org-d', name: 'B', tokenHash: 'h-d' });
+    const row = (id: string, orgId: string, deviceId: string) =>
+      ({ id, orgId, deviceId, deviceName: 'B', path: id, sizeBytes: 1, amigaDate: '1.1.1', status: 'receiving', expiresAt: later() });
+    await db().insert(amigaUploads).values([row('d-mine', 'org-d', 'dev-d'), row('d-other', 'org-r', 'dev-r')]);
+    await db().insert(amigaUploadChunks).values([
+      { uploadId: 'd-mine', offset: 0, data: Buffer.from([1]) }, { uploadId: 'd-other', offset: 0, data: Buffer.from([2]) },
+    ]);
+
+    await deleteUserCascade('usr-d');
+
+    expect(await db().select().from(amigaUploads).where(eq(amigaUploads.orgId, 'org-d'))).toHaveLength(0);
+    expect(await db().select().from(amigaUploadChunks).where(eq(amigaUploadChunks.uploadId, 'd-mine'))).toHaveLength(0);
+    expect(await db().select().from(amigaUploads).where(eq(amigaUploads.id, 'd-other'))).toHaveLength(1);
+    expect(await db().select().from(amigaUploadChunks).where(eq(amigaUploadChunks.uploadId, 'd-other'))).toHaveLength(1);
+  });
+});

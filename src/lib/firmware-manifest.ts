@@ -26,6 +26,11 @@ export function refuseImageMarkers(bytes: Buffer, notes: string | null = null): 
   if (bytes.includes(Buffer.from('wf-pnet-loop-test', 'ascii')) && !(notes ?? '').startsWith('TEST build')) {
     return 'image is a PaulaNET loopback build (WF_PNET_LOOP); publish it only as a bench build, with --notes starting "TEST build"';
   }
+  // The increment 0 measurement build (WF_A2B_DISCARD, plan 2026-10-19 Task 1): a discard service on TCP 6801 and
+  // full-size frames from the Amiga. Bench only, like the loopback build.
+  if (bytes.includes(Buffer.from('wf-a2b-discard-test', 'ascii')) && !(notes ?? '').startsWith('TEST build')) {
+    return 'image is the A2B discard measurement build (WF_A2B_DISCARD); publish it only as a bench build, with --notes starting "TEST build"';
+  }
   return null;
 }
 

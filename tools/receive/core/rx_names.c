@@ -63,3 +63,16 @@ int rx_candidate(const char *path, unsigned n, char *out) {
     out[dirlen + stem + slen + extlen] = 0;
     return 0;
 }
+
+void rx_base_name(const char *path, char *out) {
+    size_t n = strlen(path), start;
+    while (n > 0 && path[n - 1] == '/') n--;
+    start = n;
+    while (start > 0 && path[start - 1] != '/' && path[start - 1] != ':') start--;
+    if (start == n) {   /* "DH0:" or "RAM:/": the volume's name, up to its colon (or a first '/') */
+        for (start = 0, n = 0; path[n] && path[n] != ':' && path[n] != '/'; n++) ;
+    }
+    if (n - start > RX_PART_MAX) n = start + RX_PART_MAX;
+    memcpy(out, path + start, n - start);
+    out[n - start] = 0;
+}

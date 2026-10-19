@@ -121,9 +121,20 @@ if (WF_PNET_L2)
   endif ()
   list(APPEND WFMF_FIRMWARE_SOURCES src/pnet_sort.c src/pnet_ring.c src/pnet_link.c src/pnet_bridge.c src/pnet_status.c
               src/pnet_lz4.c src/pnet_pack.c)
-  # PaulaNET Phase 4 (fw 1.14.0): files sent to Receive on the Amiga.
-  list(APPEND WFMF_FIRMWARE_SOURCES src/amiga_send.c src/amiga_tcp.c)
+  # PaulaNET Phase 4 (fw 1.14.0): files sent to Receive on the Amiga; uploads (fw 1.19.0) and the board key.
+  list(APPEND WFMF_FIRMWARE_SOURCES src/amiga_send.c src/amiga_tcp.c src/key_store.c)
   message(STATUS "WF_PNET_L2 is ON: DF1 Network mode (layer-2 sharing) is built in.")
+endif ()
+# Increment 0 of plan 2026-10-19 (spec 2026-10-18 §10 step 0): a TCP discard service on 6801 and full-size frames from
+# the Amiga, to measure the A2B rate and the lwIP heap before uploads exist. TEST builds only (image marker).
+option(WF_A2B_DISCARD "Bench-only: a TCP discard service on 6801 and full-size Amiga frames (plan 2026-10-19 Task 1)" OFF)
+list(APPEND WFMF_COMMON_DEFS WF_A2B_DISCARD=$<IF:$<BOOL:${WF_A2B_DISCARD}>,1,0>)
+if (WF_A2B_DISCARD)
+  if (NOT WF_PNET_L2)
+    message(FATAL_ERROR "WF_A2B_DISCARD needs WF_PNET_L2: the Amiga reaches the board over the local path")
+  endif ()
+  list(APPEND WFMF_FIRMWARE_SOURCES src/a2b_discard.c)
+  message(WARNING "WF_A2B_DISCARD is ON: a TEST build. Publish it only with --notes starting \"TEST build\".")
 endif ()
 # Stack frames (HANDOFF 3ax): 1.7.0 died because one 1232-byte frame took core0's
 # boot path past its stack (2 KB then, 4 KB since 1.7.1) -- a hard fault before
@@ -259,7 +270,7 @@ endif ()
 # configure whenever this file changes. `-DFIRMWARE_SEMVER=` still overrides,
 # for a one-off build, because -D defines it before this point.
 if (NOT DEFINED FIRMWARE_SEMVER)
-  set(FIRMWARE_SEMVER "1.18.2")
+  set(FIRMWARE_SEMVER "1.19.0")
 endif ()
 
 set(WF_VERSION_HEADER "${CMAKE_CURRENT_BINARY_DIR}/generated/wifi_floppy_version.h")

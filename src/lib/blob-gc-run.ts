@@ -1,9 +1,10 @@
-import { inArray, isNotNull } from 'drizzle-orm';
+import { inArray, isNotNull, ne } from 'drizzle-orm';
 import { getDb } from '@/db';
 import { blobs, disks, entitlements, games } from '@/db/schema/catalog';
 import { devices } from '@/db/schema/devices';
 import { diskVersions, diskWriteSessions } from '@/db/schema/disk-history';
 import { transfers } from '@/db/schema/transfers';
+import { amigaUploads } from '@/db/schema/amiga-uploads';
 import { coverStore, diskStore } from '@/lib/storage';
 import { planBlobGc, planCoverGc, withoutReferenced } from '@/lib/blob-gc';
 import { ALWAYS_REFERENCED_BLOBS } from '@/lib/paulanet-disk';
@@ -25,6 +26,35 @@ export interface BlobGcResult {
   coversRefused: string | null;
 }
 
+type Db = ReturnType<typeof getDb>;
+
+/** Every blobs row and every digest some table names (the reference sources of the GC). */
+async function readReferences(db: Db): Promise<{ rows: { sha256: string; createdAt: Date }[]; referenced: Set<string> }> {
+  const [rows, diskRefs, entRefs, histBlob, histImage, devRefs, sessionRefs, derived, sendRefs, uploadRefs] = await Promise.all([
+    db.select({ sha256: blobs.sha256, createdAt: blobs.createdAt }).from(blobs),
+    db.selectDistinct({ s: disks.sha256 }).from(disks),
+    db.selectDistinct({ s: entitlements.sha256 }).from(entitlements),
+    db.selectDistinct({ s: diskVersions.blobSha256 }).from(diskVersions),
+    db.selectDistinct({ s: diskVersions.imageSha256 }).from(diskVersions),
+    db.select({ m: devices.mountedSha256, d: devices.desiredSha256, p: devices.preloadSha256 }).from(devices),
+    db.selectDistinct({ s: diskWriteSessions.baseSha256 }).from(diskWriteSessions),
+    db.selectDistinct({ s: blobs.derivedFromSha256 }).from(blobs),
+    // Files queued for an Amiga (PaulaNET Phase 4): kept while a transfers row names them; the daily transfers cron
+    // deletes finished rows after 7 days, and the next GC after that collects the bytes.
+    db.selectDistinct({ s: transfers.blobSha256 }).from(transfers),
+    // Files an Amiga sent up (spec 2026-10-18 §4): kept while the row is not deleted; the daily cron drops rows past
+    // their 30 days, and the next GC after that collects the bytes.
+    db.selectDistinct({ s: amigaUploads.blobSha256 }).from(amigaUploads).where(ne(amigaUploads.status, 'deleted')),
+  ]);
+  const referenced = new Set<string>();
+  for (const list of [diskRefs, entRefs, histBlob, histImage, sessionRefs, derived, sendRefs, uploadRefs]) {
+    for (const r of list) if (r.s) referenced.add(r.s);
+  }
+  for (const d of devRefs) for (const s of [d.m, d.d, d.p]) if (s) referenced.add(s);
+  for (const s of ALWAYS_REFERENCED_BLOBS) referenced.add(s);   // fixed images no row names (PaulaNET disk)
+  return { rows, referenced };
+}
+
 /**
  * The weekly blob GC (cron: /api/cron/blob-gc). Reads every reference in the
  * database and every object in the store, asks planBlobGc what may go, and
@@ -38,25 +68,7 @@ export interface BlobGcResult {
 export async function runBlobGc({ dryRun }: { dryRun: boolean }): Promise<BlobGcResult> {
   const db = getDb();
   const now = new Date();
-  const [rows, diskRefs, entRefs, histBlob, histImage, devRefs, sessionRefs, derived, sendRefs] = await Promise.all([
-    db.select({ sha256: blobs.sha256, createdAt: blobs.createdAt }).from(blobs),
-    db.selectDistinct({ s: disks.sha256 }).from(disks),
-    db.selectDistinct({ s: entitlements.sha256 }).from(entitlements),
-    db.selectDistinct({ s: diskVersions.blobSha256 }).from(diskVersions),
-    db.selectDistinct({ s: diskVersions.imageSha256 }).from(diskVersions),
-    db.select({ m: devices.mountedSha256, d: devices.desiredSha256, p: devices.preloadSha256 }).from(devices),
-    db.selectDistinct({ s: diskWriteSessions.baseSha256 }).from(diskWriteSessions),
-    db.selectDistinct({ s: blobs.derivedFromSha256 }).from(blobs),
-    // Files queued for an Amiga (PaulaNET Phase 4): kept while a transfers row names them; the daily transfers cron
-    // deletes finished rows after 7 days, and the next GC after that collects the bytes.
-    db.selectDistinct({ s: transfers.blobSha256 }).from(transfers),
-  ]);
-  const referenced = new Set<string>();
-  for (const list of [diskRefs, entRefs, histBlob, histImage, sessionRefs, derived, sendRefs]) {
-    for (const r of list) if (r.s) referenced.add(r.s);
-  }
-  for (const d of devRefs) for (const s of [d.m, d.d, d.p]) if (s) referenced.add(s);
-  for (const s of ALWAYS_REFERENCED_BLOBS) referenced.add(s);   // fixed images no row names (PaulaNET disk)
+  const { rows, referenced } = await readReferences(db);
 
   // Covers: a separate namespace (cover/), a separate reference (games), and a
   // separate plan, so a brake on one pass never stops the other. Referenced
@@ -98,6 +110,12 @@ export async function runBlobGc({ dryRun }: { dryRun: boolean }): Promise<BlobGc
   }
   result.covers = coversRemoved;
   if (plan.refused) return result;
+
+  // Last look (the same sources again): storeSendBytes skips the put when the object exists, so a close or a send
+  // that landed after the first read re-uses an object whose uploadedAt is old, and names it now. Spare those.
+  const fresh = (await readReferences(db)).referenced;
+  plan.rows = plan.rows.filter((sha) => !fresh.has(sha));
+  plan.objects = plan.objects.filter((sha) => !fresh.has(sha));
 
   const stored = new Set(objects.map((o) => o.sha256));
   const rowsRemoved: string[] = [];
