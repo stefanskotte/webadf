@@ -28,6 +28,7 @@ export const HELP_TOPICS = {
   // Naming at pairing: pair-button.tsx, api/devices/pair + device/register (plan 2026-10-17 R8).
   // Disk at startup: lib/boot-disk.ts + boot-disk-store.ts (cleared at a new boot's first request; not on the same
   // boot id or an &ota=1 boot), boot-disk-setting.tsx, firmware fw_trial.h (the update-reboot mark), BOOT_DISK_FW.
+  // Stuck-start line: lib/last-boot.ts describeLastBoot, device-card.tsx; firmware boot_trail.h (fw 1.18.2).
   boards: {
     title: 'Boards',
     short:
@@ -36,9 +37,9 @@ export const HELP_TOPICS = {
       <>
         <p>
           <strong>Pairing.</strong> Press <em>Pair a device</em>, give the board a name
-          (or none, for its MAC address), and press <em>Get a code</em>. A new board starts its own Wi-Fi
+          and press <em>Get a code</em>. A new board starts its own Wi-Fi
           network <em>wifi-floppy-…</em> (password <em>wififloppy</em>); join it and enter your home Wi-Fi details and
-          the code. If the code runs out, get a new one.
+          the code.
         </p>
         <p>
           <strong>Online / Offline.</strong> A board is online if heard from in the last minute.
@@ -55,8 +56,11 @@ export const HELP_TOPICS = {
           mount one. A firmware update or a Wi-Fi drop keeps the disk. Needs firmware 1.18.1.
         </p>
         <p>
-          <strong>Deleting a board.</strong> The trash icon removes a board from your account; it then offers its setup
-          network again. Your disks and their history stay.
+          <strong>Stuck start?</strong> The card then says where, e.g.{' '}
+          <em>Previous start stopped at: I2C scan</em> (firmware 1.18.2). Include it in reports.
+        </p>
+        <p>
+          <strong>Deleting a board.</strong> The trash icon removes a board from your account. Your disks and their history stay.
         </p>
         <p>
           <strong>Your own server.</strong> Running your own copy? See{' '}

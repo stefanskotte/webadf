@@ -134,6 +134,10 @@ export function formatTagUid(uid: string | null): string | null {
 /** The board's failure reasons (firmware nfc_reader.c: locked, moved,
  *  verify) as plain words. An unknown one is shown verbatim, not hidden. */
 export function writeFailureText(reason: string): string {
+  // fw 1.18.2 adds the PN532's status byte and the command that drew it: "locked:0x14@A2". The words stay the
+  // word's; the code follows, for whoever reads it out to us.
+  const m = /^([^:]+):(0x[0-9A-Fa-f]{2})@([0-9A-Fa-f]{2})$/.exec(reason);
+  if (m) return `${writeFailureText(m[1]!)} (reader code ${m[2]} on ${m[3]})`;
   switch (reason) {
     case 'locked': return 'Locked tag — it cannot be written.';
     case 'moved': return 'Tag moved — hold it still until the board confirms.';

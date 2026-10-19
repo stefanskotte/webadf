@@ -625,3 +625,27 @@ test('Disk at startup: a board before 1.18.1 is told which firmware it needs, an
   expect(res.status()).toBe(409);
   expect((await res.json()).reason).toBe('Needs firmware 1.18.1 or newer');
 });
+
+// The boot trail (fw 1.18.2): the card names where the previous start stopped -- and says nothing after a clean one.
+test('the card says where the previous start stopped, and nothing after a clean one', async ({ page, request }) => {
+  await signUpFresh(page);
+  const { deviceId: stuck, token: t1 } = await pairDevice(page, request, 'Stuck Board');
+  const { deviceId: upd, token: t2 } = await pairDevice(page, request, 'Update Board');
+  const { deviceId: clean, token: t3 } = await pairDevice(page, request, 'Clean Board');
+  const report = (token: string, data: object) =>
+    request.post('/api/device/status', { headers: authHeader(token), data: { mountedSha256: null, ...data } });
+  expect((await report(t1, { firmwareVersion: '1.18.2+ge2e', lastBoot: { reset: 'watchdog', c0: 'i2c', up0: 0 } }))
+    .status()).toBe(204);
+  expect((await report(t2, { firmwareVersion: '1.18.2+ge2e', lastBoot: { reset: 'power-on', upd: 'i2c' } }))
+    .status()).toBe(204);
+  expect((await report(t3, { firmwareVersion: '1.18.2+ge2e',
+    lastBoot: { reset: 'software', c0: 'reboot', up0: 30, c1: 'contact', up1: 29 } })).status()).toBe(204);
+
+  await page.goto('/devices');
+  await expect(page.getByTestId(`device-last-boot-${stuck}`))
+    .toHaveText('Previous start stopped at: I2C scan (reset: watchdog)');
+  await expect(page.getByTestId(`device-last-boot-${upd}`))
+    .toHaveText("Last update's restart got as far as: the I2C scan (reset: power-on)");
+  await expect(page.getByTestId(`device-${clean}`)).toBeVisible();
+  await expect(page.getByTestId(`device-last-boot-${clean}`)).toHaveCount(0);
+});

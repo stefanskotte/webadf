@@ -1,4 +1,5 @@
-import { pgTable, text, timestamp, index, integer, boolean, customType } from 'drizzle-orm/pg-core';
+import { pgTable, text, timestamp, index, integer, boolean, customType, jsonb } from 'drizzle-orm/pg-core';
+import type { LastBoot } from '@/lib/last-boot';
 import { disks } from './catalog';
 
 // bytea, used by devices.display_layout (a <=132-byte layout blob) and by
@@ -124,6 +125,13 @@ export const devices = pgTable('devices', {
   // The boot I2C scan (fw 1.17.0, migration 0044): the addresses that answered on i2c1, at most eight, [] for
   // none. NULL = a board that sends no scan (older firmware, or a reverted trial boot). src/lib/i2c-scan.ts.
   i2cAddrs: integer('i2c_addrs').array(),
+  // The boot trail (fw 1.18.2, migration 0046): the previous boot's last stage per core, the reset that ended it,
+  // and an update restart's flash-trail stage -- sent once per boot (src/lib/last-boot.ts). NULL = never sent.
+  lastBoot: jsonb('last_boot').$type<LastBoot>(),
+  lastBootAt: timestamp('last_boot_at', { withTimezone: true }),
+  // The newest failed tag event's reason, with a PN532's status and command (fw 1.18.2): "locked:0x14@A2".
+  nfcLastFail: text('nfc_last_fail'),
+  nfcLastFailAt: timestamp('nfc_last_fail_at', { withTimezone: true }),
   // The write request (spec §5.3): a cursor the board echoes as ?nfcAck=,
   // never a flag -- a cancel and a retry are both just the next seq.
   nfcWriteSeq: integer('nfc_write_seq').notNull().default(0),

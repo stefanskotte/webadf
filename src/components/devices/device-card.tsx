@@ -7,6 +7,7 @@ import type { DeviceListItem } from '@/lib/queries';
 import type { NextInfo } from '@/lib/next-disk';
 import { preloadText } from '@/lib/drive-chips';
 import { describeI2cScan } from '@/lib/i2c-scan';
+import { describeLastBoot } from '@/lib/last-boot';
 import { Link } from '@/components/shell/link';
 import { SecondDriveReadings } from './second-drive-readings';
 import { SecondDriveSetting } from './second-drive-setting';
@@ -49,6 +50,8 @@ export function DeviceCard(
   const online = isOnline(device.lastSeenAt, now);
   // The boot I2C scan in words (fw 1.17.0+); null from older firmware, which keeps the card as it was. The version
   // decides whether a PN532 at 0x24 is a reader (1.18.0+) or a module that needs the update.
+  // The boot trail (fw 1.18.2): only when the previous boot stopped where it should not have; null otherwise.
+  const lastBoot = describeLastBoot(device.lastBoot);
   const i2c = describeI2cScan(device.nfcReader, device.i2cAddrs, device.firmwareVersion);
 
   // An update in flight REPLACES the firmware line: there is no value in
@@ -225,6 +228,12 @@ export function DeviceCard(
         <SecondDriveReadings device={device} />
         <SecondDriveSetting device={device} next={next} now={now} />
         <BootDiskSetting device={device} />
+        {lastBoot && (
+          <span className="text-[11px]" style={{ color: 'var(--warning-fg)', overflowWrap: 'anywhere' }}
+                data-testid={`device-last-boot-${device.id}`}>
+            {lastBoot}
+          </span>
+        )}
         {i2c && (
           <span className="flex min-w-0 items-start gap-1" data-testid={`device-nfc-${device.id}`} data-ok={i2c.ok}>
             <span className="flex min-w-0 flex-col text-[11px]" style={{ overflowWrap: 'anywhere' }}>

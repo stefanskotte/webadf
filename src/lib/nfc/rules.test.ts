@@ -184,6 +184,11 @@ describe('writeFailureText', () => {
   it('names an unknown reason rather than hiding it', () => {
     expect(writeFailureText('bad data')).toBe('Write failed (bad data).');
   });
+  it('keeps the words for a reason with the PN532 detail (fw 1.18.2), and adds the code', () => {
+    expect(writeFailureText('locked:0x14@A2')).toBe('Locked tag — it cannot be written. (reader code 0x14 on A2)');
+    expect(writeFailureText('moved:0x01@A2')).toBe('Tag moved — hold it still until the board confirms. (reader code 0x01 on A2)');
+    expect(writeFailureText('bad data:0x27@30')).toBe('Write failed (bad data). (reader code 0x27 on 30)');
+  });
 });
 
 describe('tapRefusalOutcome', () => {

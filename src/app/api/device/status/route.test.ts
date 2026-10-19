@@ -15,6 +15,7 @@ type RecordStatusArg = {
   server?: { custom: boolean; tls: 'verify' | 'noverify' };
   mountedSha256?: string | null;
   i2c?: number[];
+  lastBoot?: unknown; nfcFail?: string;
 };
 const recordStatus = vi.fn<(deviceId: string, s: RecordStatusArg) => Promise<void>>(
   async () => undefined,
@@ -196,6 +197,28 @@ describe('POST /api/device/status -- i2c', () => {
       expect(res.status).toBe(204);
       const s = recordStatus.mock.calls[0]![1];
       expect(s.i2c).toBeUndefined();
+      expect(s.mountedSha256).toBe(SHA);
+    }
+  });
+});
+
+// The boot trail and the newest tag failure (fw 1.18.2): telemetry, dropped -- never a 400 -- when malformed.
+describe('POST /api/device/status -- lastBoot and nfcFail', () => {
+  it('passes them through', async () => {
+    const { POST } = await import('./route');
+    const lastBoot = { reset: 'watchdog', c0: 'i2c', up0: 0, c1: 'wifi', up1: 0, upd: 'i2c' };
+    expect((await POST(post({ mountedSha256: null, lastBoot, nfcFail: 'locked:0x14@A2' }))).status).toBe(204);
+    expect(recordStatus.mock.calls[0]![1].lastBoot).toEqual(lastBoot);
+    expect(recordStatus.mock.calls[0]![1].nfcFail).toBe('locked:0x14@A2');
+  });
+  it('drops malformed ones whole but still records mountedSha256', async () => {
+    const { POST } = await import('./route');
+    for (const [lastBoot, nfcFail] of [[{ reset: 'meltdown' }, 'x'.repeat(40)], ['watchdog', 7], [null, null]]) {
+      recordStatus.mockClear();
+      expect((await POST(post({ mountedSha256: SHA, lastBoot, nfcFail }))).status).toBe(204);
+      const s = recordStatus.mock.calls[0]![1];
+      expect(s.lastBoot).toBeUndefined();
+      expect(s.nfcFail).toBeUndefined();
       expect(s.mountedSha256).toBe(SHA);
     }
   });
