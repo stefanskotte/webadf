@@ -44,6 +44,12 @@
 #endif
 #define AS_UP_OPEN_GIVEUP_MS 60000u  // the server never answered the open: NO offline (spec §8, about 60 s)
 #define AS_UP_STALL_MS 120000u       // no progress this long: NO offline (spec §5)
+// A resume at <off>: Receive reads and CRCs the first <off> bytes, silently, before its first raw byte (or END). The
+// stall clock allows that much more, at 8 KB/s worst case (off/8 ms): 4 MB is about 11 minutes in all. The 8 KB/s is
+// an assumption for a 7 MHz 68000 reading from floppy, not a measurement: bench B5 (Resume) times it -- the log's
+// "up: <tag> open ... at <off>" to the first chunk -- and a resume far into a 4 MB file from DF0: is the case to time
+// (plan 2026-10-19, Bench). A measured rate below 8 KB/s replaces the divisor.
+#define AS_UP_PREREAD_MS(off) (AS_UP_STALL_MS + (uint32_t)(off) / 8u)
 #define AS_UP_JSON_MAX 2200          // the open body at its worst: 255 path and 79 comment bytes, each \u00XX
 #define AS_UP_RESP_MAX 768           // the server's answer (the stored name, UTF-8, escaped)
 

@@ -294,10 +294,11 @@ static const char *no_text(const char *code) {
     if (!strcmp(code, "auth")) return "this board is not paired";
     if (!strcmp(code, "busy")) return "the web app is busy";   // the Amiga's own ABORT says "cancelled" itself
     if (!strcmp(code, "crc")) return "damaged on the way";
+    if (!strcmp(code, "gone")) return "deleted on the web app";   // the person deleted it mid-upload
     return "the web app refused it";
 }
 static bool code_known(const char *c) {
-    static const char *const k[] = { "size", "full", "name", "offline", "auth", "busy", "server", "crc" };
+    static const char *const k[] = { "size", "full", "name", "offline", "auth", "busy", "server", "crc", "gone" };
     for (unsigned i = 0; i < sizeof k / sizeof k[0]; i++) if (!strcmp(c, k[i])) return true;
     return false;
 }
@@ -356,6 +357,7 @@ static void on_end(amiga_send_t *s) {
     t = word(&p, &n);
     if (!hex32(t, n, &u->crc) || __atomic_load_n(&u->raw.got, __ATOMIC_ACQUIRE) != u->raw.total) { drop(s, 'u', "bad END"); return; }
     u->end_seen = true;
+    u->t_progress = now(s);   // END is progress too: after a resume's long pre-read it is the first sign of life
 }
 static bool up_open(amiga_send_t *s, uint32_t t, bool http) {
     as_up_t *u = s->up;
@@ -412,7 +414,9 @@ static bool up_data(amiga_send_t *s, uint32_t t, bool http) {
     if (u->raw.broken) { drop(s, 'u', "upload past the credit"); return true; }
     const uint32_t got = __atomic_load_n(&u->raw.got, __ATOMIC_ACQUIRE);
     if (got != u->last_got) { u->last_got = got; u->t_progress = t; }
-    if ((int32_t)(t - u->t_progress) > (int32_t)AS_UP_STALL_MS) {
+    // Before the first raw byte (or END) of a resume, Receive is still CRCing the part the server has: allow for it.
+    const uint32_t stall = (got == 0 && !u->end_seen && u->start > 0) ? AS_UP_PREREAD_MS(u->start) : AS_UP_STALL_MS;
+    if ((int32_t)(t - u->t_progress) > (int32_t)stall) {
         // Spec §5, PF8: NO offline either way (the file resumes later); the log says which side stalled.
         if (s->backoff_ms) wf_logf(WF_WARN, "up: %s stalled: the web app keeps failing", u->tag);
         else wf_logf(WF_WARN, "up: %s stalled: the Amiga stopped sending", u->tag);
@@ -450,6 +454,7 @@ static bool up_data(amiga_send_t *s, uint32_t t, bool http) {
         return true;
     }
     if (st == 401) { up_fail_drop(s, "auth", no_text("auth")); return true; }
+    if (st == 404) { up_fail_drop(s, "gone", no_text("gone")); return true; }   // the row went: deleted on the web
     if (st >= 400 && st < 500 && st != 408 && st != 429) { up_fail_drop(s, "server", "the web app refused part of the file"); return true; }
     http_failed(s, "upload chunk", st);
     return true;
@@ -482,7 +487,8 @@ static bool up_close(amiga_send_t *s, uint32_t t, bool http) {
     if (st == 401) { up_refuse(s, "auth", no_text("auth")); return true; }
     if (st >= 400 && st < 500 && st != 408 && st != 429) {
         char code[17];
-        if (!json_str(u->resp, "code", code, sizeof code) || strcmp(code, "crc") != 0) snprintf(code, sizeof code, "server");
+        if (!json_str(u->resp, "code", code, sizeof code) || (strcmp(code, "crc") != 0 && strcmp(code, "gone") != 0))
+            snprintf(code, sizeof code, "server");
         up_refuse(s, code, no_text(code));
         return true;
     }
@@ -656,11 +662,16 @@ static bool run(amiga_send_t *s, bool http) {
             // During a backoff nothing is sure to come: the PUT goes rather than wait the backoff out.
             const bool unsure = (s->done_owed || fetch_owed(s)) && !in_backoff(s);
             if (s->up && s->up->pending && !(s->up_last && (down || unsure))) {
+                // A PONG still owed would cross the TAKE and land in the raw section as file data: the turn waits for
+                // it (it is read as a line meanwhile). No PONG within AS_PONG_MS drops the connection, as ever.
+                if (s->ping_out) {
+                    if (t - s->t_ping > AS_PONG_MS) { drop(s, 'u', "no PONG"); return true; }
+                    break;
+                }
                 s->up->pending = false;
                 s->phase = AS_UP_OPEN;
                 s->t_phase = t;
-                s->ping_out = false;   // no PING in an upload (spec §3): a PONG still owed is not waited for
-                s->t_ping = t;
+                s->t_ping = t;   // no PING in an upload (spec §3); the next is due AS_PING_MS after it ends
                 return true;
             }
             if (down) { s->up_last = false; start_file(s); if (!flush(s)) drop(s, 'u', "send"); return true; }

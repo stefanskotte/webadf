@@ -832,16 +832,98 @@ static void an_upload_that_ends_on_lines_leaves_the_raw_section_disarmed(void) {
     CHECK(strstr(F.out, "NO 1 crc ") != NULL, F.out);
     CHECK(F.armed == NULL, "disarmed after a NO at the close");
 }
-// Fix round 1, item 3: a PING still owed its PONG when the upload's turn came does not drop the connection after.
+// Fix round 1, item 3, revised (increment-2 review, item 4): the upload's turn waits for a PONG still owed, so the
+// PONG arrives as a line before the raw section is armed -- and the connection is not dropped after the upload.
 static void a_ping_owed_when_an_upload_starts_does_not_drop_after_it(void) {
     ready2();
     F.now += AS_PING_MS + 1; run(1);
     CHECK(strcmp(F.out, "PING\n") == 0, F.out);
-    reply(PUT5); run(1);                               // Receive's PUT crossed the PING; no PONG comes
+    reply(PUT5); run(1);                               // Receive's PUT crossed the PING
+    reply("PONG"); run(1);
     amiga_sends("hello", 5); end_line("1", (const uint8_t *)"hello", 5); run(4);
     CHECK(strstr(F.out, "DONE 1 ") != NULL, F.out);
     F.now += AS_PONG_MS + 1; run(2);
     CHECK(F.sock == AS_SOCK_OPEN, "not dropped for a PONG owed before the upload");
+}
+// Increment-2 review, item 4: a PONG that crosses the TAKE would land in the raw ring as file data. The turn waits.
+static void a_pong_owed_at_the_upload_turn_is_read_as_a_line_first(void) {
+    ready2();
+    F.now += AS_PING_MS + 1; run(1);
+    CHECK(strcmp(F.out, "PING\n") == 0, F.out);
+    clear_out();
+    amiga_sends("PUT 1 5 1.2.3 0 9:Hello.txt 0:\n", 31); run(2);
+    CHECK_EQ_INT(F.opens, 0);                          // no open, no TAKE, nothing armed while the PONG is owed
+    CHECK(strstr(F.out, "TAKE") == NULL && F.armed == NULL, F.out);
+    amiga_sends("PONG\n", 5); run(2);
+    CHECK(strcmp(F.out, "TAKE 1 0 5\n") == 0, F.out);
+    CHECK(UP.raw.got == 0, "the PONG never reached the ring");
+    amiga_sends("hello", 5); end_line("1", (const uint8_t *)"hello", 5); run(4);
+    CHECK(memcmp(F.stored, "hello", 5) == 0 && F.stored_len == 5, "the file's own bytes only");
+    CHECK(strstr(F.out, "DONE 1 ") != NULL, F.out);
+}
+// ... and a PONG that never comes drops the connection as ever, the PUT unopened.
+static void a_pong_that_never_comes_at_the_upload_turn_drops(void) {
+    ready2();
+    F.now += AS_PING_MS + 1; run(1);
+    reply(PUT5); run(1);
+    F.now += AS_PONG_MS + 1; run(2);
+    CHECK_EQ_INT(F.opens, 0);
+    CHECK(F.sock == AS_SOCK_CLOSED, "no PONG: dropped");
+}
+// Increment-2 review, item 1: Receive CRCs the resumed part before its first raw byte (or END), silently. On a 7 MHz
+// 68000 that takes minutes for 4 MB, so the stall clock allows AS_UP_PREREAD_MS(offset) for it.
+#define RESUME_SIZE 4194304u
+#define RESUME_OFF  3145728u
+static void a_resume_far_into_the_file_waits_for_receives_pre_read(void) {
+    char l[80];
+    ready2();
+    snprintf(F.open_resp, sizeof F.open_resp, "{\"id\":\"%s\",\"offset\":%u}", UID, RESUME_OFF);
+    snprintf(l, sizeof l, "PUT 1 %u 1.2.3 0 3:Big 0:", RESUME_SIZE); reply(l); run(1);
+    CHECK(strncmp(F.out, "TAKE 1 3145728 ", 15) == 0, F.out);
+    const uint32_t allow = AS_UP_PREREAD_MS(RESUME_OFF);
+    CHECK(allow > AS_UP_STALL_MS + 300000u, "at least 5 minutes more for 3 MB");
+    F.now += AS_UP_STALL_MS + 60000u; run(2);
+    CHECK(strstr(F.out, "NO 1 ") == NULL && F.sock == AS_SOCK_OPEN, "past 120 s but within the allowance: waits");
+    F.now += allow - (AS_UP_STALL_MS + 60000u) + 1000u; run(2);
+    CHECK(strstr(F.out, "NO 1 offline ") != NULL, F.out);
+    CHECK(F.sock == AS_SOCK_CLOSED, "past the allowance: given up");
+}
+// Once the first raw byte is in, the plain 120 s stall applies again.
+static void after_the_pre_read_the_plain_stall_applies(void) {
+    char l[80];
+    fill_big(); ready2();
+    snprintf(F.open_resp, sizeof F.open_resp, "{\"id\":\"%s\",\"offset\":%u}", UID, RESUME_OFF);
+    snprintf(l, sizeof l, "PUT 1 %u 1.2.3 0 3:Big 0:", RESUME_SIZE); reply(l); run(1);
+    F.now += AS_UP_STALL_MS + 60000u; run(1);
+    amiga_sends(BIG, 1000); run(1);                    // the pre-read is over
+    F.now += AS_UP_STALL_MS + 1000u; run(2);
+    CHECK(strstr(F.out, "NO 1 offline ") != NULL, F.out);
+}
+// A resume at the file's size: the pre-read is the whole file, then END, then the close -- not NO offline.
+static void a_resume_at_size_after_a_long_pre_read_closes(void) {
+    char l[80];
+    ready2();
+    snprintf(F.open_resp, sizeof F.open_resp, "{\"id\":\"%s\",\"offset\":%u}", UID, RESUME_SIZE);
+    snprintf(l, sizeof l, "PUT 1 %u 1.2.3 0 3:Big 0:", RESUME_SIZE); reply(l); run(1);
+    CHECK(strcmp(F.out, "TAKE 1 4194304 4194304\n") == 0, F.out);
+    F.now += AS_UP_STALL_MS + 280000u; run(2);         // 400 s of CRC over 4 MB
+    CHECK(strstr(F.out, "NO 1 ") == NULL, F.out);
+    amiga_sends("END 1 1234abcd\n", 15); run(3);
+    CHECK_EQ_INT(F.closes, 1);
+    CHECK(strstr(F.out, "DONE 1 ") != NULL, F.out);
+}
+// Increment-2 review, item 5: a chunk answered 404 is a file deleted on the web app mid-upload.
+static void a_chunk_404_is_no_gone(void) {
+    fill_big(); ready2(); put_big(); run(1);
+    F.chunk_status = 404; amiga_sends(BIG, CH); run(2);
+    CHECK(strstr(F.out, "NO 1 gone 22:deleted on the web app\n") != NULL, F.out);
+    CHECK(F.sock == AS_SOCK_CLOSED, "dropped: bytes may be in flight");
+}
+static void a_close_gone_is_no_gone(void) {
+    ready2(); F.close_status = 404; snprintf(F.close_resp, sizeof F.close_resp, "{\"code\":\"gone\"}");
+    reply(PUT5); run(1); amiga_sends("hello", 5); end_line("1", (const uint8_t *)"hello", 5); run(4);
+    CHECK(strstr(F.out, "NO 1 gone 22:deleted on the web app\n") != NULL, F.out);
+    CHECK(F.sock == AS_SOCK_OPEN, "kept: the stream is lines again");
 }
 // Fix round 1, item 4: right after an upload, a queue fetch that keeps failing does not hold the next PUT forever.
 static void a_failing_fetch_after_an_upload_does_not_hold_the_next_put(void) {
@@ -942,6 +1024,13 @@ int main(void) {
     RUN(a_put_that_waited_out_a_long_download_still_opens);
     RUN(an_upload_that_ends_on_lines_leaves_the_raw_section_disarmed);
     RUN(a_ping_owed_when_an_upload_starts_does_not_drop_after_it);
+    RUN(a_pong_owed_at_the_upload_turn_is_read_as_a_line_first);
+    RUN(a_pong_that_never_comes_at_the_upload_turn_drops);
+    RUN(a_resume_far_into_the_file_waits_for_receives_pre_read);
+    RUN(after_the_pre_read_the_plain_stall_applies);
+    RUN(a_resume_at_size_after_a_long_pre_read_closes);
+    RUN(a_chunk_404_is_no_gone);
+    RUN(a_close_gone_is_no_gone);
     RUN(a_failing_fetch_after_an_upload_does_not_hold_the_next_put);
     RUN(a_put_behind_a_failing_outcome_gets_no_offline);
     RUN(a_server_busy_at_open_is_not_called_cancelled);
