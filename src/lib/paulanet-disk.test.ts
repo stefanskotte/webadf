@@ -96,9 +96,10 @@ describe('the driver disk rollout (plan 2026-10-17 R16)', () => {
     expect(driverDiskFor({ df1Sha256: null, netDriverSeenAt: new Date(NOW) }, NOW)).toBe(PAULANET_DISK_SHA256);
     expect(driverDiskFor({ df1Sha256: PAULANET_DISK_SHA256, netDriverSeenAt: new Date(NOW) }, NOW)).toBe(PAULANET_DISK_SHA256);
   });
-  it('serves and keeps the current disk and every older one, and nothing else (plan 2026-10-18)', () => {
-    expect(PAULANET_DISK_OLDER).toEqual([PAULANET_DISK_PREVIOUS, '05170a83c279157fc50a2a9a595f4caf1ec194253127d93232f6fd5bfc008c9e']);
-    expect(PAULANET_DISK_PREVIOUS).toBe('fb363d45c3b6c26592ada627c1cddc68b32c93c003a82328617a487dce5aa287');
+  it('serves and keeps the current disk and every older one, and nothing else (plan 2026-10-19)', () => {
+    expect(PAULANET_DISK_OLDER).toEqual([PAULANET_DISK_PREVIOUS,
+      'fb363d45c3b6c26592ada627c1cddc68b32c93c003a82328617a487dce5aa287', '05170a83c279157fc50a2a9a595f4caf1ec194253127d93232f6fd5bfc008c9e']);
+    expect(PAULANET_DISK_PREVIOUS).toBe('1ca4f4cb402042e9c842bcf7af91fb86cf5587125ba64134b26f4d25d35a352d');
     for (const sha of [PAULANET_DISK_SHA256, ...PAULANET_DISK_OLDER]) {
       expect(isDriverDisk(sha)).toBe(true);
       expect(servedWithoutEntitlement(sha)).toBe(true);
@@ -107,9 +108,10 @@ describe('the driver disk rollout (plan 2026-10-17 R16)', () => {
     expect([...ALWAYS_REFERENCED_BLOBS].sort()).toEqual([PAULANET_DISK_SHA256, ...PAULANET_DISK_OLDER].sort());
   });
   it('leaves any older disk in DF1 while the Amiga runs, the disk before Receive too', () => {
-    const before = PAULANET_DISK_OLDER[1];
-    expect(driverDiskFor({ df1Sha256: before, netDriverSeenAt: new Date(NOW - 10_000) }, NOW)).toBe(before);
-    expect(driverDiskFor({ df1Sha256: before, netDriverSeenAt: new Date(NOW - 600_001) }, NOW)).toBe(PAULANET_DISK_SHA256);
+    for (const before of PAULANET_DISK_OLDER.slice(1)) {
+      expect(driverDiskFor({ df1Sha256: before, netDriverSeenAt: new Date(NOW - 10_000) }, NOW)).toBe(before);
+      expect(driverDiskFor({ df1Sha256: before, netDriverSeenAt: new Date(NOW - 600_001) }, NOW)).toBe(PAULANET_DISK_SHA256);
+    }
   });
   it('a board holding the older disk stays a re-arm candidate, so the new one goes in once the Amiga is off', () => {
     expect(netNextRearmCandidate({ secondDrive: 'net', driveVersion: 1, df1Sha256: PAULANET_DISK_PREVIOUS })).toBe(true);
