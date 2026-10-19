@@ -2269,6 +2269,8 @@ void dc_set_last_boot(device_client_t *c, const char *json_object) {
     c->_last_boot_owed = json_object != NULL && json_object[0] == '{';
 }
 
+bool dc_last_boot_owed(const device_client_t *c) { return c->_last_boot_owed; }
+
 void dc_set_nfc_fail(device_client_t *c, const char *reason) {
     if (!reason || !reason[0]) return;
     snprintf(c->_nfc_fail, sizeof c->_nfc_fail, "%s", reason);

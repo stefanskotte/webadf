@@ -2001,6 +2001,7 @@ static void core1_main(void) {
         // associate?" could not be answered from the console at all.
         wf_logf(WF_INFO, "associated, default route %s", default_route_str());
         bt_hw_mark(1, BT1_SERVER);
+        ut_hw_mark(UT_SERVER);
         g_ui_bars = rssi_bars(wifi_rssi());
         ui_publish(DS_READY, "No disk", ip_str(), -1);
 
@@ -2326,6 +2327,10 @@ static void core1_main(void) {
                     const char *why = NULL;
                     fw_trial_action_t a = fw_trial_decide(&tin, &why);
                     if (a == FW_TRIAL_BUY) {
+                        // The boot trail: the confirm path starts here -- POWMAN for the fine detail, the flash
+                        // trail's header for after a power cut (the one erase and write this boot makes).
+                        bt_hw_mark(1, BT1_PROVEN);
+                        ut_hw_begin(WF_FIRMWARE_VERSION);
                         // Fix round 4: never buy from here. Calling the ROM buy
                         // on core1 wedged the board twice. Mark this version as
                         // proven and reboot into our own slot; the next boot
@@ -2355,8 +2360,15 @@ static void core1_main(void) {
         uint32_t last_status_ms = clock_ms();
 
         bt_hw_mark(1, BT1_LOOP);
+        bool trail_contact = false;
         while (true) {
             bt_hw_tick(1);
+            // The first heard status report (it carried lastBoot): running. Ends the flash trail of a confirm restart.
+            if (!trail_contact && !dc_last_boot_owed(&c)) {
+                trail_contact = true;
+                bt_hw_mark(1, BT1_CONTACT);
+                ut_hw_mark(UT_CONTACT);
+            }
             // The write cursor's mark for this pass (poll_wake.h), taken FIRST,
             // before any up_has_work() below: a write landing after it is then
             // either seen as work by those checks or cuts this pass's poll
@@ -3921,6 +3933,9 @@ int main(void) {
     // FIRST, before stdio, core1, or any PSRAM user: a trial that proved
     // itself last boot is bought here, single-core (fw_rom.c, fix round 4).
     fw_rom_boot_early(WF_FIRMWARE_VERSION);
+    // The flash half of the trail (boot_trail.h): read only here (an XIP read); written from PSRAM on.
+    ut_hw_capture(fw_rom_bought_this_boot());
+    bt_hw_mark(0, BT0_PSRAM_INIT);
     // THEN PSRAM, on every boot, before anything that touches it (the log
     // ring is SRAM; track_cache_init/psram_image_init and everything after
     // use PSRAM). The SDK's pre-main PSRAM init is skipped
@@ -3934,6 +3949,7 @@ int main(void) {
         restore_interrupts(irq);
     }
     bt_hw_mark(0, BT0_PSRAM);
+    ut_hw_mark(UT_PSRAM);   // first flash write of a confirm restart: after the buy AND PSRAM, never between
     stdio_init_all();
     wf_log_init();
     wf_logf(WF_INFO, "wifi-floppy boot: %s", PICO_BOARD);
@@ -4115,8 +4131,10 @@ int main(void) {
         display_init(&g_disp, panel_blit, NULL);
         uint8_t panel = 0;
         bt_hw_mark(0, BT0_I2C);
+        ut_hw_mark(UT_I2C);
         i2c_probe_bus(&panel, &g_i2c_scan);
         bt_hw_mark(0, BT0_DISPLAY);
+        ut_hw_mark(UT_DISPLAY);
         // Only when a panel actually answered: a missing display must cost
         // nothing, and must certainly not put bounded-but-real bus writes in
         // front of a board that is trying to boot.
@@ -4319,6 +4337,7 @@ int main(void) {
                     g_server.tls == OVR_TLS_NOVERIFY ? "noverify -- INSECURE" : "verify", g_server_hdr);
         else wf_logf(WF_INFO, "server: default %s", WEBADF_HOST);
     }
+    ut_hw_mark(UT_LAUNCH);   // the last flash mark core0 makes; core1's two follow (SERVER, CONTACT)
     multicore_launch_core1_with_stack(core1_main, core1_stack, sizeof core1_stack);
     // Lets core1's (rare, one-time) token flash write -- token_store.c,
     // guarded to only ever run before any disk is mounted -- pause core0

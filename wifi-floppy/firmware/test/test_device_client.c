@@ -1828,7 +1828,9 @@ static void status_carries_last_boot_until_heard(void) {
     fake_push_response("HTTP/1.1 204 No Content\r\n\r\n");
     dc_report_status(&c, 0, -50, NULL, "1.18.2+gt");
     CHECK(strstr(fake_last_request(), "lastBoot") == NULL, "never set: no key");
+    CHECK(!dc_last_boot_owed(&c), "nothing owed before it is set");
     dc_set_last_boot(&c, "{\"reset\":\"watchdog\",\"c0\":\"i2c\",\"up0\":0}");
+    CHECK(dc_last_boot_owed(&c), "owed once set");
     fake_push_response("HTTP/1.1 500 Internal Server Error\r\nContent-Length: 0\r\n\r\n");
     dc_report_status(&c, 0, -50, NULL, "1.18.2+gt");
     CHECK(strstr(fake_last_request(), ",\"lastBoot\":{\"reset\":\"watchdog\",\"c0\":\"i2c\",\"up0\":0}") != NULL,
@@ -1841,6 +1843,7 @@ static void status_carries_last_boot_until_heard(void) {
     fake_push_response("HTTP/1.1 204 No Content\r\n\r\n");
     dc_report_status(&c, 0, -50, NULL, "1.18.2+gt");
     CHECK(strstr(fake_last_request(), "lastBoot") == NULL, "heard: not again");
+    CHECK(!dc_last_boot_owed(&c), "and no longer owed (main.c's CONTACT stage)");
     dc_set_last_boot(&c, "");
     fake_push_response("HTTP/1.1 204 No Content\r\n\r\n");
     dc_report_status(&c, 0, -50, NULL, "1.18.2+gt");

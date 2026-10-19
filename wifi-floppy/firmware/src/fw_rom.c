@@ -101,8 +101,10 @@ void fw_rom_boot_early(const char *running_version) {
         g_early = (g_mark0 == FW_PROVEN_MAGIC) ? EARLY_STALE_MARK : EARLY_NO_MARK;
         return;                                   // a plain trial, or no trial at all
     }
+    bt_hw_mark(0, BT0_BUY);                       // the boot trail: two POWMAN register writes, no flash
     g_buy_rc = early_buy();
     if (g_buy_rc == 0) {
+        bt_hw_mark(0, BT0_BOUGHT);
         g_bought = true;                          // trial over; the deadline stands down
         g_early = EARLY_BOUGHT;
     } else {
@@ -132,6 +134,7 @@ void fw_rom_boot_init(void) {
 }
 
 bool fw_rom_trial_boot(void)      { return g_trial && !g_bought; }
+bool fw_rom_bought_this_boot(void) { return g_bought; }
 bool fw_rom_boot_after_ota(void)  { return g_boot_after_ota; }
 void fw_rom_set_trial_revertible(bool revertible) { g_revertible = revertible; }
 int  fw_rom_booted_partition(void) { return g_partition; }

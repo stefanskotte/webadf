@@ -174,11 +174,11 @@ typedef bool (*dc_hold_fn)(void *ctx);
 // The boot I2C scan (1.17.0) adds ,"i2c":[<eight 3-digit addresses>] -- 40 bytes at most (I2C_SCAN_JSON_MAX):
 // 1514 + 40 = 1554 (measured 1553), so the body goes to 1560 (6 spare), paid for by trimming preload_tail and display_tail to
 // their measured maxima (device_client.c) -- .bss does not grow. The request: 1824 + 40 = 1864 <= 2048.
-// The boot trail (1.18.2) adds ,"lastBoot":<object of at most BT_JSON_MAX (80)> -- 92 bytes -- and
-// ,"nfcFail":"<reason of at most 23>" -- measured 1674 at maximum with a 16-character reason (nfc_ui_why's
-// longest), so the body goes to 1680 (6 spare). The request: measured 1808 <= 2048. Both ride only until a report is heard (once per boot / failure).
+// The boot trail (1.18.2) adds ,"lastBoot":<object of at most BT_JSON_MAX (96)> and ,"nfcFail":"<reason of at
+// most 23>" -- measured 1690 at maximum with a 16-character reason (nfc_ui_why's longest), so the body goes to 1696
+// (6 spare). The request: measured 1824 <= 2048. A key that would not fit is left out, never the report. Both ride only until a report is heard (once per boot / failure).
 // test_status_body_fits_at_maximum prints the measured sizes.
-#define DC_STATUS_BODY_BYTES  1680
+#define DC_STATUS_BODY_BYTES  1696
 #define DC_STATUS_REQ_BYTES   2048
 // `err` is firmware-authored (a short static string or errno-derived text,
 // never network input), but it still has to survive being embedded in a
@@ -790,6 +790,8 @@ void dc_set_i2c_scan(device_client_t *c, const struct i2c_scan *scan);
 // until one is heard (any 2xx) -- once a boot. A pointer: the string must outlive the client (main.c's is
 // boot_trail_hw.c's static). NULL or "" sends nothing.
 void dc_set_last_boot(device_client_t *c, const char *json_object);
+// Whether lastBoot is still owed (no status report carrying it has been heard).
+bool dc_last_boot_owed(const device_client_t *c);
 // The newest failed tag event's reason (nfc_ui_why: "locked:0x14@A2"), sent as "nfcFail" until a report is heard.
 // A newer one replaces an unsent older one. Copied (at most 23 characters).
 void dc_set_nfc_fail(device_client_t *c, const char *reason);

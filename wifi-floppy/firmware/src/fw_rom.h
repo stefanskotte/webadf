@@ -49,6 +49,8 @@ bool fw_rom_boot_after_ota(void);
 // (early_buy). 16 s, the most the RP2350 counter holds (0xffffff us); the loop's fw_rom_watchdog_start then
 // re-arms it at 8 s. A hang there now resets the board (the boot trail names the stage) instead of needing a
 // power cycle.
+// True when fw_rom_boot_early bought a proven trial on THIS boot (the boot trail's flash half carries on).
+bool fw_rom_bought_this_boot(void);
 void fw_rom_watchdog_start_boot(void);
 void fw_rom_watchdog_start(void);      // core0, right before its loop
 void fw_rom_service(void);             // core0, every loop turn: feed, deadline, honour reboot
