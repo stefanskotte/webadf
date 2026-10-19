@@ -1,0 +1,70 @@
+import { describe, it, expect } from 'vitest';
+import { DISK_IMAGE_PATTERN } from '@/lib/archive/disk-image';
+import type { UploadView } from '@/lib/amiga-uploads';
+import {
+  LIBRARY_EXT, anyArriving, cardUploadLine, clearBody, clearConfirm, clearable, libraryEligible, newestSeen, uploadChip, uploadErrorText,
+} from './from-amiga-ui';
+
+const row = (over: Partial<UploadView> = {}): UploadView => ({
+  id: 'u', path: 'Lemmings.adf', sizeBytes: 901_120, status: 'stored', receivedBytes: 901_120, errorCode: null, deviceId: 'd',
+  deviceName: 'Bench', createdAt: 1000, storedAt: 2000, expiresAt: 3000, libraryDiskId: null, libraryGameId: null,
+  cursor: '2026-10-19T10:00:00.000001Z', ...over,
+});
+
+describe('from the Amiga: the rules the card shows', () => {
+  it("offers Add to library for the library's extensions and sizes only", () => {
+    expect(LIBRARY_EXT.source).toBe(DISK_IMAGE_PATTERN.source);
+    expect(libraryEligible('Games/Lemmings.ADF', 901_120)).toBe(true);
+    expect(libraryEligible('x.hfe', 2_000_000)).toBe(true);
+    expect(libraryEligible('x.adf', 2_621_441)).toBe(false);
+    expect(libraryEligible('x.dms', 4_000_000)).toBe(true);
+    expect(libraryEligible('x.lha', 1000)).toBe(false);
+    expect(libraryEligible('adf', 1000)).toBe(false);
+    expect(libraryEligible('x.adf', 0)).toBe(false);
+  });
+  it('says how each row stands', () => {
+    expect(uploadChip(row({ status: 'receiving', receivedBytes: 450_560 }))).toEqual({ kind: 'blue', label: 'Arriving 50 %', note: null });
+    expect(uploadChip(row())).toEqual({ kind: 'green', label: 'Stored', note: null });
+    expect(uploadChip(row({ status: 'failed', errorCode: 'crc' })).note).toMatch(/damaged on the way/);
+    expect(uploadChip(row({ status: 'failed', errorCode: 'expired' })).note).toMatch(/24 hours/);
+    expect(uploadChip(row({ status: 'failed', errorCode: 'zzz' })).note).toMatch(/did not arrive whole/);
+    expect(uploadChip(row({ status: 'receiving', sizeBytes: 0, receivedBytes: 0 })).label).toBe('Arriving 0 %');
+    expect(uploadChip(row({ status: 'receiving', receivedBytes: 901_120 })).label).toBe('Arriving 99 %');
+  });
+  it("the device card's line: files from the Amiga, or the update a Network board needs", () => {
+    expect(cardUploadLine(2, '1.19.0+gabc', true)).toEqual({ text: '2 files from the Amiga', href: true });
+    expect(cardUploadLine(1, '1.19.0+gabc', false)).toEqual({ text: '1 file from the Amiga', href: true });
+    expect(cardUploadLine(undefined, '1.18.2', true)).toEqual({ text: 'Update to 1.19.0 to send files from the Amiga', href: false });
+    expect(cardUploadLine(undefined, null, true)).toEqual({ text: 'Update to 1.19.0 to send files from the Amiga', href: false });
+    expect(cardUploadLine(undefined, '1.18.2', false)).toBeNull();
+    expect(cardUploadLine(0, '1.19.0+gabc', true)).toBeNull();
+    expect(cardUploadLine(0, '1.19.0+gabc', false)).toBeNull();
+  });
+  it('Clear all: the count it names, and the newest row the person saw', () => {
+    const rows = [
+      row({ id: 'b', status: 'receiving', cursor: '2026-10-19T10:00:09.000009Z' }),
+      row({ id: 'c', status: 'failed', cursor: '2026-10-19T10:00:07.000007Z' }),
+      row({ id: 'a', cursor: '2026-10-19T10:00:05.000005Z' }),
+    ];
+    expect(clearable(rows)).toBe(2);
+    expect(newestSeen(rows)).toBe('2026-10-19T10:00:09.000009Z');
+    expect(newestSeen([])).toBeNull();
+    expect(anyArriving(rows)).toBe(true);
+    expect(anyArriving([rows[2]])).toBe(false);
+    expect(clearConfirm(1)).toBe('Clear 1 file from the Amiga?');
+    expect(clearConfirm(3)).toBe('Clear 3 files from the Amiga?');
+  });
+  it('the Clear all request carries the newest cursor seen and the board filter, when there is one', () => {
+    const rows = [row({ cursor: '2026-10-19T10:00:09.000009Z' }), row({ cursor: '2026-10-19T10:00:05.000005Z' })];
+    expect(clearBody(rows, 'dev-1')).toEqual({ cursor: '2026-10-19T10:00:09.000009Z', board: 'dev-1' });
+    expect(clearBody(rows, null)).toEqual({ cursor: '2026-10-19T10:00:09.000009Z' });
+    expect('board' in clearBody(rows, null)!).toBe(false);
+    expect(clearBody([], null)).toBeNull();
+  });
+  it('words for refusals', () => {
+    expect(uploadErrorText('not_a_disk_image', 422)).toMatch(/not a disk image/i);
+    expect(uploadErrorText('queue_full', 409)).toMatch(/queue/);
+    expect(uploadErrorText('invalid', 400)).toMatch(/refresh/i);
+    expect(uploadErrorText(undefined, 500)).toBe('The server answered 500.');
+  });
+});
