@@ -22,6 +22,8 @@ export const lastBootSchema = z.object({
   c1: z.enum(C1).optional(),
   up1: up.optional(),
   upd: z.enum(UPD).optional(),
+  // Fix round 1: that boot found SCL held low, never set up I2C and ran with display and NFC off.
+  i2cHeld: z.literal(true).optional(),
 });
 export type LastBoot = z.infer<typeof lastBootSchema>;
 
@@ -56,6 +58,8 @@ export function describeLastBoot(lb: LastBoot | null): string | null {
   const why = `(reset: ${lb.reset})`;
   // An update's confirm restart the flash trail saw stop (usually ended by a power cut, which wipes the rest).
   if (lb.upd && lb.upd !== 'contact') return `Last update's restart got as far as: ${UPD_LABEL[lb.upd]} ${why}`;
+  // A fault whatever ended that boot: it ran without its display and reader.
+  if (lb.i2cHeld) return `Previous start found the I2C bus held low: display and NFC were off ${why}`;
   if (lb.reset === 'software' || lb.c0 === 'reboot' || (!lb.c0 && !lb.c1)) return null;
   if (lb.c0 && lb.c0 !== 'loop') return `Previous start stopped at: ${C0_LABEL[lb.c0]} ${why}`;
   if (lb.c1 && lb.c1 !== 'contact') return `Previous start stopped at: ${C1_LABEL[lb.c1]} ${why}`;

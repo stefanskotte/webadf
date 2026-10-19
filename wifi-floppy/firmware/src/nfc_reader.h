@@ -117,6 +117,7 @@ typedef struct nfc_reader {
     uint32_t (*now_ms)(void);
     nfc_frame_bus_t fbus;  // the PN532's, if attached (has_fbus)
     bool has_fbus;
+    bool disabled;         // nfc_disable: no bus operation, ever, for the rest of the boot
     int  chip;             // nfc_chip_t: the chip this session talks to
 
     int state;           // the protocol state (nfc_reader.c's st_t)
@@ -208,6 +209,10 @@ void nfc_init(nfc_reader_t *r, const nfc_bus_t *bus, uint32_t (*now_ms)(void));
 
 // Gives the reader a PN532 to look for when the Si512 does not answer.
 // Without it (the host tests of the Si512 alone) only the Si512 is tried.
+// Fix round 1: turns the reader off for the rest of the boot -- nfc_step does nothing (no transfer on either chip,
+// no presence recheck, no event) and nfc_present stays false. main.c calls it when the boot found SCL held and
+// never set i2c1 up (i2c_scan_t held): a transfer then would queue in a controller that cannot run it.
+void nfc_disable(nfc_reader_t *r);
 void nfc_attach_pn532(nfc_reader_t *r, const nfc_frame_bus_t *fbus);
 
 // One slice of work. Returns the register operations used, never more than

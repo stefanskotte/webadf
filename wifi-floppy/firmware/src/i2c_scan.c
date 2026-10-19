@@ -39,3 +39,38 @@ i2c_rec_t i2c_recover_action(bool sda_high, bool scl_high, int pulses) {
     if (sda_high) return pulses == 0 ? I2C_REC_IDLE : I2C_REC_STOP;
     return pulses < 9 ? I2C_REC_CLOCK : I2C_REC_STUCK;
 }
+
+// SCL high within I2C_SCL_WAIT_US (a stretch), or false (held).
+static bool scl_wait(const i2c_lines_t *io) {
+    const uint32_t t0 = io->now_us(io->ctx);
+    while (!io->scl(io->ctx)) {
+        if (io->now_us(io->ctx) - t0 >= I2C_SCL_WAIT_US) return false;
+        io->delay_us(io->ctx, 10);
+    }
+    return true;
+}
+
+i2c_rec_t i2c_bus_clear(const i2c_lines_t *io, int *pulses_out) {
+    io->set_scl(io->ctx, false);
+    io->set_sda(io->ctx, false);
+    io->delay_us(io->ctx, 10);
+    int pulses = 0;
+    i2c_rec_t a;
+    for (;;) {
+        const bool scl_high = scl_wait(io);
+        a = i2c_recover_action(io->sda(io->ctx), scl_high, pulses);
+        if (a != I2C_REC_CLOCK) break;
+        io->set_scl(io->ctx, true);  io->delay_us(io->ctx, 5);   // 100 kHz, the probe's own rate
+        io->set_scl(io->ctx, false); io->delay_us(io->ctx, 5);
+        pulses++;
+    }
+    if (a == I2C_REC_STOP) {                       // SCL high, SDA high: make it a STOP -- SDA low, then up
+        io->set_scl(io->ctx, true);  io->delay_us(io->ctx, 5);
+        io->set_sda(io->ctx, true);  io->delay_us(io->ctx, 5);
+        io->set_scl(io->ctx, false); io->delay_us(io->ctx, 5);
+        (void)scl_wait(io);
+        io->set_sda(io->ctx, false); io->delay_us(io->ctx, 5);
+    }
+    *pulses_out = pulses;
+    return a;
+}

@@ -27,7 +27,8 @@ _Static_assert(BT_HAD_WATCHDOG_RESET_PSM == POWMAN_CHIP_RESET_HAD_WATCHDOG_RESET
 static char     g_prev[BT_JSON_MAX + 1];
 static uint8_t  g_stage[2];
 static uint32_t g_tick_at[2];
-static uint32_t g_cr, g_wd, g_w0, g_w1;   // what capture read, for ut_hw_capture's rebuild
+static uint32_t g_cr, g_wd, g_w0, g_w1;
+static uint8_t  g_flags0;                 // BT_FLAG_I2C_HELD, sticky for the boot (core0's word only)   // what capture read, for ut_hw_capture's rebuild
 
 void bt_hw_capture(void) {
     g_w0 = powman_hw->scratch[0];
@@ -45,7 +46,7 @@ void bt_hw_mark(int core, int stage) {
     core &= 1;
     g_stage[core] = (uint8_t)stage;
     g_tick_at[core] = to_ms_since_boot(get_absolute_time());
-    powman_hw->scratch[core] = bt_word(stage, g_tick_at[core]);
+    powman_hw->scratch[core] = bt_word(stage | (core == 0 ? g_flags0 : 0), g_tick_at[core]);
 }
 
 void bt_hw_tick(int core) {
@@ -53,7 +54,12 @@ void bt_hw_tick(int core) {
     const uint32_t now = to_ms_since_boot(get_absolute_time());
     if (g_stage[core] == 0 || now - g_tick_at[core] < 1000u) return;
     g_tick_at[core] = now;
-    powman_hw->scratch[core] = bt_word(g_stage[core], now);
+    powman_hw->scratch[core] = bt_word(g_stage[core] | (core == 0 ? g_flags0 : 0), now);
+}
+
+void bt_hw_flag_i2c_held(void) {
+    g_flags0 = BT_FLAG_I2C_HELD;
+    bt_hw_mark(0, g_stage[0]);
 }
 
 const char *bt_hw_json(void) { return g_prev; }

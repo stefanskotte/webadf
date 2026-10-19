@@ -5,6 +5,7 @@ import { firmwareVersionSchema } from '@/lib/firmware-version';
 import { updateStateSchema, updateProtocolSchema } from '@/lib/firmware-update-state';
 import { i2cAddrsSchema } from '@/lib/i2c-scan';
 import { lastBootSchema } from '@/lib/last-boot';
+import { NFC_FAIL_RE } from '@/lib/nfc/fail';
 
 export const maxDuration = 60;
 
@@ -59,7 +60,7 @@ const statusBody = z.object({
   // The boot trail (fw 1.18.2): the previous boot, once a boot; and the newest failed tag event's reason
   // ("locked:0x14@A2", at most 23 characters on the board). Telemetry: dropped whole when malformed.
   lastBoot: lastBootSchema.optional().catch(undefined),
-  nfcFail: z.string().min(1).max(32).optional().catch(undefined),
+  nfcFail: z.string().max(32).regex(NFC_FAIL_RE).optional().catch(undefined),
   // Multi-disk spec §3.5: what the idle slot holds. Telemetry -- dropped, never rejected.
   preload: z.object({ sha256: z.string().regex(SHA256_RE), state: z.enum(['loading', 'ready']) })
     .nullable().optional().catch(undefined),

@@ -4171,7 +4171,12 @@ int main(void) {
         nfc_bus_t nfc_bus;
         nfc_bus_i2c(&nfc_bus);
         nfc_init(&g_nfc, &nfc_bus, clock_ms);
-        if (i2c_scan_has(&g_i2c_scan, PN532_I2C_ADDR)) {
+        if (g_i2c_scan.held) {
+            // i2c1 was never set up (SCL held at boot, i2c_probe.c): no reader this boot, and the trail says so.
+            nfc_disable(&g_nfc);
+            bt_hw_flag_i2c_held();
+            wf_logf(WF_ERR, "nfc: reader off for this boot -- the I2C bus was held at boot");
+        } else if (i2c_scan_has(&g_i2c_scan, PN532_I2C_ADDR)) {
             nfc_frame_bus_t nfc_fbus;
             nfc_frame_bus_i2c(&nfc_fbus);
             nfc_attach_pn532(&g_nfc, &nfc_fbus);

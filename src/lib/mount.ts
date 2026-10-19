@@ -1,5 +1,6 @@
 import { and, eq, sql } from 'drizzle-orm';
 import type { LastBoot } from '@/lib/last-boot';
+import { NFC_FAIL_RE } from '@/lib/nfc/fail';
 import type { PgUpdateSetSource } from 'drizzle-orm/pg-core';
 import { DC_TITLE_MAX } from '@/lib/device-limits';
 import { getDb } from '@/db';
@@ -464,7 +465,8 @@ export async function recordStatus(
     patch.lastBootAt = new Date();
     console.info(`[device ${deviceId}] previous boot: ${JSON.stringify(s.lastBoot)}`);
   }
-  if (s.nfcFail !== undefined) {
+  // The route already checked the shape (NFC_FAIL_RE); checked again here, the store's own guard, before the log.
+  if (s.nfcFail !== undefined && NFC_FAIL_RE.test(s.nfcFail)) {
     patch.nfcLastFail = s.nfcFail;
     patch.nfcLastFailAt = new Date();
     console.info(`[device ${deviceId}] tag failure: ${s.nfcFail}`);

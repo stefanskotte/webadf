@@ -12,11 +12,16 @@ uint32_t bt_word(int stage, uint32_t up_ms) {
 
 bool bt_word_read(uint32_t w, int *stage, uint32_t *up_s) {
     if ((w >> 24) != BT_MAGIC) return false;
-    int st = (int)((w >> 16) & 0xFFu);
+    int st = (int)((w >> 16) & 0xFFu & ~(uint32_t)BT_FLAG_I2C_HELD);
     if (st == 0 || st > BT_STAGE_MAX) return false;
     *stage = st;
     *up_s = w & 0xFFFFu;
     return true;
+}
+
+bool bt_word_i2c_held(uint32_t w) {
+    int st; uint32_t up;
+    return bt_word_read(w, &st, &up) && ((w >> 16) & BT_FLAG_I2C_HELD) != 0;
 }
 
 bt_reset_t bt_reset_reason(uint32_t chip_reset, uint32_t wd_reason, uint32_t w0) {
@@ -68,6 +73,7 @@ int bt_json(char *out, size_t cap, uint32_t chip_reset, uint32_t wd_reason, uint
         if (!name[0]) continue;
         n += snprintf(tmp + n, sizeof tmp - (size_t)n, ",\"c%d\":\"%s\",\"up%d\":%lu", core, name, core,
                       (unsigned long)up);
+        if (core == 0 && bt_word_i2c_held(w[0])) n += snprintf(tmp + n, sizeof tmp - (size_t)n, ",\"i2cHeld\":true");
     }
     if (upd && upd[0]) n += snprintf(tmp + n, sizeof tmp - (size_t)n, ",\"upd\":\"%s\"", upd);
     n += snprintf(tmp + n, sizeof tmp - (size_t)n, "}");

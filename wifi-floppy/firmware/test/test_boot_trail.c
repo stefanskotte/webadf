@@ -154,10 +154,32 @@ static void the_boot_right_after_the_buy_carries_it_on(void) {
     CHECK(ut_stalled(&v, true), "and is reported");
 }
 
+// Fix round 1 (review I2): a boot that found SCL held says so in its trail -- a flag on core0's word that every
+// later stage keeps -- and the next boot's lastBoot carries "i2cHeld":true.
+static void a_held_bus_rides_core0s_word(void) {
+    const uint32_t w = bt_word(BT0_LOOP | BT_FLAG_I2C_HELD, 61000);
+    int st = -1; uint32_t up = 0;
+    CHECK(bt_word_read(w, &st, &up), "still a record");
+    CHECK_EQ_INT(st, BT0_LOOP);                         // the stage without the flag
+    CHECK_EQ_INT(up, 61);
+    CHECK(bt_word_i2c_held(w), "flagged");
+    CHECK(!bt_word_i2c_held(bt_word(BT0_LOOP, 61000)), "not flagged");
+    CHECK(!bt_word_i2c_held(0), "no record, no flag");
+    char b[BT_JSON_MAX + 1];
+    bt_json(b, sizeof b, BT_HAD_WATCHDOG_RESET_PSM, 1, w, bt_word(BT1_CONTACT, 60000), NULL);
+    CHECK(strcmp(b, "{\"reset\":\"watchdog\",\"c0\":\"loop\",\"up0\":61,\"i2cHeld\":true,\"c1\":\"contact\",\"up1\":60}") == 0, b);
+    char big[256];
+    int m = bt_json(big, sizeof big, BT_HAD_BOR, 1, bt_word(BT0_PSRAM_INIT | BT_FLAG_I2C_HELD, 0xFFFFFFFFu),
+                    bt_word(BT1_CONTACT, 0xFFFFFFFFu), "display");
+    printf("  widest with the flag: %d bytes (BT_JSON_MAX %d)\n", m, BT_JSON_MAX);
+    CHECK(m > 0 && m <= BT_JSON_MAX, "still fits");
+}
+
 int main(void) {
     RUN(a_word_holds_its_stage_and_seconds);
     RUN(the_reset_reason_comes_from_the_chip_and_the_trail);
     RUN(the_report_names_both_cores);
+    RUN(a_held_bus_rides_core0s_word);
     RUN(an_erased_or_foreign_sector_is_no_trail);
     RUN(the_trail_reads_how_far_the_update_restart_got);
     RUN(a_finished_or_already_reported_trail_is_not_reported);

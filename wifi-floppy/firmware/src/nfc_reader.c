@@ -401,8 +401,13 @@ void nfc_attach_pn532(nfc_reader_t *r, const nfc_frame_bus_t *fbus) {
     r->has_fbus = true;
 }
 
+void nfc_disable(nfc_reader_t *r) {
+    r->disabled = true;
+}
+
 int nfc_step(nfc_reader_t *r) {
     r->ops = 0;
+    if (r->disabled) return 0;
     // Back-pressure: while an event waits, hold still. Nothing is ever
     // overwritten, and nothing the caller has not seen is acted on.
     if (r->has_ev) return 0;

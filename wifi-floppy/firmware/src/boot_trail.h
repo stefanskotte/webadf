@@ -31,6 +31,8 @@ enum { BT0_NONE, BT0_EARLY, BT0_BUY, BT0_BOUGHT, BT0_PSRAM_INIT, BT0_PSRAM, BT0_
 // CONTACT (a status report has been heard: running).
 enum { BT1_NONE, BT1_START, BT1_WIFI, BT1_SERVER, BT1_TRIAL, BT1_PROVEN, BT1_LOOP, BT1_CONTACT };
 #define BT_STAGE_MAX BT0_REBOOT
+// Fix round 1: OR'd into core0's stage byte for the rest of a boot that found SCL held (i2c_scan_t held).
+#define BT_FLAG_I2C_HELD 0x80
 
 // POWMAN CHIP_RESET's HAD_* bits (RP2350 datasheet, POWMAN CHIP_RESET; pico-sdk hardware/regs/powman.h --
 // boot_trail_hw.c checks each against the SDK's at compile time).
@@ -55,7 +57,8 @@ typedef enum {
 // The word for `stage` at `up_ms` since boot.
 uint32_t bt_word(int stage, uint32_t up_ms);
 // A word's stage and seconds. false: no record (no magic, or a stage out of range).
-bool bt_word_read(uint32_t w, int *stage, uint32_t *up_s);
+bool bt_word_read(uint32_t w, int *stage, uint32_t *up_s);   // *stage without BT_FLAG_I2C_HELD
+bool bt_word_i2c_held(uint32_t w);
 // Why the chip reset: CHIP_RESET, WATCHDOG REASON (TIMER bit 0, FORCE bit 1), and core0's word from the boot
 // that ended. Power-on, brown-out and the RUN pin first (they clear the trail anyway); then a glitch or a
 // debugger; then core0's word: BT0_REBOOT means the firmware asked for the reboot (fw_rom_service, the only
@@ -67,7 +70,7 @@ const char *bt_stage_name(int core, int stage);
 // {"reset":"watchdog","c0":"nfc","up0":3,"c1":"wifi","up1":2}: the previous boot, as the status report's
 // lastBoot. A core with no record is left out; `upd` (the flash update trail's stage, below; NULL = none) adds
 // ,"upd":"i2c". -1 if it does not fit `cap` (never clipped); else its length.
-#define BT_JSON_MAX 96
+#define BT_JSON_MAX 112
 int bt_json(char *out, size_t cap, uint32_t chip_reset, uint32_t wd_reason, uint32_t w0, uint32_t w1,
             const char *upd);
 
@@ -109,6 +112,8 @@ void bt_hw_capture(void);
 void bt_hw_mark(int core, int stage);
 // Called often from a core's loop: rewrites its word with the current uptime, at most once a second.
 void bt_hw_tick(int core);
+// core0, once: this boot found the I2C bus held -- every later word of core0's carries BT_FLAG_I2C_HELD.
+void bt_hw_flag_i2c_held(void);
 // The previous boot, as bt_json made it ("" if it did not fit). Built at capture, and again by ut_hw_capture.
 const char *bt_hw_json(void);
 // The flash update trail (device side). ut_hw_capture: once, after fw_rom_boot_early (it needs `bought_now`) --

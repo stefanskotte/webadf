@@ -20,6 +20,11 @@ describe('lastBootSchema', () => {
 });
 
 describe('describeLastBoot', () => {
+  it('a boot that found the I2C bus held says so, whatever ended it (fix round 1)', () => {
+    expect(describeLastBoot({ reset: 'software', c0: 'reboot', up0: 900, i2cHeld: true, c1: 'contact', up1: 899 }))
+      .toBe('Previous start found the I2C bus held low: display and NFC were off (reset: software)');
+    expect(lastBootSchema.safeParse({ reset: 'watchdog', i2cHeld: 'yes' }).success).toBe(false);
+  });
   it('an update restart that a power cut ended is named from the flash trail', () => {
     expect(describeLastBoot({ reset: 'power-on', upd: 'i2c' }))
       .toBe("Last update's restart got as far as: the I2C scan (reset: power-on)");

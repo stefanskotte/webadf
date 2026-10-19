@@ -566,6 +566,21 @@ static void an_ntag_never_goes_down_the_classic_auth_path(void) {
     CHECK_EQ_INT(P.auth_cmds, 0);
 }
 
+// Fix round 1 (review I2): with SCL held at boot, i2c1 is never set up, and every transfer would queue in a
+// controller that cannot run it until the SDK's untimed FIFO wait wedges core0 (a watchdog reboot every 1-2 min).
+// The reader is turned off for the boot: from then on not one bus operation, on either chip, ever.
+static void a_disabled_reader_never_touches_the_bus(void) {
+    setup_both(true, true);
+    nfc_disable(&R);
+    nfc_arm_write(&R, 1, ID);                            // not even an armed write wakes it
+    run(60000);                                          // a minute: twelve 5 s rechecks' worth
+    CHECK_EQ_INT(S.ops, 0);
+    CHECK_EQ_INT(P.xfers, 0);
+    CHECK(!nfc_present(&R), "absent");
+    CHECK_EQ_INT(nfc_chip(&R), NFC_CHIP_NONE);
+    CHECK_EQ_INT(nev, 0);                                // no events either (no ABSENT, no write result)
+}
+
 int main(void) {
     RUN(frame_is_the_manuals_normal_information_frame);
     RUN(parse_takes_a_good_frame_and_the_ack);
@@ -597,5 +612,6 @@ int main(void) {
     RUN(a_found_target_is_released_before_the_next_list);
     RUN(the_pn532_status_and_command_ride_the_event);
     RUN(an_ntag_never_goes_down_the_classic_auth_path);
+    RUN(a_disabled_reader_never_touches_the_bus);
     return REPORT();
 }

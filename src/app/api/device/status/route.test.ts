@@ -213,7 +213,8 @@ describe('POST /api/device/status -- lastBoot and nfcFail', () => {
   });
   it('drops malformed ones whole but still records mountedSha256', async () => {
     const { POST } = await import('./route');
-    for (const [lastBoot, nfcFail] of [[{ reset: 'meltdown' }, 'x'.repeat(40)], ['watchdog', 7], [null, null]]) {
+    for (const [lastBoot, nfcFail] of [[{ reset: 'meltdown' }, 'x'.repeat(40)], ['watchdog', 7], [null, null],
+      [{ reset: 'glitch', c0: 'warp' }, 'locked\n[device x] forged log line'], [7, 'LOCKED:0x14@A2']]) {
       recordStatus.mockClear();
       expect((await POST(post({ mountedSha256: SHA, lastBoot, nfcFail }))).status).toBe(204);
       const s = recordStatus.mock.calls[0]![1];

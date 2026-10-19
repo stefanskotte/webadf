@@ -26,35 +26,23 @@ static const char *known(uint8_t addr) {
     return "";
 }
 
-// The bus clear (i2c_scan.h i2c_recover_action; UM10204 §3.1.16), bit-banged on the two pads before the I2C block
+// The bus clear (i2c_scan.h i2c_bus_clear; UM10204 §3.1.16), bit-banged on the two pads before the I2C block
 // owns them. Open-drain by hand: a line is driven low (output 0) or released (input, pulled up), never driven high.
-// 5 us half-periods: 100 kHz, the probe's own rate. HYPOTHESIS, not measured (2026-10-19): a PN532 left mid-byte by
-// a warm reset holds SDA low, and the boot scan then never finds it -- or wedges in the SDK's untimed FIFO wait.
-static void line_low(uint pin)     { gpio_set_dir(pin, GPIO_OUT); gpio_put(pin, 0); }
-static void line_release(uint pin) { gpio_set_dir(pin, GPIO_IN); }
+// HYPOTHESIS, not measured (2026-10-19): a PN532 left mid-byte by a warm reset holds SDA low, and the boot scan
+// then never finds it -- or wedges in the SDK's untimed FIFO wait.
+static bool     io_scl(void *c) { (void)c; return gpio_get(PIN_I2C_SCL); }
+static bool     io_sda(void *c) { (void)c; return gpio_get(PIN_I2C_SDA); }
+static void     io_line(uint pin, bool low) { if (low) { gpio_set_dir(pin, GPIO_OUT); gpio_put(pin, 0); } else gpio_set_dir(pin, GPIO_IN); }
+static void     io_set_scl(void *c, bool low) { (void)c; io_line(PIN_I2C_SCL, low); }
+static void     io_set_sda(void *c, bool low) { (void)c; io_line(PIN_I2C_SDA, low); }
+static void     io_delay(void *c, uint32_t us) { (void)c; sleep_us(us); }
+static uint32_t io_now(void *c) { (void)c; return time_us_32(); }
 
 static i2c_rec_t bus_clear(int *pulses_out) {
-    const uint sda = PIN_I2C_SDA, scl = PIN_I2C_SCL;
-    gpio_init(sda); gpio_init(scl);                // SIO, input, output latch 0
-    gpio_pull_up(sda); gpio_pull_up(scl);
-    sleep_us(10);
-    int pulses = 0;
-    i2c_rec_t a;
-    for (;;) {
-        a = i2c_recover_action(gpio_get(sda), gpio_get(scl), pulses);
-        if (a != I2C_REC_CLOCK) break;
-        line_low(scl);  sleep_us(5);
-        line_release(scl); sleep_us(5);
-        pulses++;
-    }
-    if (a == I2C_REC_STOP) {                       // SCL high, SDA high: make it a STOP -- SDA low, then up
-        line_low(scl); sleep_us(5);
-        line_low(sda); sleep_us(5);
-        line_release(scl); sleep_us(5);
-        line_release(sda); sleep_us(5);
-    }
-    *pulses_out = pulses;
-    return a;
+    gpio_init(PIN_I2C_SDA); gpio_init(PIN_I2C_SCL);   // SIO, input, output latch 0
+    gpio_pull_up(PIN_I2C_SDA); gpio_pull_up(PIN_I2C_SCL);
+    const i2c_lines_t io = { io_scl, io_sda, io_set_scl, io_set_sda, io_delay, io_now, NULL };
+    return i2c_bus_clear(&io, pulses_out);
 }
 
 int i2c_probe_bus(uint8_t *panel_addr, i2c_scan_t *scan) {
@@ -66,10 +54,13 @@ int i2c_probe_bus(uint8_t *panel_addr, i2c_scan_t *scan) {
     else if (rec == I2C_REC_STUCK)
         wf_logf(WF_ERR, "i2c1: SDA held low through 9 clocks -- the bus is stuck");
     else if (rec == I2C_REC_SCL_HELD) {
-        // A device holding SCL: every transfer would wait it out, and enough of them wedge the SDK's FIFO wait.
-        // The scan is skipped (done and empty), so boot goes on with no panel and no reader.
-        wf_logf(WF_ERR, "i2c1: SCL held low on GP%d -- scan skipped (power-cycle the board)", PIN_I2C_SCL);
-        if (scan) i2c_scan_done(scan);
+        // A device holding SCL past I2C_SCL_WAIT_US: every transfer would queue in a controller that cannot run
+        // it, and enough of them wedge the SDK's untimed FIFO wait. So the I2C block is never set up this boot
+        // (i2c_init is not called, the pads stay GPIO inputs): the scan is skipped (done, empty, held), main.c turns
+        // the reader off for the boot (nfc_disable), and with no panel address nothing draws.
+        wf_logf(WF_ERR, "i2c1: SCL held low on GP%d past %u ms -- no I2C this boot, display and NFC off "
+                        "(power-cycle the board)", PIN_I2C_SCL, (unsigned)(I2C_SCL_WAIT_US / 1000u));
+        if (scan) { scan->held = true; i2c_scan_done(scan); }
         if (panel_addr) *panel_addr = 0;
         return 0;
     }
