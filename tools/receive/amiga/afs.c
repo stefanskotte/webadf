@@ -89,6 +89,58 @@ static int a_set_meta(void *x, const char *rel, unsigned long prot, const char *
     if (comment[0]) ok = SetComment((STRPTR)p, (STRPTR)comment) != 0 && ok;
     return ok ? 0 : -1;
 }
+/* Protocol 2 (spec 2026-10-18 §2): the Amiga's own paths, read with a shared lock in 8 KB blocks. */
+static int a_is_dir(void *x, const char *local) {
+    BPTR l = Lock((STRPTR)local, SHARED_LOCK); struct FileInfoBlock *fib; int r = -1;
+    (void)x;
+    if (!l) return -1;
+    fib = AllocDosObject(DOS_FIB, NULL);
+    if (fib) { if (Examine(l, fib)) r = fib->fib_DirEntryType > 0 ? 1 : 0; FreeDosObject(DOS_FIB, fib); }
+    UnLock(l);
+    return r;
+}
+static int a_list(void *x, const char *local, rx_list_fn each, void *u) {
+    BPTR l = Lock((STRPTR)local, SHARED_LOCK); struct FileInfoBlock *fib; int r = -1;
+    (void)x;
+    if (!l) return -1;
+    fib = AllocDosObject(DOS_FIB, NULL);
+    if (fib && Examine(l, fib) && fib->fib_DirEntryType > 0) {
+        r = 0;
+        while (ExNext(l, fib)) each(u, (const char *)fib->fib_FileName, fib->fib_DirEntryType > 0);
+    }
+    if (fib) FreeDosObject(DOS_FIB, fib);
+    UnLock(l);
+    return r;
+}
+static int a_open_r(void *x, const char *local, rx_finfo *info) {
+    afs_ctx *c = x; struct FileInfoBlock *fib;
+    c->rh = Open((STRPTR)local, MODE_OLDFILE);   /* MODE_OLDFILE takes a shared lock */
+    if (!c->rh) return -1;
+    fib = AllocDosObject(DOS_FIB, NULL);
+    if (!fib || !ExamineFH(c->rh, fib) || fib->fib_DirEntryType > 0) {
+        if (fib) FreeDosObject(DOS_FIB, fib);
+        Close(c->rh); c->rh = 0;
+        return -1;
+    }
+    info->size = (unsigned long)fib->fib_Size; info->prot = (unsigned long)fib->fib_Protection;
+    info->days = (unsigned long)fib->fib_Date.ds_Days; info->mins = (unsigned long)fib->fib_Date.ds_Minute;
+    info->ticks = (unsigned long)fib->fib_Date.ds_Tick;
+    strncpy(info->comment, (const char *)fib->fib_Comment, RX_COMMENT_MAX); info->comment[RX_COMMENT_MAX] = 0;
+    FreeDosObject(DOS_FIB, fib);
+    return 0;
+}
+static long a_read(void *x, unsigned char *b, unsigned long n) { LONG got = Read(((afs_ctx *)x)->rh, b, (LONG)n); return got < 0 ? -1 : (long)got; }
+static void a_close_r(void *x) { afs_ctx *c = x; if (c->rh) { Close(c->rh); c->rh = 0; } }
+void afs_base_name(const char *path, char *out) {
+    const char *p = (const char *)FilePart((STRPTR)path), *colon;
+    size_t n = strlen(p);
+    if (n == 0) {   /* "RAM:" or "DH0:Drawer/": the volume's name */
+        colon = strchr(path, ':');
+        p = path; n = colon ? (size_t)(colon - path) : strlen(path);
+    }
+    if (n > RX_PART_MAX) n = RX_PART_MAX;
+    memcpy(out, p, n); out[n] = 0;
+}
 void afs_set_root(afs_ctx *c, const char *root) { strncpy(c->root, root, sizeof c->root - 1); c->root[sizeof c->root - 1] = 0; }
 void afs_init(afs_ctx *c, rx_fs *fs, const char *root) {
     memset(c, 0, sizeof *c);
@@ -96,4 +148,5 @@ void afs_init(afs_ctx *c, rx_fs *fs, const char *root) {
     fs->ctx = c; fs->folder_ok = a_folder_ok; fs->free_bytes = a_free; fs->exists = a_exists; fs->make_dir = a_make_dir;
     fs->open_w = a_open_w; fs->write = a_write; fs->close_w = a_close_w; fs->rename = a_rename; fs->remove = a_remove;
     fs->set_meta = a_set_meta;
+    fs->is_dir = a_is_dir; fs->list = a_list; fs->open_r = a_open_r; fs->read = a_read; fs->close_r = a_close_r;
 }

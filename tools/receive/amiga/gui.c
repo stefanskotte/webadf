@@ -188,9 +188,10 @@ static int build(gui *G, const char *dir) {
     return 0;
 }
 
-int gui_main(const char *dir) {
-    static gui G; static afs_ctx ctx; static rx_fs fs; static rx_session s;
+int gui_main(const char *dir, struct WBArg *wbargs, long nwb, STRPTR *send) {
+    static gui G; static afs_ctx ctx; static rx_fs fs; static rx_session s; static rx_upq q;
     int rc = RETURN_FAIL;
+    (void)wbargs; (void)nwb; (void)send;
     IntuitionBase = (struct IntuitionBase *)OpenLibrary((STRPTR)"intuition.library", 37);
     GfxBase = (struct GfxBase *)OpenLibrary((STRPTR)"graphics.library", 37);
     GadToolsBase = OpenLibrary((STRPTR)"gadtools.library", 37);
@@ -199,6 +200,7 @@ int gui_main(const char *dir) {
     memset(&G, 0, sizeof G); new_list(&G.list);
     G.ctx = &ctx; G.fs = &fs; G.s = &s;
     afs_init(&ctx, &fs, dir);
+    rx_upq_init(&q, "");
     strcpy(G.status, "Starting...");
     if (!(G.scr = LockPubScreen(NULL)) || !(G.vi = GetVisualInfo(G.scr, TAG_END))) goto out;
     if (build(&G, dir) != 0) goto out;
@@ -212,7 +214,8 @@ int gui_main(const char *dir) {
         net_ui ui;
         ui.u = &G; ui.on_event = on_event; ui.on_status = on_status;
         ui.extra_sigs = 1UL << G.win->UserPort->mp_SigBit; ui.on_signal = on_signal;
-        if (net_run(&ui, &ctx, &fs, &s) != 0) {
+        ui.on_pass = NULL; ui.on_link = NULL;
+        if (net_run(&ui, &ctx, &fs, &s, &q) != 0) {
             /* e.g. Receive is already running: say so and wait for the close gadget, as without a stack. */
             set_status(&G, "Could not listen on port 6800");
             while (!G.quit) {
