@@ -2436,10 +2436,12 @@ static void core1_main(void) {
                     a2b_discard_stats(&a);
                     if (a.bytes != a2b_logged || a.open) {
                         a2b_logged = a.bytes;
-                        wf_logf(WF_INFO, "a2b: %lu B in %lu ms = %lu B/s ooseq max %lu mem max %lu err %lu conns %lu%s",
+                        wf_logf(WF_INFO, "a2b: %lu B in %lu ms = %lu B/s chunk max %lu ooseq max %lu B %lu pbufs "
+                                "mem max %lu err %lu conns %lu%s",
                                 (unsigned long)a.bytes, (unsigned long)a.ms,
                                 (unsigned long)(a.ms ? (uint32_t)((uint64_t)a.bytes * 1000u / a.ms) : 0u),
-                                (unsigned long)a.ooseq_max, (unsigned long)a.mem_max, (unsigned long)a.mem_err,
+                                (unsigned long)a.chunk_max, (unsigned long)a.ooseq_max, (unsigned long)a.ooseq_pbufs_max,
+                                (unsigned long)a.mem_max, (unsigned long)a.mem_err,
                                 (unsigned long)a.conns, a.open ? "" : " (closed)");
                     }
                 }
