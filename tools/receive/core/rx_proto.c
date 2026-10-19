@@ -25,6 +25,19 @@ static void put(rx_session *s, const char *p, unsigned n) {
 }
 static void puts_(rx_session *s, const char *p) { put(s, p, (unsigned)strlen(p)); }
 
+static void emit_up(rx_session *s, int kind, const rx_up_item *it, const char *path, unsigned long size,
+                    unsigned long bytes, const char *text, const char *code) {
+    emit_full(s, kind, 0, path ? path : it->name, size, bytes, text, it->tag, code, 0);
+}
+static void put_dec(rx_session *s, unsigned long v) { char b[12]; rx_utoa(v, b); puts_(s, b); }
+static void put_hex(rx_session *s, unsigned long v) {
+    char b[9]; int i = 8;
+    b[8] = 0;
+    do { b[--i] = "0123456789abcdef"[v & 15UL]; v >>= 4; } while (v && i > 0);
+    puts_(s, b + i);
+}
+static void put_lenstr(rx_session *s, const char *str) { put_dec(s, (unsigned long)strlen(str)); puts_(s, ":"); puts_(s, str); }
+
 static void reply_err(rx_session *s, const char *id, const char *code, const char *text) {
     puts_(s, "ERR "); puts_(s, id[0] ? id : "-"); puts_(s, " "); puts_(s, code); puts_(s, " ");
     puts_(s, text); puts_(s, "\n");
@@ -42,7 +55,7 @@ void rx_init(rx_session *s, const rx_fs *fs, rx_event_fn on_event, void *uctx) {
 
 int rx_busy(const rx_session *s) { return s->in_data; }
 
-unsigned rx_take_output(rx_session *s, char *dst, unsigned cap) {
+static unsigned take_lines(rx_session *s, char *dst, unsigned cap) {
     unsigned n = s->out_n < cap ? s->out_n : cap;
     memcpy(dst, s->out, n);
     memmove(s->out, s->out + n, s->out_n - n);
@@ -150,6 +163,7 @@ int rx_uploads_on(const rx_session *s) { return s->upq && s->peer_v >= 2 && s->t
 int rx_trust_now(rx_session *s) {
     if (!s->upq || s->peer_v < 2 || !s->peer_key[0]) return -1;
     strcpy(s->upq->trusted, s->peer_key);
+    s->upq->trust_next = 0;
     s->trust = RX_TRUST_OK;
     emit_trust(s, "new");
     return 0;
@@ -231,6 +245,157 @@ int rx_up_add_tree(rx_upq *q, const rx_fs *fs, const char *local, const char *na
     return w.n;
 }
 
+
+/* --- protocol 2: the file going up (spec §3; plan ruling P7) --- */
+static int put_due(const rx_session *s) {
+    return s->upq && s->upq->n > 0 && s->up_phase == RX_UP_IDLE && !s->in_data && !s->up_closing && rx_uploads_on(s);
+}
+/* Ends the file going up: closed, and the front end told. */
+static void up_finish(rx_session *s, int kind, const char *text, const char *code, const char *stored) {
+    rx_up_item it = s->up_cur;
+    unsigned long size = s->up_info.size, sent = s->up_sent;
+    s->fs->close_r(s->fs->ctx);
+    s->up_phase = RX_UP_IDLE;
+    s->up_cancel = 0;
+    if (kind == RX_EV_UP_DONE) emit_up(s, kind, &it, stored, size, size, 0, 0);
+    else emit_up(s, kind, &it, 0, size, sent, text, code);
+}
+static void protocol_error(rx_session *s, const char *why) {
+    if (s->up_phase != RX_UP_IDLE) up_finish(s, RX_EV_UP_FAILED, why, "local", 0);
+    s->proto_err = 1;
+}
+static void up_put(rx_session *s) {
+    while (put_due(s)) {
+        rx_up_item it = s->upq->q[0];
+        rx_upq_remove(s->upq, it.tag);
+        memset(&s->up_info, 0, sizeof s->up_info);
+        if (s->fs->open_r(s->fs->ctx, it.local, &s->up_info) != 0) {
+            emit_up(s, RX_EV_UP_FAILED, &it, 0, 0, 0, "cannot read the file", "local");
+            continue;
+        }
+        if (s->up_info.size > RX_FILE_MAX) {
+            s->fs->close_r(s->fs->ctx);
+            emit_up(s, RX_EV_UP_FAILED, &it, 0, s->up_info.size, 0, "file too large (4 MB at most)", "local");
+            continue;
+        }
+        s->up_cur = it; s->up_phase = RX_UP_ASKED; s->up_cancel = 0; s->up_sent = 0;
+        puts_(s, "PUT "); put_dec(s, it.tag); puts_(s, " "); put_dec(s, s->up_info.size); puts_(s, " ");
+        put_dec(s, s->up_info.days); puts_(s, "."); put_dec(s, s->up_info.mins); puts_(s, "."); put_dec(s, s->up_info.ticks);
+        puts_(s, " "); put_hex(s, s->up_info.prot); puts_(s, " "); put_lenstr(s, it.name); puts_(s, " ");
+        put_lenstr(s, s->up_info.comment); puts_(s, "\n");
+        return;
+    }
+}
+static void up_end(rx_session *s) {
+    s->up_phase = RX_UP_ENDED;
+    puts_(s, "END "); put_dec(s, s->up_cur.tag); puts_(s, " "); put_hex(s, s->up_crc); puts_(s, "\n");
+}
+static void up_data_begins(rx_session *s) {
+    s->up_phase = RX_UP_DATA;
+    if (s->up_sent == s->up_info.size) up_end(s);
+}
+/* Mid-file nothing can stop the raw section but closing (ruling P7). */
+static int up_read_failed(rx_session *s) {
+    up_finish(s, RX_EV_UP_FAILED, "cannot read the file", "local", 0);
+    s->up_closing = 1;
+    return -1;
+}
+/* One block: the resumed part's CRC (nothing to send), or bytes within the credit. */
+static int up_bytes(rx_session *s, unsigned char *dst, unsigned cap) {
+    unsigned long want;
+    if (cap > RX_UP_BLOCK) cap = (unsigned)RX_UP_BLOCK;
+    if (s->up_phase == RX_UP_SKIP) {
+        want = s->up_skip < cap ? s->up_skip : cap;
+        if (s->fs->read(s->fs->ctx, dst, want) != (long)want) return up_read_failed(s);
+        s->up_crc = rx_crc32_update(s->up_crc, dst, want);
+        s->up_skip -= want;
+        if (s->up_skip == 0) up_data_begins(s);
+        return 0;
+    }
+    want = s->up_credit - s->up_sent;
+    if (want > cap) want = cap;
+    if (want == 0) return 0;
+    if (s->fs->read(s->fs->ctx, dst, want) != (long)want) return up_read_failed(s);
+    s->up_crc = rx_crc32_update(s->up_crc, dst, want);
+    s->up_sent += want;
+    if (s->up_sent == s->up_info.size) up_end(s);   /* END goes out with the next take */
+    return (int)want;
+}
+static int tag_is(const rx_session *s, cur *c) {
+    const char *t; unsigned n; unsigned long v;
+    return s->up_phase != RX_UP_IDLE && tok(c, &t, &n) && num(t, n, 10, &v) && v == s->up_cur.tag;
+}
+static void on_take(rx_session *s, cur *c) {
+    const char *t; unsigned n; unsigned long off, credit;
+    if (s->up_phase != RX_UP_ASKED || !tag_is(s, c)) return;
+    if (!tok(c, &t, &n) || !num(t, n, 10, &off) || !tok(c, &t, &n) || !num(t, n, 10, &credit) ||
+        off > s->up_info.size || credit < off || credit > s->up_info.size) {
+        protocol_error(s, "the board answered out of range");
+        return;
+    }
+    if (s->up_cancel) {   /* our ABORT crossed this TAKE: the board treats every byte as data now */
+        up_finish(s, RX_EV_UP_FAILED, "cancelled", "local", 0);
+        s->up_closing = 1;
+        return;
+    }
+    s->up_off = s->up_sent = off; s->up_credit = credit; s->up_window = credit - off; s->up_crc = 0; s->up_skip = off;
+    emit_up(s, RX_EV_UP_BEGIN, &s->up_cur, 0, s->up_info.size, off, 0, 0);
+    if (off) s->up_phase = RX_UP_SKIP; else up_data_begins(s);
+}
+static void on_more(rx_session *s, cur *c) {
+    const char *t; unsigned n; unsigned long v;
+    if ((s->up_phase != RX_UP_SKIP && s->up_phase != RX_UP_DATA && s->up_phase != RX_UP_ENDED) || !tag_is(s, c)) return;
+    if (!tok(c, &t, &n) || !num(t, n, 10, &v) || v > s->up_info.size) { protocol_error(s, "the board answered out of range"); return; }
+    if (v > s->up_credit) s->up_credit = v;
+    emit_up(s, RX_EV_UP_PROGRESS, &s->up_cur, 0, s->up_info.size, s->up_credit - s->up_window, 0, 0);
+}
+static void on_done(rx_session *s, cur *c) {
+    char name[RX_PATH_MAX + 1];
+    if (s->up_phase != RX_UP_ENDED || !tag_is(s, c)) return;
+    if (!lenstr(c, name, sizeof name, 1)) strcpy(name, s->up_cur.name);
+    up_finish(s, RX_EV_UP_DONE, 0, 0, name);
+}
+static void on_no(rx_session *s, cur *c) {
+    const char *t; unsigned n; char code[17], text[80];
+    int raw = s->up_phase == RX_UP_SKIP || s->up_phase == RX_UP_DATA;
+    if (!tag_is(s, c)) return;
+    if (!tok(c, &t, &n) || n > 16) { t = "server"; n = 6; }
+    memcpy(code, t, n); code[n] = 0;
+    if (!lenstr(c, text, sizeof text, 1)) strcpy(text, "refused");
+    up_finish(s, RX_EV_UP_FAILED, (s->up_cancel && strcmp(code, "busy") == 0) ? "cancelled" : text, code, 0);
+    if (raw) s->up_closing = 1;   /* the stream's place is lost: the board closes too */
+}
+
+int rx_take_output(rx_session *s, char *dst, unsigned cap) {
+    if (s->up_closing) return -1;
+    if (s->up_phase == RX_UP_SKIP || s->up_phase == RX_UP_DATA) return up_bytes(s, (unsigned char *)dst, cap);
+    if (s->out_n == 0) up_put(s);
+    return (int)take_lines(s, dst, cap);
+}
+int rx_want_output(const rx_session *s) {
+    if (s->up_closing || s->up_phase == RX_UP_SKIP) return 1;
+    if (s->up_phase == RX_UP_DATA) return s->up_sent < s->up_credit;
+    return s->out_n > 0 || put_due(s);
+}
+int rx_up_cancel(rx_session *s, rx_upq *q, unsigned tag) {
+    unsigned i;
+    for (i = 0; q && i < q->n; i++) if (q->q[i].tag == tag) {
+        rx_up_item it = q->q[i];
+        rx_upq_remove(q, tag);
+        emit_up(s, RX_EV_UP_FAILED, &it, 0, 0, 0, "cancelled", "local");
+        return 0;
+    }
+    if (s->up_phase == RX_UP_IDLE || s->up_cur.tag != tag) return -1;
+    if (s->up_phase == RX_UP_ASKED) {
+        if (!s->up_cancel) { puts_(s, "ABORT "); put_dec(s, tag); puts_(s, "\n"); s->up_cancel = 1; }
+        return 0;
+    }
+    if (s->up_phase == RX_UP_ENDED) return 0;   /* the last byte is out: the web app has it in a moment */
+    up_finish(s, RX_EV_UP_FAILED, "cancelled", "local", 0);
+    s->up_closing = 1;
+    return 1;
+}
+int rx_idle_secs(const rx_session *s) { return s->up_phase != RX_UP_IDLE ? RX_UP_IDLE_SECS : RX_IDLE_SECS; }
 
 /* --- files --- */
 static void parent_of(const char *path, char *dst) {
@@ -336,7 +501,14 @@ static void on_line(rx_session *s, const char *line, unsigned len) {
         s->list_expect = (unsigned)k;
         if (k == 0) emit(s, RX_EV_LIST, 0, 0, 0, 0, 0);
     }
-    else if (is(t, n, "FILE")) on_file(s, &c);
+    else if (is(t, n, "FILE")) {
+        if (s->up_phase == RX_UP_SKIP || s->up_phase == RX_UP_DATA) protocol_error(s, "the board sent a file mid-upload");
+        else on_file(s, &c);
+    }
+    else if (is(t, n, "TAKE")) on_take(s, &c);
+    else if (is(t, n, "MORE")) on_more(s, &c);
+    else if (is(t, n, "DONE")) on_done(s, &c);
+    else if (is(t, n, "NO")) on_no(s, &c);
     /* anything else: ignored, for newer boards and stray clients */
 }
 
@@ -367,6 +539,7 @@ int rx_feed(rx_session *s, const unsigned char *data, unsigned long n) {
             s->line_n = 0;
             data++; n--;
             on_line(s, s->line, len);
+            if (s->proto_err) return -1;
             continue;
         }
         if (s->line_n >= RX_LINE_MAX) return -1;
@@ -383,6 +556,8 @@ void rx_disconnected(rx_session *s) {
         s->in_data = 0;
         emit(s, RX_EV_FAILED, s->cur_id, s->cur_path, s->cur_size, 0, "connection lost");
     }
+    if (s->up_phase != RX_UP_IDLE) up_finish(s, RX_EV_UP_FAILED, s->up_cancel ? "cancelled" : "connection lost", "local", 0);
+    s->up_closing = 0; s->proto_err = 0;
     s->peer_v = 0; s->trust = RX_TRUST_NONE;
     s->line_n = 0; s->list_expect = 0; s->out_n = 0;
 }

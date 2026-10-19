@@ -20,7 +20,7 @@ static void on_ev(void *u, const rx_event *e) {
 static void setup(void) { ff_init(&F, &FS); n_ev = 0; rx_init(&S, &FS, on_ev, NULL); }
 static int feed(const char *str) { return rx_feed(&S, (const unsigned char *)str, strlen(str)); }
 static char outbuf[4096];
-static const char *out(void) { unsigned n = rx_take_output(&S, outbuf, sizeof outbuf - 1); outbuf[n] = 0; return outbuf; }
+static const char *out(void) { int n = rx_take_output(&S, outbuf, sizeof outbuf - 1); outbuf[n > 0 ? n : 0] = 0; return outbuf; }
 static void file_line(char *dst, const char *id, const char *data, unsigned long len, unsigned long prot,
                       const char *path, const char *comment, int bad_crc) {
     unsigned long crc = rx_crc32_update(0, (const unsigned char *)data, len) ^ (bad_crc ? 1UL : 0UL);
@@ -266,6 +266,162 @@ static void a_volume_root_joins_without_a_slash_and_a_walk_stops_at_64(void) {
     CHECK_EQ_INT(rx_up_add_tree(&Q, &FS, "RAM:", "Ram Disk", NULL, NULL), RX_UP_MAX);
     CHECK(strncmp(Q.q[0].local, "RAM:f", 5) == 0 && strncmp(Q.q[0].name, "Ram Disk/f", 10) == 0, "RAM:fNN, Ram Disk/fNN");
 }
+/* --- protocol 2: a file going up --- */
+static unsigned char DATA[65536];
+static unsigned char obig[200000]; static unsigned long ob_n; static int ob_closed;
+static void fill_data(void) { for (unsigned i = 0; i < sizeof DATA; i++) DATA[i] = (unsigned char)(i * 7 + 3); }
+/* Everything Receive has to send now, in 4 KB takes, as a front end does. */
+static void drain(void) {
+    ob_n = 0; ob_closed = 0;
+    for (int i = 0; i < 5000 && rx_want_output(&S); i++) {
+        int k = rx_take_output(&S, (char *)obig + ob_n, 4096);
+        if (k < 0) { ob_closed = 1; break; }
+        ob_n += (unsigned long)k;
+    }
+    obig[ob_n] = 0;
+}
+static void up_ready(const char *local, const char *name, unsigned long len, unsigned long prot, const char *comment) {
+    setup2(""); fill_data(); F.days = 1; F.mins = 2; F.ticks = 3;
+    ff_put(&F, local, DATA, len, prot, comment);
+    rx_up_add(&Q, local, name);
+    hello2(KEY); out();          /* READY 2 (the PUT is not out yet: out() takes lines only once) */
+}
+static unsigned long crc_of(unsigned long n) { return rx_crc32_update(0, DATA, n); }
+
+static void put_goes_out_once_the_board_is_trusted(void) {
+    setup2(""); fill_data(); F.days = 1; F.mins = 2; F.ticks = 3;
+    ff_put(&F, "DH0:Hello.txt", "hello", 5, 0x40, "note");
+    CHECK_EQ_INT(rx_up_add(&Q, "DH0:Hello.txt", "Hello.txt"), 1);
+    drain(); CHECK_EQ_INT(ob_n, 0);                       /* no board yet */
+    hello2(KEY); drain();
+    CHECK(strcmp((char *)obig, "READY 2\nPUT 1 5 1.2.3 40 9:Hello.txt 4:note\n") == 0, "READY, then the PUT");
+    CHECK_EQ_INT(Q.n, 0); CHECK_EQ_INT(F.opens_r, 1);
+    CHECK_EQ_INT(rx_idle_secs(&S), RX_UP_IDLE_SECS);
+}
+static void no_put_while_a_file_comes_down(void) {
+    char l[600];
+    setup2(""); ff_put(&F, "DH0:a", "a", 1, 0, ""); hello2(KEY); out();
+    file_line(l, "d1", "hello", 5, 0, "Down.txt", "", 0); feed(l);
+    rx_up_add(&Q, "DH0:a", "a");
+    drain(); CHECK(strstr((char *)obig, "GO d1\n") && !strstr((char *)obig, "PUT"), "no PUT while receiving");
+    feed("hello"); drain();
+    CHECK(strstr((char *)obig, "OK d1 8:Down.txt\nPUT 1 1 ") != NULL, "the OK, then the PUT");
+}
+static void no_put_to_a_protocol_1_board_or_another_key(void) {
+    setup2(""); ff_put(&F, "DH0:a", "a", 1, 0, ""); rx_up_add(&Q, "DH0:a", "a");
+    feed("WEBADF 1\n"); drain(); CHECK(strstr((char *)obig, "PUT") == NULL, "protocol 1: no PUT");
+    setup2(KEY); ff_put(&F, "DH0:a", "a", 1, 0, ""); rx_up_add(&Q, "DH0:a", "a");
+    hello2(KEY2); drain(); CHECK(strstr((char *)obig, "PUT") == NULL, "another key: no PUT");
+    CHECK_EQ_INT(Q.n, 1);                                 /* it waits for the trusted board */
+}
+static void bytes_never_pass_the_credit_then_end(void) {
+    char want[40];
+    up_ready("DH0:Big", "Big", 40000, 0, ""); drain();   /* the PUT */
+    feed("TAKE 1 0 32768\n"); drain();
+    CHECK_EQ_INT(ob_n, 32768); CHECK(memcmp(obig, DATA, 32768) == 0, "the first 32 KB");
+    CHECK(!rx_want_output(&S), "nothing past the credit");
+    CHECK_EQ_INT(last_ev[last_kind(RX_EV_UP_BEGIN)].bytes, 0);
+    feed("MORE 1 40000\n"); drain();
+    snprintf(want, sizeof want, "END 1 %lx\n", crc_of(40000));
+    CHECK_EQ_INT(ob_n, 7232 + strlen(want));
+    CHECK(memcmp(obig, DATA + 32768, 7232) == 0, "the rest");
+    CHECK(strcmp((char *)obig + 7232, want) == 0, "END with the CRC of the whole file");
+    CHECK_EQ_INT(last_ev[last_kind(RX_EV_UP_PROGRESS)].bytes, 7232);   /* credit 40000 - window 32768 */
+}
+static void resume_crc_covers_the_skipped_part(void) {
+    char want[40];
+    up_ready("DH0:Big", "Big", 40000, 0, ""); drain();
+    feed("TAKE 1 16384 40000\n"); drain();
+    snprintf(want, sizeof want, "END 1 %lx\n", crc_of(40000));
+    CHECK_EQ_INT(ob_n, 40000 - 16384 + strlen(want));
+    CHECK(memcmp(obig, DATA + 16384, 40000 - 16384) == 0, "only the part the web app lacks is sent");
+    CHECK(strcmp((char *)obig + 40000 - 16384, want) == 0, "the CRC still covers the whole file");
+    CHECK_EQ_INT(F.bytes_read, 40000);                    /* the skipped part is read once, never sent */
+    CHECK_EQ_INT(last_ev[last_kind(RX_EV_UP_BEGIN)].bytes, 16384);
+}
+static void resume_at_the_end_sends_no_bytes_then_end(void) {   /* Review Focus 1 */
+    up_ready("DH0:Hello.txt", "Hello.txt", 5, 0, ""); drain();
+    feed("TAKE 1 5 5\n"); drain();
+    char want[40]; snprintf(want, sizeof want, "END 1 %lx\n", crc_of(5));
+    CHECK(strcmp((char *)obig, want) == 0, "END at once");
+    CHECK_EQ_INT(F.bytes_read, 5);
+}
+static void empty_file_goes_up(void) {                          /* Review Focus 2 */
+    up_ready("RAM:Empty", "Empty", 0, 0, ""); drain();
+    CHECK(strcmp((char *)obig, "PUT 1 0 1.2.3 0 5:Empty 0:\n") == 0, "PUT size 0");
+    feed("TAKE 1 0 0\n"); drain();
+    CHECK(strcmp((char *)obig, "END 1 0\n") == 0, "END 1 0");
+}
+static void done_and_no_are_events_and_the_next_file_follows(void) {
+    up_ready("DH0:Hello.txt", "Hello.txt", 5, 0, "");
+    ff_put(&F, "DH0:Two", "two", 3, 0, ""); rx_up_add(&Q, "DH0:Two", "Two");
+    drain(); feed("TAKE 1 0 5\n"); drain();
+    feed("DONE 1 9:Hello.txt\n");
+    int i = last_kind(RX_EV_UP_DONE);
+    CHECK(i >= 0 && last_ev[i].tag == 1 && strncmp(ev_path[i], "Hello.txt|", 10) == 0, "done, with the stored name");
+    CHECK_EQ_INT(F.closes_r, 1);
+    drain(); CHECK(strncmp((char *)obig, "PUT 2 3 ", 8) == 0, "the next file");
+    feed("NO 2 full 23:the area on the web app\n");
+    i = last_kind(RX_EV_UP_FAILED);
+    CHECK(i >= 0 && strcmp(ev_code[i], "full") == 0 && strstr(ev_path[i], "|the area on the web app"), "refused, with the board's words");
+    CHECK_EQ_INT(F.closes_r, 2);
+}
+static void abort_before_take_and_cancel_mid_file(void) {
+    up_ready("DH0:Big", "Big", 40000, 0, ""); drain();
+    CHECK_EQ_INT(rx_up_cancel(&S, &Q, 1), 0);
+    drain(); CHECK(strcmp((char *)obig, "ABORT 1\n") == 0, "ABORT before TAKE");
+    feed("NO 1 busy 9:cancelled\n");
+    CHECK(strstr(ev_path[last_kind(RX_EV_UP_FAILED)], "|cancelled") != NULL, "cancelled");
+    up_ready("DH0:Big", "Big", 40000, 0, ""); drain(); feed("TAKE 1 0 32768\n");
+    CHECK_EQ_INT(rx_up_cancel(&S, &Q, 1), 1);             /* mid-file: only closing stops it (ruling P7) */
+    drain(); CHECK(ob_closed, "the connection closes");
+    up_ready("DH0:Big", "Big", 40000, 0, ""); drain();
+    feed("TAKE 1 0 32768\n");
+    rx_up_add(&Q, "DH0:Big", "Big");
+    CHECK_EQ_INT(rx_up_cancel(&S, &Q, 2), 0); CHECK_EQ_INT(Q.n, 0);   /* a waiting one just leaves the list */
+    CHECK_EQ_INT(rx_up_cancel(&S, &Q, 99), -1);
+}
+static void take_after_abort_closes(void) {
+    up_ready("DH0:Big", "Big", 40000, 0, ""); drain();
+    rx_up_cancel(&S, &Q, 1); drain();                      /* ABORT out, but TAKE was already on its way */
+    feed("TAKE 1 0 32768\n"); drain();
+    CHECK(ob_closed, "closed: the board already treats every byte as data");
+    CHECK(strstr(ev_path[last_kind(RX_EV_UP_FAILED)], "|cancelled") != NULL, "cancelled");
+}
+static void a_read_failure_mid_file_closes(void) {
+    up_ready("DH0:Big", "Big", 40000, 0, ""); drain();
+    F.fail_read_at = 10000;
+    feed("TAKE 1 0 32768\n"); drain();
+    CHECK(ob_closed, "closed");
+    CHECK(strstr(ev_path[last_kind(RX_EV_UP_FAILED)], "|cannot read the file") != NULL, "why");
+}
+static void a_dropped_connection_fails_the_file(void) {
+    up_ready("DH0:Big", "Big", 40000, 0, ""); drain(); feed("TAKE 1 0 32768\n"); drain();
+    rx_disconnected(&S);
+    CHECK(strstr(ev_path[last_kind(RX_EV_UP_FAILED)], "|connection lost") != NULL, "connection lost");
+    CHECK_EQ_INT(F.closes_r, 1); CHECK_EQ_INT(rx_idle_secs(&S), RX_IDLE_SECS);
+}
+static void answers_out_of_range_and_a_file_mid_upload_close(void) {
+    char l[600];
+    up_ready("DH0:Hello.txt", "Hello.txt", 5, 0, ""); drain();
+    CHECK_EQ_INT(feed("TAKE 1 6 5\n"), -1);
+    up_ready("DH0:Hello.txt", "Hello.txt", 5, 0, ""); drain();
+    CHECK_EQ_INT(feed("TAKE 1 0 9\n"), -1);                /* a credit past the size */
+    up_ready("DH0:Big", "Big", 40000, 0, ""); drain(); feed("TAKE 1 0 32768\n");
+    file_line(l, "d9", "x", 1, 0, "X", "", 0);
+    CHECK_EQ_INT(feed(l), -1);
+}
+static void no_after_data_started_closes_too(void) {
+    up_ready("DH0:Big", "Big", 40000, 0, ""); drain(); feed("TAKE 1 0 32768\n");
+    feed("NO 1 offline 29:the web app cannot be reached\n");
+    CHECK(strcmp(ev_code[last_kind(RX_EV_UP_FAILED)], "offline") == 0, "offline");
+    drain(); CHECK(ob_closed, "closed: the place in the stream is lost");
+}
+static void stale_lines_for_another_tag_are_ignored(void) {
+    up_ready("DH0:Hello.txt", "Hello.txt", 5, 0, ""); drain();
+    feed("TAKE 7 0 5\nMORE 7 5\nDONE 7 1:x\nNO 7 full 1:x\n");
+    CHECK_EQ_INT(last_kind(RX_EV_UP_BEGIN), -1); CHECK_EQ_INT(last_kind(RX_EV_UP_FAILED), -1);
+}
 int main(void) {
     RUN(hello_and_ping); RUN(list_items); RUN(list_split_across_feeds_and_bad_line_skipped); RUN(one_file);
     RUN(line_and_data_in_one_feed_then_next_line); RUN(collision); RUN(subfolder_made); RUN(bad_crc);
@@ -276,5 +432,12 @@ int main(void) {
     RUN(a_malformed_key_is_never_saved); RUN(a_protocol_1_board_is_old_and_uploads_stay_off);
     RUN(trust_now_and_trust_next_replace_the_saved_key); RUN(the_queue_takes_64_good_names);
     RUN(a_dropped_drawer_is_walked_and_icons_skipped); RUN(a_volume_root_joins_without_a_slash_and_a_walk_stops_at_64);
+    RUN(put_goes_out_once_the_board_is_trusted); RUN(no_put_while_a_file_comes_down);
+    RUN(no_put_to_a_protocol_1_board_or_another_key); RUN(bytes_never_pass_the_credit_then_end);
+    RUN(resume_crc_covers_the_skipped_part); RUN(resume_at_the_end_sends_no_bytes_then_end); RUN(empty_file_goes_up);
+    RUN(done_and_no_are_events_and_the_next_file_follows); RUN(abort_before_take_and_cancel_mid_file);
+    RUN(take_after_abort_closes); RUN(a_read_failure_mid_file_closes); RUN(a_dropped_connection_fails_the_file);
+    RUN(answers_out_of_range_and_a_file_mid_upload_close); RUN(no_after_data_started_closes_too);
+    RUN(stale_lines_for_another_tag_are_ignored);
     return REPORT();
 }

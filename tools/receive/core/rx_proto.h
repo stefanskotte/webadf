@@ -94,7 +94,15 @@ typedef struct rx_session { /* fields private to rx_proto.c except list/list_n *
 
 void rx_init(rx_session *s, const rx_fs *fs, rx_event_fn on_event, void *uctx);
 int rx_feed(rx_session *s, const unsigned char *data, unsigned long n); /* 0, or -1: close the connection */
-unsigned rx_take_output(rx_session *s, char *dst, unsigned cap);       /* moves pending reply bytes out */
+/* Moves what is to be sent now into dst: reply lines, a PUT, or file bytes within the board's credit (one 8 KB block
+   at most). 0: nothing this time (perhaps a block read only for the CRC: ask rx_want_output). -1: close the
+   connection now (an upload stopped mid-file, or the board broke the protocol). */
+int rx_take_output(rx_session *s, char *dst, unsigned cap);
+int rx_want_output(const rx_session *s);   /* 1 while rx_take_output has work now */
+/* Stop an upload: a waiting file leaves the list (0); the file going up sends ABORT before TAKE (0), or -- once bytes
+   flow -- needs the connection closed (1; rx_take_output then returns -1). -1: no such tag. */
+int rx_up_cancel(rx_session *s, rx_upq *q, unsigned tag);
+int rx_idle_secs(const rx_session *s);     /* the silence allowed: RX_IDLE_SECS, RX_UP_IDLE_SECS while a file goes up */
 void rx_disconnected(rx_session *s);   /* the peer went away: drop a half-written file */
 int rx_busy(const rx_session *s);      /* 1 while a file is being received */
 

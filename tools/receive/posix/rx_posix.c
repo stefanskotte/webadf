@@ -104,8 +104,11 @@ int main(int argc, char **argv) {
             int bad = n <= 0 || rx_feed(&S, buf, (unsigned long)n) != 0;
             last = time(NULL);
             char o[RX_OUT_MAX];
-            unsigned k;
-            while ((k = rx_take_output(&S, o, sizeof o)) > 0) if (send_all(cl, o, k) != 0) bad = 1;
+            while (!bad && rx_want_output(&S)) {
+                int k = rx_take_output(&S, o, sizeof o);
+                if (k < 0) bad = 1;
+                else if (k > 0 && send_all(cl, o, (size_t)k) != 0) bad = 1;
+            }
             if (bad) { rx_disconnected(&S); close(cl); cl = -1; }
         }
         if (FD_ISSET(ls, &r)) {

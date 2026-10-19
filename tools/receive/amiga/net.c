@@ -66,8 +66,11 @@ int net_run(net_ui *ui, afs_ctx *ctx, rx_fs *fs, rx_session *s) {
             int bad = got <= 0 || rx_feed(s, buf, (unsigned long)got) != 0;
             last = now_secs();
             char o[RX_OUT_MAX];
-            unsigned k;
-            while ((k = rx_take_output(s, o, sizeof o)) > 0) if (send_all(cl, o, (LONG)k) != 0) bad = 1;
+            while (!bad && rx_want_output(s)) {
+                int k = rx_take_output(s, o, sizeof o);
+                if (k < 0) bad = 1;
+                else if (k > 0 && send_all(cl, o, (LONG)k) != 0) bad = 1;
+            }
             if (bad) { rx_disconnected(s); CloseSocket(cl); cl = -1; }
         }
         if (FD_ISSET(ls, &r)) {
