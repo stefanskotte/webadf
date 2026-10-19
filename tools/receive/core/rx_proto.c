@@ -5,12 +5,17 @@
 
 #define PROGRESS_STEP 16384UL
 
-static void emit(rx_session *s, int kind, const char *id, const char *path, unsigned long size,
-                 unsigned long bytes, const char *text) {
+static void emit_full(rx_session *s, int kind, const char *id, const char *path, unsigned long size,
+                      unsigned long bytes, const char *text, unsigned tag, const char *code, const char *key) {
     rx_event e;
     if (!s->on_event) return;
     e.kind = kind; e.id = id; e.path = path; e.size = size; e.bytes = bytes; e.text = text;
+    e.tag = tag; e.code = code; e.key = key;
     s->on_event(s->uctx, &e);
+}
+static void emit(rx_session *s, int kind, const char *id, const char *path, unsigned long size,
+                 unsigned long bytes, const char *text) {
+    emit_full(s, kind, id, path, size, bytes, text, 0, 0, 0);
 }
 
 static void put(rx_session *s, const char *p, unsigned n) {
@@ -99,6 +104,133 @@ static int id_ok(const char *t, unsigned n) {
     return 1;
 }
 static int is(const char *t, unsigned n, const char *word) { return n == strlen(word) && memcmp(t, word, n) == 0; }
+
+/* --- protocol 2: the hello and the board key (spec 2026-10-18 §3, §6) --- */
+static int hex_key(const char *t, unsigned n, char *out) {
+    unsigned i;
+    if (n != RX_KEY_HEX) return 0;
+    for (i = 0; i < n; i++) {
+        char ch = t[i];
+        if (ch >= 'A' && ch <= 'F') ch = (char)(ch - 'A' + 'a');
+        if (!((ch >= '0' && ch <= '9') || (ch >= 'a' && ch <= 'f'))) return 0;
+        out[i] = ch;
+    }
+    out[n] = 0;
+    return 1;
+}
+static void emit_trust(rx_session *s, const char *code) { emit_full(s, RX_EV_TRUST, 0, 0, 0, 0, 0, 0, code, s->peer_key); }
+/* "WEBADF <v> [<key>]": READY 1 to a protocol 1 board (or a stray WEBADF), READY 2 to a protocol 2 one; then the key
+   decides whether this connection may upload. Downloads work either way. */
+static void on_hello(rx_session *s, cur *c) {
+    const char *t; unsigned n; unsigned long v = 1;
+    if (tok(c, &t, &n) && !num(t, n, 10, &v)) v = 1;
+    s->peer_key[0] = 0;
+    if (v < 2) {
+        s->peer_v = 1; s->trust = RX_TRUST_OLD;
+        puts_(s, "READY 1\n");
+        emit(s, RX_EV_HELLO, 0, 0, 0, 0, 0);
+        if (s->upq) emit_trust(s, "old");
+        return;
+    }
+    s->peer_v = 2;
+    puts_(s, "READY 2\n");
+    if (!tok(c, &t, &n) || !hex_key(t, n, s->peer_key)) s->peer_key[0] = 0;
+    emit(s, RX_EV_HELLO, 0, 0, 0, 0, 0);
+    if (!s->upq) { s->trust = RX_TRUST_NONE; return; }
+    if (!s->peer_key[0]) { s->trust = RX_TRUST_OTHER; emit_trust(s, "other"); }
+    else if (!s->upq->trusted[0] || s->upq->trust_next) {
+        strcpy(s->upq->trusted, s->peer_key); s->upq->trust_next = 0;
+        s->trust = RX_TRUST_OK; emit_trust(s, "new");
+    } else if (strcmp(s->upq->trusted, s->peer_key) == 0) { s->trust = RX_TRUST_OK; emit_trust(s, "ok"); }
+    else { s->trust = RX_TRUST_OTHER; emit_trust(s, "other"); }
+}
+
+void rx_attach(rx_session *s, rx_upq *q) { s->upq = q; }
+int rx_uploads_on(const rx_session *s) { return s->upq && s->peer_v >= 2 && s->trust == RX_TRUST_OK; }
+int rx_trust_now(rx_session *s) {
+    if (!s->upq || s->peer_v < 2 || !s->peer_key[0]) return -1;
+    strcpy(s->upq->trusted, s->peer_key);
+    s->trust = RX_TRUST_OK;
+    emit_trust(s, "new");
+    return 0;
+}
+void rx_key4(const char *key, char out[5]) {
+    unsigned i;
+    for (i = 0; i < 4 && key && key[i]; i++) out[i] = (char)(key[i] >= 'a' && key[i] <= 'f' ? key[i] - 'a' + 'A' : key[i]);
+    out[i] = 0;
+}
+
+/* --- protocol 2: the queue (in memory only: spec §2) --- */
+void rx_upq_init(rx_upq *q, const char *trusted) {
+    memset(q, 0, sizeof *q);
+    if (trusted && !hex_key(trusted, (unsigned)strlen(trusted), q->trusted)) q->trusted[0] = 0;
+}
+unsigned rx_up_add(rx_upq *q, const char *local, const char *name) {
+    rx_up_item *it;
+    if (q->n >= RX_UP_MAX || !local[0] || strlen(local) > RX_LOCAL_MAX || !rx_path_ok(name)) return 0;
+    it = &q->q[q->n++];
+    if (++q->next_tag > 999999999U) q->next_tag = 1;   /* the board reads 1-9 digits */
+    it->tag = q->next_tag;
+    strcpy(it->local, local);
+    strcpy(it->name, name);
+    return it->tag;
+}
+int rx_upq_remove(rx_upq *q, unsigned tag) {
+    unsigned i;
+    for (i = 0; i < q->n; i++) if (q->q[i].tag == tag) {
+        memmove(&q->q[i], &q->q[i + 1], (q->n - i - 1) * sizeof q->q[0]);
+        q->n--;
+        return 1;
+    }
+    return 0;
+}
+
+/* A dropped drawer (spec §2): each file joins with its path under the drawer ("Drawer/sub/file"), 64 at most; an .info
+   file only when the icon itself was dropped. */
+typedef struct { rx_upq *q; const rx_fs *fs; rx_added_fn added; void *u;
+                 char local[RX_LOCAL_MAX + 1]; char name[RX_PATH_MAX + 1]; int n, depth; } rx_walk;
+static int ends_info(const char *nm) {
+    size_t k = strlen(nm);
+    return k >= 5 && nm[k - 5] == '.' && (nm[k - 4] | 0x20) == 'i' && (nm[k - 3] | 0x20) == 'n' &&
+           (nm[k - 2] | 0x20) == 'f' && (nm[k - 1] | 0x20) == 'o';
+}
+static void walk_each(void *u, const char *nm, int is_dir) {
+    rx_walk *w = u;
+    size_t ll = strlen(w->local), nl = strlen(w->name), k = strlen(nm);
+    size_t sep = (ll && w->local[ll - 1] != ':' && w->local[ll - 1] != '/') ? 1 : 0;
+    if (w->n >= RX_UP_MAX || (!is_dir && ends_info(nm))) return;
+    if (ll + sep + k > RX_LOCAL_MAX || nl + 1 + k > RX_PATH_MAX) return;
+    if (sep) w->local[ll] = '/';
+    memcpy(w->local + ll + sep, nm, k + 1);
+    w->name[nl] = '/';
+    memcpy(w->name + nl + 1, nm, k + 1);
+    if (is_dir) {
+        if (w->depth < RX_TREE_DEPTH) { w->depth++; w->fs->list(w->fs->ctx, w->local, walk_each, w); w->depth--; }
+    } else if (rx_up_add(w->q, w->local, w->name)) {
+        w->n++;
+        if (w->added) w->added(w->u, &w->q->q[w->q->n - 1]);
+    }
+    w->local[ll] = 0;
+    w->name[nl] = 0;
+}
+int rx_up_add_tree(rx_upq *q, const rx_fs *fs, const char *local, const char *name, rx_added_fn added, void *u) {
+    static rx_walk w;   /* static: the Amiga's stack is small, and a walk is never nested */
+    int d;
+    if (strlen(local) > RX_LOCAL_MAX || strlen(name) > RX_PATH_MAX) return -1;
+    d = fs->is_dir(fs->ctx, local);
+    if (d < 0) return -1;
+    if (d == 0) {
+        if (!rx_up_add(q, local, name)) return 0;
+        if (added) added(u, &q->q[q->n - 1]);
+        return 1;
+    }
+    memset(&w, 0, sizeof w);
+    w.q = q; w.fs = fs; w.added = added; w.u = u;
+    strcpy(w.local, local); strcpy(w.name, name);
+    if (fs->list(fs->ctx, local, walk_each, &w) != 0) return -1;
+    return w.n;
+}
+
 
 /* --- files --- */
 static void parent_of(const char *path, char *dst) {
@@ -195,7 +327,7 @@ static void on_line(rx_session *s, const char *line, unsigned len) {
         return;
     }
     if (!tok(&c, &t, &n)) return;
-    if (is(t, n, "WEBADF")) { puts_(s, "READY 1\n"); emit(s, RX_EV_HELLO, 0, 0, 0, 0, 0); }
+    if (is(t, n, "WEBADF")) on_hello(s, &c);
     else if (is(t, n, "PING")) puts_(s, "PONG\n");
     else if (is(t, n, "LIST")) {
         unsigned long k;
@@ -251,5 +383,6 @@ void rx_disconnected(rx_session *s) {
         s->in_data = 0;
         emit(s, RX_EV_FAILED, s->cur_id, s->cur_path, s->cur_size, 0, "connection lost");
     }
+    s->peer_v = 0; s->trust = RX_TRUST_NONE;
     s->line_n = 0; s->list_expect = 0; s->out_n = 0;
 }

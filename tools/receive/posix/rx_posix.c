@@ -73,7 +73,7 @@ int main(int argc, char **argv) {
     static rx_session S;
     static unsigned char buf[8192];
     pctx ctx = { 0 };
-    rx_fs fs = { &ctx, p_folder_ok, p_free, p_exists, p_make_dir, p_open_w, p_write, p_close_w, p_rename, p_remove, p_set_meta };
+    rx_fs fs = { &ctx, p_folder_ok, p_free, p_exists, p_make_dir, p_open_w, p_write, p_close_w, p_rename, p_remove, p_set_meta, NULL, NULL, NULL, NULL, NULL };   /* the read side (protocol 2) arrives with the Amiga front ends */
     struct sockaddr_in a;
     socklen_t al = sizeof a;
     int one = 1, ls, cl = -1;

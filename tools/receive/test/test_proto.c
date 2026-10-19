@@ -5,11 +5,16 @@
 #include "fakefs.h"
 
 static fakefs F; static rx_fs FS; static rx_session S;
-static rx_event last_ev[64]; static int n_ev; static char ev_text[64][300];
+static rx_event last_ev[64]; static int n_ev; static char ev_text[64][300], ev_code[64][20], ev_key[64][40], ev_path[64][300];
 static void on_ev(void *u, const rx_event *e) {
     (void)u;
+    if (n_ev >= 64) return;
     last_ev[n_ev] = *e;
     snprintf(ev_text[n_ev], 300, "%s", e->kind == RX_EV_DONE || e->kind == RX_EV_FAILED ? (e->path ? e->path : "") : "");
+    snprintf(ev_code[n_ev], 20, "%s", e->code ? e->code : "");
+    snprintf(ev_key[n_ev], 40, "%s", e->key ? e->key : "");
+    snprintf(ev_path[n_ev], 300, "%s|%s", e->path ? e->path : "", e->text ? e->text : "");
+    last_ev[n_ev].text = NULL; last_ev[n_ev].code = NULL; last_ev[n_ev].key = NULL; last_ev[n_ev].path = NULL;
     n_ev++;
 }
 static void setup(void) { ff_init(&F, &FS); n_ev = 0; rx_init(&S, &FS, on_ev, NULL); }
@@ -125,7 +130,7 @@ static void disconnect_mid_file(void) {
     rx_disconnected(&S);
     CHECK(!has(RX_TMP_NAME) && !has("D"), "temp removed");
     CHECK_EQ_INT(last_ev[n_ev - 1].kind, RX_EV_FAILED);
-    CHECK(strcmp(last_ev[n_ev - 1].text, "connection lost") == 0, "reason");
+    CHECK(strstr(ev_path[n_ev - 1], "|connection lost") != NULL, "reason");
     CHECK(!rx_busy(&S), "idle");
 }
 static void garbage_ignored_overflow_closes(void) {
@@ -166,15 +171,100 @@ static void refusals_are_events(void) {
     setup(); F.folder_present = 0; file_line(l, "r1", "x", 1, 0, "Pic.iff", "", 0); feed(l);
     CHECK_EQ_INT(n_ev, 1);
     CHECK_EQ_INT(last_ev[0].kind, RX_EV_FAILED);
-    CHECK(last_ev[0].text && strcmp(last_ev[0].text, "folder not found") == 0, "reason");
+    CHECK(strstr(ev_path[0], "|folder not found") != NULL, "reason");
     CHECK(strcmp(ev_text[0], "Pic.iff") == 0, "path");
     setup(); F.free = 100; file_line(l, "r2", "x", 1, 0, "Big", "", 0); feed(l);
-    CHECK_EQ_INT(n_ev, 1); CHECK(last_ev[0].text && strcmp(last_ev[0].text, "not enough space") == 0, "space reason");
+    CHECK_EQ_INT(n_ev, 1); CHECK(strstr(ev_path[0], "|not enough space") != NULL, "space reason");
 }
 static void huge_decimal_refused(void) {
     /* 4294967296 wrapped to 0 and the next bytes were read as commands (review minor). */
     setup(); feed("FILE w1 4294967296 0 0 1:x 0:\n");
     CHECK(strncmp(out(), "ERR w1 ", 7) == 0, "refused");
+}
+/* --- protocol 2 (spec 2026-10-18 §3, §6) --- */
+static rx_upq Q;
+static const char *KEY = "0123456789abcdef0123456789abcdef";
+static const char *KEY2 = "fedcba9876543210fedcba9876543210";
+static void setup2(const char *trusted) { setup(); rx_upq_init(&Q, trusted); rx_attach(&S, &Q); }
+static int last_kind(int k) { for (int i = n_ev - 1; i >= 0; i--) if (last_ev[i].kind == k) return i; return -1; }
+static void hello2(const char *key) { char l[80]; snprintf(l, sizeof l, "WEBADF 2 %s\n", key); feed(l); }
+static const char *trust_code(void) { int i = last_kind(RX_EV_TRUST); return i < 0 ? "" : ev_code[i]; }
+static unsigned added_n; static char added_names[80][300];
+static void on_added(void *u, const rx_up_item *it) { (void)u; snprintf(added_names[added_n++ % 80], 300, "%s=%s", it->name, it->local); }
+
+static void v2_hello_answers_ready_2_and_trusts_the_first_key(void) {
+    setup2("");
+    hello2(KEY);
+    CHECK(strcmp(out(), "READY 2\n") == 0, "READY 2");
+    CHECK(strcmp(trust_code(), "new") == 0, "a new key");
+    CHECK(strcmp(ev_key[last_kind(RX_EV_TRUST)], KEY) == 0, "the key in the event");
+    CHECK(strcmp(Q.trusted, KEY) == 0, "saved");
+    CHECK(rx_uploads_on(&S), "uploads on");
+    CHECK(last_kind(RX_EV_HELLO) >= 0 && last_kind(RX_EV_HELLO) < last_kind(RX_EV_TRUST), "HELLO, then TRUST");
+}
+static void the_same_key_again_is_ok_and_another_is_refused(void) {
+    setup2(KEY); hello2(KEY); out();
+    CHECK(strcmp(trust_code(), "ok") == 0, "ok"); CHECK(rx_uploads_on(&S), "on");
+    setup2(KEY); hello2(KEY2); out();
+    CHECK(strcmp(trust_code(), "other") == 0, "other");
+    CHECK(!rx_uploads_on(&S), "uploads off"); CHECK(strcmp(Q.trusted, KEY) == 0, "the saved key is unchanged");
+    setup2(KEY); hello2("0123456789ABCDEF0123456789ABCDEF"); out();
+    CHECK(strcmp(trust_code(), "ok") == 0, "upper-case hex is the same key");
+}
+static void a_malformed_key_is_never_saved(void) {
+    setup2(""); feed("WEBADF 2 xyz\n");
+    CHECK(strcmp(out(), "READY 2\n") == 0, "still READY 2: downloads keep working");
+    CHECK(strcmp(trust_code(), "other") == 0, "not trusted"); CHECK(Q.trusted[0] == 0, "nothing saved");
+    setup2(""); feed("WEBADF 2\n"); out();
+    CHECK(strcmp(trust_code(), "other") == 0, "no key at all");
+}
+static void a_protocol_1_board_is_old_and_uploads_stay_off(void) {
+    setup2(""); feed("WEBADF 1\n");
+    CHECK(strcmp(out(), "READY 1\n") == 0, "READY 1");
+    CHECK(strcmp(trust_code(), "old") == 0, "old"); CHECK(!rx_uploads_on(&S), "off"); CHECK(Q.trusted[0] == 0, "nothing saved");
+    setup(); feed("WEBADF 2 "); feed(KEY); feed("\n");
+    CHECK(strcmp(out(), "READY 2\n") == 0, "no queue attached: READY 2, no trust event");
+    CHECK_EQ_INT(last_kind(RX_EV_TRUST), -1);
+}
+static void trust_now_and_trust_next_replace_the_saved_key(void) {
+    char k4[5];
+    setup2(KEY); hello2(KEY2); out();
+    CHECK_EQ_INT(rx_trust_now(&S), 0);
+    CHECK(strcmp(Q.trusted, KEY2) == 0, "replaced"); CHECK(rx_uploads_on(&S), "on"); CHECK(strcmp(trust_code(), "new") == 0, "saved again");
+    setup2(KEY); CHECK_EQ_INT(rx_trust_now(&S), -1);   /* no board yet */
+    Q.trust_next = 1; hello2(KEY2); out();
+    CHECK(strcmp(Q.trusted, KEY2) == 0, "the next board's key"); CHECK_EQ_INT(Q.trust_next, 0);
+    rx_key4(KEY2, k4); CHECK(strcmp(k4, "FEDC") == 0, "four digits, upper case");
+}
+static void the_queue_takes_64_good_names(void) {
+    char nm[20];
+    rx_upq_init(&Q, "");
+    for (int i = 0; i < RX_UP_MAX; i++) { snprintf(nm, sizeof nm, "F%d", i); CHECK_EQ_INT(rx_up_add(&Q, "DH0:f", nm), i + 1); }
+    CHECK_EQ_INT(rx_up_add(&Q, "DH0:f", "one-more"), 0);
+    CHECK_EQ_INT(rx_upq_remove(&Q, 3), 1); CHECK_EQ_INT(Q.n, RX_UP_MAX - 1); CHECK_EQ_INT(rx_upq_remove(&Q, 3), 0);
+    CHECK_EQ_INT(rx_up_add(&Q, "DH0:x", "../x"), 0); CHECK_EQ_INT(rx_up_add(&Q, "DH0:x", "a:b"), 0);
+    CHECK_EQ_INT(rx_up_add(&Q, "", "x"), 0);
+    CHECK_EQ_INT(rx_up_add(&Q, "DH0:x", "x"), RX_UP_MAX + 1);   /* tags keep counting */
+}
+static void a_dropped_drawer_is_walked_and_icons_skipped(void) {
+    setup2(""); added_n = 0;
+    ff_add(&F, "DH0:Mods", 1); ff_add(&F, "DH0:Mods/sub", 1);
+    ff_put(&F, "DH0:Mods/a.mod", "a", 1, 0, ""); ff_put(&F, "DH0:Mods/a.mod.info", "i", 1, 0, "");
+    ff_put(&F, "DH0:Mods/sub/b.mod", "b", 1, 0, "");
+    CHECK_EQ_INT(rx_up_add_tree(&Q, &FS, "DH0:Mods", "Mods", on_added, NULL), 2);
+    CHECK_EQ_INT(Q.n, 2);
+    CHECK((strcmp(added_names[0], "Mods/a.mod=DH0:Mods/a.mod") == 0 && strcmp(added_names[1], "Mods/sub/b.mod=DH0:Mods/sub/b.mod") == 0) ||
+          (strcmp(added_names[1], "Mods/a.mod=DH0:Mods/a.mod") == 0 && strcmp(added_names[0], "Mods/sub/b.mod=DH0:Mods/sub/b.mod") == 0),
+          "both files, with their sub-paths; the icon file skipped");
+    CHECK_EQ_INT(rx_up_add_tree(&Q, &FS, "DH0:Mods/a.mod.info", "a.mod.info", NULL, NULL), 1);   /* an icon dropped itself goes */
+    CHECK_EQ_INT(rx_up_add_tree(&Q, &FS, "DH0:Nothing", "Nothing", NULL, NULL), -1);
+}
+static void a_volume_root_joins_without_a_slash_and_a_walk_stops_at_64(void) {
+    char nm[40];
+    setup2(""); ff_add(&F, "RAM:", 1);
+    for (int i = 0; i < 70; i++) { snprintf(nm, sizeof nm, "RAM:f%02d", i); ff_put(&F, nm, "x", 1, 0, ""); }
+    CHECK_EQ_INT(rx_up_add_tree(&Q, &FS, "RAM:", "Ram Disk", NULL, NULL), RX_UP_MAX);
+    CHECK(strncmp(Q.q[0].local, "RAM:f", 5) == 0 && strncmp(Q.q[0].name, "Ram Disk/f", 10) == 0, "RAM:fNN, Ram Disk/fNN");
 }
 int main(void) {
     RUN(hello_and_ping); RUN(list_items); RUN(list_split_across_feeds_and_bad_line_skipped); RUN(one_file);
@@ -182,5 +272,9 @@ int main(void) {
     RUN(refusals); RUN(write_failure_consumes_data); RUN(zero_length); RUN(meta_and_comment);
     RUN(disconnect_mid_file); RUN(garbage_ignored_overflow_closes); RUN(progress_every_16k);
     RUN(long_path_keeps_comment); RUN(refusals_are_events); RUN(huge_decimal_refused);
+    RUN(v2_hello_answers_ready_2_and_trusts_the_first_key); RUN(the_same_key_again_is_ok_and_another_is_refused);
+    RUN(a_malformed_key_is_never_saved); RUN(a_protocol_1_board_is_old_and_uploads_stay_off);
+    RUN(trust_now_and_trust_next_replace_the_saved_key); RUN(the_queue_takes_64_good_names);
+    RUN(a_dropped_drawer_is_walked_and_icons_skipped); RUN(a_volume_root_joins_without_a_slash_and_a_walk_stops_at_64);
     return REPORT();
 }
