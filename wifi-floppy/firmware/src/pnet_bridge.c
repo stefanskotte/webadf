@@ -92,14 +92,11 @@ static err_t pnet_input(struct pbuf *p, struct netif *nif) {
 // reassembly could pin pool buffers for seconds (review I1). Capped at PNET_LOCAL_A2B_MAX: ARP, a ping, TCP SYNs and
 // ACKs -- and Receive's replies (Phase 4): its longest OK line (a 36-char id and a 255-byte saved path) is ~310 bytes
 // of TCP payload, ~364 on the wire, and a frame dropped here is dropped on every retransmit too, so the board never
-// sees the OK and sends the file again (review C2). 768 covers a 640-byte line (Receive's RX_LINE_MAX) with headers.
-// Larger frames are dropped and counted; raise the cap when a board-side service takes bulk data from the Amiga.
-// The WF_A2B_DISCARD TEST build (plan 2026-10-19 Task 1) raises it to PNET_RING_MTU to measure full frames first.
-#if WF_A2B_DISCARD
-#define PNET_LOCAL_A2B_MAX PNET_RING_MTU   // increment 0 (plan 2026-10-19 Task 1): full frames, measured first (spec U9)
-#else
-#define PNET_LOCAL_A2B_MAX 768u
-#endif
+// sees the OK and sends the file again (review C2).
+// Uploads (fw 1.19.0, spec 2026-10-18 U9): any frame the ring holds (PNET_RING_MTU; the spec's "1,514" is this cap,
+// plan ruling P4). The frame's pbuf lives only until amiga_tcp.c's receive callback copies it into PSRAM and frees
+// it, before the next frame is input, so lwIP heap use stays at about one frame (measured in plan Task 1).
+#define PNET_LOCAL_A2B_MAX PNET_RING_MTU
 static void pnet_to_board(struct netif *nif, const uint8_t *f, uint16_t len) {
     struct pbuf *p = s_next && len <= PNET_LOCAL_A2B_MAX ? pbuf_alloc(PBUF_RAW, len, PBUF_RAM) : NULL;
     if (!p) { s_local_drops++; return; }

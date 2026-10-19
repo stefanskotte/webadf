@@ -1452,6 +1452,32 @@ static void post_sends_a_16k_body_from_the_callers_memory(void) {
     CHECK_EQ_INT(dc_upload_chunk(&c, "x", 0, body, 16385, resp, sizeof resp), -1);   // over DC_POST_BODY_MAX
     CHECK_EQ_INT(dc_upload_chunk(&c, "x", 0, body, 0, resp, sizeof resp), -1);       // a chunk is never empty
 }
+// A chunk retried over a stale kept socket (plan 2026-10-19 Task 7 parked item, Task 11): dc_post's head and body
+// are two writes, so the retry must send BOTH again on the fresh connection -- the whole 16 KB, not the head alone
+// or the body's tail. Two shapes of a dead kept socket: the first write fails, or the head goes and the body fails.
+static void a_chunk_retried_over_a_stale_socket_resends_the_whole_body(int max_write) {
+    boot();
+    static uint8_t body[16384];
+    for (int i = 0; i < 16384; i++) body[i] = (uint8_t)(i * 31 + 7);
+    fake_set_reused(true);
+    fake_kill_kept_connection();
+    if (max_write > 0) fake_set_max_write(max_write);
+    push_ok_json("{\"received\":16384}");                 // the fresh connection's answer
+    char resp[64];
+    CHECK_EQ_INT(dc_upload_chunk(&c, "11111111-2222-4333-8444-555555555555", 0, body, 16384, resp, sizeof resp), 200);
+    CHECK_EQ_INT(fake_request_count(), 2);
+    CHECK(!fake_last_reused(), "the retry is a fresh connection");
+    CHECK(strcmp(resp, "{\"received\":16384}") == 0, "the retry's answer");
+    const char *req = fake_last_request();
+    const int n = fake_last_request_len();
+    static const char line[] = "POST /api/device/upload/11111111-2222-4333-8444-555555555555?offset=0 HTTP/1.1\r\n";
+    CHECK(strncmp(req, line, sizeof line - 1) == 0, "the retry starts with the head");
+    const char *blank = strstr(req, "\r\n\r\n");
+    CHECK(blank != NULL && (int)(blank + 4 - req) + 16384 == n, "head, then exactly 16 KB");
+    CHECK(n > 16384 && memcmp(req + n - 16384, body, 16384) == 0, "the last request ends with the full body");
+}
+static void a_chunk_retried_after_a_failed_first_write_is_whole(void) { a_chunk_retried_over_a_stale_socket_resends_the_whole_body(0); }
+static void a_chunk_retried_after_a_half_sent_request_is_whole(void) { a_chunk_retried_over_a_stale_socket_resends_the_whole_body(1460); }
 static void upload_open_and_close_post_json(void) {
     boot();
     char resp[128];
@@ -3980,6 +4006,8 @@ int main(void) {
     RUN(a_connect_failure_releases_a_held_connection);
     RUN(post_sends_a_binary_body_whole);
     RUN(post_sends_a_16k_body_from_the_callers_memory);
+    RUN(a_chunk_retried_after_a_failed_first_write_is_whole);
+    RUN(a_chunk_retried_after_a_half_sent_request_is_whole);
     RUN(upload_open_and_close_post_json);
     RUN(status_carries_the_up_key_until_heard);
     RUN(post_reports_a_dead_link_and_a_dead_token);

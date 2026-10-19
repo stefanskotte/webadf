@@ -1,5 +1,6 @@
 // See key_store.h. Record layout, one program page: magic(4) . key(16) . crc32(4); the CRC covers the key.
 #include "key_store.h"
+#include "drive_store.h"   // drive_store_should_write: the same deferred-write rule
 #include <stddef.h>
 #include <string.h>
 
@@ -30,6 +31,10 @@ static bool page_build(uint8_t *out, size_t len, const uint8_t k[KEY_STORE_BYTES
     write_u32(out + 4 + KEY_STORE_BYTES, crc32_bitwise(k, KEY_STORE_BYTES));
     return true;
 }
+bool key_store_should_write(bool unsaved, bool drive_record_this_pass, bool drive_empty, bool idle) {
+    return unsaved && !drive_record_this_pass && drive_store_should_write(true, drive_empty, idle);
+}
+
 void key_store_hex(const uint8_t k[KEY_STORE_BYTES], char out[2 * KEY_STORE_BYTES + 1]) {
     static const char d[] = "0123456789abcdef";
     for (int i = 0; i < KEY_STORE_BYTES; i++) { out[2 * i] = d[k[i] >> 4]; out[2 * i + 1] = d[k[i] & 15]; }

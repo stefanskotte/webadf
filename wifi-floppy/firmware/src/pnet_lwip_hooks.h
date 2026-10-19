@@ -1,7 +1,7 @@
 #ifndef PNET_LWIP_HOOKS_H
 #define PNET_LWIP_HOOKS_H
 // lwIP's hook file (LWIP_HOOK_FILENAME, lwipopts.h), WF_PNET_L2 builds (every release since 1.11.0,
-// every DF1 mode: plan 2026-10-12 ruling 4). Every lwIP source includes it; only dhcp.c uses the hook.
+// every DF1 mode: plan 2026-10-12 ruling 4). Every lwIP source includes it; dhcp.c and tcp_in.c use its hooks.
 //
 // The board and the Amiga share one MAC (PaulaNET Phase 1), so both stacks put it in chaddr. The
 // Amiga's AmiTCP_NG sends client-id 01:<MAC>; lwIP sends none, and a router that matches a lease
@@ -14,4 +14,13 @@
         *(options_len_ptr) = (u16_t)pnet_dhcp_client_id((msg)->options, *(options_len_ptr),   \
                                                         DHCP_OPTIONS_LEN - 1u, (netif)->hwaddr); \
     } while (0)
+
+// Uploads from the Amiga (fw 1.19.0, spec 2026-10-18 §5; plan 2026-10-19 Task 11): the Amiga's frames are PBUF_RAM in
+// lwIP's 16 KB heap (pnet_bridge.c), so out-of-order segments queued for its connection could hold the heap. That pcb
+// may queue AS_UP_OOSEQ_BYTES; every other keeps lwIP's default (no limit). tcp_in.c reads the hook; amiga_tcp.c
+// defines the function.
+#include <stdint.h>
+struct tcp_pcb;
+uint32_t amiga_tcp_ooseq_limit(const struct tcp_pcb *pcb);
+#define TCP_OOSEQ_BYTES_LIMIT(pcb) amiga_tcp_ooseq_limit(pcb)
 #endif

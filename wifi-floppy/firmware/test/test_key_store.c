@@ -34,8 +34,19 @@ static void hex_is_lower_case_32_digits(void) {
     key_store_hex(K, h);
     CHECK(strcmp(h, "ab12cd34ef56ab12cd34ef56ab12cd34") == 0, "hex");
 }
+// When the key made at this boot is stored (plan 2026-10-19 ruling PF10): whatever the DF1 setting -- here DF1 off, so
+// no DF1 record is pending and DF1 holds nothing -- by drive_store_should_write's rule (empty, or idle with a disk), and
+// never in a pass that already wrote (or tried) the DF1 setting's record.
+static void the_new_key_is_stored_with_df1_off(void) {
+    const bool unsaved = true, no_df1_record = false;
+    CHECK(key_store_should_write(unsaved, no_df1_record, /*drive_empty=*/true, /*idle=*/false), "DF0 empty: stored");
+    CHECK(key_store_should_write(unsaved, no_df1_record, false, /*idle=*/true), "a disk in DF0, the Amiga idle: stored");
+    CHECK(!key_store_should_write(unsaved, no_df1_record, false, false), "a disk in DF0, the Amiga busy: later");
+    CHECK(!key_store_should_write(/*unsaved=*/false, no_df1_record, true, true), "already stored: never again");
+    CHECK(!key_store_should_write(unsaved, /*drive_record_this_pass=*/true, true, true), "not in the DF1 record's pass");
+}
 int main(void) {
     RUN(nothing_stored_loads_false); RUN(a_saved_key_loads_back); RUN(a_damaged_record_is_no_key);
-    RUN(re_pairing_keeps_the_key); RUN(hex_is_lower_case_32_digits);
+    RUN(re_pairing_keeps_the_key); RUN(hex_is_lower_case_32_digits); RUN(the_new_key_is_stored_with_df1_off);
     return REPORT();
 }
