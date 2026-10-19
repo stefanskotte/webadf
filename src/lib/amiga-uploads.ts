@@ -72,32 +72,56 @@ export async function storeChunk(db: Db, deviceId: string, id: string, offset: n
 
 export type CloseResult = { ok: true; name: string } | { ok: false; status: 404 | 409; code: 'crc' | 'size' | 'gone' };
 
+/**
+ * What a close of a settled row answers. The board repeats a close whose answer it lost, or retries one after its 30 s
+ * read timeout while the first still runs: the same CRC hears what the first close decided -- the name once stored,
+ * crc once that CRC failed. Anything else (deleted, expired, another CRC) is gone.
+ */
+function settledAnswer(r: UploadRow, crc: number): CloseResult | null {
+  if (r.status === 'receiving') return null;
+  if (r.crc32 === crc >>> 0) {
+    if (r.status === 'stored') return { ok: true, name: r.path };
+    if (r.status === 'failed' && r.errorCode === 'crc') return { ok: false, status: 409, code: 'crc' };
+  }
+  return { ok: false, status: 409, code: 'gone' };
+}
+
 /** The close (spec §4): every byte in order, the size and the CRC-32, then the bytes into the disk store. */
 export async function closeUpload(db: Db, deviceId: string, id: string, crc: number, now = new Date()): Promise<CloseResult> {
-  const [r] = await db.select().from(amigaUploads).where(and(eq(amigaUploads.id, id), eq(amigaUploads.deviceId, deviceId)));
+  const reread = async () => (await db.select().from(amigaUploads).where(and(eq(amigaUploads.id, id), eq(amigaUploads.deviceId, deviceId))))[0];
+  // A guarded update or a chunk read lost a race: the row as it is now decides (another close settled it, or a delete).
+  const lost = async (otherwise: CloseResult): Promise<CloseResult> => {
+    const cur = await reread();
+    if (!cur) return { ok: false, status: 404, code: 'gone' };
+    const a = settledAnswer(cur, crc);
+    return a && !(a.ok === false && a.code === 'gone') ? a : otherwise;
+  };
+  const r = await reread();
   if (!r) return { ok: false, status: 404, code: 'gone' };
-  if (r.status === 'stored') return { ok: true, name: r.path };   // a repeat after a lost answer
-  if (r.status !== 'receiving') return { ok: false, status: 409, code: 'gone' };
+  const settled = settledAnswer(r, crc);
+  if (settled) return settled;
   const parts = await db.select({ offset: amigaUploadChunks.offset, data: amigaUploadChunks.data }).from(amigaUploadChunks)
     .where(eq(amigaUploadChunks.uploadId, id)).orderBy(asc(amigaUploadChunks.offset));
   const bytes = new Uint8Array(r.sizeBytes);
   let at = 0;
   for (const p of parts) {
-    if (p.offset !== at || at + p.data.byteLength > r.sizeBytes) return { ok: false, status: 409, code: 'size' };
+    if (p.offset !== at || at + p.data.byteLength > r.sizeBytes) return lost({ ok: false, status: 409, code: 'size' });
     bytes.set(p.data, at);
     at += p.data.byteLength;
   }
-  if (at !== r.sizeBytes) return { ok: false, status: 409, code: 'size' };   // not every chunk is in: the board resumes
+  // Not every chunk is in: the board resumes. (Or a close running alongside settled the row and took the chunks.)
+  if (at !== r.sizeBytes) return lost({ ok: false, status: 409, code: 'size' });
   if ((crc32(bytes) >>> 0) !== crc >>> 0) {
-    // Final (spec §4): the chunks go, so the next send of this file starts at 0.
+    // Final (spec §4): the chunks go, so the next send of this file starts at 0. The CRC sent is kept, so a repeat of
+    // this close (its answer lost) hears crc again.
     const failed = await db.transaction(async (tx) => {
-      const hit = await tx.update(amigaUploads).set({ status: 'failed', errorCode: 'crc' })
+      const hit = await tx.update(amigaUploads).set({ status: 'failed', errorCode: 'crc', crc32: crc >>> 0 })
         .where(and(eq(amigaUploads.id, id), eq(amigaUploads.status, 'receiving'))).returning({ id: amigaUploads.id });
       if (hit.length) await tx.delete(amigaUploadChunks).where(eq(amigaUploadChunks.uploadId, id));
       return hit.length > 0;
     });
     // Deleted or expired meanwhile: it stays so, and the board hears gone.
-    return failed ? { ok: false, status: 409, code: 'crc' } : { ok: false, status: 404, code: 'gone' };
+    return failed ? { ok: false, status: 409, code: 'crc' } : lost({ ok: false, status: 404, code: 'gone' });
   }
   const sha = await storeSendBytes(bytes);   // adf/<sha256> through diskStore: local folder or Vercel Blob (ruling P5)
   const done = await db.transaction(async (tx) => {
@@ -107,7 +131,8 @@ export async function closeUpload(db: Db, deviceId: string, id: string, crc: num
     if (hit.length) await tx.delete(amigaUploadChunks).where(eq(amigaUploadChunks.uploadId, id));
     return hit.length > 0;
   });
-  return done ? { ok: true, name: r.path } : { ok: false, status: 404, code: 'gone' };   // deleted mid-close: not ok
+  // Lost the update: another close stored it (ok, the same name) -- or a delete took it (gone, not ok).
+  return done ? { ok: true, name: r.path } : lost({ ok: false, status: 404, code: 'gone' });
 }
 
 export type UploadView = {

@@ -282,6 +282,45 @@ describe('amiga uploads', () => {
     }
   });
 
+  // Increment-2 review, item 2: the board retries a close after its 30 s read timeout while the first still runs.
+  it('two closes at once both answer ok with the name; a repeat with another CRC is not ok', async () => {
+    const d = await device('org-close-twice'); const data = bytes(40000, 40);
+    const id = await upload(d, data, 'Twice.bin');
+    // Deterministic: the other close finishes between this one's checks and its guarded update.
+    const racy = new Proxy(db(), {
+      get(t, k) {
+        if (k === 'transaction') return async (fn: never) => {
+          expect(await U.closeUpload(db(), d.deviceId, id, crc(data))).toEqual({ ok: true, name: 'Twice.bin' });
+          return t.transaction(fn);
+        };
+        const v = Reflect.get(t, k); return typeof v === 'function' ? v.bind(t) : v;
+      },
+    });
+    expect(await U.closeUpload(racy, d.deviceId, id, crc(data))).toEqual({ ok: true, name: 'Twice.bin' });
+    expect(await row(id)).toMatchObject({ status: 'stored', crc32: crc(data) });
+    expect(await U.closeUpload(db(), d.deviceId, id, crc(data) ^ 1)).toEqual({ ok: false, status: 409, code: 'gone' });
+    // And truly at once.
+    const data2 = bytes(40000, 41);
+    const id2 = await upload(d, data2, 'Twice2.bin');
+    const both = await Promise.all([U.closeUpload(db(), d.deviceId, id2, crc(data2)), U.closeUpload(db(), d.deviceId, id2, crc(data2))]);
+    expect(both).toEqual([{ ok: true, name: 'Twice2.bin' }, { ok: true, name: 'Twice2.bin' }]);
+  });
+
+  // Increment-2 review, item 3: the answer to a CRC-failed close is lost; the board asks again with the same CRC.
+  it('a repeat of a CRC-failed close with the same CRC answers crc again; another CRC answers gone', async () => {
+    const d = await device('org-crc-repeat'); const data = bytes(20000, 42);
+    const id = await upload(d, data, 'Crc.bin');
+    const bad = (crc(data) ^ 1) >>> 0;
+    expect(await U.closeUpload(db(), d.deviceId, id, bad)).toEqual({ ok: false, status: 409, code: 'crc' });
+    expect(await row(id)).toMatchObject({ status: 'failed', errorCode: 'crc', crc32: bad });
+    expect(await U.closeUpload(db(), d.deviceId, id, bad)).toEqual({ ok: false, status: 409, code: 'crc' });
+    expect(await U.closeUpload(db(), d.deviceId, id, crc(data))).toEqual({ ok: false, status: 409, code: 'gone' });
+    // Two CRC-failed closes at once: both hear crc.
+    const id2 = await upload(d, data, 'Crc2.bin');
+    const both = await Promise.all([U.closeUpload(db(), d.deviceId, id2, bad), U.closeUpload(db(), d.deviceId, id2, bad)]);
+    expect(both).toEqual([{ ok: false, status: 409, code: 'crc' }, { ok: false, status: 409, code: 'crc' }]);
+  });
+
   it('lists newest first, filtered by board, with the board on each row; a lapsed partial reads failed', async () => {
     const a = await device('org-list', 'Bench'); const b = await device('org-list', 'Den');
     await stored(a, bytes(5, 5), 'A.txt');

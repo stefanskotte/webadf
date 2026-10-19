@@ -16,7 +16,7 @@ export const amigaUploads = pgTable('amiga_uploads', {
   /** UTF-8, decoded from Latin-1 and cleaned (cleanAmigaPath). Data only: never a storage key. */
   path: text('path').notNull(),
   sizeBytes: integer('size_bytes').notNull(),
-  /** Set at the close: the CRC-32 Receive sent, which the bytes matched. */
+  /** Set at the close: the CRC-32 Receive sent -- which the bytes matched (stored) or did not (failed, crc). */
   crc32: bigint('crc32', { mode: 'number' }),
   protection: bigint('protection', { mode: 'number' }).notNull().default(0),
   comment: text('comment').notNull().default(''),

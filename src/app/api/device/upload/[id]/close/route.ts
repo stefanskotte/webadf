@@ -1,5 +1,6 @@
 // Closes an upload from the Amiga (spec 2026-10-18 §4): the CRC-32 Receive computed over the whole file. A 4 MB close
-// reads 256 chunk rows (Task 12 timed it). A row deleted or expired mid-close answers 404 gone.
+// reads 256 chunk rows (Task 12 timed it). A row deleted or expired mid-close answers 404 gone. A repeat with the same
+// CRC (a lost answer, or the board's retry while the first close runs) answers as the first did: the name, or crc.
 import { z } from 'zod';
 import { getDb } from '@/db';
 import { requireDevice, deviceAuthResponse } from '@/lib/device-auth';
