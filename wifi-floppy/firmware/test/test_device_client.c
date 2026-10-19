@@ -509,6 +509,7 @@ static void test_status_body_fits_at_maximum(void) {
     worst_boot[BT_JSON_MAX] = '\0';
     dc_set_last_boot(&c, worst_boot);
     dc_set_nfc_fail(&c, "bad data:0xFF@FF");
+    dc_set_up_key(&c, "ab12cd34ef56ab12cd34ef56ab12cd34");
 
     fake_push_response("HTTP/1.1 204 No Content\r\n\r\n");
     CHECK(dc_report_status(&c, 2147483647, -200, long_err, long_ver),
@@ -537,6 +538,9 @@ static void test_status_body_fits_at_maximum(void) {
     CHECK(r[strlen(r) - 1] == '}', "and the body still closes");
     CHECK(strstr(r, worst_boot) != NULL, "the whole lastBoot object survives a maximal body");
     CHECK(strstr(r, ",\"nfcFail\":\"bad data:0xFF@FF\"") != NULL, "and the whole nfcFail reason");
+    // upKey does not fit beside every other tail at its maximum: left out, still owed, never the report (ruling P13).
+    CHECK(strstr(r, "\"upKey\"") == NULL, "upKey waits when the body is full");
+    CHECK(dc_up_key_owed(&c), "and stays owed for the next report");
     {
         // The whole reason, escaped, closing quote included: 47 x \" then ".
         static char want[16 + 2 * sizeof c.display_error + 2];
@@ -1429,6 +1433,58 @@ static void post_sends_a_binary_body_whole(void) {
     CHECK(n > DC_POST_BODY_MAX, "head + body");
     CHECK(memcmp(fake_last_request() + n - DC_POST_BODY_MAX, body, DC_POST_BODY_MAX) == 0,
           "the body arrives byte for byte, NULs and all");
+}
+
+// Uploads from the Amiga (plan 2026-10-19 Task 7): a 16 KB chunk goes out as the head, then the caller's bytes.
+static void post_sends_a_16k_body_from_the_callers_memory(void) {
+    boot();
+    static uint8_t body[16384];
+    for (int i = 0; i < 16384; i++) body[i] = (uint8_t)(i * 29 + 1);
+    push_ok_json("{\"received\":16384}");
+    char resp[64];
+    CHECK_EQ_INT(dc_upload_chunk(&c, "11111111-2222-4333-8444-555555555555", 0, body, 16384, resp, sizeof resp), 200);
+    CHECK(strcmp(resp, "{\"received\":16384}") == 0, "the answer");
+    CHECK(strstr(fake_last_request(), "POST /api/device/upload/11111111-2222-4333-8444-555555555555?offset=0 HTTP/1.1") != NULL, "line");
+    CHECK(strstr(fake_last_request(), "Content-Type: application/octet-stream") != NULL, "type");
+    CHECK(strstr(fake_last_request(), "Content-Length: 16384\r\n") != NULL, "length");
+    int n = fake_last_request_len();
+    CHECK(memcmp(fake_last_request() + n - 16384, body, 16384) == 0, "the body byte for byte, after the head");
+    CHECK_EQ_INT(dc_upload_chunk(&c, "x", 0, body, 16385, resp, sizeof resp), -1);   // over DC_POST_BODY_MAX
+    CHECK_EQ_INT(dc_upload_chunk(&c, "x", 0, body, 0, resp, sizeof resp), -1);       // a chunk is never empty
+}
+static void upload_open_and_close_post_json(void) {
+    boot();
+    char resp[128];
+    push_ok_json("{\"id\":\"u1\",\"offset\":16384}");
+    CHECK_EQ_INT(dc_upload_open(&c, "{\"size\":5,\"date\":\"1.2.3\",\"protection\":0,\"path\":\"a\",\"comment\":\"\"}", resp, sizeof resp), 200);
+    CHECK(strstr(fake_last_request(), "POST /api/device/upload HTTP/1.1") != NULL, "open line");
+    CHECK(strstr(fake_last_request(), "Content-Type: application/json") != NULL, "json");
+    CHECK(strstr(resp, "\"offset\":16384") != NULL, "answer");
+    push_status_json("HTTP/1.1 409 Conflict", "{\"code\":\"crc\"}");
+    CHECK_EQ_INT(dc_upload_close(&c, "u1", "{\"crc32\":907060870}", resp, sizeof resp), 409);
+    CHECK(strstr(fake_last_request(), "POST /api/device/upload/u1/close HTTP/1.1") != NULL, "close line");
+    CHECK(strstr(fake_last_request(), "\r\n\r\n{\"crc32\":907060870}") != NULL, "close body");
+    CHECK(strcmp(resp, "{\"code\":\"crc\"}") == 0, "the refusal's body");
+}
+// The board key's 4 digits (fw 1.19.0): ride the status reports until one is heard, like lastBoot (plan ruling P13).
+static void status_carries_the_up_key_until_heard(void) {
+    boot();
+    fake_push_response("HTTP/1.1 204 No Content\r\n\r\n");
+    dc_report_status(&c, 0, -50, NULL, "1.19.0+gt");
+    CHECK(strstr(fake_last_request(), "upKey") == NULL, "not set: no key");
+    dc_set_up_key(&c, "ab12cd34ef56ab12cd34ef56ab12cd34");
+    CHECK(dc_up_key_owed(&c), "owed");
+    fake_push_response("HTTP/1.1 500 Internal Server Error\r\nContent-Length: 0\r\n\r\n");
+    dc_report_status(&c, 0, -50, NULL, "1.19.0+gt");
+    CHECK(strstr(fake_last_request(), ",\"upKey\":\"ab12\"") != NULL, "the first 4 digits");
+    CHECK(dc_up_key_owed(&c), "a 500 was not heard");
+    fake_push_response("HTTP/1.1 204 No Content\r\n\r\n");
+    dc_report_status(&c, 0, -50, NULL, "1.19.0+gt");
+    fake_push_response("HTTP/1.1 204 No Content\r\n\r\n");
+    dc_report_status(&c, 0, -50, NULL, "1.19.0+gt");
+    CHECK(strstr(fake_last_request(), "upKey") == NULL, "heard: not again");
+    dc_set_up_key(&c, NULL);
+    CHECK(!dc_up_key_owed(&c), "NULL: nothing owed");
 }
 
 static void post_reports_a_dead_link_and_a_dead_token(void) {
@@ -3923,6 +3979,9 @@ int main(void) {
     RUN(a_partial_write_that_then_fails_is_abandoned_and_retried);
     RUN(a_connect_failure_releases_a_held_connection);
     RUN(post_sends_a_binary_body_whole);
+    RUN(post_sends_a_16k_body_from_the_callers_memory);
+    RUN(upload_open_and_close_post_json);
+    RUN(status_carries_the_up_key_until_heard);
     RUN(post_reports_a_dead_link_and_a_dead_token);
     RUN(test_fetch_firmware_streams_the_body);
     RUN(test_fetch_firmware_incomplete_is_minus_one);

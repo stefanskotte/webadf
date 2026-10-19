@@ -177,6 +177,8 @@ typedef bool (*dc_hold_fn)(void *ctx);
 // The boot trail (1.18.2) adds ,"lastBoot":<object of at most BT_JSON_MAX (112)> and ,"nfcFail":"<reason of at
 // most 23>" -- measured 1706 at maximum with a 16-character reason (nfc_ui_why's longest), so the body goes to 1712
 // (6 spare). The request: measured 1840 <= 2048. A key that would not fit is left out, never the report. Both ride only until a report is heard (once per boot / failure).
+// upKey (1.19.0) adds ,"upKey":"abcd" -- 15 bytes -- that does not fit beside every other tail at its maximum, so it
+// rides like lastBoot: until heard, left out (still owed) when the body is full. The budget is not raised.
 // test_status_body_fits_at_maximum prints the measured sizes.
 #define DC_STATUS_BODY_BYTES  1712
 #define DC_STATUS_REQ_BYTES   2048
@@ -462,6 +464,9 @@ typedef struct {
     bool     _last_boot_owed;
     char     _nfc_fail[24];
     bool     _nfc_fail_owed;
+    // dc_set_up_key (fw 1.19.0): the board key, whose first 4 digits go out as "upKey" until a report is heard.
+    const char *_up_key;
+    bool     _up_key_owed;
     // dc_set_plays_hd: "playsHd":true in every status report.
     bool     _plays_hd;
     // dc_set_boot (Disk at startup, 2026-10-19): this boot's id (0 = not set: nothing sent) and whether the reboot
@@ -679,11 +684,11 @@ void dc_force_refetch(device_client_t *c);
 // it had arrived by a normal fetch.
 void dc_adopt_image(device_client_t *c, const char *sha256);
 
-// Largest body dc_post will send in one call: one HD track's sector data,
-// 11,264 bytes (HD writes spec §4.4; a DD track is 5,632). See the STACK note
-// in device_client.c for why the request buffer this backs is `static` and
-// sized from this: it costs 5.6 KB more than DD alone did.
-#define DC_POST_BODY_MAX 11264
+// Largest body dc_post sends in one call: one upload chunk from the Amiga (spec 2026-10-18 §4: 16 KB), more than
+// an HD track's sector data (11,264, HD writes spec §4.4). Only the head is built into a static buffer
+// (DC_POST_HEAD_BYTES); the body goes out from the caller's memory -- a PSRAM ring, a track in PSRAM -- so the size
+// costs no SRAM (plan 2026-10-19 ruling P3; until 1.19.0 the static was head + 11,264).
+#define DC_POST_BODY_MAX 16384
 
 // Sends one POST with a binary body (`body`/`body_len`, up to
 // DC_POST_BODY_MAX -- NUL bytes and all, unlike http_build_request's
@@ -795,6 +800,11 @@ bool dc_last_boot_owed(const device_client_t *c);
 // The newest failed tag event's reason (nfc_ui_why: "locked:0x14@A2"), sent as "nfcFail" until a report is heard.
 // A newer one replaces an unsent older one. Copied (at most 23 characters).
 void dc_set_nfc_fail(device_client_t *c, const char *reason);
+// The board key (32 hex digits, key_store.c), whose first 4 digits are sent as "upKey" until a status report carrying
+// them is heard, so the web app can show them beside Receive's "Trusted board AB12" (spec 2026-10-18 §6). A pointer:
+// the string must outlive the client. NULL sends nothing.
+void dc_set_up_key(device_client_t *c, const char *key_hex);
+bool dc_up_key_owed(const device_client_t *c);
 
 // Whether dc_report_status says "playsHd":true (HD spec §4.3, §5.5). main.c
 // sets it once from WF_DRIVE_ID: the drive-ID responder is what lets the
@@ -933,6 +943,14 @@ int dc_fetch_send_chunk(device_client_t *c, const char *id, uint32_t off, uint32
 int dc_post_send_done(device_client_t *c, const char *id, const char *json);
 // What the next poll reports: &xferAck=<acked>&rx=<rx>.
 void dc_set_send(device_client_t *c, uint32_t acked_version, char rx);
+
+// --- Uploads from the Amiga (spec 2026-10-18 §4; amiga_send.c drives these). HTTP status, or -1. resp gets the body.
+// POST /api/device/upload with {size, date, protection, path, comment}: 200 {id, offset}, or 4xx {code}.
+int dc_upload_open(device_client_t *c, const char *json, char *resp, int resp_cap);
+// POST /api/device/upload/<id>?offset=<o> with 1..DC_POST_BODY_MAX raw bytes: 200 {received}, 409 {received}.
+int dc_upload_chunk(device_client_t *c, const char *id, uint32_t offset, const uint8_t *b, int n, char *resp, int resp_cap);
+// POST /api/device/upload/<id>/close with {crc32}: 200 {name}, or 409 {code}.
+int dc_upload_close(device_client_t *c, const char *id, const char *json, char *resp, int resp_cap);
 // Disk at startup (2026-10-19): names this boot on every poll (&boot=<8 hex>) and tap (?boot=<8 hex>), plus
 // &ota=1 when the reboot before it was the firmware's own for an update (fw_boot_after_ota). The id is chosen once
 // per boot and never changes within it -- a Wi-Fi reconnect re-sends the same one -- so the server can act on the
