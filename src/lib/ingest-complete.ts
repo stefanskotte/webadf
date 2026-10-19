@@ -13,6 +13,7 @@ import { blobs, entitlements, games, disks } from '@/db/schema/catalog';
 import { diskVersions } from '@/db/schema/disk-history';
 import { selectReleasableUploads } from '@/lib/blob-gc';
 import { diskStore } from '@/lib/storage';
+import { blobRefsElsewhere } from '@/lib/amiga-uploads';
 import { completeBody, stableId } from '@/lib/ingest';
 import { groupDisks } from '@/lib/grouping';
 import { parseTosecName } from '@/lib/tosec';
@@ -147,17 +148,18 @@ async function release(sha256: string): Promise<void> {
  * Best effort, like release(): a failed lookup leaves the bytes where they
  * were, which is the state before this existed, and never fails the request.
  */
-async function releaseRefused(shas: string[]): Promise<void> {
+export async function releaseRefused(shas: string[]): Promise<void> {
   if (shas.length === 0) return;
   const db = getDb();
-  let rowed, diskRefs, entRefs, history;
+  let rowed, diskRefs, entRefs, history, elsewhere;
   try {
-    [rowed, diskRefs, entRefs, history] = await Promise.all([
+    [rowed, diskRefs, entRefs, history, elsewhere] = await Promise.all([
       db.select({ sha256: blobs.sha256 }).from(blobs).where(inArray(blobs.sha256, shas)),
       db.select({ sha256: disks.sha256 }).from(disks).where(inArray(disks.sha256, shas)),
       db.select({ sha256: entitlements.sha256 }).from(entitlements).where(inArray(entitlements.sha256, shas)),
       db.select({ blob: diskVersions.blobSha256, image: diskVersions.imageSha256 }).from(diskVersions)
         .where(or(inArray(diskVersions.blobSha256, shas), inArray(diskVersions.imageSha256, shas))),
+      blobRefsElsewhere(db, shas),
     ]);
   } catch (err) {
     console.error('ingest: could not check refused uploads for references; keeping their bytes', err);
@@ -168,7 +170,9 @@ async function releaseRefused(shas: string[]): Promise<void> {
     rowed.map((r) => r.sha256),
     diskRefs.map((r) => r.sha256),
     entRefs.map((r) => r.sha256),
-    history.flatMap((h) => [h.blob, h.image]),
+    // History, plus bytes a file from the Amiga or a queued transfer names: Add to library hands registerUploads bytes
+    // the From the Amiga area still shows (plan 2026-10-19 ruling P6), and a refusal must not delete them.
+    [...history.flatMap((h) => [h.blob, h.image]), ...elsewhere],
   );
   for (const s of releasable) await release(s);
 }
