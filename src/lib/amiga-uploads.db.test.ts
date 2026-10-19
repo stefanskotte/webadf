@@ -248,6 +248,19 @@ describe('amiga uploads', () => {
     await expect(U.clearUploads(db(), 'org-micro', "x'; drop table amiga_uploads; --")).rejects.toThrow(RangeError);
   });
 
+  it('clear with a board clears only that board, up to the cursor the filtered list gave', async () => {
+    const a = await device('org-board'); const b = await device('org-board');
+    const a1 = await stored(a, bytes(10, 40), 'A1.txt');
+    const b1 = await stored(b, bytes(10, 41), 'B1.txt');
+    const a2 = await stored(a, bytes(10, 42), 'A2.txt');
+    const seen = (await U.listUploads(db(), 'org-board', a.deviceId))[0].cursor;   // newest of board a's list: a2
+    const b2 = await stored(b, bytes(10, 43), 'B2.txt');
+    expect(await U.clearUploads(db(), 'org-board', seen, a.deviceId)).toBe(2);
+    expect((await row(a1)).status).toBe('deleted'); expect((await row(a2)).status).toBe('deleted');
+    expect((await row(b1)).status).toBe('stored');   // older than the cursor, but another board
+    expect((await row(b2)).status).toBe('stored');
+  });
+
   it('a cursor has one exact shape; anything else is rejected before SQL', async () => {
     expect(U.isUploadCursor('2026-10-20T10:00:00.000100Z')).toBe(true);
     for (const bad of ['2026-10-20 10:00:00.000100+00', '2026-10-20T10:00:00Z', '2026-10-20T10:00:00.000100+02:00',
