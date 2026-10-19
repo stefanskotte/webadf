@@ -321,12 +321,12 @@ static void bytes_never_pass_the_credit_then_end(void) {
     CHECK_EQ_INT(ob_n, 32768); CHECK(memcmp(obig, DATA, 32768) == 0, "the first 32 KB");
     CHECK(!rx_want_output(&S), "nothing past the credit");
     CHECK_EQ_INT(last_ev[last_kind(RX_EV_UP_BEGIN)].bytes, 0);
-    feed("MORE 1 40000\n"); drain();
+    feed("MORE 1 40000 32768\n"); drain();
     snprintf(want, sizeof want, "END 1 %lx\n", crc_of(40000));
     CHECK_EQ_INT(ob_n, 7232 + strlen(want));
     CHECK(memcmp(obig, DATA + 32768, 7232) == 0, "the rest");
     CHECK(strcmp((char *)obig + 7232, want) == 0, "END with the CRC of the whole file");
-    CHECK_EQ_INT(last_ev[last_kind(RX_EV_UP_PROGRESS)].bytes, 7232);   /* credit 40000 - window 32768 */
+    CHECK_EQ_INT(last_ev[last_kind(RX_EV_UP_PROGRESS)].bytes, 32768);   /* the board's stored field */
 }
 static void resume_crc_covers_the_skipped_part(void) {
     char want[40];
@@ -419,8 +419,57 @@ static void no_after_data_started_closes_too(void) {
 }
 static void stale_lines_for_another_tag_are_ignored(void) {
     up_ready("DH0:Hello.txt", "Hello.txt", 5, 0, ""); drain();
-    feed("TAKE 7 0 5\nMORE 7 5\nDONE 7 1:x\nNO 7 full 1:x\n");
+    feed("TAKE 7 0 5\nMORE 7 5 5\nDONE 7 1:x\nNO 7 full 1:x\n");
     CHECK_EQ_INT(last_kind(RX_EV_UP_BEGIN), -1); CHECK_EQ_INT(last_kind(RX_EV_UP_FAILED), -1);
+}
+static void progress_follows_the_stored_field_and_a_capped_credit(void) {
+    up_ready("DH0:Big", "Big", 40000, 0, ""); drain();
+    feed("TAKE 1 0 32768\n"); drain();
+    feed("MORE 1 40000 16384\n");                          /* credit capped at the size; stored is what counts */
+    CHECK_EQ_INT(last_ev[last_kind(RX_EV_UP_PROGRESS)].bytes, 16384);
+    feed("MORE 1 40000 40000\n");
+    CHECK_EQ_INT(last_ev[last_kind(RX_EV_UP_PROGRESS)].bytes, 40000);
+    up_ready("DH0:Big", "Big", 40000, 0, ""); drain();
+    feed("TAKE 1 0 40000\n");                              /* a first TAKE already capped */
+    CHECK_EQ_INT(last_ev[last_kind(RX_EV_UP_BEGIN)].bytes, 0);
+    feed("MORE 1 40000 8192\n");
+    CHECK_EQ_INT(last_ev[last_kind(RX_EV_UP_PROGRESS)].bytes, 8192);
+    up_ready("DH0:Big", "Big", 40000, 0, ""); drain();
+    CHECK_EQ_INT(feed("TAKE 1 0 32768\nMORE 1 40000\n"), -1);   /* no third field: a protocol error closes */
+    CHECK(strstr(ev_path[last_kind(RX_EV_UP_FAILED)], "out of range") != NULL, "MORE without <stored> is refused");
+}
+static void a_drop_after_take_reports_the_stored_offset(void) {
+    up_ready("DH0:Big", "Big", 40000, 0, ""); drain(); feed("TAKE 1 0 32768\n"); drain();
+    rx_disconnected(&S);
+    CHECK_EQ_INT(last_ev[last_kind(RX_EV_UP_FAILED)].bytes, 0);   /* sent 32768, stored 0 */
+    up_ready("DH0:Big", "Big", 40000, 0, ""); drain(); feed("TAKE 1 16384 32768\n"); drain();
+    rx_disconnected(&S);
+    CHECK_EQ_INT(last_ev[last_kind(RX_EV_UP_FAILED)].bytes, 16384);
+    up_ready("DH0:Big", "Big", 40000, 0, ""); drain();
+    rx_disconnected(&S);
+    CHECK_EQ_INT(last_ev[last_kind(RX_EV_UP_FAILED)].bytes, 0);   /* before any TAKE */
+}
+static void more_mid_write_and_during_skip_never_lets_sent_pass_credit(void) {
+    unsigned char b[4096]; int k;
+    up_ready("DH0:Big", "Big", 40000, 0, ""); drain();
+    feed("TAKE 1 16384 24576\n");                          /* SKIP first */
+    k = rx_take_output(&S, (char *)b, sizeof b);           /* one skip block, nothing sent */
+    CHECK_EQ_INT(k, 0);
+    feed("MORE 1 24576 16384\n");                          /* a MORE during SKIP */
+    CHECK_EQ_INT(last_ev[last_kind(RX_EV_UP_PROGRESS)].bytes, 16384);
+    drain();
+    CHECK_EQ_INT(ob_n, 24576 - 16384); CHECK_EQ_INT(S.up_sent, 24576);
+    up_ready("DH0:Big", "Big", 40000, 0, ""); drain(); feed("TAKE 1 0 12288\n");
+    for (int i = 0; i < 2; i++) { rx_take_output(&S, (char *)b, sizeof b); rx_take_output(&S, (char *)b, sizeof b); }   /* mid-write */
+    feed("MORE 1 12288 4096\n");                           /* a MORE that does not raise the credit */
+    drain(); CHECK(S.up_sent <= S.up_credit, "sent never passes credit"); CHECK_EQ_INT(S.up_sent, 12288);
+    feed("MORE 1 20000 12288\n"); drain();
+    CHECK(S.up_sent <= S.up_credit, "still within the credit"); CHECK_EQ_INT(S.up_sent, 20000);
+}
+static void the_comment_in_the_put_has_no_control_bytes(void) {
+    up_ready("DH0:C", "C", 3, 0, "a\nb\rc\td"); drain();
+    CHECK(strstr((char *)obig, "PUT 1 3 1.2.3 0 1:C 7:a b c d\n") != NULL, "control bytes become spaces, length kept");
+    CHECK_EQ_INT(strchr(strstr((char *)obig, "PUT"), '\n') - (char *)obig, (long)strlen("PUT 1 3 1.2.3 0 1:C 7:a b c d"));
 }
 int main(void) {
     RUN(hello_and_ping); RUN(list_items); RUN(list_split_across_feeds_and_bad_line_skipped); RUN(one_file);
@@ -438,6 +487,8 @@ int main(void) {
     RUN(done_and_no_are_events_and_the_next_file_follows); RUN(abort_before_take_and_cancel_mid_file);
     RUN(take_after_abort_closes); RUN(a_read_failure_mid_file_closes); RUN(a_dropped_connection_fails_the_file);
     RUN(answers_out_of_range_and_a_file_mid_upload_close); RUN(no_after_data_started_closes_too);
-    RUN(stale_lines_for_another_tag_are_ignored);
+    RUN(stale_lines_for_another_tag_are_ignored); RUN(progress_follows_the_stored_field_and_a_capped_credit);
+    RUN(a_drop_after_take_reports_the_stored_offset); RUN(more_mid_write_and_during_skip_never_lets_sent_pass_credit);
+    RUN(the_comment_in_the_put_has_no_control_bytes);
     return REPORT();
 }

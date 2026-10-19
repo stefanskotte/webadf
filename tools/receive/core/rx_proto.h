@@ -48,7 +48,7 @@ typedef struct rx_fs {
 enum { RX_EV_HELLO, RX_EV_LIST, RX_EV_BEGIN, RX_EV_PROGRESS, RX_EV_DONE, RX_EV_FAILED,
        RX_EV_TRUST,          /* after HELLO, with a queue attached: code "new" (store key now), "ok", "other", "old" */
        RX_EV_UP_BEGIN,       /* the board took the file: bytes = where it resumes */
-       RX_EV_UP_PROGRESS,    /* bytes = stored on the web app */
+       RX_EV_UP_PROGRESS,    /* bytes = stored on the web app (MORE's <stored> field) */
        RX_EV_UP_DONE,        /* path = the name as stored */
        RX_EV_UP_FAILED };    /* text = why; code = the board's NO code, or "local" */
 typedef struct rx_event {
@@ -89,7 +89,7 @@ typedef struct rx_session { /* fields private to rx_proto.c except list/list_n *
     /* protocol 2 */
     rx_upq *upq; int peer_v, trust, proto_err; char peer_key[RX_KEY_HEX + 1];
     int up_phase, up_closing, up_cancel; rx_up_item up_cur; rx_finfo up_info;
-    unsigned long up_off, up_credit, up_window, up_sent, up_skip, up_crc;
+    unsigned long up_off, up_credit, up_stored, up_sent, up_skip, up_crc;
 } rx_session;
 
 void rx_init(rx_session *s, const rx_fs *fs, rx_event_fn on_event, void *uctx);

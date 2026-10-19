@@ -253,12 +253,13 @@ static int put_due(const rx_session *s) {
 /* Ends the file going up: closed, and the front end told. */
 static void up_finish(rx_session *s, int kind, const char *text, const char *code, const char *stored) {
     rx_up_item it = s->up_cur;
-    unsigned long size = s->up_info.size, sent = s->up_sent;
+    unsigned long size = s->up_info.size;
+    unsigned long acked = s->up_stored;   /* stored on the web app (PF16): the TAKE offset, then MORE's field; 0 before TAKE */
     s->fs->close_r(s->fs->ctx);
     s->up_phase = RX_UP_IDLE;
     s->up_cancel = 0;
     if (kind == RX_EV_UP_DONE) emit_up(s, kind, &it, stored, size, size, 0, 0);
-    else emit_up(s, kind, &it, 0, size, sent, text, code);
+    else emit_up(s, kind, &it, 0, size, acked, text, code);
 }
 static void protocol_error(rx_session *s, const char *why) {
     if (s->up_phase != RX_UP_IDLE) up_finish(s, RX_EV_UP_FAILED, why, "local", 0);
@@ -278,11 +279,15 @@ static void up_put(rx_session *s) {
             emit_up(s, RX_EV_UP_FAILED, &it, 0, s->up_info.size, 0, "file too large (4 MB at most)", "local");
             continue;
         }
-        s->up_cur = it; s->up_phase = RX_UP_ASKED; s->up_cancel = 0; s->up_sent = 0;
+        s->up_cur = it; s->up_phase = RX_UP_ASKED; s->up_cancel = 0; s->up_sent = 0; s->up_stored = 0;
         puts_(s, "PUT "); put_dec(s, it.tag); puts_(s, " "); put_dec(s, s->up_info.size); puts_(s, " ");
         put_dec(s, s->up_info.days); puts_(s, "."); put_dec(s, s->up_info.mins); puts_(s, "."); put_dec(s, s->up_info.ticks);
         puts_(s, " "); put_hex(s, s->up_info.prot); puts_(s, " "); put_lenstr(s, it.name); puts_(s, " ");
-        put_lenstr(s, s->up_info.comment); puts_(s, "\n");
+        { char cm[RX_COMMENT_MAX + 1]; unsigned i;   /* a control byte would end the PUT line early */
+          for (i = 0; s->up_info.comment[i] && i < RX_COMMENT_MAX; i++)
+              cm[i] = (unsigned char)s->up_info.comment[i] < 0x20 ? ' ' : s->up_info.comment[i];
+          cm[i] = 0; put_lenstr(s, cm); }
+        puts_(s, "\n");
         return;
     }
 }
@@ -338,16 +343,20 @@ static void on_take(rx_session *s, cur *c) {
         s->up_closing = 1;
         return;
     }
-    s->up_off = s->up_sent = off; s->up_credit = credit; s->up_window = credit - off; s->up_crc = 0; s->up_skip = off;
+    s->up_off = s->up_sent = off; s->up_credit = credit; s->up_stored = off; s->up_crc = 0; s->up_skip = off;
     emit_up(s, RX_EV_UP_BEGIN, &s->up_cur, 0, s->up_info.size, off, 0, 0);
     if (off) s->up_phase = RX_UP_SKIP; else up_data_begins(s);
 }
 static void on_more(rx_session *s, cur *c) {
-    const char *t; unsigned n; unsigned long v;
+    const char *t; unsigned n; unsigned long v, stored;
     if ((s->up_phase != RX_UP_SKIP && s->up_phase != RX_UP_DATA && s->up_phase != RX_UP_ENDED) || !tag_is(s, c)) return;
-    if (!tok(c, &t, &n) || !num(t, n, 10, &v) || v > s->up_info.size) { protocol_error(s, "the board answered out of range"); return; }
+    if (!tok(c, &t, &n) || !num(t, n, 10, &v) || v > s->up_info.size ||
+        !tok(c, &t, &n) || !num(t, n, 10, &stored) || stored > s->up_info.size) {   /* MORE <tag> <credit> <stored> (PF16) */
+        protocol_error(s, "the board answered out of range"); return;
+    }
     if (v > s->up_credit) s->up_credit = v;
-    emit_up(s, RX_EV_UP_PROGRESS, &s->up_cur, 0, s->up_info.size, s->up_credit - s->up_window, 0, 0);
+    if (stored > s->up_stored) s->up_stored = stored;
+    emit_up(s, RX_EV_UP_PROGRESS, &s->up_cur, 0, s->up_info.size, s->up_stored, 0, 0);
 }
 static void on_done(rx_session *s, cur *c) {
     char name[RX_PATH_MAX + 1];
