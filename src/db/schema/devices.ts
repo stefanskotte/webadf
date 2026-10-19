@@ -241,6 +241,9 @@ export const devices = pgTable('devices', {
   /** The receiver state the board last reported (?rx=): c connected, r refused, u unreachable, - unknown/off. */
   sendRx: text('send_rx'),
   sendRxAt: timestamp('send_rx_at', { withTimezone: true }),
+  // fw 1.19.0 (spec 2026-10-18 §6): the board key's first 4 hex digits (status upKey), shown beside Receive's
+  // "Trusted board AB12" so the person can compare them. null until a 1.19.0 board reports it.
+  upKey: text('up_key'),
 
   /**
    * 'queued' | 'downloading' | 'applying' | 'failed', as the device reports.

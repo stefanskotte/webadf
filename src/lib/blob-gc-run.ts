@@ -1,9 +1,10 @@
-import { inArray, isNotNull } from 'drizzle-orm';
+import { inArray, isNotNull, ne } from 'drizzle-orm';
 import { getDb } from '@/db';
 import { blobs, disks, entitlements, games } from '@/db/schema/catalog';
 import { devices } from '@/db/schema/devices';
 import { diskVersions, diskWriteSessions } from '@/db/schema/disk-history';
 import { transfers } from '@/db/schema/transfers';
+import { amigaUploads } from '@/db/schema/amiga-uploads';
 import { coverStore, diskStore } from '@/lib/storage';
 import { planBlobGc, planCoverGc, withoutReferenced } from '@/lib/blob-gc';
 import { ALWAYS_REFERENCED_BLOBS } from '@/lib/paulanet-disk';
@@ -38,7 +39,7 @@ export interface BlobGcResult {
 export async function runBlobGc({ dryRun }: { dryRun: boolean }): Promise<BlobGcResult> {
   const db = getDb();
   const now = new Date();
-  const [rows, diskRefs, entRefs, histBlob, histImage, devRefs, sessionRefs, derived, sendRefs] = await Promise.all([
+  const [rows, diskRefs, entRefs, histBlob, histImage, devRefs, sessionRefs, derived, sendRefs, uploadRefs] = await Promise.all([
     db.select({ sha256: blobs.sha256, createdAt: blobs.createdAt }).from(blobs),
     db.selectDistinct({ s: disks.sha256 }).from(disks),
     db.selectDistinct({ s: entitlements.sha256 }).from(entitlements),
@@ -50,9 +51,12 @@ export async function runBlobGc({ dryRun }: { dryRun: boolean }): Promise<BlobGc
     // Files queued for an Amiga (PaulaNET Phase 4): kept while a transfers row names them; the daily transfers cron
     // deletes finished rows after 7 days, and the next GC after that collects the bytes.
     db.selectDistinct({ s: transfers.blobSha256 }).from(transfers),
+    // Files an Amiga sent up (spec 2026-10-18 §4): kept while the row is not deleted; the daily cron drops rows past
+    // their 30 days, and the next GC after that collects the bytes.
+    db.selectDistinct({ s: amigaUploads.blobSha256 }).from(amigaUploads).where(ne(amigaUploads.status, 'deleted')),
   ]);
   const referenced = new Set<string>();
-  for (const list of [diskRefs, entRefs, histBlob, histImage, sessionRefs, derived, sendRefs]) {
+  for (const list of [diskRefs, entRefs, histBlob, histImage, sessionRefs, derived, sendRefs, uploadRefs]) {
     for (const r of list) if (r.s) referenced.add(r.s);
   }
   for (const d of devRefs) for (const s of [d.m, d.d, d.p]) if (s) referenced.add(s);
