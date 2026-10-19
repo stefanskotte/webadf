@@ -300,11 +300,12 @@ test('three paired devices share one row, each card as tall as its content, and 
 
   // Content height, not square (changed 2026-10-08 at the operator's request:
   // the square left an empty band under the bezel). Three identical fresh
-  // cards are the same height, and shorter than they are wide (< 1.0, was 0.8
-  // before the DF1 second-drive control added its rows to every card).
+  // cards are the same height, and about as tall as they are wide (< 1.1; was
+  // 0.8 before the DF1 second-drive control added its rows to every card, and
+  // < 1.0 before the Disk at startup line added one more, 2026-10-19: 1.04).
   expect(Math.abs(a.height - b.height)).toBeLessThan(2);
   expect(Math.abs(a.height - c.height)).toBeLessThan(2);
-  for (const box of [a, b, c]) expect(box.height / box.width).toBeLessThan(1);
+  for (const box of [a, b, c]) expect(box.height / box.width).toBeLessThan(1.1);
 
   // Opening A's drawer grows A; B in the same row keeps its height (the grid
   // does not stretch row neighbours). Closing it shrinks A back.
@@ -558,4 +559,69 @@ test('the card names a PN532 reader at 0x24, and the firmware it needs', async (
   await expect(page.getByTestId(`device-nfc-${pn}`)).toHaveAttribute('data-ok', 'true');
   await expect(page.getByTestId(`device-nfc-${oldPn}`)).toContainText('the PN532 at 0x24 needs firmware 1.18.0 or newer');
   await expect(page.getByTestId(`device-i2c-${oldPn}`)).toHaveText('I2C devices seen: 0x24 (NFC reader, PN532), 0x3c (display)');
+});
+
+// Disk at startup (2026-10-19, src/lib/boot-disk.ts): on No disk, the board's first request of a new boot empties
+// DF0 -- its poll carries no disk and the card truthfully says No disk -- while a reconnect (the same boot) keeps a
+// disk mounted after it.
+test('Disk at startup: No disk empties DF0 at the board\'s boot, and a reconnect keeps a disk mounted after it', async ({ page, request }) => {
+  const { orgId } = await signUpFresh(page);
+  const { deviceId, token } = await pairDevice(page, request, 'Boot Empty');
+  const tag = runTag();
+  const { gameId, diskId } = await seedDisk(orgId, { title: `BootEmpty-${tag}`, diskNo: 1, sha256: sha(tag) });
+  const report = (data: object) =>
+    request.post('/api/device/status', { headers: authHeader(token), data: { firmwareVersion: '1.18.1+ge2e', ...data } });
+  expect((await report({ mountedSha256: sha(tag), mountedDiskId: diskId, version: 1 })).status()).toBe(204);
+  await setDevice(deviceId, {
+    desiredGameId: gameId, desiredDiskId: diskId, desiredSha256: sha(tag), desiredDiskNo: 1, desiredVersion: 1,
+  });
+
+  // The board's earlier boot, as the server first heard it: a baseline (the first id ever heard never clears).
+  expect((await request.get('/api/device/poll?since=0&nfcAck=0&displayAck=0&boot=0000000a',
+    { headers: authHeader(token) })).status()).toBe(200);
+
+  await page.goto('/devices');
+  const select = page.getByTestId(`boot-disk-${deviceId}`);
+  await expect(select).toHaveValue('last');
+  await expect(page.getByTestId(`boot-disk-note-${deviceId}`)).toHaveCount(0);
+  await Promise.all([
+    page.waitForResponse((r) => r.url().includes(`/api/devices/${deviceId}/boot-disk`) && r.status() === 200),
+    select.selectOption('empty'),
+  ]);
+  expect((await getDb().select().from(devices).where(eq(devices.id, deviceId)))[0].bootDisk).toBe('empty');
+
+  // The board powers up: nothing in its drive, since=0, and a new boot id.
+  const poll = await request.get('/api/device/poll?since=0&nfcAck=0&displayAck=0&boot=1a2b3c4d', { headers: authHeader(token) });
+  expect(poll.status()).toBe(200);
+  const body = await poll.json();
+  expect(body.desired).toBeNull();
+  expect(body.version).toBe(2);
+  expect((await report({ mountedSha256: null, mountedDiskId: null, version: 2 })).status()).toBe(204);
+  await page.reload();
+  const card = page.getByTestId(`device-${deviceId}`);
+  await expect(card).toHaveAttribute('data-state', 'empty');
+  await expect(card).toContainText('No disk');
+  await expect(page.getByTestId(`boot-disk-${deviceId}`)).toHaveValue('empty');
+
+  // A tag is tapped (the disk is desired again), then Wi-Fi drops and the board polls again in the SAME boot.
+  await setDevice(deviceId, {
+    desiredGameId: gameId, desiredDiskId: diskId, desiredSha256: sha(tag), desiredDiskNo: 1, desiredVersion: 3,
+  });
+  const again = await request.get('/api/device/poll?since=2&nfcAck=0&displayAck=0&boot=1a2b3c4d', { headers: authHeader(token) });
+  expect(again.status()).toBe(200);
+  expect((await again.json()).desired?.sha256).toBe(sha(tag));
+});
+
+test('Disk at startup: a board before 1.18.1 is told which firmware it needs, and No disk is refused', async ({ page, request }) => {
+  await signUpFresh(page);
+  const { deviceId, token } = await pairDevice(page, request, 'Old Boot');
+  expect((await request.post('/api/device/status', { headers: authHeader(token),
+    data: { mountedSha256: null, firmwareVersion: '1.18.0+ge2e' } })).status()).toBe(204);
+  await page.goto('/devices');
+  await expect(page.getByTestId(`boot-disk-fixed-${deviceId}`)).toHaveText('Disk at startup: Last disk');
+  await expect(page.getByTestId(`boot-disk-note-${deviceId}`)).toHaveText('— needs firmware 1.18.1 or newer');
+  await expect(page.getByTestId(`boot-disk-${deviceId}`)).toHaveCount(0);   // nothing to choose on this firmware
+  const res = await page.request.patch(`/api/devices/${deviceId}/boot-disk`, { data: { mode: 'empty' } });
+  expect(res.status()).toBe(409);
+  expect((await res.json()).reason).toBe('Needs firmware 1.18.1 or newer');
 });

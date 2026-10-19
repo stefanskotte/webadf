@@ -180,6 +180,18 @@ export const devices = pgTable('devices', {
   /** What DF1 holds now (a sha256), null = empty or off. */
   df1Sha256: text('df1_sha256'),
 
+  // --- Disk at startup (2026-10-19, migration 0045; src/lib/boot-disk-store.ts) ---
+  /**
+   * 'last' | 'empty': what DF0 holds after the board boots. 'last' (the default, every board before 0045) = the
+   * disk it had, re-sent by the poll as always; 'empty' = none -- the desired disk is cleared at the first request
+   * of a boot the server has not seen, unless the board says the boot is an update's own reboot.
+   */
+  bootDisk: text('boot_disk').notNull().default('last'),
+  /** The board's id for its current boot (?boot= on a poll or tap, fw 1.18.1+); null = never heard. */
+  bootId: text('boot_id'),
+  /** The boot before it: a late request carrying it is ignored, never taken for a new boot. Null = none yet. */
+  prevBootId: text('prev_boot_id'),
+
   // --- DF1 any disk (spec docs/superpowers/specs/2026-10-14-df1-any-disk-design.md §4.1) ---
   /**
    * The disk the user mounted into DF1 (a "pick"); null = DF1 follows the set. Text, like disks.id (plan ruling 1).

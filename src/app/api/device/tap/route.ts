@@ -2,6 +2,8 @@ import { z } from 'zod';
 import { requireDevice, deviceAuthResponse } from '@/lib/device-auth';
 import { tapDevice, tapNext } from '@/lib/nfc/store';
 import { DISK_ID_RE } from '@/lib/nfc/rules';
+import { parseBoot } from '@/lib/boot-disk';
+import { noteBoot } from '@/lib/boot-disk-store';
 
 export const maxDuration = 60;
 const NO_STORE = { 'cache-control': 'no-store' };
@@ -38,6 +40,10 @@ export async function POST(request: Request) {
   }
   const parsed = body.safeParse(raw);
   if (!parsed.success) return Response.json({ error: 'invalid_body' }, { status: 400, headers: NO_STORE });
+  // Disk at startup (boot-disk.ts): a tag tapped at the Kickstart screen arrives before the boot's first poll. The
+  // boot is decided first, so "No disk" empties the OLD disk and the tap then mounts the new one -- never the reverse.
+  const boot = parseBoot(new URL(request.url).searchParams);
+  if (boot) await noteBoot(device.deviceId, boot);
   const result = 'action' in parsed.data
     ? await tapNext(device.deviceId, device.orgId, new Date())
     : await tapDevice(device.deviceId, device.orgId, parsed.data.diskId, new Date());

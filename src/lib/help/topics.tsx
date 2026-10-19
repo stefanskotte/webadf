@@ -26,6 +26,8 @@ export const HELP_TOPICS = {
   // DC_HALTED branch; disk history kept because disk_versions.device_id has no FK (db/schema/disk-history.ts).
   // Address note: plan 2026-10-12 ruling 4 -- 1.11.0 sends the board's own DHCP client-id.
   // Naming at pairing: pair-button.tsx, api/devices/pair + device/register (plan 2026-10-17 R8).
+  // Disk at startup: lib/boot-disk.ts + boot-disk-store.ts (cleared at a new boot's first request; not on the same
+  // boot id or an &ota=1 boot), boot-disk-setting.tsx, firmware fw_trial.h (the update-reboot mark), BOOT_DISK_FW.
   boards: {
     title: 'Boards',
     short:
@@ -34,31 +36,35 @@ export const HELP_TOPICS = {
       <>
         <p>
           <strong>Pairing.</strong> Press <em>Pair a device</em>, give the board a name
-          (or leave it empty to use its MAC address), and press <em>Get a code</em>. A new board starts its own Wi-Fi
-          network named <em>wifi-floppy-…</em> (password <em>wififloppy</em>); join it, and in the page that opens
-          enter your home Wi-Fi details and the code. If it runs out first, mint a new one.
+          (or none, for its MAC address), and press <em>Get a code</em>. A new board starts its own Wi-Fi
+          network <em>wifi-floppy-…</em> (password <em>wififloppy</em>); join it and enter your home Wi-Fi details and
+          the code. If the code runs out, get a new one.
         </p>
         <p>
-          <strong>Online / Offline.</strong> A board is online if it was heard from in the last minute.
+          <strong>Online / Offline.</strong> A board is online if heard from in the last minute.
         </p>
         <p>
-          <strong>Firmware updates.</strong> When a newer version is published, tick <em>Select for update</em> on the
-          board, press <em>Update</em> and confirm with your password (unless you turned that off in Settings). Its card then shows <em>update queued</em>,{' '}
-          <em>downloading</em> and <em>applying — do not power off</em>. A new version first runs on trial: if it doesn&apos;t check in within 5 minutes, the
-          board goes back to its old version by itself, and the card says <em>update failed</em> with the reason.
+          <strong>Firmware updates.</strong> Tick <em>Select for update</em> on the board, press <em>Update</em> and
+          confirm with your password (unless you turned that off in Settings). The card shows <em>update queued</em>,{' '}
+          <em>downloading</em> and <em>applying — do not power off</em>. A new version runs on trial: if it doesn&apos;t
+          check in within 5 minutes, the board goes back to its old version and the card says <em>update failed</em>.
         </p>
         <p>
-          <strong>Deleting a board.</strong> The trash icon on a board&apos;s card removes it from your account. The
-          board then offers its setup network again, and a new code pairs it; your disks and their history stay.
+          <strong>Disk at startup.</strong> <em>Last disk</em> (the default) puts the board&apos;s disk back at power-up.{' '}
+          <em>No disk</em> leaves the drive empty: the Amiga waits at its insert-disk screen until you tap a card or
+          mount one. A firmware update or a Wi-Fi drop keeps the disk. Needs firmware 1.18.1.
+        </p>
+        <p>
+          <strong>Deleting a board.</strong> The trash icon removes a board from your account; it then offers its setup
+          network again. Your disks and their history stay.
         </p>
         <p>
           <strong>Your own server.</strong> Running your own copy? See{' '}
           <a className="underline" href="/help#own-server">Your own server</a>.
         </p>
         <GoodToKnow items={[
-          'A board never updates while a disk is mounted — the update waits for the eject.',
-          'Updates also wait until the Amiga is switched on and the drive is idle.',
-          'After updating to firmware 1.11.0, your router may give the board a new network address once; nothing needs changing.',
+          'An update waits until no disk is mounted, the Amiga is on and the drive is idle.',
+          'After updating to firmware 1.11.0, your router may give the board a new network address once.',
         ]} />
       </>
     ),

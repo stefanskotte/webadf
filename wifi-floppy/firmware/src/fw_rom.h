@@ -37,6 +37,12 @@ extern const fw_flash_t fw_rom_flash;
 // buys in fw_rom_boot_early. Refused (logged) if a reboot is already pending.
 void fw_rom_request_proven_reboot(const char *running_version);
 void fw_rom_request_reboot(uint32_t flash_update_off); // 0 = normal reboot; any core
+// The same, for a reboot that is part of a firmware update (installing one, a trial reverting): it marks the next
+// boot as an update boot (fw_mark_ota_reboot), which the "No disk at startup" setting is never applied to.
+void fw_rom_request_ota_reboot(uint32_t flash_update_off);
+// This boot follows a reboot the firmware made for an update (fw_boot_after_ota on the words fw_rom_boot_early
+// consumed). False after a power-up, the RUN button, a console "reboot" or a watchdog reset from a hang.
+bool fw_rom_boot_after_ota(void);
 void fw_rom_watchdog_start(void);      // core0, right before its loop
 void fw_rom_service(void);             // core0, every loop turn: feed, deadline, honour reboot
 

@@ -15,6 +15,7 @@ import type { ImageFormat } from '@/lib/disk-format';
 import { asSecondDriveMode, SECOND_DRIVE_NET_FW, type SecondDriveMode } from '@/lib/second-drive';
 import { isHdAdfSql } from '@/lib/disk-format-sql';
 import { firmwareAtLeast } from '@/lib/firmware-version';
+import { asBootDisk, BOOT_DISK_FW, type BootDisk } from '@/lib/boot-disk';
 import {
   NFC_ELEMENT_FIRMWARE, ROTATION_FIRMWARE, STATUS_ICON_FIRMWARE, stripHeadRecords,
 } from '@/lib/display-layout';
@@ -445,6 +446,9 @@ export interface DeviceListItem {
   netFramesOut: number | null;
   /** The stored layout blob, base64; null = the panel's default. */
   displayLayout: string | null;
+  /** Disk at startup (src/lib/boot-disk.ts): what the user chose, and whether the board's firmware can do "No disk". */
+  bootDisk: BootDisk;
+  bootDiskCapable: boolean;
 }
 
 /**
@@ -528,6 +532,7 @@ export async function listDevices(orgId: string): Promise<DeviceListItem[]> {
       netFramesIn: devices.netFramesIn,
       netFramesOut: devices.netFramesOut,
       displayLayout: devices.displayLayout,
+      bootDisk: devices.bootDisk,
     })
     .from(devices)
     // Every join here is org-scoped in the ON clause itself, not just
@@ -557,6 +562,8 @@ export async function listDevices(orgId: string): Promise<DeviceListItem[]> {
     secondDriveReported: asSecondDriveMode(r.secondDriveReported),
     secondDriveNetCapable: r.secondDriveCapable === true && firmwareAtLeast(r.firmwareVersion, SECOND_DRIVE_NET_FW),
     secondDriveCapable: r.secondDriveCapable === true,
+    bootDisk: asBootDisk(r.bootDisk),
+    bootDiskCapable: firmwareAtLeast(r.firmwareVersion, BOOT_DISK_FW),
     displayLayout: r.displayLayout && r.displayLayout.length > 0
       ? Buffer.from(stripHeadRecords(r.displayLayout)).toString('base64')   // 1.17.0's head element is withdrawn; stored blobs are not migrated
       : null,

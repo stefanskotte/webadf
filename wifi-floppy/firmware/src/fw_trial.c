@@ -74,3 +74,14 @@ fw_boot_t fw_boot_reconcile(fw_state_t *st, const char *running_version, char *e
     clear_pending(st);
     return FW_BOOT_REVERTED;
 }
+
+void fw_mark_ota_reboot(uint32_t *s0, uint32_t *s1) {
+    if (*s0 == FW_PROVEN_MAGIC) return;   // the reboot-to-buy: its mark is the buy's, and already says "update"
+    *s0 = FW_OTA_REBOOT_MAGIC;
+    *s1 = ~FW_OTA_REBOOT_MAGIC;
+}
+
+bool fw_boot_after_ota(uint32_t s0, uint32_t s1) {
+    // Any proven mark counts, stale or not: only an update reboot ever writes PRVN.
+    return s0 == FW_PROVEN_MAGIC || (s0 == FW_OTA_REBOOT_MAGIC && s1 == ~FW_OTA_REBOOT_MAGIC);
+}

@@ -233,3 +233,17 @@ describe('cover-image says what the upload accepts and what Revert does', () => 
   });
   it('says the choice is per organization', () => expect(all()).toMatch(/your organization only/i));
 });
+
+// Disk at startup (2026-10-19, src/lib/boot-disk.ts): the setting, what No disk does, and when it does not apply.
+describe('boards explains Disk at startup', () => {
+  it('names both choices, that No disk waits for a tap, and that an update or a network drop keeps the disk', () => {
+    const b = bodyText('boards');
+    expect(b).toMatch(/Disk at startup/);
+    expect(b).toMatch(/Last disk/);
+    expect(b).toMatch(/No disk/);
+    expect(b).toMatch(/insert-disk screen/);
+    expect(b).toMatch(/firmware update/);
+    expect(b).toMatch(/Wi-Fi/);
+    expect(b).toMatch(/1\.18\.1/);
+  });
+});

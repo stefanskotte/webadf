@@ -3700,7 +3700,78 @@ static void send_done_post(void) {
     CHECK(strstr(fake_last_request(), "{\"ok\":true,\"savedAs\":\"x\"}") != NULL, "body");
 }
 
+// --- Disk at startup (2026-10-19): every poll and tap of one boot names that boot -----------------------------------
+// The server decides "No disk" at the FIRST request of a boot it has not seen (src/lib/boot-disk-store.ts). So the id
+// is the same on every request of the boot -- a Wi-Fi drop and reconnect re-sends it, and is a no-op there -- and a
+// boot the firmware itself started for an update says so (&ota=1), which the server never empties.
+
+static void boot_id_is_absent_until_set(void) {
+    boot();
+    fake_push_response("HTTP/1.1 204 No Content\r\n\r\n");
+    dc_step(&c);
+    CHECK(strstr(fake_last_request(), "boot=") == NULL, "a client without a boot id polls exactly as before");
+    boot();
+    push_ok_json("{\"outcome\":\"mounting\"}");
+    dc_tap(&c, NFC_ID, NULL, 0);
+    CHECK(strstr(fake_last_request(), "POST /api/device/tap HTTP/1.1") != NULL, "nor taps");
+}
+
+static void boot_id_rides_every_poll_across_a_reconnect(void) {
+    boot(); dc_set_boot(&c, 0x1a2b3c4du, false);
+    fake_push_response("HTTP/1.1 204 No Content\r\n\r\n");
+    dc_step(&c);
+    CHECK(strstr(fake_last_request(), "&boot=1a2b3c4d HTTP/1.1\r\n") != NULL, "the boot rides the poll");
+    CHECK(strstr(fake_last_request(), "ota=") == NULL, "a power-up is not an update boot");
+    // The network drops: the poll fails, and the next one (a reconnect) names the SAME boot -- never a new one.
+    fake_push_connect_failure();
+    CHECK_EQ_INT(dc_step(&c), DC_BACKOFF);
+    fake_push_response("HTTP/1.1 204 No Content\r\n\r\n");
+    dc_step(&c);
+    CHECK(strstr(fake_last_request(), "&boot=1a2b3c4d HTTP/1.1\r\n") != NULL, "a reconnect is the same boot");
+    // And after a disk arrives, too: `since` moves, the boot does not.
+    push_ok_json("{\"version\":3,\"desired\":null}");
+    dc_step(&c);
+    fake_push_response("HTTP/1.1 204 No Content\r\n\r\n");
+    dc_step(&c);
+    CHECK(strstr(fake_last_request(), "since=3") != NULL && strstr(fake_last_request(), "&boot=1a2b3c4d ") != NULL,
+          "the boot is not a cursor the poll advances");
+}
+
+static void boot_id_rides_the_tap_too(void) {
+    // A tag tapped at the Kickstart screen goes out BEFORE the first poll of the boot (main.c sends taps first), so
+    // the server must hear of the boot there as well, or it would empty DF0 after mounting the tapped disk.
+    boot(); dc_set_boot(&c, 0x0000beefu, false);
+    push_ok_json("{\"outcome\":\"mounting\"}");
+    CHECK_EQ_INT(dc_tap(&c, NFC_ID, NULL, 0), DC_TAP_MOUNTING);
+    CHECK(strstr(fake_last_request(), "POST /api/device/tap?boot=0000beef HTTP/1.1") != NULL, "tap names the boot");
+    uint32_t no = 0, count = 0;
+    push_ok_json("{\"outcome\":\"mounting\",\"diskNo\":2,\"diskCount\":3}");
+    dc_tap_next(&c, &no, &count, NULL, 0);
+    CHECK(strstr(fake_last_request(), "POST /api/device/tap?boot=0000beef HTTP/1.1") != NULL, "so does Next disk");
+}
+
+static void an_update_boot_says_so(void) {
+    boot(); dc_set_boot(&c, 0xdeadbeefu, true);
+    fake_push_response("HTTP/1.1 204 No Content\r\n\r\n");
+    dc_step(&c);
+    CHECK(strstr(fake_last_request(), "&boot=deadbeef&ota=1 HTTP/1.1\r\n") != NULL, "an OTA boot is marked");
+    push_ok_json("{\"outcome\":\"mounting\"}");
+    dc_tap(&c, NFC_ID, NULL, 0);
+    CHECK(strstr(fake_last_request(), "POST /api/device/tap?boot=deadbeef&ota=1 HTTP/1.1") != NULL, "on the tap too");
+    // Worst case: every cursor at its maximum, DF1-capable, sending, and an update boot: still whole.
+    boot(); dc_set_df1(&c, DF1_MODE_OFF, false); dc_set_boot(&c, 0xffffffffu, true);
+    c.since = 4294967295u; c.nfc_ack = 4294967295u; c.display_ack = 4294967295u;
+    c.drive_ack = 4294967295u; c.df1_ack = 4294967295u;
+    dc_set_send(&c, 4294967295u, 'u');
+    fake_push_response("HTTP/1.1 204 No Content\r\n\r\n");
+    dc_step(&c);
+    CHECK(strstr(fake_last_request(), "&xferAck=4294967295&rx=u&boot=ffffffff&ota=1 HTTP/1.1\r\n") != NULL,
+          "the worst-case path is sent whole");
+}
+
 int main(void) {
+    RUN(boot_id_is_absent_until_set); RUN(boot_id_rides_every_poll_across_a_reconnect); RUN(boot_id_rides_the_tap_too);
+    RUN(an_update_boot_says_so);
     RUN(send_poll_params_only_once_set); RUN(send_version_is_read_from_the_poll); RUN(send_ip_hint_is_read_from_xfer); RUN(parse_ipv4_is_strict); RUN(send_queue_fetch);
     RUN(send_chunk_fetch); RUN(send_done_post);
     // Only test_successful_image_fetch_publishes_and_reflects_write_protected

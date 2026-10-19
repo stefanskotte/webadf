@@ -11,6 +11,7 @@ import { DC_TITLE_MAX } from '@/lib/device-limits';
 import { getDb } from '@/db';
 import { recordSendRx } from '@/lib/transfers';
 import { PAULANET_NEXT, driverDiskFor, netApplied, netKeepsDriverDisk } from '@/lib/paulanet-disk';
+import { parseBoot } from '@/lib/boot-disk';
 
 // Holds up to 25 s. maxDuration covers the hold plus slack; the platform
 // default would cut the connection mid-hold.
@@ -48,7 +49,10 @@ export async function GET(request: Request) {
   // than pointing the operator at the hardware. src/lib/mount.ts's
   // touchLastSeen keeps this a single-column write, not the full recordStatus
   // path, which is for actual observations.
-  await touchLastSeen(device.deviceId);
+  //
+  // Disk at startup (boot-disk.ts): the boot the board names rides the same write, before the first tick below, so
+  // on "No disk" the first poll of a power-up already finds DF0 emptied and answers with no disk.
+  await touchLastSeen(device.deviceId, parseBoot(new URL(request.url).searchParams));
 
   const sinceRaw = new URL(request.url).searchParams.get('since') ?? '0';
   // parseInt('1abc') is 1 -- a numeric-prefixed garbage value would parse to a
