@@ -751,17 +751,19 @@ static void an_armed_write_goes_at_once_to_an_ntag_differing_only_in_uid_bytes_4
     end_checks();
 }
 
-// The 4-byte Classic and a 7-byte NTAG whose first bytes match are different.
+// The 4-byte Classic and a 7-byte NTAG whose first bytes match are different
+// -- even one whose last three bytes are zero, where only the length differs.
 static void a_classic_and_an_ntag_are_different_tags(void) {
     setup();
     static const uint8_t c4[4] = { 0x04, 0xB3, 0x2F, 0x3E };
+    static const uint8_t z7[7] = { 0x04, 0xB3, 0x2F, 0x3E, 0x00, 0x00, 0x00 };
     memcpy(B.uid, c4, 4);
     put_id(ID);
     run(2000);
     CHECK_EQ_INT(count(NFC_EV_TAG_READ), 1);
     tag(false);
     run(300);
-    use_ntag(135, U7);
+    use_ntag(135, z7);
     put_id(ID2);
     tag(true);
     run(1000);
