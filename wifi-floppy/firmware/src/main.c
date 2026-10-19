@@ -2214,7 +2214,7 @@ static void core1_main(void) {
             const bool psram_ok = psram_check_address(&g_send_queue_buf[sizeof g_send_queue_buf - 1]) &&
                                   psram_check_address(&g_send_chunk_buf[sizeof g_send_chunk_buf - 1]);
             if (!psram_ok) wf_logf(WF_ERR, "send: buffers are not backed by PSRAM -- sending to the Amiga is off");
-            as_init(&g_send, &g_send_ops, psram_ok ? g_send_queue_buf : NULL, psram_ok ? g_send_chunk_buf : NULL);
+            as_init(&g_send, &g_send_ops, psram_ok ? g_send_queue_buf : NULL, psram_ok ? g_send_chunk_buf : NULL, NULL);
         }
 #endif
         dc_set_hold(&c, swap_holds, &up);

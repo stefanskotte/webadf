@@ -1,5 +1,6 @@
 // PaulaNET Phase 4: the board's side of sending files to Receive on the Amiga. See amiga_send.h.
 #include "amiga_send.h"
+#include "json_scan.h"
 #include "wf_log.h"
 #include <stdio.h>
 #include <string.h>
@@ -41,6 +42,7 @@ static void drop(amiga_send_t *s, char rx, const char *why) {
     s->rx = rx;
     s->out_n = 0;
     s->ping_out = false;
+    s->peer_v = 0;
     s->list_owed = false;
     s->t_retry = now(s) + retry_ms(s);
     s->force_fetch = true;
@@ -61,6 +63,113 @@ int as_json_escape(char *dst, int cap, const char *src, int n) {
     }
     dst[o] = 0;
     return o;
+}
+
+int as_raw_feed(as_raw_t *w, const uint8_t *b, int n) {
+    const uint32_t got = w->got;                                   // this is the only writer
+    const uint32_t lim = __atomic_load_n(&w->limit, __ATOMIC_ACQUIRE);
+    uint32_t take = w->total - got;
+    if (n <= 0 || take == 0) return 0;
+    if ((uint32_t)n < take) take = (uint32_t)n;
+    if (got + take > lim) { w->broken = true; return -1; }        // past the credit
+    const uint32_t at = got % AS_UP_RING_BYTES;
+    uint32_t first = AS_UP_RING_BYTES - at;
+    if (first > take) first = take;
+    memcpy(w->ring + at, b, first);
+    if (take > first) memcpy(w->ring, b + first, take - first);
+    __atomic_store_n(&w->got, got + take, __ATOMIC_RELEASE);       // the bytes, then the count
+    return (int)take;
+}
+
+int as_utf8_to_latin1(const char *in, char *out, int cap) {
+    int o = 0;
+    const unsigned char *p = (const unsigned char *)in;
+    while (*p && o < cap - 1) {
+        if (*p < 0x80) { out[o++] = (char)*p++; }
+        else if ((*p == 0xC2 || *p == 0xC3) && (p[1] & 0xC0) == 0x80) { out[o++] = (char)(((*p & 0x03u) << 6) | (p[1] & 0x3Fu)); p += 2; }
+        else { out[o++] = '?'; p++; while ((*p & 0xC0) == 0x80) p++; }
+    }
+    out[o] = 0;
+    return o;
+}
+
+static const char *word(const char **p, int *n) {
+    const char *t = *p;
+    while (**p && **p != ' ') (*p)++;
+    *n = (int)(*p - t);
+    if (**p == ' ') (*p)++;
+    return t;
+}
+static bool dec32(const char *t, int n, uint32_t *v) {
+    uint64_t x = 0;
+    if (n < 1 || n > 10) return false;
+    for (int i = 0; i < n; i++) { if (t[i] < '0' || t[i] > '9') return false; x = x * 10u + (uint64_t)(t[i] - '0'); }
+    if (x > 0xFFFFFFFFu) return false;
+    *v = (uint32_t)x;
+    return true;
+}
+static bool hex32(const char *t, int n, uint32_t *v) {
+    uint32_t x = 0;
+    if (n < 1 || n > 8) return false;
+    for (int i = 0; i < n; i++) {
+        char c = t[i];
+        int d = (c >= '0' && c <= '9') ? c - '0' : (c >= 'a' && c <= 'f') ? c - 'a' + 10 : (c >= 'A' && c <= 'F') ? c - 'A' + 10 : -1;
+        if (d < 0) return false;
+        x = (x << 4) | (uint32_t)d;
+    }
+    *v = x;
+    return true;
+}
+// "<len>:<bytes>" then a space or the end of the line.
+static bool lenfield(const char **p, const char **s, int *n) {
+    const char *q = *p;
+    uint32_t len = 0;
+    int d = 0;
+    while (*q >= '0' && *q <= '9' && d < 4) { len = len * 10u + (uint32_t)(*q - '0'); q++; d++; }
+    if (d == 0 || *q != ':') return false;
+    q++;
+    if (strnlen(q, len) < len) return false;
+    *s = q; *n = (int)len; q += len;
+    if (*q == ' ') q++; else if (*q) return false;
+    *p = q;
+    return true;
+}
+bool as_put_parse(const char *line, as_put_t *o) {
+    const char *p = line, *t;
+    int n, dots = 0;
+    if (strncmp(p, "PUT ", 4) != 0) return false;
+    p += 4;
+    t = word(&p, &n);
+    if (n < 1 || n > AS_TAG_MAX) return false;
+    for (int i = 0; i < n; i++) if (t[i] < '0' || t[i] > '9') return false;
+    memcpy(o->tag, t, (size_t)n); o->tag[n] = 0;
+    t = word(&p, &n); if (!dec32(t, n, &o->size)) return false;
+    t = word(&p, &n);
+    if (n < 5 || n >= (int)sizeof o->date) return false;
+    for (int i = 0; i < n; i++) {
+        if (t[i] == '.') { if (i == 0 || i == n - 1 || t[i - 1] == '.') return false; dots++; }
+        else if (t[i] < '0' || t[i] > '9') return false;
+    }
+    if (dots != 2) return false;
+    memcpy(o->date, t, (size_t)n); o->date[n] = 0;
+    t = word(&p, &n); if (!hex32(t, n, &o->prot)) return false;
+    if (!lenfield(&p, &o->path, &o->path_n) || o->path_n < 1 || o->path_n > 255) return false;
+    if (!lenfield(&p, &o->comment, &o->comment_n) || o->comment_n > 79) return false;
+    return *p == 0;
+}
+int as_put_json(const as_put_t *p, char *json, int cap) {
+    int o = snprintf(json, (size_t)cap, "{\"size\":%lu,\"date\":\"%s\",\"protection\":%lu,\"path\":\"",
+                     (unsigned long)p->size, p->date, (unsigned long)p->prot);
+    if (o < 0 || o >= cap) return -1;
+    if (p->path_n * 6 + p->comment_n * 6 + o + 20 > cap) return -1;   // never cut a name
+    o += as_json_escape(json + o, cap - o, p->path, p->path_n);
+    int k = snprintf(json + o, (size_t)(cap - o), "\",\"comment\":\"");
+    if (k < 0 || o + k >= cap) return -1;
+    o += k;
+    o += as_json_escape(json + o, cap - o, p->comment, p->comment_n);
+    k = snprintf(json + o, (size_t)(cap - o), "\"}");
+    if (k < 0 || o + k >= cap) return -1;
+    return o + k;
 }
 
 // Receive's "ERR <id> <code> <text>" or the board's own reason, as the outcome to post.
@@ -126,12 +235,20 @@ static bool fetch_owed(const amiga_send_t *s) {
 }
 static bool file_moving(const amiga_send_t *s) { return s->phase >= AS_FILE_SENT && s->phase <= AS_AWAIT_OK; }
 
-void as_init(amiga_send_t *s, const as_ops_t *ops, char *queue_buf, uint8_t *chunk_buf) {
+void as_init(amiga_send_t *s, const as_ops_t *ops, char *queue_buf, uint8_t *chunk_buf, as_up_t *up) {
     memset(s, 0, sizeof *s);
     s->ops = ops;
     s->rx = '-';
     s->queue = queue_buf;
     s->chunk = chunk_buf;
+    s->up = (queue_buf && chunk_buf) ? up : NULL;
+    if (s->up) memset(s->up, 0, sizeof *s->up);
+}
+void as_set_key(amiga_send_t *s, const char *hex) {
+    if (!s->up) return;
+    bool ok = hex && strlen(hex) == AS_KEY_HEX;
+    for (int i = 0; ok && i < AS_KEY_HEX; i++) ok = (hex[i] >= '0' && hex[i] <= '9') || (hex[i] >= 'a' && hex[i] <= 'f');
+    if (ok) memcpy(s->up->key, hex, AS_KEY_HEX + 1); else s->up->key[0] = 0;
 }
 static bool usable(const amiga_send_t *s) { return s->queue && s->chunk; }
 
@@ -212,7 +329,12 @@ static bool run(amiga_send_t *s, bool http) {
         return true;
     case AS_CONNECTING:
         if (sock == AS_SOCK_OPEN) {
-            push(s, (const uint8_t *)"WEBADF 1\n", 9);
+            if (s->up && s->up->key[0]) {   // protocol 2 (fw 1.19.0): uploads, to a Receive that trusts this key
+                int n = snprintf(s->up->line, sizeof s->up->line, "WEBADF 2 %s\n", s->up->key);
+                push(s, (const uint8_t *)s->up->line, n);
+            } else {
+                push(s, (const uint8_t *)"WEBADF 1\n", 9);
+            }
             if (!flush(s)) { drop(s, 'u', "send"); return true; }
             s->phase = AS_HELLO;
             s->t_phase = t;
@@ -236,6 +358,7 @@ static bool run(amiga_send_t *s, bool http) {
         switch (s->phase) {
         case AS_HELLO:
             if (strncmp(s->line, "READY ", 6) == 0) {
+                s->peer_v = (s->line[6] == '2' && s->line[7] == 0) ? 2 : 1;   // Receive 1 says READY 1 to anything
                 s->phase = AS_READY;
                 s->rx = 'c';
                 s->list_owed = true;

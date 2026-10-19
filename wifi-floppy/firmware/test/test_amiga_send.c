@@ -16,6 +16,12 @@ static struct {
     uint8_t file[70000]; uint32_t file_len; int chunk_error; int chunk_fetches;
     uint32_t last_off;
     char posted_id[64]; char posted[600]; int posts; int post_status;
+    as_raw_t *raw; int arms;                           // the armed raw section (amiga_tcp.c's role)
+    char partial[AS_LINE_MAX + 1]; int partial_n;      // a line from the Amiga being built
+    int opens, open_status; char open_json[AS_UP_JSON_MAX]; char open_resp[256];
+    int chunks, chunk_status; uint32_t chunk_offs[300], chunk_lens[300]; uint8_t stored[200000]; uint32_t stored_len;
+    int lose_answer;                                   // the next chunk is stored but answered -1 (a lost answer)
+    int closes, close_status; char close_json[128]; char close_resp[512];
     uint32_t now;
 } F;
 
@@ -51,13 +57,36 @@ static int f_post(void *c, const char *id, const char *json) {
     return F.post_status ? F.post_status : 204;   // -1: a transport failure
 }
 static uint32_t f_now(void *c) { (void)c; return F.now; }
-static const as_ops_t OPS = { NULL, f_connect, f_state, f_send, f_recv, f_close, f_queue, f_chunk, f_post, f_now };
+static int f_up_open(void *c, const char *json, char *resp, int cap) {
+    (void)c; F.opens++; snprintf(F.open_json, sizeof F.open_json, "%s", json);
+    snprintf(resp, (size_t)cap, "%s", F.open_resp[0] ? F.open_resp : "{\"id\":\"u1\",\"offset\":0}");
+    return F.open_status ? F.open_status : 200;
+}
+static int f_up_chunk(void *c, const char *id, uint32_t off, const uint8_t *b, uint32_t n, char *resp, int cap) {
+    (void)c; (void)id;
+    if (F.chunks < 300) { F.chunk_offs[F.chunks] = off; F.chunk_lens[F.chunks] = n; }
+    F.chunks++;
+    if (F.chunk_status) { snprintf(resp, (size_t)cap, "{\"received\":%lu}", (unsigned long)F.stored_len); return F.chunk_status; }
+    if (off == F.stored_len) { memcpy(F.stored + off, b, n); F.stored_len += n; }   // a retry of a stored chunk adds nothing
+    else if (off > F.stored_len) { snprintf(resp, (size_t)cap, "{\"received\":%lu}", (unsigned long)F.stored_len); return 409; }
+    snprintf(resp, (size_t)cap, "{\"received\":%lu}", (unsigned long)F.stored_len);
+    if (F.lose_answer) { F.lose_answer = 0; return -1; }
+    return 200;
+}
+static int f_up_close(void *c, const char *id, const char *json, char *resp, int cap) {
+    (void)c; (void)id; F.closes++; snprintf(F.close_json, sizeof F.close_json, "%s", json);
+    snprintf(resp, (size_t)cap, "%s", F.close_resp[0] ? F.close_resp : "{\"name\":\"Hello.txt\"}");
+    return F.close_status ? F.close_status : 200;
+}
+static void f_raw_arm(void *c, as_raw_t *w) { (void)c; F.raw = (w && w->got < w->total) ? w : NULL; F.arms++; }
+static const as_ops_t OPS = { NULL, f_connect, f_state, f_send, f_recv, f_close, f_queue, f_chunk, f_post, f_now, f_up_open, f_up_chunk, f_up_close, f_raw_arm };
 
 static amiga_send_t S;
 static void reply(const char *l) { snprintf(F.in[F.in_tail], AS_LINE_MAX + 1, "%s", l); F.in_tail = (F.in_tail + 1) % 16; }
 static char QBUF[AS_QUEUE_BYTES + 1];
-static uint8_t CBUF[AS_CHUNK_BYTES];
-static void fresh(void) { memset(&F, 0, sizeof F); F.now = 1000; as_init(&S, &OPS, QBUF, CBUF); }
+static uint8_t CBUF[AS_UP_RING_BYTES];
+static as_up_t UP;
+static void fresh(void) { memset(&F, 0, sizeof F); F.now = 1000; as_init(&S, &OPS, QBUF, CBUF, &UP); }
 static void run(int n) { for (int i = 0; i < n; i++) { F.budget = F.accept_max; as_tick(&S); if (as_has_work(&S)) as_step(&S); } }
 static void clear_out(void) { F.out_n = 0; F.out[0] = 0; }
 static const char *ID = "11111111-2222-4333-8444-555555555555";
@@ -331,7 +360,7 @@ static void json_escapes_latin1(void) {
 }
 
 static void without_buffers_it_never_runs(void) {
-    memset(&F, 0, sizeof F); F.now = 1000; as_init(&S, &OPS, NULL, NULL);
+    memset(&F, 0, sizeof F); F.now = 1000; as_init(&S, &OPS, NULL, NULL, NULL);
     snprintf(F.queue, sizeof F.queue, "NEXT -\nLIST 0\n");
     as_set_inputs(&S, true, 0xAC100AEDu, 1); run(3);
     CHECK(!as_has_work(&S), "no work"); CHECK_EQ_INT(F.connects, 0); CHECK_EQ_INT(F.queue_fetches, 0);
@@ -412,6 +441,99 @@ static void long_latin1_saved_name_is_cut_not_emptied(void) {
     CHECK(F.posted[strlen(F.posted) - 1] == '}', "closed JSON");
 }
 
+// What amiga_tcp.c's receive callback does: the armed raw section first (as_raw_feed), the rest as lines.
+__attribute__((unused)) static void amiga_sends(const void *data, int n) {
+    const uint8_t *b = data; int i = 0;
+    if (F.raw) {
+        int k = as_raw_feed(F.raw, b, n);
+        if (k < 0) { F.recv_closed = true; return; }
+        i = k;
+        if (F.raw->got == F.raw->total) F.raw = NULL;
+    }
+    for (; i < n; i++) {
+        if (b[i] == '\n') { F.partial[F.partial_n] = 0; reply(F.partial); F.partial_n = 0; }
+        else if (F.partial_n < AS_LINE_MAX) F.partial[F.partial_n++] = (char)b[i];
+    }
+}
+static const char *KEY = "ab12cd34ef56ab12cd34ef56ab12cd34";
+// Connected to a Receive 2 that trusts us: the state every upload test starts from.
+__attribute__((unused)) static void ready2(void) {
+    fresh();
+    as_set_key(&S, KEY);
+    snprintf(F.queue, sizeof F.queue, "NEXT -\nLIST 0\n");
+    as_set_inputs(&S, true, 0xAC100AEDu, 1);
+    run(2); F.sock = AS_SOCK_OPEN; run(1);
+    reply("READY 2"); run(2);
+    clear_out();
+}
+// --- protocol 2 (spec 2026-10-18 §3) ---
+static void the_hello_carries_the_key(void) {
+    fresh(); as_set_key(&S, KEY); snprintf(F.queue, sizeof F.queue, "NEXT -\nLIST 0\n");
+    as_set_inputs(&S, true, 0xAC100AEDu, 1); run(2); F.sock = AS_SOCK_OPEN; run(1);
+    char want[64]; snprintf(want, sizeof want, "WEBADF 2 %s\n", KEY);
+    CHECK(strcmp(F.out, want) == 0, "WEBADF 2 <key>");
+}
+static void without_a_key_or_state_the_hello_stays_protocol_1(void) {
+    fresh(); as_set_key(&S, "not-hex"); snprintf(F.queue, sizeof F.queue, "NEXT -\nLIST 0\n");
+    as_set_inputs(&S, true, 0xAC100AEDu, 1); run(2); F.sock = AS_SOCK_OPEN; run(1);
+    CHECK(strcmp(F.out, "WEBADF 1\n") == 0, "a bad key: protocol 1");
+    memset(&F, 0, sizeof F); F.now = 1000; as_init(&S, &OPS, QBUF, CBUF, NULL); as_set_key(&S, KEY);
+    snprintf(F.queue, sizeof F.queue, "NEXT -\nLIST 0\n");
+    as_set_inputs(&S, true, 0xAC100AEDu, 1); run(2); F.sock = AS_SOCK_OPEN; run(1);
+    CHECK(strcmp(F.out, "WEBADF 1\n") == 0, "no upload state: protocol 1");
+}
+static void raw_bytes_land_in_the_ring_and_the_rest_are_lines(void) {
+    static uint8_t ring[AS_UP_RING_BYTES];
+    as_raw_t w = { ring, 10, 10, 0, false };
+    CHECK_EQ_INT(as_raw_feed(&w, (const uint8_t *)"0123456789END 1 0\n", 18), 10);
+    CHECK(memcmp(ring, "0123456789", 10) == 0, "ten raw bytes");
+    CHECK_EQ_INT(w.got, 10);
+    CHECK_EQ_INT(as_raw_feed(&w, (const uint8_t *)"x", 1), 0);    // the section is over: lines
+}
+static void a_byte_past_the_credit_breaks_it(void) {
+    static uint8_t ring[AS_UP_RING_BYTES];
+    as_raw_t w = { ring, 100, 5, 0, false };
+    CHECK_EQ_INT(as_raw_feed(&w, (const uint8_t *)"123456", 6), -1);
+    CHECK(w.broken, "broken"); CHECK_EQ_INT(w.got, 0);
+}
+static void the_ring_wraps_at_its_size(void) {
+    static uint8_t ring[AS_UP_RING_BYTES];
+    static uint8_t big[AS_UP_RING_BYTES + 10];
+    for (unsigned i = 0; i < sizeof big; i++) big[i] = (uint8_t)i;
+    as_raw_t w = { ring, AS_UP_RING_BYTES + 10, AS_UP_RING_BYTES + 10, AS_UP_RING_BYTES - 4, false };
+    CHECK_EQ_INT(as_raw_feed(&w, big + AS_UP_RING_BYTES - 4, 14), 14);
+    CHECK(memcmp(ring + AS_UP_RING_BYTES - 4, big + AS_UP_RING_BYTES - 4, 4) == 0, "the end of the ring");
+    CHECK(memcmp(ring, big + AS_UP_RING_BYTES, 10) == 0, "then its start");
+}
+static void put_parses_and_json_escapes_latin1(void) {   /* Review Focus 3 */
+    as_put_t p; char json[AS_UP_JSON_MAX];
+    CHECK(as_put_parse("PUT 7 5 1.2.3 40 8:Caf\xe9.txt 4:note", &p), "parsed");
+    CHECK(strcmp(p.tag, "7") == 0 && p.size == 5 && p.prot == 0x40 && strcmp(p.date, "1.2.3") == 0, "fields");
+    CHECK(p.path_n == 8 && memcmp(p.path, "Caf\xe9.txt", 8) == 0 && p.comment_n == 4, "path and comment");
+    CHECK(as_put_json(&p, json, sizeof json) > 0, "json");
+    CHECK(strcmp(json, "{\"size\":5,\"date\":\"1.2.3\",\"protection\":64,\"path\":\"Caf\\u00e9.txt\",\"comment\":\"note\"}") == 0, json);
+    CHECK(!as_put_parse("PUT x 5 1.2.3 0 1:a 0:", &p), "a tag is digits");
+    CHECK(!as_put_parse("PUT 1 5 1.2 0 1:a 0:", &p), "a date has three parts");
+    CHECK(!as_put_parse("PUT 1 5 1.2.3 0 9:a 0:", &p), "a length past the line");
+    CHECK(!as_put_parse("PUT 1 5 1.2.3 0 0: 0:", &p), "an empty path");
+    CHECK(!as_put_parse("PUT 1 99999999999 1.2.3 0 1:a 0:", &p), "a size over 32 bits");
+}
+static void the_worst_put_json_fits(void) {
+    char line[700], name[256], json[AS_UP_JSON_MAX]; as_put_t p;
+    memset(name, 0xe9, 255); name[255] = 0;
+    char com[80]; memset(com, '"', 79); com[79] = 0;
+    snprintf(line, sizeof line, "PUT 999999999 4194304 99999.1439.2999 ffffffff 255:%s 79:%s", name, com);
+    CHECK(as_put_parse(line, &p), "the longest legal PUT");
+    CHECK(as_put_json(&p, json, sizeof json) > 0, "its JSON fits AS_UP_JSON_MAX, never cut");
+}
+static void utf8_comes_back_as_latin1(void) {
+    char out[32];
+    CHECK_EQ_INT(as_utf8_to_latin1("Caf\xc3\xa9.txt", out, sizeof out), 8);
+    CHECK(strcmp(out, "Caf\xe9.txt") == 0, "é");
+    as_utf8_to_latin1("a\xe2\x82\xac" "b", out, sizeof out);
+    CHECK(strcmp(out, "a?b") == 0, "beyond Latin-1: ?");
+}
+
 int main(void) {
     RUN(off_or_no_address_does_nothing);
     RUN(connects_to_6800_and_says_hello);
@@ -439,5 +561,13 @@ int main(void) {
     RUN(failed_fetch_backs_off);
     RUN(failed_post_backs_off_and_400_is_final);
     RUN(long_latin1_saved_name_is_cut_not_emptied);
+    RUN(the_hello_carries_the_key);
+    RUN(without_a_key_or_state_the_hello_stays_protocol_1);
+    RUN(raw_bytes_land_in_the_ring_and_the_rest_are_lines);
+    RUN(a_byte_past_the_credit_breaks_it);
+    RUN(the_ring_wraps_at_its_size);
+    RUN(put_parses_and_json_escapes_latin1);
+    RUN(the_worst_put_json_fits);
+    RUN(utf8_comes_back_as_latin1);
     return REPORT();
 }
