@@ -34,6 +34,9 @@ const steps: { name: string; run: () => Promise<string | null> }[] = [
   { name: 's03 drawer', run: async () => { const b = await board();
       try { const got = [(await b.takeUpload({ timeoutMs: 60000 })).path, (await b.takeUpload({ timeoutMs: 60000 })).path].sort();
             return JSON.stringify(got) === JSON.stringify(['Mods/a.mod', 'Mods/sub/b.mod']) ? null : `got ${got}`; } finally { await b.close(); } } },
+  { name: 's03b drawer with a trailing slash (Mods/)', run: async () => { const b = await board();
+      try { const got = [(await b.takeUpload({ timeoutMs: 60000 })).path, (await b.takeUpload({ timeoutMs: 60000 })).path].sort();
+            return JSON.stringify(got) === JSON.stringify(['Mods/a.mod', 'Mods/sub/b.mod']) ? null : `got ${got}`; } finally { await b.close(); } } },
   { name: 's04 resume: the first try is cut', run: async () => { const b = await board();
       const r = await b.takeUpload({ store, dropAfterChunks: 2, timeoutMs: 60000 }); return !r.ok && r.code === 'dropped' ? null : JSON.stringify(r); } },
   { name: 's05 resume: the rest', run: async () => { const b = await board();
@@ -57,7 +60,8 @@ const steps: { name: string; run: () => Promise<string | null> }[] = [
 
 const logs: [string, RegExp[]][] = [
   ['s01', [/Hello\.txt {2}21 bytes {2}OK/, /rc=0/]], ['s02', [/Big\.bin {2}4194304 bytes {2}OK/, /rc=0/]],
-  ['s03', [/Mods\/a\.mod {2}1 bytes {2}OK/, /Mods\/sub\/b\.mod {2}1 bytes {2}OK/, /rc=0/]], ['s04', [/ERR connection lost/, /rc=10/]],
+  ['s03', [/Mods\/a\.mod {2}1 bytes {2}OK/, /Mods\/sub\/b\.mod {2}1 bytes {2}OK/, /rc=0/]], ['s03b', [/Mods\/a\.mod {2}1 bytes {2}OK/, /Mods\/sub\/b\.mod {2}1 bytes {2}OK/, /rc=0/]],
+  ['s04', [/ERR connection lost/, /rc=10/]],
   ['s05', [/Resume\.bin {2}100000 bytes {2}OK/, /rc=0/]], ['s06', [/ERR damaged on the way/, /rc=10/]],
   ['s07', [/ERR the web app's area is full/, /rc=10/]], ['s08', [/bytes {2}OK/, /rc=0/]],
   ['s09', [/cannot receive files \(update to 1\.19\.0\)/, /rc=10/]], ['s10', [/Another board or computer connected -- not sending/, /rc=10/]],

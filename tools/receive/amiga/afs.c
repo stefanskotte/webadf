@@ -131,16 +131,7 @@ static int a_open_r(void *x, const char *local, rx_finfo *info) {
 }
 static long a_read(void *x, unsigned char *b, unsigned long n) { LONG got = Read(((afs_ctx *)x)->rh, b, (LONG)n); return got < 0 ? -1 : (long)got; }
 static void a_close_r(void *x) { afs_ctx *c = x; if (c->rh) { Close(c->rh); c->rh = 0; } }
-void afs_base_name(const char *path, char *out) {
-    const char *p = (const char *)FilePart((STRPTR)path), *colon;
-    size_t n = strlen(p);
-    if (n == 0) {   /* "RAM:" or "DH0:Drawer/": the volume's name */
-        colon = strchr(path, ':');
-        p = path; n = colon ? (size_t)(colon - path) : strlen(path);
-    }
-    if (n > RX_PART_MAX) n = RX_PART_MAX;
-    memcpy(out, p, n); out[n] = 0;
-}
+void afs_base_name(const char *path, char *out) { rx_base_name(path, out); }   /* the rule is the core's, host-tested */
 void afs_set_root(afs_ctx *c, const char *root) { strncpy(c->root, root, sizeof c->root - 1); c->root[sizeof c->root - 1] = 0; }
 void afs_init(afs_ctx *c, rx_fs *fs, const char *root) {
     memset(c, 0, sizeof *c);

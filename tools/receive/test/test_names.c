@@ -47,4 +47,18 @@ static void utoa(void) {
     CHECK_EQ_INT(rx_utoa(4194304UL, b), 7); CHECK(strcmp(b, "4194304") == 0, "4194304");
     CHECK_EQ_INT(rx_utoa(4294967295UL, b), 10); CHECK(strcmp(b, "4294967295") == 0, "max");
 }
-int main(void) { RUN(ok_paths); RUN(bad_paths); RUN(candidates); RUN(utoa); return REPORT(); }
+/* The name a dropped or typed Amiga path goes up under (fix round 1 of Task 5): the last part, a trailing '/' ignored
+   (Shell TAB completion adds one), or the volume's name for a bare volume. */
+static void base_names(void) {
+    char out[RX_PART_MAX + 1];
+    rx_base_name("DH0:Drawer", out); CHECK(strcmp(out, "Drawer") == 0, "absolute");
+    rx_base_name("DH0:Drawer/", out); CHECK(strcmp(out, "Drawer") == 0, "absolute, trailing slash");
+    rx_base_name("DH0:a/Mods//", out); CHECK(strcmp(out, "Mods") == 0, "two trailing slashes");
+    rx_base_name("Work:Up/Hello.txt", out); CHECK(strcmp(out, "Hello.txt") == 0, "a file");
+    rx_base_name("Drawer/", out); CHECK(strcmp(out, "Drawer") == 0, "relative, trailing slash");
+    rx_base_name("Drawer", out); CHECK(strcmp(out, "Drawer") == 0, "relative");
+    rx_base_name("DH0:", out); CHECK(strcmp(out, "DH0") == 0, "bare volume");
+    rx_base_name("RAM:/", out); CHECK(strcmp(out, "RAM") == 0, "volume, then a slash");
+    rx_base_name("DH0:123456789012345678901234567890XYZ", out); CHECK_EQ_INT(strlen(out), RX_PART_MAX);
+}
+int main(void) { RUN(ok_paths); RUN(bad_paths); RUN(candidates); RUN(utoa); RUN(base_names); return REPORT(); }

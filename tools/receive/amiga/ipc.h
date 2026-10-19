@@ -6,7 +6,8 @@
 #include "rx_proto.h"
 #define RX_PORT_NAME "webadf.Receive"
 int ipc_running(void);                                         /* a Receive owns the port */
-int ipc_hand_off(const rx_upq *items, int trust, int *ok);     /* client: prints a line per file; 0 when handed over */
+int ipc_hand_off(const rx_upq *items, int trust, int *ok);     /* client: a line per file; 0 handed over, 1 gave up
+                                                                  waiting (Receive not answering), -1 not handed */
 int ipc_open(void);                                            /* server: 0 when the port is ours */
 ULONG ipc_sigmask(void);
 void ipc_take(rx_upq *q, rx_added_fn added, int (*trust)(void *u), void *u);   /* drains the port into q */

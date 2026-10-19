@@ -11,7 +11,7 @@
 #include "net.h"
 #include "ui.h"
 
-static struct { int send_mode, asked, ok, done, heard, quit; ULONG t0; } sh;
+static struct { int send_mode, asked, ok, done, heard, quit, old_said; ULONG t0; } sh;
 static rx_upq q;
 static rx_session sess;
 
@@ -31,7 +31,15 @@ static void sh_event(void *u, const rx_event *e, rx_session *s) {
             VPrintf((STRPTR)"Trusted board %s\n", a);
         } else if (!strcmp(e->code, "ok")) VPrintf((STRPTR)"Board key %s\n", a);
         else if (!strcmp(e->code, "other")) { PutStr((STRPTR)"Another board or computer connected -- not sending\n"); if (sh.send_mode) sh.quit = 1; }
-        else { PutStr((STRPTR)"This board's firmware cannot receive files (update to 1.19.0)\n"); if (sh.send_mode) sh.quit = 1; }
+        else {
+            /* Every board before 1.19.0 connects this way to send files down: say it only when something is to go up,
+               and once a run. */
+            if ((sh.send_mode || q.n > 0) && !sh.old_said) {
+                PutStr((STRPTR)"This board's firmware cannot receive files (update to 1.19.0)\n");
+                sh.old_said = 1;
+            }
+            if (sh.send_mode) sh.quit = 1;
+        }
         break;
     case RX_EV_UP_DONE:
         a[0] = (LONG)e->path; a[1] = (LONG)e->size; VPrintf((STRPTR)"%s  %lu bytes  OK\n", a);
@@ -79,7 +87,7 @@ int shell_main(const char *dir, STRPTR *send, int trust) {
         if (q.n == 0) return RETURN_ERROR;
         if (ipc_running()) {
             int ok = 0, n = (int)q.n;
-            if (ipc_hand_off(&q, trust, &ok) == 0) { sh.ok += ok; sh.done += n; return send_rc(); }
+            if (ipc_hand_off(&q, trust, &ok) >= 0) { sh.ok += ok; sh.done += n; return send_rc(); }
         }
         if (net_open() != 0) { PutStr((STRPTR)"No TCP/IP stack running (bsdsocket.library)\n"); return RETURN_ERROR; }
         PutStr((STRPTR)"Waiting for the board\n"); Flush(Output());

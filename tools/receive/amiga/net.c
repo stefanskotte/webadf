@@ -100,7 +100,8 @@ int net_run(net_ui *ui, afs_ctx *ctx, rx_fs *fs, rx_session *s, rx_upq *q) {
                 if (cl >= 0) { send_all(ns, "ERR - busy receiver busy\n", 25); CloseSocket(ns); }
                 else {
                     LONG nb = 1;
-                    IoctlSocket(ns, FIONBIO, (char *)&nb);
+                    /* A blocking socket would freeze the loop on a full send buffer: refuse rather than risk it. */
+                    if (IoctlSocket(ns, FIONBIO, (char *)&nb) != 0) { CloseSocket(ns); continue; }
                     cl = ns; last = rx_now_secs(); o_len = o_off = 0;
                     rx_init(s, fs, relay, NULL); rx_attach(s, q);
                     if (ui->on_link) ui->on_link(ui->u, 1);

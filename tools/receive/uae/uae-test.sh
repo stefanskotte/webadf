@@ -46,7 +46,7 @@ if [ "$mode" = space ]; then
   xdftool "$work/small.adf" create + format Small ofs >/dev/null; df0="$work/small.adf"; target='DF0:'
 fi
 if [ "$mode" = send ]; then
-  # Uploads (spec 2026-10-18 §10 increment 1): files on Work:Up for twelve `Receive SEND` runs, played by send-scenarios.ts.
+  # Uploads (spec 2026-10-18 §10 increment 1): files on Work:Up for thirteen `Receive SEND` runs, played by send-scenarios.ts.
   mkdir -p "$work/hd/Up/Mods/sub"
   printf 'hello from the Amiga\n' > "$work/hd/Up/Hello.txt"
   head -c 4194304 /dev/urandom > "$work/hd/Up/Big.bin"
@@ -63,9 +63,10 @@ DF1:C/LoadWB
 Run >NIL: Work:Receive TO $target GUI";;
   send) e9=$(printf '\351')   # é in Latin-1: the Amiga reads the script byte by byte
         run_line=""
-        n=0
-        for f in Hello.txt Big.bin Mods Resume.bin Resume.bin Crc.bin Refused.bin "Caf${e9}.txt" Hello.txt Hello.txt; do
-          n=$((n + 1)); log=$(printf 's%02d' "$n")
+        # <log>:<file>; s03b is the drawer again with the slash Shell TAB completion adds.
+        for step in s01:Hello.txt s02:Big.bin s03:Mods s03b:Mods/ s04:Resume.bin s05:Resume.bin s06:Crc.bin \
+                    s07:Refused.bin "s08:Caf${e9}.txt" s09:Hello.txt s10:Hello.txt; do
+          log=${step%%:*}; f=${step#*:}
           run_line="${run_line}Work:Receive SEND Work:Up/$f >Work:$log.log
 Echo >>Work:$log.log "'"rc=$RC"'"
 "
