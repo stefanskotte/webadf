@@ -103,6 +103,10 @@ int rx_want_output(const rx_session *s);   /* 1 while rx_take_output has work no
    flow -- needs the connection closed (1; rx_take_output then returns -1). -1: no such tag. */
 int rx_up_cancel(rx_session *s, rx_upq *q, unsigned tag);
 int rx_idle_secs(const rx_session *s);     /* the silence allowed: RX_IDLE_SECS, RX_UP_IDLE_SECS while a file goes up */
+/* 1 while Receive CRCs the part of a resumed file the web app already has: no byte goes either way meanwhile, and on a
+   68000 it can take minutes (the board allows for it, AS_UP_PREREAD_MS). The silence is Receive's own work, so the
+   loop restarts its idle clock while this is 1. */
+int rx_up_reading_ahead(const rx_session *s);
 void rx_disconnected(rx_session *s);   /* the peer went away: drop a half-written file */
 int rx_busy(const rx_session *s);      /* 1 while a file is being received */
 

@@ -192,6 +192,8 @@ int main(int argc, char **argv) {
                 }
             }
         }
+        /* A resume's pre-read is our own silence, not the board's: it does not count (as net.c). */
+        if (cl >= 0 && rx_up_reading_ahead(&S)) last = time(NULL);
         /* A peer that went silent (a rebooted board sends no FIN; a scanner just waits) must not hold the slot. */
         if (cl >= 0 && !FD_ISSET(cl, &r) && time(NULL) - last > (idle_env ? idle_env : rx_idle_secs(&S))) {
             rx_disconnected(&S); close(cl); cl = -1; continue;

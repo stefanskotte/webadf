@@ -69,6 +69,8 @@ int net_run(net_ui *ui, afs_ctx *ctx, rx_fs *fs, rx_session *s, rx_upq *q) {
         if (sigs & SIGBREAKF_CTRL_C) break;
         if ((sigs & ui->extra_sigs) && ui->on_signal(ui->u, sigs)) break;
         if (ui->on_pass && ui->on_pass(ui->u, s, cl >= 0)) break;
+        /* A resume's pre-read is our own silence, not the board's: it does not count (the board allows for it). */
+        if (cl >= 0 && rx_up_reading_ahead(s)) last = rx_now_secs();
         /* A peer that went silent (a rebooted board sends no FIN; a scanner just waits) must not hold the slot. */
         if (cl >= 0 && (n <= 0 || !FD_ISSET(cl, &r)) && rx_now_secs() - last > (ULONG)rx_idle_secs(s)) { drop(ui, s, &cl); continue; }
         /* The connection first: a board's close (EOF) is handled before its reconnect is accepted. */

@@ -471,6 +471,30 @@ static void the_comment_in_the_put_has_no_control_bytes(void) {
     CHECK(strstr((char *)obig, "PUT 1 3 1.2.3 0 1:C 7:a b c d\n") != NULL, "control bytes become spaces, length kept");
     CHECK_EQ_INT(strchr(strstr((char *)obig, "PUT"), '\n') - (char *)obig, (long)strlen("PUT 1 3 1.2.3 0 1:C 7:a b c d"));
 }
+/* Increment-2 review, item 1: the CRC over a resume's stored part is Receive's own silent work -- the loop restarts its
+   idle clock while it lasts (net.c), so a long pre-read on a 68000 never times the board out. */
+static void a_resumes_pre_read_counts_as_receives_own_work(void) {
+    unsigned char b[RX_UP_BLOCK];
+    up_ready("DH0:Big", "Big", 40000, 0, ""); drain();
+    CHECK(!rx_up_reading_ahead(&S), "not before the TAKE");
+    feed("TAKE 1 16384 24576\n");
+    CHECK(rx_up_reading_ahead(&S), "reading the stored part");
+    CHECK_EQ_INT(rx_take_output(&S, (char *)b, sizeof b), 0);
+    CHECK(rx_up_reading_ahead(&S), "one block of two read");
+    CHECK_EQ_INT(rx_take_output(&S, (char *)b, sizeof b), 0);
+    CHECK(!rx_up_reading_ahead(&S), "done: the raw bytes are next, and the board answers them");
+    up_ready("DH0:Big", "Big", 40000, 0, ""); drain(); feed("TAKE 1 0 16384\n");
+    CHECK(!rx_up_reading_ahead(&S), "no stored part, no pre-read");
+}
+/* Item 5: a file deleted on the web app mid-upload -- the board's NO gone, its text shown as sent. */
+static void no_gone_mid_file_shows_the_boards_text(void) {
+    up_ready("DH0:Big", "Big", 40000, 0, ""); drain(); feed("TAKE 1 0 32768\n");
+    feed("NO 1 gone 22:deleted on the web app\n");
+    int i = last_kind(RX_EV_UP_FAILED);
+    CHECK(i >= 0 && strcmp(ev_code[i], "gone") == 0, "code gone");
+    CHECK(i >= 0 && strcmp(ev_path[i], "Big|deleted on the web app") == 0, ev_path[i < 0 ? 0 : i]);
+    drain(); CHECK(ob_closed, "closed: the place in the stream is lost");
+}
 int main(void) {
     RUN(hello_and_ping); RUN(list_items); RUN(list_split_across_feeds_and_bad_line_skipped); RUN(one_file);
     RUN(line_and_data_in_one_feed_then_next_line); RUN(collision); RUN(subfolder_made); RUN(bad_crc);
@@ -490,5 +514,6 @@ int main(void) {
     RUN(stale_lines_for_another_tag_are_ignored); RUN(progress_follows_the_stored_field_and_a_capped_credit);
     RUN(a_drop_after_take_reports_the_stored_offset); RUN(more_mid_write_and_during_skip_never_lets_sent_pass_credit);
     RUN(the_comment_in_the_put_has_no_control_bytes);
+    RUN(a_resumes_pre_read_counts_as_receives_own_work); RUN(no_gone_mid_file_shows_the_boards_text);
     return REPORT();
 }

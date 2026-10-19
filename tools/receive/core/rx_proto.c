@@ -405,6 +405,7 @@ int rx_up_cancel(rx_session *s, rx_upq *q, unsigned tag) {
     return 1;
 }
 int rx_idle_secs(const rx_session *s) { return s->up_phase != RX_UP_IDLE ? RX_UP_IDLE_SECS : RX_IDLE_SECS; }
+int rx_up_reading_ahead(const rx_session *s) { return s->up_phase == RX_UP_SKIP && !s->up_closing; }
 
 /* --- files --- */
 static void parent_of(const char *path, char *dst) {
