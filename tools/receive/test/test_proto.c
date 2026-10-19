@@ -189,8 +189,8 @@ static void setup2(const char *trusted) { setup(); rx_upq_init(&Q, trusted); rx_
 static int last_kind(int k) { for (int i = n_ev - 1; i >= 0; i--) if (last_ev[i].kind == k) return i; return -1; }
 static void hello2(const char *key) { char l[80]; snprintf(l, sizeof l, "WEBADF 2 %s\n", key); feed(l); }
 static const char *trust_code(void) { int i = last_kind(RX_EV_TRUST); return i < 0 ? "" : ev_code[i]; }
-static unsigned added_n; static char added_names[80][300];
-static void on_added(void *u, const rx_up_item *it) { (void)u; snprintf(added_names[added_n++ % 80], 300, "%s=%s", it->name, it->local); }
+static unsigned added_n; static char added_names[80][520];
+static void on_added(void *u, const rx_up_item *it) { (void)u; snprintf(added_names[added_n++ % 80], sizeof added_names[0], "%s=%s", it->name, it->local); }
 
 static void v2_hello_answers_ready_2_and_trusts_the_first_key(void) {
     setup2("");
