@@ -22,7 +22,7 @@ PARTITIONS = os.path.join(FW, "partitions.json")
 ABSOLUTE = 0xE48BFF57
 XIP = 0x10000000
 FLASH_END = XIP + 16 * 1024 * 1024
-TOP6 = FLASH_END - 6 * 4096            # 0x10ffa000: token/config/fw_state/display/drive_store/override
+TOP8 = FLASH_END - 8 * 4096            # 0x10ff8000: the six stores, the update trail, the board key
 E10 = 0x10FFFF00
 
 
@@ -121,7 +121,7 @@ class StructuralChecks:
             self.assertEqual(b["num"], n, "numBlocks inconsistent")
             self.assertEqual(b["addr"] % 256, 0)
             self.assertGreaterEqual(b["addr"], XIP)
-            self.assertLessEqual(b["addr"] + 256, TOP6, f"block at {b['addr']:#x} in the top 6 sectors")
+            self.assertLessEqual(b["addr"] + 256, TOP8, f"block at {b['addr']:#x} in the top 8 sectors")
             self.assertNotEqual(b["addr"], E10, "E10 abs-block present")
         addrs = [b["addr"] for b in blocks]
         self.assertEqual(addrs, sorted(set(addrs)), "addresses not strictly ascending / duplicated")
@@ -189,7 +189,7 @@ class SyntheticTests(unittest.TestCase, StructuralChecks):
         pt, _ = pt_uf2()
         r, _ = self.r.tool(self.r.write("pt.uf2", pt), self.r.write("img.bin", picobin_image(False)), part)
         self.assertNotEqual(r.returncode, 0)
-        self.assertIn("top 6", r.stderr)
+        self.assertIn("top 8", r.stderr)
 
     def test_refuses_slot_in_the_override_sector(self):
         # Sector -6 (0x10ffa000) holds the server override (fw 1.13.0).
@@ -200,7 +200,18 @@ class SyntheticTests(unittest.TestCase, StructuralChecks):
         pt, _ = pt_uf2()
         r, _ = self.r.tool(self.r.write("pt.uf2", pt), self.r.write("img.bin", picobin_image(False)), part)
         self.assertNotEqual(r.returncode, 0)
-        self.assertIn("top 6", r.stderr)
+        self.assertIn("top 8", r.stderr)
+
+    def test_refuses_slot_in_the_board_key_sector(self):
+        # Sector -8 (0x10ff8000) holds the board key (fw 1.19.0); -7 the boot trail's update trail.
+        with open(PARTITIONS) as f:
+            p = json.load(f)
+        p["partitions"][1]["start"] = "16352K"     # B's blank page at 0x10ff8000, the key sector
+        part = self.r.write("partitions.json", json.dumps(p).encode())
+        pt, _ = pt_uf2()
+        r, _ = self.r.tool(self.r.write("pt.uf2", pt), self.r.write("img.bin", picobin_image(False)), part)
+        self.assertNotEqual(r.returncode, 0)
+        self.assertIn("top 8", r.stderr)
 
     def test_refuses_slot_outside_flash(self):
         with open(PARTITIONS) as f:
