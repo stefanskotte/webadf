@@ -20,6 +20,15 @@ async function diskWhere(orgId: string, where: ReturnType<typeof eq>) {
 }
 
 export async function POST(_request: Request, ctx: { params: Promise<{ id: string }> }) {
+  try {
+    return await add(ctx);
+  } catch (err) {
+    console.error('uploads: add to library failed', err);
+    return Response.json({ error: 'server' }, { status: 500 });
+  }
+}
+
+async function add(ctx: { params: Promise<{ id: string }> }) {
   const { orgId } = await requireOrg();
   const { id } = await ctx.params;
   const db = getDb();

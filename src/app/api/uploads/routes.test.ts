@@ -2,12 +2,28 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { createHash } from 'node:crypto';
 import { DISK_IMAGE_PATTERN } from '@/lib/archive/disk-image';
+import { attachmentDisposition } from '@/lib/content-disposition';
 import { LIBRARY_EXT, libraryEligible } from '@/lib/from-amiga-ui';
 
 vi.mock('@/lib/session', () => ({ requireOrg: () => Promise.resolve({ orgId: 'org-1', userId: 'user-1', email: 'a@b.test' }) }));
-const diskRow = { id: 'disk-9', gameId: 'game-9' };
+// and/eq record their conditions, so the disks mock below answers only the rows the where clause really selects: dropping
+// an org (or id / sha) condition from the route changes what the mock returns.
+vi.mock('drizzle-orm', async (orig) => ({
+  ...(await orig<typeof import('drizzle-orm')>()),
+  and: (...c: unknown[]) => ({ and: c }),
+  eq: (col: unknown, v: unknown) => ({ eq: [col, v] }),
+}));
+type Cond = { and: Cond[] } | { eq: [unknown, unknown] } | undefined;
+const flat = (c: Cond): [unknown, unknown][] => (!c ? [] : 'and' in c ? c.and.flatMap(flat) : [c.eq]);
+const diskTable: { id: string; gameId: string; orgId: string; sha256: string }[] = [];
+const { disks: disksT } = await import('@/db/schema/catalog');
 vi.mock('@/db', () => ({ getDb: () => ({
-  select: () => ({ from: () => ({ where: () => ({ limit: async () => [diskRow] }) }) }),
+  select: () => ({ from: () => ({ where: (c: Cond) => ({ limit: async () => {
+    const f = flat(c);
+    const want = (col: unknown) => f.find(([k]) => k === col)?.[1];
+    return diskTable.filter((d) => (['orgId', 'id', 'sha256'] as const).every((k) => { const w = want(disksT[k]); return w === undefined || d[k] === w; }))
+      .map(({ id, gameId }) => ({ id, gameId }));
+  } }) }) }),
 }) }));
 const store = new Map<string, Uint8Array>();
 vi.mock('@/lib/storage', () => ({ diskStore: {
@@ -43,7 +59,10 @@ const stored = (over: Record<string, unknown> = {}) => ({
   status: 'stored', blobSha256: sha(ADF), protection: 0x40, comment: 'note', libraryDiskId: null, ...over,
 });
 
-beforeEach(() => { vi.clearAllMocks(); store.clear(); store.set(sha(ADF), ADF); });
+beforeEach(() => {
+  vi.clearAllMocks(); store.clear(); store.set(sha(ADF), ADF);
+  diskTable.length = 0; diskTable.push({ id: 'disk-9', gameId: 'game-9', orgId: 'org-1', sha256: sha(ADF) });
+});
 
 describe('GET /api/uploads', () => {
   it("lists the session org's area, filtered by ?board=, with the boards and the server's time", async () => {
@@ -115,6 +134,23 @@ describe('POST /api/uploads/<id>/library', () => {
     expect(await r.json()).toEqual({ diskId: 'disk-9', gameId: 'game-9' });
     expect(registerUploads).not.toHaveBeenCalled();
   });
+  it("never reuses or answers another org's disk named by libraryDiskId", async () => {
+    diskTable.length = 0;
+    diskTable.push({ id: 'disk-x', gameId: 'game-x', orgId: 'org-other', sha256: sha(ADF) });
+    U.getUpload.mockResolvedValue(stored({ libraryDiskId: 'disk-x' }));
+    registerUploads.mockResolvedValue(Response.json({ created: 1, disks: 1, rejected: 0, rejectedReasons: {} }));
+    const r = await libraryPOST(new Request('http://x', { method: 'POST' }), ctx('up-1'));
+    // Not found in org-1 (neither by id nor by sha), so it is not handed out and nothing is recorded against it.
+    expect(r.status).toBe(502);
+    expect(U.setLibraryDisk).not.toHaveBeenCalled();
+    expect(registerUploads).toHaveBeenCalledOnce();
+  });
+  it('answers JSON 500 server when the normaliser or the ingest throws', async () => {
+    U.getUpload.mockResolvedValue(stored());
+    registerUploads.mockRejectedValue(new Error('boom'));
+    const r = await libraryPOST(new Request('http://x', { method: 'POST' }), ctx('up-1'));
+    expect(r.status).toBe(500); expect(await r.json()).toEqual({ error: 'server' });
+  });
   it('refuses what is not a library disk image, and says why a refused one was refused', async () => {
     U.getUpload.mockResolvedValueOnce(stored({ path: 'Archive.lha' }));
     let r = await libraryPOST(new Request('http://x', { method: 'POST' }), ctx('up-1'));
@@ -135,6 +171,7 @@ describe('POST /api/uploads/<id>/send', () => {
     queueTransferFromBlob.mockResolvedValue({ ok: true, id: 't1' });
     const r = await sendPOST(new Request('http://x', { method: 'POST', body: JSON.stringify({ deviceId: 'dev-2' }) }), ctx('up-1'));
     expect(r.status).toBe(201);
+    expect(findSendTarget).toHaveBeenCalledWith(expect.anything(), 'org-1', 'dev-2');
     expect(queueTransferFromBlob).toHaveBeenCalledWith(expect.anything(), { orgId: 'org-1', deviceId: 'dev-2', userId: 'user-1',
       path: 'Games/Lemmings.adf', sha256: sha(ADF), protection: 0x40, comment: 'note' });
   });
@@ -143,6 +180,14 @@ describe('POST /api/uploads/<id>/send', () => {
     findSendTarget.mockResolvedValue(null);
     const r = await sendPOST(new Request('http://x', { method: 'POST', body: JSON.stringify({ deviceId: 'dev-x' }) }), ctx('up-1'));
     expect(r.status).toBe(404);
+  });
+  it("is 404 and queues nothing for a board of another org (findSendTarget is asked with the session's org)", async () => {
+    U.getUpload.mockResolvedValue(stored());
+    findSendTarget.mockImplementation(async (_db: unknown, org: string, dev: string) => (org === 'org-2' && dev === 'dev-foreign' ? { id: dev } : null));
+    const r = await sendPOST(new Request('http://x', { method: 'POST', body: JSON.stringify({ deviceId: 'dev-foreign' }) }), ctx('up-1'));
+    expect(r.status).toBe(404);
+    expect(findSendTarget).toHaveBeenCalledWith(expect.anything(), 'org-1', 'dev-foreign');
+    expect(queueTransferFromBlob).not.toHaveBeenCalled();
   });
 });
 
@@ -206,5 +251,12 @@ describe('LIBRARY_EXT / libraryEligible', () => {
     expect(libraryEligible('Games/A.dms', 3_000_000)).toBe(true);
     expect(libraryEligible('Games/A.dms', 4_194_305)).toBe(false);
     expect(libraryEligible('Games/A.txt', 10)).toBe(false);
+  });
+});
+
+describe('attachmentDisposition', () => {
+  it('falls back to the ASCII name for a lone surrogate instead of throwing', () => {
+    expect(() => attachmentDisposition('bad\ud800name.txt')).not.toThrow();
+    expect(attachmentDisposition('bad\ud800name.txt')).toBe('attachment; filename="bad_name.txt"');
   });
 });
