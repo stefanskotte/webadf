@@ -40,6 +40,7 @@
 #include "activity_led.h"
 #include "i2c_probe.h"
 #include "boot_trail.h"
+#include "hardware/watchdog.h"
 #include "ssd1306.h"
 #include "display.h"
 #include "display_layout.h"
@@ -3966,6 +3967,9 @@ int main(void) {
             // Core0's loop is what drains the log ring, so drain it here or
             // the line below never reaches the console.
             wf_logf(WF_ERR, "board: %s fails its check: %s", g_board->name, why);
+            // Halt, as before 1.18.2 -- not a reboot loop: fw_rom_boot_early now arms the boot watchdog, so it is
+            // stopped here (a trial is still reverted: a revert is its own reboot request on the next boot).
+            if (!fw_rom_trial_boot()) watchdog_disable();
             while (1) {
                 wf_log_drain(4);
                 tight_loop_contents();
@@ -3973,8 +3977,6 @@ int main(void) {
         }
         wf_logf(WF_INFO, "board: %s", g_board->name);
     }
-    // The boot path's watchdog (fw_rom.h fw_rom_watchdog_start_boot): after the buy and PSRAM, before the I2C scan.
-    fw_rom_watchdog_start_boot();
 
     // inputs. PIN_WDATA belongs here too even though only PIO reads it: an
     // RP2350 pad stays isolated from reset until gpio_set_function() clears

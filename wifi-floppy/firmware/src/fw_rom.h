@@ -43,15 +43,15 @@ void fw_rom_request_ota_reboot(uint32_t flash_update_off);
 // This boot follows a reboot the firmware made for an update (fw_boot_after_ota on the words fw_rom_boot_early
 // consumed). False after a power-up, the RUN button, a console "reboot" or a watchdog reset from a hang.
 bool fw_rom_boot_after_ota(void);
-// 1.18.2: armed in main() as soon as the board check has passed -- AFTER the early buy and PSRAM, so the buy
-// sequence is untouched -- for the boot path before core0's loop (I2C scan, display, PIO, core1 launch), which no
+// 1.18.2: armed at the end of fw_rom_boot_early, on every boot -- AFTER the early buy has returned, so the buy
+// itself is untouched -- for the boot path (PSRAM init, the I2C scan, display, PIO, core1 launch), which no
 // watchdog covered on a normal boot, and which a bought boot entered with the watchdog explicitly DISABLED
 // (early_buy). 16 s, the most the RP2350 counter holds (0xffffff us); the loop's fw_rom_watchdog_start then
 // re-arms it at 8 s. A hang there now resets the board (the boot trail names the stage) instead of needing a
 // power cycle.
+void fw_rom_watchdog_start_boot(void);
 // True when fw_rom_boot_early bought a proven trial on THIS boot (the boot trail's flash half carries on).
 bool fw_rom_bought_this_boot(void);
-void fw_rom_watchdog_start_boot(void);
 void fw_rom_watchdog_start(void);      // core0, right before its loop
 void fw_rom_service(void);             // core0, every loop turn: feed, deadline, honour reboot
 

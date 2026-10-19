@@ -99,18 +99,23 @@ void fw_rom_boot_early(const char *running_version) {
 
     if (!fw_trial_proven(g_trial, g_mark0, g_mark1, running_version)) {
         g_early = (g_mark0 == FW_PROVEN_MAGIC) ? EARLY_STALE_MARK : EARLY_NO_MARK;
-        return;                                   // a plain trial, or no trial at all
-    }
-    bt_hw_mark(0, BT0_BUY);                       // the boot trail: two POWMAN register writes, no flash
-    g_buy_rc = early_buy();
-    if (g_buy_rc == 0) {
-        bt_hw_mark(0, BT0_BOUGHT);
-        g_bought = true;                          // trial over; the deadline stands down
-        g_early = EARLY_BOUGHT;
     } else {
-        g_early = EARLY_BUY_FAILED;
-        fw_rom_request_ota_reboot(0);             // unbought -> the old slot (M5)
+        bt_hw_mark(0, BT0_BUY);                   // the boot trail: two POWMAN register writes, no flash
+        g_buy_rc = early_buy();
+        if (g_buy_rc == 0) {
+            bt_hw_mark(0, BT0_BOUGHT);
+            g_bought = true;                      // trial over; the deadline stands down
+            g_early = EARLY_BOUGHT;
+        } else {
+            g_early = EARLY_BUY_FAILED;
+            fw_rom_request_ota_reboot(0);         // unbought -> the old slot (M5)
+        }
     }
+    // 1.18.2: the boot path's watchdog, on EVERY boot, from here -- after the buy has returned (early_buy is
+    // unchanged: armed 8 s around the ROM call, disarmed after a good buy), before PSRAM init. A bought boot used to
+    // run PSRAM init, the I2C scan and the display with NO watchdog until core0's loop, and the tester's confirm
+    // restart wedged in exactly that stretch. fw_rom_watchdog_start_boot (fw_rom.h).
+    fw_rom_watchdog_start_boot();
 }
 
 void fw_rom_boot_init(void) {
