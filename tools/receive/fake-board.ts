@@ -28,6 +28,7 @@ export interface UploadOpts {
   dropAfterChunks?: number;                 // close the socket after this many stored chunks
   store?: UploadStore;
   timeoutMs?: number;
+  delayMoreMs?: number;   // wait this long before each MORE (to show progress)
 }
 export type UploadResult = {
   tag: string; path: string; size: number; date: string; protection: number; comment: string; offset: number;
@@ -182,6 +183,7 @@ export async function connect(port: number, host = '127.0.0.1', opts: { v?: 1 | 
           return { ...head, offset, ok: false, code: 'dropped' };
         }
         credit = Math.min(head.size, got.length + W);
+        if (o.delayMoreMs) await new Promise((r) => setTimeout(r, o.delayMoreMs));
         sock.write(`MORE ${head.tag} ${credit} ${got.length}\n`);
       }
       const end = await rd.line(Math.max(ms, 60000));

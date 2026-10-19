@@ -56,11 +56,14 @@ if [ "$mode" = send ]; then
   printf 'x' > "$work/hd/Up/Refused.bin"
   printf 'e' > "$work/hd/Up/Café.txt"
 fi
+if [ "$mode" = gui ]; then
+  mkdir -p "$work/hd/Up"; head -c 901120 /dev/zero > "$work/hd/Up/Lemmings.adf"; printf 'notes\n' > "$work/hd/Up/Notes.txt"
+fi
 case "$mode" in
   shell|space|ram) run_line="Work:Receive TO $target SAVE >Work:receive.log";;
   gui) run_line="DF1:C/Assign >NIL: SYS: DF1:
 DF1:C/LoadWB
-Run >NIL: Work:Receive TO $target GUI";;
+Run >NIL: Work:Receive TO $target GUI SEND Work:Up/Lemmings.adf Work:Up/Notes.txt";;
   send) e9=$(printf '\351')   # é in Latin-1: the Amiga reads the script byte by byte
         run_line=""
         # <log>:<file>; s03b is the drawer again with the slash Shell TAB completion adds.
