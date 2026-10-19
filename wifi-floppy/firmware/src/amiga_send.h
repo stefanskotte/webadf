@@ -134,7 +134,8 @@ typedef struct amiga_send {
     uint32_t backoff_ms, t_backoff;  // after a failed HTTPS call: no work until t_backoff
     char line[AS_LINE_MAX + 1];
     as_up_t *up;                     // the caller's (PSRAM); NULL: no uploads
-    uint8_t peer_v;                  // Receive's READY: 1 or 2 (0 before)
+    uint8_t hello_v;                 // the hello this connection sent: 1 or 2
+    uint8_t peer_v;                  // Receive's READY: 2 only in answer to our protocol 2 hello, else 1 (0 before)
     bool up_last;                    // the last file to finish went up: a waiting download goes next (spec §3)
 } amiga_send_t;
 

@@ -7,6 +7,7 @@
 
 static uint32_t now(const amiga_send_t *s) { return s->ops->now_ms(s->ops->ctx); }
 static void http_failed(amiga_send_t *s, const char *what, int st);
+static void up_reset(amiga_send_t *s);
 
 // The queue text's first line is "NEXT -" or "NEXT <id> <size> <crc> <prot> <len>:<path> <len>:<comment>".
 static bool next_present(const amiga_send_t *s) {
@@ -37,6 +38,11 @@ static bool flush(amiga_send_t *s) {
 // Receive deletes its temporary file when the connection goes.
 static void drop(amiga_send_t *s, char rx, const char *why) {
     if (s->phase >= AS_FILE_SENT && s->phase <= AS_AWAIT_OK) wf_logf(WF_WARN, "send: %.8s aborted (%s)", s->id, why);
+    if (s->up && s->phase >= AS_UP_OPEN && s->phase <= AS_UP_CLOSE) wf_logf(WF_WARN, "up: %s aborted (%s)", s->up->tag, why);
+    if (s->up) {   // the server keeps the partial upload: the same file sent again resumes (spec U4)
+        if (s->ops->raw_arm) s->ops->raw_arm(s->ops->ctx, NULL);
+        up_reset(s);
+    }
     s->ops->close(s->ops->ctx);
     s->phase = AS_IDLE;
     s->rx = rx;
@@ -233,7 +239,8 @@ static void http_failed(amiga_send_t *s, const char *what, int st) {
 static bool fetch_owed(const amiga_send_t *s) {
     return !s->fetched_once || s->force_fetch || s->want_version != s->have_version;
 }
-static bool file_moving(const amiga_send_t *s) { return s->phase >= AS_FILE_SENT && s->phase <= AS_AWAIT_OK; }
+// A file moving either way: no queue fetch, no long poll.
+static bool file_moving(const amiga_send_t *s) { return s->phase >= AS_FILE_SENT && s->phase <= AS_UP_CLOSE; }
 
 void as_init(amiga_send_t *s, const as_ops_t *ops, char *queue_buf, uint8_t *chunk_buf, as_up_t *up) {
     memset(s, 0, sizeof *s);
@@ -265,11 +272,217 @@ bool as_has_work(const amiga_send_t *s) {
     // between two files, and each file of a folder waits it out (bench 2026-10-18: ~28 s apiece).
     return s->done_owed || file_moving(s) || s->phase == AS_CONNECTING || s->phase == AS_HELLO
         || (fetch_owed(s) && !file_moving(s))
-        || (s->phase == AS_READY && (s->list_owed || s->out_n > 0 || next_present(s)));
+        || (s->phase == AS_READY && (s->list_owed || s->out_n > 0 || next_present(s) || (s->up && s->up->pending)));
 }
 
 char as_rx(const amiga_send_t *s) { return s->rx; }
 uint32_t as_acked_version(const amiga_send_t *s) { return s->have_version; }
+
+// --- Uploads (protocol 2, spec 2026-10-18 §3, §5) -------------------------------------------------------------------
+static bool up_moving(const amiga_send_t *s) { return s->phase >= AS_UP_OPEN && s->phase <= AS_UP_CLOSE; }
+static void up_reset(amiga_send_t *s) {
+    as_up_t *u = s->up;
+    u->pending = false; u->aborted = false; u->end_seen = false;
+    u->tag[0] = 0; u->id[0] = 0;
+    u->size = u->start = u->posted = u->crc = u->last_got = 0;
+    u->raw.total = 0; u->raw.got = 0; u->raw.limit = 0; u->raw.broken = false;
+}
+static const char *no_text(const char *code) {
+    if (!strcmp(code, "size")) return "file too large (4 MB at most)";
+    if (!strcmp(code, "full")) return "the From the Amiga area on the web app is full";
+    if (!strcmp(code, "name")) return "the web app refused the name";
+    if (!strcmp(code, "offline")) return "the web app cannot be reached";
+    if (!strcmp(code, "auth")) return "this board is not paired";
+    if (!strcmp(code, "busy")) return "cancelled";
+    if (!strcmp(code, "crc")) return "damaged on the way";
+    return "the web app refused it";
+}
+static bool code_known(const char *c) {
+    static const char *const k[] = { "size", "full", "name", "offline", "auth", "busy", "server", "crc" };
+    for (unsigned i = 0; i < sizeof k / sizeof k[0]; i++) if (!strcmp(c, k[i])) return true;
+    return false;
+}
+// The server's upload id goes into a request path: lower-case hex and '-' only.
+static bool id_ok(const char *id) {
+    size_t n = strlen(id);
+    if (n < 1 || n > AS_ID_MAX) return false;
+    for (size_t i = 0; i < n; i++) if (!((id[i] >= '0' && id[i] <= '9') || (id[i] >= 'a' && id[i] <= 'f') || id[i] == '-')) return false;
+    return true;
+}
+// "NO <tag> <code> <len>:<text>".
+static void up_no(amiga_send_t *s, const char *code, const char *text) {
+    as_up_t *u = s->up;
+    int n = snprintf(u->line, sizeof u->line, "NO %s %s %u:%s\n", u->tag, code, (unsigned)strlen(text), text);
+    push(s, (const uint8_t *)u->line, n);
+    wf_logf(WF_INFO, "up: %s NO %s", u->tag, code);
+}
+// Before TAKE, or after the last raw byte: the stream is lines, so the connection stays.
+static void up_refuse(amiga_send_t *s, const char *code, const char *text) {
+    up_no(s, code, text);
+    up_reset(s);
+    s->phase = AS_READY;
+    s->up_last = true;
+    s->t_ping = now(s);
+    if (!flush(s)) drop(s, 'u', "send");
+}
+// Raw bytes may be in flight: the stream's place is lost, so after the NO the connection goes (plan ruling P7).
+static void up_fail_drop(amiga_send_t *s, const char *code, const char *text) {
+    char why[24];
+    up_no(s, code, text);
+    (void)flush(s);
+    snprintf(why, sizeof why, "upload %s", code);
+    drop(s, s->rx, why);
+}
+static void on_put(amiga_send_t *s) {
+    as_put_t p;
+    if (!s->up || s->peer_v < 2) return;                    // only a protocol 2 Receive offers files
+    if (s->up->pending || up_moving(s)) { drop(s, 'u', "a second PUT"); return; }   // Receive sends one at a time
+    if (!as_put_parse(s->line, &p)) { drop(s, 'u', "bad PUT"); return; }
+    memcpy(s->up->put, s->line, strlen(s->line) + 1);
+    memcpy(s->up->tag, p.tag, sizeof s->up->tag);
+    s->up->pending = true;
+    s->up->aborted = false;
+}
+static void on_abort(amiga_send_t *s) {
+    if (s->up && (s->up->pending || up_moving(s)) && strcmp(s->line + 6, s->up->tag) == 0) s->up->aborted = true;
+}
+static void on_end(amiga_send_t *s) {
+    as_up_t *u = s->up;
+    const char *p = s->line + 4, *t;
+    int n;
+    if (!u || s->phase != AS_UP_DATA) { drop(s, 'u', "stray END"); return; }
+    t = word(&p, &n);
+    if ((int)strlen(u->tag) != n || strncmp(t, u->tag, (size_t)n) != 0) { drop(s, 'u', "END for another file"); return; }
+    t = word(&p, &n);
+    if (!hex32(t, n, &u->crc) || __atomic_load_n(&u->raw.got, __ATOMIC_ACQUIRE) != u->raw.total) { drop(s, 'u', "bad END"); return; }
+    u->end_seen = true;
+}
+static bool up_open(amiga_send_t *s, uint32_t t, bool http) {
+    as_up_t *u = s->up;
+    as_put_t p;
+    uint32_t off;
+    char id[AS_ID_MAX + 2];   // one past AS_ID_MAX: json_str cuts silently, and a cut id must not pass id_ok
+    if (s->out_n > 0) return false;
+    if (u->aborted) { up_refuse(s, "busy", "cancelled"); return true; }
+    if ((int32_t)(t - u->t_open) > (int32_t)AS_UP_OPEN_GIVEUP_MS) { up_refuse(s, "offline", no_text("offline")); return true; }
+    if (!http || in_backoff(s)) return false;
+    if (!as_put_parse(u->put, &p)) { drop(s, 'u', "bad PUT"); return true; }
+    if (p.size > AS_UP_FILE_MAX) { up_refuse(s, "size", no_text("size")); return true; }
+    if (as_put_json(&p, u->json, sizeof u->json) < 0) { up_refuse(s, "name", no_text("name")); return true; }
+    int st = s->ops->upload_open(s->ops->ctx, u->json, u->resp, sizeof u->resp);
+    if (st == 200 || st == 201) {
+        if (!json_str(u->resp, "id", id, sizeof id) || !id_ok(id) ||
+            !json_u32_strict(u->resp, "offset", &off) || off > p.size) {
+            up_refuse(s, "server", "the web app gave an answer the board cannot read");
+            return true;
+        }
+        memcpy(u->id, id, strlen(id) + 1);
+        s->backoff_ms = 0;
+        u->size = p.size; u->start = u->posted = off; u->end_seen = false; u->last_got = 0;
+        u->raw.ring = s->chunk; u->raw.total = p.size - off; u->raw.got = 0; u->raw.broken = false;
+        const uint32_t lim = u->raw.total < AS_UP_RING_BYTES ? u->raw.total : AS_UP_RING_BYTES;
+        __atomic_store_n(&u->raw.limit, lim, __ATOMIC_RELEASE);
+        // BEFORE the TAKE: every later byte is file data. A resume at the file's size has no raw section: END is next.
+        if (s->ops->raw_arm && u->raw.total) s->ops->raw_arm(s->ops->ctx, &u->raw);
+        int n = snprintf(u->line, sizeof u->line, "TAKE %s %lu %lu\n", u->tag, (unsigned long)off, (unsigned long)(off + lim));
+        push(s, (const uint8_t *)u->line, n);
+        s->phase = AS_UP_DATA;
+        u->t_progress = t;
+        wf_logf(WF_INFO, "up: %s open %.*s %lu at %lu", u->tag, p.path_n < 40 ? p.path_n : 40, p.path,
+                (unsigned long)p.size, (unsigned long)off);
+        if (!flush(s)) drop(s, 'u', "send");
+        return true;
+    }
+    if (st == 401) { up_refuse(s, "auth", no_text("auth")); return true; }
+    if (st >= 400 && st < 500 && st != 408 && st != 429) {
+        char code[17];
+        if (!json_str(u->resp, "code", code, sizeof code) || !code_known(code)) snprintf(code, sizeof code, "server");
+        up_refuse(s, code, no_text(code));
+        return true;
+    }
+    http_failed(s, "upload open", st);
+    return true;
+}
+static bool up_data(amiga_send_t *s, uint32_t t, bool http) {
+    as_up_t *u = s->up;
+    if (u->raw.broken) { drop(s, 'u', "upload past the credit"); return true; }
+    const uint32_t got = __atomic_load_n(&u->raw.got, __ATOMIC_ACQUIRE);
+    if (got != u->last_got) { u->last_got = got; u->t_progress = t; }
+    if ((int32_t)(t - u->t_progress) > (int32_t)AS_UP_STALL_MS) {
+        if (s->backoff_ms) up_fail_drop(s, "offline", no_text("offline"));
+        else up_fail_drop(s, "busy", "the Amiga stopped sending");
+        return true;
+    }
+    if (s->out_n > 0) return false;
+    const uint32_t done = u->posted - u->start, total = u->raw.total;
+    if (done == total) {
+        if (u->aborted) { up_refuse(s, "busy", "cancelled"); return true; }   // every byte is in: lines again
+        if (u->end_seen) { s->phase = AS_UP_CLOSE; return true; }
+        return false;                                                       // waiting for END
+    }
+    const uint32_t hi = total - done > AS_CHUNK_BYTES ? done + AS_CHUNK_BYTES : total;
+    if (got < hi || !http || in_backoff(s)) return false;                   // the chunk is still filling
+    // The chunk that completes the raw section waits for END: an ABORT that crossed the TAKE lands in the ring as
+    // data (Receive then closes, rx_proto.c on_take), and for a tiny file it can fill the section. Never post it.
+    if (hi == total && !u->end_seen) return false;
+    int st = s->ops->upload_chunk(s->ops->ctx, u->id, u->posted, s->chunk + (done % AS_UP_RING_BYTES), hi - done,
+                                  u->resp, sizeof u->resp);
+    if (st == 200) {
+        uint32_t rec;
+        if (!json_u32_strict(u->resp, "received", &rec) || rec != u->start + hi) {
+            up_fail_drop(s, "server", "the web app lost its place in the file");
+            return true;
+        }
+        u->posted = rec; s->backoff_ms = 0; u->t_progress = t;
+        const uint32_t lim = total - hi > AS_UP_RING_BYTES ? hi + AS_UP_RING_BYTES : total;
+        __atomic_store_n(&u->raw.limit, lim, __ATOMIC_RELEASE);
+        // MORE <tag> <credit> <stored> (PF16): the new credit, and what the web app now holds -- Receive's progress.
+        int n = snprintf(u->line, sizeof u->line, "MORE %s %lu %lu\n", u->tag, (unsigned long)(u->start + lim),
+                         (unsigned long)u->posted);
+        push(s, (const uint8_t *)u->line, n);
+        if (!flush(s)) drop(s, 'u', "send");
+        return true;
+    }
+    if (st == 401) { up_fail_drop(s, "auth", no_text("auth")); return true; }
+    if (st >= 400 && st < 500 && st != 408 && st != 429) { up_fail_drop(s, "server", "the web app refused part of the file"); return true; }
+    http_failed(s, "upload chunk", st);
+    return true;
+}
+static bool up_close(amiga_send_t *s, uint32_t t, bool http) {
+    as_up_t *u = s->up;
+    if (s->out_n > 0) return false;
+    if ((int32_t)(t - u->t_progress) > (int32_t)AS_UP_STALL_MS) { up_refuse(s, "offline", no_text("offline")); return true; }
+    if (!http || in_backoff(s)) return false;
+    snprintf(u->json, sizeof u->json, "{\"crc32\":%lu}", (unsigned long)u->crc);
+    int st = s->ops->upload_close(s->ops->ctx, u->id, u->json, u->resp, sizeof u->resp);
+    if (st == 200) {
+        // The name as stored: UTF-8 from the server, Latin-1 on the wire. u->json and u->resp are scratch now.
+        int nlen;
+        if (json_str(u->resp, "name", u->json, sizeof u->json) && u->json[0]) nlen = as_utf8_to_latin1(u->json, u->resp, 256);
+        else {
+            as_put_t p;
+            nlen = as_put_parse(u->put, &p) ? p.path_n : 0;
+            if (nlen) memcpy(u->resp, p.path, (size_t)nlen);
+            u->resp[nlen] = 0;
+        }
+        int n = snprintf(u->line, sizeof u->line, "DONE %s %d:%s\n", u->tag, nlen, u->resp);
+        push(s, (const uint8_t *)u->line, n);
+        wf_logf(WF_INFO, "up: %s stored %lu -> %s", u->tag, (unsigned long)u->size, u->resp);
+        up_reset(s);
+        s->phase = AS_READY; s->up_last = true; s->backoff_ms = 0; s->t_ping = t;
+        if (!flush(s)) drop(s, 'u', "send");
+        return true;
+    }
+    if (st == 401) { up_refuse(s, "auth", no_text("auth")); return true; }
+    if (st >= 400 && st < 500 && st != 408 && st != 429) {
+        char code[17];
+        if (!json_str(u->resp, "code", code, sizeof code) || strcmp(code, "crc") != 0) snprintf(code, sizeof code, "server");
+        up_refuse(s, code, no_text(code));
+        return true;
+    }
+    http_failed(s, "upload close", st);
+    return true;
+}
 
 // The shared engine: as_tick runs it without HTTPS, as_step with at most one request.
 static bool run(amiga_send_t *s, bool http) {
@@ -332,8 +545,10 @@ static bool run(amiga_send_t *s, bool http) {
             if (s->up && s->up->key[0]) {   // protocol 2 (fw 1.19.0): uploads, to a Receive that trusts this key
                 int n = snprintf(s->up->line, sizeof s->up->line, "WEBADF 2 %s\n", s->up->key);
                 push(s, (const uint8_t *)s->up->line, n);
+                s->hello_v = 2;
             } else {
                 push(s, (const uint8_t *)"WEBADF 1\n", 9);
+                s->hello_v = 1;
             }
             if (!flush(s)) { drop(s, 'u', "send"); return true; }
             s->phase = AS_HELLO;
@@ -355,10 +570,15 @@ static bool run(amiga_send_t *s, bool http) {
         if (r == 0) break;
         moved = true;
         if (strcmp(s->line, "PONG") == 0) { s->ping_out = false; continue; }
+        // Protocol 2 lines from Receive 2, in any phase (spec 2026-10-18 §3).
+        if (strncmp(s->line, "PUT ", 4) == 0) { on_put(s); if (s->phase == AS_IDLE) return true; continue; }
+        if (strncmp(s->line, "ABORT ", 6) == 0) { on_abort(s); continue; }
+        if (strncmp(s->line, "END ", 4) == 0) { on_end(s); if (s->phase == AS_IDLE) return true; continue; }
         switch (s->phase) {
         case AS_HELLO:
             if (strncmp(s->line, "READY ", 6) == 0) {
-                s->peer_v = (s->line[6] == '2' && s->line[7] == 0) ? 2 : 1;   // Receive 1 says READY 1 to anything
+                // Receive 1 says READY 1 to anything; READY 2 counts only as the answer to our protocol 2 hello.
+                s->peer_v = (s->hello_v == 2 && s->line[6] == '2' && s->line[7] == 0) ? 2 : 1;
                 s->phase = AS_READY;
                 s->rx = 'c';
                 s->list_owed = true;
@@ -411,7 +631,21 @@ static bool run(amiga_send_t *s, bool http) {
             if (!flush(s)) { drop(s, 'u', "send"); return true; }
             return true;
         }
-        if (!s->done_owed && !fetch_owed(s) && next_present(s)) { start_file(s); if (!flush(s)) drop(s, 'u', "send"); return true; }
+        if (s->up && s->up->pending && s->up->aborted) { up_refuse(s, "busy", "cancelled"); return true; }
+        {
+            // Spec §3 arbitration: a waiting PUT goes before the next download -- except right after an upload, when
+            // a waiting download (or one the queue may hold: an outcome or a fetch is owed) goes first. Turns.
+            const bool down = !s->done_owed && !fetch_owed(s) && next_present(s);
+            const bool unsure = s->done_owed || fetch_owed(s);
+            if (s->up && s->up->pending && !(s->up_last && (down || unsure))) {
+                s->up->pending = false;
+                s->up->t_open = t;   // the 60 s give-up counts the open's tries, not the wait for this turn
+                s->phase = AS_UP_OPEN;
+                s->t_phase = t;
+                return true;
+            }
+            if (down) { s->up_last = false; start_file(s); if (!flush(s)) drop(s, 'u', "send"); return true; }
+        }
         if (s->ping_out && t - s->t_ping > AS_PONG_MS) { drop(s, 'u', "no PONG"); return true; }
         if (!s->ping_out && t - s->t_ping > AS_PING_MS) {
             push(s, (const uint8_t *)"PING\n", 5);
@@ -446,6 +680,9 @@ static bool run(amiga_send_t *s, bool http) {
     case AS_AWAIT_OK:
         if (t - s->t_phase > 60000u + s->size / 4) { drop(s, 'u', "no OK"); return true; }
         break;
+    case AS_UP_OPEN: return up_open(s, t, http) || moved;
+    case AS_UP_DATA: return up_data(s, t, http) || moved;
+    case AS_UP_CLOSE: return up_close(s, t, http) || moved;
     default:
         break;
     }

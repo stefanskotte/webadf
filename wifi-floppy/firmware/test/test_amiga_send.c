@@ -20,6 +20,7 @@ static struct {
     char partial[AS_LINE_MAX + 1]; int partial_n;      // a line from the Amiga being built
     int opens, open_status; char open_json[AS_UP_JSON_MAX]; char open_resp[256];
     int chunks, chunk_status; uint32_t chunk_offs[300], chunk_lens[300]; uint8_t stored[200000]; uint32_t stored_len;
+    char chunk_id[64]; char close_id[64];              // the upload id each request was made for
     int lose_answer;                                   // the next chunk is stored but answered -1 (a lost answer)
     int closes, close_status; char close_json[128]; char close_resp[512];
     uint32_t now;
@@ -59,11 +60,11 @@ static int f_post(void *c, const char *id, const char *json) {
 static uint32_t f_now(void *c) { (void)c; return F.now; }
 static int f_up_open(void *c, const char *json, char *resp, int cap) {
     (void)c; F.opens++; snprintf(F.open_json, sizeof F.open_json, "%s", json);
-    snprintf(resp, (size_t)cap, "%s", F.open_resp[0] ? F.open_resp : "{\"id\":\"u1\",\"offset\":0}");
+    snprintf(resp, (size_t)cap, "%s", F.open_resp[0] ? F.open_resp : "{\"id\":\"aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee\",\"offset\":0}");
     return F.open_status ? F.open_status : 200;
 }
 static int f_up_chunk(void *c, const char *id, uint32_t off, const uint8_t *b, uint32_t n, char *resp, int cap) {
-    (void)c; (void)id;
+    (void)c; snprintf(F.chunk_id, sizeof F.chunk_id, "%s", id);
     if (F.chunks < 300) { F.chunk_offs[F.chunks] = off; F.chunk_lens[F.chunks] = n; }
     F.chunks++;
     if (F.chunk_status) { snprintf(resp, (size_t)cap, "{\"received\":%lu}", (unsigned long)F.stored_len); return F.chunk_status; }
@@ -74,7 +75,7 @@ static int f_up_chunk(void *c, const char *id, uint32_t off, const uint8_t *b, u
     return 200;
 }
 static int f_up_close(void *c, const char *id, const char *json, char *resp, int cap) {
-    (void)c; (void)id; F.closes++; snprintf(F.close_json, sizeof F.close_json, "%s", json);
+    (void)c; snprintf(F.close_id, sizeof F.close_id, "%s", id); F.closes++; snprintf(F.close_json, sizeof F.close_json, "%s", json);
     snprintf(resp, (size_t)cap, "%s", F.close_resp[0] ? F.close_resp : "{\"name\":\"Hello.txt\"}");
     return F.close_status ? F.close_status : 200;
 }
@@ -442,7 +443,7 @@ static void long_latin1_saved_name_is_cut_not_emptied(void) {
 }
 
 // What amiga_tcp.c's receive callback does: the armed raw section first (as_raw_feed), the rest as lines.
-__attribute__((unused)) static void amiga_sends(const void *data, int n) {
+static void amiga_sends(const void *data, int n) {
     const uint8_t *b = data; int i = 0;
     if (F.raw) {
         int k = as_raw_feed(F.raw, b, n);
@@ -457,15 +458,36 @@ __attribute__((unused)) static void amiga_sends(const void *data, int n) {
 }
 static const char *KEY = "ab12cd34ef56ab12cd34ef56ab12cd34";
 // Connected to a Receive 2 that trusts us: the state every upload test starts from.
-__attribute__((unused)) static void ready2(void) {
+static void ready2_with(const char *queue) {
     fresh();
     as_set_key(&S, KEY);
-    snprintf(F.queue, sizeof F.queue, "NEXT -\nLIST 0\n");
+    snprintf(F.queue, sizeof F.queue, "%s", queue);
     as_set_inputs(&S, true, 0xAC100AEDu, 1);
     run(2); F.sock = AS_SOCK_OPEN; run(1);
     reply("READY 2"); run(2);
     clear_out();
 }
+static void ready2(void) { ready2_with("NEXT -\nLIST 0\n"); }
+static unsigned long crc32_of(const uint8_t *p, size_t n) {
+    uint32_t c = 0xFFFFFFFFu;
+    for (size_t i = 0; i < n; i++) { c ^= p[i]; for (int k = 0; k < 8; k++) c = (c >> 1) ^ (0xEDB88320u & (uint32_t)-(int32_t)(c & 1u)); }
+    return (unsigned long)~c;
+}
+static void end_line(const char *tag, const uint8_t *p, size_t n) {
+    char e[40]; int k = snprintf(e, sizeof e, "END %s %lx\n", tag, crc32_of(p, n)); amiga_sends(e, k);
+}
+static const char *PUT5 = "PUT 1 5 1.2.3 0 9:Hello.txt 0:";
+static const char *UID = "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee";   // the fake server's upload id
+// Window values come from the constant (plan ruling PF3: Task 11 may change it). BIGN is always past the window.
+#define CH AS_CHUNK_BYTES
+#define W ((uint32_t)AS_UP_RING_BYTES)
+#define WC ((int)AS_UP_WINDOW_CHUNKS)
+#define BIGN (W + 7232u)
+static uint32_t umin(uint32_t a, uint32_t b) { return a < b ? a : b; }
+static uint8_t BIG[200000];
+typedef char big_fits[(BIGN <= sizeof BIG && BIGN <= sizeof F.stored) ? 1 : -1];
+static void fill_big(void) { for (unsigned i = 0; i < sizeof BIG; i++) BIG[i] = (uint8_t)(i * 13 + 5); }
+static void put_big(void) { char l[64]; snprintf(l, sizeof l, "PUT 1 %lu 1.2.3 0 3:Big 0:", (unsigned long)BIGN); reply(l); }
 // --- protocol 2 (spec 2026-10-18 §3) ---
 static void the_hello_carries_the_key(void) {
     fresh(); as_set_key(&S, KEY); snprintf(F.queue, sizeof F.queue, "NEXT -\nLIST 0\n");
@@ -521,10 +543,13 @@ static void put_parses_and_json_escapes_latin1(void) {   /* Review Focus 3 */
 static void the_worst_put_json_fits(void) {
     char line[700], name[256], json[AS_UP_JSON_MAX]; as_put_t p;
     memset(name, 0xe9, 255); name[255] = 0;
-    char com[80]; memset(com, '"', 79); com[79] = 0;
-    snprintf(line, sizeof line, "PUT 999999999 4194304 99999.1439.2999 ffffffff 255:%s 79:%s", name, com);
-    CHECK(as_put_parse(line, &p), "the longest legal PUT");
-    CHECK(as_put_json(&p, json, sizeof json) > 0, "its JSON fits AS_UP_JSON_MAX, never cut");
+    char com[80]; memset(com, 0xe9, 79); com[79] = 0;            // every byte an escape, the date at its 23 chars
+    snprintf(line, sizeof line, "PUT 999999999 4294967295 99999999.99999999.99999 ffffffff 255:%s 79:%s", name, com);
+    CHECK(as_put_parse(line, &p), "the longest PUT the parser takes");
+    CHECK_EQ_INT((int)strlen(p.date), 23);
+    int n = as_put_json(&p, json, sizeof json);
+    CHECK(n > 0 && n < AS_UP_JSON_MAX && (int)strlen(json) == n, "its JSON fits AS_UP_JSON_MAX, never cut");
+    CHECK(n > 255 * 6 + 79 * 6, "the whole path and comment, escaped");
 }
 static void utf8_comes_back_as_latin1(void) {
     char out[32];
@@ -532,6 +557,265 @@ static void utf8_comes_back_as_latin1(void) {
     CHECK(strcmp(out, "Caf\xe9.txt") == 0, "é");
     as_utf8_to_latin1("a\xe2\x82\xac" "b", out, sizeof out);
     CHECK(strcmp(out, "a?b") == 0, "beyond Latin-1: ?");
+}
+
+// --- protocol 2 uploads (spec 2026-10-18 §3, §5; plan Task 10) ---
+static void ready_2_lets_a_put_in_and_ready_1_does_not(void) {
+    ready2(); reply(PUT5); run(1);
+    CHECK_EQ_INT(F.opens, 1);
+    fresh(); as_set_key(&S, KEY); snprintf(F.queue, sizeof F.queue, "NEXT -\nLIST 0\n");
+    as_set_inputs(&S, true, 0xAC100AEDu, 1); run(2); F.sock = AS_SOCK_OPEN; run(1);
+    reply("READY 1"); run(2);
+    reply(PUT5); run(3);
+    CHECK_EQ_INT(F.opens, 0);                     // Receive 1 never PUTs; a stray PUT is ignored
+}
+// Task 9 review carry: READY 2 counts only when our hello was protocol 2.
+static void a_ready_2_to_a_protocol_1_hello_lets_no_put_in(void) {
+    fresh(); snprintf(F.queue, sizeof F.queue, "NEXT -\nLIST 0\n");   // upload state, but no key: WEBADF 1
+    as_set_inputs(&S, true, 0xAC100AEDu, 1); run(2); F.sock = AS_SOCK_OPEN; run(1);
+    CHECK(strcmp(F.out, "WEBADF 1\n") == 0, F.out);
+    reply("READY 2"); run(2);
+    reply(PUT5); run(3);
+    CHECK_EQ_INT(F.opens, 0);
+    CHECK(F.sock == AS_SOCK_OPEN, "ignored, as from Receive 1");
+}
+static void a_small_upload_end_to_end(void) {
+    ready2(); reply(PUT5); run(1);
+    CHECK_EQ_INT(F.opens, 1);
+    CHECK(strstr(F.open_json, "\"size\":5") && strstr(F.open_json, "\"path\":\"Hello.txt\""), F.open_json);
+    CHECK(strcmp(F.out, "TAKE 1 0 5\n") == 0, F.out);
+    CHECK(as_has_work(&S), "work while an upload is open");
+    clear_out();
+    amiga_sends("hello", 5); end_line("1", (const uint8_t *)"hello", 5);
+    run(4);
+    CHECK_EQ_INT(F.chunks, 1); CHECK(F.chunk_offs[0] == 0 && F.chunk_lens[0] == 5, "one chunk");
+    CHECK(strcmp(F.chunk_id, UID) == 0 && strcmp(F.close_id, UID) == 0, "the server's id");
+    CHECK(memcmp(F.stored, "hello", 5) == 0, "the bytes");
+    CHECK(strstr(F.out, "MORE 1 5 5\n") != NULL, F.out);                 // PF16: the stored progress
+    CHECK_EQ_INT(F.closes, 1); CHECK(strcmp(F.close_json, "{\"crc32\":907060870}") == 0, F.close_json);
+    CHECK(strstr(F.out, "DONE 1 9:Hello.txt\n") != NULL, F.out);
+    CHECK(!as_has_work(&S), "idle after");
+}
+static void a_big_upload_moves_in_16k_chunks_and_the_credit_follows(void) {
+    char want[80];
+    fill_big(); ready2();
+    put_big(); run(1);
+    snprintf(want, sizeof want, "TAKE 1 0 %lu\n", (unsigned long)W);
+    CHECK(strcmp(F.out, want) == 0, F.out);
+    clear_out();
+    amiga_sends(BIG, (int)W); run(WC + 1);
+    CHECK_EQ_INT(F.chunks, WC);
+    // MORE <tag> <credit> <stored> after each chunk (PF16): the stored field advances chunk by chunk.
+    const char *at = F.out;
+    for (int k = 1; k <= WC; k++) {
+        snprintf(want, sizeof want, "MORE 1 %lu %lu\n", (unsigned long)umin((uint32_t)k * CH + W, BIGN), (unsigned long)((uint32_t)k * CH));
+        const char *m = strstr(at, want);
+        CHECK(m != NULL, want);
+        if (m) at = m + 1;
+    }
+    amiga_sends(BIG + W, (int)(BIGN - W)); end_line("1", BIG, BIGN);
+    run(4);
+    CHECK_EQ_INT(F.chunks, WC + 1); CHECK(F.chunk_offs[WC] == W && F.chunk_lens[WC] == 7232, "the last chunk");
+    snprintf(want, sizeof want, "MORE 1 %lu %lu\n", (unsigned long)BIGN, (unsigned long)BIGN);
+    CHECK(strstr(F.out, want) != NULL, "all of it stored");
+    CHECK(memcmp(F.stored, BIG, BIGN) == 0, "every byte, in order");
+    CHECK(strstr(F.out, "DONE 1 ") != NULL, F.out);
+}
+static void bytes_past_the_credit_drop_the_connection(void) {
+    fill_big(); ready2(); put_big(); run(1);
+    amiga_sends(BIG, (int)W + 1); run(2);
+    CHECK(F.sock == AS_SOCK_CLOSED, "dropped");
+    CHECK(F.raw == NULL && F.arms >= 2, "the raw section disarmed");
+}
+static void the_servers_offset_resumes_the_file(void) {
+    char want[80];
+    fill_big(); ready2();
+    memcpy(F.stored, BIG, CH); F.stored_len = CH;
+    snprintf(F.open_resp, sizeof F.open_resp, "{\"id\":\"%s\",\"offset\":%u}", UID, (unsigned)CH);
+    put_big(); run(1);
+    snprintf(want, sizeof want, "TAKE 1 %u %lu\n", (unsigned)CH, (unsigned long)umin(CH + W, BIGN));
+    CHECK(strcmp(F.out, want) == 0, F.out);
+    amiga_sends(BIG + CH, (int)(BIGN - CH)); end_line("1", BIG, BIGN);
+    const int n = (int)((BIGN - CH + CH - 1) / CH);
+    run(n + 4);
+    CHECK_EQ_INT(F.chunks, n);
+    for (int i = 0; i < n; i++) CHECK(F.chunk_offs[i] == CH + (uint32_t)i * CH, "from the offset");
+    CHECK(memcmp(F.stored, BIG, BIGN) == 0, "whole");
+}
+static void resume_at_size_goes_straight_to_close(void) {       /* Review Focus 1 */
+    ready2(); memcpy(F.stored, "hello", 5); F.stored_len = 5;
+    snprintf(F.open_resp, sizeof F.open_resp, "{\"id\":\"%s\",\"offset\":5}", UID);
+    reply(PUT5); run(1);
+    CHECK(strcmp(F.out, "TAKE 1 5 5\n") == 0, F.out);
+    CHECK(F.raw == NULL, "an empty raw section is never armed");
+    end_line("1", (const uint8_t *)"hello", 5); run(3);
+    CHECK_EQ_INT(F.chunks, 0); CHECK_EQ_INT(F.closes, 1); CHECK(strstr(F.out, "DONE 1 ") != NULL, F.out);
+}
+static void zero_byte_upload(void) {                            /* Review Focus 2 */
+    ready2(); reply("PUT 1 0 1.2.3 0 5:Empty 0:"); run(1);
+    CHECK(strcmp(F.out, "TAKE 1 0 0\n") == 0, F.out);
+    amiga_sends("END 1 0\n", 8); run(3);
+    CHECK_EQ_INT(F.chunks, 0); CHECK(strcmp(F.close_json, "{\"crc32\":0}") == 0, F.close_json);
+    CHECK(strstr(F.out, "DONE 1 ") != NULL, F.out);
+}
+static void refusals_at_open_become_no_and_keep_the_connection(void) {
+    ready2(); F.open_status = 409; snprintf(F.open_resp, sizeof F.open_resp, "{\"code\":\"full\"}");
+    reply(PUT5); run(1);
+    CHECK(strstr(F.out, "NO 1 full ") != NULL, F.out); CHECK(F.sock == AS_SOCK_OPEN, "kept");
+    ready2(); F.open_status = 413; snprintf(F.open_resp, sizeof F.open_resp, "{\"code\":\"size\"}"); reply(PUT5); run(1);
+    CHECK(strstr(F.out, "NO 1 size ") != NULL, F.out);
+    ready2(); F.open_status = 401; reply(PUT5); run(1);
+    CHECK(strstr(F.out, "NO 1 auth ") != NULL, F.out);
+    ready2(); F.open_status = 400; snprintf(F.open_resp, sizeof F.open_resp, "{\"code\":\"weird\"}"); reply(PUT5); run(1);
+    CHECK(strstr(F.out, "NO 1 server ") != NULL, "an unknown code is server");
+    ready2(); reply("PUT 1 4194305 1.2.3 0 1:a 0:"); run(1);
+    CHECK(strstr(F.out, "NO 1 size ") != NULL && F.opens == 0, "over 4 MB: refused without asking");
+    ready2(); snprintf(F.open_resp, sizeof F.open_resp, "{\"id\":\"../x\",\"offset\":0}"); reply(PUT5); run(1);
+    CHECK(strstr(F.out, "NO 1 server ") != NULL, "an id that is not a uuid never reaches a path");
+}
+// Task 7 parked item: the server's id goes into a request path -- [0-9a-f-], 1..AS_ID_MAX, nothing else.
+static void an_upload_id_the_board_cannot_trust_is_no_server(void) {
+    char long_id[AS_ID_MAX + 2];
+    memset(long_id, 'a', AS_ID_MAX + 1); long_id[AS_ID_MAX + 1] = 0;   // json_str would cut it to AS_ID_MAX
+    const char *bad[] = { "ab?cd", "ab\\rcd", "ab\rcd", "ABCD", "ab cd", "", long_id };
+    for (unsigned i = 0; i < sizeof bad / sizeof bad[0]; i++) {
+        ready2(); snprintf(F.open_resp, sizeof F.open_resp, "{\"id\":\"%s\",\"offset\":0}", bad[i]);
+        reply(PUT5); run(2);
+        CHECK(strstr(F.out, "NO 1 server ") != NULL, bad[i]);
+        CHECK(F.raw == NULL && F.chunks == 0 && F.sock == AS_SOCK_OPEN, "no TAKE: lines, kept");
+    }
+    char id40[AS_ID_MAX + 1]; memset(id40, 'f', AS_ID_MAX); id40[AS_ID_MAX] = 0;
+    ready2(); snprintf(F.open_resp, sizeof F.open_resp, "{\"id\":\"%s\",\"offset\":0}", id40);
+    reply(PUT5); run(1);
+    CHECK(strcmp(F.out, "TAKE 1 0 5\n") == 0, "AS_ID_MAX hex digits are fine");
+}
+static void an_open_that_never_answers_gives_up_after_60_s(void) {
+    ready2(); F.open_status = -1;
+    reply(PUT5); run(1);
+    CHECK_EQ_INT(F.opens, 1); CHECK(F.out[0] == 0, "nothing yet");
+    F.now += 1100; run(1); CHECK_EQ_INT(F.opens, 2);           // the backoff, then again
+    F.now += 61000; run(2);
+    CHECK(strstr(F.out, "NO 1 offline ") != NULL, F.out);
+    CHECK(F.sock == AS_SOCK_OPEN, "kept: no byte was in flight");
+}
+static void a_409_on_a_chunk_ends_the_file_and_the_connection(void) {
+    fill_big(); ready2(); put_big(); run(1);
+    F.chunk_status = 409; amiga_sends(BIG, CH); run(2);
+    CHECK(strstr(F.out, "NO 1 server ") != NULL, F.out);
+    CHECK(F.sock == AS_SOCK_CLOSED, "dropped: bytes may be in flight (ruling P7)");
+}
+static void a_failing_chunk_waits_then_gives_up_after_120_s(void) {
+    fill_big(); ready2(); put_big(); run(1);
+    clear_out();
+    F.chunk_status = -1; amiga_sends(BIG, (int)W); run(2);
+    CHECK(F.chunks >= 1 && strstr(F.out, "MORE") == NULL, "the credit does not move");
+    CHECK(!as_has_work(&S), "in the backoff the long poll runs (ruling P9)");
+    F.now += 121000; run(2);
+    CHECK(strstr(F.out, "NO 1 offline ") != NULL, F.out);
+    CHECK(F.sock == AS_SOCK_CLOSED, "dropped");
+}
+static void an_amiga_that_stops_sending_is_given_up_too(void) {
+    fill_big(); ready2(); put_big(); run(1);
+    amiga_sends(BIG, 1000); run(1);
+    F.now += 121000; run(2);
+    CHECK(strstr(F.out, "NO 1 busy ") != NULL, F.out);
+}
+static void a_crc_refused_at_close_is_no_crc(void) {
+    ready2(); F.close_status = 409; snprintf(F.close_resp, sizeof F.close_resp, "{\"code\":\"crc\"}");
+    reply(PUT5); run(1); amiga_sends("hello", 5); end_line("1", (const uint8_t *)"hello", 5); run(4);
+    CHECK(strstr(F.out, "NO 1 crc ") != NULL, F.out); CHECK(F.sock == AS_SOCK_OPEN, "kept: the stream is lines again");
+}
+static void done_name_is_latin1(void) {                         /* Review Focus 3 */
+    ready2(); snprintf(F.close_resp, sizeof F.close_resp, "{\"name\":\"Caf\xc3\xa9.txt\"}");
+    reply("PUT 1 1 1.2.3 0 8:Caf\xe9.txt 0:"); run(1);
+    CHECK(strstr(F.open_json, "\"path\":\"Caf\\u00e9.txt\"") != NULL, F.open_json);
+    amiga_sends("e", 1); end_line("1", (const uint8_t *)"e", 1); run(4);
+    CHECK(strstr(F.out, "DONE 1 8:Caf\xe9.txt\n") != NULL, F.out);
+}
+static void a_lost_chunk_answer_is_retried(void) {             /* Review Focus 4 */
+    ready2(); reply(PUT5); run(1);
+    F.lose_answer = 1; amiga_sends("hello", 5); end_line("1", (const uint8_t *)"hello", 5);
+    run(2);
+    CHECK_EQ_INT(F.chunks, 1); CHECK_EQ_INT(F.stored_len, 5);
+    F.now += 1100; run(4);
+    CHECK_EQ_INT(F.chunks, 2); CHECK_EQ_INT(F.stored_len, 5);   // the retry stored nothing twice
+    CHECK(strstr(F.out, "DONE 1 ") != NULL, F.out);
+}
+static void no_ping_while_a_file_goes_up(void) {
+    ready2(); put_big(); run(1); clear_out();
+    F.now += 31000; run(2);
+    CHECK(strstr(F.out, "PING") == NULL, "no ping in an upload (spec §3)");
+}
+static void abort_before_the_open_is_answered_no_busy(void) {
+    ready2(); F.open_status = -1;
+    reply(PUT5); run(1); clear_out();
+    reply("ABORT 1"); F.now += 1100; run(2);
+    CHECK(strstr(F.out, "NO 1 busy 9:cancelled\n") != NULL, F.out); CHECK(F.sock == AS_SOCK_OPEN, "kept");
+}
+// Controller ruling (T9 review): an ABORT that crosses the TAKE lands in the raw section as data, and Receive then
+// closes. For a tiny file those stray bytes complete the raw section -- so the last chunk waits for END.
+static void stray_bytes_completing_a_tiny_raw_section_never_reach_the_server(void) {
+    ready2(); reply(PUT5); run(1);
+    CHECK(strcmp(F.out, "TAKE 1 0 5\n") == 0, F.out);
+    amiga_sends("ABORT 1\n", 8);                     // "ABORT" is the raw section, " 1" a line
+    run(3);
+    CHECK_EQ_INT(F.chunks, 0);                       // no END: the last chunk is not posted
+    F.sock = AS_SOCK_CLOSED;                         // Receive closes (rx_proto.c on_take, up_cancel)
+    run(2);
+    CHECK_EQ_INT(F.chunks, 0); CHECK_EQ_INT(F.closes, 0);
+    CHECK(F.raw == NULL, "disarmed");
+}
+static void a_second_put_while_one_is_open_drops(void) {
+    ready2(); reply(PUT5); run(1);
+    reply("PUT 2 5 1.2.3 0 1:x 0:"); run(1);
+    CHECK(F.sock == AS_SOCK_CLOSED, "Receive sends one at a time");
+}
+static void a_dropped_connection_mid_upload_disarms(void) {
+    fill_big(); ready2(); put_big(); run(1);
+    amiga_sends(BIG, 1000); F.sock = AS_SOCK_CLOSED; run(1);
+    CHECK(F.raw == NULL, "disarmed");
+}
+static void a_put_during_a_download_waits_then_goes_first(void) {
+    char q[600], go[80], ok[120];
+    snprintf(q, sizeof q, "NEXT %s 5 3610a686 0 5:Hello 0:\nLIST 1\n%s 5 5:Hello\n", ID, ID);
+    ready2_with(q);
+    CHECK(S.phase == AS_FILE_SENT, "the download started");
+    reply(PUT5); run(1);
+    CHECK_EQ_INT(F.opens, 0);                                      // it waits for the file going down
+    memcpy(F.file, "hello", 5); F.file_len = 5;
+    snprintf(go, sizeof go, "GO %s", ID); reply(go); run(3);
+    snprintf(ok, sizeof ok, "OK %s 5:Hello", ID); reply(ok);
+    run(6);
+    CHECK_EQ_INT(F.posts, 1);                                      // the download's outcome first
+    CHECK_EQ_INT(F.opens, 1);                                      // then the PUT, before the next download
+}
+// The 60 s open give-up counts the open's own tries (spec �8), not the time a PUT waited for a download's turn.
+static void a_put_that_waited_out_a_long_download_still_opens(void) {
+    char q[600], go[80], ok[120];
+    snprintf(q, sizeof q, "NEXT %s 5 3610a686 0 5:Hello 0:\nLIST 1\n%s 5 5:Hello\n", ID, ID);
+    ready2_with(q);
+    reply(PUT5); run(1);
+    memcpy(F.file, "hello", 5); F.file_len = 5;
+    F.now += AS_GO_MS - 1000;
+    snprintf(go, sizeof go, "GO %s", ID); reply(go); run(3);
+    F.now += 50000;                                                // Receive takes its time to answer OK
+    snprintf(ok, sizeof ok, "OK %s 5:Hello", ID); reply(ok);
+    clear_out(); run(6);
+    CHECK_EQ_INT(F.opens, 1);
+    CHECK(strstr(F.out, "TAKE 1 0 5\n") != NULL && strstr(F.out, "NO 1") == NULL, F.out);
+}
+static void after_an_upload_a_waiting_download_goes_first(void) {
+    char q[600];
+    ready2(); reply(PUT5); run(1);
+    snprintf(q, sizeof q, "NEXT %s 5 3610a686 0 5:Hello 0:\nLIST 1\n%s 5 5:Hello\n", ID, ID);
+    snprintf(F.queue, sizeof F.queue, "%s", q); as_set_inputs(&S, true, 0xAC100AEDu, 2);   // a download arrives meanwhile
+    amiga_sends("hello", 5); end_line("1", (const uint8_t *)"hello", 5);
+    run(2);                                                        // the chunk, then the close: DONE; the queue not refetched yet
+    CHECK(strstr(F.out, "DONE 1 ") != NULL, F.out);
+    reply("PUT 2 5 1.2.3 0 9:Hello.txt 0:");                       // Receive offers its next file at once
+    run(6);
+    CHECK_EQ_INT(F.opens, 1);                                      // the second PUT waits its turn
+    CHECK(strstr(F.out, "FILE ") != NULL, "the download goes first");
 }
 
 int main(void) {
@@ -569,5 +853,30 @@ int main(void) {
     RUN(put_parses_and_json_escapes_latin1);
     RUN(the_worst_put_json_fits);
     RUN(utf8_comes_back_as_latin1);
+    RUN(ready_2_lets_a_put_in_and_ready_1_does_not);
+    RUN(a_ready_2_to_a_protocol_1_hello_lets_no_put_in);
+    RUN(a_small_upload_end_to_end);
+    RUN(a_big_upload_moves_in_16k_chunks_and_the_credit_follows);
+    RUN(bytes_past_the_credit_drop_the_connection);
+    RUN(the_servers_offset_resumes_the_file);
+    RUN(resume_at_size_goes_straight_to_close);
+    RUN(zero_byte_upload);
+    RUN(refusals_at_open_become_no_and_keep_the_connection);
+    RUN(an_upload_id_the_board_cannot_trust_is_no_server);
+    RUN(an_open_that_never_answers_gives_up_after_60_s);
+    RUN(a_409_on_a_chunk_ends_the_file_and_the_connection);
+    RUN(a_failing_chunk_waits_then_gives_up_after_120_s);
+    RUN(an_amiga_that_stops_sending_is_given_up_too);
+    RUN(a_crc_refused_at_close_is_no_crc);
+    RUN(done_name_is_latin1);
+    RUN(a_lost_chunk_answer_is_retried);
+    RUN(no_ping_while_a_file_goes_up);
+    RUN(abort_before_the_open_is_answered_no_busy);
+    RUN(stray_bytes_completing_a_tiny_raw_section_never_reach_the_server);
+    RUN(a_second_put_while_one_is_open_drops);
+    RUN(a_dropped_connection_mid_upload_disarms);
+    RUN(a_put_during_a_download_waits_then_goes_first);
+    RUN(after_an_upload_a_waiting_download_goes_first);
+    RUN(a_put_that_waited_out_a_long_download_still_opens);
     return REPORT();
 }
