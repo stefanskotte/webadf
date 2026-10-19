@@ -5,7 +5,8 @@ import { DISK_IMAGE_PATTERN } from '@/lib/archive/disk-image';
 import { attachmentDisposition } from '@/lib/content-disposition';
 import { LIBRARY_EXT, libraryEligible } from '@/lib/from-amiga-ui';
 
-vi.mock('@/lib/session', () => ({ requireOrg: () => Promise.resolve({ orgId: 'org-1', userId: 'user-1', email: 'a@b.test' }) }));
+const requireOrg = vi.fn(() => Promise.resolve({ orgId: 'org-1', userId: 'user-1', email: 'a@b.test' }));
+vi.mock('@/lib/session', () => ({ requireOrg: () => requireOrg() }));
 // and/eq record their conditions, so the disks mock below answers only the rows the where clause really selects: dropping
 // an org (or id / sha) condition from the route changes what the mock returns.
 vi.mock('drizzle-orm', async (orig) => ({
@@ -150,6 +151,11 @@ describe('POST /api/uploads/<id>/library', () => {
     registerUploads.mockRejectedValue(new Error('boom'));
     const r = await libraryPOST(new Request('http://x', { method: 'POST' }), ctx('up-1'));
     expect(r.status).toBe(500); expect(await r.json()).toEqual({ error: 'server' });
+  });
+  it('lets the sign-in redirect through: a signed-out request is never a 500', async () => {
+    const redirect = Object.assign(new Error('NEXT_REDIRECT'), { digest: 'NEXT_REDIRECT;replace;/sign-in;307;' });
+    requireOrg.mockRejectedValueOnce(redirect);
+    await expect(libraryPOST(new Request('http://x', { method: 'POST' }), ctx('up-1'))).rejects.toBe(redirect);
   });
   it('refuses what is not a library disk image, and says why a refused one was refused', async () => {
     U.getUpload.mockResolvedValueOnce(stored({ path: 'Archive.lha' }));

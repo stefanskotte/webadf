@@ -20,16 +20,17 @@ async function diskWhere(orgId: string, where: ReturnType<typeof eq>) {
 }
 
 export async function POST(_request: Request, ctx: { params: Promise<{ id: string }> }) {
+  // Outside the try: requireOrg signs a stranger out by throwing Next's redirect, which must reach Next.
+  const { orgId } = await requireOrg();
   try {
-    return await add(ctx);
+    return await add(orgId, ctx);
   } catch (err) {
     console.error('uploads: add to library failed', err);
     return Response.json({ error: 'server' }, { status: 500 });
   }
 }
 
-async function add(ctx: { params: Promise<{ id: string }> }) {
-  const { orgId } = await requireOrg();
+async function add(orgId: string, ctx: { params: Promise<{ id: string }> }) {
   const { id } = await ctx.params;
   const db = getDb();
   const row = await getUpload(db, orgId, id);
