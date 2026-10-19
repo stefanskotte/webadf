@@ -21,7 +21,11 @@
 //     register names are the vendor's.
 //   - nfc_pn532.c: NXP UM0701-02 (PN532 User Manual, Rev. 02) frames over
 //     I2C -- SAMConfiguration, RFConfiguration, InListPassiveTarget and
-//     InDataExchange (MIFARE auth / read / write).
+//     InDataExchange (MIFARE auth / read / write, Type 2 read / write).
+// Two kinds of tag are read and written (nfc_reader_priv.h nfc_kind_t): a
+// MIFARE Classic 1K (4-byte UID, SAK bit 3; sector 1, key A) and an NFC Forum
+// Type 2 tag -- NTAG213/215/216 (7-byte UID, SAK 0x00; pages 4-15, no auth).
+// Any other kind is NFC_EV_NOT_SUPPORTED.
 // Which one runs is decided at every presence check: the Si512 first, then
 // the PN532 (nfc_attach_pn532), else absent.
 //
@@ -55,13 +59,21 @@ typedef struct {
 
 typedef enum { NFC_CHIP_NONE, NFC_CHIP_SI512, NFC_CHIP_PN532 } nfc_chip_t;
 
+// NOT_OURS: a kind of tag we read (Classic 1K, NTAG21x) holding no WFDK
+// payload -- "not a disk tag". NOT_SUPPORTED (1.18.1): any other kind -- an
+// ISO-DEP card, a 7-byte Classic, a DESFire -- never read or written. Added
+// last, so the older kinds keep their values.
 typedef enum { NFC_EV_NONE, NFC_EV_TAG_READ, NFC_EV_NOT_OURS, NFC_EV_UNREADABLE,
                NFC_EV_WRITE_DONE, NFC_EV_PRESENT, NFC_EV_ABSENT,
-               NFC_EV_TAG_NEXT } nfc_ev_kind_t;
+               NFC_EV_TAG_NEXT, NFC_EV_NOT_SUPPORTED } nfc_ev_kind_t;
+
+// The longest UID handled: a double-size (7-byte) UID -- an NTAG21x.
+#define NFC_UID_MAX 7
 
 typedef struct {
     nfc_ev_kind_t kind;
-    uint8_t  uid[4]; int uid_len;    // 0 for PRESENT / ABSENT
+    uint8_t  uid[NFC_UID_MAX];
+    uint8_t  uid_len;                // 4 or 7; 0 for PRESENT / ABSENT
     char     disk_id[37];            // TAG_READ
     const char *why;                 // UNREADABLE / WRITE_DONE failure: "locked", "bad data",
                                      // "moved", "verify" (write only); NULL otherwise
@@ -73,7 +85,8 @@ typedef struct {
 // re-arrival window -- 3 s, or 1 s for a Next-disk card -- (new_arrival
 // true). Measurement only -- it decides nothing. This file may not log (the RULE above), so the caller does.
 typedef struct {
-    uint8_t  uid[4];
+    uint8_t  uid[NFC_UID_MAX];
+    uint8_t  uid_len;                // 4 or 7
     uint32_t ms;
     bool     new_arrival;
 } nfc_gap_t;
@@ -128,7 +141,10 @@ typedef struct nfc_reader {
     int      rx_bits;
 
     // The tag being handled. Discarded whole if the chip is lost.
-    uint8_t  uid[4];
+    uint8_t  uid[NFC_UID_MAX];
+    uint8_t  uid_len;    // 4 (single-size) or 7 (double-size)
+    uint8_t  kind;       // nfc_reader_priv.h nfc_kind_t, decided at selection
+    uint8_t  sub;        // a Type 2 write: the page (0..3) inside the 16-byte block
     int      block;
     bool     writing;    // this arrival runs WRITE, decided when it arrived
     uint32_t write_seq;
@@ -143,7 +159,8 @@ typedef struct nfc_reader {
     // chip's return after an outage (which says nothing about the tag).
     bool     held;
     bool     held_next;    // the held tag was reported as NFC_EV_TAG_NEXT
-    uint8_t  last_uid[4];
+    uint8_t  last_uid[NFC_UID_MAX];
+    uint8_t  last_uid_len;
     uint32_t last_seen;
     uint32_t last_detect;  // the last time it truly answered (arming is no sighting)
     bool     missed;       // a poll since then found no tag at all

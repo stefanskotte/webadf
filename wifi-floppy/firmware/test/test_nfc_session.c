@@ -192,11 +192,14 @@ static void blank_tag_is_not_ours(void) {
     end_checks();
 }
 
-static void non_classic_tag_is_not_ours(void) {
+// A 4-byte-UID tag that is not a MIFARE Classic (SAK without bit 3) is a
+// kind this reader does not handle: "not supported", not "not a disk tag".
+static void non_classic_tag_is_not_supported(void) {
     setup();
     *B.sak = 0x04;
     run(1000);
-    CHECK_EQ_INT(count(NFC_EV_NOT_OURS), 1);
+    CHECK_EQ_INT(count(NFC_EV_NOT_SUPPORTED), 1);
+    CHECK_EQ_INT(count(NFC_EV_NOT_OURS), 0);
     CHECK_EQ_INT(count(NFC_EV_UNREADABLE), 0);
     end_checks();
 }
@@ -502,6 +505,331 @@ static void chip_vanishes_mid_read_and_comes_back(void) {
     end_checks();
 }
 
+
+// ---- NFC Forum Type 2 tags: NTAG213/215/216 ---------------------------------------
+//
+// The tester's NTAG215 (2026-10-19): ATQA 0x0044, SAK 0x00, 7-byte UID
+// 04:B3:2F:3E:34:02:89, 135 pages. The payload is nfc_tag.h's 48 bytes in
+// pages 4-15; no auth; pages 0-3 and the configuration pages are never written.
+
+static const uint8_t U7[7]  = { 0x04, 0xB3, 0x2F, 0x3E, 0x34, 0x02, 0x89 };
+// The same first four bytes: only a 7-byte comparison tells them apart.
+static const uint8_t U7B[7] = { 0x04, 0xB3, 0x2F, 0x3E, 0x99, 0x98, 0x97 };
+
+static void use_ntag(int pages, const uint8_t uid[7]) {
+    if (is_pn) { pn532_fake_ntag(&P, pages, uid); B.sector1 = P.mem + 16; }
+    else       { si512_fake_ntag(&S, pages, uid); B.sector1 = S.mem + 16; }
+}
+static int ntag_pages(void)  { return is_pn ? P.ntag_pages : S.ntag_pages; }
+static int page_writes(void) { return is_pn ? P.page_writes : S.page_writes; }
+static int low_writes(void)  { return is_pn ? P.low_page_writes : S.low_page_writes; }
+static int cfg_writes(void)  { return is_pn ? P.cfg_page_writes : S.cfg_page_writes; }
+static int max_page(void)    { return is_pn ? P.max_page_written : S.max_page_written; }
+static int compat(void)      { return is_pn ? P.compat_writes : S.compat_writes; }
+static void protect(bool on) { if (is_pn) P.write_protected = on; else S.write_protected = on; }
+static void ntag_uid(const uint8_t uid[7]) { memcpy(B.uid, uid, 7); }
+
+// No WRITE ever aimed at pages 0-3 (UID, lock bytes, CC) or at the dynamic
+// lock / configuration pages, and no COMPATIBILITY WRITE.
+static void no_forbidden_writes(void) {
+    CHECK_EQ_INT(low_writes(), 0);
+    CHECK_EQ_INT(cfg_writes(), 0);
+    CHECK_EQ_INT(compat(), 0);
+}
+
+static void ntag_disk_tag_is_read_with_its_7_byte_uid(void) {
+    setup();
+    use_ntag(135, U7);
+    put_id(ID);
+    run(1000);
+    CHECK_EQ_INT(count(NFC_EV_TAG_READ), 1);
+    CHECK_EQ_INT(nev, 2);
+    const nfc_event_t *e = first(NFC_EV_TAG_READ);
+    if (e) {
+        CHECK(strcmp(e->disk_id, ID) == 0, "disk id");
+        CHECK_EQ_INT(e->uid_len, 7);
+        CHECK(memcmp(e->uid, U7, 7) == 0, "the whole 7-byte uid");
+    }
+    no_forbidden_writes();
+    end_checks();
+}
+
+static void ntag_blank_is_not_a_disk_tag(void) {
+    setup();
+    use_ntag(135, U7);                       // factory: 03 00 FE in page 4
+    run(1000);
+    CHECK_EQ_INT(count(NFC_EV_NOT_OURS), 1);
+    CHECK_EQ_INT(count(NFC_EV_NOT_SUPPORTED), 0);
+    CHECK_EQ_INT(nev, 2);
+    const nfc_event_t *e = first(NFC_EV_NOT_OURS);
+    if (e) CHECK(e->uid_len == 7 && memcmp(e->uid, U7, 7) == 0, "uid");
+    end_checks();
+}
+
+static void ntag_next_card_reports_tag_next(void) {
+    setup();
+    use_ntag(135, U7);
+    put_next();
+    run(10000);
+    CHECK_EQ_INT(count(NFC_EV_TAG_NEXT), 1);
+    CHECK_EQ_INT(nev, 2);
+    end_checks();
+}
+
+static void ntag_armed_write_writes_pages_4_to_15_and_verifies(void) {
+    setup();
+    use_ntag(135, U7);
+    uint8_t cc[4];
+    memcpy(cc, B.sector1 - 4, 4);            // page 3
+    uint8_t want[NFC_TAG_BYTES];
+    CHECK(nfc_tag_encode(ID, want), "encode");
+    nfc_arm_write(&R, 21, ID);
+    run(1000);
+    CHECK_EQ_INT(count(NFC_EV_WRITE_DONE), 1);
+    const nfc_event_t *e = first(NFC_EV_WRITE_DONE);
+    if (e) {
+        CHECK_EQ_INT(e->seq, 21);
+        CHECK(e->ok, "ok");
+        CHECK(e->why == NULL, "no why");
+        CHECK(e->uid_len == 7 && memcmp(e->uid, U7, 7) == 0, "uid");
+    }
+    CHECK(memcmp(B.sector1, want, NFC_TAG_BYTES) == 0, "pages 4-15 hold the encoding");
+    CHECK_EQ_INT(page_writes(), 12);         // one WRITE per page, each once
+    CHECK_EQ_INT(max_page(), 15);
+    CHECK(memcmp(B.sector1 - 4, cc, 4) == 0, "the CC is untouched");
+    no_forbidden_writes();
+    // Lifted and tapped again: it reads as the disk.
+    tag(false);
+    run(3500);
+    tag(true);
+    run(1000);
+    CHECK_EQ_INT(count(NFC_EV_TAG_READ), 1);
+    e = first(NFC_EV_TAG_READ);
+    if (e) CHECK(strcmp(e->disk_id, ID) == 0, "reads back the written id");
+    end_checks();
+}
+
+static void ntag_next_card_can_be_written(void) {
+    setup();
+    use_ntag(135, U7);
+    uint8_t want[NFC_TAG_BYTES];
+    nfc_tag_encode_next(want);
+    nfc_arm_write_next(&R, 22);
+    run(1000);
+    const nfc_event_t *e = first(NFC_EV_WRITE_DONE);
+    CHECK(e && e->ok && e->seq == 22, "ok, seq 22");
+    CHECK(memcmp(B.sector1, want, NFC_TAG_BYTES) == 0, "the next payload");
+    no_forbidden_writes();
+    end_checks();
+}
+
+// NTAG213 is the smallest: 45 pages, user memory 4-39 (144 bytes), the
+// dynamic lock at 0x28. The 48-byte payload fits, and nothing past 15 is written.
+static void ntag213_holds_the_payload_and_no_config_page_is_written(void) {
+    setup();
+    use_ntag(45, U7);
+    CHECK(NFC_TAG_BYTES <= 144, "the payload fits NTAG213's user memory");
+    nfc_arm_write(&R, 23, ID);
+    run(1000);
+    const nfc_event_t *e = first(NFC_EV_WRITE_DONE);
+    CHECK(e && e->ok, "written");
+    CHECK(max_page() <= 39, "inside NTAG213's user pages");
+    CHECK_EQ_INT(ntag_pages(), 45);
+    no_forbidden_writes();
+    tag(false);
+    run(3500);
+    tag(true);
+    run(1000);
+    CHECK_EQ_INT(count(NFC_EV_TAG_READ), 1);
+    end_checks();
+}
+
+static void ntag_write_protected_fails_locked(void) {
+    setup();
+    use_ntag(135, U7);
+    protect(true);
+    nfc_arm_write(&R, 24, ID);
+    run(1000);
+    CHECK_EQ_INT(count(NFC_EV_WRITE_DONE), 1);
+    const nfc_event_t *e = first(NFC_EV_WRITE_DONE);
+    if (e) {
+        CHECK(!e->ok, "not ok");
+        CHECK(e->why && strcmp(e->why, "locked") == 0, "why locked");
+    }
+    CHECK_EQ_INT(page_writes(), 0);
+    no_forbidden_writes();
+    end_checks();
+}
+
+static void ntag_readback_mismatch_fails_verify(void) {
+    setup();
+    use_ntag(135, U7);
+    *B.flip_next_read = true;
+    nfc_arm_write(&R, 25, ID);
+    run(1000);
+    const nfc_event_t *e = first(NFC_EV_WRITE_DONE);
+    CHECK(e && !e->ok && e->why && strcmp(e->why, "verify") == 0, "why verify");
+    end_checks();
+}
+
+static void ntag_pulled_mid_write_fails_moved(void) {
+    setup();
+    use_ntag(135, U7);
+    nfc_arm_write(&R, 26, ID);
+    while (page_writes() < 5 && now < 1000) run(1);
+    tag(false);
+    run(1000);
+    CHECK_EQ_INT(count(NFC_EV_WRITE_DONE), 1);
+    const nfc_event_t *e = first(NFC_EV_WRITE_DONE);
+    CHECK(e && !e->ok && e->why && strcmp(e->why, "moved") == 0, "why moved");
+    no_forbidden_writes();
+    end_checks();
+}
+
+static void ntag_held_reports_once_and_a_retap_after_the_window_twice(void) {
+    setup();
+    use_ntag(135, U7);
+    put_id(ID);
+    run(10000);
+    CHECK_EQ_INT(count(NFC_EV_TAG_READ), 1);
+    CHECK_EQ_INT(*B.reads, 3);               // held, it is not read again
+    tag(false);
+    run(2000);                               // a 2 s dropout: the same tap
+    tag(true);
+    run(3000);
+    CHECK_EQ_INT(count(NFC_EV_TAG_READ), 1);
+    CHECK_EQ_INT(ngap, 1);
+    if (ngap >= 1) CHECK(gaps[0].uid_len == 7 && memcmp(gaps[0].uid, U7, 7) == 0, "the gap names all 7 bytes");
+    tag(false);
+    run(3500);                               // gone for the whole window
+    tag(true);
+    run(1000);
+    CHECK_EQ_INT(count(NFC_EV_TAG_READ), 2);
+    end_checks();
+}
+
+static void ntags_sharing_their_first_4_uid_bytes_are_different_tags(void) {
+    EACH_PHASE {
+        setup();
+        use_ntag(135, U7);
+        put_id(ID);
+        run(2000 + phase);
+        CHECK_EQ_INT(count(NFC_EV_TAG_READ), 1);
+        tag(false);
+        run(300);                            // well inside the 3 s window
+        ntag_uid(U7B);
+        put_id(ID2);
+        tag(true);
+        run(1000);
+        CHECK_EQ_INT(count(NFC_EV_TAG_READ), 2);
+        const nfc_event_t *e = nev >= 3 ? &evs[2] : NULL;
+        if (e) {
+            CHECK(strcmp(e->disk_id, ID2) == 0, "the second tag's own id");
+            CHECK(memcmp(e->uid, U7B, 7) == 0, "the second uid");
+        }
+        end_checks();
+    }
+}
+
+static void an_armed_write_goes_at_once_to_an_ntag_differing_only_in_uid_bytes_4_to_6(void) {
+    setup();
+    use_ntag(135, U7);
+    put_id(ID2);
+    run(2000);
+    nfc_arm_write(&R, 27, ID);
+    run(1000);
+    CHECK_EQ_INT(count(NFC_EV_WRITE_DONE), 0);   // the tag lying there is not written
+    tag(false);
+    run(300);
+    ntag_uid(U7B);
+    tag(true);
+    run(1000);
+    const nfc_event_t *e = first(NFC_EV_WRITE_DONE);
+    CHECK(e && e->ok && e->seq == 27, "written");
+    if (e) CHECK(memcmp(e->uid, U7B, 7) == 0, "to the other tag");
+    no_forbidden_writes();
+    end_checks();
+}
+
+// The 4-byte Classic and a 7-byte NTAG whose first bytes match are different.
+static void a_classic_and_an_ntag_are_different_tags(void) {
+    setup();
+    static const uint8_t c4[4] = { 0x04, 0xB3, 0x2F, 0x3E };
+    memcpy(B.uid, c4, 4);
+    put_id(ID);
+    run(2000);
+    CHECK_EQ_INT(count(NFC_EV_TAG_READ), 1);
+    tag(false);
+    run(300);
+    use_ntag(135, U7);
+    put_id(ID2);
+    tag(true);
+    run(1000);
+    CHECK_EQ_INT(count(NFC_EV_TAG_READ), 2);
+    end_checks();
+}
+
+static void ntag_under_a_one_op_cap_reads_once(void) {
+    setup();
+    nfc_set_max_ops(&R, 1);
+    use_ntag(135, U7);
+    put_id(ID);
+    run_capped(3000, 10, 1);
+    CHECK_EQ_INT(count(NFC_EV_TAG_READ), 1);
+    CHECK_EQ_INT(ngap, 0);
+    end_checks();
+}
+
+static void ntag_field_is_off_between_polls_while_held(void) {
+    setup();
+    use_ntag(135, U7);
+    put_id(ID);
+    run(1000);
+    uint32_t before = field_on_ms();
+    run(10000);
+    CHECK_EQ_INT(count(NFC_EV_TAG_READ), 1);
+    CHECK(field_on_ms() - before < 2000, "field on under 20% of the time with an NTAG held");
+    end_checks();
+}
+
+// Any other kind -- an ISO-DEP card (SAK 0x20), a 7-byte MIFARE Classic, a
+// DESFire -- is "not supported", and never "not a disk tag".
+static void other_tag_kinds_are_not_supported(void) {
+    static const uint8_t saks4[] = { 0x20, 0x00, 0x10 };
+    for (int k = 0; k < 3; k++) {
+        setup();
+        *B.sak = saks4[k];                   // 4-byte UID
+        run(1000);
+        CHECK_EQ_INT(count(NFC_EV_NOT_SUPPORTED), 1);
+        CHECK_EQ_INT(count(NFC_EV_NOT_OURS), 0);
+        end_checks();
+    }
+    static const uint8_t saks7[] = { 0x20, 0x08, 0x18 };
+    for (int k = 0; k < 3; k++) {
+        setup();
+        use_ntag(135, U7);
+        *B.sak = saks7[k];                   // 7-byte UID, not Type 2
+        run(1000);
+        CHECK_EQ_INT(count(NFC_EV_NOT_SUPPORTED), 1);
+        CHECK_EQ_INT(count(NFC_EV_NOT_OURS), 0);
+        const nfc_event_t *e = first(NFC_EV_NOT_SUPPORTED);
+        if (e) CHECK(e->uid_len == 7 && memcmp(e->uid, U7, 7) == 0, "uid");
+        CHECK_EQ_INT(page_writes(), 0);
+        end_checks();
+    }
+}
+
+static void an_armed_write_skips_an_unsupported_tag_and_stays_armed(void) {
+    setup();
+    *B.sak = 0x20;
+    nfc_arm_write(&R, 28, ID);
+    run(1000);
+    CHECK_EQ_INT(count(NFC_EV_NOT_SUPPORTED), 1);
+    CHECK_EQ_INT(count(NFC_EV_WRITE_DONE), 0);
+    CHECK(R.armed, "still armed");
+    end_checks();
+}
+
 static void all(void) {
     RUN(present_chip_is_found_and_named);
     RUN(tag_read_reports_disk_id);
@@ -509,7 +837,7 @@ static void all(void) {
     RUN(tag_removed_and_returned_after_the_window_reports_twice);
     RUN(held_tag_dropout_2s_is_the_same_tap);
     RUN(blank_tag_is_not_ours);
-    RUN(non_classic_tag_is_not_ours);
+    RUN(non_classic_tag_is_not_supported);
     RUN(locked_tag_is_unreadable_locked);
     RUN(tag_pulled_mid_read_is_unreadable_moved);
     RUN(write_armed_writes_and_verifies);
@@ -530,6 +858,23 @@ static void all(void) {
     RUN(the_field_is_off_between_polls_with_a_tag_held);
     RUN(the_ops_cap_is_honoured_and_a_slow_read_reports_once);
     RUN(chip_vanishes_mid_read_and_comes_back);
+    RUN(ntag_disk_tag_is_read_with_its_7_byte_uid);
+    RUN(ntag_blank_is_not_a_disk_tag);
+    RUN(ntag_next_card_reports_tag_next);
+    RUN(ntag_armed_write_writes_pages_4_to_15_and_verifies);
+    RUN(ntag_next_card_can_be_written);
+    RUN(ntag213_holds_the_payload_and_no_config_page_is_written);
+    RUN(ntag_write_protected_fails_locked);
+    RUN(ntag_readback_mismatch_fails_verify);
+    RUN(ntag_pulled_mid_write_fails_moved);
+    RUN(ntag_held_reports_once_and_a_retap_after_the_window_twice);
+    RUN(ntags_sharing_their_first_4_uid_bytes_are_different_tags);
+    RUN(an_armed_write_goes_at_once_to_an_ntag_differing_only_in_uid_bytes_4_to_6);
+    RUN(a_classic_and_an_ntag_are_different_tags);
+    RUN(ntag_under_a_one_op_cap_reads_once);
+    RUN(ntag_field_is_off_between_polls_while_held);
+    RUN(other_tag_kinds_are_not_supported);
+    RUN(an_armed_write_skips_an_unsupported_tag_and_stays_armed);
 }
 
 int main(void) {

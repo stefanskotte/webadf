@@ -39,7 +39,15 @@
 //   - MIFARE Classic through InDataExchange Tg 1 (§7.3.8): 60 blk key[6]
 //     uid[4] (auth A), 30 blk (READ, 16 bytes back), A0 blk data[16] (WRITE);
 //     the status byte is §7.1's: 0x00 good, 0x14 a failed auth, 0x01 a tag
-//     that did not answer.
+//     that did not answer;
+//   - an NFC Forum Type 2 tag (NTAG213/215/216) is a "Mifare" target to the
+//     PN532 too (§7.3.8, "Mifare card": "Refer to Mifare cards (Classic and
+//     Ultralight) documentation"), with no auth: 30 page (READ, four pages,
+//     16 bytes back) and A2 page data[4] -- "0xA2 4 bytes writing" in
+//     §7.3.8's list of Mifare command bytes. Not A0: on a Type 2 tag 0xA0 is
+//     the COMPATIBILITY WRITE, which takes 16 bytes and writes only the first
+//     4. The manual does not say which status a Type 2 NAK becomes; 0x01 (no
+//     answer, §7.1) is read as "moved", any other non-zero as "locked".
 #include "nfc_reader_priv.h"
 #include <string.h>
 
@@ -352,20 +360,19 @@ static bool st_poll(nfc_reader_t *r) {
         nfc_empty_poll(r);
         return true;
     }
-    if (idlen == 4) {
-        memcpy(r->uid, p + 6, 4);
-    } else {
-        // As the Si512's cascade level 1 sees it: the cascade tag, then the
-        // first three UID bytes -- so a tag has the same UID on either chip.
-        r->uid[0] = 0x88;
-        memcpy(r->uid + 1, p + 6, 3);
-    }
-    r->sak = p[4];
+    // The whole UID, as the Si512 assembles it from its two cascade levels --
+    // so a tag has the same UID on either chip. A triple-size (10-byte) UID
+    // keeps its first seven, and is refused below.
+    nfc_uid_set(r, p + 6, idlen == 4 ? 4 : 7);
+    r->sak = p[4];                               // the final SEL_RES (SAK)
     if (!nfc_arrival(r)) return true;            // the held tag: back to idle
-    // SEL_RES bit 3: MIFARE Classic, which has a 4-byte UID here. Anything
-    // else has no sector 1 to read: "not ours", as on the Si512.
-    if (idlen != 4 || !(r->sak & 0x08)) { nfc_finish(r, NFC_EV_NOT_OURS, NULL); return true; }
-    nfc_go(r, ST_PN_AUTH);
+    if (idlen == 10) { nfc_finish(r, NFC_EV_NOT_SUPPORTED, NULL); return true; }
+    // A MIFARE Classic (4-byte UID, SAK bit 3) goes on to key A; a Type 2 tag
+    // (7-byte UID, SAK 00) straight to its pages; anything else is "not
+    // supported", as on the Si512 (nfc_tag_selected).
+    if (!nfc_tag_selected(r, r->sak)) return true;
+    if (r->kind == NFC_KIND_CLASSIC) nfc_go(r, ST_PN_AUTH);
+    else nfc_go(r, r->writing ? ST_PN_WRITE : ST_PN_READ);
     return true;
 }
 
@@ -387,7 +394,7 @@ static bool st_auth(nfc_reader_t *r) {
 
 static bool st_read(nfc_reader_t *r) {
     if (r->phase == 0) {
-        uint8_t c[4] = { 0x40, 0x01, 0x30, (uint8_t)r->block };
+        uint8_t c[4] = { 0x40, 0x01, 0x30, nfc_read_addr(r) };   // a block, or a Type 2 tag's four pages
         r->phase = 1;
         pn_call(r, c, 4, RD_READ);
         return true;
@@ -398,7 +405,29 @@ static bool st_read(nfc_reader_t *r) {
     return true;
 }
 
+// A Type 2 page: 40 01 A2 page d0..d3 (§7.3.8 "0xA2 4 bytes writing"), the
+// only pages ever sent being 4-15 (nfc_t2_page).
+static bool st_write_t2(nfc_reader_t *r) {
+    if (r->phase == 0) {
+        int pg = nfc_t2_page(r);
+        if (pg < 0) { nfc_moved(r); return true; }   // cannot happen; nothing is sent
+        uint8_t c[8] = { 0x40, 0x01, 0xA2, (uint8_t)pg };
+        memcpy(c + 4, nfc_t2_page_out(r), 4);
+        r->phase = 1;
+        pn_call(r, c, 8, RD_STATUS);
+        return true;
+    }
+    if (r->status != MI_OK || r->rx_n < 1) { nfc_moved(r); return true; }
+    uint8_t st = answer(r)[0] & 0x3F;            // §7.1: the error code is bits 0-5
+    if (st == 0x01) { nfc_moved(r); return true; }           // no answer: the tag left
+    if (st != 0x00) { nfc_write_refused(r); return true; }   // it answered, and refused
+    if (nfc_t2_page_written(r)) { r->phase = 0; return true; }
+    nfc_go(r, ST_PN_READBACK);
+    return true;
+}
+
 static bool st_write(nfc_reader_t *r) {
+    if (r->kind == NFC_KIND_T2) return st_write_t2(r);
     if (r->phase == 0) {
         uint8_t c[20] = { 0x40, 0x01, 0xA0, (uint8_t)r->block };
         memcpy(c + 4, nfc_block_out(r), 16);

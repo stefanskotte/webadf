@@ -65,8 +65,8 @@ void nfc_finish(nfc_reader_t *r, nfc_ev_kind_t kind, const char *why) {
     nfc_event_t *e = &r->built;
     memset(e, 0, sizeof *e);
     e->kind = kind;
-    memcpy(e->uid, r->uid, 4);
-    e->uid_len = 4;
+    memcpy(e->uid, r->uid, NFC_UID_MAX);
+    e->uid_len = r->uid_len;
     e->why = why;
     if (kind == NFC_EV_WRITE_DONE) {
         e->seq = r->write_seq;
@@ -88,7 +88,8 @@ void nfc_moved(nfc_reader_t *r) {
 // A held tag's detection gap, for the log (nfc_take_gap): measured from the
 // last time it truly answered, which an arm's sighting does not move.
 static void post_gap(nfc_reader_t *r, uint32_t now, bool new_arrival) {
-    memcpy(r->gap.uid, r->last_uid, 4);
+    memcpy(r->gap.uid, r->last_uid, NFC_UID_MAX);
+    r->gap.uid_len = r->last_uid_len;
     r->gap.ms = now - r->last_detect;
     r->gap.new_arrival = new_arrival;
     r->has_gap = true;
@@ -142,7 +143,11 @@ bool nfc_arrival(nfc_reader_t *r) {
     // been unseen for the whole re-arrival window.
     uint32_t now = r->now_ms();
     expire_hold(r, now);
-    if (r->held && memcmp(r->uid, r->last_uid, 4) == 0) {
+    // The whole UID, and its length: two NTAGs can share their first four
+    // bytes (the manufacturer byte and a serial prefix), and a 4-byte Classic
+    // can match an NTAG's first four. Bytes past uid_len are zero on both
+    // sides (nfc_uid_set), so the 7-byte compare is exact for a 4-byte UID.
+    if (r->held && r->uid_len == r->last_uid_len && memcmp(r->uid, r->last_uid, NFC_UID_MAX) == 0) {
         if (r->missed && now - r->last_detect > GAP_REPORT_MS) post_gap(r, now, false);
         r->last_seen = r->last_detect = now;
         r->missed = false;
@@ -160,6 +165,61 @@ bool nfc_arrival(nfc_reader_t *r) {
 }
 
 // ---- The tag's blocks -------------------------------------------------------------
+
+void nfc_uid_set(nfc_reader_t *r, const uint8_t *b, int n) {
+    if (n > NFC_UID_MAX) n = NFC_UID_MAX;
+    memset(r->uid, 0, NFC_UID_MAX);
+    memcpy(r->uid, b, (size_t)n);
+    r->uid_len = (uint8_t)n;
+}
+
+nfc_kind_t nfc_classify(int uid_len, uint8_t sak) {
+    // SAK bit 3 is MIFARE Classic (08 the 1K; 18 the 4K and 09 the Mini have
+    // a sector 1 too and were always read). A Type 2 tag's final SAK is 00.
+    // A 7-byte Classic, a DESFire, an ISO-DEP card (SAK bit 5): none of these.
+    if (uid_len == 4 && (sak & 0x08)) return NFC_KIND_CLASSIC;
+    if (uid_len == 7 && sak == 0x00) return NFC_KIND_T2;
+    return NFC_KIND_NONE;
+}
+
+bool nfc_tag_selected(nfc_reader_t *r, uint8_t sak) {
+    r->kind = (uint8_t)nfc_classify(r->uid_len, sak);
+    if (r->kind == NFC_KIND_NONE) {
+        nfc_finish(r, NFC_EV_NOT_SUPPORTED, NULL);
+        return false;
+    }
+    if (r->kind == NFC_KIND_T2) {      // no Crypto1: the blocks are open
+        r->block = FIRST_BLOCK;
+        r->sub = 0;
+    }
+    return true;
+}
+
+uint8_t nfc_read_addr(const nfc_reader_t *r) {
+    if (r->kind == NFC_KIND_T2) return (uint8_t)(T2_FIRST_PAGE + (r->block - FIRST_BLOCK) * 4);
+    return (uint8_t)r->block;
+}
+
+int nfc_t2_page(const nfc_reader_t *r) {
+    int pg = T2_FIRST_PAGE + (r->block - FIRST_BLOCK) * 4 + r->sub;
+    // The one gate on a Type 2 page number: nothing outside the payload's
+    // pages -- never 0-3, never a lock or configuration page.
+    return pg >= T2_FIRST_PAGE && pg <= T2_LAST_PAGE ? pg : -1;
+}
+
+const uint8_t *nfc_t2_page_out(const nfc_reader_t *r) {
+    return nfc_block_out(r) + r->sub * 4;
+}
+
+bool nfc_t2_page_written(nfc_reader_t *r) {
+    if (++r->sub < 4) return true;
+    r->sub = 0;
+    return nfc_block_written(r);
+}
+
+void nfc_write_refused(nfc_reader_t *r) {
+    nfc_finish(r, NFC_EV_WRITE_DONE, "locked");
+}
 
 void nfc_auth_done(nfc_reader_t *r, bool ok) {
     // A wrong key, or a tag that left during the auth: either way "locked".
@@ -286,7 +346,8 @@ static bool st_report(nfc_reader_t *r) {
     // into the re-arrival window before the tag had been polled even once.
     r->held = true;
     r->held_next = r->built.kind == NFC_EV_TAG_NEXT;   // its window: hold_window
-    memcpy(r->last_uid, r->uid, 4);
+    memcpy(r->last_uid, r->uid, NFC_UID_MAX);
+    r->last_uid_len = r->uid_len;
     r->last_seen = r->last_detect = r->now_ms();
     r->missed = false;
     if (r->built.kind == NFC_EV_WRITE_DONE && r->armed && r->arm_seq == r->built.seq)

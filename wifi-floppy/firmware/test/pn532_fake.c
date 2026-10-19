@@ -22,8 +22,25 @@ void pn532_fake_init(pn532_fake_t *f, const uint32_t *clock) {
     f->tag_leaves_after_cmds = -1;
     f->vanish_after_xfers = -1;
     f->retries_passive = 0xFF;
+    f->max_page_written = -1;
     f->clock = clock;
     f->bus_hz = 100000;
+}
+
+void pn532_fake_ntag(pn532_fake_t *f, int pages, const uint8_t uid[7]) {
+    f->ntag_pages = pages;
+    f->uid_len = 7;
+    memcpy(f->uid, uid, 7);
+    f->sak = 0x00;
+    memset(f->mem, 0, sizeof f->mem);
+    f->mem[0] = uid[0]; f->mem[1] = uid[1]; f->mem[2] = uid[2];
+    f->mem[3] = (uint8_t)(0x88 ^ uid[0] ^ uid[1] ^ uid[2]);
+    memcpy(f->mem + 4, uid + 3, 4);
+    f->mem[8] = (uint8_t)(uid[3] ^ uid[4] ^ uid[5] ^ uid[6]);
+    f->mem[9] = 0x48;
+    f->mem[12] = 0xE1; f->mem[13] = 0x10;
+    f->mem[14] = (uint8_t)(pages == 45 ? 0x12 : pages == 135 ? 0x3E : 0x6D);
+    f->mem[16] = 0x03; f->mem[17] = 0x00; f->mem[18] = 0xFE;
 }
 
 static void set_field(pn532_fake_t *f, bool on) {
@@ -86,7 +103,7 @@ static void list_passive(pn532_fake_t *f, const uint8_t *p, int n) {
         int k = 0;
         d[k++] = 1;                                     // NbTg
         d[k++] = 1;                                     // Tg
-        d[k++] = 0x00; d[k++] = 0x04;                   // SENS_RES
+        d[k++] = 0x00; d[k++] = f->uid_len == 7 ? 0x44 : 0x04;   // SENS_RES
         d[k++] = f->sak;
         d[k++] = (uint8_t)f->uid_len;
         memcpy(d + k, f->uid, (size_t)f->uid_len);
@@ -118,6 +135,35 @@ static void exchange(pn532_fake_t *f, const uint8_t *p, int n) {
     int m = n - 1;
     bool alive = f->tag_present && f->field && f->tag_state >= 2;
     if (!alive) { f->tag_state = 0; status_only(f, 0x41, 0x01, MIFARE_TO_MS); return; }
+    if (f->ntag_pages > 0) {                            // a Type 2 tag: no auth at all
+        if (m == 2 && c[0] == 0x30 && c[1] < f->ntag_pages) {
+            uint8_t d[17] = { 0x00 };
+            for (int k = 0; k < 16; k++)
+                d[1 + k] = f->mem[((c[1] + k / 4) % f->ntag_pages) * 4 + k % 4];
+            if (f->flip_next_read) { d[4] ^= 0x10; f->flip_next_read = false; }
+            f->reads++;
+            answer(f, 0x41, d, 17, ANSWER_MS);
+            return;
+        }
+        if (m == 6 && c[0] == 0xA2) {
+            int pg = c[1];
+            if (pg > f->max_page_written) f->max_page_written = pg;
+            if (pg < 4) f->low_page_writes++;
+            if (pg >= f->ntag_pages - 5) f->cfg_page_writes++;
+            if (f->write_protected || pg < 2 || pg >= f->ntag_pages) {
+                status_only(f, 0x41, 0x14, ANSWER_MS);  // the NAK (a modelling choice: see the header)
+                return;
+            }
+            memcpy(f->mem + pg * 4, c + 2, 4);
+            f->page_writes++;
+            status_only(f, 0x41, 0x00, ANSWER_MS);
+            return;
+        }
+        if (m >= 1 && c[0] == 0xA0) f->compat_writes++;
+        f->tag_state = 0;                               // anything else: NAK, the tag drops out
+        status_only(f, 0x41, 0x14, ANSWER_MS);
+        return;
+    }
     if (m == 12 && c[0] == 0x60 && c[1] >= 4 && c[1] <= 7) {
         if (!f->locked && memcmp(c + 2, key, 6) == 0 && memcmp(c + 8, f->uid, 4) == 0) {
             f->tag_state = 3;

@@ -36,7 +36,7 @@
 #define NFC_WRITE_LIFETIME_MS  120000u
 #define NFC_UI_LINE_BYTES      (DISP_DETAIL_MAX + 1)
 #define NFC_UI_TITLE_BYTES     (DISP_TITLE_MAX + 1)
-#define NFC_UI_UID_HEX_BYTES   9
+#define NFC_UI_UID_HEX_BYTES   (2 * NFC_UID_MAX + 1)   // 14 digits for an NTAG's 7 bytes
 // The detail line while a write is armed; the disk's title is on the title line.
 #define NFC_UI_ARMED_DETAIL    "Tap tag to write"
 
@@ -59,13 +59,18 @@ const char *nfc_ui_disk_line(uint32_t disk_no, uint32_t disk_count, const char *
 const char *nfc_ui_next_line(dc_tap_outcome_t o, uint32_t disk_no, uint32_t disk_count, bool saving,
                              char *buf, int cap);
 
-// The line for an event core1 shows without asking the server: NOT_OURS,
-// UNREADABLE (by its `why`) and WRITE_DONE. NULL for the rest.
+// The line for an event core1 shows without asking the server: NOT_OURS
+// ("not a disk tag": a kind we read, holding no disk id), NOT_SUPPORTED (a
+// kind we do not read), UNREADABLE (by its `why`) and WRITE_DONE. NULL for
+// the rest.
 const char *nfc_ui_event_line(const nfc_event_t *ev);
 
-// The tag's UID as upper-case hex for POST /tap-write, or "none" when the
-// event has no tag (the server's `uid` must be at least one character).
+// The tag's UID as upper-case hex for POST /tap-write (all of it: 8 digits
+// for a Classic, 14 for an NTAG; the server takes up to 32), or "none" when
+// the event has no tag (the server's `uid` must be at least one character).
 void nfc_ui_uid_hex(const nfc_event_t *ev, char out[NFC_UI_UID_HEX_BYTES]);
+// `n` bytes (at most NFC_UID_MAX) as upper-case hex: the log's gap lines.
+void nfc_ui_hex(const uint8_t *b, int n, char out[NFC_UI_UID_HEX_BYTES]);
 
 // core0's view of the armed write request.
 typedef struct {

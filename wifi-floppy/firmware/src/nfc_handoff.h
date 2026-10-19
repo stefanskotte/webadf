@@ -45,7 +45,7 @@ bool nfc_ev_box_pending(const nfc_ev_box_t *b, uint32_t last);
 
 // Both event boxes, and core1's cursor into each.
 typedef struct {
-    nfc_ev_box_t taps;   // TAG_READ, NOT_OURS, UNREADABLE
+    nfc_ev_box_t taps;   // TAG_READ, TAG_NEXT, NOT_OURS, NOT_SUPPORTED, UNREADABLE
     nfc_ev_box_t done;   // WRITE_DONE only
 } nfc_ev_boxes_t;
 typedef struct {

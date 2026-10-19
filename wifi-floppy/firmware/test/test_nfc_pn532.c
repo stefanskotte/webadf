@@ -243,28 +243,42 @@ static void one_lost_answer_is_not_a_lost_chip(void) {
     CHECK_EQ_INT(count(NFC_EV_TAG_READ), 1);
 }
 
-static void a_seven_byte_uid_is_not_ours(void) {
+// A 7-byte UID (the tester's NTAG215) is reported whole -- no longer as the
+// Si512's old cascade-level-1 view 88 04 11 22 -- and read without any auth.
+static void a_seven_byte_uid_is_read_whole_without_auth(void) {
     setup();
     static const uint8_t u7[7] = { 0x04, 0x11, 0x22, 0x33, 0x44, 0x55, 0x66 };
-    memcpy(P.uid, u7, 7);
-    P.uid_len = 7;
-    P.sak = 0x00;                                        // an NTAG / Ultralight
+    pn532_fake_ntag(&P, 135, u7);
     run(1000);
-    CHECK_EQ_INT(count(NFC_EV_NOT_OURS), 1);
+    CHECK_EQ_INT(count(NFC_EV_NOT_OURS), 1);             // a blank NTAG
     const nfc_event_t *e = first(NFC_EV_NOT_OURS);
-    // As the Si512 reports it: cascade level 1 -- CT 0x88 and the first three bytes.
-    static const uint8_t cl1[4] = { 0x88, 0x04, 0x11, 0x22 };
-    if (e) CHECK(memcmp(e->uid, cl1, 4) == 0, "88 04 11 22");
-    CHECK_EQ_INT(P.cmds[0x40], 0);                       // no auth tried
+    if (e) CHECK(e->uid_len == 7 && memcmp(e->uid, u7, 7) == 0, "04 11 22 33 44 55 66");
+    CHECK_EQ_INT(P.reads, 3);                            // pages 4, 8, 12
     CHECK_EQ_INT(P.host_nacks, 0);                       // 23 bytes: read whole the first time
 }
 
-static void an_iso14443_4_card_with_a_long_ats_is_not_ours(void) {
+// The Type 2 write through InDataExchange is "0xA2 4 bytes writing"
+// (UM0701-02 §7.3.8): 40 01 A2 page d0..d3, never the 16-byte 0xA0.
+static void an_ntag_is_written_with_a2_one_page_at_a_time(void) {
+    setup();
+    static const uint8_t u7[7] = { 0x04, 0xB3, 0x2F, 0x3E, 0x34, 0x02, 0x89 };
+    pn532_fake_ntag(&P, 135, u7);
+    nfc_arm_write(&R, 5, ID);
+    run(1000);
+    CHECK_EQ_INT(count(NFC_EV_WRITE_DONE), 1);
+    CHECK_EQ_INT(P.page_writes, 12);
+    CHECK_EQ_INT(P.compat_writes, 0);
+    CHECK_EQ_INT(P.low_page_writes, 0);
+    CHECK_EQ_INT(P.cfg_page_writes, 0);
+    CHECK(P.max_xfer <= 28, "no frame longer than the Classic WRITE's");
+}
+
+static void an_iso14443_4_card_with_a_long_ats_is_not_supported(void) {
     setup();
     P.sak = 0x20;
     P.ats_len = 20;                                      // the answer is 33 bytes: re-read whole
     run(1000);
-    CHECK_EQ_INT(count(NFC_EV_NOT_OURS), 1);
+    CHECK_EQ_INT(count(NFC_EV_NOT_SUPPORTED), 1);
     CHECK_EQ_INT(count(NFC_EV_ABSENT), 0);
     setup();
     P.sak = 0x20;
@@ -454,8 +468,9 @@ int main(void) {
     RUN(a_lying_len_is_never_followed_out_of_bounds);
     RUN(a_wedged_chip_is_aborted_then_lost_then_found_again);
     RUN(one_lost_answer_is_not_a_lost_chip);
-    RUN(a_seven_byte_uid_is_not_ours);
-    RUN(an_iso14443_4_card_with_a_long_ats_is_not_ours);
+    RUN(a_seven_byte_uid_is_read_whole_without_auth);
+    RUN(an_ntag_is_written_with_a2_one_page_at_a_time);
+    RUN(an_iso14443_4_card_with_a_long_ats_is_not_supported);
     RUN(a_found_pn532_puts_the_bus_at_400khz_and_keeps_it);
     RUN(every_step_at_400khz_is_under_1500us);
     RUN(without_0x24_in_the_boot_scan_nothing_is_written_there);
