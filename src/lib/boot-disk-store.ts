@@ -8,17 +8,22 @@ import { BOOT_DISK_FW, type BootDisk, type BootReport } from '@/lib/boot-disk';
 /**
  * The SET half of the one UPDATE that decides a boot (Disk at startup, see boot-disk.ts). Every expression reads the
  * row's PRE-image under one lock, so a boot is acted on exactly once however many requests carry it:
- *   - `fresh`: the boot id differs from the one stored -- the first request of this boot;
- *   - DF0 is emptied only on a fresh boot, on "No disk", not an update's reboot, and with a disk desired -- the same
- *     columns and version bump as clearDesired, so the board's own poll (since=0 at boot) is answered with no disk.
+ *   - `fresh`: the id is neither the stored boot nor the one before it -- the first request of a NEW boot. A late
+ *     request from the previous boot (its id is prev_boot_id) is ignored: it neither clears nor moves the ids back.
+ *   - DF0 is emptied only on a fresh boot that FOLLOWS a known one (boot_id not null): the first id ever heard from a
+ *     board is a baseline, recorded only -- the reboot that installs 1.18.1 runs older firmware's code, which writes
+ *     no update mark, and must never be what empties DF0. Then: on "No disk", not an update's reboot, and with a disk
+ *     desired -- the same columns and version bump as clearDesired, so the boot's first poll answers with no disk.
  * A reconnect, a server restart or a retried request carries the stored id: nothing moves. DF1 is not touched.
  */
 export function bootPatch(boot: BootReport): PgUpdateSetSource<typeof devices> {
-  const empty = sql`(${devices.bootId} is distinct from ${boot.id} and ${devices.bootDisk} = 'empty'
+  const fresh = sql`(${devices.bootId} is distinct from ${boot.id} and ${devices.prevBootId} is distinct from ${boot.id})`;
+  const empty = sql`(${fresh} and ${devices.bootId} is not null and ${devices.bootDisk} = 'empty'
     and ${boot.ota ? sql`false` : sql`true`} and ${devices.desiredSha256} is not null)`;
   const clear = <T>(col: T) => sql`case when ${empty} then null else ${col} end`;
   return {
-    bootId: boot.id,
+    bootId: sql`case when ${fresh} then ${boot.id} else ${devices.bootId} end`,
+    prevBootId: sql`case when ${fresh} then ${devices.bootId} else ${devices.prevBootId} end`,
     desiredSha256: clear(devices.desiredSha256),
     desiredGameId: clear(devices.desiredGameId),
     desiredDiskNo: clear(devices.desiredDiskNo),

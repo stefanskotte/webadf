@@ -13,7 +13,12 @@
 
 export type BootDisk = 'last' | 'empty';
 
-/** The firmware that names its boot on the poll and the tap. */
+/**
+ * The firmware that names its boot on the poll and the tap.
+ * RELEASE RULE (operator ruling, fix round 1, 2026-10-19): 1.18.1 ships as ONE build with feat/boot-empty AND
+ * feat/nfc-ntag. Never publish a 1.18.1 without the boot id (device_client.c dc_set_boot) -- the card would offer
+ * "No disk" to boards that cannot do it. Built from a tree without it? Bump the version, and this with it.
+ */
 export const BOOT_DISK_FW = '1.18.1';
 
 /** A stored value, or 'last' for anything else (never guess "empty": that ejects a game). */

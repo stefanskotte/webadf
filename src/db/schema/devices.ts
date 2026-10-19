@@ -189,6 +189,8 @@ export const devices = pgTable('devices', {
   bootDisk: text('boot_disk').notNull().default('last'),
   /** The board's id for its current boot (?boot= on a poll or tap, fw 1.18.1+); null = never heard. */
   bootId: text('boot_id'),
+  /** The boot before it: a late request carrying it is ignored, never taken for a new boot. Null = none yet. */
+  prevBootId: text('prev_boot_id'),
 
   // --- DF1 any disk (spec docs/superpowers/specs/2026-10-14-df1-any-disk-design.md §4.1) ---
   /**

@@ -42,15 +42,55 @@ describe('Disk at startup', () => {
       macAddress: 'AA:BB:CC:DD:EE:02', tokenHash: 'h-boot', firmwareVersion: '1.18.1+gabc1234' });
   });
   afterAll(async () => { await closeDb(); await admin(`drop database if exists ${DB} with (force)`); });
+  // Every test but the baseline ones starts from a board whose earlier boot (0000000b) the server has heard.
   beforeEach(async () => {
-    await getDb().update(devices).set({ bootDisk: 'last', bootId: null, firmwareVersion: '1.18.1+gabc1234' })
-      .where(eq(devices.id, ID));
+    await getDb().update(devices).set({ bootDisk: 'last', bootId: '0000000b', prevBootId: null,
+      firmwareVersion: '1.18.1+gabc1234' }).where(eq(devices.id, ID));
   });
+  const fresh = () => getDb().update(devices).set({ bootId: null, prevBootId: null }).where(eq(devices.id, ID));
 
   it('defaults to the last disk, with no boot heard', async () => {
-    const r = await row();
+    const id = 'boot-dev-fresh';
+    await getDb().insert(devices).values({ id, orgId: ORG, name: 'Device AA:BB:CC:DD:EE:03',
+      macAddress: 'AA:BB:CC:DD:EE:03', tokenHash: 'h-boot-2' });
+    const [r] = await getDb().select().from(devices).where(eq(devices.id, id));
     expect(r.bootDisk).toBe('last');
     expect(r.bootId).toBeNull();
+    expect(r.prevBootId).toBeNull();
+  });
+
+  // Fix round 1: the first boot id ever heard from a board is only a baseline. The update that installs 1.18.1
+  // reboots under OLDER firmware, which writes no update mark -- that boot must never be the one that empties DF0.
+  it('the first boot ever heard is a baseline: recorded, never cleared', async () => {
+    await saveBootDisk(ORG, ID, 'empty');
+    await fresh();
+    await mounted(4);
+    await noteBoot(ID, { id: '1a2b3c4d', ota: false });
+    const r = await row();
+    expect(r.bootId).toBe('1a2b3c4d');
+    expect(r.desiredSha256).toBe(SHA);
+    expect(r.desiredVersion).toBe(4);
+  });
+
+  // Fix round 1: a late request from the previous boot (A), landing after the new boot's (B) first one, neither
+  // clears again nor makes B look new a second time.
+  it('A, B, a late A, then B again: exactly one clear', async () => {
+    await saveBootDisk(ORG, ID, 'empty');
+    await fresh();
+    await mounted(4);
+    await noteBoot(ID, { id: 'aaaaaaaa', ota: false });    // baseline
+    await noteBoot(ID, { id: 'bbbbbbbb', ota: false });    // power-up: cleared, version 5
+    expect((await row()).desiredVersion).toBe(5);
+    await mounted(6);                                       // a tag tapped in boot B
+    await touchLastSeen(ID, { id: 'aaaaaaaa', ota: false }); // boot A's request, late
+    let r = await row();
+    expect(r.desiredSha256).toBe(SHA);
+    expect(r.bootId).toBe('bbbbbbbb');
+    expect(r.prevBootId).toBe('aaaaaaaa');
+    await noteBoot(ID, { id: 'bbbbbbbb', ota: false });    // boot B again
+    r = await row();
+    expect(r.desiredSha256).toBe(SHA);
+    expect(r.desiredVersion).toBe(6);
   });
 
   it('on Last disk, a boot is recorded and the disk comes back', async () => {

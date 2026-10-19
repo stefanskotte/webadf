@@ -1,5 +1,5 @@
 {
-  "id": "1250de1f-a55f-45ef-abd5-73d7151b970f",
+  "id": "4ab62e5a-9f9b-436a-b3f8-2e4995a433be",
   "prevId": "3925754b-aed0-4fef-a543-e015655e7d5c",
   "version": "7",
   "dialect": "postgresql",
@@ -2327,6 +2327,12 @@
         },
         "boot_id": {
           "name": "boot_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "prev_boot_id": {
+          "name": "prev_boot_id",
           "type": "text",
           "primaryKey": false,
           "notNull": false

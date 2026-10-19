@@ -576,6 +576,10 @@ test('Disk at startup: No disk empties DF0 at the board\'s boot, and a reconnect
     desiredGameId: gameId, desiredDiskId: diskId, desiredSha256: sha(tag), desiredDiskNo: 1, desiredVersion: 1,
   });
 
+  // The board's earlier boot, as the server first heard it: a baseline (the first id ever heard never clears).
+  expect((await request.get('/api/device/poll?since=0&nfcAck=0&displayAck=0&boot=0000000a',
+    { headers: authHeader(token) })).status()).toBe(200);
+
   await page.goto('/devices');
   const select = page.getByTestId(`boot-disk-${deviceId}`);
   await expect(select).toHaveValue('last');

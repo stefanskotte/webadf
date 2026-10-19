@@ -36,7 +36,8 @@ export function BootDiskSetting({ device }: { device: DeviceListItem }) {
   // A board that has never said which firmware it runs (just paired): nothing to offer or to ask for yet.
   if (device.firmwareVersion === null && device.bootDisk === 'last') return null;
   // Older firmware, still on the default: one line saying what it does and what it needs, not a disabled select plus
-  // a note -- every fresh card (no firmware reported yet) shows this, and two lines made the card taller than wide.
+  // a note. A just-paired board usually lands here (registration reports its firmware), so this line is on most
+  // fresh cards; two lines made them taller than wide. A card with no firmware reported at all renders nothing (above).
   if (note && device.bootDisk === 'last') {
     return (
       <span className="flex flex-wrap items-center gap-x-1 text-[11px]" style={{ color: 'var(--muted)' }}>

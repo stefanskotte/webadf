@@ -55,7 +55,7 @@ bool fw_trial_after_buy(fw_state_t *st);   // true if *st changed and must be sa
 // the buy depends on it, and it is an update boot already.
 void fw_mark_ota_reboot(uint32_t *s0, uint32_t *s1);
 // True when the words a boot found say the reboot before it was for an update: the OTA mark, or a proven mark.
-bool fw_boot_after_ota(uint32_t s0, uint32_t s1);   // true if *st changed and must be saved
+bool fw_boot_after_ota(uint32_t s0, uint32_t s1);
 
 typedef enum {
     FW_BOOT_CLEAN,
