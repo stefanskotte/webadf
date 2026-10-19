@@ -3,5 +3,5 @@
 #include <exec/types.h>
 #include <workbench/startup.h>
 int shell_main(const char *dir, STRPTR *send, int trust);
-int gui_main(const char *dir, struct WBArg *wbargs, long nwb, STRPTR *send);
+int gui_main(const char *dir, struct WBArg *wbargs, long nwb, STRPTR *send, int trust);
 #endif

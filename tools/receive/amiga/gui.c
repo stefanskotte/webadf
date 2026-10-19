@@ -61,13 +61,15 @@ static unsigned pct_of(unsigned long bytes, unsigned long size) {
     return p > 99 ? 99 : p;
 }
 static void row_text(row *r) {
-    char nm[18], sz[10]; const char *base = strrchr(r->name, '/'); size_t l;
+    char nm[18], sz[16]; const char *base = strrchr(r->name, '/'); size_t l;
     base = base ? base + 1 : r->name;
     strncpy(nm, base, 17); nm[17] = 0;
     l = strlen(nm); while (l < 17) nm[l++] = ' '; nm[17] = 0;
     /* A file waiting to go up has no size yet (the board's TAKE brings it): blank, not "0 KB". */
     if (!r->size && (r->state == ST_UP_WAITING || r->state == ST_UP_FAILED)) strcpy(sz, "       ");
-    else sprintf(sz, "%4lu KB", (r->size + 1023) / 1024);   /* 4 MB at most: 4 digits */
+    /* Files are 4 MB at most (4 digits of KB); a LIST from anyone on the LAN may say more: MB then (4 GB = 4096 MB). */
+    else if (r->size <= 9999UL * 1024) sprintf(sz, "%4lu KB", (r->size + 1023) / 1024);
+    else sprintf(sz, "%4lu MB", r->size / 1048576UL + 1);
     switch (r->state) {
     case ST_WAITING: sprintf(r->text, "%s %s waiting", nm, sz); break;
     case ST_RECEIVING: sprintf(r->text, "%s %s receiving %u%%", nm, sz, r->pct); break;
@@ -345,7 +347,17 @@ static int build(gui *G, const char *dir) {
     return 0;
 }
 
-int gui_main(const char *dir, struct WBArg *wbargs, long nwb, STRPTR *send) {
+/* Without a network (no stack, or port 6800 taken) the window still takes drops, Send... and Shell hand-offs. */
+static void wait_window(gui *G) {
+    ULONG mask = 1UL << G->win->UserPort->mp_SigBit | (G->app_port ? 1UL << G->app_port->mp_SigBit : 0) | ipc_sigmask();
+    while (!G->quit) {
+        ULONG sigs = Wait(mask | SIGBREAKF_CTRL_C);
+        if (sigs & SIGBREAKF_CTRL_C) break;
+        on_signal(G, sigs);
+    }
+}
+
+int gui_main(const char *dir, struct WBArg *wbargs, long nwb, STRPTR *send, int trust) {
     static gui G; static afs_ctx ctx; static rx_fs fs; static rx_session s; static rx_upq q;
     char key[RX_KEY_HEX + 8];
     long i;
@@ -361,6 +373,7 @@ int gui_main(const char *dir, struct WBArg *wbargs, long nwb, STRPTR *send) {
     afs_init(&ctx, &fs, dir);
     cfg_key_load(key, sizeof key);
     rx_upq_init(&q, key);
+    if (trust) gui_trust(&G);   /* Receive GUI TRUST (ruling PF18): as the Shell form, the next board's key is trusted */
     strcpy(G.status, "Starting...");
     strcpy(G.okstatus, "Listening on port 6800");
     if (!(G.scr = LockPubScreen(NULL)) || !(G.vi = GetVisualInfo(G.scr, TAG_END))) goto out;
@@ -372,10 +385,7 @@ int gui_main(const char *dir, struct WBArg *wbargs, long nwb, STRPTR *send) {
     for (i = 0; send && send[i]; i++) add_path(&G, (const char *)send[i]);   /* Receive GUI SEND ... */
     if (net_open() != 0) {
         set_status(&G, "No TCP/IP stack running (bsdsocket.library)");
-        while (!G.quit) {
-            if (Wait(1UL << G.win->UserPort->mp_SigBit | SIGBREAKF_CTRL_C) & SIGBREAKF_CTRL_C) break;
-            on_signal(&G, 0);
-        }
+        wait_window(&G);
     } else {
         net_ui ui;
         ui.u = &G; ui.on_event = on_event; ui.on_status = on_status;
@@ -384,10 +394,7 @@ int gui_main(const char *dir, struct WBArg *wbargs, long nwb, STRPTR *send) {
         if (net_run(&ui, &ctx, &fs, &s, &q) != 0) {
             /* e.g. Receive is already running: say so and wait for the close gadget, as without a stack. */
             set_status(&G, "Could not listen on port 6800");
-            while (!G.quit) {
-                if (Wait(1UL << G.win->UserPort->mp_SigBit | SIGBREAKF_CTRL_C) & SIGBREAKF_CTRL_C) break;
-                on_signal(&G, 0);
-            }
+            wait_window(&G);
         }
         net_close();
     }

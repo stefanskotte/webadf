@@ -29,7 +29,7 @@ static int is_word(const char *s, const char *w) {
     return *s == 0 && *w == 0;
 }
 
-static int run(void) { return want_gui ? gui_main(dir, wb_args, wb_n, send_files) : shell_main(dir, send_files, want_trust); }
+static int run(void) { return want_gui ? gui_main(dir, wb_args, wb_n, send_files, want_trust) : shell_main(dir, send_files, want_trust); }
 
 static int run_with_stack(void) {
     struct Task *me = FindTask(NULL);

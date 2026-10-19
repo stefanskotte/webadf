@@ -32,7 +32,8 @@ static void init_msg(rx_msg *m, struct MsgPort *reply, int kind) {
 
 /* A Receive that died without removing its port (a crash, a Guru) never answers. After LETGO the wait is a poll: a
    second Ctrl-C, or ~5 s with no reply, gives up -- and leaks the messages and the reply port on purpose, since a
-   Receive that is only slow might still reply into them. */
+   Receive that is only slow might still reply into them. So every message is AllocVec'd, never in our data hunk,
+   which goes away when we exit. */
 #define RX_LETGO_TICKS 250   /* 5 s at 50 ticks/s */
 static int give_up(unsigned left) {
     LONG a[1];
@@ -42,7 +43,7 @@ static int give_up(unsigned left) {
     return 1;
 }
 int ipc_hand_off(const rx_upq *items, int trust, int *ok) {
-    static rx_msg ctl, tm;
+    rx_msg *ctl, *tm;   /* LETGO and TRUST: allocated, as m, so a give-up can leak them */
     struct MsgPort *reply = CreateMsgPort();
     rx_msg *m;
     unsigned i, sent = 0, got = 0;
@@ -51,10 +52,11 @@ int ipc_hand_off(const rx_upq *items, int trust, int *ok) {
     LONG a[2];
     *ok = 0;
     if (!reply) return -1;
-    m = AllocVec(sizeof(rx_msg) * (items->n ? items->n : 1), MEMF_PUBLIC | MEMF_CLEAR);
+    m = AllocVec(sizeof(rx_msg) * (items->n ? items->n + 2 : 3), MEMF_PUBLIC | MEMF_CLEAR);
     if (!m) { DeleteMsgPort(reply); return -1; }
+    ctl = &m[items->n ? items->n : 1]; tm = ctl + 1;
     /* TRUST first: messages to one port are taken in order, so the files that follow see the new key. */
-    if (trust) { init_msg(&tm, reply, RXM_TRUST); if (put_msg(&tm) == 0) tm_out = 1; }
+    if (trust) { init_msg(tm, reply, RXM_TRUST); if (put_msg(tm) == 0) tm_out = 1; }
     for (i = 0; i < items->n; i++) {
         init_msg(&m[i], reply, RXM_FILE);
         strcpy(m[i].local, items->q[i].local); strcpy(m[i].name, items->q[i].name);
@@ -69,15 +71,15 @@ int ipc_hand_off(const rx_upq *items, int trust, int *ok) {
         else { Delay(10); waited += 10; sig = SetSignal(0, SIGBREAKF_CTRL_C) & SIGBREAKF_CTRL_C; }
         if (sig & SIGBREAKF_CTRL_C) {
             if (letgo) return give_up(sent - got);   /* the second Ctrl-C */
-            init_msg(&ctl, reply, RXM_LETGO);
-            if (put_msg(&ctl) == 0) ctl_out = 1;
+            init_msg(ctl, reply, RXM_LETGO);
+            if (put_msg(ctl) == 0) ctl_out = 1;
             letgo = 1;
             PutStr((STRPTR)"Stopped waiting; Receive keeps the files in its list\n");
         }
         while ((r = GetMsg(reply)) != NULL) {
             rx_msg *x = (rx_msg *)r;
-            if (x == &ctl) { ctl_out = 0; continue; }
-            if (x == &tm) { tm_out = 0; continue; }
+            if (x == ctl) { ctl_out = 0; continue; }
+            if (x == tm) { tm_out = 0; continue; }
             got++;
             a[0] = (LONG)x->name;
             if (x->ok) { a[1] = (LONG)x->size; VPrintf((STRPTR)"%s  %lu bytes  OK\n", a); (*ok)++; }
