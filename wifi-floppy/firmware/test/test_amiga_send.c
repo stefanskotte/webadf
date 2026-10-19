@@ -17,6 +17,7 @@ static struct {
     uint32_t last_off;
     char posted_id[64]; char posted[600]; int posts; int post_status;
     as_raw_t *raw; int arms;                           // the armed raw section (amiga_tcp.c's role)
+    as_raw_t *armed;                                   // exactly what the engine last armed (NULL: disarmed)
     char partial[AS_LINE_MAX + 1]; int partial_n;      // a line from the Amiga being built
     int opens, open_status; char open_json[AS_UP_JSON_MAX]; char open_resp[256];
     int chunks, chunk_status; uint32_t chunk_offs[300], chunk_lens[300]; uint8_t stored[200000]; uint32_t stored_len;
@@ -79,7 +80,7 @@ static int f_up_close(void *c, const char *id, const char *json, char *resp, int
     snprintf(resp, (size_t)cap, "%s", F.close_resp[0] ? F.close_resp : "{\"name\":\"Hello.txt\"}");
     return F.close_status ? F.close_status : 200;
 }
-static void f_raw_arm(void *c, as_raw_t *w) { (void)c; F.raw = (w && w->got < w->total) ? w : NULL; F.arms++; }
+static void f_raw_arm(void *c, as_raw_t *w) { (void)c; F.raw = (w && w->got < w->total) ? w : NULL; F.armed = w; F.arms++; }
 static const as_ops_t OPS = { NULL, f_connect, f_state, f_send, f_recv, f_close, f_queue, f_chunk, f_post, f_now, f_up_open, f_up_chunk, f_up_close, f_raw_arm };
 
 static amiga_send_t S;
@@ -718,7 +719,8 @@ static void an_amiga_that_stops_sending_is_given_up_too(void) {
     fill_big(); ready2(); put_big(); run(1);
     amiga_sends(BIG, 1000); run(1);
     F.now += 121000; run(2);
-    CHECK(strstr(F.out, "NO 1 busy ") != NULL, F.out);
+    CHECK(strstr(F.out, "NO 1 offline ") != NULL, F.out);       // PF8, spec §5: a stall is offline either way
+    CHECK(F.sock == AS_SOCK_CLOSED, "dropped: raw bytes may be in flight");
 }
 static void a_crc_refused_at_close_is_no_crc(void) {
     ready2(); F.close_status = 409; snprintf(F.close_resp, sizeof F.close_resp, "{\"code\":\"crc\"}");
@@ -818,6 +820,66 @@ static void after_an_upload_a_waiting_download_goes_first(void) {
     CHECK(strstr(F.out, "FILE ") != NULL, "the download goes first");
 }
 
+// Fix round 1, item 2: an upload that ends without a drop leaves nothing armed.
+static void an_upload_that_ends_on_lines_leaves_the_raw_section_disarmed(void) {
+    ready2(); reply(PUT5); run(1);
+    CHECK(F.armed != NULL, "armed for the TAKE");
+    amiga_sends("hello", 5); end_line("1", (const uint8_t *)"hello", 5); run(4);
+    CHECK(strstr(F.out, "DONE 1 ") != NULL, F.out);
+    CHECK(F.armed == NULL, "disarmed after DONE");
+    ready2(); F.close_status = 409; snprintf(F.close_resp, sizeof F.close_resp, "{\"code\":\"crc\"}");
+    reply(PUT5); run(1); amiga_sends("hello", 5); end_line("1", (const uint8_t *)"hello", 5); run(4);
+    CHECK(strstr(F.out, "NO 1 crc ") != NULL, F.out);
+    CHECK(F.armed == NULL, "disarmed after a NO at the close");
+}
+// Fix round 1, item 3: a PING still owed its PONG when the upload's turn came does not drop the connection after.
+static void a_ping_owed_when_an_upload_starts_does_not_drop_after_it(void) {
+    ready2();
+    F.now += AS_PING_MS + 1; run(1);
+    CHECK(strcmp(F.out, "PING\n") == 0, F.out);
+    reply(PUT5); run(1);                               // Receive's PUT crossed the PING; no PONG comes
+    amiga_sends("hello", 5); end_line("1", (const uint8_t *)"hello", 5); run(4);
+    CHECK(strstr(F.out, "DONE 1 ") != NULL, F.out);
+    F.now += AS_PONG_MS + 1; run(2);
+    CHECK(F.sock == AS_SOCK_OPEN, "not dropped for a PONG owed before the upload");
+}
+// Fix round 1, item 4: right after an upload, a queue fetch that keeps failing does not hold the next PUT forever.
+static void a_failing_fetch_after_an_upload_does_not_hold_the_next_put(void) {
+    ready2(); reply(PUT5); run(1);
+    amiga_sends("hello", 5); end_line("1", (const uint8_t *)"hello", 5); run(4);
+    CHECK(strstr(F.out, "DONE 1 ") != NULL, F.out);
+    F.queue_status = -1; as_set_inputs(&S, true, 0xAC100AEDu, 2);   // a new queue version; the fetch fails
+    run(2);
+    CHECK(F.queue_fetches >= 2, "the fetch was tried");
+    clear_out();
+    reply("PUT 2 5 1.2.3 0 9:Hello.txt 0:");
+    run(1);                                            // its turn, during the backoff
+    F.now += AS_BACKOFF_MAX_MS; run(2);                // the backoff over: the open, not another fetch
+    CHECK_EQ_INT(F.opens, 2);                          // not held by an "unsure" queue
+    CHECK(strstr(F.out, "TAKE 2 0 5\n") != NULL, F.out);
+}
+// ... and no path holds a waiting PUT longer than AS_UP_OPEN_GIVEUP_MS: an outcome the server keeps refusing.
+static void a_put_behind_a_failing_outcome_gets_no_offline(void) {
+    char q[600], go[80], ok[120];
+    snprintf(q, sizeof q, "NEXT %s 5 3610a686 0 5:Hello 0:\nLIST 1\n%s 5 5:Hello\n", ID, ID);
+    ready2_with(q);
+    memcpy(F.file, "hello", 5); F.file_len = 5;
+    reply(PUT5); run(1);
+    snprintf(go, sizeof go, "GO %s", ID); reply(go); run(3);
+    F.post_status = 503;                               // the download's outcome cannot be posted
+    snprintf(ok, sizeof ok, "OK %s 5:Hello", ID); reply(ok); run(2);
+    for (int i = 0; i < 40; i++) { F.now += 2000; run(1); }      // 80 s of backoffs
+    CHECK_EQ_INT(F.opens, 0);                          // the outcome goes first, so the open never ran
+    CHECK(strstr(F.out, "NO 1 offline ") != NULL, F.out);
+    CHECK(F.sock == AS_SOCK_OPEN, "kept: no raw byte was in flight");
+}
+// Fix round 1, item 5: the server's busy is not the user's cancel.
+static void a_server_busy_at_open_is_not_called_cancelled(void) {
+    ready2(); F.open_status = 409; snprintf(F.open_resp, sizeof F.open_resp, "{\"code\":\"busy\"}");
+    reply(PUT5); run(1);
+    CHECK(strstr(F.out, "NO 1 busy ") != NULL && strstr(F.out, "cancelled") == NULL, F.out);
+    CHECK(strstr(F.out, "NO 1 busy 19:the web app is busy\n") != NULL, F.out);
+}
 int main(void) {
     RUN(off_or_no_address_does_nothing);
     RUN(connects_to_6800_and_says_hello);
@@ -878,5 +940,10 @@ int main(void) {
     RUN(a_put_during_a_download_waits_then_goes_first);
     RUN(after_an_upload_a_waiting_download_goes_first);
     RUN(a_put_that_waited_out_a_long_download_still_opens);
+    RUN(an_upload_that_ends_on_lines_leaves_the_raw_section_disarmed);
+    RUN(a_ping_owed_when_an_upload_starts_does_not_drop_after_it);
+    RUN(a_failing_fetch_after_an_upload_does_not_hold_the_next_put);
+    RUN(a_put_behind_a_failing_outcome_gets_no_offline);
+    RUN(a_server_busy_at_open_is_not_called_cancelled);
     return REPORT();
 }
