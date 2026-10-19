@@ -248,6 +248,17 @@ describe('amiga uploads', () => {
     await expect(U.clearUploads(db(), 'org-micro', "x'; drop table amiga_uploads; --")).rejects.toThrow(RangeError);
   });
 
+  it('clear spares a file that was still arriving when the person looked, even if it is stored by the time they confirm', async () => {
+    const d = await device('org-arrive');
+    const before = await stored(d, bytes(10, 50), 'Before.txt');
+    const o = await opened(d, { size: 20, path: 'Late.bin' });           // created before the cursor, still receiving
+    const seen = (await U.listUploads(db(), 'org-arrive', null))[0].cursor;   // the newest row: Late.bin, arriving
+    await db().update(amigaUploads).set({ status: 'stored', storedAt: new Date(Date.now() + 5) }).where(eq(amigaUploads.id, o.id));
+    expect(await U.clearUploads(db(), 'org-arrive', seen)).toBe(1);
+    expect((await row(before)).status).toBe('deleted');
+    expect((await row(o.id)).status).toBe('stored');                      // stored after the cursor: never seen as finished
+  });
+
   it('clear with a board clears only that board, up to the cursor the filtered list gave', async () => {
     const a = await device('org-board'); const b = await device('org-board');
     const a1 = await stored(a, bytes(10, 40), 'A1.txt');

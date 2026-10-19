@@ -139,7 +139,7 @@ export type UploadView = {
   id: string; path: string; sizeBytes: number; status: 'receiving' | 'stored' | 'failed'; receivedBytes: number;
   errorCode: string | null; deviceId: string | null; deviceName: string; createdAt: number; storedAt: number | null;
   expiresAt: number; libraryDiskId: string | null; libraryGameId: string | null;
-  /** created_at as Postgres prints it, with microseconds: a Date is milliseconds and would round (ruling PF4). */
+  /** When the row settled (stored_at, else created_at) as Postgres prints it, with microseconds: a Date is milliseconds and would round (ruling PF4). Clear all sends the greatest cursor in the list. */
   cursor: string;
 };
 /** An exact position in the area (a created_at with microseconds) that Clear all compares without truncation. */
@@ -162,9 +162,9 @@ export function toUploadView(r: UploadRow & { libraryGameId?: string | null; cur
   };
 }
 
-/** The org's area, newest first (the first row's `cursor` is what Clear all sends back); `board` filters it. A stored row past its 30 days is gone already for the person. */
+/** The org's area, newest first (the greatest `cursor` in the list is what Clear all sends back); `board` filters it. A stored row past its 30 days is gone already for the person. */
 export async function listUploads(db: Db, orgId: string, board: string | null, now = new Date()): Promise<UploadView[]> {
-  const rows = await db.select({ u: amigaUploads, gameId: disks.gameId, cursor: sql<string>`to_char(${amigaUploads.createdAt} at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"')` }).from(amigaUploads)
+  const rows = await db.select({ u: amigaUploads, gameId: disks.gameId, cursor: sql<string>`to_char(coalesce(${amigaUploads.storedAt}, ${amigaUploads.createdAt}) at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"')` }).from(amigaUploads)
     .leftJoin(disks, and(eq(disks.id, amigaUploads.libraryDiskId), eq(disks.orgId, orgId)))
     .where(and(eq(amigaUploads.orgId, orgId), ne(amigaUploads.status, 'deleted'),
       or(ne(amigaUploads.status, 'stored'), gt(amigaUploads.expiresAt, now)),
@@ -197,8 +197,9 @@ export async function deleteUpload(db: Db, orgId: string, id: string): Promise<b
 }
 
 /**
- * Clear all (spec §4, ruling PF4): every stored or failed row created at or before `cursor` (the newest row's
- * UploadView.cursor the person saw); a receiving row stays. The comparison is on the exact Postgres timestamp, so a
+ * Clear all (spec §4, ruling PF4): every stored or failed row settled at or before `cursor` (the newest row's
+ * UploadView.cursor the person saw); a receiving row stays, and so does one that was still arriving when the person
+ * looked and was stored since (settled = stored_at, else created_at). The comparison is on the exact Postgres timestamp, so a
  * file that arrived in the same millisecond, after the person looked, survives. With `board`, only that board's rows
  * go (the cursor is then the newest row of the filtered list).
  */
@@ -206,7 +207,7 @@ export async function clearUploads(db: Db, orgId: string, cursor: UploadCursor, 
   if (!isUploadCursor(cursor)) throw new RangeError('clearUploads: not an upload cursor');
   return db.transaction(async (tx) => {
     const done = await tx.update(amigaUploads).set({ status: 'deleted' })
-      .where(and(eq(amigaUploads.orgId, orgId), inArray(amigaUploads.status, ['stored', 'failed']), sql`${amigaUploads.createdAt} <= ${cursor}::timestamptz`,
+      .where(and(eq(amigaUploads.orgId, orgId), inArray(amigaUploads.status, ['stored', 'failed']), sql`coalesce(${amigaUploads.storedAt}, ${amigaUploads.createdAt}) <= ${cursor}::timestamptz`,
         board ? eq(amigaUploads.deviceId, board) : undefined))
       .returning({ id: amigaUploads.id });
     if (done.length) await tx.delete(amigaUploadChunks).where(inArray(amigaUploadChunks.uploadId, done.map((d) => d.id)));

@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { DISK_IMAGE_PATTERN } from '@/lib/archive/disk-image';
 import type { UploadView } from '@/lib/amiga-uploads';
 import {
-  LIBRARY_EXT, anyArriving, cardUploadLine, clearBody, clearConfirm, clearable, libraryEligible, newestSeen, uploadChip, uploadErrorText,
+  LIBRARY_EXT, anyArriving, downloadName, tabTarget, cardUploadLine, clearBody, clearConfirm, clearable, libraryEligible, newestSeen, uploadChip, uploadErrorText,
 } from './from-amiga-ui';
 
 const row = (over: Partial<UploadView> = {}): UploadView => ({
@@ -48,6 +48,8 @@ describe('from the Amiga: the rules the card shows', () => {
     ];
     expect(clearable(rows)).toBe(2);
     expect(newestSeen(rows)).toBe('2026-10-19T10:00:09.000009Z');
+    // newest created is first, but an older row stored later carries the greater cursor: that one is what was seen
+    expect(newestSeen([row({ cursor: '2026-10-19T10:00:05.000005Z' }), row({ cursor: '2026-10-19T10:00:08.000001Z' })])).toBe('2026-10-19T10:00:08.000001Z');
     expect(newestSeen([])).toBeNull();
     expect(anyArriving(rows)).toBe(true);
     expect(anyArriving([rows[2]])).toBe(false);
@@ -55,7 +57,7 @@ describe('from the Amiga: the rules the card shows', () => {
     expect(clearConfirm(3)).toBe('Clear 3 files from the Amiga?');
   });
   it('the Clear all request carries the newest cursor seen and the board filter, when there is one', () => {
-    const rows = [row({ cursor: '2026-10-19T10:00:09.000009Z' }), row({ cursor: '2026-10-19T10:00:05.000005Z' })];
+    const rows = [row({ cursor: '2026-10-19T10:00:05.000005Z' }), row({ cursor: '2026-10-19T10:00:09.000009Z' })];
     expect(clearBody(rows, 'dev-1')).toEqual({ cursor: '2026-10-19T10:00:09.000009Z', board: 'dev-1' });
     expect(clearBody(rows, null)).toEqual({ cursor: '2026-10-19T10:00:09.000009Z' });
     expect('board' in clearBody(rows, null)!).toBe(false);
@@ -66,5 +68,18 @@ describe('from the Amiga: the rules the card shows', () => {
     expect(uploadErrorText('queue_full', 409)).toMatch(/queue/);
     expect(uploadErrorText('invalid', 400)).toMatch(/refresh/i);
     expect(uploadErrorText(undefined, 500)).toBe('The server answered 500.');
+  });
+  it('the saved name is the last part of the Amiga path, as the file route sends it', () => {
+    expect(downloadName('Games/Lemmings.adf')).toBe('Lemmings.adf');
+    expect(downloadName('DH0:Docs/Read Me.txt')).toBe('Read Me.txt');
+    expect(downloadName('Work:')).toBe('file');
+  });
+  it('Tab stays inside the dialog: it wraps at both ends', () => {
+    expect(tabTarget(0, 2, false)).toBeNull();   // the browser moves on by itself
+    expect(tabTarget(1, 2, false)).toBe(0);      // last -> first
+    expect(tabTarget(0, 2, true)).toBe(1);       // first, Shift+Tab -> last
+    expect(tabTarget(-1, 2, false)).toBe(0);     // focus outside -> in
+    expect(tabTarget(-1, 2, true)).toBe(1);
+    expect(tabTarget(0, 0, false)).toBeNull();
   });
 });

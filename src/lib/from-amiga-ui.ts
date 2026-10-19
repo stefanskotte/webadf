@@ -36,8 +36,8 @@ export function cardUploadLine(count: number | undefined, fw: string | null, net
 }
 export const clearConfirm = (n: number) => (n === 1 ? 'Clear 1 file from the Amiga?' : `Clear ${n} files from the Amiga?`);
 export const clearable = (rows: UploadView[]) => rows.filter((r) => r.status !== 'receiving').length;
-/** The list is newest first: the exact cursor of its first row (null for an empty list). */
-export const newestSeen = (rows: UploadView[]): string | null => rows[0]?.cursor ?? null;
+/** The greatest cursor in the list (fixed-width UTC strings compare as text): a row stored late can outrun the newest created. Null if empty. */
+export const newestSeen = (rows: UploadView[]): string | null => rows.reduce<string | null>((m, r) => (m === null || r.cursor > m ? r.cursor : m), null);
 /** The body of POST /api/uploads/clear: the newest row seen, and the board filter only when one is on. */
 export function clearBody(rows: UploadView[], board: string | null): { cursor: string; board?: string } | null {
   const cursor = newestSeen(rows);
@@ -57,4 +57,15 @@ export function uploadErrorText(code: string | undefined, status: number): strin
     case 'invalid': return 'The list was out of date. Refresh the page and try again.';
     default: return `The server answered ${status}.`;
   }
+}
+
+/** The name a downloaded file is saved under: the last part of its Amiga path (what the file route sends too). */
+export const downloadName = (path: string): string => path.split(/[/:]/).pop() || 'file';
+/** Where Tab should send focus to keep it inside a dialog of `count` controls, or null to let the browser move it. */
+export function tabTarget(index: number, count: number, shift: boolean): number | null {
+  if (count <= 0) return null;
+  if (index < 0) return shift ? count - 1 : 0;
+  if (!shift && index === count - 1) return 0;
+  if (shift && index === 0) return count - 1;
+  return null;
 }

@@ -478,7 +478,7 @@ export const HELP_TOPICS = {
         <GoodToKnow items={[
           'Up to 4 MB a file. The area holds up to 500 files or 256 MB for your organization, and keeps each file 30 days.',
           'A file cut off by a reset or a lost connection continues where it stopped when you send it again within 24 hours.',
-          'Add to library is offered for ADF, ADZ, DMS, DMZ and HFE files; nothing is added on its own.',
+          'Add to library is offered for ADF, DSK, ADZ, DMS, DMZ and HFE files; nothing is added on its own.',
           'Clear all removes every finished file you can see; a file still arriving stays.',
           'Download always saves the file: a web page sent from the Amiga is never opened in the browser.',
         ]} />

@@ -9,7 +9,7 @@ import { ListFrame, UploadCard } from '@/components/ingest/upload-card';
 import { formatSize, type SendTarget } from '@/lib/send-ui';
 import type { UploadBoard, UploadView } from '@/lib/amiga-uploads';
 import {
-  anyArriving, clearBody, clearConfirm, clearable, libraryEligible, uploadChip, uploadErrorText,
+  anyArriving, clearBody, clearConfirm, clearable, downloadName, libraryEligible, tabTarget, uploadChip, uploadErrorText,
 } from '@/lib/from-amiga-ui';
 
 type Snapshot = { rows: UploadView[]; boards: UploadBoard[]; now: number };
@@ -30,6 +30,9 @@ export function FromAmigaCard({ targets, initialBoard }: { targets: SendTarget[]
   const [confirming, setConfirming] = useState<{ n: number; body: { cursor: string; board?: string } } | null>(null);
   const [busy, setBusy] = useState<string | null>(null);   // a row's id, or 'clear', while its request runs
   const active = useRef(false);
+  const clearBtn = useRef<HTMLButtonElement>(null);
+  const dialog = useRef<HTMLDivElement>(null);
+  const cancelBtn = useRef<HTMLButtonElement>(null);
   const boardNow = useRef(board);   // a late answer for a board the person has left must not fill the list
 
   const refresh = useCallback(async () => {
@@ -50,7 +53,14 @@ export function FromAmigaCard({ targets, initialBoard }: { targets: SendTarget[]
       if (!stopped) timer = setTimeout(tick, active.current ? ACTIVE_MS : IDLE_MS);
     };
     void tick();
-    return () => { stopped = true; if (timer) clearTimeout(timer); };
+    // Coming back to the tab reads the list at once, and restarts the timer so two loops never run.
+    const onVisible = () => {
+      if (document.visibilityState !== 'visible' || stopped) return;
+      if (timer) clearTimeout(timer);
+      void tick();
+    };
+    document.addEventListener('visibilitychange', onVisible);
+    return () => { stopped = true; if (timer) clearTimeout(timer); document.removeEventListener('visibilitychange', onVisible); };
   }, [refresh]);
 
   async function run(id: string, what: string, request: () => Promise<Response>, done: (res: Response) => Promise<void>) {
@@ -75,6 +85,27 @@ export function FromAmigaCard({ targets, initialBoard }: { targets: SendTarget[]
   const sendTo = (r: UploadView, t: SendTarget) => run(r.id, 'Not sent',
     () => fetch(`/api/uploads/${encodeURIComponent(r.id)}/send`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ deviceId: t.id }) }),
     async () => { toast.success(`Queued for ${t.name}`, { description: 'It shows under Send to Amiga.' }); });
+  // A fetch first, so a 404 is a toast and not a saved file called "not found"; the bytes then save under the Amiga name.
+  async function download(r: UploadView) {
+    setBusy(r.id);
+    try {
+      const res = await fetch(`/api/uploads/${encodeURIComponent(r.id)}/file`, { cache: 'no-store' });
+      if (!res.ok) {
+        toast.error('Not downloaded', { description: res.status === 404 ? uploadErrorText('not_found', 404) : uploadErrorText(undefined, res.status) });
+        await refresh();
+        return;
+      }
+      const url = URL.createObjectURL(await res.blob());
+      const a = document.createElement('a');
+      a.href = url; a.download = downloadName(r.path);
+      document.body.appendChild(a); a.click(); a.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 10_000);
+    } catch {
+      toast.error('Not downloaded', { description: 'Check the connection and try again.' });
+    } finally {
+      setBusy(null);
+    }
+  }
   const remove = (r: UploadView) => run(r.id, 'Not deleted',
     () => fetch(`/api/uploads/${encodeURIComponent(r.id)}`, { method: 'DELETE' }), async () => undefined);
   const clearAll = (body: { cursor: string; board?: string }) => run('clear', 'Not cleared',
@@ -83,6 +114,24 @@ export function FromAmigaCard({ targets, initialBoard }: { targets: SendTarget[]
       const { deleted } = (await res.json()) as { deleted: number };
       toast.success(deleted === 1 ? '1 file cleared' : `${deleted} files cleared`);
     }).finally(() => setConfirming(null));
+
+  // The confirm is a modal: Cancel takes focus when it opens, Escape closes it, Tab stays inside, and the Clear all
+  // button gets focus back when it closes.
+  const open = confirming !== null;
+  useEffect(() => {
+    if (!open) return;
+    const opener = clearBtn.current;
+    cancelBtn.current?.focus();
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') { e.preventDefault(); setConfirming(null); return; }
+      if (e.key !== 'Tab' || !dialog.current) return;
+      const items = Array.from(dialog.current.querySelectorAll<HTMLElement>('button:not([disabled])'));
+      const to = tabTarget(items.indexOf(document.activeElement as HTMLElement), items.length, e.shiftKey);
+      if (to !== null) { e.preventDefault(); items[to].focus(); }
+    };
+    document.addEventListener('keydown', onKey);
+    return () => { document.removeEventListener('keydown', onKey); if (opener?.isConnected) opener.focus(); };
+  }, [open]);
 
   const rows = snap?.rows ?? [];
   const boards = snap?.boards ?? [];
@@ -112,7 +161,7 @@ export function FromAmigaCard({ targets, initialBoard }: { targets: SendTarget[]
           title="Files"
           counts={rows.length ? `${rows.length} ${rows.length === 1 ? 'file' : 'files'}` : undefined}
           action={n > 0 && (
-            <button type="button" data-testid="from-amiga-clear" disabled={busy === 'clear'} className={btn} style={quiet}
+            <button type="button" ref={clearBtn} data-testid="from-amiga-clear" disabled={busy === 'clear'} className={btn} style={quiet}
                     onClick={() => { const body = clearBody(rows, board); if (body) setConfirming({ n, body }); }}>
               Clear all ({n})
             </button>
@@ -135,8 +184,8 @@ export function FromAmigaCard({ targets, initialBoard }: { targets: SendTarget[]
                       {c.note && <><span className="sr-only"> · </span><span style={{ color: 'var(--muted)' }}>{c.note}</span></>}
                     </span>
                     {stored && (
-                      <a href={`/api/uploads/${encodeURIComponent(r.id)}/file`} download data-testid={`from-amiga-download-${r.id}`}
-                         className={btn} style={quiet} aria-label={`Download ${r.path}`}>Download</a>
+                      <button type="button" data-testid={`from-amiga-download-${r.id}`} disabled={busy === r.id} className={btn} style={quiet}
+                              aria-label={`Download ${r.path}`} onClick={() => void download(r)}>Download</button>
                     )}
                     {stored && r.libraryGameId && (
                       <Link href={`/games/${encodeURIComponent(r.libraryGameId)}`} data-testid={`from-amiga-in-library-${r.id}`}
@@ -173,14 +222,14 @@ export function FromAmigaCard({ targets, initialBoard }: { targets: SendTarget[]
       </UploadCard>
       {confirming && createPortal((
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4" style={{ background: 'rgb(11 18 28 / 0.55)' }}>
-          <div role="dialog" aria-modal="true" aria-label="Clear all" data-testid="from-amiga-confirm" className="glass-card w-full max-w-[440px] p-6 text-left">
+          <div ref={dialog} role="dialog" aria-modal="true" aria-label="Clear all" data-testid="from-amiga-confirm" className="glass-card w-full max-w-[440px] p-6 text-left">
             <h2 className="text-[15px] font-bold" style={{ color: 'var(--ink)' }}>{clearConfirm(confirming.n)}</h2>
             <p className="mt-2 text-[13px]" style={{ color: 'var(--muted)' }}>
               They go from this list for everyone in your organization. A file still arriving stays, and a disk you added to
               the library stays there.
             </p>
             <div className="mt-5 flex items-center justify-end gap-2">
-              <button type="button" disabled={busy === 'clear'} onClick={() => setConfirming(null)}
+              <button type="button" ref={cancelBtn} data-testid="from-amiga-confirm-cancel" disabled={busy === 'clear'} onClick={() => setConfirming(null)}
                       className="rounded-full px-4 py-1.5 text-[12.5px] font-semibold disabled:opacity-50" style={{ color: 'var(--muted)' }}>Cancel</button>
               <button type="button" data-testid="from-amiga-confirm-yes" disabled={busy === 'clear'} onClick={() => void clearAll(confirming.body)}
                       className="rounded-full px-4 py-1.5 text-[12.5px] font-semibold text-white disabled:opacity-50" style={{ background: 'var(--danger-fg)' }}>
