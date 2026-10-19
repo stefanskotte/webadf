@@ -62,6 +62,14 @@ void nfc_ui_hex(const uint8_t *b, int n, char out[NFC_UI_UID_HEX_BYTES]) {
     for (int i = 0; i < n; i++) snprintf(out + 2 * i, 3, "%02X", b[i]);
 }
 
+const char *nfc_ui_why(const nfc_event_t *ev, char out[NFC_UI_WHY_BYTES]) {
+    out[0] = '\0';
+    if (!ev->why) return out;
+    if (ev->pn_cmd == 0) snprintf(out, NFC_UI_WHY_BYTES, "%s", ev->why);
+    else snprintf(out, NFC_UI_WHY_BYTES, "%s:0x%02X@%02X", ev->why, (unsigned)ev->pn_status, (unsigned)ev->pn_cmd);
+    return out;
+}
+
 void nfc_ui_uid_hex(const nfc_event_t *ev, char out[NFC_UI_UID_HEX_BYTES]) {
     if (ev->uid_len == 0) { snprintf(out, NFC_UI_UID_HEX_BYTES, "none"); return; }
     nfc_ui_hex(ev->uid, ev->uid_len, out);

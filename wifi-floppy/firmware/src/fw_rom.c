@@ -4,6 +4,7 @@
 #include "fw_rom.h"
 #include "fw_trial.h"
 #include "wf_log.h"
+#include "boot_trail.h"
 #include <string.h>
 #include "pico/stdlib.h"
 #include "pico/bootrom.h"
@@ -98,16 +99,23 @@ void fw_rom_boot_early(const char *running_version) {
 
     if (!fw_trial_proven(g_trial, g_mark0, g_mark1, running_version)) {
         g_early = (g_mark0 == FW_PROVEN_MAGIC) ? EARLY_STALE_MARK : EARLY_NO_MARK;
-        return;                                   // a plain trial, or no trial at all
-    }
-    g_buy_rc = early_buy();
-    if (g_buy_rc == 0) {
-        g_bought = true;                          // trial over; the deadline stands down
-        g_early = EARLY_BOUGHT;
     } else {
-        g_early = EARLY_BUY_FAILED;
-        fw_rom_request_ota_reboot(0);             // unbought -> the old slot (M5)
+        bt_hw_mark(0, BT0_BUY);                   // the boot trail: two POWMAN register writes, no flash
+        g_buy_rc = early_buy();
+        if (g_buy_rc == 0) {
+            bt_hw_mark(0, BT0_BOUGHT);
+            g_bought = true;                      // trial over; the deadline stands down
+            g_early = EARLY_BOUGHT;
+        } else {
+            g_early = EARLY_BUY_FAILED;
+            fw_rom_request_ota_reboot(0);         // unbought -> the old slot (M5)
+        }
     }
+    // 1.18.2: the boot path's watchdog, on EVERY boot, from here -- after the buy has returned (early_buy is
+    // unchanged: armed 8 s around the ROM call, disarmed after a good buy), before PSRAM init. A bought boot used to
+    // run PSRAM init, the I2C scan and the display with NO watchdog until core0's loop, and the tester's confirm
+    // restart wedged in exactly that stretch. fw_rom_watchdog_start_boot (fw_rom.h).
+    fw_rom_watchdog_start_boot();
 }
 
 void fw_rom_boot_init(void) {
@@ -131,6 +139,7 @@ void fw_rom_boot_init(void) {
 }
 
 bool fw_rom_trial_boot(void)      { return g_trial && !g_bought; }
+bool fw_rom_bought_this_boot(void) { return g_bought; }
 bool fw_rom_boot_after_ota(void)  { return g_boot_after_ota; }
 void fw_rom_set_trial_revertible(bool revertible) { g_revertible = revertible; }
 int  fw_rom_booted_partition(void) { return g_partition; }
@@ -197,6 +206,10 @@ static void request_reboot(uint32_t flash_update_off, bool ota) {
 void fw_rom_request_reboot(uint32_t flash_update_off) { request_reboot(flash_update_off, false); }
 void fw_rom_request_ota_reboot(uint32_t flash_update_off) { request_reboot(flash_update_off, true); }
 
+void fw_rom_watchdog_start_boot(void) {
+    watchdog_enable(16000, false);   // pause_on_debug off, as fw_rom_watchdog_start (fix round 3)
+}
+
 void fw_rom_watchdog_start(void) {
     // Fix round 3 (bench): pause_on_debug is now OFF. This board never runs
     // under a debugger (no SWD probe attached in the field or on the
@@ -249,6 +262,7 @@ void fw_rom_service(void) {
             watchdog_hw->scratch[0] = s0;
             watchdog_hw->scratch[1] = s1;
         }
+        bt_hw_mark(0, BT0_REBOOT);   // the boot trail: this reset was asked for (bt_reset_reason "software")
         wf_log_drain(64);
         rom_reboot(type | REBOOT2_FLAG_NO_RETURN_ON_SUCCESS, 100, base, 0);
         for (;;) tight_loop_contents();

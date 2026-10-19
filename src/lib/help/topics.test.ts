@@ -247,3 +247,11 @@ describe('boards explains Disk at startup', () => {
     expect(b).toMatch(/1\.18\.1/);
   });
 });
+
+describe('boards explains the stuck-start line (fw 1.18.2 boot trail)', () => {
+  it('names the card line and the firmware', () => {
+    const t = bodyText('boards');
+    expect(t).toMatch(/Previous start stopped at/);
+    expect(t).toMatch(/1\.18\.2/);
+  });
+});

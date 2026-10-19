@@ -1,4 +1,5 @@
 import { sql, desc, asc, eq, and, or, inArray, type SQL } from 'drizzle-orm';
+import type { LastBoot } from '@/lib/last-boot';
 import { alias } from 'drizzle-orm/pg-core';
 import { getDb } from '@/db';
 import { games, disks, blobs, entitlements } from '@/db/schema/catalog';
@@ -423,6 +424,8 @@ export interface DeviceListItem {
   nfcReader: 'present' | 'absent' | null;
   /** The boot I2C scan (fw 1.17.0+): addresses that answered, [] for none; null = the board sends none. */
   i2cAddrs: number[] | null;
+  /** The previous boot as the board last reported it (fw 1.18.2 boot trail); null = never sent. */
+  lastBoot: LastBoot | null;
   /** DF1 second drive readings; null = firmware before 1.7.6 (or never reported). */
   sel1Wired: boolean | null;
   df1Seen: boolean | null;
@@ -515,6 +518,7 @@ export async function listDevices(orgId: string): Promise<DeviceListItem[]> {
       displayLayouts: devices.displayLayouts,
       nfcReader: devices.nfcReader,
       i2cAddrs: devices.i2cAddrs,
+      lastBoot: devices.lastBoot,
       sel1Wired: devices.sel1Wired,
       df1Seen: devices.df1Seen,
       secondDrive: devices.secondDrive,

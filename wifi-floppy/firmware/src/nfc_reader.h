@@ -78,6 +78,10 @@ typedef struct {
     const char *why;                 // UNREADABLE / WRITE_DONE failure: "locked", "bad data",
                                      // "moved", "verify" (write only); NULL otherwise
     uint32_t seq; bool ok;           // WRITE_DONE
+    // UNREADABLE / WRITE_DONE failure on a PN532 (2026-10-19): the status byte the chip answered (UM0701-02
+    // §7.1, bits 0-5 the error code) and the InDataExchange command byte that drew it (0x60 auth, 0x30 READ,
+    // 0xA0 / 0xA2 WRITE). pn_cmd 0 = no detail (a good event, the Si512, or no status at all).
+    uint8_t  pn_status, pn_cmd;
 } nfc_event_t;
 
 // A detection gap on a held tag: `ms` unseen, reported when it is seen again
@@ -113,6 +117,7 @@ typedef struct nfc_reader {
     uint32_t (*now_ms)(void);
     nfc_frame_bus_t fbus;  // the PN532's, if attached (has_fbus)
     bool has_fbus;
+    bool disabled;         // nfc_disable: no bus operation, ever, for the rest of the boot
     int  chip;             // nfc_chip_t: the chip this session talks to
 
     int state;           // the protocol state (nfc_reader.c's st_t)
@@ -191,6 +196,9 @@ typedef struct nfc_reader {
     int      pn_bad;         // consecutive failed commands: LOSS_FAILS = the chip is gone
     int      pn_nacks;       // NACKs sent for the current answer
     bool     pn_field;       // the PN532's field may be on
+    bool     pn_target;      // InListPassiveTarget found a target that InRelease has not released yet
+    uint8_t  pn_err_status;  // the failure detail for the event being built (nfc_event_t pn_status/pn_cmd);
+    uint8_t  pn_err_cmd;     // nfc_finish copies both into it and clears them
     uint8_t  sak;            // the tag's SEL_RES, from InListPassiveTarget
     int      pn_at;          // where the answer's payload starts in pn_buf
     uint8_t  pn_buf[NFC_PN532_BUF];
@@ -201,6 +209,10 @@ void nfc_init(nfc_reader_t *r, const nfc_bus_t *bus, uint32_t (*now_ms)(void));
 
 // Gives the reader a PN532 to look for when the Si512 does not answer.
 // Without it (the host tests of the Si512 alone) only the Si512 is tried.
+// Fix round 1: turns the reader off for the rest of the boot -- nfc_step does nothing (no transfer on either chip,
+// no presence recheck, no event) and nfc_present stays false. main.c calls it when the boot found SCL held and
+// never set i2c1 up (i2c_scan_t held): a transfer then would queue in a controller that cannot run it.
+void nfc_disable(nfc_reader_t *r);
 void nfc_attach_pn532(nfc_reader_t *r, const nfc_frame_bus_t *fbus);
 
 // One slice of work. Returns the register operations used, never more than

@@ -174,8 +174,11 @@ typedef bool (*dc_hold_fn)(void *ctx);
 // The boot I2C scan (1.17.0) adds ,"i2c":[<eight 3-digit addresses>] -- 40 bytes at most (I2C_SCAN_JSON_MAX):
 // 1514 + 40 = 1554 (measured 1553), so the body goes to 1560 (6 spare), paid for by trimming preload_tail and display_tail to
 // their measured maxima (device_client.c) -- .bss does not grow. The request: 1824 + 40 = 1864 <= 2048.
+// The boot trail (1.18.2) adds ,"lastBoot":<object of at most BT_JSON_MAX (112)> and ,"nfcFail":"<reason of at
+// most 23>" -- measured 1706 at maximum with a 16-character reason (nfc_ui_why's longest), so the body goes to 1712
+// (6 spare). The request: measured 1840 <= 2048. A key that would not fit is left out, never the report. Both ride only until a report is heard (once per boot / failure).
 // test_status_body_fits_at_maximum prints the measured sizes.
-#define DC_STATUS_BODY_BYTES  1560
+#define DC_STATUS_BODY_BYTES  1712
 #define DC_STATUS_REQ_BYTES   2048
 // `err` is firmware-authored (a short static string or errno-derived text,
 // never network input), but it still has to survive being embedded in a
@@ -454,6 +457,11 @@ typedef struct {
     // dc_set_i2c_scan: the boot I2C scan, appended as "i2c" once it is done.
     // A pointer (main.c owns the record) -- four bytes, not ten, in each client.
     const struct i2c_scan *_i2c;
+    // dc_set_last_boot / dc_set_nfc_fail (1.18.2): sent until a status report is heard.
+    const char *_last_boot;
+    bool     _last_boot_owed;
+    char     _nfc_fail[24];
+    bool     _nfc_fail_owed;
     // dc_set_plays_hd: "playsHd":true in every status report.
     bool     _plays_hd;
     // dc_set_boot (Disk at startup, 2026-10-19): this boot's id (0 = not set: nothing sent) and whether the reboot
@@ -777,6 +785,16 @@ void dc_set_nfc_reader(device_client_t *c, const char *state);
 // keeps null). Kept as a pointer: the record must outlive the client (main.c
 // holds it in a static, written once on core0 before core1 starts).
 void dc_set_i2c_scan(device_client_t *c, const struct i2c_scan *scan);
+
+// The boot trail (boot_trail.h, 1.18.2): the previous boot as a JSON object, sent as "lastBoot" in status reports
+// until one is heard (any 2xx) -- once a boot. A pointer: the string must outlive the client (main.c's is
+// boot_trail_hw.c's static). NULL or "" sends nothing.
+void dc_set_last_boot(device_client_t *c, const char *json_object);
+// Whether lastBoot is still owed (no status report carrying it has been heard).
+bool dc_last_boot_owed(const device_client_t *c);
+// The newest failed tag event's reason (nfc_ui_why: "locked:0x14@A2"), sent as "nfcFail" until a report is heard.
+// A newer one replaces an unsent older one. Copied (at most 23 characters).
+void dc_set_nfc_fail(device_client_t *c, const char *reason);
 
 // Whether dc_report_status says "playsHd":true (HD spec §4.3, §5.5). main.c
 // sets it once from WF_DRIVE_ID: the drive-ID responder is what lets the

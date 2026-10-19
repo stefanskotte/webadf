@@ -456,6 +456,131 @@ static void a_si512_that_answers_its_recheck_is_kept(void) {
     CHECK_EQ_INT(P.xfers, 0);
 }
 
+// ---- stale target state, and the reader's status in the event (2026-10-19) -----------------
+//
+// Pillock's batch of fresh NTAG215s read "locked" on every tap and write on a PN532 until he erased ONE of them
+// in NFC Tools -- which cannot change the others, so the suspect is the reader's state. InRelease (UM0701-02
+// §7.3.11: "the PN532 erases all the information relative to" the target, HLTA for a MIFARE card, and Standby --
+// field off -- once no target is left) is sent after every found target, before the next InListPassiveTarget.
+
+static const uint8_t U215[7] = { 0x04, 0x5A, 0x6B, 0x7C, 0x8D, 0x9E, 0xAF };
+
+// The model of the suspicion (pn532_fake.h poison_after_auth_fail): after a failed Classic auth the chip refuses
+// every InDataExchange with 0x27 until InRelease. A fresh NTAG215 tapped next must still read and write.
+static void a_failed_classic_auth_is_released_so_the_next_ntag_reads_and_writes(void) {
+    setup();
+    P.poison_after_auth_fail = true;
+    P.locked = true;                                     // a Classic whose key A is not FF..FF
+    run(1000);
+    CHECK_EQ_INT(count(NFC_EV_UNREADABLE), 1);
+    CHECK(P.poisoned == false, "released after the failed auth");
+    P.tag_present = false;
+    run(3500);                                           // gone for the whole window
+    pn532_fake_ntag(&P, 135, U215);
+    P.tag_present = true;
+    run(1000);
+    CHECK_EQ_INT(count(NFC_EV_NOT_OURS), 1);             // read: a blank NTAG, not "locked"
+    CHECK_EQ_INT(count(NFC_EV_UNREADABLE), 1);
+    P.tag_present = false;
+    run(3500);
+    nfc_arm_write(&R, 7, ID);
+    P.tag_present = true;
+    run(1000);
+    const nfc_event_t *w = first(NFC_EV_WRITE_DONE);
+    CHECK(w != NULL, "the write ran");
+    if (w) {
+        CHECK(w->ok, "and was written, not refused");
+        CHECK(w->why == NULL, "no reason on a good write");
+    }
+    CHECK_EQ_INT(P.page_writes, 12);
+}
+
+// Every found target is released before the next poll, and the release does not lose a tag lying on the reader:
+// HLTA halts it, but the field going off (InRelease's Standby, and the reader's own field-off) resets it to IDLE,
+// so the next REQA finds it -- the same tap, not a new one.
+static void a_found_target_is_released_before_the_next_list(void) {
+    setup();
+    nfc_tag_encode(ID, P.sector1);
+    run(3000);                                           // read, then held on the reader for ~10 polls
+    CHECK_EQ_INT(count(NFC_EV_TAG_READ), 1);
+    CHECK(P.ilpt_found >= 5, "the held tag is still found by every poll");
+    CHECK(P.cmds[0x52] >= P.ilpt_found - 1, "an InRelease after every found target");
+    CHECK_EQ_INT(P.lists_while_listed, 0);
+}
+
+// The PN532's status byte and the failing command ride the event, for the server (why "locked" is otherwise all
+// anyone sees). The OLED wording does not change: that is nfc_ui's, from `why` alone.
+static void the_pn532_status_and_command_ride_the_event(void) {
+    setup();
+    P.locked = true;
+    run(1000);
+    const nfc_event_t *e = first(NFC_EV_UNREADABLE);
+    CHECK(e != NULL, "a locked Classic is unreadable");
+    if (e) {
+        CHECK(e->why && strcmp(e->why, "locked") == 0, "why stays \"locked\"");
+        CHECK_EQ_INT(e->pn_status, 0x14);
+        CHECK_EQ_INT(e->pn_cmd, 0x60);
+    }
+    setup();
+    pn532_fake_ntag(&P, 135, U215);
+    P.write_protected = true;
+    nfc_arm_write(&R, 3, ID);
+    run(1000);
+    const nfc_event_t *w = first(NFC_EV_WRITE_DONE);
+    CHECK(w != NULL, "the write ran");
+    if (w) {
+        CHECK(!w->ok && w->why && strcmp(w->why, "locked") == 0, "refused: locked");
+        CHECK_EQ_INT(w->pn_status, 0x14);
+        CHECK_EQ_INT(w->pn_cmd, 0xA2);
+    }
+    setup();                                             // a good read carries nothing
+    nfc_tag_encode(ID, P.sector1);
+    run(1000);
+    const nfc_event_t *g = first(NFC_EV_TAG_READ);
+    CHECK(g != NULL, "read");
+    if (g) CHECK_EQ_INT(g->pn_cmd, 0);
+}
+
+// An NTAG (7-byte UID, SAK 0x00) never goes down the Classic auth path -- reading or writing, first contact or
+// not -- and nothing with SAK 0x00 is ever sent a key.
+static void an_ntag_never_goes_down_the_classic_auth_path(void) {
+    CHECK_EQ_INT(nfc_classify(7, 0x00), NFC_KIND_T2);
+    CHECK_EQ_INT(nfc_classify(4, 0x00), NFC_KIND_NONE);
+    CHECK_EQ_INT(nfc_classify(7, 0x08), NFC_KIND_NONE);
+    CHECK_EQ_INT(nfc_classify(4, 0x08), NFC_KIND_CLASSIC);
+    setup();
+    pn532_fake_ntag(&P, 135, U215);
+    run(1000);
+    P.tag_present = false;
+    run(3500);
+    nfc_arm_write(&R, 9, ID);
+    P.tag_present = true;
+    run(1000);
+    CHECK_EQ_INT(count(NFC_EV_NOT_OURS), 1);
+    CHECK_EQ_INT(count(NFC_EV_WRITE_DONE), 1);
+    CHECK_EQ_INT(P.auth_cmds, 0);
+    setup();                                             // a 4-byte UID with SAK 0x00: not supported, no key sent
+    P.sak = 0x00;
+    run(1000);
+    CHECK_EQ_INT(count(NFC_EV_NOT_SUPPORTED), 1);
+    CHECK_EQ_INT(P.auth_cmds, 0);
+}
+
+// Fix round 1 (review I2): with SCL held at boot, i2c1 is never set up, and every transfer would queue in a
+// controller that cannot run it until the SDK's untimed FIFO wait wedges core0 (a watchdog reboot every 1-2 min).
+// The reader is turned off for the boot: from then on not one bus operation, on either chip, ever.
+static void a_disabled_reader_never_touches_the_bus(void) {
+    setup_both(true, true);
+    nfc_disable(&R);
+    nfc_arm_write(&R, 1, ID);                            // not even an armed write wakes it
+    run(60000);                                          // a minute: twelve 5 s rechecks' worth
+    CHECK_EQ_INT(S.ops, 0);
+    CHECK_EQ_INT(P.xfers, 0);
+    CHECK(!nfc_present(&R), "absent");
+    CHECK_EQ_INT(nfc_chip(&R), NFC_CHIP_NONE);
+    CHECK_EQ_INT(nev, 0);                                // no events either (no ABSENT, no write result)
+}
+
 int main(void) {
     RUN(frame_is_the_manuals_normal_information_frame);
     RUN(parse_takes_a_good_frame_and_the_ack);
@@ -483,5 +608,10 @@ int main(void) {
     RUN(a_pn532_plugged_in_late_is_found);
     RUN(a_si512_plugged_in_late_is_found);
     RUN(a_lost_pn532_swapped_for_a_si512_is_the_si512);
+    RUN(a_failed_classic_auth_is_released_so_the_next_ntag_reads_and_writes);
+    RUN(a_found_target_is_released_before_the_next_list);
+    RUN(the_pn532_status_and_command_ride_the_event);
+    RUN(an_ntag_never_goes_down_the_classic_auth_path);
+    RUN(a_disabled_reader_never_touches_the_bus);
     return REPORT();
 }

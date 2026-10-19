@@ -73,7 +73,7 @@ set(WFMF_FIRMWARE_SOURCES
   src/transport_tls.c src/sntp_time.c src/tls_mem.c
   ${WFMF_PSA_CRYPTO_RANDOM_SRC}
   src/wf_log.c
-  src/activity_led.c src/led_activity.c src/i2c_probe.c src/i2c_scan.c src/ssd1306.c src/oled_cmds.c src/display.c src/display_layout.c src/display_store.c src/drive_store.c src/df1_live.c src/nfc_tag.c
+  src/activity_led.c src/led_activity.c src/i2c_probe.c src/i2c_scan.c src/boot_trail.c src/boot_trail_hw.c src/ssd1306.c src/oled_cmds.c src/display.c src/display_layout.c src/display_store.c src/drive_store.c src/df1_live.c src/nfc_tag.c
   src/nfc_reader.c src/nfc_si512.c src/nfc_pn532.c src/nfc_bus_i2c.c src/nfc_handoff.c src/nfc_ui.c
   src/flux_capture.c src/flux_bits.c
   src/board.c src/bus_gate.c src/bus_out.c
@@ -259,7 +259,7 @@ endif ()
 # configure whenever this file changes. `-DFIRMWARE_SEMVER=` still overrides,
 # for a one-off build, because -D defines it before this point.
 if (NOT DEFINED FIRMWARE_SEMVER)
-  set(FIRMWARE_SEMVER "1.18.1")
+  set(FIRMWARE_SEMVER "1.18.2")
 endif ()
 
 set(WF_VERSION_HEADER "${CMAKE_CURRENT_BINARY_DIR}/generated/wifi_floppy_version.h")

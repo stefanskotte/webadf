@@ -4,6 +4,8 @@ import { recordStatus } from '@/lib/mount';
 import { firmwareVersionSchema } from '@/lib/firmware-version';
 import { updateStateSchema, updateProtocolSchema } from '@/lib/firmware-update-state';
 import { i2cAddrsSchema } from '@/lib/i2c-scan';
+import { lastBootSchema } from '@/lib/last-boot';
+import { NFC_FAIL_RE } from '@/lib/nfc/fail';
 
 export const maxDuration = 60;
 
@@ -55,6 +57,10 @@ const statusBody = z.object({
   // The boot I2C scan (fw 1.17.0): integers 0x08-0x77, at most eight. Anything else is dropped whole -- the
   // telemetry rule above -- and recordStatus then treats the report as one without a scan.
   i2c: i2cAddrsSchema.optional().catch(undefined),
+  // The boot trail (fw 1.18.2): the previous boot, once a boot; and the newest failed tag event's reason
+  // ("locked:0x14@A2", at most 23 characters on the board). Telemetry: dropped whole when malformed.
+  lastBoot: lastBootSchema.optional().catch(undefined),
+  nfcFail: z.string().max(32).regex(NFC_FAIL_RE).optional().catch(undefined),
   // Multi-disk spec §3.5: what the idle slot holds. Telemetry -- dropped, never rejected.
   preload: z.object({ sha256: z.string().regex(SHA256_RE), state: z.enum(['loading', 'ready']) })
     .nullable().optional().catch(undefined),
@@ -155,6 +161,8 @@ export async function POST(request: Request) {
     playsHd: parsed.data.playsHd,
     nfcReader: parsed.data.nfcReader,
     i2c: parsed.data.i2c,
+    lastBoot: parsed.data.lastBoot,
+    nfcFail: parsed.data.nfcFail,
     preload: parsed.data.preload,
     displayLayouts: parsed.data.displayLayouts,
     displayVersion: parsed.data.displayVersion,

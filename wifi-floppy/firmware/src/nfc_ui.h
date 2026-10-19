@@ -69,6 +69,11 @@ const char *nfc_ui_event_line(const nfc_event_t *ev);
 // for a Classic, 14 for an NTAG; the server takes up to 32), or "none" when
 // the event has no tag (the server's `uid` must be at least one character).
 void nfc_ui_uid_hex(const nfc_event_t *ev, char out[NFC_UI_UID_HEX_BYTES]);
+// A failed event's reason for the server (tap-write's `reason`, the status report's nfcFail): `why`, and when a
+// PN532 reported a status byte, ":0x<status>@<command>" after it -- "locked:0x14@A2" (2026-10-19). "" when the
+// event has no `why`. The OLED line stays nfc_ui_event_line's, from `why` alone.
+#define NFC_UI_WHY_BYTES 24   // "bad data:0xFF@FF" is 16
+const char *nfc_ui_why(const nfc_event_t *ev, char out[NFC_UI_WHY_BYTES]);
 // `n` bytes (at most NFC_UID_MAX) as upper-case hex: the log's gap lines.
 void nfc_ui_hex(const uint8_t *b, int n, char out[NFC_UI_UID_HEX_BYTES]);
 

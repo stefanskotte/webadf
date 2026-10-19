@@ -1813,6 +1813,21 @@ bool dc_report_status(device_client_t *c, int psram_free, int rssi, const char *
     // The boot I2C scan, written straight into the body (no tail buffer of its own: .bss), then the
     // closing brace. "" until the scan is done, or from a client never given one.
     body_len += i2c_scan_json(c->_i2c, body + body_len, sizeof body - (size_t)body_len);
+    // The boot trail and the newest tag failure (1.18.2), likewise straight into the body; each only until heard.
+    // A key that would not fit (it cannot, at the sizes above) is left out and stays owed -- never the report.
+    bool boot_sent = false, fail_sent = false;
+    if (c->_last_boot_owed) {
+        int k = snprintf(body + body_len, sizeof body - (size_t)body_len, ",\"lastBoot\":%s", c->_last_boot);
+        if (k > 0 && body_len + k + 1 < (int)sizeof body) { body_len += k; boot_sent = true; }
+        else body[body_len] = '\0';
+    }
+    if (c->_nfc_fail_owed) {
+        static char esc[2 * sizeof c->_nfc_fail + 2];
+        dc_json_escape(esc, sizeof esc, c->_nfc_fail);
+        int k = snprintf(body + body_len, sizeof body - (size_t)body_len, ",\"nfcFail\":\"%s\"", esc);
+        if (k > 0 && body_len + k + 1 < (int)sizeof body) { body_len += k; fail_sent = true; }
+        else body[body_len] = '\0';
+    }
     if (body_len + 1 >= (int)sizeof body) return false;
     body[body_len++] = '}';
     body[body_len] = '\0';
@@ -1842,6 +1857,8 @@ bool dc_report_status(device_client_t *c, int psram_free, int rssi, const char *
         c->_drive_sent_mode = drive_mode_sent;
         c->_drive_sent_ack = drive_ack_sent;
     }
+    if (accepted && boot_sent) c->_last_boot_owed = false;
+    if (accepted && fail_sent) c->_nfc_fail_owed = false;   // core1 only: nothing set a newer one meanwhile
     if (accepted) {
         c->_net_sent_valid = true;
         c->_net_sent_on = net_sent.on;
@@ -2245,6 +2262,19 @@ void dc_set_nfc_reader(device_client_t *c, const char *state) {
 
 void dc_set_i2c_scan(device_client_t *c, const i2c_scan_t *scan) {
     c->_i2c = scan;
+}
+
+void dc_set_last_boot(device_client_t *c, const char *json_object) {
+    c->_last_boot = json_object;
+    c->_last_boot_owed = json_object != NULL && json_object[0] == '{';
+}
+
+bool dc_last_boot_owed(const device_client_t *c) { return c->_last_boot_owed; }
+
+void dc_set_nfc_fail(device_client_t *c, const char *reason) {
+    if (!reason || !reason[0]) return;
+    snprintf(c->_nfc_fail, sizeof c->_nfc_fail, "%s", reason);
+    c->_nfc_fail_owed = true;
 }
 
 void dc_set_plays_hd(device_client_t *c, bool on) {
