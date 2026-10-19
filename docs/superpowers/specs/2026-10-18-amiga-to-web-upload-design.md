@@ -1,7 +1,8 @@
 # Upload from the Amiga to the web app (design draft, 2026-10-18)
 
-**Status:** draft for the operator's review. U6 is an operator decision (2026-10-18). The other decisions in §1 are
-recommendations, and the open questions in §12 are the operator's to rule on before a plan is written.
+**Status:** APPROVED 2026-10-19. U6 is an operator decision (2026-10-18); the operator accepted every recommendation in
+§1 and all nine answers in §12 as recommended (2026-10-19). Renumbered 2026-10-19 for today's tree: migration **0047**,
+firmware **1.19.0** (1.17.0/1.18.x have shipped other features; SRAM .bss baseline is now 432,532 B after 1.18.2).
 
 **Goal:** a file on the Amiga goes into the web app, through the board, over PaulaNET. It is the reverse of Phase 4
 (HANDOFF backlog "Upload from the Amiga to the web app", operator 2026-10-16).
@@ -48,7 +49,7 @@ When I am done, I clear the lot."
 | U5 | **Limits:** 4 MB per file (= `SEND_FILE_MAX`). One upload in flight per board. The destination area holds at most 500 files or 256 MB per org. Files are kept 30 days (Q4). |
 | U6 | **Operator decision (2026-10-18): one destination area for the whole org.** "A 'destination area' on the web app side, where all uploads from wififloppies go -- there should be an option to delete individual files or clear all." One list, *From the Amiga*, collects the uploads from **all** of the org's boards, newest first. Each row shows the board it came from (the board's name, kept even after the board is unpaired). The operator's actions are **Download**, **Delete** (one file) and **Clear all** (with a confirm that gives the count). Recommended additions: **Add to library** (ADF/ADZ/DMS/DMZ/HFE only, never automatic), **Send to an Amiga**, and a filter by board when the org has more than one. |
 | U7 | **Receive uploads only to its own board (trust on first use).** The board sends a per-board key in its hello. Receive saves the first key it sees and refuses to upload to a peer with a different one (§6). |
-| U8 | **Gates:** firmware **1.17.0** (`UPLOAD_FW`) and Receive protocol **2**. Each side falls back to Phase 4's protocol 1 (download only) when the other is older. |
+| U8 | **Gates:** firmware **1.19.0** (`UPLOAD_FW`) and Receive protocol **2**. Each side falls back to Phase 4's protocol 1 (download only) when the other is older. |
 | U9 | **The local path cap rises to a full frame** (1,514 = `PNET_RING_MTU`). The frame's pbuf is freed in the receive callback before the next frame is input, so lwIP heap use stays at about one frame. This is measured first (§10, step 0). |
 | U10 | **LZ4 is transparent.** It runs below TCP, in the driver and the board. Receive and the protocol do not change for it. |
 
@@ -65,7 +66,7 @@ When I am done, I clear the lot."
   - The **listview shows both directions**: `to web: 34 %`, `to web: done`, `to web: failed: <reason>`, beside
     Phase 4's `receiving NN %`. Long names are cut in the list, as today; the file is never cut.
   - The **status line** adds "Board connected (key AB12)", "Waiting for the board" and "This board's firmware cannot
-    receive files (update to 1.17.0)".
+    receive files (update to 1.19.0)".
 - **Workbench start with arguments:** shift-click file icons, then double-click Receive. The project arguments
   (`WBStartup->sm_ArgList`) open the window with those files queued.
 - **Shell:** the template becomes `TO/K,SAVE/S,GUI/S,SEND/M,TRUST/S`.
@@ -132,7 +133,7 @@ stated. Every protocol 1 line stays valid.
 
 ## 4. The server
 
-**Tables** (migration 0043):
+**Tables** (migration 0047):
 - `amiga_uploads`, one table for the org's destination area (U6), indexed on `(org_id, created_at)`:
   - who and where: `id`, `org_id`, `device_id` (`on delete set null`), `device_name` (a copy, so a row still names
     its board after the board is unpaired or renamed);
@@ -198,7 +199,7 @@ stated. Every protocol 1 line stays valid.
   filtered to that board.
 - Help: one topic in `src/lib/help/topics.tsx`, written with the code it describes.
 
-## 5. Firmware 1.17.0
+## 5. Firmware 1.19.0
 
 **The local path:**
 - `PNET_LOCAL_A2B_MAX` rises to 1,514.
@@ -222,7 +223,7 @@ stated. Every protocol 1 line stays valid.
 
   One fills from TCP while the other is posted.
 - The upload state, the PUT line and the board key also live in PSRAM (in the struct `main.c` already places there).
-  **SRAM `.bss` +0**, checked against 431,584.
+  **SRAM `.bss` +0**, checked against 432,532 (1.18.2).
 
 **The board key:**
 - 16 random bytes from the RP2350's TRNG, made at first use and kept in `config_store`. It survives re-pairing and
@@ -290,7 +291,7 @@ stated. Every protocol 1 line stays valid.
 | Server refuses (size, full, name, auth) | `NO <code> <text>`, shown as "failed: <text>". It is final for that item; Retry re-asks the server. |
 | CRC mismatch at close | `NO crc`. The server deletes the partial upload, so the next send starts at 0. |
 | Board not connected to Receive | The item waits as "waiting for the board". The board connects within 30 s (its idle probe) and holds the connection. The Shell form gives up after 60 s with RC 10. |
-| Old board or old Receive | Protocol 1 only. Receive 2 says "update the board"; the card says "Update to 1.17.0 to send files from the Amiga". |
+| Old board or old Receive | Protocol 1 only. Receive 2 says "update the board"; the card says "Update to 1.19.0 to send files from the Amiga". |
 | A download and an upload at once | They take turns per file (§3). |
 | Untrusted peer on 6800 | Downloads behave as in Phase 4. Uploads are refused locally and never announced (§6). |
 
@@ -328,7 +329,7 @@ One plan, four increments, each testable on its own:
      board.
    - The AppWindow drop and multi-select cannot be driven in FS-UAE from here (as **Choose…** was in 3bt), so they
      move to the bench.
-2. **Firmware 1.17.0 and the server.**
+2. **Firmware 1.19.0 and the server.**
    - `test_amiga_send.c`:
      - upload phases against fake ops;
      - the arbitration with a waiting download;
@@ -370,7 +371,7 @@ One plan, four increments, each testable on its own:
 - Adding to the library automatically (U6).
 - Kickstart 1.3 (Phase 4 D7).
 
-## 12. Open questions for the operator
+## 12. Operator rulings (2026-10-19: all nine accepted as recommended)
 
 1. **The program's name.** Keep `Receive` with a `SEND` mode, or rename it (for example `Transfer`) and keep a
    `Receive` alias? *Recommend: keep `Receive`.* Install, `C:`, help and the bench all use the name, and the
