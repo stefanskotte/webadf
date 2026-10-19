@@ -30,7 +30,7 @@ export async function openUpload(db: Db, dev: { deviceId: string; orgId: string 
     // The count and the insert under one lock per org: READ COMMITTED alone lets two opens count the same rows (ruling P8).
     await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${`amiga_uploads:${dev.orgId}`}))`);
     const [same] = await tx.select({ id: amigaUploads.id, received: amigaUploads.receivedBytes }).from(amigaUploads)
-      .where(and(eq(amigaUploads.deviceId, dev.deviceId), eq(amigaUploads.status, 'receiving'), eq(amigaUploads.path, path),
+      .where(and(eq(amigaUploads.orgId, dev.orgId), eq(amigaUploads.deviceId, dev.deviceId), eq(amigaUploads.status, 'receiving'), eq(amigaUploads.path, path),
         eq(amigaUploads.sizeBytes, a.size), eq(amigaUploads.amigaDate, a.date), gt(amigaUploads.expiresAt, now)))
       .orderBy(desc(amigaUploads.createdAt)).limit(1);
     if (same) return { ok: true as const, id: same.id, offset: same.received };
@@ -90,20 +90,24 @@ export async function closeUpload(db: Db, deviceId: string, id: string, crc: num
   if (at !== r.sizeBytes) return { ok: false, status: 409, code: 'size' };   // not every chunk is in: the board resumes
   if ((crc32(bytes) >>> 0) !== crc >>> 0) {
     // Final (spec §4): the chunks go, so the next send of this file starts at 0.
-    await db.transaction(async (tx) => {
-      await tx.delete(amigaUploadChunks).where(eq(amigaUploadChunks.uploadId, id));
-      await tx.update(amigaUploads).set({ status: 'failed', errorCode: 'crc' }).where(eq(amigaUploads.id, id));
+    const failed = await db.transaction(async (tx) => {
+      const hit = await tx.update(amigaUploads).set({ status: 'failed', errorCode: 'crc' })
+        .where(and(eq(amigaUploads.id, id), eq(amigaUploads.status, 'receiving'))).returning({ id: amigaUploads.id });
+      if (hit.length) await tx.delete(amigaUploadChunks).where(eq(amigaUploadChunks.uploadId, id));
+      return hit.length > 0;
     });
-    return { ok: false, status: 409, code: 'crc' };
+    // Deleted or expired meanwhile: it stays so, and the board hears gone.
+    return failed ? { ok: false, status: 409, code: 'crc' } : { ok: false, status: 404, code: 'gone' };
   }
   const sha = await storeSendBytes(bytes);   // adf/<sha256> through diskStore: local folder or Vercel Blob (ruling P5)
-  await db.transaction(async (tx) => {
-    await tx.delete(amigaUploadChunks).where(eq(amigaUploadChunks.uploadId, id));
-    await tx.update(amigaUploads).set({ status: 'stored', crc32: crc >>> 0, blobSha256: sha, storedAt: now, receivedBytes: r.sizeBytes,
+  const done = await db.transaction(async (tx) => {
+    const hit = await tx.update(amigaUploads).set({ status: 'stored', crc32: crc >>> 0, blobSha256: sha, storedAt: now, receivedBytes: r.sizeBytes,
       expiresAt: new Date(now.getTime() + UPLOAD_KEEP_MS) })
-      .where(and(eq(amigaUploads.id, id), eq(amigaUploads.status, 'receiving')));
+      .where(and(eq(amigaUploads.id, id), eq(amigaUploads.status, 'receiving'))).returning({ id: amigaUploads.id });
+    if (hit.length) await tx.delete(amigaUploadChunks).where(eq(amigaUploadChunks.uploadId, id));
+    return hit.length > 0;
   });
-  return { ok: true, name: r.path };
+  return done ? { ok: true, name: r.path } : { ok: false, status: 404, code: 'gone' };   // deleted mid-close: not ok
 }
 
 export type UploadView = {
@@ -115,8 +119,13 @@ export type UploadView = {
 };
 /** An exact position in the area (a created_at with microseconds) that Clear all compares without truncation. */
 export type UploadCursor = string;
-const CURSOR_RE = /^\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}:\d{2}(\.\d{1,6})?([+-]\d{2}(:?\d{2})?|Z)$/;
-export const isUploadCursor = (s: unknown): s is UploadCursor => typeof s === 'string' && CURSOR_RE.test(s);
+const CURSOR_RE = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})\.(\d{6})Z$/;
+/** Exactly `YYYY-MM-DDTHH:MM:SS.uuuuuuZ` (UTC) and a real instant: the only shape the SQL ever sees. */
+export function isUploadCursor(s: unknown): s is UploadCursor {
+  if (typeof s !== 'string' || !CURSOR_RE.test(s)) return false;
+  const d = new Date(s.slice(0, 19) + 'Z');
+  return !Number.isNaN(d.getTime()) && d.toISOString().slice(0, 19) === s.slice(0, 19);
+}
 export function toUploadView(r: UploadRow & { libraryGameId?: string | null; cursor: string }, now: number): UploadView {
   // A partial past its 24 h never moves again: it reads failed at once, as the daily cron will mark it.
   const lapsed = r.status === 'receiving' && r.expiresAt.getTime() <= now;
@@ -130,7 +139,7 @@ export function toUploadView(r: UploadRow & { libraryGameId?: string | null; cur
 
 /** The org's area, newest first (the first row's `cursor` is what Clear all sends back); `board` filters it. A stored row past its 30 days is gone already for the person. */
 export async function listUploads(db: Db, orgId: string, board: string | null, now = new Date()): Promise<UploadView[]> {
-  const rows = await db.select({ u: amigaUploads, gameId: disks.gameId, cursor: sql<string>`${amigaUploads.createdAt}::text` }).from(amigaUploads)
+  const rows = await db.select({ u: amigaUploads, gameId: disks.gameId, cursor: sql<string>`to_char(${amigaUploads.createdAt} at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"')` }).from(amigaUploads)
     .leftJoin(disks, and(eq(disks.id, amigaUploads.libraryDiskId), eq(disks.orgId, orgId)))
     .where(and(eq(amigaUploads.orgId, orgId), ne(amigaUploads.status, 'deleted'),
       or(ne(amigaUploads.status, 'stored'), gt(amigaUploads.expiresAt, now)),

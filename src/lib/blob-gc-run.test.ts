@@ -8,11 +8,13 @@ import { amigaUploads } from '@/db/schema/amiga-uploads';
 const OLD = new Date('2026-01-01T00:00:00Z');   // far past the week's grace
 const ORPHAN = 'e'.repeat(64);
 const UPLOADED = 'd'.repeat(64);   // a file an Amiga sent up: only amiga_uploads names it
+const LATE = 'c'.repeat(64);   // named by an upload only AFTER the GC's first reference read (a close that re-used an old object)
+let uploadReads = 0;
 const QUEUED = 'f'.repeat(64);   // a file waiting to be sent to an Amiga (PaulaNET Phase 4): only transfers names it
 
 // Every select resolves to no rows: `.from()` is awaitable and also offers `.where()` (the cover pass).
 const rows = (table?: unknown) => {
-  const found = table === transfers ? [{ s: QUEUED }] : table === amigaUploads ? [{ s: UPLOADED }] : [];
+  const found = table === transfers ? [{ s: QUEUED }] : table === amigaUploads ? (uploadReads++ === 0 ? [{ s: UPLOADED }] : [{ s: UPLOADED }, { s: LATE }]) : [];
   const p = Promise.resolve(found as unknown[]);
   return Object.assign(p, { where: () => Promise.resolve((table === amigaUploads ? found : []) as unknown[]) });
 };
@@ -32,11 +34,13 @@ vi.mock('@/lib/storage', () => ({
 
 beforeEach(() => {
   vi.clearAllMocks();
+  uploadReads = 0;
   listAll.mockResolvedValue([
     { sha256: PAULANET_DISK_SHA256, uploadedAt: OLD },
     { sha256: ORPHAN, uploadedAt: OLD },
     { sha256: QUEUED, uploadedAt: OLD },
     { sha256: UPLOADED, uploadedAt: OLD },
+    { sha256: LATE, uploadedAt: OLD },
   ]);
 });
 
@@ -58,5 +62,11 @@ describe('runBlobGc keeps the PaulaNET driver disk', () => {
     const { runBlobGc } = await import('./blob-gc-run');
     await runBlobGc({ dryRun: false });
     expect(remove).not.toHaveBeenCalledWith(UPLOADED);
+  });
+  it('spares an object a reference names only after the first read (the re-check before deleting)', async () => {
+    const { runBlobGc } = await import('./blob-gc-run');
+    await runBlobGc({ dryRun: false });
+    expect(remove).not.toHaveBeenCalledWith(LATE);
+    expect(remove).toHaveBeenCalledWith(ORPHAN);
   });
 });

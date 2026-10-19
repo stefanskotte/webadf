@@ -26,19 +26,10 @@ export interface BlobGcResult {
   coversRefused: string | null;
 }
 
-/**
- * The weekly blob GC (cron: /api/cron/blob-gc). Reads every reference in the
- * database and every object in the store, asks planBlobGc what may go, and
- * deletes it -- bytes first, then the row, the order the e2e teardown uses: a
- * missing object under a surviving row is visible to the sweeper; a deleted row
- * over a surviving object is a leak nothing can ever find again.
- *
- * The reference lists are read BEFORE the store is listed, so an object
- * uploaded mid-run is younger than the grace period and therefore kept.
- */
-export async function runBlobGc({ dryRun }: { dryRun: boolean }): Promise<BlobGcResult> {
-  const db = getDb();
-  const now = new Date();
+type Db = ReturnType<typeof getDb>;
+
+/** Every blobs row and every digest some table names (the reference sources of the GC). */
+async function readReferences(db: Db): Promise<{ rows: { sha256: string; createdAt: Date }[]; referenced: Set<string> }> {
   const [rows, diskRefs, entRefs, histBlob, histImage, devRefs, sessionRefs, derived, sendRefs, uploadRefs] = await Promise.all([
     db.select({ sha256: blobs.sha256, createdAt: blobs.createdAt }).from(blobs),
     db.selectDistinct({ s: disks.sha256 }).from(disks),
@@ -61,6 +52,23 @@ export async function runBlobGc({ dryRun }: { dryRun: boolean }): Promise<BlobGc
   }
   for (const d of devRefs) for (const s of [d.m, d.d, d.p]) if (s) referenced.add(s);
   for (const s of ALWAYS_REFERENCED_BLOBS) referenced.add(s);   // fixed images no row names (PaulaNET disk)
+  return { rows, referenced };
+}
+
+/**
+ * The weekly blob GC (cron: /api/cron/blob-gc). Reads every reference in the
+ * database and every object in the store, asks planBlobGc what may go, and
+ * deletes it -- bytes first, then the row, the order the e2e teardown uses: a
+ * missing object under a surviving row is visible to the sweeper; a deleted row
+ * over a surviving object is a leak nothing can ever find again.
+ *
+ * The reference lists are read BEFORE the store is listed, so an object
+ * uploaded mid-run is younger than the grace period and therefore kept.
+ */
+export async function runBlobGc({ dryRun }: { dryRun: boolean }): Promise<BlobGcResult> {
+  const db = getDb();
+  const now = new Date();
+  const { rows, referenced } = await readReferences(db);
 
   // Covers: a separate namespace (cover/), a separate reference (games), and a
   // separate plan, so a brake on one pass never stops the other. Referenced
@@ -102,6 +110,12 @@ export async function runBlobGc({ dryRun }: { dryRun: boolean }): Promise<BlobGc
   }
   result.covers = coversRemoved;
   if (plan.refused) return result;
+
+  // Last look (the same sources again): storeSendBytes skips the put when the object exists, so a close or a send
+  // that landed after the first read re-uses an object whose uploadedAt is old, and names it now. Spare those.
+  const fresh = (await readReferences(db)).referenced;
+  plan.rows = plan.rows.filter((sha) => !fresh.has(sha));
+  plan.objects = plan.objects.filter((sha) => !fresh.has(sha));
 
   const stored = new Set(objects.map((o) => o.sha256));
   const rowsRemoved: string[] = [];

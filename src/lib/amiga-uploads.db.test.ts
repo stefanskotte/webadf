@@ -209,7 +209,7 @@ describe('amiga uploads', () => {
     const id = await stored(d, bytes(10), 'Mine.txt');
     expect(await U.getUpload(db(), 'org-other', id)).toBeNull();
     expect(await U.deleteUpload(db(), 'org-other', id)).toBe(false);
-    expect(await U.clearUploads(db(), 'org-other', '2999-01-01 00:00:00.000000+00')).toBe(0);
+    expect(await U.clearUploads(db(), 'org-other', '2999-01-01T00:00:00.000000Z')).toBe(0);
     expect((await U.listUploads(db(), 'org-other', null)).some((r) => r.id === id)).toBe(false);
     expect((await U.getUpload(db(), 'org-own', id))?.status).toBe('stored');
   });
@@ -240,12 +240,46 @@ describe('amiga uploads', () => {
     // Both are the same millisecond: a Date (ms) could not tell them apart.
     await db().delete(amigaUploads).where(eq(amigaUploads.id, 'm-new'));
     const seen = (await U.listUploads(db(), 'org-micro', null))[0].cursor;
-    expect(seen).toMatch(/\.0001(\+|$)/);
+    expect(seen).toBe('2026-10-20T10:00:00.000100Z');
     await db().insert(amigaUploads).values(mk('m-new', '000900'));
     expect(await U.clearUploads(db(), 'org-micro', seen)).toBe(1);
     expect((await row('m-old')).status).toBe('deleted');
     expect((await row('m-new')).status).toBe('stored');
     await expect(U.clearUploads(db(), 'org-micro', "x'; drop table amiga_uploads; --")).rejects.toThrow(RangeError);
+  });
+
+  it('a cursor has one exact shape; anything else is rejected before SQL', async () => {
+    expect(U.isUploadCursor('2026-10-20T10:00:00.000100Z')).toBe(true);
+    for (const bad of ['2026-10-20 10:00:00.000100+00', '2026-10-20T10:00:00Z', '2026-10-20T10:00:00.000100+02:00',
+      '2026-13-20T10:00:00.000100Z', '2026-02-30T10:00:00.000100Z', '2026-10-20T24:00:00.000000Z', '', 5, null]) {
+      expect(U.isUploadCursor(bad)).toBe(false);
+    }
+    await expect(U.clearUploads(db(), 'org-micro', '2026-02-30T10:00:00.000100Z')).rejects.toThrow(RangeError);
+    const d = await device('org-shape');
+    await stored(d, bytes(5, 20), 'S.txt');
+    expect(U.isUploadCursor((await U.listUploads(db(), 'org-shape', null))[0].cursor)).toBe(true);
+  });
+
+  it('the resume lookup is scoped by org as well as board', async () => {
+    const d = await device('org-res-a');
+    const o = await opened(d, { path: 'Moved.bin' });
+    const r = await U.openUpload(db(), { deviceId: d.deviceId, orgId: 'org-res-b' }, { size: 5, date: '1.2.3', protection: 0, path: 'Moved.bin', comment: '' });
+    expect(r.ok && r.id).not.toBe(o.id);
+  });
+
+  it('a close that loses the race to a delete answers gone and revives nothing', async () => {
+    for (const goodCrc of [true, false]) {
+      const d = await device('org-race-close'); const data = bytes(20000, goodCrc ? 30 : 31);
+      const id = await upload(d, data, `Race${goodCrc}.bin`);
+      const racy = new Proxy(db(), {
+        get(t, k) {
+          if (k === 'transaction') return async (fn: never) => { await U.deleteUpload(db(), 'org-race-close', id); return t.transaction(fn); };
+          const v = Reflect.get(t, k); return typeof v === 'function' ? v.bind(t) : v;
+        },
+      });
+      expect(await U.closeUpload(racy, d.deviceId, id, goodCrc ? crc(data) : crc(data) ^ 1)).toEqual({ ok: false, status: 404, code: 'gone' });
+      expect(await row(id)).toMatchObject({ status: 'deleted', errorCode: null });
+    }
   });
 
   it('lists newest first, filtered by board, with the board on each row; a lapsed partial reads failed', async () => {
