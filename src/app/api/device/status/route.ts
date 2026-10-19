@@ -61,6 +61,7 @@ const statusBody = z.object({
   // ("locked:0x14@A2", at most 23 characters on the board). Telemetry: dropped whole when malformed.
   lastBoot: lastBootSchema.optional().catch(undefined),
   nfcFail: z.string().max(32).regex(NFC_FAIL_RE).optional().catch(undefined),
+  upKey: z.string().regex(/^[0-9a-f]{4}$/).optional().catch(undefined),   // fw 1.19.0: the board key's first 4 digits
   // Multi-disk spec §3.5: what the idle slot holds. Telemetry -- dropped, never rejected.
   preload: z.object({ sha256: z.string().regex(SHA256_RE), state: z.enum(['loading', 'ready']) })
     .nullable().optional().catch(undefined),
@@ -163,6 +164,7 @@ export async function POST(request: Request) {
     i2c: parsed.data.i2c,
     lastBoot: parsed.data.lastBoot,
     nfcFail: parsed.data.nfcFail,
+    upKey: parsed.data.upKey,
     preload: parsed.data.preload,
     displayLayouts: parsed.data.displayLayouts,
     displayVersion: parsed.data.displayVersion,

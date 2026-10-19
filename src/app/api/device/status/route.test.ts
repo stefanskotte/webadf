@@ -15,7 +15,7 @@ type RecordStatusArg = {
   server?: { custom: boolean; tls: 'verify' | 'noverify' };
   mountedSha256?: string | null;
   i2c?: number[];
-  lastBoot?: unknown; nfcFail?: string;
+  lastBoot?: unknown; nfcFail?: string; upKey?: string;
 };
 const recordStatus = vi.fn<(deviceId: string, s: RecordStatusArg) => Promise<void>>(
   async () => undefined,
@@ -221,6 +221,19 @@ describe('POST /api/device/status -- lastBoot and nfcFail', () => {
       expect(s.lastBoot).toBeUndefined();
       expect(s.nfcFail).toBeUndefined();
       expect(s.mountedSha256).toBe(SHA);
+    }
+  });
+});
+
+describe('POST /api/device/status -- upKey (fw 1.19.0)', () => {
+  it('passes 4 lower-case hex digits through, and drops anything else without a 400', async () => {
+    const { POST } = await import('./route');
+    expect((await POST(post({ mountedSha256: null, upKey: 'ab12' }))).status).toBe(204);
+    expect(recordStatus.mock.calls[0]![1].upKey).toBe('ab12');
+    for (const upKey of ['AB12', 'ab1', 'ab123', 'zz12', 12]) {
+      recordStatus.mockClear();
+      expect((await POST(post({ mountedSha256: null, upKey }))).status).toBe(204);
+      expect(recordStatus.mock.calls[0]![1].upKey).toBeUndefined();
     }
   });
 });
