@@ -5011,7 +5011,7 @@ Demozoo API (the bulk export makes per-lookup load on a non-profit unnecessary).
   allowlist checks only the first URL (the raster content-type allowlist and `nosniff` still apply).
 - **Cron drift:** the daily 01:30 cron against a 7-day gate can drift a refetch to 8 days.
 
-### 3cb. fw 1.18.2 TEST (seq 106, master c3af634): boot diagnostics for the tester's update hang -- 2026-10-19
+### 3cb. fw 1.18.2 RELEASED (seq 106, fw-1.18.2, master c3af634): boot diagnostics for the tester's update hang -- 2026-10-19
 
 - Tester (Pillock, PN532 at 0x24): NTAG215 + Next Disk work on 1.18.1 (fresh NTAGs said "locked" until one was erased in
   NFC Tools, then all worked -- unexplained). Update 1.18.0->1.18.1 hung ~3 min on "applying": OLED showed progress
@@ -5030,8 +5030,10 @@ Demozoo API (the bulk export makes per-lookup load on a non-profit unnecessary).
 - Open: core1 is not watchdog-supervised (a core1 hang never resets -- the overnight hang may be one); a held bus
   after boot can still wedge (no controller reset on runtime timeouts); flash-trail writes on core1 not limited to
   idle-drive times (possible ~1 ms flux gap once per update, unmeasured).
-- Tester asked 2026-10-19 to update to 1.18.2 (film the OLED, wait 20 s on a hang), retry fresh NTAG215s, and test
-  Disk at startup.
+- Tester result 2026-10-19 15:25-15:28 on 1.18.2: update did NOT hang (progress, wifi, one restart, up to date); a fresh
+  (never erased) NTAG215 wrote OK first try (InRelease likely fixed the 'locked'); no nfc_last_fail; Disk at startup
+  No disk empties DF0 on power cycles, Last disk restores. RELEASED to all 2026-10-19 (operator). Not yet run: an NTAG
+  sticker on an Si512 reader (CL2 path); the side arrow on our bench panel.
 
 ### 3ca. fw 1.18.1 TEST (seq 105, master f008023): NTAG21x tags + Disk at startup -- 2026-10-19
 
