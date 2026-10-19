@@ -350,6 +350,25 @@ static void mounted_disk_lines(void) {
           "a longer one is clipped to the line");
 }
 
+// The reason a failed tag event is reported with (tap-write's reason, the status report's nfcFail): `why`, and on
+// a PN532 the status byte and the command after it -- "locked:0x14@A2". The OLED line is nfc_ui_event_line's,
+// unchanged.
+static void a_reason_carries_the_pn532_detail(void) {
+    char b[NFC_UI_WHY_BYTES];
+    nfc_event_t e;
+    memset(&e, 0, sizeof e);
+    e.kind = NFC_EV_WRITE_DONE;
+    e.why = "locked";
+    CHECK(strcmp(nfc_ui_why(&e, b), "locked") == 0, "no detail: the word alone");
+    e.pn_status = 0x14; e.pn_cmd = 0xA2;
+    CHECK(strcmp(nfc_ui_why(&e, b), "locked:0x14@A2") == 0, "locked:0x14@A2");
+    e.kind = NFC_EV_UNREADABLE;
+    e.pn_status = 0x27; e.pn_cmd = 0x30; e.why = "moved";
+    CHECK(strcmp(nfc_ui_why(&e, b), "moved:0x27@30") == 0, "moved:0x27@30");
+    e.why = NULL;
+    CHECK(strcmp(nfc_ui_why(&e, b), "") == 0, "nothing for a good event");
+}
+
 int main(void) {
     RUN(mounted_disk_lines);
     RUN(next_lines);
@@ -376,5 +395,6 @@ int main(void) {
     RUN(an_expired_arm_stays_ended_across_the_wrap);
     RUN(expiry_survives_the_clock_wrapping);
     RUN(only_its_own_write_done_ends_a_request);
+    RUN(a_reason_carries_the_pn532_detail);
     return REPORT();
 }

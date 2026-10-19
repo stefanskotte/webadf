@@ -7,6 +7,7 @@
 #include "../src/display_layout.h"
 #include "../src/wf_log.h"
 #include "../src/i2c_scan.h"
+#include "../src/boot_trail.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -502,6 +503,12 @@ static void test_status_body_fits_at_maximum(void) {
     dc_set_net(&c, &worst_net);
     // Server override (1.13.0): the longer form of the server key.
     dc_set_server_report(&c, true, true);
+    // The boot trail (1.18.2): the widest lastBoot object (BT_JSON_MAX) and the longest nfcFail reason.
+    static char worst_boot[BT_JSON_MAX + 1];
+    memset(worst_boot, 'x', BT_JSON_MAX); worst_boot[0] = '{'; worst_boot[BT_JSON_MAX - 1] = '}';
+    worst_boot[BT_JSON_MAX] = '\0';
+    dc_set_last_boot(&c, worst_boot);
+    dc_set_nfc_fail(&c, "bad data:0xFF@FF");
 
     fake_push_response("HTTP/1.1 204 No Content\r\n\r\n");
     CHECK(dc_report_status(&c, 2147483647, -200, long_err, long_ver),
@@ -525,8 +532,11 @@ static void test_status_body_fits_at_maximum(void) {
     CHECK(strstr(r, "\"framesOut\":999999999}") != NULL, "the net tail survives a maximal body");
     CHECK(strstr(r, ",\"server\":{\"custom\":true,\"tls\":\"noverify\"}") != NULL,
           "the server key survives a maximal body");
-    CHECK(strstr(r, ",\"i2c\":[112,113,114,115,116,117,118,119]}") != NULL,
-          "the whole I2C list survives a maximal body, and the body still closes");
+    CHECK(strstr(r, ",\"i2c\":[112,113,114,115,116,117,118,119]") != NULL,
+          "the whole I2C list survives a maximal body");
+    CHECK(r[strlen(r) - 1] == '}', "and the body still closes");
+    CHECK(strstr(r, worst_boot) != NULL, "the whole lastBoot object survives a maximal body");
+    CHECK(strstr(r, ",\"nfcFail\":\"bad data:0xFF@FF\"") != NULL, "and the whole nfcFail reason");
     {
         // The whole reason, escaped, closing quote included: 47 x \" then ".
         static char want[16 + 2 * sizeof c.display_error + 2];
@@ -1809,6 +1819,50 @@ static void tap_write_report_body(void) {
     push_ok_json("{\"stored\":false}");
     CHECK(dc_tap_write_report(&c, 9, false, "04", NULL), "a NULL reason is sent as none");
     CHECK(strcmp(body_of_last_request(), "{\"seq\":9,\"ok\":false,\"uid\":\"04\"}") == 0, "no reason key");
+}
+
+// The boot trail (1.18.2): the previous boot's lastBoot rides the status reports until one is heard (any 2xx),
+// then never again this boot.
+static void status_carries_last_boot_until_heard(void) {
+    boot();
+    fake_push_response("HTTP/1.1 204 No Content\r\n\r\n");
+    dc_report_status(&c, 0, -50, NULL, "1.18.2+gt");
+    CHECK(strstr(fake_last_request(), "lastBoot") == NULL, "never set: no key");
+    dc_set_last_boot(&c, "{\"reset\":\"watchdog\",\"c0\":\"i2c\",\"up0\":0}");
+    fake_push_response("HTTP/1.1 500 Internal Server Error\r\nContent-Length: 0\r\n\r\n");
+    dc_report_status(&c, 0, -50, NULL, "1.18.2+gt");
+    CHECK(strstr(fake_last_request(), ",\"lastBoot\":{\"reset\":\"watchdog\",\"c0\":\"i2c\",\"up0\":0}") != NULL,
+          "sent");
+    fake_push_response("HTTP/1.1 204 No Content\r\n\r\n");
+    dc_report_status(&c, 0, -50, NULL, "1.18.2+gt");
+    CHECK(strstr(fake_last_request(), "\"lastBoot\"") != NULL, "a 500 was not heard: sent again");
+    const char *b = strstr(fake_last_request(), "\r\n\r\n");
+    CHECK(b && b[4] == '{' && b[strlen(b) - 1] == '}', "still one JSON object");
+    fake_push_response("HTTP/1.1 204 No Content\r\n\r\n");
+    dc_report_status(&c, 0, -50, NULL, "1.18.2+gt");
+    CHECK(strstr(fake_last_request(), "lastBoot") == NULL, "heard: not again");
+    dc_set_last_boot(&c, "");
+    fake_push_response("HTTP/1.1 204 No Content\r\n\r\n");
+    dc_report_status(&c, 0, -50, NULL, "1.18.2+gt");
+    CHECK(strstr(fake_last_request(), "lastBoot") == NULL, "an empty object is no key");
+}
+
+// A failed tag event's reason with the PN532's detail (1.18.2): the newest one rides the reports until heard.
+static void status_carries_the_newest_nfc_failure_until_heard(void) {
+    boot();
+    dc_set_nfc_fail(&c, "locked:0x14@60");
+    dc_set_nfc_fail(&c, "locked:0x27@A2");
+    fake_push_response("HTTP/1.1 204 No Content\r\n\r\n");
+    dc_report_status(&c, 0, -50, NULL, "1.18.2+gt");
+    CHECK(strstr(fake_last_request(), ",\"nfcFail\":\"locked:0x27@A2\"") != NULL, "the newest");
+    CHECK(strstr(fake_last_request(), "0x14") == NULL, "not the older");
+    fake_push_response("HTTP/1.1 204 No Content\r\n\r\n");
+    dc_report_status(&c, 0, -50, NULL, "1.18.2+gt");
+    CHECK(strstr(fake_last_request(), "nfcFail") == NULL, "heard: not again");
+    dc_set_nfc_fail(&c, "moved\"x");
+    fake_push_response("HTTP/1.1 204 No Content\r\n\r\n");
+    dc_report_status(&c, 0, -50, NULL, "1.18.2+gt");
+    CHECK(strstr(fake_last_request(), ",\"nfcFail\":\"moved\\\"x\"") != NULL, "escaped");
 }
 
 static void status_includes_the_i2c_scan(void) {
@@ -3891,6 +3945,8 @@ int main(void) {
     RUN(tap_write_report_body);
     RUN(status_includes_nfc_reader);
     RUN(status_includes_the_i2c_scan);
+    RUN(status_carries_last_boot_until_heard);
+    RUN(status_carries_the_newest_nfc_failure_until_heard);
 
     // Multi-disk Next disk. Before the free below: these drive real fetches.
     RUN(next_is_lifted_before_desired_is_read);

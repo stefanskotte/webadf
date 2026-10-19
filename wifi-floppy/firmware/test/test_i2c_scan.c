@@ -91,6 +91,23 @@ static void has_answers_only_for_a_finished_scan_that_saw_the_address(void) {
     CHECK(!i2c_scan_has(NULL, 0x24), "no record");
 }
 
+// The I2C bus recovery's decision (UM10204 §3.1.16 "Bus clear"): a device holding SDA low after a warm reset --
+// mid-byte when the RP2350 reset -- is clocked out with up to nine SCL pulses, then a STOP. SCL held low is a
+// device clock-stretching for good: nothing the master can clock, so the boot scan is skipped rather than run.
+static void the_bus_recovery_clocks_until_sda_is_released(void) {
+    // Idle bus: nothing to do.
+    CHECK_EQ_INT(i2c_recover_action(true, true, 0), I2C_REC_IDLE);
+    // SDA low: clock, up to nine times.
+    for (int k = 0; k < 9; k++) CHECK_EQ_INT(i2c_recover_action(false, true, k), I2C_REC_CLOCK);
+    // Released after some pulses: STOP and done.
+    CHECK_EQ_INT(i2c_recover_action(true, true, 3), I2C_REC_STOP);
+    // Still low after nine: stuck; give up (the scan's timeouts and the controller reset then cover it).
+    CHECK_EQ_INT(i2c_recover_action(false, true, 9), I2C_REC_STUCK);
+    // SCL low: a clock held by a device. Not ours to clock.
+    CHECK_EQ_INT(i2c_recover_action(true, false, 0), I2C_REC_SCL_HELD);
+    CHECK_EQ_INT(i2c_recover_action(false, false, 4), I2C_REC_SCL_HELD);
+}
+
 int main(void) {
     RUN(has_answers_only_for_a_finished_scan_that_saw_the_address);
     RUN(a_fresh_record_says_nothing);
@@ -100,5 +117,6 @@ int main(void) {
     RUN(the_list_is_bounded_at_eight);
     RUN(the_longest_list_fits_its_bound);
     RUN(a_short_buffer_writes_nothing);
+    RUN(the_bus_recovery_clocks_until_sda_is_released);
     return REPORT();
 }

@@ -57,6 +57,12 @@ typedef struct {
     int     garble_next;       // the next N answers go out with a bad DCS (a NACK gets a good copy)
     int     bad_len_next;      // > 0: the next answer's LEN claims this (LCS to match), body unchanged
     bool    never_answer;      // commands are ACKed but never answered (a wedged chip)
+    // A HYPOTHESIS, not the manual (2026-10-19, Pillock's NTAG215 "locked" batch): a chip that, after a failed
+    // MIFARE auth, refuses every InDataExchange with 0x27 ("not acceptable due to the current context ... Target
+    // not in the good state", §7.1) until an InRelease (§7.3.11) -- even across a new InListPassiveTarget, which
+    // §7.3.5 says loses "the information relative to previously initialized targets". If the real chip behaves as
+    // the manual says, this never happens and the reader's InRelease costs one frame per found tag.
+    bool    poison_after_auth_fail;
     const uint32_t *clock;     // the test's clock (ms); required
 
     // --- what the reader did ---
@@ -77,6 +83,10 @@ typedef struct {
     int  compat_writes;        // InDataExchange 0xA0 to a Type 2 tag: never used, must stay 0
     int  trailer_writes;       // WRITEs aimed at block 7 (must stay 0)
     int  ilpt_found;           // InListPassiveTarget answers with a tag
+    int  auth_cmds;            // InDataExchange MIFARE auth (0x60/0x61) commands received, any tag
+    int  lists_while_listed;   // InListPassiveTarget sent while a found target was never released
+    bool poisoned;             // poison_after_auth_fail has struck and no InRelease has cleared it
+    bool listed;               // a target is in the chip's list (found, not yet released)
     uint32_t field_on_ms;      // total time the field has been on (closed intervals)
     uint32_t bus_hz;           // the I2C clock: 100 kHz (the boot probe's) until the reader asks for more
     int  hz_requests;          // set_hz calls

@@ -68,6 +68,11 @@ void nfc_finish(nfc_reader_t *r, nfc_ev_kind_t kind, const char *why) {
     memcpy(e->uid, r->uid, NFC_UID_MAX);
     e->uid_len = r->uid_len;
     e->why = why;
+    if (why) {                       // a failure's PN532 detail, if the backend recorded one
+        e->pn_status = r->pn_err_status;
+        e->pn_cmd = r->pn_err_cmd;
+    }
+    r->pn_err_status = r->pn_err_cmd = 0;
     if (kind == NFC_EV_WRITE_DONE) {
         e->seq = r->write_seq;
         e->ok = why == NULL;
@@ -311,7 +316,7 @@ bool nfc_si512_back(nfc_reader_t *r) {
     r->fails = 0;                    // a missing Si512 is no fault of the PN532's
     if (v < 0) return false;
     r->chip = NFC_CHIP_SI512;
-    r->pn_field = false;
+    r->pn_field = r->pn_target = false;
     nfc_go(r, ST_RESET);
     return true;
 }
@@ -363,7 +368,7 @@ static bool st_report(nfc_reader_t *r) {
 void nfc_lose_chip(nfc_reader_t *r) {
     nfc_go(r, ST_ABSENT);
     r->chip = NFC_CHIP_NONE;
-    r->probing = r->pn_probe_due = r->pn_field = false;
+    r->probing = r->pn_probe_due = r->pn_field = r->pn_target = false;
     r->t0 = r->now_ms();
     r->checked_once = true;
     r->fails = 0;

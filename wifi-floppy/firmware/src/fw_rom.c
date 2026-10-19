@@ -4,6 +4,7 @@
 #include "fw_rom.h"
 #include "fw_trial.h"
 #include "wf_log.h"
+#include "boot_trail.h"
 #include <string.h>
 #include "pico/stdlib.h"
 #include "pico/bootrom.h"
@@ -249,6 +250,7 @@ void fw_rom_service(void) {
             watchdog_hw->scratch[0] = s0;
             watchdog_hw->scratch[1] = s1;
         }
+        bt_hw_mark(0, BT0_REBOOT);   // the boot trail: this reset was asked for (bt_reset_reason "software")
         wf_log_drain(64);
         rom_reboot(type | REBOOT2_FLAG_NO_RETURN_ON_SUCCESS, 100, base, 0);
         for (;;) tight_loop_contents();

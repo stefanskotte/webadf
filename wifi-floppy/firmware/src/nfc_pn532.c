@@ -47,7 +47,21 @@
 //     §7.3.8's list of Mifare command bytes. Not A0: on a Type 2 tag 0xA0 is
 //     the COMPATIBILITY WRITE, which takes 16 bytes and writes only the first
 //     4. The manual does not say which status a Type 2 NAK becomes; 0x01 (no
-//     answer, §7.1) is read as "moved", any other non-zero as "locked".
+//     answer, §7.1) is read as "moved", any other non-zero as "locked";
+//   - InRelease 52 Tg (§7.3.11): "the PN532 erases all the information relative
+//     to" the target, sends HLTA to a MIFARE card (Table 24), and, with no
+//     activated target left, returns to Standby -- field off. Sent with Tg 00
+//     (all targets) once at init (a warm reset of the RP2350 does not reset the
+//     PN532, so a target from the previous boot may still be listed) and after
+//     every poll that found a target, before the next InListPassiveTarget. §7.3.5
+//     says a new InListPassiveTarget already loses the old targets' information;
+//     the release is belt and braces against stale state (2026-10-19: a batch of
+//     NTAG215s read "locked" on a PN532 until one was erased elsewhere). HLTA
+//     leaves a tag on the reader HALTed, which REQA does not wake -- the field
+//     going off (Standby, and the field-off below it) resets it to IDLE, so the
+//     next poll still finds it;
+//   - a failed exchange's status byte and command go into the event
+//     (pn_err_status / pn_err_cmd), for the server; `why` is unchanged.
 #include "nfc_reader_priv.h"
 #include <string.h>
 
@@ -286,10 +300,19 @@ static bool st_cmd(nfc_reader_t *r) {
 
 static const uint8_t *answer(const nfc_reader_t *r) { return r->pn_buf + r->pn_at; }
 
+// A failed InDataExchange: the status byte the chip answered and the command byte that drew it, for the event
+// (nfc_finish). Nothing when there is no status to keep (the command itself was not answered).
+static void pn_detail(nfc_reader_t *r, uint8_t cmd) {
+    if (r->status != MI_OK || r->rx_n < 1) return;
+    r->pn_err_status = answer(r)[0];
+    r->pn_err_cmd = cmd;
+}
+
 static bool st_init(nfc_reader_t *r) {
     static const uint8_t SAM[2]     = { 0x14, 0x01 };                    // Normal mode (§7.2.10)
     static const uint8_t RETRIES[5] = { 0x32, 0x05, 0xFF, 0x01, 0x00 };  // MxRtyATR, PSL defaults; one passive try
     static const uint8_t FIELD0[3]  = { 0x32, 0x01, 0x00 };              // RF field off, AutoRFCA off
+    static const uint8_t RELEASE[2] = { 0x52, 0x00 };                    // InRelease all (§7.3.11)
     switch (r->phase) {
     case 0:
         r->phase = 1;
@@ -308,6 +331,11 @@ static bool st_init(nfc_reader_t *r) {
         return true;
     case 2:
         r->phase = 3;
+        pn_call(r, RELEASE, 2, RD_STATUS);       // a target left listed by the previous boot
+        return true;
+    case 3:
+        r->pn_target = false;
+        r->phase = 4;
         pn_call(r, FIELD0, 3, RD_PLAIN);
         return true;
     default:
@@ -319,15 +347,27 @@ static bool st_init(nfc_reader_t *r) {
 
 static bool st_idle(nfc_reader_t *r) {
     static const uint8_t FIELD0[3] = { 0x32, 0x01, 0x00 };
+    static const uint8_t RELEASE[2] = { 0x52, 0x00 };   // InRelease all (§7.3.11)
     switch (r->phase) {
-    case 0:                                      // field off, if a found tag left it on
-        if (!r->pn_field) { r->phase = 2; return true; }
+    case 0:                                      // release a found target first, whatever happened to it
+        if (!r->pn_target) { r->phase = 2; return true; }
         r->phase = 1;
-        pn_call(r, FIELD0, 3, RD_PLAIN);
+        pn_call(r, RELEASE, 2, RD_STATUS);
         return true;
     case 1:
-        if (r->status == MI_OK) r->pn_field = false;
+        // Answered (any status): the target's logical number is freed. Not answered: the command subroutine
+        // already counted it, and the next found target is released again.
+        if (r->status == MI_OK) r->pn_target = false;
         r->phase = 2;
+        return true;
+    case 2:                                      // field off, if a found tag left it on
+        if (!r->pn_field) { r->phase = 4; return true; }
+        r->phase = 3;
+        pn_call(r, FIELD0, 3, RD_PLAIN);
+        return true;
+    case 3:
+        if (r->status == MI_OK) r->pn_field = false;
+        r->phase = 4;
         return true;
     default:                                     // wait for the poll
         if (nfc_si512_back(r)) return false;     // the preferred chip answered again
@@ -355,6 +395,7 @@ static bool st_poll(nfc_reader_t *r) {
     }
     // TargetData, 106 kbps type A: Tg SENS_RES[2] SEL_RES NFCIDLength NFCID1[]
     // [ATS] (§7.3.5). Anything shorter than it says is garbage: no tag.
+    r->pn_target = true;                         // NbTg >= 1: listed until InRelease (st_idle)
     int idlen = n >= 6 ? p[5] : 0;
     if (p[1] != 1 || (idlen != 4 && idlen != 7 && idlen != 10) || 6 + idlen > n) {
         nfc_empty_poll(r);
@@ -387,6 +428,7 @@ static bool st_auth(nfc_reader_t *r) {
     // Status 0x00 is the only proof; 0x14 is a wrong key, 0x01 a tag that
     // left during the auth -- both "locked", as on the Si512.
     bool ok = r->status == MI_OK && r->rx_n >= 1 && answer(r)[0] == 0x00;
+    if (!ok) pn_detail(r, 0x60);
     nfc_auth_done(r, ok);
     if (ok) nfc_go(r, r->writing ? ST_PN_WRITE : ST_PN_READ);
     return true;
@@ -400,7 +442,7 @@ static bool st_read(nfc_reader_t *r) {
         return true;
     }
     const uint8_t *p = answer(r);
-    if (r->status != MI_OK || r->rx_n != 17 || p[0] != 0x00) { nfc_moved(r); return true; }
+    if (r->status != MI_OK || r->rx_n != 17 || p[0] != 0x00) { pn_detail(r, 0x30); nfc_moved(r); return true; }
     if (nfc_block_in(r, p + 1, r->state == ST_PN_READBACK)) r->phase = 0;
     return true;
 }
@@ -419,6 +461,7 @@ static bool st_write_t2(nfc_reader_t *r) {
     }
     if (r->status != MI_OK || r->rx_n < 1) { nfc_moved(r); return true; }
     uint8_t st = answer(r)[0] & 0x3F;            // §7.1: the error code is bits 0-5
+    if (st != 0x00) pn_detail(r, 0xA2);
     if (st == 0x01) { nfc_moved(r); return true; }           // no answer: the tag left
     if (st != 0x00) { nfc_write_refused(r); return true; }   // it answered, and refused
     if (nfc_t2_page_written(r)) { r->phase = 0; return true; }
@@ -435,7 +478,7 @@ static bool st_write(nfc_reader_t *r) {
         pn_call(r, c, 20, RD_STATUS);
         return true;
     }
-    if (r->status != MI_OK || r->rx_n < 1 || answer(r)[0] != 0x00) { nfc_moved(r); return true; }
+    if (r->status != MI_OK || r->rx_n < 1 || answer(r)[0] != 0x00) { pn_detail(r, 0xA0); nfc_moved(r); return true; }
     if (nfc_block_written(r)) { r->phase = 0; return true; }
     nfc_go(r, ST_PN_READBACK);
     return true;
@@ -448,7 +491,7 @@ void pn532_probe(nfc_reader_t *r) {
     r->probing = true;
     r->t_probe = r->t0;                          // the presence check's time (st_absent)
     r->pn_bad = 0;
-    r->pn_field = false;
+    r->pn_field = r->pn_target = false;
     nfc_go(r, ST_PN_INIT);
 }
 

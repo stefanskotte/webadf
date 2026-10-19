@@ -33,3 +33,9 @@ int i2c_scan_json(const i2c_scan_t *s, char *out, size_t cap) {
     }
     return (int)k;
 }
+
+i2c_rec_t i2c_recover_action(bool sda_high, bool scl_high, int pulses) {
+    if (!scl_high) return I2C_REC_SCL_HELD;
+    if (sda_high) return pulses == 0 ? I2C_REC_IDLE : I2C_REC_STOP;
+    return pulses < 9 ? I2C_REC_CLOCK : I2C_REC_STUCK;
+}

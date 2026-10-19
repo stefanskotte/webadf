@@ -97,6 +97,7 @@ static void list_passive(pn532_fake_t *f, const uint8_t *p, int n) {
         answer(f, 0x4B, &none, 1, ANSWER_MS);
         return;
     }
+    if (f->listed) f->lists_while_listed++;
     set_field(f, true);
     if (f->tag_present && f->tag_state == 0) {          // REQA: an IDLE tag only
         uint8_t d[90];
@@ -114,6 +115,7 @@ static void list_passive(pn532_fake_t *f, const uint8_t *p, int n) {
         }
         f->tag_state = 2;
         f->ilpt_found++;
+        f->listed = true;
         answer(f, 0x4B, d, k, ANSWER_MS);
         return;
     }
@@ -133,6 +135,8 @@ static void exchange(pn532_fake_t *f, const uint8_t *p, int n) {
     if (n < 1 || p[0] != 0x01) { status_only(f, 0x41, 0x27, ANSWER_MS); return; }
     const uint8_t *c = p + 1;
     int m = n - 1;
+    if (m >= 1 && (c[0] == 0x60 || c[0] == 0x61)) f->auth_cmds++;
+    if (f->poisoned) { status_only(f, 0x41, 0x27, ANSWER_MS); return; }   // the hypothesis (header)
     bool alive = f->tag_present && f->field && f->tag_state >= 2;
     if (!alive) { f->tag_state = 0; status_only(f, 0x41, 0x01, MIFARE_TO_MS); return; }
     if (f->ntag_pages > 0) {                            // a Type 2 tag: no auth at all
@@ -170,6 +174,7 @@ static void exchange(pn532_fake_t *f, const uint8_t *p, int n) {
             status_only(f, 0x41, 0x00, ANSWER_MS);
         } else {
             f->tag_state = 0;                           // a failed auth: the tag drops out
+            if (f->poison_after_auth_fail) f->poisoned = true;
             status_only(f, 0x41, 0x14, ANSWER_MS);
         }
         return;
@@ -222,8 +227,10 @@ static void command(pn532_fake_t *f, uint8_t code, const uint8_t *p, int n) {
         break;
     case 0x4A: list_passive(f, p, n); break;
     case 0x40: exchange(f, p, n); break;
-    case 0x52:                                           // InRelease: HLTA, field off
-        if (f->tag_state >= 2) f->tag_state = 1;
+    case 0x52:                                           // InRelease (§7.3.11, Table 24): HLTA; with no
+        if (f->tag_state >= 2) f->tag_state = 1;         // activated target left, Standby: the field off
+        f->poisoned = false;
+        f->listed = false;
         set_field(f, false);
         status_only(f, 0x53, 0x00, ANSWER_MS);
         break;

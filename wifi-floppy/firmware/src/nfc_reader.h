@@ -78,6 +78,10 @@ typedef struct {
     const char *why;                 // UNREADABLE / WRITE_DONE failure: "locked", "bad data",
                                      // "moved", "verify" (write only); NULL otherwise
     uint32_t seq; bool ok;           // WRITE_DONE
+    // UNREADABLE / WRITE_DONE failure on a PN532 (2026-10-19): the status byte the chip answered (UM0701-02
+    // §7.1, bits 0-5 the error code) and the InDataExchange command byte that drew it (0x60 auth, 0x30 READ,
+    // 0xA0 / 0xA2 WRITE). pn_cmd 0 = no detail (a good event, the Si512, or no status at all).
+    uint8_t  pn_status, pn_cmd;
 } nfc_event_t;
 
 // A detection gap on a held tag: `ms` unseen, reported when it is seen again
@@ -191,6 +195,9 @@ typedef struct nfc_reader {
     int      pn_bad;         // consecutive failed commands: LOSS_FAILS = the chip is gone
     int      pn_nacks;       // NACKs sent for the current answer
     bool     pn_field;       // the PN532's field may be on
+    bool     pn_target;      // InListPassiveTarget found a target that InRelease has not released yet
+    uint8_t  pn_err_status;  // the failure detail for the event being built (nfc_event_t pn_status/pn_cmd);
+    uint8_t  pn_err_cmd;     // nfc_finish copies both into it and clears them
     uint8_t  sak;            // the tag's SEL_RES, from InListPassiveTarget
     int      pn_at;          // where the answer's payload starts in pn_buf
     uint8_t  pn_buf[NFC_PN532_BUF];

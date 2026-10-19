@@ -39,6 +39,7 @@
 #include "wf_log.h"
 #include "activity_led.h"
 #include "i2c_probe.h"
+#include "boot_trail.h"
 #include "ssd1306.h"
 #include "display.h"
 #include "display_layout.h"
@@ -1228,15 +1229,18 @@ static bool preload_ok(void *ctx) {
  *  not a rate); a newer write request makes it moot (nfc_core1_write_request). */
 static void nfc_core1_event(device_client_t *c, uploader_t *up) {
     static uint32_t warned_seq;                 // log a failed report once per seq
+    static char why[NFC_UI_WHY_BYTES];          // static: core1's stack is measured tight
     const bool online = c->state != DC_UNPROVISIONED && c->state != DC_HALTED;
     char uid[NFC_UI_UID_HEX_BYTES];
     nfc_event_t ev;
     if (nfc_ev_box_take(&g_nfc_ev.done, &g_nfc_ev_cur.done, &ev)) {
         nfc_report_hold(&g_nfc_report, &ev);
         nfc_ui_uid_hex(&ev, uid);
+        nfc_ui_why(&ev, why);                   // "locked:0x14@A2" on a PN532 (nfc_ui.h)
         wf_logf(ev.ok ? WF_INFO : WF_WARN, "nfc: write %lu to tag %s: %s%s",
                 (unsigned long)ev.seq, uid, ev.ok ? "ok" : "FAILED ",
-                ev.ok ? "" : (ev.why ? ev.why : "?"));
+                ev.ok ? "" : (why[0] ? why : "?"));
+        if (!ev.ok && why[0]) dc_set_nfc_fail(c, why);
         ui_publish_tag(nfc_ui_event_line(&ev), clock_ms());
     }
     bool tapped = false;
@@ -1265,7 +1269,9 @@ static void nfc_core1_event(device_client_t *c, uploader_t *up) {
             wf_logf(WF_INFO, "nfc: next -> %s", show);
         } else {
             show = nfc_ui_event_line(&ev);
-            if (show) wf_logf(WF_INFO, "nfc: %s", show);
+            nfc_ui_why(&ev, why);               // an unreadable tag's reason, with the PN532's detail
+            if (show) wf_logf(WF_INFO, "nfc: %s%s%s", show, why[0] ? " -- " : "", why);
+            if (ev.kind == NFC_EV_UNREADABLE && why[0]) dc_set_nfc_fail(c, why);
         }
         if (show) ui_publish_tag(show, clock_ms());
     }
@@ -1273,7 +1279,7 @@ static void nfc_core1_event(device_client_t *c, uploader_t *up) {
     tapped = tapped || nfc_ev_box_pending(&g_nfc_ev.taps, g_nfc_ev_cur.taps);
     if (online && nfc_report_turn(&g_nfc_report, clock_ms(), tapped, &ev)) {
         nfc_ui_uid_hex(&ev, uid);
-        const bool heard = dc_tap_write_report(c, ev.seq, ev.ok, uid, ev.why);
+        const bool heard = dc_tap_write_report(c, ev.seq, ev.ok, uid, ev.why ? nfc_ui_why(&ev, why) : NULL);
         nfc_report_sent(&g_nfc_report, ev.seq, heard, clock_ms());
         if (heard) {
             wf_logf(WF_INFO, "nfc: write %lu reported", (unsigned long)ev.seq);
@@ -1795,6 +1801,7 @@ static void pio_claim_masks(unsigned m[3]) {
 }
 
 static void core1_main(void) {
+    bt_hw_mark(1, BT1_START);
     // OLED layouts: core0 writes the display record to flash itself (see the
     // display layouts section at the top), so core0 must be able to park this
     // core -- the mirror of main()'s flash_safe_execute_core_init() for core1's
@@ -1854,6 +1861,7 @@ static void core1_main(void) {
     // until that happens.
     const char *last_error = NULL;
 
+    bt_hw_mark(1, BT1_WIFI);
     for (;;) {
         if (prov.state == PROV_PORTAL) {
             // The catch-all, deliberately here rather than only at the sites
@@ -1992,6 +2000,7 @@ static void core1_main(void) {
         // Success was previously silent -- only failures logged -- so "did it
         // associate?" could not be answered from the console at all.
         wf_logf(WF_INFO, "associated, default route %s", default_route_str());
+        bt_hw_mark(1, BT1_SERVER);
         g_ui_bars = rssi_bars(wifi_rssi());
         ui_publish(DS_READY, "No disk", ip_str(), -1);
 
@@ -2133,6 +2142,7 @@ static void core1_main(void) {
         // is in it. After dc_init, which zeroes the struct.
         dc_set_plays_hd(&c, WF_DRIVE_ID != 0);
         dc_set_i2c_scan(&c, &g_i2c_scan);   // what answered on i2c1 at boot ("i2c" in every status report)
+        dc_set_last_boot(&c, bt_hw_json()); // the previous boot (boot_trail.h), until a report is heard
         // Disk at startup (2026-10-19): this boot's id on every poll and tap, so the server can act on the boot's first
         // request once -- "No disk" empties DF0 then, and never on a reconnect (same id) or an update's own reboot
         // (&ota=1). Chosen once per boot: a re-entry (re-pair) keeps it. After dc_init, which zeroes the struct.
@@ -2307,7 +2317,9 @@ static void core1_main(void) {
                 // every heartbeat below carries it.
                 fw_report.state = "applying";
                 fw_report.error = NULL;
+                bt_hw_mark(1, BT1_TRIAL);
                 for (;;) {
+                    bt_hw_tick(1);
                     bool hb = dc_report_status(&c, psram_free_estimate(), wifi_rssi(), NULL,
                                                WF_FIRMWARE_VERSION);
                     fw_trial_in_t tin = { true, &fst, WF_FIRMWARE_VERSION, hb, clock_ms() };
@@ -2342,7 +2354,9 @@ static void core1_main(void) {
         static uint32_t last_reported_version = 0;
         uint32_t last_status_ms = clock_ms();
 
+        bt_hw_mark(1, BT1_LOOP);
         while (true) {
+            bt_hw_tick(1);
             // The write cursor's mark for this pass (poll_wake.h), taken FIRST,
             // before any up_has_work() below: a write landing after it is then
             // either seen as work by those checks or cuts this pass's poll
@@ -3900,6 +3914,10 @@ static void df0_present(int slot, int32_t token) {
 extern void runtime_init_setup_psram(void);
 
 int main(void) {
+    // The boot trail (boot_trail.h): what the previous boot left in POWMAN SCRATCH0/1 and why the chip reset, read
+    // before anything overwrites it; this boot's trail starts at "early". Two register reads and two writes --
+    // nothing touches flash or PSRAM, and the buy below is unchanged.
+    bt_hw_capture();
     // FIRST, before stdio, core1, or any PSRAM user: a trial that proved
     // itself last boot is bought here, single-core (fw_rom.c, fix round 4).
     fw_rom_boot_early(WF_FIRMWARE_VERSION);
@@ -3915,9 +3933,11 @@ int main(void) {
         runtime_init_setup_psram();
         restore_interrupts(irq);
     }
+    bt_hw_mark(0, BT0_PSRAM);
     stdio_init_all();
     wf_log_init();
     wf_logf(WF_INFO, "wifi-floppy boot: %s", PICO_BOARD);
+    wf_logf(WF_INFO, "boot: previous %s", bt_hw_json()[0] ? bt_hw_json() : "(no record)");
 
     {
         char why[96];
@@ -4092,7 +4112,9 @@ int main(void) {
         // what touches the bus, and it stays gated on g_panel_addr.
         display_init(&g_disp, panel_blit, NULL);
         uint8_t panel = 0;
+        bt_hw_mark(0, BT0_I2C);
         i2c_probe_bus(&panel, &g_i2c_scan);
+        bt_hw_mark(0, BT0_DISPLAY);
         // Only when a panel actually answered: a missing display must cost
         // nothing, and must certainly not put bounded-but-real bus writes in
         // front of a board that is trying to boot.
@@ -4418,9 +4440,16 @@ int main(void) {
                                 (1u << PIN_WGATE) | (1u << PIN_STEP) | (1u << PIN_DIR) |
                                 (1u << PIN_SIDE);
     bool motor_off_unpowered = false;   // the next "motor: DF0 off" line's reason
+    // The boot trail: "nfc" until the loop has run 2 s (the reader's presence check is its first nfc_step), then
+    // "loop"; the word's uptime is rewritten once a second from here on, so a hang the watchdog ends says when.
+    bt_hw_mark(0, BT0_NFC);
+    const uint32_t loop_since = clock_ms();
+    bool trail_loop = false;
     fw_rom_watchdog_start();
     while (true) {
         fw_rom_service();
+        if (!trail_loop && clock_ms() - loop_since >= 2000u) { bt_hw_mark(0, BT0_LOOP); trail_loop = true; }
+        bt_hw_tick(0);
         dskchg_poll();
         // The Amiga switched off (bus_power.h): its pull-ups lose +5 V and
         // every input reads asserted. sel_mtr latches MTR only on a SEL0 fall,
