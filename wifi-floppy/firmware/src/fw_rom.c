@@ -26,6 +26,8 @@ static volatile bool     g_bought;
 static volatile bool     g_revertible = true;  // I3: see fw_rom_set_trial_revertible
 static volatile uint32_t g_reboot_req;        // 0 none, 1 normal, 2 flash update
 static volatile uint32_t g_reboot_off;
+static volatile bool     g_reboot_ota;        // Disk at startup: the pending reboot is for an update (fw_mark_ota_reboot)
+static bool              g_boot_after_ota;    // this boot follows one (fw_boot_after_ota), read before the mark is cleared
 // g_reboot_req/g_reboot_off are read and written from BOTH cores
 // (fw_rom_request_reboot / fw_rom_request_proven_reboot on core1,
 // fw_rom_service's deadline check on core0). g_boot_cs (a hardware spinlock +
@@ -92,6 +94,7 @@ void fw_rom_boot_early(const char *running_version) {
     g_mark1 = watchdog_hw->scratch[1];
     watchdog_hw->scratch[0] = 0;
     watchdog_hw->scratch[1] = 0;
+    g_boot_after_ota = fw_boot_after_ota(g_mark0, g_mark1);
 
     if (!fw_trial_proven(g_trial, g_mark0, g_mark1, running_version)) {
         g_early = (g_mark0 == FW_PROVEN_MAGIC) ? EARLY_STALE_MARK : EARLY_NO_MARK;
@@ -103,7 +106,7 @@ void fw_rom_boot_early(const char *running_version) {
         g_early = EARLY_BOUGHT;
     } else {
         g_early = EARLY_BUY_FAILED;
-        fw_rom_request_reboot(0);                 // unbought -> the old slot (M5)
+        fw_rom_request_ota_reboot(0);             // unbought -> the old slot (M5)
     }
 }
 
@@ -128,6 +131,7 @@ void fw_rom_boot_init(void) {
 }
 
 bool fw_rom_trial_boot(void)      { return g_trial && !g_bought; }
+bool fw_rom_boot_after_ota(void)  { return g_boot_after_ota; }
 void fw_rom_set_trial_revertible(bool revertible) { g_revertible = revertible; }
 int  fw_rom_booted_partition(void) { return g_partition; }
 
@@ -155,7 +159,7 @@ void fw_rom_request_proven_reboot(const char *running_version) {
         // Revert instead: an unbought image never becomes current.
         wf_logf(WF_ERR, "trial: no range for booted partition %d -- rebooting to revert",
                 g_partition);
-        fw_rom_request_reboot(0);
+        fw_rom_request_ota_reboot(0);
         return;
     }
     uint32_t h = fw_version_hash(running_version);
@@ -166,6 +170,7 @@ void fw_rom_request_proven_reboot(const char *running_version) {
         watchdog_hw->scratch[1] = h;
         g_reboot_off = off;
         g_reboot_req = 2u;
+        g_reboot_ota = true;   // the PRVN mark itself says so (fw_mark_ota_reboot leaves it)
         accepted = true;
     }
     critical_section_exit(&g_boot_cs);
@@ -176,7 +181,7 @@ void fw_rom_request_proven_reboot(const char *running_version) {
         wf_logf(WF_WARN, "trial: proven, but a reboot is already pending -- not marking");
 }
 
-void fw_rom_request_reboot(uint32_t flash_update_off) {
+static void request_reboot(uint32_t flash_update_off, bool ota) {
     // Under the same lock as fw_rom_service/fw_rom_request_proven_reboot,
     // and only if nothing is pending yet -- never overwrite an
     // already-requested reboot.
@@ -184,9 +189,13 @@ void fw_rom_request_reboot(uint32_t flash_update_off) {
     if (g_reboot_req == 0) {
         g_reboot_off = flash_update_off;
         g_reboot_req = flash_update_off ? 2u : 1u;
+        g_reboot_ota = ota;
     }
     critical_section_exit(&g_boot_cs);
 }
+
+void fw_rom_request_reboot(uint32_t flash_update_off) { request_reboot(flash_update_off, false); }
+void fw_rom_request_ota_reboot(uint32_t flash_update_off) { request_reboot(flash_update_off, true); }
 
 void fw_rom_watchdog_start(void) {
     // Fix round 3 (bench): pause_on_debug is now OFF. This board never runs
@@ -214,6 +223,7 @@ void fw_rom_service(void) {
     if (g_trial && !g_bought && g_revertible && g_reboot_req == 0 &&
         to_ms_since_boot(get_absolute_time()) >= FW_TRIAL_DEADLINE_MS) {
         g_reboot_req = 1u;
+        g_reboot_ota = true;   // a trial reverting is part of the update
         deadline_hit = true;
     }
     critical_section_exit(&g_boot_cs);
@@ -231,6 +241,14 @@ void fw_rom_service(void) {
         // guard stays a rule without exceptions -- this is not a flash read.
         uint32_t base = 0;
         if (g_reboot_req == 2u) { base = (uint32_t)XIP_BASE; base += g_reboot_off; }
+        // Disk at startup: an update's reboot marks scratch[0..1] for the next boot (fw_trial.h). Here, at the one
+        // place a reboot happens, so no request path can forget it; a proven mark already there is kept.
+        if (g_reboot_ota) {
+            uint32_t s0 = watchdog_hw->scratch[0], s1 = watchdog_hw->scratch[1];
+            fw_mark_ota_reboot(&s0, &s1);
+            watchdog_hw->scratch[0] = s0;
+            watchdog_hw->scratch[1] = s1;
+        }
         wf_log_drain(64);
         rom_reboot(type | REBOOT2_FLAG_NO_RETURN_ON_SUCCESS, 100, base, 0);
         for (;;) tight_loop_contents();

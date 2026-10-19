@@ -1684,7 +1684,7 @@ static bool fwu_save(void *ctx, const fw_state_t *st) { (void)ctx; return fw_sta
 // FLASH_UPDATE into the OTHER slot (the one just written): the new image then
 // trial-boots. fw_rom_request_reboot never overwrites an already-pending
 // request (g_boot_cs, fw_rom.c); core0's fw_rom_service performs it (M9).
-static void fwu_reboot(void *ctx, uint32_t off) { (void)ctx; fw_rom_request_reboot(off); }
+static void fwu_reboot(void *ctx, uint32_t off) { (void)ctx; fw_rom_request_ota_reboot(off); }   // an update's
 
 // Published by core0 every loop turn. core1 reads it for the update's idle
 // gate (D6) and the swap hold (swap_holds); dskchg.c's own state stays core0's.
@@ -2133,6 +2133,18 @@ static void core1_main(void) {
         // is in it. After dc_init, which zeroes the struct.
         dc_set_plays_hd(&c, WF_DRIVE_ID != 0);
         dc_set_i2c_scan(&c, &g_i2c_scan);   // what answered on i2c1 at boot ("i2c" in every status report)
+        // Disk at startup (2026-10-19): this boot's id on every poll and tap, so the server can act on the boot's first
+        // request once -- "No disk" empties DF0 then, and never on a reconnect (same id) or an update's own reboot
+        // (&ota=1). Chosen once per boot: a re-entry (re-pair) keeps it. After dc_init, which zeroes the struct.
+        {
+            static uint32_t boot_id;
+            if (boot_id == 0) {
+                do boot_id = get_rand_32(); while (boot_id == 0);   // 0 means "not set" (dc_set_boot)
+                wf_logf(WF_INFO, "boot: id %08lx (%s)", (unsigned long)boot_id,
+                        fw_rom_boot_after_ota() ? "after an update reboot" : "power-up or reset");
+            }
+            dc_set_boot(&c, boot_id, fw_rom_boot_after_ota());
+        }
         // OLED layouts: the display cursor. dc_init zeroes it; the first entry
         // after boot resumes from the stored record's version, so a layout
         // already on the glass is not fetched again. A re-entry is a re-pair:
@@ -2317,7 +2329,7 @@ static void core1_main(void) {
                         wf_logf(WF_WARN, "trial: giving up (%s) -- rebooting to revert", why);
                         snprintf(fst.failure, sizeof fst.failure, "%s", why);
                         fw_state_save(&fst);
-                        fw_rom_request_reboot(0);
+                        fw_rom_request_ota_reboot(0);   // a trial reverting: still the update's boot
                         for (;;) sleep_ms(1000);
                     }
                     tls_release_if_unreusable();

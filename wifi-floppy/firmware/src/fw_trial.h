@@ -45,6 +45,18 @@ bool fw_trial_proven(bool trial_boot, uint32_t scratch0, uint32_t scratch1,
                      const char *running_version);
 bool fw_trial_after_buy(fw_state_t *st);   // true if *st changed and must be saved
 
+// Disk at startup (2026-10-19): a reboot the firmware makes FOR AN UPDATE (installing one, the trial's
+// reboot-to-buy, a trial reverting) marks watchdog scratch[0..1], which survive a watchdog/ROM reboot and are
+// cleared by a power-up. The next boot reads it (fw_rom_boot_early consumes both words) and tells the server
+// (&ota=1 on the poll and the tap), which then never applies the "No disk at startup" setting to that boot.
+// "OTAR"; scratch[1] = ~magic, so a stray value in one word is not a mark.
+#define FW_OTA_REBOOT_MAGIC 0x4f544152u
+// Marks the words for an update reboot. A proven mark already there (the reboot-to-buy) is left exactly as it is:
+// the buy depends on it, and it is an update boot already.
+void fw_mark_ota_reboot(uint32_t *s0, uint32_t *s1);
+// True when the words a boot found say the reboot before it was for an update: the OTA mark, or a proven mark.
+bool fw_boot_after_ota(uint32_t s0, uint32_t s1);   // true if *st changed and must be saved
+
 typedef enum {
     FW_BOOT_CLEAN,
     FW_BOOT_REVERTED,

@@ -1421,6 +1421,18 @@ void dc_init(device_client_t *c, transport_t *t, clock_ms_fn now,
     c->display_layouts = true;
 }
 
+void dc_set_boot(device_client_t *c, uint32_t id, bool ota) {
+    c->_boot_id = id;
+    c->_boot_ota = ota;
+}
+
+// "boot=<8 hex>[&ota=1]" for a set boot id, "" otherwise (dc_set_boot). At most 20 bytes + NUL.
+static void dc_boot_params(const device_client_t *c, char out[24]) {
+    out[0] = '\0';
+    if (c->_boot_id == 0) return;
+    snprintf(out, 24, "boot=%08lx%s", (unsigned long)c->_boot_id, c->_boot_ota ? "&ota=1" : "");
+}
+
 // Server override (1.13.0; see device_client.h).
 void dc_set_server(device_client_t *c, int port, const char *host_header) {
     c->port = port;
@@ -2069,7 +2081,8 @@ static dc_state_t dc_step_inner(device_client_t *c) {
     // is 73 (51 before displayAck); &driveAck=4294967295 makes it 93, and
     // &df1Ack=4294967295 (DF1 any disk, 1.12.0) 111, and &netPick=1 (fw 1.12.1: Network's driver disk comes as
     // DF1's pick, `next` stays DF0's next disk) 121.
-    // &xferAck=4294967295&rx=u (fw 1.14.0, files sent to the Amiga) makes it 146.
+    // &xferAck=4294967295&rx=u (fw 1.14.0, files sent to the Amiga) makes it 146, and &boot=ffffffff&ota=1 (Disk at
+    // startup) 166.
     // test_poll_url_carries_display_ack / _drive_ack / poll_url_carries_df1_ack / send_poll_params_only_once_set send them.
     static char path[176];
     int plen = snprintf(path, sizeof path, "/api/device/poll?since=%lu&nfcAck=%lu&displayAck=%lu",
@@ -2081,6 +2094,12 @@ static dc_state_t dc_step_inner(device_client_t *c) {
     if (c->_send_on && plen > 0 && plen < (int)sizeof path)
         snprintf(path + plen, sizeof path - (size_t)plen, "&xferAck=%lu&rx=%c",
                  (unsigned long)c->_send_ack, c->_send_rx);
+    // Disk at startup (dc_set_boot): last, so every older parameter keeps its place.
+    static char bootp[24];   // static: see the STACK note above
+    dc_boot_params(c, bootp);
+    plen = (int)strnlen(path, sizeof path);
+    if (bootp[0] && plen > 0 && plen < (int)sizeof path)
+        snprintf(path + plen, sizeof path - (size_t)plen, "&%s", bootp);
 
     static char req[DC_REQ_BUF_BYTES];
     int req_len = http_build_request(req, sizeof req, "GET", path, c->host_header, c->token, NULL);
@@ -2264,6 +2283,17 @@ bool dc_net_owed(const device_client_t *c) {
 #define DC_TAP_WRITE_PATH "/api/device/tap-write"
 #define DC_JSON           "application/json"
 
+// The tap path, naming the boot (dc_set_boot): a tag tapped at the Kickstart screen goes out before the boot's first
+// poll, and the server must hear of the boot first, or "No disk at startup" would empty DF0 after the tap mounted it.
+static const char *dc_tap_path(const device_client_t *c) {
+    static char path[48];   // "/api/device/tap?boot=ffffffff&ota=1" is 35
+    static char bootp[24];  // static: see the STACK note above
+    dc_boot_params(c, bootp);
+    if (!bootp[0]) return DC_TAP_PATH;
+    snprintf(path, sizeof path, "%s?%s", DC_TAP_PATH, bootp);
+    return path;
+}
+
 dc_tap_outcome_t dc_tap(device_client_t *c, const char *disk_id, char *title_out, int title_cap) {
     if (title_out && title_cap > 0) title_out[0] = '\0';
     // The tag codec already checked the shape; checked again because this is
@@ -2279,7 +2309,7 @@ dc_tap_outcome_t dc_tap(device_client_t *c, const char *disk_id, char *title_out
     // it -- harmless: `outcome` is emitted first (src/lib/nfc/store.ts), and
     // the title is clipped to the caller's buffer anyway.
     static char resp[256];
-    int st = dc_post(c, DC_TAP_PATH, DC_JSON, (const uint8_t *)body, n, resp, sizeof resp);
+    int st = dc_post(c, dc_tap_path(c), DC_JSON, (const uint8_t *)body, n, resp, sizeof resp);
     // -1 (offline, incomplete), 400 invalid_body, 401 (dc_post halted), 5xx:
     // all "no answer" as far as the person at the reader is concerned.
     if (st < 200 || st >= 300) return DC_TAP_FAILED;
@@ -2329,7 +2359,7 @@ dc_tap_outcome_t dc_tap_next(device_client_t *c, uint32_t *disk_no, uint32_t *di
 
     static const char body[] = "{\"action\":\"next\"}";
     static char resp[256];   // static: see the STACK note above
-    int st = dc_post(c, DC_TAP_PATH, DC_JSON, (const uint8_t *)body, (int)sizeof body - 1,
+    int st = dc_post(c, dc_tap_path(c), DC_JSON, (const uint8_t *)body, (int)sizeof body - 1,
                      resp, sizeof resp);
     if (st < 200 || st >= 300) return DC_TAP_FAILED;
 

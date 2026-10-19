@@ -223,7 +223,32 @@ static void test_proven_magic_is_not_an_sdk_or_rom_watchdog_magic(void) {
     CHECK(FW_PROVEN_MAGIC != 0u && FW_PROVEN_MAGIC != 0xffffffffu, "not a reset-looking value");
 }
 
+// Disk at startup (2026-10-19): a reboot the firmware made for an update leaves a mark in watchdog scratch[0..1],
+// so the next boot can tell the server it is not a power-up (the "No disk" setting is not applied to it).
+static void test_an_update_reboot_marks_the_next_boot(void) {
+    uint32_t s0 = 0, s1 = 0;
+    fw_mark_ota_reboot(&s0, &s1);
+    CHECK(fw_boot_after_ota(s0, s1), "an update reboot is read back as one");
+    CHECK(!fw_boot_after_ota(0, 0), "a power-up (scratch cleared) is not");
+    CHECK(!fw_boot_after_ota(s0, s1 ^ 1u), "a half-written mark is not");
+    CHECK(!fw_boot_after_ota(FW_OTA_REBOOT_MAGIC ^ 1u, s1), "nor a near miss");
+}
+static void test_the_proven_mark_is_an_update_boot_and_is_kept(void) {
+    // The trial's reboot-to-buy already carries PRVN for its version: that is an update boot, and marking it must not
+    // overwrite the mark the buy depends on.
+    uint32_t s0 = FW_PROVEN_MAGIC, s1 = fw_version_hash("1.18.1+gnew");
+    fw_mark_ota_reboot(&s0, &s1);
+    CHECK(s0 == FW_PROVEN_MAGIC && s1 == fw_version_hash("1.18.1+gnew"), "the proven mark is untouched");
+    CHECK(fw_boot_after_ota(s0, s1), "and counts as an update boot");
+}
+static void test_ota_magic_is_not_an_sdk_or_rom_watchdog_magic(void) {
+    CHECK(FW_OTA_REBOOT_MAGIC != 0xb007c0d3u && FW_OTA_REBOOT_MAGIC != 0x6ab73121u, "not the SDK's or the ROM's");
+    CHECK(FW_OTA_REBOOT_MAGIC != FW_PROVEN_MAGIC, "not the proven mark");
+}
+
 int main(void) {
+    RUN(test_an_update_reboot_marks_the_next_boot); RUN(test_the_proven_mark_is_an_update_boot_and_is_kept);
+    RUN(test_ota_magic_is_not_an_sdk_or_rom_watchdog_magic);
     RUN(test_a_normal_boot_is_not_a_trial);
     RUN(test_waits_until_a_heartbeat_lands);
     RUN(test_buys_after_a_heartbeat);

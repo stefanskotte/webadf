@@ -456,6 +456,10 @@ typedef struct {
     const struct i2c_scan *_i2c;
     // dc_set_plays_hd: "playsHd":true in every status report.
     bool     _plays_hd;
+    // dc_set_boot (Disk at startup, 2026-10-19): this boot's id (0 = not set: nothing sent) and whether the reboot
+    // before it was the firmware's own, for an update.
+    uint32_t _boot_id;
+    bool     _boot_ota;
 
     // --- DF1 second drive (spec 2026-10-08) ---
     // SEL1 telemetry: sent as both values once main.c has said anything.
@@ -911,6 +915,13 @@ int dc_fetch_send_chunk(device_client_t *c, const char *id, uint32_t off, uint32
 int dc_post_send_done(device_client_t *c, const char *id, const char *json);
 // What the next poll reports: &xferAck=<acked>&rx=<rx>.
 void dc_set_send(device_client_t *c, uint32_t acked_version, char rx);
+// Disk at startup (2026-10-19): names this boot on every poll (&boot=<8 hex>) and tap (?boot=<8 hex>), plus
+// &ota=1 when the reboot before it was the firmware's own for an update (fw_boot_after_ota). The id is chosen once
+// per boot and never changes within it -- a Wi-Fi reconnect re-sends the same one -- so the server can act on the
+// FIRST request of a boot exactly once (src/lib/boot-disk-store.ts). 0 = not set: nothing is sent, as before.
+// Set after dc_init (which zeroes it), on every entry of main.c's poll branch, with the same id.
+void dc_set_boot(device_client_t *c, uint32_t id, bool ota);
+
 // A strict dotted quad ("192.168.1.57" -> 0xC0A80139). False for anything else, and for 0.0.0.0; *out untouched then.
 bool dc_parse_ipv4(const char *s, uint32_t *out);
 
