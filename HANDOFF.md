@@ -1478,6 +1478,10 @@ separately.
 
 ### 4. Backlog, not blocking anything
 
+- **"Put on a disk" from the From the Amiga area** (operator, 2026-10-19, "makes sense maybe later on"): pick one or
+  more uploaded (non-disk) files and write them into a new or existing ADF, then optionally add that ADF to the
+  library. The pieces exist (Browse's file operations / staged drop into a folder, `registerUploads`); not built with
+  the Amiga->web feature (spec 2026-10-18, Add to library stays a per-file button for disk images only).
 - **Shared / remote libraries** (operator, 2026-10-18), "much like you can on plex.tv (self hosted)":
   - **Sharing:** a library owner invites people with **one-time links** (no email). The owner can add and revoke
     members per library.
