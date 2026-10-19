@@ -5011,6 +5011,25 @@ Demozoo API (the bulk export makes per-lookup load on a non-profit unnecessary).
   allowlist checks only the first URL (the raster content-type allowlist and `nosniff` still apply).
 - **Cron drift:** the daily 01:30 cron against a 7-day gate can drift a refetch to 8 days.
 
+### 3ca. fw 1.18.1 TEST (seq 105, master f008023): NTAG21x tags + Disk at startup -- 2026-10-19
+
+- PN532 on real hardware (Pillock, 1.18.0): detected at 0x24, MIFARE Classic 1K write/read/re-tap/resting tag all OK;
+  "a little unreliable sometimes" at the edge of range; one "Tag locked" seen once. His bulk-pack tags are NTAG215
+  (ATQA 0x0044, SAK 0x00, 7-byte UID) -> refused on 1.18.0 -> NTAG support built.
+- NTAG213/215/216 (6657e06): both backends; Si512 cascade level 2 (SEL 0x95); Type 2 READ 0x30 / WRITE 0xA2 (pages
+  4-15 only, never 0-3 or config); 7-byte UID through the session; other kinds show "Tag: not supported". No NDEF.
+  PN532 status for a refused Type 2 write is undocumented (assumed: 0x01 = moved, else locked).
+- Disk at startup (f008023, migration 0045 APPLIED: boot_disk default 'last', boot_id, prev_boot_id): firmware sends
+  ?boot=<id> (and &ota=1 after its own update reboot); server empties DF0 on the first request of a NEW boot when
+  boot_disk='empty'; the first id ever seen is a baseline only; a late id from the previous boot is ignored; DF1
+  untouched. Gate BOOT_DISK_FW = 1.18.1: NEVER publish a 1.18.1 without the boot id (the NTAG-only master was not).
+- Bench board on 1.18.1+g39e670f: confirmed, Si512 present, boot id recorded. Not yet done at the bench: an NTAG
+  sticker on the Si512 (first real CL2), the track arrow on glass, a No-disk power cycle.
+- Tester steps posted to Pillock 2026-10-19 (NTAG215 write+mount, Classic regression, No-disk power cycle).
+- Pillock's board once showed "last seen 10h ago" while it had an IP; a power cycle fixed it -- not investigated.
+- Vincent's board (28:cd:c1:19:49:12): I2C scan sees only 0x3c -- his module does not answer on I2C at all (mode
+  switches/wiring); not yet asked.
+
 ### 3bz. fw 1.18.0 TEST (seq 104, master 02bfe14): PN532 NFC readers + track side arrow; head element removed -- 2026-10-19
 
 - PN532 (0x24) support: nfc_reader.c is now the shared session (hold windows, Next card, arm/write/verify, events);
