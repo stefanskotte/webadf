@@ -3,15 +3,15 @@ import { spawn, execFileSync, type ChildProcess } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { runScenarios } from './scenarios';
+import { runScenarios, runUploadScenarios } from './scenarios';
 import { connect, rawConnect } from './fake-board';
 
 const here = path.dirname(new URL(import.meta.url).pathname);
 let bin: string; let tmp: string;
 
-function start(dir: string, env: Record<string, string> = {}): Promise<{ proc: ChildProcess; port: number; lines: string[] }> {
+function start(dir: string, env: Record<string, string> = {}, keyFile?: string): Promise<{ proc: ChildProcess; port: number; lines: string[] }> {
   return new Promise((resolve, reject) => {
-    const proc = spawn(bin, [dir, '0'], { env: { ...process.env, ...env } });
+    const proc = spawn(bin, [dir, '0', ...(keyFile ? [keyFile] : [])], { env: { ...process.env, ...env }, stdio: ['pipe', 'pipe', 'inherit'] });
     const lines: string[] = []; let buf = '';
     proc.stdout!.on('data', (d) => {
       buf += d.toString(); let i;
@@ -42,6 +42,26 @@ describe('Receive (POSIX build) against the fake board', () => {
       expect(lines).toContain('META Script 40 a comment');
     } finally { proc.kill(); }
   }, 60000);
+
+  it('sends files up: small, Latin-1, 4 MB, a drawer, a resume, a CRC fault, a refusal, a v1 board, a key change, a cancel', async () => {
+    const dir = fs.mkdtempSync(path.join(tmp, 'up-'));
+    const src = fs.mkdtempSync(path.join(tmp, 'src-'));
+    const keyFile = path.join(tmp, 'BoardKey');
+    const { proc, port, lines } = await start(dir, {}, keyFile);
+    const ctl = {
+      dir: src, lines: () => lines,
+      send: (p: string) => proc.stdin!.write(`SEND ${p}\n`),
+      trust: () => proc.stdin!.write('TRUST\n'),
+      cancel: (t: string) => proc.stdin!.write(`CANCEL ${t}\n`),
+    };
+    try {
+      const res = await runUploadScenarios(port, ctl);
+      expect(res.filter((r) => !r.ok)).toEqual([]);
+      expect(res).toHaveLength(10);
+      expect(fs.readFileSync(keyFile, 'utf8').trim()).toBe('fedcba9876543210fedcba9876543210');   // TRUST saved the second key
+      expect(lines).toContain('TRUST new 0123');                                                    // first contact
+    } finally { proc.kill(); }
+  }, 300000);
 
   it('refuses a file larger than the free space', async () => {
     const dir = fs.mkdtempSync(path.join(tmp, 'small-'));

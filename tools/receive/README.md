@@ -16,6 +16,10 @@ It needs Kickstart 2.04 or newer, any 68000 or later, and a running TCP/IP stack
   - `GUI` opens the window.
 
   It prints one line per file, and Ctrl-C stops it.
+- **Sending to the web app (protocol 2, spec 2026-10-18):** drop icons on the window, press **Send…**, or type
+  `Receive SEND DH0:a.lha DH0:Drawer`. A drawer sends its files with their paths under it (64 at most; `.info` files
+  only when the icon itself is dropped). Files go only to the board whose key Receive trusts: the first board it hears
+  (saved in `ENVARC:webadf/BoardKey`); `TRUST` (or **Trust this board**) accepts another one.
 - **The folder setting** is the file `ENVARC:webadf/ReceiveDir`, copied to `ENV:webadf/ReceiveDir`. The default is
   `RAM:`.
 - **Nothing is overwritten:** a second `Foo.lha` arrives as `Foo_2.lha`. Nothing is written outside the folder.
@@ -27,7 +31,7 @@ While `Receive` runs, it listens on TCP port 6800 for the board.
 | Path | What |
 |---|---|
 | `core/` | portable C: CRC-32, name rules, the protocol state machine (every decision lives here) |
-| `posix/rx_posix.c` | a host build of the receiver, for tests and CI |
+| `posix/rx_posix.c` | a host build of the receiver, for tests and CI (stdin: SEND <path>, TRUST, CANCEL <tag>) |
 | `amiga/` | dos.library and bsdsocket glue, the Shell form and the gadtools window |
 | `fake-board.ts`, `scenarios.ts`, `run-scenarios.ts` | the board's side of the protocol, and the shared scenarios |
 | `uae/uae-test.sh` | runs the scenarios against the real binary in FS-UAE |

@@ -1,7 +1,7 @@
 // Scenarios run against any listening Receive (POSIX build or FS-UAE), checked against the folder on the host.
 import fs from 'node:fs';
 import path from 'node:path';
-import { connect, rawConnect, type SendFile, type Outcome } from './fake-board';
+import { BOARD_KEY2, UploadStore, connect, rawConnect, type SendFile, type Outcome } from './fake-board';
 
 function bytes(n: number, seed: number): Buffer {
   const b = Buffer.alloc(n);
@@ -83,6 +83,120 @@ export async function runScenarios(port: number, dir: string, opts: { host?: str
     if (s.uaeOnly && !opts.uae) continue;
     if (s.posixOnly && opts.uae) continue;
     try { const err = await s.run(port, dir, opts.host ?? '127.0.0.1'); out.push({ name: s.name, ok: err === null, detail: err ?? '' }); }
+    catch (e) { out.push({ name: s.name, ok: false, detail: String(e) }); }
+  }
+  return out;
+}
+
+// --- Uploads (spec 2026-10-18 §3, §10 increment 1): the board's side against a Receive that was told to send. ---
+
+/** How a scenario asks Receive to send: the POSIX build reads stdin; FS-UAE runs a fixed startup-sequence. */
+export interface UpCtl {
+  send(hostPath: string): void;
+  trust(): void;
+  cancel(tag: string): void;
+  lines(): string[];          // what Receive has printed so far (POSIX: stdout)
+  dir: string;                // a host folder the scenarios may write their files into
+}
+export interface UpScenario { name: string; run: (port: number, host: string, ctl: UpCtl) => Promise<string | null> }
+
+const upFile = (ctl: UpCtl, name: string, data: Buffer) => { const p = path.join(ctl.dir, name); fs.mkdirSync(path.dirname(p), { recursive: true }); fs.writeFileSync(p, data); return p; };
+const waitFor = async (ctl: UpCtl, re: RegExp, ms = 10000) => {
+  const t0 = Date.now();
+  while (Date.now() - t0 < ms) { if (ctl.lines().some((l) => re.test(l))) return true; await new Promise((r) => setTimeout(r, 50)); }
+  return false;
+};
+const sameBytes = (r: { ok: boolean } & Partial<{ data: Buffer }>, want: Buffer) => (r.ok && r.data && Buffer.compare(r.data, want) === 0 ? null : `got ${JSON.stringify({ ...r, data: r.data?.length })}`);
+
+export const UP_SCENARIOS: UpScenario[] = [
+  { name: 'up-small', run: async (p, h, ctl) => {
+      const data = Buffer.from('hello from the Amiga\n');
+      ctl.send(upFile(ctl, 'Hello.txt', data));
+      const b = await connect(p, h, { v: 2 });
+      try { const r = await b.takeUpload(); return sameBytes(r, data) ?? (r.path === 'Hello.txt' ? null : `path ${r.path}`); }
+      finally { await b.close(); } } },
+  { name: 'up-latin1', run: async (p, h, ctl) => {
+      const data = Buffer.from('é');
+      ctl.send(upFile(ctl, 'Café.txt', data));
+      const b = await connect(p, h, { v: 2 });
+      try { const r = await b.takeUpload(); return sameBytes(r, data) ?? (r.path === 'Café.txt' ? null : `path ${JSON.stringify(r.path)}`); }
+      finally { await b.close(); } } },
+  { name: 'up-big', run: async (p, h, ctl) => {
+      const data = bytes(4194304, 21); const t0 = Date.now();
+      ctl.send(upFile(ctl, 'Big.bin', data));
+      const b = await connect(p, h, { v: 2 });
+      try { return sameBytes(await b.takeUpload({ timeoutMs: 300000 }), data); }
+      finally { console.log(`  up-big: 4 MB in ${((Date.now() - t0) / 1000).toFixed(1)} s`); await b.close(); } } },
+  { name: 'up-drawer', run: async (p, h, ctl) => {
+      upFile(ctl, 'Mods/a.mod', Buffer.from('a')); upFile(ctl, 'Mods/a.mod.info', Buffer.from('i')); upFile(ctl, 'Mods/sub/b.mod', Buffer.from('b'));
+      ctl.send(path.join(ctl.dir, 'Mods'));
+      const b = await connect(p, h, { v: 2 });
+      try {
+        const got = [(await b.takeUpload()).path, (await b.takeUpload()).path].sort();
+        const extra = await b.maybeLine(1500);
+        return JSON.stringify(got) === JSON.stringify(['Mods/a.mod', 'Mods/sub/b.mod']) && extra === null ? null : `got ${got} then ${extra}`;
+      } finally { await b.close(); } } },
+  { name: 'up-resume', run: async (p, h, ctl) => {
+      const data = bytes(100000, 23); const store = new UploadStore();
+      const f = upFile(ctl, 'Resume.bin', data);
+      ctl.send(f);
+      let b = await connect(p, h, { v: 2 });
+      const first = await b.takeUpload({ store, dropAfterChunks: 2 });
+      if (first.ok || first.code !== 'dropped') return `first try: ${JSON.stringify(first)}`;
+      if (!(await waitFor(ctl, /UP_FAILED \d+ local connection lost/))) return 'Receive did not report the dropped connection';
+      ctl.send(f);                                               // Retry: a new PUT, resumed from the stored chunks
+      b = await connect(p, h, { v: 2 });
+      try { const r = await b.takeUpload({ store }); return r.offset === 32768 ? sameBytes(r, data) : `resumed at ${r.offset}`; }
+      finally { await b.close(); } } },
+  { name: 'up-crc', run: async (p, h, ctl) => {
+      ctl.send(upFile(ctl, 'Crc.bin', bytes(20000, 25)));
+      const b = await connect(p, h, { v: 2 });
+      try { const r = await b.takeUpload({ crcFault: true }); if (r.ok || r.code !== 'crc') return `got ${JSON.stringify(r)}`;
+            return (await waitFor(ctl, /UP_FAILED \d+ crc /)) ? null : 'no crc failure printed'; }
+      finally { await b.close(); } } },
+  { name: 'up-refused', run: async (p, h, ctl) => {
+      ctl.send(upFile(ctl, 'Refused.bin', Buffer.from('x')));
+      const b = await connect(p, h, { v: 2 });
+      try { await b.takeUpload({ refuse: { code: 'full', text: "the web app's area is full" } });
+            return (await waitFor(ctl, /UP_FAILED \d+ full the web app's area is full/)) ? null : 'no refusal printed'; }
+      finally { await b.close(); } } },
+  { name: 'up-v1-board', run: async (p, h, ctl) => {
+      ctl.send(upFile(ctl, 'Old.txt', Buffer.from('x')));
+      const b = await connect(p, h, { v: 1 });
+      try { const l = await b.maybeLine(2000); return l === null ? null : `a protocol 1 board got ${JSON.stringify(l)}`; }
+      finally { await b.close(); } } },
+  { name: 'up-other-key-then-trust', run: async (p, h, ctl) => {
+      const b = await connect(p, h, { v: 2, key: BOARD_KEY2 });   // Old.txt still waits from up-v1-board
+      try {
+        const l = await b.maybeLine(2000);
+        if (l !== null) return `another key got ${JSON.stringify(l)}`;
+        ctl.trust();
+        const r = await b.takeUpload();
+        return r.ok && r.path === 'Old.txt' ? null : `after TRUST: ${JSON.stringify(r)}`;
+      } finally { await b.close(); } } },
+  { name: 'up-cancel-mid-file', run: async (p, h, ctl) => {
+      ctl.send(upFile(ctl, 'Stop.bin', bytes(200000, 27)));
+      const b = await connect(p, h, { v: 2, key: BOARD_KEY2 });   // trusted since the scenario before
+      try {
+        const put = await b.maybeLine(10000);
+        const tag = put && /^PUT (\d+) /.exec(put)?.[1];
+        if (!tag) return `no PUT: ${put}`;
+        ctl.cancel(tag);                                          // before TAKE: an ABORT, answered NO busy
+        const abort = await b.maybeLine(5000);
+        if (abort !== `ABORT ${tag}`) return `expected ABORT ${tag}, got ${abort}`;
+        // PF11: the outcome, not only the ABORT. The board answers a cancelled file NO busy (the file was never taken);
+        // Receive must report that as cancelled, and the file must not go up.
+        b.refuseWith(tag, 'busy', 'cancelled');
+        return (await waitFor(ctl, new RegExp(`^UP_FAILED ${tag} busy cancelled$`), 5000)) && !ctl.lines().some((l) => new RegExp(`^UP_DONE ${tag} `).test(l))
+          ? null : `no "UP_FAILED ${tag} busy cancelled" after the ABORT: ${JSON.stringify(ctl.lines().slice(-4))}`;
+      } finally { await b.close(); } } },
+];
+
+export async function runUploadScenarios(port: number, ctl: UpCtl, opts: { host?: string; only?: string[] } = {}) {
+  const out: { name: string; ok: boolean; detail: string }[] = [];
+  for (const s of UP_SCENARIOS) {
+    if (opts.only && !opts.only.includes(s.name)) continue;
+    try { const err = await s.run(port, opts.host ?? '127.0.0.1', ctl); out.push({ name: s.name, ok: err === null, detail: err ?? '' }); }
     catch (e) { out.push({ name: s.name, ok: false, detail: String(e) }); }
   }
   return out;
