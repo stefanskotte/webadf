@@ -5011,6 +5011,28 @@ Demozoo API (the bulk export makes per-lookup load on a non-profit unnecessary).
   allowlist checks only the first URL (the raster content-type allowlist and `nosniff` still apply).
 - **Cron drift:** the daily 01:30 cron against a 7-day gate can drift a refetch to 8 days.
 
+### 3cb. fw 1.18.2 TEST (seq 106, master c3af634): boot diagnostics for the tester's update hang -- 2026-10-19
+
+- Tester (Pillock, PN532 at 0x24): NTAG215 + Next Disk work on 1.18.1 (fresh NTAGs said "locked" until one was erased in
+  NFC Tools, then all worked -- unexplained). Update 1.18.0->1.18.1 hung ~3 min on "applying": OLED showed progress
+  bar, restart, "connecting", "no disk" (then frozen); PaulaNET disabled, NFC connected; power cycle -> up to date.
+  Third reboot-related hang on his board, never on ours.
+- Likely mechanism (hypothesis): after the proven reboot/buy the boot ran without a watchdog; pico-sdk 2.3.0
+  hardware_i2c/i2c.c:291 has an untimed wait in the read path; a PN532 holding the bus across a warm reset could wedge
+  the boot I2C scan with the OLED keeping its last frame.
+- 1.18.2: boot trail in POWMAN SCRATCH0/1 + flash update trail in sector -7 (update path only, <=1 erase + 7 programs per
+  update) reported as lastBoot (devices.last_boot, migration 0046 APPLIED); I2C bus clear (waits up to 25 ms for a
+  clock-stretching SCL) before the scan; held bus => I2C, OLED and NFC off for that boot (no reboot loop); 16 s watchdog
+  armed at the end of fw_rom_boot_early AFTER the buy (buy unchanged); PN532 InRelease while a target is listed; reader
+  status in tap failures (devices.nfc_last_fail, e.g. "locked:0x14@A2"), validated server-side.
+- Bench: installed and confirmed, Si512 present, 230 s with no watchdog reset, heap unchanged. lastBoot reported
+  reset "power-on" for a proven reboot -- the reset-reason decode may be imprecise (minor).
+- Open: core1 is not watchdog-supervised (a core1 hang never resets -- the overnight hang may be one); a held bus
+  after boot can still wedge (no controller reset on runtime timeouts); flash-trail writes on core1 not limited to
+  idle-drive times (possible ~1 ms flux gap once per update, unmeasured).
+- Tester asked 2026-10-19 to update to 1.18.2 (film the OLED, wait 20 s on a hang), retry fresh NTAG215s, and test
+  Disk at startup.
+
 ### 3ca. fw 1.18.1 TEST (seq 105, master f008023): NTAG21x tags + Disk at startup -- 2026-10-19
 
 - PN532 on real hardware (Pillock, 1.18.0): detected at 0x24, MIFARE Classic 1K write/read/re-tap/resting tag all OK;
