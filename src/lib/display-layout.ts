@@ -37,9 +37,22 @@ export const LEGACY_HEAD_NAME = 'head';
  * head record, is returned as it is (the same array).
  */
 export function stripHeadRecords(b: Uint8Array): Uint8Array {
+  return stripRecords(b, LEGACY_HEAD_ID);
+}
+
+/**
+ * `b` drawn upright: without its rotation record, the same way. The device
+ * card's bezel renders this, as the editor's preview does (the turn is how the
+ * panel is mounted, not what it shows); the board still gets the turned blob.
+ */
+export function stripRotation(b: Uint8Array): Uint8Array {
+  return stripRecords(b, ROTATION_RECORD);
+}
+
+function stripRecords(b: Uint8Array, id: number): Uint8Array {
   if (b.length < HEADER || b[0] !== FORMAT || b.length !== HEADER + RECORD * b[2]) return b;
   const keep: number[] = [];
-  for (let i = 0; i < b[2]; i++) if (b[HEADER + RECORD * i] !== LEGACY_HEAD_ID) keep.push(i);
+  for (let i = 0; i < b[2]; i++) if (b[HEADER + RECORD * i] !== id) keep.push(i);
   if (keep.length === b[2]) return b;
   const out = new Uint8Array(HEADER + RECORD * keep.length);
   out.set(b.subarray(0, HEADER));

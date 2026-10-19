@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useRef, useState, useTransition } from 'react';
 import { useRouter } from 'next/navigation';
 import { loadDisplayWasm, type DisplayWasm } from '@/lib/display-wasm';
-import { panelId } from '@/lib/display-layout';
+import { panelId, stripRotation } from '@/lib/display-layout';
 import { panelHeight, PANEL_W } from '@/lib/display-editor-geometry';
 import { paintFramebuffer } from '@/lib/display-paint';
 import { liveDisplayState, liveDisplayText } from '@/lib/live-display';
@@ -50,12 +50,14 @@ export function DriveBezel({ device, online, drawerOpen, onOpenDisplay }: {
   const rows = panelHeight(device.displayPanel);
   const panel = panelId(device.displayPanel);
   // The stored layout, when it decodes and validates; otherwise the panel's
-  // default, which is what the board itself falls back to.
+  // default, which is what the board itself falls back to. Drawn upright at
+  // Rotation 180, as the editor's preview is: the turn is how the panel is
+  // mounted, and a picture of it upside down only reads as upside down here.
   const blob = useMemo(() => {
     if (!wasm || !device.displayLayout) return null;
     try {
       const b = fromBase64(device.displayLayout);
-      return wasm.validate(b) === null ? b : null;
+      return wasm.validate(b) === null ? stripRotation(b) : null;
     } catch { return null; }
   }, [wasm, device.displayLayout]);
 

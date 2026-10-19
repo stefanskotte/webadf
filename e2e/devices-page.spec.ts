@@ -1,9 +1,11 @@
 import { test, expect } from '@playwright/test';
 import { createHash } from 'node:crypto';
+import { readFile } from 'node:fs/promises';
 import { eq } from 'drizzle-orm';
 import { getDb } from '@/db';
 import { devices, pairingCodes } from '@/db/schema/devices';
 import { signUpFresh, runTag } from './helpers';
+import { decodeLayout, encodeLayout } from '@/lib/display-layout';
 import { pairDevice, seedDisk, cleanupSeeded, authHeader } from './device-helpers';
 
 test.afterAll(cleanupSeeded);
@@ -502,6 +504,37 @@ test('pressing the bezel display opens the drawer, and the bezel behind it canno
   await expect(page.getByTestId(`display-toggle-${deviceId}`)).toHaveText('▾ Change Display');
   // inert: the blurred face is out of the tab order and the click path.
   await expect(page.getByTestId(`device-oled-${deviceId}`).locator('xpath=..')).toHaveAttribute('inert', '');
+});
+
+// Pillock, 2026-10-19: the bezel drew the board's screen upside down at
+// Rotation 180. It is drawn upright, as the editor's preview is -- the same
+// pixels as the same layout unturned.
+test('the bezel draws a turned layout upright', async ({ page, request }) => {
+  await signUpFresh(page);
+  const { deviceId } = await pairDevice(page, request);
+  const upright = new Uint8Array(await readFile('wifi-floppy/firmware/test/fixtures/layouts/default32.bin'));
+  const turned = encodeLayout({ ...decodeLayout(upright), rotation: 180 });
+  const glass = async () => {
+    await page.goto('/devices');
+    const c = page.getByTestId(`device-oled-${deviceId}`).locator('canvas');
+    await expect.poll(() => c.evaluate((el: HTMLCanvasElement) =>
+      el.getContext('2d')!.getImageData(0, 0, el.width, el.height).data.some((v, i) => i % 4 === 0 && v > 0))).toBe(true);
+    return c.evaluate((el: HTMLCanvasElement) => el.toDataURL());
+  };
+  await setDevice(deviceId, { displayPanel: '128x32', displayLayout: Buffer.from(upright) });
+  const want = await glass();
+  await setDevice(deviceId, { displayPanel: '128x32', displayLayout: Buffer.from(turned) });
+  expect(await glass()).toBe(want);
+});
+
+// Pillock, 2026-10-19: on a phone the Devices page used half the width.
+test('on a phone a device card uses the whole width', async ({ page, request }) => {
+  await signUpFresh(page);
+  const { deviceId } = await pairDevice(page, request);
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto('/devices');
+  const box = await page.locator(`#device-${deviceId}`).boundingBox();
+  expect(box!.width).toBeGreaterThan(330);   // 390 less the 16 px gutters, not half of it
 });
 
 /** LiveRefresh polls every 3 s while the tab is in use; allow a few ticks plus the RSC refresh. */

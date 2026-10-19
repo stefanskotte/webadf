@@ -284,7 +284,7 @@ export const HELP_TOPICS = {
   // full only at 100 %), display_layout.h STATUS_OPT_ICON (opt 1; the word in every default),
   // display_layout_for (built-in screens take the icon), display-layout.ts STATUS_ICON_FIRMWARE 1.15.0.
   // Rotation (1.17.0): oled_cmds.c (A0/C0 in the controller, every screen turns), display_layout.h
-  // REC_ROTATION, display-editor.tsx (Rotation select, reset keeps the turn), route.ts tooOldReason.
+  // REC_ROTATION, display-editor.tsx (Rotation select, reset keeps the turn), drive-bezel.tsx (stripRotation), route.ts tooOldReason.
   // Track counter side arrow (1.18.0): display.c track_text ("42" arrow "79", down = side 0, up = side 1).
   // The 1.17.0 head element (id 10) was withdrawn; stored layouts that name it lose it silently.
   display: {
@@ -299,7 +299,7 @@ export const HELP_TOPICS = {
         <p>
           Pick the <em>Panel</em> (128×32 or 128×64) and drag elements into place, shown or hidden, at 1× or 2×.{' '}
           <em>Preview as</em> shows other situations. <em>Rotation</em> 180° turns every screen for a board mounted
-          upside down; the preview stays upright.
+          upside down; the preview and the card&rsquo;s screen stay upright.
         </p>
         <p>
           The <em>track</em> counter reads cylinder, a side arrow, then the last cylinder, as{' '}
