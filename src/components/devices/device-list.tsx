@@ -225,7 +225,7 @@ export function DeviceList({
         card keeps its own height, so one open drawer does not stretch its row
         neighbours into the empty band the square cards had.
       */}
-      <div className="grid grid-cols-2 items-start gap-3 lg:grid-cols-3">
+      <div className="grid grid-cols-1 items-start gap-3 sm:grid-cols-2 lg:grid-cols-3">
         {devices.map((d, i) => (
           <DeviceCard
             key={d.id} device={d} now={now} firmware={states[i]}

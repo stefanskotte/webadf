@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { readFile } from 'node:fs/promises';
 import {
   encodeLayout, decodeLayout, layoutMinFirmware, ELEMENT_NAMES, panelId, NFC_ELEMENT_FIRMWARE, STATUS_ICON_FIRMWARE, STATUS_OPT,
-  stripHeadRecords, ROTATION_FIRMWARE, ROTATION_RECORD, type LayoutJson,
+  stripHeadRecords, stripRotation, ROTATION_FIRMWARE, ROTATION_RECORD, type LayoutJson,
 } from './display-layout';
 
 const FIX = 'wifi-floppy/firmware/test/fixtures/layouts';
@@ -49,6 +49,24 @@ describe('display layout encoding', () => {
       const plain = new Uint8Array(await readFile(`${FIX}/default32.bin`));
       expect(stripHeadRecords(plain)).toBe(plain);
       expect(stripHeadRecords(new Uint8Array([9, 9]))).toEqual(new Uint8Array([9, 9]));   // not a layout: untouched
+    });
+  });
+
+  // The device card's bezel draws the board's screen upright, as the editor's
+  // preview does: the turn is how the panel is mounted, not what it shows.
+  describe('stripRotation: the blob the bezel draws', () => {
+    it('drops the rotation record and fixes the count; the elements are untouched', async () => {
+      const bin = new Uint8Array(await readFile(`${FIX}/custom32_head_rot180.bin`));
+      const out = stripRotation(bin);
+      expect(out.length).toBe(bin.length - 8);
+      expect(out[2]).toBe(bin[2] - 1);
+      expect(decodeLayout(out)).toEqual({ ...decodeLayout(bin), rotation: undefined });
+      expect(decodeLayout(out).rotation).toBeUndefined();
+    });
+    it('returns an upright blob, or one that is not a layout, as it is', async () => {
+      const plain = new Uint8Array(await readFile(`${FIX}/default32.bin`));
+      expect(stripRotation(plain)).toBe(plain);
+      expect(stripRotation(new Uint8Array([9, 9]))).toEqual(new Uint8Array([9, 9]));
     });
   });
 
