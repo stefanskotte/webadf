@@ -198,6 +198,10 @@ static void request_reboot(uint32_t flash_update_off, bool ota) {
 void fw_rom_request_reboot(uint32_t flash_update_off) { request_reboot(flash_update_off, false); }
 void fw_rom_request_ota_reboot(uint32_t flash_update_off) { request_reboot(flash_update_off, true); }
 
+void fw_rom_watchdog_start_boot(void) {
+    watchdog_enable(16000, false);   // pause_on_debug off, as fw_rom_watchdog_start (fix round 3)
+}
+
 void fw_rom_watchdog_start(void) {
     // Fix round 3 (bench): pause_on_debug is now OFF. This board never runs
     // under a debugger (no SWD probe attached in the field or on the

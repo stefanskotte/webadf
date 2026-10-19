@@ -3957,6 +3957,8 @@ int main(void) {
         }
         wf_logf(WF_INFO, "board: %s", g_board->name);
     }
+    // The boot path's watchdog (fw_rom.h fw_rom_watchdog_start_boot): after the buy and PSRAM, before the I2C scan.
+    fw_rom_watchdog_start_boot();
 
     // inputs. PIN_WDATA belongs here too even though only PIO reads it: an
     // RP2350 pad stays isolated from reset until gpio_set_function() clears
