@@ -109,7 +109,8 @@ bool drive_store_idle(uint32_t now, bool motor_on, bool wgate_asserted,
 //   -1 token_store.c   -2 config_store.c   -3 fw_state.c (OTA state)
 //   -4 display_store.c   -5 drive_store.c (this one)
 //   -6 override_store.c
-// The A/B partitions (partitions.json) end at 8224K, far below all six.
+//   -7 boot_trail_hw.c (update trail)   -8 key_store.c (the board key, fw 1.19.0)
+// The A/B partitions (partitions.json) end at 8224K, far below all eight.
 #define DRIVE_FLASH_OFFSET (PICO_FLASH_SIZE_BYTES - 5 * FLASH_SECTOR_SIZE)
 #define DRIVE_STORE_CAP    FLASH_PAGE_SIZE   // one program page
 

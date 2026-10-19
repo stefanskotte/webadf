@@ -121,8 +121,8 @@ if (WF_PNET_L2)
   endif ()
   list(APPEND WFMF_FIRMWARE_SOURCES src/pnet_sort.c src/pnet_ring.c src/pnet_link.c src/pnet_bridge.c src/pnet_status.c
               src/pnet_lz4.c src/pnet_pack.c)
-  # PaulaNET Phase 4 (fw 1.14.0): files sent to Receive on the Amiga.
-  list(APPEND WFMF_FIRMWARE_SOURCES src/amiga_send.c src/amiga_tcp.c)
+  # PaulaNET Phase 4 (fw 1.14.0): files sent to Receive on the Amiga; uploads (fw 1.19.0) and the board key.
+  list(APPEND WFMF_FIRMWARE_SOURCES src/amiga_send.c src/amiga_tcp.c src/key_store.c)
   message(STATUS "WF_PNET_L2 is ON: DF1 Network mode (layer-2 sharing) is built in.")
 endif ()
 # Increment 0 of plan 2026-10-19 (spec 2026-10-18 §10 step 0): a TCP discard service on 6801 and full-size frames from
