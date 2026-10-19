@@ -102,7 +102,7 @@ describe('verifyRelease refuses bench-only images regardless of notes', () => {
     const msg = firmwareManifest({ version: m.version, sequence: m.sequence, sha256: s, sizeBytes: image.length });
     return { ...m, signature: sign(null, Buffer.from(msg, 'ascii'), privateKey).toString('base64'), notes: 'TEST build' } as ReleaseManifest;
   }
-  for (const [marker, re] of [['wf-df1-default-on', /DF1/], ['wf-pnet-loop-test', /PaulaNET loopback/], ['fwdbg', /WF_FW_DEBUG/]] as const) {
+  for (const [marker, re] of [['wf-df1-default-on', /DF1/], ['wf-pnet-loop-test', /PaulaNET loopback/], ['wf-a2b-discard-test', /discard/], ['fwdbg', /WF_FW_DEBUG/]] as const) {
     it(`refuses an image carrying ${marker}, even with TEST build notes`, () => {
       const image = Buffer.concat([bin, Buffer.from(marker, 'ascii')]);
       expect(verifyRelease(signed(image), image, keys)).toMatch(re);

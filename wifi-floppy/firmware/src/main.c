@@ -82,6 +82,9 @@
 #include "pnet_pack.h"       //   ...board -> Amiga packing
 #include "amiga_send.h"      // Phase 4: files sent to Receive on the Amiga
 #include "amiga_tcp.h"       //   its lwIP and HTTPS ops
+#if WF_A2B_DISCARD
+#include "a2b_discard.h"     // increment 0 of plan 2026-10-19: TEST builds only
+#endif
 #endif
 #endif
 
@@ -1845,6 +1848,9 @@ static void core1_main(void) {
     }
 #if WF_PNET_L2
     pnet_bridge_start();          // the input hook and the send worker (plan 2026-10-11)
+#if WF_A2B_DISCARD
+    a2b_discard_start();          // increment 0 (plan 2026-10-19 Task 1): the bench copies to <board>:6801
+#endif
     net_radio_mac(g_pnet_mac);    // Phase 2: for cylinder 76's status track, published once
     __dmb();
     g_pnet_mac_ok = true;
@@ -2421,6 +2427,24 @@ static void core1_main(void) {
             // Cheap, every pass (no HTTPS): connect retries, the handshake, pings, Receive's replies, pushing bytes.
             as_tick(&g_send);
             dc_set_send(&c, as_acked_version(&g_send), as_rx(&g_send));
+#if WF_A2B_DISCARD
+            {   // Increment 0: one line every 2 s while a copy runs, and the totals once it ends.
+                static uint32_t a2b_log_ms, a2b_logged;
+                if (clock_ms() - a2b_log_ms >= 2000u) {
+                    a2b_log_ms = clock_ms();
+                    a2b_stats_t a;
+                    a2b_discard_stats(&a);
+                    if (a.bytes != a2b_logged || a.open) {
+                        a2b_logged = a.bytes;
+                        wf_logf(WF_INFO, "a2b: %lu B in %lu ms = %lu B/s ooseq max %lu mem max %lu err %lu conns %lu%s",
+                                (unsigned long)a.bytes, (unsigned long)a.ms,
+                                (unsigned long)(a.ms ? (uint32_t)((uint64_t)a.bytes * 1000u / a.ms) : 0u),
+                                (unsigned long)a.ooseq_max, (unsigned long)a.mem_max, (unsigned long)a.mem_err,
+                                (unsigned long)a.conns, a.open ? "" : " (closed)");
+                    }
+                }
+            }
+#endif
 #endif
             g_up_holds = up_holds(&up);   // core0's DF1 store rule (R17)
 

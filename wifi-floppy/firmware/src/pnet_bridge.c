@@ -94,7 +94,11 @@ static err_t pnet_input(struct pbuf *p, struct netif *nif) {
 // of TCP payload, ~364 on the wire, and a frame dropped here is dropped on every retransmit too, so the board never
 // sees the OK and sends the file again (review C2). 768 covers a 640-byte line (Receive's RX_LINE_MAX) with headers.
 // Larger frames are dropped and counted; raise the cap when a board-side service takes bulk data from the Amiga.
+#if WF_A2B_DISCARD
+#define PNET_LOCAL_A2B_MAX PNET_RING_MTU   // increment 0 (plan 2026-10-19 Task 1): full frames, measured first (spec U9)
+#else
 #define PNET_LOCAL_A2B_MAX 768u
+#endif
 static void pnet_to_board(struct netif *nif, const uint8_t *f, uint16_t len) {
     struct pbuf *p = s_next && len <= PNET_LOCAL_A2B_MAX ? pbuf_alloc(PBUF_RAW, len, PBUF_RAM) : NULL;
     if (!p) { s_local_drops++; return; }
