@@ -16,8 +16,15 @@ enum {
 };
 enum { PCD_IDLE = 0x00, PCD_CALCCRC = 0x03, PCD_TRANSCEIVE = 0x0C, PCD_AUTHENT = 0x0E,
        PCD_RESETPHASE = 0x0F };
-enum { PICC_REQALL = 0x52, PICC_ANTICOLL1 = 0x93, PICC_AUTHENT1A = 0x60,
+enum { PICC_REQALL = 0x52, PICC_ANTICOLL1 = 0x93, PICC_ANTICOLL2 = 0x95, PICC_AUTHENT1A = 0x60,
        PICC_READ = 0x30, PICC_WRITE = 0xA0 };
+// Not the vendor's: the Type 2 (NTAG21x / Ultralight) one-page WRITE.
+enum { PICC_T2_WRITE = 0xA2 };
+// ISO/IEC 14443-3 Type A: the cascade tag that opens CL1 of a double-size
+// UID, and the SAK bit that says "UID not complete" (the vendor tests
+// SAK & 0x04 the same way in its Request-Anticoll-Select loop).
+#define CASCADE_TAG   0x88
+#define SAK_CASCADE   0x04
 #define RFCfgReg_Val 0x68
 
 // ---- Timing ---------------------------------------------------------------
@@ -404,7 +411,7 @@ static bool st_anticoll(nfc_reader_t *r) {
         // short answer cannot pass on the bytes of an earlier frame.
         if (r->status == MI_OK && r->rx_bits == 40 &&
             (uint8_t)(r->rx[0] ^ r->rx[1] ^ r->rx[2] ^ r->rx[3]) == r->rx[4]) {
-            memcpy(r->uid, r->rx, 4);
+            nfc_uid_set(r, r->rx, 4);    // CL1: the whole UID, or CT + UID0-2
             r->phase = 2;
         } else {
             r->phase = 3;
@@ -417,22 +424,97 @@ static bool st_anticoll(nfc_reader_t *r) {
         if (r->phase == 3) { nfc_enter_idle(r, false); return true; }   // collision or garbage
         break;
     }
+    // CL1 began with the cascade tag: a double-size UID (an NTAG), whose rest
+    // is at cascade level 2 (st_cascade). A single-size UID is complete.
+    if (r->uid[0] == CASCADE_TAG) { go(r, ST_CASCADE); return true; }
+    r->uid_len = 4;
     // The session decides whether this is a tap (nfc_arrival), before the
     // tag is even selected: a held tag is not read again.
     if (nfc_arrival(r)) go(r, ST_SELECT);
     return true;
 }
 
+// The SELECT frame for the UID part at this cascade level, its CRC_A to come:
+// sel 70 part[4] BCC (the vendor's PcdSelect1 / PcdSelect2).
+static void select_frame(nfc_reader_t *r, uint8_t sel, const uint8_t part[4]) {
+    r->tx[0] = sel;
+    r->tx[1] = 0x70;
+    r->tx[6] = 0;
+    for (int k = 0; k < 4; k++) {
+        r->tx[k + 2] = part[k];
+        r->tx[6] ^= part[k];
+    }
+}
+
+/*
+ * A double-size UID, as the vendor's Request-Anticoll-Select loop does it
+ * (SI512_App.c: PcdAnticoll(UID, PICC_ANTICOLL1), PcdSelect1, SAK & 0x04,
+ * PcdAnticoll(UID + 4, PICC_ANTICOLL2)) and as ISO/IEC 14443-3 describes it:
+ * CL1 answered CT 88 + UID0-2; SELECT at CL1 answers SAK 0x04 (UID not
+ * complete); ANTICOLL at CL2 (SEL 0x95) answers UID3-6 + BCC. Only then is the
+ * UID whole, and only then can the session tell this tag from another
+ * (nfc_arrival): two NTAGs share CL1 when their first three bytes match. The
+ * last SELECT, at CL2, is st_select's. Anything off the script here -- no
+ * cascade bit, a bad BCC, no answer -- is a collision or a tag at the edge of
+ * the field: back to idle, nothing reported (as a bad CL1 answer).
+ */
+static bool st_cascade(nfc_reader_t *r) {
+    switch (r->phase) {
+    case 0:
+        select_frame(r, PICC_ANTICOLL1, r->uid);
+        r->phase = 1;
+        call_crc(r, 7);
+        return true;
+    case 1:
+        if (r->status != MI_OK) { nfc_enter_idle(r, false); return true; }
+        if (r->pc < SCRIPT_LEN(SELECT_PRE_OPS)) return script_op(r, SELECT_PRE_OPS);
+        r->phase = 2;
+        call_com(r, PCD_TRANSCEIVE, 9, 0x00);
+        return true;
+    case 2:
+        if (r->status != MI_OK || r->rx_bits != 0x18 || !(r->rx[0] & SAK_CASCADE)) {
+            nfc_enter_idle(r, false);
+            return true;
+        }
+        r->phase = 3;
+        r->pc = 0;
+        r->tmp = -1;
+        return true;
+    case 3:
+        if (r->pc < SCRIPT_LEN(ANTICOLL_PRE_OPS)) return script_op(r, ANTICOLL_PRE_OPS);
+        r->tx[0] = PICC_ANTICOLL2;
+        r->tx[1] = 0x20;
+        r->phase = 4;
+        call_com(r, PCD_TRANSCEIVE, 2, 0x00);
+        return true;
+    case 4:
+        if (r->status == MI_OK && r->rx_bits == 40 &&
+            (uint8_t)(r->rx[0] ^ r->rx[1] ^ r->rx[2] ^ r->rx[3]) == r->rx[4]) {
+            uint8_t u[7] = { r->uid[1], r->uid[2], r->uid[3], r->rx[0], r->rx[1], r->rx[2], r->rx[3] };
+            nfc_uid_set(r, u, 7);
+            r->phase = 5;
+        } else {
+            r->phase = 6;
+        }
+        r->pc = 0;
+        r->tmp = -1;
+        return true;
+    default:
+        if (r->pc < SCRIPT_LEN(ANTICOLL_POST_OPS)) return script_op(r, ANTICOLL_POST_OPS);
+        if (r->phase == 6) { nfc_enter_idle(r, false); return true; }
+        break;
+    }
+    if (nfc_arrival(r)) go(r, ST_SELECT);
+    return true;
+}
+
+// The last SELECT: CL1 for a single-size UID, CL2 (UID3-6) for a double-size
+// one. Its SAK says what the tag is (nfc_tag_selected).
 static bool st_select(nfc_reader_t *r) {
     switch (r->phase) {
     case 0:
-        r->tx[0] = PICC_ANTICOLL1;
-        r->tx[1] = 0x70;
-        r->tx[6] = 0;
-        for (int k = 0; k < 4; k++) {
-            r->tx[k + 2] = r->uid[k];
-            r->tx[6] ^= r->uid[k];
-        }
+        if (r->uid_len == 7) select_frame(r, PICC_ANTICOLL2, r->uid + 3);
+        else                 select_frame(r, PICC_ANTICOLL1, r->uid);
         r->phase = 1;
         call_crc(r, 7);
         return true;
@@ -444,11 +526,13 @@ static bool st_select(nfc_reader_t *r) {
         return true;
     default:
         if (r->status != MI_OK || r->rx_bits != 0x18) { nfc_moved(r); return true; }
-        // SAK bit 3: MIFARE Classic (08 for the 1K). Without it -- an NTAG,
-        // whose SAK 04 says "UID not complete", or anything else -- sector 1
-        // does not exist, and the honest answer is "not ours", not "locked".
-        if (!(r->rx[0] & 0x08)) { nfc_finish(r, NFC_EV_NOT_OURS, NULL); return true; }
-        go(r, ST_AUTH);
+        // SAK 08 with a 4-byte UID: MIFARE Classic, on to key A. SAK 00 with
+        // a 7-byte UID: a Type 2 tag (an NTAG), no auth. Anything else --
+        // an ISO-DEP card, a 7-byte Classic, a DESFire -- is "not supported",
+        // and reported as such, not as "not a disk tag" (nfc_tag_selected).
+        if (!nfc_tag_selected(r, r->rx[0])) return true;
+        if (r->kind == NFC_KIND_CLASSIC) go(r, ST_AUTH);
+        else go(r, r->writing ? ST_WRITE : ST_READ);
         return true;
     }
 }
@@ -479,8 +563,8 @@ static bool st_auth(nfc_reader_t *r) {
 static bool st_read(nfc_reader_t *r) {
     switch (r->phase) {
     case 0:
-        r->tx[0] = PICC_READ;
-        r->tx[1] = (uint8_t)r->block;
+        r->tx[0] = PICC_READ;            // the same frame on a Type 2 tag: four pages
+        r->tx[1] = nfc_read_addr(r);
         r->phase = 1;
         call_crc(r, 2);
         return true;
@@ -503,7 +587,42 @@ static bool ack_ok(const nfc_reader_t *r) {
     return r->status == MI_OK && r->rx_bits == 4 && (r->rx[0] & 0x0F) == 0x0A;
 }
 
+// A Type 2 tag's WRITE: A2 page d0..d3 + CRC_A, one page, answered by the
+// same 4-bit ACK (0xA) as a Classic WRITE's halves -- handled the same way,
+// by ack_ok -- or by a 4-bit NAK (0x0 / 0x1 / 0x4 / 0x5): the tag is there
+// and refuses the page, which is "locked", not "moved". Never the 16-byte
+// COMPATIBILITY WRITE (0xA0), and never a page outside 4-15 (nfc_t2_page).
+static bool st_write_t2(nfc_reader_t *r) {
+    switch (r->phase) {
+    case 0: {
+        int pg = nfc_t2_page(r);
+        if (pg < 0) { nfc_moved(r); return true; }   // cannot happen; nothing is sent
+        r->tx[0] = PICC_T2_WRITE;
+        r->tx[1] = (uint8_t)pg;
+        memcpy(r->tx + 2, nfc_t2_page_out(r), 4);
+        r->phase = 1;
+        call_crc(r, 6);
+        return true;
+    }
+    case 1:
+        if (r->status != MI_OK) { nfc_moved(r); return true; }
+        r->phase = 2;
+        call_com(r, PCD_TRANSCEIVE, 8, 0x00);
+        return true;
+    default:
+        if (ack_ok(r)) {
+            if (nfc_t2_page_written(r)) { r->phase = 0; return true; }
+            go(r, ST_READBACK);
+            return true;
+        }
+        if (r->status == MI_OK && r->rx_bits == 4) { nfc_write_refused(r); return true; }   // a NAK
+        nfc_moved(r);
+        return true;
+    }
+}
+
 static bool st_write(nfc_reader_t *r) {
+    if (r->kind == NFC_KIND_T2) return st_write_t2(r);
     switch (r->phase) {
     case 0:
         r->tx[0] = PICC_WRITE;
@@ -548,6 +667,7 @@ bool si512_handle(nfc_reader_t *r) {
     case ST_IDLE:     return st_idle(r);
     case ST_REQ:      return st_req(r);
     case ST_ANTICOLL: return st_anticoll(r);
+    case ST_CASCADE:  return st_cascade(r);
     case ST_SELECT:   return st_select(r);
     case ST_AUTH:     return st_auth(r);
     case ST_READ:

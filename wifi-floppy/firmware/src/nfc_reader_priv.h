@@ -23,6 +23,7 @@ typedef enum {
     ST_IDLE,       // field off until the next poll, then on and settle
     ST_REQ,        // PcdRequest(WUPA)
     ST_ANTICOLL,   // PcdAnticoll(level 1) and the debounce decision
+    ST_CASCADE,    // a double-size UID: PcdSelect1 (SAK 0x04), PcdAnticoll(level 2)
     ST_SELECT,     // PcdSelect
     ST_AUTH,       // PcdAuthState(key A, sector 1)
     ST_READ,       // PcdRead x 3
@@ -49,6 +50,28 @@ typedef enum {
 #define FIRST_BLOCK 4
 #define LAST_BLOCK  6
 
+// The tag kinds (nfc_classify), decided once the tag is selected.
+typedef enum {
+    NFC_KIND_NONE,      // anything else: NFC_EV_NOT_SUPPORTED
+    NFC_KIND_CLASSIC,   // a 4-byte UID and SAK bit 3: MIFARE Classic (08 for the 1K)
+    NFC_KIND_T2,        // a 7-byte UID and SAK 0x00: NFC Forum Type 2 -- NTAG213/215/216
+} nfc_kind_t;
+
+// A Type 2 tag holds the same 48-byte payload (nfc_tag.h) in pages 4-15: the
+// session's "blocks" 4, 5, 6 are pages 4-7, 8-11, 12-15, read 16 bytes (four
+// pages) at a time with READ 0x30 and written one page at a time with WRITE
+// 0xA2. Pages 0-3 (UID, static lock bytes, the Capability Container -- all
+// one-time-programmable or read-only) and the dynamic lock / configuration
+// pages (NTAG213 0x28+, 215 0x82+, 216 0xE2+) are never written: the smallest,
+// NTAG213, has user memory 4-39, so 4-15 is user memory on every NTAG21x (and
+// on every MIFARE Ultralight, whose user pages are 4-15) -- no GET_VERSION is
+// needed to know where the payload may go.
+#define T2_FIRST_PAGE 4
+#define T2_LAST_PAGE  (T2_FIRST_PAGE + NFC_TAG_BYTES / 4 - 1)
+#define T2_NTAG213_CFG_PAGE 0x28   // the first page never to be written, on the smallest
+_Static_assert(T2_LAST_PAGE == 15, "the payload is pages 4-15");
+_Static_assert(T2_LAST_PAGE < T2_NTAG213_CFG_PAGE, "the payload fits NTAG213's user memory (144 bytes)");
+
 enum { MI_OK, MI_NOTAGERR, MI_ERR };
 
 // ---- The session, for the backends (nfc_reader.c) --------------------------
@@ -70,9 +93,33 @@ void nfc_empty_poll(nfc_reader_t *r);
 // decided and the backend runs it. false: the held tag again, the session has
 // gone back to idle.
 bool nfc_arrival(nfc_reader_t *r);
+// The tag's UID: `n` (4 or 7) bytes of `b`, the rest of r->uid zeroed -- the
+// only way a backend sets it, so a UID comparison may cover all NFC_UID_MAX.
+void nfc_uid_set(nfc_reader_t *r, const uint8_t *b, int n);
+// What a selected tag is: from its UID length (4 or 7) and its final SAK.
+nfc_kind_t nfc_classify(int uid_len, uint8_t sak);
+// The tag in r->uid answered SELECT with `sak`. false: a kind this reader does
+// not handle, and NFC_EV_NOT_SUPPORTED is built. true: r->kind is set; a
+// Classic goes on to its auth, a Type 2 tag straight to its blocks
+// (r->block = FIRST_BLOCK; read or write by r->writing).
+bool nfc_tag_selected(nfc_reader_t *r, uint8_t sak);
 // The tag answered key A (true: r->block = FIRST_BLOCK; read or write by
 // r->writing), or did not ("locked").
 void nfc_auth_done(nfc_reader_t *r, bool ok);
+// The READ address for r->block: the block itself on a Classic, its first page
+// on a Type 2 tag.
+uint8_t nfc_read_addr(const nfc_reader_t *r);
+// A Type 2 write: the page to write next (T2_FIRST_PAGE..T2_LAST_PAGE, the
+// only pages ever written -- -1 if somehow not, and nothing may be sent), and
+// its 4 bytes.
+int nfc_t2_page(const nfc_reader_t *r);
+const uint8_t *nfc_t2_page_out(const nfc_reader_t *r);
+// One page written: true = more to write; false = all written, r->block =
+// FIRST_BLOCK for the read-back.
+bool nfc_t2_page_written(nfc_reader_t *r);
+// The tag answered the WRITE with a NAK: it is there, and refuses -- a locked
+// or password-protected page. WRITE_DONE "locked".
+void nfc_write_refused(nfc_reader_t *r);
 // One block read: true = more to read (r->block advanced); false = the event
 // is built (a decode, or the read-back's verify).
 bool nfc_block_in(nfc_reader_t *r, const uint8_t b[16], bool readback);

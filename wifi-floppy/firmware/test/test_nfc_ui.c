@@ -70,7 +70,8 @@ static void every_fixed_line_fits_the_detail_line(void) {
     CHECK((int)strlen(nfc_ui_tap_line(DC_TAP_MOUNTING, "", b, sizeof b)) <= DISP_DETAIL_MAX,
           "the untitled mount line fits");
     const char *whys[] = { NULL, "locked", "bad data", "moved", "verify" };
-    const nfc_ev_kind_t kinds[] = { NFC_EV_NOT_OURS, NFC_EV_UNREADABLE, NFC_EV_WRITE_DONE };
+    const nfc_ev_kind_t kinds[] = { NFC_EV_NOT_OURS, NFC_EV_UNREADABLE, NFC_EV_WRITE_DONE,
+                                    NFC_EV_NOT_SUPPORTED };
     for (unsigned k = 0; k < sizeof kinds / sizeof kinds[0]; k++)
         for (unsigned w = 0; w < sizeof whys / sizeof whys[0]; w++)
             for (int ok = 0; ok < 2; ok++) {
@@ -93,6 +94,9 @@ static void a_long_title_is_clipped_to_the_line(void) {
 static void local_event_lines(void) {
     nfc_event_t e = ev_of(NFC_EV_NOT_OURS, NULL);
     CHECK(strcmp(nfc_ui_event_line(&e), "Tag: not a disk tag") == 0, "no WFDK marker");
+    e = ev_of(NFC_EV_NOT_SUPPORTED, NULL);
+    CHECK(strcmp(nfc_ui_event_line(&e), "Tag: not supported") == 0,
+          "neither a MIFARE Classic 1K nor an NTAG21x");
     e = ev_of(NFC_EV_UNREADABLE, "locked");
     CHECK(strcmp(nfc_ui_event_line(&e), "Tag: locked") == 0, "auth failed");
     e = ev_of(NFC_EV_UNREADABLE, "bad data");
@@ -126,6 +130,12 @@ static void uid_as_hex(void) {
     nfc_event_t e = ev_of(NFC_EV_WRITE_DONE, NULL);
     nfc_ui_uid_hex(&e, h);
     CHECK(strcmp(h, "DEAD0B01") == 0, "four bytes, eight upper-case digits, zero-padded");
+    static const uint8_t u7[7] = { 0x04, 0xB3, 0x2F, 0x3E, 0x34, 0x02, 0x89 };
+    memcpy(e.uid, u7, 7);
+    e.uid_len = 7;
+    nfc_ui_uid_hex(&e, h);
+    CHECK(strcmp(h, "04B32F3E340289") == 0, "an NTAG's seven bytes, all of them");
+    CHECK((int)strlen(h) <= 32, "inside the server's uid bound");
     e.uid_len = 0;
     nfc_ui_uid_hex(&e, h);
     CHECK(strcmp(h, "none") == 0, "no tag (a refused arm): never empty, the server needs 1+ chars");

@@ -48,6 +48,7 @@ const char *nfc_ui_next_line(dc_tap_outcome_t o, uint32_t disk_no, uint32_t disk
 const char *nfc_ui_event_line(const nfc_event_t *ev) {
     switch (ev->kind) {
     case NFC_EV_NOT_OURS:   return "Tag: not a disk tag";
+    case NFC_EV_NOT_SUPPORTED: return "Tag: not supported";
     case NFC_EV_UNREADABLE:
         return ev->why && strcmp(ev->why, "locked") == 0 ? "Tag: locked" : "Tag: unreadable";
     case NFC_EV_WRITE_DONE: return ev->ok ? "Tag written" : "Write failed";
@@ -55,10 +56,15 @@ const char *nfc_ui_event_line(const nfc_event_t *ev) {
     }
 }
 
+void nfc_ui_hex(const uint8_t *b, int n, char out[NFC_UI_UID_HEX_BYTES]) {
+    if (n > NFC_UID_MAX) n = NFC_UID_MAX;
+    out[0] = '\0';
+    for (int i = 0; i < n; i++) snprintf(out + 2 * i, 3, "%02X", b[i]);
+}
+
 void nfc_ui_uid_hex(const nfc_event_t *ev, char out[NFC_UI_UID_HEX_BYTES]) {
-    if (ev->uid_len <= 0) { snprintf(out, NFC_UI_UID_HEX_BYTES, "none"); return; }
-    int n = ev->uid_len > 4 ? 4 : ev->uid_len;
-    for (int i = 0; i < n; i++) snprintf(out + 2 * i, 3, "%02X", ev->uid[i]);
+    if (ev->uid_len == 0) { snprintf(out, NFC_UI_UID_HEX_BYTES, "none"); return; }
+    nfc_ui_hex(ev->uid, ev->uid_len, out);
 }
 
 void nfc_armed_init(nfc_armed_t *a) {

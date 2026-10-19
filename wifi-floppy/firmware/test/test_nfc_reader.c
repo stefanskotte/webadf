@@ -333,11 +333,12 @@ static void disarm_before_tag_means_plain_read(void) {
 
 // ---- beyond the brief's twelve --------------------------------------------
 
-static void non_classic_tag_is_not_ours(void) {
+static void non_classic_tag_is_not_supported(void) {
     setup();
-    F.sak = 0x04;                            // an NTAG's cascade-level-1 SAK
+    F.sak = 0x04;                            // a 4-byte UID with no SAK bit 3: not a Classic
     run(1000);
-    CHECK_EQ_INT(count(NFC_EV_NOT_OURS), 1);
+    CHECK_EQ_INT(count(NFC_EV_NOT_SUPPORTED), 1);
+    CHECK_EQ_INT(count(NFC_EV_NOT_OURS), 0);
     CHECK_EQ_INT(count(NFC_EV_UNREADABLE), 0);
     end_checks();
 }
@@ -811,7 +812,7 @@ int main(void) {
     RUN(write_to_locked_tag_fails_locked);
     RUN(write_readback_mismatch_fails_verify);
     RUN(disarm_before_tag_means_plain_read);
-    RUN(non_classic_tag_is_not_ours);
+    RUN(non_classic_tag_is_not_supported);
     RUN(tag_pulled_mid_read_is_unreadable_moved);
     RUN(tag_pulled_mid_write_fails_moved);
     RUN(two_failed_transfers_are_not_a_loss);

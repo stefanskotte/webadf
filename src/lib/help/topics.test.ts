@@ -66,8 +66,17 @@ describe('help topics say what the app really does', () => {
     expect(t).not.toMatch(/\bhead\b/);
     expect(t).not.toMatch(/40\.1/);
   });
-  it('nfc names the tag type that works (MIFARE Classic; NTAG stickers are refused)', () => {
-    expect(HELP_TOPICS.nfc.short + bodyText('nfc')).toMatch(/MIFARE Classic/);
+  it('nfc names the tag types that work: MIFARE Classic 1K, and NTAG213/215/216 from fw 1.18.1', () => {
+    const b = HELP_TOPICS.nfc.short + bodyText('nfc');
+    expect(b).toMatch(/MIFARE Classic 1K/);
+    expect(b).toMatch(/NTAG213, NTAG215 or NTAG216/);
+    expect(b).toMatch(/1\.18\.1/);
+    expect(b).not.toMatch(/not recognised/);
+  });
+  it('nfc: another kind of tag shows "Tag: not supported"; a blank one "Tag: not a disk tag" (fw 1.18.1 nfc_ui.c)', () => {
+    const b = bodyText('nfc');
+    expect(b).toMatch(/Tag: not supported/);
+    expect(b).toMatch(/Tag: not a disk tag/);
   });
   it('nfc explains the reader line on the board card (fw 1.17.0 boot scan: 0x28, and 0x24 for a PN532)', () => {
     const b = bodyText('nfc');
@@ -82,7 +91,7 @@ describe('help topics say what the app really does', () => {
     expect(b).toMatch(/1\.18\.0/);
     expect(b).toMatch(/being tested/);
     expect(b).not.toMatch(/Both kinds of red reader module work/);
-    expect(b).not.toMatch(/not supported/);
+    expect(b).not.toMatch(/PN532[^.]*not supported/);
   });
   it('nfc: a PN532 is looked for only at start-up (fw 1.18.0 needs the boot scan to see 0x24)', () => {
     expect(bodyText('nfc')).toMatch(/restart the board after connecting/);

@@ -26,7 +26,13 @@
 //   - InDataExchange carries MIFARE Classic auth (0x60), READ (0x30) and
 //     WRITE (0xA0) (§7.3.8); its status byte is the §7.1 error code: 0x14 a
 //     failed auth, 0x01 a tag that did not answer (after the 51.2 ms default
-//     timeout, §7.3.1 CfgItem 2).
+//     timeout, §7.3.1 CfgItem 2);
+//   - a Type 2 tag (pn532_fake_ntag: NTAG213/215/216) is a "Mifare" target
+//     too: InListPassiveTarget reports its whole 7-byte UID and the final SAK
+//     0x00; InDataExchange READ 0x30 answers four pages and "0xA2 4 bytes
+//     writing" (§7.3.8) one page. A page the tag NAKs answers status 0x14:
+//     the manual does not say which code a Type 2 NAK becomes, and 0x14 is
+//     what libnfc reports for one -- a modelling choice, flagged as such.
 #include <stdbool.h>
 #include <stdint.h>
 #include "../src/nfc_reader.h"
@@ -41,6 +47,10 @@ typedef struct {
     int     ats_len;           // > 0: an ISO 14443-4 card's ATS of this many bytes in TargetData
     uint8_t sector1[48];       // blocks 4, 5, 6
     bool    locked;            // key A is not FF..FF
+    // A Type 2 tag (ntag_pages > 0; pn532_fake_ntag): pages of 4 bytes.
+    int     ntag_pages;        // 45 NTAG213, 135 NTAG215, 231 NTAG216; 0 = a Classic tag
+    uint8_t mem[231 * 4];
+    bool    write_protected;   // every WRITE is NAKed
     bool    flip_next_read;    // the next READ answers with one bit flipped
     int     tag_leaves_after_cmds;   // -1 never; once N commands have arrived the tag is gone
     int     vanish_after_xfers;      // -1 never; from transfer N on every transfer fails
@@ -60,6 +70,11 @@ typedef struct {
     int  retries_passive;      // MxRtyPassiveActivation as configured (0xFF default)
     bool sam_done;
     int  reads;                // READs the tag answered
+    int  page_writes;          // Type 2 WRITEs (0xA2) the tag accepted
+    int  low_page_writes;      // Type 2 WRITEs aimed at pages 0-3: must stay 0
+    int  cfg_page_writes;      // Type 2 WRITEs aimed at the dynamic lock / config pages: must stay 0
+    int  max_page_written;     // -1
+    int  compat_writes;        // InDataExchange 0xA0 to a Type 2 tag: never used, must stay 0
     int  trailer_writes;       // WRITEs aimed at block 7 (must stay 0)
     int  ilpt_found;           // InListPassiveTarget answers with a tag
     uint32_t field_on_ms;      // total time the field has been on (closed intervals)
@@ -93,6 +108,9 @@ typedef struct {
 void pn532_fake_init(pn532_fake_t *f, const uint32_t *clock);
 
 nfc_frame_bus_t pn532_fake_bus(pn532_fake_t *f);
+
+// A factory-fresh Type 2 tag, as si512_fake_ntag.
+void pn532_fake_ntag(pn532_fake_t *f, int pages, const uint8_t uid[7]);
 
 // Total field-on time so far, including the interval still open.
 uint32_t pn532_fake_field_on_ms(const pn532_fake_t *f);

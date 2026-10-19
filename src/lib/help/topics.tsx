@@ -68,7 +68,8 @@ export const HELP_TOPICS = {
   // HANDOFF tap-to-mount (5248-5296) and Next-disk card (4968-4971).
   // Reader line: lib/i2c-scan.ts describeI2cScan (wording, 0x28 / 0x24 PN532 / 0x3c-0x3d display), device-card.tsx;
   // firmware i2c_scan.h (boot scan only, fw 1.17.0). Two reader chips: firmware nfc_reader.h (Si512 at 0x28 first,
-  // then a PN532 at 0x24, fw 1.18.0).
+  // then a PN532 at 0x24, fw 1.18.0). Tag kinds: nfc_reader_priv.h nfc_classify (MIFARE Classic 1K; NTAG21x from
+  // fw 1.18.1); the "not a disk tag" / "not supported" lines are nfc_ui.c's.
   nfc: {
     title: 'NFC cards',
     short:
@@ -76,8 +77,9 @@ export const HELP_TOPICS = {
     body: (
       <>
         <p>
-          <strong>Linking a tag.</strong> Use MIFARE Classic 1K tags; other kinds, such as the common NTAG stickers,
-          are not recognised. Press the NFC button on a disk — it only appears when one of your boards has
+          <strong>Linking a tag.</strong> Use MIFARE Classic 1K tags or NTAG213, NTAG215 or NTAG216 stickers. A
+          blank one shows &ldquo;Tag: not a disk tag&rdquo;; any other kind shows &ldquo;Tag: not supported&rdquo;.
+          Press the NFC button on a disk — it only appears when one of your boards has
           an NFC reader. Pick the disk and the board, then hold the tag on that board&apos;s reader within two
           minutes. Lift any tag that is already on the reader first: the board never writes to a tag that was lying
           there when you started.
@@ -103,6 +105,7 @@ export const HELP_TOPICS = {
           'Next-disk cards need board firmware 1.6.0 or newer.',
           'The reader line on the card needs firmware 1.17.0 or newer.',
           'A PN532 reader needs firmware 1.18.0 or newer.',
+          'NTAG stickers need firmware 1.18.1 or newer.',
         ]} />
       </>
     ),

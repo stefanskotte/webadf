@@ -1,8 +1,9 @@
 #ifndef NFC_TAG_H
 #define NFC_TAG_H
 // The WFDK v1 tag payload: what nfc_reader.c writes into (and reads back
-// from) MIFARE Classic 1K sector 1, blocks 4-6, and nothing about the
-// reader itself. Pure C so it can be host-tested -- see the RULE in
+// from) MIFARE Classic 1K sector 1, blocks 4-6 -- or, the same 48 bytes, an
+// NTAG213/215/216's user pages 4-15 (nfc_reader_priv.h T2_FIRST_PAGE) -- and
+// nothing about the reader itself. Pure C so it can be host-tested -- see the RULE in
 // display.h/device_client.h for why that split exists project-wide.
 //
 // RULE: this file and nfc_tag.c may include only C standard headers.

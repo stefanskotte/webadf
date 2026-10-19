@@ -10,7 +10,7 @@ enum {
     CRCResultRegH = 0x21, CRCResultRegL = 0x22, VersionReg = 0x37,
 };
 
-enum { TAG_IDLE, TAG_READY, TAG_ACTIVE, TAG_AUTHED };
+enum { TAG_IDLE, TAG_READY, TAG_ACTIVE, TAG_AUTHED, TAG_READY2 };
 
 #define REPLY_MS   1     // a tag's answer, as the IRQ poll sees it
 #define TIMER_MS   25    // TPrescaler 0xA9, TReload 0x03E8: 1000 x 25 us
@@ -58,12 +58,35 @@ void si512_fake_init(si512_fake_t *f, const uint32_t *clock) {
     f->tag_present = true;
     static const uint8_t uid[4] = { 0xDE, 0xAD, 0xBE, 0xEF };
     memcpy(f->uid, uid, 4);
+    f->uid_len = 4;
     f->sak = 0x08;
+    f->max_page_written = -1;
     f->vanish_after_ops = -1;
     f->tag_leaves_after_ops = -1;
     f->clock = clock;
     f->initiator_at = f->txcontrol_at = f->first_read_at = -1;
     reset_values(f);
+}
+
+int si512_fake_ntag_cfg_page(int pages) { return pages - 5; }
+
+void si512_fake_ntag(si512_fake_t *f, int pages, const uint8_t uid[7]) {
+    f->ntag_pages = pages;
+    f->uid_len = 7;
+    memcpy(f->uid, uid, 7);
+    f->sak = 0x00;
+    memset(f->mem, 0, sizeof f->mem);
+    // Pages 0-2: UID0-2, BCC0 (CT ^ UID0-2), UID3-6, BCC1, internal, lock 0 0.
+    f->mem[0] = uid[0]; f->mem[1] = uid[1]; f->mem[2] = uid[2];
+    f->mem[3] = (uint8_t)(0x88 ^ uid[0] ^ uid[1] ^ uid[2]);
+    memcpy(f->mem + 4, uid + 3, 4);
+    f->mem[8] = (uint8_t)(uid[3] ^ uid[4] ^ uid[5] ^ uid[6]);
+    f->mem[9] = 0x48;
+    // Page 3: the Capability Container, E1 10 size 00 (size = data area / 8).
+    f->mem[12] = 0xE1; f->mem[13] = 0x10;
+    f->mem[14] = (uint8_t)(pages == 45 ? 0x12 : pages == 135 ? 0x3E : 0x6D);
+    // Page 4: an empty NDEF message TLV, then the terminator TLV.
+    f->mem[16] = 0x03; f->mem[17] = 0x00; f->mem[18] = 0xFE;
 }
 
 static bool field_on(const si512_fake_t *f) {
@@ -135,19 +158,65 @@ static void transceive(si512_fake_t *f, uint8_t tx_bits) {
         return;
     }
     if (tx_bits != 0) { silence(f); return; }
-    // ANTICOLL cascade level 1: UID + BCC.
-    if (n == 2 && fr[0] == 0x93 && fr[1] == 0x20 && f->tag_state == TAG_READY) {
-        uint8_t u[5] = { f->uid[0], f->uid[1], f->uid[2], f->uid[3],
-                         (uint8_t)(f->uid[0] ^ f->uid[1] ^ f->uid[2] ^ f->uid[3]) };
+    // The UID's part at each cascade level (ISO/IEC 14443-3): a 4-byte UID is
+    // all at CL1; a 7-byte one is CT 0x88 + UID0-2 at CL1, UID3-6 at CL2.
+    uint8_t cl[4];
+    bool cl2 = f->tag_state == TAG_READY2;
+    if (f->uid_len == 7 && !cl2) { cl[0] = 0x88; memcpy(cl + 1, f->uid, 3); }
+    else if (f->uid_len == 7)    memcpy(cl, f->uid + 3, 4);
+    else                         memcpy(cl, f->uid, 4);
+    uint8_t bcc = (uint8_t)(cl[0] ^ cl[1] ^ cl[2] ^ cl[3]);
+    uint8_t sel = cl2 ? 0x95 : 0x93;
+    bool ready = f->tag_state == TAG_READY || cl2;
+    // ANTICOLL at this level: its UID part + BCC.
+    if (n == 2 && fr[0] == sel && fr[1] == 0x20 && ready) {
+        uint8_t u[5] = { cl[0], cl[1], cl[2], cl[3], bcc };
         answer(f, u, 5, 0);
         return;
     }
-    // SELECT: 93 70 uid bcc CRC_A -> SAK + CRC_A.
-    if (n == 9 && fr[0] == 0x93 && fr[1] == 0x70 && f->tag_state == TAG_READY &&
-        memcmp(fr + 2, f->uid, 4) == 0 &&
-        fr[6] == (uint8_t)(f->uid[0] ^ f->uid[1] ^ f->uid[2] ^ f->uid[3]) && crc_ok(fr, n)) {
+    // SELECT: sel 70 part bcc CRC_A -> SAK + CRC_A. At CL1 of a 7-byte UID the
+    // SAK is 0x04, "UID not complete", and the tag waits for CL2.
+    if (n == 9 && fr[0] == sel && fr[1] == 0x70 && ready &&
+        memcmp(fr + 2, cl, 4) == 0 && fr[6] == bcc && crc_ok(fr, n)) {
+        if (f->uid_len == 7 && !cl2) {
+            static const uint8_t cascade = 0x04;
+            f->tag_state = TAG_READY2;
+            answer_crc(f, &cascade, 1);
+            return;
+        }
         f->tag_state = TAG_ACTIVE;
         answer_crc(f, &f->sak, 1);
+        return;
+    }
+    // A Type 2 tag: no Crypto1; READ four pages, WRITE one.
+    if (f->ntag_pages > 0) {
+        if (f->tag_state == TAG_ACTIVE && n == 4 && fr[0] == 0x30 && crc_ok(fr, n)) {
+            if (fr[1] >= f->ntag_pages) { uint8_t nak = 0x00; answer(f, &nak, 1, 4); return; }
+            uint8_t blk[16];
+            for (int k = 0; k < 16; k++)          // past the last page it rolls over to page 0
+                blk[k] = f->mem[((fr[1] + k / 4) % f->ntag_pages) * 4 + k % 4];
+            if (f->flip_next_read) { blk[3] ^= 0x10; f->flip_next_read = false; }
+            f->reads++;
+            answer_crc(f, blk, 16);
+            return;
+        }
+        if (f->tag_state == TAG_ACTIVE && n == 8 && fr[0] == 0xA2 && crc_ok(fr, n)) {
+            int pg = fr[1];
+            if (pg > f->max_page_written) f->max_page_written = pg;
+            if (pg < 4) f->low_page_writes++;
+            if (pg >= si512_fake_ntag_cfg_page(f->ntag_pages)) f->cfg_page_writes++;
+            uint8_t ack = 0x0A;
+            if (f->write_protected || pg < 2 || pg >= f->ntag_pages) {
+                ack = 0x00;                       // NAK: the page is not writable
+            } else {
+                memcpy(f->mem + pg * 4, fr + 2, 4);
+                f->page_writes++;
+            }
+            answer(f, &ack, 1, 4);
+            return;
+        }
+        if (n >= 1 && fr[0] == 0xA0) f->compat_writes++;
+        silence(f);
         return;
     }
     // READ and WRITE need an authenticated sector 1 (blocks 4..7).
@@ -179,7 +248,7 @@ static void authent(si512_fake_t *f) {
     int n = take_frame(f, fr);
     static const uint8_t key[6] = { 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF };
     if (!f->tag_present) f->tag_state = TAG_IDLE;
-    if (f->tag_present && field_on(f) && !f->locked && n == 12 && fr[0] == 0x60 &&
+    if (f->tag_present && field_on(f) && !f->locked && f->ntag_pages == 0 && n == 12 && fr[0] == 0x60 &&
         fr[1] >= 4 && fr[1] <= 7 && memcmp(fr + 2, key, 6) == 0 &&
         memcmp(fr + 8, f->uid, 4) == 0 &&
         (f->tag_state == TAG_ACTIVE || f->tag_state == TAG_AUTHED)) {
