@@ -11,6 +11,8 @@ import { isHdAdf, isServable } from '@/lib/disk-format';
 import { LEGACY_BOARD_TRACK_MAX_BYTES } from '@/lib/adfmfm';
 import { asSecondDriveMode, type SecondDriveMode } from '@/lib/second-drive';
 import { netNextRearm, netNextRearmCandidate } from '@/lib/paulanet-disk';
+import { bootPatch } from '@/lib/boot-disk-store';
+import type { BootReport } from '@/lib/boot-disk';
 
 export interface DesiredDisk {
   sha256: string;
@@ -563,9 +565,11 @@ export async function recordStatus(
  * every ~25 s, so a device polling happily whose status POST is failing must
  * still read as recently seen, not as vanished hardware.
  */
-export async function touchLastSeen(deviceId: string): Promise<void> {
+export async function touchLastSeen(deviceId: string, boot?: BootReport | null): Promise<void> {
+  // Disk at startup: the boot rides this same write (bootPatch) -- still one statement per poll -- and lands
+  // before the hold's first tick reads the desired disk.
   await getDb().update(devices)
-    .set({ lastSeenAt: new Date() })
+    .set({ lastSeenAt: new Date(), ...(boot ? bootPatch(boot) : {}) })
     .where(eq(devices.id, deviceId));
 }
 

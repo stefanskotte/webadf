@@ -16,7 +16,7 @@ import { PAULANET_DISK_PREVIOUS, PAULANET_DISK_SHA256 } from '@/lib/paulanet-dis
 const requireDevice = vi.fn<(r: Request) => Promise<{ deviceId: string; orgId: string }>>(
   async () => ({ deviceId: 'dev-1', orgId: 'org-1' }),
 );
-const touchLastSeen = vi.fn(async () => undefined);
+const touchLastSeen = vi.fn<(...a: unknown[]) => Promise<void>>(async () => undefined);
 const readPollTick = vi.fn<() => Promise<PollTick | null>>();
 const readDesired = vi.fn<() => Promise<DesiredState | null>>(
   async () => ({ version: 1, desired: null }),
@@ -31,7 +31,7 @@ vi.mock('@/lib/device-auth', () => ({
   deviceAuthResponse: () => null,
 }));
 vi.mock('@/lib/mount', () => ({
-  touchLastSeen: () => touchLastSeen(),
+  touchLastSeen: (...a: unknown[]) => touchLastSeen(...a),
   readPollTick: () => readPollTick(),
   readDesired: () => readDesired(),
   readFirmwareInstruction: () => readFirmwareInstruction(),
@@ -738,5 +738,28 @@ describe('GET /api/device/poll -- xfer (PaulaNET Phase 4: files sent to the Amig
     recordSendRx.mockClear();
     await GET(get('?since=1&xferAck=0&rx=zz'));
     expect(recordSendRx).not.toHaveBeenCalled();
+  });
+});
+
+// Disk at startup (2026-10-19): the boot rides the poll's own last_seen write, BEFORE the first tick reads the
+// desired disk -- so a board on "No disk" is never handed the old disk at its boot's first poll.
+describe('GET /api/device/poll -- the boot', () => {
+  it('hands the boot to the last-seen write before anything is read', async () => {
+    const order: string[] = [];
+    touchLastSeen.mockImplementation(async () => { order.push('touch'); });
+    readPollTick.mockImplementation(async () => { order.push('tick'); return baseTick({ version: 2 }); });
+    const { GET } = await import('./route');
+    const res = await GET(get('?since=0&boot=1a2b3c4d'));
+    expect(res.status).toBe(200);
+    expect(touchLastSeen).toHaveBeenCalledWith('dev-1', { id: '1a2b3c4d', ota: false });
+    expect(order).toEqual(['touch', 'tick']);
+  });
+  it('an update boot says so; a poll without a boot passes none', async () => {
+    readPollTick.mockResolvedValue(baseTick({ version: 2 }));
+    const { GET } = await import('./route');
+    await GET(get('?since=0&boot=deadbeef&ota=1'));
+    expect(touchLastSeen).toHaveBeenLastCalledWith('dev-1', { id: 'deadbeef', ota: true });
+    await GET(get('?since=0'));
+    expect(touchLastSeen).toHaveBeenLastCalledWith('dev-1', null);
   });
 });

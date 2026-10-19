@@ -15,9 +15,11 @@ const tapNext = vi.fn<
   (deviceId: string, orgId: string, now: Date) => Promise<{ outcome: TapOutcome; diskNo?: number; diskCount?: number }>
 >(async () => ({ outcome: 'mounting', diskNo: 2, diskCount: 3 }));
 vi.mock('@/lib/nfc/store', () => ({ tapDevice, tapNext }));
+const noteBoot = vi.fn<(...a: unknown[]) => Promise<void>>(async () => undefined);
+vi.mock('@/lib/boot-disk-store', () => ({ noteBoot: (...a: unknown[]) => noteBoot(...a) }));
 
 const ID = 'a1b2c3d4-e5f6-5a7b-8c9d-0e1f2a3b4c5d';
-const post = (body: unknown) => new Request('http://test/api/device/tap', {
+const post = (body: unknown, qs = '') => new Request(`http://test/api/device/tap${qs}`, {
   method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body),
 });
 
@@ -66,5 +68,27 @@ describe('POST /api/device/tap {action:"next"}', () => {
     const { POST } = await import('./route');
     expect((await POST(post(body))).status).toBe(400);
     expect(tapNext).not.toHaveBeenCalled();
+  });
+});
+
+// Disk at startup (2026-10-19): a tag tapped at the Kickstart screen reaches the server before the boot's first
+// poll, so the tap names the boot too -- and the boot is decided FIRST, or "No disk" would empty the tapped disk.
+describe('POST /api/device/tap -- the boot', () => {
+  it('decides the boot before the tap mounts', async () => {
+    const order: string[] = [];
+    noteBoot.mockImplementation(async () => { order.push('boot'); });
+    tapDevice.mockImplementation(async () => { order.push('tap'); return { outcome: 'mounting' }; });
+    const { POST } = await import('./route');
+    expect((await POST(post({ diskId: ID }, '?boot=1a2b3c4d'))).status).toBe(200);
+    expect(noteBoot).toHaveBeenCalledWith('dev-1', { id: '1a2b3c4d', ota: false });
+    expect(order).toEqual(['boot', 'tap']);
+  });
+  it('for Next disk as well, and not at all without a boot', async () => {
+    const { POST } = await import('./route');
+    await POST(post({ action: 'next' }, '?boot=deadbeef&ota=1'));
+    expect(noteBoot).toHaveBeenCalledWith('dev-1', { id: 'deadbeef', ota: true });
+    noteBoot.mockClear();
+    await POST(post({ diskId: ID }));
+    expect(noteBoot).not.toHaveBeenCalled();
   });
 });

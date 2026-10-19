@@ -10,6 +10,7 @@ import { describeI2cScan } from '@/lib/i2c-scan';
 import { Link } from '@/components/shell/link';
 import { SecondDriveReadings } from './second-drive-readings';
 import { SecondDriveSetting } from './second-drive-setting';
+import { BootDiskSetting } from './boot-disk-setting';
 import { HelpTip } from '@/components/help/help-tip';
 import { NextDiskButton } from './next-disk-button';
 import { DeviceAlias } from './device-alias';
@@ -223,6 +224,7 @@ export function DeviceCard(
       <div className="flex flex-col gap-2">
         <SecondDriveReadings device={device} />
         <SecondDriveSetting device={device} next={next} now={now} />
+        <BootDiskSetting device={device} />
         {i2c && (
           <span className="flex min-w-0 items-start gap-1" data-testid={`device-nfc-${device.id}`} data-ok={i2c.ok}>
             <span className="flex min-w-0 flex-col text-[11px]" style={{ overflowWrap: 'anywhere' }}>
