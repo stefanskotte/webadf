@@ -5015,6 +5015,47 @@ Demozoo API (the bulk export makes per-lookup load on a non-profit unnecessary).
   allowlist checks only the first URL (the raster content-type allowlist and `nosniff` still apply).
 - **Cron drift:** the daily 01:30 cron against a 7-day gate can drift a refetch to 8 days.
 
+### 3cc. Upload from the Amiga to the web app: Receive 2, fw 1.19.0 TEST, the From the Amiga area (master 27d7508) -- 2026-10-20
+
+- Spec `docs/superpowers/specs/2026-10-18-amiga-to-web-upload-design.md`; plan
+  `docs/superpowers/plans/2026-10-19-amiga-to-web-upload.md` (20 tasks, subagent-driven; ledger kept until the bench).
+  Merged in two steps: increments 0-2 at 9b3aca8 (+ CI fix 995f9ff), increment 3 at 27d7508.
+- **Shipped:** Receive 2.0 (protocol 2: `WEBADF 2 <key>`/`READY 2`, PUT/TAKE/MORE <tag> <credit> <stored>/END/DONE/NO;
+  AppWindow drops, Send..., Retry failed, Trust this board; `Receive SEND <files> [TRUST]`; pin ec66deb2..., 39 KB),
+  on the driver disk 6e799db5... (PAULANET_DISK_PREVIOUS 1ca4f4cb..., OLDER adds fb363d45...; stored in the disk
+  store). Firmware 1.19.0 TEST: 1.19.0+gb3312e8 seq 109 (notes "TEST build -- uploads from the Amiga ..."), on the
+  bench board (confirmed, board key digits 2143, devices.up_key = 2143). Migration 0047 APPLIED to production
+  (amiga_uploads, amiga_upload_chunks, devices.up_key). Server: /api/device/upload (open/chunk/close), upKey on
+  status; person routes /api/uploads (list, file, library, send, delete, clear); the From the Amiga card on the
+  Upload page, the device card's line, help topic from-amiga; cron expires uploads; GC and org deletion know them;
+  the self-host smoke uploads a file.
+- **Measured:** `.bss` 421,664 (budget 432,532; dc_post's two-part send freed 11,264). 4 MB close 30 ms (256 chunk
+  rows). FS-UAE 4 MB up: 73 s (68000, KS 2.04 and A500) and 17-18 s (68020). B0 NOT run: the window (2 x 16 KB)
+  and the out-of-order limit (2,920 B) are the plan's defaults.
+- **Rulings P1-P17** are in the plan. During execution (cost if wrong in the ledger):
+  PF1 re-pin Receive per task; PF2 the driver disk rebuilt at the increment-2 checkpoint; PF3 window-derived tests;
+  PF4 Clear all uses an exact microsecond cursor -- finally coalesce(stored_at, created_at), and only rows finished
+  when seen are cleared, per board when filtered; PF5 housekeeping db tests; PF6 one DateStamp helper; PF7
+  LIBRARY_EXT = the browser upload's set (includes .dsk); PF8 a stall answers NO offline; PF9 "Update to 1.19.0"
+  shown while 1.19.0 is TEST-only; PF10 the key is saved unconditionally; PF11 stronger tests; PF16 MORE carries
+  stored; PF17 `SEND TRUST` is the switch; PF18 `GUI TRUST` works; T9/T10 ABORT is legal only before TAKE and the
+  last short chunk is posted only after END; the upload turn waits for an owed PONG; a resumed upload gets a
+  pre-read allowance of 120 s + offset/8 KB/s (an ASSUMED 68000 CRC rate -- B5 measures it); a chunk or close 404
+  is `NO gone` ("deleted on the web app"); repeated closes answer as the first did.
+- **Deviations / known gaps:** an ABORT for a PUT waiting behind a backing-off outcome post is answered NO offline
+  (~60 s), not cancelled; a lost open answer leaves a receiving row counting against the 500 files / 256 MB limit for
+  24 h; Receive trusts the first board it meets (TOFU; the 4 digits on the web are the check; help says so); a row
+  receiving when seen that then FAILS is still cleared by Clear all (no failed_at); a freshly opened tab treats a
+  long-stalled row as moving for 2 min; the empty state's "update ... and use Network mode" is firmware-based only.
+- **Deferred minors:** blob GC residual window between its re-read and each remove; cron's two expiry calls not
+  isolated; chunk/close ignore expiresAt; library_disk_id has no FK; open/close request.json() uncapped; idle poll
+  every 10 s never stops; the send-to-amiga e2e's first test times out on a cold first run (twice; re-runs pass).
+- **Pillock's org is in FIRMWARE_BENCH_ORGS**, so his board is offered 1.19.0 TEST too (he presses Update).
+- **Bench owed (plan "Bench"):** B0 (A2B measurement, then apply Task 11 Step 1), B1 reinstall Receive from the new
+  disk, B2 three files up + sha256 + rate, B3 add to library / delete / Clear all, B4 the Shell, B5 resume (time the
+  pre-read), B6 web unreachable mid-file, B7 both directions, B8 an impostor, B9 ping + heap low-water >= 20,480,
+  B10 the A4000D. Release of 1.19.0 is the operator's call after the bench.
+
 ### 3cb. fw 1.18.2 RELEASED (seq 106, fw-1.18.2, master c3af634): boot diagnostics for the tester's update hang -- 2026-10-19
 
 - Tester (Pillock, PN532 at 0x24): NTAG215 + Next Disk work on 1.18.1 (fresh NTAGs said "locked" until one was erased in
