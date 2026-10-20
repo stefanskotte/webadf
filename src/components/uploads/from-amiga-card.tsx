@@ -47,17 +47,20 @@ export function FromAmigaCard({ targets, initialBoard }: { targets: SendTarget[]
   useEffect(() => {
     let stopped = false;
     let timer: ReturnType<typeof setTimeout> | null = null;
-    const tick = async () => {
-      if (stopped) return;
+    // One loop at a time: a tick still awaiting its fetch when the tab comes back belongs to an older generation, and
+    // does not schedule the next one (clearing the timer alone misses it -- that timer has already fired).
+    let gen = 0;
+    const tick = async (g: number) => {
+      if (stopped || g !== gen) return;
       if (document.visibilityState === 'visible') await refresh();
-      if (!stopped) timer = setTimeout(tick, active.current ? ACTIVE_MS : IDLE_MS);
+      if (!stopped && g === gen) timer = setTimeout(() => tick(g), active.current ? ACTIVE_MS : IDLE_MS);
     };
-    void tick();
-    // Coming back to the tab reads the list at once, and restarts the timer so two loops never run.
+    void tick(gen);
+    // Coming back to the tab reads the list at once, and restarts the loop.
     const onVisible = () => {
       if (document.visibilityState !== 'visible' || stopped) return;
       if (timer) clearTimeout(timer);
-      void tick();
+      void tick(++gen);
     };
     document.addEventListener('visibilitychange', onVisible);
     return () => { stopped = true; if (timer) clearTimeout(timer); document.removeEventListener('visibilitychange', onVisible); };
