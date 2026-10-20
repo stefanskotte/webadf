@@ -125,7 +125,7 @@ export async function closeUpload(db: Db, deviceId: string, id: string, crc: num
   }
   const sha = await storeSendBytes(bytes);   // adf/<sha256> through diskStore: local folder or Vercel Blob (ruling P5)
   const done = await db.transaction(async (tx) => {
-    const hit = await tx.update(amigaUploads).set({ status: 'stored', crc32: crc >>> 0, blobSha256: sha, storedAt: now, receivedBytes: r.sizeBytes,
+    const hit = await tx.update(amigaUploads).set({ status: 'stored', crc32: crc >>> 0, blobSha256: sha, storedAt: sql`now()`, receivedBytes: r.sizeBytes,
       expiresAt: new Date(now.getTime() + UPLOAD_KEEP_MS) })
       .where(and(eq(amigaUploads.id, id), eq(amigaUploads.status, 'receiving'))).returning({ id: amigaUploads.id });
     if (hit.length) await tx.delete(amigaUploadChunks).where(eq(amigaUploadChunks.uploadId, id));

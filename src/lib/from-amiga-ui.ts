@@ -20,9 +20,10 @@ const FAILED: Record<string, string> = {
   crc: 'damaged on the way: send it again',
   expired: 'not finished within 24 hours: send it again',
 };
-export function uploadChip(r: UploadView): UploadChip {
+export function uploadChip(r: UploadView, stalled = false): UploadChip {
   if (r.status === 'receiving') {
     const pct = r.sizeBytes ? Math.min(99, Math.floor((r.receivedBytes * 100) / r.sizeBytes)) : 0;
+    if (stalled) return { kind: 'amber', label: `Stopped at ${pct} %`, note: 'send it again from the Amiga to continue' };
     return { kind: 'blue', label: `Arriving ${pct} %`, note: null };
   }
   if (r.status === 'failed') return { kind: 'red', label: 'Failed', note: FAILED[r.errorCode ?? ''] ?? 'it did not arrive whole' };
@@ -44,7 +45,35 @@ export function clearBody(rows: UploadView[], board: string | null): { cursor: s
   if (!cursor) return null;
   return board ? { cursor, board } : { cursor };
 }
-export const anyArriving = (rows: UploadView[]) => rows.some((r) => r.status === 'receiving');
+
+/** How long a receiving file may sit at the same byte count before the card calls it stopped. */
+export const STALL_MS = 120_000;
+/** Per receiving row: the byte count last seen and since when it has been that. */
+export type ProgressSeen = Record<string, { bytes: number; since: number }>;
+/** The seen-map after a poll: a row whose bytes moved (or is new) restarts its clock; rows no longer receiving are forgotten. */
+export function trackProgress(prev: ProgressSeen, rows: UploadView[], now: number): ProgressSeen {
+  const next: ProgressSeen = {};
+  for (const r of rows) {
+    if (r.status !== 'receiving') continue;
+    const p = prev[r.id];
+    next[r.id] = p && p.bytes === r.receivedBytes ? p : { bytes: r.receivedBytes, since: now };
+  }
+  return next;
+}
+export const isStalled = (r: UploadView, seen: ProgressSeen, now: number): boolean =>
+  r.status === 'receiving' && seen[r.id] !== undefined && now - seen[r.id].since >= STALL_MS;
+/** Some row is still arriving and moving: only then is the list read every 3 s. */
+export const anyMoving = (rows: UploadView[], seen: ProgressSeen, now: number): boolean =>
+  rows.some((r) => r.status === 'receiving' && !isStalled(r, seen, now));
+/** What the empty list says: how to send, or what the boards still need before they can. */
+export function emptyText(boards: { canUpload: boolean }[]): string {
+  if (!boards.some((b) => b.canUpload)) return `No board can send from the Amiga yet: update to ${UPLOAD_FW} and use Network (PaulaNET) mode.`;
+  return "Nothing from the Amiga yet. Drop files on Receive's window, or type Receive SEND in a Shell.";
+}
+/** Add to library: a stored library-type file whose disk is not (or no longer) in the library. */
+export const canAddToLibrary = (r: UploadView): boolean => r.status === 'stored' && !r.libraryGameId && libraryEligible(r.path, r.sizeBytes);
+/** A list answer is current only if no change of ours (delete, clear) finished since its request began. */
+export const answerIsCurrent = (startedAt: number, changes: number): boolean => startedAt === changes;
 export function uploadErrorText(code: string | undefined, status: number): string {
   switch (code) {
     case 'not_a_disk_image': return 'Not a disk image the library takes.';
@@ -54,6 +83,8 @@ export function uploadErrorText(code: string | undefined, status: number): strin
     case 'queue_full': return 'The queue for that board is full (32 files or 16 MB). Wait for some to arrive.';
     case 'too_large': return 'Over 4 MB: too large to send.';
     case 'bad_name': return 'That name cannot be used on the Amiga.';
+    case 'gone': return 'That file is no longer here.';
+    case 'invalid_body': return 'The request was not understood. Refresh the page and try again.';
     case 'invalid': return 'The list was out of date. Refresh the page and try again.';
     default: return `The server answered ${status}.`;
   }

@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { DISK_IMAGE_PATTERN } from '@/lib/archive/disk-image';
 import type { UploadView } from '@/lib/amiga-uploads';
 import {
-  LIBRARY_EXT, anyArriving, downloadName, tabTarget, cardUploadLine, clearBody, clearConfirm, clearable, libraryEligible, newestSeen, uploadChip, uploadErrorText,
+  LIBRARY_EXT, STALL_MS, anyMoving, answerIsCurrent, canAddToLibrary, downloadName, emptyText, isStalled, trackProgress, tabTarget, cardUploadLine, clearBody, clearConfirm, clearable, libraryEligible, newestSeen, uploadChip, uploadErrorText,
 } from './from-amiga-ui';
 
 const row = (over: Partial<UploadView> = {}): UploadView => ({
@@ -51,8 +51,6 @@ describe('from the Amiga: the rules the card shows', () => {
     // newest created is first, but an older row stored later carries the greater cursor: that one is what was seen
     expect(newestSeen([row({ cursor: '2026-10-19T10:00:05.000005Z' }), row({ cursor: '2026-10-19T10:00:08.000001Z' })])).toBe('2026-10-19T10:00:08.000001Z');
     expect(newestSeen([])).toBeNull();
-    expect(anyArriving(rows)).toBe(true);
-    expect(anyArriving([rows[2]])).toBe(false);
     expect(clearConfirm(1)).toBe('Clear 1 file from the Amiga?');
     expect(clearConfirm(3)).toBe('Clear 3 files from the Amiga?');
   });
@@ -68,6 +66,8 @@ describe('from the Amiga: the rules the card shows', () => {
     expect(uploadErrorText('queue_full', 409)).toMatch(/queue/);
     expect(uploadErrorText('invalid', 400)).toMatch(/refresh/i);
     expect(uploadErrorText(undefined, 500)).toBe('The server answered 500.');
+    expect(uploadErrorText('gone', 410)).toMatch(/no longer here/i);
+    expect(uploadErrorText('invalid_body', 400)).toMatch(/not understood/i);
   });
   it('the saved name is the last part of the Amiga path, as the file route sends it', () => {
     expect(downloadName('Games/Lemmings.adf')).toBe('Lemmings.adf');
@@ -81,5 +81,60 @@ describe('from the Amiga: the rules the card shows', () => {
     expect(tabTarget(-1, 2, false)).toBe(0);     // focus outside -> in
     expect(tabTarget(-1, 2, true)).toBe(1);
     expect(tabTarget(0, 0, false)).toBeNull();
+  });
+});
+
+describe('a stalled upload', () => {
+  const moving = row({ id: 'm', status: 'receiving', receivedBytes: 450_560 });
+  it('is a receiving row whose bytes have not moved for two minutes', () => {
+    let seen = trackProgress({}, [moving], 1_000);
+    expect(isStalled(moving, seen, 1_000 + STALL_MS - 1)).toBe(false);
+    expect(isStalled(moving, seen, 1_000 + STALL_MS)).toBe(true);
+    // a poll that finds the same bytes keeps the old clock; one that finds more restarts it
+    seen = trackProgress(seen, [moving], 60_000);
+    expect(isStalled(moving, seen, 1_000 + STALL_MS)).toBe(true);
+    const more = { ...moving, receivedBytes: 466_944 };
+    seen = trackProgress(seen, [more], 130_000);
+    expect(isStalled(more, seen, 130_000 + STALL_MS - 1)).toBe(false);
+    expect(isStalled(more, seen, 130_000 + STALL_MS)).toBe(true);
+  });
+  it('never applies to a row that is not receiving or has not been seen', () => {
+    const seen = trackProgress({}, [moving], 0);
+    expect(isStalled(row(), seen, 10 * STALL_MS)).toBe(false);
+    expect(isStalled(moving, {}, 10 * STALL_MS)).toBe(false);
+    expect(trackProgress(seen, [], 5)).toEqual({});   // a row that left the list is forgotten
+  });
+  it('reads Stopped at N % with the way out, and the list polls fast only while some row is moving', () => {
+    expect(uploadChip(moving, true)).toEqual({ kind: 'amber', label: 'Stopped at 50 %', note: 'send it again from the Amiga to continue' });
+    expect(uploadChip(moving, false).label).toBe('Arriving 50 %');
+    const other = row({ id: 'o', status: 'receiving', receivedBytes: 1 });
+    const seen = trackProgress({}, [moving, other], 0);
+    const later = STALL_MS;
+    expect(anyMoving([moving, other], seen, later)).toBe(false);
+    expect(anyMoving([moving, other, row()], seen, later)).toBe(false);
+    const seen2 = trackProgress(seen, [moving, { ...other, receivedBytes: 99 }], later - 1);
+    expect(anyMoving([moving, { ...other, receivedBytes: 99 }], seen2, later)).toBe(true);
+    expect(anyMoving([], {}, 0)).toBe(false);
+  });
+});
+
+describe('the card words that depend on the boards and the library', () => {
+  it('the empty list says what is missing when no board can send', () => {
+    expect(emptyText([{ canUpload: true }])).toMatch(/Drop files on Receive/);
+    expect(emptyText([{ canUpload: false }, { canUpload: true }])).toMatch(/Drop files on Receive/);
+    const no = /No board can send from the Amiga yet: update to 1\.19\.0 and use Network \(PaulaNET\) mode/;
+    expect(emptyText([{ canUpload: false }])).toMatch(no);
+    expect(emptyText([])).toMatch(no);
+  });
+  it('Add to library is offered while the disk is not in the library, also after its disk was deleted', () => {
+    expect(canAddToLibrary(row())).toBe(true);
+    expect(canAddToLibrary(row({ libraryDiskId: 'd1', libraryGameId: 'g1' }))).toBe(false);
+    expect(canAddToLibrary(row({ libraryDiskId: 'd1', libraryGameId: null }))).toBe(true);
+    expect(canAddToLibrary(row({ path: 'x.txt' }))).toBe(false);
+    expect(canAddToLibrary(row({ status: 'receiving' }))).toBe(false);
+  });
+  it('an answer older than the last change is dropped', () => {
+    expect(answerIsCurrent(3, 3)).toBe(true);
+    expect(answerIsCurrent(3, 4)).toBe(false);
   });
 });

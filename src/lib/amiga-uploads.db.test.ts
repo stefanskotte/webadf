@@ -137,6 +137,24 @@ describe('amiga uploads', () => {
     expect(await U.closeUpload(db(), d.deviceId, id, crc(data))).toEqual({ ok: true, name: 'File.bin' });
   });
 
+  it('stored_at is the database clock (like created_at), whatever clock the caller passes', async () => {
+    const d = await device('org-clock'); const data = bytes(10, 9);
+    const id = await upload(d, data);
+    expect((await U.closeUpload(db(), d.deviceId, id, crc(data), later())).ok).toBe(true);
+    const [r] = (await db().execute(sql`select (stored_at <= now()) as past, (stored_at >= created_at) as after from amiga_uploads where id = ${id}`)).rows as { past: boolean; after: boolean }[];
+    expect(r).toEqual({ past: true, after: true });
+  });
+
+  it('delete takes a receiving row too: the board then hears gone and the next send starts at 0', async () => {
+    const d = await device('org-del-recv'); const data = bytes(40000, 5);
+    const o = await opened(d, { size: data.byteLength, path: 'Stalled.bin' });
+    await U.storeChunk(db(), d.deviceId, o.id, 0, data.subarray(0, 16384));
+    expect(await U.deleteUpload(db(), 'org-del-recv', o.id)).toBe(true);
+    expect(await chunkRows(o.id)).toBe(0);
+    expect(await U.closeUpload(db(), d.deviceId, o.id, crc(data))).toEqual({ ok: false, status: 409, code: 'gone' });
+    expect((await opened(d, { size: data.byteLength, path: 'Stalled.bin' })).offset).toBe(0);
+  });
+
   it('a CRC mismatch is final: failed crc, the chunks gone, and the next send starts at 0', async () => {
     const d = await device(); const data = bytes(20000);
     const id = await upload(d, data, 'Bad.bin');

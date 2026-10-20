@@ -3,7 +3,7 @@
 import { getDb } from '@/db';
 import { requireOrg } from '@/lib/session';
 import { getUpload, usableBlob } from '@/lib/amiga-uploads';
-import { attachmentDisposition } from '@/lib/content-disposition';
+import { contentDisposition } from '@/lib/download-name';
 import { diskStore } from '@/lib/storage';
 
 export async function GET(_request: Request, ctx: { params: Promise<{ id: string }> }) {
@@ -19,7 +19,7 @@ export async function GET(_request: Request, ctx: { params: Promise<{ id: string
     headers: {
       'content-type': 'application/octet-stream',
       'x-content-type-options': 'nosniff',
-      'content-disposition': attachmentDisposition(base),
+      'content-disposition': contentDisposition(base),
       'content-length': String(bytes.byteLength),
       'cache-control': 'private, no-store',
     },

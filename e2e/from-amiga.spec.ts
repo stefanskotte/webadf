@@ -103,6 +103,11 @@ test('Clear all names the count, spares a file still arriving and one that arriv
   await expect(page.getByTestId(`from-amiga-row-${b}`)).toHaveCount(0);
   await expect(page.getByTestId(`from-amiga-row-${moving}`)).toBeVisible();
   await expect(page.getByTestId(`from-amiga-row-${late}`)).toBeVisible({ timeout: LIVE });
+  // A file still arriving can be deleted too (a stalled one is otherwise stuck for 24 h); the board then hears gone.
+  await page.getByTestId(`from-amiga-delete-${moving}`).click();
+  await expect(page.getByTestId(`from-amiga-row-${moving}`)).toHaveCount(0, { timeout: LIVE });
+  expect((await request.post(`/api/device/upload/${moving}?offset=16384`, {
+    headers: { ...authHeader(token), 'content-type': 'application/octet-stream' }, data: Buffer.alloc(3_616, 1) })).status()).toBe(404);
 });
 
 test('Send to an Amiga queues the file for another board', async ({ page, request }) => {

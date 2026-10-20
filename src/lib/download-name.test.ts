@@ -82,4 +82,13 @@ describe('contentDisposition', () => {
     expect(h).toContain("filename*=UTF-8''Caf%C3%A9.adf");
     expect(h).toMatch(/filename="Caf.?\.adf"/);
   });
+
+  it('falls back to the ASCII name for a lone surrogate instead of throwing', () => {
+    expect(() => contentDisposition('bad\ud800name.txt')).not.toThrow();
+    expect(contentDisposition('bad\ud800name.txt')).toBe('attachment; filename="bad_name.txt"');
+  });
+
+  it('escapes the characters RFC 5987 leaves out of the encoded form', () => {
+    expect(contentDisposition("it's (a) *b*.adf")).toContain("filename*=UTF-8''it%27s%20%28a%29%20%2Ab%2A.adf");
+  });
 });

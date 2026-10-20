@@ -2,7 +2,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { createHash } from 'node:crypto';
 import { DISK_IMAGE_PATTERN } from '@/lib/archive/disk-image';
-import { attachmentDisposition } from '@/lib/content-disposition';
 import { LIBRARY_EXT, libraryEligible } from '@/lib/from-amiga-ui';
 
 const requireOrg = vi.fn(() => Promise.resolve({ orgId: 'org-1', userId: 'user-1', email: 'a@b.test' }));
@@ -104,7 +103,7 @@ describe('GET /api/uploads/<id>/file', () => {
     expect(r.status).toBe(200);
     const cd = r.headers.get('content-disposition')!;
     expect(cd).not.toMatch(/[\r\n]/);
-    expect(cd).toBe(`attachment; filename="a_b__Set-Cookie z=1__q'(*).txt"; filename*=UTF-8''a%22b%0D%0ASet-Cookie%20z%3D1%3B%5Cq%27%28%2A%29.txt`);
+    expect(cd).toBe(`attachment; filename="a_bSet-Cookie z=1__q'(*).txt"; filename*=UTF-8''a%22bSet-Cookie%20z%3D1%3B%5Cq%27%28%2A%29.txt`);
     expect(r.headers.get('set-cookie')).toBeNull();
   });
   it('is 404 for a stored file past its 30 days', async () => {
@@ -257,12 +256,5 @@ describe('LIBRARY_EXT / libraryEligible', () => {
     expect(libraryEligible('Games/A.dms', 3_000_000)).toBe(true);
     expect(libraryEligible('Games/A.dms', 4_194_305)).toBe(false);
     expect(libraryEligible('Games/A.txt', 10)).toBe(false);
-  });
-});
-
-describe('attachmentDisposition', () => {
-  it('falls back to the ASCII name for a lone surrogate instead of throwing', () => {
-    expect(() => attachmentDisposition('bad\ud800name.txt')).not.toThrow();
-    expect(attachmentDisposition('bad\ud800name.txt')).toBe('attachment; filename="bad_name.txt"');
   });
 });

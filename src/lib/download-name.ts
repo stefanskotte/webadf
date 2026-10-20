@@ -63,16 +63,21 @@ function base(name: string | null | undefined): string | null {
 export function contentDisposition(filename: string): string {
   const clean = filename.replace(/[\r\n]/g, '');
 
-  // Quoted-string form: printable ASCII only, with the two characters that
-  // can end the quoting early (" and \) replaced rather than escaped, since
+  // Quoted-string form: printable ASCII only, with the characters that
+  // can end the quoting early or confuse a naive parser (" \ ; %) replaced rather than escaped, since
   // a saved filename gains nothing from carrying them.
   const ascii = [...clean]
     .map((ch) => {
       const code = ch.codePointAt(0) ?? 0;
-      if (ch === '"' || ch === '\\') return '_';
+      if (ch === '"' || ch === '\\' || ch === ';' || ch === '%') return '_';
       return code >= 0x20 && code <= 0x7e ? ch : '_';
     })
     .join('') || 'disk.adf';
 
-  return `attachment; filename="${ascii}"; filename*=UTF-8''${encodeURIComponent(clean)}`;
+  // RFC 5987 attr-char leaves out ' ( ) * as well, which encodeURIComponent keeps. A lone surrogate cannot be
+  // UTF-8 encoded (encodeURIComponent throws): that name gets the ASCII form only.
+  let star: string;
+  try { star = encodeURIComponent(clean).replace(/['()*]/g, (c) => `%${c.charCodeAt(0).toString(16).toUpperCase()}`); }
+  catch { return `attachment; filename="${ascii}"`; }
+  return `attachment; filename="${ascii}"; filename*=UTF-8''${star}`;
 }
