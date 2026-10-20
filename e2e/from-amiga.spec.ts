@@ -14,18 +14,35 @@ async function boardSays(request: APIRequestContext, token: string, firmware = '
   expect((await request.post('/api/device/status', { headers: authHeader(token),
     data: { mountedSha256: null, firmwareVersion: firmware, secondDrive: 'net', driveVersion: 0, upKey } })).status()).toBe(204);
 }
-/** What a 1.19.0 board does for one PUT: open, 16 KB chunks, close. */
-async function boardUploads(request: APIRequestContext, token: string, path: string, data: Buffer, date = '17000.600.0') {
-  const open = await request.post('/api/device/upload', { headers: authHeader(token), data: { size: data.length, date, protection: 0, path, comment: '' } });
+/**
+ * The open body as the firmware writes it: a raw JSON string, application/json, with every non-ASCII character
+ * (the board's Latin-1 bytes) escaped \u00XX. Playwright's `data: {...}` would send raw UTF-8 instead.
+ */
+function amigaJson(o: object): string {
+  return JSON.stringify(o).replace(/[\u0080-\uffff]/g, (c) => `\\u${c.charCodeAt(0).toString(16).padStart(4, '0')}`);
+}
+async function boardOpens(request: APIRequestContext, token: string, path: string, size: number, date = '17000.600.0') {
+  const open = await request.post('/api/device/upload', { headers: { ...authHeader(token), 'content-type': 'application/json' },
+    data: amigaJson({ size, date, protection: 0, path, comment: '' }) });
   expect(open.status()).toBe(200);
-  const { id, offset } = (await open.json()) as { id: string; offset: number };
-  for (let at = offset; at < data.length; at += 16_384) {
+  return (await open.json()) as { id: string; offset: number };
+}
+/** Chunks of 16 KB from `from`, at most `max` of them. */
+async function boardSendsChunks(request: APIRequestContext, token: string, id: string, data: Buffer, from = 0, max = Infinity) {
+  for (let at = from, n = 0; at < data.length && n < max; at += 16_384, n++) {
     const r = await request.post(`/api/device/upload/${id}?offset=${at}`, {
       headers: { ...authHeader(token), 'content-type': 'application/octet-stream' }, data: data.subarray(at, Math.min(at + 16_384, data.length)),
     });
     expect(r.status()).toBe(200);
   }
-  expect((await request.post(`/api/device/upload/${id}/close`, { headers: authHeader(token), data: { crc32: crc32(data) >>> 0 } })).status()).toBe(200);
+}
+const boardCloses = (request: APIRequestContext, token: string, id: string, crc: number) =>
+  request.post(`/api/device/upload/${id}/close`, { headers: authHeader(token), data: { crc32: crc } });
+/** What a 1.19.0 board does for one PUT: open, 16 KB chunks, close. */
+async function boardUploads(request: APIRequestContext, token: string, path: string, data: Buffer, date = '17000.600.0') {
+  const { id, offset } = await boardOpens(request, token, path, data.length, date);
+  await boardSendsChunks(request, token, id, data, offset);
+  expect((await boardCloses(request, token, id, crc32(data) >>> 0)).status()).toBe(200);
   return id;
 }
 
@@ -73,8 +90,7 @@ test('Clear all names the count, spares a file still arriving and one that arriv
   await boardSays(request, token);
   const a = await boardUploads(request, token, 'A.txt', Buffer.from('a'));
   const b = await boardUploads(request, token, 'B.txt', Buffer.from('b'));
-  const open = await request.post('/api/device/upload', { headers: authHeader(token), data: { size: 20000, date: '1.2.3', protection: 0, path: 'Moving.bin', comment: '' } });
-  const { id: moving } = (await open.json()) as { id: string };
+  const { id: moving } = await boardOpens(request, token, 'Moving.bin', 20000, '1.2.3');
   expect((await request.post(`/api/device/upload/${moving}?offset=0`, {
     headers: { ...authHeader(token), 'content-type': 'application/octet-stream' }, data: Buffer.alloc(16_384, 1) })).status()).toBe(200);
   await page.goto('/ingest');
@@ -121,9 +137,10 @@ test("the board filter, the device card's line, and the update an older Network 
   await page.getByTestId(`device-upload-${bench.deviceId}`).click();
   await expect(page).toHaveURL(new RegExp(`/ingest\\?from=${bench.deviceId}#from-amiga`));
   await expect(page.getByTestId(`from-amiga-row-${fromBench}`)).toBeVisible({ timeout: LIVE });
-  await expect(page.getByTestId(`from-amiga-row-${fromDen}`)).toHaveCount(0);
+  await expect(page.getByTestId(`from-amiga-row-${fromDen}`)).toHaveCount(0, { timeout: LIVE });
 });
-test('Clear all with a board filter on leaves the other board\'s finished file', async ({ page, request }) => {
+
+test('Clear all with a board filter on spares the other board\'s finished file', async ({ page, request }) => {
   await signUpFresh(page);
   const bench = await pairDevice(page, request, 'Bench');
   const den = await pairDevice(page, request, 'Den');
@@ -165,9 +182,60 @@ test('a download the server answers 404 to gives a toast, not a saved file', asy
   await page.route(`**/api/uploads/${id}/file`, (route) => route.fulfill({ status: 404, contentType: 'application/json', body: '{"error":"not_found"}' }));
   await page.goto('/ingest');
   await expect(page.getByTestId(`from-amiga-row-${id}`)).toBeVisible({ timeout: LIVE });
-  let saved = false;
-  page.on('download', () => { saved = true; });
+  const saved = page.waitForEvent('download', { timeout: 1500 }).then(() => true, () => false);
   await page.getByTestId(`from-amiga-download-${id}`).click();
   await expect(page.getByText('That file is no longer here.')).toBeVisible({ timeout: LIVE });
-  expect(saved).toBe(false);
+  expect(await saved).toBe(false);
+});
+
+test('a file that fails its CRC shows as failed, is neither downloadable nor addable, and the board hears crc', async ({ page, request }) => {
+  await signUpFresh(page);
+  const { token } = await pairDevice(page, request, 'Bench');
+  await boardSays(request, token);
+  const data = Buffer.from(formatVolume({ filesystem: 'FFS', volumeName: 'Damaged' }).subarray(0, 40_000));
+  const { id } = await boardOpens(request, token, 'Disks/Damaged.adf', data.length);
+  await boardSendsChunks(request, token, id, data);
+  const close = await boardCloses(request, token, id, ((crc32(data) >>> 0) ^ 1) >>> 0);
+  expect(close.status()).toBe(409);
+  expect(await close.json()).toEqual({ code: 'crc' });
+  await page.goto('/ingest');
+  const row = page.getByTestId(`from-amiga-row-${id}`);
+  await expect(row).toHaveAttribute('data-status', 'failed', { timeout: LIVE });
+  await expect(page.getByTestId(`from-amiga-state-${id}`)).toContainText('Failed');
+  await expect(page.getByTestId(`from-amiga-state-${id}`)).toContainText('damaged on the way: send it again');
+  await expect(page.getByTestId(`from-amiga-download-${id}`)).toHaveCount(0);
+  await expect(page.getByTestId(`from-amiga-library-${id}`)).toHaveCount(0);
+  expect((await page.request.get(`/api/uploads/${id}/file`)).status()).toBe(404);
+  await expect(page.getByTestId(`from-amiga-delete-${id}`)).toBeVisible();
+});
+
+test('a file the board stopped sending resumes at the next chunk and is listed once', async ({ page, request }) => {
+  await signUpFresh(page);
+  const { token } = await pairDevice(page, request, 'Bench');
+  await boardSays(request, token);
+  const data = Buffer.alloc(20_000, 7);
+  const first = await boardOpens(request, token, 'Docs/Big.bin', data.length);
+  expect(first.offset).toBe(0);
+  await boardSendsChunks(request, token, first.id, data, 0, 1);   // one chunk, then the board goes away
+  const again = await boardOpens(request, token, 'Docs/Big.bin', data.length);
+  expect(again).toEqual({ id: first.id, offset: 16_384 });
+  await boardSendsChunks(request, token, again.id, data, again.offset);
+  expect((await boardCloses(request, token, again.id, crc32(data) >>> 0)).status()).toBe(200);
+  await page.goto('/ingest');
+  await expect(page.getByTestId(`from-amiga-row-${first.id}`)).toHaveAttribute('data-status', 'stored', { timeout: LIVE });
+  await expect(page.getByTestId('from-amiga-list').locator('li[data-testid^="from-amiga-row-"]')).toHaveCount(1);
+  const dl = await page.request.get(`/api/uploads/${first.id}/file`);
+  expect(Buffer.from(await dl.body()).equals(data)).toBe(true);
+});
+
+test('an empty file is stored and listed as 0 B', async ({ page, request }) => {
+  await signUpFresh(page);
+  const { token } = await pairDevice(page, request, 'Bench');
+  await boardSays(request, token);
+  const { id } = await boardOpens(request, token, 'Empty.txt', 0);
+  expect((await boardCloses(request, token, id, 0)).status()).toBe(200);
+  await page.goto('/ingest');
+  const row = page.getByTestId(`from-amiga-row-${id}`);
+  await expect(row).toHaveAttribute('data-status', 'stored', { timeout: LIVE });
+  await expect(row).toContainText('0 B');
 });
