@@ -69,6 +69,31 @@ got=$(docker run --rm -v "$W/data/blobs:/b:ro" alpine sh -c "sha256sum /b/adf/$p
 [ "$got" = "$pn_sha" ] || fail "the PaulaNET disk is not stored under its sha in blobs/adf (got: $got)"
 echo "smoke: PaulaNET disk OK"
 
+# Uploads from the Amiga (spec 2026-10-18 §9): the board's three routes, played with curl against a device row with a
+# known token; the bytes must land in blobs/adf/<sha256> (the local backend), as on Vercel Blob.
+sha256_of() { (sha256sum 2>/dev/null || shasum -a 256) | cut -d' ' -f1; }
+tok="wadf_smoke_upload"
+tok_hash=$(printf '%s' "$tok" | sha256_of)
+psql "insert into devices (id, org_id, name, token_hash) values ('smoke-dev', 'smoke-org', 'Smoke board', '$tok_hash')" >/dev/null \
+  || fail "could not seed a device row"
+up="https://localhost:$PORT/api/device/upload"
+open=$(curl -skf -H "authorization: Bearer $tok" -H 'content-type: application/json' \
+  -d '{"size":11,"date":"1.2.3","protection":0,"path":"Smoke.txt","comment":""}' "$up") || fail "upload open"
+id=$(sed -n 's/.*"id":"\([^"]*\)".*/\1/p' <<<"$open")
+[ -n "$id" ] || fail "upload open answered no id: $open"
+got=$(curl -skf -H "authorization: Bearer $tok" -H 'content-type: application/octet-stream' --data-binary 'hello amiga' "$up/$id?offset=0") \
+  || fail "upload chunk"
+has '"received":11' "$got" || fail "upload chunk answered $got"
+# zlib.crc32 needs Node 22.2+; the image is node:24.
+crc=$(dc exec -T app node -e 'process.stdout.write(String(require("zlib").crc32(Buffer.from("hello amiga")) >>> 0))')
+got=$(curl -skf -H "authorization: Bearer $tok" -H 'content-type: application/json' -d "{\"crc32\":$crc}" "$up/$id/close") \
+  || fail "upload close"
+has '"name":"Smoke.txt"' "$got" || fail "upload close answered $got"
+up_sha=$(printf 'hello amiga' | sha256_of)
+got=$(docker run --rm -v "$W/data/blobs:/b:ro" alpine sh -c "cat /b/adf/$up_sha" 2>&1) || true
+[ "$got" = "hello amiga" ] || fail "the upload is not stored under its sha in blobs/adf (got: $got)"
+echo "smoke: upload from the Amiga OK"
+
 # Change WEBADF_URL to an IP address: `up -d` alone must bring Caddy onto the new site (it is not recreated;
 # it reloads the re-rendered Caddyfile), and a client that sends no SNI (curl to an IP) must get the certificate.
 caddy_id=$(dc ps -q caddy)

@@ -137,6 +137,24 @@ describe('amiga uploads', () => {
     expect(await U.closeUpload(db(), d.deviceId, id, crc(data))).toEqual({ ok: true, name: 'File.bin' });
   });
 
+  it('stored_at is the database clock (like created_at), whatever clock the caller passes', async () => {
+    const d = await device('org-clock'); const data = bytes(10, 9);
+    const id = await upload(d, data);
+    expect((await U.closeUpload(db(), d.deviceId, id, crc(data), later())).ok).toBe(true);
+    const [r] = (await db().execute(sql`select (stored_at <= now()) as past, (stored_at >= created_at) as after from amiga_uploads where id = ${id}`)).rows as { past: boolean; after: boolean }[];
+    expect(r).toEqual({ past: true, after: true });
+  });
+
+  it('delete takes a receiving row too: the board then hears gone and the next send starts at 0', async () => {
+    const d = await device('org-del-recv'); const data = bytes(40000, 5);
+    const o = await opened(d, { size: data.byteLength, path: 'Stalled.bin' });
+    await U.storeChunk(db(), d.deviceId, o.id, 0, data.subarray(0, 16384));
+    expect(await U.deleteUpload(db(), 'org-del-recv', o.id)).toBe(true);
+    expect(await chunkRows(o.id)).toBe(0);
+    expect(await U.closeUpload(db(), d.deviceId, o.id, crc(data))).toEqual({ ok: false, status: 409, code: 'gone' });
+    expect((await opened(d, { size: data.byteLength, path: 'Stalled.bin' })).offset).toBe(0);
+  });
+
   it('a CRC mismatch is final: failed crc, the chunks gone, and the next send starts at 0', async () => {
     const d = await device(); const data = bytes(20000);
     const id = await upload(d, data, 'Bad.bin');
@@ -246,6 +264,30 @@ describe('amiga uploads', () => {
     expect((await row('m-old')).status).toBe('deleted');
     expect((await row('m-new')).status).toBe('stored');
     await expect(U.clearUploads(db(), 'org-micro', "x'; drop table amiga_uploads; --")).rejects.toThrow(RangeError);
+  });
+
+  it('clear spares a file that was still arriving when the person looked, even if it is stored by the time they confirm', async () => {
+    const d = await device('org-arrive');
+    const before = await stored(d, bytes(10, 50), 'Before.txt');
+    const o = await opened(d, { size: 20, path: 'Late.bin' });           // created before the cursor, still receiving
+    const seen = (await U.listUploads(db(), 'org-arrive', null))[0].cursor;   // the newest row: Late.bin, arriving
+    await db().update(amigaUploads).set({ status: 'stored', storedAt: new Date(Date.now() + 5) }).where(eq(amigaUploads.id, o.id));
+    expect(await U.clearUploads(db(), 'org-arrive', seen)).toBe(1);
+    expect((await row(before)).status).toBe('deleted');
+    expect((await row(o.id)).status).toBe('stored');                      // stored after the cursor: never seen as finished
+  });
+
+  it('clear with a board clears only that board, up to the cursor the filtered list gave', async () => {
+    const a = await device('org-board'); const b = await device('org-board');
+    const a1 = await stored(a, bytes(10, 40), 'A1.txt');
+    const b1 = await stored(b, bytes(10, 41), 'B1.txt');
+    const a2 = await stored(a, bytes(10, 42), 'A2.txt');
+    const seen = (await U.listUploads(db(), 'org-board', a.deviceId))[0].cursor;   // newest of board a's list: a2
+    const b2 = await stored(b, bytes(10, 43), 'B2.txt');
+    expect(await U.clearUploads(db(), 'org-board', seen, a.deviceId)).toBe(2);
+    expect((await row(a1)).status).toBe('deleted'); expect((await row(a2)).status).toBe('deleted');
+    expect((await row(b1)).status).toBe('stored');   // older than the cursor, but another board
+    expect((await row(b2)).status).toBe('stored');
   });
 
   it('a cursor has one exact shape; anything else is rejected before SQL', async () => {

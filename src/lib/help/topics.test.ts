@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { HELP_TOPICS, HELP_ORDER, type HelpTopicId } from './topics';
 
-const IDS: HelpTopicId[] = ['boards', 'own-server', 'nfc', 'next-disk', 'write-back', 'write-protect', 'disk-sets', 'hd-hfe', 'display', 'second-drive', 'network', 'send', 'cover-image', 'about', 'preferences'];
+const IDS: HelpTopicId[] = ['boards', 'own-server', 'nfc', 'next-disk', 'write-back', 'write-protect', 'disk-sets', 'hd-hfe', 'display', 'second-drive', 'network', 'send', 'from-amiga', 'cover-image', 'about', 'preferences'];
 // Internal words a reader of the help should never meet (spec §5).
 const BANNED = /\b(PSRAM|TBYB|poll|sha256|cursor|WPROT)\b/i;
 
@@ -48,6 +48,19 @@ describe('help topics', () => {
 
 // Final review fixes (2026-10-05): claims that were wrong, incomplete or unverifiable.
 describe('help topics say what the app really does', () => {
+  it('from-amiga names the firmware, the three ways to send, the key digits and the limits (spec 2026-10-18)', () => {
+    const b = HELP_TOPICS['from-amiga'].short + bodyText('from-amiga');
+    for (const w of ['1.19.0', 'Install', 'Send…', 'Receive SEND', 'Trusted board AB12', 'Trust this board', 'TRUST',
+      '4 MB', '500 files', '256 MB', '30 days', '24 hours', 'Clear all', 'Add to library']) expect(b).toContain(w);
+  });
+  it('from-amiga lists every extension the library takes', () => {
+    expect(bodyText('from-amiga')).toMatch(/ADF, DSK, ADZ, DMS, DMZ and HFE/);
+  });
+  it('from-amiga says Receive trusts the first board it meets and the four digits are how to check it', () => {
+    const b = bodyText('from-amiga');
+    expect(b).toMatch(/first board/);
+    expect(b).toMatch(/four digits/);
+  });
   it('preferences names the three start pages, says they follow the person, and that a collection keeps its order', () => {
     const b = bodyText('preferences');
     for (const w of ['Library', 'Devices', 'Upload']) expect(b).toContain(w);

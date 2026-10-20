@@ -1,3 +1,5 @@
+import { uploadSummaries } from '@/lib/amiga-uploads';
+import { cardUploadLine } from '@/lib/from-amiga-ui';
 import { nowMs } from '@/lib/clock';
 import { getDb } from '@/db';
 import { sendSummaries } from '@/lib/transfers';
@@ -47,6 +49,11 @@ export default async function DevicesPage() {
     return [t.id, cardSendLine(s, receiverRunning(t, (s?.sending ?? 0) > 0, now))];
   }));
 
+  // Uploads from the Amiga (spec 2026-10-18 §4, §8): files stored within 24 h, or the update a Network board needs.
+  const uploads = await uploadSummaries(getDb(), orgId, new Date(now));
+  const uploadLineById = Object.fromEntries(devices.map((d) => [d.id,
+    cardUploadLine(uploads[d.id], d.firmwareVersion, d.secondDriveReported === 'net')]));
+
   // The registry is indexed ONCE and shared, so "which release is newest" is
   // computed in exactly one place -- the notice and the cards cannot disagree
   // about it, and the per-device step is a map lookup rather than three walks
@@ -86,7 +93,7 @@ export default async function DevicesPage() {
           </div>
         ) : (
           <DeviceList devices={devices} now={now} states={states}
-                      selectableIds={selectableIds} latest={registry.latest} nextById={nextById} sendLineById={sendLineById}
+                      selectableIds={selectableIds} latest={registry.latest} nextById={nextById} sendLineById={sendLineById} uploadLineById={uploadLineById}
                       skipPassword={prefs.firmware.skipPassword} />
         )}
       </div>

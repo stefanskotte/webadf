@@ -5,6 +5,7 @@ import { PageHeader } from '@/components/shell/page-header';
 import { Dropzone } from '@/components/ingest/dropzone';
 import { SendPanel } from '@/components/send/send-panel';
 import { UploadCard } from '@/components/ingest/upload-card';
+import { FromAmigaCard } from '@/components/uploads/from-amiga-card';
 import { listSendTargets } from '@/lib/send-targets';
 
 export default async function IngestPage(props: PageProps<'/ingest'>) {
@@ -12,6 +13,8 @@ export default async function IngestPage(props: PageProps<'/ingest'>) {
   const sp = await props.searchParams;
   // ?board= comes from the card's line and the disk pages' "See queue"; an id that is not a target is ignored.
   const board = typeof sp.board === 'string' ? sp.board : null;
+  // ?from= comes from a device card's "N files from the Amiga" line (it filters the area to that board).
+  const from = typeof sp.from === 'string' ? sp.from : null;
   const now = nowMs();
   const targets = await listSendTargets(getDb(), orgId, now);
   return (
@@ -28,6 +31,7 @@ export default async function IngestPage(props: PageProps<'/ingest'>) {
         </UploadCard>
         <SendPanel targets={targets} initialBoard={board} serverNow={now} />
       </div>
+      <FromAmigaCard targets={targets} initialBoard={from} />
     </>
   );
 }

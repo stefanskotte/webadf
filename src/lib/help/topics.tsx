@@ -455,6 +455,36 @@ export const HELP_TOPICS = {
       </>
     ),
   },
+  // Sources: spec docs/superpowers/specs/2026-10-18-amiga-to-web-upload-design.md §1 (U2 the ways to send, U4 resume,
+  // U5 limits, U6 the area, U7 trust), §2 (Receive), §4 (Add to library, Clear all, attachments), §6 (the key digits);
+  // src/lib/amiga-upload-limits.ts (UPLOAD_FW, limits), src/lib/from-amiga-ui.ts (the words), tools/receive/amiga/gui.c.
+  'from-amiga': {
+    title: 'Files from the Amiga',
+    short:
+      'Send files from your Amiga to the web app with Receive. They land in From the Amiga on the Upload page, where you can download them, add disk images to your library or send them on.',
+    body: (
+      <>
+        <p>
+          Your board needs firmware 1.19.0 or newer, in <em>Network (PaulaNET)</em> mode. Run <em>Install</em> from the
+          driver disk again to get the new <em>Receive</em>, and start it. Then drop files or drawers on its window, press{' '}
+          <em>Send…</em>, or type <em>Receive SEND DH0:file</em> in a Shell.
+        </p>
+        <p>
+          <strong>Your board, and only yours.</strong> Receive trusts the first board it meets: it saves that
+          board&apos;s key and shows four of its digits, such as <em>Trusted board AB12</em>. The same four digits appear
+          on this page, so check they match your board. Receive sends only to that board; if another one connects it
+          stops, and <em>Trust this board</em> (or <em>TRUST</em> in the Shell) accepts the new one.
+        </p>
+        <GoodToKnow items={[
+          'Up to 4 MB a file. The area holds up to 500 files or 256 MB for your organization, and keeps each file 30 days.',
+          'A file cut off by a reset or a lost connection continues where it stopped when you send it again within 24 hours. A file marked Stopped can be sent again in that time, or deleted.',
+          'Add to library is offered for ADF, DSK, ADZ, DMS, DMZ and HFE files; nothing is added on its own.',
+          'Clear all removes every finished file you can see; a file still arriving stays.',
+          'Download always saves the file: a web page sent from the Amiga is never opened in the browser.',
+        ]} />
+      </>
+    ),
+  },
 
   // Sources: cover-image.ts (types, 2 MB, 16-4096 px, effectiveCoverUrl precedence), cover-control.tsx
   // (button texts), api/games/[id]/cover/route.ts (Revert keeps nothing else), cover-override.ts (per-org row),
@@ -582,6 +612,6 @@ export const HELP_TOPICS = {
 export type HelpTopicId = keyof typeof HELP_TOPICS;
 
 export const HELP_ORDER: readonly HelpTopicId[] = [
-  'boards', 'own-server', 'nfc', 'next-disk', 'second-drive', 'network', 'send', 'write-back', 'write-protect', 'disk-sets', 'hd-hfe', 'display',
+  'boards', 'own-server', 'nfc', 'next-disk', 'second-drive', 'network', 'send', 'from-amiga', 'write-back', 'write-protect', 'disk-sets', 'hd-hfe', 'display',
   'cover-image', 'about', 'preferences',
 ];

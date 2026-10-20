@@ -34,7 +34,7 @@ import { DeleteDeviceDialog } from './delete-device-dialog';
  * screen readers either way.
  */
 export function DeviceCard(
-  { device, now, firmware, selection, onCancelUpdate, next, sendLine }: {
+  { device, now, firmware, selection, onCancelUpdate, next, sendLine, uploadLine }: {
     device: DeviceListItem; now: number; firmware: FirmwareState;
     /** Absent when this board cannot be updated -- no checkbox is drawn at all. */
     selection?: { selected: boolean; onToggle: (id: string) => void };
@@ -44,6 +44,7 @@ export function DeviceCard(
     next?: NextInfo | null;
     /** Send to Amiga's one line (spec §4), or null when nothing waits or happened lately. */
     sendLine?: string | null;
+    uploadLine?: { text: string; href: boolean } | null;
   },
 ) {
   const state = deviceState(device, now);
@@ -223,6 +224,14 @@ export function DeviceCard(
           {sendLine}
         </Link>
       )}
+      {uploadLine && (uploadLine.href ? (
+        <Link href={`/ingest?from=${encodeURIComponent(device.id)}#from-amiga`} data-testid={`device-upload-${device.id}`}
+              className="w-fit text-[11px] font-semibold underline underline-offset-2" style={{ color: 'var(--ink)', overflowWrap: 'anywhere' }}>
+          {uploadLine.text}
+        </Link>
+      ) : (
+        <span data-testid={`device-upload-${device.id}`} className="text-[11px]" style={{ color: 'var(--muted)' }}>{uploadLine.text}</span>
+      ))}
       {/* BOTTOM: write protection, firmware, and every existing action. */}
       <div className="flex flex-col gap-2">
         <SecondDriveReadings device={device} />
