@@ -1,3 +1,6 @@
+> **SUPERSEDED 2026-10-20 (operator):** the Challenger (ESP32-C6) board is dropped, so the second radio path (P3-P4) is
+> not needed. Rev C is a chip-down RP2350B with a CYW43439 module (HANDOFF §4 rev C). Kept for history only.
+
 # One firmware for two boards: PIM726 (RM2/CYW43439) and Challenger+ RP2350 WiFi6 (ESP32-C6) — design
 
 Status: written 2026-10-04 from the conversation; **awaiting operator review**. Nothing is built.

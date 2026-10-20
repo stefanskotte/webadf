@@ -1593,7 +1593,15 @@ separately.
       touch the cylinder-17 hang without it).
     - Everything rev B gained: the eight 1 kOhm floppy-line pull-ups, R12 22 Ohm and the double BZ1 footprint,
       and the I2C headers for OLED and NFC.
-  - **DECISION 2026-10-04 (operator): rev C carries a DUAL footprint, PIM726 OR the Challenger below**, so either
+  - **DECISION 2026-10-20 (operator): the Challenger option is DROPPED ("its not worth it"). Rev C is the chip-down
+    design above: an on-PCB RP2350B with its own flash and PSRAM (plus crystal, regulator, USB-C, BOOTSEL and RUN),
+    keeping the PIM726 pin map, and a CYW43439 radio module with an RF pin and u.FL.** This supersedes the
+    2026-10-04 dual-footprint decision below and the unified firmware's ESP-Hosted half (P3-P4): one board, one
+    radio driver. `REV-C-DUAL-FOOTPRINT.md` and the unified-firmware spec are kept for history only. Also ruled
+    out 2026-10-20: the ESP32-P4-WIFI6-M (no PIO -- the drive and PaulaNET timing would be rewritten and re-proven;
+    its C6-MINI-1 has no antenna port) and the SparkFun Thing Plus RP2350 (Feather pins, RP2350A without GP47, the
+    same RM2 radio with no antenna port, the same 8 MB PSRAM).
+  - ~~**DECISION 2026-10-04 (operator): rev C carries a DUAL footprint, PIM726 OR the Challenger below**~~ (superseded 2026-10-20), so either
     module can be fitted: the PIM726 where the on-board antenna suffices, the Challenger's IPEX3 antenna for big
     boxes. Net-by-net mapping for Shanshe: `wifi-floppy/hardware/REV-C-DUAL-FOOTPRINT.md`.
     - Key constraint: SEL0/SEL1/MTR/DIR must be four consecutive GPIOs. That is GP2-5 on the PIM726 and GP26-29 on

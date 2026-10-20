@@ -1,3 +1,6 @@
+> **SUPERSEDED 2026-10-20 (operator):** the Challenger option is dropped; rev C is a chip-down RP2350B with its own flash,
+> PSRAM and a CYW43439 radio module with u.FL (HANDOFF §4 rev C). Kept for history only.
+
 # Rev C: one footprint for either the PIM726 or the Challenger+ RP2350 WiFi6/BLE5
 
 Operator decision 2026-10-04: rev C carries footprints for **both** modules. Only one is fitted, and every board net
