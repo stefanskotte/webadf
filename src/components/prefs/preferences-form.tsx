@@ -6,10 +6,12 @@ import { toast } from 'sonner';
 import { SortSelect } from '@/components/prefs/sort-select';
 import { savePrefs } from '@/lib/user-prefs-client';
 import {
-  BROWSE_SORT_OPTIONS, LIBRARY_SORT_OPTIONS, START_PAGES, prefsDiff, type StartPage, type UserPrefs,
+  BROWSE_SORT_OPTIONS, LIBRARY_SORT_OPTIONS, LIBRARY_VIEWS, START_PAGES, prefsDiff,
+  type LibraryViewMode, type StartPage, type UserPrefs,
 } from '@/lib/user-prefs-schema';
 
 const START_PAGE_LABELS: Record<StartPage, string> = { library: 'Library', devices: 'Devices', upload: 'Upload' };
+const LIBRARY_VIEW_LABELS: Record<LibraryViewMode, string> = { grid: 'Grid', table: 'Table' };
 
 /**
  * Preferences: every per-user setting in one place. Saved together with an
@@ -21,6 +23,8 @@ export function PreferencesForm({ prefs }: { prefs: UserPrefs }) {
   const startId = useId();
   const startHint = useId();
   const libraryHint = useId();
+  const viewId = useId();
+  const viewHint = useId();
   const [saved, setSaved] = useState(prefs);
   const [draft, setDraft] = useState(prefs);
   const [busy, setBusy] = useState(false);
@@ -72,6 +76,20 @@ export function PreferencesForm({ prefs }: { prefs: UserPrefs }) {
                       testId="pref-library-sort" describedBy={libraryHint} />
           <span id={libraryHint} className="text-[12px]" style={{ color: 'var(--muted)' }}>
             The library and Uncategorized. A collection keeps its own order.
+          </span>
+        </div>
+        <div className="flex flex-col gap-1">
+          <span className="inline-flex items-center gap-2 text-[12px]">
+            <label htmlFor={viewId} className="font-semibold" style={{ color: 'var(--muted)' }}>Library opens in</label>
+            <select id={viewId} aria-describedby={viewHint} data-testid="pref-library-view" value={draft.library.view}
+                    onChange={(e) => setDraft({ ...draft, library: { ...draft.library, view: e.target.value as LibraryViewMode } })}
+                    className="h-8 rounded-lg border px-2 text-[12px]"
+                    style={{ borderColor: 'var(--hairline)', background: 'var(--input-bg)', color: 'var(--ink)' }}>
+              {LIBRARY_VIEWS.map((v) => <option key={v} value={v}>{LIBRARY_VIEW_LABELS[v]}</option>)}
+            </select>
+          </span>
+          <span id={viewHint} className="text-[12px]" style={{ color: 'var(--muted)' }}>
+            How the library first shows. The grid and table buttons on the library switch views without changing this.
           </span>
         </div>
         <SortSelect label="Disk file list order" options={BROWSE_SORT_OPTIONS} value={draft.browse.sort}

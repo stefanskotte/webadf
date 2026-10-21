@@ -6,10 +6,10 @@ import {
 } from './user-prefs-schema';
 
 describe('user prefs defaults', () => {
-  it("are today's behaviour: library start page, newest-added first, Browse by name", () => {
+  it("are today's behaviour: library start page, newest-added first in the grid, Browse by name", () => {
     expect(DEFAULT_PREFS).toEqual({
       startPage: 'library',
-      library: { sort: { key: 'added', dir: 'desc' } },
+      library: { sort: { key: 'added', dir: 'desc' }, view: 'grid' },
       browse: { sort: { key: 'name', dir: 'asc' } },
       firmware: { skipPassword: false },
     });
@@ -31,7 +31,7 @@ describe('user prefs defaults', () => {
     });
     expect(p).toEqual({
       startPage: 'devices',
-      library: { sort: { key: 'added', dir: 'desc' } },
+      library: { sort: { key: 'added', dir: 'desc' }, view: 'grid' },
       browse: { sort: { key: 'size', dir: 'desc' } },
       firmware: { skipPassword: false },
     });
@@ -93,12 +93,49 @@ describe('user prefs patch', () => {
     const next = applyPrefsPatch(cur, { library: { sort: { key: 'year', dir: 'asc' } } });
     expect(next).toEqual({
       startPage: 'devices',
-      library: { sort: { key: 'year', dir: 'asc' } },
+      library: { sort: { key: 'year', dir: 'asc' }, view: 'grid' },
       browse: { sort: { key: 'size', dir: 'desc' } },
       firmware: { skipPassword: false },
     });
     // The input is untouched.
     expect(cur.library.sort).toEqual({ key: 'added', dir: 'desc' });
+  });
+});
+
+describe('library.view (which view /library opens in)', () => {
+  it('defaults to the grid, and reads a stored table back', () => {
+    expect(DEFAULT_PREFS.library.view).toBe('grid');
+    expect(parsePrefs({ library: { view: 'table' } }).library).toEqual({ sort: { key: 'added', dir: 'desc' }, view: 'table' });
+  });
+
+  it('a stored view that no longer validates falls back to the grid and keeps the sort', () => {
+    for (const bad of ['list', 1, null, { v: 'table' }]) {
+      expect(parsePrefs({ library: { sort: { key: 'title', dir: 'asc' }, view: bad } }).library)
+        .toEqual({ sort: { key: 'title', dir: 'asc' }, view: 'grid' });
+    }
+  });
+
+  it('a patch may name grid or table, nothing else', () => {
+    expect(parsePrefsPatch({ library: { view: 'table' } })).toEqual({ ok: true, patch: { library: { view: 'table' } } });
+    expect(parsePrefsPatch({ library: { view: 'grid', sort: { key: 'title', dir: 'asc' } } }).ok).toBe(true);
+    expect(parsePrefsPatch({ library: { view: 'list' } }).ok).toBe(false);
+  });
+
+  it('a patch sets the view without touching the sort, and a sort patch leaves the view', () => {
+    const cur = parsePrefs({ library: { sort: { key: 'year', dir: 'asc' } } });
+    const table = applyPrefsPatch(cur, { library: { view: 'table' } });
+    expect(table.library).toEqual({ sort: { key: 'year', dir: 'asc' }, view: 'table' });
+    expect(applyPrefsPatch(table, { library: { sort: { key: 'title', dir: 'asc' } } }).library)
+      .toEqual({ sort: { key: 'title', dir: 'asc' }, view: 'table' });
+    expect(cur.library.view).toBe('grid');
+  });
+
+  it('prefsDiff names the view only when it changed, and alongside a changed sort', () => {
+    const saved = parsePrefs({});
+    expect(prefsDiff(saved, { ...saved, library: { ...saved.library, view: 'table' } }))
+      .toEqual({ library: { view: 'table' } });
+    expect(prefsDiff(saved, { ...saved, library: { sort: { key: 'title', dir: 'asc' }, view: 'table' } }))
+      .toEqual({ library: { sort: { key: 'title', dir: 'asc' }, view: 'table' } });
   });
 });
 
@@ -131,7 +168,7 @@ describe('prefsDiff', () => {
     expect(prefsDiff(saved, { ...saved, startPage: 'devices' })).toEqual({ startPage: 'devices' });
     expect(prefsDiff(saved, { ...saved, browse: { sort: { key: 'size', dir: 'desc' } } }))
       .toEqual({ browse: { sort: { key: 'size', dir: 'desc' } } });
-    expect(prefsDiff(saved, { ...saved, library: { sort: { key: 'title', dir: 'asc' } } }))
+    expect(prefsDiff(saved, { ...saved, library: { ...saved.library, sort: { key: 'title', dir: 'asc' } } }))
       .toEqual({ library: { sort: { key: 'title', dir: 'asc' } } });
   });
 });

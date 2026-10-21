@@ -54,7 +54,7 @@ describe('user prefs storage', () => {
     await setUserPrefs(u, { browse: { sort: { key: 'size', dir: 'desc' } } });
     expect(await getUserPrefs(u)).toEqual({
       startPage: 'devices',
-      library: { sort: { key: 'title', dir: 'asc' } },
+      library: { sort: { key: 'title', dir: 'asc' }, view: 'grid' },
       browse: { sort: { key: 'size', dir: 'desc' } },
       firmware: { skipPassword: false },
     });
@@ -79,7 +79,7 @@ describe('user prefs storage', () => {
     ]);
     expect(await getUserPrefs(u)).toEqual({
       startPage: 'devices',
-      library: { sort: { key: 'publisher', dir: 'asc' } },
+      library: { sort: { key: 'publisher', dir: 'asc' }, view: 'grid' },
       browse: { sort: { key: 'date', dir: 'desc' } },
       firmware: { skipPassword: false },
     });
@@ -95,7 +95,7 @@ describe('user prefs storage', () => {
     ]);
     expect(await getUserPrefs(u)).toEqual({
       startPage: 'devices',
-      library: { sort: { key: 'year', dir: 'asc' } },
+      library: { sort: { key: 'year', dir: 'asc' }, view: 'grid' },
       browse: { sort: { key: 'size', dir: 'asc' } },
       firmware: { skipPassword: false },
     });
