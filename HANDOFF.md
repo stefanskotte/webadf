@@ -5023,6 +5023,37 @@ Demozoo API (the bulk export makes per-lookup load on a non-profit unnecessary).
   allowlist checks only the first URL (the raster content-type allowlist and `nosniff` still apply).
 - **Cron drift:** the daily 01:30 cron against a 7-day gate can drift a refetch to 8 days.
 
+### 3cd. Amiga-upload bench closed; fw 1.20.2 TEST (uploads 4.6x faster, 5 s reconnect); Receive renamed Transfer (master e0e525b) -- 2026-10-21
+
+- **Bench (A500, fw 1.19.1 seq 111):** B0 ran (keep window 2 x 16 KB, ooseq 2,920 B; 1.19.1 because the registry
+  refuses rollback). B1-B5, B7, B9 PASS; B6 and B8 SKIPPED by the operator ("I trust you on that"); B10 waits for
+  the A4000D. Results in `.superpowers/sdd/2026-10-19-amiga-to-web-upload/progress.md`. Rates on 1.19.1: 2.3-8.5 KB/s.
+- **Found and fixed (fw 1.20.2+g68b7b8e, TEST seq 114, on the bench board):**
+  - The slow uploads were TLS connection loss about every 30 s: tls_write sized writes from altcp_tls's sndbuf,
+    which subtracts mbedTLS's expansion ESTIMATE; near a full buffer a 1-byte write became a 37-byte record TCP
+    could not take, altcp_tls parked it in out_left and reported success, and the NEXT write's flush returned
+    ERR_MEM (-112, detail -1). 1.20.1's diagnostic line proved it (`write 1 parked: out_left=37 sndbuf=1`, heap
+    15 KB of 24, seg/pool fine). Fix: `tls_write_len` (src/tls_room.h, host-tested) sizes from tcp_sndbuf with a
+    128 B margin, never under 512 B, and checks the queue length. Result: the 880 KB ADF in 85 s (was 392-397 s),
+    no refusals, sha matches.
+  - 1.20.0's first theory (lwIP heap exhaustion) was WRONG: its heap-room wait never waited. Kept anyway, with
+    MEM_SIZE 24 KB (`.bss` +8,192 = 429,856), because uploads measured 15.4 KB of lwIP heap in use -- the edge of
+    the old 16 KB. Cost if wrong: 8 KB of SRAM heap (low-water was 32,768 before).
+  - B5: after an Amiga reset mid-upload the board retried at the idle 30 s cadence and missed Receive's 60 s wait.
+    A drop with an upload in flight now retries after 5 s; on the bench it reconnected 26 s after the cut and
+    resumed at 425,984; sha matches.
+  - The `tls: write N parked|refused` diagnostic line stays: it should never appear now.
+- **Transfer (operator 2026-10-21):** `C:Receive` is `C:Transfer` 2.1 -- `Transfer [RECEIVE]`, `Transfer SEND
+  <files>`, `Transfer GUI`; window title "WebFloppy - Receive & Send"; port `webadf.Transfer`; RECEIVE+SEND with
+  files is RC 10. Settings files keep their names. Install deletes old C:Receive and SYS:Tools/Receive(.info).
+  Driver disk 36bce70c... (stored in the disk store 2026-10-21, read back); 6e799db5 became PREVIOUS. The source
+  dir stays tools/receive and the pin file receive.sha256. FS-UAE 3.1 passed; NOT run: KS 2.04/3.2 and the A500.
+- **Product name:** "WebFloppy" arrives with the new design; until then only the Transfer window says WebFloppy.
+- **Owed:** Transfer on the A500 (Install from the new disk, then B2-style sends); B10; releasing 1.20.2 (operator's
+  call; Pillock's org is offered the TEST builds too); core1 watchdog; table view (operator decides what a folder is).
+- **Backlog (operator 2026-10-21):** the disk upload/download area and send/receive may share one stage area, or
+  reusable parts -- brainstorm later.
+
 ### 3cc. Upload from the Amiga to the web app: Receive 2, fw 1.19.0 TEST, the From the Amiga area (master 27d7508) -- 2026-10-20
 
 - Spec `docs/superpowers/specs/2026-10-18-amiga-to-web-upload-design.md`; plan
