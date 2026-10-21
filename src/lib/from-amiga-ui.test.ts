@@ -120,8 +120,8 @@ describe('a stalled upload', () => {
 
 describe('the card words that depend on the boards and the library', () => {
   it('the empty list says what is missing when no board can send', () => {
-    expect(emptyText([{ canUpload: true }])).toMatch(/Drop files on Receive/);
-    expect(emptyText([{ canUpload: false }, { canUpload: true }])).toMatch(/Drop files on Receive/);
+    expect(emptyText([{ canUpload: true }])).toMatch(/Drop files on Transfer's window, or type Transfer SEND/);
+    expect(emptyText([{ canUpload: false }, { canUpload: true }])).toMatch(/Drop files on Transfer/);
     const no = /No board can send from the Amiga yet: update to 1\.19\.0 and use Network \(PaulaNET\) mode/;
     expect(emptyText([{ canUpload: false }])).toMatch(no);
     expect(emptyText([])).toMatch(no);

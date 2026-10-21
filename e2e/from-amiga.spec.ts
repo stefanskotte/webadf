@@ -52,7 +52,7 @@ test('a file from the Amiga appears with its board, downloads as an attachment, 
   await boardSays(request, token);
   await page.goto('/ingest');
   await expect(page.getByTestId('from-amiga-empty')).toBeVisible({ timeout: LIVE });
-  await expect(page.getByTestId('from-amiga-key')).toContainText('AB12');            // the digits Receive shows
+  await expect(page.getByTestId('from-amiga-key')).toContainText('AB12');            // the digits Transfer shows
   const id = await boardUploads(request, token, 'Docs/Café.txt', Buffer.from('hello from the Amiga\n'));
   const row = page.getByTestId(`from-amiga-row-${id}`);
   await expect(row).toHaveAttribute('data-status', 'stored', { timeout: LIVE });

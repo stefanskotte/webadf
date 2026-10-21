@@ -23,15 +23,15 @@ export type TransferView = {
 export type Tone = 'ok' | 'busy' | 'bad' | 'muted';
 export type SendSummary = { waiting: number; sending: number; delivered: number; failed: number };
 
-// Receive's error codes (spec §2), as a person would say them.
+// Transfer's error codes (spec §2; the program was Receive until 2.1), as a person would say them.
 const REASONS: Record<string, string> = {
   space: 'not enough space on the Amiga',
   crc: 'damaged on the way',
   name: 'the Amiga refused the name',
   write: 'could not write it on the Amiga',
   folder: 'the folder on the Amiga is missing',
-  busy: 'Receive was busy',
-  size: 'too large for Receive',
+  busy: 'Transfer was busy',
+  size: 'too large for Transfer',
 };
 
 export function failureText(code: string | null, text: string | null): string {
@@ -89,11 +89,11 @@ export function receiverRunning(t: Pick<SendTarget, 'rx' | 'rxAt'>, sending: boo
 export function receiverLine(t: SendTarget, q: { waiting: number; sending: boolean }, now: number): { ok: boolean; text: string } {
   if (!t.online) return { ok: false, text: 'The board is offline. Files wait until it is back.' };
   if (!t.network) return { ok: false, text: 'The board is not in Network mode. Files wait until it is.' };
-  if (receiverRunning(t, q.sending, now)) return { ok: true, text: 'Receive is running on the Amiga' };
+  if (receiverRunning(t, q.sending, now)) return { ok: true, text: 'Transfer is running on the Amiga' };
   if (t.rx === null || t.rx === '-') return { ok: false, text: 'The board has not seen the Amiga on the network yet' };
-  if (q.waiting > 0) return { ok: false, text: 'Start Receive on the Amiga' };
+  if (q.waiting > 0) return { ok: false, text: 'Start Transfer on the Amiga' };
   if (t.rx === 'u') return { ok: false, text: 'The Amiga does not answer' };
-  return { ok: false, text: 'Receive is not running on the Amiga' };
+  return { ok: false, text: 'Transfer is not running on the Amiga' };
 }
 
 export function offlineFor(ms: number): string {
@@ -132,7 +132,7 @@ export function cardSendLine(s: SendSummary | undefined, running: boolean): stri
   if (s.failed) parts.push(`${s.failed} failed`);
   if (s.delivered && !s.waiting && !s.sending) parts.push(`${s.delivered} delivered`);
   if (parts.length === 0) return null;
-  return `${parts.join(' · ')} · Receive ${running ? 'running' : 'not running'}`;
+  return `${parts.join(' · ')} · Transfer ${running ? 'running' : 'not running'}`;
 }
 
 export function adfSendName(d: { tosecName: string | null; sourceFilename: string | null; diskNo: number }): string {

@@ -45,7 +45,7 @@ describe('transfer states, each in words', () => {
     expect(transferState(row({ status: 'cancelled' })).text).toBe('Cancelled');
     expect(transferState(row({ status: 'expired' })).text).toBe('Expired · the Amiga did not take it within 24 h');
   });
-  it('falls back to Receive\'s own text for a code it does not know', () => {
+  it('falls back to Transfer\'s own text for a code it does not know', () => {
     expect(failureText('odd', 'something broke')).toBe('something broke');
     expect(failureText(null, null)).toBe('unknown reason');
   });
@@ -68,11 +68,11 @@ describe('the receiver line', () => {
     const q = { waiting: 0, sending: false };
     expect(receiverLine(t({ online: false }), q, NOW)).toEqual({ ok: false, text: 'The board is offline. Files wait until it is back.' });
     expect(receiverLine(t({ network: false }), q, NOW).text).toBe('The board is not in Network mode. Files wait until it is.');
-    expect(receiverLine(t(), q, NOW)).toEqual({ ok: true, text: 'Receive is running on the Amiga' });
+    expect(receiverLine(t(), q, NOW)).toEqual({ ok: true, text: 'Transfer is running on the Amiga' });
     expect(receiverLine(t({ rx: '-' }), q, NOW).text).toBe('The board has not seen the Amiga on the network yet');
     expect(receiverLine(t({ rx: null }), q, NOW).text).toBe('The board has not seen the Amiga on the network yet');
-    expect(receiverLine(t({ rx: 'r' }), { waiting: 2, sending: false }, NOW).text).toBe('Start Receive on the Amiga');
-    expect(receiverLine(t({ rx: 'r' }), q, NOW).text).toBe('Receive is not running on the Amiga');
+    expect(receiverLine(t({ rx: 'r' }), { waiting: 2, sending: false }, NOW).text).toBe('Start Transfer on the Amiga');
+    expect(receiverLine(t({ rx: 'r' }), q, NOW).text).toBe('Transfer is not running on the Amiga');
     expect(receiverLine(t({ rx: 'u' }), q, NOW).text).toBe('The Amiga does not answer');
   });
 });
@@ -102,13 +102,13 @@ describe('boards to send to', () => {
 });
 
 describe('the card line and names', () => {
-  it('counts what waits and what happened, and always says whether Receive runs', () => {
+  it('counts what waits and what happened, and always says whether Transfer runs', () => {
     expect(cardSendLine(undefined, true)).toBeNull();
     expect(cardSendLine({ waiting: 0, sending: 0, delivered: 0, failed: 0 }, true)).toBeNull();
-    expect(cardSendLine({ waiting: 3, sending: 0, delivered: 1, failed: 0 }, true)).toBe('3 files waiting · Receive running');
+    expect(cardSendLine({ waiting: 3, sending: 0, delivered: 1, failed: 0 }, true)).toBe('3 files waiting · Transfer running');
     expect(cardSendLine({ waiting: 1, sending: 1, delivered: 0, failed: 1 }, false))
-      .toBe('1 file waiting · 1 sending · 1 failed · Receive not running');
-    expect(cardSendLine({ waiting: 0, sending: 0, delivered: 2, failed: 0 }, false)).toBe('2 delivered · Receive not running');
+      .toBe('1 file waiting · 1 sending · 1 failed · Transfer not running');
+    expect(cardSendLine({ waiting: 0, sending: 0, delivered: 2, failed: 0 }, false)).toBe('2 delivered · Transfer not running');
   });
   it('names a whole disk <name>.adf, whatever it was uploaded as', () => {
     expect(adfSendName({ tosecName: 'Lotus (1990)(Gremlin).adf', sourceFilename: 'x.dms', diskNo: 1 })).toBe('Lotus (1990)(Gremlin).adf');

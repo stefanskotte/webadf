@@ -423,19 +423,20 @@ export const HELP_TOPICS = {
   },
 
   // Sources: spec docs/superpowers/specs/2026-10-16-paulanet-phase4-send-to-amiga-design.md §1 (D4 limits, D8 never
-  // overwrite, D9 accepted risk), §4 (the Upload page column, Browse Send, Send .adf), §5 (Receive, Install);
+  // overwrite, D9 accepted risk), §4 (the Upload page column, Browse Send, Send .adf), §5 (Receive, now Transfer, and Install);
   // src/lib/send-limits.ts (XFER_FW, limits), src/lib/send-ui.ts (the words), tools/paulanet-disk/Install;
   // plan 2026-10-17 rulings R1 (1.15.0), R9 (Cancel while sending), R10 (Retry).
   send: {
     title: 'Sending files to the Amiga',
     short:
-      'Send files from your computer, or from a disk in your library, to a folder on your Amiga. The Amiga saves them with Receive, from the PaulaNET driver disk.',
+      'Send files from your computer, or from a disk in your library, to a folder on your Amiga. The Amiga saves them with Transfer, from the PaulaNET driver disk.',
     body: (
       <>
         <p>
           Your board must be in <em>Network (PaulaNET)</em> mode, on firmware 1.15.0 or newer. On the Amiga, run{' '}
-          <em>Install</em> from the driver disk once: it copies <em>Receive</em> to SYS:Tools and C:. Start Receive by
-          hand, choose a folder and press Save. The default folder is RAM:.
+          <em>Install</em> from the driver disk once: it copies <em>Transfer</em> to SYS:Tools and C:, replacing{' '}
+          <em>Receive</em>. Start it yourself (in a Shell: <em>Transfer RECEIVE</em>), choose a folder and press
+          Save. The default folder is RAM:.
         </p>
         <p>
           <strong>Three ways to send.</strong> On the Upload page, drop any file under <em>Send to Amiga</em>. On a
@@ -445,34 +446,34 @@ export const HELP_TOPICS = {
         </p>
         <GoodToKnow items={[
           'Up to 4 MB a file, and up to 32 files or 16 MB waiting for one board.',
-          'A file sent while Receive is closed waits up to 24 hours, then expires.',
+          'A file sent while Transfer is closed waits up to 24 hours, then expires.',
           'Nothing is overwritten: a second Foo.lha arrives as Foo_2.lha.',
           'Cancel stops a file that is waiting or on its way. Retry sends a failed one again from the start.',
           'Clear finished drops every delivered, failed, cancelled or expired file from the list.',
           'A board whose Amiga was running when a new driver disk came out keeps its older driver disk until the Amiga has been off a while; then it gets the new one.',
-          'While Receive runs, any computer on your network can drop a file into its folder. It cannot overwrite anything or leave the folder, and nothing is run.',
+          'While Transfer runs, any computer on your network can drop a file into its folder. It cannot overwrite anything or leave the folder, and nothing is run.',
         ]} />
       </>
     ),
   },
   // Sources: spec docs/superpowers/specs/2026-10-18-amiga-to-web-upload-design.md §1 (U2 the ways to send, U4 resume,
-  // U5 limits, U6 the area, U7 trust), §2 (Receive), §4 (Add to library, Clear all, attachments), §6 (the key digits);
+  // U5 limits, U6 the area, U7 trust), §2 (Receive, now Transfer), §4 (Add to library, Clear all, attachments), §6 (the key digits);
   // src/lib/amiga-upload-limits.ts (UPLOAD_FW, limits), src/lib/from-amiga-ui.ts (the words), tools/receive/amiga/gui.c.
   'from-amiga': {
     title: 'Files from the Amiga',
     short:
-      'Send files from your Amiga to the web app with Receive. They land in From the Amiga on the Upload page, where you can download them, add disk images to your library or send them on.',
+      'Send files from your Amiga to the web app with Transfer. They land in From the Amiga on the Upload page, where you can download them, add disk images to your library or send them on.',
     body: (
       <>
         <p>
           Your board needs firmware 1.19.0 or newer, in <em>Network (PaulaNET)</em> mode. Run <em>Install</em> from the
-          driver disk again to get the new <em>Receive</em>, and start it. Then drop files or drawers on its window, press{' '}
-          <em>Send…</em>, or type <em>Receive SEND DH0:file</em> in a Shell.
+          driver disk again to get <em>Transfer</em> (it replaces <em>Receive</em>), and start it. Then drop files or
+          drawers on its window, press <em>Send…</em>, or type <em>Transfer SEND DH0:file</em> in a Shell.
         </p>
         <p>
-          <strong>Your board, and only yours.</strong> Receive trusts the first board it meets: it saves that
+          <strong>Your board, and only yours.</strong> Transfer trusts the first board it meets: it saves that
           board&apos;s key and shows four of its digits, such as <em>Trusted board AB12</em>. The same four digits appear
-          on this page, so check they match your board. Receive sends only to that board; if another one connects it
+          on this page, so check they match your board. Transfer sends only to that board; if another one connects it
           stops, and <em>Trust this board</em> (or <em>TRUST</em> in the Shell) accepts the new one.
         </p>
         <GoodToKnow items={[
