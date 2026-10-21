@@ -8,8 +8,12 @@ import { z } from 'zod';
  */
 export const LAST_BOOT_RESETS = [
   'power-on', 'brown-out', 'run-pin', 'debugger', 'glitch', 'watchdog', 'software', 'sysreset', 'unknown',
+  // fw 1.21.0 (core1_wd.h): core0 saw the network core's heartbeat stop and let the watchdog reset the board.
+  'core1-stall',
 ] as const;
-const C0 = ['early', 'buy', 'bought', 'psram-init', 'psram', 'i2c', 'display', 'nfc', 'loop', 'reboot'] as const;
+const C0 = [
+  'early', 'buy', 'bought', 'psram-init', 'psram', 'i2c', 'display', 'nfc', 'loop', 'reboot', 'c1-stall',
+] as const;
 const C1 = ['start', 'wifi', 'server', 'trial', 'proven', 'loop', 'contact'] as const;
 /** The flash update trail (boot_trail.h UT_*): how far an update's confirm restart got -- it survives a power cut. */
 const UPD = ['buy', 'psram', 'i2c', 'display', 'launch', 'server', 'contact'] as const;
@@ -31,7 +35,7 @@ export type LastBoot = z.infer<typeof lastBootSchema>;
 const C0_LABEL: Record<(typeof C0)[number], string> = {
   early: 'firmware start', buy: 'firmware buy', bought: 'after the firmware buy', 'psram-init': 'memory init',
   psram: 'after memory init', i2c: 'I2C scan', display: 'display init', nfc: 'NFC probe', loop: 'running',
-  reboot: 'restart',
+  reboot: 'restart', 'c1-stall': 'running',
 };
 const C1_LABEL: Record<(typeof C1)[number], string> = {
   start: 'radio start', wifi: 'Wi-Fi', server: 'server connection', trial: 'update trial', proven: 'confirm restart',
@@ -61,6 +65,11 @@ export function describeLastBoot(lb: LastBoot | null): string | null {
   // A fault whatever ended that boot: it ran without its display and reader.
   if (lb.i2cHeld) return `Previous start found the I2C bus held low: display and NFC were off ${why}`;
   if (lb.reset === 'software' || lb.c0 === 'reboot' || (!lb.c0 && !lb.c1)) return null;
+  // The network core stopped in its poll loop and the board reset itself (fw 1.21.0); core1's uptime is its last tick.
+  if (lb.reset === 'core1-stall' || lb.c0 === 'c1-stall') {
+    return `Previous run: the network side stopped responding after ${duration(lb.up1 ?? lb.up0 ?? 0)}; ` +
+      `the board restarted itself ${why}`;
+  }
   if (lb.c0 && lb.c0 !== 'loop') return `Previous start stopped at: ${C0_LABEL[lb.c0]} ${why}`;
   if (lb.c1 && lb.c1 !== 'contact') return `Previous start stopped at: ${C1_LABEL[lb.c1]} ${why}`;
   return `Previous run stopped after ${duration(Math.max(lb.up0 ?? 0, lb.up1 ?? 0))} ${why}`;
