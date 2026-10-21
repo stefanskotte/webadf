@@ -51,7 +51,7 @@ static void the_report_names_both_cores(void) {
     CHECK(strcmp(b, "{\"reset\":\"watchdog\",\"c0\":\"display\",\"up0\":0}") == 0, b);
     // The confirm path, stage by stage, has names.
     static const int c0s[] = { BT0_EARLY, BT0_BUY, BT0_BOUGHT, BT0_PSRAM_INIT, BT0_PSRAM, BT0_I2C, BT0_DISPLAY,
-                               BT0_NFC, BT0_LOOP, BT0_REBOOT };
+                               BT0_NFC, BT0_LOOP, BT0_REBOOT, BT0_C1STALL };
     static const int c1s[] = { BT1_START, BT1_WIFI, BT1_SERVER, BT1_TRIAL, BT1_PROVEN, BT1_LOOP, BT1_CONTACT };
     for (unsigned i = 0; i < sizeof c0s / sizeof c0s[0]; i++) CHECK(bt_stage_name(0, c0s[i])[0] != '\0', "c0 named");
     for (unsigned i = 0; i < sizeof c1s / sizeof c1s[0]; i++) CHECK(bt_stage_name(1, c1s[i])[0] != '\0', "c1 named");
@@ -175,11 +175,40 @@ static void a_held_bus_rides_core0s_word(void) {
     CHECK(m > 0 && m <= BT_JSON_MAX, "still fits");
 }
 
+// core1 supervision (1.21.0, core1_wd.h): core0 saw core1's heartbeat stop, marked its own word BT0_C1STALL and
+// stopped feeding the watchdog. The next boot names that as its own reason -- as BT0_REBOOT names "software" --
+// and core1's word still says where core1 was and when it last ticked.
+static void a_core1_stall_is_its_own_reason(void) {
+    const uint32_t w0 = bt_word(BT0_C1STALL, 3700000), w1 = bt_word(BT1_CONTACT, 3640000);
+    int st = -1; uint32_t up = 0;
+    CHECK(bt_word_read(w0, &st, &up), "a record");
+    CHECK_EQ_INT(st, BT0_C1STALL);
+    CHECK_EQ_INT(bt_reset_reason(BT_HAD_WATCHDOG_RESET_PSM, 1, w0), BT_RESET_CORE1_STALL);
+    CHECK_EQ_INT(bt_reset_reason(0, 1, w0), BT_RESET_CORE1_STALL);
+    // The chip's own word wins as it does for every other trail: a power cut, the RUN pin.
+    CHECK_EQ_INT(bt_reset_reason(BT_HAD_POR, 0, w0), BT_RESET_POWER_ON);
+    CHECK_EQ_INT(bt_reset_reason(BT_HAD_RUN_LOW, 0, w0), BT_RESET_RUN_PIN);
+    // A requested reboot that overtook the stall re-marks core0 BT0_REBOOT: "software", as before.
+    CHECK_EQ_INT(bt_reset_reason(BT_HAD_WATCHDOG_RESET_PSM, 2, bt_word(BT0_REBOOT, 3700000)), BT_RESET_SOFTWARE);
+    CHECK(strcmp(bt_reset_name(BT_RESET_CORE1_STALL), "core1-stall") == 0, "named");
+    CHECK(strcmp(bt_stage_name(0, BT0_C1STALL), "c1-stall") == 0, "stage named");
+    char b[BT_JSON_MAX + 1];
+    bt_json(b, sizeof b, BT_HAD_WATCHDOG_RESET_PSM, 1, w0, w1, NULL);
+    CHECK(strcmp(b, "{\"reset\":\"core1-stall\",\"c0\":\"c1-stall\",\"up0\":3700,\"c1\":\"contact\",\"up1\":3640}") == 0, b);
+    // The widest a stall can make it: the I2C flag, a stalled update trail, both uptimes saturated.
+    char big[256];
+    int m = bt_json(big, sizeof big, 0, 1, bt_word(BT0_C1STALL | BT_FLAG_I2C_HELD, 0xFFFFFFFFu),
+                    bt_word(BT1_CONTACT, 0xFFFFFFFFu), "display");
+    printf("  widest with a core1 stall: %d bytes (BT_JSON_MAX %d)\n", m, BT_JSON_MAX);
+    CHECK(m > 0 && m <= BT_JSON_MAX, "fits");
+}
+
 int main(void) {
     RUN(a_word_holds_its_stage_and_seconds);
     RUN(the_reset_reason_comes_from_the_chip_and_the_trail);
     RUN(the_report_names_both_cores);
     RUN(a_held_bus_rides_core0s_word);
+    RUN(a_core1_stall_is_its_own_reason);
     RUN(an_erased_or_foreign_sector_is_no_trail);
     RUN(the_trail_reads_how_far_the_update_restart_got);
     RUN(a_finished_or_already_reported_trail_is_not_reported);

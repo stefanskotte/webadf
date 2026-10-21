@@ -5,6 +5,7 @@
 #include "hardware/structs/watchdog.h"
 #include "hardware/regs/powman.h"
 #include "hardware/flash.h"
+#include "hardware/sync.h"             // __dmb (bt_hw_mark / bt_hw_core_view)
 #include "hardware/address_mapped.h"   // XIP_NOCACHE_NOALLOC_NOTRANSLATE_BASE
 #include "pico/flash.h"
 #include "fw_trial.h"                  // fw_version_hash
@@ -25,8 +26,11 @@ _Static_assert(BT_HAD_HZD_SYS_RESET_REQ == POWMAN_CHIP_RESET_HAD_HZD_SYS_RESET_R
 _Static_assert(BT_HAD_WATCHDOG_RESET_PSM == POWMAN_CHIP_RESET_HAD_WATCHDOG_RESET_PSM_BITS, "CHIP_RESET bits");
 
 static char     g_prev[BT_JSON_MAX + 1];
-static uint8_t  g_stage[2];
-static uint32_t g_tick_at[2];
+// Read by the OTHER core too (bt_hw_core_view, core1 supervision): aligned words, volatile, no lock. A mark writes
+// the tick before the stage, and the view reads the stage before the tick, so a view that sees a new stage also
+// sees that stage's time -- never a fresh LOOP with the previous stage's minutes-old tick.
+static volatile uint8_t  g_stage[2];
+static volatile uint32_t g_tick_at[2];
 static uint32_t g_cr, g_wd, g_w0, g_w1;
 static uint8_t  g_flags0;                 // BT_FLAG_I2C_HELD, sticky for the boot (core0's word only)   // what capture read, for ut_hw_capture's rebuild
 
@@ -44,9 +48,11 @@ void bt_hw_capture(void) {
 
 void bt_hw_mark(int core, int stage) {
     core &= 1;
+    const uint32_t now = to_ms_since_boot(get_absolute_time());
+    g_tick_at[core] = now;
+    __dmb();
     g_stage[core] = (uint8_t)stage;
-    g_tick_at[core] = to_ms_since_boot(get_absolute_time());
-    powman_hw->scratch[core] = bt_word(stage | (core == 0 ? g_flags0 : 0), g_tick_at[core]);
+    powman_hw->scratch[core] = bt_word(stage | (core == 0 ? g_flags0 : 0), now);
 }
 
 void bt_hw_tick(int core) {
@@ -63,6 +69,13 @@ void bt_hw_flag_i2c_held(void) {
 }
 
 const char *bt_hw_json(void) { return g_prev; }
+
+void bt_hw_core_view(int core, int *stage, uint32_t *tick_ms) {
+    core &= 1;
+    *stage = g_stage[core];
+    __dmb();
+    *tick_ms = g_tick_at[core];
+}
 
 // ---- the flash update trail (boot_trail.h) ----
 //

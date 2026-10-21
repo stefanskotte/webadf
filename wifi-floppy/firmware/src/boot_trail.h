@@ -23,14 +23,16 @@
 // core0's stages, in boot order. NONE (0) is no record. EARLY is fw_rom_boot_early's entry; BUY / BOUGHT bracket
 // the ROM buy (a proven trial only); PSRAM_INIT / PSRAM bracket runtime_init_setup_psram; I2C is the bus clear and
 // scan; DISPLAY the panel self-test and the reader's setup; NFC core0's loop before its first 2 s (the reader's
-// presence check); LOOP after; REBOOT the firmware's own rom_reboot (fw_rom_service).
+// presence check); LOOP after; REBOOT the firmware's own rom_reboot (fw_rom_service). C1STALL (1.21.0,
+// core1_wd.h): core0 saw core1's heartbeat stop past C1WD_LIMIT_MS and stopped feeding the watchdog -- the next
+// boot's reset reason is "core1-stall", as REBOOT's is "software".
 enum { BT0_NONE, BT0_EARLY, BT0_BUY, BT0_BOUGHT, BT0_PSRAM_INIT, BT0_PSRAM, BT0_I2C, BT0_DISPLAY, BT0_NFC,
-       BT0_LOOP, BT0_REBOOT };
+       BT0_LOOP, BT0_REBOOT, BT0_C1STALL };
 // core1's stages: START (core1_main), WIFI (joining), SERVER (associated: SNTP, TLS, the first requests), TRIAL
 // (a trial's heartbeat loop), PROVEN (the trial decided BUY: the proven reboot is requested), LOOP (the poll loop),
 // CONTACT (a status report has been heard: running).
 enum { BT1_NONE, BT1_START, BT1_WIFI, BT1_SERVER, BT1_TRIAL, BT1_PROVEN, BT1_LOOP, BT1_CONTACT };
-#define BT_STAGE_MAX BT0_REBOOT
+#define BT_STAGE_MAX BT0_C1STALL
 // Fix round 1: OR'd into core0's stage byte for the rest of a boot that found SCL held (i2c_scan_t held).
 #define BT_FLAG_I2C_HELD 0x80
 
@@ -51,7 +53,7 @@ enum { BT1_NONE, BT1_START, BT1_WIFI, BT1_SERVER, BT1_TRIAL, BT1_PROVEN, BT1_LOO
 
 typedef enum {
     BT_RESET_UNKNOWN, BT_RESET_POWER_ON, BT_RESET_BROWN_OUT, BT_RESET_RUN_PIN, BT_RESET_DEBUGGER,
-    BT_RESET_GLITCH, BT_RESET_WATCHDOG, BT_RESET_SOFTWARE, BT_RESET_SYSRESET,
+    BT_RESET_GLITCH, BT_RESET_WATCHDOG, BT_RESET_SOFTWARE, BT_RESET_SYSRESET, BT_RESET_CORE1_STALL,
 } bt_reset_t;
 
 // The word for `stage` at `up_ms` since boot.
@@ -62,7 +64,8 @@ bool bt_word_i2c_held(uint32_t w);
 // Why the chip reset: CHIP_RESET, WATCHDOG REASON (TIMER bit 0, FORCE bit 1), and core0's word from the boot
 // that ended. Power-on, brown-out and the RUN pin first (they clear the trail anyway); then a glitch or a
 // debugger; then core0's word: BT0_REBOOT means the firmware asked for the reboot (fw_rom_service, the only
-// place one happens) -- "software"; otherwise any watchdog sign is "watchdog": a hang it caught.
+// place one happens) -- "software"; BT0_C1STALL means core0 let the watchdog go because core1 stopped
+// (core1_wd.h) -- "core1-stall"; otherwise any watchdog sign is "watchdog": a hang it caught.
 bt_reset_t bt_reset_reason(uint32_t chip_reset, uint32_t wd_reason, uint32_t w0);
 const char *bt_reset_name(bt_reset_t r);
 const char *bt_stage_name(int core, int stage);
@@ -112,6 +115,9 @@ void bt_hw_capture(void);
 void bt_hw_mark(int core, int stage);
 // Called often from a core's loop: rewrites its word with the current uptime, at most once a second.
 void bt_hw_tick(int core);
+// From the OTHER core (core1 supervision, core1_wd.h): `core`'s current stage and the ms-since-boot time of its last
+// mark or tick. Lock-free; a new stage is never paired with the previous stage's tick (boot_trail_hw.c).
+void bt_hw_core_view(int core, int *stage, uint32_t *tick_ms);
 // core0, once: this boot found the I2C bus held -- every later word of core0's carries BT_FLAG_I2C_HELD.
 void bt_hw_flag_i2c_held(void);
 // The previous boot, as bt_json made it ("" if it did not fit). Built at capture, and again by ut_hw_capture.

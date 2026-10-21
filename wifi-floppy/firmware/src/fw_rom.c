@@ -220,6 +220,11 @@ void fw_rom_watchdog_start(void) {
     watchdog_enable(8000, false);
 }
 
+// core1 supervision (core1_wd.h): set once, by core0, when core1's heartbeat stopped past C1WD_LIMIT_MS. From then
+// on fw_rom_service stops feeding and the 8 s watchdog resets the board. A requested reboot still goes first.
+static bool g_wd_released;
+void fw_rom_release_watchdog(void) { g_wd_released = true; }
+
 void fw_rom_service(void) {
     // The trial deadline is enforced HERE, on core0, independent of core1: a
     // trial image whose network side hangs must still revert (spec M5/M6).
@@ -267,7 +272,7 @@ void fw_rom_service(void) {
         rom_reboot(type | REBOOT2_FLAG_NO_RETURN_ON_SUCCESS, 100, base, 0);
         for (;;) tight_loop_contents();
     }
-    watchdog_update();
+    if (!g_wd_released) watchdog_update();
 }
 
 // ---- device flash ops for fw_apply_image (D7) ------------------------------
