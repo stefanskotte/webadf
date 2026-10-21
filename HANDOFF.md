@@ -5049,7 +5049,12 @@ Demozoo API (the bulk export makes per-lookup load on a non-profit unnecessary).
   Driver disk 36bce70c... (stored in the disk store 2026-10-21, read back); 6e799db5 became PREVIOUS. The source
   dir stays tools/receive and the pin file receive.sha256. FS-UAE 3.1 passed; NOT run: KS 2.04/3.2 and the A500.
 - **Product name:** "WebFloppy" arrives with the new design; until then only the Transfer window says WebFloppy.
-- **Owed:** Transfer on the A500 (Install from the new disk, then B2-style sends); B10; releasing 1.20.2 (operator's
+- **Transfer on the A500 PASSED (2026-10-21, fw 1.20.2):** the rollout swapped DF1 to 36bce70c 13 min after the
+  Amiga's driver went quiet (reset, network left down), as R16 intends; Install copied Transfer to SYS:Tools and C:
+  and removed Receive from both; `version` = Transfer 2.1; `Transfer RECEIVE SEND <file>` refused, RC 10;
+  `Transfer SEND wb31.lha` stored 431,375 B in 42 s (10.2 KB/s), sha cebb95a7 matches; `Transfer GUI` shows
+  "WebFloppy - Receive & Send" and received a 200,000 B file from the web.
+- **Owed:** B10; releasing 1.20.2 (operator's
   call; Pillock's org is offered the TEST builds too); core1 watchdog; table view (operator decides what a folder is).
 - **Backlog (operator 2026-10-21):** the disk upload/download area and send/receive may share one stage area, or
   reusable parts -- brainstorm later.
