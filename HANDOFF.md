@@ -1478,6 +1478,15 @@ separately.
 
 ### 4. Backlog, not blocking anything
 
+**Current order (re-checked 2026-10-21):** (1) core1 watchdog -- measure the longest core1 heartbeat gap, then
+enforce (3cc's proposal; a candidate for the testers' overnight hangs); (2) library table view + folder browsing --
+waits on the operator's ruling on what a folder is (collections, disk sets or library categories); (3) B10 on the
+A4000D when it is on the bench. Entries below marked SHIPPED are kept for their history only.
+
+- **Unified staging area** (operator, 2026-10-21): the disk upload/Browse area and send/receive (Send to Amiga, From
+  the Amiga) should share one stage area, or at least reusable parts. Brainstorm first; announced to the testers as
+  "pending the new design build", so it rides with the redesign.
+
 - **"Put on a disk" from the From the Amiga area** (operator, 2026-10-19, "makes sense maybe later on"): pick one or
   more uploaded (non-disk) files and write them into a new or existing ADF, then optionally add that ADF to the
   library. The pieces exist (Browse's file operations / staged drop into a folder, `registerUploads`); not built with
@@ -1505,7 +1514,7 @@ separately.
   - **Self-host parity:** must work between two self-hosted instances and between self-hosted and ours.
   - **Shape:** architectural; brainstorm, spec, plan.
 
-- **Documentation for file transfer** (operator, 2026-10-18): describe the new Send to Amiga feature end to end in
+- **Documentation for file transfer** (operator, 2026-10-18; since 2026-10-21 the program is Transfer 2.1, 3cd): describe the new Send to Amiga feature end to end in
   the user-facing docs: the README and the docs the GitHub page links to, plus a check of the in-app help. Cover:
   - Receive on the PaulaNET driver disk (Install, Workbench icon, Shell form `Receive TO`, the saved folder);
   - the Upload page's Send to Amiga card, the queue, Clear finished, and the Browse/title-page Send buttons;
@@ -1539,11 +1548,11 @@ separately.
   way the library upload already understands .lzh (3bd); show what will be written before it is, and refuse what
   does not fit.
 
-- **OLED: rotate the display** (operator, 2026-10-17): a rotation setting (at least 180°, so a board mounted upside
+- **SHIPPED in fw 1.17.0 (3by).** **OLED: rotate the display** (operator, 2026-10-17): a rotation setting (at least 180°, so a board mounted upside
   down reads right) in the web app's display configuration, stored with the board's display settings and applied by
   the firmware (SSD1306/SH1106 segment remap + COM scan direction for 180°); the web preview must rotate with it.
 
-- **OLED: show the side with the track** (operator, 2026-10-17): as current FlashFloppy does, show the head
+- **SHIPPED in fw 1.18.0 (3bz, the side arrow).** **OLED: show the side with the track** (operator, 2026-10-17): as current FlashFloppy does, show the head
   position as `cylinder.side`, e.g. 78.0 -> 78.1 -> 79.0 -> 79.1 while the Amiga reads cylinders 78-79, both sides
   along the way. Fits every layout (128x32 and 128x64, both drives).
 
@@ -2758,7 +2767,7 @@ separately.
     - Verified bit-exact against the reference lz4 library on the host, as tools/netloop does for RLE.
     - The decoder's target is at least the measured third-party figure: 300-510 KB/s on a 7 MHz 68000, with an
       output-end bounds guard.
-- **Upload from the Amiga to the web app (operator, 2026-10-16).** The reverse of Phase 4: a file on the Amiga goes
+- **SHIPPED: fw 1.20.2 + Transfer 2.1 (3cc, 3cd).** **Upload from the Amiga to the web app (operator, 2026-10-16).** The reverse of Phase 4: a file on the Amiga goes
   into the web app, as a library disk if it is an ADF, otherwise as a plain file. Constraints known today:
   - The board's local path caps frames from the Amiga to the board at 256 bytes (`PNET_LOCAL_A2B_MAX`, 3bm). That cap
     was fine for Phase 4's acks, but bulk data from the Amiga needs it raised, or the frames sent out by radio.
@@ -2766,7 +2775,7 @@ separately.
   - Amiga side: a `Send` beside `Receive` (same tools/receive core and protocol style), or a mode of Receive.
   - Where the files land in the web app follows from the Upload page split (Phase 4 increment 3).
   Not started.
-- **Drop files onto the Amiga's RAM: (operator, 2026-10-09; after PaulaNET works).** A drop zone in the web app that
+- **SHIPPED as Send to Amiga (Phase 4, 3bv).** **Drop files onto the Amiga's RAM: (operator, 2026-10-09; after PaulaNET works).** A drop zone in the web app that
   copies the dropped files straight into the running Amiga's RAM disk. Needs PaulaNET online first. Shape to
   decide then: a small Amiga-side receiver (started from the driver disk / WBStartup) that the board or the server
   pushes files to over TCP and that writes them to RAM:, vs. driving an existing Amiga FTP/server tool. Questions:
