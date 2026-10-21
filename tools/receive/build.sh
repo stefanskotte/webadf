@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Builds Receive (68000, Kickstart 2.04+) with the pinned amiga-gcc image. Deterministic: the same sources give the
+# Builds Transfer (was Receive; 68000, Kickstart 2.04+) with the pinned amiga-gcc image. Deterministic: the same sources give the
 # same bytes (checked 2026-10-16), pinned in receive.sha256.
 # Usage: tools/receive/build.sh <out file> [--pin]   (--pin writes the pin; without it a mismatch fails)
 set -euo pipefail
@@ -10,8 +10,8 @@ tmp="$(mktemp -d)"; trap 'rm -rf "$tmp"' EXIT
 # sh -c so the amiga/*.c glob expands inside the container; sorted, so the link order never changes.
 docker run --rm --platform linux/amd64 -v "$here:/src:ro" -v "$tmp:/o" -w /src "$img" sh -c \
   'm68k-amigaos-gcc -m68000 -Os -noixemul -s -Wall -Werror -Icore \
-    -o /o/Receive core/rx_crc.c core/rx_names.c core/rx_proto.c $(ls amiga/*.c | LC_ALL=C sort)'
-cp "$tmp/Receive" "$out"
+    -o /o/Transfer core/rx_crc.c core/rx_names.c core/rx_proto.c $(ls amiga/*.c | LC_ALL=C sort)'
+cp "$tmp/Transfer" "$out"
 sha256() { if command -v sha256sum >/dev/null; then sha256sum "$1"; else shasum -a 256 "$1"; fi | cut -d' ' -f1; }
 got="$(sha256 "$out")"
 echo "$got  $out ($(wc -c < "$out" | tr -d ' ') bytes)"

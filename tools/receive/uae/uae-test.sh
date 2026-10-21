@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Boots FS-UAE with Receive and runs the shared scenarios against it through bsdsocket emulation (the Amiga's
+# Boots FS-UAE with Transfer and runs the shared scenarios against it through bsdsocket emulation (the Amiga's
 # listen on 6800 is the Mac's port 6800). Usage: uae-test.sh 204|31|32 [shell|gui|space|ram|send]
 # Never pattern-kills: stops only the FS-UAE PID it started.
 set -euo pipefail
@@ -39,14 +39,14 @@ fi
 pid=""
 cleanup() { [ -n "$pid" ] && kill "$pid" 2>/dev/null || true; }
 trap cleanup EXIT
-tools_out="$work/hd/Receive"; "$repo/tools/receive/build.sh" "$tools_out" >/dev/null
+tools_out="$work/hd/Transfer"; "$repo/tools/receive/build.sh" "$tools_out" >/dev/null
 target='Work:Out'; df0=''
 if [ "$mode" = ram ]; then target='RAM:'; fi
 if [ "$mode" = space ]; then
   xdftool "$work/small.adf" create + format Small ofs >/dev/null; df0="$work/small.adf"; target='DF0:'
 fi
 if [ "$mode" = send ]; then
-  # Uploads (spec 2026-10-18 §10 increment 1): files on Work:Up for thirteen `Receive SEND` runs, played by send-scenarios.ts.
+  # Uploads (spec 2026-10-18 §10 increment 1): files on Work:Up for thirteen `Transfer SEND` runs (and one RECEIVE SEND, refused), played by send-scenarios.ts.
   mkdir -p "$work/hd/Up/Mods/sub"
   printf 'hello from the Amiga\n' > "$work/hd/Up/Hello.txt"
   head -c 4194304 /dev/urandom > "$work/hd/Up/Big.bin"
@@ -60,26 +60,29 @@ if [ "$mode" = gui ]; then
   mkdir -p "$work/hd/Up"; head -c 901120 /dev/zero > "$work/hd/Up/Lemmings.adf"; printf 'notes\n' > "$work/hd/Up/Notes.txt"
 fi
 case "$mode" in
-  shell|space|ram) run_line="Work:Receive TO $target SAVE >Work:receive.log";;
+  shell|space|ram) run_line="Work:Transfer RECEIVE TO $target SAVE >Work:receive.log";;
   gui) run_line="DF1:C/Assign >NIL: SYS: DF1:
 DF1:C/LoadWB
-Run >NIL: Work:Receive TO $target GUI SEND Work:Up/Lemmings.adf Work:Up/Notes.txt";;
+Run >NIL: Work:Transfer TO $target GUI SEND Work:Up/Lemmings.adf Work:Up/Notes.txt";;
   send) e9=$(printf '\351')   # é in Latin-1: the Amiga reads the script byte by byte
         run_line=""
         # <log>:<file>; s03b is the drawer again with the slash Shell TAB completion adds.
         for step in s01:Hello.txt s02:Big.bin s03:Mods s03b:Mods/ s04:Resume.bin s05:Resume.bin s06:Crc.bin \
                     s07:Refused.bin "s08:Caf${e9}.txt" s09:Hello.txt s10:Hello.txt; do
           log=${step%%:*}; f=${step#*:}
-          run_line="${run_line}Work:Receive SEND Work:Up/$f >Work:$log.log
+          run_line="${run_line}Work:Transfer SEND Work:Up/$f >Work:$log.log
 Echo >>Work:$log.log "'"rc=$RC"'"
 "
         done
-        run_line="${run_line}Work:Receive SEND TRUST Work:Up/Hello.txt >Work:s11.log
+        run_line="${run_line}Work:Transfer SEND TRUST Work:Up/Hello.txt >Work:s11.log
 Echo >>Work:s11.log "'"rc=$RC"'"
-Run >NIL: Work:Receive TO Work:Out
+Run >NIL: Work:Transfer TO Work:Out
 Wait 3
-Work:Receive SEND Work:Up/Hello.txt >Work:s12.log
+Work:Transfer SEND Work:Up/Hello.txt >Work:s12.log
 Echo >>Work:s12.log "'"rc=$RC"'"
+Work:Transfer RECEIVE SEND Work:Up/Hello.txt >Work:s13.log
+Echo >>Work:s13.log "'"rc=$RC"'"
+Version Work:Transfer >Work:ver.log
 Echo >Work:done done";;
 esac
 cat > "$work/hd/S/startup-sequence" <<EOF
@@ -115,7 +118,7 @@ EOF
 pid=$!
 echo "fs-uae pid $pid, folder $work"
 for _ in $(seq 1 90); do nc -z 127.0.0.1 6800 2>/dev/null && break; sleep 1; done
-nc -z 127.0.0.1 6800 || { echo "FAIL: Receive never listened on 6800"; tail -20 "$work/fs-uae.log"; exit 1; }
+nc -z 127.0.0.1 6800 || { echo "FAIL: Transfer never listened on 6800"; tail -20 "$work/fs-uae.log"; exit 1; }
 rc=0
 case "$mode" in
   shell) pnpm exec tsx "$repo/tools/receive/run-scenarios.ts" --port 6800 --dir "$work/hd/Out" --uae || rc=1

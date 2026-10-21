@@ -18,6 +18,6 @@ jobs:
       - name: POSIX integration against the fake board
         run: pnpm vitest run tools/receive/receive.int.test.ts
       - name: Cross-build matches the pin
-        run: tools/receive/build.sh "$RUNNER_TEMP/Receive"
+        run: tools/receive/build.sh "$RUNNER_TEMP/Transfer"
       - name: The committed binary is that build (the driver disk and the self-host image use it)
-        run: cmp "$RUNNER_TEMP/Receive" tools/receive/dist/Receive
+        run: cmp "$RUNNER_TEMP/Transfer" tools/receive/dist/Transfer

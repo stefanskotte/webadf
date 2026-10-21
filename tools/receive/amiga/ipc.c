@@ -30,15 +30,15 @@ static void init_msg(rx_msg *m, struct MsgPort *reply, int kind) {
     m->m.mn_ReplyPort = reply; m->m.mn_Length = (UWORD)sizeof *m; m->kind = kind;
 }
 
-/* A Receive that died without removing its port (a crash, a Guru) never answers. After LETGO the wait is a poll: a
+/* A Transfer that died without removing its port (a crash, a Guru) never answers. After LETGO the wait is a poll: a
    second Ctrl-C, or ~5 s with no reply, gives up -- and leaks the messages and the reply port on purpose, since a
-   Receive that is only slow might still reply into them. So every message is AllocVec'd, never in our data hunk,
+   Transfer that is only slow might still reply into them. So every message is AllocVec'd, never in our data hunk,
    which goes away when we exit. */
 #define RX_LETGO_TICKS 250   /* 5 s at 50 ticks/s */
 static int give_up(unsigned left) {
     LONG a[1];
     a[0] = (LONG)left;
-    VPrintf((STRPTR)"Receive is not answering (its port webadf.Receive may be stale); %lu files not confirmed\n", a);
+    VPrintf((STRPTR)"Transfer is not answering (its port webadf.Transfer may be stale); %lu files not confirmed\n", a);
     Flush(Output());
     return 1;
 }
@@ -63,7 +63,7 @@ int ipc_hand_off(const rx_upq *items, int trust, int *ok) {
         if (put_msg(&m[i]) != 0) break;
         sent++;
     }
-    for (i = sent; i < items->n; i++) { a[0] = (LONG)items->q[i].name; VPrintf((STRPTR)"%s  ERR Receive stopped\n", a); }
+    for (i = sent; i < items->n; i++) { a[0] = (LONG)items->q[i].name; VPrintf((STRPTR)"%s  ERR Transfer stopped\n", a); }
     while (got < sent || ctl_out || tm_out) {
         ULONG sig;
         struct Message *r;
@@ -74,7 +74,7 @@ int ipc_hand_off(const rx_upq *items, int trust, int *ok) {
             init_msg(ctl, reply, RXM_LETGO);
             if (put_msg(ctl) == 0) ctl_out = 1;
             letgo = 1;
-            PutStr((STRPTR)"Stopped waiting; Receive keeps the files in its list\n");
+            PutStr((STRPTR)"Stopped waiting; Transfer keeps the files in its list\n");
         }
         while ((r = GetMsg(reply)) != NULL) {
             rx_msg *x = (rx_msg *)r;
@@ -101,7 +101,7 @@ int ipc_open(void) {
     port->mp_Node.ln_Name = (char *)RX_PORT_NAME;
     port->mp_Node.ln_Pri = 0;
     Forbid(); p = FindPort((STRPTR)RX_PORT_NAME); if (!p) AddPort(port); Permit();
-    if (p) { DeleteMsgPort(port); port = NULL; return -1; }   /* another Receive owns it */
+    if (p) { DeleteMsgPort(port); port = NULL; return -1; }   /* another Transfer owns it */
     return 0;
 }
 ULONG ipc_sigmask(void) { return port ? 1UL << port->mp_SigBit : 0; }
@@ -118,7 +118,7 @@ void ipc_take(rx_upq *q, rx_added_fn added, int (*trust)(void *u), void *u) {
         if (m->kind == RXM_TRUST) { m->ok = trust && trust(u) == 0; ReplyMsg(&m->m); continue; }
         if (m->kind == RXM_LETGO) {
             for (i = nheld - 1; i >= 0; i--) if (held[i].m->m.mn_ReplyPort == m->m.mn_ReplyPort) {
-                answer(held[i].m, 0, 0, "not waited for (still in Receive's list)");
+                answer(held[i].m, 0, 0, "not waited for (still in Transfer's list)");
                 held[i] = held[--nheld];
             }
             ReplyMsg(&m->m);
@@ -126,7 +126,7 @@ void ipc_take(rx_upq *q, rx_added_fn added, int (*trust)(void *u), void *u) {
         }
         {
             unsigned tag = nheld < RX_UP_MAX ? rx_up_add(q, m->local, m->name) : 0;
-            if (!tag) { answer(m, 0, 0, "Receive's list is full, or the name is not allowed"); continue; }
+            if (!tag) { answer(m, 0, 0, "Transfer's list is full, or the name is not allowed"); continue; }
             held[nheld].tag = tag; held[nheld].m = m; nheld++;
             if (added) added(u, &q->q[q->n - 1]);
         }
@@ -140,8 +140,8 @@ void ipc_close(void) {
     rx_msg *m;
     if (!port) return;
     Forbid(); RemPort(port); Permit();
-    while (nheld > 0) { nheld--; answer(held[nheld].m, 0, 0, "Receive stopped"); }
-    while ((m = (rx_msg *)GetMsg(port)) != NULL) answer(m, 0, 0, "Receive stopped");
+    while (nheld > 0) { nheld--; answer(held[nheld].m, 0, 0, "Transfer stopped"); }
+    while ((m = (rx_msg *)GetMsg(port)) != NULL) answer(m, 0, 0, "Transfer stopped");
     DeleteMsgPort(port);
     port = NULL;
 }

@@ -1,5 +1,5 @@
-// Fills Receive's window for a screenshot: an upload moving "to web", another waiting, and three downloads waiting
-// beside them (a download never moves during an upload: spec §3 arbitration). uae-test.sh's gui mode starts Receive
+// Fills Transfer's window for a screenshot: an upload moving "to web", another waiting, and three downloads waiting
+// beside them (a download never moves during an upload: spec §3 arbitration). uae-test.sh's gui mode starts Transfer
 // with Work:Up/Lemmings.adf and Work:Up/Notes.txt queued.
 // Usage: tsx tools/receive/uae/gui-demo.ts   (prints "capture now" while Lemmings.adf goes up)
 import { connect } from '../fake-board';

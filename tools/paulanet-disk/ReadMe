@@ -30,35 +30,41 @@ Keep this disk in DF1 while you are online: the driver checks for
 it when it starts. PaulaNET Config is not needed with the WiFi
 floppy board; its Wi-Fi is set on the board's web page.
 
-Receive
-=======
+Transfer
+========
 
-Receive saves files you send from the webadf web app into a
-folder you choose: from the Upload page (Send to Amiga), from a
-disk's Browse page, or a whole disk as an .adf file. Install
-copies it to SYS:Tools, with its icon, and to C:.
+Transfer moves files between the webadf web app and a folder on
+your Amiga, both ways. (It was called Receive; Install removes
+the old C:Receive.) Install copies it to SYS:Tools, with its
+icon, and to C:.
 
-Start it by hand: double-click its icon, or type Receive in a
-Shell. In the window, choose the folder and press Save. The
-default folder is RAM:. Close the window to stop. Files sent
-while Receive is not running wait on the server for 24 hours.
+Receiving: files you send from the web app -- from the Upload
+page (Send to Amiga), from a disk's Browse page, or a whole disk
+as an .adf file -- are saved into a folder you choose. Start it
+by hand: double-click its icon, or type Transfer in a Shell. In
+the window, choose the folder and press Save. The default folder
+is RAM:. Close the window to stop. Files sent while Transfer is
+not running wait on the server for 24 hours.
 
-In a Shell:  Receive [TO <folder>] [SAVE] [GUI] [SEND <files>] [TRUST]
-TO uses a folder for this run, SAVE also stores it, GUI opens
-the window. Ctrl-C stops it.
+In a Shell:
+  Transfer RECEIVE [TO <folder>] [SAVE] [GUI] [TRUST]
+  Transfer SEND <files> [GUI] [TRUST]
+  Transfer GUI
+RECEIVE is the default: plain Transfer receives too. TO uses a
+folder for this run, SAVE also stores it, GUI opens the window.
+Ctrl-C stops it.
 
-Receive also sends files from the Amiga to the web app (board
-firmware 1.19.0 or newer): drop icons or drawers on its window,
-press Send..., or type  Receive SEND DH0:file  in a Shell. They
-appear under From the Amiga on the web app's Upload page.
-Receive sends only to the board it trusts: the first one it
-meets ("Trusted board AB12"; the web app shows the same four
-digits). If another one connects, press Trust this board (or
-use TRUST) to accept it. A file cut off part way continues when
-you send it again within 24 hours.
+Sending (board firmware 1.19.0 or newer): drop icons or drawers
+on its window, press Send..., or type  Transfer SEND DH0:file
+in a Shell. They appear under From the Amiga on the web app's
+Upload page. Transfer sends only to the board it trusts: the
+first one it meets ("Trusted board AB12"; the web app shows the
+same four digits). If another one connects, press Trust this
+board (or use TRUST) to accept it. A file cut off part way
+continues when you send it again within 24 hours.
 
 Nothing is overwritten: a second Foo.lha arrives as Foo_2.lha,
-and nothing is written outside the folder. While Receive runs,
+and nothing is written outside the folder. While Transfer runs,
 it listens on TCP port 6800, and any computer on your network
 can drop a file into the folder -- but files go out only to
 the trusted board.

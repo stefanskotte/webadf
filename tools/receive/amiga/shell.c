@@ -1,5 +1,5 @@
-/* Receive in a Shell (spec 2026-10-16 §5, 2026-10-18 §2): one line per file; Ctrl-C stops. With SEND the files go to
-   the web app: handed to a Receive already running (port webadf.Receive), or sent by this run, which listens on 6800
+/* Transfer in a Shell (spec 2026-10-16 §5, 2026-10-18 §2): one line per file; Ctrl-C stops. With SEND the files go to
+   the web app: handed to a Transfer already running (port webadf.Transfer), or sent by this run, which listens on 6800
    itself, waits up to 60 s for the board, and returns 0 (all sent), 5 (some) or 10 (none). */
 #include <string.h>
 #include <proto/exec.h>
@@ -101,7 +101,7 @@ int shell_main(const char *dir, STRPTR *send, int trust) {
     if (!fs.folder_ok(&ctx)) { PutStr((STRPTR)"Folder not found\n"); net_close(); return RETURN_FAIL; }
     if (ipc_open() == 0) ui.extra_sigs = ipc_sigmask();
     args[0] = (LONG)dir;
-    VPrintf((STRPTR)"Receive: saving into %s. Ctrl-C to stop.\n", args);
+    VPrintf((STRPTR)"Transfer: saving into %s. Ctrl-C to stop.\n", args);
     rc = net_run(&ui, &ctx, &fs, &sess, &q);
     ipc_close();
     if (rc != 0) { PutStr((STRPTR)"Could not listen on port 6800\n"); net_close(); return RETURN_FAIL; }

@@ -1,4 +1,4 @@
-/* Receive's window (spec 2026-10-16 §5, 2026-10-18 §2): the folder, the board, and both directions in one list. It is
+/* Transfer's window (spec 2026-10-16 §5, 2026-10-18 §2): the folder, the board, and both directions in one list. It is
    an AppWindow: icons dropped on it go to the web app (a drawer walked, 64 files at most); Send... opens an asl
    requester (several files on V38+, one on V37). gadtools, asl and workbench only (V37). */
 #include <stdio.h>
@@ -162,7 +162,7 @@ static void retry_failed(gui *G) {
     }
     relist(G);
 }
-/* TRUST from `Receive SEND TRUST ...` in a Shell, as shell.c: with no board yet, the next board's key is trusted. */
+/* TRUST from `Transfer SEND TRUST ...` in a Shell, as shell.c: with no board yet, the next board's key is trusted. */
 static int gui_trust(void *u) { gui *G = u; if (rx_trust_now(G->s) != 0) G->q->trust_next = 1; return 0; }
 
 static void on_event(void *u, const rx_event *e, rx_session *s) {
@@ -338,7 +338,7 @@ static int build(gui *G, const char *dir) {
     G->gl = gl;
     if (!g) { FreeGadgets(gl); G->gl = NULL; return -1; }
     G->win = OpenWindowTags(NULL,
-        WA_Title, (ULONG)"webadf Receive & Send", WA_PubScreen, (ULONG)G->scr, WA_Gadgets, (ULONG)gl,
+        WA_Title, (ULONG)"WebFloppy - Receive & Send", WA_PubScreen, (ULONG)G->scr, WA_Gadgets, (ULONG)gl,
         WA_InnerWidth, iw, WA_InnerHeight, (ULONG)(y + ng.ng_Height + 6 - (G->scr->WBorTop + fh + 1)),
         WA_DragBar, TRUE, WA_DepthGadget, TRUE, WA_CloseGadget, TRUE, WA_Activate, TRUE, WA_SimpleRefresh, TRUE,
         WA_IDCMP, IDCMP_CLOSEWINDOW | IDCMP_REFRESHWINDOW | BUTTONIDCMP | STRINGIDCMP | LISTVIEWIDCMP, TAG_END);
@@ -373,7 +373,7 @@ int gui_main(const char *dir, struct WBArg *wbargs, long nwb, STRPTR *send, int 
     afs_init(&ctx, &fs, dir);
     cfg_key_load(key, sizeof key);
     rx_upq_init(&q, key);
-    if (trust) gui_trust(&G);   /* Receive GUI TRUST (ruling PF18): as the Shell form, the next board's key is trusted */
+    if (trust) gui_trust(&G);   /* Transfer GUI TRUST (ruling PF18): as the Shell form, the next board's key is trusted */
     strcpy(G.status, "Starting...");
     strcpy(G.okstatus, "Listening on port 6800");
     if (!(G.scr = LockPubScreen(NULL)) || !(G.vi = GetVisualInfo(G.scr, TAG_END))) goto out;
@@ -382,7 +382,7 @@ int gui_main(const char *dir, struct WBArg *wbargs, long nwb, STRPTR *send, int 
         G.app_win = AddAppWindowA(0, 0, G.win, G.app_port, NULL);
     ipc_open();
     for (i = 0; i < nwb; i++) add_wbarg(&G, &wbargs[i]);           /* shift-clicked project icons */
-    for (i = 0; send && send[i]; i++) add_path(&G, (const char *)send[i]);   /* Receive GUI SEND ... */
+    for (i = 0; send && send[i]; i++) add_path(&G, (const char *)send[i]);   /* Transfer GUI SEND ... */
     if (net_open() != 0) {
         set_status(&G, "No TCP/IP stack running (bsdsocket.library)");
         wait_window(&G);
@@ -392,7 +392,7 @@ int gui_main(const char *dir, struct WBArg *wbargs, long nwb, STRPTR *send, int 
         ui.extra_sigs = 1UL << G.win->UserPort->mp_SigBit | (G.app_port ? 1UL << G.app_port->mp_SigBit : 0) | ipc_sigmask();
         ui.on_signal = on_signal; ui.on_pass = gui_pass; ui.on_link = on_link;
         if (net_run(&ui, &ctx, &fs, &s, &q) != 0) {
-            /* e.g. Receive is already running: say so and wait for the close gadget, as without a stack. */
+            /* e.g. Transfer is already running: say so and wait for the close gadget, as without a stack. */
             set_status(&G, "Could not listen on port 6800");
             wait_window(&G);
         }

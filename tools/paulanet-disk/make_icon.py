@@ -1,6 +1,6 @@
 """A Workbench icon from a tool icon. Usage:
   make_icon.py <tool.info> <default tool> <out.info>   a project icon with that default tool
-  make_icon.py <tool.info> --tool <out.info>          a tool icon (Receive.info): the same picture, placed by Workbench
+  make_icon.py <tool.info> --tool <out.info>          a tool icon (Transfer.info): the same picture, placed by Workbench
 
 The input must be a plain OS 2+ tool icon with no default tool, no tool types and
 no drawer data (Rob's "PaulaNET Config.info" is one); anything else is refused.
