@@ -3096,6 +3096,9 @@ static void core1_main(void) {
                 // if the fault persists), not after up to 60 s of backoff.
                 while (remaining > 0 && !up_has_work(&up) && !nfc_event_pending(NULL)) {
                     uint32_t step = remaining < 100 ? remaining : 100;
+                    // A deliberate wait of up to DC_BACKOFF_CAP_MS (60 s): core1 is alive, so it ticks (at most
+                    // once a second, bt_hw_tick's own pace) -- a server outage must never read as a core1 stall.
+                    bt_hw_tick(1);
                     sleep_ms(step);
                     remaining -= step;
                 }
@@ -3168,8 +3171,12 @@ static void core1_main(void) {
                 // Idling holding a TLS connection is not, and this state
                 // never sends another request -- but that is now the per-pass
                 // tls_release_if_unreusable() above's job, not a guard of its
-                // own here.
-                sleep_ms(DC_BACKOFF_CAP_MS);
+                // own here. Slept a second at a time, ticking: a 60 s sleep in
+                // the poll loop would otherwise read as a core1 stall (core1_wd.h).
+                for (uint32_t t = 0; t < DC_BACKOFF_CAP_MS; t += 1000u) {
+                    bt_hw_tick(1);
+                    sleep_ms(1000);
+                }
             }
         }
     }
