@@ -29,9 +29,29 @@ static void boundary_and_odd_stats(void) {
     CHECK(!tls_room_ok(100, 200, 1, 1460), "used > avail reads as no room, not a wrap");
 }
 
+// Bench 2026-10-21 (fw 1.20.1's log): `write 1 parked: out_left=37 sndbuf=1`. The TLS layer's send space is TCP's
+// minus mbedTLS's own expansion estimate, which is short of what a record really adds, so a write sized to it
+// overflows TCP and is parked; the next write fails and the connection goes. tls_write_len sizes a write from
+// TCP's free space with a full margin, and waits (0) rather than dribble out tiny records.
+static void a_write_leaves_room_for_the_record_overhead(void) {
+    CHECK_EQ_INT(tls_write_len(16384, 4096, 11680), 4096);                        // room for a whole record
+    CHECK_EQ_INT(tls_write_len(16384, 4096, 2000), 2000 - TLS_ROOM_RECORD_MARGIN);  // a smaller record that fits
+    CHECK_EQ_INT(tls_write_len(100, 4096, 100 + TLS_ROOM_RECORD_MARGIN), 100);      // a short request, exactly
+}
+static void a_nearly_full_send_buffer_waits(void) {
+    CHECK_EQ_INT(tls_write_len(16384, 4096, 38), 0);    // the bench case: never a 1-byte record
+    CHECK_EQ_INT(tls_write_len(16384, 4096, 0), 0);
+    CHECK_EQ_INT(tls_write_len(16384, 4096, TLS_ROOM_RECORD_MARGIN + TLS_ROOM_MIN_RECORD - 1), 0);
+    CHECK_EQ_INT(tls_write_len(16384, 4096, TLS_ROOM_RECORD_MARGIN + TLS_ROOM_MIN_RECORD), TLS_ROOM_MIN_RECORD);
+    CHECK_EQ_INT(tls_write_len(10, 4096, TLS_ROOM_RECORD_MARGIN + 10), 10);       // a short write is not held back
+    CHECK_EQ_INT(tls_write_len(10, 4096, TLS_ROOM_RECORD_MARGIN + 9), 0);
+}
+
 int main(void) {
     RUN(needed_counts_record_segments_and_reserve);
     RUN(the_bench_case_waits_then_goes);
     RUN(boundary_and_odd_stats);
+    RUN(a_write_leaves_room_for_the_record_overhead);
+    RUN(a_nearly_full_send_buffer_waits);
     return REPORT();
 }

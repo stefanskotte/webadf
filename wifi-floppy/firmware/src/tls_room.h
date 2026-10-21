@@ -39,4 +39,22 @@ static inline bool tls_room_ok(uint32_t avail, uint32_t used, uint32_t n, uint32
     return used <= avail && avail - used >= tls_room_needed(n, mss);
 }
 
+// How much of an n-byte write may go as one record now, given TCP's free send space (tcp_sndbuf of the inner pcb)
+// and mbedTLS's largest record payload; 0 = wait for acknowledgements (bench 2026-10-21, fw 1.20.1's log:
+// `write 1 parked: out_left=37 sndbuf=1`). altcp_tls's own sndbuf subtracts mbedTLS's expansion estimate, which is
+// short of what a record really adds, so a write sized to it can overflow TCP; tcp_write refuses it, altcp_tls
+// parks the record in out_left and reports success, and the next write's flush fails -- and with it the connection.
+// The margin covers any cipher suite's record overhead; the minimum keeps a nearly full buffer from being fed
+// one-byte records (each a record of its own on the wire).
+#define TLS_ROOM_RECORD_MARGIN 128u
+#define TLS_ROOM_MIN_RECORD    512u
+
+static inline uint32_t tls_write_len(uint32_t n, uint32_t rec_max, uint32_t tcp_free) {
+    const uint32_t want = n < rec_max ? n : rec_max;
+    if (tcp_free < TLS_ROOM_RECORD_MARGIN) return 0;
+    const uint32_t room = tcp_free - TLS_ROOM_RECORD_MARGIN;
+    if (room >= want) return want;
+    return room >= TLS_ROOM_MIN_RECORD ? room : 0;
+}
+
 #endif
