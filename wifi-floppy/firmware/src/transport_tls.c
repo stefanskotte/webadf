@@ -37,6 +37,7 @@
 #include "net_radio.h"
 #include "pico/time.h"
 #include "wf_log.h"
+#include "tls_room.h"
 #include "mbedtls/x509_crt.h"   // root-CA parse probe, see tls_connect()
 #include "lwip/stats.h"          // 3z: pbuf/heap counters at the stall
 #include "lwip/priv/altcp_priv.h" // 3z: reach the inner TCP pcb for rcv_wnd
@@ -531,41 +532,75 @@ static int tls_write(struct transport *t, const uint8_t *b, int n) {
     // failed used to be a bare -1, so an upload or a request that died here
     // looked exactly like one that died anywhere else.
     absolute_time_t deadline = make_timeout_time_ms(WRITE_TIMEOUT_MS);
-    u16_t avail;
+    // Wait until one whole record fits, then write it, keeping the lock from the check to the write. Three limits:
+    //  - NEVER more than one TLS record's payload per altcp_write. mbedtls_ssl_write takes at most
+    //    MBEDTLS_SSL_OUT_CONTENT_LEN and reports the rest as a short write (ssl_msg.c, ssl_write_real), but the
+    //    SDK's altcp_mbedtls_write treats any short write as impossible -- LWIP_ASSERT("ret <= 0", 0), and LWIP
+    //    asserts are live in this build (pico_lwip's cc.h: panic) -- after the record has already gone out. With
+    //    OUT_CONTENT_LEN below TCP_SND_BUF (mbedtls_config.h) a write-back POST of an 11 KB HD track would panic.
+    //    The short return is legal per transport.h and dc_attempt already loops on it.
+    //  - The record must fit TCP's free send space with a full margin for its overhead (tls_write_len). altcp_tls's
+    //    own sndbuf is short by part of that overhead, so a write sized to it overflowed TCP: the record was parked
+    //    in out_left, the next write failed, and the connection went (bench 2026-10-21, about every 30 s during an
+    //    upload from the Amiga). The queue length counts too: tcp_write refuses past TCP_SND_QUEUELEN pbufs.
+    //  - And lwIP's heap must hold the record's segments (tls_room_ok): that ERR_MEM, too, comes after the record
+    //    was encrypted.
+    // The lock is let go while waiting, so lwIP can process the acknowledgements that free the room.
+    int to_write = 0;
+    uint32_t wait_ms = 0;
     for (;;) {
         if (!c->pcb || c->closed)
             return tls_fail(TLS_ERR_WRITE_CLOSED, "write on a closed connection", (int)c->err);
         net_radio_lock();
-        avail = altcp_sndbuf(c->pcb);
+        if (c->pcb && altcp_sndbuf(c->pcb) > 0) {   // 0 until the handshake is done
+            mbedtls_ssl_context *ssl = (mbedtls_ssl_context *)altcp_tls_context(c->pcb);
+            const int rec_max = ssl ? mbedtls_ssl_get_max_out_record_payload(ssl) : MBEDTLS_SSL_OUT_CONTENT_LEN;
+            struct altcp_pcb *inner = c->pcb->inner_conn;
+            struct tcp_pcb *tp = inner ? (struct tcp_pcb *)inner->state : NULL;
+            uint32_t len = 0;
+            if (tp && tp->snd_queuelen + 4u <= TCP_SND_QUEUELEN)   // a 4 KB record is at most 4 segments
+                len = tls_write_len((uint32_t)n, rec_max > 0 ? (uint32_t)rec_max : MBEDTLS_SSL_OUT_CONTENT_LEN,
+                                    (uint32_t)tcp_sndbuf(tp));
+            if (len && tls_room_ok((uint32_t)lwip_stats.mem.avail, (uint32_t)lwip_stats.mem.used, len, TCP_MSS)) {
+                to_write = (int)len;
+                break;   // still locked: nothing changes between the check and the write
+            }
+        }
         net_radio_unlock();
-        if (avail > 0) break;
         if (absolute_time_diff_us(get_absolute_time(), deadline) <= 0)
-            return tls_fail(TLS_ERR_WRITE_TIMEOUT, "no send buffer space, write timed out",
-                            (int)WRITE_TIMEOUT_MS);
+            return tls_fail(TLS_ERR_WRITE_TIMEOUT, "no send room, write timed out", (int)WRITE_TIMEOUT_MS);
         sleep_ms(1);
-    }
-
-    int to_write = (avail < (u16_t)n) ? (int)avail : n;
-    net_radio_lock();
-    // NEVER more than one TLS record's payload per altcp_write. mbedtls_ssl_write
-    // takes at most MBEDTLS_SSL_OUT_CONTENT_LEN and reports the rest as a short
-    // write (ssl_msg.c, ssl_write_real), but the SDK's altcp_mbedtls_write
-    // treats any short write as impossible -- LWIP_ASSERT("ret <= 0", 0), and
-    // LWIP asserts are live in this build (pico_lwip's cc.h: panic) -- after
-    // the record has already gone out. altcp_sndbuf() does not know the
-    // record limit, so with OUT_CONTENT_LEN below TCP_SND_BUF (mbedtls_config.h)
-    // a write-back POST of an 11 KB HD track would panic here. Capping makes
-    // every write a whole record; the short return is legal per transport.h
-    // and dc_attempt already loops on it.
-    {
-        mbedtls_ssl_context *ssl = (mbedtls_ssl_context *)altcp_tls_context(c->pcb);
-        const int rec_max = ssl ? mbedtls_ssl_get_max_out_record_payload(ssl)
-                                : MBEDTLS_SSL_OUT_CONTENT_LEN;
-        if (rec_max > 0 && to_write > rec_max) to_write = rec_max;
+        wait_ms++;
     }
     err_t werr = altcp_write(c->pcb, b, (u16_t)to_write, TCP_WRITE_FLAG_COPY);
     if (werr == ERR_OK) altcp_output(c->pcb);
+    // Bench 2026-10-21: a refused write with heap room to spare. altcp_tls parks a record TCP refused in mbedTLS's
+    // out_left and reports success; the NEXT write's flush is what returns ERR_MEM. Which TCP limit refused it is
+    // read here, at the moment, under the lock: the segment pool, the queue length, the send buffer or the heap.
+    unsigned d_mem = 0, d_mem_err = 0, d_seg = 0, d_seg_max = 0, d_seg_err = 0, d_pool = 0, d_tcp_memerr = 0;
+    unsigned d_sndbuf = 0, d_qlen = 0, d_out_left = 0, d_state = 0;
+    mbedtls_ssl_context *d_ssl = c->pcb ? (mbedtls_ssl_context *)altcp_tls_context(c->pcb) : NULL;
+    const bool parked = werr == ERR_OK && d_ssl && d_ssl->MBEDTLS_PRIVATE(out_left) > 0;
+    if (werr != ERR_OK || parked) {
+        d_mem = (unsigned)lwip_stats.mem.used; d_mem_err = (unsigned)lwip_stats.mem.err;
+        d_seg = (unsigned)lwip_stats.memp[MEMP_TCP_SEG]->used; d_seg_max = (unsigned)lwip_stats.memp[MEMP_TCP_SEG]->max;
+        d_seg_err = (unsigned)lwip_stats.memp[MEMP_TCP_SEG]->err;
+        d_pool = (unsigned)lwip_stats.memp[MEMP_PBUF_POOL]->used; d_tcp_memerr = (unsigned)lwip_stats.tcp.memerr;
+        struct altcp_pcb *inner = c->pcb ? c->pcb->inner_conn : NULL;
+        struct tcp_pcb *tp = inner ? (struct tcp_pcb *)inner->state : NULL;
+        if (tp) { d_sndbuf = (unsigned)tp->snd_buf; d_qlen = (unsigned)tp->snd_queuelen; d_state = (unsigned)tp->state; }
+        if (d_ssl) d_out_left = (unsigned)d_ssl->MBEDTLS_PRIVATE(out_left);
+    }
     net_radio_unlock();
+    if (werr != ERR_OK || parked)
+        wf_logf(WF_WARN, "tls: write %d %s: out_left=%u sndbuf=%u qlen=%u/%u state=%u | heap %u/%u err %u | "
+                "seg %u max %u/%u err %u | pool %u | tcp memerr %u", to_write, werr != ERR_OK ? "refused" : "parked", d_out_left, d_sndbuf, d_qlen,
+                (unsigned)TCP_SND_QUEUELEN, d_state, d_mem, (unsigned)MEM_SIZE, d_mem_err, d_seg, d_seg_max,
+                (unsigned)MEMP_NUM_TCP_SEG, d_seg_err, d_pool, d_tcp_memerr);
+    // Waiting for acknowledgements is routine during an upload; only a long wait is worth a line.
+    if (wait_ms >= 1000)
+        wf_logf(WF_INFO, "tls: waited %lu ms for send room (heap used %u of %u, max %u)", (unsigned long)wait_ms,
+                (unsigned)lwip_stats.mem.used, (unsigned)lwip_stats.mem.avail, (unsigned)lwip_stats.mem.max);
     if (werr != ERR_OK) return tls_fail(TLS_ERR_WRITE, "altcp_write refused", (int)werr);
     return to_write;
 }

@@ -4,7 +4,11 @@
 #define LWIP_SOCKET                 0
 #define LWIP_NETCONN                0
 #define MEM_ALIGNMENT               4
-#define MEM_SIZE                    16384
+// 24 KB since fw 1.20.0 (bench 2026-10-21): this heap holds the TLS send queue (up to TCP_SND_BUF of PBUF_RAM
+// segments), every frame from the Amiga (pnet_bridge.c) and its out-of-order queue (AS_UP_OOSEQ_BYTES) at once
+// during an upload from the Amiga; at 16 KB tcp_write ran out about every 30 s (tls_room.h). The 8 KB comes out of
+// the C heap, whose measured low-water was 32,768 B against its 20,480 B floor.
+#define MEM_SIZE                    24576
 // (Not MEM_LIBC_MALLOC: pico_cyw43_arch_threadsafe_background.c #errors on
 // that combination outright -- lwIP's mem_malloc can run from the
 // low-priority IRQ context this arch mode uses, and newlib malloc isn't

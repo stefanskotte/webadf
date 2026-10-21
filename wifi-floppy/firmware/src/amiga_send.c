@@ -38,6 +38,9 @@ static bool flush(amiga_send_t *s) {
 // Receive deletes its temporary file when the connection goes.
 static void drop(amiga_send_t *s, char rx, const char *why) {
     if (s->phase >= AS_FILE_SENT && s->phase <= AS_AWAIT_OK) wf_logf(WF_WARN, "send: %.8s aborted (%s)", s->id, why);
+    // An upload cut off (an Amiga reset, bench B5 2026-10-21) comes back as a fresh Receive that waits 60 s for the
+    // board: reconnect at the waiting cadence, not the idle one, or the board misses it.
+    const bool up_cut = s->up && (s->up->pending || (s->phase >= AS_UP_OPEN && s->phase <= AS_UP_CLOSE));
     if (s->up && s->phase >= AS_UP_OPEN && s->phase <= AS_UP_CLOSE) wf_logf(WF_WARN, "up: %s aborted (%s)", s->up->tag, why);
     if (s->up) up_reset(s);   // the server keeps the partial upload: the same file sent again resumes (spec U4)
     s->ops->close(s->ops->ctx);
@@ -47,7 +50,7 @@ static void drop(amiga_send_t *s, char rx, const char *why) {
     s->ping_out = false;
     s->peer_v = 0;
     s->list_owed = false;
-    s->t_retry = now(s) + retry_ms(s);
+    s->t_retry = now(s) + (up_cut ? AS_RETRY_WAITING_MS : retry_ms(s));
     s->force_fetch = true;
 }
 

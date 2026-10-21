@@ -777,6 +777,23 @@ static void a_dropped_connection_mid_upload_disarms(void) {
     amiga_sends(BIG, 1000); F.sock = AS_SOCK_CLOSED; run(1);
     CHECK(F.raw == NULL, "disarmed");
 }
+// Bench B5 (2026-10-21): an Amiga reset mid-upload. The board learns of it only when the Amiga's stack comes back
+// and refuses the old connection; the Receive started after the reset waits 60 s, so the idle 30 s cadence (plus a
+// connect) missed it. A drop with an upload in flight retries at the waiting cadence, as a waiting download does.
+static void a_drop_mid_upload_reconnects_after_5s(void) {
+    fill_big(); ready2(); put_big(); run(1);
+    amiga_sends(BIG, 1000); F.sock = AS_SOCK_CLOSED; run(1);
+    const int c0 = F.connects;
+    F.now += AS_RETRY_WAITING_MS - 100; run(3); CHECK_EQ_INT(F.connects, c0);
+    F.now += 200; run(3); CHECK_EQ_INT(F.connects, c0 + 1);
+}
+// ... and a drop with nothing in flight keeps the idle cadence.
+static void a_drop_while_idle_keeps_the_30s_cadence(void) {
+    ready2(); F.sock = AS_SOCK_CLOSED; run(1);
+    const int c0 = F.connects;
+    F.now += AS_RETRY_WAITING_MS + 100; run(3); CHECK_EQ_INT(F.connects, c0);
+    F.now += AS_RETRY_IDLE_MS; run(3); CHECK_EQ_INT(F.connects, c0 + 1);
+}
 static void a_put_during_a_download_waits_then_goes_first(void) {
     char q[600], go[80], ok[120];
     snprintf(q, sizeof q, "NEXT %s 5 3610a686 0 5:Hello 0:\nLIST 1\n%s 5 5:Hello\n", ID, ID);
@@ -1034,5 +1051,7 @@ int main(void) {
     RUN(a_failing_fetch_after_an_upload_does_not_hold_the_next_put);
     RUN(a_put_behind_a_failing_outcome_gets_no_offline);
     RUN(a_server_busy_at_open_is_not_called_cancelled);
+    RUN(a_drop_mid_upload_reconnects_after_5s);
+    RUN(a_drop_while_idle_keeps_the_30s_cadence);
     return REPORT();
 }
