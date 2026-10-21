@@ -584,7 +584,29 @@ static int tls_write(struct transport *t, const uint8_t *b, int n) {
     }
     err_t werr = altcp_write(c->pcb, b, (u16_t)to_write, TCP_WRITE_FLAG_COPY);
     if (werr == ERR_OK) altcp_output(c->pcb);
+    // Bench 2026-10-21: a refused write with heap room to spare. altcp_tls parks a record TCP refused in mbedTLS's
+    // out_left and reports success; the NEXT write's flush is what returns ERR_MEM. Which TCP limit refused it is
+    // read here, at the moment, under the lock: the segment pool, the queue length, the send buffer or the heap.
+    unsigned d_mem = 0, d_mem_err = 0, d_seg = 0, d_seg_max = 0, d_seg_err = 0, d_pool = 0, d_tcp_memerr = 0;
+    unsigned d_sndbuf = 0, d_qlen = 0, d_out_left = 0, d_state = 0;
+    mbedtls_ssl_context *d_ssl = c->pcb ? (mbedtls_ssl_context *)altcp_tls_context(c->pcb) : NULL;
+    const bool parked = werr == ERR_OK && d_ssl && d_ssl->MBEDTLS_PRIVATE(out_left) > 0;
+    if (werr != ERR_OK || parked) {
+        d_mem = (unsigned)lwip_stats.mem.used; d_mem_err = (unsigned)lwip_stats.mem.err;
+        d_seg = (unsigned)lwip_stats.memp[MEMP_TCP_SEG]->used; d_seg_max = (unsigned)lwip_stats.memp[MEMP_TCP_SEG]->max;
+        d_seg_err = (unsigned)lwip_stats.memp[MEMP_TCP_SEG]->err;
+        d_pool = (unsigned)lwip_stats.memp[MEMP_PBUF_POOL]->used; d_tcp_memerr = (unsigned)lwip_stats.tcp.memerr;
+        struct altcp_pcb *inner = c->pcb ? c->pcb->inner_conn : NULL;
+        struct tcp_pcb *tp = inner ? (struct tcp_pcb *)inner->state : NULL;
+        if (tp) { d_sndbuf = (unsigned)tp->snd_buf; d_qlen = (unsigned)tp->snd_queuelen; d_state = (unsigned)tp->state; }
+        if (d_ssl) d_out_left = (unsigned)d_ssl->MBEDTLS_PRIVATE(out_left);
+    }
     net_radio_unlock();
+    if (werr != ERR_OK || parked)
+        wf_logf(WF_WARN, "tls: write %d %s: out_left=%u sndbuf=%u qlen=%u/%u state=%u | heap %u/%u err %u | "
+                "seg %u max %u/%u err %u | pool %u | tcp memerr %u", to_write, werr != ERR_OK ? "refused" : "parked", d_out_left, d_sndbuf, d_qlen,
+                (unsigned)TCP_SND_QUEUELEN, d_state, d_mem, (unsigned)MEM_SIZE, d_mem_err, d_seg, d_seg_max,
+                (unsigned)MEMP_NUM_TCP_SEG, d_seg_err, d_pool, d_tcp_memerr);
     // The bench's evidence that the wait, not luck, kept ERR_MEM away; short waits are routine and not logged.
     if (room_wait_ms >= 100)
         wf_logf(WF_INFO, "tls: waited %lu ms for lwIP heap room (used %u of %u, max %u)", (unsigned long)room_wait_ms,
