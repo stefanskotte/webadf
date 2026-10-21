@@ -5,6 +5,30 @@ function hueFor(id: string): number {
   return h;
 }
 
+/** The deterministic no-image look: the same gradient for the same title on every surface. */
+function gradientFor(id: string): string {
+  const hue = hueFor(id);
+  return `linear-gradient(150deg, oklch(0.44 0.16 ${hue}), oklch(0.24 0.10 ${(hue + 45) % 360}))`;
+}
+
+/**
+ * The cover at table-row size. A fixed box in the Cover's own proportions
+ * whether or not the image loads, so a row never changes height when it
+ * does. No title overlay and no badges: at 40px those would be noise, and the
+ * row prints the title, type and disk count in their own columns.
+ */
+export function CoverThumb({ id, coverUrl }: { id: string; coverUrl?: string | null }) {
+  return (
+    <div className="relative h-[32px] w-[40px] shrink-0 overflow-hidden rounded" data-testid="cover-thumb"
+         style={{ background: gradientFor(id), boxShadow: '0 1px 2px rgb(30 45 60 / 0.22)' }}>
+      {coverUrl && (
+        <img src={coverUrl} alt="" aria-hidden="true" loading="lazy" decoding="async"
+             className="absolute inset-0 h-full w-full object-cover" />
+      )}
+    </div>
+  );
+}
+
 /**
  * A game's box in the library grid.
  *
@@ -23,11 +47,10 @@ export function Cover({
   id: string; title: string; diskCount: number;
   coverUrl?: string | null; kind?: string | null;
 }) {
-  const hue = hueFor(id);
   return (
     <div className="relative overflow-hidden rounded-lg" style={{
       aspectRatio: '1.23 / 1',   // matches the firmware's 138x112 cover box
-      background: `linear-gradient(150deg, oklch(0.44 0.16 ${hue}), oklch(0.24 0.10 ${(hue + 45) % 360}))`,
+      background: gradientFor(id),
       boxShadow: '0 1px 3px rgb(30 45 60 / 0.22)',
     }}>
       {coverUrl ? (

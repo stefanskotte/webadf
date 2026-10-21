@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import {
-  resolveLibraryView, viewHref, viewParam, isCurrentView,
+  resolveLibraryView, viewHref, viewParam, isCurrentView, resolveViewMode, viewModeHref,
   UNCATEGORIZED, ALL_TITLES, RESERVED_COLLECTION_IDS,
 } from './library-view';
 
@@ -75,5 +75,30 @@ describe('reserved ids', () => {
   it('names both words, so collection creation can refuse them', () => {
     expect(RESERVED_COLLECTION_IDS).toContain(UNCATEGORIZED);
     expect(RESERVED_COLLECTION_IDS).toContain(ALL_TITLES);
+  });
+});
+
+describe('resolveViewMode', () => {
+  it('takes ?view= when it names a view, and the person\'s preference otherwise', () => {
+    expect(resolveViewMode('table', 'grid')).toBe('table');
+    expect(resolveViewMode('grid', 'table')).toBe('grid');
+    expect(resolveViewMode(undefined, 'table')).toBe('table');
+    expect(resolveViewMode(undefined, 'grid')).toBe('grid');
+    // Junk or a repeated parameter is no choice at all, so the preference holds.
+    expect(resolveViewMode('list', 'table')).toBe('table');
+    expect(resolveViewMode(['table', 'grid'], 'grid')).toBe('grid');
+  });
+});
+
+describe('viewModeHref', () => {
+  it('switches grid/table and keeps the collection being viewed', () => {
+    expect(viewModeHref({ kind: 'collection', id: 'c-1' }, 'table')).toBe('/library?view=table&collection=c-1');
+    expect(viewModeHref({ kind: 'all' }, 'grid')).toBe('/library?view=grid&collection=all');
+    expect(viewModeHref({ kind: 'uncategorized' }, 'table')).toBe('/library?view=table');
+  });
+
+  it('keeps every other parameter and replaces an old view', () => {
+    const p = new URLSearchParams('view=grid&q=lemmings&collection=c-1');
+    expect(viewModeHref({ kind: 'collection', id: 'c-1' }, 'table', p)).toBe('/library?view=table&q=lemmings&collection=c-1');
   });
 });

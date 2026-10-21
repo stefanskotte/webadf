@@ -71,3 +71,22 @@ export function isCurrentView(view: LibraryView, candidate: LibraryView): boolea
   if (view.kind !== candidate.kind) return false;
   return view.kind !== 'collection' || view.id === (candidate as { id: string }).id;
 }
+
+/**
+ * Grid or table. `?view=` wins when it names one; otherwise the person's own
+ * default (user prefs library.view), which is the grid unless they changed it.
+ * Anything else on the query string -- junk, or the parameter twice -- is no
+ * choice at all, so the preference holds.
+ */
+export function resolveViewMode(raw: string | string[] | undefined, pref: 'grid' | 'table'): 'grid' | 'table' {
+  return raw === 'grid' || raw === 'table' ? raw : pref;
+}
+
+/** The address of `view` in grid or table, keeping every other parameter. */
+export function viewModeHref(view: LibraryView, mode: 'grid' | 'table', params?: URLSearchParams): string {
+  const next = new URLSearchParams(params?.toString() ?? '');
+  // `view` first, so the usual address reads /library?view=table&collection=…
+  next.delete('view');
+  const ordered = new URLSearchParams([['view', mode], ...next.entries()]);
+  return viewHref(view, ordered);
+}

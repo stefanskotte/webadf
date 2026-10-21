@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { HELP_TOPICS, HELP_ORDER, type HelpTopicId } from './topics';
 
-const IDS: HelpTopicId[] = ['boards', 'own-server', 'nfc', 'next-disk', 'write-back', 'write-protect', 'disk-sets', 'hd-hfe', 'display', 'second-drive', 'network', 'send', 'from-amiga', 'cover-image', 'about', 'preferences'];
+const IDS: HelpTopicId[] = ['library', 'boards', 'own-server', 'nfc', 'next-disk', 'write-back', 'write-protect', 'disk-sets', 'hd-hfe', 'display', 'second-drive', 'network', 'send', 'from-amiga', 'cover-image', 'about', 'preferences'];
 // Internal words a reader of the help should never meet (spec §5).
 const BANNED = /\b(PSRAM|TBYB|poll|sha256|cursor|WPROT)\b/i;
 
@@ -60,6 +60,16 @@ describe('help topics say what the app really does', () => {
     const b = bodyText('from-amiga');
     expect(b).toMatch(/first board/);
     expect(b).toMatch(/four digits/);
+  });
+  it('library describes the table: folders, the way up, the card controls, filing by drag, and the default view (2026-10-21)', () => {
+    const b = HELP_TOPICS.library.short + bodyText('library');
+    for (const w of ['folder', '↑ Library', 'All titles', 'Library opens in', 'version history', 'mount', 'NFC',
+      'remove from the collection', 'delete', 'grid only']) expect(b).toContain(w);
+  });
+  it('preferences names the default library view', () => {
+    const b = bodyText('preferences');
+    expect(b).toContain('Library opens in');
+    expect(b).toMatch(/Grid or Table/);
   });
   it('preferences names the three start pages, says they follow the person, and that a collection keeps its order', () => {
     const b = bodyText('preferences');

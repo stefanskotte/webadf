@@ -19,6 +19,39 @@ function GoodToKnow({ items }: { items: ReactNode[] }) {
 }
 
 export const HELP_TOPICS = {
+  // Sources: library/page.tsx (view from ?view= else prefs library.view; no overview in the table),
+  // game-table.tsx + library-table.ts (folders at the root, the up row), title-controls.tsx (the shared controls
+  // and their order), view-toggle.tsx (keeps the collection), collection-provider.tsx onDragEnd (a row files on a
+  // rail drop only; reorder and card-on-card sets are the grid's), preferences-form.tsx (Library opens in).
+  library: {
+    title: 'Library',
+    short:
+      'Your titles, as a grid of cards or as a condensed table with the same controls. The table shows your collections as folders.',
+    body: (
+      <>
+        <p>
+          <strong>Grid or table.</strong> The two buttons beside the sort switch views and keep the collection you
+          are in. <em>Library opens in</em> under Preferences in Settings picks the view the library starts in: the
+          grid unless you change it.
+        </p>
+        <p>
+          <strong>Folders.</strong> In the table, the library&apos;s first page lists each collection as a folder,
+          with how many titles and disks it holds, before the titles that are in no collection. Open a folder to
+          see its titles; <em>↑ Library</em> at the top takes you back. <em>All titles</em> has the same way back.
+        </p>
+        <p>
+          <strong>Controls.</strong> Each row has the card&apos;s buttons in the same order: version history, mount
+          or eject, write an NFC tag (when you have a reader), remove from the collection (inside one) and delete. A
+          disk in a drive is marked round its picture, and a disk you made here can be renamed in place.
+        </p>
+        <p>
+          <strong>Filing.</strong> Drag a card or a row onto a collection in the list beside it. Reordering a
+          collection, and making a disk set by dropping one title on another, are grid only.
+        </p>
+      </>
+    ),
+  },
+
   // Sources: pair-button.tsx, devices/page.tsx:58-68, device-state.ts:19 (60 s),
   // firmware-state.ts:107-148, HANDOFF trial/revert (5546-5577) and "waits for eject" (2064, 5148).
   // Deleting a board: delete-device-dialog.tsx + api/devices/[id] DELETE; the board's side (401 -> token erased ->
@@ -573,17 +606,21 @@ export const HELP_TOPICS = {
     ),
   },
   // Sources: src/lib/user-prefs-schema.ts (choices, defaults), src/app/page.tsx + sign-in/page.tsx (start page),
-  // library/page.tsx (sort skipped in a collection), file-tree.tsx + browse-sort.ts (folders first),
+  // library/page.tsx (sort skipped in a collection; ?view= else library.view), file-tree.tsx + browse-sort.ts (folders first),
   // components/prefs/preferences-form.tsx (Save), db/schema/user-prefs.ts (per user, not per org),
   // components/prefs/firmware-password-setting.tsx + api/me/prefs/firmware-skip-password (firmware password).
   preferences: {
     title: 'Preferences',
-    short: 'Your own start page and sort orders. They are kept with your account, so they follow you to every browser.',
+    short: 'Your own start page, library view and sort orders. They are kept with your account, so they follow you to every browser.',
     body: (
       <>
         <p>
           <strong>Start page.</strong> Where you land after signing in, and when you open the site&apos;s address:
           Library, Devices or Upload. Library unless you change it.
+        </p>
+        <p>
+          <strong>Library opens in.</strong> Grid or Table: how the library shows when you open it. The grid and
+          table buttons on the library switch for the moment without changing it.
         </p>
         <p>
           <strong>Sort orders.</strong> The library&apos;s sort picker and the one above a disk&apos;s file list
@@ -613,6 +650,6 @@ export const HELP_TOPICS = {
 export type HelpTopicId = keyof typeof HELP_TOPICS;
 
 export const HELP_ORDER: readonly HelpTopicId[] = [
-  'boards', 'own-server', 'nfc', 'next-disk', 'second-drive', 'network', 'send', 'from-amiga', 'write-back', 'write-protect', 'disk-sets', 'hd-hfe', 'display',
+  'library', 'boards', 'own-server', 'nfc', 'next-disk', 'second-drive', 'network', 'send', 'from-amiga', 'write-back', 'write-protect', 'disk-sets', 'hd-hfe', 'display',
   'cover-image', 'about', 'preferences',
 ];

@@ -6,7 +6,7 @@ import { df1BoardOf } from '@/lib/df1-pick';
 import type { DriveContext, DriveDisk } from '@/components/library/card-mount-button';
 import { listCollections, countUncategorized, collectionMosaics } from '@/lib/collections';
 import { countReviewQueue } from '@/lib/demozoo/queries';
-import { resolveLibraryView } from '@/lib/library-view';
+import { resolveLibraryView, resolveViewMode } from '@/lib/library-view';
 import { CategoryOverview } from '@/components/collections/category-overview';
 import { PageHeader } from '@/components/shell/page-header';
 import { GameGrid } from '@/components/library/game-grid';
@@ -24,9 +24,10 @@ import { LibrarySortPicker } from '@/components/library/library-sort-picker';
 export default async function LibraryPage(props: PageProps<'/library'>) {
   const { orgId, userId } = await requireOrg();
   const sp = await props.searchParams;
-  const viewMode = sp.view === 'table' ? 'table' : 'grid';
 
   const [collections, prefs] = await Promise.all([listCollections(orgId), getUserPrefs(userId)]);
+  // `?view=` when the address names one, else the person's own default.
+  const viewMode = resolveViewMode(sp.view, prefs.library.view);
 
   /*
    * sp.collection is untrusted input straight off the query string, and it is
@@ -62,14 +63,19 @@ export default async function LibraryPage(props: PageProps<'/library'>) {
   // for that ("No disks yet", with a link to Ingest). A second empty state
   // here would be a worse copy of it that only appears on brand-new accounts
   // -- which is exactly what it did on its first e2e run.
-  const showOverview = view.kind === 'uncategorized' && games.length === 0 && collections.length > 0;
-  // The grid's cards carry the mount control and the NFC button, both of
-  // which need the boards and the disks of the titles on the page. Loaded
-  // with everything else, in parallel; the disk list is one query for both.
-  const cards = viewMode === 'grid' && !showOverview;
+  //
+  // That fall-through is the GRID's: the table lists the collections as
+  // folder rows at its root whatever the inbox holds, so it has no overview.
+  const emptyInbox = view.kind === 'uncategorized' && games.length === 0 && collections.length > 0;
+  const showOverview = emptyInbox && viewMode === 'grid';
+  // The grid's cards and the table's rows carry the mount control and the
+  // NFC button, both of which need the boards and the disks of the titles on
+  // the page. Loaded with everything else, in parallel; the disk list is one
+  // query for both.
+  const cards = !showOverview;
   const [uncategorizedCount, libraryTotals, reviewQueueCount, mosaics, readers, boards, pageDisks] = await Promise.all([
     countUncategorized(orgId),
-    showOverview ? countAllGames(orgId) : Promise.resolve(null),
+    emptyInbox ? countAllGames(orgId) : Promise.resolve(null),
     // R15: the badge is a count, not the review queue's full item list --
     // listReviewQueue also loads productions and screenshots, which this
     // page must not pay for on every load. Only /library/demozoo does that.
@@ -119,15 +125,16 @@ export default async function LibraryPage(props: PageProps<'/library'>) {
       <PageHeader
         eyebrow="Amiga collection"
         title="Library"
-        subtitle={showOverview
+        help="library"
+        subtitle={emptyInbox
           ? `${(libraryTotals?.titles ?? 0).toLocaleString()} titles · ${(libraryTotals?.disks ?? 0).toLocaleString()} disks`
           : `${games.length.toLocaleString()} titles · ${diskTotal.toLocaleString()} disks`}
         actions={
           <div className="flex flex-wrap items-center gap-3">
             <DemozooBadge count={reviewQueueCount} />
             <CreateAdf />
-            {view.kind !== 'collection' && !showOverview && <LibrarySortPicker sort={sort} />}
-            <ViewToggle view={viewMode} />
+            {view.kind !== 'collection' && !emptyInbox && <LibrarySortPicker sort={sort} />}
+            <ViewToggle mode={viewMode} view={view} />
           </div>
         }
       />
@@ -157,7 +164,10 @@ export default async function LibraryPage(props: PageProps<'/library'>) {
                 />
               )
               : viewMode === 'table'
-                ? <GameTable games={games} collectionId={filteredCollectionId} />
+                ? (
+                  <GameTable games={games} collectionId={filteredCollectionId} fob={fob} drives={drives}
+                             folderDisks={Object.fromEntries(collections.map((c) => [c.id, c.diskCount]))} />
+                  )
                 : <GameGrid games={games} fob={fob} drives={drives} />}
           </div>
         </div>

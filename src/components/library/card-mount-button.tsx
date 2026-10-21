@@ -29,16 +29,18 @@ export type DriveContext = {
  * card -- no layout space, nothing over the cover -- rather than by the card's
  * `outline`, which would replace the link's keyboard focus ring.
  */
-export function DriveRing({ holds }: { holds: Hold[] | undefined }) {
+export function DriveRing({ holds, compact = false }: { holds: Hold[] | undefined; compact?: boolean }) {
   if (!holds || holds.length === 0) return null;
   const mounted = holds.some((h) => h.state === 'mounted');
+  // `compact`: the table row's marker, the same ring drawn round the row's
+  // cover thumbnail rather than round a whole card.
   return (
     <span aria-hidden data-testid="drive-ring"
-          className="pointer-events-none absolute -inset-[4px] border-2"
+          className={`pointer-events-none absolute border-2 ${compact ? '-inset-[3px]' : '-inset-[4px]'}`}
           style={{
             borderStyle: mounted ? 'solid' : 'dashed',
             borderColor: 'var(--primary-action)',
-            borderRadius: 'calc(var(--radius-card) + 4px)',
+            borderRadius: compact ? '7px' : 'calc(var(--radius-card) + 4px)',
           }} />
   );
 }

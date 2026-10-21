@@ -1,6 +1,11 @@
 import { Link } from '@/components/shell/link';
+import { viewModeHref, type LibraryView } from '@/lib/library-view';
 
-export function ViewToggle({ view }: { view: 'grid' | 'table' }) {
+/**
+ * Grid or table, for the slice being viewed: switching keeps the collection
+ * (or All titles) you are in, rather than dropping you back at the root.
+ */
+export function ViewToggle({ mode, view }: { mode: 'grid' | 'table'; view: LibraryView }) {
   // Bigger on a phone and back to today's 36x32 from `sm`: this pair lives in
   // the page header's actions, where a thumb is the only pointer there is.
   const base = 'grid h-10 w-11 place-items-center text-[11px] font-semibold sm:h-8 sm:w-9';
@@ -9,10 +14,10 @@ export function ViewToggle({ view }: { view: 'grid' | 'table' }) {
   return (
     <div className="flex overflow-hidden rounded-lg border"
          style={{ borderColor: 'var(--hairline)', background: 'var(--input-bg)' }}>
-      <Link href="/library?view=grid"  aria-label="Grid view"  aria-pressed={view === 'grid'}
-            className={base} style={view === 'grid' ? on : off}>▦</Link>
-      <Link href="/library?view=table" aria-label="Table view" aria-pressed={view === 'table'}
-            className={base} style={view === 'table' ? on : off}>☰</Link>
+      <Link href={viewModeHref(view, 'grid')}  aria-label="Grid view"  aria-pressed={mode === 'grid'}
+            className={base} style={mode === 'grid' ? on : off}>▦</Link>
+      <Link href={viewModeHref(view, 'table')} aria-label="Table view" aria-pressed={mode === 'table'}
+            className={base} style={mode === 'table' ? on : off}>☰</Link>
     </div>
   );
 }
