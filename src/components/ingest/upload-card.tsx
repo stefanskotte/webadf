@@ -1,6 +1,6 @@
 /**
  * One of the Upload page's two cards. The header row has a fixed minimum height so the two cards' drop zones
- * start on the same line whatever sits at its right (the Send side's board and Receive chip).
+ * start on the same line whatever sits at its right (the Send side's board and Transfer chip).
  */
 export function UploadCard({
   id, title, help, meta, children, testId,

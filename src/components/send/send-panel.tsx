@@ -21,7 +21,7 @@ const IDLE_MS = 10_000;
 const btn = 'rounded-lg px-3 py-1.5 text-[12px] font-semibold disabled:opacity-50';
 
 /**
- * The Upload page's right column (spec §4): which board, whether Receive runs there, a drop zone for any file, and
+ * The Upload page's right column (spec §4): which board, whether Transfer runs there, a drop zone for any file, and
  * every transfer for that board however it was sent. Reads its own queue route rather than the page's live
  * fingerprint, because progress moves on every chunk and the fingerprint moves on state changes only.
  */

@@ -1,32 +1,37 @@
-# Receive
+# Transfer
 
-The Amiga program that saves files sent from webadf, through the board, into a folder you choose. Spec:
+The Amiga program that moves files between webadf and a folder you choose, through the board: it saves files sent
+from the web app (receive) and sends files up to it (send). Until 2.1 it was called Receive; the sources stay in
+`tools/receive/`, and the settings files keep their names (`ReceiveDir`, `BoardKey`) so existing settings carry over. Spec:
 `docs/superpowers/specs/2026-10-16-paulanet-phase4-send-to-amiga-design.md` (protocol §2, the program §5).
 
 It needs Kickstart 2.04 or newer, any 68000 or later, and a running TCP/IP stack (bsdsocket.library) on PaulaNET.
 
 ## Using it
 
-- **From Workbench:** double-click it. The window shows the folder (**Choose…** opens a requester; **Save** stores
-  it), the status, and the receiving queue: waiting, receiving NN %, done, or failed with the reason. Close the window
-  to stop; files still waiting stay queued on the server.
-- **From a Shell:** `Receive [TO <folder>] [SAVE] [GUI] [SEND <files>] [TRUST]`
-  - with no arguments, it uses the saved folder;
+- **From Workbench:** double-click it (from a Shell: `Transfer GUI`). The window, titled *WebFloppy - Receive & Send*,
+  shows the folder (**Choose…** opens a requester; **Save** stores it), the status, and the queue: waiting, receiving
+  NN %, done, or failed with the reason. Close the window to stop; files still waiting stay queued on the server.
+- **From a Shell:** `Transfer [RECEIVE] [TO <folder>] [SAVE] [GUI] [SEND <files>] [TRUST]` (template
+  `TO/K,SAVE/S,GUI/S,SEND/M,TRUST/S,RECEIVE/S`)
+  - `Transfer RECEIVE` receives; so does a plain `Transfer` (RECEIVE is the default), using the saved folder;
+  - `Transfer SEND <files>` sends; `RECEIVE` and `SEND` together is refused with `Transfer: RECEIVE or SEND, not both`
+    and return code 10;
   - `TO DH0:Downloads` uses that folder for this run, and `SAVE` also stores it;
   - `GUI` opens the window.
 
   It prints one line per file, and Ctrl-C stops it.
 - **Sending to the web app (protocol 2, spec 2026-10-18):** drop icons on the window, press **Send…**, or type
-  `Receive SEND DH0:a.lha DH0:Drawer`. With a Receive already running, the files are handed to it (port
-  `webadf.Receive`); otherwise that run listens itself and waits 60 s for the board. It prints a line per file and
+  `Transfer SEND DH0:a.lha DH0:Drawer`. With a Transfer already running, the files are handed to it (port
+  `webadf.Transfer`); otherwise that run listens itself and waits 60 s for the board. It prints a line per file and
   returns 0 (all sent), 5 (some) or 10 (none). A drawer sends its files with their paths under it (64 at most; `.info` files
-  only when the icon itself is dropped). Files go only to the board whose key Receive trusts: the first board it hears
+  only when the icon itself is dropped). Files go only to the board whose key Transfer trusts: the first board it hears
   (saved in `ENVARC:webadf/BoardKey`); `TRUST` (or **Trust this board**) accepts another one.
 - **The folder setting** is the file `ENVARC:webadf/ReceiveDir`, copied to `ENV:webadf/ReceiveDir`. The default is
   `RAM:`.
 - **Nothing is overwritten:** a second `Foo.lha` arrives as `Foo_2.lha`. Nothing is written outside the folder.
 
-While `Receive` runs, it listens on TCP port 6800 for the board.
+While `Transfer` runs, it listens on TCP port 6800 for the board.
 
 ## Layout
 
@@ -43,7 +48,7 @@ While `Receive` runs, it listens on TCP port 6800 for the board.
 ```bash
 pnpm receive:test                                # host tests of the core
 pnpm vitest run tools/receive/receive.int.test.ts  # the POSIX build against the fake board
-pnpm receive:build /tmp/Receive                  # Docker cross-build; fails unless it matches receive.sha256
+pnpm receive:build /tmp/Transfer                 # Docker cross-build; fails unless it matches receive.sha256
 pnpm receive:uae 204|31|32 [shell|gui|space|ram|send]  # FS-UAE on Kickstart 2.04 / 3.1 (A1200) / 3.2 (A500)
 ```
 
@@ -61,6 +66,7 @@ pnpm receive:uae 204|31|32 [shell|gui|space|ram|send]  # FS-UAE on Kickstart 2.0
   Workbench disks are never committed.
 - **FS-UAE's bsdsocket emulation** uses the Mac's network stack, so the Amiga's port 6800 is the Mac's port 6800.
   macOS may ask once whether FS-UAE may accept incoming connections.
-- **The binary goes onto the PaulaNET driver disk** from `dist/Receive`, the committed copy of the pinned build
-  (CI checks they are identical). After changing the sources: `build.sh dist/Receive --pin`, commit both, then
-  rebuild the driver disk (its pin changes too). `Install` copies it to `SYS:Tools/` and `C:`.
+- **The binary goes onto the PaulaNET driver disk** from `dist/Transfer`, the committed copy of the pinned build
+  (CI checks they are identical). After changing the sources: `build.sh dist/Transfer --pin`, commit both, then
+  rebuild the driver disk (its pin changes too). `Install` copies it to `SYS:Tools/` and `C:`, and deletes an older
+  `C:Receive` and `SYS:Tools/Receive` (+ `.info`) when present.

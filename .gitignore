@@ -19,10 +19,10 @@ node_modules/
 !.env.example
 .vercel
 dist/
-# The pinned Receive build is committed (plan 2026-10-17 R14): only that one file.
+# The pinned Transfer build (tools/receive) is committed (plan 2026-10-17 R14): only that one file.
 !tools/receive/dist/
 tools/receive/dist/*
-!tools/receive/dist/Receive
+!tools/receive/dist/Transfer
 # The pinned PaulaNET.device variant is committed (plan 2026-10-18 Task 6); its NDK download and work copies are not.
 !tools/paulanet-driver/dist/
 tools/paulanet-driver/dist/*

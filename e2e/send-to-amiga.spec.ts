@@ -45,17 +45,17 @@ test('a file dropped under Send to Amiga waits, the board takes it, and it reads
   await expect(page.getByRole('heading', { name: 'Add to library' })).toBeVisible();
   await expect(page.getByTestId('dropzone')).toBeVisible();          // the library upload is unchanged
   await expect(page.getByTestId('send-board')).toContainText('Bench');
-  await expect(page.getByTestId('send-receiver')).toHaveText('• Receive is not running on the Amiga');
+  await expect(page.getByTestId('send-receiver')).toHaveText('• Transfer is not running on the Amiga');
 
   await dropFile(page, 'Café.txt', Buffer.from('hello amiga'));
   const row = page.locator('[data-testid^="send-row-"]').first();
   await expect(row).toHaveAttribute('data-status', 'queued', { timeout: LIVE });
   await expect(row).toContainText('Café.txt');
   await expect(row).toContainText('Waiting');
-  await expect(page.getByTestId('send-receiver')).toHaveText('• Start Receive on the Amiga', { timeout: LIVE });
+  await expect(page.getByTestId('send-receiver')).toHaveText('• Start Transfer on the Amiga', { timeout: LIVE });
 
   await boardSays(request, token, 'c');
-  await expect(page.getByTestId('send-receiver')).toHaveText('✓ Receive is running on the Amiga', { timeout: LIVE });
+  await expect(page.getByTestId('send-receiver')).toHaveText('✓ Transfer is running on the Amiga', { timeout: LIVE });
   const id = await boardTakesNext(request, token, { ok: true, savedAs: 'Café_2.txt' });
   await expect(page.getByTestId(`send-state-${id}`)).toHaveText('Delivered · saved as Café_2.txt', { timeout: LIVE });
   await expect(page.getByTestId(`send-cancel-${id}`)).toHaveCount(0);
@@ -88,7 +88,7 @@ test('Cancel takes a waiting file out of the board\'s queue; a cancel after deli
   await expect(page.getByTestId(`send-state-${twoId}`)).toHaveText('Delivered · saved as Two.bin', { timeout: LIVE });
 });
 
-test('a failure shows Receive\'s reason, and Retry queues the file again', async ({ page, request }) => {
+test('a failure shows Transfer\'s reason, and Retry queues the file again', async ({ page, request }) => {
   await signUpFresh(page);
   const { token } = await pairDevice(page, request, 'Bench');   // Task 1: the name is kept
   await boardSays(request, token, 'c');
@@ -154,16 +154,16 @@ test('a title page: Send .adf to Amiga queues the whole disk as <name>.adf', asy
   expect(q).toContain(` 901120 ${`${title}-1.adf`.length}:${title}-1.adf\n`);
 });
 
-test('the board\'s card says what waits and whether Receive runs, and links to the queue', async ({ page, request }) => {
+test('the board\'s card says what waits and whether Transfer runs, and links to the queue', async ({ page, request }) => {
   await signUpFresh(page);
   const { deviceId, token } = await pairDevice(page, request, 'Bench');   // Task 1: the name is kept
   await boardSays(request, token, 'r');
   expect((await page.request.post(`/api/transfers?deviceId=${deviceId}&name=a.txt`, { data: Buffer.from('a'),
     headers: { 'content-type': 'application/octet-stream' } })).status()).toBe(201);
   await page.goto('/devices');
-  await expect(page.getByTestId(`device-send-${deviceId}`)).toHaveText('1 file waiting · Receive not running');
+  await expect(page.getByTestId(`device-send-${deviceId}`)).toHaveText('1 file waiting · Transfer not running');
   await boardSays(request, token, 'c');
-  await expect(page.getByTestId(`device-send-${deviceId}`)).toHaveText('1 file waiting · Receive running', { timeout: LIVE });
+  await expect(page.getByTestId(`device-send-${deviceId}`)).toHaveText('1 file waiting · Transfer running', { timeout: LIVE });
   await page.getByTestId(`device-send-${deviceId}`).click();
   await expect(page).toHaveURL(new RegExp(`/ingest\\?board=${deviceId}$`));
   await expect(page.getByTestId('send-board')).toContainText('Bench');

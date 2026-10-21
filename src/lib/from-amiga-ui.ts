@@ -68,7 +68,7 @@ export const anyMoving = (rows: UploadView[], seen: ProgressSeen, now: number): 
 /** What the empty list says: how to send, or what the boards still need before they can. */
 export function emptyText(boards: { canUpload: boolean }[]): string {
   if (!boards.some((b) => b.canUpload)) return `No board can send from the Amiga yet: update to ${UPLOAD_FW} and use Network (PaulaNET) mode.`;
-  return "Nothing from the Amiga yet. Drop files on Receive's window, or type Receive SEND in a Shell.";
+  return "Nothing from the Amiga yet. Drop files on Transfer's window, or type Transfer SEND in a Shell.";
 }
 /** Add to library: a stored library-type file whose disk is not (or no longer) in the library. */
 export const canAddToLibrary = (r: UploadView): boolean => r.status === 'stored' && !r.libraryGameId && libraryEligible(r.path, r.sizeBytes);

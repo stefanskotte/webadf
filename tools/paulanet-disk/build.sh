@@ -2,9 +2,9 @@
 # Builds the PaulaNET driver disk (spec docs/superpowers/specs/2026-10-12-paulanet-phase3-network-setting-design.md §2).
 # PaulaNET.device is webadf's LZ4 build of Rob's driver (tools/paulanet-driver/).
 # Built from Rob Smith's own disk (third-party/paulanet/, pinned): his PaulaNET.device is replaced by the LZ4 build,
-# his PaulaNET Config stays, and our Install script, ReadMe, Receive and their icons are added.
+# his PaulaNET Config stays, and our Install script, ReadMe, Transfer and their icons are added.
 # Deterministic: the same inputs give the same bytes, whose sha256 is pinned in paulanet-disk.sha256.
-# Usage: tools/paulanet-disk/build.sh <out.adf>     Needs xdftool (amitools 0.4.0). Receive comes from tools/receive/dist/.
+# Usage: tools/paulanet-disk/build.sh <out.adf>     Needs xdftool (amitools 0.4.0). Transfer comes from tools/receive/dist/.
 set -euo pipefail
 here="$(cd "$(dirname "$0")" && pwd)"
 repo="$(cd "$here/../.." && pwd)"
@@ -20,10 +20,10 @@ xdf() { TZ=UTC "$py" -I "$here/xdf_fixed.py" "$@" </dev/null; }
 tmp="$(mktemp -d)"
 trap 'rm -rf "$tmp"' EXIT
 cp "$base" "$tmp/disk.adf"
-# Receive (spec 2026-10-16 §5): the committed pinned build, checked here so a stale copy fails the disk build.
-cp "$repo/tools/receive/dist/Receive" "$tmp/Receive"
-[ "$(sha256 "$tmp/Receive")" = "$(cat "$repo/tools/receive/receive.sha256")" ] \
-  || { echo "FAIL: tools/receive/dist/Receive is not the binary pinned in tools/receive/receive.sha256"; exit 1; }
+# Transfer, was Receive (spec 2026-10-16 §5): the committed pinned build, checked here so a stale copy fails the disk build.
+cp "$repo/tools/receive/dist/Transfer" "$tmp/Transfer"
+[ "$(sha256 "$tmp/Transfer")" = "$(cat "$repo/tools/receive/receive.sha256")" ] \
+  || { echo "FAIL: tools/receive/dist/Transfer is not the binary pinned in tools/receive/receive.sha256"; exit 1; }
 # The driver (spec 2026-10-18 §4): webadf's LZ4 build of Rob's PaulaNET.device, the committed pinned binary.
 cp "$repo/tools/paulanet-driver/dist/PaulaNET.device" "$tmp/PaulaNET.device"
 [ "$(sha256 "$tmp/PaulaNET.device")" = "$(cat "$repo/tools/paulanet-driver/driver.sha256")" ] \
@@ -31,19 +31,19 @@ cp "$repo/tools/paulanet-driver/dist/PaulaNET.device" "$tmp/PaulaNET.device"
 xdftool "$tmp/disk.adf" read "PaulaNET Config.info" "$tmp/tool.info"
 python3 -I "$here/make_icon.py" "$tmp/tool.info" "C:IconX" "$tmp/Install.info"
 python3 -I "$here/make_icon.py" "$tmp/tool.info" "SYS:Utilities/MultiView" "$tmp/ReadMe.info"
-python3 -I "$here/make_icon.py" "$tmp/tool.info" --tool "$tmp/Receive.info"
+python3 -I "$here/make_icon.py" "$tmp/tool.info" --tool "$tmp/Transfer.info"
 cp "$here/Install" "$here/ReadMe" "$tmp/"
 ( cd "$tmp" && xdf disk.adf delete PaulaNET.device + write PaulaNET.device + write Install + write Install.info + write ReadMe + write ReadMe.info \
-                + write Receive + write Receive.info + protect Install srwed + protect Receive rwed )
+                + write Transfer + write Transfer.info + protect Install srwed + protect Transfer rwed )
 xdftool "$tmp/disk.adf" list > "$tmp/list.txt"
 python3 -I "$here/check.py" "$tmp/disk.adf" "$tmp/list.txt"
 xdftool "$tmp/disk.adf" read PaulaNET.device "$tmp/driver"
 cmp -s "$tmp/driver" "$repo/tools/paulanet-driver/dist/PaulaNET.device" \
   && echo "PASS PaulaNET.device is webadf's LZ4 build (tools/paulanet-driver/dist)" \
   || { echo "FAIL: PaulaNET.device differs from tools/paulanet-driver/dist/"; exit 1; }
-xdftool "$tmp/disk.adf" read Receive "$tmp/receive.back"
-cmp -s "$tmp/receive.back" "$tmp/Receive" \
-  && echo "PASS Receive is the pinned binary" || { echo "FAIL: Receive on the disk differs from tools/receive/dist/"; exit 1; }
+xdftool "$tmp/disk.adf" read Transfer "$tmp/transfer.back"
+cmp -s "$tmp/transfer.back" "$tmp/Transfer" \
+  && echo "PASS Transfer is the pinned binary" || { echo "FAIL: Transfer on the disk differs from tools/receive/dist/"; exit 1; }
 cp "$tmp/disk.adf" "$out"
 got="$(sha256 "$out")"
 echo "$got  $out"

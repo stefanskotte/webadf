@@ -1,8 +1,9 @@
 ; Install -- puts PaulaNET.device (webadf's LZ4 build of Rob Smith's
-; driver) in place for a TCP/IP stack, and webadf's Receive in SYS:Tools
-; (with its icon) and C:.
+; driver) in place for a TCP/IP stack, and webadf's Transfer in SYS:Tools
+; (with its icon) and C:. An older Receive (Transfer's former name) is
+; removed from SYS:Tools and C:.
 ; From webadf (https://github.com/stefanskotte/webadf). Safe to run more
-; than once: the driver and Receive are copied again, and an existing eth0
+; than once: the driver and Transfer are copied again, and an existing eth0
 ; is never changed.
 FailAt 21
 If NOT EXISTS DEVS:Networks
@@ -18,23 +19,32 @@ Echo "Copied PaulaNET.device to DEVS:Networks."
 If NOT EXISTS SYS:Tools
   MakeDir SYS:Tools
 EndIf
-Copy PaulaNET:Receive SYS:Tools/ CLONE QUIET
+Copy PaulaNET:Transfer SYS:Tools/ CLONE QUIET
 If WARN
-  Skip NORECEIVE
+  Skip NOTRANSFER
 EndIf
-Copy PaulaNET:Receive.info SYS:Tools/ CLONE QUIET
+Copy PaulaNET:Transfer.info SYS:Tools/ CLONE QUIET
 If WARN
-  Skip NORECEIVE
+  Skip NOTRANSFER
 EndIf
-Copy PaulaNET:Receive C: CLONE QUIET
+Copy PaulaNET:Transfer C: CLONE QUIET
 If WARN
-  Skip NORECEIVE
+  Skip NOTRANSFER
 EndIf
-Echo "Copied Receive to SYS:Tools and C:."
+Echo "Copied Transfer to SYS:Tools and C:."
+If EXISTS SYS:Tools/Receive
+  Delete SYS:Tools/Receive QUIET
+EndIf
+If EXISTS SYS:Tools/Receive.info
+  Delete SYS:Tools/Receive.info QUIET
+EndIf
+If EXISTS C:Receive
+  Delete C:Receive QUIET
+EndIf
 Skip ETH
-Lab NORECEIVE
-Echo "Could not copy Receive to SYS:Tools and C:."
-Echo "The driver is in place; Receive also runs from this disk."
+Lab NOTRANSFER
+Echo "Could not copy Transfer to SYS:Tools and C:."
+Echo "The driver is in place; Transfer also runs from this disk."
 Lab ETH
 If EXISTS DEVS:NetInterfaces/eth0
   Echo "DEVS:NetInterfaces/eth0 already exists: left as it is."

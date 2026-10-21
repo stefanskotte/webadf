@@ -50,13 +50,13 @@ describe('help topics', () => {
 describe('help topics say what the app really does', () => {
   it('from-amiga names the firmware, the three ways to send, the key digits and the limits (spec 2026-10-18)', () => {
     const b = HELP_TOPICS['from-amiga'].short + bodyText('from-amiga');
-    for (const w of ['1.19.0', 'Install', 'Send…', 'Receive SEND', 'Trusted board AB12', 'Trust this board', 'TRUST',
+    for (const w of ['1.19.0', 'Install', 'Send…', 'Transfer SEND', 'Trusted board AB12', 'Trust this board', 'TRUST',
       '4 MB', '500 files', '256 MB', '30 days', '24 hours', 'Clear all', 'Add to library']) expect(b).toContain(w);
   });
   it('from-amiga lists every extension the library takes', () => {
     expect(bodyText('from-amiga')).toMatch(/ADF, DSK, ADZ, DMS, DMZ and HFE/);
   });
-  it('from-amiga says Receive trusts the first board it meets and the four digits are how to check it', () => {
+  it('from-amiga says Transfer trusts the first board it meets and the four digits are how to check it', () => {
     const b = bodyText('from-amiga');
     expect(b).toMatch(/first board/);
     expect(b).toMatch(/four digits/);
@@ -216,10 +216,12 @@ describe('network says what a regular user needs (spec 2026-10-12 §5)', () => {
   it('names the firmware it needs', () => expect(all()).toMatch(/1\.11\.0/));
 });
 
-describe('send names the limits, Receive, the expiry and the accepted risk', () => {
-  it('send names the limits, Receive, the expiry and the accepted risk', () => {
+describe('send names the limits, Transfer, the expiry and the accepted risk', () => {
+  it('send names the limits, Transfer, the expiry and the accepted risk', () => {
     const s = HELP_TOPICS.send.short + bodyText('send');
-    expect(s).toMatch(/Receive/);
+    expect(s).toMatch(/Transfer/);
+    expect(s).toContain('Transfer RECEIVE');                  // the Shell form (Transfer 2.1)
+    expect(s).toMatch(/replacing\s+Receive/);                 // Install deletes the old C:Receive
     expect(s).toMatch(/4 MB/);
     expect(s).toMatch(/24 hours/);
     expect(s).toMatch(/1\.15\.0/);

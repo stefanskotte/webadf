@@ -42,7 +42,7 @@ export default async function DevicesPage() {
     devices.map((d) => [d.id, nextInfo(nexts.get(d.id), d.preloadSha256, d.preloadState)]),
   );
 
-  // The card's send line (spec §4): what waits or happened lately, and whether Receive runs, per sending board.
+  // The card's send line (spec §4): what waits or happened lately, and whether Transfer runs, per sending board.
   const [sendTargets, summaries] = await Promise.all([listSendTargets(getDb(), orgId, now), sendSummaries(getDb(), orgId, new Date(now))]);
   const sendLineById = Object.fromEntries(sendTargets.map((t) => {
     const s = summaries[t.id];

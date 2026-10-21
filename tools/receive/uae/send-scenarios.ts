@@ -1,4 +1,4 @@
-// The board's side of uae-test.sh's send mode: one step per `Receive SEND` line of the startup-sequence it wrote, in
+// The board's side of uae-test.sh's send mode: one step per `Transfer SEND` line of the startup-sequence it wrote, in
 // the same order. Each step waits for that run to listen on 6800, plays the board, and closes; then the logs (one per
 // run, with its return code) and ENVARC:webadf/BoardKey are checked.
 // Usage: tsx tools/receive/uae/send-scenarios.ts --hd <the emulated Work: folder>
@@ -12,7 +12,7 @@ async function listening(ms = 180000) {
   const t0 = Date.now();
   for (;;) {
     try { const s = await rawConnect(6800); s.destroy(); return; }
-    catch { if (Date.now() - t0 > ms) throw new Error('Receive never listened'); await new Promise((r) => setTimeout(r, 500)); }
+    catch { if (Date.now() - t0 > ms) throw new Error('Transfer never listened'); await new Promise((r) => setTimeout(r, 500)); }
   }
 }
 // The run before may still hold the port for a moment as it quits: retry until a READY comes back.
@@ -42,20 +42,20 @@ const steps: { name: string; run: () => Promise<string | null> }[] = [
   { name: 's05 resume: the rest', run: async () => { const b = await board();
       try { const r = await b.takeUpload({ store, timeoutMs: 120000 }); return r.offset === 32768 ? same(r, up('Resume.bin')) : `resumed at ${r.offset}`; } finally { await b.close(); } } },
   { name: 's06 CRC fault', run: async () => { const b = await board(); try { const r = await b.takeUpload({ crcFault: true, timeoutMs: 60000 }); return !r.ok && r.code === 'crc' ? null : JSON.stringify(r); } finally { await b.close(); } } },
-  // PF11: not just "a PUT came": it is this run's file, and the NO ends the run -- Receive closes at once, with no retry
-  // and no other PUT (a Receive that ignored the NO would sit in the PUT until the 180 s silence).
+  // PF11: not just "a PUT came": it is this run's file, and the NO ends the run -- Transfer closes at once, with no retry
+  // and no other PUT (a Transfer that ignored the NO would sit in the PUT until the 180 s silence).
   { name: 's07 refused', run: async () => { const b = await board();
       try { const r = await b.takeUpload({ refuse: { code: 'full', text: "the web app's area is full" }, timeoutMs: 60000 });
             if (r.path !== 'Refused.bin' || r.size !== 1) return `refused the wrong PUT ${JSON.stringify(r)}`;
             const t0 = Date.now(); const l = await b.maybeLine(15000);
             if (l !== null) return `got ${JSON.stringify(l)} after the NO`;
-            return Date.now() - t0 < 14000 ? null : 'Receive kept the connection open after the NO'; } finally { await b.close(); } } },
+            return Date.now() - t0 < 14000 ? null : 'Transfer kept the connection open after the NO'; } finally { await b.close(); } } },
   { name: 's08 Latin-1 name', run: async () => { const b = await board();
       try { const r = await b.takeUpload({ timeoutMs: 60000 }); return r.path === 'Café.txt' ? same(r, up('Café.txt')) : `path ${JSON.stringify(r.path)}`; } finally { await b.close(); } } },
   { name: 's09 a protocol 1 board', run: async () => { const b = await board(BOARD_KEY, 1); try { const l = await b.maybeLine(5000); return l === null ? null : `got ${l}`; } finally { await b.close(); } } },
   { name: 's10 another key', run: async () => { const b = await board(BOARD_KEY2); try { const l = await b.maybeLine(5000); return l === null ? null : `got ${l}`; } finally { await b.close(); } } },
   { name: 's11 SEND TRUST', run: async () => { const b = await board(BOARD_KEY2); try { return same(await b.takeUpload({ timeoutMs: 60000 }), up('Hello.txt')); } finally { await b.close(); } } },
-  { name: 's12 hand-off to a running Receive', run: async () => { const b = await board(BOARD_KEY2); try { return same(await b.takeUpload({ timeoutMs: 120000 }), up('Hello.txt')); } finally { await b.close(); } } },
+  { name: 's12 hand-off to a running Transfer', run: async () => { const b = await board(BOARD_KEY2); try { return same(await b.takeUpload({ timeoutMs: 120000 }), up('Hello.txt')); } finally { await b.close(); } } },
 ];
 
 const logs: [string, RegExp[]][] = [
@@ -66,6 +66,8 @@ const logs: [string, RegExp[]][] = [
   ['s07', [/ERR the web app's area is full/, /rc=10/]], ['s08', [/bytes {2}OK/, /rc=0/]],
   ['s09', [/cannot receive files \(update to 1\.19\.0\)/, /rc=10/]], ['s10', [/Another board or computer connected -- not sending/, /rc=10/]],
   ['s11', [/Trusted board FEDC/, /rc=0/]], ['s12', [/Hello\.txt {2}21 bytes {2}OK/, /rc=0/]],
+  // The direction is RECEIVE or SEND (2.1): both is refused before anything starts; and the version names the program.
+  ['s13', [/^Transfer: RECEIVE or SEND, not both$/m, /rc=10/]], ['ver', [/Transfer 2\.1/]],
 ];
 
 let fail = 0;
