@@ -200,6 +200,8 @@ test('remove from collection on a row takes it out of the collection, not the li
   await page.goto(`/library?view=table&collection=${id}`);
   await row(page, t).getByTestId(`remove-from-collection-${gameId}`).click();
   await expect(page.getByTestId('game-row')).toHaveCount(0);
+  // An emptied collection says so, rather than showing an up row alone (final review M2).
+  await expect(page.getByTestId('table-empty-note')).toContainText('No titles in this collection yet');
   await expect(page).toHaveURL(new RegExp(`collection=${id}`));
   expect(await membership(id)).toEqual([]);
   expect(await getDb().select().from(games).where(eq(games.id, gameId))).toHaveLength(1);

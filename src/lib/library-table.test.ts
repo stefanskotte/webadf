@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { tableRows } from './library-table';
+import { tableRows, emptyTableNote } from './library-table';
 
 const A = { id: 'c-a', name: 'Demos' };
 const B = { id: 'c-b', name: 'Games' };
@@ -38,5 +38,18 @@ describe('tableRows', () => {
       { kind: 'title', game: g1 },
       { kind: 'title', game: g2 },
     ]);
+  });
+});
+
+describe('emptyTableNote', () => {
+  it('says a collection is empty and how to fill it', () => {
+    expect(emptyTableNote({ kind: 'collection', id: 'c1' }, 0)).toMatch(/no titles in this collection/i);
+  });
+  it('says the library is empty in All titles', () => {
+    expect(emptyTableNote({ kind: 'all' }, 0)).toMatch(/no titles yet/i);
+  });
+  it('is null when there are titles, and at the root (folders or the empty-library state speak there)', () => {
+    expect(emptyTableNote({ kind: 'collection', id: 'c1' }, 2)).toBeNull();
+    expect(emptyTableNote({ kind: 'uncategorized' }, 0)).toBeNull();
   });
 });

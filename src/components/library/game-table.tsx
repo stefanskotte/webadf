@@ -9,7 +9,7 @@ import { Link } from '@/components/shell/link';
 import { fromQuery } from '@/lib/trail';
 import type { GameListItem } from '@/lib/queries';
 import { fmtSize } from '@/lib/format';
-import { tableRows } from '@/lib/library-table';
+import { emptyTableNote, tableRows } from '@/lib/library-table';
 import { viewModeHref } from '@/lib/library-view';
 import { HdTag } from '@/components/disks/hd-tag';
 import type { FobContext } from '@/components/nfc/fob-button';
@@ -53,6 +53,7 @@ export function GameTable({ games, collectionId = null, fob = null, drives = nul
   const { collections, view, pendingHide: hidden } = useCollectionsContext();
   const searchParams = useSearchParams();
   const rows = tableRows(view, collections, games);
+  const emptyNote = emptyTableNote(view, games.length);
   // Folder and up rows keep the table: they are the table's own navigation,
   // so they say view=table outright rather than leaning on the preference.
   const tableHref = (v: Parameters<typeof viewModeHref>[0]) =>
@@ -89,6 +90,11 @@ export function GameTable({ games, collectionId = null, fob = null, drives = nul
                       pendingHide={hidden?.sourceId === g.id ? hidden : null} />
           );
         })}
+        {emptyNote && (
+          <p data-testid="table-empty-note" className="px-4 py-3 font-sans text-[13px]" style={{ color: 'var(--muted)' }}>
+            {emptyNote}
+          </p>
+        )}
       </div>
       <RowDragOverlay games={games} />
     </div>

@@ -26,3 +26,16 @@ export function tableRows<C, G>(view: LibraryView, collections: readonly C[], ga
   }
   return [{ kind: 'up' }, ...titles];
 }
+
+/**
+ * The line the table shows under its up row when a collection, or the whole
+ * library in All titles, has no titles (final review M2): an up row alone
+ * reads like a page that failed to load. Null at the root, where the folders
+ * or the empty-library state already say what there is.
+ */
+export function emptyTableNote(view: LibraryView, titleCount: number): string | null {
+  if (titleCount > 0 || view.kind === 'uncategorized') return null;
+  return view.kind === 'collection'
+    ? 'No titles in this collection yet. Drag one onto it in the list of collections.'
+    : 'No titles yet. Add disks on the Upload page.';
+}
