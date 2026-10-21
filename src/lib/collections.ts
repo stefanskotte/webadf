@@ -104,10 +104,13 @@ export async function listCollections(orgId: string): Promise<CollectionListItem
       // The table's folder rows show it. The disks are org-scoped as well as
       // the collection: collection_games has no org_id (D-4-5), and a member
       // row pointing at another tenant's game must not count its disks here.
+      // The outer columns are spelled out, not interpolated: drizzle renders a
+      // one-table select's columns unqualified, and a bare "id" or "org_id"
+      // inside this subquery would bind to disks' own.
       diskCount: sql<number>`(
         select count(*)::int from collection_games
-        join disks on disks.game_id = collection_games.game_id and disks.org_id = ${collections.orgId}
-        where collection_games.collection_id = ${collections.id}
+        join disks on disks.game_id = collection_games.game_id and disks.org_id = collections.org_id
+        where collection_games.collection_id = collections.id
       )`,
     })
     .from(collections)
