@@ -40,6 +40,7 @@
 #include "activity_led.h"
 #include "i2c_probe.h"
 #include "boot_trail.h"
+#include "core1_wd.h"          // core1 supervision: core0 judges core1's heartbeat
 #include "hardware/watchdog.h"
 #include "ssd1306.h"
 #include "display.h"
@@ -1037,6 +1038,28 @@ static uint32_t clock_ms(void) {
     return to_ms_since_boot(get_absolute_time());
 }
 
+// core1 supervision (core1_wd.h), core0, every loop pass before fw_rom_service: how long since core1's last boot-trail
+// tick, the longest such gap (logged as it grows, and every 10 min), and past C1WD_LIMIT_MS the watchdog is let go.
+// Judged only while core1 is in its poll loop (BT1_LOOP / BT1_CONTACT). The tick is bt_hw_tick's own clock (ms since
+// boot, the same as clock_ms); it is read first, so the clock read after it is never the older of the two.
+static void c1wd_poll(void) {
+    static c1wd_t wd;   // zero is c1wd_init's state
+    int stage;
+    uint32_t tick;
+    bt_hw_core_view(1, &stage, &tick);
+    const unsigned r = c1wd_step(&wd, clock_ms(), tick, stage == BT1_LOOP || stage == BT1_CONTACT);
+    if (r & C1WD_NEW_MAX)
+        wf_logf(WF_INFO, "c1wd: longest core1 gap %lu ms (new max)", (unsigned long)wd.max_gap);
+    if (r & C1WD_REPORT)
+        wf_logf(WF_INFO, "c1wd: longest core1 gap %lu ms since its loop began (limit %lu ms)",
+                (unsigned long)wd.max_gap, (unsigned long)C1WD_LIMIT_MS);
+    if (r & C1WD_STALL) {
+        wf_logf(WF_ERR, "c1wd: core1 stalled %lu ms -- letting the watchdog reset", (unsigned long)wd.gap);
+        bt_hw_mark(0, BT0_C1STALL);   // the next boot's lastBoot: reset "core1-stall"
+    }
+    if (!(r & C1WD_FEED)) fw_rom_release_watchdog();
+}
+
 // Free heap, conservatively: only the never-claimed space between the break
 // and __StackLimit, the ceiling the SDK's _sbrk refuses to grow past
 // (pico_clib_interface/newlib_interface.c; 0x20080000 in this build's map,
@@ -1879,8 +1902,12 @@ static void core1_main(void) {
     // until that happens.
     const char *last_error = NULL;
 
-    bt_hw_mark(1, BT1_WIFI);
     for (;;) {
+        // Every pass -- the first, and each return from the poll loop below (DC_HALTED's re-pair breaks out to
+        // registration and the portal) -- re-marks WIFI: joining, the portal and registration wait as long as they
+        // take (a portal waits for a person), and core1 supervision (core1_wd.h) judges only the poll loop. Left at
+        // LOOP/CONTACT, a re-pair's portal would read as a poll loop gone silent.
+        bt_hw_mark(1, BT1_WIFI);
         if (prov.state == PROV_PORTAL) {
             // The catch-all, deliberately here rather than only at the sites
             // that set PROV_PORTAL: this is the single door every route into
@@ -2364,14 +2391,14 @@ static void core1_main(void) {
                         // an OTA's pending record, CLEAN for a USB install)
                         // does the bookkeeping fw_trial_after_buy used to do.
                         fw_rom_request_proven_reboot(WF_FIRMWARE_VERSION);
-                        for (;;) sleep_ms(1000);
+                        for (;;) sleep_ms(1000);   // stage PROVEN: not supervised (core1_wd.h); core0 is rebooting
                     }
                     if (a == FW_TRIAL_GIVE_UP) {
                         wf_logf(WF_WARN, "trial: giving up (%s) -- rebooting to revert", why);
                         snprintf(fst.failure, sizeof fst.failure, "%s", why);
                         fw_state_save(&fst);
                         fw_rom_request_ota_reboot(0);   // a trial reverting: still the update's boot
-                        for (;;) sleep_ms(1000);
+                        for (;;) sleep_ms(1000);   // stage TRIAL: not supervised (core1_wd.h); core0 is rebooting
                     }
                     tls_release_if_unreusable();
                     sleep_ms(5000);
@@ -2823,7 +2850,10 @@ static void core1_main(void) {
                     // last report (best effort -- core0 may reset first; the
                     // "applying" before the flash write already went out), then stop.
                     dc_report_status(&c, psram_free_estimate(), wifi_rssi(), NULL, WF_FIRMWARE_VERSION);
-                    for (;;) sleep_ms(1000);
+                    // Parked inside the poll loop, so it keeps ticking: core0 reboots on its next pass, and must
+                    // never take this wait for a stall (core1_wd.h) -- a watchdog reset here would boot the old
+                    // slot instead of the update's trial.
+                    for (;;) { bt_hw_tick(1); sleep_ms(1000); }
                 }
             }
 
@@ -3066,6 +3096,9 @@ static void core1_main(void) {
                 // if the fault persists), not after up to 60 s of backoff.
                 while (remaining > 0 && !up_has_work(&up) && !nfc_event_pending(NULL)) {
                     uint32_t step = remaining < 100 ? remaining : 100;
+                    // A deliberate wait of up to DC_BACKOFF_CAP_MS (60 s): core1 is alive, so it ticks (at most
+                    // once a second, bt_hw_tick's own pace) -- a server outage must never read as a core1 stall.
+                    bt_hw_tick(1);
                     sleep_ms(step);
                     remaining -= step;
                 }
@@ -3138,8 +3171,12 @@ static void core1_main(void) {
                 // Idling holding a TLS connection is not, and this state
                 // never sends another request -- but that is now the per-pass
                 // tls_release_if_unreusable() above's job, not a guard of its
-                // own here.
-                sleep_ms(DC_BACKOFF_CAP_MS);
+                // own here. Slept a second at a time, ticking: a 60 s sleep in
+                // the poll loop would otherwise read as a core1 stall (core1_wd.h).
+                for (uint32_t t = 0; t < DC_BACKOFF_CAP_MS; t += 1000u) {
+                    bt_hw_tick(1);
+                    sleep_ms(1000);
+                }
             }
         }
     }
@@ -4532,6 +4569,7 @@ int main(void) {
     bool trail_loop = false;
     fw_rom_watchdog_start();
     while (true) {
+        c1wd_poll();
         fw_rom_service();
         if (!trail_loop && clock_ms() - loop_since >= 2000u) { bt_hw_mark(0, BT0_LOOP); trail_loop = true; }
         bt_hw_tick(0);

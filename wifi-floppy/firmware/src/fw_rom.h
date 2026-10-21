@@ -54,6 +54,9 @@ void fw_rom_watchdog_start_boot(void);
 bool fw_rom_bought_this_boot(void);
 void fw_rom_watchdog_start(void);      // core0, right before its loop
 void fw_rom_service(void);             // core0, every loop turn: feed, deadline, honour reboot
+// core0 (core1 supervision, core1_wd.h): core1 has stopped -- fw_rom_service no longer feeds the watchdog, which
+// resets the board within its 8 s. One-way. A reboot already requested is still performed first.
+void fw_rom_release_watchdog(void);
 
 #if WF_FW_DEBUG
 // Bench-only (fix round 3): reproduces the nested-flash_safe_execute wedge

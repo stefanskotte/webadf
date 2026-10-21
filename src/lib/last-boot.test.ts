@@ -51,6 +51,14 @@ describe('describeLastBoot', () => {
     expect(describeLastBoot({ reset: 'brown-out', c0: 'loop', up0: 9, c1: 'server', up1: 8 }))
       .toBe('Previous start stopped at: server connection (reset: brown-out)');
   });
+  it('a core1 stall (fw 1.21.0) says the network side stopped, and how long the board had run', () => {
+    const lb = lastBootSchema.parse({ reset: 'core1-stall', c0: 'c1-stall', up0: 3700, c1: 'contact', up1: 3640 });
+    expect(describeLastBoot(lb))
+      .toBe('Previous run: the network side stopped responding after 1 h 0 min; the board restarted itself (reset: core1-stall)');
+    // Before its first server report: still the network side, named by where core1 was.
+    expect(describeLastBoot({ reset: 'core1-stall', c0: 'c1-stall', up0: 200, c1: 'loop', up1: 130 }))
+      .toBe('Previous run: the network side stopped responding after 2 min; the board restarted itself (reset: core1-stall)');
+  });
   it('a run that was cut short by an unasked reset says how long it ran', () => {
     expect(describeLastBoot({ reset: 'watchdog', c0: 'loop', up0: 36125, c1: 'contact', up1: 36100 }))
       .toBe('Previous run stopped after 10 h 2 min (reset: watchdog)');

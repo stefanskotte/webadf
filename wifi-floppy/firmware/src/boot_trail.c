@@ -32,6 +32,7 @@ bt_reset_t bt_reset_reason(uint32_t chip_reset, uint32_t wd_reason, uint32_t w0)
     if (chip_reset & (BT_HAD_DP_RESET_REQ | BT_HAD_RESCUE)) return BT_RESET_DEBUGGER;
     int st = 0; uint32_t up;
     if (bt_word_read(w0, &st, &up) && st == BT0_REBOOT) return BT_RESET_SOFTWARE;
+    if (st == BT0_C1STALL) return BT_RESET_CORE1_STALL;   // core0 let the watchdog go (core1_wd.h)
     const uint32_t wd_bits = BT_HAD_WATCHDOG_RESET_PSM | BT_HAD_WATCHDOG_RESET_SWCORE |
                              BT_HAD_WATCHDOG_RESET_POWMAN | BT_HAD_WATCHDOG_RESET_POWMAN_ASYNC;
     if ((chip_reset & wd_bits) || (wd_reason & 0x3u)) return BT_RESET_WATCHDOG;
@@ -49,13 +50,14 @@ const char *bt_reset_name(bt_reset_t r) {
     case BT_RESET_WATCHDOG:  return "watchdog";
     case BT_RESET_SOFTWARE:  return "software";
     case BT_RESET_SYSRESET:  return "sysreset";
+    case BT_RESET_CORE1_STALL: return "core1-stall";
     default:                 return "unknown";
     }
 }
 
 const char *bt_stage_name(int core, int stage) {
     static const char *const c0[] = { "", "early", "buy", "bought", "psram-init", "psram", "i2c", "display", "nfc",
-                                      "loop", "reboot" };
+                                      "loop", "reboot", "c1-stall" };
     static const char *const c1[] = { "", "start", "wifi", "server", "trial", "proven", "loop", "contact" };
     if (core == 0) return stage > 0 && stage < (int)(sizeof c0 / sizeof c0[0]) ? c0[stage] : "";
     return stage > 0 && stage < (int)(sizeof c1 / sizeof c1[0]) ? c1[stage] : "";
