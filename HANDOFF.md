@@ -5023,7 +5023,7 @@ Demozoo API (the bulk export makes per-lookup load on a non-profit unnecessary).
   allowlist checks only the first URL (the raster content-type allowlist and `nosniff` still apply).
 - **Cron drift:** the daily 01:30 cron against a 7-day gate can drift a refetch to 8 days.
 
-### 3cd. Amiga-upload bench closed; fw 1.20.2 TEST (uploads 4.6x faster, 5 s reconnect); Receive renamed Transfer (master e0e525b) -- 2026-10-21
+### 3cd. Amiga-upload bench closed; fw 1.20.2 RELEASED (uploads 4.6x faster, 5 s reconnect); Receive renamed Transfer (master e0e525b) -- 2026-10-21
 
 - **Bench (A500, fw 1.19.1 seq 111):** B0 ran (keep window 2 x 16 KB, ooseq 2,920 B; 1.19.1 because the registry
   refuses rollback). B1-B5, B7, B9 PASS; B6 and B8 SKIPPED by the operator ("I trust you on that"); B10 waits for
@@ -5054,8 +5054,8 @@ Demozoo API (the bulk export makes per-lookup load on a non-profit unnecessary).
   and removed Receive from both; `version` = Transfer 2.1; `Transfer RECEIVE SEND <file>` refused, RC 10;
   `Transfer SEND wb31.lha` stored 431,375 B in 42 s (10.2 KB/s), sha cebb95a7 matches; `Transfer GUI` shows
   "WebFloppy - Receive & Send" and received a 200,000 B file from the web.
-- **Owed:** B10; releasing 1.20.2 (operator's
-  call; Pillock's org is offered the TEST builds too); core1 watchdog; table view (operator decides what a folder is).
+- **1.20.2 RELEASED 2026-10-21 (operator):** seq 114 promoted by its notes; GitHub release fw-1.20.2.
+- **Owed:** B10; core1 watchdog; table view (operator decides what a folder is).
 - **Backlog (operator 2026-10-21):** the disk upload/download area and send/receive may share one stage area, or
   reusable parts -- brainstorm later.
 
