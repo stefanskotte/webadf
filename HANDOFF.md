@@ -1478,10 +1478,10 @@ separately.
 
 ### 4. Backlog, not blocking anything
 
-**Current order (re-checked 2026-10-21):** (1) core1 watchdog -- measure the longest core1 heartbeat gap, then
-enforce (3cc's proposal; a candidate for the testers' overnight hangs); (2) library table view + folder browsing --
-waits on the operator's ruling on what a folder is (collections, disk sets or library categories); (3) B10 on the
-A4000D when it is on the bench. Entries below marked SHIPPED are kept for their history only.
+**Current order (re-checked 2026-10-22):** (1) core1 watchdog bench measurement with the Amiga on, set the limit,
+release 1.21.0 (3ce); (2) paging for the library, both views (operator 2026-10-21); (3) the table's deferred minors
+M1/M3-M8 (3ce); (4) B10 on the A4000D when it is on the bench; (5) the redesign (canvas reviewed by the operator
+first). The table view with folders SHIPPED (3ce). Entries below marked SHIPPED are kept for their history only.
 
 - **Unified staging area** (operator, 2026-10-21): the disk upload/Browse area and send/receive (Send to Amiga, From
   the Amiga) should share one stage area, or at least reusable parts. Brainstorm first; announced to the testers as
@@ -5031,6 +5031,40 @@ Demozoo API (the bulk export makes per-lookup load on a non-profit unnecessary).
 - **Screenshot redirects:** screenshot fetches follow redirects, so the `media.demozoo.org` host
   allowlist checks only the first URL (the raster content-type allowlist and `nosniff` still apply).
 - **Cron drift:** the daily 01:30 cron against a 7-day gate can drift a refetch to 8 days.
+
+### 3ce. Library table with folders (merged 4a7fcd2), fw 1.21.0 TEST core1 watchdog (merged 655ad1d), redesign gaps inferred -- 2026-10-22
+
+- **Library table (operator design 2026-10-21):** collections are folder rows at the root, then uncategorized
+  titles; inside a collection or All titles an "↑ Library" row first. Each row: small cover, title (inline rename
+  for authored disks), type, year, publisher, disks, size, and the card's controls (history, mount + drive marker,
+  NFC fob, remove from collection, delete) from the new shared `src/components/library/title-controls.tsx`. Rows
+  drag onto a rail collection only (no reorder or disk-set drop in the table). Per-user `library.view` (grid default)
+  in Settings › Preferences; `?view=` overrides; the toggle and rail keep the collection and the view. New help
+  topic "Library". e2e library-table 10/10 + 105 across touched areas.
+  - Final whole-branch review: ship. M2 (empty collection showed only the up row) FIXED. Deferred minors: M1
+    breadcrumb from a title drops view=table; M3 root subtitle changes meaning when the inbox is empty; M4 help says
+    "beside the sort" where there is none; M5 screen readers read whole rows incl. buttons; M6 folder disk count
+    lags a drop until refresh; M7 an old server mid-deploy can drop library.view on save; M8 trivia (two arrows on
+    the up row, div in span, missing final newline). Full list: the review in that session's scratchpad.
+  - **Pre-existing e2e failures on master (not this branch):** mobile "Devices grid is two columns at 390px"
+    (stale since 7aa3de0 made Devices one column) and disk-sets "Add disks… says when the list is cut". Fix or
+    update both.
+- **Core1 watchdog, fw 1.21.0+gd730d49 TEST seq 115, on the bench board:** core0 reads core1's boot-trail tick
+  every pass (`src/core1_wd.c`, host-tested); logs the longest gap ("c1wd: longest core1 gap N ms") when it grows
+  by max(1 s, 25%) and every 10 min; past C1WD_LIMIT_MS (120 s for now) it marks BT0_C1STALL and stops feeding the
+  8 s watchdog; the next boot reports reset "core1-stall" (server accepts it since 655ad1d -- must be live, incl.
+  self-hosters, before 1.21.0 is released). core1 now ticks through backoff waits and the OTA park; re-marks WIFI on
+  each outer pass so a re-pair's portal is never judged. .bss +20 B.
+  - **First reading (idle, Amiga off): longest gap 26.2 s** -- the long poll (server holds 25 s). A bad network can
+    block one pass ~65 s (DNS 10 + connect 15 + write 10 + read 30), hence 120 s, not the 60 s first proposed.
+  - **Owed (operator, Amiga on 2026-10-22):** measure during uploads and a degraded network, set the limit to >= 3x
+    the longest gap, then release.
+- **Redesign:** the Modern canvas (https://claude.ai/artifact/66QQLv1VK4Ye2gBNaV4F6S) now has a "Modern — inferred
+  pages (draft for review)" section: 5 admin pages, Devices with the four DF1 modes + network checklist + Disk at
+  startup, Upload as one staging list (the operator's unified-staging idea), the folder table, disk history/time
+  machine, Settings/Preferences, sign-in/up, Help + "?" popover, search, states, phone layouts. Proposals beyond
+  today's app are marked in the session summary (search inside disks, sign out elsewhere, undo on mount, ...).
+  Note: the Modern design puts title actions behind a "…" menu; the shipped table uses today's icon controls.
 
 ### 3cd. Amiga-upload bench closed; fw 1.20.2 RELEASED (uploads 4.6x faster, 5 s reconnect); Receive renamed Transfer (master e0e525b) -- 2026-10-21
 
