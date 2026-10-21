@@ -1,6 +1,6 @@
 /* eslint-disable @next/next/no-img-element */
 import { Link } from '@/components/shell/link';
-import { viewHref } from '@/lib/library-view';
+import { viewModeHref } from '@/lib/library-view';
 import type { CollectionListItem } from '@/lib/collections';
 
 /**
@@ -127,7 +127,9 @@ export function CategoryOverview({
         {collections.map((c) => (
           <Link
             key={c.id}
-            href={viewHref({ kind: 'collection', id: c.id })}
+            // Explicitly the grid: the overview is the grid's alone, and a
+            // person whose default is the table opened it with ?view=grid.
+            href={viewModeHref({ kind: 'collection', id: c.id }, 'grid')}
             data-testid={`overview-card-${c.id}`}
             className="glass-card relative aspect-square overflow-hidden p-0"
           >

@@ -48,6 +48,13 @@ export const LIBRARY_SORT_KEYS = ['added', 'title', 'year', 'publisher', 'size',
 export type LibrarySortKey = (typeof LIBRARY_SORT_KEYS)[number];
 export type LibrarySort = { key: LibrarySortKey; dir: SortDir };
 
+/**
+ * Which view /library opens in when the address names none (`?view=`
+ * always wins). The grid is what the library has always opened in.
+ */
+export const LIBRARY_VIEWS = ['grid', 'table'] as const;
+export type LibraryViewMode = (typeof LIBRARY_VIEWS)[number];
+
 /** A disk's Browse list. Folders always come before files, whatever the key. */
 export const BROWSE_SORT_KEYS = ['name', 'size', 'date'] as const;
 export type BrowseSortKey = (typeof BROWSE_SORT_KEYS)[number];
@@ -55,7 +62,7 @@ export type BrowseSort = { key: BrowseSortKey; dir: SortDir };
 
 export type UserPrefs = {
   startPage: StartPage;
-  library: { sort: LibrarySort };
+  library: { sort: LibrarySort; view: LibraryViewMode };
   browse: { sort: BrowseSort };
   /**
    * `skipPassword`: the Update button on Devices does not ask for this user's
@@ -76,7 +83,7 @@ export type UserPrefs = {
 function defaults(): UserPrefs {
   return {
     startPage: 'library',
-    library: { sort: { key: 'added', dir: 'desc' } },
+    library: { sort: { key: 'added', dir: 'desc' }, view: 'grid' },
     browse: { sort: { key: 'name', dir: 'asc' } },
     firmware: { skipPassword: false },
   };
@@ -96,6 +103,7 @@ const prefsSchema = z.object({
   startPage: z.enum(START_PAGES).catch(() => defaults().startPage),
   library: z.object({
     sort: librarySortSchema.catch(() => defaults().library.sort),
+    view: z.enum(LIBRARY_VIEWS).catch(() => defaults().library.view),
   }).catch(() => defaults().library),
   browse: z.object({
     sort: browseSortSchema.catch(() => defaults().browse.sort),
@@ -118,7 +126,10 @@ export function parsePrefs(raw: unknown): UserPrefs {
  */
 const prefsPatchSchema = z.strictObject({
   startPage: z.enum(START_PAGES).optional(),
-  library: z.strictObject({ sort: librarySortSchema.strict().optional() }).optional(),
+  library: z.strictObject({
+    sort: librarySortSchema.strict().optional(),
+    view: z.enum(LIBRARY_VIEWS).optional(),
+  }).optional(),
   browse: z.strictObject({ sort: browseSortSchema.strict().optional() }).optional(),
   // Valid here either way; PATCH /api/me/prefs refuses `true` itself (see
   // UserPrefs.firmware), so the password-checked endpoint can share setUserPrefs.
@@ -136,7 +147,10 @@ export function parsePrefsPatch(raw: unknown): { ok: true; patch: PrefsPatch } |
 export function applyPrefsPatch(cur: UserPrefs, patch: PrefsPatch): UserPrefs {
   return {
     startPage: patch.startPage ?? cur.startPage,
-    library: { ...cur.library, ...patch.library, sort: { ...(patch.library?.sort ?? cur.library.sort) } },
+    library: {
+      sort: { ...(patch.library?.sort ?? cur.library.sort) },
+      view: patch.library?.view ?? cur.library.view,
+    },
     browse: { ...cur.browse, ...patch.browse, sort: { ...(patch.browse?.sort ?? cur.browse.sort) } },
     firmware: { skipPassword: patch.firmware?.skipPassword ?? cur.firmware.skipPassword },
   };
@@ -154,6 +168,7 @@ export function prefsDiff(from: UserPrefs, to: UserPrefs): PrefsPatch {
   const patch: PrefsPatch = {};
   if (from.startPage !== to.startPage) patch.startPage = to.startPage;
   if (!sameSort(from.library.sort, to.library.sort)) patch.library = { sort: { ...to.library.sort } };
+  if (from.library.view !== to.library.view) patch.library = { ...patch.library, view: to.library.view };
   if (!sameSort(from.browse.sort, to.browse.sort)) patch.browse = { sort: { ...to.browse.sort } };
   // `firmware` deliberately never: it has its own controls on Settings
   // (firmware-password-setting.tsx), and turning it on needs the password.

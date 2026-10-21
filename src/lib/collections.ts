@@ -21,7 +21,7 @@ import { planReorder, type ReorderResult } from '@/lib/collection-order';
 import { coverUrlsForGames } from '@/lib/queries';
 import { chooseMosaic, mosaicCandidates, MOSAIC_TILES } from '@/lib/collection-mosaic';
 
-export interface CollectionListItem { id: string; name: string; sortKey: number; gameCount: number }
+export interface CollectionListItem { id: string; name: string; sortKey: number; gameCount: number; diskCount: number }
 
 /**
  * Up to four cover URLs for each of `collectionIds`, in the collection's own
@@ -101,6 +101,17 @@ export async function listCollections(orgId: string): Promise<CollectionListItem
         select count(*)::int from collection_games
         where collection_games.collection_id = ${collections.id}
       )`,
+      // The table's folder rows show it. The disks are org-scoped as well as
+      // the collection: collection_games has no org_id (D-4-5), and a member
+      // row pointing at another tenant's game must not count its disks here.
+      // The outer columns are spelled out, not interpolated: drizzle renders a
+      // one-table select's columns unqualified, and a bare "id" or "org_id"
+      // inside this subquery would bind to disks' own.
+      diskCount: sql<number>`(
+        select count(*)::int from collection_games
+        join disks on disks.game_id = collection_games.game_id and disks.org_id = collections.org_id
+        where collection_games.collection_id = collections.id
+      )`,
     })
     .from(collections)
     .where(orgFilter(collections, orgId))
@@ -140,7 +151,7 @@ export async function createCollection(orgId: string, name: string): Promise<Col
   const id = randomUUID();
   const sortKey = maxSort + 1;
   await db.insert(collections).values({ id, orgId, name, sortKey });
-  return { id, name, sortKey, gameCount: 0 };
+  return { id, name, sortKey, gameCount: 0, diskCount: 0 };
 }
 
 export async function renameCollection(orgId: string, id: string, name: string): Promise<boolean> {
