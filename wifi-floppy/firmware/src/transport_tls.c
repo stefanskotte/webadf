@@ -37,6 +37,7 @@
 #include "net_radio.h"
 #include "pico/time.h"
 #include "wf_log.h"
+#include "tls_room.h"
 #include "mbedtls/x509_crt.h"   // root-CA parse probe, see tls_connect()
 #include "lwip/stats.h"          // 3z: pbuf/heap counters at the stall
 #include "lwip/priv/altcp_priv.h" // 3z: reach the inner TCP pcb for rcv_wnd
@@ -563,9 +564,31 @@ static int tls_write(struct transport *t, const uint8_t *b, int n) {
                                 : MBEDTLS_SSL_OUT_CONTENT_LEN;
         if (rec_max > 0 && to_write > rec_max) to_write = rec_max;
     }
+    // And never into an lwIP heap that cannot hold the record's segments (tls_room.h): tcp_write's ERR_MEM comes
+    // after the record was encrypted, so it costs the connection. Wait for acknowledgements to free the send queue,
+    // as above for send-buffer space; the lock is let go while waiting so lwIP can process them.
+    uint32_t room_wait_ms = 0;
+    while (!tls_room_ok((uint32_t)lwip_stats.mem.avail, (uint32_t)lwip_stats.mem.used, (uint32_t)to_write, TCP_MSS)) {
+        net_radio_unlock();
+        if (!c->pcb || c->closed)
+            return tls_fail(TLS_ERR_WRITE_CLOSED, "write on a closed connection", (int)c->err);
+        if (absolute_time_diff_us(get_absolute_time(), deadline) <= 0)
+            return tls_fail(TLS_ERR_WRITE_TIMEOUT, "no lwIP heap room, write timed out", (int)WRITE_TIMEOUT_MS);
+        sleep_ms(1);
+        room_wait_ms++;
+        net_radio_lock();
+    }
+    if (room_wait_ms && (!c->pcb || c->closed)) {   // closed while we slept: no pcb to write to
+        net_radio_unlock();
+        return tls_fail(TLS_ERR_WRITE_CLOSED, "write on a closed connection", (int)c->err);
+    }
     err_t werr = altcp_write(c->pcb, b, (u16_t)to_write, TCP_WRITE_FLAG_COPY);
     if (werr == ERR_OK) altcp_output(c->pcb);
     net_radio_unlock();
+    // The bench's evidence that the wait, not luck, kept ERR_MEM away; short waits are routine and not logged.
+    if (room_wait_ms >= 100)
+        wf_logf(WF_INFO, "tls: waited %lu ms for lwIP heap room (used %u of %u, max %u)", (unsigned long)room_wait_ms,
+                (unsigned)lwip_stats.mem.used, (unsigned)lwip_stats.mem.avail, (unsigned)lwip_stats.mem.max);
     if (werr != ERR_OK) return tls_fail(TLS_ERR_WRITE, "altcp_write refused", (int)werr);
     return to_write;
 }
