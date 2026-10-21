@@ -17,11 +17,13 @@
 #include <stdbool.h>
 #include <stdint.h>
 
-// The limit: core1 silent for longer than this resets the board. 60 s is a placeholder until the bench measures
+// The limit: core1 silent for longer than this resets the board. 120 s is a placeholder until the bench measures
 // the longest gap core1's loop really makes ("c1wd: longest core1 gap ... (new max)"): set it from that, never
-// below 3x the longest gap measured. One #define, overridable with -DC1WD_LIMIT_MS=...
+// below 3x the longest gap measured. Not 60 s: one poll pass on a bad network may block for the sum of its own
+// timeouts (DNS 10 + connect 15 + write 10 + read 30 = ~65 s) without anything being hung. One #define,
+// overridable with -DC1WD_LIMIT_MS=...
 #ifndef C1WD_LIMIT_MS
-#define C1WD_LIMIT_MS 60000u
+#define C1WD_LIMIT_MS 120000u
 #endif
 // The periodic report of the longest gap.
 #define C1WD_REPORT_MS (10u * 60u * 1000u)
