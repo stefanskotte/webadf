@@ -1478,9 +1478,9 @@ separately.
 
 ### 4. Backlog, not blocking anything
 
-**Current order (re-checked 2026-10-22, afternoon):** (1) the table's deferred minors M1/M3-M8 (3ce); (2) B10 on the
-A4000D when it is on the bench; (3) rev C radio: the LWB+ breadboard test when the Mouser parts arrive; (4) the
-redesign (canvas reviewed by the operator first). SHIPPED today: the table view with folders, the core1 watchdog
+**Current order (re-checked 2026-10-22, evening):** (1) B10 on the A4000D when it is on the bench; (2) rev C radio:
+the LWB+ breadboard test when the Mouser parts arrive; (3) the redesign (canvas reviewed by the operator first). The
+table's deferred minors are DONE (3ce: M1, M3-M6, M8 fixed; M7 left by the review's ruling). SHIPPED today: the table view with folders, the core1 watchdog
 (1.21.0), uploads surviving a 5-minute outage (1.21.1 + Transfer 2.2), library paging (all 3ce). Entries below marked SHIPPED are kept for their history only.
 
 - **Unified staging area** (operator, 2026-10-21): the disk upload/Browse area and send/receive (Send to Amiga, From
@@ -5107,6 +5107,13 @@ Demozoo API (the bulk export makes per-lookup load on a non-profit unnecessary).
   (listCollectionGameIds -> provider collectionOrder). e2e library-paging 8/8; library, table, collections, settings,
   in-collection drags all green. Also: cards no longer say "unidentified" (operator) -- year, publisher or
   "made here", else nothing.
+- **Library table minors DONE (2026-10-22):** M1 the title links carry `?view=` when the address names one
+  (useTrailView), so the breadcrumb back keeps a toggled view; M3 the root count reads "N uncategorized titles" and
+  singulars are right (librarySubtitle); M4 help says "at the top of the page" / "the collections list"; M5 rows and
+  cards are named by title (+ year), the sr-only Actions header is gone; M6 a drop bumps the folder's disk count with
+  its title count; M8 one arrow on the up row, a div round the cover, game-grid.tsx ends in a newline. M7 not changed
+  (review: only a deploy overlap or rollback). e2e: library-table 13/13, breadcrumb/adf-browser/paging/library 22,
+  collections/disk-history 19, in-collection drags 11; unit 2902/2902.
 - **Redesign:** the Modern canvas (https://claude.ai/artifact/66QQLv1VK4Ye2gBNaV4F6S) now has a "Modern — inferred
   pages (draft for review)" section: 5 admin pages, Devices with the four DF1 modes + network checklist + Disk at
   startup, Upload as one staging list (the operator's unified-staging idea), the folder table, disk history/time
