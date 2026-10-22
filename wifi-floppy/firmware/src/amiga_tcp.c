@@ -12,6 +12,7 @@
 #include "wf_log.h"
 #include "pico/time.h"
 #include "lwip/tcp.h"
+#include "lwip/netif.h"
 #include "lwip/ip_addr.h"
 #include <string.h>
 
@@ -57,7 +58,11 @@ static err_t on_recv(void *arg, struct tcp_pcb *pcb, struct pbuf *p, err_t err) 
 
 static void on_err(void *arg, err_t err) {
     (void)arg;
-    // lwIP has freed the pcb already.
+    // lwIP has freed the pcb already. Logged: an upload must survive a Wi-Fi drop, and this says why it did not
+    // (ERR_ABRT -13: lwIP aborted it, e.g. the netif address changed; ERR_RST -14: a reset came; ERR_CLSD -15).
+    const struct netif *n = net_radio_sta_netif();
+    wf_logf(WF_WARN, "amiga tcp: lost, err %d, state %d, netif %s link %s addr %s", (int)err, T.state,
+            netif_is_up(n) ? "up" : "DOWN", netif_is_link_up(n) ? "up" : "DOWN", ip4addr_ntoa(netif_ip4_addr(n)));
     T.pcb = NULL;
     T.state = (err == ERR_RST && T.state == AS_SOCK_CONNECTING) ? AS_SOCK_REFUSED : AS_SOCK_CLOSED;
 }
