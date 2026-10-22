@@ -127,6 +127,21 @@ export async function listCollections(orgId: string): Promise<CollectionListItem
  * through `collections`, since collection_games carries no org_id: a title
  * filed in another tenant's collection is uncategorized HERE.
  */
+/**
+ * Every title of a collection, in its hand-made order: what dragging inside one PAGE of the collection reorders
+ * (library paging, 2026-10-22). reorderCollectionGames takes the whole list, so a page must hand it the whole list,
+ * not its own slice. Empty for a collection this org does not own.
+ */
+export async function listCollectionGameIds(orgId: string, id: string): Promise<string[]> {
+  const rows = await getDb()
+    .select({ gameId: collectionGames.gameId })
+    .from(collectionGames)
+    .innerJoin(collections, eq(collections.id, collectionGames.collectionId))
+    .where(and(eq(collectionGames.collectionId, id), eq(collections.orgId, orgId)))
+    .orderBy(collectionGames.sortKey, collectionGames.gameId);
+  return rows.map((r) => r.gameId);
+}
+
 export async function countUncategorized(orgId: string): Promise<number> {
   const db = getDb();
   const [row] = await db

@@ -81,8 +81,14 @@ export interface GameListItem {
  */
 export async function listGames(
   orgId: string,
-  opts: { limit?: number; collectionId?: string; uncategorized?: boolean; sort?: LibrarySort } = {},
+  opts: { limit?: number | null; offset?: number; collectionId?: string; uncategorized?: boolean; sort?: LibrarySort } = {},
 ): Promise<GameListItem[]> {
+  // One page of the view (library paging, 2026-10-22): `limit` titles from `offset`; null is every title. The
+  // default stays 200, the cap this list always had, for a caller that names no page.
+  const page = <T extends { limit: (n: number) => T; offset: (n: number) => T }>(q: T): T => {
+    const limited = opts.limit === null ? q : q.limit(opts.limit ?? 200);
+    return opts.offset ? limited.offset(opts.offset) : limited;
+  };
   const db = getDb();
   // The whole library and the inbox take the person's chosen sort (user
   // prefs, library.sort); a collection keeps its own hand-made order below.
@@ -96,7 +102,7 @@ export async function listGames(
     // no org_id column (D-4-5), so this subquery is scoped through the
     // collections table, or a title filed in ANOTHER tenant's collection
     // would wrongly read as uncategorized here.
-    const rows = await db
+    const rows = await page(db
       .select({
         id: games.id, title: games.title, year: games.year, publisher: games.publisher,
         coverAssetId: games.coverAssetId, authored: games.authored,
@@ -115,14 +121,14 @@ export async function listGames(
       )`))
       .groupBy(games.id)
       .orderBy(...order)
-      .limit(opts.limit ?? 200);
+      .$dynamic());
 
     return withDerived(orgId, rows);
   }
 
   if (opts.collectionId) {
     const collectionId = opts.collectionId;
-    const rows = await db
+    const rows = await page(db
       .select({
         id: games.id, title: games.title, year: games.year, publisher: games.publisher,
         coverAssetId: games.coverAssetId, authored: games.authored,
@@ -145,12 +151,12 @@ export async function listGames(
       // to at most one row per game, so grouping by both does not fan out.
       .groupBy(games.id, collectionGames.sortKey)
       .orderBy(collectionGames.sortKey, games.id)
-      .limit(opts.limit ?? 200);
+      .$dynamic());
 
     return withDerived(orgId, rows);
   }
 
-  const rows = await db
+  const rows = await page(db
     .select({
       id: games.id, title: games.title, year: games.year, publisher: games.publisher,
       coverAssetId: games.coverAssetId, authored: games.authored,
@@ -171,7 +177,7 @@ export async function listGames(
     .where(orgFilter(games, orgId))
     .groupBy(games.id)
     .orderBy(...order)     // default: recently added first (spec §10, D9)
-    .limit(opts.limit ?? 200);
+    .$dynamic());
 
   return withDerived(orgId, rows);
 }
@@ -201,6 +207,33 @@ export function libraryOrderBy(sort: LibrarySort): SQL[] {
     case 'size': return [dir(sql`coalesce(sum(${disks.sizeBytes}), 0)`), ...tie];
     case 'disks': return [dir(sql`count(${disks.id})`), ...tie];
   }
+}
+
+/**
+ * Titles and disks in one view of the library -- all of it, the inbox, or one collection -- for the page header and
+ * the pager, which show the whole view while listGames returns one page of it. Scoped like listGames: a collection
+ * counts only through this org's collections table (collection_games has no org_id, D-4-5).
+ */
+export async function countGames(
+  orgId: string, opts: { collectionId?: string; uncategorized?: boolean },
+): Promise<{ titles: number; disks: number }> {
+  const db = getDb();
+  const inView = opts.collectionId
+    ? sql`exists (select 1 from collection_games cg join collections co on co.id = cg.collection_id
+        where cg.game_id = ${games.id} and cg.collection_id = ${opts.collectionId} and co.org_id = ${orgId})`
+    : opts.uncategorized
+      ? sql`not exists (select 1 from collection_games cg join collections co on co.id = cg.collection_id
+          where cg.game_id = ${games.id} and co.org_id = ${orgId})`
+      : sql`true`;
+  const [r] = await db
+    .select({
+      titles: sql<number>`count(distinct ${games.id})::int`,
+      disks: sql<number>`count(${disks.id})::int`,
+    })
+    .from(games)
+    .leftJoin(disks, and(eq(disks.gameId, games.id), eq(disks.orgId, orgId)))
+    .where(and(orgFilter(games, orgId), inView));
+  return { titles: r?.titles ?? 0, disks: r?.disks ?? 0 };
 }
 
 /**
