@@ -12,7 +12,7 @@
 #include "config.h"
 #include "ui.h"
 
-static const char version[] = "$VER: Transfer 2.1 (21.10.2026) webadf";
+static const char version[] = "$VER: Transfer 2.2 (22.10.2026) webadf";
 
 /* Shell and Workbench starts often give 4 KB of stack; the window, asl and dos calls nest deeper than that. Below
    RX_STACK, run on a stack of our own (exec StackSwap, V37). Everything used across the swap is file-static. */

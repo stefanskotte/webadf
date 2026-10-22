@@ -16,7 +16,7 @@
 #define RX_UP_MAX 64             /* files waiting to go up; a drop adds at most this many (spec §2) */
 #define RX_LOCAL_MAX 255         /* an Amiga path to read, such as DH0:Work/foo.lha */
 #define RX_UP_BLOCK 8192UL       /* files are read in 8 KB blocks (spec §2) */
-#define RX_UP_IDLE_SECS 180      /* the silence allowed while a file goes up: past the board's 120 s give-up (plan P14) */
+#define RX_UP_IDLE_SECS 360      /* the silence allowed while a file goes up: past the board's 5-minute wait (Transfer 2.2) */
 #define RX_TREE_DEPTH 16         /* drawers inside a dropped drawer, at most */
 
 typedef struct rx_finfo {        /* what Examine says about a file that goes up */

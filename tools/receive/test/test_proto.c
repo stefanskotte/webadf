@@ -298,6 +298,12 @@ static void put_goes_out_once_the_board_is_trusted(void) {
     CHECK_EQ_INT(Q.n, 0); CHECK_EQ_INT(F.opens_r, 1);
     CHECK_EQ_INT(rx_idle_secs(&S), RX_UP_IDLE_SECS);
 }
+/* The board waits out a network outage of up to 5 minutes mid-upload, silently (AS_UP_STALL_MS and
+   AS_UP_OPEN_GIVEUP_MS = 300 s in wifi-floppy/firmware/src/amiga_send.h; no PING in an upload): Transfer's silence
+   limit must outlast it, with a minute to spare, or Transfer drops a file the board would have resumed. */
+static void the_upload_silence_outlasts_the_boards_5_minute_wait(void) {
+    CHECK(RX_UP_IDLE_SECS >= 300 + 60, "past the board's 5-minute wait, with a minute to spare");
+}
 static void no_put_while_a_file_comes_down(void) {
     char l[600];
     setup2(""); ff_put(&F, "DH0:a", "a", 1, 0, ""); hello2(KEY); out();
@@ -514,6 +520,7 @@ int main(void) {
     RUN(stale_lines_for_another_tag_are_ignored); RUN(progress_follows_the_stored_field_and_a_capped_credit);
     RUN(a_drop_after_take_reports_the_stored_offset); RUN(more_mid_write_and_during_skip_never_lets_sent_pass_credit);
     RUN(the_comment_in_the_put_has_no_control_bytes);
+    RUN(the_upload_silence_outlasts_the_boards_5_minute_wait);
     RUN(a_resumes_pre_read_counts_as_receives_own_work); RUN(no_gone_mid_file_shows_the_boards_text);
     return REPORT();
 }
