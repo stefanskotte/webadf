@@ -1601,6 +1601,10 @@ first). The table view with folders SHIPPED (3ce). Entries below marked SHIPPED 
       the dev kit 453-00084-K1 showed 20-week lead time at DigiKey; LCSC unknown (operator sources).
       Fallback: a bare-RF-pad module (Murata 1YN) with the u.FL a few mm away, 50-ohm grounded coplanar,
       via fence, pi-match footprint.
+    - **2026-10-22: bring-up parts ORDERED (operator, Mouser DK)**: 6 x 453-00084R, MHF4-to-SMA cable, SMA
+      dipole, a stick-on MHF4 PCB antenna, passives. Bench test on arrival: a plain Pico 2 on a breadboard with
+      `wifi-floppy/hardware/rev-c-lwb-bringup/` (wiring, parts list, scan firmware). Pass = MAC + scan list;
+      it also answers whether the chip runs without a 32 kHz clock. No rev C layout before it passes.
     - Big boxes: a u.FL-to-SMA pigtail to a bulkhead SMA in a rear expansion-slot blanking plate (all three
       machines have them, so no case modification), and a standard 2.4 GHz rubber-duck antenna on the back.
   - **More PSRAM (operator, 2026-10-02).** Today's budget (psram_image.h) is 2 slots x 160 x 14,336 B = 4.37 MiB,
