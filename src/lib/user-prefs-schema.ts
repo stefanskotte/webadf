@@ -55,6 +55,15 @@ export type LibrarySort = { key: LibrarySortKey; dir: SortDir };
 export const LIBRARY_VIEWS = ['grid', 'table'] as const;
 export type LibraryViewMode = (typeof LIBRARY_VIEWS)[number];
 
+/**
+ * Titles per page in /library, the grid and the table alike (operator 2026-10-22). 48 by default -- the one default
+ * here that is NOT the library's old behaviour (everything on one page), chosen by the operator; 'all' gives that
+ * back. 24/48/96/192 split evenly over the grid's 2, 3, 4, 6 and 8 columns.
+ */
+export const LIBRARY_PAGE_SIZES = [24, 48, 96, 192, 'all'] as const;
+export type LibraryPageSize = (typeof LIBRARY_PAGE_SIZES)[number];
+const libraryPageSizeSchema = z.union([z.literal(24), z.literal(48), z.literal(96), z.literal(192), z.literal('all')]);
+
 /** A disk's Browse list. Folders always come before files, whatever the key. */
 export const BROWSE_SORT_KEYS = ['name', 'size', 'date'] as const;
 export type BrowseSortKey = (typeof BROWSE_SORT_KEYS)[number];
@@ -62,7 +71,7 @@ export type BrowseSort = { key: BrowseSortKey; dir: SortDir };
 
 export type UserPrefs = {
   startPage: StartPage;
-  library: { sort: LibrarySort; view: LibraryViewMode };
+  library: { sort: LibrarySort; view: LibraryViewMode; pageSize: LibraryPageSize };
   browse: { sort: BrowseSort };
   /**
    * `skipPassword`: the Update button on Devices does not ask for this user's
@@ -83,7 +92,7 @@ export type UserPrefs = {
 function defaults(): UserPrefs {
   return {
     startPage: 'library',
-    library: { sort: { key: 'added', dir: 'desc' }, view: 'grid' },
+    library: { sort: { key: 'added', dir: 'desc' }, view: 'grid', pageSize: 48 },
     browse: { sort: { key: 'name', dir: 'asc' } },
     firmware: { skipPassword: false },
   };
@@ -104,6 +113,7 @@ const prefsSchema = z.object({
   library: z.object({
     sort: librarySortSchema.catch(() => defaults().library.sort),
     view: z.enum(LIBRARY_VIEWS).catch(() => defaults().library.view),
+    pageSize: libraryPageSizeSchema.catch(() => defaults().library.pageSize),
   }).catch(() => defaults().library),
   browse: z.object({
     sort: browseSortSchema.catch(() => defaults().browse.sort),
@@ -129,6 +139,7 @@ const prefsPatchSchema = z.strictObject({
   library: z.strictObject({
     sort: librarySortSchema.strict().optional(),
     view: z.enum(LIBRARY_VIEWS).optional(),
+    pageSize: libraryPageSizeSchema.optional(),
   }).optional(),
   browse: z.strictObject({ sort: browseSortSchema.strict().optional() }).optional(),
   // Valid here either way; PATCH /api/me/prefs refuses `true` itself (see
@@ -150,6 +161,7 @@ export function applyPrefsPatch(cur: UserPrefs, patch: PrefsPatch): UserPrefs {
     library: {
       sort: { ...(patch.library?.sort ?? cur.library.sort) },
       view: patch.library?.view ?? cur.library.view,
+      pageSize: patch.library?.pageSize ?? cur.library.pageSize,
     },
     browse: { ...cur.browse, ...patch.browse, sort: { ...(patch.browse?.sort ?? cur.browse.sort) } },
     firmware: { skipPassword: patch.firmware?.skipPassword ?? cur.firmware.skipPassword },
@@ -169,6 +181,7 @@ export function prefsDiff(from: UserPrefs, to: UserPrefs): PrefsPatch {
   if (from.startPage !== to.startPage) patch.startPage = to.startPage;
   if (!sameSort(from.library.sort, to.library.sort)) patch.library = { sort: { ...to.library.sort } };
   if (from.library.view !== to.library.view) patch.library = { ...patch.library, view: to.library.view };
+  if (from.library.pageSize !== to.library.pageSize) patch.library = { ...patch.library, pageSize: to.library.pageSize };
   if (!sameSort(from.browse.sort, to.browse.sort)) patch.browse = { sort: { ...to.browse.sort } };
   // `firmware` deliberately never: it has its own controls on Settings
   // (firmware-password-setting.tsx), and turning it on needs the password.
