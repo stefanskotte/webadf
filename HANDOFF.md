@@ -1478,10 +1478,10 @@ separately.
 
 ### 4. Backlog, not blocking anything
 
-**Current order (re-checked 2026-10-22):** (1) core1 watchdog bench measurement with the Amiga on, set the limit,
-release 1.21.0 (3ce); (2) paging for the library, both views (operator 2026-10-21); (3) the table's deferred minors
-M1/M3-M8 (3ce); (4) B10 on the A4000D when it is on the bench; (5) the redesign (canvas reviewed by the operator
-first). The table view with folders SHIPPED (3ce). Entries below marked SHIPPED are kept for their history only.
+**Current order (re-checked 2026-10-22, afternoon):** (1) the table's deferred minors M1/M3-M8 (3ce); (2) B10 on the
+A4000D when it is on the bench; (3) rev C radio: the LWB+ breadboard test when the Mouser parts arrive; (4) the
+redesign (canvas reviewed by the operator first). SHIPPED today: the table view with folders, the core1 watchdog
+(1.21.0), uploads surviving a 5-minute outage (1.21.1 + Transfer 2.2), library paging (all 3ce). Entries below marked SHIPPED are kept for their history only.
 
 - **Unified staging area** (operator, 2026-10-21): the disk upload/Browse area and send/receive (Send to Amiga, From
   the Amiga) should share one stage area, or at least reusable parts. Brainstorm first; announced to the testers as
