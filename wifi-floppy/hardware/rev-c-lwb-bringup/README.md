@@ -28,3 +28,19 @@ the SPI clock is slowed (CYW43_PIO_CLOCK_DIV_INT=8) for breadboard wiring.
 
 Pass: `PASS: radio up, MAC ...` and a scan list with RSSI every 5 s (LED blinks once
 per scan). Fail: `FAIL: cyw43 init` and a fast-blinking LED.
+
+## Parts (Mouser DK, checked 2026-10-22)
+
+| Qty | Mfr part | Mouser part | What |
+|---|---|---|---|
+| 3 | Ezurio 453-00084R | 239-453-00084R | Sterling LWB+ MHF4 module (54,46 kr, cut tape from 1) |
+| 1 | GCT CAB556RF-0200-A-1 | 640-CAB556RF0200A1 | MHF4 to SMA rear-mount bulkhead jack, 200 mm |
+| 1 | Linx ANT-DB1-LCD-SMA | 712-ANT-DB1-LCD-SMA | 2.4/5.8 GHz swivel dipole, SMA male (fits the cable and the Raspberry Pi kit's style) |
+| 1 | KYOCERA AVX W3P35X8W04-H100D3B0A | 581-P35X8W04H10D3B0A | optional: stick-on PCB antenna on a 100 mm MHF4 lead (in-case use) |
+| 1 | YAGEO MFR-25FBF52-470R | 603-MFR-25FBF52-470R | 470 ohm |
+| 1 | YAGEO MFR-25FBF52-10K | 603-MFR-25FBF52-10K | 10 kohm |
+| 1 | KEMET C320C104K5R5TA | 80-C320C104K5R | 100 nF |
+| 1 | TDK FG28X5R1E106MRT06 | 810-FG28X5R1E106MR06 | 10 uF |
+| 1 | Jonard R30R-0100 | 801-R30R | optional: 30 AWG Kynar wire, 100 ft |
+
+SMA, not RP-SMA: the cable is an SMA jack, so the antenna must be SMA male.
