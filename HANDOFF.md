@@ -5128,8 +5128,12 @@ Demozoo API (the bulk export makes per-lookup load on a non-profit unnecessary).
     Transfer box inside the DF1 section; a Board settings modal with Disk at startup and the NFC reader).
   - **DECISION 2026-10-22 (operator): Disk history & time machine keeps the version already in the redesign (the
     Disk files board); InfDiskHistory is not chosen. Upload = the inferred "Upload · send & receive" page
-    (InfUploadTransfer: one staging list for all three directions) -- APPROVED.** Remaining inferred pages (admin x5,
-    library table, settings, sign-in, help, search, states, phone) still await review.
+    (InfUploadTransfer: one staging list for all three directions) -- APPROVED.**
+  - **DECISION 2026-10-22 (operator): APPROVED the inferred Admin pages (Overview, Users, Invites, Scan, Firmware),
+    the Library table with folders, Help + "?" popover, Sign in & sign up, Search, Empty/loading/error states and
+    Phone layouts (to iterate later).** The not-chosen Devices and Disk history boards were removed from the canvas.
+    Both Library boards now show the shipped paging (pager + Per page, 48 default) and the table's "↑ Library" up row
+    (folders on page 1). Still awaiting review: Settings (InfSettings) and Devices v2.
 
 ### 3cd. Amiga-upload bench closed; fw 1.20.2 RELEASED (uploads 4.6x faster, 5 s reconnect); Receive renamed Transfer (master e0e525b) -- 2026-10-21
 
