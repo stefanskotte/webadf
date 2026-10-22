@@ -510,7 +510,7 @@ static bool run(amiga_send_t *s, bool http) {
     bool moved = false;
     uint32_t t = now(s);
 
-    // A PUT not yet answered with TAKE: its 60 s give-up (spec §8) runs from the PUT, paused only while a download
+    // A PUT not yet answered with TAKE: its AS_UP_OPEN_GIVEUP_MS give-up (spec §8) runs from the PUT, paused only while a download
     // moves, and is checked here, before a failing outcome post can end the pass -- so nothing holds it longer.
     if (s->up && (s->up->pending || s->phase == AS_UP_OPEN)) {
         if (s->phase >= AS_FILE_SENT && s->phase <= AS_AWAIT_OK) s->up->t_open = t;
