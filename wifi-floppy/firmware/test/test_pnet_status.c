@@ -107,6 +107,15 @@ static void version_bytes_come_from_the_version_string(void) {
 }
 
 /* Spec 2026-10-18 §3: LiveStatus.reserved (byte 155) tells the driver the board speaks LZ4. */
+// The driver (Rob's device.c) counts JOIN, NOIP, UP and NONET as online; DOWN makes it reject every write. A Wi-Fi
+// drop is the board rejoining, not the Amiga's link going away: the PaulaNET link and the board's own TCP to the Amiga
+// (Transfer) still work, so the driver must stay online (bench 2026-10-22: a 3-minute Wi-Fi cut killed a SEND, RST
+// from the Amiga, while the board waited it out).
+static void a_wifi_drop_keeps_the_amiga_online(void) {
+    CHECK_EQ_INT(pnet_link_for(true), PNET_LINK_NOIP);
+    CHECK_EQ_INT(pnet_link_for(false), PNET_LINK_JOIN);
+    CHECK(pnet_link_for(false) != PNET_LINK_DOWN, "never DOWN: the driver would go offline");
+}
 static void byte_155_says_the_board_speaks_lz4(void) {
     pnet_status_t st = BENCH;
     uint8_t p[PNET_STATUS_BYTES];
@@ -126,5 +135,6 @@ int main(void) {
     RUN(the_lead_in_never_runs_short);
     RUN(version_bytes_come_from_the_version_string);
     RUN(byte_155_says_the_board_speaks_lz4);
+    RUN(a_wifi_drop_keeps_the_amiga_online);
     return REPORT();
 }
