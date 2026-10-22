@@ -5096,7 +5096,8 @@ Demozoo API (the bulk export makes per-lookup load on a non-profit unnecessary).
       `pnet_link_for()` reports JOIN (online for the driver) while the board rejoins; never DOWN.
     - **Bench PASS (seq 119 = 1.21.1+ga5424b4):** UniFi block of the board for 3 min mid-SEND -> reconnected,
       "up: 1 stored 864972", Transfer "big9 864972 bytes OK".
-    - Release of 1.21.1 owed: the operator's go. Transfer 2.2's disk is already live (rolls out by R16).
+    - **1.21.1 RELEASED 2026-10-22 (operator): seq 119 (1.21.1+ga5424b4) promoted; GitHub fw-1.21.1 (Latest).**
+      Transfer 2.2's disk is live (rolls out by R16).
 - **Redesign:** the Modern canvas (https://claude.ai/artifact/66QQLv1VK4Ye2gBNaV4F6S) now has a "Modern — inferred
   pages (draft for review)" section: 5 admin pages, Devices with the four DF1 modes + network checklist + Disk at
   startup, Upload as one staging list (the operator's unified-staging idea), the folder table, disk history/time
