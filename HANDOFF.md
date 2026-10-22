@@ -5120,6 +5120,11 @@ Demozoo API (the bulk export makes per-lookup load on a non-profit unnecessary).
   machine, Settings/Preferences, sign-in/up, Help + "?" popover, search, states, phone layouts. Proposals beyond
   today's app are marked in the session summary (search inside disks, sign out elsewhere, undo on mount, ...).
   Note: the Modern design puts title actions behind a "…" menu; the shipped table uses today's icon controls.
+  - **DECISION 2026-10-22 (operator): Devices keeps the ORIGINAL Modern layout with the modal dialog
+    (ModernDevices + ModernDevicesModal), not the inferred InfDevicesDrives page.** The original predates DF1
+    Network/any-disk, the network checklist, Disk at startup, Transfer/From-the-Amiga status and the NFC reader line;
+    when the redesign is built those go INTO that layout (the DF1 section and modal-style settings), not onto a new
+    page. The other inferred pages still await the operator's review.
 
 ### 3cd. Amiga-upload bench closed; fw 1.20.2 RELEASED (uploads 4.6x faster, 5 s reconnect); Receive renamed Transfer (master e0e525b) -- 2026-10-21
 
