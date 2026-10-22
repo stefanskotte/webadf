@@ -5124,7 +5124,12 @@ Demozoo API (the bulk export makes per-lookup load on a non-profit unnecessary).
     (ModernDevices + ModernDevicesModal), not the inferred InfDevicesDrives page.** The original predates DF1
     Network/any-disk, the network checklist, Disk at startup, Transfer/From-the-Amiga status and the NFC reader line;
     when the redesign is built those go INTO that layout (the DF1 section and modal-style settings), not onto a new
-    page. The other inferred pages still await the operator's review.
+    page. A variant drawn that way is on the canvas for approval: "Devices v2" (four DF1 modes + network checklist +
+    Transfer box inside the DF1 section; a Board settings modal with Disk at startup and the NFC reader).
+  - **DECISION 2026-10-22 (operator): Disk history & time machine keeps the version already in the redesign (the
+    Disk files board); InfDiskHistory is not chosen. Upload = the inferred "Upload · send & receive" page
+    (InfUploadTransfer: one staging list for all three directions) -- APPROVED.** Remaining inferred pages (admin x5,
+    library table, settings, sign-in, help, search, states, phone) still await review.
 
 ### 3cd. Amiga-upload bench closed; fw 1.20.2 RELEASED (uploads 4.6x faster, 5 s reconnect); Receive renamed Transfer (master e0e525b) -- 2026-10-21
 
