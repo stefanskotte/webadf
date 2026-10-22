@@ -14,7 +14,7 @@ import { readVolume, readUsage, DD_GEOMETRY, type AdfEntry } from '@/lib/adffs';
 import { listCollections } from '@/lib/collections';
 import { listDevices } from '@/lib/queries';
 import { mountChoices, holderText } from '@/lib/mount-choice';
-import { resolveFrom, libraryTrail, fromQuery } from '@/lib/trail';
+import { resolveFrom, libraryTrail, fromQuery, parseTrailView } from '@/lib/trail';
 import { loadEntries } from '@/lib/disk-history/store';
 import { materialise } from '@/lib/disk-history/chain';
 import { loadHistory, type HistoryVersion } from '@/lib/disk-history/history';
@@ -78,6 +78,7 @@ export default async function DiskFilesPage(props: PageProps<'/disks/[id]/files'
   // own collections before its name is rendered.
   const sp = await props.searchParams;
   const from = typeof sp.from === 'string' ? sp.from : undefined;
+  const view = parseTrailView(sp.view);
   const collections = await listCollections(orgId);
 
   // `?version=<seq>` (time machine, Task 3): browse an earlier version of
@@ -150,7 +151,7 @@ export default async function DiskFilesPage(props: PageProps<'/disks/[id]/files'
   // An HFE has no filesystem to browse and can never be edited (HFE spec
   // D2); its game page states that and offers Extract as ADF. A hand-typed
   // URL lands there instead of on an editor that would refuse everything.
-  if (disk.imageFormat === 'hfe') redirect(`/games/${disk.gameId}${fromQuery(from)}`);
+  if (disk.imageFormat === 'hfe') redirect(`/games/${disk.gameId}${fromQuery(from, view)}`);
 
   const filename = disk.tosecName ?? disk.sourceFilename ?? `${disk.sha256.slice(0, 12)}.adf`;
 
@@ -322,10 +323,10 @@ export default async function DiskFilesPage(props: PageProps<'/disks/[id]/files'
         // multi-disk set the number is the only thing saying which one you
         // opened.
         eyebrow={[
-          ...libraryTrail(resolveFrom(from, collections)),
+          ...libraryTrail(resolveFrom(from, collections), view),
           // The collection is carried onward here too, so stepping back up to
           // the title does not silently lose it.
-          { label: disk.gameTitle ?? 'Untitled', href: `/games/${disk.gameId}${fromQuery(from)}` },
+          { label: disk.gameTitle ?? 'Untitled', href: `/games/${disk.gameId}${fromQuery(from, view)}` },
           { label: `Disk ${disk.diskNo}` },
         ]}
         title={title}
@@ -347,7 +348,7 @@ export default async function DiskFilesPage(props: PageProps<'/disks/[id]/files'
           >
             Viewing version {historicalSeq} of this disk, read-only.{' '}
             <Link
-              href={`/disks/${id}/files${fromQuery(from)}`}
+              href={`/disks/${id}/files${fromQuery(from, view)}`}
               className="font-semibold underline underline-offset-2"
             >
               Return to the current version
@@ -419,6 +420,7 @@ export default async function DiskFilesPage(props: PageProps<'/disks/[id]/files'
           <HistoryPanel
             diskId={id}
             from={from}
+            view={view}
             versions={historyVersions}
             viewingSeq={historicalSeq}
             mountedMessage={mountedMessage}

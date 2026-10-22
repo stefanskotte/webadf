@@ -91,7 +91,8 @@ test('the table root lists collections as folders before the uncategorized title
   await expect(folder(page, first).getByTestId('folder-disks')).toHaveText('2');
   await expect(folder(page, second).getByTestId('folder-titles')).toHaveText('0 titles');
   await expect(folder(page, first)).toHaveAttribute('aria-label', `Open collection Alpha ${run}, 1 title, 2 disks`);
-  await expect(row(page, `Loose ${run}`)).toHaveAttribute('href', `/games/${inbox.gameId}`);
+  // The address names the table, so the title link carries it back (final review M1).
+  await expect(row(page, `Loose ${run}`)).toHaveAttribute('href', `/games/${inbox.gameId}?view=table`);
   // No SHA-256 column any more, and no overview mosaics.
   await expect(page.getByTestId('game-table')).not.toContainText('SHA-256');
   await expect(page.getByTestId('category-overview')).toHaveCount(0);
@@ -286,4 +287,42 @@ test('with a reader in the org, a row shows the fob button in the card\'s place'
   const controls = await row(page, `Fob row ${run}`).locator('button')
     .evaluateAll((els) => els.map((el) => el.getAttribute('data-testid')));
   expect(controls).toEqual([`history-${gameId}`, `card-mount-${gameId}`, `fob-${gameId}`, `delete-game-${gameId}`]);
+});
+
+// Final review fixes (2026-10-22): M1, M3, M5, M8.
+test('a title opened from the table goes back to the table by its breadcrumb, though the default is the grid', async ({ page }) => {
+  const run = runTag();
+  const u = await signUpFresh(page);
+  const { gameId } = await seedDisk(u.orgId, { title: `Crumb ${run}`, diskNo: 1, sha256: sha(`crumb-${run}`) });
+  const id = await apiCreateCollection(page, `Crumbs ${run}`);
+  await apiAddGame(page, id, gameId);
+
+  await page.goto(`/library?collection=${id}`);
+  await expect(page.getByTestId('game-grid')).toBeVisible();          // the default
+  await page.getByLabel('Table view').click();
+  await row(page, `Crumb ${run}`).click();
+  await expect(page).toHaveURL(new RegExp(`/games/${gameId}\\?from=${id}&view=table`));
+  await page.getByTestId('breadcrumb').getByRole('link', { name: `Crumbs ${run}` }).click();
+  await expect(page.getByTestId('game-table')).toBeVisible();
+  await expect(page).toHaveURL(/view=table/);
+});
+
+test('the root says its count is the uncategorized titles, singular when there is one', async ({ page }) => {
+  const run = runTag();
+  const u = await signUpFresh(page);
+  await seedDisk(u.orgId, { title: `Only ${run}`, diskNo: 1, sha256: sha(`only-${run}`) });
+  await page.goto('/library?view=table');
+  await expect(page.getByText('1 uncategorized title · 1 disk', { exact: true })).toBeVisible();
+});
+
+test('a row and a card are named by their title, and the up row draws one arrow', async ({ page }) => {
+  const run = runTag();
+  const u = await signUpFresh(page);
+  await seedDisk(u.orgId, { title: `Named ${run}`, diskNo: 1, sha256: sha(`named-${run}`) });
+  await page.goto('/library?collection=all&view=table');
+  await expect(row(page, `Named ${run}`)).toHaveAttribute('aria-label', `Named ${run}`);
+  await expect(page.getByTestId('up-row').locator('svg')).toHaveCount(0);
+  await expect(page.getByTestId('up-row')).toContainText('↑ Library');
+  await page.goto('/library?collection=all&view=grid');
+  await expect(page.getByTestId('game-card').filter({ hasText: `Named ${run}` })).toHaveAttribute('aria-label', `Named ${run}`);
 });

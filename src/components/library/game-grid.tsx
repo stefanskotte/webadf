@@ -8,9 +8,10 @@ import { CSS } from '@dnd-kit/utilities';
 import type { FobContext } from '@/components/nfc/fob-button';
 import { DriveRing, type DriveContext } from './card-mount-button';
 import { fromQuery } from '@/lib/trail';
+import { useTrailView } from './use-trail-view';
 import { Cover } from './cover';
 import {
-  EmptyLibrary, HoldsLabel, TitleControls, TitleName, dragStyle, driveState, pendingHideStyle,
+  EmptyLibrary, HoldsLabel, TitleControls, TitleName, dragStyle, driveState, pendingHideStyle, titleLabel,
 } from './title-controls';
 import type { GameListItem } from '@/lib/queries';
 import { useCollectionsContext, type GameDragData, type PendingHide } from '@/components/collections/collection-provider';
@@ -83,6 +84,7 @@ const stillStrategy: SortingStrategy = () => null;
 function CardBody({ game: g, collectionId, fob, drives }: {
   game: GameListItem; collectionId?: string; fob: FobContext; drives: DriveContext;
 }) {
+  const trailView = useTrailView();
   return (
     <>
       <Cover id={g.id} title={g.title} diskCount={g.diskCount} coverUrl={g.coverUrl} kind={g.kind} />
@@ -98,7 +100,7 @@ function CardBody({ game: g, collectionId, fob, drives }: {
           {/* Inside the card's <a href>, like the rename field, and safe the
               same way: each control stops every pointer event before it
               reaches the anchor or dnd-kit's drag listeners. */}
-          <TitleControls game={g} collectionId={collectionId} fob={fob} drives={drives} />
+          <TitleControls game={g} collectionId={collectionId} fob={fob} drives={drives} view={trailView} />
         </div>
       </div>
     </>
@@ -135,6 +137,7 @@ function SetDropHint() {
 function DraggableCard({ game: g, fob, drives, pendingHide }: {
   game: GameListItem; fob: FobContext; drives: DriveContext; pendingHide: PendingHide | null;
 }) {
+  const trailView = useTrailView();
   // `role` is pulled OUT of dnd-kit's attributes and thrown away: it is
   // "button", and this card is an <a href> that really does navigate. Spread
   // whole, it would have a screen reader announce every game in the library
@@ -159,7 +162,8 @@ function DraggableCard({ game: g, fob, drives, pendingHide }: {
   return (
     <Link
       ref={setNodeRef}
-      href={`/games/${g.id}`}
+      href={`/games/${g.id}${fromQuery(null, trailView)}`}
+      aria-label={titleLabel(g)}   // the title, not the card's every line and button (final review M5)
       data-testid="game-card"
       data-drive={driveState(drives, g.id)}
       aria-hidden={pendingHide ? true : undefined}
@@ -190,6 +194,7 @@ function DraggableCard({ game: g, fob, drives, pendingHide }: {
 function SortableCard({ game: g, collectionId, fob, drives, armed, pendingHide }: {
   game: GameListItem; collectionId: string; fob: FobContext; drives: DriveContext; armed: boolean; pendingHide: PendingHide | null;
 }) {
+  const trailView = useTrailView();
   // See DraggableCard on why `role` is discarded rather than spread.
   const { attributes: dragAttributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
     id: g.id,
@@ -215,7 +220,8 @@ function SortableCard({ game: g, collectionId, fob, drives, armed, pendingHide }
       // can lead back HERE rather than to the unfiltered library. It cannot
       // be derived on the far side: a game is in many collections and
       // collection_games is many-to-many.
-      href={`/games/${g.id}${fromQuery(collectionId)}`}
+      href={`/games/${g.id}${fromQuery(collectionId, trailView)}`}
+      aria-label={titleLabel(g)}   // the title, not the card's every line and button (final review M5)
       data-testid="game-card"
       data-drive={driveState(drives, g.id)}
       aria-hidden={pendingHide ? true : undefined}

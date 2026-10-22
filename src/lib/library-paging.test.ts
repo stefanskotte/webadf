@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { resolvePage, pageWindow, pageHref } from './library-paging';
+import { resolvePage, pageWindow, pageHref, librarySubtitle } from './library-paging';
 
 describe('resolvePage', () => {
   it('splits the titles into pages of the chosen size', () => {
@@ -54,5 +54,19 @@ describe('pageHref', () => {
   it('page 1 is the address without ?page=', () => {
     expect(pageHref(new URLSearchParams('view=grid&page=4'), 1)).toBe('/library?view=grid');
     expect(pageHref(new URLSearchParams(''), 1)).toBe('/library');
+  });
+});
+
+// Final review M3: the root's count is the inbox, and says so; the plurals are right.
+describe('librarySubtitle', () => {
+  it('names the inbox at the root, and counts plainly elsewhere', () => {
+    expect(librarySubtitle({ titles: 3, disks: 5 }, 'uncategorized')).toBe('3 uncategorized titles · 5 disks');
+    expect(librarySubtitle({ titles: 300, disks: 1200 }, 'all')).toBe('300 titles · 1,200 disks');
+    expect(librarySubtitle({ titles: 2, disks: 2 }, 'collection')).toBe('2 titles · 2 disks');
+  });
+
+  it('one is singular', () => {
+    expect(librarySubtitle({ titles: 1, disks: 1 }, 'uncategorized')).toBe('1 uncategorized title · 1 disk');
+    expect(librarySubtitle({ titles: 1, disks: 0 }, 'all')).toBe('1 title · 0 disks');
   });
 });

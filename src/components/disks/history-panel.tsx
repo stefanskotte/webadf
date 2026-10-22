@@ -6,7 +6,7 @@ import { useRouter } from 'next/navigation';
 import { toast } from 'sonner';
 import { Link } from '@/components/shell/link';
 import { ejectMessage } from '@/lib/mount-wording';
-import { fromQuery } from '@/lib/trail';
+import { fromQuery, type TrailView } from '@/lib/trail';
 import type { HistoryVersion } from '@/lib/disk-history/history';
 import type { TreeChange } from '@/lib/disk-history/diff';
 import { fmtTimeUtc } from '@/lib/format';
@@ -91,11 +91,13 @@ function ChangesBody({ version, isOldest }: { version: HistoryVersion; isOldest:
 }
 
 export function HistoryPanel({
-  diskId, from, versions, viewingSeq, mountedMessage,
+  diskId, from, view = null, versions, viewingSeq, mountedMessage,
 }: {
   diskId: string;
   /** The library collection this page arrived from, carried onward into Browse links -- same convention as the page's own "Return to current version" link. */
   from: string | undefined;
+  /** The library's grid or table, carried with `from` (trail.ts TrailView). */
+  view?: TrailView;
   /** Newest first, as `loadHistory` returns it. Empty means this disk has never been edited. */
   versions: HistoryVersion[];
   /** The `?version=` currently on screen, or null while viewing the head. */
@@ -219,8 +221,8 @@ export function HistoryPanel({
               // old one". Route the head's Browse back to the plain URL
               // instead; every other row still gets its own `?version=`.
               const browseHref = version.isHead
-                ? `/disks/${diskId}/files${fromQuery(from)}`
-                : `/disks/${diskId}/files?version=${version.seq}${from ? `&from=${encodeURIComponent(from)}` : ''}`;
+                ? `/disks/${diskId}/files${fromQuery(from, view)}`
+                : `/disks/${diskId}/files?version=${version.seq}${from ? `&from=${encodeURIComponent(from)}` : ''}${view ? `&view=${view}` : ''}`;
 
               return (
                 <li

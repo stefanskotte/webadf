@@ -207,6 +207,8 @@ export interface CollectionSummary {
   name: string;
   sortKey: number;
   gameCount: number;
+  /** Disks in it, for the table's folder rows; bumped with gameCount by a drop (final review M6). */
+  diskCount?: number;
 }
 
 interface CollectionsContextValue {
@@ -467,9 +469,11 @@ export function CollectionsProvider({
     useSensor(TouchSensor, { activationConstraint: { delay: 250, tolerance: 8 } }),
   );
 
-  async function addGameToCollection(collectionId: string, gameId: string) {
+  async function addGameToCollection(collectionId: string, gameId: string, diskCount = 0) {
     setCollections((prev) => prev.map((c) =>
-      c.id === collectionId ? { ...c, gameCount: c.gameCount + 1 } : c));
+      c.id === collectionId
+        ? { ...c, gameCount: c.gameCount + 1, ...(c.diskCount !== undefined ? { diskCount: c.diskCount + diskCount } : {}) }
+        : c));
     // Hidden the instant it is dropped, not flown back to its slot (see
     // PendingHide). Only THIS drop's hide is ever advanced below: a newer
     // drop or drag has replaced it otherwise.
@@ -618,7 +622,7 @@ export function CollectionsProvider({
     // Case 1: a game dropped on a collection -- file it there. Works from
     // anywhere a game card is draggable, filtered or not.
     if (activeData.type === 'game' && overData.type === 'collection') {
-      void addGameToCollection(overData.id, activeData.id);
+      void addGameToCollection(overData.id, activeData.id, activeData.diskCount ?? 0);
       return;
     }
 

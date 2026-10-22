@@ -21,7 +21,7 @@ import type { FobContext, FobDisk } from '@/components/nfc/fob-button';
 import { getUserPrefs } from '@/lib/user-prefs';
 import { LibrarySortPicker } from '@/components/library/library-sort-picker';
 import { LibraryPager } from '@/components/library/library-pager';
-import { resolvePage } from '@/lib/library-paging';
+import { resolvePage, librarySubtitle } from '@/lib/library-paging';
 
 export default async function LibraryPage(props: PageProps<'/library'>) {
   const { orgId, userId } = await requireOrg();
@@ -138,7 +138,7 @@ export default async function LibraryPage(props: PageProps<'/library'>) {
         help="library"
         subtitle={emptyInbox
           ? `${(libraryTotals?.titles ?? 0).toLocaleString()} titles · ${(libraryTotals?.disks ?? 0).toLocaleString()} disks`
-          : `${totals.titles.toLocaleString()} titles · ${totals.disks.toLocaleString()} disks`}
+          : librarySubtitle(totals, view.kind)}
         actions={
           <div className="flex flex-wrap items-center gap-3">
             <DemozooBadge count={reviewQueueCount} />

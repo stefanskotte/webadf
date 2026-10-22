@@ -36,9 +36,23 @@ export function resolveFrom(
   return collections.find((c) => c.id === from) ?? null;
 }
 
-/** `?from=` to append to a link, or '' when there is nothing to carry. */
-export function fromQuery(collectionId: string | null | undefined): string {
-  return collectionId ? `?from=${encodeURIComponent(collectionId)}` : '';
+/**
+ * The library's grid or table, carried like the collection so the breadcrumb back keeps the view the person chose
+ * with the toggle (library table final review M1, 2026-10-22). Null: not carried, the person's preference decides.
+ */
+export type TrailView = 'grid' | 'table' | null;
+
+/** An untrusted `?view=` as a TrailView: grid or table, anything else is none. */
+export function parseTrailView(raw: string | string[] | undefined): TrailView {
+  return raw === 'grid' || raw === 'table' ? raw : null;
+}
+
+/** `?from=` (and `view=`) to append to a link, or '' when there is nothing to carry. */
+export function fromQuery(collectionId: string | null | undefined, view: TrailView = null): string {
+  const parts: string[] = [];
+  if (collectionId) parts.push(`from=${encodeURIComponent(collectionId)}`);
+  if (view) parts.push(`view=${view}`);
+  return parts.length ? `?${parts.join('&')}` : '';
 }
 
 /**
@@ -48,10 +62,10 @@ export function fromQuery(collectionId: string | null | undefined): string {
  * is a view of the library, not a replacement for it, and someone who filtered
  * their way in still wants the way out.
  */
-export function libraryTrail(collection: CollectionRef | null): Crumb[] {
-  const crumbs: Crumb[] = [{ label: 'Library', href: '/library' }];
+export function libraryTrail(collection: CollectionRef | null, view: TrailView = null): Crumb[] {
+  const crumbs: Crumb[] = [{ label: 'Library', href: libraryHref(null, view) }];
   if (collection) {
-    crumbs.push({ label: collection.name, href: libraryHref(collection.id) });
+    crumbs.push({ label: collection.name, href: libraryHref(collection.id, view) });
   }
   return crumbs;
 }
@@ -65,8 +79,10 @@ export function libraryTrail(collection: CollectionRef | null): Crumb[] {
  * the crumb the person can see -- and spelling the query string out twice is
  * how they would quietly stop agreeing.
  */
-export function libraryHref(collectionId: string | null | undefined): string {
-  return collectionId
-    ? `/library?collection=${encodeURIComponent(collectionId)}`
-    : '/library';
+export function libraryHref(collectionId: string | null | undefined, view: TrailView = null): string {
+  // `view` first, as the library's own toggle writes it (viewModeHref).
+  const parts: string[] = [];
+  if (view) parts.push(`view=${view}`);
+  if (collectionId) parts.push(`collection=${encodeURIComponent(collectionId)}`);
+  return parts.length ? `/library?${parts.join('&')}` : '/library';
 }
