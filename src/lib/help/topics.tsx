@@ -32,8 +32,8 @@ export const HELP_TOPICS = {
     body: (
       <>
         <p>
-          <strong>Grid or table.</strong> The two buttons beside the sort switch views and keep the collection you
-          are in. <em>Library opens in</em> under Preferences in Settings picks the view the library starts in: the
+          <strong>Grid or table.</strong> The grid and table buttons at the top of the page switch views and keep the
+          collection you are in. <em>Library opens in</em> under Preferences in Settings picks the view the library starts in: the
           grid unless you change it.
         </p>
         <p>
@@ -53,7 +53,7 @@ export const HELP_TOPICS = {
           disk in a drive is marked round its picture, and a disk you made here can be renamed in place.
         </p>
         <p>
-          <strong>Filing.</strong> Drag a card or a row onto a collection in the list beside it. Reordering a
+          <strong>Filing.</strong> Drag a card or a row onto a collection in the collections list. Reordering a
           collection, and making a disk set by dropping one title on another, are grid only.
         </p>
       </>

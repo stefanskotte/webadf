@@ -9,14 +9,13 @@ import { ExtractAction } from './extract-action';
 import { WEAK_BIT_NOTICE } from '@/lib/hfe/messages';
 import { holderText, type MountChoice } from '@/lib/mount-choice';
 import { DeleteDiskDialog } from '@/components/library/delete-disk-dialog';
-import { libraryHref } from '@/lib/trail';
-import { fromQuery } from '@/lib/trail';
+import { fromQuery, libraryHref, type TrailView } from '@/lib/trail';
 import { FobButton, type FobDevice } from '@/components/nfc/fob-button';
 import { HdTag } from '@/components/disks/hd-tag';
 import { isHdAdf } from '@/lib/disk-format';
 import { DiskSetMenu, LoneDiskMenu, type DiskSetControls } from './disk-set-menu';
 
-export function DiskRow({ disk, choices, from, fobDevices = [], send = null, setControls, loneGameId, helpProtect, helpNfc, helpHfe }: {
+export function DiskRow({ disk, choices, from, view = null, fobDevices = [], send = null, setControls, loneGameId, helpProtect, helpNfc, helpHfe }: {
   disk: GameDetailDisk;
   /** Per-device verdict for THIS disk -- see lib/mount-choice.ts. */
   choices: MountChoice[];
@@ -26,6 +25,8 @@ export function DiskRow({ disk, choices, from, fobDevices = [], send = null, set
    * a game is in many collections and nothing downstream can work out which.
    */
   from?: string;
+  /** The library's grid or table, carried with `from` (trail.ts TrailView). */
+  view?: TrailView;
   /** Boards with a reader present; the fob button is drawn only when there is one. */
   fobDevices?: FobDevice[];
   /** Draw the write-protection "?" on this row -- one row per page, chosen by the parent. */
@@ -155,7 +156,7 @@ export function DiskRow({ disk, choices, from, fobDevices = [], send = null, set
                          help={helpHfe === true} />
         ) : (
           <Link
-            href={`/disks/${disk.id}/files${fromQuery(from)}`}
+            href={`/disks/${disk.id}/files${fromQuery(from, view)}`}
             data-testid={`browse-${disk.id}`}
             className="btn-like shrink-0 rounded-lg px-3 py-1.5 text-[12px] font-semibold"
             style={{ background: 'var(--glass-strong)', color: 'var(--ink)' }}
@@ -196,7 +197,7 @@ export function DiskRow({ disk, choices, from, fobDevices = [], send = null, set
           // that title. Go where the breadcrumb's own Library crumb goes,
           // carrying the collection you arrived from, rather than refreshing
           // into a 404.
-          redirectWhenGone={libraryHref(from)}
+          redirectWhenGone={libraryHref(from, view)}
         />
         {/* Set controls, after Delete: they rearrange the title rather than
             act on the disk, and only exist on a title with two or more. */}

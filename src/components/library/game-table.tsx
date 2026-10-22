@@ -4,9 +4,10 @@ import { createPortal } from 'react-dom';
 import { useSearchParams } from 'next/navigation';
 import { DragOverlay, useDndContext, useDraggable, type Modifier } from '@dnd-kit/core';
 import { getEventCoordinates } from '@dnd-kit/utilities';
-import { CornerLeftUp, Folder } from 'lucide-react';
+import { Folder } from 'lucide-react';
 import { Link } from '@/components/shell/link';
 import { fromQuery } from '@/lib/trail';
+import { useTrailView } from './use-trail-view';
 import type { GameListItem } from '@/lib/queries';
 import { fmtSize } from '@/lib/format';
 import { emptyTableNote, tableRows } from '@/lib/library-table';
@@ -18,7 +19,7 @@ import {
 } from '@/components/collections/collection-provider';
 import { DriveRing, type DriveContext } from './card-mount-button';
 import { CoverThumb } from './cover';
-import { EmptyLibrary, HoldsLabel, TitleControls, TitleName, driveState, pendingHideStyle } from './title-controls';
+import { EmptyLibrary, HoldsLabel, TitleControls, TitleName, driveState, pendingHideStyle, titleLabel } from './title-controls';
 
 // The grid condensed (operator design 2026-10-21): one row per title with the
 // card's features, and the collections as folders.
@@ -77,13 +78,14 @@ export function GameTable({ games, collectionId = null, fob = null, drives = nul
              style={{ borderColor: 'var(--hairline)', color: 'var(--muted-2)' }}>
           <span /><span>TITLE</span><span>TYPE</span><span>YEAR</span><span>PUBLISHER</span>
           <span className="text-right">DSK</span><span className="text-right">SIZE</span>
-          <span className="sr-only">Actions</span>
+          {/* The controls' column: no header, since the rows are links, not table cells (final review M5). */}
+          <span />
         </div>
         {rows.map((row) => {
           if (row.kind === 'up') return <UpRow key="up" href={tableHref({ kind: 'uncategorized' })} />;
           if (row.kind === 'folder') {
             const c = row.collection;
-            return <FolderRow key={c.id} collection={c} disks={folderDisks[c.id]}
+            return <FolderRow key={c.id} collection={c} disks={c.diskCount ?? folderDisks[c.id]}
                               href={tableHref({ kind: 'collection', id: c.id })} />;
           }
           const g = row.game;
@@ -107,9 +109,8 @@ export function GameTable({ games, collectionId = null, fob = null, drives = nul
 function UpRow({ href }: { href: string }) {
   return (
     <Link href={href} data-testid="up-row" aria-label="Up to Library" className={ROW} style={ROW_BORDER}>
-      <span className="grid h-[32px] w-[40px] place-items-center" style={{ color: 'var(--muted-2)' }}>
-        <CornerLeftUp size={16} strokeWidth={1.75} aria-hidden />
-      </span>
+      {/* One arrow, the text's (final review M8: the icon and "↑" drew two). */}
+      <span />
       <span className="col-span-7 font-sans text-[13px] font-semibold" style={{ color: 'var(--ink)' }}>
         ↑ Library
       </span>
@@ -153,6 +154,7 @@ function FolderRow({ collection: c, disks, href }: { collection: CollectionSumma
 function TitleRow({ game: g, collectionId, fob, drives, pendingHide }: {
   game: GameListItem; collectionId?: string; fob: FobContext; drives: DriveContext; pendingHide: PendingHide | null;
 }) {
+  const trailView = useTrailView();
   // See DraggableCard (game-grid.tsx) on why `role` is discarded rather than spread.
   const data = { type: 'game', id: g.id, title: g.title, diskCount: g.diskCount } satisfies GameDragData;
   const { attributes: dragAttributes, listeners, setNodeRef, isDragging } = useDraggable({ id: g.id, data });
@@ -164,7 +166,10 @@ function TitleRow({ game: g, collectionId, fob, drives, pendingHide }: {
   return (
     <Link
       ref={setNodeRef}
-      href={`/games/${g.id}${fromQuery(collectionId)}`}
+      href={`/games/${g.id}${fromQuery(collectionId, trailView)}`}
+      // The title, not the whole row: a screen reader otherwise reads every cell and every button as the link's name
+      // (final review M5).
+      aria-label={titleLabel(g)}
       data-testid="game-row"
       data-drive={driveState(drives, g.id)}
       aria-hidden={pendingHide ? true : undefined}
@@ -175,14 +180,14 @@ function TitleRow({ game: g, collectionId, fob, drives, pendingHide }: {
       {...attributes}
       {...listeners}
     >
-      <span className="relative w-[40px]">
+      <div className="relative w-[40px]">
         <CoverThumb id={g.id} coverUrl={g.coverUrl} />
         {/* The card's ring, drawn round the thumbnail; the label says it to
             a screen reader. Both inside this cell: a bare child of the row
             would take a grid column of its own. */}
         <DriveRing holds={drives?.holds[g.id]} compact />
         <HoldsLabel game={g} drives={drives} />
-      </span>
+      </div>
       <span className="flex min-w-0 flex-col gap-0.5 pr-3 font-sans">
         <TitleName game={g} className="truncate text-[13px] font-semibold" />
       </span>
@@ -211,7 +216,7 @@ function TitleRow({ game: g, collectionId, fob, drives, pendingHide }: {
       {/* Inside the row's <a href>, as on the card: each control stops every
           pointer event before it reaches the anchor or dnd-kit. */}
       <span className="flex justify-end">
-        <TitleControls game={g} collectionId={collectionId} fob={fob} drives={drives} />
+        <TitleControls game={g} collectionId={collectionId} fob={fob} drives={drives} view={trailView} />
       </span>
     </Link>
   );

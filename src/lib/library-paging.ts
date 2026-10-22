@@ -45,3 +45,13 @@ export function pageHref(params: URLSearchParams, page: number): string {
   const qs = next.toString();
   return qs ? `/library?${qs}` : '/library';
 }
+
+/**
+ * The library header's count, for the whole view (never one page). At the root it is the inbox -- titles in no
+ * collection -- and says so, so it never reads as the size of the library beside the folders (final review M3).
+ */
+export function librarySubtitle(t: { titles: number; disks: number }, kind: 'uncategorized' | 'all' | 'collection'): string {
+  const n = (x: number, one: string, many: string) => `${x.toLocaleString('en-US')} ${x === 1 ? one : many}`;
+  const titles = kind === 'uncategorized' ? n(t.titles, 'uncategorized title', 'uncategorized titles') : n(t.titles, 'title', 'titles');
+  return `${titles} · ${n(t.disks, 'disk', 'disks')}`;
+}

@@ -15,7 +15,7 @@ import { DeleteDiskDialog } from '@/components/library/delete-disk-dialog';
 import { FobButton, type FobContext } from '@/components/nfc/fob-button';
 import { CardMountButton, type DriveContext } from './card-mount-button';
 import { holdLabel } from '@/lib/drive-holds';
-import { fromQuery } from '@/lib/trail';
+import { fromQuery, type TrailView } from '@/lib/trail';
 import { ejectMessage, isMountedReason, mountedReason } from '@/lib/mount-wording';
 import type { GameListItem } from '@/lib/queries';
 import { type PendingHide, SET_DROP_RETURN_MS } from '@/components/collections/collection-provider';
@@ -215,7 +215,7 @@ function VolumeNameField({ game: g }: { game: GameListItem }) {
  *  mousedown for the MouseSensor, touchstart for the TouchSensor. */
 const stopDrag = (e: React.SyntheticEvent) => { e.stopPropagation(); };
 
-function HistoryButton({ game: g, collectionId }: { game: GameListItem; collectionId?: string }) {
+function HistoryButton({ game: g, collectionId, view }: { game: GameListItem; collectionId?: string; view: TrailView }) {
   const router = useRouter();
 
   // `diskId` is a min() aggregate, so it names a real disk only on a
@@ -224,7 +224,7 @@ function HistoryButton({ game: g, collectionId }: { game: GameListItem; collecti
   // card already leads to the title page where each disk is listed with its
   // own Browse.
   if (g.diskCount !== 1 || !g.diskId) return null;
-  const href = `/disks/${g.diskId}/files${fromQuery(collectionId)}#disk-history`;
+  const href = `/disks/${g.diskId}/files${fromQuery(collectionId, view)}#disk-history`;
 
   return (
     <button
@@ -332,12 +332,22 @@ export function HoldsLabel({ game: g, drives }: { game: GameListItem; drives: Dr
  * Each one stops every pointer event before it reaches the card's or row's
  * link or dnd-kit's drag listeners (see stopDrag above).
  */
-export function TitleControls({ game: g, collectionId, fob, drives }: {
+/**
+ * A card's or a row's accessible name: the title, and its year when known (final review M5). Without it the link's
+ * name is everything inside it -- every cell and every button's label read as one long name.
+ */
+export function titleLabel(g: Pick<GameListItem, 'title' | 'year'>): string {
+  return g.year ? `${g.title}, ${g.year}` : g.title;
+}
+
+export function TitleControls({ game: g, collectionId, fob, drives, view = null }: {
   game: GameListItem; collectionId?: string; fob: FobContext; drives: DriveContext;
+  /** The library view to carry into the history link when it is not the person's default (trail.ts, final review M1). */
+  view?: TrailView;
 }) {
   return (
     <div className="flex shrink-0 items-center">
-      <HistoryButton game={g} collectionId={collectionId} />
+      <HistoryButton game={g} collectionId={collectionId} view={view} />
       {drives && (
         <CardMountButton gameId={g.id} title={g.title} diskCount={g.diskCount}
                          singleDiskId={g.diskCount === 1 ? g.diskId : null} drives={drives} />

@@ -10,6 +10,7 @@
 // No data fetching here: the page passes the disks, and every change ends in
 // router.refresh() so the server's order is what is drawn afterwards.
 
+import type { TrailView } from '@/lib/trail';
 import { useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { toast } from 'sonner';
@@ -55,7 +56,7 @@ function diskName(d: GameDetailDisk): string {
   return d.tosecName ?? d.sourceFilename ?? `Disk ${d.diskNo}`;
 }
 
-export function DiskSetSection({ gameId, title, entries, from, fobDevices = [], send = null }: {
+export function DiskSetSection({ gameId, title, entries, from, view = null, fobDevices = [], send = null }: {
   gameId: string;
   /** The title's name, for the Add disks… heading and its "Moved to" toast. */
   title: string;
@@ -63,6 +64,7 @@ export function DiskSetSection({ gameId, title, entries, from, fobDevices = [], 
   entries: DiskSetEntry[];
   /** Carried through to each DiskRow (see disk-row.tsx). */
   from?: string;
+  view?: TrailView;
   fobDevices?: FobDevice[];
   /** Boards that can take files; null = no Send buttons. Carried to each DiskRow. */
   send?: SendContext | null;
@@ -214,7 +216,7 @@ export function DiskSetSection({ gameId, title, entries, from, fobDevices = [], 
           const { disk, choices } = byId.get(id)!;
           return (
             <DiskRow
-              key={disk.id} disk={disk} from={from} fobDevices={fobDevices} send={send} choices={choices}
+              key={disk.id} disk={disk} from={from} view={view} fobDevices={fobDevices} send={send} choices={choices}
               helpNfc={i === 0}
               helpProtect={id === shown.find((sid) => byId.get(sid)!.disk.imageFormat !== 'hfe')}
               helpHfe={id === shown.find((sid) => byId.get(sid)!.disk.imageFormat === 'hfe')}

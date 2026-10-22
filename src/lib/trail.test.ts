@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { resolveFrom, fromQuery, libraryTrail } from '@/lib/trail';
+import { resolveFrom, fromQuery, libraryTrail, libraryHref, parseTrailView } from '@/lib/trail';
 
 const mine = [{ id: 'col_a', name: 'Demos' }, { id: 'col_b', name: 'Workbench' }];
 
@@ -51,5 +51,30 @@ describe('libraryTrail', () => {
 
   it('encodes a collection id with awkward characters', () => {
     expect(libraryTrail({ id: 'a b', name: 'X' })[1].href).toBe('/library?collection=a%20b');
+  });
+});
+
+// Final review M1 (library table, 2026-10-22): the grid/table choice made with the toggle survives a round trip
+// through a title page's breadcrumb. Carried like the collection, as `view=`; junk is no view.
+describe('the library view in the trail', () => {
+  it('fromQuery carries the view alongside the collection, or alone', () => {
+    expect(fromQuery('col_a', 'table')).toBe('?from=col_a&view=table');
+    expect(fromQuery(null, 'grid')).toBe('?view=grid');
+    expect(fromQuery(null, null)).toBe('');
+  });
+
+  it('parseTrailView takes grid or table and nothing else', () => {
+    expect(parseTrailView('table')).toBe('table');
+    expect(parseTrailView('grid')).toBe('grid');
+    for (const junk of [undefined, '', 'list', ['table']]) expect(parseTrailView(junk)).toBeNull();
+  });
+
+  it('the crumbs and the way back keep it', () => {
+    expect(libraryTrail({ id: 'col_a', name: 'Demos' }, 'table')).toEqual([
+      { label: 'Library', href: '/library?view=table' },
+      { label: 'Demos', href: '/library?view=table&collection=col_a' },
+    ]);
+    expect(libraryHref(null, 'table')).toBe('/library?view=table');
+    expect(libraryHref('col_a', null)).toBe('/library?collection=col_a');
   });
 });

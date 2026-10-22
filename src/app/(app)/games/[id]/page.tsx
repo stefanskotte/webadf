@@ -3,7 +3,7 @@ import { notFound } from 'next/navigation';
 import { requireOrg } from '@/lib/session';
 import { getGameDetail, listDevices } from '@/lib/queries';
 import { listCollections } from '@/lib/collections';
-import { resolveFrom, libraryTrail } from '@/lib/trail';
+import { resolveFrom, libraryTrail, parseTrailView } from '@/lib/trail';
 import { mountChoices } from '@/lib/mount-choice';
 import { PageHeader } from '@/components/shell/page-header';
 import { DiskRow } from '@/components/games/disk-row';
@@ -26,6 +26,8 @@ export default async function GamePage(props: PageProps<'/games/[id]'>) {
   // name on the page.
   const sp = await props.searchParams;
   const from = typeof sp.from === 'string' ? sp.from : undefined;
+  // The library's grid or table, carried back to it by the breadcrumb (library table final review M1).
+  const view = parseTrailView(sp.view);
 
   const [game, devices, collections, readers, sendTargets] = await Promise.all([
     getGameDetail(orgId, id), listDevices(orgId), listCollections(orgId),
@@ -53,7 +55,7 @@ export default async function GamePage(props: PageProps<'/games/[id]'>) {
         // but it is null for the ~54% of the archive TOSEC does not recognise,
         // it is not somewhere you can navigate to, and it would cost
         // getGameDetail an extra query per render.
-        eyebrow={libraryTrail(resolveFrom(from, collections))}
+        eyebrow={libraryTrail(resolveFrom(from, collections), view)}
         title={game.title}
         subtitle={[game.year, game.publisher, game.genre, game.chipset,
                    `${game.disks.length} disk${game.disks.length === 1 ? '' : 's'}`]
@@ -74,7 +76,7 @@ export default async function GamePage(props: PageProps<'/games/[id]'>) {
           // Reorder, each row gaining a ⋯ menu. A client component, so the
           // mount choices are computed here and handed over as data.
           <DiskSetSection
-            gameId={game.id} title={game.title} from={from} fobDevices={readers} send={send}
+            gameId={game.id} title={game.title} from={from} view={view} fobDevices={readers} send={send}
             entries={game.disks.map((disk) => ({
               disk, choices: mountChoices(devices, disk, now),
             }))}
@@ -86,7 +88,7 @@ export default async function GamePage(props: PageProps<'/games/[id]'>) {
             shared list of targets cannot express it. devices x disks is a
             handful of rows either way.
           */
-          <DiskRow key={disk.id} disk={disk} from={from} fobDevices={readers} send={send}
+          <DiskRow key={disk.id} disk={disk} from={from} view={view} fobDevices={readers} send={send}
                    // One "?" per feature per page: NFC on the first row, write
                    // protection on the first row that has the toggle (not HFE),
                    // HFE on the first HFE row.
