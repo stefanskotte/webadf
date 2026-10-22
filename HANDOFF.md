@@ -5084,7 +5084,8 @@ Demozoo API (the bulk export makes per-lookup load on a non-profit unnecessary).
     timeout, then the next request's handshake, all in one pass with no tick. One request's worst timeout sum is
     105 s (write 10 + read 30, retry DNS 10 + connect 15 + write 10 + read 30) and a pass may chain requests.
   - **Limit set to 300 s** (4be4665; test_core1_wd checks >= 3x C1WD_BENCH_LONGEST_MS and >= C1WD_WORST_REQUEST_MS).
-    **TEST seq 116 = 1.21.0+g4be4665 on the bench board**, confirmed. Release owed: the operator's go.
+    **1.21.0 RELEASED 2026-10-22 (operator): seq 116 (1.21.0+g4be4665) promoted by its notes; GitHub
+    release fw-1.21.0 (Latest, target 4be4665).** Untracked helper `.fw-promote.mts <seq> <version> <notes>`.
   - **Finding (not the watchdog):** an Amiga->web upload does not survive a 90 s outage: the board answered the
     Amiga "NO offline" ~0.4 s before the network came back, and Transfer printed "ERR connection lost" (re-run
     SEND works). Whether to hold the Amiga's connection longer is the operator's call.
