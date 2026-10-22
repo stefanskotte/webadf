@@ -42,8 +42,11 @@
 #ifndef AS_UP_OOSEQ_BYTES
 #define AS_UP_OOSEQ_BYTES 2920u      // out-of-order bytes lwIP may hold for the Amiga's pcb (two segments). From Task 1.
 #endif
-#define AS_UP_OPEN_GIVEUP_MS 60000u  // the server never answered the open: NO offline (spec §8, about 60 s)
-#define AS_UP_STALL_MS 120000u       // no progress this long: NO offline (spec §5)
+// A network outage of a few minutes is waited out, not reported (operator 2026-10-22, after the bench's 90 s cut
+// ended in NO offline): the open and a stalled upload both wait 5 minutes. Transfer's own silence limit during an
+// upload, RX_UP_IDLE_SECS (tools/receive), must stay above both -- it is 360 s from Transfer 2.2.
+#define AS_UP_OPEN_GIVEUP_MS 300000u // the server never answered the open: NO offline (spec §8)
+#define AS_UP_STALL_MS 300000u       // no progress this long: NO offline (spec §5)
 // A resume at <off>: Receive reads and CRCs the first <off> bytes, silently, before its first raw byte (or END). The
 // stall clock allows that much more, at 8 KB/s worst case (off/8 ms): 4 MB is about 11 minutes in all. The 8 KB/s is
 // an assumption for a 7 MHz 68000 reading from floppy, not a measurement: bench B5 (Resume) times it -- the log's

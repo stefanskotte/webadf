@@ -690,12 +690,14 @@ static void an_upload_id_the_board_cannot_trust_is_no_server(void) {
     reply(PUT5); run(1);
     CHECK(strcmp(F.out, "TAKE 1 0 5\n") == 0, "AS_ID_MAX hex digits are fine");
 }
-static void an_open_that_never_answers_gives_up_after_60_s(void) {
+static void an_open_that_never_answers_gives_up_after_5_min(void) {
     ready2(); F.open_status = -1;
     reply(PUT5); run(1);
     CHECK_EQ_INT(F.opens, 1); CHECK(F.out[0] == 0, "nothing yet");
     F.now += 1100; run(1); CHECK_EQ_INT(F.opens, 2);           // the backoff, then again
-    F.now += 61000; run(2);
+    F.now += 121000; run(2);
+    CHECK(strstr(F.out, "NO 1 ") == NULL, "a Wi-Fi blip of 2 minutes is waited out");
+    F.now += 180000; run(2);
     CHECK(strstr(F.out, "NO 1 offline ") != NULL, F.out);
     CHECK(F.sock == AS_SOCK_OPEN, "kept: no byte was in flight");
 }
@@ -705,20 +707,36 @@ static void a_409_on_a_chunk_ends_the_file_and_the_connection(void) {
     CHECK(strstr(F.out, "NO 1 server ") != NULL, F.out);
     CHECK(F.sock == AS_SOCK_CLOSED, "dropped: bytes may be in flight (ruling P7)");
 }
-static void a_failing_chunk_waits_then_gives_up_after_120_s(void) {
+static void a_failing_chunk_waits_then_gives_up_after_5_min(void) {
     fill_big(); ready2(); put_big(); run(1);
     clear_out();
     F.chunk_status = -1; amiga_sends(BIG, (int)W); run(2);
     CHECK(F.chunks >= 1 && strstr(F.out, "MORE") == NULL, "the credit does not move");
     CHECK(!as_has_work(&S), "in the backoff the long poll runs (ruling P9)");
     F.now += 121000; run(2);
+    CHECK(strstr(F.out, "NO 1 ") == NULL && F.sock == AS_SOCK_OPEN, "past 2 minutes: still waiting");
+    F.now += 180000; run(2);
     CHECK(strstr(F.out, "NO 1 offline ") != NULL, F.out);
     CHECK(F.sock == AS_SOCK_CLOSED, "dropped");
+}
+// A Wi-Fi or internet outage of a few minutes mid-upload (bench 2026-10-22: 90 s cut, NO offline at 120 s) is waited
+// out: the chunks fail, the board backs off, and once the server answers again the file carries on and completes.
+static void a_3_minute_outage_mid_upload_resumes(void) {
+    fill_big(); ready2(); put_big(); run(1);
+    clear_out();
+    F.chunk_status = -1; amiga_sends(BIG, (int)W); run(2);
+    for (int i = 0; i < 90; i++) { F.now += 2000; run(1); }      // 180 s of failing chunks and backoffs
+    CHECK(strstr(F.out, "NO 1 ") == NULL && F.sock == AS_SOCK_OPEN, "still waiting after 3 minutes");
+    F.chunk_status = 0;                                          // the network is back
+    for (int i = 0; i < 4; i++) { F.now += AS_BACKOFF_MAX_MS; run(3); }
+    amiga_sends(BIG + W, (int)(BIGN - W)); end_line("1", BIG, BIGN); run(6);
+    CHECK(memcmp(F.stored, BIG, BIGN) == 0, "every byte, in order");
+    CHECK(strstr(F.out, "DONE 1 ") != NULL, F.out);
 }
 static void an_amiga_that_stops_sending_is_given_up_too(void) {
     fill_big(); ready2(); put_big(); run(1);
     amiga_sends(BIG, 1000); run(1);
-    F.now += 121000; run(2);
+    F.now += AS_UP_STALL_MS + 1000u; run(2);
     CHECK(strstr(F.out, "NO 1 offline ") != NULL, F.out);       // PF8, spec §5: a stall is offline either way
     CHECK(F.sock == AS_SOCK_CLOSED, "dropped: raw bytes may be in flight");
 }
@@ -905,7 +923,7 @@ static void a_resume_far_into_the_file_waits_for_receives_pre_read(void) {
     CHECK(strstr(F.out, "NO 1 offline ") != NULL, F.out);
     CHECK(F.sock == AS_SOCK_CLOSED, "past the allowance: given up");
 }
-// Once the first raw byte is in, the plain 120 s stall applies again.
+// Once the first raw byte is in, the plain stall (AS_UP_STALL_MS) applies again.
 static void after_the_pre_read_the_plain_stall_applies(void) {
     char l[80];
     fill_big(); ready2();
@@ -967,7 +985,7 @@ static void a_put_behind_a_failing_outcome_gets_no_offline(void) {
     snprintf(go, sizeof go, "GO %s", ID); reply(go); run(3);
     F.post_status = 503;                               // the download's outcome cannot be posted
     snprintf(ok, sizeof ok, "OK %s 5:Hello", ID); reply(ok); run(2);
-    for (int i = 0; i < 40; i++) { F.now += 2000; run(1); }      // 80 s of backoffs
+    for (int i = 0; i < 160; i++) { F.now += 2000; run(1); }     // 320 s of backoffs
     CHECK_EQ_INT(F.opens, 0);                          // the outcome goes first, so the open never ran
     CHECK(strstr(F.out, "NO 1 offline ") != NULL, F.out);
     CHECK(F.sock == AS_SOCK_OPEN, "kept: no raw byte was in flight");
@@ -1024,9 +1042,10 @@ int main(void) {
     RUN(zero_byte_upload);
     RUN(refusals_at_open_become_no_and_keep_the_connection);
     RUN(an_upload_id_the_board_cannot_trust_is_no_server);
-    RUN(an_open_that_never_answers_gives_up_after_60_s);
+    RUN(an_open_that_never_answers_gives_up_after_5_min);
     RUN(a_409_on_a_chunk_ends_the_file_and_the_connection);
-    RUN(a_failing_chunk_waits_then_gives_up_after_120_s);
+    RUN(a_failing_chunk_waits_then_gives_up_after_5_min);
+    RUN(a_3_minute_outage_mid_upload_resumes);
     RUN(an_amiga_that_stops_sending_is_given_up_too);
     RUN(a_crc_refused_at_close_is_no_crc);
     RUN(done_name_is_latin1);
