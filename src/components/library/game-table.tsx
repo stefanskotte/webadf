@@ -33,7 +33,7 @@ const MIN_W = 'min-w-[800px]';
 const ROW = `grid ${COLS} ${MIN_W} items-center border-b px-4 py-1.5 font-mono text-[11px] hover:bg-white/40`;
 const ROW_BORDER = { borderColor: 'rgb(30 45 60 / 0.05)' };
 
-export function GameTable({ games, collectionId = null, fob = null, drives = null, folderDisks = {} }: {
+export function GameTable({ games, collectionId = null, fob = null, drives = null, folderDisks = {}, firstPage = true }: {
   games: GameListItem[];
   /**
    * The collection currently being viewed, carried into each title's link so
@@ -46,13 +46,15 @@ export function GameTable({ games, collectionId = null, fob = null, drives = nul
   drives?: DriveContext;
   /** Each collection's disk count, for its folder row. */
   folderDisks?: Record<string, number>;
+  /** Library paging: the folder rows are drawn on the first page only. */
+  firstPage?: boolean;
 }) {
   // The collections from the shared context, not from the page: the rail
   // reorders them and bumps their counts optimistically, and the folders
   // must agree with the rail beside them.
   const { collections, view, pendingHide: hidden } = useCollectionsContext();
   const searchParams = useSearchParams();
-  const rows = tableRows(view, collections, games);
+  const rows = tableRows(view, collections, games, { firstPage });
   const emptyNote = emptyTableNote(view, games.length);
   // Folder and up rows keep the table: they are the table's own navigation,
   // so they say view=table outright rather than leaning on the preference.

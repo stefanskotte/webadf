@@ -22,7 +22,9 @@ export const HELP_TOPICS = {
   // Sources: library/page.tsx (view from ?view= else prefs library.view; no overview in the table),
   // game-table.tsx + library-table.ts (folders at the root, the up row), title-controls.tsx (the shared controls
   // and their order), view-toggle.tsx (keeps the collection), collection-provider.tsx onDragEnd (a row files on a
-  // rail drop only; reorder and card-on-card sets are the grid's), preferences-form.tsx (Library opens in).
+  // rail drop only; reorder and card-on-card sets are the grid's), preferences-form.tsx (Library opens in, Titles per
+  // page), library-pager.tsx + library-paging.ts (?page=, Per page saves the preference, a new size or sort goes to
+  // page 1), library-table.ts (folders on page 1 only).
   library: {
     title: 'Library',
     short:
@@ -38,6 +40,12 @@ export const HELP_TOPICS = {
           <strong>Folders.</strong> In the table, the library&apos;s first page lists each collection as a folder,
           with how many titles and disks it holds, before the titles that are in no collection. Open a folder to
           see its titles; <em>↑ Library</em> at the top takes you back. <em>All titles</em> has the same way back.
+        </p>
+        <p>
+          <strong>Pages.</strong> The grid and the table show your titles a page at a time: 48 unless you change it,
+          with <em>Per page</em> under the list or <em>Titles per page</em> under Preferences in Settings (24, 48, 96,
+          192 or All). Changing it, or the sort, starts again at page 1. Switching between grid and table keeps the
+          page you are on. In the table, the folders are on the first page.
         </p>
         <p>
           <strong>Controls.</strong> Each row has the card&apos;s buttons in the same order: version history, mount
@@ -621,6 +629,9 @@ export const HELP_TOPICS = {
         <p>
           <strong>Library opens in.</strong> Grid or Table: how the library shows when you open it. The grid and
           table buttons on the library switch for the moment without changing it.
+        </p>
+        <p>
+          <strong>Titles per page.</strong> 24, 48 (the default), 96, 192 or All, in the grid and the table alike.
         </p>
         <p>
           <strong>Sort orders.</strong> The library&apos;s sort picker and the one above a disk&apos;s file list

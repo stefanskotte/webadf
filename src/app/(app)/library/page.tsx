@@ -1,10 +1,10 @@
 import { nowMs } from '@/lib/clock';
 import { requireOrg } from '@/lib/session';
-import { listGames, countAllGames, listDevices } from '@/lib/queries';
+import { listGames, countGames, countAllGames, listDevices } from '@/lib/queries';
 import { holdsByGame } from '@/lib/drive-holds';
 import { df1BoardOf } from '@/lib/df1-pick';
 import type { DriveContext, DriveDisk } from '@/components/library/card-mount-button';
-import { listCollections, countUncategorized, collectionMosaics } from '@/lib/collections';
+import { listCollections, countUncategorized, collectionMosaics, listCollectionGameIds } from '@/lib/collections';
 import { countReviewQueue } from '@/lib/demozoo/queries';
 import { resolveLibraryView, resolveViewMode } from '@/lib/library-view';
 import { CategoryOverview } from '@/components/collections/category-overview';
@@ -20,6 +20,8 @@ import { listNfcReaders, listDisksForNfc } from '@/lib/nfc/store';
 import type { FobContext, FobDisk } from '@/components/nfc/fob-button';
 import { getUserPrefs } from '@/lib/user-prefs';
 import { LibrarySortPicker } from '@/components/library/library-sort-picker';
+import { LibraryPager } from '@/components/library/library-pager';
+import { resolvePage } from '@/lib/library-paging';
 
 export default async function LibraryPage(props: PageProps<'/library'>) {
   const { orgId, userId } = await requireOrg();
@@ -48,12 +50,20 @@ export default async function LibraryPage(props: PageProps<'/library'>) {
   // with everyone in the org and is what dragging a card reorders, so a
   // per-person sort laid over it would make the drag look broken.
   const sort = prefs.library.sort;
-  const games = await listGames(orgId, view.kind === 'collection'
+  const scope = view.kind === 'collection'
     ? { collectionId: view.id }
     : view.kind === 'uncategorized'
       ? { uncategorized: true, sort }
-      : { sort });
-  const diskTotal = games.reduce((n, g) => n + g.diskCount, 0);
+      : { sort };
+  // Library paging (operator 2026-10-22): the whole view is counted, one page of it is loaded -- and with it only that
+  // page's disks, boards and NFC data below. `?page=` past the end shows the last page.
+  const totals = await countGames(orgId, scope);
+  const paging = resolvePage(sp.page, totals.titles, prefs.library.pageSize);
+  const [games, collectionOrder] = await Promise.all([
+    listGames(orgId, { ...scope, limit: paging.limit, offset: paging.offset }),
+    // Dragging inside one page of a collection reorders the whole collection: the drag needs its full order.
+    view.kind === 'collection' && paging.pages > 1 ? listCollectionGameIds(orgId, view.id) : Promise.resolve(undefined),
+  ]);
 
   // The inbox emptying is the ordinary end state of a tidy library, not an
   // error -- fall through to the collections rather than to a blank page.
@@ -66,7 +76,7 @@ export default async function LibraryPage(props: PageProps<'/library'>) {
   //
   // That fall-through is the GRID's: the table lists the collections as
   // folder rows at its root whatever the inbox holds, so it has no overview.
-  const emptyInbox = view.kind === 'uncategorized' && games.length === 0 && collections.length > 0;
+  const emptyInbox = view.kind === 'uncategorized' && totals.titles === 0 && collections.length > 0;
   const showOverview = emptyInbox && viewMode === 'grid';
   // The grid's cards and the table's rows carry the mount control and the
   // NFC button, both of which need the boards and the disks of the titles on
@@ -128,13 +138,13 @@ export default async function LibraryPage(props: PageProps<'/library'>) {
         help="library"
         subtitle={emptyInbox
           ? `${(libraryTotals?.titles ?? 0).toLocaleString()} titles · ${(libraryTotals?.disks ?? 0).toLocaleString()} disks`
-          : `${games.length.toLocaleString()} titles · ${diskTotal.toLocaleString()} disks`}
+          : `${totals.titles.toLocaleString()} titles · ${totals.disks.toLocaleString()} disks`}
         actions={
           <div className="flex flex-wrap items-center gap-3">
             <DemozooBadge count={reviewQueueCount} />
             <CreateAdf />
             {view.kind !== 'collection' && !emptyInbox && <LibrarySortPicker sort={sort} />}
-            <ViewToggle mode={viewMode} view={view} />
+            <ViewToggle mode={viewMode} view={view} page={paging.page} />
           </div>
         }
       />
@@ -142,6 +152,7 @@ export default async function LibraryPage(props: PageProps<'/library'>) {
         collections={collections}
         gameIds={games.map((g) => g.id)}
         filteredCollectionId={filteredCollectionId}
+        collectionOrder={collectionOrder}
         view={view}
         uncategorizedCount={uncategorizedCount}
       >
@@ -166,9 +177,13 @@ export default async function LibraryPage(props: PageProps<'/library'>) {
               : viewMode === 'table'
                 ? (
                   <GameTable games={games} collectionId={filteredCollectionId} fob={fob} drives={drives}
-                             folderDisks={Object.fromEntries(collections.map((c) => [c.id, c.diskCount]))} />
+                             folderDisks={Object.fromEntries(collections.map((c) => [c.id, c.diskCount]))}
+                             firstPage={paging.page === 1} />
                   )
                 : <GameGrid games={games} fob={fob} drives={drives} />}
+            {!showOverview && (
+              <LibraryPager page={paging.page} pages={paging.pages} pageSize={prefs.library.pageSize} total={totals.titles} />
+            )}
           </div>
         </div>
       </CollectionsProvider>

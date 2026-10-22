@@ -16,6 +16,18 @@ describe('tableRows', () => {
     ]);
   });
 
+  it('the folders are on the first page only, like a file browser listing folders first (library paging)', () => {
+    expect(tableRows({ kind: 'uncategorized' }, [B, A], [g1, g2], { firstPage: false })).toEqual([
+      { kind: 'title', game: g1 },
+      { kind: 'title', game: g2 },
+    ]);
+    expect(tableRows({ kind: 'uncategorized' }, [A], [g1], { firstPage: true })[0]).toEqual({ kind: 'folder', collection: A });
+  });
+
+  it('the up row is on every page', () => {
+    expect(tableRows({ kind: 'collection', id: 'c-a' }, [A], [g2], { firstPage: false })).toEqual([{ kind: 'up' }, { kind: 'title', game: g2 }]);
+  });
+
   it('an empty inbox still shows the folders, and no collections shows only the titles', () => {
     expect(tableRows({ kind: 'uncategorized' }, [A], [])).toEqual([{ kind: 'folder', collection: A }]);
     expect(tableRows({ kind: 'uncategorized' }, [], [g1])).toEqual([{ kind: 'title', game: g1 }]);

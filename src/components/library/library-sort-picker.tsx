@@ -1,11 +1,12 @@
 'use client';
 
 import { useState, useTransition } from 'react';
-import { useRouter } from 'next/navigation';
+import { useRouter, useSearchParams } from 'next/navigation';
 import { toast } from 'sonner';
 import { SortSelect } from '@/components/prefs/sort-select';
 import { latestSaver } from '@/lib/user-prefs-client';
 import { LIBRARY_SORT_OPTIONS, sortOptionId, type LibrarySort } from '@/lib/user-prefs-schema';
+import { pageHref } from '@/lib/library-paging';
 
 /**
  * The library's sort, remembered per user (user prefs library.sort). The
@@ -20,6 +21,7 @@ import { LIBRARY_SORT_OPTIONS, sortOptionId, type LibrarySort } from '@/lib/user
  */
 export function LibrarySortPicker({ sort }: { sort: LibrarySort }) {
   const router = useRouter();
+  const searchParams = useSearchParams();
   const [saver] = useState(latestSaver);
   const [value, setValue] = useState(sort);
   const [serverSort, setServerSort] = useState(sort);
@@ -32,7 +34,11 @@ export function LibrarySortPicker({ sort }: { sort: LibrarySort }) {
   async function change(next: LibrarySort) {
     setValue(next);
     try {
-      if (await saver.save({ library: { sort: next } }) === 'saved') startTransition(() => router.refresh());
+      if (await saver.save({ library: { sort: next } }) === 'saved') {
+        // A new order starts at its first page (library paging): page 3 of another order is other titles.
+        const params = new URLSearchParams(searchParams.toString());
+        startTransition(() => (params.has('page') ? router.push(pageHref(params, 1)) : router.refresh()));
+      }
     } catch {
       setValue(serverSort);
       toast.error("Couldn't save the sort order. Try again.");
