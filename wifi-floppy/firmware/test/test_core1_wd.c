@@ -158,6 +158,13 @@ static void the_limit_is_sane(void) {
     CHECK(C1WD_LIMIT_MS < 0x7FFFFFFFu, "limit fits a signed ms difference");
 }
 
+static void the_limit_covers_what_the_bench_measured(void) {
+    // The rule in core1_wd.h: never below 3x the longest gap the bench measured, and never below one request's
+    // worst sum of timeouts (with its one retry on a new connection) -- a bad network makes that wait, not a hang.
+    CHECK(C1WD_LIMIT_MS >= 3u * C1WD_BENCH_LONGEST_MS, "at least 3x the bench's longest gap");
+    CHECK(C1WD_LIMIT_MS >= C1WD_WORST_REQUEST_MS, "above one request's worst sum of timeouts");
+}
+
 int main(void) {
     RUN(before_the_loop_nothing_is_supervised);
     RUN(a_new_maximum_is_kept_and_logged_rate_limited);
@@ -167,5 +174,6 @@ int main(void) {
     RUN(the_ms_clock_wraps);
     RUN(the_maximum_is_reported_every_ten_minutes);
     RUN(the_limit_is_sane);
+    RUN(the_limit_covers_what_the_bench_measured);
     return REPORT();
 }
