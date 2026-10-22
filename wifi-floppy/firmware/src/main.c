@@ -3655,7 +3655,7 @@ static void pnet_serve_status(void) {
     memset(&st, 0, sizeof st);
     memcpy(st.mac, g_pnet_mac, sizeof st.mac);
     st.rssi = g_pnet_rssi;
-    st.link = net_radio_sta_joined() ? PNET_LINK_NOIP : PNET_LINK_DOWN;
+    st.link = pnet_link_for(net_radio_sta_joined());
     pnet_version_bytes(WF_FIRMWARE_VERSION, &st.ver_major, &st.ver_minor);
     st.lz4 = pnet_lz4_on() ? (uint8_t)(PNET_ST_LZ4_TO_AMIGA | PNET_ST_LZ4_FROM_AMIGA) : 0u;   // spec 2026-10-18 §3
     if (pnet_build_status((uint8_t *)g_pnet_status_words, sizeof g_pnet_status_words,

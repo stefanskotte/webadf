@@ -19,6 +19,7 @@
  * The track repeats the record every PNET_STATUS_PERIOD bytes, so a read that starts at any bit finds
  * a sync STARTING within its first 124 bytes, inside the driver's scan, with no start timing at all.
  */
+#include <stdbool.h>
 #include <stdint.h>
 #include <stddef.h>
 #include "pnet_frame.h"
@@ -51,7 +52,8 @@
 #define PNET_ST_LIVE_BYTES      14u
 #define PNET_ST_FLAGS_RLE_BOTH  3u       /* bit 1: the Amiga sends RLE; bit 0: so does the board */
 #define PNET_ST_MAX_TX_BYTES    8192u    /* never 0 or small: the driver's 16-bit space sum would wrap */
-#define PNET_LINK_DOWN          0u
+#define PNET_LINK_DOWN          0u       /* the driver goes offline and rejects every write: never sent */
+#define PNET_LINK_JOIN          1u       /* rejoining Wi-Fi: online for the driver, so the PaulaNET link keeps working */
 #define PNET_LINK_NOIP          2u       /* associated; the driver counts 1, 2, 3 and 5 as online */
 
 typedef struct {
@@ -62,6 +64,9 @@ typedef struct {
     uint8_t lz4;                         /* PNET_ST_LZ4_* bits for byte 155; 0 = 1.15.0's byte */
 } pnet_status_t;
 
+/* The link byte for the status: NOIP while the board is on Wi-Fi, JOIN while it is (re)joining -- never DOWN, which
+ * would take the Amiga's whole network offline, the board's own link to it included (bench 2026-10-22). */
+uint8_t pnet_link_for(bool sta_joined);
 /* The 156-byte payload. SSID, password and hostname are always zeros. */
 void pnet_status_payload(const pnet_status_t *st, uint8_t out[PNET_STATUS_BYTES]);
 /* What DF1 loops: PNET_STATUS_RECORDS copies of the record, PNET_STATUS_PERIOD bytes apart, at out.

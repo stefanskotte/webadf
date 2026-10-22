@@ -5086,9 +5086,17 @@ Demozoo API (the bulk export makes per-lookup load on a non-profit unnecessary).
   - **Limit set to 300 s** (4be4665; test_core1_wd checks >= 3x C1WD_BENCH_LONGEST_MS and >= C1WD_WORST_REQUEST_MS).
     **1.21.0 RELEASED 2026-10-22 (operator): seq 116 (1.21.0+g4be4665) promoted by its notes; GitHub
     release fw-1.21.0 (Latest, target 4be4665).** Untracked helper `.fw-promote.mts <seq> <version> <notes>`.
-  - **Finding (not the watchdog):** an Amiga->web upload does not survive a 90 s outage: the board answered the
-    Amiga "NO offline" ~0.4 s before the network came back, and Transfer printed "ERR connection lost" (re-run
-    SEND works). Whether to hold the Amiga's connection longer is the operator's call.
+  - **Uploads survive a Wi-Fi/internet outage of up to 5 minutes (operator 2026-10-22, "a limited few minutes"):**
+    - board: AS_UP_OPEN_GIVEUP_MS and AS_UP_STALL_MS 300 s (were 60/120 s); Transfer 2.2: RX_UP_IDLE_SECS 360 s
+      (was 180); driver disk **9f58337d** (stored, read back; 36bce70c is PREVIOUS); e2e driver-disk specs 33/33,
+      FS-UAE KS 3.1 send + shell scenarios all PASS.
+    - **Root cause found on the bench** (debug log `amiga tcp: lost, err ...`, kept): during a Wi-Fi drop the board
+      told the Amiga's driver LINK DOWN; Rob's driver (device.c:186) then goes offline and rejects every write, so
+      the board<->Amiga TCP died (RST from the Amiga, err -14) although the PaulaNET link was fine. Fix:
+      `pnet_link_for()` reports JOIN (online for the driver) while the board rejoins; never DOWN.
+    - **Bench PASS (seq 119 = 1.21.1+ga5424b4):** UniFi block of the board for 3 min mid-SEND -> reconnected,
+      "up: 1 stored 864972", Transfer "big9 864972 bytes OK".
+    - Release of 1.21.1 owed: the operator's go. Transfer 2.2's disk is already live (rolls out by R16).
 - **Redesign:** the Modern canvas (https://claude.ai/artifact/66QQLv1VK4Ye2gBNaV4F6S) now has a "Modern — inferred
   pages (draft for review)" section: 5 admin pages, Devices with the four DF1 modes + network checklist + Disk at
   startup, Upload as one staging list (the operator's unified-staging idea), the folder table, disk history/time

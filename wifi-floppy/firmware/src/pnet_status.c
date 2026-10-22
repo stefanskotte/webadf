@@ -70,3 +70,5 @@ void pnet_version_bytes(const char *v, uint8_t *major, uint8_t *minor) {
     *major = (uint8_t)a;
     *minor = (uint8_t)b;
 }
+
+uint8_t pnet_link_for(bool sta_joined) { return sta_joined ? PNET_LINK_NOIP : PNET_LINK_JOIN; }
