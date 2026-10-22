@@ -1584,6 +1584,23 @@ first). The table view with folders SHIPPED (3ce). Entries below marked SHIPPED 
     pinout, the gSPI wiring the driver expects, the module's certification conditions and its antenna list.
     - A u.FL on the PCB, and ideally a 0-ohm selectable path to an on-board chip antenna, so an A500 or A1200 board
       outside the case needs no external antenna.
+    - **2026-10-22 update: no RF routing on our PCB if we can help it.** Shanshe (layout) is unsure of the USB
+      90-ohm pair and the antenna routing; the operator DM'd him Raspberry Pi's RP2350B Minimal KiCad design
+      (RP-010329-CA; the guide RP-008280 gives 27-ohm series Rs, 0.8 mm tracks / 0.15 mm gap on a 1 mm 2-layer
+      board, and an optional second-memory footprint U4) and proposed dropping the on-board chip antenna.
+      Leading radio candidate: **Ezurio Sterling-LWB+ 453-00084** (CYW43439, 15.5 x 21 mm SMT module, MHF4
+      connector and matching on the module, certified with Ezurio's antenna list). From its datasheet v2.2:
+      VDD_3V3 + VDD_VIO (3.3 V ok), WL_REG_ON pin 12, HOST_WAKE pin 11, SDIO CMD/CLK/D0-D3 on pins 22-29,
+      26 MHz crystal on module, NO 32 kHz crystal (32KHZ_OSC_IN pin 19). Open points before choosing it:
+      (1) Ezurio documents SDIO only -- gSPI is the chip's own mode (SDIO_DATA_2 low at power-up, which the
+      SDK does by driving GP24 low before WL_REG_ON); copy the Pico 2 W / RM2 wiring and resistor network
+      exactly, and prove it on a breadboard with a Pico 2 (non-W) before layout; (2) whether the chip runs
+      without an external 32 kHz sleep clock -- give pin 19 a DNP 0-ohm from an RP2350 GPOUT pin; (3) MHF4
+      is NOT u.FL-mateable (smaller): big boxes need an MHF4-to-SMA pigtail (common for M.2 Wi-Fi cards);
+      the datasheet's block diagram says "u.FL" while the listings say MHF4 -- check a sample; (4) stock:
+      the dev kit 453-00084-K1 showed 20-week lead time at DigiKey; LCSC unknown (operator sources).
+      Fallback: a bare-RF-pad module (Murata 1YN) with the u.FL a few mm away, 50-ohm grounded coplanar,
+      via fence, pi-match footprint.
     - Big boxes: a u.FL-to-SMA pigtail to a bulkhead SMA in a rear expansion-slot blanking plate (all three
       machines have them, so no case modification), and a standard 2.4 GHz rubber-duck antenna on the back.
   - **More PSRAM (operator, 2026-10-02).** Today's budget (psram_image.h) is 2 slots x 160 x 14,336 B = 4.37 MiB,
