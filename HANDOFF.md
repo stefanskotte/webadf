@@ -5134,6 +5134,8 @@ Demozoo API (the bulk export makes per-lookup load on a non-profit unnecessary).
     Phone layouts (to iterate later).** The not-chosen Devices and Disk history boards were removed from the canvas.
     Both Library boards now show the shipped paging (pager + Per page, 48 default) and the table's "↑ Library" up row
     (folders on page 1). Still awaiting review: Settings (InfSettings) and Devices v2.
+  - 2026-10-22 (operator): the original Modern Upload board was REMOVED from the canvas; the approved inferred
+    "Upload · send & receive" is the Upload page, and the header nav and Library now link to it.
 
 ### 3cd. Amiga-upload bench closed; fw 1.20.2 RELEASED (uploads 4.6x faster, 5 s reconnect); Receive renamed Transfer (master e0e525b) -- 2026-10-21
 
