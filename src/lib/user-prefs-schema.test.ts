@@ -2,14 +2,14 @@ import { describe, it, expect } from 'vitest';
 import {
   DEFAULT_PREFS, parsePrefs, parsePrefsPatch, applyPrefsPatch, startPagePath,
   LIBRARY_SORT_OPTIONS, BROWSE_SORT_OPTIONS, sortOptionId, sortFromOptionId,
-  type SortOption, type SortDir, prefsDiff,
+  type SortOption, type SortDir, prefsDiff, LIBRARY_PAGE_SIZES,
 } from './user-prefs-schema';
 
 describe('user prefs defaults', () => {
-  it("are today's behaviour: library start page, newest-added first in the grid, Browse by name", () => {
+  it("are today's behaviour (plus 48 titles a page): library start page, newest-added first in the grid, Browse by name", () => {
     expect(DEFAULT_PREFS).toEqual({
       startPage: 'library',
-      library: { sort: { key: 'added', dir: 'desc' }, view: 'grid' },
+      library: { sort: { key: 'added', dir: 'desc' }, view: 'grid', pageSize: 48 },
       browse: { sort: { key: 'name', dir: 'asc' } },
       firmware: { skipPassword: false },
     });
@@ -31,7 +31,7 @@ describe('user prefs defaults', () => {
     });
     expect(p).toEqual({
       startPage: 'devices',
-      library: { sort: { key: 'added', dir: 'desc' }, view: 'grid' },
+      library: { sort: { key: 'added', dir: 'desc' }, view: 'grid', pageSize: 48 },
       browse: { sort: { key: 'size', dir: 'desc' } },
       firmware: { skipPassword: false },
     });
@@ -93,7 +93,7 @@ describe('user prefs patch', () => {
     const next = applyPrefsPatch(cur, { library: { sort: { key: 'year', dir: 'asc' } } });
     expect(next).toEqual({
       startPage: 'devices',
-      library: { sort: { key: 'year', dir: 'asc' }, view: 'grid' },
+      library: { sort: { key: 'year', dir: 'asc' }, view: 'grid', pageSize: 48 },
       browse: { sort: { key: 'size', dir: 'desc' } },
       firmware: { skipPassword: false },
     });
@@ -105,13 +105,13 @@ describe('user prefs patch', () => {
 describe('library.view (which view /library opens in)', () => {
   it('defaults to the grid, and reads a stored table back', () => {
     expect(DEFAULT_PREFS.library.view).toBe('grid');
-    expect(parsePrefs({ library: { view: 'table' } }).library).toEqual({ sort: { key: 'added', dir: 'desc' }, view: 'table' });
+    expect(parsePrefs({ library: { view: 'table' } }).library).toEqual({ sort: { key: 'added', dir: 'desc' }, view: 'table', pageSize: 48 });
   });
 
   it('a stored view that no longer validates falls back to the grid and keeps the sort', () => {
     for (const bad of ['list', 1, null, { v: 'table' }]) {
       expect(parsePrefs({ library: { sort: { key: 'title', dir: 'asc' }, view: bad } }).library)
-        .toEqual({ sort: { key: 'title', dir: 'asc' }, view: 'grid' });
+        .toEqual({ sort: { key: 'title', dir: 'asc' }, view: 'grid', pageSize: 48 });
     }
   });
 
@@ -124,9 +124,9 @@ describe('library.view (which view /library opens in)', () => {
   it('a patch sets the view without touching the sort, and a sort patch leaves the view', () => {
     const cur = parsePrefs({ library: { sort: { key: 'year', dir: 'asc' } } });
     const table = applyPrefsPatch(cur, { library: { view: 'table' } });
-    expect(table.library).toEqual({ sort: { key: 'year', dir: 'asc' }, view: 'table' });
+    expect(table.library).toEqual({ sort: { key: 'year', dir: 'asc' }, view: 'table', pageSize: 48 });
     expect(applyPrefsPatch(table, { library: { sort: { key: 'title', dir: 'asc' } } }).library)
-      .toEqual({ sort: { key: 'title', dir: 'asc' }, view: 'table' });
+      .toEqual({ sort: { key: 'title', dir: 'asc' }, view: 'table', pageSize: 48 });
     expect(cur.library.view).toBe('grid');
   });
 
@@ -134,8 +134,38 @@ describe('library.view (which view /library opens in)', () => {
     const saved = parsePrefs({});
     expect(prefsDiff(saved, { ...saved, library: { ...saved.library, view: 'table' } }))
       .toEqual({ library: { view: 'table' } });
-    expect(prefsDiff(saved, { ...saved, library: { sort: { key: 'title', dir: 'asc' }, view: 'table' } }))
+    expect(prefsDiff(saved, { ...saved, library: { sort: { key: 'title', dir: 'asc' }, view: 'table', pageSize: 48 } }))
       .toEqual({ library: { sort: { key: 'title', dir: 'asc' }, view: 'table' } });
+  });
+});
+
+describe('library.pageSize (titles per page, grid and table alike)', () => {
+  it('defaults to 48 and offers 24, 48, 96, 192 and all', () => {
+    expect(DEFAULT_PREFS.library.pageSize).toBe(48);
+    expect(LIBRARY_PAGE_SIZES).toEqual([24, 48, 96, 192, 'all']);
+    for (const size of LIBRARY_PAGE_SIZES) expect(parsePrefs({ library: { pageSize: size } }).library.pageSize).toBe(size);
+  });
+
+  it('a stored size that no longer validates falls back to 48 and keeps the rest', () => {
+    for (const bad of [50, 0, '48', null, -1]) {
+      expect(parsePrefs({ library: { view: 'table', pageSize: bad } }).library)
+        .toEqual({ sort: { key: 'added', dir: 'desc' }, view: 'table', pageSize: 48 });
+    }
+  });
+
+  it('a patch may name one of the sizes, nothing else, and leaves the view and the sort', () => {
+    expect(parsePrefsPatch({ library: { pageSize: 96 } })).toEqual({ ok: true, patch: { library: { pageSize: 96 } } });
+    expect(parsePrefsPatch({ library: { pageSize: 'all' } }).ok).toBe(true);
+    expect(parsePrefsPatch({ library: { pageSize: 50 } }).ok).toBe(false);
+    const cur = parsePrefs({ library: { view: 'table', sort: { key: 'year', dir: 'asc' } } });
+    expect(applyPrefsPatch(cur, { library: { pageSize: 'all' } }).library)
+      .toEqual({ sort: { key: 'year', dir: 'asc' }, view: 'table', pageSize: 'all' });
+  });
+
+  it('prefsDiff names the size only when it changed', () => {
+    const saved = parsePrefs({});
+    expect(prefsDiff(saved, { ...saved, library: { ...saved.library, pageSize: 192 } })).toEqual({ library: { pageSize: 192 } });
+    expect(prefsDiff(saved, saved)).toEqual({});
   });
 });
 

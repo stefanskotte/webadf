@@ -5098,6 +5098,15 @@ Demozoo API (the bulk export makes per-lookup load on a non-profit unnecessary).
       "up: 1 stored 864972", Transfer "big9 864972 bytes OK".
     - **1.21.1 RELEASED 2026-10-22 (operator): seq 119 (1.21.1+ga5424b4) promoted; GitHub fw-1.21.1 (Latest).**
       Transfer 2.2's disk is live (rolls out by R16).
+- **Library paging SHIPPED (2026-10-22, operator):** a page at a time in the grid and the table; per-user
+  `library.pageSize` 24/48/96/192/all, default 48 (the one prefs default that is not old behaviour -- the operator's
+  call), set in Preferences ("Titles per page") or the pager's "Per page". `?page=` (junk = 1, past the end = last),
+  kept by the grid/table toggle, dropped by another collection, a new size or a new sort. Server-side: countGames for
+  the whole view's totals, listGames limit/offset (null = all) -- **the old silent 200-title cap is gone**. Table
+  folders on page 1 only, up row on every page. A drag inside a paged collection reorders the whole collection
+  (listCollectionGameIds -> provider collectionOrder). e2e library-paging 8/8; library, table, collections, settings,
+  in-collection drags all green. Also: cards no longer say "unidentified" (operator) -- year, publisher or
+  "made here", else nothing.
 - **Redesign:** the Modern canvas (https://claude.ai/artifact/66QQLv1VK4Ye2gBNaV4F6S) now has a "Modern — inferred
   pages (draft for review)" section: 5 admin pages, Devices with the four DF1 modes + network checklist + Disk at
   startup, Upload as one staging list (the operator's unified-staging idea), the folder table, disk history/time

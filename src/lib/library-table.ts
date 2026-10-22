@@ -19,9 +19,14 @@ export type TableRow<C, G> =
   | { kind: 'folder'; collection: C }
   | { kind: 'title'; game: G };
 
-export function tableRows<C, G>(view: LibraryView, collections: readonly C[], games: readonly G[]): TableRow<C, G>[] {
+// `firstPage` (library paging): the folders are listed on the first page only, as a file browser lists folders
+// first; the up row is on every page, so the way out is always there.
+export function tableRows<C, G>(
+  view: LibraryView, collections: readonly C[], games: readonly G[], { firstPage = true }: { firstPage?: boolean } = {},
+): TableRow<C, G>[] {
   const titles = games.map((game) => ({ kind: 'title', game }) as const);
   if (view.kind === 'uncategorized') {
+    if (!firstPage) return [...titles];
     return [...collections.map((collection) => ({ kind: 'folder', collection }) as const), ...titles];
   }
   return [{ kind: 'up' }, ...titles];

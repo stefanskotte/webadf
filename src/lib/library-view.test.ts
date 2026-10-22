@@ -52,6 +52,12 @@ describe('viewHref', () => {
     expect(viewHref({ kind: 'uncategorized' }, p)).toBe('/library?view=table&q=lemmings');
   });
 
+  it('drops ?page=: another view starts at its first page (library paging)', () => {
+    const p = new URLSearchParams('view=table&collection=c-1&page=3');
+    expect(viewHref({ kind: 'collection', id: 'c-2' }, p)).toBe('/library?view=table&collection=c-2');
+    expect(viewHref({ kind: 'all' }, p)).toBe('/library?view=table&collection=all');
+  });
+
   it('round-trips through viewParam', () => {
     for (const v of [{ kind: 'uncategorized' }, { kind: 'all' }, { kind: 'collection', id: 'c-1' }] as const) {
       expect(resolveLibraryView(viewParam(v) ?? undefined, KNOWN)).toEqual(v);
@@ -100,5 +106,10 @@ describe('viewModeHref', () => {
   it('keeps every other parameter and replaces an old view', () => {
     const p = new URLSearchParams('view=grid&q=lemmings&collection=c-1');
     expect(viewModeHref({ kind: 'collection', id: 'c-1' }, 'table', p)).toBe('/library?view=table&q=lemmings&collection=c-1');
+  });
+
+  it('keeps the page when it is named: grid and table show the same titles', () => {
+    expect(viewModeHref({ kind: 'collection', id: 'c-1' }, 'grid', undefined, 3)).toBe('/library?view=grid&collection=c-1&page=3');
+    expect(viewModeHref({ kind: 'all' }, 'table', undefined, 1)).toBe('/library?view=table&collection=all');
   });
 });

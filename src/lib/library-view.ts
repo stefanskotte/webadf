@@ -59,6 +59,8 @@ export function viewParam(view: LibraryView): string | null {
 
 export function viewHref(view: LibraryView, params?: URLSearchParams): string {
   const next = new URLSearchParams(params?.toString() ?? '');
+  // Another view starts at its first page (library paging): a page number belongs to the view it was counted in.
+  next.delete('page');
   const v = viewParam(view);
   if (v === null) next.delete('collection');
   else next.set('collection', v);
@@ -82,11 +84,16 @@ export function resolveViewMode(raw: string | string[] | undefined, pref: 'grid'
   return raw === 'grid' || raw === 'table' ? raw : pref;
 }
 
-/** The address of `view` in grid or table, keeping every other parameter. */
-export function viewModeHref(view: LibraryView, mode: 'grid' | 'table', params?: URLSearchParams): string {
+/**
+ * The address of `view` in grid or table, keeping every other parameter. `page` (library paging) is kept when named:
+ * the grid and the table list the same titles in the same order, so switching keeps the page you are on.
+ */
+export function viewModeHref(view: LibraryView, mode: 'grid' | 'table', params?: URLSearchParams, page?: number): string {
   const next = new URLSearchParams(params?.toString() ?? '');
   // `view` first, so the usual address reads /library?view=table&collection=…
   next.delete('view');
   const ordered = new URLSearchParams([['view', mode], ...next.entries()]);
-  return viewHref(view, ordered);
+  const href = viewHref(view, ordered);
+  if (!page || page <= 1) return href;
+  return `${href}${href.includes('?') ? '&' : '?'}page=${page}`;
 }

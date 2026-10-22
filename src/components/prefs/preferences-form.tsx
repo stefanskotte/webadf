@@ -6,9 +6,10 @@ import { toast } from 'sonner';
 import { SortSelect } from '@/components/prefs/sort-select';
 import { savePrefs } from '@/lib/user-prefs-client';
 import {
-  BROWSE_SORT_OPTIONS, LIBRARY_SORT_OPTIONS, LIBRARY_VIEWS, START_PAGES, prefsDiff,
+  BROWSE_SORT_OPTIONS, LIBRARY_PAGE_SIZES, LIBRARY_SORT_OPTIONS, LIBRARY_VIEWS, START_PAGES, prefsDiff,
   type LibraryViewMode, type StartPage, type UserPrefs,
 } from '@/lib/user-prefs-schema';
+import { pageSizeLabel } from '@/components/library/library-pager';
 
 const START_PAGE_LABELS: Record<StartPage, string> = { library: 'Library', devices: 'Devices', upload: 'Upload' };
 const LIBRARY_VIEW_LABELS: Record<LibraryViewMode, string> = { grid: 'Grid', table: 'Table' };
@@ -25,6 +26,8 @@ export function PreferencesForm({ prefs }: { prefs: UserPrefs }) {
   const libraryHint = useId();
   const viewId = useId();
   const viewHint = useId();
+  const sizeId = useId();
+  const sizeHint = useId();
   const [saved, setSaved] = useState(prefs);
   const [draft, setDraft] = useState(prefs);
   const [busy, setBusy] = useState(false);
@@ -90,6 +93,23 @@ export function PreferencesForm({ prefs }: { prefs: UserPrefs }) {
           </span>
           <span id={viewHint} className="text-[12px]" style={{ color: 'var(--muted)' }}>
             How the library first shows. The grid and table buttons on the library switch views without changing this.
+          </span>
+        </div>
+        <div className="flex flex-col gap-1">
+          <span className="inline-flex items-center gap-2 text-[12px]">
+            <label htmlFor={sizeId} className="font-semibold" style={{ color: 'var(--muted)' }}>Titles per page</label>
+            <select id={sizeId} aria-describedby={sizeHint} data-testid="pref-library-page-size" value={String(draft.library.pageSize)}
+                    onChange={(e) => {
+                      const pageSize = LIBRARY_PAGE_SIZES.find((s) => String(s) === e.target.value);
+                      if (pageSize !== undefined) setDraft({ ...draft, library: { ...draft.library, pageSize } });
+                    }}
+                    className="h-8 rounded-lg border px-2 text-[12px]"
+                    style={{ borderColor: 'var(--hairline)', background: 'var(--input-bg)', color: 'var(--ink)' }}>
+              {LIBRARY_PAGE_SIZES.map((s) => <option key={s} value={String(s)}>{pageSizeLabel(s)}</option>)}
+            </select>
+          </span>
+          <span id={sizeHint} className="text-[12px]" style={{ color: 'var(--muted)' }}>
+            In the grid and the table alike. The pager under the library changes it too.
           </span>
         </div>
         <SortSelect label="Disk file list order" options={BROWSE_SORT_OPTIONS} value={draft.browse.sort}

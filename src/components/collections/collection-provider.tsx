@@ -288,6 +288,9 @@ export interface CollectionsProviderProps {
   collections: CollectionSummary[];
   gameIds: string[];
   filteredCollectionId: string | null;
+  /** In a collection: every title of it, in its order -- `gameIds` is one PAGE of it (library paging). A drag inside
+   *  the page is applied to this whole list, which is what the order route takes; absent, `gameIds` is the whole list. */
+  collectionOrder?: string[];
   view: LibraryView;
   uncategorizedCount: number;
   children: ReactNode;
@@ -297,6 +300,7 @@ export function CollectionsProvider({
   collections: initialCollections,
   gameIds: initialGameIds,
   filteredCollectionId,
+  collectionOrder,
   view,
   uncategorizedCount,
   children,
@@ -499,8 +503,9 @@ export function CollectionsProvider({
     }
   }
 
-  async function reorderGamesInCollection(collectionId: string, ids: string[]) {
-    setGameIds(ids);
+  // `ids` is the collection's whole new order (what the route takes); `shown`, when given, is the page of it on screen.
+  async function reorderGamesInCollection(collectionId: string, ids: string[], shown?: string[]) {
+    setGameIds(shown ?? ids);
     try {
       let res: Response;
       try {
@@ -638,10 +643,15 @@ export function CollectionsProvider({
         });
         return;
       }
-      const oldIndex = gameIds.indexOf(activeData.id);
-      const newIndex = gameIds.indexOf(overData.id);
+      // Moved within the WHOLE collection, not the page: both titles are on this page, so the move is the same, and
+      // the titles on other pages keep their places (library paging, 2026-10-22).
+      const full = collectionOrder ?? gameIds;
+      const oldIndex = full.indexOf(activeData.id);
+      const newIndex = full.indexOf(overData.id);
       if (!filteredCollectionId || oldIndex === -1 || newIndex === -1) return;
-      void reorderGamesInCollection(filteredCollectionId, arrayMove(gameIds, oldIndex, newIndex));
+      const next = arrayMove(full, oldIndex, newIndex);
+      const onPage = new Set(gameIds);
+      void reorderGamesInCollection(filteredCollectionId, next, collectionOrder ? next.filter((id) => onPage.has(id)) : undefined);
       return;
     }
 
