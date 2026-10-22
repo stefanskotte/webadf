@@ -17,13 +17,20 @@
 #include <stdbool.h>
 #include <stdint.h>
 
-// The limit: core1 silent for longer than this resets the board. 120 s is a placeholder until the bench measures
-// the longest gap core1's loop really makes ("c1wd: longest core1 gap ... (new max)"): set it from that, never
-// below 3x the longest gap measured. Not 60 s: one poll pass on a bad network may block for the sum of its own
-// timeouts (DNS 10 + connect 15 + write 10 + read 30 = ~65 s) without anything being hung. One #define,
-// overridable with -DC1WD_LIMIT_MS=...
+// What the A500 bench measured (2026-10-22, fw 1.21.0 TEST, "c1wd: longest core1 gap"): 27.3 s idle for 12 h (the
+// 25 s long poll); uploads, a 2 MB send to the Amiga and DF0 swaps stayed under 34 s; Wi-Fi and internet cut for
+// 90 s mid-upload: 37.2 s; Wi-Fi cut for 90 s while idle: 60.4 s -- a poll's 30 s read timeout, then its retry's
+// 15 s handshake timeout, then the next request's handshake, all in one pass of core1's loop with no tick between.
+#define C1WD_BENCH_LONGEST_MS 60419u
+// One request's worst sum of timeouts (transport_tls.c, device_client.c): the kept connection's write 10 + read 30,
+// then the one retry on a new connection, DNS 10 + connect 15 + write 10 + read 30.
+#define C1WD_WORST_REQUEST_MS 105000u
+// The limit: core1 silent for longer than this resets the board. Never below 3x the bench's longest gap, nor below
+// one request's worst sum of timeouts (test_core1_wd.c checks both). 300 s: a pass may chain requests, so the
+// longest bad-network gap is a few of them, not one -- and a real hang is still caught in 5 minutes instead of
+// never. One #define, overridable with -DC1WD_LIMIT_MS=...
 #ifndef C1WD_LIMIT_MS
-#define C1WD_LIMIT_MS 120000u
+#define C1WD_LIMIT_MS 300000u
 #endif
 // The periodic report of the longest gap.
 #define C1WD_REPORT_MS (10u * 60u * 1000u)

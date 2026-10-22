@@ -5078,8 +5078,16 @@ Demozoo API (the bulk export makes per-lookup load on a non-profit unnecessary).
   each outer pass so a re-pair's portal is never judged. .bss +20 B.
   - **First reading (idle, Amiga off): longest gap 26.2 s** -- the long poll (server holds 25 s). A bad network can
     block one pass ~65 s (DNS 10 + connect 15 + write 10 + read 30), hence 120 s, not the 60 s first proposed.
-  - **Owed (operator, Amiga on 2026-10-22):** measure during uploads and a degraded network, set the limit to >= 3x
-    the longest gap, then release.
+  - **Bench 2026-10-22 (A500 on, Transfer 2.1):** 12 h idle 27.3 s; SEND 864,972 B in 82.4 s, web->Amiga 2 MB,
+    DF0 mount + swap: all under 34 s (no new max logged); board blocked in UniFi (Wi-Fi + internet gone) 90 s
+    mid-upload: 37.2 s; the same while idle: **60.4 s** -- a poll's 30 s read timeout, the retry's 15 s handshake
+    timeout, then the next request's handshake, all in one pass with no tick. One request's worst timeout sum is
+    105 s (write 10 + read 30, retry DNS 10 + connect 15 + write 10 + read 30) and a pass may chain requests.
+  - **Limit set to 300 s** (4be4665; test_core1_wd checks >= 3x C1WD_BENCH_LONGEST_MS and >= C1WD_WORST_REQUEST_MS).
+    **TEST seq 116 = 1.21.0+g4be4665 on the bench board**, confirmed. Release owed: the operator's go.
+  - **Finding (not the watchdog):** an Amiga->web upload does not survive a 90 s outage: the board answered the
+    Amiga "NO offline" ~0.4 s before the network came back, and Transfer printed "ERR connection lost" (re-run
+    SEND works). Whether to hold the Amiga's connection longer is the operator's call.
 - **Redesign:** the Modern canvas (https://claude.ai/artifact/66QQLv1VK4Ye2gBNaV4F6S) now has a "Modern — inferred
   pages (draft for review)" section: 5 admin pages, Devices with the four DF1 modes + network checklist + Disk at
   startup, Upload as one staging list (the operator's unified-staging idea), the folder table, disk history/time
