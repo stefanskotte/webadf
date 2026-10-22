@@ -4,7 +4,7 @@ import { eq } from 'drizzle-orm';
 import { getDb } from '@/db';
 import { collectionGames } from '@/db/schema/collections';
 import { ARM_DELAY_MS } from '@/lib/set-folder';
-import { signUpFresh, runTag } from './helpers';
+import { signUpFresh, runTag, createAdf } from './helpers';
 import { seedDisk, cleanupSeeded } from './device-helpers';
 
 // Library paging (operator 2026-10-22): a page at a time in the grid and the table, the size a per-user setting
@@ -183,4 +183,19 @@ test('dragging inside page 2 of a collection reorders those titles and leaves pa
   await expect.poll(() => membership(id), { timeout: 15_000 }).toEqual(expected);   // the WHOLE collection, page 1 untouched
   await expect.poll(() => gridIds(page)).toEqual([before[25], before[24]]);
   await expect(page.getByTestId('set-drop-dialog')).toHaveCount(0);
+});
+
+// Operator 2026-10-22: a card says what is known -- year, publisher, or "made here" -- and nothing at all when
+// nothing is, rather than "unidentified".
+test('a card with nothing known shows no "unidentified" line, and a disk made here still says so', async ({ page }) => {
+  const { orgId } = await signUpFresh(page);
+  const run = runTag();
+  await seedDisk(orgId, { title: `Plain ${run}`, diskNo: 1, sha256: sha(`plain-${run}`) });
+  await page.goto('/library?collection=all');
+  const plain = cards(page).filter({ hasText: `Plain ${run}` });
+  await expect(plain).toHaveCount(1);
+  await expect(plain).not.toContainText('unidentified');
+  await createAdf(page);
+  await expect(cards(page)).toHaveCount(2);   // the new disk is in, on this page
+  await expect(cards(page).filter({ hasText: 'made here' })).toHaveCount(1);
 });

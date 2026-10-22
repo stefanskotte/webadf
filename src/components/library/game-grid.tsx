@@ -92,7 +92,8 @@ function CardBody({ game: g, collectionId, fob, drives }: {
         <TitleName game={g} className="truncate text-[13px] font-semibold" />
         <div className="flex items-center justify-between gap-2">
           <span className="truncate font-mono text-[10.5px]" style={{ color: 'var(--muted-2)' }}>
-            {[g.year, g.publisher].filter(Boolean).join(' · ') || (g.authored ? 'made here' : 'unidentified')}
+            {/* What is known, and nothing when nothing is (operator 2026-10-22: no "unidentified"). */}
+            {[g.year, g.publisher].filter(Boolean).join(' · ') || (g.authored ? 'made here' : '')}
           </span>
           {/* Inside the card's <a href>, like the rename field, and safe the
               same way: each control stops every pointer event before it
