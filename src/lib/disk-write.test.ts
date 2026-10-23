@@ -193,7 +193,7 @@ describe('applyDiskEdit', () => {
 
     const result = await applyDiskEdit(ORG_ID, DISK_ID, edit, 'user-1');
 
-    expect(result).toEqual({ ok: true, sha256: newSha });
+    expect(result).toEqual({ ok: true, sha256: newSha, seq: 1 });
     expect(recordVersion).toHaveBeenCalledTimes(1);
     expect(recordVersion).toHaveBeenCalledWith({
       orgId: ORG_ID, diskId: DISK_ID, headSha: OLD_SHA, head: before, next: after,
@@ -232,7 +232,7 @@ describe('applyDiskEdit', () => {
     const { applyDiskEdit } = await import('@/lib/disk-write');
     const result = await applyDiskEdit(ORG_ID, DISK_ID, () => ({ ok: true, adf: same }), 'user-1');
 
-    expect(result).toEqual({ ok: true, sha256: OLD_SHA });
+    expect(result).toEqual({ ok: true, sha256: OLD_SHA, seq: null });
     // Nothing moved, so no device is repointed.
     expect(updateCalls).toHaveLength(0);
   });
@@ -317,7 +317,7 @@ describe('applyDiskEdit', () => {
     const { applyDiskEdit } = await import('@/lib/disk-write');
     const result = await applyDiskEdit(ORG_ID, DISK_ID, () => ({ ok: true, adf: after }));
 
-    expect(result).toEqual({ ok: true, sha256: newSha });
+    expect(result).toEqual({ ok: true, sha256: newSha, seq: 1 });
     expect(recordVersion).toHaveBeenCalledTimes(1);
   });
 });

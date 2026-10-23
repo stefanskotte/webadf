@@ -71,6 +71,15 @@ export interface DropNode {
 export async function synthDrop(
   page: Page, tree: DropNode[], target = '[data-testid="drop-strip"]',
 ): Promise<void> {
+  // The server-rendered target is on the page before React has hydrated it,
+  // and a drop dispatched then reaches no handler and stages nothing: three
+  // specs that dropped straight after page.goto failed this way (2026-10-23,
+  // on master as well). React marks a node it has hydrated with a
+  // `__reactProps$…` key, so wait for that on the target itself.
+  await page.waitForFunction((sel) => {
+    const el = document.querySelector(sel);
+    return !!el && Object.keys(el).some((k) => k.startsWith('__reactProps$'));
+  }, target);
   await page.evaluate(({ treeArg, targetArg }: { treeArg: DropNode[]; targetArg: string }) => {
     function makeEntry(node: DropNode): unknown {
       if (node.kind === 'dir') {

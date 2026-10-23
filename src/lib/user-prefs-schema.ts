@@ -72,7 +72,8 @@ export type BrowseSort = { key: BrowseSortKey; dir: SortDir };
 export type UserPrefs = {
   startPage: StartPage;
   library: { sort: LibrarySort; view: LibraryViewMode; pageSize: LibraryPageSize };
-  browse: { sort: BrowseSort };
+  /** `hideInfo`: the disk browser leaves out Workbench .info icon files (A5). */
+  browse: { sort: BrowseSort; hideInfo: boolean };
   /**
    * `skipPassword`: the Update button on Devices does not ask for this user's
    * password (step-up, src/lib/step-up.ts). Per USER, never per org: another
@@ -93,7 +94,7 @@ function defaults(): UserPrefs {
   return {
     startPage: 'library',
     library: { sort: { key: 'added', dir: 'desc' }, view: 'grid', pageSize: 48 },
-    browse: { sort: { key: 'name', dir: 'asc' } },
+    browse: { sort: { key: 'name', dir: 'asc' }, hideInfo: false },
     firmware: { skipPassword: false },
   };
 }
@@ -117,6 +118,7 @@ const prefsSchema = z.object({
   }).catch(() => defaults().library),
   browse: z.object({
     sort: browseSortSchema.catch(() => defaults().browse.sort),
+    hideInfo: z.boolean().catch(false),
   }).catch(() => defaults().browse),
   // Only a real boolean `true` reads as true; anything else is the prompt.
   firmware: z.object({
@@ -141,7 +143,7 @@ const prefsPatchSchema = z.strictObject({
     view: z.enum(LIBRARY_VIEWS).optional(),
     pageSize: libraryPageSizeSchema.optional(),
   }).optional(),
-  browse: z.strictObject({ sort: browseSortSchema.strict().optional() }).optional(),
+  browse: z.strictObject({ sort: browseSortSchema.strict().optional(), hideInfo: z.boolean().optional() }).optional(),
   // Valid here either way; PATCH /api/me/prefs refuses `true` itself (see
   // UserPrefs.firmware), so the password-checked endpoint can share setUserPrefs.
   firmware: z.strictObject({ skipPassword: z.boolean().optional() }).optional(),
@@ -163,7 +165,10 @@ export function applyPrefsPatch(cur: UserPrefs, patch: PrefsPatch): UserPrefs {
       view: patch.library?.view ?? cur.library.view,
       pageSize: patch.library?.pageSize ?? cur.library.pageSize,
     },
-    browse: { ...cur.browse, ...patch.browse, sort: { ...(patch.browse?.sort ?? cur.browse.sort) } },
+    browse: {
+      sort: { ...(patch.browse?.sort ?? cur.browse.sort) },
+      hideInfo: patch.browse?.hideInfo ?? cur.browse.hideInfo,
+    },
     firmware: { skipPassword: patch.firmware?.skipPassword ?? cur.firmware.skipPassword },
   };
 }
@@ -183,6 +188,7 @@ export function prefsDiff(from: UserPrefs, to: UserPrefs): PrefsPatch {
   if (from.library.view !== to.library.view) patch.library = { ...patch.library, view: to.library.view };
   if (from.library.pageSize !== to.library.pageSize) patch.library = { ...patch.library, pageSize: to.library.pageSize };
   if (!sameSort(from.browse.sort, to.browse.sort)) patch.browse = { sort: { ...to.browse.sort } };
+  if (from.browse.hideInfo !== to.browse.hideInfo) patch.browse = { ...patch.browse, hideInfo: to.browse.hideInfo };
   // `firmware` deliberately never: it has its own controls on Settings
   // (firmware-password-setting.tsx), and turning it on needs the password.
   return patch;

@@ -53,6 +53,8 @@ export function describeEditError(reason: string): string {
     case 'no-filesystem': return 'This disk has no filesystem to edit.';
     case 'blob_unavailable': return 'The disk image could not be read from storage.';
     case 'hfe_read_only': return HFE_READ_ONLY;
+    case 'changed_since':
+      return 'The disk changed since, so going back would lose that. Use History to go back to an earlier version.';
     default: return reason;
   }
 }
@@ -81,7 +83,16 @@ interface FileEditContextValue {
    * caller with a reviewed batch worth not losing (`DropStaging`'s commit)
    * needs "cleared" to mean "written", not "attempted".
    */
-  runEdit: (perform: () => Promise<Response>, successMessage: string, onSuccess?: () => void) => void;
+  runEdit: (perform: () => Promise<Response>, successMessage: string, onSuccess?: () => void, opts?: RunEditOptions) => void;
+}
+
+export interface RunEditOptions {
+  /**
+   * The success toast offers Undo (A5): a restore of the version before the
+   * one this edit recorded (the route answers its `seq`), refused by the
+   * server when anything has written the disk since.
+   */
+  undoable?: boolean;
 }
 
 const FileEditContext = createContext<FileEditContextValue | null>(null);
@@ -130,7 +141,28 @@ export function FileEditProvider({
   const [confirmOpen, setConfirmOpen] = useState(false);
   const pendingRef = useRef<(() => void) | null>(null);
 
-  async function execute(perform: () => Promise<Response>, successMessage: string, onSuccess?: () => void) {
+  async function undo(seq: number) {
+    try {
+      const res = await fetch(`/api/disks/${diskId}/restore`, {
+        method: 'POST', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ seq: seq - 1, ifHead: seq }),
+      });
+      if (!res.ok) {
+        const body = await res.json().catch(() => null);
+        const reason = typeof body?.reason === 'string' ? body.reason
+          : typeof body?.error === 'string' ? body.error
+          : `the server answered ${res.status}`;
+        toast.error("Couldn't undo that", { description: describeEditError(reason) });
+        return;
+      }
+      toast.success('Undone');
+      router.refresh();
+    } catch {
+      toast.error('Could not reach the server', { description: 'Nothing was undone.' });
+    }
+  }
+
+  async function execute(perform: () => Promise<Response>, successMessage: string, onSuccess?: () => void, opts: RunEditOptions = {}) {
     setBusy(true);
     try {
       const res = await perform();
@@ -142,7 +174,12 @@ export function FileEditProvider({
         toast.error('Could not make that change', { description: describeEditError(reason) });
         return;
       }
-      toast.success(successMessage);
+      const seq = opts.undoable ? (await res.json().catch(() => null))?.seq : null;
+      if (typeof seq === 'number' && seq > 0) {
+        toast.success(successMessage, { action: { label: 'Undo', onClick: () => void undo(seq) } });
+      } else {
+        toast.success(successMessage);
+      }
       router.refresh();
       onSuccess?.();
     } catch {
@@ -152,18 +189,18 @@ export function FileEditProvider({
     }
   }
 
-  function runEdit(perform: () => Promise<Response>, successMessage: string, onSuccess?: () => void) {
+  function runEdit(perform: () => Promise<Response>, successMessage: string, onSuccess?: () => void, opts?: RunEditOptions) {
     // The controls that call this are themselves disabled whenever
     // `disabled` is set -- this is the belt-and-braces guard, not the
     // primary one, in case a request is already in flight when the disk's
     // state changes under it.
     if (disabled) return;
     if (tosecName && !identityConfirmed) {
-      pendingRef.current = () => { void execute(perform, successMessage, onSuccess); };
+      pendingRef.current = () => { void execute(perform, successMessage, onSuccess, opts); };
       setConfirmOpen(true);
       return;
     }
-    void execute(perform, successMessage, onSuccess);
+    void execute(perform, successMessage, onSuccess, opts);
   }
 
   function confirmIdentityDrop() {

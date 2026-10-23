@@ -216,3 +216,36 @@ describe('PATCH /api/disks/[id]/files/[block] -- move (toParent)', () => {
     expect(updateCalls).toHaveLength(0);
   });
 });
+
+describe('PATCH /api/disks/[id]/files/[block] -- protection', () => {
+  function protRequest(block: number, body: unknown): Request {
+    return new Request(`http://test/api/disks/${DISK_ID}/files/${block}`, {
+      method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body),
+    });
+  }
+
+  it('writes the bits into the entry and answers the new version', async () => {
+    const added = addFile(syntheticVolume({ filesystem: 'FFS', volumeName: 'ProtVol' }), 880, 'note.txt', new Uint8Array([1]));
+    if (!added.ok) throw new Error('add');
+    const v0 = readVolume(added.adf);
+    if (!v0.ok) throw new Error('read');
+    const block = v0.root[0].block;
+    selectResults = [[{ sha256: OLD_SHA, tosecName: 'Game.adf', sourceFilename: 'Game.adf' }], []];
+    diskStoreRead.mockResolvedValue(added.adf);
+
+    const { PATCH } = await import('./route');
+    const response = await PATCH(protRequest(block, { protection: 0x40 }), { params: Promise.resolve({ id: DISK_ID, block: String(block) }) });
+    expect(response.status).toBe(200);
+    expect((await response.json()).seq).toBe(1);
+    const v1 = readVolume(recordVersion.mock.calls[0][0].next);
+    if (!v1.ok) throw new Error('read after');
+    expect(v1.root[0].protection).toBe('-s--rwed');
+  });
+
+  it('refuses bits outside the eight the browser shows', async () => {
+    const { PATCH } = await import('./route');
+    const response = await PATCH(protRequest(900, { protection: 0x100 }), { params: Promise.resolve({ id: DISK_ID, block: '900' }) });
+    expect(response.status).toBe(400);
+    expect(recordVersion).not.toHaveBeenCalled();
+  });
+});

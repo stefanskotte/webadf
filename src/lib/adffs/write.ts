@@ -627,6 +627,38 @@ function ancestryOf(adf: Uint8Array, entry: number): number[] {
  * collision so a drag onto a descendant reports `cycle` rather than the
  * misleading `name-exists`.
  */
+/**
+ * Set an entry's AmigaDOS protection bits (A5): the long word at offset 320 of
+ * its header block, as `protectionString` (dir.ts) reads it -- the low four
+ * (rwed) INVERTED, a set bit forbidding the action. Only that word and the
+ * header's checksum change; no block is allocated or freed, and the hash
+ * chain is untouched. `mask` limits which bits change (default: all 32).
+ *
+ * Validated like `renameEntry`: a checksummed T_HEADER file or directory
+ * whose parent pointer names `parentBlock`, so a block that merely looks like
+ * a header elsewhere on the disk is refused.
+ */
+export function setProtection(
+  adf: Uint8Array, parentBlock: number, entryBlock: number, bits: number, mask = 0xffffffff,
+): WriteResult {
+  if (!readBoot(adf)) return { ok: false, reason: 'no-filesystem' };
+  const header = blockAt(adf, entryBlock);
+  if (!header) return { ok: false, reason: 'not-found' };
+  if (be32(header, 0) !== T_HEADER) return { ok: false, reason: 'not-found' };
+  if (!checksumOk(header, CHECKSUM_WORD)) return { ok: false, reason: 'not-found' };
+  const secondary = i32(header, 508);
+  if (secondary !== ST_FILE && secondary !== ST_USERDIR) return { ok: false, reason: 'not-found' };
+  if (be32(header, 500) !== parentBlock) return { ok: false, reason: 'not-found' };
+
+  const out = adf.slice();                       // never mutate the input
+  // Only the bits in `mask` change: the browser edits the eight it shows
+  // (hsparwed) and must not clear multi-user bits above them it never drew.
+  const word = ((be32(header, 320) & ~mask) | (bits & mask)) >>> 0;
+  putBe32(out, entryBlock * BLOCK_BYTES + 320, word);
+  recheck(out, entryBlock);
+  return { ok: true, adf: out };
+}
+
 export function moveEntry(
   adf: Uint8Array, fromParent: number, entryBlock: number, toParent: number,
 ): WriteResult {

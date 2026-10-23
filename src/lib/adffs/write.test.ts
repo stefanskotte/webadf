@@ -1,11 +1,11 @@
 import { describe, it, expect } from 'vitest';
-import { addFile, deleteEntry, renameEntry, replaceFile, makeDirectory, moveEntry, applyBatch } from './write';
+import { addFile, deleteEntry, renameEntry, replaceFile, makeDirectory, moveEntry, applyBatch, setProtection } from './write';
 import { readVolume, readFile } from './index';
 import { readUsage } from './usage';
 import { readBoot } from './boot';
 import { nameHash } from './hash';
 import { syntheticVolume } from './synthetic';
-import { blockAt, be32 } from './blocks';
+import { blockAt, be32, checksumOk } from './blocks';
 import { HASH_TABLE_SIZE, ROOT_BLOCK, BLOCK_BYTES } from './constants';
 import { walkDirectory } from './dir';
 
@@ -1014,5 +1014,62 @@ describe('protection bits', () => {
     if (!v.ok) return;
     expect(v.root[0].name).toBe('fresh');
     expect(v.root[0].protection).toBe('----rwed');
+  });
+});
+
+describe('setProtection', () => {
+  const withFile = () => {
+    const r = addFile(empty(), 880, 'prot.txt', new TextEncoder().encode('x'));
+    if (!r.ok) throw new Error(r.reason);
+    const v = readVolume(r.adf);
+    if (!v.ok) throw new Error(v.reason);
+    return { adf: r.adf, block: v.root[0].block };
+  };
+
+  it('writes the bits the reader then shows, with a valid header checksum', () => {
+    const { adf, block } = withFile();
+    // s and p set; w and d forbidden (the low four bits are inverted).
+    const r = setProtection(adf, 880, block, 0x40 | 0x20 | 0x04 | 0x01);
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    const v = readVolume(r.adf);
+    if (!v.ok) throw new Error(v.reason);
+    expect(v.root[0].protection).toBe('-sp-r-e-');
+    expect(checksumOk(blockAt(r.adf, block)!, 5)).toBe(true);
+    expect(Array.from(readFile(r.adf, block)!.bytes)).toEqual([0x78]);
+  });
+
+  it('with a mask, changes only the masked bits and keeps the rest of the word', () => {
+    const { adf, block } = withFile();
+    const first = setProtection(adf, 880, block, 0x12340000);
+    if (!first.ok) throw new Error(first.reason);
+    const r = setProtection(first.adf, 880, block, 0x40, 0xff);
+    if (!r.ok) throw new Error(r.reason);
+    expect(be32(blockAt(r.adf, block)!, 320)).toBe(0x12340040);
+  });
+
+  it('does not mutate the input', () => {
+    const { adf, block } = withFile();
+    const copy = adf.slice();
+    setProtection(adf, 880, block, 0xff);
+    expect(adf).toEqual(copy);
+  });
+
+  it('works on a directory', () => {
+    const d = makeDirectory(empty(), 880, 'Dir');
+    if (!d.ok) throw new Error(d.reason);
+    const v = readVolume(d.adf);
+    if (!v.ok) throw new Error(v.reason);
+    const r = setProtection(d.adf, 880, v.root[0].block, 0x10);
+    if (!r.ok) throw new Error(r.reason);
+    const back = readVolume(r.adf);
+    if (!back.ok) throw new Error(back.reason);
+    expect(back.root[0].protection).toBe('---arwed');
+  });
+
+  it('refuses a block that is not an entry of that parent', () => {
+    const { adf, block } = withFile();
+    expect(setProtection(adf, 880, 881, 0)).toEqual({ ok: false, reason: 'not-found' });
+    expect(setProtection(adf, 999, block, 0)).toEqual({ ok: false, reason: 'not-found' });
   });
 });

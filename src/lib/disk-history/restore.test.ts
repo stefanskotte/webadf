@@ -230,6 +230,28 @@ describe('restoreVersion', () => {
     expect(diskVersionRows).toHaveLength(rowCountBefore); // nothing recorded
   });
 
+  it('an Undo (ifHeadSeq) is refused when the disk moved on since the edit it undoes', async () => {
+    const images = await buildChain(['A', 'B', 'C']); // versions 0..3; the edit being undone made 2
+    diskLookupResult = [{ sha256: sha256Of(images[3]), tosecName: 'Chain.adf', sourceFilename: 'Chain.adf' }];
+    const rowCountBefore = diskVersionRows.length;
+
+    const { restoreVersion } = await import('./restore');
+    const result = await restoreVersion(ORG, DISK, 1, 'user-1', { ifHeadSeq: 2 });
+
+    expect(result).toEqual({ ok: false, status: 409, reason: 'changed_since' });
+    expect(diskVersionRows).toHaveLength(rowCountBefore);
+  });
+
+  it('an Undo (ifHeadSeq) whose edit is still the head restores the version before it', async () => {
+    const images = await buildChain(['A', 'B']); // versions 0..2
+    diskLookupResult = [{ sha256: sha256Of(images[2]), tosecName: 'Chain.adf', sourceFilename: 'Chain.adf' }];
+
+    const { restoreVersion } = await import('./restore');
+    const result = await restoreVersion(ORG, DISK, 1, 'user-1', { ifHeadSeq: 2 });
+
+    expect(result).toMatchObject({ ok: true, seq: 3, recorded: true });
+  });
+
   it('an unknown seq is 404, and records nothing', async () => {
     const images = await buildChain(['A']);
     diskLookupResult = [{ sha256: sha256Of(images[1]), tosecName: 'Chain.adf', sourceFilename: 'Chain.adf' }];

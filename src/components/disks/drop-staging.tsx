@@ -415,6 +415,7 @@ export function DropStaging({
       () => fetch(`/api/disks/${diskId}/files/batch`, { method: 'POST', body: form }),
       `Added ${manifest.length} item${manifest.length === 1 ? '' : 's'}`,
       clearStaged,
+      { undoable: true },
     );
   }
 

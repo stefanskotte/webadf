@@ -18,6 +18,7 @@ import { resolveFrom, libraryTrail, fromQuery, parseTrailView } from '@/lib/trai
 import { loadEntries } from '@/lib/disk-history/store';
 import { materialise } from '@/lib/disk-history/chain';
 import { loadHistory, type HistoryVersion } from '@/lib/disk-history/history';
+import { addedIn } from '@/lib/disk-history/added-in';
 import { PageHeader } from '@/components/shell/page-header';
 import { VolumeHeader } from '@/components/disks/volume-header';
 import { FileTree } from '@/components/disks/file-tree';
@@ -307,6 +308,8 @@ export default async function DiskFilesPage(props: PageProps<'/disks/[id]/files'
   const held = holderText(choices);
   // Send to Amiga from this disk (spec §4): the boards that can take files; none = no Send buttons at all.
   const [sendTargets, prefs] = await Promise.all([listSendTargets(getDb(), orgId), getUserPrefs(userId)]);
+  // "New in vN" marks (A5) describe the head: browsing an older version shows none.
+  const addedInMarks = historicalSeq === null ? Object.fromEntries(addedIn(historyVersions)) : {};
   const send = sendTargets.length > 0 ? { targets: sendTargets, now } : null;
 
   return (
@@ -388,7 +391,10 @@ export default async function DiskFilesPage(props: PageProps<'/disks/[id]/files'
             <FileToolbar />
             {/* Lets a file dropped on a folder row land in the staging area below, aimed at that folder. */}
             <NativeDropProvider>
-            {volume.ok && <FileTree entries={volume.root} diskId={id} send={send} sort={prefs.browse.sort} />}
+            {volume.ok && (
+              <FileTree entries={volume.root} diskId={id} send={send} sort={prefs.browse.sort}
+                        hideInfo={prefs.browse.hideInfo} addedIn={addedInMarks} />
+            )}
             {/*
               Below the tree, always rendered -- even with no filesystem to
               browse, matching FileToolbar's own always-shown-but-disabled

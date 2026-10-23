@@ -12,7 +12,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import type { RestoreOutcome } from '@/lib/disk-history/restore';
 
-const restoreVersion = vi.fn<(orgId: string, diskId: string, seq: number, userId: string | null) => Promise<RestoreOutcome>>();
+const restoreVersion = vi.fn<(orgId: string, diskId: string, seq: number, userId: string | null, opts?: { ifHeadSeq?: number }) => Promise<RestoreOutcome>>();
 vi.mock('@/lib/disk-history/restore', () => ({ restoreVersion }));
 
 const ORG_ID = 'org-1';
@@ -87,9 +87,18 @@ describe('POST /api/disks/[id]/restore', () => {
     const request = makeRequest({ seq: 2 });
     const response = await POST(request, { params: Promise.resolve({ id: DISK_ID }) });
 
-    expect(restoreVersion).toHaveBeenCalledWith(ORG_ID, DISK_ID, 2, USER_ID);
+    expect(restoreVersion).toHaveBeenCalledWith(ORG_ID, DISK_ID, 2, USER_ID, {});
     expect(response.status).toBe(200);
     expect(await response.json()).toEqual({ sha256: 'f'.repeat(64), seq: 4, recorded: true });
+  });
+
+  it('passes ifHead through as the Undo guard, and maps changed_since to 409', async () => {
+    restoreVersion.mockResolvedValue({ ok: false, status: 409, reason: 'changed_since' });
+    const { POST } = await import('./route');
+    const response = await POST(makeRequest({ seq: 3, ifHead: 4 }), { params: Promise.resolve({ id: DISK_ID }) });
+    expect(restoreVersion).toHaveBeenCalledWith(ORG_ID, DISK_ID, 3, USER_ID, { ifHeadSeq: 4 });
+    expect(response.status).toBe(409);
+    expect(await response.json()).toEqual({ error: 'changed_since' });
   });
 
   it('maps a held disk to 409 {error: "mounted", reason}', async () => {

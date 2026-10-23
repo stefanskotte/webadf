@@ -1480,12 +1480,28 @@ separately.
 
 **Current order (re-checked 2026-10-23):** (1) the **WebFloppy redesign** per its approved roadmap
 `docs/superpowers/specs/2026-10-23-webfloppy-redesign-roadmap-design.md` -- Phase A (missing features in today's look;
-**A1 States, A2 Settings/account, A3 Library and A4 Devices SHIPPED 2026-10-23**, see below; A5 Disk files next), then Phase B (design foundation + rename), then Phase C (layouts area by area); the operator starts
+**A1 States, A2 Settings/account, A3 Library, A4 Devices and A5 Disk files SHIPPED 2026-10-23**, see below; A6 Upload next, which needs a FULL spec), then Phase B (design foundation + rename), then Phase C (layouts area by area); the operator starts
 it; (2) B10 on the A4000D when it is on the bench; (3) rev C radio: the LWB+ breadboard test when the Mouser parts
 arrive. The
 table's deferred minors are DONE (3ce: M1, M3-M6, M8 fixed; M7 left by the review's ruling). SHIPPED today: the table view with folders, the core1 watchdog
 (1.21.0), uploads surviving a 5-minute outage (1.21.1 + Transfer 2.2), library paging (all 3ce). Entries below marked SHIPPED are kept for their history only.
 
+- **A5 Disk files -- SHIPPED 2026-10-23** (branch feat/a5-disk-files; no migration). On /disks/[id]/files: a name
+  filter (opens folders holding matches; not remembered) and **Hide .info files** (prefs `browse.hideInfo`, own
+  saver). Row checkboxes + a selection bar: **Download .zip** (GET files/zip?blocks=, fflate streaming `Zip` so a
+  `__proto__` name survives; case-insensitive top-level dedupe; `.`/`..` become `_.`/`_..`; 422 `unreadable` names
+  the file), **Move to…** and **Delete** through the new POST files/bulk -- ONE commit, all or nothing, entries
+  under a selected folder go with it. The selection is pruned on every tree change (freed blocks get reused) and
+  the bar says how many selected items the filter hides. **Protection bits**: click `----rwed`, eight toggles;
+  PATCH files/[block] `{protection}` (0..0xff), `setProtection(adf, parent, block, bits, mask)` changes only the
+  low eight bits (xdftool-checked 2026-10-23). **"new in vN"** from the loaded history (`disk-history/added-in.ts`;
+  a rewind restores the earlier mark; a move still shows as new at its new path; only the detailed newest
+  versions). **Undo** in the toast after a drop and a bulk move/delete: applyDiskEdit now returns the recorded
+  `seq`; Undo = POST restore `{seq: seq-1, ifHead: seq}`, refused 409 `changed_since` once anything else wrote.
+  Like every writer, setProtection ignores the FFS directory cache (DCFS) -- worth a refusal when that is next
+  touched. Also fixed: `synthDrop` (e2e/drag-drop-helpers.ts) now waits for React to hydrate its target --
+  archive-drop-folder :170/:196 and disk-drag-drop :292 failed on master too (drop before hydration).
+  e2e: disk-files-a5.spec.ts (8, 90 s budget: an Undo restore takes ~20 s against the live DB).
 - **A4 Devices -- SHIPPED 2026-10-23** (branch feat/a4-devices, migration **0048_last_disk applied to production
   2026-10-23** before the push). `devices.last_disk_id` (FK disks, SET NULL): clearDesired sets it to
   coalesce(desired, mounted, previous), so every web eject (card, chips, library, disk delete) remembers the disk;

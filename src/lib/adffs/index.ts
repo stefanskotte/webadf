@@ -18,7 +18,7 @@ export type { FileBytes } from './file';
 export type { Filesystem, BootInfo } from './boot';
 export { readUsage, type VolumeUsage } from './usage';
 export {
-  addFile, deleteEntry, renameEntry, replaceFile, makeDirectory, moveEntry,
+  addFile, deleteEntry, renameEntry, replaceFile, makeDirectory, moveEntry, setProtection,
   applyBatch, type WriteResult, type WriteError, type BatchOp,
 } from './write';
 export { blocksForFile, blocksForPlan, type CostItem } from './capacity';

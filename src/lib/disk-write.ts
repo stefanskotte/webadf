@@ -30,7 +30,8 @@ import { recordVersion, StaleHeadError, type Recorded } from '@/lib/disk-history
 import type { WriteResult } from '@/lib/adffs';
 
 export type DiskEditOutcome =
-  | { ok: true; sha256: string }
+  /** `seq` is the version this edit recorded; null when it changed nothing. Undo (A5) restores `seq - 1`. */
+  | { ok: true; sha256: string; seq: number | null }
   | { ok: false; status: number; reason: string };
 
 /**
@@ -131,5 +132,5 @@ export async function applyDiskEdit(
   // above; the only repoint is repointLateMounts' completion of a mount that
   // began after it.
 
-  return { ok: true, sha256 };
+  return { ok: true, sha256, seq: recorded?.seq ?? null };
 }

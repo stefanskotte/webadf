@@ -40,6 +40,7 @@ export type RestoreOutcome =
  */
 export async function restoreVersion(
   orgId: string, diskId: string, seq: number, userId: string | null = null,
+  opts: { ifHeadSeq?: number } = {},
 ): Promise<RestoreOutcome> {
   const db = getDb();
 
@@ -82,6 +83,13 @@ export async function restoreVersion(
   const entries = await loadEntries(diskId);
   if (!entries.some((e) => e.seq === seq)) {
     return { ok: false, status: 404, reason: 'not_found' };
+  }
+
+  // An Undo (A5) names the version its edit recorded: anything written since
+  // -- an Amiga save, another edit -- would be wiped by going back, so it is
+  // refused and the History panel is the way back instead.
+  if (opts.ifHeadSeq !== undefined && entries[entries.length - 1].seq !== opts.ifHeadSeq) {
+    return { ok: false, status: 409, reason: 'changed_since' };
   }
 
   let target: Uint8Array;

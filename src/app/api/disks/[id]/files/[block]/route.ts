@@ -5,41 +5,14 @@ import { disks, entitlements } from '@/db/schema/catalog';
 import { requireOrg } from '@/lib/session';
 import { diskStore } from '@/lib/storage';
 import {
-  readVolume, readFile, deleteEntry, renameEntry, replaceFile, moveEntry,
-  type AdfEntry, type WriteResult,
+  readVolume, readFile, deleteEntry, renameEntry, replaceFile, moveEntry, setProtection,
+  type WriteResult,
 } from '@/lib/adffs';
 import { downloadFilename, contentDisposition } from '@/lib/download-name';
 import { applyDiskEdit } from '@/lib/disk-write';
+import { findEntry, findEntryWithParent } from '@/lib/disk-entries';
 
 export const maxDuration = 60;
-
-/** Depth-first search for the entry at `block`, so its NAME can be used. */
-function findEntry(entries: AdfEntry[], block: number): AdfEntry | null {
-  for (const e of entries) {
-    if (e.block === block) return e;
-    const found = findEntry(e.children, block);
-    if (found) return found;
-  }
-  return null;
-}
-
-/**
- * Same walk as `findEntry`, but also returns the block the entry lives
- * directly under. `renameEntry` and `deleteEntry` both take the PARENT block
- * explicitly (spec D-3-5's block-addressing has no parent pointer of its
- * own to read back), so the only way to get it is to walk down from the
- * volume's root block and remember where each entry was found.
- */
-function findEntryWithParent(
-  entries: AdfEntry[], block: number, parentBlock: number,
-): { entry: AdfEntry; parentBlock: number } | null {
-  for (const e of entries) {
-    if (e.block === block) return { entry: e, parentBlock };
-    const found = findEntryWithParent(e.children, block, e.block);
-    if (found) return found;
-  }
-  return null;
-}
 
 /**
  * One file out of a disk's AmigaDOS filesystem.
@@ -115,6 +88,8 @@ export async function GET(
 
 const renameBody = z.object({ name: z.string().trim().min(1) });
 const moveBody = z.object({ toParent: z.number().int().nonnegative() });
+// The eight bits the browser shows (hsparwed); the rest of the word is kept.
+const protectionBody = z.object({ protection: z.number().int().min(0).max(0xff) });
 
 /**
  * Rename this entry, replace a file's contents, or move it to another
@@ -167,9 +142,23 @@ export async function PATCH(
       return Response.json({ error: 'invalid_json' }, { status: 400 });
     }
 
-    // `toParent` is the one field that distinguishes a move from a rename --
-    // there is no separate `kind` field to fall out of sync with it.
-    if (raw !== null && typeof raw === 'object' && 'toParent' in raw) {
+    // `protection` (A5): set the entry's AmigaDOS protection bits.
+    if (raw !== null && typeof raw === 'object' && 'protection' in raw) {
+      const parsed = protectionBody.safeParse(raw);
+      if (!parsed.success) {
+        return Response.json({ error: 'invalid_body', detail: z.flattenError(parsed.error) }, { status: 400 });
+      }
+      const bits = parsed.data.protection;
+      edit = (adf) => {
+        const volume = readVolume(adf);
+        if (!volume.ok) return { ok: false, reason: 'no-filesystem' };
+        const found = findEntryWithParent(volume.root, blockNo, volume.rootBlock);
+        if (!found) return { ok: false, reason: 'not-found' };
+        return setProtection(adf, found.parentBlock, blockNo, bits, 0xff);
+      };
+    } else if (raw !== null && typeof raw === 'object' && 'toParent' in raw) {
+      // `toParent` is the one field that distinguishes a move from a rename --
+      // there is no separate `kind` field to fall out of sync with it.
       const parsed = moveBody.safeParse(raw);
       if (!parsed.success) {
         return Response.json({ error: 'invalid_body', detail: z.flattenError(parsed.error) }, { status: 400 });
@@ -225,7 +214,7 @@ export async function PATCH(
       : result.reason;
     return Response.json({ error: 'edit_failed', reason }, { status: result.status });
   }
-  return Response.json({ id, block: blockNo, sha256: result.sha256 });
+  return Response.json({ id, block: blockNo, sha256: result.sha256, seq: result.seq });
 }
 
 /**
@@ -257,5 +246,5 @@ export async function DELETE(
   if (!result.ok) {
     return Response.json({ error: 'edit_failed', reason: result.reason }, { status: result.status });
   }
-  return Response.json({ id, block: blockNo, sha256: result.sha256 });
+  return Response.json({ id, block: blockNo, sha256: result.sha256, seq: result.seq });
 }

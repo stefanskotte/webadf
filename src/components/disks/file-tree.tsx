@@ -22,6 +22,10 @@ import type { SendContext } from '@/lib/send-ui';
 import { useSendAction } from '@/components/send/send-button';
 import { useFileEdit, MAX_NAME_LENGTH, type EditDisabled } from './file-actions';
 import { useNativeDrop, isFileDrag } from './native-drop';
+import { SelectionBar } from './selection-bar';
+import { ProtectionEditor } from './protection-editor';
+import { filterTree } from '@/lib/file-filter';
+import { underSelected } from '@/lib/disk-entries';
 
 /**
  * The handlers that make an element take an OS file drop for `block`
@@ -48,6 +52,8 @@ interface VisibleRow {
   entry: AdfEntry;
   depth: number;
   open: boolean;
+  /** Root-relative, '/'-separated: the key "new in vN" marks are looked up by. */
+  path: string;
 }
 
 /**
@@ -72,16 +78,25 @@ interface VisibleRow {
  * droppable wrapping the whole list" both true at once without either one
  * fighting the other for the pointer.
  */
-function flatten(entries: AdfEntry[], openBlocks: Set<number>, sort: BrowseSort, depth = 0): VisibleRow[] {
+function flatten(
+  entries: AdfEntry[], openBlocks: ReadonlySet<number>, sort: BrowseSort, depth = 0, prefix = '',
+): VisibleRow[] {
   const rows: VisibleRow[] = [];
   for (const entry of sortEntries(entries, sort)) {
     const open = entry.kind === 'dir' && openBlocks.has(entry.block);
-    rows.push({ entry, depth, open });
+    const path = prefix ? `${prefix}/${entry.name}` : entry.name;
+    rows.push({ entry, depth, open, path });
     if (open && entry.kind === 'dir') {
-      rows.push(...flatten(entry.children, openBlocks, sort, depth + 1));
+      rows.push(...flatten(entry.children, openBlocks, sort, depth + 1, path));
     }
   }
   return rows;
+}
+
+/** Every block in the tree, so a selection can drop what a refresh took away. */
+function allBlocks(entries: AdfEntry[], into = new Set<number>()): Set<number> {
+  for (const e of entries) { into.add(e.block); allBlocks(e.children, into); }
+  return into;
 }
 
 /**
@@ -198,11 +213,20 @@ export function collectDirectories(entries: AdfEntry[], parentPath = ''): Direct
 
 /** Reserved on the left of every row for the drag handle, so the handle can be absolutely positioned in that gutter without disturbing any of the existing `pl-[22px]` alignment the metadata/action lines below the name already depend on. */
 const GRIP_GUTTER = 22;
+/** Room for the selection checkbox (A5), left of the grip, when rows are selectable. */
+const SELECT_GUTTER = 20;
 
-export function FileTree({ entries, diskId, send = null, sort: initialSort = DEFAULT_PREFS.browse.sort }: {
+export function FileTree({
+  entries, diskId, send = null, sort: initialSort = DEFAULT_PREFS.browse.sort,
+  hideInfo: initialHideInfo = DEFAULT_PREFS.browse.hideInfo, addedIn = {},
+}: {
   entries: AdfEntry[]; diskId: string; send?: SendContext | null;
   /** The person's remembered Browse sort (user prefs browse.sort), read by the page. */
   sort?: BrowseSort;
+  /** The person's remembered "Hide .info files" (user prefs browse.hideInfo). */
+  hideInfo?: boolean;
+  /** Path -> the version that added it (disk-history/added-in.ts): the "new in vN" marks. */
+  addedIn?: Record<string, number>;
 }) {
   const [openBlocks, setOpenBlocks] = useState<ReadonlySet<number>>(() => new Set());
   // Sorted here in the browser (the whole tree is already on the page), so a
@@ -225,6 +249,48 @@ export function FileTree({ entries, diskId, send = null, sort: initialSort = DEF
   }
   const { disabled, busy, runEdit, rootBlock } = useFileEdit();
   const sender = useSendAction(send);
+
+  // Name filter and "Hide .info files" (A5). The filter is for this visit
+  // only; hiding .info is remembered like the sort.
+  const [query, setQuery] = useState('');
+  const [hideInfo, setHideInfo] = useState(initialHideInfo);
+  // Its own saver: latestSaver keeps only the newest pending patch, so sharing
+  // the sort's would let this cancel a sort save still waiting to go.
+  const [infoSaver] = useState(latestSaver);
+  function changeHideInfo(next: boolean) {
+    setHideInfo(next);
+    infoSaver.save({ browse: { hideInfo: next } }).catch(() => {
+      toast.error("Couldn't remember that for next time.");
+    });
+  }
+  const filtered = useMemo(() => filterTree(entries, { query, hideInfo }), [entries, query, hideInfo]);
+  const shownBlocks = useMemo(() => allBlocks(filtered.entries), [filtered]);
+
+  // Multi-select (A5). A refresh after an edit renumbers nothing it did not
+  // touch, but drops what it removed -- and a later add may reuse a freed
+  // block -- so the selection is pruned to the blocks still on the disk each
+  // time the tree changes. Anything inside a selected folder goes with it.
+  const [selected, setSelected] = useState<ReadonlySet<number>>(() => new Set());
+  const [selectedFor, setSelectedFor] = useState(entries);
+  if (selectedFor !== entries) {
+    setSelectedFor(entries);
+    const present = allBlocks(entries);
+    setSelected((prev) => new Set([...prev].filter((b) => present.has(b))));
+  }
+  const live = selected;
+  const selectionTops = useMemo(
+    () => [...live].filter((b) => !underSelected(entries, b, live))
+      .map((b) => findEntryByBlock(entries, b)).filter((e): e is AdfEntry => e !== null),
+    [entries, live],
+  );
+  function toggleSelected(block: number) {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (!next.delete(block)) next.add(block);
+      return next;
+    });
+  }
+  const selectable = disabled?.reason !== 'historical';
 
   // OS file drops onto a folder row (or the tree itself, meaning the root)
   // go to the staging area with that folder as the destination. Even when
@@ -270,6 +336,8 @@ export function FileTree({ entries, diskId, send = null, sort: initialSort = DEF
   // see startRename/startDelete below.
   const [moveBlock, setMoveBlock] = useState<number | null>(null);
   const [moveTarget, setMoveTarget] = useState<number | ''>('');
+  // Fourth of the same set: the row whose protection editor is open.
+  const [protectBlock, setProtectBlock] = useState<number | null>(null);
 
   // The block of whichever row is currently being dragged, or null. Tracked
   // here (not per-row) because deciding whether a GIVEN folder may accept
@@ -287,6 +355,7 @@ export function FileTree({ entries, diskId, send = null, sort: initialSort = DEF
   function startRename(entry: AdfEntry) {
     setDeleteBlock(null);
     setMoveBlock(null);
+    setProtectBlock(null);
     setRenameBlock(entry.block);
     setRenameValue(entry.name.slice(0, MAX_NAME_LENGTH));
   }
@@ -310,6 +379,7 @@ export function FileTree({ entries, diskId, send = null, sort: initialSort = DEF
   function startDelete(entry: AdfEntry) {
     setRenameBlock(null);
     setMoveBlock(null);
+    setProtectBlock(null);
     setDeleteBlock(entry.block);
   }
 
@@ -325,9 +395,17 @@ export function FileTree({ entries, diskId, send = null, sort: initialSort = DEF
     cancelDelete();
   }
 
+  function startProtect(entry: AdfEntry) {
+    setRenameBlock(null);
+    setDeleteBlock(null);
+    setMoveBlock(null);
+    setProtectBlock(entry.block);
+  }
+
   function startMove(entry: AdfEntry) {
     setRenameBlock(null);
     setDeleteBlock(null);
+    setProtectBlock(null);
     setMoveBlock(entry.block);
     setMoveTarget('');
   }
@@ -475,7 +553,10 @@ export function FileTree({ entries, diskId, send = null, sort: initialSort = DEF
     );
   }
 
-  const rows = flatten(entries, openBlocks as Set<number>, sort);
+  // While a filter is typed, the folders leading to a match are open as well
+  // as whatever the person opened themselves.
+  const shownOpen = query.trim() ? new Set([...openBlocks, ...filtered.open]) : openBlocks;
+  const rows = flatten(filtered.entries, shownOpen, sort);
 
   return (
     // `id` is not decoration. dnd-kit derives the hidden drag description's
@@ -502,10 +583,36 @@ export function FileTree({ entries, diskId, send = null, sort: initialSort = DEF
         data-drop-target={rootIsOver || nativeOver === rootBlock ? 'true' : undefined}
         {...nativeDropProps(rootBlock)}
       >
-        <div className="flex justify-end px-1 pb-2">
+        <div className="flex flex-wrap items-center justify-end gap-x-3 gap-y-2 px-1 pb-2">
+          <input
+            type="search"
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            onKeyDown={(e) => { if (e.key === 'Escape') setQuery(''); }}
+            placeholder="Filter by name"
+            aria-label="Filter files by name"
+            data-testid="fs-filter"
+            className="min-w-0 flex-1 rounded border bg-transparent px-2 py-1 text-[12px] sm:max-w-[240px]"
+            style={{ borderColor: 'var(--hairline)', color: 'var(--ink)' }}
+          />
+          <label className="flex items-center gap-1.5 text-[12px]" style={{ color: 'var(--muted)' }}>
+            <input type="checkbox" checked={hideInfo} onChange={(e) => changeHideInfo(e.target.checked)}
+                   data-testid="fs-hide-info" />
+            Hide .info files
+          </label>
           <SortSelect options={BROWSE_SORT_OPTIONS} value={sort} onChange={changeSort} testId="browse-sort" />
         </div>
-        {rows.map(({ entry, depth, open }, i) => (
+        {selectionTops.length > 0 && (
+          <SelectionBar diskId={diskId} tops={selectionTops} directoryOptions={directoryOptions}
+                        hidden={selectionTops.filter((e) => !shownBlocks.has(e.block)).length}
+                        onClear={() => setSelected(new Set())} />
+        )}
+        {rows.length === 0 && (
+          <p className="px-2 py-3 text-[12.5px]" style={{ color: 'var(--muted)' }} data-testid="fs-filter-empty">
+            {query.trim() ? `No files match "${query.trim()}".` : 'Every file here is a .info icon file.'}
+          </p>
+        )}
+        {rows.map(({ entry, depth, open, path }, i) => (
           <FileRow
             key={entry.block}
             entry={entry}
@@ -542,6 +649,13 @@ export function FileTree({ entries, diskId, send = null, sort: initialSort = DEF
             // this file", i.e. into the folder it is in.
             nativeDrop={nativeDropProps(entry.kind === 'dir' ? entry.block : (parentBlocks.get(entry.block) ?? rootBlock))}
             nativeOver={nativeOver === entry.block}
+            selectable={selectable}
+            selected={live.has(entry.block)}
+            onSelect={toggleSelected}
+            addedInSeq={addedIn[path] ?? null}
+            protectOpen={protectBlock === entry.block}
+            startProtect={startProtect}
+            closeProtect={() => setProtectBlock(null)}
           />
         ))}
       </div>
@@ -590,6 +704,15 @@ interface FileRowProps {
   nativeDrop?: NativeDropProps;
   /** An OS file drag is over this folder right now. */
   nativeOver: boolean;
+  /** Multi-select (A5): off while browsing an older version. */
+  selectable: boolean;
+  selected: boolean;
+  onSelect: (block: number) => void;
+  /** The version that added this entry, for its "new in vN" mark; null for none. */
+  addedInSeq: number | null;
+  protectOpen: boolean;
+  startProtect: (entry: AdfEntry) => void;
+  closeProtect: () => void;
 }
 
 function FileRow({
@@ -599,8 +722,10 @@ function FileRow({
   toggle, startRename, cancelRename, submitRename, setRenameValue,
   startDelete, cancelDelete, submitDelete,
   startMove, cancelMove, submitMove, setMoveTarget, nativeDrop, nativeOver,
+  selectable, selected, onSelect, addedInSeq, protectOpen, startProtect, closeProtect,
 }: FileRowProps) {
   const isDir = entry.kind === 'dir';
+  const selectGutter = selectable ? SELECT_GUTTER : 0;
 
   // The "Move to…" menu's own options -- this row's exclusion of
   // `directoryOptions`, computed the same way `forbiddenBlocks` is computed
@@ -647,6 +772,16 @@ function FileRow({
     disabled: !isDir || !!editDisabled || forbiddenBlocks.has(entry.block),
   });
 
+  // "New in vN" (A5): this entry was not on the disk as uploaded.
+  const newMark = addedInSeq !== null && (
+    <span className="shrink-0 rounded-full px-1.5 py-px text-[10px] font-semibold"
+          style={{ background: 'var(--success-bg)', color: 'var(--success-fg)' }}
+          title={`Added in version ${addedInSeq} — see History`}
+          data-testid={`fs-new-${entry.block}`}>
+      new in v{addedInSeq}
+    </span>
+  );
+
   const row = (
     <div
       ref={setDragRef}
@@ -659,7 +794,7 @@ function FileRow({
       // action, so it would be the first thing pushed out of reach.
       className="relative flex flex-col gap-1 py-1.5 text-[12.5px] sm:flex-row sm:items-center sm:gap-3"
       style={{
-        paddingLeft: `${depth * 18 + 8 + GRIP_GUTTER}px`,
+        paddingLeft: `${depth * 18 + 8 + selectGutter + GRIP_GUTTER}px`,
         paddingRight: '8px',
         background: striped ? 'rgb(255 255 255 / 0.5)' : 'transparent',
         // Rounded so the wash reads as a band rather than a full-bleed
@@ -698,7 +833,7 @@ function FileRow({
         {...listeners}
         style={{
           position: 'absolute',
-          left: `${depth * 18 + 8}px`,
+          left: `${depth * 18 + 8 + selectGutter}px`,
           top: '50%',
           transform: 'translateY(-50%)',
           touchAction: 'none',
@@ -709,6 +844,17 @@ function FileRow({
         <GripVertical size={12} aria-hidden />
       </button>
 
+      {selectable && (
+        <input
+          type="checkbox"
+          checked={selected}
+          onChange={() => onSelect(entry.block)}
+          aria-label={`Select ${entry.name}`}
+          data-testid={`fs-select-${entry.block}`}
+          className="absolute"
+          style={{ left: `${depth * 18 + 10}px`, top: '50%', transform: 'translateY(-50%)' }}
+        />
+      )}
       {isDir ? (
         // A stable testid of its own -- not just the accessible name
         // (which happens to equal entry.name today) -- because a row
@@ -735,10 +881,12 @@ function FileRow({
             ▸
           </span>
           <span className="truncate">{entry.name}</span>
+          {newMark}
         </button>
       ) : (
-        <span className="min-w-0 flex-1 truncate pl-[22px]" style={{ color: 'var(--ink)' }}>
-          {entry.name}
+        <span className="flex min-w-0 flex-1 items-center gap-2 pl-[22px]" style={{ color: 'var(--ink)' }}>
+          <span className="truncate">{entry.name}</span>
+          {newMark}
         </span>
       )}
 
@@ -756,9 +904,22 @@ function FileRow({
             {entry.sizeBytes.toLocaleString()} B
           </span>
         )}
-        <span className="shrink-0 font-mono text-[11px]" style={{ color: 'var(--muted-2)' }}>
-          {entry.protection}
-        </span>
+        {/* Click to edit (A5); a plain reading when the disk can't be edited. */}
+        {editDisabled ? (
+          <span className="shrink-0 font-mono text-[11px]" style={{ color: 'var(--muted-2)' }}
+                data-testid={`fs-protect-${entry.block}`}>
+            {entry.protection}
+          </span>
+        ) : (
+          <button type="button" onClick={() => startProtect(entry)}
+                  aria-label={`Protection of ${entry.name}: ${entry.protection}. Change`}
+                  title="Change protection bits"
+                  data-testid={`fs-protect-${entry.block}`}
+                  className="shrink-0 rounded font-mono text-[11px] underline-offset-2 hover:underline"
+                  style={{ color: 'var(--muted-2)' }}>
+            {entry.protection}
+          </button>
+        )}
         <span className="w-[80px] shrink-0 font-mono text-[11px]" style={{ color: 'var(--muted-2)' }}>
           {entry.modifiedAt ? entry.modifiedAt.toISOString().slice(0, 10) : '—'}
         </span>
@@ -852,7 +1013,9 @@ function FileRow({
         `fs-toggle-${block}` testid instead, so the row can hold more
         than one button without any test locator caring.
       */}
-      {renameBlock === entry.block ? (
+      {protectOpen ? (
+        <ProtectionEditor diskId={diskId} entry={entry} onClose={closeProtect} />
+      ) : renameBlock === entry.block ? (
         <div className="flex flex-wrap items-center gap-2 pl-[22px]">
           <input
             value={renameValue}

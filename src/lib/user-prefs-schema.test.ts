@@ -10,7 +10,7 @@ describe('user prefs defaults', () => {
     expect(DEFAULT_PREFS).toEqual({
       startPage: 'library',
       library: { sort: { key: 'added', dir: 'desc' }, view: 'grid', pageSize: 48 },
-      browse: { sort: { key: 'name', dir: 'asc' } },
+      browse: { sort: { key: 'name', dir: 'asc' }, hideInfo: false },
       firmware: { skipPassword: false },
     });
   });
@@ -32,7 +32,7 @@ describe('user prefs defaults', () => {
     expect(p).toEqual({
       startPage: 'devices',
       library: { sort: { key: 'added', dir: 'desc' }, view: 'grid', pageSize: 48 },
-      browse: { sort: { key: 'size', dir: 'desc' } },
+      browse: { sort: { key: 'size', dir: 'desc' }, hideInfo: false },
       firmware: { skipPassword: false },
     });
     expect(parsePrefs({ startPage: 'nowhere' }).startPage).toBe('library');
@@ -94,7 +94,7 @@ describe('user prefs patch', () => {
     expect(next).toEqual({
       startPage: 'devices',
       library: { sort: { key: 'year', dir: 'asc' }, view: 'grid', pageSize: 48 },
-      browse: { sort: { key: 'size', dir: 'desc' } },
+      browse: { sort: { key: 'size', dir: 'desc' }, hideInfo: false },
       firmware: { skipPassword: false },
     });
     // The input is untouched.
@@ -196,9 +196,24 @@ describe('prefsDiff', () => {
     const saved = parsePrefs({});
     expect(prefsDiff(saved, saved)).toEqual({});
     expect(prefsDiff(saved, { ...saved, startPage: 'devices' })).toEqual({ startPage: 'devices' });
-    expect(prefsDiff(saved, { ...saved, browse: { sort: { key: 'size', dir: 'desc' } } }))
+    expect(prefsDiff(saved, { ...saved, browse: { ...saved.browse, sort: { key: 'size', dir: 'desc' } } }))
       .toEqual({ browse: { sort: { key: 'size', dir: 'desc' } } });
     expect(prefsDiff(saved, { ...saved, library: { ...saved.library, sort: { key: 'title', dir: 'asc' } } }))
       .toEqual({ library: { sort: { key: 'title', dir: 'asc' } } });
+  });
+});
+
+describe('browse.hideInfo (A5)', () => {
+  it('defaults to showing .info files, and a stored true is kept', () => {
+    expect(DEFAULT_PREFS.browse.hideInfo).toBe(false);
+    expect(parsePrefs({ browse: { hideInfo: true } }).browse.hideInfo).toBe(true);
+    expect(parsePrefs({ browse: { hideInfo: 'yes' } }).browse.hideInfo).toBe(false);
+  });
+
+  it('is patched on its own, keeping the sort', () => {
+    const r = parsePrefsPatch({ browse: { hideInfo: true } });
+    if (!r.ok) throw new Error(r.error);
+    const next = applyPrefsPatch(parsePrefs({ browse: { sort: { key: 'size', dir: 'desc' } } }), r.patch);
+    expect(next.browse).toEqual({ sort: { key: 'size', dir: 'desc' }, hideInfo: true });
   });
 });

@@ -14,7 +14,9 @@ export const dynamic = 'force-dynamic';
 // fail this one first.
 export const maxDuration = 60;
 
-const body = z.object({ seq: z.number().int().min(0) });
+// `ifHead` (A5's Undo): the version the undone edit recorded; refused with
+// 409 changed_since when the disk has moved past it.
+const body = z.object({ seq: z.number().int().min(0), ifHead: z.number().int().min(0).optional() });
 
 /**
  * Restore a disk to an earlier version -- the time machine's rewind (spec
@@ -42,7 +44,10 @@ export async function POST(request: Request, ctx: { params: Promise<{ id: string
     return Response.json({ error: 'invalid_body', detail: z.flattenError(parsed.error) }, { status: 400 });
   }
 
-  const result = await restoreVersion(orgId, id, parsed.data.seq, userId);
+  const result = await restoreVersion(
+    orgId, id, parsed.data.seq, userId,
+    parsed.data.ifHead === undefined ? {} : { ifHeadSeq: parsed.data.ifHead },
+  );
   if (!result.ok) {
     // A 409 is either a held disk (reason is the shared mountedReason
     // wording) or a stale head (reason is the literal 'conflict'); every

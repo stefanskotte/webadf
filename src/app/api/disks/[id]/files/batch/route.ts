@@ -199,5 +199,5 @@ export async function POST(request: Request, ctx: { params: Promise<{ id: string
   if (!result.ok) {
     return Response.json({ error: 'edit_failed', reason: result.reason }, { status: result.status });
   }
-  return Response.json({ id, sha256: result.sha256 });
+  return Response.json({ id, sha256: result.sha256, seq: result.seq });
 }
