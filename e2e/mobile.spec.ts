@@ -87,11 +87,14 @@ test('the bottom bar reaches every route, and there is only one nav', async ({ p
   await seedLibrary(page, 2);
   await page.goto('/library');
 
-  // One nav element, not a desktop copy plus a mobile copy -- a duplicate
-  // would make getByRole('link') ambiguous here AND in the 1280 specs.
-  await expect(page.locator('nav')).toHaveCount(1);
+  // One site nav, not a desktop copy plus a mobile copy -- a duplicate
+  // would make getByRole('link') ambiguous here AND in the 1280 specs. The
+  // library's pager is a <nav> of its own (aria-label "Pages"), so it is left
+  // out by name rather than counted.
+  const navs = page.locator('nav:not([aria-label="Pages"])');
+  await expect(navs).toHaveCount(1);
 
-  const bar = page.locator('nav');
+  const bar = navs;
   const box = (await bar.boundingBox())!;
   // Actually at the bottom of the 844px viewport, not merely styled for it.
   expect(box.y + box.height).toBeGreaterThan(760);

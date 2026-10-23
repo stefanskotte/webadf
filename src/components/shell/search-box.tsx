@@ -12,7 +12,7 @@
 // below instead, kept in sync with src/lib/search.ts by hand.
 
 import { useEffect, useRef, useState } from 'react';
-import { useNavProgress } from './nav-progress';
+import { useRouter } from 'next/navigation';
 
 interface SearchTitle {
   id: string;
@@ -34,7 +34,7 @@ interface SearchResults {
 const EMPTY_RESULTS: SearchResults = { titles: [], collections: [] };
 
 export function SearchBox() {
-  const { navigate } = useNavProgress();
+  const router = useRouter();
   const inputRef = useRef<HTMLInputElement>(null);
 
   const [q, setQ] = useState('');
@@ -205,11 +205,9 @@ export function SearchBox() {
   }
 
   function select(entry: (typeof flat)[number]) {
-    // navigate(), not router.push: a bare push reports no pending state, and
-    // this is the one navigation in the app where the panel vanishes on the
-    // same click, so without the bar nothing on screen confirms it landed.
-    if (entry.kind === 'title') navigate(`/games/${entry.item.id}`);
-    else navigate(`/library?collection=${entry.item.id}`);
+    // The page's loading placeholders (loading.tsx) confirm the click landed.
+    if (entry.kind === 'title') router.push(`/games/${entry.item.id}`);
+    else router.push(`/library?collection=${entry.item.id}`);
     // SearchBox lives in the layout, so navigating does not unmount it --
     // without reset() here the request for whatever was typed keeps running
     // and can repopulate the panel with the PREVIOUS search's rows the next

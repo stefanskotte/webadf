@@ -1,24 +1,6 @@
-'use client';
-
-import NextLink from 'next/link';
-import type { ComponentProps } from 'react';
-import { PendingReporter } from './nav-progress';
-
 /**
- * next/link, plus this app's navigation feedback.
- *
- * Import this instead of next/link anywhere a click navigates. The only
- * difference is the reporter child, which renders null and exists so that
- * useLinkStatus() -- readable only BELOW a <Link> -- can tell the shell a
- * navigation is in flight. Everything else, props included, is next/link's.
- *
- * A plain next/link still works; it just navigates without the bar.
+ * The app's in-app link: next/link. It once also drove a top-of-page progress bar; the loading placeholders
+ * (loading.tsx, A1 States) replaced that on the operator's call (2026-10-23), and this name is kept so the many
+ * imports of it did not have to change.
  */
-export function Link({ children, ...props }: ComponentProps<typeof NextLink>) {
-  return (
-    <NextLink {...props}>
-      {children}
-      <PendingReporter />
-    </NextLink>
-  );
-}
+export { default as Link } from 'next/link';

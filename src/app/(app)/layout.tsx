@@ -11,7 +11,6 @@ import { AboutLink } from "@/components/shell/about-link";
 import { SettingsLink } from "@/components/shell/settings-link";
 import { Logo } from "@/components/shell/logo";
 import { Link } from "@/components/shell/link";
-import { NavProgressProvider } from "@/components/shell/nav-progress";
 import { LiveRefresh } from "@/components/shell/live-refresh";
 import { DriveChips } from "@/components/shell/drive-chips";
 import { HeaderStart } from "@/components/shell/header-start";
@@ -47,7 +46,7 @@ export default async function AppLayout({
   // LiveRefresh keeps them exactly as fresh as the Devices page.
   const chips = driveChips(liveRows, now);
   return (
-    <NavProgressProvider>
+    <>
       <LiveRefresh initial={fingerprint} />
       {/* The bottom padding is the room the fixed mobile nav bar occupies (see
           the wrapper below). It lives here, once, rather than on each page:
@@ -66,9 +65,7 @@ export default async function AppLayout({
           <HeaderStart pillEstimate={showAdmin ? 386 : 312}>
             {/* The wordmark is the way home. Every other shell in the app has an
                 explicit way back to the library; this one only had the nav pill,
-                and the mark is where people click first (operator, 2026-09-21).
-                Uses the shell's own Link, so it drives the navigation bar like
-                every other in-app link. */}
+                and the mark is where people click first (operator, 2026-09-21). */}
             <Link
               href="/library"
               data-testid="wordmark-home"
@@ -146,6 +143,6 @@ export default async function AppLayout({
         </header>
         {children}
       </div>
-    </NavProgressProvider>
+    </>
   );
 }

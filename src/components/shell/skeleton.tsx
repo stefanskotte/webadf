@@ -1,6 +1,7 @@
 /**
  * Loading placeholders (A1 States): grey shapes where the page's header and content will be, shown by a loading.tsx
- * while the server renders the page. The top navigation bar (nav-progress.tsx) keeps running over them. No ids that
+ * while the server renders the page -- the app's only navigation feedback (the top progress bar was removed
+ * 2026-10-23, operator: the placeholders say it). No ids that
  * a real page uses, so a test waiting for real content never mistakes a placeholder for it.
  */
 

@@ -3,7 +3,6 @@ import { requireSuperAdmin } from '@/lib/superadmin';
 import { AdminNav } from '@/components/admin/admin-nav';
 import { SearchBox } from '@/components/shell/search-box';
 import { Logo } from '@/components/shell/logo';
-import { NavProgressProvider } from '@/components/shell/nav-progress';
 
 /**
  * The admin shell. Deliberately NOT the (app) shell: there is no active
@@ -22,7 +21,7 @@ export default async function AdminLayout({
 }) {
   const { email } = await requireSuperAdmin();
   return (
-    <NavProgressProvider>
+    <>
       {/* The bottom padding is the room the fixed mobile nav bar occupies (see
           the wrapper below). It lives here, once, rather than on each admin
           page, which would otherwise each have to remember it. */}
@@ -92,6 +91,6 @@ export default async function AdminLayout({
         </header>
         {children}
       </div>
-    </NavProgressProvider>
+    </>
   );
 }
