@@ -1,5 +1,5 @@
 import { test, expect } from '@playwright/test';
-import { signUpFresh } from './helpers';
+import { signUpFresh, libRows, stagingReady } from './helpers';
 import { cleanupSeeded } from './device-helpers';
 
 // Upload from a URL (POST /api/ingest/url, the URL field on /ingest).
@@ -57,6 +57,7 @@ test('refuses non-public and malformed targets with a code only, then rate-limit
 test("refuses the app's own server (port and loopback) from the upload page", async ({ page, baseURL }) => {
   await signUpFresh(page);
   await page.goto('/ingest');
+  await stagingReady(page);
 
   const field = page.getByLabel('Or fetch from a URL');
   await expect(field).toBeVisible();
@@ -72,7 +73,7 @@ test("refuses the app's own server (port and loopback) from the upload page", as
   await expect(page.getByTestId('url-status')).toHaveText(/private or local network/);
 
   // A refused fetch adds no rows.
-  await expect(page.getByTestId('ingest-row')).toHaveCount(0);
+  await expect(libRows(page)).toHaveCount(0);
 });
 
 test('the URL field and Fetch button fit a 390 px screen', async ({ page }) => {
@@ -95,11 +96,11 @@ test('fetches a public disk image and lists it like a dropped file', async ({ pa
 
   await signUpFresh(page);
   await page.goto('/ingest');
+  await stagingReady(page);
   await page.getByLabel('Or fetch from a URL').fill(fixture!);
   await page.getByTestId('url-fetch').click();
 
   await expect(page.getByTestId('url-status')).toHaveText(/Fetched: [1-9]/, { timeout: 60_000 });
-  const row = page.getByTestId('ingest-row').first();
   // A fixture somebody else already uploaded comes back deduped: both are success.
-  await expect(row.locator('[data-state="done"], [data-state="deduped"]')).toBeVisible();
+  await expect(libRows(page).first()).toHaveAttribute('data-state', /^(done|deduped)$/);
 });

@@ -5,7 +5,7 @@ import { gunzipSync } from 'node:zlib';
 import { and, eq } from 'drizzle-orm';
 import { getDb } from '@/db';
 import { blobs, disks, entitlements } from '@/db/schema/catalog';
-import { signUpFresh } from './helpers';
+import { signUpFresh, libRows, stagingReady } from './helpers';
 import { seedDisk, cleanupSeeded, pairDevice, authHeader } from './device-helpers';
 import { parseLikeFirmware } from '@/lib/adfmfm/firmware-parser';
 import { diskStore } from '@/lib/storage';
@@ -66,10 +66,11 @@ test.describe('uploading HFE', () => {
       const page = await (await browser.newContext()).newPage();
       const { orgId } = await signUpFresh(page);
       await page.goto('/ingest');
+      await stagingReady(page);
       await page.getByTestId('file-input').setInputFiles({
         name: `HFE Test ${i} (1993)(Webadf).hfe`, mimeType: 'application/octet-stream', buffer: hfeFixture('clean'),
       });
-      const row = page.getByTestId('ingest-row').first();
+      const row = libRows(page).first();
       await expect(row.getByTestId('ingest-note')).toContainText("Weak-bit copy protections aren't supported");
       // Polled, not read once: a row shows "deduped" (the fixture is fixed, so
       // every run after the first dedupes) BEFORE /complete has written it.
@@ -83,11 +84,12 @@ test.describe('uploading HFE', () => {
   test('v3 and PC HFE files are refused on the row, with the reason, and never uploaded', async ({ page }) => {
     const { orgId } = await signUpFresh(page);
     await page.goto('/ingest');
+    await stagingReady(page);
     await page.getByTestId('file-input').setInputFiles([
       { name: 'V3 Disk.hfe', mimeType: 'application/octet-stream', buffer: hfeFixture('v3') },
       { name: 'PC Disk.hfe', mimeType: 'application/octet-stream', buffer: hfeFixture('pc') },
     ]);
-    await expect(page.getByTestId('ingest-row')).toHaveCount(2);
+    await expect(libRows(page)).toHaveCount(2);
     await expect(page.getByText("HFE v3 isn't supported yet")).toBeVisible();
     await expect(page.getByText('Not an Amiga disk: track 0 has no Amiga boot sectors.')).toBeVisible();
     expect(await getDb().select().from(disks).where(eq(disks.orgId, orgId))).toHaveLength(0);
@@ -147,12 +149,14 @@ test.describe('uploading HFE', () => {
       }),
     );
 
+    await stagingReady(page);
+
     await page.getByTestId('file-input').setInputFiles({
       name: 'Server Refusal Test.hfe', mimeType: 'application/octet-stream', buffer: bytes,
     });
 
-    const row = page.getByTestId('ingest-row').first();
-    await expect(row.locator('[data-state="failed"]')).toBeVisible({ timeout: 15_000 });
+    const row = libRows(page).first();
+    await expect(row).toHaveAttribute('data-state', 'failed', { timeout: 15_000 });
     await expect(row.getByTestId('ingest-note')).toHaveText(reason);
   });
 });
@@ -190,10 +194,11 @@ test.describe('HFE batch and size limits', () => {
   test('an oversize file fails on its row with the size and the limit', async ({ page }) => {
     await signUpFresh(page);
     await page.goto('/ingest');
+    await stagingReady(page);
     await page.getByTestId('file-input').setInputFiles({
       name: 'Too Big.adf', mimeType: 'application/octet-stream', buffer: Buffer.alloc(2_831_155, 1),
     });
-    await expect(page.getByTestId('ingest-row').first().getByTestId('ingest-note'))
+    await expect(libRows(page).first().getByTestId('ingest-note'))
       .toHaveText('Too Big.adf is 2.7 MB; the limit is 2.5 MB');
   });
 
@@ -211,6 +216,7 @@ test.describe('HFE batch and size limits', () => {
       writeFileSync(p, buffer);
       return p;
     });
+    await stagingReady(page);
     await page.getByTestId('file-input').setInputFiles(paths);
     await expect.poll(async () => (await getDb().select({ id: disks.id }).from(disks)
       .where(eq(disks.orgId, orgId))).length, { timeout: 90_000 }).toBe(51);
@@ -219,6 +225,7 @@ test.describe('HFE batch and size limits', () => {
 
 async function uploadHfeThroughUi(page: import('@playwright/test').Page, orgId: string, title: string) {
   await page.goto('/ingest');
+  await stagingReady(page);
   await page.getByTestId('file-input').setInputFiles({
     name: `${title} (1993)(Webadf).hfe`, mimeType: 'application/octet-stream', buffer: hfeFixture('clean'),
   });

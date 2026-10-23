@@ -74,8 +74,6 @@ export function emptyText(boards: { canUpload: boolean }[]): string {
 }
 /** Add to library: a stored library-type file whose disk is not (or no longer) in the library. */
 export const canAddToLibrary = (r: UploadView): boolean => r.status === 'stored' && !r.libraryGameId && libraryEligible(r.path, r.sizeBytes);
-/** A list answer is current only if no change of ours (delete, clear) finished since its request began. */
-export const answerIsCurrent = (startedAt: number, changes: number): boolean => startedAt === changes;
 export function uploadErrorText(code: string | undefined, status: number): string {
   switch (code) {
     case 'not_a_disk_image': return 'Not a disk image the library takes.';
