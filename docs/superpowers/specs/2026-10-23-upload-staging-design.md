@@ -95,7 +95,7 @@ once there is one (§3.3). Send to Amiga… offers the paired boards, as today.
   uploads count as To the Amiga). Browser state, default All; `?from=` opens on From the Amiga.
 - **Clear finished (N)**: N = rows with a Clear action within the current filter; hidden when N is 0. It clears only
   what the filter shows: the browser drops its own finished/failed library and send-upload rows, and the server clears
-  the rest (§3.2) with the cursor of the list the person saw. No confirm (nothing it removes is a file the server
+  the rest (§3.2) by the keys of the rows the person saw. No confirm (nothing it removes is a file the server
   keeps for the person).
 - A row's **Clear** removes that row only.
 - Empty list: "Nothing here yet. Drop disks for the library, or files for the Amiga." Empty under a filter:
@@ -105,7 +105,9 @@ once there is one (§3.3). Send to Amiga… offers the paired boards, as today.
 
 ### 3.1 `GET /api/staging`
 
-Org-scoped (`requireOrg`). Answers `{ rows: StagingRow[], cursor: string }`.
+Org-scoped (`requireOrg`). Answers `{ rows: StagingRow[], targets: SendTarget[], now: number }`. `targets` is
+`listSendTargets` (what the page reads today), so the Send drop area's board line ("Transfer running") stays live
+without the old per-board queue route.
 
 ```ts
 type StagingRow = {
@@ -122,28 +124,31 @@ type StagingRow = {
   isDiskImage: boolean;              // stored Amiga file
   title: { gameId: string; title: string } | null;   // stored Amiga file already in the library
   at: string;                        // ISO time to sort by
-  settledAt: string | null;          // send: finishedAt; Amiga file: coalesce(storedAt, createdAt) as clearUploads uses; null while moving
 };
 ```
 
 - Sends: the org's newest 200 across all boards. Amiga files: the rows `/api/uploads` returns today (up to
   `UPLOAD_AREA_MAX_FILES`, not deleted). Retention unchanged (7 days, 30 days).
-- `cursor` is the database's `now()` read in the same request, as an exact timestamp string.
 - Mapping reuses the existing view code (`toView`'s lapsed rule for sends, `toUploadView` for Amiga files) rather
   than re-deriving states. Board names come from the devices join both lists already use.
 
 ### 3.2 `POST /api/staging/clear`
 
-Body `{ cursor: string, kinds?: ('out'|'in')[], ids?: string[] }` (zod; `ids` are row keys, at most 500). One
-transaction. Removes, among the org's rows (narrowed to `kinds` and/or `ids` when given):
+Body `{ keys: string[] }` (zod; 1..1000 row keys `send:<id>` / `amiga:<id>`). The page sends the keys of the rows
+it showed with a Clear action (the whole filtered set for Clear finished, one key for a row's Clear). One
+transaction. Among the org's rows with those keys it removes only those still finished:
 
-- sends delivered, failed, cancelled or expired with `finishedAt <= cursor`, and queued/sending rows whose
-  `expiresAt <= cursor` (the lapsed rows the page shows as Expired) — the same set `clearFinishedTransfers` deletes,
-  now with the cursor and across boards;
-- Amiga uploads with status failed whose `coalesce(storedAt, createdAt)` is at or before the cursor (the rule `clearUploads` uses today), and receiving rows whose resume window ended at
-  or before the cursor (shown as failed) — marked `deleted` with their chunks removed, as `clearUploads` does.
+- sends delivered, failed, cancelled or expired, or queued/sending past `expiresAt` (the lapsed rows the page shows
+  as Expired) — deleted, as `clearFinishedTransfers` does;
+- Amiga uploads failed, or receiving past `expiresAt` (shown as failed) — marked `deleted` with their chunks removed,
+  as `clearUploads` does.
 
-It never touches a stored Amiga file or a row still moving. Answers `{ cleared: number }`; a bad cursor is 400.
+A key of another org, a stored Amiga file or a row still moving is left alone (so a row that changed after the
+person looked is never cleared: it was not finished when shown, or it is no longer finished). Answers
+`{ cleared: number }`; a bad body is 400.
+
+*(Amended while planning, 2026-10-23: keys replace the cursor. `amiga_uploads` has no failure time, so a cursor could
+not tell an upload that failed after the person looked; the keys the person saw can.)*
 
 ### 3.3 Titles
 
@@ -192,9 +197,8 @@ and the CLI. The page stops using the old list routes. No migration.
 - Unit: `mergeStaging` order; `stagingView` actions for every kind × state, counts per filter, clearable keys within
   a filter, the lapsed and stalled cases; the `/complete` `titles` map (new disk, deduped, re-send, beside a set,
   rejected file absent).
-- DB: `/api/staging` across two boards and two orgs (no leak); clear with a cursor — a send finished after the cursor
-  and an Amiga file that failed after it survive; a stored file and moving rows are never cleared; `kinds` and `ids`
-  narrowing; the sha-256 title match.
+- DB: `/api/staging` across two boards and two orgs (no leak); clear by keys — a key whose row is still moving,
+  a stored Amiga file and another org's key are left alone; the sha-256 title match.
 - e2e: new `e2e/upload-staging.spec.ts` — counts with all three kinds; Clear finished keeps a stored file; Open title
   after an ingest; Stop with its confirm; a second board's rows show. Existing specs move to the new row ids:
   `ingest-ui`, `send-to-amiga`, `from-amiga`, `mobile`, `hfe-disks`, `hd-disks`, `disk-sets`, `url-upload`,
