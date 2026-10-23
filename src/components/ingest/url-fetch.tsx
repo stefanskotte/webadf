@@ -9,6 +9,7 @@ export type FetchedRow = {
   sha256: string | null;
   state: 'deduped' | 'done' | 'failed';
   note?: string;
+  title?: { gameId: string; title: string } | null;
 };
 
 /**
