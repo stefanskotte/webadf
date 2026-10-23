@@ -1,6 +1,6 @@
 'use client';
 
-import { useId, useState } from 'react';
+import { useId, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { toast } from 'sonner';
 import { SortSelect } from '@/components/prefs/sort-select';
@@ -15,9 +15,9 @@ const START_PAGE_LABELS: Record<StartPage, string> = { library: 'Library', devic
 const LIBRARY_VIEW_LABELS: Record<LibraryViewMode, string> = { grid: 'Grid', table: 'Table' };
 
 /**
- * Preferences: every per-user setting in one place. Saved together with an
- * explicit Save (unlike the in-page sort pickers, which save as they change):
- * a start page is something a person sets once and wants confirmed.
+ * Preferences: every per-user setting in one place. Each change saves at once (A2, operator 2026-10-23), like the
+ * in-page sort pickers -- and only the field that changed, so a sort changed in another tab since this page loaded
+ * is never put back. A failed save puts the field back to what is stored and says so.
  */
 export function PreferencesForm({ prefs }: { prefs: UserPrefs }) {
   const router = useRouter();
@@ -30,23 +30,26 @@ export function PreferencesForm({ prefs }: { prefs: UserPrefs }) {
   const sizeHint = useId();
   const [saved, setSaved] = useState(prefs);
   const [draft, setDraft] = useState(prefs);
-  const [busy, setBusy] = useState(false);
-  const dirty = JSON.stringify(draft) !== JSON.stringify(saved);
+  const [state, setState] = useState<'saved' | 'saving' | 'failed'>('saved');
+  // Saves in flight. Only the last one to finish settles the line, so two quick changes cannot end on "Saving…".
+  const pending = useRef(0);
 
-  async function save() {
-    setBusy(true);
+  async function change(next: UserPrefs) {
+    const diff = prefsDiff(saved, next);
+    setDraft(next);
+    setState('saving');
+    pending.current += 1;
     try {
-      // Only what was changed here: a sort changed in another tab since this
-      // page loaded must not be put back by a Save that never touched it.
-      const next = await savePrefs(prefsDiff(saved, draft));
-      setSaved(next);
-      setDraft(next);
-      toast.success('Preferences saved');
+      const stored = await savePrefs(diff);
+      setSaved(stored);
+      if (pending.current === 1) { setDraft(stored); setState('saved'); }
       router.refresh();
     } catch {
+      setDraft(saved);
+      setState('failed');
       toast.error("Couldn't save your preferences. Try again.");
     } finally {
-      setBusy(false);
+      pending.current -= 1;
     }
   }
 
@@ -63,7 +66,7 @@ export function PreferencesForm({ prefs }: { prefs: UserPrefs }) {
           <span className="inline-flex items-center gap-2 text-[12px]">
             <label htmlFor={startId} className="font-semibold" style={{ color: 'var(--muted)' }}>Start page</label>
             <select id={startId} aria-describedby={startHint} data-testid="pref-start-page" value={draft.startPage}
-                    onChange={(e) => setDraft({ ...draft, startPage: e.target.value as StartPage })}
+                    onChange={(e) => void change({ ...draft, startPage: e.target.value as StartPage })}
                     className="h-8 rounded-lg border px-2 text-[12px]"
                     style={{ borderColor: 'var(--hairline)', background: 'var(--input-bg)', color: 'var(--ink)' }}>
               {START_PAGES.map((p) => <option key={p} value={p}>{START_PAGE_LABELS[p]}</option>)}
@@ -75,7 +78,7 @@ export function PreferencesForm({ prefs }: { prefs: UserPrefs }) {
         </div>
         <div className="flex flex-col gap-1">
           <SortSelect label="Library order" options={LIBRARY_SORT_OPTIONS} value={draft.library.sort}
-                      onChange={(sort) => setDraft({ ...draft, library: { ...draft.library, sort } })}
+                      onChange={(sort) => void change({ ...draft, library: { ...draft.library, sort } })}
                       testId="pref-library-sort" describedBy={libraryHint} />
           <span id={libraryHint} className="text-[12px]" style={{ color: 'var(--muted)' }}>
             The library and Uncategorized. A collection keeps its own order.
@@ -85,7 +88,7 @@ export function PreferencesForm({ prefs }: { prefs: UserPrefs }) {
           <span className="inline-flex items-center gap-2 text-[12px]">
             <label htmlFor={viewId} className="font-semibold" style={{ color: 'var(--muted)' }}>Library opens in</label>
             <select id={viewId} aria-describedby={viewHint} data-testid="pref-library-view" value={draft.library.view}
-                    onChange={(e) => setDraft({ ...draft, library: { ...draft.library, view: e.target.value as LibraryViewMode } })}
+                    onChange={(e) => void change({ ...draft, library: { ...draft.library, view: e.target.value as LibraryViewMode } })}
                     className="h-8 rounded-lg border px-2 text-[12px]"
                     style={{ borderColor: 'var(--hairline)', background: 'var(--input-bg)', color: 'var(--ink)' }}>
               {LIBRARY_VIEWS.map((v) => <option key={v} value={v}>{LIBRARY_VIEW_LABELS[v]}</option>)}
@@ -101,7 +104,7 @@ export function PreferencesForm({ prefs }: { prefs: UserPrefs }) {
             <select id={sizeId} aria-describedby={sizeHint} data-testid="pref-library-page-size" value={String(draft.library.pageSize)}
                     onChange={(e) => {
                       const pageSize = LIBRARY_PAGE_SIZES.find((s) => String(s) === e.target.value);
-                      if (pageSize !== undefined) setDraft({ ...draft, library: { ...draft.library, pageSize } });
+                      if (pageSize !== undefined) void change({ ...draft, library: { ...draft.library, pageSize } });
                     }}
                     className="h-8 rounded-lg border px-2 text-[12px]"
                     style={{ borderColor: 'var(--hairline)', background: 'var(--input-bg)', color: 'var(--ink)' }}>
@@ -113,20 +116,13 @@ export function PreferencesForm({ prefs }: { prefs: UserPrefs }) {
           </span>
         </div>
         <SortSelect label="Disk file list order" options={BROWSE_SORT_OPTIONS} value={draft.browse.sort}
-                    onChange={(sort) => setDraft({ ...draft, browse: { ...draft.browse, sort } })}
+                    onChange={(sort) => void change({ ...draft, browse: { ...draft.browse, sort } })}
                     testId="pref-browse-sort" />
       </div>
-      <div className="flex items-center gap-3">
-        <button type="button" onClick={() => void save()} disabled={!dirty || busy} data-testid="prefs-save"
-                className="btn-like rounded-lg px-4 py-2 text-sm font-semibold text-white disabled:opacity-60"
-                style={{ background: 'var(--primary-action)' }}>
-          {busy ? 'Saving…' : 'Save'}
-        </button>
-        <span className="text-[12px]" style={{ color: 'var(--muted)' }} data-testid="prefs-state"
-              role="status" aria-live="polite">
-          {dirty ? 'Unsaved changes' : 'All changes saved'}
-        </span>
-      </div>
+      <span className="text-[12px]" style={{ color: state === 'failed' ? 'var(--danger-fg)' : 'var(--muted)' }}
+            data-testid="prefs-state" role="status" aria-live="polite">
+        {state === 'saving' ? 'Saving…' : state === 'failed' ? "Couldn't save. Try again" : 'All changes saved'}
+      </span>
     </section>
   );
 }

@@ -1480,12 +1480,21 @@ separately.
 
 **Current order (re-checked 2026-10-23):** (1) the **WebFloppy redesign** per its approved roadmap
 `docs/superpowers/specs/2026-10-23-webfloppy-redesign-roadmap-design.md` -- Phase A (missing features in today's look;
-**A1 States SHIPPED 2026-10-23** -- error/not-found/loading pages, see below; A2 Settings/account next), then Phase B (design foundation + rename), then Phase C (layouts area by area); the operator starts
+**A1 States and A2 Settings/account SHIPPED 2026-10-23**, see below; A3 Library next), then Phase B (design foundation + rename), then Phase C (layouts area by area); the operator starts
 it; (2) B10 on the A4000D when it is on the bench; (3) rev C radio: the LWB+ breadboard test when the Mouser parts
 arrive. The
 table's deferred minors are DONE (3ce: M1, M3-M6, M8 fixed; M7 left by the review's ruling). SHIPPED today: the table view with folders, the core1 watchdog
 (1.21.0), uploads surviving a 5-minute outage (1.21.1 + Transfer 2.2), library paging (all 3ce). Entries below marked SHIPPED are kept for their history only.
 
+- **A2 Settings / account -- SHIPPED 2026-10-23** (branch feat/a2-account). Settings in the approved board's order:
+  Preferences (now save as each field changes, only that field; "Saving…" / "All changes saved" / "Couldn't save. Try
+  again" with the field put back; no Save button), Sign-in & password (email; Change password via better-auth
+  `changePassword` with `revokeOtherSessions: true`; "Signed in on N browsers" + Sign out everywhere else via
+  `revokeOtherSessions`), Firmware updates (unchanged), Delete account (`DELETE /api/me/account` {password,
+  confirm:"DELETE"}: DELETE checked first, then the throttled `stepUpGate`, then refused 409 if `otherMemberCount` >
+  0, then `deleteUserCascade` -- boards get 401 next check-in, which the firmware takes as erase-token-and-pair; this
+  path is read from device_client.c/main.c and covered by e2e at the API, NOT yet watched on a real board). e2e:
+  account.spec.ts (5); user-settings/library-table/library-paging updated for autosave.
 - **A1 States -- SHIPPED 2026-10-23** (branch feat/a1-states). `error.tsx` in (app), (admin) and the root (a shell
   failure), plus `global-error.tsx`: "This page didn't load", Try again (`retry()`, re-fetches), `Reference:
   error.digest` (matches the server log; absent for browser-only errors). `(app)/not-found.tsx` "That isn't in your

@@ -112,8 +112,7 @@ test('Titles per page in Preferences: All shows every title on one page, with no
   await seedTitles(page, orgId, 'Prefs', 30);
   await page.goto('/settings');
   await expect(page.getByTestId('pref-library-page-size')).toHaveValue('24');
-  await page.getByTestId('pref-library-page-size').selectOption('all');
-  await page.getByTestId('prefs-save').click();
+  await Promise.all([page.waitForResponse((r) => r.url().endsWith('/api/me/prefs') && r.request().method() === 'PATCH'), page.getByTestId('pref-library-page-size').selectOption('all')]);
   await expect(page.getByTestId('prefs-state')).toHaveText('All changes saved');
   expect((await prefs(page)).pageSize).toBe('all');
 

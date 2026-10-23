@@ -39,9 +39,7 @@ test('the chosen start page is where the root URL and sign-in land', async ({ pa
   await page.getByTestId('settings-link').click();
   await expect(page).toHaveURL(/\/settings/);
   await expect(page.getByTestId('prefs-state')).toHaveText('All changes saved');
-  await page.getByTestId('pref-start-page').selectOption('devices');
-  await expect(page.getByTestId('prefs-state')).toHaveText('Unsaved changes');
-  await page.getByTestId('prefs-save').click();
+  await Promise.all([page.waitForResponse((r) => r.url().endsWith('/api/me/prefs') && r.request().method() === 'PATCH'), page.getByTestId('pref-start-page').selectOption('devices')]);
   await expect(page.getByTestId('prefs-state')).toHaveText('All changes saved');
 
   await page.goto('/');
@@ -54,8 +52,7 @@ test('the chosen start page is where the root URL and sign-in land', async ({ pa
 
   // And Upload, whose route is /ingest.
   await page.goto('/settings');
-  await page.getByTestId('pref-start-page').selectOption('upload');
-  await page.getByTestId('prefs-save').click();
+  await Promise.all([page.waitForResponse((r) => r.url().endsWith('/api/me/prefs') && r.request().method() === 'PATCH'), page.getByTestId('pref-start-page').selectOption('upload')]);
   await expect(page.getByTestId('prefs-state')).toHaveText('All changes saved');
   await page.goto('/');
   await expect(page).toHaveURL(/\/ingest/);
@@ -67,8 +64,7 @@ test('saving Preferences does not put back a sort changed elsewhere since the pa
   // Another tab changes the library sort after this form loaded.
   const res = await page.request.patch('/api/me/prefs', { data: { library: { sort: { key: 'year', dir: 'asc' } } } });
   expect(res.status()).toBe(200);
-  await page.getByTestId('pref-start-page').selectOption('devices');
-  await page.getByTestId('prefs-save').click();
+  await Promise.all([page.waitForResponse((r) => r.url().endsWith('/api/me/prefs') && r.request().method() === 'PATCH'), page.getByTestId('pref-start-page').selectOption('devices')]);
   await expect(page.getByTestId('prefs-state')).toHaveText('All changes saved');
   const prefs = await (await page.request.get('/api/me/prefs')).json();
   expect(prefs.startPage).toBe('devices');

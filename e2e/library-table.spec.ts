@@ -262,8 +262,7 @@ test('Library opens in Table: /library opens in the table, and ?view=grid still 
 
   await page.goto('/settings');
   await expect(page.getByTestId('prefs-state')).toHaveText('All changes saved');
-  await page.getByTestId('pref-library-view').selectOption('table');
-  await page.getByTestId('prefs-save').click();
+  await Promise.all([page.waitForResponse((r) => r.url().endsWith('/api/me/prefs') && r.request().method() === 'PATCH'), page.getByTestId('pref-library-view').selectOption('table')]);
   await expect(page.getByTestId('prefs-state')).toHaveText('All changes saved');
   expect((await (await page.request.get('/api/me/prefs')).json()).library.view).toBe('table');
 

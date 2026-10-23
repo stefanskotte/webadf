@@ -13,7 +13,7 @@
 // not a reason to relax the first -- the rows referencing it are exactly what
 // this function removes.
 
-import { eq, inArray, sql } from 'drizzle-orm';
+import { and, eq, inArray, ne, sql } from 'drizzle-orm';
 import { atomic } from '@/db/atomic';
 import { getDb } from '@/db';
 import { entitlements, games, disks } from '@/db/schema/catalog';
@@ -29,6 +29,21 @@ export interface DeleteUserResult {
   devices: number;
   /** Organizations removed because this user was their last member. */
   orgsRemoved: number;
+}
+
+/**
+ * How many OTHER people share an organization with `userId` (across every membership). Self-service delete refuses
+ * when this is above zero: deleteUserCascade below removes everything each of the user's organizations owns, which
+ * would be the other members' library too. Nothing in the app adds a second member today, so this is 0 in practice.
+ */
+export async function otherMemberCount(userId: string): Promise<number> {
+  const db = getDb();
+  const mine = db.select({ id: member.organizationId }).from(member).where(eq(member.userId, userId));
+  const [row] = await db
+    .select({ n: sql<number>`count(distinct ${member.userId})::int` })
+    .from(member)
+    .where(and(inArray(member.organizationId, mine), ne(member.userId, userId)));
+  return Number(row?.n ?? 0);
 }
 
 /**

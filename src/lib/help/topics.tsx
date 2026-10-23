@@ -615,7 +615,7 @@ export const HELP_TOPICS = {
   },
   // Sources: src/lib/user-prefs-schema.ts (choices, defaults), src/app/page.tsx + sign-in/page.tsx (start page),
   // library/page.tsx (sort skipped in a collection; ?view= else library.view), file-tree.tsx + browse-sort.ts (folders first),
-  // components/prefs/preferences-form.tsx (Save), db/schema/user-prefs.ts (per user, not per org),
+  // components/prefs/preferences-form.tsx (saves as it changes), db/schema/user-prefs.ts (per user, not per org),
   // components/prefs/firmware-password-setting.tsx + api/me/prefs/firmware-skip-password (firmware password).
   preferences: {
     title: 'Preferences',
@@ -641,8 +641,8 @@ export const HELP_TOPICS = {
           everyone in your organization.
         </p>
         <p>
-          <strong>Changing them.</strong> Settings (the gear at the top) lists every preference in one place; press
-          Save to keep your changes there.
+          <strong>Changing them.</strong> Settings (the gear at the top) lists every preference in one place, and
+          each change there is kept as soon as you make it.
         </p>
         <p>
           <strong>Firmware updates.</strong> Settings can stop <em>Update</em> on Devices asking for your password.
