@@ -1478,8 +1478,11 @@ separately.
 
 ### 4. Backlog, not blocking anything
 
-**Current order (re-checked 2026-10-22, evening):** (1) B10 on the A4000D when it is on the bench; (2) rev C radio:
-the LWB+ breadboard test when the Mouser parts arrive; (3) the redesign (canvas reviewed by the operator first). The
+**Current order (re-checked 2026-10-23):** (1) the **WebFloppy redesign** per its approved roadmap
+`docs/superpowers/specs/2026-10-23-webfloppy-redesign-roadmap-design.md` -- Phase A (missing features in today's look,
+A1 States first), then Phase B (design foundation + rename), then Phase C (layouts area by area); the operator starts
+it; (2) B10 on the A4000D when it is on the bench; (3) rev C radio: the LWB+ breadboard test when the Mouser parts
+arrive. The
 table's deferred minors are DONE (3ce: M1, M3-M6, M8 fixed; M7 left by the review's ruling). SHIPPED today: the table view with folders, the core1 watchdog
 (1.21.0), uploads surviving a 5-minute outage (1.21.1 + Transfer 2.2), library paging (all 3ce). Entries below marked SHIPPED are kept for their history only.
 
