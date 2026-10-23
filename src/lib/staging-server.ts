@@ -8,7 +8,7 @@ import { toView } from '@/lib/send-http';
 import { failureText } from '@/lib/send-ui';
 import { listUploads } from '@/lib/amiga-uploads';
 import { libraryEligible, uploadFailureText } from '@/lib/from-amiga-ui';
-import type { ServerRow } from '@/lib/staging';
+import type { ServerRow } from '@/lib/upload-staging';
 
 // The server half of the Upload staging list (spec 2026-10-23 §3.1-3.2): sends and Amiga files of every board, and clear by row key.
 
