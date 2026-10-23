@@ -38,7 +38,7 @@ test('the route resolves and shows the game title', async ({ page }) => {
   await expect(page.getByRole('heading', { name: `RouteTest-${tag}` })).toBeVisible();
 });
 
-test("a game from another organization 404s, while the signed-in org's own game still resolves", async ({ page, browser }) => {
+test("a game from another organization is not found, while the signed-in org's own game still resolves", async ({ page, browser }) => {
   const { orgId } = await signUpFresh(page);
   const tag = runTag();
   const { gameId: ownGameId } = await seedDisk(orgId, { title: `OwnOrg-${tag}`, diskNo: 1, sha256: sha(`${tag}-own`) });
@@ -52,11 +52,15 @@ test("a game from another organization 404s, while the signed-in org's own game 
   // The positive half is what makes the negative half mean something:
   // without it, a route that 404s unconditionally (e.g. one that doesn't
   // exist yet) would also satisfy "the other org's game 404s".
+  // The not-found card, not a 404 status: the app streams behind its loading.tsx (A1 States), so the status is sent before notFound() runs.
   const ownRes = await page.goto(`/games/${ownGameId}`);
   expect(ownRes?.status()).toBe(200);
+  await expect(page.getByRole('heading', { name: `OwnOrg-${tag}` })).toBeVisible();
+  await expect(page.getByTestId('not-found-page')).toHaveCount(0);
 
-  const otherRes = await page.goto(`/games/${gameIdB}`);
-  expect(otherRes?.status()).toBe(404);
+  await page.goto(`/games/${gameIdB}`);
+  await expect(page.getByTestId('not-found-page')).toBeVisible();
+  await expect(page.getByText(`OtherOrg-${tag}`)).toHaveCount(0);
 });
 
 test('every disk in the set is listed in disk_no order, with the boot badge on the boot disk only', async ({ page }) => {

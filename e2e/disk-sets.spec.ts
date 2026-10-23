@@ -270,8 +270,9 @@ test('Add disks… folds a lone title in as the last disk, and the old title is 
 
   // Task 4's NOT EXISTS guard, on the real database: the emptied title is gone.
   expect(await gameExists(lone.gameId)).toBe(false);
-  const res = await page.goto(`/games/${lone.gameId}`);
-  expect(res?.status()).toBe(404);
+  // The not-found card, not a 404 status: the app streams behind its loading.tsx (A1 States), so the status is sent before notFound() runs.
+  await page.goto(`/games/${lone.gameId}`);
+  await expect(page.getByTestId('not-found-page')).toBeVisible();
   await page.goto('/library');
   await expect(page.getByTestId('game-card')).toHaveCount(1);
   await expect(page.getByTestId('game-card').filter({ hasText: `Lone ${tag}` })).toHaveCount(0);
@@ -565,7 +566,8 @@ test('All titles: a card dropped on a card asks, then makes one set named as typ
   await expect(page.getByRole('heading', { level: 1, name: `Dropped ${tag}` }).first()).toBeVisible();
   await expect(page.getByTestId('set-name')).toHaveText(`Dropped ${tag}`);
   expect(await rowOrder(page)).toEqual([...a.ids, b.diskId]);
-  expect((await page.goto(`/games/${b.gameId}`))?.status()).toBe(404);
+  await page.goto(`/games/${b.gameId}`);   // not-found card, not a 404: see the emptied-title test above
+  await expect(page.getByTestId('not-found-page')).toBeVisible();
 });
 
 test('Swap: the dragged title becomes the set, and its disks come first', async ({ page }) => {

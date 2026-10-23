@@ -256,8 +256,9 @@ test('another tenant gets 404 from both the file route and the page, not the own
     expect(deniedRoute.status()).toBe(404);
     expect((await deniedRoute.body()).byteLength).toBeLessThan(1000);
 
-    const deniedPage = await pageB.goto(`/disks/${row.id}/files`);
-    expect(deniedPage?.status()).toBe(404);
+    // The not-found card, not a 404 status: the app streams behind its loading.tsx (A1 States), so the status is sent before notFound() runs.
+    await pageB.goto(`/disks/${row.id}/files`);
+    await expect(pageB.getByTestId('not-found-page')).toBeVisible();
   } finally {
     await a.close();
     await b.close();

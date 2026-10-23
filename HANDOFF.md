@@ -1479,12 +1479,23 @@ separately.
 ### 4. Backlog, not blocking anything
 
 **Current order (re-checked 2026-10-23):** (1) the **WebFloppy redesign** per its approved roadmap
-`docs/superpowers/specs/2026-10-23-webfloppy-redesign-roadmap-design.md` -- Phase A (missing features in today's look,
-A1 States first), then Phase B (design foundation + rename), then Phase C (layouts area by area); the operator starts
+`docs/superpowers/specs/2026-10-23-webfloppy-redesign-roadmap-design.md` -- Phase A (missing features in today's look;
+**A1 States SHIPPED 2026-10-23** -- error/not-found/loading pages, see below; A2 Settings/account next), then Phase B (design foundation + rename), then Phase C (layouts area by area); the operator starts
 it; (2) B10 on the A4000D when it is on the bench; (3) rev C radio: the LWB+ breadboard test when the Mouser parts
 arrive. The
 table's deferred minors are DONE (3ce: M1, M3-M6, M8 fixed; M7 left by the review's ruling). SHIPPED today: the table view with folders, the core1 watchdog
 (1.21.0), uploads surviving a 5-minute outage (1.21.1 + Transfer 2.2), library paging (all 3ce). Entries below marked SHIPPED are kept for their history only.
+
+- **A1 States -- SHIPPED 2026-10-23** (branch feat/a1-states). `error.tsx` in (app), (admin) and the root (a shell
+  failure), plus `global-error.tsx`: "This page didn't load", Try again (`retry()`, re-fetches), `Reference:
+  error.digest` (matches the server log; absent for browser-only errors). `(app)/not-found.tsx` "That isn't in your
+  library" for notFound() on titles/disks; root `not-found.tsx` "Page not found". `(app)/loading.tsx` (generic) and
+  `library/loading.tsx` (card grid) placeholders; the top progress bar still runs. Shared parts:
+  `components/shell/state-card.tsx`, `error-view.tsx`, `skeleton.tsx`. Dev-only test pages `/dev/fail` and
+  `/dev/slow` (404 in production). **Consequence:** with a loading.tsx the response streams, so a notFound() page now
+  returns HTTP 200 (Next adds `noindex`), not 404. Four e2e checks that asserted a page 404 for another tenant's or a
+  deleted title/disk (game-detail, disk-sets x2, adf-browser) now assert the not-found card and the absence of the
+  other org's title; API routes still 404. e2e: states.spec.ts (5).
 
 - **Unified staging area** (operator, 2026-10-21): the disk upload/Browse area and send/receive (Send to Amiga, From
   the Amiga) should share one stage area, or at least reusable parts. Brainstorm first; announced to the testers as

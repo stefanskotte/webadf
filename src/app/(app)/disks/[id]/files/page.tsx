@@ -289,7 +289,7 @@ export default async function DiskFilesPage(props: PageProps<'/disks/[id]/files'
     // unreachable -- and catching only the first would let the other two
     // replace this ENTIRE page (tree, toolbar, volume header, chrome) with
     // Next's default error page, for a disk whose current bytes are perfectly
-    // readable. There is no error.tsx anywhere under src/app to soften that.
+    // readable. (app)/error.tsx would at least keep the header, but the page would still be lost.
     // The read failure is the likely one: it happens once per version, with
     // useCache false, so the chance of catching a transient 5xx rises with
     // history length. Logged, because a broken chain or an unreadable blob is
