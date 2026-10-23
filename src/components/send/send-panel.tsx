@@ -1,67 +1,31 @@
 'use client';
-import { useCallback, useEffect, useRef, useState } from 'react';
-import { toast } from 'sonner';
+import { useRef, useState } from 'react';
 import { Link } from '@/components/shell/link';
 import { SEND_FILE_MAX, XFER_FW } from '@/lib/send-limits';
-import {
-  canCancel, canRetry, clearableCount, formatSize, orderQueue, longOffline, orderTargets, receiverLine, sendErrorText, stateChip, targetState,
-  type SendTarget, type TransferView,
-} from '@/lib/send-ui';
+import { longOffline, orderTargets, receiverLine, sendErrorText, targetState, type SendTarget } from '@/lib/send-ui';
 import { useSendBoard } from './use-send-board';
 import { HelpTip } from '@/components/help/help-tip';
 import { StatusChip } from '@/components/ui/status-chip';
 import { DropArea } from '@/components/ingest/drop-area';
-import { ListFrame, UploadCard } from '@/components/ingest/upload-card';
-
-type Upload = { key: string; name: string; state: 'uploading' | 'failed'; note?: string };
-type Snapshot = { target: SendTarget; transfers: TransferView[]; now: number };
-// While anything waits or moves the queue is read every 3 s (progress is per 16 KB chunk); otherwise every 10 s.
-const ACTIVE_MS = 3_000;
-const IDLE_MS = 10_000;
-const btn = 'rounded-lg px-3 py-1.5 text-[12px] font-semibold disabled:opacity-50';
+import { UploadCard } from '@/components/ingest/upload-card';
+import { useStaging } from '@/components/ingest/staging-provider';
 
 /**
- * The Upload page's right column (spec §4): which board, whether Transfer runs there, a drop zone for any file, and
- * every transfer for that board however it was sent. Reads its own queue route rather than the page's live
- * fingerprint, because progress moves on every chunk and the fingerprint moves on state changes only.
+ * The Upload page's Send drop area (spec 2026-10-23 §1): which board new files go to, whether Transfer runs there,
+ * and a drop zone for any file. What it sends shows in the Staging list (every board's rows), which also reads the
+ * targets live; `targets` here is the server-rendered list, used until the list's first answer.
  */
-export function SendPanel({ targets, initialBoard, serverNow }: { targets: SendTarget[]; initialBoard: string | null; serverNow: number }) {
-  const [board, setBoard] = useSendBoard(targets, serverNow, initialBoard);
+export function SendPanel({ targets: initialTargets, initialBoard, serverNow }: { targets: SendTarget[]; initialBoard: string | null; serverNow: number }) {
+  const staging = useStaging();
+  const targets = staging.targets ?? initialTargets;
+  const now = staging.now ?? serverNow;
+  const [board, setBoard] = useSendBoard(targets, now, initialBoard);
   const [showOffline, setShowOffline] = useState(false);
-  const [snap, setSnap] = useState<Snapshot | null>(null);
-  const [uploads, setUploads] = useState<Upload[]>([]);
-  const [clearing, setClearing] = useState(false);
   const seq = useRef(0);
-  const active = useRef(false);
-
-  const refresh = useCallback(async () => {
-    if (!board) return;
-    try {
-      const res = await fetch(`/api/transfers?deviceId=${encodeURIComponent(board)}`, { cache: 'no-store', signal: AbortSignal.timeout(10_000) });
-      if (!res.ok) return;
-      setSnap((await res.json()) as Snapshot);
-    } catch { /* offline, signed out or a deploy: the next tick tries again */ }
-  }, [board]);
-
-  useEffect(() => {
-    active.current = snap?.transfers.some((t) => canCancel(t.status)) ?? false;
-  }, [snap]);
-
-  useEffect(() => {
-    let stopped = false;
-    let timer: ReturnType<typeof setTimeout> | null = null;
-    const tick = async () => {
-      if (stopped) return;
-      if (document.visibilityState === 'visible') await refresh();
-      if (!stopped) timer = setTimeout(tick, active.current ? ACTIVE_MS : IDLE_MS);
-    };
-    void tick();
-    return () => { stopped = true; if (timer) clearTimeout(timer); };
-  }, [refresh]);
 
   if (targets.length === 0) {
     return (
-      <UploadCard id="send-heading" title="Send to Amiga" help={<HelpTip topic="send" />}>
+      <UploadCard id="send-heading" title="Send files to the Amiga" help={<HelpTip topic="send" />}>
         <p className="text-[13px]" style={{ color: 'var(--muted)' }} data-testid="send-no-board">
           No board can receive files yet. Sending needs a board on firmware {XFER_FW} or newer.{' '}
           <Link href="/devices" className="font-semibold underline underline-offset-2" style={{ color: 'var(--ink)' }}>Devices</Link>
@@ -70,69 +34,41 @@ export function SendPanel({ targets, initialBoard, serverNow }: { targets: SendT
     );
   }
 
-  const view = snap && snap.target.id === board ? snap : null;
-  const now = view?.now ?? serverNow;
   const ordered = orderTargets(targets);
   const shown = ordered.filter((t) => showOffline || !longOffline(t, now) || t.id === board);
   const hidden = ordered.length - shown.length;
-  const current = view?.target ?? targets.find((t) => t.id === board) ?? null;
-  const waiting = view?.transfers.filter((t) => t.status === 'queued').length ?? 0;
-  const sending = view?.transfers.some((t) => t.status === 'sending') ?? false;
+  const current = targets.find((t) => t.id === board) ?? null;
+  const mine = staging.serverRows.filter((r) => r.kind === 'out' && r.board.id === board);
+  const waiting = mine.filter((r) => r.status === 'queued').length;
+  const sending = mine.some((r) => r.status === 'sending');
   const line = current ? receiverLine(current, { waiting, sending }, now) : null;
-  const finished = view ? clearableCount(view.transfers) : 0;
-  const counts = view ? queueCounts(waiting, view.transfers.filter((t) => t.status === 'sending').length, finished) : '';
 
   async function handleFiles(list: FileList) {
-    const to = board;
+    const to = current;
     if (!to) return;
     for (const file of Array.from(list)) {
-      const key = `u${++seq.current}`;
+      const key = `up:${++seq.current}`;
+      const row = { source: 'up' as const, key, kind: 'out' as const, name: file.name, sizeBytes: file.size, boardName: to.name, at: Date.now() };
       if (file.size === 0 || file.size > SEND_FILE_MAX) {
-        setUploads((u) => [...u, { key, name: file.name, state: 'failed', note: sendErrorText(file.size === 0 ? 'empty' : 'too_large', 0) }]);
+        staging.addUp({ ...row, state: 'failed', note: sendErrorText(file.size === 0 ? 'empty' : 'too_large', 0) });
         continue;
       }
-      setUploads((u) => [...u, { key, name: file.name, state: 'uploading' }]);
+      staging.addUp({ ...row, state: 'uploading' });
       try {
-        const res = await fetch(`/api/transfers?deviceId=${encodeURIComponent(to)}&name=${encodeURIComponent(file.name)}`,
+        const res = await fetch(`/api/transfers?deviceId=${encodeURIComponent(to.id)}&name=${encodeURIComponent(file.name)}`,
           { method: 'POST', headers: { 'content-type': 'application/octet-stream' }, body: file });
-        if (res.ok) { setUploads((u) => u.filter((x) => x.key !== key)); await refresh(); continue; }
+        if (res.ok) {
+          // Its transfer row takes its place: read the list first, then drop the upload row, so the file never vanishes.
+          staging.changed();
+          await staging.refreshNow();
+          staging.removeLocal([key]);
+          continue;
+        }
         const b = (await res.json().catch(() => null)) as { error?: string } | null;
-        setUploads((u) => u.map((x) => (x.key === key ? { ...x, state: 'failed', note: sendErrorText(b?.error, res.status) } : x)));
+        staging.patchUp(key, { state: 'failed', note: sendErrorText(b?.error, res.status) });
       } catch {
-        setUploads((u) => u.map((x) => (x.key === key ? { ...x, state: 'failed', note: 'The upload did not finish. Check the connection and try again.' } : x)));
+        staging.patchUp(key, { state: 'failed', note: 'The upload did not finish. Check the connection and try again.' });
       }
-    }
-  }
-
-  async function cancel(id: string) {
-    const res = await fetch(`/api/transfers/${encodeURIComponent(id)}`, { method: 'DELETE' }).catch(() => null);
-    if (!res) toast.error('Could not cancel', { description: 'Check the connection and try again.' });
-    else if (res.status === 409) toast.info('Already finished', { description: 'It ended before the cancel arrived.' });
-    else if (!res.ok) toast.error('Could not cancel', { description: `The server answered ${res.status}.` });
-    await refresh();
-  }
-
-  async function retry(id: string) {
-    const res = await fetch(`/api/transfers/${encodeURIComponent(id)}/retry`, { method: 'POST' }).catch(() => null);
-    if (!res) toast.error('Could not retry', { description: 'Check the connection and try again.' });
-    else if (!res.ok) {
-      const b = (await res.json().catch(() => null)) as { error?: string } | null;
-      toast.error('Could not retry', { description: sendErrorText(b?.error, res.status) });
-    }
-    await refresh();
-  }
-
-  async function clearFinished() {
-    const to = board;
-    if (!to) return;
-    setClearing(true);
-    try {
-      const res = await fetch(`/api/transfers?deviceId=${encodeURIComponent(to)}`, { method: 'DELETE' }).catch(() => null);
-      if (!res) toast.error('Could not clear', { description: 'Check the connection and try again.' });
-      else if (!res.ok) toast.error('Could not clear', { description: `The server answered ${res.status}.` });
-      await refresh();
-    } finally {
-      setClearing(false);
     }
   }
 
@@ -153,7 +89,7 @@ export function SendPanel({ targets, initialBoard, serverNow }: { targets: SendT
   );
 
   return (
-    <UploadCard id="send-heading" title="Send to Amiga" help={<HelpTip topic="send" />} meta={meta}>
+    <UploadCard id="send-heading" title="Send files to the Amiga" help={<HelpTip topic="send" />} meta={meta}>
       {!single && (
         <fieldset className="flex flex-col gap-1 rounded-xl p-3" data-testid="send-board-picker"
                   style={{ border: '1px solid var(--hairline-strong)', background: 'var(--glass-subtle)' }}>
@@ -179,93 +115,8 @@ export function SendPanel({ targets, initialBoard, serverNow }: { targets: SendT
 
       <DropArea testId="send-dropzone" inputTestId="send-file-input" resetAfterPick
                 title="Drop any file here, or choose one"
-                hint="Up to 4 MB each. It waits here until the Amiga takes it."
+                hint="Up to 4 MB each. It waits in Staging until the Amiga takes it."
                 onFiles={(f) => void handleFiles(f)} />
-
-      <ListFrame
-        title="Queue"
-        counts={counts || undefined}
-        action={finished > 0 && (
-          <button type="button" data-testid="send-clear-finished" disabled={clearing} onClick={() => void clearFinished()}
-                  className={btn} style={{ background: 'var(--glass-strong)', color: 'var(--ink)', border: '1px solid var(--hairline-strong)' }}>
-            Clear finished ({finished})
-          </button>
-        )}
-      >
-        {/* About 10 rows on a wide screen, fewer on a phone; it scrolls inside, with waiting and sending rows on
-            top. On a wide screen it also grows to fill the card to the library card's height. */}
-        <ul aria-label="Files for this board" data-testid="send-queue" tabIndex={0}
-            className="flex max-h-[26rem] min-h-0 flex-1 flex-col overflow-y-auto overscroll-contain outline-none focus-visible:ring-2 focus-visible:ring-inset sm:max-h-[35rem]">
-          {uploads.map((u) => (
-            <li key={u.key} data-testid="send-upload" data-state={u.state} className="flex flex-wrap items-center gap-x-3 gap-y-1.5 px-4 py-2.5"
-                style={{ borderBottom: '1px solid var(--hairline)' }}>
-              <span className="min-w-0 flex-1 font-mono text-[12px]" style={{ color: 'var(--ink)', overflowWrap: 'anywhere' }}>{u.name}</span>
-              <span className="flex min-w-0 basis-full flex-wrap items-center gap-x-2 gap-y-1 text-[12px]">
-                {u.state === 'uploading' ? <StatusChip kind="blue">Uploading…</StatusChip> : (
-                  <>
-                    <StatusChip kind="red">Not sent</StatusChip>
-                    <span className="sr-only"> · </span>
-                    <span className="min-w-0 flex-1" style={{ color: 'var(--danger-fg)', overflowWrap: 'anywhere' }}>{u.note}</span>
-                    <button type="button" className={btn} style={{ background: 'var(--glass-strong)', color: 'var(--ink)', border: '1px solid var(--hairline-strong)' }}
-                            onClick={() => setUploads((x) => x.filter((y) => y.key !== u.key))}>Dismiss</button>
-                  </>
-                )}
-              </span>
-            </li>
-          ))}
-          {view && orderQueue(view.transfers).map((t) => {
-            const c = stateChip(t);
-            return (
-              <li key={t.id} data-testid={`send-row-${t.id}`} data-status={t.status}
-                  className="flex flex-wrap items-center gap-x-3 gap-y-1.5 px-4 py-2.5" style={{ borderBottom: '1px solid var(--hairline)' }}>
-                <span className="min-w-0 flex-1 font-mono text-[12px]" style={{ color: 'var(--ink)', overflowWrap: 'anywhere' }}>{t.path}</span>
-                <span className="shrink-0 font-mono text-[11.5px]" style={{ color: 'var(--muted)' }}>{formatSize(t.sizeBytes)}</span>
-                <span className="flex min-w-0 basis-full items-center gap-2">
-                  {/* Reads as transferState's own words ("Delivered · saved as X"): the separator is there for
-                      the text, the chip's edge stands in for it on screen. */}
-                  <span className="flex min-w-0 flex-1 flex-wrap items-center gap-x-2 gap-y-1 text-[12px]" data-testid={`send-state-${t.id}`}>
-                    <StatusChip kind={c.kind}>{c.label}</StatusChip>
-                    {(c.note || c.path) && (
-                      <>
-                        <span className="sr-only"> · </span>
-                        <span className="min-w-0" style={{ color: 'var(--muted)', overflowWrap: 'anywhere' }}>
-                          {c.note}
-                          {c.path && <>{' '}<span className="font-mono" style={{ color: 'var(--ink)' }}>{c.path}</span></>}
-                        </span>
-                      </>
-                    )}
-                  </span>
-                  {canCancel(t.status) && (
-                    <button type="button" aria-label={`Cancel ${t.path}`} data-testid={`send-cancel-${t.id}`} onClick={() => void cancel(t.id)}
-                            className={`${btn} shrink-0`} style={{ background: 'var(--glass-strong)', color: 'var(--ink)', border: '1px solid var(--hairline-strong)' }}>Cancel</button>
-                  )}
-                  {canRetry(t.status) && (
-                    <button type="button" aria-label={`Retry ${t.path}`} data-testid={`send-retry-${t.id}`} onClick={() => void retry(t.id)}
-                            className={`${btn} shrink-0 text-white`} style={{ background: 'var(--primary-action)' }}>Retry</button>
-                  )}
-                </span>
-              </li>
-            );
-          })}
-          {view === null && uploads.length === 0 && (
-            <li className="px-4 py-3 text-[12.5px]" style={{ color: 'var(--muted)' }}>Reading the queue…</li>
-          )}
-          {view !== null && view.transfers.length === 0 && uploads.length === 0 && (
-            <li className="px-4 py-3 text-[12.5px]" style={{ color: 'var(--muted)' }} data-testid="send-queue-empty">
-              Nothing sent to this board in the last 7 days.
-            </li>
-          )}
-        </ul>
-      </ListFrame>
     </UploadCard>
   );
-}
-
-/** The queue header's counts, e.g. "1 waiting · 13 finished"; empty when there is nothing. */
-function queueCounts(waiting: number, sending: number, finished: number): string {
-  return [
-    waiting > 0 && `${waiting} waiting`,
-    sending > 0 && `${sending} sending`,
-    finished > 0 && `${finished} finished`,
-  ].filter(Boolean).join(' · ');
 }
