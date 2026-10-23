@@ -7,7 +7,7 @@ import {
 
 const row = (over: Partial<UploadView> = {}): UploadView => ({
   id: 'u', path: 'Lemmings.adf', sizeBytes: 901_120, status: 'stored', receivedBytes: 901_120, errorCode: null, deviceId: 'd',
-  deviceName: 'Bench', createdAt: 1000, storedAt: 2000, expiresAt: 3000, libraryDiskId: null, libraryGameId: null,
+  deviceName: 'Bench', createdAt: 1000, storedAt: 2000, expiresAt: 3000, libraryDiskId: null, libraryGameId: null, blobSha256: null,
   cursor: '2026-10-19T10:00:00.000001Z', ...over,
 });
 

@@ -138,7 +138,7 @@ export async function closeUpload(db: Db, deviceId: string, id: string, crc: num
 export type UploadView = {
   id: string; path: string; sizeBytes: number; status: 'receiving' | 'stored' | 'failed'; receivedBytes: number;
   errorCode: string | null; deviceId: string | null; deviceName: string; createdAt: number; storedAt: number | null;
-  expiresAt: number; libraryDiskId: string | null; libraryGameId: string | null;
+  expiresAt: number; libraryDiskId: string | null; libraryGameId: string | null; blobSha256: string | null;
   /** When the row settled (stored_at, else created_at) as Postgres prints it, with microseconds: a Date is milliseconds and would round (ruling PF4). Clear all sends the greatest cursor in the list. */
   cursor: string;
 };
@@ -158,7 +158,7 @@ export function toUploadView(r: UploadRow & { libraryGameId?: string | null; cur
     id: r.id, path: r.path, sizeBytes: r.sizeBytes, status: lapsed ? 'failed' : (r.status as UploadView['status']),
     receivedBytes: r.receivedBytes, errorCode: lapsed ? 'expired' : r.errorCode, deviceId: r.deviceId, deviceName: r.deviceName,
     createdAt: r.createdAt.getTime(), storedAt: r.storedAt?.getTime() ?? null, expiresAt: r.expiresAt.getTime(),
-    libraryDiskId: r.libraryDiskId, libraryGameId: r.libraryGameId ?? null, cursor: r.cursor,
+    libraryDiskId: r.libraryDiskId, libraryGameId: r.libraryGameId ?? null, blobSha256: r.blobSha256, cursor: r.cursor,
   };
 }
 
