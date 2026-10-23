@@ -33,6 +33,8 @@ export const COLLECTION_LIMIT = 4;
 
 export interface SearchTitle {
   id: string; title: string; year: number | null; publisher: string | null; diskCount: number;
+  /** This org's collections the title is in, in the rail's order; empty = Uncategorized (A3). */
+  collections: string[];
 }
 export interface SearchCollectionHit { id: string; name: string; gameCount: number }
 export interface SearchResults { titles: SearchTitle[]; collections: SearchCollectionHit[] }
@@ -66,6 +68,13 @@ export async function search(orgId: string, raw: string): Promise<SearchResults>
         year: games.year,
         publisher: games.publisher,
         diskCount: sql<number>`count(${disks.id})::int`,
+        // Scoped by the COLLECTION's org: collection_games carries no org_id of its own (D-4-5), so the join to
+        // collections is what keeps another tenant's collection names out of this answer.
+        collections: sql<string[]>`coalesce((
+          select array_agg(c.name order by c.sort_key, c.id)
+          from collection_games cg join collections c on c.id = cg.collection_id
+          where cg.game_id = ${games.id} and c.org_id = ${orgId}
+        ), '{}')`,
       })
       .from(games)
       // BOTH predicates, deliberately. disks.orgId is an independent column

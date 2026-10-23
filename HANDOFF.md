@@ -1480,12 +1480,20 @@ separately.
 
 **Current order (re-checked 2026-10-23):** (1) the **WebFloppy redesign** per its approved roadmap
 `docs/superpowers/specs/2026-10-23-webfloppy-redesign-roadmap-design.md` -- Phase A (missing features in today's look;
-**A1 States and A2 Settings/account SHIPPED 2026-10-23**, see below; A3 Library next), then Phase B (design foundation + rename), then Phase C (layouts area by area); the operator starts
+**A1 States, A2 Settings/account and A3 Library SHIPPED 2026-10-23**, see below; A4 Devices next), then Phase B (design foundation + rename), then Phase C (layouts area by area); the operator starts
 it; (2) B10 on the A4000D when it is on the bench; (3) rev C radio: the LWB+ breadboard test when the Mouser parts
 arrive. The
 table's deferred minors are DONE (3ce: M1, M3-M6, M8 fixed; M7 left by the review's ruling). SHIPPED today: the table view with folders, the core1 watchdog
 (1.21.0), uploads surviving a 5-minute outage (1.21.1 + Transfer 2.2), library paging (all 3ce). Entries below marked SHIPPED are kept for their history only.
 
+- **A3 Library -- SHIPPED 2026-10-23** (branch feat/a3-library). Move to collection… (folder icon in the title
+  controls, cards and rows; a picker of the org's collections minus the one you are in; add then remove, so a
+  failure leaves the title in both, never neither; `move-to-collection.tsx`). Undo in the mount toast: the mount
+  route now answers `undo: { diskId }` (DF0's confirmed disk / DF1's pick before the request, `lib/mount-undo.ts`);
+  Undo re-mounts it as a cancel, or ejects (DF1 eject with {drive:'df1'}) when it was empty. Header search: titles
+  show "in <collections>" / "Uncategorized" (org-scoped subquery in lib/search.ts); a Help group (≤3, client-side
+  `lib/help/match.ts`, title then short text) opens /help#id. The progress bar was removed the same day
+  (9bef0ae, operator: the loading placeholders replace it). e2e: library-a3.spec.ts (4).
 - **A2 Settings / account -- SHIPPED 2026-10-23** (branch feat/a2-account). Settings in the approved board's order:
   Preferences (now save as each field changes, only that field; "Saving…" / "All changes saved" / "Couldn't save. Try
   again" with the field put back; no Save button), Sign-in & password (email; Change password via better-auth

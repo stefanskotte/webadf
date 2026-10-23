@@ -13,6 +13,8 @@
 
 import { useEffect, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
+import { matchHelpTopics } from '@/lib/help/match';
+import { HELP_TOPICS, type HelpTopicId } from '@/lib/help/topics';
 
 interface SearchTitle {
   id: string;
@@ -20,6 +22,7 @@ interface SearchTitle {
   year: number | null;
   publisher: string | null;
   diskCount: number;
+  collections: string[];
 }
 interface SearchCollectionHit {
   id: string;
@@ -172,12 +175,16 @@ export function SearchBox() {
   const flat: Array<
     | { kind: 'title'; item: SearchTitle }
     | { kind: 'collection'; item: SearchCollectionHit }
+    | { kind: 'help'; item: { id: HelpTopicId } }
   > = error
     ? []
     : [
         ...results.titles.map((item) => ({ kind: 'title' as const, item })),
         ...results.collections.map((item) => ({ kind: 'collection' as const, item })),
+        // Help topics (A3), matched here in the browser: they ship with the app, so no request is needed.
+        ...matchHelpTopics(trimmed).map((id) => ({ kind: 'help' as const, item: { id } })),
       ];
+  const helpHits = flat.filter((e) => e.kind === 'help').map((e) => e.item.id as HelpTopicId);
   const showEmpty = trimmed !== '' && !error && respondedQuery === trimmed && flat.length === 0;
   // The panel itself is gated on there being something to put in it. Without
   // this, the bordered box renders empty (no rows, no error, no empty-state
@@ -207,6 +214,7 @@ export function SearchBox() {
   function select(entry: (typeof flat)[number]) {
     // The page's loading placeholders (loading.tsx) confirm the click landed.
     if (entry.kind === 'title') router.push(`/games/${entry.item.id}`);
+    else if (entry.kind === 'help') router.push(`/help#${entry.item.id}`);
     else router.push(`/library?collection=${entry.item.id}`);
     // SearchBox lives in the layout, so navigating does not unmount it --
     // without reset() here the request for whatever was typed keeps running
@@ -386,7 +394,9 @@ export function SearchBox() {
                       {t.title}
                     </span>
                     <span className="font-mono text-[10.5px]" style={{ color: 'var(--muted)' }}>
-                      {[t.year, t.publisher, `${t.diskCount} disk${t.diskCount === 1 ? '' : 's'}`]
+                      {[t.year, t.publisher, `${t.diskCount} disk${t.diskCount === 1 ? '' : 's'}`,
+                        // Where it lives (A3): its collections, or the inbox. Older servers send no list.
+                        t.collections ? (t.collections.length > 0 ? `in ${t.collections.join(', ')}` : 'Uncategorized') : null]
                         .filter(Boolean)
                         .join(' · ')}
                     </span>
@@ -419,6 +429,36 @@ export function SearchBox() {
                     </span>
                     <span className="font-mono text-[10.5px]" style={{ color: 'var(--muted)' }}>
                       {c.gameCount} title{c.gameCount === 1 ? '' : 's'}
+                    </span>
+                  </button>
+                );
+              })}
+
+              {helpHits.length > 0 && (
+                <div className="px-2 py-1 font-mono text-[10px] uppercase tracking-[0.09em]" style={{ color: 'var(--faint)' }}>
+                  Help
+                </div>
+              )}
+              {helpHits.map((id) => {
+                const index = flat.findIndex((e) => e.kind === 'help' && e.item.id === id);
+                const highlighted = index === highlight;
+                return (
+                  <button
+                    key={id}
+                    type="button"
+                    data-testid="search-result"
+                    data-result-kind="help"
+                    data-result-id={id}
+                    onMouseEnter={() => setHighlight(index)}
+                    onClick={() => select({ kind: 'help', item: { id } })}
+                    className="flex w-full flex-col items-start gap-0.5 rounded-lg px-2 py-1.5 text-left"
+                    style={highlighted ? { background: 'rgb(30 45 60 / 0.08)' } : undefined}
+                  >
+                    <span className="text-[13px] font-semibold" style={{ color: 'var(--ink)' }}>
+                      {HELP_TOPICS[id].title}
+                    </span>
+                    <span className="line-clamp-1 text-[11.5px]" style={{ color: 'var(--muted)' }}>
+                      {HELP_TOPICS[id].short}
                     </span>
                   </button>
                 );

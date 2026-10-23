@@ -156,9 +156,9 @@ test('a row carries the card controls, and its delete asks first without leaving
 
   await page.goto(`/library?view=table&collection=${id}`);
   const r = row(page, t);
-  // The card's order: history, mount, (fob only with a reader), remove, delete.
+  // The card's order: history, mount, (fob only with a reader), move to a collection (A3), remove, delete.
   const controls = await r.locator('button').evaluateAll((els) => els.map((el) => el.getAttribute('data-testid')));
-  expect(controls).toEqual([`history-${gameId}`, `card-mount-${gameId}`, `remove-from-collection-${gameId}`, `delete-game-${gameId}`]);
+  expect(controls).toEqual([`history-${gameId}`, `card-mount-${gameId}`, `move-to-collection-${gameId}`, `remove-from-collection-${gameId}`, `delete-game-${gameId}`]);
   // No reader in this org: no fob button, as on the card.
   await expect(r.getByTestId(`fob-${gameId}`)).toHaveCount(0);
 
@@ -285,7 +285,7 @@ test('with a reader in the org, a row shows the fob button in the card\'s place'
   await page.goto('/library?view=table');
   const controls = await row(page, `Fob row ${run}`).locator('button')
     .evaluateAll((els) => els.map((el) => el.getAttribute('data-testid')));
-  expect(controls).toEqual([`history-${gameId}`, `card-mount-${gameId}`, `fob-${gameId}`, `delete-game-${gameId}`]);
+  expect(controls).toEqual([`history-${gameId}`, `card-mount-${gameId}`, `fob-${gameId}`, `move-to-collection-${gameId}`, `delete-game-${gameId}`]);
 });
 
 // Final review fixes (2026-10-22): M1, M3, M5, M8.

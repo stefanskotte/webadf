@@ -102,7 +102,9 @@ export function CardMountButton({ gameId, title, diskCount, singleDiskId, drives
         res = await fetch(`/api/devices/${device}/${disk ? 'mount' : 'eject'}`, disk
           ? { method: 'POST', headers: { 'content-type': 'application/json' },
               body: JSON.stringify(toDf1 ? { diskId: disk, drive: 'df1' } : { diskId: disk }) }
-          : { method: 'POST' });
+          : toDf1
+            ? { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ drive: 'df1' }) }
+            : { method: 'POST' });
       } catch {
         toast.error('Could not reach the server');
         return;
@@ -116,7 +118,17 @@ export function CardMountButton({ gameId, title, diskCount, singleDiskId, drives
         });
         return;
       }
-      toast.success(cancel ? 'Mount cancelled' : disk ? (toDf1 ? 'Mount into DF1 requested' : 'Mount requested') : 'Eject requested');
+      if (disk && !cancel) {
+        // Undo (A3): put back what the drive held before this request -- the route says which (`undo.diskId`), or
+        // null for "it was empty", which is an eject. It goes through act() as a cancel, like the card's own Cancel.
+        const body = await res.json().catch(() => null) as { undo?: { diskId?: string | null } } | null;
+        const back = body?.undo ? body.undo.diskId ?? null : undefined;
+        toast.success(toDf1 ? 'Mount into DF1 requested' : 'Mount requested', back === undefined ? undefined : {
+          action: { label: 'Undo', onClick: () => { void act(device, back, true, toDf1); } },
+        });
+      } else {
+        toast.success(cancel ? 'Mount cancelled' : 'Eject requested');
+      }
       router.refresh();
     } finally {
       setBusy(false);

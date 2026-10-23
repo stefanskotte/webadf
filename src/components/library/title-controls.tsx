@@ -14,6 +14,7 @@ import { History, Minus } from 'lucide-react';
 import { DeleteDiskDialog } from '@/components/library/delete-disk-dialog';
 import { FobButton, type FobContext } from '@/components/nfc/fob-button';
 import { CardMountButton, type DriveContext } from './card-mount-button';
+import { MoveToCollectionButton } from './move-to-collection';
 import { holdLabel } from '@/lib/drive-holds';
 import { fromQuery, type TrailView } from '@/lib/trail';
 import { ejectMessage, isMountedReason, mountedReason } from '@/lib/mount-wording';
@@ -199,7 +200,7 @@ function VolumeNameField({ game: g }: { game: GameListItem }) {
 /**
  * The title controls, in the order they read (TitleControls below): history,
  * mount, write to an NFC tag (the fob button, only when the org has a
- * reader), remove from the collection, delete. All of them are BUTTONS,
+ * reader), move to a collection (A3), remove from the collection, delete. All of them are BUTTONS,
  * including the history one that is really a navigation -- the card, and a
  * table row, is itself an <a href>, and an anchor inside an anchor is invalid
  * HTML that browsers "fix" by closing the outer one early, which would break
@@ -353,6 +354,7 @@ export function TitleControls({ game: g, collectionId, fob, drives, view = null 
                          singleDiskId={g.diskCount === 1 ? g.diskId : null} drives={drives} />
       )}
       {fob && <CardFobButton game={g} fob={fob} />}
+      <MoveToCollectionButton game={g} collectionId={collectionId} />
       {collectionId && <RemoveFromCollectionButton game={g} collectionId={collectionId} />}
       <DeleteDiskDialog kind="game" id={g.id} title={g.title} diskCount={g.diskCount} />
     </div>

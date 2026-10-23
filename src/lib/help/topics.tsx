@@ -48,12 +48,14 @@ export const HELP_TOPICS = {
           page you are on. In the table, the folders are on the first page.
         </p>
         <p>
-          <strong>Controls.</strong> Each row has the card&apos;s buttons in the same order: version history, mount
-          or eject, write an NFC tag (when you have a reader), remove from the collection (inside one) and delete. A
-          disk in a drive is marked round its picture, and a disk you made here can be renamed in place.
+          <strong>Controls.</strong> Rows have the card&apos;s buttons in the same order: version history, mount
+          or eject, write an NFC tag (when you have a reader), move to a collection, remove from the collection
+          (inside one) and delete. A disk in a drive is marked round its picture, and a disk you made here can be
+          renamed in place.
         </p>
         <p>
-          <strong>Filing.</strong> Drag a card or a row onto a collection in the collections list. Reordering a
+          <strong>Filing.</strong> Drag a card or a row onto a collection in the list, or use{' '}
+          <em>Move to collection</em>. Reordering a
           collection, and making a disk set by dropping one title on another, are grid only.
         </p>
       </>

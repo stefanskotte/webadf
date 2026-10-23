@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { requireOrg } from '@/lib/session';
+import { drivesBefore } from '@/lib/mount-undo';
 import { setDesired } from '@/lib/mount';
 import { mountToDf1 } from '@/lib/df1-store';
 import { DF1_REFUSAL_TEXT } from '@/lib/df1-pick';
@@ -31,9 +32,14 @@ export async function POST(request: Request, ctx: { params: Promise<{ id: string
     return Response.json({ error: 'invalid_body', detail: z.flattenError(parsed.error) }, { status: 400 });
   }
 
+  // What Undo in the mount toast puts back (A3): the disk this drive held before the request -- DF0's confirmed disk,
+  // DF1's pick -- or null for "it was empty", which Undo answers with an eject. Read before the write; a change
+  // landing between the two is the same race the card's own Cancel has.
+  const before = await drivesBefore(orgId, deviceId);
+
   if (parsed.data.drive === 'df1') {
     const r = await mountToDf1(orgId, deviceId, parsed.data.diskId);
-    if (r.ok) return Response.json({ version: r.version });
+    if (r.ok) return Response.json({ version: r.version, undo: { diskId: before?.df1 ?? null } });
     if (r.reason === 'not_found') return Response.json({ error: 'not_found' }, { status: 404 });
     // Said, not hidden: the reason is the same sentence the disabled button shows (df1-pick.ts).
     return Response.json({ error: r.reason, reason: DF1_REFUSAL_TEXT[r.reason] }, { status: 409 });
@@ -52,5 +58,5 @@ export async function POST(request: Request, ctx: { params: Promise<{ id: string
   // track. Said, not hidden -- the fix (update the board) is the person's.
   if (!result.ok) return Response.json({ error: 'track_too_long', reason: TRACK_TOO_LONG }, { status: 409 });
 
-  return Response.json({ version: result.version });
+  return Response.json({ version: result.version, undo: { diskId: before?.df0 ?? null } });
 }

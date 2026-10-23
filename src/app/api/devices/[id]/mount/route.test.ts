@@ -5,6 +5,8 @@ const setDesired = vi.fn();
 vi.mock('@/lib/mount', () => ({ setDesired: (...a: unknown[]) => setDesired(...a) }));
 const mountToDf1 = vi.fn();
 vi.mock('@/lib/df1-store', () => ({ mountToDf1: (...a: unknown[]) => mountToDf1(...a) }));
+const drivesBefore = vi.fn();
+vi.mock('@/lib/mount-undo', () => ({ drivesBefore: (...a: unknown[]) => drivesBefore(...a) }));
 
 const post = async (body: unknown) => {
   const { POST } = await import('./route');
@@ -13,7 +15,10 @@ const post = async (body: unknown) => {
   }), { params: Promise.resolve({ id: 'dev-1' }) });
 };
 
-beforeEach(() => { vi.clearAllMocks(); });
+beforeEach(() => {
+  vi.clearAllMocks();
+  drivesBefore.mockResolvedValue({ df0: 'disk-held', df1: null });
+});
 
 describe('POST /api/devices/[id]/mount -- drive', () => {
   it('no drive, or df0: DF0 as before', async () => {
@@ -27,7 +32,7 @@ describe('POST /api/devices/[id]/mount -- drive', () => {
     mountToDf1.mockResolvedValue({ ok: true, version: 7 });
     const res = await post({ diskId: 'disk-x', drive: 'df1' });
     expect(res.status).toBe(200);
-    expect(await res.json()).toEqual({ version: 7 });
+    expect(await res.json()).toEqual({ version: 7, undo: { diskId: null } });   // DF1 had no pick: Undo ejects it
     expect(mountToDf1).toHaveBeenCalledWith('org-1', 'dev-1', 'disk-x');
     expect(setDesired).not.toHaveBeenCalled();
   });
@@ -38,6 +43,12 @@ describe('POST /api/devices/[id]/mount -- drive', () => {
     expect(await r1.json()).toEqual({ error: 'not_dd', reason: 'DF1 takes standard DD disks only' });
     mountToDf1.mockResolvedValue({ ok: false, reason: 'not_found' });
     expect((await post({ diskId: 'disk-x', drive: 'df1' })).status).toBe(404);
+  });
+  it("DF0's answer names the confirmed disk Undo puts back (A3), read for this org's board", async () => {
+    setDesired.mockResolvedValue({ ok: true, version: 3 });
+    const res = await post({ diskId: 'disk-x' });
+    expect(await res.json()).toEqual({ version: 3, undo: { diskId: 'disk-held' } });
+    expect(drivesBefore).toHaveBeenCalledWith('org-1', 'dev-1');
   });
   it('an unknown drive is a 400', async () => {
     expect((await post({ diskId: 'disk-x', drive: 'df2' })).status).toBe(400);
