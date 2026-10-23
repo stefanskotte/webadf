@@ -63,6 +63,9 @@ function fakeAdf(): Buffer {
 async function dropAdf(page: Page, name: string): Promise<{ key: string; sha: string }> {
   const buffer = fakeAdf();
   const sha = createHash('sha256').update(buffer).digest('hex');
+  // Hydrated first: a pick on server-rendered HTML has no change handler yet, and the drop silently does nothing.
+  // The server render says "Reading the list…"; an empty text or a row exists only once the client has run.
+  await expect(page.locator('[data-testid="staging-empty"], [data-testid="staging-row"]').first()).toBeVisible({ timeout: LIVE });
   await page.getByTestId('file-input').setInputFiles({ name, mimeType: 'application/octet-stream', buffer });
   const key = `lib:${sha}`;
   await expect(page.locator(`[data-testid="staging-row"][data-key="${key}"]`)).toHaveAttribute('data-state', 'done', { timeout: 30_000 });
@@ -163,4 +166,30 @@ test('a failed refresh keeps the rows and says so until the next good one (Revie
   await page.unroute('**/api/staging');
   await expect(page.getByTestId('staging-refresh-failed')).toHaveCount(0, { timeout: LIVE });
   await expect(row(page, key)).toBeVisible();
+});
+
+test('the list keeps refreshing while a file for the Amiga is still going up', async ({ page, request }) => {
+  const { orgId } = await signUpFresh(page);
+  const { deviceId, token } = await pairDevice(page, request, 'Bench');
+  await boardSays(request, token);
+  await page.goto('/ingest');
+  await expect(page.getByTestId('send-board')).toContainText('Bench', { timeout: LIVE });
+  await expect(page.getByTestId('staging-empty')).toBeVisible({ timeout: LIVE });   // hydrated (see dropAdf)
+  // A slow link: the upload's POST is held for 20 s before it reaches the server.
+  let release!: () => void;
+  const held = new Promise<void>((r) => { release = r; });
+  await page.route('**/api/transfers?**', async (r) => {
+    if (r.request().method() !== 'POST') return r.continue();
+    await Promise.race([held, new Promise((t) => setTimeout(t, 20_000))]);
+    await r.continue();
+  });
+  await page.getByTestId('send-file-input').setInputFiles({ name: 'Slow.bin', mimeType: 'application/octet-stream', buffer: Buffer.alloc(1000, 7) });
+  await expect(page.locator('[data-testid="staging-row"][data-key^="up:"]')).toHaveAttribute('data-state', 'uploading');
+  // Meanwhile a file arrives from the Amiga: the poll still paints it, before the upload settles.
+  const up = await seedUpload(orgId, deviceId, 'Bench', { path: 'Arrived.txt', status: 'stored' });
+  await expect(row(page, `amiga:${up}`)).toBeVisible({ timeout: LIVE });
+  await expect(page.locator('[data-testid="staging-row"][data-key^="up:"]')).toHaveAttribute('data-state', 'uploading');
+  release();
+  await expect(page.locator('[data-testid="staging-row"][data-key^="up:"]')).toHaveCount(0, { timeout: LIVE });
+  await expect(page.locator('[data-testid="staging-row"][data-kind="out"]')).toContainText('Slow.bin');
 });
