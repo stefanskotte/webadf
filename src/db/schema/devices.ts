@@ -52,6 +52,9 @@ export const devices = pgTable('devices', {
   // -- echoes the status payload's `version` field (spec §4). Nullable: a
   // device that has never sent it (or an older firmware) simply has none.
   mountedVersion: integer('mounted_version'),
+  // The disk DF0 last held before an eject asked through the web (A4, "Re-insert last disk" on an empty drive).
+  // Set by clearDesired; SET NULL when that disk is deleted, so the offer never names a disk that is gone.
+  lastDiskId: text('last_disk_id').references(() => disks.id, { onDelete: 'set null' }),
 
   // --- firmware updates (spec 2026-09-22-firmware-update-server-design) ---
 

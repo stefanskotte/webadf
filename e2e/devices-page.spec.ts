@@ -292,6 +292,8 @@ test('three paired devices share one row, each card as tall as its content, and 
   // none, so this is 1280x720) is above the lg breakpoint device-list.tsx
   // switches on -- 3 per row is what should render here.
   await page.goto('/devices');
+  // boundingBox() does not wait, and the cards stream in behind the loading placeholders (A1): wait for them first.
+  for (const id of [idA, idB, idC]) await expect(page.getByTestId(`device-${id}`)).toBeVisible();
   const a = (await page.getByTestId(`device-${idA}`).boundingBox())!;
   const b = (await page.getByTestId(`device-${idB}`).boundingBox())!;
   const c = (await page.getByTestId(`device-${idC}`).boundingBox())!;
@@ -533,6 +535,7 @@ test('on a phone a device card uses the whole width', async ({ page, request }) 
   const { deviceId } = await pairDevice(page, request);
   await page.setViewportSize({ width: 390, height: 844 });
   await page.goto('/devices');
+  await expect(page.locator(`#device-${deviceId}`)).toBeVisible();   // boundingBox() does not wait (A1 streaming)
   const box = await page.locator(`#device-${deviceId}`).boundingBox();
   expect(box!.width).toBeGreaterThan(330);   // 390 less the 16 px gutters, not half of it
 });

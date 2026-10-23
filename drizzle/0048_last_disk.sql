@@ -1,0 +1,2 @@
+ALTER TABLE "devices" ADD COLUMN "last_disk_id" text;--> statement-breakpoint
+ALTER TABLE "devices" ADD CONSTRAINT "devices_last_disk_id_disks_id_fk" FOREIGN KEY ("last_disk_id") REFERENCES "public"."disks"("id") ON DELETE set null ON UPDATE no action;

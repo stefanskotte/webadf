@@ -485,6 +485,10 @@ export interface DeviceListItem {
   /** Disk at startup (src/lib/boot-disk.ts): what the user chose, and whether the board's firmware can do "No disk". */
   bootDisk: BootDisk;
   bootDiskCapable: boolean;
+  /** The disk DF0 last held before a web eject (A4): offered as "Re-insert last disk" while the drive is empty. */
+  lastDiskId: string | null;
+  lastDiskTitle: string | null;
+  lastDiskNo: number | null;
 }
 
 /**
@@ -512,6 +516,9 @@ export async function listDevices(orgId: string): Promise<DeviceListItem[]> {
   // The disk mounted into DF1 and its title (spec 2026-10-14 §3.3), org-scoped like every join here.
   const df1Disk = alias(disks, 'df1_disk');
   const df1Game = alias(games, 'df1_game');
+  // The disk DF0 last held before a web eject, and its title (A4, "Re-insert last disk").
+  const lastDisk = alias(disks, 'last_disk');
+  const lastGame = alias(games, 'last_game');
 
   const rows = await getDb()
     .select({
@@ -570,6 +577,9 @@ export async function listDevices(orgId: string): Promise<DeviceListItem[]> {
       netFramesOut: devices.netFramesOut,
       displayLayout: devices.displayLayout,
       bootDisk: devices.bootDisk,
+      lastDiskId: lastDisk.id,
+      lastDiskTitle: lastGame.title,
+      lastDiskNo: lastDisk.diskNo,
     })
     .from(devices)
     // Every join here is org-scoped in the ON clause itself, not just
@@ -583,6 +593,8 @@ export async function listDevices(orgId: string): Promise<DeviceListItem[]> {
     .leftJoin(mountedEnt, and(eq(mountedEnt.sha256, mountedDisk.sha256), eq(mountedEnt.orgId, orgId)))
     .leftJoin(df1Disk, and(eq(df1Disk.id, devices.df1DiskId), eq(df1Disk.orgId, orgId)))
     .leftJoin(df1Game, and(eq(df1Game.id, df1Disk.gameId), eq(df1Game.orgId, orgId)))
+    .leftJoin(lastDisk, and(eq(lastDisk.id, devices.lastDiskId), eq(lastDisk.orgId, orgId)))
+    .leftJoin(lastGame, and(eq(lastGame.id, lastDisk.gameId), eq(lastGame.orgId, orgId)))
     .where(orgFilter(devices, orgId))
     .orderBy(devices.name);
   // The layout crosses to the client component as base64 (a Uint8Array does

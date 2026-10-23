@@ -132,6 +132,9 @@ export async function clearDesired(orgId: string, deviceId: string): Promise<num
       desiredDiskId: null,
       desiredSetAt: new Date(),
       desiredVersion: sql`${devices.desiredVersion} + 1`,
+      // "Re-insert last disk" (A4): the disk on its way in, else the one held, else what was remembered before (an
+      // already-empty drive). SET reads the row's values from before this UPDATE.
+      lastDiskId: sql`coalesce(${devices.desiredDiskId}, ${devices.mountedDiskId}, ${devices.lastDiskId})`,
     })
     .where(and(eq(devices.id, deviceId), eq(devices.orgId, orgId)))
     .returning({ version: devices.desiredVersion });

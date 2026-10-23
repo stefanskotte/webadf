@@ -184,9 +184,13 @@ describe('second-drive states every caveat the operator asked for', () => {
     expect(all()).toMatch(/Eject DF1/);
     expect(all()).toMatch(/standard DD disks only/i);
     expect(all()).toMatch(/1\.12\.0/);
-    expect(all()).not.toMatch(/Choose <em>Next disk of the set|Choose Next disk of the set/);
   });
-  it('names the setting On', () => expect(bodyText('second-drive')).toMatch(/Choose\s+On\s+under/));
+  // A4 (2026-10-23) brings back the approved board's names in place of D4's "On": both choices are the stored 'df1'.
+  it('names the choices Next disk of the set and Any disk', () => {
+    expect(bodyText('second-drive')).toMatch(/Choose\s+Next disk of the set\s+under/);
+    expect(bodyText('second-drive')).toMatch(/choose\s+Any disk\s+and mount/);
+    expect(bodyText('second-drive')).not.toMatch(/Choose\s+On\s+under/);
+  });
   it('the refusal and its override', () => {
     expect(all()).toMatch(/refuse/i);
     expect(all()).toMatch(/anyway/i);

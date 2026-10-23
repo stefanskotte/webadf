@@ -1480,12 +1480,23 @@ separately.
 
 **Current order (re-checked 2026-10-23):** (1) the **WebFloppy redesign** per its approved roadmap
 `docs/superpowers/specs/2026-10-23-webfloppy-redesign-roadmap-design.md` -- Phase A (missing features in today's look;
-**A1 States, A2 Settings/account and A3 Library SHIPPED 2026-10-23**, see below; A4 Devices next), then Phase B (design foundation + rename), then Phase C (layouts area by area); the operator starts
+**A1 States, A2 Settings/account, A3 Library and A4 Devices SHIPPED 2026-10-23**, see below; A5 Disk files next), then Phase B (design foundation + rename), then Phase C (layouts area by area); the operator starts
 it; (2) B10 on the A4000D when it is on the bench; (3) rev C radio: the LWB+ breadboard test when the Mouser parts
 arrive. The
 table's deferred minors are DONE (3ce: M1, M3-M6, M8 fixed; M7 left by the review's ruling). SHIPPED today: the table view with folders, the core1 watchdog
 (1.21.0), uploads surviving a 5-minute outage (1.21.1 + Transfer 2.2), library paging (all 3ce). Entries below marked SHIPPED are kept for their history only.
 
+- **A4 Devices -- SHIPPED 2026-10-23** (branch feat/a4-devices, migration **0048_last_disk applied to production
+  2026-10-23** before the push). `devices.last_disk_id` (FK disks, SET NULL): clearDesired sets it to
+  coalesce(desired, mounted, previous), so every web eject (card, chips, library, disk delete) remembers the disk;
+  board-side empties (Disk at startup "No disk", NFC) do not. An empty DF0 shows **Re-insert last disk** (title,
+  disk N) on the card (`reinsert-button.tsx`), an ordinary mount with Undo = eject. DF1 menu: Off / Next disk of the
+  set / Any disk (read-only) / Network -- Next and Any are both the stored 'df1'; Any shows while a pick exists;
+  choosing Next with a pick ejects it; choosing Any with none turns DF1 on and says it follows the set until a disk
+  is mounted into it (the firmware cannot hold DF1 empty). Help and its test now name Next disk of the set / Any disk
+  (reverses D4's "On"). Also fixed: second-drive.spec's exact mount answer (broken by A3's `undo`), two
+  devices-page layout tests that measured before the streamed cards arrived (since A1), and user-prefs.db.test
+  missing `pageSize: 48` (since paging 76e8a70). e2e: reinsert.spec.ts (1), second-drive.spec.ts (+2).
 - **A3 Library -- SHIPPED 2026-10-23** (branch feat/a3-library). Move to collection… (folder icon in the title
   controls, cards and rows; a picker of the org's collections minus the one you are in; add then remove, so a
   failure leaves the title in both, never neither; `move-to-collection.tsx`). Undo in the mount toast: the mount

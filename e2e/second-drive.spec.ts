@@ -198,17 +198,18 @@ test('a seen DF1 refuses Network; the override saves Network (Review Focus 5)', 
 const sha = (s: string) => createHash('sha256').update(`df1-any-${s}`).digest('hex');
 const FW = '1.12.0+gabc1234';
 
-test('the setting reads Off / On / Network, with the help line under it (D4)', async ({ page, request }) => {
+test('the setting reads Off / Next disk of the set / Any disk / Network, with the help line under it (D4, A4)', async ({ page, request }) => {
   await signUpFresh(page);
   const { deviceId } = await df1OnBoard(page, request);
   await page.goto('/devices');
   const select = page.getByTestId(`second-drive-${deviceId}`);
   await expect(select).toHaveValue('df1');                              // the stored value is unchanged
   await expect(select.locator('option[value="off"]')).toHaveText('Off');
-  await expect(select.locator('option[value="df1"]')).toHaveText('On');
+  await expect(select.locator('option[value="df1"]')).toHaveText('Next disk of the set');
+  await expect(select.locator('option[value="any"]')).toHaveText('Any disk (read-only)');
   await expect(select.locator('option[value="net"]')).toHaveText('Network (PaulaNET)');
   await expect(page.getByTestId(`second-drive-help-${deviceId}`))
-    .toHaveText('On: DF1 holds the next disk of the set, or a disk you mount into DF1.');
+    .toHaveText('DF1 holds the next disk of the set, read-only, so a game asking for its next disk finds it.');
   await expect(page.getByTestId(`device-df1-disk-${deviceId}`)).toHaveText('DF1: next disk of the set — empty');
 });
 
@@ -220,7 +221,7 @@ test('a disk mounted into DF1 reaches the board by its own cursor, shows on the 
   const { diskId } = await seedDisk(orgId, { title: `Pick-${tag}`, diskNo: 1, sha256: pick });
   const m = await page.request.post(`/api/devices/${deviceId}/mount`, { data: { diskId, drive: 'df1' } });
   expect(m.status()).toBe(200);
-  expect(await m.json()).toEqual({ version: 1 });
+  expect(await m.json()).toEqual({ version: 1, undo: { diskId: null } });   // DF1 had no pick: Undo would eject it (A3)
   expect((await row(deviceId)).df1DiskId).toBe(diskId);
   expect((await row(deviceId)).desiredDiskId).toBeNull();               // DF0 untouched
 
@@ -319,4 +320,40 @@ test('fw 1.12.1 (netPick): the driver disk comes as DF1\'s pick, and leaving Net
   const b3 = await (await request.get(q(1, 1), { headers: authHeader(token) })).json();
   expect(b3.secondDrive).toEqual({ seq: 2, mode: 'off' });
   expect(b3.df1).toEqual({ v: 2, sha256: null });
+});
+
+// A4: "Any disk" is its own choice, stored as the same 'df1' as "Next disk of the set"; what DF1 holds tells them
+// apart.
+test('Any disk shows while DF1 holds a disk mounted into it; Next disk of the set ejects that disk', async ({ page, request }) => {
+  const { orgId } = await signUpFresh(page);
+  const { deviceId } = await df1OnBoard(page, request);
+  const tag = runTag();
+  const { diskId } = await seedDisk(orgId, { title: `AnyPick-${tag}`, diskNo: 1, sha256: sha(`anypick-${tag}`) });
+  expect((await page.request.post(`/api/devices/${deviceId}/mount`, { data: { diskId, drive: 'df1' } })).status()).toBe(200);
+
+  await page.goto('/devices');
+  const select = page.getByTestId(`second-drive-${deviceId}`);
+  await expect(select).toHaveValue('any');
+  await expect(page.getByTestId(`second-drive-help-${deviceId}`))
+    .toHaveText('DF1 holds a disk you mount into DF1 from the library, read-only.');
+
+  await select.selectOption('df1');
+  await expect.poll(async () => (await row(deviceId)).df1DiskId).toBeNull();
+  await expect(select).toHaveValue('df1');
+  expect((await row(deviceId)).secondDrive).toBe('df1');
+});
+
+test('Any disk on a board with DF1 Off switches DF1 on and says how to fill it', async ({ page, request }) => {
+  await signUpFresh(page);
+  const { deviceId } = await df1OnBoard(page, request);
+  expect((await page.request.patch(`/api/devices/${deviceId}/second-drive`, { data: { mode: 'off' } })).status()).toBe(200);
+
+  await page.goto('/devices');
+  const select = page.getByTestId(`second-drive-${deviceId}`);
+  await expect(select).toHaveValue('off');
+  await select.selectOption('any');
+  await expect.poll(async () => (await row(deviceId)).secondDrive).toBe('df1');
+  await expect(select).toHaveValue('any');
+  await expect(page.getByTestId(`second-drive-help-${deviceId}`)).toHaveText(
+    'DF1 holds a disk you mount into DF1 from the library, read-only. Mount one with a title’s Mount → DF1; until then DF1 holds the next disk of the set.');
 });

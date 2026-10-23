@@ -389,7 +389,7 @@ export const HELP_TOPICS = {
   // but cannot take a change -- second-drive.ts DF1_ON_OLD_FIRMWARE, shown when df1Sha256 is non-null.
   // HD next disk: device_client.c dc_df1_want (returns SLOT_NONE for SLOT_KIND_ADF_HD unless _df1_hd_ok) and
   // wifi-floppy/firmware/CMakeLists.txt:181 WF_DF1_HD OFF (decision D2: DF1's buffer is DD-only) -> DF1 stays empty.
-  // DF1 any disk (spec 2026-10-14): the setting is "On" (stored 'df1'); Mount offers DF0/DF1 (mount-action.tsx,
+  // DF1 any disk (spec 2026-10-14; A4 2026-10-23): "Next disk of the set" and "Any disk" are both stored 'df1'; Mount offers DF0/DF1 (mount-action.tsx,
   // card-mount-button.tsx), standard DD only, Eject DF1 on the card (second-drive-setting.tsx), fw 1.12.0
   // (df1-pick.ts DF1_PICK_FW); a pick works with DF0 empty and survives DF0 changes (device_client.c dc_df1_want).
   'second-drive': {
@@ -399,14 +399,14 @@ export const HELP_TOPICS = {
     body: (
       <>
         <p>
-          Choose <em>On</em> under <em>Second drive (DF1)</em> on the board&apos;s card. DF1 then holds the next disk
+          Choose <em>Next disk of the set</em> under <em>Second drive (DF1)</em> on the board&apos;s card. DF1 then holds the next disk
           of the set (empty when that is an HD disk); after <em>Next disk</em> it is empty for about five seconds while
           the following disk is fetched.
         </p>
         <p>
-          Or mount a disk of your choice into DF1: press <em>DF1</em> beside <em>DF0</em> where you mount a disk. DF1 keeps it whatever
-          DF0 does, even with DF0 empty, until <em>Eject DF1</em> on the card; then it follows the set again. DF1
-          takes standard DD disks only.
+          Or choose <em>Any disk</em> and mount a disk of your choice into DF1: press <em>DF1</em> beside <em>DF0</em> where you
+          mount a disk. DF1 keeps it whatever DF0 does, until <em>Eject DF1</em> or <em>Next disk of the set</em>; then it
+          follows the set again. Standard DD disks only.
         </p>
         <p>
           It takes effect when the Amiga restarts, cold or warm: switch it off and on, or press Ctrl-Amiga-Amiga.
@@ -420,7 +420,7 @@ export const HELP_TOPICS = {
           'DF1 is read-only: saving to it fails as write-protected. Saves to DF0 follow that disk’s own write protection.',
           <>The third choice, <em>Network (PaulaNET)</em>, uses DF1 for networking instead: see{' '}
             <a className="underline" href="/help#network">Amiga networking</a>.</>,
-          'On needs board firmware 1.9.0 or newer, and a disk of your choice in DF1 needs 1.12.0; Network needs 1.11.0. Older firmware keeps the DF1 setting it had, and the card says DF1 is on while it holds a disk; install 1.9.0 or newer to switch it off.',
+          'DF1 needs board firmware 1.9.0 or newer, and Any disk needs 1.12.0; Network needs 1.11.0. Older firmware keeps the DF1 setting it had, and the card says DF1 is on while it holds a disk; install 1.9.0 or newer to switch it off.',
         ]} />
       </>
     ),

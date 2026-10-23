@@ -17,6 +17,7 @@ import { NextDiskButton } from './next-disk-button';
 import { DeviceAlias } from './device-alias';
 import { DriveFront } from './drive-front';
 import { DeleteDeviceDialog } from './delete-device-dialog';
+import { ReinsertButton } from './reinsert-button';
 
 /**
  * The drive-bezel card (design A2, 2026-10-07): name, online badge and MAC on
@@ -202,6 +203,10 @@ export function DeviceCard(
         </span>
         <span className="text-[12px]" style={{ color: 'var(--muted)' }}>{subText}</span>
       </div>
+      {/* Converged and empty only: while an eject is still in flight the drive is not empty yet (A4). */}
+      {state === 'empty' && device.lastDiskId && device.lastDiskTitle && (
+        <ReinsertButton deviceId={device.id} diskId={device.lastDiskId} title={device.lastDiskTitle} diskNo={device.lastDiskNo} />
+      )}
       {/* Gated like the Next button below: the line is about the disk in the
           drive, which only a converged board has. Not on the OLED, so it
           stays visible. */}
