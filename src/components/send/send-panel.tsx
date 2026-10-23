@@ -54,12 +54,15 @@ export function SendPanel({ targets: initialTargets, initialBoard, serverNow }: 
         continue;
       }
       staging.addUp({ ...row, state: 'uploading' });
+      staging.begin();
+      let ended = false;
+      const end = () => { if (!ended) { ended = true; staging.end(); } };
       try {
         const res = await fetch(`/api/transfers?deviceId=${encodeURIComponent(to.id)}&name=${encodeURIComponent(file.name)}`,
           { method: 'POST', headers: { 'content-type': 'application/octet-stream' }, body: file });
         if (res.ok) {
           // Its transfer row takes its place: read the list first, then drop the upload row, so the file never vanishes.
-          staging.changed();
+          end();
           await staging.refreshNow();
           staging.removeLocal([key]);
           continue;
@@ -68,6 +71,8 @@ export function SendPanel({ targets: initialTargets, initialBoard, serverNow }: 
         staging.patchUp(key, { state: 'failed', note: sendErrorText(b?.error, res.status) });
       } catch {
         staging.patchUp(key, { state: 'failed', note: 'The upload did not finish. Check the connection and try again.' });
+      } finally {
+        end();
       }
     }
   }

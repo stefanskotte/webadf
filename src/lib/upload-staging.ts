@@ -152,3 +152,15 @@ export function trackStalls(prev: Seen, rows: ServerRow[], now: number): { seen:
   }
   return { seen, stalled };
 }
+
+/**
+ * Changes of ours (an action's request) against list reads: `count` moves when a change begins and when it ends,
+ * `inFlight` is how many are running. A read is painted only if no change ran at its start or its end and none began
+ * or ended in between -- so a read made while a Clear's POST is still out cannot bring a cleared row back.
+ */
+export type ChangeClock = { count: number; inFlight: number };
+export const idleClock = (): ChangeClock => ({ count: 0, inFlight: 0 });
+export const beginChange = (c: ChangeClock): ChangeClock => ({ count: c.count + 1, inFlight: c.inFlight + 1 });
+export const endChange = (c: ChangeClock): ChangeClock => ({ count: c.count + 1, inFlight: Math.max(0, c.inFlight - 1) });
+export const readIsCurrent = (atStart: ChangeClock, atEnd: ChangeClock): boolean =>
+  atStart.inFlight === 0 && atEnd.inFlight === 0 && atStart.count === atEnd.count;

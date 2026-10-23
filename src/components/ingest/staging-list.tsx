@@ -54,10 +54,9 @@ export function StagingList({ initialFilter, fallbackTargets }: { initialFilter:
   async function run(key: string, what: string, request: () => Promise<Response>, done?: (res: Response) => void,
     failText: (code: string | undefined, status: number) => string = uploadErrorText, special?: (res: Response) => boolean) {
     mark(key, true);
-    s.changed();
+    s.begin();   // until it settles, no list read is painted: one made meanwhile may predate the change
     try {
       const res = await request();
-      s.changed();   // the list is different now: any read still in flight is older than that
       if (special?.(res)) { /* handled */ } else if (res.ok) done?.(res);
       else {
         const b = (await res.json().catch(() => null)) as { error?: string; reason?: string } | null;
@@ -66,6 +65,7 @@ export function StagingList({ initialFilter, fallbackTargets }: { initialFilter:
     } catch {
       toast.error(what, { description: 'Check the connection and try again.' });
     } finally {
+      s.end();
       mark(key, false);
       await s.refreshNow();
     }
@@ -100,7 +100,6 @@ export function StagingList({ initialFilter, fallbackTargets }: { initialFilter:
       const res = await fetch(`/api/uploads/${encodeURIComponent(idOf(v))}/file`, { cache: 'no-store' });
       if (!res.ok) {
         toast.error('Not downloaded', { description: res.status === 404 ? uploadErrorText('not_found', 404) : uploadErrorText(undefined, res.status) });
-        s.changed();
         await s.refreshNow();
         return;
       }
@@ -172,6 +171,11 @@ export function StagingList({ initialFilter, fallbackTargets }: { initialFilter:
 
   const meta = (
     <>
+      {s.boards.filter((b) => b.key).map((b) => (
+        <span key={b.id} className="text-[12px]" style={{ color: 'var(--muted)', overflowWrap: 'anywhere' }} data-testid="from-amiga-key">
+          {b.name}: board key <strong style={{ color: 'var(--ink)' }}>{b.key}</strong>
+        </span>
+      ))}
       {s.refreshFailed && (
         <span role="status" className="text-[12px] font-semibold" style={{ color: 'var(--danger-fg)' }} data-testid="staging-refresh-failed">
           Couldn&apos;t refresh

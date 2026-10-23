@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {
-  anyMoving, mergeStaging, stagingView, trackStalls, upsertLibRows,
-  type LibRow, type ServerRow, type UpRow,
+  anyMoving, beginChange, endChange, idleClock, mergeStaging, readIsCurrent, stagingView, trackStalls, upsertLibRows,
+  type ChangeClock, type LibRow, type ServerRow, type UpRow,
 } from '@/lib/upload-staging';
 import { STALL_MS } from '@/lib/from-amiga-ui';
 
@@ -140,5 +140,41 @@ describe('anyMoving and trackStalls', () => {
     expect(c.stalled.size).toBe(0);
     expect(c.seen['amiga:u1']).toEqual({ bytes: 200, since: 2000 + STALL_MS });
     expect(trackStalls(c.seen, [amiga({ status: 'stored' })], 9e9).seen).toEqual({});
+  });
+});
+
+describe('readIsCurrent: a list read is painted only if no change of ours overlapped it', () => {
+  const at = (c: ChangeClock): ChangeClock => ({ ...c });
+  it('paints a read with no change anywhere near it', () => {
+    let c = idleClock();
+    c = endChange(beginChange(c));          // an earlier change, finished before the read
+    const start = at(c);
+    expect(readIsCurrent(start, at(c))).toBe(true);
+  });
+  it('discards a read that starts and ends inside a change (the Clear POST case)', () => {
+    const c = beginChange(idleClock());
+    const start = at(c);
+    expect(readIsCurrent(start, at(c))).toBe(false);
+  });
+  it('discards a read straddling the start of a change', () => {
+    const start = idleClock();
+    const end = beginChange(start);
+    expect(readIsCurrent(start, end)).toBe(false);
+  });
+  it('discards a read straddling the end of a change', () => {
+    const c = beginChange(idleClock());
+    const start = at(c);
+    expect(readIsCurrent(start, endChange(c))).toBe(false);
+  });
+  it('discards a read that a whole change happened inside', () => {
+    const start = idleClock();
+    expect(readIsCurrent(start, endChange(beginChange(start)))).toBe(false);
+  });
+  it('two overlapping changes: still discarded until both end', () => {
+    const two = beginChange(beginChange(idleClock()));
+    const one = endChange(two);
+    expect(readIsCurrent(at(one), at(one))).toBe(false);
+    const none = endChange(one);
+    expect(readIsCurrent(at(none), at(none))).toBe(true);
   });
 });

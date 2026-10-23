@@ -1,8 +1,10 @@
 'use client';
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import type { SendTarget } from '@/lib/send-ui';
-import { answerIsCurrent } from '@/lib/from-amiga-ui';
-import { anyMoving, trackStalls, type LibRow, type ServerRow, type UpRow } from '@/lib/upload-staging';
+import type { UploadBoard } from '@/lib/amiga-uploads';
+import {
+  anyMoving, beginChange, endChange, idleClock, readIsCurrent, trackStalls, type LibRow, type ServerRow, type UpRow,
+} from '@/lib/upload-staging';
 
 // While anything waits, sends or arrives the list is read every 3 s (progress moves per 16 KB chunk); otherwise every 10 s.
 const ACTIVE_MS = 3_000;
@@ -22,11 +24,14 @@ type Staging = {
   targets: SendTarget[] | null;
   /** The latest answer's clock; null before the first good answer. */
   now: number | null;
+  /** The org's boards with the key digits Transfer shows ("Trusted board AB12"); empty before the first answer. */
+  boards: UploadBoard[];
   stalled: ReadonlySet<string>;
   loaded: boolean;
   refreshFailed: boolean;
-  /** Marks a change of ours: any list read that began before it is older than it, and is not painted. */
-  changed: () => void;
+  /** A change of ours (an action's request) begins / has settled: no list read that overlaps it is painted. */
+  begin: () => void;
+  end: () => void;
   /** Reads the list at once (and restarts the poll), resolving when that read has settled. */
   refreshNow: () => Promise<void>;
 };
@@ -39,7 +44,7 @@ export function useStaging(): Staging {
   return s;
 }
 
-const isAnswer = (v: unknown): v is { rows: ServerRow[]; targets: SendTarget[]; now: number } =>
+const isAnswer = (v: unknown): v is { rows: ServerRow[]; targets: SendTarget[]; boards?: UploadBoard[]; now: number } =>
   !!v && typeof v === 'object' && Array.isArray((v as { rows?: unknown }).rows);
 
 /**
@@ -53,10 +58,11 @@ export function StagingProvider({ children }: { children: React.ReactNode }) {
   const [serverRows, setServerRows] = useState<ServerRow[]>([]);
   const [targets, setTargets] = useState<SendTarget[] | null>(null);
   const [now, setNow] = useState<number | null>(null);
+  const [boards, setBoards] = useState<UploadBoard[]>([]);
   const [stalled, setStalled] = useState<ReadonlySet<string>>(new Set());
   const [loaded, setLoaded] = useState(false);
   const [refreshFailed, setRefreshFailed] = useState(false);
-  const changes = useRef(0);      // finished changes of ours: an answer whose read began before one is stale
+  const clock = useRef(idleClock());   // changes of ours: a read that overlaps one is stale (readIsCurrent)
   const seq = useRef(0);          // read order: an answer older than one already painted is not painted
   const painted = useRef(0);
   const seen = useRef<Seen>({});
@@ -64,20 +70,21 @@ export function StagingProvider({ children }: { children: React.ReactNode }) {
   const restart = useRef<() => Promise<void>>(async () => undefined);
 
   const refresh = useCallback(async () => {
-    const startedAt = changes.current;
+    const startedAt = clock.current;
     const mine = ++seq.current;
     try {
       const res = await fetch('/api/staging', { cache: 'no-store', signal: AbortSignal.timeout(10_000) });
       // Signed out, the fetch follows requireOrg's redirect to the sign-in page: not OK, or not this JSON.
       const body: unknown = res.ok ? await res.json() : null;
       if (!isAnswer(body)) throw new Error('not a staging answer');
-      if (!answerIsCurrent(startedAt, changes.current) || mine < painted.current) return;
+      if (!readIsCurrent(startedAt, clock.current) || mine < painted.current) return;
       painted.current = mine;
       const t = Date.now();
       const s = trackStalls(seen.current, body.rows, t);
       seen.current = s.seen;
       setServerRows(body.rows);
       setTargets(Array.isArray(body.targets) ? body.targets : []);
+      setBoards(Array.isArray(body.boards) ? body.boards : []);
       setNow(typeof body.now === 'number' ? body.now : t);
       setStalled(s.stalled);
       setLoaded(true);
@@ -127,13 +134,14 @@ export function StagingProvider({ children }: { children: React.ReactNode }) {
     setUp((rs) => rs.filter((r) => !gone.has(r.key)));
     setServerRows((rs) => rs.filter((r) => !gone.has(r.key)));
   }, []);
-  const changed = useCallback(() => { changes.current++; }, []);
+  const begin = useCallback(() => { clock.current = beginChange(clock.current); }, []);
+  const end = useCallback(() => { clock.current = endChange(clock.current); }, []);
   const refreshNow = useCallback(() => restart.current(), []);
 
   const value = useMemo<Staging>(() => ({
-    libRows, upRows, setLibRows, addUp, patchUp, removeLocal, serverRows, targets, now, stalled, loaded, refreshFailed,
-    changed, refreshNow,
-  }), [libRows, upRows, setLibRows, addUp, patchUp, removeLocal, serverRows, targets, now, stalled, loaded, refreshFailed, changed, refreshNow]);
+    libRows, upRows, setLibRows, addUp, patchUp, removeLocal, serverRows, targets, now, boards, stalled, loaded, refreshFailed,
+    begin, end, refreshNow,
+  }), [libRows, upRows, setLibRows, addUp, patchUp, removeLocal, serverRows, targets, now, boards, stalled, loaded, refreshFailed, begin, end, refreshNow]);
 
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
 }

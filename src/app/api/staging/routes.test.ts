@@ -12,6 +12,8 @@ vi.mock('@/lib/staging-server', () => ({
 }));
 const listSendTargets = vi.fn();
 vi.mock('@/lib/send-targets', () => ({ listSendTargets: (...a: unknown[]) => listSendTargets(...a) }));
+const uploadBoards = vi.fn();
+vi.mock('@/lib/amiga-uploads', () => ({ uploadBoards: (...a: unknown[]) => uploadBoards(...a) }));
 
 const { GET } = await import('./route');
 const { POST } = await import('./clear/route');
@@ -27,11 +29,14 @@ describe('GET /api/staging', () => {
   it('passes the session org to both libs with one shared now and returns their answers', async () => {
     listStaging.mockResolvedValue([{ key: 'a' }]);
     listSendTargets.mockResolvedValue([{ deviceId: 'dev-1' }]);
+    uploadBoards.mockResolvedValue([{ id: 'dev-1', name: 'Bench', key: 'AB12', canUpload: true }]);
     const res = await GET();
     expect(res.headers.get('cache-control')).toBe('no-store');
     const body = await res.json();
     expect(body.rows).toEqual([{ key: 'a' }]);
     expect(body.targets).toEqual([{ deviceId: 'dev-1' }]);
+    expect(body.boards).toEqual([{ id: 'dev-1', name: 'Bench', key: 'AB12', canUpload: true }]);   // the key digits Transfer shows
+    expect(uploadBoards).toHaveBeenCalledWith(db, 'org-1');
     expect(typeof body.now).toBe('number');
     const [sDb, sOrg, sNow] = listStaging.mock.calls[0];
     const [tDb, tOrg, tNow] = listSendTargets.mock.calls[0];

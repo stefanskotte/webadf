@@ -21,10 +21,10 @@ test.afterAll(async () => {
   await cleanupSeeded();   // the devices go, and their transfers with them (cascade)
 });
 
-/** The board reports Network mode on a firmware that can take files, so it is an online send target. */
-async function boardSays(request: APIRequestContext, token: string) {
+/** The board reports Network mode on a firmware that can take files (an online send target), and its key digits. */
+async function boardSays(request: APIRequestContext, token: string, upKey = 'ab12') {
   expect((await request.post('/api/device/status', { headers: authHeader(token),
-    data: { mountedSha256: null, firmwareVersion: '1.19.0+gabc1234', secondDrive: 'net', driveVersion: 0 } })).status()).toBe(204);
+    data: { mountedSha256: null, firmwareVersion: '1.19.0+gabc1234', secondDrive: 'net', driveVersion: 0, upKey } })).status()).toBe(204);
 }
 
 async function seedSend(orgId: string, deviceId: string, o: { path: string; status: string; savedAs?: string; at?: number }) {
@@ -140,14 +140,16 @@ test('a second board\'s send shows its board while the picker points at the firs
   const { orgId } = await signUpFresh(page);
   const bench = await pairDevice(page, request, 'Bench');
   const den = await pairDevice(page, request, 'Den');
-  await boardSays(request, bench.token);
-  await boardSays(request, den.token);
+  await boardSays(request, bench.token, 'ab12');
+  await boardSays(request, den.token, 'cd34');
   const send = await seedSend(orgId, den.deviceId, { path: 'ForDen.txt', status: 'queued' });
   await page.goto('/ingest');
   await expect(page.getByTestId('send-board-picker')).toBeVisible();
   await expect(page.getByTestId(`send-board-${bench.deviceId}`).locator('input')).toBeChecked();
   await expect(row(page, `send:${send}`)).toContainText('to Den', { timeout: LIVE });
   await expect(page.getByTestId(`staging-status-send:${send}`)).toHaveText(/Waiting for the Amiga/);
+  // Each board's key, as Transfer on the Amiga shows it ("Trusted board AB12").
+  await expect(page.getByTestId('from-amiga-key')).toHaveText(['Bench: board key AB12', 'Den: board key CD34']);
 });
 
 test('a failed refresh keeps the rows and says so until the next good one (Review Focus 4)', async ({ page }) => {
