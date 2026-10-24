@@ -6,7 +6,7 @@ export function DemozooBadge({ count }: { count: number }) {
   return (
     <Link href="/library/demozoo" data-testid="demozoo-badge"
       className="flex h-8 items-center gap-1.5 rounded-full border px-3 text-[12.5px] font-semibold"
-      style={{ borderColor: 'rgb(255 255 255 / 0.22)', color: 'var(--on-dark-muted)' }}>
+      style={{ borderColor: 'var(--hairline-strong)', color: 'var(--on-dark-muted)' }}>
       {count} Demozoo suggestion{count === 1 ? '' : 's'}
     </Link>
   );

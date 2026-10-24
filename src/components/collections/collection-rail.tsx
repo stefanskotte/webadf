@@ -166,7 +166,7 @@ function CollectionRow({
     // mid-drag is how you make a drop land somewhere the person did not aim.
     background: isDropTarget
       ? 'rgb(245 130 46 / 0.20)'
-      : draggingGame ? 'rgb(30 45 60 / 0.05)' : undefined,
+      : draggingGame ? 'rgb(36 33 27 / 0.05)' : undefined,
     boxShadow: isDropTarget ? 'inset 0 0 0 2px var(--accent-amber)' : undefined,
   };
 

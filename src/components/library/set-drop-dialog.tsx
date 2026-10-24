@@ -118,7 +118,7 @@ export function SetDropDialog({ target: dropTarget, source: dropSource, onClose 
   return createPortal((
     <div
       className="fixed inset-0 z-50 flex items-end sm:items-center sm:justify-center sm:p-4"
-      style={{ background: 'rgb(11 18 28 / 0.55)' }}
+      style={{ background: 'var(--scrim)' }}
       onPointerDown={(e) => e.stopPropagation()}
       onMouseDown={(e) => { e.stopPropagation(); if (e.target === e.currentTarget && !busy) onClose(); }}
       onTouchStart={(e) => e.stopPropagation()}
@@ -127,7 +127,7 @@ export function SetDropDialog({ target: dropTarget, source: dropSource, onClose 
     >
       <div
         role="dialog" aria-modal="true" aria-labelledby={titleId} data-testid="set-drop-dialog"
-        className="flex w-full min-w-0 flex-col gap-3 rounded-t-[14px] border p-4 text-left shadow-xl backdrop-blur-xl sm:max-w-[440px] sm:rounded-[14px] sm:p-5"
+        className="wf-modal flex w-full min-w-0 flex-col gap-3 rounded-t-[14px] border p-4 text-left shadow-xl backdrop-blur-xl sm:max-w-[440px] sm:rounded-[14px] sm:p-5"
         style={{ background: 'var(--glass-strong)', borderColor: 'var(--hairline-strong)', color: 'var(--ink)' }}
       >
         <h2 id={titleId} className="text-[15px] font-bold">Add to a disk set</h2>

@@ -160,7 +160,7 @@ function PageLink({ page, testId, label }: { page: number; testId: string; label
     <Link
       href={`/admin/firmware?page=${page}`}
       className="font-medium"
-      style={{ color: 'rgb(233 240 244 / 0.85)' }}
+      style={{ color: 'var(--ink)' }}
       data-testid={testId}
     >
       {label}

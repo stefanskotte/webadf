@@ -83,7 +83,7 @@ export default async function AdminLayout({
             <Link
               href="/library"
               className="whitespace-nowrap text-[13px] font-medium"
-              style={{ color: 'rgb(233 240 244 / 0.78)' }}
+              style={{ color: 'var(--muted)' }}
             >
               Back to library
             </Link>

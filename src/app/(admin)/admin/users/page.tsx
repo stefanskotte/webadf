@@ -135,7 +135,7 @@ function PageLink({ page, disabled, label }: { page: number; disabled: boolean; 
     <Link
       href={`/admin/users?page=${page}`}
       className="font-medium"
-      style={{ color: 'rgb(233 240 244 / 0.85)' }}
+      style={{ color: 'var(--ink)' }}
     >
       {label}
     </Link>

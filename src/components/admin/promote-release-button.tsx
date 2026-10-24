@@ -99,7 +99,7 @@ export function PromoteReleaseButton({
       {open && typeof document !== 'undefined' && createPortal(
         <div
           className="fixed inset-0 z-50 flex items-center justify-center p-4"
-          style={{ background: 'rgb(0 0 0 / 0.45)' }}
+          style={{ background: 'var(--scrim)' }}
           onClick={close}
         >
           <div
@@ -107,7 +107,7 @@ export function PromoteReleaseButton({
             aria-modal="true"
             aria-label={`Promote ${version} to release`}
             data-testid="fw-promote-dialog"
-            className="glass-card w-full max-w-[520px] p-6 text-left"
+            className="glass-card wf-modal w-full max-w-[520px] p-6 text-left"
             onClick={(e) => e.stopPropagation()}
           >
             <h2 className="text-[18px] font-bold tracking-[-0.02em]">Promote to release</h2>

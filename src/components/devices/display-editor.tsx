@@ -290,7 +290,7 @@ function LoadedEditor({ device, wasm, onCancel }: { device: DeviceListItem; wasm
     const ctx = c?.getContext('2d');
     if (!c || !ctx) return;
     const css = getComputedStyle(c);
-    const amber = css.getPropertyValue('--accent-amber').trim() || '#f5822e';
+    const amber = css.getPropertyValue('--accent-amber').trim() || '#B5541A';
 
     const fb = rendered.fb;
     if (fb) lastGood.current = { panel: layout.panel, fb };
@@ -585,8 +585,8 @@ function LoadedEditor({ device, wasm, onCancel }: { device: DeviceListItem; wasm
       <div className="flex flex-wrap items-center gap-2">
         <button type="button" onClick={save} disabled={!!problem || busy || refreshing}
                 data-testid={`display-save-${id}`}
-                className="rounded-lg px-3 py-1.5 text-[12px] font-semibold disabled:opacity-50"
-                style={{ background: 'var(--primary-action)', color: 'var(--on-dark)' }}>
+                className="rounded-lg px-3 py-1.5 text-[12px] font-semibold text-white disabled:opacity-50"
+                style={{ background: 'var(--primary-action)' }}>
           {busy ? 'Saving…' : 'Save'}
         </button>
         <button type="button" onClick={reset} disabled={busy || refreshing}

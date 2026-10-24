@@ -66,7 +66,7 @@ export function CoverControl({ gameId, hasOverride }: { gameId: string; hasOverr
   }
 
   const buttonClass = 'shrink-0 rounded-full border px-3 py-1 text-[12.5px] font-semibold disabled:opacity-60';
-  const buttonStyle = { borderColor: 'rgb(255 255 255 / 0.22)', color: 'var(--on-dark-muted)' };
+  const buttonStyle = { borderColor: 'var(--hairline-strong)', color: 'var(--on-dark-muted)' };
 
   return (
     <div className="flex flex-wrap items-center gap-2 px-4 pb-3 sm:px-7" style={{ color: 'var(--on-dark-muted)' }}>

@@ -48,7 +48,7 @@ export function Breadcrumb({ crumbs }: { crumbs: Crumb[] }) {
           return (
             <li key={`${crumb.label}-${i}`} className="flex min-w-0 items-center gap-x-1.5">
               {i > 0 && (
-                <span aria-hidden className="select-none" style={{ color: 'rgb(233 240 244 / 0.45)' }}>
+                <span aria-hidden className="select-none" style={{ color: 'var(--faint)' }}>
                   /
                 </span>
               )}

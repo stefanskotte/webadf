@@ -322,7 +322,7 @@ export function HistoryPanel({
       {restoreTarget && createPortal((
         <div
           className="fixed inset-0 z-50 flex items-center justify-center p-4"
-          style={{ background: 'rgb(11 18 28 / 0.55)' }}
+          style={{ background: 'var(--scrim)' }}
           onPointerDown={(e) => e.stopPropagation()}
           onMouseDown={(e) => e.stopPropagation()}
           onClick={(e) => { e.preventDefault(); e.stopPropagation(); }}
@@ -332,7 +332,7 @@ export function HistoryPanel({
             aria-modal="true"
             aria-label={`Restore version ${restoreTarget.seq}`}
             data-testid="restore-dialog"
-            className="glass-card w-full max-w-[440px] p-6 text-left"
+            className="glass-card wf-modal w-full max-w-[440px] p-6 text-left"
           >
             <h2 className="text-[15px] font-bold" style={{ color: 'var(--ink)' }}>
               Restore version {restoreTarget.seq}?

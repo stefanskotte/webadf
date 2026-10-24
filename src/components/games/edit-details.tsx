@@ -137,7 +137,7 @@ export function EditDetails({ game }: { game: GameDetail }) {
         data-testid="edit-details"
         onClick={() => { setValues(initial(game)); setOpen(true); }}
         className="shrink-0 rounded-full border px-3 py-1 text-[12.5px] font-semibold"
-        style={{ borderColor: 'rgb(255 255 255 / 0.22)', color: 'var(--on-dark-muted)' }}
+        style={{ borderColor: 'var(--hairline-strong)', color: 'var(--on-dark-muted)' }}
       >
         Edit details
       </button>

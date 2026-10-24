@@ -114,14 +114,14 @@ export function DeleteUserDialog({
       </button>
       <div
         className="fixed inset-0 z-50 flex items-center justify-center p-4"
-        style={{ background: 'rgb(0 0 0 / 0.45)' }}
+        style={{ background: 'var(--scrim)' }}
         onClick={() => setOpen(false)}
       >
         <div
           role="dialog"
           aria-modal="true"
           aria-label={`Delete ${email}`}
-          className="glass-card w-full max-w-[440px] p-6 text-left"
+          className="glass-card wf-modal w-full max-w-[440px] p-6 text-left"
           onClick={(e) => e.stopPropagation()}
         >
           <h2 className="text-[18px] font-bold tracking-[-0.02em]">Delete this account?</h2>

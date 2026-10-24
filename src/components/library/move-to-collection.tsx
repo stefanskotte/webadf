@@ -76,7 +76,7 @@ export function MoveToCollectionButton({ game: g, collectionId }: { game: GameLi
       {createPortal((
         <div
           className="fixed inset-0 z-50 flex items-center justify-center p-4"
-          style={{ background: 'rgb(11 18 28 / 0.55)' }}
+          style={{ background: 'var(--scrim)' }}
           onPointerDown={stop}
           onMouseDown={stop}
           onTouchStart={stop}
@@ -84,7 +84,7 @@ export function MoveToCollectionButton({ game: g, collectionId }: { game: GameLi
           onKeyDown={(e) => { if (e.key === 'Escape' && !busy) setOpen(false); }}
         >
           <div role="dialog" aria-modal="true" aria-label={`Move ${g.title} to a collection`} data-testid="move-dialog"
-               className="glass-card flex w-full max-w-[360px] flex-col gap-3 p-5 text-left">
+               className="glass-card wf-modal flex w-full max-w-[360px] flex-col gap-3 p-5 text-left">
             <h2 className="text-[15px] font-bold" style={{ color: 'var(--ink)' }}>Move to collection</h2>
             <p className="text-[12.5px]" style={{ color: 'var(--muted)' }}>
               <strong style={{ color: 'var(--ink)' }}>{g.title}</strong>
