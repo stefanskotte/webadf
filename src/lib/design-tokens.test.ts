@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { ratio } from '@/lib/contrast-test-util';
+import { ratio } from '@/lib/contrast.test-util';
 
 // Pins the Phase B palette (spec docs/superpowers/specs/2026-10-24-phase-b-foundation-design.md §4) as it is WRITTEN
 // in globals.css, and the §4.5 contrast pairs that must clear WCAG AA (4.5:1 for text).

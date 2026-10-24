@@ -250,8 +250,8 @@ function FobDialogBody({ title, disks, devices, mode, onClose }: {
     const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') close(); };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- close only reads refs and setters
-  }, []);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- close reads refs, setters and the current onClose
+  }, [onClose]);
 
   // Unmount while armed (a client-side navigation away mid-wait) withdraws
   // too, and bumps the generation so a POST still in flight withdraws its
@@ -284,11 +284,16 @@ function FobDialogBody({ title, disks, devices, mode, onClose }: {
 
   // Arm at once when there is nothing to choose.
   // Deferred a microtask (the first render is already `starting`), and once only, so a dev double-mount arms one request.
+  // `alive`: false once unmounted, so a microtask that lost the race to an unmount never arms the board.
   const armedOnOpen = useRef(false);
+  const alive = useRef(false);
   useEffect(() => {
-    if (!direct || armedOnOpen.current) return;
-    armedOnOpen.current = true;
-    queueMicrotask(() => { void start(mode === 'next' ? null : onlyDisk, onlyDevice, true); });
+    alive.current = true;
+    if (direct && !armedOnOpen.current) {
+      armedOnOpen.current = true;
+      queueMicrotask(() => { if (alive.current) void start(mode === 'next' ? null : onlyDisk, onlyDevice, true); });
+    }
+    return () => { alive.current = false; };
     // eslint-disable-next-line react-hooks/exhaustive-deps -- once per opening
   }, []);
 

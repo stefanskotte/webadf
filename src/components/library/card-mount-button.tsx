@@ -207,9 +207,18 @@ export function CardMountDialog(props: CardMountProps & {
   /** The caller's own `useCardMount` result, when it has one (the button shares its busy state); else made here. */
   mount?: ReturnType<typeof useCardMount>;
 }) {
-  const { open, onClose, mount, ...rest } = props;
-  const own = useCardMount(rest);
-  const m = mount ?? own;
+  const { mount, ...rest } = props;
+  return mount ? <CardMountDialogWith {...rest} m={mount} /> : <CardMountDialogOwn {...rest} />;
+}
+
+type DialogState = CardMountProps & { open: boolean; onClose: () => void };
+
+function CardMountDialogOwn(props: DialogState) {
+  const m = useCardMount(props);
+  return <CardMountDialogWith {...props} m={m} />;
+}
+
+function CardMountDialogWith({ open, onClose, m, ...rest }: DialogState & { m: ReturnType<typeof useCardMount> }) {
   if (!open || !m.available) return null;
   return <CardMountPicker {...rest} m={m} onClose={onClose} />;
 }

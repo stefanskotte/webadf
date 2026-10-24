@@ -89,7 +89,7 @@ export function DeleteDialog({
   kind, id, title, diskCount, onDeleted, redirectWhenGone, open, onClose,
 }: DeleteDialogContentProps & { open: boolean; onClose: () => void; }) {
   const router = useRouter();
-    const [busy, setBusy] = useState(false);
+  const [busy, setBusy] = useState(false);
 
   async function confirm() {
     setBusy(true);

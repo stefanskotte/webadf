@@ -1,12 +1,12 @@
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { ratio } from '@/lib/contrast-test-util';
+import { ratio } from '@/lib/contrast.test-util';
 import { DISK_BODIES } from '@/lib/disk-icon';
 import { collectionDot, COLLECTION_DOTS, kindTag, stageFor, titleDiskColor } from '@/lib/library-look';
 
 // Spec docs/superpowers/specs/2026-10-24-phase-c1-library-title-design.md §4. The contrast maths is shared with the
-// Phase B token test (src/lib/contrast-test-util.ts).
+// Phase B token test (src/lib/contrast.test-util.ts).
 const css = readFileSync(join(process.cwd(), 'src/app/globals.css'), 'utf8');
 function tok(name: string): string {
   const all = [...css.matchAll(new RegExp(`(${name}):\\s*(#[0-9a-fA-F]{6})\\b`, 'g'))];
