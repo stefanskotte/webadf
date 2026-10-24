@@ -6,8 +6,9 @@ import { devices } from '@/db/schema/devices';
 import { disks, blobs } from '@/db/schema/catalog';
 import { signUpFresh, runTag } from './helpers';
 import { pairDevice, seedDisk, addDisk, cleanupSeeded } from './device-helpers';
+import { seedTosecEntry, cleanupTosec } from './tosec-helpers';
 
-test.afterAll(cleanupSeeded);
+test.afterAll(async () => { await cleanupTosec(); await cleanupSeeded(); });
 
 const sha = (s: string) => createHash('sha256').update(s).digest('hex');
 
@@ -337,4 +338,29 @@ test('with no devices paired, the disk page offers to pair one instead of a Moun
   await page.goto(`/disks/${diskId}/files`);
   await expect(page.getByTestId(`holder-${diskId}`)).toHaveText('Not in a drive');
   await expect(page.getByTestId(`mount-${diskId}-none`)).toHaveText('Pair a device');
+});
+
+test('the hero shows a TOSEC-typed title with its type pill, and an undated title reads Year —', async ({ page }) => {
+  const { orgId } = await signUpFresh(page);
+  const tag = runTag();
+  const typed = await seedDisk(orgId, { title: `TypedHero-${tag}`, diskNo: 1, sha256: sha(`${tag}-typed`) });
+  const entryId = await seedTosecEntry({
+    setName: 'Commodore Amiga - Games - [ADF]', gameName: `TypedHero-${tag} (1992)(Test)`,
+    romName: `TypedHero-${tag}-${randomUUID()}.adf`, title: `TypedHero-${tag}`, sortTitle: `typedhero-${tag}`, year: 1992,
+  });
+  await getDb().update(blobs).set({ tosecEntryId: entryId, matchState: 'matched', matchCheckedAt: new Date() })
+    .where(eq(blobs.sha256, sha(`${tag}-typed`)));
+  const plain = await seedDisk(orgId, { title: `PlainHero-${tag}`, diskNo: 1, sha256: sha(`${tag}-plain`) });
+
+  await page.goto(`/games/${typed.gameId}`);
+  await expect(page.getByTestId('title-hero')).toBeVisible();
+  await expect(page.getByTestId('title-pill-kind')).toHaveText('Game');
+  await expect(page.getByTestId('title-pill-disks')).toHaveText('1 disk');
+
+  // Nothing dated this title, and nothing typed it: the year says so, and there is no kind pill.
+  await page.goto(`/games/${plain.gameId}`);
+  await expect(page.getByTestId('title-hero')).toBeVisible();
+  await expect(page.getByTestId('title-pill-year')).toHaveText('Year —');
+  await expect(page.getByTestId('title-pill-publisher')).toHaveText('Publisher —');
+  await expect(page.getByTestId('title-pill-kind')).toHaveCount(0);
 });

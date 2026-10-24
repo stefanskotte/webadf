@@ -4,11 +4,11 @@ import { DemozooSuggestions, UnlinkButton } from './demozoo-actions';
 import { IdentifySearch } from './identify-search';
 
 /**
- * The linked production, or the suggestion card. Rendered OUTSIDE GameFacts,
- * which renders nothing for a title OpenRetro never enriched -- exactly the
- * titles Demozoo exists for.
+ * The identify box's content (title-hero.tsx slot `title-identify`, spec §5.2): whichever branch applies, without a
+ * card of its own -- the box is the card. Rendered OUTSIDE GameFacts, which renders nothing for a title OpenRetro
+ * never enriched -- exactly the titles Demozoo exists for.
  */
-export function DemozooPanel({ game }: { game: GameDetail }) {
+export function DemozooIdentify({ game }: { game: GameDetail }) {
   const { link, suggestions, isGame } = game.demozoo;
 
   if (!link) {
@@ -20,24 +20,22 @@ export function DemozooPanel({ game }: { game: GameDetail }) {
     if (isGame) {
       if (game.metadataSource !== 'demozoo') {
         return (
-          <div className="px-4 pb-3 sm:px-7" data-testid="identify-search-panel">
-            <div className="glass-card p-5">
-              <IdentifySearch gameId={game.id} sources="tosec" />
-              <div className="mt-4 text-[12px]" style={{ color: 'var(--muted)' }}>
-                Releases from TOSEC. Nothing changes until you choose.
-              </div>
+          <div className="flex flex-col gap-2.5" data-testid="identify-search-panel">
+            <span className="text-[13px] font-semibold">Identify with TOSEC</span>
+            <IdentifySearch gameId={game.id} sources="tosec" />
+            <div className="text-[12px] leading-normal" style={{ color: 'var(--muted-2)' }}>
+              Releases from TOSEC. Nothing changes until you choose.
             </div>
           </div>
         );
       }
       return (
-        <div className="px-4 pb-3 sm:px-7" data-testid="demozoo-restore">
-          <div className="glass-card flex flex-col gap-2 p-5 sm:flex-row sm:items-center sm:justify-between">
-            <span className="text-[12.5px]" style={{ color: 'var(--muted)' }}>
-              This title&apos;s name came from Demozoo.
-            </span>
-            <UnlinkButton gameId={game.id} label="Restore original title" />
-          </div>
+        <div className="flex flex-col gap-2.5" data-testid="demozoo-restore">
+          <span className="text-[13px] font-semibold">Identify with TOSEC</span>
+          <span className="text-[12.5px]" style={{ color: 'var(--muted)' }}>
+            This title&apos;s name came from Demozoo.
+          </span>
+          <UnlinkButton gameId={game.id} label="Restore original title" />
         </div>
       );
     }
@@ -55,6 +53,26 @@ export function DemozooPanel({ game }: { game: GameDetail }) {
     );
   }
 
+  // Linked: the box names the production and holds the way out; the facts, screenshots and credit stay in the
+  // full-width DemozooPanel below.
+  return (
+    <div className="flex flex-col gap-2.5" data-testid="demozoo-linked">
+      <span className="text-[13px] font-semibold">Identify with Demozoo</span>
+      <a href={link.production.url} target="_blank" rel="noreferrer noopener"
+         className="break-words text-[14px] font-semibold" style={{ color: 'var(--amber-text)' }}>
+        {link.production.title}
+      </a>
+      <span className="text-[12px]" style={{ color: 'var(--muted-2)' }}>Linked to Demozoo</span>
+      <UnlinkButton gameId={game.id} />
+    </div>
+  );
+}
+
+/** The linked production's facts, screenshots and credit, full width under the hero. Nothing when not linked. */
+export function DemozooPanel({ game }: { game: GameDetail }) {
+  const { link } = game.demozoo;
+  if (!link) return null;
+
   const p = link.production;
   const facts: Array<[string, string]> = [];
   if (p.types.length) facts.push(['Type', p.types.join(', ')]);
@@ -62,19 +80,16 @@ export function DemozooPanel({ game }: { game: GameDetail }) {
   if (p.releaseYear) facts.push(['Released', String(p.releaseYear)]);
 
   return (
-    <div className="px-4 pb-3 sm:px-7" data-testid="demozoo-panel" data-link-source={link.source}>
-      <div className="glass-card p-5">
-        <div className="flex items-start justify-between gap-3">
-          <dl className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1.5 text-[13px]">
-            {facts.map(([k, v]) => (
-              <div key={k} className="contents">
-                <dt className="whitespace-nowrap font-semibold" style={{ color: 'var(--muted)' }}>{k}</dt>
-                <dd className="min-w-0 break-words" data-testid={`demozoo-fact-${k.toLowerCase()}`}>{v}</dd>
-              </div>
-            ))}
-          </dl>
-          <UnlinkButton gameId={game.id} />
-        </div>
+    <div data-testid="demozoo-panel" data-link-source={link.source}>
+      <div className="glass-card rounded-2xl p-5">
+        <dl className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1.5 text-[13px]">
+          {facts.map(([k, v]) => (
+            <div key={k} className="contents">
+              <dt className="whitespace-nowrap font-semibold" style={{ color: 'var(--muted)' }}>{k}</dt>
+              <dd className="min-w-0 break-words" data-testid={`demozoo-fact-${k.toLowerCase()}`}>{v}</dd>
+            </div>
+          ))}
+        </dl>
         {p.screenshots.length > 0 && (
           <div className="mt-5 flex gap-3 overflow-x-auto pb-1" data-testid="demozoo-screenshots">
             {p.screenshots.map((s) => (

@@ -2,7 +2,7 @@
 import type { GameDetail } from '@/lib/queries';
 
 /**
- * Everything OpenRetro contributed about a game: the cover, a screenshot
+ * Everything OpenRetro contributed about a game: a screenshot
  * strip, the facts block, the prose and the outbound links.
  *
  * Renders NOTHING at all when nothing has been enriched -- an un-enriched
@@ -47,46 +47,15 @@ export function GameFacts({ game }: { game: GameDetail }) {
   // Distinct from `authored`: WHO wrote it, not whether anyone did.
   const fromOpenRetro = game.factsSource === 'openretro' || game.proseSource === 'openretro'
     || game.front !== null || game.title_ !== null || game.screenshots.length > 0;
-  const hasBody = facts.length > 0 || game.description || game.front || game.coverOverrideUrl
+  // The cover itself lives in the title hero now (title-hero.tsx); it no longer makes a body here.
+  const hasBody = facts.length > 0 || game.description
     || game.screenshots.length > 0 || links.length > 0;
   if (!enriched || !hasBody) return null;
 
-  // The one precedence rule (cover-image.ts effectiveCoverUrl): the org's own
-  // choice, else OpenRetro's front cover, else its title screen.
-  const cover = game.coverOverrideUrl ? { url: game.coverOverrideUrl } : (game.front ?? game.title_);
-
   return (
-    <div className="px-4 pb-3 sm:px-7" data-testid="game-facts">
-      <div className="glass-card p-5">
+    <div data-testid="game-facts">
+      <div className="glass-card rounded-2xl p-5">
         <div className="flex flex-col gap-5 md:flex-row">
-          {cover && (
-            // A FIXED box, with the image contained inside it.
-            //
-            // `h-auto` reserved no height at all until the bytes arrived, so
-            // the whole card below the cover was painted at the top of the
-            // page and then shoved down by ~280px when it decoded -- the jump
-            // you see on opening a title. Nothing in the schema records an
-            // image's dimensions (openretro_images stores sha1, kind, size
-            // and source, no width/height), so the browser cannot be told the
-            // real aspect ratio and has to be given a reserved one instead.
-            //
-            // 4/5 is the shape of Amiga box art (a measured cover is
-            // 400x509 = 0.786 against this box's 0.8). object-contain means
-            // a cover that disagrees letterboxes by a few pixels rather than
-            // being cropped or resizing the layout. The grid's Cover has
-            // done exactly this since it shipped, which is why the library
-            // never had this bug.
-            <div className="aspect-[4/5] w-full max-w-[220px] shrink-0 self-start overflow-hidden rounded-lg">
-              <img
-                src={cover.url}
-                alt={`${game.title} cover`}
-                data-testid="game-cover"
-                decoding="async"
-                className="h-full w-full object-contain"
-              />
-            </div>
-          )}
-
           <div className="min-w-0 flex-1">
             {facts.length > 0 && (
               <dl className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1.5 text-[13px]">

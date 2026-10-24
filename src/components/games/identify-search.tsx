@@ -62,7 +62,7 @@ function TosecRow({ gameId, r, applying, onApplying }: {
 
   return (
     <li data-testid="tosec-search-result" data-key={r.key}
-        className="flex flex-col gap-3 rounded-lg p-3 sm:flex-row sm:items-center" style={{ background: 'var(--glass-strong)' }}>
+        className="flex flex-col gap-2.5 rounded-[10px] p-2.5" style={{ background: 'var(--surface)', boxShadow: '0 0 0 1px var(--line)' }}>
       <div className="min-w-0 flex-1">
         <Tag source="tosec" />
         <span className="break-words font-semibold">{r.name}</span>
@@ -72,7 +72,7 @@ function TosecRow({ gameId, r, applying, onApplying }: {
       </div>
       <button type="button" data-testid={`tosec-use-${r.key}`} disabled={applying} onClick={use}
         aria-label={`Use these details: ${r.name}`}
-        className="min-h-11 shrink-0 rounded-full px-4 py-1.5 text-[12.5px] font-semibold text-white disabled:opacity-50 sm:min-h-0"
+        className="min-h-11 w-fit shrink-0 rounded-[10px] px-3.5 text-[13px] font-semibold text-white disabled:opacity-50 sm:h-[38px] sm:min-h-0"
         style={{ background: 'var(--primary-action)' }}>
         Use these details
       </button>
@@ -147,12 +147,14 @@ export function IdentifySearch({ gameId, sources }: { gameId: string; sources: S
 
   return (
     <div data-testid="identify-search">
-      <form onSubmit={search} className="flex flex-col gap-2 sm:flex-row" data-testid="demozoo-search">
+      <form onSubmit={search} className="flex gap-1.5" data-testid="demozoo-search">
         <input data-testid="demozoo-search-input" value={q} onChange={(e) => { setQ(e.target.value); setTooShort(false); }}
           placeholder={label} aria-label={label}
-          className="min-h-11 min-w-0 flex-1 rounded-full px-4 py-1.5 text-[13px] sm:min-h-0" style={{ background: 'var(--input-bg)' }} />
+          className="min-h-11 min-w-0 flex-1 rounded-[10px] border px-3 text-[13px] sm:h-[38px] sm:min-h-0"
+          style={{ background: 'var(--surface)', borderColor: 'var(--line)', color: 'var(--ink)' }} />
         <button type="submit" disabled={searching} data-testid="identify-search-submit"
-          className="min-h-11 rounded-full px-4 py-1.5 text-[12.5px] font-semibold disabled:opacity-50 sm:min-h-0" style={{ color: 'var(--muted)' }}>
+          className="min-h-11 rounded-[10px] border px-3 text-[13px] font-medium disabled:opacity-50 sm:h-[38px] sm:min-h-0"
+          style={{ background: 'var(--surface)', borderColor: 'var(--line)', color: 'var(--ink)' }}>
           Search
         </button>
       </form>

@@ -9,7 +9,7 @@ import { MAX_COVER_BYTES, COVER_TYPES } from '@/lib/cover-image';
 /**
  * "Change image…" and "Revert to default" for a title's cover.
  *
- * Its own row under Edit details, not inside GameFacts: GameFacts renders
+ * Its own row under the hero art, not inside GameFacts: GameFacts renders
  * nothing for a title nobody has enriched -- precisely the utilities and
  * home-made disks that most need a picture of their own.
  *
@@ -65,11 +65,12 @@ export function CoverControl({ gameId, hasOverride }: { gameId: string; hasOverr
     }
   }
 
-  const buttonClass = 'shrink-0 rounded-full border px-3 py-1 text-[12.5px] font-semibold disabled:opacity-60';
-  const buttonStyle = { borderColor: 'var(--hairline-strong)', color: 'var(--on-dark-muted)' };
+  // Small ghost buttons under the art (spec §5.2): the cover is changed where it is shown.
+  const buttonClass = 'shrink-0 rounded-lg px-2.5 py-1 text-[12px] font-medium hover:bg-[var(--track)] disabled:opacity-60';
+  const buttonStyle = { color: 'var(--muted)' };
 
   return (
-    <div className="flex flex-wrap items-center gap-2 px-4 pb-3 sm:px-7" style={{ color: 'var(--on-dark-muted)' }}>
+    <div className="flex flex-wrap items-center justify-center gap-1" style={{ color: 'var(--muted)' }}>
       <input
         ref={input}
         type="file"

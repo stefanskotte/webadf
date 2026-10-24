@@ -1,6 +1,7 @@
 'use client';
 
 import { useState } from 'react';
+import { createPortal } from 'react-dom';
 import { useRouter } from 'next/navigation';
 import { toast } from 'sonner';
 import type { GameDetail } from '@/lib/queries';
@@ -46,6 +47,9 @@ function ownerLine(source: string | null, group: Group): string {
 }
 
 const MULTILINE = new Set(['description', 'history']);
+
+/** Where the page puts the open panel: an empty div under the hero (games/[id]/page.tsx). */
+export const EDIT_SLOT_ID = 'edit-panel-slot';
 
 export function EditDetails({ game }: { game: GameDetail }) {
   const router = useRouter();
@@ -125,29 +129,9 @@ export function EditDetails({ game }: { game: GameDetail }) {
     }
   }
 
-  if (!open) {
-    // Rendered in the same slot as the panel, not in the header's actions:
-    // one component cannot put a button in the header AND a panel below it
-    // without lifting state somewhere neither of them owns, and this stays
-    // one thing that opens in place.
-    return (
-      <div className="px-4 pb-3 sm:px-7">
-      <button
-        type="button"
-        data-testid="edit-details"
-        onClick={() => { setValues(initial(game)); setOpen(true); }}
-        className="shrink-0 rounded-full border px-3 py-1 text-[12.5px] font-semibold"
-        style={{ borderColor: 'var(--hairline-strong)', color: 'var(--on-dark-muted)' }}
-      >
-        Edit details
-      </button>
-      </div>
-    );
-  }
-
-  return (
-    <div className="px-4 pb-3 sm:px-7" data-testid="edit-panel">
-      <div className="glass-card flex flex-col gap-5 p-5">
+  const panel = (
+    <div data-testid="edit-panel">
+      <div className="glass-card flex flex-col gap-5 rounded-2xl p-5">
         {(Object.keys(GROUP_FIELDS) as Group[]).map((group) => (
           <section key={group} className="flex flex-col gap-2" data-testid={`edit-group-${group}`}>
             <div className="flex flex-wrap items-baseline justify-between gap-2">
@@ -165,8 +149,8 @@ export function EditDetails({ game }: { game: GameDetail }) {
                     disabled={busy}
                     data-testid={`edit-reset-${group}`}
                     onClick={() => reset(group)}
-                    className="rounded px-2 py-0.5 text-[11.5px] font-semibold disabled:opacity-50"
-                    style={{ background: 'var(--glass-strong)', color: 'var(--ink)' }}
+                    className="rounded-lg border px-2 py-0.5 text-[11.5px] font-semibold disabled:opacity-50"
+                    style={{ background: 'var(--surface)', borderColor: 'var(--line)', color: 'var(--ink)' }}
                   >
                     Use scanned data
                   </button>
@@ -188,8 +172,8 @@ export function EditDetails({ game }: { game: GameDetail }) {
                       value={values[field] ?? ''}
                       disabled={busy}
                       onChange={(e) => setValues((v) => ({ ...v, [field]: e.target.value }))}
-                      className="rounded border px-2 py-1.5 text-[12.5px]"
-                      style={{ borderColor: 'var(--hairline)', background: 'var(--input-bg)', color: 'var(--ink)' }}
+                      className="rounded-[10px] border px-3 py-2 text-[13px]"
+                      style={{ borderColor: 'var(--line)', background: 'var(--surface)', color: 'var(--ink)' }}
                     />
                   ) : (
                     <input
@@ -198,8 +182,8 @@ export function EditDetails({ game }: { game: GameDetail }) {
                       disabled={busy}
                       inputMode={field === 'year' ? 'numeric' : undefined}
                       onChange={(e) => setValues((v) => ({ ...v, [field]: e.target.value }))}
-                      className="rounded border px-2 py-1.5 text-[12.5px]"
-                      style={{ borderColor: 'var(--hairline)', background: 'var(--input-bg)', color: 'var(--ink)' }}
+                      className="h-10 rounded-[10px] border px-3 text-[13px]"
+                      style={{ borderColor: 'var(--line)', background: 'var(--surface)', color: 'var(--ink)' }}
                     />
                   )}
                 </label>
@@ -214,7 +198,7 @@ export function EditDetails({ game }: { game: GameDetail }) {
             disabled={busy}
             data-testid="edit-save"
             onClick={save}
-            className="rounded-full px-4 py-1.5 text-[12.5px] font-semibold text-white disabled:opacity-50"
+            className="h-[38px] rounded-[10px] px-4 text-[13px] font-semibold text-white disabled:opacity-50"
             style={{ background: 'var(--primary-action)' }}
           >
             {busy ? 'Saving…' : 'Save'}
@@ -224,7 +208,7 @@ export function EditDetails({ game }: { game: GameDetail }) {
             disabled={busy}
             data-testid="edit-cancel"
             onClick={() => setOpen(false)}
-            className="rounded-full px-4 py-1.5 text-[12.5px] font-semibold disabled:opacity-50"
+            className="h-[38px] rounded-[10px] px-3.5 text-[13px] font-medium disabled:opacity-50"
             style={{ color: 'var(--muted)' }}
           >
             Cancel
@@ -235,5 +219,28 @@ export function EditDetails({ game }: { game: GameDetail }) {
         </div>
       </div>
     </div>
+  );
+
+  // The trigger lives in the title hero; the panel opens full width in the slot under it (title-page layout, spec
+  // §5.1). One component owns both, so the form's state is one thing; a portal carries the panel to its slot.
+  // `open` is only ever true after a click, i.e. after hydration, so the slot lookup never runs during SSR.
+  const slot = open && typeof document !== 'undefined' ? document.getElementById(EDIT_SLOT_ID) : null;
+  return (
+    <>
+      {!open && (
+      <button
+        type="button"
+        data-testid="edit-details"
+        onClick={() => { setValues(initial(game)); setOpen(true); }}
+        className="inline-flex h-[38px] items-center gap-2 rounded-[10px] border px-3.5 text-[13px] font-medium"
+        style={{ background: 'var(--surface)', borderColor: 'var(--line)', color: 'var(--ink)' }}
+      >
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"
+             strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M4 20h4L19 9l-4-4L4 16z" /></svg>
+        Edit details
+      </button>
+      )}
+      {open && slot ? createPortal(panel, slot) : null}
+    </>
   );
 }

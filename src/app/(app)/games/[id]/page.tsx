@@ -5,13 +5,16 @@ import { getGameDetail, listDevices } from '@/lib/queries';
 import { listCollections } from '@/lib/collections';
 import { resolveFrom, libraryTrail, parseTrailView } from '@/lib/trail';
 import { mountChoices } from '@/lib/mount-choice';
-import { PageHeader } from '@/components/shell/page-header';
+import { Breadcrumb } from '@/components/shell/breadcrumb';
 import { DiskRow } from '@/components/games/disk-row';
 import { DiskSetSection } from '@/components/games/disk-set-section';
 import { GameFacts } from '@/components/games/game-facts';
-import { EditDetails } from '@/components/games/edit-details';
+import { EditDetails, EDIT_SLOT_ID } from '@/components/games/edit-details';
 import { CoverControl } from '@/components/games/cover-control';
-import { DemozooPanel } from '@/components/games/demozoo-panel';
+import { DemozooPanel, DemozooIdentify } from '@/components/games/demozoo-panel';
+import { TitleHero } from '@/components/games/title-hero';
+import { holdsByGame } from '@/lib/drive-holds';
+import { isHdAdf } from '@/lib/disk-format';
 import { listNfcReaders } from '@/lib/nfc/store';
 import { getDb } from '@/db';
 import { listSendTargets } from '@/lib/send-targets';
@@ -43,33 +46,48 @@ export default async function GamePage(props: PageProps<'/games/[id]'>) {
   const now = nowMs();
   const send = sendTargets.length > 0 ? { targets: sendTargets, now } : null;
 
+  // The one precedence rule (cover-image.ts effectiveCoverUrl): the org's own choice, else OpenRetro's front cover,
+  // else its title screen.
+  const cover = game.coverOverrideUrl ? { url: game.coverOverrideUrl } : (game.front ?? game.title_);
+
+  // The drive pill: a disk of this title CONFIRMED in a drive (the library card's rule, drive-holds.ts, for DF0; the
+  // mount choices' df1Held for DF1). A request still in flight is not a hold yet, so it draws nothing.
+  const holdDisk = holdsByGame(
+    devices, game.disks.map((d) => ({ id: d.id, gameId: game.id, diskNo: d.diskNo, sha256: d.sha256 })), now,
+  )[game.id]?.find((h) => h.state === 'mounted');
+  const df0Disk = holdDisk ? game.disks.find((d) => d.id === holdDisk.diskId) : undefined;
+  const df1Disk = game.disks.find((d) => mountChoices(devices, d, now).some((c) => c.df1Held));
+  const mountedText = df0Disk ? `DF0 · ${df0Disk.imageFormat.toUpperCase()}`
+    : df1Disk ? `DF1 · ${df1Disk.imageFormat.toUpperCase()}` : null;
+
+  const fromName = resolveFrom(from, collections)?.name;
+
   return (
-    <>
-      <PageHeader
-        // Library, plus the collection you came from when a ?from= names one
-        // of this org's own. It cannot be derived here: a game is in many
-        // collections and collection_games is many-to-many, so an unfiltered
-        // "Library" is the honest answer when nothing was carried.
-        //
-        // The KIND is still deliberately not a crumb: game-kind.ts derives it,
-        // but it is null for the ~54% of the archive TOSEC does not recognise,
-        // it is not somewhere you can navigate to, and it would cost
-        // getGameDetail an extra query per render.
-        eyebrow={libraryTrail(resolveFrom(from, collections), view)}
-        title={game.title}
-        subtitle={[game.year, game.publisher, game.genre, game.chipset,
-                   `${game.disks.length} disk${game.disks.length === 1 ? '' : 's'}`]
-                  .filter(Boolean).join(' · ')}
+    <div className="flex flex-col gap-6 px-4 pb-10 pt-6 sm:px-7">
+      {/* Library, plus the collection you came from when a ?from= names one of this org's own. It cannot be
+          derived here: a game is in many collections and collection_games is many-to-many, so an unfiltered
+          "Library" is the honest answer when nothing was carried.
+
+          The KIND is still deliberately not a crumb: it is null for the ~54% of the archive TOSEC does not
+          recognise and it is not somewhere you can navigate to. It is a pill in the hero (getGameDetail.kind). */}
+      <Breadcrumb crumbs={libraryTrail(resolveFrom(from, collections), view)} />
+      <TitleHero
+        id={game.id} title={game.title} year={game.year} publisher={game.publisher} kind={game.kind}
+        diskCount={game.disks.length} cover={cover} formats={game.disks.map((d) => d.imageFormat)}
+        hasHd={game.disks.some(isHdAdf)} authored={game.authored} mounted={mountedText}
+        setLabel={fromName ?? game.kind ?? 'Unidentified'}
+        // Above GameFacts, and outside it: GameFacts renders nothing at all for a title nothing has enriched, which
+        // is exactly the title a person most wants to fill in by hand.
+        editSlot={<EditDetails game={game} />}
+        // Same reason as EditDetails: reachable on titles nothing has enriched.
+        coverSlot={<CoverControl gameId={game.id} hasOverride={game.coverOverrideUrl !== null} />}
+        identifySlot={<DemozooIdentify game={game} />}
       />
-      {/* Above GameFacts, and outside it: GameFacts renders nothing at all
-          for a title nothing has enriched, which is exactly the title a
-          person most wants to fill in by hand. */}
-      <EditDetails game={game} />
-      {/* Same reason as EditDetails: reachable on titles nothing has enriched. */}
-      <CoverControl gameId={game.id} hasOverride={game.coverOverrideUrl !== null} />
+      {/* The open edit panel lands here (EditDetails portals into it); empty, it takes no gap. */}
+      <div id={EDIT_SLOT_ID} className="empty:hidden" />
       <DemozooPanel game={game} />
       <GameFacts game={game} />
-      <div className="flex flex-col gap-3 px-4 pb-10 sm:px-7">
+      <div className="flex flex-col gap-3">
         <SendBoardPicker ctx={send} />
         {game.disks.length >= 2 ? (
           // A disk set: the same rows, under a heading with Add disks… and
@@ -100,6 +118,6 @@ export default async function GamePage(props: PageProps<'/games/[id]'>) {
                    loneGameId={game.id} />
         ))}
       </div>
-    </>
+    </div>
   );
 }

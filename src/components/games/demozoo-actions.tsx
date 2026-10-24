@@ -38,7 +38,7 @@ export function UnlinkButton({ gameId, label = 'Unlink' }: { gameId: string; lab
   const [busy, setBusy] = useState(false);
   return (
     <button type="button" data-testid="demozoo-unlink" disabled={busy}
-      className="rounded-full px-3 py-1 text-[12.5px] font-semibold disabled:opacity-50" style={{ color: 'var(--muted)' }}
+      className="min-h-11 w-fit rounded-[10px] border px-3 text-[13px] font-medium disabled:opacity-50 sm:h-[38px] sm:min-h-0" style={{ color: 'var(--ink)', background: 'var(--surface)', borderColor: 'var(--line)' }}
       onClick={async () => { setBusy(true); if (await send(`/api/games/${gameId}/demozoo`, 'DELETE')) router.refresh(); setBusy(false); }}>
       {label}
     </button>
@@ -60,24 +60,26 @@ export function Candidate({ gameId, p, allowDismiss, testId = 'demozoo-suggestio
   const thumb = p.screenshots[0];
   return (
     <li data-testid={testId} data-production-id={p.id}
-        className="flex flex-col gap-3 rounded-lg p-3 sm:flex-row sm:items-center" style={{ background: 'var(--glass-strong)' }}>
-      <div className="h-[72px] w-[92px] shrink-0 overflow-hidden rounded-md" style={{ background: 'var(--hairline)' }}>
-        {thumb && <img src={thumb.url} alt={`${p.title} screenshot`} loading="lazy" decoding="async" className="h-full w-full object-contain" />}
-      </div>
-      <div className="min-w-0 flex-1">
-        {tag}
-        <a href={p.url} target="_blank" rel="noreferrer noopener" className="font-semibold" style={{ color: 'var(--amber-text)' }}>{p.title}</a>
-        <div className="text-[12.5px]" style={{ color: 'var(--muted)' }}>{byline(p)}</div>
+        className="flex flex-col gap-2.5 rounded-[10px] p-2.5" style={{ background: 'var(--surface)', boxShadow: '0 0 0 1px var(--line)' }}>
+      <div className="flex items-center gap-3">
+        <div className="h-[54px] w-[70px] shrink-0 overflow-hidden rounded-md" style={{ background: 'var(--track)' }}>
+          {thumb && <img src={thumb.url} alt={`${p.title} screenshot`} loading="lazy" decoding="async" className="h-full w-full object-contain" />}
+        </div>
+        <div className="min-w-0 flex-1">
+          {tag}
+          <a href={p.url} target="_blank" rel="noreferrer noopener" className="break-words text-[13px] font-semibold" style={{ color: 'var(--amber-text)' }}>{p.title}</a>
+          <div className="text-[12px]" style={{ color: 'var(--muted)' }}>{byline(p)}</div>
+        </div>
       </div>
       <div className="flex gap-2">
         <button type="button" data-testid="demozoo-use" disabled={busy}
-          className="min-h-11 rounded-full px-4 py-1.5 text-[12.5px] font-semibold text-white disabled:opacity-50 sm:min-h-0" style={{ background: 'var(--primary-action)' }}
+          className="min-h-11 rounded-[10px] px-3.5 text-[13px] font-semibold text-white disabled:opacity-50 sm:h-[38px] sm:min-h-0" style={{ background: 'var(--primary-action)' }}
           onClick={async () => { setBusy(true); if (await send(`/api/games/${gameId}/demozoo`, 'POST', { productionId: p.id })) router.refresh(); setBusy(false); }}>
           Use this
         </button>
         {allowDismiss && (
           <button type="button" data-testid="demozoo-dismiss" disabled={busy}
-            className="min-h-11 rounded-full px-4 py-1.5 text-[12.5px] font-semibold disabled:opacity-50 sm:min-h-0" style={{ color: 'var(--muted)' }}
+            className="min-h-11 rounded-[10px] px-3.5 text-[13px] font-medium disabled:opacity-50 sm:h-[38px] sm:min-h-0" style={{ color: 'var(--muted)' }}
             onClick={async () => { setBusy(true); if (await send(`/api/games/${gameId}/demozoo/dismiss`, 'POST', { productionId: p.id })) router.refresh(); setBusy(false); }}>
             Not this
           </button>
@@ -100,28 +102,27 @@ export function DemozooSuggestions({ gameId, suggestions, restoreTitle, search }
   restoreTitle?: boolean;
 }) {
   return (
-    <div className="px-4 pb-3 sm:px-7" data-testid="demozoo-suggestions">
-      <div className="glass-card p-5">
-        {restoreTitle && (
-          <div className="mb-4 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-            <span className="text-[12.5px]" style={{ color: 'var(--muted)' }}>
-              This title&apos;s name came from Demozoo.
-            </span>
-            <UnlinkButton gameId={gameId} label="Restore original title" />
-          </div>
-        )}
-        {suggestions.length > 0 && (
-          <>
-            <h2 className="mb-3 text-[14px] font-semibold">Possibly on Demozoo</h2>
-            <ul className="flex flex-col gap-2">
-              {suggestions.map((p) => <Candidate key={p.id} gameId={gameId} p={p} allowDismiss />)}
-            </ul>
-          </>
-        )}
-        {search && <div className={suggestions.length ? 'mt-4' : ''}>{search}</div>}
-        <div className="mt-4 text-[12px]" style={{ color: 'var(--muted)' }}>
-          Suggestions from <a href="https://demozoo.org" target="_blank" rel="noreferrer noopener" className="font-semibold" style={{ color: 'var(--amber-text)' }}>Demozoo</a>; releases from TOSEC. Nothing changes until you choose.
+    <div className="flex flex-col gap-2.5" data-testid="demozoo-suggestions">
+      <span className="text-[13px] font-semibold">Identify with Demozoo</span>
+      {restoreTitle && (
+        <div className="flex flex-col gap-2">
+          <span className="text-[12.5px]" style={{ color: 'var(--muted)' }}>
+            This title&apos;s name came from Demozoo.
+          </span>
+          <UnlinkButton gameId={gameId} label="Restore original title" />
         </div>
+      )}
+      {suggestions.length > 0 && (
+        <>
+          <h2 className="text-[12.5px] font-semibold" style={{ color: 'var(--muted)' }}>Possibly on Demozoo</h2>
+          <ul className="flex flex-col gap-2">
+            {suggestions.map((p) => <Candidate key={p.id} gameId={gameId} p={p} allowDismiss />)}
+          </ul>
+        </>
+      )}
+      {search}
+      <div className="text-[12px] leading-normal" style={{ color: 'var(--muted-2)' }}>
+        Suggestions from <a href="https://demozoo.org" target="_blank" rel="noreferrer noopener" className="font-semibold" style={{ color: 'var(--amber-text)' }}>Demozoo</a>; releases from TOSEC. Nothing changes until you choose.
       </div>
     </div>
   );
