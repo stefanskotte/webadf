@@ -1,4 +1,4 @@
-import { driveBoxText } from '@/lib/devices-look';
+import { driveBoxText, firmwareCellText, signalCell, statusPill } from '@/lib/devices-look';
 import { deviceState, isOnline, relative } from '@/lib/device-state';
 import { firmwareLabel, updateLabel, type FirmwareState } from '@/lib/firmware-state';
 import { isDefaultDeviceName } from '@/lib/device-name';
@@ -88,55 +88,110 @@ export function DeviceCard(
     : device.mountedWriteProtected === false ? 'writable'
     : 'none';
 
+  const pill = statusPill(online);
+  const signal = signalCell(device.rssi, online);
+  const behind = update !== null || firmware.kind === 'behind';
+
   return (
-    <div id={`device-${device.id}`} className="glass-card flex scroll-mt-24 flex-col gap-2 p-5"
-         data-testid={`device-${device.id}`}
-         data-state={state}>
-      {/*
-        TOP: identity. Below `lg` this is a NARROW card (two per row on a
-        phone -- 173px measured at 390px, 133px once p-5 is subtracted), and
-        the badge sharing a row with the name plus DeviceAlias's own
-        Name/Rename control left the name 0-2px wide there (fix round 1,
-        critical 1). Below `lg` the badge drops to its own line UNDER the
-        name, so the name gets the full row to itself minus only the Rename
-        control; at `lg` and up the card is wide enough that the badge goes
-        back to sharing the name's row.
-      */}
-      <div className="flex flex-col gap-1 lg:flex-row lg:items-start lg:justify-between lg:gap-2">
-        <div className="min-w-0 lg:flex-1">
-          <DeviceAlias deviceId={device.id} name={device.name}
-                       isDefault={isDefaultDeviceName(device.name, device.macAddress)} />
+    <article id={`device-${device.id}`} aria-label={device.name}
+             className="glass-card flex scroll-mt-24 flex-col overflow-hidden"
+             style={{ borderRadius: 20, boxShadow: '0 24px 48px -28px rgb(36 33 27 / .35)' }}
+             data-testid={`device-${device.id}`}
+             data-state={state}>
+      {/* TOP ROW: the drive tile's slot (Task 3 puts the tile here; today's bezel stays in the lower half) and the
+          info column. A column below md. */}
+      <div className="flex flex-col gap-5 px-5 pb-6 pt-6 sm:px-7 sm:pt-7 md:flex-row md:items-center md:gap-8">
+        <div className="flex min-w-0 flex-1 flex-col gap-3.5">
+          <div className="flex flex-wrap items-center gap-x-2.5 gap-y-2">
+            <div className="min-w-0 max-w-full">
+              <DeviceAlias deviceId={device.id} name={device.name}
+                           isDefault={isDefaultDeviceName(device.name, device.macAddress)} />
+            </div>
+            <span className="flex-1" />
+            {/* Both values of "is this device online" are words in a pill, never an absent icon (Ruling 10). */}
+            <span className="inline-flex w-fit shrink-0 items-center gap-1.5 rounded-full px-2.5 py-1 text-[13px] font-semibold"
+                  style={{ background: pill.bg, color: pill.fg }}
+                  data-testid={`device-status-${device.id}`}>
+              <span className="size-2 rounded-full" style={{ background: pill.dot, boxShadow: `0 0 0 3px ${pill.halo}` }} />
+              {pill.label}
+            </span>
+          </div>
+          <dl className="grid grid-cols-2 gap-4 sm:grid-cols-4">
+            <div className="min-w-0">
+              <dt className="text-[12px]" style={{ color: 'var(--muted-2)' }}>Network</dt>
+              <dd className="break-all font-mono text-[13px]" style={{ color: 'var(--ink)' }}>{device.macAddress ?? '—'}</dd>
+            </div>
+            <div className="min-w-0">
+              <dt className="text-[12px]" style={{ color: 'var(--muted-2)' }}>Signal</dt>
+              <dd className="flex items-center gap-1.5 font-mono text-[13px]" style={{ color: 'var(--ink)' }}
+                  data-testid={`device-signal-${device.id}`}>
+                <span className="flex items-end gap-[2px]" aria-hidden="true">
+                  {[5, 8, 11].map((h, i) => (
+                    <span key={h} style={{
+                      width: 3, height: h, borderRadius: 1,
+                      background: i < signal.lit ? 'var(--ink)' : 'var(--line-strong)',
+                    }} />
+                  ))}
+                </span>
+                {signal.text}
+              </dd>
+            </div>
+            <div className="min-w-0">
+              <dt className="text-[12px]" style={{ color: 'var(--muted-2)' }}>Firmware</dt>
+              <dd className="flex min-w-0 flex-col items-start gap-1">
+                {/* min-w-0 plus overflow-wrap: anywhere -- a real version like "1.1.4+g137a4db" or a failure reason
+                    holding a URL has no break point and pushed the page sideways at 390 px (fix round 1). */}
+                <span className="flex w-full min-w-0 items-start gap-1">
+                  <span className="block min-w-0 flex-1 font-mono text-[13px]"
+                        style={{ overflowWrap: 'anywhere', color: behind ? 'var(--amber-text)' : 'var(--ink)' }}
+                        data-testid={`device-firmware-${device.id}`}>
+                    {firmwareCellText(update ?? firmwareLabel(firmware))}
+                  </span>
+                  <HelpTip topic="boards" className="-mt-1" />
+                </span>
+                {selection && (
+                  <label className="flex items-center gap-2 font-sans text-[12px]" style={{ color: 'var(--muted)' }}>
+                    <input type="checkbox" checked={selection.selected}
+                           onChange={() => selection.onToggle(device.id)}
+                           data-testid={`device-select-${device.id}`} />
+                    Select for update
+                  </label>
+                )}
+                {update && onCancelUpdate && (
+                  <button type="button" onClick={() => onCancelUpdate(device.id)}
+                          data-testid={`device-cancel-update-${device.id}`}
+                          className="font-sans text-[12px] underline"
+                          style={{ color: 'var(--muted)' }}>
+                    Cancel update
+                  </button>
+                )}
+              </dd>
+            </div>
+            <div className="min-w-0">
+              <dt className="text-[12px]" style={{ color: 'var(--muted-2)' }}>Last seen</dt>
+              <dd className="text-[13px]" style={{ color: 'var(--ink)' }} data-testid={`device-seen-${device.id}`}>
+                {relative(device.lastSeenAt, now)}
+              </dd>
+            </div>
+          </dl>
         </div>
-        {/*
-          Both values of "is this device online" are rendered as a badge --
-          never an absent icon standing in for one of them. Offline additionally
-          gets its own "last seen" line right below, so the badge is not the
-          only thing telling a person how stale the card in front of them is.
-          `self-start` stops it stretching to the row's full width in the
-          column layout below `lg`.
-        */}
-        <span className="inline-flex w-fit shrink-0 items-center gap-1 self-start rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide"
-              style={{
-                background: online ? 'var(--success-bg)' : 'var(--danger-bg)',
-                color: online ? 'var(--success-fg)' : 'var(--danger-fg)',
-              }}
-              data-testid={`device-status-${device.id}`}>
-          <span className="h-1.5 w-1.5 rounded-full"
-                style={{ background: online ? 'var(--online-dot)' : 'var(--danger-fg)' }} />
-          {online ? 'Online' : 'Offline'}
-        </span>
       </div>
-      <span className="break-words font-mono text-[11px]" style={{ color: 'var(--muted)' }}>
-        {[device.macAddress,
-          device.rssi !== null && `${device.rssi} dBm`].filter(Boolean).join(' · ')}
-      </span>
+
+      {/* Offline strip (spec §9.3): the card keeps every control, requests queue. Only offline cards carry
+          device-last-seen. */}
       {!online && (
-        <span className="text-[11px]" style={{ color: 'var(--muted)' }}
-              data-testid={`device-last-seen-${device.id}`}>
-          last seen {relative(device.lastSeenAt, now)}
-        </span>
+        <div className="mx-3 mb-3 rounded-[14px] px-4 py-3" style={{ background: 'var(--danger-bg)' }}
+             data-testid={`device-offline-${device.id}`}>
+          <p className="text-[14px] font-semibold" style={{ color: 'var(--ink)' }}>{device.name} is offline</p>
+          <p className="text-[13px]" style={{ color: 'var(--muted)' }}>
+            <span data-testid={`device-last-seen-${device.id}`}>It was last seen {relative(device.lastSeenAt, now)}.</span>
+            {' '}Mounts, ejects and settings you change now reach it when it reconnects. Check its power and Wi-Fi.
+          </p>
+        </div>
       )}
 
+      {/* The lower half keeps today's pieces until Tasks 3-6 replace them. */}
+      <div className="mx-3 mb-3 flex flex-col gap-2">
       <DriveFront device={device} online={online} />
 
       {/* The disk in words. Visible only while the OLED would name the wrong
@@ -230,52 +285,9 @@ export function DeviceCard(
           {protection === 'protected' ? 'Protected' : protection === 'writable' ? 'Writable' : '—'}
         </span>
 
-        {/*
-          Its OWN full-width row rather than sharing one with the tag above
-          (fix round 1, critical 2): a flex item next to a shrink-0 sibling
-          with no min-w-0 cannot shrink below its content's intrinsic width,
-          and a real version string like "1.1.4+g137a4db" or a failure
-          reason containing a URL has no natural break point -- that pushed
-          the whole PAGE into horizontal scroll at 390px. min-w-0 plus
-          overflow-wrap: anywhere (the update bar's break-all is the same
-          escape hatch for the same shape of content) lets it wrap instead.
-        */}
-        <span className="flex min-w-0 w-full items-start gap-1">
-          <span className="block min-w-0 flex-1 font-mono text-[11px]"
-                style={{
-                  overflowWrap: 'anywhere',
-                  color: update || firmware.kind === 'behind'
-                    ? 'var(--amber-text)' : 'var(--muted)',
-                }}
-                data-testid={`device-firmware-${device.id}`}>
-            {update ?? firmwareLabel(firmware)}
-          </span>
-          <HelpTip topic="boards" className="-mt-1" />
-        </span>
-
-        {update && onCancelUpdate && (
-          <button type="button" onClick={() => onCancelUpdate(device.id)}
-                  data-testid={`device-cancel-update-${device.id}`}
-                  className="self-start text-[11px] underline"
-                  style={{ color: 'var(--muted)' }}>
-            Cancel update
-          </button>
-        )}
-
-        <div className="flex items-center justify-between gap-2">
-          {selection ? (
-            <label className="flex items-center gap-2 text-[11px]"
-                   style={{ color: 'var(--muted)' }}>
-              <input type="checkbox" checked={selection.selected}
-                     onChange={() => selection.onToggle(device.id)}
-                     data-testid={`device-select-${device.id}`} />
-              Select for update
-            </label>
-          ) : <span />}
-          <div className="flex items-center gap-2">
-            {next && state === 'converged' && <NextDiskButton deviceId={device.id} next={next} />}
-            <DeleteDeviceDialog deviceId={device.id} name={device.name} />
-          </div>
+        <div className="flex items-center justify-end gap-2">
+          {next && state === 'converged' && <NextDiskButton deviceId={device.id} next={next} />}
+          <DeleteDeviceDialog deviceId={device.id} name={device.name} />
         </div>
       </div>
 
@@ -290,6 +302,7 @@ export function DeviceCard(
           {device.lastError}
         </div>
       )}
-    </div>
+      </div>
+    </article>
   );
 }

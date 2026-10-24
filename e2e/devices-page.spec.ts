@@ -6,9 +6,12 @@ import { getDb } from '@/db';
 import { devices, pairingCodes } from '@/db/schema/devices';
 import { signUpFresh, runTag } from './helpers';
 import { decodeLayout, encodeLayout } from '@/lib/display-layout';
-import { pairDevice, seedDisk, cleanupSeeded, authHeader } from './device-helpers';
+import { pairDevice, seedDisk, cleanupSeeded, authHeader, publishTestRelease, cleanupTestReleases } from './device-helpers';
 
-test.afterAll(cleanupSeeded);
+// The releases first (firmware_releases is global), then the seeded rows.
+test.afterAll(async () => {
+  try { await cleanupTestReleases(); } finally { await cleanupSeeded(); }
+});
 
 const sha = (s: string) => createHash('sha256').update(s).digest('hex');
 
@@ -282,46 +285,102 @@ test('a pending eject says "Ejecting", never "Mounting"', async ({ page, request
 
 // --- the card grid (option A -- "the disk in the middle"; content height since 2026-10-08) --
 
-test('three paired devices share one row, each card as tall as its content, and a drawer grows only its own card', async ({ page, request }) => {
+test('three paired devices stack, each card the full content width, and no card is a fixed square', async ({ page, request }) => {
   await signUpFresh(page);
   const { deviceId: idA } = await pairDevice(page, request, 'Card A');
   const { deviceId: idB } = await pairDevice(page, request, 'Card B');
   const { deviceId: idC } = await pairDevice(page, request, 'Card C');
 
-  // Default desktop viewport (playwright.config.ts's "desktop" project sets
-  // none, so this is 1280x720) is above the lg breakpoint device-list.tsx
-  // switches on -- 3 per row is what should render here.
+  // 1280x720 is above the lg breakpoint; with 2+ boards the list is one column (spec §1, Ruling 1), no aside.
   await page.goto('/devices');
   // boundingBox() does not wait, and the cards stream in behind the loading placeholders (A1): wait for them first.
   for (const id of [idA, idB, idC]) await expect(page.getByTestId(`device-${id}`)).toBeVisible();
-  const a = (await page.getByTestId(`device-${idA}`).boundingBox())!;
-  const b = (await page.getByTestId(`device-${idB}`).boundingBox())!;
-  const c = (await page.getByTestId(`device-${idC}`).boundingBox())!;
+  const boxes = await Promise.all([idA, idB, idC].map((id) => page.getByTestId(`device-${id}`).boundingBox()));
+  const [a, b, c] = boxes.map((x) => x!).sort((x, y) => x.y - y.y);
 
-  // Same row: all three tops line up.
-  expect(Math.abs(a.y - b.y)).toBeLessThan(4);
-  expect(Math.abs(a.y - c.y)).toBeLessThan(4);
+  // Stacked: each starts below the previous one's bottom.
+  expect(b.y).toBeGreaterThanOrEqual(a.y + a.height - 1);
+  expect(c.y).toBeGreaterThanOrEqual(b.y + b.height - 1);
+  // Same left edge and the same width (+-2 px), and wide (the page content, not a third of it).
+  for (const box of [b, c]) {
+    expect(Math.abs(box.x - a.x)).toBeLessThan(2);
+    expect(Math.abs(box.width - a.width)).toBeLessThan(2);
+  }
+  expect(a.width).toBeGreaterThan(700);
+  await expect(page.getByTestId('pair-another-card')).toHaveCount(0);
+});
 
-  // Content height, not square (changed 2026-10-08 at the operator's request:
-  // the square left an empty band under the bezel). Three identical fresh
-  // cards are the same height, and about as tall as they are wide (< 1.1; was
-  // 0.8 before the DF1 second-drive control added its rows to every card, and
-  // < 1.0 before the Disk at startup line added one more, 2026-10-19: 1.04).
-  expect(Math.abs(a.height - b.height)).toBeLessThan(2);
-  expect(Math.abs(a.height - c.height)).toBeLessThan(2);
-  for (const box of [a, b, c]) expect(box.height / box.width).toBeLessThan(1.1);
+test('pair-another: with one board the aside opens the header pairing form, with two the aside is gone', async ({ page, request }) => {
+  await signUpFresh(page);
+  const { deviceId } = await pairDevice(page, request, 'Only Board');
+  await page.goto('/devices');
+  await expect(page.getByTestId(`device-${deviceId}`)).toBeVisible();
+  await expect(page.getByTestId('pair-another-card')).toBeVisible();
+  await expect(page.getByTestId('pair-name')).toHaveCount(0);
 
-  // Opening A's drawer grows A; B in the same row keeps its height (the grid
-  // does not stretch row neighbours). Closing it shrinks A back.
-  await page.getByTestId(`device-oled-${idA}`).click();
-  await expect(page.getByTestId(`display-drawer-${idA}`)).toBeVisible();
-  await expect.poll(async () => (await page.getByTestId(`device-${idA}`).boundingBox())!.height)
-    .toBeGreaterThan(a.height + 40);
-  expect(Math.abs((await page.getByTestId(`device-${idB}`).boundingBox())!.height - b.height)).toBeLessThan(2);
-  await page.getByTestId(`display-toggle-${idA}`).click();
-  await expect(page.getByTestId(`display-drawer-${idA}`)).toHaveCount(0);
-  await expect.poll(async () => Math.round((await page.getByTestId(`device-${idA}`).boundingBox())!.height))
-    .toBeLessThan(a.height + 2);
+  await page.getByTestId('pair-another').click();
+  // The header's own form opens: exactly one on the page, and it has the focus.
+  await expect(page.getByTestId('pair-name')).toHaveCount(1);
+  await expect(page.getByTestId('pair-name')).toBeFocused();
+
+  await pairDevice(page, request, 'Second Board');
+  await page.goto('/devices');
+  await expect(page.getByTestId('pair-device')).toBeVisible();
+  await expect(page.getByTestId('pair-another-card')).toHaveCount(0);
+});
+
+test('firmware-notice: one updatable board gets "Update <name>", which opens the update dialog listing it', async ({ page, request }) => {
+  await signUpFresh(page);
+  const { deviceId, token } = await pairDevice(page, request);
+  await setDevice(deviceId, { name: 'Bench A500' });
+  await publishTestRelease('0.0.0+e2e71');
+  await publishTestRelease('0.0.0+e2e72');
+  await request.post('/api/device/status', {
+    headers: authHeader(token),
+    data: { mountedSha256: null, firmwareVersion: '0.0.0+e2e71', updateProtocol: 1 },
+  });
+
+  await page.goto('/devices');
+  const notice = page.getByTestId('firmware-notice');
+  await expect(notice).toContainText('is available');
+  await expect(notice).toContainText('1 of 1 device is behind');
+  const action = page.getByTestId('firmware-notice-update');
+  await expect(action).toHaveText('Update Bench A500');
+
+  await action.click();
+  const dialog = page.getByTestId('update-dialog');
+  await expect(dialog).toBeVisible();
+  await expect(dialog).toContainText('Update 1 device');
+  await expect(dialog).toContainText('Bench A500');
+  await expect(dialog).toContainText('0.0.0+e2e72');
+});
+
+test('offline strip: an offline board says so and when it was last seen, an online one has no strip', async ({ page, request }) => {
+  await signUpFresh(page);
+  const { deviceId: idOff } = await pairDevice(page, request, 'Strip Off');
+  const { deviceId: idOn } = await pairDevice(page, request, 'Strip On');
+  await setDevice(idOff, { name: 'Dark Amiga', lastSeenAt: new Date(Date.now() - 5 * 60_000) });
+  await setDevice(idOn, { name: 'Lit Amiga', lastSeenAt: new Date() });
+
+  await page.goto('/devices');
+  const strip = page.getByTestId(`device-offline-${idOff}`);
+  await expect(strip).toBeVisible();
+  await expect(strip).toContainText('Dark Amiga is offline');
+  await expect(page.getByTestId(`device-last-seen-${idOff}`)).toContainText(/It was last seen \d+m ago\./);
+  await expect(strip).toContainText('reach it when it reconnects');
+  await expect(page.getByTestId(`device-offline-${idOn}`)).toHaveCount(0);
+  await expect(page.getByTestId(`device-last-seen-${idOn}`)).toHaveCount(0);
+});
+
+test('the card facts show Network, Signal, Firmware and Last seen', async ({ page, request }) => {
+  await signUpFresh(page);
+  const { deviceId } = await pairDevice(page, request);
+  await setDevice(deviceId, { lastSeenAt: new Date(), rssi: -61 });
+  await page.goto('/devices');
+  await expect(page.getByTestId(`device-signal-${deviceId}`)).toContainText('-61 dBm');
+  await expect(page.getByTestId(`device-seen-${deviceId}`)).toHaveText(/^\d+s ago$|^just now$|^\d+m ago$/);
+  await expect(page.getByTestId(`device-firmware-${deviceId}`)).not.toContainText('fw ');
+  await expect(page.getByTestId(`device-name-${deviceId}`)).toHaveJSProperty('tagName', 'H2');
 });
 
 test('the Online/Offline badge renders both values, and only Offline gets a last-seen line', async ({ page, request }) => {

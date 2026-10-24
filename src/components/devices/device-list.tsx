@@ -8,6 +8,8 @@ import type { FirmwareState, ReleaseRef } from '@/lib/firmware-state';
 import type { NextInfo } from '@/lib/next-disk';
 import { MAX_UPDATE_BATCH, overBatchCap } from '@/lib/firmware-update-rules';
 import { DeviceCard } from './device-card';
+import { FirmwareNotice } from './firmware-notice';
+import { PairAnotherButton } from './pairing';
 
 /**
  * The card list, plus the update selection that lives across it.
@@ -19,13 +21,16 @@ import { DeviceCard } from './device-card';
  * the server would refuse.
  */
 export function DeviceList({
-  devices, now, states, selectableIds, latest, nextById, sendLineById, transferById, uploadLineById, skipPassword = false,
+  devices, now, states, selectableIds, latest, behind, security, nextById, sendLineById, transferById, uploadLineById, skipPassword = false,
 }: {
   devices: DeviceListItem[];
   now: number;
   states: FirmwareState[];
   selectableIds: string[];
   latest: ReleaseRef | null;
+  /** How many boards are behind `latest`, and whether a security release is pending (the banner's words). */
+  behind: number;
+  security: boolean;
   nextById: Record<string, NextInfo | null>;
   sendLineById: Record<string, string | null>;
   /** Whether Transfer runs on the Amiga, for each board that can take files (spec §7); absent for the others. */
@@ -182,10 +187,19 @@ export function DeviceList({
     }
   }
 
+  // The banner's one-click action exists only when exactly one board can be updated (Ruling 13).
+  const oneBoard = selectableIds.length === 1 ? devices.find((d) => d.id === selectableIds[0]) : undefined;
+
   return (
     <>
+      {latest && behind > 0 && (
+        <FirmwareNotice behind={behind} total={devices.length} latest={latest} security={security}
+                        oneName={oneBoard?.name}
+                        onUpdateOne={oneBoard ? () => { setPicked(new Set([oneBoard.id])); setOpen(true); } : undefined} />
+      )}
       {latest && picked.size > 0 && (
-        <div className="glass-card flex flex-wrap items-center gap-3 p-4" data-testid="update-bar">
+        <div className="flex flex-wrap items-center gap-3 rounded-2xl p-4" data-testid="update-bar"
+             style={{ background: 'var(--surface)', boxShadow: '0 0 0 1px var(--line)' }}>
           <span className="text-[13px]" style={{ color: 'var(--ink)' }}>
             {picked.size} selected · Update to{' '}
             {/* The FULL version, never the semver: two releases can share one. */}
@@ -206,8 +220,8 @@ export function DeviceList({
               not shift under the cursor mid-click. */}
           <button type="button" data-testid="update-start" onClick={() => setOpen(true)}
                   disabled={chosen.length === 0 || untick > 0}
-                  className="rounded-full px-4 py-1.5 text-[13px] font-semibold text-white disabled:opacity-50"
-                  style={{ background: 'var(--amber-text)' }}>
+                  className="h-[38px] rounded-[10px] px-4 text-[14px] font-semibold disabled:opacity-50"
+                  style={{ background: 'var(--ink)', color: 'var(--surface)' }}>
             Update
           </button>
           <button type="button" onClick={() => setPicked(new Set())}
@@ -217,32 +231,35 @@ export function DeviceList({
         </div>
       )}
 
-      {/*
-        Content-height cards in a grid rather than the old full-width stacked
-        list (the approved redesign, option A -- "the disk in the middle").
-        2 per row is the base (mobile-first, so this is what a 390px phone
-        gets with no override needed), 3 per row from lg up: this card carries
-        more prose than the library's thumbnails, so it needs tablet-width
-        room that a switch at `sm` (library's own breakpoint, game-grid.tsx)
-        would not give it. `items-start`, not the grid's default stretch: each
-        card keeps its own height, so one open drawer does not stretch its row
-        neighbours into the empty band the square cards had.
-      */}
-      <div className="grid grid-cols-1 items-start gap-3 sm:grid-cols-2 lg:grid-cols-3">
-        {devices.map((d, i) => (
-          <DeviceCard
-            key={d.id} device={d} now={now} firmware={states[i]}
-            selection={selectable.has(d.id)
-              ? { selected: picked.has(d.id), onToggle: toggle }
-              : undefined}
-            onCancelUpdate={d.desiredFirmwareVersion ? cancel : undefined}
-            next={nextById[d.id] ?? null}
-            sendLine={sendLineById[d.id] ?? null}
-            transfer={transferById[d.id] ?? null}
-            uploadLine={uploadLineById[d.id] ?? null}
-          />
-        ))}
-      </div>
+      {devices.length === 0 ? (
+        // The full empty state (spec §9.1) is Task 7's; today's words stay until then.
+        <div className="glass-card p-6 text-[13px]" style={{ color: 'var(--muted)' }}>
+          No devices paired yet. Press <strong>Pair a device</strong> and enter the code on the hardware.
+        </div>
+      ) : (
+        /*
+          One board: the card and the "Add another drive" aside side by side from lg (spec §1). Two or more: one
+          column of full-width cards and no aside (Ruling 1). `items-stretch` so the aside is as tall as the card.
+        */
+        <div className={devices.length === 1
+          ? 'grid grid-cols-1 items-stretch gap-6 lg:grid-cols-[minmax(0,1fr)_360px]'
+          : 'grid grid-cols-1 gap-6'}>
+          {devices.map((d, i) => (
+            <DeviceCard
+              key={d.id} device={d} now={now} firmware={states[i]}
+              selection={selectable.has(d.id)
+                ? { selected: picked.has(d.id), onToggle: toggle }
+                : undefined}
+              onCancelUpdate={d.desiredFirmwareVersion ? cancel : undefined}
+              next={nextById[d.id] ?? null}
+              sendLine={sendLineById[d.id] ?? null}
+              transfer={transferById[d.id] ?? null}
+              uploadLine={uploadLineById[d.id] ?? null}
+            />
+          ))}
+          {devices.length === 1 && <PairAnotherCard />}
+        </div>
+      )}
 
       {/*
         PORTALLED, as DeleteDiskDialog and the history panel's restore dialog
@@ -262,7 +279,7 @@ export function DeviceList({
           <form role="dialog" aria-modal="true" aria-labelledby={titleId} data-testid="update-dialog"
                 onSubmit={(e) => { e.preventDefault(); void confirm(); }}
                 className="glass-card wf-modal flex max-h-full w-full max-w-lg flex-col gap-3 overflow-y-auto p-6">
-            <h2 id={titleId} className="text-[15px] font-semibold" style={{ color: 'var(--ink)' }}>
+            <h2 id={titleId} className="text-[22px] font-bold" style={{ color: 'var(--ink)', fontFamily: 'var(--font-display)' }}>
               Update {chosen.length} device{chosen.length === 1 ? '' : 's'}
             </h2>
             <ul className="flex flex-col gap-1 text-[12px]" style={{ color: 'var(--muted)' }}>
@@ -310,13 +327,13 @@ export function DeviceList({
               </ul>
             )}
             <div className="flex justify-end gap-2">
-              <button type="button" onClick={close} disabled={busy} className="text-[13px] disabled:opacity-50"
+              <button type="button" onClick={close} disabled={busy} className="h-[38px] px-3 text-[14px] disabled:opacity-50"
                       style={{ color: 'var(--muted)' }}>Cancel</button>
               {/* With no password to type, the caret starts on Update instead. */}
               <button type="submit" data-testid="update-confirm" autoFocus={skipPassword}
                       disabled={busy || (!skipPassword && password.length === 0)}
-                      className="rounded-full px-4 py-1.5 text-[13px] font-semibold text-white disabled:opacity-50"
-                      style={{ background: 'var(--amber-text)' }}>
+                      className="h-[38px] rounded-[10px] px-4 text-[14px] font-semibold disabled:opacity-50"
+                      style={{ background: 'var(--ink)', color: 'var(--surface)' }}>
                 {busy ? 'Requesting…' : 'Update'}
               </button>
             </div>
@@ -324,5 +341,26 @@ export function DeviceList({
         </div>
       ), document.body)}
     </>
+  );
+}
+
+/** The "Add another drive" aside (spec §1.4): a dashed card whose button opens the header's pairing form. */
+function PairAnotherCard() {
+  return (
+    <aside aria-label="Pair another drive" data-testid="pair-another-card"
+           className="flex flex-col items-center justify-center gap-3.5 rounded-[20px] p-7 text-center"
+           style={{ border: '1.5px dashed var(--line-strong)' }}>
+      <svg width="120" height="52" viewBox="0 0 120 52" fill="none" aria-hidden="true">
+        <rect x="1" y="1" width="118" height="50" rx="8" stroke="#C4B9A2" strokeWidth="1.5" strokeDasharray="5 4" />
+        <rect x="22" y="30" width="76" height="8" rx="3" style={{ fill: 'var(--line-strong)' }} />
+      </svg>
+      <h2 className="text-[22px] font-bold" style={{ color: 'var(--ink)', fontFamily: 'var(--font-display)' }}>
+        Add another drive
+      </h2>
+      <p className="max-w-[260px] text-[14px]" style={{ color: 'var(--muted)' }}>
+        Pair another WifiFloppy to switch between drives from the header.
+      </p>
+      <PairAnotherButton />
+    </aside>
   );
 }

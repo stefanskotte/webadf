@@ -88,8 +88,8 @@ export const HELP_TOPICS = {
           <strong>Online / Offline.</strong> A board is online if heard from in the last minute.
         </p>
         <p>
-          <strong>Firmware updates.</strong> Tick <em>Select for update</em> on the board, press <em>Update</em> and
-          confirm with your password (unless you turned that off in Settings). The card shows <em>update queued</em>,{' '}
+          <strong>Firmware updates.</strong> Press <em>Update &lt;name&gt;</em> in the banner or tick <em>Select for update</em>,{' '}
+          then confirm with your password (unless you turned that off in Settings). The card shows <em>update queued</em>,{' '}
           <em>downloading</em> and <em>applying — do not power off</em>. A new version runs on trial: if it doesn&apos;t
           check in within 5 minutes, the board goes back to its old version and the card says <em>update failed</em>.
         </p>
