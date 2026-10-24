@@ -56,7 +56,7 @@ export function IssueInviteButton() {
       )}
       {code && (
         <span style={{ color: 'var(--on-dark)' }}>
-          <CopyInviteButtons code={code} />
+          <CopyInviteButtons code={code} idPrefix="new-invite-copy" />
         </span>
       )}
       <button

@@ -41,7 +41,7 @@ describe('ensureBootstrapInvite', () => {
   it('returns null and creates nothing once a user exists', async () => {
     await admin(`insert into auth."user" (id, name, email, email_verified, created_at, updated_at) values ('u1','x','x@x.lan',false,now(),now())`, u.toString());
     expect(await ensureBootstrapInvite('https://x.lan', 'me@x.lan')).toBeNull();
-    const n = await admin(`select count(*)::int as n from invites where org_id = 'bootstrap'`, u.toString());
-    expect(n.rows[0].n).toBe(2);
+    const n = await admin(`select count(*)::int as n from invites where org_id = 'bootstrap' and revoked_at is null`, u.toString());
+    expect(n.rows[0].n).toBe(1);
   });
 });

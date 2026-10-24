@@ -7,7 +7,10 @@ import { inviteSignUpUrl } from '@/lib/invite-link';
 type Which = 'code' | 'link';
 
 /** Copy code / Copy link for one invite. The link uses window.location.origin so a self-hosted instance copies its own address. */
-export function CopyInviteButtons({ code }: { code: string }) {
+export function CopyInviteButtons({ code, idPrefix }: { code: string; idPrefix?: string }) {
+  // Table rows use invite-copy-<which>-<code>. A surface that can sit beside a row for the same code (the new-code
+  // panel) passes idPrefix, giving <idPrefix>-<which> with no code, so the two never share a test id.
+  const tid = (which: Which) => (idPrefix ? `${idPrefix}-${which}` : `invite-copy-${which}-${code}`);
   const [copied, setCopied] = useState<Which | null>(null);
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
   useEffect(() => () => { if (timer.current) clearTimeout(timer.current); }, []);
@@ -28,10 +31,10 @@ export function CopyInviteButtons({ code }: { code: string }) {
   const cls = 'text-[12.5px] font-semibold';
   return (
     <span className="inline-flex items-center gap-3">
-      <button type="button" onClick={() => copy('code')} data-testid={`invite-copy-code-${code}`} className={cls}>
+      <button type="button" onClick={() => copy('code')} data-testid={tid('code')} className={cls}>
         {copied === 'code' ? 'Copied' : 'Copy code'}
       </button>
-      <button type="button" onClick={() => copy('link')} data-testid={`invite-copy-link-${code}`} className={cls}>
+      <button type="button" onClick={() => copy('link')} data-testid={tid('link')} className={cls}>
         {copied === 'link' ? 'Copied' : 'Copy link'}
       </button>
     </span>

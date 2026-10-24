@@ -42,9 +42,9 @@ export default async function AdminInvitesPage() {
           {/* w-full alone let the card's overflow-x-auto go unused: the table
               shrank to the viewport and crushed its cells rather than
               scrolling, taking Revoke -- the only action here -- with it.
-              640px is comfortable for five narrow, fixed-shape columns: an
-              eight-character code, a state word, and two ISO dates that must
-              never wrap mid-token. */}
+              820px is comfortable for six columns: an eight-character code,
+              a state word, an email with its consumed date, two ISO dates that
+              must never wrap mid-token, and the Copy/Revoke actions. */}
           <table className="w-full min-w-[820px] text-[13px]">
             <thead>
               <tr style={{ color: 'var(--muted)' }}>

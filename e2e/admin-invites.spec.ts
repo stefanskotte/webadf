@@ -142,12 +142,15 @@ test.describe('copy buttons and Used by', () => {
     await page.goto('/admin/invites');
     const code = await issueCode(page);
 
-    await page.getByTestId(`invite-copy-link-${code}`).click();
-    await expect(page.getByTestId(`invite-copy-link-${code}`)).toHaveText('Copied');
+    // The new-code panel's buttons (no code in the test id) ...
+    await page.getByTestId('new-invite-copy-link').click();
+    await expect(page.getByTestId('new-invite-copy-link')).toHaveText('Copied');
     expect(await page.evaluate(() => navigator.clipboard.readText())).toBe(`${baseURL}/sign-up?invite=${code}`);
 
-    await page.getByTestId(`invite-copy-code-${code}`).click();
-    await expect(page.getByTestId(`invite-copy-code-${code}`)).toHaveText('Copied');
+    // ... and the table row's, scoped to the row.
+    const row = page.getByTestId(`invite-${code}`);
+    await row.getByTestId(`invite-copy-code-${code}`).click();
+    await expect(row.getByTestId(`invite-copy-code-${code}`)).toHaveText('Copied');
     expect(await page.evaluate(() => navigator.clipboard.readText())).toBe(code);
   });
 
@@ -155,13 +158,16 @@ test.describe('copy buttons and Used by', () => {
     const code = await mintInviteCode();
     const email = `usedby-${Date.now()}@example.test`;
     const consumer = await context.browser()!.newPage();
-    await consumer.goto('/sign-up');
-    await consumer.getByLabel('Email').fill(email);
-    await consumer.getByLabel('Password').fill('correct-horse-battery-staple');
-    await consumer.getByLabel('Invite code').fill(code);
-    await consumer.getByRole('button', { name: /sign up/i }).click();
-    await expect(consumer).toHaveURL(/\/library/, { timeout: 15_000 });
-    await consumer.close();
+    try {
+      await consumer.goto('/sign-up');
+      await consumer.getByLabel('Email').fill(email);
+      await consumer.getByLabel('Password').fill('correct-horse-battery-staple');
+      await consumer.getByLabel('Invite code').fill(code);
+      await consumer.getByRole('button', { name: /sign up/i }).click();
+      await expect(consumer).toHaveURL(/\/library/, { timeout: 15_000 });
+    } finally {
+      await consumer.close();
+    }
 
     await signInAsSuperAdmin(page);
     await page.goto('/admin/invites');
