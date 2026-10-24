@@ -14,8 +14,10 @@ export default async function IngestPage(props: PageProps<'/ingest'>) {
   const sp = await props.searchParams;
   // ?board= comes from the card's line and the disk pages' "See queue"; an id that is not a target is ignored.
   const board = typeof sp.board === 'string' ? sp.board : null;
-  // ?from= comes from a device card's "N files from the Amiga" line: the list opens on From the Amiga.
+  // ?from= comes from a device card's "N files from the Amiga" line: the list opens on From the Amiga. Without it,
+  // ?board= (the queue) opens it on To the Amiga.
   const from = typeof sp.from === 'string';
+  const initialFilter = from ? 'in' : board ? 'out' : 'all';
   const now = nowMs();
   const targets = await listSendTargets(getDb(), orgId, now);
   return (
@@ -33,7 +35,7 @@ export default async function IngestPage(props: PageProps<'/ingest'>) {
         </UploadCard>
         <SendPanel targets={targets} initialBoard={board} serverNow={now} />
       </div>
-      <StagingList initialFilter={from ? 'in' : 'all'} fallbackTargets={targets} />
+      <StagingList initialFilter={initialFilter} fallbackTargets={targets} />
     </StagingProvider>
   );
 }

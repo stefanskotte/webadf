@@ -148,6 +148,7 @@ test('Browse: Send on a folder queues its files with their paths and protection'
   expect(q).toMatch(/^NEXT \S+ 5 [0-9a-f]+ 40 10:mods\/a\.txt 0:\n/);
   await page.getByRole('button', { name: 'See queue' }).click();
   await expect(page).toHaveURL(/\/ingest\?board=/);
+  await expect(page.getByTestId('staging-filter-out')).toHaveAttribute('aria-pressed', 'true');   // the queue: To the Amiga
   await expect(sendRows(page, 'queued')).toContainText('mods/a.txt', { timeout: LIVE });
 });
 
@@ -177,6 +178,7 @@ test('the board\'s card says what waits and whether Transfer runs, and links to 
   await page.getByTestId(`device-send-${deviceId}`).click();
   await expect(page).toHaveURL(new RegExp(`/ingest\\?board=${deviceId}$`));
   await expect(page.getByTestId('send-board')).toContainText('Bench');
+  await expect(page.getByTestId('staging-filter-out')).toHaveAttribute('aria-pressed', 'true');
 });
 
 test('a long queue: the waiting file is first, and Clear finished removes the finished rows while it stays', async ({ page, request }) => {
