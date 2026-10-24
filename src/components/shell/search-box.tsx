@@ -256,9 +256,10 @@ export function SearchBox() {
     // Full width below sm: the header wraps the search box onto a line of its
     // own there, and a shrink-to-fit box would leave that line mostly empty
     // while the input it contains stayed too narrow to read a query in.
-    // sm:mr-2 keeps the box 16px clear of the icon buttons, which sit 8px
-    // apart (gap-2 on the header's right group).
-    <div className="relative w-full sm:mr-2 sm:w-auto">
+    // mr-2 keeps the box 16px clear of the icon buttons, which sit 8px
+    // apart (gap-2 on the header's right group) -- below sm as well, where
+    // the box shares its wrapped line with them (spec §6.1).
+    <div className="relative mr-2 w-full sm:w-auto">
       <SearchIcon aria-hidden className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2"
                   style={{ color: 'var(--muted-2)' }} />
       <input
@@ -289,7 +290,10 @@ export function SearchBox() {
         // Below sm none of that applies -- the pill has left the header for
         // the bottom bar -- and 192px would waste the line the box now has to
         // itself, so it takes the whole of it.
-        className="h-10 w-full rounded-[10px] border pl-9 pr-4 text-[14px] outline-none transition-colors placeholder:text-(--muted-2) sm:w-48 sm:pr-9"
+        // The focus ring is a box-shadow in the full --ring (>= 3:1 on the
+        // bar, WCAG 1.4.11): the border colour is an inline style, which a
+        // focus-visible border class could not override.
+        className="h-10 w-full rounded-[10px] border pl-9 pr-4 text-[14px] outline-none transition-colors placeholder:text-(--muted-2) focus-visible:ring-2 focus-visible:ring-(--ring) sm:w-48 sm:pr-9"
         style={{ background: 'var(--surface-2)', borderColor: 'var(--line)', color: 'var(--ink)' }}
       />
 

@@ -48,6 +48,7 @@ describe('design tokens (globals.css)', () => {
     ['--success-fg', '#1F6A2A'],
     ['--warning-fg', '#7A4A08'],
     ['--online-dot', '#3FBF55'],
+    ['--ring', '#7A7262'],
   ])('%s is %s', (name, value) => {
     expect(tokens()[name]).toBe(value);
   });
@@ -68,6 +69,13 @@ describe('design tokens (globals.css)', () => {
   it.each(pairs)('%s on %s clears AA (4.5:1)', (fg, bg) => {
     const read = (n: string) => (n.startsWith('#') ? n : tok(n));
     expect(ratio(read(fg), read(bg))).toBeGreaterThanOrEqual(4.5);
+  });
+
+  // Focus indicators are non-text: WCAG 1.4.11 wants 3:1 against what they are drawn on. Only the FULL --ring
+  // clears it (globals.css' base outline, Button's ring); at /50 it blends to ~2:1 on the surface, which
+  // contrast.spec's focus test measures on the page.
+  it.each(grounds)('--ring on %s clears 3:1 (WCAG 1.4.11)', (bg) => {
+    expect(ratio(tok('--ring'), tok(bg))).toBeGreaterThanOrEqual(3);
   });
 
   it('no gradient token remains', () => {

@@ -181,3 +181,98 @@ test('the search panel metadata line is legible while its row is highlighted', a
   console.log(`search    metadata line                  ${r.toFixed(2)}:1  "${p!.text.slice(0, 40)}"`);
   expect(r).toBeGreaterThan(4.5);
 });
+
+/**
+ * A focused control's indicator, composited over what is behind the control,
+ * against that same background (WCAG 1.4.11 wants 3:1). The indicator is the
+ * outline when it has one, else the widest box-shadow ring (Tailwind's
+ * `ring-*`). Half-strength `--ring` (`outline-ring/50`, `ring-ring/50`)
+ * blended to ~2:1 on the cream bar (Task 4's review, 2026-10-24).
+ */
+async function focusIndicator(page: Page, sel: string) {
+  return page.evaluate((s) => {
+    const el = document.querySelector(s) as HTMLElement | null;
+    if (!el || document.activeElement !== el) return { error: `${s} is not focused` };
+    // Button has transition-all: read the ring where it lands, not mid-fade.
+    for (const a of el.getAnimations()) a.finish();
+    const ctx = document.createElement('canvas').getContext('2d')!;
+    const SENTINEL = '#010203';
+    const parse = (v: string) => {
+      if (!v || v === 'transparent') return null;
+      ctx.fillStyle = SENTINEL;
+      ctx.fillStyle = v;
+      if (ctx.fillStyle === SENTINEL && v.toLowerCase() !== SENTINEL) return null;
+      ctx.clearRect(0, 0, 1, 1);
+      ctx.fillRect(0, 0, 1, 1);
+      const d = ctx.getImageData(0, 0, 1, 1).data;
+      return [d[0], d[1], d[2], d[3] / 255];
+    };
+    const cs = getComputedStyle(el);
+    let indicator: number[] | null = null;
+    let kind = `none (focus-visible ${el.matches(':focus-visible')}, box-shadow ${cs.boxShadow})`;
+    if (cs.outlineStyle !== 'none' && parseFloat(cs.outlineWidth) > 0) {
+      indicator = parse(cs.outlineColor);
+      kind = `outline ${cs.outlineStyle} ${cs.outlineWidth} ${cs.outlineColor}`;
+    }
+    if (!indicator || indicator[3] === 0) {
+      // Split the shadow list on top-level commas; Chromium writes each
+      // shadow's colour first.
+      const shadows: string[] = [];
+      let depth = 0, cur = '';
+      for (const ch of cs.boxShadow) {
+        if (ch === '(') depth++;
+        if (ch === ')') depth--;
+        if (ch === ',' && depth === 0) { shadows.push(cur.trim()); cur = ''; } else cur += ch;
+      }
+      if (cur.trim()) shadows.push(cur.trim());
+      let best = 0;
+      for (const sh of shadows) {
+        const m = sh.match(/^([a-z-]+\([^)]*\)|#[0-9a-f]+)\s+(.*)$/i);
+        if (!m) continue;
+        const lengths = m[2].split(/\s+/).map(parseFloat);
+        const spread = lengths[3] ?? 0;
+        const c = parse(m[1]);
+        if (c && c[3] > 0 && spread > best) { best = spread; indicator = c; kind = `ring ${sh}`; }
+      }
+    }
+    // What the indicator is drawn over: the control's surroundings, not
+    // the control itself.
+    const layers: number[][] = [];
+    let node: Element | null = el.parentElement;
+    while (node) {
+      const p = parse(getComputedStyle(node).backgroundColor);
+      if (p) { layers.push(p); if (p[3] > 0.5) break; }
+      node = node.parentElement;
+    }
+    const over = (top: number[], bg: number[]) => [0, 1, 2].map((i) => top[i] * top[3] + bg[i] * (1 - top[3]));
+    let bg = [...layers[layers.length - 1].slice(0, 3)];
+    for (let i = layers.length - 2; i >= 0; i--) bg = over(layers[i], bg);
+    return { kind, indicator: indicator ? over(indicator, bg) : null, bg };
+  }, sel);
+}
+
+test('header focus indicators clear 3:1 against the bar', async ({ page }) => {
+  await signUpFresh(page);
+  await page.goto('/library');
+  // A key press first, so programmatic focus counts as keyboard focus and
+  // :focus-visible applies the way it does for a Tab.
+  await page.keyboard.press('Tab');
+  for (const sel of [
+    'header nav a:not([aria-current])', // .seg-item
+    '[data-testid=about-link]',
+    '[data-testid=settings-link]',
+    '[data-testid=sign-out]',
+    '[data-testid=search-input]',
+  ]) {
+    await page.locator(sel).first().focus();
+    const f = await focusIndicator(page, sel);
+    expect('error' in f ? f.error : null, sel).toBeNull();
+    const { kind, indicator, bg } = f as { kind: string; indicator: number[] | null; bg: number[] };
+    // Soft, so one run reports every control rather than the first.
+    expect.soft(indicator, `${sel}: no visible focus indicator (${kind})`).toBeTruthy();
+    if (!indicator) continue;
+    const r = ratio(indicator, bg);
+    console.log(`focus     ${sel.padEnd(38)} ${r.toFixed(2)}:1  ${kind}`);
+    expect.soft(r, `${sel} focus indicator (${kind})`).toBeGreaterThanOrEqual(3);
+  }
+});

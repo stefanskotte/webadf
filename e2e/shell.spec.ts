@@ -31,3 +31,16 @@ test('the shell renders on the ground with the right fonts', async ({ page }) =>
   await page.goto('/help');
   await expect(page).toHaveTitle('Help · WebFloppy');
 });
+
+test('below sm the search box keeps 16px from the (i) button, as it does from sm up', async ({ page }) => {
+  await signUpFresh(page);
+  for (const width of [390, 1280]) {
+    await page.setViewportSize({ width, height: 844 });
+    await page.goto('/library');
+    const search = (await page.getByTestId('search-input').boundingBox())!;
+    const about = (await page.getByTestId('about-link').boundingBox())!;
+    // Same line, and spec §6.1's 16px between them (mr-2 + the group's gap-2).
+    expect(Math.abs((search.y + search.height / 2) - (about.y + about.height / 2)), `same line at ${width}`).toBeLessThan(4);
+    expect(about.x - (search.x + search.width), `gap at ${width}`).toBeCloseTo(16, 0);
+  }
+});
