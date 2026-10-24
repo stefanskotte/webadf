@@ -104,10 +104,17 @@ export function PairingProvider({ children }: { children: React.ReactNode }) {
  * button that opens the header's form and brings the header into view. It draws no form of its own.
  */
 export function PairAnotherButton() {
-  const { startNaming } = usePairing();
+  const { startNaming, code } = usePairing();
   return (
     <button type="button" data-testid="pair-another"
             onClick={() => {
+              // A code is already live (one at a time): bring it into view and focus it rather than do nothing.
+              if (code) {
+                const live = document.querySelector<HTMLElement>('[data-testid="pairing-code"]');
+                live?.scrollIntoView({ block: 'center', behavior: 'smooth' });
+                live?.focus({ preventScroll: true });
+                return;
+              }
               startNaming();
               // The form is in the header; on a tall page it may be off screen.
               document.querySelector('[data-testid="pair-device"], [data-testid="pair-name"]')

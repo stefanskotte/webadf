@@ -372,6 +372,31 @@ test('offline strip: an offline board says so and when it was last seen, an onli
   await expect(page.getByTestId(`device-last-seen-${idOn}`)).toHaveCount(0);
 });
 
+test('offline strip: a board never seen says so without "last seen never"', async ({ page, request }) => {
+  await signUpFresh(page);
+  const { deviceId } = await pairDevice(page, request);
+  await setDevice(deviceId, { lastSeenAt: null });
+  await page.goto('/devices');
+  const line = page.getByTestId(`device-last-seen-${deviceId}`);
+  await expect(line).toHaveText('It has not been seen yet.');
+  await expect(page.getByTestId(`device-offline-${deviceId}`)).not.toContainText('seen never');
+});
+
+test('pair-another while a code is live moves focus to that code', async ({ page, request }) => {
+  await signUpFresh(page);
+  const { deviceId } = await pairDevice(page, request, 'Only Board');
+  await page.goto('/devices');
+  await expect(page.getByTestId(`device-${deviceId}`)).toBeVisible();
+  await page.getByTestId('pair-device').click();
+  await page.getByTestId('pair-submit').click();
+  await expect(page.getByTestId('pairing-code')).toBeVisible();
+  await page.getByTestId('pair-another').click();
+  await expect(page.getByTestId('pairing-code')).toBeFocused();
+  await expect(page.getByTestId('pairing-code')).toBeInViewport();
+  // The live code stays; no second form opens.
+  await expect(page.getByTestId('pair-name')).toHaveCount(0);
+});
+
 test('the card facts show Network, Signal, Firmware and Last seen', async ({ page, request }) => {
   await signUpFresh(page);
   const { deviceId } = await pairDevice(page, request);

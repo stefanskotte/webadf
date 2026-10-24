@@ -83,8 +83,8 @@ export function DeviceAlias({ deviceId, name, isDefault }: {
           placeholder="Name this drive — empty restores the MAC"
           aria-label="Device name"
           data-testid={`alias-input-${deviceId}`}
-          className="min-w-0 flex-1 rounded-lg border px-2.5 py-1.5 text-[14px] font-semibold sm:w-64 sm:flex-none"
-          style={{ borderColor: 'var(--hairline)', background: 'var(--glass-strong)', color: 'var(--ink)' }}
+          className="h-[38px] min-w-0 flex-1 rounded-[9px] border px-2.5 text-[16px] font-semibold sm:w-60 sm:flex-none"
+          style={{ borderColor: 'var(--ink)', background: 'var(--surface)', color: 'var(--ink)' }}
         />
         <button type="button" onClick={() => void save()} disabled={busy}
                 data-testid={`alias-save-${deviceId}`}

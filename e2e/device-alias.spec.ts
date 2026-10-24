@@ -150,3 +150,17 @@ test('an over-long alias is refused rather than truncated silently', async ({ pa
   expect(res.status()).toBe(400);
   expect((await deviceRow(deviceId)).name).toBe(before);
 });
+
+test('the rename input is the spec size: 38 px tall, 9 px radius, 1 px ink border, 16/600, 240 px wide', async ({ page, request }) => {
+  await signUpFresh(page);
+  const { deviceId } = await pairDevice(page, request);
+  await page.goto('/devices');
+  await page.getByTestId(`alias-edit-${deviceId}`).click();
+  const input = page.getByTestId(`alias-input-${deviceId}`);
+  await expect(input).toBeVisible();
+  const css = await input.evaluate((el) => {
+    const c = getComputedStyle(el);
+    return { h: c.height, w: c.width, r: c.borderTopLeftRadius, b: c.borderTopWidth, fs: c.fontSize, fw: c.fontWeight };
+  });
+  expect(css).toEqual({ h: '38px', w: '240px', r: '9px', b: '1px', fs: '16px', fw: '600' });
+});

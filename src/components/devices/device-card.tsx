@@ -184,7 +184,9 @@ export function DeviceCard(
              data-testid={`device-offline-${device.id}`}>
           <p className="text-[14px] font-semibold" style={{ color: 'var(--ink)' }}>{device.name} is offline</p>
           <p className="text-[13px]" style={{ color: 'var(--muted)' }}>
-            <span data-testid={`device-last-seen-${device.id}`}>It was last seen {relative(device.lastSeenAt, now)}.</span>
+            <span data-testid={`device-last-seen-${device.id}`}>
+              {device.lastSeenAt === null ? 'It has not been seen yet.' : `It was last seen ${relative(device.lastSeenAt, now)}.`}
+            </span>
             {' '}Mounts, ejects and settings you change now reach it when it reconnects. Check its power and Wi-Fi.
           </p>
         </div>

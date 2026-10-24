@@ -28,7 +28,7 @@ export function PairButton() {
 
   if (p.code) {
     return (
-      <div className="flex flex-col items-end gap-1" data-testid="pairing-code">
+      <div className="flex flex-col items-end gap-1 outline-none" data-testid="pairing-code" tabIndex={-1}>
         <span className="font-mono text-[20px] font-bold tracking-[0.14em]"
               style={{ color: 'var(--ink)' }}>{p.code}</span>
         {p.pairedName && (
