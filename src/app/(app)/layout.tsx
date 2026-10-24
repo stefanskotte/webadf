@@ -108,36 +108,42 @@ export default async function AppLayout({
             a fixed bottom bar, where a thumb is (spec D-6-2). Moved by CSS,
             never duplicated -- a second, mobile copy of the nav would make
             getByRole('link') ambiguous under strict mode and fail the suite
-            at 1280. */}
+            at 1280.
+
+            Absolute centring only from xl, though. Between sm and xl it ran
+            under the search box (~55px at 1024; Phase B final review F1),
+            so there the wrapper is in flow, flex-1, centring the pill in the
+            space HeaderStart and the right-hand group leave, and the pill
+            scrolls inside its clamp when that space is short.
+            e2e/header-overlap.spec.ts pins both. */}
           <div
             // h-[34px] matching the flow content's height, with items-center,
             // so the pill's centre lines up with the search box's rather than
             // its TOP edge lining up with the search box's top -- the pill is
             // 42px tall (34 + its own 4px padding), so aligning tops left it
-            // sitting 4px high. pointer-events-none on the full-width wrapper,
-            // auto on the pill: the wrapper spans the header and would
-            // otherwise swallow clicks meant for the search box behind it.
-            // The bar takes the clicks back below sm, where it is opaque
-            // enough to look like a surface and nothing sits behind it.
+            // sitting 4px high. From xl, pointer-events-none on the
+            // full-width wrapper, auto on the pill: there the wrapper spans
+            // the header and would otherwise swallow clicks meant for the
+            // search box behind it. In flow (sm to xl) it covers nothing.
             //
-            // sm:top-[19px] is (72 - 34) / 2: the 72px bar's middle. Below sm
+            // xl:top-[19px] is (72 - 34) / 2: the 72px bar's middle. Below sm
             // the bar's look comes from --nav-scrim / --nav-scrim-hairline, a
             // light surface now like the header itself, carrying the same
             // segmented nav (ink on the track).
-            className="pointer-events-auto fixed inset-x-0 bottom-0 z-40 flex items-center justify-center border-t border-(--nav-scrim-hairline) bg-(--nav-scrim) px-3 pt-2 pb-[calc(0.5rem+env(safe-area-inset-bottom))] backdrop-blur-md sm:pointer-events-none sm:absolute sm:top-[19px] sm:bottom-auto sm:z-auto sm:h-[34px] sm:border-0 sm:bg-transparent sm:p-0 sm:backdrop-blur-none"
+            className="pointer-events-auto fixed inset-x-0 bottom-0 z-40 flex items-center justify-center border-t border-(--nav-scrim-hairline) bg-(--nav-scrim) px-3 pt-2 pb-[calc(0.5rem+env(safe-area-inset-bottom))] backdrop-blur-md sm:static sm:z-auto sm:min-w-0 sm:flex-1 sm:border-0 sm:bg-transparent sm:p-0 sm:backdrop-blur-none xl:pointer-events-none xl:absolute xl:inset-x-0 xl:top-[19px] xl:bottom-auto xl:h-[34px]"
           >
             {/* The pill scrolls inside this clamp rather than the bar
                 scrolling around it: a justify-center scroll container puts
                 the start of its own content out of reach once it overflows,
                 which with four items is a 320px-wide phone away. */}
             {/* data-nav-pill: what HeaderStart measures. */}
-            <div data-nav-pill className="pointer-events-auto max-w-full overflow-x-auto sm:max-w-none sm:overflow-visible">
+            <div data-nav-pill className="pointer-events-auto max-w-full overflow-x-auto">
               <TopNav showAdmin={showAdmin} />
             </div>
           </div>
           {/* Full-width on its own wrapped line below sm, so the search box
               has somewhere to grow into; ml-auto is inert at that width. */}
-          <div className="ml-auto flex w-full items-center gap-2 sm:w-auto">
+          <div className="ml-auto flex w-full items-center gap-2 sm:w-auto sm:shrink-0">
             <SearchBox />
             <AboutLink />
             <SettingsLink />

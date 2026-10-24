@@ -18,10 +18,10 @@ export function AdminNav() {
   return (
     <nav
       aria-label="Admin"
-      // w-max below sm, matching TopNav: inside the layout's bottom bar the
+      // w-max at every width, matching TopNav: inside the layout's clamp the
       // pill is in a clamped scroll container, and at auto width its items
       // would spill outside the track rather than widen it.
-      className="seg w-max sm:w-auto"
+      className="seg w-max"
     >
       {ITEMS.map((item) => {
         const active = pathname === item.href;

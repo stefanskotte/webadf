@@ -33,12 +33,13 @@ export function TopNav({ showAdmin = false }: { showAdmin?: boolean }) {
   return (
     <nav
       aria-label="Main"
-      // w-max below sm so the pill stays as wide as its items when the
-      // layout's bottom bar clamps it and scrolls: at the shell's own width
+      // w-max at every width so the pill stays as wide as its items when the
+      // layout clamps it and scrolls (the phone bar, and the in-flow header
+      // at narrow sm widths): at the clamp's own width
       // the items would spill outside the track instead of taking it with
       // them. The look is .seg / .seg-item (globals.css): muted on the
       // track, the current page a raised surface in ink.
-      className="seg w-max sm:w-auto"
+      className="seg w-max"
     >
       {items.map((item) => {
         const active = pathname.startsWith(item.href);
