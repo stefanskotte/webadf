@@ -68,3 +68,7 @@ Each area: a short spec, a plan, the build, the e2e specs for that area, merge.
   upkeep. About a week.
 - Forgot password by email: the app sends no email today; needs a mail provider, with a self-host path (parity rule).
 - DF1 "Any disk" writable: DF1 write-back in firmware and server.
+- Library multi-select (operator 2026-10-25): an icon at the top of the grid and table views turns on "multi
+  operations"; a checkbox then appears in each title's left corner, and the top bar expands to the operations (Move to
+  collection, Delete). Nothing changes until OK is pressed; Cancel leaves everything as it was. Bulk routes for move
+  and delete are needed (today both act on one title).
