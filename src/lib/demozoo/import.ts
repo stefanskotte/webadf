@@ -68,6 +68,11 @@ async function readCursor(): Promise<ImportCursor | null> {
   return rows[0] ?? null;
 }
 
+/** The single import row, or null when Demozoo has never been fetched. Throws if unreadable. */
+export async function readDemozooImportState() {
+  return readCursor();
+}
+
 async function saveCursor(values: Partial<ImportCursor>): Promise<void> {
   await getDb().insert(demozooImport).values({ id: IMPORT_ROW_ID, ...values })
     .onConflictDoUpdate({ target: demozooImport.id, set: values });

@@ -17,6 +17,14 @@ test('the admin sees the scan status page', async ({ page }) => {
   await expect(page.getByTestId('scan-unchecked')).toHaveText(/^\d+$/);
 });
 
+test('the scan page shows the Demozoo status line', async ({ page }) => {
+  await signInAsSuperAdmin(page);
+  await page.goto('/admin/scan');
+  const line = page.getByTestId('demozoo-status');
+  await expect(line).toBeVisible();
+  await expect(line).toHaveText(/^Demozoo:/);
+});
+
 test('a non-admin cannot reach the scan page or its APIs', async ({ page }) => {
   await signUpFresh(page);
   await page.goto('/admin/scan');
