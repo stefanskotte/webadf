@@ -74,10 +74,10 @@ export function FobButton({ testId, title, disks, devices, mode = 'disk' }: {
       onPointerDown={(e) => e.stopPropagation()}
       onMouseDown={(e) => e.stopPropagation()}
       onTouchStart={(e) => e.stopPropagation()}
-      className="shrink-0 rounded p-1 transition-colors hover:bg-[var(--glass-strong)] hover:text-[var(--ink)]"
-      style={{ color: 'var(--faint)' }}
+      className="grid size-[38px] shrink-0 place-items-center rounded-[10px] transition-colors hover:bg-[var(--surface-2)]"
+      style={{ color: 'var(--muted)' }}
     >
-      <Nfc size={14} strokeWidth={1.75} aria-hidden />
+      <Nfc size={18} strokeWidth={2} aria-hidden />
     </button>
   );
   return (

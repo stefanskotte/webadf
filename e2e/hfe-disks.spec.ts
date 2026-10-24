@@ -242,7 +242,7 @@ test.describe('an HFE on the game page', () => {
     await page.goto(`/games/${d.gameId}`);
     await expect(page.getByTestId(`hfe-tag-${d.id}`)).toHaveText('HFE');
     await expect(page.getByTestId(`hfe-notice-${d.id}`)).toContainText("Weak-bit copy protections aren't supported");
-    await expect(page.getByTestId(`hfe-readonly-${d.id}`)).toHaveText('Read-only (HFE)');
+    await expect(page.getByTestId(`hfe-readonly-${d.id}`)).toHaveText('Read-only');
     await expect(page.getByTestId(`wp-${d.id}`)).toHaveCount(0);
     await expect(page.getByTestId(`browse-${d.id}`)).toHaveCount(0);
     await expect(page.getByTestId(`extract-${d.id}`)).toBeVisible();

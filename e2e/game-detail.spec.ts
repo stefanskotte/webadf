@@ -364,3 +364,26 @@ test('the hero shows a TOSEC-typed title with its type pill, and an undated titl
   await expect(page.getByTestId('title-pill-publisher')).toHaveText('Publisher —');
   await expect(page.getByTestId('title-pill-kind')).toHaveCount(0);
 });
+
+test('a disk the board has confirmed is marked on its row, and the hero shows the drive pill', async ({ page, request }) => {
+  const { orgId } = await signUpFresh(page);
+  const { deviceId } = await pairDevice(page, request, 'Mark Device');
+  await setDevice(deviceId, { lastSeenAt: new Date() });
+  const tag = runTag();
+  const { gameId, diskId } = await seedDisk(orgId, { title: `Marked-${tag}`, diskNo: 1, sha256: sha(tag) });
+
+  await page.goto(`/games/${gameId}`);
+  const row = page.getByTestId(`disk-${diskId}`);
+  await expect(row).toBeVisible();
+  // Nothing confirmed yet: no mark, no pill.
+  await expect(row).not.toHaveAttribute('data-mounted', 'true');
+  await expect(page.getByTestId('title-pill-drive')).toHaveCount(0);
+
+  await setDevice(deviceId, {
+    desiredGameId: gameId, desiredDiskId: diskId, desiredSha256: sha(tag), desiredDiskNo: 1,
+    mountedGameId: gameId, mountedDiskId: diskId, mountedSha256: sha(tag), mountedDiskNo: 1, lastSeenAt: new Date(),
+  });
+  await page.reload();
+  await expect(page.getByTestId(`disk-${diskId}`)).toHaveAttribute('data-mounted', 'true');
+  await expect(page.getByTestId('title-pill-drive')).toContainText('DF0');
+});

@@ -51,11 +51,11 @@ export function SendBoardPicker({ ctx }: { ctx: SendContext | null }) {
   const [board, setBoard] = useSendBoard(ctx?.targets ?? [], ctx?.now ?? 0);
   if (!ctx || ctx.targets.length < 2) return null;
   return (
-    <label className="flex min-w-0 items-center gap-2 text-[12px]" style={{ color: 'var(--muted)' }}>
+    <label className="flex min-w-0 items-center gap-2 text-[13px]" style={{ color: 'var(--muted)' }}>
       Send to
       <select value={board ?? ''} onChange={(e) => setBoard(e.target.value)} data-testid="send-board-select"
-              className="min-w-0 max-w-[60vw] rounded border bg-transparent px-2 py-1 text-[12px]"
-              style={{ borderColor: 'var(--hairline)', color: 'var(--ink)' }}>
+              className="min-w-0 max-w-[60vw] rounded-[10px] border bg-transparent px-2 py-1 text-[13px]"
+              style={{ borderColor: 'var(--line)', color: 'var(--ink)' }}>
         {orderTargets(ctx.targets).map((t) => (
           <option key={t.id} value={t.id}>{t.name} · {targetState(t, ctx.now)}</option>
         ))}
@@ -71,8 +71,8 @@ export function SendAdfButton({ ctx, diskId }: { ctx: SendContext; diskId: strin
   return (
     <button type="button" disabled={s.busy} onClick={() => void s.send({ diskId, whole: true }, 'the whole disk')}
             data-testid={`send-adf-${diskId}`}
-            className="btn-like shrink-0 rounded-lg px-3 py-1.5 text-[12px] font-semibold disabled:opacity-50"
-            style={{ background: 'var(--glass-strong)', color: 'var(--ink)' }}>
+            className="btn-like inline-flex h-[38px] shrink-0 items-center rounded-[10px] border px-3 text-[13px] font-medium disabled:opacity-50"
+            style={{ background: 'var(--surface)', borderColor: 'var(--line)', color: 'var(--ink)' }}>
       Send .adf to Amiga
     </button>
   );

@@ -87,19 +87,24 @@ export default async function GamePage(props: PageProps<'/games/[id]'>) {
       <div id={EDIT_SLOT_ID} className="empty:hidden" />
       <DemozooPanel game={game} />
       <GameFacts game={game} />
-      <div className="flex flex-col gap-3">
-        <SendBoardPicker ctx={send} />
+      <section aria-label="Disks" className="flex flex-col gap-3">
         {game.disks.length >= 2 ? (
-          // A disk set: the same rows, under a heading with Add disks… and
-          // Reorder, each row gaining a ⋯ menu. A client component, so the
-          // mount choices are computed here and handed over as data.
+          // A disk set: the same rows, under a heading line with the set's name, Add disks… and Reorder, each row
+          // gaining a ⋯ menu. A client component, so the mount choices are computed here and handed over as data.
           <DiskSetSection
             gameId={game.id} title={game.title} from={from} view={view} fobDevices={readers} send={send}
+            kind={game.kind} authored={game.authored} sendPicker={<SendBoardPicker ctx={send} />}
             entries={game.disks.map((disk) => ({
               disk, choices: mountChoices(devices, disk, now),
             }))}
           />
-        ) : game.disks.map((disk, i) => (
+        ) : (
+          <>
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <h2 className="text-[15px] font-semibold" style={{ color: 'var(--ink)' }}>Disks</h2>
+              <SendBoardPicker ctx={send} />
+            </div>
+            {game.disks.map((disk, i) => (
           /*
             Per disk, not once for the page: whether a device offers "Mount
             here" or "Eject" is a fact about THIS disk and that device, so one
@@ -115,9 +120,11 @@ export default async function GamePage(props: PageProps<'/games/[id]'>) {
                    helpHfe={disk.id === game.disks.find((d) => d.imageFormat === 'hfe')?.id}
                    choices={mountChoices(devices, disk, now)}
                    // A lone disk: its ⋯ menu offers "Add to a disk set…".
-                   loneGameId={game.id} />
-        ))}
-      </div>
+                   loneGameId={game.id} kind={game.kind} authored={game.authored} />
+            ))}
+          </>
+        )}
+      </section>
     </div>
   );
 }
