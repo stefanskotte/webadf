@@ -88,7 +88,7 @@ export default async function AppLayout({
                 centres them from sm up (HeaderStart); below sm the compact
                 control's own ml-auto still puts it at the line's right end. */}
             <div className="flex flex-1 items-center sm:justify-center">
-              <DriveChips chips={chips} />
+              <DriveChips chips={chips} showAdmin={showAdmin} />
             </div>
           </HeaderStart>
         {/* The nav is centred on the VIEWPORT, which means taking it out of
