@@ -1,5 +1,5 @@
 import { test, expect } from '@playwright/test';
-import { signUpFresh } from './helpers';
+import { signUpFresh, mintInviteCode } from './helpers';
 import { signInAsSuperAdmin } from './admin-helpers';
 import { cleanupSeeded } from './device-helpers';
 import { ALPHABET } from '@/lib/invites';
@@ -56,13 +56,15 @@ test('a live code is exactly what the sign-up gate accepts', async ({ page, cont
   await consumer.close();
 });
 
-test('a revoked code disappears and no longer works at sign-up', async ({ page }) => {
+test('a revoked code shows as Revoked with no Revoke button and no longer works at sign-up', async ({ page }) => {
   await signInAsSuperAdmin(page);
   await page.goto('/admin/invites');
   const code = await issueCode(page);
 
   await page.getByTestId(`revoke-${code}`).click();
-  await expect(page.getByTestId(`invite-${code}`)).toHaveCount(0);
+  // The row stays (revoked_at, not a delete), now labelled Revoked and with no action.
+  await expect(page.getByTestId(`invite-${code}`)).toContainText('Revoked');
+  await expect(page.getByTestId(`revoke-${code}`)).toHaveCount(0);
 
   // The real proof: it is dead as a credential, not merely hidden.
   await page.context().clearCookies();
@@ -128,4 +130,48 @@ test('an anonymous caller cannot reach the invite API at all', async ({ request 
     expect(res.status(), path).toBe(307);
     expect(res.headers()['location'], path).toContain('/sign-in');
   }
+});
+
+test.describe('copy buttons and Used by', () => {
+  test.beforeEach(async ({ context, baseURL }) => {
+    await context.grantPermissions(['clipboard-read', 'clipboard-write'], { origin: baseURL });
+  });
+
+  test('Copy link and Copy code put the sign-up link and the code on the clipboard', async ({ page, baseURL }) => {
+    await signInAsSuperAdmin(page);
+    await page.goto('/admin/invites');
+    const code = await issueCode(page);
+
+    // The new-code panel's buttons (no code in the test id) ...
+    await page.getByTestId('new-invite-copy-link').click();
+    await expect(page.getByTestId('new-invite-copy-link')).toHaveText('Copied');
+    expect(await page.evaluate(() => navigator.clipboard.readText())).toBe(`${baseURL}/sign-up?invite=${code}`);
+
+    // ... and the table row's, scoped to the row.
+    const row = page.getByTestId(`invite-${code}`);
+    await row.getByTestId(`invite-copy-code-${code}`).click();
+    await expect(row.getByTestId(`invite-copy-code-${code}`)).toHaveText('Copied');
+    expect(await page.evaluate(() => navigator.clipboard.readText())).toBe(code);
+  });
+
+  test('the Used by column shows the email of the user who signed up with the code', async ({ page, context }) => {
+    const code = await mintInviteCode();
+    const email = `usedby-${Date.now()}@example.test`;
+    const consumer = await context.browser()!.newPage();
+    try {
+      await consumer.goto('/sign-up');
+      await consumer.getByLabel('Email').fill(email);
+      await consumer.getByLabel('Password').fill('correct-horse-battery-staple');
+      await consumer.getByLabel('Invite code').fill(code);
+      await consumer.getByRole('button', { name: /sign up/i }).click();
+      await expect(consumer).toHaveURL(/\/library/, { timeout: 15_000 });
+    } finally {
+      await consumer.close();
+    }
+
+    await signInAsSuperAdmin(page);
+    await page.goto('/admin/invites');
+    await expect(page.getByTestId(`invite-used-by-${code}`)).toContainText(email);
+    await expect(page.getByTestId(`invite-${code}`)).toContainText('Used');
+  });
 });

@@ -1,6 +1,7 @@
 import { adminListInvites } from '@/lib/admin-queries';
 import { PageHeader } from '@/components/shell/page-header';
 import { IssueInviteButton } from '@/components/admin/issue-invite-button';
+import { CopyInviteButtons } from '@/components/admin/copy-invite-buttons';
 import { RevokeInviteButton } from '@/components/admin/revoke-invite-button';
 
 export const dynamic = 'force-dynamic';
@@ -12,6 +13,7 @@ const STATE_STYLE: Record<string, { label: string; color: string }> = {
   live: { label: 'Live', color: 'var(--amber-text)' },
   consumed: { label: 'Used', color: 'var(--muted)' },
   expired: { label: 'Expired', color: 'var(--muted)' },
+  revoked: { label: 'Revoked', color: 'var(--muted)' },
 };
 
 export default async function AdminInvitesPage() {
@@ -40,14 +42,15 @@ export default async function AdminInvitesPage() {
           {/* w-full alone let the card's overflow-x-auto go unused: the table
               shrank to the viewport and crushed its cells rather than
               scrolling, taking Revoke -- the only action here -- with it.
-              640px is comfortable for five narrow, fixed-shape columns: an
-              eight-character code, a state word, and two ISO dates that must
-              never wrap mid-token. */}
-          <table className="w-full min-w-[640px] text-[13px]">
+              820px is comfortable for six columns: an eight-character code,
+              a state word, an email with its consumed date, two ISO dates that
+              must never wrap mid-token, and the Copy/Revoke actions. */}
+          <table className="w-full min-w-[820px] text-[13px]">
             <thead>
               <tr style={{ color: 'var(--muted)' }}>
                 <th className="px-4 py-3 text-left font-semibold">Code</th>
                 <th className="px-4 py-3 text-left font-semibold">State</th>
+                <th className="px-4 py-3 text-left font-semibold">Used by</th>
                 <th className="px-4 py-3 text-left font-semibold">Issued</th>
                 <th className="px-4 py-3 text-left font-semibold">Expires</th>
                 <th className="px-4 py-3 text-right font-semibold">Action</th>
@@ -67,6 +70,20 @@ export default async function AdminInvitesPage() {
                     <td className="px-4 py-3 font-semibold" style={{ color: style.color }}>
                       {style.label}
                     </td>
+                    <td className="px-4 py-3 text-[12.5px]" data-testid={`invite-used-by-${i.code}`}>
+                      {i.state === 'consumed' ? (
+                        <>
+                          <div>{i.usedByEmail ?? '—'}</div>
+                          {i.consumedAt && (
+                            <div className="font-mono text-[12px]" style={{ color: 'var(--muted)' }}>
+                              {i.consumedAt.toISOString().slice(0, 10)}
+                            </div>
+                          )}
+                        </>
+                      ) : (
+                        <span style={{ color: 'var(--muted)' }}>—</span>
+                      )}
+                    </td>
                     <td className="px-4 py-3 font-mono text-[12px]" style={{ color: 'var(--muted)' }}>
                       {i.createdAt.toISOString().slice(0, 10)}
                     </td>
@@ -77,7 +94,12 @@ export default async function AdminInvitesPage() {
                       {/* Only a live code is revocable. A consumed one is the
                           record that an account exists; an expired one is
                           already dead as a credential. */}
-                      {i.state === 'live' ? <RevokeInviteButton code={i.code} /> : null}
+                      {i.state === 'live' ? (
+                        <span className="inline-flex items-center gap-4">
+                          <CopyInviteButtons code={i.code} />
+                          <RevokeInviteButton code={i.code} />
+                        </span>
+                      ) : null}
                     </td>
                   </tr>
                 );

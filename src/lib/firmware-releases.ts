@@ -97,6 +97,35 @@ export function releaseVisibleToSql(orgId: SQLWrapper | string): SQL {
       or ${isBench})`;
 }
 
+/**
+ * A release row that is a real release: not a TEST build (notes) and not an e2e version -- what an org outside
+ * FIRMWARE_BENCH_ORGS that is not a test org may see (releaseVisibleToSql's rule for such an org).
+ */
+export function isRealReleaseSql(): SQL {
+  return sql`(${firmwareReleases.version} not like ${TEST_RELEASE_PATTERNS[0]}
+    and ${firmwareReleases.version} not like ${TEST_RELEASE_PATTERNS[1]}
+    and (${firmwareReleases.notes} is null or ${firmwareReleases.notes} not like ${TEST_BUILD_NOTES_PATTERN}))`;
+}
+
+/**
+ * "Current release" (A7 spec §1): the highest-sequence real release, as a one-row select of `version, sequence`
+ * (no row when nothing real is published). Shared by the admin Overview and the admin Firmware tags, so the two can
+ * never disagree on which release is current. Use it as a CTE or a subquery:
+ * `sql\`... = (select sequence from (${currentReleaseSql()}) cur)\``.
+ */
+export function currentReleaseSql(): SQL {
+  return sql`select ${firmwareReleases.version} as version, ${firmwareReleases.sequence} as sequence
+    from ${firmwareReleases} where ${isRealReleaseSql()}
+    order by ${firmwareReleases.sequence} desc limit 1`;
+}
+
+/** The current release (currentReleaseSql), or null when nothing real is published. */
+export async function readCurrentRelease(): Promise<{ version: string; sequence: number } | null> {
+  const { rows } = await getDb().execute<{ version: string; sequence: number }>(currentReleaseSql());
+  const row = rows[0];
+  return row ? { version: row.version, sequence: Number(row.sequence) } : null;
+}
+
 export function listReleasesQuery(db: Db, orgId: string) {
   return db
     .select({
@@ -130,6 +159,7 @@ export async function listReleases(orgId: string): Promise<ReleaseRef[]> {
 export interface FirmwareReleaseListItem {
   id: string;
   version: string;
+  semver: string;
   sequence: number;
   sizeBytes: number;
   signingKeyId: string;
@@ -138,20 +168,25 @@ export interface FirmwareReleaseListItem {
   publishedAt: Date;
   publishedByEmail: string | null;
   signatureFormat: number;
+  /** The current release (currentReleaseSql) -- the same rule as the admin Overview's, so the two agree. */
+  isCurrent: boolean;
 }
 
 /**
- * For /admin/firmware. Newest first, and only the columns the page renders --
- * sha256, blobPath and the base64 signature are ~180 bytes a row that it
- * never shows.
+ * For /admin/firmware: one page, newest first (countReleases gives "Page N of M" its M). Only the columns the page
+ * renders -- sha256, blobPath and the base64 signature are ~180 bytes a row that it never shows. Board counts per
+ * version are a cross-tenant devices read, so they live in admin-queries.ts (adminBoardsByVersion), not here.
  */
-export async function listReleasesFull(limit = 100): Promise<FirmwareReleaseListItem[]> {
+export async function listReleasesFull(
+  opts: { limit: number; offset: number },
+): Promise<FirmwareReleaseListItem[]> {
   const { user } = await import('@/db/schema/auth');
   const { eq } = await import('drizzle-orm');
-  return getDb()
+  const rows = await getDb()
     .select({
       id: firmwareReleases.id,
       version: firmwareReleases.version,
+      semver: firmwareReleases.semver,
       sequence: firmwareReleases.sequence,
       sizeBytes: firmwareReleases.sizeBytes,
       signingKeyId: firmwareReleases.signingKeyId,
@@ -162,11 +197,20 @@ export async function listReleasesFull(limit = 100): Promise<FirmwareReleaseList
       // this" is unanswerable from one without a join.
       publishedByEmail: user.email,
       signatureFormat: firmwareReleases.signatureFormat,
+      isCurrent: sql<boolean>`coalesce(${firmwareReleases.sequence} = (select sequence from (${currentReleaseSql()}) cur), false)`,
     })
     .from(firmwareReleases)
     .leftJoin(user, eq(user.id, firmwareReleases.publishedByUserId))
     .orderBy(desc(firmwareReleases.sequence))
-    .limit(limit);
+    .limit(opts.limit)
+    .offset(opts.offset);
+  return rows.map((r) => ({ ...r, isCurrent: r.isCurrent === true }));
+}
+
+/** Every release row, for /admin/firmware's page count. */
+export async function countReleases(): Promise<number> {
+  const [row] = await getDb().select({ n: sql<number>`count(*)::int` }).from(firmwareReleases);
+  return Number(row.n);
 }
 
 export function latestReleaseQuery(db: Db, orgId: string) {

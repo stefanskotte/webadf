@@ -9,10 +9,17 @@
 // review caught; keeping the unscoped set in a quarantined module is what
 // makes that mistake visible in review rather than invisible in a diff.
 
-import { sql, desc, eq } from 'drizzle-orm';
+import { sql, desc, eq, gte, and, isNotNull, or, inArray } from 'drizzle-orm';
 import { getDb } from '@/db';
 import { user, member, organization } from '@/db/schema/auth';
-import { invites } from '@/db/schema/devices';
+import { invites, devices } from '@/db/schema/devices';
+import { firmwareReleases } from '@/db/schema/firmware';
+import { STALE_AFTER_MS } from '@/lib/device-state';
+import { readCurrentRelease } from '@/lib/firmware-releases';
+import {
+  ERROR_WINDOW_MS, SEEN_WINDOW_MS, needsAttention,
+  type AttentionRow, type BoardHealthRow, type DistributionInput,
+} from '@/lib/admin-board-health';
 
 export interface AdminCounts {
   users: number; orgs: number; games: number; disks: number;
@@ -25,11 +32,11 @@ export interface AdminUserRow {
   games: number; disks: number; devices: number;
 }
 
-export type InviteState = 'live' | 'consumed' | 'expired';
+export type InviteState = 'live' | 'consumed' | 'expired' | 'revoked';
 
 export interface AdminInviteRow {
   code: string; state: InviteState; createdAt: Date; expiresAt: Date;
-  consumedAt: Date | null;
+  consumedAt: Date | null; usedByEmail: string | null;
 }
 
 /**
@@ -53,7 +60,8 @@ export async function adminCounts(): Promise<AdminCounts> {
       (select count(*)::int from disks)                             as disks,
       (select count(*)::int from blobs)                             as blobs,
       (select count(*)::int from invites
-        where consumed_at is null and expires_at > now())           as live_invites
+        where consumed_at is null and revoked_at is null
+          and expires_at > now())                                  as live_invites
   `);
   const row = rows[0];
   return {
@@ -132,6 +140,7 @@ export async function adminCountUsers(): Promise<number> {
  */
 export async function adminListInvites(limit: number = 200): Promise<AdminInviteRow[]> {
   const state = sql<InviteState>`case
+    when ${invites.revokedAt} is not null  then 'revoked'
     when ${invites.consumedAt} is not null then 'consumed'
     when ${invites.expiresAt} <= now()     then 'expired'
     else 'live'
@@ -144,8 +153,100 @@ export async function adminListInvites(limit: number = 200): Promise<AdminInvite
       createdAt: invites.createdAt,
       expiresAt: invites.expiresAt,
       consumedAt: invites.consumedAt,
+      usedByEmail: user.email,
     })
     .from(invites)
+    .leftJoin(user, eq(user.id, invites.consumedByUserId))
     .orderBy(sql`(${state} = 'live') desc`, desc(invites.createdAt))
     .limit(limit);
+}
+
+export interface AdminBoardCounts { paired: number; online: number; seen7d: number }
+
+/**
+ * The Overview's Boards tiles (A7 spec §1), every org. Online is the Devices page's rule (isOnline: seen within
+ * STALE_AFTER_MS); the cut-offs are computed from `now` here rather than from the database's now(), so the page's
+ * "now" and the tiles agree.
+ */
+export async function adminBoardCounts(now: number = Date.now()): Promise<AdminBoardCounts> {
+  const online = new Date(now - STALE_AFTER_MS);
+  const seen = new Date(now - SEEN_WINDOW_MS);
+  const [row] = await getDb()
+    .select({
+      paired: sql<number>`count(*)::int`,
+      online: sql<number>`(count(*) filter (where ${devices.lastSeenAt} >= ${online}))::int`,
+      seen7d: sql<number>`(count(*) filter (where ${devices.lastSeenAt} >= ${seen}))::int`,
+    })
+    .from(devices);
+  return { paired: Number(row.paired), online: Number(row.online), seen7d: Number(row.seen7d) };
+}
+
+/**
+ * Boards seen in the last 7 days, grouped by firmware_version (NULL kept as its own group), with the matching
+ * release row's sequence (null = no release row: "unrecognised"). firmware_releases.version is unique, so the join
+ * cannot fan a group out. Ordering is orderDistribution's (admin-board-health.ts).
+ */
+export async function adminFirmwareDistribution(now: number = Date.now()): Promise<DistributionInput[]> {
+  const seen = new Date(now - SEEN_WINDOW_MS);
+  const rows = await getDb()
+    .select({
+      version: devices.firmwareVersion,
+      count: sql<number>`count(*)::int`,
+      sequence: firmwareReleases.sequence,
+    })
+    .from(devices)
+    .leftJoin(firmwareReleases, eq(firmwareReleases.version, devices.firmwareVersion))
+    .where(gte(devices.lastSeenAt, seen))
+    .groupBy(devices.firmwareVersion, firmwareReleases.sequence);
+  return rows.map((r) => ({ version: r.version, count: Number(r.count), sequence: r.sequence }));
+}
+
+/**
+ * Every board that could need attention: an error in the last 24 h, or seen in the last 7 days. The owner's email is
+ * the org's member with role 'owner' (bootstrapOrganization creates the org with its user as owner), else the
+ * earliest member -- one row per board either way, never a fan-out over memberships.
+ */
+export async function adminAttentionCandidates(now: number = Date.now()): Promise<BoardHealthRow[]> {
+  const errorSince = new Date(now - ERROR_WINDOW_MS);
+  const seen = new Date(now - SEEN_WINDOW_MS);
+  return getDb()
+    .select({
+      deviceId: devices.id,
+      name: devices.name,
+      ownerEmail: sql<string | null>`(select u.email from auth.member m join auth."user" u on u.id = m.user_id
+        where m.organization_id = ${devices.orgId}
+        order by (m.role = 'owner') desc, m.created_at asc, m.id asc limit 1)`,
+      firmwareVersion: devices.firmwareVersion,
+      sequence: firmwareReleases.sequence,
+      lastSeenAt: devices.lastSeenAt,
+      lastError: devices.lastError,
+      lastErrorAt: devices.lastErrorAt,
+    })
+    .from(devices)
+    .leftJoin(firmwareReleases, eq(firmwareReleases.version, devices.firmwareVersion))
+    .where(or(
+      and(isNotNull(devices.lastError), gte(devices.lastErrorAt, errorSince)),
+      gte(devices.lastSeenAt, seen),
+    ));
+}
+
+/** The Needs attention list (spec §1): at most ATTENTION_LIMIT boards with their reasons, sorted. */
+export async function adminNeedsAttention(now: number = Date.now()): Promise<AttentionRow[]> {
+  const [candidates, current] = await Promise.all([adminAttentionCandidates(now), readCurrentRelease()]);
+  return needsAttention(candidates, current, now);
+}
+
+/**
+ * The admin Firmware page's "N boards" (A7 spec §3): devices whose firmware_version is each of `versions`, every org,
+ * any last-seen (a paired board that has not reported in a year still runs what it last said). A version no device
+ * reports is absent from the map (read it as 0); a NULL firmware_version matches nothing.
+ */
+export async function adminBoardsByVersion(versions: string[]): Promise<Map<string, number>> {
+  if (versions.length === 0) return new Map();
+  const rows = await getDb()
+    .select({ version: devices.firmwareVersion, n: sql<number>`count(*)::int` })
+    .from(devices)
+    .where(inArray(devices.firmwareVersion, versions))
+    .groupBy(devices.firmwareVersion);
+  return new Map(rows.map((r) => [r.version as string, Number(r.n)]));
 }

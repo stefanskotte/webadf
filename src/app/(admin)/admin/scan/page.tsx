@@ -4,6 +4,8 @@ import { DatUpload } from '@/components/admin/dat-upload';
 import { RunScanButton } from '@/components/admin/run-scan-button';
 import { OpenRetroUpload } from '@/components/admin/openretro-upload';
 import { readTosecFetchState } from '@/lib/tosec-fetch';
+import { readDemozooImportState } from '@/lib/demozoo/import';
+import { demozooStatusText } from '@/lib/demozoo/status';
 
 export const dynamic = 'force-dynamic';
 
@@ -30,6 +32,8 @@ export default async function AdminScanPage() {
   const s = await scanStatus();
   // The table may not exist yet (deploy before migration): the page must not 500 over a status line.
   const fetchState = await readTosecFetchState().catch(() => null);
+  // null = never fetched; 'unreadable' = the read failed. Distinct on purpose.
+  const demozooState = await readDemozooImportState().catch(() => 'unreadable' as const);
 
   // A blob whose bytes could not be read is stamped hashed (so the sweeper
   // does not spin on it forever) with null hashes, and phase 2's short
@@ -157,6 +161,10 @@ export default async function AdminScanPage() {
               </div>
             )}
           </div>
+        </div>
+
+        <div className="glass-card mb-3 p-5 text-[12.5px]" style={{ color: 'var(--muted)' }} data-testid="demozoo-status">
+          {demozooStatusText(demozooState, Date.now())}
         </div>
 
         <div className="glass-card mb-3 p-5">

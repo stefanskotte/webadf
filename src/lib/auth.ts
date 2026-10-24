@@ -6,7 +6,7 @@ import { APIError, isAPIError } from 'better-auth/api';
 import { asc, eq } from 'drizzle-orm';
 import { getDb } from '@/db';
 import { member, user as userTable, organization as organizationTable } from '@/db/schema/auth';
-import { claimInvite } from '@/lib/invites';
+import { claimInvite, recordInviteConsumer } from '@/lib/invites';
 
 // The invite code travels as a plain extra property in the sign-up/email
 // request body (accepted because that endpoint's body schema is
@@ -112,7 +112,14 @@ export const auth = betterAuth({
             });
           }
         },
-        after: async (user) => {
+        after: async (user, context) => {
+          // Who used the code. Best effort in its own try/catch, independent
+          // of the bootstrap below: a failure here must never affect it.
+          try {
+            await recordInviteConsumer(readInviteCode(context?.body), user.id);
+          } catch (err) {
+            console.error(`[auth] failed to record invite consumer for user ${user.id}`, err);
+          }
           // Not atomic with user creation. And, per the ordering discovery
           // above, this hook does NOT run until the entire sign-up handler
           // has already finished: `linkAccount` (the password credential)
