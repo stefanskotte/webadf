@@ -52,7 +52,7 @@ test('the table shows a type derived from the TOSEC set', async ({ page }) => {
   }
 });
 
-test('the grid shows the same type as a pill on the cover', async ({ page }) => {
+test('the grid shows the same type as a pill on the card', async ({ page }) => {
   const user = await signUpFresh(page);
   await seedTyped(user.orgId, 'gridtypedgame', 'Commodore Amiga - Games - [ADF]');
   await seedTyped(user.orgId, 'gridtypeddemo', 'Commodore Amiga - Demos - Various - [ADF]');
@@ -69,7 +69,7 @@ test('the grid shows the same type as a pill on the cover', async ({ page }) => 
 });
 
 test('a grid card with no type carries no pill at all', async ({ page }) => {
-  // Not an empty pill and not a dash: on a cover, an "unknown" chip would be
+  // Not an empty pill and not a dash: on a card, an "unknown" chip would be
   // visual noise on the majority of cards. The table needs the dash because a
   // column has to hold its place; a badge does not.
   const user = await signUpFresh(page);
@@ -82,8 +82,8 @@ test('a grid card with no type carries no pill at all', async ({ page }) => {
 });
 
 test('a typed multi-disk card shows both the type and the disk count', async ({ page }) => {
-  // The two badges sit in opposite corners of the same cover; a layout change
-  // that dropped one would otherwise go unnoticed.
+  // The two sit side by side in the card's footer; a layout change that
+  // dropped one would otherwise go unnoticed.
   const user = await signUpFresh(page);
   const first = await seedTyped(user.orgId, 'gridboth', 'Commodore Amiga - Games - [ADF]');
   await addDisk(user.orgId, first.gameId, { diskNo: 2, sha256: freshSha() });
@@ -91,7 +91,7 @@ test('a typed multi-disk card shows both the type and the disk count', async ({ 
   await page.goto('/library');
   const card = page.getByTestId('game-card').filter({ hasText: 'gridboth' });
   await expect(card.getByTestId('grid-kind')).toHaveText('Game');
-  await expect(card.getByText('2', { exact: true })).toBeVisible();
+  await expect(card.getByTestId('grid-disks')).toHaveText('2 disks');
 });
 
 test('an unmatched game shows a dash, not a made-up type', async ({ page }) => {
