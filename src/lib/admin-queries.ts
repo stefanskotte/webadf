@@ -25,11 +25,11 @@ export interface AdminUserRow {
   games: number; disks: number; devices: number;
 }
 
-export type InviteState = 'live' | 'consumed' | 'expired';
+export type InviteState = 'live' | 'consumed' | 'expired' | 'revoked';
 
 export interface AdminInviteRow {
   code: string; state: InviteState; createdAt: Date; expiresAt: Date;
-  consumedAt: Date | null;
+  consumedAt: Date | null; usedByEmail: string | null;
 }
 
 /**
@@ -53,7 +53,8 @@ export async function adminCounts(): Promise<AdminCounts> {
       (select count(*)::int from disks)                             as disks,
       (select count(*)::int from blobs)                             as blobs,
       (select count(*)::int from invites
-        where consumed_at is null and expires_at > now())           as live_invites
+        where consumed_at is null and revoked_at is null
+          and expires_at > now())                                  as live_invites
   `);
   const row = rows[0];
   return {
@@ -132,6 +133,7 @@ export async function adminCountUsers(): Promise<number> {
  */
 export async function adminListInvites(limit: number = 200): Promise<AdminInviteRow[]> {
   const state = sql<InviteState>`case
+    when ${invites.revokedAt} is not null  then 'revoked'
     when ${invites.consumedAt} is not null then 'consumed'
     when ${invites.expiresAt} <= now()     then 'expired'
     else 'live'
@@ -144,8 +146,10 @@ export async function adminListInvites(limit: number = 200): Promise<AdminInvite
       createdAt: invites.createdAt,
       expiresAt: invites.expiresAt,
       consumedAt: invites.consumedAt,
+      usedByEmail: user.email,
     })
     .from(invites)
+    .leftJoin(user, eq(user.id, invites.consumedByUserId))
     .orderBy(sql`(${state} = 'live') desc`, desc(invites.createdAt))
     .limit(limit);
 }

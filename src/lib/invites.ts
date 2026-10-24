@@ -1,5 +1,5 @@
 import { randomInt } from 'node:crypto';
-import { and, eq, gt, isNull } from 'drizzle-orm';
+import { and, eq, gt, isNull, sql } from 'drizzle-orm';
 import { getDb } from '@/db';
 import { invites } from '@/db/schema/devices';
 
@@ -102,10 +102,57 @@ export async function claimInvite(raw: string): Promise<ClaimResult> {
     .where(and(
       eq(invites.code, code),
       isNull(invites.consumedAt),
+      isNull(invites.revokedAt),
       gt(invites.expiresAt, new Date()),
     ))
     .returning({ orgId: invites.orgId });
   const row = rows[0];
   if (!row) return { ok: false };
   return { ok: true, orgId: row.orgId };
+}
+
+export type RevokeResult = 'revoked' | 'consumed' | 'missing';
+
+/**
+ * Revokes an unconsumed code by stamping `revoked_at`; the row is kept so the
+ * admin list can still show it. Idempotent: an already revoked code answers
+ * 'revoked' again and keeps its first timestamp. A consumed code is the record
+ * that an account exists, so it is never revoked ('consumed'); an unknown code
+ * is 'missing'.
+ *
+ * The update and the disambiguating read are two statements, a benign race:
+ * a sign-up landing between them makes the answer 'consumed', which is true.
+ */
+export async function revokeInvite(raw: string): Promise<RevokeResult> {
+  const code = normalizeInviteCode(raw);
+  const db = getDb();
+  const updated = await db
+    .update(invites)
+    .set({ revokedAt: new Date() })
+    .where(and(eq(invites.code, code), isNull(invites.consumedAt), isNull(invites.revokedAt)))
+    .returning({ code: invites.code });
+  if (updated.length > 0) return 'revoked';
+
+  const [existing] = await db
+    .select({ consumedAt: invites.consumedAt, revokedAt: invites.revokedAt })
+    .from(invites)
+    .where(eq(invites.code, code))
+    .limit(1);
+  if (!existing) return 'missing';
+  if (existing.consumedAt) return 'consumed';
+  return 'revoked';
+}
+
+/**
+ * Records who used a code. `claimInvite` runs before better-auth has a user
+ * id, so this runs from `user.create.after`. Sets the id once, never
+ * overwrites. Callers wrap it in their own try/catch; it is best effort.
+ */
+export async function recordInviteConsumer(raw: string, userId: string): Promise<void> {
+  const code = normalizeInviteCode(raw);
+  if (!code) return;
+  await getDb()
+    .update(invites)
+    .set({ consumedByUserId: userId })
+    .where(and(eq(invites.code, code), isNull(invites.consumedByUserId), sql`${invites.consumedAt} is not null`));
 }

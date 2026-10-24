@@ -12,6 +12,7 @@ const STATE_STYLE: Record<string, { label: string; color: string }> = {
   live: { label: 'Live', color: 'var(--amber-text)' },
   consumed: { label: 'Used', color: 'var(--muted)' },
   expired: { label: 'Expired', color: 'var(--muted)' },
+  revoked: { label: 'Revoked', color: 'var(--muted)' },
 };
 
 export default async function AdminInvitesPage() {

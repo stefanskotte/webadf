@@ -56,13 +56,15 @@ test('a live code is exactly what the sign-up gate accepts', async ({ page, cont
   await consumer.close();
 });
 
-test('a revoked code disappears and no longer works at sign-up', async ({ page }) => {
+test('a revoked code shows as Revoked with no Revoke button and no longer works at sign-up', async ({ page }) => {
   await signInAsSuperAdmin(page);
   await page.goto('/admin/invites');
   const code = await issueCode(page);
 
   await page.getByTestId(`revoke-${code}`).click();
-  await expect(page.getByTestId(`invite-${code}`)).toHaveCount(0);
+  // The row stays (revoked_at, not a delete), now labelled Revoked and with no action.
+  await expect(page.getByTestId(`invite-${code}`)).toContainText('Revoked');
+  await expect(page.getByTestId(`revoke-${code}`)).toHaveCount(0);
 
   // The real proof: it is dead as a credential, not merely hidden.
   await page.context().clearCookies();
