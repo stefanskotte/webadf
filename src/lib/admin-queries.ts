@@ -9,7 +9,7 @@
 // review caught; keeping the unscoped set in a quarantined module is what
 // makes that mistake visible in review rather than invisible in a diff.
 
-import { sql, desc, eq, gte, and, isNotNull, or } from 'drizzle-orm';
+import { sql, desc, eq, gte, and, isNotNull, or, inArray } from 'drizzle-orm';
 import { getDb } from '@/db';
 import { user, member, organization } from '@/db/schema/auth';
 import { invites, devices } from '@/db/schema/devices';
@@ -234,4 +234,19 @@ export async function adminAttentionCandidates(now: number = Date.now()): Promis
 export async function adminNeedsAttention(now: number = Date.now()): Promise<AttentionRow[]> {
   const [candidates, current] = await Promise.all([adminAttentionCandidates(now), readCurrentRelease()]);
   return needsAttention(candidates, current, now);
+}
+
+/**
+ * The admin Firmware page's "N boards" (A7 spec §3): devices whose firmware_version is each of `versions`, every org,
+ * any last-seen (a paired board that has not reported in a year still runs what it last said). A version no device
+ * reports is absent from the map (read it as 0); a NULL firmware_version matches nothing.
+ */
+export async function adminBoardsByVersion(versions: string[]): Promise<Map<string, number>> {
+  if (versions.length === 0) return new Map();
+  const rows = await getDb()
+    .select({ version: devices.firmwareVersion, n: sql<number>`count(*)::int` })
+    .from(devices)
+    .where(inArray(devices.firmwareVersion, versions))
+    .groupBy(devices.firmwareVersion);
+  return new Map(rows.map((r) => [r.version as string, Number(r.n)]));
 }

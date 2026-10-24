@@ -439,7 +439,10 @@ const seededFirmwareBlobs: string[] = [];
  * fine for the UI specs and useless for the download path -- a test that
  * asserted on 200 bytes with that fixture would fail for the wrong reason.
  */
-export async function publishTestReleaseWithBlob(version: string): Promise<string> {
+export async function publishTestReleaseWithBlob(
+  version: string,
+  opts: { notes?: string } = {},
+): Promise<string> {
   if (!version.startsWith(E2E_RELEASE_PREFIX)) {
     throw new Error(`e2e releases must start with ${E2E_RELEASE_PREFIX}, got ${version}`);
   }
@@ -459,7 +462,7 @@ export async function publishTestReleaseWithBlob(version: string): Promise<strin
     id: randomUUID(), version, semver: '0.0.0', sequence,
     sha256: createHash('sha256').update(bytes).digest('hex'),
     sizeBytes: bytes.byteLength, blobPath,
-    signature: 'ZTJlLXRlc3Q=', signingKeyId: 'e2e', signatureFormat: 2, notes: null,
+    signature: 'ZTJlLXRlc3Q=', signingKeyId: 'e2e', signatureFormat: 2, notes: opts.notes ?? null,
     security: false, publishedByUserId: 'e2e',
   }).onConflictDoNothing();
   return version;

@@ -159,6 +159,7 @@ export async function listReleases(orgId: string): Promise<ReleaseRef[]> {
 export interface FirmwareReleaseListItem {
   id: string;
   version: string;
+  semver: string;
   sequence: number;
   sizeBytes: number;
   signingKeyId: string;
@@ -167,20 +168,25 @@ export interface FirmwareReleaseListItem {
   publishedAt: Date;
   publishedByEmail: string | null;
   signatureFormat: number;
+  /** The current release (currentReleaseSql) -- the same rule as the admin Overview's, so the two agree. */
+  isCurrent: boolean;
 }
 
 /**
- * For /admin/firmware. Newest first, and only the columns the page renders --
- * sha256, blobPath and the base64 signature are ~180 bytes a row that it
- * never shows.
+ * For /admin/firmware: one page, newest first (countReleases gives "Page N of M" its M). Only the columns the page
+ * renders -- sha256, blobPath and the base64 signature are ~180 bytes a row that it never shows. Board counts per
+ * version are a cross-tenant devices read, so they live in admin-queries.ts (adminBoardsByVersion), not here.
  */
-export async function listReleasesFull(limit = 100): Promise<FirmwareReleaseListItem[]> {
+export async function listReleasesFull(
+  opts: { limit: number; offset: number },
+): Promise<FirmwareReleaseListItem[]> {
   const { user } = await import('@/db/schema/auth');
   const { eq } = await import('drizzle-orm');
-  return getDb()
+  const rows = await getDb()
     .select({
       id: firmwareReleases.id,
       version: firmwareReleases.version,
+      semver: firmwareReleases.semver,
       sequence: firmwareReleases.sequence,
       sizeBytes: firmwareReleases.sizeBytes,
       signingKeyId: firmwareReleases.signingKeyId,
@@ -191,11 +197,20 @@ export async function listReleasesFull(limit = 100): Promise<FirmwareReleaseList
       // this" is unanswerable from one without a join.
       publishedByEmail: user.email,
       signatureFormat: firmwareReleases.signatureFormat,
+      isCurrent: sql<boolean>`coalesce(${firmwareReleases.sequence} = (select sequence from (${currentReleaseSql()}) cur), false)`,
     })
     .from(firmwareReleases)
     .leftJoin(user, eq(user.id, firmwareReleases.publishedByUserId))
     .orderBy(desc(firmwareReleases.sequence))
-    .limit(limit);
+    .limit(opts.limit)
+    .offset(opts.offset);
+  return rows.map((r) => ({ ...r, isCurrent: r.isCurrent === true }));
+}
+
+/** Every release row, for /admin/firmware's page count. */
+export async function countReleases(): Promise<number> {
+  const [row] = await getDb().select({ n: sql<number>`count(*)::int` }).from(firmwareReleases);
+  return Number(row.n);
 }
 
 export function latestReleaseQuery(db: Db, orgId: string) {

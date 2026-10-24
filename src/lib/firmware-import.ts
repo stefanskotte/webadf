@@ -9,6 +9,7 @@ import { parseReleaseManifest, verifyRelease, type ReleaseManifest } from '@/lib
 import { FIRMWARE_PUBLIC_KEYS } from '@/lib/firmware-keys';
 import { FIRMWARE_MAX_BYTES } from '@/lib/firmware-manifest';
 import { webadfUserAgent } from '@/lib/user-agent';
+import { firmwareRepo } from '@/lib/admin-firmware';
 
 export interface FirmwareImportResult { imported: string[]; skipped: { tag: string; reason: string }[]; waiting?: string; error?: string }
 const TAG = /^fw-(\d+\.\d+\.\d+)$/;
@@ -31,7 +32,7 @@ interface GhRelease { tag_name: string; body: string | null; draft: boolean; pre
 export async function runFirmwareImport(opts: {
   repo?: string; fetchImpl?: typeof fetch; keys?: Readonly<Record<string, string>>; log?: (l: string) => void;
 } = {}): Promise<FirmwareImportResult> {
-  const repo = opts.repo ?? process.env.WEBADF_FIRMWARE_REPO ?? 'stefanskotte/webadf';
+  const repo = opts.repo ?? firmwareRepo();
   const f = opts.fetchImpl ?? fetch;
   const log = opts.log ?? ((l) => console.log(l));
   const ua = webadfUserAgent();
