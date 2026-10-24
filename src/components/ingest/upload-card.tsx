@@ -25,25 +25,3 @@ export function UploadCard({
     </section>
   );
 }
-
-/** The framed list at the bottom of each card: a header row (title, counts, an action) over its rows. */
-export function ListFrame({
-  title, counts, action, children,
-}: {
-  title: string;
-  counts?: React.ReactNode;
-  action?: React.ReactNode;
-  children: React.ReactNode;
-}) {
-  return (
-    <div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-xl"
-         style={{ border: '1px solid var(--hairline-strong)', background: 'var(--glass-subtle)' }}>
-      <div className="flex min-h-[44px] flex-wrap items-center gap-x-3 gap-y-1 px-4 py-2" style={{ borderBottom: '1px solid var(--hairline)' }}>
-        <span className="text-[13.5px] font-semibold" style={{ color: 'var(--ink)' }}>{title}</span>
-        {counts && <span className="text-[12px]" style={{ color: 'var(--muted)' }}>{counts}</span>}
-        {action && <span className="ml-auto">{action}</span>}
-      </div>
-      {children}
-    </div>
-  );
-}

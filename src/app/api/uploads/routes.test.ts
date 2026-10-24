@@ -31,11 +31,12 @@ vi.mock('@/lib/storage', () => ({ diskStore: {
   put: async (s: string, b: Uint8Array) => { store.set(s, b); return { key: `adf/${s}` }; },
   read: async (s: string) => { const b = store.get(s); if (!b) throw new Error('missing'); return b; },
 } }));
-const U = { listUploads: vi.fn(), uploadBoards: vi.fn(), getUpload: vi.fn(), deleteUpload: vi.fn(), clearUploads: vi.fn(), setLibraryDisk: vi.fn() };
+const U = { listUploads: vi.fn(), uploadBoards: vi.fn(), getUpload: vi.fn(), deleteUpload: vi.fn(), stopUpload: vi.fn(), clearUploads: vi.fn(), setLibraryDisk: vi.fn() };
 vi.mock('@/lib/amiga-uploads', async (orig) => ({
   ...(await orig<typeof import('@/lib/amiga-uploads')>()),
   listUploads: (...a: unknown[]) => U.listUploads(...a), uploadBoards: (...a: unknown[]) => U.uploadBoards(...a),
   getUpload: (...a: unknown[]) => U.getUpload(...a), deleteUpload: (...a: unknown[]) => U.deleteUpload(...a),
+  stopUpload: (...a: unknown[]) => U.stopUpload(...a),
   clearUploads: (...a: unknown[]) => U.clearUploads(...a), setLibraryDisk: (...a: unknown[]) => U.setLibraryDisk(...a),
 }));
 const registerUploads = vi.fn();
@@ -202,6 +203,17 @@ describe('DELETE /api/uploads/<id> and POST /api/uploads/clear', () => {
     expect((await oneDELETE(new Request('http://x', { method: 'DELETE' }), ctx('up-1'))).status).toBe(204);
     expect((await oneDELETE(new Request('http://x', { method: 'DELETE' }), ctx('up-1'))).status).toBe(404);
     expect(U.deleteUpload).toHaveBeenCalledWith(expect.anything(), 'org-1', 'up-1');
+  });
+  it('only=receiving stops a receiving file, and answers 409 not_receiving once it finished (or 404)', async () => {
+    U.stopUpload.mockResolvedValueOnce('stopped').mockResolvedValueOnce('not_receiving').mockResolvedValueOnce('not_found');
+    const del = () => oneDELETE(new Request('http://x/api/uploads/up-1?only=receiving', { method: 'DELETE' }), ctx('up-1'));
+    expect((await del()).status).toBe(204);
+    const refused = await del();
+    expect(refused.status).toBe(409);
+    expect(await refused.json()).toEqual({ error: 'not_receiving' });
+    expect((await del()).status).toBe(404);
+    expect(U.stopUpload).toHaveBeenCalledWith(expect.anything(), 'org-1', 'up-1');
+    expect(U.deleteUpload).not.toHaveBeenCalled();
   });
   const CUR = '2026-10-20T10:00:00.000123Z';
   const post = (b: unknown) => clearPOST(new Request('http://x', { method: 'POST', body: JSON.stringify(b) }));

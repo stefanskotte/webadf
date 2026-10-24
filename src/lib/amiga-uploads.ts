@@ -138,7 +138,7 @@ export async function closeUpload(db: Db, deviceId: string, id: string, crc: num
 export type UploadView = {
   id: string; path: string; sizeBytes: number; status: 'receiving' | 'stored' | 'failed'; receivedBytes: number;
   errorCode: string | null; deviceId: string | null; deviceName: string; createdAt: number; storedAt: number | null;
-  expiresAt: number; libraryDiskId: string | null; libraryGameId: string | null;
+  expiresAt: number; libraryDiskId: string | null; libraryGameId: string | null; blobSha256: string | null;
   /** When the row settled (stored_at, else created_at) as Postgres prints it, with microseconds: a Date is milliseconds and would round (ruling PF4). Clear all sends the greatest cursor in the list. */
   cursor: string;
 };
@@ -158,7 +158,7 @@ export function toUploadView(r: UploadRow & { libraryGameId?: string | null; cur
     id: r.id, path: r.path, sizeBytes: r.sizeBytes, status: lapsed ? 'failed' : (r.status as UploadView['status']),
     receivedBytes: r.receivedBytes, errorCode: lapsed ? 'expired' : r.errorCode, deviceId: r.deviceId, deviceName: r.deviceName,
     createdAt: r.createdAt.getTime(), storedAt: r.storedAt?.getTime() ?? null, expiresAt: r.expiresAt.getTime(),
-    libraryDiskId: r.libraryDiskId, libraryGameId: r.libraryGameId ?? null, cursor: r.cursor,
+    libraryDiskId: r.libraryDiskId, libraryGameId: r.libraryGameId ?? null, blobSha256: r.blobSha256, cursor: r.cursor,
   };
 }
 
@@ -193,6 +193,26 @@ export async function deleteUpload(db: Db, orgId: string, id: string): Promise<b
     if (done.length === 0) return false;
     await tx.delete(amigaUploadChunks).where(eq(amigaUploadChunks.uploadId, id));
     return true;
+  });
+}
+
+/**
+ * Stop (the Upload page's Stop, `DELETE ?only=receiving`): deletes the row only while it is still arriving -- receiving
+ * and not past its 24 h, as toUploadView judges -- in the update's own WHERE, so a file that finished while the confirm
+ * was open is kept. 'not_found' when there is no such row of the org (or it is deleted already).
+ */
+export async function stopUpload(db: Db, orgId: string, id: string, now = new Date()): Promise<'stopped' | 'not_receiving' | 'not_found'> {
+  return db.transaction(async (tx) => {
+    const done = await tx.update(amigaUploads).set({ status: 'deleted' })
+      .where(and(eq(amigaUploads.id, id), eq(amigaUploads.orgId, orgId), eq(amigaUploads.status, 'receiving'), gt(amigaUploads.expiresAt, now)))
+      .returning({ id: amigaUploads.id });
+    if (done.length > 0) {
+      await tx.delete(amigaUploadChunks).where(eq(amigaUploadChunks.uploadId, id));
+      return 'stopped';
+    }
+    const [left] = await tx.select({ id: amigaUploads.id }).from(amigaUploads)
+      .where(and(eq(amigaUploads.id, id), eq(amigaUploads.orgId, orgId), ne(amigaUploads.status, 'deleted')));
+    return left ? 'not_receiving' : 'not_found';
   });
 }
 

@@ -20,13 +20,15 @@ const FAILED: Record<string, string> = {
   crc: 'damaged on the way: send it again',
   expired: 'not finished within 24 hours: send it again',
 };
+/** Why a failed file did not arrive whole, in words. */
+export const uploadFailureText = (errorCode: string | null): string => FAILED[errorCode ?? ''] ?? 'it did not arrive whole';
 export function uploadChip(r: UploadView, stalled = false): UploadChip {
   if (r.status === 'receiving') {
     const pct = r.sizeBytes ? Math.min(99, Math.floor((r.receivedBytes * 100) / r.sizeBytes)) : 0;
     if (stalled) return { kind: 'amber', label: `Stopped at ${pct} %`, note: 'send it again from the Amiga to continue' };
     return { kind: 'blue', label: `Arriving ${pct} %`, note: null };
   }
-  if (r.status === 'failed') return { kind: 'red', label: 'Failed', note: FAILED[r.errorCode ?? ''] ?? 'it did not arrive whole' };
+  if (r.status === 'failed') return { kind: 'red', label: 'Failed', note: uploadFailureText(r.errorCode) };
   return { kind: 'green', label: 'Stored', note: null };
 }
 /** The device card (spec §4, §8): files stored within 24 h, or, on a Network board too old to send, the update. Nothing otherwise. */
@@ -72,8 +74,6 @@ export function emptyText(boards: { canUpload: boolean }[]): string {
 }
 /** Add to library: a stored library-type file whose disk is not (or no longer) in the library. */
 export const canAddToLibrary = (r: UploadView): boolean => r.status === 'stored' && !r.libraryGameId && libraryEligible(r.path, r.sizeBytes);
-/** A list answer is current only if no change of ours (delete, clear) finished since its request began. */
-export const answerIsCurrent = (startedAt: number, changes: number): boolean => startedAt === changes;
 export function uploadErrorText(code: string | undefined, status: number): string {
   switch (code) {
     case 'not_a_disk_image': return 'Not a disk image the library takes.';

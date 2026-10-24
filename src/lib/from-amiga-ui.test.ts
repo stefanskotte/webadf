@@ -2,12 +2,12 @@ import { describe, it, expect } from 'vitest';
 import { DISK_IMAGE_PATTERN } from '@/lib/archive/disk-image';
 import type { UploadView } from '@/lib/amiga-uploads';
 import {
-  LIBRARY_EXT, STALL_MS, anyMoving, answerIsCurrent, canAddToLibrary, downloadName, emptyText, isStalled, trackProgress, tabTarget, cardUploadLine, clearBody, clearConfirm, clearable, libraryEligible, newestSeen, uploadChip, uploadErrorText,
+  LIBRARY_EXT, STALL_MS, anyMoving, canAddToLibrary, downloadName, emptyText, isStalled, trackProgress, tabTarget, cardUploadLine, clearBody, clearConfirm, clearable, libraryEligible, newestSeen, uploadChip, uploadErrorText,
 } from './from-amiga-ui';
 
 const row = (over: Partial<UploadView> = {}): UploadView => ({
   id: 'u', path: 'Lemmings.adf', sizeBytes: 901_120, status: 'stored', receivedBytes: 901_120, errorCode: null, deviceId: 'd',
-  deviceName: 'Bench', createdAt: 1000, storedAt: 2000, expiresAt: 3000, libraryDiskId: null, libraryGameId: null,
+  deviceName: 'Bench', createdAt: 1000, storedAt: 2000, expiresAt: 3000, libraryDiskId: null, libraryGameId: null, blobSha256: null,
   cursor: '2026-10-19T10:00:00.000001Z', ...over,
 });
 
@@ -132,9 +132,5 @@ describe('the card words that depend on the boards and the library', () => {
     expect(canAddToLibrary(row({ libraryDiskId: 'd1', libraryGameId: null }))).toBe(true);
     expect(canAddToLibrary(row({ path: 'x.txt' }))).toBe(false);
     expect(canAddToLibrary(row({ status: 'receiving' }))).toBe(false);
-  });
-  it('an answer older than the last change is dropped', () => {
-    expect(answerIsCurrent(3, 3)).toBe(true);
-    expect(answerIsCurrent(3, 4)).toBe(false);
   });
 });

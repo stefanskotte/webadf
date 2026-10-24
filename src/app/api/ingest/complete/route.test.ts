@@ -62,9 +62,13 @@ const deleteProxy = pgProxyDrizzle(async (sql, params) => {
 function fakeDb() {
   const select = () => {
     let table: unknown;
+    let joined = false;
     const chain = {
       from: (t: unknown) => { table = t; selectedFrom.push(t); return chain; },
+      // The closing read of each disk's title (disks JOIN games): not part of what these tests queue or count.
+      innerJoin: () => { joined = true; return chain; },
       where: (w: SQL) => {
+        if (joined) return Promise.resolve([]);
         wheres.push({ table, where: w });
         const rows = byTable.get(table)?.shift() ?? [];
         return Promise.resolve(rows);

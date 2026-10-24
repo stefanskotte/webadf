@@ -135,3 +135,18 @@ export async function createAdf(page: Page, filesystem: 'FFS' | 'OFS' = 'FFS', d
   await page.getByTestId(`create-adf-fs-${filesystem.toLowerCase()}`).click();
   await page.getByTestId('create-adf-submit').click();
 }
+
+// ---- The Upload page's Staging list (A6, spec 2026-10-23 §4 "Test ids") ----
+
+/** The library rows ("↓ To library") of the Staging list, newest first. */
+export const libRows = (page: Page) => page.locator('[data-testid="staging-row"][data-kind="lib"]');
+
+/**
+ * Waits until the Upload page has hydrated: a synthetic pick or drop on server-rendered HTML has no handler yet and
+ * silently does nothing. The server render says "Reading the list…"; an empty text or a row exists only once the
+ * client has run (as dropAdf in upload-staging.spec.ts does).
+ */
+export async function stagingReady(page: Page) {
+  await expect(page.locator('[data-testid="staging-empty"], [data-testid="staging-row"]').first())
+    .toBeVisible({ timeout: 15_000 });
+}

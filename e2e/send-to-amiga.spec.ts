@@ -1,7 +1,7 @@
 // PaulaNET Phase 4 increment 3 (spec 2026-10-16 §4, §7 e2e): the web side of sending to the Amiga. The board is
 // simulated through its own routes (status, poll, queue, chunk, done), as e2e/device-send.spec.ts does.
 import { test, expect, type APIRequestContext, type Page } from '@playwright/test';
-import { signUpFresh } from './helpers';
+import { signUpFresh, stagingReady } from './helpers';
 import { createHash } from 'node:crypto';
 import { diskStore } from '@/lib/storage';
 import { formatVolume } from '@/lib/adffs/format';
@@ -11,6 +11,12 @@ import { runTag } from './helpers';
 
 test.afterAll(async () => { await cleanupSeeded(); });
 const LIVE = 15_000;
+
+/** The Staging list's rows of files to the Amiga (sends, keyed `send:<id>`), newest first. */
+const sendRows = (page: Page, state?: string) =>
+  page.locator(`[data-testid="staging-row"][data-key^="send:"]${state ? `[data-state="${state}"]` : ''}`);
+const sendRow = (page: Page, id: string) => page.locator(`[data-testid="staging-row"][data-key="send:${id}"]`);
+const keyId = async (row: ReturnType<Page['locator']>) => (await row.getAttribute('data-key'))!.replace('send:', '');
 
 /** The board reports Network mode on 1.15.0 and its receiver state (since=999999 answers at once). */
 async function boardSays(request: APIRequestContext, token: string, rx: 'c' | 'r' | 'u' | '-', firmware = '1.15.0+gabc1234') {
@@ -34,6 +40,7 @@ async function boardTakesNext(request: APIRequestContext, token: string,
 }
 
 async function dropFile(page: Page, name: string, buffer: Buffer) {
+  await stagingReady(page);   // a pick before hydration has no change handler yet
   await page.getByTestId('send-file-input').setInputFiles({ name, mimeType: 'application/octet-stream', buffer });
 }
 
@@ -42,23 +49,24 @@ test('a file dropped under Send to Amiga waits, the board takes it, and it reads
   const { token } = await pairDevice(page, request, 'Bench');   // Task 1: the name is kept
   await boardSays(request, token, 'r');
   await page.goto('/ingest');
-  await expect(page.getByRole('heading', { name: 'Add to library' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Add disks to the library' })).toBeVisible();
   await expect(page.getByTestId('dropzone')).toBeVisible();          // the library upload is unchanged
   await expect(page.getByTestId('send-board')).toContainText('Bench');
   await expect(page.getByTestId('send-receiver')).toHaveText('• Transfer is not running on the Amiga');
 
   await dropFile(page, 'Café.txt', Buffer.from('hello amiga'));
-  const row = page.locator('[data-testid^="send-row-"]').first();
-  await expect(row).toHaveAttribute('data-status', 'queued', { timeout: LIVE });
+  const row = sendRows(page).first();
+  await expect(row).toHaveAttribute('data-state', 'queued', { timeout: LIVE });
   await expect(row).toContainText('Café.txt');
-  await expect(row).toContainText('Waiting');
+  await expect(row).toContainText('Waiting for the Amiga');
   await expect(page.getByTestId('send-receiver')).toHaveText('• Start Transfer on the Amiga', { timeout: LIVE });
 
   await boardSays(request, token, 'c');
   await expect(page.getByTestId('send-receiver')).toHaveText('✓ Transfer is running on the Amiga', { timeout: LIVE });
   const id = await boardTakesNext(request, token, { ok: true, savedAs: 'Café_2.txt' });
-  await expect(page.getByTestId(`send-state-${id}`)).toHaveText('Delivered · saved as Café_2.txt', { timeout: LIVE });
-  await expect(page.getByTestId(`send-cancel-${id}`)).toHaveCount(0);
+  await expect(page.getByTestId(`staging-status-send:${id}`)).toHaveText('Delivered', { timeout: LIVE });
+  await expect(sendRow(page, id)).toContainText('to Bench · saved as Café_2.txt');
+  await expect(page.getByTestId(`staging-cancel-send:${id}`)).toHaveCount(0);
 });
 
 test('Cancel takes a waiting file out of the board\'s queue; a cancel after delivery says it already finished', async ({ page, request }) => {
@@ -67,25 +75,26 @@ test('Cancel takes a waiting file out of the board\'s queue; a cancel after deli
   await boardSays(request, token, 'c');
   await page.goto('/ingest');
   await dropFile(page, 'One.bin', Buffer.alloc(100, 1));
-  const row = page.locator('[data-testid^="send-row-"]').first();
-  await expect(row).toHaveAttribute('data-status', 'queued', { timeout: LIVE });
-  const id = (await row.getAttribute('data-testid'))!.replace('send-row-', '');
-  await page.getByTestId(`send-cancel-${id}`).click();
-  await expect(page.getByTestId(`send-state-${id}`)).toHaveText('Cancelled', { timeout: LIVE });
+  const row = sendRows(page).first();
+  await expect(row).toHaveAttribute('data-state', 'queued', { timeout: LIVE });
+  const id = await keyId(row);
+  await page.getByTestId(`staging-cancel-send:${id}`).click();
+  await expect(page.getByTestId(`staging-status-send:${id}`)).toHaveText('Cancelled', { timeout: LIVE });
   const q = Buffer.from(await (await request.get('/api/device/send/queue', { headers: authHeader(token) })).body()).toString('latin1');
   expect(q).toBe('NEXT -\nLIST 0\n');
 
   // Review Focus 2: a cancel that arrives after the board delivered is refused, and the row stays Delivered. (Sent by
   // request, not by the button: the page refreshes every 3 s, so whether the button is still there is a race.)
   await dropFile(page, 'Two.bin', Buffer.alloc(100, 2));
-  const two = page.locator('[data-testid^="send-row-"][data-status="queued"]').first();
+  const two = sendRows(page, 'queued').first();
   await expect(two).toBeVisible({ timeout: LIVE });
-  const twoId = (await two.getAttribute('data-testid'))!.replace('send-row-', '');
+  const twoId = await keyId(two);
   await boardTakesNext(request, token, { ok: true, savedAs: 'Two.bin' });
   const late = await page.request.delete(`/api/transfers/${twoId}`);
   expect(late.status()).toBe(409);
   expect(await late.json()).toEqual({ error: 'not_waiting' });
-  await expect(page.getByTestId(`send-state-${twoId}`)).toHaveText('Delivered · saved as Two.bin', { timeout: LIVE });
+  await expect(page.getByTestId(`staging-status-send:${twoId}`)).toHaveText('Delivered', { timeout: LIVE });
+  await expect(sendRow(page, twoId)).toContainText('saved as Two.bin');
 });
 
 test('a failure shows Transfer\'s reason, and Retry queues the file again', async ({ page, request }) => {
@@ -94,11 +103,11 @@ test('a failure shows Transfer\'s reason, and Retry queues the file again', asyn
   await boardSays(request, token, 'c');
   await page.goto('/ingest');
   await dropFile(page, 'Full.bin', Buffer.alloc(300, 3));
-  await expect(page.locator('[data-testid^="send-row-"][data-status="queued"]')).toHaveCount(1, { timeout: LIVE });
+  await expect(sendRows(page, 'queued')).toHaveCount(1, { timeout: LIVE });
   const id = await boardTakesNext(request, token, { ok: false, code: 'space', text: 'disk full' });
-  await expect(page.getByTestId(`send-state-${id}`)).toHaveText('Failed · not enough space on the Amiga', { timeout: LIVE });
-  await page.getByTestId(`send-retry-${id}`).click();
-  await expect(page.locator('[data-testid^="send-row-"][data-status="queued"]')).toHaveCount(1, { timeout: LIVE });
+  await expect(page.getByTestId(`staging-status-send:${id}`)).toHaveText('Failed · not enough space on the Amiga', { timeout: LIVE });
+  await page.getByTestId(`staging-retry-send:${id}`).click();
+  await expect(sendRows(page, 'queued')).toHaveCount(1, { timeout: LIVE });
 });
 
 test('a file over 4 MB is refused in the browser, and a board below 1.15.0 is never offered', async ({ page, request }) => {
@@ -107,8 +116,9 @@ test('a file over 4 MB is refused in the browser, and a board below 1.15.0 is ne
   await boardSays(request, token, 'c');
   await page.goto('/ingest');
   await dropFile(page, 'Big.bin', Buffer.alloc(4_194_305));
-  await expect(page.getByTestId('send-upload')).toHaveAttribute('data-state', 'failed');
-  await expect(page.getByTestId('send-upload')).toContainText('Over 4 MB: too large to send.');
+  const up = page.locator('[data-testid="staging-row"][data-key^="up:"]');
+  await expect(up).toHaveAttribute('data-state', 'failed');
+  await expect(up).toContainText('Failed · Over 4 MB: too large to send.');
 
   await boardSays(request, token, 'c', '1.13.0+gdef5678');
   await page.goto('/ingest');
@@ -138,7 +148,8 @@ test('Browse: Send on a folder queues its files with their paths and protection'
   expect(q).toMatch(/^NEXT \S+ 5 [0-9a-f]+ 40 10:mods\/a\.txt 0:\n/);
   await page.getByRole('button', { name: 'See queue' }).click();
   await expect(page).toHaveURL(/\/ingest\?board=/);
-  await expect(page.locator('[data-testid^="send-row-"][data-status="queued"]')).toContainText('mods/a.txt');
+  await expect(page.getByTestId('staging-filter-out')).toHaveAttribute('aria-pressed', 'true');   // the queue: To the Amiga
+  await expect(sendRows(page, 'queued')).toContainText('mods/a.txt', { timeout: LIVE });
 });
 
 test('a title page: Send .adf to Amiga queues the whole disk as <name>.adf', async ({ page, request }) => {
@@ -167,9 +178,10 @@ test('the board\'s card says what waits and whether Transfer runs, and links to 
   await page.getByTestId(`device-send-${deviceId}`).click();
   await expect(page).toHaveURL(new RegExp(`/ingest\\?board=${deviceId}$`));
   await expect(page.getByTestId('send-board')).toContainText('Bench');
+  await expect(page.getByTestId('staging-filter-out')).toHaveAttribute('aria-pressed', 'true');
 });
 
-test('a long queue scrolls inside a bounded list, and Clear finished removes the finished rows while a waiting file stays', async ({ page, request }) => {
+test('a long queue: the waiting file is first, and Clear finished removes the finished rows while it stays', async ({ page, request }) => {
   test.setTimeout(120_000);   // 14 rows made through the routes, each a request or several
   await signUpFresh(page);
   const { deviceId, token } = await pairDevice(page, request, 'Bench');
@@ -187,21 +199,21 @@ test('a long queue scrolls inside a bounded list, and Clear finished removes the
   const waiting = await post('Waiting.bin');
 
   await page.goto('/ingest');
-  const list = page.getByTestId('send-queue');
-  await expect(page.locator('[data-testid^="send-row-"]')).toHaveCount(14, { timeout: LIVE });
-  // The waiting row is first although it is the newest of many finished ones, and the list scrolls inside itself.
-  await expect(page.locator('[data-testid^="send-row-"]').first()).toHaveAttribute('data-testid', `send-row-${waiting}`);
-  const box = await list.evaluate((el) => ({ client: el.clientHeight, scroll: el.scrollHeight,
-    max: getComputedStyle(el).maxHeight, overflowY: getComputedStyle(el).overflowY }));
-  expect(box.max).not.toBe('none');
+  await expect(sendRows(page)).toHaveCount(14, { timeout: LIVE });
+  // Newest first: the waiting row, made last, leads the many finished ones.
+  await expect(sendRows(page).first()).toHaveAttribute('data-key', `send:${waiting}`);
+  // On a desktop the rows scroll inside a bounded list (36rem) rather than growing the page (Task 6 ruling 1).
+  const box = await page.getByTestId('staging-list').evaluate((el) => ({ client: el.clientHeight, scroll: el.scrollHeight,
+    height: el.getBoundingClientRect().height, overflowY: getComputedStyle(el).overflowY }));
   expect(box.overflowY).toBe('auto');
   expect(box.client).toBeLessThan(box.scroll);
+  expect(box.height).toBeLessThanOrEqual(36 * 16 + 2);   // the box itself stops at 36rem (+ its 1 px borders)
 
-  const clear = page.getByTestId('send-clear-finished');
+  const clear = page.getByTestId('staging-clear-finished');
   await expect(clear).toHaveText('Clear finished (13)');
   await clear.click();
-  await expect(page.locator('[data-testid^="send-row-"]')).toHaveCount(1, { timeout: LIVE });
-  await expect(page.getByTestId(`send-row-${waiting}`)).toHaveAttribute('data-status', 'queued');
+  await expect(sendRows(page)).toHaveCount(1, { timeout: LIVE });
+  await expect(sendRow(page, waiting)).toHaveAttribute('data-state', 'queued');
   await expect(clear).toHaveCount(0);
   const q = Buffer.from(await (await request.get('/api/device/send/queue', { headers: authHeader(token) })).body()).toString('latin1');
   expect(q).toMatch(new RegExp(`^NEXT ${waiting} `));
