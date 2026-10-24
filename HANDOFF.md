@@ -1480,11 +1480,22 @@ separately.
 
 **Current order (re-checked 2026-10-24):** (1) the **WebFloppy redesign** per its approved roadmap
 `docs/superpowers/specs/2026-10-23-webfloppy-redesign-roadmap-design.md` -- Phase A (missing features in today's look;
-**A1-A5 SHIPPED 2026-10-23; A6 Upload (df042b6) and A7 Admin (4c37c0e, migration 0049) SHIPPED 2026-10-24** -- Phase A DONE, see below), then Phase B (design foundation + rename), then Phase C (layouts area by area) -- the operator authorized B and C unattended 2026-10-24 (design calls recorded as rulings in each spec); (2) B10 on the A4000D when it is on the bench; (3) rev C radio: the LWB+ breadboard test when the Mouser parts
+**A1-A5 SHIPPED 2026-10-23; A6 Upload (df042b6) and A7 Admin (4c37c0e, migration 0049) SHIPPED 2026-10-24** -- Phase A DONE, see below), then Phase B (design foundation + rename; **SHIPPED 2026-10-24, merge 77bc163**), then Phase C (layouts area by area) -- the operator authorized B and C unattended 2026-10-24 (design calls recorded as rulings in each spec); (2) B10 on the A4000D when it is on the bench; (3) rev C radio: the LWB+ breadboard test when the Mouser parts
 arrive. The
 table's deferred minors are DONE (3ce: M1, M3-M6, M8 fixed; M7 left by the review's ruling). SHIPPED today: the table view with folders, the core1 watchdog
 (1.21.0), uploads surviving a 5-minute outage (1.21.1 + Transfer 2.2), library paging (all 3ce). Entries below marked SHIPPED are kept for their history only.
 
+- **Phase B foundation -- SHIPPED 2026-10-24** (merge 77bc163; spec `docs/superpowers/specs/2026-10-24-phase-b-foundation-design.md`;
+  plan `docs/superpowers/plans/2026-10-24-phase-b-foundation.md`). Cream/ink/amber palette on the existing token names (AA-safe
+  #6E6657 muted-2 and #A84C16 amber text), Bricolage Grotesque/Geist/Geist Mono via next/font (self-hosted at build), flat
+  cards, `--scrim` + `.wf-modal` on all 13 modals (`.glass-card` and `.wf-modal`/`.seg` live in `@layer components`),
+  pill/button/card/seg/DiskIcon, new header in both shells, rename to WebFloppy (six strings + icons; lowercase wordmark).
+  The header nav is in flow below xl (absolute-centred from xl) so it never runs under search (`e2e/header-overlap.spec.ts`);
+  the admin email is hidden 640-1279. Open, owned by Phase C: the app nav fits 640-~1000 only by scrolling (31px at 640) --
+  area 7 decides bottom bar up to md or a narrower search; pill centring differs between shells at 1280-1535; minors
+  deferred: .seg toggle 40/48px and wraps at 390, faint search keyboard highlight, tosec-scan spec 9.9 min (split it).
+  Pre-existing e2e failures at merge: mobile:131, time-machine:267 (loading.tsx 200), time-machine:212 and
+  display-layout:287 (timing races).
 - **A7 Admin -- SHIPPED 2026-10-24** (merge 4c37c0e; spec `docs/superpowers/specs/2026-10-24-admin-a7-design.md`;
   migration **0049 `invites.revoked_at`**, applied to production by the controller before merge). Overview: board
   tiles (Paired / Online now / Seen in 7 days), Boards by firmware among boards seen in 7 days (a current
