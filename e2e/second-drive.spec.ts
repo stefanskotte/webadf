@@ -5,7 +5,7 @@ import { getDb } from '@/db';
 import { devices } from '@/db/schema/devices';
 import { PAULANET_DISK_SHA256 } from '@/lib/paulanet-disk';
 import { signUpFresh, runTag } from './helpers';
-import { pairDevice, authHeader, cleanupSeeded, seedDisk, df1OnBoard } from './device-helpers';
+import { pairDevice, authHeader, cleanupSeeded, seedDisk, df1OnBoard, pickSecondDrive } from './device-helpers';
 
 test.afterAll(cleanupSeeded);
 
@@ -25,7 +25,7 @@ test('a board without DF1 support is told which firmware it needs', async ({ pag
   await report(request, token, { firmwareVersion: '1.7.4' });
   await page.goto('/devices');
   await expect(page.getByTestId(`second-drive-status-${deviceId}`)).toHaveText('Needs firmware 1.9.0 or newer');
-  await expect(page.getByTestId(`second-drive-${deviceId}`)).toBeDisabled();
+  for (const m of ['off', 'df1', 'net', 'any']) await expect(page.getByTestId(`second-drive-${deviceId}-${m}`)).toBeDisabled();
 });
 
 test('switching DF1 on reaches the board through the poll and reads applied once acked', async ({ page, request }) => {
@@ -34,7 +34,7 @@ test('switching DF1 on reaches the board through the poll and reads applied once
   await report(request, token, { secondDrive: 'off', driveVersion: 0, sel1Wired: true, df1Seen: false });
   await page.goto('/devices');
   await expect(page.getByTestId(`device-df1seen-${deviceId}`)).toHaveText('Other DF1 drive: none seen');
-  await page.getByTestId(`second-drive-${deviceId}`).selectOption('df1');
+  await pickSecondDrive(page, deviceId, 'df1');
   await expect(page.getByTestId(`second-drive-status-${deviceId}`)).toHaveText('Waiting for the board');
   expect((await row(deviceId)).secondDriveVersion).toBe(1);
 
@@ -56,7 +56,7 @@ test('a seen DF1 refuses the switch; the override needs a second confirmation', 
   const { deviceId, token } = await pairDevice(page, request);
   await report(request, token, { secondDrive: 'off', driveVersion: 0, sel1Wired: true, df1Seen: true });
   await page.goto('/devices');
-  await page.getByTestId(`second-drive-${deviceId}`).selectOption('df1');
+  await pickSecondDrive(page, deviceId, 'df1');
   await expect(page.getByTestId(`second-drive-refused-${deviceId}`)).toContainText('A drive already answers as DF1 on this Amiga');
   expect((await row(deviceId)).secondDriveVersion).toBe(0);           // nothing saved
   await page.getByTestId(`second-drive-override-${deviceId}`).click();
@@ -65,17 +65,17 @@ test('a seen DF1 refuses the switch; the override needs a second confirmation', 
   await expect.poll(async () => (await row(deviceId)).secondDrive).toBe('df1');
 });
 
-test('a failed save shows the error and leaves the select at the stored value', async ({ page, request }) => {
+test('a failed save shows the error and leaves the radiogroup at the stored value', async ({ page, request }) => {
   await signUpFresh(page);
   const { deviceId, token } = await pairDevice(page, request);
   await report(request, token, { secondDrive: 'off', driveVersion: 0, sel1Wired: true, df1Seen: false });
   await page.goto('/devices');
   await page.route(`**/api/devices/${deviceId}/second-drive`, (route) =>
     route.fulfill({ status: 500, contentType: 'application/json', body: JSON.stringify({ reason: 'Database unavailable' }) }));
-  const select = page.getByTestId(`second-drive-${deviceId}`);
-  await select.selectOption('df1');
+  const group = page.getByTestId(`second-drive-${deviceId}`);
+  await pickSecondDrive(page, deviceId, 'df1');
   await expect(page.getByTestId(`second-drive-error-${deviceId}`)).toHaveText('Database unavailable');
-  await expect(select).toHaveValue('off');
+  await expect(group).toHaveAttribute('data-value', 'off');
   expect((await row(deviceId)).secondDriveVersion).toBe(0);
 });
 
@@ -90,14 +90,13 @@ test('the help tip opens and names the caveats', async ({ page, request }) => {
   await expect(pop).toContainText(/next disk of the set/i);
 });
 
-test('Network needs 1.11.0: the option says so, and the route refuses', async ({ page, request }) => {
+test('Network needs 1.11.0: the radio says so, and the route refuses', async ({ page, request }) => {
   await signUpFresh(page);
   const { deviceId, token } = await pairDevice(page, request);
   await report(request, token, { firmwareVersion: '1.10.2+gabc1234', secondDrive: 'off', driveVersion: 0 });
   await page.goto('/devices');
-  const opt = page.getByTestId(`second-drive-${deviceId}`).locator('option[value="net"]');
-  await expect(opt).toHaveAttribute('disabled', '');   // toBeDisabled() does not read an <option>'s own attribute
-  await expect(opt).toHaveText('Network (PaulaNET) — needs firmware 1.11.0');
+  await expect(page.getByTestId(`second-drive-${deviceId}-net`)).toBeDisabled();
+  await expect(page.getByTestId(`second-drive-net-note-${deviceId}`)).toHaveText('Network needs firmware 1.11.0 or newer');
   const res = await page.request.patch(`/api/devices/${deviceId}/second-drive`, { data: { mode: 'net' } });
   expect(res.status()).toBe(409);
   expect(await res.json()).toEqual({ error: 'firmware_too_old', reason: 'Needs firmware 1.11.0 or newer' });
@@ -135,7 +134,7 @@ test('choosing Network reaches the board and reads applied once acked', async ({
   const { deviceId, token } = await pairDevice(page, request);
   await report(request, token, { firmwareVersion: '1.11.0+gabc1234', secondDrive: 'off', driveVersion: 0, sel1Wired: true, df1Seen: false });
   await page.goto('/devices');
-  await page.getByTestId(`second-drive-${deviceId}`).selectOption('net');
+  await pickSecondDrive(page, deviceId, 'net');
   await expect(page.getByTestId(`second-drive-status-${deviceId}`)).toHaveText('Waiting for the board');
   const poll = await request.get('/api/device/poll?since=0&driveAck=0', { headers: authHeader(token) });
   const b1 = await poll.json();
@@ -166,7 +165,7 @@ test('the checklist reads the board\'s net report: all three good, and traffic',
   const { deviceId, token } = await pairDevice(page, request);
   await report(request, token, { firmwareVersion: '1.11.0+gabc1234', secondDrive: 'off', driveVersion: 0 });
   await page.goto('/devices');
-  await page.getByTestId(`second-drive-${deviceId}`).selectOption('net');
+  await pickSecondDrive(page, deviceId, 'net');
   await expect.poll(async () => (await row(deviceId)).secondDrive).toBe('net');
   await report(request, token, { firmwareVersion: '1.11.0+gabc1234', mountedSha256: 'a'.repeat(64),
     secondDrive: 'net', driveVersion: 1, df1Sha256: PAULANET_DISK_SHA256,
@@ -187,7 +186,7 @@ test('a seen DF1 refuses Network; the override saves Network (Review Focus 5)', 
   const { deviceId, token } = await pairDevice(page, request);
   await report(request, token, { firmwareVersion: '1.11.0+gabc1234', secondDrive: 'off', driveVersion: 0, sel1Wired: true, df1Seen: true });
   await page.goto('/devices');
-  await page.getByTestId(`second-drive-${deviceId}`).selectOption('net');
+  await pickSecondDrive(page, deviceId, 'net');
   await expect(page.getByTestId(`second-drive-refused-${deviceId}`)).toContainText('A drive already answers as DF1 on this Amiga');
   expect((await row(deviceId)).secondDriveVersion).toBe(0);
   await page.getByTestId(`second-drive-override-${deviceId}`).click();
@@ -202,12 +201,9 @@ test('the setting reads Off / Next disk of the set / Any disk / Network, with th
   await signUpFresh(page);
   const { deviceId } = await df1OnBoard(page, request);
   await page.goto('/devices');
-  const select = page.getByTestId(`second-drive-${deviceId}`);
-  await expect(select).toHaveValue('df1');                              // the stored value is unchanged
-  await expect(select.locator('option[value="off"]')).toHaveText('Off');
-  await expect(select.locator('option[value="df1"]')).toHaveText('Next disk of the set');
-  await expect(select.locator('option[value="any"]')).toHaveText('Any disk (read-only)');
-  await expect(select.locator('option[value="net"]')).toHaveText('Network (PaulaNET)');
+  const group = page.getByTestId(`second-drive-${deviceId}`);
+  await expect(group).toHaveAttribute('data-value', 'df1');             // the stored value is unchanged
+  await expect(group.getByRole('radio')).toHaveText(['Off', 'Next disk of the set', 'Network (PaulaNET)', 'Any disk']);
   await expect(page.getByTestId(`second-drive-help-${deviceId}`))
     .toHaveText('DF1 holds the next disk of the set, read-only, so a game asking for its next disk finds it.');
   await expect(page.getByTestId(`device-df1-disk-${deviceId}`)).toHaveText('DF1: next disk of the set — empty');
@@ -297,7 +293,7 @@ test('fw 1.12.1 (netPick): the driver disk comes as DF1\'s pick, and leaving Net
   const fw = '1.12.1+gabc1234';
   await report(request, token, { firmwareVersion: fw, secondDrive: 'off', driveVersion: 0, sel1Wired: true, df1Seen: false });
   await page.goto('/devices');
-  await page.getByTestId(`second-drive-${deviceId}`).selectOption('net');
+  await pickSecondDrive(page, deviceId, 'net');
   await expect(page.getByTestId(`second-drive-status-${deviceId}`)).toHaveText('Waiting for the board');
   const q = (driveAck: number, df1Ack: number) =>
     `/api/device/poll?since=0&driveAck=${driveAck}&df1Ack=${df1Ack}&netPick=1`;
@@ -314,7 +310,7 @@ test('fw 1.12.1 (netPick): the driver disk comes as DF1\'s pick, and leaving Net
   expect(b2).not.toHaveProperty('next');            // nothing in DF0, no set: no next at all
   expect((await row(deviceId)).df1Version).toBe(1);
   // Off: the setting write moves the cursor too, so the board hears the driver disk go.
-  await page.getByTestId(`second-drive-${deviceId}`).selectOption('off');
+  await pickSecondDrive(page, deviceId, 'off');
   await expect.poll(async () => (await row(deviceId)).secondDrive).toBe('off');
   expect((await row(deviceId)).df1Version).toBe(2);
   const b3 = await (await request.get(q(1, 1), { headers: authHeader(token) })).json();
@@ -332,14 +328,14 @@ test('Any disk shows while DF1 holds a disk mounted into it; Next disk of the se
   expect((await page.request.post(`/api/devices/${deviceId}/mount`, { data: { diskId, drive: 'df1' } })).status()).toBe(200);
 
   await page.goto('/devices');
-  const select = page.getByTestId(`second-drive-${deviceId}`);
-  await expect(select).toHaveValue('any');
+  const group = page.getByTestId(`second-drive-${deviceId}`);
+  await expect(group).toHaveAttribute('data-value', 'any');
   await expect(page.getByTestId(`second-drive-help-${deviceId}`))
     .toHaveText('DF1 holds a disk you mount into DF1 from the library, read-only.');
 
-  await select.selectOption('df1');
+  await pickSecondDrive(page, deviceId, 'df1');
   await expect.poll(async () => (await row(deviceId)).df1DiskId).toBeNull();
-  await expect(select).toHaveValue('df1');
+  await expect(group).toHaveAttribute('data-value', 'df1');
   expect((await row(deviceId)).secondDrive).toBe('df1');
 });
 
@@ -349,11 +345,46 @@ test('Any disk on a board with DF1 Off switches DF1 on and says how to fill it',
   expect((await page.request.patch(`/api/devices/${deviceId}/second-drive`, { data: { mode: 'off' } })).status()).toBe(200);
 
   await page.goto('/devices');
-  const select = page.getByTestId(`second-drive-${deviceId}`);
-  await expect(select).toHaveValue('off');
-  await select.selectOption('any');
+  const group = page.getByTestId(`second-drive-${deviceId}`);
+  await expect(group).toHaveAttribute('data-value', 'off');
+  await pickSecondDrive(page, deviceId, 'any');
   await expect.poll(async () => (await row(deviceId)).secondDrive).toBe('df1');
-  await expect(select).toHaveValue('any');
+  await expect(group).toHaveAttribute('data-value', 'any');
   await expect(page.getByTestId(`second-drive-help-${deviceId}`)).toHaveText(
     'DF1 holds a disk you mount into DF1 from the library, read-only. Mount one with a title’s Mount → DF1; until then DF1 holds the next disk of the set.');
+});
+
+// Ruling 14: the radiogroup roves. Tab enters on the checked radio; an arrow key moves the selection and saves it.
+test('arrow keys move the DF1 selection and save it; Tab enters on the checked radio only', async ({ page, request }) => {
+  await signUpFresh(page);
+  // 1.10.2: DF1 modes but no Network, so ArrowRight from "Next disk" must skip the disabled Network radio.
+  const { deviceId } = await df1OnBoard(page, request, '1.10.2+gabc1234');
+  await page.goto('/devices');
+  const radio = (m: string) => page.getByTestId(`second-drive-${deviceId}-${m}`);
+  await expect(radio('df1')).toHaveAttribute('aria-checked', 'true');
+  for (const m of ['off', 'net', 'any']) await expect(radio(m)).toHaveAttribute('tabindex', '-1');
+  await expect(radio('df1')).toHaveAttribute('tabindex', '0');
+  await radio('df1').focus();
+  await page.keyboard.press('ArrowLeft');
+  await expect.poll(async () => (await row(deviceId)).secondDrive).toBe('off');
+  await expect(page.getByTestId(`second-drive-${deviceId}`)).toHaveAttribute('data-value', 'off');
+  await expect(radio('off')).toBeFocused();   // focus follows the selection once the save is done
+  await page.keyboard.press('ArrowRight');
+  await expect.poll(async () => (await row(deviceId)).secondDrive).toBe('df1');
+  await expect(radio('df1')).toBeFocused();
+  await page.keyboard.press('ArrowRight');   // Network is disabled on 1.10.2: skipped, Any disk is next
+  await expect(page.getByTestId(`second-drive-${deviceId}`)).toHaveAttribute('data-value', 'any');
+  await expect(radio('any')).toBeFocused();
+});
+
+test('a Network board shows the Transfer box inside the DF1 box', async ({ page, request }) => {
+  await signUpFresh(page);
+  const { deviceId, token } = await pairDevice(page, request);
+  await report(request, token, { firmwareVersion: '1.21.1+gabc1234', secondDrive: 'net', driveVersion: 0, sel1Wired: true, df1Seen: false,
+    net: { framesIn: 0, framesOut: 0 } });
+  await page.goto('/devices');
+  const box = page.getByTestId(`device-df1-${deviceId}`);
+  await expect(box.getByTestId(`net-checklist-${deviceId}`)).toBeVisible({ timeout: LIVE });
+  await expect(box.getByTestId(`device-transfer-${deviceId}`)).toBeVisible();
+  await expect(page.getByTestId(`device-transfer-${deviceId}`)).toHaveCount(1);
 });

@@ -403,7 +403,8 @@ export const HELP_TOPICS = {
     body: (
       <>
         <p>
-          Choose <em>Next disk of the set</em> under <em>Second drive (DF1)</em> on the board&apos;s card. DF1 then holds the next disk
+          In the <em>Second drive (DF1)</em> box on the board&apos;s card, the choices are <em>Off</em>, <em>Next disk of the
+          set</em>, <em>Network (PaulaNET)</em> and <em>Any disk</em>. Choose <em>Next disk of the set</em> and DF1 then holds the next disk
           of the set (empty when that is an HD disk); after <em>Next disk</em> it is empty for about five seconds while
           the following disk is fetched.
         </p>
@@ -422,7 +423,7 @@ export const HELP_TOPICS = {
         </p>
         <GoodToKnow items={[
           'DF1 is read-only: saving to it fails as write-protected. Saves to DF0 follow that disk’s own write protection.',
-          <>The third choice, <em>Network (PaulaNET)</em>, uses DF1 for networking instead: see{' '}
+          <>The choice <em>Network (PaulaNET)</em> uses DF1 for networking instead: see{' '}
             <a className="underline" href="/help#network">Amiga networking</a>.</>,
           'DF1 needs board firmware 1.9.0 or newer, and Any disk needs 1.12.0; Network needs 1.11.0. Older firmware keeps the DF1 setting it had, and the card says DF1 is on while it holds a disk; install 1.9.0 or newer to switch it off.',
         ]} />
@@ -446,7 +447,7 @@ export const HELP_TOPICS = {
     body: (
       <>
         <p>
-          Choose <em>Network (PaulaNET)</em> under <em>Second drive (DF1)</em> on the board&apos;s card, then restart
+          Choose <em>Network (PaulaNET)</em> in the <em>Second drive (DF1)</em> box on the board&apos;s card, then restart
           the Amiga. DF1 then holds the PaulaNET driver disk, whatever is in DF0. You need a TCP/IP stack such as
           AmiTCP_NG or Roadshow, and no other drive answering as DF1. If the board has seen another drive answer as DF1, the
           setting refuses to switch on; once you have removed that drive, override it with <em>Switch on anyway…</em>.

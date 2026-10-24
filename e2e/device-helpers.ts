@@ -560,3 +560,8 @@ export async function df1OnBoard(
   await getDb().update(devices).set({ lastSeenAt: new Date() }).where(eq(devices.id, deviceId));
   return { deviceId, token };
 }
+
+/** Choose a second-drive mode on a board's card: click its radio in the DF1 box (Devices spec §5.1). */
+export async function pickSecondDrive(page: Page, deviceId: string, mode: 'off' | 'df1' | 'net' | 'any') {
+  await page.getByTestId(`second-drive-${deviceId}-${mode}`).click();
+}

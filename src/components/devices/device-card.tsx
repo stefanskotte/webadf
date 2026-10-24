@@ -10,7 +10,6 @@ import { preloadText } from '@/lib/drive-chips';
 import { describeI2cScan } from '@/lib/i2c-scan';
 import { describeLastBoot } from '@/lib/last-boot';
 import { Link } from '@/components/shell/link';
-import { SecondDriveReadings } from './second-drive-readings';
 import { SecondDriveSetting } from './second-drive-setting';
 import { BootDiskSetting } from './boot-disk-setting';
 import { HelpTip } from '@/components/help/help-tip';
@@ -69,6 +68,8 @@ export function DeviceCard(
 
   const pill = statusPill(online);
   const signal = signalCell(device.rssi, online);
+  // The board reports Network (and can take the setting): its Transfer box sits in the DF1 box's Network panel.
+  const inNetwork = device.secondDriveReported === 'net' && device.secondDriveCapable;
   const behind = update !== null || firmware.kind === 'behind';
 
   return (
@@ -192,17 +193,23 @@ export function DeviceCard(
         </div>
       )}
 
-      {/* Until the Network panel (Task 5) holds it: a board with a send or upload line gets the Transfer box here. */}
-      {(sendLine || uploadLine) && (
+      {/* A standalone Transfer box only when the board does not report Network: otherwise it sits in the DF1 box's
+          Network panel (spec §2, §7). */}
+      {!inNetwork && (sendLine || uploadLine) && (
         <TransferBox className="mx-3 mb-3" deviceId={device.id} transfer={transfer ?? null}
                      sendLine={sendLine ?? null} uploadLine={uploadLine ?? null} />
       )}
 
+      <div className="mx-3 mb-3">
+        <SecondDriveSetting device={device} next={next} now={now}
+                            transfer={inNetwork ? transfer ?? null : null}
+                            sendLine={inNetwork ? sendLine ?? null : null}
+                            uploadLine={inNetwork ? uploadLine ?? null : null} />
+      </div>
+
       <div className="mx-3 mb-3 flex flex-col gap-2">
       {/* BOTTOM: write protection, firmware, and every existing action. */}
       <div className="flex flex-col gap-2">
-        <SecondDriveReadings device={device} />
-        <SecondDriveSetting device={device} next={next} now={now} />
         <BootDiskSetting device={device} />
         {i2c && (
           <span className="flex min-w-0 items-start gap-1" data-testid={`device-nfc-${device.id}`} data-ok={i2c.ok}>
