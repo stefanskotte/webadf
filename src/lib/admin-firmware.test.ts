@@ -25,6 +25,11 @@ describe('stripTestPrefix', () => {
     expect(stripTestPrefix('TEST build -: ')).toBe('');
   });
 
+  it('strips only a whole "TEST build": "TEST builds" stays as it is', () => {
+    expect(stripTestPrefix('TEST builds are bench only')).toBe('TEST builds are bench only');
+    expect(stripTestPrefix('TEST buildx')).toBe('TEST buildx');
+  });
+
   it('notes that do not start "TEST build" are unchanged', () => {
     expect(stripTestPrefix('Fixes DF1. TEST build later')).toBe('Fixes DF1. TEST build later');
     expect(stripTestPrefix('test build: lower case')).toBe('test build: lower case');

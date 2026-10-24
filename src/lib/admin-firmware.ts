@@ -18,11 +18,21 @@ export function firmwareRepo(raw: string | undefined = process.env.WEBADF_FIRMWA
 
 /**
  * The notes a promoted TEST build starts from: the leading "TEST build" and the punctuation and spaces right after it
- * removed ("TEST build: DF1 fix" -> "DF1 fix"). Notes that do not start "TEST build" come back unchanged.
+ * removed ("TEST build: DF1 fix" -> "DF1 fix"). Notes that do not start with the whole words "TEST build" come back
+ * unchanged.
  */
 export function stripTestPrefix(notes: string): string {
-  if (!notes.startsWith('TEST build')) return notes;
+  // A whole "TEST build" only: "TEST builds are ..." is a sentence, not the prefix.
+  if (!/^TEST build(?!\w)/.test(notes)) return notes;
   return notes.slice('TEST build'.length).replace(/^[\s\-–—:·,.]+/, '');
+}
+
+/**
+ * Notes that read as a TEST build to a person, whatever the case or leading punctuation ("test build", "- TEST
+ * build"). The promote route refuses them: release notes that look like a bench build would mislead every org.
+ */
+export function looksLikeTestBuild(notes: string): boolean {
+  return /^\W*test build/i.test(notes.trim());
 }
 
 /**

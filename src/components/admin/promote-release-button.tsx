@@ -1,7 +1,9 @@
 'use client';
 
 import { useEffect, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { useRouter } from 'next/navigation';
+import { looksLikeTestBuild } from '@/lib/admin-firmware';
 
 /**
  * Promote a TEST build to a release (A7 spec §3): a centered modal holding the notes with "TEST build" removed,
@@ -44,21 +46,30 @@ export function PromoteReleaseButton({
     try {
       let res: Response;
       try {
+        // redirect: 'manual' -- a signed-out session is answered with requireSuperAdmin()'s redirect to /sign-in,
+        // and a followed redirect is a 200 HTML page that must never read as "Promoted".
         res = await fetch(`/api/admin/firmware/${id}/promote`, {
           method: 'POST',
           headers: { 'content-type': 'application/json' },
           body: JSON.stringify({ notes }),
+          redirect: 'manual',
         });
       } catch {
         setError('Could not reach the server. Check your connection and try again.');
         return;
       }
+      if (res.type === 'opaqueredirect' || res.redirected || res.status === 401 || res.status === 403) {
+        setError(SIGNED_OUT);
+        return;
+      }
+      const body = (await res.json().catch(() => null)) as { id?: string; error?: string; reason?: string } | null;
       if (res.ok) {
+        // Done only for the row's own JSON: anything else (an HTML page, an empty body) is not a promote.
+        if (body?.id !== id) { setError(SIGNED_OUT); return; }
         setDone(true);
         router.refresh();
         return;
       }
-      const body = (await res.json().catch(() => null)) as { error?: string; reason?: string } | null;
       setError(errorText(res.status, body));
       if (res.status === 409 && body?.error === 'not_test_build') router.refresh();
     } finally {
@@ -67,7 +78,7 @@ export function PromoteReleaseButton({
   }
 
   const trimmed = notes.trim();
-  const armed = trimmed.length > 0 && trimmed.length <= 2000 && !trimmed.startsWith('TEST build');
+  const armed = trimmed.length > 0 && trimmed.length <= 2000 && !looksLikeTestBuild(trimmed);
 
   return (
     <>
@@ -82,7 +93,10 @@ export function PromoteReleaseButton({
           Promote to release
         </button>
       )}
-      {open && (
+      {/* Portaled to <body>: inside the row, the glass-card's backdrop-filter makes the card the containing block
+          and stacking context of a fixed overlay, so the NEXT row painted over the modal and took its clicks. Only
+          rendered once opened, which is always after a click on the client, so document exists. */}
+      {open && typeof document !== 'undefined' && createPortal(
         <div
           className="fixed inset-0 z-50 flex items-center justify-center p-4"
           style={{ background: 'rgb(0 0 0 / 0.45)' }}
@@ -148,16 +162,20 @@ export function PromoteReleaseButton({
               </>
             )}
           </div>
-        </div>
+        </div>,
+        document.body,
       )}
     </>
   );
 }
 
+const SIGNED_OUT = 'Signed out — sign in again';
+
 function errorText(status: number, body: { error?: string; reason?: string } | null): string {
   switch (body?.error) {
     case 'invalid_notes': return 'Notes must be 1 to 2000 characters.';
-    case 'still_test_build': return 'Notes must not start with "TEST build".';
+    case 'still_test_build': return 'Notes must not start with "TEST build" (in any case).';
+    case 'image_mismatch': return 'The stored image does not match the release\'s sha256; it cannot be promoted.';
     case 'not_found': return 'This release no longer exists.';
     case 'not_test_build': return 'This release is no longer a TEST build; it was already promoted.';
     case 'bench_image': return `This image is a bench-only build and cannot be a release: ${body.reason}`;

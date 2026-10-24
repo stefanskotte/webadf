@@ -96,7 +96,9 @@ describe('POST /api/admin/firmware/[id]/promote', () => {
   it('400 for empty notes, notes still starting "TEST build", too long, or a bad body', async () => {
     const id = await seed({ notes: 'TEST build: bench' });
     for (const body of [{ notes: '' }, { notes: '   ' }, { notes: 'TEST build again' }, { notes: '  TEST build x' },
-      { notes: 'x'.repeat(2001) }, {}, { notes: 5 }, 'not json']) {
+      { notes: 'x'.repeat(2001) }, {}, { notes: 5 }, 'not json',
+      // look-alikes: any case, after leading punctuation
+      { notes: 'test build: lower' }, { notes: 'Test Build x' }, { notes: '- TEST build x' }, { notes: '[test build] x' }]) {
       const res = await promote(id, body);
       expect(res.status, JSON.stringify(body)).toBe(400);
     }
@@ -113,6 +115,23 @@ describe('POST /api/admin/firmware/[id]/promote', () => {
       expect(body.reason).toMatch(/WF_/);
       expect((await row(id)).notes).toBe('TEST build: bench');
     }
+  });
+
+  it('a look-alike answers still_test_build', async () => {
+    const id = await seed({ notes: 'TEST build: bench' });
+    const res = await promote(id, { notes: '* test build again' });
+    expect(res.status).toBe(400);
+    expect((await res.json()).error).toBe('still_test_build');
+  });
+
+  it('409 image_mismatch when the stored image is not the bytes the row (and its signature) names; no update', async () => {
+    const id = await seed({ notes: 'TEST build: swapped' });
+    const before = await row(id);
+    await firmwareStore.put(before.blobPath, Buffer.from('some other bytes'));
+    const res = await promote(id, { notes: 'Looks fine.' });
+    expect(res.status).toBe(409);
+    expect(await res.json()).toEqual({ error: 'image_mismatch' });
+    expect(await row(id)).toEqual(before);
   });
 
   it('503 blob_unavailable when the image cannot be read', async () => {

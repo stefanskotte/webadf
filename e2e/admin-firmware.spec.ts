@@ -85,6 +85,25 @@ test('a TEST build is tagged Test, shows its boards, and promotes to a release t
   await expect(r.getByRole('button', { name: 'Promote to release' })).toHaveCount(0);
 });
 
+test('a promote from a signed-out session says so, never "Promoted"', async ({ page }) => {
+  const version = await publishTestReleaseWithBlob('0.0.0+e2e15', { notes: 'TEST build e2e signed out' });
+  await signInAsSuperAdmin(page);
+  await page.goto('/admin/firmware');
+
+  const r = row(page, version);
+  const dialog = page.getByTestId('fw-promote-dialog');
+  await expect(async () => {
+    await r.getByRole('button', { name: 'Promote to release' }).click();
+    await expect(dialog).toBeVisible({ timeout: 1_000 });
+  }).toPass();
+  await page.context().clearCookies();
+  await dialog.getByTestId('fw-promote-confirm').click();
+
+  await expect(dialog.getByTestId('fw-promote-error')).toHaveText('Signed out — sign in again');
+  await expect(dialog.getByTestId('fw-promote-done')).toHaveCount(0);
+  await expect(r.getByTestId('fw-tag-test')).toBeVisible();
+});
+
 test('the list pages: "Page 1 of", no Newer on page 1, and a garbage ?page= clamps', async ({ page }) => {
   await publishTestRelease('0.0.0+e2e14');
   await signInAsSuperAdmin(page);
