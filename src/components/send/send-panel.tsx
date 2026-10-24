@@ -9,6 +9,7 @@ import { StatusChip } from '@/components/ui/status-chip';
 import { DropArea } from '@/components/ingest/drop-area';
 import { UploadCard } from '@/components/ingest/upload-card';
 import { useStaging } from '@/components/ingest/staging-provider';
+import { SIGNED_OUT_TEXT, isSignedOutAnswer } from '@/lib/upload-staging';
 
 /**
  * The Upload page's Send drop area (spec 2026-10-23 §1): which board new files go to, whether Transfer runs there,
@@ -59,6 +60,10 @@ export function SendPanel({ targets: initialTargets, initialBoard, serverNow }: 
       try {
         const res = await fetch(`/api/transfers?deviceId=${encodeURIComponent(to.id)}&name=${encodeURIComponent(file.name)}`,
           { method: 'POST', headers: { 'content-type': 'application/octet-stream' }, body: file });
+        if (isSignedOutAnswer(res)) {
+          staging.patchUp(key, { state: 'failed', note: SIGNED_OUT_TEXT });
+          continue;
+        }
         if (res.ok) {
           // Its transfer row takes its place: read the list first, then drop the upload row, so the file never vanishes.
           // A read that began before the POST and lands after this one is not painted (the provider's read order).

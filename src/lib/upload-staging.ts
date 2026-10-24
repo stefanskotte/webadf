@@ -67,8 +67,10 @@ function serverBody(r: ServerRow, stalled: ReadonlySet<string>): Body {
   const where = `from ${r.board.name}`;
   const gameId = r.title?.gameId ?? null;
   if (r.status === 'receiving') {
-    const text = stalled.has(r.key) ? `Stopped at ${pct} %` : `Arriving · ${pct} %`;
-    return { state: r.status, where, status: text, tone: 'busy', note: null, actions: ['stop'], gameId };
+    const stopped = stalled.has(r.key);
+    const text = stopped ? `Stopped at ${pct} %` : `Arriving · ${pct} %`;
+    const note = stopped ? 'send it again from the Amiga to continue' : null;
+    return { state: r.status, where, status: text, tone: 'busy', note, actions: ['stop'], gameId };
   }
   if (r.status === 'stored') {
     const first: StagingAction[] = r.title ? ['open'] : r.isDiskImage ? ['add'] : [];
@@ -164,3 +166,15 @@ export const beginChange = (c: ChangeClock): ChangeClock => ({ count: c.count + 
 export const endChange = (c: ChangeClock): ChangeClock => ({ count: c.count + 1, inFlight: Math.max(0, c.inFlight - 1) });
 export const readIsCurrent = (atStart: ChangeClock, atEnd: ChangeClock): boolean =>
   atStart.inFlight === 0 && atEnd.inFlight === 0 && atStart.count === atEnd.count;
+
+/**
+ * Signed out, an action's fetch follows requireOrg's redirect and lands on the sign-in page: a 200 that is not JSON.
+ * Such an answer is not a success. A redirect is always one; a 204 (no body) is fine; a non-OK answer stays an
+ * ordinary failure whatever its type (an HTML 500 or 404 is not a sign-out).
+ */
+export function isSignedOutAnswer(res: Pick<Response, 'redirected' | 'ok' | 'status' | 'headers'>): boolean {
+  if (res.redirected) return true;
+  if (!res.ok || res.status === 204) return false;
+  return !(res.headers.get('content-type') ?? '').includes('json');
+}
+export const SIGNED_OUT_TEXT = 'Signed out — sign in again';

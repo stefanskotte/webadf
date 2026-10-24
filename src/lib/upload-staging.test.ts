@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {
-  anyMoving, beginChange, endChange, idleClock, mergeStaging, readIsCurrent, stagingView, trackStalls, upsertLibRows,
+  anyMoving, beginChange, endChange, idleClock, isSignedOutAnswer, mergeStaging, readIsCurrent, stagingView, trackStalls,
+  upsertLibRows,
   type ChangeClock, type LibRow, type ServerRow, type UpRow,
 } from '@/lib/upload-staging';
 import { STALL_MS } from '@/lib/from-amiga-ui';
@@ -41,6 +42,10 @@ describe('from the Amiga', () => {
   it('a stalled arriving file says where it stopped', () => {
     expect(one(amiga({ status: 'receiving', pct: 47 }), ['amiga:u1'])).toMatchObject({
       status: 'Stopped at 47 %', tone: 'busy', actions: ['stop'] });
+  });
+  it('a stalled arriving file says how to continue, as a row note', () => {
+    expect(one(amiga({ status: 'receiving', pct: 47 }), ['amiga:u1']).note).toBe('send it again from the Amiga to continue');
+    expect(one(amiga({ status: 'receiving', pct: 47 })).note).toBeNull();
   });
   it('failed', () => {
     expect(one(amiga({ status: 'failed', error: 'Too slow' }))).toMatchObject({
@@ -176,5 +181,30 @@ describe('readIsCurrent: a list read is painted only if no change of ours overla
     expect(readIsCurrent(at(one), at(one))).toBe(false);
     const none = endChange(one);
     expect(readIsCurrent(at(none), at(none))).toBe(true);
+  });
+});
+
+describe('isSignedOutAnswer', () => {
+  const res = (o: { redirected?: boolean; type?: string | null; status?: number }) =>
+    ({ redirected: o.redirected ?? false, status: o.status ?? 200, ok: (o.status ?? 200) < 300,
+       headers: new Headers(o.type === null ? {} : { 'content-type': o.type ?? 'application/json' }) }) as Response;
+  it('a JSON answer is not signed out', () => {
+    expect(isSignedOutAnswer(res({}))).toBe(false);
+    expect(isSignedOutAnswer(res({ type: 'application/json; charset=utf-8', status: 409 }))).toBe(false);
+  });
+  it('a redirected answer is signed out, whatever its type', () => {
+    expect(isSignedOutAnswer(res({ redirected: true }))).toBe(true);
+    expect(isSignedOutAnswer(res({ redirected: true, type: 'text/html' }))).toBe(true);
+  });
+  it('a 200 HTML page (the sign-in page) is signed out', () => {
+    expect(isSignedOutAnswer(res({ type: 'text/html; charset=utf-8' }))).toBe(true);
+  });
+  it('an HTML error page (a 500, a 404) stays an ordinary failure', () => {
+    expect(isSignedOutAnswer(res({ type: 'text/html', status: 500 }))).toBe(false);
+    expect(isSignedOutAnswer(res({ type: 'text/html', status: 404 }))).toBe(false);
+  });
+  it('a 204 with no body is not signed out unless redirected', () => {
+    expect(isSignedOutAnswer(res({ status: 204, type: null }))).toBe(false);
+    expect(isSignedOutAnswer(res({ status: 204, type: null, redirected: true }))).toBe(true);
   });
 });

@@ -8,7 +8,7 @@ import { HelpTip } from '@/components/help/help-tip';
 import { adfDensity, isHfeFilename } from '@/lib/disk-format';
 import { sendErrorText, type SendTarget } from '@/lib/send-ui';
 import { downloadName, uploadErrorText } from '@/lib/from-amiga-ui';
-import { mergeStaging, stagingView, type StagingFilter, type Tone, type ViewRow } from '@/lib/upload-staging';
+import { SIGNED_OUT_TEXT, isSignedOutAnswer, mergeStaging, stagingView, type StagingFilter, type Tone, type ViewRow } from '@/lib/upload-staging';
 import { useStaging } from './staging-provider';
 import { StagingConfirm } from './staging-confirm';
 
@@ -31,7 +31,8 @@ const DOT: Record<Tone, string> = {
   done: 'var(--success-fg)', busy: 'var(--accent-amber)', wait: 'var(--muted)', fail: 'var(--danger-fg)',
 };
 
-type Confirm = { key: string; id: string; question: string; yes: string; what: string };
+/** `stop`: the file is still arriving; the delete then holds only while it is (`?only=receiving`). */
+type Confirm = { key: string; id: string; question: string; yes: string; what: string; stop?: boolean };
 
 /** The Upload page's Staging list (spec 2026-10-23 §2): every row moving into the library, to the Amiga and from it. */
 export function StagingList({ initialFilter, fallbackTargets }: { initialFilter: StagingFilter; fallbackTargets: SendTarget[] }) {
@@ -58,7 +59,9 @@ export function StagingList({ initialFilter, fallbackTargets }: { initialFilter:
     s.begin();   // until it settles, no list read is painted: one made meanwhile may predate the change
     try {
       const res = await request();
-      if (special?.(res)) { /* handled */ } else if (res.ok) done?.(res);
+      // Signed out, the fetch follows the redirect to the sign-in page and answers 200 with HTML: not a success.
+      if (isSignedOutAnswer(res)) toast.error(what, { description: SIGNED_OUT_TEXT });
+      else if (special?.(res)) { /* handled */ } else if (res.ok) done?.(res);
       else {
         const b = (await res.json().catch(() => null)) as { error?: string; reason?: string } | null;
         toast.error(what, { description: b?.reason ?? failText(b?.error, res.status) });
@@ -91,14 +94,25 @@ export function StagingList({ initialFilter, fallbackTargets }: { initialFilter:
     }),
     () => { toast.success(`Queued for ${t.name}`, { description: 'It shows in the staging list.' }); });
   const removeUpload = (c: Confirm) => run(c.key, c.what,
-    () => fetch(`/api/uploads/${encodeURIComponent(c.id)}`, { method: 'DELETE' }),
-    () => s.removeLocal([c.key])).finally(() => setConfirm(null));
+    () => fetch(`/api/uploads/${encodeURIComponent(c.id)}${c.stop ? '?only=receiving' : ''}`, { method: 'DELETE' }),
+    () => s.removeLocal([c.key]), uploadErrorText,
+    // Stop: it finished while the confirm was open, so the server kept it (the list reads it again as stored).
+    (res) => {
+      if (!c.stop || res.status !== 409) return false;
+      toast.info('It finished arriving; it was kept.');
+      return true;
+    }).finally(() => setConfirm(null));
 
   // A fetch first, so a 404 is a toast and not a saved file called "not found"; the bytes then save under the Amiga name.
   async function download(v: ViewRow) {
     mark(v.key, true);
     try {
       const res = await fetch(`/api/uploads/${encodeURIComponent(idOf(v))}/file`, { cache: 'no-store' });
+      // The file itself is not JSON, so only a redirect (to the sign-in page) says signed out here.
+      if (res.redirected) {
+        toast.error('Not downloaded', { description: SIGNED_OUT_TEXT });
+        return;
+      }
       if (!res.ok) {
         toast.error('Not downloaded', { description: res.status === 404 ? uploadErrorText('not_found', 404) : uploadErrorText(undefined, res.status) });
         await s.refreshNow();
@@ -156,7 +170,7 @@ export function StagingList({ initialFilter, fallbackTargets }: { initialFilter:
       case 'stop':
         return <button key={a} type="button" data-testid={id} disabled={disabled} className={btn} style={quiet}
                        aria-label={`Stop receiving ${v.name}`}
-                       onClick={() => setConfirm({ key: v.key, id: idOf(v), question: `Stop receiving ${v.name}? The part that arrived is deleted.`, yes: 'Stop', what: 'Not stopped' })}>Stop</button>;
+                       onClick={() => setConfirm({ key: v.key, id: idOf(v), question: `Stop receiving ${v.name}? The part that arrived is deleted.`, yes: 'Stop', what: 'Not stopped', stop: true })}>Stop</button>;
       case 'cancel':
         return <button key={a} type="button" data-testid={id} disabled={disabled} className={btn} style={quiet}
                        aria-label={`Cancel ${v.name}`} onClick={() => void cancel(v)}>Cancel</button>;

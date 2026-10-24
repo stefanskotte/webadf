@@ -213,11 +213,52 @@ test('the Delete confirm focuses Cancel and Escape closes it without deleting', 
   await page.goto('/ingest');
   await expect(row(page, id)).toBeVisible({ timeout: LIVE });
   await act(page, 'delete', id).click();
+  await expect(page.getByRole('dialog', { name: 'Delete Keep.txt? It is the only copy.' })).toBeVisible();   // named by its question
   await expect(page.getByTestId('staging-confirm-cancel')).toBeFocused();
   await page.keyboard.press('Escape');
   await expect(page.getByTestId('staging-confirm')).toHaveCount(0);
   await expect(act(page, 'delete', id)).toBeFocused();
   await expect(row(page, id)).toBeVisible();
+});
+
+// Signed out, the fetch follows the redirect to the sign-in page: a 200 with HTML. That is not a success.
+test('an action answered by the sign-in page (200 text/html) says signed out and keeps the row', async ({ page, request }) => {
+  await signUpFresh(page);
+  const { token } = await pairDevice(page, request, 'Bench');
+  await boardSays(request, token);
+  const id = await boardUploads(request, token, 'Kept.txt', Buffer.from('kept'));
+  await page.route(`**/api/uploads/${id}`, (route) => route.request().method() === 'DELETE'
+    ? route.fulfill({ status: 200, contentType: 'text/html; charset=utf-8', body: '<!doctype html><title>Sign in</title>' })
+    : route.continue());
+  await page.goto('/ingest');
+  await expect(row(page, id)).toBeVisible({ timeout: LIVE });
+  await act(page, 'delete', id).click();
+  await page.getByTestId('staging-confirm-yes').click();
+  await expect(page.getByText('Signed out — sign in again')).toBeVisible({ timeout: LIVE });
+  await expect(page.getByTestId('staging-confirm')).toHaveCount(0);
+  await expect(row(page, id)).toBeVisible();
+  await expect(status(page, id)).toHaveText('Stored');
+});
+
+// The file finished while the Stop confirm was open: Stop must not delete the only copy.
+test('Stop on a file that finished while the confirm was open keeps it and says so', async ({ page, request }) => {
+  await signUpFresh(page);
+  const { token } = await pairDevice(page, request, 'Bench');
+  await boardSays(request, token);
+  const data = Buffer.alloc(20_000, 1);
+  const { id } = await boardOpens(request, token, 'Late.bin', data.length, '1.2.3');
+  await boardSendsChunks(request, token, id, data, 0, 1);
+  await page.goto('/ingest');
+  await expect(status(page, id)).toContainText('Arriving · 81 %', { timeout: LIVE });
+  await act(page, 'stop', id).click();
+  await expect(page.getByRole('dialog', { name: 'Stop receiving Late.bin? The part that arrived is deleted.' })).toBeVisible();
+  await boardSendsChunks(request, token, id, data, 16_384);                 // the rest arrives meanwhile
+  expect((await boardCloses(request, token, id, crc32(data) >>> 0)).status()).toBe(200);
+  await page.getByTestId('staging-confirm-yes').click();
+  await expect(page.getByText('It finished arriving; it was kept.')).toBeVisible({ timeout: LIVE });
+  await expect(page.getByTestId('staging-confirm')).toHaveCount(0);
+  await expect(status(page, id)).toHaveText('Stored', { timeout: LIVE });
+  expect((await page.request.get(`/api/uploads/${id}/file`)).status()).toBe(200);
 });
 
 test('a download the server answers 404 to gives a toast, not a saved file', async ({ page, request }) => {
