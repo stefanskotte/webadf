@@ -7,7 +7,7 @@ import { devices } from '@/db/schema/devices';
 import { collectionGames } from '@/db/schema/collections';
 import { syntheticVolume } from '@/lib/adffs/synthetic';
 import { ARM_DELAY_MS, EDGE_REST_MS, zoneOf } from '@/lib/set-folder';
-import { signUpFresh, runTag } from './helpers';
+import { signUpFresh, runTag, libRows, stagingReady } from './helpers';
 import { pairDevice, seedDisk, addDisk, authHeader, cleanupSeeded } from './device-helpers';
 
 /**
@@ -137,10 +137,11 @@ async function dropRelease(page: Page, orgId: string) {
   const order = ['Workbench3_1_4', 'Extras3_1_4', 'Install3_1_4', 'Fonts', 'Locale'];
   const files = order.map((v) => ({ name: `${v}.adf`, mimeType: 'application/octet-stream', buffer: adfBytes(v) }));
   await page.goto('/ingest');
+  await stagingReady(page);
   await page.getByTestId('file-input').setInputFiles(files);
-  await expect(page.getByTestId('ingest-row')).toHaveCount(5);
+  await expect(libRows(page)).toHaveCount(5);
   for (let i = 0; i < 5; i++) {
-    await expect(page.getByTestId('ingest-row').nth(i).locator('[data-state="done"]')).toBeVisible({ timeout: 60_000 });
+    await expect(libRows(page).nth(i)).toHaveAttribute('data-state', 'done', { timeout: 60_000 });
   }
   await expect(page.getByTestId('set-suggestion')).toBeVisible({ timeout: 30_000 });
 
@@ -230,13 +231,14 @@ test('upload: a reordered, partly ticked suggestion makes exactly that set; re-u
   // must not bring that title back, empty or with a duplicate disk.
   const wb = files.find((f) => f.name === 'Workbench3_1_4.adf')!;
   await page.goto('/ingest');
+  await stagingReady(page);
   // Waited on /complete itself, not the row: a deduped row turns blue as soon
   // as /check answers, BEFORE /complete has run (and re-created, then
   // removed, the original title).
   const completed = page.waitForResponse((r) => r.url().includes('/api/ingest/complete'), { timeout: 30_000 });
   await page.getByTestId('file-input').setInputFiles(wb);
   expect((await completed).status()).toBe(200);
-  await expect(page.getByTestId('ingest-row').first().locator('[data-state="deduped"]')).toBeVisible();
+  await expect(libRows(page).first()).toHaveAttribute('data-state', 'deduped');
 
   const after = (await orgGames(orgId)).map((g) => g.id).sort();
   expect(after).toEqual(before);

@@ -90,8 +90,8 @@ function lhaOf(names: string[], claimed: number, method = '-lh5-'): Uint8Array {
 const fetched = (bytes: Uint8Array, url = 'https://files.example/games/Turrican.adf', cd: string | null = null) =>
   async (): Promise<UrlFetchResult> => ({ ok: true, bytes, finalUrl: new URL(url), contentDisposition: cd });
 
-const okRegister = (rejectedReasons: Record<string, string> = {}, status = 200) =>
-  registerUploads.mockImplementation(async () => Response.json({ created: 1, rejected: Object.keys(rejectedReasons), rejectedReasons }, { status }));
+const okRegister = (rejectedReasons: Record<string, string> = {}, status = 200, titles: Record<string, { gameId: string; title: string }> = {}) =>
+  registerUploads.mockImplementation(async () => Response.json({ created: 1, rejected: Object.keys(rejectedReasons), rejectedReasons, titles }, { status }));
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -262,9 +262,19 @@ describe('ingestFromUrl', () => {
   it('stores a new image and registers it through registerUploads, for the given org', async () => {
     const bytes = ADF(1);
     const r = await ingestFromUrl('org-1', 'https://files.example/games/Turrican.adf', { fetch: fetched(bytes) });
-    expect(r).toEqual({ ok: true, rows: [{ filename: 'Turrican.adf', sizeBytes: 901_120, sha256: sha(bytes), state: 'done' }] });
+    expect(r).toEqual({ ok: true, rows: [{ filename: 'Turrican.adf', sizeBytes: 901_120, sha256: sha(bytes), state: 'done', title: null }] });
     expect(put).toHaveBeenCalledWith(sha(bytes), bytes);
     expect(registerUploads).toHaveBeenCalledWith('org-1', [{ sha256: sha(bytes), sizeBytes: 901_120, filename: 'Turrican.adf' }]);
+  });
+
+  it("carries the title /complete named for each disk, and none for a refused one", async () => {
+    const bytes = ADF(1);
+    okRegister({}, 200, { [sha(bytes)]: { gameId: 'g1', title: 'Turrican' } });
+    const r = await ingestFromUrl('org-1', 'https://files.example/games/Turrican.adf', { fetch: fetched(bytes) });
+    expect(r.ok && r.rows[0].title).toEqual({ gameId: 'g1', title: 'Turrican' });
+    okRegister({ [sha(bytes)]: 'digest-mismatch' });
+    const bad = await ingestFromUrl('org-1', 'https://files.example/games/Turrican.adf', { fetch: fetched(bytes) });
+    expect(bad.ok && bad.rows[0]).not.toHaveProperty('title');
   });
 
   it('does not store bytes the store already holds, and reports them deduped', async () => {

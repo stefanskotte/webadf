@@ -6,7 +6,7 @@ import { games, disks } from '@/db/schema/catalog';
 import { devices } from '@/db/schema/devices';
 import { syntheticVolume } from '@/lib/adffs/synthetic';
 import { readVolume } from '@/lib/adffs';
-import { signUpFresh, runTag, createAdf } from './helpers';
+import { signUpFresh, runTag, createAdf, stagingReady } from './helpers';
 import { cleanupSeeded, seedDisk, addDisk, pairDevice, authHeader } from './device-helpers';
 import { synthDrop } from './drag-drop-helpers';
 import { zoneOf } from '@/lib/set-folder';
@@ -832,15 +832,17 @@ test('the Upload page stacks its two columns at 390px, and a 200-byte saved path
     data: { mountedSha256: null, firmwareVersion: '1.15.0+gabc1234', secondDrive: 'net', driveVersion: 0 } });
   await request.get('/api/device/poll?since=999999&xferAck=0&rx=c', { headers: authHeader(token) });
   await page.goto('/ingest');
+  await stagingReady(page);
   await page.getByTestId('send-file-input').setInputFiles({ name: 'p.txt', mimeType: 'text/plain', buffer: Buffer.from('x') });
-  await expect(page.locator('[data-testid^="send-row-"]')).toHaveCount(1, { timeout: 15_000 });
+  await expect(page.locator('[data-testid="staging-row"][data-key^="send:"]')).toHaveCount(1, { timeout: 15_000 });
   const q = Buffer.from(await (await request.get('/api/device/send/queue', { headers: authHeader(token) })).body()).toString('latin1');
   const id = /^NEXT (\S+) /.exec(q)![1];
   await request.get(`/api/device/send/${id}?offset=0&length=1`, { headers: authHeader(token) });
   const long = Array.from({ length: 7 }, (_, i) => `Folder${i}${'x'.repeat(21)}`).join('/') + '/p.txt';
   expect(long.length).toBeGreaterThanOrEqual(200);
   await request.post(`/api/device/send/${id}/done`, { headers: authHeader(token), data: { ok: true, savedAs: long } });
-  await expect(page.getByTestId(`send-state-${id}`)).toContainText('Delivered', { timeout: 15_000 });
+  await expect(page.getByTestId(`staging-status-send:${id}`)).toContainText('Delivered', { timeout: 15_000 });
+  await expect(page.locator(`[data-testid="staging-row"][data-key="send:${id}"]`)).toContainText(`saved as ${long}`);
   const add = await page.getByTestId('dropzone').boundingBox();
   const send = await page.getByTestId('send-dropzone').boundingBox();
   expect(send!.y).toBeGreaterThan(add!.y + add!.height);              // stacked, not side by side

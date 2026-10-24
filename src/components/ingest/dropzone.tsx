@@ -9,42 +9,29 @@ import {
   splitBatches, MAX_HFE_PER_BATCH, type UploadOutcome,
 } from '@/lib/blob-upload';
 import { inspectHfe, describeInspection } from '@/lib/hfe/inspect';
-import { adfDensity, isHfeFilename } from '@/lib/disk-format';
-import { HdTag } from '@/components/disks/hd-tag';
+import { isHfeFilename } from '@/lib/disk-format';
 import type { Suggestion } from '@/lib/disk-set-suggest';
 import { SetSuggestion } from './set-suggestion';
 import { UrlFetch, type FetchedRow } from './url-fetch';
 import { DropArea } from './drop-area';
-import { ListFrame } from './upload-card';
-import { StatusChip } from '@/components/ui/status-chip';
-import type { ChipKind } from '@/lib/send-ui';
+import { useStaging } from './staging-provider';
+import { upsertLibRows, type LibRow, type LibState } from '@/lib/upload-staging';
 
 /** disk-sets spec §3 / the suggest route's own zod cap. */
 const MAX_SUGGEST_HASHES = 32;
 
-type RowState = 'hashing' | 'deduped' | 'uploading' | 'done' | 'failed';
+type RowState = LibState;
+type Title = { gameId: string; title: string };
 
-type Row = {
-  filename: string;
-  sizeBytes: number;
-  sha256: string;
-  state: RowState;
-  /** Why a file failed, or what it was expanded from. A dropped .dms that
-   *  cannot be decoded has to SAY so: silently dropping it from the list is
-   *  how the old behaviour looked -- the file appeared to upload and then
-   *  could never be mounted. */
-  note?: string;
-};
+/** A library row's key in the staging list (spec 2026-10-23 §4): its sha256, or `bad:<filename>` before hashing. */
+const libKey = (sha: string) => `lib:${sha}`;
 
-// The row's state as a chip, in the same colours as the tiles above it: amber while
-// in flight, blue for already-stored, green for uploaded, red for failed.
-const STATE_CHIP: Record<RowState, ChipKind> = {
-  failed: 'red',
-  deduped: 'blue',
-  done: 'green',
-  hashing: 'amber',
-  uploading: 'amber',
-};
+/** A new library row. Its `at` is the drop time the list sorts by. A dropped .dms that cannot be decoded has to SAY
+ *  so in its note: silently dropping it from the list is how the old behaviour looked -- the file appeared to upload
+ *  and then could never be mounted. */
+function newRow(name: string, sizeBytes: number, sha: string, state: RowState, note?: string, title: Title | null = null): LibRow {
+  return { source: 'lib', key: libKey(sha), kind: 'lib', name, sizeBytes, state, note, title, at: Date.now() };
+}
 
 // The check/presign/complete endpoints cap a batch at 500 items (see
 // MAX_BATCH in src/lib/ingest.ts, enforced by Zod .max()). A real collection
@@ -68,19 +55,19 @@ const UPLOAD_CONCURRENCY = 6;
 
 export function Dropzone() {
   const router = useRouter();
-  const [rows, setRows] = useState<Row[]>([]);
+  const { setLibRows, refreshNow } = useStaging();
   const [busy, setBusy] = useState(false);
   const [suggestion, setSuggestion] = useState<Suggestion>(null);
 
-  // The state each sha256 last settled into, kept alongside `rows` rather
-  // than read back from it: handleFiles's loop can out-run React's commits
-  // (see the hashing loop's own comment below), so `rows` state may not yet
-  // reflect the last patch() this same call made. This ref always does.
+  // The state each sha256 last settled into, kept alongside the staging rows
+  // rather than read back from them: handleFiles's loop can out-run React's
+  // commits (see the hashing loop's own comment below), so the rows may not
+  // yet reflect the last patch() this same call made. This ref always does.
   const finalState = useRef(new Map<string, RowState>());
 
-  const patch = (sha: string, next: Partial<Row>) => {
+  const patch = (sha: string, next: Partial<LibRow>) => {
     if (next.state) finalState.current.set(sha, next.state);
-    setRows((rs) => rs.map((r) => (r.sha256 === sha ? { ...r, ...next } : r)));
+    setLibRows((rs) => rs.map((r) => (r.key === libKey(sha) ? { ...r, ...next } : r)));
   };
 
   // Any non-OK response is thrown, never returned as if it were data. The
@@ -115,7 +102,7 @@ export function Dropzone() {
   // so every refusal in the batch reaches its row. Any other /complete
   // failure -- network error, 400, 503, a 409 that doesn't look like this --
   // still throws, matching post()'s behaviour for every other endpoint.
-  async function postComplete(body: unknown): Promise<{ rejectedReasons?: Record<string, string> }> {
+  async function postComplete(body: unknown): Promise<{ rejectedReasons?: Record<string, string>; titles?: Record<string, Title> }> {
     const res = await fetch('/api/ingest/complete', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
@@ -199,7 +186,7 @@ export function Dropzone() {
           // Caught per-file rather than left to reject: a hard network
           // failure here (not a non-2xx -- an actual fetch rejection) must
           // not throw out of handleFiles before /complete, the final
-          // setRows, and setBusy(false) ever run. That used to wedge every
+          // row updates, and setBusy(false) ever run. That used to wedge every
           // row on "uploading" forever with no visible error and no way to
           // recover short of a reload. Now a failure is scoped to just this
           // file: it is marked 'failed' and every other row keeps going.
@@ -246,8 +233,11 @@ export function Dropzone() {
           })),
         });
         const refused = res.rejectedReasons ?? {};
+        // The title each placed (or already placed) disk is in; a refused file has none, so its row offers no Open title.
+        const titles = res.titles ?? {};
         for (const h of okToComplete) {
           if (refused[h.sha256]) patch(h.sha256, { state: 'failed', note: refused[h.sha256] });
+          else if (titles[h.sha256]) patch(h.sha256, { title: titles[h.sha256] });
         }
         for (const h of toUpload) {
           if (uploadOk.get(h.sha256) !== false && !refused[h.sha256]) patch(h.sha256, { state: 'done' });
@@ -261,9 +251,10 @@ export function Dropzone() {
       // mark it failed so the failure is visible, matching the per-file PUT
       // handling above.
       console.error('ingest batch failed', err);
-      setRows((rs) =>
+      const groupKeys = new Set([...groupShas].map(libKey));
+      setLibRows((rs) =>
         rs.map((r) =>
-          groupShas.has(r.sha256) && (r.state === 'hashing' || r.state === 'uploading')
+          groupKeys.has(r.key) && (r.state === 'hashing' || r.state === 'uploading')
             ? { ...r, state: 'failed' }
             : r,
         ),
@@ -282,7 +273,7 @@ export function Dropzone() {
     const dropPaths = new Map<string, string>();
     // Every sha256 this drop actually hashed (never the synthetic `bad:...`
     // ids used for a row that failed before hashing), collected here rather
-    // than read back from `rows` state afterwards -- see finalState's own
+    // than read back from the staging rows afterwards -- see finalState's own
     // comment above for why.
     const dropShas: string[] = [];
     setBusy(true);
@@ -302,10 +293,7 @@ export function Dropzone() {
           // because the CLI never runs this.
           const r = inspectHfe(new Uint8Array(await original.arrayBuffer()));
           if (!r.ok) {
-            setRows((rs) => [...rs, {
-              filename: original.name, sizeBytes: original.size, sha256: `bad:${original.name}`,
-              state: 'failed' as RowState, note: r.reason,
-            }]);
+            setLibRows((rs) => upsertLibRows(rs, [newRow(original.name, original.size, `bad:${original.name}`, 'failed', r.reason)]));
             continue;
           }
           file = original;
@@ -317,10 +305,7 @@ export function Dropzone() {
           // give one disk two identities depending on how it arrived.
           const conv = await toAdf(original.name, new Uint8Array(await original.arrayBuffer()));
           if (!conv.ok) {
-            setRows((rs) => [...rs, {
-              filename: original.name, sizeBytes: original.size, sha256: `bad:${original.name}`,
-              state: 'failed' as RowState, note: conv.reason,
-            }]);
+            setLibRows((rs) => upsertLibRows(rs, [newRow(original.name, original.size, `bad:${original.name}`, 'failed', conv.reason)]));
             continue;
           }
           file = conv.from === 'adf'
@@ -334,18 +319,13 @@ export function Dropzone() {
         dropShas.push(sha256);
         if (original.webkitRelativePath) dropPaths.set(sha256, original.webkitRelativePath);
         // If this exact content is already a row (the user dropped it
-        // earlier in this same session, before a reload), reset that row in
-        // place rather than appending a second one: two rows sharing a
-        // sha256 would share a React key, which React logs as a
-        // duplicate-key error and may drop or duplicate the row in the DOM.
-        // This also has to reach into functional-update state, since the
-        // loop can hash faster than React commits each prior setRows call.
-        setRows((rs) => {
-          const row: Row = { filename: file.name, sizeBytes: file.size, sha256, state: 'hashing', note };
-          return rs.some((r) => r.sha256 === sha256)
-            ? rs.map((r) => (r.sha256 === sha256 ? row : r))
-            : [...rs, row];
-        });
+        // earlier in this visit), reset that row in place rather than
+        // appending a second one: two rows sharing a key would share a React
+        // key, which React logs as a duplicate-key error and may drop or
+        // duplicate the row in the DOM. This also has to reach into
+        // functional-update state, since the loop can hash faster than React
+        // commits each prior update.
+        setLibRows((rs) => upsertLibRows(rs, [newRow(file.name, file.size, sha256, 'hashing', note)]));
       }
 
       // Screened before batching. /api/ingest/presign rejects a zero-byte or
@@ -372,10 +352,11 @@ export function Dropzone() {
       // library view always reflects whatever did land.
       setBusy(false);
       router.refresh();
+      void refreshNow();
 
       // Fired only after busy/refresh: the suggestion is about what this
       // drop just did, not something that should hold the UI up while it's
-      // still uploading. finalState (not `rows` state -- see its own
+      // still uploading. finalState (not the staging rows -- see its own
       // comment) says which of this drop's own sha256s actually landed.
       await suggestFor(dropShas, dropPaths, since);
     }
@@ -423,23 +404,12 @@ export function Dropzone() {
     }
   }
 
-  // Rows from /api/ingest/url, merged into this run's table exactly like a
+  // Rows from /api/ingest/url, merged into the staging list exactly like a
   // drop's: same states, same notes, same reset-in-place for a repeat sha.
   async function addFetchedRows(fetched: FetchedRow[], since: string) {
     const shas: string[] = [];
-    setRows((rs) => {
-      let next = rs;
-      for (const f of fetched) {
-        const row: Row = {
-          filename: f.filename, sizeBytes: f.sizeBytes,
-          sha256: f.sha256 ?? `bad:${f.filename}`, state: f.state, note: f.note,
-        };
-        next = next.some((r) => r.sha256 === row.sha256)
-          ? next.map((r) => (r.sha256 === row.sha256 ? row : r))
-          : [...next, row];
-      }
-      return next;
-    });
+    const rows = fetched.map((f) => newRow(f.filename, f.sizeBytes, f.sha256 ?? `bad:${f.filename}`, f.state, f.note, f.title ?? null));
+    setLibRows((rs) => upsertLibRows(rs, rows));
     for (const f of fetched) {
       if (!f.sha256) continue;
       finalState.current.set(f.sha256, f.state);
@@ -450,15 +420,9 @@ export function Dropzone() {
     await suggestFor(shas, new Map(), since);
   }
 
-  const scanned = rows.length;
-  const deduped = rows.filter((r) => r.state === 'deduped').length;
-  const uploaded = rows.filter((r) => r.state === 'done').length;
-  const inFlight = rows.filter((r) => r.state === 'hashing' || r.state === 'uploading').length;
-  const failed = rows.filter((r) => r.state === 'failed').length;
-
   return (
-    // The Add-to-library card's body (src/app/(app)/ingest/page.tsx): drop zone, URL fetch, then this run's
-    // list, which fills the card to the Send card's height on a wide screen.
+    // The Add-to-library card's body (src/app/(app)/ingest/page.tsx): drop zone, URL fetch and the set suggestion.
+    // What each file did shows in the Staging list below both cards.
     <div className="flex min-h-0 flex-1 flex-col gap-4">
       <DropArea
         testId="dropzone"
@@ -472,109 +436,9 @@ export function Dropzone() {
 
       <UrlFetch busy={busy} setBusy={setBusy} onRows={addFetchedRows} />
 
-      {rows.length > 0 && (
-        // Five tiles across is ~70px each at 390px -- narrower than some of
-        // the labels in them. Two, then three, then five.
-        <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
-          {(
-            [
-              { k: 'scanned', v: scanned, col: 'var(--ink)', border: 'var(--ink)' },
-              { k: 'deduped', v: deduped, col: 'var(--accent-blue)', border: 'var(--accent-blue)' },
-              { k: 'uploaded', v: uploaded, col: 'var(--success-fg)', border: 'var(--success-fg)' },
-              // Border is a fill, not text, so it can use the brighter
-              // --accent-amber; the number stays on --amber-text for AA.
-              { k: 'in flight', v: inFlight, col: 'var(--amber-text)', border: 'var(--accent-amber)' },
-              { k: 'failed', v: failed, col: 'var(--danger-fg)', border: 'var(--danger-fg)' },
-            ] as const
-          ).map((t) => (
-            <div
-              key={t.k}
-              className="flex flex-col gap-1 rounded-xl p-3"
-              style={{
-                background: 'var(--glass-strong)',
-                border: '1px solid var(--hairline-strong)',
-                borderTop: `3px solid ${t.border}`,
-              }}
-            >
-              <span className="text-[10.5px] font-semibold uppercase tracking-wide" style={{ color: 'var(--muted)' }}>
-                {t.k}
-              </span>
-              <span className="text-2xl font-bold leading-tight" style={{ color: t.col }}>
-                {t.v}
-              </span>
-            </div>
-          ))}
-        </div>
-      )}
-
       {suggestion && (
         <SetSuggestion suggestion={suggestion} onDone={() => setSuggestion(null)} />
       )}
-
-      <ListFrame
-        title="This run"
-        counts={rows.length > 0 ? `${scanned} file${scanned === 1 ? '' : 's'} · ${inFlight} in flight` : undefined}
-      >
-        {rows.length === 0 ? (
-          <p className="px-4 py-3 text-[12.5px]" style={{ color: 'var(--muted)' }}>
-            Files you drop or fetch appear here, with what happened to each.
-          </p>
-        ) : (
-          <>
-            {/* Hidden below `sm`: the rows underneath stack there, so a
-                header of column names would be naming columns that no longer
-                exist. */}
-            <div
-              className="hidden grid-cols-[1fr_80px_90px_84px] items-center px-4 py-1.5 text-[10.5px] font-semibold uppercase tracking-wide sm:grid"
-              style={{ borderBottom: '1px solid var(--hairline)', color: 'var(--muted)' }}
-            >
-              <span>File</span>
-              <span className="text-right">Size</span>
-              <span className="text-right">SHA-256</span>
-              <span className="text-right">State</span>
-            </div>
-
-            <div data-testid="ingest-rows">
-              {rows.map((r) => (
-                <div
-                  key={r.sha256}
-                  data-testid="ingest-row"
-                  // Below `sm` the row is a card of its own: filename on the
-                  // first line, the rest wrapped beneath it, so the state is
-                  // never clipped off the end at 390px.
-                  className="flex flex-wrap items-center gap-x-3 gap-y-1 px-4 py-2 text-[12px] sm:grid sm:grid-cols-[1fr_80px_90px_84px] sm:gap-x-0 sm:gap-y-0"
-                  style={{ borderBottom: '1px solid var(--hairline)' }}
-                >
-                  <span className="w-full min-w-0 truncate pr-3 sm:w-auto">
-                    <span className="font-mono text-[12px]" style={{ color: 'var(--ink)' }}>{r.filename}</span>
-                    {r.note && (
-                      // Not a tooltip: "why your .dms was rejected" and "this
-                      // .adf came out of a .dms" both need to be seen.
-                      <span
-                        className="ml-2 text-[11.5px]"
-                        data-testid="ingest-note"
-                        style={{ color: r.state === 'failed' ? 'var(--danger-fg)' : 'var(--muted)' }}
-                      >
-                        {r.note}
-                      </span>
-                    )}
-                  </span>
-                  <span className="flex items-center justify-end gap-1 text-right font-mono text-[11.5px]" style={{ color: 'var(--muted)' }}>
-                    {Math.round(r.sizeBytes / 1024)} KB
-                    {!isHfeFilename(r.filename) && adfDensity(r.sizeBytes) === 'hd' && <HdTag testId="ingest-hd-tag" />}
-                  </span>
-                  <span className="text-right font-mono text-[11px]" style={{ color: 'var(--muted)' }}>
-                    {r.sha256.slice(0, 8)}…
-                  </span>
-                  <span className="flex justify-end" data-state={r.state}>
-                    <StatusChip kind={STATE_CHIP[r.state]}>{r.state}</StatusChip>
-                  </span>
-                </div>
-              ))}
-            </div>
-          </>
-        )}
-      </ListFrame>
     </div>
   );
 }

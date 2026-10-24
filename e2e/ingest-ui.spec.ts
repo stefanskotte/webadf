@@ -1,5 +1,5 @@
 import { test, expect } from '@playwright/test';
-import { signUpFresh } from './helpers';
+import { signUpFresh, libRows, stagingReady } from './helpers';
 import { cleanupSeeded } from './device-helpers';
 
 // These specs create their rows through the REAL ingest flow, so no helper
@@ -20,15 +20,15 @@ test('uploading a disk shows it in the library', async ({ page }) => {
   await signUpFresh(page);
   await page.goto('/ingest');
 
+  await stagingReady(page);
   await page.getByTestId('file-input').setInputFiles({
     name: 'Test Game (1992)(Acme)(Disk 1 of 2).adf',
     mimeType: 'application/octet-stream',
     buffer: fakeAdf(Date.now()),
   });
 
-  await expect(page.getByTestId('ingest-row')).toHaveCount(1);
-  await expect(page.getByTestId('ingest-row').first().locator('[data-state="done"]'))
-    .toBeVisible({ timeout: 30_000 });
+  await expect(libRows(page)).toHaveCount(1);
+  await expect(libRows(page).first()).toHaveAttribute('data-state', 'done', { timeout: 30_000 });
 
   await page.goto('/library');
   // Every game card renders its title twice (once as the cover's text
@@ -50,18 +50,18 @@ test('re-uploading the same bytes dedupes instead of uploading again', async ({ 
   const buffer = fakeAdf(Date.now());
 
   await page.goto('/ingest');
+  await stagingReady(page);
   await page.getByTestId('file-input').setInputFiles({
     name: 'Dedupe Me (1990)(X).adf', mimeType: 'application/octet-stream', buffer,
   });
-  await expect(page.getByTestId('ingest-row').first().locator('[data-state="done"]'))
-    .toBeVisible({ timeout: 30_000 });
+  await expect(libRows(page).first()).toHaveAttribute('data-state', 'done', { timeout: 30_000 });
 
   await page.reload();
+  await stagingReady(page);
   await page.getByTestId('file-input').setInputFiles({
     name: 'Dedupe Me (1990)(X).adf', mimeType: 'application/octet-stream', buffer,
   });
-  await expect(page.getByTestId('ingest-row').first().locator('[data-state="deduped"]'))
-    .toBeVisible({ timeout: 30_000 });
+  await expect(libRows(page).first()).toHaveAttribute('data-state', 'deduped', { timeout: 30_000 });
 });
 
 test('a failed check call marks the row failed, never deduped', async ({ page }) => {
@@ -87,16 +87,15 @@ test('a failed check call marks the row failed, never deduped', async ({ page })
     }),
   );
 
+  await stagingReady(page);
   await page.getByTestId('file-input').setInputFiles({
     name: 'Should Fail (1993)(Nobody).adf',
     mimeType: 'application/octet-stream',
     buffer: fakeAdf(Date.now()),
   });
 
-  await expect(page.getByTestId('ingest-row').first().locator('[data-state="failed"]'))
-    .toBeVisible({ timeout: 10_000 });
-  await expect(page.getByTestId('ingest-row').first().locator('[data-state="deduped"]'))
-    .toHaveCount(0);
+  await expect(libRows(page).first()).toHaveAttribute('data-state', 'failed', { timeout: 10_000 });
+  await expect(libRows(page).first()).not.toHaveAttribute('data-state', 'deduped');
 });
 
 test('re-selecting the same file in one session updates the row instead of duplicating it', async ({ page }) => {
@@ -109,23 +108,23 @@ test('re-selecting the same file in one session updates the row instead of dupli
   });
 
   await page.goto('/ingest');
+  await stagingReady(page);
   await page.getByTestId('file-input').setInputFiles({
     name: 'Reselect Me (1990)(X).adf', mimeType: 'application/octet-stream', buffer,
   });
-  await expect(page.getByTestId('ingest-row').first().locator('[data-state="done"]'))
-    .toBeVisible({ timeout: 30_000 });
+  await expect(libRows(page).first()).toHaveAttribute('data-state', 'done', { timeout: 30_000 });
 
   // Re-select the SAME bytes again without reloading -- this is exactly the
   // path that used to produce two rows sharing key={sha256} (a React
   // duplicate-key console error, and either a dropped or duplicated DOM
   // row), since setRows used to append a new row unconditionally.
+  await stagingReady(page);
   await page.getByTestId('file-input').setInputFiles({
     name: 'Reselect Me (1990)(X).adf', mimeType: 'application/octet-stream', buffer,
   });
-  await expect(page.getByTestId('ingest-row').first().locator('[data-state="deduped"]'))
-    .toBeVisible({ timeout: 30_000 });
+  await expect(libRows(page).first()).toHaveAttribute('data-state', 'deduped', { timeout: 30_000 });
 
-  await expect(page.getByTestId('ingest-row')).toHaveCount(1);
+  await expect(libRows(page)).toHaveCount(1);
   expect(consoleErrors.some((m) => /same key/i.test(m))).toBe(false);
 });
 
@@ -148,11 +147,11 @@ test('a re-PUT of bytes already in the store reconciles instead of wedging', asy
 
   // First pass: real upload, real blobs row.
   await page.goto('/ingest');
+  await stagingReady(page);
   await page.getByTestId('file-input').setInputFiles({
     name: 'Wedge Me (1991)(Y).adf', mimeType: 'application/octet-stream', buffer,
   });
-  await expect(page.getByTestId('ingest-row').first().locator('[data-state="done"]'))
-    .toBeVisible({ timeout: 30_000 });
+  await expect(libRows(page).first()).toHaveAttribute('data-state', 'done', { timeout: 30_000 });
 
   await page.reload();
 
@@ -169,6 +168,7 @@ test('a re-PUT of bytes already in the store reconciles instead of wedging', asy
     });
   });
 
+  await stagingReady(page);
   await page.getByTestId('file-input').setInputFiles({
     name: 'Wedge Me (1991)(Y).adf', mimeType: 'application/octet-stream', buffer,
   });
@@ -177,8 +177,6 @@ test('a re-PUT of bytes already in the store reconciles instead of wedging', asy
   // goes to /complete and the row finishes. Without it, uploadOk=false
   // excluded the file from /complete and the row landed on 'failed' -- the
   // dead end, on every subsequent run.
-  await expect(page.getByTestId('ingest-row').first().locator('[data-state="done"]'))
-    .toBeVisible({ timeout: 30_000 });
-  await expect(page.getByTestId('ingest-row').first().locator('[data-state="failed"]'))
-    .toHaveCount(0);
+  await expect(libRows(page).first()).toHaveAttribute('data-state', 'done', { timeout: 30_000 });
+  await expect(libRows(page).first()).not.toHaveAttribute('data-state', 'failed');
 });

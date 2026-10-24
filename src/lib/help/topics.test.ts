@@ -51,7 +51,13 @@ describe('help topics say what the app really does', () => {
   it('from-amiga names the firmware, the three ways to send, the key digits and the limits (spec 2026-10-18)', () => {
     const b = HELP_TOPICS['from-amiga'].short + bodyText('from-amiga');
     for (const w of ['1.19.0', 'Install', 'Send…', 'Transfer SEND', 'Trusted board AB12', 'Trust this board', 'TRUST',
-      '4 MB', '500 files', '256 MB', '30 days', '24 hours', 'Clear all', 'Add to library']) expect(b).toContain(w);
+      '4 MB', '500 files', '256 MB', '30 days', '24 hours', 'Clear finished', 'Add to library', 'Open title', 'Stop',
+      'Staging']) expect(b).toContain(w);
+    expect(b).not.toContain('Clear all');   // gone with the one list (spec 2026-10-23 decision 2)
+  });
+  it('send describes the one Staging list and every board\'s files (spec 2026-10-23)', () => {
+    const b = bodyText('send');
+    for (const w of ['Staging', 'To the Amiga', 'Clear finished', 'every board']) expect(b).toContain(w);
   });
   it('from-amiga lists every extension the library takes', () => {
     expect(bodyText('from-amiga')).toMatch(/ADF, DSK, ADZ, DMS, DMZ and HFE/);

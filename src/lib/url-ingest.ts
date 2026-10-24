@@ -48,6 +48,8 @@ export type UrlIngestRow = {
   sha256: string | null;
   state: 'deduped' | 'done' | 'failed';
   note?: string;
+  /** The title the disk landed in, as /complete named it; absent on a failed row. */
+  title?: { gameId: string; title: string } | null;
 };
 
 export type UrlIngestResult =
@@ -273,14 +275,18 @@ export async function ingestFromUrl(
   }));
   if (res.status === 503) return { ok: false, code: 'store_busy' };
   if (res.status !== 200 && res.status !== 409) return { ok: false, code: 'ingest_failed' };
-  const body = (await res.json()) as { rejectedReasons?: Record<string, string> };
+  const body = (await res.json()) as {
+    rejectedReasons?: Record<string, string>;
+    titles?: Record<string, { gameId: string; title: string }>;
+  };
   const refusedBy = body.rejectedReasons ?? {};
+  const titles = body.titles ?? {};
 
   for (const sha of stored) {
     const img = bySha.get(sha)!;
     const base = { filename: img.filename, sizeBytes: img.bytes.length, sha256: sha };
     if (refusedBy[sha]) rows.push({ ...base, state: 'failed', note: refusedBy[sha] });
-    else rows.push({ ...base, state: known.has(sha) ? 'deduped' : 'done', ...(img.note ? { note: img.note } : {}) });
+    else rows.push({ ...base, state: known.has(sha) ? 'deduped' : 'done', title: titles[sha] ?? null, ...(img.note ? { note: img.note } : {}) });
   }
   return { ok: true, rows };
 }

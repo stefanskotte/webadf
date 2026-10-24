@@ -7,7 +7,7 @@ import { getDb } from '@/db';
 import { disks, games } from '@/db/schema/catalog';
 import { invites } from '@/db/schema/devices';
 import { deleteUserCascade } from '@/lib/admin-delete';
-import { mintInviteCode, signedUpOrgIds } from './helpers';
+import { mintInviteCode, signedUpOrgIds, libRows, stagingReady } from './helpers';
 import { pairDevice, cleanupSeeded } from './device-helpers';
 
 /**
@@ -139,9 +139,10 @@ test('capture the README screenshots', async ({ page, request, browser }) => {
 
   // --- upload through the real ingest page ----------------------------------
   await page.goto('/ingest');
+  await stagingReady(page);
   await page.getByTestId('file-input').setInputFiles(UPLOADS.map((f) => path.join(ARCHIVE, f)));
-  await expect(page.getByTestId('ingest-row')).toHaveCount(UPLOADS.length, { timeout: 30_000 });
-  await expect(page.locator('[data-testid="ingest-row"] [data-state="done"], [data-testid="ingest-row"] [data-state="deduped"]'))
+  await expect(libRows(page)).toHaveCount(UPLOADS.length, { timeout: 30_000 });
+  await expect(page.locator('[data-testid="staging-row"][data-kind="lib"][data-state="done"], [data-testid="staging-row"][data-kind="lib"][data-state="deduped"]'))
     .toHaveCount(UPLOADS.length, { timeout: 120_000 });
   // A two-disk demo is offered as a set; take it, the way a person would.
   const setAccept = page.getByTestId('set-suggestion-accept');

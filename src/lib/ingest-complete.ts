@@ -386,6 +386,8 @@ export async function registerUploads(orgId: string, files: CompleteFile[]): Pro
   // An already-there disk re-sent as an HFE still gets the flip the upsert
   // below would have given it -- as a plain UPDATE, which can never insert.
   const hfeFlips: { id: string; sha256: string }[] = [];
+  // Every disk this call placed or found already there: the answer names the title each one is in.
+  const placedDiskIds = new Set<string>();
 
   for (const g of grouped) {
     const parsedGameId = gameIdOf(g);
@@ -397,6 +399,7 @@ export async function registerUploads(orgId: string, files: CompleteFile[]): Pro
         const existing = stableId('disk', parsedGameId, d.sha256);
         if (alreadyThere.has(existing)) {
           if (hfeInfo.has(d.sha256)) hfeFlips.push({ id: existing, sha256: d.sha256 });
+          placedDiskIds.add(existing);
           continue;
         }
         gameId = stableId('game', orgId, g.sortTitle, g.year === null ? '' : String(g.year), 'beside-set', d.sha256);
@@ -409,6 +412,7 @@ export async function registerUploads(orgId: string, files: CompleteFile[]): Pro
         });
       }
       const diskId = stableId('disk', gameId, d.sha256);
+      placedDiskIds.add(diskId);
       if (!diskRows.has(diskId)) {
         // Decided by the bytes (did this sha256 pass HFE inspection in this
         // batch?), not by this row's filename: the same bytes can appear
@@ -526,12 +530,23 @@ export async function registerUploads(orgId: string, files: CompleteFile[]): Pro
     }
   });
 
+  // Read back, not taken from the parse: a title edited since the first upload,
+  // or a disk that lives in a person-arranged set, is named as it is now.
+  const titles: Record<string, { gameId: string; title: string }> = {};
+  for (const part of chunk([...placedDiskIds], INSERT_CHUNK)) {
+    const rows = await db.select({ sha256: disks.sha256, gameId: disks.gameId, title: games.title })
+      .from(disks).innerJoin(games, eq(games.id, disks.gameId))
+      .where(and(inArray(disks.id, part), eq(disks.orgId, orgId)));
+    for (const r of rows) titles[r.sha256] = { gameId: r.gameId, title: r.title };
+  }
+
   return Response.json({
     created: grouped.length,
     disks: groupable.length,
     rejected,
     rejectedReasons,
     skippedTitle,
+    titles,
     notices: Object.fromEntries([...hfeInfo].map(([s, r]) => [s, r.notices])),
   });
 }
