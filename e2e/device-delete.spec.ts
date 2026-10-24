@@ -20,6 +20,9 @@ test('Cancel keeps the device; Delete removes the card and the row, and the toke
   // Cancel leaves everything as it was.
   await page.getByTestId(`device-delete-${deviceId}`).click();
   await expect(page.getByTestId('device-delete-dialog')).toBeVisible();
+  // The modal radius (20px, .wf-modal) beats the card's 16px (.glass-card):
+  // both sit in the components layer with .wf-modal second (Phase B F3).
+  await expect(page.getByTestId('device-delete-dialog')).toHaveCSS('border-top-left-radius', '20px');
   await page.getByTestId('device-delete-cancel').click();
   await expect(page.getByTestId('device-delete-dialog')).toHaveCount(0);
   expect(await rowCount(deviceId)).toBe(1);

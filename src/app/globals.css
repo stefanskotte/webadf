@@ -302,18 +302,20 @@
   min-height: 100vh;
 }
 
-/* Flat: a surface and a 1px line. The border (not a ring shadow) keeps every
-   card's box exactly as it was; no backdrop-filter, so a card is no longer a
-   containing block for fixed-position children. */
-.glass-card {
-  background: var(--surface);
-  border: 1px solid var(--line);
-  border-radius: var(--radius-card);
-}
-
-/* Modal panels, beside .glass-card on each dialog. In the components layer so a panel's own utilities win
-   (the phone sheets' rounded-t / rounded-none keep their corners); an unlayered rule would beat every utility. */
+/* Modal panels sit beside .glass-card on each dialog. Both are in the components layer, and .glass-card comes
+   first, so .wf-modal's 20px radius beats the card's 16px (unlayered, .glass-card beat it on every dialog that
+   carries both), and a panel's own utilities still win over both (the phone sheets' rounded-t / rounded-none keep
+   their corners); an unlayered rule would beat every utility. */
 @layer components {
+  /* Flat: a surface and a 1px line. The border (not a ring shadow) keeps every
+     card's box exactly as it was; no backdrop-filter, so a card is no longer a
+     containing block for fixed-position children. */
+  .glass-card {
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: var(--radius-card);
+  }
+
   .wf-modal {
     border-radius: 20px;
     box-shadow: var(--shadow-modal), 0 0 0 1px var(--line);

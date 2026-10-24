@@ -165,7 +165,7 @@ function CollectionRow({
     // or size shift -- because moving a drop target out from under the cursor
     // mid-drag is how you make a drop land somewhere the person did not aim.
     background: isDropTarget
-      ? 'rgb(245 130 46 / 0.20)'
+      ? 'color-mix(in srgb, var(--accent-amber) 20%, transparent)'
       : draggingGame ? 'rgb(36 33 27 / 0.05)' : undefined,
     boxShadow: isDropTarget ? 'inset 0 0 0 2px var(--accent-amber)' : undefined,
   };

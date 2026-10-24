@@ -182,7 +182,7 @@ export function DisplayEditor({ device, open, onOpenChange }: {
     <div className="flex min-w-0 flex-col gap-2 rounded-b-xl border-4 border-t-0 px-3 pb-3 pt-4 lg:border-[6px]"
          data-testid={`display-drawer-${device.id}`}
          style={{
-           borderColor: BEZEL_EDGE, background: '#e3e8ec',
+           borderColor: BEZEL_EDGE, background: 'var(--track)',
            boxShadow: 'inset 0 10px 10px -6px rgb(0 0 0 / 0.45), inset 0 0 0 1px #3a4048, 0 2px 0 rgb(0 0 0 / 0.25)',
          }}>
       {toggle}
