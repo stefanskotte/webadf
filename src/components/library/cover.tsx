@@ -4,38 +4,6 @@ import { holdLabel, type Hold } from '@/lib/drive-holds';
 import { stageFor, titleDiskColor } from '@/lib/library-look';
 import type { GameListItem } from '@/lib/queries';
 
-// hueFor / gradientFor: the table thumbnail's (CoverThumb's) look only, now that the grid card draws a disk on its
-// stage instead. They go with CoverThumb when the table moves to the disk icon (spec §3.2).
-function hueFor(id: string): number {
-  let h = 0;
-  for (let i = 0; i < id.length; i++) h = (h * 31 + id.charCodeAt(i)) % 360;
-  return h;
-}
-
-/** The deterministic no-image look: the same gradient for the same title on every surface. */
-function gradientFor(id: string): string {
-  const hue = hueFor(id);
-  return `linear-gradient(150deg, oklch(0.44 0.16 ${hue}), oklch(0.24 0.10 ${(hue + 45) % 360}))`;
-}
-
-/**
- * The cover at table-row size. A fixed box in the Cover's own proportions
- * whether or not the image loads, so a row never changes height when it
- * does. No title overlay and no badges: at 40px those would be noise, and the
- * row prints the title, type and disk count in their own columns.
- */
-export function CoverThumb({ id, coverUrl }: { id: string; coverUrl?: string | null }) {
-  return (
-    <div className="relative h-[32px] w-[40px] shrink-0 overflow-hidden rounded" data-testid="cover-thumb"
-         style={{ background: gradientFor(id), boxShadow: '0 1px 2px rgb(36 33 27 / 0.22)' }}>
-      {coverUrl && (
-        <img src={coverUrl} alt="" aria-hidden="true" loading="lazy" decoding="async"
-             className="absolute inset-0 h-full w-full object-cover" />
-      )}
-    </div>
-  );
-}
-
 /** A card's byline: what is known, and nothing when nothing is (operator 2026-10-22: no "unidentified"). */
 export function titleByline(g: Pick<GameListItem, 'year' | 'publisher' | 'authored'>): string {
   return [g.year, g.publisher].filter(Boolean).join(' · ') || (g.authored ? 'made here' : '');
@@ -50,13 +18,18 @@ function diskSetLine(g: GameListItem): string {
  * The card's DF0 pill (board: ModernLibrary): green dot once the board confirms, amber and `DF0…` while it is only
  * asked for. Drawn with or without a cover, beside the ring round the card (Ruling 7). `title` names the holds.
  */
-function DriveBadge({ holds, diskCount }: { holds: Hold[] | undefined; diskCount: number }) {
+export function DriveBadge({ holds, diskCount, inline = false }: {
+  holds: Hold[] | undefined; diskCount: number;
+  /** In flow after a table row's title, instead of floated over a card's art (spec §3.2). */
+  inline?: boolean;
+}) {
   if (!holds || holds.length === 0) return null;
   const mounted = holds.some((h) => h.state === 'mounted');
   return (
     <span data-testid="drive-badge" title={holds.map((h) => holdLabel(h, diskCount)).join('; ')}
-          className="absolute right-2 top-2 z-[1] flex items-center gap-[5px] rounded-full py-0.5 pl-[7px] pr-2 font-mono text-[11px] font-semibold leading-4"
-          style={{ background: 'var(--drive-pill-bg)', color: 'var(--drive-pill-fg)', boxShadow: '0 2px 6px rgb(0 0 0 / 0.3)' }}>
+          className={`flex items-center gap-[5px] rounded-full font-mono text-[11px] font-semibold leading-4 ${
+            inline ? 'shrink-0 py-px pl-[7px] pr-[7px]' : 'absolute right-2 top-2 z-[1] py-0.5 pl-[7px] pr-2'}`}
+          style={{ background: 'var(--drive-pill-bg)', color: 'var(--drive-pill-fg)', ...(inline ? {} : { boxShadow: '0 2px 6px rgb(0 0 0 / 0.3)' }) }}>
       <span aria-hidden className="h-1.5 w-1.5 rounded-full"
             style={mounted
               ? { background: 'var(--online-dot)', boxShadow: '0 0 5px var(--online-dot)' }
