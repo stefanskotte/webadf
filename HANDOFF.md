@@ -1478,14 +1478,32 @@ separately.
 
 ### 4. Backlog, not blocking anything
 
-**Current order (re-checked 2026-10-23):** (1) the **WebFloppy redesign** per its approved roadmap
+**Current order (re-checked 2026-10-24):** (1) the **WebFloppy redesign** per its approved roadmap
 `docs/superpowers/specs/2026-10-23-webfloppy-redesign-roadmap-design.md` -- Phase A (missing features in today's look;
-**A1 States, A2 Settings/account, A3 Library, A4 Devices and A5 Disk files SHIPPED 2026-10-23**, see below; A6 Upload next, which needs a FULL spec), then Phase B (design foundation + rename), then Phase C (layouts area by area); the operator starts
-it; (2) B10 on the A4000D when it is on the bench; (3) rev C radio: the LWB+ breadboard test when the Mouser parts
+**A1-A5 SHIPPED 2026-10-23; A6 Upload (df042b6) and A7 Admin (4c37c0e, migration 0049) SHIPPED 2026-10-24** -- Phase A DONE, see below), then Phase B (design foundation + rename), then Phase C (layouts area by area) -- the operator authorized B and C unattended 2026-10-24 (design calls recorded as rulings in each spec); (2) B10 on the A4000D when it is on the bench; (3) rev C radio: the LWB+ breadboard test when the Mouser parts
 arrive. The
 table's deferred minors are DONE (3ce: M1, M3-M6, M8 fixed; M7 left by the review's ruling). SHIPPED today: the table view with folders, the core1 watchdog
 (1.21.0), uploads surviving a 5-minute outage (1.21.1 + Transfer 2.2), library paging (all 3ce). Entries below marked SHIPPED are kept for their history only.
 
+- **A7 Admin -- SHIPPED 2026-10-24** (merge 4c37c0e; spec `docs/superpowers/specs/2026-10-24-admin-a7-design.md`;
+  migration **0049 `invites.revoked_at`**, applied to production by the controller before merge). Overview: board
+  tiles (Paired / Online now / Seen in 7 days), Boards by firmware among boards seen in 7 days (a current
+  distribution -- no per-day history exists), Needs attention (error in 24 h, behind the current release, offline 1-7
+  days; 20 max). Invites: Revoked state (revoke keeps the row AND expires it, so a rollback to pre-A7 code still
+  refuses it), Used by (recorded in `user.create.after`; "—" for older codes), Copy code / Copy link (browser origin,
+  self-host safe); the self-host bootstrap no longer treats a revoked code as live. Firmware: Current / Release / Test
+  tags, boards per version, GitHub link, paging (25), **Promote to release** (`POST /api/admin/firmware/[id]/promote`:
+  a notes edit -- notes are unsigned -- after checking the stored bytes' sha256 against the row and
+  `refuseImageMarkers` with the NEW notes; the GitHub release still comes from `pnpm firmware:publish --github-only`).
+  Scan: Demozoo status line. Deferred minors: attention query reads the whole 7-day fleet; promote has no password
+  step-up and no focus trap; TEST rows sharing a semver link the same tag.
+- **A6 Upload -- SHIPPED 2026-10-24** (merge df042b6; spec `docs/superpowers/specs/2026-10-23-upload-staging-design.md`;
+  no migration). One **Staging** list on /ingest for to-library (browser rows, this visit only), to-Amiga (transfers)
+  and from-Amiga (amiga_uploads), every board's rows, filter with counts, Clear finished (by row keys; never a stored
+  Amiga file), Open title after an ingest. `GET /api/staging`, `POST /api/staging/clear`; Stop sends
+  `DELETE /api/uploads/:id?only=receiving` (409 if it finished meanwhile). Signed-out (HTML 200) answers are failures
+  everywhere in the list. The list scrolls inside 36rem on desktop. Deferred minors: "Reading the list…" stays if the
+  first poll fails; focus falls to body after a Delete; dev server logs "destination stream closed early" (pre-existing).
 - **A5 Disk files -- SHIPPED 2026-10-23** (branch feat/a5-disk-files; no migration). On /disks/[id]/files: a name
   filter (opens folders holding matches; not remembered) and **Hide .info files** (prefs `browse.hideInfo`, own
   saver). Row checkboxes + a selection bar: **Download .zip** (GET files/zip?blocks=, fflate streaming `Zip` so a
