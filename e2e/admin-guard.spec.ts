@@ -1,9 +1,13 @@
 import { test, expect } from '@playwright/test';
+import { randomUUID } from 'node:crypto';
+import { eq } from 'drizzle-orm';
 import { signUpFresh } from './helpers';
 import {
   signInAsSuperAdmin, seedUsers, cleanupSeededUsers, ADMIN_PER_PAGE,
 } from './admin-helpers';
-import { cleanupSeeded } from './device-helpers';
+import { cleanupSeeded, seedDevices, E2E_RELEASE_PREFIX } from './device-helpers';
+import { getDb } from '@/db';
+import { devices } from '@/db/schema/devices';
 
 test.afterAll(async () => { await cleanupSeededUsers(); await cleanupSeeded(); });
 
@@ -58,6 +62,34 @@ test('the allowlisted admin sees the overview with real counts', async ({ page }
   await expect(page.getByTestId('count-users')).toHaveText(/^\d+$/);
   await expect(page.getByTestId('count-orgs')).toHaveText(/^\d+$/);
   await expect(page.getByTestId('count-blobs')).toHaveText(/^\d+$/);
+});
+
+test('the overview shows the board tiles, a seeded firmware row and a seeded error under Needs attention', async ({ page }) => {
+  // The database is shared and live: assert only on the rows this test seeds (a version no one else reports, and
+  // the seeded device ids), never on totals.
+  const { orgId } = await signUpFresh(page);
+  const version = `${E2E_RELEASE_PREFIX}-dist-${randomUUID().slice(0, 8)}`;
+  const [, errored] = await seedDevices(orgId, 2, version);
+  await getDb().update(devices)
+    .set({ lastError: 'e2e seeded error', lastErrorAt: new Date() })
+    .where(eq(devices.id, errored));
+
+  await page.context().clearCookies();
+  await signInAsSuperAdmin(page);
+  await page.goto('/admin');
+
+  for (const id of ['count-boardsPaired', 'count-boardsOnline', 'count-boardsSeen7d']) {
+    await expect(page.getByTestId(id)).toHaveText(/^\d+$/);
+  }
+  await expect(page.getByTestId('fw-dist')).toBeVisible();
+  const distRow = page.locator(`[data-testid="fw-dist-row"][data-version="${version}"]`);
+  await expect(distRow).toHaveCount(1);
+  await expect(distRow).toHaveAttribute('data-count', '2');
+  await expect(distRow.locator(`[title="${version}"]`)).toHaveText('0.0.0');
+
+  const attention = page.locator(`[data-testid="attention-row"][data-device-id="${errored}"]`);
+  await expect(attention).toHaveCount(1);
+  await expect(attention.locator('[data-kind="error"]')).toHaveText(/^Error \d+[sm] ago: e2e seeded error$/);
 });
 
 // Both pagination specs below need a second page to exist. They used to get

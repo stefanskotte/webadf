@@ -97,6 +97,35 @@ export function releaseVisibleToSql(orgId: SQLWrapper | string): SQL {
       or ${isBench})`;
 }
 
+/**
+ * A release row that is a real release: not a TEST build (notes) and not an e2e version -- what an org outside
+ * FIRMWARE_BENCH_ORGS that is not a test org may see (releaseVisibleToSql's rule for such an org).
+ */
+export function isRealReleaseSql(): SQL {
+  return sql`(${firmwareReleases.version} not like ${TEST_RELEASE_PATTERNS[0]}
+    and ${firmwareReleases.version} not like ${TEST_RELEASE_PATTERNS[1]}
+    and (${firmwareReleases.notes} is null or ${firmwareReleases.notes} not like ${TEST_BUILD_NOTES_PATTERN}))`;
+}
+
+/**
+ * "Current release" (A7 spec §1): the highest-sequence real release, as a one-row select of `version, sequence`
+ * (no row when nothing real is published). Shared by the admin Overview and the admin Firmware tags, so the two can
+ * never disagree on which release is current. Use it as a CTE or a subquery:
+ * `sql\`... = (select sequence from (${currentReleaseSql()}) cur)\``.
+ */
+export function currentReleaseSql(): SQL {
+  return sql`select ${firmwareReleases.version} as version, ${firmwareReleases.sequence} as sequence
+    from ${firmwareReleases} where ${isRealReleaseSql()}
+    order by ${firmwareReleases.sequence} desc limit 1`;
+}
+
+/** The current release (currentReleaseSql), or null when nothing real is published. */
+export async function readCurrentRelease(): Promise<{ version: string; sequence: number } | null> {
+  const { rows } = await getDb().execute<{ version: string; sequence: number }>(currentReleaseSql());
+  const row = rows[0];
+  return row ? { version: row.version, sequence: Number(row.sequence) } : null;
+}
+
 export function listReleasesQuery(db: Db, orgId: string) {
   return db
     .select({
