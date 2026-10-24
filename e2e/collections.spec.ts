@@ -92,6 +92,10 @@ async function dragOnto(
   // the only moment the drop-target highlight exists to be asserted on.
   opts: { whileOver?: () => Promise<void> } = {},
 ) {
+  // Wait for both, rather than measuring whatever is there the instant the page settles: a box read during a
+  // refresh comes back null.
+  await expect(source).toBeVisible();
+  await expect(target).toBeVisible();
   const from = await source.boundingBox();
   const to = await target.boundingBox();
   if (!from || !to) throw new Error('drag: source or target is not visible');
@@ -299,6 +303,10 @@ test('Uncategorized: a card dropped on a rail collection hides at once, keeps it
   await expect(page.getByTestId('game-card')).toHaveCount(2);
   const cardA = cardTitled(page, `HideFile ${run}`);
   const other = cardTitled(page, `Stays ${run}`);
+  // Counted is not shown: a streamed page's cards sit in a hidden boundary until React swaps them in, and a box
+  // read then is null.
+  await expect(cardA).toBeVisible();
+  await expect(other).toBeVisible();
   const aBox = (await cardA.boundingBox())!;
   const otherBox = (await other.boundingBox())!;
 
@@ -333,6 +341,7 @@ test('All titles: a card dropped on a rail collection is hidden during the add a
   await page.goto('/library?collection=all');
   await expect(page.getByTestId('game-card')).toHaveCount(2);
   const cardA = cardTitled(page, `HideAll ${run}`);
+  await expect(cardA).toBeVisible();   // see the Uncategorized test: counted is not shown
   const aBox = (await cardA.boundingBox())!;
 
   await dragOnto(page, cardA, railRow(page, id));

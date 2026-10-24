@@ -613,7 +613,10 @@ test('a press-and-hold inside a card\'s dialog does not drag the card behind it'
     await held.end();
   }
 
+  // The ⋯ popup is portalled out of the card too, and bubbles through it the same way.
   await openTitleMenu(page, gameId);
+  await holdInside(page.getByTestId('title-menu-panel'));
+  await expect(page.getByTestId('title-menu-panel')).toBeVisible();
   await page.getByTestId(`fob-${gameId}`).tap();
   await expect(page.getByTestId('fob-waiting')).toBeVisible();
   await holdInside(page.getByTestId('fob-waiting'));
@@ -775,6 +778,9 @@ test('in a collection at 390px: a finger walked slowly into a card\'s centre lea
   await expect(cards).toHaveCount(3);
   const cardOf = (title: string) => cards.filter({ hasText: title });
   // Two columns: A and B side by side, so a finger walks across from one to the other.
+  // Counted is not shown: streamed cards sit in a hidden boundary until React swaps them in (box null).
+  await expect(cardOf(t('A'))).toBeVisible();
+  await expect(cardOf(t('B'))).toBeVisible();
   const from = (await cardOf(t('A')).boundingBox())!;
   const slot = (await cardOf(t('B')).boundingBox())!;
   expect(Math.abs(from.y - slot.y)).toBeLessThan(2);

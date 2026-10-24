@@ -257,7 +257,7 @@ export function TitleMenu({ game: g, collectionId, fob, drives, view = null }: {
             aria-label={`Delete ${g.title}`}
             variant="destructive"
             onClick={(e) => { e.stopPropagation(); openDialog('delete'); }}
-            className={ITEM}
+            className={`${ITEM} *:[svg]:text-[var(--danger-fg)]`}
             style={{ color: 'var(--danger-fg)' }}
           >
             {Glyph.delete}Delete title

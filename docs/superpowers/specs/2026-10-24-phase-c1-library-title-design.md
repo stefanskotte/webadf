@@ -420,3 +420,5 @@ text is `#8A3A0E` on `#FCE6D6`).
     is mentioned only in Help.
 22. **`getGameDetail` gains `kind`** (one query per title render) for the hero's type pill. Cost: a query.
 23. **InfLibraryTable's caption ("The library opens in Table or Grid…") is a board note, not UI**, and is not built.
+24. **Ruling: the grid card shows the DF0 pill only, never DiskIcon's DF0 badge** — the mark must not jump when the
+    board confirms; only the pill carries the amber 'DF0…' state and hold tooltip — cost: none. (Task 2 fix round 1.)

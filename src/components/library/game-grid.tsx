@@ -102,16 +102,18 @@ function CardBody({ game: g, collectionId, fob, drives }: {
       <HoldsLabel game={g} drives={drives} />
       <div className="flex min-w-0 flex-col gap-0.5 px-3.5 pb-1 pt-3">
         <TitleName game={g} className="truncate text-[14px] font-semibold" />
-        <span className="truncate text-[13px]" style={{ color: 'var(--muted-2)' }}>{titleByline(g)}</span>
+        {/* One line tall even when empty, so footers line up across a row. */}
+        <span className="min-h-[1lh] truncate text-[13px]" style={{ color: 'var(--muted-2)' }}>{titleByline(g)}</span>
       </div>
-      <div className="flex items-center gap-1.5 pb-2.5 pl-3.5 pr-2 pt-1.5">
+      <div className="mt-auto flex min-w-0 items-center gap-1.5 pb-2.5 pl-3.5 pr-2 pt-1.5">
+        {/* Pill and count may shrink and truncate on a 2-column phone card; the ⋯ never does, so it stays inside. */}
         {tag && (
-          <span data-testid="grid-kind" className="shrink-0 rounded-full px-2 py-0.5 text-[12px] font-medium"
+          <span data-testid="grid-kind" className="min-w-0 truncate rounded-full px-2 py-0.5 text-[12px] font-medium"
                 style={{ background: tag.bg, color: tag.fg }}>
             {g.kind}
           </span>
         )}
-        <span data-testid="grid-disks" className="shrink-0 font-mono text-[12px]" style={{ color: 'var(--muted-2)' }}>
+        <span data-testid="grid-disks" className="min-w-0 truncate font-mono text-[12px]" style={{ color: 'var(--muted-2)' }}>
           {g.diskCount === 1 ? '1 disk' : `${g.diskCount} disks`}
         </span>
         <span className="flex-1" />

@@ -130,6 +130,20 @@ test('the ⋯ menu and its items neither navigate nor start a drag, and its dial
   await expect(dialog).toHaveCount(0);
   await expect(page.getByTestId(`title-menu-${gameId}`)).toBeFocused();
   await expect(page).toHaveURL(/\/library$/);
+
+  // From the keyboard: Delete title opens its dialog with focus inside it (on Cancel, the safe choice), Escape
+  // closes it, and focus is back on ⋯ -- not lost to <body>.
+  await page.keyboard.press('Enter');
+  await expect(page.getByTestId('title-menu-panel')).toBeVisible();
+  await page.keyboard.press('End');
+  await expect(page.getByTestId(`delete-game-${gameId}`)).toBeFocused();
+  await page.keyboard.press('Enter');
+  await expect(page.getByTestId('delete-dialog')).toBeVisible();
+  await expect(page.getByTestId('delete-cancel')).toBeFocused();
+  await page.keyboard.press('Escape');
+  await expect(page.getByTestId('delete-dialog')).toHaveCount(0);
+  await expect(page.getByTestId(`title-menu-${gameId}`)).toBeFocused();
+  await expect(card(page, title)).toHaveCount(1);
 });
 
 test("search shows each title's collection, or Uncategorized", async ({ page }) => {

@@ -1,7 +1,7 @@
 'use client';
 import { Trash2 } from 'lucide-react';
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useRouter } from 'next/navigation';
 import { toast } from 'sonner';
@@ -90,6 +90,15 @@ export function DeleteDialog({
 }: DeleteDialogContentProps & { open: boolean; onClose: () => void; }) {
   const router = useRouter();
   const [busy, setBusy] = useState(false);
+
+  // Escape closes it, as FobDialog and CardMountDialog do -- and not mid-delete, like Cancel. A window listener,
+  // so it works wherever focus is; `onClose` is a dependency so a fresh one from the caller is the one called.
+  useEffect(() => {
+    if (!open) return;
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape' && !busy) onClose(); };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [open, busy, onClose]);
 
   async function confirm() {
     setBusy(true);
@@ -185,6 +194,9 @@ export function DeleteDialog({
           <button
             type="button"
             data-testid="delete-cancel"
+            // Focus starts inside the dialog, on the choice that does no harm. Without it, a dialog opened from
+            // the ⋯ menu (which hands focus over rather than taking it back) left focus on <body>.
+            autoFocus
             disabled={busy}
             onClick={() => onClose()}
             className="rounded-full px-4 py-1.5 text-[12.5px] font-semibold disabled:opacity-50"

@@ -83,8 +83,9 @@ function DriveBadge({ holds, diskCount }: { holds: Hold[] | undefined; diskCount
  */
 export function Cover({ game: g, holds }: { game: GameListItem; holds: Hold[] | undefined }) {
   const color = titleDiskColor(g);
-  const mounted = (holds ?? []).some((h) => h.state === 'mounted');
-  const disk = { color, set: diskSetLine(g), title: g.title, hd: g.hasHd, stack: g.diskCount, mounted };
+  // mounted={false} always: the card's one DF0 mark is the pill (DriveBadge), which also carries the amber `DF0…`
+  // state and the hold tooltip. The icon's own badge would add a second mark that appears only on confirmation.
+  const disk = { color, set: diskSetLine(g), title: g.title, hd: g.hasHd, stack: g.diskCount, mounted: false };
   return (
     <div className="relative m-2 mb-0 overflow-hidden rounded-[10px]"
          style={{ aspectRatio: '4 / 5', background: stageFor(color) }}>

@@ -32,7 +32,7 @@ export const HELP_TOPICS = {
     body: (
       <>
         <p>
-          <strong>Grid or table.</strong> The grid and table buttons at the top of the page switch views and keep the
+          <strong>Grid or table.</strong> The grid and table buttons at the top switch views and keep the
           collection you are in. <em>Library opens in</em> under Preferences in Settings picks the view the library starts in: the
           grid unless you change it.
         </p>
@@ -48,9 +48,10 @@ export const HELP_TOPICS = {
           page you are on. In the table, the folders are on the first page.
         </p>
         <p>
-          <strong>Controls.</strong> A card&apos;s or a row&apos;s <em>⋯</em> menu has, in order: mount or eject,
-          write to an NFC tag, version history, move to a collection, remove from the collection (inside one) and
-          delete. A disk in a drive shows a DF0 pill; a disk made here can be renamed in place.
+          <strong>Controls.</strong> A card&apos;s or a row&apos;s <em>⋯</em> menu has, in order: mount or eject
+          (with a board), write to an NFC tag (with a reader), version history, move to a collection, remove from
+          the collection (inside one) and delete. A disk in a drive shows a DF0 pill on its picture; one made here
+          can be renamed in place.
         </p>
         <p>
           <strong>Filing.</strong> Drag a card or a row onto a collection in the list, or use{' '}

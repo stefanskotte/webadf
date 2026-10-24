@@ -98,7 +98,7 @@ export function MoveToCollectionDialog({ game: g, collectionId, open, onClose }:
               </ul>
             )}
             <div className="flex justify-end">
-              <button type="button" disabled={busy} onClick={() => onClose()}
+              <button type="button" disabled={busy} onClick={() => onClose()} autoFocus={targets.length === 0}
                       className="rounded-full px-4 py-1.5 text-[12.5px] font-semibold disabled:opacity-50" style={{ color: 'var(--muted)' }}>
                 Cancel
               </button>
