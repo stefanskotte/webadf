@@ -1480,11 +1480,21 @@ separately.
 
 **Current order (re-checked 2026-10-24):** (1) the **WebFloppy redesign** per its approved roadmap
 `docs/superpowers/specs/2026-10-23-webfloppy-redesign-roadmap-design.md` -- Phase A (missing features in today's look;
-**A1-A5 SHIPPED 2026-10-23; A6 Upload (df042b6) and A7 Admin (4c37c0e, migration 0049) SHIPPED 2026-10-24** -- Phase A DONE, see below), then Phase B (design foundation + rename; **SHIPPED 2026-10-24, merge 77bc163**), then Phase C (layouts area by area) -- the operator authorized B and C unattended 2026-10-24 (design calls recorded as rulings in each spec); (2) B10 on the A4000D when it is on the bench; (3) rev C radio: the LWB+ breadboard test when the Mouser parts
+**A1-A5 SHIPPED 2026-10-23; A6 Upload (df042b6) and A7 Admin (4c37c0e, migration 0049) SHIPPED 2026-10-24** -- Phase A DONE, see below), then Phase B (design foundation + rename; **SHIPPED 2026-10-24, merge 77bc163**), then Phase C (layouts area by area; **C1 Library + Title SHIPPED 2026-10-24, merge 1d930b6**; next C2 Devices) -- the operator authorized B and C unattended 2026-10-24 (design calls recorded as rulings in each spec); (2) B10 on the A4000D when it is on the bench; (3) rev C radio: the LWB+ breadboard test when the Mouser parts
 arrive. The
 table's deferred minors are DONE (3ce: M1, M3-M6, M8 fixed; M7 left by the review's ruling). SHIPPED today: the table view with folders, the core1 watchdog
 (1.21.0), uploads surviving a 5-minute outage (1.21.1 + Transfer 2.2), library paging (all 3ce). Entries below marked SHIPPED are kept for their history only.
 
+- **Phase C1 Library + Title -- SHIPPED 2026-10-24** (merge 1d930b6; spec `docs/superpowers/specs/2026-10-24-phase-c1-library-title-design.md`,
+  plan `docs/superpowers/plans/2026-10-24-phase-c1-library-title.md`; 24+ rulings in the spec and ledger). Card actions moved
+  into a portalled ⋯ menu (`title-menu-<id>`, controlled Mount/Fob/Move/Delete dialogs), 4:5 cards with DF0 pill only, table
+  restyle (DiskIcon rows, folder glyphs, DF0 pill, `--mounted-bg`), title hero (`title-pills`, edit panel portal), disk rows
+  (format pills, protect switch, DiskIcon `drive` DF0/DF1), empty/loading/state cards, `hasHfe` on list rows (HFE grey).
+  disk-sets "in a collection" e2e fixed (streamed cards: wait visible before boundingBox; 1204 hit dnd-kit auto-scroll).
+  Deferred minors: aria-labels lack visible menu text (spec kept labels), hex literals beside tokens, dead CardMountDialogOwn /
+  TitleControls pass-through, rail count inside its link, focus to body after menu Delete, row colour hashes disk id vs
+  card game id, ⋯/grip touch targets below md. Pre-existing at merge: lint react-hooks/purity in admin/page.tsx and
+  admin/scan/page.tsx (area 6), mobile:133, time-machine 212/268, display-layout 287.
 - **Phase B foundation -- SHIPPED 2026-10-24** (merge 77bc163; spec `docs/superpowers/specs/2026-10-24-phase-b-foundation-design.md`;
   plan `docs/superpowers/plans/2026-10-24-phase-b-foundation.md`). Cream/ink/amber palette on the existing token names (AA-safe
   #6E6657 muted-2 and #A84C16 amber text), Bricolage Grotesque/Geist/Geist Mono via next/font (self-hosted at build), flat
