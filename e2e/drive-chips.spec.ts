@@ -304,6 +304,15 @@ test('the chips are centred between the wordmark and the pill, and stay centred 
     }).toBe(true);
   });
 
+test('the first-paint pill estimate matches the real pill at 1280', async ({ page }) => {
+  await signUpFresh(page);
+  await page.setViewportSize({ width: 1280, height: 800 });
+  await page.goto('/library');
+  const est = Number(await page.getByTestId('header-start').getAttribute('data-pill-estimate'));
+  const real = await page.locator('header nav').evaluate((n) => n.getBoundingClientRect().width);
+  expect(Math.abs(real - est), `estimate ${est}, measured ${real}`).toBeLessThanOrEqual(2);
+});
+
 test('the "+k" chip shows exactly one number, the right one, at every chip width', async ({ page, request }) => {
   test.setTimeout(60_000);
   await signUpFresh(page);

@@ -156,15 +156,20 @@ export const MAX_CHIPS = 3;
  * How many chips fit beside the wordmark at a viewport width (0 below xl,
  * where the compact "Drives" control is used instead).
  *
- * Measured 2026-09-25 in Chromium, not guessed. The chips start at x=132,
- * after the wordmark, and must stop short of the nav pill, which is centred
- * on the VIEWPORT (the layout's comment on why) and 248px wide -- 322px with
- * the Admin item. A chip with a long name and a long title is ~187px, the
- * "+k" chip ~50-65px. So, with Admin (the tighter case):
- *   - 1280 (xl):   pill at 479 -> ONE chip + "+k" ends at 373
- *   - 1536 (2xl):  pill at 607 -> TWO + "+k" end at 566
- *   - 1920:        pill at 799 -> THREE + "+k" end at 775, the design's maximum
- * Two at 1280 would end near 560, well into the pill.
+ * Measured 2026-09-25 in Chromium, not guessed; re-measured 2026-10-24 for
+ * the Phase B header (Geist, 18px Bricolage wordmark, segmented nav). The
+ * chips start 16px after the wordmark (x=142 with "webadf", x=168 with
+ * "webfloppy") and must stop short of the nav pill, which is centred on the
+ * VIEWPORT (the layout's comment on why) and 317px wide -- 394px with the
+ * Admin item. A chip with a long name, a long title and a WP tag is ~184px,
+ * the "+k" chip ~45-48px. So, with Admin (the tighter case) and "webfloppy":
+ *   - 1280 (xl):   pill at 443 -> ONE chip + "+k" ends at 407
+ *   - 1536 (2xl):  pill at 571 -> TWO + "+k" end at 597
+ *   - 1920:        pill at 763 -> THREE + "+k" end at 785, the design's maximum
+ * At 1536 and 1920 that worst case (Admin, every chip at both caps) now
+ * reaches ~25px under the pill; without Admin it clears (pill at 609 / 801).
+ * Typical chips (short disk text) clear everywhere: drive-chips.spec measures
+ * 1280 and 1920. Two at 1280 would end near 600, well into the pill.
  * The CSS in drive-chips.tsx mirrors these breakpoints literally (Tailwind
  * cannot read them from here); the e2e layout test proves 1280.
  */

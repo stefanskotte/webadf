@@ -57,22 +57,26 @@ export default async function AppLayout({
             search box plus sign-out take line two full-width. At 390px they do
             not fit on one line, and nowrap would push the sign-out button off
             the right edge rather than shrinking anything. */}
-        <header className="relative flex flex-wrap items-center gap-3 px-4 pt-4 sm:flex-nowrap sm:gap-4 sm:px-7">
+        <header
+          data-testid="app-header"
+          className="relative flex flex-wrap items-center gap-3 border-b px-4 py-3 sm:h-[72px] sm:flex-nowrap sm:gap-4 sm:px-7 sm:py-0"
+          style={{ background: "var(--surface)", borderColor: "var(--line)" }}
+        >
           {/* The wordmark and, after it, a lane that centres the drive chips
               between the wordmark and the pill -- see HeaderStart for the
               geometry. The estimate is only the first paint's; the pill is
               measured on the client. */}
-          <HeaderStart pillEstimate={showAdmin ? 386 : 312}>
+          <HeaderStart pillEstimate={showAdmin ? 394 : 317}>
             {/* The wordmark is the way home. Every other shell in the app has an
                 explicit way back to the library; this one only had the nav pill,
                 and the mark is where people click first (operator, 2026-09-21). */}
             <Link
               href="/library"
               data-testid="wordmark-home"
-              className="flex items-center gap-2.5 text-base font-bold tracking-[-0.02em]"
-              style={{ color: "var(--on-dark)" }}
+              className="flex items-center gap-2.5 text-[18px] font-bold tracking-[-0.02em]"
+              style={{ color: "var(--ink)", fontFamily: "var(--font-display)" }}
             >
-              <Logo size={22} />
+              <Logo size={24} />
               webadf
             </Link>
             {/* Beside the wordmark, in flow, rather than beside the pill: the
@@ -116,12 +120,11 @@ export default async function AppLayout({
             // The bar takes the clicks back below sm, where it is opaque
             // enough to look like a surface and nothing sits behind it.
             //
-            // The scrim is dark, not one of the white --glass-* surfaces:
-            // the pill's text is the light --on-dark ramp, tuned against the
-            // gradient's dark TOP band, and the bottom of the viewport is
-            // where the gradient has reached its pale end. Glass there would
-            // leave the nav labels at roughly 1.5:1.
-            className="pointer-events-auto fixed inset-x-0 bottom-0 z-40 flex items-center justify-center border-t border-(--nav-scrim-hairline) bg-(--nav-scrim) px-3 pt-2 pb-[calc(0.5rem+env(safe-area-inset-bottom))] backdrop-blur-md sm:pointer-events-none sm:absolute sm:top-4 sm:bottom-auto sm:z-auto sm:h-[34px] sm:border-0 sm:bg-transparent sm:p-0 sm:backdrop-blur-none"
+            // sm:top-[19px] is (72 - 34) / 2: the 72px bar's middle. Below sm
+            // the bar's look comes from --nav-scrim / --nav-scrim-hairline, a
+            // light surface now like the header itself, carrying the same
+            // segmented nav (ink on the track).
+            className="pointer-events-auto fixed inset-x-0 bottom-0 z-40 flex items-center justify-center border-t border-(--nav-scrim-hairline) bg-(--nav-scrim) px-3 pt-2 pb-[calc(0.5rem+env(safe-area-inset-bottom))] backdrop-blur-md sm:pointer-events-none sm:absolute sm:top-[19px] sm:bottom-auto sm:z-auto sm:h-[34px] sm:border-0 sm:bg-transparent sm:p-0 sm:backdrop-blur-none"
           >
             {/* The pill scrolls inside this clamp rather than the bar
                 scrolling around it: a justify-center scroll container puts
@@ -134,7 +137,7 @@ export default async function AppLayout({
           </div>
           {/* Full-width on its own wrapped line below sm, so the search box
               has somewhere to grow into; ml-auto is inert at that width. */}
-          <div className="ml-auto flex w-full items-center gap-4 sm:w-auto">
+          <div className="ml-auto flex w-full items-center gap-2 sm:w-auto">
             <SearchBox />
             <AboutLink />
             <SettingsLink />

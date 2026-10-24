@@ -1,13 +1,17 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 106 108" width="64" height="64">
   <!--
-    The webadf mark, small-size variant: the slot and the label's ruled lines
-    are removed and the keyline goes to 7, because a sub-pixel outline is the
-    first thing a browser tab throws away. Kept in step with
-    src/components/shell/logo.tsx by hand -- there is no build step generating
-    this, and there does not need to be for three shapes.
+    The WebFloppy mark, small-size variant: the shutter's slot is removed,
+    because at tab size it closes up into mud. Kept in step with
+    src/components/shell/logo.tsx by hand; there is no build step generating
+    this, and there does not need to be for eight shapes.
   -->
-  <path d="M12 5 H43.5 L59 20.5 V52 A7 7 0 0 1 52 59 H12 A7 7 0 0 1 5 52 V12 A7 7 0 0 1 12 5 Z"
-        fill="#16232f" stroke="#c8cfd3" stroke-width="7" stroke-linejoin="round" paint-order="stroke"/>
-  <path d="M22 5 H41 V23 H22 Z" fill="#f5822e"/>
-  <rect x="14" y="33" width="36" height="20" rx="3.5" fill="#c8cfd3"/>
+  <g transform="translate(0 6)">
+    <path d="M5 0 H88 L100 12 V97 Q100 102 95 102 H5 Q0 102 0 97 V5 Q0 0 5 0 Z" fill="#24211B"/>
+    <rect x="25" y="0" width="52" height="35" rx="2" fill="#D6D9DD"/>
+    <path d="M12 48 H88 V102 H12 Z" fill="#FBF8F1"/>
+    <rect x="20" y="58" width="15" height="6" rx="1" fill="#D9453A"/>
+    <rect x="37" y="58" width="15" height="6" rx="1" fill="#EE8A2A"/>
+    <rect x="54" y="58" width="15" height="6" rx="1" fill="#4F9D4A"/>
+    <rect x="71" y="58" width="10" height="6" rx="1" fill="#2F6FB5"/>
+  </g>
 </svg>

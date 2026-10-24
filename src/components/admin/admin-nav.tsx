@@ -2,7 +2,7 @@
 import { Link } from '@/components/shell/link';
 import { usePathname } from 'next/navigation';
 
-// Mirrors the app shell's TopNav styling, but over the admin routes. Exact
+// The app shell's TopNav look (.seg / .seg-item), over the admin routes. Exact
 // matching on href, not startsWith: '/admin' is a prefix of every other entry,
 // so startsWith would light up Overview on every other page.
 const ITEMS = [
@@ -17,14 +17,11 @@ export function AdminNav() {
   const pathname = usePathname();
   return (
     <nav
+      aria-label="Admin"
       // w-max below sm, matching TopNav: inside the layout's bottom bar the
       // pill is in a clamped scroll container, and at auto width its items
-      // would spill outside the pill's own border rather than widen it.
-      className="flex w-max items-center gap-[3px] rounded-full border p-1 sm:w-auto"
-      style={{
-        background: 'rgb(255 255 255 / 0.12)',
-        borderColor: 'rgb(255 255 255 / 0.16)',
-      }}
+      // would spill outside the track rather than widen it.
+      className="seg w-max sm:w-auto"
     >
       {ITEMS.map((item) => {
         const active = pathname === item.href;
@@ -33,12 +30,7 @@ export function AdminNav() {
             key={item.href}
             href={item.href}
             aria-current={active ? 'page' : undefined}
-            className="flex h-[34px] items-center rounded-full px-4 text-[13px] transition-colors"
-            style={
-              active
-                ? { background: 'var(--on-dark)', color: '#16273a', fontWeight: 600 }
-                : { color: 'rgb(233 240 244 / 0.78)', fontWeight: 500 }
-            }
+            className="seg-item whitespace-nowrap"
           >
             {item.label}
           </Link>

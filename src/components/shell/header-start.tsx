@@ -24,9 +24,10 @@ import { useLayoutEffect, useRef, useState } from 'react';
  * every resize, so the chips would lag a frame behind the pill while a window
  * is dragged; its width changes only when its contents do.
  *
- * `pillEstimate` is the pill's width as measured on 2026-10-08 at 1280px
- * (312px, 386px with Admin; the Help item added 64px since 2026-09-26), used ONLY for the server-rendered first paint so the chips do
- * not jump sideways on hydration; the ResizeObserver replaces it with the
+ * `pillEstimate` is the pill's width as measured on 2026-10-24 at 1280px in
+ * Chromium (317px, 394px with Admin: the segmented nav in Geist 14px; it was
+ * 312/386 in Space Grotesk 13px), used ONLY for the server-rendered first
+ * paint so the chips do not jump sideways on hydration; the ResizeObserver replaces it with the
  * real width before the first client paint (layout effect), and again
  * whenever the pill changes size (web font swap, labels). Server and client
  * start from the same number, so hydration sees identical markup.
@@ -61,6 +62,7 @@ export function HeaderStart({ pillEstimate, children }: { pillEstimate: number; 
     <div
       ref={ref}
       data-testid="header-start"
+      data-pill-estimate={pillEstimate}
       className="flex flex-1 items-center gap-3 sm:max-w-[calc(50%-var(--nav-pill-w)/2-1rem)] sm:gap-4"
       style={{ '--nav-pill-w': `${pillWidth}px` } as React.CSSProperties}
     >

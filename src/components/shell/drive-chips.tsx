@@ -144,13 +144,13 @@ function MoreList({ chips }: { chips: DriveChip[] }) {
 // last. gap-1/px-2 rather than roomier values: each 4px here is 4px per chip
 // of a width budget chipSlots is measured against.
 const CHIP_CLASS =
-  'h-[30px] max-w-full items-center gap-1 rounded-full border px-2 text-[12px] outline-none focus-visible:ring-2 focus-visible:ring-white/60';
-// The TopNav pill's own translucent-white treatment, so the chips read as
-// part of the same header rather than as cards dropped onto it.
+  'h-9 max-w-full items-center gap-1 rounded-[10px] border px-2 text-[12px] outline-none focus-visible:ring-2 focus-visible:ring-[color:var(--ring)]';
+// The board's drive chip: surface-2 on the header's surface, with a hairline,
+// so it reads as a control sitting in the bar rather than a card on it.
 const CHIP_STYLE = {
-  background: 'rgb(255 255 255 / 0.12)',
-  borderColor: 'rgb(255 255 255 / 0.16)',
-  color: 'var(--on-dark)',
+  background: 'var(--surface-2)',
+  borderColor: 'var(--line)',
+  color: 'var(--ink)',
 } as const;
 
 function StatusDot({ online }: { online: boolean }) {
@@ -160,8 +160,8 @@ function StatusDot({ online }: { online: boolean }) {
     <>
       <span aria-hidden className="h-[7px] w-[7px] shrink-0 rounded-full"
             style={online
-              ? { background: 'var(--online-dot)' }
-              : { border: '1.5px solid rgb(233 240 244 / 0.7)' }} />
+              ? { background: 'var(--online-dot)', boxShadow: '0 0 0 3px rgb(63 191 85 / 0.18)' }
+              : { border: '1.5px solid var(--muted)' }} />
       <span className="sr-only">{online ? 'Online' : 'Offline'}</span>
     </>
   );
@@ -191,13 +191,13 @@ function Chip({ chip, className }: { chip: DriveChip; className: string }) {
         <span className="max-w-[3.5rem] truncate font-semibold" data-testid={`drive-chip-name-${chip.id}`}>
           {chip.shortName}
         </span>
-        <span className="max-w-[3.5rem] truncate" style={{ color: 'var(--on-dark-muted)' }}
+        <span className="max-w-[3.5rem] truncate font-mono" style={{ color: 'var(--muted)' }}
               data-testid={`drive-chip-disk-${chip.id}`}>
           {diskText(chip)}
         </span>
         {tag && (
-          <span className="shrink-0 rounded border px-1 font-mono text-[9.5px] font-semibold leading-[14px]"
-                style={{ borderColor: 'rgb(255 255 255 / 0.3)' }}
+          <span className="shrink-0 rounded-[5px] px-1 font-mono text-[9.5px] font-semibold leading-[14px]"
+                style={{ background: 'var(--track)', color: 'var(--muted)' }}
                 data-testid={`drive-chip-wp-${chip.id}`}>
             {tag}
           </span>
@@ -220,11 +220,9 @@ function MenuPopup({ testId, align, children }: { testId: string; align: 'start'
       // for a chip is narrower than a disk title. A fixed width that never
       // exceeds the viewport less its gutters instead: Base UI will not pull
       // an over-wide popup back on screen by itself.
-      // backdrop-blur: --glass-strong is 80% white, and over the library's
-      // cards a multi-board list (the phone's) let the text behind show
-      // through its own -- seen in the first screenshot, not predicted.
-      className="w-64 max-w-[calc(100vw-2rem)] backdrop-blur-xl"
-      style={{ background: 'var(--glass-strong)', color: 'var(--ink)', border: '1px solid var(--hairline-strong)' }}
+      // Opaque --surface, so nothing on the page behind shows through.
+      className="w-64 max-w-[calc(100vw-2rem)] rounded-2xl"
+      style={{ background: 'var(--surface)', color: 'var(--ink)', border: '1px solid var(--line)', boxShadow: 'var(--shadow-card)' }}
     >
       {children}
     </DropdownMenuContent>
@@ -235,7 +233,7 @@ function MenuPopup({ testId, align, children }: { testId: string; align: 'start'
 function DriveList({ chips }: { chips: DriveChip[] }) {
   return chips.map((c, i) => (
     <div key={c.id}>
-      {i > 0 && <DropdownMenuSeparator className="my-1.5" style={{ background: 'var(--hairline-strong)' }} />}
+      {i > 0 && <DropdownMenuSeparator className="my-1.5" style={{ background: 'var(--line)' }} />}
       <DriveEntry chip={c} />
     </div>
   ));
@@ -363,7 +361,7 @@ function DriveEntry({ chip }: { chip: DriveChip }) {
       {/* The divider keeps Eject -- the one action that reaches out and pulls
           a disk from under a running Amiga -- from sitting flush against the
           other two. No confirmation, matching the Eject button on /devices. */}
-      <DropdownMenuSeparator style={{ background: 'var(--hairline-strong)' }} />
+      <DropdownMenuSeparator style={{ background: 'var(--line)' }} />
       <DropdownMenuItem
         data-testid={`drive-eject-${chip.id}`}
         disabled={!chip.canEject}

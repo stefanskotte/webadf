@@ -32,15 +32,13 @@ export function TopNav({ showAdmin = false }: { showAdmin?: boolean }) {
   const items = showAdmin ? [...ITEMS, ADMIN_ITEM] : ITEMS;
   return (
     <nav
+      aria-label="Main"
       // w-max below sm so the pill stays as wide as its items when the
       // layout's bottom bar clamps it and scrolls: at the shell's own width
-      // the items would spill outside the pill's border instead of taking it
-      // with them. Four items (with Admin) already fill most of 390px.
-      className="flex w-max items-center gap-[3px] rounded-full border p-1 sm:w-auto"
-      style={{
-        background: "rgb(255 255 255 / 0.12)",
-        borderColor: "rgb(255 255 255 / 0.16)",
-      }}
+      // the items would spill outside the track instead of taking it with
+      // them. The look is .seg / .seg-item (globals.css): muted on the
+      // track, the current page a raised surface in ink.
+      className="seg w-max sm:w-auto"
     >
       {items.map((item) => {
         const active = pathname.startsWith(item.href);
@@ -49,12 +47,7 @@ export function TopNav({ showAdmin = false }: { showAdmin?: boolean }) {
             key={item.href}
             href={item.href}
             aria-current={active ? "page" : undefined}
-            className="flex h-[34px] items-center rounded-full px-4 text-[13px] transition-colors"
-            style={
-              active
-                ? { background: "var(--on-dark)", color: "#16273a", fontWeight: 600 }
-                : { color: "rgb(233 240 244 / 0.78)", fontWeight: 500 }
-            }
+            className="seg-item whitespace-nowrap"
           >
             {item.label}
           </Link>
