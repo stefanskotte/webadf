@@ -374,3 +374,23 @@ test('a confirmed title\'s row shows the DF0 pill and the ring, and a folder row
   await expect(page).toHaveURL(new RegExp(`collection=${coll}`));
   await expect(page.getByTestId('up-row')).toBeVisible();
 });
+
+// Final review M1 (spec §4): an HFE title's disk is grey in the grid and the table, as on its own page. This title has
+// no TOSEC kind, so without the HFE rule it would be cream, never grey.
+test('an HFE-only title draws a grey disk in the grid and in the table', async ({ page }) => {
+  const run = runTag();
+  const u = await signUpFresh(page);
+  const t = `HfeGrey ${run}`;
+  await seedDisk(u.orgId, { title: t, diskNo: 1, sha256: sha(`hfegrey-${run}`), sizeBytes: 2_049_024, imageFormat: 'hfe' });
+  const GREY = '#8A8D93';
+
+  await page.goto('/library?view=grid');
+  const card = page.getByTestId('game-card').filter({ hasText: t });
+  await expect(card).toBeVisible();
+  await expect(card.locator(`svg path[fill="${GREY}"]`).first()).toBeAttached();
+
+  await page.goto('/library?view=table');
+  const r = row(page, t);
+  await expect(r).toBeVisible();
+  await expect(r.locator(`svg path[fill="${GREY}"]`).first()).toBeAttached();
+});

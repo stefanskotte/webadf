@@ -40,4 +40,12 @@ describe('TitleHero', () => {
   it('shows the drive pill when a disk is held', () => {
     expect(render({ mounted: 'DF0 · ADF' })).toMatch(/data-testid="title-pill-drive"[^>]*>[^<]*(<[^>]*>)*DF0 · ADF/);
   });
+
+  it('draws the drive mark once: the pill, never a badge on the disk icon (Ruling 24)', () => {
+    for (const mounted of ['DF0 · ADF', 'DF1 · ADF']) {
+      const html = render({ mounted });
+      expect(html.match(/DF[01]/g)).toHaveLength(1);
+      expect(html).toContain('data-testid="title-pill-drive"');
+    }
+  });
 });

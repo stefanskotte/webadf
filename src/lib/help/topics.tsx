@@ -38,20 +38,20 @@ export const HELP_TOPICS = {
         </p>
         <p>
           <strong>Folders.</strong> In the table, the library&apos;s first page lists each collection as a folder,
-          with how many titles and disks it holds, before the titles that are in no collection. Open a folder to
+          before the titles that are in no collection. Open a folder to
           see its titles; <em>↑ Library</em> at the top takes you back. <em>All titles</em> has the same way back.
         </p>
         <p>
           <strong>Pages.</strong> The grid and the table show your titles a page at a time: 48 unless you change it,
           with <em>Per page</em> under the list or <em>Titles per page</em> under Preferences in Settings (24, 48, 96,
           192 or All). Changing it, or the sort, starts again at page 1. Switching between grid and table keeps the
-          page you are on. In the table, the folders are on the first page.
+          page you are on.
         </p>
         <p>
           <strong>Controls.</strong> A card&apos;s or a row&apos;s <em>⋯</em> menu has, in order: mount or eject
           (with a board), write to an NFC tag (with a reader), version history, move to a collection, remove from
-          the collection (inside one) and delete. A disk in a drive shows a DF0 pill on its picture; one made here
-          can be renamed in place.
+          the collection (inside one) and delete. A disk in a drive shows a DF0 pill: in the grid on the card&apos;s picture, in the table after
+          the name, amber <em>DF0…</em> while it is fetching. A title made here can be renamed in place.
         </p>
         <p>
           <strong>Filing.</strong> Drag a card or a row onto a collection in the list, or use{' '}

@@ -13,6 +13,7 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
+import { MENU_ITEM_HIGHLIGHT } from '@/components/ui/menu-item-look';
 import { AddDisksDialog } from './add-disks-dialog';
 
 export interface DiskSetControls {
@@ -26,7 +27,7 @@ export interface DiskSetControls {
 // The drive-chip menu's item look (drive-chips.tsx ITEM_CLASS), with a 44px
 // row below `sm` so a finger can hit it.
 const ITEM_CLASS =
-  'min-h-11 px-2 py-1 text-[13px] sm:min-h-8 focus:bg-[var(--surface-2)] data-highlighted:bg-[var(--surface-2)]';
+  `min-h-11 px-2 py-1 text-[13px] sm:min-h-8 ${MENU_ITEM_HIGHLIGHT}`;
 
 // The 38 px ghost look the other icon buttons on the row wear (44 px below `sm`).
 const TRIGGER_CLASS = 'grid h-11 w-11 shrink-0 place-items-center rounded-[10px] transition-colors hover:bg-[var(--surface-2)] sm:h-[38px] sm:w-[38px]';

@@ -17,6 +17,7 @@ export function DiskIcon({
   wp = false,
   stack = 1,
   mounted = false,
+  drive = 'DF0',
   set = '',
   title = '',
   className,
@@ -27,6 +28,8 @@ export function DiskIcon({
   wp?: boolean;
   stack?: number;
   mounted?: boolean;
+  /** Which drive the badge names; the drive that actually holds the disk. */
+  drive?: 'DF0' | 'DF1';
   set?: string;
   title?: string;
   className?: string;
@@ -120,7 +123,7 @@ export function DiskIcon({
           fontWeight: 600, color: '#9BEA9F',
         }}>
           <span style={{ width: '6px', height: '6px', borderRadius: '50%', background: '#3FBF55', boxShadow: '0 0 5px #3FBF55' }} />
-          DF0
+          {drive}
         </span>
       )}
     </div>

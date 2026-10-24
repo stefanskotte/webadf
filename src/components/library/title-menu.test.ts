@@ -10,7 +10,7 @@ const { TitleMenu } = await import('./title-menu');
 const game: GameListItem = {
   id: 'g1', title: 'Lemmings', year: 1991, publisher: 'Psygnosis', diskCount: 1, coverAssetId: null,
   authored: false, diskId: 'd1', holderName: null, coverUrl: null, kind: 'Game', sizeBytes: 901120,
-  sha256Prefix: null, hasHd: false,
+  sha256Prefix: null, hasHd: false, hasHfe: false,
 };
 
 describe('TitleMenu', () => {

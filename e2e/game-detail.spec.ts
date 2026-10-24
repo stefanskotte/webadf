@@ -387,3 +387,33 @@ test('a disk the board has confirmed is marked on its row, and the hero shows th
   await expect(page.getByTestId(`disk-${diskId}`)).toHaveAttribute('data-mounted', 'true');
   await expect(page.getByTestId('title-pill-drive')).toContainText('DF0');
 });
+
+// Final review I1: a disk held only in DF1 names DF1 on its row icon, never DF0; the hero draws the drive once, in
+// the pill (Ruling 24), so it has no icon badge at all.
+test('a disk held in DF1 is badged DF1 on its row, and the hero pill says DF1', async ({ page, request }) => {
+  const { orgId } = await signUpFresh(page);
+  const { deviceId } = await pairDevice(page, request, 'Df1 Mark Device');
+  const tag = runTag();
+  const { gameId, diskId } = await seedDisk(orgId, { title: `Df1Marked-${tag}`, diskNo: 1, sha256: sha(tag) });
+  await setDevice(deviceId, {
+    secondDrive: 'df1', df1DiskId: diskId, df1Sha256: sha(tag), lastSeenAt: new Date(),
+  });
+
+  await page.goto(`/games/${gameId}`);
+  const row = page.getByTestId(`disk-${diskId}`);
+  await expect(row).toHaveAttribute('data-mounted', 'true');
+  await expect(row.locator('svg ~ span', { hasText: /^DF[01]$/ })).toHaveText('DF1');
+  await expect(page.getByTestId('title-pill-drive')).toContainText('DF1');
+  // The hero's disk icon carries no badge of its own: the pill is the one mark.
+  await expect(page.getByTestId('title-art').getByText(/^DF[01]$/)).toHaveCount(0);
+
+  // A DF0 hold still reads DF0 on the row.
+  await setDevice(deviceId, {
+    secondDrive: 'off', df1DiskId: null, df1Sha256: null,
+    desiredGameId: gameId, desiredDiskId: diskId, desiredSha256: sha(tag), desiredDiskNo: 1,
+    mountedGameId: gameId, mountedDiskId: diskId, mountedSha256: sha(tag), mountedDiskNo: 1, lastSeenAt: new Date(),
+  });
+  await page.reload();
+  await expect(row.locator('svg ~ span', { hasText: /^DF[01]$/ })).toHaveText('DF0');
+  await expect(page.getByTestId('title-pill-drive')).toContainText('DF0');
+});

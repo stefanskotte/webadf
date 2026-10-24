@@ -11,6 +11,7 @@ import { FolderMinus } from 'lucide-react';
 import {
   DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
+import { MENU_ITEM_HIGHLIGHT } from '@/components/ui/menu-item-look';
 import { FobDialog, type FobContext } from '@/components/nfc/fob-button';
 import { DeleteDialog } from './delete-disk-dialog';
 import { CardMountDialog, useCardMount, type DriveContext } from './card-mount-button';
@@ -33,8 +34,8 @@ const NO_DRIVES: NonNullable<DriveContext> = { devices: [], holds: {}, disksByGa
 
 type Which = null | 'mount' | 'fob' | 'move' | 'delete';
 
-const ITEM = 'h-11 gap-2.5 rounded-lg px-2.5 py-0 text-[13px] sm:h-9 '
-  + 'data-[variant=destructive]:focus:bg-[var(--surface-2)] [&_svg:not([class*=size-])]:size-4';
+const ITEM = `h-11 gap-2.5 rounded-lg px-2.5 py-0 text-[13px] sm:h-9 ${MENU_ITEM_HIGHLIGHT} `
+  + '[&_svg:not([class*=size-])]:size-4';
 
 /** The board's glyphs, 16 px, `currentColor`. */
 const Glyph = {

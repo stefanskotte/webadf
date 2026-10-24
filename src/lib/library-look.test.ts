@@ -64,6 +64,11 @@ describe('titleDiskColor', () => {
     expect(titleDiskColor({ ...base, formats: ['adf', 'HFE'] })).toBe('grey');
     expect(titleDiskColor({ ...base, kind: null, formats: ['hfe'] })).toBe('grey');
   });
+  it('is grey for a list item that has an HFE disk (the library grid and table pass the whole GameListItem)', () => {
+    expect(titleDiskColor({ ...base, kind: 'Game', hasHfe: true })).toBe('grey');
+    expect(titleDiskColor({ ...base, kind: null, hasHfe: true })).toBe('grey');
+    expect(titleDiskColor({ ...base, kind: null, hasHfe: false })).toBe('cream');
+  });
   it('is cream for an unknown, non-authored title', () => {
     expect(titleDiskColor({ ...base, kind: null })).toBe('cream');
     expect(titleDiskColor({ ...base, kind: null, authored: false })).toBe('cream');

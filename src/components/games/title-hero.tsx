@@ -57,7 +57,7 @@ export function TitleHero({
         ) : (
           <div data-testid="title-art" className="flex h-[240px] w-full items-center justify-center rounded-2xl"
                style={{ background: stageFor(color) }}>
-            <DiskIcon color={color} size={180} hd={hasHd} stack={diskCount} mounted={mounted !== null}
+            <DiskIcon color={color} size={180} hd={hasHd} stack={diskCount} mounted={false}
                       set={setLabel} title={title} />
           </div>
         )}

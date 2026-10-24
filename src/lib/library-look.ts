@@ -31,12 +31,14 @@ const TITLE_COLORS: DiskColor[] = ['black', 'red', 'blue', 'green'];
 /**
  * The colour of a title's disk icon. An HD or HFE title is `grey`; a title with no kind that nobody authored is
  * `cream`; every other title is one of black / red / blue / green by a stable hash of its id.
- * `formats`: the image formats of the title's disks (case-insensitive; 'hfe' counts). `authored`: made here.
+ * `formats`: the image formats of the title's disks (case-insensitive; 'hfe' counts); `hasHfe`: the same fact as one
+ * flag, for a library list item (GameListItem), which carries no format list. `authored`: made here.
  */
-export function titleDiskColor({ id, hasHd, kind, formats, authored }: {
-  id: string; hasHd: boolean; kind: string | null | undefined; formats?: readonly string[]; authored?: boolean;
+export function titleDiskColor({ id, hasHd, kind, formats, hasHfe, authored }: {
+  id: string; hasHd: boolean; kind: string | null | undefined; formats?: readonly string[]; hasHfe?: boolean;
+  authored?: boolean;
 }): DiskColor {
-  if (hasHd || (formats ?? []).some((f) => f.toLowerCase() === 'hfe')) return 'grey';
+  if (hasHd || hasHfe || (formats ?? []).some((f) => f.toLowerCase() === 'hfe')) return 'grey';
   if (!kind && !authored) return 'cream';
   return TITLE_COLORS[hash(id) % TITLE_COLORS.length];
 }

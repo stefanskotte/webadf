@@ -61,6 +61,8 @@ export interface GameListItem {
   sizeBytes: number; sha256Prefix: string | null;
   /** Any of its disks is HD (HD spec §4.2): the table tags the size. */
   hasHd: boolean;
+  /** Any of its disks is an HFE image: spec §4 draws an HFE title's disk grey. */
+  hasHfe: boolean;
 }
 
 /**
@@ -109,6 +111,7 @@ export async function listGames(
         diskCount: sql<number>`count(${disks.id})::int`,
         sizeBytes: sql<number>`coalesce(sum(${disks.sizeBytes}), 0)::bigint`,
         hasHd: sql<boolean>`coalesce(bool_or(${isHdAdfSql()}), false)`,
+        hasHfe: sql<boolean>`coalesce(bool_or(${disks.imageFormat} = 'hfe'), false)`,
         sha256Prefix: sql<string | null>`min(${disks.sha256})`,
         diskId: sql<string | null>`min(${disks.id})`,
       })
@@ -135,6 +138,7 @@ export async function listGames(
         diskCount: sql<number>`count(${disks.id})::int`,
         sizeBytes: sql<number>`coalesce(sum(${disks.sizeBytes}), 0)::bigint`,
         hasHd: sql<boolean>`coalesce(bool_or(${isHdAdfSql()}), false)`,
+        hasHfe: sql<boolean>`coalesce(bool_or(${disks.imageFormat} = 'hfe'), false)`,
         sha256Prefix: sql<string | null>`min(${disks.sha256})`,
         diskId: sql<string | null>`min(${disks.id})`,
       })
@@ -163,6 +167,7 @@ export async function listGames(
       diskCount: sql<number>`count(${disks.id})::int`,
       sizeBytes: sql<number>`coalesce(sum(${disks.sizeBytes}), 0)::bigint`,
       hasHd: sql<boolean>`coalesce(bool_or(${isHdAdfSql()}), false)`,
+      hasHfe: sql<boolean>`coalesce(bool_or(${disks.imageFormat} = 'hfe'), false)`,
       sha256Prefix: sql<string | null>`min(${disks.sha256})`,
       diskId: sql<string | null>`min(${disks.id})`,
     })
