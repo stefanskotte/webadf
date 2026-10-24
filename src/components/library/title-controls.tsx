@@ -12,6 +12,7 @@ import { useRouter } from 'next/navigation';
 import { toast } from 'sonner';
 import { History, Minus } from 'lucide-react';
 import { DeleteDiskDialog } from '@/components/library/delete-disk-dialog';
+import { DiskIcon } from '@/components/ui/disk-icon';
 import { FobButton, type FobContext } from '@/components/nfc/fob-button';
 import { CardMountButton, type DriveContext } from './card-mount-button';
 import { MoveToCollectionButton } from './move-to-collection';
@@ -24,11 +25,12 @@ import { type PendingHide, SET_DROP_RETURN_MS } from '@/components/collections/c
 /**
  * The library with nothing in it. `testId` is the view's own (game-grid or
  * game-table), so a check for "which view is this" holds on an empty library
- * too.
+ * too. The cream "New box" disk is the board's empty collection (Phase B).
  */
 export function EmptyLibrary({ testId }: { testId: string }) {
   return (
     <div className="glass-card mx-4 flex flex-col items-center gap-3 p-12 text-center sm:mx-7" data-testid={testId}>
+      <DiskIcon color="cream" set="Empty" title="New box" size={96} />
       <p className="text-lg font-semibold" style={{ color: 'var(--ink)' }}>No disks yet</p>
       <p className="text-sm" style={{ color: 'var(--muted)' }}>
         Drop some ADFs on the ingest page, or run <code className="font-mono">webadf push</code>.
