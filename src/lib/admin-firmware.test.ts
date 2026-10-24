@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import {
-  stripTestPrefix, githubReleaseUrl, clampPage, firmwareRepo,
+  stripTestPrefix, looksLikeTestBuild, githubReleaseUrl, clampPage, firmwareRepo,
   FIRMWARE_PAGE_SIZE, FIRMWARE_REPO_DEFAULT,
 } from './admin-firmware';
 
@@ -89,5 +89,18 @@ describe('repo and page size', () => {
     expect(FIRMWARE_REPO_DEFAULT).toBe('stefanskotte/webadf');
     expect(firmwareRepo(undefined)).toBe('stefanskotte/webadf');
     expect(firmwareRepo('me/fork')).toBe('me/fork');
+  });
+});
+
+describe('looksLikeTestBuild', () => {
+  it('catches spacing and hyphen variants of "test build"', () => {
+    for (const n of ['TEST-build x', 'TESTbuild x', 'TEST  build x', 'test_build', '* Test Build']) {
+      expect(looksLikeTestBuild(n), n).toBe(true);
+    }
+  });
+  it('leaves real release notes alone', () => {
+    for (const n of ['Fixes DF1.', 'Tested build of the DF1 fix', 'Build test passes']) {
+      expect(looksLikeTestBuild(n), n).toBe(false);
+    }
   });
 });

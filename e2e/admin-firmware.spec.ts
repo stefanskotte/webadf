@@ -70,6 +70,7 @@ test('a TEST build is tagged Test, shows its boards, and promotes to a release t
 
   const notes = dialog.getByTestId('fw-promote-notes');
   // "TEST build" and the space after it are removed.
+  await expect(dialog.getByTestId('fw-promote-scope')).toHaveText("Every organization's boards will be offered this build.");
   await expect(notes).toHaveValue('e2e promote');
   await notes.fill('TEST build still');
   await expect(dialog.getByTestId('fw-promote-confirm')).toBeDisabled();

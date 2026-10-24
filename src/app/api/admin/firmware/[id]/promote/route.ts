@@ -95,7 +95,9 @@ export async function POST(
   const [updated] = await db
     .update(firmwareReleases)
     .set({ notes })
-    .where(and(eq(firmwareReleases.id, id), like(firmwareReleases.notes, TEST_BUILD_NOTES_PATTERN)))
+    // Pinned to the image just checked: the row's bytes, by hash and path, are the ones that passed.
+    .where(and(eq(firmwareReleases.id, id), like(firmwareReleases.notes, TEST_BUILD_NOTES_PATTERN),
+      eq(firmwareReleases.sha256, rel.sha256), eq(firmwareReleases.blobPath, rel.blobPath)))
     .returning();
   if (!updated) return Response.json({ error: 'not_test_build' }, { status: 409 });
   return Response.json(updated);

@@ -32,7 +32,7 @@ export function stripTestPrefix(notes: string): string {
  * build"). The promote route refuses them: release notes that look like a bench build would mislead every org.
  */
 export function looksLikeTestBuild(notes: string): boolean {
-  return /^\W*test build/i.test(notes.trim());
+  return /^\W*test[\W_]*build/i.test(notes.trim());
 }
 
 /**

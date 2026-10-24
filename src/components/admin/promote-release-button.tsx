@@ -126,6 +126,9 @@ export function PromoteReleaseButton({
               </>
             ) : (
               <>
+                <p className="mt-2 text-[13px]" style={{ color: 'var(--muted)' }} data-testid="fw-promote-scope">
+                  Every organization&apos;s boards will be offered this build.
+                </p>
                 <label htmlFor={`fw-notes-${id}`} className="mt-4 block text-[12.5px] font-semibold">
                   Release notes
                 </label>

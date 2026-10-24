@@ -128,7 +128,9 @@ export async function revokeInvite(raw: string): Promise<RevokeResult> {
   const db = getDb();
   const updated = await db
     .update(invites)
-    .set({ revokedAt: new Date() })
+    // Also expire it: code from before revoked_at existed (a rollback, or a self-hoster on an older image) checks
+    // only consumed_at and expires_at, and must still refuse a revoked code. The state CASE reads revoked first.
+    .set({ revokedAt: new Date(), expiresAt: sql`least(${invites.expiresAt}, now())` })
     .where(and(eq(invites.code, code), isNull(invites.consumedAt), isNull(invites.revokedAt)))
     .returning({ code: invites.code });
   if (updated.length > 0) return 'revoked';

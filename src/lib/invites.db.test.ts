@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { Client } from 'pg';
-import { eq } from 'drizzle-orm';
+import { and, eq, gt, isNull } from 'drizzle-orm';
 
 // A database of its own (the shared one is the live one).
 const base = process.env.TEST_DATABASE_URL!;
@@ -48,6 +48,18 @@ describe('invites: revoked state and consumer', () => {
     expect(r.revokedAt).toBeInstanceOf(Date);
     const listed = (await Q.adminListInvites()).find((i) => i.code === code);
     expect(listed?.state).toBe('revoked');
+  });
+
+  it('revoke also expires the code, so pre-A7 code (no revoked_at check) still refuses it after a rollback', async () => {
+    const code = await issue();
+    expect(await I.revokeInvite(code)).toBe('revoked');
+    const r = await row(code);
+    expect(r.expiresAt.getTime()).toBeLessThanOrEqual(Date.now());
+    // The old claim's WHERE: consumed_at is null and expires_at > now()
+    const old = await db().select().from(invites)
+      .where(and(eq(invites.code, code), isNull(invites.consumedAt), gt(invites.expiresAt, new Date())));
+    expect(old).toHaveLength(0);
+    expect((await Q.adminListInvites()).find((i) => i.code === code)?.state).toBe('revoked');
   });
 
   it('revoking twice answers revoked both times and keeps the first timestamp', async () => {
