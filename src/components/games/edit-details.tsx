@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useRouter } from 'next/navigation';
 import { toast } from 'sonner';
@@ -55,6 +55,16 @@ export function EditDetails({ game }: { game: GameDetail }) {
   const router = useRouter();
   const [open, setOpen] = useState(false);
   const [busy, setBusy] = useState(false);
+  const triggerRef = useRef<HTMLButtonElement>(null);
+  const titleRef = useRef<HTMLInputElement>(null);
+  const wasOpen = useRef(false);
+  // Focus follows the panel: into the title field when it opens, back to the trigger when it closes (save, reset,
+  // Cancel), so a keyboard user is never left on a button that just disappeared.
+  useEffect(() => {
+    if (open) titleRef.current?.focus();
+    else if (wasOpen.current) triggerRef.current?.focus();
+    wasOpen.current = open;
+  }, [open]);
   const [values, setValues] = useState<Record<string, string>>(() => initial(game));
 
   function initial(g: GameDetail): Record<string, string> {
@@ -177,6 +187,7 @@ export function EditDetails({ game }: { game: GameDetail }) {
                     />
                   ) : (
                     <input
+                      ref={field === 'title' ? titleRef : undefined}
                       data-testid={`edit-field-${field}`}
                       value={values[field] ?? ''}
                       disabled={busy}
@@ -225,10 +236,13 @@ export function EditDetails({ game }: { game: GameDetail }) {
   // §5.1). One component owns both, so the form's state is one thing; a portal carries the panel to its slot.
   // `open` is only ever true after a click, i.e. after hydration, so the slot lookup never runs during SSR.
   const slot = open && typeof document !== 'undefined' ? document.getElementById(EDIT_SLOT_ID) : null;
+  // No slot on the page: show the panel right here rather than hide the trigger and show nothing.
+  if (open && !slot) return panel;
   return (
     <>
       {!open && (
       <button
+        ref={triggerRef}
         type="button"
         data-testid="edit-details"
         onClick={() => { setValues(initial(game)); setOpen(true); }}

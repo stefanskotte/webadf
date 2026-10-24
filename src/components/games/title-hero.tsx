@@ -69,7 +69,7 @@ export function TitleHero({
             style={{ color: 'var(--ink)' }}>
           {title}
         </h1>
-        <div data-testid="title-pills" className="flex flex-wrap items-center gap-2">
+        <div data-testid="title-pills" role="group" aria-label="Title details" className="flex flex-wrap items-center gap-2">
           {kind && (
             <span data-testid="title-pill-kind" className={PILL} style={{ background: tag.bg, color: tag.fg }}>{kind}</span>
           )}
