@@ -4,6 +4,7 @@ import { toast } from 'sonner';
 import { Link } from '@/components/shell/link';
 import { HdTag } from '@/components/disks/hd-tag';
 import { UploadCard } from '@/components/ingest/upload-card';
+import { HelpTip } from '@/components/help/help-tip';
 import { adfDensity, isHfeFilename } from '@/lib/disk-format';
 import { sendErrorText, type SendTarget } from '@/lib/send-ui';
 import { downloadName, uploadErrorText } from '@/lib/from-amiga-ui';
@@ -193,7 +194,7 @@ export function StagingList({ initialFilter, fallbackTargets }: { initialFilter:
   return (
     // id: a device card's "N files from the Amiga" link lands here (/ingest?from=<board>#from-amiga), on that filter.
     <section id="from-amiga" className="mx-4 pb-10 sm:mx-7">
-      <UploadCard id="staging-heading" title="Staging" meta={meta}>
+      <UploadCard id="staging-heading" title="Staging" help={<HelpTip topic="from-amiga" />} meta={meta}>
         <div role="group" aria-label="Show" className="flex flex-wrap gap-1 self-start rounded-xl p-1"
              style={{ border: '1px solid var(--hairline-strong)', background: 'var(--glass-subtle)' }}>
           {FILTERS.map((f) => {
@@ -209,7 +210,7 @@ export function StagingList({ initialFilter, fallbackTargets }: { initialFilter:
         </div>
 
         <ul aria-label="Staging" data-testid="staging-list"
-            className="flex flex-col overflow-hidden rounded-xl" style={{ border: '1px solid var(--hairline-strong)', background: 'var(--glass-subtle)' }}>
+            className="flex flex-col overflow-hidden rounded-xl md:max-h-[36rem] md:overflow-y-auto" style={{ border: '1px solid var(--hairline-strong)', background: 'var(--glass-subtle)' }}>
           {view.shown.map((v) => <Row key={v.key} v={v}>{v.actions.map((a) => action(v, a))}</Row>)}
           {view.shown.length === 0 && (rows.length > 0 || s.loaded) && (
             <li className="px-4 py-3 text-[12.5px]" style={{ color: 'var(--muted)' }} data-testid="staging-empty">

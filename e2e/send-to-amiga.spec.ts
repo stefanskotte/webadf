@@ -198,9 +198,14 @@ test('a long queue: the waiting file is first, and Clear finished removes the fi
 
   await page.goto('/ingest');
   await expect(sendRows(page)).toHaveCount(14, { timeout: LIVE });
-  // Newest first: the waiting row, made last, leads the many finished ones. (The old per-board queue also scrolled
-  // inside a bounded box; the one Staging list of spec 2026-10-23 §2 has no such bound, so that check went with it.)
+  // Newest first: the waiting row, made last, leads the many finished ones.
   await expect(sendRows(page).first()).toHaveAttribute('data-key', `send:${waiting}`);
+  // On a desktop the rows scroll inside a bounded list (36rem) rather than growing the page (Task 6 ruling 1).
+  const box = await page.getByTestId('staging-list').evaluate((el) => ({ client: el.clientHeight, scroll: el.scrollHeight,
+    height: el.getBoundingClientRect().height, overflowY: getComputedStyle(el).overflowY }));
+  expect(box.overflowY).toBe('auto');
+  expect(box.client).toBeLessThan(box.scroll);
+  expect(box.height).toBeLessThanOrEqual(36 * 16 + 2);   // the box itself stops at 36rem (+ its 1 px borders)
 
   const clear = page.getByTestId('staging-clear-finished');
   await expect(clear).toHaveText('Clear finished (13)');

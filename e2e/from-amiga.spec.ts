@@ -194,9 +194,12 @@ test('Clear finished under From the Amiga spares a finished send to the Amiga', 
   await expect(page.getByTestId('staging-clear-finished')).toHaveText('Clear finished (1)');
   await page.getByTestId('staging-clear-finished').click();
   await expect(row(page, failed)).toHaveCount(0, { timeout: LIVE });
+  // The next list read after the filter click (the next poll) is the server's word: the send was not cleared.
+  const next = page.waitForResponse((r) => new URL(r.url()).pathname === '/api/staging' && r.request().method() === 'GET',
+    { timeout: LIVE });
   await page.getByTestId('staging-filter-all').click();
   await expect(sendRow).toBeVisible({ timeout: LIVE });
-  await page.waitForTimeout(11_000);   // one idle poll later the server agrees
+  await next;
   await expect(sendRow).toBeVisible();
   await expect(row(page, failed)).toHaveCount(0);
 });
