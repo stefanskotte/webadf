@@ -197,6 +197,26 @@ export async function deleteUpload(db: Db, orgId: string, id: string): Promise<b
 }
 
 /**
+ * Stop (the Upload page's Stop, `DELETE ?only=receiving`): deletes the row only while it is still arriving -- receiving
+ * and not past its 24 h, as toUploadView judges -- in the update's own WHERE, so a file that finished while the confirm
+ * was open is kept. 'not_found' when there is no such row of the org (or it is deleted already).
+ */
+export async function stopUpload(db: Db, orgId: string, id: string, now = new Date()): Promise<'stopped' | 'not_receiving' | 'not_found'> {
+  return db.transaction(async (tx) => {
+    const done = await tx.update(amigaUploads).set({ status: 'deleted' })
+      .where(and(eq(amigaUploads.id, id), eq(amigaUploads.orgId, orgId), eq(amigaUploads.status, 'receiving'), gt(amigaUploads.expiresAt, now)))
+      .returning({ id: amigaUploads.id });
+    if (done.length > 0) {
+      await tx.delete(amigaUploadChunks).where(eq(amigaUploadChunks.uploadId, id));
+      return 'stopped';
+    }
+    const [left] = await tx.select({ id: amigaUploads.id }).from(amigaUploads)
+      .where(and(eq(amigaUploads.id, id), eq(amigaUploads.orgId, orgId), ne(amigaUploads.status, 'deleted')));
+    return left ? 'not_receiving' : 'not_found';
+  });
+}
+
+/**
  * Clear all (spec §4, ruling PF4): every stored or failed row settled at or before `cursor` (the newest row's
  * UploadView.cursor the person saw); a receiving row stays, and so does one that was still arriving when the person
  * looked and was stored since (settled = stored_at, else created_at). The comparison is on the exact Postgres timestamp, so a

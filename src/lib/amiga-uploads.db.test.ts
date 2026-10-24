@@ -155,6 +155,30 @@ describe('amiga uploads', () => {
     expect((await opened(d, { size: data.byteLength, path: 'Stalled.bin' })).offset).toBe(0);
   });
 
+  it('stop (only=receiving) takes a receiving row, and keeps one that finished or lapsed meanwhile', async () => {
+    const d = await device('org-stop'); const data = bytes(40000, 6);
+    const recv = await opened(d, { size: data.byteLength, path: 'Moving.bin' });
+    await U.storeChunk(db(), d.deviceId, recv.id, 0, data.subarray(0, 16384));
+    expect(await U.stopUpload(db(), 'org-stop', recv.id)).toBe('stopped');
+    expect((await row(recv.id)).status).toBe('deleted');
+    expect(await chunkRows(recv.id)).toBe(0);
+    // It finished while the confirm was open: Stop must not delete the only copy.
+    const done = await stored(d, bytes(10, 7), 'Done.txt');
+    expect(await U.stopUpload(db(), 'org-stop', done)).toBe('not_receiving');
+    expect((await row(done)).status).toBe('stored');
+    // Past its 24 h a partial reads failed (toUploadView): not receiving either.
+    const lapsed = await opened(d, { size: data.byteLength, path: 'Lapsed.bin' });
+    await db().update(amigaUploads).set({ expiresAt: new Date(Date.now() - 1000) }).where(eq(amigaUploads.id, lapsed.id));
+    expect(await U.stopUpload(db(), 'org-stop', lapsed.id)).toBe('not_receiving');
+    expect((await row(lapsed.id)).status).toBe('receiving');
+    // Gone, deleted, or another org's: not found.
+    expect(await U.stopUpload(db(), 'org-stop', recv.id)).toBe('not_found');
+    expect(await U.stopUpload(db(), 'org-stop', 'no-such-id')).toBe('not_found');
+    const other = await opened(d, { size: data.byteLength, path: 'Other.bin' });
+    expect(await U.stopUpload(db(), 'org-not-mine', other.id)).toBe('not_found');
+    expect((await row(other.id)).status).toBe('receiving');
+  });
+
   it('a CRC mismatch is final: failed crc, the chunks gone, and the next send starts at 0', async () => {
     const d = await device(); const data = bytes(20000);
     const id = await upload(d, data, 'Bad.bin');
